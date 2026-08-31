@@ -13,7 +13,8 @@ identical across every module for the system to be a system:
 
 * the header that says which contract this file follows
 * the base class, so the contract is inherited rather than reimplemented
-* the exported surface, declared and therefore checkable
+* an access level on each mode, marked where the mode is and therefore
+  checkable against the thing it describes
 * an empty page, so a module that grows a UI has one shape to grow into
 
 The agent's job is the middle: what this module actually does. Everything
@@ -37,14 +38,24 @@ SPEC_MD = """# {name} 规格
 type: {type}          # atomic（一件事）| workflow（串起几件事）
 runtime: python
 
-# 这个模块能做哪几件事。一个 mode 一件事，第一个是默认。
+# 这个模块能做哪几件事，以及每件事对外开到什么程度。
+# 一个 mode 一件事，一个 mode 一个访问级别，三选一：
+#
+#   export   只读契约。别的模块能调，这个配方自己的页面也读得到。
+#            MUST 只读——不触网、不重算、不改状态、不开浏览器，
+#            别人每 5 分钟问一次也不会出事。
+#   action   这张页面上能按，允许干活。页面是这套东西里最不可信的一层
+#            （谁打得开谁就能按），而按下去是在主人的机器上、用主人的凭证跑。
+#            NEVER 给会花钱、会以主人身份对外做事的 mode 写 action。
+#   不写     只有主人能跑。默认，而且默认是对的——开出去容易，收回来难。
+#
+# 只写一个：export 已经意味着页面读得到，「既导出又给页面按」本来就没有意义。
 modes:
-  - status
+  status: export
+  refresh:
 
-# 别的模块能调哪几个 mode。MUST 是只读的：
-# 不触网、不重算、不改状态、不开浏览器——别人每 5 分钟问一次也不会出事。
-# 不确定要不要开放就先留空，开出去容易收回来难。
-exports: []
+# 不写 mode 时跑哪一个。留空就是上面第一个。
+default_mode:
 
 # 用了谁的哪个口。写下来，对方才知道自己正在被谁读。
 # 例：cn_etf_data_feed: [status, read]
@@ -52,13 +63,6 @@ imports: {{}}
 
 # 要不要一张页面。要的话 create 会生成空页面骨架。
 page: false
-
-# 这张页面能触发哪几个 mode。默认一个都没有，而且默认是对的：
-# 页面是这套东西里最不可信的一层——谁打得开谁就能按——而按下去是在主人的
-# 机器上、用主人的凭证跑。跟 exports 不许有交集（导出的按契约只读，页面直接
-# 调 api/<mode> 就能读，不需要按钮）。
-# NEVER 把会花钱、会以主人身份对外做事的 mode 写进来。
-page_actions: []
 ```
 
 ## 人读的部分
@@ -69,9 +73,10 @@ TODO：一句话。说清楚**谁**在**什么时候**会需要它。
 
 ### 每个 mode 做什么
 
-| mode | 输入 | 输出 | 只读？ |
+| mode | 输入 | 输出 | 开给谁 |
 |---|---|---|---|
-| status | — | TODO | 是 |
+| status | — | TODO | export：别的模块和页面都读得到，只读 |
+| refresh | — | TODO | 只有主人 |
 
 ### 它不做什么
 
@@ -135,12 +140,8 @@ use_cases:
   - "TODO：一句话说清什么时候该用它"
 output_targets:
   - stdout
-# 这张页面能触发哪几个 mode。空着就是页面上没有按钮，这是默认也是常态。
-page_actions: {page_actions}
-
-# 别的模块可以调本模块的哪些 mode。导出的 mode MUST 只读：
-# 不触网、不重算、不改状态、不开浏览器——那是别人每 5 分钟问一次也不会出事的口。
-exports: {exports}
+# 一个 mode 对外开到什么程度，写在 recipe.py 的方法上（@export / @action / 不标），
+# 不在这里。这里不再有平行的名单要跟代码对齐。
 # 本模块用了谁的哪个口。写下来，对方才知道自己正在被谁读。
 imports: {imports}
 inputs:
@@ -173,7 +174,7 @@ RECIPE_PY = '''#!/usr/bin/env python3
 TODO：这个模块解决什么问题、为什么这么解。
 """
 
-from frago_recipe import Recipe
+from frago_recipe import Recipe{access_imports}
 
 
 class {cls}(Recipe):
@@ -181,28 +182,27 @@ class {cls}(Recipe):
 
     name = "{name}"
     version = "0.1.0"
-
-    #: 本模块能做的事。第一个是默认。
-    modes = {modes}
-
-    #: 别的模块能调哪几个。导出的 MUST 只读——不触网、不重算、不改状态。
-    #: 内核在总线上按这份声明放行，没导出的一律调不到。
-    exports = {exports}
-
+{default_mode}
     #: 用了谁的哪个口。NEVER 自己去读别的模块的文件：对方不知道自己正在被读，
     #: 它改自己的东西时看不到任何提示，断裂会发生在跟改动毫无关系的地方。
     imports = {imports}
+
+    # 一个 mode 一个 mode_<名字> 方法，方法上标它对外开到什么程度：
+    #   @export  只读契约，别的模块能调、页面也读得到。MUST 只读。
+    #   @action  页面上能按，允许干活。
+    #   不标     只有主人能跑。
+    # 不用另外写 modes 名单——平台从这些方法上直接读。
 
 {methods}
 
 {cls}.main()
 '''
 
-#: One method per declared mode. Generated rather than left to the author,
-#: because a mode declared and not implemented is the failure that sent a
+#: One method per mode in the spec. Generated rather than left to the author,
+#: because a mode planned and never implemented is the failure that sent a
 #: read-only probe into the middle of a state machine that called a live API.
-_METHOD = '''    def mode_{safe}(self) -> dict:
-        """TODO：{mode} 做什么。{readonly}
+_METHOD = '''{mark}    def mode_{safe}(self) -> dict:
+        """TODO：{mode} 做什么。{note}
 
         自己的数据走 self.store（落点由平台交代，NEVER 自己拼路径）。
         要别的模块的数据走 self.ask(模块名, mode)，先在 imports 里声明。
@@ -211,11 +211,36 @@ _METHOD = '''    def mode_{safe}(self) -> dict:
         raise self.fail("mode_{safe} 还没写")
 '''
 
+_NOTES = {
+    "export": ("这个 mode 是只读契约，别的模块和页面都读得到，"
+               "MUST 只读：不触网、不重算、不改状态、不开浏览器。"),
+    "action": ("这个 mode 页面上能按。谁打得开那张页面谁就能按，"
+               "按下去是在主人的机器上跑。"),
+}
 
-def _method(mode: str, exported: bool) -> str:
-    note = ("这个 mode 导出给别的模块，MUST 只读："
-            "不触网、不重算、不改状态、不开浏览器。") if exported else ""
-    return _METHOD.format(safe=mode.replace("-", "_"), mode=mode, readonly=note)
+
+def _method(mode: str, level: str) -> str:
+    return _METHOD.format(
+        safe=mode.replace("-", "_"), mode=mode,
+        mark=f"    @{level}\n" if level in _NOTES else "",
+        note=_NOTES.get(level, ""),
+    )
+
+
+def _mode_levels(declared) -> dict[str, str]:
+    """The spec's modes as ``{mode: level}``, in the order they were written.
+
+    Accepts the plain list as well as the mapping, because a spec is written by
+    hand as often as it is generated and ``modes: [status, refresh]`` is what
+    somebody types when they have not yet decided what to open. Every mode in
+    that form comes out at the closed level, which is the right default and the
+    one the author has to go out of their way to widen.
+    """
+    if isinstance(declared, dict):
+        return {str(m): str(level or "").strip() for m, level in declared.items() if m}
+    if isinstance(declared, list):
+        return {str(m): "" for m in declared if m}
+    return {"status": ""}
 
 
 def _py_tuple(items: list) -> str:
@@ -231,10 +256,6 @@ def _py_imports(imports: dict) -> str:
     parts = [f'"{k}": {_py_tuple([str(m) for m in (v or [])])}'
              for k, v in imports.items()]
     return "{" + ", ".join(parts) + "}"
-
-
-def _yaml_list(items: list) -> str:
-    return "[]" if not items else "\n" + "\n".join(f"  - {i}" for i in items)
 
 
 def _yaml_map(m: dict) -> str:
@@ -336,14 +357,14 @@ def render_spec(name: str, *, kind: str = "atomic") -> str:
     Planning used to write nothing: it handed an agent a prompt and whatever
     prose came back was the spec. `create` then read that prose and produced
     code from it, which meant the two halves of the pipeline agreed only by
-    luck — the spec could describe modes that never got declared, or declare an
-    exported surface that the code never exposed, and nothing anywhere noticed.
+    luck — the spec could describe modes that never got written, or open a
+    surface the code never had, and nothing anywhere noticed.
 
     So the spec now has a machine-readable half. What is written there is what
-    `create` builds: the modes become methods, the exported surface becomes the
-    declaration the hub enforces, the imports become the dependency both sides
-    can see. Deciding those things is the actual work of planning; the prose
-    around them is for the person who has to maintain it afterwards.
+    `create` builds: the modes become methods, each one's access level becomes
+    the mark on that method, the imports become the dependency both sides can
+    see. Deciding those things is the actual work of planning; the prose around
+    them is for the person who has to maintain it afterwards.
     """
     return SPEC_MD.format(name=name, type=kind)
 
@@ -382,48 +403,44 @@ def render(name: str, *, description: str = "TODO：一句话说清它做什么"
     spec = spec or {}
     cls = class_name(name)
     kind = spec.get("type") or kind
-    modes = [str(m) for m in (spec.get("modes") or ["status"]) if m]
-    exports = [str(e) for e in (spec.get("exports") or []) if e]
-    actions = [str(a) for a in (spec.get("page_actions") or []) if a]
+    levels = _mode_levels(spec.get("modes"))
+    modes = list(levels)
     imports = spec.get("imports") or {}
+    default = str(spec.get("default_mode") or "").strip()
     if with_page is None:
         with_page = bool(spec.get("page", True))
 
-    bad = [e for e in exports if e not in modes]
+    bad = [m for m, level in levels.items() if level not in ("", "export", "action")]
     if bad:
         raise ValueError(
-            f"规格里导出了 {'、'.join(bad)}，但 modes 里没有它们。"
-            f"导出的必须是这个模块真有的 mode。"
+            f"规格给 {'、'.join(bad)} 写了平台不认识的访问级别。"
+            f"只有三种：export（只读契约）、action（页面能按）、留空（只有主人）。"
         )
-    bad = [a for a in actions if a not in modes]
-    if bad:
+    if default and default not in modes:
         raise ValueError(
-            f"规格里让页面能按 {'、'.join(bad)}，但 modes 里没有它们。"
+            f"规格把默认 mode 定成 {default}，但 modes 里没有它。"
         )
-    both = [a for a in actions if a in exports]
-    if both:
-        raise ValueError(
-            f"{'、'.join(both)} 既导出又开给页面按。导出的 mode 按契约是只读的，"
-            f"页面直接 POST /app/<name>/api/<mode> 就能读，不需要按钮——"
-            f"两边都写等于规格自己前后矛盾。"
-        )
+    actions = [m for m, level in levels.items() if level == "action"]
     if actions and not with_page:
         raise ValueError(
-            f"规格说没有页面（page: false），却让页面能按 {'、'.join(actions)}。"
+            f"规格说没有页面（page: false），却给 {'、'.join(actions)} 写了 action。"
+            f"action 的意思就是「这张页面上能按」，没有页面就没有这回事。"
         )
 
+    used = sorted({level for level in levels.values() if level in ("export", "action")})
     files = {
         "recipe.md": RECIPE_MD.format(
             name=name, type=kind, description=description,
-            exports=_yaml_list(exports), page_actions=_yaml_list(actions),
             imports=_yaml_map(imports),
             modes_doc=" | ".join(modes),
         ),
         "recipe.py": RECIPE_PY.format(
             header=HEADER, name=name, cls=cls, description=description,
-            modes=_py_tuple(modes), exports=_py_tuple(exports),
+            access_imports=f", {', '.join(used)}" if used else "",
+            default_mode=(f'\n    #: 不写 mode 时跑哪一个。\n'
+                          f'    default_mode = "{default}"\n' if default else ""),
             imports=_py_imports(imports),
-            methods="\n".join(_method(m, m in exports) for m in modes),
+            methods="\n".join(_method(m, levels[m]) for m in modes),
         ),
     }
     if with_page:

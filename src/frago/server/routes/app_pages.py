@@ -227,9 +227,10 @@ async def serve_app_config(name: str, request: Request):
     #
     # The answer is now the recipe's own declaration rather than a flag on the
     # exposure entry, so a page and its run route agree by construction — both
-    # read `page_actions`. What the exposure still decides is *who is looking*,
-    # and that only subtracts: a shared reading has no per-person directory for
-    # a run to write, so its readers get no actions at all.
+    # read the `@action` marks off the same methods. What the exposure still
+    # decides is *who is looking*, and that only subtracts: a shared reading has
+    # no per-person directory for a run to write, so its readers get no actions
+    # at all.
     if zone_of(request) == "identity":
         actions = () if serves_recipe_slot(request) else page_actions_of(name)
     elif owner:
@@ -263,24 +264,27 @@ async def serve_app_api(name: str, mode: str, request: Request):
     machine, and the day the recipe's landing spot moves the page keeps reading
     the old one while every refresh reports success.
 
-    Only exported modes are reachable, and exported modes are read-only by
-    contract. So a page — which is the least trusted thing in the system, since
-    anyone who can open it can call this — can never reach a mode that fetches,
-    recomputes, or changes state.
+    Only ``@export`` modes are reachable here, and an exported mode is
+    read-only by contract. So a page — which is the least trusted thing in the
+    system, since anyone who can open it can call this — can never reach a mode
+    that fetches, recomputes, or changes state through this door. The door for
+    modes that do work is ``/app/<name>/run``, and it opens only for
+    ``@action``.
     """
-    from frago.server.routes.bus import _exports_of
+    from frago.recipes.contract import exports_of
 
     # Pass the mode: a snapshot can be stale in two ways, and being refused for
     # an export that was added after the server started is indistinguishable
-    # from never having added it. See ``_exports_of``.
-    exports = _exports_of(name, mode) or ()
+    # from never having added it. See ``contract.surface_of``.
+    exports = exports_of(name, mode) or ()
     if mode not in exports:
         raise HTTPException(
             status_code=403,
-            detail=(f"{name} 没有把 {mode} 导出给页面调。"
-                    f"它导出的是 {'、'.join(exports) or '（空）'}。"
-                    f"页面只能调导出的只读 mode——没导出的那些里面有活干，"
-                    f"不是给页面顺手调的。"),
+            detail=(f"{name} 没有把 {mode} 开给页面读。"
+                    f"它标了 @export 的是 {'、'.join(exports) or '（一个都没有）'}。"
+                    f"页面这个口只收 @export 的只读 mode——"
+                    f"要让页面按一下去干活，那个 mode 标 @action，"
+                    f"走 POST /app/{name}/run 那扇门。"),
         )
 
     try:

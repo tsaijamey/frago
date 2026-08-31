@@ -12,7 +12,7 @@
 ## 标准流程
 
     frago recipe plan <名字> --prompt "<需求>"     一、定规格
-            ↓  人看一眼规格，尤其是 exports
+            ↓  人看一眼规格，尤其是每个 mode 的访问级别
     frago recipe create <名字>                     二、按规格生成模板
             ↓  在模板上填业务逻辑
     frago recipe validate <目录>                   三、查
@@ -29,11 +29,13 @@
 
     type: atomic          # atomic（一件事）| workflow（串起几件事）
     runtime: python
-    modes: [status, refresh]    # 能做哪几件事，一个 mode 一件，第一个是默认
-    exports: [status]           # 别的模块能调哪几个，MUST 只读
-    imports: {}                 # 用了谁的哪个口
-    page: false                 # 要不要一张页面
-    page_actions: []            # 这张页面能触发哪几个 mode，默认一个都没有
+    modes:                # 能做哪几件事（一个 mode 一件），每件开到什么程度
+      status: export      #   export = 只读契约：别的模块能调，页面也读得到
+      save: action        #   action = 这张页面上能按，允许干活
+      refresh:            #   不写 = 只有主人能跑（默认，而且默认是对的）
+    default_mode:         # 不写 mode 时跑哪一个，留空就是上面第一个
+    imports: {}           # 用了谁的哪个口
+    page: false           # 要不要一张页面
 
 **下半给人读**：它解决什么问题、每个 mode 干什么、**它不做什么**、数据存什么。
 
@@ -41,9 +43,10 @@
 
 ### 二、create 产出什么
 
-    recipe.py     契约描述头 + 继承 Recipe + 按规格声明的 modes/exports/imports
-                  + 每个 mode 一个方法骨架
-    recipe.md     元信息，exports/imports 与代码一致
+    recipe.py     契约描述头 + 继承 Recipe + imports + 每个 mode 一个方法骨架，
+                  方法上带着规格里定的访问级别（@export / @action / 不标）
+    recipe.md     元信息。**只有 imports**——对外性质写在方法上，
+                  这里不再有平行的名单
     assets/       空页面骨架（规格里 page: true 才生成）
 
 **在模板上改，NEVER 另起炉灶重写文件。**
@@ -52,18 +55,24 @@
 
 ### 1. 能力建在基类上
 
-    from frago_recipe import Recipe
+    from frago_recipe import Recipe, export
 
     class MyBoard(Recipe):
         name = "my_board"
-        modes = ("status", "refresh")
-        exports = ("status",)
         imports = {}
 
+        @export
         def mode_status(self):
             return {"rows": len(self.store.read_jsonl("ledger.jsonl"))}
 
+        def mode_refresh(self):
+            ...
+
     MyBoard.main()
+
+**没有 modes 名单要维护**——平台扫 `mode_*` 方法，按方法上的标记决定各自开给谁。
+自己写 `modes` / `exports` / `page_actions` 会被当场拒绝：手写的那份跟方法一旦
+对不上，页面和总线各按各的答案走，而且不报错。
 
 基类由平台在起进程时递给配方，**不用在依赖里声明**。它管四件事：
 
@@ -79,29 +88,39 @@ NEVER 自己拼数据路径，NEVER 留「平台没给就用我自己的」那�
 
 ### 2. 导出的 mode 必须只读
 
-`exports` 里的 mode 是**对外的承诺**：不触网、不重算、不改状态、不开浏览器，
+标了 `@export` 的 mode 是**对外的承诺**：不触网、不重算、不改状态、不开浏览器，
 别人每 5 分钟问一次也不会出事。
 
-内核在总线上按这份声明放行，没导出的一律调不到；页面读数据也只能调导出的
+内核在总线上按这个标记放行，没标的一律调不到；页面读数据也只能调标了 `@export` 的
 （`POST /app/<name>/api/<mode>`）。
-**不确定要不要开放就先留空——开出去容易，收回来难。**
+**不确定要不要开放就先别标——开出去容易，收回来难。**
 
-### 2b. 页面能按什么，写在 page_actions 里
+### 2b. 页面能按什么，标 @action
 
-    page_actions: [save]
+    @action
+    def mode_save(self):
+        ...
 
 页面要**改**点什么（存一笔、重算一次），走 `POST /app/<name>/run`，
-体里 `{"params": {"mode": "save", ...}}`。平台只放行 `page_actions` 里点过名的 mode。
+体里 `{"params": {"mode": "save", ...}}`。平台只放行标了 `@action` 的 mode。
 
 这一条以前不在配方这边——它是开放页面时的一个开关（`--runnable`），意思是
 「谁看得见谁就能按全部」，而按下去是在主人的机器上、用主人的凭证跑。
 同一个配方在这张页面上能按、在那张不能，配方自己一个字都没说。现在它是配方的声明，
 在每台机器上答案一样。
 
-- 与 `exports` **不许有交集**：导出的按契约只读，页面直接调 `api/<mode>` 就能读。
-- 开了 `page_actions` 就 MUST 用 `self.store` / `self.data_dir`（或读
+- **一个 mode 一个级别，不叠加。**「既导出又给页面按」本来就没有意义：
+  `@export` 已经意味着页面读得到，页面直接调 `api/<mode>` 即可，不需要按钮。
+- 标了 `@action` 就 MUST 用 `self.store` / `self.data_dir`（或读
   `FRAGO_RECIPE_DATA_DIR`），否则 `validate` 直接报错——不然每个人按下去写的都是主人那一份。
-- **会花钱、会以主人身份对外做事的 mode NEVER 写进来。**
+- **会花钱、会以主人身份对外做事的 mode NEVER 标 @action。**
+
+### 2c. 别的模块能调什么 ≠ 页面能按什么
+
+这两件事不嵌套，NEVER 照着 C++ 的 public / protected / private 去想——那是全序，
+一层套一层。这里不是：一个 mode 可以允许页面触发却不允许别的模块调用，
+因为总线那条路额外承诺只读，而页面这条明确不承诺。要类比就类比
+Rust 的 `pub(crate)`——可见性带着「对谁」。
 
 ### 3. 跨模块只走接口
 

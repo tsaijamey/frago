@@ -147,7 +147,10 @@ class TestTheRetiredFlagsExplainThemselves:
         pub.publish(NAME, mode=pub.MODE_IDENTITY)
         result = _named(page, "--runnable", "--yes", "--format", "json")
         assert json.loads(result.output)["code"] == "runnable_retired"
-        assert "page_actions" in result.output
+        # The refusal has to name the replacement, not just the removal: a
+        # message that says "this flag is gone" and stops there sends the
+        # reader looking for a changelog.
+        assert "@action" in result.output
 
     def test_force_says_why_it_is_gone(self, page):
         pub.publish(NAME, mode=pub.MODE_IDENTITY, allow=[ALICE])

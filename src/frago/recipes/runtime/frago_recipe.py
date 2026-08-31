@@ -12,10 +12,12 @@ callers each worked out their own path to it; the page showed the three-day-old
 copy and reported every refresh as a success. Nothing was broken. Nothing was
 logged. There was simply no place where "who reads whom" was written down.
 
-**Modules declare their surface.** ``exports`` says what other modules may
-call; ``imports`` says whose surface this one depends on. Both sides are
-written down, so the recipe being read finally knows it is being read — the
-single fact whose absence made every one of these failures silent.
+**Modules declare their surface.** A mode carries an access level, written on
+the method itself — ``@export`` for what other modules may call, ``@action``
+for what this module's own page may press, nothing for the modes only the
+owner reaches. ``imports`` says whose surface this one depends on. Both sides
+are written down, so the recipe being read finally knows it is being read —
+the single fact whose absence made every one of these failures silent.
 
 **The page is a front end.** It renders state and calls this module's exported
 modes. It never receives a path and never reads a file.
@@ -63,6 +65,86 @@ EXECUTION_ENV = "FRAGO_EXECUTION_ID"
 #: same way it hands over the landing spot. Empty on a personal machine, where
 #: loopback is trusted and no token exists.
 BUS_TOKEN_ENV = "FRAGO_BUS_TOKEN"
+
+
+# ── access levels ──────────────────────────────────────────────────────────
+#
+# How far out a mode reaches, written on the method that implements it.
+#
+# This used to be two lists of names in `recipe.md` — `exports` and
+# `page_actions` — that had to agree with a third list of names in the class,
+# and the three agreed only as long as somebody kept them agreeing. Two of the
+# three mismatches were invisible on the machine where the recipe was written:
+# a `page_actions` entry naming a mode that does not exist raised nothing at
+# all and showed up as a 403 on the server, and the owner's own path never
+# consults either list.
+#
+# The names being in a different file from the thing they name was the whole
+# problem, so they moved onto it. One value per mode, not two flags: "exported
+# and also pressable from the page" was never a coherent state — an exported
+# mode is read-only by contract and the page reads it through
+# `POST /app/<name>/api/<mode>` without needing a button — and the rule that
+# used to forbid that combination is now something the shape cannot express.
+#
+# **Not a C++-style ladder, and it must not be designed as one.** public /
+# protected / private is a total order, each level containing the next. These
+# do not nest: a mode may be pressable from a page and still not callable by
+# another module, because the bus additionally promises read-only and the page
+# route explicitly does not. What travels is not "how far", it is "by whom" —
+# closer to Rust's `pub(crate)` than to anything in C++.
+
+#: Read-only contract. Other modules may call it over the bus, and this
+#: module's own page may read it. MUST be read-only: no network, no
+#: recomputation, no state change, no browser.
+EXPORT = "export"
+
+#: This module's page may trigger it, and it is allowed to do work. Not
+#: callable by other modules — the bus promises read-only, and this does not.
+ACTION = "action"
+
+#: The default, and the default is right. A mode nobody marked runs only for
+#: the owner: a page is the least trusted thing in the system, because whoever
+#: can open it can press it, while the run happens on the owner's machine with
+#: the owner's credentials.
+OWNER_ONLY = "owner"
+
+#: Where the mark is kept on the function object. The platform reads the
+#: *decorator's name* out of the source without importing anything (see
+#: ``frago.recipes.contract``); this attribute is what makes the same answer
+#: available at run time to the class itself.
+ACCESS_ATTR = "__frago_access__"
+
+
+def export(method):
+    """This mode is a read-only contract: the bus and the page may both read it.
+
+    MUST be read-only — no network, no recomputation, no state change, no
+    browser. Another module is entitled to ask every five minutes, and a
+    read-only probe that fell through into a state machine once went and called
+    a live API.
+    """
+    setattr(method, ACCESS_ATTR, EXPORT)
+    return method
+
+
+def action(method):
+    """This module's page may trigger this mode, and it may do work.
+
+    Everything about this is a permission, not a formality: whoever can open
+    the page can press it, and pressing it runs this code on the owner's
+    machine with the owner's credentials. NEVER mark a mode that spends money
+    or acts outwards as the owner.
+    """
+    setattr(method, ACCESS_ATTR, ACTION)
+    return method
+
+
+class ContractBroken(TypeError):
+    """The class does not describe a module this platform can place.
+
+    Raised while the class body is being built, so it fires on import — before
+    a run, before a page, before anything reads a surface that is not there.
+    """
 
 
 class NoLandingSpot(RuntimeError):
@@ -282,12 +364,20 @@ class Recipe:
 
         class EtfFeed(Recipe):
             name = "cn_etf_data_feed"
-            modes = ("refresh", "status", "read")
-            exports = ("status", "read")          # 别的模块能调这两个
             imports = {}                          # 不依赖别人
 
+            @export                               # 别的模块能调，页面也读得到
             def mode_status(self):
                 return {"symbols": len(self.store.read_json("index.json", default=[]))}
+
+            def mode_refresh(self):               # 不标：只有主人能跑
+                ...
+
+    There is no list of modes to keep in step with the methods: ``modes``,
+    ``exports`` and ``page_actions`` are all derived from the ``mode_*``
+    methods and their access marks, in the order the methods are written.
+    Declaring any of the three by hand is refused rather than quietly
+    overwritten — see ``__init_subclass__``.
 
     ``main()`` does the rest: reads params, checks what is required, picks the
     mode, and turns whatever comes back into one result message with an exit
@@ -300,14 +390,27 @@ class Recipe:
     #: This module's own version. Bump it when its exported shapes change.
     version: str = "1.0.0"
 
-    #: Every mode this module answers to. The first is the default.
+    #: Every mode this module answers to, in the order the methods appear.
+    #: Derived — NEVER write this in a subclass.
     modes: tuple[str, ...] = ()
 
-    #: The modes other modules may call — this module's exported surface.
-    #: **Exported modes must be read-only**: no network, no recomputation, no
-    #: state change, no browser. The hub refuses anything not listed here, so a
-    #: caller can never reach into a mode that does work.
+    #: The modes other modules may call, i.e. every ``@export``. Derived.
     exports: tuple[str, ...] = ()
+
+    #: The modes this module's page may trigger, i.e. every ``@action``.
+    #: Derived.
+    page_actions: tuple[str, ...] = ()
+
+    #: Which mode a caller gets when they name none. Empty means the first
+    #: ``mode_*`` method.
+    #:
+    #: Written down rather than derived, unlike everything above it, because
+    #: this one is a decision and the others are facts. Deriving it would make
+    #: "which mode runs by default" a consequence of where somebody happened to
+    #: type a method — moving two methods past each other, or renaming one,
+    #: would silently change what a bare run does. Eleven installed recipes had
+    #: a default that was not their first method when this was introduced.
+    default_mode: str = ""
 
     #: Whose surface this module depends on, as ``{recipe: (mode, ...)}``.
     #: Declared so the dependency exists on both sides: the module being read
@@ -321,6 +424,63 @@ class Recipe:
     #: Params without which a mode cannot run, as ``{"mode": ("a", "b")}``.
     #: ``"*"`` applies to every mode.
     requires: dict[str, tuple[str, ...]] = {}
+
+    #: Names a subclass may no longer bind. Each was a list of mode names kept
+    #: in a different place from the modes it named, which is the whole reason
+    #: the marks moved onto the methods.
+    _DERIVED = ("modes", "exports", "page_actions")
+
+    def __init_subclass__(cls, **kwargs):
+        """Work out this module's surface from its methods, once, at import.
+
+        Refuses rather than overrides when a subclass writes one of the derived
+        names itself. Overriding would be the quieter behaviour and the wrong
+        one: a class carrying ``exports = ("status",)`` says something specific,
+        and silently computing a different answer would leave the file and the
+        system disagreeing with nothing to show for it — which is the exact
+        failure mode this whole change is here to remove.
+        """
+        super().__init_subclass__(**kwargs)
+
+        clashing = [one for one in cls._DERIVED if one in cls.__dict__]
+        if clashing:
+            raise ContractBroken(
+                f"{cls.__name__} 自己写了 {'、'.join(clashing)}。"
+                f"这几项现在由平台从 mode_* 方法上的访问级别推导，不再手写——"
+                f"手写的那份和方法一旦对不上，页面和总线各按各的答案走，而且不报错。"
+                f"改法：在方法上标 @export（只读契约，别的模块和页面都读得到）"
+                f"或 @action（页面能触发，允许干活），不标就是只有主人能跑。"
+                f"默认 mode 用 default_mode = \"<名字>\" 指定。"
+            )
+
+        modes: list[str] = []
+        exports: list[str] = []
+        actions: list[str] = []
+        # Reversed MRO so a base's modes come before the ones a subclass adds,
+        # and a subclass overriding a mode keeps the position it inherited
+        # rather than jumping to the end and becoming the default.
+        for base in reversed(cls.__mro__):
+            for attr, value in vars(base).items():
+                if not attr.startswith("mode_") or not callable(value):
+                    continue
+                mode = attr[len("mode_"):]
+                if mode not in modes:
+                    modes.append(mode)
+                level = getattr(value, ACCESS_ATTR, OWNER_ONLY)
+                for level_name, bucket in ((EXPORT, exports), (ACTION, actions)):
+                    if level == level_name and mode not in bucket:
+                        bucket.append(mode)
+
+        cls.modes = tuple(modes)
+        cls.exports = tuple(exports)
+        cls.page_actions = tuple(actions)
+
+        if cls.default_mode and cls.default_mode not in modes:
+            raise ContractBroken(
+                f"{cls.__name__} 把默认 mode 定成 {cls.default_mode!r}，"
+                f"但它没有 mode_{cls.default_mode} 方法。"
+                f"本模块有的是：{'、'.join(modes) or '（一个都没有）'}"
+            )
 
     def __init__(self, params: dict | None = None):
         self.params: dict = params or {}
@@ -502,8 +662,8 @@ class Recipe:
         asked = str(self.params.get("mode") or "").strip()
         if not asked:
             if not self.modes:
-                raise RecipeFailed("这个模块没有声明任何 mode")
-            return self.modes[0]
+                raise RecipeFailed("这个模块一个 mode_* 方法都没有")
+            return self.default_mode or self.modes[0]
         if asked not in self.modes:
             raise RecipeFailed(
                 f"未知 mode: {asked}（本模块支持 {' | '.join(self.modes)}）。"

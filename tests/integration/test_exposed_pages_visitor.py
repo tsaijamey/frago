@@ -35,18 +35,31 @@ _PAGE_FETCH = "data/"
 
 def build(root: Path, name: str, *, page: str, recipe: str = "",
           page_actions: list[str] | None = None) -> Path:
-    """One recipe on disk: a front end, a body, and its declared contract."""
+    """One recipe on disk: a front end, a body, and its declared contract.
+
+    ``page_actions`` becomes ``@action`` marks in ``recipe.py``. That is the
+    whole declaration now — there is no list in the frontmatter to disagree
+    with the methods, which is what the two used to do quietly.
+    """
     directory = root / name
     (directory / "assets").mkdir(parents=True)
     (directory / "assets" / "app.js").write_text(page, encoding="utf-8")
+    opened = "".join(
+        f"\n    @action\n    def mode_{one}(self):\n        return {{}}\n"
+        for one in (page_actions or [])
+    )
+    header = (
+        "# frago-recipe/1\n"
+        "from frago_recipe import Recipe, action\n\n\n"
+        f'class Page(Recipe):\n    name = "{name}"\n{opened}\n\n'
+    ) if page_actions else ""
     (directory / "recipe.py").write_text(
-        recipe or 'import os\nD = os.environ.get("FRAGO_RECIPE_DATA_DIR") or "."\n',
+        header + (recipe or 'import os\nD = os.environ.get("FRAGO_RECIPE_DATA_DIR") or "."\n'),
         encoding="utf-8")
     (directory / "recipe.md").write_text(
         "---\n"
         f"name: {name}\ntype: atomic\nruntime: python\nversion: '1.0'\n"
         f"description: {name}\nuse_cases: [reading]\noutput_targets: [stdout]\n"
-        f"page_actions: {page_actions or []}\n"
         "---\n",
         encoding="utf-8")
     return directory
@@ -163,23 +176,35 @@ class TestWritingIsARunAndTheRecipeSaysWhich:
         assert "mode: 'save'" in app_js
 
     def test_the_mode_it_presses_is_one_the_recipe_declared(self, entry_page):
-        from frago.recipes.metadata import parse_metadata_file
-
-        declared = parse_metadata_file(entry_page / "recipe.md").page_actions
+        declared = checks.page_actions(entry_page)
         assert "save" in declared, (
             "the page presses a button the recipe never opened; the run route "
             "answers that with a 403 naming what was on offer"
         )
 
-    def test_declaring_an_action_without_reading_the_data_directory_is_blocked(self, tmp_path):
-        """Otherwise every reader's save lands in the owner's one pile."""
-        careless = build(
-            tmp_path, "careless_ledger",
+    def test_an_action_writing_to_a_fixed_place_is_blocked(self, tmp_path):
+        """Otherwise every reader's save lands in the owner's one pile.
+
+        A bare `open("ledger.json", "w")` is *not* this failure and must not be
+        flagged as one: the runner starts the process inside the run's own
+        directory, so that lands where it should. What cannot be right is a
+        place that has nothing to do with who is running.
+        """
+        fine = build(
+            tmp_path / "fine", "careful_ledger",
             page="fetch('run', {method:'POST'});\n",
             recipe='open("ledger.json", "w").write("{}")\n',
             page_actions=["save"])
+        assert checks.blocking(checks.audit(fine)) == []
+
+        careless = build(
+            tmp_path / "careless", "careless_ledger",
+            page="fetch('run', {method:'POST'});\n",
+            recipe='from pathlib import Path\n'
+                   'Path.home().joinpath("ledger.json").write_text("{}")\n',
+            page_actions=["save"])
         rules = {f.rule for f in checks.blocking(checks.audit(careless))}
-        assert "actions-ignore-data-dir" in rules
+        assert "home-derived-write" in rules
 
 
 def test_what_a_page_displays_has_to_be_declared_public(viewer):

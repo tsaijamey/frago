@@ -40,6 +40,21 @@ def world(tmp_path, monkeypatch):
 
     titles = {"ledger": "A running account book", "board": "The signals board"}
 
+    # What each recipe opened to its own page, written where the platform
+    # reads it: a mark on the method. The card's `runnable` is this, narrowed
+    # by how the page was exposed — never the exposure entry on its own.
+    for name in titles:
+        script = tmp_path / "recipes" / name / "recipe.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "# frago-recipe/1\n"
+            "from frago_recipe import Recipe, action\n\n\n"
+            f'class Page(Recipe):\n    name = "{name}"\n\n'
+            "    @action\n    def mode_save(self):\n        return {}\n\n\n"
+            "Page.main()\n",
+            encoding="utf-8",
+        )
+
     class _Registry:
         def find(self, name, source=None):
             if name not in titles:
@@ -48,10 +63,6 @@ def world(tmp_path, monkeypatch):
             class _Meta:
                 description = titles[name]
                 ui_from = None
-                # What the recipe opened to its own page. The card's `runnable`
-                # is this, narrowed by how the page was exposed — never the
-                # exposure entry on its own.
-                page_actions = ["save"]
 
             class _Recipe:
                 base_dir = tmp_path / "recipes" / name

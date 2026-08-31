@@ -311,6 +311,7 @@ async def reachable_pages(request: Request) -> Response:
         return _fail(403, "password_reset_required",
                      "this account must set a new password before it can open anything")
 
+    from frago.recipes.contract import page_actions_of
     from frago.recipes.exceptions import RecipeNotFoundError
     from frago.recipes.publish import allows, load, published_entry, serves_recipe_slot
     from frago.recipes.registry import get_registry
@@ -329,7 +330,7 @@ async def reachable_pages(request: Request) -> Response:
             if not serves_recipe_slot(entry):
                 # A shared reading has no directory of this person's, so nothing
                 # they pressed could land anywhere. The card says read-only.
-                actions = list(getattr(metadata, "page_actions", None) or [])
+                actions = list(page_actions_of(name))
         except (RecipeNotFoundError, AttributeError):
             # Published but no longer installed. Listing it by name is better
             # than hiding it: the owner can see the stale entry in the same

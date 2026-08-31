@@ -121,17 +121,22 @@ def _plan_into(name: str, prompt_text: str, spec_path: Path,
 那份模板分两半：
 
   ```yaml 代码块里的字段是给机器读的。frago recipe create 会读它，
-  写什么就长出什么——modes 变成方法，exports 变成内核在总线上放行的依据，
+  写什么就长出什么——modes 变成方法，每个 mode 的访问级别变成方法上的标记，
   imports 变成对方能看见的依赖。这几个字段 MUST 想清楚再写：
-    modes    这个模块能做哪几件事，一个 mode 一件
-    exports  别的模块能调哪几个。MUST 只读——不触网、不重算、不改状态、不开浏览器。
-             不确定就先留空：开出去容易，收回来难。
+    modes    这个模块能做哪几件事（一个 mode 一件），以及每件事对外开到什么程度。
+             写成 `<mode>: <级别>`，级别只有三种，一个 mode 只写一个：
+               export  只读契约。别的模块能调，这个配方自己的页面也读得到。
+                       MUST 只读——不触网、不重算、不改状态、不开浏览器。
+               action  这张页面上能按，允许干活。页面是最不可信的一层
+                       （谁打得开谁就能按），按下去却是在主人的机器上
+                       用主人的凭证跑。会花钱、会以主人身份对外做事的
+                       mode NEVER 写 action。
+               留空    只有主人能跑。默认，而且默认是对的：开出去容易，收回来难。
+             只写一个级别：export 已经意味着页面读得到，
+             「既导出又给页面按」本来就没有意义。
+    default_mode  不写 mode 时跑哪一个。留空就是 modes 里第一个。
     imports  用了谁的哪个口
     page     要不要一张页面
-    page_actions  这张页面能触发哪几个 mode。默认空，而且默认是对的——
-             页面是最不可信的一层（谁打得开谁就能按），按下去却是在主人的机器上
-             用主人的凭证跑。与 exports 不许有交集。
-             会花钱、会以主人身份对外做事的 mode NEVER 写进来。
 
   下半部分是给人读的：它解决什么问题、每个 mode 干什么、**它不做什么**、
   数据存什么、出错怎么办、怎么验。
@@ -334,13 +339,12 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
         # is how a promise gets made by accident.
         click.echo("Error: 没有规格，不生成配方。", err=True)
         click.echo(f"[Fix] 先跑 frago recipe plan {name} --prompt \"<需求>\"，"
-                   f"在规格里定下 modes / exports / imports / page 四项，再回来 create。",
-                   err=True)
-        click.echo("      exports 是这个模块对外的承诺——写代码时顺手定下来的承诺，"
+                   f"在规格里定下 modes（含每个 mode 的访问级别）/ imports / page 三项，"
+                   f"再回来 create。", err=True)
+        click.echo("      访问级别是这个模块对外的承诺——写代码时顺手定下来的承诺，"
                    "别的模块依赖上就收不回来了。", err=True)
         sys.exit(1)
-    click.echo(f"[Template] 按规格生成：modes={spec_fields.get('modes')} "
-               f"exports={spec_fields.get('exports')}")
+    click.echo(f"[Template] 按规格生成：modes={spec_fields.get('modes')}")
     try:
         generated = render(name, spec=spec_fields)
     except ValueError as err:
@@ -360,17 +364,22 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
 
   recipe.py          配方本体。类继承 Recipe，头部的 frago-recipe 描述头 MUST 原样保留——
                      那是契约描述头，说明这个文件照哪一版规范写，NEVER 删掉。
-  recipe.md          元信息。exports / imports 两个字段 MUST 照实填。
+  recipe.md          元信息。imports 字段 MUST 照实填。
+                     NEVER 往里加 exports / page_actions——那两个字段已作废，
+                     写了 validate 会报错。
   assets/            空页面。用不上就删掉整个目录，用得上就在它上面长。
 
 必须守的：
 
   1. 能力建在基类上。落点用 self.store / self.data_dir，
      NEVER 自己拼路径，NEVER 留「平台没给就用我自己的」那种兜底。
-  2. 一个 mode 一个 mode_<名字> 方法，名字写进类里的 modes。
+  2. 一个 mode 一个 mode_<名字> 方法。NEVER 另写 modes / exports /
+     page_actions 名单——平台从方法和方法上的标记直接读，手写会被拒。
+     方法上标它对外开到什么程度：@export（只读契约，别的模块和页面都读得到）、
+     @action（页面能按，允许干活）、不标（只有主人能跑）。
   3. 要别的模块的数据：先在 imports 里声明，再 self.ask(模块, mode)。
      NEVER 去读对方的文件，NEVER import 对方的代码。
-  4. 导出给别人的 mode MUST 只读：不触网、不重算、不改状态、不开浏览器。
+  4. 标了 @export 的 mode MUST 只读：不触网、不重算、不改状态、不开浏览器。
   5. 页面是前端、配方是后端。publish 只发渲染状态，NEVER 发路径。
   6. 说话用 self.progress() / self.warn() / self.log()，
      NEVER 直接 print 到 stdout——stdout 是消息流，混一句进去整段就解不动。
@@ -1668,12 +1677,15 @@ def validate_recipe(path: str, output_format: str):
     # now lives: the declaration travels with the recipe, so this is the same
     # verdict on every machine it reaches, and the author finds out while still
     # holding the file.
-    if metadata and metadata.page_actions:
+    from frago.recipes import checks as recipe_checks
+
+    opened = recipe_checks.page_actions(recipe_dir)
+    if opened:
         gap = _actions_readiness(recipe_dir)
         if gap:
             errors.append(
-                f"recipe.md 的 page_actions 开了 {'、'.join(metadata.page_actions)}，"
-                f"但这个配方不读落点变量。{gap}"
+                f"这个配方用 @action 开了 {'、'.join(opened)}，"
+                f"但它不读落点变量。{gap}"
             )
 
     # 5b-2. Cross-recipe reads are requested here and granted by the owner. A
@@ -1698,8 +1710,6 @@ def validate_recipe(path: str, output_format: str):
     # are warnings *here* on purpose: validate describes a recipe, it does not
     # decide anything, and a recipe that is never exposed is entitled to hard-code
     # whatever it likes on the machine it was written for.
-    from frago.recipes import checks as recipe_checks
-
     for finding in recipe_checks.audit(recipe_dir):
         warnings.append(finding.render(recipe_dir).replace("\n", " "))
 
@@ -2659,57 +2669,26 @@ def _page_calls_backend(recipe_dir: Path) -> str | None:
 def _actions_readiness(recipe_dir: Path) -> str | None:
     """Why this recipe's page actions cannot be honoured yet, or None if they can.
 
-    The check is a string search for ``FRAGO_RECIPE_DATA_DIR`` across the
-    recipe's own files, and it is deliberately about the environment variable
-    rather than an import: a recipe carrying a PEP 723 block runs in an isolated
-    environment where ``import frago`` raises, so a check that accepted an import
-    would pass exactly the recipes that crash on their first run.
+    The predicate itself lives in ``frago.recipes.checks`` and is shared with the
+    audit that ``expose`` runs, because this function and that one used to be two
+    copies of the same rule and the copies drifted — see
+    ``checks.honours_the_landing_spot`` for what that cost.
 
-    It is weak on purpose and worth saying so — a mention in a comment satisfies
-    it. It catches the recipe that never considered the question, which is every
-    recipe written before this existed and the ones most likely to be exposed by
-    accident. It cannot catch a recipe determined to write elsewhere, and it does
-    not try: a recipe's source is code the owner installed, and the untrusted
-    thing here is the parameters, not the program.
-
-    Refusing rather than warning, because declaring a page action happens a
+    Refusing rather than warning, because opening a mode to a page happens a
     handful of times a year and a warning at that moment is a line of yellow text
     between an author and the thing they already decided to do. The cost of being
     wrong does not appear until the second reader arrives.
     """
-    marker = "FRAGO_RECIPE_DATA_DIR"
-    # Building on the base class satisfies this too, and more strongly than the
-    # string search does. ``Recipe.data_dir`` *is* the read of that variable, and
-    # it raises when the platform did not set one — there is no fallback to fall
-    # back to. A recipe on the base class cannot quietly write somewhere else
-    # without going out of its way to bypass ``self.data_dir``.
-    #
-    # This was found the hard way: six recipes converted onto the base class
-    # passed validate on the machine they were written on and failed it on the
-    # server, because this check only runs for recipes that are exposed and
-    # exposure only exists there. The message told the author to "restore that
-    # line" — a line whose absence was the point of the conversion.
-    #
-    # The env-var search stays for everything not built on the base class. The
-    # docstring's reason for preferring it over an import check still holds for
-    # those: a PEP 723 recipe cannot ``import frago``. It can import
-    # ``frago_recipe``, which the platform hands over on PYTHONPATH.
-    base_class = ("from frago_recipe import", "import frago_recipe")
-    for path in sorted(recipe_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in {".py", ".sh", ".js", ".mjs"}:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if marker in text or any(sig in text for sig in base_class):
-            return None
+    from frago.recipes.checks import honours_the_landing_spot
+
+    if honours_the_landing_spot(recipe_dir):
+        return None
     return (
-        f"This recipe never reads {marker}, so a visitor-triggered run would write "
-        f"wherever the recipe hard-codes — the owner's directory — and every "
-        f"visitor would share it. Have it read that variable and fall back to its "
-        f"own default:\n"
-        f"    data_dir = os.environ.get(\"{marker}\") or <its own default>\n"
+        f"This recipe never reads {_DATA_DIR_ENV} and is not built on the base "
+        f"class, so a page-triggered run would write wherever the recipe "
+        f"hard-codes — the owner's directory — and every reader would share it. "
+        f"Have it read that variable and fall back to its own default:\n"
+        f"    data_dir = os.environ.get(\"{_DATA_DIR_ENV}\") or <its own default>\n"
         f"then expose it again."
     )
 
@@ -2787,9 +2766,9 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
     --public with a password. Read-only by construction: nobody has a directory
     of their own on such a page, so there is nothing a run could write.
 
-    Whether a page has buttons at all is no longer decided here. The recipe names
-    the modes its page may trigger, in `page_actions` in its recipe.md, and that
-    answer is the same wherever the page is exposed. Exposure decides who is
+    Whether a page has buttons at all is no longer decided here. The recipe marks
+    the modes its page may trigger with `@action`, on the methods themselves, and
+    that answer is the same wherever the page is exposed. Exposure decides who is
     looking; the recipe decides what may be asked of it.
 
     \b
@@ -2823,8 +2802,8 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
     if runnable:
         _fail(output_format,
               "--runnable 已经取消。它是页面级开关：谁看得见就谁能按，而按下去是在主人的机器上、"
-              "用主人的凭证跑。现在由配方在 recipe.md 里写 `page_actions: [<mode>, ...]` 逐个点名，"
-              "同一个配方在哪张页面上答案都一样。改完 recipe.md 再 expose，不用带任何开关。",
+              "用主人的凭证跑。现在由配方逐个点名——在那个 mode 方法上标 @action，"
+              "同一个配方在哪张页面上答案都一样。改完 recipe.py 再 expose，不用带任何开关。",
               "runnable_retired")
     if force:
         _fail(output_format,
@@ -3006,7 +2985,7 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
     if legacy_runnable(load_exposed().get(name)):
         notes.append(
             "这条记录还带着老的 runnable=yes。它已经不授予任何东西了——"
-            "页面能触发什么由配方的 page_actions 决定。这次改写会把它抹掉。"
+            "页面能触发什么由配方方法上的 @action 决定。这次改写会把它抹掉。"
         )
 
     # The gate applies to both output formats. `--format json` is the path an
@@ -3087,7 +3066,7 @@ def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: st
                     reads: str, allow_ids: list[str] | None, slot: str,
                     portal: bool) -> list[str]:
     """What this exposure means, in the words of the decision rather than the flags."""
-    from frago.recipes.checks import declares_page_actions
+    from frago.recipes.checks import page_actions
     from frago.recipes.publish import MODE_IDENTITY, READS_RECIPE
 
     notes: list[str] = []
@@ -3124,19 +3103,17 @@ def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: st
             f"第一次打开时那份还没被写过，页面要能渲染空 state。"
         )
 
-    if declares_page_actions(recipe_dir):
-        from frago.recipes.metadata import parse_metadata_file
-
-        actions = parse_metadata_file(recipe_dir / "recipe.md").page_actions
+    actions = page_actions(recipe_dir)
+    if actions:
         if mode == MODE_IDENTITY and reads != READS_RECIPE:
             notes.append(
-                f"配方在 page_actions 里开了 {'、'.join(actions)}：名单上的人能从页面触发它们。"
+                f"配方用 @action 开了 {'、'.join(actions)}：名单上的人能从页面触发它们。"
                 f"跑的是这台机器、这个配方的凭证，产出落各人自己的目录。"
-                f"会花钱、会以主人身份对外做事的 mode NEVER 放进 page_actions。"
+                f"会花钱、会以主人身份对外做事的 mode NEVER 标 @action。"
             )
         else:
             notes.append(
-                f"配方声明了 page_actions（{'、'.join(actions)}），但这次的开放方式不给运行权，"
+                f"配方标了 @action 的有 {'、'.join(actions)}，但这次的开放方式不给运行权，"
                 f"所以页面上按不动。"
             )
 
@@ -3436,7 +3413,7 @@ def list_exposed(output_format: str):
         click.echo()
         click.echo(f"这 {len(stale)} 条还带着老的 runnable 标记，它已经不授予任何东西："
                    f"{', '.join(stale)}")
-        click.echo("页面能触发什么现在写在配方的 recipe.md `page_actions` 里。"
+        click.echo("页面能触发什么现在写在配方的 mode 方法上（@action）。"
                    "重新 expose 一次即可把这个标记抹掉。")
 
 
@@ -3616,18 +3593,10 @@ def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], li
             if isinstance(t, ast.Name):
                 declared[t.id] = getattr(stmt, "value", None)
 
-    def _strings(node) -> list[str]:
-        if isinstance(node, (ast.Tuple, ast.List)):
-            return [e.value for e in node.elts
-                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-        return []
-
-    for required in ("name", "modes"):
-        if required not in declared:
-            errors.append(
-                f"类上没有声明 {required}。基类靠这几个属性决定这个模块是谁、能做什么，"
-                f"没声明平台就只能猜。"
-            )
+    if "name" not in declared:
+        errors.append(
+            "类上没有声明 name。页面、落点、总线都按这个名字找它，没声明平台只能猜。"
+        )
 
     name_node = declared.get("name")
     if isinstance(name_node, ast.Constant) and name_node.value != recipe_name:
@@ -3636,24 +3605,22 @@ def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], li
             f"两者 MUST 一致——页面、落点、总线都按这个名字找它。"
         )
 
-    modes = _strings(declared.get("modes"))
-    for mode in modes:
-        if f"mode_{mode}" not in methods:
-            errors.append(
-                f"声明了 mode={mode}，但没有 mode_{mode} 方法。"
-                f"NEVER 让不认识的 mode 落到默认那条路上——一次只读的探问就是这样"
-                f"掉进状态机、真的去调了外部接口。"
-            )
-    for m in methods:
-        if m.startswith("mode_") and m[5:] not in modes and modes:
-            warnings.append(
-                f"有 {m} 方法，但 modes 里没写 {m[5:]}，外面调不到它。"
-            )
+    # What this module opened and to whom, read off the marks on its methods.
+    # Everything wrong with that declaration is the recipe author's mistake and
+    # this is the one place they are looking, which is the whole reason it moved
+    # here: a `page_actions` entry naming a mode that did not exist used to
+    # raise nothing at all and surface as a 403 on a server, in front of a
+    # stranger, days later.
+    from frago.recipes.contract import read_source
 
-    exports = _strings(declared.get("exports"))
-    for e in exports:
-        if e not in modes:
-            errors.append(f"导出了 {e}，但 modes 里没有它。")
+    surface = read_source(content)
+    if surface is not None:
+        errors.extend(surface.problems)
+        if not surface.modes:
+            errors.append(
+                "一个 mode_* 方法都没有。模块靠 mode 对外说话，没有 mode 就没有"
+                "任何人能让它做任何事。"
+            )
 
     if "main" in methods:
         warnings.append("覆盖了 main：那是基类的入口，改了消息形状和退出码就不再统一。")

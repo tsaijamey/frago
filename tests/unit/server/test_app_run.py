@@ -34,13 +34,32 @@ DECLARED = {
 ACTION = "save"
 
 
+def _source(actions) -> str:
+    """A recipe whose page may press exactly these modes.
+
+    Written to disk rather than faked on a metadata object, because that is
+    where the answer now comes from: the access level is a mark on the method,
+    and the platform reads it out of the file. A fixture that stubbed it
+    somewhere else would pass while the real path was broken.
+    """
+    body = "".join(
+        f"\n    {'@action' if mode in actions else ''}\n"
+        f"    def mode_{mode}(self):\n        return {{}}\n"
+        for mode in ("save", "view")
+    )
+    return (
+        "# frago-recipe/1\n"
+        "from frago_recipe import Recipe, action\n\n\n"
+        f'class Ledger(Recipe):\n    name = "{PAGE}"\n{body}\n\nLedger.main()\n'
+    )
+
+
 class _Meta:
     ui_from = None
 
-    def __init__(self, inputs, page_actions):
+    def __init__(self, inputs):
         self.name = PAGE
         self.inputs = inputs
-        self.page_actions = list(page_actions)
 
 
 @pytest.fixture
@@ -69,20 +88,26 @@ def world(tmp_path, monkeypatch):
     # way — scanned once per process, refreshed only where a caller asks
     # whether it is still current — and the difference matters here because a
     # visitor's parameters are checked strictly against whichever it is.
-    disk = {"inputs": dict(DECLARED), "page_actions": [ACTION]}
+    script = tmp_path / "recipes" / PAGE / "recipe.py"
+    script.write_text(_source([ACTION]), encoding="utf-8")
+
+    disk = {"inputs": dict(DECLARED)}
     singleton = []
+
+    def _open_to_page(actions):
+        """Rewrite the recipe so its page may press exactly these modes."""
+        script.write_text(_source(actions), encoding="utf-8")
 
     class _Recipe:
         base_dir = tmp_path / "recipes" / PAGE
-        script_path = tmp_path / "recipes" / PAGE / "recipe.py"
+        script_path = script
 
-        def __init__(self, inputs, actions):
-            self.metadata = _Meta(inputs, actions)
+        def __init__(self, inputs):
+            self.metadata = _Meta(inputs)
 
     class _Registry:
         def __init__(self):
             self.scanned = dict(disk["inputs"])
-            self.actions = list(disk["page_actions"])
 
         def needs_rescan(self):
             return self.scanned != disk["inputs"]
@@ -90,7 +115,7 @@ def world(tmp_path, monkeypatch):
         def find(self, name, source=None):
             if name != PAGE:
                 raise RecipeNotFoundError(name, [])
-            return _Recipe(self.scanned, self.actions)
+            return _Recipe(self.scanned)
 
     def _get_registry():
         if not singleton:
@@ -107,7 +132,8 @@ def world(tmp_path, monkeypatch):
 
     pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[people["zhang"]["id"]])
 
-    yield {"people": people, "root": tmp_path, "disk": disk, "registry": _get_registry}
+    yield {"people": people, "root": tmp_path, "disk": disk,
+           "registry": _get_registry, "open_to_page": _open_to_page}
     ident.reset_rate_limits()
     app_run._running.clear()
 
@@ -168,8 +194,7 @@ class TestWhoMayStartOne:
         """Capability comes from the recipe, not from the exposure entry. The
         same person, on the same page they are allowed to open, gets nothing to
         press once the declaration goes away."""
-        world["disk"]["page_actions"] = []
-        world["registry"]().actions = []
+        world["open_to_page"]([])
         r = _post(world["people"]["zhang"]["cookie"])
         assert r.status_code == 404
         assert ran == {}

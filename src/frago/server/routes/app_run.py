@@ -296,10 +296,10 @@ async def run_for_visitor(name: str, request: Request):
     "Whether this page may be run at all" is now the recipe's own answer. It
     used to be a flag on the exposure entry, which put the decision in the hands
     of whoever exposed the page and expressed it as "everyone who can see this
-    can press every button on it". Capability comes from the contract
-    (``page_actions`` in ``recipe.md``, named one mode at a time by the person
-    who wrote them); the exposure decides only who is looking. The two now
-    narrow independently, and neither can widen the other.
+    can press every button on it". Capability comes from the contract — an
+    ``@action`` on the mode's own method, written by the person who wrote the
+    mode; the exposure decides only who is looking. The two now narrow
+    independently, and neither can widen the other.
     """
     from frago.recipes import app_state, context
     from frago.recipes.contract import page_actions_of
@@ -343,10 +343,10 @@ async def run_for_visitor(name: str, request: Request):
     # separate one.
     #
     # The tempting shortcut is to resolve it: the recipe has a default mode, so
-    # let the platform fill that in. It cannot. The default lives in the class
-    # (``modes[0]``), not in the metadata this route can see, so "resolve it"
-    # really means "guess it" — and the guess has to be right for the
-    # authorisation to mean anything. Authorising ``view`` and running ``data``
+    # let the platform fill that in. It must not. The default is the mode
+    # nobody asked for, and the whole point of an access level is that what got
+    # authorised is what runs. Filling it in means authorising ``view`` and
+    # running ``data`` whenever the default happens to be something else, which
     # is the same silent divergence between what was allowed and what happened
     # that this whole contract exists to remove, arrived at from the other side.
     #
@@ -366,7 +366,9 @@ async def run_for_visitor(name: str, request: Request):
         raise VisitorSafe(
             status_code=403,
             detail=(f"这张页面能触发的是 {'、'.join(allowed_actions)}，不是 {wanted!r}。"
-                    f"页面能按的按钮由配方在 recipe.md 的 page_actions 里逐个点名。"),
+                    f"页面能按的按钮由配方逐个点名：在那个 mode 方法上标 @action。"
+                    f"只读的数据不走这扇门——标 @export，页面用 "
+                    f"POST /app/{name}/api/<mode> 读。"),
         )
 
     # Where this run stands, decided in one place for both doors — the run

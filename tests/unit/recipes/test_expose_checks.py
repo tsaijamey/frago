@@ -8,23 +8,39 @@ can use. Nothing in the publish path had anything to say about it.
 
 from pathlib import Path
 
-import pytest
-
 from frago.recipes import checks
 
 
 def make_recipe(tmp_path: Path, *, code: str = "", page: str = "",
                 page_actions: list[str] | None = None) -> Path:
+    """A recipe on disk, optionally opening some of its modes to its page.
+
+    ``page_actions`` becomes real ``@action`` marks in ``recipe.py`` rather
+    than a list in the frontmatter, because that is where the answer lives now
+    — and a fixture that put it anywhere else would be testing a shape no
+    recipe has.
+    """
     recipe = tmp_path / "some_recipe"
     (recipe / "assets").mkdir(parents=True)
-    (recipe / "recipe.py").write_text(code or "print('ok')\n", encoding="utf-8")
+    opened = "".join(
+        f"\n    @action\n    def mode_{one}(self):\n        return {{}}\n"
+        for one in (page_actions or [])
+    )
+    module = (
+        "# frago-recipe/1\n"
+        "from frago_recipe import Recipe, action\n\n\n"
+        'class SomeRecipe(Recipe):\n    name = "some_recipe"\n'
+        f"{opened}\n    def mode_status(self):\n        return {{}}\n\n\n"
+        "SomeRecipe.main()\n"
+    ) if page_actions else ""
+    (recipe / "recipe.py").write_text(
+        module + (code or "print('ok')\n"), encoding="utf-8")
     if page:
         (recipe / "assets" / "app.js").write_text(page, encoding="utf-8")
     (recipe / "recipe.md").write_text(
         "---\n"
         "name: some_recipe\ntype: atomic\nruntime: python\nversion: '1.0'\n"
         "description: a recipe\nuse_cases: [testing]\noutput_targets: [stdout]\n"
-        f"page_actions: {page_actions or []}\n"
         "---\n# some_recipe\n",
         encoding="utf-8",
     )
@@ -129,26 +145,37 @@ def test_a_jsdoc_block_describing_the_old_endpoint_is_not_a_finding(tmp_path):
     assert checks.audit(recipe) == []
 
 
-def test_the_data_dir_gate_follows_the_recipe_s_own_declaration(tmp_path):
-    """It used to fire when somebody exposed the page with --runnable, i.e. at
-    the moment a person who may not have written the recipe made a decision. It
-    now fires on the recipe's own `page_actions`, which is the author's decision
-    and the same answer on every machine."""
-    quiet = make_recipe(tmp_path / "quiet", code='print("ok")\n')
-    assert checks.audit(quiet) == []
-
-    loud = make_recipe(tmp_path / "loud", code='print("ok")\n', page_actions=["save"])
-    assert "actions-ignore-data-dir" in rules(checks.audit(loud))
+HOME_WRITE = 'from pathlib import Path\nPath.home().joinpath("x.json").write_text("{}")\n'
 
 
-def test_the_data_dir_gate_is_satisfied_by_reading_the_variable(tmp_path):
-    recipe = make_recipe(
-        tmp_path,
-        code='import os\nd = os.environ.get("FRAGO_RECIPE_DATA_DIR") or "/tmp/x"\n',
-        page_actions=["save"],
-    )
+def test_a_fixed_landing_spot_is_a_warning_until_a_page_can_press_it(tmp_path):
+    """The severity tracks who can trigger the write, not what the line says.
 
-    assert "actions-ignore-data-dir" not in rules(checks.audit(recipe))
+    A recipe only its owner runs is entitled to keep long-lived data in the
+    owner's tree — blocking that would train people to skip this module. The
+    same line under `@action` means every reader's press lands in one person's
+    directory, and that is the failure the retired `actions-ignore-data-dir`
+    rule existed to catch.
+    """
+    quiet = make_recipe(tmp_path / "quiet", code=HOME_WRITE)
+    assert [f.severity for f in checks.audit(quiet)
+            if f.rule == "home-derived-write"] == ["warn"]
+    assert checks.blocking(checks.audit(quiet)) == []
+
+    loud = make_recipe(tmp_path / "loud", code=HOME_WRITE, page_actions=["save"])
+    assert "home-derived-write" in rules(checks.blocking(checks.audit(loud)))
+
+
+def test_a_recipe_on_the_base_class_may_open_a_mode_without_naming_the_variable(tmp_path):
+    """`Recipe.data_dir` *is* that read, and it raises when the platform did not
+    set one — so requiring the name in the source would refuse exactly the
+    recipes the conversion produced. Six of them failed this way, on the server
+    only, with a message telling the author to restore a line whose absence was
+    the point."""
+    recipe = make_recipe(tmp_path, code="", page_actions=["save"])
+
+    assert checks.honours_the_landing_spot(recipe)
+    assert checks.blocking(checks.audit(recipe)) == []
 
 
 def test_findings_render_with_file_line_and_a_fix(tmp_path):

@@ -19,9 +19,9 @@ follow from recipes calling each other directly:
 **The edge is recorded.** Who asked whom, for what. The dependency graph is
 something the system holds, not something somebody would have to reconstruct.
 
-**The rule is enforceable.** A module may only be asked for a mode it exported,
-and exported modes are read-only by contract. A child process cannot be told
-no; a request through a hub can.
+**The rule is enforceable.** A module may only be asked for a mode marked
+``@export``, and an exported mode is read-only by contract. A child process
+cannot be told no; a request through a hub can.
 
 **The dependency is declared on both sides.** The caller declares what it
 imports; the hub checks the callee exports it. Neither side can acquire a
@@ -212,86 +212,6 @@ def _flush_rollups() -> None:
         _append_edge(line)
 
 
-def _exports_of(recipe_name: str, wanted: str | None = None) -> tuple[str, ...] | None:
-    """Which modes this module offers other modules, read off its own source.
-
-    None when the module never declared an exported surface — which is not the
-    same as declaring an empty one. A module that has said nothing has not
-    agreed to anything, and the hub says so rather than assuming either way.
-
-    ``wanted`` is the mode about to be checked. It is passed in for one reason:
-    a snapshot can be stale in two ways, and until now only one of them was
-    handled. A recipe missing from the snapshot got a second look; a recipe
-    **present in the snapshot with an older export list** did not, and was
-    refused with "this module does not export that" — a sentence that blames
-    the recipe when the stale list is the actual problem. That is the same
-    failure the paragraph below was written about, one step further along:
-    adding an export and being told it does not exist is indistinguishable
-    from never having added it.
-    """
-    from frago.recipes.exceptions import RecipeNotFoundError
-    from frago.recipes.registry import get_registry, invalidate_registry
-
-    def _look() -> tuple[str, ...] | None:
-        try:
-            recipe = get_registry().find(recipe_name)
-        except (RecipeNotFoundError, OSError):
-            return None
-        declared = getattr(recipe.metadata, "exports", None)
-        if declared:
-            return tuple(declared)
-        script = getattr(recipe, "script_path", None)
-        if not script or not Path(script).exists():
-            return None
-        return _exports_from_source(
-            Path(script).read_text(encoding="utf-8", errors="ignore"))
-
-    found = _look()
-
-    # Look again before refusing — but only when the answer would be a refusal.
-    # Re-scanning on every call would make the hub walk the recipe tree for each
-    # question anybody asks, and the overwhelmingly common answer (yes, it is
-    # exported) is already correct from the snapshot.
-    if found is None or (wanted is not None and wanted not in found):
-        invalidate_registry()
-        found = _look()
-
-    return found
-
-
-def _exports_from_source(source: str) -> tuple[str, ...] | None:
-    """Read the `exports` declaration without executing the module.
-
-    Parsed rather than imported: importing a recipe to find out what it offers
-    would run whatever sits at its module level, on a machine where no run is
-    in progress, every time anybody asked it a question.
-    """
-    import ast
-
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        for stmt in node.body:
-            targets = (
-                [stmt.target] if isinstance(stmt, ast.AnnAssign)
-                else getattr(stmt, "targets", [])
-            )
-            for t in targets:
-                if isinstance(t, ast.Name) and t.id == "exports":
-                    value = getattr(stmt, "value", None)
-                    if isinstance(value, (ast.Tuple, ast.List)):
-                        names = [
-                            e.value for e in value.elts
-                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
-                        ]
-                        return tuple(names)
-    return None
-
-
 @router.post("/ask")
 async def bus_ask(req: AskRequest, request: Request):
     """One module asking another for data.
@@ -325,23 +245,28 @@ async def bus_ask(req: AskRequest, request: Request):
                     f"只写了 {'、'.join(wanted) or '（空）'}"),
         )
 
-    exports = _exports_of(req.recipe, req.mode)
+    from frago.recipes.contract import exports_of
+
+    exports = exports_of(req.recipe, req.mode)
 
     if exports is None:
-        _record_edge(caller, req.recipe, req.mode, False, "callee-has-no-exports")
+        _record_edge(caller, req.recipe, req.mode, False, "callee-is-not-a-module")
         raise HTTPException(
             status_code=403,
-            detail=(f"{req.recipe} 没有声明任何导出接口，别的模块调不了它。"
-                    f"要把它变成可被调用的，在它的类上写 exports = ('status', ...)，"
-                    f"并且导出的 mode 必须是只读的：不触网、不重算、不改状态、不开浏览器。"),
+            detail=(f"{req.recipe} 不是一个建在基类上的模块，别的模块调不了它。"
+                    f"先把它改造成配方模块（frago book recipe-creation），"
+                    f"再在要开放的 mode 方法上标 @export——"
+                    f"导出的 mode 必须只读：不触网、不重算、不改状态、不开浏览器。"),
         )
     if req.mode not in exports:
         _record_edge(caller, req.recipe, req.mode, False, "mode-not-exported")
         raise HTTPException(
             status_code=403,
-            detail=(f"{req.recipe} 没有把 {req.mode} 导出，它只导出了 "
-                    f"{'、'.join(exports) or '（空）'}。"
-                    f"没导出的 mode 一律不对外——那里面的活不是给别人顺手调的。"),
+            detail=(f"{req.recipe} 没有把 {req.mode} 导出，它导出的是 "
+                    f"{'、'.join(exports) or '（一个都没有）'}。"
+                    f"要开放就在 mode_{req.mode} 上标 @export。"
+                    f"没标的 mode 一律不对外——那里面的活不是给别人顺手调的，"
+                    f"而 @action 只开给这个配方自己的页面，不开给别的模块。"),
         )
 
     # The callee runs as whoever the caller was running as.

@@ -30,8 +30,8 @@ flag beside the allow list, which said that whoever could see the page could als
 push its buttons — and those buttons run on the owner's machine with the owner's
 credentials. Visibility and capability are two different facts about two
 different things: who is looking, and what the recipe agreed a page may ask for.
-So capability moved into the recipe's own contract (``page_actions`` in
-``recipe.md``) and this file no longer has an opinion. A legacy entry's
+So capability moved onto the recipe's own methods (``@action`` on the mode
+that may be pressed) and this file no longer has an opinion. A legacy entry's
 ``runnable`` key is read only to be reported, never to grant anything.
 
 Publishing one slot does not publish the others. A recipe that keeps a public
@@ -254,8 +254,8 @@ def legacy_runnable(entry: dict[str, Any] | None) -> bool:
 
     Read for one purpose only: telling the owner that an entry written by an
     older frago is claiming something this one no longer honours. It grants
-    nothing. What a page may trigger now comes from the recipe's own
-    ``page_actions`` declaration — see ``frago book recipe-expose``.
+    nothing. What a page may trigger now comes from the ``@action`` marks on
+    the recipe's own mode methods — see ``frago book recipe-expose``.
     """
     return isinstance(entry, dict) and entry.get("runnable") is True
 

@@ -11,6 +11,15 @@ from .exceptions import MetadataParseError, RecipeValidationError
 
 logger = logging.getLogger(__name__)
 
+#: Frontmatter keys that no longer mean anything, and what to write instead.
+#: Kept as data so the refusal names the replacement rather than only the
+#: mistake — a message that says "this is gone" and stops there sends the
+#: reader looking for a changelog.
+RETIRED_KEYS = {
+    'exports': "在要开放的 mode 方法上标 @export（只读契约：别的模块能调，页面也读得到）",
+    'page_actions': "在要开放的 mode 方法上标 @action（页面能触发，允许干活）",
+}
+
 
 @dataclass
 class RecipeMetadata:
@@ -46,27 +55,17 @@ class RecipeMetadata:
     # platform hand over the directory instead of the recipe naming a path.
     reads_common: list[str] = field(default_factory=list)
 
-    #: The modes other modules may call — this module's exported surface.
-    #: Exported modes are read-only by contract: no network, no recomputation,
-    #: no state change, no browser. The hub refuses anything not listed here,
-    #: so a caller can never reach past the surface into a mode that does work.
-    exports: list[str] = field(default_factory=list)
-
-    #: The modes this recipe's own page is allowed to trigger. Empty for almost
-    #: every recipe, and empty is the right default: a page is the least trusted
-    #: thing in the system — anyone who can open it can push its buttons — while
-    #: the run happens on the owner's machine with the owner's credentials.
+    #: Retired frontmatter keys this file still carries. Recorded rather than
+    #: dropped so ``validate_metadata`` can say so out loud.
     #:
-    #: This is where "may a visitor run it" lives now. It used to be a flag on
-    #: the exposure entry (``--runnable``), which meant the answer depended on
-    #: who was looking rather than on what the recipe agreed to; the same recipe
-    #: was runnable on one page and not on another, and nothing in the recipe
-    #: said either. Declared here it is one answer, written by the person who
-    #: knows what the mode does, and it survives the page being re-exposed.
-    #:
-    #: Distinct from ``exports``, which is read-only by contract and is what
-    #: *other modules* may ask for. A page action is allowed to do work.
-    page_actions: list[str] = field(default_factory=list)
+    #: ``exports`` and ``page_actions`` used to live here: two lists of mode
+    #: names, in a different file from the modes they named, that had to agree
+    #: with a third list in the class. A mode's reach is now written on the
+    #: method — ``@export`` / ``@action`` / nothing — so there is nothing left
+    #: to keep in step. A file still carrying the old keys is not merely
+    #: outdated: it *says* something the platform no longer reads, which is the
+    #: worst state of the three, so it is an error rather than a warning.
+    retired_fields: tuple[str, ...] = ()
 
     #: Whose surface this module depends on, as ``{recipe: [mode, ...]}``.
     #: Written down so the dependency exists on both sides. Until now the
@@ -155,8 +154,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             flow=data.get('flow', []),
             ui_from=data.get('ui_from'),
             reads_common=data.get('reads_common') or [],
-            exports=data.get('exports') or [],
-            page_actions=data.get('page_actions') or [],
+            retired_fields=tuple(k for k in RETIRED_KEYS if k in data),
             imports=data.get('imports') or {},
             created_at=_iso_or_none(data.get('created_at')),
             updated_at=_iso_or_none(data.get('updated_at')),
@@ -217,21 +215,17 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
             f"restart_policy must be 'always', 'on-failure' or 'never', current value: '{metadata.restart_policy}'"
         )
 
-    # Validate page_actions. Checked against `exports` rather than against the
-    # mode list, which lives in the class rather than here: an exported mode is
-    # read-only by contract, so naming one as a page action is a contradiction
-    # in the recipe's own declaration — the page would be given a button for
-    # something the recipe promised does nothing.
-    for action in metadata.page_actions:
-        if not isinstance(action, str) or not action:
-            errors.append("page_actions must be a list of mode names")
-            break
-        if action in metadata.exports:
-            errors.append(
-                f"page_actions lists '{action}', which is also exported. An exported "
-                f"mode is read-only by contract — a page reads it with "
-                f"POST /app/<name>/api/{action} and needs no action for it."
-            )
+    # Keys that no longer mean anything. An error rather than a warning: a file
+    # saying `exports: [status]` reads, to anyone opening it, as a recipe that
+    # exports status — and it no longer does. Leaving it in place would put the
+    # file and the system into exactly the quiet disagreement that moving these
+    # marks onto the methods was meant to end.
+    for key in metadata.retired_fields:
+        errors.append(
+            f"recipe.md 里还写着 {key}，这个字段已经作废——"
+            f"一个 mode 的对外性质现在写在方法上，不再是一份平行的名单。"
+            f"删掉它，改成：{RETIRED_KEYS[key]}。不标就是只有主人能跑。"
+        )
 
     # Validate inputs
     for param_name, param_def in metadata.inputs.items():
