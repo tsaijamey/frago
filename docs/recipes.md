@@ -525,13 +525,17 @@ The full command surface (details with `frago recipe <command> --help`):
 ├── atomic/browser/<name>/         # Chrome-js
 └── workflows/<name>/              # workflows
 ~/.frago/community-recipes/        # installed community recipes
-built-in package resources         # official recipes
 ```
 
 Each recipe is a directory holding `recipe.md` (YAML frontmatter metadata) and
 its execution script; a `spec.md` design document is optional. Community
 recipes install into `~/.frago/community-recipes/` with
-`frago recipe install community:<name>`.
+`frago recipe install community:<name>`; they are fetched from
+[frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community).
+
+The frago package itself ships no recipes. Everything you can run is either
+yours or installed — there is no third, invisible tier that a fresh machine
+silently has and another does not.
 
 ## Best Practices
 

@@ -523,12 +523,15 @@ frago --debug recipe run <recipe_name> --params '{...}'
 ├── atomic/browser/<name>/         # Chrome-js
 └── workflows/<name>/              # 工作流
 ~/.frago/community-recipes/        # 已安装的社区配方
-内置包资源                          # 官方配方
 ```
 
 每个配方是一个目录：`recipe.md`（YAML frontmatter 元数据）+ 执行脚本；
 `spec.md` 设计文档可选。社区配方通过
-`frago recipe install community:<name>` 装进 `~/.frago/community-recipes/`。
+`frago recipe install community:<name>` 装进 `~/.frago/community-recipes/`，
+来源是 [frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community)。
+
+frago 包本身不带任何配方。你能跑的每一个配方，要么是自己写的，要么是装来的——
+不存在第三层「装完就有、换台机器却没有」的隐形配方。
 
 ## 最佳实践
 
@@ -887,7 +890,7 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 |------|-------------------|---------------------|
 | 参数传递 | 命令行参数 | JSON 格式（统一） |
 | 元数据 | 无 | YAML frontmatter |
-| 查找路径 | 固定路径 | 三级查找（用户/社区/官方） |
+| 查找路径 | 固定路径 | 两级查找（用户/社区） |
 | 错误处理 | 原始输出 | 结构化 JSON 错误 |
 | 依赖管理 | 无 | 自动检查依赖 |
 | 编排能力 | 无 | 支持 Workflow |

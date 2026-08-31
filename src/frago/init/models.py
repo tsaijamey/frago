@@ -195,8 +195,12 @@ class Config(BaseModel):
         default_factory=lambda: ["node_modules", ".venv", "__pycache__", ".git"]
     )
 
-    # Community recipe repository
-    community_repo: str = "tsaijamey/frago"  # GitHub repo for community recipes
+    # Community recipe repository.
+    # Recipes moved out of the frago repo into their own; a config.json written
+    # before that still names "tsaijamey/frago", which no longer has a recipes
+    # directory. RecipeInstaller treats that legacy value as unset rather than
+    # letting search silently return nothing — see recipes/installer.py.
+    community_repo: str = "tsaijamey/frago-recipe-community"
 
     # DEPRECATED (spec 20260422-init-flow-modernization): init no longer
     # bundles or installs official commands/skills/recipes. Fields kept so

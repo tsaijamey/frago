@@ -14,10 +14,11 @@
 
 **本质**：可执行的自动化脚本，带有元数据描述。
 
-**存放位置**（三级优先级）：
+**存放位置**（两级优先级）：
 1. `~/.frago/recipes/` - 用户级（最高优先级）
-2. `~/.frago/community-recipes/` - 社区级
-3. 内置 - 官方级
+2. `~/.frago/community-recipes/` - 社区级，装自 [frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community)
+
+frago 包本身不带任何配方。
 
 **结构**（用户配方位于 `~/.frago/recipes/` 下）：
 ```

@@ -14,49 +14,18 @@ existing callers (e.g. `server/services/init_service.py` → Web InitWizard)
 keep working. They return empty `InstallResult`s so the UI renders "nothing
 to install" rather than failing with ImportError or KeyError.
 
-`get_package_resources_path()` is kept for one remaining reader: the recipe
-registry (`recipes/registry.py`) adds the package `recipes/` directory as a
-search path when present. After the bundled recipes are deleted the path
-simply won't exist and the try/except caller handles it.
+`get_package_resources_path()` used to live here for one remaining reader: the
+recipe registry scanned the package's own `recipes/` directory as the
+`Official` source. That directory is gone — public recipes moved to
+tsaijamey/frago-recipe-community and the package ships none — so the function
+went with its last caller, and nothing here invites a future reader to put
+recipes back into the wheel.
 """
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from frago.init.models import InstallResult, ResourceStatus, ResourceType
-
-
-def get_package_resources_path(resource_type: str) -> Path:
-    """Return the package's `frago/resources/<resource_type>` directory.
-
-    Raises FileNotFoundError if the directory no longer exists (which is the
-    normal case after spec 20260422 for commands/skills/recipes).
-    """
-    valid_types = ("commands", "skills", "recipes")
-    if resource_type not in valid_types:
-        raise ValueError(
-            f"Invalid resource type: {resource_type}, valid values: {valid_types}"
-        )
-
-    try:
-        from importlib.resources import files
-        package_files = files("frago.resources")
-        resource_path = Path(str(package_files.joinpath(resource_type)))
-        if not resource_path.exists():
-            raise FileNotFoundError(
-                f"Resource directory does not exist: {resource_path}"
-            )
-        return resource_path
-    except (ImportError, AttributeError) as err:
-        import frago.resources
-        base_path = Path(frago.resources.__file__).parent
-        resource_path = base_path / resource_type
-        if not resource_path.exists():
-            raise FileNotFoundError(
-                f"Resource directory does not exist: {resource_path}"
-            ) from err
-        return resource_path
 
 
 def install_commands() -> InstallResult:

@@ -107,9 +107,17 @@ class RecipeInstaller:
     """Handles recipe installation from various sources"""
 
     # Community repository configuration (defaults, can be overridden by config)
-    DEFAULT_COMMUNITY_REPO = "tsaijamey/frago"
+    DEFAULT_COMMUNITY_REPO = "tsaijamey/frago-recipe-community"
     COMMUNITY_BRANCH = "main"
-    COMMUNITY_PATH = "community-recipes/recipes"
+    COMMUNITY_PATH = "recipes"
+
+    # Where public recipes used to live: a subdirectory of the frago runtime
+    # repo itself. Config files written before the split still name it, and
+    # that repo no longer has recipes in it — a search against it comes back
+    # 404, which this class reports as "no recipes available" rather than as an
+    # error. Nobody would connect an empty recipe list to a stale config line,
+    # so the legacy value is treated as unset.
+    LEGACY_COMMUNITY_REPO = "tsaijamey/frago"
 
     # GitHub API configuration
     GITHUB_API_BASE = "https://api.github.com"
@@ -123,7 +131,10 @@ class RecipeInstaller:
         # Load community repo from config
         from frago.init.config_manager import load_config
         config = load_config()
-        self.community_repo = config.community_repo
+        configured = (config.community_repo or "").strip()
+        if not configured or configured == self.LEGACY_COMMUNITY_REPO:
+            configured = self.DEFAULT_COMMUNITY_REPO
+        self.community_repo = configured
 
     @property
     def COMMUNITY_REPO(self) -> str:

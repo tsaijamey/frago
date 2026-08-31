@@ -75,26 +75,27 @@ class RecipeRegistry:
         self._setup_search_paths()
 
     def _setup_search_paths(self) -> None:
-        """Set up search paths for User > Community > Official priority"""
+        """Set up search paths for User > Community priority.
+
+        There used to be a third path here: a `recipes/` directory inside the
+        installed frago package, scanned as the `Official` source. It is gone —
+        public recipes live in their own repository now, and the package ships
+        none. Nothing to fall back to means nothing to look in, so the path is
+        not registered rather than registered-and-always-missing.
+
+        `Official` survives as a label because installs made before the split
+        may still carry recipes filed under it; it is simply never produced by
+        a scan any more.
+        """
         # 1. User recipes (highest priority)
         user_path = Path.home() / '.frago' / 'recipes'
         if user_path.exists():
             self.search_paths.append(user_path)
 
-        # 2. Community recipes
+        # 2. Community recipes, installed from the community repository
         community_path = Path.home() / '.frago' / 'community-recipes'
         if community_path.exists():
             self.search_paths.append(community_path)
-
-        # 3. Official recipes (from package resources)
-        try:
-            from frago.init.resources import get_package_resources_path
-            official_path = get_package_resources_path("recipes")
-            if official_path.exists():
-                self.search_paths.append(official_path)
-        except (ImportError, FileNotFoundError, ValueError):
-            # Official resources not available
-            pass
 
     def needs_rescan(self) -> bool:
         """Check if any recipe directory or metadata file was modified since last scan.

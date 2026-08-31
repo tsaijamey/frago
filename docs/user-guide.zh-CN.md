@@ -72,25 +72,26 @@ frago recipe run <name> --timeout 300
 ### Recipe 优先级
 
 ```
-1. User (~/.frago/recipes/)              ← 最高（个人）
-2. Community (~/.frago/community-recipes/) ← 中等（社区）
-3. Official (built-in)                   ← 最低（官方内置）
+1. User (~/.frago/recipes/)                 ← 较高（个人写的）
+2. Community (~/.frago/community-recipes/)  ← 较低（装来的）
 ```
 
-### 内置 Recipe
+### 配方从哪来
 
-| 名称 | 功能 | 类型 |
-|------|------|------|
-| `openrouter_vision_classify` | 通过视觉模型对图片分类 | system |
-| `transcript_completion` | 补全与扩写会话记录 | system |
+**安装包一个都不带。** 刚装完的 frago 跑不了任何配方，要先自己写一个或装一个——
+这是有意的：这台机器能干什么，看得见地写在「谁往上面放了什么」里，
+而不是藏在安装包里。
 
-这是随安装包分发的两个配方。其余（YouTube、Bilibili、arXiv、飞书/Lark、
-微信、TTS 等）都在社区注册表里，按需安装：
+公开配方（YouTube、Bilibili、arXiv、飞书/Lark、微信、TTS、视觉识别……）
+住在 [frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community)，按需安装：
 
 ```bash
-frago recipe list --source community
+frago recipe search <关键词>
 frago recipe install community:<recipe-name>
+frago recipe list --source community
 ```
+
+自己写的配方想让别人也能用，`frago recipe share <name>` 会替你把 PR 提过去。
 
 recipe 命令组还有 `plan`、`create`、`schedule`、`publish`、`search`、
 `update`、`uninstall` 等子命令，见 [Recipe 系统指南](recipes.zh-CN.md)。
@@ -162,7 +163,7 @@ frago server --debug    # 前台运行带日志
 - **Skills（技能）**：管理已安装技能
 - **Workspace（工作空间）**：项目文件、日志、截图与输出
 - **Guide（指南）**：内置文档
-- **Settings（设置）**：提示能力（静态规则 + 轻量 AI）、模型 profile、任务通道、官方资源同步、外观、初始化状态、关于
+- **Settings（设置）**：提示能力（静态规则 + 轻量 AI）、模型 profile、任务通道、官方资源同步（命令与技能）、外观、初始化状态、关于
 
 ## 资源与同步
 
@@ -189,7 +190,8 @@ frago session sync --force   # 已存在的会话也重新同步
 
 ### 官方资源
 
-**设置 → 资源** 可开启官方命令、技能、配方的定时同步。密钥（Secrets）在任何
+**设置 → 资源** 可开启官方命令与技能的定时同步。配方不在其中——配方来自社区
+仓库，什么时候更新由你自己敲 `frago recipe update` 决定。密钥（Secrets）在任何
 路径下都不会被同步。
 
 ## 故障排除

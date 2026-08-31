@@ -50,10 +50,12 @@ The following concepts are original designs from the frago project.
 
 **Essence**: Executable automation scripts with metadata descriptions.
 
-**Storage locations** (three-tier priority):
+**Storage locations** (two-tier priority):
 1. `~/.frago/recipes/` - User level (highest priority)
-2. `~/.frago/community-recipes/` - Community level
-3. Built-in package resources - Official level
+2. `~/.frago/community-recipes/` - Community level, installed from
+   [frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community)
+
+The frago package ships no recipes of its own.
 
 **Structure** (user recipes live under `~/.frago/recipes/`):
 ```

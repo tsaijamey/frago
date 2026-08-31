@@ -235,7 +235,7 @@ AGPL-3.0 — 详见 [LICENSE](LICENSE)
 
 - [提交 Issue](https://github.com/tsaijamey/frago/issues)
 - [技术讨论](https://github.com/tsaijamey/frago/discussions)
-- [社区配方](community-recipes/README.md)
+- [社区配方](https://github.com/tsaijamey/frago-recipe-community) —— 公开配方住在它自己的仓库
 
 ---
 

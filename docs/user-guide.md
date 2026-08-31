@@ -74,26 +74,28 @@ frago recipe run <name> --timeout 300
 ### Recipe Priority
 
 ```
-1. User (~/.frago/recipes/)              ← Highest (personal)
-2. Community (~/.frago/community-recipes/) ← Medium
-3. Official (built-in)                   ← Lowest
+1. User (~/.frago/recipes/)                 ← Higher (personal)
+2. Community (~/.frago/community-recipes/)  ← Lower (installed)
 ```
 
-### Built-in Recipes
+### Where recipes come from
 
-| Name | Function | Type |
-|------|----------|------|
-| `openrouter_vision_classify` | Classify images through a vision model | system |
-| `transcript_completion` | Complete and extend session transcripts | system |
+**The install bundles none.** A fresh frago can run nothing until you write
+a recipe or install one — which is the point: what a machine can do is
+visible in what has been put on it, not hidden in the wheel.
 
-These are the two recipes bundled with the install. Everything else
-(YouTube, Bilibili, arXiv, Feishu/Lark, WeChat, TTS, ...) lives in the
-community registry and installs on demand:
+Public recipes (YouTube, Bilibili, arXiv, Feishu/Lark, WeChat, TTS, vision
+classification, ...) live in [frago-recipe-community](https://github.com/tsaijamey/frago-recipe-community) and install on
+demand:
 
 ```bash
-frago recipe list --source community
+frago recipe search <keyword>
 frago recipe install community:<recipe-name>
+frago recipe list --source community
 ```
+
+Wrote one worth sharing? `frago recipe share <name>` opens the pull request
+for you.
 
 The recipe command group also offers `plan`, `create`, `schedule`,
 `publish`, `search`, `update`, `uninstall` and more — see
@@ -195,8 +197,10 @@ frago session sync --force   # Re-sync existing sessions too
 
 ### Official resources
 
-**Settings → Resources** toggles scheduled sync of official commands,
-skills and recipes. Secrets are never synced anywhere.
+**Settings → Resources** toggles scheduled sync of official commands and
+skills. Recipes are not part of it — they come from the community
+repository, on the schedule you choose, via `frago recipe update`.
+Secrets are never synced anywhere.
 
 ## Troubleshooting
 

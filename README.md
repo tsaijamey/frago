@@ -240,7 +240,7 @@ AGPL-3.0 — see [LICENSE](LICENSE)
 
 - [Submit an Issue](https://github.com/tsaijamey/frago/issues)
 - [Discussions](https://github.com/tsaijamey/frago/discussions)
-- [Community recipes](community-recipes/README.md)
+- [Community recipes](https://github.com/tsaijamey/frago-recipe-community) — public recipes live in their own repository
 
 ---
 
