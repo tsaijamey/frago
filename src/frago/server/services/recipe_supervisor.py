@@ -29,6 +29,7 @@ import shutil
 import signal
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 
 from frago.compat import get_windows_subprocess_kwargs
@@ -186,7 +187,7 @@ class RecipeSupervisor:
         # daemon that did get that far had no landing spot, so it would have
         # written wherever its author once guessed.
         from frago.recipes.runner import prepare_platform_env
-        _, run_cwd = prepare_platform_env(self._spec.recipe, env)
+        _, run_cwd, view = prepare_platform_env(self._spec.recipe, env, recipe=recipe)
         if getattr(recipe.metadata, "no_proxy", False):
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                       "http_proxy", "https_proxy", "all_proxy"):
@@ -195,6 +196,17 @@ class RecipeSupervisor:
         uv_bin = shutil.which("uv") or "uv"
         params_json = json.dumps(self._spec.params or {})
         cmd = [uv_bin, "run", "--quiet", str(recipe.script_path), params_json]
+
+        # A daemon is confined exactly like a one-shot run. It has to be the
+        # same answer or it is not a boundary: a recipe that cannot read
+        # ~/.ssh when started by hand and can when the server keeps it alive is
+        # a recipe with an unconfined path, and the long-lived one at that.
+        from frago.recipes import isolation
+        cmd, backend_name = isolation.wrap(
+            cmd, view, cwd=Path(run_cwd) if run_cwd else None
+        )
+        if backend_name:
+            logger.debug("daemon %s confined by %s", self._spec.recipe, backend_name)
 
         # POSIX: 起独立进程组（session），让 _terminate 能对整组发信号。
         # 直接子进程是 ``uv run``，真正的配方 python 是它的孙进程；只 terminate/kill

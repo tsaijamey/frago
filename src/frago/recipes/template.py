@@ -144,6 +144,13 @@ output_targets:
 # 不在这里。这里不再有平行的名单要跟代码对齐。
 # 本模块用了谁的哪个口。写下来，对方才知道自己正在被谁读。
 imports: {imports}
+# 要读别的模块的共读数据就在这里点名（对方还得写 shares，两句缺一句都拿不到）。
+# reads_common: []
+# 本模块对外开放自己数据里的哪一块，只读。相对 ~/.frago/recipe-data/<本模块>/。
+# shares: share/common
+# 要 shell 出去调 frago 自己的命令（browser / desktop …）才写 true。
+# 隔离下不写就调不动，validate 会拦。能走总线的优先走总线。
+# uses_frago_cli: false
 inputs:
   mode:
     type: string

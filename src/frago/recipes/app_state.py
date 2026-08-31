@@ -175,10 +175,81 @@ def recipe_state_path(identity: str, recipe_name: str, project: str | None = Non
     return recipe_data_dir(identity, recipe_name, project) / STATE_FILE
 
 
+#: The one directory under a recipe's own machine-level tree that holds nothing
+#: of its own: the view, built for this module, of the blocks other modules
+#: opened to it. Named here because two rules depend on it — the staging
+#: rebuilds it, and a module may not declare it as the block it shares, which
+#: would pass its own dependencies on to whoever reads it.
+READS_DIR = "reads"
+
+
+class InvalidShare(ValueError):
+    """A ``shares:`` declaration that does not name a bounded block.
+
+    Raised rather than trimmed into something workable. The whole value of the
+    declaration is that it is bounded — a machine can hand over a bounded thing
+    without a person signing for it — so a declaration whose bounds have to be
+    guessed at is not a smaller version of the same statement.
+    """
+
+
+def machine_root(recipe_name: str) -> Path:
+    """Everything one recipe keeps outside any account, in one directory."""
+    _validate(recipe_name, DEFAULT_SLOT)
+    return Path.home() / ".frago" / RECIPE_DATA / recipe_name
+
+
+def shared_subtree(recipe_name: str, declared: str) -> Path:
+    """The directory a recipe's ``shares:`` names, or a refusal.
+
+    ``declared`` is relative to the recipe's own machine-level root, so a
+    producer says ``share/common`` and means the block it has always written
+    there. Nothing about this walks outside that root, and the three ways of
+    trying are refused by name rather than by resolving to something safe:
+
+    * an absolute path, or one climbing out with ``..`` — that is not "part of
+      my data", it is somebody else's;
+    * the root itself — it contains ``reads/``, the view of what other modules
+      opened to *this* one, so sharing the root would quietly pass a producer's
+      own dependencies through to everyone reading it;
+    * ``reads`` itself, for the same reason said directly.
+    """
+    root = machine_root(recipe_name)
+    raw = (declared or "").strip()
+    if not raw:
+        raise InvalidShare(
+            f"{recipe_name} 没有写 shares，也就没有对外开放任何一块数据。"
+        )
+    if raw.startswith(("/", "~")) or "\\" in raw:
+        raise InvalidShare(
+            f"shares 写的是 {raw!r}：它必须是相对本模块数据根的一小块，"
+            f"例如 share/common，不是一条绝对路径。"
+        )
+    parts = [one for one in raw.split("/") if one not in ("", ".")]
+    if not parts:
+        raise InvalidShare(
+            f"{recipe_name} 的 shares 指向自己的数据根。那里面有 {READS_DIR}/——"
+            f"别人共享给本模块的东西，转手全给出去了。点名一块，比如 share/common。"
+        )
+    if ".." in parts:
+        raise InvalidShare(f"shares 写的是 {raw!r}：不允许 ..，它会走出本模块的数据。")
+    if parts[0] == READS_DIR:
+        raise InvalidShare(
+            f"{READS_DIR}/ 装的是别人共享给本模块的数据，不是本模块的。"
+            f"把它再共享出去，等于替别人做了他没做的决定。"
+        )
+    for one in parts:
+        if not _SAFE_NAME.match(one) or one in {".", ".."}:
+            raise InvalidShare(
+                f"shares 里的 {one!r} 不是一个目录名（只能是字母、数字、点、横线、下划线）。"
+            )
+    return root.joinpath(*parts)
+
+
 def share_root(recipe_name: str) -> Path:
     """One recipe's cross-user data. Machine-level, under nobody's account."""
     _validate(recipe_name, DEFAULT_SLOT)
-    return Path.home() / ".frago" / RECIPE_DATA / recipe_name / SHARE_DIR
+    return machine_root(recipe_name) / SHARE_DIR
 
 
 def seed_dir(recipe_name: str) -> Path:

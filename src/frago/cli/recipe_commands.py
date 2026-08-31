@@ -447,9 +447,9 @@ Spec 内容（位于 {resolved_spec}）：
 @recipe_group.command(name='list', cls=AgentFriendlyCommand)
 @click.option(
     '--source',
-    type=click.Choice(['user', 'community', 'official', 'all'], case_sensitive=False),
+    type=click.Choice(['user', 'community', 'all'], case_sensitive=False),
     default='all',
-    help='Filter by source (user | community | official | all)'
+    help='Filter by source (user | community | all)'
 )
 @click.option(
     '--type',
@@ -538,7 +538,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
 @click.argument('name')
 @click.option(
     '--source',
-    type=click.Choice(['user', 'community', 'official'], case_sensitive=False),
+    type=click.Choice(['user', 'community'], case_sensitive=False),
     default=None,
     help='Specify recipe source (defaults to auto-select by priority)'
 )
@@ -666,7 +666,7 @@ def recipe_info(name: str, source: str | None, output_format: str):
 @click.argument('name')
 @click.option(
     '--source',
-    type=click.Choice(['user', 'community', 'official'], case_sensitive=False),
+    type=click.Choice(['user', 'community'], case_sensitive=False),
     default=None,
     help='Specify recipe source (defaults to auto-select by priority)'
 )
@@ -823,7 +823,7 @@ def run_recipe(
 @click.option('--interval', required=True, help='Run interval (e.g., 30s, 10m, 2h, 1h30m)')
 @click.option('--params', type=str, default='{}', help='Recipe parameters (JSON)')
 @click.option('--params-file', type=click.Path(exists=True), help='Read parameters from file')
-@click.option('--source', type=click.Choice(['user', 'community', 'official']), default=None, help='Recipe source')
+@click.option('--source', type=click.Choice(['user', 'community']), default=None, help='Recipe source')
 @click.option('--env', '-e', 'env_vars', multiple=True, help='Env override KEY=VALUE')
 @click.option('--start-at', 'start_at', help='Start time (ISO 8601 or HH:MM), default: now')
 @click.option('--stop-at', 'stop_at', help='Stop time (ISO 8601 or HH:MM), default: never')
@@ -1688,21 +1688,38 @@ def validate_recipe(path: str, output_format: str):
                 f"但它不读落点变量。{gap}"
             )
 
-    # 5b-2. Cross-recipe reads are requested here and granted by the owner. A
-    # request nobody granted is not an error — the recipe is perfectly valid, it
-    # simply will not be handed that directory — but it is the exact shape that
-    # ends as an empty page nobody can explain, so it is said here where the
-    # author is looking.
+    # 5b-2. A recipe that says it reads another module's data, and will not be
+    # able to. **An error, not a warning.** This used to be a warning because
+    # the missing piece was an owner's signature, and a recipe waiting for one
+    # was merely unfinished. It is now a disagreement between two declarations,
+    # which means the run fails every time it happens — and the failure is the
+    # quietest kind there is: the module reads an empty directory and reports,
+    # accurately, that there is no data. On 2026-08-31 that shape ran every five
+    # minutes for three days behind a board showing three-day-old numbers, with
+    # the reason sitting in this command's warnings the whole time.
+    shared_subtrees: dict[str, Path] = {}
     if metadata and metadata.reads_common:
-        from frago.recipes.grants import readable_producers
+        from frago.recipes.context import shared_with
 
-        allowed = set(readable_producers(metadata.name, list(metadata.reads_common)))
-        ungranted = [one for one in metadata.reads_common if one not in allowed]
-        if ungranted:
-            warnings.append(
-                f"reads_common 声明了 {', '.join(ungranted)}，但主人还没授权，运行时拿不到它们。"
-                f"授权：frago recipe grant {metadata.name} --read <生产者>"
-            )
+        _, shared_subtrees, problems = shared_with(metadata.name)
+        for problem in problems:
+            errors.append(problem)
+
+    # 5b-3. And what isolation itself will refuse. A recipe runs inside a view
+    # holding its own landing spot, the blocks other modules declared, and the
+    # machinery — nothing else. Whatever the kernel will refuse has to be
+    # refused here first, by asking the same view rather than by keeping a
+    # second list: two gates that describe different boundaries are not two
+    # gates, they are one gate and one document.
+    if metadata and metadata.runtime in ('python', 'shell'):
+        from frago.recipes import isolation
+
+        for blocked in isolation.foresee(
+            recipe_dir, metadata.name,
+            uses_frago_cli=bool(getattr(metadata, 'uses_frago_cli', False)),
+            shared=shared_subtrees,
+        ):
+            errors.append(blocked.render(recipe_dir).replace("\n", " "))
 
     # 5c. Whatever would stop this recipe's page from working on another machine.
     # Reported here as well as at `expose` so an author can find out while still
@@ -1805,10 +1822,13 @@ def install_recipe(source: str, force: bool, name_override: str | None, output_f
     """
     Install a recipe from various sources
 
+    frago ships no recipes of its own — everything runnable is either yours
+    or installed from here.
+
     SOURCE can be:
 
     \b
-    - community:<name>     Install from frago community recipes
+    - community:<name>     Install from github.com/tsaijamey/frago-recipe-community
     - /path/to/recipe      Install from local directory
 
     \b
@@ -1886,7 +1906,7 @@ def uninstall_recipe(name: str, yes: bool, source: str | None, output_format: st
     """
     Uninstall a recipe (User or Community)
 
-    Supports all sources via registry lookup. Official recipes cannot be uninstalled.
+    Those are the only two places recipes live — frago itself ships none.
     Checks for dependent recipes before deletion.
 
     \b
@@ -1923,28 +1943,30 @@ def uninstall_recipe(name: str, yes: bool, source: str | None, output_format: st
                 click.echo(f"Error: Recipe '{name}' not found in {source}. Available: {available}", err=True)
             sys.exit(1)
     else:
-        # Auto-select: User > Community, skip Official
+        # Auto-select: User > Community
         source_label = None
         for s in ['User', 'Community']:
             if s in sources_dict:
                 source_label = s
                 break
         if not source_label:
+            # The registry only ever scans ~/.frago/recipes and
+            # ~/.frago/community-recipes, so getting here means it grew a
+            # search path somewhere else. frago did not put that directory
+            # there and must not delete out of it.
+            found = ", ".join(sorted(sources_dict)) or "unknown"
+            hint = (
+                f"Recipe '{name}' lives outside the directories frago manages "
+                f"(source: {found}); remove it where it came from"
+            )
             if output_format == 'json':
-                result = {"success": False, "error": f"Recipe '{name}' is Official and cannot be uninstalled", "code": "official"}
+                result = {"success": False, "error": hint, "code": "unmanaged"}
                 click.echo(json.dumps(result, ensure_ascii=False, indent=2))
             else:
-                click.echo(f"Error: Recipe '{name}' is an Official recipe and cannot be uninstalled", err=True)
+                click.echo(f"Error: {hint}", err=True)
+                for src_label, recipe in sources_dict.items():
+                    click.echo(f"  {src_label}: {recipe.base_dir}", err=True)
             sys.exit(1)
-
-    # Official guard
-    if source_label == 'Official':
-        if output_format == 'json':
-            result = {"success": False, "error": "Cannot uninstall Official recipe", "code": "official"}
-            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
-        else:
-            click.echo(f"Error: Cannot uninstall Official recipe '{name}'. It is bundled with frago.", err=True)
-        sys.exit(1)
 
     # Dependency check
     dependents = _check_dependents(name, registry)
@@ -2089,7 +2111,7 @@ def update_recipe(name: str | None, update_all: bool, output_format: str):
 )
 def search_recipes(query: str | None, output_format: str):
     """
-    Search for recipes in community repository
+    Search the community recipe repository (tsaijamey/frago-recipe-community)
 
     QUERY supports '|' separated multiple keywords (OR logic).
 
@@ -2102,7 +2124,21 @@ def search_recipes(query: str | None, output_format: str):
     from frago.recipes.installer import RecipeInstaller
 
     installer = RecipeInstaller()
-    results = installer.search_community(query)
+    try:
+        results = installer.search_community(query)
+    except RuntimeError as e:
+        # Almost always GitHub's anonymous quota: 60 requests an hour per IP.
+        # Unhandled it surfaces as a traceback, which reads like frago is
+        # broken and says nothing about the one action that fixes it.
+        if output_format == 'json':
+            click.echo(json.dumps(
+                {"success": False, "error": str(e), "code": "search_failed"},
+                ensure_ascii=False, indent=2,
+            ))
+        else:
+            click.echo(f"Error: {e}", err=True)
+            click.echo("[Fix] gh auth login   # raises the GitHub quota to 5000/hour", err=True)
+        sys.exit(1)
 
     if output_format == 'json':
         click.echo(json.dumps(results, ensure_ascii=False, indent=2))
@@ -2148,7 +2184,7 @@ def share_recipe(name: str, yes: bool, output_format: str):
 
     This command will:
     1. Validate the recipe format
-    2. Fork the frago repository (if needed)
+    2. Fork the community recipe repository (if needed)
     3. Create a branch and copy the recipe
     4. Submit a Pull Request
 
@@ -2290,10 +2326,12 @@ def share_recipe(name: str, yes: bool, output_format: str):
     # Step 2: Prepare submission
     echo_step(2, 4, "Preparing submission...")
 
-    # Community repository (configurable via config file)
-    from frago.init.config_manager import load_config
-    config = load_config()
-    UPSTREAM_REPO = config.community_repo
+    # Community repository. Read it off the installer rather than the config
+    # directly: the installer is what resolves a stale pre-split value, and a
+    # PR opened against a different repo than the one `search_community` just
+    # checked for name collisions would be checking one place and writing to
+    # another.
+    UPSTREAM_REPO = installer.COMMUNITY_REPO
     BRANCH_NAME = f"recipe/{name}"
 
     # Check if user has push permission to upstream (owner or collaborator)
@@ -2335,7 +2373,7 @@ def share_recipe(name: str, yes: bool, output_format: str):
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        repo_path = temp_path / "frago"
+        repo_path = temp_path / "community-recipes"
 
         try:
             # Clone the repository
@@ -2351,8 +2389,9 @@ def share_recipe(name: str, yes: bool, output_format: str):
                 run_cmd(["git", "-C", str(repo_path), "fetch", "upstream", "main"])
                 run_cmd(["git", "-C", str(repo_path), "checkout", "-b", BRANCH_NAME, "upstream/main"])
 
-            # Copy recipe files
-            target_dir = repo_path / "community-recipes" / "recipes" / name
+            # Copy recipe files. Same layout the installer reads from, taken
+            # from the same constant so the two can never drift apart.
+            target_dir = repo_path / installer.COMMUNITY_PATH / name
             target_dir.mkdir(parents=True, exist_ok=True)
 
             import shutil
@@ -3417,117 +3456,63 @@ def list_exposed(output_format: str):
                    "重新 expose 一次即可把这个标记抹掉。")
 
 
-@recipe_group.command(name='grant', cls=AgentFriendlyCommand)
-@click.argument('consumer')
-@click.option('--read', 'producers', multiple=True, metavar='RECIPE',
-              help="Let CONSUMER read this recipe's shared data. Repeatable.")
-@click.option('--revoke', 'revoked', multiple=True, metavar='RECIPE',
-              help='Take one of those back. Repeatable.')
+@recipe_group.command(name='reads', cls=AgentFriendlyCommand)
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def grant_recipe_read(consumer: str, producers: tuple[str, ...],
-                      revoked: tuple[str, ...], output_format: str):
-    """Allow one recipe to read another's shared data.
+def list_reads(output_format: str):
+    """Which modules read which other modules' data, and what they actually get.
 
-    A recipe says which producers it depends on, in `reads_common` in its
-    recipe.md — that is what makes the dependency visible to the recipe being
-    read, which otherwise has no idea anyone is relying on its file layout. But
-    a declaration is made by the side that benefits from it, so it is a request,
-    not a permission. This command is the permission.
-
-    A run is handed only what it both declared and was granted. Either half
-    missing means the directory is not there, and `frago recipe validate` says
-    which half it was.
-
-    \b
-    Examples:
-      frago recipe grant astock_trade_history --read astock_trade_ledger
-      frago recipe grant astock_trade_history --revoke astock_trade_ledger
-      frago recipe grants
+    Derived from the two declarations rather than from a table somebody
+    maintains, so it cannot drift from what a run will be handed: the same
+    function answers both.
     """
-    from frago.recipes import grants
-
-    if not producers and not revoked:
-        _fail(output_format,
-              "说清楚授权还是收回：--read <生产者> 或 --revoke <生产者>。",
-              "nothing_to_do")
-
-    try:
-        for one in producers:
-            grants.grant(consumer, one)
-        for one in revoked:
-            grants.revoke(consumer, one)
-    except ValueError as err:
-        _fail(output_format, str(err), "refused")
-
-    current = grants.granted_to(consumer)
-    if output_format == 'json':
-        click.echo(json.dumps(
-            {"success": True, "recipe_name": consumer, "read": current},
-            ensure_ascii=False, indent=2))
-        return
-
-    if current:
-        click.echo(f"✓ {consumer} 现在可以读：{', '.join(current)}")
-    else:
-        click.echo(f"✓ {consumer} 现在读不到任何别的配方的共享数据")
-
-    declared = _declared_reads_common(consumer)
-    if declared is not None:
-        missing = [one for one in current if one not in declared]
-        if missing:
-            click.echo(f"  注意 {consumer} 的 recipe.md 里没有声明 {', '.join(missing)}，"
-                       f"没声明就还是拿不到——把它们加进 reads_common。")
-
-
-def _declared_reads_common(name: str) -> list[str] | None:
-    """What this recipe says it reads, or None if it cannot be found."""
-    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.context import shared_with
     from frago.recipes.registry import get_registry
 
-    try:
-        return list(getattr(get_registry().find(name).metadata, "reads_common", None) or [])
-    except (RecipeNotFoundError, OSError):
-        return None
-
-
-@recipe_group.command(name='grants', cls=AgentFriendlyCommand)
-@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def list_grants(output_format: str):
-    """Which recipes may read which other recipes' shared data."""
-    from frago.recipes import grants
-
-    entries = grants.load()
+    registry = get_registry()
     rows = []
-    for consumer in sorted(entries):
-        granted = grants.granted_to(consumer)
-        declared = _declared_reads_common(consumer)
+    for name in sorted(registry.recipes):
+        try:
+            recipe = registry.find(name)
+        except Exception:
+            continue
+        declared = list(getattr(recipe.metadata, "reads_common", None) or [])
+        shares = getattr(recipe.metadata, "shares", "") or ""
+        if not declared and not shares:
+            continue
+        _, subtrees, problems = shared_with(name) if declared else (None, {}, [])
         rows.append({
-            "recipe_name": consumer,
-            "granted": granted,
-            "declared": declared,
-            # Granted but never asked for: harmless, and worth seeing — it is
-            # usually a grant written against a recipe that has since been
-            # rewritten, and it will quietly do nothing forever.
-            "unused": [] if declared is None else [g for g in granted if g not in declared],
+            "recipe_name": name,
+            "shares": shares,
+            "reads": declared,
+            "resolved": {k: str(v) for k, v in subtrees.items()},
+            "problems": problems,
         })
 
     if output_format == 'json':
-        click.echo(json.dumps(
-            {"grants": rows, "source": str(grants.grants_path())},
-            ensure_ascii=False, indent=2))
+        click.echo(json.dumps({"reads": rows}, ensure_ascii=False, indent=2))
         return
 
     if not rows:
-        click.echo("没有任何跨配方读取授权。配方只能读自己的数据。")
-        click.echo("授权：frago recipe grant <读的人> --read <被读的人>")
+        click.echo("没有任何模块共享数据，也没有任何模块声明要读别人的。")
+        click.echo("被读的一方在 recipe.md 写 shares: <子路径>，读的一方写 reads_common: [<名字>]。")
         return
 
     for row in rows:
-        click.echo(f"{row['recipe_name']}  →  {', '.join(row['granted'])}")
-        if row["declared"] is None:
-            click.echo("    （这个配方在本机找不到）")
-        elif row["unused"]:
-            click.echo(f"    授权了但 recipe.md 没声明，拿不到：{', '.join(row['unused'])}")
+        if row["shares"]:
+            click.echo(f"{row['recipe_name']}  共享  {row['shares']}（只读）")
+        for one in row["reads"]:
+            if one == row["recipe_name"]:
+                # Reading its own shared block. Listed rather than hidden — the
+                # recipes that compute a machine-level result do declare it —
+                # but it is not a dependency: the platform hands a module its
+                # own tree on every run, sharing or no sharing.
+                click.echo(f"{row['recipe_name']}  读  自己那一份（平台本来就交给它）")
+                continue
+            got = row["resolved"].get(one)
+            click.echo(f"{row['recipe_name']}  读  {one}"
+                       + (f"  →  {got}" if got else "  →  拿不到"))
+        for problem in row["problems"]:
+            click.echo(f"    {problem}")
 
 
 def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], list[str]]:

@@ -116,10 +116,11 @@
 - **这几个人本来就该看配方自己算的那一份** → `frago recipe expose <name> --allow … --shared`。
   一条命令，不动数据，页面直接读配方自己的槽和那个槽声明的 `dataDir`。
 - **数据要给别的配方读** → 写机器级共读目录 `~/.frago/recipe-data/<配方>/share/common/`，
-  读的那个配方在 `recipe.md` 的 `reads_common` 里列上生产者，
-  **再由主人 `frago recipe grant <读的人> --read <被读的人>` 授权**。
-  声明是请求（由得利的一方写），授权才是许可。两半缺一不可，
-  运行时只拿得到「既声明又授权」的那些，`frago recipe validate` 会说缺的是哪一半。
+  然后**两边各说一句**：被读的一方在自己的 `recipe.md` 写 `shares: share/common`
+  （我交出自己数据里的哪一块），读的一方在 `reads_common` 里列上生产者。
+  两句缺一句就拿不到，`frago recipe validate` **直接拒绝**并说缺的是哪一句。
+  不需要任何人再点一次头——平台只交出声明的那一块，且在隔离下物理只读。
+  查现状：`frago recipe reads`。
 
 **验收只有一条可信的路**：拿名单上一个真实账号登录进去看一眼。
 以主人身份（本机、或带 token 直连）跑出数据，**不构成登录用户看得到数据的证据**。

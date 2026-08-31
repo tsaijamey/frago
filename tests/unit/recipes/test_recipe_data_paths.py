@@ -299,3 +299,68 @@ class TestAPageMayAskItsOwnBackEnd:
 
         for bad in ("/api/../x", "/api/a/b", "/api/a.b", "/api/a%2Fb"):
             assert not _APP_API_PATH.match(bad), bad
+
+
+class TestWhatAModuleOpensToOthers:
+    """``shares:`` — the half that used to be missing.
+
+    The point of it is that it is *bounded*. An owner's signature over an
+    unbounded handle was never worth what it cost, which is why the signature
+    is gone and this is here instead: a machine can hand over a named block it
+    can also make read-only, and cannot do either with "the producer's
+    directory".
+    """
+
+    def test_it_names_a_block_inside_the_modules_own_tree(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from frago.recipes.app_state import machine_root, shared_subtree
+
+        assert shared_subtree("feed", "share/common") == (
+            machine_root("feed") / "share" / "common")
+
+    def test_nothing_is_shared_until_somebody_says_which_block(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from frago.recipes.app_state import InvalidShare, shared_subtree
+
+        with pytest.raises(InvalidShare):
+            shared_subtree("feed", "")
+
+    @pytest.mark.parametrize("declared", ["/etc", "~/secrets", "../other", "a/../../b"])
+    def test_it_cannot_walk_out_of_that_tree(self, tmp_path, monkeypatch, declared):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from frago.recipes.app_state import InvalidShare, shared_subtree
+
+        with pytest.raises(InvalidShare):
+            shared_subtree("feed", declared)
+
+    def test_the_root_itself_is_refused(self, tmp_path, monkeypatch):
+        """It contains `reads/` — what other modules opened to *this* one.
+        Sharing the root passes a producer's own dependencies on to everyone
+        reading it, which is a decision those producers never made."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from frago.recipes.app_state import InvalidShare, shared_subtree
+
+        for spelling in (".", "/", "./"):
+            with pytest.raises(InvalidShare):
+                shared_subtree("feed", spelling)
+
+    def test_the_staging_directory_is_refused_by_name(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from frago.recipes.app_state import READS_DIR, InvalidShare, shared_subtree
+
+        with pytest.raises(InvalidShare):
+            shared_subtree("feed", f"{READS_DIR}/cn_stock_data_feed")
+
+    def test_a_bad_declaration_fails_validation_rather_than_being_trimmed(self):
+        """Refused where the author is looking, not quietly resolved into
+        something workable — a bound that has to be guessed at is not a bound."""
+        from frago.recipes.exceptions import RecipeValidationError
+        from frago.recipes.metadata import RecipeMetadata, validate_metadata
+
+        meta = RecipeMetadata(
+            name="feed", type="atomic", runtime="python", version="1.0.0",
+            description="d", use_cases=["u"], output_targets=["stdout"],
+            shares="../elsewhere",
+        )
+        with pytest.raises(RecipeValidationError):
+            validate_metadata(meta)

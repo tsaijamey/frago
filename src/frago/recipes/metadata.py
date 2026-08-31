@@ -54,6 +54,29 @@ class RecipeMetadata:
     # dependency somewhere both sides can see it — and it is what lets the
     # platform hand over the directory instead of the recipe naming a path.
     reads_common: list[str] = field(default_factory=list)
+    #: Which part of its own machine-level data this recipe opens to the
+    #: recipes that declare they read it. One subpath, relative to
+    #: ``~/.frago/recipe-data/<name>/``, and empty by default: a module shares
+    #: nothing until its author says which block.
+    #:
+    #: This is the half that used to be missing. ``reads_common`` is said by the
+    #: side that benefits, and what it used to buy was a handle on the producer's
+    #: whole directory — so "read-only" and "only this part" were both things
+    #: the consumer was trusted to honour. Naming one subtree here is what makes
+    #: the answer *bounded*, and a bounded answer is one a machine can hand over
+    #: without anybody signing for it. See ``frago book must-recipe-data``.
+    shares: str = ""
+    #: Whether this recipe shells out to frago's own commands (``frago
+    #: browser``, ``frago desktop``, ``frago book``…).
+    #:
+    #: Declared because a confined run cannot reach frago's working directories
+    #: otherwise, and it is declared *by the recipe* rather than assumed for
+    #: everybody for the same reason every other dependency here is written
+    #: down: the ones that need it are a minority, and a platform that hands it
+    #: to all of them has handed out the difference for nothing. What it opens
+    #: is named in ``frago.recipes.isolation._platform_cli_paths`` — frago's own
+    #: machinery, never anybody's data.
+    uses_frago_cli: bool = False
 
     #: Retired frontmatter keys this file still carries. Recorded rather than
     #: dropped so ``validate_metadata`` can say so out loud.
@@ -154,6 +177,8 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             flow=data.get('flow', []),
             ui_from=data.get('ui_from'),
             reads_common=data.get('reads_common') or [],
+            shares=str(data.get('shares') or '').strip(),
+            uses_frago_cli=bool(data.get('uses_frago_cli', False)),
             retired_fields=tuple(k for k in RETIRED_KEYS if k in data),
             imports=data.get('imports') or {},
             created_at=_iso_or_none(data.get('created_at')),
@@ -226,6 +251,18 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
             f"一个 mode 的对外性质现在写在方法上，不再是一份平行的名单。"
             f"删掉它，改成：{RETIRED_KEYS[key]}。不标就是只有主人能跑。"
         )
+
+    # What this recipe opens to the ones that declare they read it. Checked here
+    # rather than at staging time because a declaration that cannot be honoured
+    # is wrong the moment it is written, and the author is the only person who
+    # knows what they meant by it.
+    if metadata.shares:
+        from frago.recipes.app_state import InvalidShare, InvalidSlotName, shared_subtree
+
+        try:
+            shared_subtree(metadata.name, metadata.shares)
+        except (InvalidShare, InvalidSlotName) as err:
+            errors.append(str(err))
 
     # Validate inputs
     for param_name, param_def in metadata.inputs.items():

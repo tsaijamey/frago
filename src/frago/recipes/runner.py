@@ -13,7 +13,7 @@ from typing import Any
 
 from frago.compat import get_windows_subprocess_kwargs
 
-from . import context
+from . import context, isolation
 from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import RecipeExecutionError, RecipeValidationError
 from .execution import ExecutionStatus
@@ -138,11 +138,19 @@ def prepare_platform_env(
     *,
     ctx: "context.InvocationContext | None" = None,
     execution_id: str = "",
-) -> tuple["context.InvocationContext | None", str | None]:
+    recipe: Any = None,
+) -> tuple["context.InvocationContext | None", str | None, "isolation.View"]:
     """Everything the platform tells a recipe before it starts, in one place.
 
     Whose run this is, where it writes, what it is built on, and how it reaches
-    the hub. Returns the context and the directory the process should stand in.
+    the hub. Returns the context, the directory the process should stand in, and
+    the view of the filesystem the run is confined to.
+
+    The view is worked out here rather than at the point of spawning because it
+    is decided by exactly the same three facts as everything else above it —
+    whose run this is, where it writes, whose blocks it declared — and a second
+    place working them out again is how the directory a recipe is *told about*
+    stops being the directory a kernel is *held to*.
 
     **There is more than one door into starting a recipe** — a normal run, and
     the supervisor that keeps a long-connection recipe alive — and each used to
@@ -213,7 +221,47 @@ def prepare_platform_env(
         # them. Fall back to the old behaviour of inheriting.
         run_cwd = None
 
-    return ctx, run_cwd
+    return ctx, run_cwd, _view_for_run(name, ctx, recipe)
+
+
+def _view_for_run(
+    name: str,
+    ctx: "context.InvocationContext | None",
+    recipe: Any = None,
+) -> "isolation.View":
+    """What this run will be able to see, worked out from what this run is.
+
+    The recipe object is optional because one caller has it in hand and the
+    other does not; when it is missing the registry is asked, and when even that
+    fails the view still names the run's own landing spot. A view assembled from
+    less than the full answer confines *more* than intended rather than less,
+    which is the direction a mistake here has to fail in.
+    """
+    from frago.recipes.registry import get_registry
+
+    if recipe is None:
+        try:
+            recipe = get_registry().find(name)
+        except Exception:
+            recipe = None
+
+    base_dir = getattr(recipe, "base_dir", None) if recipe else None
+    if base_dir is None and recipe is not None:
+        script = getattr(recipe, "script_path", None)
+        base_dir = Path(script).parent if script else None
+
+    landing = ctx.data_dir if ctx is not None else None
+    if landing is None:
+        landing = context.working_dir(name, ctx)
+
+    return isolation.view_for(
+        name,
+        landing_spot=landing,
+        recipe_dir=Path(base_dir) if base_dir else None,
+        shared=dict(ctx.shared) if ctx is not None else {},
+        uses_frago_cli=bool(getattr(getattr(recipe, "metadata", None),
+                                    "uses_frago_cli", False)),
+    )
 
 
 def _bus_token() -> str:
@@ -234,10 +282,17 @@ def _bus_url() -> str:
     """
     port = os.environ.get("FRAGO_SERVER_PORT")
     if not port:
+        # Read out of config.json directly. This used to import
+        # ``frago.config.get_config``, which does not exist — the name lives on
+        # ``ConfigService`` and answers about gui_config.json anyway — so every
+        # machine that had moved its port silently handed each recipe an address
+        # nothing was listening on, which is precisely what the docstring above
+        # promised would not happen.
         try:
-            from frago.config import get_config
-            port = str(get_config().get("server", {}).get("port", 8093))
-        except Exception:
+            config = Path.home() / ".frago" / "config.json"
+            data = json.loads(config.read_text(encoding="utf-8"))
+            port = str((data.get("server") or {}).get("port") or 8093)
+        except (OSError, ValueError, AttributeError):
             port = "8093"
     return f"http://127.0.0.1:{port}"
 
@@ -545,8 +600,8 @@ class RecipeRunner:
         # write. Where its data has not been copied to the new layout yet, the
         # directory is deliberately withheld and the recipe keeps its old
         # behaviour — see `context.for_owner`.
-        ctx, run_cwd = prepare_platform_env(
-            name, resolved_env, ctx=ctx, execution_id=execution_id
+        ctx, run_cwd, view = prepare_platform_env(
+            name, resolved_env, ctx=ctx, execution_id=execution_id, recipe=recipe
         )
         if execution_id:
             # And the hub's half of it: whatever this run asks another module
@@ -599,13 +654,21 @@ class RecipeRunner:
                 # a local process at all — the script executes inside the browser
                 # and reaches the disk, if ever, through frago's own commands.
                 # A working directory would describe nothing.
+                #
+                # **And no isolation either, which is a hole worth naming.** What
+                # gets started here is `frago browser exec-js`, i.e. the
+                # platform's own CLI; confining it to a recipe's view would break
+                # every chrome-js recipe on the machine while protecting nothing
+                # — the script itself runs in a browser this view says nothing
+                # about. The boundary for that runtime is the browser's, and it
+                # is a different piece of work.
                 result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id)
             elif recipe.metadata.runtime == 'python':
                 # Check if system Python is needed (for scripts that depend on system packages like dbus)
                 use_system_python = getattr(recipe.metadata, 'system_packages', False)
-                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd)
+                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd, view=view)
             elif recipe.metadata.runtime == 'shell':
-                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd)
+                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd, view=view)
             else:
                 raise RecipeExecutionError(
                     recipe_name=name,
@@ -732,6 +795,50 @@ class RecipeRunner:
             exit_code=-15,
         )
         return True
+
+    def _confine(
+        self,
+        cmd: list[str],
+        view: "isolation.View | None",
+        *,
+        cwd: str | None,
+        recipe_name: str,
+        runtime: str,
+    ) -> list[str]:
+        """The command that actually gets started: this one, inside its view.
+
+        A machine with no way to confine a recipe refuses to start one. That is
+        a refusal a person can act on — install bubblewrap, or say out loud in
+        the config that this machine runs recipes unconfined — and it is the
+        only honest answer available: the alternative is a run that reads
+        ``~/.ssh`` while every document in this package says it cannot.
+
+        ``view`` is None only for a caller that predates isolation; it confines
+        to nothing rather than to everything, so such a caller fails loudly here
+        instead of quietly running unconfined.
+        """
+        if view is None:
+            view = isolation.View()
+        try:
+            confined, backend_name = isolation.wrap(
+                cmd, view, cwd=Path(cwd) if cwd else None
+            )
+        except isolation.NoBackend as err:
+            raise RecipeExecutionError(
+                recipe_name=recipe_name,
+                runtime=runtime,
+                exit_code=-1,
+                stderr=(
+                    f"{err}\n"
+                    f"配方是一个拿着整台机器的进程，隔离是它唯一的边界，所以没有隔离就不起。\n"
+                    f"确实要在没有隔离的情况下跑：在 ~/.frago/config.json 里写 "
+                    f'"recipe": {{"isolation": "off"}}——这句话有名有姓，'
+                    f"不是一次静默的降级。"
+                ),
+            ) from err
+        if backend_name:
+            logger.debug("recipe %s confined by %s", recipe_name, backend_name)
+        return confined
 
     def _run_subprocess(
         self,
@@ -996,6 +1103,7 @@ class RecipeRunner:
         timeout: int | None = None,
         execution_id: str | None = None,
         cwd: str | None = None,
+        view: "isolation.View | None" = None,
     ) -> dict[str, Any]:
         """
         Execute Python Recipe
@@ -1042,6 +1150,9 @@ class RecipeRunner:
             # Build command: uv run <script_path> <params_json>
             # uv will automatically handle PEP 723 inline dependencies (# /// script ... # ///)
             cmd = ['uv', 'run', str(script_path), params_json]
+
+        cmd = self._confine(cmd, view, cwd=cwd, recipe_name=recipe_name,
+                            runtime='python')
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(
@@ -1099,6 +1210,7 @@ class RecipeRunner:
         timeout: int | None = None,
         execution_id: str | None = None,
         cwd: str | None = None,
+        view: "isolation.View | None" = None,
     ) -> dict[str, Any]:
         """
         Execute Shell Recipe
@@ -1128,7 +1240,8 @@ class RecipeRunner:
 
         # Build command: <script_path> <params_json>
         params_json = json.dumps(params)
-        cmd = [str(script_path), params_json]
+        cmd = self._confine([str(script_path), params_json], view, cwd=cwd,
+                            recipe_name=recipe_name, runtime='shell')
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(

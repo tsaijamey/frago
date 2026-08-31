@@ -40,12 +40,13 @@ pretend it has one. Only a visitor run gives it both the right and the duty to
 decide.
 """
 
+import contextlib
 import json
 import os
 import re
 import secrets
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -213,6 +214,14 @@ class InvocationContext:
     data_dir: Path | None = None
     common_dir: Path | None = None
 
+    #: The real directories behind ``common_dir``, keyed by the module that
+    #: opened each one. The recipe never sees this — it sees the staged root
+    #: above — but the isolation policy is built from it, because a rule about
+    #: a symlink is a rule about nothing: the kernel resolves the link first.
+    #: Empty on a context read back out of an environment; only the platform
+    #: side, which worked out who shares what, can populate it.
+    shared: dict[str, Path] = field(default_factory=dict)
+
     @property
     def is_visitor(self) -> bool:
         return self.caller == VISITOR
@@ -282,79 +291,127 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
     )
 
 
-def common_dirs_for(recipe_name: str) -> Path | None:
-    """The directory a run may read other recipes' shared data from.
+def shared_with(recipe_name: str) -> tuple[Path | None, dict[str, Path], list[str]]:
+    """What this recipe may read of other modules', and where it will find it.
 
-    Handed over as one root that the recipe joins a producer's name onto — the
-    shape recipes already use — but the root is **built for this recipe** rather
-    than being the tree itself. It holds one entry per producer the owner
-    granted, and nothing else, so a recipe joining a name it was not granted
-    finds no directory there.
+    Returns the root to hand over, the real subtrees behind it keyed by
+    producer, and whatever could not be honoured. The middle value is what the
+    isolation policy is built from, which is the whole reason this returns three
+    things instead of a path: the directory a recipe is *told about* and the
+    directory a kernel is *held to* must be the same directory, and they were
+    two answers computed in two places for as long as read-only was a sentence
+    rather than a fact.
 
-    That indirection is the correction. The root used to be
-    ``~/.frago/recipe-data/`` outright, handed over whenever the recipe declared
-    *any* producer — so the declaration bought the whole tree, and a recipe that
-    named one producer could read every one of them. A declaration is a request;
-    the grant is the owner's, and it lives in ``frago.recipes.grants``.
+    **Two declarations, both required, said by the two different sides.** The
+    consumer's ``reads_common`` says whose data it reads. The producer's
+    ``shares`` says which block of its own data is open. Neither side can grant
+    itself anything: a consumer naming a producer that shares nothing gets
+    nothing, and a producer opening a block hands it only to the recipes that
+    wrote the dependency down where both sides can see it.
 
-    None when nothing is both declared and granted, which is almost every
-    recipe. An empty variable and an absent one are different claims, and a
-    recipe with nothing to read should not be handed a door at all.
+    Nobody signs for it, and that is the point of the second declaration rather
+    than an oversight. What used to need an owner's grant was unbounded — a
+    handle on the producer's whole directory, writable, because "read-only" was
+    a contract nobody enforced. A bounded, genuinely read-only block is the kind
+    of thing a machine can hand over, for the same reason ``@export`` needs no
+    signature: what it gives out is a bounded read-only answer.
     """
+    from frago.recipes.app_state import InvalidShare, InvalidSlotName, shared_subtree
     from frago.recipes.exceptions import RecipeNotFoundError
-    from frago.recipes.grants import readable_producers
     from frago.recipes.registry import get_registry
 
     try:
-        recipe = get_registry().find(recipe_name)
+        registry = get_registry()
+        recipe = registry.find(recipe_name)
     except (RecipeNotFoundError, OSError):
-        return None
-    declared = getattr(recipe.metadata, "reads_common", None) or []
+        return None, {}, []
+    declared = list(getattr(recipe.metadata, "reads_common", None) or [])
     if not declared:
-        return None
-    allowed = readable_producers(recipe_name, list(declared))
-    staged = _stage_common_dirs(recipe_name, allowed)
-    # Built even when the answer is "nothing", because that is what a revocation
-    # looks like: the grant is gone, and the link left behind from the last run
-    # would otherwise keep the door open for as long as the directory survives.
-    # Rebuilding first and refusing second is the difference between a revocation
-    # and a note about one.
-    return staged if allowed else None
+        return None, {}, []
+
+    subtrees: dict[str, Path] = {}
+    problems: list[str] = []
+    for producer in declared:
+        if producer == recipe_name:
+            # A recipe reading its own shared block. Not an error and not a
+            # dependency: the platform already hands it its own tree, and the
+            # engines that compute a machine-level result read it back the same
+            # way everyone else does.
+            continue
+        try:
+            other = registry.find(producer)
+        except (RecipeNotFoundError, OSError):
+            problems.append(
+                f"reads_common 里的 {producer} 在这台机器上没有这个配方。"
+            )
+            continue
+        opened = getattr(other.metadata, "shares", "") or ""
+        if not opened:
+            problems.append(
+                f"{producer} 没有声明 shares，它没有对外开放任何一块数据——"
+                f"在 {producer}/recipe.md 里写上 shares: <子路径>，"
+                f"由数据的主人说哪一块可以被读。"
+            )
+            continue
+        try:
+            subtrees[producer] = shared_subtree(producer, opened)
+        except (InvalidShare, InvalidSlotName) as err:
+            problems.append(f"{producer} 的 shares 不能用：{err}")
+
+    staged = _stage_shared(recipe_name, subtrees)
+    return (staged if subtrees else None), subtrees, problems
 
 
-def _stage_common_dirs(recipe_name: str, producers: list[str]) -> Path | None:
-    """Build this recipe's view of the shared tree: one link per granted producer.
+def common_dirs_for(recipe_name: str) -> Path | None:
+    """The root a run reads other modules' shared blocks under, or None.
+
+    None when this recipe declared nothing, or when nothing it declared is
+    actually shared. An empty variable and an absent one are different claims,
+    and a recipe with nothing to read should not be handed a door at all.
+    """
+    root, _, _ = shared_with(recipe_name)
+    return root
+
+
+def _stage_shared(recipe_name: str, subtrees: dict[str, Path]) -> Path | None:
+    """Build this recipe's view: one link per producer, pointing at one block.
+
+    The shape a consumer sees is unchanged — ``<root>/<producer>/…`` with the
+    producer's own path below it — because that is what the recipes reading
+    these directories already join. What changed is what sits at the far end of
+    the link: the producer's whole tree before, the one block it declared now.
+    A consumer walking up out of that block finds nothing above it, and under
+    isolation the kernel says the same thing.
 
     Rebuilt from scratch each time rather than patched, because the interesting
-    change is a *revocation* — and a patch that only adds is a revocation that
-    never takes effect. Anything in here that is not on the current list goes,
-    including a name that is no longer a recipe.
+    change is a *withdrawal* — a producer that stops sharing, or a recipe that
+    stops declaring — and a patch that only adds is a withdrawal that never
+    takes effect.
 
-    Links rather than copies, for the reason ``app_state.common_dir`` gives:
-    everyone reads the same copy and exactly one recipe updates it, so a copy
-    would go stale silently in as many directions as there are readers.
-
-    Returns None if the directory cannot be built. A run that would otherwise
-    start with a half-built view is a run that reads some of its dependencies
-    and silently skips the rest.
+    Returns None if the view cannot be built. A run that would otherwise start
+    with a half-built one is a run that reads some of its dependencies and
+    silently skips the rest.
     """
-    from frago.recipes.app_state import RECIPE_DATA, _validate
+    from frago.recipes.app_state import READS_DIR, _validate, machine_root
 
-    root = Path.home() / ".frago" / RECIPE_DATA
-    staged = root / recipe_name / "granted"
+    staged = machine_root(recipe_name) / READS_DIR
     try:
         staged.mkdir(parents=True, exist_ok=True)
         wanted = set()
-        for producer in producers:
+        for producer, subtree in subtrees.items():
             try:
                 _validate(producer, "default")
             except Exception:
                 continue
             wanted.add(producer)
-            link = staged / producer
-            target = root / producer
+            # The link stands where the producer's own root would, and points at
+            # the block it opened, so the path the consumer joins comes out at
+            # the same place it always did.
+            relative = subtree.relative_to(machine_root(producer))
+            link = staged / producer / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
             if link.is_symlink():
-                if link.readlink() == target:
+                if link.readlink() == subtree:
                     continue
                 link.unlink()
             elif link.exists():
@@ -362,13 +419,41 @@ def _stage_common_dirs(recipe_name: str, producers: list[str]) -> Path | None:
                 # a real directory somebody put there, and deleting data is not
                 # this function's business.
                 continue
-            link.symlink_to(target, target_is_directory=True)
+            link.symlink_to(subtree, target_is_directory=True)
         for existing in staged.iterdir():
-            if existing.name not in wanted and existing.is_symlink():
-                existing.unlink()
+            if existing.name not in wanted:
+                _retire(existing)
     except OSError:
         return None
     return staged
+
+
+def _retire(entry: Path) -> None:
+    """Take a producer out of this recipe's view, link or staged directory.
+
+    Only ever removes links and the empty scaffolding around them — a real
+    directory somebody put here is left where it is, because deleting data is
+    not this function's business and a withdrawal is not a reason to lose any.
+    """
+    if entry.is_symlink():
+        entry.unlink()
+        return
+    if not entry.is_dir():
+        return
+    for child in sorted(entry.rglob("*"), reverse=True):
+        try:
+            if child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()          # empty ones only; anything else stays
+        except OSError:
+            continue
+    # A directory that will not go is one with something real still in it. Left
+    # alone, and left visible: a directory outliving its link is a thing
+    # somebody can look at, which is the right outcome for data nobody meant to
+    # delete.
+    with contextlib.suppress(OSError):
+        entry.rmdir()
 
 
 def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext:
@@ -397,11 +482,13 @@ def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext
 
     who = default_identity()
     behind = data_left_behind(recipe_name, who, project or DEFAULT_SLOT)
+    root, subtrees, _ = shared_with(recipe_name)
     return InvocationContext(
         caller=OWNER,
         slot=who,
         data_dir=recipe_data_dir(who, recipe_name, project) if behind is None else None,
-        common_dir=common_dirs_for(recipe_name),
+        common_dir=root,
+        shared=subtrees,
     )
 
 
@@ -451,14 +538,17 @@ def for_visitor(recipe_name: str, identity: str) -> InvocationContext:
         except (OSError, ValueError):
             spot = fallback
 
+    root, subtrees, _ = shared_with(recipe_name)
     return InvocationContext(
         caller=VISITOR,
         slot=identity,
         data_dir=spot,
         # Shared data is machine-level and read-only, so a visitor's run gets
         # the same door the owner's does — it is the one thing here that is not
-        # per person. Which producers this recipe may read is its own declaration.
-        common_dir=common_dirs_for(recipe_name),
+        # per person. Which producers this recipe may read is its own
+        # declaration, and which block of theirs it reaches is theirs.
+        common_dir=root,
+        shared=subtrees,
     )
 
 

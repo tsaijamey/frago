@@ -78,7 +78,17 @@
 
 ### 怎么读别人的共读数据
 
-**在自己的 recipe.md 里声明，然后用平台交代的那个根去拼。**
+**两边各说一句，缺一句就拿不到。没有第三个人要签字。**
+
+被读的那一方，在自己的 recipe.md 里点名交出哪一块：
+
+```yaml
+# 声明的是「我自己数据里的哪一部分」，不是「谁可以读」。
+# 相对 ~/.frago/recipe-data/<本配方>/，不写就是什么都不共享。
+shares: share/common
+```
+
+读的那一方，在自己的 recipe.md 里写下这条依赖：
 
 ```yaml
 reads_common:
@@ -93,18 +103,49 @@ if not root:
 hist = Path(root) / "cn_stock_data_feed" / "share" / "common" / "hist"
 ```
 
-没声明的配方**收不到这个变量**——它不该有一扇自己不需要的门。
+没声明的配方**收不到这个变量**——它不该有一扇自己不需要的门。对方没写 `shares`，
+`frago recipe validate` **当场拒绝**：跑起来必然读到空的东西，不叫「值得注意」，
+叫现在就是坏的。查现状：`frago recipe reads`。
 
-声明这件事本身才是重点：**持有数据的那个配方，没有任何办法知道有人在依赖它的目录
-形状。** 它改自己的文件，弄坏一张它从没听说过的页面，而且改的人看不到任何提示。
-把依赖写下来，是唯一能让双方都看见它的办法。
+两句话各自解决一件事：
 
-共读数据靠**平台在起进程时多交代一个只读目录**告诉配方，NEVER 用软链接或硬链接：
+- `reads_common` 让**被读的一方知道自己正在被读**。持有数据的那个配方，没有任何
+  办法自己发现这件事；它改自己的文件，弄坏一张它从没听说过的页面。
+- `shares` 让交出去的东西**有界**。有界是关键：无界的句柄靠谁签字都兜不住，而有界
+  且在隔离下真只读的东西，机器自己就能放行——所以这里没有任何一步要人点头。
+
+平台按 `shares` 只交出那一块，**且在隔离下物理只读**：消费方写它会拿到
+`PermissionError`，不是拿到一句承诺。NEVER 用硬链接：
 
 - 硬链接的后果取决于配方怎么保存文件——「写临时文件再顶替」会断开链接变成两份，
   「原地改」会穿透污染所有人。同一个动作两种相反结果，从目录结构上看不出会是哪一种。
-- 软链接只说明位置，说明不了谁能写。而共读数据的核心约束正是「所有人读、只有一个
-  配方能写」。想用文件权限兜底也兜不住：一台机器上所有用户共用同一个系统身份。
+
+## 配方跑在一个视图里
+
+起进程时平台把配方关进一个只看得见该看的东西的视图（macOS `sandbox-exec`，
+Linux `bwrap`）：
+
+| | |
+|---|---|
+| 本次运行的落点 | 可写 |
+| 本配方自己的机器级目录 `~/.frago/recipe-data/<本配方>/` | 可写 |
+| 别人 `shares` 出来的那一块 | **只读** |
+| 系统、解释器、配方源码 | 只读 |
+| 其余一切——`~/.ssh`、别的账号的数据、别人的凭证、机器身份 | **不存在** |
+
+于是这几条从「规矩」变成「事实」：读别人的目录不再是不礼貌，是 `PermissionError`。
+
+要 shell 出去调 frago 自己的命令（`frago browser` / `frago desktop` …）的配方，
+在 recipe.md 里写 `uses_frago_cli: true`——它只交出 frago 自己的机器件，不含任何人的
+数据。不写而调用，`validate` 直接拒绝：隔离下那句命令必然失败。
+
+Linux 上没装隔离工具（bubblewrap）的机器**拒绝起配方**。确实要在没有隔离的情况下跑，
+得在 `~/.frago/config.json` 里明写 `"recipe": {"isolation": "off"}`——这句话有名有姓，
+不是一次静默的降级。
+
+**Windows 例外：照常跑，每次警告。** 那上面没有合用的隔离办法，而它通常是一个人自己
+的电脑——配方能碰到的数据本来就是他自己的，拦下来只换来一个不能用的 frago。警告每次
+都发：哪天这台机器上多了第二个人，得有人知道这里从来没有边界。
 
 ## 运行必须绑定用户
 
@@ -188,16 +229,20 @@ NEVER 改成 `import frago`：带 PEP 723 块的配方跑在隔离环境里，im
 返回值。自己读自己的数据不受这条限制。
 
 ```python
-# ❌ 错：按路径去翻别人的缓存
+# ❌ 错：按路径去翻别人的缓存（隔离下这条路径根本不存在，当场 PermissionError）
 hist = Path.home() / ".frago/data/stock/recipe-caches/cn_stock_data_feed/hist"
 rows = json.loads((hist / f"{code}.json").read_text())
 
-# ✅ 对：问它要
-r = subprocess.run(["frago", "recipe", "run", "cn_stock_data_feed",
-                    "--params", json.dumps({"mode": "read", "symbol": code})],
-                   capture_output=True, text=True, timeout=120)
-rows = json.loads(r.stdout)["data"]
+# ✅ 对：走总线问它要（先在 recipe.md 的 imports 里声明用了它哪个口）
+rows = self.ask("cn_stock_data_feed", "read", {"symbol": code})["rows"]
 ```
+
+NEVER 用 `subprocess.run(["frago", "recipe", "run", …])` 代替 `self.ask`：那是绕过总线
+再起一个进程，谁在读谁没人记下来；而且隔离下 frago 命令看不见自己的工作目录，除非
+配方声明了 `uses_frago_cli`。总线是这件事的正门。
+
+**大块数据是例外，而且是声明过的例外**：七千只标的的日线不该一只一次调用（实测每次
+约 0.5 秒，七千只就是一小时）。那走共读——见上面 `shares` / `reads_common` 那一节。
 
 ### 为什么是硬规则
 

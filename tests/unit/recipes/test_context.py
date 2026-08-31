@@ -403,19 +403,20 @@ class TestAnOwnerRunKnowsWhoseItIs:
         assert context.current({}).slot is None
 
 
-class TestSharedDataOnlyReachesWhoAskedForItAndWasGranted:
-    """Two halves, and they fail in opposite directions.
+class TestSharedDataNeedsBothSidesToHaveSaidSomething:
+    """Two declarations, said by the two different sides, and neither is enough.
 
-    The recipe **declares** what it reads, because the recipe holding the data
-    has no way of knowing somebody depends on its layout — it edits its own
-    files and breaks a page it has never heard of. The owner **grants** it,
-    because a declaration is made by the side that benefits from it: a recipe
-    that could declare its way into another's directory is a recipe authorising
-    itself, which is the whole of what "cross-recipe reads must be granted"
-    means.
+    The consumer's ``reads_common`` says whose data it reads — the recipe
+    holding the data has no other way of knowing somebody depends on its layout,
+    and edits its own files to break a page it has never heard of.
 
-    And the door is built per recipe rather than being the tree itself. Handing
-    over `~/.frago/recipe-data/` meant one declared producer bought the lot.
+    The producer's ``shares`` says which block of its own data is open. That is
+    the half that used to be missing, and its absence is why the arrangement
+    needed an owner's signature: what a declaration bought was a writable handle
+    on the producer's *whole* directory, and no amount of signing makes an
+    unbounded handle safe. A bounded, read-only block is something a machine can
+    hand over — which is exactly why `frago recipe grant` is gone rather than
+    merely automated.
     """
 
     @pytest.fixture
@@ -423,80 +424,122 @@ class TestSharedDataOnlyReachesWhoAskedForItAndWasGranted:
         monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(tmp_path / "identity.json"))
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / ".frago" / "users"))
-        monkeypatch.setenv("FRAGO_RECIPE_GRANTS_FILE", str(tmp_path / "grants.json"))
         return tmp_path
 
-    def _registry(self, monkeypatch, declares):
+    def _registry(self, monkeypatch, *, reads=(), shares=None):
+        """A machine holding one consumer and whatever producers ``shares`` names."""
+        shares = shares or {}
+
         class _Meta:
-            reads_common = declares
+            def __init__(self, reads_common, shared):
+                self.reads_common = list(reads_common)
+                self.shares = shared
 
         class _Recipe:
-            metadata = _Meta()
+            def __init__(self, meta):
+                self.metadata = meta
 
         class _Registry:
             def find(self, name, source=None):
-                return _Recipe()
+                from frago.recipes.exceptions import RecipeNotFoundError
+
+                if name == "demo_board":
+                    return _Recipe(_Meta(reads, ""))
+                if name in shares:
+                    return _Recipe(_Meta([], shares[name]))
+                raise RecipeNotFoundError(name, [])
 
         monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
 
     def test_a_recipe_that_declared_nothing_is_handed_nothing(self, machine, monkeypatch):
-        self._registry(monkeypatch, [])
+        self._registry(monkeypatch, reads=[])
         assert context.common_dirs_for("demo_board") is None
         assert context.for_owner("demo_board").common_dir is None
 
-    def test_declaring_without_a_grant_is_handed_nothing(self, machine, monkeypatch):
-        """The correction. This used to be the whole test, and it passed."""
-        self._registry(monkeypatch, ["cn_stock_data_feed"])
-        assert context.common_dirs_for("demo_board") is None
+    def test_reading_something_nobody_shared_is_handed_nothing(self, machine, monkeypatch):
+        """Declaring is asking. The answer comes from the other side."""
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": ""})
+        root, subtrees, problems = context.shared_with("demo_board")
+        assert root is None and subtrees == {}
+        assert any("shares" in one for one in problems)
 
-    def test_a_granted_producer_becomes_one_entry_in_this_recipe_s_own_door(
+    def test_a_shared_block_becomes_one_entry_in_this_recipe_s_own_door(
             self, machine, monkeypatch):
-        from frago.recipes import grants
-
-        self._registry(monkeypatch, ["cn_stock_data_feed"])
-        grants.grant("demo_board", "cn_stock_data_feed")
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": "share/common"})
 
         root = context.common_dirs_for("demo_board")
-        assert root == machine / ".frago" / "recipe-data" / "demo_board" / "granted"
-        # The shape recipes already join onto: <root>/<producer>/share/common
-        assert (root / "cn_stock_data_feed").resolve() == (
+        assert root == machine / ".frago" / "recipe-data" / "demo_board" / "reads"
+        # The shape recipes already join onto — <root>/<producer>/share/common —
+        # comes out at the producer's block and nowhere above it.
+        assert (root / "cn_stock_data_feed" / "share" / "common").resolve() == (
             machine / ".frago" / "recipe-data" / "cn_stock_data_feed"
+            / "share" / "common"
         )
 
-    def test_an_ungranted_producer_is_simply_not_there(self, machine, monkeypatch):
-        from frago.recipes import grants
+    def test_nothing_above_the_shared_block_is_reachable_through_the_door(
+            self, machine, monkeypatch):
+        """The bound is the point: a link at the producer's root would have
+        handed over its whole directory, which is what a grant used to sign
+        for."""
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": "share/common"})
+        root = context.common_dirs_for("demo_board")
+        assert not (root / "cn_stock_data_feed").is_symlink()
+        assert (root / "cn_stock_data_feed" / "share" / "common").is_symlink()
 
-        self._registry(monkeypatch, ["cn_stock_data_feed", "someone_else"])
-        grants.grant("demo_board", "cn_stock_data_feed")
-
+    def test_a_producer_that_shares_nothing_is_simply_not_there(
+            self, machine, monkeypatch):
+        self._registry(monkeypatch, reads=["cn_stock_data_feed", "someone_else"],
+                       shares={"cn_stock_data_feed": "share/common",
+                               "someone_else": ""})
         root = context.common_dirs_for("demo_board")
         # A link, not a copy — and a link whose target may not exist yet, because
         # the producer is entitled not to have run.
-        assert (root / "cn_stock_data_feed").is_symlink()
-        assert not (root / "someone_else").is_symlink()
+        assert (root / "cn_stock_data_feed" / "share" / "common").is_symlink()
+        assert not (root / "someone_else").exists()
 
-    def test_revoking_takes_the_entry_away_again(self, machine, monkeypatch):
-        """A door rebuilt by adding only is a revocation that never happens."""
-        from frago.recipes import grants
-
-        self._registry(monkeypatch, ["cn_stock_data_feed"])
-        grants.grant("demo_board", "cn_stock_data_feed")
+    def test_withdrawing_takes_the_entry_away_again(self, machine, monkeypatch):
+        """A door rebuilt by adding only is a withdrawal that never happens."""
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": "share/common"})
         root = context.common_dirs_for("demo_board")
-        assert (root / "cn_stock_data_feed").is_symlink()
+        assert (root / "cn_stock_data_feed" / "share" / "common").is_symlink()
 
-        grants.revoke("demo_board", "cn_stock_data_feed")
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": ""})
         assert context.common_dirs_for("demo_board") is None
-        assert not (root / "cn_stock_data_feed").is_symlink()
+        assert not (root / "cn_stock_data_feed").exists()
+
+    def test_the_real_block_comes_back_beside_the_door(self, machine, monkeypatch):
+        """What the recipe is told about and what the kernel is held to have to
+        be the same directory, so both come out of one call."""
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": "share/common"})
+        _, subtrees, problems = context.shared_with("demo_board")
+        assert problems == []
+        assert subtrees == {
+            "cn_stock_data_feed": machine / ".frago" / "recipe-data"
+            / "cn_stock_data_feed" / "share" / "common"
+        }
+        assert context.for_owner("demo_board").shared == subtrees
 
     def test_it_reaches_the_recipe_as_a_variable(self, machine, monkeypatch):
-        from frago.recipes import grants
-
-        self._registry(monkeypatch, ["cn_stock_data_feed"])
-        grants.grant("demo_board", "cn_stock_data_feed")
+        self._registry(monkeypatch, reads=["cn_stock_data_feed"],
+                       shares={"cn_stock_data_feed": "share/common"})
         env = {}
         context.apply_to_env(env, context.for_owner("demo_board"))
         assert env[context.COMMON_DIR_ENV] == str(
-            machine / ".frago" / "recipe-data" / "demo_board" / "granted")
+            machine / ".frago" / "recipe-data" / "demo_board" / "reads")
+
+    def test_a_producer_nobody_can_find_is_said_out_loud(self, machine, monkeypatch):
+        """Silence here is the failure this whole area keeps producing: the run
+        starts, reads an empty directory, and reports that there is no data."""
+        self._registry(monkeypatch, reads=["gone_away"])
+        root, subtrees, problems = context.shared_with("demo_board")
+        assert root is None and subtrees == {}
+        assert any("gone_away" in one for one in problems)
 
     def test_a_recipe_nobody_can_find_is_handed_nothing(self, machine, monkeypatch):
         """A registry that cannot answer must not become a reason to open the
