@@ -462,17 +462,36 @@ class Bubblewrap(Backend):
     def available(self) -> bool:
         return platform.system() == "Linux" and bool(shutil.which("bwrap"))
 
+    #: Places bwrap furnishes itself, and which must not then be bound over with
+    #: the host's copy.
+    #:
+    #: **``/dev`` is the one that bites, and it was not the obvious suspect.**
+    #: Binding the host's ``/dev`` on top of the small one bwrap builds leaves
+    #: the tool that starts the interpreter unable to work out which C library
+    #: this machine has, and it gives up before running anything: every recipe
+    #: on the demo server died before its first line on 2026-08-31, minutes
+    #: after that machine got its isolation backend installed.
+    #:
+    #: The measurement is worth recording, because the plausible story was
+    #: wrong: bind the host's ``/proc`` alone and everything works; bind the
+    #: host's ``/dev`` alone and everything breaks. ``/proc`` is on this list
+    #: anyway — a run in its own pid namespace has no business reading the
+    #: host's process table — but it is here for isolation, not for this bug.
+    FURNISHED = frozenset({Path("/proc"), Path("/dev")})
+
     def wrap(self, cmd: list[str], view: View, *, cwd: Path | None) -> list[str]:
         argv = ["bwrap", "--die-with-parent", "--unshare-pid", "--proc", "/proc",
                 "--dev", "/dev", "--tmpfs", "/tmp"]
         for path in view.readable:
-            if path in view.shared:
+            if path in view.shared or path in self.FURNISHED:
                 continue
             argv += ["--ro-bind-try", str(path), str(path)]
         writable = list(view.writable)
         if cwd is not None and cwd not in writable:
             writable.append(cwd)
         for path in writable:
+            if path in self.FURNISHED:
+                continue
             argv += ["--bind-try", str(path), str(path)]
         # Mounted last, so that a writable bind covering the same place is
         # covered *by* this one rather than the other way round. Same reason the

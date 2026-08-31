@@ -17,6 +17,7 @@ import json
 import platform
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -141,6 +142,25 @@ class TestTheMountsLinuxIsHeldTo:
         argv = isolation.Bubblewrap().wrap(["echo"], view, cwd=None)
         assert argv[-2:] == ["--", "echo"]
         assert argv.index("--ro-bind-try") > argv.index("--bind-try")
+
+    def test_it_does_not_bind_the_hosts_proc_and_dev_back_over_its_own(self, tmp_path):
+        """bwrap furnishes /proc and /dev itself; binding the host's copies on
+        top is what broke every recipe on the demo server on 2026-08-31 — the
+        tool that starts the interpreter could no longer tell which C library
+        the machine has, and gave up before running a line. Measured: the host's
+        /proc alone is harmless, the host's /dev alone breaks it. Both are kept
+        out — /dev because of this, /proc because a run in its own pid namespace
+        has no business reading the host's process table."""
+        view = isolation.View(
+            writable=(Path("/dev"), tmp_path),
+            readable=(Path("/usr"), Path("/proc")),
+        )
+        argv = isolation.Bubblewrap().wrap(["echo"], view, cwd=None)
+        assert "--proc" in argv and "--dev" in argv          # bwrap 自己铺
+        pairs = list(zip(argv, argv[1:]))
+        assert ("--ro-bind-try", "/proc") not in pairs
+        assert ("--bind-try", "/dev") not in pairs
+        assert ("--ro-bind-try", "/usr") in pairs            # 别的照常
 
     def test_the_command_survives_intact(self, tmp_path):
         argv = isolation.Bubblewrap().wrap(
