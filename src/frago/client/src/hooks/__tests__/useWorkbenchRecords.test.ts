@@ -169,3 +169,179 @@ describe('useWorkbenchRecords', () => {
     await waitFor(() => expect(result.current.records).toHaveLength(PAGE_SIZE));
   });
 });
+
+describe('刚发完话那一阵', () => {
+  it('举起「在等 agent 开口」，流里已有的旧记录不算它开了口', async () => {
+    vi.stubGlobal('fetch', stubSession(() => 3));
+    const { result } = renderHook(() => useWorkbenchRecords(SID));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    expect(result.current.awaitingAgent).toBe(false);
+    act(() => result.current.markSent('一句话'));
+    // 手上这三条都是上一轮的，一条都不该被当成"它刚开口"。
+    expect(result.current.awaitingAgent).toBe(true);
+  });
+
+  it('agent 真吐出新记录，「在等」立刻撤掉', async () => {
+    let grown = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const fresh = { ...record(3), ts: Date.now(), kind: 'tool.call' as const };
+        const body = /[?&]tail=true/.test(String(input))
+          ? [record(0), record(1), record(2)]
+          : grown
+            ? [fresh]
+            : [];
+        return { ok: true, json: async () => body } as Response;
+      })
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('一句话'));
+    expect(result.current.awaitingAgent).toBe(true);
+
+    // markSent 进了快节拍，一秒一趟——不必等满平时的五秒。
+    grown = true;
+    await waitFor(() => expect(result.current.records).toHaveLength(4), { timeout: 4000 });
+    await waitFor(() => expect(result.current.awaitingAgent).toBe(false));
+  });
+
+  it('用户自己刚说的那句不算 agent 开了口', async () => {
+    let grown = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const mine = { ...record(3), ts: Date.now(), kind: 'user.say' as const };
+        const body = /[?&]tail=true/.test(String(input))
+          ? [record(0), record(1), record(2)]
+          : grown
+            ? [mine]
+            : [];
+        return { ok: true, json: async () => body } as Response;
+      })
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('一句话'));
+    grown = true;
+    await waitFor(() => expect(result.current.records).toHaveLength(4), { timeout: 4000 });
+    expect(result.current.awaitingAgent).toBe(true);
+  });
+
+  it('那句话根本没发出去时把「在等」撤掉——挂着一句假的比不提示还糟', async () => {
+    vi.stubGlobal('fetch', stubSession(() => 3));
+    const { result } = renderHook(() => useWorkbenchRecords(SID));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('一句话'));
+    expect(result.current.awaitingAgent).toBe(true);
+    act(() => result.current.clearSent());
+    expect(result.current.awaitingAgent).toBe(false);
+  });
+
+  it('换一场会话，上一场的「在等」不许跟过去', async () => {
+    vi.stubGlobal('fetch', stubSession(() => 3));
+    const other = '11111111-2222-3333-4444-555555555555';
+    const { result, rerender } = renderHook(({ sid }) => useWorkbenchRecords(sid), {
+      initialProps: { sid: SID },
+    });
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+    act(() => result.current.markSent('一句话'));
+    expect(result.current.awaitingAgent).toBe(true);
+
+    rerender({ sid: other });
+    expect(result.current.awaitingAgent).toBe(false);
+  });
+});
+
+describe('送达信号：输入区靠它放行', () => {
+  function stubGrowing(fresh: () => WorkbenchRecord | null) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const body = /[?&]tail=true/.test(String(input))
+        ? [record(0), record(1), record(2)]
+        : (() => {
+            const f = fresh();
+            return f ? [f] : [];
+          })();
+      return { ok: true, json: async () => body } as Response;
+    });
+  }
+
+  it('自己那句话作为用户发言落进流里，就算送达', async () => {
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? { ...record(3), ts: Date.now(), kind: 'user.say', payload: { text: '去备份目录找' } }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('去备份目录找'));
+    expect(result.current.deliveredAt).toBeNull();
+
+    landed = true;
+    await waitFor(() => expect(result.current.deliveredAt).not.toBeNull(), { timeout: 4000 });
+  });
+
+  it('插话没有用户发言那种形态，靠插话卡也要能算送达', async () => {
+    // agent 正忙时投进去的话被引擎并进当轮，会话记录里**根本不会有用户发言**。
+    // 只认用户发言的话，这种情况下输入框永远等不到放行——正是"发出去了却清不掉"。
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? {
+              ...record(3),
+              ts: Date.now(),
+              kind: 'context.inject',
+              payload: { channel: 'queued_command', body: '插一句', queue_state: 'absorbed' },
+            }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('插一句'));
+    landed = true;
+    await waitFor(() => expect(result.current.deliveredAt).not.toBeNull(), { timeout: 4000 });
+  });
+
+  it('流里的老记录不算送达——同一句话重发一遍不许被上一轮那条顶掉', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => [
+          // 时刻在很久以前：这是上一轮说过的同一句话。
+          { ...record(0), ts: 1_753_800_000_000, kind: 'user.say', payload: { text: '再来一次' } },
+        ],
+      })) as unknown as typeof fetch
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID));
+    await waitFor(() => expect(result.current.records).toHaveLength(1));
+
+    act(() => result.current.markSent('再来一次'));
+    expect(result.current.deliveredAt).toBeNull();
+  });
+
+  it('换一场会话，上一场的送达信号不许跟过去', async () => {
+    vi.stubGlobal('fetch', stubSession(() => 3));
+    const other = '11111111-2222-3333-4444-555555555555';
+    const { result, rerender } = renderHook(({ sid }) => useWorkbenchRecords(sid), {
+      initialProps: { sid: SID },
+    });
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+    act(() => result.current.markSent('一句话'));
+    rerender({ sid: other });
+    expect(result.current.deliveredAt).toBeNull();
+  });
+});

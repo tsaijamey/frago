@@ -12,8 +12,14 @@
  * `after` 是**本批第一条的 seq、闭区间起点**，不是绝对下标：会话被重新解析后 seq 会变，
  * 界面拿着过期的游标只会错位，过期时从尾部重取。
  *
- * 轮询的开关在「这场会话还活不活」：左栏状态为 running，或者刚刚有过动静（发话后的重拉、
- * 上一次增量真的取到了新条目）——活的会话每五秒取一次增量，安静十五分钟后自己停。
+ * **新内容主要靠 WebSocket 推**（服务端盯着会话文件，一动就把增量推过来），轮询是断连时
+ * 的兜底。轮询的开关在「这场会话还活不活」：左栏状态为 running，或者刚刚有过动静——活的
+ * 会话平时五秒取一次增量，安静十五分钟后自己停。
+ *
+ * 节拍是**两档**的。刚按下发送那一分半钟走一秒一趟：发送那条接口要等整整一轮才返回（服务端
+ * 把话投进 tmux 后一直轮询到这一轮说完，上限 180 秒），那段时间里页面手上没有任何别的
+ * 消息来源。五秒一档在这一刻不够——人盯着屏幕等自己那句话落进流里，最坏要等满五秒才看到
+ * 第一点动静，中间没有任何迹象说明话已经送出去了。
  *
  * 分页是硬要求不是礼貌——单条工具结果见过 7.2 万字符，一次拉整场大会话会打死浏览器。
  */
@@ -29,8 +35,38 @@ export const PAGE_SIZE = 200;
 /** 活会话多久取一次增量。 */
 export const POLL_INTERVAL_MS = 5_000;
 
+/**
+ * 刚发完话那一阵多久取一次增量。
+ *
+ * 五秒的节拍在「一直开着看」时是够的，在「刚按下发送」那一刻不够：人盯着屏幕等自己那句
+ * 话落进流里，最坏要等满五秒才看到第一点动静，中间没有任何迹象说明话已经送出去了。
+ * WebSocket 通着的时候这条路根本用不上，它是断连时的兜底。
+ */
+export const FAST_POLL_INTERVAL_MS = 1_000;
+
+/** 发完话之后，快节拍维持多久。跟服务端那次投喂的超时（180 秒）同一量级。 */
+export const FAST_POLL_WINDOW_MS = 90_000;
+
 /** 最后一次动静过后，多久还当这场会话是活的。 */
 export const HOT_WINDOW_MS = 15 * 60_000;
+
+/**
+ * 发完话之后，最多等多久还认为"在等 agent 开口"。
+ *
+ * 到点还没等到就把提示撤掉——挂着一句永远不消失的"在等"，比不提示还糟：人分不出是
+ * agent 在想，还是这条通道早就断了。
+ */
+export const AWAIT_REPLY_CEILING_MS = 180_000;
+
+/** 这几种形态出现，就算 agent 真的开口了。用户自己那句话不算。 */
+const AGENT_ACTIVITY: ReadonlySet<RecordKind> = new Set<RecordKind>([
+  'agent.say',
+  'agent.think',
+  'tool.call',
+  'tool.result',
+  'subagent.dispatch',
+  'error',
+]);
 
 /** 十五种形态。身份由形态直接表达，统一记录不设发言人字段。 */
 export type RecordKind =
@@ -99,6 +135,27 @@ export interface WorkbenchRecordsState {
   loadOlder: () => Promise<void>;
   /** 重取尾部一页。发完话调它，让自己刚说的话立刻落进流里。 */
   reload: () => Promise<void>;
+  /**
+   * 刚投了一句话进去，还没见 agent 有任何动静。
+   *
+   * 从按下发送到第一条新记录落盘，中间隔着一次 tmux 投喂加一轮冷启动，短则一两秒长则
+   * 十几秒。这段空窗里界面上一个字都不变，人只能猜"是没发出去还是它在想"。这个标志
+   * 就是给那句"在等"用的。
+   */
+  awaitingAgent: boolean;
+  /** 告诉记录流「刚发出去一句」：进快节拍、举起"在等 agent 开口"。 */
+  markSent: (text: string) => void;
+  /**
+   * 那句话**确实落进这场会话**的时刻（毫秒，没送达时为 null）。
+   *
+   * 发送那条接口要等整整一轮才返回（上限 180 秒），可"话送到了没有"这件事早在几秒内
+   * 就有答案了——它会以一条记录的形式出现在流里。输入区靠这个时刻放行：清空输入框、
+   * 把按钮从"发送中"放回去。挂在接口返回上的话，人明明看见自己的话已经在流里了，
+   * 输入框却还塞着同一段字、按钮还转着圈，只能切走再切回来才恢复。
+   */
+  deliveredAt: number | null;
+  /** 那句话根本没发出去，把"在等"撤掉。挂着一句假的比不提示还糟。 */
+  clearSent: () => void;
 }
 
 export async function fetchWorkbenchRecords(
@@ -161,6 +218,16 @@ export function useWorkbenchRecords(
   // live 是外部给的（左栏状态），hotUntil 是内部长出来的，取增量时两个都看。
   const liveRef = useRef(live);
   liveRef.current = live;
+  // 刚发完话的快节拍窗口。WebSocket 通着时用不上，断连时它是唯一的兜底。
+  const fastUntil = useRef(0);
+  // 换节拍要把在飞的那个定时器一起换掉，否则"刚按下发送"还要先等满上一档的五秒。
+  // 这个数字只用来重启轮询那个效应，本身不参与任何显示。
+  const [pace, setPace] = useState(0);
+  // 那句话是什么时候投出去的。等到 agent 真有动静、或者等满上限就清掉。
+  const [awaitingSince, setAwaitingSince] = useState<number | null>(null);
+  // 还没在流里露面的那句话。露面即"送达"，输入区据此放行。
+  const pendingSent = useRef<{ text: string; at: number } | null>(null);
+  const [deliveredAt, setDeliveredAt] = useState<number | null>(null);
 
   const loadTail = useCallback(async (sid: string) => {
     if (inflightNewer.current) return;
@@ -216,12 +283,80 @@ export function useWorkbenchRecords(
     await loadTail(sessionId);
   }, [sessionId, loadTail]);
 
+  const markSent = useCallback((text: string) => {
+    const now = Date.now();
+    hotUntil.current = now + HOT_WINDOW_MS;
+    fastUntil.current = now + FAST_POLL_WINDOW_MS;
+    setAwaitingSince(now);
+    setDeliveredAt(null);
+    pendingSent.current = { text: text.trim(), at: now };
+    setPace((n) => n + 1);
+  }, []);
+
+  const clearSent = useCallback(() => {
+    fastUntil.current = 0;
+    pendingSent.current = null;
+    setAwaitingSince(null);
+    setPace((n) => n + 1);
+  }, []);
+
+  /**
+   * 刚投出去那句话，在流里露面了没有。
+   *
+   * 两种露面方式都算，因为**投进去的话本来就有两种落地形态**：agent 当时闲着，它成为
+   * 一条用户发言；agent 正忙着，它成为一张插话卡（那种情况下会话记录里根本不会有用户
+   * 发言，只认前一种会让插话永远等不到放行）。
+   *
+   * 比时刻是必须的：同一句话重发一遍时，不比时刻会让上一轮那条老记录当场"送达"。
+   */
+  useEffect(() => {
+    const pending = pendingSent.current;
+    if (!pending) return;
+    const landed = records.some((r) => {
+      if (r.ts < pending.at - 1_000) return false;
+      if (r.kind === 'user.say') {
+        const text = typeof r.payload.text === 'string' ? r.payload.text.trim() : '';
+        return Boolean(pending.text) && text.startsWith(pending.text);
+      }
+      if (r.kind === 'context.inject' && r.payload.channel === 'queued_command') {
+        const body = typeof r.payload.body === 'string' ? r.payload.body.trim() : '';
+        return body === pending.text;
+      }
+      return false;
+    });
+    if (landed) {
+      pendingSent.current = null;
+      setDeliveredAt(Date.now());
+    }
+  }, [records]);
+
+  // 等到 agent 真有动静就把"在等"撤掉。判据是**记录形态**，不是"记录变多了"——发完话
+  // 重拉一次，多出来的第一条是用户自己刚说的那句，那不算 agent 开了口。
+  useEffect(() => {
+    if (awaitingSince === null) return;
+    const spoke = records.some(
+      (r) => r.ts >= awaitingSince - 1_000 && AGENT_ACTIVITY.has(r.kind)
+    );
+    if (spoke) {
+      setAwaitingSince(null);
+      return;
+    }
+    // 等满上限就撤。挂着一句永不消失的"在等"，比不提示还糟。
+    const remaining = awaitingSince + AWAIT_REPLY_CEILING_MS - Date.now();
+    const timer = setTimeout(() => setAwaitingSince(null), Math.max(0, remaining));
+    return () => clearTimeout(timer);
+  }, [records, awaitingSince]);
+
   useEffect(() => {
     activeSession.current = sessionId;
     recordsRef.current = [];
     setRecords([]);
     setHasOlder(false);
     setError(null);
+    setAwaitingSince(null);
+    setDeliveredAt(null);
+    pendingSent.current = null;
+    fastUntil.current = 0;
     if (!sessionId) return;
     void loadTail(sessionId);
   }, [sessionId, loadTail]);
@@ -258,16 +393,39 @@ export function useWorkbenchRecords(
     }
   }, [sessionId, hasOlder, loadingOlder]);
 
-  // 轮询：会话活着（左栏判 running，或刚刚还有过动静）且页面看得见时，每五秒取一次增量。
+  // 轮询：会话活着（左栏判 running，或刚刚还有过动静）且页面看得见时取增量。
+  //
+  // 节拍是两档的：平时五秒，刚发完话那一分半钟一秒。定时器因此不能是 setInterval——
+  // 节拍要能在两趟之间改，所以每跑完一趟自己排下一趟。
   useEffect(() => {
     if (!sessionId) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      if (!liveRef.current && hotUntil.current < Date.now()) return;
-      void appendNewer(sessionId);
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [sessionId, appendNewer]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      const interval =
+        fastUntil.current > Date.now() ? FAST_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+      timer = setTimeout(tick, interval);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      const visible = document.visibilityState === 'visible';
+      const awake = liveRef.current || hotUntil.current >= Date.now();
+      if (visible && awake) {
+        await appendNewer(sessionId);
+      }
+      if (!cancelled) schedule();
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // pace 变了就重排：换节拍必须连在飞的那个定时器一起换，否则"刚按下发送"还得先
+    // 等满上一档的五秒——那五秒正是人盯着屏幕最想看到动静的五秒。
+  }, [sessionId, appendNewer, pace]);
 
   // WebSocket：服务端有文件监听时直接推增量，比轮询快一整个量级。
   // 轮询留作兜底——WebSocket 断连时它还在跑。
@@ -307,5 +465,17 @@ export function useWorkbenchRecords(
     };
   }, [sessionId]);
 
-  return { records, loading, loadingOlder, hasOlder, error, loadOlder, reload };
+  return {
+    records,
+    loading,
+    loadingOlder,
+    hasOlder,
+    error,
+    loadOlder,
+    reload,
+    awaitingAgent: awaitingSince !== null,
+    deliveredAt,
+    markSent,
+    clearSent,
+  };
 }

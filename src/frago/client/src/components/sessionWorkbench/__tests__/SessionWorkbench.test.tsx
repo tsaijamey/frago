@@ -601,3 +601,120 @@ describe('ReportPanel 右栏', () => {
     expect(container.querySelectorAll('progress, [role="progressbar"]')).toHaveLength(0);
   });
 });
+
+describe('RecordStream 自动跟随的滑法', () => {
+  const GROUP2 = 'msg_01SkR7HrxLZ7hTfaLPKgcyQz';
+
+  function rec(over: Partial<WorkbenchRecord> & { id: string; seq: number }): WorkbenchRecord {
+    return {
+      session_id: '00a02979-7eb4-5c70-94ae-867c8281e3f6',
+      group_id: null,
+      ts: 1_753_800_000_000,
+      kind: 'agent.say',
+      agent_path: [],
+      payload: { text: '一句', model: 'claude-opus-5' },
+      raw_available: true,
+      ...over,
+    } as WorkbenchRecord;
+  }
+
+  const base = [rec({ id: 'a', seq: 0 }), rec({ id: 'b', seq: 1, group_id: GROUP2 })];
+
+  function props(over: Partial<React.ComponentProps<typeof RecordStream>> = {}) {
+    return {
+      sessionId: '00a02979-7eb4-5c70-94ae-867c8281e3f6',
+      records: base,
+      loading: false,
+      loadingOlder: false,
+      hasOlder: false,
+      error: null,
+      onLoadOlder: () => {},
+      ...over,
+    };
+  }
+
+  /** jsdom 没有 scrollTo，装一个能记账的。 */
+  function installScrollTo(el: Element) {
+    const calls: ScrollToOptions[] = [];
+    Object.defineProperty(el, 'scrollTo', {
+      configurable: true,
+      value: (opts: ScrollToOptions) => {
+        calls.push(opts);
+        if (typeof opts.top === 'number') {
+          Object.defineProperty(el, 'scrollTop', { value: opts.top, configurable: true });
+        }
+      },
+    });
+    return calls;
+  }
+
+  function geometry(el: Element, height: number, client: number, top: number) {
+    Object.defineProperty(el, 'scrollHeight', { value: height, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { value: client, configurable: true });
+    Object.defineProperty(el, 'scrollTop', { value: top, configurable: true });
+  }
+
+  it('近处追加用动画滑过去，人眼跟得住"又来了一条"', () => {
+    const { rerender } = render(<RecordStream {...props()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    const calls = installScrollTo(scroller);
+    geometry(scroller, 2000, 800, 1200); // 已经贴着底
+
+    rerender(<RecordStream {...props({ records: [...base, rec({ id: 'c', seq: 2 })] })} />);
+    expect(calls[calls.length - 1]?.behavior).toBe('smooth');
+  });
+
+  it('远处直接落位——那种距离拿动画滑等于让人干等半秒还看不清落点', () => {
+    const { rerender } = render(<RecordStream {...props()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    const calls = installScrollTo(scroller);
+    geometry(scroller, 40000, 800, 0); // 离底部三万多像素
+
+    rerender(<RecordStream {...props({ records: [...base, rec({ id: 'c', seq: 2 })] })} />);
+    expect(calls[calls.length - 1]?.behavior).toBe('auto');
+  });
+
+  it('人一伸手，动画余波立刻作废——不许出现「滚着滚着就不跟了」', () => {
+    const { rerender } = render(<RecordStream {...props()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    installScrollTo(scroller);
+    geometry(scroller, 2000, 800, 1200);
+
+    // 程序刚滑过（挂载时那次沉底留下的余波窗口还开着），紧接着人自己滚轮往上翻。
+    // 这一下必须被认成人滚的：认不出来，自动跟随就永远解除不掉。
+    fireEvent.wheel(scroller);
+    Object.defineProperty(scroller, 'scrollTop', { value: 100, configurable: true });
+    fireEvent.scroll(scroller);
+
+    // 人翻上去了，新条目进来不许把视口拽回底部。
+    const calls = installScrollTo(scroller);
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2600, configurable: true });
+    rerender(<RecordStream {...props({ records: [...base, rec({ id: 'c', seq: 2 })] })} />);
+    expect(calls).toHaveLength(0);
+    expect(scroller.scrollTop).toBe(100);
+  });
+
+  it('页面被藏起来时一律直接落位——后台标签根本不发帧，动画一步都走不了', () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    try {
+      const { rerender } = render(<RecordStream {...props()} />);
+      const scroller = screen.getByTestId('record-stream-scroll');
+      const calls = installScrollTo(scroller);
+      geometry(scroller, 2000, 800, 1200); // 贴着底，本来该走动画那一档
+
+      rerender(<RecordStream {...props({ records: [...base, rec({ id: 'c', seq: 2 })] })} />);
+      expect(calls[calls.length - 1]?.behavior).toBe('auto');
+      expect(scroller.scrollTop).toBe(2000);
+    } finally {
+      hidden.mockRestore();
+    }
+  });
+
+  it('刚发完话，流的末尾挂一条"在等 agent 开口"', () => {
+    const { rerender } = render(<RecordStream {...props()} />);
+    expect(screen.queryByTestId('awaiting-agent')).toBeNull();
+    rerender(<RecordStream {...props({ awaitingAgent: true })} />);
+    expect(screen.getByTestId('awaiting-agent')).toBeTruthy();
+    expect(screen.getByText(/在等 agent 开口/)).toBeTruthy();
+  });
+});

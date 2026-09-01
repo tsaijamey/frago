@@ -29,8 +29,17 @@ export interface ComposerProps {
   sessionId: string | null;
   /** 这场会话是哪一家。只用来把「在跟谁说话」写进占位话，不参与可发判定。 */
   family: SessionFamily | null;
+  /**
+   * 请求**出门那一刻**调它。发送这条接口要等整整一轮才回来（上限 180 秒），"在跑"
+   * 这件事必须挂在出门那一刻，挂在回来那一刻等于整轮之内界面一动不动。
+   */
+  onSendStart?: (text: string) => void;
   /** 发送成功后重拉记录。页面接的是记录流的 `reload`。 */
   onSent: () => void | Promise<void>;
+  /** 没发出去。页面据此把"在等 agent 开口"撤掉。 */
+  onSendFailed?: () => void;
+  /** 那句话确实落进会话的时刻。它一变就清空输入框、把按钮放回去。 */
+  deliveredAt?: number | null;
 }
 
 /**
@@ -48,10 +57,23 @@ export function blockReason(sessionId: string | null): string | null {
   return null;
 }
 
-export default function Composer({ sessionId, family, onSent }: ComposerProps) {
+export default function Composer({
+  sessionId,
+  family,
+  onSendStart,
+  onSent,
+  onSendFailed,
+  deliveredAt,
+}: ComposerProps) {
   const blocked = blockReason(sessionId);
   const { text, setText, images, addFiles, removeImage, sending, error, canSend, send } =
-    useSendToSession(sessionId, { enabled: !blocked, onSent });
+    useSendToSession(sessionId, {
+      enabled: !blocked,
+      onSendStart,
+      onSent,
+      onSendFailed,
+      deliveredAt,
+    });
   const [dragging, setDragging] = useState(false);
   const filePicker = useRef<HTMLInputElement>(null);
 

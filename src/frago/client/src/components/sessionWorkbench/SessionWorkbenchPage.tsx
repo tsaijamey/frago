@@ -33,9 +33,20 @@ export default function SessionWorkbenchPage() {
   const { t } = useTranslation();
   const sessions = useWorkbenchSessions();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
-  // 还在跑的会话让中栏自己活起来：每几秒取一次增量，agent 的回复会自己流进来。
-  const { records, loading, loadingOlder, hasOlder, error, loadOlder, reload } =
-    useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
+  // 还在跑的会话让中栏自己活起来：文件一动服务端就推增量，轮询只是断连时的兜底。
+  const {
+    records,
+    loading,
+    loadingOlder,
+    hasOlder,
+    error,
+    loadOlder,
+    reload,
+    awaitingAgent,
+    deliveredAt,
+    markSent,
+    clearSent,
+  } = useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
 
   return (
     <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[232px_minmax(0,1fr)_280px] tablet:grid-cols-[232px_minmax(0,1fr)] phone:grid-cols-1 desktop:grid-cols-[302px_minmax(0,1fr)_346px]">
@@ -95,11 +106,26 @@ export default function SessionWorkbenchPage() {
             hasOlder={hasOlder}
             error={error}
             onLoadOlder={loadOlder}
+            awaitingAgent={awaitingAgent}
           />
         </div>
 
-        {/* 发完话同时刷新记录流与左栏清单——中栏看新回复，左栏状态跟随即刻。"completed"转"running"、升到顶部。 */}
-        <Composer sessionId={selectedId} family={selected?.family ?? null} onSent={() => { reload(); void sessions.reload(); }} />
+        {/* 分两刻做两件事。
+            **出门那一刻**举起"在等 agent 开口"并转入快节拍（markSent）——发送这条接口
+            要等整整一轮才回来，挂在回来那一刻等于整轮之内中栏一动不动。
+            **回来那一刻**把自己刚说的那句拉进流里（reload），并让左栏状态跟着从"已完成"
+            转成"在跑"、升到顶部。 */}
+        <Composer
+          sessionId={selectedId}
+          family={selected?.family ?? null}
+          onSendStart={markSent}
+          onSendFailed={clearSent}
+          deliveredAt={deliveredAt}
+          onSent={() => {
+            void reload();
+            void sessions.reload();
+          }}
+        />
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">

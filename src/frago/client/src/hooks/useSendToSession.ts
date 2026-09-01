@@ -101,13 +101,40 @@ export async function sendToSession(
 export interface UseSendToSessionOptions {
   /** 这场会话能不能发。为 false 时按钮恒禁用，`send` 直接不出门。 */
   enabled?: boolean;
+  /**
+   * 请求**出门那一刻**调它，不是回来的时候。
+   *
+   * 这条接口等的是整整一轮：服务端把话投进 tmux 之后一直轮询到这一轮说完才返回，上限
+   * 180 秒。等它回来再做任何事，等于整轮跑完之前中栏一个字都不会变——那正是"发完话
+   * 体现不出会话在进行"的根因。要让人立刻看见"在跑"，只能挂在这里。
+   *
+   * 带上这次投出去的原文：记录流靠它认出"这句话已经落进流里了"，好放行输入框。
+   */
+  onSendStart?: (text: string) => void;
   /** 发送成功后调它重拉记录。页面接的是记录流的 `reload`。 */
   onSent?: () => void | Promise<void>;
+  /** 没发出去。页面据此把"在等 agent 开口"撤掉——挂着一句假的比不提示还糟。 */
+  onSendFailed?: () => void;
+  /**
+   * 那句话**确实落进会话**的时刻（页面接的是记录流的 `deliveredAt`）。它一变就放行：
+   * 清空输入框、把按钮放回去。
+   *
+   * 不能等接口返回：那条接口一直等到整轮说完才回来（上限 180 秒）。等它的话，人明明
+   * 看见自己的话已经出现在流里了，输入框却还塞着同一段字、按钮还转着圈，只能切到别的
+   * 会话再切回来才恢复。
+   */
+  deliveredAt?: number | null;
 }
 
 export function useSendToSession(
   sessionId: string | null,
-  { enabled = true, onSent }: UseSendToSessionOptions = {}
+  {
+    enabled = true,
+    onSendStart,
+    onSent,
+    onSendFailed,
+    deliveredAt = null,
+  }: UseSendToSessionOptions = {}
 ): SendToSessionState {
   const [text, setText] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -116,11 +143,19 @@ export function useSendToSession(
 
   // 附件编号用单调自增，不掺时间戳与随机数——同一毫秒连附两张会撞。
   const counter = useRef(0);
+  // 在飞的那一单的编号，以及"哪一单已经被送达信号清过了"。两者一比就知道接口回来时
+  // 还该不该清——不比的话，人在放行后新打的字会被上一单的返回抹掉。
+  const ticket = useRef(0);
+  const clearedTicket = useRef(0);
   const mounted = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // onSent 每渲染都是新的，放进 ref 让 send 保持稳定，同时永远调到最新那个。
+  // 这三个回调每渲染都是新的，放进 ref 让 send 保持稳定，同时永远调到最新那个。
   const onSentRef = useRef(onSent);
   onSentRef.current = onSent;
+  const onSendStartRef = useRef(onSendStart);
+  onSendStartRef.current = onSendStart;
+  const onSendFailedRef = useRef(onSendFailed);
+  onSendFailedRef.current = onSendFailed;
 
   useEffect(() => {
     mounted.current = true;
@@ -156,6 +191,21 @@ export function useSendToSession(
     setImages((cur) => cur.filter((im) => im.id !== id));
   }, []);
 
+  /**
+   * 送达信号一到就放行。
+   *
+   * 放行之后人可以立刻接着说下一句——那句会成为插话，投进正在跑的那一轮。这是安全的：
+   * "送达"本身就意味着上一句已经打完并落了盘，两次投喂不会在输入框里把字咬在一起。
+   */
+  useEffect(() => {
+    if (!deliveredAt) return;
+    if (ticket.current === 0 || clearedTicket.current === ticket.current) return;
+    clearedTicket.current = ticket.current;
+    setText('');
+    setImages([]);
+    setSending(false);
+  }, [deliveredAt]);
+
   const body = text.trim();
   const canSend = Boolean(enabled && sessionId) && !sending && (!!body || images.length > 0);
 
@@ -165,14 +215,21 @@ export function useSendToSession(
     if (!enabled || !sessionId || sending) return;
     if (!payloadText && payloadImages.length === 0) return;
 
+    const mine = ++ticket.current;
     setSending(true);
     setError(null);
+    // 请求还没出门就先喊一声。这条接口要等整整一轮才回来，等它回来再喊就晚了整轮。
+    onSendStartRef.current?.(payloadText);
     try {
       await sendToSession(sessionId, payloadText, payloadImages);
       if (!mounted.current) return;
-      // 只有成功才清。失败那条路一个字都不动。
-      setText('');
-      setImages([]);
+      // 到这里整轮已经跑完了。**只有送达信号没来过才在这里清**：来过的话输入框早清过，
+      // 而且人可能已经打了新的一句，再清一次就是把它抹掉。失败那条路一个字都不动。
+      if (clearedTicket.current !== mine) {
+        clearedTicket.current = mine;
+        setText('');
+        setImages([]);
+      }
       await onSentRef.current?.();
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
@@ -181,8 +238,11 @@ export function useSendToSession(
     } catch (e) {
       if (!mounted.current) return;
       setError(e instanceof Error ? e.message : String(e));
+      onSendFailedRef.current?.();
     } finally {
-      if (mounted.current) setSending(false);
+      // 只有还是自己那一单时才落下"发送中"：放行之后人已经发了下一句的话，
+      // 这里再动一次会把后一单的状态抹掉。
+      if (mounted.current && ticket.current === mine) setSending(false);
     }
   }, [enabled, sessionId, sending, text, images]);
 

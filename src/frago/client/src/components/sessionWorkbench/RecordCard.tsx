@@ -26,7 +26,7 @@
  * 变量（跟着 `[data-theme]` 走），强调色与状态色照搬工作台设计稿的色相。
  */
 
-import { useState, type ReactNode } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Bot,
@@ -48,6 +48,7 @@ import {
   ShieldAlert,
   Terminal,
   User,
+  CornerDownRight,
   Zap,
 } from 'lucide-react';
 import MarkdownContent from '@/components/ui/MarkdownContent';
@@ -695,6 +696,41 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
   );
 }
 
+/** 插话的三种下场各配一句人话与一个颜色。写的是**结果**，不是过程。 */
+const QUEUE_STATE: Record<string, { text: string; tone: string }> = {
+  absorbed: { text: '已并入当时那一轮', tone: `${DONE_BG} ${DONE_TEXT}` },
+  submitted: { text: '已作为独立一轮发出', tone: `${DONE_BG} ${DONE_TEXT}` },
+  pending: { text: '还在队列里', tone: `${WAIT_BG} ${WAIT_TEXT}` },
+};
+
+/**
+ * 插话 —— 人在 agent 干活时打进去的那句话。
+ *
+ * 它跟别的注入内容不是一类东西：**这是人说的话**，只是因为当时 agent 正忙，引擎把它
+ * 排了一下队。它在会话记录里没有「用户消息」那种形态，这张卡是它唯一的痕迹——所以
+ * 正文默认摊开（跟其他发言一样），而不是折起来等人去点。
+ *
+ * 卡上必须写清下场。只说"排队"不说"后来怎么了"，人看到"排队"只会以为它还在等、或者
+ * 压根没进去；而绝大多数插话在几秒内就已经送达、模型也照做了。
+ */
+function QueuedCommand({ record }: { record: WorkbenchRecord }) {
+  const p = record.payload;
+  const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
+  return (
+    <TextShell
+      record={record}
+      icon={<CornerDownRight size={12} />}
+      label="插话"
+      tone={`${ACCENT_BG} ${ACCENT_RING}`}
+      meta={
+        <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{state.text}</span>
+      }
+    >
+      <Prose text={str(p, 'body')} />
+    </TextShell>
+  );
+}
+
 function ContextInject({ record }: { record: WorkbenchRecord }) {
   const p = record.payload;
   const files = list(p, 'files');
@@ -1134,7 +1170,12 @@ export interface RecordCardProps {
   sessionId: string;
 }
 
-export default function RecordCard({ record, sessionId }: RecordCardProps) {
+/**
+ * 一条记录 = 一张卡。**必须记忆化**：中栏一屏挂着两百张卡，agent 每吐一条新记录就要
+ * 重渲染一次整栏；不记忆化的话那两百张全部重跑一遍分发与格式化，追加越密越卡，正是
+ * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
+ */
+function RecordCardInner({ record, sessionId }: RecordCardProps) {
   switch (record.kind) {
     // 文本类
     case 'user.say':
@@ -1146,6 +1187,11 @@ export default function RecordCard({ record, sessionId }: RecordCardProps) {
     case 'context.inject':
       // 旁路注入自成一格。判据是数据层给的 `source`，界面 NEVER 靠标签名反推——
       // 标签是给人看的，改一个字就会把归类改掉。
+      // 插话自成一格：判据取数据层给的 `channel`，界面 NEVER 靠标签名反推——
+      // 标签是给人看的，改一个字就会把归类改掉。
+      if (record.payload.channel === 'queued_command') {
+        return <QueuedCommand record={record} />;
+      }
       return record.payload.source === 'hook' ? (
         <HookInject record={record} />
       ) : (
@@ -1188,3 +1234,8 @@ export default function RecordCard({ record, sessionId }: RecordCardProps) {
       );
   }
 }
+
+const RecordCard = memo(RecordCardInner);
+RecordCard.displayName = 'RecordCard';
+
+export default RecordCard;

@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Composer, { blockReason } from '../Composer';
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
@@ -223,5 +223,63 @@ describe('Composer 输入区', () => {
     fireEvent.click(screen.getByLabelText('移除 b.png'));
     await waitFor(() => expect(screen.queryByTestId('composer-thumb')).toBeNull());
     expect(isDisabled('composer-send')).toBe(true);
+  });
+});
+
+describe('送达即放行：不许等整轮跑完才清输入框', () => {
+  /** 一条永远不回来的发送请求：模拟"接口要等整整一轮才返回"。 */
+  function stubHangingSend() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    );
+  }
+
+  it('话落进流里就清空输入框、把按钮放回去', async () => {
+    stubHangingSend();
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={() => {}} deliveredAt={null} />
+    );
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '复制到 recipes 目录下' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+
+    // 请求还挂着：按钮转圈、文字还在。人此刻已经能在流里看到自己那句话了。
+    await waitFor(() => expect(screen.getByTestId('composer-send').textContent).toContain('发送中'));
+    expect(input.value).toBe('复制到 recipes 目录下');
+
+    // 送达信号到——不必等接口返回。
+    rerender(
+      <Composer sessionId={SID} family="claude-code" onSent={() => {}} deliveredAt={Date.now()} />
+    );
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(screen.getByTestId('composer-send').textContent).not.toContain('发送中');
+  });
+
+  it('放行之后人接着打的新内容，不许被上一单的返回抹掉', async () => {
+    // 上一单最终会回来，那时它若再清一次，人刚打的下一句就凭空消失了。
+    let settle: ((r: Response) => void) | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((res) => { settle = res; }))
+    );
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={() => {}} deliveredAt={null} />
+    );
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '第一句' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+
+    rerender(
+      <Composer sessionId={SID} family="claude-code" onSent={() => {}} deliveredAt={Date.now()} />
+    );
+    await waitFor(() => expect(input.value).toBe(''));
+
+    fireEvent.change(input, { target: { value: '第二句还没发' } });
+    await act(async () => {
+      settle?.({ ok: true, json: async () => ({ sid: SID, status: 'ready', text: '' }) } as Response);
+      await Promise.resolve();
+    });
+    expect(input.value).toBe('第二句还没发');
   });
 });

@@ -8,7 +8,12 @@
  * 2. **自动滚动是个会听人话的状态机。** 默认武装：新条目进来时视口跟着沉到底。人手动
  *    滚动（滚轮、触摸、拖滚动条、翻页键）离开底部就解除；手动回到底部立即重新武装；
  *    解除后超过十秒没再手动滚动，新条目进来时自动滚动复活。程序自己滚的（沉底、前插
- *    锚定）不算手动，NEVER 因此解除。
+ *    锚定）不算手动，NEVER 因此解除——平滑滚动一路经过的中间位置全都不在底部，被当成
+ *    人滚的就会把跟随解除掉，症状是「滚着滚着就不跟了」，而且极难复现。反过来，人一
+ *    伸手（滚轮/触摸/按键）就立刻作废程序那次滚动的余波，不许拿动画挡住人的意图。
+ * 2b. **跟到底这件事，近处滑、远处落。** 一条新记录通常只把内容顶高几百像素，那一段用
+ *    动画滑过去，人眼跟得住"又来了一条"；一次前插或整流重取动辄上万像素，那种距离拿
+ *    动画滑等于让人干等半秒还看不清落点，直接落位反而清楚。
  * 3. **同一次模型回复要视觉归组，分组编号不显示。** `group_id` 是三十几位的机器标识，
  *    对人零意义。归组只体现为一个包住多张卡的容器，容器头写模型名与本组条数。
  * 4. **看哪一类由人挑，条数照实报。** 一场会话里对话只占几十分之一，其余是工具、旁路
@@ -49,6 +54,11 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     return 'talk';
   }
   if (record.kind === 'context.inject') {
+    // 插话归**对话**，不归系统。人在 agent 干活时打的那句话在会话记录里没有「用户消息」
+    // 那种形态，这张卡是它唯一的痕迹；把它摆进系统那一档，等于让它跟引擎记账混在一起。
+    // 后果不是不好看：切到「对话」看这段会话，会看到 agent 突然转向去做另一件事，而
+    // 没有任何东西解释它为什么转向——那句话明明是人说的，却在人的发言里找不到。
+    if (record.payload.channel === 'queued_command') return 'talk';
     return record.payload.source === 'hook' ? 'hook' : 'system';
   }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
@@ -95,6 +105,16 @@ const AT_BOTTOM_PX = 60;
 const MANUAL_INTENT_MS = 400;
 /** 解除后多久没再手动滚动，新条目进来时自动滚动复活。 */
 const REARM_AFTER_MS = 10_000;
+/**
+ * 跟到底时，离底部多远之内用动画滑过去。
+ *
+ * 一条新记录通常只把内容顶高几百像素，那一段用动画滑过去，人眼跟得住"又来了一条"；
+ * 而一次前插或整流重取动辄上万像素，那种距离拿动画滑等于让人干等半秒还看不清落点，
+ * 直接落位反而清楚。
+ */
+const SMOOTH_MAX_PX = 1_600;
+/** 程序自己滚的时候，多久之内的滚动事件一律不当人滚的看。 */
+const PROGRAMMATIC_MS = { auto: 150, smooth: 800 } as const;
 
 /** 会滚动的键。别的键（打字、Tab）不该被当成滚动意图。 */
 const SCROLL_KEYS = new Set([
@@ -118,6 +138,8 @@ export interface RecordStreamProps {
   hasOlder: boolean;
   error: string | null;
   onLoadOlder: () => void;
+  /** 刚投了一句话进去、还没见 agent 有任何动静。为真时流的末尾挂一条"在等"。 */
+  awaitingAgent?: boolean;
 }
 
 export default function RecordStream({
@@ -128,6 +150,7 @@ export default function RecordStream({
   hasOlder,
   error,
   onLoadOlder,
+  awaitingAgent = false,
 }: RecordStreamProps) {
   const [lens, setLens] = useState<StreamLens>('all');
 
@@ -167,10 +190,31 @@ export default function RecordStream({
   });
   // 滚动事件触发得很密，到顶一次就够了；再触发由 hook 那一侧的闸挡住。
   const olderArmed = useRef(true);
+  /**
+   * 程序自己滚的有效期。
+   *
+   * 平滑滚动一次会连着吐几十个滚动事件，一路持续几百毫秒。不把这段时间标出来，那些
+   * 事件会落进"人手滚动"的判定窗口里，人明明没碰过，自动跟随却自己解除了——症状是
+   * 「滚着滚着就不跟了」，而且极难复现。
+   */
+  const programmaticUntil = useRef(0);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'auto') => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // **页面被藏起来时一律直接落位。** 平滑滚动是逐帧动画，而浏览器在后台标签里根本
+    // 不发帧——动画一步都不会走，视口就此被晾在半路。记录还在经 WebSocket 往里进
+    // （那条路不看可见性），人切回来时看到的是停在中间的一屏，而且再也不会自己走完。
+    // 实测：后台标签里 scrollTo({behavior:'smooth'}) 调用成功、scrollTop 一动不动。
+    const effective = behavior === 'smooth' && document.hidden ? 'auto' : behavior;
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS[effective];
+    // 没有 scrollTo 就直接落位。测试环境（jsdom）与老浏览器都属于这一档——沉底这件事
+    // 一次都不能因为"滑不动"而不发生，那会让打开会话时停在整场的开头。
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: el.scrollHeight, behavior: effective });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
   }, []);
 
   // 换会话：一切归零，默认重新武装——新打开的会话就该落在最新内容上。
@@ -180,6 +224,7 @@ export default function RecordStream({
     followArmed.current = true;
     lastManualScrollAt.current = 0;
     manualIntentUntil.current = 0;
+    programmaticUntil.current = 0;
     anchor.current = null;
     prevEnds.current = { first: null, last: null };
     olderArmed.current = true;
@@ -211,7 +256,10 @@ export default function RecordStream({
         followArmed.current ||
         Date.now() - lastManualScrollAt.current > REARM_AFTER_MS
       ) {
-        scrollToBottom();
+        // 近处滑过去，远处直接落位——见 SMOOTH_MAX_PX。
+        const el = scrollRef.current;
+        const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
+        scrollToBottom(gap <= SMOOTH_MAX_PX ? 'smooth' : 'auto');
         followArmed.current = true;
       }
     } else if (first !== prev.first && last !== prev.last) {
@@ -231,9 +279,17 @@ export default function RecordStream({
     followArmed.current = true;
   }, [lens, scrollToBottom]);
 
+  // "在等 agent 开口"那一条也是内容，它一冒出来就要看得见——跟着的人正是为了看它。
+  // 人自己滚上去看别的时不打扰。
+  useLayoutEffect(() => {
+    if (awaitingAgent && followArmed.current) scrollToBottom('smooth');
+  }, [awaitingAgent, scrollToBottom]);
+
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
     manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
+    // 人一伸手，程序那次滚动就作废——接下来的每一个事件都是人的，不许再被当成动画余波。
+    programmaticUntil.current = 0;
   }, []);
 
   const handleKeyDown = useCallback(
@@ -260,7 +316,11 @@ export default function RecordStream({
       const now = Date.now();
 
       // 手动滚动：离开底部就解除自动滚动，回到底部立即重新武装。
-      if (now <= manualIntentUntil.current) {
+      //
+      // 程序自己滚出来的那一串**不参与这个判定**：平滑滚动一路经过的中间位置全都不在
+      // 底部，落进判定里就会把自动跟随解除掉——人明明没碰过，症状却是「滚着滚着就不跟
+      // 了」。到顶取更早那一页的判定不受这条影响：那件事只看位置，不问是谁滚的。
+      if (now > programmaticUntil.current && now <= manualIntentUntil.current) {
         lastManualScrollAt.current = now;
         followArmed.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
@@ -397,6 +457,18 @@ export default function RecordStream({
             <p className="flex items-center justify-center gap-2 py-4 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
               取记录中
+            </p>
+          ) : null}
+
+          {/* 从按下发送到第一条新记录落盘，中间隔着一次投喂加一轮冷启动。那段空窗里
+              界面上一个字都不变，人只能猜「是没发出去还是它在想」。这一条就是答它。 */}
+          {awaitingAgent ? (
+            <p
+              data-testid="awaiting-agent"
+              className="flex items-center justify-center gap-2 py-3 text-[12px] text-text-muted"
+            >
+              <Loader2 size={13} className="animate-spin" />
+              已经投进去了，在等 agent 开口
             </p>
           ) : null}
         </div>
