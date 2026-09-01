@@ -517,3 +517,57 @@ def test_send_survives_transient_capture_failure_and_completes() -> None:
     result = sess.send("hi", timeout_s=5)
     assert result.status == "ok"
     assert result.text == "hello world"
+
+
+# ── has_live_agent：三态，不是布尔 ──────────────────────────────────
+class _PaneCommandTmux:
+    """只回答 display-message 的替身：pane 前台跑的是什么，由用例说了算。"""
+
+    def __init__(self, command: str | None) -> None:
+        self._command = command
+
+    def __call__(self, argv: list[str]) -> str:
+        if argv[1:2] == ["display-message"]:
+            if self._command is None:
+                raise RuntimeError("tmux 这一拍不答")
+            return self._command + "\n"
+        return ""
+
+
+def _session_with_pane_command(command: str | None):
+    from frago.agent_driver.driver import load_driver
+
+    return TmuxAgentSession(
+        session_id="sid",
+        driver=load_driver("opencode"),
+        cwd="/tmp",
+        runner=_PaneCommandTmux(command),
+        sleep=_no_sleep,
+    )
+
+
+def test_a_running_agent_reports_true() -> None:
+    """claude 把进程名设成自己的版本号——实测 pane_current_command 报的就是这个。
+
+    所以判据只能是"前台跑的是不是登录 shell"，NEVER 按名字白名单认 agent：那要么
+    每接一家改一次表，要么在 agent 换个版本号时集体失灵。
+    """
+    assert _session_with_pane_command("2.1.250").has_live_agent() is True
+    assert _session_with_pane_command("node").has_live_agent() is True
+
+
+def test_a_bare_shell_reports_false() -> None:
+    """agent 退出后 tmux 窗口不会跟着消失，留下的是一个停在提示符上的空壳。"""
+    for shell in ("zsh", "bash", "-zsh", "fish", "login"):
+        assert _session_with_pane_command(shell).has_live_agent() is False, shell
+
+
+def test_an_unanswerable_query_reports_none_not_false() -> None:
+    """问不出来必须是第三态。
+
+    两个调用点的安全方向正好相反：复用自己那场会话时，一次问不出来当成"死了"会把
+    健康的常驻会话杀了重建（白等一次冷启动）；接管来路不明的孤儿时，当成"活着"会把
+    用户的话打进一个没人接的窗口（永久静默）。合成布尔，必然在其中一边犯错。
+    """
+    assert _session_with_pane_command(None).has_live_agent() is None
+    assert _session_with_pane_command("").has_live_agent() is None

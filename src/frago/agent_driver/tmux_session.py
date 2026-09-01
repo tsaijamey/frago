@@ -71,6 +71,15 @@ def _default_runner(argv: list[str]) -> str:
     return proc.stdout
 
 
+# pane 里跑着这些名字，说明**没有** agent 在跑：agent 早退了，只剩一个 shell 壳。
+# 判据取「前台跑的是不是登录 shell」而不是「是不是叫 claude」：claude 把进程名设成
+# 自己的版本号（实测 pane_current_command 报 ``2.1.250``），codex / opencode 各叫各的，
+# 按名字白名单认 agent 等于每接一家改一次表，还会在版本一变时集体失灵。
+_SHELL_COMMANDS = frozenset(
+    {"zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "csh", "login", "-zsh", "-bash"}
+)
+
+
 def tmux_name_for(session_id: str) -> str:
     """把 session_id 映射成它的 tmux 会话名。
 
@@ -173,6 +182,9 @@ class TmuxAgentSession:
         # 最后一次成功抓到的可见 pane。抓屏偶发失败时顶上（本拍当作没有新内容），
         # 会话确认消失时作为末屏证据随异常/错误结果上报。None = 一次都没抓到过。
         self._last_pane: str | None = None
+        # 这一场是被接管来的（tmux 里本来就活着），而不是本进程冷启动出来的。调用方
+        # 据此如实报告"这一轮到底有没有付冷启动的代价"，NEVER 把接管说成冷启动。
+        self.adopted = False
         # 该活会话在「本池实例」里自己的最后活动时间（wall clock）。open() 与每轮 send()
         # 结束时刷新。空闲回收据此算 idle 时长——NEVER 用 transcript 时间戳：--resume 一个
         # 旧 transcript 时它的最后记录可能是几小时前，会让刚预热的会话被秒判「闲了几小时」回收。
@@ -297,6 +309,7 @@ class TmuxAgentSession:
             if handler.trigger.matches(pane_now):
                 handler.action(self)
         self.status = "ready"
+        self.adopted = False
         self.last_active_at = datetime.now(UTC)
 
     def _fail_startup(self, tail: str) -> NoReturn:
@@ -316,6 +329,35 @@ class TmuxAgentSession:
             return True
         except subprocess.CalledProcessError:
             return False
+
+    def pane_command(self) -> str:
+        """pane 里此刻跑在前台的是什么。问不出来返回空串，NEVER 抛。"""
+        try:
+            return self._tmux(
+                "display-message", "-p", "-t", self.tmux_name, "#{pane_current_command}"
+            ).strip()
+        except Exception:
+            return ""
+
+    def has_live_agent(self) -> bool | None:
+        """这个 tmux 会话里还有没有一个活着的 agent 进程。**三态，不是布尔。**
+
+        - ``True``  —— 前台跑着非 shell 的东西，也就是 agent 还在
+        - ``False`` —— 前台就是登录 shell，agent 早退了，只剩一个空壳
+        - ``None``  —— 问不出来（tmux 这一拍不答、版本不支持这个格式）
+
+        必须三态，因为**两个调用点的安全方向正好相反**：复用一场自己起的会话时，一次
+        瞬时问不出来绝不能当成"它死了"——那会把一场健康的常驻会话杀了重建，正是要消灭
+        的浪费；而接管一场来路不明的孤儿时，问不出来就绝不能当成"它活着"——那会把话打
+        进一个其实没人接的窗口，这一轮永久静默。合并成布尔，必然在其中一边犯错。
+
+        **这是"能不能说话"的判据，不是"闲不闲"的判据。** 会话在忙同样返回 ``True``——
+        忙着正说明它活得好好的，该做的是把话排给它，而不是把它杀了重来。
+        """
+        command = self.pane_command()
+        if not command:
+            return None
+        return command not in _SHELL_COMMANDS
 
     # ── 通用原语：发送前快照 → 提交 → 轮询完成 → 取 delta ──────────────
     def send(self, prompt: str, *, timeout_s: float | None = None) -> TurnResult:

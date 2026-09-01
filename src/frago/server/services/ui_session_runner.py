@@ -105,7 +105,12 @@ class UiSessionRunner:
             native_session_id=True,
             timeout_s=timeout_s,
         )
-        status: Literal["ready", "activating"] = "ready" if was_warm else "activating"
+        # 「接管」也是零冷启动：tmux 里那场本来就活着，池只是重新拿到了它的把手。
+        # 报成 activating 等于凭空宣称付了十几秒重建的代价，而实际上一秒都没付。
+        adopted = getattr(self._pool.peek(session_id), "adopted", False)
+        status: Literal["ready", "activating"] = (
+            "ready" if (was_warm or adopted) else "activating"
+        )
         return SessionActivation(
             session_id=session_id, status=status, text=result.text
         )

@@ -10,6 +10,7 @@ spec 20260625-webui-session-lifecycle-mediator / Phase 1。验证：
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from frago.agent_driver.tmux_session import TurnResult
 from frago.server.services.pa_tmux_runner import PaTmuxRunner
@@ -24,16 +25,28 @@ class FakePool:
         self.runs: list[tuple[str, str]] = []  # (session_id, prompt)
         self.builds: list[str] = []            # 触发冷启动重建的 session_id
         self.native_flags: list[bool] = []     # 每轮 run 收到的 native_session_id
+        # session_id → 会话替身。只需带一个 adopted 标志：runner 据此分辨"接管"与
+        # "冷启动"，两者都是零等待与十几秒等待的差别。
+        self.sessions: dict[str, SimpleNamespace] = {}
         self.reply_text = "ok"
 
     def has(self, session_id: str) -> bool:
         return session_id in self.live
+
+    def peek(self, session_id: str):
+        """与 WarmSessionPool 同名同义：取常驻会话对象，无则 None。
+
+        runner 靠它问"这一场是接管来的还是冷启动来的"，好把激活态报准。替身缺这个
+        方法的话，测出来的是替身的形状，不是真 pool 的行为。
+        """
+        return self.sessions.get(session_id)
 
     def run(self, prompt, *, agent_type, session_id, cwd, native_session_id=False, timeout_s=120.0, resume_hook=None):  # noqa: ARG002
         if session_id not in self.live:
             # 冷会话：pool 会 resume 重建。
             self.builds.append(session_id)
             self.live.add(session_id)
+            self.sessions[session_id] = SimpleNamespace(adopted=False)
         self.runs.append((session_id, prompt))
         self.native_flags.append(native_session_id)
         return TurnResult(text=self.reply_text, raw_delta="", status="ok", duration_ms=1)
@@ -41,10 +54,12 @@ class FakePool:
     def evict(self, session_id: str) -> bool:
         existed = session_id in self.live
         self.live.discard(session_id)
+        self.sessions.pop(session_id, None)
         return existed
 
     def shutdown(self) -> None:
         self.live.clear()
+        self.sessions.clear()
 
 
 def test_second_send_reuses_resident_session_without_rebuild():
