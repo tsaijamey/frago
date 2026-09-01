@@ -142,12 +142,16 @@ class OpencodeStream:
         if records is None:
             return
 
+        first_sight = session_id not in self._session_seqs
         last_seq = self._session_seqs.get(session_id, -1)
         new_records = [r for r in records if r.seq > last_seq]
 
         if new_records:
             self._session_seqs[session_id] = new_records[-1].seq
-            if self._on_records is not None:
+            # 刚登记上这一场，第一趟只对水位、一条不发。水位按 -1 起算的话，整场历史会
+            # 被当成"新内容"一次性推给浏览器，接在流的尾巴上——最老的内容排在最新内容
+            # 后面，人看到的是一坨乱序的旧货。页面打开会话时已经自己取过尾部了。
+            if self._on_records is not None and not first_sight:
                 from dataclasses import asdict
 
                 try:
@@ -161,6 +165,12 @@ class OpencodeStream:
         turn = latest_turn(session_id)
         done = turn.done if turn is not None else False
         prev_done = self._session_done.get(session_id, False)
+
+        # 第一趟连"这一轮说完了没有"也只是对齐，不当成刚刚翻面：页面刚打开一场早就答完
+        # 的老会话，不该收到一条"刚刚答完"的通知，那会让它白白热十五分钟。
+        if first_sight:
+            self._session_done[session_id] = done
+            return
 
         if done and not prev_done:
             self._session_done[session_id] = True

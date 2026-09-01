@@ -15,10 +15,8 @@ Design:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
-from pathlib import Path
 
 from frago.server.websocket import create_message, manager
 from frago.session.adapters.claude_code_records import find_session_file
@@ -31,26 +29,6 @@ logger = logging.getLogger(__name__)
 # WebSocket event types (extend MessageType or keep local)
 WS_SESSION_RECORDS_APPEND = "session_records_append"
 WS_SESSION_TURN_DONE = "session_turn_done"
-
-
-def _read_cwd_from_jsonl(file_path: Path) -> str | None:
-    """Read the ``cwd`` field from the first few lines of a session JSONL."""
-    try:
-        with open(file_path, encoding="utf-8", errors="replace") as fh:
-            for _ in range(5):
-                line = fh.readline()
-                if not line:
-                    break
-                try:
-                    record = json.loads(line.strip())
-                except json.JSONDecodeError:
-                    continue
-                cwd = record.get("cwd")
-                if cwd and isinstance(cwd, str):
-                    return cwd
-    except OSError:
-        pass
-    return None
 
 
 class WorkbenchStreamBridge:
@@ -70,6 +48,10 @@ class WorkbenchStreamBridge:
         self._opencode_stream: OpencodeStream | None = None
         self._lock = threading.Lock()
         self._loop = loop
+        # 已经登记过的会话。页面每取一次记录就调一次 ensure_watching，一秒一趟的快节拍
+        # 下就是一秒一次——不记住的话每一趟都要 glob 一遍 ~/.claude/projects 再开一次
+        # 文件读 cwd，全是白做的。
+        self._registered: set[str] = set()
 
     # ---- singleton --------------------------------------------------------
 
@@ -100,6 +82,10 @@ class WorkbenchStreamBridge:
 
         Safe to call multiple times — duplicate calls are no-ops.
         """
+        with self._lock:
+            if session_id in self._registered:
+                return
+
         # Opencode session → shared OpencodeStream
         if session_id.startswith("ses_"):
             with self._lock:
@@ -110,6 +96,7 @@ class WorkbenchStreamBridge:
                     )
                     self._opencode_stream.start()
                 self._opencode_stream.watch_session(session_id)
+                self._registered.add(session_id)
             return
 
         # Claude Code session → SessionStream per project
@@ -118,23 +105,39 @@ class WorkbenchStreamBridge:
             logger.warning("WorkbenchStreamBridge: session file not found for %s", session_id)
             return
 
-        project_path = _read_cwd_from_jsonl(file_path)
-        if project_path is None:
-            logger.warning("WorkbenchStreamBridge: no cwd found in %s", file_path)
-            return
+        # **要盯的目录就是这个文件所在的目录，不必再去猜。**
+        #
+        # 从前这里是另一条路：读出会话记的工作目录，再把它编码回目录名。那条路有两个
+        # 坑，第二个是致命的——它只读文件开头几行，而会话开头躺的常常是模式、权限之类
+        # 不带工作目录的旁挂记录。实测抽样 300 场里有 60 场（20%）这样读不出来，于是
+        # 这些会话的实时推送**一次都没启动过**：页面只能靠五秒一趟的轮询兜底，浏览器
+        # 被切到后台时连轮询都被节流，人看到的就是"这场会话半天不动"。
+        #
+        # 而这个文件本来就躺在它该被监听的那个目录里。用它，既不用读内容，也不经过
+        # 一次有损的编码往返。
+        watch_dir = file_path.parent
+        project_path = str(watch_dir)
 
         with self._lock:
-            if project_path in self._streams:
+            existing = self._streams.get(project_path)
+            if existing is not None:
+                # 同一个项目共用一条流，但**每一场会话都要单独登记**：没登记的会话被碰
+                # 一下时事件当场丢掉，不去整文件翻一遍。一个项目目录下能躺一千个会话文件。
+                existing.watch_session(session_id)
+                self._registered.add(session_id)
                 return
 
-            logger.info("WorkbenchStreamBridge: starting stream for %s", project_path)
+            logger.info("WorkbenchStreamBridge: starting stream for %s", watch_dir)
             stream = SessionStream(
                 project_path=project_path,
+                watch_dir=watch_dir,
                 on_records=self._on_new_records,
                 on_turn_complete=self._on_turn_complete,
+                session_id_filter=session_id,
             )
             stream.start()
             self._streams[project_path] = stream
+            self._registered.add(session_id)
 
     def stop_all(self) -> None:
         """Stop all active streams."""
@@ -145,6 +148,7 @@ class WorkbenchStreamBridge:
                 except Exception:
                     logger.exception("WorkbenchStreamBridge: error stopping stream %s", path)
             self._streams.clear()
+            self._registered.clear()
             if self._opencode_stream is not None:
                 try:
                     self._opencode_stream.stop()
