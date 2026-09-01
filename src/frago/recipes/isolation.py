@@ -256,6 +256,18 @@ def _platform_cli_paths() -> tuple[list[Path], list[Path]]:
     every recipe on it. Handing that over to run one browser command would give
     away more than having no isolation costs, because it would do it while
     reporting that a boundary was in place.
+
+    **``profiles`` is the one entry here that is not just machinery, and it is
+    said out loud rather than left to be discovered.** A browser profile holds
+    the cookies of every site the owner has logged into, so a recipe that writes
+    ``uses_frago_cli: true`` can read those. It is here because there is no
+    smaller grant that lets ``frago browser`` work at all — the browser's
+    user-data-dir is where a browser lives — and because the honest comparison
+    is not against a tighter boundary but against the recipe shelling out to a
+    browser that dies on startup. The tighter boundary exists and is a separate
+    piece of work: a declaration of its own (``uses_browser``) that hands over
+    ``profiles`` and nothing else, so that the nine recipes here which only ever
+    call ``frago recipe publish`` stop being handed a cookie jar.
     """
     home = Path.home() / ".frago"
     readable = _existing(
@@ -274,6 +286,19 @@ def _platform_cli_paths() -> tuple[list[Path], list[Path]]:
         home / "logs",
         home / "traces",
         home / "projects",
+        # The browser's own profile directories, one per brand and port. Listed
+        # next to ``chrome`` because the two are halves of the same thing and
+        # only one of them was here: ``chrome`` is the ledger ``frago browser``
+        # keeps *about* tabs, ``profiles`` is the user-data-dir the browser it
+        # starts actually lives in. Without it the command still returns 0 —
+        # it starts the process and sees a port answer — and the browser dies
+        # about a second later, unable to create ``SingletonLock`` in a profile
+        # directory the view does not contain. Chromium reads that failure as
+        # "this profile is already in use" and exits, so the visible symptom is
+        # a browser that launched and vanished with nothing in any log of ours.
+        # Cost this once: every ``frago desktop up`` on 2026-09-01 failed 90
+        # seconds in, and the first three hypotheses were about the port.
+        home / "profiles",
     )
     return readable, writable
 
