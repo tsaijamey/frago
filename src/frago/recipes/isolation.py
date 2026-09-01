@@ -145,6 +145,19 @@ def _existing(*candidates: str | Path | None) -> list[Path]:
     fails the bind outright; a stale SBPL subpath is merely dead weight), and
     the lists below deliberately name paths that exist on some machines and not
     others — /opt/homebrew, /lib64, the uv cache before uv has ever run.
+
+    **Every entry is kept twice when the name and the place differ**, because
+    the kernel resolves symlinks before it consults any rule and the lists below
+    are written in the spelling a human uses. On macOS that difference is not an
+    edge case, it is ``$TMPDIR``: the environment hands out
+    ``/var/folders/…/T/`` and the kernel checks ``/private/var/folders/…/T``, so
+    a profile granting the first grants nothing at all. The symptom is a
+    scratch directory that every process can see and none can write — uv fails
+    to write its lock, and a browser started from the recipe dies creating its
+    own temp file, both without a single line in any log of ours. ``/tmp`` and
+    ``/var/tmp`` were already listed in both spellings by hand below, which is
+    the same fix applied one path at a time; doing it here covers the one that
+    is read from the environment and cannot be listed by hand.
     """
     found: list[Path] = []
     for one in candidates:
@@ -152,8 +165,11 @@ def _existing(*candidates: str | Path | None) -> list[Path]:
             continue
         path = Path(one).expanduser()
         try:
-            if path.exists() and path not in found:
-                found.append(path)
+            if not path.exists():
+                continue
+            for spelling in (path, path.resolve()):
+                if spelling not in found:
+                    found.append(spelling)
         except OSError:
             continue
     return found
