@@ -24,10 +24,12 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
@@ -35,6 +37,7 @@ from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
 __all__ = [
     "ClaudeCodeRecordAdapter",
     "TranslationStats",
+    "clear_cache",
     "find_session_file",
     "to_unified",
     "translate_records",
@@ -55,8 +58,22 @@ _STANDING_DROP_TYPES = (
     "bridge-session",
     "pr-link",
     "frame-link",
+    # 这三类同属纯指针，一个字的人类内容都没有，从前全落进兜底、在中栏铺成一张张
+    # 「未识别」的原始 JSON 卡。``atis-latch`` 尤其密（抽样 120 场里 1070 条，平均一场
+    # 九条），够把系统那一档淹掉。
+    "atis-latch",
+    "artifact-comment-monitor",
+    "artifact-autoreact-ledger",
 )
-_STANDING_TYPES = frozenset(_STANDING_TITLE_TYPES + _STANDING_MODE_TYPES + _STANDING_DROP_TYPES)
+# 同一个键被反复覆写，只留最后那一条。花费账本每轮都重写一次，全留下来等于把同一件事
+# 说几十遍；一条都不留又会让"这场烧了多少钱"彻底看不见。
+_STANDING_LAST_ONLY_TYPES = ("cost-state",)
+_STANDING_TYPES = frozenset(
+    _STANDING_TITLE_TYPES
+    + _STANDING_MODE_TYPES
+    + _STANDING_DROP_TYPES
+    + _STANDING_LAST_ONLY_TYPES
+)
 
 # 旁挂状态各自把值存在哪个键上。
 _STANDING_VALUE_KEY = {
@@ -82,6 +99,56 @@ _ENGINE_ERROR_SUBTYPES = frozenset({"model_refusal_fallback", "model_consent_fal
 _MEDIA_ATTACHMENT_TYPES = frozenset(
     {"file", "already_read_file", "nested_memory", "compact_file_reference"}
 )
+
+# ── 判据表序 10：其余附件各自叫什么、正文在哪个键上 ──────────────────
+# 机器名直接摆给人看等于没说。``total_tokens_reminder`` 抽样 120 场里 3250 条，是这一档
+# 里最响的一个，从前它在界面上叫「total_tokens_reminder」。
+#
+# 正文的键**随类型而变**，取错的下场是卡片正文全空，看起来像"这次注入什么都没说"。
+# 插话的三种下场各自怎么说。**标签直接写结果，不写过程**——"排队的输入"只交代了它
+# 进过队列，而人要知道的是它到底送没送到。
+_QUEUE_STATE_LABEL = {
+    "absorbed": "插话 · 已并入当时那一轮",
+    "submitted": "插话 · 已作为独立一轮发出",
+    "pending": "插话 · 还在队列里",
+}
+
+_ATTACHMENT_LABEL = {
+    "goal_status": "迭代目标",
+    "queued_command": "插话",
+    "total_tokens_reminder": "上下文余量",
+    "skill_listing": "可用技能",
+    "deferred_tools_delta": "工具清单变化",
+    "agent_listing_delta": "可用 agent 变化",
+    "edited_text_file": "文件被外部改过",
+    "auto_mode": "自动模式",
+    "plan_mode": "计划模式",
+    "plan_mode_exit": "退出计划模式",
+    "date_change": "日期换了",
+    "command_permissions": "命令授权",
+    "hook_cancelled": "旁路注入被取消",
+    "task_reminder": "待办清单",
+    "read_truncation_notice": "读取被截断",
+}
+
+# 正文取哪个键。列在这里的一律优先于默认的 ``content``。
+_ATTACHMENT_BODY_KEY = {
+    "goal_status": "condition",
+    "queued_command": "prompt",
+    "total_tokens_reminder": "text",
+    "skill_listing": "content",
+    "edited_text_file": "snippet",
+    "date_change": "newDate",
+    "plan_mode_exit": "planFilePath",
+    "plan_mode": "planFilePath",
+}
+
+# 正文本身是个字符串数组的那几种：拼起来才是人话。
+_ATTACHMENT_BODY_LIST_KEY = {
+    "deferred_tools_delta": "addedNames",
+    "agent_listing_delta": "addedLines",
+    "command_permissions": "allowedTools",
+}
 
 # ── hook 注入 ───────────────────────────────────────────────────────
 # 旁路的轻量 ai 把话塞进上下文，落盘时分两条走：hook 进程自己的执行记录
@@ -330,6 +397,26 @@ def _media_blocks(content: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _attachment_body(attachment: dict[str, Any], atype: str) -> str:
+    """这种附件的正文在哪个键上。查不到就退回 ``content``。
+
+    退回是明写的：本表没登记过的附件类型仍然要有正文，NEVER 因为不认识就留空——留空
+    在界面上跟"这次什么都没说"长得一模一样，人分不出是引擎没说还是我们没读。
+    """
+    list_key = _ATTACHMENT_BODY_LIST_KEY.get(atype)
+    if list_key is not None:
+        return "\n".join(str(x) for x in _as_list(attachment.get(list_key)))
+    key = _ATTACHMENT_BODY_KEY.get(atype)
+    if key is not None:
+        value = attachment.get(key)
+        if value:
+            return str(value)
+    body = attachment.get("content")
+    if isinstance(body, list):
+        return "\n".join(str(x) for x in body)
+    return _text_of(body)
+
+
 def find_session_file(session_id: str, root: Path | None = None) -> Path | None:
     """按会话编号找到那个 JSONL。找不到返回 None，NEVER 抛。
 
@@ -377,6 +464,8 @@ class _Translator:
         self._injected_texts: set[str] = set()
         self._last_standing_index: dict[str, int] = {}
         self._last_title_index = -1
+        # 插话的下场：正文 → 依次的结局（同一句话可能被插过不止一次）。
+        self._queue_outcome: dict[str, list[str]] = {}
 
         # 第二趟游标
         self._dispatch_by_call: dict[str, UnifiedRecord] = {}
@@ -385,6 +474,7 @@ class _Translator:
 
     # ── 第一趟 ──────────────────────────────────────────────────
     def _build_index(self) -> None:
+        self._index_queue_outcomes()
         pending_boundary: int | None = None
         for i, row in enumerate(self._rows):
             rtype = row.get("type")
@@ -425,6 +515,52 @@ class _Translator:
                 self._last_standing_index[rtype] = i
                 if rtype in _STANDING_TITLE_TYPES:
                     self._last_title_index = i
+
+    def _index_queue_outcomes(self) -> None:
+        """人在 agent 干活时插的那些话，各自最后怎么了。
+
+        这段话不在会话记录里以「用户消息」的形式存在——**它唯一的痕迹就是那张排队卡**，
+        而卡本身只说进过队列，不说下场。下场记在另一类记录上，而那类记录从前被整条丢弃，
+        于是界面上那句话永远停在"排队的输入"这个说法上：人看到"排队"，自然以为它还在等，
+        或者压根没进去。实际上它九秒后就已经送达了。
+
+        两种下场，判据取自实测（抽样 200 场）：
+
+        - **并入当时那一轮**（``remove``，带正文，301 条里 298 条从未成为用户消息）：
+          引擎把这句话折进正在跑的那一轮，模型收到了，但它不另立一条用户消息。新版本
+          在 ``reason`` 里明写 ``absorbed_mid_turn``，老版本什么都不写，行为是一样的。
+        - **作为独立一轮发出**（``dequeue``，207 条）：紧随其后就有一条内容一模一样的
+          用户消息，四例四中。
+
+        ``dequeue`` **不带正文**，所以对不上具体哪一句——只能按先进先出弹队首。带正文的
+        ``remove`` 则直接按正文摘。两种匹配方式混用是数据形状逼的，不是偷懒。
+        """
+        pending: list[str] = []
+        for row in self._rows:
+            if row.get("type") != "queue-operation":
+                continue
+            op = row.get("operation")
+            content = str(row.get("content") or "").strip()
+            if op == "enqueue":
+                pending.append(content)
+                continue
+            if op == "remove":
+                if content:
+                    if content in pending:
+                        pending.remove(content)
+                    self._queue_outcome.setdefault(content, []).append("absorbed")
+                elif pending:
+                    self._queue_outcome.setdefault(pending.pop(0), []).append("absorbed")
+                continue
+            if op == "dequeue" and pending:
+                self._queue_outcome.setdefault(pending.pop(0), []).append("submitted")
+
+    def _take_queue_outcome(self, prompt: str) -> str:
+        """取这句插话的下场。对不上就说"还在队列里"，NEVER 猜一个。"""
+        outcomes = self._queue_outcome.get(prompt.strip())
+        if not outcomes:
+            return "pending"
+        return outcomes.pop(0)
 
     # ── 发条 ────────────────────────────────────────────────────
     def _emit(
@@ -511,6 +647,9 @@ class _Translator:
         if rtype in _STANDING_DROP_TYPES:
             self._stats.dropped_standing += 1
             return
+        if rtype in _STANDING_LAST_ONLY_TYPES:
+            self._rule_01_cost(index, rtype, row)
+            return
         value = str(row.get(_STANDING_VALUE_KEY[rtype], ""))
         if rtype in _STANDING_TITLE_TYPES:
             # 标题被反复覆写，同会话只保留最后一条。
@@ -534,6 +673,40 @@ class _Translator:
                 "source_type": rtype,
                 "from": previous,
                 "to": value,
+            },
+            record_id=f"{self._session_id}#state-{index}",
+        )
+
+    def _rule_01_cost(self, index: int, rtype: str, row: dict[str, Any]) -> None:
+        """这场会话的花费账本。每轮重写一次，只留最后那一条。
+
+        账本本身是一坨数字，机器名摆出来等于没说。正文写成一句人话，原始数字留在载荷里
+        给要细看的人。
+        """
+        if index != self._last_standing_index.get(rtype, index):
+            self._stats.dropped_standing_stale += 1
+            return
+        cost = row.get("totalCostUSD")
+        duration_ms = row.get("totalDuration")
+        pieces: list[str] = []
+        if isinstance(cost, int | float):
+            pieces.append(f"花费 ${cost:.4f}")
+        if isinstance(duration_ms, int | float) and duration_ms:
+            pieces.append(f"历时 {duration_ms / 60000:.1f} 分钟")
+        added, removed = row.get("totalLinesAdded"), row.get("totalLinesRemoved")
+        if isinstance(added, int) and isinstance(removed, int) and (added or removed):
+            pieces.append(f"改动 +{added} / -{removed} 行")
+        self._emit(
+            row,
+            "session.state",
+            {
+                "field": "cost",
+                "source_type": rtype,
+                "from": None,
+                "to": "，".join(pieces) or "（账本是空的）",
+                "total_cost_usd": cost,
+                "total_duration_ms": duration_ms,
+                "model_usage": row.get("modelUsage"),
             },
             record_id=f"{self._session_id}#state-{index}",
         )
@@ -684,26 +857,46 @@ class _Translator:
             self._rule_09_hook_result(row, attachment)
             return
 
-        # 序 10：其余附件。**正文取哪个键随附件类型而变**，取错的下场是卡片正文全空，
-        # 看起来像"这次注入什么都没说"。排队的输入正文在 ``prompt``、目标状态在
-        # ``condition``，两者都是真有人写下的话，NEVER 让它们空着。
-        body = attachment.get("content")
+        # 序 10：其余附件。**正文取哪个键随附件类型而变**（见 ``_ATTACHMENT_BODY_KEY``），
+        # 取错的下场是卡片正文全空，看起来像"这次注入什么都没说"。排队的输入正文在
+        # ``prompt``、目标状态在 ``condition``、上下文余量在 ``text``，全是真有人写下或
+        # 引擎真的说了的话，NEVER 让它们空着。
+        key = str(atype or "")
         payload: dict[str, Any] = {
-            "channel": str(atype or "attachment"),
+            "channel": key or "attachment",
             "source": "attachment",
-            "label": str(attachment.get("hookName") or atype or "attachment"),
-            "body": "\n".join(str(x) for x in body) if isinstance(body, list) else _text_of(body),
+            # 标签按「本表给的人话 > hook 名 > 机器类型名」依次退让。退到机器名说明这是
+            # 一种本表还没认过的附件，那时把机器名摆出来好过摆一句编造的人话。
+            "label": _ATTACHMENT_LABEL.get(key)
+            or str(attachment.get("hookName") or key or "attachment"),
+            "body": _attachment_body(attachment, key),
             "exit_code": attachment.get("exitCode"),
             "stdout": attachment.get("stdout"),
             "stderr": attachment.get("stderr"),
         }
-        if atype == "queued_command" and attachment.get("prompt"):
-            payload["label"] = "排队的输入"
-            payload["body"] = str(attachment.get("prompt"))
+        if atype == "queued_command":
+            # 这是**人在 agent 干活时插的一句话**，不是引擎记账。它在会话记录里没有
+            # 「用户消息」那种形态，这张卡是它唯一的痕迹——所以下场必须写在卡上：
+            # 只说"进过队列"不说"后来怎么了"，等于让人以为它还在等或者压根没进去。
+            state = self._take_queue_outcome(str(attachment.get("prompt") or ""))
+            payload["queue_state"] = state
+            payload["label"] = _QUEUE_STATE_LABEL[state]
         elif atype == "goal_status":
-            payload["label"] = "迭代目标"
-            payload["body"] = str(attachment.get("condition") or "")
             payload["goal_met"] = attachment.get("met")
+        elif atype == "edited_text_file":
+            payload["ref"] = attachment.get("filename")
+        elif atype == "hook_cancelled":
+            # 这是一次 hook **没跑成**。当普通附件摆出来的话，界面上看不出它跟正常注入
+            # 有什么区别，人会以为那句话注进去了。
+            payload["hook_event"] = str(attachment.get("hookEvent") or "")
+            payload["timed_out"] = attachment.get("timedOut")
+            payload["duration_ms"] = attachment.get("durationMs")
+            payload["body"] = payload["body"] or (
+                f"{attachment.get('hookName') or 'hook'} 超时未返回"
+                f"（{attachment.get('timeoutMs')} 毫秒）"
+                if attachment.get("timedOut")
+                else f"{attachment.get('hookName') or 'hook'} 被取消"
+            )
         self._emit(row, "context.inject", payload)
 
     def _emit_hook_inject(
@@ -1124,17 +1317,72 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+# ── 翻译结果的缓存 ──────────────────────────────────────────────────
+# 一场会话被看的时候，同一个文件会被反复整翻：页面每五秒取一次增量、文件每动一次
+# 推一次、取原文再来一次。本机最大那场 82 MB，翻一遍 0.33 秒——安静着不动也照烧不误。
+#
+# 失效判据是**文件大小加修改时刻**，与 ``session_index`` 那侧同口径：会话文件只会往
+# 尾部追加，两者任一变了就是真的变了。判据一改必须 bump 版本号，否则改对了判据、
+# 命令行现算是对的、界面上还是旧的。
+#
+# 只留最近几场：一场大会话的记录对象是十兆量级，留多了内存换不回速度。
+_CACHE_CAPACITY = 4
+_cache: OrderedDict[str, tuple[int, int, list[UnifiedRecord]]] = OrderedDict()
+_cache_lock = Lock()
+
+
+def _cache_get(path: Path) -> list[UnifiedRecord] | None:
+    """缓存里那份还算不算数。文件读不到属性时当没缓存，NEVER 因此抛。"""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = str(path)
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None or entry[0] != stat.st_size or entry[1] != stat.st_mtime_ns:
+            return None
+        _cache.move_to_end(key)
+        return entry[2]
+
+
+def _cache_put(path: Path, records: list[UnifiedRecord]) -> None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return
+    with _cache_lock:
+        _cache[str(path)] = (stat.st_size, stat.st_mtime_ns, records)
+        _cache.move_to_end(str(path))
+        while len(_cache) > _CACHE_CAPACITY:
+            _cache.popitem(last=False)
+
+
+def clear_cache() -> None:
+    """把缓存清空。给测试用，也给"判据改了要重算"那一刻用。"""
+    with _cache_lock:
+        _cache.clear()
+
+
 def to_unified(source: Path | str | Iterable[dict[str, Any]]) -> list[UnifiedRecord]:
     """翻一个会话文件（或一串已解析好的原始记录）。
 
     传路径时会话编号取文件名；子 agent 的轨迹在同目录下的 ``<会话编号>/subagents/``
     里，用来判断派发卡的轨迹取不取得到。
+
+    传路径这一路带缓存，**返回的列表是共享的**：调用方只许读与切片，NEVER 原地改动
+    里面的记录——改了会串到下一个拿到同一份缓存的人身上。
     """
     if isinstance(source, str | Path):
         path = Path(source)
+        cached = _cache_get(path)
+        if cached is not None:
+            return cached
         rows = _read_rows(path)
         trace_dir = path.parent / path.stem / "subagents"
-        return translate_records(rows, path.stem, trace_dir if trace_dir.is_dir() else None)
+        records = translate_records(rows, path.stem, trace_dir if trace_dir.is_dir() else None)
+        _cache_put(path, records)
+        return records
     return translate_records(list(source))
 
 

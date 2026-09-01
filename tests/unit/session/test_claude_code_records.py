@@ -1097,3 +1097,285 @@ def test_adapter_read_raw_refuses_error_records(tmp_path: Path) -> None:
     assert adapter.read_raw(SESSION, "u1") is not None
     assert adapter.read_raw(SESSION, "u2") is None
     assert adapter.read_raw(SESSION, "不存在的记录") is None
+
+
+# ── 判据表序 1 与 10：本机真出现过、从前没被认出来的那些类型 ──────────
+def test_pointer_only_top_level_types_are_dropped_with_accounting() -> None:
+    """纯指针状态不出卡，但要在账上留下数。
+
+    从前 ``atis-latch`` 这三类全落进兜底，在中栏铺成一张张「未识别」的原始 JSON 卡。
+    抽样 120 场里 ``atis-latch`` 就有 1070 条（平均一场九条），够把系统那一档淹掉。
+    """
+    rows = [
+        {"type": "atis-latch", "atis": "", "sessionId": SESSION},
+        {"type": "artifact-comment-monitor", "v": 1, "sessionId": SESSION, "artifacts": {}},
+        {"type": "artifact-autoreact-ledger", "v": 1, "sessionId": SESSION, "artifacts": {}},
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    assert records == []
+    assert stats.dropped_standing == 3
+    assert stats.unrecognized == 0
+
+
+def test_cost_state_keeps_only_the_last_one_and_reads_as_chinese() -> None:
+    """花费账本每轮重写一次，只留最后那条；正文是一句人话不是一坨数字。"""
+    rows = [
+        {"type": "cost-state", "sessionId": SESSION, "totalCostUSD": 0.5, "totalDuration": 60000},
+        _user("u1", "先说一句", promptSource="typed"),
+        {
+            "type": "cost-state",
+            "sessionId": SESSION,
+            "totalCostUSD": 2.7506665,
+            "totalDuration": 340267,
+            "totalLinesAdded": 12,
+            "totalLinesRemoved": 3,
+        },
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    states = _by_kind(records, "session.state")
+    assert len(states) == 1, "同一场里的花费账本只该留最后一条"
+    assert states[0].payload["field"] == "cost"
+    assert "$2.7507" in states[0].payload["to"]
+    assert "5.7 分钟" in states[0].payload["to"]
+    assert "+12 / -3 行" in states[0].payload["to"]
+    assert states[0].payload["total_cost_usd"] == 2.7506665
+    assert stats.dropped_standing_stale == 1
+    assert stats.unrecognized == 0
+
+
+def test_goal_status_carries_the_condition_not_an_empty_body() -> None:
+    """迭代目标的正文在 ``condition`` 上，照 ``content`` 取永远是空的。"""
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={
+                "type": "goal_status",
+                "met": False,
+                "sentinel": True,
+                "condition": "把 detail 做成自动丝滑滚动",
+            },
+        )
+    ]
+    record = translate_records(rows, SESSION)[0]
+    assert record.kind == "context.inject"
+    assert record.payload["label"] == "迭代目标"
+    assert record.payload["body"] == "把 detail 做成自动丝滑滚动"
+    assert record.payload["goal_met"] is False
+
+
+def test_attachment_types_read_as_chinese_with_the_right_body_key() -> None:
+    """正文取哪个键随类型而变。取错的下场是卡片正文全空，看起来像"这次什么都没说"。"""
+    cases = [
+        (
+            {"type": "total_tokens_reminder", "text": "<total_tokens>15000000 tokens left</total_tokens>"},
+            "上下文余量",
+            "15000000",
+        ),
+        ({"type": "skill_listing", "content": "- design: 画布"}, "可用技能", "design"),
+        ({"type": "deferred_tools_delta", "addedNames": ["CronList", "WebFetch"]}, "工具清单变化", "WebFetch"),
+        ({"type": "agent_listing_delta", "addedLines": ["- Explore: 只读检索"]}, "可用 agent 变化", "Explore"),
+        (
+            {"type": "edited_text_file", "filename": "/tmp/a.md", "snippet": "34\t改了这一行"},
+            "文件被外部改过",
+            "改了这一行",
+        ),
+        ({"type": "date_change", "newDate": "2026-09-01"}, "日期换了", "2026-09-01"),
+        (
+            {"type": "plan_mode_exit", "planFilePath": "/tmp/plan.md", "planExists": False},
+            "退出计划模式",
+            "plan.md",
+        ),
+    ]
+    for i, (attachment, label, needle) in enumerate(cases):
+        record = translate_records([_row(f"u{i}", "attachment", attachment=attachment)], SESSION)[0]
+        assert record.payload["label"] == label, attachment["type"]
+        assert needle in record.payload["body"], attachment["type"]
+        assert record.payload.get("unrecognized") is not True
+
+
+def test_cancelled_hook_says_it_did_not_run() -> None:
+    """hook 超时没跑成，界面上必须跟正常注入区分得开——否则人以为那句话注进去了。"""
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={
+                "type": "hook_cancelled",
+                "hookName": "UserPromptSubmit",
+                "hookEvent": "UserPromptSubmit",
+                "durationMs": 10607,
+                "timedOut": True,
+                "timeoutMs": 10000,
+            },
+        )
+    ]
+    record = translate_records(rows, SESSION)[0]
+    assert record.payload["label"] == "旁路注入被取消"
+    assert record.payload["timed_out"] is True
+    assert "超时未返回" in record.payload["body"]
+
+
+def test_unlisted_attachment_type_still_shows_its_machine_name(caplog) -> None:
+    """本表没登记过的附件类型退回机器名，NEVER 编一句人话——编的那句会骗人。"""
+    rows = [_row("u1", "attachment", attachment={"type": "还没见过的附件", "content": "正文"})]
+    record = translate_records(rows, SESSION)[0]
+    assert record.payload["label"] == "还没见过的附件"
+    assert record.payload["body"] == "正文"
+
+
+# ── 翻译结果的缓存 ──────────────────────────────────────────────────
+def test_parse_cache_serves_the_same_records_until_the_file_changes(tmp_path: Path) -> None:
+    """同一个没动过的文件不该被反复整翻。
+
+    页面每五秒取一次增量、文件每动一次推一次、取原文再来一次，全都落到同一个
+    ``to_unified``。本机最大那场 82 MB，翻一遍 0.33 秒——安静着不动也照烧不误。
+    """
+    from frago.session.adapters import claude_code_records as ccr
+
+    ccr.clear_cache()
+    path = tmp_path / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(_user("u1", "第一句", promptSource="typed"), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    first = ccr.to_unified(path)
+    assert ccr.to_unified(path) is first, "文件没动，该拿回同一份"
+
+    path.write_text(
+        "\n".join(
+            json.dumps(_user(f"u{i}", f"第 {i} 句", promptSource="typed"), ensure_ascii=False)
+            for i in range(3)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second = ccr.to_unified(path)
+    assert second is not first, "文件变了必须重翻"
+    assert len(second) == 3
+    ccr.clear_cache()
+
+
+def test_parse_cache_is_bounded(tmp_path: Path) -> None:
+    """只留最近几场：一场大会话的记录对象是十兆量级，留多了内存换不回速度。"""
+    from frago.session.adapters import claude_code_records as ccr
+
+    ccr.clear_cache()
+    for i in range(ccr._CACHE_CAPACITY + 3):
+        path = tmp_path / f"s{i}.jsonl"
+        path.write_text(
+            json.dumps(_user("u1", f"第 {i} 场", promptSource="typed"), ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        ccr.to_unified(path)
+    assert len(ccr._cache) == ccr._CACHE_CAPACITY
+    ccr.clear_cache()
+
+
+# ── 插话：人在 agent 干活时打的那句话 ────────────────────────────────
+def _queue_op(op: str, content: str | None = None, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"type": "queue-operation", "operation": op, "sessionId": SESSION}
+    if content is not None:
+        row["content"] = content
+    row.update(extra)
+    return row
+
+
+def _queued(uuid: str, prompt: str) -> dict[str, Any]:
+    return _row(
+        uuid,
+        "attachment",
+        attachment={
+            "type": "queued_command",
+            "prompt": prompt,
+            "commandMode": "prompt",
+            "origin": {"kind": "human"},
+        },
+    )
+
+
+def _queue_card(records: list[Any]) -> Any:
+    cards = [r for r in records if r.payload.get("channel") == "queued_command"]
+    assert cards, "插话卡不见了"
+    return cards[0]
+
+
+def test_absorbed_interjection_says_it_landed_in_the_running_turn() -> None:
+    """插话被并进当时那一轮时，卡上要写清楚它**送到了**。
+
+    这句话在会话记录里没有"用户消息"那种形态——这张卡是它唯一的痕迹。只说"排队的输入"
+    的话，人看到"排队"只会以为它还在等、或者压根没进去；而实际上它几秒后就已经送达、
+    模型也照做了。抽样 200 场里这是主流下场（带正文的出队 301 条中 298 条如此）。
+    """
+    rows = [
+        _queue_op("enqueue", "去备份目录里找一下"),
+        _queue_op("remove", "去备份目录里找一下", reason="absorbed_mid_turn"),
+        _queued("u1", "去备份目录里找一下"),
+    ]
+    card = _queue_card(translate_records(rows, SESSION))
+    assert card.payload["queue_state"] == "absorbed"
+    assert card.payload["label"] == "插话 · 已并入当时那一轮"
+    assert card.payload["body"] == "去备份目录里找一下"
+
+
+def test_absorbed_is_detected_even_when_the_engine_gives_no_reason() -> None:
+    """老版本的引擎不写出队原因，行为却一模一样——判据 NEVER 依赖那个字段。
+
+    抽样里 301 条带正文的出队只有 1 条写了原因。照 ``reason`` 判的话，另外 300 条会
+    被当成"还在队列里"，等于对绝大多数插话谎报下场。
+    """
+    rows = [
+        _queue_op("enqueue", "换个思路"),
+        _queue_op("remove", "换个思路"),
+        _queued("u1", "换个思路"),
+    ]
+    assert _queue_card(translate_records(rows, SESSION)).payload["queue_state"] == "absorbed"
+
+
+def test_dequeued_interjection_became_a_turn_of_its_own() -> None:
+    """另一种下场：那句话作为独立一轮发了出去，紧接着就有一条一模一样的用户消息。
+
+    ``dequeue`` **不带正文**，对不上具体哪一句，只能按先进先出弹队首。
+    """
+    rows = [
+        _queue_op("enqueue", "这句会独立成一轮"),
+        _queue_op("dequeue"),
+        _queued("u1", "这句会独立成一轮"),
+    ]
+    card = _queue_card(translate_records(rows, SESSION))
+    assert card.payload["queue_state"] == "submitted"
+    assert card.payload["label"] == "插话 · 已作为独立一轮发出"
+
+
+def test_an_interjection_that_never_left_the_queue_says_so() -> None:
+    """会话就此结束、那句话还躺在队列里——照实说"还在队列里"，NEVER 猜一个下场。"""
+    rows = [_queue_op("enqueue", "还没轮到我"), _queued("u1", "还没轮到我")]
+    assert _queue_card(translate_records(rows, SESSION)).payload["queue_state"] == "pending"
+
+
+def test_two_interjections_keep_their_own_fates_in_order() -> None:
+    """两句话先后插进来，各自的下场不许串。先进先出，一条对一条。"""
+    rows = [
+        _queue_op("enqueue", "第一句"),
+        _queue_op("enqueue", "第二句"),
+        _queue_op("dequeue"),                 # 弹队首 → 第一句独立成一轮
+        _queue_op("remove", "第二句"),        # 第二句被并进当轮
+        _queued("u1", "第一句"),
+        _queued("u2", "第二句"),
+    ]
+    records = translate_records(rows, SESSION)
+    cards = [r for r in records if r.payload.get("channel") == "queued_command"]
+    assert [c.payload["queue_state"] for c in cards] == ["submitted", "absorbed"]
+
+
+def test_queue_bookkeeping_itself_stays_out_of_the_stream() -> None:
+    """入队/出队那两条是记账，不出卡——一句插话只该在中栏留下一张卡，不是三张。"""
+    rows = [
+        _queue_op("enqueue", "一句话"),
+        _queue_op("remove", "一句话"),
+        _queued("u1", "一句话"),
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    assert len(records) == 1
+    assert stats.dropped_standing == 2
+    assert stats.unrecognized == 0
