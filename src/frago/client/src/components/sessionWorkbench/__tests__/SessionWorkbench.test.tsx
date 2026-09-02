@@ -299,6 +299,7 @@ function railState(over: Partial<WorkbenchSessionsState> = {}): WorkbenchSession
   return {
     sessions,
     visible: sessions,
+    searched: sessions,
     loading: false,
     error: null,
     search: '',

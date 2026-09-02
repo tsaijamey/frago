@@ -26,6 +26,7 @@ from frago.server.services import (
     session_send,
     workbench_agents,
     workbench_new_session,
+    workbench_pins,
 )
 from frago.server.services.webui_uploads import (
     ImageUploadError,
@@ -196,6 +197,53 @@ async def search_workbench_content(
         "scanned_files": outcome.scanned_files,
         "warnings": outcome.warnings,
     }
+
+
+@router.get("/workbench/pins")
+async def list_workbench_pins() -> dict[str, list[str]]:
+    """当前置顶了哪几场，最近置顶的在最前。
+
+    只回编号，不回会话本身：清单那一条接口已经把每场的标题、状态、摘要都取齐了，这里
+    再回一份等于同一份数据摆两处，迟早各说各的。界面拿编号去清单里对号入座。
+
+    名单里的编号**不与清单核对**。会话档案随时可能被删或被滚删，核对过的名单会因为
+    一次滚删悄悄变短，而人根本不知道自己的置顶被清了。
+    """
+    return {"pinned": await asyncio.to_thread(workbench_pins.list_pins)}
+
+
+@router.put("/workbench/pins/{sid}")
+async def pin_workbench_session(sid: str) -> dict[str, list[str]]:
+    """把这场会话置顶，回置顶后的完整名单。
+
+    回整份名单而不是"成功"：置顶会改次序（已经在名单里的会被挪到最前），只说一句成功
+    的话，界面得自己猜新次序长什么样，猜错就是两边不一致。
+
+    **不设数量上限。** 上限是替人做决定，而左栏本来就是窗口化渲染，多几行不额外花什么。
+
+    编号三家的形状都不像时回 404：置顶一个不存在的编号，名单里会永远躺着一行谁都对不
+    上的记录。
+    """
+    try:
+        record_reader.detect_family(sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        pinned = await asyncio.to_thread(workbench_pins.pin, sid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"pinned": pinned}
+
+
+@router.delete("/workbench/pins/{sid}")
+async def unpin_workbench_session(sid: str) -> dict[str, list[str]]:
+    """取消置顶，回剩下的名单。
+
+    本来就不在名单里也回 200：这条接口承诺的是"结束时它不在名单里"，那个结果已经成立。
+    为此回 404 只会让界面在连点两下时弹一句没有意义的报错。同理，这里**不校验编号属于
+    哪一家**——不管什么形状，把它从名单里去掉都是对的。
+    """
+    return {"pinned": await asyncio.to_thread(workbench_pins.unpin, sid)}
 
 
 class SendRequest(BaseModel):

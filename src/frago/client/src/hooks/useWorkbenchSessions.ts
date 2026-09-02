@@ -164,6 +164,18 @@ export interface WorkbenchSessionsState {
   sessions: WorkbenchSession[];
   /** 过滤后的清单，左栏实际渲染的就是它。 */
   visible: WorkbenchSession[];
+  /**
+   * 只过了搜索这一道、还没按状态与时间范围收窄的那一批。**置顶区渲染的是它。**
+   *
+   * 置顶区不跟状态与时间范围走：那两道答的是"翻哪一段、翻哪一档"，而置顶区的意义正是
+   * "这几场我随时要回来"——点一下「7 天」就让人自己挑出来的那几场消失，是把筛选的语义
+   * 套到了一个根本不该被筛的地方。搜索另说：那一刻人是在找某一场，置顶区跟着筛才不会答
+   * 非所问。
+   *
+   * 摆在这里而不是让左栏自己再筛一遍：搜索是两条腿取并集（见 `searched`），判据抄第二遍
+   * 迟早两处各走各的。
+   */
+  searched: WorkbenchSession[];
   loading: boolean;
   error: string | null;
   search: string;
@@ -362,6 +374,7 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
   return {
     sessions,
     visible,
+    searched,
     loading,
     error,
     search,

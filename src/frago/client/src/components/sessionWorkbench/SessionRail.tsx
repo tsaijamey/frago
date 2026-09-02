@@ -22,14 +22,27 @@
  * 底部汇总只报已经发生的绝对数：共几场、两家各几场。没有分母，也不该有。
  *
  * **列表走窗口化渲染。** 全量会话可能上千场，用 Virtuoso 只渲染视口内可见的卡片。
+ *
+ * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶
+ * 的次序而不是活动时刻，数量不设上限，整片可以折起来。它**不跟状态与时间范围走**——那
+ * 两道答的是「翻哪一段、翻哪一档」，而置顶答的是「这几场我随时要回来」，点一下「7 天」
+ * 就让人挑出来的那几场消失，是把筛选的语义套到了一个不该被筛的地方。搜索另说：那一刻人
+ * 是在找某一场，置顶区跟着筛才不会答非所问。
+ *
+ * 一场都没置顶时不长分区标题，整片仍是从前那个单列清单——空着的分区标题只是噪音。
+ *
+ * **分区标题是列表里的普通一行，不是窗口化列表的 group header。** group header 的位置要
+ * 等列表量完每一行的高度才算得出来，量完之前那两行标题一个都不在页面上——真实浏览器里
+ * 撞见过整片清单已经摆好、标题还没出现。标题上坐着折叠开关，它不该等任何东西。
  */
 
 import { useMemo, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Pin, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import SessionItem, { resumeCommand } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
+import { useSessionPins } from '@/hooks/useSessionPins';
 import { waitForSession } from '@/hooks/useAgentClients';
 import {
   DAY_OPTIONS,
@@ -63,6 +76,12 @@ const STATUS_DOT: Record<string, string> = {
   idle: 'bg-text-muted',
 };
 
+/** 列表里的一行：要么是分区标题，要么是一张会话卡。 */
+type RailRow =
+  | { kind: 'pinned-header' }
+  | { kind: 'rest-header' }
+  | { kind: 'session'; session: WorkbenchSession };
+
 export interface SessionRailProps {
   state: WorkbenchSessionsState;
   selectedId: string | null;
@@ -73,6 +92,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
   const {
     sessions,
     visible,
+    searched,
     counts,
     loading,
     error,
@@ -86,6 +106,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     reload,
   } = state;
   const showToast = useAppStore((s) => s.showToast);
+  const pins = useSessionPins();
   const [newOpen, setNewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -100,6 +121,59 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     }
     return { cc, oc, cx };
   }, [sessions]);
+
+  /**
+   * 置顶区摆哪几场。
+   *
+   * 次序照置顶的次序，不按最后活动时刻重排——那一区的意义正是"我说了算"，跟着活动时刻
+   * 重排等于把人刚摆好的次序打乱。名单里有编号、清单里却没有那场（档案被删或被滚删）时
+   * 就是不显示，NEVER 因此把编号从名单里踢掉：一次滚删不该悄悄清空人的置顶。
+   */
+  const pinnedRows = useMemo(() => {
+    if (!pins.pinned.length) return [];
+    const rank = new Map(pins.pinned.map((id, i) => [id, i]));
+    return searched
+      .filter((s) => rank.has(s.session_id))
+      .sort((a, b) => rank.get(a.session_id)! - rank.get(b.session_id)!);
+  }, [searched, pins.pinned]);
+
+  /** 置顶的那几场不在下面再出现一次。同一场摆两处，人会以为是两场。 */
+  const restRows = useMemo(
+    () => (pins.pinned.length ? visible.filter((s) => !pins.isPinned(s.session_id)) : visible),
+    [visible, pins]
+  );
+
+  /**
+   * 摆进列表的每一行：分区标题与会话卡走同一条队。
+   *
+   * 分区标题做成**普通一行**而不是窗口化列表的 group header：group header 的位置要等
+   * 列表量完每一行的高度才算得出来，量完之前那两行标题一个都不在页面上——真实浏览器里
+   * 就撞见过整片清单已经摆好、标题还没出现。标题是折叠开关所在，它不该等任何东西。
+   *
+   * 一场都没置顶时连标题都不长，整片就是从前那个单列清单——空着的分区标题只是噪音。
+   */
+  const rows = useMemo<RailRow[]>(() => {
+    if (!pins.pinned.length) return restRows.map((session) => ({ kind: 'session' as const, session }));
+    return [
+      { kind: 'pinned-header' as const },
+      ...(pins.collapsed
+        ? []
+        : pinnedRows.map((session) => ({ kind: 'session' as const, session }))),
+      { kind: 'rest-header' as const },
+      ...restRows.map((session) => ({ kind: 'session' as const, session })),
+    ];
+  }, [pins.pinned.length, pins.collapsed, pinnedRows, restRows]);
+
+  const handleTogglePin = async (session: WorkbenchSession) => {
+    const wasPinned = pins.isPinned(session.session_id);
+    try {
+      await pins.toggle(session.session_id);
+      // 折起来的时候置顶一场，那一场会立刻消失在眼前。说一句它去哪了。
+      if (!wasPinned && pins.collapsed) showToast('已置顶，在折起来的置顶区里', 'success');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '置顶没存下', 'error');
+    }
+  };
 
   const handleCopy = async (session: WorkbenchSession) => {
     try {
@@ -240,25 +314,63 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
               </div>
             ))}
           </div>
-        ) : !visible.length ? (
+        ) : !rows.length ? (
           <p className="px-1 py-6 text-center text-[12px] text-text-muted">没有匹配的会话</p>
         ) : (
+          /* 置顶区与其余那一片共用同一条队、同一条滚动条。两个列表并排摆的话，置顶那一片
+             要么自己不窗口化（置顶数不设上限，迟早卡），要么各滚各的（两条滚动条挨着，
+             没人分得清该滚哪条）。 */
           <Virtuoso
-            data={visible}
-            initialItemCount={Math.min(visible.length, 30)}
-            itemContent={(_, session) => (
-              <div className="px-3">
-                <SessionItem
-                  session={session}
-                  selected={session.session_id === selectedId}
-                  copied={copiedId === session.session_id}
-                  contentMatch={content.matches.get(session.session_id) ?? null}
-                  onSelect={onSelect}
-                  onCopy={handleCopy}
-                />
-                <div className="h-1.5" />
-              </div>
-            )}
+            data={rows}
+            initialItemCount={Math.min(rows.length, 30)}
+            computeItemKey={(_, row) =>
+              row.kind === 'session' ? row.session.session_id : row.kind
+            }
+            itemContent={(_, row) => {
+              if (row.kind === 'pinned-header') {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => pins.setCollapsed(!pins.collapsed)}
+                    aria-expanded={!pins.collapsed}
+                    data-testid="pinned-header"
+                    className="flex w-full items-center gap-1.5 px-3 pb-1.5 pt-1 text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                  >
+                    {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                    <Pin size={11} fill="currentColor" className={ACCENT_TEXT} />
+                    <span className={ACCENT_TEXT}>置顶</span>
+                    {/* 折起来时这个数就是全部线索：不报的话，人看不出自己折掉了什么。 */}
+                    <span className="font-mono opacity-70">{pinnedRows.length}</span>
+                  </button>
+                );
+              }
+              if (row.kind === 'rest-header') {
+                return (
+                  <div
+                    data-testid="rest-header"
+                    className="px-3 pb-1.5 pt-2 text-[11px] text-text-muted"
+                  >
+                    其余 <span className="font-mono opacity-70">{restRows.length}</span>
+                  </div>
+                );
+              }
+              const session = row.session;
+              return (
+                <div className="px-3">
+                  <SessionItem
+                    session={session}
+                    selected={session.session_id === selectedId}
+                    copied={copiedId === session.session_id}
+                    pinned={pins.isPinned(session.session_id)}
+                    contentMatch={content.matches.get(session.session_id) ?? null}
+                    onSelect={onSelect}
+                    onCopy={handleCopy}
+                    onTogglePin={handleTogglePin}
+                  />
+                  <div className="h-1.5" />
+                </div>
+              );
+            }}
           />
         )}
       </div>

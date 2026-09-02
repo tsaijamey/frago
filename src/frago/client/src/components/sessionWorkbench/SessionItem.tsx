@@ -2,7 +2,7 @@
  * SessionItem — 左栏会话卡片，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
  */
 
-import { Check, Copy, Quote } from 'lucide-react';
+import { Check, Copy, Pin, Quote } from 'lucide-react';
 import {
   activityTs,
   FAMILY_LABEL,
@@ -100,17 +100,23 @@ export default function SessionItem({
   session,
   selected,
   copied,
+  pinned = false,
   contentMatch,
   onSelect,
   onCopy,
+  onTogglePin,
 }: {
   session: WorkbenchSession;
   selected: boolean;
   copied: boolean;
+  /** 这场会话在不在置顶名单里。 */
+  pinned?: boolean;
   /** 这场会话在内容检索里命中了什么。没搜内容、或这场没命中时为 null。 */
   contentMatch?: ContentMatch | null;
   onSelect: (id: string) => void;
   onCopy: (session: WorkbenchSession) => void;
+  /** 置顶开关。不给就不长这颗按钮——骨架屏与只读场景用得上。 */
+  onTogglePin?: (session: WorkbenchSession) => void;
 }) {
   const dirTail = session.directory.split('/').filter(Boolean).slice(-2).join('/');
   const cmd = resumeCommand(session);
@@ -128,7 +134,8 @@ export default function SessionItem({
       aria-current={selected ? 'true' : undefined}
       data-testid="session-item"
       data-status={session.status}
-      className={`w-full cursor-pointer rounded-[10px] border border-border-color px-[11px] pb-[11px] pt-[10px] text-left transition-colors duration-200 ${
+      data-pinned={pinned ? 'true' : undefined}
+      className={`group/session w-full cursor-pointer rounded-[10px] border border-border-color px-[11px] pb-[11px] pt-[10px] text-left transition-colors duration-200 ${
         selected ? `${ACCENT_BG} ${ACCENT_RING} -translate-y-px` : 'bg-bg-card hover:bg-bg-hover'
       }`}
     >
@@ -156,6 +163,30 @@ export default function SessionItem({
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
           {dirTail}
         </span>
+        {onTogglePin ? (
+          <button
+            type="button"
+            title={pinned ? '取消置顶' : '置顶这场会话'}
+            aria-label={pinned ? '取消置顶' : '置顶'}
+            aria-pressed={pinned}
+            data-testid="toggle-pin"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePin(session);
+            }}
+            /* 置顶的那几场图钉一直亮着，其余的平时不显形、鼠标进卡才浮出来：一千多张卡
+               每张都常驻一颗图钉，视觉噪音远大于它的用处。键盘走到时同样显形。 */
+            className={`shrink-0 rounded-[5px] p-1 transition-colors duration-200 ${
+              pinned
+                ? ACCENT_TEXT
+                : 'text-text-muted opacity-0 hover:text-text-primary focus-visible:opacity-100 group-hover/session:opacity-100'
+            }`}
+          >
+            {/* 图钉的形状不随状态变，只有颜色与实心变：形状一换（图钉↔断了的图钉），
+                静止时看到的就成了"这一下会发生什么"，而不是"这场现在是什么状态"。 */}
+            <Pin size={12} fill={pinned ? 'currentColor' : 'none'} />
+          </button>
+        ) : null}
         <button
           type="button"
           title={cmd}
