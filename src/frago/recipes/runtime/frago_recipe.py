@@ -289,6 +289,22 @@ class Bus:
             )
         return body.get("data") or {}
 
+    def frago(self, argv: list[str], timeout: int = 120) -> dict:
+        """Have the platform run one of its own commands and hand back the result.
+
+        The words after ``frago``, as a list — the same list this module would
+        have passed to a subprocess, which is exactly what it used to do. What
+        changed is who runs it: inside this process the command inherits this
+        run's confined view of the filesystem and answers out of it, cheerfully
+        and with exit 0, having seen none of the platform's own books.
+        """
+        body = self._call("/api/bus/frago",
+                          {"argv": [str(word) for word in argv], "timeout": timeout},
+                          timeout=timeout + 10)
+        return {"code": int(body.get("code") or 0),
+                "stdout": str(body.get("stdout") or ""),
+                "stderr": str(body.get("stderr") or "")}
+
     def publish(self, state: dict, slot: str = "default") -> str:
         body = self._call("/api/bus/publish",
                           {"recipe": self.recipe.name, "slot": slot, "state": state})
@@ -559,6 +575,27 @@ class Recipe:
             timeout: int = 120) -> dict:
         """Ask another module for data. The only sanctioned way to get it."""
         return self.bus.ask(recipe, mode, params, timeout=timeout)
+
+    def ask_frago(self, argv: list[str], timeout: int = 120) -> dict:
+        """Run a frago command through the platform. Returns code/stdout/stderr.
+
+        Write the words you would type::
+
+            out = self.ask_frago(["user", "list", "--format", "json"])
+            if out["code"] == 0:
+                roster = json.loads(out["stdout"])
+
+        **Use this instead of starting frago yourself.** A subprocess started
+        here runs inside this run's view of the filesystem, where the platform's
+        own books do not exist. The commands that read them do not fail when
+        they cannot see them — they answer "nothing", exit 0, and whatever was
+        going to be shown gets shown as empty. Through this door the command
+        runs where those books actually are.
+
+        No shell is involved and no line is assembled, so an argument may hold
+        quotes, spaces or an apostrophe without anything needing to be escaped.
+        """
+        return self.bus.frago(argv, timeout=timeout)
 
     def publish(self, state: dict, slot: str = "default") -> str:
         """Publish what this module's page should render; returns its address.

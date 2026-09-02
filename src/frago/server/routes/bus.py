@@ -105,6 +105,19 @@ class AskRequest(BaseModel):
     caller_imports: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class FragoRequest(BaseModel):
+    #: The words that would come after ``frago`` on a terminal, as a list.
+    #:
+    #: A list rather than a string, and the difference is not stylistic. A
+    #: string has to be split by something, and whatever splits it has to make
+    #: decisions about quoting — at which point an account named with an
+    #: apostrophe, or a page name with a space, becomes a parse question with a
+    #: security answer. A list never gets assembled into a line, so there is no
+    #: line for anything to break out of.
+    argv: list[str] = Field(..., min_length=1, max_length=64)
+    timeout: int = Field(default=120, ge=1, le=600)
+
+
 class PublishRequest(BaseModel):
     recipe: str
     slot: str = "default"
@@ -348,6 +361,125 @@ async def bus_ask(req: AskRequest, request: Request):
         _record_edge(caller, req.recipe, req.mode, True,
                      f"paths-in-return: {'; '.join(leaked[:2])}")
     return {"ok": True, "data": out}
+
+
+#: Environment a recipe's run carries that must not reach the command the hub
+#: runs for it. These say "you are this recipe's run, for this person, writing
+#: here" — true of the caller, false of the command, and a nested
+#: ``frago recipe run`` that inherited them would take the caller's landing spot
+#: for its own and write another module's output into it.
+_CALLER_ONLY_ENV = ("FRAGO_RECIPE_CALLER", "FRAGO_RECIPE_SLOT", "FRAGO_RECIPE_DATA_DIR",
+                    "FRAGO_RECIPE_COMMON_DIR", "FRAGO_BUS_URL", "FRAGO_BUS_TOKEN",
+                    "FRAGO_EXECUTION_ID", "FRAGO_CURRENT_RUN")
+
+
+def _command_path(argv: list[str]) -> str:
+    """The command being run, for the ledger: the words before the first flag.
+
+    ``["recipe", "expose", "x", "--allow", "a@b"]`` reads as ``recipe expose``.
+    Recorded rather than the whole line because the ledger's question is which
+    crossings exist, and the arguments are the part that differs every time —
+    keeping them would defeat the roll-up and turn one busy page into megabytes
+    of near-identical lines.
+    """
+    words = []
+    for token in argv:
+        if token.startswith("-"):
+            break
+        words.append(token)
+        if len(words) == 2:
+            break
+    return " ".join(words) or "(empty)"
+
+
+@router.post("/frago")
+async def bus_frago(req: FragoRequest, request: Request):
+    """A recipe asking the platform to run one of its own commands.
+
+    **Why this exists.** Recipes have always driven frago's commands — it is the
+    documented way for one to do anything the platform owns. Confinement did not
+    forbid that; it did something worse. The command still ran, still exited 0,
+    and answered out of a filesystem view that has none of the platform's own
+    books in it. ``frago user list`` inside a recipe returns ``{"users": []}`` on
+    a machine with 23 accounts, and the access console drew an empty table under
+    a heading that said everything was fine.
+
+    So the command runs here instead, in the server's process tree, which is not
+    confined. Nothing is handed to the recipe: no path, no directory, no key. It
+    asks for something to be done and gets back what the command printed.
+
+    **The recipe never names the program.** It supplies only the words after
+    ``frago``, and this picks the interpreter — the server's own. A recipe cannot
+    run ``ls``, cannot run a differently-versioned frago, and cannot reach a
+    shell, because no line of shell is ever assembled.
+
+    **What this deliberately does not do is filter the command.** An earlier
+    design had tiers — some commands never reachable, some grantable per recipe,
+    some open. It was wrong twice over. It sorted commands by how alarming their
+    names were rather than by what they actually cross, and it protected a
+    machine whose recipes already run as their owner holding a full interpreter:
+    a recipe that means harm does not need ``frago def remove``, it has Python.
+    The trust decision this rides on is the one that already exists and is
+    already asked at the right moment — marking a mode ``@action`` means "this
+    source is one I would let other people press".
+
+    The two things that replace a filter are both here: every call is written to
+    the ledger with the command it ran, and every call goes through one function,
+    so a reviewer sees a recipe's whole reach over the platform in one place
+    instead of reading all of its Python.
+    """
+    import os
+    import subprocess
+    import sys
+
+    caller = request.headers.get("X-Frago-Recipe", "") or "(unknown)"
+    command = _command_path(req.argv)
+
+    # NUL cannot survive the trip into execve, and a caller sending one is
+    # either broken or probing. Refused by name so it reads as a rejection
+    # rather than a mangled command.
+    if any("\0" in word for word in req.argv):
+        _record_edge(caller, "frago", command, False, "argv-contains-nul")
+        raise HTTPException(status_code=400, detail="参数里不能有 NUL 字节")
+
+    env = {k: v for k, v in os.environ.items() if k not in _CALLER_ONLY_ENV}
+
+    def _run() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "frago", *req.argv],
+            capture_output=True, text=True, timeout=req.timeout, env=env,
+            # No terminal, on purpose. `frago user passwd` reads a hidden
+            # password; over this door there is nobody to type it. Given a
+            # closed stdin it fails at once and says so, where an inherited one
+            # would hold a thread until the timeout and report nothing useful.
+            stdin=subprocess.DEVNULL,
+            # The server's own directory, never the caller's. A relative path in
+            # the command would otherwise resolve inside whichever run happened
+            # to be asking.
+            cwd=str(Path.home()),
+        )
+
+    try:
+        # Off the event loop: these are whole processes, and one of them may be
+        # `frago recipe run`, which comes back through this same server.
+        done = await asyncio.to_thread(_run)
+    except subprocess.TimeoutExpired:
+        _record_edge(caller, "frago", command, True, f"timeout after {req.timeout}s")
+        return {"ok": False, "code": 124, "stdout": "",
+                "stderr": f"frago {command} 超过 {req.timeout}s 没有返回"}
+    except Exception as err:
+        logger.exception("bus: frago %s failed for %s", command, caller)
+        _record_edge(caller, "frago", command, True, f"failed: {err}")
+        return {"ok": False, "code": 127, "stdout": "", "stderr": str(err)}
+
+    # A non-zero exit is the command answering, not the door failing, so it
+    # comes back as data. The caller reads the code the same way it would have
+    # read it from its own subprocess — which is the whole point: the migration
+    # for an existing recipe is one function, not a rewrite.
+    _record_edge(caller, "frago", command, True,
+                 "" if done.returncode == 0 else f"exit {done.returncode}")
+    return {"ok": True, "code": done.returncode,
+            "stdout": done.stdout, "stderr": done.stderr}
 
 
 @router.post("/publish")
