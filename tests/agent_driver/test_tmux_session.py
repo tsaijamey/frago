@@ -214,7 +214,11 @@ def test_claude_submit_resends_enter_when_text_stuck() -> None:
     from frago.agent_driver.drivers.claude import _SUBMIT_VERIFY_POLLS
 
     stuck = "  ❯ hello still in box"
-    panes = [stuck] * _SUBMIT_VERIFY_POLLS + ["  ❯ ", "(2s · esc to interrupt)"]
+    # ``_SUBMIT_VERIFY_POLLS + 1``：多出来的那一帧是**按 Enter 前的安全闸**读的
+    # （``_tui_is_gone``，见 claude driver 的 ``_submit``）。FakeTmux 是按位置吐 pane
+    # 的，少给这一帧，"输入框回空"那一帧就会提前落进第一轮验证窗口里，本用例要测的
+    # "首个 Enter 被吞、重发第二个"根本不会发生——测的就不再是它声称测的东西了。
+    panes = [stuck] * (_SUBMIT_VERIFY_POLLS + 1) + ["  ❯ ", "(2s · esc to interrupt)"]
     driver = load_driver("claude")
     fake = FakeTmux(panes)
     sess = TmuxAgentSession("c2", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)

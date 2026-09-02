@@ -84,7 +84,48 @@ _BASE_FLAGS = (
 # Python 3.11+ 直接抛 PatternError——整个 driver 连装载都装载不了。
 _BANNER_PAT = r"^\s*│\s*>_\s*OpenAI\s+Codex\b"
 _FOOTER_PAT = r"^[^\n│╭╰]*\S\s·\s+[~/][^\n]*$"
-_READY = PaneMatcher(name="codex-ready", pattern=rf"{_BANNER_PAT}|{_FOOTER_PAT}")
+_READY_SIGNAL = PaneMatcher(name="codex-ready-signal", pattern=rf"{_BANNER_PAT}|{_FOOTER_PAT}")
+
+# 启动期的致命失败。**横幅在，不等于会话活着。**
+#
+# 现场是这样的：codex 0.149 给每场会话上了单写者锁，同一个会话第二次
+# ``codex resume <id>`` 会在 TUI bootstrap 阶段失败——
+#
+#     Resuming session…
+#     › Error: Failed to resume session from …/rollout-….jsonl: thread/resume failed
+#       during TUI bootstrap: thread <id> already has an active writer (code -32600)
+#
+# 而这一屏上**启动横幅是在的**（它先画横幅、再回放会话、才失败），于是就绪信号当场命中、
+# ``open()`` 认为起好了。紧接着 codex 自己退出、pane 落回 shell 提示符，而 frago 把用户
+# 那句话打进了 shell——话被当成命令执行，完成信号永不出现，本轮一路空等到超时。也就是本
+# driver 模块头列为首要要防的那种静默挂起，只是这一次它披着"已就绪"的皮。
+#
+# 撞得上这一屏的不止一种情形：人自己在终端里开着同一场 codex、服务重启后遗留的孤儿 tmux
+# 还占着写者、页面同时从两处续接同一场。共同点是**这一屏永远不该被当成就绪**。
+#
+# 判据只认带明确失败语义的组合，NEVER 只匹配裸 ``Error``——正常答案正文里就会出现这个词。
+_FATAL_STARTUP = re.compile(
+    r"(?i)failed\s+to\s+resume\s+session"
+    r"|already\s+has\s+an\s+active\s+writer"
+    r"|resume\s+failed\s+during\s+TUI\s+bootstrap"
+)
+
+
+class _CodexReady:
+    """就绪 = 结构信号在 **且** 屏上没有致命的启动失败。鸭子兼容 ``PaneMatcher``。
+
+    多加的那半句判据是全部要点：只看结构信号的话，一屏"横幅在、会话已经起不来"会被
+    判成就绪，用户那句话就被打进了 shell。判不出就绪时 ``open()`` 会带着末屏抛启动失败，
+    那份末屏里就写着 codex 自己报的原因——比空等十分钟强得多。
+    """
+
+    name = "codex-ready"
+
+    def matches(self, text: str) -> bool:
+        return _READY_SIGNAL.matches(text) and _FATAL_STARTUP.search(text) is None
+
+
+_READY = _CodexReady()
 
 # 忙碌：codex 干活时在页脚给中断提示。判完成走 rollout 权威探针，这里只服务于
 # 探针不可用时的读屏退路。
@@ -111,13 +152,22 @@ _DONE = _CodexDone()
 # 不静默挂到超时。只认带明确失败语义的组合——裸 ``login`` / ``sign in`` 会出现在
 # 启动横幅与普通答案正文里，放进来会让本轮刚提交就误判返回（claude/opencode 两侧
 # 都实证过这个坑）。三道启动模态已由启动开关与预写信任消解，不在这里兜。
+#
+# 单写者锁那一屏（``_FATAL_STARTUP``）也进这道门，而且**它不能只靠就绪判据拦**。
+# 20260902 本机实测的时序是：横幅先画出来 → 就绪当场命中、``open()`` 返回 → 提示词被
+# 打进输入框 → codex **这时**才失败退出 → Enter 落到 shell 上，pane 上留下一句
+# ``zsh: command not found: 这句话不该被打进``。也就是说错误行在就绪判定的那一刻还没
+# 上屏，就绪那道闸对这个时序无能为力。这道门是在**轮询里**反复看的，所以错误行一上屏
+# 就命中，本轮以 needs_input 收场（几百毫秒），而不是空等到十分钟超时。
 _NEEDS_INPUT = PaneMatcher(
     name="codex-needs-input",
     pattern=(
         r"(?i:invalid api key|api key.*(?:invalid|expired)"
         r"|not\s+logged\s+in|unauthorized|authentication\s+failed"
         r"|insufficient\s+(?:credit|balance|quota)|quota\s+exceeded"
-        r"|please\s+(?:run\s*/?login|log\s*in|sign\s+in\s+to\s+continue))"
+        r"|please\s+(?:run\s*/?login|log\s*in|sign\s+in\s+to\s+continue)"
+        r"|failed\s+to\s+resume\s+session|already\s+has\s+an\s+active\s+writer"
+        r"|resume\s+failed\s+during\s+TUI\s+bootstrap)"
     ),
 )
 
@@ -313,6 +363,19 @@ def _rollout_size(session: TmuxAgentSession) -> int | None:
         return None
 
 
+def _tui_is_gone(session: TmuxAgentSession) -> bool:
+    """TUI 已经确定不在了吗——只认**屏上写着的失败**，读不到屏一律当"还在"。
+
+    判据故意是单向的：只有看见 ``_FATAL_STARTUP`` 那一屏才算"不在"。反过来用"就绪信号
+    没命中"来判死，会在重绘中途的空窗帧上误伤一场健康会话，把正常的一轮拦下来——那比
+    要防的问题更常见。
+    """
+    try:
+        return _FATAL_STARTUP.search(session.capture_pane()) is not None
+    except Exception:  # noqa: BLE001 — 读不到屏不是"它死了"
+        return False
+
+
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
     """投喂一轮：文本进框 → Enter → 确认落地（确认不了才补发）。
 
@@ -323,6 +386,18 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
 
     确认不了也不抛不卡：留一条 debug 日志，交给完成轮询的超时兜底。那条日志是事后
     排查"整段提示词滞留输入框"的唯一线索，NEVER 静默走掉。
+
+    ## 按 Enter 之前先确认 TUI 还在——这一条是安全闸，不是优化
+
+    20260902 本机实测的时序：横幅先画出来 → 就绪命中、``open()`` 返回 → 这里把提示词
+    打进去 → codex **这时**才因单写者锁失败退出 → Enter 落到 shell 上。pane 上留下的是
+    ``zsh: command not found: 这句话不该被打进``——**用户那句话被 shell 当命令执行了**。
+    这次的内容无害，可页面上的一句话本就可能长得像命令；把它交给 shell 执行，是这条
+    链路上后果最严重的一种错法。
+
+    所以每次 Enter 之前都看一眼那一屏。TUI 已经不在就**不按 Enter**：文本停在 shell 的
+    行缓冲里不会执行，本轮交给完成轮询的 needs_input 门去收（那道门认同一屏，几百毫秒
+    就返回，并把 codex 自己报的原因带回给调用方）。
     """
     _claim_once(session)
     baseline = _rollout_size(session)
@@ -333,6 +408,13 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
 
     landed = False
     for attempt in range(1 + _ENTER_RETRIES):
+        if _tui_is_gone(session):
+            logger.warning(
+                "codex TUI 在提交前就已经起不来了，不按 Enter（session=%s）——"
+                "按下去等于把用户那句话交给 shell 执行",
+                session.session_id,
+            )
+            return
         session.send_keys("Enter")
         for _ in range(_SUBMIT_VERIFY_POLLS):
             if baseline is None:

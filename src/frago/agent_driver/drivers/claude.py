@@ -53,6 +53,42 @@ _PROMPT_BOX = PaneMatcher(name="claude-prompt", pattern=r"(?m)^\s*│?\s*[>❯]\
 # 尚未可交互时就误判就绪、过早投喂导致 Enter 被吞、prompt 永不提交。
 _READY_BOX = PaneMatcher(name="claude-ready", pattern=r"(?m)^\s*│?\s*[>❯]\s*$")
 
+# 启动期的致命失败：claude 报完这一句就退出，pane 落回 shell。
+#
+# 两句都是 launch 分岔判错时的必然结果（见 ``_launch`` 的 resume/--session-id 二分）：
+# 对不存在的会话用 ``--resume`` 得到前者，对已存在的会话用 ``--session-id`` 得到后者。
+#
+# **为什么光有就绪判据不够。** ``_READY_BOX`` 认的是「``❯`` 后整行为空」——那正是
+# claude v2.1.x 输入框的样子（横线 + ``❯ `` + 横线）。可**裸 zsh 提示符长得一模一样**：
+# 20260902 实测，``❯ \n`` 这一行 ``_READY_BOX`` 命中。本机的 starship 在行尾还画了个
+# ``─╯`` 才侥幸不命中，换一套提示符主题（pure / spaceship / 裸 ``PROMPT='❯ '``）就会
+# 命中——于是 claude 已经退出、pane 上只剩 shell，frago 却判它就绪，把用户那句话打进
+# shell 并按下 Enter。**那句话会被当成命令执行。**
+#
+# 这就是同月在 codex driver 上实测到的同一类事故（那边是单写者锁失败），只是 claude
+# 这边的触发条件多一个「提示符主题恰好是裸的」。判据加在这里，不再赌主题。
+_FATAL_STARTUP = re.compile(
+    r"(?i)no conversation found with session id"
+    r"|session id\s+\S+\s+is already in use"
+)
+
+
+class _ClaudeReady:
+    """就绪 = 空输入框在 **且** 屏上没有启动失败。鸭子兼容 ``PaneMatcher``。
+
+    只作为 driver 对外的 ``ready_signal``。模块内那两处「输入框空没空」的判断
+    （``_clear_input`` / ``_submitted``）仍直接用 ``_READY_BOX``——它们问的是别的问题，
+    不该被启动失败这件事影响。
+    """
+
+    name = "claude-ready"
+
+    def matches(self, text: str) -> bool:
+        return _READY_BOX.matches(text) and _FATAL_STARTUP.search(text) is None
+
+
+_READY = _ClaudeReady()
+
 # 忙碌标记：思考期间 pane 会出现下列之一，三者任一命中即视为"仍在忙"。
 #   1. ``esc to interrupt`` —— 可中断提示行。
 #   2. 括号内计时 ``(12s`` / ``(running stop hook · 4s`` —— 注意完成后的摘要行
@@ -93,9 +129,15 @@ _AUTH_WALL_PAT = (
     r"|credit balance is too low|sign\s+in\s+to\s+continue"
 )
 _SELECT_MENU_PAT = r"^\s*│?\s*❯\s+\d+[.)]\s"
+# 启动失败那两句也进这道门：它比就绪那道闸晚一步，但它是在**轮询里**反复看的，
+# 所以就算错误行比就绪信号晚上屏（codex 那边实测到的时序），这一轮也会在几百毫秒内
+# 以 needs_input 收场，而不是空等到超时。
+_FATAL_STARTUP_PAT = (
+    r"no conversation found with session id|session id\s+\S+\s+is already in use"
+)
 _NEEDS_INPUT = PaneMatcher(
     name="claude-needs-input",
-    pattern=rf"(?i:{_AUTH_WALL_PAT})|{_SELECT_MENU_PAT}",
+    pattern=rf"(?i:{_AUTH_WALL_PAT}|{_FATAL_STARTUP_PAT})|{_SELECT_MENU_PAT}",
 )
 
 # 真空闲判定（spec 20260627 Phase 6）用到的两个独立结构信号——与 ``_BUSY`` 互补：
@@ -352,7 +394,29 @@ def _transcript_size(path: Path | None) -> int | None:
         return None
 
 
+def _tui_is_gone(session: TmuxAgentSession) -> bool:
+    """claude 已经确定不在了吗——只认**屏上写着的启动失败**，读不到屏一律当"还在"。
+
+    单向判据：反过来拿"就绪信号没命中"判死，会在重绘中途的空窗帧误伤健康会话。
+    """
+    try:
+        return _FATAL_STARTUP.search(session.capture_pane()) is not None
+    except Exception:  # noqa: BLE001 — 读不到屏不是"它死了"
+        return False
+
+
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
+    """投喂一轮。**按 Enter 之前先确认 claude 还在——这一条是安全闸。**
+
+    claude 起不来时（``No conversation found`` / ``Session ID … is already in use``）
+    会打印一句就退出，pane 落回 shell 提示符。而裸 ``❯ `` 提示符与 claude 自己的空输入
+    框在读屏上长得一模一样（``_READY_BOX`` 两者都命中，20260902 实测），所以就绪判据
+    在某些提示符主题下拦不住这一屏。拦不住就意味着：用户在页面上打的那句话被送进
+    shell 并按下 Enter，**当成命令执行**。
+
+    不按 Enter 的话，文本只停在 shell 的行缓冲里不会执行，本轮交给完成轮询的
+    needs_input 门去收（那道门认同一批字样）。
+    """
     session.send_text(prompt)
     # claude TUI 的粘贴检测把紧随粘贴突发到达的 Enter 当成粘贴内容里的换行而非
     # 提交，长消息会整段滞留输入框（PA 卡死的根因）。停 2 秒让突发先结束。
@@ -363,6 +427,13 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     path = transcript_path_for(session)
     baseline_size = _transcript_size(path)
     for _ in range(1 + _ENTER_RETRIES):
+        if _tui_is_gone(session):
+            logger.warning(
+                "claude 在提交前就已经起不来了，不按 Enter（session=%s）——"
+                "按下去等于把用户那句话交给 shell 执行",
+                session.session_id,
+            )
+            return
         session.send_keys("Enter")
         confirmed = False
         for _ in range(_SUBMIT_VERIFY_POLLS):
@@ -501,7 +572,7 @@ register_driver(
     AgentDriver(
         agent_type="claude",
         launch_command=_launch,
-        ready_signal=_READY_BOX,
+        ready_signal=_READY,
         submit=_submit,
         done_signal=_DONE,
         extract=_extract,
