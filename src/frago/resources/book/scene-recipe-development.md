@@ -24,6 +24,10 @@
 简单 recipe 可跳过 plan，直接一步创建：
   frago recipe create <name> --prompt "..."
 
+第 5 步和第 7 步 MUST 后台跑（Bash 工具 `run_in_background: true`）：两条命令都
+阻塞在一个 worker 上，认真的任务书要写十几到几十分钟，而前台命令有 10 分钟硬
+上限，砍掉的只是 CLI、worker 还在写同一个目录。详见 recipe-creation。
+
 ## 关键约束
 - recipe-fields — 必填字段、schema 规范
 - browser-usage — JS recipe 中的选择器稳定性与交互规范

@@ -49,12 +49,19 @@ def _run_frago_agent(
     prompt_text: str,
     *,
     agent_type: str = "claude",
+    timeout: int = 0,
 ) -> int:
     """Run frago agent as subprocess with the given prompt.
 
     ``agent_type`` defaults to claude (unchanged behavior); pass another agent
     to drive a different cli-agent recipe. 后端只剩 tmux（spec 20260607 Phase 5），
     故不再有 driver 选择。
+
+    ``timeout`` 缺省 0 = 这一轮不设墙钟上限，跟 ``frago agent`` 对外宣告的契约
+    同一个缺省。写规格 / 写代码这一轮该跑多久由任务决定：一份认真的任务书要
+    worker 写十几到几十分钟，而到点判死的那一刻它往往还在写，产出既没交付也没
+    人回收。正数才交给 ``frago agent --timeout N``（见下面为什么是交下去而不是
+    从外面扣）。
 
     Returns the process exit code.
     """
@@ -67,7 +74,7 @@ def _run_frago_agent(
         # Resolve frago binary via the shared server helper (single source of
         # truth for the venv-aware lookup). NOTE: the *execution model* stays
         # CLI-local on purpose — this command must block until the agent exits
-        # and surface its returncode (with --quiet and a 600s timeout), whereas
+        # and surface its returncode (with --quiet), whereas
         # AgentService.start_task is fire-and-forget background that returns a
         # task_id/pid immediately. Reusing start_task here would silently change
         # this command's behavior, so only the binary resolution is shared.
@@ -78,18 +85,29 @@ def _run_frago_agent(
             "--agent-type", agent_type,
             "--prompt-file", prompt_file,
         ]
+        # 墙钟上限 MUST 交给被调方，NEVER 用 subprocess.run(timeout=...) 从外面扣。
+        # 这里曾经硬扣 600 秒，代价有两层：
+        #   一、`frago agent` 缺省本来就不设上限，600 秒是调用方外挂的，跟它对外
+        #       宣告的契约直接打架，而调用方压根没传 --timeout；
+        #   二、到点 subprocess.run 对 `frago agent` 发 SIGKILL，于是
+        #       SessionLauncher.run 的 `finally: session.close()` 永远不执行。
+        #       tmux 是独立守护进程不跟着死，session_id 又是那一次现 mint 的
+        #       uuid4、没有任何人记着——每次超时泄漏一条谁也认领不了、还在继续
+        #       写同一批文件的 tmux 会话，只能手工 kill，而人看到的是「失败」，
+        #       于是重跑，两个 worker 在一个目录里打架。
+        # 交下去之后，到点是 `frago agent` 自己正常返回一个 timeout 结果并退 1，
+        # 收尾（kill-session）照常跑。
+        if timeout > 0:
+            cmd += ["--timeout", str(timeout)]
 
-        result = subprocess.run(cmd, timeout=600)
+        result = subprocess.run(cmd)
         return result.returncode
-    except subprocess.TimeoutExpired:
-        click.echo("Error: Agent execution timed out (600s)", err=True)
-        return 1
     finally:
         Path(prompt_file).unlink(missing_ok=True)
 
 
 def _plan_into(name: str, prompt_text: str, spec_path: Path,
-               *, type_: str | None, runtime: str | None) -> None:
+               *, type_: str | None, runtime: str | None, timeout: int = 0) -> None:
     """Decide the module's shape and write it down. Shared by plan and create.
 
     One implementation on purpose: the two commands used to be two paths to a
@@ -149,9 +167,31 @@ def _plan_into(name: str, prompt_text: str, spec_path: Path,
 
 填完不要自己写代码。
 """
-    if _run_frago_agent(agent_prompt) != 0:
+    if _run_frago_agent(agent_prompt, timeout=timeout) != 0:
         click.echo("Error: Agent failed to generate spec", err=True)
         sys.exit(1)
+
+
+#: 派 worker 那一轮该跑多久由任务决定，所以这条命令自己不设上限。真要卡表时这
+#: 个数字交给 `frago agent --timeout N` 执行——被调方到点是正常返回，会把自己的
+#: tmux 会话收掉；从外面套一个杀手（subprocess timeout、timeout(1)、Ctrl-C 之外
+#: 的任何 kill）收不掉，只会留下一条还在写盘的孤儿会话。
+_TIMEOUT_HELP = (
+    'Wall-clock cap for the worker turn, in seconds. Default 0 = no cap: the '
+    'turn runs until the worker is done. A positive number is handed to '
+    '`frago agent --timeout N`, which cuts the turn off *and still tears down '
+    'its tmux session*. NEVER wrap this command in an outside killer instead — '
+    'that leaves the worker alive and writing.'
+)
+
+#: 前台起的调用方会在被砍掉之前先收到这一行，于是重跑时知道该换后台。
+#: `--help` 里那段同样的话是写死在两条命令的 docstring 里的——一个不知情的 agent
+#: 该在准备跑的时候就读到，而不是在第 10 分钟被砍掉之后才去猜发生了什么。
+_BACKGROUND_HINT = (
+    "[Note] 这一轮不设时间上限，认真的任务书要 worker 写十几到几十分钟。"
+    "agent 调用方 MUST 后台起（Bash 工具 run_in_background: true）——"
+    "前台被 harness 的 10 分钟上限砍掉时，worker 不会跟着停，还在写同一个目录。"
+)
 
 
 @recipe_group.command(name='plan', cls=AgentFriendlyCommand)
@@ -185,12 +225,23 @@ def _plan_into(name: str, prompt_text: str, spec_path: Path,
     is_flag=True,
     help='Overwrite existing spec.md'
 )
-def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: str | None, runtime: str | None, force: bool):
+@click.option('--timeout', type=int, default=0, help=_TIMEOUT_HELP)
+def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: str | None,
+                runtime: str | None, force: bool, timeout: int):
     """
     Generate a recipe spec via agent
 
     Creates a spec.md file defining requirements for a recipe.
     The agent will consult frago book recipe-spec-writing for guidelines.
+
+    \b
+    MUST be run in the background by an agent caller.
+    This blocks on a worker that writes the spec for you, and a serious
+    requirement brief takes ten to forty minutes; there is no time cap by
+    default. Claude Code's Bash tool kills a *foreground* command at 10 minutes
+    and that limit cannot be raised, so start it with run_in_background: true.
+    Killed from outside, this command dies but the worker does not — it keeps
+    writing the same recipe directory, so a rerun puts two workers in one folder.
 
     \b
     Examples:
@@ -220,7 +271,8 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
 
     click.echo(f"[Plan] Generating spec for recipe '{name}'...")
     click.echo(f"  Directory: {recipe_dir}")
-    _plan_into(name, prompt_text, spec_path, type_=type_, runtime=runtime)
+    click.echo(_BACKGROUND_HINT, err=True)
+    _plan_into(name, prompt_text, spec_path, type_=type_, runtime=runtime, timeout=timeout)
 
     if spec_path.exists():
         click.echo(f"[OK] Spec written: {spec_path}")
@@ -257,13 +309,25 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
     is_flag=True,
     help='Overwrite existing recipe.md and script'
 )
-def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_path: str | None, force: bool):
+@click.option('--timeout', type=int, default=0, help=_TIMEOUT_HELP)
+def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_path: str | None,
+                  force: bool, timeout: int):
     """
     Create a recipe via agent from spec or prompt
 
     Two modes:
     1. From spec: reads spec.md and generates recipe code
     2. One-step: --prompt creates spec + code in one pass
+
+    \b
+    MUST be run in the background by an agent caller.
+    This blocks on a worker that writes the recipe for you (one-step mode also
+    writes the spec first, so it is the longer of the two); there is no time cap
+    by default. Claude Code's Bash tool kills a *foreground* command at 10
+    minutes and that limit cannot be raised, so start it with
+    run_in_background: true. Killed from outside, this command dies but the
+    worker does not — it keeps writing the same recipe directory, so a rerun
+    puts two workers in one folder.
 
     \b
     Examples:
@@ -303,6 +367,8 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
     # Ensure directory exists
     recipe_dir.mkdir(parents=True, exist_ok=True)
 
+    click.echo(_BACKGROUND_HINT, err=True)
+
     # One-step creation still goes through planning; it just does not make the
     # person run two commands. The step being skipped, not the second command,
     # was the problem: a probe run showed a fresh agent finding
@@ -314,7 +380,7 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
         spec_file = recipe_dir / "spec.md"
         if not spec_file.exists() or force:
             click.echo(f"[Plan] 先定规格：{spec_file}")
-            _plan_into(name, user_prompt, spec_file, type_=None, runtime=None)
+            _plan_into(name, user_prompt, spec_file, type_=None, runtime=None, timeout=timeout)
         spec_content = spec_file.read_text(encoding="utf-8")
 
     # Lay the template down before the agent is asked for anything. Creation
@@ -424,7 +490,7 @@ Spec 内容（位于 {resolved_spec}）：
     click.echo(f"[Create] Creating recipe '{name}'...")
     click.echo(f"  Directory: {recipe_dir}")
 
-    exit_code = _run_frago_agent(agent_prompt)
+    exit_code = _run_frago_agent(agent_prompt, timeout=timeout)
 
     if exit_code != 0:
         click.echo("Error: Agent failed to create recipe", err=True)

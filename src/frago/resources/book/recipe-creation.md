@@ -21,6 +21,29 @@
 `frago recipe create <名字> --prompt "<需求>"` 是把前两步并成一条命令，
 **不是跳过第一步**——它照样先生成规格、让 agent 填完，再按规格生成模板。
 
+### plan / create MUST 后台跑（agent 调用方）
+
+这两条命令都是**阻塞的**：它们各派一个 worker 去写文件，跑完那一轮才退出。
+一份认真的任务书要 worker 写十几到几十分钟，命令本身**不设时间上限**
+（缺省 `--timeout 0`，与 `frago agent` 同一个契约）。
+
+```bash
+# 主控：Bash 工具带 run_in_background: true
+frago recipe plan <名字> --prompt-file <任务书.md>
+```
+
+前台起会被砍：Claude Code 的 Bash 工具对前台命令有 **10 分钟硬上限，提不动**。
+砍掉的只是这条命令，**worker 不会跟着停**——它还在写同一个配方目录，而磁盘上
+的东西一样没回滚。人看到「失败」去重跑，于是两个 worker 在一个目录里打架。
+2026-08-27 已经实测踩过两次：文件都写好了，CLI 却报 timed out。
+
+真要卡表就 `--timeout N`，那个数字交给 `frago agent` 执行，它到点会把自己的
+tmux 会话收掉。**NEVER 从外面套杀手**（`timeout 600 frago recipe plan ...`、
+或任何 kill）——外面杀掉的是 CLI，tmux 是独立守护进程，留下的是一条谁也认领
+不了、还在写盘的孤儿会话。
+
+同一条纪律的上游版本见 `frago book agent-worker-driving`。
+
 ### 一、plan 产出什么
 
 一份 `spec.md`，分两半。
