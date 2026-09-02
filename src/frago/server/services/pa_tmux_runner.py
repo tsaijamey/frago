@@ -58,13 +58,33 @@ class PaTmuxRunner:
         """当前常驻的全部 session_key（transcript 持续转发器遍历用）。"""
         return self._pool.active_ids()
 
+    def _inject_bootstrap(self, key: str, session_key: str | None, bootstrap: str) -> None:
+        """把 bootstrap 作为**独立一轮**注入并等它答完（``run`` / ``warm`` 唯一入口）。
+
+        两条路径注入的是同一件事，故 MUST 只有这一处：从前 ``run`` 给这一轮压了
+        180 秒墙钟而 ``warm`` 不设上限，同一件事两个值——一个会在 bootstrap 还没
+        答完时就返回，把后面那条真实消息提交进一个仍在忙的会话。
+
+        这一轮**不设时间上限**（``timeout_s`` 不传 = ``None``，见
+        ``TmuxAgentSession.send``）：注入没答完就往下走，等于在会话还在生成时锚
+        baseline、再提交真实 prompt——转发器会把 bootstrap 那一轮的回复当成用户
+        那句话的答案投出去。
+        """
+        self._pool.run(
+            bootstrap,
+            agent_type=self._agent_type,
+            session_id=key,
+            cwd=self._cwd,
+            conv_key=session_key,
+        )
+
     def run(
         self,
         session_key: str | None,
         prompt: str,
         *,
         bootstrap: str | None = None,
-        timeout_s: float = 180.0,
+        timeout_s: float | None = None,
         on_ready: Callable[[str], None] | None = None,
     ) -> TurnResult:
         """取/建该 key 的常驻会话，投喂一轮，返回完整 ``TurnResult``。
@@ -72,6 +92,19 @@ class PaTmuxRunner:
         首次创建（pool 未持有活会话）且给了 bootstrap 时，bootstrap 作为独立一轮
         先注入（丢弃回复），再发本轮 prompt；之后只发 prompt。阻塞调用（tmux +
         轮询），调用方应在线程里跑以免阻塞事件循环。
+
+        ``timeout_s`` 缺省 ``None`` = **这一轮不设墙钟上限**，与 ``pool.run`` /
+        ``TmuxAgentSession.send`` / ``warm`` 同一口径（ffb902a 已在驱动层定下：
+        一轮该跑多久由任务决定，不由一个拍脑袋的秒数决定）。PA 恰恰是最可能跑长
+        任务的那个，从前这里压着 180 秒缺省：到点了会话没被杀、活还在干，但
+        ``send`` 已按超时返回——它把仍在生成的会话标成 ``idle``，于是这场正干活的
+        会话变得可被池的数量上限当"闲会话"挤掉（``WarmSessionPool._evict_if_needed``
+        只跳过 ``status == "busy"``），一轮的工具调用与后台 worker 连同产出一起丢。
+        真要卡表的调用方自己传一个正数，opt-in 的老行为一点没少。
+
+        投递不依赖本方法返回：transcript 持续转发器独立盯着同一份 jsonl，每条新终答
+        自己投（见 ``primary/watcher.py``）。所以去掉上限不会让回复变慢，只是让本方法
+        如实等到这一轮真的结束。
 
         返回整个 ``TurnResult``（含 ``status`` / ``raw_delta``）而非只取 ``.text``：
         调用方据 ``status==needs_input`` 把阻断门的可见提示投递回 chat 并挂起会话。
@@ -84,14 +117,7 @@ class PaTmuxRunner:
         # 回显行"定位本轮答案，巨型多行 prompt 在屏上找不到匹配回显会回退整屏、抠出
         # 启动垃圾。分两轮后，真实消息是一条干净可定位的 prompt。
         if bootstrap and not self._pool.has(key):
-            self._pool.run(
-                bootstrap,
-                agent_type=self._agent_type,
-                session_id=key,
-                cwd=self._cwd,
-                conv_key=session_key,
-                timeout_s=timeout_s,
-            )
+            self._inject_bootstrap(key, session_key, bootstrap)
 
         # bootstrap 注入完毕（或会话已活、无需 bootstrap）、真实 prompt 提交之前，
         # 回调一次：调用方在此把 transcript 持续转发器的 last_delivered_marker 锚到
@@ -133,13 +159,7 @@ class PaTmuxRunner:
             if session is not None and session.is_alive():
                 return False
         if bootstrap is not None:
-            self._pool.run(
-                bootstrap,
-                agent_type=self._agent_type,
-                session_id=key,
-                cwd=self._cwd,
-                conv_key=session_key,
-            )
+            self._inject_bootstrap(key, session_key, bootstrap)
             if on_ready is not None:
                 on_ready(key)
         else:

@@ -25,6 +25,9 @@ class FakePool:
     def __init__(self) -> None:
         self.live: set[str] = set()
         self.runs: list[tuple[str, str]] = []   # (session_id, prompt)
+        # 每一轮实际落到 pool 的墙钟上限。缺省与真实 WarmSessionPool.run 一致（None =
+        # 不设上限），故 None 就是"这一轮没有被卡表"。
+        self.timeouts: list[float | None] = []
         self.evicted: list[str] = []
         self.reply_text = "[]"
         self.status = "ok"
@@ -38,8 +41,9 @@ class FakePool:
         # 不模拟真实 tmux pane，统一返回 None → 真空闲门短路（无活会话=立即放行）。
         return None
 
-    def run(self, prompt, *, agent_type, session_id, cwd, conv_key=None, timeout_s=120.0, resume_hook=None):  # noqa: ARG002
+    def run(self, prompt, *, agent_type, session_id, cwd, conv_key=None, timeout_s=None, resume_hook=None):  # noqa: ARG002
         self.runs.append((session_id, prompt))
+        self.timeouts.append(timeout_s)
         self.live.add(session_id)
         return TurnResult(
             text=self.reply_text, raw_delta=self.raw_delta, status=self.status, duration_ms=1,
@@ -138,6 +142,65 @@ def test_runner_returns_full_turnresult():
     assert res.text == "hi"
     assert res.status == "needs_input"
     assert res.raw_delta == "menu"
+
+
+# ── 一轮 PA 任务不设墙钟上限（fix/agent-idle-timeout） ────────────────────────
+
+
+def test_run_sets_no_wall_clock_by_default():
+    """不传 timeout：bootstrap 那一轮和真实消息那一轮都不设上限。
+
+    从前这里压着 180 秒缺省。到点时会话没被杀、活还在干，但 ``send`` 已按超时返回，
+    把仍在生成的会话标成 ``idle``——这场正干活的会话于是可被池的数量上限当"闲会话"
+    挤掉，一轮的工具调用与后台 worker 连同产出一起丢。
+    """
+    pool = FakePool()
+    runner = PaTmuxRunner(pool=pool, cwd="/tmp")
+
+    runner.run("thread-A", "msg-1", bootstrap="BOOT")
+
+    assert [p for _, p in pool.runs] == ["BOOT", "msg-1"]
+    assert pool.timeouts == [None, None]
+
+
+def test_run_and_warm_inject_bootstrap_with_the_same_cap():
+    """同一件事（注入 bootstrap）在 run / warm 两条路上 MUST 是同一个值。"""
+    run_pool = FakePool()
+    PaTmuxRunner(pool=run_pool, cwd="/tmp").run("conv-x", "msg", bootstrap="BOOT")
+
+    warm_pool = FakePool()
+    PaTmuxRunner(pool=warm_pool, cwd="/tmp").warm("conv-x", bootstrap="BOOT")
+
+    assert run_pool.runs[0][1] == warm_pool.runs[0][1] == "BOOT"
+    assert run_pool.timeouts[0] == warm_pool.timeouts[0] is None
+
+
+def test_run_still_honours_an_explicit_cap():
+    """显式传正数的调用方（探活之类）不受影响——opt-in 的卡表一点没少。"""
+    pool = FakePool()
+    runner = PaTmuxRunner(pool=pool, cwd="/tmp")
+
+    runner.run("thread-A", "msg", timeout_s=30.0)
+
+    assert pool.timeouts == [30.0]
+
+
+def test_dispatch_does_not_impose_a_wall_clock(monkeypatch):
+    """真实派发路径不传 timeout —— 落到缺省，也就是不设上限。"""
+    svc = _fresh_pa()
+    pool = FakePool()
+    svc._pa_tmux_runner = PaTmuxRunner(pool=pool, cwd="/tmp")
+    monkeypatch.setattr(svc, "_build_bootstrap_prompt", lambda **kw: ("BOOT", "route"))  # noqa: ARG005
+
+    async def _deliver(text, route):  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(svc, "deliver", _deliver)
+
+    group = [{"type": "user_message", "channel": "lark", "prompt": "yo", "thread_id": "thread-A"}]
+    asyncio.run(svc._dispatch_group_tmux("thread-A", group))
+
+    assert pool.timeouts == [None, None]
 
 
 def test_needs_input_delivers_prompt_and_suspends_without_requeue(monkeypatch):
