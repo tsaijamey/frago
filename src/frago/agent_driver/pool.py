@@ -56,17 +56,47 @@ class WarmSessionPool:
         self._clock = clock
         # OrderedDict 充当 LRU：末尾为最近使用。
         self._sessions: OrderedDict[str, TmuxAgentSession] = OrderedDict()
+        # 别名 → 池里的真实键。见 ``alias``。
+        self._aliases: dict[str, str] = {}
 
     # ── 查询 ────────────────────────────────────────────────────────
     def __len__(self) -> int:
         return len(self._sessions)
 
+    def _key(self, session_id: str) -> str:
+        """把可能是别名的编号翻成池里的真实键。不是别名就原样返回。"""
+        return self._aliases.get(session_id, session_id)
+
+    def alias(self, alias_id: str, session_id: str) -> bool:
+        """让 ``alias_id`` 也指向池里 ``session_id`` 那一场。命中返回 True。
+
+        给"编号是事后认领来的"那两家用（codex / opencode）：新建会话时 frago 只有
+        自己 mint 的一个把手，agent 起来之后才分配真正的会话编号。这两个名字指的是
+        **同一个 TUI**，池里 MUST 只有一份。
+
+        不这样做的后果很具体：页面认到编号后紧接着再发一句话，池里查不到那个编号，
+        于是又起一个 tmux 去 ``codex resume <同一个编号>``。codex 0.149 给每场会话上了
+        单写者锁，第二次 resume 会在 TUI bootstrap 阶段直接失败退出（20260902 实测），
+        这一轮就此报废——而失败屏上启动横幅还在，读屏差一点就把它当成一场活会话。
+
+        别名**只登记不新建**：目标不在池里就什么都不做、返回 False。凭空造一条指向
+        空处的别名，只会让下一次 acquire 拿着一个不存在的键去起会话。
+
+        会话对象自己的 ``session_id`` 一个字都不改：driver 侧的认领映射
+        （codex/opencode 的 binding）正是拿它当键，改了等于让 driver 重认一遍，
+        两场会话的记录就此互串。
+        """
+        if session_id not in self._sessions or alias_id == session_id:
+            return False
+        self._aliases[alias_id] = session_id
+        return True
+
     def has(self, session_id: str) -> bool:
-        return session_id in self._sessions
+        return self._key(session_id) in self._sessions
 
     def peek(self, session_id: str) -> TmuxAgentSession | None:
         """取一个已常驻的会话对象（不触发重建 / 不刷新 LRU）。无则 None。"""
-        return self._sessions.get(session_id)
+        return self._sessions.get(self._key(session_id))
 
     def active_ids(self) -> list[str]:
         return list(self._sessions.keys())
@@ -83,6 +113,9 @@ class WarmSessionPool:
         resume_hook: ResumeHook | None = None,
         env: dict[str, str] | None = None,
     ) -> TmuxAgentSession:
+        # 别名先翻成真实键：认领来的原生编号与新建时那个把手指的是同一个 TUI，
+        # 不翻的话这里会为同一场会话再起一个 tmux（见 ``alias``）。
+        session_id = self._key(session_id)
         existing = self._sessions.get(session_id)
         if existing is not None:
             # 两问都要问：tmux 窗口在不在，以及里面那个 agent 还活着没有。只问前一个
@@ -169,12 +202,23 @@ class WarmSessionPool:
 
     # ── 生命周期 ─────────────────────────────────────────────────────
     def evict(self, session_id: str) -> bool:
-        """主动驱逐一个会话（kill tmux）。返回是否命中。"""
-        session = self._sessions.pop(session_id, None)
+        """主动驱逐一个会话（kill tmux）。返回是否命中。
+
+        指向它的别名一并清掉：留着的话，下一次 acquire 会拿这条别名去查一个已经不在
+        池里的键，落到"翻不出来 → 原样当新会话"的路上，行为与没有别名时一致，但排查
+        时会看见一张对不上号的映射表。
+        """
+        key = self._key(session_id)
+        session = self._sessions.pop(key, None)
         if session is None:
             return False
+        self._drop_aliases(key)
         self._safe_close(session)
         return True
+
+    def _drop_aliases(self, session_id: str) -> None:
+        for alias_id in [a for a, target in self._aliases.items() if target == session_id]:
+            del self._aliases[alias_id]
 
     def evict_idle(
         self,
@@ -200,6 +244,7 @@ class WarmSessionPool:
         for session in self._sessions.values():
             self._safe_close(session)
         self._sessions.clear()
+        self._aliases.clear()
 
     # ── 内部 ────────────────────────────────────────────────────────
     @staticmethod
@@ -283,6 +328,7 @@ class WarmSessionPool:
                 )
                 return
             old_session = self._sessions.pop(victim)
+            self._drop_aliases(victim)
             self._safe_close(old_session)
 
     @staticmethod

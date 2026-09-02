@@ -82,6 +82,7 @@ class UiSessionRunner:
         agent_type: str | None = None,
         cwd: str | None = None,
         timeout_s: float = 180.0,
+        native_session_id: bool = True,
     ) -> SessionActivation:
         """向该 session_id 的常驻会话投喂一轮，返回激活态。
 
@@ -93,6 +94,11 @@ class UiSessionRunner:
         会话编号判定后传入；不给时退回构造时的缺省。**判错家等于静默开新会话**：
         把 codex 的编号交给 claude driver 不会报错，claude 会拿它当一个没见过的
         ``--session-id`` 当场开一场空白会话，原来那场一个字没动。
+
+        ``native_session_id`` 缺省为真：页面清单里那些编号本来就是各家自己的真实会话
+        编号，原样交给 driver、不派生，冷启动才续得回原会话。只有"页面新建一场编号由
+        agent 自己分配的会话"（codex / opencode）才传假——那一刻 frago 手上只有自己
+        mint 的一个把手，真编号要等会话起来后认领。
         """
         was_warm = self._pool.has(session_id)
         result = self._pool.run(
@@ -100,9 +106,7 @@ class UiSessionRunner:
             agent_type=agent_type or self._agent_type,
             session_id=session_id,
             cwd=cwd or self._cwd,
-            # 页面列的 session_id 就是真实的 claude jsonl 会话 id，原样用、不派生，
-            # 冷启动才能续上原会话而非另起新会话写进别的 jsonl。
-            native_session_id=True,
+            native_session_id=native_session_id,
             timeout_s=timeout_s,
         )
         # 「接管」也是零冷启动：tmux 里那场本来就活着，池只是重新拿到了它的把手。
@@ -130,6 +134,10 @@ class UiSessionRunner:
     def has(self, session_id: str) -> bool:
         """该会话当前是否常驻。"""
         return self._pool.has(session_id)
+
+    def alias(self, alias_id: str, session_id: str) -> bool:
+        """让认领来的原生编号也指向那一场常驻会话（见 ``WarmSessionPool.alias``）。"""
+        return self._pool.alias(alias_id, session_id)
 
     def evict(self, session_id: str) -> bool:
         """驱逐该会话（kill tmux）。返回是否命中。"""

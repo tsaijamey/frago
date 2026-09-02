@@ -369,3 +369,53 @@ def test_over_capacity_is_tolerated_when_everything_is_busy() -> None:
 
     assert runner.fake.killed == []
     assert len(pool) == 2
+
+
+# ── 别名：认领来的原生编号与新建时那个把手，指的是同一场会话 ──────────────
+
+
+def test_alias_makes_claimed_id_reuse_the_same_session() -> None:
+    """页面拿认领到的编号再发话时，MUST 落回同一个 TUI，NEVER 另起一个。
+
+    不这样的话，两个 tmux 会同时对着一份 rollout 说话——人看到的是自己的话被吞掉、
+    或者两轮答案交错在一起，而界面上一点异样都没有。
+    """
+    runner = _make_runner()
+    pool = WarmSessionPool(runner=runner)
+    launched = pool.acquire("opencode", "webui-handle", "/tmp")
+
+    assert pool.alias("ses_real", "webui-handle") is True
+
+    assert pool.has("ses_real")
+    assert pool.peek("ses_real") is launched
+    assert pool.acquire("opencode", "ses_real", "/tmp") is launched
+    # 只起过一场 tmux：别名没有把它变成两场。
+    new_sessions = [c for c in runner.fake.commands if c[1:2] == ["new-session"]]
+    assert len(new_sessions) == 1
+    # 会话对象自己的编号一个字没改——driver 侧的认领映射正是拿它当键。
+    assert launched.session_id == "webui-handle"
+
+
+def test_alias_refuses_to_point_at_nothing() -> None:
+    """目标不在池里就什么都不做：凭空一条别名只会让下次 acquire 拿着空键去起会话。"""
+    runner = _make_runner()
+    pool = WarmSessionPool(runner=runner)
+    assert pool.alias("ses_real", "never-launched") is False
+    assert not pool.has("ses_real")
+
+
+def test_evict_drops_aliases_pointing_at_it() -> None:
+    """收走一场会话，指向它的别名跟着清，NEVER 留一张对不上号的映射表。"""
+    runner = _make_runner()
+    pool = WarmSessionPool(runner=runner)
+    pool.acquire("opencode", "webui-handle", "/tmp")
+    pool.alias("ses_real", "webui-handle")
+
+    # 用别名驱逐也算数：指的本来就是同一场。
+    assert pool.evict("ses_real") is True
+    assert not pool.has("ses_real")
+    assert not pool.has("webui-handle")
+
+    # 别名清干净了：同名再 acquire 是一场全新的会话，而不是复用一个已被 kill 的把手。
+    fresh = pool.acquire("opencode", "ses_real", "/tmp")
+    assert fresh.session_id == "ses_real"
