@@ -30,6 +30,7 @@ import { Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import SessionItem, { resumeCommand } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
+import { waitForSession } from '@/hooks/useAgentClients';
 import {
   DAY_OPTIONS,
   MIN_CONTENT_QUERY,
@@ -267,10 +268,26 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
         {familyCounts.oc} 场 · codex {familyCounts.cx} 场
       </div>
 
+      {/* 建完之后跳进那一场，并在随后的十几秒里反复重取清单——新会话的档案是 agent
+          自己写的，写完才扫得到，一次重取多半扫了个空。
+
+          编号不是当场就有的那两家（codex / opencode）先等它报编号：那段空窗如实说一句
+          "正在起"，NEVER 静默地什么都不发生——人点了创建、界面纹丝不动，只会再点一次，
+          于是起了两场。 */}
       <NewSessionModal
         isOpen={newOpen}
         onClose={() => setNewOpen(false)}
-        onCreated={async (sid) => {
+        onCreated={async (launch) => {
+          let sid = launch.session_id;
+          if (!sid) {
+            showToast(`正在起 ${launch.display_name}，等它报出会话编号…`, 'info');
+            try {
+              sid = await waitForSession(launch.handle);
+            } catch (e) {
+              showToast(e instanceof Error ? e.message : '这一场没起来', 'error');
+              return;
+            }
+          }
           onSelect(sid);
           for (const delay of [1500, 3000, 6000, 12000]) {
             await new Promise((r) => setTimeout(r, delay));

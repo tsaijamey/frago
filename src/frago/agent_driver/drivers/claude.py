@@ -27,6 +27,7 @@ from frago.agent_driver.driver import (
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 from frago.agent_driver.transcript_source import JsonlTranscriptSource
+from frago.compat import find_claude_cli
 from frago.session import transcript_completion as tc_mod
 
 if TYPE_CHECKING:
@@ -572,6 +573,12 @@ register_driver(
     AgentDriver(
         agent_type="claude",
         launch_command=_launch,
+        display_name="Claude Code",
+        # claude 多半是 npm 全局装的，可能躺在 nvm/fnm/volta/asdf/pnpm 各自的目录里，
+        # 而 server 进程的 PATH 未必包含它们——探测复用 compat 里那份深挖，NEVER 在这
+        # 里退化成一句 which。
+        locate=find_claude_cli,
+        accepts_session_id=True,
         ready_signal=_READY,
         submit=_submit,
         done_signal=_DONE,

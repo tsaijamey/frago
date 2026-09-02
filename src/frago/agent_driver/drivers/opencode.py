@@ -40,6 +40,7 @@ from frago.agent_driver.driver import (
     register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
+from frago.compat import find_agent_cli
 from frago.session import opencode_store
 
 if TYPE_CHECKING:
@@ -815,6 +816,11 @@ register_driver(
     AgentDriver(
         agent_type="opencode",
         launch_command=_launch,
+        display_name="opencode",
+        locate=lambda: find_agent_cli("opencode"),
+        # 编号由 opencode 自己分配，而且要等首轮提交落库之后才认得到（见 _claim_once）。
+        # 页面新建一场 opencode 会话时，编号得等认领。
+        accepts_session_id=False,
         ready_signal=_READY,
         submit=_submit,
         done_signal=_DONE,

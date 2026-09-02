@@ -54,6 +54,7 @@ from frago.agent_driver.driver import (
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 from frago.agent_driver.transcript_source import JsonlTranscriptSource
+from frago.compat import find_agent_cli
 from frago.session import codex_store
 
 if TYPE_CHECKING:
@@ -551,6 +552,11 @@ register_driver(
     AgentDriver(
         agent_type="codex",
         launch_command=_launch,
+        display_name="Codex CLI",
+        locate=lambda: find_agent_cli("codex"),
+        # 编号由 codex 自己分配：它只认 ``codex resume <id>``，没有"用我给的 id 新建"
+        # 这条路（见模块头）。页面新建一场 codex 会话时，编号得等会话起来后认领。
+        accepts_session_id=False,
         ready_signal=_READY,
         submit=_submit,
         done_signal=_DONE,

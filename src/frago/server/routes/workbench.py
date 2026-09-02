@@ -22,7 +22,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from frago.server.services import session_send
+from frago.server.services import (
+    session_send,
+    workbench_agents,
+    workbench_new_session,
+)
 from frago.server.services.webui_uploads import (
     ImageUploadError,
     build_prompt_with_images,
@@ -46,6 +50,93 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     """
     cards = await asyncio.to_thread(record_reader.list_sessions)
     return [asdict(card) for card in cards]
+
+
+@router.get("/workbench/agents")
+async def list_workbench_agents() -> dict[str, Any]:
+    """新建会话时能挑哪几家 CLI，各是什么状况。
+
+    **挑不了的也回。** 藏起来等于告诉人"frago 不支持 codex"，而真相往往只是没装；
+    每一行都带着挑不了的理由，界面原样转述。判据全在
+    :mod:`~frago.server.services.workbench_agents`，本模块一个字都不推导——
+    前端再写一张 agent 名单，接新家的人改完 driver 会发现界面上它根本不出现。
+
+    ``default`` 是这台机器上该默认挑哪一家；一家都挑不了时为 null。
+    """
+    agents = await asyncio.to_thread(workbench_agents.list_agents)
+    return {
+        "agents": [asdict(agent) for agent in agents],
+        "default": workbench_agents.default_agent(agents),
+    }
+
+
+class CreateSessionRequest(BaseModel):
+    """``POST /workbench/sessions`` 的请求体。
+
+    ``agent`` 是挑中的那一家（``/workbench/agents`` 里的 ``agent_type``）；
+    ``cwd`` 是会话的起始目录；``text`` 是第一句话。
+    """
+
+    agent: str
+    cwd: str
+    text: str
+
+
+@router.post("/workbench/sessions", status_code=201)
+async def create_workbench_session(request: CreateSessionRequest) -> dict[str, Any]:
+    """起一场新会话并投进第一句话，**不等它答完**。
+
+    回的东西有两种形状，因为三家的会话编号来路本来就是两种：
+
+    - ``session_id`` 有值（claude）——编号是页面这边定的，界面直接跳进那一场；
+    - ``session_id`` 为 null（codex / opencode）——编号由 agent 自己分配，frago 要等会话
+      起来后认领，界面拿 ``handle`` 去 ``/workbench/sessions/pending/{handle}`` 问。
+
+    那段空窗 MUST 如实呈现。假装编号已经有了，界面会跳进一场并不存在的会话，看到的是
+    一片空记录流，而人以为自己刚开的会话丢了。
+
+    挑不了的那一家回 400（带上为什么），NEVER 起了再说：人要等上一分钟才看得出这一场
+    根本不会出现在左栏。
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="第一句话不能是空的")
+    if not request.cwd.strip():
+        raise HTTPException(status_code=400, detail="起始目录不能是空的")
+
+    try:
+        launch = await asyncio.to_thread(
+            workbench_new_session.start, request.agent, request.cwd, request.text.strip()
+        )
+    except workbench_agents.AgentUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return _launch_payload(launch)
+
+
+@router.get("/workbench/sessions/pending/{handle}")
+async def read_pending_session(handle: str) -> dict[str, Any]:
+    """这次新建到哪一步了：认到会话编号没有、还是已经起失败了。
+
+    把手过期或压根没有过这么一次时回 404——界面据此停下来说"这次新建跟丢了"，
+    比无限轮询一个永远不会有答案的把手强。
+    """
+    launch = await asyncio.to_thread(workbench_new_session.status, handle)
+    if launch is None:
+        raise HTTPException(status_code=404, detail=f"没有编号为 {handle} 的新建记录")
+    return _launch_payload(launch)
+
+
+def _launch_payload(launch: workbench_new_session.PendingLaunch) -> dict[str, Any]:
+    """一次新建的对外形状。两条路共用一份，NEVER 各拍各的。"""
+    return {
+        "handle": launch.handle,
+        "agent": launch.agent_type,
+        "display_name": launch.display_name,
+        "cwd": launch.cwd,
+        "session_id": launch.session_id,
+        "error": launch.error,
+        "finished": launch.finished,
+    }
 
 
 @router.get("/workbench/sessions/{sid}/records")

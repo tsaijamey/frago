@@ -64,18 +64,28 @@ def _codebuddy_session_uuid(frago_session_id: str) -> str:
     return str(uuid.uuid5(_CODEBUDDY_SID_NS, frago_session_id))
 
 
-def _codebuddy_bin() -> str:
-    """定位 codebuddy 可执行文件：PATH 优先，退回 WorkBuddy.app 里的那份。
+def _locate_codebuddy() -> str | None:
+    """本机装没装 codebuddy：PATH 优先，退回 WorkBuddy.app 里那份内嵌 CLI。
 
-    两个都不在时仍返回裸名字 ``codebuddy``——让 tmux 里的 shell 自己报
-    "command not found"，pane 上看得见，比 driver 在这里抛一个没有末屏的异常好排查。
+    找不到返回 None——这是给"列出本机能用哪几家"用的诚实答案。启动路径要的是另一种
+    答案（见 :func:`_codebuddy_bin`），两者 MUST 分开：把"没装"翻成一个裸名字交给
+    清单，界面上就会多出一个点了会静默失败的选项。
     """
     found = shutil.which("codebuddy")
     if found:
         return found
     if os.path.isfile(_APP_BUNDLE_CLI):
         return _APP_BUNDLE_CLI
-    return "codebuddy"
+    return None
+
+
+def _codebuddy_bin() -> str:
+    """启动用的 codebuddy 可执行文件；两处都不在时仍返回裸名字 ``codebuddy``。
+
+    没装也照样把命令发进 tmux——让 shell 自己报 "command not found"，pane 上看得见，
+    比 driver 在这里抛一个没有末屏的异常好排查。
+    """
+    return _locate_codebuddy() or "codebuddy"
 
 
 # ── transcript 定位 ────────────────────────────────────────────────────────
@@ -584,6 +594,9 @@ register_driver(
     AgentDriver(
         agent_type="codebuddy",
         launch_command=_launch,
+        display_name="CodeBuddy Code",
+        locate=_locate_codebuddy,
+        accepts_session_id=True,
         ready_signal=_READY_BOX,
         submit=_submit,
         done_signal=_DONE,

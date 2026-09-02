@@ -96,6 +96,25 @@ class AgentDriver:
     submit: Callable[[TmuxAgentSession, str], None]
     done_signal: PaneMatcher
     extract: Callable[[str], str]
+    # 给人看的名字（"Claude Code" / "Codex CLI"）。界面要列出"本机能用哪几家"时照抄
+    # 这一份，NEVER 在前端再维护一张 agent_type → 显示名的表：那张表与这里的注册表
+    # 一分岔，新接一家的人改完 driver 会发现界面上它仍然叫裸 key，或者干脆不出现。
+    # 不填时上层退回 agent_type 本身。
+    display_name: str | None = None
+    # 本机装没装这一家：返回可执行文件的绝对路径，找不到返回 None。
+    #
+    # 探测规则是**这一家自己的知识**，故落在 driver 里：claude 要翻 nvm/fnm/volta 那
+    # 一堆 Node 版本管理器的目录，codebuddy 要退回 WorkBuddy.app 里那份内嵌 CLI，
+    # 都不是"PATH 里 which 一下"能覆盖的。不填时上层只能报"判不出装没装"。
+    locate: Callable[[], str | None] | None = None
+    # 起会话时能不能由调用方指定会话编号。
+    #
+    # True（claude / codebuddy）：launch 接受 ``--session-id`` 一类的开关，调用方可以
+    # 先 mint 一个编号再新建，编号当场就有。
+    # False（codex / opencode）：编号由 agent 自己分配，frago 只能在会话起来之后去
+    # **认领**（见各 driver 的 ``_claim_once``），所以新建的那一刻拿不到编号。
+    # 这两条路在"页面新建一场会话"上是两种交互，判据 MUST 出自 driver 自己。
+    accepts_session_id: bool = False
     exception_handlers: list[ExceptionHandler] = field(default_factory=list)
     # 可选：直接从完成时的可见 pane 抽取本轮答案（pane, prompt）→ answer。
     # 给 claude 这类"固定底部输入框 + 答案在框上方渲染 + alt-screen 无 scrollback"
@@ -165,6 +184,18 @@ _REGISTRY: dict[str, AgentDriver] = {}
 def register_driver(driver: AgentDriver) -> None:
     """注册一个 driver；重复注册同 agent_type 覆盖旧值。"""
     _REGISTRY[driver.agent_type] = driver
+
+
+def registered_drivers() -> dict[str, AgentDriver]:
+    """已注册的全部 driver（agent_type → driver）的快照。
+
+    "本机支持哪几家"只有这一份判据。上层要列客户端时照着它遍历，NEVER 另写一张
+    名单——两张名单迟早各走各的，那时新接的一家在界面上根本不出现，而接它的人
+    在 driver 侧看不出少了什么。
+    """
+    import frago.agent_driver.drivers  # noqa: F401 — 触发各 driver 自注册
+
+    return dict(_REGISTRY)
 
 
 def load_driver(agent_type: str) -> AgentDriver:
