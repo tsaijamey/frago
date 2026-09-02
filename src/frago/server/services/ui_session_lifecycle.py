@@ -5,11 +5,13 @@ spec 20260625-webui-session-lifecycle-mediator / Phase 2：server lifespan 内�
 stop_reason 起静默超过 idle_timeout_secs」的会话关掉（kill tmux），释放内存。
 
 设计要点：
-- **激活看 last_activity、回收看记录静默**：空闲判定锚定会话自己的记录（claude 的
+- **停没停看记录、停了多久看池**：「最新一轮终结没有」问会话自己的记录（claude 的
   jsonl / codex 的 rollout / opencode 的会话库），不看页面有没有输入——手动 attach
-  敲入也落同一份记录，双驾驶来源天然统一。
-- **干活中绝不误杀**：最新一轮还没终结的会话不计时。具体逻辑在
-  UiSessionRunner.evict_idle，本服务只管周期触发。
+  敲入也落同一份记录，双驾驶来源天然统一；而静默时长从 ``session.last_active_at``
+  起算，NEVER 用记录里的时间戳（``--resume`` 一个旧 transcript 时那个时间戳是几小时
+  前的，会把刚起来的会话当场判成「闲了几小时」回收，见 ui_session_runner._idle_age）。
+- **干活中绝不误杀**：最新一轮还没终结、或本进程正驱动着这一轮的会话不计时。具体
+  逻辑在 UiSessionRunner.evict_idle，本服务只管周期触发。
 - **复用同一 runner 单例**：操作的就是 ui_session_runner.get_runner() 持有的那个 pool。
 - **阈值实时取 config**：每轮读 ~/.frago/config.json -> webui_sessions.idle_timeout_secs，
   改配置无需重启即生效。

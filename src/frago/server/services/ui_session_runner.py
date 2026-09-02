@@ -18,8 +18,9 @@ WarmSessionPool resume 重建后再 send。
   （零冷启动直送）；否则本轮触发冷启动 resume → "activating"（页面据此显示进度条）。
 
 本类只薄封装 WarmSessionPool，NEVER 重写 driver/pool/transcript（母 spec 已落地）。
-Phase 2 的空闲回收（idle eviction）落在 ``evict_idle`` + 模块级 ``_idle_age``，
-巡检的周期触发在 ``ui_session_lifecycle``。
+Phase 2 的空闲回收（idle eviction）落在 ``evict_idle`` + 模块级 ``_idle_age``
+（静默多久，锚点是会话在池里的最后活动时刻）与 ``_turn_finished``（停没停，三家各问
+各的档案），巡检的周期触发在 ``ui_session_lifecycle``。
 """
 
 from __future__ import annotations
@@ -120,11 +121,12 @@ class UiSessionRunner:
         )
 
     def evict_idle(self, timeout_s: float) -> list[str]:
-        """回收空闲超阈值的常驻会话——空闲以**会话自己的记录**为准，不看页面输入。
+        """回收空闲超阈值的常驻会话——**停没停**看会话自己的记录，**停了多久**看池。
 
-        三家各问各的档案（见 :func:`_idle_age`），共同的判据只有一条：仅当最新一轮
-        确已终结、且能取到那一刻的时间戳时，才以「自那一刻起的静默时长」计；仍在
-        干活或取不到锚点的会话返回 None，NEVER 被回收。返回被驱逐的 session_id 列表。
+        「停没停」三家各问各的档案（见 :func:`_turn_finished`），「停了多久」一律从
+        ``session.last_active_at`` 起算（见 :func:`_idle_age` 里那段事故说明）。任一
+        问不出来、或本进程正驱动着这一轮，都返回 None，NEVER 被回收。返回被驱逐的
+        session_id 列表。
         """
         from datetime import datetime
 
@@ -151,56 +153,85 @@ class UiSessionRunner:
 def _idle_age(session: TmuxAgentSession, now: float) -> float | None:
     """这个常驻会话已经静默了多少秒；判不出来（还在干活 / 没有锚点）返回 None。
 
-    三家的"停顿"各有各的证据，判据 MUST 各问各的档案：
+    **两个问题分开问，缺一个都不许回收。**
 
-    - claude：jsonl 的完成探针，锚点是最新一轮终结记录的时间戳；
-    - codex：rollout 里最新一轮已 ``task_complete``，锚点是 rollout 文件的修改时刻
-      （codex 不给会话存"最后更新时刻"，文件被动过的那一刻就是它）；
-    - opencode：会话库里最新一轮已终结，锚点是那条终结消息的 ``time.completed``。
+    一、*它停下来了吗*——三家各问各的档案，见 :func:`_turn_finished`。
 
-    从前这里只有 claude 那一条路：另外两家的编号在 claude 的档案里定位不到文件，
-    一律返回 None，于是它们的常驻会话**永远不参与空闲回收**，只能等数量 LRU 把它们
-    挤掉——tmux 进程因此白占着，而回收本来是按"人已经不管它了"来的。
+    二、*停了多久*——锚点一律是 ``session.last_active_at``，也就是「这场会话在本池里
+    自己的最后活动时刻」（``open()`` 与每轮 ``send()`` 结束时刷新）。
 
-    哪一家**问会话自己**（``session.driver.agent_type``），不按编号形状去猜：这个
-    会话是拿哪个 driver 起来的，它就是哪一家，没有再判一次的余地。问不出来就返回
-    None——不知道该翻谁的档案时，宁可不回收，也不能拿另一家的判据去断它的生死。
+    **锚点 NEVER 取档案里的时间戳**，这是一条用事故换来的判据。工作台点开一场几小时
+    前的旧会话时，走的是 ``--resume``：tmux 起来、接回旧 transcript、把提示词一块块
+    投喂进去，前后十几秒。这十几秒里那份 transcript 一个字都没变——它最后一条记录本
+    来就是几小时前的、而且状态是「已终结」。于是每 60 秒路过一次的巡检看到的是「已
+    说完 + 闲了几小时」，远超阈值，当场把这场刚起来的会话 kill 掉：人点了发送、转了
+    十几秒、会话没了，重试往往又好了。阈值调多大都救不了——旧 transcript 的年龄可以
+    是任意大。PA 那条路早把这一条钉在 ``primary/lifecycle.py`` 的注释上了，工作台这
+    条路一直没跟上，本函数就是来跟上的。
+
+    ``status == "busy"`` 时同样返回 None：本进程此刻正驱动着这一轮（投喂、等答），
+    这是内存里的事实，比任何档案都新。档案的滞后正是上面那个窗口的成因。
 
     全程吞异常：判不出空闲只是这一轮不回收它，NEVER 让一次读盘失败把整趟巡检打死。
+    """
+    # 本进程正驱动着这一轮 → 不是空闲，一个字都不用再问。
+    if getattr(session, "status", None) == "busy":
+        return None
+    # 没有锚点就算不出静默多久——算不出就不回收（与"档案里没有终结时刻"同一档）。
+    last_active = getattr(session, "last_active_at", None)
+    if last_active is None:
+        return None
+    if not _turn_finished(session):
+        return None
+    return now - last_active.timestamp()
+
+
+def _turn_finished(session: TmuxAgentSession) -> bool:
+    """这场会话最新一轮确已终结吗——三家各问各的档案。判不出一律 False。
+
+    - claude：jsonl 完成探针（``stop_reason`` 是不是终结原因），再叠一道 PA 也在用的
+      ``is_truly_idle``——空输入框 + 无 spinner + 无 "shells still running" + 记录已
+      静默若干秒。探针只知道「最后一轮的话说完了」，它不知道那一轮派出去的后台 shell
+      还在跑；把还在跑的那种当空闲回收，等于连着后台 worker 一起杀。
+    - codex：rollout 里最新一轮已 ``task_complete``。
+    - opencode：会话库里最新一轮已终结。
+
+    哪一家**问会话自己**（``session.driver.agent_type``），不按编号形状去猜：这个
+    会话是拿哪个 driver 起来的，它就是哪一家，没有再判一次的余地。问不出来就 False
+    ——不知道该翻谁的档案时，宁可不回收，也不能拿另一家的判据去断它的生死。
+
+    这里**只判"停没停"，NEVER 顺手把档案里的时间戳当空闲锚点**（理由见 ``_idle_age``）。
+    另外两家没有与 claude 那套 pane 判据等价的东西：codex / opencode 的屏上信号得各自
+    实测一遍才敢写，凭空编一组正则去断它们的生死，比现在这条只问档案的路更危险。
     """
     driver = getattr(session, "driver", None)
     family = getattr(driver, "agent_type", None)
     if family is None:
-        return None
+        return False
     try:
         if family == "claude":
-            # UI 会话是 native：session_id 即真实 claude jsonl id，原样定位。
-            path = tc_mod.locate_transcript(session.session_id, cwd=session.cwd)
+            from frago.agent_driver.drivers import claude as claude_driver
+
+            # 定位规则与 driver 自己那份共用（native 原样、否则 uuid5 派生），
+            # NEVER 在这里另派生一份。
+            path = claude_driver.transcript_path_for(session)
             if path is None:
-                return None
-            completion = tc_mod.evaluate_file(path)
-            if not completion.done or completion.last_terminal_ts is None:
-                return None
-            return now - completion.last_terminal_ts.timestamp()
+                return False
+            if not tc_mod.evaluate_file(path).done:
+                return False
+            return claude_driver.is_truly_idle(session)
 
         if family == "codex":
             turn = codex_store.latest_turn(session.session_id)
-            if turn is None or not turn.done:
-                return None
-            path = codex_store.find_rollout(session.session_id)
-            if path is None:
-                return None
-            return now - path.stat().st_mtime
+            return turn is not None and turn.done
 
         if family == "opencode":
             turn = opencode_store.latest_turn(session.session_id)
-            if turn is None or not turn.done or turn.completed_at is None:
-                return None
-            return now - turn.completed_at / 1000
-    except Exception:  # noqa: BLE001 — 读盘/读库失败只是这一轮判不出空闲
-        return None
+            return turn is not None and turn.done
+    except Exception:  # noqa: BLE001 — 读盘/读库/读屏失败只是这一轮判不出空闲
+        return False
     # 注册了新 driver 却没在这里给它一条判据：不回收，NEVER 拿别家的档案去断它。
-    return None
+    return False
 
 
 # ── UI runner 单例 ──────────────────────────────────────────────────
