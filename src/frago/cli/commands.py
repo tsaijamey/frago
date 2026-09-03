@@ -2328,16 +2328,24 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
         )
         raise SystemExit(2)
 
+    # Every failure below exits non-zero. It used to `return`, which click
+    # turns into exit 0 — the command said "Error: ..." on stderr and told the
+    # shell it had succeeded. Callers that gate on the exit code (the agent_os
+    # broker does: `if proc.returncode != 0: raise`) sailed straight past a
+    # browser that never launched, and only found out 30s later via a
+    # misleading "browser came up but CDP never answered". --void below already
+    # got this right; the rest did not.
+
     # Mode exclusivity check
     if headless and app_mode:
         click.echo("Error: --headless and --app are mutually exclusive", err=True)
-        return
+        raise SystemExit(2)
 
     # App mode requires URL
     if app_mode and not app_url:
         click.echo("Error: --app mode requires --app-url to be specified", err=True)
         click.echo("Example: frago browser start --app --app-url http://localhost:8093/viewer/...", err=True)
-        return
+        raise SystemExit(2)
 
     # Window position only used for app mode
     if (window_x is not None or window_y is not None) and not app_mode:
@@ -2365,7 +2373,7 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
         else:
             click.echo("Error: No supported browser found (Chrome, Edge, or Chromium)", err=True)
         click.echo("Please install Google Chrome, Microsoft Edge, or Chromium browser", err=True)
-        return
+        raise SystemExit(1)
 
     click.echo(f"Browser: {launcher.browser_type.value.title()} ({launcher.browser_path})")
     click.echo(f"Profile directory: {launcher.profile_dir}")
@@ -2414,6 +2422,12 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
                 launcher.stop()
     else:
         click.echo("[X] Failed to launch browser", err=True)
+        click.echo(
+            f"  The browser process was started but CDP never answered on port {port}.\n"
+            f"  Check: lsof -nP -iTCP:{port} -sTCP:LISTEN",
+            err=True,
+        )
+        raise SystemExit(1)
 
 
 @click.command('browser-stop', cls=AgentFriendlyCommand)
