@@ -30,7 +30,8 @@ from frago.server.services import (
 )
 from frago.server.services.webui_uploads import (
     ImageUploadError,
-    build_prompt_with_images,
+    build_prompt_with_attachments,
+    save_uploaded_documents,
     save_uploaded_images,
 )
 from frago.session import record_reader, record_search
@@ -246,11 +247,24 @@ async def unpin_workbench_session(sid: str) -> dict[str, list[str]]:
     return {"pinned": await asyncio.to_thread(workbench_pins.unpin, sid)}
 
 
+class Document(BaseModel):
+    """一份随这条消息附上的文档。
+
+    ``name`` 是用户那边的原文件名，只用来给落盘文件起个有意义的名字——agent 在提示词
+    里看到的是路径，路径上带着原名它才知道自己要打开的是什么。
+    """
+
+    name: str = ""
+    data: str = ""
+
+
 class SendRequest(BaseModel):
     """``POST /workbench/sessions/{sid}/send`` 的请求体。
 
-    ``images`` 是可选的 base64 图像（data URL 或裸 base64），落盘后其绝对路径被拼进
-    投给 agent 的提示词。允许 text 为空但带图（纯发图）。
+    ``images`` 与 ``documents`` 都是可选附件，内容以 base64 传上来，落盘后其绝对路径
+    被拼进投给 agent 的提示词。浏览器读不到本机文件的真实路径（那是浏览器的安全边界，
+    拖拽也拿不到），所以只能走这条"内容上传、路径下发"的路——agent 拿到的是一条它
+    真的打得开的服务端路径。允许 text 为空但带附件。
 
     ``cwd`` 只在页面**新建**一场会话时给：那个编号是页面自己 mint 的，还没有任何
     记录，所以读不出目录。已经有记录的会话一律以档案里记着的目录为准。
@@ -258,6 +272,7 @@ class SendRequest(BaseModel):
 
     text: str = ""
     images: list[str] = []
+    documents: list[Document] = []
     cwd: str | None = None
 
 
@@ -274,16 +289,19 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     - 记录已经不在了（用户删了那场会话）→ 409。**这一档最要紧**：驱动层遇到续不上的
       目标会自愈成裸起一场新的，那正是页面上最不该发生的事——人以为在跟原来那场说话；
     - 问不出这场会话当初跑在哪个目录 → 409，替它猜一个目录等于把 agent 挪进另一个仓库；
-    - 一个字没有也没有图 → 400，空轮次投进去只会白占一次冷启动。
+    - 一个字没有也没有附件 → 400，空轮次投进去只会白占一次冷启动。
     """
-    if not request.text.strip() and not request.images:
-        raise HTTPException(status_code=400, detail="要发的话和图片不能都是空的")
+    if not request.text.strip() and not request.images and not request.documents:
+        raise HTTPException(status_code=400, detail="要发的话和附件不能都是空的")
 
     try:
         image_paths = save_uploaded_images(request.images, sid)
+        doc_paths = save_uploaded_documents(
+            [d.model_dump() for d in request.documents], sid
+        )
     except ImageUploadError as e:
-        raise HTTPException(status_code=400, detail=f"图片没收下：{e}") from e
-    prompt = build_prompt_with_images(request.text, image_paths)
+        raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+    prompt = build_prompt_with_attachments(request.text, image_paths, doc_paths)
 
     try:
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。

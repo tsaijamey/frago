@@ -28,3 +28,27 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value, configurable: true, writable: true })
   }
 }
+
+/**
+ * 给 canvas 补一个能用的 2D 上下文。
+ *
+ * 哪个环节出事：jsdom 不带 canvas 实现，`getContext('2d')` 每调一次就往控制台喷一句
+ * "Not implemented"。输入区那圈会生长的边是一块 canvas 色场，于是每个渲染到输入区的
+ * 用例都刷几屏警告——真正的失败信息被埋在里面。
+ *
+ * 补的是**够用的最小面**：色场那段代码只要 `createImageData` 与 `putImageData`。
+ * NEVER 装 canvas 那个原生包——它要编译链，把一次 CI 从几秒拖到几分钟，而这里根本
+ * 不验像素，验的是组件挂不挂得起来。拿不到上下文时组件本来就直接返回，也是安全的。
+ */
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
+    return {
+      createImageData: (w: number, h: number) => ({
+        data: new Uint8ClampedArray(w * h * 4),
+        width: w,
+        height: h,
+      }),
+      putImageData: () => {},
+    }
+  } as unknown as HTMLCanvasElement['getContext']
+}

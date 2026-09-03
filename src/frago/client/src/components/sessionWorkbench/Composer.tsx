@@ -21,9 +21,11 @@
  */
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { ImagePlus, Loader2, RotateCcw, SendHorizontal, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { FileText, Loader2, Plus, RotateCcw, SendHorizontal, X } from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
-import { FAMILY_LABEL, type SessionFamily } from '@/hooks/useWorkbenchSessions';
+import NoiseField from '@/components/ui/NoiseField';
+import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 
 export interface ComposerProps {
   sessionId: string | null;
@@ -43,7 +45,7 @@ export interface ComposerProps {
 }
 
 /**
- * 这场会话为什么发不出去。可发时返回 null。
+ * 这场会话为什么发不出去。可发时返回 null，发不出去时返回**词表里的键**，取字由界面做。
  *
  * 现在只剩「一场都没选」这一条：三家都发得出去，来源不再是闸门。判定在打字之前就做完，
  * 理由直接写在界面上——「发不出去」和「为什么发不出去」得同时给，只禁用不说明，人只会
@@ -52,8 +54,15 @@ export interface ComposerProps {
  * 会话记录被删掉、目录查不出来这类情况在这一侧判不出来（要问各家的档案），由服务端在
  * 发送那一刻回 409 说明原因，走的是错误提示那条路，NEVER 在这里靠猜提前闸死。
  */
+/** 字节数 → 人话。只报已经发生的量，没有分母。 */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function blockReason(sessionId: string | null): string | null {
-  if (!sessionId) return '从左边挑一场会话，再在这里说话';
+  if (!sessionId) return 'workbench.composer.blockedNoSession';
   return null;
 }
 
@@ -65,9 +74,22 @@ export default function Composer({
   onSendFailed,
   deliveredAt,
 }: ComposerProps) {
+  const { t } = useTranslation();
+  const { familyLabel } = useWorkbenchLabels();
   const blocked = blockReason(sessionId);
-  const { text, setText, images, addFiles, removeImage, sending, error, canSend, send } =
-    useSendToSession(sessionId, {
+  const {
+    text,
+    setText,
+    images,
+    documents,
+    addFiles,
+    removeImage,
+    removeDocument,
+    sending,
+    error,
+    canSend,
+    send,
+  } = useSendToSession(sessionId, {
       enabled: !blocked,
       onSendStart,
       onSent,
@@ -75,7 +97,11 @@ export default function Composer({
       deliveredAt,
     });
   const [dragging, setDragging] = useState(false);
+  // 边什么时候活过来：正在打字（框内有焦点）或者正在发。其余时候它冻在最后一帧上——
+  // 一直在动的边会让人打字时眼角始终有东西在晃。
+  const [focused, setFocused] = useState(false);
   const filePicker = useRef<HTMLInputElement>(null);
+  const attachCount = images.length + documents.length;
 
   const takeFiles = useCallback(
     (files: FileList | null) => {
@@ -136,7 +162,7 @@ export default function Composer({
             data-testid="composer-blocked"
             className="rounded-[8px] bg-bg-subtle px-3 py-2 text-[12px] text-text-secondary"
           >
-            {blocked}
+            {t(blocked)}
           </p>
         ) : null}
 
@@ -145,7 +171,9 @@ export default function Composer({
             data-testid="composer-error"
             className="flex items-start gap-2 rounded-[8px] bg-bg-subtle px-3 py-2 text-[12px] text-accent-error"
           >
-            <span className="min-w-0 flex-1 break-words">没发出去：{error}</span>
+            <span className="min-w-0 flex-1 break-words">
+              {t('workbench.composer.sendFailed', { reason: error })}
+            </span>
             <button
               type="button"
               data-testid="composer-retry"
@@ -154,7 +182,7 @@ export default function Composer({
               className="flex shrink-0 items-center gap-1 rounded-[6px] border border-border-color px-2 py-[2px] text-text-secondary hover:bg-bg-hover disabled:opacity-40"
             >
               <RotateCcw size={11} />
-              重试
+              {t('workbench.composer.retry')}
             </button>
           </div>
         ) : null}
@@ -171,7 +199,7 @@ export default function Composer({
                 <button
                   type="button"
                   data-testid="composer-remove"
-                  aria-label={`移除 ${image.name}`}
+                  aria-label={t('workbench.composer.removeImage', { name: image.name })}
                   onClick={() => removeImage(image.id)}
                   className="absolute right-[2px] top-[2px] rounded-full bg-bg-card/90 p-[2px] text-text-secondary hover:text-text-primary"
                 >
@@ -182,21 +210,58 @@ export default function Composer({
           </div>
         ) : null}
 
-        <div className="flex min-w-0 items-end gap-2 rounded-[10px] border border-border-color bg-bg-card px-3 py-2 focus-within:border-accent-primary">
-          <button
-            type="button"
-            data-testid="composer-pick"
-            aria-label="添加图片"
-            disabled={Boolean(blocked) || images.length >= MAX_ATTACHMENTS}
-            onClick={() => filePicker.current?.click()}
-            className="shrink-0 pb-[3px] text-text-muted hover:text-text-primary disabled:opacity-40"
-          >
-            <ImagePlus size={16} />
-          </button>
+        {/* 文档不做缩略图——一份 PDF 的首页缩成 64px 什么也看不出来。它需要的是
+            名字（尤其扩展名，agent 靠它判断怎么读）和大小。 */}
+        {documents.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {documents.map((doc) => (
+              <span
+                key={doc.id}
+                data-testid="composer-doc"
+                className="flex max-w-full items-center gap-1.5 rounded-[8px] border border-border-color bg-bg-subtle py-1 pl-2 pr-1 text-[12px] text-text-secondary"
+              >
+                <FileText size={13} strokeWidth={1.5} className="shrink-0 text-text-muted" />
+                <span className="min-w-0 truncate">{doc.name}</span>
+                <span className="shrink-0 font-mono text-[11px] text-text-dim">
+                  {formatSize(doc.size)}
+                </span>
+                <button
+                  type="button"
+                  data-testid="composer-doc-remove"
+                  aria-label={t('workbench.composer.removeFile', { name: doc.name })}
+                  onClick={() => removeDocument(doc.id)}
+                  className="shrink-0 rounded-[4px] p-0.5 text-text-muted hover:text-text-primary"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {/* **这圈边是两个容器叠出来的，不是 border。**
+            外层铺一块会自己生长的色场，内层盖住中间，只在四周露出 2px——于是那 2px
+            是活的，而 border 属性画不出会动的颜色。内层必须不透明，否则色场会从正文
+            底下透上来。 */}
+        <div className="relative rounded-[15px] p-[3px]">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[15px]">
+            {/* 模糊只留 2px：3px 的边上抹 6px 的模糊，色场会被糊成一条均匀的颜色，
+                等于白做。scale 稍微放大一点，盖住模糊在四角透出的底。 */}
+            <NoiseField
+              animate={focused || sending}
+              className={`h-full w-full scale-105 blur-[2px] transition-opacity duration-500 ${
+                focused || sending ? 'opacity-100' : 'opacity-40'
+              }`}
+            />
+          </div>
+
+          {/* 文本在上、控件在下一行。从前是一整行左右排：文本框有两行高，而 `+` 与发送
+              贴着底边，于是占位话在最上面、`+` 在最下面，两者差了一行的距离，看着像是
+              没对齐。分成两行之后，控件自己成一条基线。 */}
+          <div className="relative min-w-0 rounded-[12px] bg-bg-card px-3 py-2.5">
           <input
             ref={filePicker}
             type="file"
-            accept="image/*"
             multiple
             hidden
             data-testid="composer-file"
@@ -211,26 +276,53 @@ export default function Composer({
             onChange={(e) => setText(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             disabled={Boolean(blocked)}
             rows={2}
             placeholder={
               blocked
                 ? ''
-                : `对${family ? ` ${FAMILY_LABEL[family]} ` : ''}说点什么，图片可以直接粘贴或拖进来`
+                : family
+                  ? t('workbench.composer.placeholderWithFamily', { family: familyLabel(family) })
+                  : t('workbench.composer.placeholder')
             }
-            className="min-h-[44px] min-w-0 flex-1 resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed"
+            /* 焦点由外面那圈色场表达，这里就不要再叠一个焦点环——同一件事两种说法，
+               而且那个环是绿的，正是要去掉的东西。 */
+            className="min-h-[46px] w-full resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
           />
-          <button
-            type="button"
-            data-testid="composer-send"
-            aria-label="发送"
-            disabled={!canSend}
-            onClick={() => void send()}
-            className="flex shrink-0 items-center gap-1 rounded-[8px] bg-accent-primary px-3 py-[6px] text-[12px] text-white disabled:opacity-40"
-          >
-            {sending ? <Loader2 size={13} className="animate-spin" /> : <SendHorizontal size={13} />}
-            {sending ? '发送中' : '发送'}
-          </button>
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="composer-pick"
+              aria-label={t('workbench.composer.addAttachment')}
+              title={t('workbench.composer.addAttachment')}
+              disabled={Boolean(blocked) || attachCount >= MAX_ATTACHMENTS}
+              onClick={() => filePicker.current?.click()}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+            >
+              <Plus size={16} strokeWidth={1.5} />
+            </button>
+            <span className="flex-1" />
+            <button
+              type="button"
+              data-testid="composer-send"
+              aria-label={t('workbench.composer.send')}
+              disabled={!canSend}
+              onClick={() => void send()}
+              /* 字色走 --text-on-accent 而不是写死白：深色主题的品牌绿被提亮过，白字压在
+                 上面对比度不够；那个变量在两套主题下各是各的答案。 */
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] bg-accent-primary px-3 text-[12px] font-medium text-[var(--text-on-accent)] disabled:opacity-40"
+            >
+              {sending ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <SendHorizontal size={13} />
+              )}
+              {sending ? t('workbench.composer.sending') : t('workbench.composer.send')}
+            </button>
+          </div>
+          </div>
         </div>
       </div>
     </div>

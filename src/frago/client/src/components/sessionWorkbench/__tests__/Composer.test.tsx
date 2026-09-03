@@ -7,9 +7,21 @@
  * 不连真服务端——`fetch` 全程被替身接管，只核对出门的那一份请求长什么样。
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Composer, { blockReason } from '../Composer';
+import i18n from '@/i18n';
+
+/**
+ * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
+ *
+ * 这一句顺带把另一件事也核了：`zh.json` 里的字必须与从前写死在组件里的逐字相同，
+ * 差一个标点，下面这些断言就红。
+ */
+beforeAll(async () => {
+  await i18n.changeLanguage('zh');
+});
+
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
 const OPENCODE_SID = 'ses_058288655ffeYMxYC1AZKCcv56';
@@ -40,11 +52,17 @@ function sentBody(fetchMock: ReturnType<typeof vi.fn>) {
   return JSON.parse(String(fetchMock.mock.calls[0][1].body)) as {
     text: string;
     images: string[];
+    documents: { name: string; data: string }[];
   };
 }
 
 function pngFile(name = 'shot.png') {
   return new File(['fake-png-bytes'], name, { type: 'image/png' });
+}
+
+/** 一份非图片文件。MIME 不是 image/*，所以它该被分到文档那条路。 */
+function docFile(name = 'spec.md', type = 'text/markdown') {
+  return new File(['# spec'], name, { type });
 }
 
 /** 这个控件此刻按不按得动。用原生属性判，不依赖 jest-dom 的匹配器。 */
@@ -81,7 +99,8 @@ afterEach(() => {
 
 describe('blockReason 可发判定', () => {
   it('只有一场都没选才闸死，三家的会话都发得出去', () => {
-    expect(blockReason(null)).toContain('挑一场会话');
+    // 交回的是词表键，取字由界面做——这样切语言时这句提示才跟着变。
+    expect(blockReason(null)).toBe('workbench.composer.blockedNoSession');
     expect(blockReason(SID)).toBeNull();
     expect(blockReason(OPENCODE_SID)).toBeNull();
     expect(blockReason(CODEX_SID)).toBeNull();
@@ -98,7 +117,7 @@ describe('Composer 输入区', () => {
 
     await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${SID}/send`);
-    expect(sentBody(fetchMock)).toEqual({ text: '开工', images: [] });
+    expect(sentBody(fetchMock)).toEqual({ text: '开工', images: [], documents: [] });
     // 成功才清空。
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
   });
@@ -117,7 +136,42 @@ describe('Composer 输入区', () => {
     expect(body.images[0]).toMatch(/^data:image\/png;base64,/);
   });
 
-  it('文本与图片都空时按钮闸死，请求根本不出门', () => {
+  it('挂一份文档也能发，它跟图片分两路走', async () => {
+    const onSent = vi.fn();
+    render(<Composer sessionId={SID} family="claude-code" onSent={onSent} />);
+
+    fireEvent.change(screen.getByTestId('composer-file'), {
+      target: { files: [docFile('spec.md')] },
+    });
+    // 文档不做缩略图，界面上是一行带文件名的条。
+    await waitFor(() => expect(screen.getByTestId('composer-doc')).toBeTruthy());
+    expect(screen.getByTestId('composer-doc').textContent).toContain('spec.md');
+    expect(screen.queryByTestId('composer-thumb')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+
+    const body = sentBody(fetchMock);
+    expect(body.images).toHaveLength(0);
+    expect(body.documents).toHaveLength(1);
+    // 原文件名要带上去：服务端拿它给落盘文件起名，agent 靠扩展名判断怎么读。
+    expect(body.documents[0].name).toBe('spec.md');
+    expect(body.documents[0].data).toMatch(/^data:text\/markdown;base64,/);
+  });
+
+  it('同一次选中图片和文档，各归各路', async () => {
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} />);
+
+    fireEvent.change(screen.getByTestId('composer-file'), {
+      target: { files: [pngFile('shot.png'), docFile('notes.txt', 'text/plain')] },
+    });
+
+    await waitFor(() => expect(screen.getByTestId('composer-thumb')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('composer-doc')).toBeTruthy());
+    expect(screen.getByTestId('composer-doc').textContent).toContain('notes.txt');
+  });
+
+  it('文本与附件都空时按钮闸死，请求根本不出门', () => {
     render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} />);
 
     expect(isDisabled('composer-send')).toBe(true);

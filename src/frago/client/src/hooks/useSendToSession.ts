@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import i18n from '@/i18n';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -38,6 +39,25 @@ export interface AttachedImage {
   name: string;
 }
 
+/**
+ * 一份已附加、待发送的文档。
+ *
+ * **浏览器给不出本机文件的真实路径**——那是浏览器的安全边界，选文件拿不到，拖拽也拿不到。
+ * 所以文档跟图片走同一条路：内容以 base64 传上去，服务端落盘成真实文件，再把**服务端
+ * 那一侧的绝对路径**拼进投给 agent 的提示词。agent 于是拿到一条它真的打得开的路径。
+ *
+ * `name` 不只是显示用：服务端拿它给落盘文件起名，agent 在提示词里看到的路径末尾就是
+ * 这个名字，它靠这个名字（尤其是扩展名）判断该怎么读。
+ */
+export interface AttachedDoc {
+  id: string;
+  /** `data:<mime>;base64,....` */
+  dataUrl: string;
+  name: string;
+  /** 字节数，界面上报给人看。 */
+  size: number;
+}
+
 export interface SendResult {
   sid: string;
   status: string;
@@ -48,9 +68,11 @@ export interface SendToSessionState {
   text: string;
   setText: (value: string) => void;
   images: AttachedImage[];
-  /** 收图片文件（选择、粘贴、拖入三条路共用）。非图片一律忽略。 */
+  documents: AttachedDoc[];
+  /** 收文件（选择、粘贴、拖入三条路共用）。按 MIME 分给图片或文档两条路。 */
   addFiles: (files: FileList | File[]) => Promise<void>;
   removeImage: (id: string) => void;
+  removeDocument: (id: string) => void;
   sending: boolean;
   /** 失败原因，照抄服务端的说法。成功或重新发送时清掉。 */
   error: string | null;
@@ -63,7 +85,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error('图片读不出来'));
+    reader.onerror = () => reject(reader.error ?? new Error(i18n.t('workbench.errors.imageUnreadable')));
     reader.readAsDataURL(file);
   });
 }
@@ -76,20 +98,21 @@ async function explainFailure(res: Response): Promise<string> {
   } catch {
     /* 响应不是 JSON，退回状态码 */
   }
-  return `发送没成功（HTTP ${res.status}）`;
+  return i18n.t('workbench.errors.sendFailed', { status: res.status });
 }
 
 export async function sendToSession(
   sessionId: string,
   text: string,
-  images: string[]
+  images: string[],
+  documents: { name: string; data: string }[] = []
 ): Promise<SendResult> {
   const res = await fetch(
     `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/send`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, images }),
+      body: JSON.stringify({ text, images, documents }),
     }
   );
   if (!res.ok) {
@@ -138,6 +161,7 @@ export function useSendToSession(
 ): SendToSessionState {
   const [text, setText] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
+  const [documents, setDocuments] = useState<AttachedDoc[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -169,26 +193,59 @@ export function useSendToSession(
   useEffect(() => {
     setText('');
     setImages([]);
+    setDocuments([]);
     setSending(false);
     setError(null);
   }, [sessionId]);
 
+  /**
+   * 收下一批文件，按 MIME 分成图片与文档两路。
+   *
+   * 分两路不是为了好看：图片在界面上是缩略图、在提示词里是"打开看"，文档在界面上是
+   * 一行文件名、在提示词里是"打开读"。合成一路的话，两种都会被当成其中一种处理。
+   *
+   * 判据取浏览器给的 MIME 而不是扩展名——扩展名是可以骗人的，而这里分错的后果是
+   * 一份 PDF 被当成图片送去"看图"。MIME 认不出来（有些系统对 `.md` 就报空）时按文档
+   * 处理：文档那条路对内容不做任何假设，是安全的那一档。
+   */
   const addFiles = useCallback(async (files: FileList | File[]) => {
-    const picked = Array.from(files).filter((f) => f.type.startsWith('image/'));
-    if (picked.length === 0) return;
-    const read = await Promise.all(
-      picked.map(async (f) => ({
-        id: `img-${counter.current++}`,
-        dataUrl: await readFileAsDataUrl(f),
-        name: f.name || 'image',
-      }))
-    );
-    if (!mounted.current) return;
-    setImages((cur) => [...cur, ...read].slice(0, MAX_ATTACHMENTS));
+    const all = Array.from(files);
+    if (all.length === 0) return;
+    const pics = all.filter((f) => f.type.startsWith('image/'));
+    const docs = all.filter((f) => !f.type.startsWith('image/'));
+
+    if (pics.length) {
+      const read = await Promise.all(
+        pics.map(async (f) => ({
+          id: `img-${counter.current++}`,
+          dataUrl: await readFileAsDataUrl(f),
+          name: f.name || 'image',
+        }))
+      );
+      if (!mounted.current) return;
+      setImages((cur) => [...cur, ...read].slice(0, MAX_ATTACHMENTS));
+    }
+
+    if (docs.length) {
+      const read = await Promise.all(
+        docs.map(async (f) => ({
+          id: `doc-${counter.current++}`,
+          dataUrl: await readFileAsDataUrl(f),
+          name: f.name || 'file',
+          size: f.size,
+        }))
+      );
+      if (!mounted.current) return;
+      setDocuments((cur) => [...cur, ...read].slice(0, MAX_ATTACHMENTS));
+    }
   }, []);
 
   const removeImage = useCallback((id: string) => {
     setImages((cur) => cur.filter((im) => im.id !== id));
+  }, []);
+
+  const removeDocument = useCallback((id: string) => {
+    setDocuments((cur) => cur.filter((d) => d.id !== id));
   }, []);
 
   /**
@@ -203,17 +260,22 @@ export function useSendToSession(
     clearedTicket.current = ticket.current;
     setText('');
     setImages([]);
+    setDocuments([]);
     setSending(false);
   }, [deliveredAt]);
 
   const body = text.trim();
-  const canSend = Boolean(enabled && sessionId) && !sending && (!!body || images.length > 0);
+  const canSend =
+    Boolean(enabled && sessionId) &&
+    !sending &&
+    (!!body || images.length > 0 || documents.length > 0);
 
   const send = useCallback(async () => {
     const payloadText = text.trim();
     const payloadImages = images.map((im) => im.dataUrl);
+    const payloadDocs = documents.map((d) => ({ name: d.name, data: d.dataUrl }));
     if (!enabled || !sessionId || sending) return;
-    if (!payloadText && payloadImages.length === 0) return;
+    if (!payloadText && payloadImages.length === 0 && payloadDocs.length === 0) return;
 
     const mine = ++ticket.current;
     setSending(true);
@@ -221,7 +283,7 @@ export function useSendToSession(
     // 请求还没出门就先喊一声。这条接口要等整整一轮才回来，等它回来再喊就晚了整轮。
     onSendStartRef.current?.(payloadText);
     try {
-      await sendToSession(sessionId, payloadText, payloadImages);
+      await sendToSession(sessionId, payloadText, payloadImages, payloadDocs);
       if (!mounted.current) return;
       // 到这里整轮已经跑完了。**只有送达信号没来过才在这里清**：来过的话输入框早清过，
       // 而且人可能已经打了新的一句，再清一次就是把它抹掉。失败那条路一个字都不动。
@@ -229,6 +291,7 @@ export function useSendToSession(
         clearedTicket.current = mine;
         setText('');
         setImages([]);
+        setDocuments([]);
       }
       await onSentRef.current?.();
       if (timer.current !== null) clearTimeout(timer.current);
@@ -244,14 +307,16 @@ export function useSendToSession(
       // 这里再动一次会把后一单的状态抹掉。
       if (mounted.current && ticket.current === mine) setSending(false);
     }
-  }, [enabled, sessionId, sending, text, images]);
+  }, [enabled, sessionId, sending, text, images, documents]);
 
   return {
     text,
     setText,
     images,
+    documents,
     addFiles,
     removeImage,
+    removeDocument,
     sending,
     error,
     canSend,
