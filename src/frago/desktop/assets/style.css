@@ -1,0 +1,647 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: -apple-system, "Helvetica Neue", "PingFang SC", sans-serif;
+  user-select: none;
+}
+/* 真鼠标保持可见。曾经这里写 cursor:none，怕真假两个光标同时入镜穿帮——
+   这个担心不成立：录制走 9223 那个独立的无头机位，它画的是自己那一份桌面页，
+   看不到本机光标，CDP screencast 也不采集系统光标。
+   代价却是实打实的：人在自己屏幕上没了指针，连关个标签都得摸。
+   桌面页对真实输入本来就完全免疫（见 app.js blockInput），指针露出来不改变这一点。 */
+
+#stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+}
+
+#desktop {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* 桌布画布不透明，这层底色只在两种时候露出来：画布还没画第一帧，
+     以及画布被放大后四边模糊过渡的那一两像素。所以它取的就是色场的
+     base 色，露出来也看不出接缝。 */
+  background: #101a33;   /* = indigo 配色的 base；换配色时 JS 会在运行时改写这里 */
+}
+
+/* ── 桌布 ──────────────────────────────────────────────
+   铺满桌面、压在所有窗口(100/200)之下，只当背景看。
+   pointer-events 关掉：页面本来就屏蔽真实输入，这里再断一道，
+   免得将来有人给桌面加拖拽时被这张画布截胡。
+   blur 是给 96px 宽放大 20 倍后残留的插值网格用的，抹掉它就干净了。 */
+#wp-mesh {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  filter: blur(10px);
+  transform: scale(1.03);   /* blur 会让四边透出底色，放大一点点盖住 */
+}
+
+/* ── menubar ── */
+#menubar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  /* 半透明 + 背景模糊，桌布从菜单栏底下透出来，跟 macOS 一样。
+     底色不是纯黑而是压深的暗色：桌布局部可能很亮，没有这层压深，
+     白字在亮色团上会糊掉。模糊半径给大，透出来的是色调不是形状——
+     能看清桌布的形状就会跟菜单文字抢注意力。 */
+  background: rgba(10, 14, 24, 0.36);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.10);
+  color: #fff;
+  font-size: 13px;
+  z-index: 500;
+}
+.mb-left, .mb-right { display: flex; align-items: center; gap: 18px; }
+
+/* 自定义标记：缺口方环（右上角开口，缺口内一粒琥珀点）。
+   缺口曾经是拿一块与菜单栏同色的实心补丁盖出来的。菜单栏改成半透明之后
+   那块补丁就穿帮了——它会变成一个跟着桌布颜色对不上的深色方块。
+   现在改成真镂空：环画在 ::before 上，用 mask 把右上角挖掉。
+   mask 只加在 ::before，缺口里那粒点在 ::after 上，不受影响。 */
+#apple-logo {
+  position: relative;
+  width: 15px; height: 15px;
+}
+#apple-logo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2.5px solid #e8a33d;
+  border-radius: 5px;
+  -webkit-mask-image: radial-gradient(circle 6px at 100% 0, transparent 0 6px, #000 6.5px);
+  mask-image: radial-gradient(circle 6px at 100% 0, transparent 0 6px, #000 6.5px);
+}
+#apple-logo::after {
+  content: "";
+  position: absolute;
+  top: -2px; right: -2px;
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: #e8a33d;
+}
+
+/* 菜单文字一律白色，照 macOS 的样子：当前应用名加粗，其余菜单项同色略降
+   不透明度。原先当前应用名是琥珀色，那是把品牌强调色用在了系统级构件上——
+   真实 macOS 的菜单栏里没有彩色文字。琥珀继续留在窗口高亮、标签页、
+   标记那些地方。 */
+.mb-app { font-weight: 700; color: #fff; }
+.mb-item { color: rgba(255, 255, 255, 0.88); }
+#mb-clock { font-variant-numeric: tabular-nums; color: #fff; }
+
+#mb-battery {
+  position: relative;
+  width: 22px; height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 3px;
+}
+#mb-battery::after {
+  content: "";
+  position: absolute;
+  right: -4px; top: 2.5px;
+  width: 2px; height: 4px;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 0 1px 1px 0;
+}
+#mb-battery i {
+  position: absolute;
+  left: 1px; top: 1px; bottom: 1px;
+  width: 75%;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 1px;
+}
+/* 同心扇形从一点向上张开，这才是真实的 Wi-Fi 图形。
+   之前用三个只染上边框的圆叠出来，圆被容器裁掉一半，弧长和弧心都不对，
+   放大看是畸形的。 */
+#mb-wifi {
+  display: flex;
+  align-items: center;
+}
+
+/* ── windows ── */
+.stage-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #161d27;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: left 0.3s cubic-bezier(.4,0,.2,1), top 0.3s cubic-bezier(.4,0,.2,1),
+              width 0.3s cubic-bezier(.4,0,.2,1), height 0.3s cubic-bezier(.4,0,.2,1),
+              transform 0.38s cubic-bezier(.5,0,.8,.4), opacity 0.38s ease,
+              box-shadow 0.3s ease;
+}
+.stage-window.focused {
+  z-index: 200;
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(232, 163, 61, 0.28),
+    0 0 24px rgba(232, 163, 61, 0.08);
+}
+.stage-window:not(.focused) { z-index: 100; }
+/* 最小化：飞向 dock（transform 由 JS 按图标位置计算），落点渐隐。
+   窗口只是不画了——broker 照常推画面，恢复瞬间内容是最新的。 */
+.stage-window.minimized { opacity: 0; pointer-events: none; }
+/* 关闭：原地缩一点淡出，刻意不飞向 dock——飞进 dock 是"我收起来了，还在跑"，
+   而关闭是"这个程序不在桌面上了"。两者在画面上必须一眼分得开，否则观众
+   看到窗口消失只会理解成最小化。dock 上那颗灯灭掉是第二个信号。 */
+.stage-window.closing { opacity: 0; pointer-events: none; }
+/* 关掉的窗口要真的从渲染树里拿掉。
+   **这一条不能省。** 浏览器内置的 [hidden]{display:none} 属于 UA 样式表，
+   而上面 .stage-window 的 display:flex 是作者样式——作者样式恒压过 UA 样式，
+   与选择器权重无关。所以不写这条规则，hidden 属性形同虚设：JS 把 hidden 设上了、
+   dock 的灯也灭了，窗口却照样画在桌面上，看起来像"程序关了但窗口还在"。
+   图片浏览器一直是这个毛病（它开机就带 hidden，于是桌面上常年挂着一扇空的
+   Preview），只是没人把它和这条规则联系起来。 */
+.stage-window[hidden] { display: none; }
+
+.titlebar {
+  position: relative;
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #232d3b;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+}
+.stage-window:not(.focused) .titlebar {
+  background: #1a222e;
+  box-shadow: none;
+}
+.win-title {
+  color: #e6edf3;
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 60%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stage-window:not(.focused) .win-title { color: #8b98a5; }
+
+.traffic {
+  position: absolute;
+  left: 12px; top: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tl {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+.stage-window.focused .tl:first-child {
+  background: #e8a33d;
+  box-shadow: 0 0 6px rgba(232, 163, 61, 0.55);
+}
+
+.win-body { flex: 1; min-height: 0; position: relative; }
+
+/* terminal */
+.term-body {
+  background: #10151d;
+  padding: 8px 10px;
+  overflow: hidden;
+}
+/* 缓冲区的视口。高度由 app.js 钉成整行数 × 行高——留半行的话，
+   画面上会挂着一条被切掉一半的字，而 broker 换算行号时那半行既算
+   看得见又算看不见，取景就会差一行。
+
+   overflow:hidden 而不是 auto：滚动条会占掉宽度，字符列数跟着抖，
+   tmux 就被反复 resize；而且这是块荧幕，没有人会用手去滚它。
+   overflow:hidden 照样滚得动——scrollTop 是程序设的。 */
+.term-scroll {
+  overflow: hidden;
+  scrollbar-width: none;
+}
+.term-scroll::-webkit-scrollbar { display: none; }
+#term-screen {
+  font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  /* 字号是录制构图的第一变量，不是外观偏好：13px 在 1080p 的成片里就是
+     13 像素高，压到手机上根本读不出，而想让字变大靠改窗口几何或手动
+     tmux resize 都没用——列数行数是"窗口尺寸 ÷ 字符格子"算出来的，格子
+     大小只由这里定。录制档走 broker 的 term.fontsize 指令改这个变量，
+     默认仍是 13px（人自己看那块荧幕的习惯尺寸）。 */
+  font-size: var(--term-fs, 13px);
+  line-height: 1.35;
+  color: #d8dee9;
+  /* 回看的动画走这条：滚动位置一步到位写进 scrollTop，视觉上的移动靠内容
+     平移补间。时长由指令给（app.js 里现设），这里只声明补间什么、怎么走。 */
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(.4, 0, .2, 1);
+  will-change: transform;
+}
+.term-line { white-space: pre; }
+/* 空行也得占满一行高。没有这一条，一屏里的空行高度是 0，下面的内容
+   整体上移——画面看着像少了几行，而行号换算出来的位置全是错的。 */
+.term-line::after { content: "\200b"; }
+
+/* image viewer */
+.image-body {
+  background: #10151d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+#image-view {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* fake browser chrome */
+.browser-chrome {
+  flex: none;
+  background: #1a222e;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+}
+.tab-strip {
+  display: flex;
+  align-items: flex-end;
+  height: 28px;
+  padding: 0 10px;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  min-width: 130px;
+  max-width: 220px;
+  padding: 0 12px;
+  border-radius: 8px 8px 0 0;
+  background: #222c3a;
+  color: #8b98a5;
+  font-size: 12px;
+}
+.tab.active {
+  background: rgba(232, 163, 61, 0.14);
+  color: #e6edf3;
+}
+.tab-favicon {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 2px solid #e8a33d;
+  flex: none;
+}
+.tab-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  background: #222c3a;
+}
+.nav-btn {
+  color: #8b98a5;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.nav-btn.dim { opacity: 0.35; }
+.addressbar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 13px;
+  background: #141a23;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #e6edf3;
+  font-size: 12px;
+  overflow: hidden;
+}
+.addr-url { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spinner {
+  flex: none;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #e8a33d;
+  display: none;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.on { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 画面按自身比例居中铺放，不拉满盒子。
+   拉满的写法默认了"帧和窗口永远同比"，而这两者同步天生有延迟：窗口尺寸是
+   CSS 补间，立刻就变形；新尺寸的帧要等 UI 报几何、broker 改视口、重开帧流、
+   页面重绘一整圈才回来。中间那一秒画面就是横向拉伸的。
+   按比例铺放之后，同步延迟最多表现为两侧一点空边，变形则从机制上没有了。 */
+.browser-body { background: #0e0f12; overflow: hidden; }
+#browser-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ── 空白起始页 ──
+   演员标签不在时铺满窗体。做成浏览器刚打开的样子：四色圆点加一条搜索框，
+   认得出是个浏览器、又明摆着没开任何页面。不写文案是有意的——录制画面里
+   一行英文提示会立刻暴露这不是真的浏览器。 */
+.browser-newtab {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 起始页的重心偏上，跟真浏览器一样：正中会显得整扇窗口是空的，
+     偏上才读得出"这是个等着你输入的浏览器"。 */
+  justify-content: center;
+  padding-bottom: 12%;
+  gap: 26px;
+  background: #1c1d20;
+}
+.browser-newtab[hidden] { display: none; }
+/* 尺寸用 min() 钳住：这扇窗口的宽度跟着演员标签的宽高比走，纯百分比在宽窗口上
+   会把标记撑成一个巨大的色块。 */
+.nt-mark {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+  width: min(5%, 46px);
+  aspect-ratio: 1;
+}
+.nt-dot { border-radius: 50%; aspect-ratio: 1; }
+.nt-b { background: #4285f4; }
+.nt-r { background: #ea4335; }
+.nt-y { background: #fbbc05; }
+.nt-g { background: #34a853; }
+.nt-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(42%, 460px);
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: #2a2b2f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+.nt-search-icon { color: #8a8d93; font-size: 15px; line-height: 1; }
+
+/* ── dock ── */
+/* 尺寸按"够认得出、不抢戏"取：录制画面里 dock 是场景交代，不是主体。
+   改动时 app.js 的 DOCK_MARGIN 要跟着 bottom 走——桌面可用区靠它扣留白。 */
+#dock {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  padding: 7px;
+  border-radius: 14px;
+  background: #1a222e;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 14px 34px rgba(0, 0, 0, 0.5);
+  z-index: 500;
+}
+.dock-item {
+  position: relative;
+  width: 38px; height: 38px;
+}
+.dock-icon {
+  width: 38px; height: 38px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.icon-terminal {
+  background: #2a313c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.icon-terminal span {
+  color: #fff;
+  font-family: Menlo, monospace;
+  font-size: 13px;
+  font-weight: 700;
+}
+/* 地球仪：经纬线是"浏览器"最通用也最真实的符号，且不撞任何品牌。
+   底色从琥珀换成深蓝——琥珀要留给系统状态（焦点、运行中）才不会被稀释，
+   而 Dock 里图标各有各的色，本来就更接近真实桌面。 */
+.icon-chrome {
+  background: linear-gradient(160deg, #3d7fc4 0%, #2560a0 55%, #1b4a80 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.icon-image {
+  background: linear-gradient(160deg, #4a7d52 0%, #2f5f3a 55%, #22492e 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.dock-dot {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #e8a33d;
+  box-shadow: 0 0 5px rgba(232, 163, 61, 0.7);
+  opacity: 0;
+}
+/* 圆点答的是"这个程序在不在跑"，不是"是不是前台"——这是画面上唯一能区分
+   close（灯灭）与 min（灯还亮着、只是窗口飞进了 dock）的地方。
+   前台那个再亮一档，两种状态各有各的形态，不必去数窗口。 */
+.dock-item.running .dock-dot { opacity: 0.42; }
+.dock-item.active .dock-dot { opacity: 1; }
+
+/* ── caption ── */
+/* 字幕贴着 dock 上沿走，和所有影片一样。原先吊在画面 30% 高处，
+   正好压在内容区中间——观众看窗口里发生什么时，字幕挡在视线正中。 */
+/* 容器只管排队：底对齐，新行从下方进来把旧行顶上去。
+   气泡长在每一行上，不在容器上——多行共用一个气泡的话，行数一变
+   整块背景跟着跳，看着像画面在抖。 */
+#caption {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  max-width: 70%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 800;
+}
+.caption-line {
+  padding: 10px 20px;
+  border-radius: 12px;
+  background: rgba(10, 13, 19, 0.82);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #f2f4f8;
+  font-size: 22px;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(.4,0,.2,1);
+}
+.caption-line.in { opacity: 1; transform: none; }
+/* 上面的旧行退到次要位置：当前这句该是最亮的那句 */
+/* 必须带 .in：正在淡出的行没有 .in，让它落回 opacity:0，
+   否则这条会把它按住在 0.62 上，永远淡不掉 */
+.caption-line.in:not(:last-child) { opacity: 0.62; font-size: 19px; }
+
+/* ── 浮层标注 ──
+   夹在窗口(100/200)、菜单栏与 dock(500)、字幕(800) 之上，涟漪(1900) 与
+   虚拟鼠标(2000) 之下。鼠标必须压在最上面——观众全靠它判断操作发生在哪，
+   被一张图示盖住的话，画面就只剩"有东西在动"而不知道是谁在动。 */
+#overlay-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1200;
+  overflow: hidden;
+}
+.overlay-item {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(.4,0,.2,1);
+}
+.overlay-item.in { opacity: 1; }
+/* 未给 at 的浮层铺满整层，靠 flex 把 body 摆到正中。
+   用 inset+flex 而不是 left:50%+translate，是为了把 transform 整个让给进场动画。 */
+.overlay-centered {
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.overlay-body { max-width: 100%; max-height: 100%; }
+
+/* card：承载结构图、对比表这类 HTML 片段 */
+.overlay-card .overlay-body {
+  padding: 26px 34px;
+  border-radius: 18px;
+  background: rgba(14, 18, 26, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(232, 163, 61, 0.22),
+    0 24px 60px rgba(0, 0, 0, 0.6);
+  color: #eef2f7;
+  font-size: 26px;
+  line-height: 1.5;
+}
+
+/* title：海报字。这个尺寸是给"断章"用的，小了就只是个标题，砸不下来 */
+.overlay-title .overlay-body {
+  font-size: 132px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.75);
+}
+
+/* highlight：亮框 + 反向遮罩。超大扩散的 box-shadow 把画面其余部分压暗，
+   框内保持原样，等于在不裁剪 DOM 的前提下抠了个洞。 */
+.overlay-hole {
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 3px rgba(232, 163, 61, 0.95),
+    0 0 26px rgba(232, 163, 61, 0.5),
+    0 0 0 9999px rgba(6, 9, 14, 0.55);
+}
+
+.overlay-image .overlay-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* 三种进场。终态一律是 none，进场差异全在起手式上 */
+.overlay-enter-fade { transform: none; }
+.overlay-enter-slam { transform: scale(2.6); }
+/* 过冲曲线让它落地时轻轻弹一下，才有"砸"的重量感 */
+.overlay-enter-slam.in {
+  transform: scale(1);
+  transition: opacity 0.16s ease, transform 0.34s cubic-bezier(.2,1.6,.35,1);
+}
+.overlay-enter-slide { transform: translateX(-60%); }
+.overlay-enter-slide.in { transform: translateX(0); }
+
+/* ── virtual cursor ── */
+#vcursor {
+  position: fixed;
+  left: 0; top: 0;
+  z-index: 2000;
+  pointer-events: none;
+  transition: transform 0.2s cubic-bezier(.4,0,.2,1);
+  will-change: transform;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+/* 按下时以箭头尖端为锚点缩一下——换成别的锚点，指针会在点击瞬间
+   整体挪开，看着像点歪了 */
+#vcursor.pressed svg { transform: scale(0.85); transform-origin: 0.9px 0.9px; }
+#vcursor svg { transition: transform 0.1s ease; display: block; }
+
+#ripple-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1900;
+  overflow: hidden;
+}
+.ripple {
+  position: absolute;
+  width: 44px; height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(232, 163, 61, 0.35);
+  animation: ripple-pop 0.38s ease-out forwards;
+}
+@keyframes ripple-pop {
+  from { transform: scale(0.25); opacity: 0.9; }
+  to   { transform: scale(1.4); opacity: 0; }
+}
+
+/* ── 扫描灯 ─────────────────────────────────────────────────
+   贴桌面底边。z-index 压在窗口(100/200)、菜单栏与 dock(500)、字幕(800)
+   之上但低于浮层(1200)——它是系统级的状态指示，不该被应用窗口盖住，
+   但也不能挡住讲解用的浮层。pointer-events 关掉，纯装饰不吃点击。 */
+#scanline {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 18px;
+  z-index: 900;
+  opacity: 0.55;
+  pointer-events: none;
+}

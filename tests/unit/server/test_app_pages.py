@@ -113,6 +113,65 @@ class TestAddress:
         assert "no assets" in response.json()["detail"]
 
 
+class TestBuiltInPages:
+    """A page whose front end ships inside frago, at the same kind of address.
+
+    The virtual desktop's page is the one that exists today. Two things must hold
+    for it, and neither is about the files themselves: the address stays exactly
+    what the stage's ledger and the open browser tab already say it is, and a
+    leftover recipe of the same name on disk can never take that address back.
+    """
+
+    def test_desktop_page_is_served_without_any_recipe_installed(self, client):
+        """The registry in this fixture knows only `demo_board`; the page loads anyway."""
+        response = client.get("/app/agent_os/")
+        assert response.status_code == 200
+        assert "<html" in response.text.lower()
+
+    def test_bytes_come_from_the_package(self, client):
+        from importlib.resources import files
+
+        packaged = files("frago.desktop").joinpath("assets", "index.html").read_bytes()
+        assert client.get("/app/agent_os/").content == packaged
+        assert client.get("/app/agent_os/app.js").status_code == 200
+
+    def test_a_recipe_of_the_same_name_cannot_take_the_address(
+        self, client, tmp_path, monkeypatch
+    ):
+        """The retired recipe stays on disk as the rollback copy until Phase 5.
+
+        If it could still answer here, the page would quietly go on being served
+        from a directory nobody edits any more — and nothing would report it.
+        """
+        impostor = tmp_path / "recipes" / "agent_os"
+        (impostor / "assets").mkdir(parents=True)
+        (impostor / "assets" / "index.html").write_text("<h1>stale</h1>", encoding="utf-8")
+
+        class _Meta:
+            ui_from = None
+
+        class _Recipe:
+            base_dir = impostor
+            script_path = impostor / "recipe.py"
+            metadata = _Meta()
+
+        class _Registry:
+            def find(self, name, source=None):
+                return _Recipe()
+
+        monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
+        assert "stale" not in client.get("/app/agent_os/").text
+
+    def test_the_address_is_the_one_written_into_the_ledger(self):
+        """`http://127.0.0.1:8093/app/agent_os` is recorded per instance and never
+        recomputed, so the route it points at is not free to move."""
+        from frago.desktop import health
+
+        assert health.expected_desktop_url("bc98c2f8114b") == (
+            "http://127.0.0.1:8093/app/agent_os"
+        )
+
+
 class TestSharedFrontEnd:
     """One front end serving several recipes, declared with `ui_from`.
 

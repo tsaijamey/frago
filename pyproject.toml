@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "1.2.206"
+version = "1.2.207"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -50,6 +50,10 @@ dependencies = [
     # unescaped backslashes, mixed quotes, half-finished escapes — failure
     # modes that LLM JSON output regularly produces and json.loads cannot fix).
     "json-repair>=0.30.0",
+    # 虚拟桌面舞台的摇镜与取景（frago.desktop.broker 顶层就 from PIL import Image）。
+    # 承重，不是可选：摇镜靠 resize(box=浮点) 拿亚像素位移，换 ffmpeg 的整数 crop
+    # 会把每帧量化到整像素。
+    "pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]

@@ -379,7 +379,7 @@ cli.add_command(update)  # Self-update command
 
 # Command groups
 cli.add_command(browser_group)  # browser automation command group
-cli.add_command(desktop_group)  # virtual desktop stage (forwards to the agent_os recipe)
+cli.add_command(desktop_group)  # virtual desktop stage (forwards into frago.desktop)
 cli.add_command(extension_group, name="extension")  # Browser extension bridge (P1 MVP)
 
 # Recipe management command group

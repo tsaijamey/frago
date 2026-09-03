@@ -163,6 +163,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     logger = logging.getLogger(__name__)
 
+    # Lay down packaged knowledge the user is meant to edit — the book topics
+    # and the constitution — before anything reads them. Existing files are
+    # never overwritten: whatever is already on disk is treated as the user's
+    # own version. Runs first because the review pass and the book command both
+    # read what it puts there.
+    try:
+        from frago.init.user_resource_seed import seed_user_resources
+
+        logger.info("user resources: %s", seed_user_resources().summary())
+    except Exception as e:
+        logger.warning("Failed to seed user resources: %s", e)
+
     # Startup: Initialize state manager (unified state)
     state_manager = StateManager.get_instance()
     await state_manager.initialize()

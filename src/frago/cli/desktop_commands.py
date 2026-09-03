@@ -2,9 +2,9 @@
 
 为什么要有这一层
 ----------------
-舞台的能力一直都在（配方 ``agent_os`` 里那个 ``aos`` 脚本），缺的是**被看见**。
+舞台的能力一直都在（``frago.desktop`` 包里那个 ``aos``），缺的是**被看见**。
 同样是驱动一块外部界面，``frago browser`` 在 PATH 上、``--help`` 一把列全动词、
-book 里有常驻章节；而 ``aos`` 埋在配方目录里，agent 只有先知道"有这么个文件"
+book 里有常驻章节；而 ``aos`` 从前埋在配方目录里，agent 只有先知道"有这么个文件"
 才谈得上用它。结果是 agent 知道"有虚拟桌面这回事"，却不知道 ``aos status``
 和 ``aos up`` 存在——这两条本来就在那儿。
 
@@ -14,30 +14,32 @@ book 里有常驻章节；而 ``aos`` 埋在配方目录里，agent 只有先知
 
 这一层只做转发
 --------------
-真正干活的仍是配方里那份 ``aos``：动词、参数、回执格式一个字不改，这里不复制
-任何语义。复制会立刻产生第二份真相——配方改了动词，CLI 这边不跟，agent 拿到的
-帮助就是错的，而这种错比没有帮助更伤。
+真正干活的仍是 ``aos``：动词、参数、回执格式一个字不改，这里不复制任何语义。
+复制会立刻产生第二份真相——那边改了动词、这边不跟，agent 拿到的帮助就是错的，
+而这种错比没有帮助更伤。
 
-所以这里刻意做成**透明管道**：拿到什么原样递过去，stdout / stderr / 退出码
-原样带回来。``frago desktop`` 与 ``aos`` 永远等价。
+这条约束照旧成立，但它现在是**自动**成立的，不再靠人守：舞台 2026-09-02 从配方
+搬进本体（``frago.desktop``），全机器只剩这一份实现，没有任何地方还需要抄一遍动词表。
+
+于是"怎么转发"退化成一道纯粹的工程题，答案从子进程换成了进程内直调：
+
+- 从前 ``[sys.executable, ~/.frago/recipes/workflows/agent_os/aos, *args]``，
+  外加一段"把落点用环境变量交代给子进程"的前置。
+- 现在 ``aos.main(list(args))``。省掉一次解释器启动，更要紧的是省掉那份环境变量
+  约定——本机的保活守护正是漏掉它，连续 4005 次没能把舞台拉起来，而每次只留下
+  一行 WARNING。落点改由 ``registry`` 自己求，调用方**没有机会**漏掉交代。
+
+代价是 stdout 的干净得主动守，两条护栏配套：``aos.main()`` 兜住所有异常，无论如何
+只打印一行 JSON、用返回值定退出码；本命令体自己一个字都不打印。
 """
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
-from pathlib import Path
 
 import click
 
 from .agent_friendly import AgentFriendlyCommand
-
-# 舞台脚本的位置。跟 virtual_os_lifecycle 用的是同一条路径约定：
-# 配方装在用户目录下，不随 frago 包分发。
-RECIPE_NAME = "agent_os"
-AOS = Path.home() / ".frago" / "recipes" / "workflows" / RECIPE_NAME / "aos"
 
 
 @click.command(
@@ -85,48 +87,9 @@ def desktop_group(args: tuple[str, ...]) -> None:
     verbatim and returns its exit code unchanged. Run it bare to list the
     resources, or see `frago book desktop-usage` for the full path.
     """
-    if not AOS.exists():
-        # 这里曾经写着"用 frago init 装配方"，那是假的：包里只随分发
-        # transcript_completion 与 openrouter_vision_classify 两个配方，
-        # agent_os 不在其中。init 会正常跑完、报告成功，然后这条命令依然
-        # 找不到舞台——一个会跑完、会报成功、却什么也没解决的指引，比没有
-        # 指引更坏。所以这里只说实话：它不随包走，得从配方来源同步。
-        # 回执用 json.dumps 生成，不手拼字符串：这段里有中文、有路径、有引号，
-        # 手拼出非法 JSON 的话，调用方（多半是 agent）拿到的是解析异常，
-        # 而真正的原因「配方不在」一个字都传不到。
-        click.echo(json.dumps({
-            "ok": False,
-            "error": "本机没有虚拟桌面配方，frago desktop 无法工作",
-            "expected": str(AOS),
-            "note": "agent_os 与 agent_os_ui 两个配方不随 frago 包分发，"
-                    "frago init 装不来它们",
-            "hint": "从配方来源同步这两份到 ~/.frago/recipes/：",
-            "need": ["workflows/agent_os", "atomic/system/agent_os_ui"],
-        }, ensure_ascii=False))
-        sys.exit(2)
+    # 这里没有"舞台不在本机"这条分支，是刻意的。舞台跟着 frago 包分发，import 不到
+    # 就是这个装置装坏了，Python 自己的 ImportError 是最诚实的报告。给一个不可能
+    # 发生的状态编一段回执，等于给下一个人埋一条要去查的假线索。
+    from frago.desktop import aos
 
-    # 舞台把它的运行状态（实例台账、录屏片段、broker 日志）写在平台交代的落点里，
-    # 而这条命令不走 `frago recipe run`——它直接起舞台脚本，所以那份交代得由这里补上。
-    # 不补的话舞台起不来，报的是「平台没有交代落点」：一条对着人喊的错误，而人根本
-    # 没做错什么，他只是敲了 frago desktop。
-    env = dict(os.environ)
-    try:
-        from frago.recipes.context import for_owner
-
-        ctx = for_owner(RECIPE_NAME)
-        if ctx.data_dir is not None:
-            env["FRAGO_RECIPE_DATA_DIR"] = str(ctx.data_dir)
-            env["FRAGO_RECIPE_CALLER"] = "owner"
-            if ctx.slot:
-                env["FRAGO_RECIPE_SLOT"] = ctx.slot
-    except Exception:  # noqa: BLE001 — 交代不出就让舞台自己报，别把这里变成第二个报错点
-        pass
-
-    # 直接把子进程的输出接到自己的 stdout/stderr 上，不做缓冲、不做转写：
-    # 舞台的回执恒为单行 JSON，调用方（多半是 agent）要拿它原样解析。
-    proc = subprocess.run(  # noqa: S603
-        [sys.executable, str(AOS), *args],
-        check=False,
-        env=env,
-    )
-    sys.exit(proc.returncode)
+    sys.exit(aos.main(list(args)))

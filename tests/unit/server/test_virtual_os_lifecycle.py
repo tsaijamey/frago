@@ -114,10 +114,8 @@ class TestLoopSurvival:
         assert starts == [1]
 
     @pytest.mark.asyncio
-    async def test_start_is_idempotent(self, service, monkeypatch):
+    async def test_start_is_idempotent(self, service):
         svc, _ = service
-        # 指向一个确实存在的文件即可——start 只用它判断配方装没装。
-        monkeypatch.setattr(vol, "_REGISTRY", vol.Path(__file__))
         await svc.start()
         first = svc._task
         await svc.start()
@@ -125,9 +123,23 @@ class TestLoopSurvival:
         await svc.stop()
 
     @pytest.mark.asyncio
-    async def test_uninstalled_recipe_means_no_supervision(self, service, monkeypatch):
-        """No stage recipe on this machine — the service must not spin a loop."""
-        svc, _ = service
-        monkeypatch.setattr(vol, "_REGISTRY", vol.Path("/nonexistent/registry.py"))
+    async def test_a_machine_with_no_desktop_yet_still_supervises(
+        self, service, monkeypatch
+    ):
+        """There is no longer an "is it installed" gate, and there must not be one.
+
+        The stage ships inside frago now, so the old gate (does the recipe exist
+        on disk?) would be true on every machine — and a gate that is always open
+        only makes the reader look for a case that cannot happen. A machine that
+        has simply never created a desktop is handled one layer in: the loop runs,
+        every scan reads no instance record, and every scan does nothing.
+        """
+        svc, starts = service
+        monkeypatch.setattr(
+            vol.VirtualOsLifecycleService, "_read_state", staticmethod(lambda: None)
+        )
         await svc.start()
-        assert svc._task is None
+        assert svc._task is not None
+        await asyncio.sleep(0.05)
+        assert starts == []
+        await svc.stop()

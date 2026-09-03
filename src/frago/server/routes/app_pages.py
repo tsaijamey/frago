@@ -22,6 +22,11 @@ Three routes make up the contract:
 Front ends keep using relative paths (`fetch('config.json')`, `fetch('data/x.json')`),
 so the page does not know it moved.
 
+A few pages are not a recipe's at all: their front end ships inside frago (the
+virtual desktop's is `frago/desktop/assets/`). They are served through the exact
+same three routes under the exact same address — `_BUILT_IN` only changes where
+the files are read from, and it is consulted before the recipe registry.
+
 Running the same recipe twice does not mint a new address. A recipe that needs
 to distinguish projects or sessions passes a key in the query string
 (`/app/<name>?key=<id>`); without one, the default slot is served. State for
@@ -37,6 +42,7 @@ separate identity root; see `_slot_state`.
 import asyncio
 import logging
 import mimetypes
+from importlib.resources import files
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -71,18 +77,43 @@ _REVALIDATE = {"Cache-Control": "no-cache"}
 _NO_STORE = {"Cache-Control": "no-store"}
 
 
-def _assets_dir(name: str) -> Path:
-    """Locate a recipe's assets directory, or explain why the page can't load.
+# Pages whose front end ships inside frago itself, keyed by the same name a
+# recipe would have used. The address does not change when a page moves in here:
+# `/app/agent_os` is written into the stage's instance ledger and into whatever
+# browser tab is open on it, so it has to keep meaning the same page.
+#
+# Looked up *before* the recipe registry, deliberately. The old `agent_os_ui`
+# recipe stays on disk as the rollback copy until it is retired, and a built-in
+# page must never lose its address to a leftover on disk — that failure would
+# show up as a stale front end with nothing anywhere reporting an error.
+#
+# Lazy on purpose: importing `frago.desktop` pulls in the stage's modules, and
+# every other page served by this module has no reason to pay for that.
+_BUILT_IN = {
+    "agent_os": lambda: files("frago.desktop").joinpath("assets"),
+}
 
-    The failure modes are worth telling apart: a recipe that does not exist at
-    all, one that exists but has no front end, and one that points at a shared
-    front end that isn't there. All three used to surface as a blank page.
+
+def _assets_dir(name: str) -> Path:
+    """Locate a page's assets directory, or explain why it can't load.
+
+    Built-in pages (`_BUILT_IN`) answer straight from the frago package. For a
+    recipe the failure modes are worth telling apart: a recipe that does not
+    exist at all, one that exists but has no front end, and one that points at a
+    shared front end that isn't there. All three used to surface as a blank page.
 
     A recipe may borrow another recipe's assets via `ui_from` in its metadata,
     for the cases where one front end genuinely serves several recipes.
     """
     if "/" in name or ".." in name:
         raise HTTPException(status_code=400, detail="Invalid recipe name")
+
+    built_in = _BUILT_IN.get(name)
+    if built_in is not None:
+        # `files()` hands back a Traversable; everything downstream (FileResponse,
+        # `_resolve_within`) wants a real filesystem path, and frago is installed
+        # as a directory, never as a zip.
+        return Path(str(built_in()))
 
     from frago.recipes.exceptions import RecipeNotFoundError
     from frago.recipes.registry import get_registry, invalidate_registry

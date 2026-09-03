@@ -1,12 +1,27 @@
 """Keeps the virtual desktop alive — unless a person said to stop it.
 
-The virtual desktop (recipe ``agent_os``) is meant to be there whenever someone
+The virtual desktop (``frago.desktop``) is meant to be there whenever someone
 wants it: an agent sends a command and the stage is already running. Before this
 service, nothing kept it up. It was started by hand, and once its process was
 gone — crashed, killed by a restart, reaped by the OS — everything downstream
 kept behaving as if it were still there: the registry still said ``running``,
 the desktop page kept showing its last frame, and the next command failed with a
 connection error that named a port rather than the reason.
+
+It had never once worked on this machine
+----------------------------------------
+Until 2026-09-02 the stage was a recipe on disk, and this service reached it the
+way one reaches a recipe: it loaded the registry module *by path* and started
+the stage through ``RecipeRunner``. The registry demanded that whoever imports it
+declare where the stage keeps its ledger (``FRAGO_RECIPE_DATA_DIR``), and the
+server never did. So every scan raised, and ``_loop`` swallowed it into a single
+WARNING line — 4005 consecutive times, once every fifteen seconds. The desktop on
+this machine was never supervised, and nothing above WARNING ever said so.
+
+Both halves are now plain in-package calls: ``frago.desktop.registry`` for the
+state, ``frago.desktop.stage.up()`` for the start. The environment-variable
+handover that rotted is gone — the registry works its own landing spot out, so
+there is no longer anything for a caller to forget.
 
 Why not the generic daemon supervisor
 -------------------------------------
@@ -33,7 +48,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +59,7 @@ _SCAN_INTERVAL_S = 15.0
 # 否则一轮没跑完下一轮又来一次，会同时起好几个。
 _START_COOLDOWN_S = 90.0
 
-_RECIPE = "agent_os"
 _INSTANCE = "default"
-_REGISTRY = Path.home() / ".frago" / "recipes" / "workflows" / _RECIPE / "registry.py"
 
 
 class VirtualOsLifecycleService:
@@ -69,9 +81,9 @@ class VirtualOsLifecycleService:
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
             return
-        if not _REGISTRY.exists():
-            logger.info("VirtualOsLifecycleService: recipe %s not installed, idle", _RECIPE)
-            return
+        # 从前这里有一道「配方装了没有」的闸。舞台跟着包走之后它永远为真，而且
+        # ``_read_state`` 在没有实例记录时本来就返回 None、循环自己会早退——
+        # 一道恒真的闸只会让读的人以为还有别的情况。
         self._task = asyncio.create_task(self._loop())
         logger.info(
             "VirtualOsLifecycleService started (scan every %.0fs)", self._scan_interval_s
@@ -115,16 +127,11 @@ class VirtualOsLifecycleService:
     def _read_state() -> tuple[bool, bool] | None:
         """(人想让它跑, 它确实在跑)。没有实例记录时返回 None。
 
-        直接加载配方自带的注册表模块，而不是自己解析那些 json：判定「在跑」
-        要同时看进程和端口，那套判据住在配方里，抄一份到这里必然漂移。
+        用舞台自己的注册表模块，而不是自己解析那些 json：判定「在跑」要同时看
+        进程和端口，那套判据只有一份，抄一份到这里必然漂移。从前这份判据住在
+        配方目录里、只能按路径 import；搬进本体之后普通 import 把同一件事做得更好。
         """
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("_agent_os_registry", _REGISTRY)
-        if spec is None or spec.loader is None:
-            return None
-        registry = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(registry)
+        from frago.desktop import registry
 
         record = registry.read_instance(_INSTANCE)
         if record is None:
@@ -133,11 +140,21 @@ class VirtualOsLifecycleService:
 
     @staticmethod
     def _start_desktop() -> None:
-        from frago.recipes.runner import RecipeRunner
+        """把舞台拉起来。直调包内的 up()，不再经 RecipeRunner。
 
-        result = RecipeRunner().run(_RECIPE, {}, timeout=180)
-        ok = isinstance(result, dict) and result.get("status") != "error"
-        if ok:
-            logger.info("Virtual OS started")
-        else:
-            logger.warning("Virtual OS start failed: %s", result)
+        少掉的不只是一层转发：走 RecipeRunner 就要套 ``frago.recipes.isolation``
+        的沙箱，而舞台要开浏览器、读人的 profile、写 clips——那个沙箱正是搬家要
+        脱掉的东西。
+        """
+        from frago.desktop import stage
+
+        try:
+            result = stage.up()
+        except Exception as e:  # noqa: BLE001 —— 起不来不该拖垮巡检循环
+            # 单独记，不让它冒到 _loop 的 except 里去：那条 WARNING 说的是
+            # 「这一轮巡检本身崩了」，与「舞台没起来」是两件事，混在一起就分不出
+            # 到底哪一环坏了——上一版把两件事混成一句，吞了 4005 次。
+            logger.warning("Virtual OS start failed: %s", e)
+            return
+        runtime = result.get("runtime") if isinstance(result, dict) else None
+        logger.info("Virtual OS started: %s", runtime)
