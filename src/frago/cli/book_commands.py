@@ -1,16 +1,25 @@
 """frago book — built-in knowledge query command"""
 
 import logging
-from importlib.resources import files as pkg_files
-
 import click
 import yaml
+
+from frago.init.user_resource_seed import ensure_book_dir
 
 from .agent_friendly import AgentFriendlyCommand
 
 logger = logging.getLogger(__name__)
 
-BOOK_DIR = pkg_files("frago.resources") / "book"
+
+def _book_dir():
+    """The book lives under ``~/.frago/book`` so the user can edit it.
+
+    Read straight out of the wheel until 2026-09-03; a topic inside
+    site-packages cannot be corrected by the person the topic is wrong for, and
+    an upgrade throws the correction away. The packaged copy is now a seed: it
+    is laid down once, and never written over.
+    """
+    return ensure_book_dir()
 
 CATEGORY_ORDER = ["must", "better", "available"]
 CATEGORY_HEADERS = {
@@ -23,7 +32,7 @@ CATEGORY_TAGS = {"must": "MUST", "better": "BETTER", "available": "AVAILABLE"}
 
 def _load_index() -> list[dict]:
     """Load the book index from _index.yaml."""
-    index_path = BOOK_DIR / "_index.yaml"
+    index_path = _book_dir() / "_index.yaml"
     if not index_path.is_file():
         raise click.ClickException(
             "Book index not found. frago installation may be incomplete."
@@ -41,7 +50,7 @@ def _load_index() -> list[dict]:
 
 def _load_scenes() -> list[dict]:
     """Load the scene index from _scenes.yaml."""
-    scenes_path = BOOK_DIR / "_scenes.yaml"
+    scenes_path = _book_dir() / "_scenes.yaml"
     if not scenes_path.is_file():
         return []
     raw = yaml.safe_load(scenes_path.read_text(encoding="utf-8"))
@@ -120,7 +129,7 @@ def book_command(topic: str | None, brief: bool, list_sections: bool, section: s
 
     # Handle scene-<name> — scene card (also .md file)
     if topic.startswith("scene-"):
-        md_path = BOOK_DIR / f"{topic}.md"
+        md_path = _book_dir() / f"{topic}.md"
         if md_path.is_file():
             click.echo(md_path.read_text(encoding="utf-8"))
             return
@@ -142,7 +151,7 @@ def book_command(topic: str | None, brief: bool, list_sections: bool, section: s
 
     # Output .md content — always use canonical name from index
     topic_name = entry["name"]
-    md_path = BOOK_DIR / f"{topic_name}.md"
+    md_path = _book_dir() / f"{topic_name}.md"
     if not md_path.is_file():
         click.echo(f"{entry['brief']} [{CATEGORY_TAGS[entry['category']]}]", err=True)
         click.echo(f"\nDetail content missing for topic: {topic_name}", err=True)
@@ -183,7 +192,7 @@ def _print_index(entries: list[dict]):
     click.echo("\nfrago Knowledge Book\n")
 
     # Identity preamble
-    identity_path = BOOK_DIR / "_identity.md"
+    identity_path = _book_dir() / "_identity.md"
     if identity_path.is_file():
         click.echo(identity_path.read_text(encoding="utf-8"))
         click.echo()
@@ -199,7 +208,7 @@ def _print_index(entries: list[dict]):
         click.echo()
 
     # Guidance footer
-    guidance_path = BOOK_DIR / "_guidance.md"
+    guidance_path = _book_dir() / "_guidance.md"
     if guidance_path.is_file():
         click.echo(guidance_path.read_text(encoding="utf-8"))
 
