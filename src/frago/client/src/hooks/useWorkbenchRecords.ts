@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWebSocketClient, MessageType, type WebSocketMessage } from '../api/websocket';
+import i18n from '@/i18n';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -170,7 +171,7 @@ export async function fetchWorkbenchRecords(
     `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/records?${query}`
   );
   if (!res.ok) {
-    throw new Error(`记录取不到（HTTP ${res.status}）`);
+    throw new Error(i18n.t('workbench.errors.recordsFetchFailed', { status: res.status }));
   }
   return (await res.json()) as WorkbenchRecord[];
 }
@@ -190,7 +191,7 @@ export async function fetchWorkbenchRaw(
       `?session_id=${encodeURIComponent(sessionId)}`
   );
   if (!res.ok) {
-    throw new Error(`原文不予提供（HTTP ${res.status}）`);
+    throw new Error(i18n.t('workbench.errors.rawWithheld', { status: res.status }));
   }
   return res.json();
 }

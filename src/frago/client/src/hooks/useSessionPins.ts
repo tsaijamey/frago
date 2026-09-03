@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import i18n from '@/i18n';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -33,7 +34,7 @@ export interface SessionPinsState {
 
 export async function fetchPins(): Promise<string[]> {
   const res = await fetch(`${API_BASE_URL}/api/workbench/pins`);
-  if (!res.ok) throw new Error(`置顶名单取不到（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(i18n.t('workbench.errors.pinsFetchFailed', { status: res.status }));
   const body = (await res.json()) as { pinned?: string[] };
   return body.pinned ?? [];
 }
@@ -43,7 +44,7 @@ export async function putPin(sessionId: string): Promise<string[]> {
     `${API_BASE_URL}/api/workbench/pins/${encodeURIComponent(sessionId)}`,
     { method: 'PUT' }
   );
-  if (!res.ok) throw new Error(`置顶没存下（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(i18n.t('workbench.errors.pinSaveFailed', { status: res.status }));
   const body = (await res.json()) as { pinned?: string[] };
   return body.pinned ?? [];
 }
@@ -53,7 +54,7 @@ export async function deletePin(sessionId: string): Promise<string[]> {
     `${API_BASE_URL}/api/workbench/pins/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' }
   );
-  if (!res.ok) throw new Error(`取消置顶没存下（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(i18n.t('workbench.errors.unpinSaveFailed', { status: res.status }));
   const body = (await res.json()) as { pinned?: string[] };
   return body.pinned ?? [];
 }

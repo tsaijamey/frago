@@ -23,59 +23,81 @@
 /* === CSS Variables - Dark Theme (Default) === */
 /* Aligned to frago design prototype (.claude/desgin/styles.css) */
 :root {
-  /* Background color scale — lifted slate (less near-black for comfort) */
-  --bg-primary: #161b24;
-  --bg-secondary: #1c2230;
-  --bg-tertiary: #273142;
-  --bg-card: #222a38;
-  --bg-base: #161b24;
-  --bg-subtle: #1c2230;
-  --bg-hover: #2a3344;
-  --bg-elevated: #273142;
-  --bg-overlay: #161b24cc;
+  /* === 表面只有三级 ===
+     地 (ground)   页面底，凹进去的那一层
+     面 (raised)   内容画布、侧栏、卡片，浮在地之上
+     浮层 (overlay) 弹窗、下拉、气泡，浮在面之上
+     深色下「浮起来」= 更浅，浅色下「浮起来」= 更白。两套主题同一条规则。
+     色相一律为零：中性灰不带蓝调，品牌绿出现时才不会被底色稀释。 */
+  --bg-primary: #1f1f1f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #262626;
+  --bg-card: #242424;
+  --bg-base: #141414;
+  --bg-subtle: #1a1a1a;
+  /* hover 用半透明白而不是实色：同一条规则盖在任何一级表面上都成立。 */
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --bg-elevated: #2a2a2a;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
 
   /* Sidebar specific colors (dark mode) */
-  --page-bg: #12161e;
-  --sidebar-bg: #1a2029;
-  --sidebar-item-selected-bg: #273142;
-  --sidebar-item-selected-text: #e2e8f2;
-  --sidebar-item-unselected-text: rgba(226, 232, 242, 0.55);
-  --sidebar-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --page-bg: #141414;
+  /* 导航栏与页面底同色。内容区是一块浮在底上的卡，导航栏是窗口的框——框跟着底走，
+     浮起来的只有那一块卡。两者各给一个色，页面上就有三层平面在争谁在前面。 */
+  --sidebar-bg: var(--page-bg);
+  /* 导航选中态是中性填充，NEVER 品牌色。品牌绿只留给动作与活跃状态，
+     一旦拿它标"你在哪一页"，整个界面就没有真正的强调位了。 */
+  --sidebar-item-selected-bg: rgba(255, 255, 255, 0.12);
+  --sidebar-item-selected-text: rgba(255, 255, 255, 0.95);
+  --sidebar-item-unselected-text: rgba(255, 255, 255, 0.62);
+  --sidebar-shadow: none;
 
-  /* Text color scale */
-  --text-primary: #dce3ee;
-  --text-secondary: #8b98ad;
-  --text-muted: #5a6680;
-  --text-dim: #5a6680;
+  /* Text color scale — 半透明白，压在任何一级表面上都保持同一层级关系 */
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --text-muted: rgba(255, 255, 255, 0.42);
+  --text-dim: rgba(255, 255, 255, 0.3);
   --text-link: #15b34d;
-  --text-on-accent: #0a2614;
+  --text-on-accent: #06210f;
   --text-white: #ffffff;
-  --text-blue: #5ba4cf;
-  --text-blue-dim: #5ba4cf88;
-  --text-yellow: #ecc94b;
+  --text-blue: #6ba3d6;
+  --text-blue-dim: rgba(107, 163, 214, 0.55);
+  --text-yellow: #e5a93c;
 
-  /* Accent colors — frog-green primary (brand logo #009933, brightened for dark UI) */
+  /* === 唯一的高亮色：品牌绿 ===
+     取自 logo 的 #009933（色相 141°），为近黑底提亮。它只出现在四处：
+     主动作按钮、焦点环、「在跑」这一档活跃状态、发送键。别处一律中性。
+
+     告警与报错的色相是**相对绿定的**：绿在 141°，橙定在 39°、红定在 352°，
+     三者两两相隔 50° 以上，色觉障碍下靠明度与彩度也仍分得开。红特意偏品红
+     而不是偏橙，否则红与橙在近黑底上会糊成同一块暖色。
+     颜色从来不是唯一通道——每一处状态都另有文字标签。 */
   --accent-primary: #15b34d;
   --accent-primary-10: rgba(21, 179, 77, 0.12);
   --accent-primary-20: rgba(21, 179, 77, 0.22);
   --accent-success: #15b34d;
-  --accent-warning: #ecc94b;
-  --accent-error: #EF4444;
-  --accent-info: #5ba4cf;
-  --accent-info-bg: #273142;
-  --accent-info-text: #5ba4cf;
+  --accent-warning: #e5a93c;
+  --accent-warning-10: rgba(229, 169, 60, 0.14);
+  --accent-error: #f0596b;
+  --accent-error-10: rgba(240, 89, 107, 0.14);
+  --accent-info: #6ba3d6;
+  --accent-info-10: rgba(107, 163, 214, 0.14);
+  --accent-info-bg: rgba(107, 163, 214, 0.14);
+  --accent-info-text: #6ba3d6;
 
   /* Border colors — neutral hairlines, accent reserved for emphasis */
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-accent: rgba(21, 179, 77, 0.28);
+  --border-color: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-accent: rgba(21, 179, 77, 0.32);
   --border-primary: #15b34d;
-  --border-dim: rgba(30, 42, 58, 0.19);
-  --shadow-color: rgba(0, 0, 0, 0.6);
+  --border-dim: rgba(255, 255, 255, 0.05);
+  --shadow-color: rgba(0, 0, 0, 0.5);
 
   /* Status badge backgrounds */
-  --status-running-bg: rgba(236, 201, 75, 0.15);
-  --status-completed-bg: rgba(21, 179, 77, 0.16);
-  --status-error-bg: rgba(239, 68, 68, 0.15);
+  --status-running-bg: rgba(21, 179, 77, 0.14);
+  --status-completed-bg: rgba(255, 255, 255, 0.07);
+  --status-error-bg: rgba(240, 89, 107, 0.14);
 
   /* Spacing system (8px grid, fixed values) */
   --spacing-xs: 4px;
@@ -86,15 +108,16 @@
   --spacing-2xl: 48px;
 
   /* Border radius */
-  --radius-sm: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
 
-  /* Elevation — layered soft shadows (dark UI) */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.24);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.3);
+  /* Elevation — 深色下几乎不用投影：近黑底上阴影看不见，层级靠表面明度差表达。
+     只有真正浮在页面之上的东西（弹窗、下拉）才给一层。 */
+  --shadow-sm: none;
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
 
   /* Accent focus ring — keyboard/active emphasis */
   --focus-ring: 0 0 0 3px rgba(21, 179, 77, 0.32);
@@ -104,14 +127,26 @@
      there, not here. */
   --font-scale: 1;
 
-  /* Fonts - responsive sizing (1080p baseline, scaled by --font-scale) */
+  /* 字号只有四档在日常界面上出现：14 菜单与正文、13 次级正文、12 元信息、11 微标。
+     16 与 20 留给页面标题。档位之间不再插值——多一档就多一次"这两个到底一不一样大"。 */
   --font-size-xs: calc(11px * var(--font-scale));
   --font-size-sm: calc(12px * var(--font-scale));
   --font-size-base: calc(13px * var(--font-scale));
   --font-size-md: calc(14px * var(--font-scale));
   --font-size-lg: calc(16px * var(--font-scale));
-  --font-size-xl: calc(18px * var(--font-scale));
+  --font-size-xl: calc(20px * var(--font-scale));
   --font-size-2xl: calc(24px * var(--font-scale));
+
+  /* 图标只有两档：16px 是全局默认（菜单、按钮、行内），13px 给微标行。
+     stroke 1.5 —— 2 在 16px 上过粗显脏，1 在近黑底上会糊。 */
+  --icon-size: 16px;
+  --icon-size-sm: 13px;
+  --icon-stroke: 1.5;
+
+  /* 菜单行的形状。抄 workbuddy 实测：高 32、内距 5/10、圆角 8、行间距 2。 */
+  --nav-item-height: 32px;
+  --nav-item-radius: 8px;
+  --nav-item-gap: 2px;
   --font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     Roboto, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', 'Noto Sans SC', sans-serif;
@@ -136,63 +171,70 @@
   --sidebar-collapsed-width: 56px;
 }
 
-/* === Light Theme === */
-/* Teal accent on light backgrounds */
+/* === Light Theme ===
+   与深色同一条规则，只是方向反过来：地是灰、面是白。
+   两套主题的表面级数、语义名、层级关系完全对称，组件不必知道自己身处哪一套。 */
 [data-theme='light'] {
   --bg-primary: #FFFFFF;
-  --bg-secondary: #F8FAFC;
-  --bg-tertiary: #F1F5F9;
-  --bg-card: #F8FAFC;
-  --bg-base: #FFFFFF;
-  --bg-subtle: #F1F5F9;
-  --bg-hover: #E2E8F0;
-  --bg-elevated: #E2E8F0;
-  --bg-overlay: rgba(255, 255, 255, 0.8);
+  --bg-secondary: #F7F7F7;
+  --bg-tertiary: #F0F0F0;
+  --bg-card: #FFFFFF;
+  --bg-base: #F2F2F2;
+  --bg-subtle: #F5F5F5;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-elevated: #FFFFFF;
+  --bg-overlay: rgba(0, 0, 0, 0.35);
 
   /* Sidebar specific colors (light mode) */
-  --page-bg: #E2E8F0;
-  --sidebar-bg: #FFFFFF;
-  --sidebar-item-selected-bg: #F1F5F9;
-  --sidebar-item-selected-text: #0F172A;
-  --sidebar-item-unselected-text: #64748B;
-  --sidebar-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --page-bg: #F2F2F2;
+  --sidebar-bg: var(--page-bg);
+  --sidebar-item-selected-bg: rgba(0, 0, 0, 0.07);
+  --sidebar-item-selected-text: rgba(0, 0, 0, 0.9);
+  --sidebar-item-unselected-text: rgba(0, 0, 0, 0.62);
+  --sidebar-shadow: none;
 
-  --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-muted: #64748B;
-  --text-dim: #94A3B8;
+  --text-primary: rgba(0, 0, 0, 0.9);
+  --text-secondary: rgba(0, 0, 0, 0.6);
+  --text-muted: rgba(0, 0, 0, 0.45);
+  --text-dim: rgba(0, 0, 0, 0.32);
   --text-link: #0a8f33;
   --text-on-accent: #FFFFFF;
-  --text-white: #0F172A;
-  --text-blue: #2563EB;
-  --text-blue-dim: rgba(37, 99, 235, 0.5);
-  --text-yellow: #CA8A04;
+  --text-white: rgba(0, 0, 0, 0.9);
+  --text-blue: #2e6da8;
+  --text-blue-dim: rgba(46, 109, 168, 0.5);
+  --text-yellow: #a97609;
 
+  /* 同一组色相（绿 141° / 橙 39° / 红 352°），为白底压暗到可读对比度。 */
   --accent-primary: #0a8f33;
   --accent-primary-10: rgba(10, 143, 51, 0.1);
   --accent-primary-20: rgba(10, 143, 51, 0.2);
-  --accent-success: #16A34A;
-  --accent-warning: #CA8A04;
-  --accent-error: #DC2626;
-  --accent-info: #2563EB;
-  --accent-info-bg: #DBEAFE;
-  --accent-info-text: #1E40AF;
+  --accent-success: #0a8f33;
+  --accent-warning: #a97609;
+  --accent-warning-10: rgba(169, 118, 9, 0.12);
+  --accent-error: #c42b45;
+  --accent-error-10: rgba(196, 43, 69, 0.1);
+  --accent-info: #2e6da8;
+  --accent-info-10: rgba(46, 109, 168, 0.1);
+  --accent-info-bg: rgba(46, 109, 168, 0.1);
+  --accent-info-text: #2e6da8;
 
-  --border-color: #E2E8F0;
-  --border-accent: rgba(10, 143, 51, 0.22);
+  --border-color: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --border-accent: rgba(10, 143, 51, 0.26);
   --border-primary: #0a8f33;
-  --border-dim: rgba(226, 232, 240, 0.5);
-  --shadow-color: rgba(0, 0, 0, 0.08);
+  --border-dim: rgba(0, 0, 0, 0.05);
+  --shadow-color: rgba(0, 0, 0, 0.1);
 
   /* Status badge backgrounds */
-  --status-running-bg: rgba(202, 138, 4, 0.12);
-  --status-completed-bg: rgba(10, 143, 51, 0.12);
-  --status-error-bg: rgba(220, 38, 38, 0.12);
+  --status-running-bg: rgba(10, 143, 51, 0.1);
+  --status-completed-bg: rgba(0, 0, 0, 0.05);
+  --status-error-bg: rgba(196, 43, 69, 0.1);
 
-  /* Elevation — softer shadows for light surfaces */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.06);
-  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.08);
+  /* Elevation — 浅色下阴影是层级的主要线索，但压到最轻。 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.12);
   --focus-ring: 0 0 0 3px rgba(10, 143, 51, 0.22);
 }
 
@@ -529,7 +571,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   background: var(--bg-hover);
 }
 
-/* === Main Layout === */
+/* === Main Layout ===
+   地 (--page-bg) 是窗口底，内容区是浮在它上面的一块面。左栏与内容区之间留 12px
+   的地色缝，两块面才读得出是两块，而不是一整片被一根线切开。 */
 .main-layout {
   display: flex;
   flex: 1;
@@ -544,9 +588,10 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  margin: 12px 12px 12px 0;
-  border-radius: 12px;
+  margin: 10px 10px 10px 0;
+  border-radius: var(--radius-lg);
   background: var(--bg-primary);
+  border: 1px solid var(--border-color);
 }
 
 .main-content {
@@ -555,6 +600,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   background: transparent;
+  /* 内容区自己是圆角的，里面任何贴边的东西都要被这一层裁掉，
+     否则子元素的方角会从圆角上探出来。 */
+  border-radius: inherit;
 }
 
 /* === New Layout: No Sidebar === */
@@ -565,211 +613,118 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .content-area--full {
   margin: 0;
+  border: none;
   border-radius: 0;
   background: var(--bg-primary);
 }
 
-/* === TopBar === */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 32px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-}
-
-.topbar-logo {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.topbar-logo-img {
-  width: 24px;
-  height: 24px;
-  display: block;
-  flex-shrink: 0;
-}
-
-.topbar-logo-text {
-  font-family: var(--font-mono);
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: 0.01em;
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-/* Phone tier: rail is hidden, so the content card no longer needs the
-   left slot; tighten margins and compress the topbar padding. */
 @media (max-width: 640px) {
   .content-area {
-    margin: 8px;
-  }
-
-  .topbar {
-    padding: 0 14px;
-  }
-
-  .topbar-right {
-    gap: 12px;
+    margin: 0;
+    border: none;
+    border-radius: 0;
   }
 }
 
-.topbar-status {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.topbar-status--active {
-  color: var(--accent-primary);
-  font-weight: 500;
-}
-
-.topbar-time {
-  color: var(--text-muted);
-}
-
-/* === BottomDock — docked icon bar (non-floating, centered, rounded top) === */
-.bottom-dock {
-  flex-shrink: 0;
-  display: flex;
-  justify-content: center;
-  z-index: 50;
-}
-
-.dock-items {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 10px 28px;
-  height: 64px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-bottom: none;
-  border-radius: 18px 18px 0 0;
-}
-
-.dock-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 44px;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.dock-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.dock-item--active {
-  background: var(--accent-primary-10);
-  color: var(--accent-primary);
-}
-
-.dock-item-icon {
-  display: flex;
-  align-items: center;
-}
-
-/* Menu name as a tooltip above the icon, revealed on hover */
-.dock-item-label {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  padding: 4px 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 60;
-}
-
-.dock-item:hover .dock-item-label {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.dock-separator {
-  width: 1px;
-  height: 26px;
-  background: var(--border-color);
-  margin: 0 10px;
-}
-
-/* === Left Icon Rail (primary navigation) === */
+/* === Left navigation rail ===
+   实体栏，不是浮层。它占自己的位置，宽窄由人自己按 .rail--expanded 切换。
+   收起 56px 只放图标，展开 200px 图标加名字；两档之间的宽度动画是唯一的位移。 */
 .rail {
-  position: relative;
   flex-shrink: 0;
-  width: 76px;
-  z-index: 50;
-}
-
-/* Collapsed rail floats over content; expands rightward on hover (no reflow) */
-.rail-inner {
-  position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 12px;
-  width: 52px;
+  width: 56px;
   display: flex;
   flex-direction: column;
   background: var(--sidebar-bg);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--sidebar-shadow);
-  padding: 10px 0;
-  overflow: hidden;
-  transition: width 0.18s ease, box-shadow 0.18s ease;
+  padding: 8px;
+  gap: 2px;
+  transition: width 0.16s ease;
+  z-index: 20;
 }
 
-.rail-inner:hover {
-  width: 204px;
-  box-shadow: var(--shadow-lg);
+.rail--expanded {
+  width: 200px;
+}
+
+/* 栏顶：logo 与折叠开关。展开时中间插字标。 */
+.rail-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+
+.rail-logo {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.rail-wordmark {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* 收起时开关压在 logo 上：56px 的栏里塞不下两个 28px 的方块并排。
+   鼠标进栏才浮出来，静止时栏顶只有 logo。 */
+.rail-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.rail:not(.rail--expanded) .rail-toggle {
+  position: absolute;
+  margin-left: -3px;
+  background: var(--sidebar-bg);
+  opacity: 0;
+}
+
+.rail:not(.rail--expanded):hover .rail-toggle {
+  opacity: 1;
+}
+
+.rail-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .rail-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 0 6px;
+  gap: var(--nav-item-gap);
 }
 
+/* 菜单行：高 32、圆角 8、图标 16。收起时整行就是一个 40×32 的方块。 */
 .rail-item {
+  position: relative;
   display: flex;
   align-items: center;
-  height: 44px;
-  padding-left: 8px;
+  gap: 10px;
+  height: var(--nav-item-height);
+  padding: 0 10px;
+  width: 100%;
   border: none;
   background: transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--nav-item-radius);
   color: var(--sidebar-item-unselected-text);
   cursor: pointer;
   white-space: nowrap;
@@ -779,32 +734,34 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .rail-item:hover {
   background: var(--bg-hover);
-  color: var(--text-primary);
+  color: var(--sidebar-item-selected-text);
 }
 
+/* 选中：中性填充 + 字重加一档。整块换底，不靠任何单边色条。 */
 .rail-item--active {
-  background: var(--accent-primary-10);
-  color: var(--accent-primary);
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
+}
+
+.rail-item--active .rail-item-label {
+  font-weight: var(--font-weight-bold);
 }
 
 .rail-item-icon {
   flex-shrink: 0;
-  width: 24px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .rail-item-label {
-  margin-left: 12px;
+  min-width: 0;
   font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.rail-inner:hover .rail-item-label {
-  opacity: 1;
+  font-weight: var(--font-weight-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rail-item:focus-visible {
@@ -816,13 +773,110 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   flex: 1;
 }
 
-.rail-status {
+/* 栏底：外观与运行状态。 */
+.rail-foot {
+  position: relative;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* 收起时状态点贴在图标右上角。展开时它仍在原处，不另开一行。 */
+.rail-item-badge {
+  position: absolute;
+  top: 6px;
+  left: 22px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  box-shadow: 0 0 0 2px var(--sidebar-bg);
+}
+
+.rail-item-badge.is-on {
+  background: var(--accent-primary);
+}
+
+/* 外观浮层从栏底向右上方弹出。它是浮层，所以用 --bg-elevated 与投影。 */
+.rail-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 4px;
+  width: 232px;
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+}
+
+.rail-popover-row {
   display: flex;
   align-items: center;
-  height: 40px;
-  padding-left: 8px;
-  margin: 4px 6px 0;
-  border-top: 1px solid var(--border-color);
+  justify-content: space-between;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+}
+
+.rail-popover-label {
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+}
+
+.rail-popover-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.rail-dot.is-on {
+  background: var(--accent-primary);
+}
+
+/* 两档分段控件：写的是「现在是哪一档」，不是「点了会变成什么」。 */
+.rail-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.rail-seg-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.rail-seg-item:hover {
+  color: var(--text-primary);
+}
+
+.rail-seg-item.is-on {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border-color);
 }
 
 /* === Bottom Tab Bar (phone-tier primary navigation) === */
@@ -896,30 +950,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   }
 }
 
-.rail-status-dot {
-  flex-shrink: 0;
-  width: 24px;
-  display: flex;
-  justify-content: center;
-}
 
-.rail-status-dot::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
 
-.rail-status-dot--active::before {
-  background: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-primary-10);
-}
 
-.rail-status-label {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
+
+
+
+
 
 /* === Sidebar === */
 .sidebar {
@@ -1556,13 +1593,17 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--accent-primary);
 }
 
-/* Page scroll container - scrollbar at edge, content has padding */
+/* === 滚动容器的内距契约 ===
+   全项目只有这一条，任何整页滚动的地方都走它：
+     上 20 / 左右 20 / 下 40
+   底下比上面厚一倍，是因为滚到底那一刻，最后一行不该被硬切在容器边框上——那一下看起来
+   像是内容被截断了，而不是到头了。滚动条仍然贴着容器边，内距在内容上，不在容器上。 */
 .page-scroll {
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
   min-height: 0;
-  padding: var(--spacing-md);
+  padding: 20px 20px 40px;
 }
 
 .status-bar {
@@ -1833,7 +1874,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .task-status-badge.running {
   background: var(--status-running-bg);
-  color: var(--accent-warning);
+  color: var(--accent-primary);
   animation: badge-pulse 2s infinite;
 }
 
@@ -2903,28 +2944,33 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: var(--spacing-md);
 }
 
+/* 页面标题。24px 是海报的尺度，不是工具的尺度——一个只有两三个字的页面名顶在
+   每一页最上面，占掉的高度比它说的信息多得多。20px 已经足够把它与正文分开。 */
 .cs-title {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-xl);
   font-weight: var(--font-weight-bold);
   color: var(--text-primary);
   margin: 0;
+  line-height: 1.3;
 }
 
 .cs-subtitle {
   font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  margin: 4px 0 0;
+  color: var(--text-muted);
+  margin: 3px 0 0;
 }
 
+/* 重新取一次数据是次要动作：它不改变任何东西，失败了再点一次就行。
+   把它做成品牌色，页面上最显眼的位置就被一个「原地不动」的按钮占着。 */
 .cs-refresh {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 8px 14px;
-  background: var(--accent-primary-10);
+  padding: 6px 12px;
+  background: transparent;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  color: var(--accent-primary);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
@@ -2945,7 +2991,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .cs-refresh:hover:not(:disabled) {
-  background: var(--accent-primary-20);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .cs-refresh:disabled {
@@ -4056,17 +4103,20 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* Recipe card icon tile — smaller sibling of the detail hero icon */
+/* 配方卡上的图标砖。**它不是强调位，是一个占位的形状。**
+   一屏能摆下十几张配方卡，每一张都顶着一块品牌绿的砖，整页就成了绿色马赛克——
+   而这些砖之间没有任何区别，它们标的不是"这一张重要"，只是"这里是一张配方卡"。
+   改成中性表面，图标本身仍留品牌绿，够认出它属于 frago。 */
 .rc-icon {
   flex-shrink: 0;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-md);
-  background: var(--accent-primary-10);
-  color: var(--accent-primary);
-  box-shadow: inset 0 0 0 1px var(--accent-primary-20);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
 }
 
 .rd-hero-icon {
@@ -4133,7 +4183,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .rd-ready--ok {
   background: var(--status-completed-bg);
-  color: var(--accent-success);
+  color: var(--text-secondary);
 }
 
 .rd-ready--warn {
@@ -4165,31 +4215,38 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-layout {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
 }
 
 .settings-nav {
-  flex: 0 0 220px;
+  flex: 0 0 176px;
   position: sticky;
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--nav-item-gap);
 }
 
+/* 分类项与左侧主导航长一样：高 32、圆角 8、图标 16、中性选中填充。
+   同一种东西在两个地方长得一样，人只需要认一次。
+
+   **描述那一行搬走了。** 从前每一项都是"名字 + 一行小字描述"，右侧面板的标题下面
+   又把同一行小字原样写了一遍——同一句话在一屏里出现两次，还把分类栏撑成了两倍高。
+   描述现在只留在右侧面板的标题下面，分类栏只报名字。 */
 .settings-nav-item {
   display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-sm);
+  align-items: center;
+  gap: 10px;
   width: 100%;
+  height: var(--nav-item-height);
   text-align: left;
-  padding: 9px 12px;
+  padding: 0 10px;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border: none;
+  border-radius: var(--nav-item-radius);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .settings-nav-item:hover {
@@ -4198,52 +4255,43 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .settings-nav-item.active {
-  background: var(--bg-card);
-  border-color: var(--border-color);
+  background: var(--sidebar-item-selected-bg);
   color: var(--text-primary);
 }
 
-.settings-nav-item.active .settings-nav-icon {
-  color: var(--accent-primary);
+.settings-nav-item.active .settings-nav-label {
+  font-weight: var(--font-weight-bold);
 }
 
 .settings-nav-icon {
   flex-shrink: 0;
-  margin-top: 1px;
   color: var(--text-muted);
 }
 
-.settings-nav-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
+.settings-nav-item.active .settings-nav-icon {
+  color: var(--text-primary);
 }
 
 .settings-nav-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-}
-
-.settings-nav-desc {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-normal);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 面板限宽。设置项是一行行的短句，铺满一块 1400px 宽的画布之后，标签在最左、
+   控件在最右，眼睛要横跨整个屏幕才能把一对配起来。 */
 .settings-panel {
   flex: 1;
   min-width: 0;
+  max-width: 760px;
 }
 
 .settings-panel-head {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-sm);
   padding-bottom: var(--spacing-md);
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -4255,13 +4303,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .settings-panel-desc {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  margin: 2px 0 0;
+  margin: 4px 0 0;
 }
 
 .settings-panel-body {
-  max-width: 640px;
+  max-width: 100%;
 }
 
 /* === Settings ▸ Prompting capability (two-layer status) ===
@@ -4313,26 +4361,25 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
     border-color var(--transition-fast);
 }
 
-/* One tone per state. Each is the full ring + ground pair, never a stripe. */
+/* One tone per state — the whole card, never a stripe.
+
+   **一切正常的那一档不给颜色。** 从前 is-ok 是一圈绿边加一层绿光晕加一块实心绿图标，
+   而这一页上多数时候两张卡都是 is-ok：结果是打开设置，最先看到的是满屏的绿在庆祝
+   "没事发生"。正常本来就是这一页的默认状态，它不需要被标出来——右上角的徽章已经用
+   文字写着「已生效」。颜色留给需要人动手的两档。 */
 .settings-cap-card.is-ok {
-  border-color: var(--border-accent);
-  background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px var(--accent-primary-20),
-    0 0 0 4px color-mix(in srgb, var(--accent-primary) 8%, transparent), var(--shadow-sm);
+  border-color: var(--border-color);
+  background: var(--bg-card);
 }
 
 .settings-cap-card.is-warn {
   border-color: color-mix(in srgb, var(--accent-warning) 34%, transparent);
-  background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 20%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--accent-warning) 9%, transparent), var(--shadow-sm);
+  background: var(--accent-warning-10);
 }
 
 .settings-cap-card.is-alert {
-  border-color: color-mix(in srgb, var(--accent-error) 38%, transparent);
-  background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 22%, transparent),
-    0 0 0 5px color-mix(in srgb, var(--accent-error) 11%, transparent), var(--shadow-md);
+  border-color: color-mix(in srgb, var(--accent-error) 40%, transparent);
+  background: var(--accent-error-10);
 }
 
 .settings-cap-card.is-off {
@@ -4352,18 +4399,17 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-md);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text-secondary);
 }
 
+/* 正常这一档的图标只染字，不做成一块实心色砖。 */
 .settings-cap-card.is-ok .settings-cap-mark {
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22),
-    0 4px 14px -3px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: var(--bg-subtle);
+  color: var(--accent-primary);
 }
 
 .settings-cap-card.is-warn .settings-cap-mark {
@@ -4413,7 +4459,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .settings-cap-badge.is-warn {
-  background: var(--status-running-bg);
+  background: var(--accent-warning-10);
   color: var(--accent-warning);
 }
 
@@ -4642,10 +4688,12 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-primary);
 }
 
+/* 筛选是操作面，不是数据。与会话页左栏、记录流镜头同一套写法。 */
 .td-filter--active {
-  background: var(--accent-primary-10);
-  border-color: var(--border-accent);
-  color: var(--accent-primary);
+  background: var(--bg-active);
+  border-color: transparent;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 .td-filter-count {
@@ -4668,7 +4716,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   padding: 8px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  background: var(--status-running-bg);
+  background: var(--accent-warning-10);
   color: var(--accent-warning);
   font-size: var(--font-size-sm);
 }
@@ -4679,14 +4727,18 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-size: var(--font-size-sm);
 }
 
+/* 两栏各自滚，所以内距必须落在**每一栏内部**，不能落在这个外框上：
+   外框给了内距，滚动条会被推进来一段，而滚动的内容仍然贴着栏的上沿。
+   外框只负责把两栏分开与留出左右边距。 */
 .td-split {
   display: flex;
   gap: var(--spacing-md);
   flex: 1;
   min-height: 0;
-  padding: 0 var(--spacing-md) var(--spacing-md);
+  padding: 0 var(--spacing-md);
 }
 
+/* 上 12 下 32：滚到底时最后一行不被硬切在容器边框上。 */
 .td-list-pane {
   flex: 1;
   min-width: 0;
@@ -4694,12 +4746,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
+  padding: 12px 4px 32px 0;
 }
 
 .td-detail-pane {
   width: 420px;
   flex-shrink: 0;
   overflow-y: auto;
+  padding: 12px 0 32px;
 }
 
 /* 清单里的一行。选中时整张卡换一套底色与描边——不靠任何单边竖条。 */
@@ -4771,7 +4825,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .td-chip--doing {
   background: var(--status-running-bg);
-  color: var(--accent-warning);
+  color: var(--accent-primary);
 }
 
 .td-chip--todo {
@@ -4781,7 +4835,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .td-chip--done {
   background: var(--status-completed-bg);
-  color: var(--accent-success);
+  color: var(--text-secondary);
 }
 
 .td-chip--dropped {
@@ -4790,8 +4844,10 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   text-decoration: line-through;
 }
 
+/* 「高」是告警，不是「在跑」。它从前借的是 --status-running-bg——那个令牌答的是
+   「这件事正在进行」，两件事不是一回事，混用的代价是其中一个改色时另一个悄悄跟着变。 */
 .td-chip--high {
-  background: var(--status-running-bg);
+  background: var(--accent-warning-10);
   color: var(--accent-warning);
 }
 

@@ -21,27 +21,24 @@ export default function RecipeTabs({
 }: RecipeTabsProps) {
   const { t } = useTranslation();
 
+  // 选中那一档抬起来（换成浮起的表面 + 一档字重），不是刷成一块实心品牌绿。
+  // 这是"你在看哪一半"，属于页面的操作面；品牌绿留给动作与活跃状态。
+  const seg = (on: boolean) =>
+    `px-3 h-7 text-[13px] rounded-[6px] transition-colors duration-200 ${
+      on
+        ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-medium shadow-[var(--shadow-sm),0_0_0_1px_var(--border-color)]'
+        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+    }`;
+
   return (
-    <div className="flex justify-center mt-4 mb-4">
-      <div className="inline-flex rounded-full bg-[var(--bg-tertiary)] p-1">
-        <button
-          type="button"
-          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
-            activeTab === 'local'
-              ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)] shadow-sm'
-              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-          }`}
-          onClick={() => onTabChange('local')}
-        >
+    <div className="mb-5 flex justify-center">
+      <div className="inline-flex gap-0.5 rounded-[8px] bg-[var(--bg-subtle)] p-0.5">
+        <button type="button" className={seg(activeTab === 'local')} onClick={() => onTabChange('local')}>
           {t('recipes.localRecipes')} ({localCount})
         </button>
         <button
           type="button"
-          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
-            activeTab === 'community'
-              ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)] shadow-sm'
-              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-          }`}
+          className={seg(activeTab === 'community')}
           onClick={() => onTabChange('community')}
         >
           {t('recipes.communityRecipes')} ({communityCount})

@@ -1,12 +1,13 @@
 /**
- * SessionItem — 左栏会话卡片，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
+ * SessionItem — 左栏清单里的一行，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
  */
 
+import { useTranslation } from 'react-i18next';
 import { Check, Copy, Pin, Quote } from 'lucide-react';
+import i18n from '@/i18n';
 import {
   activityTs,
-  FAMILY_LABEL,
-  STATUS_LABEL,
+  useWorkbenchLabels,
   type ContentMatch,
   type SessionStatus,
   type WorkbenchSession,
@@ -14,19 +15,33 @@ import {
 
 const ACCENT_TEXT = 'text-accent-primary';
 const ACCENT_BG = 'bg-accent-primary-10';
-const ACCENT_RING = 'ring-[1.5px] ring-accent-primary';
 
+/**
+ * 每一档的点。
+ *
+ * **只有两档带颜色。** 在跑是绿、出错是红——这两档要人回来看一眼。已完成与停着占了清单
+ * 的九成，它们是会话正常的归宿，给颜色等于把整条清单染花。这两档改用两级灰区分：
+ * 已完成亮一档、停着暗一档，旁边本来就写着字，不靠颜色也读得出。
+ */
 const STATUS_DOT: Record<SessionStatus, string> = {
   running: 'bg-accent-primary',
   error: 'bg-accent-error',
-  done: 'bg-accent-info',
-  idle: 'bg-text-muted',
+  done: 'bg-text-secondary',
+  idle: 'bg-text-dim',
 };
 
+/**
+ * 状态文字的颜色。
+ *
+ * 「已完成」从前是蓝的。一千多场会话里六成是这一档，于是整条清单常年泛着蓝——一个占
+ * 多数的、且不需要人做任何事的状态，不该拿一个颜色去标它。现在它跟其余静态信息一样是
+ * 中性灰，颜色只留给需要人注意的两档：在跑（绿）与出错（红）。
+ * 筛选行那几个点仍各有各的颜色——那里是图例，要的正是彼此可辨。
+ */
 const STATUS_TEXT: Record<SessionStatus, string> = {
   running: 'text-accent-primary',
   error: 'text-accent-error',
-  done: 'text-accent-info',
+  done: 'text-text-muted',
   idle: 'text-text-muted',
 };
 
@@ -41,15 +56,25 @@ export function resumeCommand(session: WorkbenchSession): string {
   }
 }
 
+/**
+ * 相对时刻。取字走 i18next 实例而不是 `useTranslation`——这是个纯函数，不是组件。
+ *
+ * 取字发生在**调用那一刻**（也就是渲染那一刻），所以它拿到的永远是当下这一种语言；
+ * 调它的那张卡自己订阅了语言变化，换语言时整行重算，不用刷新页面。
+ */
 export function relativeTime(ts: number, now: number = Date.now()): string {
   if (!ts) return '';
   const delta = Math.max(0, now - ts);
   const minute = 60_000;
-  if (delta < minute) return '刚刚';
-  if (delta < 60 * minute) return `${Math.floor(delta / minute)} 分钟前`;
-  if (delta < 24 * 60 * minute) return `${Math.floor(delta / (60 * minute))} 小时前`;
+  if (delta < minute) return i18n.t('workbench.rail.justNow');
+  if (delta < 60 * minute) {
+    return i18n.t('workbench.rail.minutesAgo', { n: Math.floor(delta / minute) });
+  }
+  if (delta < 24 * 60 * minute) {
+    return i18n.t('workbench.rail.hoursAgo', { n: Math.floor(delta / (60 * minute)) });
+  }
   const days = Math.floor(delta / (24 * 60 * minute));
-  if (days < 30) return `${days} 天前`;
+  if (days < 30) return i18n.t('workbench.rail.daysAgo', { n: days });
   const d = new Date(ts);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
     d.getDate()
@@ -57,14 +82,15 @@ export function relativeTime(ts: number, now: number = Date.now()): string {
 }
 
 function StatusDot({ status }: { status: SessionStatus }) {
+  const { statusLabel } = useWorkbenchLabels();
   return (
     <span
       data-status={status}
-      title={STATUS_LABEL[status]}
+      title={statusLabel(status)}
       className={`inline-flex shrink-0 items-center gap-1 text-[11px] ${STATUS_TEXT[status]}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
-      {STATUS_LABEL[status]}
+      {statusLabel(status)}
     </span>
   );
 }
@@ -74,22 +100,28 @@ function StatusDot({ status }: { status: SessionStatus }) {
  * 卡片上最该出现的就是它，而不是这场会话最后做完了什么。
  */
 function ContentHits({ match }: { match: ContentMatch }) {
+  const { t } = useTranslation();
   const more = match.hit_count - match.hits.length;
   return (
-    <div data-testid="content-hits" className="mt-1.5 space-y-1">
+    <div data-testid="content-hits" className="mt-1 space-y-1">
       {match.hits.map((hit) => (
         <p
           key={hit.record_id}
           className="line-clamp-2 rounded-[5px] bg-bg-subtle px-1.5 py-1 text-[11px] leading-[1.55] text-text-secondary"
         >
           <Quote size={9} className="mr-1 inline align-baseline text-text-muted" />
-          <span className="text-text-muted">{hit.kind === 'user.say' ? '你说 ' : '回复 '}</span>
+          <span className="text-text-muted">
+            {hit.kind === 'user.say'
+              ? t('workbench.rail.hitUserSay')
+              : t('workbench.rail.hitAgentSay')}{' '}
+          </span>
           {hit.snippet}
         </p>
       ))}
       {more > 0 ? (
         <p className="text-[11px] text-text-muted">
-          这场还有 {more} 处{match.capped ? '（不止，太多了没数完）' : ''}
+          {t('workbench.rail.moreHits', { n: more })}
+          {match.capped ? t('workbench.rail.moreHitsCapped') : ''}
         </p>
       ) : null}
     </div>
@@ -118,6 +150,8 @@ export default function SessionItem({
   /** 置顶开关。不给就不长这颗按钮——骨架屏与只读场景用得上。 */
   onTogglePin?: (session: WorkbenchSession) => void;
 }) {
+  const { t } = useTranslation();
+  const { familyLabel } = useWorkbenchLabels();
   const dirTail = session.directory.split('/').filter(Boolean).slice(-2).join('/');
   const cmd = resumeCommand(session);
   return (
@@ -135,13 +169,17 @@ export default function SessionItem({
       data-testid="session-item"
       data-status={session.status}
       data-pinned={pinned ? 'true' : undefined}
-      className={`group/session w-full cursor-pointer rounded-[10px] border border-border-color px-[11px] pb-[11px] pt-[10px] text-left transition-colors duration-200 ${
-        selected ? `${ACCENT_BG} ${ACCENT_RING} -translate-y-px` : 'bg-bg-card hover:bg-bg-hover'
+      /* **不再是一张卡。** 从前每一场会话都有自己的边框与卡底，一屏摆下五六张，人看到
+         的先是五六个方框，然后才是里面的字。清单要的是一列可扫读的行：平时没有任何容器，
+         鼠标经过才浮出一层底，选中的那一场换成品牌绿淡底——整行换底，不靠任何单边色条。
+         绿环去掉了：淡底加标题转绿已经足够把它从一列灰字里分出来，再加一圈亮绿只是喊。 */
+      className={`group/session w-full cursor-pointer rounded-[8px] px-2.5 py-2 text-left transition-colors duration-200 ${
+        selected ? ACCENT_BG : 'hover:bg-bg-hover'
       }`}
     >
       <div className="flex items-start gap-2">
         <span
-          className={`line-clamp-2 min-w-0 flex-1 text-[13px] font-semibold leading-[1.5] ${
+          className={`line-clamp-2 min-w-0 flex-1 text-[13px] font-medium leading-[1.5] ${
             selected ? ACCENT_TEXT : 'text-text-primary'
           }`}
         >
@@ -149,25 +187,35 @@ export default function SessionItem({
         </span>
         <span
           className="shrink-0 font-mono text-[11px] text-text-muted"
-          title={session.last_reply_at ? '最后一句回复的时刻' : '会话文件最后被动过的时刻'}
+          title={
+            session.last_reply_at
+              ? t('workbench.rail.tsLastReply')
+              : t('workbench.rail.tsLastActive')
+          }
         >
           {relativeTime(activityTs(session))}
         </span>
       </div>
 
-      <div className="mt-1.5 flex items-center gap-2">
+      {/* 行内挤、行间松——这一行贴着标题走，它是标题的附属而不是并列的另一件事。
+          行与行之间留 8px（见 SessionRail 里那道间隔），内外差出四倍，
+          眼睛才分得清「一行从哪开始」。workbuddy 的清单也不画分隔线，靠的就是这个比例。 */}
+      <div className="mt-0.5 flex items-center gap-2">
         <StatusDot status={session.status} />
-        <span className="shrink-0 rounded-full bg-bg-subtle px-2 py-[1px] text-[11px] text-text-muted">
-          {FAMILY_LABEL[session.family] ?? session.family}
+        {/* 来源从前套着一颗药丸。行没有卡底之后，药丸的底色与清单底色是同一个值——
+            那圈药丸只剩一个看不见的轮廓在占位。改成一段普通的次要文字，
+            用一个间隔点与目录分开就够了。 */}
+        <span className="shrink-0 text-[11px] text-text-muted">
+          {familyLabel(session.family)}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-dim">
           {dirTail}
         </span>
         {onTogglePin ? (
           <button
             type="button"
-            title={pinned ? '取消置顶' : '置顶这场会话'}
-            aria-label={pinned ? '取消置顶' : '置顶'}
+            title={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pinThis')}
+            aria-label={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
             aria-pressed={pinned}
             data-testid="toggle-pin"
             onClick={(e) => {
@@ -190,7 +238,7 @@ export default function SessionItem({
         <button
           type="button"
           title={cmd}
-          aria-label="复制恢复命令"
+          aria-label={t('workbench.rail.copyResume')}
           data-testid="copy-resume"
           onClick={(e) => {
             e.stopPropagation();
@@ -208,18 +256,18 @@ export default function SessionItem({
       {!contentMatch && session.digest_done ? (
         <p
           data-testid="digest-done"
-          className="mt-1.5 line-clamp-2 text-[11px] leading-[1.55] text-text-secondary"
+          className="mt-1 line-clamp-2 text-[11px] leading-[1.5] text-text-muted"
         >
-          <span className="text-text-muted">已完成 </span>
+          <span className="text-text-muted">{t('workbench.rail.digestDone')} </span>
           {session.digest_done}
         </p>
       ) : null}
       {session.digest_stuck ? (
         <p
           data-testid="digest-stuck"
-          className="mt-1.5 line-clamp-2 text-[11px] leading-[1.55] text-accent-error"
+          className="mt-1 line-clamp-2 text-[11px] leading-[1.55] text-accent-error"
         >
-          <span className="opacity-70">卡在 </span>
+          <span className="opacity-70">{t('workbench.rail.digestStuck')} </span>
           {session.digest_stuck}
         </p>
       ) : null}

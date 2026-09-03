@@ -5,7 +5,7 @@
  * 数、全域禁令在三栏都成立。
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import RecordStream, { groupRecords } from '../RecordStream';
 import SessionRail from '../SessionRail';
@@ -13,6 +13,18 @@ import { relativeTime } from '../SessionItem';
 import ReportPanel from '../ReportPanel';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
+import i18n from '@/i18n';
+
+/**
+ * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
+ *
+ * 这一句顺带把另一件事也核了：`zh.json` 里的字必须与从前写死在组件里的逐字相同，
+ * 差一个标点，下面这些断言就红。
+ */
+beforeAll(async () => {
+  await i18n.changeLanguage('zh');
+});
+
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
 const GROUP = 'msg_0193abcdef0123456789abcdef012345';
@@ -342,13 +354,17 @@ describe('SessionRail 左栏', () => {
     expect(onSelect).toHaveBeenCalledWith(SID);
   });
 
-  it('选中的那张卡整卡换状态，不靠单边竖条', () => {
+  it('选中的那一行整行换状态，不靠单边竖条', () => {
     render(<SessionRail state={railState()} selectedId={SID} onSelect={NOOP} />);
     const [first] = screen.getAllByTestId('session-item');
     expect(first.getAttribute('aria-current')).toBe('true');
     const className = first.className;
-    expect(className).toContain('ring-');
+    // 整行换底。这一条从前钉的是「有没有 ring-」——那是当时的实现（淡底加一圈绿环），
+    // 不是这条规矩本身。绿环后来去掉了，规矩没变：状态由整行承担。
+    expect(className).toContain('bg-accent-primary-10');
+    // 真正的禁令：任何单边色条都不许出现。
     expect(className).not.toMatch(/border-[lrtb]-\d/);
+    expect(className).not.toMatch(/\bborder-[lrtb]\b/);
   });
 
   it('一场都没匹配上时说清楚，不当成坏了', () => {

@@ -31,6 +31,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type UIEvent,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Inbox, Loader2 } from 'lucide-react';
 import RecordCard, { KIND_GROUP } from './RecordCard';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
@@ -38,12 +39,13 @@ import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
 
-export const LENS_LABEL: Record<StreamLens, string> = {
-  all: '全部',
-  talk: '对话',
-  hook: '旁路注入',
-  tool: '工具',
-  system: '系统',
+/** 每一档的**词表键**。取字在渲染时做，换语言这一排跟着变。 */
+export const LENS_LABEL_KEY: Record<StreamLens, string> = {
+  all: 'workbench.stream.lens.all',
+  talk: 'workbench.stream.lens.talk',
+  hook: 'workbench.stream.lens.hook',
+  tool: 'workbench.stream.lens.tool',
+  system: 'workbench.stream.lens.system',
 };
 
 export const LENS_ORDER: StreamLens[] = ['all', 'talk', 'hook', 'tool', 'system'];
@@ -152,6 +154,7 @@ export default function RecordStream({
   onLoadOlder,
   awaitingAgent = false,
 }: RecordStreamProps) {
+  const { t } = useTranslation();
   const [lens, setLens] = useState<StreamLens>('all');
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
@@ -344,7 +347,7 @@ export default function RecordStream({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-text-muted">
         <Inbox size={44} strokeWidth={1.4} />
-        <p className="text-[13px]">从左边挑一场会话，记录会在这里逐条铺开</p>
+        <p className="text-[13px]">{t('workbench.stream.pickSession')}</p>
       </div>
     );
   }
@@ -354,7 +357,7 @@ export default function RecordStream({
       {records.length ? (
         <div
           data-testid="stream-lens"
-          className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border-color px-5 py-2"
+          className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border-color px-5 py-2"
         >
           {LENS_ORDER.map((id) => (
             <button
@@ -364,14 +367,16 @@ export default function RecordStream({
               aria-pressed={lens === id}
               data-testid={`lens-${id}`}
               disabled={counts[id] === 0}
-              className={`rounded-full px-2.5 py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
+              /* 镜头是操作面，不是数据：选中态走中性填充加一档字重。
+                 与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。 */
+              className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
                 lens === id
-                  ? 'bg-accent-primary-10 text-accent-primary'
-                  : 'bg-bg-card text-text-muted hover:text-text-secondary'
+                  ? 'bg-bg-active font-medium text-text-primary'
+                  : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
               }`}
             >
-              {LENS_LABEL[id]}
-              <span className="ml-1 font-mono opacity-70">{counts[id]}</span>
+              {t(LENS_LABEL_KEY[id])}
+              <span className="ml-1 font-mono opacity-60">{counts[id]}</span>
             </button>
           ))}
         </div>
@@ -384,20 +389,22 @@ export default function RecordStream({
         onTouchMove={noteManualIntent}
         onKeyDown={handleKeyDown}
         onMouseDown={handleMouseDown}
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+        /* 滚动容器的内距契约：上 16 下 40。底下比上面厚，是因为滚到底那一刻最后一条
+           不该被硬切在容器边框上，而输入框就压在下面。 */
+        className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-4"
         data-testid="record-stream-scroll"
       >
-        <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-3">
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
-              取更早的记录
+              {t('workbench.stream.loadingOlder')}
             </p>
           ) : null}
 
           {!hasOlder && records.length ? (
             <p className="py-2 text-center text-[11px] text-text-muted">
-              这是这场会话的开头，共 {records.length} 条记录
+              {t('workbench.stream.streamStart', { n: records.length })}
             </p>
           ) : null}
 
@@ -409,15 +416,15 @@ export default function RecordStream({
 
           {records.length && !visible.length ? (
             <p className="py-10 text-center text-[12px] text-text-muted">
-              这一档在当前这一页里一条都没有
+              {t('workbench.stream.lensEmpty')}
             </p>
           ) : null}
 
           {!records.length && !loading && !error ? (
             <div className="flex flex-col items-center gap-3 py-16 text-text-muted">
               <Inbox size={44} strokeWidth={1.4} />
-              <p className="text-[13px]">这场会话只有元信息，一条记录都没留下</p>
-              <p className="text-[12px]">它不是坏了，是当时什么都没发生</p>
+              <p className="text-[13px]">{t('workbench.stream.emptySession')}</p>
+              <p className="text-[12px]">{t('workbench.stream.emptySessionHint')}</p>
             </div>
           ) : null}
 
@@ -429,26 +436,28 @@ export default function RecordStream({
             }
             const model = modelOf(group.records);
             return (
+              /* **归组不再是一个盒子。**
+                 从前这里是一圈边加一层纸色，里面每张卡自己又是一圈边加一层纸色，
+                 外面还有滚动容器的内距——一条工具输出要穿过四层内距才见得到字。
+                 归组要表达的只是"下面这几条属于同一次回复"，一行小字标题加上紧一档的
+                 行距就说清了；盒子不但没多说什么，还把每条记录的可用宽度削掉两回。 */
               <section
                 key={`${group.groupId}-${index}`}
                 data-testid="record-group"
-                className="min-w-0 rounded-[14px] border border-border-color bg-bg-subtle px-3 pb-3 pt-2"
+                className="flex min-w-0 flex-col gap-1.5"
               >
                 {/* 容器头只写模型名与本组条数。分组编号一个字都不露。 */}
-                <header className="mb-2 flex items-center gap-2 text-[11px] text-text-muted">
-                  <span>同一次回复</span>
-                  {model ? (
-                    <span className="rounded-full bg-bg-card px-2 py-[1px] font-mono">
-                      {model}
-                    </span>
-                  ) : null}
-                  <span className="font-mono">本组 {group.records.length} 条</span>
+                <header className="flex items-center gap-2 px-1 text-[11px] text-text-dim">
+                  <span>{t('workbench.stream.sameReply')}</span>
+                  {model ? <span className="font-mono">{model}</span> : null}
+                  <span className="font-mono">
+                    {t('workbench.stream.groupCount', { n: group.records.length })}
+                  </span>
+                  <span className="h-px flex-1 bg-border-color" />
                 </header>
-                <div className="flex min-w-0 flex-col gap-2">
-                  {group.records.map((record) => (
-                    <RecordCard key={record.id} record={record} sessionId={sessionId} />
-                  ))}
-                </div>
+                {group.records.map((record) => (
+                  <RecordCard key={record.id} record={record} sessionId={sessionId} />
+                ))}
               </section>
             );
           })}
@@ -456,7 +465,7 @@ export default function RecordStream({
           {loading ? (
             <p className="flex items-center justify-center gap-2 py-4 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
-              取记录中
+              {t('workbench.stream.loading')}
             </p>
           ) : null}
 
@@ -468,7 +477,7 @@ export default function RecordStream({
               className="flex items-center justify-center gap-2 py-3 text-[12px] text-text-muted"
             >
               <Loader2 size={13} className="animate-spin" />
-              已经投进去了，在等 agent 开口
+              {t('workbench.stream.awaitingAgent')}
             </p>
           ) : null}
         </div>

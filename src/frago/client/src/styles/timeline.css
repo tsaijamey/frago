@@ -341,7 +341,7 @@
 
 .sa-modal-status--running {
   background: var(--status-running-bg);
-  color: var(--accent-warning);
+  color: var(--accent-primary);
 }
 
 .sa-modal-status--completed {

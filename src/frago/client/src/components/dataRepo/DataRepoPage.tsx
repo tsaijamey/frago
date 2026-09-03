@@ -377,7 +377,9 @@ export default function DataRepoPage() {
                           </code>
                           <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
                             <div
-                              className="h-full rounded-full bg-[var(--accent-primary)]"
+                              /* 条的长度已经把量说完了，颜色不承载任何信息。十几根一模一样的
+                                 品牌绿横条铺满半屏，读者要在一片绿里数格子。中性填充。 */
+                              className="h-full rounded-full bg-[var(--text-dim)]"
                               style={{ width: `${share}%` }}
                             />
                           </div>

@@ -14,8 +14,8 @@
  * **状态与摘要一个字都不在这里推导。** 服务端已经判完四档、填好两格摘要，界面照着显示。
  * 摆两处判据迟早各走各的，那时中栏和左栏会对同一场会话说两种话。
  *
- * **选中态不用左侧竖条。** 整卡换成品牌绿淡底、加一圈品牌绿环、标题转品牌绿。单边竖条
- * 是肌肉记忆，不是设计决策。
+ * **选中态不用左侧竖条。** 整行换成品牌绿淡底、标题转品牌绿。单边竖条是肌肉记忆，
+ * 不是设计决策。绿环后来也去掉了：淡底加标题转绿已经足够把那一行从一列灰字里分出来。
  *
  * **颜色一律走 CSS 变量。** 明暗两套主题各有一份品牌绿，写死色值会让其中一套失真。
  *
@@ -37,6 +37,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Virtuoso } from 'react-virtuoso';
 import { ChevronDown, ChevronRight, Loader2, Pin, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -47,33 +48,49 @@ import { waitForSession } from '@/hooks/useAgentClients';
 import {
   DAY_OPTIONS,
   MIN_CONTENT_QUERY,
-  STATUS_LABEL,
+  STATUS_LABEL_KEY,
   type DayRange,
   type StatusFilter,
   type WorkbenchSession,
   type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
 
-/** 品牌绿承担选中、当前、活跃。三处共用一套，别处不许再造。 */
+/**
+ * 品牌绿承担选中、当前、活跃。三处共用一套，别处不许再造。
+ *
+ * **筛选那两行不在这三处之内。** 时间范围与状态是页面自己的操作面，不是数据。
+ * 五个筛选档同时用品牌绿点亮，会让页面上常年挂着两块绿——真正需要被看见的
+ * 「哪一场会话被选中了」「哪一场在跑」反而没有地方可去。所以选中的筛选档换成
+ * 中性填充加一档字重，颜色留给数据。
+ */
 const ACCENT_TEXT = 'text-accent-primary';
-const ACCENT_BG = 'bg-accent-primary-10';
+
+/** 筛选档选中态：中性填充 + 字重。整块换底，不靠任何单边色条。 */
+const CHIP_ON = 'bg-bg-active text-text-primary font-medium';
+const CHIP_OFF = 'text-text-muted hover:bg-bg-hover hover:text-text-secondary';
 
 /** 四档筛选加一个全部。次序与判定顺序一致，看的人不必再学一套排列。 */
 const FILTERS: StatusFilter[] = ['all', 'running', 'error', 'done', 'idle'];
 
-const FILTER_LABEL: Record<StatusFilter, string> = { all: '全部', ...STATUS_LABEL };
+/** 筛选档的**词表键**。取字在渲染时做，换语言这一行跟着变。 */
+const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
+  all: 'workbench.rail.filterAll',
+  ...STATUS_LABEL_KEY,
+};
 
 /** 时间范围：不限，加四档。0 排在最前，与状态那一行的「全部」对齐。 */
 const DAY_FILTERS: DayRange[] = [0, ...DAY_OPTIONS];
 
 /**
- * 每一档点与字的颜色。停着不给红或黄——两百多场停着是会话正常的归宿。
+ * 每一档点的颜色。与清单里那份保持一致（见 SessionItem 的同名表）：只有在跑与出错
+ * 带颜色，已完成与停着用两级灰。图例与清单说的必须是同一套，否则人按图例去清单里找
+ * 蓝点，会一个都找不到。
  */
 const STATUS_DOT: Record<string, string> = {
   running: 'bg-accent-primary',
   error: 'bg-accent-error',
-  done: 'bg-accent-info',
-  idle: 'bg-text-muted',
+  done: 'bg-text-secondary',
+  idle: 'bg-text-dim',
 };
 
 /** 列表里的一行：要么是分区标题，要么是一张会话卡。 */
@@ -105,6 +122,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     content,
     reload,
   } = state;
+  const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const pins = useSessionPins();
   const [newOpen, setNewOpen] = useState(false);
@@ -169,9 +187,14 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     try {
       await pins.toggle(session.session_id);
       // 折起来的时候置顶一场，那一场会立刻消失在眼前。说一句它去哪了。
-      if (!wasPinned && pins.collapsed) showToast('已置顶，在折起来的置顶区里', 'success');
+      if (!wasPinned && pins.collapsed) {
+        showToast(t('workbench.rail.pinnedToastCollapsed'), 'success');
+      }
     } catch (e) {
-      showToast(e instanceof Error ? e.message : '置顶没存下', 'error');
+      showToast(
+        e instanceof Error ? e.message : t('workbench.errors.pinSaveFailedPlain'),
+        'error'
+      );
     }
   };
 
@@ -179,47 +202,49 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     try {
       await navigator.clipboard.writeText(resumeCommand(session));
       setCopiedId(session.session_id);
-      showToast('恢复命令已复制', 'success');
+      showToast(t('workbench.rail.copied'), 'success');
       setTimeout(() => setCopiedId((cur) => (cur === session.session_id ? null : cur)), 1500);
     } catch {
-      showToast('复制失败', 'error');
+      showToast(t('workbench.rail.copyFailed'), 'error');
     }
   };
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-r border-border-color bg-bg-secondary">
-      <div className="shrink-0 space-y-2 border-b border-border-color px-3 py-3">
+      <div className="shrink-0 space-y-1.5 border-b border-border-color px-2.5 pb-2.5 pt-2.5">
+        {/* 新建会话是一行，不是一整块实心色。整条侧栏最抢眼的东西不该是一颗按钮——
+            人来这一页是为了找会话，不是为了建会话。 */}
         <button
           type="button"
           onClick={() => setNewOpen(true)}
           data-testid="new-session"
-          className="flex w-full items-center justify-center gap-1.5 rounded-[6px] bg-accent-primary px-2 py-1.5 text-[12px] font-semibold text-[var(--text-on-accent)] transition-opacity duration-200 hover:opacity-90"
+          className="flex h-8 w-full items-center gap-2 rounded-[8px] border border-border-color px-2.5 text-[13px] font-medium text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
         >
-          <Plus size={13} />
-          <span>新建会话</span>
+          <Plus size={16} strokeWidth={1.5} className="shrink-0" />
+          <span>{t('workbench.rail.newSession')}</span>
         </button>
 
-        <div className="flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[6px] border border-border-color bg-bg-card px-2 py-1.5 focus-within:border-accent-primary">
-            <Search size={13} className="shrink-0 text-text-muted" />
+        <div className="flex items-center gap-1.5">
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] bg-bg-subtle px-2.5 ring-1 ring-inset ring-transparent focus-within:ring-border-strong">
+            <Search size={14} strokeWidth={1.5} className="shrink-0 text-text-muted" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜标题、目录，或会话里说过的话"
-              aria-label="搜会话"
-              className="w-full min-w-0 bg-transparent text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+              placeholder={t('workbench.rail.searchPlaceholder')}
+              aria-label={t('workbench.rail.searchLabel')}
+              className="w-full min-w-0 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-muted"
             />
             {content.searching ? (
-              <Loader2 size={12} className="shrink-0 animate-spin text-text-muted" />
+              <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
             ) : null}
             {search ? (
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                aria-label="清空搜索"
+                aria-label={t('workbench.rail.clearSearch')}
                 className="shrink-0 text-text-muted hover:text-text-primary"
               >
-                <X size={12} />
+                <X size={13} />
               </button>
             ) : null}
           </div>
@@ -227,14 +252,18 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
             type="button"
             onClick={() => void reload()}
             disabled={loading}
-            aria-label="重新拉清单"
-            className="shrink-0 rounded-[6px] border border-border-color p-1.5 text-text-muted hover:text-text-primary disabled:opacity-50"
+            aria-label={t('workbench.rail.reload')}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
           >
-            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {loading ? (
+              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} strokeWidth={1.5} />
+            )}
           </button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1">
           {DAY_FILTERS.map((d) => (
             <button
               key={d}
@@ -242,18 +271,16 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
               onClick={() => setDays(d)}
               aria-pressed={days === d}
               data-testid={`day-filter-${d}`}
-              className={`rounded-full px-2.5 py-[3px] text-[11px] transition-colors duration-200 ${
-                days === d
-                  ? `${ACCENT_BG} ${ACCENT_TEXT}`
-                  : 'bg-bg-card text-text-muted hover:text-text-secondary'
+              className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
+                days === d ? CHIP_ON : CHIP_OFF
               }`}
             >
-              {d === 0 ? '不限' : `${d} 天`}
+              {d === 0 ? t('workbench.rail.dayAll') : t('workbench.rail.dayRange', { days: d })}
             </button>
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1">
           {FILTERS.map((id) => (
             <button
               key={id}
@@ -261,15 +288,14 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
               onClick={() => setStatus(id)}
               aria-pressed={status === id}
               data-testid={`status-filter-${id}`}
-              className={`flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] transition-colors duration-200 ${
-                status === id
-                  ? `${ACCENT_BG} ${ACCENT_TEXT}`
-                  : 'bg-bg-card text-text-muted hover:text-text-secondary'
+              className={`flex items-center gap-1.5 rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
+                status === id ? CHIP_ON : CHIP_OFF
               }`}
             >
+              {/* 点保留各档的语义色：那是数据，不是操作面。 */}
               {id === 'all' ? null : <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[id]}`} />}
-              <span>{FILTER_LABEL[id]}</span>
-              <span className="font-mono opacity-70">{counts[id]}</span>
+              <span>{t(FILTER_LABEL_KEY[id])}</span>
+              <span className="font-mono opacity-60">{counts[id]}</span>
             </button>
           ))}
         </div>
@@ -281,8 +307,8 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
             {content.error
               ? content.error
               : content.searching
-                ? '正在会话内容里找…'
-                : `会话内容里命中 ${content.matches.size} 场`}
+                ? t('workbench.rail.contentSearching')
+                : t('workbench.rail.contentHits', { n: content.matches.size })}
           </p>
         ) : null}
         {content.warnings.map((warning) => (
@@ -302,20 +328,18 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
           </p>
         )}
         {loading && !visible.length ? (
-          <div className="px-3 py-3 animate-pulse">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div
-                key={i}
-                className="mb-1.5 w-full rounded-[10px] border border-border-color bg-bg-card px-[11px] pb-[11px] pt-[10px]"
-              >
-                <div className="mb-2 h-3.5 w-2/3 rounded bg-bg-subtle" />
-                <div className="mb-1.5 h-3 w-1/3 rounded bg-bg-subtle" />
-                <div className="h-2.5 w-1/2 rounded bg-bg-subtle" />
+          <div className="animate-pulse px-2 pt-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="mb-0.5 w-full rounded-[8px] px-2.5 py-2">
+                <div className="mb-2 h-3.5 w-2/3 rounded bg-bg-hover" />
+                <div className="h-2.5 w-1/2 rounded bg-bg-hover" />
               </div>
             ))}
           </div>
         ) : !rows.length ? (
-          <p className="px-1 py-6 text-center text-[12px] text-text-muted">没有匹配的会话</p>
+          <p className="px-3 py-8 text-center text-[12px] text-text-muted">
+            {t('workbench.rail.empty')}
+          </p>
         ) : (
           /* 置顶区与其余那一片共用同一条队、同一条滚动条。两个列表并排摆的话，置顶那一片
              要么自己不窗口化（置顶数不设上限，迟早卡），要么各滚各的（两条滚动条挨着，
@@ -323,6 +347,12 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
           <Virtuoso
             data={rows}
             initialItemCount={Math.min(rows.length, 30)}
+            /* 滚动容器的内容不许贴着容器上下沿。顶上 8px 让第一张卡与筛选区之间有
+               一道呼吸，底下 16px 让最后一张滚到底时不是被硬切在边框上。 */
+            components={{
+              Header: () => <div className="h-2" />,
+              Footer: () => <div className="h-4" />,
+            }}
             computeItemKey={(_, row) =>
               row.kind === 'session' ? row.session.session_id : row.kind
             }
@@ -334,11 +364,11 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
                     onClick={() => pins.setCollapsed(!pins.collapsed)}
                     aria-expanded={!pins.collapsed}
                     data-testid="pinned-header"
-                    className="flex w-full items-center gap-1.5 px-3 pb-1.5 pt-1 text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
                   >
                     {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                     <Pin size={11} fill="currentColor" className={ACCENT_TEXT} />
-                    <span className={ACCENT_TEXT}>置顶</span>
+                    <span className={ACCENT_TEXT}>{t('workbench.rail.pinnedHeader')}</span>
                     {/* 折起来时这个数就是全部线索：不报的话，人看不出自己折掉了什么。 */}
                     <span className="font-mono opacity-70">{pinnedRows.length}</span>
                   </button>
@@ -348,15 +378,16 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
                 return (
                   <div
                     data-testid="rest-header"
-                    className="px-3 pb-1.5 pt-2 text-[11px] text-text-muted"
+                    className="px-2.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-text-muted"
                   >
-                    其余 <span className="font-mono opacity-70">{restRows.length}</span>
+                    {t('workbench.rail.restHeader')}{' '}
+                    <span className="font-mono opacity-70">{restRows.length}</span>
                   </div>
                 );
               }
               const session = row.session;
               return (
-                <div className="px-3">
+                <div className="px-2">
                   <SessionItem
                     session={session}
                     selected={session.session_id === selectedId}
@@ -367,7 +398,9 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
                     onCopy={handleCopy}
                     onTogglePin={handleTogglePin}
                   />
-                  <div className="h-1.5" />
+                  {/* 行与行之间的间隔。连同每行自己的 py-2，行间总共留出 24px，
+                      而行内最大的间距是 4px——差出六倍，清单才读得出是一行一行的。 */}
+                  <div className="h-2" />
                 </div>
               );
             }}
@@ -375,9 +408,13 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border-color px-3 py-2 font-mono text-[11px] text-text-muted">
-        共 {sessions.length} 场 · Claude Code {familyCounts.cc} 场 · opencode{' '}
-        {familyCounts.oc} 场 · codex {familyCounts.cx} 场
+      <div className="shrink-0 border-t border-border-color px-2.5 py-2 font-mono text-[11px] leading-[1.6] text-text-muted">
+        {t('workbench.rail.summary', {
+          total: sessions.length,
+          cc: familyCounts.cc,
+          oc: familyCounts.oc,
+          cx: familyCounts.cx,
+        })}
       </div>
 
       {/* 建完之后跳进那一场，并在随后的十几秒里反复重取清单——新会话的档案是 agent
@@ -392,11 +429,14 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
         onCreated={async (launch) => {
           let sid = launch.session_id;
           if (!sid) {
-            showToast(`正在起 ${launch.display_name}，等它报出会话编号…`, 'info');
+            showToast(t('workbench.rail.launching', { name: launch.display_name }), 'info');
             try {
               sid = await waitForSession(launch.handle);
             } catch (e) {
-              showToast(e instanceof Error ? e.message : '这一场没起来', 'error');
+              showToast(
+                e instanceof Error ? e.message : t('workbench.errors.launchFailed'),
+                'error'
+              );
               return;
             }
           }

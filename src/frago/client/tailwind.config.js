@@ -26,12 +26,15 @@ export default {
         'bg-card': 'var(--bg-card)',
         'bg-subtle': 'var(--bg-subtle)',
         'bg-hover': 'var(--bg-hover)',
+        'bg-active': 'var(--bg-active)',
         'bg-elevated': 'var(--bg-elevated)',
+        'bg-base': 'var(--bg-base)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-muted': 'var(--text-muted)',
         'text-link': 'var(--text-link)',
         'border-color': 'var(--border-color)',
+        'border-strong': 'var(--border-strong)',
         'border-primary': 'var(--border-primary)',
         'border-accent': 'var(--border-accent)',
         'accent-primary': 'var(--accent-primary)',
@@ -46,6 +49,11 @@ export default {
         'accent-warning': 'var(--accent-warning)',
         'accent-error': 'var(--accent-error)',
         'accent-info': 'var(--accent-info)',
+        // 告警/报错/提示各自的淡底。同上：CSS 变量拿不到 Tailwind 的 /opacity，
+        // 不给这三个令牌就只能写死十六进制，浅色主题必然失真。
+        'accent-warning-10': 'var(--accent-warning-10)',
+        'accent-error-10': 'var(--accent-error-10)',
+        'accent-info-10': 'var(--accent-info-10)',
       },
       backgroundImage: {
         'gradient-title': 'linear-gradient(180deg, #FFFFFF 0%, #ADADAD 100%)',

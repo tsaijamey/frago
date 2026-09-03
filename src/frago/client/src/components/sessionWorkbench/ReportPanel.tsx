@@ -15,13 +15,24 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FlaskConical } from 'lucide-react';
 
-/** 强调位与左栏、中栏共用同一份品牌绿，走主题变量，NEVER 写死色值。 */
-const ACCENT_TEXT = 'text-accent-primary';
-const ACCENT_BG = 'bg-accent-primary-10';
+/**
+ * 槽位标题的写法。四个槽位共用一套：11px、次级灰、字重加一档、字距略开。
+ *
+ * 这一栏是四段并置的短文，彼此之间没有从属关系。标题要能一眼与正文分开，但不该比正文
+ * 更抢眼——所以走的是"更小更淡但更紧"，而不是"更大更重"。
+ */
+const SLOT_LABEL = 'text-[11px] font-medium tracking-wide text-text-muted';
 
-/** 覆盖型槽位：高度固定，长文槽位高一档。固定不等于小。 */
+/**
+ * 覆盖型槽位：高度固定，长文槽位高一档。固定不等于小。
+ *
+ * **不再是一张带边框的卡。** 四个槽位各套一圈边、外面还有一层栏底，一眼看过去是四个
+ * 方框而不是四段话；而这一栏的内容本来就是要被读的。现在改成发丝线分段：段与段之间
+ * 一条线，最后一段不带线。
+ */
 function CoverSlot({
   label,
   value,
@@ -32,8 +43,8 @@ function CoverSlot({
   tall?: boolean;
 }) {
   return (
-    <section className="rounded-[10px] border border-border-color bg-bg-card p-3">
-      <header className="mb-1.5 text-[12px] text-text-muted">{label}</header>
+    <section className="border-b border-border-color px-3 py-3 last:border-b-0">
+      <header className={`mb-1.5 ${SLOT_LABEL}`}>{label}</header>
       <div
         className={`overflow-hidden text-[13px] leading-[1.72] text-text-primary ${
           tall ? 'h-[112px]' : 'h-[76px]'
@@ -47,14 +58,17 @@ function CoverSlot({
 
 /** 增长型槽位：只追加不覆盖，默认露最新三条。 */
 function GrowSlot({ label, items }: { label: string; items: string[] }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? items : items.slice(0, 3);
   const hidden = items.length - shown.length;
   return (
-    <section className="rounded-[10px] border border-border-color bg-bg-card p-3">
-      <header className="mb-1.5 flex items-center gap-2 text-[12px] text-text-muted">
+    <section className="border-b border-border-color px-3 py-3 last:border-b-0">
+      <header className={`mb-1.5 flex items-center gap-2 ${SLOT_LABEL}`}>
         <span>{label}</span>
-        <span className="font-mono">{items.length} 条</span>
+        <span className="font-mono opacity-70">
+          {t('workbench.report.itemCount', { n: items.length })}
+        </span>
       </header>
       <ul className="space-y-1.5">
         {shown.map((item, i) => (
@@ -69,45 +83,57 @@ function GrowSlot({ label, items }: { label: string; items: string[] }) {
           onClick={() => setExpanded(true)}
           className="mt-2 text-[11px] text-text-muted hover:text-text-primary"
         >
-          展开更早的 {hidden} 条
+          {t('workbench.report.expandOlder', { n: hidden })}
         </button>
       ) : null}
     </section>
   );
 }
 
-// 示意数据。这些字是写死的，不来自任何会话。
-const DEMO_NOW = '正在把两家的会话记录归一成同一种形状，中栏已经能逐条铺开';
-const DEMO_DECISION =
-  '左栏的时间范围默认不限，一千多场一次铺开。要不要给它一个更窄的默认值，等看过几天使用情况再定。';
-const DEMO_OUTPUT = '旧会话页上还值钱的五件事整个搬进了这一页，剩下的随页面一起下线';
-const DEMO_HAPPENED = [
-  '中栏接上了真接口，十五种形态各有各的样式',
-  '报错卡去掉了取原文入口，服务端那一道也还在',
-  '左栏把两家的会话合并成一份清单',
-  '统一记录类型与两家翻译层落在核心数据层',
-  '会话在导航上只剩一个入口',
+// 示意数据的词条名。这些字不来自任何会话，取字在渲染时做——摆在模块级会把它锁死在
+// 开局那一种语言上。
+const DEMO_HAPPENED_KEYS = [
+  'workbench.report.demoHappened1',
+  'workbench.report.demoHappened2',
+  'workbench.report.demoHappened3',
+  'workbench.report.demoHappened4',
+  'workbench.report.demoHappened5',
 ];
 
 export default function ReportPanel() {
+  const { t } = useTranslation();
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-l border-border-color bg-bg-secondary">
-      <div
-        className={`flex shrink-0 items-center gap-2 border-b border-border-color px-3 py-2.5 text-[12px] ${ACCENT_BG} ${ACCENT_TEXT}`}
-      >
-        <FlaskConical size={13} />
-        <span>速记员尚未接入，下面是示意数据</span>
+      {/* 「尚未接入」是一句提醒，不是一次告警。
+          从前这条横带铺满品牌绿，一进会话页最先跳进眼里的就是它——而它说的事既不紧急、
+          也没人能立刻做点什么。现在按提醒的分量给：中性底，只有那颗烧瓶图标带一点绿，
+          够认出"这一栏跟别处不一样"就行。 */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border-color bg-bg-subtle px-3 py-2 text-[11px] text-text-secondary">
+        <FlaskConical size={13} className="shrink-0 text-accent-primary" />
+        <span>{t('workbench.report.notWired')}</span>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-3">
-        <CoverSlot label="此刻在做什么" value={DEMO_NOW} />
-        <CoverSlot label="需要你决策" value={DEMO_DECISION} tall />
-        <CoverSlot label="最近一次产出" value={DEMO_OUTPUT} />
-        <GrowSlot label="已经发生的事" items={DEMO_HAPPENED} />
+      {/* 滚动容器的内距契约：分段自带上下内距，容器只在最底下补一段留白，
+          最后一段滚到底时不会被硬切在边框上。 */}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+        <CoverSlot label={t('workbench.report.slotNow')} value={t('workbench.report.demoNow')} />
+        <CoverSlot
+          label={t('workbench.report.slotDecision')}
+          value={t('workbench.report.demoDecision')}
+          tall
+        />
+        <CoverSlot
+          label={t('workbench.report.slotOutput')}
+          value={t('workbench.report.demoOutput')}
+        />
+        <GrowSlot
+          label={t('workbench.report.slotHappened')}
+          items={DEMO_HAPPENED_KEYS.map((key) => t(key))}
+        />
       </div>
 
-      <div className="shrink-0 border-t border-border-color px-3 py-2 text-[11px] text-text-muted">
-        槽位由速记员填写。接入之前，这里的字不来自任何一场会话。
+      <div className="shrink-0 border-t border-border-color px-3 py-2 text-[11px] leading-[1.6] text-text-muted">
+        {t('workbench.report.footer')}
       </div>
     </aside>
   );

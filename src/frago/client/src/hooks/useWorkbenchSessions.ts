@@ -14,6 +14,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useTranslation } from 'react-i18next';
+
+import i18n from '@/i18n';
 import { useAutoRefresh } from './useAutoRefresh';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -65,18 +68,46 @@ export function activityTs(session: WorkbenchSession): number {
   return session.last_reply_at ?? session.last_active_at;
 }
 
-export const FAMILY_LABEL: Record<SessionFamily, string> = {
-  'claude-code': 'Claude Code',
-  opencode: 'opencode',
-  codex: 'codex',
+/**
+ * 家族名与状态名摆的是**词表里的键**，不是字。
+ *
+ * 这两张表是模块级常量，模块加载时 `t()` 还没有语言上下文；在这里直接把字取出来，会
+ * 把它锁死在开局那一种语言上——人切到另一种语言，左栏的「在跑」「已完成」一个字都不动。
+ * 所以这里只存键，取字的那一下由用到它的组件在渲染时做（见 `useWorkbenchLabels`）。
+ */
+export const FAMILY_LABEL_KEY: Record<SessionFamily, string> = {
+  'claude-code': 'workbench.family.claude-code',
+  opencode: 'workbench.family.opencode',
+  codex: 'workbench.family.codex',
 };
 
-export const STATUS_LABEL: Record<SessionStatus, string> = {
-  running: '在跑',
-  error: '出错',
-  done: '已完成',
-  idle: '停着',
+export const STATUS_LABEL_KEY: Record<SessionStatus, string> = {
+  running: 'workbench.status.running',
+  error: 'workbench.status.error',
+  done: 'workbench.status.done',
+  idle: 'workbench.status.idle',
 };
+
+/**
+ * 把上面那两张键表取成字。**取字这一下必须发生在渲染里。**
+ *
+ * 用这个 hook 的组件跟着 i18next 的语言重渲染，人在设置里换一次语言，左栏的状态名与
+ * 家族名当场就变，不用刷新页面。家族名认不出时原样返回——服务端将来多接一家，界面上
+ * 至少还看得见它叫什么，而不是一片空白。
+ */
+export function useWorkbenchLabels() {
+  const { t } = useTranslation();
+  return useMemo(
+    () => ({
+      statusLabel: (status: SessionStatus) => t(STATUS_LABEL_KEY[status]),
+      familyLabel: (family: string) => {
+        const key = FAMILY_LABEL_KEY[family as SessionFamily];
+        return key ? t(key) : family;
+      },
+    }),
+    [t]
+  );
+}
 
 /**
  * 左栏的筛选维度是**状态**，不是来源。
@@ -154,7 +185,7 @@ export async function fetchContentMatches(
     { signal }
   );
   if (!res.ok) {
-    throw new Error(`内容搜不了（HTTP ${res.status}）`);
+    throw new Error(i18n.t('workbench.errors.contentSearchFailed', { status: res.status }));
   }
   const body = (await res.json()) as { sessions?: ContentMatch[]; warnings?: string[] };
   return { matches: body.sessions ?? [], warnings: body.warnings ?? [] };
@@ -200,7 +231,7 @@ export interface WorkbenchSessionsState {
 export async function fetchWorkbenchSessions(): Promise<WorkbenchSession[]> {
   const res = await fetch(`${API_BASE_URL}/api/workbench/sessions`);
   if (!res.ok) {
-    throw new Error(`会话清单取不到（HTTP ${res.status}）`);
+    throw new Error(i18n.t('workbench.errors.sessionsFetchFailed', { status: res.status }));
   }
   return (await res.json()) as WorkbenchSession[];
 }

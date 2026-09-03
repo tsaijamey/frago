@@ -24,12 +24,11 @@ function RecipeCard({ recipe, onClick, view = 'grid' }: RecipeCardProps) {
   const visibleTags = recipe.tags.slice(0, tagLimit);
   const extraTags = recipe.tags.length - visibleTags.length;
 
+  // 分类徽章是分类，不是状态：工作流不比原子配方"更成功"，原子配方也不是"告警"。
+  // 借状态色来分类，等于让人以为满屏的绿卡是在报什么好消息。两种都用中性徽章，
+  // 靠上面写的字区分——本来也只有那两个字有意义。
   const categoryChip = (
-    <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
-      recipe.category === 'atomic'
-        ? 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
-        : 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
-    }`}>
+    <span className="shrink-0 rounded-[5px] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-xs text-[var(--text-muted)]">
       {recipe.category === 'atomic' ? t('recipes.atomic') : t('recipes.workflow')}
     </span>
   );
@@ -212,7 +211,7 @@ export default function RecipeList() {
   return (
     <div className="flex flex-col h-full">
       {/* Page header — consistent with Sessions / Settings */}
-      <div className="cs-header" style={{ padding: 'var(--spacing-md) var(--spacing-md) 0' }}>
+      <div className="cs-header" style={{ padding: '20px 20px 0' }}>
         <div>
           <h1 className="cs-title">{t('recipes.title')}</h1>
           <p className="cs-subtitle">{t('recipes.pageDesc')}</p>
@@ -299,7 +298,7 @@ export default function RecipeList() {
                       count={workflowRecipes.length}
                       expanded={workflowExpanded}
                       onToggle={() => setWorkflowExpanded(!workflowExpanded)}
-                      colorClass="text-[var(--accent-success)]"
+                      colorClass="text-[var(--text-primary)]"
                       tip={t('recipes.workflowTip')}
                       containerClass={sectionContainerClass}
                     >
@@ -319,7 +318,7 @@ export default function RecipeList() {
                       count={atomicRecipes.length}
                       expanded={atomicExpanded}
                       onToggle={() => setAtomicExpanded(!atomicExpanded)}
-                      colorClass="text-[var(--accent-warning)]"
+                      colorClass="text-[var(--text-primary)]"
                       tip={t('recipes.atomicTip')}
                       containerClass={sectionContainerClass}
                     >

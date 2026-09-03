@@ -76,10 +76,13 @@ export interface DataSlice {
   toggleGitHubStar: () => Promise<void>;
 }
 
-// Apply theme to DOM and persist to localStorage for FOUC prevention
-// Design spec only supports dark theme — force dark regardless of input
-function applyTheme(_theme: Theme) {
-  const theme: Theme = 'dark';
+// Apply theme to DOM and persist to localStorage for FOUC prevention.
+//
+// 这里曾经无视入参一律钉死 dark。那一行让浅色主题整套变量成了死代码：设置里改得动、
+// 存得下、读得回，`<html>` 上永远还是 dark。两套主题现在都真的会生效，所以入参必须
+// 照用；只有拿到不认识的值时才落回 dark。
+function applyTheme(requested: Theme) {
+  const theme: Theme = requested === 'light' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.style.colorScheme = theme;
   // Save to localStorage so index.html can read it before JS loads

@@ -8,11 +8,23 @@
  * 的责任只是"照名单把清单摆成两片"。
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import SessionRail from '../SessionRail';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
+import i18n from '@/i18n';
+
+/**
+ * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
+ *
+ * 这一句顺带把另一件事也核了：`zh.json` 里的字必须与从前写死在组件里的逐字相同，
+ * 差一个标点，下面这些断言就红。
+ */
+beforeAll(async () => {
+  await i18n.changeLanguage('zh');
+});
+
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
 const OC_SID = 'ses_058288655ffeYMxYC1AZKCcv56';

@@ -5,12 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frago</title>
     <style>
-      /* Force dark theme — design spec only supports dark */
-      html {
-        background-color: #161b24;
-        color-scheme: dark;
-      }
+      /* 两套主题各自的开画底色。这两条必须在样式表加载之前就位，否则第一帧会闪
+         一下另一套主题的底色。数值与 globals.css 里的 --page-bg 一致。 */
+      html[data-theme='dark'] { background-color: #141414; color-scheme: dark; }
+      html[data-theme='light'] { background-color: #f2f2f2; color-scheme: light; }
     </style>
+    <script>
+      // 主题要在第一帧之前定下来。React 挂上之前谁都没机会改 <html>，
+      // 这一段读回上次的选择，页面就不会先按 dark 画一帧再跳成 light。
+      (function () {
+        try {
+          var saved = localStorage.getItem('theme');
+          if (saved === 'light' || saved === 'dark') {
+            document.documentElement.setAttribute('data-theme', saved);
+          }
+        } catch (_) {
+          // localStorage 不可用时保留标签上的默认值
+        }
+      })();
+    </script>
     <script>
       // Calculate font scale based on SCREEN resolution (not viewport)
       // Base: 1080p screen height = 13px, linear scale with min/max limits
@@ -45,11 +58,23 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background-color: #161b24;
-        color: #dce3ee;
+        background-color: #141414;
+        color: rgba(255, 255, 255, 0.92);
         font-family: system-ui, -apple-system, sans-serif;
         z-index: 9999;
         transition: opacity 0.3s ease;
+      }
+      /* 启动屏跟着主题走。它盖满整屏，画错了就是整屏画错。 */
+      html[data-theme='light'] #frago-loading {
+        background-color: #f2f2f2;
+        color: rgba(0, 0, 0, 0.9);
+      }
+      html[data-theme='light'] .loading-spinner {
+        border-color: rgba(10, 143, 51, 0.18);
+        border-top-color: #0a8f33;
+      }
+      html[data-theme='light'] .loading-error {
+        color: #c42b45;
       }
       #frago-loading.fade-out {
         opacity: 0;
@@ -157,6 +182,6 @@
         }
       };
     </script>
-    <script src="./assets/index-B43ddgO0.js"></script>
+    <script src="./assets/index-DzaT11si.js"></script>
   </body>
 </html>

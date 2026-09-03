@@ -90,16 +90,10 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
   const activeTab = TABS.find((tab) => tab.id === active) ?? TABS[0];
 
   return (
-    <div className="page-scroll" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
-      {/* Header */}
-      <div className="cs-header">
-        <div>
-          <h1 className="cs-title">{t('settings.title')}</h1>
-          <p className="cs-subtitle">{t('settings.description')}</p>
-        </div>
-      </div>
-
-      {/* Two-column: category rail + active panel */}
+    /* 页面自己的标题去掉了。左侧主导航上「config」那一项已经亮着，右侧面板的标题又写着
+       分类名——中间再夹一个「设置 / 配置 frago 功能」，是同一件事说第三遍，
+       还把真正的内容往下推了七十多像素。 */
+    <div className="page-scroll">
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('settings.title')}>
           {TABS.map((tab) => (
@@ -108,23 +102,21 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               type="button"
               className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
               onClick={() => setActive(tab.id)}
+              /* 描述搬到了右侧面板的标题下面。这里留一份 title，
+                 鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
+              title={t(`settings.tabDesc.${tab.id}`)}
+              aria-current={tab.id === active ? 'true' : undefined}
             >
-              <tab.Icon size={16} className="settings-nav-icon" />
-              <span className="settings-nav-text">
-                <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
-                <span className="settings-nav-desc">{t(`settings.tabDesc.${tab.id}`)}</span>
-              </span>
+              <tab.Icon size={16} strokeWidth={1.5} className="settings-nav-icon" />
+              <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
             </button>
           ))}
         </nav>
 
         <section className="settings-panel">
           <div className="settings-panel-head">
-            <activeTab.Icon size={18} className="text-[var(--accent-primary)]" />
-            <div>
-              <h2 className="settings-panel-title">{t(`settings.tabs.${active}`)}</h2>
-              <p className="settings-panel-desc">{t(`settings.tabDesc.${active}`)}</p>
-            </div>
+            <h2 className="settings-panel-title">{t(`settings.tabs.${active}`)}</h2>
+            <p className="settings-panel-desc">{t(`settings.tabDesc.${active}`)}</p>
           </div>
           <div className="settings-panel-body">
             {activeTab.render({

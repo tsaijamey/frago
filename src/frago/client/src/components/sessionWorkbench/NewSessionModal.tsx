@@ -37,6 +37,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Folder, Home, Loader2 } from 'lucide-react';
 import Modal from '../ui/Modal';
 import { getSystemDirectories } from '../../api/client';
@@ -61,6 +62,7 @@ interface DirChoice {
 }
 
 export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessionModalProps) {
+  const { t } = useTranslation();
   const [choices, setChoices] = useState<DirChoice[]>([]);
   const [dir, setDir] = useState('');
   const [text, setText] = useState('');
@@ -144,27 +146,35 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     } catch (e) {
       // 建不起来就**留在对话框里**并把话原样摆出来。关掉再弹一句提示，人打的那段话
       // 就没了，还得从头再敲一遍。
-      setError(e instanceof Error ? e.message : '没建起来');
+      setError(e instanceof Error ? e.message : t('workbench.errors.createFailedPlain'));
       setCreating(false);
     }
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="新建会话">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('workbench.newSession.title')}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <label className="text-xs font-medium text-[var(--text-secondary)]">用哪个客户端</label>
+          <label className="text-xs font-medium text-[var(--text-secondary)]">
+            {t('workbench.newSession.clientLabel')}
+          </label>
 
           {clients.loading && !clients.agents.length ? (
-            <p className="text-[11px] text-[var(--text-muted)]">正在看本机装了哪几家…</p>
+            <p className="text-[11px] text-[var(--text-muted)]">
+              {t('workbench.newSession.probing')}
+            </p>
           ) : clients.error ? (
             <p className="text-xs text-[var(--accent-error)] break-words">{clients.error}</p>
           ) : !selectable.length ? (
             <p className="text-xs text-[var(--accent-error)] break-words">
-              本机一家可用的 CLI 都没找到。装好 claude / codex / opencode 其中之一，它会自己出现在这里。
+              {t('workbench.newSession.noneAvailable')}
             </p>
           ) : (
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="用哪个客户端">
+            <div
+              className="flex flex-wrap gap-1.5"
+              role="radiogroup"
+              aria-label={t('workbench.newSession.clientLabel')}
+            >
               {selectable.map((c) => (
                 <button
                   key={c.agent_type}
@@ -190,7 +200,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
               人会以为卡住了。 */}
           {chosen?.id_origin === 'claimed' ? (
             <p className="text-[11px] text-[var(--text-muted)] -mt-0.5">
-              {chosen.display_name} 的会话编号由它自己分配，创建后要等它起来报出编号，通常几秒。
+              {t('workbench.newSession.claimedHint', { name: chosen.display_name })}
             </p>
           ) : null}
 
@@ -205,7 +215,9 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 className="flex items-center gap-1 self-start text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               >
                 {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <span>还有 {unavailable.length} 个用不了</span>
+                <span>
+                  {t('workbench.newSession.unavailableCount', { n: unavailable.length })}
+                </span>
               </button>
               {showUnavailable
                 ? unavailable.map((c) => (
@@ -224,9 +236,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         </div>
 
         <div className="flex flex-col gap-2">
-          <label className="text-xs font-medium text-[var(--text-secondary)]">起始目录</label>
+          <label className="text-xs font-medium text-[var(--text-secondary)]">
+            {t('workbench.newSession.cwdLabel')}
+          </label>
           <p className="text-[11px] text-[var(--text-muted)] -mt-1">
-            会话在该目录下启动，等同于在这里打开终端后运行它。
+            {t('workbench.newSession.cwdHint')}
           </p>
 
           <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
@@ -266,7 +280,9 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         </div>
 
         <div className="flex flex-col gap-2">
-          <label className="text-xs font-medium text-[var(--text-secondary)]">第一句话</label>
+          <label className="text-xs font-medium text-[var(--text-secondary)]">
+            {t('workbench.newSession.firstMessage')}
+          </label>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -277,13 +293,15 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
               }
             }}
             rows={3}
-            placeholder="要它做什么…"
+            placeholder={t('workbench.newSession.firstMessagePlaceholder')}
             className="resize-none bg-[var(--bg-subtle)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
           />
         </div>
 
         {error && (
-          <p className="text-xs text-[var(--accent-error)] break-words">创建失败：{error}</p>
+          <p className="text-xs text-[var(--accent-error)] break-words">
+            {t('workbench.newSession.createFailed', { reason: error })}
+          </p>
         )}
 
         <div className="flex items-center justify-end gap-2">
@@ -292,7 +310,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
             onClick={onClose}
             className="px-3 py-2 rounded-md text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
           >
-            取消
+            {t('workbench.newSession.cancel')}
           </button>
           <button
             type="button"
@@ -301,7 +319,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
             className="flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--accent-primary)] text-[var(--text-on-accent)] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {creating ? <Loader2 size={13} className="animate-spin" /> : null}
-            创建
+            {t('workbench.newSession.create')}
           </button>
         </div>
       </div>

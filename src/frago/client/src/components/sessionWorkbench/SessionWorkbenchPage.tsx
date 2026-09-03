@@ -60,19 +60,19 @@ export default function SessionWorkbenchPage() {
           selectedId ? '' : 'phone:hidden'
         }`}
       >
-        <header className="flex shrink-0 items-center gap-3 border-b border-border-color px-5 py-3">
+        <header className="flex shrink-0 items-center gap-3 border-b border-border-color px-5 py-2.5">
           {selectedId ? (
             <button
               type="button"
               onClick={() => setSelectedId(null)}
               className="hidden shrink-0 text-text-muted hover:text-text-primary phone:block"
-              aria-label="回到会话清单"
+              aria-label={t('workbench.page.backToList')}
             >
               <ChevronLeft size={16} />
             </button>
           ) : null}
-          <h1 className="min-w-0 truncate text-[16px] font-semibold text-text-primary">
-            {selected ? selected.title : '会话'}
+          <h1 className="min-w-0 truncate text-[14px] font-semibold text-text-primary">
+            {selected ? selected.title : t('workbench.page.title')}
           </h1>
           {selected ? (
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
@@ -80,7 +80,7 @@ export default function SessionWorkbenchPage() {
             </span>
           ) : (
             <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
-              两家的会话记录归一成同一种形状，逐条无损铺开
+              {t('workbench.page.subtitle')}
             </span>
           )}
           {/* 用量是跨全部会话的一件事，所以入口在顶部，而不是挂在某一场会话上。 */}
@@ -88,9 +88,9 @@ export default function SessionWorkbenchPage() {
             type="button"
             onClick={() => setCalendarOpen(true)}
             title={t('tokenCalendar.open')}
-            className="flex shrink-0 items-center gap-1.5 rounded-[6px] border border-border-color px-2 py-1 text-[12px] text-text-secondary transition-colors duration-200 hover:border-accent-primary hover:text-accent-primary"
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-[6px] px-2 text-[12px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
           >
-            <CalendarDays size={13} />
+            <CalendarDays size={14} strokeWidth={1.5} />
             <span className="phone:hidden">{t('tokenCalendar.open')}</span>
           </button>
         </header>

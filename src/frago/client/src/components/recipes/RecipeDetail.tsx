@@ -41,7 +41,9 @@ export default function RecipeDetail() {
   }
 
   return (
-    <div className="flex flex-col gap-4 h-full overflow-hidden p-4">
+    /* 外框只留左右与顶上的边距，**不留底边**：底边归滚动区自己，
+       否则内容滚到底时会停在一段死白之上，而最后一行仍然贴着滚动区的边。 */
+    <div className="flex h-full flex-col gap-4 overflow-hidden px-5 pt-5">
       {/* Back button */}
       <button
         type="button"
@@ -52,7 +54,7 @@ export default function RecipeDetail() {
       </button>
 
       {/* Two-column: intro on the left, action/parameters panel on the right */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pb-10">
         <div className="rd-layout">
           <RecipeOverview recipe={recipe} showToast={showToast} t={t} />
           <RecipeRunPanel

@@ -12,10 +12,22 @@
  * 5. **建不起来时留在对话框里**，把话原样摆出来——关掉再弹提示，人打的那段话就没了。
  */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import NewSessionModal from '../NewSessionModal';
+import i18n from '@/i18n';
+
+/**
+ * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
+ *
+ * 这一句顺带把另一件事也核了：`zh.json` 里的字必须与从前写死在组件里的逐字相同，
+ * 差一个标点，下面这些断言就红。
+ */
+beforeAll(async () => {
+  await i18n.changeLanguage('zh');
+});
+
 
 vi.mock('../../../api/client', () => ({
   getSystemDirectories: async () => ({ home: '/Users/frago', cwd: '/Users/frago/Repos/frago' }),

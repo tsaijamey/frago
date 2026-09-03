@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import i18n from '@/i18n';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -58,7 +59,9 @@ export interface AgentClientsState {
 
 export async function fetchAgents(): Promise<{ agents: AgentClient[]; default: string | null }> {
   const res = await fetch(`${API_BASE_URL}/api/workbench/agents`);
-  if (!res.ok) throw new Error(`取不到本机的客户端清单（HTTP ${res.status}）`);
+  if (!res.ok) {
+    throw new Error(i18n.t('workbench.errors.agentsFetchFailed', { status: res.status }));
+  }
   return (await res.json()) as { agents: AgentClient[]; default: string | null };
 }
 
@@ -81,7 +84,11 @@ export async function createSession(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(await readError(res, `没建起来（HTTP ${res.status}）`));
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('workbench.errors.createFailed', { status: res.status }))
+    );
+  }
   return (await res.json()) as PendingLaunch;
 }
 
@@ -89,7 +96,11 @@ export async function fetchPending(handle: string): Promise<PendingLaunch> {
   const res = await fetch(
     `${API_BASE_URL}/api/workbench/sessions/pending/${encodeURIComponent(handle)}`
   );
-  if (!res.ok) throw new Error(await readError(res, `问不到这次新建（HTTP ${res.status}）`));
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('workbench.errors.pendingFetchFailed', { status: res.status }))
+    );
+  }
   return (await res.json()) as PendingLaunch;
 }
 
@@ -110,15 +121,15 @@ export async function waitForSession(
   const delays = [700, 700, 1000, 1000, 1500, 1500, 2000, 2000, 3000, 3000, 5000, 5000, 5000];
   for (const delay of delays) {
     await new Promise((r) => setTimeout(r, delay));
-    if (options.signal?.aborted) throw new Error('已取消');
+    if (options.signal?.aborted) throw new Error(i18n.t('workbench.errors.cancelled'));
     const launch = await fetchPending(handle);
     if (launch.session_id) return launch.session_id;
     if (launch.error) throw new Error(launch.error);
     if (launch.finished) {
-      throw new Error(`${launch.display_name} 这一轮跑完了也没报出会话编号，去 tmux 里看看它`);
+      throw new Error(i18n.t('workbench.errors.noSessionId', { name: launch.display_name }));
     }
   }
-  throw new Error('等太久了，还是没等到会话编号');
+  throw new Error(i18n.t('workbench.errors.waitTimeout'));
 }
 
 export function readLastAgent(): string | null {
@@ -163,7 +174,7 @@ export function useAgentClients(enabled: boolean): AgentClientsState {
       .catch((e: unknown) => {
         if (!alive) return;
         // 取不到就明说取不到。悄悄退回"只有 claude"会让人以为本机只装了这一家。
-        setError(e instanceof Error ? e.message : '取不到本机的客户端清单');
+        setError(e instanceof Error ? e.message : i18n.t('workbench.errors.agentsFetchFailedPlain'));
         setAgents([]);
       })
       .finally(() => {

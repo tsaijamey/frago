@@ -129,7 +129,7 @@ export default function TodoPage() {
 
   return (
     <div className="td-page">
-      <div className="cs-header" style={{ padding: 'var(--spacing-md) var(--spacing-md) 0' }}>
+      <div className="cs-header" style={{ padding: '20px 20px 0' }}>
         <div>
           <h1 className="cs-title">{t('todos.title')}</h1>
           <p className="cs-subtitle">{t('todos.pageDesc')}</p>

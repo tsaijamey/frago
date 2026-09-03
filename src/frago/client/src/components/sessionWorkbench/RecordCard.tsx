@@ -27,6 +27,7 @@
  */
 
 import { memo, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   Bot,
@@ -51,6 +52,7 @@ import {
   CornerDownRight,
   Zap,
 } from 'lucide-react';
+import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import {
   fetchWorkbenchRaw,
@@ -59,25 +61,33 @@ import {
 } from '@/hooks/useWorkbenchRecords';
 
 // ── 配色 ──────────────────────────────────────────────────────────────
-// 强调位（子轨迹、子 agent、正在做的那一项）由品牌绿承担，走主题变量，明暗两套各取各的
-// 那一份，NEVER 写死色值。其余状态色照抄设计稿，写成完整字面量而不是拼接——Tailwind 的
-// 扫描器只认字面量。
+// **这一栏只有三个色相**：品牌绿（活跃、子轨迹）、告警橙、报错红。全部走主题变量，
+// 明暗两套各取各的那一份，NEVER 写死色值。
+//
+// 从前这里另立了一套写死的柔色板——鼠尾草绿的「成功」、青灰的「已完成」、紫的「旁路
+// 注入」。它们和主题变量各走各的，浅色主题下从来没被验过；更要紧的是，一屏记录里
+// 「成功」和「已完成」占了绝大多数，给这两档各配一个颜色，等于把整条流染成彩色，
+// 真正需要被一眼找到的报错反而淹在里面。
+//
+// 现在的规则：**默认结局不给颜色。** 成功、已完成、结束——这些是记录流的常态，用中性
+// 灰。只有需要人做点什么的两档才有颜色：出错（红）、在等（橙）。
 const ACCENT_TEXT = 'text-accent-primary';
 const ACCENT_BG = 'bg-accent-primary-10';
 const ACCENT_RING = 'ring-1 ring-border-accent';
-const ERR_TEXT = 'text-[#E4705C] [[data-theme=light]_&]:text-[#A8442F]';
-const ERR_BG = 'bg-[#E4705C]/[0.12] [[data-theme=light]_&]:bg-[#A8442F]/[0.11]';
-const ERR_RING = 'ring-1 ring-[#E4705C]/35 [[data-theme=light]_&]:ring-[#A8442F]/30';
-const WAIT_TEXT = 'text-[#E3A857] [[data-theme=light]_&]:text-[#9A6E1B]';
-const WAIT_BG = 'bg-[#E3A857]/[0.12] [[data-theme=light]_&]:bg-[#9A6E1B]/[0.11]';
-const OK_TEXT = 'text-[#8FC29A] [[data-theme=light]_&]:text-[#4C7A56]';
-const DONE_TEXT = 'text-[#8DB5AC] [[data-theme=light]_&]:text-[#56736E]';
-const DONE_BG = 'bg-[#8DB5AC]/[0.12] [[data-theme=light]_&]:bg-[#56736E]/[0.11]';
-// 旁路注入自成一色。它既不是人说的、也不是 agent 说的，混在对话的纸色里就看不出
-// "这句话是被别人塞进来的"——而那恰恰是读这一格时唯一要知道的事。
-const HOOK_TEXT = 'text-[#A78BC8] [[data-theme=light]_&]:text-[#6D4E9C]';
-const HOOK_BG = 'bg-[#A78BC8]/[0.10] [[data-theme=light]_&]:bg-[#6D4E9C]/[0.08]';
-const HOOK_RING = 'ring-1 ring-[#A78BC8]/30 [[data-theme=light]_&]:ring-[#6D4E9C]/25';
+const ERR_TEXT = 'text-accent-error';
+const ERR_BG = 'bg-accent-error-10';
+const ERR_RING = 'ring-1 ring-accent-error/35';
+const WAIT_TEXT = 'text-accent-warning';
+const WAIT_BG = 'bg-accent-warning-10';
+const OK_TEXT = 'text-text-secondary';
+const DONE_TEXT = 'text-text-muted';
+const DONE_BG = 'bg-bg-subtle';
+// 旁路注入要与人说的、agent 说的分得开：读这一格时唯一要知道的事，就是"这句话是被别人
+// 塞进来的"。分得开靠的不是再发明一个色相——**是虚线轮廓**。虚线在任何主题下都读作
+// "外来的、临时贴上去的"，而且它不消耗颜色预算：颜色留给出错与在等。
+const HOOK_TEXT = 'text-text-secondary';
+const HOOK_BG = 'bg-bg-subtle';
+const HOOK_RING = 'border border-dashed border-border-strong';
 
 // ── 三组归属 ──────────────────────────────────────────────────────────
 export type KindGroup = 'text' | 'tool' | 'system';
@@ -101,23 +111,26 @@ export const KIND_GROUP: Record<RecordKind, KindGroup> = {
   'call.envelope': 'system',
 };
 
-/** 形态在界面上叫什么。取中文，NEVER 把机器标记名直接摆给人看。 */
-export const KIND_LABEL: Record<RecordKind, string> = {
-  'user.say': '你说',
-  'agent.say': '回复',
-  'agent.think': '思考',
-  'context.inject': '注入内容',
-  'tool.call': '工具调用',
-  'tool.result': '工具结果',
-  'subagent.dispatch': '派发子 agent',
-  'todo.snapshot': '待办清单',
-  'permission.outcome': '权限结果',
-  'media.attach': '附件',
-  error: '报错',
-  interrupt: '打断',
-  'session.state': '状态变更',
-  'context.compact': '上下文压缩',
-  'call.envelope': '调用边界',
+/**
+ * 形态在界面上叫什么。这里摆的是**词表键**，NEVER 把机器标记名直接摆给人看，也 NEVER
+ * 在模块级把字取出来——那会把它锁死在开局那一种语言上。取字由各张卡在渲染时做。
+ */
+export const KIND_LABEL_KEY: Record<RecordKind, string> = {
+  'user.say': 'workbench.record.kind.userSay',
+  'agent.say': 'workbench.record.kind.agentSay',
+  'agent.think': 'workbench.record.kind.agentThink',
+  'context.inject': 'workbench.record.kind.contextInject',
+  'tool.call': 'workbench.record.kind.toolCall',
+  'tool.result': 'workbench.record.kind.toolResult',
+  'subagent.dispatch': 'workbench.record.kind.subagentDispatch',
+  'todo.snapshot': 'workbench.record.kind.todoSnapshot',
+  'permission.outcome': 'workbench.record.kind.permissionOutcome',
+  'media.attach': 'workbench.record.kind.mediaAttach',
+  error: 'workbench.record.kind.error',
+  interrupt: 'workbench.record.kind.interrupt',
+  'session.state': 'workbench.record.kind.sessionState',
+  'context.compact': 'workbench.record.kind.contextCompact',
+  'call.envelope': 'workbench.record.kind.callEnvelope',
 };
 
 // ── 取值小工具 ────────────────────────────────────────────────────────
@@ -144,21 +157,32 @@ function dict(value: unknown): Payload {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Payload) : {};
 }
 
-/** 毫秒 → 人话。只报已经发生的时长，NEVER 报预计还要多久。 */
+/**
+ * 毫秒 → 人话。只报已经发生的时长，NEVER 报预计还要多久。
+ *
+ * 取字走 i18next 实例而不是 `useTranslation`——它是纯函数，不是组件。取字发生在调用
+ * 那一刻，也就是渲染那一刻，所以拿到的永远是当下这一种语言。
+ */
 export function formatDuration(ms: number | null): string {
   if (ms === null || ms < 0) return '';
-  if (ms < 1000) return `${ms} 毫秒`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} 秒`;
+  if (ms < 1000) return i18n.t('workbench.record.duration.ms', { n: ms });
+  if (ms < 60_000) {
+    return i18n.t('workbench.record.duration.sec', { n: (ms / 1000).toFixed(1) });
+  }
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.round((ms % 60_000) / 1000);
-  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+  return seconds
+    ? i18n.t('workbench.record.duration.minSec', { m: minutes, s: seconds })
+    : i18n.t('workbench.record.duration.min', { m: minutes });
 }
 
 export function formatBytes(bytes: number | null): string {
   if (bytes === null || bytes < 0) return '';
-  if (bytes < 1024) return `${bytes} 字节`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024) return i18n.t('workbench.record.bytes.b', { n: bytes });
+  if (bytes < 1024 * 1024) {
+    return i18n.t('workbench.record.bytes.kb', { n: (bytes / 1024).toFixed(1) });
+  }
+  return i18n.t('workbench.record.bytes.mb', { n: (bytes / 1024 / 1024).toFixed(1) });
 }
 
 /** 毫秒时间戳 → 本地时刻。naive local time，不拼 Z 后缀。 */
@@ -183,18 +207,18 @@ function previewArgs(args: Payload): string {
 }
 
 // ── 工具家族 ──────────────────────────────────────────────────────────
-const TOOL_FAMILY_LABEL: Record<string, string> = {
-  shell: '命令',
-  'file-read': '读',
-  'file-write': '写',
-  search: '搜',
-  web: '网',
-  agent: '派发',
-  todo: '待办',
-  ask: '问你',
-  schedule: '定时',
-  mcp: '外接',
-  other: '其他',
+const TOOL_FAMILY_LABEL_KEY: Record<string, string> = {
+  shell: 'workbench.record.toolFamily.shell',
+  'file-read': 'workbench.record.toolFamily.fileRead',
+  'file-write': 'workbench.record.toolFamily.fileWrite',
+  search: 'workbench.record.toolFamily.search',
+  web: 'workbench.record.toolFamily.web',
+  agent: 'workbench.record.toolFamily.agent',
+  todo: 'workbench.record.toolFamily.todo',
+  ask: 'workbench.record.toolFamily.ask',
+  schedule: 'workbench.record.toolFamily.schedule',
+  mcp: 'workbench.record.toolFamily.mcp',
+  other: 'workbench.record.toolFamily.other',
 };
 
 function toolIcon(family: string) {
@@ -220,17 +244,18 @@ function toolIcon(family: string) {
   }
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  ok: '成功',
-  error: '失败',
-  denied: '被拒',
-  interrupted: '被打断',
-  completed: '已完成',
-  pending: '未回',
+const STATUS_TEXT_KEY: Record<string, string> = {
+  ok: 'workbench.record.status.ok',
+  error: 'workbench.record.status.error',
+  denied: 'workbench.record.status.denied',
+  interrupted: 'workbench.record.status.interrupted',
+  completed: 'workbench.record.status.completed',
+  pending: 'workbench.record.status.pending',
 };
 
 /** 状态一律带文字标签，颜色不是唯一通道——拿掉颜色也读得出。 */
 function StatusChip({ status }: { status: string }) {
+  const { t } = useTranslation();
   if (!status) return null;
   const tone =
     status === 'error'
@@ -240,20 +265,21 @@ function StatusChip({ status }: { status: string }) {
         : `${DONE_BG} ${OK_TEXT}`;
   return (
     <span className={`rounded-full px-2 py-[1px] text-[11px] leading-[1.45] ${tone}`}>
-      {STATUS_TEXT[status] ?? status}
+      {STATUS_TEXT_KEY[status] ? t(STATUS_TEXT_KEY[status]) : status}
     </span>
   );
 }
 
 /** 截断三态。三者一眼可辨，且各自带图标加文字。 */
 function TruncationChip({ state, ref_ }: { state: string; ref_: string }) {
+  const { t } = useTranslation();
   if (state === 'clipped') {
     return (
       <span
         className={`inline-flex items-center gap-1 rounded-full px-2 py-[1px] text-[11px] ${ERR_BG} ${ERR_TEXT}`}
       >
         <Scissors size={11} />
-        中段内容已永久丢失
+        {t('workbench.record.clipped')}
       </span>
     );
   }
@@ -263,7 +289,11 @@ function TruncationChip({ state, ref_ }: { state: string; ref_: string }) {
         className={`inline-flex max-w-full items-center gap-1 rounded-full px-2 py-[1px] text-[11px] ${DONE_BG} ${DONE_TEXT}`}
       >
         <FileText size={11} />
-        <span className="truncate font-mono">全文在别处{ref_ ? `：${ref_}` : ''}</span>
+        <span className="truncate font-mono">
+          {ref_
+            ? t('workbench.record.offloadedRef', { ref: ref_ })
+            : t('workbench.record.offloaded')}
+        </span>
       </span>
     );
   }
@@ -284,24 +314,91 @@ function Timestamp({ ts }: { ts: number }) {
 }
 
 function AgentPath({ path }: { path: string[] }) {
+  const { t } = useTranslation();
   if (!path.length) return null;
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-[1px] text-[11px] ${ACCENT_BG} ${ACCENT_TEXT}`}
     >
       <Bot size={10} />
-      子轨迹
+      {t('workbench.record.subtrace')}
     </span>
   );
 }
 
 /**
- * 文本类外壳：正文优先，容器尽量轻。头部一行是标签、时刻与可折叠开关，正文由调用方给。
+ * 每一条记录的头一行都长这样：类型标签在最左，元信息居中省略，时刻钉在最右。
+ *
+ * **类型靠"标签是什么样"来分，不是靠"标签写了什么"。** 十五种形态的名字都是两到四个
+ * 汉字、同一个字号、同一个灰——静止时它们看上去是同一种东西，人必须逐条读字才知道
+ * 这条是回复还是工具还是记账。所以标签自己带三种形状：说话的是实心字，工具的是等宽
+ * 字，系统记账的是更小更淡的字。一屏扫过去，不读字也认得出哪几条是对话。
+ */
+function CardHead({
+  record,
+  icon,
+  label,
+  labelTone = 'text-text-secondary',
+  meta,
+  trailing,
+  open,
+  onToggle,
+}: {
+  record: WorkbenchRecord;
+  icon?: ReactNode;
+  label: ReactNode;
+  labelTone?: string;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+  /** 给了 onToggle 才长折叠开关。 */
+  open?: boolean;
+  onToggle?: () => void;
+}) {
+  const name = (
+    <span className={`inline-flex shrink-0 items-center gap-1 ${labelTone}`}>
+      {icon}
+      {label}
+    </span>
+  );
+  return (
+    <header className="flex items-center gap-2 text-[11px] text-text-muted">
+      {onToggle ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className={`inline-flex shrink-0 items-center gap-1 hover:opacity-80 ${labelTone}`}
+        >
+          <ChevronRight
+            size={12}
+            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          />
+          {icon}
+          {label}
+        </button>
+      ) : (
+        name
+      )}
+      <span className="min-w-0 flex-1 truncate">{meta}</span>
+      {trailing}
+      <AgentPath path={record.agent_path} />
+      <Timestamp ts={record.ts} />
+    </header>
+  );
+}
+
+/**
+ * 文本类外壳：正文优先，容器尽量轻。
+ *
+ * **默认没有容器。** agent 的回复是这一栏里字最多、也最该被读进去的东西；给它套一个
+ * 卡底，一屏就成了五六个灰盒子叠在一起，读一段要先跨过一道边。只有需要被认出来的那
+ * 几种（你说、思考、旁路）才自带纸色或虚线轮廓——由调用方经 `tone` 指定。
  */
 function TextShell({
   record,
   icon,
   label,
+  labelTone,
   meta,
   tone = '',
   collapsible = false,
@@ -310,50 +407,46 @@ function TextShell({
 }: ShellProps & {
   icon?: ReactNode;
   label: string;
+  labelTone?: string;
   meta?: ReactNode;
   tone?: string;
   collapsible?: boolean;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // 有纸色的才需要内距把字撑开；没纸色的不加，否则正文会莫名其妙地缩在中间。
+  const padded = tone && tone !== 'bg-transparent';
   return (
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
-      className={`rounded-[10px] px-3 py-2.5 ${tone || 'bg-bg-card'} min-w-0`}
+      className={`min-w-0 rounded-[8px] ${padded ? 'px-3 py-2' : ''} ${tone}`}
     >
-      <header className="mb-1.5 flex items-center gap-2 text-[11px] text-text-muted">
-        {collapsible ? (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
-            aria-expanded={open}
-          >
-            <ChevronRight
-              size={12}
-              className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-            />
-            {icon}
-            <span>{label}</span>
-          </button>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-text-secondary">
-            {icon}
-            {label}
-          </span>
-        )}
-        <span className="min-w-0 flex-1 truncate">{meta}</span>
-        <AgentPath path={record.agent_path} />
-        <Timestamp ts={record.ts} />
-      </header>
-      {open ? <div className="min-w-0">{children}</div> : null}
+      <CardHead
+        record={record}
+        icon={icon}
+        label={label}
+        labelTone={labelTone}
+        meta={meta}
+        open={open}
+        onToggle={collapsible ? () => setOpen((v) => !v) : undefined}
+      />
+      {open ? <div className="mt-1.5 min-w-0">{children}</div> : null}
     </article>
   );
 }
 
 /**
- * 工具类外壳：卡头（家族图标 + 名字 + 一行预览 + 状态）压在卡身上面，卡身装输出。
+ * 工具类外壳：一行卡头（家族图标 + 名字 + 一行预览 + 状态），输出收在下面。
+ *
+ * **默认是收起来的。** 从前默认摊开：一次 `Read` 的输出就是两百行，一屏记录里躺着七八
+ * 次调用，人要滚过几千行才看得到 agent 下一句说了什么。工具的输出是要查的时候才查的
+ * 东西，卡头那一行（工具名 + 参数预览 + 状态）已经答了"它干了什么、成没成"。
+ * 唯一的例外是失败：那一条自己摊开——出了错还要人再点一下才看得见，是把最该被看见的
+ * 东西藏起来。
+ *
+ * **卡头不再自带一层底色。** 卡头有底、卡身有底、外面还有一圈边，三层套在一起，一屏
+ * 就成了一堆窗口。现在整卡一个底、一圈边，卡头与卡身之间只用一条发丝线分开。
  */
 function ToolShell({
   record,
@@ -364,7 +457,7 @@ function ToolShell({
   headTone = '',
   ringTone = '',
   collapsible = false,
-  defaultOpen = true,
+  defaultOpen = false,
   children,
 }: ShellProps & {
   icon: ReactNode;
@@ -376,22 +469,25 @@ function ToolShell({
   collapsible?: boolean;
   defaultOpen?: boolean;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   const hasBody = Boolean(children);
   return (
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
-      className={`min-w-0 overflow-hidden rounded-[6px] border border-border-color bg-bg-secondary ${ringTone}`}
+      className={`min-w-0 overflow-hidden rounded-[8px] border border-border-color ${
+        headTone || 'bg-bg-card'
+      } ${ringTone}`}
     >
-      <header className={`flex items-center gap-2 px-3 py-2 ${headTone || 'bg-bg-card'}`}>
+      <header className="flex items-center gap-2 px-3 py-2">
         {collapsible && hasBody ? (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             className="shrink-0 text-text-muted hover:text-text-primary"
             aria-expanded={open}
-            aria-label="展开或收起"
+            aria-label={t('workbench.record.toggle')}
           >
             <ChevronRight
               size={12}
@@ -399,11 +495,12 @@ function ToolShell({
             />
           </button>
         ) : null}
-        <span className="shrink-0 text-text-secondary">{icon}</span>
-        <span className="shrink-0 font-mono text-[13px] font-semibold text-text-primary">
+        <span className="shrink-0 text-text-muted">{icon}</span>
+        {/* 工具名一律等宽字。这是"这条是工具"的第一眼线索，不必读字就成立。 */}
+        <span className="shrink-0 font-mono text-[12px] font-semibold text-text-primary">
           {title}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text-muted">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
           {subtitle}
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
@@ -412,13 +509,20 @@ function ToolShell({
           <Timestamp ts={record.ts} />
         </span>
       </header>
-      {hasBody && open ? <div className="min-w-0 px-3 py-2.5">{children}</div> : null}
+      {hasBody && open ? (
+        <div className="min-w-0 border-t border-border-color px-3 py-2">{children}</div>
+      ) : null}
     </article>
   );
 }
 
 /**
- * 系统类外壳：不是对话，是发生在会话上的事。默认横贯一行，正文可有可无。
+ * 系统类外壳：不是对话，是发生在会话上的事。
+ *
+ * **它是一行日志，不是一张卡。** 状态变更、调用边界、上下文压缩这些是引擎的记账，一场
+ * 会话里能有几百条。每一条都给一个纸色方块，人读到的就是一整屏方块。所以默认无底色、
+ * 11px、更淡的灰——需要它时它在，不需要时它退到背景里。
+ * 只有报错与打断这两种自带纸色（由调用方经 `tone` 指定）：那两条本来就该跳出来。
  */
 function SystemShell({
   record,
@@ -437,22 +541,24 @@ function SystemShell({
   collapsible?: boolean;
   defaultOpen?: boolean;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   const hasBody = Boolean(children);
+  const padded = Boolean(tone);
   return (
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
-      className={`min-w-0 rounded-[6px] px-3 py-2 ${tone || 'bg-bg-subtle'}`}
+      className={`min-w-0 rounded-[8px] ${padded ? 'px-3 py-2' : 'px-1 py-0.5'} ${tone}`}
     >
-      <div className="flex items-center gap-2 text-[12px]">
+      <div className="flex items-center gap-2 text-[11px] text-text-muted">
         {collapsible && hasBody ? (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="shrink-0 text-text-muted hover:text-text-primary"
+            className="shrink-0 hover:text-text-primary"
             aria-expanded={open}
-            aria-label="展开或收起"
+            aria-label={t('workbench.record.toggle')}
           >
             <ChevronRight
               size={12}
@@ -462,11 +568,11 @@ function SystemShell({
         ) : null}
         <span className="shrink-0">{icon}</span>
         <span className="shrink-0">{label}</span>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-text-muted">{meta}</span>
+        <span className="min-w-0 flex-1 truncate">{meta}</span>
         <AgentPath path={record.agent_path} />
         <Timestamp ts={record.ts} />
       </div>
-      {hasBody && open ? <div className="mt-2 min-w-0">{children}</div> : null}
+      {hasBody && open ? <div className="mt-1.5 min-w-0">{children}</div> : null}
     </article>
   );
 }
@@ -474,7 +580,10 @@ function SystemShell({
 // ── 正文块 ────────────────────────────────────────────────────────────
 /** 中文正文：14px / 1.72。长会话一路读下来，这个行高比 1.5 明显省力。 */
 function Prose({ text }: { text: string }) {
-  if (!text) return <p className="text-[13px] italic text-text-muted">（正文为空）</p>;
+  const { t } = useTranslation();
+  if (!text) {
+    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+  }
   return (
     <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.72] text-text-primary">
       {text}
@@ -487,7 +596,10 @@ function Prose({ text }: { text: string }) {
  * 照字面铺开等于把排版信息当噪音丢掉，一屏井号和星号读起来比什么都累。
  */
 function Rich({ text }: { text: string }) {
-  if (!text) return <p className="text-[13px] italic text-text-muted">（正文为空）</p>;
+  const { t } = useTranslation();
+  if (!text) {
+    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+  }
   return (
     <MarkdownContent
       content={text}
@@ -501,7 +613,10 @@ function Rich({ text }: { text: string }) {
  * 230px 约十二行，够看出这次调用干了什么，又不至于把一屏占满。
  */
 function Mono({ text }: { text: string }) {
-  if (!text) return <p className="text-[12px] italic text-text-muted">（没有输出）</p>;
+  const { t } = useTranslation();
+  if (!text) {
+    return <p className="text-[12px] italic text-text-muted">{t('workbench.record.noOutput')}</p>;
+  }
   return (
     <pre className="max-h-[230px] overflow-auto whitespace-pre-wrap break-words rounded-[3px] bg-bg-subtle p-2 font-mono text-[12px] leading-[1.6] text-text-secondary">
       {text}
@@ -518,31 +633,41 @@ function Mono({ text }: { text: string }) {
  * 是什么"。所以整卡换纸色加一圈环——不用单边竖条，那是肌肉记忆不是设计。
  */
 function UserSay({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const images = list(p, 'images');
   return (
     <TextShell
       record={record}
       icon={<User size={12} />}
-      label="你说"
+      label={t(KIND_LABEL_KEY['user.say'])}
+      labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
       tone={`${ACCENT_BG} ${ACCENT_RING}`}
-      meta={str(p, 'input_mode') ? `输入方式 ${str(p, 'input_mode')}` : undefined}
+      meta={
+        str(p, 'input_mode')
+          ? t('workbench.record.inputMode', { mode: str(p, 'input_mode') })
+          : undefined
+      }
     >
       <Prose text={str(p, 'text')} />
       {images.length ? (
-        <p className="mt-1.5 text-[11px] text-text-muted">随附图片 {images.length} 张</p>
+        <p className="mt-1.5 text-[11px] text-text-muted">
+          {t('workbench.record.attachedImages', { n: images.length })}
+        </p>
       ) : null}
     </TextShell>
   );
 }
 
 function AgentSay({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   return (
     <TextShell
       record={record}
       icon={<Bot size={12} />}
-      label="回复"
+      label={t(KIND_LABEL_KEY['agent.say'])}
+      labelTone="text-[11px] font-semibold text-text-primary"
       tone="bg-transparent"
       meta={str(p, 'model')}
     >
@@ -552,6 +677,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
 }
 
 function AgentThink({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const text = str(record.payload, 'text');
   // 正文没落盘的思考（模型这一轮的推理是加密的，落盘时只剩一个空壳）照常出卡的话，
   // 一屏能排下八九个「思考 0 字」的空盒子，把真正有内容的对话挤没了。它确实发生过，
@@ -565,7 +691,7 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
         className="flex min-w-0 items-center gap-2 px-1 text-[11px] text-text-muted"
       >
         <Circle size={7} />
-        <span>思考了一轮，正文没落盘</span>
+        <span>{t('workbench.record.thinkEmpty')}</span>
         <span className="h-px flex-1 border-t border-dashed border-border-color" />
         <span className="font-mono">{formatClock(record.ts)}</span>
       </div>
@@ -575,9 +701,10 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
     <TextShell
       record={record}
       icon={<Circle size={10} />}
-      label="思考"
-      tone="border border-dashed border-border-color bg-transparent"
-      meta={`${text.length} 字`}
+      label={t(KIND_LABEL_KEY['agent.think'])}
+      labelTone="text-[11px] text-text-muted"
+      tone="border border-dashed border-border-color"
+      meta={t('workbench.record.charCount', { n: text.length })}
       collapsible
       defaultOpen={false}
     >
@@ -592,14 +719,14 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
  * hook 是在什么当口把话塞进来的。取中文，NEVER 把 ``PreToolUse`` 这种机器名摆给人看
  * ——认不出这几个词的人，看到它只知道"有东西"，看不出"有东西拦在我动手之前"。
  */
-const HOOK_EVENT_LABEL: Record<string, string> = {
-  SessionStart: '开场时塞进来的',
-  UserPromptSubmit: '你发话时塞进来的',
-  PreToolUse: '动手之前塞进来的',
-  PostToolUse: '动完手塞进来的',
-  Stop: '收尾时塞进来的',
-  PreCompact: '压缩之前塞进来的',
-  Notification: '提醒时塞进来的',
+const HOOK_EVENT_LABEL_KEY: Record<string, string> = {
+  SessionStart: 'workbench.record.hookEvent.SessionStart',
+  UserPromptSubmit: 'workbench.record.hookEvent.UserPromptSubmit',
+  PreToolUse: 'workbench.record.hookEvent.PreToolUse',
+  PostToolUse: 'workbench.record.hookEvent.PostToolUse',
+  Stop: 'workbench.record.hookEvent.Stop',
+  PreCompact: 'workbench.record.hookEvent.PreCompact',
+  Notification: 'workbench.record.hookEvent.Notification',
 };
 
 /**
@@ -613,6 +740,7 @@ const HOOK_EVENT_LABEL: Record<string, string> = {
  * 很长一句，读起来是两回事。
  */
 function HookInject({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const event = str(p, 'hook_event');
   const target = str(p, 'hook_target');
@@ -631,7 +759,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
       data-group="text"
       data-source="hook"
       data-testid="hook-inject"
-      className={`min-w-0 rounded-[10px] px-3 py-2.5 ${HOOK_BG} ${HOOK_RING}`}
+      className={`min-w-0 rounded-[8px] px-3 py-2 ${HOOK_BG} ${HOOK_RING}`}
     >
       <header className="flex items-center gap-2 text-[11px]">
         <button
@@ -645,25 +773,25 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
             className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
           />
           <Zap size={12} />
-          <span>旁路注入</span>
+          <span>{t('workbench.record.hookInject')}</span>
         </button>
         <span className="min-w-0 flex-1 truncate text-text-secondary">
-          {HOOK_EVENT_LABEL[event] ?? event}
+          {HOOK_EVENT_LABEL_KEY[event] ? t(HOOK_EVENT_LABEL_KEY[event]) : event}
           {target ? <span className="ml-1 font-mono text-text-muted">{target}</span> : null}
         </span>
         {segments.length > 1 ? (
           <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
-            {segments.length} 段
+            {t('workbench.record.segments', { n: segments.length })}
           </span>
         ) : null}
         {prevented ? (
           <span className={`shrink-0 rounded-full px-2 py-[1px] ${WAIT_BG} ${WAIT_TEXT}`}>
-            拦住了收尾
+            {t('workbench.record.blockedStop')}
           </span>
         ) : null}
         {failed ? (
           <span className={`shrink-0 rounded-full px-2 py-[1px] ${ERR_BG} ${ERR_TEXT}`}>
-            退出码 {exit}
+            {t('workbench.record.exitCode', { code: exit })}
           </span>
         ) : null}
         <AgentPath path={record.agent_path} />
@@ -676,17 +804,19 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
             segments.map((text, i) => (
               <div
                 key={i}
-                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] bg-bg-card px-2.5 py-2 text-[13px] leading-[1.7] text-text-secondary"
+                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-border-color px-2.5 py-2 text-[13px] leading-[1.7] text-text-secondary"
               >
                 {text}
               </div>
             ))
           ) : (
-            <p className="text-[12px] italic text-text-muted">这次 hook 一个字都没说</p>
+            <p className="text-[12px] italic text-text-muted">
+              {t('workbench.record.hookSaidNothing')}
+            </p>
           )}
           {stderr ? (
             <div>
-              <p className={`mb-1 text-[11px] ${ERR_TEXT}`}>标准错误</p>
+              <p className={`mb-1 text-[11px] ${ERR_TEXT}`}>{t('workbench.record.stderr')}</p>
               <Mono text={stderr} />
             </div>
           ) : null}
@@ -697,10 +827,10 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
 }
 
 /** 插话的三种下场各配一句人话与一个颜色。写的是**结果**，不是过程。 */
-const QUEUE_STATE: Record<string, { text: string; tone: string }> = {
-  absorbed: { text: '已并入当时那一轮', tone: `${DONE_BG} ${DONE_TEXT}` },
-  submitted: { text: '已作为独立一轮发出', tone: `${DONE_BG} ${DONE_TEXT}` },
-  pending: { text: '还在队列里', tone: `${WAIT_BG} ${WAIT_TEXT}` },
+const QUEUE_STATE: Record<string, { key: string; tone: string }> = {
+  absorbed: { key: 'workbench.record.queueState.absorbed', tone: `${DONE_BG} ${DONE_TEXT}` },
+  submitted: { key: 'workbench.record.queueState.submitted', tone: `${DONE_BG} ${DONE_TEXT}` },
+  pending: { key: 'workbench.record.queueState.pending', tone: `${WAIT_BG} ${WAIT_TEXT}` },
 };
 
 /**
@@ -714,16 +844,17 @@ const QUEUE_STATE: Record<string, { text: string; tone: string }> = {
  * 压根没进去；而绝大多数插话在几秒内就已经送达、模型也照做了。
  */
 function QueuedCommand({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
   return (
     <TextShell
       record={record}
       icon={<CornerDownRight size={12} />}
-      label="插话"
+      label={t('workbench.record.queuedCommand')}
       tone={`${ACCENT_BG} ${ACCENT_RING}`}
       meta={
-        <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{state.text}</span>
+        <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
       <Prose text={str(p, 'body')} />
@@ -732,21 +863,24 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
 }
 
 function ContextInject({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const files = list(p, 'files');
   const exit = num(p, 'exit_code');
   const unrecognized = p.unrecognized === true;
-  const label = str(p, 'label') || str(p, 'channel') || '注入内容';
+  const label = str(p, 'label') || str(p, 'channel') || t(KIND_LABEL_KEY['context.inject']);
   return (
     <TextShell
       record={record}
       icon={<Download size={12} />}
-      label={unrecognized ? `未识别 · ${label}` : label}
+      label={unrecognized ? t('workbench.record.unrecognized', { label }) : label}
       tone="bg-bg-subtle"
       meta={
         <span className="flex items-center gap-2">
           <span className="truncate">{str(p, 'channel')}</span>
-          {exit !== null ? <span className="font-mono">退出码 {exit}</span> : null}
+          {exit !== null ? (
+            <span className="font-mono">{t('workbench.record.exitCode', { code: exit })}</span>
+          ) : null}
         </span>
       }
       collapsible
@@ -768,17 +902,18 @@ function ContextInject({ record }: { record: WorkbenchRecord }) {
 }
 
 function ToolCall({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const family = str(p, 'tool_family') || 'other';
   return (
     <ToolShell
       record={record}
       icon={toolIcon(family)}
-      title={str(p, 'tool_name') || '（无名工具）'}
+      title={str(p, 'tool_name') || t('workbench.record.unnamedTool')}
       subtitle={str(p, 'title') || previewArgs(dict(p.args))}
       chips={
         <span className="rounded-full bg-bg-subtle px-2 py-[1px] text-[11px] text-text-muted">
-          {TOOL_FAMILY_LABEL[family] ?? family}
+          {TOOL_FAMILY_LABEL_KEY[family] ? t(TOOL_FAMILY_LABEL_KEY[family]) : family}
         </span>
       }
       collapsible
@@ -790,6 +925,7 @@ function ToolCall({ record }: { record: WorkbenchRecord }) {
 }
 
 function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId: string }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const truncation = str(p, 'truncation') || 'none';
   const [raw, setRaw] = useState<string | null>(null);
@@ -812,16 +948,27 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
   };
 
   const duration = formatDuration(num(p, 'duration_ms'));
+  const status = str(p, 'status');
+  // 失败的那一条自己摊开。其余收着——一次 Read 的输出两百行，一屏躺着七八次调用，
+  // 全摊开的话人要滚过几千行才看得到 agent 下一句说了什么。
+  const failed = status === 'error';
+  // 内容被截断或被挪走的那几条也摊开：卡身里放着「取原文」，那是人拿回丢掉那段的
+  // 唯一入口。收起来等于把补救办法藏在一次点击后面，而卡头上的徽章刚说完"没了"。
+  const needsAction = failed || Boolean(truncation);
   return (
     <ToolShell
       record={record}
       icon={<Terminal size={14} />}
-      title={str(p, 'tool_name') || '工具结果'}
-      subtitle={duration ? `耗时 ${duration}` : undefined}
+      title={str(p, 'tool_name') || t(KIND_LABEL_KEY['tool.result'])}
+      subtitle={duration ? t('workbench.record.elapsed', { duration }) : undefined}
+      headTone={failed ? ERR_BG : undefined}
+      ringTone={failed ? ERR_RING : undefined}
+      collapsible
+      defaultOpen={needsAction}
       chips={
         <>
           <TruncationChip state={truncation} ref_={str(p, 'truncation_ref')} />
-          <StatusChip status={str(p, 'status')} />
+          <StatusChip status={status} />
         </>
       }
     >
@@ -834,7 +981,7 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
             disabled={rawLoading}
             className="rounded-[3px] border border-border-color px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
-            {rawLoading ? '取原文…' : '取原文'}
+            {rawLoading ? t('workbench.record.fetchingRaw') : t('workbench.record.fetchRaw')}
           </button>
           {rawError ? <p className={`mt-1 text-[11px] ${ERR_TEXT}`}>{rawError}</p> : null}
           {raw ? (
@@ -849,6 +996,7 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
 }
 
 function SubagentDispatch({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const stats = dict(p.stats);
   // 允许出现的量只有已发生的绝对数：调了几次工具、多少 token、跑了多久。
@@ -858,15 +1006,17 @@ function SubagentDispatch({ record }: { record: WorkbenchRecord }) {
     typeof stats.total_tool_use_count === 'number' ? stats.total_tool_use_count : null;
   const spent =
     typeof stats.total_duration_ms === 'number' ? stats.total_duration_ms : num(p, 'duration_ms');
-  if (calls !== null) facts.push(`调用工具 ${calls} 次`);
-  if (tokens !== null) facts.push(`${tokens} token`);
-  if (spent !== null) facts.push(`历时 ${formatDuration(spent)}`);
+  if (calls !== null) facts.push(t('workbench.record.toolCalls', { n: calls }));
+  if (tokens !== null) facts.push(t('workbench.record.tokens', { n: tokens }));
+  if (spent !== null) {
+    facts.push(t('workbench.record.spent', { duration: formatDuration(spent) }));
+  }
 
   return (
     <ToolShell
       record={record}
       icon={<Bot size={14} />}
-      title={str(p, 'agent_type') || '子 agent'}
+      title={str(p, 'agent_type') || t('workbench.record.subagent')}
       subtitle={str(p, 'description') || str(p, 'title')}
       headTone={ACCENT_BG}
       ringTone={ACCENT_RING}
@@ -879,24 +1029,29 @@ function SubagentDispatch({ record }: { record: WorkbenchRecord }) {
       ) : null}
       {str(p, 'prompt') ? (
         <div className="mb-2">
-          <p className="mb-1 text-[11px] text-text-muted">派发时交代的话</p>
+          <p className="mb-1 text-[11px] text-text-muted">
+            {t('workbench.record.dispatchPrompt')}
+          </p>
           <Mono text={str(p, 'prompt')} />
         </div>
       ) : null}
       {str(p, 'content') || str(p, 'body') ? (
         <div>
-          <p className="mb-1 text-[11px] text-text-muted">子 agent 交回来的东西</p>
+          <p className="mb-1 text-[11px] text-text-muted">
+            {t('workbench.record.dispatchResult')}
+          </p>
           <Mono text={str(p, 'content') || str(p, 'body')} />
         </div>
       ) : null}
       {p.trace_available === false ? (
-        <p className="mt-1.5 text-[11px] text-text-muted">这次派发没有留下轨迹文件</p>
+        <p className="mt-1.5 text-[11px] text-text-muted">{t('workbench.record.noTrace')}</p>
       ) : null}
     </ToolShell>
   );
 }
 
 function TodoSnapshot({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const items = list(p, 'items');
   // 引擎被动重发的清单一个字没改也发，默认折叠；agent 主动写入的展开。
@@ -905,11 +1060,11 @@ function TodoSnapshot({ record }: { record: WorkbenchRecord }) {
     <ToolShell
       record={record}
       icon={<ListChecks size={14} />}
-      title="待办清单"
-      subtitle={passive ? '引擎重发' : 'agent 写入'}
+      title={t(KIND_LABEL_KEY['todo.snapshot'])}
+      subtitle={passive ? t('workbench.record.todoPassive') : t('workbench.record.todoActive')}
       chips={
         <span className="rounded-full bg-bg-subtle px-2 py-[1px] text-[11px] text-text-muted">
-          {items.length} 条
+          {t('workbench.record.itemCount', { n: items.length })}
         </span>
       }
       collapsible
@@ -955,30 +1110,38 @@ function TodoSnapshot({ record }: { record: WorkbenchRecord }) {
 }
 
 function PermissionOutcome({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   return (
     <ToolShell
       record={record}
       icon={<ShieldAlert size={14} />}
-      title={str(p, 'tool_name') || '权限结果'}
+      title={str(p, 'tool_name') || t(KIND_LABEL_KEY['permission.outcome'])}
       subtitle={str(p, 'reason')}
       headTone={WAIT_BG}
+      /* 正文只有一行「权限模式 X」，收起来省不下什么，还多一次点击。 */
+      defaultOpen
       chips={
         <span className={`rounded-full px-2 py-[1px] text-[11px] ${WAIT_BG} ${WAIT_TEXT}`}>
-          {str(p, 'decision') === 'denied' ? '被拒' : str(p, 'decision')}
+          {str(p, 'decision') === 'denied'
+            ? t('workbench.record.status.denied')
+            : str(p, 'decision')}
         </span>
       }
     >
       {str(p, 'mode') ? (
-        <p className="font-mono text-[11px] text-text-muted">权限模式 {str(p, 'mode')}</p>
+        <p className="font-mono text-[11px] text-text-muted">
+          {t('workbench.record.permMode', { mode: str(p, 'mode') })}
+        </p>
       ) : null}
     </ToolShell>
   );
 }
 
 function MediaAttach({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
-  const name = str(p, 'display_name') || str(p, 'ref') || '附件';
+  const name = str(p, 'display_name') || str(p, 'ref') || t(KIND_LABEL_KEY['media.attach']);
   const size = formatBytes(num(p, 'bytes'));
   return (
     <ToolShell
@@ -986,6 +1149,7 @@ function MediaAttach({ record }: { record: WorkbenchRecord }) {
       icon={<Paperclip size={14} />}
       title={name}
       subtitle={str(p, 'media_type')}
+      defaultOpen
       chips={
         size ? (
           <span className="rounded-full bg-bg-subtle px-2 py-[1px] text-[11px] text-text-muted">
@@ -1008,33 +1172,36 @@ function MediaAttach({ record }: { record: WorkbenchRecord }) {
  * 一层连按钮都不渲染——两道都要有，任何一道都不许省。
  */
 function ErrorCard({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   return (
     <article
       data-kind={record.kind}
       data-group="system"
-      className={`min-w-0 rounded-[6px] px-3 py-2.5 ${ERR_BG} ${ERR_RING}`}
+      className={`min-w-0 rounded-[8px] px-3 py-2 ${ERR_BG} ${ERR_RING}`}
     >
       <header className="mb-1.5 flex items-center gap-2">
         <AlertTriangle size={14} className={ERR_TEXT} />
-        <span className={`text-[13px] font-semibold ${ERR_TEXT}`}>报错</span>
+        <span className={`text-[13px] font-semibold ${ERR_TEXT}`}>
+          {t(KIND_LABEL_KEY.error)}
+        </span>
         <span className="flex-1" />
         <AgentPath path={record.agent_path} />
         <Timestamp ts={record.ts} />
       </header>
       <dl className="space-y-1 text-[12px]">
         <div className="flex gap-2">
-          <dt className="w-12 shrink-0 text-text-muted">范围</dt>
+          <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errScope')}</dt>
           <dd className="min-w-0 break-words font-mono text-text-secondary">
             {str(p, 'scope')}
           </dd>
         </div>
         <div className="flex gap-2">
-          <dt className="w-12 shrink-0 text-text-muted">代码</dt>
+          <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errCode')}</dt>
           <dd className="min-w-0 break-words font-mono text-text-secondary">{str(p, 'code')}</dd>
         </div>
         <div className="flex gap-2">
-          <dt className="w-12 shrink-0 text-text-muted">消息</dt>
+          <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errMessage')}</dt>
           <dd className="min-w-0 whitespace-pre-wrap break-words text-text-primary">
             {str(p, 'message')}
           </dd>
@@ -1042,20 +1209,21 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
       </dl>
       <p className="mt-2 flex items-center gap-1 text-[11px] text-text-muted">
         <Lock size={11} />
-        原文带登录凭据，不予提供
+        {t('workbench.record.rawWithheld')}
       </p>
     </article>
   );
 }
 
 function Interrupt({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const phase = str(p, 'phase');
   const phaseText =
     phase === 'tool' || phase === 'tool-executing'
-      ? '工具正在跑的时候'
+      ? t('workbench.record.phaseTool')
       : phase === 'generating'
-        ? '模型正在写的时候'
+        ? t('workbench.record.phaseGenerating')
         : '';
   return (
     <div
@@ -1066,7 +1234,7 @@ function Interrupt({ record }: { record: WorkbenchRecord }) {
       <span className="h-px flex-1 border-t border-dashed border-border-color" />
       <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-bg-subtle px-2.5 py-1 text-[11px] text-text-secondary">
         <Scissors size={11} />
-        你按了停止
+        {t('workbench.record.interrupted')}
         {phaseText ? <span className="text-text-muted">· {phaseText}</span> : null}
         <span className="font-mono text-text-muted">{formatClock(record.ts)}</span>
       </span>
@@ -1076,26 +1244,31 @@ function Interrupt({ record }: { record: WorkbenchRecord }) {
 }
 
 function SessionState({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const from = str(p, 'from');
   const to = str(p, 'to');
-  const FIELD: Record<string, string> = {
-    title: '标题',
-    model: '模型',
-    agent: 'agent',
-    mode: '模式',
-    'permission-mode': '权限模式',
+  const FIELD_KEY: Record<string, string> = {
+    title: 'workbench.record.stateField.title',
+    model: 'workbench.record.stateField.model',
+    agent: 'workbench.record.stateField.agent',
+    mode: 'workbench.record.stateField.mode',
+    'permission-mode': 'workbench.record.stateField.permissionMode',
   };
   const field = str(p, 'field');
   return (
     <SystemShell
       record={record}
       icon={<Circle size={7} className="text-text-muted" />}
-      label={<span className="text-text-secondary">{FIELD[field] ?? field}</span>}
+      label={
+        <span className="text-text-secondary">
+          {FIELD_KEY[field] ? t(FIELD_KEY[field]) : field}
+        </span>
+      }
       meta={
         <span className="font-mono">
           {from ? `${from} → ` : ''}
-          <span className="text-text-primary">{to || '（空）'}</span>
+          <span className="text-text-primary">{to || t('workbench.record.emptyValue')}</span>
         </span>
       }
     />
@@ -1103,6 +1276,7 @@ function SessionState({ record }: { record: WorkbenchRecord }) {
 }
 
 function ContextCompact({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const before = num(p, 'tokens_before');
   const after = num(p, 'tokens_after');
@@ -1110,13 +1284,15 @@ function ContextCompact({ record }: { record: WorkbenchRecord }) {
     <SystemShell
       record={record}
       icon={<Minimize2 size={12} className="text-text-muted" />}
-      label={<span className="text-text-secondary">上下文压缩</span>}
+      label={
+        <span className="text-text-secondary">{t(KIND_LABEL_KEY['context.compact'])}</span>
+      }
       meta={
         <span className="font-mono">
           {str(p, 'trigger') ? `${str(p, 'trigger')} · ` : ''}
-          {before !== null ? `压缩前 ${before} token` : ''}
+          {before !== null ? t('workbench.record.compactBefore', { n: before }) : ''}
           {before !== null && after !== null ? ' → ' : ''}
-          {after !== null ? `压缩后 ${after} token` : ''}
+          {after !== null ? t('workbench.record.compactAfter', { n: after }) : ''}
         </span>
       }
       collapsible
@@ -1127,25 +1303,30 @@ function ContextCompact({ record }: { record: WorkbenchRecord }) {
 }
 
 function CallEnvelope({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
   const p = record.payload;
   const facts: string[] = [];
   const duration = formatDuration(num(p, 'duration_ms'));
-  if (duration) facts.push(`历时 ${duration}`);
+  if (duration) facts.push(t('workbench.record.spent', { duration }));
   const messages = num(p, 'message_count');
-  if (messages !== null) facts.push(`${messages} 条消息`);
-  if (str(p, 'finish_reason')) facts.push(`结束于 ${str(p, 'finish_reason')}`);
+  if (messages !== null) facts.push(t('workbench.record.messageCount', { n: messages }));
+  if (str(p, 'finish_reason')) {
+    facts.push(t('workbench.record.finishReason', { reason: str(p, 'finish_reason') }));
+  }
   const tokens = dict(p.tokens);
-  for (const [key, label] of [
-    ['input', '入'],
-    ['output', '出'],
+  for (const [key, labelKey] of [
+    ['input', 'workbench.record.tokenIn'],
+    ['output', 'workbench.record.tokenOut'],
   ] as const) {
     const v = tokens[key];
-    if (typeof v === 'number') facts.push(`${label} ${v} token`);
+    if (typeof v === 'number') {
+      facts.push(t('workbench.record.tokenFact', { label: t(labelKey), n: v }));
+    }
   }
   const starts = num(p, 'step_start_count');
   const finishes = num(p, 'step_finish_count');
   if (starts !== null && finishes !== null && starts !== finishes) {
-    facts.push('这条消息里的边界标记缺一半');
+    facts.push(t('workbench.record.markersMissing'));
   }
   const phase = str(p, 'phase');
   return (
@@ -1154,8 +1335,12 @@ function CallEnvelope({ record }: { record: WorkbenchRecord }) {
       icon={<Clock size={11} className="text-text-muted" />}
       label={
         <span className="text-text-muted">
-          调用边界
-          {phase === 'start' ? ' · 开始' : phase === 'finish' ? ' · 结束' : ''}
+          {t(KIND_LABEL_KEY['call.envelope'])}
+          {phase === 'start'
+            ? t('workbench.record.phaseStart')
+            : phase === 'finish'
+              ? t('workbench.record.phaseFinish')
+              : ''}
         </span>
       }
       meta={<span className="font-mono">{facts.join(' · ')}</span>}
@@ -1224,15 +1409,21 @@ function RecordCardInner({ record, sessionId }: RecordCardProps) {
     default:
       // 十五种之外的形态在核心数据层就被拦住了（`UnifiedRecord.__post_init__` 会炸）。
       // 真跑到这里说明两边的形态清单脱了节，显示出来而不是静默丢弃。
-      return (
-        <SystemShell
-          record={record}
-          icon={<AlertTriangle size={12} className={ERR_TEXT} />}
-          label={<span className={ERR_TEXT}>界面认不出的记录形态</span>}
-          meta={String((record as WorkbenchRecord).kind)}
-        />
-      );
+      return <UnknownKind record={record} />;
   }
+}
+
+/** 分发那一支的兜底卡。单独成一个组件，是为了让取字这件事发生在组件里。 */
+function UnknownKind({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
+  return (
+    <SystemShell
+      record={record}
+      icon={<AlertTriangle size={12} className={ERR_TEXT} />}
+      label={<span className={ERR_TEXT}>{t('workbench.record.unknownKind')}</span>}
+      meta={String(record.kind)}
+    />
+  );
 }
 
 const RecordCard = memo(RecordCardInner);
