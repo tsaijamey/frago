@@ -1,23 +1,31 @@
 /**
- * EnvironmentModal —— 跑 frago 需要的那一整套东西，各自装的是哪一版、外面出到哪一版，
- * 以及把它升上去。
+ * EnvironmentModal —— 跑 frago 需要的那一整套东西，齐不齐、要不要你动手。
+ *
+ * **每一格第一眼看到的是一句结论，不是版本号。** 上一版把 `2.50.1` 和 `最新 2.55.0`
+ * 并排摆在最显眼的位置，结果是人读完两个数字仍然不知道这要不要紧——差一个小版本和
+ * 缺一样必需的东西长得一模一样。现在第一行直接写「没事」「有新版」「没装」，版本号
+ * 退成底下一行小字，谁想核对谁去看。
+ *
+ * **颜色只留给真的要人动手的那几格。** 从前只要有新版就整格染成琥珀色，一屏十几格
+ * 全亮着，看着像机器坏了一半，实际上一样都不影响用。现在有新版的那几格是安静的，
+ * 只有「缺了必需的东西」和「升级没成、得你自己来」才上色。
+ *
+ * **人要做的事写成他能照做的样子。** 升级被本机规则拦下时，worker 把该由人执行的那条
+ * 命令原样交回来，格子里直接摆出来并配一颗复制按钮——而不是丢一句「被拦截了」让人
+ * 自己猜下一步。
  *
  * **这张清单照装机向导抄，不是这里现编的。** 装机时探测脚本查哪几样，这张表就报哪
  * 几样，再加上 frago 自己。两处对不上，用户装完看到的和事后查到的就成了两台机器。
  *
- * **升级是点一下就走的动作，不是一段说明。** 落后的那一格上直接挂按钮，头上还有一颗
- * 把所有落后的一次排进队。至于每样东西该怎么升——它现在是从哪儿装的、这台机器有哪些
- * 包管理器——由服务端派出去的 agent 按本机事实自己判断，界面不替它猜。
- *
  * **只有关闭按钮能关掉它。** 点周围收窗对一张要来回对照着读的表是个陷阱：人的视线在
  * 十几格之间移动，鼠标跟着落到格与格的空隙上，一点就没了。升级跑着的时候更是如此。
  *
- * **默认每行四格。** 四格是一屏能横着扫完、又不至于让每格窄到版本号折行的那个数；
- * 屏幕窄下去依次退到三格、两格、一格。
+ * **默认每行四格**，屏幕窄下去依次退到三格、两格、一格。
  */
 
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowUp, Check, Loader2, RefreshCw, X } from 'lucide-react';
+import { ArrowUp, Check, Copy, Loader2, RefreshCw, X } from 'lucide-react';
 import type { EnvironmentState, EnvironmentUpgradeState } from '@/hooks/useEnvironment';
 import type { EnvironmentItem, EnvironmentUpgradeItemState } from '@/types/api';
 
@@ -32,14 +40,18 @@ interface Props {
 const GROUP_ORDER: Array<EnvironmentItem['group']> = ['frago', 'required', 'optional', 'agent'];
 
 /**
- * 一格的状态。四档各自对应一句人话，颜色只给需要人动手的那两档——全都标上颜色，
- * 等于哪一档都没被标出来。
+ * 一格的处境，也就是第一行那句结论。
+ *
+ * 五档，按「要不要人动手」排的：needs-you 升级没成、要人自己来；missing-required
+ * 缺了必需的东西；outdated 有新版（点一下就升，不急）；missing 这项能力还没开；
+ * ok 没事。只有前两档上色——全都标上颜色，等于哪一档都没被标出来。
  */
-type Tone = 'missing-required' | 'missing' | 'outdated' | 'current';
+type Tone = 'needs-you' | 'missing-required' | 'outdated' | 'missing' | 'ok';
 
-function toneOf(item: EnvironmentItem): Tone {
+function toneOf(item: EnvironmentItem, job?: EnvironmentUpgradeItemState): Tone {
+  if (job?.state === 'manual' || job?.state === 'failed') return 'needs-you';
   if (!item.installed) return item.required ? 'missing-required' : 'missing';
-  return item.outdated ? 'outdated' : 'current';
+  return item.outdated ? 'outdated' : 'ok';
 }
 
 /**
@@ -65,6 +77,42 @@ function formatCheckedAt(seconds: number | null): string {
   });
 }
 
+/**
+ * 那条要人自己去终端跑的命令，配一颗复制按钮。
+ *
+ * 命令只有能原样拿走才算交付。让人从一段说明里把命令挑出来手敲，是把最后一步的成本
+ * 又推回给他，而那一步正是他找我们来解决的。
+ */
+function ManualCommand({ command }: { command: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 剪贴板不给用（非安全来源、权限被拒）时命令仍然摆在屏上，人能自己选中复制。
+    }
+  };
+
+  return (
+    <div className="envc-manual">
+      <code className="envc-manual-cmd">{command}</code>
+      <button
+        type="button"
+        className="envc-manual-copy"
+        onClick={() => void copy()}
+        title={t('envCheck.copy')}
+        aria-label={t('envCheck.copy')}
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </div>
+  );
+}
+
 export default function EnvironmentModal({ environment, upgrade: job, onClose }: Props) {
   const { t } = useTranslation();
   const { data, loading, error, reload } = environment;
@@ -81,20 +129,20 @@ export default function EnvironmentModal({ environment, upgrade: job, onClose }:
 
   const stateOf = (id: string): EnvironmentUpgradeItemState | undefined => status?.items?.[id];
 
-  /* 上一轮升级的下场，摆在最上面。
-     升级关了窗还在跑，人回头再打开时最想知道的第一件事是「刚才那下成了没有」——
-     那句话不该藏在某一格里等人自己去找。 */
+  /* 刚才那一下成了没有，摆在最上面。
+     升级关了窗还在跑，人回头再打开时最想知道的就是这个——那句话不该藏在某一格里
+     等人自己去找。只数两个数：升好了几样、还要人自己动手几样；「不用升」不占篇幅，
+     它对人没有任何要求。 */
   const done = status && !status.running && status.order.length > 0;
   const tally = done
     ? status.order.reduce(
         (acc, id) => {
           const state = status.items[id]?.state;
           if (state === 'ok') acc.ok += 1;
-          else if (state === 'failed') acc.failed += 1;
-          else acc.skipped += 1;
+          else if (state === 'manual' || state === 'failed') acc.needsYou += 1;
           return acc;
         },
-        { ok: 0, failed: 0, skipped: 0 }
+        { ok: 0, needsYou: 0 }
       )
     : null;
 
@@ -153,16 +201,14 @@ export default function EnvironmentModal({ environment, upgrade: job, onClose }:
             人才知道为什么要等，以及等的时候机器上正在发生什么。 */}
         {busy ? <div className="envc-note envc-note--busy">{t('envCheck.busyNote')}</div> : null}
 
-        {/* 跑完那一轮的总账。失败的那几样底下各自写着卡在哪，这里只说数目和去哪看。 */}
+        {/* 跑完那一下的结果。要人动手的那几样底下各自摆着命令，这里只说还剩几样。 */}
         {tally ? (
           <div
-            className={`envc-note ${tally.failed > 0 ? 'envc-note--failed' : 'envc-note--done'}`}
+            className={`envc-note ${tally.needsYou > 0 ? 'envc-note--failed' : 'envc-note--done'}`}
           >
-            {t('envCheck.doneNote', {
-              ok: tally.ok,
-              failed: tally.failed,
-              skipped: tally.skipped,
-            })}
+            {tally.needsYou > 0
+              ? t('envCheck.doneNeedsYou', { ok: tally.ok, n: tally.needsYou })
+              : t('envCheck.doneAllGood', { ok: tally.ok })}
           </div>
         ) : null}
 
@@ -182,13 +228,15 @@ export default function EnvironmentModal({ environment, upgrade: job, onClose }:
               <h3 className="envc-group-title">{t(`envCheck.group.${group}`)}</h3>
               <div className="envc-grid">
                 {rows.map((item) => {
-                  const tone = toneOf(item);
                   const job = stateOf(item.id);
+                  const tone = toneOf(item, job);
                   const upgradable = isUpgradable(item, fragoSource);
+                  // 这一轮正在做这一格，那句结论就让位给进度——「有新版」这时候是废话。
+                  const working = job?.state === 'running' || job?.state === 'pending';
+
                   return (
                     <div key={item.id} className={`envc-cell envc-cell--${tone}`}>
                       <div className="envc-cell-head">
-                        <span className={`envc-dot envc-dot--${tone}`} aria-hidden="true" />
                         <span className="envc-cell-name" title={item.name}>
                           {item.name}
                         </span>
@@ -197,41 +245,53 @@ export default function EnvironmentModal({ environment, upgrade: job, onClose }:
                         ) : null}
                       </div>
 
-                      {/* 当前版本是这一格的主角：人来这儿是要知道「我现在跑的是哪一版」。 */}
-                      <div className="envc-cell-current">
-                        {item.installed ? item.current ?? '—' : t('envCheck.notInstalled')}
+                      {/* 第一行是结论。人打开这扇窗要知道的第一件事是「这一样要不要紧」，
+                          不是它的版本号——版本号退到下一行。 */}
+                      <div className={`envc-verdict envc-verdict--${tone}`}>
+                        {working ? (
+                          <>
+                            <Loader2 size={12} className="cs-spin" />
+                            {t(`envCheck.job.${job?.state}`)}
+                          </>
+                        ) : (
+                          t(`envCheck.verdict.${tone}`)
+                        )}
                       </div>
 
-                      <div className="envc-cell-latest">
-                        {item.latest
-                          ? t('envCheck.latest', { version: item.latest })
-                          : t('envCheck.latestUnknown')}
+                      {/* 版本号退成小字：想核对的人看得到，不看也不妨碍读上面那句。 */}
+                      <div className="envc-versions">
+                        {/* 外面查不到版本的（只发桌面版那种），就别写「外面 —」——
+                            一个破折号不是答案，说清楚查不到才是。 */}
+                        {item.installed && item.latest
+                          ? t('envCheck.versionLine', {
+                              current: item.current ?? '—',
+                              latest: item.latest,
+                            })
+                          : item.installed
+                            ? t('envCheck.versionCurrentOnly', { current: item.current ?? '—' })
+                            : item.latest
+                              ? t('envCheck.versionLatestOnly', { latest: item.latest })
+                              : t('envCheck.latestUnknown')}
                       </div>
 
-                      {/* 这一格自己那一轮升级的下场，压在版本号底下。跑完了留在原地不清掉
-                          ——人回头看的时候要知道刚才这一格到底成没成。 */}
-                      {job ? (
-                        <div className={`envc-cell-job envc-cell-job--${job.state}`}>
-                          {job.state === 'running' ? (
-                            <>
-                              <Loader2 size={11} className="cs-spin" />
-                              {t('envCheck.job.running')}
-                            </>
-                          ) : null}
-                          {job.state === 'pending' ? t('envCheck.job.pending') : null}
-                          {job.state === 'ok' ? (
-                            <>
-                              <Check size={11} />
-                              {job.message || t('envCheck.job.ok')}
-                            </>
-                          ) : null}
-                          {job.state === 'skipped' || job.state === 'failed'
-                            ? job.message || t(`envCheck.job.${job.state}`)
-                            : null}
+                      {/* 升级没成的时候，把该由人做的那件事直接摆出来。 */}
+                      {job?.state === 'manual' && job.message ? (
+                        <ManualCommand command={job.message} />
+                      ) : null}
+                      {job?.state === 'failed' && job.message ? (
+                        <div className="envc-cell-job envc-cell-job--failed">{job.message}</div>
+                      ) : null}
+                      {job?.state === 'ok' ? (
+                        <div className="envc-cell-job envc-cell-job--ok">
+                          <Check size={11} />
+                          {job.message || t('envCheck.job.ok')}
                         </div>
                       ) : null}
+                      {job?.state === 'skipped' && job.message ? (
+                        <div className="envc-cell-job">{job.message}</div>
+                      ) : null}
 
-                      {upgradable && job?.state !== 'ok' ? (
+                      {upgradable && !working && job?.state !== 'ok' ? (
                         <button
                           type="button"
                           className="envc-cell-upgrade"
@@ -239,7 +299,7 @@ export default function EnvironmentModal({ environment, upgrade: job, onClose }:
                           disabled={busy}
                         >
                           <ArrowUp size={12} />
-                          {item.installed
+                          {job ? t('envCheck.retryOne') : item.installed
                             ? t('envCheck.upgradeOne')
                             : t('envCheck.installOne')}
                         </button>

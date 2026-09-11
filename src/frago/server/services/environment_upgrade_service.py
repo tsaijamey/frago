@@ -163,11 +163,15 @@ def build_brief(item_id: str, current: str | None, latest: str | None) -> str:
 - 下载很大（几百 MB）时照做，但在过程里说一句在下什么。
 
 ## 怎么算完
-装完重新问一次版本号，确认真的变了。**最后一行必须是下面三种之一，前面不要加任何符号：**
+装完重新问一次版本号，确认真的变了。**最后一行必须是下面四种之一，前面不要加任何符号：**
 
 {RESULT_PREFIX} OK <升级前的版本> -> <升级后的版本>
 {RESULT_PREFIX} SKIPPED <一句话说明为什么不用升>
+{RESULT_PREFIX} MANUAL <要用户自己在终端里跑的那一条命令，只写命令本身>
 {RESULT_PREFIX} FAILED <一句话说明卡在哪>
+
+MANUAL 用在「你做不了、但人能做」的场合——被本机规则拦下、需要输入密码、要在图形界面里点。
+那一行只写命令，界面会原样显示给用户复制，所以不要加解释、不要加提示符、不要加引号。
 """
 
 
@@ -314,6 +318,9 @@ class EnvironmentUpgradeService:
                 return "ok", rest or f"{before} -> {after}"
             if head == "SKIPPED":
                 return "skipped", rest
+            if head == "MANUAL":
+                # 这一档的内容是一条命令，界面原样摆给人复制，所以不加任何修饰。
+                return "manual", rest
             return "failed", rest or body
 
         if after and after != before:

@@ -1445,35 +1445,46 @@
     "refresh": "重新检查",
     "close": "关闭",
     "empty": "问不到这台机器的情况",
-    "checkedAt": "外面的版本号问于 {{time}}",
-    "neverChecked": "还没问过外面的版本号",
-    "notInstalled": "未安装",
-    "latest": "最新 {{version}}",
-    "latestUnknown": "外面没有可查的版本",
-    "localBuildNote": "这台机器上的 frago 是从本地构建的包装上去的，版本号通常比线上发布的大，所以它不报可更新。",
+    "checkedAt": "{{time}} 查过外面的版本",
+    "neverChecked": "还没查过外面的版本",
+    "latestUnknown": "查不到外面的版本",
+    "localBuildNote": "这台机器上的 frago 是你自己构建装的，比线上发布的新，所以不提示升级。",
     "tag": {
       "required": "必装"
     },
     "group": {
-      "frago": "frago 本体",
-      "required": "装 frago 必须有",
-      "optional": "各管一种能力",
-      "agent": "agent 命令行"
+      "frago": "frago 本身",
+      "required": "没有它就装不了 frago",
+      "optional": "各开一项能力",
+      "agent": "能接进来的 agent 命令行"
     },
     "upgradeAll": "全部升级（{{n}}）",
     "upgradingAll": "升级中",
     "upgradeOne": "升级",
     "installOne": "安装",
-    "busyNote": "正在这台机器上真的装东西：frago 派了一个 agent 按本机的实际装法一样一样升，中途可以关掉这扇窗，升级不会停。",
+    "busyNote": "正在这台机器上真的装东西：frago 派了一个 agent 按每样东西原本的装法一样一样升。可以关掉这扇窗，升级不会停。",
     "job": {
       "pending": "排队中",
-      "running": "正在升级",
-      "ok": "已升级",
+      "running": "正在装",
+      "ok": "升好了",
       "skipped": "不用升",
       "failed": "没升成"
     },
     "railUpgrading": "正在升级这台机器上的环境，点开看进度",
     "railUpgradingShort": "升级中",
-    "doneNote": "上一轮升级：成功 {{ok}}，失败 {{failed}}，不用升 {{skipped}}。失败的那几样在下面各自写着卡在哪。"
+    "verdict": {
+      "ok": "没事",
+      "outdated": "有新版",
+      "missing": "没装，这项能力用不了",
+      "missing-required": "缺了，装 frago 必须有它",
+      "needs-you": "得你自己动手"
+    },
+    "versionLine": "现在 {{current}} · 外面 {{latest}}",
+    "versionLatestOnly": "外面 {{latest}}",
+    "copy": "复制这条命令",
+    "retryOne": "再试一次",
+    "doneAllGood": "升好了 {{ok}} 样，都没问题。",
+    "doneNeedsYou": "升好了 {{ok}} 样，还有 {{n}} 样要你自己动手——下面标红的格子里有该跑的命令。",
+    "versionCurrentOnly": "现在 {{current}} · 外面查不到版本"
   }
 }

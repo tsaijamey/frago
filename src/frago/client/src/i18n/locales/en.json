@@ -1445,35 +1445,46 @@
     "refresh": "Check again",
     "close": "Close",
     "empty": "Could not read this machine",
-    "checkedAt": "Upstream versions checked {{time}}",
-    "neverChecked": "Upstream versions not checked yet",
-    "notInstalled": "Not installed",
-    "latest": "Latest {{version}}",
-    "latestUnknown": "No public version to check",
-    "localBuildNote": "The frago on this machine was installed from a locally built package. Its version is usually ahead of the published one, so it never reports an update.",
+    "checkedAt": "Checked upstream {{time}}",
+    "neverChecked": "Upstream not checked yet",
+    "latestUnknown": "No upstream version to check",
+    "localBuildNote": "The frago here was built by you, so it is ahead of the published one and never prompts to update.",
     "tag": {
       "required": "Required"
     },
     "group": {
       "frago": "frago itself",
-      "required": "Required to install frago",
-      "optional": "Each enables one capability",
-      "agent": "Agent CLIs"
+      "required": "frago cannot be installed without these",
+      "optional": "Each turns on one capability",
+      "agent": "Agent CLIs you can plug in"
     },
     "upgradeAll": "Upgrade all ({{n}})",
     "upgradingAll": "Upgrading",
     "upgradeOne": "Upgrade",
     "installOne": "Install",
-    "busyNote": "Really installing on this machine: frago sent an agent to upgrade them one by one the way each was installed. You can close this window; the upgrade keeps running.",
+    "busyNote": "Really installing on this machine: frago sent an agent to upgrade them one by one the way each was installed. You can close this window; it keeps running.",
     "job": {
       "pending": "Queued",
-      "running": "Upgrading",
+      "running": "Installing",
       "ok": "Upgraded",
       "skipped": "Nothing to do",
       "failed": "Did not upgrade"
     },
     "railUpgrading": "Upgrading this machine's environment — open to see progress",
     "railUpgradingShort": "Upgrading",
-    "doneNote": "Last run: {{ok}} upgraded, {{failed}} failed, {{skipped}} left alone. Each failure says below where it got stuck."
+    "verdict": {
+      "ok": "All good",
+      "outdated": "Newer version out",
+      "missing": "Not installed — this capability is off",
+      "missing-required": "Missing — frago needs it",
+      "needs-you": "Needs you"
+    },
+    "versionLine": "Now {{current}} · upstream {{latest}}",
+    "versionLatestOnly": "Upstream {{latest}}",
+    "copy": "Copy this command",
+    "retryOne": "Try again",
+    "doneAllGood": "{{ok}} upgraded, all fine.",
+    "doneNeedsYou": "{{ok}} upgraded. {{n}} still need you — the red cells below have the command to run.",
+    "versionCurrentOnly": "Now {{current}} · no upstream version"
   }
 }

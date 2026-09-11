@@ -666,8 +666,11 @@ class EnvironmentUpgradeRequest(BaseModel):
 class EnvironmentUpgradeItemState(BaseModel):
     """一样东西这一轮升级到哪一步了。
 
-    `state` 五档：pending 排着队、running 正在跑、ok 升成了、skipped 不用升、
-    failed 没升成。`message` 是给人看的那句结论。
+    `state` 六档：pending 排着队、running 正在跑、ok 升成了、skipped 不用升、
+    manual 得用户自己动手、failed 没升成。
+
+    `message` 随档位换意思：manual 那档它是一条要用户在终端里跑的命令，界面原样摆出来
+    给人复制；其余档位是给人看的那句结论。
     """
 
     state: str = "pending"

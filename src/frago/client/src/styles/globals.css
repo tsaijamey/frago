@@ -5817,7 +5817,11 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   }
 }
 
-/* 一格是一整块，状态靠整块的底色和边框说话，不靠边上加一条竖杠。 */
+/* 一格是一整块，状态靠整块的底色和边框说话，不靠边上加一条竖杠。
+
+   **默认是安静的。** 有新版不上色——那不是毛病，是一条可选的消息，一屏十几格全亮着
+   只会让人以为机器坏了一半。只有两种处境上色：缺了必需的东西，和升级没成、等着人
+   自己动手。那两种是真的在向人要一个动作。 */
 .envc-cell {
   min-width: 0;
   padding: 10px var(--spacing-sm);
@@ -5829,11 +5833,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: 3px;
 }
 
-.envc-cell--outdated {
-  background: var(--accent-warning-10);
-  border-color: color-mix(in srgb, var(--accent-warning) 34%, transparent);
-}
-
+.envc-cell--needs-you,
 .envc-cell--missing-required {
   background: var(--accent-error-10);
   border-color: color-mix(in srgb, var(--accent-error) 34%, transparent);
@@ -5850,31 +5850,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-.envc-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-
-.envc-dot--current {
-  background: var(--text-dim);
-}
-
-.envc-dot--outdated {
-  background: var(--accent-warning);
-}
-
-.envc-dot--missing-required {
-  background: var(--accent-error);
-}
-
-.envc-dot--missing {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--text-dim);
 }
 
 .envc-cell-name {
@@ -5897,35 +5872,45 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   line-height: 15px;
 }
 
-/* 当前版本是这一格的主角：人来这儿要知道的第一件事是「我现在跑的是哪一版」。
-   等宽数字，好让上下几格能横着比。 */
-.envc-cell-current {
+/* 结论。这一行是一格里最大的字，因为人来这儿要知道的第一件事就是它。 */
+.envc-verdict {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: calc(15px * var(--font-scale));
   font-weight: 600;
   color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
 }
 
-.envc-cell--missing .envc-cell-current,
-.envc-cell--missing-required .envc-cell-current {
+.envc-verdict--ok {
+  color: var(--text-secondary);
   font-weight: 500;
-  color: var(--text-muted);
 }
 
-.envc-cell-latest {
+.envc-verdict--missing {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.envc-verdict--outdated {
+  color: var(--text-primary);
+}
+
+.envc-verdict--needs-you,
+.envc-verdict--missing-required {
+  color: var(--accent-error);
+}
+
+/* 版本号退成小字。想核对的人看得到，不看也不妨碍读上面那句结论。 */
+.envc-versions {
   font-size: calc(11px * var(--font-scale));
+  line-height: 1.4;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.envc-cell--outdated .envc-cell-latest {
-  color: var(--accent-warning);
+  /* 宁可折成两行也不截断：Chrome 的版本号有十几位，截成「外面 …」正好把人要核对的
+     那个数字藏起来，而这一行存在的唯一理由就是给人核对。 */
+  overflow-wrap: anywhere;
 }
 
 /* === 侧边栏上那颗入口按钮 === */
@@ -6102,4 +6087,51 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .envc-note--failed {
   background: var(--accent-error-10);
   color: var(--accent-error);
+}
+
+/* 要人自己去终端跑的那条命令。摆成可以原样拿走的样子，旁边一颗复制按钮——让人从
+   一段说明里把命令挑出来手敲，等于把最后一步又推回给他。 */
+.envc-manual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  border: 1px solid var(--border-color);
+}
+
+.envc-manual-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-primary);
+}
+
+.envc-manual-copy {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.envc-manual-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.envc-manual-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
