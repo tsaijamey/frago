@@ -6,6 +6,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     t,
     presets,
     vendorCores,
+    workbuddy,
     viewMode,
     formName,
     setFormName,
@@ -44,6 +45,12 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   const isVendorCli = formKind === 'vendor_cli';
   const core = vendorCores.find((c) => c.agent_type === formAgentType);
 
+  // Borrowing the WorkBuddy login: no endpoint and no key again, but here it is
+  // frago-core that calls the gateway, so the model can only be one the last
+  // probe found answering. Half the names WorkBuddy hands out do not answer.
+  const isWorkbuddy = formKind === 'workbuddy';
+  const usableModels = (workbuddy?.models ?? []).filter((m) => m.ok);
+
   return (
     <div className="space-y-3">
       {/* Profile name */}
@@ -62,39 +69,92 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         />
       </div>
 
-      {/* What kind of connection this is. Hidden when frago knows of no core
-          that runs on its own account — a picker with one option is noise. */}
-      {vendorCores.length > 0 && (
-        <div>
-          <label htmlFor="profile-kind" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            {t('settings.profiles.connectionKind')}
-          </label>
-          <select
-            id="profile-kind"
-            value={formKind}
-            onChange={(e) => {
-              const kind = e.target.value as typeof formKind;
-              setFormKind(kind);
-              // Land on a usable core straight away; an empty core is the one
-              // thing the backend will refuse to save.
-              if (kind === 'vendor_cli' && !formAgentType) {
-                setFormAgentType(vendorCores[0].agent_type);
-              }
-            }}
-            className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
-          >
-            <option value="endpoint">{t('settings.profiles.kindEndpoint')}</option>
+      {/* What kind of connection this is. It decides which half of the form is
+          even meaningful. The vendor CLI option only appears when frago knows
+          of a core that runs on its own account. */}
+      <div>
+        <label htmlFor="profile-kind" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+          {t('settings.profiles.connectionKind')}
+        </label>
+        <select
+          id="profile-kind"
+          value={formKind}
+          onChange={(e) => {
+            const kind = e.target.value as typeof formKind;
+            setFormKind(kind);
+            // Land on a usable core straight away; an empty core is the one
+            // thing the backend will refuse to save.
+            if (kind === 'vendor_cli' && !formAgentType && vendorCores.length > 0) {
+              setFormAgentType(vendorCores[0].agent_type);
+            }
+            // Same for a WorkBuddy model: anything the probe did not find
+            // answering is refused on save.
+            if (kind === 'workbuddy' && !usableModels.some((m) => m.id === formDefaultModel)) {
+              setFormDefaultModel(usableModels[0]?.id ?? '');
+            }
+          }}
+          className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+        >
+          <option value="endpoint">{t('settings.profiles.kindEndpoint')}</option>
+          {vendorCores.length > 0 && (
             <option value="vendor_cli">{t('settings.profiles.kindVendorCli')}</option>
-          </select>
-          {isVendorCli && (
-            <p className="text-xs text-[var(--text-muted)] mt-1">
-              {t('settings.profiles.vendorCliHint')}
+          )}
+          <option value="workbuddy">{t('settings.profiles.kindWorkbuddy')}</option>
+        </select>
+        {isVendorCli && (
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            {t('settings.profiles.vendorCliHint')}
+          </p>
+        )}
+        {isWorkbuddy && (
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            {t('settings.profiles.workbuddyHint')}
+          </p>
+        )}
+      </div>
+
+      {isWorkbuddy ? (
+        <>
+          {!workbuddy?.logged_in && (
+            <p className="text-xs text-[var(--accent-error)]">
+              {t('settings.profiles.workbuddyNotLoggedIn')}
             </p>
           )}
-        </div>
-      )}
-
-      {isVendorCli ? (
+          {usableModels.length === 0 ? (
+            <p className="text-xs text-[var(--text-muted)]">
+              {t('settings.profiles.workbuddyNotProbed')}{' '}
+              <code className="font-mono">frago-core models probe-workbuddy</code>
+            </p>
+          ) : (
+            <div>
+              <label htmlFor="profile-workbuddy-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                {t('settings.profiles.workbuddyModel')}
+              </label>
+              <select
+                id="profile-workbuddy-model"
+                value={formDefaultModel}
+                onChange={(e) => setFormDefaultModel(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+              >
+                {usableModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                    {m.first_ms != null ? ` · ${t('settings.profiles.firstToken', { ms: m.first_ms })}` : ''}
+                    {m.thinks ? ` · ${t('settings.profiles.thinks')}` : ''}
+                  </option>
+                ))}
+              </select>
+              {workbuddy?.probed_at && (
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  {t('settings.profiles.workbuddyProbedAt', {
+                    time: workbuddy.probed_at.slice(0, 16).replace('T', ' '),
+                  })}
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      ) : isVendorCli ? (
         <>
           {/* Which core, and which of the models its own service offers. */}
           <div>

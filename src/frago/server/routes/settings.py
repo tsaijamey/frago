@@ -1150,9 +1150,11 @@ class VendorCoreResponse(BaseModel):
 class RoleBindingResponse(BaseModel):
     """One role and the connection it currently runs on."""
     role: str
-    # None means nothing is bound, which is the plain subscription.
+    # None means nothing is bound: the plain subscription for main and worker,
+    # the fallback for the light agent, not running for the observer.
     profile_id: Optional[str] = None
-    connection: ProfileResponse
+    # None only for an unbound observer — there is nothing it runs on.
+    connection: ProfileResponse | None = None
     # main only: the agent CLIs this connection was written into.
     targets: List[str] = []
 
@@ -1213,7 +1215,7 @@ async def get_connections() -> ConnectionsResponse:
         list_connections,
         load_profiles,
         role_binding_id,
-        role_connection,
+        role_view,
     )
 
     store = load_profiles()
@@ -1225,7 +1227,11 @@ async def get_connections() -> ConnectionsResponse:
         RoleBindingResponse(
             role=role,
             profile_id=role_binding_id(role),
-            connection=_profile_to_response(role_connection(role), store.active_profile_id),
+            connection=(
+                _profile_to_response(view, store.active_profile_id)
+                if (view := role_view(role)) is not None
+                else None
+            ),
             targets=list(store.active_targets) if role == MAIN_ROLE else [],
         )
         for role in ROLES
@@ -1262,7 +1268,57 @@ async def bind_role_endpoint(role: str, request: BindRoleRequest) -> ApiResponse
         state_manager = StateManager.get_instance()
         await state_manager.refresh_config(broadcast=True)
 
-    return ApiResponse(status="ok", message=f"{role} → {bound.name}")
+    return ApiResponse(status="ok", message=f"{role} → {bound.name if bound else 'unbound'}")
+
+
+class WorkBuddyModelResponse(BaseModel):
+    """One model as the last probe found it."""
+    id: str
+    name: str = ""
+    # On the catalog WorkBuddy hands out. Not being there does not mean unusable.
+    listed: bool = False
+    ok: bool
+    # openai / anthropic — which of the gateway's two doors this model answers at.
+    wire: str | None = None
+    first_ms: int | None = None
+    thinks: bool = False
+    error: str | None = None
+
+
+class WorkBuddyModelsResponse(BaseModel):
+    """What a WorkBuddy connection can be pointed at."""
+    # Whether the WorkBuddy client is logged in on this machine. Without it every
+    # call fails, so the form says so before anyone picks a model.
+    logged_in: bool
+    probed_at: str | None = None
+    models: list[WorkBuddyModelResponse] = []
+
+
+@router.get("/settings/workbuddy-models", response_model=WorkBuddyModelsResponse)
+async def get_workbuddy_models() -> WorkBuddyModelsResponse:
+    """The last probe's findings. Re-probing is `frago-core models probe-workbuddy`."""
+    import json as _json
+    from datetime import datetime
+
+    from frago.init.profile_manager import WORKBUDDY_MODELS_PATH, workbuddy_login_path
+
+    logged_in = workbuddy_login_path().is_file()
+    try:
+        data = _json.loads(WORKBUDDY_MODELS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return WorkBuddyModelsResponse(logged_in=logged_in)
+    models = [
+        WorkBuddyModelResponse(**{k: v for k, v in m.items() if k in WorkBuddyModelResponse.model_fields})
+        for m in data.get("models", [])
+        if isinstance(m, dict) and isinstance(m.get("id"), str) and "ok" in m
+    ]
+    # frago-core stamps the probe in UTC while every other time on the page is
+    # local, so 13:30 read as 05:30. The file is written the moment the probe
+    # finishes; its modification time is that moment, and it reads as local time.
+    probed_at = datetime.fromtimestamp(WORKBUDDY_MODELS_PATH.stat().st_mtime).isoformat(
+        timespec="seconds"
+    )
+    return WorkBuddyModelsResponse(logged_in=logged_in, probed_at=probed_at, models=models)
 
 
 @router.post("/settings/profiles/from-current", response_model=ApiResponse)

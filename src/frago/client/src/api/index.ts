@@ -1096,6 +1096,8 @@ export type {
   ProfileListResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyModel,
+  WorkBuddyModelsResponse,
   ConnectionsResponse,
   RoleBinding,
   VendorCore,
@@ -1126,6 +1128,13 @@ export const getConnections = withMode(
     bindings: [],
     vendor_cores: [],
   }),
+);
+
+/* 桌面壳里没有这条服务：当作没登录、没探测过，表单就照实说「先登录 WorkBuddy」。 */
+export const getWorkbuddyModels = withMode(
+  (): Promise<httpApi.WorkBuddyModelsResponse> => httpApi.getWorkbuddyModels(),
+  (): Promise<httpApi.WorkBuddyModelsResponse> =>
+    Promise.resolve({ logged_in: false, probed_at: null, models: [] }),
 );
 
 export const bindRole = withMode(

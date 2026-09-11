@@ -5,6 +5,7 @@ import {
   getEndpointPresets,
   getActivationTargets,
   getConnections,
+  getWorkbuddyModels,
   createProfile,
   updateProfile,
   deleteProfile,
@@ -18,6 +19,7 @@ import type {
   EndpointPreset,
   ProfileItem,
   VendorCore,
+  WorkBuddyModelsResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
 } from '@/api';
@@ -66,6 +68,10 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   // asks for a core and a model instead of an endpoint and a key.
   const [vendorCores, setVendorCores] = useState<VendorCore[]>([]);
 
+  // What a WorkBuddy connection can be pointed at: the models the last probe
+  // found answering, and whether the WorkBuddy client is logged in here.
+  const [workbuddy, setWorkbuddy] = useState<WorkBuddyModelsResponse | null>(null);
+
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
@@ -100,6 +106,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       loadPresets();
       loadTargets();
       loadVendorCores();
+      loadWorkbuddyModels();
       setViewMode('list');
       setPickingTargetsFor(null);
     }
@@ -159,6 +166,16 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       // Without the roster the vendor CLI option has nothing to offer, so the
       // form stays on endpoints — which is what it could always do.
       setVendorCores([]);
+    }
+  };
+
+  const loadWorkbuddyModels = async () => {
+    try {
+      setWorkbuddy(await getWorkbuddyModels());
+    } catch {
+      // Without the list the form says nothing has been probed, which is true
+      // as far as it can tell.
+      setWorkbuddy(null);
     }
   };
 
@@ -223,6 +240,20 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
    * "Custom URL" clears the stale one rather than leaving it on the card.
    */
   const formFields = () => {
+    if (formKind === 'workbuddy') {
+      // No endpoint and no key — the login is the WorkBuddy client's own — and a
+      // single model, which frago-core asks for whichever role it is bound to.
+      return {
+        name: formName.trim(),
+        kind: 'workbuddy' as ConnectionKind,
+        endpoint_type: 'workbuddy',
+        agent_type: null,
+        url: null,
+        default_model: formDefaultModel.trim() || null,
+        sonnet_model: null,
+        haiku_model: null,
+      };
+    }
     if (formKind === 'vendor_cli') {
       // A vendor CLI has no endpoint, no key and no per-tier model overrides —
       // its models come from its own service. Sending the endpoint fields
@@ -259,14 +290,14 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
         // Only an endpoint connection has a key to demand; a vendor CLI runs on
         // its own login, and asking for a key there would be asking for
         // something that does not exist.
-        if (formKind !== 'vendor_cli' && !formApiKey.trim()) {
+        if (formKind === 'endpoint' && !formApiKey.trim()) {
           showToast(t('errors.apiKeyEmpty'), 'error');
           setFormSubmitting(false);
           return;
         }
         const data: CreateProfileRequest = {
           ...formFields(),
-          api_key: formKind === 'vendor_cli' ? '' : formApiKey.trim(),
+          api_key: formKind === 'endpoint' ? formApiKey.trim() : '',
         };
         const result = await createProfile(data);
         if (result.status === 'ok') {
@@ -425,6 +456,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     pickedTargets,
     presets,
     vendorCores,
+    workbuddy,
     loading,
     viewMode,
     setViewMode,

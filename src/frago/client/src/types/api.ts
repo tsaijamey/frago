@@ -607,7 +607,9 @@ export interface EndpointPresetListResponse {
  *   has no key to hand it, so what the connection carries is which core to
  *   run and which model to ask it for.
  */
-export type ConnectionKind = 'endpoint' | 'official' | 'vendor_cli';
+// workbuddy: frago-core calling the WorkBuddy gateway on the WorkBuddy client's own
+// login. No key is stored; it can serve the light agent and the observer only.
+export type ConnectionKind = 'endpoint' | 'official' | 'vendor_cli' | 'workbuddy';
 
 export interface ProfileItem {
   id: string;
@@ -635,8 +637,13 @@ export interface ProfileListResponse {
   worker_profile_id?: string | null;
 }
 
-/** The two roles that consume a connection. */
-export type ConnectionRole = 'main' | 'worker';
+/**
+ * The roles that consume a connection. `main` and `worker` run on an agent CLI;
+ * `lightagent` (the hook's review passes) and `observer` (the session page's side
+ * panel) are served by frago-core, which can only call a connection that carries
+ * its own key or borrows the WorkBuddy login.
+ */
+export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer';
 
 /**
  * A core that runs on its own account rather than on a key frago holds.
@@ -659,9 +666,11 @@ export interface VendorCore {
 /** One role and the connection it is running on right now. */
 export interface RoleBinding {
   role: ConnectionRole;
-  /** null means nothing bound, which is the subscription. */
+  /** null means nothing bound: the subscription for main and worker, the
+   *  fallback for the light agent, not running for the observer. */
   profile_id: string | null;
-  connection: ProfileItem;
+  /** null only for an unbound observer — it runs on nothing. */
+  connection: ProfileItem | null;
   /** main only: the agent CLIs this connection was written into. */
   targets: string[];
 }
@@ -671,6 +680,29 @@ export interface ConnectionsResponse {
   connections: ProfileItem[];
   bindings: RoleBinding[];
   vendor_cores: VendorCore[];
+}
+
+/** One WorkBuddy model as the last probe found it. */
+export interface WorkBuddyModel {
+  id: string;
+  name: string;
+  /** On the catalog WorkBuddy hands out. Not being there does not mean unusable. */
+  listed: boolean;
+  ok: boolean;
+  /** Which of the gateway's two doors this model answers at. */
+  wire?: 'openai' | 'anthropic' | null;
+  first_ms?: number | null;
+  /** Thinks before it answers: slower, and it spends the budget doing so. */
+  thinks: boolean;
+  error?: string | null;
+}
+
+/** What a WorkBuddy connection can be pointed at. */
+export interface WorkBuddyModelsResponse {
+  /** Whether the WorkBuddy client is logged in on this machine. */
+  logged_in: boolean;
+  probed_at: string | null;
+  models: WorkBuddyModel[];
 }
 
 /**

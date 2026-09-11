@@ -84,6 +84,8 @@ import type {
   ConnectionsResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyModel,
+  WorkBuddyModelsResponse,
   RoleBinding,
   VendorCore,
   ActivationTarget,
@@ -196,6 +198,8 @@ export type {
   ConnectionsResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyModel,
+  WorkBuddyModelsResponse,
   RoleBinding,
   VendorCore,
   ActivationTarget,
@@ -1062,6 +1066,15 @@ export async function bindRole(
     method: 'PUT',
     body: JSON.stringify({ profile_id: profileId, targets: targets ?? null }),
   });
+}
+
+/**
+ * What a WorkBuddy connection can be pointed at: the models the last probe found
+ * answering, and whether the WorkBuddy client is logged in here. Re-probing is
+ * `frago-core models probe-workbuddy`.
+ */
+export async function getWorkbuddyModels(): Promise<WorkBuddyModelsResponse> {
+  return fetchApi<WorkBuddyModelsResponse>('/settings/workbuddy-models');
 }
 
 export async function saveCurrentAsProfile(name: string): Promise<ApiResponse> {

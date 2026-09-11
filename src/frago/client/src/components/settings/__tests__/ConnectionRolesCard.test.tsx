@@ -160,3 +160,85 @@ describe('ConnectionRolesCard', () => {
     expect(screen.getByText(/hy4-preview/).textContent).toContain('CodeBuddy Code');
   });
 });
+
+describe('ConnectionRolesCard · frago-core 替它们问模型的两行', () => {
+  const borrowed: ProfileItem = {
+    id: 'wb000001',
+    name: 'WorkBuddy flash',
+    kind: 'workbuddy',
+    endpoint_type: 'workbuddy',
+    api_key_masked: '',
+    default_model: 'deepseek-v4-flash',
+    is_active: false,
+    created_at: '',
+    updated_at: '',
+  };
+  const four: RoleBinding[] = [
+    { role: 'main', profile_id: null, connection: official, targets: [] },
+    { role: 'worker', profile_id: null, connection: official, targets: [] },
+    { role: 'lightagent', profile_id: null, connection: deepseek, targets: [] },
+    { role: 'observer', profile_id: null, connection: null, targets: [] },
+  ];
+  const renderFour = (overrides: Partial<Parameters<typeof ConnectionRolesCard>[0]> = {}) =>
+    renderCard({ connections: [official, deepseek, workbuddy, borrowed], bindings: four, ...overrides });
+  const optionIn = (row: string, value: string) =>
+    Array.from(screen.getByLabelText(row).querySelectorAll('option')).find((o) => o.value === value);
+
+  beforeEach(() => {
+    bindRole.mockReset();
+    bindRole.mockResolvedValue({ status: 'ok' });
+  });
+
+  it('四个角色各一行', () => {
+    renderFour();
+    for (const role of ['main', 'worker', 'lightagent', 'observer']) {
+      expect(screen.getByLabelText(`settings.connections.${role}Role`)).toBeTruthy();
+    }
+  });
+
+  it('订阅不在这两行里，第一项是解除绑定', () => {
+    renderFour();
+    const row = screen.getByLabelText('settings.connections.observerRole') as HTMLSelectElement;
+    const values = Array.from(row.querySelectorAll('option')).map((o) => o.value);
+    expect(values[0]).toBe('');
+    expect(values).not.toContain('official');
+    expect(row.value).toBe('');
+  });
+
+  it('CLI 自带登录在这两行列出但不可选，并说明原因', () => {
+    renderFour();
+    const opt = optionIn('settings.connections.lightagentRole', 'vend0001');
+    expect(opt?.disabled).toBe(true);
+    expect(opt?.textContent).toContain('settings.connections.notForFragoCore');
+  });
+
+  it('借用 WorkBuddy 登录只在这两行可选', () => {
+    renderFour();
+    for (const row of ['settings.connections.mainRole', 'settings.connections.workerRole']) {
+      const opt = optionIn(row, 'wb000001');
+      expect(opt?.disabled).toBe(true);
+      expect(opt?.textContent).toContain('settings.connections.fragoCoreOnly');
+    }
+    expect(optionIn('settings.connections.observerRole', 'wb000001')?.disabled).toBe(false);
+  });
+
+  it('选回第一项就是解除绑定', async () => {
+    renderFour({
+      bindings: [
+        ...four.slice(0, 3),
+        { role: 'observer', profile_id: 'wb000001', connection: borrowed, targets: [] },
+      ],
+    });
+    fireEvent.change(screen.getByLabelText('settings.connections.observerRole'), {
+      target: { value: '' },
+    });
+    await waitFor(() => expect(bindRole).toHaveBeenCalledWith('observer', '', undefined));
+  });
+
+  it('轻量 ai 没单独绑时说出它跟随的是哪一条', () => {
+    renderFour();
+    expect(screen.getByText(/settings.connections.followingDefault/).textContent).toContain(
+      'deepseek-v4-flash',
+    );
+  });
+});

@@ -15,6 +15,11 @@ they are not variations of one another:
   WorkBuddy). Its credential is that CLI's login, not a key frago holds, so
   there is nothing to write into anyone else's config; what a profile of this
   kind carries is which core to run and which model to ask it for.
+- ``workbuddy`` — frago-core calling the WorkBuddy model gateway directly on the
+  WorkBuddy client's own login. No key is stored: the client rotates its token,
+  so a copy would go stale within days, and refreshing it from here would fight
+  the client over the same file. frago-core reads the login each call. What the
+  profile carries is the model, picked from what the last probe found usable.
 
 Two roles consume connections, and they consume them differently:
 
@@ -26,6 +31,14 @@ Two roles consume connections, and they consume them differently:
 - **worker** — the sessions ``frago agent`` starts. Binding here writes nothing
   anywhere; it is read at launch and applied to that one session. Recorded in
   ``worker_profile_id``.
+
+Two more roles are served by frago-core rather than by an agent CLI, and frago-core
+can only call a connection that carries its own key or borrows the WorkBuddy login:
+
+- **lightagent** — the hook's review passes. Unbound, it keeps what it always
+  used: the active profile, else the first saved one. ``lightagent_profile_id``.
+- **observer** — the session page's side panel. Unbound, it does not run.
+  ``observer_profile_id``.
 """
 
 import json
@@ -51,7 +64,13 @@ PROFILES_PATH = Path.home() / ".frago" / "profiles.json"
 KIND_ENDPOINT = "endpoint"
 KIND_OFFICIAL = "official"
 KIND_VENDOR_CLI = "vendor_cli"
-PROFILE_KINDS = (KIND_ENDPOINT, KIND_OFFICIAL, KIND_VENDOR_CLI)
+KIND_WORKBUDDY = "workbuddy"
+PROFILE_KINDS = (KIND_ENDPOINT, KIND_OFFICIAL, KIND_VENDOR_CLI, KIND_WORKBUDDY)
+
+# Written by `frago-core models probe-workbuddy`: which WorkBuddy models answer, and
+# on which wire. The catalog WorkBuddy hands out cannot stand in for it — measured,
+# 15 of its entries do not answer and 4 models that do are not on it.
+WORKBUDDY_MODELS_PATH = Path.home() / ".frago" / "workbuddy-models.json"
 
 # The plain subscription is a fixed id rather than a saved row: nothing about
 # it is editable, and a row could be deleted out from under a binding.
@@ -59,7 +78,15 @@ OFFICIAL_ID = "official"
 
 MAIN_ROLE = "main"
 WORKER_ROLE = "worker"
-ROLES = (MAIN_ROLE, WORKER_ROLE)
+LIGHTAGENT_ROLE = "lightagent"
+OBSERVER_ROLE = "observer"
+#: The roles whose connection an agent CLI runs on.
+CLI_ROLES = (MAIN_ROLE, WORKER_ROLE)
+#: The roles frago-core asks the model for. It can call a connection with its own
+#: key or one that borrows the WorkBuddy login, and nothing else.
+FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE)
+ROLES = CLI_ROLES + FRAGO_CORE_ROLES
+_FRAGO_CORE_KINDS = (KIND_ENDPOINT, KIND_WORKBUDDY)
 
 
 class APIProfile(BaseModel):
@@ -101,6 +128,12 @@ class ProfileStore(BaseModel):
     # applied to that session alone, so a worker can run somewhere the person's
     # own agent does not.
     worker_profile_id: Optional[str] = None
+    # What the light agent is bound to. None keeps what it always used: the active
+    # profile, else the first saved one. frago-core reads this field directly, so
+    # it has to be declared here — an undeclared key is dropped on the next save.
+    lightagent_profile_id: str | None = None
+    # What the session observer is bound to. None means it does not run.
+    observer_profile_id: str | None = None
     profiles: list[APIProfile] = Field(default_factory=list)
 
 
@@ -139,6 +172,41 @@ def save_profiles(store: ProfileStore) -> None:
     # Set file permissions on Unix
     if platform.system() != "Windows":
         os.chmod(PROFILES_PATH, 0o600)
+
+
+def workbuddy_usable_models() -> list[str] | None:
+    """The WorkBuddy models that answered on the last probe; None if never probed."""
+    try:
+        data = json.loads(WORKBUDDY_MODELS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    models = data.get("models") if isinstance(data, dict) else None
+    return [
+        m["id"]
+        for m in models or []
+        if isinstance(m, dict) and m.get("ok") and isinstance(m.get("id"), str)
+    ]
+
+
+def workbuddy_login_path() -> Path:
+    """Where the WorkBuddy client keeps its login. Mirrors frago-core's lookup."""
+    rel = ("CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
+    system = platform.system()
+    if system == "Darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif system == "Windows":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path.home() / ".local" / "share"
+    return base.joinpath(*rel)
+
+
+def _frago_core_only(name: str) -> str:
+    return (
+        f"'{name}' borrows the WorkBuddy client's login and is called by frago-core "
+        "directly, so there is no agent CLI configuration it could go into. Bind it "
+        "to the light agent or the session observer."
+    )
 
 
 def official_connection() -> APIProfile:
@@ -182,6 +250,7 @@ def _validate_profile(
     url: Optional[str],
     kind: str = KIND_ENDPOINT,
     agent_type: Optional[str] = None,
+    models: Sequence[str | None] = (),
 ) -> None:
     """Reject the profile shapes that break something later and quietly.
 
@@ -228,6 +297,27 @@ def _validate_profile(
             )
         return
 
+    if kind == KIND_WORKBUDDY:
+        # The model can only come from what the last probe found usable. Half the
+        # names WorkBuddy hands out do not answer; typing one that was never probed
+        # puts off finding that out until the first time the connection is used.
+        if endpoint_type != KIND_WORKBUDDY:
+            raise ValueError("A WorkBuddy connection's endpoint type must be 'workbuddy'")
+        usable = workbuddy_usable_models()
+        if usable is None:
+            raise ValueError(
+                "No WorkBuddy models have been probed yet — run `frago-core models probe-workbuddy` first"
+            )
+        chosen = [m for m in models if m]
+        if not chosen:
+            raise ValueError("A WorkBuddy connection needs a model")
+        unusable = [m for m in chosen if m not in usable]
+        if unusable:
+            raise ValueError(
+                f"Not among the WorkBuddy models that answered on the last probe: {', '.join(unusable)}"
+            )
+        return
+
     if endpoint_type != "custom" and endpoint_type not in PRESET_ENDPOINTS:
         known_types = ", ".join([*PRESET_ENDPOINTS, "custom"])
         raise ValueError(f"Unknown endpoint type '{endpoint_type}' (expected one of: {known_types})")
@@ -243,7 +333,12 @@ def add_profile(profile: APIProfile) -> ProfileStore:
         ValueError: If the endpoint type / URL combination is unusable.
     """
     _validate_profile(
-        profile.name, profile.endpoint_type, profile.url, profile.kind, profile.agent_type
+        profile.name,
+        profile.endpoint_type,
+        profile.url,
+        profile.kind,
+        profile.agent_type,
+        (profile.default_model, profile.sonnet_model, profile.haiku_model),
     )
     store = load_profiles()
     store.profiles.append(profile)
@@ -280,6 +375,10 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                 updates.get("url", profile.url),
                 updates.get("kind") or profile.kind,
                 updates.get("agent_type", profile.agent_type),
+                tuple(
+                    updates.get(key, getattr(profile, key))
+                    for key in ("default_model", "sonnet_model", "haiku_model")
+                ),
             )
             for key, value in updates.items():
                 if key == "api_key" and not value:
@@ -321,6 +420,10 @@ def delete_profile(profile_id: str) -> ProfileStore:
     # profile's name as the worker's connection.
     if store.worker_profile_id == profile_id:
         store.worker_profile_id = None
+    if store.lightagent_profile_id == profile_id:
+        store.lightagent_profile_id = None
+    if store.observer_profile_id == profile_id:
+        store.observer_profile_id = None
 
     save_profiles(store)
     return store
@@ -385,6 +488,8 @@ def activate_profile(
             "nothing to write into another CLI's configuration. It can be bound to the "
             "worker role, or started directly as your own agent."
         )
+    if profile.kind == KIND_WORKBUDDY:
+        raise ValueError(_frago_core_only(profile.name))
 
     previous = list(store.active_targets)
     apply_profile(profile, resolved)
@@ -463,20 +568,56 @@ def role_binding_id(role: str) -> Optional[str]:
     if role not in ROLES:
         raise ValueError(f"Unknown role '{role}' (expected one of: {', '.join(ROLES)})")
     store = load_profiles()
-    stored = store.active_profile_id if role == MAIN_ROLE else store.worker_profile_id
+    stored = {
+        MAIN_ROLE: store.active_profile_id,
+        WORKER_ROLE: store.worker_profile_id,
+        LIGHTAGENT_ROLE: store.lightagent_profile_id,
+        OBSERVER_ROLE: store.observer_profile_id,
+    }[role]
+    if role in FRAGO_CORE_ROLES:
+        # These two only ever name a saved row: the subscription is not one, and
+        # frago-core could not call it anyway.
+        return stored if stored and get_profile(stored) else None
     # An id left behind by a profile that no longer exists reads as unbound,
     # which is also what actually happens at launch.
     return stored if find_connection(stored) else None
 
 
 def role_connection(role: str) -> APIProfile:
-    """What a role runs on right now. Unbound resolves to the subscription."""
+    """What an agent-CLI role runs on right now. Unbound resolves to the subscription.
+
+    The two frago-core roles have no subscription to fall back to; ask
+    :func:`role_view` for them.
+    """
+    if role in FRAGO_CORE_ROLES:
+        raise ValueError(f"'{role}' has no subscription to fall back to; use role_view()")
     return find_connection(role_binding_id(role)) or official_connection()
+
+
+def role_view(role: str) -> APIProfile | None:
+    """What a role runs on right now, resolved the way the thing running it does.
+
+    - main / worker: the bound connection, else the subscription.
+    - lightagent: the bound connection, else what frago-core falls back to — the
+      active profile, else the first saved one. Shown as-is even when frago-core
+      cannot call it, so the page says what will actually be tried.
+    - observer: the bound connection, else nothing. An unbound observer does not run.
+    """
+    if role in CLI_ROLES:
+        return role_connection(role)
+    bound = role_binding_id(role)
+    if bound:
+        return get_profile(bound)
+    if role == OBSERVER_ROLE:
+        return None
+    store = load_profiles()
+    active = next((p for p in store.profiles if p.id == store.active_profile_id), None)
+    return active or (store.profiles[0] if store.profiles else None)
 
 
 def bind_role(
     role: str, profile_id: str, targets: Optional[Sequence[str]] = None
-) -> APIProfile:
+) -> APIProfile | None:
     """Point a role at a connection.
 
     The two roles differ in what binding *does*, not just in what it records:
@@ -494,8 +635,13 @@ def bind_role(
     into Claude Code to put the person's own agent on it — the honest answer is
     to say so rather than to accept the binding and change nothing.
 
+    The two frago-core roles only record the choice, like worker. An empty id or
+    the subscription unbinds them: the light agent goes back to what it always
+    used, the observer stops.
+
     Returns:
-        The connection now bound to that role.
+        The connection now bound to that role; None when a frago-core role was
+        unbound.
 
     Raises:
         ValueError: Unknown role, unknown profile, or a binding this kind of
@@ -504,9 +650,14 @@ def bind_role(
     if role not in ROLES:
         raise ValueError(f"Unknown role '{role}' (expected one of: {', '.join(ROLES)})")
 
+    if role in FRAGO_CORE_ROLES:
+        return _bind_frago_core_role(role, profile_id)
+
     connection = find_connection(profile_id)
     if connection is None:
         raise ValueError(f"Profile not found: {profile_id}")
+    if connection.kind == KIND_WORKBUDDY:
+        raise ValueError(_frago_core_only(connection.name))
 
     if role == MAIN_ROLE:
         if connection.kind == KIND_VENDOR_CLI:
@@ -523,6 +674,27 @@ def bind_role(
 
     store = load_profiles()
     store.worker_profile_id = None if connection.kind == KIND_OFFICIAL else connection.id
+    save_profiles(store)
+    return connection
+
+
+def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
+    store = load_profiles()
+    field = "lightagent_profile_id" if role == LIGHTAGENT_ROLE else "observer_profile_id"
+    if not profile_id or profile_id == OFFICIAL_ID:
+        setattr(store, field, None)
+        save_profiles(store)
+        return None
+    connection = get_profile(profile_id)
+    if connection is None:
+        raise ValueError(f"Profile not found: {profile_id}")
+    if connection.kind not in _FRAGO_CORE_KINDS:
+        raise ValueError(
+            f"'{connection.name}' runs on its own CLI's login, which frago-core cannot call. "
+            "The light agent and the session observer take a connection with its own key, "
+            "or one that borrows the WorkBuddy login."
+        )
+    setattr(store, field, connection.id)
     save_profiles(store)
     return connection
 

@@ -609,7 +609,16 @@
       "modelCandidates": "该 CLI 提供的模型",
       "vendorCliHint": "frago 手里没有它的密钥，它跑的是那个 CLI 自己的登录态。选内核和模型即可。",
       "notInstalled": "本机未安装",
-      "vendorOwnAccount": "跑它自己的账号"
+      "vendorOwnAccount": "跑它自己的账号",
+      "kindWorkbuddy": "借用 WorkBuddy 登录",
+      "workbuddyHint": "frago-core 借用本机 WorkBuddy 客户端的登录，直接调它的模型网关，不存钥匙。只能绑给轻量 ai 或旁路 AI。",
+      "workbuddyNotLoggedIn": "本机的 WorkBuddy 客户端没有登录，这条连接现在调不通。",
+      "workbuddyNotProbed": "还没探测过 WorkBuddy 上哪些模型能用，先在终端跑：",
+      "workbuddyModel": "模型（上次探测跑通的）",
+      "workbuddyProbedAt": "探测于 {{time}}。重新探测：frago-core models probe-workbuddy",
+      "thinks": "会先思考",
+      "firstToken": "首字 {{ms}}ms",
+      "workbuddyLogin": "借用 WorkBuddy 登录"
     },
     "appearance": {
       "title": "外观",
@@ -718,7 +727,17 @@
       "onCore": "运行于",
       "vendorNotForMain": "它跑自己的账号，只能给 worker 用",
       "switching": "切换中…",
-      "bindFailed": "这条连接没能切换"
+      "bindFailed": "这条连接没能切换",
+      "lightagentRole": "轻量 ai",
+      "lightagentRoleHint": "hook 里的判读。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
+      "observerRole": "旁路 AI",
+      "observerRoleHint": "会话页右栏的旁路观察。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
+      "followDefault": "跟随默认（当前启用的，没有就取第一条）",
+      "followingDefault": "跟随默认：{{name}}",
+      "observerOff": "不绑定（不跑）",
+      "notForFragoCore": "frago-core 用不了它",
+      "fragoCoreOnly": "只能给轻量 ai 或旁路 AI",
+      "borrowedLogin": "借用 WorkBuddy 登录"
     }
   },
   "init": {

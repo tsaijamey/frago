@@ -131,6 +131,11 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
             // button would only ever produce a refusal. It is bound to the
             // worker role from the connections card instead.
             const isVendorCli = profile.kind === 'vendor_cli';
+            // A borrowed WorkBuddy login is called by frago-core directly, so it
+            // has no agent CLI configuration to go into either. It is bound to
+            // the light agent or the session observer from the connections card.
+            const isBorrowed = profile.kind === 'workbuddy';
+            const ownLogin = isVendorCli || isBorrowed;
             return (
             <div
               key={profile.id}
@@ -153,7 +158,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {!isVendorCli && (
+                  {!ownLogin && (
                     <button
                       type="button"
                       onClick={() => handleActivateClick(profile.id)}
@@ -191,14 +196,14 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                 {/* A vendor CLI has no endpoint and no key of frago's; printing
                     blank ones made it look like a half-filled profile. What it
                     does have is a core and a model. */}
-                <span>{isVendorCli ? (profile.agent_type ?? provider) : provider}</span>
+                <span>{isVendorCli ? (profile.agent_type ?? provider) : isBorrowed ? 'WorkBuddy' : provider}</span>
                 {model && (
                   <>
                     <span>·</span>
                     <span className="font-mono">{model}</span>
                   </>
                 )}
-                {!isVendorCli && (
+                {!ownLogin && (
                   <>
                     <span>·</span>
                     <span className="font-mono">{profile.api_key_masked}</span>
@@ -208,6 +213,12 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                   <>
                     <span>·</span>
                     <span>{t('settings.profiles.vendorOwnAccount')}</span>
+                  </>
+                )}
+                {isBorrowed && (
+                  <>
+                    <span>·</span>
+                    <span>{t('settings.profiles.workbuddyLogin')}</span>
                   </>
                 )}
               </div>

@@ -245,14 +245,21 @@ class TestConnectionsAndBindings:
         assert [c.id for c in response.connections[1:]] == [saved_profile]
 
     @pytest.mark.asyncio
-    async def test_both_roles_report_the_subscription_when_unbound(self, tmp_profiles_path):
+    async def test_unbound_roles_report_what_each_falls_back_to(self, tmp_profiles_path):
+        """The agent-CLI roles fall back to the subscription. The two frago-core
+        roles have none: with nothing saved, the light agent has nothing to try
+        and the observer does not run."""
         from frago.server.routes.settings import get_connections
 
         response = await get_connections()
+        by_role = {b.role: b for b in response.bindings}
 
-        assert [b.role for b in response.bindings] == ["main", "worker"]
+        assert list(by_role) == ["main", "worker", "lightagent", "observer"]
         assert all(b.profile_id is None for b in response.bindings)
-        assert all(b.connection.kind == "official" for b in response.bindings)
+        assert by_role["main"].connection.kind == "official"
+        assert by_role["worker"].connection.kind == "official"
+        assert by_role["lightagent"].connection is None
+        assert by_role["observer"].connection is None
 
     @pytest.mark.asyncio
     async def test_vendor_cores_come_from_the_driver_registry(self, tmp_profiles_path):

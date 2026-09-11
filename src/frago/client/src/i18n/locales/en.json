@@ -609,7 +609,16 @@
       "modelCandidates": "Models this CLI offers",
       "vendorCliHint": "frago holds no key for this one — it runs on the CLI's own login. Pick which core and which model.",
       "notInstalled": "not installed on this machine",
-      "vendorOwnAccount": "runs on its own account"
+      "vendorOwnAccount": "runs on its own account",
+      "kindWorkbuddy": "Borrow the WorkBuddy login",
+      "workbuddyHint": "frago-core calls the WorkBuddy model gateway on this machine's WorkBuddy client login. No key is stored. It can serve the light agent or the session observer only.",
+      "workbuddyNotLoggedIn": "The WorkBuddy client on this machine is not logged in, so this connection cannot reach anything right now.",
+      "workbuddyNotProbed": "No WorkBuddy models have been probed yet. Run this in a terminal first:",
+      "workbuddyModel": "Model (answered on the last probe)",
+      "workbuddyProbedAt": "Probed at {{time}}. Re-probe: frago-core models probe-workbuddy",
+      "thinks": "thinks first",
+      "firstToken": "first token {{ms}}ms",
+      "workbuddyLogin": "Borrows the WorkBuddy login"
     },
     "appearance": {
       "title": "Appearance",
@@ -718,7 +727,17 @@
       "onCore": "on",
       "vendorNotForMain": "Runs on its own account — worker only",
       "switching": "Switching…",
-      "bindFailed": "Could not change this connection"
+      "bindFailed": "Could not change this connection",
+      "lightagentRole": "Light agent",
+      "lightagentRoleHint": "The hook's review passes. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
+      "observerRole": "Session observer",
+      "observerRoleHint": "The session page's side panel. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
+      "followDefault": "Follow the default (the active one, else the first)",
+      "followingDefault": "Following the default: {{name}}",
+      "observerOff": "Not bound (does not run)",
+      "notForFragoCore": "frago-core cannot call it",
+      "fragoCoreOnly": "Light agent or session observer only",
+      "borrowedLogin": "Borrows the WorkBuddy login"
     }
   },
   "init": {
