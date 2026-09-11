@@ -99,6 +99,11 @@ __pycache__/
 *.pyc
 *.bak
 *.bak.*
+# 升级时随包资源覆盖本机前留下的备份：<文件名>.bak-<旧版本>-<时间戳>。
+*.bak-*
+# 随包资源的播种清单：这台机器上次放资源时的版本号与各文件哈希，纯本机状态。
+.seed-manifest.json
+.seed-manifest.json.tmp
 server.pid
 server.log*
 gui_history.jsonl

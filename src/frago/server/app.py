@@ -163,11 +163,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     logger = logging.getLogger(__name__)
 
-    # Lay down packaged knowledge the user is meant to edit — the book topics
-    # and the constitution — before anything reads them. Existing files are
-    # never overwritten: whatever is already on disk is treated as the user's
-    # own version. Runs first because the review pass and the book command both
-    # read what it puts there.
+    # Lay down packaged knowledge the user is meant to edit — the book topics,
+    # the constitution, the hook rules and prompts — before anything reads them.
+    # After an upgrade the package's copy replaces the one on disk; a copy the
+    # user edited is backed up beside it first (see user_resource_seed). Runs
+    # first because the review pass and the book command both read what it puts
+    # there.
     try:
         from frago.init.user_resource_seed import seed_user_resources
 
