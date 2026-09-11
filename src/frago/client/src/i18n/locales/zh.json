@@ -1290,22 +1290,23 @@
       "localCommandOutput": "命令输出"
     },
     "report": {
-      "notWired": "速记员尚未接入，下面是示意数据",
       "slotNow": "此刻在做什么",
       "slotDecision": "需要你决策",
       "slotOutput": "最近一次产出",
       "slotHappened": "已经发生的事",
       "itemCount": "{{n}} 条",
       "expandOlder": "展开更早的 {{n}} 条",
-      "footer": "槽位由速记员填写。接入之前，这里的字不来自任何一场会话。",
-      "demoNow": "正在把两家的会话记录归一成同一种形状，中栏已经能逐条铺开",
-      "demoDecision": "左栏的时间范围默认不限，一千多场一次铺开。要不要给它一个更窄的默认值，等看过几天使用情况再定。",
-      "demoOutput": "旧会话页上还值钱的五件事整个搬进了这一页，剩下的随页面一起下线",
-      "demoHappened1": "中栏接上了真接口，十五种形态各有各的样式",
-      "demoHappened2": "报错卡去掉了取原文入口，服务端那一道也还在",
-      "demoHappened3": "左栏把两家的会话合并成一份清单",
-      "demoHappened4": "统一记录类型与两家翻译层落在核心数据层",
-      "demoHappened5": "会话在导航上只剩一个入口"
+      "slotAnchor": "这场在做什么",
+      "noSession": "选一场会话，这里会显示旁路 AI 看到的它。",
+      "unbound": "旁路 AI 还没绑定模型。到设置的「连接」里给「旁路 AI」选一条。",
+      "failed": "旁路 AI 上一次没问到：{{reason}}",
+      "empty": "旁路 AI 还没填过这场会话。打开会话、或 agent 交还一轮之后，它会来填。",
+      "updated": "{{time}} 由 {{model}} 填写",
+      "none": "（无）",
+      "showAll": "展开全文",
+      "showLess": "收起",
+      "resizeSlot": "拖动调整「{{label}}」的高度，双击恢复",
+      "resizePanel": "拖动调整右栏宽度，双击恢复"
     },
     "composer": {
       "blockedNoSession": "从左边挑一场会话，再在这里说话",

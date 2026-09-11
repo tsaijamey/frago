@@ -97,6 +97,7 @@ class WorkbenchStreamBridge:
                     self._opencode_stream.start()
                 self._opencode_stream.watch_session(session_id)
                 self._registered.add(session_id)
+            self._observe(session_id, "open")
             return
 
         # Claude Code session → SessionStream per project
@@ -125,19 +126,21 @@ class WorkbenchStreamBridge:
                 # 一下时事件当场丢掉，不去整文件翻一遍。一个项目目录下能躺一千个会话文件。
                 existing.watch_session(session_id)
                 self._registered.add(session_id)
-                return
-
-            logger.info("WorkbenchStreamBridge: starting stream for %s", watch_dir)
-            stream = SessionStream(
-                project_path=project_path,
-                watch_dir=watch_dir,
-                on_records=self._on_new_records,
-                on_turn_complete=self._on_turn_complete,
-                session_id_filter=session_id,
-            )
-            stream.start()
-            self._streams[project_path] = stream
-            self._registered.add(session_id)
+            else:
+                logger.info("WorkbenchStreamBridge: starting stream for %s", watch_dir)
+                stream = SessionStream(
+                    project_path=project_path,
+                    watch_dir=watch_dir,
+                    on_records=self._on_new_records,
+                    on_turn_complete=self._on_turn_complete,
+                    session_id_filter=session_id,
+                )
+                stream.start()
+                self._streams[project_path] = stream
+                self._registered.add(session_id)
+        # 这场会话在这次服务运行里第一次被打开：让旁路 AI 从槽位文件记着的位置补读一次。
+        # 打开一场早就答完的会话不会有「一轮结束」，不在这里补，右栏就一直是旧的。
+        self._observe(session_id, "open")
 
     def stop_all(self) -> None:
         """Stop all active streams."""
@@ -156,12 +159,31 @@ class WorkbenchStreamBridge:
                     logger.exception("WorkbenchStreamBridge: error stopping opencode stream")
                 self._opencode_stream = None
 
+    # ---- side observer ----------------------------------------------------
+
+    def _observe(self, session_id: str, trigger: str) -> None:
+        """把这场会话的旁路观察投进它自己的队列。投完就走，不在监听线上等模型。
+
+        **NEVER 在这里加「页面切走就撤监听」。** 右栏的旁路观察要求切换会话打断不了它：
+        监听一撤，这场会话再交还多少轮都没人投任务，切回来看到的是旧的。
+        """
+        try:
+            from frago.server.services.session_observer import get_observer
+
+            get_observer().notify(session_id, trigger)
+        except Exception:
+            logger.exception("WorkbenchStreamBridge: observer notify failed (session=%s)", session_id)
+
     # ---- callbacks (called on watcher thread) -----------------------------
 
     def _on_new_records(self, session_id: str, records: list[dict]) -> None:
         """Called by SessionStream when new records arrive."""
         if not records:
             return
+        # 人按了打断，这一轮不算「交还」，不会有一轮结束的信号；不在这里投，右栏会停在
+        # 打断之前。
+        if any(isinstance(r, dict) and r.get("kind") == "interrupt" for r in records):
+            self._observe(session_id, "interrupt")
         try:
             loop = self._loop or asyncio.get_event_loop()
         except RuntimeError:
@@ -174,6 +196,8 @@ class WorkbenchStreamBridge:
     def _on_turn_complete(self, session_id: str, done: bool,
                           stop_reason: str | None) -> None:
         """Called by SessionStream when a turn flips to complete."""
+        if done:
+            self._observe(session_id, "turn")
         try:
             loop = self._loop or asyncio.get_event_loop()
         except RuntimeError:

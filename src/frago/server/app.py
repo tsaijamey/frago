@@ -354,6 +354,11 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     WorkbenchStreamBridge.get_instance(loop)
     logger.info("WorkbenchStreamBridge initialized (loop=%s)", loop is not None)
 
+    # 会话页右栏的旁路观察。不起任何常驻的东西：会话流投任务时才干活。
+    from frago.server.services.session_observer import get_observer, reset_observer
+
+    get_observer(loop)
+
     yield
 
     # Shutdown
@@ -374,6 +379,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     # Stop workbench stream bridge
     WorkbenchStreamBridge.reset_instance()
+    # 还在跑的 frago-core 一起收掉
+    reset_observer()
 
 
 async def _start_ingestion_scheduler(logger):
@@ -610,6 +617,11 @@ def create_app(
 
     from frago.server.routes.workbench import router as workbench_router
     app.include_router(workbench_router, prefix="/api", tags=["workbench"])
+
+    # 会话页右栏读槽位
+    from frago.server.routes.session_observer import router as session_observer_router
+
+    app.include_router(session_observer_router, prefix="/api", tags=["workbench"])
 
     from frago.server.routes.todos import router as todos_router
     app.include_router(todos_router, prefix="/api", tags=["todos"])

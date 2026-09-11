@@ -5,12 +5,13 @@
  * 数、全域禁令在三栏都成立。
  */
 
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import RecordStream, { groupRecords } from '../RecordStream';
 import SessionRail from '../SessionRail';
 import { relativeTime } from '../SessionItem';
-import ReportPanel from '../ReportPanel';
+import { ReportBody } from '../ReportPanel';
+import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObserver';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
@@ -629,13 +630,59 @@ describe('SessionRail 左栏', () => {
 });
 
 describe('ReportPanel 右栏', () => {
-  it('明写速记员尚未接入', () => {
-    render(<ReportPanel />);
-    expect(screen.getByText(/速记员尚未接入/)).toBeTruthy();
+  const view = (
+    state: Partial<ObserverState> | null,
+    extra: Partial<SessionObserverView> = {},
+  ): SessionObserverView => ({
+    state: state && {
+      bound: true,
+      anchor: '把会话记录归一成同一种形状',
+      now: '在跑测试',
+      decision: '',
+      output: '',
+      happened: [],
+      updated_at: null,
+      model: null,
+      status: 'ok',
+      status_detail: null,
+      ...state,
+    },
+    loading: false,
+    error: null,
+    ...extra,
+  });
+
+  it('没选会话时只说一句该做什么', () => {
+    render(<ReportBody sessionId={null} view={view(null)} />);
+    expect(screen.getByText(/选一场会话/)).toBeTruthy();
+  });
+
+  it('旁路 AI 没绑模型时明说', () => {
+    render(<ReportBody sessionId="s1" view={view({ bound: false, status: 'unbound' })} />);
+    expect(screen.getByText(/还没绑定模型/)).toBeTruthy();
+  });
+
+  it('锚槽排最上面，写的是人的原话', () => {
+    const { container } = render(<ReportBody sessionId="s1" view={view({})} />);
+    const labels = Array.from(container.querySelectorAll('header')).map((h) => h.textContent);
+    expect(labels[0]).toContain('这场在做什么');
+    expect(screen.getByText('把会话记录归一成同一种形状')).toBeTruthy();
+  });
+
+  it('上一次没问到时把原因说出来', () => {
+    render(
+      <ReportBody sessionId="s1" view={view({ status: 'failed', status_detail: 'WorkBuddy 没登录' })} />,
+    );
+    expect(screen.getByText(/WorkBuddy 没登录/)).toBeTruthy();
   });
 
   it('增长型槽位的展开按钮写绝对条数，不写比值', () => {
-    const { container } = render(<ReportPanel />);
+    const { container } = render(
+      <ReportBody
+        sessionId="s1"
+        view={view({ happened: ['第五件', '第四件', '第三件', '第二件', '第一件'] })}
+      />,
+    );
     const more = screen.getByText(/展开更早的 \d+ 条/);
     expect(more).toBeTruthy();
     fireEvent.click(more);
@@ -644,6 +691,73 @@ describe('ReportPanel 右栏', () => {
     expect(text.match(/\d+\s*%/g)).toBeNull();
     expect(text.match(/\d+\s*\/\s*\d+/g)).toBeNull();
     expect(container.querySelectorAll('progress, [role="progressbar"]')).toHaveLength(0);
+  });
+
+  it('已经发生的事一条一格，条与条之间有分隔线', () => {
+    const { container } = render(
+      <ReportBody sessionId="s1" view={view({ happened: ['第三件', '第二件', '第一件'] })} />,
+    );
+    const list = container.querySelector('ul');
+    expect(list?.className).toContain('divide-y');
+    expect(Array.from(list?.querySelectorAll('li') ?? []).map((li) => li.textContent)).toEqual([
+      '第三件',
+      '第二件',
+      '第一件',
+    ]);
+  });
+
+  describe('版面由人来定', () => {
+    beforeEach(() => window.localStorage.clear());
+
+    it('内容装不下时给「展开全文」，展开后变成「收起」', () => {
+      const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get() {
+          return (this as HTMLElement).hasAttribute('data-slot-body') ? 400 : 0;
+        },
+      });
+      try {
+        render(<ReportBody sessionId="s1" view={view({})} />);
+        fireEvent.click(screen.getAllByText('展开全文')[0]);
+        expect(screen.getAllByText('收起').length).toBe(1);
+      } finally {
+        if (own) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', own);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+      }
+    });
+
+    it('点标题折成只剩标题，重新打开还是折着的', () => {
+      const { unmount } = render(<ReportBody sessionId="s1" view={view({})} />);
+      fireEvent.click(screen.getByRole('button', { name: /此刻在做什么/ }));
+      expect(screen.queryByText('在跑测试')).toBeNull();
+      unmount();
+      render(<ReportBody sessionId="s1" view={view({})} />);
+      expect(screen.queryByText('在跑测试')).toBeNull();
+    });
+
+    it('分隔线调这一格的高度，双击回默认，调过的记得住', () => {
+      render(<ReportBody sessionId="s1" view={view({})} />);
+      const handle = screen.getByRole('separator', { name: /此刻在做什么/ });
+      expect(handle.getAttribute('aria-valuenow')).toBe('76');
+      fireEvent.keyDown(handle, { key: 'ArrowDown' });
+      expect(handle.getAttribute('aria-valuenow')).toBe('92');
+      expect(window.localStorage.getItem('frago.workbench.reportSlots.v1')).toContain('92');
+      fireEvent.doubleClick(handle);
+      expect(handle.getAttribute('aria-valuenow')).toBe('76');
+    });
+
+    it('右栏左边缘调整栏宽度，双击回默认', () => {
+      const onWidthChange = vi.fn();
+      render(
+        <ReportBody sessionId="s1" view={view({})} width={400} onWidthChange={onWidthChange} />,
+      );
+      const handle = screen.getByRole('separator', { name: /宽度/ });
+      fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+      expect(onWidthChange).toHaveBeenLastCalledWith(416);
+      fireEvent.doubleClick(handle);
+      expect(onWidthChange).toHaveBeenLastCalledWith(null);
+    });
   });
 });
 

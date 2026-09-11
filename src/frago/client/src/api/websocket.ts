@@ -29,6 +29,8 @@ export const MessageType = {
   // Workbench session streaming (replaces 5s record polling)
   SESSION_RECORDS_APPEND: 'session_records_append',
   SESSION_TURN_DONE: 'session_turn_done',
+  // The session page's side panel: the observer finished a pass over one session.
+  SESSION_OBSERVER_UPDATE: 'session_observer_update',
 
   // Recipe events
   RECIPE_STARTED: 'recipe_started',

@@ -1290,22 +1290,23 @@
       "localCommandOutput": "Command output"
     },
     "report": {
-      "notWired": "The stenographer isn't wired up yet — what follows is placeholder data",
       "slotNow": "What's happening now",
       "slotDecision": "Needs your call",
       "slotOutput": "Latest output",
       "slotHappened": "What has happened",
       "itemCount": "{{n}} items",
       "expandOlder": "Show {{n}} earlier",
-      "footer": "The stenographer fills these slots. Until it's wired up, nothing here comes from a real session.",
-      "demoNow": "Normalizing both clients' transcripts into one shape; the middle column already lays them out record by record",
-      "demoDecision": "The time range on the left defaults to no limit, so a thousand-odd sessions come out at once. Whether to give it a narrower default can wait until we've watched a few days of use.",
-      "demoOutput": "The five things worth keeping from the old session page moved into this one; the rest retired along with it",
-      "demoHappened1": "The middle column is on real endpoints, with a style per record shape",
-      "demoHappened2": "The error card lost its raw-text entry, and the server still blocks it too",
-      "demoHappened3": "The left column merges both clients into one list",
-      "demoHappened4": "The unified record type and both translation layers landed in the core data layer",
-      "demoHappened5": "Sessions have exactly one entry in the nav now"
+      "slotAnchor": "What this session is for",
+      "noSession": "Pick a session and this panel shows what the observer sees in it.",
+      "unbound": "The observer has no model yet. Pick one for it under Settings → Connections.",
+      "failed": "The observer's last pass got no answer: {{reason}}",
+      "empty": "The observer hasn't filled this session in yet. It will once the session is opened or the agent hands a turn back.",
+      "updated": "Filled in at {{time}} by {{model}}",
+      "none": "(none)",
+      "showAll": "Show all",
+      "showLess": "Show less",
+      "resizeSlot": "Drag to resize “{{label}}”, double-click to reset",
+      "resizePanel": "Drag to resize this panel, double-click to reset"
     },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",

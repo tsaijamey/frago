@@ -10,13 +10,13 @@
  * |---|---|---|
  * | 左 | 索引 | 真数据。两家会话都出现 |
  * | 中 | 流 | 真数据。十五种形态无损呈现 |
- * | 右 | 面 | 示意数据。速记员不在本次范围 |
+ * | 右 | 面 | 真数据。旁路 AI 每轮在服务端填，切换会话打断不了它 |
  *
  * 中栏走 `minmax(0, …)`、三栏各自 `min-w-0`。这两条是页面不横向滚的地基——少任何一条，
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -28,11 +28,14 @@ import StopRunButton from './StopRunButton';
 import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
+import { useReportWidth } from '@/hooks/useReportLayout';
 
 export default function SessionWorkbenchPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { t } = useTranslation();
   const sessions = useWorkbenchSessions();
+  // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
+  const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
   // 还在跑的会话让中栏自己活起来：文件一动服务端就推增量，轮询只是断连时的兜底。
   const {
@@ -72,7 +75,9 @@ export default function SessionWorkbenchPage() {
   const showLaunch = Boolean(launch) && (selectedId === null || selectedId === launch?.sessionId);
 
   return (
-    <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[232px_minmax(0,1fr)_280px] tablet:grid-cols-[232px_minmax(0,1fr)] phone:grid-cols-1 desktop:grid-cols-[302px_minmax(0,1fr)_346px]">
+    <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[232px_minmax(0,1fr)_var(--report-w,280px)] tablet:grid-cols-[232px_minmax(0,1fr)] phone:grid-cols-1 desktop:grid-cols-[302px_minmax(0,1fr)_var(--report-w,346px)]"
+      style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
+    >
       {/* 手机上一次只放得下一栏：没选会话时给清单，选了就整屏让给记录流。 */}
       <div className={`min-h-0 min-w-0 ${selectedId || showLaunch ? 'phone:hidden' : ''}`}>
         <SessionRail
@@ -181,7 +186,11 @@ export default function SessionWorkbenchPage() {
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
-        <ReportPanel />
+        <ReportPanel
+          sessionId={selectedId}
+          width={report.width}
+          onWidthChange={report.setWidth}
+        />
       </div>
     </div>
   );
