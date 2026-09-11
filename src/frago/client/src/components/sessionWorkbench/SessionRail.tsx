@@ -37,22 +37,44 @@
  *
  * 一场都没置顶时不长分区标题，整片仍是从前那个单列清单——空着的分区标题只是噪音。
  *
+ * **分组把主干按主题拆成几区。** 标签与每个标签下的会话编号存在服务端（见
+ * `useSessionGroups`）。一个标签都没有时不长任何分区标题，清单还是从前那样。有了标签，
+ * 主干拆成「未分组」加各标签几区：未分组排最前——新开的会话都落在这，人一眼要看见它们；
+ * 各标签按组里最近一场的活动时刻排，正在推进的主题在上面。各标签默认折起，折着时标题上
+ * 的数就是全部线索。置顶的那几场留在置顶区、worker 仍折在派活的那场下面，都不进分区。
+ *
  * **分区标题是列表里的普通一行，不是窗口化列表的 group header。** group header 的位置要
  * 等列表量完每一行的高度才算得出来，量完之前那两行标题一个都不在页面上——真实浏览器里
  * 撞见过整片清单已经摆好、标题还没出现。标题上坐着折叠开关，它不该等任何东西。
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso } from 'react-virtuoso';
-import { ChevronDown, ChevronRight, Loader2, Mail, Pin, Plus, RefreshCw, Search, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Mail,
+  Pin,
+  Plus,
+  RefreshCw,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import Modal from '@/components/ui/Modal';
 import SessionItem, { resumeCommand } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
+import GroupPicker from './GroupPicker';
 import { useSessionPins } from '@/hooks/useSessionPins';
+import { UNGROUPED, useSessionGroups, type GroupTag } from '@/hooks/useSessionGroups';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
+  activityTs,
   DAY_OPTIONS,
   MIN_CONTENT_QUERY,
   STATUS_LABEL_KEY,
@@ -122,6 +144,10 @@ type RailRow =
   | { kind: 'pinned-header' }
   | { kind: 'rest-header' }
   | { kind: 'workers-header' }
+  /** 一个分区的标题。`tag` 为 null 是「未分组」那一区。 */
+  | { kind: 'group-header'; key: string; tag: GroupTag | null; count: number; open: boolean }
+  /** 这一区这一批没放完，还剩几场。 */
+  | { kind: 'section-more'; key: string; remaining: number }
   | {
       kind: 'session';
       session: WorkbenchSession;
@@ -188,6 +214,11 @@ export default function SessionRail({
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const pins = useSessionPins();
+  const groups = useSessionGroups();
+  /** 「放进分组」那一小块开在哪一场、按钮在屏幕上的哪。 */
+  const [picker, setPicker] = useState<{ session: WorkbenchSession; rect: DOMRect } | null>(null);
+  /** 等人确认要删的那个标签。 */
+  const [deleting, setDeleting] = useState<GroupTag | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   /** 哪几场把自己派出去的 worker 展开着。默认一场都不展开——清单的主干是主会话。 */
@@ -272,6 +303,50 @@ export default function SessionRail({
   const searching = search.trim().length > 0;
 
   /**
+   * 主干按分组拆成几区。一个标签都没有时为空，清单照从前那样摆。
+   *
+   * 「未分组」排最前：新开的会话都落在这，人一眼要看见它们。各标签按组里最近一场的活动
+   * 时刻排——主干本来就按活动时刻倒序，每组第一场就是最近那场——正在推进的主题在上面；
+   * 一场都没有的组排最后，照建的次序。
+   *
+   * 筛了状态、时间范围或在搜索时，一场都不剩的区不长标题：点「在跑」之后摆着十几行「0」
+   * 只是噪音。什么都没筛时空组照样摆出来——人刚建的标签得看得见。
+   */
+  const grouping = groups.tags.length > 0;
+  const filtering = searching || status !== 'all' || days !== 0;
+  const { tags: groupTags, groupOf } = groups;
+  const sections = useMemo(() => {
+    if (!grouping) return [];
+    const known = new Set(groupTags.map((tag) => tag.id));
+    const buckets = new Map<string, WorkbenchSession[]>();
+    const ungrouped: WorkbenchSession[] = [];
+    for (const session of trunkRows) {
+      const tagId = groupOf(session.session_id);
+      if (tagId && known.has(tagId)) {
+        const bucket = buckets.get(tagId);
+        if (bucket) bucket.push(session);
+        else buckets.set(tagId, [session]);
+      } else {
+        ungrouped.push(session);
+      }
+    }
+    const latest = (list: WorkbenchSession[]) => (list.length ? activityTs(list[0]) : -1);
+    const tagged = groupTags
+      .map((tag) => ({ key: tag.id, tag: tag as GroupTag | null, sessions: buckets.get(tag.id) ?? [] }))
+      .sort((a, b) => latest(b.sessions) - latest(a.sessions));
+    return [{ key: UNGROUPED, tag: null as GroupTag | null, sessions: ungrouped }, ...tagged].filter(
+      (section) => section.sessions.length > 0 || (section.tag !== null && !filtering)
+    );
+  }, [grouping, groupTags, groupOf, trunkRows, filtering]);
+
+  /** 这一区摊没摊开。搜索时整片摊开——命中的要是折在某一区里，折着就等于没搜到。 */
+  const { isCollapsed } = groups;
+  const sectionOpen = useCallback(
+    (key: string) => searching || !isCollapsed(key),
+    [searching, isCollapsed]
+  );
+
+  /**
    * 这一批清单放到哪儿了。
    *
    * **预算先喂主干，主干摆完才轮到末尾那一区。** 那一区默认折着，折着的时候一条都不渲染，
@@ -282,13 +357,22 @@ export default function SessionRail({
    * 置顶区不受分页管，它本来就是人自己挑出来的几场，摆在最上面。
    */
   const orphansVisible = orphansOpen || searching;
-  const pagedTrunk = useMemo(() => trunkRows.slice(0, shown), [trunkRows, shown]);
+  /**
+   * 主干里这一刻摊开着的那几场。分了组就只算摊开的那几区——折着的区一场都不渲染，
+   * 不该占掉这一批的名额。
+   */
+  const openTrunk = useMemo(
+    () =>
+      grouping ? sections.flatMap((s) => (sectionOpen(s.key) ? s.sessions : [])) : trunkRows,
+    [grouping, sections, sectionOpen, trunkRows]
+  );
+  const pagedTrunk = useMemo(() => openTrunk.slice(0, shown), [openTrunk, shown]);
   const pagedOrphans = useMemo(
-    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - trunkRows.length)) : []),
-    [orphansVisible, orphanRows, shown, trunkRows.length]
+    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - openTrunk.length)) : []),
+    [orphansVisible, orphanRows, shown, openTrunk.length]
   );
   /** 这一刻还能往下放多少场，与已经放了多少场。底下那行进度报的就是这两个数。 */
-  const loadable = trunkRows.length + (orphansVisible ? orphanRows.length : 0);
+  const loadable = openTrunk.length + (orphansVisible ? orphanRows.length : 0);
   const loaded = pagedTrunk.length + pagedOrphans.length;
   const hasMore = loaded < loadable;
 
@@ -329,7 +413,37 @@ export default function SessionRail({
       ];
     };
 
-    const body: RailRow[] = pagedTrunk.flatMap(trunkWithKids);
+    let body: RailRow[];
+    if (!grouping) {
+      body = pagedTrunk.flatMap(trunkWithKids);
+    } else {
+      // 名额按分区的先后依次用：前一区放完才轮到下一区，与不分组时"一批一批往下放"是同一件事。
+      let budget = shown;
+      body = [];
+      for (const section of sections) {
+        const open = sectionOpen(section.key);
+        body.push({
+          kind: 'group-header',
+          key: section.key,
+          tag: section.tag,
+          count: section.sessions.length,
+          open,
+        });
+        if (!open) continue;
+        const take = section.sessions.slice(0, Math.max(0, budget));
+        budget -= take.length;
+        body.push(...take.flatMap(trunkWithKids));
+        // 这一区没放完就说一声还剩几场：它下面紧跟着别的分区标题，不说的话人会以为
+        // 这一区就这么多。
+        if (take.length < section.sessions.length) {
+          body.push({
+            kind: 'section-more',
+            key: section.key,
+            remaining: section.sessions.length - take.length,
+          });
+        }
+      }
+    }
     const tail: RailRow[] = orphanRows.length
       ? [
           { kind: 'workers-header' as const },
@@ -346,7 +460,8 @@ export default function SessionRail({
       { kind: 'pinned-header' as const },
       // 置顶的那几场同样带着自己那一叠：置顶只改"摆在哪儿"，不改"它底下有没有东西"。
       ...(pins.collapsed ? [] : pinnedRows.flatMap(trunkWithKids)),
-      { kind: 'rest-header' as const },
+      // 分了组的话下面紧跟着各分区标题，再长一行「其余」是多说一遍。
+      ...(grouping ? [] : [{ kind: 'rest-header' as const }]),
       ...body,
       ...tail,
     ];
@@ -360,6 +475,10 @@ export default function SessionRail({
     pagedOrphans,
     expandedWorkers,
     searching,
+    grouping,
+    sections,
+    sectionOpen,
+    shown,
   ]);
 
   /**
@@ -370,7 +489,7 @@ export default function SessionRail({
    */
   const toggleOrphans = () => {
     const opening = !orphansOpen;
-    if (opening) setShown((s) => Math.max(s, trunkRows.length + PAGE_SIZE));
+    if (opening) setShown((s) => Math.max(s, openTrunk.length + PAGE_SIZE));
     setOrphansOpen(opening);
   };
 
@@ -397,6 +516,83 @@ export default function SessionRail({
       );
     }
   };
+
+  const openPicker = useCallback((session: WorkbenchSession, anchor: HTMLElement) => {
+    setPicker({ session, rect: anchor.getBoundingClientRect() });
+  }, []);
+  const closePicker = useCallback(() => setPicker(null), []);
+
+  /**
+   * 把这场放进某个组，或移出分组。
+   *
+   * 放进去之后这一场多半就从眼前消失了——它去了另一区，那一区可能还折着。说一句它去哪了。
+   */
+  const moveTo = async (session: WorkbenchSession, tag: GroupTag | null) => {
+    setPicker(null);
+    try {
+      await groups.assign(session.session_id, tag ? tag.id : null);
+      showToast(
+        tag
+          ? t('workbench.rail.groupMovedToast', { name: tag.name })
+          : t('workbench.rail.groupRemovedToast'),
+        'success'
+      );
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : t('workbench.errors.groupSaveFailedPlain'),
+        'error'
+      );
+    }
+  };
+
+  /** 建一个标签并把这场放进去。建不成就抛，浮层留着让人改名重试。 */
+  const createAndMove = async (session: WorkbenchSession, name: string) => {
+    const tag = await groups.createTag(name);
+    await moveTo(session, tag);
+  };
+
+  const confirmDelete = async () => {
+    const tag = deleting;
+    setDeleting(null);
+    if (!tag) return;
+    try {
+      await groups.deleteTag(tag.id);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const handleRunAi = async () => {
+    try {
+      await groups.runAi();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  /**
+   * AI 那一趟跑完时报一句结果。
+   *
+   * 只在"这个页面看着它从在跑变成跑完"时报：开页面时它早就跑完了的那一趟，人没在等，
+   * 报出来是在说一件跟眼下无关的旧事。
+   */
+  const aiJob = groups.aiJob;
+  const wasRunning = useRef(aiJob.running);
+  useEffect(() => {
+    if (wasRunning.current && !aiJob.running) {
+      if (aiJob.error) {
+        showToast(t('workbench.rail.groupAiFailed', { error: aiJob.error }), 'error');
+      } else if (!aiJob.total) {
+        showToast(t('workbench.rail.groupAiNothing'), 'success');
+      } else {
+        showToast(
+          t('workbench.rail.groupAiDone', { assigned: aiJob.assigned, tags: aiJob.created_tags }),
+          'success'
+        );
+      }
+    }
+    wasRunning.current = aiJob.running;
+  }, [aiJob, showToast, t]);
 
   /**
    * 清单头尾那两块。
@@ -488,6 +684,22 @@ export default function SessionRail({
               <RefreshCw size={14} strokeWidth={1.5} />
             )}
           </button>
+          {/* AI 分组只在人按下去时跑：整理这件事人要看着。只动还没分组的主会话。 */}
+          <button
+            type="button"
+            onClick={() => void handleRunAi()}
+            disabled={aiJob.running}
+            aria-label={t('workbench.rail.groupAiHint')}
+            title={t('workbench.rail.groupAiHint')}
+            data-testid="group-ai"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+          >
+            {aiJob.running ? (
+              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+            ) : (
+              <Sparkles size={14} strokeWidth={1.5} />
+            )}
+          </button>
         </div>
 
         <div className="flex flex-wrap gap-1">
@@ -536,6 +748,14 @@ export default function SessionRail({
               : content.searching
                 ? t('workbench.rail.contentSearching')
                 : t('workbench.rail.contentHits', { n: content.matches.size })}
+          </p>
+        ) : null}
+        {/* AI 在跑时一直报它走到哪：一批要几十秒，不报的话那颗转圈看起来像卡住了。 */}
+        {aiJob.running ? (
+          <p data-testid="group-ai-status" className="text-[11px] text-text-muted">
+            {aiJob.phase === 'tags'
+              ? t('workbench.rail.groupAiDrafting')
+              : t('workbench.rail.groupAiProgress', { done: aiJob.done, total: aiJob.total })}
           </p>
         ) : null}
         {content.warnings.map((warning) => (
@@ -632,7 +852,13 @@ export default function SessionRail({
               if (hasMore) setShown((s) => s + PAGE_SIZE);
             }}
             computeItemKey={(_, row) =>
-              row.kind === 'session' ? row.session.session_id : row.kind
+              row.kind === 'session'
+                ? row.session.session_id
+                : row.kind === 'group-header'
+                  ? `group:${row.key}`
+                  : row.kind === 'section-more'
+                    ? `more:${row.key}`
+                    : row.kind
             }
             itemContent={(_, row) => {
               if (row.kind === 'pinned-header') {
@@ -663,6 +889,61 @@ export default function SessionRail({
                         认不出出处的算在下面那一区——每一场只被数一次。 */}
                     <span className="font-mono opacity-70">{trunkRows.length}</span>
                   </div>
+                );
+              }
+              if (row.kind === 'group-header') {
+                const tag = row.tag;
+                return (
+                  <div className="group/section flex items-center pr-2">
+                    <button
+                      type="button"
+                      onClick={() => groups.toggleCollapsed(row.key)}
+                      aria-expanded={row.open}
+                      data-testid="group-header"
+                      data-group-key={row.key}
+                      /* 标签名是人或 AI 起的字，不做大写变换——其余几行分区标题是界面自己
+                         的词，这一行是数据。 */
+                      className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                    >
+                      {row.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      <span className="truncate">
+                        {tag ? tag.name : t('workbench.rail.ungroupedHeader')}
+                      </span>
+                      {tag?.source === 'ai' ? (
+                        <Sparkles
+                          size={10}
+                          className="shrink-0 text-text-dim"
+                          aria-label={t('workbench.rail.groupSourceAi')}
+                        />
+                      ) : null}
+                      {/* 折着时这个数就是全部线索：不报的话，人看不出这一区里有多少。 */}
+                      <span className="shrink-0 font-mono opacity-70">{row.count}</span>
+                    </button>
+                    {tag ? (
+                      <button
+                        type="button"
+                        onClick={() => setDeleting(tag)}
+                        aria-label={t('workbench.rail.groupDelete')}
+                        title={t('workbench.rail.groupDelete')}
+                        data-testid="group-delete"
+                        className="mt-2 shrink-0 rounded-[5px] p-1 text-text-muted opacity-0 transition-colors duration-200 hover:text-accent-error focus-visible:opacity-100 group-hover/section:opacity-100"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              }
+              if (row.kind === 'section-more') {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setShown((s) => s + PAGE_SIZE)}
+                    data-testid="section-more"
+                    className="w-full px-4 pb-2 pt-0.5 text-left text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                  >
+                    {t('workbench.rail.sectionMore', { n: row.remaining })}
+                  </button>
                 );
               }
               if (row.kind === 'workers-header') {
@@ -713,6 +994,10 @@ export default function SessionRail({
                     onCopy={handleCopy}
                     onTogglePin={handleTogglePin}
                     onToggleWorkers={toggleWorkers}
+                    /* worker 跟着派活的那场走，不单独分组，卡上也就不长这颗按钮。 */
+                    onPickGroup={
+                      row.nested || session.origin === 'worker' ? undefined : openPicker
+                    }
                       />
                     </div>
                   </div>
@@ -736,6 +1021,48 @@ export default function SessionRail({
           cx: familyCounts.cx,
         })}
       </div>
+
+      {picker ? (
+        <GroupPicker
+          anchor={picker.rect}
+          tags={groups.tags}
+          current={groups.groupOf(picker.session.session_id)}
+          onPick={(tagId) =>
+            void moveTo(picker.session, groups.tags.find((tag) => tag.id === tagId) ?? null)
+          }
+          onCreate={(name) => createAndMove(picker.session, name)}
+          onClose={closePicker}
+        />
+      ) : null}
+
+      <Modal
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title={deleting ? t('workbench.rail.groupDeleteTitle', { name: deleting.name }) : ''}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setDeleting(null)}
+              className="flex-1 rounded-[8px] px-3 py-1.5 text-[13px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover"
+            >
+              {t('workbench.rail.groupDeleteCancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmDelete()}
+              data-testid="group-delete-confirm"
+              className="flex-1 rounded-[8px] bg-accent-error px-3 py-1.5 text-[13px] font-medium text-[var(--text-on-accent)] transition-opacity duration-200 hover:opacity-90"
+            >
+              {t('workbench.rail.groupDeleteOk')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-[13px] leading-[1.6] text-text-secondary">
+          {deleting ? t('workbench.rail.groupDeleteConfirm', { n: groups.sizeOf(deleting.id) }) : null}
+        </p>
+      </Modal>
 
       {/* 建完就交出去。等编号、反复重取清单、把中栏切过去，这些事由页面那边的启动状态
           统一管（见 `useSessionLaunch`）——左栏自己等的话，那段等待只有左栏知道，中栏

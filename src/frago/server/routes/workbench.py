@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from frago.server.services import (
     session_send,
     workbench_agents,
+    workbench_groups,
     workbench_new_session,
     workbench_pins,
 )
@@ -284,6 +285,80 @@ async def unpin_workbench_session(sid: str) -> dict[str, list[str]]:
     哪一家**——不管什么形状，把它从名单里去掉都是对的。
     """
     return {"pinned": await asyncio.to_thread(workbench_pins.unpin, sid)}
+
+
+def _groups_payload(state: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:
+    """分组的对外形状：整份分组，外加 AI 分组那一趟走到哪了。每条接口都回这一份。"""
+    return {**state, "ai_job": job if job is not None else workbench_groups.job_state()}
+
+
+@router.get("/workbench/groups")
+async def list_workbench_groups() -> dict[str, Any]:
+    """有哪些标签、每个标签下挂哪些会话编号，外加 AI 分组的进度。
+
+    与置顶一样只回编号：会话本身由清单那条接口给，界面拿编号去对号入座。编号**不与清单
+    核对**——Claude Code 清理掉原文件的会话备份里还在，一核对就会被悄悄踢出分组。
+    """
+    return _groups_payload(await asyncio.to_thread(workbench_groups.load))
+
+
+class CreateTagRequest(BaseModel):
+    name: str
+
+
+@router.post("/workbench/groups/tags")
+async def create_workbench_tag(request: CreateTagRequest) -> dict[str, Any]:
+    """人建一个标签。重名回 409：两个同名分区，人分不清该往哪个里放。"""
+    try:
+        state = await asyncio.to_thread(workbench_groups.create_tag, request.name)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return _groups_payload(state)
+
+
+@router.delete("/workbench/groups/tags/{tag_id}")
+async def delete_workbench_tag(tag_id: str) -> dict[str, Any]:
+    """删一个标签，里面的会话回到未分组。本来就没有也回 200。"""
+    return _groups_payload(await asyncio.to_thread(workbench_groups.delete_tag, tag_id))
+
+
+class AssignRequest(BaseModel):
+    """``tag_id`` 为 null 就是移出分组。"""
+
+    tag_id: str | None = None
+
+
+@router.put("/workbench/groups/sessions/{sid}")
+async def assign_workbench_session(sid: str, request: AssignRequest) -> dict[str, Any]:
+    """把这场会话放进某个组（从原来那组搬走），或移出分组。
+
+    编号三家的形状都不像时回 404，标签不存在也回 404：分组里躺一行谁都对不上的记录，
+    从此没人清得掉。
+    """
+    try:
+        record_reader.detect_family(sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        state = await asyncio.to_thread(workbench_groups.assign, sid, request.tag_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=f"没有这个标签：{request.tag_id}") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return _groups_payload(state)
+
+
+@router.post("/workbench/groups/ai")
+async def start_workbench_ai_grouping() -> dict[str, Any]:
+    """让 AI 把还没分组的主会话归进标签。在后台跑，立刻回进度，页面轮询取分组看它走到哪。
+
+    已经在跑就不再起第二趟，照样回当前进度。
+    """
+    cards = await asyncio.to_thread(record_reader.list_sessions)
+    job = workbench_groups.start_ai_grouping(cards)
+    return _groups_payload(await asyncio.to_thread(workbench_groups.load), job)
 
 
 class SendRequest(BaseModel):

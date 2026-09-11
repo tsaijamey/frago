@@ -3,7 +3,7 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, CornerDownRight, Pin, Quote } from 'lucide-react';
+import { Check, Copy, CornerDownRight, Pin, Quote, Tag } from 'lucide-react';
 import i18n from '@/i18n';
 import {
   activityTs,
@@ -170,6 +170,7 @@ export default function SessionItem({
   onCopy,
   onTogglePin,
   onToggleWorkers,
+  onPickGroup,
 }: {
   session: WorkbenchSession;
   selected: boolean;
@@ -194,6 +195,8 @@ export default function SessionItem({
   onTogglePin?: (session: WorkbenchSession) => void;
   /** 展开/折起这场派出去的 worker。不给就不长这颗按钮。 */
   onToggleWorkers?: (session: WorkbenchSession) => void;
+  /** 放进分组。`anchor` 是按钮本身，浮层按它的位置摆。不给就不长这颗按钮。 */
+  onPickGroup?: (session: WorkbenchSession, anchor: HTMLElement) => void;
 }) {
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
@@ -328,6 +331,23 @@ export default function SessionItem({
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-dim">
           {dirTail}
         </span>
+        {onPickGroup ? (
+          <button
+            type="button"
+            title={t('workbench.rail.groupPick')}
+            aria-label={t('workbench.rail.groupPick')}
+            data-testid="pick-group"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPickGroup(session, e.currentTarget);
+            }}
+            /* 与图钉同一个规矩：平时不显形，鼠标进卡或键盘走到才浮出来。这张卡在哪个组，
+               分区标题已经说了，卡上不必再常驻一颗。 */
+            className="shrink-0 rounded-[5px] p-1 text-text-muted opacity-0 transition-colors duration-200 hover:text-text-primary focus-visible:opacity-100 group-hover/session:opacity-100"
+          >
+            <Tag size={12} />
+          </button>
+        ) : null}
         {onTogglePin ? (
           <button
             type="button"
