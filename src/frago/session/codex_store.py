@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from frago.session.engine_cli import run_engine_command
+
 logger = logging.getLogger(__name__)
 
 # frago 侧的身份映射文件：frago 会话标识 → codex 原生会话 id。设备本地产物，
@@ -205,6 +207,21 @@ def session_exists(session_id: str) -> bool:
     if not sessions_root().is_dir():
         return True
     return find_rollout(session_id) is not None
+
+
+def delete_session(session_id: str) -> str:
+    """叫 codex 自己把这场会话永久删掉，回它吐出来的那句话。
+
+    **不自己动手删文件。** 一场 codex 会话不只躺在 rollout 文件里：会话标题、分页
+    历史、被引用过的目标分别记在 ``thread_history_1.sqlite``、``state_5.sqlite`` 与
+    ``history.jsonl`` 里，还有若干 ``-wal`` / ``-shm`` 边车。只把 rollout 文件删掉，
+    会话清单里是没了，但 codex 自己那边仍留着半场会话——两边从此各说各话，而界面上
+    看不出哪边是真的。``codex delete`` 是它给这条路留的口子，交给它。
+
+    "本机已经没有了"这条**不在这里判**。判据在上游（``find_rollout`` 就是会话清单
+    取数用的那一个），上游没拦住才会走到这儿；走到这儿还失败，那就是真失败，如实抛。
+    """
+    return run_engine_command("codex", ["delete", session_id]).output
 
 
 def claim_session(directory: str, since_ms: int) -> str | None:
@@ -581,3 +598,28 @@ def drop_binding(frago_session_id: str) -> None:
     if bindings.pop(frago_session_id, None) is None:
         return
     _save_bindings(bindings)
+
+
+def drop_bindings_pointing_at(codex_session_id: str) -> list[str]:
+    """清掉所有指向这场 codex 会话的映射，回被清掉的 frago 会话编号。
+
+    有人把一场 codex 会话永久删掉之后，映射里那些还指着它的条目就永远匹配不上了。
+    驱动那侧碰见失效映射会自己清（见 ``drivers/codex.py`` 的 ``session_exists`` 自愈），
+    但那是**下一次起会话时**才发生的事；在那之前，删掉的会话仍以「已认领」的样子留在
+    映射里。人是主动删的，顺手摘干净。
+
+    方向是"按 codex 编号找 frago 编号"：映射的键是 frago 侧的编号，而人删的是引擎侧
+    那一场，两边不是同一个编号空间，NEVER 拿删掉的那个编号直接去 ``pop`` 键。
+    """
+    bindings = _load_bindings()
+    dropped = [
+        key
+        for key, entry in bindings.items()
+        if entry.get("codex_session_id") == codex_session_id
+    ]
+    if not dropped:
+        return []
+    for key in dropped:
+        del bindings[key]
+    _save_bindings(bindings)
+    return dropped

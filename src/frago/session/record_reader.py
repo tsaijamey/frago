@@ -12,21 +12,30 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from frago.session import adapters, codex_store, opencode_store, session_index, session_origin
+from frago.session.adapters import claude_code_records
 from frago.session.session_index import SessionStatus, TailSignals, derive_status
 from frago.session.session_origin import OriginIndex, SessionOrigin
 from frago.session.unified_record import RecordFamily, UnifiedRecord
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
+    "DeletedSession",
     "SessionCard",
+    "SessionDeleteUnsupported",
+    "SessionFilesMissing",
     "UnknownSessionFamily",
+    "delete_session",
     "detect_family",
     "list_sessions",
     "read_raw",
@@ -265,9 +274,7 @@ def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
         digest_done, digest_stuck = _digests(status, tail)
         last_active = int(meta.mtime * 1000)
         created = (
-            int(meta.started_at.timestamp() * 1000)
-            if meta.started_at is not None
-            else last_active
+            int(meta.started_at.timestamp() * 1000) if meta.started_at is not None else last_active
         )
         cards.append(
             SessionCard(
@@ -360,3 +367,102 @@ def read_raw(session_id: str, record_id: str) -> dict[str, Any] | None:
     """
     family = detect_family(session_id)
     return adapters.get_adapter(family).read_raw(session_id, record_id)
+
+
+class SessionDeleteUnsupported(RuntimeError):
+    """这一家的会话还没有删除入口。
+
+    眼下三家都有入口，这个异常在正常路径上抛不出来。它守的是**以后**：``detect_family``
+    多加一家、而 ``delete_session`` 还没跟上时，落进别家的删法里比报错危险得多——删的
+    东西不一样，出了事没人看得出是这里错的。
+    """
+
+
+class SessionFilesMissing(FileNotFoundError):
+    """这场会话在本机的原始记录已经不在了。"""
+
+
+@dataclass(frozen=True)
+class DeletedSession:
+    """一场会话删掉之后的如实交代。
+
+    ``removed`` 与 ``problems`` 都是可以直接摆到界面上的人话：前者说删掉了哪几样，
+    后者说哪一样没删干净。**"删没删成"不看这个结构**——删不成一律抛异常；能返回就
+    说明主要目的（会话清单里不再有它）已经达成，``problems`` 只是收尾上的瑕疵。
+    把一件已经做成的事说成没做成，人会以为要重来一遍。
+    """
+
+    session_id: str
+    family: RecordFamily
+    removed: list[str]
+    problems: list[str] = field(default_factory=list)
+
+
+def delete_session(session_id: str) -> DeletedSession:
+    """删掉一场会话，让它从会话清单里消失。
+
+    三种结局，调用方各说各话：
+
+    - 编号不属于任何一家 → 抛 :class:`UnknownSessionFamily`；
+    - 本机已经没有这场会话 → 抛 :class:`SessionFilesMissing`；
+    - 引擎拒绝动手 → 抛 :class:`~frago.session.engine_cli.EngineCliFailed`。
+
+    **三家走两种路。** Claude Code 的记录就是一个 JSONL 加一个同名目录，位置稳定、
+    格式公开，直接删干净。另两家借引擎自己的删除命令——不是偷懒，是因为它们的会话
+    横跨多张表与多个库，对着别人的库手写 ``DELETE`` 只会留下看不见的残渣（详见
+    :mod:`frago.session.engine_cli` 开头）。
+
+    **删掉引擎侧那一场之后，顺手摘掉 frago 这边指着它的映射。** 映射的键是 frago 侧
+    的编号、值是引擎侧的编号，驱动碰见失效映射会自己清，但那是下一次起会话时的事；
+    在那之前，已删的会话仍以「已认领」的样子留在映射里。摘不干净不算删除失败，
+    如实放进 ``problems``。
+
+    **这不等于抹掉这场会话存在过。** 删的是引擎自己那份原始记录；frago 在
+    ``~/.frago/sessions/`` 下另存的副本不跟着动，命令行检索仍找得到它。这一步只承诺
+    一件事：会话清单里不再有它。
+    """
+    sid = session_id.strip()
+    family = detect_family(sid)
+
+    if family == "claude-code":
+        files = claude_code_records.delete_session_files(sid)
+        if files is None:
+            raise SessionFilesMissing(f"本机已经找不到这场会话的原始记录了：{sid}")
+        removed = [f"原始记录 {files.file}"]
+        if files.directory_removed:
+            removed.append(f"会话目录 {files.directory}")
+        return DeletedSession(sid, family, removed, list(files.problems))
+
+    if family == "opencode":
+        if not opencode_store.session_exists(sid):
+            raise SessionFilesMissing(f"opencode 库里已经没有这场会话了：{sid}")
+        output = opencode_store.delete_session(sid)
+        dropped = _drop_pointing_bindings(sid, opencode_store.drop_bindings_pointing_at)
+        return DeletedSession(sid, family, [output or "opencode 里的会话记录"], dropped)
+
+    if family == "codex":
+        if not codex_store.find_rollout(sid):
+            raise SessionFilesMissing(f"codex 那边已经没有这场会话了：{sid}")
+        output = codex_store.delete_session(sid)
+        dropped = _drop_pointing_bindings(sid, codex_store.drop_bindings_pointing_at)
+        return DeletedSession(sid, family, [output or "codex 里的会话记录"], dropped)
+
+    # 三家都在上面各归各的。走到这里说明 `detect_family` 认出了一个本函数还不认识的家
+    # ——NEVER 让它落进上面任何一条分支：拿别家的删法去删这一家，删的东西不一样，出了事
+    # 没人看得出是这里错的。
+    raise SessionDeleteUnsupported(f"{family} 的会话还没有删除入口")
+
+
+def _drop_pointing_bindings(sid: str, drop: Callable[[str], list[str]]) -> list[str]:
+    """摘掉指向这场会话的 frago 映射，回"没摘干净"的那句话（摘干净了就是空表）。
+
+    摘不干净 NEVER 让整个删除失败：要的结果（清单里不再有它）已经达成。但也不能吞
+    ——映射里留着一个永远匹配不上的编号，是下一次起会话时才发作的那种毛病。
+    """
+    try:
+        dropped = drop(sid)
+    except OSError as exc:
+        return [f"frago 这边指向它的会话映射没摘掉：{exc}"]
+    if dropped:
+        logger.info("dropped %d binding(s) pointing at deleted session %s", len(dropped), sid)
+    return []

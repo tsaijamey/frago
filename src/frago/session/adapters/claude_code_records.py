@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -41,8 +42,10 @@ from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
 
 __all__ = [
     "ClaudeCodeRecordAdapter",
+    "DeletedSessionFiles",
     "TranslationStats",
     "clear_cache",
+    "delete_session_files",
     "find_session_file",
     "to_unified",
     "translate_records",
@@ -512,6 +515,91 @@ def find_session_file(session_id: str, root: Path | None = None) -> Path | None:
     for candidate in base.glob(f"*/{session_id}.jsonl"):
         return candidate
     return None
+
+
+@dataclass
+class DeletedSessionFiles:
+    """一场会话删掉了哪些东西。
+
+    ``problems`` 是删了但没删干净的地方，原样带出来给界面说。为空表示两样都删掉了。
+    """
+
+    session_id: str
+    project_dir: str
+    file: str
+    directory: str
+    """同名的会话目录。它本来就没建过时为假，此时这个路径并不存在。"""
+    directory_removed: bool
+    freed_bytes: int
+    problems: list[str] = field(default_factory=list)
+
+
+def _tree_bytes(root: Path) -> int:
+    """目录下所有文件加起来多少字节。量不出来就当 0——这是个报数，不该让它挡住删除。"""
+    total = 0
+    for item in root.rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def delete_session_files(
+    session_id: str, root: Path | None = None
+) -> DeletedSessionFiles | None:
+    """删掉一场会话在本机 Claude Code 里的原始记录：那个 JSONL，外带同名的会话目录。
+
+    ``root`` 是记录根目录，与 :func:`find_session_file` 同一道口子，测试用。
+
+    找不到返回 None，NEVER 抛——"本机已经没有它了"和"删不动"是两回事，由调用方各说各话。
+    删不动（权限、被占用）一律把 ``OSError`` 抛出去，不吞。
+
+    **先删 JSONL。** 会话清单是按这个文件扫出来的，它在，这一场就还在列表里。会话目录
+    （``<项目目录>/<会话编号>/``）是它的附属，Claude Code 往里放自定义标题之类的私货。
+    顺序反过来的话，目录没了而文件删不动，人看到的会是"说删了，它还在"。
+
+    **目录删不掉不算整件事失败。** 要的结果（清单里不再有它）已经达成，把那句实话放进
+    ``problems`` 带回去就行——把一件已经做成的事说成没做成，人会以为要重来一遍。
+
+    目标目录的判据只有一条：与记录文件同级、且目录名就是这场会话的编号。项目目录的名字
+    由工作目录编码而来、一律以 ``-`` 开头，撞不上裸的会话编号，所以这一条比对就是全部
+    的安全边界，不用再加别的。
+    """
+    path = find_session_file(session_id, root)
+    if path is None:
+        return None
+
+    project_dir = path.parent
+    session_dir = project_dir / session_id
+
+    freed = 0
+    try:
+        freed += path.stat().st_size
+    except OSError:
+        pass
+    path.unlink()
+
+    directory_removed = False
+    problems: list[str] = []
+    if session_dir.is_dir() and session_dir.name == session_id:
+        try:
+            freed += _tree_bytes(session_dir)
+            shutil.rmtree(session_dir)
+            directory_removed = True
+        except OSError as exc:
+            problems.append(f"会话目录没删掉：{exc}")
+
+    return DeletedSessionFiles(
+        session_id=session_id,
+        project_dir=str(project_dir),
+        file=str(path),
+        directory=str(session_dir),
+        directory_removed=directory_removed,
+        freed_bytes=freed,
+        problems=problems,
+    )
 
 
 # ── 翻译主体 ────────────────────────────────────────────────────────

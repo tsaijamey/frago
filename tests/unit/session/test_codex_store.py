@@ -325,6 +325,21 @@ def test_binding_roundtrip(codex_home, tmp_path):
     assert codex_store.get_binding("frago-1") is None
 
 
+def test_drop_bindings_pointing_at_spares_the_others(codex_home, tmp_path):
+    """按 codex 编号找 frago 编号：两边不是同一个编号空间，别把键当值删。"""
+    codex_store.put_binding("frago-1", "codex-gone", str(tmp_path))
+    codex_store.put_binding("frago-2", "codex-kept", str(tmp_path))
+    # 键恰好长得和要删的那个一样，也必须留着——它指的是另一场会话。
+    codex_store.put_binding("codex-gone", "codex-other", str(tmp_path))
+
+    dropped = codex_store.drop_bindings_pointing_at("codex-gone")
+
+    assert dropped == ["frago-1"]
+    assert codex_store.get_binding("frago-1") is None
+    assert codex_store.get_binding("frago-2") == "codex-kept"
+    assert codex_store.get_binding("codex-gone") == "codex-other"
+
+
 def test_corrupt_binding_file_reads_as_empty(codex_home):
     codex_store.BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     codex_store.BINDINGS_PATH.write_text("{not json", encoding="utf-8")

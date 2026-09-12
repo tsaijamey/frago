@@ -1083,6 +1083,18 @@
       "failed": "Couldn't stop",
       "hint": "End this session's tmux run. The transcript stays; you just can't send to it anymore"
     },
+    "delete": {
+      "action": "Delete session",
+      "title": "Delete session",
+      "what": "Everything {{engine}} recorded for this session is deleted — what was said, what was run, all of it.",
+      "effect": "Afterwards it's gone from the session list and won't open again.",
+      "irreversible": "This can't be undone — once it's gone, it's gone.",
+      "running": "This session is still running. Stop it first, then come back and delete it.",
+      "gone": "This session is already gone from this machine — there is nothing left to delete. Refresh the list.",
+      "cancel": "Cancel",
+      "ok": "Delete",
+      "busy": "Deleting…"
+    },
     "status": {
       "running": "Running",
       "error": "Error",

@@ -451,6 +451,29 @@ def test_drop_binding() -> None:
     opencode_store.drop_binding("frago-1")
 
 
+@pytest.mark.usefixtures("bindings")
+def test_drop_bindings_pointing_at_spares_the_others() -> None:
+    """按 opencode 编号找 frago 编号：两边不是同一个编号空间，别把键当值删。"""
+    opencode_store.put_binding("frago-1", "ses_gone", "/w")
+    opencode_store.put_binding("frago-2", "ses_kept", "/w2")
+    # 键恰好长得和要删的那个一样，也必须留着——它指的是另一场会话。
+    opencode_store.put_binding("ses_gone", "ses_other", "/w3")
+
+    dropped = opencode_store.drop_bindings_pointing_at("ses_gone")
+
+    assert dropped == ["frago-1"]
+    assert opencode_store.get_binding("frago-1") is None
+    assert opencode_store.get_binding("frago-2") == "ses_kept"
+    assert opencode_store.get_binding("ses_gone") == "ses_other"
+
+
+@pytest.mark.usefixtures("bindings")
+def test_drop_bindings_pointing_at_is_a_noop_when_nothing_points() -> None:
+    opencode_store.put_binding("frago-1", "ses_kept", "/w")
+    assert opencode_store.drop_bindings_pointing_at("ses_gone") == []
+    assert opencode_store.get_binding("frago-1") == "ses_kept"
+
+
 def test_binding_missing_file_reads_as_unbound(bindings: Path) -> None:
     assert not bindings.exists()
     assert opencode_store.get_binding("anything") is None

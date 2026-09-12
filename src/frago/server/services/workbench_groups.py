@@ -257,6 +257,31 @@ def assign(session_id: str, tag_id: str | None) -> dict[str, Any]:
         return state
 
 
+def remove_session(session_id: str) -> dict[str, Any]:
+    """把这场会话的编号从所有标签里摘掉。标签本身一个都不动。
+
+    删会话的时候顺手调它。**与"编号留在分组里"那条规矩不冲突**：那条说的是会话文件被
+    Claude Code 滚删、被挪走、被恢复时，编号照样留着——那几种情况人都没表态，留着才是
+    对的。这里是有人主动把这一场删了，再留一个永远匹配不上的编号就没有意义了。
+
+    本来就不在任何标签里也当成功：这条接口承诺的是"结束时它不在任何标签里"，那个结果
+    已经成立，回一句"本来就不在"只会让调用方多写一段没用的分支。
+    """
+    sid = session_id.strip()
+    if not sid:
+        raise ValueError("会话编号不能是空的")
+    with _LOCK:
+        state = _read()
+        dropped = False
+        for members in state["sessions"].values():
+            if sid in members:
+                members.remove(sid)
+                dropped = True
+        if dropped:
+            _write(state)
+        return state
+
+
 # ── AI 分组 ─────────────────────────────────────────────────────────
 class CardLike(Protocol):
     session_id: str

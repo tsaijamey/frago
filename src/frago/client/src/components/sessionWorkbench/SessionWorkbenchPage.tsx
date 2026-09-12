@@ -25,6 +25,7 @@ import ReportPanel from './ReportPanel';
 import Composer from './Composer';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import StopRunButton from './StopRunButton';
+import DeleteSessionButton from './DeleteSessionButton';
 import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
@@ -134,6 +135,18 @@ export default function SessionWorkbenchPage() {
             <StopRunButton
               sessionId={selected.session_id}
               onStopped={() => void sessions.reload()}
+            />
+          ) : null}
+          {/* 三家都摆。删法三家不一样（Claude Code 删文件，另两家借引擎自己的命令），
+              那层差别由弹窗里的话交代，不靠"有没有这个按钮"来暗示。删成之后中栏要退回
+              清单态——再停在那一场上，记录流对着一个已经不存在的编号接着问。 */}
+          {selected ? (
+            <DeleteSessionButton
+              session={selected}
+              onDeleted={() => {
+                setSelectedId(null);
+                void sessions.reload();
+              }}
             />
           ) : null}
         </header>

@@ -1,8 +1,10 @@
 /**
  * 标题栏那个「结束运行」。
  *
- * 钉住的是三件按错了就出事的事：一按不出门（否则手滑就把会话打断了）、服务端说
- * 「还在干活」时界面不许当成关掉了、这一场没在跑时照实说而不是报「已结束」。
+ * 钉住的是四件按错了就出事的事：一按不出门（否则手滑就把会话打断了）、服务端说
+ * 「还在干活」时界面不许当成关掉了、这一场没在跑时照实说而不是报「已结束」、
+ * 以及**按钮上不留文字**——那一行还挤着标题、工作目录和删除按钮，带字就把标题挤没。
+ * 少了字不等于少了说法：每一档的完整说法挂在无障碍名称上，所以这几条照旧按名字找它。
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,18 +27,31 @@ function mockStop(body: Record<string, unknown>) {
   return fetchMock;
 }
 
+/** 按当前这一档的说法找那个按钮。 */
+function button(name: string): HTMLElement {
+  return screen.getByRole('button', { name });
+}
+
 beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe('StopRunButton', () => {
+  it('按钮上只有图标，一个字的正文都没有', () => {
+    mockStop({ alive: true, busy: false, stopped: true });
+    render(<StopRunButton sessionId={SID} />);
+
+    expect(button('结束运行').textContent).toBe('');
+  });
+
   it('第一下只问不出门', () => {
     const fetchMock = mockStop({ alive: true, busy: false, stopped: true });
     render(<StopRunButton sessionId={SID} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(button('结束运行'));
 
-    expect(screen.getByText('确认结束')).toBeTruthy();
+    expect(button('确认结束')).toBeTruthy();
+    expect(button('确认结束').textContent).toBe('');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -45,16 +60,16 @@ describe('StopRunButton', () => {
     const onStopped = vi.fn();
     render(<StopRunButton sessionId={SID} onStopped={onStopped} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(button('结束运行'));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(button('确认结束'));
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(`/api/workbench/sessions/${SID}/stop`);
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ force: false });
-    await waitFor(() => expect(screen.getByText('已结束')).toBeTruthy());
+    await waitFor(() => expect(button('已结束')).toBeTruthy());
     expect(onStopped).toHaveBeenCalled();
   });
 
@@ -63,17 +78,17 @@ describe('StopRunButton', () => {
     const onStopped = vi.fn();
     render(<StopRunButton sessionId={SID} onStopped={onStopped} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(button('结束运行'));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(button('确认结束'));
     });
 
-    await waitFor(() => expect(screen.getByText('还在干活，仍要结束')).toBeTruthy());
+    await waitFor(() => expect(button('还在干活，仍要结束')).toBeTruthy());
     expect(onStopped).not.toHaveBeenCalled();
 
     // 人决定打断：这一按带上 force。
     await act(async () => {
-      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(button('还在干活，仍要结束'));
     });
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
       force: true,
@@ -85,12 +100,12 @@ describe('StopRunButton', () => {
     const onStopped = vi.fn();
     render(<StopRunButton sessionId={SID} onStopped={onStopped} />);
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(button('结束运行'));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(button('确认结束'));
     });
 
-    await waitFor(() => expect(screen.getByText('这一场没在跑')).toBeTruthy());
+    await waitFor(() => expect(button('这一场没在跑')).toBeTruthy());
     expect(onStopped).not.toHaveBeenCalled();
   });
 });

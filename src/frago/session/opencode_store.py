@@ -32,6 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from frago.session.engine_cli import run_engine_command
+
 logger = logging.getLogger(__name__)
 
 # opencode 的会话库默认位置。测试经 ``FRAGO_OPENCODE_DB`` 指向临时库。
@@ -177,6 +179,23 @@ def session_exists(opencode_session_id: str) -> bool:
     finally:
         conn.close()
     return row is not None
+
+
+def delete_session(opencode_session_id: str) -> str:
+    """叫 opencode 自己把这场会话删掉，回它吐出来的那句话。
+
+    **这条命令是唯一一处从这个模块发起的写。** 它不由本模块的只读连接执行——那个
+    连接照旧 ``mode=ro``，本模块照旧一条写语句都不发；动手的是 ``opencode session
+    delete``，写它自己的库是它的事。
+
+    不自己发 ``DELETE`` 的理由在 :mod:`frago.session.engine_cli`：这个库默认不强制
+    外键，漏删的子表不报错，事件流水的序列号对不上时坏的是 opencode 自己的同步，
+    而这些在界面上都表现为「删干净了」。
+
+    "本机已经没有了"这条**不在这里判**，判据在上游的 ``session_exists``；走到这儿
+    还失败就是真失败，如实抛。
+    """
+    return run_engine_command("opencode", ["session", "delete", opencode_session_id]).output
 
 
 def session_directory(opencode_session_id: str) -> str | None:
@@ -790,3 +809,28 @@ def drop_binding(frago_session_id: str) -> None:
     if bindings.pop(frago_session_id, None) is None:
         return
     _save_bindings(bindings)
+
+
+def drop_bindings_pointing_at(opencode_session_id: str) -> list[str]:
+    """清掉所有指向这场 opencode 会话的映射，回被清掉的 frago 会话编号。
+
+    有人把一场 opencode 会话删掉之后，映射里那些还指着它的条目就永远匹配不上了。
+    驱动那侧碰见失效映射会自己清（见 ``drivers/opencode.py`` 的自愈），但那是**下一次
+    起会话时**才发生的事；在那之前，删掉的会话仍以「已认领」的样子留在映射里。人是
+    主动删的，顺手摘干净。
+
+    方向是"按 opencode 编号找 frago 编号"：映射的键是 frago 侧的编号，而人删的是引擎
+    侧那一场，两边不是同一个编号空间，NEVER 拿删掉的那个编号直接去 ``pop`` 键。
+    """
+    bindings = _load_bindings()
+    dropped = [
+        key
+        for key, entry in bindings.items()
+        if entry.get("opencode_session_id") == opencode_session_id
+    ]
+    if not dropped:
+        return []
+    for key in dropped:
+        del bindings[key]
+    _save_bindings(bindings)
+    return dropped

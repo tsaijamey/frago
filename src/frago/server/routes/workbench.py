@@ -37,6 +37,7 @@ from frago.server.services.webui_uploads import (
     save_uploaded_images,
 )
 from frago.session import record_reader, record_search
+from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
 
 router = APIRouter()
@@ -134,9 +135,7 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
     launch_id = str(uuid.uuid4())
     try:
         image_paths = save_uploaded_images(request.images, launch_id)
-        doc_paths = save_uploaded_documents(
-            [d.model_dump() for d in request.documents], launch_id
-        )
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
     prompt = build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths)
@@ -404,9 +403,7 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
 
     try:
         image_paths = save_uploaded_images(request.images, sid)
-        doc_paths = save_uploaded_documents(
-            [d.model_dump() for d in request.documents], sid
-        )
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], sid)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
     prompt = build_prompt_with_attachments(request.text, image_paths, doc_paths)
@@ -414,14 +411,10 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     try:
         if not request.wait:
             # 只排队：判落点仍会读盘，照样进工作线程；投喂本身由它自己开的线程做。
-            await asyncio.to_thread(
-                session_send.send_queued, sid, prompt, cwd_hint=request.cwd
-            )
+            await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。
-        activation = await asyncio.to_thread(
-            session_send.send, sid, prompt, cwd_hint=request.cwd
-        )
+        activation = await asyncio.to_thread(session_send.send, sid, prompt, cwd_hint=request.cwd)
     except UnknownSessionFamily as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except (session_send.SessionGone, session_send.SessionDirectoryUnknown) as e:
@@ -506,6 +499,78 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
 
     # 找会话要跑 tmux、读屏，关闭要跑 ps 与 kill，整趟都是阻塞 IO。
     return await asyncio.to_thread(_stop)
+
+
+@router.delete("/workbench/sessions/{sid}")
+async def delete_workbench_session(sid: str) -> dict[str, Any]:
+    """把一场会话从本机删掉，让它不再出现在会话清单里。
+
+    三家都删，删法两家不同（详见 :func:`frago.session.record_reader.delete_session`）：
+    Claude Code 的记录就是一个 JSONL 加一个同名目录，直接删干净；opencode 与 codex
+    借引擎自己的删除命令。删完这一场从左栏消失，记录流也打不开。frago 在
+    ``~/.frago/sessions/`` 下另存的副本不跟着动，命令行检索仍找得到它。
+
+    **正在跑的会话不删，回 409。** 判据是 tmux 里此刻有没有一具活着的会话，与「结束运行」
+    那个按钮问的是同一件事：那具壳还活着的话，它接着往新写出来的同名文件里落记录，人会
+    以为删除没生效。NEVER 拿卡片上那个从记录文件推出来的「在跑」当判据——那条路和 tmux
+    的真实情况对不上，一场昨天的会话记录还热着，tmux 早就没了。
+
+    四种拒绝各有各的意思，NEVER 合并成一个 500：
+
+    - 编号不属于任何一家 → 404；
+    - 本机已经没有这场会话 → 404，要的结果已经成立，把人引到"失败"上是错的；
+    - 这一场还在跑 → 409；
+    - 引擎拒绝动手（没装那个命令、命令超时、它自己报错）→ 500，把它的话原样带出去。
+
+    还有一条正常走不到的 400（``SessionDeleteUnsupported``）：将来 ``detect_family``
+    多加一家而删除这条路还没跟上时，让它明着说不支持，好过落进别家的删法里。
+
+    删掉之后再摘分组、置顶里那个编号，以及 frago 这边指着它的身份映射（后一件在
+    ``delete_session`` 里做）。这些失败**不回滚删除也不报成失败**——会话已经不在盘上了，
+    那句实话进 ``warnings`` 带回去，比假装整件事没做成有用。
+    """
+    try:
+        record_reader.detect_family(sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    from frago.server.services import tmux_sessions_service as tsvc
+
+    # 读屏是阻塞 IO，且这条问路与「结束运行」共用同一份判据，两处 MUST 给出同一个答案。
+    link = await asyncio.to_thread(tsvc.find_for_session, sid)
+    if link is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"这一场还在跑（{link.name}），先结束运行再删",
+        )
+
+    try:
+        removed = await asyncio.to_thread(record_reader.delete_session, sid)
+    except record_reader.SessionDeleteUnsupported as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except record_reader.SessionFilesMissing as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (EngineCliMissing, EngineCliFailed) as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"没删掉：{e}") from e
+
+    warnings = list(removed.problems)
+    try:
+        await asyncio.to_thread(workbench_groups.remove_session, sid)
+    except Exception as e:  # noqa: BLE001 — 收尾没做干净要说出来，NEVER 吞掉
+        warnings.append(f"分组里那个编号没摘掉：{e}")
+    try:
+        await asyncio.to_thread(workbench_pins.unpin, sid)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"置顶名单里那个编号没摘掉：{e}")
+
+    return {
+        "sid": removed.session_id,
+        "family": removed.family,
+        "removed": removed.removed,
+        "warnings": warnings,
+    }
 
 
 @router.get("/workbench/records/{rid}/raw")
