@@ -24,6 +24,12 @@
    个、2.6 GB），谁被碰一下都去整文件翻一遍是白烧。:meth:`watch_session` 登记过的会话
    才进处理，其余的事件当场丢掉。
 
+4. **水位记身份，不记位置。** ``seq`` 不是地址：整份记录每次都是重新编号的，引擎重写一条
+   记录（每轮的花费账本只留最后一条）就让它后面所有记录的编号往前挪一格——新写下来的那句
+   话于是可能正好落在已经交出去过的编号上，被当成旧货丢掉。丢得无声无息：界面上看不出报
+   错，那条消息就是不出现（实测踩过一次，人那句话再也没进过右栏）。所以每个文件另记一批
+   「已经交出去的记录编号」，按身份去重，``seq`` 只当兜底。
+
 分层：
 - ``SessionStream`` 只向 ``WatchdogObserverService`` 登记，NEVER 自己持有 Observer
 - 回调跑在本流的工作线程上，消费方自己负责跨线程
@@ -36,6 +42,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -47,6 +54,11 @@ logger = logging.getLogger(__name__)
 
 # Default debounce: wait for the file to settle before re-reading.
 DEFAULT_DEBOUNCE_SECONDS = 0.3
+
+#: 每个文件记住多少个最近交出去的记录编号。「这条见过没有」问的就是这个集合，所以它同时
+#: 是去重的依据：编号挪位之后老记录重新对不上位置时，靠它保证不重发也不漏发。一次去抖批
+#: 顶天几十条，64 够宽。
+HANDED_MEMORY = 64
 
 
 class SessionStream:
@@ -103,6 +115,10 @@ class SessionStream:
 
         # Per-file state: last-known seq (monotonically increasing).
         self._file_seqs: dict[str, int] = {}  # file_path → last seen seq
+        # Per-file state: 最近交出去的那批记录的编号（身份）。**不能只记 seq**：整份记录每次都是
+        # 重新编号的，引擎重写一条记录就会让它后面的整体往前挪一格——新写下来的那句话可能正好
+        # 落在已经交出去过的编号上，于是被判成「看过了」，当场丢掉，界面上就是人对它说话它不理。
+        self._file_handed: dict[str, deque[str]] = {}  # file_path → 最近交出去的记录编号
         # Per-file state: last known turn-completion verdict.
         self._file_done: dict[str, bool] = {}  # file_path → done
 
@@ -240,11 +256,19 @@ class SessionStream:
             session_id = Path(file_path).stem
             first_sight = file_path not in self._file_seqs
             last_seq = self._file_seqs.get(file_path, -1)
-            new_records = [r for r in records if r.seq > last_seq]
+            handed = self._file_handed.get(file_path)
+            if handed is None:
+                new_records = [r for r in records if r.seq > last_seq]
+            else:
+                # 认身份不认位置：只要这条记录的编号没交出去过，它就是新的，不管它排在几号。
+                new_records = [r for r in records if r.id not in handed]
 
             if new_records:
                 # Update last known seq
                 self._file_seqs[file_path] = new_records[-1].seq
+                if handed is None:
+                    handed = self._file_handed[file_path] = deque(maxlen=HANDED_MEMORY)
+                handed.extend(r.id for r in new_records)
 
                 # 第一次看见一个开始盯之前就存在的文件：只对水位，一条不发（纪律 1）。
                 # 页面那一侧打开会话时已经自己取过尾部，这中间的空档由它的兜底轮询补上。

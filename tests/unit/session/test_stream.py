@@ -123,6 +123,50 @@ def test_new_file_created_after_start_is_emitted_whole(watch_dir):
         stream.stop()
 
 
+def test_a_record_landing_on_an_already_used_number_is_still_emitted(watch_dir, monkeypatch):
+    """整份记录是重新编号的：位置会动，身份不会。
+
+    引擎重写一条记录（每轮的花费账本只留最后一条），它后面所有记录的编号整体往前挪一格。
+    新写下来的那句话于是可能正好落在**已经交出去过的编号**上，按 ``seq > 水位`` 差就是
+    "旧的"，当场丢掉。丢得无声无息：不报错、界面上也不显示那条消息，人看到的是"我对它
+    说话它不理"。（2026-09-12 实测踩到过一次，那句话再没进过右栏。）
+    """
+    from frago.session.adapters import claude_code_records
+    from frago.session.unified_record import UnifiedRecord
+
+    session = watch_dir / "ffffffff-1111-2222-3333-444444444444.jsonl"
+    _write_session(session, 2)
+
+    def rec(seq, rid):
+        return UnifiedRecord(
+            id=rid,
+            session_id=session.stem,
+            group_id=None,
+            seq=seq,
+            ts=seq,
+            kind="user.say",
+            payload={"text": rid, "is_tool_result": False},
+        )
+
+    shape = [rec(0, "a"), rec(1, "b")]
+    monkeypatch.setattr(claude_code_records, "to_unified", lambda _p: list(shape))
+
+    seen: list[list[str]] = []
+    stream = SessionStream(
+        project_path="/tmp/proj",
+        on_records=lambda _sid, recs: seen.append([r["id"] for r in recs]),
+        debounce_seconds=0.05,
+    )
+    stream._preexisting = set()  # noqa: SLF001 — 当成开始盯之后才出现的文件，第一次就发货
+    stream._process_file(str(session))  # noqa: SLF001
+    assert seen == [["a", "b"]]
+
+    # 重写掉最前面那条：身份没变的两条各往前挪一格，"c" 落在 1 号——老水位上。
+    shape[:] = [rec(0, "b"), rec(1, "c")]
+    stream._process_file(str(session))  # noqa: SLF001
+    assert seen[-1] == ["c"], "挪位之后新出现的那条要发，已经交出去的不许重发"
+
+
 def test_unwatched_session_is_never_processed(watch_dir):
     """没人在看的那场会话，事件当场丢——一个项目目录下能躺一千个会话文件。"""
     watched = watch_dir / "cccccccc-1111-2222-3333-444444444444.jsonl"
