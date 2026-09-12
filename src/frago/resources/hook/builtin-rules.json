@@ -561,6 +561,23 @@
       "priority": 150,
       "description": "why: 网络失败被反复误判成站点故障/反爬，agent 往错误的层里查到人开口点破；根因是引擎此前看不到执行结果，只能提前警告。how: 挂 PostToolUse，Bash 报失败且输出含网络症状时注入判据与处置分支。tool_failed 只读退出码/错误标志/错误消息，不搜输出里的 error 字样——构建日志天天出现那个词。2026-09-09 实测补入四条：TLS 秒断＝代理侧 DNS 解析错；内网域名要路由与 DNS 两条一起加；改完要重新合成不是重载；TUN 开关是独立变量会污染归因。",
       "created_at": "2026-09-09T16:43:53"
+    },
+    {
+      "id": "builtin-tool-agent-deny",
+      "source": "builtin",
+      "event": "PreToolUse",
+      "match": {
+        "type": "tool_name_eq",
+        "value": "Agent"
+      },
+      "action": {
+        "type": "deny_tool_call",
+        "reason": "当前会话不再用 Claude Code 自带的子代理。要外包活，用 `frago agent --prompt-file <任务书>` 起 worker —— 它按 Worker 那一栏的模型起会话，完成会通知你验收。若是被拉起的 worker，自己做完，不要再派会话。用法见 frago book agent-worker-driving。"
+      },
+      "dedup_scope": "always",
+      "priority": 290,
+      "description": "why: 会话内派子代理不经 Worker 配置，内置 Explore 更会按 Anthropic opus 档发请求、被第三方端点接成自家旗舰（2026-09-11 实测：Explore 子代理按 deepseek-v4-pro 计费，用户设的 flash 被绕过），与 frago 的 worker 路由并行成两套；how: 命中即否决，统一收敛到 frago agent，worker 会话内不递归。",
+      "created_at": "2026-09-12T00:00:00"
     }
   ]
 }
