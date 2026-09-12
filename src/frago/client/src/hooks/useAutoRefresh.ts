@@ -8,12 +8,16 @@
  * 三个时机重取：定时（只在页面看得见的时候）、切回这个标签页时、窗口重新拿到
  * 焦点时。页面被藏起来时定时器空转不发请求——没人在看的页面不值得占着服务端。
  *
+ * 第四个时机：本机服务重新连上时（见 api/connection.ts）。断连期间页面上的内容是旧
+ * 的，服务刚回来的那一刻不必再等满一轮轮询。
+ *
  * 与 `usePolling` 的分工：那个是纯定时器，谁在看、看得见看不见一概不问，适合
  * 「装完等结果」这类必须一直跑到底的轮询；这个是给**内容页**用的，前提是没人
  * 看的时候不该烧请求。
  */
 
 import { useCallback, useEffect, useRef } from 'react';
+import { RECONNECTED_EVENT } from '@/api/connection';
 
 export interface AutoRefreshOptions {
   /** 隔多久重取一次，毫秒。给 0 就不定时，只在人回到页面时重取。 */
@@ -99,11 +103,17 @@ export function useAutoRefresh(
     const onFocus = () => {
       void run(false);
     };
+    const onReconnected = () => {
+      // 不看时间闸：旧数据在屏上多留一秒，人就多一秒可能照着它做判断。
+      void run(true);
+    };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onFocus);
+    window.addEventListener(RECONNECTED_EVENT, onReconnected);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener(RECONNECTED_EVENT, onReconnected);
     };
   }, [enabled, run]);
 

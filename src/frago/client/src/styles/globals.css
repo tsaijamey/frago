@@ -5965,3 +5965,48 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* === 本机服务不在时的遮罩 === */
+/* 盖住的是整片工作区，而底下那些内容此刻全是断连前那一刻的旧数据——模糊是为了让人别去
+   读它们（同 .envc-overlay 的道理，那层的说明写在环境仪表盘那一节）。
+
+   它不接点击、也没有关闭按钮：关掉它并不能让服务回来，只会让人对着一个哑掉的页面继续点。
+   所以它比别的浮层都高一档，盖在弹窗与开关之上——那些东西此刻按下去也不会有反应。 */
+.reconnect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.reconnect-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 260px;
+  max-width: min(420px, 100%);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px var(--shadow-color);
+  text-align: center;
+}
+
+.reconnect-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.reconnect-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}

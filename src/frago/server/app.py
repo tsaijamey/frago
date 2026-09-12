@@ -707,6 +707,22 @@ def create_app(
                 name="icons",
             )
 
+    # The offline shell's service worker. It has to be a route of its own: the
+    # SPA catch-all below answers everything unmatched with index.html, and a
+    # worker whose script arrives as text/html is refused by the browser
+    # ("unsupported MIME type") — the page then has no shell to fall back on
+    # exactly when the server is down, which is the only time it matters.
+    # Served out of the build directory, so a rebuild updates it too.
+    @app.get("/sw.js")
+    async def service_worker_script():
+        worker_path = frontend_path / "sw.js"
+        if not worker_path.exists():
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Service worker not built")
+
+        return FileResponse(str(worker_path), media_type="application/javascript")
+
     # SPA fallback: serve index.html for all non-API routes
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

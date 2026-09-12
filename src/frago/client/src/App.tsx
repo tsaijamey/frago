@@ -22,6 +22,7 @@ import { GuidePage } from '@/components/guide';
 
 // UI
 import Toast from '@/components/ui/Toast';
+import ReconnectOverlay from '@/components/ui/ReconnectOverlay';
 
 // Init wizard
 import { InitWizardPage } from '@/components/init';
@@ -127,12 +128,17 @@ function App() {
 
   // Show init wizard page if not completed
   if (initCompleted === false) {
-    return <InitWizardPage onComplete={handleInitComplete} />;
+    return (
+      <>
+        <InitWizardPage onComplete={handleInitComplete} />
+        <ReconnectOverlay />
+      </>
+    );
   }
 
   // Show loading while checking init status
   if (initCompleted === null) {
-    return null; // Loading handled by index.html
+    return <ReconnectOverlay />; // 加载屏在 index.html 里，服务这时没起来就只有这张卡
   }
 
   // Show main app if init completed
@@ -148,6 +154,9 @@ function App() {
           ))}
         </div>
       )}
+
+      {/* 本机服务不在时盖住整页——放在最后，保证盖在弹窗与 toast 之上 */}
+      <ReconnectOverlay />
     </>
   );
 }

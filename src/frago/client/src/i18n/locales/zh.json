@@ -74,6 +74,10 @@
     "connected": "已连接",
     "disconnected": "已断开"
   },
+  "reconnect": {
+    "title": "正在重新连接本机后台服务",
+    "hint": "服务重启中，连上之后这一页会自己接着走。"
+  },
   "dashboard": {
     "title": "工作台",
     "pageDesc": "任务、配方和系统状态一览",

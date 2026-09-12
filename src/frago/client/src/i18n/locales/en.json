@@ -74,6 +74,10 @@
     "connected": "Connected",
     "disconnected": "Disconnected"
   },
+  "reconnect": {
+    "title": "Reconnecting to the local backend service",
+    "hint": "The service is restarting. This page picks up on its own once it's back."
+  },
   "dashboard": {
     "title": "Dashboard",
     "pageDesc": "Your workbench — tasks, recipes, and system at a glance",
