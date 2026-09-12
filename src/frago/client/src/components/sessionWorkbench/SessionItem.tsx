@@ -4,6 +4,7 @@
 
 import { useTranslation } from 'react-i18next';
 import { Check, Copy, CornerDownRight, Pin, Quote, Tag } from 'lucide-react';
+import { LiveRing } from '@/components/ui/LiveEdge';
 import i18n from '@/i18n';
 import {
   activityTs,
@@ -162,6 +163,7 @@ export default function SessionItem({
   selected,
   copied,
   pinned = false,
+  unread = false,
   contentMatch,
   nested = false,
   workerCount = 0,
@@ -177,6 +179,13 @@ export default function SessionItem({
   copied: boolean;
   /** 这场会话在不在置顶名单里。 */
   pinned?: boolean;
+  /**
+   * agent 说完了话、你还没回去看过这一场。
+   *
+   * 判据在 `useSessionViews`：这场已经不在跑、最后一句回复比你上次点开它的时刻新，
+   * 而且你至少点开过它一次。
+   */
+  unread?: boolean;
   /** 这场会话在内容检索里命中了什么。没搜内容、或这场没命中时为 null。 */
   contentMatch?: ContentMatch | null;
   /**
@@ -297,6 +306,19 @@ export default function SessionItem({
             className="mt-[3px] shrink-0 text-text-dim"
             aria-hidden="true"
           />
+        ) : null}
+        {/* 绿圈与分区标题上那个是同一个东西：这一场 agent 说完了话，你还没回来看。
+            点开这张卡它就灭。 */}
+        {unread ? (
+          /* 这一格的高度就是标题第一行的高度（字号 × 1.5 的行高），圈在格子里上下居中，
+             于是圈的中线正好落在标题第一行的中线上。从前靠一个 5px 的下推去凑，而这一格
+             自己的高度跟着继承来的行高走、圈又按文字基线摆，两边各算各的，对不齐。 */
+          <span
+            data-testid="session-unread"
+            className={`flex shrink-0 items-center ${nested ? 'h-[18px]' : 'h-[19.5px]'}`}
+          >
+            <LiveRing label={t('workbench.rail.unreadMark')} />
+          </span>
         ) : null}
         <span
           className={`line-clamp-2 min-w-0 flex-1 font-medium leading-[1.5] ${

@@ -81,6 +81,27 @@ vi.mock('@/hooks/useSessionGroups', async () => {
   };
 });
 
+/** 两个标记的替身：哪几场算「没看过」、哪几场算「最近动过」由用例说了算。 */
+const marks = vi.hoisted(() => ({
+  unread: new Set<string>(),
+  recent: new Set<string>(),
+  markViewed: vi.fn(),
+}));
+
+vi.mock('@/hooks/useSessionViews', async () => {
+  const actual = await vi.importActual<typeof import('@/hooks/useSessionViews')>(
+    '@/hooks/useSessionViews'
+  );
+  return {
+    ...actual,
+    useSessionViews: () => ({
+      isUnread: (s: WorkbenchSession) => marks.unread.has(s.session_id),
+      isRecent: (s: WorkbenchSession) => marks.recent.has(s.session_id),
+      markViewed: marks.markViewed,
+    }),
+  };
+});
+
 const NOOP = () => {};
 
 function session(
@@ -152,6 +173,9 @@ beforeEach(() => {
   groups.runAi.mockClear();
   groups.toggleCollapsed.mockClear();
   pins.pinned = [];
+  marks.unread = new Set();
+  marks.recent = new Set();
+  marks.markViewed.mockClear();
 });
 
 describe('SessionRail 分组区', () => {
@@ -279,5 +303,57 @@ describe('SessionRail 分组区', () => {
     render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('group-ai-status').textContent).toContain('120 / 300');
     expect((screen.getByTestId('group-ai') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('SessionRail 的两个标记', () => {
+  it('没看过的那一场，卡上长一个绿圈', () => {
+    marks.unread = new Set([B]);
+    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const ringed = screen.getByTestId('session-unread').closest('[data-testid=session-item]');
+    expect(ringed?.textContent).toContain(B);
+    expect(screen.getAllByTestId('session-unread')).toHaveLength(1);
+  });
+
+  it('最近动过的那一场，卡外面长一圈活的边', () => {
+    marks.recent = new Set([A]);
+    const { container } = render(
+      <SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
+    );
+    const framed = container.querySelectorAll('[data-live-edge="border"]');
+    expect(framed).toHaveLength(1);
+    expect(framed[0].textContent).toContain(A);
+  });
+
+  it('折起来的分区标题替组里那几场说这两件事', () => {
+    groups.tags = [{ id: 't1', name: '会话页', source: 'human' }];
+    groups.map = { [B]: 't1', [C]: 't1' };
+    marks.unread = new Set([B]);
+    marks.recent = new Set([C]);
+    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    // 组是折着的，里面的卡一张都不在页面上，所以这两件事只能由标题说。
+    expect(screen.queryAllByTestId('session-item')).toHaveLength(1);
+    expect(screen.getByTestId('group-unread')).toBeTruthy();
+    expect(screen.getByTestId('group-recent').textContent).toContain('会话页');
+  });
+
+  it('摊开之后标题不再画那圈边，改由组里的卡自己画', () => {
+    groups.tags = [{ id: 't1', name: '会话页', source: 'human' }];
+    groups.map = { [C]: 't1' };
+    groups.collapsed = { t1: false };
+    marks.recent = new Set([C]);
+    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    expect(screen.queryByTestId('group-recent')).toBeNull();
+    const framed = document.querySelectorAll('[data-live-edge="border"]');
+    expect(framed).toHaveLength(1);
+    expect(framed[0].textContent).toContain(C);
+  });
+
+  it('点开一场会话就记一笔「看过了」', () => {
+    const onSelect = vi.fn();
+    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
+    fireEvent.click(screen.getAllByTestId('session-item')[0]);
+    expect(marks.markViewed).toHaveBeenCalledWith(A);
+    expect(onSelect).toHaveBeenCalledWith(A);
   });
 });

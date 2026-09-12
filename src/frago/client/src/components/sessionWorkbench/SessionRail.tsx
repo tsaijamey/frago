@@ -48,7 +48,7 @@
  * 撞见过整片清单已经摆好、标题还没出现。标题上坐着折叠开关，它不该等任何东西。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso } from 'react-virtuoso';
 import {
@@ -71,6 +71,8 @@ import NewSessionModal from './NewSessionModal';
 import GroupPicker from './GroupPicker';
 import { useSessionPins } from '@/hooks/useSessionPins';
 import { UNGROUPED, useSessionGroups, type GroupTag } from '@/hooks/useSessionGroups';
+import { useSessionViews } from '@/hooks/useSessionViews';
+import { LiveBorder, LiveRing } from '@/components/ui/LiveEdge';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
@@ -145,7 +147,17 @@ type RailRow =
   | { kind: 'rest-header' }
   | { kind: 'workers-header' }
   /** 一个分区的标题。`tag` 为 null 是「未分组」那一区。 */
-  | { kind: 'group-header'; key: string; tag: GroupTag | null; count: number; open: boolean }
+  | {
+      kind: 'group-header';
+      key: string;
+      tag: GroupTag | null;
+      count: number;
+      open: boolean;
+      /** 这一区里有你还没回去看过的新回复。 */
+      unread: boolean;
+      /** 这一区最近动过。 */
+      recent: boolean;
+    }
   /** 这一区这一批没放完，还剩几场。 */
   | { kind: 'section-more'; key: string; remaining: number }
   | {
@@ -166,6 +178,11 @@ type RailRow =
  * 语义——它说的是"这几行是一组"，不是"这一行被选中了"。
  */
 type GroupPos = 'head' | 'mid' | 'tail';
+
+/** 最近动过的那几场，卡片外面长一圈活的绿边；其余原样摆着，不多包一层节点。 */
+function MaybeLive({ live, children }: { live: boolean; children: ReactNode }) {
+  return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
+}
 
 export interface SessionRailProps {
   state: WorkbenchSessionsState;
@@ -215,6 +232,7 @@ export default function SessionRail({
   const showToast = useAppStore((s) => s.showToast);
   const pins = useSessionPins();
   const groups = useSessionGroups();
+  const views = useSessionViews();
   /** 「放进分组」那一小块开在哪一场、按钮在屏幕上的哪。 */
   const [picker, setPicker] = useState<{ session: WorkbenchSession; rect: DOMRect } | null>(null);
   /** 等人确认要删的那个标签。 */
@@ -428,6 +446,9 @@ export default function SessionRail({
           tag: section.tag,
           count: section.sessions.length,
           open,
+          // 折起来的一区，里面的卡一张都不在页面上，这两件事只能由标题替它们说。
+          unread: section.sessions.some(views.isUnread),
+          recent: section.sessions.some(views.isRecent),
         });
         if (!open) continue;
         const take = section.sessions.slice(0, Math.max(0, budget));
@@ -479,6 +500,7 @@ export default function SessionRail({
     sections,
     sectionOpen,
     shown,
+    views,
   ]);
 
   /**
@@ -619,6 +641,20 @@ export default function SessionRail({
         ),
     }),
     [hasMore, loaded, loadable, t]
+  );
+
+  /**
+   * 点开一场会话。
+   *
+   * 顺手记一笔「这一场我此刻看过了」——那个绿圈是拿这个时刻与会话最后一句回复比出来的，
+   * 不记的话它永远不灭。
+   */
+  const handleSelect = useCallback(
+    (sessionId: string) => {
+      views.markViewed(sessionId);
+      onSelect(sessionId);
+    },
+    [views, onSelect]
   );
 
   const handleCopy = async (session: WorkbenchSession) => {
@@ -851,8 +887,13 @@ export default function SessionRail({
             endReached={() => {
               if (hasMore) setShown((s) => s + PAGE_SIZE);
             }}
-            computeItemKey={(_, row) =>
-              row.kind === 'session'
+            /* 拿不到行也要给得出键。清单重算时行数会变短，而窗口化列表可能还按上一批的
+               位置来问键——问到一个已经不在的位置，这里要是伸手去读它，整页会当场抛错、
+               整棵界面被卸掉，人看到的是一片空白。 */
+            computeItemKey={(index, row) =>
+              !row
+                ? `row-${index}`
+                : row.kind === 'session'
                 ? row.session.session_id
                 : row.kind === 'group-header'
                   ? `group:${row.key}`
@@ -861,6 +902,8 @@ export default function SessionRail({
                     : row.kind
             }
             itemContent={(_, row) => {
+              // 同上：位置对不上时给一个空位，NEVER 伸手去读一个不在的行。
+              if (!row) return null;
               if (row.kind === 'pinned-header') {
                 return (
                   <button
@@ -893,7 +936,7 @@ export default function SessionRail({
               }
               if (row.kind === 'group-header') {
                 const tag = row.tag;
-                return (
+                const head = (
                   <div className="group/section flex items-center pr-2">
                     <button
                       type="button"
@@ -906,6 +949,13 @@ export default function SessionRail({
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
                     >
                       {row.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {/* 绿圈说的是「这一组里有你还没回去看过的新回复」。它长在标题左边，
+                          与「最近动过」那圈边分工：圈是提醒，边是找路。 */}
+                      {row.unread ? (
+                        <span data-testid="group-unread">
+                          <LiveRing label={t('workbench.rail.unreadMark')} />
+                        </span>
+                      ) : null}
                       <span className="truncate">
                         {tag ? tag.name : t('workbench.rail.ungroupedHeader')}
                       </span>
@@ -932,6 +982,15 @@ export default function SessionRail({
                       </button>
                     ) : null}
                   </div>
+                );
+                /* 折着的时候，整条标题外面长一圈活的绿边，说「这一组最近动过」。展开之后
+                   这句话由组里那几张卡自己说，标题上再留一圈就是同一件事说了两遍。 */
+                return row.recent && !row.open ? (
+                  <div className="px-2 pt-2" data-testid="group-recent">
+                    <LiveBorder>{head}</LiveBorder>
+                  </div>
+                ) : (
+                  head
                 );
               }
               if (row.kind === 'section-more') {
@@ -981,16 +1040,18 @@ export default function SessionRail({
                 <div className={row.nested && !pos ? 'pl-6 pr-2' : 'px-2'}>
                   <div className={box} data-group={pos}>
                     <div className={row.nested && pos ? 'pl-4' : ''}>
+                  <MaybeLive live={views.isRecent(session)}>
                   <SessionItem
                     session={session}
                     selected={session.session_id === selectedId}
                     copied={copiedId === session.session_id}
                     pinned={pins.isPinned(session.session_id)}
+                    unread={views.isUnread(session)}
                     contentMatch={content.matches.get(session.session_id) ?? null}
                     nested={row.nested}
                     workerCount={row.workerCount}
                     workersExpanded={row.workersExpanded}
-                    onSelect={onSelect}
+                    onSelect={handleSelect}
                     onCopy={handleCopy}
                     onTogglePin={handleTogglePin}
                     onToggleWorkers={toggleWorkers}
@@ -999,6 +1060,7 @@ export default function SessionRail({
                       row.nested || session.origin === 'worker' ? undefined : openPicker
                     }
                       />
+                  </MaybeLive>
                     </div>
                   </div>
                   {/* 行与行之间的间隔。连同每行自己的 py-2，行间总共留出 24px，

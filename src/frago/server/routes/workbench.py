@@ -29,6 +29,7 @@ from frago.server.services import (
     workbench_groups,
     workbench_new_session,
     workbench_pins,
+    workbench_views,
 )
 from frago.server.services.webui_uploads import (
     ImageUploadError,
@@ -284,6 +285,33 @@ async def unpin_workbench_session(sid: str) -> dict[str, list[str]]:
     哪一家**——不管什么形状，把它从名单里去掉都是对的。
     """
     return {"pinned": await asyncio.to_thread(workbench_pins.unpin, sid)}
+
+
+@router.get("/workbench/views")
+async def list_workbench_views() -> dict[str, dict[str, int]]:
+    """每场会话你上次点开它的毫秒时刻。没点开过的不在里面。
+
+    左栏拿它与清单里「最后一句回复的时刻」相比，判这一场有没有你还没看过的新回复。
+    """
+    return {"viewed": await asyncio.to_thread(workbench_views.list_views)}
+
+
+@router.put("/workbench/views/{sid}")
+async def mark_workbench_viewed(sid: str) -> dict[str, Any]:
+    """记下此刻点开了这场会话。
+
+    时刻由服务端取而不收页面给的：它要和会话记录里的时刻比大小，两边必须出自同一个钟。
+
+    编号三家的形状都不像时回 404：记录里躺一行谁都对不上的编号，从此没人清得掉。
+    """
+    try:
+        record_reader.detect_family(sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        return await asyncio.to_thread(workbench_views.mark_viewed, sid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 def _groups_payload(state: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -6010,3 +6010,67 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
+
+/* ── 会话卡与分区标题上那道光 ────────────────────────────────────────────
+   一个圆头光点沿着边框顺时针匀速慢跑，身后拖一条渐隐的尾巴，像流星。
+
+   **亮的永远只有一小段，不是整条边一起亮。** 这与输入区那圈边是两回事：那一圈是整条
+   都活着的色场，答的是「这里正在等你说话」；这一道光答的是「这一场最近动过」，一条
+   清单上可能同时有好几张卡挂着它，整条边一起亮的话，左栏会变成一片发绿的框。
+
+   做法：底下垫一块比卡片大的方形色盘匀速转，色盘上只有一段是亮的——圆锥渐变，尾巴由
+   淡到浓、头部最亮；上面盖一层不透明的内层，只在四周露出一像素半。于是人看到的就是
+   那一小段亮光沿着边框走。border 属性画不出会动的东西，所以不用它。
+
+   转一圈 5 秒。再快就成了跑马灯，在一条清单上不停抢眼睛。头部那点模糊是让它成为一个
+   圆头而不是一刀切断的扇形。 */
+.live-border {
+  position: relative;
+  border-radius: 10px;
+  padding: 1.5px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.live-border::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 240%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  filter: blur(0.6px);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 296deg,
+    color-mix(in srgb, var(--accent-primary) 14%, transparent) 316deg,
+    color-mix(in srgb, var(--accent-primary) 45%, transparent) 340deg,
+    color-mix(in srgb, var(--accent-primary) 90%, transparent) 353deg,
+    color-mix(in srgb, var(--accent-primary) 92%, white) 357.5deg,
+    color-mix(in srgb, var(--accent-primary) 55%, white) 359.2deg,
+    transparent 360deg
+  );
+  animation: live-border-orbit 5s linear infinite;
+}
+
+@keyframes live-border-orbit {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* 内层必须不透明，否则那块色盘会从正文底下透上来。默认取左栏的底色，
+   摆在别的底色上时由调用方改 --live-border-fill。 */
+.live-border-inner {
+  position: relative;
+  border-radius: 8.5px;
+  background: var(--live-border-fill, var(--bg-secondary));
+}
+
+/* 系统里关掉动效就停在一处：那道光还在，只是不再跑。这不是可选的礼貌，是无障碍要求。 */
+@media (prefers-reduced-motion: reduce) {
+  .live-border::before {
+    animation: none;
+  }
+}
