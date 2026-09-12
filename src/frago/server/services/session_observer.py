@@ -4,10 +4,13 @@
 
 ## 它不是一个活着的东西
 
-旁路 AI 不常驻。会话流里三件事发生时——agent 把话交还给人、人按了打断、这场会话在页面
-上第一次被打开——往这场会话自己的队列里投一个任务。任务读游标之后的新增记录，问一次
-frago-core，把回答写进槽位文件，推给页面，结束。没有进程要看管，也就没有孤儿；会话不再
-动，就不再有人投任务；服务重启后游标还在槽位文件里，下次打开时一次补上。
+旁路 AI 不常驻。会话流里四件事发生时——人发来一句话、agent 把话交还给人、人按了打断、
+这场会话在页面上第一次被打开——往这场会话自己的队列里投一个任务。任务读游标之后的新增
+记录，问一次 frago-core，把回答写进槽位文件，推给页面，结束。没有进程要看管，也就没有孤
+儿；会话不再动，就不再有人投任务；服务重启后游标还在槽位文件里，下次打开时一次补上。
+
+人那句话一到就跑一次，是因为「这场在做什么」「此刻在做什么」说的都是眼下：只等一轮结束
+才更新，人刚下的指令要整整等一轮才出现在右栏，而那一刻正是他最想看右栏的时候。
 
 ## 切换会话不能打断它
 
@@ -120,6 +123,10 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         "family": family,
         # 下一条要读的记录的 seq。
         "cursor": 0,
+        # 上一次读到的那条记录的编号（身份）。**seq 会动**：整场会话每次都是重新编号的，
+        # 引擎重写一条记录（例如每轮的花费账本只留最后一条）就会让它后面所有记录的编号
+        # 往前挪一格。只记编号，编号一动就认不出「上次读到哪」了。
+        "cursor_id": None,
         # {"seq": 这句人话的记录序号, "text": 原话}，还没找到时为 None。
         "anchor": None,
         "now": "",
@@ -207,22 +214,44 @@ def observer_bound() -> bool:
 
 
 def human_text(record: UnifiedRecord) -> str | None:
-    """这条是不是人亲口说的话；是就返回剥掉 frago 注入之后的原话。
+    """这条是不是人亲口说的话；是就返回剥掉 frago 注入之后的原话。"""
+    if record.kind != "user.say":
+        return None
+    return spoken_text(record.payload)
+
+
+def spoken_text(payload: Any) -> str | None:
+    """一条 ``user.say`` 的正文，是不是人亲口说的。
 
     同样落在「人说的话」这一档里的，还有三种不是人说的：工具结果、frago 定时唤醒 PA 的
     唤醒词、opencode 把 hook 注入包在人话前面的那一段。
+
+    按正文判而不是按记录判：实时监听那条线上，新来的那批还是字典（``asdict`` 过的统一
+    记录），人刚发话时要在那里就问一句「这是不是人在说话」，那时还没有记录对象。
     """
     from frago.session.opencode_store import strip_hook_injection
-    from frago.session.session_index import _is_wake_prompt
+    from frago.session.session_index import is_wake_text
 
-    if record.kind != "user.say" or record.payload.get("is_tool_result"):
+    if not isinstance(payload, dict) or payload.get("is_tool_result"):
         return None
-    if _is_wake_prompt(record):
-        return None
-    text = record.payload.get("text")
-    if not isinstance(text, str):
+    text = payload.get("text")
+    if is_wake_text(text) or not isinstance(text, str):
         return None
     return strip_hook_injection(text) or None
+
+
+def person_spoke(records: Sequence[Any]) -> bool:
+    """这批新记录里有没有人亲口说话。
+
+    监听线上判触发点用：人刚发来一句话就该叫一次旁路观察，等 agent 把话交还回来才叫，
+    「这场在做什么」「此刻在做什么」就整整慢一轮。
+    """
+    return any(
+        isinstance(record, dict)
+        and record.get("kind") == "user.say"
+        and spoken_text(record.get("payload")) is not None
+        for record in records
+    )
 
 
 def is_heartbeat_batch(records: Sequence[UnifiedRecord]) -> bool:
@@ -526,15 +555,21 @@ class SessionObserver:
             "cursor_from": cursor,
         }
 
-        new, total = self._read_after(session_id, cursor)
+        new, total = self._read_after(session_id, cursor, slots.get("cursor_id"))
         if not new:
             entry.update(skipped="nothing-new", dur_ms=_ms(started))
+            if trigger == "prompt" and directory.exists():
+                # 人刚说了一句话，监听那边是看见了才叫我们的，这里却一条都没读到——位置
+                # 对不上了。这一笔留着：下次人对右栏没动静起疑时，能看出「叫过我，我什么
+                # 都没读到」。平时读空（定时补读、页面轮询）不记，免得把执行记录泡满。
+                append_run(directory, entry)
             return entry
         entry["records"] = total
         last_seq = new[-1].seq
 
         if is_heartbeat_batch(new):
             slots["cursor"] = last_seq + 1
+            slots["cursor_id"] = new[-1].id
             save_slots(directory, slots)
             entry.update(skipped="pa-heartbeat", cursor_to=last_seq + 1, dur_ms=_ms(started))
             append_run(directory, entry)
@@ -571,6 +606,7 @@ class SessionObserver:
         except ValueError as exc:
             answer, why = None, f"回答不是约定的格式：{exc}"
         slots["cursor"] = last_seq + 1
+        slots["cursor_id"] = new[-1].id
         entry["cursor_to"] = last_seq + 1
         if answer is None or why:
             # 答了但不合规矩：整份作废，槽位保持原样；游标照样往前，免得同一段反复踩同一个坑。
@@ -592,12 +628,33 @@ class SessionObserver:
         self._push(session_id, slots)
         return entry
 
-    def _read_after(self, session_id: str, cursor: int) -> tuple[list[UnifiedRecord], int]:
+    def _read_after(
+        self, session_id: str, cursor: int, cursor_id: str | None = None
+    ) -> tuple[list[UnifiedRecord], int]:
         """游标之后的新增记录：只留最后 BACKLOG_CAP 条，另外报总共有多少。
 
-        游标比整场的末尾还靠后，说明会话被重新解析过、序号变了——这时退回到末尾往前
-        BACKLOG_CAP 条重读，而不是永远读空。
+        游标是个**位置**，而位置会动：整场会话每次都是重新编号的。引擎重写一条记录
+        （每轮的花费账本只留最后一条）就让它后面所有记录的编号整体往前挪一格，于是
+        「下一次从第几号读」这个说法本身失效——人刚说的那句话可能排在游标**之前**，
+        而且读出来的那一批看上去很正常。所以每次先验一下位置：游标前面那条，现在还是
+        我们上次读到的那条吗？不是就退回尾部，从认得的那条接着往下喂。宁可重喂，
+        NEVER 当作没有新的——被吞掉那次是无声无息吞的：执行记录里一笔都没留，右栏
+        看上去就是「人对它说话它不理」。
+
+        ``cursor_id`` 是上一次读到的那条记录的编号。老槽位文件里没有这一格（None），
+        位置对不对无从判断，就退到尾部重读一段——重喂一遍比漏掉一句强，而且这种槽位
+        文件只会遇到一次，第一次跑完就把身份补上了。
         """
+        if cursor > 0:
+            aligned = False
+            if cursor_id is not None:
+                standing = self._read(session_id, after=cursor - 1, limit=1)
+                aligned = (
+                    bool(standing) and standing[0].seq == cursor - 1 and standing[0].id == cursor_id
+                )
+            if not aligned:
+                return self._re_anchor(session_id, cursor_id)
+
         kept: deque[UnifiedRecord] = deque(maxlen=BACKLOG_CAP)
         total = 0
         after = cursor
@@ -610,11 +667,16 @@ class SessionObserver:
             if len(batch) < PAGE:
                 break
             after = batch[-1].seq + 1
-        if total == 0 and cursor > 0:
-            tail = self._read(session_id, tail=True, limit=1)
-            if tail and tail[-1].seq + 1 < cursor:
-                return self._read_after(session_id, max(0, tail[-1].seq + 1 - BACKLOG_CAP))
         return list(kept), total
+
+    def _re_anchor(self, session_id: str, cursor_id: str | None) -> tuple[list[UnifiedRecord], int]:
+        """位置靠不住时退回尾部：认得身份就接在它后面，认不得就整段尾巴都当新的。"""
+        window = self._read(session_id, tail=True, limit=BACKLOG_CAP)
+        if cursor_id:
+            for index, record in enumerate(window):
+                if record.id == cursor_id:
+                    return list(window[index + 1 :]), len(window) - index - 1
+        return list(window), len(window)
 
     def _first_human(self, session_id: str) -> tuple[int, str] | None:
         after = 0

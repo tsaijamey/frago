@@ -256,13 +256,20 @@ def _one_line(text: Any) -> str | None:
     return None
 
 
-def _is_wake_prompt(record: UnifiedRecord) -> bool:
-    """这句话是不是 frago 自己写的唤醒词（见 :data:`FRAGO_WAKE_MARKERS`）。"""
-    text = record.payload.get("text")
+def is_wake_text(text: Any) -> bool:
+    """这段正文是不是 frago 自己写的唤醒词（见 :data:`FRAGO_WAKE_MARKERS`）。
+
+    按正文判，不按记录判：实时监听那条线上，新来的那批还没变成记录，只看得到正文。
+    """
     if not isinstance(text, str):
         return False
     head = text.lstrip()
     return any(head.startswith(marker) for marker in FRAGO_WAKE_MARKERS)
+
+
+def _is_wake_prompt(record: UnifiedRecord) -> bool:
+    """这句话是不是 frago 自己写的唤醒词。"""
+    return is_wake_text(record.payload.get("text"))
 
 
 def _is_heartbeat_reply(records: Sequence[UnifiedRecord], index: int) -> bool | None:
