@@ -167,6 +167,48 @@ def test_a_record_landing_on_an_already_used_number_is_still_emitted(watch_dir, 
     assert seen[-1] == ["c"], "挪位之后新出现的那条要发，已经交出去的不许重发"
 
 
+def test_a_long_session_never_has_its_history_pushed_again(watch_dir):
+    """已经交出去的记录要记**全场**，不是只记最近几十条。
+
+    去重只记最近 64 条时，第 65 条往前的全部在下一次文件变动时被判成没见过——整份记录每次
+    都是重新翻的。于是那场会话每动一次（agent 每调一次工具、引擎每记一笔账都写盘），几百条
+    旧记录被当成新内容推给页面，页面接在流的尾巴上：人滚到底，看见的是一段几小时前的对话
+    摆在最新内容前面。2026-09-12 实测，935 条的会话新增 3 条推出了 874 条。
+
+    这一场特意写到 80 条——跨过那个上限，否则这条测试连症状都碰不到。
+    """
+    session = watch_dir / "eeeeeeee-1111-2222-3333-444444444444.jsonl"
+    _write_session(session, 80)
+
+    seen: list[int] = []
+    stream = SessionStream(
+        project_path="/tmp/proj",
+        on_records=lambda _sid, recs: seen.append(len(recs)),
+        debounce_seconds=0.05,
+        session_id_filter=session.stem,
+    )
+    stream.start()
+    try:
+        stream._on_file_event(  # noqa: SLF001
+            stream_mod.FileEvent(
+                path=str(session), event_type="modified", is_directory=False, timestamp=0.0
+            )
+        )
+        _drain(stream)
+        assert seen == []
+
+        _write_session(session, 2, start=80)
+        stream._on_file_event(  # noqa: SLF001
+            stream_mod.FileEvent(
+                path=str(session), event_type="modified", is_directory=False, timestamp=0.0
+            )
+        )
+        _drain(stream)
+        assert seen == [2], "只该推新长出来的那两条，历史一条都不许再推"
+    finally:
+        stream.stop()
+
+
 def test_unwatched_session_is_never_processed(watch_dir):
     """没人在看的那场会话，事件当场丢——一个项目目录下能躺一千个会话文件。"""
     watched = watch_dir / "cccccccc-1111-2222-3333-444444444444.jsonl"

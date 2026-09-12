@@ -111,7 +111,7 @@ describe('useWorkbenchRecords', () => {
       expect(result.current.records[PAGE_SIZE + 4].seq).toBe(304);
 
       const urls = vi.mocked(fetch).mock.calls.map((call) => String(call[0]));
-      expect(urls.some((u) => u.includes('after=300'))).toBe(true);
+      expect(urls.some((u) => u.includes('after=299'))).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -229,12 +229,11 @@ describe('刚发完话那一阵', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
         const fresh = { ...record(3), ts: Date.now(), kind: 'tool.call' as const };
-        const body = /[?&]tail=true/.test(String(input))
-          ? [record(0), record(1), record(2)]
-          : grown
-            ? [fresh]
-            : [];
+        const all = [record(0), record(1), record(2), ...(grown ? [fresh] : [])];
+        const after = Number(url.match(/after=(\d+)/)?.[1] ?? 0);
+        const body = /[?&]tail=true/.test(url) ? all : all.filter((r) => r.seq >= after);
         return { ok: true, json: async () => body } as Response;
       })
     );
@@ -255,12 +254,11 @@ describe('刚发完话那一阵', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
         const mine = { ...record(3), ts: Date.now(), kind: 'user.say' as const };
-        const body = /[?&]tail=true/.test(String(input))
-          ? [record(0), record(1), record(2)]
-          : grown
-            ? [mine]
-            : [];
+        const all = [record(0), record(1), record(2), ...(grown ? [mine] : [])];
+        const after = Number(url.match(/after=(\d+)/)?.[1] ?? 0);
+        const body = /[?&]tail=true/.test(url) ? all : all.filter((r) => r.seq >= after);
         return { ok: true, json: async () => body } as Response;
       })
     );
@@ -300,14 +298,14 @@ describe('刚发完话那一阵', () => {
 });
 
 describe('送达信号：输入区靠它放行', () => {
+  /** 三条打底，第四条随 `fresh` 出现。取增量按服务端的规矩给：从 `after` 那一格起的整段。 */
   function stubGrowing(fresh: () => WorkbenchRecord | null) {
     return vi.fn(async (input: RequestInfo | URL) => {
-      const body = /[?&]tail=true/.test(String(input))
-        ? [record(0), record(1), record(2)]
-        : (() => {
-            const f = fresh();
-            return f ? [f] : [];
-          })();
+      const url = String(input);
+      const f = fresh();
+      const all = [record(0), record(1), record(2), ...(f ? [f] : [])];
+      const after = Number(url.match(/after=(\d+)/)?.[1] ?? 0);
+      const body = /[?&]tail=true/.test(url) ? all : all.filter((r) => r.seq >= after);
       return { ok: true, json: async () => body } as Response;
     });
   }
@@ -389,14 +387,14 @@ describe('送达信号：输入区靠它放行', () => {
 });
 
 describe('信封：已发送 → 已入队列 → 成为一轮', () => {
+  /** 三条打底，第四条随 `fresh` 出现。取增量按服务端的规矩给：从 `after` 那一格起的整段。 */
   function stubGrowing(fresh: () => WorkbenchRecord | null) {
     return vi.fn(async (input: RequestInfo | URL) => {
-      const body = /[?&]tail=true/.test(String(input))
-        ? [record(0), record(1), record(2)]
-        : (() => {
-            const f = fresh();
-            return f ? [f] : [];
-          })();
+      const url = String(input);
+      const f = fresh();
+      const all = [record(0), record(1), record(2), ...(f ? [f] : [])];
+      const after = Number(url.match(/after=(\d+)/)?.[1] ?? 0);
+      const body = /[?&]tail=true/.test(url) ? all : all.filter((r) => r.seq >= after);
       return { ok: true, json: async () => body } as Response;
     });
   }
@@ -639,5 +637,111 @@ describe('信封：已发送 → 已入队列 → 成为一轮', () => {
 
     rerender({ sid: other });
     expect(result.current.outbound).toHaveLength(0);
+  });
+});
+
+describe('这场会话的编号被重排过', () => {
+  /**
+   * 顶替 fetch：一场会话，内容由一串**身份稳定**的记录给出，序号按它当下的位置现排。
+   *
+   * 抽掉中间一条就等于引擎重写了一次账本——账本只留最后一份，前面那份一被丢掉，它后面
+   * 所有内容的编号就整体往前挪一格。真服务端就是这么发的：序号是每次重翻档案时现排的。
+   */
+  function stubArchive(ids: () => string[]) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const limit = Number(url.match(/limit=(\d+)/)?.[1] ?? PAGE_SIZE);
+      const all = ids().map((id, seq) => ({ ...record(seq), id }));
+      const body = /[?&]tail=true/.test(url)
+        ? all.slice(Math.max(0, all.length - limit))
+        : all
+            .filter((r) => r.seq >= Number(url.match(/after=(\d+)/)?.[1] ?? 0))
+            .slice(0, limit);
+      return { ok: true, json: async () => body } as Response;
+    });
+  }
+
+  it('号往前挪了一格，新写下来的那句话照样取得回来', async () => {
+    // 这是"话发进去了、中栏却看不见它"的那一刻：挪格之后人刚说的那句正好落回轮询已经
+    // 问过的号段。只问"比手上末条更新的"，这一趟必定空手——回执就是这么丢的。
+    vi.useFakeTimers();
+    try {
+      let ids = ['a0', 'a1', 'a2', 'ledger', 'a4', 'a5'];
+      vi.stubGlobal('fetch', stubArchive(() => ids));
+      const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+      await act(async () => {});
+      expect(result.current.records.map((r) => r.id)).toEqual(ids);
+
+      // 一轮说完：旧账本被新的顶掉（少一条），人紧接着说了一句（多一条）。
+      ids = ['a0', 'a1', 'a2', 'a4', 'a5', '人刚说的那句'];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+      });
+
+      expect(result.current.records.map((r) => r.id)).toContain('人刚说的那句');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('号没动就只追加真的新内容，作对照多要的那一条不留下重影', async () => {
+    vi.useFakeTimers();
+    try {
+      let ids = ['a0', 'a1', 'a2'];
+      vi.stubGlobal('fetch', stubArchive(() => ids));
+      const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+      await act(async () => {});
+
+      ids = ['a0', 'a1', 'a2', 'a3'];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+      });
+
+      expect(result.current.records.map((r) => r.id)).toEqual(['a0', 'a1', 'a2', 'a3']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('挪格之后，自己那句话照样认得出送达——输入区靠它放行', async () => {
+    vi.useFakeTimers();
+    try {
+      let ids = ['a0', 'a1', 'ledger', 'a3'];
+      vi.stubGlobal('fetch', stubArchive(() => ids));
+      const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+      await act(async () => {});
+
+      act(() => {
+        result.current.markSent('去备份目录找');
+      });
+      expect(result.current.deliveredAt).toBeNull();
+      expect(result.current.outbound).toHaveLength(1);
+
+      // 账本被顶掉，人那句话落进档案：整场少一条又多一条，尾巴上的号原地没变。
+      ids = ['a0', 'a1', 'a3', 'said'];
+      const mine = vi.fn(async (input: RequestInfo | URL) => {
+        const res = await stubArchive(() => ids)(input);
+        const body = (await res.json()) as WorkbenchRecord[];
+        return {
+          ok: true,
+          json: async () =>
+            body.map((r) =>
+              r.id === 'said'
+                ? { ...r, ts: Date.now(), kind: 'user.say' as const, payload: { text: '去备份目录找' } }
+                : r
+            ),
+        } as Response;
+      });
+      vi.stubGlobal('fetch', mine);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+      });
+
+      expect(result.current.deliveredAt).not.toBeNull();
+      expect(result.current.outbound).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

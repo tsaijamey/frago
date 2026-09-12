@@ -6,11 +6,14 @@
  * 1. **打开会话取尾部。** `tail=true&limit=200` 取整场最后两百条——中栏要直接落在最新
  *    内容上，从头一页页翻到尾会把大会话整个塞进浏览器。
  * 2. **往上翻取更早。** `after=<窗口首条 seq 减一页>` 取当前窗口之前的一页，往顶部前插。
- * 3. **新内容取增量。** `after=<末条 seq 加一>` 只取比手头更新的，往尾部追加。轮询与
- *    发话后的重拉都走这条路和尾部重取。
+ * 3. **新内容取增量。** `after=<末条自己的 seq>` 连手头末条一起要回来，多的那一条当对照，
+ *    其余按身份并进尾部。轮询与发话后的重拉都走这条路和尾部重取。
  *
- * `after` 是**本批第一条的 seq、闭区间起点**，不是绝对下标：会话被重新解析后 seq 会变，
- * 界面拿着过期的游标只会错位，过期时从尾部重取。
+ * `after` 是**本批第一条的 seq、闭区间起点**，不是绝对下标：会话每次重新解析时 seq 都是
+ * 现排的，编号会变。所以起点取末条自己那一格而不是它的下一格——对照那一条还在，说明编号
+ * 没动；换了人，说明这场重排过，手上这份的位置全部作废，从尾部重取。**不这么做就会丢内容**：
+ * 每一轮结束引擎都会重写这场会话的花费账本，账本只留最后一份，前面那份一被丢掉，它后面所有
+ * 内容的编号就整体往前挪一格，人紧接着说的那句话正好落回已经问过的号段，从此取不回来。
  *
  * **新内容主要靠 WebSocket 推**（服务端盯着会话文件，一动就把增量推过来），轮询是断连时
  * 的兜底。轮询的开关在「这场会话还活不活」：左栏状态为 running，或者刚刚有过动静——活的
@@ -274,6 +277,45 @@ export interface WorkbenchRecordsState {
   settleSent: (id?: string) => void;
 }
 
+/**
+ * 实时推送来的这一批，怎么并进手头这一窗。
+ *
+ * 三条：
+ *
+ * 1. **见过的按身份丢掉。** 同一条记录被重推是常态——服务端每次文件变动都整份重翻。
+ * 2. **比手头这一窗头一条还早的一律丢掉。** 那不是新内容，是历史。页面手上只有尾部一页，
+ *    窗外的记录接进来只能接在末尾，于是一段很早的对话被摆在最新内容前面，时间戳差出几个
+ *    小时——这正是 2026-09-12 那天人看到的症状。窗外的历史该由往上翻那条路取回来，
+ *    NEVER 从推送这条路进。
+ * 3. **剩下的按序号落位，不是一律追加。** 引擎重写一条记录会让它后面的整体往前挪一格，
+ *    新写下来的那句话因此可能落在窗内某个位置上；追加到末尾就把顺序搞乱了。同一个序号上
+ *    新来的排在手头那条之后——挪位意味着它物理上更晚。
+ *
+ * 手上一条都没有时照收：那是新开的一场，它的档案本来就只有几行，这时候推送是唯一的内容来源。
+ */
+export function mergePushed(
+  prev: WorkbenchRecord[],
+  batch: WorkbenchRecord[]
+): WorkbenchRecord[] {
+  const held = new Set(prev.map((r) => r.id));
+  const windowStart = prev.length ? prev[0].seq : Number.NEGATIVE_INFINITY;
+  const fresh = batch
+    .filter((r) => !held.has(r.id) && r.seq >= windowStart)
+    .sort((a, b) => a.seq - b.seq);
+  if (!fresh.length) return prev;
+  const tail = prev.length ? prev[prev.length - 1].seq : Number.NEGATIVE_INFINITY;
+  // 尾部追加是常态（新内容的序号都不小于手头末条），这一路一条都不搬。
+  if (fresh[0].seq >= tail) return [...prev, ...fresh];
+  const merged: WorkbenchRecord[] = [];
+  let i = 0;
+  for (const r of prev) {
+    while (i < fresh.length && fresh[i].seq < r.seq) merged.push(fresh[i++]);
+    merged.push(r);
+  }
+  while (i < fresh.length) merged.push(fresh[i++]);
+  return merged;
+}
+
 export async function fetchWorkbenchRecords(
   sessionId: string,
   opts: { after?: number; limit?: number; tail?: boolean } = {}
@@ -401,30 +443,50 @@ export function useWorkbenchRecords(
     }
   }, []);
 
-  /** 取比手头末条更新的记录，往尾部追加。返回新取到几条——轮询靠它续命。 */
+  /**
+   * 取比手头末条更新的记录，往尾部追加。返回新取到几条——轮询靠它续命。
+   *
+   * **起点取手头末条自己那一格，不是它的下一格。** 序号不是地址：整场记录每次都是重新
+   * 编号的，而每一轮结束引擎都会重写这场会话的花费账本，账本只留最后一份——前面那份一
+   * 被丢掉，它后面所有内容的编号就整体往前挪一格。于是人刚发出去的那句话会落回轮询已经
+   * 问过的号段，这一趟空手而归：话进去了，中栏却看不见它，输入区那个信封就一直挂着说没
+   * 发出去（实时推送那条路认的是记录身份，所以推送通着的时候一切正常——症状因此时有时无）。
+   *
+   * 多要回来的这一条是对照：它还是原来那条，说明编号没动，后面的按身份并进去；换了人或
+   * 者那一格整个没了，说明这场重排过，手上这份的位置全部作废，只能整段重取。
+   */
   const appendNewer = useCallback(async (sid: string): Promise<number> => {
     if (inflightNewer.current) return 0;
     const last = recordsRef.current[recordsRef.current.length - 1];
     if (!last) return pickUpTail(sid);
+
+    let renumbered = false;
+    let taken = 0;
     inflightNewer.current = true;
     try {
-      const batch = await fetchWorkbenchRecords(sid, { after: last.seq + 1, limit: PAGE_SIZE });
-      if (activeSession.current !== sid || !batch.length) return 0;
-      setRecords((prev) => {
-        const floor = prev.length ? prev[prev.length - 1].seq : -1;
-        const fresh = batch.filter((r) => r.seq > floor);
-        const next = fresh.length ? [...prev, ...fresh] : prev;
-        recordsRef.current = next;
-        return next;
-      });
-      hotUntil.current = Date.now() + HOT_WINDOW_MS;
-      return batch.length;
+      const batch = await fetchWorkbenchRecords(sid, { after: last.seq, limit: PAGE_SIZE });
+      if (activeSession.current !== sid) return 0;
+      if (!batch.length || batch[0].id !== last.id) {
+        renumbered = true;
+      } else {
+        // 按身份并，不按位置并：对照那一条自己会被认出来丢掉，剩下的才是真的新内容。
+        setRecords((prev) => {
+          const next = mergePushed(prev, batch);
+          if (next === prev) return prev;
+          recordsRef.current = next;
+          return next;
+        });
+        taken = batch.length - 1;
+        if (taken > 0) hotUntil.current = Date.now() + HOT_WINDOW_MS;
+      }
     } catch {
       // 增量取不到不打断看记录的人——下一次轮询再试。错误只在整流重取时才摆出来。
       return 0;
     } finally {
       inflightNewer.current = false;
     }
+    // 重取放在闸门之外做：还占着 `inflightNewer` 的话，重取那一趟会被自己挡回去。
+    return renumbered ? await pickUpTail(sid) : taken;
   }, [pickUpTail]);
 
   const reload = useCallback(async () => {
@@ -641,10 +703,10 @@ export function useWorkbenchRecords(
       const batch = (data.records ?? []) as WorkbenchRecord[];
       if (!batch.length) return;
       setRecords((prev) => {
-        const existing = new Set(prev.map((r) => r.id));
-        const fresh = batch.filter((r) => !existing.has(r.id));
-        if (!fresh.length) return prev;
-        const next = [...prev, ...fresh];
+        // 顺序不托付给推送那一侧：见 mergePushed。推送只要错一次，人滚到底看见的就是
+        // 一段很早的对话摆在最新内容前面，而界面上没有任何迹象说明发生了什么。
+        const next = mergePushed(prev, batch);
+        if (next === prev) return prev;
         recordsRef.current = next;
         return next;
       });
