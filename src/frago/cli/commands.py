@@ -386,24 +386,6 @@ COMMAND_EXAMPLES = {
     "schedule/run": [
         "frago schedule run <schedule_id>",
     ],
-    # Client
-    "client": [
-        "frago client <command>",
-        "frago client start",
-    ],
-    "client/start": [
-        "frago client start",
-        "frago client start --no-download",
-    ],
-    "client/status": [
-        "frago client status",
-    ],
-    "client/update": [
-        "frago client update",
-    ],
-    "client/uninstall": [
-        "frago client uninstall",
-    ],
     # Autostart
     "autostart": [
         "frago autostart <command>",

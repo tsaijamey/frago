@@ -2,26 +2,9 @@
 
 [English](installation.md)
 
-## 桌面客户端
+frago 以命令行工具的形式安装；给人用的界面是它提供的网页（`frago server start` 之后打开 http://127.0.0.1:8093）。安装需要 Python 3.13+。
 
-下载，安装，从应用菜单打开。
-
-| 平台 | 下载 |
-|------|------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
-
-> 所有下载见 [Releases 页面](https://github.com/tsaijamey/frago/releases/latest)
-
----
-
-## CLI
-
-frago 的命令行界面——相当于操作系统的 shell。桌面客户端能做的，CLI 都能做，还支持浏览器自动化、Recipe 开发和直接控制 agent。安装需要 Python 3.13+。
+> frago 没有桌面客户端。GitHub Releases 页面上旧版本附带的安装包已停止维护。
 
 ### 环境要求
 

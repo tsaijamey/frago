@@ -19,7 +19,6 @@ from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
 from .channel_commands import channel_group
-from .client_commands import client_group
 from .cloud_commands import (
     config_group,
     install_group,
@@ -59,7 +58,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
+    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -313,7 +312,7 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
       - Memory & recall    def, context, session search, todo
       - Recipes            once it works, it freezes into code (recipe, daemon, market)
       - Boundaries         beyond this session: agent, channel/reply, remote, schedule
-    The Web UI, desktop client, profiles and market are for people.
+    The Web UI, profiles and market are for people.
 
     \b
     GUI Mode (deprecated):
@@ -413,9 +412,6 @@ cli.add_command(serve)
 
 # Server command group - background web service management
 cli.add_command(server_group)
-
-# Client command group - desktop client management
-cli.add_command(client_group)
 
 # Autostart command group - manage server autostart on boot
 cli.add_command(autostart_group)

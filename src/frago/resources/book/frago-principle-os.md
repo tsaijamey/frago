@@ -71,7 +71,7 @@ frago 不绑定某一个 agent。Claude Code / codex / opencode / codebuddy 任�
 
 ## 人面：一层
 
-frago 也有会话工作台与 WebUI、桌面客户端、模型供应商 profile、配方市场、安装与自更新（`frago start / client / profile / market / update / autostart`）——**那些是给人用的**。agent 通过五根支柱看见 frago，这一层不归 agent 管；agent 只在给人指路时提它，比如「去 WebUI 设置页改 profile」。
+frago 也有会话工作台与 WebUI、模型供应商 profile、配方市场、安装与自更新（`frago start / profile / market / update / autostart`）——**那些是给人用的**。agent 通过五根支柱看见 frago，这一层不归 agent 管；agent 只在给人指路时提它，比如「去 WebUI 设置页改 profile」。
 
 ## agent OS 是个什么品类
 

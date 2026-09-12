@@ -6,7 +6,7 @@ frago is an agent OS. This page is the entry point for developers who want to us
 
 ## CLI
 
-The command-line interface to frago — like a shell to an OS. Everything the desktop app can do, the CLI can do too, plus browser automation, Recipe development, and direct agent control.
+The command-line interface to frago — like a shell to an OS. Everything the web UI can do, the CLI can do too, plus browser automation, Recipe development, and direct agent control.
 
 ### Quick Install
 

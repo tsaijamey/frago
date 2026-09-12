@@ -6,7 +6,7 @@ frago 是一个 agent OS。本页面是面向开发者的入口——适用于�
 
 ## CLI
 
-frago 的命令行界面——相当于操作系统的 shell。桌面客户端能做的，CLI 都能做，还支持浏览器自动化、Recipe 开发和直接控制 agent。
+frago 的命令行界面——相当于操作系统的 shell。网页界面能做的，CLI 都能做，还支持浏览器自动化、Recipe 开发和直接控制 agent。
 
 ### 快速安装
 

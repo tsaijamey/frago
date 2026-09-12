@@ -8,10 +8,10 @@
 
 简体中文 · [English](README.md) · [使用指南](docs/user-guide.zh-CN.md) · [配方系统](docs/recipes.zh-CN.md) · [讨论区](https://github.com/tsaijamey/frago/discussions)
 
-[![Release](https://img.shields.io/github/v/release/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/releases/latest)
+[![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
-[![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](https://github.com/tsaijamey/frago/releases/latest)
+[![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.zh-CN.md)
 
 <img src="docs/images/hero-workbench.png" width="880" alt="frago 会话工作台：左栏一千多场会话，中栏是 agent 正在干活的逐条回执" />
 
@@ -70,7 +70,7 @@ frago 是另一个龙虾、另一个 Hermes 吗？
 | **会话检索**<br>`frago session search` | 跨 Claude Code / opencode 按意思搜历史会话，而不是靠记得关键词 |
 | **定时与常驻**<br>`frago schedule` · `frago daemon` | 配方按点自己跑、长任务常驻后台，不需要你守着 |
 | **配方市场**<br>`frago market` · `frago recipe share` | 把配方发出去，也把别人的装进来 |
-| **安装运维**<br>`frago client` · `frago update` · `frago autostart` | 桌面客户端、自更新、开机自启，换一台电脑不用从头折腾一遍 |
+| **安装运维**<br>`frago init` · `frago update` · `frago autostart` | 一步配好环境、自更新、开机自启，换一台电脑不用从头折腾一遍 |
 
 ## 能拿它做什么
 
@@ -204,16 +204,17 @@ frago 不生产回执，**也不挑边**。它做的是把**每一家**的记录
 
 ## 安装
 
-| 平台 | 下载 |
-|------|------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux** | [.deb](https://github.com/tsaijamey/frago/releases/latest) · [.rpm](https://github.com/tsaijamey/frago/releases/latest) · [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
+需要 Python 3.13+，macOS、Windows、Linux 都能用。
 
-> 所有下载见 [Releases 页面](https://github.com/tsaijamey/frago/releases/latest)。当前版本：**v1.2.101**。
+```bash
+uv tool install frago-cli   # 安装
+frago init                  # 检查依赖、配好一个模型 profile
+frago server start          # 启动网页界面，打开 http://127.0.0.1:8093
+```
 
-下载、打开、配好一个模型 profile，然后开工。桌面客户端会自动检查和安装它需要的一切——不需要终端、不需要配环境、不需要自己管理依赖。
+还没装 uv，或者想用一行命令装好，见[安装指南](docs/installation.zh-CN.md)。
+
+> frago 没有桌面客户端。GitHub Releases 页面上旧版本附带的安装包已停止维护。
 
 ## 文档
 

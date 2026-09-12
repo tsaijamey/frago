@@ -8,10 +8,10 @@
 
 English · [简体中文](README.zh-CN.md) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
 
-[![Release](https://img.shields.io/github/v/release/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/releases/latest)
+[![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
-[![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](https://github.com/tsaijamey/frago/releases/latest)
+[![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.md)
 
 <img src="docs/images/hero-workbench.png" width="880" alt="The frago session workbench: a thousand sessions on the left, the agent's live receipts in the middle" />
 
@@ -70,7 +70,7 @@ This half is the human's window.
 | **Session search**<br>`frago session search` | Searches past sessions by meaning across Claude Code and opencode, instead of relying on remembering a keyword |
 | **Scheduling & daemons**<br>`frago schedule` · `frago daemon` | Recipes run on a clock and long jobs sit in the background without you watching |
 | **Recipe market**<br>`frago market` · `frago recipe share` | Publish your recipes, install other people's |
-| **Install & upkeep**<br>`frago client` · `frago update` · `frago autostart` | Desktop client, self-update, start on boot — a new computer doesn't mean starting over |
+| **Install & upkeep**<br>`frago init` · `frago update` · `frago autostart` | One-step setup, self-update, start on boot — a new computer doesn't mean starting over |
 
 ## What you can do with it
 
@@ -209,16 +209,17 @@ and will most likely have nothing to do with any of these.
 
 ## Install
 
-| Platform | Download |
-|----------|----------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux** | [.deb](https://github.com/tsaijamey/frago/releases/latest) · [.rpm](https://github.com/tsaijamey/frago/releases/latest) · [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
+Requires Python 3.13+. Works on macOS, Windows and Linux.
 
-> All downloads on the [Releases page](https://github.com/tsaijamey/frago/releases/latest). Current release: **v1.2.101**.
+```bash
+uv tool install frago-cli   # install
+frago init                  # check dependencies, configure a model profile
+frago server start          # start the web UI at http://127.0.0.1:8093
+```
 
-Install, open, configure one model profile, and go. The desktop app checks and installs everything it needs — no terminal, no environment setup, no dependencies to manage yourself.
+Don't have uv yet, or want the one-line installer? See [Installation](docs/installation.md).
+
+> There is no desktop app. The installers attached to older GitHub Releases are no longer maintained.
 
 ## Documentation
 

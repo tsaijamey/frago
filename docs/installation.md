@@ -2,26 +2,9 @@
 
 [简体中文](installation.zh-CN.md)
 
-## Desktop App
+frago installs as a command-line tool; the web UI it serves (`frago server start`, then http://127.0.0.1:8093) is the interface for people. Requires Python 3.13+ to install.
 
-Download, install, and open from your app menu. That's it.
-
-| Platform | Download |
-|----------|----------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest) |
-| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
-
-> All downloads: [Releases page](https://github.com/tsaijamey/frago/releases/latest)
-
----
-
-## CLI
-
-The command-line interface to frago — like a shell to an OS. Everything the desktop app can do, the CLI can do too, plus browser automation, Recipe development, and direct agent control. Requires Python 3.13+ to install.
+> There is no desktop app. The installers attached to older GitHub Releases are no longer maintained.
 
 ### Requirements
 

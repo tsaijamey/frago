@@ -124,7 +124,7 @@ def update(check_only: bool, from_repo: bool):
         else:
             # Always use install --reinstall to pull from PyPI regardless of original install source.
             # uv tool upgrade follows the original source (e.g. local wheel), which breaks when
-            # the wheel no longer exists (e.g. after Tauri installs a version, then the dist/ is cleaned).
+            # the wheel no longer exists (e.g. installed from a local build whose dist/ was later cleaned).
             cmd = ["uv", "tool", "install", "--reinstall", PACKAGE_NAME]
 
         # Execute directly, let output display to user

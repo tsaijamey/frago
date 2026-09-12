@@ -36,7 +36,7 @@ Every request the server receives is sorted into one of four zones by
 
 | Zone | What it covers | What it requires |
 |---|---|---|
-| **trusted local** | a process on this machine — the CLI, the desktop client, a recipe calling back in — and, by default, other devices on the private network | nothing; behaviour is unchanged from a personal install |
+| **trusted local** | a process on this machine — the CLI, a recipe calling back in — and, by default, other devices on the private network | nothing; behaviour is unchanged from a personal install |
 | **public** | `GET /app/<recipe>/…` for a recipe published in `public` mode | nothing, but it is read-only and the page's config is filtered |
 | **identity** | the same pages for a recipe published in `identity` mode, plus five `/api/auth/…` endpoints (login, logout, password, me, pages) | a login cookie; still read-only, still filtered, and the visitor reads *their own* slot |
 | **private** | everything else: all of `/api`, `/ws`, `/viewer`, `/browser`, the SPA | `Authorization: Bearer <token>` |

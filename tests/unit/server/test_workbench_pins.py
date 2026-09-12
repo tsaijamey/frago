@@ -63,7 +63,7 @@ class TestStore:
         assert workbench_pins.unpin(OC_SID) == [CC_SID]
 
     def test_名单落在盘上_换个壳打开还在(self, pins_file):
-        """置顶存服务端的全部理由：桌面客户端与浏览器的本地存储天生不通。"""
+        """置顶存服务端的全部理由：不同浏览器、不同设备的本地存储天生不通。"""
         workbench_pins.pin(CC_SID)
         assert json.loads(pins_file.read_text(encoding="utf-8")) == {"pinned": [CC_SID]}
 

@@ -6,12 +6,6 @@ const DATA = [
     id: "daily", zh: "日常使用", en: "Daily Use",
     cmds: [
       { name: "start", zh: "启动 frago 并在浏览器中打开 Web UI。", en: "Start frago and open the Web UI in your browser." },
-      { name: "client", zh: "管理 frago 桌面客户端。", en: "Manage the frago desktop client.", sub: [
-        ["start", "启动桌面客户端(未安装则自动下载)。", "Start the desktop client (downloads if not installed)."],
-        ["status", "显示桌面客户端的安装状态。", "Show the desktop client installation status."],
-        ["uninstall", "卸载已安装的桌面客户端。", "Remove the installed desktop client."],
-        ["update", "将桌面客户端更新到最新版本。", "Update the desktop client to the latest version."],
-      ]},
       { name: "browser", zh: "浏览器自动化（extension / CDP 双后端）。", en: "Browser automation (extension / CDP backends).", subgroups: [
         { zh: "生命周期", en: "Lifecycle", items: [
           ["start", "启动带 CDP 调试支持的浏览器。", "Launch browser with CDP debugging support."],
