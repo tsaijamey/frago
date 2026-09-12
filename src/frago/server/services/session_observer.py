@@ -134,6 +134,15 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         "output": "",
         # 从旧到新。
         "happened": [],
+        # 每一格自己上次变样的时刻（毫秒）。整份只记一个总的更新时刻不够用：右栏是按
+        # 时间线读的，人要分得出哪一格是刚刚变的、哪一格半小时前就停在那儿了。老的槽位
+        # 文件里没有这几格，读出来是 None，那几格照常显示，只是暂时不带时间。
+        "anchor_at": None,
+        "now_at": None,
+        "decision_at": None,
+        "output_at": None,
+        # 跟 happened 一一对齐，同样从旧到新。
+        "happened_at": [],
         "updated_at": None,
         "model": None,
         # ok / failed / empty。未绑定不写文件，由读取时现判。
@@ -175,9 +184,15 @@ def append_run(directory: Path, entry: dict[str, Any]) -> None:
 
 
 def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
-    """页面要的形状。「已经发生的事」给新的在前，页面按顺序露头三条。"""
+    """页面要的形状。「已经发生的事」给新的在前，页面按顺序露头三条。
+
+    每一格带上它自己上次变样的时刻，右栏按时间线读要用。时刻跟着正文一起倒过来，免得
+    第一条的时间落到最后一条头上。
+    """
     anchor = slots.get("anchor") or {}
     happened = list(slots.get("happened") or [])
+    times = list(slots.get("happened_at") or [])
+    times = [None] * max(0, len(happened) - len(times)) + times[: len(happened)]
     return {
         "bound": bound,
         "anchor": anchor.get("text"),
@@ -185,6 +200,11 @@ def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
         "decision": slots.get("decision") or "",
         "output": slots.get("output") or "",
         "happened": list(reversed(happened)),
+        "happened_at": list(reversed(times)),
+        "anchor_at": slots.get("anchor_at"),
+        "now_at": slots.get("now_at"),
+        "decision_at": slots.get("decision_at"),
+        "output_at": slots.get("output_at"),
         "updated_at": slots.get("updated_at"),
         "model": slots.get("model"),
         "status": "unbound" if not bound else slots.get("status") or "empty",
@@ -343,6 +363,16 @@ def record_line(record: UnifiedRecord) -> str | None:
     return None
 
 
+def showable(records: Sequence[UnifiedRecord]) -> list[str]:
+    """这一批里真正给模型看的几行。
+
+    一批新记录里大部分是给不出内容的（思考、工具结果、注入、调用边界），全过滤掉之后
+    可能一行不剩。那种情况下**不能去问模型**：它看到的是一份空记录，只会如实回答「这
+    一段什么都没有」，而那份空回答会盖掉右栏里本来有内容的格子。
+    """
+    return [line for line in (record_line(r) for r in records) if line]
+
+
 def build_prompt(
     slots: dict[str, Any],
     fed: Sequence[UnifiedRecord],
@@ -360,7 +390,7 @@ def build_prompt(
         "- 已经发生的事（最近几条，从旧到新）：",
     ]
     lines += [f"  - {h}" for h in happened] or [f"  - {EMPTY_MARK}"]
-    shown = [line for line in (record_line(r) for r in fed) if line]
+    shown = showable(fed)
     head = f"## 这一段新增的会话记录（{len(shown)} 条"
     head += f"；更早的 {dropped} 条太多，没给）" if dropped else "）"
     lines += ["", head]
@@ -428,31 +458,62 @@ def _content(slots: dict[str, Any]) -> str:
 
 
 def apply_answer(
-    slots: dict[str, Any], answer: dict[str, Any], candidates: dict[int, str]
+    slots: dict[str, Any],
+    answer: dict[str, Any],
+    candidates: dict[int, str],
+    stamp_ms: int | None = None,
 ) -> bool:
     """把回答合进槽位，返回槽位是否真的变了。
 
     - 此刻在做什么：有新值就盖掉。
-    - 需要你决策：照回答写，空串就是没有待决——人答过了，这一格就该清掉。
+    - 需要你决策：**只有人在这一段里开过口，空串才算「已经答了、清掉」。**
+      这一格说的是眼下还有什么在等人回话，是个常驻状态；模型每次只看得见新增的那一段，
+      问题是上一段提的，这一段里自然不会再出现一遍。人没开口就把空串当成「没有待决」，
+      等于agent 一问完、下一批记录一到就把问题擦掉——实测就是这么丢的：21:08:23 填上
+      「改法要人挑」，21:08:25 一条轮次边界落盘，这一格就空了。人只要没答，问题就还在。
     - 最近一次产出：空串表示这一段没有新产出，沿用上一次。
     - 已经发生的事：只追加，跟最近几条重复的不加。
     - 锚：只认这一段里人说过的话的编号；指别的编号当没指。
+
+    每一格另记它自己上次变样的时刻，右栏按时间线读要用。``stamp_ms`` 只给测试用。
     """
     before = _content(slots)
+    at = int(time.time() * 1000) if stamp_ms is None else stamp_ms
+
+    def put(key: str, value: str) -> None:
+        """写一格，值真的变了才动它的时刻。
+
+        时刻记的是「这一格上次变样是什么时候」，不是「上次被写过」。旁路每轮都跑，值没变
+        也照写一遍；跟着写时刻的话，一格半小时没动的内容会一直显示成「刚刚」。
+        """
+        if slots.get(key) != value:
+            slots[key] = value
+            slots[f"{key}_at"] = at
+
     if answer["now"]:
-        slots["now"] = answer["now"]
-    slots["decision"] = answer["decision"]
+        put("now", answer["now"])
+    if answer["decision"] or candidates:
+        put("decision", answer["decision"])
     if answer["output"]:
-        slots["output"] = answer["output"]
+        put("output", answer["output"])
+
     happened = list(slots.get("happened") or [])
+    # 老槽位文件只有正文没有时刻，左边补空对齐，别让新加的那条错位到老内容头上。
+    times = list(slots.get("happened_at") or [])
+    times = times[-len(happened) :] if happened and len(times) > len(happened) else times
+    times = [None] * max(0, len(happened) - len(times)) + times
     for item in answer["happened_add"]:
         if item not in happened[-20:]:
             happened.append(item)
+            times.append(at)
     slots["happened"] = happened[-HAPPENED_KEEP:]
+    slots["happened_at"] = times[-HAPPENED_KEEP:]
+
     seq = answer["anchor_seq"]
     current = (slots.get("anchor") or {}).get("seq")
     if seq is not None and seq in candidates and seq != current:
         slots["anchor"] = {"seq": seq, "text": candidates[seq]}
+        slots["anchor_at"] = at
     return _content(slots) != before
 
 
@@ -572,6 +633,18 @@ class SessionObserver:
             slots["cursor_id"] = new[-1].id
             save_slots(directory, slots)
             entry.update(skipped="pa-heartbeat", cursor_to=last_seq + 1, dur_ms=_ms(started))
+            append_run(directory, entry)
+            return entry
+
+        if not showable(new):
+            # 这一批全是看不见的东西（思考、工具结果、注入、轮次边界）。问了也是白问：
+            # 模型看到一份空记录，只会如实答「这一段什么都没有」，而那份空回答会把右栏
+            # 里本来有内容的格子盖掉——实测过一次，agent 刚摆出三条改法等人挑，两秒后
+            # 一条轮次边界落盘，「需要你决策」当场被清空。游标照样往前，人什么都不会看到。
+            slots["cursor"] = last_seq + 1
+            slots["cursor_id"] = new[-1].id
+            save_slots(directory, slots)
+            entry.update(skipped="nothing-to-read", cursor_to=last_seq + 1, dur_ms=_ms(started))
             append_run(directory, entry)
             return entry
 

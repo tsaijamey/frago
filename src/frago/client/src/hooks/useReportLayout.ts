@@ -11,15 +11,19 @@
 
 import { useCallback, useState } from 'react';
 
-/** 会被整格替换的四格。 */
-export type CoverKey = 'anchor' | 'now' | 'decision' | 'output';
+/**
+ * 会被整格替换的三格。
+ *
+ * 「需要你决策」不在这里：它不是时间线上的一段，是唯一一条要人动手的信息，钉在栏顶
+ * 单独画（见 ReportPanel 的 CallBanner），不参与折叠和拖高度。
+ */
+export type CoverKey = 'anchor' | 'now' | 'output';
 export type SlotKey = CoverKey | 'happened';
 
 /** 默认高度沿用原来写死的两档：长文的格高一档。 */
 export const DEFAULT_HEIGHTS: Record<CoverKey, number> = {
   anchor: 112,
   now: 76,
-  decision: 112,
   output: 76,
 };
 export const MIN_SLOT_HEIGHT = 44;
@@ -58,7 +62,7 @@ interface SlotLayout {
   collapsed: SlotKey[];
 }
 
-const SLOT_KEYS: SlotKey[] = ['anchor', 'now', 'decision', 'output', 'happened'];
+const SLOT_KEYS: SlotKey[] = ['anchor', 'now', 'output', 'happened'];
 
 function initialSlots(): SlotLayout {
   const saved = read(SLOTS_KEY) as Partial<SlotLayout> | null;

@@ -1343,7 +1343,11 @@
       "showAll": "展开全文",
       "showLess": "收起",
       "resizeSlot": "拖动调整「{{label}}」的高度，双击恢复",
-      "resizePanel": "拖动调整右栏宽度，双击恢复"
+      "resizePanel": "拖动调整右栏宽度，双击恢复",
+      "decisionBanner": "轮到你了",
+      "justNow": "刚刚",
+      "minutesAgo": "{{n}} 分钟前",
+      "hoursAgo": "{{n}} 小时前"
     },
     "composer": {
       "blockedNoSession": "从左边挑一场会话，再在这里说话",

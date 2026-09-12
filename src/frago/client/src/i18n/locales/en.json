@@ -1343,7 +1343,11 @@
       "showAll": "Show all",
       "showLess": "Show less",
       "resizeSlot": "Drag to resize “{{label}}”, double-click to reset",
-      "resizePanel": "Drag to resize this panel, double-click to reset"
+      "resizePanel": "Drag to resize this panel, double-click to reset",
+      "decisionBanner": "Your turn",
+      "justNow": "just now",
+      "minutesAgo": "{{n}} min ago",
+      "hoursAgo": "{{n}} h ago"
     },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",

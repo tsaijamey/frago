@@ -40,6 +40,17 @@ export interface ObserverState {
   output: string;
   /** 已经发生的事，新的在前。 */
   happened: string[];
+  /**
+   * 每一格自己上次变样的时刻（毫秒），跟正文一一对应。右栏按时间线读要用它。
+   *
+   * 老的槽位文件里没有这几格，读回来是 null / 一串 null：那几格照常显示，只是不带时间。
+   * 所以画的时候一律当「可能没有」处理，NEVER 假定一定有。
+   */
+  happened_at?: (number | null)[];
+  anchor_at?: number | null;
+  now_at?: number | null;
+  decision_at?: number | null;
+  output_at?: number | null;
   /** 毫秒时间戳。槽位真的变过才会动。 */
   updated_at: number | null;
   model: string | null;

@@ -657,6 +657,60 @@ describe('ReportPanel 右栏', () => {
     expect(screen.getByText(/选一场会话/)).toBeTruthy();
   });
 
+  describe('轮到你了', () => {
+    it('有待决时钉在栏顶，排在所有格子前面', () => {
+      const { container } = render(
+        <ReportBody sessionId="s1" view={view({ decision: '三条改法要人挑一条' })} />,
+      );
+      expect(screen.getByText('轮到你了')).toBeTruthy();
+      expect(screen.getByText('三条改法要人挑一条')).toBeTruthy();
+
+      // 它不在滚动区里面：右栏滚到哪儿它都在。
+      const scroller = container.querySelector('.overflow-y-auto');
+      expect(scroller?.textContent).not.toContain('三条改法要人挑一条');
+
+      // 顺序上排在第一格前面。
+      const body = container.textContent ?? '';
+      expect(body.indexOf('轮到你了')).toBeLessThan(body.indexOf('这场在做什么'));
+    });
+
+    it('没有待决时整条不存在，不留一个「（无）」占着栏顶', () => {
+      render(<ReportBody sessionId="s1" view={view({ decision: '' })} />);
+      expect(screen.queryByText('轮到你了')).toBeNull();
+      expect(screen.queryByText('需要你决策')).toBeNull();
+    });
+  });
+
+  it('四格按时间顺序排：要干嘛 → 一路走来 → 刚产出 → 眼下', () => {
+    const body =
+      render(<ReportBody sessionId="s1" view={view({ happened: ['做了一件事'] })} />).container
+        .textContent ?? '';
+    const order = ['这场在做什么', '已经发生的事', '最近一次产出', '此刻在做什么'].map((s) =>
+      body.indexOf(s),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((i) => i >= 0)).toBe(true);
+  });
+
+  it('每格标它自己上次变样的时刻，老槽位文件没有就不标', () => {
+    const now = Date.now();
+    render(
+      <ReportBody
+        sessionId="s1"
+        view={view({
+          now: '在跑测试',
+          now_at: now - 3 * 60_000,
+          output: '写好了 a.py',
+          output_at: now - 5 * 3600_000,
+        })}
+      />,
+    );
+    expect(screen.getByText('3 分钟前')).toBeTruthy();
+    expect(screen.getByText('5 小时前')).toBeTruthy();
+    // anchor 没有时刻（老槽位文件就是这样），那一格照常显示，只是不带时间。
+    expect(screen.getByText('把会话记录归一成同一种形状')).toBeTruthy();
+  });
+
   it('旁路 AI 没绑模型时明说', () => {
     render(<ReportBody sessionId="s1" view={view({ bound: false, status: 'unbound' })} />);
     expect(screen.getByText(/还没绑定模型/)).toBeTruthy();
@@ -693,16 +747,18 @@ describe('ReportPanel 右栏', () => {
     expect(container.querySelectorAll('progress, [role="progressbar"]')).toHaveLength(0);
   });
 
-  it('已经发生的事一条一格，条与条之间有分隔线', () => {
+  it('已经发生的事一条一格，条与条之间有分隔线，老的排在上面', () => {
+    // 服务端给的是新的在前；整栏是一条从上往下走的时间线，这一格里要是从下往上读，
+    // 两个方向打架，人就看不出谁先谁后了。
     const { container } = render(
       <ReportBody sessionId="s1" view={view({ happened: ['第三件', '第二件', '第一件'] })} />,
     );
     const list = container.querySelector('ul');
     expect(list?.className).toContain('divide-y');
     expect(Array.from(list?.querySelectorAll('li') ?? []).map((li) => li.textContent)).toEqual([
-      '第三件',
-      '第二件',
       '第一件',
+      '第二件',
+      '第三件',
     ]);
   });
 
@@ -738,13 +794,19 @@ describe('ReportPanel 右栏', () => {
 
     it('分隔线调这一格的高度，双击回默认，调过的记得住', () => {
       render(<ReportBody sessionId="s1" view={view({})} />);
-      const handle = screen.getByRole('separator', { name: /此刻在做什么/ });
+      const handle = screen.getByRole('separator', { name: /最近一次产出/ });
       expect(handle.getAttribute('aria-valuenow')).toBe('76');
       fireEvent.keyDown(handle, { key: 'ArrowDown' });
       expect(handle.getAttribute('aria-valuenow')).toBe('92');
       expect(window.localStorage.getItem('frago.workbench.reportSlots.v1')).toContain('92');
       fireEvent.doubleClick(handle);
       expect(handle.getAttribute('aria-valuenow')).toBe('76');
+    });
+
+    it('最后一格底下没有分隔线', () => {
+      // 「此刻在做什么」是时间线的终点，底下再画一道线就像下面还有一段。
+      render(<ReportBody sessionId="s1" view={view({})} />);
+      expect(screen.queryByRole('separator', { name: /此刻在做什么/ })).toBeNull();
     });
 
     it('右栏左边缘调整栏宽度，双击回默认', () => {

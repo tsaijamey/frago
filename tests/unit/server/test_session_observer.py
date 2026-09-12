@@ -192,13 +192,60 @@ class TestMerging:
         changed = so.apply_answer(
             slots,
             so.parse_answer(json.dumps({"now": "在改前端", "happened_add": ["a", "b"]})),
-            {},
+            {7: "部署吧"},
         )
         assert changed
         assert slots["now"] == "在改前端"
         assert slots["output"] == "旧产出", "no new output keeps the last one"
         assert slots["decision"] == "", "an answered question clears the slot"
         assert slots["happened"] == ["a", "b"], "only appended, never repeated"
+
+    def test_a_pending_question_survives_a_stretch_where_nobody_answered_it(self):
+        """「需要你决策」是常驻状态，不是「这一段里新出现的待决」。
+
+        模型每次只看得见新增的那一段，而问题是上一段提的，这一段里不会再出现一遍。人没
+        开口就把空回答当成「已经答了」，等于 agent 一问完、下一批记录一到就把问题擦掉。
+        实测正是这么丢的：agent 摆出三条改法让人挑，两秒后一条轮次边界落盘，这一格就空了。
+        """
+        slots = so.empty_slots(SID, "claude-code")
+        slots["decision"] = "三条改法要人挑一条"
+
+        so.apply_answer(slots, so.parse_answer('{"now": "还在跑测试"}'), {})
+        assert slots["decision"] == "三条改法要人挑一条", "人没开口，问题就还挂着"
+
+        so.apply_answer(slots, so.parse_answer('{"now": "在改前端"}'), {9: "选 C"})
+        assert slots["decision"] == "", "人开了口又没有新的待决，这一格才算清掉"
+
+    def test_each_slot_carries_the_moment_it_last_changed(self):
+        """右栏按时间线读，每一格要分得出是刚刚变的还是半小时前就停在那儿了。
+
+        记的是「上次**变样**」不是「上次被写过」：旁路每轮都跑，值没变也照写一遍，跟着
+        写时刻的话，一格几小时没动的内容会一直显示成「刚刚」。
+        """
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(slots, so.parse_answer('{"now": "在改前端", "happened_add": ["读了 a.py"]}'), {}, 1000)
+        assert slots["now_at"] == 1000
+        assert slots["happened_at"] == [1000]
+        assert slots["output_at"] is None, "没填过的格子没有时刻"
+
+        so.apply_answer(slots, so.parse_answer('{"now": "在改前端"}'), {}, 9000)
+        assert slots["now_at"] == 1000, "值没变，时刻不许动"
+
+        so.apply_answer(slots, so.parse_answer('{"now": "在跑测试"}'), {}, 9000)
+        assert slots["now_at"] == 9000
+
+    def test_an_old_slots_file_without_times_lines_up_instead_of_skewing(self):
+        """老槽位文件只有正文没有时刻。新加的那条不能错位标到老内容头上。"""
+        slots = so.empty_slots(SID, "claude-code")
+        slots["happened"] = ["很久以前的 a", "很久以前的 b"]
+        slots.pop("happened_at")
+        so.apply_answer(slots, so.parse_answer('{"happened_add": ["刚发生的 c"]}'), {}, 7000)
+        assert slots["happened"] == ["很久以前的 a", "很久以前的 b", "刚发生的 c"]
+        assert slots["happened_at"] == [None, None, 7000]
+
+        view = so.public_state(slots, bound=True)
+        assert view["happened"] == ["刚发生的 c", "很久以前的 b", "很久以前的 a"]
+        assert view["happened_at"] == [7000, None, None], "正文倒过来，时刻要跟着倒"
 
     def test_the_anchor_moves_only_to_something_the_person_said_in_this_stretch(self):
         slots = so.empty_slots(SID, "claude-code")
@@ -261,6 +308,30 @@ class TestOneRun:
         assert entry["rejected"]
         assert slots["now"] == ""
         assert slots["cursor"] == 2
+
+    def test_a_batch_with_nothing_to_read_never_reaches_the_model(self, tmp_path):
+        """一批全是看不见的东西（思考、工具结果、注入、轮次边界）时，不许去问模型。
+
+        问了也是白问：模型看到一份空记录，只会如实答「这一段什么都没有」，而那份空回答
+        会盖掉右栏里本来有内容的格子。实测踩到过：agent 刚摆出三条改法等人挑，两秒后一条
+        轮次边界落盘，「需要你决策」当场被清空，人什么都没看到。
+        """
+        session = FakeSession([human(0, "你好"), rec(1, "agent.say", text="三条改法你挑一条")])
+        calls = []
+        obs = observer(
+            tmp_path, session, lambda p: calls.append(p) or answer(decision="三条改法要人挑")
+        )
+        obs.run_once(SID, "turn")
+        assert slots_of(tmp_path)["decision"] == "三条改法要人挑"
+
+        # 轮次边界落盘：一条记录，正文一行都露不出来。
+        session.records.append(rec(2, "call.envelope"))
+        entry = obs.run_once(SID, "turn")
+
+        assert entry["skipped"] == "nothing-to-read"
+        assert len(calls) == 1, "白问一次既花钱又会把右栏擦掉"
+        assert slots_of(tmp_path)["decision"] == "三条改法要人挑", "等人挑的那件事还挂着"
+        assert slots_of(tmp_path)["cursor"] == 3, "游标照样往前，免得这一批反复重读"
 
     def test_an_unbound_observer_writes_nothing(self, tmp_path):
         session = FakeSession([human(0, "你好")])
