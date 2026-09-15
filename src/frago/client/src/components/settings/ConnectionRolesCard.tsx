@@ -48,10 +48,11 @@ interface ConnectionRolesCardProps {
   onBindingChanged: () => void;
 }
 
-const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'lightagent', 'observer'];
+const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'coreagent', 'lightagent', 'observer'];
 
-/** The two roles frago-core asks the model for. */
+/** The roles frago-core asks the model for. */
 const FRAGO_CORE_ROLES: ReadonlySet<ConnectionRole> = new Set<ConnectionRole>([
+  'coreagent',
   'lightagent',
   'observer',
 ]);
@@ -66,6 +67,10 @@ const ROLE_TEXT: Record<ConnectionRole, { name: string; hint: string }> = {
   observer: {
     name: 'settings.connections.observerRole',
     hint: 'settings.connections.observerRoleHint',
+  },
+  coreagent: {
+    name: 'settings.connections.coreagentRole',
+    hint: 'settings.connections.coreagentRoleHint',
   },
 };
 
@@ -135,8 +140,12 @@ export default function ConnectionRolesCard({
       return `${t('settings.connections.writtenInto')}: ${names}`;
     }
     if (FRAGO_CORE_ROLES.has(binding.role)) {
-      // frago-core asks the cheap tier, and the default model when there is none.
-      const model = connection.haiku_model || connection.default_model || null;
+      // The two one-question roles ask the cheap tier, and the default model when
+      // there is none. CoreAgent does real work and runs on the default model.
+      const model =
+        binding.role === 'coreagent'
+          ? connection.default_model || null
+          : connection.haiku_model || connection.default_model || null;
       const how = connection.kind === 'workbuddy' ? t('settings.connections.borrowedLogin') : null;
       const tail = [model, how].filter(Boolean).join(' · ');
       if (binding.profile_id === null) {
@@ -207,9 +216,9 @@ export default function ConnectionRolesCard({
               >
                 {fragoCore && (
                   <option value="">
-                    {role === 'lightagent'
-                      ? t('settings.connections.followDefault')
-                      : t('settings.connections.observerOff')}
+                    {role === 'observer'
+                      ? t('settings.connections.observerOff')
+                      : t('settings.connections.followDefault')}
                   </option>
                 )}
                 {options.map((connection) => {

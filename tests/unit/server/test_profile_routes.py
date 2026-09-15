@@ -254,12 +254,13 @@ class TestConnectionsAndBindings:
         response = await get_connections()
         by_role = {b.role: b for b in response.bindings}
 
-        assert list(by_role) == ["main", "worker", "lightagent", "observer"]
+        assert list(by_role) == ["main", "worker", "lightagent", "observer", "coreagent"]
         assert all(b.profile_id is None for b in response.bindings)
         assert by_role["main"].connection.kind == "official"
         assert by_role["worker"].connection.kind == "official"
         assert by_role["lightagent"].connection is None
         assert by_role["observer"].connection is None
+        assert by_role["coreagent"].connection is None
 
     @pytest.mark.asyncio
     async def test_vendor_cores_come_from_the_driver_registry(self, tmp_profiles_path):

@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from frago.init.profile_manager import (
+    COREAGENT_ROLE,
     KIND_VENDOR_CLI,
     KIND_WORKBUDDY,
     LIGHTAGENT_ROLE,
@@ -156,9 +157,9 @@ class TestWhichConnectionGoesWhere:
         """There is no agent CLI configuration it could be written into."""
         add_profile(workbuddy_profile)
         for role in (MAIN_ROLE, WORKER_ROLE):
-            with pytest.raises(ValueError, match="light agent or the session observer"):
+            with pytest.raises(ValueError, match="CoreAgent, the light agent or the session observer"):
                 bind_role(role, workbuddy_profile.id)
-        with pytest.raises(ValueError, match="light agent or the session observer"):
+        with pytest.raises(ValueError, match="CoreAgent, the light agent or the session observer"):
             activate_profile(workbuddy_profile.id, ["claude"])
         assert load_profiles().active_profile_id is None
 
@@ -237,3 +238,44 @@ class TestWhereFragoCoreReadsIt:
         row = next(p for p in raw["profiles"] if p["id"] == workbuddy_profile.id)
         assert row["endpoint_type"] == "workbuddy"
         assert row["api_key"] == ""
+
+
+class TestCoreAgent:
+    """CoreAgent 是后加的第三个 frago-core 角色。加它不能让前两个角色的绑定有任何变化。"""
+
+    def test_binding_it_leaves_the_other_two_where_they_were(
+        self, tmp_profiles_path, probed, endpoint_profile, workbuddy_profile
+    ):
+        add_profile(endpoint_profile)
+        add_profile(workbuddy_profile)
+        bind_role(LIGHTAGENT_ROLE, endpoint_profile.id)
+        bind_role(OBSERVER_ROLE, workbuddy_profile.id)
+        bind_role(COREAGENT_ROLE, workbuddy_profile.id)
+
+        raw = json.loads(tmp_profiles_path.read_text(encoding="utf-8"))
+        assert raw["coreagent_profile_id"] == workbuddy_profile.id
+        assert raw["lightagent_profile_id"] == endpoint_profile.id
+        assert raw["observer_profile_id"] == workbuddy_profile.id
+
+    def test_unbound_it_falls_back_like_the_light_agent(self, tmp_profiles_path, endpoint_profile):
+        add_profile(endpoint_profile)
+        assert role_binding_id(COREAGENT_ROLE) is None
+        assert role_view(COREAGENT_ROLE).id == endpoint_profile.id
+
+    def test_it_refuses_a_vendor_cli(self, tmp_profiles_path, vendor_profile):
+        add_profile(vendor_profile)
+        with pytest.raises(ValueError, match="frago-core cannot call"):
+            bind_role(COREAGENT_ROLE, vendor_profile.id)
+
+    def test_deleting_the_bound_row_unbinds_it(self, tmp_profiles_path, probed, workbuddy_profile):
+        add_profile(workbuddy_profile)
+        bind_role(COREAGENT_ROLE, workbuddy_profile.id)
+        delete_profile(workbuddy_profile.id)
+        assert load_profiles().coreagent_profile_id is None
+
+    def test_a_store_written_before_it_existed_still_loads(self, tmp_profiles_path):
+        tmp_profiles_path.write_text(
+            json.dumps({"lightagent_profile_id": None, "observer_profile_id": None, "profiles": []}),
+            encoding="utf-8",
+        )
+        assert load_profiles().coreagent_profile_id is None

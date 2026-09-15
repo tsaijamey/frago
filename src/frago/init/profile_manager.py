@@ -80,11 +80,18 @@ MAIN_ROLE = "main"
 WORKER_ROLE = "worker"
 LIGHTAGENT_ROLE = "lightagent"
 OBSERVER_ROLE = "observer"
+COREAGENT_ROLE = "coreagent"
 #: The roles whose connection an agent CLI runs on.
 CLI_ROLES = (MAIN_ROLE, WORKER_ROLE)
 #: The roles frago-core asks the model for. It can call a connection with its own
 #: key or one that borrows the WorkBuddy login, and nothing else.
-FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE)
+FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE, COREAGENT_ROLE)
+#: frago-core role → the profiles.json field frago-core reads it from.
+_FRAGO_CORE_FIELDS = {
+    LIGHTAGENT_ROLE: "lightagent_profile_id",
+    OBSERVER_ROLE: "observer_profile_id",
+    COREAGENT_ROLE: "coreagent_profile_id",
+}
 ROLES = CLI_ROLES + FRAGO_CORE_ROLES
 _FRAGO_CORE_KINDS = (KIND_ENDPOINT, KIND_WORKBUDDY)
 
@@ -134,6 +141,9 @@ class ProfileStore(BaseModel):
     lightagent_profile_id: str | None = None
     # What the session observer is bound to. None means it does not run.
     observer_profile_id: str | None = None
+    # What CoreAgent (frago-core's own agent loop) is bound to. None falls back the
+    # way the light agent does: the active profile, else the first saved one.
+    coreagent_profile_id: str | None = None
     profiles: list[APIProfile] = Field(default_factory=list)
 
 
@@ -205,7 +215,7 @@ def _frago_core_only(name: str) -> str:
     return (
         f"'{name}' borrows the WorkBuddy client's login and is called by frago-core "
         "directly, so there is no agent CLI configuration it could go into. Bind it "
-        "to the light agent or the session observer."
+        "to CoreAgent, the light agent or the session observer."
     )
 
 
@@ -424,6 +434,8 @@ def delete_profile(profile_id: str) -> ProfileStore:
         store.lightagent_profile_id = None
     if store.observer_profile_id == profile_id:
         store.observer_profile_id = None
+    if store.coreagent_profile_id == profile_id:
+        store.coreagent_profile_id = None
 
     save_profiles(store)
     return store
@@ -573,9 +585,10 @@ def role_binding_id(role: str) -> Optional[str]:
         WORKER_ROLE: store.worker_profile_id,
         LIGHTAGENT_ROLE: store.lightagent_profile_id,
         OBSERVER_ROLE: store.observer_profile_id,
+        COREAGENT_ROLE: store.coreagent_profile_id,
     }[role]
     if role in FRAGO_CORE_ROLES:
-        # These two only ever name a saved row: the subscription is not one, and
+        # These only ever name a saved row: the subscription is not one, and
         # frago-core could not call it anyway.
         return stored if stored and get_profile(stored) else None
     # An id left behind by a profile that no longer exists reads as unbound,
@@ -602,6 +615,8 @@ def role_view(role: str) -> APIProfile | None:
       active profile, else the first saved one. Shown as-is even when frago-core
       cannot call it, so the page says what will actually be tried.
     - observer: the bound connection, else nothing. An unbound observer does not run.
+    - coreagent: like the light agent — the bound connection, else the active
+      profile, else the first saved one.
     """
     if role in CLI_ROLES:
         return role_connection(role)
@@ -680,7 +695,7 @@ def bind_role(
 
 def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
     store = load_profiles()
-    field = "lightagent_profile_id" if role == LIGHTAGENT_ROLE else "observer_profile_id"
+    field = _FRAGO_CORE_FIELDS[role]
     if not profile_id or profile_id == OFFICIAL_ID:
         setattr(store, field, None)
         save_profiles(store)
@@ -691,7 +706,7 @@ def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
     if connection.kind not in _FRAGO_CORE_KINDS:
         raise ValueError(
             f"'{connection.name}' runs on its own CLI's login, which frago-core cannot call. "
-            "The light agent and the session observer take a connection with its own key, "
+            "The light agent, the session observer and CoreAgent take a connection with its own key, "
             "or one that borrows the WorkBuddy login."
         )
     setattr(store, field, connection.id)
