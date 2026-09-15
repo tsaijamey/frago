@@ -5,13 +5,14 @@
  * 本地：换一个浏览器、换一台设备，本地存储天生不通，在一处看过的那几场换个地方打开又全
  * 成了「没看过」。
  *
- * **两个标记都以一小时为界，各答一个问题。**
+ * **两个标记各答一个问题。**
  *
  * - 「没看过」（绿圈）：agent 说完话停下了，而你还没回去看这一场。判据是停下来那一刻——
  *   也就是最后一句回复的时刻——在一小时之内，且你没在那之后点开过它。没有点开记录的
  *   同样算，一小时这道窗口已经挡住了那些旧会话：它们停在几天前，不会亮。
- * - 「最近动过」（活的绿边）：最后一次活动在一小时之内，与看没看过无关。它答的是
- *   「我刚才在哪儿谈的」，所以看过之后照样亮着，过了一小时自己灭。
+ * - 「开在 tmux 里」（流光）：这一场此刻有一个活着的 tmux 会话，与时间、看没看过都无关。
+ *   它答的是「哪几场还占着一个在跑的 agent」，tmux 关掉它才灭。判据由服务端给
+ *   （`in_tmux`），只按名字对，飞书群、语音会话开着也不亮。
  *
  * 判据写成下面两个纯函数，用例直接盯它们——这种口径一旦只活在界面代码里，过几天就没人
  * 说得清绿圈到底什么时候亮。
@@ -23,7 +24,7 @@ import { activityTs, type WorkbenchSession } from './useWorkbenchSessions';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-/** 两个标记共用的时间窗：一小时。 */
+/** 绿圈的时间窗：一小时。 */
 export const RECENT_MS = 60 * 60 * 1000;
 
 /**
@@ -43,17 +44,16 @@ export function isUnreadAt(
   return viewedAt === undefined || stopped > viewedAt;
 }
 
-/** 这一场最近动过：最后一次活动在一小时之内。 */
-export function isRecentAt(session: WorkbenchSession, now: number): boolean {
-  const last = activityTs(session);
-  return Boolean(last) && now - last < RECENT_MS;
+/** 这一场此刻开在 tmux 里。 */
+export function isInTmux(session: WorkbenchSession): boolean {
+  return session.in_tmux === true;
 }
 
 export interface SessionViewsState {
   /** 这场会话有没有你还没看过的新回复。 */
   isUnread: (session: WorkbenchSession) => boolean;
-  /** 这场会话最近动过没有。 */
-  isRecent: (session: WorkbenchSession) => boolean;
+  /** 这场会话此刻开在 tmux 里没有。 */
+  isInTmux: (session: WorkbenchSession) => boolean;
   /** 记下此刻点开了这场会话。失败不抛——少记一次只是标记多亮一会儿。 */
   markViewed: (sessionId: string) => void;
 }
@@ -105,7 +105,7 @@ export function useSessionViews(): SessionViewsState {
     () => ({
       isUnread: (session: WorkbenchSession) =>
         isUnreadAt(session, viewed[session.session_id], Date.now()),
-      isRecent: (session: WorkbenchSession) => isRecentAt(session, Date.now()),
+      isInTmux,
       markViewed,
     }),
     [viewed, markViewed]

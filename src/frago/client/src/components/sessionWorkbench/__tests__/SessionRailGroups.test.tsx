@@ -81,10 +81,10 @@ vi.mock('@/hooks/useSessionGroups', async () => {
   };
 });
 
-/** 两个标记的替身：哪几场算「没看过」、哪几场算「最近动过」由用例说了算。 */
+/** 两个标记的替身：哪几场算「没看过」、哪几场算「开在 tmux 里」由用例说了算。 */
 const marks = vi.hoisted(() => ({
   unread: new Set<string>(),
-  recent: new Set<string>(),
+  inTmux: new Set<string>(),
   markViewed: vi.fn(),
 }));
 
@@ -96,7 +96,7 @@ vi.mock('@/hooks/useSessionViews', async () => {
     ...actual,
     useSessionViews: () => ({
       isUnread: (s: WorkbenchSession) => marks.unread.has(s.session_id),
-      isRecent: (s: WorkbenchSession) => marks.recent.has(s.session_id),
+      isInTmux: (s: WorkbenchSession) => marks.inTmux.has(s.session_id),
       markViewed: marks.markViewed,
     }),
   };
@@ -174,7 +174,7 @@ beforeEach(() => {
   groups.toggleCollapsed.mockClear();
   pins.pinned = [];
   marks.unread = new Set();
-  marks.recent = new Set();
+  marks.inTmux = new Set();
   marks.markViewed.mockClear();
 });
 
@@ -315,8 +315,8 @@ describe('SessionRail 的两个标记', () => {
     expect(screen.getAllByTestId('session-unread')).toHaveLength(1);
   });
 
-  it('最近动过的那一场，卡外面长一圈活的边', () => {
-    marks.recent = new Set([A]);
+  it('开在 tmux 里的那一场，卡外面长一圈流光', () => {
+    marks.inTmux = new Set([A]);
     const { container } = render(
       <SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
     );
@@ -329,21 +329,21 @@ describe('SessionRail 的两个标记', () => {
     groups.tags = [{ id: 't1', name: '会话页', source: 'human' }];
     groups.map = { [B]: 't1', [C]: 't1' };
     marks.unread = new Set([B]);
-    marks.recent = new Set([C]);
+    marks.inTmux = new Set([C]);
     render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     // 组是折着的，里面的卡一张都不在页面上，所以这两件事只能由标题说。
     expect(screen.queryAllByTestId('session-item')).toHaveLength(1);
     expect(screen.getByTestId('group-unread')).toBeTruthy();
-    expect(screen.getByTestId('group-recent').textContent).toContain('会话页');
+    expect(screen.getByTestId('group-in-tmux').textContent).toContain('会话页');
   });
 
   it('摊开之后标题不再画那圈边，改由组里的卡自己画', () => {
     groups.tags = [{ id: 't1', name: '会话页', source: 'human' }];
     groups.map = { [C]: 't1' };
     groups.collapsed = { t1: false };
-    marks.recent = new Set([C]);
+    marks.inTmux = new Set([C]);
     render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
-    expect(screen.queryByTestId('group-recent')).toBeNull();
+    expect(screen.queryByTestId('group-in-tmux')).toBeNull();
     const framed = document.querySelectorAll('[data-live-edge="border"]');
     expect(framed).toHaveLength(1);
     expect(framed[0].textContent).toContain(C);

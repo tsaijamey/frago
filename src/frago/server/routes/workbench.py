@@ -53,9 +53,26 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     连字段都不给。
 
     落盘扫描是同步的，丢进工作线程跑，免得清单一慢整个事件循环跟着停。
+
+    ``in_tmux``：这一场此刻开在某个 tmux 会话里，左栏据此给卡片挂流光。**不进核心数据层
+    的缓存**——它是 tmux 此刻的样子，不是记录文件推出来的，缓存一轮就不准了。只按名字
+    对（``frago-agent-<编号>``），名字是业务把手的飞书、语音会话开着也是 false。
     """
-    cards = await asyncio.to_thread(record_reader.list_sessions)
-    return [asdict(card) for card in cards]
+    from frago.agent_driver.tmux_session import tmux_name_for
+    from frago.server.services import tmux_sessions_service as tsvc
+
+    cards, open_names = await asyncio.gather(
+        asyncio.to_thread(record_reader.list_sessions),
+        asyncio.to_thread(tsvc.open_session_names),
+    )
+    # ``tmux_name``：开着时那个 tmux 会话的名字，页面「关闭 tmux 会话」的弹窗原样摆出来，
+    # 命名规则不在前端再抄一份。没开着为 null。
+    rows = []
+    for card in cards:
+        name = tmux_name_for(card.session_id)
+        alive = name in open_names
+        rows.append({**asdict(card), "in_tmux": alive, "tmux_name": name if alive else None})
+    return rows
 
 
 @router.get("/workbench/agents")

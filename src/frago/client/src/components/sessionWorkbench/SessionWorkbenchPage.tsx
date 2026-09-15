@@ -128,14 +128,11 @@ export default function SessionWorkbenchPage() {
           )}
           {/* 用量月历的入口搬去了左栏底部：那里是「我还剩多少」的位置，与额度条并排。
               它本来就不是会话页专属的东西，挂在这一页的标题栏上只是它当初落脚的地方。 */}
-          {/* 这一行的最右留给「结束运行」：人认为这一场谈完了，按它把 tmux 里那具还占着
-              几百兆的壳收掉。会话本身不动——记录还在，还能翻。没选会话时它不出现，
-              那时候没有「这一场」可结束。 */}
-          {selected ? (
-            <StopRunButton
-              sessionId={selected.session_id}
-              onStopped={() => void sessions.reload()}
-            />
+          {/* 这一行的最右留给「关闭 tmux 会话」：人认为这一场暂时谈完了，按它把 tmux 里那具
+              还占着几百兆的壳收掉。会话本身不动——记录还在，还能翻。只在清单说这一场此刻
+              开在 tmux 里时出现：tmux 里没有了还挂着按钮，按下去只得到一句「没在跑」。 */}
+          {selected?.in_tmux ? (
+            <StopRunButton session={selected} onStopped={() => void sessions.reload()} />
           ) : null}
           {/* 三家都摆。删法三家不一样（Claude Code 删文件，另两家借引擎自己的命令），
               那层差别由弹窗里的话交代，不靠"有没有这个按钮"来暗示。删成之后中栏要退回

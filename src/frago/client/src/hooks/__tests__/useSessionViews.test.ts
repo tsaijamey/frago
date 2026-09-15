@@ -1,13 +1,13 @@
 /**
  * 两个标记的判据。
  *
- * 绿圈答「agent 说完话停下了、你还没回去看」，活的绿边答「最近动过」。两者都以一小时
- * 为界，区别在于绿圈认你点没点开过、绿边不认。
+ * 绿圈答「agent 说完话停下了、你还没回去看」，以一小时为界。流光答「此刻开在 tmux
+ * 里」，只看服务端给的 `in_tmux`，与时间无关。
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { isRecentAt, isUnreadAt, RECENT_MS } from '../useSessionViews';
+import { isInTmux, isUnreadAt, RECENT_MS } from '../useSessionViews';
 import type { WorkbenchSession } from '../useWorkbenchSessions';
 
 const NOW = 1_800_000_000_000;
@@ -61,21 +61,21 @@ describe('绿圈：说完了话、你还没回去看', () => {
   });
 });
 
-describe('活的绿边：最近动过', () => {
-  it('十分钟前动过 → 亮', () => {
-    expect(isRecentAt(session(), NOW)).toBe(true);
+describe('流光：此刻开在 tmux 里', () => {
+  it('服务端说开着 → 亮', () => {
+    expect(isInTmux(session({ in_tmux: true }))).toBe(true);
   });
 
-  it('你刚点开看过，它照样亮着——它答的是「我刚才在哪儿谈的」', () => {
-    expect(isRecentAt(session(), NOW)).toBe(true);
+  it('开着但几天没动过 → 照样亮，不再看时间', () => {
+    const old = session({ in_tmux: true, last_reply_at: NOW - 72 * RECENT_MS, last_active_at: NOW - 72 * RECENT_MS });
+    expect(isInTmux(old)).toBe(true);
   });
 
-  it('一小时以前动的 → 灭', () => {
-    const old = session({ last_reply_at: NOW - RECENT_MS - 1, last_active_at: NOW - RECENT_MS - 1 });
-    expect(isRecentAt(old, NOW)).toBe(false);
+  it('十分钟前刚动过、但 tmux 没开着 → 灭', () => {
+    expect(isInTmux(session({ in_tmux: false }))).toBe(false);
   });
 
-  it('还在跑的也算最近动过', () => {
-    expect(isRecentAt(session({ status: 'running' }), NOW)).toBe(true);
+  it('旧服务端不给这个字段 → 当没开着', () => {
+    expect(isInTmux(session())).toBe(false);
   });
 });

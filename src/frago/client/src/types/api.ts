@@ -641,9 +641,10 @@ export interface ProfileListResponse {
  * The roles that consume a connection. `main` and `worker` run on an agent CLI;
  * `lightagent` (the hook's review passes) and `observer` (the session page's side
  * panel) are served by frago-core, which can only call a connection that carries
- * its own key or borrows the WorkBuddy login.
+ * its own key or borrows the WorkBuddy login. So is `coreagent`, frago-core's own
+ * agent loop.
  */
-export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer';
+export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer' | 'coreagent';
 
 /**
  * A core that runs on its own account rather than on a key frago holds.

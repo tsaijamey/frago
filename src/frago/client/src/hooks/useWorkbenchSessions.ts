@@ -74,6 +74,18 @@ export interface WorkbenchSession {
    * 没地方可挂，另有一处收它们（见 `SessionRail`）。
    */
   parent_session_id: string | null;
+  /**
+   * 这一场此刻开在某个 tmux 会话里。左栏据此给卡片挂流光。
+   *
+   * 服务端只按名字 `frago-agent-<编号>` 对，飞书群、语音这类名字是业务把手的会话开着
+   * 也是 false。可选是因为旧服务端不给这个字段，没给就当没开着。
+   */
+  in_tmux?: boolean;
+  /**
+   * 开着时那个 tmux 会话的名字，没开着为 null。命名规则只在服务端一处，这里不自己拼——
+   * 「关闭 tmux 会话」的弹窗要把它原样摆给人看。旧服务端不给，没给就不摆。
+   */
+  tmux_name?: string | null;
 }
 
 /**

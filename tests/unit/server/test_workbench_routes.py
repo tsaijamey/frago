@@ -118,7 +118,38 @@ class TestSessionList:
             # 两层，缺了就只能靠编号形状在界面上再猜一遍。
             "origin",
             "parent_session_id",
+            # 此刻开在 tmux 里没有，左栏据此挂流光。
+            "in_tmux",
+            # 开着时那个 tmux 会话的名字，「关闭 tmux 会话」弹窗原样摆出来。
+            "tmux_name",
         }
+
+    def test_开在tmux里的那一场才标上(self, client, monkeypatch):
+        """只按名字 ``frago-agent-<编号>`` 对；没有同名 tmux 会话的一律 false。"""
+        from frago.server.services import tmux_sessions_service as tsvc
+
+        monkeypatch.setattr(
+            record_reader,
+            "list_sessions",
+            lambda: [_card(CC_SID, "claude-code", 3000), _card(OC_SID, "opencode", 2000)],
+        )
+        monkeypatch.setattr(
+            tsvc, "open_session_names", lambda: {f"frago-agent-{CC_SID}", "feishu_oc_x"}
+        )
+        body = client.get("/api/workbench/sessions").json()
+        assert [row["in_tmux"] for row in body] == [True, False]
+        assert [row["tmux_name"] for row in body] == [f"frago-agent-{CC_SID}", None]
+
+    def test_tmux没起来就全是false而不是报错(self, client, monkeypatch):
+        from frago.server.services import tmux_sessions_service as tsvc
+
+        monkeypatch.setattr(
+            record_reader, "list_sessions", lambda: [_card(CC_SID, "claude-code", 2000)]
+        )
+        monkeypatch.setattr(tsvc, "_tmux", lambda *_a: "")
+        response = client.get("/api/workbench/sessions")
+        assert response.status_code == 200
+        assert response.json()[0]["in_tmux"] is False
 
     def test_每行都带状态与摘要(self, client, monkeypatch):
         """左栏最值钱的是"一眼看出每场什么情况"。这三样不出接口，左栏就只能按来源分组。"""

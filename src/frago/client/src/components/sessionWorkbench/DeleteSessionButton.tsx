@@ -109,7 +109,7 @@ export default function DeleteSessionButton({ session, onDeleted }: DeleteSessio
         onDeleted?.(result);
       })
       .catch((e: unknown) => {
-        // 失败就留在弹窗里：拒绝的理由多半是"这一场还在跑"，人正好接着去按结束运行。
+        // 失败就留在弹窗里：拒绝的理由多半是"这一场还在跑"，人正好接着去按「关闭 tmux 会话」。
         if (e instanceof DeleteSessionError) setFailure({ status: e.status, detail: e.message });
         else setFailure({ status: 0, detail: e instanceof Error ? e.message : String(e) });
       })

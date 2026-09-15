@@ -8,7 +8,7 @@
  *    点错一行是常有的事；
  * 3. 删之前三句话要说全：动的是哪一份记录、删完会怎样、能不能反悔；
  * 4. 站起来确认才真删，删成之后要叫页面重取清单、中栏退回清单态；
- * 5. 这一场还在跑时，说的是"先去按结束运行"，不是把服务端那句原文摆上来；
+ * 5. 这一场还在跑时，说的是"先去按关闭 tmux 会话"，不是把服务端那句原文摆上来；
  * 6. 本机本来就没有这场时，说的是"不用再删"，NEVER 说成没删掉——要的结果已经成立；
  * 7. 引擎自己拒绝的那句话原样摆出来（``Session not found`` 这类），我们转述一次就多
  *    一层失真；
@@ -164,8 +164,8 @@ describe('DeleteSessionButton', () => {
     });
 
     await waitFor(() => expect(screen.getByTestId('session-delete-error')).toBeTruthy());
-    expect(screen.getByTestId('session-delete-error').textContent).toContain('先按「结束运行」');
-    // 拒绝就是真的什么都没删，弹窗也不许自己关掉——人正好接着去按「结束运行」。
+    expect(screen.getByTestId('session-delete-error').textContent).toContain('关闭 tmux 会话');
+    // 拒绝就是真的什么都没删，弹窗也不许自己关掉——人正好接着去按「关闭 tmux 会话」。
     expect(onDeleted).not.toHaveBeenCalled();
     expect(screen.getByTestId('session-delete-confirm')).toBeTruthy();
   });

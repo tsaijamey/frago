@@ -463,6 +463,16 @@ def find_for_session(session_id: str) -> TmuxSessionLink | None:
     )
 
 
+def open_session_names() -> set[str]:
+    """此刻本机活着的 tmux 会话名，一条 ``list-sessions``，不读屏、不读记录。
+
+    左栏的会话清单每 15 秒拉一次，每张卡要答「这一场此刻开在 tmux 里吗」。调用方拿
+    ``tmux_name_for(编号)`` 来这里查即可——**只认名字**：飞书群、语音这类名字是业务
+    把手的会话在这里对不上，要认它们得逐个读屏，每轮几十毫秒乘以会话数，清单扛不住。
+    """
+    return set(_session_names())
+
+
 def as_dicts(rows: list[TmuxSessionInfo]) -> list[dict]:
     return [asdict(r) for r in rows]
 
@@ -475,4 +485,5 @@ __all__ = [
     "close_sessions",
     "find_for_session",
     "list_sessions",
+    "open_session_names",
 ]

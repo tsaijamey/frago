@@ -155,8 +155,8 @@ type RailRow =
       open: boolean;
       /** 这一区里有你还没回去看过的新回复。 */
       unread: boolean;
-      /** 这一区最近动过。 */
-      recent: boolean;
+      /** 这一区有一场此刻开在 tmux 里。 */
+      inTmux: boolean;
     }
   /** 这一区这一批没放完，还剩几场。 */
   | { kind: 'section-more'; key: string; remaining: number }
@@ -179,7 +179,7 @@ type RailRow =
  */
 type GroupPos = 'head' | 'mid' | 'tail';
 
-/** 最近动过的那几场，卡片外面长一圈活的绿边；其余原样摆着，不多包一层节点。 */
+/** 此刻开在 tmux 里的那几场，卡片外面长一圈流光；其余原样摆着，不多包一层节点。 */
 function MaybeLive({ live, children }: { live: boolean; children: ReactNode }) {
   return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
 }
@@ -448,7 +448,7 @@ export default function SessionRail({
           open,
           // 折起来的一区，里面的卡一张都不在页面上，这两件事只能由标题替它们说。
           unread: section.sessions.some(views.isUnread),
-          recent: section.sessions.some(views.isRecent),
+          inTmux: section.sessions.some(views.isInTmux),
         });
         if (!open) continue;
         const take = section.sessions.slice(0, Math.max(0, budget));
@@ -936,6 +936,7 @@ export default function SessionRail({
               }
               if (row.kind === 'group-header') {
                 const tag = row.tag;
+                const framed = row.inTmux && !row.open;
                 const head = (
                   <div className="group/section flex items-center pr-2">
                     <button
@@ -945,8 +946,10 @@ export default function SessionRail({
                       data-testid="group-header"
                       data-group-key={row.key}
                       /* 标签名是人或 AI 起的字，不做大写变换——其余几行分区标题是界面自己
-                         的词，这一行是数据。 */
-                      className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                         的词，这一行是数据。套上绿边时，外框已经占了左边 8px + 1.5px，
+                         标题自己的左边距要让出这一截，箭头才和没套边的分类对在同一条竖线上，
+                         不然看着像上一组的子分类。 */
+                      className={`flex min-w-0 flex-1 items-center gap-1.5 ${framed ? 'pl-[0.5px] pr-2.5' : 'px-2.5'} pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary`}
                     >
                       {row.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                       {/* 绿圈说的是「这一组里有你还没回去看过的新回复」。它长在标题左边，
@@ -983,10 +986,10 @@ export default function SessionRail({
                     ) : null}
                   </div>
                 );
-                /* 折着的时候，整条标题外面长一圈活的绿边，说「这一组最近动过」。展开之后
+                /* 折着的时候，整条标题外面长一圈活的绿边，说「这一组有一场开在 tmux 里」。展开之后
                    这句话由组里那几张卡自己说，标题上再留一圈就是同一件事说了两遍。 */
-                return row.recent && !row.open ? (
-                  <div className="px-2 pt-2" data-testid="group-recent">
+                return framed ? (
+                  <div className="px-2 pt-2" data-testid="group-in-tmux">
                     <LiveBorder>{head}</LiveBorder>
                   </div>
                 ) : (
@@ -1040,7 +1043,7 @@ export default function SessionRail({
                 <div className={row.nested && !pos ? 'pl-6 pr-2' : 'px-2'}>
                   <div className={box} data-group={pos}>
                     <div className={row.nested && pos ? 'pl-4' : ''}>
-                  <MaybeLive live={views.isRecent(session)}>
+                  <MaybeLive live={views.isInTmux(session)}>
                   <SessionItem
                     session={session}
                     selected={session.session_id === selectedId}
