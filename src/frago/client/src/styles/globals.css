@@ -4968,6 +4968,135 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   text-decoration: underline;
 }
 
+/* 分类：清单排序的第一名次。用描边胶囊，跟状态、优先级那几颗实心的分开——它答的
+   是「属于哪一摊」，不是「进行到哪」或「多急」。 */
+.td-chip--category {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.td-chip--uncategorized {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+/* 分类编辑器：借 td-composer 的外框，里面是一张可挪动的表。 */
+.td-cat-toggle--open {
+  background: var(--bg-active);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.td-cat-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-sm);
+}
+
+.td-cat-editor-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.td-cat-rows {
+  margin: 0 0 var(--spacing-sm);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.td-cat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.td-cat-row:hover {
+  background: var(--bg-hover);
+}
+
+/* 出问题的那一行整行换底色加整圈描边，不靠单边竖条。 */
+.td-cat-row--invalid {
+  background: var(--accent-warning-10);
+  border-color: var(--accent-warning);
+}
+
+.td-cat-rank {
+  width: 1.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.td-cat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.td-cat-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.td-cat-input--id,
+.td-cat-id {
+  flex: 0 0 9em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.td-cat-id {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-cat-usage {
+  flex: 0 0 4.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.td-cat-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.td-cat-actions .td-close:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+
+.td-cat-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.td-cat-editor .td-error {
+  margin: var(--spacing-sm) 0 0;
+}
+
 /* 窄屏：详情改成压在清单下面，别把清单挤成一条缝。 */
 @media (max-width: 900px) {
   .td-split {
@@ -5489,6 +5618,163 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   line-height: 1.7;
   color: var(--text-secondary);
   white-space: pre-wrap;
+}
+
+/* ── 定时任务页（frago schedule） ───────────────────────────────────
+   骨架整套借事务页的 td-*：同样是「左清单右详情」、同样的筛选条和一句话新建。
+   这里只补事务页没有的东西：动作按钮、执行记录、执行内容的等宽原文。 */
+
+/* 停用的任务整行退淡，但不划线——它还在，随时能启用，跟「已放弃」不是一回事。 */
+.sc-row--disabled {
+  opacity: 0.62;
+}
+
+.sc-row--disabled:hover,
+.sc-row--disabled.td-row--selected {
+  opacity: 1;
+}
+
+.sc-chip--disabled {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+/* 执行内容是命令或配方名，等宽才认得出空格和引号。 */
+.sc-row-target {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.sc-warn {
+  color: var(--accent-warning);
+}
+
+.sc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sc-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sc-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.sc-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 删除平时不喊：跟在两个常用动作后面，字色退一档。点下去之后才换成告警色要人确认。 */
+.sc-action--quiet {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.sc-action--danger {
+  background: var(--accent-warning-10);
+  border-color: var(--accent-warning);
+  color: var(--accent-warning);
+}
+
+.sc-action--danger:hover:not(:disabled) {
+  background: var(--accent-warning-10);
+  filter: brightness(1.08);
+}
+
+.sc-target {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sc-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px var(--spacing-md);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.sc-facts dt {
+  color: var(--text-muted);
+}
+
+.sc-facts dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 一次执行一张小卡。失败的整张换成告警底色，扫一眼就能数出最近败了几次。 */
+.sc-run {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.sc-run--failed {
+  background: var(--accent-warning-10);
+}
+
+.sc-run-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sc-run-time {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-run-meta {
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.sc-run-error {
+  margin: 4px 0 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--accent-warning);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* === 环境仪表盘 === */

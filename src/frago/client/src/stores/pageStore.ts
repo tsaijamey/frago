@@ -25,6 +25,8 @@ export type PageType =
   | 'data_repo'
   | 'todos'
   | 'todo_detail'
+  | 'schedules'
+  | 'schedule_detail'
   | 'skills'
   | 'guide'
   | 'settings'
@@ -38,6 +40,7 @@ export interface PageSlice {
   currentRecipeName: string | null;
   currentProjectId: string | null;
   currentTodoId: string | null;
+  currentScheduleId: string | null;
 
   switchPage: (page: PageType, id?: string) => void;
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
@@ -51,6 +54,7 @@ function idFields(page: PageType, id?: string | null) {
     currentRecipeName: page === 'recipe_detail' ? id ?? null : null,
     currentProjectId: page === 'project_detail' ? id ?? null : null,
     currentTodoId: page === 'todo_detail' ? id ?? null : null,
+    currentScheduleId: page === 'schedule_detail' ? id ?? null : null,
   };
 }
 

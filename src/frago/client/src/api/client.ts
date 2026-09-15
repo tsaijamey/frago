@@ -457,6 +457,11 @@ export interface TodoItem {
   status: TodoStatus;
   priority: TodoPriority;
   tags: string[];
+  /**
+   * 分类 id，未分类为 null。可能引用了已从分类清单里删掉的 id——字段原样保留，
+   * 显示和排序都按未分类算。
+   */
+  category: string | null;
   created: string;
   updated: string;
   done_at: string | null;
@@ -475,12 +480,30 @@ export interface TodoListResponse {
   todos: TodoItem[];
   /** 每一档各有几件，外加 `all`。按状态筛选之前算，所以筛来筛去这组数不变。 */
   counts: Record<string, number>;
+  /** 分类清单，按名次先后。清单里的位置就是排序时的名次，不映射到高中低。 */
+  categories: TodoCategory[];
+}
+
+export interface TodoCategory {
+  /** 稳定 id，事务文件里存的是它；改显示名不动它。 */
+  id: string;
+  name: string;
+  /** 从 1 数的名次。 */
+  position: number;
+}
+
+export interface TodoCategoriesResponse {
+  categories: TodoCategory[];
+  /** 每个分类 id 被几件事务引用（含已不在清单里的 id）。 */
+  usage: Record<string, number>;
 }
 
 export interface TodoQuery {
   status?: TodoStatus;
   priority?: TodoPriority;
   tag?: string;
+  /** 分类 id；`none` 为未分类。 */
+  category?: string;
 }
 
 export async function getTodos(query: TodoQuery = {}): Promise<TodoListResponse> {
@@ -488,12 +511,27 @@ export async function getTodos(query: TodoQuery = {}): Promise<TodoListResponse>
   if (query.status) params.set('status', query.status);
   if (query.priority) params.set('priority', query.priority);
   if (query.tag) params.set('tag', query.tag);
+  if (query.category) params.set('category', query.category);
   const qs = params.toString();
   return fetchApi<TodoListResponse>(`/todos${qs ? `?${qs}` : ''}`);
 }
 
 export async function getTodo(todoId: string): Promise<TodoItem> {
   return fetchApi<TodoItem>(`/todos/${encodeURIComponent(todoId)}`);
+}
+
+/**
+ * 整张替换分类清单，数组顺序即名次。
+ *
+ * 这是 config.json 里的一段配置，不是事务文件——事务本身仍只走命令行写。
+ */
+export async function updateTodoCategories(
+  categories: { id: string; name: string }[]
+): Promise<TodoCategoriesResponse> {
+  return fetchApi<TodoCategoriesResponse>('/todos/categories', {
+    method: 'PUT',
+    body: JSON.stringify({ categories }),
+  });
 }
 
 /** agent 替人建完事务之后的回话。 */
@@ -515,6 +553,113 @@ export interface TodoComposeResponse {
  */
 export async function composeTodo(description: string): Promise<TodoComposeResponse> {
   return fetchApi<TodoComposeResponse>('/todos', {
+    method: 'POST',
+    body: JSON.stringify({ description }),
+  });
+}
+
+// ============================================================
+// Schedules API — `frago schedule` 的定时任务
+// ============================================================
+
+/** 一次执行。配方和命令型写得全；自然语言型由 PA 回填，只有时间和状态。 */
+export interface ScheduleHistoryEntry {
+  triggered_at: string | null;
+  status: string | null;
+  kind?: string | null;
+  exit_code?: number | null;
+  duration_ms?: number | null;
+  error?: string;
+  /** 这一次是人手点的「立即跑」，不是按周期触发的。 */
+  manual?: boolean;
+  notified?: boolean;
+  notify_status?: string | null;
+  notify_reason?: string | null;
+  task_id?: string | null;
+}
+
+/** 一条定时任务。字段取自 ~/.frago/schedules.json，外加服务端现算的 next_run_at 与 running。 */
+export interface ScheduleItem {
+  id: string;
+  name: string;
+  /** command / recipe 由 frago 自己执行；prompt 交给 PA。 */
+  kind: 'command' | 'recipe' | 'prompt' | string;
+  prompt: string | null;
+  recipe: string | null;
+  command: string | null;
+  cwd: string | null;
+  /** prompt 型：CoreAgent 读的说明书（~/.frago/coreagent/ 下的文件名）。 */
+  instructions: string | null;
+  /** prompt 型：只允许这些工具调用（Claude Code 权限规则写法）；空数组 = 不限制。 */
+  allowed_tools: string[];
+  /** prompt 型：禁止的工具调用，命中即拒，优先于允许。 */
+  disallowed_tools: string[];
+  params: Record<string, unknown>;
+  interval_seconds: number | null;
+  cron: string | null;
+  overlap: string;
+  timeout: number;
+  start_at: string | null;
+  end_at: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_success_at: string | null;
+  consecutive_failures: number;
+  run_count: number;
+  notify: { on: string; to: string | null; context: Record<string, unknown> };
+  /** 最近 50 次，早的在前。 */
+  history: ScheduleHistoryEntry[];
+  /** 停用的任务为 null。 */
+  next_run_at: string | null;
+  /** 上一次触发还没结束。 */
+  running: boolean;
+}
+
+export interface ScheduleListResponse {
+  schedules: ScheduleItem[];
+  /** 调度器没在跑时，「下次运行」一条都不会兑现。 */
+  scheduler_running: boolean;
+}
+
+export interface ScheduleRunResponse {
+  status: string;
+  id: string;
+  kind: string;
+  triggered_at: string;
+}
+
+export interface ScheduleComposeResponse {
+  /** agent 跑完却没建出任何一条时为 null。 */
+  schedule_id: string | null;
+  message: string;
+  /** 它实际敲下去的那条 `frago schedule add`。 */
+  command: string[] | null;
+}
+
+export async function getSchedules(): Promise<ScheduleListResponse> {
+  return fetchApi<ScheduleListResponse>('/schedules');
+}
+
+export async function toggleSchedule(id: string): Promise<ScheduleItem> {
+  return fetchApi<ScheduleItem>(`/schedules/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
+}
+
+/** 立即跑一次。接口不等执行结束，结果要靠刷新执行记录看。 */
+export async function runSchedule(id: string): Promise<ScheduleRunResponse> {
+  return fetchApi<ScheduleRunResponse>(`/schedules/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+  });
+}
+
+export async function removeSchedule(id: string): Promise<void> {
+  await fetchApi<unknown>(`/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** 把一句话交给 agent 建成定时任务。会真的起一个模型跑几轮，调用方必须有等待态。 */
+export async function composeSchedule(description: string): Promise<ScheduleComposeResponse> {
+  return fetchApi<ScheduleComposeResponse>('/schedules', {
     method: 'POST',
     body: JSON.stringify({ description }),
   });

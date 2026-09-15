@@ -308,7 +308,7 @@
   },
   "todos": {
     "title": "事务",
-    "pageDesc": "frago todo 里的事务。顺序与 frago todo list 一致：优先级高的在前，同级早建的在前。",
+    "pageDesc": "frago todo 里的事务。顺序与 frago todo list 一致：先按分类名次，同一分类里优先级高的在前，同级早建的在前。",
     "searchPlaceholder": "按标题、背景、标签或编号找",
     "empty": "这一档一件都没有",
     "emptyDesc": "换一档看看，或者用上面的「添一件」写一句话。",
@@ -326,6 +326,38 @@
     "loadFailed": "事务清单取不到：{{message}}",
     "notFound": "地址里的这件事务不在清单里：{{id}}",
     "stepCount": "{{n}} 步",
+    "category": {
+      "label": "分类",
+      "all": "全部分类",
+      "none": "未分类",
+      "removed": "未分类（原分类 {{id}} 已不在清单里）",
+      "edit": "编辑分类"
+    },
+    "categoryEditor": {
+      "title": "分类清单",
+      "desc": "{{n}}/{{max}} 个。位置就是名次：事务先按它排，同一分类里再按高中低。",
+      "namePlaceholder": "显示名",
+      "idPlaceholder": "id，如 study",
+      "idLocked": "id 写在事务文件里，改了事务会失联，所以只能改显示名",
+      "usage": "{{n}} 件",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "remove": "删除",
+      "add": "加一个分类",
+      "full": "已满 {{max}} 个",
+      "removedInUse": "「{{name}}」还有 {{n}} 件事务在用。删掉后它们按未分类排，事务里记的分类不清掉，加回同一个 id 就归位。",
+      "save": "保存",
+      "saving": "保存中…",
+      "cancel": "取消",
+      "failed": "没存上：{{message}}",
+      "errors": {
+        "tooMany": "最多 {{max}} 个分类",
+        "emptyName": "第 {{row}} 行没填显示名",
+        "badId": "第 {{row}} 行的 id 不合规：小写字母、数字、- 或 _，32 个字符以内",
+        "reservedId": "第 {{row}} 行：none 留给「未分类」，不能当 id",
+        "duplicateId": "第 {{row}} 行的 id 和前面重复了"
+      }
+    },
     "status": {
       "todo": "待办",
       "doing": "在做",
@@ -357,6 +389,114 @@
       "doneWhen": "做到什么算完",
       "links": "相关链接",
       "sessions": "谈过这件事的会话"
+    }
+  },
+  "schedules": {
+    "title": "定时任务",
+    "pageDesc": "frago schedule 里的定时任务，由服务端的调度器到点执行。顺序与 frago schedule list 一致。",
+    "searchPlaceholder": "按名字、执行内容、编号或通知落点找",
+    "schedulerStopped": "调度器现在没在跑：下面每一条的「下次运行」都不会兑现。重启 frago 服务后恢复。",
+    "empty": "这一档一条都没有",
+    "emptyDesc": "换一档看看。",
+    "emptyAll": "还没有定时任务",
+    "emptyAllDesc": "用上面的「新建」写一句话，比如「每天早上九点看一眼磁盘剩多少」。",
+    "loadFailed": "定时任务清单取不到：{{message}}",
+    "notFound": "地址里的这条定时任务不在清单里：{{id}}",
+    "compose": {
+      "button": "新建",
+      "placeholder": "用一句话说清要定时做什么、多久做一次、结果推到哪。形态、频率、通知由 agent 补齐。",
+      "hint": "⌘/Ctrl + Enter 提交。agent 要跑十几秒。",
+      "submit": "交给 agent",
+      "working": "agent 正在建…",
+      "created": "建好了：{{id}}",
+      "nothingCreated": "agent 跑完了，但一条定时任务都没建出来。看看下面它怎么说。",
+      "failed": "没建成：{{message}}"
+    },
+    "filter": {
+      "all": "全部",
+      "enabled": "启用中",
+      "failing": "上次失败",
+      "disabled": "已停用"
+    },
+    "state": {
+      "disabled": "已停用",
+      "running": "在跑",
+      "failing": "上次失败",
+      "ok": "上次成功",
+      "never": "还没跑过"
+    },
+    "kind": {
+      "command": "命令",
+      "recipe": "配方",
+      "prompt": "自然语言"
+    },
+    "freq": {
+      "cron": "cron {{expr}}",
+      "hours": "每 {{n}} 小时",
+      "minutes": "每 {{n}} 分钟",
+      "seconds": "每 {{n}} 秒"
+    },
+    "row": {
+      "next": "下次 {{time}}",
+      "runs": "已跑 {{n}} 次",
+      "failures": "连续失败 {{n}} 次"
+    },
+    "notify": {
+      "never": "不通知",
+      "to": "{{on}}，推到 {{to}}",
+      "on": {
+        "change": "有新鲜事才通知",
+        "always": "每次都通知",
+        "failure": "失败时通知"
+      }
+    },
+    "actions": {
+      "run": "立即跑一次",
+      "runBusy": "上一次触发还没结束",
+      "enable": "启用",
+      "disable": "停用",
+      "remove": "删除",
+      "confirmRemove": "确认删除",
+      "failed": "没做成：{{message}}"
+    },
+    "detail": {
+      "target": {
+        "command": "执行的命令",
+        "recipe": "执行的配方",
+        "prompt": "交给 CoreAgent 的任务"
+      },
+      "cwd": "工作目录：{{cwd}}",
+      "instructions": "说明书：~/.frago/coreagent/{{name}}",
+      "noInstructions": "没有说明书",
+      "allowedTools": "允许：{{list}}",
+      "allowedToolsAll": "工具调用不限制",
+      "disallowedTools": "禁止：{{list}}",
+      "params": "配方参数",
+      "timing": "时间",
+      "frequency": "频率",
+      "nextRun": "下次运行",
+      "lastRun": "上次按周期运行",
+      "lastSuccess": "上次成功",
+      "runCount": "累计触发",
+      "failures": "连续失败",
+      "startAt": "开始于",
+      "endAt": "结束于",
+      "createdAt": "建于",
+      "notify": "通知"
+    },
+    "history": {
+      "title": "执行记录（{{n}}）",
+      "empty": "还没有执行记录。",
+      "manual": "手动",
+      "duration": "{{ms}} ms",
+      "exitCode": "退出码 {{code}}",
+      "notified": "已通知（{{status}}）",
+      "notNotified": "未通知：{{reason}}"
+    },
+    "runStatus": {
+      "success": "成功",
+      "failed": "失败",
+      "unknown": "—"
     }
   },
   "guide": {
@@ -736,11 +876,13 @@
       "lightagentRoleHint": "hook 里的判读。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
       "observerRole": "旁路 AI",
       "observerRoleHint": "会话页右栏的旁路观察。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
+      "coreagentRole": "CoreAgent",
+      "coreagentRoleHint": "frago-core 自己的 agent：自然语言定时任务等由它执行。只接自带密钥或借用 WorkBuddy 登录的连接，用连接的默认模型。",
       "followDefault": "跟随默认（当前启用的，没有就取第一条）",
       "followingDefault": "跟随默认：{{name}}",
       "observerOff": "不绑定（不跑）",
       "notForFragoCore": "frago-core 用不了它",
-      "fragoCoreOnly": "只能给轻量 ai 或旁路 AI",
+      "fragoCoreOnly": "只能给 CoreAgent、轻量 ai 或旁路 AI",
       "borrowedLogin": "借用 WorkBuddy 登录"
     }
   },
@@ -1074,14 +1216,19 @@
       "backToList": "回到会话清单"
     },
     "stopRun": {
-      "action": "结束运行",
-      "confirm": "确认结束",
-      "forceConfirm": "还在干活，仍要结束",
-      "stopping": "结束中…",
-      "stopped": "已结束",
-      "absent": "这一场没在跑",
-      "failed": "没关掉",
-      "hint": "结束这一场会话在 tmux 里的运行。记录还在，只是不能再往里发话"
+      "action": "关闭 tmux 会话",
+      "title": "关闭 tmux 会话",
+      "what": "会关掉这一场在 tmux 里的会话，腾出它占着的内存。",
+      "effect": "会话记录不动，还能翻。之后再发消息会重新拉起，接着原来的上下文，头一轮会慢一些。",
+      "interrupt": "如果它正在回答或有后台命令没跑完，会先停下来问你。",
+      "busyNow": "它还在干活，现在关会打断这一轮。",
+      "cancel": "取消",
+      "dismiss": "知道了",
+      "ok": "关闭",
+      "forceOk": "仍要关闭",
+      "stopping": "关闭中…",
+      "absent": "tmux 里已经没有这一场了，不用再关。",
+      "failed": "没关掉：{{error}}"
     },
     "delete": {
       "action": "删除会话",
@@ -1089,7 +1236,7 @@
       "what": "{{engine}} 为这一场留下的记录会全部删掉——聊过什么、跑过什么，都不在了。",
       "effect": "删完就从会话列表里消失，再也打不开。",
       "irreversible": "这一步不能撤回，删了就找不回来了。",
-      "running": "这一场还在跑，先按「结束运行」把它停下来，再回来删。",
+      "running": "这一场还在跑，先按右上角「关闭 tmux 会话」把它停下来，再回来删。",
       "gone": "本机已经没有这场会话了，不用再删——刷新一下列表就好。",
       "cancel": "取消",
       "ok": "删除",

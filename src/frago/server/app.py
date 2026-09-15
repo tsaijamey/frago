@@ -627,6 +627,9 @@ def create_app(
     from frago.server.routes.todos import router as todos_router
     app.include_router(todos_router, prefix="/api", tags=["todos"])
 
+    from frago.server.routes.schedules import router as schedules_router
+    app.include_router(schedules_router, prefix="/api", tags=["schedules"])
+
     # Signing in. The paths here are matched exactly by `security._ANON_POST`
     # and `_IDENTITY_ENDPOINTS`, so the prefix is not a detail to tidy later:
     # change it and the gate stops recognising these four endpoints.

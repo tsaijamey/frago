@@ -308,7 +308,7 @@
   },
   "todos": {
     "title": "Todos",
-    "pageDesc": "Todos from frago todo, in the same order as frago todo list: highest priority first, oldest first within a priority.",
+    "pageDesc": "Todos from frago todo, in the same order as frago todo list: by category rank, then highest priority, then oldest.",
     "searchPlaceholder": "Search title, context, tags or id",
     "empty": "Nothing in this bucket",
     "emptyDesc": "Try another bucket, or write a line with Add above.",
@@ -326,6 +326,38 @@
     "loadFailed": "Could not load todos: {{message}}",
     "notFound": "The todo in this link is not in the list: {{id}}",
     "stepCount": "{{n}} steps",
+    "category": {
+      "label": "Category",
+      "all": "All categories",
+      "none": "Uncategorized",
+      "removed": "Uncategorized (category {{id}} was removed)",
+      "edit": "Categories"
+    },
+    "categoryEditor": {
+      "title": "Category list",
+      "desc": "{{n}}/{{max}}. Position is rank: todos sort by it first, then by priority within a category.",
+      "namePlaceholder": "Display name",
+      "idPlaceholder": "id, e.g. study",
+      "idLocked": "The id is stored in todo files; changing it would orphan them, so only the name is editable",
+      "usage": "{{n}} todos",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove",
+      "add": "Add a category",
+      "full": "Full ({{max}})",
+      "removedInUse": "\"{{name}}\" is still used by {{n}} todos. After removal they sort as uncategorized; their field is kept, so re-adding the same id brings them back.",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "failed": "Not saved: {{message}}",
+      "errors": {
+        "tooMany": "At most {{max}} categories",
+        "emptyName": "Row {{row}} needs a display name",
+        "badId": "Row {{row}}: id must be lowercase letters, digits, - or _, up to 32 chars",
+        "reservedId": "Row {{row}}: none is reserved for Uncategorized",
+        "duplicateId": "Row {{row}}: id duplicates an earlier row"
+      }
+    },
     "status": {
       "todo": "Todo",
       "doing": "Doing",
@@ -357,6 +389,114 @@
       "doneWhen": "Done when",
       "links": "Links",
       "sessions": "Sessions"
+    }
+  },
+  "schedules": {
+    "title": "Schedules",
+    "pageDesc": "Scheduled tasks from frago schedule, run by the server's scheduler. Same order as frago schedule list.",
+    "searchPlaceholder": "Search name, what it runs, id or notify target",
+    "schedulerStopped": "The scheduler is not running: none of the next runs below will happen until the frago server restarts.",
+    "empty": "Nothing in this bucket",
+    "emptyDesc": "Try another bucket.",
+    "emptyAll": "No schedules yet",
+    "emptyAllDesc": "Use New above and describe one in a line, e.g. \"check free disk space every morning at 9\".",
+    "loadFailed": "Could not load schedules: {{message}}",
+    "notFound": "The schedule in this link is not in the list: {{id}}",
+    "compose": {
+      "button": "New",
+      "placeholder": "Describe what to run, how often, and where to send the result. The agent fills in the kind, timing and notification.",
+      "hint": "⌘/Ctrl + Enter to submit. The agent takes a dozen seconds.",
+      "submit": "Hand to agent",
+      "working": "Agent is creating…",
+      "created": "Created: {{id}}",
+      "nothingCreated": "The agent finished without creating a schedule. See what it says below.",
+      "failed": "Not created: {{message}}"
+    },
+    "filter": {
+      "all": "All",
+      "enabled": "Enabled",
+      "failing": "Failing",
+      "disabled": "Disabled"
+    },
+    "state": {
+      "disabled": "Disabled",
+      "running": "Running",
+      "failing": "Last run failed",
+      "ok": "Last run ok",
+      "never": "Never run"
+    },
+    "kind": {
+      "command": "Command",
+      "recipe": "Recipe",
+      "prompt": "Prompt"
+    },
+    "freq": {
+      "cron": "cron {{expr}}",
+      "hours": "every {{n}}h",
+      "minutes": "every {{n}}m",
+      "seconds": "every {{n}}s"
+    },
+    "row": {
+      "next": "next {{time}}",
+      "runs": "{{n}} runs",
+      "failures": "{{n}} failures in a row"
+    },
+    "notify": {
+      "never": "No notifications",
+      "to": "{{on}}, to {{to}}",
+      "on": {
+        "change": "Notify on change",
+        "always": "Notify every run",
+        "failure": "Notify on failure"
+      }
+    },
+    "actions": {
+      "run": "Run now",
+      "runBusy": "The previous run has not finished",
+      "enable": "Enable",
+      "disable": "Disable",
+      "remove": "Delete",
+      "confirmRemove": "Confirm delete",
+      "failed": "Failed: {{message}}"
+    },
+    "detail": {
+      "target": {
+        "command": "Command",
+        "recipe": "Recipe",
+        "prompt": "Task for CoreAgent"
+      },
+      "cwd": "Working directory: {{cwd}}",
+      "instructions": "Instructions: ~/.frago/coreagent/{{name}}",
+      "noInstructions": "No instructions",
+      "allowedTools": "Allowed: {{list}}",
+      "allowedToolsAll": "Any tool call",
+      "disallowedTools": "Disallowed: {{list}}",
+      "params": "Recipe params",
+      "timing": "Timing",
+      "frequency": "Frequency",
+      "nextRun": "Next run",
+      "lastRun": "Last scheduled run",
+      "lastSuccess": "Last success",
+      "runCount": "Total runs",
+      "failures": "Failures in a row",
+      "startAt": "Starts",
+      "endAt": "Ends",
+      "createdAt": "Created",
+      "notify": "Notifications"
+    },
+    "history": {
+      "title": "History ({{n}})",
+      "empty": "No runs yet.",
+      "manual": "manual",
+      "duration": "{{ms}} ms",
+      "exitCode": "exit {{code}}",
+      "notified": "Notified ({{status}})",
+      "notNotified": "Not notified: {{reason}}"
+    },
+    "runStatus": {
+      "success": "Success",
+      "failed": "Failed",
+      "unknown": "—"
     }
   },
   "guide": {
@@ -736,11 +876,13 @@
       "lightagentRoleHint": "The hook's review passes. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
       "observerRole": "Session observer",
       "observerRoleHint": "The session page's side panel. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
+      "coreagentRole": "CoreAgent",
+      "coreagentRoleHint": "frago-core's own agent: prompt-based schedules run on it. Takes a connection with its own key or one borrowing the WorkBuddy login, on its default model.",
       "followDefault": "Follow the default (the active one, else the first)",
       "followingDefault": "Following the default: {{name}}",
       "observerOff": "Not bound (does not run)",
       "notForFragoCore": "frago-core cannot call it",
-      "fragoCoreOnly": "Light agent or session observer only",
+      "fragoCoreOnly": "CoreAgent, light agent or session observer only",
       "borrowedLogin": "Borrows the WorkBuddy login"
     }
   },
@@ -1074,14 +1216,19 @@
       "backToList": "Back to the session list"
     },
     "stopRun": {
-      "action": "Stop run",
-      "confirm": "Confirm stop",
-      "forceConfirm": "Still working — stop anyway",
-      "stopping": "Stopping…",
-      "stopped": "Stopped",
-      "absent": "Not running",
-      "failed": "Couldn't stop",
-      "hint": "End this session's tmux run. The transcript stays; you just can't send to it anymore"
+      "action": "Close tmux session",
+      "title": "Close tmux session",
+      "what": "This closes the tmux session this conversation is running in and frees the memory it holds.",
+      "effect": "The transcript stays and can still be read. Sending a message later starts it again with the same context; the first turn is a bit slower.",
+      "interrupt": "If it is still answering or has a background command running, you'll be asked again first.",
+      "busyNow": "It's still working. Closing now will interrupt this turn.",
+      "cancel": "Cancel",
+      "dismiss": "OK",
+      "ok": "Close",
+      "forceOk": "Close anyway",
+      "stopping": "Closing…",
+      "absent": "This session is no longer in tmux. Nothing to close.",
+      "failed": "Couldn't close: {{error}}"
     },
     "delete": {
       "action": "Delete session",
@@ -1089,7 +1236,7 @@
       "what": "Everything {{engine}} recorded for this session is deleted — what was said, what was run, all of it.",
       "effect": "Afterwards it's gone from the session list and won't open again.",
       "irreversible": "This can't be undone — once it's gone, it's gone.",
-      "running": "This session is still running. Stop it first, then come back and delete it.",
+      "running": "This session is still running. Use \"Close tmux session\" first, then come back and delete it.",
       "gone": "This session is already gone from this machine — there is nothing left to delete. Refresh the list.",
       "cancel": "Cancel",
       "ok": "Delete",

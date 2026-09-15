@@ -43,6 +43,10 @@ describe('parsePath', () => {
     expect(parsePath('#/recipes/my-recipe')).toEqual({ page: 'recipe_detail', id: 'my-recipe' });
     expect(parsePath('#/todos/20260627-x')).toEqual({ page: 'todo_detail', id: '20260627-x' });
     expect(parsePath('#/workspace/run-9')).toEqual({ page: 'project_detail', id: 'run-9' });
+    expect(parsePath('#/schedules/sch_1a2b3c4d')).toEqual({
+      page: 'schedule_detail',
+      id: 'sch_1a2b3c4d',
+    });
   });
 
   it('认不出来的地址回首页，NEVER 留一张白页', () => {
@@ -74,6 +78,8 @@ describe('写出去再读回来', () => {
     ['recipe_detail', 'my-recipe'],
     ['todos', null],
     ['todo_detail', '20260627-fix-todo-id-slug-pinyin-garbage'],
+    ['schedules', null],
+    ['schedule_detail', 'sch_1a2b3c4d'],
     ['data_repo', null],
     ['skills', null],
     ['settings', null],

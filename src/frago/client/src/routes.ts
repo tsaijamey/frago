@@ -33,6 +33,8 @@ const PAGE_SEGMENT: Record<PageType, string> = {
   data_repo: 'data',
   todos: 'todos',
   todo_detail: 'todos',
+  schedules: 'schedules',
+  schedule_detail: 'schedules',
   skills: 'skills',
   guide: 'guide',
   settings: 'settings',
@@ -46,6 +48,7 @@ const DETAIL_PAGE: Record<string, PageType> = {
   tasks: 'task_detail',
   recipes: 'recipe_detail',
   todos: 'todo_detail',
+  schedules: 'schedule_detail',
   workspace: 'project_detail',
 };
 

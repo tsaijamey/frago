@@ -32,6 +32,7 @@ import {
   Settings,
   PanelLeft,
   CalendarDays,
+  Clock,
   Gauge,
   Loader2,
   Moon,
@@ -69,6 +70,8 @@ export const NAV_ITEMS: RailItem[] = [
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
   { id: 'todos', label: 'todos', icon: <ListChecks {...ICON} /> },
+  // 定时任务：`frago schedule` 由服务端的调度器执行，跟事务一样不走配方，自成一项。
+  { id: 'schedules', label: 'schedules', icon: <Clock {...ICON} /> },
   // 数据仓库：~/.frago 备份到用户自己的私有仓库，紧跟在 recipes 后面。
   { id: 'data_repo', label: 'data', icon: <Database {...ICON} /> },
   { id: 'settings', label: 'settings', icon: <Settings {...ICON} /> },
@@ -78,6 +81,7 @@ export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
+  if (id === 'schedules') return currentPage === 'schedules' || currentPage === 'schedule_detail';
   if (id === 'data_repo') return currentPage === 'data_repo';
   if (id === 'settings') return currentPage === 'settings';
   return false;

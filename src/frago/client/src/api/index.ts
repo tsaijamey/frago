@@ -236,6 +236,8 @@ export type {
   TodoStatus,
   TodoPriority,
   TodoComposeResponse,
+  TodoCategory,
+  TodoCategoriesResponse,
 } from './client';
 
 // 事务是本机 `~/.frago/todo/` 下的文件，只有服务端读得到。桌面壳那一路没有对应
@@ -257,6 +259,56 @@ export const composeTodo = withMode(
   (description: string): Promise<httpApi.TodoComposeResponse> => httpApi.composeTodo(description),
   (_description: string): Promise<httpApi.TodoComposeResponse> =>
     Promise.reject(new Error(TODOS_UNAVAILABLE)),
+);
+
+export const updateTodoCategories = withMode(
+  (categories: { id: string; name: string }[]): Promise<httpApi.TodoCategoriesResponse> =>
+    httpApi.updateTodoCategories(categories),
+  (_categories: { id: string; name: string }[]): Promise<httpApi.TodoCategoriesResponse> =>
+    Promise.reject(new Error(TODOS_UNAVAILABLE)),
+);
+
+// ============================================================
+// Schedules API — `frago schedule` 的定时任务
+// ============================================================
+
+export type {
+  ScheduleItem,
+  ScheduleHistoryEntry,
+  ScheduleListResponse,
+  ScheduleRunResponse,
+  ScheduleComposeResponse,
+} from './client';
+
+// 定时任务由服务端进程里的调度器执行，桌面壳那一路没有对应的桥。
+const SCHEDULES_UNAVAILABLE = 'Schedules API not available in pywebview mode';
+
+export const getSchedules = withMode(
+  (): Promise<httpApi.ScheduleListResponse> => httpApi.getSchedules(),
+  (): Promise<httpApi.ScheduleListResponse> => Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const toggleSchedule = withMode(
+  (id: string): Promise<httpApi.ScheduleItem> => httpApi.toggleSchedule(id),
+  (_id: string): Promise<httpApi.ScheduleItem> => Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const runSchedule = withMode(
+  (id: string): Promise<httpApi.ScheduleRunResponse> => httpApi.runSchedule(id),
+  (_id: string): Promise<httpApi.ScheduleRunResponse> =>
+    Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const removeSchedule = withMode(
+  (id: string): Promise<void> => httpApi.removeSchedule(id),
+  (_id: string): Promise<void> => Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
+);
+
+export const composeSchedule = withMode(
+  (description: string): Promise<httpApi.ScheduleComposeResponse> =>
+    httpApi.composeSchedule(description),
+  (_description: string): Promise<httpApi.ScheduleComposeResponse> =>
+    Promise.reject(new Error(SCHEDULES_UNAVAILABLE)),
 );
 
 // ============================================================

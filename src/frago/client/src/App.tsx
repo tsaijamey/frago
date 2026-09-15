@@ -18,6 +18,7 @@ import SettingsPage from '@/components/settings/SettingsPage';
 import NewTaskPage from '@/components/newTask/NewTaskPage';
 import { WorkspacePage } from '@/components/workspace';
 import { TodoPage } from '@/components/todos';
+import { SchedulePage } from '@/components/schedules';
 import { GuidePage } from '@/components/guide';
 
 // UI
@@ -110,6 +111,9 @@ function App() {
       case 'todos':
       case 'todo_detail':
         return <TodoPage />;
+      case 'schedules':
+      case 'schedule_detail':
+        return <SchedulePage />;
       case 'skills':
         return <SkillList />;
       case 'guide':
