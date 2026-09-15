@@ -12,16 +12,43 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from frago.browser import cft_fetch as cf
 from frago.browser.extension import lifecycle as lc
+
+
+@pytest.fixture(autouse=True)
+def _no_cft_download(request, monkeypatch):
+    """没有 CfT 的机器上跑这些测试时，不许真去下载。"""
+    if "fetch_cft" in request.node.name:
+        return
+    monkeypatch.setattr(lc, "_fetch_cft_if_missing", lambda: None)
+
+
+def test_fetch_cft_downloads_when_missing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cf, "installed_binary", lambda root=None: None)
+    monkeypatch.setattr(cf, "ensure_cft", lambda **kw: calls.append(kw))
+    lc._fetch_cft_if_missing()
+    assert len(calls) == 1
+
+
+def test_fetch_cft_failure_only_warns(monkeypatch, capsys):
+    def _fail(**_kw):
+        raise cf.CftFetchError("network", "下载 CfT 失败，直连：timed out")
+
+    monkeypatch.setattr(cf, "installed_binary", lambda root=None: None)
+    monkeypatch.setattr(cf, "ensure_cft", _fail)
+    lc._fetch_cft_if_missing()
+    assert "没取到 Chrome for Testing" in capsys.readouterr().err
 
 
 def test_no_browser_raises():
     """When picker returns None, orchestration fails loud."""
     with patch.object(lc, "bundle_path", return_value=Path("/fake/bundle")), \
          patch("frago.browser.backends.extension.pick_browser_for_extension",
-               return_value=None):
-        with pytest.raises(RuntimeError, match="no Chromium-class browser"):
-            lc.start_extension_bridge()
+               return_value=None), \
+         pytest.raises(RuntimeError, match="no Chromium-class browser"):
+        lc.start_extension_bridge()
 
 
 def test_chrome_binary_without_brand_raises():
@@ -38,9 +65,9 @@ def test_profile_lock_blocks_start(tmp_path):
          patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")), \
-         patch.object(lc, "_profile_locked", return_value=True):
-        with pytest.raises(RuntimeError, match="locked"):
-            lc.start_extension_bridge(profile_dir=profile)
+         patch.object(lc, "_profile_locked", return_value=True), \
+         pytest.raises(RuntimeError, match="locked"):
+        lc.start_extension_bridge(profile_dir=profile)
 
 
 def test_missing_bundle_manifest_raises(tmp_path):
@@ -51,9 +78,9 @@ def test_missing_bundle_manifest_raises(tmp_path):
     with patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")), \
-         patch.object(lc, "_profile_locked", return_value=False):
-        with pytest.raises(RuntimeError, match="manifest.json"):
-            lc.start_extension_bridge(profile_dir=profile, bundle_dir=bundle)
+         patch.object(lc, "_profile_locked", return_value=False), \
+         pytest.raises(RuntimeError, match="manifest.json"):
+        lc.start_extension_bridge(profile_dir=profile, bundle_dir=bundle)
 
 
 def test_idempotent_daemon_reuse(tmp_path):

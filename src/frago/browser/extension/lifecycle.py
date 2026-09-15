@@ -241,6 +241,23 @@ def _profile_locked(profile_dir: Path) -> bool:
         return False
 
 
+def _fetch_cft_if_missing() -> None:
+    """没有 CfT 就先取一份，再交给挑浏览器那一步。
+
+    取不到只提醒不中断：挑浏览器会退回用户自己装的那些，这台机器照样能用，
+    但人得知道此刻驱动的不是 frago 自带的那份、以及为什么。
+    """
+    from ..cft_fetch import CftFetchError, ensure_cft, installed_binary
+
+    if installed_binary() is not None:
+        return
+    try:
+        ensure_cft(progress=lambda msg: print(f"[cft] {msg}", file=sys.stderr))
+    except CftFetchError as e:
+        print(f"warning: 没取到 Chrome for Testing，退回本机已装的浏览器：{e}",
+              file=sys.stderr)
+
+
 # ─────────────────────────── public API ─────────────────────────────
 
 
@@ -254,6 +271,7 @@ def start_extension_bridge(
     bridge_timeout: float = 30.0,
     socket_timeout: float = 5.0,
     reseed_profile: bool = False,
+    app_url: str | None = None,
 ) -> BridgeStartupResult:
     """Bring up the full extension bridge — daemon, manifest, browser, handshake.
 
@@ -277,6 +295,8 @@ def start_extension_bridge(
         reseed_profile: Obsolete (the backend drives the browser's own
             profile — there is nothing to re-seed). Ignored with a
             warning.
+        app_url: Open this page as a borderless app window instead of a
+            blank tab.
 
     Returns:
         :class:`BridgeStartupResult` with everything the caller might
@@ -307,6 +327,7 @@ def start_extension_bridge(
                 f"brand."
             )
         from ..backends.extension import pick_browser_for_extension
+        _fetch_cft_if_missing()
         choice = pick_browser_for_extension()
         if not choice:
             raise RuntimeError(
@@ -368,6 +389,7 @@ def start_extension_bridge(
     from ..backends.extension import launch_chrome_with_extension
     browser_proc = launch_chrome_with_extension(
         bundle, user_data_dir=profile, chrome_binary=binary, brand=brand,
+        app_url=app_url,
     )
 
     # 7. Bridge handshake

@@ -16,6 +16,10 @@ class BrowserType(Enum):
     CHROME = "chrome"
     EDGE = "edge"
     CHROMIUM = "chromium"
+    # Chrome for Testing — frago's own download under ~/.frago/tools. Only
+    # reachable by name (`--browser cft`); it is deliberately absent from
+    # BROWSER_PRIORITY so auto-detection keeps its old answer.
+    CFT = "cft"
 
 
 # The order frago picks a browser in, and the order every listing shows.
@@ -143,6 +147,13 @@ def find_browser(browser_type: BrowserType, system: str | None = None) -> str | 
     """
     if system is None:
         system = platform.system()
+
+    # frago put CfT on disk itself, so there is exactly one place to look.
+    if browser_type is BrowserType.CFT:
+        from frago.browser.backends.extension import cft_binary
+
+        path = cft_binary()
+        return str(path) if path else None
 
     # Layer 1: PATH environment variable (respects user customization)
     for cmd in BROWSER_COMMANDS.get(browser_type, []):

@@ -237,10 +237,19 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
                 f"`frago browser check` to see which browsers are available."
             )
 
+        # --app/--app-url are the one pair of window options this backend
+        # honors: the agent_os stage opens a visible CfT window with them.
+        app_url = kwargs.get("app_url")
+        if kwargs.get("app_mode") and not app_url:
+            raise click.UsageError("--app requires --app-url")
+        if app_url and not kwargs.get("app_mode"):
+            raise click.UsageError("--app-url only takes effect together with --app")
+
         try:
             result: BridgeStartupResult = start_extension_bridge(
                 browser=brand,
                 reseed_profile=bool(kwargs.get("reseed_profile")),
+                app_url=app_url,
             )
         except (RuntimeError, TimeoutError) as e:
             click.echo(json.dumps({"ok": False, "error": str(e)}), err=True)
@@ -608,6 +617,39 @@ def check_browsers():
         lines.append(f"Default: {default_choice.brand} ({default_choice.path})")
 
     click.echo("\n".join(lines))
+
+
+@browser_group.command(name="install", cls=AgentFriendlyCommand)
+@click.option("--force", is_flag=True,
+              help="Re-fetch the latest Stable even if a copy is already there. "
+                   "Stop the browser first: the old copy is moved away.")
+def install_cft(force: bool):
+    """Fetch frago's own browser, Chrome for Testing
+
+    \b
+    Downloads the current Stable build for this platform into
+    ~/.frago/tools/chrome-for-testing/ and checks it runs. Does nothing
+    when a copy is already there (unless --force). No admin rights, not
+    registered as a system browser.
+
+    \b
+    `frago browser start` and the agent_os stage call the same thing on
+    their own when CfT is missing, so this is only needed to fetch ahead
+    of time or to upgrade.
+    """
+    import json
+
+    from ..browser.cft_fetch import CftFetchError, ensure_cft
+
+    try:
+        binary = ensure_cft(force=force,
+                            progress=lambda msg: click.echo(f"[cft] {msg}", err=True))
+    except CftFetchError as e:
+        click.echo(json.dumps({"ok": False, "kind": e.kind, "error": str(e)},
+                              ensure_ascii=False), err=True)
+        raise click.exceptions.Exit(1) from e
+    click.echo(json.dumps({"ok": True, "binary": str(binary)}, ensure_ascii=False))
+
 
 # Tab management
 browser_group.add_command(_wrap_mvp(list_tabs, "list-tabs"), name="list-tabs")

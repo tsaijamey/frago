@@ -5,8 +5,6 @@ Both were found the expensive way, by losing a working browser to them.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from frago.browser import proxy_detect
@@ -88,6 +86,13 @@ def test_startup_url_stays_last(launched, monkeypatch):
     monkeypatch.setenv("FRAGO_BROWSER_PROXY", "http://127.0.0.1:7890")
     args = launched()
     assert args[-1] == "about:blank"
+
+
+def test_app_url_replaces_blank_tab(launched, monkeypatch):
+    monkeypatch.setenv("FRAGO_BROWSER_PROXY", "http://127.0.0.1:7890")
+    args = launched(app_url="http://127.0.0.1:8093/#/sessions")
+    assert args[-1] == "--app=http://127.0.0.1:8093/#/sessions"
+    assert "about:blank" not in args
 
 
 def test_core_flags_survive_the_additions(launched, monkeypatch):

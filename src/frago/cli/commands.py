@@ -2165,7 +2165,7 @@ def init(force: bool):
 @click.command('chrome', cls=AgentFriendlyCommand)
 @click.option(
     '--browser',
-    type=click.Choice(['chrome', 'edge', 'chromium'], case_sensitive=False),
+    type=click.Choice(['chrome', 'edge', 'chromium', 'cft'], case_sensitive=False),
     help='CDP backend only. Under the default extension backend this does '
          'NOT pick the browser (the picker still decides) — it only '
          'redirects the profile directory, so you drive one browser '
@@ -2265,17 +2265,21 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     ~/.frago/tools/chrome-for-testing. It wins because it is never the
     user's daily browser and carries no vendor sign-in or update service.
     Everything after it is a browser the user installed, used only when
-    frago has no CfT of its own.
+    frago has no CfT of its own. When CfT is missing, start fetches it
+    first (same as `frago browser install`) and falls back to that list
+    only if the fetch fails.
     Chrome Stable is excluded on purpose: since v137 it silently ignores
     --load-extension. Use `frago browser check` to see what's available.
 
     \b
     Options below are CDP-backend options. Under the default extension
     backend they are silently dropped and do nothing:
-      --headless --app --app-url --port --profile-dir
+      --headless --port --profile-dir
       --width --height --window-x --window-y --no-kill --keep-alive
     They take effect only when you explicitly select CDP:
       frago browser -b cdp start --headless
+    --app --app-url work on both backends: the browser opens that page
+    as a borderless app window instead of a blank tab.
 
     \b
     Do NOT pass --browser. Under the default backend it does not change

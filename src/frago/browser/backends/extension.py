@@ -379,7 +379,7 @@ class ExtensionChromeBackend(ChromeBackend):
             output.parent.mkdir(parents=True, exist_ok=True)
             proc = _sp.run(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                 "-i", str(listing), "-vsync", "cfr", "-r", str(fps),
+                 "-i", str(listing), "-fps_mode", "cfr", "-r", str(fps),
                  "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
                  "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                  "-pix_fmt", "yuv420p", str(output)],
@@ -703,11 +703,17 @@ def launch_chrome_with_extension(bundle_dir: Path,
                                  chrome_binary: str | None = None,
                                  log_path: Path | None = None,
                                  brand: str | None = None,
+                                 app_url: str | None = None,
                                  ) -> subprocess.Popen:
     """Launch Chrome with the unpacked bundle loaded.
 
     This is the ``start`` command for the extension backend. Chrome is
     detached so it survives the CLI process exit.
+
+    ``app_url`` opens that page as a borderless app window instead of a
+    blank tab. The agent_os stage uses it to put a visible CfT window up
+    before its headless actor and camera start — see
+    ``frago.desktop.broker._ensure_human_cft``.
 
     Browser selection: caller may pass ``chrome_binary`` to override
     (then also pass ``brand`` so first-launch profile seeding can locate
@@ -770,8 +776,9 @@ def launch_chrome_with_extension(bundle_dir: Path,
 
     # Opening a real URL on startup triggers the content script, which
     # pings the service worker and forces it to wake up and connect to
-    # the native host. Without this, MV3 SWs may stay dormant.
-    args.append("about:blank")
+    # the native host. Without this, MV3 SWs may stay dormant. An app
+    # window's page is a real URL too, so it wakes the SW the same way.
+    args.append(f"--app={app_url}" if app_url else "about:blank")
     stdio = subprocess.DEVNULL
     if log_path:
         stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
