@@ -113,6 +113,13 @@ def _is_record_stop(steps: list[dict]) -> bool:
     return any(s.get("op") == "record.stop" for s in steps)
 
 
+def _waits_on_speech(steps: list[dict]) -> bool:
+    """这一批要不要等语音讲完。排着十几句旁白时，180 秒的读超时同样恒为假。"""
+    return any(s.get("op") == "speech.wait"
+               or (s.get("op") == "say" and s.get("speak") and not s.get("async"))
+               for s in steps)
+
+
 def _stopping_clip(rec: dict) -> dict:
     """停录之前先问一句它在录哪一段。
 
@@ -151,7 +158,8 @@ def post(rec: dict, steps: list[dict], timeout: float | None = None) -> dict:
     """
     stopping = _is_record_stop(steps)
     if timeout is None:
-        timeout = RECORD_STOP_TIMEOUT if stopping else DEFAULT_POST_TIMEOUT
+        timeout = (RECORD_STOP_TIMEOUT if stopping or _waits_on_speech(steps)
+                   else DEFAULT_POST_TIMEOUT)
     # 问在发之前：发完再问就晚了，那时 name 已经被清掉。
     clip = _stopping_clip(rec) if stopping else {}
     body = json.dumps({"steps": steps}, ensure_ascii=False).encode()
@@ -634,8 +642,20 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         raise die(f"未知 viewport 动词: {verb}", allowed=["refresh"])
 
     if res == "wait":
-        f = take_flags(rest, {"for", "url", "text", "timeout"})
-        which = need_exactly_one(f, ["for", "url", "text"], "wait")
+        f = take_flags(rest, {"for", "url", "text", "speech", "timeout"})
+        which = need_exactly_one(f, ["for", "url", "text", "speech"], "wait")
+        if which == "speech":
+            # 等语音讲完不在这边轮询：讲没讲完只有 broker 知道（页面报回来的、
+            # 播放进程退出的），它自己等、等到了才回。所以这条能和前后的指令
+            # 并进同一批，书写顺序就是执行顺序。
+            target = f["speech"]
+            if target != "all" and not target.isdigit():
+                raise die(f"--speech 取 all 或一句的编号，得到: {target}",
+                          hint="编号在 say --speak --async 的回执里")
+            step = {"op": "speech.wait", "target": target}
+            if "timeout" in f:
+                step["timeout"] = as_int(f, "timeout")
+            return "steps", [step]
         timeout = as_int(f, "timeout", 30)
         return "local", lambda rec: cmd_wait(rec, which, f[which], timeout)
 
@@ -668,9 +688,56 @@ def parse(tokens: list[str]) -> tuple[str, object]:
 
     if res == "say":
         text, rest = one_positional(rest, "字幕文字")
-        f = take_flags(rest, {"ms"})
-        return "steps", [{"op": "say", "text": text,
-                          "ms": as_int(f, "ms", 2600)}]
+        # 三个无值 flag，与 rec start 的 --force 同一个摘法：进 take_flags 之前
+        # 先摘掉，不给解析器开通用的无值分支。
+        #   --speak      开口（不带就是纯字幕，与从前一模一样）
+        #   --async      不等讲完就返回，后面的指令与语音同时进行
+        #   --interrupt  掐掉正在说的和排着的，再说这一句
+        switches = {s for s in ("--speak", "--async", "--interrupt") if s in rest}
+        rest = [t for t in rest if t not in switches]
+        voice_flags = {"out", "voice", "rate", "volume", "pitch"}
+        f = take_flags(rest, {"ms"} | voice_flags)
+        if "--speak" not in switches:
+            extra = sorted(["--" + k for k in voice_flags if k in f]
+                           + list(switches))
+            if extra:
+                raise die(f"{' '.join(extra)} 只在开口时有意义，需要同时给 --speak",
+                          hint='say "<文字>" --speak [--async] [--out page|local|both|none]')
+            return "steps", [{"op": "say", "text": text,
+                              "ms": as_int(f, "ms", 2600)}]
+        if "ms" in f:
+            raise die("开口时字幕跟着声音走，不接受 --ms",
+                      hint="字幕留多久由这句话实际多长决定")
+        step = {"op": "say", "text": text, "speak": True,
+                "out": f.get("out", "page")}
+        for k in ("voice", "rate", "volume", "pitch"):
+            if k in f:
+                step[k] = f[k]
+        if "--async" in switches:
+            step["async"] = True
+        if "--interrupt" in switches:
+            step["interrupt"] = True
+        return "steps", [step]
+
+    if res == "voice":
+        verb, rest = one_positional(rest, "voice 的动词（synth / stop / cache / clear）")
+        if verb == "synth":
+            # 只合成、不出声，也不要求舞台在跑：给"开演前把台词先合成好"用，
+            # 回执里的时长拿去排节奏。
+            text, rest = one_positional(rest, "要合成的文字")
+            f = take_flags(rest, {"voice", "rate", "volume", "pitch"})
+            return "free", lambda _rec: cmd_voice_synth(text, f)
+        if verb == "stop":
+            take_flags(rest, set())
+            return "steps", [{"op": "speech.stop"}]
+        if verb == "cache":
+            take_flags(rest, set())
+            return "free", lambda _rec: cmd_voice_cache()
+        if verb == "clear":
+            take_flags(rest, set())
+            return "free", lambda _rec: cmd_voice_clear()
+        raise die(f"未知 voice 动词: {verb}",
+                  allowed=["synth", "stop", "cache", "clear"])
 
     raise die(f"未知指令: {res}", allowed=sorted(RESOURCES))
 
@@ -691,7 +758,7 @@ WINDOWS = ("term", "browser", "image", "video")
 
 RESOURCES = {"up", "down", "status", "elements", "mouse", "window", "focus",
              "term", "image", "video", "slide", "strap", "browser", "tab",
-             "camera", "viewport", "wait", "pause", "rec", "say"}
+             "camera", "viewport", "wait", "pause", "rec", "say", "voice"}
 
 #: 裸跑 `frago desktop` 时，每个资源一句话。
 #:
@@ -718,10 +785,15 @@ RESOURCE_HELP = {
     "tab": "浏览器标签：open / switch <n> / close <n>",
     "camera": "摄像机（不是窗口）：up / down / focus --ref / pan --to / reset",
     "viewport": "refresh：重读演员视口并按新比例重摆虚拟浏览器窗口",
-    "wait": "语义等待：--for <ref> | --url <模式> | --text <文字>",
+    "wait": "语义等待：--for <ref> | --url <模式> | --text <文字> | "
+            "--speech all|<编号>（等语音讲完）",
     "pause": "纯演示节拍 --ms，与语义等待分开的动词",
-    "rec": "录制：start --name <n> / stop（回执带冻帧指标与 2×3 宫格）",
-    "say": "旁白字幕，一句句流过去，各自计时",
+    "rec": "录制：start --name <n> / stop（回执带冻帧指标与 2×3 宫格；"
+           "录制期间开口的话封成音轨）",
+    "say": "旁白字幕，一句句流过去，各自计时。加 --speak 开口（Edge 语音，"
+           "默认等讲完；--async 边说边做；--out page|local|both|none）",
+    "voice": "语音：synth <文字> 只合成不出声（不要求舞台在跑）/ stop 掐掉 / "
+             "cache 看缓存 / clear 清缓存",
 }
 
 
@@ -818,6 +890,12 @@ def cmd_down(rec: dict) -> dict:
     viewer 目录、clips、tmux 会话）全都还在，删掉身份等于把"存在但没跑"错报成
     "不存在"。
     """
+    # 还在说的话先说完再停，最多等两分钟。问不到（broker 没在应答）就不等——
+    # down 的全部意义是停得掉，不能被一句旁白挡住。
+    speech_waited = None
+    with suppress(Exception):
+        speech_waited = post(rec, [{"op": "speech.wait", "target": "all",
+                                    "timeout": 120}], timeout=130)
     # 先落意愿再动手：这句话是说给守护听的——它看到进程没了会拉起，除非人
     # 明说过不想让它跑。顺序反过来的话，中间那一瞬守护正好巡检到，就会把
     # 刚杀掉的进程原样拉回来，而人以为自己关掉了。
@@ -846,11 +924,43 @@ def cmd_down(rec: dict) -> dict:
         time.sleep(0.3)
     registry.mark_stopped(rec["id"])
     after = registry.read_instance(rec["id"]) or {}
+    waited = ((speech_waited or {}).get("results") or [{}])[0]
     return {"ok": True, "id": rec["id"], "signalled": signalled,
+            **({"waited_for_speech_sec": waited["waited_sec"]}
+               if waited.get("waited_sec") else {}),
             "status": after.get("status"),
             "desired": after.get(registry.DESIRED_FIELD),
             "note": "已记下人不想让它跑，守护不会把它拉起来；要重新用就 `frago desktop up`。",
             "identity_kept": {k: after.get(k) for k in registry.IDENTITY_FIELDS}}
+
+
+def cmd_voice_synth(text: str, flags: dict) -> dict:
+    """只合成、不出声。与 say --speak 走同一份合成与同一份缓存。"""
+    from . import voice
+
+    try:
+        out = voice.synthesize_sync(
+            text, flags.get("voice") or voice.DEFAULT_VOICE,
+            flags.get("rate", "+0%"), flags.get("volume", "+0%"),
+            flags.get("pitch", "+0Hz"))
+    except (ValueError, voice.VoiceUnavailable, voice.VoiceFailed) as exc:
+        raise die(str(exc)) from None
+    return {"ok": True, **out}
+
+
+def cmd_voice_cache() -> dict:
+    from . import voice
+
+    return {"ok": True, **voice.stats(),
+            "note": "上限改 ~/.frago/config.json 的 tts.cache_max_mb；"
+                    "超出后从最久没用的删起"}
+
+
+def cmd_voice_clear() -> dict:
+    from . import voice
+
+    return {"ok": True, **voice.clear(),
+            "note": "已经封进片子的音轨、复制进录制目录的音频都不受影响"}
 
 
 def cmd_term_read(rec: dict, lines: int) -> dict:
@@ -976,9 +1086,10 @@ def run(phrases: list[list[str]], to: str | None) -> dict:
 
     # up 之外的任何指令都要先定位实例；up 自己负责创建，不能反过来要求它先存在。
     # "any" 那一档（目前只有 down）只要求实例**存在**，不要求它在跑。
+    # "free" 那一档（voice synth / cache / clear）跟舞台无关，一样都不要求。
     rec: dict | None = None
     kinds = {kind for kind, _ in plans}
-    if kinds - {"boot", "any"}:
+    if kinds - {"boot", "any", "free"}:
         rec = pick_instance(to)
     elif "any" in kinds:
         rec = registry.read_instance(registry.DEFAULT_ID)

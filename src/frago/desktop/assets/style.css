@@ -894,3 +894,21 @@ html, body {
   opacity: 0.55;
   pointer-events: none;
 }
+
+/* 「启用声音」按钮。挂在 body 上而不是 #stage 里：#stage 整块按比例缩放，按钮
+   跟着缩就可能小到点不中。只在浏览器拦下语音播放时露出来，机位那一页永远没有它。 */
+#sound-unlock {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 5000;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(18, 22, 30, 0.9);
+  color: #e8ecf2;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+#sound-unlock[hidden] { display: none; }

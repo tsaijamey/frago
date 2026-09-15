@@ -75,6 +75,8 @@ def desktop_group(args: tuple[str, ...]) -> None:
       frago desktop term run "ls -la"
       frago desktop camera focus --ref page:text:Explore --zoom 1.8
       frago desktop say "旁白一句"
+      frago desktop say "边说边点" --speak --async   # 开口（Edge 语音），不等讲完
+      frago desktop wait --speech all              # 动作做完了，等话讲完再往下
 
     \b
     Full-screen HTML, video, and the caption strap:

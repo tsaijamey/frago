@@ -54,6 +54,10 @@ dependencies = [
     # 承重，不是可选：摇镜靠 resize(box=浮点) 拿亚像素位移，换 ffmpeg 的整数 crop
     # 会把每帧量化到整像素。
     "pillow>=10.0.0",
+    # 虚拟桌面开口说话（frago.desktop.voice，say --speak / voice synth）。
+    # 必装，不是可选：装完 frago 就该能说话，不许让用户事后自己补装。
+    # 7.2.8 起按恒定码率算时长，与 voice.py 的时长算法一致。
+    "edge-tts>=7.2.8",
 ]
 
 [project.optional-dependencies]

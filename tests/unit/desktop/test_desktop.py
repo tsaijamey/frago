@@ -1435,3 +1435,133 @@ def test_video_position_extrapolates_while_playing(sealed_broker, clip_file,
     moved = st["video"]["intent"]["position_sec"]
     assert moved > started + 30, f"位置停在了 {moved}，没跟着时间走"
     assert moved <= 42.5, "外推不许越过片长"
+
+
+# ── 演员/机位浏览器按候选顺序起 ───────────────────────────────────────────
+
+
+def _stub_cdp_start(monkeypatch, ok_brands):
+    """把起浏览器那条命令换成假的：只有 ok_brands 里的品牌起得来。"""
+    calls = []
+
+    def _run(cmd, **_kw):
+        brand = cmd[cmd.index("--browser") + 1]
+        calls.append(brand)
+        ok = brand in ok_brands
+        return types.SimpleNamespace(
+            returncode=0 if ok else 1, stdout="",
+            stderr="" if ok else f"Error: {brand.title()} browser not found")
+
+    monkeypatch.setattr(broker, "_cdp_answering", lambda _port: False)
+    monkeypatch.setattr(broker, "_frago_bin", lambda: "frago")
+    monkeypatch.setattr(broker.subprocess, "run", _run)
+
+    async def _up(_port, _timeout):
+        return True
+
+    monkeypatch.setattr(broker, "_wait_cdp_up", _up)
+
+    async def _no_human_cft():
+        return None
+
+    monkeypatch.setattr(broker, "_ensure_human_cft", _no_human_cft)
+    monkeypatch.setattr(broker, "_ensure_stage_cft", _no_human_cft)
+    return calls
+
+
+def test_stage_browser_uses_only_cft(monkeypatch):
+    calls = _stub_cdp_start(monkeypatch, {"edge", "cft", "chrome"})
+    asyncio.run(broker._ensure_cdp_instance(9222, "演员"))
+    assert calls == ["cft"]
+
+
+def test_stage_browser_never_falls_back_to_daily_browsers(monkeypatch):
+    calls = _stub_cdp_start(monkeypatch, {"edge", "chrome"})
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(broker._ensure_cdp_instance(9222, "演员"))
+    assert calls == ["cft"]
+    assert "Cft browser not found" in str(exc.value)
+
+
+def test_stage_cft_fetched_when_missing(monkeypatch):
+    import frago.browser.cft_fetch as cf
+
+    fetched = []
+    monkeypatch.setattr(cf, "installed_binary", lambda root=None: None)
+    monkeypatch.setattr(cf, "ensure_cft", lambda **kw: fetched.append(kw) or Path("/x"))
+    asyncio.run(broker._ensure_stage_cft())
+    assert len(fetched) == 1
+
+
+def test_stage_refuses_to_start_when_cft_cannot_be_fetched(monkeypatch):
+    import frago.browser.cft_fetch as cf
+
+    def _fail(**_kw):
+        raise cf.CftFetchError("network", "下载 CfT 失败，直连：timed out")
+
+    monkeypatch.setattr(cf, "installed_binary", lambda root=None: None)
+    monkeypatch.setattr(cf, "ensure_cft", _fail)
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(broker._ensure_stage_cft())
+    assert "network" in str(exc.value) and "timed out" in str(exc.value)
+
+
+# ── 起舞台浏览器之前先让人那个有头 CfT 在跑 ─────────────────────────────
+
+
+CFT = "/x/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+
+
+def _stub_human_cft(monkeypatch, tmp_path, ps_lines):
+    """ps 报出 ps_lines；记下 broker 发出的每条 frago 命令。"""
+    import frago.browser.backends.extension as ext_mod
+
+    monkeypatch.setattr(ext_mod, "cft_binary", lambda: Path(CFT))
+    monkeypatch.setattr(broker, "_frago_bin", lambda: "frago")
+    started = []
+
+    def _run(cmd, **_kw):
+        if cmd[0] == "ps":
+            return types.SimpleNamespace(
+                returncode=0, stdout="ARGS\n" + "\n".join(ps_lines), stderr="")
+        started.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(broker.subprocess, "run", _run)
+    return started
+
+
+def test_human_cft_started_as_app_window_when_missing(monkeypatch, tmp_path):
+    started = _stub_human_cft(monkeypatch, tmp_path, [
+        f"{CFT} --user-data-dir=/p/cft/9222 --remote-debugging-port=9222 --headless",
+    ])
+    asyncio.run(broker._ensure_human_cft())
+    assert len(started) == 1
+    cmd = started[0]
+    assert cmd[1:5] == ["browser", "-b", "extension", "start"]
+    assert cmd[cmd.index("--app-url") + 1].endswith("/#/sessions")
+    assert "--app" in cmd
+
+
+def test_human_cft_left_alone_when_already_running(monkeypatch, tmp_path):
+    started = _stub_human_cft(monkeypatch, tmp_path, [
+        f"{CFT} --user-data-dir=/p/cft/extension --load-extension=/b",
+    ])
+    asyncio.run(broker._ensure_human_cft())
+    assert started == []
+
+
+def test_human_cft_ignores_helper_processes(monkeypatch, tmp_path):
+    started = _stub_human_cft(monkeypatch, tmp_path, [
+        f"{CFT} --type=renderer --user-data-dir=/p/cft/extension",
+    ])
+    asyncio.run(broker._ensure_human_cft())
+    assert len(started) == 1
+
+
+def test_human_cft_skipped_without_cft(monkeypatch, tmp_path):
+    started = _stub_human_cft(monkeypatch, tmp_path, [])
+    import frago.browser.backends.extension as ext_mod
+    monkeypatch.setattr(ext_mod, "cft_binary", lambda: None)
+    asyncio.run(broker._ensure_human_cft())
+    assert started == []

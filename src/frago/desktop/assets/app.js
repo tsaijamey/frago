@@ -15,6 +15,11 @@
   // dock 距屏幕底边的留白，与 style.css 里 #dock 的 bottom 保持一致。
   var DOCK_MARGIN = 10;
 
+  // 这块荧幕是不是录制机位。机位与人那块荧幕打开的是同一个地址，页面自己分不
+  // 出来，所以由 broker 在机位加载之前注入。机位不放声音、不露「启用声音」按钮：
+  // 它是无头的，没有扬声器；按钮一露出来就被录进片子。
+  var ROLE = window.__FRAGO_ROLE__ === "camera" ? "camera" : "screen";
+
   // 桌面上的四个程序。**只有这一份名单**：写死三元/四元的地方每多一处，
   // 下一扇窗进来就要挨个改一遍，而漏掉的那一处会在画面上静静失效
   // （窗口画出来了却不可寻址，或者关掉了 dock 的灯还亮着）。
@@ -789,7 +794,7 @@
   var CAPTION_MAX_LINES = 3;
   var CAPTION_MAX_MS = 8000;
 
-  function showCaption(text, ms) {
+  function showCaption(text, ms, speech) {
     var line = document.createElement("div");
     line.className = "caption-line";
     line.textContent = text;
@@ -803,7 +808,10 @@
     }
     requestAnimationFrame(function () { line.classList.add("in"); });
 
-    var life = Math.min(typeof ms === "number" ? ms : 3000, CAPTION_MAX_MS);
+    var life = typeof ms === "number" ? ms : 3000;
+    // 8 秒封顶只管纯字幕：开口的那句，字幕留多久由声音多长决定，一句 12 秒的话
+    // 字幕在第 8 秒就走会让后半句没字可看。
+    if (!speech) life = Math.min(life, CAPTION_MAX_MS);
     line._timer = setTimeout(function () { dropCaption(line); }, life);
   }
 
@@ -822,6 +830,95 @@
     setTimeout(function () {
       if (line.parentNode) line.parentNode.removeChild(line);
     }, 350);
+  }
+
+  /* ── 语音 ──
+     broker 发来一句的音频地址，这里放、并把进展报回去：开始放了 / 放完了 /
+     被浏览器拦了。broker 靠这几条判断"这句讲完没有、有没有人听见"，所以
+     **放没放出来必须如实报**——play() 被拦下时页面一声不吭，不报的话 broker
+     会把"发出去了"当成"说出来了"。
+
+     浏览器不放没有用户手势的有声播放。被拦下时露出「启用声音」按钮，人点一下
+     之后这张页面上的播放就都放行了（浏览器记的是这张页面被人碰过）。 */
+  var speechState = { audio: null, id: null, startedAt: 0, ms: 0 };
+
+  function speechAudio() {
+    if (speechState.audio) return speechState.audio;
+    var a = new Audio();
+    a.preload = "auto";
+    a.addEventListener("ended", function () {
+      if (speechState.id) send({ t: "speech", id: speechState.id, event: "ended" });
+      speechState.id = null;
+    });
+    a.addEventListener("error", function () {
+      if (!speechState.id) return;
+      send({ t: "speech", id: speechState.id, event: "error",
+             error: "media error " + (a.error ? a.error.code : "?") });
+    });
+    speechState.audio = a;
+    return a;
+  }
+
+  function startSpeechAudio(id, late) {
+    var a = speechState.audio;
+    var p = a.play();
+    function started() {
+      if (speechState.id === id) send({ t: "speech", id: id, event: "started", late: !!late });
+    }
+    if (!p || typeof p.then !== "function") { started(); return; }
+    p.then(started, function (err) {
+      var name = String((err && err.name) || err);
+      // 换句打断上一句时，上一句的 play() 会以 AbortError 收场——那不是被拦。
+      if (name === "AbortError") return;
+      send({ t: "speech", id: id, event: "blocked", error: name });
+      if (name === "NotAllowedError") showSoundUnlock();
+    });
+  }
+
+  function playSpeech(msg) {
+    if (ROLE === "camera") return;
+    var a = speechAudio();
+    speechState.id = String(msg.id);
+    speechState.ms = msg.ms || 0;
+    speechState.startedAt = Date.now();
+    a.src = msg.url;
+    startSpeechAudio(speechState.id, false);
+  }
+
+  function stopSpeech(id) {
+    var a = speechState.audio;
+    if (!a || (id && speechState.id !== String(id))) return;
+    speechState.id = null;
+    a.pause();
+    a.removeAttribute("src");
+    a.load();
+  }
+
+  function showSoundUnlock() {
+    if (ROLE === "camera" || !els.soundUnlock) return;
+    els.soundUnlock.hidden = false;
+  }
+
+  function setupSoundUnlock() {
+    if (ROLE === "camera") return null;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "sound-unlock";
+    btn.hidden = true;
+    btn.textContent = "🔈 启用声音";
+    btn.title = "浏览器拦下了语音播放，点一下之后这张页面就能放出声";
+    btn.addEventListener("click", function () {
+      btn.hidden = true;
+      // 正在说的那句还剩不少，就从当前位置接着放；剩得不多就算了，下一句自然能放。
+      var id = speechState.id, a = speechState.audio;
+      var elapsed = Date.now() - speechState.startedAt;
+      if (id && a && speechState.ms - elapsed > 400) {
+        try { a.currentTime = elapsed / 1000; } catch (e) { /* 还没加载好就从头放 */ }
+        startSpeechAudio(id, true);
+      }
+    });
+    document.body.appendChild(btn);
+    return btn;
   }
 
   /* ── 浮层标注 ──
@@ -1046,7 +1143,13 @@
         applyChrome(msg);
         break;
       case "say":
-        showCaption(msg.text, msg.ms);
+        showCaption(msg.text, msg.ms, !!msg.speech);
+        break;
+      case "speech.play":
+        playSpeech(msg);
+        break;
+      case "speech.stop":
+        stopSpeech(msg.id);
         break;
       case "overlay":
         showOverlay(msg);
@@ -1084,7 +1187,8 @@
         t: "identify",
         contentId: CONFIG.contentId,
         instanceId: CONFIG.instanceId,
-        uiVersion: CONFIG.uiVersion
+        uiVersion: CONFIG.uiVersion,
+        role: ROLE
       });
       sendLayout();
     };
@@ -1106,6 +1210,10 @@
         // 事件落在它里面就放行，别的地方照旧免疫。
         if (els.humanInput && !els.humanInput.hidden &&
             e.target && els.humanInput.contains(e.target)) return;
+        // 「启用声音」按钮同理：浏览器只认人真的点过一下才肯放声音，拦掉它
+        // 这块荧幕就永远出不了声。
+        if (els.soundUnlock && !els.soundUnlock.hidden &&
+            e.target && els.soundUnlock.contains(e.target)) return;
         e.preventDefault(); e.stopPropagation();
       }, { capture: true, passive: false });
     });
@@ -1436,6 +1544,7 @@
     setInterval(tickClock, 1000);
     window.addEventListener("resize", fitStage);
     setupHumanInput();
+    els.soundUnlock = setupSoundUnlock();
     blockInput();
 
     startWallpaper();

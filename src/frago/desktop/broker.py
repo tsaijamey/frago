@@ -39,6 +39,7 @@ from PIL import Image
 from . import (
     refs,  # 同包模块，page: 的判型只有这一份，aos 也用它
     registry,  # 同包模块，与 stage.py 共用注册表语义
+    voice,  # 同包模块，语音合成与缓存；aos 的 voice synth 也用它
 )
 
 # 演员与机位各是一台独立的无头 CDP 实例，端口分开（2026-08-10 换回来）：
@@ -182,28 +183,104 @@ def _running_headful(port: int) -> bool:
     return False
 
 
-# 舞台两台浏览器都是 Edge，各占一个 CDP 端口：演员 9222、机位 9223。
+# 舞台两台浏览器只用 Chrome for Testing，各占一个 CDP 端口：演员 9222、机位 9223。
 #
-# **为什么是 Edge**：登录态只能有一份好使的。extension 后端驱动的是 Edge 自己的
-# 真实 profile（`~/Library/Application Support/Microsoft Edge`），人平时就在那儿
-# 登录；`-b cdp` 的 Edge 实例用 `~/.frago/profiles/edge/<port>/`，首次启动由 frago
-# 从那份真实 profile 播种一次（只拷 Local State 与 Default/，跳过锁文件与日志）。
-# 于是舞台一起来就带着人已经登过的那批站点，不必再登一遍。
+# **为什么不再是 Edge**（2026-09-15 起）：macOS 按应用只登记一份「正在运行」，程序坞
+# 图标和系统默认浏览器收到的链接都交给先登记的那个进程。舞台先于人把无头 Edge 起
+# 起来，人再点 Edge 图标、点任何链接，请求全落进这台没有窗口的实例——程序坞显示
+# Edge 已启动，屏幕上什么都不出现，也开不出新窗口。2026-09-15 实测：人点的
+# Confluence 链接就躺在 9222 的标签里。Edge / Chrome 是人日常在用的浏览器，舞台
+# 不该去占。CfT 是 frago 自己下载的那份（how-to-install-frago 默认就取它），不是
+# 任何人的日常浏览器。
 #
-# 走 Chrome 那条路已经排除：Chrome Stable 从 v127 起拒绝 `--remote-debugging-port`
-# 作用于自己的默认 profile（反侧载加固），只能用隔离拷贝；而隔离拷贝里没有登录态
-# ——2026-08-10 实测 `profiles/chrome/9222` 那 641MB 在 x.com / google.com /
-# reddit 三站全是游客态。
+# 代价明确：profile 换成 `cft/<port>`，没有原来 `edge/9222` 从人真实 Edge 播种来的
+# 那批登录态，要登的站点得在这份 profile 里重新登一次。
 #
-# **品牌仍然显式传 `--browser edge`**，尽管它当前就是默认值：默认值改过一次
-# （2026-08-08 从 Chrome 改成 Edge），再改一次舞台就会静默换到另一份 profile，
-# 而这种错只在撞上登录墙那一刻才暴露。这是全仓库唯一有理由传 `--browser` 的地方，
-# 且只在 CDP 后端成立——默认的 extension 后端下这个参数换不了浏览器，只会让
-# profile 目录错位。
+# CfT 自己也有同一个问题：人用来看 agent 操作的那个有头 CfT 与演员、机位是同一个
+# 应用。所以起演员、机位之前先确认有头 CfT 在跑，没有就先把它起起来——见
+# `_ensure_human_cft`。
 #
-# **profile 不显式指**：端口推出来的默认目录就是要的那个（9222 → edge/9222），
+# **品牌仍然逐个显式传 `--browser`**，不交给默认值：`-b cdp` 的默认值改过不止一次，
+# 再改一次舞台就会静默换到另一份 profile，而这种错只在撞上登录墙那一刻才暴露。
+# 这是全仓库唯一有理由传 `--browser` 的地方，且只在 CDP 后端成立——默认的 extension
+# 后端下这个参数换不了浏览器，只会让 profile 目录错位。
+#
+# **CfT 不在就去取，取不到就不起，不退回 Edge / Chrome**（2026-09-15 起）。曾经按
+# CfT → Edge → Chrome 往下试，结果是同一套 frago 在装了 Edge 的机器上占人的 Edge、
+# 只装 Chrome 的占人的 Chrome、什么都没装的报三条「找不到」让人以为得自己去装浏览器。
+# 现在只剩两种机器：有 CfT，或者没有——没有就当场取一份（`frago.browser.cft_fetch`），
+# 取不到舞台起不来，报出来的是取 CfT 卡在哪一环（网络、平台、缺系统库），人日常用的
+# 浏览器永远不被碰。
+#
+# **profile 不显式指**：端口推出来的默认目录就是要的那个（9222 → <品牌>/9222），
 # 多写一个 `--profile-dir` 只是多一处会漂的重复。
-STAGE_BROWSER_BRAND = "edge"
+STAGE_BROWSER_BRANDS = ("cft",)
+
+
+async def _ensure_stage_cft() -> None:
+    """起舞台浏览器之前保证本机有 CfT，没有就当场取。取不到直接让舞台起不来。"""
+    from ..browser.cft_fetch import CftFetchError, ensure_cft, installed_binary
+
+    if installed_binary() is not None:
+        return
+    _log("舞台浏览器只用 Chrome for Testing，本机没有，先去取一份")
+    try:
+        await asyncio.to_thread(ensure_cft, progress=lambda msg: _log(f"[cft] {msg}"))
+    except CftFetchError as e:
+        raise RuntimeError(f"舞台起不来：没取到 Chrome for Testing（{e.kind}）。{e}") from e
+
+
+def _human_cft_running(binary: str) -> bool:
+    """有没有一个人看得见的 CfT 在跑。
+
+    只认主进程（没有 `--type=`），且既不是无头、也不是挂着 CDP 端口的那台——
+    后者是演员或机位自己，起演员时会被停掉重起，不能拿它当人那一台。
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-Ao", "args"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except Exception:
+        return False
+    return any(
+        line.startswith(binary) and "--type=" not in line
+        and "--headless" not in line and "--remote-debugging-port" not in line
+        for line in out.splitlines()
+    )
+
+
+async def _ensure_human_cft() -> None:
+    """起演员、机位之前，先让人那个有头 CfT 在跑。
+
+    演员和机位是无头 CfT，与人用来看 agent 操作的有头 CfT 是同一个应用。谁先起，
+    macOS 就把程序坞图标上的点击交给谁；无头的先起，人点 CfT 图标就什么也看不到。
+    所以没有有头 CfT 时，先用 extension 后端把它以 app 窗口打开到会话页。
+
+    起不来只记日志不拦舞台：这一步是为了人用着顺手，舞台本身不依赖它。
+    """
+    from ..browser.backends.extension import cft_binary
+    from ..server.daemon import get_scheme, get_server_port
+
+    binary = cft_binary()
+    if binary is None:
+        return
+    if await asyncio.to_thread(_human_cft_running, str(binary)):
+        return
+    url = f"{get_scheme()}://127.0.0.1:{get_server_port()}/#/sessions"
+    _log(f"没有有头的 CfT，先以 app 窗口打开会话页：{url}")
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            [_frago_bin(), "browser", "-b", "extension", "start",
+             "--app", "--app-url", url],
+            capture_output=True, text=True, timeout=90,
+        )
+    except Exception as e:
+        _log(f"警告：有头 CfT 没起来（{e}），照常起舞台浏览器")
+        return
+    if proc.returncode != 0:
+        _log(f"警告：有头 CfT 没起来，照常起舞台浏览器："
+             f"{(proc.stderr or proc.stdout)[-400:].strip()}")
 
 
 async def _ensure_cdp_instance(port: int, who: str, headless: bool = True) -> None:
@@ -236,6 +313,8 @@ async def _ensure_cdp_instance(port: int, who: str, headless: bool = True) -> No
     # 也是先杀后起，杀完立刻起，同样会撞上锁没释放。2026-08-23 实测，从无头
     # 切到有头正好绕过那个条件，于是竞态原样复现——演员起来几秒后整台浏览器
     # 消失，虚拟浏览器窗口退回一个空白新标签页，而三层回执都说一切正常。
+    await _ensure_stage_cft()
+    await _ensure_human_cft()
     if await asyncio.to_thread(_cdp_answering, port):
         headful = await asyncio.to_thread(_running_headful, port)
         _log(f"{port} 上已有实例（{'有头' if headful else '无头'}），"
@@ -255,17 +334,23 @@ async def _ensure_cdp_instance(port: int, who: str, headless: bool = True) -> No
         # 要 12 秒上下，改有头演员当天就稳定复现。定数从来不是判据。
         if not await _wait_browser_gone(port, 30.0):
             _log(f"警告：{port} 上的旧浏览器 30 秒后仍在，照常起新的")
-    cmd = [_frago_bin(), "browser", "-b", "cdp", "start",
-           "--browser", STAGE_BROWSER_BRAND, "--port", str(port)]
-    if headless:
-        cmd.append("--headless")
-    proc = await asyncio.to_thread(
-        subprocess.run, cmd, capture_output=True, text=True, timeout=120,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"{' '.join(cmd[1:])} 失败: {(proc.stderr or proc.stdout)[-400:]}"
+    failures: list[str] = []
+    for brand in STAGE_BROWSER_BRANDS:
+        cmd = [_frago_bin(), "browser", "-b", "cdp", "start",
+               "--browser", brand, "--port", str(port)]
+        if headless:
+            cmd.append("--headless")
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=120,
         )
+        if proc.returncode == 0:
+            _log(f"{who}浏览器用的是 {brand}（候选顺序 {' → '.join(STAGE_BROWSER_BRANDS)}）")
+            break
+        reason = (proc.stderr or proc.stdout)[-400:]
+        failures.append(f"{' '.join(cmd[1:])} 失败: {reason}")
+        _log(f"{who}浏览器 {brand} 起不来：{reason.strip()}")
+    else:
+        raise RuntimeError("；".join(failures))
     # 起命令返回不等于 CDP 已经挂上——有头实例慢，这里再等一程，
     # 免得下一步拿一个还没就绪的端口去开标签，报一句语焉不详的"未能就绪"。
     if not await _wait_cdp_up(port, 30.0):
@@ -1573,6 +1658,9 @@ class StageRecorder:
         # 动作日志。帧时间戳只够还原节奏，对不上"当时在做什么"；
         # 后期要剪掉无效片段，需要的是一张以开录时刻为零点的动作索引。
         self.journal: list[dict] = []
+        # 本段录制里开口的每一句：什么时刻开口、音频复制到了哪。机位只收画面
+        # 不收声音，停录时照这张表把音频贴成音轨封进片子。
+        self.voice_lines: list[dict] = []
 
     async def _send(self, method: str, params: dict | None = None) -> None:
         self._msg_id += 1
@@ -1609,6 +1697,11 @@ class StageRecorder:
         self.alive = True
         asyncio.create_task(self._pump())
         await self._send("Page.enable")
+        # 告诉这张桌面页"你是机位"，赶在它加载之前。机位与人那块荧幕打开的是
+        # 同一个地址，页面自己分不出来；分不出来的后果是机位也去放语音、也去报
+        # "放出声了"——而无头的机位没有扬声器，一句谁都没听见的话会被记成听见了。
+        await self._send("Page.addScriptToEvaluateOnNewDocument",
+                         {"source": "window.__FRAGO_ROLE__ = 'camera';"})
         # 对准桌面页，并确保该标签在前台且保持合成——后台标签不产帧，
         # 症状是 record.stop 报"没有收到任何帧"。
         await self._send("Page.navigate", {"url": self.url})
@@ -1678,6 +1771,7 @@ class StageRecorder:
         self.frames_dir = Path(tempfile.mkdtemp(prefix="frago-clip-"))
         self.stamps = []
         self.journal = []
+        self.voice_lines = []
         self._idx = 0
         self._t0 = time.time()
         self.recording = True
@@ -1736,6 +1830,30 @@ class StageRecorder:
             entry["error"] = error
         self.journal.append(entry)
 
+    def add_voice(self, line: dict, started_at: float) -> dict | None:
+        """记下一句开口的话，并把它的音频**当场**复制进本段的录制目录。
+
+        当场复制而不是停录时再去缓存里拿：缓存超容量会按最久没用的删，一段长录
+        中途删掉的恰好可能是开头那几句，停录时才发现音频没了，片子里就少几句话。
+        不在录、或开口时刻早于开录（上一段话拖进了这一段），都不记。
+        """
+        if not self.recording or self.name is None or started_at < self._t0:
+            return None
+        folder = self.out_dir / f"{self.name}-voice"
+        folder.mkdir(parents=True, exist_ok=True)
+        seat = len(self.voice_lines) + 1
+        dest = folder / f"{seat:03d}.mp3"
+        shutil.copyfile(line["audio"], dest)
+        entry = {
+            "id": line["id"],
+            "at": round(started_at - self._t0, 3),
+            "duration_ms": line["duration_ms"],
+            "text": line["text"],
+            "file": str(dest),
+        }
+        self.voice_lines.append(entry)
+        return entry
+
     async def stop(self) -> dict:
         if not self.recording:
             raise RuntimeError("当前没有在录")
@@ -1746,15 +1864,19 @@ class StageRecorder:
         with suppress(Exception):
             await self._send("Page.stopScreencast")
         frames_dir, stamps, name = self.frames_dir, self.stamps, self.name
-        journal = self.journal
+        journal, voice_lines = self.journal, self.voice_lines
         self.frames_dir, self.stamps, self.name = None, [], None
-        self.journal = []
+        self.journal, self.voice_lines = [], []
         if not stamps:
             shutil.rmtree(frames_dir, ignore_errors=True)
             raise RuntimeError("没有收到任何帧——画面全程静止？")
         out = self.out_dir / f"{name}.mp4"
         await asyncio.to_thread(_encode, frames_dir, stamps, out, self.fps)
         shutil.rmtree(frames_dir, ignore_errors=True)
+        voice_out = None
+        if voice_lines:
+            voice_out = await asyncio.to_thread(
+                _mux_voice, out, voice_lines, self.out_dir / f"{name}-voice.json")
         log_path = self.out_dir / f"{name}.jsonl"
         log_path.write_text(
             "\n".join(json.dumps(e, ensure_ascii=False) for e in journal) + "\n"
@@ -1777,6 +1899,7 @@ class StageRecorder:
             "frames": len(stamps),
             "duration_sec": round(stamps[-1], 2),
             "size_bytes": out.stat().st_size,
+            **({"voice": voice_out} if voice_out else {}),
             **inspect,
         }
 
@@ -1814,7 +1937,7 @@ def _encode(frames_dir: Path, stamps: list[float], out: Path, fps: int) -> None:
     proc = subprocess.run(
         [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
-            "-vsync", "cfr", "-r", str(fps),
+            "-fps_mode", "cfr", "-r", str(fps),
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
             "-c:v", "libx264", "-preset", "medium", "-crf", "18",
             "-pix_fmt", "yuv420p", str(out),
@@ -1823,6 +1946,55 @@ def _encode(frames_dir: Path, stamps: list[float], out: Path, fps: int) -> None:
     )
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg 失败: {proc.stderr[-1200:]}")
+
+
+def _mux_voice(mp4: Path, lines: list[dict], manifest: Path) -> dict:
+    """把本段录制里开口的每一句，按开口时刻贴成一条音轨封进片子。
+
+    画面不重编码（-c:v copy），只加一条音轨。每句按自己的开口时刻往后推
+    （adelay），再叠成一轨（amix，normalize=0：不叠的地方不许被压小声）。
+
+    被打断的那句（带 cut_ms）只贴实际说出的那一段（atrim），到点直接掐断，
+    不淡出——打断就是打断，声音上也得是。
+
+    **恒不抛异常**：音轨没封进去，片子照样是一段能用的无声画面——把它连同
+    一句"音轨没封进去"交出去，远好过让停录整个失败。清单文件无论成败都写，
+    每句的开口时刻与音频副本都在里面，后期要自己配也有据可依。
+    """
+    manifest.write_text(json.dumps({"clip": mp4.name, "lines": lines},
+                                   ensure_ascii=False, indent=2))
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(mp4)]
+    for line in lines:
+        cmd += ["-i", line["file"]]
+    chains = [f"[{i}:a]"
+              + (f"atrim=end={max(line['cut_ms'], 1) / 1000:.3f},"
+                 if line.get("cut_ms") is not None else "")
+              + f"adelay=delays={round(line['at'] * 1000)}:all=1[a{i}]"
+              for i, line in enumerate(lines, start=1)]
+    labels = "".join(f"[a{i}]" for i in range(1, len(lines) + 1))
+    if len(lines) == 1:
+        graph = chains[0].rsplit("[", 1)[0] + "[voice]"
+    else:
+        graph = (";".join(chains) + f";{labels}amix=inputs={len(lines)}"
+                 ":normalize=0:dropout_transition=0[voice]")
+    tmp = mp4.with_name(f".{mp4.stem}.voice.mp4")
+    cmd += ["-filter_complex", graph, "-map", "0:v", "-map", "[voice]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", str(tmp)]
+    out = {"lines": len(lines), "manifest": str(manifest),
+           "copies": str(Path(lines[0]["file"]).parent)}
+    try:
+        proc = _run(cmd, timeout=600)
+        if proc.returncode != 0 or not tmp.exists():
+            raise RuntimeError(proc.stderr[-800:] or f"ffmpeg 退出码 {proc.returncode}")
+        os.replace(tmp, mp4)
+        out["muxed"] = True
+    except Exception as exc:  # noqa: BLE001 —— 见文档串：音轨失败不许掀翻停录
+        tmp.unlink(missing_ok=True)
+        out["muxed"] = False
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        out["note"] = ("音轨没封进去，片子是无声的。每句的开口时刻和音频副本在 "
+                       "manifest / copies 里，可以照着自己配。")
+    return out
 
 
 # ─────────────────────── 成片自检（抽帧与冻帧） ───────────────────────
@@ -1849,6 +2021,30 @@ def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
     # 而不是一个把停录整个掀翻的异常。
     return subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, check=False)
+
+
+SPEECH_OUTS = ("page", "local", "both", "none")
+SPEECH_START_GRACE_SEC = 3.0     # 页面收到之后多久之内该报"开始放了"
+SPEECH_END_GRACE_SEC = 3.0       # 按时长该放完了之后再宽限多久
+SPEECH_KEEP_DONE = 50            # 讲完的句子留多少条供 wait / status 查
+CAPTION_TAIL_MS = 300            # 字幕比声音多留一口气，别话音没落字先走
+
+
+def _player_cmd(path: str) -> list[str] | None:
+    """本机扬声器放一个音频文件的命令。macOS 自带 afplay；别处退到 ffplay。"""
+    if shutil.which("afplay"):
+        return ["afplay", path]
+    if shutil.which("ffplay"):
+        return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]
+    return None
+
+
+async def _spawn_player(path: str) -> asyncio.subprocess.Process:
+    cmd = _player_cmd(path)
+    if cmd is None:
+        raise RuntimeError("本机没有能放音频的程序（找过 afplay / ffplay）")
+    return await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
 
 
 def _ffprobe_duration(mp4: Path) -> float:
@@ -1949,7 +2145,7 @@ def _last_moving_action(journal: list[dict]) -> tuple[float | None, str | None]:
 # 把静止指令误算成会动，只是多一条 warn；把会动的误算成静止，就是把真冻帧
 # 放过去，而那正是这套自检存在的理由。
 STILL_OPS = {"sleep", "elements", "record.start", "record.stop",
-             "camera.up", "camera.down"}
+             "camera.up", "camera.down", "speech.wait", "speech.stop"}
 
 
 def _inspect_clip(mp4: Path, contact_png: Path,
@@ -2937,6 +3133,10 @@ def build_app(cfg: dict) -> FastAPI:
         confirmer.cancel()
         poller.cancel()
         framer.cancel()
+        # 本机扬声器上还在放的那句跟着收：播放进程是 broker 起的，broker 走了
+        # 它不该留在人电脑上继续说话。
+        with suppress(Exception):
+            await speech_interrupt("舞台停了")
         await recorder.close()
         await browser.close()
         if cfg.get("keep_tmux"):
@@ -2962,7 +3162,9 @@ def build_app(cfg: dict) -> FastAPI:
         自报里没有 contentId 的是更旧的资产（那时还没有这个字段），不当作
         外来荧幕——它归 uiVersion 那条防线管，两种病因不能互相顶替。
         """
-        for key in ("contentId", "instanceId", "uiVersion"):
+        # role 只有机位会报 camera（broker 在机位加载桌面页之前注入的），
+        # 人那块荧幕不报。放音进展只认人那块的：机位是无头的，没有扬声器。
+        for key in ("contentId", "instanceId", "uiVersion", "role"):
             if msg.get(key) is not None:
                 meta[key] = msg[key]
         want = cfg.get("content_id")
@@ -3253,6 +3455,10 @@ def build_app(cfg: dict) -> FastAPI:
                     if primary_meta() is not meta:
                         continue
                     ready.set()
+                elif msg.get("t") == "speech":
+                    # 放音进展：开始放了 / 放完了 / 被浏览器拦了。不看主不主——
+                    # 人可能开着两块荧幕，哪块放出声都算有人听见。
+                    speech_event(meta, msg)
         except WebSocketDisconnect:
             pass
         finally:
@@ -4842,9 +5048,330 @@ def build_app(cfg: dict) -> FastAPI:
         return {"action": action, "tabs": len(tabs),
                 "effect": _with_focus({"observed": True}, act)}
 
+    # ── 语音 ──
+    #
+    # say 默认只是字幕，带 speak 才开口。开口分三层：合成（voice.py，先查缓存）、
+    # 出声（这里的队列）、记账（录制期间开口的每一句记进 recorder，停录时封成音轨）。
+    #
+    # **队列是 broker 的，不是桌面页的。** 页面可能一块都没开、可能开了三块、机位
+    # 每次录制都是现开的一页；"这句讲完没有"必须有一个不随页面生灭的地方来答。
+    #
+    # 讲完的判据按出声位置分：
+    #   page   人看的那块荧幕报"开始放了"，再报"放完了"。3 秒内没有任何一块报
+    #          开始（没人开着页面、或浏览器拦了自动播放），就按时长走完并在回执里
+    #          写明**没人听见**——不许把"指令发出去了"说成"说出来了"。
+    #   local  本机播放进程退出。
+    #   none   不出声，只按时长走完：字幕和音轨照常，给"录后配音"用。
+    #   both   page 与 local 都走完。
+    #
+    # 新的一句默认排在上一句后面，两句不叠；interrupt 才打断。
+    speech: dict = {"seq": 0, "items": {}, "queue": [], "current": None,
+                    "worker": None}
+
+    def listening_screens() -> list[dict]:
+        """能替人把声音放出来的荧幕：本实例的、不是机位的、资产不过旧的。"""
+        return [m for m in stage.client_meta.values()
+                if m.get("role") != "camera"
+                and m.get("reason") != FOREIGN_REASON
+                and not m.get("stale")]
+
+    def speech_remaining_sec(item: dict) -> float:
+        dur = item["duration_ms"] / 1000
+        if item["state"] == "playing":
+            return max(0.0, item["started_at"] + dur - time.time())
+        return dur if item["state"] == "queued" else 0.0
+
+    def speech_view(item: dict) -> dict:
+        view = {k: item[k] for k in ("id", "state", "text", "out", "voice",
+                                     "duration_ms", "cached", "audio")}
+        for k in ("started_at", "ended_at", "ended_by", "end_reason",
+                  "cut_ms", "recorded", "error"):
+            if item.get(k) is not None:
+                view[k] = item[k]
+        if item["out"] in ("page", "both"):
+            view["heard_by_screens"] = len(item["heard_by"])
+            if item["blocked_by"]:
+                view["blocked_screens"] = len(item["blocked_by"])
+            if item["state"] == "done" and not item["heard_by"]:
+                view["heard"] = False
+                view["note"] = (
+                    "没有一块人看的桌面页把这句放出声"
+                    + ("：此刻根本没有人开着桌面页。"
+                       if not item.get("screens_at_start") else
+                       "：浏览器拦了自动播放——到桌面页上点一下「启用声音」，"
+                       "之后的句子就能放出来。")
+                    + "字幕、时长与录制音轨不受影响。")
+        return view
+
+    def speech_forget_old() -> None:
+        done = [sid for sid, it in speech["items"].items()
+                if it["done_evt"].is_set()]
+        for sid in done[:-SPEECH_KEEP_DONE]:
+            speech["items"].pop(sid, None)
+
+    async def speech_page_listen(item: dict, dur: float) -> str:
+        try:
+            await asyncio.wait_for(item["started_evt"].wait(),
+                                   SPEECH_START_GRACE_SEC)
+        except TimeoutError:
+            await asyncio.sleep(max(0.0, item["started_at"] + dur - time.time()))
+            return "clock"
+        try:
+            await asyncio.wait_for(item["ended_evt"].wait(),
+                                   dur + SPEECH_END_GRACE_SEC)
+            return "screen"
+        except TimeoutError:
+            return "timeout"
+
+    async def speech_local_play(item: dict, dur: float) -> str:
+        proc = await _spawn_player(item["audio"])
+        try:
+            await asyncio.wait_for(proc.wait(), dur + SPEECH_END_GRACE_SEC + 2)
+            return "player" if proc.returncode == 0 else f"player_exit_{proc.returncode}"
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            return "timeout"
+        except asyncio.CancelledError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            raise
+
+    async def speech_play(item: dict) -> None:
+        item["state"] = "playing"
+        item["started_at"] = time.time()
+        item["screens_at_start"] = len(listening_screens())
+        if recorder.recording:
+            try:
+                item["rec_entry"] = recorder.add_voice(item, item["started_at"])
+                item["recorded"] = item["rec_entry"] is not None
+            except Exception as exc:  # noqa: BLE001 记不进片子也照常说
+                item["recorded"] = False
+                item["error"] = f"没能复制进录制目录: {type(exc).__name__}: {exc}"
+        await broadcast({"t": "say", "text": item["text"], "speech": True,
+                         "ms": item["duration_ms"] + CAPTION_TAIL_MS})
+        dur = item["duration_ms"] / 1000
+        jobs = []
+        if item["out"] in ("page", "both"):
+            await broadcast({"t": "speech.play", "id": item["id"],
+                             "url": item["url"], "ms": item["duration_ms"]})
+            jobs.append(speech_page_listen(item, dur))
+        if item["out"] in ("local", "both"):
+            jobs.append(speech_local_play(item, dur))
+        if item["out"] == "none":
+            jobs.append(asyncio.sleep(dur, result="clock"))
+        try:
+            item["ended_by"] = "+".join(await asyncio.gather(*jobs))
+        except asyncio.CancelledError:
+            if item["out"] in ("page", "both"):
+                with suppress(Exception):
+                    await broadcast({"t": "speech.stop", "id": item["id"]})
+            raise
+
+    async def speech_worker() -> None:
+        while speech["queue"]:
+            sid = speech["queue"].pop(0)
+            item = speech["items"][sid]
+            speech["current"] = sid
+            task = asyncio.create_task(speech_play(item))
+            item["task"] = task
+            try:
+                await task
+                item["state"] = "done"
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                item["state"] = "interrupted"
+                # 实际说了多久。录制里记的是整句，不改的话停录贴音轨时这句
+                # 会整句贴进去，和打断它的那句叠着响——画面上是打断，声音上不是。
+                item["cut_ms"] = min(item["duration_ms"],
+                                     round((time.time() - item["started_at"]) * 1000))
+                if item.get("rec_entry") is not None:
+                    item["rec_entry"]["cut_ms"] = item["cut_ms"]
+            except Exception as exc:  # noqa: BLE001 一句出错不拖垮后面排着的
+                item["state"] = "failed"
+                item["error"] = f"{type(exc).__name__}: {exc}"
+            finally:
+                item["ended_at"] = time.time()
+                item.pop("task", None)
+                speech["current"] = None
+                item["done_evt"].set()
+        speech_forget_old()
+
+    def speech_enqueue(syn: dict, text: str, out: str) -> dict:
+        speech["seq"] += 1
+        sid = str(speech["seq"])
+        item = {
+            "id": sid, "state": "queued", "text": text, "out": out,
+            "voice": syn["voice"], "duration_ms": int(syn["duration_ms"]),
+            "cached": bool(syn.get("cached")), "audio": syn["audio"],
+            "url": f"http://127.0.0.1:{cfg['port']}/voice/{syn['key']}.mp3",
+            "queued_at": time.time(), "heard_by": [], "blocked_by": [],
+            "started_evt": asyncio.Event(), "ended_evt": asyncio.Event(),
+            "done_evt": asyncio.Event(),
+        }
+        speech["items"][sid] = item
+        speech["queue"].append(sid)
+        worker = speech["worker"]
+        if worker is None or worker.done():
+            speech["worker"] = asyncio.create_task(speech_worker())
+        return item
+
+    async def speech_interrupt(reason: str) -> dict:
+        dropped = []
+        for sid in speech["queue"]:
+            it = speech["items"][sid]
+            it["state"], it["end_reason"] = "dropped", reason
+            it["done_evt"].set()
+            dropped.append(sid)
+        speech["queue"].clear()
+        stopped = None
+        cur = speech["items"].get(speech["current"] or "")
+        task = cur.get("task") if cur else None
+        if task is not None and not task.done():
+            cur["end_reason"] = reason
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cur["done_evt"].wait()
+            stopped = cur["id"]
+        return {"stopped": stopped, "dropped": dropped}
+
+    def speech_pending() -> list[dict]:
+        ids = ([speech["current"]] if speech["current"] else []) + speech["queue"]
+        return [speech["items"][sid] for sid in ids]
+
+    async def speech_wait(target: str, timeout: float | None) -> dict:
+        """等语音讲完。target 是 "all" 或一句的编号。
+
+        超时不许无限：默认按排着的总时长加每句的宽限算。等不到就报错，说清楚
+        卡在哪一句——而不是让调用方一直挂着说不出自己在等什么。
+        """
+        t0 = time.time()
+        if target == "all":
+            pending = speech_pending()
+            if not pending:
+                return {"target": "all", "waited_sec": 0.0, "idle": True}
+        else:
+            item = speech["items"].get(str(target))
+            if item is None:
+                raise ValueError(
+                    f"没有编号为 {target} 的语音（编号随舞台重启归零，讲完的只留最近 "
+                    f"{SPEECH_KEEP_DONE} 句）；等全部讲完用 --speech all")
+            ahead = speech_pending()
+            pending = ahead[:ahead.index(item) + 1] if item in ahead else [item]
+        if timeout is None:
+            timeout = sum(speech_remaining_sec(it) for it in pending) \
+                + (SPEECH_START_GRACE_SEC + SPEECH_END_GRACE_SEC) * len(pending) + 5
+        deadline = t0 + timeout
+        try:
+            if target == "all":
+                # 等的过程中可能又排进来新的（另一条命令发的），全部讲完才算完。
+                while (pending := speech_pending()):
+                    await asyncio.wait_for(pending[-1]["done_evt"].wait(),
+                                           max(0.01, deadline - time.time()))
+            else:
+                await asyncio.wait_for(item["done_evt"].wait(),
+                                       max(0.01, deadline - time.time()))
+        except TimeoutError:
+            cur = speech["items"].get(speech["current"] or "")
+            raise TimeoutError(
+                f"等语音讲完等了 {timeout:.0f} 秒还没完"
+                + (f"，正在说第 {cur['id']} 句：{cur['text'][:40]}" if cur else "")
+                + "。要掐掉用 `frago desktop voice stop`") from None
+        out = {"target": target, "waited_sec": round(time.time() - t0, 3)}
+        if target != "all":
+            out["speech"] = speech_view(item)
+        return out
+
+    def speech_event(meta: dict, msg: dict) -> None:
+        """荧幕报回来的放音进展。机位与外来荧幕报的一律不算。"""
+        if meta.get("role") == "camera" or meta.get("reason") == FOREIGN_REASON:
+            return
+        event = msg.get("event")
+        if event == "blocked":
+            meta["sound"] = "blocked"
+        elif event == "started":
+            meta["sound"] = "on"
+        item = speech["items"].get(str(msg.get("id")))
+        if item is None or item["state"] != "playing":
+            return
+        if event == "started":
+            item["heard_by"].append(meta.get("seq"))
+            item["started_evt"].set()
+        elif event == "ended" and item["heard_by"]:
+            item["ended_evt"].set()
+        elif event == "blocked":
+            item["blocked_by"].append(meta.get("seq"))
+
     async def op_say(step: dict) -> Any:
-        await broadcast({"t": "say", "text": step["text"], "ms": step.get("ms", 2500)})
-        return {"said": step["text"]}
+        if not step.get("speak"):
+            await broadcast({"t": "say", "text": step["text"],
+                             "ms": step.get("ms", 2500)})
+            return {"said": step["text"]}
+        text = str(step.get("text") or "").strip()
+        out = step.get("out", "page")
+        if out not in SPEECH_OUTS:
+            raise ValueError(f"未知出声位置: {out!r}（允许: {'/'.join(SPEECH_OUTS)}）")
+        if out in ("local", "both") and _player_cmd("x.mp3") is None:
+            raise ValueError("本机没有能放音频的程序（找过 afplay / ffplay），"
+                             "出声位置换成 page 或 none")
+        try:
+            syn = await voice.synthesize(
+                text, step.get("voice") or voice.DEFAULT_VOICE,
+                step.get("rate", "+0%"), step.get("volume", "+0%"),
+                step.get("pitch", "+0Hz"))
+        except (voice.VoiceUnavailable, voice.VoiceFailed) as exc:
+            # 退回只显示字幕，照常往下走，但回执里写明这句没出声。整批停下来
+            # 代价太大（一句旁白没声音不至于让整条动线作废），闷声吞掉更坏。
+            ms = int(step.get("ms") or 2600)
+            await broadcast({"t": "say", "text": text, "ms": ms})
+            return {"said": text, "spoken": False, "error": str(exc),
+                    "note": "这句没出声：合成没做成，只显示了字幕（按 "
+                            f"{ms} 毫秒计时）。录制音轨里也没有这一句。"}
+        interrupted = (await speech_interrupt("被新的一句打断")
+                       if step.get("interrupt") else None)
+        behind = speech_pending()
+        item = speech_enqueue(syn, text, out)
+        result: dict = {"said": text, "spoken": True}
+        if interrupted is not None:
+            result["interrupted"] = interrupted
+        if step.get("async"):
+            result["queued_behind"] = [it["id"] for it in behind]
+            result["starts_in_ms"] = round(
+                sum(speech_remaining_sec(it) for it in behind) * 1000)
+            result["speech"] = speech_view(item)
+            result["hint"] = (f"要等它讲完再往下走：frago desktop wait --speech "
+                              f"{item['id']}")
+            return result
+        waited = await speech_wait(item["id"], None)
+        result["speech"] = waited["speech"]
+        result["waited_sec"] = waited["waited_sec"]
+        return result
+
+    async def op_speech_wait(step: dict) -> Any:
+        target = str(step.get("target") or "all")
+        timeout = step.get("timeout")
+        return await speech_wait(target, float(timeout) if timeout else None)
+
+    async def op_speech_stop(_step: dict) -> Any:
+        out = await speech_interrupt("被 voice stop 掐掉")
+        out["noop"] = not (out["stopped"] or out["dropped"])
+        return out
+
+    @app.get("/voice/{name}")
+    async def serve_voice(name: str) -> Response:
+        """发缓存里的一句音频。只认 <64 位指纹>.mp3，别的一律 404。
+
+        地址按内容定（指纹就是内容），所以可以放心让浏览器缓存——与 /image 那条
+        恒为同一个地址、必须 no-store 的情形正好相反。
+        """
+        key = name[:-4] if name.endswith(".mp3") else ""
+        path = voice.audio_path(key)
+        if path is None:
+            return Response(content=b"no such voice", status_code=404,
+                            media_type="text/plain")
+        return FileResponse(path, media_type="audio/mpeg",
+                            headers={"Cache-Control": "max-age=86400"})
 
     # ── 图片浏览器 ──
     #
@@ -5476,7 +6003,19 @@ def build_app(cfg: dict) -> FastAPI:
         return out
 
     async def op_record_stop(_step: dict) -> Any:
-        return await recorder.stop()
+        # 先等语音讲完再停：停录那一刻还在说的那句，后半截会被切在片子外面。
+        # 等不到（超时）照停，并在回执里说出来——停录是收尾步骤，不能被一句
+        # 卡住的话挡着不收。
+        waited: dict | None = None
+        if recorder.recording and speech_pending():
+            try:
+                waited = await speech_wait("all", None)
+            except TimeoutError as exc:
+                waited = {"timed_out": True, "error": str(exc)}
+        out = await recorder.stop()
+        if waited is not None:
+            out["waited_for_speech"] = waited
+        return out
 
     async def op_camera_up(_step: dict) -> Any:
         """把机位准备好，不开录。慢在这里，让开录那一下恒为毫秒级。"""
@@ -5548,6 +6087,7 @@ def build_app(cfg: dict) -> FastAPI:
         "navigate": op_navigate, "exec": op_exec, "win": op_win,
         "viewport": op_viewport, "tab": op_tab, "elements": op_elements,
         "say": op_say, "sleep": op_sleep,
+        "speech.wait": op_speech_wait, "speech.stop": op_speech_stop,
         "camera.focus": op_camera_focus, "camera.pan": op_camera_pan,
         "camera.reset": op_camera_reset,
         "camera.up": op_camera_up, "camera.down": op_camera_down,
@@ -5748,7 +6288,11 @@ def build_app(cfg: dict) -> FastAPI:
                  # 同实例多块荧幕时，只有一条是主荧幕、它的几何算数。
                  # 光看 accepted 分不清"还没报过 layout"和"报了但不算数"。
                  "primary": m is primary_meta(),
-                 "reason": m.get("reason")}
+                 "reason": m.get("reason"),
+                 # camera = 录制机位那一页；sound = 放音现状（on 放出过声、
+                 # blocked 被浏览器拦了自动播放、null 还没放过）。
+                 "role": m.get("role") or "screen",
+                 "sound": m.get("sound")}
                 for m in stage.client_meta.values()
             ],
             "clients_count": len(stage.clients),
@@ -5841,6 +6385,14 @@ def build_app(cfg: dict) -> FastAPI:
             "strap": (None if stage.last_strap is None else
                       {k: v for k, v in stage.last_strap.items()
                        if k != "at_ts"}),
+            # 语音队列：正在说哪句、后面排着几句。能放出声的荧幕数单列——
+            # 它为 0 时 page 出声的句子没人听得见，回执会说，这里提前看得到。
+            "speech": {
+                "current": (speech_view(speech["items"][speech["current"]])
+                            if speech["current"] else None),
+                "queued": list(speech["queue"]),
+                "listening_screens": len(listening_screens()),
+            },
             # 取景框现状。它只作用于录制落盘的帧，所以这里报的是"下一帧会
             # 留下桌面的哪一块"，不是人在桌面页上看到的东西。
             "camera": recorder.camera.report(),
