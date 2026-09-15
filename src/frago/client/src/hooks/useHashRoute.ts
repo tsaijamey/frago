@@ -15,16 +15,27 @@ import { parsePath, pathForPage, writeLocationRoute } from '@/routes';
 
 export function useHashRoute(): void {
   useEffect(() => {
-    const { currentPage, currentTaskId, currentRecipeName, currentProjectId, currentTodoId } =
-      usePageStore.getState();
-    const id = currentTaskId ?? currentRecipeName ?? currentProjectId ?? currentTodoId;
+    const {
+      currentPage,
+      currentTaskId,
+      currentRecipeName,
+      currentProjectId,
+      currentTodoId,
+      currentRecipeAppId,
+    } = usePageStore.getState();
+    const id =
+      currentTaskId ?? currentRecipeName ?? currentProjectId ?? currentTodoId ?? currentRecipeAppId;
     writeLocationRoute(pathForPage(currentPage, id), true);
 
     const sync = () => {
       const route = parsePath(window.location.hash);
       const state = usePageStore.getState();
       const currentId =
-        state.currentTaskId ?? state.currentRecipeName ?? state.currentProjectId ?? state.currentTodoId;
+        state.currentTaskId ??
+        state.currentRecipeName ??
+        state.currentProjectId ??
+        state.currentTodoId ??
+        state.currentRecipeAppId;
       // 地址栏说的就是现在这一页时不动手：`switchPage` 刚写完地址也会触发
       // hashchange，再落一次状态等于把同一次跳转做两遍。
       if (state.currentPage === route.page && currentId === route.id) return;

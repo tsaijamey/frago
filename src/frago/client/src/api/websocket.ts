@@ -35,6 +35,8 @@ export const MessageType = {
   // Recipe events
   RECIPE_STARTED: 'recipe_started',
   RECIPE_COMPLETED: 'recipe_completed',
+  // 服务端请界面在右侧打开某个配方的页面（配方跑完、或 frago recipe open）
+  RECIPE_APP_OPEN: 'recipe_app_open',
 
   // PA events (Primary Agent lifecycle)
   PA_INGESTION: 'pa_ingestion',

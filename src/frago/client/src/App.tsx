@@ -4,6 +4,7 @@ import { isApiReady, getApiMode, waitForApi } from '@/api';
 import { getInitStatus } from '@/api/client';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useHashRoute } from '@/hooks/useHashRoute';
+import { useRecipeAppOpen } from '@/hooks/useRecipeAppOpen';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
@@ -38,6 +39,9 @@ function App() {
 
   // 地址栏 ↔ 当前页面双向对齐：刷新停在原处，后退键退得回去，链接发得出去。
   useHashRoute();
+
+  // 配方跑完要给人看页面时，开在右侧、pin 在 recipes 下面，不再另开浏览器标签。
+  useRecipeAppOpen();
 
   useEffect(() => {
     const initApi = async () => {
@@ -106,6 +110,9 @@ function App() {
         return <RecipeList />;
       case 'recipe_detail':
         return <RecipeDetail />;
+      case 'recipe_app':
+        // 配方页面由主布局里的常驻宿主渲染，切走也不卸载（见 RecipeAppHost）。
+        return null;
       case 'data_repo':
         return <DataRepoPage />;
       case 'todos':

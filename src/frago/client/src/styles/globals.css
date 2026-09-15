@@ -623,6 +623,176 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   box-shadow: var(--focus-ring);
 }
 
+/* recipes 和它下面 pin 着的配方页面。子项之间的间距跟主菜单同一档，读起来是同一串。 */
+.rail-group,
+.rail-subnav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nav-item-gap);
+}
+
+/* 子项：矮一档、字暗一档，展开时往里缩一个图标位，看得出是 recipes 的下一层。
+   选中跟主菜单一样整行换中性底，不靠任何单边色条。 */
+.rail-subitem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: calc(var(--nav-item-height) - 4px);
+  border-radius: var(--nav-item-radius);
+  color: var(--text-muted);
+}
+
+.rail--expanded .rail-subitem {
+  margin-left: 14px;
+}
+
+.rail-subitem:hover {
+  background: var(--bg-hover);
+  color: var(--sidebar-item-selected-text);
+}
+
+.rail-subitem--active {
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
+}
+
+.rail-subitem--active .rail-item-label {
+  font-weight: var(--font-weight-bold);
+}
+
+.rail-subitem-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.rail-subitem-open .rail-item-label {
+  font-size: var(--font-size-sm);
+}
+
+/* × 平时藏着，鼠标停在这一行或键盘移到它上面才出来：常亮的话一列 × 比名字还显眼。 */
+.rail-subitem-unpin {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.rail-subitem:hover .rail-subitem-unpin,
+.rail-subitem-unpin:focus-visible {
+  opacity: 1;
+}
+
+.rail-subitem-unpin:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.rail-subitem-open:focus-visible,
+.rail-subitem-unpin:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 右侧开着的配方页面：一条细栏 + 占满其余高度的页面。 */
+.recipe-app-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 切到别的页面时藏起来但不卸载，页面里没保存的输入还在。上面的 display:flex 会压过
+   hidden 属性自带的隐藏，这里补回来。 */
+.recipe-app-page[hidden] {
+  display: none;
+}
+
+.recipe-app-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.recipe-app-name {
+  min-width: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipe-app-slot {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.recipe-app-bar-spacer {
+  flex: 1;
+}
+
+.recipe-app-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.recipe-app-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.recipe-app-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.recipe-app-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  background: var(--bg-primary);
+}
+
 .rail-spacer {
   flex: 1;
 }

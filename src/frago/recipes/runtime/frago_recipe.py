@@ -620,6 +620,53 @@ class Recipe:
     def open_page(self, url: str) -> bool:
         return self.bus.open_page(url)
 
+    def page_url(self, slot: str | None = None) -> str:
+        """This module's page address, without publishing anything.
+
+        The page always lives at ``/app/<name>/`` on the platform, and the
+        platform is where the hub is. ``slot`` names one published copy
+        (``?key=``); none is the short address, whose page asks its own back
+        end what to show. Here so a module never spells the address itself —
+        one that did would break the day the layout moves, and quietly.
+        """
+        from urllib.parse import quote
+
+        base = f"{self.bus.url}/app/{self.name}"
+        return f"{base}?key={quote(slot, safe='')}" if slot else base
+
+    def refuse(self, code: str, message: str, *, page: str | bool | None = None,
+               **detail: Any) -> dict:
+        """A normal answer that says no. ``return self.refuse(...)``.
+
+        **Not a failure.** The run did what it should: it looked and declined —
+        a round is still open, the account is empty, today's data is not in yet.
+        ``fail`` would turn that into ``ok: false`` and a non-zero exit, and the
+        reason would reach a signed-in visitor as a bare "the run failed".
+
+        **The person must be able to see it.** Somebody pressed a button
+        outside the page; a refusal that carries nothing leaves them with a run
+        reported as done and a screen where nothing happened. So:
+
+        * ``code`` — a short, stable reason (``open_session``, ``no_cash``) a
+          page can branch on;
+        * ``message`` — what to tell the person, in their words. The WebUI shows
+          it in place of "done";
+        * ``page`` — where they sort it out. ``True`` for the short address, a
+          slot name for that copy. The platform opens it (inside the WebUI) for
+          a run started outside the page, and not for one started from it.
+          ``open=false`` in the params keeps it closed, as for any result.
+
+        The shape — ``refused`` + ``message`` in the data — is the contract;
+        this method is the convenient way to produce it.
+        """
+        out: dict = {"refused": code, "message": message, **detail}
+        if page:
+            url = self.page_url(page if isinstance(page, str) else None)
+            out["url"] = url
+            if self.params.get("open") is not False:
+                out["open_url"] = url
+        return out
+
     # ── saying what is happening ───────────────────────────────────────────
 
     def progress(self, note: str, step: int | None = None, of: int | None = None) -> None:

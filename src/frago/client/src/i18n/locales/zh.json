@@ -207,6 +207,14 @@
     "atomicTip": "解决单一问题的小配方，可组合",
     "noResults": "无匹配结果",
     "backToRecipeList": "返回配方列表",
+    "app": {
+      "open": "打开页面",
+      "pinned": "已 pin 的配方页面",
+      "reload": "重新载入页面",
+      "detail": "配方详情",
+      "unpin": "取消 pin",
+      "missing": "没有指定要打开哪个配方页面"
+    },
     "recipeNotExist": "配方不存在",
     "type": "类型",
     "source": "来源",

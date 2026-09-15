@@ -248,6 +248,10 @@ else:
     print(json.dumps(results, ensure_ascii=False))
 ```
 
+### 被拒不是错误
+
+配方看过之后说不（还有未完成的事、条件不满足），运行本身是成功的：返回结果，退出码 0，结果里写 `refused`（原因代号）和 `message`（给人看的话）。基于配方基类的写 `return self.refuse(代号, 原话, page=...)`。带界面的配方 MUST 给出人去处理的页面，WebUI 会显示原话并打开它。细则见 `frago book interactive-recipe` 的「每一种结局都要落到人看得见的地方」。
+
 ### 错误输出
 
 错误信息写 stderr，设置非零退出码：

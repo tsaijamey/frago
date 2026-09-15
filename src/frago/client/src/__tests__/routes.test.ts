@@ -95,6 +95,23 @@ describe('写出去再读回来', () => {
     expect(parsePath(pathForPage(page, id))).toEqual({ page, id });
   });
 
+  it('配方页面：名字一段，非默认槽位再跟一段', () => {
+    expect(parsePath('#/app/demo_recipe')).toEqual({ page: 'recipe_app', id: 'demo_recipe' });
+    // 服务端没人接时交给浏览器的就是这个写法（viewer/browser.py webui_url_for）
+    expect(parsePath('#/app/demo_recipe/2024-2025')).toEqual({
+      page: 'recipe_app',
+      id: 'demo_recipe/2024-2025',
+    });
+    expect(parsePath(pathForPage('recipe_app', 'demo_recipe/x'))).toEqual({
+      page: 'recipe_app',
+      id: 'demo_recipe/x',
+    });
+  });
+
+  it('只有 /app 一段不是一个页面，回首页', () => {
+    expect(parsePath('#/app')).toEqual({ page: HOME_PAGE, id: null });
+  });
+
   it('编号里带斜杠也转得回来', () => {
     expect(parsePath(pathForPage('todo_detail', 'a/b'))).toEqual({
       page: 'todo_detail',

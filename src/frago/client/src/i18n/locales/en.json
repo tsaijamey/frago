@@ -207,6 +207,14 @@
     "atomicTip": "Small recipe that solves one specific problem, composable",
     "noResults": "No matching results",
     "backToRecipeList": "Back to Recipe List",
+    "app": {
+      "open": "Open page",
+      "pinned": "Pinned recipe pages",
+      "reload": "Reload page",
+      "detail": "Recipe details",
+      "unpin": "Unpin",
+      "missing": "No recipe page specified"
+    },
     "recipeNotExist": "Recipe does not exist",
     "type": "Type",
     "source": "Source",

@@ -30,6 +30,9 @@ const PAGE_SEGMENT: Record<PageType, string> = {
   task_detail: 'tasks',
   recipes: 'recipes',
   recipe_detail: 'recipes',
+  // 配方页面开在界面右侧：`/app/<配方名>`，非默认槽位是 `/app/<配方名>/<槽位>`。
+  // 段名跟服务端发页面的 `/app/<配方名>/` 同一个词，人从一个地址认得出另一个。
+  recipe_app: 'app',
   data_repo: 'data',
   todos: 'todos',
   todo_detail: 'todos',
@@ -47,6 +50,7 @@ const PAGE_SEGMENT: Record<PageType, string> = {
 const DETAIL_PAGE: Record<string, PageType> = {
   tasks: 'task_detail',
   recipes: 'recipe_detail',
+  app: 'recipe_app',
   todos: 'todo_detail',
   schedules: 'schedule_detail',
   workspace: 'project_detail',

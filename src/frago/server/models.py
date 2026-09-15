@@ -174,6 +174,8 @@ class RecipeDetailResponse(BaseModel):
     env: Dict[str, Any] = Field(default_factory=dict)
     source_code: Optional[str] = None
     flow: List[RecipeFlowStep] = Field(default_factory=list)
+    # 这个配方有没有页面（/app/<名字>/ 能开出东西）。界面据此决定给不给「打开页面」。
+    has_page: bool = False
 
 
 class TaskItemResponse(BaseModel):

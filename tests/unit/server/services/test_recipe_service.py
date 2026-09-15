@@ -256,4 +256,8 @@ class TestRecipeServiceRunRecipe:
         # ctx says whose run this is. None is the owner — the caller not
         # passing one is what made a signed-in person's page read out of the
         # machine's directory instead of their own.
-        mock_runner.run.assert_called_once_with("param-recipe", {"key": "value"}, ctx=None)
+        # show_page defaults to True: only a run from the recipe's own page
+        # passes False, so a result's open_url does not reopen that page.
+        mock_runner.run.assert_called_once_with(
+            "param-recipe", {"key": "value"}, ctx=None, show_page=True
+        )

@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
+  AppWindow,
   MessageSquare,
   LayoutGrid,
   Database,
@@ -38,8 +39,11 @@ import {
   Moon,
   Sun,
   Terminal,
+  X,
 } from 'lucide-react';
 import { useAppStore, type PageType } from '@/stores/appStore';
+import { usePageStore } from '@/stores/pageStore';
+import { splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
 import { useClaudeUsage } from '@/hooks/useClaudeUsage';
 import { useTmuxSessionCount } from '@/hooks/useTmuxSessions';
 import { countAttention, useEnvironment, useEnvironmentUpgrade } from '@/hooks/useEnvironment';
@@ -85,6 +89,66 @@ export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'data_repo') return currentPage === 'data_repo';
   if (id === 'settings') return currentPage === 'settings';
   return false;
+}
+
+/**
+ * recipes 下面 pin 着的配方页面，一个一行。
+ *
+ * 配方页面开在右侧之后，菜单里得有一条回到它的路——否则人切去 sessions 看一眼，
+ * 页面就只能靠地址栏找回来。所以打开过的页面都在这里留一行，点一下回去，× 摘掉。
+ *
+ * 收起时只剩图标，名字交给 tooltip，跟上面几项同一个办法；× 也跟着收掉，40px 宽里
+ * 两颗按钮挤在一起只会误点。摘掉正开着的那一页时退回配方清单，不留一张没有入口的页。
+ */
+function RecipeAppPinItems({ expanded }: { expanded: boolean }) {
+  const { t } = useTranslation();
+  const pins = useRecipeAppPins((s) => s.pins);
+  const unpin = useRecipeAppPins((s) => s.unpin);
+  const currentPage = usePageStore((s) => s.currentPage);
+  const currentId = usePageStore((s) => s.currentRecipeAppId);
+  const switchPage = usePageStore((s) => s.switchPage);
+
+  if (pins.length === 0) return null;
+
+  return (
+    <div className="rail-subnav" role="group" aria-label={t('recipes.app.pinned')}>
+      {pins.map((id) => {
+        const { name, slot } = splitRecipeAppId(id);
+        const label = `${name.replace(/_/g, ' ')}${slot ? ` · ${slot}` : ''}`;
+        const active = currentPage === 'recipe_app' && currentId === id;
+        return (
+          <div key={id} className={`rail-subitem ${active ? 'rail-subitem--active' : ''}`}>
+            <button
+              type="button"
+              className="rail-subitem-open"
+              onClick={() => switchPage('recipe_app', id)}
+              title={label}
+              aria-current={active ? 'page' : undefined}
+            >
+              <span className="rail-item-icon">
+                <AppWindow {...ICON} />
+              </span>
+              {expanded ? <span className="rail-item-label">{label}</span> : null}
+            </button>
+            {expanded ? (
+              <button
+                type="button"
+                className="rail-subitem-unpin"
+                onClick={() => {
+                  unpin(id);
+                  if (active) switchPage('recipes');
+                }}
+                title={t('recipes.app.unpin')}
+                aria-label={`${t('recipes.app.unpin')} ${label}`}
+              >
+                <X size={12} strokeWidth={1.5} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 const EXPANDED_KEY = 'sidebar-expanded';
@@ -393,7 +457,18 @@ export default function Sidebar() {
         </button>
       </div>
 
-      <div className="rail-nav">{NAV_ITEMS.map(renderItem)}</div>
+      <div className="rail-nav">
+        {NAV_ITEMS.map((item) =>
+          item.id === 'recipes' ? (
+            <div key={item.id} className="rail-group">
+              {renderItem(item)}
+              <RecipeAppPinItems expanded={expanded} />
+            </div>
+          ) : (
+            renderItem(item)
+          )
+        )}
+      </div>
 
       <div className="rail-spacer" />
 

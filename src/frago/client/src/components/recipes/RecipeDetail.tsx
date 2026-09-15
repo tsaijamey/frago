@@ -1,4 +1,6 @@
+import { AppWindow } from 'lucide-react';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import { useRecipeAppPins } from '@/stores/recipeAppPins';
 import RecipeSecretsModal from './RecipeSecretsModal';
 import RecipeOverview from './RecipeOverview';
 import RecipeRunPanel from './RecipeRunPanel';
@@ -44,14 +46,29 @@ export default function RecipeDetail() {
     /* 外框只留左右与顶上的边距，**不留底边**：底边归滚动区自己，
        否则内容滚到底时会停在一段死白之上，而最后一行仍然贴着滚动区的边。 */
     <div className="flex h-full flex-col gap-4 overflow-hidden px-5 pt-5">
-      {/* Back button */}
-      <button
-        type="button"
-        className="btn btn-ghost self-start shrink-0"
-        onClick={() => switchPage('recipes')}
-      >
-        ← {t('recipes.backToRecipeList')}
-      </button>
+      {/* 返回 + 打开页面。有页面的配方在这里开到右侧，并 pin 到菜单 recipes 下面。 */}
+      <div className="flex shrink-0 items-center justify-between gap-2">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => switchPage('recipes')}
+        >
+          ← {t('recipes.backToRecipeList')}
+        </button>
+        {recipe.has_page ? (
+          <button
+            type="button"
+            className="btn btn-secondary flex items-center gap-2"
+            onClick={() => {
+              // 已经开着就回到那一张（不重新载入），没开着才新 pin 一行
+              switchPage('recipe_app', useRecipeAppPins.getState().pin(recipe.name));
+            }}
+          >
+            <AppWindow size={16} />
+            {t('recipes.app.open')}
+          </button>
+        ) : null}
+      </div>
 
       {/* Two-column: intro on the left, action/parameters panel on the right */}
       <div className="flex-1 overflow-y-auto pb-10">

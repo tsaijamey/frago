@@ -173,6 +173,7 @@ class RecipeService:
         params: dict[str, Any] | None = None,
         timeout: int = 300,  # noqa: ARG004 — kept for API compatibility
         ctx: Any = None,
+        show_page: bool = True,
     ) -> dict[str, Any]:
         """Execute a recipe synchronously.
 
@@ -187,6 +188,8 @@ class RecipeService:
                 for a run nobody signed in for, and wrong for every other kind.
                 Leaving it out was how a signed-in person's page read came back
                 out of the machine's directory instead of their own.
+            show_page: False when the run came from the recipe's own page, so
+                an ``open_url`` in its result does not open that page again.
 
         Returns:
             Result dictionary with status, data, and optionally error.
@@ -199,7 +202,7 @@ class RecipeService:
             from frago.recipes.runner import RecipeRunner
 
             runner = RecipeRunner()
-            result = runner.run(name, params or {}, ctx=ctx)
+            result = runner.run(name, params or {}, ctx=ctx, show_page=show_page)
 
             duration_ms = int((time.time() - start_time) * 1000)
 

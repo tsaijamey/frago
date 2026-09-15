@@ -264,7 +264,12 @@ async def _run_for_owner(name: str, request: Request):
         # recipe is allowed to come back to this same server — to publish, to
         # ask another module. Called inline, the loop waits on a recipe that is
         # waiting on the loop and the server stops answering anything at all.
-        result = await asyncio.to_thread(RecipeService.run_recipe, name, params, timeout, None)
+        #
+        # `show_page=False`: this run came from the recipe's own page. A result
+        # asking to open that page would reload the page the owner is already on.
+        result = await asyncio.to_thread(
+            RecipeService.run_recipe, name, params, timeout, None, show_page=False
+        )
     except Exception as err:
         logger.warning("app run: %s failed: %s", name, err)
         return {"ok": False, "error": {"code": "recipe-failed", "message": str(err)}}

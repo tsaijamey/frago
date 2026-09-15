@@ -153,6 +153,7 @@ export const getRecipeDetail = withMode(
       env: recipe.env as Record<string, unknown> | undefined,
       source_code: recipe.source_code as string | undefined,
       flow: recipe.flow as RecipeDetail['flow'],
+      has_page: Boolean(recipe.has_page),
     };
   },
   (name: string): Promise<RecipeDetail> => pywebviewApi.getRecipeDetail(name),
@@ -164,11 +165,12 @@ export const runRecipe = withMode(
     params?: Record<string, unknown>,
   ): Promise<RecipeRunResponse> => {
     try {
-      await httpApi.runRecipe(name, params);
+      const result = (await httpApi.runRecipe(name, params)) as unknown as { data?: unknown };
       return {
         status: 'ok',
         output: 'Recipe completed',
         error: null,
+        data: result?.data,
       };
     } catch (error) {
       return {

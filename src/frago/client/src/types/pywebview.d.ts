@@ -151,6 +151,8 @@ export interface RecipeDetail extends RecipeItem {
   env?: Record<string, unknown>;
   source_code?: string;
   flow?: RecipeFlowStep[];
+  /** 有页面（/app/<名字>/ 开得出东西）才给「打开页面」。 */
+  has_page?: boolean;
 }
 
 // ============================================================
@@ -327,6 +329,8 @@ export interface RecipeRunResponse {
   status: 'ok' | 'error';
   output: string | null;
   error: string | null;
+  /** 配方交回来的结果。里面可能写着「拒绝」，见 utils/recipeOutcome。 */
+  data?: unknown;
 }
 
 export interface ConfigUpdateResponse {

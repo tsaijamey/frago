@@ -162,6 +162,18 @@ def _assets_dir(name: str) -> Path:
     return assets
 
 
+def has_page(name: str) -> bool:
+    """Whether `/app/<name>/` would serve a page rather than a 404.
+
+    Asked by the WebUI before it offers to show a recipe's page inside itself:
+    an entry that leads to "has no assets/ directory" is worse than no entry.
+    """
+    try:
+        return (_assets_dir(name) / "index.html").is_file()
+    except HTTPException:
+        return False
+
+
 def _resolve_within(base: Path, relative: str) -> Path:
     """Resolve `relative` under `base`, refusing anything that escapes it."""
     candidate = (base / relative).resolve()
@@ -366,7 +378,8 @@ async def serve_app_api(name: str, mode: str, request: Request):
         # loop is blocked waiting for a recipe that is waiting for the loop, and
         # the whole server stops answering anything, health checks included.
         result = await asyncio.to_thread(
-            RecipeService.run_recipe, name, params | {"mode": mode}, 300, ctx
+            RecipeService.run_recipe, name, params | {"mode": mode}, 300, ctx,
+            show_page=False,  # the page asking is already open
         )
     except Exception as err:
         logger.warning("app api: %s/%s failed: %s", name, mode, err)

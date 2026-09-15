@@ -288,6 +288,17 @@ export async function getRecipe(name: string): Promise<RecipeItem> {
   return fetchApi<RecipeItem>(`/recipes/${encodeURIComponent(name)}`);
 }
 
+/** 配方页面的地址。开发模式下接口在另一个端口，页面也得跟着去那边取。 */
+export function recipeAppUrl(name: string, slot?: string | null): string {
+  const base = `${API_BASE_URL}/app/${encodeURIComponent(name)}/`;
+  return slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
+}
+
+/** 告诉服务端：它推过来的那个「打开配方页面」这边已经打开了。 */
+export async function ackRecipeAppShow(requestId: string): Promise<void> {
+  await fetchApi(`/recipe-apps/ack/${encodeURIComponent(requestId)}`, { method: 'POST' });
+}
+
 export async function runRecipe(
   name: string,
   params?: Record<string, unknown>,
@@ -308,6 +319,18 @@ export async function runRecipeAsync(
     method: 'POST',
     body: JSON.stringify({ params, timeout }),
   });
+}
+
+/** 一次运行现在的样子：状态，以及跑完之后配方交回来的结果。 */
+export interface RecipeExecution {
+  id: string;
+  status: string;
+  data?: unknown;
+  error?: { message?: string } | string | null;
+}
+
+export async function getExecution(executionId: string): Promise<RecipeExecution> {
+  return fetchApi<RecipeExecution>(`/executions/${encodeURIComponent(executionId)}`);
 }
 
 /**

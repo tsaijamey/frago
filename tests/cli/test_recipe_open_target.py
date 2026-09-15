@@ -6,6 +6,9 @@
 
 所以被测的是两件事：配方名要能开（agent 手里通常只有名字），开不了的
 东西必须退非零，NEVER 假报成功。
+
+配方页面现在开在 WebUI 里：开着的 WebUI 先被问一句，没人接才交给浏览器，交过去的是
+WebUI 指向那一页的地址（`/#/app/<配方名>`），不是裸页面。
 """
 
 from __future__ import annotations
@@ -33,7 +36,20 @@ def app_state_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def opened(monkeypatch) -> list[str]:
+def no_open_webui(monkeypatch) -> list[tuple]:
+    """没有开着的 WebUI。NEVER 让用例真去问本机正在跑的服务——那会把人的界面切走。"""
+    asked: list[tuple] = []
+
+    def fake_show(origin, name, slot):
+        asked.append((origin, name, slot))
+        return False
+
+    monkeypatch.setattr('frago.viewer.browser._show_in_open_webui', fake_show)
+    return asked
+
+
+@pytest.fixture()
+def opened(monkeypatch, no_open_webui) -> list[str]:
     """拦住真正的开浏览器动作，只记录它收到的地址。"""
     calls: list[str] = []
 
@@ -55,22 +71,44 @@ def test_recipe_name_expands_to_page_url(runner, app_state_dir, opened) -> None:
     _publish(app_state_dir, 'demo_recipe')
     result = runner.invoke(recipe_group, ['open', 'demo_recipe'])
     assert result.exit_code == 0, result.output
-    assert opened == ['http://localhost:8093/app/demo_recipe']
+    assert opened == ['http://localhost:8093/#/app/demo_recipe']
 
 
 def test_slot_becomes_query_string(runner, app_state_dir, opened) -> None:
     _publish(app_state_dir, 'demo_recipe', slot='2024-2025')
     result = runner.invoke(recipe_group, ['open', 'demo_recipe', '--slot', '2024-2025'])
     assert result.exit_code == 0, result.output
-    assert opened == ['http://localhost:8093/app/demo_recipe?key=2024-2025']
+    assert opened == ['http://localhost:8093/#/app/demo_recipe/2024-2025']
 
 
 @pytest.mark.usefixtures('app_state_dir')
-def test_full_url_passes_through_untouched(runner, opened) -> None:
+def test_full_url_lands_in_webui(runner, opened, no_open_webui) -> None:
     url = 'http://localhost:8093/app/demo_recipe?key=x'
     result = runner.invoke(recipe_group, ['open', url])
     assert result.exit_code == 0, result.output
+    assert no_open_webui == [('http://localhost:8093', 'demo_recipe', 'x')]
+    assert opened == ['http://localhost:8093/#/app/demo_recipe/x']
+
+
+@pytest.mark.usefixtures('app_state_dir')
+def test_non_recipe_url_passes_through_untouched(runner, opened, no_open_webui) -> None:
+    url = 'https://example.com/report.html'
+    result = runner.invoke(recipe_group, ['open', url])
+    assert result.exit_code == 0, result.output
+    assert no_open_webui == []
     assert opened == [url]
+
+
+def test_open_webui_takes_it_and_no_tab_is_opened(runner, app_state_dir, monkeypatch) -> None:
+    """开着的 WebUI 接了，就不许再往浏览器里推一个标签。"""
+    _publish(app_state_dir, 'demo_recipe')
+    tabs: list[str] = []
+    monkeypatch.setattr('webbrowser.open', lambda url: tabs.append(url) or True)
+    monkeypatch.setattr('frago.viewer.browser._show_in_open_webui', lambda *_: True)
+    result = runner.invoke(recipe_group, ['open', 'demo_recipe'])
+    assert result.exit_code == 0, result.output
+    assert tabs == []
+    assert 'WebUI' in result.output
 
 
 @pytest.mark.usefixtures('app_state_dir')
@@ -114,6 +152,7 @@ def test_slot_with_full_url_is_refused(runner, opened) -> None:
     assert opened == []
 
 
+@pytest.mark.usefixtures('no_open_webui')
 def test_browser_refusal_still_exits_nonzero(runner, app_state_dir, monkeypatch) -> None:
     _publish(app_state_dir, 'demo_recipe')
     monkeypatch.setattr('webbrowser.open', lambda _url: False)

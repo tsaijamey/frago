@@ -80,6 +80,40 @@ def _forget_run_context(execution_id: str) -> None:
         return
     with _run_context_lock:
         _run_contexts.pop(key, None)
+        _page_runs.discard(key)
+
+
+#: Runs in progress that were started from the recipe's own page. Kept beside the
+#: contexts and dropped with them, for the same reason: the hub's ``open`` door is
+#: reached by the recipe itself, mid-run, and has only the execution id to go on.
+_page_runs: set[str] = set()
+
+
+def _remember_page_run(execution_id: str) -> None:
+    key = (execution_id or "").strip()
+    if key:
+        with _run_context_lock:
+            _page_runs.add(key)
+
+
+def may_open_page(execution_id: str) -> bool:
+    """Whether a run in progress may put a page in front of the person.
+
+    The same rule ``page_to_open`` applies to a finished run's ``open_url``,
+    for a recipe that asks mid-run through ``open_page`` instead. Without it
+    that door went around the rule: a visitor's run could open a page on the
+    owner's screen, and a run from the page reopened the page.
+
+    An execution this process did not start (a CLI run, a run with no id) is the
+    owner's and outside any page, so it may.
+    """
+    key = (execution_id or "").strip()
+    if not key:
+        return True
+    with _run_context_lock:
+        ctx = _run_contexts.get(key)
+        from_page = key in _page_runs
+    return not from_page and not (ctx is not None and ctx.is_visitor)
 
 
 class UnconvertedRecipe(RecipeExecutionError):
@@ -371,6 +405,41 @@ def _unwrap(stdout: str) -> dict:
     return out
 
 
+def page_to_open(
+    name: str,
+    data: Any,
+    *,
+    ctx: "context.InvocationContext | None",
+    show_page: bool,
+) -> str | None:
+    """The page this finished run should show the person, or None.
+
+    A recipe asks by putting ``open_url`` in its result — on success and on a
+    refusal alike (``Recipe.refuse``). Whether to obey is the platform's call,
+    made here once, so that no recipe and no page has to remember it:
+
+    * started by a visitor — a stranger making a window appear on somebody
+      else's screen. The recipe is the same, the person who pressed is not.
+    * started from the recipe's own page — the person is already looking at
+      it. Obeying reloads the page they are on and, in the WebUI, pins one more
+      row per run. Before this was decided here each page had to pass
+      ``open=false`` itself, and kline's didn't.
+
+    Dropped instructions are logged, so a recipe relying on one can be found.
+    """
+    if not isinstance(data, dict) or not data.get("open_url"):
+        return None
+    if ctx is not None and ctx.is_visitor:
+        logger.info("recipe %s asked to open a browser; ignored because this run "
+                    "was started by a visitor", name)
+        return None
+    if not show_page:
+        logger.info("recipe %s asked to open its page; ignored because this run "
+                    "was started from that page", name)
+        return None
+    return str(data["open_url"])
+
+
 class RecipeRunner:
     """Recipe runner, responsible for executing Recipes"""
 
@@ -405,6 +474,7 @@ class RecipeRunner:
         timeout: int | None = None,
         step_index: int | None = None,
         ctx: context.InvocationContext | None = None,
+        show_page: bool = True,
     ) -> dict[str, Any]:
         """
         Execute the specified Recipe
@@ -419,6 +489,10 @@ class RecipeRunner:
             source: Specify recipe source ('project' | 'user' | 'example'), selects by priority when None
             ctx: Who this run is for. None is the owner, which is every run
                 started from this machine; the server passes a visitor context.
+            show_page: Whether an ``open_url`` in the result is acted on. False
+                for a run started from the recipe's own page: the person is
+                already looking at it, and opening it again reloads the page
+                they are on (in the WebUI, one more pinned row per run).
 
         Returns:
             Execution result dictionary in format:
@@ -478,6 +552,7 @@ class RecipeRunner:
             resolved_env=resolved_env,
             timeout=timeout,
             ctx=ctx,
+            show_page=show_page,
         )
 
     def run_async(
@@ -557,6 +632,7 @@ class RecipeRunner:
         resolved_env: dict[str, str],
         timeout: int | None = None,
         ctx: context.InvocationContext | None = None,
+        show_page: bool = True,
     ) -> dict[str, Any]:
         """Run it, and drop the note about whose run it was when it ends.
 
@@ -565,9 +641,12 @@ class RecipeRunner:
         else's directory, which is the failure this whole mechanism exists to
         prevent, reintroduced by its own bookkeeping.
         """
+        if not show_page:
+            _remember_page_run(execution_id)
         try:
             return self._run_with_execution_inner(
-                execution_id, name, recipe, params, resolved_env, timeout, ctx
+                execution_id, name, recipe, params, resolved_env, timeout, ctx,
+                show_page=show_page,
             )
         finally:
             _forget_run_context(execution_id)
@@ -581,6 +660,7 @@ class RecipeRunner:
         resolved_env: dict[str, str],
         timeout: int | None = None,
         ctx: context.InvocationContext | None = None,
+        show_page: bool = True,
     ) -> dict[str, Any]:
         """Core execution logic after find/validate/resolve/create.
 
@@ -682,20 +762,9 @@ class RecipeRunner:
 
             # Handle open_url directive from recipe output
             data = result_data.get("data")
-            if isinstance(data, dict) and data.get("open_url"):
-                # On the owner's machine this is a feature: the recipe finishes
-                # and the page it made opens. Started by a visitor it is a
-                # stranger making a window appear on somebody else's screen —
-                # the recipe is the same, the person who pressed the button is
-                # not. The instruction is dropped rather than obeyed quietly, so
-                # a recipe that relies on it can be found in the log.
-                if ctx is not None and ctx.is_visitor:
-                    logger.info(
-                        "recipe %s asked to open a browser; ignored because this run "
-                        "was started by a visitor", name,
-                    )
-                else:
-                    self._handle_open_url(data["open_url"])
+            url = page_to_open(name, data, ctx=ctx, show_page=show_page)
+            if url:
+                self._handle_open_url(url)
 
             # Complete Execution
             self.store.complete(
@@ -784,19 +853,22 @@ class RecipeRunner:
         return told
 
     def _handle_open_url(self, url: str) -> None:
-        """Open a URL in the user's default browser.
+        """Show a URL to the person, through the one seam every page opener uses.
 
-        Called when recipe output contains open_url. The page is for the human
-        to look at, so it goes to the default browser rather than the CDP-driven
-        Chrome that `frago browser` operates on.
+        Called when recipe output contains open_url. A recipe page opens inside
+        the WebUI (pinned under recipes); anything else goes to the default
+        browser rather than the CDP-driven Chrome that `frago browser` operates
+        on. See `frago.viewer.browser.open_url`.
         """
         try:
-            import webbrowser
+            from frago.viewer.browser import open_url
 
-            webbrowser.open(url)
-            logger.info("Opened URL in default browser: %s", url)
+            if open_url(url):
+                logger.info("Opened URL for the user: %s", url)
+            else:
+                logger.warning("No browser took URL: %s", url)
         except Exception:
-            logger.exception("Failed to open URL in default browser: %s", url)
+            logger.exception("Failed to open URL: %s", url)
 
     def cancel(self, execution_id: str) -> bool:
         """Cancel a running execution.

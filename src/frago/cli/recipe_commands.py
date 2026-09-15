@@ -1331,28 +1331,24 @@ def open_ui(target: str, slot: str | None):
     this with the address publish already handed them; people and agents
     outside a run have only the name, so both spellings work.
 
-    It uses the OS default browser, NOT the CDP-controlled Chrome that
-    `frago browser` drives: the page is for a person to read, and opening it
-    here keeps the agent's CDP browser free and removes any dependency on
-    that browser being up. This is the single seam for "open a recipe page
-    for the human" — change the open behavior here, not in each recipe.
+    A recipe page on this machine opens INSIDE the frago WebUI: pinned under
+    recipes in the left menu and rendered on the right. An open WebUI switches
+    to it; with none open, the default browser opens the WebUI at that page.
+    Other addresses go to the OS default browser. Never the CDP-controlled
+    Chrome that `frago browser` drives. The behaviour lives in
+    `frago.viewer.browser.open_url`, shared with the runner and the recipe bus.
 
     A target that is not a known recipe or an openable address is refused
     rather than handed to the browser, because the browser answers a bad
     address with a blank page and no error.
     """
-    import webbrowser
+    from frago.viewer.browser import open_url, recipe_page_of
 
     url = _resolve_open_target(target, slot)
 
-    try:
-        opened = webbrowser.open(url)
-    except Exception as e:
-        click.echo(f"Error: failed to open URL '{url}': {e}", err=True)
-        sys.exit(1)
-
-    if opened:
-        click.echo(f"Opened in default browser: {url}", err=True)
+    if open_url(url):
+        where = "frago WebUI" if recipe_page_of(url) else "default browser"
+        click.echo(f"Opened in {where}: {url}", err=True)
     else:
         click.echo(f"Error: no browser available to open URL '{url}'", err=True)
         sys.exit(1)

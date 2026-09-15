@@ -17,6 +17,7 @@ import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 import MobileTabBar from './MobileTabBar';
 import GitHubGuardBanner from '@/components/github/GitHubGuardBanner';
+import RecipeAppHost from '@/components/recipes/RecipeAppHost';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -35,6 +36,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
         {/* Content Area */}
         <div className="content-area">
           <main className="main-content">
+            {/* 打开过的配方页面常驻在这里，切到别的页面时只是藏起来——
+                人在上面没保存的输入不会因为去点了一下运行就没了。 */}
+            <RecipeAppHost />
             {children}
           </main>
         </div>

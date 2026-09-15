@@ -116,6 +116,8 @@ class MessageType:
     # Recipe events
     RECIPE_STARTED = "recipe_started"
     RECIPE_COMPLETED = "recipe_completed"
+    # 请开着的界面在右侧打开某个配方的页面（见 routes/recipes.py show_recipe_app）
+    RECIPE_APP_OPEN = "recipe_app_open"
 
     # Agent session events (unified streaming)
     AGENT_TEXT_DELTA = "agent_text_delta"

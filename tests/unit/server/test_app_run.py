@@ -495,6 +495,7 @@ class TestTheOwnerComesThroughTheSameDoor:
                 seen["name"] = name
                 seen["params"] = params
                 seen["ctx"] = kwargs.get("ctx")
+                seen["show_page"] = kwargs.get("show_page", True)
                 return {"success": True, "data": {"ok": True, "shot": "m01", "remaining": 3}}
 
         monkeypatch.setattr("frago.recipes.runner.RecipeRunner", _Runner)
@@ -511,6 +512,13 @@ class TestTheOwnerComesThroughTheSameDoor:
         wrote without going back to ask."""
         body = local.post(f"/app/{PAGE}/run", json={"params": {}}).json()
         assert body == {"ok": True, "data": {"ok": True, "shot": "m01", "remaining": 3}}
+
+    def test_a_run_from_the_page_does_not_reopen_the_page(self, local, answered):
+        """The person pressing is already on this page. A result carrying the
+        page's address must not be obeyed from here, whatever the page sent —
+        otherwise the page reloads itself and the WebUI pins one row per run."""
+        local.post(f"/app/{PAGE}/run", json={"params": {}})
+        assert answered["show_page"] is False
 
     def test_a_page_the_owner_never_published_still_runs(self, local, answered):
         """`config.json` tells the owner `runnable: true` for anything they can

@@ -22,6 +22,7 @@ export type PageType =
   | 'task_detail'
   | 'recipes'
   | 'recipe_detail'
+  | 'recipe_app'
   | 'data_repo'
   | 'todos'
   | 'todo_detail'
@@ -41,6 +42,8 @@ export interface PageSlice {
   currentProjectId: string | null;
   currentTodoId: string | null;
   currentScheduleId: string | null;
+  /** 右侧正开着的配方页面：`<配方名>`，非默认槽位时是 `<配方名>/<槽位>`。 */
+  currentRecipeAppId: string | null;
 
   switchPage: (page: PageType, id?: string) => void;
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
@@ -66,6 +69,7 @@ export const usePageStore = create<PageSlice>((set) => ({
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
 
+    currentRecipeAppId: page === 'recipe_app' ? id ?? null : null,
   switchPage: (page, id) => {
     set({ currentPage: page, ...idFields(page, id) });
     writeLocationRoute(pathForPage(page, id));

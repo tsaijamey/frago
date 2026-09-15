@@ -22,6 +22,7 @@ from frago.server.models import (
 )
 from frago.server.state import StateManager
 from frago.server.services.recipe_service import RecipeService
+from frago.server.routes.app_pages import has_page
 
 router = APIRouter()
 
@@ -157,6 +158,7 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
         env=recipe.get("env", {}),
         source_code=recipe.get("source_code"),
         flow=flow,
+        has_page=has_page(name),
     )
 
 
@@ -300,6 +302,83 @@ async def forge_recipe(request: RecipeForgeRequest) -> dict:
         "desktop_url": launch.desktop_url,
         "recipe_name": launch.recipe_name,
     }
+
+
+# ============================================================
+# 配方页面开在 WebUI 里
+# ============================================================
+
+
+class RecipeAppShowRequest(BaseModel):
+    """``POST /recipe-apps/{name}/show`` 的请求体。``slot`` 不给就是默认那一份。"""
+
+    slot: str | None = None
+
+
+#: 发出去、还在等界面回话的「打开页面」请求：请求编号 → 收到回话时置位的事件。
+_pending_shows: dict[str, "asyncio.Event"] = {}
+
+#: 等界面回话等多久。界面收到推送后立刻回，两秒足够；再久，调用方那边就是
+#: 「配方跑完了、页面迟迟不出来」。
+_SHOW_ACK_TIMEOUT = 2.0
+
+
+@router.post("/recipe-apps/{name}/show")
+async def show_recipe_app(name: str, request: RecipeAppShowRequest | None = None) -> dict:
+    """让已经开着的 WebUI 在右侧打开这个配方的页面。
+
+    配方页面过去一律开在系统浏览器的新标签里，跑十次开十个。现在先问开着的 WebUI：
+    推一条 ``recipe_app_open``，收到的界面把页面 pin 到 recipes 下面并切过去，然后回
+    ``/recipe-apps/ack/<编号>``。
+
+    回 ``delivered: false`` 的情况是没有界面开着，或者开着的是还没刷新的旧界面（它
+    不认这条推送，也就不会回话）。这时由调用方自己开浏览器——开的是 WebUI 的地址，
+    不是裸页面，所以还是落在 WebUI 里。
+    """
+    import asyncio
+    import secrets
+
+    from frago.recipes.app_state import DEFAULT_SLOT, InvalidSlotName
+    from frago.recipes.app_state import _validate as validate_names
+    from frago.server.websocket import MessageType, create_message, manager
+
+    slot = (request.slot if request else None) or DEFAULT_SLOT
+    try:
+        validate_names(name, slot)
+    except InvalidSlotName as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+    if not has_page(name):
+        raise HTTPException(status_code=404, detail=f"Recipe '{name}' has no page to show")
+
+    if manager.connection_count == 0:
+        return {"delivered": False}
+
+    request_id = secrets.token_hex(8)
+    event = asyncio.Event()
+    _pending_shows[request_id] = event
+    try:
+        await manager.broadcast(create_message(
+            MessageType.RECIPE_APP_OPEN,
+            {"name": name, "slot": slot, "request_id": request_id},
+        ))
+        try:
+            await asyncio.wait_for(event.wait(), timeout=_SHOW_ACK_TIMEOUT)
+            delivered = True
+        except TimeoutError:
+            delivered = False
+    finally:
+        _pending_shows.pop(request_id, None)
+    return {"delivered": delivered}
+
+
+@router.post("/recipe-apps/ack/{request_id}")
+async def ack_recipe_app_show(request_id: str) -> dict:
+    """界面说：那个页面我已经打开了。"""
+    event = _pending_shows.get(request_id)
+    if event is not None:
+        event.set()
+    return {"ok": event is not None}
 
 
 # ============================================================

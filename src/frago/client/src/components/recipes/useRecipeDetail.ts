@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getRecipeDetail, runRecipe, runRecipeAsync, getRecipeSecrets } from '@/api';
+import { getExecution } from '@/api/client';
+import { refusalOf, TERMINAL_EXECUTION_STATUSES } from '@/utils/recipeOutcome';
 import type { RecipeDetail as RecipeDetailType, RecipeSecretsResponse } from '@/types/pywebview';
+
+/** 后台运行的结局多久问一次、最多盯多久。盯不到头就算了，运行记录里还查得到。 */
+const OUTCOME_POLL_MS = 1500;
+const OUTCOME_WATCH_MS = 30 * 60 * 1000;
 
 /**
  * useRecipeDetail — owns all RecipeDetail state and behavior:
@@ -38,8 +44,11 @@ export function useRecipeDetail() {
   // Initialize form values and interactive mode from recipe
   useEffect(() => {
     if (recipe) {
+      // 有页面就按交互式起步：配方跑完要把页面交给人，同步等它跑完只会让按钮卡住。
+      // 「有没有页面」是服务端看磁盘答的；interactive 标签是人手写的，带页面的配方
+      // 里有 6 个没写，开关因此一直是关的。标签仍然认，给没有页面但要常驻运行的配方用。
       const hasInteractiveTag = recipe.tags?.includes('interactive') ?? false;
-      setIsInteractiveMode(hasInteractiveTag);
+      setIsInteractiveMode(Boolean(recipe.has_page) || hasInteractiveTag);
 
       if (recipe.inputs) {
         const initialValues: Record<string, unknown> = {};
@@ -177,6 +186,37 @@ export function useRecipeDetail() {
     }
   };
 
+  /**
+   * 盯着一次后台运行，跑完告诉人结局。
+   *
+   * 从前按下运行只报一句「已启动」就撒手：配方拒绝了（比如还有一局没打完），人看到
+   * 的是「已启动」然后什么也没发生。现在跑完再说一句——拒绝就把配方给的原因原样
+   * 显示出来，失败就报错。成功不再多说：该打开的页面平台已经打开了。
+   */
+  const reportOutcome = async (executionId: string) => {
+    const deadline = Date.now() + OUTCOME_WATCH_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, OUTCOME_POLL_MS));
+      let execution;
+      try {
+        execution = await getExecution(executionId);
+      } catch {
+        continue; // 服务端一时没回，下一轮再问
+      }
+      if (!TERMINAL_EXECUTION_STATUSES.has(execution.status)) continue;
+
+      const refusal = execution.status === 'succeeded' ? refusalOf(execution.data) : null;
+      if (refusal) {
+        showToast(refusal.message, 'warning');
+      } else if (execution.status !== 'succeeded') {
+        const err = execution.error;
+        const message = typeof err === 'string' ? err : err?.message;
+        showToast(message || t('recipes.executionFailed'), 'error');
+      }
+      return;
+    }
+  };
+
   const handleRun = async () => {
     if (!currentRecipeName || isRunning) return;
 
@@ -200,11 +240,16 @@ export function useRecipeDetail() {
     try {
       const recipeParams = Object.keys(params).length > 0 ? params : undefined;
       if (isInteractiveMode) {
-        await runRecipeAsync(currentRecipeName, recipeParams);
+        const started = await runRecipeAsync(currentRecipeName, recipeParams);
         showToast(t('recipes.startedAsync'), 'success');
+        // 不等它跑完再放开按钮——交互式配方可能要跑很久。结局在后台盯着，出来了再说。
+        void reportOutcome(started.execution_id);
       } else {
         const result = await runRecipe(currentRecipeName, recipeParams);
-        if (result.status === 'ok') {
+        const refusal = result.status === 'ok' ? refusalOf(result.data) : null;
+        if (refusal) {
+          showToast(refusal.message, 'warning');
+        } else if (result.status === 'ok') {
           showToast(t('recipes.executedSuccess'), 'success');
         } else {
           showToast(result.error || t('recipes.executionFailed'), 'error');

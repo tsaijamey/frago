@@ -119,21 +119,115 @@ class BrowserViewer:
             session.disconnect()
 
 
-def open_url(url: str) -> bool:
-    """Open a page for a person to read. Returns whether a browser took it.
+#: Pages under /app/ that are not a recipe's and keep their own window: the
+#: virtual desktop is a stage of its own, not something to squeeze beside the menu.
+_NOT_EMBEDDED = frozenset({"agent_os"})
 
-    The OS default browser, not the CDP-controlled Chrome that ``frago
-    browser`` drives: the page is for a person, and opening it here keeps the
-    agent's browser free and drops any dependency on that browser being up.
-    Same seam ``frago recipe open`` uses, so a recipe calling
-    ``self.open_page()`` and a person typing the command get the same
-    behaviour.
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def recipe_page_of(url: str) -> tuple[str, str | None, str] | None:
+    """If ``url`` is a recipe page on this machine's frago, which one.
+
+    Returns ``(recipe name, slot or None, server origin)``, or None for anything
+    else — another host, a built-in page, a sub-path, or a query string carrying
+    more than ``key``: the WebUI can only address a page by name and slot, and
+    dropping the rest would open a different page than the one asked for.
+    """
+    import re
+    from urllib.parse import parse_qsl, unquote, urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or parts.hostname not in _LOCAL_HOSTS:
+        return None
+    match = re.fullmatch(r"/app/([^/]+)/?", parts.path)
+    if not match:
+        return None
+    name = unquote(match.group(1))
+    if name in _NOT_EMBEDDED:
+        return None
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    if any(key != "key" for key, _ in query):
+        return None
+    slot = query[-1][1] if query else None
+    return name, slot or None, f"{parts.scheme}://{parts.netloc}"
+
+
+def webui_url_for(origin: str, name: str, slot: str | None) -> str:
+    """The WebUI address that shows this recipe page on the right of the menu."""
+    from urllib.parse import quote
+
+    tail = quote(name, safe="")
+    if slot and slot != "default":
+        tail += "/" + quote(slot, safe="")
+    return f"{origin}/#/app/{tail}"
+
+
+def _show_in_open_webui(origin: str, name: str, slot: str | None) -> bool:
+    """Ask a WebUI that is already open to switch to this page. True if one did."""
+    import asyncio
+    import json
+    import urllib.request
+
+    from frago.server.security import read_token
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        # On an event loop thread. If it is the server's own, the call below
+        # would wait on the very loop it is blocking; go straight to the browser.
+        return False
+
+    body = json.dumps({"slot": slot}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{origin}/api/recipe-apps/{name}/show",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    token = read_token()
+    if token:
+        req.add_header("X-Frago-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return bool(json.loads(resp.read() or b"{}").get("delivered"))
+    except Exception:
+        return False
+
+
+def open_url(url: str) -> bool:
+    """Open a page for a person to read. Returns whether it reached them.
+
+    A recipe page on this machine is shown **inside the WebUI**, pinned under
+    recipes and rendered on the right, not in a browser tab of its own. A
+    WebUI that is already open is asked first and switches to the page; with
+    none open, the default browser is handed the WebUI's address for that page,
+    so it still lands in the WebUI. Running a recipe ten times therefore no
+    longer leaves ten tabs behind.
+
+    Everything else goes to the OS default browser, not the CDP-controlled
+    Chrome that ``frago browser`` drives: the page is for a person, and opening
+    it here keeps the agent's browser free. Same seam ``frago recipe open``,
+    the runner's ``open_url`` and ``self.open_page()`` all use, so they behave
+    the same.
+
+    Must not be called on the server's event loop thread: asking the open WebUI
+    is an HTTP call back into that same server.
 
     Returns False rather than raising when no browser is available. The caller
     is a recipe that has already done its work and published its page; failing
     to open a window is worth a warning, not a failed run.
     """
     import webbrowser
+
+    page = recipe_page_of(url)
+    if page is not None:
+        name, slot, origin = page
+        if _show_in_open_webui(origin, name, slot):
+            return True
+        url = webui_url_for(origin, name, slot)
 
     try:
         return bool(webbrowser.open(url))

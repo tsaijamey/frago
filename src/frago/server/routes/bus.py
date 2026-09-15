@@ -538,11 +538,29 @@ async def bus_publish(req: PublishRequest, request: Request):
 
 
 @router.post("/open")
-async def bus_open(req: OpenRequest):
+async def bus_open(req: OpenRequest, request: Request):
+    """A recipe asking, mid-run, for a page to be put in front of the person.
+
+    Held to the rule a finished run's ``open_url`` is held to: not for a
+    visitor's run, not for a run started from the recipe's own page. The run is
+    identified the same way ``bus_publish`` identifies it — the execution id the
+    caller carries, looked up among the runs this process started.
+    """
+    import asyncio
+
+    from frago.recipes.runner import may_open_page
     from frago.viewer.browser import open_url
 
+    execution = request.headers.get("X-Frago-Execution", "")
+    if not may_open_page(execution):
+        logger.info("bus: open ignored for execution %s (visitor or started from its page)",
+                    execution)
+        return {"ok": False, "ignored": True}
+
     try:
-        return {"ok": bool(open_url(req.url))}
+        # Off the loop: a recipe page is shown by asking the open WebUI, which is
+        # an HTTP call back into this same server.
+        return {"ok": bool(await asyncio.to_thread(open_url, req.url))}
     except Exception as err:
         logger.warning("bus: open failed: %s", err)
         return {"ok": False}
