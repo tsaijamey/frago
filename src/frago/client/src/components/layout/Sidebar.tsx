@@ -162,14 +162,21 @@ function readExpanded(): boolean {
   }
 }
 
+/* 圆环尺寸：收起时栏里能放的宽度是 32px。线宽 3、圈间留 1，三圈正好放满。 */
+const RING_SIZE = 32;
+const RING_STROKE = 3;
+const RING_STEP = RING_STROKE + 1;
+const RING_INNER_R = RING_SIZE / 2 - RING_STROKE / 2 - 2 * RING_STEP;
+const RING_ORDER = ['model', 'all', 'session'];
+
 /**
- * 三档额度，三根细条子。
+ * 三档额度，三圈同心圆环。
  *
  * 三档说的是三件事，谁也替代不了谁：本周某个型号（额度最紧的那一档，深绿）、本周全模型
  * （logo 绿）、当前五小时窗口（浅绿）。同一色系分三个深浅，是因为它们是同一件事的三个
  * 尺度；换三种色相会读成三件互不相干的事。
  *
- * 条子只报「到哪了」，具体数字与重置时间挂在 tooltip 上——栏收起时只有 40px 宽，写不下
+ * 圆环只报「到哪了」，具体数字与重置时间挂在 tooltip 上——栏收起时只有 40px 宽，写不下
  * 也不该写；人要看细账，旁边就是用量月历。
  */
 function UsageBars({ expanded }: { expanded: boolean }) {
@@ -222,19 +229,41 @@ function UsageBars({ expanded }: { expanded: boolean }) {
         )
         .join('\n')}
     >
-      {rows.map(({ key, longName, bucket }) => (
-        <div
-          key={key}
-          className={`rail-usage-track rail-usage-track--${key}`}
-          role="img"
-          aria-label={t('sidebar.usage.tooltip', { name: longName, percent: bucket.percent })}
-        >
-          <span
-            className="rail-usage-fill"
-            style={{ width: `${Math.min(100, Math.max(0, bucket.percent))}%` }}
-          />
-        </div>
-      ))}
+      {/* 同心圆环：rows 的顺序就是由内到外（型号 → 本周全模型 → 五小时）。
+          每一圈从 12 点起顺时针走；pathLength 定成 100，百分比直接当弧长用。 */}
+      <svg
+        className="rail-usage-rings"
+        viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+        width={RING_SIZE}
+        height={RING_SIZE}
+        role="img"
+        aria-label={rows
+          .map(({ longName, bucket }) =>
+            t('sidebar.usage.tooltip', { name: longName, percent: bucket.percent })
+          )
+          .join('; ')}
+      >
+        {rows.map(({ key, bucket }) => {
+          // 圈位按档位固定，某一档缺席时其余两圈不挪位置。
+          const r = RING_INNER_R + RING_ORDER.indexOf(key) * RING_STEP;
+          const c = RING_SIZE / 2;
+          const p = Math.min(100, Math.max(0, bucket.percent));
+          return (
+            <g key={key} className={`rail-usage-ring rail-usage-ring--${key}`}>
+              <circle className="rail-usage-ring-track" cx={c} cy={c} r={r} />
+              <circle
+                className="rail-usage-ring-fill"
+                cx={c}
+                cy={c}
+                r={r}
+                pathLength={100}
+                strokeDasharray={`${p} 100`}
+                transform={`rotate(-90 ${c} ${c})`}
+              />
+            </g>
+          );
+        })}
+      </svg>
       {expanded ? (
         <div className="rail-usage-legend">
           {rows.map(({ key, name, bucket }) => (

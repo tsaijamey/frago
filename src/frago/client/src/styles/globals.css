@@ -809,44 +809,48 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: 8px;
 }
 
-/* 三根条子。细到 3px 是因为它常驻在那里：它要能被瞥见，不该被读。
-
-   三根之间不留缝，三段槽连成一块 9px 的底：它们是同一件事的三个尺度，中间划开就成了
-   三件互不相干的事。直角也是同一个理由——圆角把每一根收成独立的一颗胶囊，而这里要的
-   是一块可以横着比长短的刻度。 */
+/* 三圈同心圆环，由内到外：型号 → 本周全模型 → 五小时，都从 12 点顺时针走。
+   线宽 3px 是因为它常驻在那里：它要能被瞥见，不该被读。收起时栏里只剩圆环；展开时
+   圆环在左，图例在右。 */
 .rail-usage {
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  align-items: center;
+  gap: 8px;
   padding: 0 4px;
   cursor: default;
 }
 
-.rail-usage-track {
-  position: relative;
-  height: 3px;
-  border-radius: 0;
-  background: var(--usage-track);
-  overflow: hidden;
-}
-
-.rail-usage-fill {
+.rail-usage-rings {
+  flex-shrink: 0;
   display: block;
-  height: 100%;
-  border-radius: 0;
-  transition: width 0.3s ease;
 }
 
-.rail-usage-track--model .rail-usage-fill {
-  background: var(--usage-week-model);
+.rail-usage-ring-track,
+.rail-usage-ring-fill {
+  fill: none;
+  stroke-width: 3px;
 }
 
-.rail-usage-track--all .rail-usage-fill {
-  background: var(--usage-week-all);
+.rail-usage-ring-track {
+  stroke: var(--usage-track);
 }
 
-.rail-usage-track--session .rail-usage-fill {
-  background: var(--usage-session);
+/* 端头平切，跟图例色块的直角一致；圆头会让 0% 也冒出一个点。 */
+.rail-usage-ring-fill {
+  stroke-linecap: butt;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.rail-usage-ring--model .rail-usage-ring-fill {
+  stroke: var(--usage-week-model);
+}
+
+.rail-usage-ring--all .rail-usage-ring-fill {
+  stroke: var(--usage-week-all);
+}
+
+.rail-usage-ring--session .rail-usage-ring-fill {
+  stroke: var(--usage-session);
 }
 
 /* 展开时才写数字。收起时栏宽只有 40px，写不下，也不该写——细账在用量月历里。
@@ -855,10 +859,11 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    于是"额度"这行脚注读起来跟"去哪一页"一样重；而条子本身细到 3px，为的就是被瞥见而
    不被读。图例是那三根条子的注脚，得跟着一起退到背景里去。 */
 .rail-usage-legend {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-top: 4px;
   /* 跌出字号表一档。表里最小的是 11px，那是给「还要读」的次要文字用的；这三行是瞥一眼
      的注脚，条子才是主体。仍然乘 --font-scale，跟着整体字号设置走。 */
   font-size: calc(10px * var(--font-scale));
