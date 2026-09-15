@@ -386,7 +386,8 @@
       "all": "All"
     },
     "detail": {
-      "dates": "Dates",
+      "status": "Status",
+      "priority": "Priority",
       "created": "Created",
       "updated": "Updated",
       "doneAt": "Completed",
@@ -480,7 +481,8 @@
       "allowedToolsAll": "Any tool call",
       "disallowedTools": "Disallowed: {{list}}",
       "params": "Recipe params",
-      "timing": "Timing",
+      "status": "Status",
+      "kind": "Type",
       "frequency": "Frequency",
       "nextRun": "Next run",
       "lastRun": "Last scheduled run",

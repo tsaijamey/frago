@@ -12,20 +12,20 @@
  * 才做得出来——服务端那边一次只认一档。
  */
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ListChecks, Loader2, Plus, RefreshCw, Search, Tags, X } from 'lucide-react';
 import * as api from '@/api';
-import type { TodoCategory, TodoItem, TodoListResponse } from '@/api';
+import type { TodoItem, TodoListResponse } from '@/api';
 import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import TodoDetail from './TodoDetail';
 import TodoCategoryEditor from './TodoCategoryEditor';
+import TodoStatusIcon from './TodoStatusIcon';
 import {
   PRIORITY_TONE,
   STATUS_FILTERS,
-  STATUS_TONE,
   UNCATEGORIZED,
   countFor,
   countStatuses,
@@ -41,50 +41,48 @@ const REFRESH_MS = 20_000;
 
 interface TodoRowProps {
   todo: TodoItem;
-  categories: TodoCategory[];
   selected: boolean;
   onClick: () => void;
 }
 
-function TodoRow({ todo, categories, selected, onClick }: TodoRowProps) {
+/**
+ * 清单里的一行。
+ *
+ * 状态落在行首的圆圈上，标题因此总从同一条竖线起头，扫一眼就能顺着读下去；分类不再
+ * 每行挂一颗，改由分组标题说一次——清单本来就按分类名次排，同一分类的事务天然挨在一起。
+ */
+function TodoRow({ todo, selected, onClick }: TodoRowProps) {
   const { t } = useTranslation();
   const line = todo.summary || todo.context || '';
-  const categoryId = effectiveCategory(todo.category, categories);
-  const categoryName = categories.find((c) => c.id === categoryId)?.name;
 
   return (
     <button
       type="button"
-      className={`td-row ${selected ? 'td-row--selected' : ''}`}
+      className={`td-row tdp-row tdp-row--${todo.status} ${selected ? 'td-row--selected' : ''}`}
       onClick={onClick}
       aria-current={selected ? 'true' : undefined}
     >
-      <div className="td-row-head">
-        <span className={`td-chip ${STATUS_TONE[todo.status].className}`}>
-          {t(`todos.status.${todo.status}`)}
+      <TodoStatusIcon status={todo.status} />
+      <span className="tdp-row-main">
+        <span className="tdp-row-top">
+          <span className="td-row-title">{todo.title}</span>
+          {todo.priority !== 'normal' && (
+            <span className={`td-chip ${PRIORITY_TONE[todo.priority].className}`}>
+              {t(`todos.priority.${todo.priority}`)}
+            </span>
+          )}
         </span>
-        <span className={`td-chip td-chip--category ${categoryName ? '' : 'td-chip--uncategorized'}`}>
-          {categoryName ?? t('todos.category.none')}
+        {line && <span className="td-row-line">{line}</span>}
+        <span className="td-row-meta">
+          <span>{todo.created}</span>
+          {todo.steps.length > 0 && <span>{t('todos.stepCount', { n: todo.steps.length })}</span>}
+          {todo.tags.slice(0, 4).map((tag) => (
+            <span key={tag} className="td-tag">
+              {tag}
+            </span>
+          ))}
         </span>
-        {todo.priority !== 'normal' && (
-          <span className={`td-chip ${PRIORITY_TONE[todo.priority].className}`}>
-            {t(`todos.priority.${todo.priority}`)}
-          </span>
-        )}
-        <span className="td-row-title">{todo.title}</span>
-      </div>
-      {line && <p className="td-row-line">{line}</p>}
-      <div className="td-row-meta">
-        <span>{todo.created}</span>
-        {todo.tags.slice(0, 4).map((tag) => (
-          <span key={tag} className="td-tag">
-            {tag}
-          </span>
-        ))}
-        {todo.steps.length > 0 && (
-          <span>{t('todos.stepCount', { n: todo.steps.length })}</span>
-        )}
-      </div>
+      </span>
     </button>
   );
 }
@@ -174,6 +172,23 @@ export default function TodoPage() {
     });
   }, [inCategory, filter, search]);
 
+  // 连续同分类的事务收成一组。只在分类变化处切开、不重排：服务端给的顺序原样保留，
+  // 分组只是把「分类名次在前」这条排序规则画出来。
+  const groups = useMemo(() => {
+    const out: { id: string; name: string; todos: TodoItem[] }[] = [];
+    for (const todo of visible) {
+      const id = effectiveCategory(todo.category, categories) ?? UNCATEGORIZED;
+      const last = out[out.length - 1];
+      if (last && last.id === id) {
+        last.todos.push(todo);
+      } else {
+        const name = categories.find((c) => c.id === id)?.name ?? t('todos.category.none');
+        out.push({ id, name, todos: [todo] });
+      }
+    }
+    return out;
+  }, [visible, categories, t]);
+
   /**
    * 把那句话交给 agent，等它把事务建出来。
    *
@@ -207,21 +222,23 @@ export default function TodoPage() {
   const missing = Boolean(currentTodoId) && body !== null && selected === null;
 
   return (
-    <div className="td-page">
-      <div className="cs-header" style={{ padding: '20px 20px 0' }}>
-        <div>
+    <div className="td-page tdp">
+      <div className="cs-header tdp-header">
+        <div className="min-w-0">
           <h1 className="cs-title">{t('todos.title')}</h1>
           <p className="cs-subtitle">{t('todos.pageDesc')}</p>
         </div>
+        {/* 主次从右往左排：刷新会自己跑，只留图标；分类是偶尔的管理动作；添一件是这页的主动作，最右最实。 */}
         <div className="td-head-actions">
           <button
             type="button"
-            className={`td-add ${composerOpen ? 'td-add--open' : ''}`}
-            onClick={() => setComposerOpen((open) => !open)}
-            aria-expanded={composerOpen}
+            className="cs-refresh tdp-icon-btn"
+            onClick={refresh}
+            disabled={refreshing}
+            title={t('common.refresh')}
+            aria-label={t('common.refresh')}
           >
-            <Plus size={14} />
-            {t('todos.compose.button')}
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
           </button>
           <button
             type="button"
@@ -233,9 +250,14 @@ export default function TodoPage() {
             <Tags size={14} />
             {t('todos.category.edit')}
           </button>
-          <button type="button" className="cs-refresh" onClick={refresh} disabled={refreshing}>
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            {t('common.refresh')}
+          <button
+            type="button"
+            className={`td-add ${composerOpen ? 'td-add--open' : ''}`}
+            onClick={() => setComposerOpen((open) => !open)}
+            aria-expanded={composerOpen}
+          >
+            {composerOpen ? <X size={14} /> : <Plus size={14} />}
+            {t('todos.compose.button')}
           </button>
         </div>
       </div>
@@ -243,6 +265,7 @@ export default function TodoPage() {
       {composerOpen && (
         <div className="td-composer">
           <textarea
+            autoFocus
             className="td-composer-input"
             rows={3}
             value={draft}
@@ -304,34 +327,20 @@ export default function TodoPage() {
         />
       )}
 
-      <div className="td-toolbar">
-        <div className="td-filters">
+      {/* 两排筛选长得不一样，是因为它们回答的问题不一样：上面是互斥的「进行到哪」，
+          用分段控件；下面是「属于哪一摊」，用轻量的文字胶囊，前面挂上名字。 */}
+      <div className="td-toolbar tdp-toolbar">
+        <div className="td-filters tdp-segmented" role="group" aria-label={t('todos.detail.status')}>
           {STATUS_FILTERS.map((name) => (
             <button
               key={name}
               type="button"
               className={`td-filter ${filter === name ? 'td-filter--active' : ''}`}
               onClick={() => setFilter(name)}
+              aria-pressed={filter === name}
             >
               {t(`todos.filter.${name}`)}
               <span className="td-filter-count">{countFor(name, counts)}</span>
-            </button>
-          ))}
-        </div>
-        <div className="td-filters" role="group" aria-label={t('todos.category.label')}>
-          {['all', ...categories.map((c) => c.id), UNCATEGORIZED].map((id) => (
-            <button
-              key={id}
-              type="button"
-              className={`td-filter ${activeCategory === id ? 'td-filter--active' : ''}`}
-              onClick={() => setCategoryFilter(id)}
-            >
-              {id === 'all'
-                ? t('todos.category.all')
-                : id === UNCATEGORIZED
-                  ? t('todos.category.none')
-                  : categories.find((c) => c.id === id)?.name}
-              <span className="td-filter-count">{categoryCounts[id] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -358,7 +367,29 @@ export default function TodoPage() {
         </div>
       </div>
 
-      {error && <div className="td-error">{t('todos.loadFailed', { message: error })}</div>}
+      <div className="td-filters tdp-categories" role="group" aria-label={t('todos.category.label')}>
+        <span className="tdp-categories-label" aria-hidden="true">
+          {t('todos.category.label')}
+        </span>
+        {['all', ...categories.map((c) => c.id), UNCATEGORIZED].map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`td-filter ${activeCategory === id ? 'td-filter--active' : ''}`}
+            onClick={() => setCategoryFilter(id)}
+            aria-pressed={activeCategory === id}
+          >
+            {id === 'all'
+              ? t('todos.category.all')
+              : id === UNCATEGORIZED
+                ? t('todos.category.none')
+                : categories.find((c) => c.id === id)?.name}
+            <span className="td-filter-count">{categoryCounts[id] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {error &&<div className="td-error">{t('todos.loadFailed', { message: error })}</div>}
       {missing && <div className="td-error">{t('todos.notFound', { id: currentTodoId })}</div>}
 
       <div className="td-split">
@@ -372,18 +403,25 @@ export default function TodoPage() {
               description={t('todos.emptyDesc')}
             />
           ) : (
-            visible.map((todo) => (
-              <TodoRow
-                key={todo.id}
-                todo={todo}
-                categories={categories}
-                selected={todo.id === currentTodoId}
-                onClick={() =>
-                  todo.id === currentTodoId
-                    ? switchPage('todos')
-                    : switchPage('todo_detail', todo.id)
-                }
-              />
+            groups.map((group, index) => (
+              <Fragment key={`${group.id}-${index}`}>
+                <div className="tdp-group-head">
+                  <span className="tdp-group-name">{group.name}</span>
+                  <span className="tdp-group-count">{group.todos.length}</span>
+                </div>
+                {group.todos.map((todo) => (
+                  <TodoRow
+                    key={todo.id}
+                    todo={todo}
+                    selected={todo.id === currentTodoId}
+                    onClick={() =>
+                      todo.id === currentTodoId
+                        ? switchPage('todos')
+                        : switchPage('todo_detail', todo.id)
+                    }
+                  />
+                ))}
+              </Fragment>
             ))
           )}
         </div>

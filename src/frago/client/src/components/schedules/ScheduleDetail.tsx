@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Pause, Play, Trash2, X, Zap } from 'lucide-react';
 import type { ScheduleHistoryEntry, ScheduleItem } from '@/api';
+import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   STATE_CHIP,
   formatTime,
@@ -31,12 +32,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** 属性表的一行：左边名字，右边值。 */
+function Prop({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <dt className="tdp-prop-label">{label}</dt>
+      <dd className={`tdp-prop-value ${className ?? ''}`}>{children}</dd>
+    </>
+  );
+}
+
 function HistoryRow({ entry }: { entry: ScheduleHistoryEntry }) {
   const { t } = useTranslation();
   const failed = entry.status === 'failed';
   return (
     <li className={`sc-run ${failed ? 'sc-run--failed' : ''}`}>
       <div className="sc-run-head">
+        <ScheduleStateIcon
+          state={failed ? 'failing' : entry.status === 'success' ? 'ok' : 'never'}
+          decorative
+        />
         <span className="sc-run-time">{formatTime(entry.triggered_at)}</span>
         <span className={`td-chip ${failed ? 'td-chip--high' : 'td-chip--done'}`}>
           {t(`schedules.runStatus.${entry.status ?? 'unknown'}`, {
@@ -88,13 +111,9 @@ export default function ScheduleDetail({
   const hasParams = Object.keys(schedule.params ?? {}).length > 0;
 
   return (
-    <div className="td-panel">
+    <div className="td-panel tdp-panel">
       <div className="td-head">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`td-chip ${STATE_CHIP[state]}`}>{t(`schedules.state.${state}`)}</span>
-            <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
-          </div>
           <h2 className="td-title">{schedule.name}</h2>
           <div className="td-id">{schedule.id}</div>
         </div>
@@ -103,10 +122,12 @@ export default function ScheduleDetail({
         </button>
       </div>
 
+      {/* 动作排序：立即跑是最常用的，实心放最前；启停跟在后面；删除推到最右端，
+          跟常用动作隔开一段，手不容易顺势点到。 */}
       <div className="sc-actions">
         <button
           type="button"
-          className="sc-action"
+          className="sc-action sc-action--primary"
           onClick={onRun}
           disabled={busy !== null || schedule.running}
           title={schedule.running ? t('schedules.actions.runBusy') : undefined}
@@ -125,7 +146,7 @@ export default function ScheduleDetail({
           {schedule.enabled ? t('schedules.actions.disable') : t('schedules.actions.enable')}
         </button>
         {confirmRemove ? (
-          <>
+          <span className="sc-actions-danger">
             <button
               type="button"
               className="sc-action sc-action--danger"
@@ -143,11 +164,11 @@ export default function ScheduleDetail({
             >
               {t('common.cancel')}
             </button>
-          </>
+          </span>
         ) : (
           <button
             type="button"
-            className="sc-action sc-action--quiet"
+            className="sc-action sc-action--quiet sc-actions-danger"
             onClick={() => setConfirmRemove(true)}
             disabled={busy !== null}
           >
@@ -156,6 +177,40 @@ export default function ScheduleDetail({
           </button>
         )}
       </div>
+
+      {/* 「这条任务现在什么情况、什么时候跑、跑了几次、通知谁」排成一张两列表；
+          执行内容和执行记录这类要细读的放在表下面。 */}
+      <dl className="tdp-props">
+        <Prop label={t('schedules.detail.status')}>
+          <span className={`td-chip tdp-status-chip ${STATE_CHIP[state]}`}>
+            <ScheduleStateIcon state={state} decorative />
+            {t(`schedules.state.${state}`)}
+          </span>
+        </Prop>
+        <Prop label={t('schedules.detail.kind')}>{t(`schedules.kind.${schedule.kind}`)}</Prop>
+        <Prop label={t('schedules.detail.frequency')}>{frequencyText(schedule, t)}</Prop>
+        <Prop label={t('schedules.detail.nextRun')}>
+          {schedule.enabled ? (
+            formatTime(schedule.next_run_at)
+          ) : (
+            <span className="tdp-prop-muted">{t('schedules.state.disabled')}</span>
+          )}
+        </Prop>
+        <Prop label={t('schedules.detail.lastRun')}>{formatTime(schedule.last_run_at)}</Prop>
+        <Prop label={t('schedules.detail.lastSuccess')}>{formatTime(schedule.last_success_at)}</Prop>
+        <Prop label={t('schedules.detail.runCount')}>{schedule.run_count}</Prop>
+        {schedule.consecutive_failures > 0 && (
+          <Prop label={t('schedules.detail.failures')} className="sc-warn">
+            {schedule.consecutive_failures}
+          </Prop>
+        )}
+        {schedule.start_at && (
+          <Prop label={t('schedules.detail.startAt')}>{formatTime(schedule.start_at)}</Prop>
+        )}
+        {schedule.end_at && <Prop label={t('schedules.detail.endAt')}>{formatTime(schedule.end_at)}</Prop>}
+        <Prop label={t('schedules.detail.createdAt')}>{formatTime(schedule.created_at)}</Prop>
+        <Prop label={t('schedules.detail.notify')}>{notifyText(schedule, t)}</Prop>
+      </dl>
 
       <div className="td-body">
         <Section title={t(`schedules.detail.target.${schedule.kind}`, { defaultValue: schedule.kind })}>
@@ -192,45 +247,6 @@ export default function ScheduleDetail({
             <pre className="sc-target">{JSON.stringify(schedule.params, null, 2)}</pre>
           </Section>
         )}
-
-        <Section title={t('schedules.detail.timing')}>
-          <dl className="sc-facts">
-            <dt>{t('schedules.detail.frequency')}</dt>
-            <dd>{frequencyText(schedule, t)}</dd>
-            <dt>{t('schedules.detail.nextRun')}</dt>
-            <dd>{schedule.enabled ? formatTime(schedule.next_run_at) : t('schedules.state.disabled')}</dd>
-            <dt>{t('schedules.detail.lastRun')}</dt>
-            <dd>{formatTime(schedule.last_run_at)}</dd>
-            <dt>{t('schedules.detail.lastSuccess')}</dt>
-            <dd>{formatTime(schedule.last_success_at)}</dd>
-            <dt>{t('schedules.detail.runCount')}</dt>
-            <dd>{schedule.run_count}</dd>
-            {schedule.consecutive_failures > 0 && (
-              <>
-                <dt>{t('schedules.detail.failures')}</dt>
-                <dd className="sc-warn">{schedule.consecutive_failures}</dd>
-              </>
-            )}
-            {schedule.start_at && (
-              <>
-                <dt>{t('schedules.detail.startAt')}</dt>
-                <dd>{formatTime(schedule.start_at)}</dd>
-              </>
-            )}
-            {schedule.end_at && (
-              <>
-                <dt>{t('schedules.detail.endAt')}</dt>
-                <dd>{formatTime(schedule.end_at)}</dd>
-              </>
-            )}
-            <dt>{t('schedules.detail.createdAt')}</dt>
-            <dd>{formatTime(schedule.created_at)}</dd>
-          </dl>
-        </Section>
-
-        <Section title={t('schedules.detail.notify')}>
-          <p className="td-text">{notifyText(schedule, t)}</p>
-        </Section>
 
         <Section title={t('schedules.history.title', { n: schedule.history.length })}>
           {history.length === 0 ? (

@@ -6,7 +6,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search, X, Globe, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
+import { Globe, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useAsync } from '@/hooks/useAsync';
 import * as api from '@/api';
@@ -14,10 +14,14 @@ import CommunityRecipeCard from './CommunityRecipeCard';
 import EmptyState from '@/components/ui/EmptyState';
 import type { GhCliStatus } from '@/types/pywebview';
 
-export default function CommunityRecipeList() {
+interface CommunityRecipeListProps {
+  /** 搜索框在配方页共用的工具栏里，这里只拿搜索词来筛。 */
+  search: string;
+}
+
+export default function CommunityRecipeList({ search }: CommunityRecipeListProps) {
   const { t } = useTranslation();
   const { communityRecipes, loadCommunityRecipes, showToast } = useAppStore();
-  const [search, setSearch] = useState('');
   const [installingRecipe, setInstallingRecipe] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -141,62 +145,58 @@ export default function CommunityRecipeList() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* GitHub CLI Warning */}
+      {/* GitHub CLI Warning——配色走主题令牌里的琥珀色，深浅两套主题各自对得上。 */}
       {showGhWarning && (
-        <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={18} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                {!ghStatus.installed
-                  ? t('recipes.ghNotInstalled')
-                  : t('recipes.ghNotAuthenticated')}
-              </h3>
-              <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
-                {!ghStatus.installed
-                  ? t('recipes.ghNotInstalledDesc')
-                  : t('recipes.ghNotAuthenticatedDesc')}
+        <div className="rl-notice">
+          <AlertCircle size={16} className="rl-notice-icon" />
+          <div className="flex-1 min-w-0">
+            <h3 className="rl-notice-title">
+              {!ghStatus.installed ? t('recipes.ghNotInstalled') : t('recipes.ghNotAuthenticated')}
+            </h3>
+            <p className="rl-notice-text">
+              {!ghStatus.installed
+                ? t('recipes.ghNotInstalledDesc')
+                : t('recipes.ghNotAuthenticatedDesc')}
+            </p>
+            {quota && (
+              <p className="rl-notice-text">
+                {t('recipes.ghAnonQuota', {
+                  remaining: quota.remaining,
+                  limit: quota.limit,
+                  minutes: Math.max(1, Math.ceil(quota.reset_in_seconds / 60)),
+                })}
               </p>
-              {quota && (
-                <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
-                  {t('recipes.ghAnonQuota', {
-                    remaining: quota.remaining,
-                    limit: quota.limit,
-                    minutes: Math.max(1, Math.ceil(quota.reset_in_seconds / 60)),
-                  })}
-                </p>
-              )}
-              <div className="mt-2 flex items-center gap-2">
-                {!ghStatus.installed ? (
-                  <a
-                    href="https://cli.github.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-yellow-700 dark:text-yellow-300 hover:underline"
-                  >
-                    {t('recipes.installGhCli')}
-                    <ExternalLink size={14} />
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleLogin}
-                    disabled={loginLoading}
-                    className="inline-flex items-center gap-1 px-3 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded-md disabled:opacity-50"
-                  >
-                    {loginLoading && <Loader2 size={14} className="animate-spin" />}
-                    {t('recipes.loginToGitHub')}
-                  </button>
-                )}
+            )}
+            <div className="rl-notice-actions">
+              {!ghStatus.installed ? (
+                <a
+                  href="https://cli.github.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rl-notice-link"
+                >
+                  {t('recipes.installGhCli')}
+                  <ExternalLink size={13} />
+                </a>
+              ) : (
                 <button
                   type="button"
-                  onClick={checkGhStatus}
-                  disabled={ghLoading}
-                  className="text-sm text-yellow-600 dark:text-yellow-400 hover:underline disabled:opacity-50"
+                  onClick={handleLogin}
+                  disabled={loginLoading}
+                  className="rl-btn rl-btn--warning"
                 >
-                  {ghLoading ? t('common.checking') : t('common.refresh')}
+                  {loginLoading && <Loader2 size={14} className="animate-spin" />}
+                  {t('recipes.loginToGitHub')}
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={checkGhStatus}
+                disabled={ghLoading}
+                className="rl-notice-link"
+              >
+                {ghLoading ? t('common.checking') : t('common.refresh')}
+              </button>
             </div>
           </div>
         </div>
@@ -212,29 +212,6 @@ export default function CommunityRecipeList() {
         />
       ) : (
         <>
-          {/* Search Box */}
-          <div className="search-box mb-4">
-            <Search size={16} className="search-icon" />
-            <input
-              type="text"
-              className="search-input"
-              placeholder={t('recipes.searchCommunity')}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label={t('recipes.searchCommunity')}
-            />
-            {search && (
-              <button
-                type="button"
-                className="search-clear"
-                onClick={() => setSearch('')}
-                aria-label="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
           {/* Recipe Grid */}
           <div className="page-scroll flex-1">
             {filteredRecipes.length === 0 ? (
@@ -242,7 +219,7 @@ export default function CommunityRecipeList() {
                 {t('recipes.noResults')}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <div className="rl-grid">
                 {filteredRecipes.map((recipe) => (
                   <CommunityRecipeCard
                     key={recipe.name}

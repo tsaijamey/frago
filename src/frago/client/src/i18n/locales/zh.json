@@ -386,7 +386,8 @@
       "all": "全部"
     },
     "detail": {
-      "dates": "时间",
+      "status": "状态",
+      "priority": "优先级",
       "created": "建于",
       "updated": "改于",
       "doneAt": "完成于",
@@ -480,7 +481,8 @@
       "allowedToolsAll": "工具调用不限制",
       "disallowedTools": "禁止：{{list}}",
       "params": "配方参数",
-      "timing": "时间",
+      "status": "状态",
+      "kind": "类型",
       "frequency": "频率",
       "nextRun": "下次运行",
       "lastRun": "上次按周期运行",

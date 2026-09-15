@@ -7,7 +7,7 @@ import RecipeTabs from './RecipeTabs';
 import CommunityRecipeList from './CommunityRecipeList';
 import RecipeForgeModal from './RecipeForgeModal';
 import type { RecipeItem } from '@/types/pywebview';
-import { Package, Search, X, ChevronDown, ChevronRight, Workflow, Box, LayoutGrid, List, Wand2 } from 'lucide-react';
+import { Package, Search, X, ChevronDown, ChevronRight, LayoutGrid, List, Wand2 } from 'lucide-react';
 
 interface RecipeCardProps {
   recipe: RecipeItem;
@@ -15,92 +15,55 @@ interface RecipeCardProps {
   view?: 'grid' | 'list';
 }
 
+/**
+ * 一张配方卡（网格）或一行（清单）。
+ *
+ * 不再挂分类徽章和分类图标：配方已经按「工作流 / 原子」分成两段，段标题说过一次，
+ * 每张卡再说一遍就是噪音；两种图标满屏重复，也不帮人认出任何一张。字号层级倒过来
+ * 的问题一并改掉——名字比描述大，眼睛先落在名字上。
+ */
 function RecipeCard({ recipe, onClick, view = 'grid' }: RecipeCardProps) {
-  const { t } = useTranslation();
   const prettyName = recipe.name.replace(/_/g, ' ');
-  const Icon = recipe.category === 'workflow' ? Workflow : Box;
   const techMeta = [recipe.source, recipe.runtime].filter(Boolean).join(' · ');
   const isList = view === 'list';
   const tagLimit = isList ? 3 : 4;
   const visibleTags = recipe.tags.slice(0, tagLimit);
   const extraTags = recipe.tags.length - visibleTags.length;
 
-  // 分类徽章是分类，不是状态：工作流不比原子配方"更成功"，原子配方也不是"告警"。
-  // 借状态色来分类，等于让人以为满屏的绿卡是在报什么好消息。两种都用中性徽章，
-  // 靠上面写的字区分——本来也只有那两个字有意义。
-  const categoryChip = (
-    <span className="shrink-0 rounded-[5px] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-xs text-[var(--text-muted)]">
-      {recipe.category === 'atomic' ? t('recipes.atomic') : t('recipes.workflow')}
+  const tags = visibleTags.length > 0 && (
+    <span className="rl-tags">
+      {visibleTags.map((tag) => (
+        <span key={tag} className="rl-tag">
+          {tag}
+        </span>
+      ))}
+      {extraTags > 0 && <span className="rl-tag-more">+{extraTags}</span>}
     </span>
   );
 
-  // Compact single-row layout for list view
   if (isList) {
     return (
-      <div
-        className="cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] hover:border-[var(--border-accent)] hover:bg-[var(--bg-elevated)] transition-colors"
-        onClick={onClick}
-      >
-        <div className="rc-icon" style={{ width: 32, height: 32 }}>
-          <Icon size={16} />
-        </div>
-        <div className="flex items-center gap-2 min-w-0 w-1/3 shrink-0">
-          <span className="font-medium text-[var(--text-primary)] capitalize truncate">{prettyName}</span>
-          {categoryChip}
-        </div>
-        <p className="text-sm text-[var(--text-secondary)] truncate flex-1 min-w-0">
-          {recipe.description || recipe.name}
-        </p>
-        <div className="hidden lg:flex items-center gap-1 shrink-0">
-          {visibleTags.map((tag) => (
-            <span key={tag} className="text-xs bg-[var(--bg-subtle)] text-[var(--text-muted)] px-2 py-0.5 rounded">
-              {tag}
-            </span>
-          ))}
-          {extraTags > 0 && <span className="text-xs text-[var(--text-muted)]">+{extraTags}</span>}
-        </div>
-      </div>
+      <button type="button" className="rl-row" onClick={onClick}>
+        <span className="rl-row-name">
+          <span className="rl-card-title">{prettyName}</span>
+          <span className="rl-card-id">{recipe.name}</span>
+        </span>
+        <span className="rl-row-desc">{recipe.description || recipe.name}</span>
+        {tags}
+      </button>
     );
   }
 
   return (
-    <div className="card cursor-pointer flex items-start gap-3" onClick={onClick}>
-      <div className="rc-icon">
-        <Icon size={18} />
-      </div>
-      <div className="flex-1 min-w-0">
-        {/* Title row — human name + category, technical id demoted below */}
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-[var(--text-primary)] capitalize truncate">
-            {prettyName}
-          </span>
-          {categoryChip}
-        </div>
-        <div className="text-xs text-[var(--text-muted)] font-mono truncate mt-0.5">
-          {recipe.name}{techMeta && ` · ${techMeta}`}
-        </div>
-        {recipe.description && (
-          <p className="text-sm text-[var(--text-secondary)] mt-2 line-clamp-2">
-            {recipe.description}
-          </p>
-        )}
-        {visibleTags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {visibleTags.map((tag) => (
-              <span
-                key={tag}
-                className="text-xs bg-[var(--bg-subtle)] text-[var(--text-muted)] px-2 py-0.5 rounded max-w-full truncate"
-              >
-                {tag}
-              </span>
-            ))}
-            {extraTags > 0 && (
-              <span className="text-xs text-[var(--text-muted)] px-1 py-0.5">+{extraTags}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <button type="button" className="rl-card" onClick={onClick}>
+      <span className="rl-card-title">{prettyName}</span>
+      <span className="rl-card-id">
+        {recipe.name}
+        {techMeta && ` · ${techMeta}`}
+      </span>
+      {recipe.description && <span className="rl-card-desc">{recipe.description}</span>}
+      {tags}
+    </button>
   );
 }
 
@@ -109,7 +72,6 @@ interface CollapsibleSectionProps {
   count: number;
   expanded: boolean;
   onToggle: () => void;
-  colorClass: string;
   tip: string;
   containerClass: string;
   children: React.ReactNode;
@@ -120,35 +82,21 @@ function CollapsibleSection({
   count,
   expanded,
   onToggle,
-  colorClass,
   tip,
   containerClass,
   children,
 }: CollapsibleSectionProps) {
   return (
-    <div className="mb-4">
-      <button
-        type="button"
-        className="flex flex-col items-start w-full text-left py-2 px-1 hover:bg-[var(--bg-hover)] rounded transition-colors"
-        onClick={onToggle}
-      >
-        <div className="flex items-center gap-2">
-          {expanded ? (
-            <ChevronDown size={16} className="text-[var(--text-muted)]" />
-          ) : (
-            <ChevronRight size={16} className="text-[var(--text-muted)]" />
-          )}
-          <span className={`font-medium ${colorClass}`}>{title}</span>
-          <span className="text-xs text-[var(--text-muted)]">({count})</span>
-        </div>
-        <div className="text-xs text-[var(--text-muted)] ml-6 mt-0.5">{tip}</div>
+    <section className="rl-section">
+      {/* 段标题与事务页的分组标题同一副样子：名字、计数、一句灰色说明排在同一行。 */}
+      <button type="button" className="rl-section-head" onClick={onToggle} aria-expanded={expanded}>
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="rl-section-title">{title}</span>
+        <span className="rl-section-count">{count}</span>
+        <span className="rl-section-tip">{tip}</span>
       </button>
-      {expanded && (
-        <div className={`${containerClass} mt-2`}>
-          {children}
-        </div>
-      )}
-    </div>
+      {expanded && <div className={containerClass}>{children}</div>}
+    </section>
   );
 }
 
@@ -156,6 +104,9 @@ export default function RecipeList() {
   const { t } = useTranslation();
   const { recipes, loadRecipes, communityRecipes, loadCommunityRecipes, switchPage } = useAppStore();
   const [search, setSearch] = useState('');
+  // 两个标签页各记各的搜索词：搜索框挪到共用的工具栏里之后，切过去再切回来，
+  // 各自打过的字还在，跟以前两个标签页各有一个搜索框时一样。
+  const [communitySearch, setCommunitySearch] = useState('');
   const [atomicExpanded, setAtomicExpanded] = useState(true);
   const [workflowExpanded, setWorkflowExpanded] = useState(true);
   const [activeTab, setActiveTab] = useState<'local' | 'community'>('local');
@@ -177,9 +128,7 @@ export default function RecipeList() {
     }
   };
 
-  const sectionContainerClass = viewMode === 'grid'
-    ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3'
-    : 'flex flex-col gap-2';
+  const sectionContainerClass = viewMode === 'grid' ? 'rl-grid' : 'rl-rows';
 
   // 配方是在本机文件系统上加加减减的，界面开着的时候它随时会变。服务端有一条
   // `data_recipes` 的推送通道，但至今没有任何地方真的推过——所以这里自己去取。
@@ -210,38 +159,91 @@ export default function RecipeList() {
 
   const noResults = atomicRecipes.length === 0 && workflowRecipes.length === 0;
 
+  // 工具栏右侧：本地页是「搜索 + 网格/清单切换」，社区页只有搜索。和原来一样，
+  // 清单为空时不摆搜索框——没东西可搜。
+  const isCommunity = activeTab === 'community';
+  const showSearch = isCommunity ? communityRecipes.length > 0 : recipes.length > 0;
+  const searchValue = isCommunity ? communitySearch : search;
+  const setSearchValue = isCommunity ? setCommunitySearch : setSearch;
+  const searchPlaceholder = isCommunity ? t('recipes.searchCommunity') : t('recipes.searchByNameOrTag');
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Page header — consistent with Sessions / Settings */}
-      <div className="cs-header" style={{ padding: '20px 20px 0' }}>
-        <div>
+    <div className="flex flex-col h-full tdp rl-page">
+      <div className="cs-header tdp-header">
+        <div className="min-w-0">
           <h1 className="cs-title">{t('recipes.title')}</h1>
           <p className="cs-subtitle">{t('recipes.pageDesc')}</p>
         </div>
         {/* 创建配方：过去只能在命令行下开发配方，这个入口把它搬进图形界面——
             人写需求，然后在虚拟桌面那扇窗口里看着配方被做出来。 */}
-        <button
-          type="button"
-          className="btn btn-primary flex items-center gap-2"
-          onClick={() => setForgeOpen(true)}
-        >
-          <Wand2 size={16} />
-          {t('recipes.forge.button')}
-        </button>
+        <div className="td-head-actions">
+          <button type="button" className="td-add" onClick={() => setForgeOpen(true)}>
+            <Wand2 size={14} />
+            {t('recipes.forge.button')}
+          </button>
+        </div>
       </div>
       {forgeOpen && <RecipeForgeModal onClose={() => setForgeOpen(false)} />}
 
-      {/* Tab Navigation */}
-      <RecipeTabs
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        localCount={recipes.length}
-        communityCount={communityRecipes.length}
-      />
+      <div className="td-toolbar tdp-toolbar">
+        <RecipeTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          localCount={recipes.length}
+          communityCount={communityRecipes.length}
+        />
+        {showSearch && (
+          <div className="search-box td-search">
+            <Search size={16} className="search-icon" />
+            <input
+              type="text"
+              className="search-input"
+              placeholder={searchPlaceholder}
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
+              aria-label={isCommunity ? t('recipes.searchCommunity') : t('recipes.searchPlaceholder')}
+            />
+            {searchValue && (
+              <button
+                type="button"
+                className="search-clear"
+                onClick={() => setSearchValue('')}
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+        {!isCommunity && recipes.length > 0 && (
+          <div className="tdp-segmented rl-view-toggle" role="group">
+            <button
+              type="button"
+              className={`td-filter ${viewMode === 'grid' ? 'td-filter--active' : ''}`}
+              onClick={() => setView('grid')}
+              aria-label={t('recipes.gridView')}
+              aria-pressed={viewMode === 'grid'}
+              title={t('recipes.gridView')}
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              type="button"
+              className={`td-filter ${viewMode === 'list' ? 'td-filter--active' : ''}`}
+              onClick={() => setView('list')}
+              aria-label={t('recipes.listView')}
+              aria-pressed={viewMode === 'list'}
+              title={t('recipes.listView')}
+            >
+              <List size={14} />
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Community Tab Content */}
-      {activeTab === 'community' ? (
-        <CommunityRecipeList />
+      {isCommunity ? (
+        <CommunityRecipeList search={communitySearch} />
       ) : (
         <>
           {/* Local Tab Content */}
@@ -253,51 +255,6 @@ export default function RecipeList() {
             />
           ) : (
             <>
-              {/* Search box + view toggle */}
-              <div className="flex items-center gap-2">
-                <div className="search-box flex-1">
-                  <Search size={16} className="search-icon" />
-                  <input
-                    type="text"
-                    className="search-input"
-                    placeholder={t('recipes.searchByNameOrTag')}
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    aria-label={t('recipes.searchPlaceholder')}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      className="search-clear"
-                      onClick={() => setSearch('')}
-                      aria-label="Clear search"
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-                <div className="rl-view-toggle">
-                  <button
-                    type="button"
-                    className={`rl-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
-                    onClick={() => setView('grid')}
-                    aria-label={t('recipes.gridView')}
-                    title={t('recipes.gridView')}
-                  >
-                    <LayoutGrid size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    className={`rl-view-btn ${viewMode === 'list' ? 'active' : ''}`}
-                    onClick={() => setView('list')}
-                    aria-label={t('recipes.listView')}
-                    title={t('recipes.listView')}
-                  >
-                    <List size={16} />
-                  </button>
-                </div>
-              </div>
-
               {/* Recipe list */}
               {noResults ? (
                 <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
@@ -311,7 +268,6 @@ export default function RecipeList() {
                       count={workflowRecipes.length}
                       expanded={workflowExpanded}
                       onToggle={() => setWorkflowExpanded(!workflowExpanded)}
-                      colorClass="text-[var(--text-primary)]"
                       tip={t('recipes.workflowTip')}
                       containerClass={sectionContainerClass}
                     >
@@ -331,7 +287,6 @@ export default function RecipeList() {
                       count={atomicRecipes.length}
                       expanded={atomicExpanded}
                       onToggle={() => setAtomicExpanded(!atomicExpanded)}
-                      colorClass="text-[var(--text-primary)]"
                       tip={t('recipes.atomicTip')}
                       containerClass={sectionContainerClass}
                     >

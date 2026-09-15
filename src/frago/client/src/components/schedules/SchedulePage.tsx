@@ -20,9 +20,9 @@ import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import ScheduleDetail from './ScheduleDetail';
+import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   FILTERS,
-  STATE_CHIP,
   formatTime,
   frequencyText,
   matchesFilter,
@@ -48,32 +48,37 @@ function ScheduleRow({
 }) {
   const { t } = useTranslation();
   const state = stateOf(schedule);
+  const target = targetText(schedule);
 
+  // 与事务页同一套行版式：档位落在行首圆圈，名字从同一条竖线起头；执行内容一行等宽，
+  // 频率与次数收在最底下一行灰字里。
   return (
     <button
       type="button"
-      className={`td-row ${selected ? 'td-row--selected' : ''} ${schedule.enabled ? '' : 'sc-row--disabled'}`}
+      className={`td-row tdp-row ${selected ? 'td-row--selected' : ''} ${schedule.enabled ? '' : 'sc-row--disabled'}`}
       onClick={onClick}
       aria-current={selected ? 'true' : undefined}
     >
-      <div className="td-row-head">
-        <span className={`td-chip ${STATE_CHIP[state]}`}>{t(`schedules.state.${state}`)}</span>
-        <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
-        <span className="td-row-title">{schedule.name}</span>
-      </div>
-      <p className="td-row-line sc-row-target">{targetText(schedule)}</p>
-      <div className="td-row-meta">
-        <span>{frequencyText(schedule, t)}</span>
-        {schedule.enabled && schedule.next_run_at && (
-          <span>{t('schedules.row.next', { time: formatTime(schedule.next_run_at) })}</span>
-        )}
-        <span>{t('schedules.row.runs', { n: schedule.run_count })}</span>
-        {schedule.consecutive_failures > 0 && (
-          <span className="sc-warn">
-            {t('schedules.row.failures', { n: schedule.consecutive_failures })}
-          </span>
-        )}
-      </div>
+      <ScheduleStateIcon state={state} />
+      <span className="tdp-row-main">
+        <span className="tdp-row-top">
+          <span className="td-row-title">{schedule.name}</span>
+          <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
+        </span>
+        {target && <span className="td-row-line sc-row-target">{target}</span>}
+        <span className="td-row-meta">
+          <span>{frequencyText(schedule, t)}</span>
+          {schedule.enabled && schedule.next_run_at && (
+            <span>{t('schedules.row.next', { time: formatTime(schedule.next_run_at) })}</span>
+          )}
+          <span>{t('schedules.row.runs', { n: schedule.run_count })}</span>
+          {schedule.consecutive_failures > 0 && (
+            <span className="sc-warn">
+              {t('schedules.row.failures', { n: schedule.consecutive_failures })}
+            </span>
+          )}
+        </span>
+      </span>
     </button>
   );
 }
@@ -190,25 +195,32 @@ export default function SchedulePage() {
   };
 
   return (
-    <div className="td-page">
-      <div className="cs-header" style={{ padding: '20px 20px 0' }}>
-        <div>
+    <div className="td-page tdp">
+      <div className="cs-header tdp-header">
+        <div className="min-w-0">
           <h1 className="cs-title">{t('schedules.title')}</h1>
           <p className="cs-subtitle">{t('schedules.pageDesc')}</p>
         </div>
+        {/* 与事务页同一个主次：刷新会自己跑，只留图标；新建是主动作，放最右。 */}
         <div className="td-head-actions">
+          <button
+            type="button"
+            className="cs-refresh tdp-icon-btn"
+            onClick={refresh}
+            disabled={refreshing}
+            title={t('common.refresh')}
+            aria-label={t('common.refresh')}
+          >
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+          </button>
           <button
             type="button"
             className={`td-add ${composerOpen ? 'td-add--open' : ''}`}
             onClick={() => setComposerOpen((open) => !open)}
             aria-expanded={composerOpen}
           >
-            <Plus size={14} />
+            {composerOpen ? <X size={14} /> : <Plus size={14} />}
             {t('schedules.compose.button')}
-          </button>
-          <button type="button" className="cs-refresh" onClick={refresh} disabled={refreshing}>
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            {t('common.refresh')}
           </button>
         </div>
       </div>
@@ -216,6 +228,7 @@ export default function SchedulePage() {
       {composerOpen && (
         <div className="td-composer">
           <textarea
+            autoFocus
             className="td-composer-input"
             rows={3}
             value={draft}
@@ -267,14 +280,15 @@ export default function SchedulePage() {
         <div className="td-error">{t('schedules.schedulerStopped')}</div>
       )}
 
-      <div className="td-toolbar">
-        <div className="td-filters">
+      <div className="td-toolbar tdp-toolbar">
+        <div className="td-filters tdp-segmented" role="group" aria-label={t('schedules.detail.status')}>
           {FILTERS.map((name) => (
             <button
               key={name}
               type="button"
               className={`td-filter ${filter === name ? 'td-filter--active' : ''}`}
               onClick={() => setFilter(name)}
+              aria-pressed={filter === name}
             >
               {t(`schedules.filter.${name}`)}
               <span className="td-filter-count">{counts[name]}</span>
@@ -311,7 +325,7 @@ export default function SchedulePage() {
       {missing && <div className="td-error">{t('schedules.notFound', { id: currentScheduleId })}</div>}
 
       <div className="td-split">
-        <div className="td-list-pane">
+        <div className="td-list-pane sc-list-pane">
           {body === null && !error ? (
             <div className="td-hint">{t('common.loading')}</div>
           ) : visible.length === 0 ? (

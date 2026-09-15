@@ -12,6 +12,7 @@
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-react';
 import type { TodoCategory, TodoItem } from '@/api';
+import TodoStatusIcon from './TodoStatusIcon';
 import { PRIORITY_TONE, STATUS_TONE, effectiveCategory } from './todoMeta';
 
 interface SectionProps {
@@ -25,6 +26,16 @@ function Section({ title, children }: SectionProps) {
       <div className="td-section-title">{title}</div>
       {children}
     </div>
+  );
+}
+
+/** 属性表的一行：左边名字，右边值。 */
+function Prop({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <>
+      <dt className="tdp-prop-label">{label}</dt>
+      <dd className="tdp-prop-value">{children}</dd>
+    </>
   );
 }
 
@@ -44,24 +55,9 @@ export default function TodoDetail({ todo, categories, onClose }: TodoDetailProp
   const orphanId = todo.category && !category ? todo.category : null;
 
   return (
-    <div className="td-panel">
+    <div className="td-panel tdp-panel">
       <div className="td-head">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`td-chip ${statusTone.className}`}>
-              {t(`todos.status.${todo.status}`)}
-            </span>
-            <span className={`td-chip ${priorityTone.className}`}>
-              {t(`todos.priority.${todo.priority}`)}
-            </span>
-            <span className={`td-chip td-chip--category ${category ? '' : 'td-chip--uncategorized'}`}>
-              {category
-                ? `${t('todos.category.label')} · ${category.name}`
-                : orphanId
-                  ? t('todos.category.removed', { id: orphanId })
-                  : t('todos.category.none')}
-            </span>
-          </div>
           <h2 className="td-title">{todo.title}</h2>
           <div className="td-id">{todo.id}</div>
         </div>
@@ -70,38 +66,49 @@ export default function TodoDetail({ todo, categories, onClose }: TodoDetailProp
         </button>
       </div>
 
-      <div className="td-body">
-        <Section title={t('todos.detail.dates')}>
-          <div className="td-dates">
-            <span>
-              {t('todos.detail.created')}: {todo.created}
-            </span>
-            <span>
-              {t('todos.detail.updated')}: {todo.updated}
-            </span>
-            {todo.done_at && (
-              <span>
-                {t('todos.detail.doneAt')}: {todo.done_at}
-              </span>
-            )}
-          </div>
-        </Section>
-
+      {/* 「这件现在什么情况」的几项答案排成一张两列表，眼睛只沿一条竖线往下扫；
+          正文三段（背景、步骤、完成条件）放在表下面，要读的时候再往下读。 */}
+      <dl className="tdp-props">
+        <Prop label={t('todos.detail.status')}>
+          <span className={`td-chip tdp-status-chip ${statusTone.className}`}>
+            <TodoStatusIcon status={todo.status} decorative />
+            {t(`todos.status.${todo.status}`)}
+          </span>
+        </Prop>
+        <Prop label={t('todos.detail.priority')}>
+          <span className={`td-chip ${priorityTone.className}`}>{t(`todos.priority.${todo.priority}`)}</span>
+        </Prop>
+        <Prop label={t('todos.category.label')}>
+          <span className={category ? '' : 'tdp-prop-muted'}>
+            {category
+              ? category.name
+              : orphanId
+                ? t('todos.category.removed', { id: orphanId })
+                : t('todos.category.none')}
+          </span>
+        </Prop>
+        <Prop label={t('todos.detail.created')}>{todo.created}</Prop>
+        <Prop label={t('todos.detail.updated')}>{todo.updated}</Prop>
+        {todo.done_at && <Prop label={t('todos.detail.doneAt')}>{todo.done_at}</Prop>}
         {todo.tags.length > 0 && (
-          <Section title={t('todos.detail.tags')}>
-            <div className="flex flex-wrap gap-1">
+          <Prop label={t('todos.detail.tags')}>
+            <span className="flex flex-wrap gap-1">
               {todo.tags.map((tag) => (
                 <span key={tag} className="td-tag">
                   {tag}
                 </span>
               ))}
-            </div>
+            </span>
+          </Prop>
+        )}
+      </dl>
+
+      <div className="td-body">
+        {todo.summary && (
+          <Section title={t('todos.detail.summary')}>
+            <p className="td-text tdp-lead">{todo.summary}</p>
           </Section>
         )}
-
-        {todo.summary && <Section title={t('todos.detail.summary')}>
-          <p className="td-text">{todo.summary}</p>
-        </Section>}
 
         {todo.context && (
           <Section title={t('todos.detail.context')}>

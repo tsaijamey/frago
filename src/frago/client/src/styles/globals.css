@@ -2501,10 +2501,15 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   margin: 0.5em 0;
   padding-left: 1.5em;
 }
+/* Tailwind preflight strips list markers; put numbers and bullets back. */
+.markdown-content ul { list-style: disc outside; }
+.markdown-content ol { list-style: decimal outside; }
+.markdown-content ul.contains-task-list { list-style: none; }
 
 .markdown-content li {
   margin: 0.25em 0;
 }
+.markdown-content li::marker { color: var(--text-secondary); }
 
 .markdown-content blockquote {
   margin: 0.5em 0;
@@ -4176,42 +4181,402 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-family: var(--font-mono);
 }
 
-/* === Recipe List — grid/list view toggle === */
+/* === 配方清单页（本地 + 社区） ===
+   页头、工具栏、分段控件借事务页的 .tdp 版式（页面根节点带 .tdp），这里只补配方
+   独有的东西：分段标题、网格卡、清单行、社区卡的操作底栏、GitHub 提示条。
+   尺度与事务页一致：左右 24px、控件 32px 高；颜色只给动作与需要留意的状态。 */
+
+/* 网格 / 清单切换：两颗纯图标的分段控件，贴在搜索框右边。 */
 .rl-view-toggle {
-  display: inline-flex;
   flex-shrink: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 2px;
 }
 
-.rl-view-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.tdp .rl-view-toggle .td-filter {
   width: 32px;
-  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.rl-page .page-scroll {
+  padding: 8px var(--tdp-gutter) 40px;
+}
+
+.rl-section + .rl-section {
+  margin-top: 12px;
+}
+
+/* 分段标题：折叠箭头、名字、计数、灰色说明排成一行，与事务页的分组标题同一副样子。 */
+.rl-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 10px 8px 10px;
   border: none;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
-  border-radius: var(--radius-sm);
+  text-align: left;
   cursor: pointer;
-  transition: all var(--transition-fast);
 }
 
-.rl-view-btn:hover {
+.rl-section-head:hover {
+  background: var(--bg-hover);
+}
+
+.rl-section-head svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.rl-section-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.rl-section-count {
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-section-tip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+}
+
+.rl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.rl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 网格卡：名字 → 标识与运行时 → 描述 → 标签，四层从重到轻。
+   悬停只换底色与描边，不上浮不投影——一屏几十张卡，鼠标扫过时整页不该跟着跳。 */
+.rl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.rl-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.rl-card:focus-visible,
+.rl-row:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.rl-card--static {
+  cursor: default;
+}
+
+.rl-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rl-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 20px;
+  color: var(--text-primary);
+}
+
+.rl-card:not(.rl-card--static) .rl-card-title,
+.rl-row .rl-card-title {
+  text-transform: capitalize;
+}
+
+/* 外链图标是次要入口，灰色。全局链接规则写成 a:not(...)×3，优先级比两级类名高，
+   这里补足到同一级，靠排在它后面胜出。 */
+.rl-page .rl-card a.rl-card-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.rl-page .rl-card a.rl-card-link:hover {
+  color: var(--text-primary);
+}
+
+/* 社区页没有分段标题顶着，第一排卡离工具栏补一点距离。 */
+.rl-page .page-scroll > .rl-grid:first-child {
+  margin-top: 8px;
+}
+
+.rl-card-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.rl-card-outdated {
+  color: var(--accent-warning);
+}
+
+.rl-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
   color: var(--text-secondary);
 }
 
-.rl-view-btn.active {
-  background: var(--accent-primary-10);
-  color: var(--accent-primary);
+/* 标签与事务页同一种写法：灰字前面挂个 #，不再每颗垫一块底色。 */
+.rl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 6px;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
 }
 
-.rl-view-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+.rl-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-tag::before {
+  content: '#';
+  opacity: 0.6;
+}
+
+/* 清单行：名字一栏定宽，描述占满中间，标签收在右端；无描边，悬停整行换底色。 */
+.rl-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 28%) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 20px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rl-row:hover {
+  background: var(--bg-hover);
+}
+
+.rl-row-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rl-row-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rl-row .rl-tags {
+  flex-wrap: nowrap;
+  margin-top: 0;
+}
+
+@media (max-width: 1100px) {
+  .rl-row {
+    grid-template-columns: minmax(160px, 34%) minmax(0, 1fr);
+  }
+
+  .rl-row .rl-tags {
+    display: none;
+  }
+}
+
+/* 社区卡的底栏：左边是「已安装」这类状态，右边是这一步能做的动作。
+   margin-top: auto 把它压到卡底，同一排卡的按钮落在同一条水平线上。 */
+.rl-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.rl-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.rl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.rl-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.rl-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.rl-btn--warning-outline {
+  border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
+  color: var(--accent-warning);
+}
+
+.rl-btn--warning-outline:hover:not(:disabled) {
+  background: var(--accent-warning-10);
+}
+
+/* 卸载平时退成灰字，悬停时才亮出红色——它合法，但不该是这张卡最显眼的东西。 */
+.rl-btn--quiet-danger {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.rl-btn--quiet-danger:hover:not(:disabled) {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+.rl-btn--warning {
+  height: 28px;
+  border-color: var(--accent-warning);
+  background: var(--accent-warning);
+  color: var(--bg-base);
+}
+
+.rl-btn--warning:hover:not(:disabled) {
+  background: var(--accent-warning);
+  filter: brightness(1.08);
+}
+
+/* GitHub 未登录的提示条：整条琥珀淡底加整圈描边，颜色取主题令牌。 */
+.rl-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px var(--tdp-gutter) 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-warning-10);
+}
+
+.rl-notice-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-warning);
+}
+
+.rl-notice-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.rl-notice-text {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.rl-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.rl-notice-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--accent-warning);
+  cursor: pointer;
+}
+
+.rl-notice-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* 「安装 GitHub CLI」是个链接，同样要压过全局链接的品牌绿，保持与提示条同一种琥珀色。 */
+.rl-page .rl-notice a.rl-notice-link,
+.rl-page .rl-notice a.rl-notice-link:hover {
+  color: var(--accent-warning);
+}
+
+.rl-notice-link:disabled {
+  opacity: 0.55;
 }
 
 /* === Recipe Detail (use-flow layout) === */
@@ -4257,23 +4622,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
     width: 100%;
     position: static;
   }
-}
-
-/* Recipe card icon tile — smaller sibling of the detail hero icon */
-/* 配方卡上的图标砖。**它不是强调位，是一个占位的形状。**
-   一屏能摆下十几张配方卡，每一张都顶着一块品牌绿的砖，整页就成了绿色马赛克——
-   而这些砖之间没有任何区别，它们标的不是"这一张重要"，只是"这里是一张配方卡"。
-   改成中性表面，图标本身仍留品牌绿，够认出它属于 frago。 */
-.rc-icon {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-  color: var(--text-secondary);
 }
 
 .rd-hero-icon {
@@ -5795,6 +6143,460 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   white-space: pre-wrap;
 }
 
+/* ── 清单 + 详情页的新版式（.tdp） ─────────────────────────────────
+   事务页与定时任务页共用。上面那套 td-* 是旧版骨架，新版式一律挂在 .tdp 下面覆盖，
+   页面根节点带上 .tdp 才生效。
+
+   几条尺度约定：
+   - 左右留白统一 24px，页头、筛选、清单、详情对齐同一条竖线。
+   - 可点的控件统一 32px 高（分类胶囊 28px，是次一级的筛选）。
+   - 颜色只给有含义的东西：绿色 = 在做 / 主动作 / 选中，琥珀 = 高优先级；
+     计数、日期、标签一律灰阶，不抢眼。 */
+
+.tdp {
+  --tdp-gutter: 24px;
+  --tdp-control-h: 32px;
+}
+
+.tdp-header {
+  padding: 20px var(--tdp-gutter) 0;
+  align-items: center;
+}
+
+.tdp .td-head-actions {
+  flex-shrink: 0;
+}
+
+.tdp .td-head-actions > button {
+  height: var(--tdp-control-h);
+}
+
+.tdp-icon-btn {
+  width: var(--tdp-control-h);
+  padding: 0;
+  justify-content: center;
+}
+
+.tdp .td-add--open {
+  background: var(--bg-active);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+/* 工具栏：左边状态分段控件，右边搜索框，同一高度同一基线。 */
+.tdp-toolbar {
+  padding: 16px var(--tdp-gutter) 0;
+  gap: 12px;
+}
+
+.tdp-segmented {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  height: var(--tdp-control-h);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tdp-segmented .td-filter {
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tdp-segmented .td-filter:hover {
+  background: var(--bg-hover);
+}
+
+/* 选中的一段整块「浮起来」：抬亮的底色加一层细影，形状完整，不靠任何边条。 */
+.tdp-segmented .td-filter--active,
+.tdp-segmented .td-filter--active:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 0 0 1px var(--border-color);
+}
+
+.tdp .td-filter--active .td-filter-count {
+  color: var(--text-secondary);
+}
+
+.tdp .td-search {
+  margin: 0;
+  margin-left: auto;
+  flex: 0 1 300px;
+  min-width: 200px;
+  height: var(--tdp-control-h);
+}
+
+.tdp .td-search .search-input {
+  padding-top: 0;
+  padding-bottom: 0;
+  height: 100%;
+  font-size: var(--font-size-sm);
+}
+
+.tdp .td-search .search-clear {
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+}
+
+/* 分类胶囊：无描边的文字按钮，前面挂一个灰色的名字，与上面的分段控件一眼分开。 */
+.tdp-categories {
+  padding: 10px var(--tdp-gutter) 4px;
+  gap: 4px;
+}
+
+.tdp-categories-label {
+  margin-right: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.tdp-categories .td-filter {
+  height: 28px;
+  padding: 0 10px;
+  border-color: transparent;
+}
+
+.tdp-categories .td-filter--active {
+  background: var(--bg-active);
+}
+
+.tdp .td-error {
+  margin: 12px var(--tdp-gutter) 0;
+}
+
+.tdp .td-composer {
+  margin: 16px var(--tdp-gutter) 0;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+}
+
+.tdp .td-composer-input {
+  font-size: var(--font-size-base);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+}
+
+.tdp .td-composer-submit,
+.tdp .td-composer-foot .cs-refresh {
+  height: var(--tdp-control-h);
+}
+
+/* 分类编辑器的底栏只有取消和保存两颗，并排收在右下角，手不用横跨整张面板。 */
+.tdp .td-cat-editor .td-composer-foot {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── 清单 ── */
+.tdp .td-split {
+  padding: 0 var(--tdp-gutter);
+  gap: 20px;
+}
+
+.tdp .td-list-pane {
+  gap: 2px;
+  padding: 4px 4px 32px 0;
+}
+
+/* 分组标题贴着清单顶部走：往下滚的时候始终知道自己在哪一摊里。
+   底色取页面同色，盖住滚上去的行。 */
+.tdp-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 12px 6px;
+  background: var(--tdp-surface, var(--bg-primary));
+}
+
+.tdp-group-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.tdp-group-count {
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* 一行：状态圆圈 | 标题 + 摘要 + 元信息。去掉每行的描边卡片，靠悬停与选中的整块底色
+   区分，90 件事务一屏能多看一半。 */
+.tdp .tdp-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+}
+
+.tdp .tdp-row:hover {
+  background: var(--bg-hover);
+}
+
+.tdp .tdp-row:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+/* 选中：整块淡绿底，再用一圈同色细环把形状收住。 */
+.tdp .tdp-row.td-row--selected,
+.tdp .tdp-row.td-row--selected:hover {
+  background: var(--accent-primary-10);
+  box-shadow: inset 0 0 0 1px var(--border-accent);
+}
+
+.tdp-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tdp-row-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* 标题只占自己需要的宽度，优先级紧跟在标题后面读，而不是被推到一屏之外的右端。 */
+.tdp .tdp-row .td-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  line-height: 20px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.tdp .tdp-row-top .td-chip {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.tdp .tdp-row .td-row-line {
+  margin: 0;
+  line-height: 18px;
+  -webkit-line-clamp: 1;
+}
+
+.tdp .tdp-row .td-row-meta {
+  margin-top: 2px;
+  gap: 10px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdp .tdp-row .td-tag {
+  padding: 0;
+  background: none;
+  color: var(--text-muted);
+}
+
+.tdp .tdp-row .td-tag::before {
+  content: '#';
+  opacity: 0.6;
+}
+
+/* 了结了的事务退到背景里：已完成标题转灰，已放弃再加删除线。 */
+.tdp-row--done .td-row-title,
+.tdp-row--dropped .td-row-title {
+  color: var(--text-muted);
+}
+
+.tdp-row--dropped .td-row-title {
+  text-decoration: line-through;
+}
+
+/* 状态圆圈：形状区分四档，颜色只是加强。 */
+.tdp-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.tdp-status--todo {
+  color: var(--text-muted);
+}
+
+.tdp-status--doing {
+  color: var(--accent-primary);
+}
+
+.tdp-status--done {
+  color: var(--accent-success);
+  opacity: 0.7;
+}
+
+.tdp-status--dropped {
+  color: var(--text-dim);
+}
+
+/* ── 详情 ── */
+/* 详情栏跟着窗口伸缩：宽屏给到 480px 读正文，窄一些的窗口退到 360px，给清单留出地方。 */
+.tdp .td-detail-pane {
+  width: clamp(360px, 38%, 480px);
+  padding: 12px 0 32px;
+}
+
+.tdp-panel {
+  box-shadow: var(--shadow-sm);
+}
+
+.tdp-panel .td-head {
+  padding: 18px 16px 14px 20px;
+  border-bottom: none;
+}
+
+.tdp-panel .td-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.4;
+}
+
+.tdp-panel .td-id {
+  margin-top: 6px;
+}
+
+.tdp-panel .td-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: -2px;
+}
+
+.tdp-props {
+  display: grid;
+  grid-template-columns: minmax(64px, max-content) minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 10px;
+  margin: 0;
+  padding: 4px 20px 18px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: var(--font-size-sm);
+}
+
+.tdp-prop-label {
+  color: var(--text-muted);
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.tdp-prop-value {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-primary);
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdp-prop-muted {
+  color: var(--text-muted);
+}
+
+.tdp-status-chip {
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.tdp-status-chip .tdp-status {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+  opacity: 1;
+}
+
+.tdp-status-chip .tdp-status svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tdp-panel .td-chip--dropped {
+  text-decoration: none;
+}
+
+.tdp-panel .td-body {
+  padding: 18px 20px 22px;
+  gap: 20px;
+}
+
+.tdp-panel .td-body:empty {
+  display: none;
+}
+
+.tdp-panel .td-section-title {
+  margin-bottom: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+.tdp-panel .td-text,
+.tdp-panel .td-list {
+  font-size: var(--font-size-base);
+  line-height: 1.7;
+}
+
+.tdp-lead.td-text {
+  color: var(--text-primary);
+}
+
+.tdp-panel .td-list {
+  gap: 6px;
+}
+
+.tdp-panel .td-list--numbered {
+  padding-left: 1.4em;
+}
+
+.tdp-panel .td-list--numbered li::marker {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .tdp .td-detail-pane {
+    width: 100%;
+  }
+
+  .tdp .td-search {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
 /* ── 定时任务页（frago schedule） ───────────────────────────────────
    骨架整套借事务页的 td-*：同样是「左清单右详情」、同样的筛选条和一句话新建。
    这里只补事务页没有的东西：动作按钮、执行记录、执行内容的等宽原文。 */
@@ -5824,19 +6626,54 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--accent-warning);
 }
 
+/* 清单没有分组标题顶着，第一行离工具栏补一点距离。 */
+.tdp .sc-list-pane {
+  padding-top: 12px;
+}
+
+/* 档位圆圈的颜色：在跑是绿，失败是琥珀，成功的绿退一档，没跑过和停用都是灰。 */
+.sc-state--running {
+  color: var(--accent-primary);
+}
+
+.sc-state--failing {
+  color: var(--accent-warning);
+}
+
+.sc-state--ok {
+  color: var(--accent-success);
+  opacity: 0.7;
+}
+
+.sc-state--never {
+  color: var(--text-muted);
+}
+
+.sc-state--disabled {
+  color: var(--text-dim);
+}
+
 .sc-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-bottom: 1px solid var(--border-color);
+  padding: 0 20px 16px;
+}
+
+/* 删除那一簇推到最右端。 */
+.sc-actions-danger {
+  display: inline-flex;
+  gap: var(--spacing-sm);
+  margin-left: auto;
 }
 
 .sc-action {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  height: 32px;
+  padding: 0 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: transparent;
@@ -5853,6 +6690,19 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .sc-action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 立即跑是详情里最常用的动作，实心绿；它与页头的「新建」是同一种按钮。 */
+.sc-action--primary {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.sc-action--primary:hover:not(:disabled) {
+  background: var(--accent-primary);
+  filter: brightness(1.08);
 }
 
 /* 删除平时不喊：跟在两个常用动作后面，字色退一档。点下去之后才换成告警色要人确认。 */
@@ -5874,8 +6724,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .sc-target {
   margin: 0;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -5885,22 +6736,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   word-break: break-word;
 }
 
-.sc-facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 4px var(--spacing-md);
-  margin: 0;
-  font-size: var(--font-size-sm);
-}
-
-.sc-facts dt {
-  color: var(--text-muted);
-}
-
-.sc-facts dd {
-  margin: 0;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+.tdp-panel .td-section .sc-run-meta {
+  margin-top: 6px;
 }
 
 .sc-runs {
@@ -5912,23 +6749,40 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: 6px;
 }
 
-/* 一次执行一张小卡。失败的整张换成告警底色，扫一眼就能数出最近败了几次。 */
+/* 一次执行一张小卡。失败的整张换成告警底色、整圈描边，扫一眼就能数出最近败了几次。 */
 .sc-run {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
 }
 
 .sc-run--failed {
   background: var(--accent-warning-10);
+  border-color: color-mix(in srgb, var(--accent-warning) 35%, transparent);
 }
 
 .sc-run-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 8px;
+}
+
+/* 执行记录里的圆圈压小一号，跟时间字号对齐；后面的内容与时间同一条起始线。 */
+.sc-run-head .tdp-status {
+  width: 16px;
+  height: 16px;
+}
+
+.sc-run-head .tdp-status svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sc-run > .sc-run-meta,
+.sc-run > .sc-run-error {
+  padding-left: 24px;
 }
 
 .sc-run-time {

@@ -2,10 +2,17 @@
  * Community Recipe Card Component
  *
  * Displays a single community recipe with install/update actions.
+ *
+ * 一屏二十多张卡，每张都挂一颗实心绿「安装」或实心红「卸载」，整页都在喊。现在按
+ * 「这张卡处在哪一步」给按钮分量：
+ * - 没装：描边的「安装」，是这张卡唯一要做的事，但不必比页头的主按钮更响；
+ * - 有更新：琥珀描边的「更新」，这是唯一需要人留意的一档；
+ * - 装好了：底栏左侧一个灰色「已安装」记号，卸载退成灰字，悬停时才露出红色。
+ * 类型徽章一律中性灰：工作流与原子是分类，不是状态，不该借绿色和琥珀色。
  */
 
 import { useTranslation } from 'react-i18next';
-import { Download, RefreshCw, ExternalLink, Trash2 } from 'lucide-react';
+import { Check, Download, RefreshCw, ExternalLink, Trash2 } from 'lucide-react';
 import type { CommunityRecipeItem } from '@/types/pywebview';
 
 interface CommunityRecipeCardProps {
@@ -24,133 +31,97 @@ export default function CommunityRecipeCard({
   isInstalling,
 }: CommunityRecipeCardProps) {
   const { t } = useTranslation();
+  const spinner = <RefreshCw size={14} className="animate-spin" />;
 
   return (
-    <div className="card hover:border-[var(--accent-primary)] transition-colors">
-      {/* Header: Name + Version + Link */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-[var(--text-primary)] truncate">
-              {recipe.name}
-            </span>
-            {recipe.url && (
-              <a
-                href={recipe.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--text-muted)] hover:text-[var(--accent-primary)] shrink-0"
-                title="View on GitHub"
-              >
-                <ExternalLink size={14} />
-              </a>
-            )}
-          </div>
-          {recipe.version && (
-            <span className="text-xs text-[var(--text-muted)]">
-              v{recipe.version}
-              {recipe.installed && recipe.installed_version && recipe.has_update && (
-                <span className="ml-1 text-[var(--accent-warning)]">
-                  (local: v{recipe.installed_version})
-                </span>
-              )}
-            </span>
-          )}
-        </div>
+    <div className="rl-card rl-card--static">
+      {/* Header: Name + Link */}
+      <span className="rl-card-head">
+        <span className="rl-card-title">{recipe.name}</span>
+        {recipe.url && (
+          <a
+            href={recipe.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rl-card-link"
+            title="View on GitHub"
+            aria-label="View on GitHub"
+          >
+            <ExternalLink size={13} />
+          </a>
+        )}
+      </span>
 
-        {/* Action Button */}
-        <div className="shrink-0">
-          {recipe.installed ? (
-            recipe.has_update ? (
-              <button
-                type="button"
-                className="btn btn-sm btn-warning flex items-center gap-1"
-                onClick={() => onUpdate(recipe.name)}
-                disabled={isInstalling}
-              >
-                {isInstalling ? (
-                  <RefreshCw size={14} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                <span>{t('recipes.update')}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-sm btn-danger flex items-center gap-1"
-                onClick={() => onUninstall(recipe.name)}
-                disabled={isInstalling}
-              >
-                {isInstalling ? (
-                  <RefreshCw size={14} className="animate-spin" />
-                ) : (
-                  <Trash2 size={14} />
-                )}
-                <span>{t('recipes.uninstall')}</span>
-              </button>
-            )
-          ) : (
-            <button
-              type="button"
-              className="btn btn-sm btn-primary flex items-center gap-1"
-              onClick={() => onInstall(recipe.name, false)}
-              disabled={isInstalling}
-            >
-              {isInstalling ? (
-                <RefreshCw size={14} className="animate-spin" />
-              ) : (
-                <Download size={14} />
-              )}
-              <span>{t('recipes.install')}</span>
-            </button>
-          )}
-        </div>
-      </div>
+      {/* Metadata: Version + Type + Runtime */}
+      <span className="rl-card-id">
+        {recipe.version && `v${recipe.version}`}
+        {recipe.installed && recipe.installed_version && recipe.has_update && (
+          <span className="rl-card-outdated"> (local: v{recipe.installed_version})</span>
+        )}
+        {[recipe.type, recipe.runtime].filter(Boolean).map((part) => ` · ${part}`)}
+      </span>
 
       {/* Description */}
-      {recipe.description && (
-        <p className="text-sm text-[var(--text-secondary)] mt-2 line-clamp-2">
-          {recipe.description}
-        </p>
-      )}
-
-      {/* Metadata: Type + Runtime */}
-      <div className="flex items-center gap-2 mt-3">
-        <span
-          className={`text-xs px-2 py-0.5 rounded ${
-            recipe.type === 'workflow'
-              ? 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
-              : 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
-          }`}
-        >
-          {recipe.type}
-        </span>
-        {recipe.runtime && (
-          <span className="text-xs text-[var(--text-muted)]">
-            {recipe.runtime}
-          </span>
-        )}
-      </div>
+      {recipe.description && <span className="rl-card-desc">{recipe.description}</span>}
 
       {/* Tags */}
       {recipe.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-2">
+        <span className="rl-tags">
           {recipe.tags.slice(0, 5).map((tag) => (
-            <span
-              key={tag}
-              className="text-xs bg-[var(--bg-subtle)] text-[var(--text-muted)] px-2 py-0.5 rounded"
-            >
+            <span key={tag} className="rl-tag">
               {tag}
             </span>
           ))}
-          {recipe.tags.length > 5 && (
-            <span className="text-xs text-[var(--text-muted)]">
-              +{recipe.tags.length - 5}
-            </span>
-          )}
-        </div>
+          {recipe.tags.length > 5 && <span className="rl-tag-more">+{recipe.tags.length - 5}</span>}
+        </span>
       )}
+
+      {/* Action row */}
+      <span className="rl-card-foot">
+        {recipe.installed && !recipe.has_update ? (
+          <>
+            <span className="rl-installed">
+              <Check size={13} />
+              {t('recipes.installed')}
+            </span>
+            <button
+              type="button"
+              className="rl-btn rl-btn--quiet-danger"
+              onClick={() => onUninstall(recipe.name)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? spinner : <Trash2 size={14} />}
+              <span>{t('recipes.uninstall')}</span>
+            </button>
+          </>
+        ) : recipe.installed ? (
+          <>
+            <span />
+            <button
+              type="button"
+              className="rl-btn rl-btn--warning-outline"
+              onClick={() => onUpdate(recipe.name)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? spinner : <RefreshCw size={14} />}
+              <span>{t('recipes.update')}</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <span />
+            <button
+              type="button"
+              className="rl-btn"
+              onClick={() => onInstall(recipe.name, false)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? spinner : <Download size={14} />}
+              <span>{t('recipes.install')}</span>
+            </button>
+          </>
+        )}
+      </span>
     </div>
   );
 }
