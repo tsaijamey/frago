@@ -154,6 +154,26 @@ class TestReinstallHandoff:
 
         assert called == []
 
+    def test_sentinel_does_not_outlive_the_handed_over_process(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The server must not inherit the sentinel.
+
+        It used to stay set, so the server carried it, tmux took it from the
+        server, and every agent session in tmux took it from tmux. A
+        ``uv run frago server restart`` run there skipped the reinstall and
+        restarted the old installed code while printing nothing wrong.
+        """
+        monkeypatch.setenv(REINSTALL_SENTINEL_ENV, "1")
+        monkeypatch.setattr(
+            "frago.server.launch_guard.source_checkout_root", lambda: tmp_path
+        )
+        monkeypatch.setattr(os, "execv", lambda *_a: None)
+
+        _reinstall_and_exec_if_source_checkout()
+
+        assert REINSTALL_SENTINEL_ENV not in os.environ
+
     def test_full_handoff_flow(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

@@ -17,7 +17,8 @@ import click
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 # Sentinel preventing infinite recursion: the re-exec'd system frago sees it
-# and skips the reinstall branch.
+# and skips the reinstall branch. It is meant for that one process only and is
+# removed as soon as it is read, so the server does not inherit it.
 REINSTALL_SENTINEL_ENV = "FRAGO_REINSTALL_DONE"
 
 # Windows raises this when Code Integrity refuses to load an image — in practice,
@@ -126,8 +127,14 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     process whose status we adopt on Windows where it does not. No-op on a
     global/uv-tool install or when the reinstall sentinel is already set (we ARE
     the re-exec'd process).
+
+    The sentinel is dropped the moment it is read. Left in place, the server
+    inherits it, tmux inherits it from the server, and every agent session in
+    tmux inherits it from tmux — so a ``uv run frago server restart`` typed in
+    one of those sessions mistakes itself for the re-exec'd process, skips the
+    reinstall, and restarts the old installed code.
     """
-    if os.environ.get(REINSTALL_SENTINEL_ENV) == "1":
+    if os.environ.pop(REINSTALL_SENTINEL_ENV, None) == "1":
         return
     from frago.server.launch_guard import source_checkout_root
 
