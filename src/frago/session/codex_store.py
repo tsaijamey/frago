@@ -220,8 +220,13 @@ def delete_session(session_id: str) -> str:
 
     "本机已经没有了"这条**不在这里判**。判据在上游（``find_rollout`` 就是会话清单
     取数用的那一个），上游没拦住才会走到这儿；走到这儿还失败，那就是真失败，如实抛。
+
+    **必须带 ``--force``。** codex 从 0.15x 起删除前要人在终端里确认，标准输入接的是
+    空设备时它直接拒绝（"cannot confirm session deletion without an interactive
+    terminal"）。人在界面上点过确认了，这里不再问第二遍。``--force`` 要求传的是 UUID
+    而不是会话名，``session_id`` 取自 rollout 文件，本来就是 UUID。
     """
-    return run_engine_command("codex", ["delete", session_id]).output
+    return run_engine_command("codex", ["delete", "--force", session_id]).output
 
 
 def claim_session(directory: str, since_ms: int) -> str | None:

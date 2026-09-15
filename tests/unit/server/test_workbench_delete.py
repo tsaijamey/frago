@@ -215,6 +215,20 @@ class TestDeleteSession:
         assert removed.removed == [f"deleted {CX_SID}"]
         assert codex_store.get_binding("frago-1") is None
 
+    def test_codex_删除命令带_force_免得它要终端确认(self, monkeypatch):
+        """codex 删除前要人在终端里确认，没有终端时直接拒绝；界面上已经确认过了。"""
+        seen = {}
+
+        def fake_run(agent, argv, **_k):
+            seen["agent"], seen["argv"] = agent, argv
+            return engine_cli.EngineCommandResult(argv=argv, output="deleted")
+
+        monkeypatch.setattr(codex_store, "run_engine_command", fake_run)
+
+        codex_store.delete_session(CX_SID)
+
+        assert seen == {"agent": "codex", "argv": ["delete", "--force", CX_SID]}
+
     def test_映射摘不干净不算整件事失败但要说出来(self, monkeypatch):
         """要的结果（清单里不再有它）已经达成，NEVER 把做成的事说成没做成。"""
         monkeypatch.setattr(opencode_store, "session_exists", lambda _sid: True)
