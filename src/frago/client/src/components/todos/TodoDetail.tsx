@@ -11,8 +11,8 @@
 
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-react';
-import type { TodoItem } from '@/api';
-import { PRIORITY_TONE, STATUS_TONE } from './todoMeta';
+import type { TodoCategory, TodoItem } from '@/api';
+import { PRIORITY_TONE, STATUS_TONE, effectiveCategory } from './todoMeta';
 
 interface SectionProps {
   title: string;
@@ -30,13 +30,18 @@ function Section({ title, children }: SectionProps) {
 
 interface TodoDetailProps {
   todo: TodoItem;
+  categories: TodoCategory[];
   onClose: () => void;
 }
 
-export default function TodoDetail({ todo, onClose }: TodoDetailProps) {
+export default function TodoDetail({ todo, categories, onClose }: TodoDetailProps) {
   const { t } = useTranslation();
   const statusTone = STATUS_TONE[todo.status];
   const priorityTone = PRIORITY_TONE[todo.priority];
+  const category = categories.find((c) => c.id === effectiveCategory(todo.category, categories));
+  // 分类被删了、事务里还留着旧 id：显示成未分类（它就是这么排的），但把旧 id 说出来，
+  // 人才知道把那个分类加回来它就会归位。
+  const orphanId = todo.category && !category ? todo.category : null;
 
   return (
     <div className="td-panel">
@@ -48,6 +53,13 @@ export default function TodoDetail({ todo, onClose }: TodoDetailProps) {
             </span>
             <span className={`td-chip ${priorityTone.className}`}>
               {t(`todos.priority.${todo.priority}`)}
+            </span>
+            <span className={`td-chip td-chip--category ${category ? '' : 'td-chip--uncategorized'}`}>
+              {category
+                ? `${t('todos.category.label')} · ${category.name}`
+                : orphanId
+                  ? t('todos.category.removed', { id: orphanId })
+                  : t('todos.category.none')}
             </span>
           </div>
           <h2 className="td-title">{todo.title}</h2>

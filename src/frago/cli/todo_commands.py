@@ -1,6 +1,8 @@
 """frago todo — local todo management commands.
 
   frago todo add/list/show/edit/log/done/rm/schema/next
+  frago todo categorize                 # 一批事务一次定分类
+  frago todo category list/add/rename/move/rm
 
 A thin CLI over ``frago.todo.store``; one JSON file per todo under
 ``~/.frago/todo/`` (``FRAGO_TODO_DIR`` overrides). Bare ``frago todo`` shows
@@ -83,20 +85,37 @@ def _current_session_id() -> tuple[str | None, str | None]:
     return found.session_id, None
 
 
-def _print_list(status=None, priority=None, tag=None):
-    from frago.todo import store
+def _check_category(category_id, *, allow_none=False):
+    """命令行收到的分类 id 先对一遍清单，不在就报错并列出可选项。"""
+    from frago.todo import categories
 
-    todos = store.list_todos(status=status, priority=priority, tag=tag)
+    if category_id is None or (allow_none and category_id == categories.UNCATEGORIZED):
+        return
+    try:
+        categories.require(category_id)
+    except ValueError as e:
+        hint = f" (or {categories.UNCATEGORIZED!r})" if allow_none else ""
+        raise click.ClickException(f"{e}{hint}") from None
+
+
+def _print_list(status=None, priority=None, tag=None, category=None):
+    from frago.todo import categories, store
+
+    _check_category(category, allow_none=True)
+    todos = store.list_todos(status=status, priority=priority, tag=tag, category=category)
     if not todos:
         click.echo("No todos.")
         click.echo('  frago todo add "..."')
         click.echo("  frago todo --how-to    # 会话尾声怎么把剩下的事交接出去")
         return
 
-    click.echo(f"\n{'ID':<36s} {'STATUS':<8s} {'PRI':<7s} TITLE")
-    click.echo("-" * 92)
+    # 未分类与引用了已删分类的，都显示成 "-"：它们排在哪，这一栏就该怎么写。
+    known = {c.id for c in categories.list_categories()}
+    click.echo(f"\n{'ID':<36s} {'CATEGORY':<10s} {'STATUS':<8s} {'PRI':<7s} TITLE")
+    click.echo("-" * 103)
     for t in todos:
-        click.echo(f"{t.id:<36s} {t.status:<8s} {t.priority:<7s} {t.title}")
+        cat = t.category if t.category in known else "-"
+        click.echo(f"{t.id:<36s} {cat:<10s} {t.status:<8s} {t.priority:<7s} {t.title}")
     click.echo(f"\n({len(todos)} todos)")
     click.echo("会话尾声要把剩下的事交接给下一场：frago todo --how-to")
 
@@ -108,6 +127,8 @@ def _print_list(status=None, priority=None, tag=None):
 @click.option("--priority", type=_PRIORITY_CHOICE, default="normal", help="Priority (default normal)")
 @click.option("--status", type=_STATUS_CHOICE, default="todo", help="Initial status (default todo)")
 @click.option("--tag", "tags", multiple=True, help="Tag (repeatable)")
+@click.option("--category", default=None,
+              help="Category id (see `frago todo category list`)")
 @click.option("--context", default=None, help="Background / why")
 @click.option("--step", "steps", multiple=True, help="Step (repeatable)")
 @click.option("--done-when", "done_when", multiple=True, help="Completion condition (repeatable)")
@@ -115,8 +136,8 @@ def _print_list(status=None, priority=None, tag=None):
 @click.option("--session", "sessions", multiple=True,
               help="Session id this came out of (repeatable; the current one is recorded anyway)")
 @click.option("--no-session", is_flag=True, help="Do not record the current session id")
-def todo_add(title_arg, title_opt, summary, priority, status, tags, context, steps, done_when,
-             links, sessions, no_session):
+def todo_add(title_arg, title_opt, summary, priority, status, tags, category, context, steps,
+             done_when, links, sessions, no_session):
     """Create a new todo. Title can be positional (`todo add "..."`) or via --title.
 
     \b
@@ -131,6 +152,7 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, context, ste
         raise click.ClickException(
             'provide a title: `frago todo add "..."` or `frago todo add --title "..."`'
         )
+    _check_category(category)
 
     session_list = list(sessions)
     warning = None
@@ -146,6 +168,7 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, context, ste
             priority=priority,
             status=status,
             tags=list(tags),
+            category=category,
             context=context,
             steps=list(steps),
             done_when=list(done_when),
@@ -171,9 +194,11 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, context, ste
 @click.option("--status", type=_STATUS_CHOICE, default=None, help="Filter by status")
 @click.option("--priority", type=_PRIORITY_CHOICE, default=None, help="Filter by priority")
 @click.option("--tag", default=None, help="Filter by tag")
-def todo_list(status, priority, tag):
-    """List todos (sorted by priority then created)."""
-    _print_list(status=status, priority=priority, tag=tag)
+@click.option("--category", default=None,
+              help="Filter by category id; `none` = uncategorized")
+def todo_list(status, priority, tag, category):
+    """List todos (sorted by category position, then priority, then created)."""
+    _print_list(status=status, priority=priority, tag=tag, category=category)
 
 
 @todo_group.command(name="show", cls=AgentFriendlyCommand)
@@ -196,13 +221,14 @@ def todo_show(ref):
 @click.option("--priority", type=_PRIORITY_CHOICE, default=None)
 @click.option("--status", type=_STATUS_CHOICE, default=None)
 @click.option("--tag", "tags", multiple=True, help="Replace tags (repeatable)")
+@click.option("--category", default=None, help="Category id; `none` clears it")
 @click.option("--context", default=None)
 @click.option("--step", "steps", multiple=True, help="Replace steps (repeatable)")
 @click.option("--done-when", "done_when", multiple=True, help="Replace conditions (repeatable)")
 @click.option("--link", "links", multiple=True, help="Replace links (repeatable)")
 @click.option("--session", "sessions", multiple=True, help="Replace session ids (repeatable)")
-def todo_edit(ref, title, summary, priority, status, tags, context, steps, done_when, links,
-              sessions):
+def todo_edit(ref, title, summary, priority, status, tags, category, context, steps, done_when,
+              links, sessions):
     """Edit fields of a todo (only provided options change).
 
     \b
@@ -222,6 +248,12 @@ def todo_edit(ref, title, summary, priority, status, tags, context, steps, done_
         changes["status"] = status
     if context is not None:
         changes["context"] = context
+    if category is not None:
+        from frago.todo import categories
+
+        _check_category(category, allow_none=True)
+        # 存储层用空串表示清空——None 在那边的意思是「这一项不改」。
+        changes["category"] = "" if category == categories.UNCATEGORIZED else category
     # Repeatable options replace the list only when supplied at least once.
     if tags:
         changes["tags"] = list(tags)
@@ -320,7 +352,7 @@ def todo_schema():
 
 @todo_group.command(name="next", cls=AgentFriendlyCommand)
 def todo_next():
-    """Show the most urgent active todo (highest priority, oldest)."""
+    """Show the most urgent active todo (first active one in `list` order)."""
     from frago.todo import store
 
     todo = store.next_todo()
@@ -334,3 +366,152 @@ def todo_next():
         click.echo("\ndone when:")
         for cond in todo.done_when:
             click.echo(f"  - {cond}")
+
+
+@todo_group.command(name="categorize", cls=AgentFriendlyCommand)
+@click.argument("mapping", required=False)
+def todo_categorize(mapping):
+    """Assign categories to many todos at once, all-or-nothing.
+
+    \b
+    MAPPING is a JSON object {"<todo id or unique prefix>": "<category id>"};
+    null or "none" clears a todo's category. Omit MAPPING (or pass "-") to read
+    the JSON from stdin.
+
+    \b
+    Every entry is checked first. If any todo id or category id is wrong, NOTHING
+    is written: the command exits non-zero and lists every bad entry. On success
+    it prints "OK: ..." with the number of todos changed.
+
+    \b
+    Examples:
+      frago todo categorize '{"20260901-fix-mail": "work", "20260902-buy-milk": "family"}'
+      frago todo categorize < plan.json
+    """
+    from frago.todo import categories, store
+
+    if mapping is None or mapping == "-":
+        mapping = click.get_text_stream("stdin").read()
+    try:
+        data = json.loads(mapping)
+    except json.JSONDecodeError as e:
+        raise click.ClickException(f"REJECTED, nothing written: mapping is not valid JSON ({e})") from None
+    if not isinstance(data, dict) or not data:
+        raise click.ClickException(
+            'REJECTED, nothing written: mapping must be a non-empty JSON object '
+            '{"<todo id>": "<category id>", ...}'
+        )
+
+    try:
+        changed, unchanged = store.categorize(data)
+    except store.BatchError as e:
+        lines = [f"REJECTED, nothing written — {len(e.problems)} of {len(data)} entries invalid:"]
+        lines += [f"  {p}" for p in e.problems]
+        lines.append(f"valid categories: {categories.describe(e.categories)} "
+                     f"(or null / {categories.UNCATEGORIZED!r} to clear)")
+        raise click.ClickException("\n".join(lines)) from None
+
+    click.echo(f"OK: categorized {len(changed)} todo(s), {unchanged} already as requested")
+    for todo, before in changed:
+        click.echo(f"  {todo.id}: {before or '-'} -> {todo.category or '-'}")
+
+
+# ── 分类清单 ────────────────────────────────────────────────────────────
+
+
+@todo_group.group(name="category", cls=AgentFriendlyGroup, invoke_without_command=True)
+@click.pass_context
+def category_group(ctx):
+    """Manage the ordered category list (position = sort rank, at most 20)."""
+    if ctx.invoked_subcommand is None:
+        _print_categories()
+
+
+def _print_categories():
+    from frago.todo import categories, store
+
+    current = categories.list_categories()
+    usage = store.category_usage()
+    click.echo(f"\n{'#':>2s}  {'ID':<20s} {'TODOS':>5s}  NAME")
+    click.echo("-" * 50)
+    for i, c in enumerate(current, 1):
+        click.echo(f"{i:>2d}  {c.id:<20s} {usage.get(c.id, 0):>5d}  {c.name}")
+    click.echo(f"\n({len(current)}/{categories.MAX_CATEGORIES} categories; "
+               "todos sort by this order, uncategorized last)")
+    orphans = {k: v for k, v in usage.items() if k not in {c.id for c in current}}
+    if orphans:
+        # 分类删了、事务里还留着 id 的，点出来：它们现在按未分类排。
+        listed = ", ".join(f"{k}({v})" for k, v in sorted(orphans.items()))
+        click.echo(f"[!] todos referencing removed categories (sorted as uncategorized): {listed}")
+
+
+def _category_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e.args[0] if isinstance(e, KeyError) else e)) from None
+
+
+@category_group.command(name="list", cls=AgentFriendlyCommand)
+def category_list():
+    """Show categories in rank order, with how many todos use each."""
+    _print_categories()
+
+
+@category_group.command(name="add", cls=AgentFriendlyCommand)
+@click.argument("category_id")
+@click.argument("name")
+@click.option("--position", type=int, default=None, help="1-based position (default: last)")
+def category_add(category_id, name, position):
+    """Add a category: ID (lowercase, stored in todo files) and display NAME."""
+    from frago.todo import categories
+
+    _category_call(categories.add_category, category_id, name, position=position)
+    click.echo(f"Added category {category_id} ({name})")
+    _print_categories()
+
+
+@category_group.command(name="rename", cls=AgentFriendlyCommand)
+@click.argument("category_id")
+@click.argument("name")
+def category_rename(category_id, name):
+    """Change a category's display NAME (the id and the todos stay as they are)."""
+    from frago.todo import categories
+
+    _category_call(categories.rename_category, category_id, name)
+    click.echo(f"Renamed {category_id} -> {name}")
+
+
+@category_group.command(name="move", cls=AgentFriendlyCommand)
+@click.argument("category_id")
+@click.argument("position", type=int)
+def category_move(category_id, position):
+    """Move a category to POSITION (1 = first; out-of-range sticks to the ends)."""
+    from frago.todo import categories
+
+    _category_call(categories.move_category, category_id, position)
+    click.echo(f"Moved {category_id} to position {position}")
+    _print_categories()
+
+
+@category_group.command(name="rm", cls=AgentFriendlyCommand)
+@click.argument("category_id")
+@click.option("--force", is_flag=True, help="Remove even if todos still reference it")
+def category_rm(category_id, force):
+    """Remove a category. Todos that used it keep the id but sort as uncategorized.
+
+    \b
+    Refuses while todos still reference it unless --force, and says how many.
+    """
+    from frago.todo import categories, store
+
+    used = store.category_usage().get(category_id, 0)
+    if used and not force:
+        raise click.ClickException(
+            f"{used} todo(s) still use category {category_id!r}. Removing it leaves their "
+            f"field as is but they will sort as uncategorized. Re-run with --force, or "
+            f"reassign them first: frago todo list --category {category_id}"
+        )
+    _category_call(categories.remove_category, category_id)
+    note = f"; {used} todo(s) now sort as uncategorized" if used else ""
+    click.echo(f"Removed category {category_id}{note}")

@@ -4,7 +4,7 @@
  * 这些事务不走配方，也不进任何数据库，就是 `~/.frago/todo/` 下的一堆 JSON 文件，
  * 所以它进不了配方那套展示体系，只能自己开一页。
  *
- * 顺序照搬服务端（优先级高的在前，同级早建的在前），跟 `frago todo list` 一模一样
+ * 顺序照搬服务端（分类名次在前，同分类里优先级高的在前，再按早建的在前），跟 `frago todo list` 一模一样
  * ——人在命令行看到的第一条和在这里看到的第一条必须是同一件，否则两边对不上账。
  *
  * 一次把全部事务拉回来，筛选在本地做。事务总共几十件，一次拉完的代价可以忽略，
@@ -14,19 +14,25 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ListChecks, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { ListChecks, Loader2, Plus, RefreshCw, Search, Tags, X } from 'lucide-react';
 import * as api from '@/api';
-import type { TodoItem, TodoListResponse } from '@/api';
+import type { TodoCategory, TodoItem, TodoListResponse } from '@/api';
 import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import TodoDetail from './TodoDetail';
+import TodoCategoryEditor from './TodoCategoryEditor';
 import {
   PRIORITY_TONE,
   STATUS_FILTERS,
   STATUS_TONE,
+  UNCATEGORIZED,
   countFor,
+  countStatuses,
+  effectiveCategory,
+  matchesCategory,
   matchesFilter,
+  type CategoryFilter,
   type StatusFilter,
 } from './todoMeta';
 
@@ -35,13 +41,16 @@ const REFRESH_MS = 20_000;
 
 interface TodoRowProps {
   todo: TodoItem;
+  categories: TodoCategory[];
   selected: boolean;
   onClick: () => void;
 }
 
-function TodoRow({ todo, selected, onClick }: TodoRowProps) {
+function TodoRow({ todo, categories, selected, onClick }: TodoRowProps) {
   const { t } = useTranslation();
   const line = todo.summary || todo.context || '';
+  const categoryId = effectiveCategory(todo.category, categories);
+  const categoryName = categories.find((c) => c.id === categoryId)?.name;
 
   return (
     <button
@@ -53,6 +62,9 @@ function TodoRow({ todo, selected, onClick }: TodoRowProps) {
       <div className="td-row-head">
         <span className={`td-chip ${STATUS_TONE[todo.status].className}`}>
           {t(`todos.status.${todo.status}`)}
+        </span>
+        <span className={`td-chip td-chip--category ${categoryName ? '' : 'td-chip--uncategorized'}`}>
+          {categoryName ?? t('todos.category.none')}
         </span>
         {todo.priority !== 'normal' && (
           <span className={`td-chip ${PRIORITY_TONE[todo.priority].className}`}>
@@ -86,7 +98,9 @@ export default function TodoPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('active');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [search, setSearch] = useState('');
+  const [editingCategories, setEditingCategories] = useState(false);
 
   // 「添一件」那一路。人只填 draft 这一句话，标题、背景、完成判据由 agent 补——所以
   // 这里没有表单，只有一个输入框和一次等待。
@@ -116,11 +130,41 @@ export default function TodoPage() {
   // 用 useMemo 兜住空清单：`?? []` 每次渲染都会造一个新数组，下面那个 useMemo 就
   // 等于没缓存，每次渲染重筛一遍。
   const todos = useMemo(() => body?.todos ?? [], [body]);
-  const counts = body?.counts ?? {};
+  const categories = useMemo(() => body?.categories ?? [], [body]);
+
+  // 分类筛选若指着一个刚被删掉的分类，退回「全部」——否则人看到一张空清单，筛选条上
+  // 却没有一个按钮是亮的，找不到是谁把事务藏起来了。
+  const activeCategory =
+    categoryFilter === 'all' || categoryFilter === UNCATEGORIZED || categories.some((c) => c.id === categoryFilter)
+      ? categoryFilter
+      : 'all';
+
+  // 状态那排的计数只按分类筛过，分类那排的计数只按状态筛过：各自点来点去，自己那排的数不跳。
+  const inCategory = useMemo(
+    () => todos.filter((todo) => matchesCategory(todo.category, activeCategory, categories)),
+    [todos, activeCategory, categories]
+  );
+  const counts = useMemo(() => countStatuses(inCategory), [inCategory]);
+  const categoryCounts = useMemo(() => {
+    const out: Record<string, number> = { all: 0, [UNCATEGORIZED]: 0 };
+    for (const todo of todos) {
+      if (!matchesFilter(todo.status, filter)) continue;
+      const key = effectiveCategory(todo.category, categories) ?? UNCATEGORIZED;
+      out[key] = (out[key] ?? 0) + 1;
+      out.all += 1;
+    }
+    return out;
+  }, [todos, filter, categories]);
+  // 分类清单编辑器里「删之前说清影响几件」用的是原始引用数，含已删分类的 id。
+  const usage = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const todo of todos) if (todo.category) out[todo.category] = (out[todo.category] ?? 0) + 1;
+    return out;
+  }, [todos]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return todos.filter((todo) => {
+    return inCategory.filter((todo) => {
       if (!matchesFilter(todo.status, filter)) return false;
       if (!q) return true;
       return [todo.title, todo.summary ?? '', todo.context ?? '', todo.id, ...todo.tags]
@@ -128,7 +172,7 @@ export default function TodoPage() {
         .toLowerCase()
         .includes(q);
     });
-  }, [todos, filter, search]);
+  }, [inCategory, filter, search]);
 
   /**
    * 把那句话交给 agent，等它把事务建出来。
@@ -178,6 +222,16 @@ export default function TodoPage() {
           >
             <Plus size={14} />
             {t('todos.compose.button')}
+          </button>
+          <button
+            type="button"
+            className={`cs-refresh ${editingCategories ? 'td-cat-toggle--open' : ''}`}
+            onClick={() => setEditingCategories((open) => !open)}
+            aria-expanded={editingCategories}
+            disabled={body === null}
+          >
+            <Tags size={14} />
+            {t('todos.category.edit')}
           </button>
           <button type="button" className="cs-refresh" onClick={refresh} disabled={refreshing}>
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
@@ -238,6 +292,18 @@ export default function TodoPage() {
         </div>
       )}
 
+      {editingCategories && body !== null && (
+        <TodoCategoryEditor
+          categories={categories}
+          usage={usage}
+          onCancel={() => setEditingCategories(false)}
+          onSaved={() => {
+            setEditingCategories(false);
+            void refresh();
+          }}
+        />
+      )}
+
       <div className="td-toolbar">
         <div className="td-filters">
           {STATUS_FILTERS.map((name) => (
@@ -249,6 +315,23 @@ export default function TodoPage() {
             >
               {t(`todos.filter.${name}`)}
               <span className="td-filter-count">{countFor(name, counts)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="td-filters" role="group" aria-label={t('todos.category.label')}>
+          {['all', ...categories.map((c) => c.id), UNCATEGORIZED].map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`td-filter ${activeCategory === id ? 'td-filter--active' : ''}`}
+              onClick={() => setCategoryFilter(id)}
+            >
+              {id === 'all'
+                ? t('todos.category.all')
+                : id === UNCATEGORIZED
+                  ? t('todos.category.none')
+                  : categories.find((c) => c.id === id)?.name}
+              <span className="td-filter-count">{categoryCounts[id] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -293,6 +376,7 @@ export default function TodoPage() {
               <TodoRow
                 key={todo.id}
                 todo={todo}
+                categories={categories}
                 selected={todo.id === currentTodoId}
                 onClick={() =>
                   todo.id === currentTodoId
@@ -306,7 +390,7 @@ export default function TodoPage() {
 
         {selected && (
           <div className="td-detail-pane">
-            <TodoDetail todo={selected} onClose={() => switchPage('todos')} />
+            <TodoDetail todo={selected} categories={categories} onClose={() => switchPage('todos')} />
           </div>
         )}
       </div>

@@ -219,3 +219,80 @@ def test_schema_documents_the_session_trail(runner):
     schema = json.loads(runner.invoke(todo_group, ["schema"]).output)
     names = {f["name"] for f in schema["fields"]}
     assert "sessions" in names
+
+
+# ── 分类 ────────────────────────────────────────────────────────────────
+
+
+def _new_id(res):
+    return res.output.split("Created todo ")[1].splitlines()[0].strip()
+
+
+def test_add_with_unknown_category_lists_choices(runner):
+    res = _add(runner, "x", "--category", "fun")
+    assert res.exit_code != 0
+    assert "family(家庭)" in res.output
+
+
+def test_categorize_rejects_whole_batch(runner, tmp_path):
+    a = _new_id(_add(runner, "alpha"))
+    b = _new_id(_add(runner, "beta"))
+    mapping = json.dumps({a: "work", b: "fun", "ghost": "family"})
+    res = runner.invoke(todo_group, ["categorize", mapping])
+    assert res.exit_code != 0
+    assert "REJECTED, nothing written" in res.output
+    assert "ghost" in res.output and "'fun'" in res.output
+    # 合法的那条也不许先写进去
+    assert json.loads((tmp_path / f"{a}.json").read_text())["category"] is None
+
+
+def test_categorize_from_stdin_reports_count(runner):
+    a = _new_id(_add(runner, "alpha"))
+    b = _new_id(_add(runner, "beta"))
+    res = runner.invoke(todo_group, ["categorize"], input=json.dumps({a: "work", b: "family"}))
+    assert res.exit_code == 0, res.output
+    assert res.output.startswith("OK: categorized 2 todo(s)")
+    listed = runner.invoke(todo_group, ["list", "--category", "work"]).output
+    assert a in listed and b not in listed
+
+
+def test_categorize_rejects_bad_json(runner):
+    res = runner.invoke(todo_group, ["categorize", "not json"])
+    assert res.exit_code != 0
+    assert "REJECTED" in res.output
+
+
+def test_edit_clears_category(runner):
+    a = _new_id(_add(runner, "alpha", "--category", "work"))
+    assert runner.invoke(todo_group, ["edit", a, "--category", "none"]).exit_code == 0
+    data = json.loads(runner.invoke(todo_group, ["show", a]).output)
+    assert data["category"] is None
+
+
+def test_category_list_cap(runner):
+    for i in range(16):
+        res = runner.invoke(todo_group, ["category", "add", f"c{i}", f"分类{i}"])
+        assert res.exit_code == 0, res.output
+    res = runner.invoke(todo_group, ["category", "add", "overflow", "多一个"])
+    assert res.exit_code != 0
+    assert "at most 20" in res.output
+
+
+def test_category_manage_commands(runner):
+    assert runner.invoke(todo_group, ["category", "rename", "hobby", "爱好"]).exit_code == 0
+    assert runner.invoke(todo_group, ["category", "move", "other", "1"]).exit_code == 0
+    out = runner.invoke(todo_group, ["category", "list"]).output
+    assert out.index("other") < out.index("family")
+    assert "爱好" in out
+    assert runner.invoke(todo_group, ["category", "rename", "ghost", "x"]).exit_code != 0
+
+
+def test_category_rm_reports_referencing_todos(runner):
+    _add(runner, "alpha", "--category", "work")
+    _add(runner, "beta", "--category", "work")
+    res = runner.invoke(todo_group, ["category", "rm", "work"])
+    assert res.exit_code != 0
+    assert "2 todo(s)" in res.output
+    res = runner.invoke(todo_group, ["category", "rm", "work", "--force"])
+    assert res.exit_code == 0
+    assert "2 todo(s) now sort as uncategorized" in res.output

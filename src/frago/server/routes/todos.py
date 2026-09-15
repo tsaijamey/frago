@@ -11,6 +11,12 @@ frago 自带的小 agent，由 agent 去敲 `frago todo add`。服务端从头�
 `~/.frago/todo/` 下的文件——事务是 agent 的工作账本，两条写入路径迟早两边打架，
 而且 `todo add` 自带的那些规矩（标题被 slugify 成 id、同一件事不准开第二条）也
 只有走命令行才生效。
+
+分类清单是例外，但不违反上面那条：它不是事务文件，是 `~/.frago/config.json` 里
+的一段本机偏好（见 :mod:`frago.todo.categories`），跟界面上改会话清点门槛、改默认
+内核是同一类写入。那几条规矩（id 不许重复、最多 20 个）也不在命令行里，而在存储
+层的同一个校验函数里，两条路径谁写都过同一道。整张清单一次交上来——增删改名换位
+在界面上都是对这张表的编辑，存盘时一次替换，不会出现「挪了一半」的中间态。
 """
 
 from __future__ import annotations
@@ -21,7 +27,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from frago.todo.store import PRIORITIES, STATUSES, list_todos
+from frago.todo import categories as todo_categories
+from frago.todo.store import PRIORITIES, STATUSES, category_usage, list_todos
 from frago.todo.store import get as get_todo
 
 router = APIRouter()
@@ -36,6 +43,9 @@ class TodoItem(BaseModel):
     status: str
     priority: str
     tags: list[str] = []
+    # 分类 id；旧事务没有这个字段，读出来是 None。可能引用了已从清单里删掉的 id——
+    # 原样给出，界面按未分类显示。
+    category: str | None = None
     created: str
     updated: str
     done_at: str | None = None
@@ -48,6 +58,20 @@ class TodoItem(BaseModel):
     sessions: list[str] = []
 
 
+class TodoCategory(BaseModel):
+    id: str
+    name: str
+    # 从 1 数的名次，与 `frago todo category list` 那一栏同一个数。
+    position: int
+
+
+def _category_rows() -> list[TodoCategory]:
+    return [
+        TodoCategory(id=c.id, name=c.name, position=i)
+        for i, c in enumerate(todo_categories.list_categories(), 1)
+    ]
+
+
 class TodoListResponse(BaseModel):
     """一批事务，外加每一档各有几件。
 
@@ -58,6 +82,8 @@ class TodoListResponse(BaseModel):
 
     todos: list[TodoItem]
     counts: dict[str, int]
+    # 分类清单，按排名先后。事务里只存 id，界面要靠它换成显示名、排出筛选条。
+    categories: list[TodoCategory]
 
 
 def _validate(value: str | None, allowed: tuple[str, ...], field: str) -> str | None:
@@ -77,13 +103,18 @@ async def api_list_todos(
     status: str | None = Query(None, description="只看某一档状态"),
     priority: str | None = Query(None, description="只看某一档优先级"),
     tag: str | None = Query(None, description="只看带某个标签的"),
+    category: str | None = Query(None, description="只看某个分类；none = 未分类"),
 ) -> TodoListResponse:
-    """事务清单，顺序与 `frago todo list` 完全一致（优先级高在前，同级早的在前）。"""
+    """事务清单，顺序与 `frago todo list` 完全一致（分类名次 → 高中低 → 早建的在前）。"""
     status = _validate(status, STATUSES, "status")
     priority = _validate(priority, PRIORITIES, "priority")
+    rows = _category_rows()
+    category = _validate(
+        category, (*(c.id for c in rows), todo_categories.UNCATEGORIZED), "category"
+    )
 
-    # 计数的底样本：优先级与标签筛过，状态没筛。
-    base = list_todos(priority=priority, tag=tag or None)
+    # 计数的底样本：优先级、标签、分类筛过，状态没筛。
+    base = list_todos(priority=priority, tag=tag or None, category=category)
 
     counts: dict[str, int] = {"all": len(base)}
     for name in STATUSES:
@@ -96,6 +127,7 @@ async def api_list_todos(
     return TodoListResponse(
         todos=[TodoItem(**asdict(t)) for t in visible],
         counts=counts,
+        categories=rows,
     )
 
 
@@ -138,6 +170,36 @@ async def api_compose_todo(request: TodoComposeRequest) -> TodoComposeResponse:
         raise HTTPException(status_code=502, detail=exc.detail) from exc
 
     return TodoComposeResponse(**result)
+
+
+class TodoCategoryInput(BaseModel):
+    id: str
+    name: str
+
+
+class TodoCategoriesUpdate(BaseModel):
+    """整张分类清单，顺序即名次。"""
+
+    categories: list[TodoCategoryInput]
+
+
+class TodoCategoriesResponse(BaseModel):
+    categories: list[TodoCategory]
+    # 每个分类 id 被几件事务引用。界面删分类前要照实说「会影响几件」。
+    usage: dict[str, int]
+
+
+@router.put("/todos/categories", response_model=TodoCategoriesResponse)
+async def api_update_todo_categories(request: TodoCategoriesUpdate) -> TodoCategoriesResponse:
+    """整张替换分类清单。被删掉的分类，事务里的字段不动，按未分类排。"""
+    try:
+        todo_categories.save_categories(
+            [todo_categories.Category(c.id, c.name) for c in request.categories]
+        )
+    except ValueError as exc:
+        # 超过 20 个、id 重复或不合规、显示名为空——原话带回去，人改了再存。
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TodoCategoriesResponse(categories=_category_rows(), usage=category_usage())
 
 
 @router.get("/todos/{todo_id}", response_model=TodoItem)

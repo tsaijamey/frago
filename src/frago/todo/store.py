@@ -24,6 +24,8 @@ from pathlib import Path
 
 from slugify import slugify
 
+from frago.todo import categories
+
 # ── Vocabularies ────────────────────────────────────────────────────────
 
 STATUSES = ("todo", "doing", "done", "dropped")
@@ -36,7 +38,9 @@ _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 # the structure without reading source.
 TODO_SCHEMA = {
     "filename": "<YYYYMMDD>-<slug>.json under ~/.frago/todo/ (FRAGO_TODO_DIR overrides)",
-    "sort": "priority(high>normal>low) then created(asc); `next` picks first active (todo/doing)",
+    "sort": "category (position in the category list; uncategorized or unknown id last) "
+            "then priority(high>normal>low) then created(asc); "
+            "`next` picks first active (todo/doing)",
     "fields": [
         {"name": "id", "type": "string", "auto": True,
          "description": "filename without .json; reference handle (prefix-resolvable)"},
@@ -46,6 +50,11 @@ TODO_SCHEMA = {
         {"name": "status", "type": "enum", "enum": list(STATUSES), "default": "todo"},
         {"name": "priority", "type": "enum", "enum": list(PRIORITIES), "default": "normal"},
         {"name": "tags", "type": "list[str]", "default": []},
+        {"name": "category", "type": "string|null", "default": None,
+         "description": "category id from `frago todo category list` (config.json -> "
+                        "todo_categories; defaults family/work/hobby/other). null = "
+                        "uncategorized; an id no longer in the list sorts as uncategorized "
+                        "but is kept"},
         {"name": "created", "type": "date", "auto": True, "description": "ISO date, set on add"},
         {"name": "updated", "type": "date", "auto": True, "description": "ISO date, refreshed on edit"},
         {"name": "done_at", "type": "date|null", "auto": True, "description": "stamped when status->done"},
@@ -71,6 +80,8 @@ class Todo:
     status: str = "todo"
     priority: str = "normal"
     tags: list[str] = field(default_factory=list)
+    # 分类 id。旧事务文件没有这个键，读出来就是 None（未分类）。
+    category: str | None = None
     created: str = ""
     updated: str = ""
     done_at: str | None = None
@@ -185,6 +196,7 @@ def add(
     priority: str = "normal",
     status: str = "todo",
     tags: list[str] | None = None,
+    category: str | None = None,
     context: str | None = None,
     steps: list[str] | None = None,
     done_when: list[str] | None = None,
@@ -198,6 +210,8 @@ def add(
         raise ValueError(f"invalid priority {priority!r}; must be one of {PRIORITIES}")
     if status not in STATUSES:
         raise ValueError(f"invalid status {status!r}; must be one of {STATUSES}")
+    if category is not None:
+        categories.require(category)
 
     today = _today()
     todo = Todo(
@@ -207,6 +221,7 @@ def add(
         status=status,
         priority=priority,
         tags=list(tags or []),
+        category=category,
         created=today,
         updated=today,
         done_at=today if status == "done" else None,
@@ -231,9 +246,17 @@ def _dedupe(values: list[str] | None) -> list[str]:
 
 
 def list_todos(
-    *, status: str | None = None, priority: str | None = None, tag: str | None = None
+    *,
+    status: str | None = None,
+    priority: str | None = None,
+    tag: str | None = None,
+    category: str | None = None,
 ) -> list[Todo]:
-    """List todos, optionally filtered, sorted by (priority, created, id).
+    """List todos, optionally filtered, sorted by (category, priority, created, id).
+
+    ``category`` filters by id; ``"none"`` keeps the uncategorized ones — including
+    todos whose id has since been removed from the list, since that is how they sort
+    and show everywhere else.
 
     Only ``*.json`` files are considered — legacy ``.md`` todos are ignored.
     Malformed files are skipped with a stderr warning, never aborting the list.
@@ -252,8 +275,33 @@ def list_todos(
     if tag:
         todos = [t for t in todos if tag in t.tags]
 
-    todos.sort(key=lambda t: (_PRIORITY_ORDER.get(t.priority, 1), t.created, t.id))
+    rank = category_rank()
+    if category == categories.UNCATEGORIZED:
+        todos = [t for t in todos if t.category not in rank]
+    elif category:
+        todos = [t for t in todos if t.category == category]
+
+    todos.sort(key=lambda t: sort_key(t, rank))
     return todos
+
+
+def category_rank() -> dict[str, int]:
+    """分类 id → 在清单里的位置（0 起）。"""
+    return {c.id: i for i, c in enumerate(categories.list_categories())}
+
+
+def sort_key(todo: Todo, rank: dict[str, int]) -> tuple:
+    """清单顺序：分类位置 → 高中低 → 建得早的在前。
+
+    未分类、以及引用了已不在清单里的分类的，统一排在所有分类之后——分类被删了不
+    代表那件事不做了，但也没有理由让它继续占着一个已经不存在的名次。
+    """
+    return (
+        rank.get(todo.category, len(rank)),
+        _PRIORITY_ORDER.get(todo.priority, 1),
+        todo.created,
+        todo.id,
+    )
 
 
 def get(ref: str) -> Todo:
@@ -262,7 +310,7 @@ def get(ref: str) -> Todo:
 
 
 _EDITABLE = {
-    "title", "summary", "status", "priority", "tags",
+    "title", "summary", "status", "priority", "tags", "category",
     "context", "steps", "done_when", "links", "sessions",
 }
 
@@ -271,6 +319,7 @@ def update(ref: str, **changes) -> Todo:
     """Apply field changes (None values are ignored), refresh ``updated``.
 
     Setting ``status`` to ``done`` stamps ``done_at`` if not already set.
+    ``category=""`` clears the category (None already means "leave it alone").
     """
     todo = get(ref)
     for key, value in changes.items():
@@ -282,6 +331,11 @@ def update(ref: str, **changes) -> Todo:
             raise ValueError(f"invalid status {value!r}; must be one of {STATUSES}")
         if key == "priority" and value not in PRIORITIES:
             raise ValueError(f"invalid priority {value!r}; must be one of {PRIORITIES}")
+        if key == "category":
+            if value == "":
+                value = None
+            else:
+                categories.require(value)
         setattr(todo, key, value)
 
     todo.updated = _today()
@@ -350,7 +404,83 @@ def remove(ref: str) -> str:
     return todo_id
 
 
+def categorize(assignments: dict[str, str | None]) -> tuple[list[tuple[Todo, str | None]], int]:
+    """一次给一批事务定分类：全部校验通过才写，任何一条不对就整批不写。
+
+    给定时任务里的 agent 用——它读完清单、一口气分好，一条命令交上来。只写了一半
+    的批次最难收拾：agent 看到报错重来一遍，前一半已经改了、后一半没改，它分不清
+    哪些是自己这次的结果。所以先把每一条都核一遍，把问题攒齐一次报出来，再动文件。
+
+    ``assignments`` 是「事务 id（或唯一前缀）→ 分类 id」；分类 id 为 None 或
+    ``"none"`` 表示清空。返回 ``([(改动后的事务, 原分类), ...], 没变的件数)``；
+    校验失败抛 :class:`BatchError`，里面带着每一条问题。
+    """
+    current = categories.list_categories()
+    valid = {c.id for c in current}
+    problems: list[str] = []
+    resolved: dict[str, str | None] = {}
+    origin: dict[str, str] = {}
+
+    for ref, category_id in assignments.items():
+        if category_id is not None and not isinstance(category_id, str):
+            problems.append(f"{ref}: category must be a string id or null, got {category_id!r}")
+            continue
+        if category_id == categories.UNCATEGORIZED:
+            category_id = None
+        try:
+            todo_id = resolve_id(ref)
+        except (KeyError, ValueError) as e:
+            problems.append(f"{ref}: {e.args[0]}")
+            todo_id = None
+        if category_id is not None and category_id not in valid:
+            problems.append(f"{ref}: unknown category {category_id!r}")
+        if todo_id is None or (category_id is not None and category_id not in valid):
+            continue
+        if todo_id in resolved and resolved[todo_id] != category_id:
+            problems.append(
+                f"{ref}: same todo as {origin[todo_id]!r} ({todo_id}) but a different category"
+            )
+            continue
+        resolved[todo_id] = category_id
+        origin.setdefault(todo_id, ref)
+
+    if problems:
+        raise BatchError(problems, current)
+
+    changed: list[tuple[Todo, str | None]] = []
+    unchanged = 0
+    for todo_id, category_id in resolved.items():
+        todo = get(todo_id)
+        if todo.category == category_id:
+            unchanged += 1
+            continue
+        before = todo.category
+        todo.category = category_id
+        todo.updated = _today()
+        _write(todo)
+        changed.append((todo, before))
+    return changed, unchanged
+
+
+class BatchError(ValueError):
+    """批量分类整批被拒。``problems`` 一条一句，``categories`` 是当时的可选项。"""
+
+    def __init__(self, problems: list[str], current: list[categories.Category]):
+        self.problems = problems
+        self.categories = current
+        super().__init__(f"{len(problems)} problem(s): " + "; ".join(problems))
+
+
+def category_usage() -> dict[str, int]:
+    """每个分类 id 被几件事务引用（含已不在清单里的 id）。"""
+    usage: dict[str, int] = {}
+    for todo in list_todos():
+        if todo.category:
+            usage[todo.category] = usage.get(todo.category, 0) + 1
+    return usage
+
+
 def next_todo() -> Todo | None:
-    """Return the most urgent active todo (highest priority, oldest), or None."""
+    """Return the most urgent active todo (first in list order), or None."""
     active = [t for t in list_todos() if t.status in _ACTIVE]
     return active[0] if active else None

@@ -10,11 +10,11 @@
 引擎在 agent 调工具的那一刻注进去的。规矩改了，这里不用跟着改；抄一份到这里，才
 是两边迟早对不上账的开始。
 
-**为什么用内核而不是 `frago agent`。** `frago agent` 那条路要起一个 tmux 会话跑
-完整的 cli-agent，实测一轮 26 秒，还占着一个会话；内核这条 9 秒出结果，手上只有
-`run_frago` 和 `run_recipe` 两个工具，对「填一句话建一条待办」正合适。代价是内核
-收不到 UserPromptSubmit 那一层的提示，但管着 todo 写法的两条硬规矩走的是工具调用
-层——实测确认内核收得到，并照着做了。
+**为什么用 CoreAgent 而不是 `frago agent`。** `frago agent` 那条路要起一个 tmux
+会话跑完整的 cli-agent，实测一轮 26 秒，还占着一个会话；CoreAgent（frago-core 自己
+的 agent 循环）9 秒出结果。它的工具面跟 Claude Code 一样有 Bash、读写文件，所以这里
+用 ``--allowed-tools`` 把它收窄到只能执行 `frago todo` 命令——填一句话建一条待办，
+用不着别的。管着 todo 写法的两条硬规矩走的是工具调用层，CoreAgent 收得到。
 
 **它可能不新建。** 用户描述的事情如果已经有一条了，规则要求 agent 改用
 `frago todo log` 往那条上追加。所以返回里的 ``created`` 会是 False，``todo_id``
@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,47 @@ DESCRIPTION
 """
 
 
+_SHELL_SEPARATORS = frozenset({"&&", "||", ";", "|"})
+
+
+def frago_invocations(events: list[dict[str, Any]]) -> list[list[str]]:
+    """agent 通过 Bash 执行过的每一条 frago 命令，按先后给出 `frago` 之后的那些词。
+
+    CoreAgent 跟 Claude Code 一样只有 Bash 这一个执行命令的工具，frago 命令也从这里走。
+    一条 Bash 可能是 `cd x && frago todo add ...` 这种组合，按分隔符拆开逐段认；
+    拆不开（引号没配对之类）的那条跳过，不要因此整单失败。
+
+    被拦下的调用不算：它没有执行，摆到界面上说「它替你执行了这条」就是假话。
+    """
+    denied_ids = {
+        event.get("tool_call_id")
+        for event in events
+        if event.get("type") == "result" and event.get("denied")
+    }
+    found: list[list[str]] = []
+    for event in events:
+        if event.get("type") != "tool" or event.get("tool_name") != "Bash":
+            continue
+        if event.get("tool_call_id") in denied_ids:
+            continue
+        command = (event.get("input") or {}).get("command")
+        if not isinstance(command, str):
+            continue
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            continue
+        segment: list[str] = []
+        for token in [*tokens, ";"]:
+            if token in _SHELL_SEPARATORS:
+                if segment[:1] == ["frago"] and len(segment) > 1:
+                    found.append(segment[1:])
+                segment = []
+            else:
+                segment.append(token)
+    return found
+
+
 class TodoComposeError(RuntimeError):
     """建不成的时候抛这个。``detail`` 是能直接给人看的那句原因。"""
 
@@ -117,12 +159,17 @@ class TodoComposeService:
         TodoComposeService._require_model()
         binary = TodoComposeService._binary_path()
 
+        # 逐步输出才带得回「它执行了哪条命令」；CoreAgent 默认只打印最终答案文字。
         cmd = [
             str(binary),
+            "--output-format",
+            "stream-json",
             "--prompt",
             _PROMPT.format(description=text),
             "--max-rounds",
             str(MAX_ROUNDS),
+            "--allowed-tools",
+            "Bash(frago todo:*)",
         ]
 
         try:
@@ -273,12 +320,7 @@ class TodoComposeService:
         preferred: list[str] | None = None
         fallback: list[str] | None = None
 
-        for event in events:
-            if event.get("type") != "tool" or event.get("tool_name") != "run_frago":
-                continue
-            args = (event.get("input") or {}).get("args")
-            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
-                continue
+        for args in frago_invocations(events):
             if args[:1] != ["todo"] or len(args) < 2 or args[1] not in _WRITE_SUBCOMMANDS:
                 continue
             if args[1] == wanted:

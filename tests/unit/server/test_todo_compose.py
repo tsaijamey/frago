@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from typing import Any
 
@@ -32,7 +33,8 @@ def _proc(events: list[dict[str, Any]], *, returncode: int = 0, stderr: str = ""
 
 
 def _tool(args: list[str]) -> dict[str, Any]:
-    return {"type": "tool", "tool_name": "run_frago", "input": {"args": args}}
+    """CoreAgent 执行 frago 命令走的是 Bash，跟 Claude Code 一样。"""
+    return {"type": "tool", "tool_name": "Bash", "input": {"command": shlex.join(["frago", *args])}}
 
 
 def _result(output: str) -> dict[str, Any]:
@@ -193,6 +195,53 @@ class TestWhatItRanForMe:
         result = TodoComposeService.compose("一件事")
         assert result["created"] is False
         assert result["command"] == ["frago", "todo", "log", "20260901-old", "又提了一次"]
+
+    def test_组合命令里认得出那条_frago_命令(self, kernel):
+        """模型常写成 `cd ~ && frago todo add ...`，拆开认，引号里的中文和空格原样保留。"""
+        kernel(
+            _proc(
+                [
+                    {
+                        "type": "tool",
+                        "tool_name": "Bash",
+                        "input": {"command": "cd ~ && frago todo add webui-x --summary '中文 摘要'"},
+                    },
+                    _result("Created todo 20260909-webui-x"),
+                    {"type": "done", "final_text": "建好了"},
+                ]
+            )
+        )
+        assert TodoComposeService.compose("一件事")["command"] == [
+            "frago", "todo", "add", "webui-x", "--summary", "中文 摘要",
+        ]
+
+    def test_被拦下没执行的命令不报(self, kernel):
+        """拦下的 add 没落盘，界面上不能说「它替你执行了这条」。"""
+        kernel(
+            _proc(
+                [
+                    {"type": "tool", "tool_call_id": "c1", "tool_name": "Bash",
+                     "input": {"command": "frago todo add blocked-one"}},
+                    {"type": "result", "tool_call_id": "c1", "denied": True,
+                     "output": "〔not allowed〕不在允许范围"},
+                    {"type": "done", "final_text": "被拦了"},
+                ]
+            )
+        )
+        assert TodoComposeService.compose("一件事")["command"] is None
+
+    def test_只准它执行_frago_todo(self, kernel, monkeypatch):
+        """它手上有 Bash，建一条待办用不着别的命令。"""
+        seen = {}
+
+        def run(cmd):
+            seen["cmd"] = cmd
+            return _proc([{"type": "done", "final_text": "没建"}])
+
+        monkeypatch.setattr(TodoComposeService, "_run", staticmethod(run))
+        TodoComposeService.compose("一件事")
+        cmd = seen["cmd"]
+        assert cmd[cmd.index("--allowed-tools") + 1] == "Bash(frago todo:*)"
 
     def test_只查了没动手就没有命令可报(self, kernel):
         kernel(

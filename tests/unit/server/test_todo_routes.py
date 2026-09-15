@@ -52,6 +52,7 @@ class TestList:
             "status",
             "priority",
             "tags",
+            "category",
             "created",
             "updated",
             "done_at",
@@ -119,3 +120,62 @@ class TestDetail:
         response = client.get(f"/api/todos/{prefix}")
         assert response.status_code == 400
         assert "ambiguous" in response.json()["detail"]
+
+
+class TestCategories:
+    def test_清单带着分类清单与名次(self, client):
+        body = client.get("/api/todos").json()
+        assert body["categories"] == [
+            {"id": "family", "name": "家庭", "position": 1},
+            {"id": "work", "name": "工作", "position": 2},
+            {"id": "hobby", "name": "个人喜好", "position": 3},
+            {"id": "other", "name": "其他", "position": 4},
+        ]
+
+    def test_顺序先按分类名次(self, client):
+        store.add("没分类的高优先", priority="high")
+        work = store.add("工作那件", priority="low", category="work")
+        family = store.add("家里那件", priority="low", category="family")
+        rows = client.get("/api/todos").json()["todos"]
+        assert [r["id"] for r in rows][:2] == [family.id, work.id]
+        assert rows[0]["category"] == "family"
+        assert rows[2]["category"] is None
+
+    def test_按分类筛并收窄计数(self, client):
+        store.add("工作那件", category="work")
+        store.add("家里那件", category="family")
+        store.add("没分类")
+        body = client.get("/api/todos?category=work").json()
+        assert [r["category"] for r in body["todos"]] == ["work"]
+        assert body["counts"]["all"] == 1
+        assert client.get("/api/todos?category=none").json()["counts"]["all"] == 1
+
+    def test_清单外的分类当场拒绝(self, client):
+        assert client.get("/api/todos?category=fun").status_code == 400
+
+    def test_整张替换分类清单(self, client):
+        store.add("爱好那件", category="hobby")
+        response = client.put(
+            "/api/todos/categories",
+            json={"categories": [{"id": "work", "name": "上班"}, {"id": "study", "name": "学习"}]},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [(c["id"], c["position"]) for c in body["categories"]] == [("work", 1), ("study", 2)]
+        # 删掉的 hobby 仍有一件事务引用，照实报出来
+        assert body["usage"] == {"hobby": 1}
+        assert client.get("/api/todos").json()["categories"][0]["name"] == "上班"
+
+    def test_超过二十个拒绝(self, client):
+        cats = [{"id": f"c{i}", "name": f"分类{i}"} for i in range(21)]
+        response = client.put("/api/todos/categories", json={"categories": cats})
+        assert response.status_code == 400
+        assert "at most 20" in response.json()["detail"]
+
+    def test_重复id拒绝且不落盘(self, client):
+        response = client.put(
+            "/api/todos/categories",
+            json={"categories": [{"id": "a", "name": "甲"}, {"id": "a", "name": "乙"}]},
+        )
+        assert response.status_code == 400
+        assert len(client.get("/api/todos").json()["categories"]) == 4
