@@ -84,8 +84,14 @@ export interface UseSessionLaunchOptions {
   reload: () => void | Promise<void>;
   /** 认到编号那一刻。页面据此把中栏切到这一场。 */
   onReady: (sessionId: string) => void;
-  /** 中栏此刻开着哪一场，以及它手上有几条记录。两者一起答"它写下第一笔了没有"。 */
-  activeSessionId?: string | null;
+  /**
+   * 中栏手上这批记录是哪一场的，以及有几条。两者一起答"它写下第一笔了没有"。
+   *
+   * NEVER 换成"中栏此刻开着哪一场"。中栏切到新编号的那一次渲染里，手上还是上一场的记录，
+   * 清空要等下一拍——拿"开着哪一场"配上一场的条数，卡一挂上就被当成"已经写下第一笔"撤掉，
+   * 人从一场有内容的会话里点新建，永远看不见这块卡。
+   */
+  recordsSessionId?: string | null;
   recordCount?: number;
 }
 
@@ -93,7 +99,7 @@ export function useSessionLaunch({
   sessions,
   reload,
   onReady,
-  activeSessionId = null,
+  recordsSessionId = null,
   recordCount = 0,
 }: UseSessionLaunchOptions): SessionLaunchState {
   const [launch, setLaunch] = useState<SessionLaunch | null>(null);
@@ -174,9 +180,9 @@ export function useSessionLaunch({
   useEffect(() => {
     if (!launch || launch.phase !== 'warming' || !launch.sessionId) return;
     const inList = sessions.some((s) => s.session_id === launch.sessionId);
-    const wrote = activeSessionId === launch.sessionId && recordCount > 0;
+    const wrote = recordsSessionId === launch.sessionId && recordCount > 0;
     if (inList || wrote) setLaunch(null);
-  }, [launch, sessions, activeSessionId, recordCount]);
+  }, [launch, sessions, recordsSessionId, recordCount]);
 
   // 等太久就撤。会话本身不受影响，该出现时还是会出现在左栏。
   useEffect(() => {

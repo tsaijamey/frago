@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import i18n from '@/i18n';
+import { pageCache } from './pageCache';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -170,9 +171,20 @@ function indexOf(sessions: Record<string, string[]>): Map<string, string> {
   return map;
 }
 
+/**
+ * 最近一次拿到手的分组（见 `pageCache`）。没有它，切去别的菜单再回来，分组取回来之前
+ * 左栏整片没有分区，「未分组」连同各标签一起消失。
+ */
+const lastPayload = pageCache<GroupsPayload>();
+
 export function useSessionGroups(): SessionGroupsState {
-  const [payload, setPayload] = useState<GroupsPayload>(EMPTY);
+  const [payload, setPayload] = useState<GroupsPayload>(() => lastPayload.get() ?? EMPTY);
   const [collapsed, setCollapsedState] = useState<Record<string, boolean>>(readCollapsed);
+
+  useEffect(() => {
+    // 开局那份空的不算拿到过——记下它等于让下次回来照样从空白开局。
+    if (payload !== EMPTY) lastPayload.set(payload);
+  }, [payload]);
 
   useEffect(() => {
     let alive = true;

@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import i18n from '@/i18n';
+import { pageCache } from './pageCache';
 import { activityTs, type WorkbenchSession } from './useWorkbenchSessions';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -75,8 +76,15 @@ export async function putView(sessionId: string): Promise<number> {
   return body.viewed_at ?? Date.now();
 }
 
+/** 最近一次拿到手的已读记录（见 `pageCache`）。切菜单回来未读标记不再先全亮一下。 */
+const lastViewed = pageCache<Record<string, number>>();
+
 export function useSessionViews(): SessionViewsState {
-  const [viewed, setViewed] = useState<Record<string, number>>({});
+  const [viewed, setViewed] = useState<Record<string, number>>(() => lastViewed.get() ?? {});
+
+  useEffect(() => {
+    lastViewed.set(viewed);
+  }, [viewed]);
 
   useEffect(() => {
     let alive = true;

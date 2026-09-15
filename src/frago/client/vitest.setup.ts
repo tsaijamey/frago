@@ -1,5 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 import { JSDOM } from 'jsdom'
+import { beforeEach } from 'vitest'
+import { resetPageCaches } from './src/hooks/pageCache'
+
+// 左栏几份数据记在网页级别（见 pageCache）。每个用例都该从「网页刚打开」开始。
+beforeEach(() => resetPageCaches())
 
 /**
  * 把一份能用的 `localStorage` / `sessionStorage` 装回全局。

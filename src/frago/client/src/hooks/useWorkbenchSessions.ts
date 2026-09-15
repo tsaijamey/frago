@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import i18n from '@/i18n';
+import { pageCache } from './pageCache';
 import { useAutoRefresh } from './useAutoRefresh';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -154,10 +155,9 @@ export type StatusCounts = Record<StatusFilter, number>;
  * 时间范围是**另一个维度**，与状态四档并存而不是二选一：状态答「现在什么情况」，
  * 时间答「哪一段时间的」。
  *
- * `0` 是不设上限。旧会话页把默认压在 7 天，代价是本机一千多场里绝大多数看不见；
- * 工作台的左栏本来就要一次摆开全部，所以默认不限，四档由人主动收窄。
+ * `0` 是不设上限。默认 1 天：左栏开局只摆最近一天的，更早的由人主动放宽。
  */
-export const DAY_OPTIONS = [1, 7, 14, 30] as const;
+export const DAY_OPTIONS = [1, 2, 7] as const;
 
 export type DayRange = 0 | (typeof DAY_OPTIONS)[number];
 
@@ -266,13 +266,25 @@ export async function fetchWorkbenchSessions(): Promise<WorkbenchSession[]> {
   return (await res.json()) as WorkbenchSession[];
 }
 
+/**
+ * 最近一次拿到手的清单（见 `pageCache`）。
+ *
+ * 回来时若从头开局，开局那一趟读到的还会是网页刚打开时预取的那份——可能是几小时前的，
+ * 那之后新开的会话一场都不在。所以回来时摆上次那份，同时立刻安静地重取一趟。
+ */
+const lastSessions = pageCache<WorkbenchSession[]>();
+
 export function useWorkbenchSessions(): WorkbenchSessionsState {
-  const [sessions, setSessions] = useState<WorkbenchSession[]>([]);
+  const [sessions, setSessionsState] = useState<WorkbenchSession[]>(() => lastSessions.get() ?? []);
+  const setSessions = useCallback((next: WorkbenchSession[]) => {
+    lastSessions.set(next);
+    setSessionsState(next);
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
-  const [days, setDays] = useState<DayRange>(0);
+  const [days, setDays] = useState<DayRange>(1);
 
   /**
    * HTML 加载阶段已经并行发过一次会话清单请求（见 `index.html` 的内联预取）。挂载时
@@ -287,7 +299,7 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
       return true;
     }
     return false;
-  }, []);
+  }, [setSessions]);
 
   /**
    * 取清单。`silent` 决定这一趟要不要把「装载中」举起来。
@@ -307,7 +319,7 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [setSessions]);
 
   const reload = useCallback(() => load(false), [load]);
 
@@ -326,6 +338,12 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
     async () => {
       if (firstRun.current) {
         firstRun.current = false;
+        // 这个网页里已经拿到过清单（切去别的菜单又回来）：上次那份已经摆着，安静重取即可。
+        // NEVER 再读预取那份——它停在网页刚打开的那一刻。
+        if (lastSessions.get()) {
+          await load(true);
+          return;
+        }
         // 预取那一份已经到了就直接用，省掉一次串在程序包之后的往返。
         if (tryReadPrefetch()) return;
         // 开局手上什么都没有，这一趟该看得见在装。

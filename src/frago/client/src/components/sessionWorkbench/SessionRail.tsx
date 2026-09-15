@@ -100,8 +100,8 @@ const ACCENT_TEXT = 'text-accent-primary';
 const CHIP_ON = 'bg-bg-active text-text-primary font-medium';
 const CHIP_OFF = 'text-text-muted hover:bg-bg-hover hover:text-text-secondary';
 
-/** 四档筛选加一个全部。次序与判定顺序一致，看的人不必再学一套排列。 */
-const FILTERS: StatusFilter[] = ['all', 'running', 'error', 'done', 'idle'];
+/** 在跑、已完成、出错，加一个全部。停着那一档不单列，归在「全部」里看。 */
+const FILTERS: StatusFilter[] = ['running', 'done', 'error', 'all'];
 
 /**
  * 一次往清单里放多少场。滚到底再放下一批。
@@ -121,8 +121,8 @@ const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
   ...STATUS_LABEL_KEY,
 };
 
-/** 时间范围：不限，加四档。0 排在最前，与状态那一行的「全部」对齐。 */
-const DAY_FILTERS: DayRange[] = [0, ...DAY_OPTIONS];
+/** 时间范围：三档加不限。0 排在最后，与状态那一行的「全部」对齐。 */
+const DAY_FILTERS: DayRange[] = [...DAY_OPTIONS, 0];
 
 /**
  * 每一档点的颜色。与清单里那份保持一致（见 SessionItem 的同名表）：只有在跑与出错
@@ -327,11 +327,12 @@ export default function SessionRail({
    * 时刻排——主干本来就按活动时刻倒序，每组第一场就是最近那场——正在推进的主题在上面；
    * 一场都没有的组排最后，照建的次序。
    *
-   * 筛了状态、时间范围或在搜索时，一场都不剩的区不长标题：点「在跑」之后摆着十几行「0」
-   * 只是噪音。什么都没筛时空组照样摆出来——人刚建的标签得看得见。
+   * 只有搜索时一场都不剩的区才不长标题：那一刻人在找某一场，摆着一排「0」答非所问。
+   * 状态与时间范围不藏标题——左栏默认就停在「在跑、1 天」，按它藏的话一开页分组全不见了；
+   * 标题上的数跟着筛选走，人照样看得出这一档里哪几组有东西。
    */
   const grouping = groups.tags.length > 0;
-  const filtering = searching || status !== 'all' || days !== 0;
+  const filtering = searching;
   const { tags: groupTags, groupOf } = groups;
   const sections = useMemo(() => {
     if (!grouping) return [];

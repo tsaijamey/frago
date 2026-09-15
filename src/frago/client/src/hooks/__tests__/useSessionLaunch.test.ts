@@ -123,7 +123,7 @@ describe('新会话正在启动', () => {
           sessions,
           reload: () => {},
           onReady: () => {},
-          activeSessionId: SID,
+          recordsSessionId: null,
           // 记录一条都还没有，也不该拦着它让位。
           recordCount: 0,
         }),
@@ -146,7 +146,7 @@ describe('新会话正在启动', () => {
           sessions: [],
           reload: () => {},
           onReady: () => {},
-          activeSessionId: SID,
+          recordsSessionId: n > 0 ? SID : null,
           recordCount: n,
         }),
       { initialProps: { n: 0 } }
@@ -159,6 +159,37 @@ describe('新会话正在启动', () => {
 
     rerender({ n: 3 });
     await waitFor(() => expect(result.current.launch).toBeNull());
+  });
+
+  it('中栏手上还是上一场的记录时，不许当成新这一场写下了第一笔', async () => {
+    /**
+     * 钉的是一次真事故：人从一场有内容的会话里点新建，中栏切到新编号的那一次渲染里
+     * 手上还是上一场的记录，启动卡一挂上就被当成"已经写下第一笔"撤掉，人根本看不见它。
+     */
+    const OLD = '11111111-2222-4333-8444-555555555555';
+    const { result, rerender } = renderHook(
+      ({ owner, n }) =>
+        useSessionLaunch({
+          sessions: [],
+          reload: () => {},
+          onReady: () => {},
+          recordsSessionId: owner,
+          recordCount: n,
+        }),
+      { initialProps: { owner: OLD as string | null, n: 40 } }
+    );
+
+    act(() => {
+      result.current.begin(pending({ session_id: SID }), '起一场新的');
+    });
+    rerender({ owner: OLD, n: 40 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(result.current.launch).not.toBeNull();
+
+    // 下一拍清空了，卡照样挂着。
+    rerender({ owner: null, n: 0 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(result.current.launch).not.toBeNull();
   });
 
   it('没起来就停在那儿说原因，不自己消失——一关了之，人连刚打的字都找不回来', async () => {

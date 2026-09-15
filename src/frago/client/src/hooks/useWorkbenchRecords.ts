@@ -219,6 +219,13 @@ export interface WorkbenchRecord {
 
 export interface WorkbenchRecordsState {
   records: WorkbenchRecord[];
+  /**
+   * 手上这批记录是替哪一场取回来的；手上没有记录时为 null。
+   *
+   * 中栏换会话的那一次渲染里，`records` 还是上一场的——清空要等下一拍。只看条数的人会把
+   * 上一场的记录当成新这一场的：新建会话的启动卡就这样一挂上就被撤掉，人根本看不见它。
+   */
+  recordsSessionId: string | null;
   /** 初次装载或整流重取中。 */
   loading: boolean;
   /** 顶部前插旧页中。与 loading 分开——往上翻不该把整栏打回装载态。 */
@@ -359,6 +366,7 @@ export function useWorkbenchRecords(
 ): WorkbenchRecordsState {
   const { live = false } = opts;
   const [records, setRecords] = useState<WorkbenchRecord[]>([]);
+  const [recordsSessionId, setRecordsSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlder, setHasOlder] = useState(false);
@@ -399,6 +407,7 @@ export function useWorkbenchRecords(
       if (activeSession.current !== sid) return;
       recordsRef.current = batch;
       setRecords(batch);
+      setRecordsSessionId(batch.length ? sid : null);
       setHasOlder(batch.length > 0 && batch[0].seq > 0);
     } catch (e) {
       if (activeSession.current !== sid) return;
@@ -432,6 +441,7 @@ export function useWorkbenchRecords(
       if (activeSession.current !== sid || !batch.length) return 0;
       recordsRef.current = batch;
       setRecords(batch);
+      setRecordsSessionId(sid);
       setHasOlder(batch[0].seq > 0);
       hotUntil.current = Date.now() + HOT_WINDOW_MS;
       return batch.length;
@@ -602,6 +612,7 @@ export function useWorkbenchRecords(
     activeSession.current = sessionId;
     recordsRef.current = [];
     setRecords([]);
+    setRecordsSessionId(null);
     setHasOlder(false);
     setError(null);
     setAwaitingSince(null);
@@ -710,6 +721,7 @@ export function useWorkbenchRecords(
         recordsRef.current = next;
         return next;
       });
+      setRecordsSessionId(sidRef.current);
       hotUntil.current = Date.now() + HOT_WINDOW_MS;
     };
 
@@ -734,6 +746,7 @@ export function useWorkbenchRecords(
 
   return {
     records,
+    recordsSessionId,
     loading,
     loadingOlder,
     hasOlder,

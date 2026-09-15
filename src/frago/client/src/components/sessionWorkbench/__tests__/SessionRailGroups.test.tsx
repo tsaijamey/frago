@@ -231,15 +231,19 @@ describe('SessionRail 分组区', () => {
     expect(titles().some((t) => t.includes(B))).toBe(true);
   });
 
-  it('什么都没筛时空标签照样摆出来，筛过之后空区不长标题', () => {
+  it('筛状态、时间范围时空标签照样摆出来，搜索时空区不长标题', () => {
     groups.tags = [{ id: 't_empty', name: '刚建的', source: 'human' }];
     const { unmount } = render(
-      <SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
+      <SessionRail
+        state={railState(rows, { status: 'running', days: 1 })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
     );
     expect(headers().some((h) => h.includes('刚建的'))).toBe(true);
     unmount();
     render(
-      <SessionRail state={railState(rows, { status: 'running' })} selectedId={null} onSelect={NOOP} />
+      <SessionRail state={railState(rows, { search: '会话' })} selectedId={null} onSelect={NOOP} />
     );
     expect(headers().some((h) => h.includes('刚建的'))).toBe(false);
   });

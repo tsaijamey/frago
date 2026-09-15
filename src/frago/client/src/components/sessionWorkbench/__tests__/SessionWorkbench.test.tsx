@@ -384,11 +384,12 @@ describe('SessionRail 左栏', () => {
     expect(screen.getByText('没有匹配的会话')).toBeTruthy();
   });
 
-  it('筛选是四档状态加全部，来源不再当筛选维度', () => {
+  it('筛选是在跑、已完成、出错加全部，来源不再当筛选维度', () => {
     render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
-    for (const id of ['all', 'running', 'error', 'done', 'idle']) {
-      expect(screen.getByTestId(`status-filter-${id}`)).toBeTruthy();
-    }
+    const ids = screen
+      .getAllByTestId(/^status-filter-/)
+      .map((el) => el.getAttribute('data-testid'));
+    expect(ids).toEqual(['running', 'done', 'error', 'all'].map((id) => `status-filter-${id}`));
     // 来源仍在卡片上看得见，但没有一个按来源筛的按钮。
     expect(screen.queryByTestId('status-filter-claude-code')).toBeNull();
     expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
@@ -542,13 +543,11 @@ describe('SessionRail 左栏', () => {
     expect(setSearch).toHaveBeenCalledWith('');
   });
 
-  it('时间范围四档与不限并排，且与状态筛选各管各的', () => {
+  it('时间范围三档与不限并排，且与状态筛选各管各的', () => {
     const setDays = vi.fn();
     render(<SessionRail state={railState({ setDays })} selectedId={null} onSelect={NOOP} />);
-    for (const d of [0, 1, 7, 14, 30]) {
-      expect(screen.getByTestId(`day-filter-${d}`)).toBeTruthy();
-    }
-    // 默认不限：一千多场会话不该被一个默认值挡在外面。
+    const ids = screen.getAllByTestId(/^day-filter-/).map((el) => el.getAttribute('data-testid'));
+    expect(ids).toEqual([1, 2, 7, 0].map((d) => `day-filter-${d}`));
     expect(screen.getByTestId('day-filter-0').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByTestId('day-filter-7'));
     expect(setDays).toHaveBeenCalledWith(7);

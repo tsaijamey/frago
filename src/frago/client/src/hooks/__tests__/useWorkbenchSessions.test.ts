@@ -75,14 +75,20 @@ async function loaded() {
 }
 
 describe('useWorkbenchSessions', () => {
-  it('默认不限时间——一千多场不该被一个默认值挡在外面', async () => {
+  it('默认只看最近 1 天、状态不限', async () => {
     const result = await loaded();
-    expect(result.current.days).toBe(0);
+    expect(result.current.days).toBe(1);
+    expect(result.current.status).toBe('all');
+    expect(result.current.visible).toHaveLength(1);
+    expect(result.current.counts.all).toBe(1);
+
+    act(() => result.current.setDays(0));
     expect(result.current.visible).toHaveLength(3);
   });
 
   it('时间范围按最后活动时刻收窄，计数跟着一起收', async () => {
     const result = await loaded();
+    act(() => result.current.setStatus('all'));
 
     act(() => result.current.setDays(1));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['today']);
@@ -106,11 +112,48 @@ describe('useWorkbenchSessions', () => {
 
   it('搜索先收一道，时间范围再收一道', async () => {
     const result = await loaded();
+    act(() => result.current.setStatus('all'));
+    act(() => result.current.setDays(0));
 
     act(() => result.current.setSearch('动过'));
     expect(result.current.counts.all).toBe(2);
     act(() => result.current.setDays(1));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['today']);
+  });
+});
+
+describe('切去别的菜单再回来', () => {
+  afterEach(() => {
+    delete (window as unknown as { __frago_prefetched__?: unknown }).__frago_prefetched__;
+  });
+
+  it('不再拿网页刚打开时预取的那份旧清单，接着显示上次的清单并立刻重取', async () => {
+    // 网页刚打开时预取到的清单里还没有后来新开的那一场。
+    const stale = [session({ session_id: 'today' })];
+    (window as unknown as { __frago_prefetched__: unknown }).__frago_prefetched__ = {
+      sessions: stale,
+      fetchedAt: Date.now(),
+    };
+    const fresh = [session({ session_id: 'today' }), session({ session_id: 'new-one' })];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => fresh })) as unknown as typeof fetch
+    );
+
+    const first = renderHook(() => useWorkbenchSessions());
+    await waitFor(() => expect(first.result.current.sessions).toHaveLength(1));
+    // 开局那一份用掉之后，定时重取把新开的那一场带回来。
+    await act(async () => {
+      await first.result.current.reload();
+    });
+    expect(first.result.current.sessions).toHaveLength(2);
+    first.unmount();
+
+    const second = renderHook(() => useWorkbenchSessions());
+    // 一挂回来就是上次那份，没有退回预取的旧清单。
+    expect(second.result.current.sessions.map((s) => s.session_id)).toEqual(['today', 'new-one']);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(second.result.current.sessions).toHaveLength(2);
   });
 });
 
@@ -150,6 +193,7 @@ describe('排序与筛选用的时刻', () => {
     const hook = renderHook(() => useWorkbenchSessions());
     await waitFor(() => expect(hook.result.current.sessions).toHaveLength(2));
 
+    act(() => hook.result.current.setStatus('all'));
     act(() => hook.result.current.setDays(7));
 
     expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['really-talked']);
@@ -205,6 +249,8 @@ describe('内容检索这条腿', () => {
       const hook = renderHook(() => useWorkbenchSessions());
       await vi.waitFor(() => expect(hook.result.current.sessions).toHaveLength(3));
 
+      act(() => hook.result.current.setStatus('all'));
+      act(() => hook.result.current.setDays(0));
       act(() => hook.result.current.setSearch('飞书推送'));
       // 敲完字要等一拍才发，这一拍之内不该有请求。
       expect(calls.some((u) => u.includes('/api/workbench/search'))).toBe(false);

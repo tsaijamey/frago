@@ -44,10 +44,19 @@ export interface PageSlice {
   currentScheduleId: string | null;
   /** 右侧正开着的配方页面：`<配方名>`，非默认槽位时是 `<配方名>/<槽位>`。 */
   currentRecipeAppId: string | null;
+  /**
+   * 会话页上正选着哪一场。
+   *
+   * 放在这里而不在会话页自己身上：会话页一切走（去配方、去待办）就整个卸掉，记在页面
+   * 里的选中跟着没了，回来又得在长清单里重找一遍。它不跟着 `switchPage` 清空，
+   * 也不写进地址——离开会话页不等于不看那一场了。
+   */
+  workbenchSessionId: string | null;
 
   switchPage: (page: PageType, id?: string) => void;
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
   applyRoute: (page: PageType, id?: string | null) => void;
+  setWorkbenchSessionId: (id: string | null) => void;
 }
 
 /** 编号该落进哪个字段，由目标页决定；其余字段一律清空。 */
@@ -58,6 +67,7 @@ function idFields(page: PageType, id?: string | null) {
     currentProjectId: page === 'project_detail' ? id ?? null : null,
     currentTodoId: page === 'todo_detail' ? id ?? null : null,
     currentScheduleId: page === 'schedule_detail' ? id ?? null : null,
+    currentRecipeAppId: page === 'recipe_app' ? id ?? null : null,
   };
 }
 
@@ -68,8 +78,8 @@ export const usePageStore = create<PageSlice>((set) => ({
   // 被弹回首页，正是这一行在读地址之前的样子。
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
+  workbenchSessionId: null,
 
-    currentRecipeAppId: page === 'recipe_app' ? id ?? null : null,
   switchPage: (page, id) => {
     set({ currentPage: page, ...idFields(page, id) });
     writeLocationRoute(pathForPage(page, id));
@@ -78,4 +88,6 @@ export const usePageStore = create<PageSlice>((set) => ({
   applyRoute: (page, id) => {
     set({ currentPage: page, ...idFields(page, id) });
   },
+
+  setWorkbenchSessionId: (id) => set({ workbenchSessionId: id }),
 }));

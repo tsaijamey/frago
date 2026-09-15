@@ -16,7 +16,7 @@
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { useState, type CSSProperties } from 'react';
+import { type CSSProperties } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -30,9 +30,12 @@ import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
+import { usePageStore } from '@/stores/pageStore';
 
 export default function SessionWorkbenchPage() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
+  const selectedId = usePageStore((s) => s.workbenchSessionId);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const { t } = useTranslation();
   const sessions = useWorkbenchSessions();
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
@@ -41,6 +44,7 @@ export default function SessionWorkbenchPage() {
   // 还在跑的会话让中栏自己活起来：文件一动服务端就推增量，轮询只是断连时的兜底。
   const {
     records,
+    recordsSessionId,
     loading,
     loadingOlder,
     hasOlder,
@@ -61,14 +65,16 @@ export default function SessionWorkbenchPage() {
    * 从前这段路上什么都没有：对话框一关，人要盯着一片空白等将近十秒。现在它有两个去处——
    * 左栏清单上方一行，中栏一块启动面板，两处说的是同一件事的同一档。
    *
-   * 接过来那一刻先把中栏腾空（`setSelectedId(null)`），启动面板才占得住位置；编号一到
+   * 接过来那一刻先把中栏腾空（`setWorkbenchSessionId(null)`），启动面板才占得住位置；编号一到
    * 就切进那一场，但**人这中间自己挑了别的会话就不抢**——他已经改看别处了。
    */
   const { launch, begin, dismiss } = useSessionLaunch({
     sessions: sessions.sessions,
     reload: sessions.reload,
-    onReady: (sid) => setSelectedId((cur) => cur ?? sid),
-    activeSessionId: selectedId,
+    onReady: (sid) => {
+      if (usePageStore.getState().workbenchSessionId === null) setWorkbenchSessionId(sid);
+    },
+    recordsSessionId,
     recordCount: records.length,
   });
 
@@ -84,11 +90,11 @@ export default function SessionWorkbenchPage() {
         <SessionRail
           state={sessions}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={setWorkbenchSessionId}
           launch={launch}
           onDismissLaunch={dismiss}
           onCreated={(pending, text) => {
-            setSelectedId(null);
+            setWorkbenchSessionId(null);
             begin(pending, text);
           }}
         />
@@ -103,7 +109,7 @@ export default function SessionWorkbenchPage() {
           {selectedId ? (
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
+              onClick={() => setWorkbenchSessionId(null)}
               className="hidden shrink-0 text-text-muted hover:text-text-primary phone:block"
               aria-label={t('workbench.page.backToList')}
             >
@@ -141,7 +147,7 @@ export default function SessionWorkbenchPage() {
             <DeleteSessionButton
               session={selected}
               onDeleted={() => {
-                setSelectedId(null);
+                setWorkbenchSessionId(null);
                 void sessions.reload();
               }}
             />

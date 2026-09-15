@@ -8,6 +8,7 @@ function reset() {
     currentRecipeName: null,
     currentProjectId: null,
     currentTodoId: null,
+    workbenchSessionId: null,
   });
   window.location.hash = '';
 }
@@ -78,6 +79,13 @@ describe('pageStore', () => {
     const s = usePageStore.getState();
     expect(s.currentTaskId).toBeNull();
     expect(s.currentRecipeName).toBe('r1');
+  });
+
+  it('切去别的菜单再回来，会话页上选着的那一场还在', () => {
+    usePageStore.getState().setWorkbenchSessionId('s1');
+    usePageStore.getState().switchPage('recipes');
+    usePageStore.getState().switchPage('session_workbench');
+    expect(usePageStore.getState().workbenchSessionId).toBe('s1');
   });
 
   // —— 地址栏这一头 ——

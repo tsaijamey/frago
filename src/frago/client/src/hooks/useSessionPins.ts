@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import i18n from '@/i18n';
+import { pageCache } from './pageCache';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -67,9 +68,16 @@ function readCollapsed(): boolean {
   }
 }
 
+/** 最近一次拿到手的置顶名单（见 `pageCache`）。切菜单回来置顶区不再先空一下。 */
+const lastPinned = pageCache<string[]>();
+
 export function useSessionPins(): SessionPinsState {
-  const [pinned, setPinned] = useState<string[]>([]);
+  const [pinned, setPinned] = useState<string[]>(() => lastPinned.get() ?? []);
   const [collapsed, setCollapsedState] = useState<boolean>(readCollapsed);
+
+  useEffect(() => {
+    lastPinned.set(pinned);
+  }, [pinned]);
 
   /**
    * 开局取一次就够。这份名单只有这一个页面会改，服务端不会背着它变——不像会话清单那样
