@@ -10,7 +10,8 @@
 所以执行按性质分家：
 
 - **命令**和**配方**是确定性的，frago 自己执行，不经过任何 agent。
-- **自然语言任务**本来就需要理解和判断，仍然交给 PA。
+- **自然语言任务**本来就需要理解和判断，交给 CoreAgent——frago-core 自己的 agent
+  循环，一个跑完就退出的子进程，不是常驻会话。
 
 PA 从执行链路上的必经之路，变成三种任务形态之一的执行者；同时它可以反过来调
 ``frago schedule add`` 来给自己或给系统安排任务。
@@ -173,6 +174,106 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
         # 命令没法像配方那样自报「有没有新鲜事」，所以拿输出的指纹当变化判据
         digest=_digest(stdout),
     )
+
+
+def execute_prompt(
+    prompt: str,
+    timeout: int,
+    instructions: str | None = None,
+    allowed_tools: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
+    cwd: str | None = None,
+) -> RunOutcome:
+    """把一句自然语言任务交给 CoreAgent（frago-core 自己的 agent 循环）去办。
+
+    以前这一类投给 PA，PA 起不来任务就无声地不发生。CoreAgent 是一个跑完就退出的
+    子进程，连接由设置页里「CoreAgent」那一行决定，跟命令、配方一样由调度器自己
+    拉起、自己收结果。
+
+    ``--output-format json`` 让它结束时只交一行结论，成败、答案、失败类别都在里面，
+    这边不用读它的过程。
+
+    ``cwd`` 是它干活的目录：命令从这里执行，项目说明（CLAUDE.md 等）也从这里往上找。
+    没给就是家目录。两张工具名单原样转交，写法是 Claude Code 的权限规则。
+    """
+    started = time.monotonic()
+    try:
+        from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
+
+        binary = get_hook_deploy_dir() / get_binary_name()
+        if not binary.exists():
+            return RunOutcome(ok=False, kind="prompt", error="frago-core 还没装好（~/.frago/bin 下找不到）")
+
+        cmd = [
+            str(binary), "--mode", "agent", "--output-format", "json",
+            "--timeout", str(timeout), "--prompt", prompt,
+        ]
+        workdir = cwd or str(Path.home())
+        cmd += ["--cwd", workdir]
+        if instructions:
+            cmd += ["--instructions", instructions]
+        for rule in allowed_tools or []:
+            cmd += ["--allowed-tools", rule]
+        for rule in disallowed_tools or []:
+            cmd += ["--disallowed-tools", rule]
+
+        from frago.server.services.subprocess_utils import get_utf8_env
+
+        # CoreAgent 自己按 --timeout 收场并交出那一行结论；这里多等一分钟只是兜底，
+        # 防的是它连收场都做不到。
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout + 60, cwd=workdir, env=get_utf8_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return RunOutcome(
+            ok=False, kind="prompt", error=f"CoreAgent 超时（{timeout}s 未结束）",
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+    except Exception as e:  # noqa: BLE001
+        return RunOutcome(
+            ok=False, kind="prompt", error=str(e),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    duration = int((time.monotonic() - started) * 1000)
+    final = _last_final_line(proc.stdout or "")
+    if final is None:
+        detail = (proc.stderr or "").strip().splitlines()
+        return RunOutcome(
+            ok=False, kind="prompt", exit_code=proc.returncode, stderr=proc.stderr or "",
+            error=(detail[-1] if detail else f"CoreAgent 没交结论，退出码 {proc.returncode}")[:NOTIFY_EXCERPT_LIMIT],
+            duration_ms=duration,
+        )
+
+    text = str(final.get("text") or "").strip()
+    ok = bool(final.get("ok")) and proc.returncode == 0
+    return RunOutcome(
+        ok=ok,
+        kind="prompt",
+        exit_code=proc.returncode,
+        stdout=text,
+        stderr=proc.stderr or "",
+        duration_ms=duration,
+        error="" if ok else str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完")[:NOTIFY_EXCERPT_LIMIT],
+        digest=_digest(text),
+        payload=final,
+    )
+
+
+def _last_final_line(stdout: str) -> dict[str, Any] | None:
+    """CoreAgent 结束时交的那一行结论。标准输出里别的行不认。"""
+    for line in reversed(stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "final":
+            return obj
+    return None
 
 
 def _coerce_payload(result: Any) -> Any:
@@ -407,7 +508,14 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
         return await asyncio.to_thread(
             execute_recipe, schedule.get("recipe") or "", schedule.get("params") or {}, timeout,
         )
-    raise ValueError(f"run_scheduled 不处理 kind={kind}（prompt 型走 PA）")
+    if kind == "prompt":
+        return await asyncio.to_thread(
+            execute_prompt, schedule.get("prompt") or "", timeout,
+            schedule.get("instructions"),
+            schedule.get("allowed_tools") or [], schedule.get("disallowed_tools") or [],
+            schedule.get("cwd"),
+        )
+    raise ValueError(f"run_scheduled 不认识 kind={kind}")
 
 
 def is_stale(schedule: dict[str, Any], now: datetime, period_seconds: int | None) -> timedelta | None:

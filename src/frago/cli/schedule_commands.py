@@ -30,9 +30,26 @@ def schedule_group():
     help="Cron expression: e.g. '0 8 * * *' (mutually exclusive with --every)",
 )
 @click.option("--name", default=None, help="Human-readable schedule name")
-@click.option("--prompt", default=None, help="自然语言任务，交给 PA 理解并执行")
+@click.option("--prompt", default=None, help="自然语言任务，交给 CoreAgent 理解并执行")
+@click.option(
+    "--instructions",
+    default=None,
+    help="--prompt 用：CoreAgent 读的说明书，~/.frago/coreagent/ 下的文件名（如 todo-triage.md）",
+)
+@click.option(
+    "--allowed-tools",
+    "allowed_tools",
+    multiple=True,
+    help="--prompt 用：只允许这些工具调用，写法同 Claude Code 权限规则（可重复，如 Read、'Bash(git log:*)'）；不给就不限制",
+)
+@click.option(
+    "--disallowed-tools",
+    "disallowed_tools",
+    multiple=True,
+    help="--prompt 用：禁止这些工具调用，命中即拒，优先于允许（可重复，如 'Bash(rm:*)'）",
+)
 @click.option("--command", default=None, help="一条 shell 命令，frago 直接执行（不经 PA）")
-@click.option("--cwd", default=None, help="--command 的工作目录，默认家目录")
+@click.option("--cwd", default=None, help="工作目录，默认家目录：--command 在这里执行，--prompt 的 CoreAgent 在这里干活")
 @click.option("--params", default=None, help="JSON params for the recipe")
 @click.option(
     "--notify-on",
@@ -65,6 +82,9 @@ def schedule_add(
     cron: str | None,
     name: str | None,
     prompt: str | None,
+    instructions: str | None,
+    allowed_tools: tuple[str, ...],
+    disallowed_tools: tuple[str, ...],
     command: str | None,
     cwd: str | None,
     params: str | None,
@@ -84,7 +104,15 @@ def schedule_add(
       命令      frago schedule add --command "df -h /" --cron "0 9 * * *"
       自然语言  frago schedule add --prompt "汇总昨天飞书消息" --cron "0 8 * * *"
 
-    配方和命令由 frago 自己执行，不经过 PA；自然语言任务交给 PA。
+    配方和命令由 frago 自己执行；自然语言任务交给 CoreAgent（设置页里绑定的连接），
+    可以用 --cwd 指定它在哪个目录干活、--instructions 给它说明书、
+    --allowed-tools / --disallowed-tools 限定它能做什么：
+
+      frago schedule add --prompt "拉 Jira 最新状态，分析我的卡，发到飞书群" \\
+        --cron "0 14 * * 1-5" --cwd ~/Repos/my-project --instructions jira-report.md \\
+        --allowed-tools Read --allowed-tools Grep \\
+        --allowed-tools 'Bash(git log:*)' --allowed-tools 'Bash(frago recipe run jira_fetch:*)' \\
+        --notify-on never
 
     通知：默认 --notify-on change，也就是任务自己说有新鲜事才推送。
     推到哪用 --notify-to，可以是已配置的 channel、desktop、或 pa：
@@ -110,9 +138,24 @@ def schedule_add(
     if len(given) > 1:
         click.echo(
             "Error: RECIPE_NAME / --command / --prompt 只能给一个。\n"
-            "  配方和命令由 frago 直接执行，自然语言任务交给 PA，三者执行者不同，混着给无法判定。"
+            "  配方和命令由 frago 直接执行，自然语言任务交给 CoreAgent，三者执行者不同，混着给无法判定。"
         )
         raise SystemExit(1)
+
+    if (instructions or allowed_tools or disallowed_tools) and not prompt:
+        click.echo(
+            "Error: --instructions / --allowed-tools / --disallowed-tools 只对 --prompt 型任务有意义。"
+        )
+        raise SystemExit(1)
+
+    if cwd:
+        # 到点才发现目录不存在，任务就只会在执行记录里失败一次又一次。建的时候就拦。
+        from pathlib import Path
+
+        cwd = str(Path(cwd).expanduser())
+        if not Path(cwd).is_dir():
+            click.echo(f"Error: --cwd 不是一个存在的目录：{cwd}")
+            raise SystemExit(1)
 
     parsed_notify_context = {}
     if notify_context:
@@ -193,12 +236,15 @@ def schedule_add(
         command=command,
         cwd=cwd,
         notify={"on": notify_on, "to": notify_to, "context": parsed_notify_context},
+        instructions=instructions,
+        allowed_tools=list(allowed_tools),
+        disallowed_tools=list(disallowed_tools),
     )
 
     executor = {
         "recipe": "frago 直接执行",
         "command": "frago 直接执行",
-        "prompt": "交给 PA",
+        "prompt": "交给 CoreAgent",
     }[schedule["kind"]]
 
     click.echo(f"Schedule created: {schedule['id']}")
@@ -210,6 +256,14 @@ def schedule_add(
         click.echo(f"  Command: {command}")
     if prompt:
         click.echo(f"  Prompt: {prompt}")
+    if instructions:
+        click.echo(f"  Instructions: ~/.frago/coreagent/{instructions}")
+    if cwd:
+        click.echo(f"  Cwd: {cwd}")
+    if allowed_tools:
+        click.echo(f"  Allowed tools: {', '.join(allowed_tools)}")
+    if disallowed_tools:
+        click.echo(f"  Disallowed tools: {', '.join(disallowed_tools)}")
     if notify_on == "never":
         click.echo("  Notify: 关闭")
     else:
@@ -365,15 +419,6 @@ def schedule_run(schedule_id: str):
         raise SystemExit(1)
 
     kind = target.get("kind") or ("recipe" if target.get("recipe") else "prompt")
-
-    # prompt 型必须有 PA 才跑得动，而 PA 的队列是服务端进程内的东西，
-    # CLI 这个独立进程拿不到——这是它一直报「PA enqueue not available」的真正原因。
-    if kind == "prompt":
-        click.echo(
-            "自然语言任务要由服务端的 PA 执行，命令行进程碰不到它的队列。\n"
-            "  手动触发这类任务请在服务端做；命令型和配方型可以在这里直接跑。"
-        )
-        raise SystemExit(1)
 
     click.echo(f"Triggering schedule {schedule_id} ({target.get('name', '')}) — {kind}...")
     asyncio.run(service._execute_native(target))

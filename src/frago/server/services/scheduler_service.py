@@ -4,15 +4,14 @@
 
   kind=command   一条 shell 命令      → frago 自己执行
   kind=recipe    一个配方             → frago 自己执行
-  kind=prompt    一句自然语言任务      → 交给 PA（这一种本来就需要理解和判断）
+  kind=prompt    一句自然语言任务      → 交给 CoreAgent（frago-core 自己的 agent 循环）
 
-**前两种不经过 PA。** 2026-04 到 2026-08 之间它们是经过的，代价是：agent 会话起
-不来时，任务只在日志里留一行警告然后无声地不发生。机械任务的执行不该绑在一个
-agent 能不能启动上。
+**三种都不经过 PA。** 2026-04 到 2026-08 之间命令和配方是经过的，代价是：agent
+会话起不来时，任务只在日志里留一行警告然后无声地不发生。2026-09 起自然语言任务
+也不再投给 PA，改由调度器拉起 CoreAgent 子进程，跑完交回一行结论——跟命令、配方
+一样有执行记录、有成败。CoreAgent 用哪个连接，由设置页的「CoreAgent」角色决定。
 
-方向也随之反过来——PA 不再是定时任务的必经之路，而是它的两个身份之一：
-执行 prompt 型任务的执行者，以及 ``frago schedule add`` 的调用方（agent 可以
-给自己或给系统安排定时任务）。
+PA 仍可以是 ``frago schedule add`` 的调用方（agent 可以给自己或给系统安排定时任务）。
 
 执行完的通知回路见 schedule_executor 模块的模块文档。
 """
@@ -174,6 +173,13 @@ class SchedulerService:
             s["command"] = None
         if "cwd" not in s:
             s["cwd"] = None
+        # 自然语言任务交给 CoreAgent 时带的：用哪份说明书、允许与禁止哪些工具调用。
+        # 两张名单的写法照搬 Claude Code 的权限规则，如 Read、Bash(git log:*)。
+        if "instructions" not in s:
+            s["instructions"] = None
+        for key in ("allowed_tools", "disallowed_tools"):
+            if key not in s:
+                s[key] = []
         if "notify" not in s:
             # 老任务一律不通知：它们此前从没推送过，升级不该让人突然被刷屏。
             s["notify"] = {"on": "never", "to": None, "context": {}}
@@ -204,6 +210,9 @@ class SchedulerService:
         command: str | None = None,
         cwd: str | None = None,
         notify: dict[str, Any] | None = None,
+        instructions: str | None = None,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
     ) -> dict[str, Any]:
         self._load()
         if command:
@@ -223,6 +232,9 @@ class SchedulerService:
             "recipe_name": recipe_name,  # backward compat
             "command": command,
             "cwd": cwd,
+            "instructions": instructions,
+            "allowed_tools": list(allowed_tools or []),
+            "disallowed_tools": list(disallowed_tools or []),
             "notify": notify or {"on": "change", "to": None, "context": {}},
             "params": params or {},
             "interval_seconds": interval_seconds,
@@ -425,7 +437,7 @@ class SchedulerService:
                 continue
 
     async def _execute(self, schedule: dict[str, Any]) -> None:
-        """到期分流：命令和配方 frago 自己跑，自然语言任务交给 PA。"""
+        """到期执行。三种形态都由调度器自己拉起、自己收结果。"""
         schedule_id = schedule["id"]
 
         # Overlap check: skip if previous trigger is still active
@@ -442,19 +454,20 @@ class SchedulerService:
         schedule["run_count"] = schedule.get("run_count", 0) + 1
         self._save()
 
-        kind = schedule.get("kind") or ("recipe" if schedule.get("recipe") else "prompt")
-        if kind in ("command", "recipe"):
-            self._active_schedule_ids.add(schedule_id)
-            try:
-                await self._execute_native(schedule)
-            finally:
-                self._active_schedule_ids.discard(schedule_id)
-            return
+        self._active_schedule_ids.add(schedule_id)
+        try:
+            await self._execute_native(schedule)
+        finally:
+            self._active_schedule_ids.discard(schedule_id)
 
-        await self._execute_via_pa(schedule)
+    async def _execute_native(
+        self, schedule: dict[str, Any], *, triggered_at: str | None = None
+    ) -> None:
+        """frago 自己执行，跑完按通知回路决定要不要说话。
 
-    async def _execute_native(self, schedule: dict[str, Any]) -> None:
-        """frago 自己执行，跑完按通知回路决定要不要说话。"""
+        ``triggered_at`` 只有手动触发时才给：手动那一次不推进 ``last_run_at``（不改
+        正常周期），执行记录上的时间要是不另给，记下的就会是上一次按周期跑的时间。
+        """
         from frago.server.services import schedule_executor as ex
 
         schedule_id = schedule["id"]
@@ -493,7 +506,8 @@ class SchedulerService:
                 s["consecutive_failures"] = int(s.get("consecutive_failures", 0)) + 1
             history = s.setdefault("history", [])
             history.append({
-                "triggered_at": s.get("last_run_at", _now_utc().isoformat()),
+                "triggered_at": triggered_at or s.get("last_run_at", _now_utc().isoformat()),
+                "manual": triggered_at is not None,
                 "status": s["last_status"],
                 "kind": s.get("kind"),
                 "exit_code": outcome.exit_code,
@@ -526,45 +540,3 @@ class SchedulerService:
             "prompt": text,
             "reply_context": schedule.get("reply_context", {}),
         })
-
-    async def _execute_via_pa(self, schedule: dict[str, Any]) -> None:
-        """自然语言任务：仍然交给 PA，它需要的是理解而不是执行。"""
-        schedule_id = schedule["id"]
-        schedule_name = schedule.get("name", schedule.get("recipe_name", "unnamed"))
-        prompt = schedule.get("prompt", "")
-        recipe = schedule.get("recipe", schedule.get("recipe_name"))
-        params = schedule.get("params", {}) or {}
-
-        # Phase 3 (去账本): 不再 Ingestor.ingest_scheduled 写 board——scheduled 消息
-        # 直接走下面的 PA enqueue 路径（带 reply_context），由常驻会话消费。
-        if not self._pa_enqueue:
-            logger.warning("[scheduler] No PA enqueue function — cannot deliver schedule %s", schedule_id)
-            return
-
-        msg_id = f"sch_msg_{uuid.uuid4().hex[:8]}"
-        # Use reply_channel as the message channel so downstream task creation
-        # and reply routing use the correct channel (e.g. "feishu") instead of "schedule".
-        effective_channel = schedule.get("reply_channel") or "schedule"
-        message: dict[str, Any] = {
-            "type": "scheduled_task",
-            "msg_id": msg_id,
-            "channel": effective_channel,
-            "schedule_id": schedule_id,
-            "schedule_name": schedule_name,
-            "prompt": prompt,
-            "recipe": recipe,
-            "params": params,
-            "reply_context": schedule.get("reply_context", {}),
-            "triggered_at": schedule["last_run_at"],
-            "last_status": schedule.get("last_status"),
-            "run_count": schedule.get("run_count", 0),
-        }
-        try:
-            await self._pa_enqueue(message)
-            self._active_schedule_ids.add(schedule_id)
-            logger.info(
-                "[scheduler] Message enqueued: type=scheduled_task, schedule=%s (%s)",
-                schedule_id, schedule_name,
-            )
-        except Exception as e:
-            logger.warning("[scheduler] Failed to enqueue schedule %s: %s", schedule_id, e)

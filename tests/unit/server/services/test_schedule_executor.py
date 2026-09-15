@@ -210,3 +210,71 @@ class TestPayloadParsing:
 
     def test_不是字典就没有通知文本(self):
         assert ex._extract_notify_field("一串文本") is None
+
+
+# --- 自然语言任务交给 CoreAgent ----------------------------------------------
+
+
+class TestPromptViaCoreAgent:
+    """不起真进程：替掉子进程那一步，喂 CoreAgent 结束时交的那一行结论。"""
+
+    @pytest.fixture
+    def core(self, tmp_path, monkeypatch):
+        binary = tmp_path / "frago-core"
+        binary.write_text("")
+        monkeypatch.setattr("frago.init.hook_binary.get_hook_deploy_dir", lambda: tmp_path)
+        monkeypatch.setattr("frago.init.hook_binary.get_binary_name", lambda: "frago-core")
+        calls = []
+
+        def install(stdout="", returncode=0, stderr=""):
+            import subprocess
+
+            def fake_run(cmd, **_kw):
+                calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+
+            monkeypatch.setattr(ex.subprocess, "run", fake_run)
+
+        install.calls = calls
+        install.workdir = tmp_path
+        return install
+
+    def test_参数照任务带过去(self, core):
+        core('{"type":"final","ok":true,"text":"分好了"}\n')
+        ex.execute_prompt(
+            "给事务分类", 900, "todo-triage.md",
+            ["Read", "Bash(frago todo:*)"], ["Bash(rm:*)"], str(core.workdir),
+        )
+        cmd = core.calls[0]
+        assert cmd[1:5] == ["--mode", "agent", "--output-format", "json"]
+        assert cmd[cmd.index("--prompt") + 1] == "给事务分类"
+        assert cmd[cmd.index("--instructions") + 1] == "todo-triage.md"
+        assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "--allowed-tools"] == [
+            "Read", "Bash(frago todo:*)",
+        ]
+        assert cmd[cmd.index("--disallowed-tools") + 1] == "Bash(rm:*)"
+        assert cmd[cmd.index("--cwd") + 1] == str(core.workdir)
+        assert cmd[cmd.index("--timeout") + 1] == "900"
+
+    def test_没给工作目录就在家目录干活(self, core):
+        from pathlib import Path
+
+        core('{"type":"final","ok":true,"text":"x"}\n')
+        ex.execute_prompt("x", 60)
+        cmd = core.calls[0]
+        assert cmd[cmd.index("--cwd") + 1] == str(Path.home())
+
+    def test_办完了算成功_答案进输出(self, core):
+        core('{"type":"final","ok":true,"text":"分好了 87 件"}\n')
+        out = ex.execute_prompt("x", 60)
+        assert out.ok and out.kind == "prompt" and out.stdout == "分好了 87 件"
+
+    def test_没办完时原因带出来(self, core):
+        core('{"type":"final","ok":false,"text":"","error_kind":"max_rounds","error":"轮数到顶"}\n', returncode=1)
+        out = ex.execute_prompt("x", 60)
+        assert not out.ok and "轮数到顶" in out.error
+
+    def test_一行结论都没交就算失败_不假装成功(self, core):
+        core("not json\n", returncode=2, stderr="frago-core: 连接解析失败")
+        out = ex.execute_prompt("x", 60)
+        assert not out.ok and "连接解析失败" in out.error
