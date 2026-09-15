@@ -28,6 +28,7 @@ import os
 import shutil
 import signal
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -101,6 +102,9 @@ class RecipeSupervisor:
         # Live subprocess handle + restart count for observability (status()).
         self._proc: asyncio.subprocess.Process | None = None
         self._restarts = 0
+        # Label and start time of the current spawn's isolation refusals.
+        self._marker: str | None = None
+        self._spawned_at = 0.0
 
     async def run(self) -> None:
         """Supervise the recipe until the stop event fires.
@@ -126,6 +130,7 @@ class RecipeSupervisor:
                     "Daemon %s: recipe %s exited (code=%s)",
                     label, self._spec.recipe, proc.returncode,
                 )
+                await self._report_refusals(proc)
             except Exception:
                 logger.exception("Daemon %s: spawn/read failed", label)
             finally:
@@ -202,8 +207,12 @@ class RecipeSupervisor:
         # ~/.ssh when started by hand and can when the server keeps it alive is
         # a recipe with an unconfined path, and the long-lived one at that.
         from frago.recipes import isolation
+        self._spawned_at = time.time()
+        self._marker = isolation.marker_for(
+            f"daemon-{self._spec.recipe}-{int(self._spawned_at)}"
+        )
         cmd, backend_name = isolation.wrap(
-            cmd, view, cwd=Path(run_cwd) if run_cwd else None
+            cmd, view, cwd=Path(run_cwd) if run_cwd else None, marker=self._marker
         )
         if backend_name:
             logger.debug("daemon %s confined by %s", self._spec.recipe, backend_name)
@@ -222,6 +231,22 @@ class RecipeSupervisor:
             cwd=run_cwd,
             **kwargs,
         )
+
+    async def _report_refusals(self, proc: asyncio.subprocess.Process) -> None:
+        """A daemon that died is told, in the server log, what the isolation
+        refused while it ran — the same note a failed one-shot run gets."""
+        if proc.returncode in (0, None) or not self._marker:
+            return
+        from frago.recipes import isolation
+        try:
+            note = await asyncio.to_thread(
+                isolation.explain_refusals, self._marker, self._spawned_at
+            )
+        except Exception:
+            logger.debug("reading isolation refusals failed", exc_info=True)
+            return
+        if note:
+            logger.warning("Daemon %s: %s", self._spec.label, note)
 
     async def _pump(self, proc: asyncio.subprocess.Process) -> None:
         """Read subprocess stdout/stderr until it exits or stop_event fires.

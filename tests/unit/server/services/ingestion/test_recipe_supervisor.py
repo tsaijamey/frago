@@ -196,6 +196,29 @@ async def test_stop_event_terminates_running_proc():
     assert proc.terminated is True
 
 
+@pytest.mark.asyncio
+async def test_a_daemon_that_died_logs_what_isolation_refused(monkeypatch, caplog):
+    """A crashed daemon's refusals go to the server log — the only place a
+    person reading about a daemon looks."""
+    from frago.recipes import isolation
+
+    seen: list[str] = []
+
+    def fake_explain(marker, since):
+        seen.append(marker)
+        return "隔离拦下了这次运行的 1 处文件访问"
+
+    monkeypatch.setattr(isolation, "explain_refusals", fake_explain)
+    sup = RecipeSupervisor(SupervisedRecipe(recipe="x"), LogSink("x"),
+                           runner=object(), stop_event=asyncio.Event())
+    sup._marker = "frago-run-daemon-x-1"
+    with caplog.at_level("WARNING"):
+        await sup._report_refusals(_FakeProc(returncode=1))
+        await sup._report_refusals(_FakeProc(returncode=0))
+    assert seen == ["frago-run-daemon-x-1"]            # 干净退出不查
+    assert "隔离拦下了" in caplog.text
+
+
 def test_should_restart_matrix():
     """_should_restart truth table across policies and exit codes."""
     def sup(policy):

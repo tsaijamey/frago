@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from frago.recipes import isolation
 from frago.recipes.execution import ExecutionStatus
 from frago.recipes.runner import RecipeRunner
 
@@ -87,6 +88,62 @@ class TestRunWithExecution:
         runner.store.complete.assert_called_once()
         call_kwargs = runner.store.complete.call_args
         assert call_kwargs[1]["status"] == ExecutionStatus.FAILED
+
+
+class TestAFailureIsToldWhatIsolationRefused:
+    """Paths a library builds at run time are invisible to validate, and the
+    library usually swallows the refusal. A failed run carries the refusals in
+    its error and in its execution record."""
+
+    def _fail(self, runner, mock_recipe, execution_id="exec_refused"):
+        from frago.recipes.exceptions import RecipeExecutionError
+
+        runner.store.transition = MagicMock()
+        runner.store.complete = MagicMock()
+        with patch.object(
+            runner, "_run_python",
+            side_effect=RecipeExecutionError(
+                recipe_name="test_recipe", runtime=mock_recipe.metadata.runtime,
+                exit_code=1, stderr="boom"),
+        ), pytest.raises(RecipeExecutionError) as err:
+            runner._run_with_execution(
+                execution_id=execution_id, name="test_recipe", recipe=mock_recipe,
+                params={}, resolved_env={},
+            )
+        return err.value
+
+    def test_the_refusals_reach_the_error_and_the_record(self, runner, mock_recipe):
+        note = "隔离拦下了这次运行的 1 处文件访问：\n  - python 新建 /Users/x/Library/Caches/y"
+        with patch("frago.recipes.isolation.explain_refusals", return_value=note) as ask:
+            err = self._fail(runner, mock_recipe)
+        ask.assert_called_once()
+        assert ask.call_args[0][0] == isolation.marker_for("exec_refused")
+        assert "boom" in str(err) and "Library/Caches/y" in str(err)
+        recorded = runner.store.complete.call_args[1]["error"]["message"]
+        assert "Library/Caches/y" in recorded
+
+    def test_nothing_refused_leaves_the_error_as_it_was(self, runner, mock_recipe):
+        with patch("frago.recipes.isolation.explain_refusals", return_value=""):
+            err = self._fail(runner, mock_recipe)
+        assert str(err) == "Recipe 'test_recipe' execution failed (exit code: 1): boom"
+
+    def test_a_runtime_outside_any_view_is_not_asked(self, runner, mock_recipe):
+        """chrome-js runs in a browser, not in a view: there is nothing to read."""
+        from frago.recipes.exceptions import RecipeExecutionError
+
+        mock_recipe.metadata.runtime = "chrome-js"
+        runner.store.transition = MagicMock()
+        runner.store.complete = MagicMock()
+        with patch("frago.recipes.isolation.explain_refusals") as ask, patch.object(
+            runner, "_run_chrome_js",
+            side_effect=RecipeExecutionError(
+                recipe_name="test_recipe", runtime="chrome-js", exit_code=1, stderr="x"),
+        ), pytest.raises(RecipeExecutionError):
+            runner._run_with_execution(
+                execution_id="exec_js", name="test_recipe", recipe=mock_recipe,
+                params={}, resolved_env={},
+            )
+        ask.assert_not_called()
 
 
 class TestRunAsync:

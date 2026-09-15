@@ -724,6 +724,7 @@ class RecipeRunner:
             status = (ExecutionStatus.TIMEOUT
                       if "timeout" in str(e).lower()
                       else ExecutionStatus.FAILED)
+            e = self._with_refusals(e, execution_id, start_time)
             self.store.complete(
                 execution_id,
                 status=status,
@@ -732,7 +733,7 @@ class RecipeRunner:
                 duration_ms=int(execution_time * 1000),
                 runtime=recipe.metadata.runtime,
             )
-            raise
+            raise e
         except Exception as e:
             # Convert other exceptions to RecipeExecutionError
             execution_time = time.time() - start_time
@@ -750,6 +751,37 @@ class RecipeRunner:
                 exit_code=-1,
                 stderr=str(e)
             ) from e
+
+    @staticmethod
+    def _with_refusals(
+        err: RecipeExecutionError, execution_id: str, since: float
+    ) -> RecipeExecutionError:
+        """The same failure, told what the isolation refused while it ran.
+
+        Only for runtimes that run inside a view. The paths a library builds at
+        run time are invisible to ``frago recipe validate``, and the library
+        usually swallows the refusal — so without this the reason a recipe
+        failed is somewhere nobody reading its error would think to look.
+        """
+        if err.runtime not in ("python", "shell") or not execution_id:
+            return err
+        try:
+            note = isolation.explain_refusals(isolation.marker_for(execution_id), since)
+        except Exception:
+            logger.debug("reading isolation refusals failed", exc_info=True)
+            return err
+        if not note:
+            return err
+        told = RecipeExecutionError(
+            recipe_name=err.recipe_name,
+            runtime=err.runtime,
+            exit_code=err.exit_code,
+            stdout=err.stdout,
+            stderr=err.stderr,
+            detail=f"{(err.detail or err.stderr).rstrip()}\n{note}".lstrip(),
+        )
+        told.__cause__ = err
+        return told
 
     def _handle_open_url(self, url: str) -> None:
         """Open a URL in the user's default browser.
@@ -804,8 +836,12 @@ class RecipeRunner:
         cwd: str | None,
         recipe_name: str,
         runtime: str,
+        execution_id: str | None = None,
     ) -> list[str]:
         """The command that actually gets started: this one, inside its view.
+
+        ``execution_id`` labels the run's refusals, so a failure can be told
+        what the isolation refused (``_with_refusals``).
 
         A machine with no way to confine a recipe refuses to start one. That is
         a refusal a person can act on — install bubblewrap, or say out loud in
@@ -821,7 +857,8 @@ class RecipeRunner:
             view = isolation.View()
         try:
             confined, backend_name = isolation.wrap(
-                cmd, view, cwd=Path(cwd) if cwd else None
+                cmd, view, cwd=Path(cwd) if cwd else None,
+                marker=isolation.marker_for(execution_id) if execution_id else None,
             )
         except isolation.NoBackend as err:
             raise RecipeExecutionError(
@@ -1152,7 +1189,7 @@ class RecipeRunner:
             cmd = ['uv', 'run', str(script_path), params_json]
 
         cmd = self._confine(cmd, view, cwd=cwd, recipe_name=recipe_name,
-                            runtime='python')
+                            runtime='python', execution_id=execution_id)
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(
@@ -1241,7 +1278,8 @@ class RecipeRunner:
         # Build command: <script_path> <params_json>
         params_json = json.dumps(params)
         cmd = self._confine([str(script_path), params_json], view, cwd=cwd,
-                            recipe_name=recipe_name, runtime='shell')
+                            recipe_name=recipe_name, runtime='shell',
+                            execution_id=execution_id)
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(

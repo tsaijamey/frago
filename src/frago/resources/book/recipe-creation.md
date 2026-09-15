@@ -255,6 +255,51 @@ NEVER 读对方的文件，NEVER import 对方的代码。
 严格校验参数**：没在 inputs 里声明过的键一律打回，主人和登录用户一视同仁。
 所以页面要传的参数 MUST 在 recipe.md 的 inputs 里声明齐。
 
+### 6. 配方跑在视图里：只拦文件
+
+平台起配方时把它关进一个视图（macOS `sandbox-exec`，Linux `bwrap`）。能读写哪些
+目录见 `frago book must-recipe-data` 的「配方跑在一个视图里」：大意是自己的落点可写，
+系统、解释器、配方源码、别人 `shares` 出来的那块只读，家目录里的其余东西都碰不到。
+
+**只拦文件。** 麦克风、摄像头、显卡、系统偏好设置、系统服务、屏幕上的窗口都不拦，
+配方和本机任何一个普通进程够得着的一样多，不需要声明什么。这些资源给不给，由操作系统
+自己的授权把关：macOS 上第一次听麦克风、开摄像头、录屏，要主人在「系统设置 → 隐私与
+安全性」里放行；没放行就拿不到数据，报不报错取决于用的库。
+
+**第三方库往家目录写的缓存会被拦。** 这是写配方时最容易踩、也最难查的一类。模型、
+字体缓存、网页引擎的数据，库默认放在 `~/Library/Caches`、`~/.cache`、`~/.config`
+之类的地方——都在视图外。库自己在运行时拼这些路径，`validate` 的隔离预检看不到；
+被拦之后库往往把错吞掉，配方表现为莫名其妙地失败，或者干脆不失败、结果是空的。
+
+改法是**在 import 那个库之前**，用它认的环境变量把缓存指到落点里：
+
+```python
+import os
+
+def mode_transcribe(self) -> dict:
+    cache = self.data_dir / "cache"
+    os.environ.setdefault("HF_HOME", str(cache / "huggingface"))   # Hugging Face 模型
+    os.environ.setdefault("TORCH_HOME", str(cache / "torch"))      # PyTorch 权重
+    os.environ.setdefault("MPLCONFIGDIR", str(cache / "matplotlib"))
+    import whisper   # 放在设完变量之后：库多半在 import 时就读这些变量
+    ...
+```
+
+库认哪个变量查它自己的文档；Linux 上遵循 XDG 约定的库认 `XDG_CACHE_HOME`。
+
+**被拦了怎么查。**
+
+- 配方**跑失败**时，macOS 上报错末尾会自动附一段「隔离拦下了这次运行的 N 处文件访问」，
+  逐条列出哪个进程读／写了哪个路径被拦；执行记录里（`frago recipe execution <id>`）
+  也是同一段。常驻配方异常退出时，这段写进 server 日志。
+- 配方**没失败但结果不对**（空数据、画面没出来），报错里不会有这段，手动去系统日志里查：
+
+      log show --last 5m --style compact --predicate 'sender == "Sandbox"'
+
+  每条长这样：`Sandbox: python3.13(81657) deny(1) file-write-create /Users/…/Library/Caches/…`。
+- **Linux 上没有拦截记录**：视图外的路径是直接不存在，表现为
+  `No such file or directory`。报错里出现落点以外的路径，先按这条想。
+
 ## 说话的规矩
 
 配方的 stdout 是一串消息，每行一条 JSON，最后一条是结果。
@@ -305,6 +350,7 @@ workflow，`runtime` 是 python / chrome-js / shell，`version` 形如 1.0 或 1
 
 **隔离预检**——代码里写下的路径落在本次视野之外；
 或者起了 frago 命令却没在 recipe.md 写 `uses_frago_cli`。
+它只看得见代码里写下的路径，第三方库在运行时自己拼的缓存路径看不到，见硬规矩第 6 条。
 
 另有几条在这里只报警告，但页面要开放给别人时会在 `frago recipe expose` 那一步
 被拦下：页面按绝对路径去平台取文件；代码里有只在这台机器上存在的绝对路径；

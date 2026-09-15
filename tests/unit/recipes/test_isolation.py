@@ -14,6 +14,7 @@ installed.
 """
 
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -125,31 +126,104 @@ class TestWhatARunMaySee:
 
 
 class TestTheProfileMacOSIsHeldTo:
-    def test_it_denies_everything_it_did_not_name(self):
+    def test_only_files_are_refused(self):
+        """A deny-default profile recorded silence from the microphone. Nothing
+        but files is refused."""
         profile = isolation.SandboxExec().profile(isolation.View(), cwd=None)
-        assert "(deny default)" in profile
+        assert "(allow default)" in profile
+        assert "(deny default)" not in profile
+        refusals = [line for line in profile.splitlines() if line.startswith("(deny")]
+        assert refusals and all(line.startswith("(deny file-") for line in refusals)
 
     def test_the_root_directory_is_readable(self):
-        """Without it a deny-default profile aborts every process, /bin/echo
-        included, with no diagnostic anywhere."""
+        """Without it every process aborts, /bin/echo included, with no
+        diagnostic anywhere."""
         profile = isolation.SandboxExec().profile(isolation.View(), cwd=None)
-        assert '(allow file-read* (literal "/"))' in profile
+        assert '(require-not (literal "/"))' in profile
 
     def test_a_shared_block_ends_in_a_refusal_to_write_it(self, tmp_path):
         block = tmp_path / "feed" / "share" / "common"
         view = isolation.View(writable=(tmp_path,), readable=(block,),
                               shared=(block,))
         profile = isolation.SandboxExec().profile(view, cwd=None)
-        deny = profile.index("(deny file-write*")
-        allow = profile.index("(allow file-read* file-write*")
-        # Last matching rule wins, so the refusal has to come after every allow
-        # that could cover the same path. With the order reversed this test
-        # passes as a string check and the block is writable in fact.
-        assert deny > allow
+        outside = profile.index("(deny file-write* (require-all")
+        shared = profile.index(f'(deny file-write* (subpath "{block}")')
+        # Last matching rule wins, and the writable root covers the block. With
+        # the order reversed this test passes as a string check and the block is
+        # writable in fact.
+        assert shared > outside
 
     def test_the_working_directory_is_writable_even_if_nobody_listed_it(self, tmp_path):
         profile = isolation.SandboxExec().profile(isolation.View(), cwd=tmp_path)
         assert str(tmp_path) in profile
+
+    def test_every_refusal_carries_the_runs_marker(self, tmp_path):
+        """The system log names processes by pid, and nobody knows the pids a
+        recipe's children had. The marker is how a run finds its own refusals."""
+        block = tmp_path / "block"
+        view = isolation.View(writable=(tmp_path,), readable=(block,), shared=(block,))
+        profile = isolation.SandboxExec().profile(view, cwd=None, marker="frago-run-abc")
+        refusals = [line for line in profile.splitlines() if line.startswith("(deny")]
+        assert len(refusals) == 3
+        assert all('(with message "frago-run-abc")' in line for line in refusals)
+
+    def test_no_marker_no_message(self):
+        profile = isolation.SandboxExec().profile(isolation.View(), cwd=None)
+        assert "with message" not in profile
+
+
+_LOG_LINES = "\n".join(json.dumps(one) for one in [
+    {"eventMessage": "Sandbox: python3.13(81657) deny(1) file-write-create "
+                     "/Users/x/Library/Caches/whisper/model.pt\nfrago-run-abc"},
+    {"eventMessage": "3 duplicate reports for Sandbox: python3.13(81657) deny(1) "
+                     "file-write-create /Users/x/Library/Caches/whisper/model.pt\nfrago-run-abc"},
+    {"eventMessage": "Sandbox: uv(81600) deny(1) file-read-data /Users/x/.netrc\nfrago-run-abc"},
+    {"finished": 1},
+])
+
+
+class TestSayingSoAfterItHappened:
+    """A failed run is told what the kernel refused while it ran."""
+
+    def test_the_marker_is_safe_to_quote_and_search(self):
+        assert isolation.marker_for("exec 1/a\"b") == "frago-run-exec-1-a-b"
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="reads the macOS log")
+    def test_the_log_is_read_into_one_line_per_refusal(self, monkeypatch):
+        def fake_run(argv, **_):
+            assert 'eventMessage CONTAINS "frago-run-abc"' in argv[-1]
+            return subprocess.CompletedProcess(argv, 0, stdout=_LOG_LINES, stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert isolation.refusals("frago-run-abc", since=0) == [
+            "python3.13 新建 /Users/x/Library/Caches/whisper/model.pt",
+            "uv 读 /Users/x/.netrc",
+        ]
+
+    def test_turned_off_says_nothing(self, monkeypatch):
+        monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "off")
+        assert isolation.explain_refusals("frago-run-abc", 0) == ""
+
+    def test_linux_says_there_is_nothing_to_read(self, monkeypatch):
+        """Not silence: a person on Linux would otherwise conclude nothing was
+        refused."""
+        monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
+        monkeypatch.setattr(isolation, "backend", lambda: isolation.Bubblewrap())
+        assert "Linux" in isolation.explain_refusals("frago-run-abc", 0)
+
+    def test_macos_lists_them_and_says_what_to_do(self, monkeypatch):
+        monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
+        monkeypatch.setattr(isolation, "backend", lambda: isolation.SandboxExec())
+        monkeypatch.setattr(isolation, "refusals",
+                            lambda marker, since: ["python 新建 /Users/x/Library/Caches/y"])
+        note = isolation.explain_refusals("frago-run-abc", 0)
+        assert "1 处" in note and "Library/Caches/y" in note and "落点" in note
+
+    def test_macos_with_an_unreadable_log_says_so(self, monkeypatch):
+        monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
+        monkeypatch.setattr(isolation, "backend", lambda: isolation.SandboxExec())
+        monkeypatch.setattr(isolation, "refusals", lambda marker, since: None)
+        assert "读不到系统日志" in isolation.explain_refusals("frago-run-abc", 0)
 
 
 class TestTheMountsLinuxIsHeldTo:
@@ -161,24 +235,33 @@ class TestTheMountsLinuxIsHeldTo:
         assert argv[-2:] == ["--", "echo"]
         assert argv.index("--ro-bind-try") > argv.index("--bind-try")
 
-    def test_it_does_not_bind_the_hosts_proc_and_dev_back_over_its_own(self, tmp_path):
-        """bwrap furnishes /proc and /dev itself; binding the host's copies on
-        top is what broke every recipe on the demo server on 2026-08-31 — the
-        tool that starts the interpreter could no longer tell which C library
-        the machine has, and gave up before running a line. Measured: the host's
-        /proc alone is harmless, the host's /dev alone breaks it. Both are kept
-        out — /dev because of this, /proc because a run in its own pid namespace
-        has no business reading the host's process table."""
+    def test_the_hosts_dev_keeps_its_devices_and_is_not_bound_over(self, tmp_path):
+        """The host's /dev bound the ordinary way is what broke every recipe on
+        the demo server on 2026-08-31 — device nodes stop being devices and the
+        tool that starts the interpreter gives up before running a line. Bound
+        with device access kept it works and hands over the sound card and GPU.
+        The view's own /dev and /proc entries must never replace those mounts."""
         view = isolation.View(
             writable=(Path("/dev"), tmp_path),
             readable=(Path("/usr"), Path("/proc")),
         )
         argv = isolation.Bubblewrap().wrap(["echo"], view, cwd=None)
-        assert "--proc" in argv and "--dev" in argv          # bwrap 自己铺
-        pairs = list(zip(argv, argv[1:]))
+        triples = list(zip(argv, argv[1:], argv[2:], strict=False))
+        assert ("--dev-bind", "/dev", "/dev") in triples
+        assert "--proc" in argv                               # bwrap 自己铺
+        pairs = list(zip(argv, argv[1:], strict=False))
         assert ("--ro-bind-try", "/proc") not in pairs
         assert ("--bind-try", "/dev") not in pairs
         assert ("--ro-bind-try", "/usr") in pairs            # 别的照常
+
+    def test_system_service_sockets_are_bound_through(self, tmp_path):
+        """Session bus, PulseAudio, PipeWire and Wayland live under
+        /run/user/<uid>; the system bus under /run/dbus. Hiding them refuses
+        more than files."""
+        argv = isolation.Bubblewrap().wrap(["echo"], isolation.View(), cwd=None)
+        pairs = list(zip(argv, argv[1:], strict=False))
+        assert ("--bind-try", "/run/dbus") in pairs
+        assert ("--bind-try", f"/run/user/{os.getuid()}") in pairs
 
     def test_the_command_survives_intact(self, tmp_path):
         argv = isolation.Bubblewrap().wrap(
@@ -464,6 +547,74 @@ class TestWhatTheKernelActuallyRefuses:
             [sys.executable, str(probe), str(ssh)], view, cwd=land)
         done = subprocess.run(cmd, cwd=land, capture_output=True, text=True)
         assert "READABLE" not in done.stdout
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="macOS preferences")
+    def test_system_resources_are_not_refused(self, tmp_path):
+        """Reading system preferences goes through a system service, not a file
+        in the view. The deny-default profile refused it; this one must not —
+        the same refusal is what recorded silence from the microphone."""
+        land = tmp_path / "land"
+        land.mkdir()
+        view = isolation.view_for("demo", landing_spot=land, recipe_dir=None)
+        cmd, _ = isolation.wrap(
+            ["/usr/bin/defaults", "read", "-g", "AppleLocale"], view, cwd=land)
+        done = subprocess.run(cmd, cwd=land, capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="macOS link semantics")
+    def test_a_file_outside_the_view_cannot_be_given_a_name_inside_it(
+            self, tmp_path, monkeypatch):
+        """Allow-by-default leaves every file operation not named open. The ways
+        to launder a file into the view — hard link, clone, symlink — must all
+        still end in a refusal to read it."""
+        # Outside the interpreter's scratch, for the reason the `run` fixture
+        # above gives: tmp_path is inside that grant.
+        monkeypatch.setattr(
+            isolation, "_interpreter_writable", lambda: [tmp_path / "scratch"])
+        (tmp_path / "scratch").mkdir()
+        secret = tmp_path / "secret"
+        secret.mkdir()
+        (secret / "key").write_text("private")
+        land = tmp_path / "land"
+        land.mkdir()
+        view = isolation.view_for("demo", landing_spot=land, recipe_dir=None)
+        script = (
+            f'ln "{secret}/key" hard; cp -c "{secret}/key" clone; '
+            f'ln -s "{secret}/key" soft; cat hard clone soft 2>/dev/null; true'
+        )
+        cmd, _ = isolation.wrap(["/bin/sh", "-c", script], view, cwd=land)
+        done = subprocess.run(cmd, cwd=land, capture_output=True, text=True)
+        assert "private" not in done.stdout
+
+    @pytest.mark.skipif(platform.system() != "Darwin", reason="reads the macOS log")
+    def test_a_refusal_can_be_found_again_by_its_marker(self, tmp_path, monkeypatch):
+        """The chain end to end: the kernel refuses, writes the marker into the
+        system log, and the run reads its own refusal back. Slow — reading the
+        log takes seconds — and the only proof the marker survives the kernel."""
+        import time
+
+        monkeypatch.setattr(
+            isolation, "_interpreter_writable", lambda: [tmp_path / "scratch"])
+        (tmp_path / "scratch").mkdir()
+        secret = tmp_path / "secret"
+        secret.mkdir()
+        (secret / "key").write_text("private")
+        land = tmp_path / "land"
+        land.mkdir()
+        marker = isolation.marker_for(f"test-{time.time_ns()}")
+        since = time.time()
+        view = isolation.view_for("demo", landing_spot=land, recipe_dir=None)
+        cmd, _ = isolation.wrap(["/bin/cat", str(secret / "key")], view,
+                                cwd=land, marker=marker)
+        subprocess.run(cmd, cwd=land, capture_output=True)
+        found: list[str] = []
+        for _ in range(3):                                  # 日志落盘有延迟
+            found = isolation.refusals(marker, since) or []
+            if found:
+                break
+            time.sleep(1)
+        assert any(str(secret.resolve() / "key") in line or "secret/key" in line
+                   for line in found), found
 
 
 class TestTheRecipesOwnTestsAreNotTheRecipe:

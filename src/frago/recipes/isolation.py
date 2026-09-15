@@ -51,6 +51,17 @@ hub will answer; a recipe allowed the platform's own CLI (see
 ``uses_frago_cli``) can drive frago's commands. Network is open — recipes fetch
 market data. Those are separate boundaries with separate answers, and pretending
 this module covers them would be the same mistake in a new place.
+
+**Only files, on purpose.** Everything that is not a file — the microphone, the
+camera, a GPU, system preferences, the session bus, a window on the screen — is
+left exactly as reachable as it is for any other process the owner starts. frago
+is where agents get at the machine, and a recipe that records audio or draws a
+window is a recipe doing its job. The first version of this module denied
+everything it did not name, and measured on 2026-09-13 what that costs: a
+recipe recording from the microphone got a complete, well-formed file of
+silence, without a line in any log. What stays guarded is the owner's operating
+system, not this module: macOS still asks before a process hears the
+microphone.
 """
 
 from __future__ import annotations
@@ -405,7 +416,8 @@ class Backend:
     def available(self) -> bool:
         raise NotImplementedError
 
-    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None) -> list[str]:
+    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None,
+             marker: str | None = None) -> list[str]:
         raise NotImplementedError
 
 
@@ -422,11 +434,19 @@ class SandboxExec(Backend):
     command line rather than written to a file: a file would be one more thing
     to clean up, and one more thing a recipe could read.
 
-    Two details that are not obvious and both cost an afternoon to find:
-    ``file-read-metadata`` has to be open everywhere or path resolution fails
-    before any rule about the target applies, and the root directory itself
-    needs ``file-read*`` — without it a deny-default profile aborts every
-    process, including ``/bin/echo``, with no diagnostic at all.
+    **Allow by default, refuse files.** The profile opens everything and then
+    refuses reading the contents of, or writing to, any file outside the view —
+    see the module docstring for why nothing but files is refused. Names stay
+    visible (``stat`` works everywhere): resolving a path needs that before any
+    rule about its target applies, and it leaks existence, not contents.
+
+    **One refusal per direction, written as "everything except".** The obvious
+    shape — refuse all files, then allow the view back — aborts every process,
+    ``/bin/echo`` included, with no diagnostic: measured, not guessed. A single
+    refusal whose filter excludes the view is the shape the kernel honours.
+    Checked against the ways a file outside the view could be given a name
+    inside it: a hard link, a clone, a copy, a symbolic link, and asking another
+    application to open it are all refused.
     """
 
     name = "sandbox-exec"
@@ -434,54 +454,49 @@ class SandboxExec(Backend):
     def available(self) -> bool:
         return platform.system() == "Darwin" and bool(shutil.which("sandbox-exec"))
 
-    def profile(self, view: View, *, cwd: Path | None) -> str:
-        lines = [
-            "(version 1)",
-            "(deny default)",
-            "(allow process*)",
-            "(allow sysctl-read)",
-            "(allow mach*)",
-            "(allow ipc*)",
-            "(allow signal (target self))",
-            # Recipes fetch market data and call the hub. Confining the network
-            # is a different boundary with a different answer; claiming it here
-            # would break every feed on the machine and protect nothing that the
-            # bus token does not already hand over.
-            "(allow network*)",
-            # Without this, resolving any path fails before the rule about its
-            # target is ever consulted. It leaks the existence of names, not
-            # their contents.
-            "(allow file-read-metadata)",
-            '(allow file-read* (literal "/"))',
-        ]
-        if view.readable:
-            lines.append(
-                "(allow file-read* "
-                + " ".join(f"(subpath {_sbpl_quote(p)})" for p in view.readable)
-                + ")"
-            )
+    def profile(self, view: View, *, cwd: Path | None,
+                marker: str | None = None) -> str:
+        """The rules for one run.
+
+        ``marker`` is stamped on every refusal, and the kernel copies it into
+        the report it writes to the system log. It is how a failed run finds
+        *its own* refusals afterwards: the log names processes by pid, and the
+        pids a recipe's children had are known to nobody.
+        """
         writable = list(view.writable)
         if cwd is not None and cwd not in writable:
             writable.append(cwd)
-        if writable:
-            lines.append(
-                "(allow file-read* file-write* "
-                + " ".join(f"(subpath {_sbpl_quote(p)})" for p in writable)
-                + ")"
-            )
+        tag = f" (with message {_sbpl_quote(marker)})" if marker else ""
+
+        def outside(paths: list[Path], *extra: str) -> str:
+            return "(require-all " + " ".join(
+                [*extra, *(f"(require-not (subpath {_sbpl_quote(p)}))" for p in paths)]
+            ) + ")"
+
+        lines = [
+            "(version 1)",
+            "(allow default)",
+            # The root directory itself stays readable: without it every process
+            # aborts before its first line.
+            f"(deny file-read-data file-read-xattr{tag} "
+            + outside([*view.readable, *writable], '(require-not (literal "/"))')
+            + ")",
+            f"(deny file-write*{tag} " + outside(writable) + ")" if writable
+            else f"(deny file-write*{tag})",
+        ]
         # Last, because the last matching rule is the one that applies. Another
-        # module's data is read-only no matter which broad rule above happens to
-        # cover the same path.
+        # module's data is read-only even where a writable root covers it.
         if view.shared:
             lines.append(
-                "(deny file-write* "
+                f"(deny file-write*{tag} "
                 + " ".join(f"(subpath {_sbpl_quote(p)})" for p in view.shared)
                 + ")"
             )
         return "\n".join(lines) + "\n"
 
-    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None) -> list[str]:
-        return ["sandbox-exec", "-p", self.profile(view, cwd=cwd), *cmd]
+    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None,
+             marker: str | None = None) -> list[str]:
+        return ["sandbox-exec", "-p", self.profile(view, cwd=cwd, marker=marker), *cmd]
 
 
 class Bubblewrap(Backend):
@@ -496,6 +511,16 @@ class Bubblewrap(Backend):
 
     The network namespace is deliberately shared, for the reason
     ``SandboxExec.profile`` gives.
+
+    **Devices and system services are files here, so they are handed over
+    explicitly.** On Linux a sound card is ``/dev/snd``, a GPU is ``/dev/dri``,
+    and the session bus, PulseAudio, PipeWire and Wayland are sockets under
+    ``/run/user/<uid>`` — a mount namespace that shows "only the view" hides
+    them along with the owner's data, which is the opposite of the module's
+    rule that nothing but files is refused. The host's ``/dev`` is bound with
+    device access intact, and the two socket directories are bound through.
+    Measured on two servers (bubblewrap 0.6.1 and 0.4.0): ``uv run`` still
+    starts, both buses connect, ``~/.ssh`` is still absent.
     """
 
     name = "bwrap"
@@ -503,26 +528,38 @@ class Bubblewrap(Backend):
     def available(self) -> bool:
         return platform.system() == "Linux" and bool(shutil.which("bwrap"))
 
-    #: Places bwrap furnishes itself, and which must not then be bound over with
-    #: the host's copy.
+    #: Places whose host copy is mounted by ``wrap`` itself, in a way a view
+    #: entry must not then mount over.
     #:
-    #: **``/dev`` is the one that bites, and it was not the obvious suspect.**
-    #: Binding the host's ``/dev`` on top of the small one bwrap builds leaves
-    #: the tool that starts the interpreter unable to work out which C library
-    #: this machine has, and it gives up before running anything: every recipe
-    #: on the demo server died before its first line on 2026-08-31, minutes
-    #: after that machine got its isolation backend installed.
+    #: **``/dev`` is the one that bites.** Bound the ordinary way — the way every
+    #: view entry is — device nodes stop working as devices, and the tool that
+    #: starts the interpreter cannot work out which C library this machine has:
+    #: every recipe on the demo server died before its first line on 2026-08-31.
+    #: Bound with device access kept (``--dev-bind``) it is fine, which is what
+    #: ``wrap`` does; the view's ``/dev`` entry is skipped so it cannot replace
+    #: that mount with the broken kind.
     #:
-    #: The measurement is worth recording, because the plausible story was
-    #: wrong: bind the host's ``/proc`` alone and everything works; bind the
-    #: host's ``/dev`` alone and everything breaks. ``/proc`` is on this list
-    #: anyway — a run in its own pid namespace has no business reading the
-    #: host's process table — but it is here for isolation, not for this bug.
+    #: ``/proc`` stays bwrap's own. The run keeps its own pid namespace, which
+    #: is not a resource restriction but lifetime: when the recipe ends, every
+    #: process it started ends with it.
     FURNISHED = frozenset({Path("/proc"), Path("/dev")})
 
-    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None) -> list[str]:
+    @staticmethod
+    def _system_services() -> list[str]:
+        """The socket directories through which a process reaches the desktop,
+        audio and system services — bound through, never part of the view."""
+        return ["/run/dbus", f"/run/user/{os.getuid()}"]
+
+    def wrap(self, cmd: list[str], view: View, *, cwd: Path | None,
+             marker: str | None = None,  # noqa: ARG002 — nothing to attach it to
+             ) -> list[str]:
+        # ``marker`` is accepted and has nothing to attach to: a path this view
+        # does not contain is absent from the mount namespace, so there is no
+        # refusal for the kernel to report. See ``explain_refusals``.
         argv = ["bwrap", "--die-with-parent", "--unshare-pid", "--proc", "/proc",
-                "--dev", "/dev", "--tmpfs", "/tmp"]
+                "--dev-bind", "/dev", "/dev", "--tmpfs", "/tmp"]
+        for path in self._system_services():
+            argv += ["--bind-try", path, path]
         for path in view.readable:
             if path in view.shared or path in self.FURNISHED:
                 continue
@@ -1111,9 +1148,13 @@ def foresee(
 
 
 def wrap(
-    cmd: list[str], view: View, *, cwd: Path | None = None
+    cmd: list[str], view: View, *, cwd: Path | None = None,
+    marker: str | None = None,
 ) -> tuple[list[str], str]:
     """The command to actually start, and the name of what is holding it.
+
+    ``marker`` labels this run's refusals so ``explain_refusals`` can find them
+    later; see ``marker_for``.
 
     Returns the command unchanged with an empty name when the owner turned
     isolation off — the one path where an unconfined recipe starts, and it takes
@@ -1131,7 +1172,7 @@ def wrap(
         return cmd, ""
     chosen = backend()
     if chosen is not None:
-        return chosen.wrap(cmd, view, cwd=cwd), chosen.name
+        return chosen.wrap(cmd, view, cwd=cwd, marker=marker), chosen.name
 
     # Windows warns and runs; everywhere else refuses.
     #
@@ -1151,3 +1192,104 @@ def wrap(
                        why_unavailable())
         return cmd, ""
     raise NoBackend(why_unavailable())
+
+
+# ── saying so after it happened ────────────────────────────────────────────
+#
+# `foresee` catches the paths a recipe writes down. It cannot catch the ones a
+# library builds at run time — a cache under ~/Library/Caches, a model under
+# ~/.cache — and those fail in the least helpful way there is: the library
+# swallows the error, the recipe exits with something unrelated, or does not
+# fail at all. So a failed run is told what the kernel refused while it ran.
+
+
+def marker_for(run_id: str) -> str:
+    """The label one run's refusals carry. Letters, digits and dashes only, so
+    it survives both the profile's quoting and the log's search syntax."""
+    return "frago-run-" + re.sub(r"[^A-Za-z0-9-]", "-", run_id)
+
+
+#: How long reading the system log may take. Measured at about nine seconds on
+#: a busy laptop; only ever paid by a run that already failed.
+_LOG_TIMEOUT = 45
+
+#: Enough to show the pattern; a library retrying one cache write floods more.
+_REFUSALS_SHOWN = 15
+
+_REPORT = re.compile(
+    r"Sandbox: (?P<proc>[^\s(]+)\(\d+\) deny\(\d+\) (?P<op>[\w*-]+) (?P<path>.+)"
+)
+
+_VERBS = {
+    "file-read-data": "读",
+    "file-read-xattr": "读属性",
+    "file-write-create": "新建",
+    "file-write-data": "写",
+    "file-write-unlink": "删除",
+}
+
+
+def refusals(marker: str, since: float) -> list[str] | None:
+    """What the kernel refused this run, one line each, oldest first.
+
+    ``None`` means this machine cannot say — not macOS, or the system log could
+    not be read — which is different from an empty list, "nothing refused".
+    """
+    if platform.system() != "Darwin" or not Path("/usr/bin/log").exists():
+        return None
+    import datetime
+    import json
+    import subprocess
+
+    start = datetime.datetime.fromtimestamp(since - 1).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        done = subprocess.run(
+            ["/usr/bin/log", "show", "--start", start, "--style", "ndjson",
+             "--predicate",
+             f'sender == "Sandbox" AND eventMessage CONTAINS "{marker}"'],
+            capture_output=True, text=True, timeout=_LOG_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    found: list[str] = []
+    for raw in done.stdout.splitlines():
+        try:
+            message = json.loads(raw).get("eventMessage") or ""
+        except (ValueError, AttributeError):
+            continue
+        match = _REPORT.search(message.split("\n", 1)[0])
+        if not match:
+            continue
+        verb = _VERBS.get(match["op"], match["op"])
+        line = f"{match['proc']} {verb} {match['path'].strip()}"
+        if line not in found:
+            found.append(line)
+    return found
+
+
+def explain_refusals(marker: str, since: float) -> str:
+    """The paragraph a failed run's error gets, or ``""`` when there is nothing
+    worth saying. Said in the words of somebody writing a recipe, because that
+    is who reads it."""
+    if configured() == OFF:
+        return ""
+    chosen = backend()
+    if isinstance(chosen, Bubblewrap):
+        return ("（Linux 上视图外的路径是直接不存在，没有拦截记录可取。"
+                "报错里出现 No such file or directory 且路径在落点之外，多半就是它。）")
+    if not isinstance(chosen, SandboxExec):
+        return ""
+    found = refusals(marker, since)
+    if found is None:
+        return "（读不到系统日志，取不出这次运行被隔离拦下了什么。）"
+    if not found:
+        return ""
+    shown = "\n".join(f"  - {line}" for line in found[:_REFUSALS_SHOWN])
+    more = (f"\n  …另有 {len(found) - _REFUSALS_SHOWN} 条"
+            if len(found) > _REFUSALS_SHOWN else "")
+    return (
+        f"隔离拦下了这次运行的 {len(found)} 处文件访问：\n{shown}{more}\n"
+        "这些路径不在配方的视图里。配方自己的数据写到平台给的落点；"
+        "第三方库往家目录写的缓存，用它的环境变量改指到落点"
+        "（见 frago book recipe-creation 硬规矩第 6 条「配方跑在视图里」）。"
+    )

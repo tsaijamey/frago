@@ -14,6 +14,7 @@ frago recipe 系统提供可复用的自动化脚本。执行前先查询可用 
 ## 跑起来是什么样
 
 - 配方跑在一个只看得见指定目录的视图里：本次运行的落点、自己的 `~/.frago/recipe-data/<配方>/` 可写；别人写了 `shares` 的那块、系统与解释器、配方源码只读；其余一切不存在，越界当场失败。
+- 视图只管文件：麦克风、摄像头、显卡、系统服务、屏幕窗口都不拦，是否放行由操作系统自己的授权决定。
 - 后端由内核来管：macOS 用自带的 `sandbox-exec`；Linux 用 `bwrap`，**没装 bubblewrap 就拒绝起配方**（`apt install bubblewrap`）。要关掉，MUST 在 `~/.frago/config.json` 明写 `"recipe": {"isolation": "off"}`。
 - frago 包里不带任何配方，`frago init` 也装不来配方。要配方去社区仓库 `tsaijamey/frago-recipe-community` 取。
 
