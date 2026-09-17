@@ -86,3 +86,9 @@ test_stealth.html
 # Design Files (local only)
 # ====================
 pencil-files/
+
+# ====================
+# TypeScript incremental build state
+# ====================
+# 增量编译的中间产物，机器之间不通用，入库只会天天冒出来要求提交。
+*.tsbuildinfo
