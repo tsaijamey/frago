@@ -4186,23 +4186,71 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    独有的东西：分段标题、网格卡、清单行、社区卡的操作底栏、GitHub 提示条。
    尺度与事务页一致：左右 24px、控件 32px 高；颜色只给动作与需要留意的状态。 */
 
-/* 网格 / 清单切换：两颗纯图标的分段控件，贴在搜索框右边。 */
+/* 工具栏的层级：来源切换（最重，浮起的分段控件）→ 搜索（贴着它左对齐）→
+   行尾的网格/清单切换（最轻）。
+   搜索框不再被推到右端：右端那颗切换只在本地页出现，搜索若靠右对齐，切一次标签页
+   它就横跳一次（实测 82px）。现在它挂在来源切换后面，位置只由左边决定。 */
+.tdp.rl-page .td-search {
+  margin-left: 0;
+  flex: 0 1 360px;
+}
+
+/* 网格 / 清单切换：两颗 28×28 的方形图标按钮，外框 32px 高，与搜索框同高同基线。
+   只有一圈细描边、选中那颗铺一层灰底，不浮起、不投影——它比左边的来源切换低一级，
+   画得就要比它轻，两个控件才不会并排抢眼。 */
 .rl-view-toggle {
+  display: inline-flex;
   flex-shrink: 0;
+  gap: 2px;
+  margin-left: auto;
+  padding: 1px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
 }
 
-.tdp .rl-view-toggle .td-filter {
-  width: 32px;
-  padding: 0;
+.rl-view-btn {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  /* 外框圆角减去 1px 内衬，内外两道弧线才同心。 */
+  border-radius: calc(var(--radius-md) - 1px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+.rl-view-btn:hover {
+  color: var(--text-primary);
+}
+
+.rl-view-btn--active,
+.rl-view-btn--active:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.rl-view-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+/* 竖向节奏：页头→工具栏、工具栏→内容，两段都是 16px。 */
 .rl-page .page-scroll {
-  padding: 8px var(--tdp-gutter) 40px;
+  padding: 16px var(--tdp-gutter) 40px;
+}
+
+/* 段标题带 6px 的悬停热区，第一段往上收回这 6px，标题字仍落在 16px 的节奏线上。 */
+.rl-section:first-child > .rl-section-head {
+  margin-top: -6px;
 }
 
 .rl-section + .rl-section {
-  margin-top: 12px;
+  margin-top: 20px;
 }
 
 /* 分段标题：折叠箭头、名字、计数、灰色说明排成一行，与事务页的分组标题同一副样子。 */
@@ -4211,8 +4259,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   align-items: baseline;
   gap: 8px;
   width: calc(100% + 16px);
-  margin: 0 -8px;
-  padding: 10px 8px 10px;
+  margin: 0 -8px 6px;
+  padding: 6px 8px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
@@ -4328,11 +4376,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .rl-page .rl-card a.rl-card-link:hover {
   color: var(--text-primary);
-}
-
-/* 社区页没有分段标题顶着，第一排卡离工具栏补一点距离。 */
-.rl-page .page-scroll > .rl-grid:first-child {
-  margin-top: 8px;
 }
 
 .rl-card-id {
@@ -6217,6 +6260,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 /* 选中的一段整块「浮起来」：抬亮的底色加一层细影，形状完整，不靠任何边条。 */
 .tdp-segmented .td-filter--active,
 .tdp-segmented .td-filter--active:hover {
+  /* 不加粗：字重一变字就变宽，点一下别的档，整排和它后面的搜索框都跟着挪 1px。 */
+  font-weight: inherit;
   background: var(--bg-elevated);
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 0 0 1px var(--border-color);

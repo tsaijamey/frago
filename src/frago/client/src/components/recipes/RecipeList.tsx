@@ -159,8 +159,9 @@ export default function RecipeList() {
 
   const noResults = atomicRecipes.length === 0 && workflowRecipes.length === 0;
 
-  // 工具栏右侧：本地页是「搜索 + 网格/清单切换」，社区页只有搜索。和原来一样，
-  // 清单为空时不摆搜索框——没东西可搜。
+  // 工具栏从左到右按层级排：来源切换（决定整页看什么）→ 搜索（在这一页里找）→
+  // 行尾的网格/清单切换（只管怎么摆，仅本地页有）。搜索框贴着来源切换左对齐，
+  // 两个标签页之间切来切去它不挪位置。和原来一样，清单为空时不摆搜索框。
   const isCommunity = activeTab === 'community';
   const showSearch = isCommunity ? communityRecipes.length > 0 : recipes.length > 0;
   const searchValue = isCommunity ? communitySearch : search;
@@ -215,27 +216,29 @@ export default function RecipeList() {
             )}
           </div>
         )}
+        {/* 网格 / 清单只是「本地这一页怎么摆」的偏好，比来源切换低一级：
+            放在行尾、画得更轻；社区页没有它时，它左边的东西一个都不挪。 */}
         {!isCommunity && recipes.length > 0 && (
-          <div className="tdp-segmented rl-view-toggle" role="group">
+          <div className="rl-view-toggle" role="group">
             <button
               type="button"
-              className={`td-filter ${viewMode === 'grid' ? 'td-filter--active' : ''}`}
+              className={`rl-view-btn ${viewMode === 'grid' ? 'rl-view-btn--active' : ''}`}
               onClick={() => setView('grid')}
               aria-label={t('recipes.gridView')}
               aria-pressed={viewMode === 'grid'}
               title={t('recipes.gridView')}
             >
-              <LayoutGrid size={14} />
+              <LayoutGrid size={15} />
             </button>
             <button
               type="button"
-              className={`td-filter ${viewMode === 'list' ? 'td-filter--active' : ''}`}
+              className={`rl-view-btn ${viewMode === 'list' ? 'rl-view-btn--active' : ''}`}
               onClick={() => setView('list')}
               aria-label={t('recipes.listView')}
               aria-pressed={viewMode === 'list'}
               title={t('recipes.listView')}
             >
-              <List size={14} />
+              <List size={15} />
             </button>
           </div>
         )}
