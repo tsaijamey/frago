@@ -1353,7 +1353,8 @@
       "sameReply": "Same reply",
       "groupCount": "{{n}} in this group",
       "loading": "Loading records",
-      "awaitingAgent": "Sent — waiting for the agent to speak"
+      "awaitingAgent": "Sent — waiting for the agent to speak",
+      "quote": "Quote"
     },
     "record": {
       "kind": {

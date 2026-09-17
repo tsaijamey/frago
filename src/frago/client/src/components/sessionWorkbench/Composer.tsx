@@ -33,6 +33,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -73,6 +74,14 @@ export interface ComposerProps {
    * 输入框在点发送那一刻就空了，这里是那句话此后唯一看得见的去处。空数组就什么都不画。
    */
   outbound?: OutboundMessage[];
+  /**
+   * 人在记录流里圈了一段话、按了「引用」交过来的那一份。
+   *
+   * `at` 是按下的时刻：同一段话连引两次是两件事，光比文字会把第二次吃掉。落进输入框
+   * 的形状是三引号包住原话、下面一行 `>>> `，光标停在 `>>> ` 后面——引的是什么和要
+   * 接着说什么，在框里一眼分得开。
+   */
+  quote?: { text: string; at: number } | null;
 }
 
 /**
@@ -92,6 +101,17 @@ export function blockReason(sessionId: string | null): string | null {
 
 /** 走多快，每秒多少像素。慢到眼角能忽略它，快到人偶尔看一眼会发现它换了地方。 */
 const WALK_SPEED = 24;
+
+/**
+ * 输入框的高度契约：一行 24 像素（与正文的 `leading-6` 同值），最少两行，最多九行。
+ *
+ * 从前它是死高两行：贴一段长交代进去，人只能在一个两行的窗口里上下推着看，改前面
+ * 一句要先滚回去找。现在它随内容长高，到九行封顶——再往上长会把记录流挤没，而人正
+ * 需要一边看着上面那几条一边写。到顶之后框内自己滚。
+ */
+const LINE_PX = 24;
+const MIN_LINES = 2;
+const MAX_LINES = 9;
 
 /**
  * 输入区上沿那条线上站着的一个人。
@@ -181,6 +201,7 @@ export default function Composer({
   onSendFailed,
   deliveredAt,
   outbound = [],
+  quote = null,
 }: ComposerProps) {
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
@@ -204,12 +225,61 @@ export default function Composer({
       onSendFailed,
       deliveredAt,
     });
+  const box = useRef<HTMLTextAreaElement>(null);
+  /**
+   * 引用刚落进来时光标该停在哪。
+   *
+   * 文字是 React 画上去的，这一刻框里还是旧内容，当场挪光标会挪到一个还不存在的位置上。
+   * 先把落点记在这里，等新内容画完那一帧再动。
+   */
+  const caretTo = useRef<number | null>(null);
+  // 引用要接在此刻框里已有的内容后面。效应只盯「按了引用」那一刻，闭包里的 text 停在
+  // 更早的一帧上，拿它拼会把人这中间打的字抹掉。
+  const textRef = useRef(text);
+  textRef.current = text;
   const [dragging, setDragging] = useState(false);
   // 边什么时候活过来：正在打字（框内有焦点）或者正在发。其余时候它冻在最后一帧上——
   // 一直在动的边会让人打字时眼角始终有东西在晃。
   const [focused, setFocused] = useState(false);
   const filePicker = useRef<HTMLInputElement>(null);
   const attachCount = images.length + documents.length;
+
+  // 引用落进输入框。同一段话连引两次也是两次，靠的是按下的时刻，不是文字本身。
+  const quoteAt = quote?.at ?? 0;
+  const quoteText = quote?.text ?? '';
+  useEffect(() => {
+    // 时刻为 0 表示这一场还没有人引用过任何东西。
+    if (!quoteText || !quoteAt) return;
+    const prev = textRef.current;
+    const lead = prev && !prev.endsWith('\n') ? '\n' : '';
+    const next = `${prev}${lead}"""\n${quoteText}\n"""\n>>> `;
+    caretTo.current = next.length;
+    setText(next);
+  }, [quoteAt, quoteText, setText]);
+
+  /**
+   * 高度跟着内容走，顺带把引用刚落进来的那一次光标安顿好。
+   *
+   * 量高度之前必须先把高度塌回 `auto`：框上还挂着上一帧的高度时，`scrollHeight` 报的
+   * 是那个高度，删字永远不会变矮。
+   */
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const content = el.scrollHeight;
+    const ceiling = MAX_LINES * LINE_PX;
+    el.style.height = `${Math.min(Math.max(content, MIN_LINES * LINE_PX), ceiling)}px`;
+    el.style.overflowY = content > ceiling ? 'auto' : 'hidden';
+    if (caretTo.current !== null) {
+      const at = caretTo.current;
+      caretTo.current = null;
+      el.focus();
+      el.setSelectionRange(at, at);
+      // 引到第十行以后，光标那一行得看得见：框内滚到底。
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [text]);
 
   const takeFiles = useCallback(
     (files: FileList | null) => {
@@ -404,6 +474,7 @@ export default function Composer({
             }}
           />
           <textarea
+            ref={box}
             data-testid="composer-input"
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -422,7 +493,7 @@ export default function Composer({
             }
             /* 焦点由外面那圈色场表达，这里就不要再叠一个焦点环——同一件事两种说法，
                而且那个环是绿的，正是要去掉的东西。 */
-            className="min-h-[46px] w-full resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
+            className="min-h-[48px] w-full resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
           />
           <div className="mt-1 flex items-center gap-2">
             <button

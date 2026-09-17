@@ -34,6 +34,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Inbox, Loader2 } from 'lucide-react';
 import RecordCard, { KIND_GROUP } from './RecordCard';
+import SelectionQuote from './SelectionQuote';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
@@ -142,6 +143,11 @@ export interface RecordStreamProps {
   onLoadOlder: () => void;
   /** 刚投了一句话进去、还没见 agent 有任何动静。为真时流的末尾挂一条"在等"。 */
   awaitingAgent?: boolean;
+  /**
+   * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
+   * 接住它的是输入区——这一侧不碰输入框的内容。
+   */
+  onQuote?: (text: string) => void;
 }
 
 export default function RecordStream({
@@ -153,6 +159,7 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
+  onQuote,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   const [lens, setLens] = useState<StreamLens>('all');
@@ -482,6 +489,12 @@ export default function RecordStream({
           ) : null}
         </div>
       </div>
+
+      {/* 圈中一段文字之后冒出来的「引用」按钮，以及短选区的同字标绿。
+          它挂在滚动容器外面：摆在里面会被 `overflow-y-auto` 裁掉一半。 */}
+      {onQuote ? (
+        <SelectionQuote containerRef={scrollRef} sessionId={sessionId} onQuote={onQuote} />
+      ) : null}
     </div>
   );
 }

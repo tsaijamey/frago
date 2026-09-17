@@ -1353,7 +1353,8 @@
       "sameReply": "同一次回复",
       "groupCount": "本组 {{n}} 条",
       "loading": "取记录中",
-      "awaitingAgent": "已经投进去了，在等 agent 开口"
+      "awaitingAgent": "已经投进去了，在等 agent 开口",
+      "quote": "引用"
     },
     "record": {
       "kind": {

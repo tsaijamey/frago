@@ -16,7 +16,7 @@
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -58,6 +58,17 @@ export default function SessionWorkbenchPage() {
     clearSent,
     settleSent,
   } = useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
+
+  /**
+   * 人从记录流里引过来的那段话，等着落进输入框。
+   *
+   * 编号用自增的次数而不是时间：同一段话连引两次，时间戳可能一模一样，输入区会以为
+   * 是同一件事而把第二次吃掉。
+   */
+  const [quote, setQuote] = useState<{ text: string; at: number } | null>(null);
+  const quoteSeq = useRef(0);
+  // 换会话把没落地的引用收掉——那段话是从上一场的记录里圈的。
+  useEffect(() => setQuote(null), [selectedId]);
 
   /**
    * 新建那一场从「点了创建」到「界面上真的有它」之间的那段路。
@@ -167,6 +178,7 @@ export default function SessionWorkbenchPage() {
               error={error}
               onLoadOlder={loadOlder}
               awaitingAgent={awaitingAgent}
+              onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
             />
           )}
         </div>
@@ -190,6 +202,7 @@ export default function SessionWorkbenchPage() {
           onSendFailed={clearSent}
           deliveredAt={deliveredAt}
           outbound={outbound}
+          quote={quote}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
