@@ -373,18 +373,30 @@ _CALLER_ONLY_ENV = ("FRAGO_RECIPE_CALLER", "FRAGO_RECIPE_SLOT", "FRAGO_RECIPE_DA
                     "FRAGO_EXECUTION_ID", "FRAGO_CURRENT_RUN")
 
 
+#: A word that can be a command name. Anything else — a path, a JSON blob, an
+#: account id — is an argument, whatever position it sits in.
+_COMMAND_WORD = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
 def _command_path(argv: list[str]) -> str:
-    """The command being run, for the ledger: the words before the first flag.
+    """The command being run, for the ledger: the command words, no arguments.
 
     ``["recipe", "expose", "x", "--allow", "a@b"]`` reads as ``recipe expose``.
     Recorded rather than the whole line because the ledger's question is which
     crossings exist, and the arguments are the part that differs every time —
     keeping them would defeat the roll-up and turn one busy page into megabytes
     of near-identical lines.
+
+    **Stopping at the first flag is not enough**, and that assumption held only
+    as long as every command was a group with a subcommand. ``frago cp <src>
+    <dst>`` is one word followed by two paths, so taking "the first two words"
+    recorded ``cp /Users/somebody/a-file`` as the command name — a name no two
+    calls share, which is precisely the case the roll-up exists for. So a word
+    is taken only while it still looks like a command word.
     """
     words = []
     for token in argv:
-        if token.startswith("-"):
+        if not _COMMAND_WORD.match(token):
             break
         words.append(token)
         if len(words) == 2:

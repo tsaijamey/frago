@@ -147,3 +147,23 @@ def test_账本写不进去不能连累调用本身(ledger, monkeypatch, tmp_pat
 
     monkeypatch.setattr(bus.Path, "mkdir", 打不开)
     bus._record_edge("plan", "engine", "progress", True)  # 不抛就算过
+
+
+# ── 命令名是怎么从 argv 里认出来的 ──────────────────────────────────────
+
+
+def test_命令名只取命令词不取参数():
+    """账本记的是「哪条命令跨过来了」，不是「带着什么参数」。
+
+    以前的写法是「取到第一个 flag 为止的前两个词」，而那只在每条命令都是
+    命令组带子命令时成立。顶层单词命令（frago cp <来源> <目标>）会被记成
+    `cp /Users/某人/某文件`——一个没有两次调用会重复的名字，滚动合并当场失效。
+    """
+    from frago.server.routes.bus import _command_path
+
+    assert _command_path(["recipe", "expose", "x", "--allow", "a@b"]) == "recipe expose"
+    assert _command_path(["user", "list", "--format", "json"]) == "user list"
+    assert _command_path(["cp", "/Users/somebody/a.txt", "/tmp/b.txt"]) == "cp"
+    assert _command_path(["rm", "/Users/somebody/a.txt", "--json"]) == "rm"
+    assert _command_path(["whoami"]) == "whoami"
+    assert _command_path(["--help"]) == "(empty)"

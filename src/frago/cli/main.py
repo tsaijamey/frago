@@ -38,6 +38,7 @@ from .daemon_commands import daemon_group
 from .def_commands import def_group
 from .desktop_commands import desktop_group
 from .extension_commands import extension_group
+from .file_commands import cp_command, mv_command, rm_command
 from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
 from .profile_commands import profile_group
@@ -59,6 +60,7 @@ from .workspace_commands import workspace_group
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
+    ("Files", ["cp", "mv", "rm"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -379,6 +381,18 @@ cli.add_command(init)  # New environment init command
 cli.add_command(init_dirs, name="init-dirs")  # Legacy directory init command
 cli.add_command(status)  # CDP connection status (kept at top level for quick checks)
 cli.add_command(update)  # Self-update command
+
+# Files - cp / mv / rm, unix's names for unix's meanings.
+#
+# Top level rather than under a `file` group, and the reason is who calls them.
+# A recipe reaches these through the bus by writing the words it would type
+# (`self.ask_frago(["rm", path])`), and every extra word in that list is a word
+# whose only job is to be remembered correctly. `rm` is also the name the deny
+# rule on this machine already tells agents to stop typing, so the replacement
+# being spelled the same is the whole point.
+cli.add_command(cp_command, name="cp")
+cli.add_command(mv_command, name="mv")
+cli.add_command(rm_command, name="rm")
 
 # Command groups
 cli.add_command(browser_group)  # browser automation command group
