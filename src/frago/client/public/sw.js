@@ -72,7 +72,11 @@ self.addEventListener('fetch', (event) => {
 async function serveShell(request) {
   const cache = await caches.open(CACHE_NAME);
   try {
-    const fresh = await fetch(request);
+    // `cache: 'no-cache'` 是问**浏览器自己那层缓存**要一次重新验证。少了它，这一句
+    // fetch 可能压根没出门：浏览器手里存着上一版 HTML、又还在它自己估的新鲜期内，就
+    // 直接把旧的塞回来。于是第 2 条规矩（"只要服务在，看到的一定是当前这一版"）在界面
+    // 刚重建过的那一刻正好失效——而那正是它唯一要紧的时刻。
+    const fresh = await fetch(request, { cache: 'no-cache' });
     if (fresh && fresh.ok) await storeShell(cache, fresh);
     return fresh;
   } catch (err) {

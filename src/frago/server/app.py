@@ -748,7 +748,16 @@ def create_app(
         # Serve index.html for SPA routing
         index_path = frontend_path / "index.html"
         if index_path.exists():
-            return FileResponse(str(index_path))
+            # 这份 HTML **必须每次都回服务问一遍**。它自己的内容几乎不变，变的是它里面
+            # 指着的那个 `assets/index-<哈希>.js`。从前这里一个缓存指令都不发，只发
+            # last-modified 和 etag——浏览器照规矩会自己估一个新鲜期，在那段时间里根本
+            # 不来问，于是重建过、重启过、新界面早就摆在服务上了，人按 F5 拿到的还是上
+            # 一版的 HTML，指着上一版的 JS。界面看上去一点没改。
+            #
+            # `no-cache` 不是不许存，是"存可以，每次用之前必须来问一句"：没变就回
+            # 304，几乎不花流量；变了当场拿到新的。带哈希的那些 JS 反过来同名即同内容，
+            # 该怎么缓存怎么缓存，这里不动它们。
+            return FileResponse(str(index_path), headers={"Cache-Control": "no-cache"})
 
         # Return a helpful message if frontend not built
         from fastapi.responses import HTMLResponse
