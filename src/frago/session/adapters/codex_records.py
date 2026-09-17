@@ -37,6 +37,7 @@ from typing import Any
 
 from frago.session import codex_store
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
+from frago.session.usage_tick import build_tick
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,11 @@ _TOOL_FAMILIES: dict[str, ToolFamily] = {
 # 纯记账类记录：codex 自己的状态快照与用量统计。它们不是任何人说的话，也不是
 # 任何动作，翻进时间线只会把真正的内容挤走。这份名单是**明确列举**的，名单之外
 # 认不出的类型仍旧归「未识别的注入内容」而不是静默丢弃。
+#
+# ``token_count`` 从这份名单里撤了出去（2026-09-16）：它不是"记账噪音"，它正是每一次
+# 请求返回后引擎报的那份用量，翻成用量刻度插进流里。
 _BOOKKEEPING_EVENTS = frozenset(
-    {"token_count", "agent_message", "turn_diff", "stream_error", "notification"}
+    {"agent_message", "turn_diff", "stream_error", "notification"}
 )
 _BOOKKEEPING_TYPES = frozenset({"world_state", "turn_context", "compacted"})
 
@@ -259,6 +263,11 @@ def _drafts_for(
                 ],
                 turn,
             )
+        if inner == "token_count":
+            tick = _usage_payload(payload)
+            if tick is None:
+                return [], turn
+            return draft("usage.tick", tick, rid=f"cx{line}", group_id=None), turn
         if inner in _BOOKKEEPING_EVENTS:
             return [], turn
         return _unrecognized(record, payload, line, ts, turn), turn
@@ -356,6 +365,49 @@ def _drafts_for(
     return _unrecognized(record, payload, line, ts, turn), turn
 
 
+def _usage_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """codex 的 ``token_count`` → 用量刻度的载荷。报不出数时返回 None。
+
+    **两个数都照抄引擎自己报的**：``last_token_usage`` 是这一次请求烧的，
+    ``total_token_usage`` 是这场会话到此为止的累计，codex 已经替我们加好了。同一份原始
+    记录里一个照抄一个另算，对不上的时候没人解释得清。
+
+    上下文水位取 ``last_token_usage.input_tokens``——那是这一次真正送进模型的提示词大小
+    （codex 的 ``cached_input_tokens`` 是它的一部分，不另加）。窗口上限引擎也报，一并
+    带上，界面因此能把水位说成百分比。
+    """
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+    last = info.get("last_token_usage")
+    total = info.get("total_token_usage")
+    if not isinstance(last, dict) or not isinstance(total, dict):
+        return None
+
+    def n(source: dict[str, Any], key: str) -> int:
+        value = source.get(key)
+        return int(value) if isinstance(value, int | float) else 0
+
+    # 分项摆的是**这一次**的明细，它要解释的是本轮那个数，不是累计。codex 的
+    # ``input_tokens`` 把缓存命中的那部分算在里面，所以"新输入"要把它减掉，否则同一批
+    # token 在两格里各数一遍。
+    cached = n(last, "cached_input_tokens")
+    breakdown = {
+        "input": max(n(last, "input_tokens") - cached, 0),
+        "output": n(last, "output_tokens"),
+        "cache_creation": n(last, "cache_write_input_tokens"),
+        "cache_read": cached,
+    }
+    window = info.get("model_context_window")
+    return build_tick(
+        breakdown,
+        turn_tokens=n(last, "total_tokens"),
+        total_tokens=n(total, "total_tokens"),
+        context_tokens=n(last, "input_tokens"),
+        context_window=int(window) if isinstance(window, int | float) and window else None,
+    )
+
+
 def _unrecognized(
     record: dict[str, Any],
     payload: dict[str, Any],
@@ -403,6 +455,7 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
     """整场会话翻成统一记录，``seq`` 按物理行序从 0 递增。"""
     drafts: list[_Draft] = []
     turn: str | None = None
+    last_total: Any = None
     for line, raw in enumerate(_raw_lines(session_id)):
         raw = raw.strip()
         if not raw:
@@ -414,7 +467,16 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
         if not isinstance(record, dict):
             continue
         produced, turn = _drafts_for(record, line, turn)
-        drafts.extend(produced)
+        for produced_draft in produced:
+            # 累计一个字没动的用量刻度不插。codex 在一轮里会把同一份统计重报几次（限流
+            # 信息变了也重报），照单全收会在流里连着摆几道一模一样的刻度，人会以为那几
+            # 次调用各烧了一份钱。
+            if produced_draft.kind == "usage.tick":
+                total = produced_draft.payload.get("total_tokens")
+                if total == last_total:
+                    continue
+                last_total = total
+            drafts.append(produced_draft)
     return [
         UnifiedRecord(
             id=draft.id,

@@ -333,7 +333,7 @@ def record_line(record: UnifiedRecord) -> str | None:
     """一条记录喂给模型时的样子。不取的几类返回 None。
 
     不取：agent 的思考（大量是空的，推理加密没落盘）、工具结果正文（体积最大、信息最少）、
-    引擎注入的内容、模型调用边界标记、会话状态变更。
+    引擎注入的内容、模型调用边界标记、会话状态变更、用量刻度（记账，不是这场在做什么）。
     """
     p = record.payload
     kind = record.kind

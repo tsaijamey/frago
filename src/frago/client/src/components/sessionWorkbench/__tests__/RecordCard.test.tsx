@@ -10,7 +10,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
@@ -129,6 +129,14 @@ const PAYLOADS: Record<RecordKind, Record<string, unknown>> = {
     duration_ms: 8300,
     message_count: 6,
   },
+  'usage.tick': {
+    context_tokens: 179064,
+    context_window: null,
+    turn_tokens: 181841,
+    total_tokens: 2193569,
+    breakdown: { input: 2, output: 538, cache_creation: 1052, cache_read: 180249 },
+    model: 'claude-opus-5',
+  },
 };
 
 function makeRecord(kind: RecordKind, overrides: Partial<WorkbenchRecord> = {}): WorkbenchRecord {
@@ -146,14 +154,14 @@ function makeRecord(kind: RecordKind, overrides: Partial<WorkbenchRecord> = {}):
   };
 }
 
-describe('RecordCard 的十五种形态', () => {
-  it('形态清单恰好十五种，且分组穷尽不重叠', () => {
-    expect(RECORD_KINDS).toHaveLength(15);
-    expect(new Set(RECORD_KINDS).size).toBe(15);
+describe('RecordCard 的十六种形态', () => {
+  it('形态清单恰好十六种，且分组穷尽不重叠', () => {
+    expect(RECORD_KINDS).toHaveLength(16);
+    expect(new Set(RECORD_KINDS).size).toBe(16);
     expect(Object.keys(KIND_GROUP).sort()).toEqual([...RECORD_KINDS].sort());
     const counts = { text: 0, tool: 0, system: 0 };
     for (const kind of RECORD_KINDS) counts[KIND_GROUP[kind]] += 1;
-    expect(counts).toEqual({ text: 4, tool: 6, system: 5 });
+    expect(counts).toEqual({ text: 4, tool: 6, system: 6 });
   });
 
   it.each(RECORD_KINDS)('%s 能渲染，且标出自己的形态', (kind) => {
@@ -269,7 +277,7 @@ describe('报错卡', () => {
 });
 
 describe('全域禁令', () => {
-  it('十五种形态全渲染出来，文本里搜不到百分比与 X 比 Y 计数，也没有进度条', () => {
+  it('十六种形态全渲染出来，文本里搜不到百分比与 X 比 Y 计数，也没有进度条', () => {
     const { container } = render(
       <>
         {RECORD_KINDS.map((kind) => (
@@ -470,5 +478,49 @@ describe('顶着「你说」出现的那几种机器记事', () => {
     expect(screen.getByText('命令输出')).toBeTruthy();
     expect(container.textContent).not.toContain('local-command-stdout');
     expect(container.textContent).not.toContain('Goal set');
+  });
+});
+
+describe('用量刻度', () => {
+  it('头一行只报上下文与累计，两个数都带千分位', () => {
+    const { container } = render(
+      <RecordCard record={makeRecord('usage.tick')} sessionId={SID} />
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('上下文 179,064');
+    expect(text).toContain('累计 2,193,569');
+    // 本轮那个数几乎总是贴着上下文走，两个并排摆会让人以为自己看重了：它收在折叠里。
+    expect(text).not.toContain('181,841');
+  });
+
+  it('展开之后才是本轮与它的四项明细，零的那一项不摆', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('usage.tick', {
+          payload: {
+            context_tokens: 51004,
+            context_window: null,
+            turn_tokens: 51604,
+            total_tokens: 51604,
+            breakdown: { input: 4, output: 600, cache_creation: 0, cache_read: 51000 },
+            model: 'claude-opus-5',
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    fireEvent.click(container.querySelector('button[aria-expanded]') as HTMLElement);
+    // 一项一行：名目与数各占一格，数字右对齐。挤成一行要从左读到右才找得到某一项。
+    const rows = [...container.querySelectorAll('dl > div')].map((row) => [
+      row.querySelector('dt')?.textContent,
+      row.querySelector('dd')?.textContent,
+    ]);
+    expect(rows).toEqual([
+      ['本轮', '51,604'],
+      ['入', '4'],
+      ['出', '600'],
+      ['缓存读', '51,000'],
+    ]);
+    expect(container.textContent ?? '').not.toContain('缓存写');
   });
 });

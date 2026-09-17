@@ -1371,7 +1371,8 @@
         "interrupt": "打断",
         "sessionState": "状态变更",
         "contextCompact": "上下文压缩",
-        "callEnvelope": "调用边界"
+        "callEnvelope": "调用边界",
+        "usageTick": "用量"
       },
       "toolFamily": {
         "shell": "命令",
@@ -1493,7 +1494,16 @@
         "killed": "被系统终止",
         "stopped": "被叫停"
       },
-      "localCommandOutput": "命令输出"
+      "localCommandOutput": "命令输出",
+      "usage": {
+        "context": "上下文",
+        "total": "累计",
+        "turn": "本轮",
+        "input": "入",
+        "output": "出",
+        "cacheCreation": "缓存写",
+        "cacheRead": "缓存读"
+      }
     },
     "report": {
       "slotNow": "此刻在做什么",

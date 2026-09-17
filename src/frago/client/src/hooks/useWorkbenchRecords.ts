@@ -163,7 +163,7 @@ const AGENT_ACTIVITY: ReadonlySet<RecordKind> = new Set<RecordKind>([
   'error',
 ]);
 
-/** 十五种形态。身份由形态直接表达，统一记录不设发言人字段。 */
+/** 十六种形态。身份由形态直接表达，统一记录不设发言人字段。 */
 export type RecordKind =
   | 'user.say'
   | 'agent.say'
@@ -179,7 +179,8 @@ export type RecordKind =
   | 'interrupt'
   | 'context.compact'
   | 'session.state'
-  | 'call.envelope';
+  | 'call.envelope'
+  | 'usage.tick';
 
 export const RECORD_KINDS: RecordKind[] = [
   'user.say',
@@ -197,6 +198,7 @@ export const RECORD_KINDS: RecordKind[] = [
   'context.compact',
   'session.state',
   'call.envelope',
+  'usage.tick',
 ];
 
 /** 截断三态。不是布尔——两家都有「看着完整其实不完整」的情况。 */

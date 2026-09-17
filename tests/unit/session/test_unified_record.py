@@ -49,9 +49,9 @@ def make_record(**overrides: object) -> UnifiedRecord:
     return UnifiedRecord(**base)  # type: ignore[arg-type]
 
 
-# ── 十五种形态 ──────────────────────────────────────────────────────
+# ── 十六种形态 ──────────────────────────────────────────────────────
 class TestRecordKind:
-    def test_十五种形态一个不多一个不少(self) -> None:
+    def test_十六种形态一个不多一个不少(self) -> None:
         assert {
             "user.say",
             "agent.say",
@@ -68,8 +68,9 @@ class TestRecordKind:
             "context.compact",
             "session.state",
             "call.envelope",
+            "usage.tick",
         } == RECORD_KINDS
-        assert len(RECORD_KINDS) == 15
+        assert len(RECORD_KINDS) == 16
 
     @pytest.mark.parametrize("kind", sorted(RECORD_KINDS))
     def test_每一种形态都建得出记录(self, kind: str) -> None:

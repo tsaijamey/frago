@@ -1,7 +1,7 @@
 /**
  * RecordCard — 一条统一记录 = 一张卡片。
  *
- * 十五种形态**不是十五个平行分支**。按 spec 风险表的办法分三组，组内只换内容区：
+ * 十六种形态**不是十六个平行分支**。按 spec 风险表的办法分三组，组内只换内容区：
  *
  * | 组 | 外壳 | 形态 |
  * |---|---|---|
@@ -11,7 +11,7 @@
  * `payload.source === 'hook'`）自成一色、默认摊开；其余注入照旧折叠。判据取数据层给的
  * `source`，NEVER 靠标签名反推——标签是给人看的，改一个字就会把归类改掉。
  * | 工具类 | `ToolShell` | tool.call / tool.result / subagent.dispatch / todo.snapshot / permission.outcome / media.attach |
- * | 系统类 | `SystemShell` | error / interrupt / session.state / context.compact / call.envelope |
+ * | 系统类 | `SystemShell` | error / interrupt / session.state / context.compact / call.envelope / usage.tick |
  *
  * 三条硬纪律落在这个文件里：
  *
@@ -37,6 +37,7 @@ import {
   Clock,
   Download,
   FileText,
+  Gauge,
   Globe,
   Layers,
   ListChecks,
@@ -92,7 +93,7 @@ const HOOK_RING = 'border border-dashed border-border-strong';
 // ── 三组归属 ──────────────────────────────────────────────────────────
 export type KindGroup = 'text' | 'tool' | 'system';
 
-/** 十五种形态各落在哪一组。测试拿它断言分组穷尽且不重叠。 */
+/** 十六种形态各落在哪一组。测试拿它断言分组穷尽且不重叠。 */
 export const KIND_GROUP: Record<RecordKind, KindGroup> = {
   'user.say': 'text',
   'agent.say': 'text',
@@ -109,6 +110,7 @@ export const KIND_GROUP: Record<RecordKind, KindGroup> = {
   'session.state': 'system',
   'context.compact': 'system',
   'call.envelope': 'system',
+  'usage.tick': 'system',
 };
 
 /**
@@ -131,6 +133,7 @@ export const KIND_LABEL_KEY: Record<RecordKind, string> = {
   'session.state': 'workbench.record.kind.sessionState',
   'context.compact': 'workbench.record.kind.contextCompact',
   'call.envelope': 'workbench.record.kind.callEnvelope',
+  'usage.tick': 'workbench.record.kind.usageTick',
 };
 
 // ── 取值小工具 ────────────────────────────────────────────────────────
@@ -1523,6 +1526,84 @@ function CallEnvelope({ record }: { record: WorkbenchRecord }) {
   );
 }
 
+/** 千分位。六位数字连成一串谁也读不出量级，而这一格全是六七位的数。 */
+function formatTokens(n: number): string {
+  // 分位符固定用英文那一套：中文环境下的分位也是逗号，两种语言看到的是同一个形状。
+  return n.toLocaleString('en-US');
+}
+
+/**
+ * 一次调用返回后的用量刻度。
+ *
+ * **头一行只报两个数，因为人问的只有这两件事**：这场此刻占了多大上下文，一路下来一共
+ * 烧了多少。两个数意思不一样——上下文是**水位**，会随一次压缩掉下去；累计是**流水**，
+ * 只增不减。摆在一起才看得出"涨的是哪一个"。
+ *
+ * 本轮那个数和它的四项明细收在折叠里。它是累计的构成，不是人一眼要找的东西；而且缓存
+ * 读取每一轮都要把整段上下文再读一遍，本轮那个数因此几乎总是贴着上下文的数走，两个数
+ * 并排摆着只会让人以为自己看重了。
+ *
+ * 一个百分比都不出现：本文件第 3 条纪律，界面不呈现任何进度，只报已发生的绝对数。
+ */
+function UsageTick({ record }: { record: WorkbenchRecord }) {
+  const { t } = useTranslation();
+  const p = record.payload;
+  const context = num(p, 'context_tokens');
+  const total = num(p, 'total_tokens');
+  const turn = num(p, 'turn_tokens');
+  const breakdown = dict(p.breakdown);
+  /** 展开后的每一行：左边一个名目，右边一个数。 */
+  const rows: { key: string; label: string; value: string }[] = [];
+  if (turn !== null) {
+    rows.push({
+      key: 'turn',
+      label: t('workbench.record.usage.turn'),
+      value: formatTokens(turn),
+    });
+  }
+  for (const [key, labelKey] of [
+    ['input', 'workbench.record.usage.input'],
+    ['output', 'workbench.record.usage.output'],
+    ['cache_creation', 'workbench.record.usage.cacheCreation'],
+    ['cache_read', 'workbench.record.usage.cacheRead'],
+  ] as const) {
+    const value = breakdown[key];
+    // 零的那一项不摆。四项里常有两项是零，全摆出来会把真正在动的那两项淹掉。
+    if (typeof value === 'number' && value > 0) {
+      rows.push({ key, label: t(labelKey), value: formatTokens(value) });
+    }
+  }
+  const headline: string[] = [];
+  if (context !== null) {
+    headline.push(`${t('workbench.record.usage.context')} ${formatTokens(context)}`);
+  }
+  if (total !== null) {
+    headline.push(`${t('workbench.record.usage.total')} ${formatTokens(total)}`);
+  }
+  return (
+    <SystemShell
+      record={record}
+      icon={<Gauge size={12} className="text-text-muted" />}
+      label={<span className="text-text-secondary">{t(KIND_LABEL_KEY['usage.tick'])}</span>}
+      meta={<span className="font-mono">{headline.join(' · ')}</span>}
+      collapsible
+    >
+      {/* 一项一行，数字右对齐。挤成一行时"入 2 · 出 463 · 缓存写 850 · 缓存读 205,461"
+          要从左读到右才找得到某一项，而且四个数的位数差着三个量级，对不齐就比不出大小。 */}
+      <dl className="space-y-0.5 text-[11px]">
+        {rows.map((row) => (
+          <div key={row.key} className="flex gap-2">
+            <dt className="w-20 shrink-0 text-text-muted">{row.label}</dt>
+            <dd className="w-24 shrink-0 text-right font-mono tabular-nums text-text-secondary">
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </SystemShell>
+  );
+}
+
 // ── 分发 ──────────────────────────────────────────────────────────────
 export interface RecordCardProps {
   record: WorkbenchRecord;
@@ -1587,8 +1668,10 @@ function RecordCardInner({ record, sessionId }: RecordCardProps) {
       return <ContextCompact record={record} />;
     case 'call.envelope':
       return <CallEnvelope record={record} />;
+    case 'usage.tick':
+      return <UsageTick record={record} />;
     default:
-      // 十五种之外的形态在核心数据层就被拦住了（`UnifiedRecord.__post_init__` 会炸）。
+      // 十六种之外的形态在核心数据层就被拦住了（`UnifiedRecord.__post_init__` 会炸）。
       // 真跑到这里说明两边的形态清单脱了节，显示出来而不是静默丢弃。
       return <UnknownKind record={record} />;
   }

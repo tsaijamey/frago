@@ -1,7 +1,7 @@
 """跨两家会话记录的统一类型（spec 20260729-session-workbench-webui Phase 1）。
 
 Claude Code 与 opencode 各自的原始记录形状差得远，但界面只该认一种形状。这个模块
-就是那一种：一条 :class:`UnifiedRecord` 等于界面上的一张卡片，十五种 :data:`RecordKind`
+就是那一种：一条 :class:`UnifiedRecord` 等于界面上的一张卡片，十六种 :data:`RecordKind`
 穷尽了两家真实数据里跑出来的全部形态。
 
 设计上有三条不能松的口子，全都写进类型而不是写进注释：
@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
-# ── 十五种形态 ──────────────────────────────────────────────────────
+# ── 十六种形态 ──────────────────────────────────────────────────────
 RecordKind = Literal[
     "user.say",  # 用户发言
     "agent.say",  # agent 回复正文
@@ -49,10 +49,15 @@ RecordKind = Literal[
     # 边界标记」无处可归（opencode 的步骤开始与结束 936 条、Claude Code 的轮次耗时
     # 5324 条），照兜底塞进注入内容会把那一格淹掉，故单开一格。
     "call.envelope",  # 一次模型调用的边界
+    # 第十六种同样是实现期补的。一次模型调用返回之后，档案里会多出一份用量，它既不是
+    # 谁说的话也不是谁做的动作，归不进前面任何一格；而它要回答的问题（这场占了多少
+    # 上下文、一路烧了多少）恰恰是人翻会话时最常问的一个。口径见
+    # :mod:`frago.session.usage_tick`。
+    "usage.tick",  # 一次调用返回后的用量刻度
 ]
 
 RECORD_KINDS: frozenset[str] = frozenset(get_args(RecordKind))
-"""十五种形态的运行时集合。翻译层拿它做归类兜底的校验。"""
+"""十六种形态的运行时集合。翻译层拿它做归类兜底的校验。"""
 
 
 # ── 两家 ────────────────────────────────────────────────────────────
@@ -131,7 +136,7 @@ class UnifiedRecord:
     """毫秒时间戳。只用于显示，不参与排序。"""
 
     kind: RecordKind
-    """十五种形态之一。身份由它表达，不另设发言人字段。"""
+    """十六种形态之一。身份由它表达，不另设发言人字段。"""
 
     agent_path: list[str] = field(default_factory=list)
     """归属轨迹。主会话为 ``[]``，子 agent 为 ``["<子agent标识>"]``。"""
@@ -145,7 +150,7 @@ class UnifiedRecord:
     def __post_init__(self) -> None:
         """把三条纪律落成运行时约束。翻译层写错时当场炸，NEVER 放到界面上才发现。"""
         if self.kind not in RECORD_KINDS:
-            raise ValueError(f"未知的记录形态: {self.kind!r}；十五种之外的一律不许出现")
+            raise ValueError(f"未知的记录形态: {self.kind!r}；十六种之外的一律不许出现")
         if self.seq < 0:
             raise ValueError(f"seq 必须从 0 起递增，收到 {self.seq}")
         if self.kind == "error" and self.raw_available:

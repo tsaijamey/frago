@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shutil
@@ -39,6 +40,7 @@ from threading import Lock
 from typing import Any
 
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
+from frago.session.usage_tick import breakdown_from_claude_usage, build_tick
 
 __all__ = [
     "ClaudeCodeRecordAdapter",
@@ -297,8 +299,9 @@ def _split_trailing_reminders(text: str) -> tuple[str, list[str]]:
 class TranslationStats:
     """一次翻译的进出账。差额要能逐条解释，不能只报一个总数。
 
-    ``lines_in`` 减去各类 ``dropped_*`` 与 ``merged_*``，再展开成块，等于
-    ``records_out``。任何一条记录的去向都在这张账上，NEVER 出现"不知道去哪了"。
+    ``lines_in`` 减去各类 ``dropped_*`` 与 ``merged_*``，再展开成块、加上
+    ``emitted_usage_ticks``，等于 ``records_out``。任何一条记录的去向都在这张账上，
+    NEVER 出现"不知道去哪了"。
     """
 
     lines_in: int = 0
@@ -337,6 +340,14 @@ class TranslationStats:
 
     unrecognized: int = 0
     """判据表全落空、走兜底归 ``context.inject`` 的记录数。"""
+
+    emitted_usage_ticks: int = 0
+    """凭空多出来的那几条：一次调用返回后的用量刻度。
+
+    这是账上**唯一一项加法**。它不对应档案里的某一行——用量在档案里是跟着内容块重复
+    记的，一次调用记三四遍，刻度只留一条。不单列的话，行数与记录数的差额就解释不了，
+    而那正是这张账存在的全部意义。
+    """
 
     kinds: dict[str, int] = field(default_factory=dict)
     """各形态各出了多少条。"""
@@ -575,10 +586,8 @@ def delete_session_files(
     session_dir = project_dir / session_id
 
     freed = 0
-    try:
+    with contextlib.suppress(OSError):
         freed += path.stat().st_size
-    except OSError:
-        pass
     path.unlink()
 
     directory_removed = False
@@ -638,8 +647,14 @@ class _Translator:
         self._last_title_index = -1
         # 插话的下场：正文 → 依次的结局（同一句话可能被插过不止一次）。
         self._queue_outcome: dict[str, list[str]] = {}
+        # 每一次模型调用的用量落在哪一行上。键是那次调用的身份，值是（行下标，用量）。
+        self._usage_last: dict[str, tuple[int, dict[str, Any]]] = {}
+        # 上一格倒过来：行下标 → 该在这一行之后插刻度的那份用量。
+        self._usage_at: dict[int, dict[str, Any]] = {}
 
         # 第二趟游标
+        # 到上一条刻度为止，这场会话一共烧了多少。刻度是流水，所以它只增不减。
+        self._usage_total = 0
         self._dispatch_by_call: dict[str, UnifiedRecord] = {}
         self._group_by_call: dict[str, str | None] = {}
         self._standing_value: dict[str, str] = {}
@@ -651,11 +666,13 @@ class _Translator:
         for i, row in enumerate(self._rows):
             rtype = row.get("type")
             if rtype == "assistant":
-                for block in _as_list(_as_dict(row.get("message")).get("content")):
+                message = _as_dict(row.get("message"))
+                for block in _as_list(message.get("content")):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         call_id = block.get("id")
                         if isinstance(call_id, str):
                             self._tool_name_by_call[call_id] = str(block.get("name", ""))
+                self._index_usage(i, row, message)
             elif rtype == "attachment":
                 attachment = _as_dict(row.get("attachment"))
                 atype = attachment.get("type")
@@ -687,6 +704,28 @@ class _Translator:
                 self._last_standing_index[rtype] = i
                 if rtype in _STANDING_TITLE_TYPES:
                     self._last_title_index = i
+
+        # 倒过来按行下标查。取的是**每次调用的最后一行**，刻度因此落在那次回复的内容
+        # 之后——先看见它说了什么，再看见这一次花了多少，顺序与人读的顺序一致。
+        self._usage_at = dict(self._usage_last.values())
+
+    def _index_usage(self, index: int, row: dict[str, Any], message: dict[str, Any]) -> None:
+        """记下这一行带的用量，**同一次调用只认一份**。
+
+        一次 API 响应在档案里被拆成好几行（思考一行、正文一行、每个工具调用各一行），
+        每一行都原样重复同一份 ``usage``。照行计数会把一轮的花费乘上三四倍——本机抽样
+        里一轮吐三行是常态，累计数会当场翻三倍，而界面上没有任何东西解释得了这个差。
+
+        去重的身份按 ``message.id`` → ``requestId`` → ``uuid`` 依次退让，与用量月历
+        （``token_calendar``）同一套，两处报的数因此必然一致。
+        """
+        usage = _as_dict(message.get("usage"))
+        if not usage:
+            return
+        key = message.get("id") or row.get("requestId") or row.get("uuid")
+        if not isinstance(key, str) or not key:
+            return
+        self._usage_last[key] = (index, usage)
 
     def _index_queue_outcomes(self) -> None:
         """人在 agent 干活时插的那些话，各自最后怎么了。
@@ -808,11 +847,40 @@ class _Translator:
             return
         if rtype == "assistant":
             self._rules_11_to_16_assistant(row)
+            self._emit_usage_tick(index, row)
             return
         if rtype == "user":
             self._rules_17_to_23_user(row)
             return
         self._emit_unrecognized(row, f"未知的顶层类型 {rtype!r}")
+
+    def _emit_usage_tick(self, index: int, row: dict[str, Any]) -> None:
+        """一次调用返回后的用量刻度。这一行没带用量就什么都不发。
+
+        **分组键留空**，刻度因此不进上面那次回复的归组容器，而是独立成一行横在两次回复
+        之间——它说的不是"这次回复的一部分"，是"到这里为止烧了多少"。
+        """
+        usage = self._usage_at.get(index)
+        if usage is None:
+            return
+        breakdown = breakdown_from_claude_usage(usage)
+        model = _as_dict(row.get("message")).get("model")
+        payload = build_tick(
+            breakdown,
+            total_before=self._usage_total,
+            model=model if isinstance(model, str) and model else None,
+        )
+        self._usage_total = int(payload["total_tokens"])
+        self._stats.emitted_usage_ticks += 1
+        self._emit(
+            row,
+            "usage.tick",
+            payload,
+            record_id=f"{self._session_id}#usage-{index}",
+            # 刻度是算出来的，不是档案里的某一行，按编号回查原文必定落空。挂一个点不开
+            # 的入口比不挂更糟——人会以为是取原文这条路坏了。
+            raw_available=False,
+        )
 
     # 序 1：十二种旁挂状态
     def _rule_01_standing(self, index: int, rtype: str, row: dict[str, Any]) -> None:

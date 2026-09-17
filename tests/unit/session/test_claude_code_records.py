@@ -478,7 +478,7 @@ def test_rule11_api_error_bubble_is_not_a_model_utterance() -> None:
         )
     ]
     records = translate_records(rows, SESSION)
-    assert _kinds(records) == ["error"]
+    assert _kinds(records) == ["error", "usage.tick"]
     assert records[0].payload["scope"] == "api"
     assert records[0].payload["code"] == "server_error"
     assert records[0].raw_available is False
@@ -492,7 +492,7 @@ def test_rule12_fallback_block_is_a_model_state_change() -> None:
         )
     ]
     records = translate_records(rows, SESSION)
-    assert _kinds(records) == ["session.state"]
+    assert _kinds(records) == ["session.state", "usage.tick"]
     assert records[0].payload == {
         "field": "model",
         "from": "claude-fable-5",
@@ -519,9 +519,19 @@ def test_rules13_to_16_blocks_split_but_share_one_group() -> None:
         )
     ]
     records = translate_records(rows, SESSION)
-    assert _kinds(records) == ["agent.think", "agent.say", "tool.call", "subagent.dispatch"]
-    assert len({r.id for r in records}) == 4, "同一行里的多个块必须各有各的 id"
-    assert {r.group_id for r in records} == {"msg_0001"}, "同一次回复共用一个分组键"
+    assert _kinds(records) == [
+        "agent.think",
+        "agent.say",
+        "tool.call",
+        "subagent.dispatch",
+        # 用量刻度落在这一组之后：先看见它说了什么，再看见这一次花了多少。
+        "usage.tick",
+    ]
+    assert len({r.id for r in records}) == 5, "同一行里的多个块必须各有各的 id"
+    blocks_only = [r for r in records if r.kind != "usage.tick"]
+    assert {r.group_id for r in blocks_only} == {"msg_0001"}, "同一次回复共用一个分组键"
+    # 刻度**不进**归组容器：它说的是"到这里为止烧了多少"，不是这次回复的一部分。
+    assert records[4].group_id is None
     assert "signature" not in records[0].payload
     assert records[2].payload["tool_family"] == "shell"
     assert records[3].payload["agent_type"] == "general-purpose"
@@ -542,7 +552,7 @@ def test_rule16_tool_family_covers_names_outside_the_closed_set() -> None:
         {"type": "tool_use", "id": "t10", "name": "ToolSearch", "input": {}},
     ]
     records = translate_records([_assistant("u1", blocks)], SESSION)
-    assert [r.payload["tool_family"] for r in records] == [
+    assert [r.payload["tool_family"] for r in records if r.kind == "tool.call"] == [
         "shell",
         "file-read",
         "file-write",
@@ -582,11 +592,12 @@ def test_rule18_denied_tool_emits_two_records() -> None:
         ),
     ]
     records = translate_records(rows, SESSION)
-    assert _kinds(records) == ["tool.call", "permission.outcome", "tool.result"]
-    assert records[1].payload["decision"] == "denied"
-    assert records[1].payload["reason"] == "user-rejected"
+    # 用量刻度横在调用与结果之间：那一次请求就是在吐出调用之后返回的，结果属于下一次。
+    assert _kinds(records) == ["tool.call", "usage.tick", "permission.outcome", "tool.result"]
+    assert records[2].payload["decision"] == "denied"
+    assert records[2].payload["reason"] == "user-rejected"
     # 被拒排在出错之前，顺序不能换。
-    assert records[2].payload["status"] == "denied"
+    assert records[3].payload["status"] == "denied"
 
 
 def test_rule19_subagent_result_merges_into_the_dispatch_card() -> None:
@@ -611,7 +622,7 @@ def test_rule19_subagent_result_merges_into_the_dispatch_card() -> None:
         ),
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["subagent.dispatch"], "子 agent 的返回不独立成条"
+    assert _kinds(records) == ["subagent.dispatch", "usage.tick"], "子 agent 的返回不独立成条"
     payload = records[0].payload
     assert payload["agent_ref"] == "a1b2c3d4e5f60718"
     assert payload["status"] == "completed"
@@ -806,6 +817,7 @@ def test_regression_user_marked_records_are_mostly_not_user_speech() -> None:
     assert _kinds(records) == [
         "tool.call",
         "tool.call",
+        "usage.tick",
         "tool.result",
         "tool.result",
         "context.inject",
@@ -835,12 +847,14 @@ def test_regression_seq_follows_physical_order_not_timestamps() -> None:
     records = translate_records(rows, SESSION)
 
     assert [r.seq for r in records] == list(range(len(records))), "seq 必须从 0 起连续递增"
-    assert [r.id for r in records] == ["call-a", "res-a", "call-b", "call-c", "res-b", "res-c"]
+    # 用量刻度是算出来的，不占物理行，这一条看的是档案里那几行的先后，把刻度摘开看。
+    body = [r for r in records if r.kind != "usage.tick"]
+    assert [r.id for r in body] == ["call-a", "res-a", "call-b", "call-c", "res-b", "res-c"]
     # 时间戳本身是倒挂的，证明确实没有按时间排过序
-    assert records[4].ts < records[3].ts
-    assert records[5].ts < records[4].ts
+    assert body[4].ts < body[3].ts
+    assert body[5].ts < body[4].ts
     # 并行调用靠 group_id 才能聚回一次回复，parentUuid 是写盘顺序链不是语义父子
-    assert records[2].group_id == records[3].group_id == "msg_2"
+    assert body[2].group_id == body[3].group_id == "msg_2"
 
 
 # ── 回归三：溢出转存时截断标记写「否」 ──────────────────────────────
@@ -940,14 +954,14 @@ def test_unknown_top_level_type_is_kept_and_flagged() -> None:
 def test_unknown_assistant_block_type_is_kept_and_flagged() -> None:
     rows = [_assistant("u1", [{"type": "还没见过的块", "data": 1}])]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["context.inject"]
+    assert _kinds(records) == ["context.inject", "usage.tick"]
     assert stats.unrecognized == 1
 
 
 def test_empty_assistant_content_is_kept_and_flagged() -> None:
     rows = [_assistant("u1", [])]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["context.inject"]
+    assert _kinds(records) == ["context.inject", "usage.tick"]
     assert stats.unrecognized == 1
 
 
@@ -976,11 +990,18 @@ def test_stats_account_for_every_line() -> None:
     records, stats = translate_with_stats(rows, SESSION)
     assert stats.lines_in == 5
     # 5 行进：1 行是纯指针状态、1 行是 hook 噪音，各自显式丢弃；剩下 3 行里有一行
-    # 含两个块，展成两条。4 条出，差额逐项可解释。
+    # 含两个块，展成两条；那一次调用返回后再加一条用量刻度。5 条出，差额逐项可解释。
     assert stats.dropped_standing == 1
     assert stats.dropped_hook_noise == 1
-    assert stats.records_out == len(records) == 4
-    assert _kinds(records) == ["agent.say", "tool.call", "tool.result", "user.say"]
+    assert stats.emitted_usage_ticks == 1
+    assert stats.records_out == len(records) == 5
+    assert _kinds(records) == [
+        "agent.say",
+        "tool.call",
+        "usage.tick",
+        "tool.result",
+        "user.say",
+    ]
     assert sum(stats.kinds.values()) == stats.records_out
 
 
@@ -1010,8 +1031,17 @@ def test_to_unified_reads_a_file_and_numbers_from_zero(tmp_path: Path) -> None:
     ]
     path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     records = to_unified(path)
-    assert [r.seq for r in records] == [0, 1, 2, 3, 4]
-    assert _kinds(records) == ["user.say", "agent.think", "tool.call", "tool.result", "agent.say"]
+    assert [r.seq for r in records] == [0, 1, 2, 3, 4, 5]
+    # 三条 assistant 共用一个 message id（同一次回复被拆成三行），刻度因此只有一条，
+    # 落在这次回复的最后一行之后。
+    assert _kinds(records) == [
+        "user.say",
+        "agent.think",
+        "tool.call",
+        "tool.result",
+        "agent.say",
+        "usage.tick",
+    ]
     assert all(r.session_id == SESSION for r in records)
 
 
@@ -1601,3 +1631,80 @@ def test_rule23_a_message_that_is_only_a_reminder_is_never_emptied() -> None:
     records = translate_records(rows, SESSION)
     assert records[0].payload["text"] == "<system-reminder>只有提醒，没有人话</system-reminder>"
     assert records[0].payload["reminders"] == []
+
+
+# ── 用量刻度：一次调用返回后插的那一道 ──────────────────────────────
+def _assistant_with_usage(
+    uuid: str, blocks: list[dict[str, Any]], msg_id: str, usage: dict[str, int]
+) -> dict[str, Any]:
+    row = _assistant(uuid, blocks, msg_id=msg_id)
+    row["message"]["usage"] = usage
+    return row
+
+
+_USAGE_ONE = {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 1_000,
+    "cache_read_input_tokens": 50_000,
+    "output_tokens": 600,
+}
+_USAGE_TWO = {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 2_000,
+    "cache_read_input_tokens": 51_000,
+    "output_tokens": 300,
+}
+
+
+def test_usage_tick_counts_one_call_once_however_many_lines_it_took() -> None:
+    """一次 API 响应在档案里被拆成好几行，每行都重复同一份用量。
+
+    照行计数会把一轮的花费乘上三四倍——一轮吐三行是常态，累计数当场翻三倍，而界面上
+    没有任何东西解释得了这个差。
+    """
+    rows = [
+        _assistant_with_usage("u1", [{"type": "thinking", "thinking": "想", "signature": "s"}], "msg_a", _USAGE_ONE),
+        _assistant_with_usage("u2", [{"type": "text", "text": "说"}], "msg_a", _USAGE_ONE),
+        _assistant_with_usage("u3", [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}], "msg_a", _USAGE_ONE),
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    ticks = _by_kind(records, "usage.tick")
+
+    assert len(ticks) == 1, "同一次调用只许出一条刻度"
+    assert stats.emitted_usage_ticks == 1
+    # 刻度落在这次回复的最后一行之后，不是第一行之前。
+    assert _kinds(records) == ["agent.think", "agent.say", "tool.call", "usage.tick"]
+    assert ticks[0].payload["turn_tokens"] == 51_604
+    assert ticks[0].payload["total_tokens"] == 51_604
+    # 上下文是**水位**，只数提示词那一侧：输出要到下一次请求才进得了上下文。
+    assert ticks[0].payload["context_tokens"] == 51_004
+    assert ticks[0].payload["model"] == "claude-opus-5"
+    assert ticks[0].payload["breakdown"] == {
+        "input": 4,
+        "output": 600,
+        "cache_creation": 1_000,
+        "cache_read": 50_000,
+    }
+    assert ticks[0].raw_available is False, "刻度是算出来的，按编号回查原文必定落空"
+
+
+def test_usage_tick_accumulates_across_calls_and_context_is_not_a_sum() -> None:
+    """累计是流水，上下文是水位。两个数的走法不一样，NEVER 混着算。"""
+    rows = [
+        _assistant_with_usage("u1", [{"type": "text", "text": "第一次"}], "msg_a", _USAGE_ONE),
+        _user("u2", "接着说", promptSource="typed"),
+        _assistant_with_usage("u3", [{"type": "text", "text": "第二次"}], "msg_b", _USAGE_TWO),
+    ]
+    ticks = _by_kind(translate_records(rows, SESSION), "usage.tick")
+
+    assert [t.payload["turn_tokens"] for t in ticks] == [51_604, 53_306]
+    assert [t.payload["total_tokens"] for t in ticks] == [51_604, 104_910]
+    assert [t.payload["context_tokens"] for t in ticks] == [51_004, 53_006]
+
+
+def test_assistant_row_without_usage_gets_no_tick() -> None:
+    """报不出数就不摆刻度。摆一条全是零的，人会以为这一轮真的没花钱。"""
+    row = _assistant("u1", [{"type": "text", "text": "没带用量"}])
+    row["message"].pop("usage")
+    records = translate_records([row], SESSION)
+    assert _kinds(records) == ["agent.say"]

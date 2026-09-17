@@ -1371,7 +1371,8 @@
         "interrupt": "Interrupt",
         "sessionState": "State change",
         "contextCompact": "Context compaction",
-        "callEnvelope": "Call boundary"
+        "callEnvelope": "Call boundary",
+        "usageTick": "Usage"
       },
       "toolFamily": {
         "shell": "Shell",
@@ -1493,7 +1494,16 @@
         "killed": "Killed by the system",
         "stopped": "Stopped"
       },
-      "localCommandOutput": "Command output"
+      "localCommandOutput": "Command output",
+      "usage": {
+        "context": "Context",
+        "total": "Session total",
+        "turn": "This call",
+        "input": "in",
+        "output": "out",
+        "cacheCreation": "cache write",
+        "cacheRead": "cache read"
+      }
     },
     "report": {
       "slotNow": "What's happening now",

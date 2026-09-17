@@ -37,6 +37,7 @@ from typing import Any
 
 from frago.session import opencode_store
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
+from frago.session.usage_tick import build_tick
 
 logger = logging.getLogger(__name__)
 
@@ -738,6 +739,63 @@ def _step_counts(parts: list[dict[str, Any]]) -> tuple[int, int]:
     return starts, finishes
 
 
+def _usage_breakdown(tokens: dict[str, Any]) -> dict[str, int] | None:
+    """opencode 的步骤用量 → 统一记录那四个分项。一个数都报不出时返回 None。
+
+    形状是 ``{"input":…, "output":…, "reasoning":…, "cache":{"read":…,"write":…}}``。
+    **推理那一段不另立一格**：它是输出的一部分，单摆出来会让四项之和对不上本轮那个数。
+    """
+
+    def n(source: dict[str, Any], key: str) -> int:
+        value = source.get(key)
+        return int(value) if isinstance(value, int | float) else 0
+
+    cache = tokens.get("cache")
+    cache = cache if isinstance(cache, dict) else {}
+    breakdown = {
+        "input": n(tokens, "input"),
+        "output": n(tokens, "output") + n(tokens, "reasoning"),
+        "cache_creation": n(cache, "write"),
+        "cache_read": n(cache, "read"),
+    }
+    return breakdown if any(breakdown.values()) else None
+
+
+def _with_usage_ticks(drafts: list[_Draft]) -> list[_Draft]:
+    """在每一条报了用量的步骤结束标记之后，插一道用量刻度。
+
+    opencode 的用量挂在步骤结束标记上（见 :func:`_step_draft`），那正是"一次模型调用返回"
+    这一刻。累计在这里现加：引擎只报每一次的，不报这场到此为止的。
+    """
+    out: list[_Draft] = []
+    total = 0
+    for draft in drafts:
+        out.append(draft)
+        if draft.kind != "call.envelope" or draft.payload.get("phase") != "finish":
+            continue
+        tokens = draft.payload.get("tokens")
+        if not isinstance(tokens, dict):
+            continue
+        breakdown = _usage_breakdown(tokens)
+        if breakdown is None:
+            continue
+        payload = build_tick(breakdown, total_before=total)
+        total = int(payload["total_tokens"])
+        out.append(
+            _Draft(
+                # 编号挂在那条步骤标记后面，同一场里必定唯一，且重新解析时稳定不变。
+                id=f"{draft.id}:usage",
+                ts=draft.ts,
+                kind="usage.tick",
+                # 分组键留空：刻度横在两次回复之间，不进上面那次回复的归组容器。
+                group_id=None,
+                payload=payload,
+                raw_available=False,
+            )
+        )
+    return out
+
+
 def translate_session(session_id: str) -> list[UnifiedRecord]:
     """把整场会话翻成统一记录，按物理序编号，从 0 递增。
 
@@ -793,6 +851,8 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
         error_draft = _envelope_error_draft(envelope, parts)
         if error_draft is not None:
             drafts.append(error_draft)
+
+    drafts = _with_usage_ticks(drafts)
 
     return [
         UnifiedRecord(

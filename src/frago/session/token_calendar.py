@@ -25,17 +25,15 @@ from pathlib import Path
 from typing import Any
 
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
+from frago.session.usage_tick import CLAUDE_USAGE_KEYS
 
 CACHE_VERSION = 1
 
 DEFAULT_CACHE_PATH = Path.home() / ".frago" / "cache" / "token_calendar.json"
 
-_USAGE_KEYS = {
-    "input": "input_tokens",
-    "output": "output_tokens",
-    "cache_creation": "cache_creation_input_tokens",
-    "cache_read": "cache_read_input_tokens",
-}
+# Shared with the per-session usage ticks shown in the workbench stream: the
+# calendar and the stream must never disagree about what a token count means.
+_USAGE_KEYS = CLAUDE_USAGE_KEYS
 
 
 def _empty_day() -> dict[str, int]:
