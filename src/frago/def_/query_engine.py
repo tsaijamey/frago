@@ -149,20 +149,47 @@ def _parse_entry(line: str) -> dict[str, str]:
     if line.startswith("[[[") and "]]]" in line:
         type_end = line.index("]]]")
         rel_type = line[3:type_end]
-        rest = line[type_end + 3:]
-        # Extract [[...]] fields
-        parts = []
-        while "[[" in rest and "]]" in rest:
-            start = rest.index("[[") + 2
-            end = rest.index("]]")
-            parts.append(rest[start:end])
-            rest = rest[end + 2:]
+        parts = _split_fields(line[type_end + 3:])
         return {
             "type": rel_type,
             "from": parts[0] if parts else "",
-            "to": parts[1] if len(parts) > 1 else "",
+            # Anything past the second field belongs to the tail of the
+            # sentence, not to a third slot — keep it rather than drop it.
+            "to": " ".join(parts[1:]) if len(parts) > 1 else "",
         }
     return {"type": "misc", "content": line}
+
+
+def _split_fields(rest: str) -> list[str]:
+    """Split ``[[a]][[b]]`` into its top-level fields.
+
+    Entry text carries ``[[other-doc]]`` cross-references, so the fields have
+    to be found by pairing brackets rather than by taking the first ``]]``
+    that turns up: the naive scan closed a field at the reference's own ``]]``
+    and threw the rest of the sentence away, silently, in the only view that
+    prints a document.
+    """
+    fields: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(rest):
+        if rest.startswith("[[", i):
+            if depth == 0:
+                start = i + 2
+            depth += 1
+            i += 2
+        elif rest.startswith("]]", i):
+            if depth > 0:
+                depth -= 1
+                if depth == 0:
+                    fields.append(rest[start:i])
+            i += 2
+        else:
+            i += 1
+    if depth > 0:  # unbalanced: keep what is there rather than lose it
+        fields.append(rest[start:])
+    return fields
 
 
 def _format_single_doc(doc: dict[str, Any]) -> str:
@@ -216,7 +243,18 @@ def _format_single_doc(doc: dict[str, Any]) -> str:
             lines.append(f"  [{rel_type}]")
             for e in entries:
                 if rel_type == "misc":
-                    lines.append(f"  - {e['content']}")
+                    # An entry can land in misc two ways: written bare (parser
+                    # hands back ``content``), or written as an explicit
+                    # ``[[[misc]]][[text]]`` marker (parser hands back
+                    # ``from``/``to`` like any other relation). Reading
+                    # ``content`` unconditionally crashed the whole document
+                    # view on the second kind.
+                    text = e.get("content")
+                    if text is None:
+                        text = " → ".join(
+                            p for p in (e.get("from"), e.get("to")) if p
+                        )
+                    lines.append(f"  - {text}")
                 else:
                     lines.append(f"  - {e['from']} → {e['to']}")
 
@@ -358,7 +396,10 @@ def _format_docs(
 
     # The last column is never padded — trailing spaces align nothing.
     def render(cells: list[str]) -> str:
-        padded = [c.ljust(col_widths[col]) for c, col in zip(cells[:-1], columns[:-1])]
+        padded = [
+            c.ljust(col_widths[col])
+            for c, col in zip(cells[:-1], columns[:-1], strict=True)
+        ]
         return "  ".join([*padded, cells[-1]])
 
     lines = [
