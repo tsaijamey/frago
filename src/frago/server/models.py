@@ -5,10 +5,9 @@ Most map directly to existing GUI models in frago.gui_deprecated.models.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ============================================================
 # Request Models
@@ -18,10 +17,10 @@ from pydantic import BaseModel, Field
 class RecipeRunRequest(BaseModel):
     """Request body for POST /api/recipes/{name}/run"""
 
-    params: Optional[Dict[str, Any]] = Field(
+    params: dict[str, Any] | None = Field(
         default=None, description="Recipe parameters as key-value pairs"
     )
-    timeout: Optional[int] = Field(
+    timeout: int | None = Field(
         default=None, ge=1, le=3600, description="Timeout in seconds (1-3600)"
     )
 
@@ -30,10 +29,10 @@ class AgentStartRequest(BaseModel):
     """Request body for POST /api/agent"""
 
     prompt: str = Field(..., min_length=1, description="Agent task prompt")
-    project_path: Optional[str] = Field(
+    project_path: str | None = Field(
         default=None, description="Project path context for the agent"
     )
-    agent_type: Optional[str] = Field(
+    agent_type: str | None = Field(
         default=None,
         description=(
             "Which cli-agent core to drive (claude / opencode / codex). "
@@ -52,10 +51,10 @@ class AgentAttachedStartRequest(BaseModel):
     """Request body for POST /api/agent/attached"""
 
     prompt: str = Field(..., min_length=1, description="Agent task prompt")
-    project_path: Optional[str] = Field(
+    project_path: str | None = Field(
         default=None, description="Project path context for the agent"
     )
-    agent_type: Optional[str] = Field(
+    agent_type: str | None = Field(
         default=None,
         description=(
             "Which cli-agent core to drive (claude / opencode / codex). "
@@ -67,7 +66,7 @@ class AgentAttachedStartRequest(BaseModel):
 class AgentAttachedStartResponse(BaseModel):
     """Response for POST /api/agent/attached"""
 
-    session_id: Optional[str] = None  # Real Claude session ID, comes later via WebSocket
+    session_id: str | None = None  # Real Claude session ID, comes later via WebSocket
     internal_id: str  # Internal ID for API calls
     status: str  # starting, running
     project_path: str
@@ -85,12 +84,12 @@ class AgentAttachResponse(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     """Request body for PUT /api/config"""
 
-    theme: Optional[str] = Field(default=None, pattern="^(dark|light)$")
-    language: Optional[str] = Field(default=None, pattern="^(en|zh)$")
-    font_size: Optional[int] = Field(default=None, ge=8, le=32)
-    max_history_items: Optional[int] = Field(default=None, ge=10, le=1000)
-    shortcuts: Optional[Dict[str, str]] = None
-    ai_title_enabled: Optional[bool] = None
+    theme: str | None = Field(default=None, pattern="^(dark|light)$")
+    language: str | None = Field(default=None, pattern="^(en|zh)$")
+    font_size: int | None = Field(default=None, ge=8, le=32)
+    max_history_items: int | None = Field(default=None, ge=10, le=1000)
+    shortcuts: dict[str, str] | None = None
+    ai_title_enabled: bool | None = None
 
 
 # ============================================================
@@ -102,13 +101,13 @@ class RecipeItemResponse(BaseModel):
     """Response for recipe list endpoints"""
 
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     category: str = "atomic"
-    icon: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
-    path: Optional[str] = None
-    source: Optional[str] = None
-    runtime: Optional[str] = None
+    icon: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    path: str | None = None
+    source: str | None = None
+    runtime: str | None = None
 
 
 class RecipeInputSchema(BaseModel):
@@ -123,20 +122,20 @@ class RecipeInputSchema(BaseModel):
 
     type: str
     required: bool = False
-    default: Optional[Any] = None
-    description: Optional[str] = None
-    enum: Optional[list] = None
-    max_length: Optional[int] = None
-    pattern: Optional[str] = None
-    min: Optional[float] = None
-    max: Optional[float] = None
+    default: Any | None = None
+    description: str | None = None
+    enum: list | None = None
+    max_length: int | None = None
+    pattern: str | None = None
+    min: float | None = None
+    max: float | None = None
 
 
 class RecipeOutputSchema(BaseModel):
     """Recipe output schema"""
 
     type: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class RecipeFlowStep(BaseModel):
@@ -145,35 +144,35 @@ class RecipeFlowStep(BaseModel):
     step: int
     action: str
     description: str
-    recipe: Optional[str] = None
-    inputs: List[Dict[str, str]] = Field(default_factory=list)
-    outputs: List[Dict[str, str]] = Field(default_factory=list)
+    recipe: str | None = None
+    inputs: list[dict[str, str]] = Field(default_factory=list)
+    outputs: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RecipeDetailResponse(BaseModel):
     """Response for recipe detail endpoint with rich metadata"""
 
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     category: str = "atomic"
-    icon: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
-    path: Optional[str] = None
-    source: Optional[str] = None
-    runtime: Optional[str] = None
+    icon: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    path: str | None = None
+    source: str | None = None
+    runtime: str | None = None
     # Rich metadata fields
-    version: Optional[str] = None
-    base_dir: Optional[str] = None
-    script_path: Optional[str] = None
-    metadata_path: Optional[str] = None
-    use_cases: List[str] = Field(default_factory=list)
-    output_targets: List[str] = Field(default_factory=list)
-    inputs: Dict[str, RecipeInputSchema] = Field(default_factory=dict)
-    outputs: Dict[str, RecipeOutputSchema] = Field(default_factory=dict)
-    dependencies: List[str] = Field(default_factory=list)
-    env: Dict[str, Any] = Field(default_factory=dict)
-    source_code: Optional[str] = None
-    flow: List[RecipeFlowStep] = Field(default_factory=list)
+    version: str | None = None
+    base_dir: str | None = None
+    script_path: str | None = None
+    metadata_path: str | None = None
+    use_cases: list[str] = Field(default_factory=list)
+    output_targets: list[str] = Field(default_factory=list)
+    inputs: dict[str, RecipeInputSchema] = Field(default_factory=dict)
+    outputs: dict[str, RecipeOutputSchema] = Field(default_factory=dict)
+    dependencies: list[str] = Field(default_factory=list)
+    env: dict[str, Any] = Field(default_factory=dict)
+    source_code: str | None = None
+    flow: list[RecipeFlowStep] = Field(default_factory=list)
     # 这个配方有没有页面（/app/<名字>/ 能开出东西）。界面据此决定给不给「打开页面」。
     has_page: bool = False
 
@@ -184,11 +183,11 @@ class TaskItemResponse(BaseModel):
     id: str
     title: str
     status: str  # running, completed, error, cancelled
-    project_path: Optional[str] = None
+    project_path: str | None = None
     agent_type: str
     started_at: datetime
-    completed_at: Optional[datetime] = None
-    duration_ms: Optional[int] = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
     step_count: int = 0
     tool_call_count: int = 0
     source: str = "unknown"  # terminal, web, or unknown
@@ -208,9 +207,9 @@ class TaskStepResponse(BaseModel):
     timestamp: datetime
     type: str  # user, assistant, tool_call, tool_result, system
     content: str
-    tool_name: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    tool_result: Optional[str] = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    tool_result: str | None = None
 
 
 class ToolUsageStatResponse(BaseModel):
@@ -229,7 +228,7 @@ class TaskSummaryResponse(BaseModel):
     tool_call_count: int = 0
     tool_success_count: int = 0
     tool_error_count: int = 0
-    most_used_tools: List[ToolUsageStatResponse] = Field(default_factory=list)
+    most_used_tools: list[ToolUsageStatResponse] = Field(default_factory=list)
 
 
 class TaskDetailResponse(BaseModel):
@@ -238,30 +237,30 @@ class TaskDetailResponse(BaseModel):
     id: str
     title: str
     status: str
-    project_path: Optional[str] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    duration_ms: Optional[int] = None
+    project_path: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
     step_count: int = 0
     tool_call_count: int = 0
-    steps: List[TaskStepResponse] = Field(default_factory=list)
+    steps: list[TaskStepResponse] = Field(default_factory=list)
     steps_total: int = 0
     steps_offset: int = 0
     has_more_steps: bool = False
-    summary: Optional[TaskSummaryResponse] = None
+    summary: TaskSummaryResponse | None = None
 
 
 class TaskListResponse(BaseModel):
     """Response for GET /api/tasks"""
 
-    tasks: List[TaskItemResponse]
+    tasks: list[TaskItemResponse]
     total: int
 
 
 class TaskStepsResponse(BaseModel):
     """Response for GET /api/tasks/{id}/steps"""
 
-    steps: List[TaskStepResponse]
+    steps: list[TaskStepResponse]
     total: int
     has_more: bool
 
@@ -286,7 +285,7 @@ class UserConfigResponse(BaseModel):
     language: str = "en"
     font_size: int = 14
     max_history_items: int = 100
-    shortcuts: Dict[str, str] = Field(default_factory=dict)
+    shortcuts: dict[str, str] = Field(default_factory=dict)
     ai_title_enabled: bool = False
     webui_sessions: WebuiSessionsResponse = Field(default_factory=WebuiSessionsResponse)
 
@@ -316,7 +315,7 @@ class SystemDirectoriesResponse(BaseModel):
     """Response for GET /api/system/directories"""
 
     home: str  # User home directory
-    cwd: Optional[str] = None  # Current working directory (optional)
+    cwd: str | None = None  # Current working directory (optional)
 
 
 class DirectoryEntry(BaseModel):
@@ -341,8 +340,8 @@ class ClaudeUsageBucket(BaseModel):
     """一档额度。`resets_at` 照 Claude Code 的原话留着，带着人自己的时区名。"""
 
     percent: int = 0
-    resets_at: Optional[str] = None
-    label: Optional[str] = None  # 型号那一档才有：Fable / Opus / …
+    resets_at: str | None = None
+    label: str | None = None  # 型号那一档才有：Fable / Opus / …
 
 
 class ClaudeUsageResponse(BaseModel):
@@ -353,19 +352,19 @@ class ClaudeUsageResponse(BaseModel):
     """
 
     available: bool = False
-    session: Optional[ClaudeUsageBucket] = None  # 五小时会话窗口
-    week_all: Optional[ClaudeUsageBucket] = None  # 本周全模型
-    week_model: Optional[ClaudeUsageBucket] = None  # 本周某个型号
-    checked_at: Optional[str] = None
-    error: Optional[str] = None
+    session: ClaudeUsageBucket | None = None  # 五小时会话窗口
+    week_all: ClaudeUsageBucket | None = None  # 本周全模型
+    week_model: ClaudeUsageBucket | None = None  # 本周某个型号
+    checked_at: str | None = None
+    error: str | None = None
 
 
 class SkillItemResponse(BaseModel):
     """Response for skill list endpoint"""
 
     name: str
-    description: Optional[str] = None
-    file_path: Optional[str] = None
+    description: str | None = None
+    file_path: str | None = None
 
 
 # ============================================================
@@ -377,14 +376,14 @@ class WebSocketMessage(BaseModel):
     """WebSocket message envelope"""
 
     type: str  # session_sync, task_started, task_updated, task_completed, connection
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class SessionSyncPayload(BaseModel):
     """Payload for session_sync message"""
 
-    tasks: List[TaskItemResponse]
+    tasks: list[TaskItemResponse]
 
 
 class TaskStartedPayload(BaseModel):
@@ -398,7 +397,7 @@ class TaskUpdatedPayload(BaseModel):
 
     task_id: str
     status: str
-    step: Optional[TaskStepResponse] = None
+    step: TaskStepResponse | None = None
 
 
 class TaskCompletedPayload(BaseModel):
@@ -406,7 +405,7 @@ class TaskCompletedPayload(BaseModel):
 
     task_id: str
     status: str
-    summary: Optional[TaskSummaryResponse] = None
+    summary: TaskSummaryResponse | None = None
 
 
 class ConnectionPayload(BaseModel):
@@ -425,11 +424,11 @@ class DependencyStatusResponse(BaseModel):
 
     name: str
     installed: bool = False
-    version: Optional[str] = None
-    path: Optional[str] = None
+    version: str | None = None
+    path: str | None = None
     version_sufficient: bool = False
     required_version: str
-    error: Optional[str] = None
+    error: str | None = None
     install_guide: str = ""
     optional: bool = False
     """Absent means nothing frago does is blocked by this dependency missing.
@@ -447,12 +446,12 @@ class InitStatusResponse(BaseModel):
     node: DependencyStatusResponse
     claude_code: DependencyStatusResponse
     resources_installed: bool = False
-    resources_version: Optional[str] = None
+    resources_version: str | None = None
     resources_update_available: bool = False
     current_frago_version: str
     auth_configured: bool = False
-    auth_method: Optional[str] = None
-    resources_info: Dict[str, Any] = Field(default_factory=dict)
+    auth_method: str | None = None
+    resources_info: dict[str, Any] = Field(default_factory=dict)
 
 
 class DependencyCheckResponse(BaseModel):
@@ -468,7 +467,7 @@ class InstallResultSummary(BaseModel):
 
     installed: int = 0
     skipped: int = 0
-    errors: List[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class ResourceInstallResponse(BaseModel):
@@ -480,9 +479,9 @@ class ResourceInstallResponse(BaseModel):
     recipes: InstallResultSummary
     total_installed: int = 0
     total_skipped: int = 0
-    errors: List[str] = Field(default_factory=list)
-    frago_version: Optional[str] = None
-    message: Optional[str] = None
+    errors: list[str] = Field(default_factory=list)
+    frago_version: str | None = None
+    message: str | None = None
 
 
 class DependencyInstallRequest(BaseModel):
@@ -497,10 +496,10 @@ class DependencyInstallResponse(BaseModel):
     status: str  # ok, error
     message: str
     requires_restart: bool = False
-    warning: Optional[str] = None
-    install_guide: Optional[str] = None
-    error_code: Optional[str] = None
-    details: Optional[str] = None
+    warning: str | None = None
+    install_guide: str | None = None
+    error_code: str | None = None
+    details: str | None = None
 
 
 class ResourceInstallRequest(BaseModel):
@@ -527,8 +526,8 @@ class InitProgressPayload(BaseModel):
 
     step: str  # dependencies, resources, auth
     status: str  # checking, installing, complete, error
-    progress: Optional[int] = None  # 0-100
-    message: Optional[str] = None
+    progress: int | None = None  # 0-100
+    message: str | None = None
 
 
 class InitStepCompletePayload(BaseModel):
@@ -536,7 +535,7 @@ class InitStepCompletePayload(BaseModel):
 
     step: str
     status: str  # ok, error, skipped
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class InitErrorPayload(BaseModel):
@@ -544,7 +543,7 @@ class InitErrorPayload(BaseModel):
 
     step: str
     error: str
-    details: Optional[str] = None
+    details: str | None = None
 
 
 # ============================================================
@@ -557,13 +556,13 @@ class CommunityRecipeItemResponse(BaseModel):
 
     name: str
     url: str
-    description: Optional[str] = None
-    version: Optional[str] = None
+    description: str | None = None
+    version: str | None = None
     type: str = "atomic"  # atomic | workflow
-    runtime: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    runtime: str | None = None
+    tags: list[str] = Field(default_factory=list)
     installed: bool = False
-    installed_version: Optional[str] = None
+    installed_version: str | None = None
     has_update: bool = False
 
 
@@ -577,9 +576,9 @@ class CommunityRecipeInstallResponse(BaseModel):
     """Response for community recipe install/update operations"""
 
     status: str  # ok | error
-    recipe_name: Optional[str] = None
-    message: Optional[str] = None
-    error: Optional[str] = None
+    recipe_name: str | None = None
+    message: str | None = None
+    error: str | None = None
 
 
 class TmuxSessionItem(BaseModel):
@@ -591,10 +590,10 @@ class TmuxSessionItem(BaseModel):
 
     name: str
     label: str
-    session_id: Optional[str] = None
-    stop_reason: Optional[str] = None
-    last_stop_at: Optional[str] = None
-    idle_secs: Optional[float] = None
+    session_id: str | None = None
+    stop_reason: str | None = None
+    last_stop_at: str | None = None
+    idle_secs: float | None = None
     excerpt: str = ""
     memory_mb: int = 0
     busy: bool = False
@@ -604,7 +603,7 @@ class TmuxSessionItem(BaseModel):
 class TmuxSessionsResponse(BaseModel):
     """Response for GET /api/system/tmux-sessions"""
 
-    sessions: List[TmuxSessionItem] = Field(default_factory=list)
+    sessions: list[TmuxSessionItem] = Field(default_factory=list)
     total: int = 0
     total_memory_mb: int = 0
     cleanup_idle_hours: float = 1.0
@@ -613,20 +612,20 @@ class TmuxSessionsResponse(BaseModel):
 class CloseTmuxSessionsRequest(BaseModel):
     """Request body for POST /api/system/tmux-sessions/close"""
 
-    names: List[str] = Field(..., description="tmux session names to close, one by one")
+    names: list[str] = Field(..., description="tmux session names to close, one by one")
 
 
 class CloseTmuxSessionsResult(BaseModel):
     name: str
     ok: bool
     via: str = "tmux"
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class CloseTmuxSessionsResponse(BaseModel):
     """Response for POST /api/system/tmux-sessions/close"""
 
-    results: List[CloseTmuxSessionsResult] = Field(default_factory=list)
+    results: list[CloseTmuxSessionsResult] = Field(default_factory=list)
     closed: int = 0
     failed: int = 0
 
