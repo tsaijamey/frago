@@ -31,6 +31,18 @@ beforeAll(async () => {
 
 vi.mock('../../../api/client', () => ({
   getSystemDirectories: async () => ({ home: '/Users/frago', cwd: '/Users/frago/Repos/frago' }),
+  browseDirectories: async (path: string) => {
+    const at = path || '/Users/frago';
+    const tree: Record<string, string[]> = {
+      '/Users/frago': ['Repos', 'Documents'],
+      '/Users/frago/Repos': ['frago', 'prod-rec-agent-service'],
+    };
+    return {
+      path: at,
+      parent: at === '/Users' ? null : at.slice(0, at.lastIndexOf('/')) || '/',
+      entries: (tree[at] ?? []).map((name) => ({ name, path: `${at}/${name}` })),
+    };
+  },
 }));
 
 vi.mock('../../../utils/recentDirectories', () => ({
@@ -266,5 +278,49 @@ describe('NewSessionModal — 挑客户端', () => {
     );
     open();
     expect(await screen.findByText(/本机一家可用的 CLI 都没找到/)).toBeTruthy();
+  });
+});
+
+describe('NewSessionModal — 挑工作目录', () => {
+  it('第一次用的人也有路可走：翻目录一层一层点进去', async () => {
+    open();
+    await screen.findByTestId('agent-claude');
+
+    fireEvent.click(screen.getByTestId('toggle-browse-dirs'));
+    expect(await screen.findByText('Repos')).toBeTruthy();
+
+    // 停在哪一层就是选了哪一层，不必再点一次"就用这个"。
+    fireEvent.click(screen.getByText('Repos'));
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('/absolute/path') as HTMLInputElement).value).toBe(
+        '/Users/frago/Repos'
+      )
+    );
+    expect(await screen.findByText('prod-rec-agent-service')).toBeTruthy();
+  });
+
+  it('子目录多的时候打字筛得动', async () => {
+    open();
+    await screen.findByTestId('agent-claude');
+    fireEvent.click(screen.getByTestId('toggle-browse-dirs'));
+    await screen.findByText('Repos');
+
+    fireEvent.change(screen.getByTestId('browse-filter'), { target: { value: 'doc' } });
+    expect(screen.getByText('Documents')).toBeTruthy();
+    expect(screen.queryByText('Repos')).toBeNull();
+  });
+
+  it('翻到的那一层就是建会话时送出去的工作目录', async () => {
+    open();
+    await screen.findByTestId('agent-claude');
+    fireEvent.click(screen.getByTestId('toggle-browse-dirs'));
+    fireEvent.click(await screen.findByText('Repos'));
+    await waitFor(() => expect(screen.getByText('frago')).toBeTruthy());
+    fireEvent.click(screen.getByText('frago'));
+
+    await fillFirstMessage();
+    fireEvent.click(screen.getByText('创建'));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0].cwd).toBe('/Users/frago/Repos/frago');
   });
 });

@@ -119,6 +119,39 @@ class SystemService:
         }
 
     @staticmethod
+    def browse_directory(path: str = "", limit: int = 500) -> dict[str, Any]:
+        """列出某一层下面有哪些子目录，供人一层一层点着挑工作目录。
+
+        只报目录不报文件：这份清单唯一的用途是挑一个工作目录，文件摆进来只会把它撑满。
+        隐藏目录（点开头的）也不报——挑工作目录的人要的是自己的项目，不是 ``.cache``。
+
+        路径读不动（不存在、没权限、是个文件）一律退回家目录，而不是抛错。挑目录的人打错
+        一个字就看到一句报错、清单整个消失，还不如把他放回一个一定走得通的地方。
+        """
+        from pathlib import Path
+
+        base = Path(path).expanduser() if path else Path.home()
+        with contextlib.suppress(Exception):
+            base = base.resolve()
+        if not base.is_dir():
+            base = Path.home()
+
+        entries: list[dict[str, str]] = []
+        with contextlib.suppress(Exception):
+            children = sorted(base.iterdir(), key=lambda c: c.name.lower())
+            for child in children:
+                if len(entries) >= limit:
+                    break
+                if child.name.startswith("."):
+                    continue
+                with contextlib.suppress(OSError):
+                    if child.is_dir():
+                        entries.append({"name": child.name, "path": str(child)})
+
+        parent = str(base.parent) if base.parent != base else None
+        return {"path": str(base), "parent": parent, "entries": entries}
+
+    @staticmethod
     def get_info(
         host: str = "127.0.0.1",
         port: int = 8080,

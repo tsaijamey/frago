@@ -319,6 +319,24 @@ class SystemDirectoriesResponse(BaseModel):
     cwd: Optional[str] = None  # Current working directory (optional)
 
 
+class DirectoryEntry(BaseModel):
+    """一个子目录。名字给人看，整条路径给选中之后用。"""
+
+    name: str
+    path: str
+
+
+class DirectoryListingResponse(BaseModel):
+    """Response for GET /api/system/directories/browse
+
+    只报子目录，不报文件——这份清单唯一的用途是挑一个工作目录。
+    """
+
+    path: str  # 当前停在哪一层（已展开、已解析的绝对路径）
+    parent: str | None = None  # 上一层；到了根就没有
+    entries: list[DirectoryEntry] = []
+
+
 class ClaudeUsageBucket(BaseModel):
     """一档额度。`resets_at` 照 Claude Code 的原话留着，带着人自己的时区名。"""
 

@@ -12,6 +12,7 @@ from frago.server.models import (
     CleanupThresholdRequest,
     CloseTmuxSessionsRequest,
     CloseTmuxSessionsResponse,
+    DirectoryListingResponse,
     EnvironmentResponse,
     EnvironmentUpgradeRequest,
     EnvironmentUpgradeResponse,
@@ -84,6 +85,21 @@ async def get_directories() -> SystemDirectoriesResponse:
         home=dirs.get("home", ""),
         cwd=dirs.get("cwd"),
     )
+
+
+@router.get("/system/directories/browse", response_model=DirectoryListingResponse)
+async def browse_directories(
+    path: str = Query("", description="停在哪一层；留空从家目录起"),
+) -> DirectoryListingResponse:
+    """一层一层往下翻，挑一个工作目录。
+
+    从前新建会话只能在"最近开过会话的几个目录"里挑，第一次用的人那份清单是空的，
+    于是唯一的出路是手打一整条绝对路径。这条接口就是为了把那条独木桥换成一条路。
+
+    只报子目录、不报文件，隐藏目录不报。读盘是阻塞 IO，整趟挪到线程里跑。
+    """
+    listing = await asyncio.to_thread(SystemService.browse_directory, path)
+    return DirectoryListingResponse(**listing)
 
 
 @router.get("/system/claude-usage", response_model=ClaudeUsageResponse)

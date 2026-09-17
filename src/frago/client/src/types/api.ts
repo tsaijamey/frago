@@ -113,6 +113,17 @@ export interface SystemDirectories {
   cwd: string | null;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: DirectoryEntry[];
+}
+
 export interface GenerateTitleResponse {
   status: 'ok' | 'error';
   title?: string;

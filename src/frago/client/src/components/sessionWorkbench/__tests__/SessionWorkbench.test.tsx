@@ -583,12 +583,14 @@ describe('SessionRail 左栏', () => {
 
   it('新建会话的入口在左栏顶部，点开是弹窗不是跳页', async () => {
     render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
-    expect(screen.queryByText('起始目录')).toBeNull();
+    expect(screen.queryByText('让它在哪个项目里干活？')).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByTestId('new-session'));
     });
-    expect(screen.getByText('起始目录')).toBeTruthy();
-    expect(screen.getByText('第一句话')).toBeTruthy();
+    // 三块的标题是三句并列的问话——人读一遍就知道自己在做哪三个决定。
+    expect(screen.getByText('这场会话交给哪个 agent 跑？')).toBeTruthy();
+    expect(screen.getByText('让它在哪个项目里干活？')).toBeTruthy();
+    expect(screen.getByText('你想让它做什么？')).toBeTruthy();
   });
 
   it('每张卡都能复制恢复命令，两家各按自己的形状', async () => {

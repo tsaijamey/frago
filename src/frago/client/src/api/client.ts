@@ -21,6 +21,7 @@ import type {
   TaskListResponse,
   TaskStepsResponse,
   UserConfig,
+  DirectoryListing,
   SystemDirectories,
   GenerateTitleResponse,
   AgentAttachedStartResponse,
@@ -135,6 +136,7 @@ export type {
   TaskListResponse,
   TaskStepsResponse,
   UserConfig,
+  DirectoryListing,
   SystemDirectories,
   GenerateTitleResponse,
   AgentAttachedStartResponse,
@@ -274,6 +276,17 @@ export async function getServerInfo(): Promise<ServerInfo> {
 
 export async function getSystemDirectories(): Promise<SystemDirectories> {
   return fetchApi<SystemDirectories>('/system/directories');
+}
+
+/**
+ * 一层一层翻目录，挑工作目录用。留空从家目录起。
+ *
+ * 路径走不通时服务端会把人放回家目录，而不是抛错——挑目录的人打错一个字就看到一句
+ * 报错、清单整个消失，还不如把他放回一个一定走得通的地方。
+ */
+export async function browseDirectories(path = ''): Promise<DirectoryListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : '';
+  return fetchApi<DirectoryListing>(`/system/directories/browse${query}`);
 }
 
 // ============================================================
