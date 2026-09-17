@@ -56,6 +56,8 @@ class TestList:
             "created",
             "updated",
             "done_at",
+            "dropped_at",
+            "drop_reason",
             "context",
             "steps",
             "done_when",

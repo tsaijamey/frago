@@ -143,7 +143,7 @@ def test_next_picks_highest_priority_oldest_active():
 
 def test_next_none_when_no_active():
     store.add("x", status="done")
-    store.add("y", status="dropped")
+    store.drop(store.add("y").id, "不做了")
     assert store.next_todo() is None
 
 
@@ -316,3 +316,85 @@ def test_schema_documents_category():
     names = [f["name"] for f in store.TODO_SCHEMA["fields"]]
     assert "category" in names
     assert "category" in store.TODO_SCHEMA["sort"]
+
+
+# ── 弃置 ────────────────────────────────────────────────────────────────
+
+
+def test_drop_records_the_reason_and_the_date(tmp_path):
+    todo = store.drop(store.add("give up on this").id, "  上游换了做法，这条不再成立  ")
+    assert todo.status == "dropped"
+    assert todo.dropped_at == todo.updated
+    # 前后空白削掉，中间的原话一个字不动——这段是留档给以后的人读的。
+    assert todo.drop_reason == "上游换了做法，这条不再成立"
+
+    data = json.loads((tmp_path / f"{todo.id}.json").read_text())
+    assert data["drop_reason"] == "上游换了做法，这条不再成立"
+
+
+@pytest.mark.parametrize("reason", ["", "   ", None])
+def test_drop_without_a_reason_is_refused(reason):
+    todo = store.add("no reason given")
+    with pytest.raises(ValueError, match="reason is required"):
+        store.drop(todo.id, reason)
+    assert store.get(todo.id).status == "todo"
+
+
+def test_dropping_twice_is_refused_and_keeps_the_first_verdict():
+    """第二次弃置是对同一件事的第二次判断，不是重复执行同一个动作。"""
+    todo = store.drop(store.add("dropped once").id, "第一次的理由")
+    with pytest.raises(ValueError) as excinfo:
+        store.drop(todo.id, "第二次的理由")
+    # 报错里要带上当初的日期与理由，人才判断得了要不要先把它拿回来。
+    assert "第一次的理由" in str(excinfo.value)
+    assert store.get(todo.id).drop_reason == "第一次的理由"
+
+
+def test_coming_back_out_of_dropped_clears_the_reason():
+    """重新开工之后理由还挂着，读的人会以为它仍然是被搁下的。"""
+    todo = store.drop(store.add("back to work").id, "当时不做了")
+    revived = store.update(todo.id, status="doing")
+    assert revived.status == "doing"
+    assert revived.dropped_at is None
+    assert revived.drop_reason is None
+
+
+def test_done_also_clears_a_previous_drop():
+    todo = store.drop(store.add("finished after all").id, "当时不做了")
+    done = store.mark_done(todo.id)
+    assert done.status == "done"
+    assert done.drop_reason is None
+    assert done.done_at is not None
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: store.add("straight to dropped", status="dropped"),
+        lambda: store.update(store.add("edited into dropped").id, status="dropped"),
+        lambda: store.log(store.add("logged into dropped").id, "记一笔", status="dropped"),
+    ],
+)
+def test_the_ordinary_paths_cannot_set_dropped(call):
+    """留一条不用给理由的旁路，理由那一栏迟早大半是空的。"""
+    with pytest.raises(ValueError) as excinfo:
+        call()
+    # 拒绝的同时要说清该走哪条路，否则调用方就把状态词表挨个试一遍。
+    assert "frago todo drop" in str(excinfo.value)
+
+
+def test_dropped_todos_are_not_picked_as_next():
+    store.drop(store.add("high one", priority="high").id, "不做了")
+    store.add("low one", priority="low")
+    assert store.next_todo().title == "low one"
+
+
+def test_list_still_filters_by_dropped():
+    dropped = store.drop(store.add("gone").id, "不做了")
+    store.add("still here")
+    assert [t.id for t in store.list_todos(status="dropped")] == [dropped.id]
+
+
+def test_schema_documents_the_drop_fields():
+    names = {f["name"] for f in store.TODO_SCHEMA["fields"]}
+    assert {"dropped_at", "drop_reason"} <= names

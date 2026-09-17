@@ -428,7 +428,14 @@ export default function TodoPage() {
 
         {selected && (
           <div className="td-detail-pane">
-            <TodoDetail todo={selected} categories={categories} onClose={() => switchPage('todos')} />
+            {/* 按 id 认人：换一件事务时整块重建，上一件填了一半的弃置理由不会跟着过来。 */}
+            <TodoDetail
+              key={selected.id}
+              todo={selected}
+              categories={categories}
+              onClose={() => switchPage('todos')}
+              onDropped={() => void refresh()}
+            />
           </div>
         )}
       </div>

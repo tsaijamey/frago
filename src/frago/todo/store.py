@@ -31,6 +31,13 @@ from frago.todo import categories
 STATUSES = ("todo", "doing", "done", "dropped")
 PRIORITIES = ("low", "normal", "high")
 _ACTIVE = ("todo", "doing")
+# 普通编辑路径（add / edit / log / done）改得动的那几档。
+#
+# 「弃置」不在里面：它是「这件不做了」的终态，进去必须说清为什么，所以只留 `drop`
+# 那一条路（见 :func:`drop`）。放在这里随手可设，理由那一栏就永远是空的——一条没有
+# 理由的弃置记录，跟直接删掉它区别不大。
+_SETTABLE_STATUSES = ("todo", "doing", "done")
+DROPPED = "dropped"
 # next/list sort priority by semantic order (NOT lexical — high>normal>low)
 _PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
 
@@ -47,7 +54,10 @@ TODO_SCHEMA = {
         {"name": "title", "type": "string", "required": True,
          "description": "one-line title; source of the slug"},
         {"name": "summary", "type": "string|null", "description": "shorter summary"},
-        {"name": "status", "type": "enum", "enum": list(STATUSES), "default": "todo"},
+        {"name": "status", "type": "enum", "enum": list(STATUSES), "default": "todo",
+         "description": "add/edit/log/done only set todo|doing|done; `dropped` is reachable "
+                        "only through `frago todo drop <ref> --reason ...` and moving back "
+                        "out of it clears drop_reason/dropped_at"},
         {"name": "priority", "type": "enum", "enum": list(PRIORITIES), "default": "normal"},
         {"name": "tags", "type": "list[str]", "default": []},
         {"name": "category", "type": "string|null", "default": None,
@@ -58,6 +68,11 @@ TODO_SCHEMA = {
         {"name": "created", "type": "date", "auto": True, "description": "ISO date, set on add"},
         {"name": "updated", "type": "date", "auto": True, "description": "ISO date, refreshed on edit"},
         {"name": "done_at", "type": "date|null", "auto": True, "description": "stamped when status->done"},
+        {"name": "dropped_at", "type": "date|null", "auto": True,
+         "description": "stamped by `todo drop`; cleared if the todo comes back out of dropped"},
+        {"name": "drop_reason", "type": "string|null", "auto": True,
+         "description": "why it was dropped — `todo drop` requires it, verbatim; cleared "
+                        "if the todo comes back out of dropped"},
         {"name": "context", "type": "string|null", "description": "background / why"},
         {"name": "steps", "type": "list[str]", "default": [], "description": "implementation steps"},
         {"name": "done_when", "type": "list[str]", "default": [], "description": "completion conditions"},
@@ -85,6 +100,9 @@ class Todo:
     created: str = ""
     updated: str = ""
     done_at: str | None = None
+    # 弃置那一刻记下的日期与理由。旧事务文件里没有这两个键，读出来就是 None。
+    dropped_at: str | None = None
+    drop_reason: str | None = None
     context: str | None = None
     steps: list[str] = field(default_factory=list)
     done_when: list[str] = field(default_factory=list)
@@ -189,6 +207,33 @@ def _load_file(path: Path) -> Todo:
 # ── CRUD ────────────────────────────────────────────────────────────────
 
 
+def _require_settable_status(status: str) -> None:
+    """普通编辑路径只收待办/在做/已完成；弃置从这里进不去。
+
+    报错里直接给出该走的那条命令。拒绝一个动作却不说替代路径，调用方（尤其是 agent）
+    下一步就是把 STATUSES 里的词挨个试一遍。
+    """
+    if status not in _SETTABLE_STATUSES:
+        raise ValueError(
+            f"invalid status {status!r}; must be one of {_SETTABLE_STATUSES}. "
+            f"To drop a todo say why: `frago todo drop <ref> --reason \"...\"`"
+        )
+
+
+def _apply_status(todo: Todo, status: str) -> None:
+    """走普通路径改状态，顺带把跟着状态走的那几个戳记对齐。
+
+    从弃置回到别的档时清掉理由与日期：那两项是「这件不做了，因为……」的记录，事情
+    重新开工之后还挂在那里，读的人会以为它仍然是被搁下的。
+    """
+    _require_settable_status(status)
+    todo.status = status
+    if status == "done" and not todo.done_at:
+        todo.done_at = _today()
+    todo.dropped_at = None
+    todo.drop_reason = None
+
+
 def add(
     title: str,
     *,
@@ -208,8 +253,7 @@ def add(
         raise ValueError("title is required")
     if priority not in PRIORITIES:
         raise ValueError(f"invalid priority {priority!r}; must be one of {PRIORITIES}")
-    if status not in STATUSES:
-        raise ValueError(f"invalid status {status!r}; must be one of {STATUSES}")
+    _require_settable_status(status)
     if category is not None:
         categories.require(category)
 
@@ -320,6 +364,7 @@ def update(ref: str, **changes) -> Todo:
 
     Setting ``status`` to ``done`` stamps ``done_at`` if not already set.
     ``category=""`` clears the category (None already means "leave it alone").
+    ``status="dropped"`` is refused here — see :func:`drop`.
     """
     todo = get(ref)
     for key, value in changes.items():
@@ -327,8 +372,9 @@ def update(ref: str, **changes) -> Todo:
             continue
         if key not in _EDITABLE:
             raise ValueError(f"field not editable: {key}")
-        if key == "status" and value not in STATUSES:
-            raise ValueError(f"invalid status {value!r}; must be one of {STATUSES}")
+        if key == "status":
+            # 弃置要带着理由一起落，这里没有地方放它，所以整条路不通。
+            _require_settable_status(value)
         if key == "priority" and value not in PRIORITIES:
             raise ValueError(f"invalid priority {value!r}; must be one of {PRIORITIES}")
         if key == "category":
@@ -339,8 +385,8 @@ def update(ref: str, **changes) -> Todo:
         setattr(todo, key, value)
 
     todo.updated = _today()
-    if changes.get("status") == "done" and not todo.done_at:
-        todo.done_at = _today()
+    if changes.get("status") is not None:
+        _apply_status(todo, changes["status"])
     _write(todo)
     return todo
 
@@ -375,11 +421,7 @@ def log(
     if session_id:
         todo.sessions = _dedupe([*todo.sessions, session_id])
     if status is not None:
-        if status not in STATUSES:
-            raise ValueError(f"invalid status {status!r}; must be one of {STATUSES}")
-        todo.status = status
-        if status == "done" and not todo.done_at:
-            todo.done_at = _today()
+        _apply_status(todo, status)
     todo.updated = _today()
     _write(todo)
     return todo
@@ -390,8 +432,43 @@ def mark_done(ref: str) -> Todo:
     todo = get(ref)
     if todo.status == "done":
         return todo
-    todo.status = "done"
+    _apply_status(todo, "done")
     todo.done_at = _today()
+    todo.updated = _today()
+    _write(todo)
+    return todo
+
+
+def drop(ref: str, reason: str) -> Todo:
+    """把一件事务弃置：这件不做了，并且把为什么留在案卷里。
+
+    弃置与完成是两个不同的结局。已完成说明事情办到了；弃置说明它被主动放下——半年后
+    有人翻到这条，第一个问题一定是「当初为什么不做了」。清单本身答不出这个问题：标题
+    和背景写的是要做什么，不是放弃的判断。所以理由在这里是必填的，没有默认值、没有
+    「未填写」这种占位。
+
+    只有这一个函数能把状态改成弃置。新建、编辑、记进展那几条路径都收窄到了待办/在做/
+    已完成（见 :data:`_SETTABLE_STATUSES`）——留一条不用给理由的旁路，理由那一栏迟早
+    大半是空的。
+
+    已经弃置过的不许再弃置一次：那不是重复执行同一个动作，而是对同一件事的第二次判断，
+    静悄悄覆盖掉第一次的理由，等于把当初的决定抹了。这里报错并把原有的日期与理由说出来，
+    让人自己决定要不要先把它拿回在做的档位。
+    """
+    text = (reason or "").strip()
+    if not text:
+        raise ValueError("a reason is required: say why this is being dropped")
+
+    todo = get(ref)
+    if todo.status == DROPPED:
+        had = todo.drop_reason or "(no reason recorded)"
+        raise ValueError(
+            f"{todo.id} was already dropped on {todo.dropped_at or 'an unknown date'}: {had}"
+        )
+
+    todo.status = DROPPED
+    todo.dropped_at = _today()
+    todo.drop_reason = text
     todo.updated = _today()
     _write(todo)
     return todo

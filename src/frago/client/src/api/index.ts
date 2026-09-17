@@ -238,6 +238,7 @@ export type {
   TodoStatus,
   TodoPriority,
   TodoComposeResponse,
+  TodoDropResponse,
   TodoCategory,
   TodoCategoriesResponse,
 } from './client';
@@ -260,6 +261,13 @@ export const getTodo = withMode(
 export const composeTodo = withMode(
   (description: string): Promise<httpApi.TodoComposeResponse> => httpApi.composeTodo(description),
   (_description: string): Promise<httpApi.TodoComposeResponse> =>
+    Promise.reject(new Error(TODOS_UNAVAILABLE)),
+);
+
+export const dropTodo = withMode(
+  (todoId: string, reason: string): Promise<httpApi.TodoDropResponse> =>
+    httpApi.dropTodo(todoId, reason),
+  (_todoId: string, _reason: string): Promise<httpApi.TodoDropResponse> =>
     Promise.reject(new Error(TODOS_UNAVAILABLE)),
 );
 

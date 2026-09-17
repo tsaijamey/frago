@@ -6422,7 +6422,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   opacity: 0.6;
 }
 
-/* 了结了的事务退到背景里：已完成标题转灰，已放弃再加删除线。 */
+/* 了结了的事务退到背景里：已完成标题转灰，弃置的再加删除线。 */
 .tdp-row--done .td-row-title,
 .tdp-row--dropped .td-row-title {
   color: var(--text-muted);
@@ -6586,6 +6586,88 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── 弃置 ──────────────────────────────────────────────────────────
+   详情面板上唯一一个会改动事务的动作，所以它就在标题那一行，跟关闭挨着。放到面板末尾
+   试过一版：背景一长，整个入口落在屏幕外，看页面的人以为这功能根本没做。 */
+
+/* 警示色：按下去这件事就了结了，界面上没有反悔的路（命令那边拒绝第二次弃置，拿回在做
+   只能去命令行）。用描边而不是实心红块——实心的那种在读着标题的人眼里是「请按我」。 */
+.tdp-drop-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 55%, transparent);
+  color: var(--accent-error);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.tdp-drop-open:hover {
+  background: var(--accent-error);
+  box-shadow: inset 0 0 0 1px var(--accent-error);
+  color: white;
+}
+
+/* 填理由那一段贴着标题行展开，整块罩一层淡警示底：它是从上面那个按钮长出来的，不是
+   面板里又一段可读的内容。 */
+.tdp-drop-form {
+  margin: 0 20px 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-error) 7%, var(--bg-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 28%, transparent);
+}
+
+.tdp-drop-desc {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.tdp-drop-input {
+  background: var(--bg-primary);
+}
+
+/* 要跑的那条命令印在输入框底下：看不见执行了什么的按钮，没人敢按第二次。
+   折行而不是横向滚动——事务 id 很长，在这条窄栏里横滚等于把后半截藏起来，人看到的
+   是一条断在半路的命令，那比不显示更糟。 */
+.tdp-drop-command {
+  margin-top: var(--spacing-sm);
+  background: var(--bg-primary);
+  overflow-x: visible;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tdp-drop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+/* 确认那一下用错误色：界面上没有反悔的路——命令那边拒绝第二次弃置，拿回在做只能
+   去命令行。按之前就该看出来这一下是有分量的。 */
+.tdp-drop-submit {
+  background: var(--accent-error);
+  border-color: var(--accent-error);
+  color: white;
+}
+
+.tdp-drop-form .td-error {
+  margin: var(--spacing-sm) 0 0;
+}
+
 @media (max-width: 900px) {
   .tdp .td-detail-pane {
     width: 100%;
@@ -6601,7 +6683,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    骨架整套借事务页的 td-*：同样是「左清单右详情」、同样的筛选条和一句话新建。
    这里只补事务页没有的东西：动作按钮、执行记录、执行内容的等宽原文。 */
 
-/* 停用的任务整行退淡，但不划线——它还在，随时能启用，跟「已放弃」不是一回事。 */
+/* 停用的任务整行退淡，但不划线——它还在，随时能启用，跟「弃置」不是一回事。 */
 .sc-row--disabled {
   opacity: 0.62;
 }

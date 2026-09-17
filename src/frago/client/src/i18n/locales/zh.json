@@ -331,6 +331,14 @@
       "nothingCreated": "agent 跑完了，但一件事务都没落下。看看下面它怎么说。",
       "failed": "没建成：{{message}}"
     },
+    "drop": {
+      "button": "弃置这件",
+      "desc": "这件不做了。说清为什么——半年后翻到它的人，问的就是这个。理由会一个字不差地记进事务里。",
+      "placeholder": "为什么不做了",
+      "submit": "确认弃置",
+      "working": "正在弃置…",
+      "failed": "没弃置成：{{message}}"
+    },
     "loadFailed": "事务清单取不到：{{message}}",
     "notFound": "地址里的这件事务不在清单里：{{id}}",
     "stepCount": "{{n}} 步",
@@ -370,7 +378,7 @@
       "todo": "待办",
       "doing": "在做",
       "done": "已完成",
-      "dropped": "已放弃"
+      "dropped": "弃置"
     },
     "priority": {
       "low": "低",
@@ -382,7 +390,7 @@
       "todo": "待办",
       "doing": "在做",
       "done": "已完成",
-      "dropped": "已放弃",
+      "dropped": "弃置",
       "all": "全部"
     },
     "detail": {
@@ -391,6 +399,8 @@
       "created": "建于",
       "updated": "改于",
       "doneAt": "完成于",
+      "droppedAt": "弃置于",
+      "dropReason": "为什么弃置",
       "tags": "标签",
       "summary": "摘要",
       "context": "背景",

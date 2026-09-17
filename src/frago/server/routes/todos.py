@@ -12,6 +12,10 @@ frago 自带的小 agent，由 agent 去敲 `frago todo add`。服务端从头�
 而且 `todo add` 自带的那些规矩（标题被 slugify 成 id、同一件事不准开第二条）也
 只有走命令行才生效。
 
+界面上的「弃置」是同一条路的另一头：这一件不做了，理由是人自己填的一段话。它不必
+经过 agent（没有什么要替人想的），但仍然由服务端去跑 `frago todo drop`，理由必填、
+已弃置的不许再弃置一次这两条规矩，就长在那条命令上。
+
 分类清单是例外，但不违反上面那条：它不是事务文件，是 `~/.frago/config.json` 里
 的一段本机偏好（见 :mod:`frago.todo.categories`），跟界面上改会话清点门槛、改默认
 内核是同一类写入。那几条规矩（id 不许重复、最多 20 个）也不在命令行里，而在存储
@@ -49,6 +53,10 @@ class TodoItem(BaseModel):
     created: str
     updated: str
     done_at: str | None = None
+    # 弃置的日期与理由。只有 `frago todo drop` 写得出这两项；没弃置过的事务是空的，
+    # 旧事务文件里也没有这两个键。
+    dropped_at: str | None = None
+    drop_reason: str | None = None
     context: str | None = None
     steps: list[str] = []
     done_when: list[str] = []
@@ -170,6 +178,40 @@ async def api_compose_todo(request: TodoComposeRequest) -> TodoComposeResponse:
         raise HTTPException(status_code=502, detail=exc.detail) from exc
 
     return TodoComposeResponse(**result)
+
+
+class TodoDropRequest(BaseModel):
+    """界面上按「弃置」时只填这一句：为什么不做了。"""
+
+    reason: str
+
+
+class TodoDropResponse(BaseModel):
+    """弃置之后那件事务的全貌，外加实际执行的那条命令。
+
+    把整件事务带回去，界面不用再跑一趟清单就能把详情刷新成弃置后的样子；命令摆出来
+    是同一个道理——人得看得见界面替他敲了什么。
+    """
+
+    todo: TodoItem
+    command: list[str]
+
+
+@router.post("/todos/{todo_id}/drop", response_model=TodoDropResponse)
+async def api_drop_todo(todo_id: str, request: TodoDropRequest) -> TodoDropResponse:
+    """弃置一件事务。理由必填，原样记进事务文件。
+
+    这一路仍然不写文件：服务端把 id 和理由交给 `frago todo drop`，由那条命令落盘。
+    """
+    from frago.server.services.todo_drop_service import TodoDropError, TodoDropService
+
+    try:
+        result = await run_in_threadpool(TodoDropService.drop, todo_id, request.reason)
+    except TodoDropError as exc:
+        # 理由空着、事务不存在、它已经弃置过了——都是人能自己处理的，原话带回去。
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    return TodoDropResponse(todo=TodoItem(**result["todo"]), command=result["command"])
 
 
 class TodoCategoryInput(BaseModel):

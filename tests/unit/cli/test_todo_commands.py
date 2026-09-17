@@ -296,3 +296,76 @@ def test_category_rm_reports_referencing_todos(runner):
     res = runner.invoke(todo_group, ["category", "rm", "work", "--force"])
     assert res.exit_code == 0
     assert "2 todo(s) now sort as uncategorized" in res.output
+
+
+# ── 弃置 ────────────────────────────────────────────────────────────────
+
+
+def _drop_target(runner):
+    res = _add(runner, "--title", "drop me")
+    return res.output.split("Created todo ")[1].splitlines()[0].strip()
+
+
+def test_drop_records_the_reason(runner):
+    todo_id = _drop_target(runner)
+    res = runner.invoke(todo_group, ["drop", todo_id, "--reason", "上游换了做法，这条不再成立"])
+    assert res.exit_code == 0, res.output
+    assert "Dropped" in res.output
+    # 回显里带上理由：人刚打完那句话，要看见它被原样收下了。
+    assert "上游换了做法，这条不再成立" in res.output
+
+    shown = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert shown["status"] == "dropped"
+    assert shown["drop_reason"] == "上游换了做法，这条不再成立"
+    assert shown["dropped_at"]
+
+
+def test_drop_without_reason_option_is_refused_by_the_command_itself(runner):
+    todo_id = _drop_target(runner)
+    res = runner.invoke(todo_group, ["drop", todo_id])
+    assert res.exit_code != 0
+    assert "--reason" in res.output
+
+
+def test_drop_with_a_blank_reason_is_refused(runner):
+    todo_id = _drop_target(runner)
+    res = runner.invoke(todo_group, ["drop", todo_id, "--reason", "   "])
+    assert res.exit_code != 0
+    assert "reason is required" in res.output
+
+
+def test_dropping_twice_is_refused(runner):
+    todo_id = _drop_target(runner)
+    runner.invoke(todo_group, ["drop", todo_id, "--reason", "第一次的理由"])
+    res = runner.invoke(todo_group, ["drop", todo_id, "--reason", "第二次的理由"])
+    assert res.exit_code != 0
+    assert "第一次的理由" in res.output
+
+
+@pytest.mark.parametrize("args", [
+    ["edit", "--status", "dropped"],
+    ["log", "记一笔", "--status", "dropped"],
+])
+def test_dropped_is_not_settable_through_edit_or_log(runner, args):
+    """留一条不用给理由的旁路，理由那一栏迟早大半是空的。"""
+    todo_id = _drop_target(runner)
+    res = runner.invoke(todo_group, [args[0], todo_id, *args[1:]])
+    assert res.exit_code != 0
+    assert "'dropped' is not one of" in res.output
+
+
+def test_add_cannot_start_a_todo_as_dropped(runner):
+    res = _add(runner, "--title", "born dropped", "--status", "dropped")
+    assert res.exit_code != 0
+    assert "'dropped' is not one of" in res.output
+
+
+def test_list_can_still_filter_by_dropped(runner):
+    todo_id = _drop_target(runner)
+    runner.invoke(todo_group, ["drop", todo_id, "--reason", "不做了"])
+    _add(runner, "--title", "still here")
+
+    res = runner.invoke(todo_group, ["list", "--status", "dropped"])
+    assert res.exit_code == 0, res.output
+    assert todo_id in res.output
+    assert "(1 todos)" in res.output

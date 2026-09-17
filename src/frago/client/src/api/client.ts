@@ -488,6 +488,9 @@ export interface TodoItem {
   created: string;
   updated: string;
   done_at: string | null;
+  /** 弃置的日期与理由。只有 `frago todo drop` 写得出，没弃置过的是 null。 */
+  dropped_at: string | null;
+  drop_reason: string | null;
   context: string | null;
   steps: string[];
   done_when: string[];
@@ -578,6 +581,28 @@ export async function composeTodo(description: string): Promise<TodoComposeRespo
   return fetchApi<TodoComposeResponse>('/todos', {
     method: 'POST',
     body: JSON.stringify({ description }),
+  });
+}
+
+/** 弃置一件事务之后的回话。 */
+export interface TodoDropResponse {
+  /** 弃置之后那件事务的全貌，界面直接拿它把详情换成新的样子。 */
+  todo: TodoItem;
+  /** 服务端替人敲下的那条命令，摆出来给人看。 */
+  command: string[];
+}
+
+/**
+ * 把一件事务弃置掉：这件不做了，`reason` 说清为什么。
+ *
+ * 理由是必填的，而且一个字不差地记进事务文件——半年后有人翻到这条，第一个问题就是
+ * 「当初为什么不做了」。服务端不写文件，它去跑 `frago todo drop`，规矩长在那条命令上：
+ * 已经弃置过的不许再弃置一次，那会把当初的判断悄悄换掉。
+ */
+export async function dropTodo(todoId: string, reason: string): Promise<TodoDropResponse> {
+  return fetchApi<TodoDropResponse>(`/todos/${encodeURIComponent(todoId)}/drop`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
   });
 }
 

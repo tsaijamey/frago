@@ -1,6 +1,6 @@
 """frago todo — local todo management commands.
 
-  frago todo add/list/show/edit/log/done/rm/schema/next
+  frago todo add/list/show/edit/log/done/drop/rm/schema/next
   frago todo categorize                 # 一批事务一次定分类
   frago todo category list/add/rename/move/rm
 
@@ -28,7 +28,12 @@ import click
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
-_STATUS_CHOICE = click.Choice(["todo", "doing", "done", "dropped"])
+# 能直接设的状态，与能筛的状态是两张表。
+#
+# 「弃置」筛得出来（清单上要看得见被放下的是哪些），但设不进去——它必须带着理由走
+# `frago todo drop`。两张表要是合成一张，`--status dropped` 就是一条绕开理由的旁路。
+_STATUS_CHOICE = click.Choice(["todo", "doing", "done"])
+_STATUS_FILTER_CHOICE = click.Choice(["todo", "doing", "done", "dropped"])
 _PRIORITY_CHOICE = click.Choice(["low", "normal", "high"])
 
 HOWTO_PATH = pkg_files("frago.resources") / "book" / "session-handoff.md"
@@ -191,7 +196,7 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, category, co
 
 
 @todo_group.command(name="list", cls=AgentFriendlyCommand)
-@click.option("--status", type=_STATUS_CHOICE, default=None, help="Filter by status")
+@click.option("--status", type=_STATUS_FILTER_CHOICE, default=None, help="Filter by status")
 @click.option("--priority", type=_PRIORITY_CHOICE, default=None, help="Filter by priority")
 @click.option("--tag", default=None, help="Filter by tag")
 @click.option("--category", default=None,
@@ -327,6 +332,37 @@ def todo_done(ref):
     except (KeyError, ValueError) as e:
         raise click.ClickException(str(e)) from None
     click.echo(f"Marked done {todo.id} (done_at={todo.done_at})")
+
+
+@todo_group.command(name="drop", cls=AgentFriendlyCommand)
+@click.argument("ref")
+@click.option("--reason", required=True,
+              help="Why it is being dropped (required, recorded verbatim)")
+def todo_drop(ref, reason):
+    """Drop a todo — it will not be done, and --reason says why.
+
+    \b
+    Dropping is not completing. `done` says it got finished; dropping says it was
+    put down on purpose. Whoever reads this todo months from now will ask why, and
+    neither the title nor the background answers that — so the reason is required
+    here and nowhere else can set this status.
+
+    \b
+    A todo that is already dropped is refused rather than re-dropped: that would be
+    a second verdict quietly overwriting the first one.
+
+    \b
+    Examples:
+      frago todo drop 20260722-frago-agent --reason "上游换了检测方式，这条不再成立"
+    """
+    from frago.todo import store
+
+    try:
+        todo = store.drop(ref, reason)
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e)) from None
+    click.echo(f"Dropped {todo.id} (dropped_at={todo.dropped_at})")
+    click.echo(f"Reason: {todo.drop_reason}")
 
 
 @todo_group.command(name="rm", cls=AgentFriendlyCommand)

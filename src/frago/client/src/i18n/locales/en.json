@@ -331,6 +331,14 @@
       "nothingCreated": "The agent finished without landing a todo. See what it says below.",
       "failed": "Not created: {{message}}"
     },
+    "drop": {
+      "button": "Drop this",
+      "desc": "This one will not be done. Say why — that is what whoever reads it months from now will ask. The reason is recorded verbatim.",
+      "placeholder": "Why it is being dropped",
+      "submit": "Drop it",
+      "working": "Dropping…",
+      "failed": "Not dropped: {{message}}"
+    },
     "loadFailed": "Could not load todos: {{message}}",
     "notFound": "The todo in this link is not in the list: {{id}}",
     "stepCount": "{{n}} steps",
@@ -391,6 +399,8 @@
       "created": "Created",
       "updated": "Updated",
       "doneAt": "Completed",
+      "droppedAt": "Dropped on",
+      "dropReason": "Why it was dropped",
       "tags": "Tags",
       "summary": "Summary",
       "context": "Context",
