@@ -6,7 +6,7 @@
 
 **让你的电脑成为 AI agent 的操作系统**
 
-简体中文 · [English](README.md) · [使用指南](docs/user-guide.zh-CN.md) · [配方系统](docs/recipes.zh-CN.md) · [讨论区](https://github.com/tsaijamey/frago/discussions)
+简体中文 · [English](README.md) · [**安装**](#安装) · [使用指南](docs/user-guide.zh-CN.md) · [配方系统](docs/recipes.zh-CN.md) · [讨论区](https://github.com/tsaijamey/frago/discussions)
 
 [![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
@@ -204,7 +204,30 @@ frago 不生产回执，**也不挑边**。它做的是把**每一家**的记录
 
 ## 安装
 
-需要 Python 3.13+，macOS、Windows、Linux 都能用。
+**没有东西要下载。** 装 frago 的是你手上已经有的那个 agent：把安装 skill 加进 Claude Code，然后开口
+要它装。skill 会备好 git 和 uv、拉源码、建环境、部署 hook，再带你把凭证配上，最后开一张欢迎页，让
+这台机器自己演一遍它现在能干什么——整个过程你不用亲手敲一条 frago 命令。
+
+```
+/plugin marketplace add tsaijamey/how-to-install-frago
+/plugin install how-to-install-frago@how-to-install-frago
+```
+
+然后开口就行：**安装 frago**
+
+→ [**how-to-install-frago**](https://github.com/tsaijamey/how-to-install-frago) — skill 自己的仓库
+
+macOS、Windows、Linux 都能用。驱动安装的是 Claude Code；装完之后 opencode、codex 也可以作为 agent
+内核使用。装 frago 本身只要 git 和 uv，另外几样是按能力来的——派活要 tmux、浏览器自动化要 Edge、
+录制要 ffmpeg、Linux 上跑配方要 bubblewrap。skill 会问你打算用哪些，配好它们，并说清哪些仍然用不了。
+
+<details>
+<summary><b>想自己动手装？</b> 包在 PyPI 上。</summary>
+
+<br>
+
+需要 Python 3.13+。这条路给你 CLI 和网页界面，但 skill 做的那些机器准备工作一样都没有——hook、
+凭证、各项能力的依赖都得你自己来。
 
 ```bash
 uv tool install frago-cli   # 安装
@@ -213,6 +236,8 @@ frago server start          # 启动网页界面，打开 http://127.0.0.1:8093
 ```
 
 还没装 uv，或者想用一行命令装好，见[安装指南](docs/installation.zh-CN.md)。
+
+</details>
 
 > frago 没有桌面客户端。GitHub Releases 页面上旧版本附带的安装包已停止维护。
 
