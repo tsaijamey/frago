@@ -280,9 +280,6 @@ export default function GitHubSetupModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[1100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div className="my-8 w-full max-w-2xl rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] shadow-xl">
         {/* Header */}

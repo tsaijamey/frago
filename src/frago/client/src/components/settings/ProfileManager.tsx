@@ -34,9 +34,6 @@ export default function ProfileManager({
   return createPortal(
     <div
       className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1100]"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div className="bg-[var(--bg-base)] rounded-lg shadow-xl max-w-lg w-full mx-4 border border-[var(--border-color)] max-h-[80vh] flex flex-col">
         {/* Header */}

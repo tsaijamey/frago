@@ -119,9 +119,6 @@ export default function SyncDialog({ isOpen, onClose, status, onStarted }: SyncD
   return createPortal(
     <div
       className="fixed inset-0 z-[1100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !starting) onClose();
-      }}
     >
       <div className="my-8 w-full max-w-2xl rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] shadow-xl">
         <div className="flex items-center justify-between border-b border-[var(--border-color)] p-4">
