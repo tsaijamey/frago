@@ -6,7 +6,7 @@
 
 **Turn your computer into an operating system for AI agents**
 
-English · [简体中文](README.zh-CN.md) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
+English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
 
 [![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
@@ -209,7 +209,32 @@ and will most likely have nothing to do with any of these.
 
 ## Install
 
-Requires Python 3.13+. Works on macOS, Windows and Linux.
+**There's nothing to download.** frago is installed by the agent you already have. Add the install
+skill to Claude Code and ask for it — the skill prepares git and uv, clones the source, builds the
+environment, deploys the hooks, walks you through credentials, and finishes by opening a welcome
+page where the machine shows you what it can now do. You never type a frago command yourself.
+
+```
+/plugin marketplace add tsaijamey/how-to-install-frago
+/plugin install how-to-install-frago@how-to-install-frago
+```
+
+Then just ask it: **install frago**
+
+→ [**how-to-install-frago**](https://github.com/tsaijamey/how-to-install-frago) — the skill's own repository
+
+Works on macOS, Windows and Linux. Claude Code drives the install; opencode and codex work as agent
+cores once it's done. Installing needs only git and uv — a few more things are needed per capability
+(tmux to delegate work, Edge for browser automation, ffmpeg to record, bubblewrap to run recipes on
+Linux), and the skill asks what you intend to use, sets that up, and says what stays unavailable.
+
+<details>
+<summary><b>Rather do it yourself?</b> The package is on PyPI.</summary>
+
+<br>
+
+Requires Python 3.13+. This gets you the CLI and the web UI, but none of the machine preparation
+the skill does — hooks, credentials and per-capability dependencies are left to you.
 
 ```bash
 uv tool install frago-cli   # install
@@ -218,6 +243,8 @@ frago server start          # start the web UI at http://127.0.0.1:8093
 ```
 
 Don't have uv yet, or want the one-line installer? See [Installation](docs/installation.md).
+
+</details>
 
 > There is no desktop app. The installers attached to older GitHub Releases are no longer maintained.
 
