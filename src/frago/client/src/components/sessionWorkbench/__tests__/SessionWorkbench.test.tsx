@@ -268,6 +268,13 @@ describe('RecordStream 中栏', () => {
       expect(screen.getByTestId('lens-system').textContent).toContain('1');
     });
 
+    it('打开就落在对话那一档，工具与记账不铺开', () => {
+      render(<RecordStream {...streamProps({ records: mixed })} />);
+      expect(screen.getByText('开工')).toBeTruthy();
+      expect(screen.getByText('好的')).toBeTruthy();
+      expect(screen.queryByTestId('hook-inject')).toBeNull();
+    });
+
     it('挑一档就只剩那一档', () => {
       render(<RecordStream {...streamProps({ records: mixed })} />);
       fireEvent.click(screen.getByTestId('lens-hook'));
