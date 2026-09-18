@@ -21,6 +21,7 @@ import {
   notifyText,
   stateOf,
   targetText,
+  timeoutText,
 } from './scheduleMeta';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -189,6 +190,7 @@ export default function ScheduleDetail({
         </Prop>
         <Prop label={t('schedules.detail.kind')}>{t(`schedules.kind.${schedule.kind}`)}</Prop>
         <Prop label={t('schedules.detail.frequency')}>{frequencyText(schedule, t)}</Prop>
+        <Prop label={t('schedules.detail.timeout')}>{timeoutText(schedule, t)}</Prop>
         <Prop label={t('schedules.detail.nextRun')}>
           {schedule.enabled ? (
             formatTime(schedule.next_run_at)

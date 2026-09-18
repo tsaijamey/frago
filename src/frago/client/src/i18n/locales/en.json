@@ -449,6 +449,11 @@
       "recipe": "Recipe",
       "prompt": "Prompt"
     },
+    "limit": {
+      "hours": "{{n}}h",
+      "minutes": "{{n}}m",
+      "seconds": "{{n}}s"
+    },
     "freq": {
       "cron": "cron {{expr}}",
       "hours": "every {{n}}h",
@@ -494,6 +499,7 @@
       "status": "Status",
       "kind": "Type",
       "frequency": "Frequency",
+      "timeout": "Time limit",
       "nextRun": "Next run",
       "lastRun": "Last scheduled run",
       "lastSuccess": "Last success",

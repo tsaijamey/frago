@@ -449,6 +449,11 @@
       "recipe": "配方",
       "prompt": "自然语言"
     },
+    "limit": {
+      "hours": "{{n}} 小时",
+      "minutes": "{{n}} 分钟",
+      "seconds": "{{n}} 秒"
+    },
     "freq": {
       "cron": "cron {{expr}}",
       "hours": "每 {{n}} 小时",
@@ -494,6 +499,7 @@
       "status": "状态",
       "kind": "类型",
       "frequency": "频率",
+      "timeout": "时限",
       "nextRun": "下次运行",
       "lastRun": "上次按周期运行",
       "lastSuccess": "上次成功",

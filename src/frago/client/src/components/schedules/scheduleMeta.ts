@@ -52,6 +52,15 @@ export function frequencyText(s: ScheduleItem, t: TFunction): string {
   return t('schedules.freq.seconds', { n: sec });
 }
 
+/** 一次最多跑多久，到点就被掐掉。没显式给过的任务是默认的 300 秒。 */
+export function timeoutText(s: ScheduleItem, t: TFunction): string {
+  const sec = s.timeout;
+  if (!sec) return '—';
+  if (sec % 3600 === 0) return t('schedules.limit.hours', { n: sec / 3600 });
+  if (sec % 60 === 0) return t('schedules.limit.minutes', { n: sec / 60 });
+  return t('schedules.limit.seconds', { n: sec });
+}
+
 /** 这条任务执行的是什么：命令原文、配方名、或那句自然语言。 */
 export function targetText(s: ScheduleItem): string {
   if (s.kind === 'command') return s.command ?? '';
