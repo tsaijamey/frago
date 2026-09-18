@@ -5,7 +5,6 @@ Tests content preview and viewer functionality.
 import time
 from pathlib import Path
 
-
 from frago.server.services.viewer_service import (
     AUDIO_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -76,6 +75,60 @@ class TestViewerServiceEnsureDirectories:
 
         assert content_dir.exists()
         assert resources_dir.exists()
+
+
+class TestViewerServiceEnsureResources:
+    """包里升级了资源，本机那份副本要跟上。
+
+    从前目标目录在就整个跳过：mermaid 从 10 升到 12 以后，装过的机器上 `frago view`
+    还在用旧引擎，页面引用的新样式文件也不存在。
+    """
+
+    def _point_at(self, tmp_path, monkeypatch):
+        package = tmp_path / "package"
+        (package / "mermaid").mkdir(parents=True)
+        local = tmp_path / "local"
+        monkeypatch.setattr(
+            "frago.server.services.viewer_service.get_package_resources_path",
+            lambda: package,
+        )
+        monkeypatch.setattr(
+            "frago.server.services.viewer_service.CONTENT_DIR", local / "content"
+        )
+        monkeypatch.setattr(
+            "frago.server.services.viewer_service.RESOURCES_DIR", local / "resources"
+        )
+        return package / "mermaid", local / "resources" / "mermaid"
+
+    def test_copies_missing_directory(self, tmp_path, monkeypatch):
+        src, dst = self._point_at(tmp_path, monkeypatch)
+        (src / "mermaid.min.js").write_text("v12")
+
+        ViewerService.ensure_resources()
+
+        assert (dst / "mermaid.min.js").read_text() == "v12"
+
+    def test_overwrites_changed_file_and_adds_new_one(self, tmp_path, monkeypatch):
+        src, dst = self._point_at(tmp_path, monkeypatch)
+        dst.mkdir(parents=True)
+        (dst / "mermaid.min.js").write_text("v10 old copy")
+        (src / "mermaid.min.js").write_text("v12")
+        (src / "frago-theme.js").write_text("theme")
+
+        ViewerService.ensure_resources()
+
+        assert (dst / "mermaid.min.js").read_text() == "v12"
+        assert (dst / "frago-theme.js").read_text() == "theme"
+
+    def test_leaves_local_only_files_alone(self, tmp_path, monkeypatch):
+        src, dst = self._point_at(tmp_path, monkeypatch)
+        dst.mkdir(parents=True)
+        (dst / "extra.js").write_text("user's own")
+        (src / "mermaid.min.js").write_text("v12")
+
+        ViewerService.ensure_resources()
+
+        assert (dst / "extra.js").read_text() == "user's own"
 
 
 class TestViewerServiceGenerateContentId:

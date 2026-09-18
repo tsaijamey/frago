@@ -524,14 +524,16 @@ def render_document(
     {body_content}
     <script src="{resources_base}/highlight/highlight.min.js"></script>
     <script src="{resources_base}/mermaid/mermaid.min.js"></script>
+    <script src="{resources_base}/mermaid/frago-theme.js"></script>
     <script>
         document.querySelectorAll('pre code').forEach((block) => {{
             hljs.highlightElement(block);
         }});
-        mermaid.initialize({{
-            startOnLoad: true,
-            theme: 'dark',
-            securityLevel: 'loose'
+        // 图的样式与 WebUI、frago apps 共用 frago-theme.js；本页是深色底。
+        // 看的是用户自己的文档，沿用原来的 loose，标签里写的 HTML 照常生效。
+        mermaid.initialize(Object.assign(fragoMermaid.config('dark'), {{ securityLevel: 'loose' }}));
+        mermaid.run({{ querySelector: '.mermaid' }}).then(() => {{
+            document.querySelectorAll('.mermaid svg').forEach((svg) => fragoMermaid.postProcess(svg));
         }});{wrap_toggle_script}{wechat_copy_script}
     </script>
 </body>
@@ -543,7 +545,7 @@ def _render_pdf_viewer() -> str:
     return '<div id="pdf-container"></div>'
 
 
-def _render_pdf_page(title: str, theme: str, resources_base: str = "") -> str:
+def _render_pdf_page(title: str, theme: str, resources_base: str = "") -> str:  # noqa: ARG001 — kept for signature parity with the doc page
     """Render complete PDF viewer page.
 
     Args:

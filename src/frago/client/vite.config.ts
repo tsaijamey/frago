@@ -59,6 +59,8 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // mermaid 图的样式放在包内资源目录，与 frago view、frago apps 共用一份，不在前端根下。
+    fs: { allow: ['.', '../resources/viewer/mermaid'] },
     // dev 下前端独立起服务，接口与推送转给本机后端，页面拿到的是真实数据。
     proxy: {
       '/api': { target: 'http://127.0.0.1:8093', changeOrigin: true },

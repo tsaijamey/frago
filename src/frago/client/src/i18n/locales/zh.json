@@ -1027,6 +1027,8 @@
     "retry": "重试"
   },
   "common": {
+    "diagramFailed": "图没画出来：{{reason}}",
+    "diagramRendering": "正在画图…",
     "loading": "加载中...",
     "loadingConfiguration": "加载配置中...",
     "save": "保存",

@@ -4,6 +4,7 @@ Manages content preparation and resources for the viewer functionality.
 Content is stored in ~/.frago/viewer/ with automatic cleanup of old content.
 """
 
+import filecmp
 import hashlib
 import shutil
 import time
@@ -23,6 +24,23 @@ VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"}
 THREE_EXTENSIONS = {".gltf", ".glb"}
+
+
+def _sync_tree(src: Path, dst: Path) -> None:
+    """把包内一个资源目录同步到本机副本：缺的补上，内容变了的覆盖。
+
+    从前是「目标目录在就整个跳过」，包里升级了 mermaid 这类库，本机副本永远停在
+    第一次安装时的版本，页面引用的新文件（如 frago-theme.js）也永远不会出现。
+    比对走文件大小加修改时间，复制时保留修改时间，没变的文件第二次起一眼就过。
+    """
+    for path in src.rglob("*"):
+        if not path.is_file():
+            continue
+        target = dst / path.relative_to(src)
+        if target.exists() and filecmp.cmp(path, target, shallow=True):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def get_package_resources_path() -> Path:
@@ -56,11 +74,8 @@ class ViewerService:
 
         for res_dir in resource_dirs:
             src = package_resources / res_dir
-            dst = RESOURCES_DIR / res_dir
-
-            # Copy if destination doesn't exist
-            if src.exists() and not dst.exists():
-                shutil.copytree(src, dst)
+            if src.exists():
+                _sync_tree(src, RESOURCES_DIR / res_dir)
 
     @staticmethod
     def generate_content_id(content: str, file_path: Path | None = None) -> str:

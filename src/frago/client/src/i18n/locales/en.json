@@ -1027,6 +1027,8 @@
     "retry": "Retry"
   },
   "common": {
+    "diagramFailed": "Couldn't draw this diagram: {{reason}}",
+    "diagramRendering": "Drawing diagram…",
     "loading": "Loading...",
     "loadingConfiguration": "Loading configuration...",
     "save": "Save",

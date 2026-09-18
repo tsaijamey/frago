@@ -8,6 +8,8 @@ apps 是「输入 → 交付成品」的内置能力集合。与 recipe / skill 
 首个 app 是 mermaid：输入 mermaid 文本 → SVG。渲染走 ``frago browser
 -b cdp`` 无头模式——复用系统 Chromium + 包内已分发的 mermaid.min.js
 （viewer 在用同一份），不弹用户浏览器窗口、不引入任何新增体积。
+样式读包内 frago-theme.js，与 WebUI、``frago view`` 画出来的图是同一套；
+导出的 SVG 多半要贴进白底的文档和幻灯片，所以用浅色那一版。
 """
 
 from __future__ import annotations
@@ -96,34 +98,51 @@ def _ensure_browser_up() -> None:
         raise click.ClickException("无法启动无头渲染浏览器")
 
 
-def _mermaid_asset() -> str:
-    """读包内 mermaid.min.js（viewer 与 apps 共用同一份，杜绝第二份真相）。"""
+def _mermaid_asset(name: str = "mermaid.min.js") -> str:
+    """读包内 mermaid 目录下的脚本（viewer 与 apps 共用同一份，杜绝第二份真相）。
+
+    ``mermaid.min.js`` 是引擎，``frago-theme.js`` 是三处画图共用的样式。
+    """
     try:
         # 包内资源用 importlib.resources 定位，不依赖源码路径。
         data = importlib.resources.files(
             "frago.resources.viewer.mermaid"
-        ).joinpath("mermaid.min.js").read_bytes()
+        ).joinpath(name).read_bytes()
         return data.decode("utf-8")
     except Exception as e:  # pragma: no cover - 资产缺失属打包错误
         raise click.ClickException(
-            f"包内 mermaid.min.js 读取失败：{e}"
+            f"包内 {name} 读取失败：{e}"
         ) from e
 
 
 def _render_mermaid(mermaid_text: str) -> str:
     """mermaid 文本 → SVG（无头渲染，不打扰用户）。
 
-    流程：内联 mermaid.js + 用户文本拼单个 HTML → 写临时目录 →
+    流程：内联 mermaid.js + 样式脚本 + 用户文本拼单个 HTML → 写临时目录 →
     navigate file:// → exec-js 抓 .mermaid svg outerHTML → 清理。
+
+    页面画完（含样式后处理）才在 body 上打 ``data-done``，画不出来打
+    ``data-error``；轮询只认这两个标记，不会抓到后处理之前的半成品。
     """
-    asset = _mermaid_asset()
+    engine = _mermaid_asset()
+    theme = _mermaid_asset("frago-theme.js")
     escaped = html.escape(mermaid_text)
     document = (
-        "<!DOCTYPE html><html><head><script>"
-        f"{asset}"
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><script>'
+        f"{engine}"
+        "</script><script>"
+        f"{theme}"
         "</script></head><body>"
         f'<div class="mermaid">{escaped}</div>'
-        "<script>mermaid.initialize({startOnLoad:true});</script>"
+        "<script>"
+        "mermaid.initialize(fragoMermaid.config('light'));"
+        "mermaid.run({querySelector: '.mermaid'}).then(function () {"
+        "fragoMermaid.postProcess(document.querySelector('.mermaid svg'));"
+        "document.body.dataset.done = '1';"
+        "}, function (e) {"
+        "document.body.dataset.error = String((e && e.message) || e);"
+        "});"
+        "</script>"
         "</body></html>"
     )
 
@@ -140,10 +159,11 @@ def _render_mermaid(mermaid_text: str) -> str:
         if nav.returncode != 0:
             raise click.ClickException(f"导航渲染页面失败：{nav.stderr.strip()}")
 
-        # 等 mermaid 渲染完成（异步初始化），轮询 SVG 出现。
+        # 等 mermaid 渲染完成（异步），轮询页面上的完成/出错标记。
         script = (
-            'document.querySelector(".mermaid svg") ? '
-            'document.querySelector(".mermaid svg").outerHTML : null'
+            'document.body.dataset.error ? "ERROR:" + document.body.dataset.error : '
+            '(document.body.dataset.done ? '
+            'document.querySelector(".mermaid svg").outerHTML : null)'
         )
         svg: str | None = None
         deadline = time.monotonic() + 20
@@ -152,6 +172,10 @@ def _render_mermaid(mermaid_text: str) -> str:
                 "exec-js", "--group", APPS_GROUP, script, "--return-value"
             )
             value = _extract_exec_result(result)
+            if value and value.startswith("ERROR:"):
+                raise click.ClickException(
+                    f"mermaid 渲染失败：{value.removeprefix('ERROR:').strip()}"
+                )
             if value:
                 svg = value
                 break
