@@ -4,15 +4,13 @@
  * 拉 `GET /api/workbench/sessions`：三家（Claude Code / opencode / codex）的会话已经
  * 在核心数据层合并并按**最后一句回复的时刻**倒序，这里一个字不重排。
  *
- * 搜索是**两条腿**：本地那条按标题、目录、会话编号即时筛，敲一个字就有反应；另一条
- * 把同一句话发去 `GET /api/workbench/search`，在会话内容（提示词与 agent 回复正文）
- * 里找。两条的结果取并集——人记得住的有时是标题，有时是当时说过的那句话，堵掉任何
- * 一条都会让搜索在最该用上的时候用不上。
+ * 搜会话不在这里：它是全站的 ⌘K 浮窗（见 `SessionSearchPalette`），结果只摆在浮窗里，
+ * 不去筛这份清单。
  *
  * 与 `/api/claude-sessions` 那条路井水不犯河水——那条背后有正在跑的会话页。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { useTranslation } from 'react-i18next';
 
@@ -161,43 +159,6 @@ export const DAY_OPTIONS = [1, 2, 7] as const;
 
 export type DayRange = 0 | (typeof DAY_OPTIONS)[number];
 
-/** 会话内容里的一处命中。只可能出自提示词或 agent 回复正文。 */
-export interface ContentHit {
-  record_id: string;
-  kind: 'user.say' | 'agent.say';
-  ts: number;
-  /** 命中处前后各留一小段，空白已压平。 */
-  snippet: string;
-}
-
-/** 一场会话的内容命中情况。 */
-export interface ContentMatch {
-  session_id: string;
-  family: SessionFamily;
-  /** 命中了多少条记录（不是多少次）。 */
-  hit_count: number;
-  hits: ContentHit[];
-  /** 这场会话的命中太多，报出来的不是全部。 */
-  capped: boolean;
-}
-
-/** 内容检索这一路的现状。 */
-export interface ContentSearchState {
-  /** 这批结果对应的是哪一句话。跟输入框不一定同步——结果总比敲字慢半拍。 */
-  query: string;
-  matches: Map<string, ContentMatch>;
-  searching: boolean;
-  /** 这一趟哪里没做全。NEVER 藏起来——做不全却不说等于谎报覆盖面。 */
-  warnings: string[];
-  error: string | null;
-}
-
-/** 敲完字等多久才去搜内容。一趟内容检索是秒级的，边敲边发只会白烧。 */
-export const SEARCH_DEBOUNCE_MS = 450;
-
-/** 少于这么多字不去搜内容：一个字能命中几乎所有会话，搜了也没用。 */
-export const MIN_CONTENT_QUERY = 2;
-
 /**
  * 左栏隔多久自己去取一次清单。
  *
@@ -206,41 +167,12 @@ export const MIN_CONTENT_QUERY = 2;
  */
 export const SESSION_REFRESH_MS = 15_000;
 
-export async function fetchContentMatches(
-  query: string,
-  signal?: AbortSignal
-): Promise<{ matches: ContentMatch[]; warnings: string[] }> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/workbench/search?q=${encodeURIComponent(query)}`,
-    { signal }
-  );
-  if (!res.ok) {
-    throw new Error(i18n.t('workbench.errors.contentSearchFailed', { status: res.status }));
-  }
-  const body = (await res.json()) as { sessions?: ContentMatch[]; warnings?: string[] };
-  return { matches: body.sessions ?? [], warnings: body.warnings ?? [] };
-}
-
 export interface WorkbenchSessionsState {
   sessions: WorkbenchSession[];
   /** 过滤后的清单，左栏实际渲染的就是它。 */
   visible: WorkbenchSession[];
-  /**
-   * 只过了搜索这一道、还没按状态与时间范围收窄的那一批。**置顶区渲染的是它。**
-   *
-   * 置顶区不跟状态与时间范围走：那两道答的是"翻哪一段、翻哪一档"，而置顶区的意义正是
-   * "这几场我随时要回来"——点一下「7 天」就让人自己挑出来的那几场消失，是把筛选的语义
-   * 套到了一个根本不该被筛的地方。搜索另说：那一刻人是在找某一场，置顶区跟着筛才不会答
-   * 非所问。
-   *
-   * 摆在这里而不是让左栏自己再筛一遍：搜索是两条腿取并集（见 `searched`），判据抄第二遍
-   * 迟早两处各走各的。
-   */
-  searched: WorkbenchSession[];
   loading: boolean;
   error: string | null;
-  search: string;
-  setSearch: (value: string) => void;
   status: StatusFilter;
   setStatus: (value: StatusFilter) => void;
   /** 只看最近几天有过动静的。0 = 不限。 */
@@ -249,12 +181,10 @@ export interface WorkbenchSessionsState {
   /**
    * 每一档各有几场，外加总数。全是已经发生的绝对数，没有分母。
    *
-   * 计数按**搜索与时间范围之后、状态筛选之前**算：筛掉的那几档也要报出真实条数，否则点进
+   * 计数按**时间范围之后、状态筛选之前**算：筛掉的那几档也要报出真实条数，否则点进
    * 「出错」看到 8 场、退回「全部」又变成另一个数，人会以为漏了。
    */
   counts: StatusCounts;
-  /** 内容检索这一路的现状。左栏据此显示"搜内容中"与每场的命中摘要。 */
-  content: ContentSearchState;
   reload: () => Promise<void>;
 }
 
@@ -282,7 +212,6 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
   }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [days, setDays] = useState<DayRange>(1);
 
@@ -356,86 +285,15 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
   );
 
   /**
-   * 内容检索：敲字停下来才发，且**只发最后那一句**。
-   *
-   * 每敲一个字发一趟的话，服务端要在 3.2 GB 语料上白扫十几遍，而前面那些结果一个都
-   * 不会被看到。前一趟没回来就换了词时直接掐掉，NEVER 让慢的那趟后到、把新词的结果
-   * 盖回旧的。
-   */
-  const [content, setContent] = useState<ContentSearchState>({
-    query: '',
-    matches: new Map(),
-    searching: false,
-    warnings: [],
-    error: null,
-  });
-  const inflight = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    const q = search.trim();
-    inflight.current?.abort();
-    if (q.length < MIN_CONTENT_QUERY) {
-      setContent({ query: q, matches: new Map(), searching: false, warnings: [], error: null });
-      return;
-    }
-    setContent((prev) => ({ ...prev, searching: true, error: null }));
-    const timer = setTimeout(() => {
-      const controller = new AbortController();
-      inflight.current = controller;
-      fetchContentMatches(q, controller.signal)
-        .then(({ matches, warnings }) => {
-          setContent({
-            query: q,
-            matches: new Map(matches.map((m) => [m.session_id, m])),
-            searching: false,
-            warnings,
-            error: null,
-          });
-        })
-        .catch((e: unknown) => {
-          if (e instanceof DOMException && e.name === 'AbortError') return;
-          setContent({
-            query: q,
-            matches: new Map(),
-            searching: false,
-            warnings: [],
-            error: e instanceof Error ? e.message : String(e),
-          });
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  /**
-   * 搜索之后、按状态筛之前的那一批。计数与筛选都从它出发。
-   *
-   * 本地那条腿（标题、目录、编号）与内容那条腿取**并集**：两者各能答一半问题，取交集
-   * 会让"记得说过什么但不记得叫什么"的场景一场都搜不到。
-   */
-  const searched = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter(
-      (s) =>
-        content.matches.has(s.session_id) ||
-        [s.title, s.directory, s.session_id, s.digest_done ?? '', s.digest_stuck ?? '']
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-          .includes(q)
-    );
-  }, [sessions, search, content.matches]);
-
-  /**
    * 再按时间范围收一道。比的是**清单排序用的那个时刻**（见 `activityTs`），不是创建
    * 时刻——人问「最近七天」，问的是这七天里说过话的会话，一场半年前开、昨天还在跑的
    * 必须留下。跟排序共用同一个时刻，否则会出现"排在第一条却被七天筛掉"这种怪事。
    */
   const inRange = useMemo(() => {
-    if (!days) return searched;
+    if (!days) return sessions;
     const floor = Date.now() - days * 24 * 60 * 60 * 1000;
-    return searched.filter((s) => activityTs(s) >= floor);
-  }, [searched, days]);
+    return sessions.filter((s) => activityTs(s) >= floor);
+  }, [sessions, days]);
 
   const counts = useMemo(() => {
     const c: StatusCounts = { all: inRange.length, running: 0, error: 0, done: 0, idle: 0 };
@@ -453,17 +311,13 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
   return {
     sessions,
     visible,
-    searched,
     loading,
     error,
-    search,
-    setSearch,
     status,
     setStatus,
     days,
     setDays,
     counts,
-    content,
     reload,
   };
 }

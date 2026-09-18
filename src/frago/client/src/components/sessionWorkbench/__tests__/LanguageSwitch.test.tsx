@@ -58,17 +58,13 @@ function railState(rows: WorkbenchSession[]): WorkbenchSessionsState {
   return {
     sessions: rows,
     visible: rows,
-    searched: rows,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: rows.length, running: rows.length, error: 0, done: 0, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
   };
 }

@@ -6,16 +6,15 @@
  * **清单是两层的：主干是主会话，frago 派出去的 worker 折在派活的那一场下面。** 本机两千多
  * 场会话里一千五百场是 worker，摊平在同一列里，人找自己刚才谈的那一场要一直往下翻。判据
  * 全在服务端（每张卡带着「谁开的」与「谁派的活」两个字段），这里只负责摆位置：派活的那场
- * 也在清单里就折进去，认不出出处的收进末尾那一区，其余留在主干。搜索时整棵树摊开——那一刻
- * 人是在找某一句话，命中的要是一个折起来的 worker，折着就等于没搜到。
+ * 也在清单里就折进去，认不出出处的收进末尾那一区，其余留在主干。
  *
  * **筛选是两个维度，不是一个。** 状态答「现在什么情况」，时间范围答「哪一段时间的」，
  * 两者并存、互不替代。按来源筛的那一维不在这里——一千多场 Claude Code 会话摆在一起，
  * 知道它们都来自 Claude Code 没有任何用；来源仍在每张卡上看得见，改由底部汇总报两家各几场。
  *
- * **搜索有两条腿。** 标题、目录、编号在本地即时筛，敲一个字就有反应；会话内容（提示词
- * 与 agent 回复正文）由服务端搜，慢一拍，所以它自己报进度、自己报哪里没搜全。两条的
- * 结果取并集，命中的那几场把命中的原话摆到卡片上。
+ * **搜索不筛这张清单。** 顶上那一整行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗
+ * （见 `SessionSearchPalette`），结果只摆在浮窗里。清单答的是「现在什么情况」，被一句
+ * 搜索词筛过之后它既不是全部、也不像搜索结果。
  *
  * **状态与摘要一个字都不在这里推导。** 服务端已经判完四档、填好两格摘要，界面照着显示。
  * 摆两处判据迟早各走各的，那时中栏和左栏会对同一场会话说两种话。
@@ -32,8 +31,7 @@
  * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶
  * 的次序而不是活动时刻，数量不设上限，整片可以折起来。它**不跟状态与时间范围走**——那
  * 两道答的是「翻哪一段、翻哪一档」，而置顶答的是「这几场我随时要回来」，点一下「7 天」
- * 就让人挑出来的那几场消失，是把筛选的语义套到了一个不该被筛的地方。搜索另说：那一刻人
- * 是在找某一场，置顶区跟着筛才不会答非所问。
+ * 就让人挑出来的那几场消失，是把筛选的语义套到了一个不该被筛的地方。
  *
  * 一场都没置顶时不长分区标题，整片仍是从前那个单列清单——空着的分区标题只是噪音。
  *
@@ -64,7 +62,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, useUIStore } from '@/stores/appStore';
+import { modKey } from '@/hooks/usePlatform';
 import Modal from '@/components/ui/Modal';
 import SessionItem, { resumeCommand } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
@@ -78,7 +77,6 @@ import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
   activityTs,
   DAY_OPTIONS,
-  MIN_CONTENT_QUERY,
   STATUS_LABEL_KEY,
   type DayRange,
   type StatusFilter,
@@ -215,21 +213,18 @@ export default function SessionRail({
   const {
     sessions,
     visible,
-    searched,
     counts,
     loading,
     error,
-    search,
-    setSearch,
     status,
     setStatus,
     days,
     setDays,
-    content,
     reload,
   } = state;
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
+  const openSearch = useUIStore((s) => s.setSessionSearchOpen);
   const pins = useSessionPins();
   const groups = useSessionGroups();
   const views = useSessionViews();
@@ -268,10 +263,10 @@ export default function SessionRail({
   const pinnedRows = useMemo(() => {
     if (!pins.pinned.length) return [];
     const rank = new Map(pins.pinned.map((id, i) => [id, i]));
-    return searched
+    return sessions
       .filter((s) => rank.has(s.session_id))
       .sort((a, b) => rank.get(a.session_id)! - rank.get(b.session_id)!);
-  }, [searched, pins.pinned]);
+  }, [sessions, pins.pinned]);
 
   /**
    * 把那一列会话摆成两层：主干是主会话，frago 派出去的 worker 折在派活的那一场下面。
@@ -284,9 +279,6 @@ export default function SessionRail({
    * - 派活的那场会话**也在当前这份清单里** → 折到它下面。
    * - 是 worker 但认不出谁派的（或派活的那场被筛掉了）→ 收进末尾那一区。
    * - 其余 → 主干。
-   *
-   * **搜索的时候整棵树摊开。** 那一刻人是在找某一句话，命中的要是一个折起来的 worker，
-   * 折着就等于没搜到。
    */
   const { trunkRows, childrenOf, orphanRows } = useMemo(() => {
     // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
@@ -318,8 +310,6 @@ export default function SessionRail({
     return { trunkRows: trunk, childrenOf: children, orphanRows: orphans };
   }, [visible, pins]);
 
-  const searching = search.trim().length > 0;
-
   /**
    * 主干按分组拆成几区。一个标签都没有时为空，清单照从前那样摆。
    *
@@ -327,12 +317,10 @@ export default function SessionRail({
    * 时刻排——主干本来就按活动时刻倒序，每组第一场就是最近那场——正在推进的主题在上面；
    * 一场都没有的组排最后，照建的次序。
    *
-   * 只有搜索时一场都不剩的区才不长标题：那一刻人在找某一场，摆着一排「0」答非所问。
    * 状态与时间范围不藏标题——左栏默认就停在「在跑、1 天」，按它藏的话一开页分组全不见了；
    * 标题上的数跟着筛选走，人照样看得出这一档里哪几组有东西。
    */
   const grouping = groups.tags.length > 0;
-  const filtering = searching;
   const { tags: groupTags, groupOf } = groups;
   const sections = useMemo(() => {
     if (!grouping) return [];
@@ -354,16 +342,13 @@ export default function SessionRail({
       .map((tag) => ({ key: tag.id, tag: tag as GroupTag | null, sessions: buckets.get(tag.id) ?? [] }))
       .sort((a, b) => latest(b.sessions) - latest(a.sessions));
     return [{ key: UNGROUPED, tag: null as GroupTag | null, sessions: ungrouped }, ...tagged].filter(
-      (section) => section.sessions.length > 0 || (section.tag !== null && !filtering)
+      (section) => section.sessions.length > 0 || section.tag !== null
     );
-  }, [grouping, groupTags, groupOf, trunkRows, filtering]);
+  }, [grouping, groupTags, groupOf, trunkRows]);
 
-  /** 这一区摊没摊开。搜索时整片摊开——命中的要是折在某一区里，折着就等于没搜到。 */
+  /** 这一区摊没摊开。 */
   const { isCollapsed } = groups;
-  const sectionOpen = useCallback(
-    (key: string) => searching || !isCollapsed(key),
-    [searching, isCollapsed]
-  );
+  const sectionOpen = useCallback((key: string) => !isCollapsed(key), [isCollapsed]);
 
   /**
    * 这一批清单放到哪儿了。
@@ -371,11 +356,11 @@ export default function SessionRail({
    * **预算先喂主干，主干摆完才轮到末尾那一区。** 那一区默认折着，折着的时候一条都不渲染，
    * 也就不该占掉这一批的名额——否则人还没看见任何 worker，主干却已经被截断了。
    *
-   * 换一个筛选档、改一次搜索词，清单换成了另一批会话，这时候还停在第三页是答非所问：
-   * 那三页是上一批的进度。所以那三样一变就回到第一页（见下面的重置）。置顶不在此列——
+   * 换一个筛选档，清单换成了另一批会话，这时候还停在第三页是答非所问：
+   * 那三页是上一批的进度。所以那两样一变就回到第一页（见下面的重置）。置顶不在此列——
    * 置顶区不受分页管，它本来就是人自己挑出来的几场，摆在最上面。
    */
-  const orphansVisible = orphansOpen || searching;
+  const orphansVisible = orphansOpen;
   /**
    * 主干里这一刻摊开着的那几场。分了组就只算摊开的那几区——折着的区一场都不渲染，
    * 不该占掉这一批的名额。
@@ -397,7 +382,7 @@ export default function SessionRail({
 
   useEffect(() => {
     setShown(PAGE_SIZE);
-  }, [search, status, days]);
+  }, [status, days]);
 
   /**
    * 摆进列表的每一行：分区标题与会话卡走同一条队。
@@ -412,7 +397,7 @@ export default function SessionRail({
   const rows = useMemo<RailRow[]>(() => {
     const trunkWithKids = (session: WorkbenchSession): RailRow[] => {
       const kids = childrenOf.get(session.session_id) ?? [];
-      const expanded = searching || expandedWorkers.has(session.session_id);
+      const expanded = expandedWorkers.has(session.session_id);
       const head: RailRow = {
         kind: 'session',
         session,
@@ -496,7 +481,6 @@ export default function SessionRail({
     orphanRows.length,
     pagedOrphans,
     expandedWorkers,
-    searching,
     grouping,
     sections,
     sectionOpen,
@@ -684,36 +668,48 @@ export default function SessionRail({
           <span>{t('workbench.rail.newSession')}</span>
         </button>
 
-        <div className="flex items-center gap-1.5">
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] bg-bg-subtle px-2.5 ring-1 ring-inset ring-transparent focus-within:ring-border-strong">
-            <Search size={14} strokeWidth={1.5} className="shrink-0 text-text-muted" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('workbench.rail.searchPlaceholder')}
-              aria-label={t('workbench.rail.searchLabel')}
-              className="w-full min-w-0 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-muted"
-            />
-            {content.searching ? (
-              <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
-            ) : null}
-            {search ? (
+        {/* 搜索入口独占一行。它不是输入框：点下去打开全站的搜会话浮窗，结果只在浮窗里，
+            这张清单不跟着筛。右端摆着快捷键，下回人就不必再伸手来点。 */}
+        <button
+          type="button"
+          onClick={() => openSearch(true)}
+          data-testid="session-search-trigger"
+          aria-label={t('sessionSearch.label')}
+          className="flex h-8 w-full items-center gap-1.5 rounded-[8px] bg-bg-subtle px-2.5 text-[13px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
+        >
+          <Search size={14} strokeWidth={1.5} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-left">{t('sessionSearch.trigger')}</span>
+          <kbd className="shrink-0 rounded-[4px] border border-border-color px-1 font-mono text-[10px] leading-[16px]">
+            {modKey}K
+          </kbd>
+        </button>
+
+        {/* 时间范围这一行的右端顺带放刷新与 AI 分组：两颗都是对整张清单的动作，与筛选同属
+            「这张清单怎么摆」，不值得为它们另起一行，也不该挤占搜索那一整行。 */}
+        <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+            {DAY_FILTERS.map((d) => (
               <button
+                key={d}
                 type="button"
-                onClick={() => setSearch('')}
-                aria-label={t('workbench.rail.clearSearch')}
-                className="shrink-0 text-text-muted hover:text-text-primary"
+                onClick={() => setDays(d)}
+                aria-pressed={days === d}
+                data-testid={`day-filter-${d}`}
+                className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
+                  days === d ? CHIP_ON : CHIP_OFF
+                }`}
               >
-                <X size={13} />
+                {d === 0 ? t('workbench.rail.dayAll') : t('workbench.rail.dayRange', { days: d })}
               </button>
-            ) : null}
+            ))}
           </div>
           <button
             type="button"
             onClick={() => void reload()}
             disabled={loading}
             aria-label={t('workbench.rail.reload')}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+            title={t('workbench.rail.reload')}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
           >
             {loading ? (
               <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
@@ -729,7 +725,7 @@ export default function SessionRail({
             aria-label={t('workbench.rail.groupAiHint')}
             title={t('workbench.rail.groupAiHint')}
             data-testid="group-ai"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
           >
             {aiJob.running ? (
               <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
@@ -737,23 +733,6 @@ export default function SessionRail({
               <Sparkles size={14} strokeWidth={1.5} />
             )}
           </button>
-        </div>
-
-        <div className="flex flex-wrap gap-1">
-          {DAY_FILTERS.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDays(d)}
-              aria-pressed={days === d}
-              data-testid={`day-filter-${d}`}
-              className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
-                days === d ? CHIP_ON : CHIP_OFF
-              }`}
-            >
-              {d === 0 ? t('workbench.rail.dayAll') : t('workbench.rail.dayRange', { days: d })}
-            </button>
-          ))}
         </div>
 
         <div className="flex flex-wrap gap-1">
@@ -776,17 +755,6 @@ export default function SessionRail({
           ))}
         </div>
 
-        {/* 内容检索比敲字慢一拍，所以它自己报进度。没搜到就明说没搜到，NEVER 让人
-            对着一份只按标题筛出来的清单以为"内容里也没有"。 */}
-        {search.trim().length >= MIN_CONTENT_QUERY ? (
-          <p data-testid="content-search-status" className="text-[11px] text-text-muted">
-            {content.error
-              ? content.error
-              : content.searching
-                ? t('workbench.rail.contentSearching')
-                : t('workbench.rail.contentHits', { n: content.matches.size })}
-          </p>
-        ) : null}
         {/* AI 在跑时一直报它走到哪：一批要几十秒，不报的话那颗转圈看起来像卡住了。 */}
         {aiJob.running ? (
           <p data-testid="group-ai-status" className="text-[11px] text-text-muted">
@@ -795,11 +763,6 @@ export default function SessionRail({
               : t('workbench.rail.groupAiProgress', { done: aiJob.done, total: aiJob.total })}
           </p>
         ) : null}
-        {content.warnings.map((warning) => (
-          <p key={warning} className="text-[11px] text-text-secondary">
-            {warning}
-          </p>
-        ))}
       </div>
 
       {/* 正在起的那一场先占一行。它摆在滚动区**外面**：这一行的意义是"你刚建的那场在
@@ -1051,7 +1014,6 @@ export default function SessionRail({
                     copied={copiedId === session.session_id}
                     pinned={pins.isPinned(session.session_id)}
                     unread={views.isUnread(session)}
-                    contentMatch={content.matches.get(session.session_id) ?? null}
                     nested={row.nested}
                     workerCount={row.workerCount}
                     workersExpanded={row.workersExpanded}

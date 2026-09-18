@@ -224,17 +224,13 @@ vi.mock('@/hooks/useWorkbenchSessions', async (importOriginal) => ({
   useWorkbenchSessions: () => ({
     sessions: page.sessions,
     visible: page.sessions,
-    searched: page.sessions,
     loading: false,
     error: null,
-    search: '',
-    setSearch: () => {},
     status: 'all',
     setStatus: () => {},
     days: 0,
     setDays: () => {},
     counts: { all: 0, running: 0, error: 0, done: 0, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
   }),
 }));

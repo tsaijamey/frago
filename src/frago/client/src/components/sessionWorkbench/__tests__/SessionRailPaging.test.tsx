@@ -100,17 +100,13 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
-    searched: rows,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -183,19 +179,6 @@ describe('SessionRail 分批加载', () => {
     expect(shownCount()).toBe(100);
     rerender(
       <SessionRail state={railState(rows, { status: 'done' })} selectedId={null} onSelect={NOOP} />
-    );
-    expect(shownCount()).toBe(50);
-  });
-
-  it('改一次搜索词同样回到第一批', () => {
-    const rows = trunkOf(765);
-    const { rerender } = render(
-      <SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
-    );
-    fireEvent.click(screen.getByTestId('scroll-to-end'));
-    expect(shownCount()).toBe(100);
-    rerender(
-      <SessionRail state={railState(rows, { search: '备份' })} selectedId={null} onSelect={NOOP} />
     );
     expect(shownCount()).toBe(50);
   });

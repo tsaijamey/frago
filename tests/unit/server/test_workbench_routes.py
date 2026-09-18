@@ -286,58 +286,70 @@ class TestRawIsWithheld:
         assert response.status_code == 404
 
 
-class TestContentSearch:
-    """内容检索这一层只做取用与序列化，怎么搜由 ``record_search`` 那份用例把关。"""
+class TestSessionSearch:
+    """搜会话这一层只做取用与序列化，怎么搜由 ``frago session search`` 那份用例把关。"""
 
-    def _stub(self, monkeypatch, outcome):
-        from frago.session import record_search
+    def _stub(self, monkeypatch, result):
+        from frago.session import search
 
-        monkeypatch.setattr(record_search, "search_sessions", lambda *_a, **_k: outcome)
+        seen: dict = {}
+
+        def fake(query, **kwargs):
+            seen.update(query=query, **kwargs)
+            return result
+
+        monkeypatch.setattr(search, "search_sessions", fake)
+        return seen
+
+    def _result(self, **overrides):
+        from frago.session.search import KeywordPlan, SearchResult
+
+        fields = dict(
+            query="飞书",
+            plan=KeywordPlan(["飞书", "lark"], "中英两种叫法", "agent"),
+            hits=[],
+            corpus_root="/tmp/sessions",
+            scanned_sessions=7,
+            duration_ms=12,
+        )
+        fields.update(overrides)
+        return SearchResult(**fields)
 
     def test_命中的会话与摘要原样交出来(self, client, monkeypatch):
-        from frago.session.record_search import ContentHit, SearchOutcome, SessionMatch
+        from frago.session.search import SessionHit, Snippet
 
-        self._stub(
-            monkeypatch,
-            SearchOutcome(
-                query="飞书",
-                matches=[
-                    SessionMatch(
-                        session_id=CC_SID,
-                        family="claude-code",
-                        hit_count=3,
-                        hits=[
-                            ContentHit(
-                                record_id="rec-1",
-                                kind="user.say",
-                                ts=1_700_000_000_000,
-                                snippet="…把飞书那条推送修一下…",
-                            )
-                        ],
-                    )
-                ],
-                scanned_files=7,
-            ),
+        hit = SessionHit(
+            source="claude",
+            session_id=CC_SID,
+            title="飞书推送",
+            cwd="/tmp/somewhere",
+            last_activity=1_700_000_000.0,
+            matched_terms=["飞书"],
+            hit_lines=3,
+            location="/tmp/sessions/claude/x/raw.jsonl",
+            resume_command=f"claude --resume {CC_SID}",
+            snippets=[Snippet(term="飞书", text="…把飞书那条推送修一下…")],
         )
-        body = client.get("/api/workbench/search?q=飞书").json()
-        assert body["terms"] == ["飞书"]
-        assert body["scanned_files"] == 7
-        (row,) = body["sessions"]
+        seen = self._stub(monkeypatch, self._result(hits=[hit]))
+        body = client.get("/api/workbench/search?q=飞书&top=5").json()
+        assert seen == {"query": "飞书", "top": 5}
+        assert body["plan"]["terms"] == ["飞书", "lark"]
+        assert body["scanned_sessions"] == 7
+        (row,) = body["hits"]
         assert row["session_id"] == CC_SID
-        assert row["hit_count"] == 3
-        assert row["hits"][0]["snippet"] == "…把飞书那条推送修一下…"
+        assert row["hit_lines"] == 3
+        assert row["snippets"][0]["text"] == "…把飞书那条推送修一下…"
 
     def test_没做全的地方必须报出来(self, client, monkeypatch):
         """做不全却不说，等于谎报覆盖面。"""
-        from frago.session.record_search import SearchOutcome
-
-        self._stub(monkeypatch, SearchOutcome(query="x", warnings=["ripgrep 不在 PATH 上"]))
+        self._stub(monkeypatch, self._result(warnings=["关键词扩展超时，退回原句切词"]))
         assert client.get("/api/workbench/search?q=x").json()["warnings"] == [
-            "ripgrep 不在 PATH 上"
+            "关键词扩展超时，退回原句切词"
         ]
 
     def test_不给要搜什么就不受理(self, client):
         assert client.get("/api/workbench/search").status_code == 422
+        assert client.get("/api/workbench/search?q=").status_code == 422
 
 
 class TestExistingRoutesUntouched:

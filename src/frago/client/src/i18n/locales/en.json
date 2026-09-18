@@ -1277,15 +1277,10 @@
     },
     "rail": {
       "newSession": "New session",
-      "searchPlaceholder": "Search titles, directories, or things said in a session",
-      "searchLabel": "Search sessions",
-      "clearSearch": "Clear search",
       "reload": "Reload the list",
       "filterAll": "All",
       "dayAll": "Any time",
       "dayRange": "{{days}}d",
-      "contentSearching": "Searching inside sessions…",
-      "contentHits": "{{n}} sessions matched inside",
       "empty": "No sessions match",
       "pinnedHeader": "Pinned",
       "restHeader": "Everything else",
@@ -1304,10 +1299,6 @@
       "pinThis": "Pin this session",
       "unpin": "Unpin",
       "copyResume": "Copy the resume command",
-      "hitUserSay": "You said",
-      "hitAgentSay": "Reply",
-      "moreHits": "{{n}} more in this session",
-      "moreHitsCapped": " (and more — too many to count)",
       "digestDone": "Done",
       "digestStuck": "Stuck at",
       "justNow": "just now",
@@ -1576,7 +1567,6 @@
     },
     "errors": {
       "sessionsFetchFailed": "Couldn't get the session list (HTTP {{status}})",
-      "contentSearchFailed": "Can't search content (HTTP {{status}})",
       "recordsFetchFailed": "Couldn't get the records (HTTP {{status}})",
       "rawWithheld": "Raw text not provided (HTTP {{status}})",
       "pinsFetchFailed": "Couldn't get the pinned list (HTTP {{status}})",
@@ -1700,5 +1690,22 @@
     "doneAllGood": "{{ok}} upgraded, all fine.",
     "doneNeedsYou": "{{ok}} upgraded. {{n}} still need you — the red cells below have the command to run.",
     "versionCurrentOnly": "Now {{current}} · no upstream version"
+  },
+  "sessionSearch": {
+    "label": "Search sessions",
+    "trigger": "Search sessions",
+    "placeholder": "Say what you remember, then press Enter",
+    "hint": "Say it the way you remember it. A model first turns it into keywords, then every session on this machine is searched — the same search as frago session search.",
+    "searching": "Turning “{{query}}” into keywords and searching every session — this takes a few seconds",
+    "terms": "Keywords",
+    "summary": "{{n}} sessions · searched {{scanned}} · {{seconds}}s",
+    "empty": "No session matched. Try saying it differently.",
+    "failed": "Search failed (HTTP {{status}})",
+    "matched": "{{n}}/{{total}} keywords",
+    "degraded": "partial copy only",
+    "navigate": "Select",
+    "open": "Open",
+    "search": "Search",
+    "close": "Close"
   }
 }

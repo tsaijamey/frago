@@ -2,7 +2,7 @@
  * UI state (Zustand)
  *
  * Owns: toast queue, sidebar collapse, global loading flag, the agent
- * attached-session id, plus the legacy console* slice.
+ * attached-session id, the ⌘K session-search palette, plus the legacy console* slice.
  *
  * NOTE: the console* fields are flagged legacy but are still actively used by
  * NewTaskPage.tsx (reads + getState + length-based rendering). They are kept
@@ -39,6 +39,9 @@ export interface UISlice {
   // Agent attached session state (for real-time streaming in TaskDetail)
   agentAttachedId: string | null; // Internal ID of attached session (null = detached/polling mode)
 
+  /** ⌘K 搜会话的浮窗开着没有。全站一个，左栏那一行入口与快捷键开的是同一个。 */
+  sessionSearchOpen: boolean;
+
   // Console state (legacy, to be removed once NewTaskPage is migrated)
   consoleInternalId: string | null;
   consoleSessionId: string | null;
@@ -54,6 +57,8 @@ export interface UISlice {
 
   // Agent attached session actions
   setAgentAttachedId: (id: string | null) => void;
+
+  setSessionSearchOpen: (open: boolean) => void;
 
   // Console actions (legacy)
   setConsoleInternalId: (id: string | null) => void;
@@ -87,6 +92,7 @@ export const useUIStore = create<UISlice>((set, get) => ({
   isLoading: false,
   toasts: [],
   agentAttachedId: null,
+  sessionSearchOpen: false,
 
   // Console initial state (legacy)
   consoleInternalId: null,
@@ -135,6 +141,8 @@ export const useUIStore = create<UISlice>((set, get) => ({
       toasts: state.toasts.filter((t) => t.id !== id),
     }));
   },
+
+  setSessionSearchOpen: (open) => set({ sessionSearchOpen: open }),
 
   // Agent attached session actions
   setAgentAttachedId: (id) => {

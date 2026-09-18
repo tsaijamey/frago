@@ -87,17 +87,13 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
-    searched: rows,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -212,19 +208,5 @@ describe('SessionRail 认不出谁派的那些 worker', () => {
     render(<SessionRail state={state} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('workers-header'));
     expect(screen.getAllByTestId('session-item')).toHaveLength(2);
-  });
-});
-
-describe('SessionRail 搜索时整棵树摊开', () => {
-  it('搜索中不必手点就看得见 worker', () => {
-    const rows = [...FAMILY, session({ session_id: LONER, origin: 'worker' })];
-    render(
-      <SessionRail
-        state={railState(rows, { search: '会话' })}
-        selectedId={null}
-        onSelect={NOOP}
-      />
-    );
-    expect(screen.getAllByTestId('session-item')).toHaveLength(4);
   });
 });

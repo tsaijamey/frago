@@ -15,6 +15,7 @@ import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObser
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
+import { useUIStore } from '@/stores/appStore';
 
 /**
  * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
@@ -314,17 +315,13 @@ function railState(over: Partial<WorkbenchSessionsState> = {}): WorkbenchSession
   return {
     sessions,
     visible: sessions,
-    searched: sessions,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: 2, running: 0, error: 0, done: 1, idle: 1 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -434,88 +431,6 @@ describe('SessionRail 左栏', () => {
     expect(screen.getByTestId('digest-stuck').textContent).toContain('连接中断');
   });
 
-  it('内容命中时把命中的原话摆到卡上，并顶掉「已完成」那一格', () => {
-    const one = session({ session_id: SID, digest_done: '把镜头判断追加进了 verdict.jsonl' });
-    render(
-      <SessionRail
-        state={railState({
-          sessions: [one],
-          visible: [one],
-          search: '飞书',
-          content: {
-            query: '飞书',
-            searching: false,
-            warnings: [],
-            error: null,
-            matches: new Map([
-              [
-                SID,
-                {
-                  session_id: SID,
-                  family: 'claude-code' as const,
-                  hit_count: 3,
-                  capped: false,
-                  hits: [
-                    {
-                      record_id: 'r1',
-                      kind: 'user.say' as const,
-                      ts: 1,
-                      snippet: '…把飞书那条推送修一下…',
-                    },
-                  ],
-                },
-              ],
-            ]),
-          },
-        })}
-        selectedId={null}
-        onSelect={NOOP}
-      />
-    );
-    expect(screen.getByTestId('content-hits').textContent).toContain('把飞书那条推送修一下');
-    expect(screen.getByTestId('content-hits').textContent).toContain('这场还有 2 处');
-    expect(screen.queryByTestId('digest-done')).toBeNull();
-  });
-
-  it('内容检索慢一拍，所以它自己报进度，也报哪里没搜全', () => {
-    const { rerender } = render(
-      <SessionRail
-        state={railState({
-          search: '飞书',
-          content: {
-            query: '',
-            searching: true,
-            warnings: [],
-            error: null,
-            matches: new Map(),
-          },
-        })}
-        selectedId={null}
-        onSelect={NOOP}
-      />
-    );
-    expect(screen.getByTestId('content-search-status').textContent).toContain('正在会话内容里找');
-
-    rerender(
-      <SessionRail
-        state={railState({
-          search: '飞书',
-          content: {
-            query: '飞书',
-            searching: false,
-            warnings: ['ripgrep 不在 PATH 上'],
-            error: null,
-            matches: new Map(),
-          },
-        })}
-        selectedId={null}
-        onSelect={NOOP}
-      />
-    );
-    expect(screen.getByTestId('content-search-status').textContent).toContain('命中 0 场');
-    expect(screen.getByText('ripgrep 不在 PATH 上')).toBeTruthy();
-  });
-
   it('摘要取不到时整行不出现，不留一句占位的话', () => {
     render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
     expect(screen.queryByTestId('digest-done')).toBeNull();
@@ -532,15 +447,13 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByTestId('status-filter-waiting')).toBeNull();
   });
 
-  it('搜索框能改词，也能一键清空', () => {
-    const setSearch = vi.fn();
-    render(
-      <SessionRail state={railState({ search: '镜头', setSearch })} selectedId={null} onSelect={NOOP} />
-    );
-    fireEvent.change(screen.getByLabelText('搜会话'), { target: { value: '旁白' } });
-    expect(setSearch).toHaveBeenCalledWith('旁白');
-    fireEvent.click(screen.getByLabelText('清空搜索'));
-    expect(setSearch).toHaveBeenCalledWith('');
+  it('搜索那一行只是入口：点它打开全站的搜会话浮窗，清单不跟着筛', () => {
+    useUIStore.getState().setSessionSearchOpen(false);
+    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    expect(screen.queryByRole('textbox', { name: '搜会话' })).toBeNull();
+    fireEvent.click(screen.getByTestId('session-search-trigger'));
+    expect(useUIStore.getState().sessionSearchOpen).toBe(true);
+    useUIStore.getState().setSessionSearchOpen(false);
   });
 
   it('时间范围三档与不限并排，且与状态筛选各管各的', () => {

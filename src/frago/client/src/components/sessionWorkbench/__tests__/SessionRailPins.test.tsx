@@ -76,17 +76,13 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
-    searched: rows,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -196,20 +192,11 @@ describe('SessionRail 置顶区', () => {
     pins.pinned = [OC_SID];
     const state = railState(rows, {
       visible: [rows[0]],
-      searched: rows,
       status: 'running',
       days: 7,
     });
     render(<SessionRail state={state} selectedId={null} onSelect={NOOP} />);
     expect(titles().some((t) => t.includes(OC_SID))).toBe(true);
-  });
-
-  it('置顶区跟着搜索走', () => {
-    // 这一刻人在找某一场，置顶区摆出搜不着的那几场只会答非所问。
-    pins.pinned = [OC_SID];
-    const state = railState(rows, { visible: [rows[0]], searched: [rows[0]], search: '找某一场' });
-    render(<SessionRail state={state} selectedId={null} onSelect={NOOP} />);
-    expect(titles().some((t) => t.includes(OC_SID))).toBe(false);
   });
 
   it('名单里有编号、清单里没那场时就是不显示，也不报错', () => {

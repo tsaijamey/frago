@@ -37,7 +37,8 @@ from frago.server.services.webui_uploads import (
     save_uploaded_documents,
     save_uploaded_images,
 )
-from frago.session import record_reader, record_search
+from frago.session import record_reader
+from frago.session import search as session_search
 from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
 
@@ -229,32 +230,23 @@ async def read_workbench_records(
 
 
 @router.get("/workbench/search")
-async def search_workbench_content(
-    q: str = Query(..., description="要在会话内容里找的一句话，空格分开的多个词是「并且」"),
-    limit: int = Query(60, ge=1, le=200, description="每一家最多报几场"),
-    per_session: int = Query(2, ge=1, le=10, description="每场最多附几条摘要"),
+async def search_workbench_sessions(
+    q: str = Query(..., min_length=1, description="要找的一句话，照人话写，不必是关键词"),
+    top: int = Query(20, ge=1, le=50, description="最多报几场"),
 ) -> dict[str, Any]:
-    """在会话内容里找一句话，只认提示词与 agent 回复正文。
+    """搜会话，与 ``frago session search`` 是同一条路：模型先把这句话摊成一组关键词，再扫遍
+    ``~/.frago/sessions`` 的会话备份，按命中的不同关键词数排序。
 
-    左栏原本只搜得到标题、目录、会话编号，可人记得住的往往是当时说过的那句话。搜的
-    范围**刻意只有对话**：工具参数、工具输出、hook 注入体量是对话的几十倍，掺进来的
-    结果人一条都认不出是自己要的。
+    界面与命令行必须搜出同一批结果——人在终端里搜到过的那一场，在网页上换个入口就该还在，
+    所以这里不另写检索，只把 :func:`frago.session.search.search_sessions` 的结果原样交出去。
 
-    ``warnings`` 里是这一趟没做全的地方（没装 ripgrep、命中太多只报了一部分）。
+    一趟里模型扩展要十几秒，界面据此只在人按下回车时才发，不边敲边搜。
+
+    ``warnings`` 里是这一趟没做全的地方（扩展失败退回原句切词、有几场只剩加工副本）。
     **NEVER 把它当可选字段丢掉**——做不全却不说，等于谎报覆盖面。
-
-    落盘检索是同步的，丢进工作线程跑，免得一次搜索把整个事件循环停住。
     """
-    outcome = await asyncio.to_thread(
-        record_search.search_sessions, q, limit=limit, per_session=per_session
-    )
-    return {
-        "query": outcome.query,
-        "terms": record_search.split_terms(q),
-        "sessions": [asdict(match) for match in outcome.matches],
-        "scanned_files": outcome.scanned_files,
-        "warnings": outcome.warnings,
-    }
+    result = await asyncio.to_thread(session_search.search_sessions, q, top=top)
+    return asdict(result)
 
 
 @router.get("/workbench/pins")

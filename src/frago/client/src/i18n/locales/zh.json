@@ -1277,15 +1277,10 @@
     },
     "rail": {
       "newSession": "新建会话",
-      "searchPlaceholder": "搜标题、目录，或会话里说过的话",
-      "searchLabel": "搜会话",
-      "clearSearch": "清空搜索",
       "reload": "重新拉清单",
       "filterAll": "全部",
       "dayAll": "不限",
       "dayRange": "{{days}} 天",
-      "contentSearching": "正在会话内容里找…",
-      "contentHits": "会话内容里命中 {{n}} 场",
       "empty": "没有匹配的会话",
       "pinnedHeader": "置顶",
       "restHeader": "其余",
@@ -1304,10 +1299,6 @@
       "pinThis": "置顶这场会话",
       "unpin": "取消置顶",
       "copyResume": "复制恢复命令",
-      "hitUserSay": "你说",
-      "hitAgentSay": "回复",
-      "moreHits": "这场还有 {{n}} 处",
-      "moreHitsCapped": "（不止，太多了没数完）",
       "digestDone": "已完成",
       "digestStuck": "卡在",
       "justNow": "刚刚",
@@ -1576,7 +1567,6 @@
     },
     "errors": {
       "sessionsFetchFailed": "会话清单取不到（HTTP {{status}}）",
-      "contentSearchFailed": "内容搜不了（HTTP {{status}}）",
       "recordsFetchFailed": "记录取不到（HTTP {{status}}）",
       "rawWithheld": "原文不予提供（HTTP {{status}}）",
       "pinsFetchFailed": "置顶名单取不到（HTTP {{status}}）",
@@ -1700,5 +1690,22 @@
     "doneAllGood": "升好了 {{ok}} 样，都没问题。",
     "doneNeedsYou": "升好了 {{ok}} 样，还有 {{n}} 样要你自己动手——下面标红的格子里有该跑的命令。",
     "versionCurrentOnly": "现在 {{current}} · 外面查不到版本"
+  },
+  "sessionSearch": {
+    "label": "搜会话",
+    "trigger": "搜会话",
+    "placeholder": "说一句你记得的事，回车开搜",
+    "hint": "照你记得的样子说。模型先把这句话摊成关键词，再翻遍本机的全部会话——与 frago session search 是同一条检索。",
+    "searching": "正在把「{{query}}」摊成关键词、翻遍本机会话，要十几秒",
+    "terms": "关键词",
+    "summary": "{{n}} 场 · 翻了 {{scanned}} 场 · {{seconds}} 秒",
+    "empty": "没有命中，换个说法再搜一次",
+    "failed": "搜不了（HTTP {{status}}）",
+    "matched": "命中 {{n}}/{{total}} 个词",
+    "degraded": "只剩加工副本",
+    "navigate": "选择",
+    "open": "打开",
+    "search": "搜索",
+    "close": "关闭"
   }
 }

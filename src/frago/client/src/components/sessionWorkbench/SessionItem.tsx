@@ -3,13 +3,12 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, CornerDownRight, Pin, Quote, Tag } from 'lucide-react';
+import { Check, Copy, CornerDownRight, Pin, Tag } from 'lucide-react';
 import { LiveRing } from '@/components/ui/LiveEdge';
 import i18n from '@/i18n';
 import {
   activityTs,
   useWorkbenchLabels,
-  type ContentMatch,
   type SessionStatus,
   type WorkbenchSession,
 } from '@/hooks/useWorkbenchSessions';
@@ -125,46 +124,12 @@ function StatusDot({ status }: { status: SessionStatus }) {
   );
 }
 
-/**
- * 内容命中摘要。**有命中就顶掉「已完成」那一格**——这一刻人是在找那句话，
- * 卡片上最该出现的就是它，而不是这场会话最后做完了什么。
- */
-function ContentHits({ match }: { match: ContentMatch }) {
-  const { t } = useTranslation();
-  const more = match.hit_count - match.hits.length;
-  return (
-    <div data-testid="content-hits" className="mt-1 space-y-1">
-      {match.hits.map((hit) => (
-        <p
-          key={hit.record_id}
-          className="line-clamp-2 rounded-[5px] bg-bg-subtle px-1.5 py-1 text-[11px] leading-[1.55] text-text-secondary"
-        >
-          <Quote size={9} className="mr-1 inline align-baseline text-text-muted" />
-          <span className="text-text-muted">
-            {hit.kind === 'user.say'
-              ? t('workbench.rail.hitUserSay')
-              : t('workbench.rail.hitAgentSay')}{' '}
-          </span>
-          {hit.snippet}
-        </p>
-      ))}
-      {more > 0 ? (
-        <p className="text-[11px] text-text-muted">
-          {t('workbench.rail.moreHits', { n: more })}
-          {match.capped ? t('workbench.rail.moreHitsCapped') : ''}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 export default function SessionItem({
   session,
   selected,
   copied,
   pinned = false,
   unread = false,
-  contentMatch,
   nested = false,
   workerCount = 0,
   workersExpanded = false,
@@ -186,8 +151,6 @@ export default function SessionItem({
    * 而且你至少点开过它一次。
    */
   unread?: boolean;
-  /** 这场会话在内容检索里命中了什么。没搜内容、或这场没命中时为 null。 */
-  contentMatch?: ContentMatch | null;
   /**
    * 这一行是挂在别人下面的 worker。
    *
@@ -411,8 +374,7 @@ export default function SessionItem({
         </button>
       </div>
 
-      {contentMatch ? <ContentHits match={contentMatch} /> : null}
-      {!contentMatch && session.digest_done ? (
+      {session.digest_done ? (
         <p
           data-testid="digest-done"
           className="mt-1 line-clamp-2 text-[11px] leading-[1.5] text-text-muted"

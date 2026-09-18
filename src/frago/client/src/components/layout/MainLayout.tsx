@@ -18,6 +18,7 @@ import Sidebar from './Sidebar';
 import MobileTabBar from './MobileTabBar';
 import GitHubGuardBanner from '@/components/github/GitHubGuardBanner';
 import RecipeAppHost from '@/components/recipes/RecipeAppHost';
+import SessionSearchPalette from '@/components/sessionWorkbench/SessionSearchPalette';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -46,6 +47,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
       {/* Phone-only bottom tab bar (rail is hidden ≤640px) */}
       <MobileTabBar />
+
+      {/* ⌘K 搜会话的浮窗挂在这一层，哪一页按都能开。 */}
+      <SessionSearchPalette />
     </div>
   );
 }

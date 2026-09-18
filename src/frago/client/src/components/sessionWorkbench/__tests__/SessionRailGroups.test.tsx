@@ -131,17 +131,13 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
-    searched: rows,
     loading: false,
     error: null,
-    search: '',
-    setSearch: NOOP,
     status: 'all',
     setStatus: NOOP,
     days: 0,
     setDays: NOOP,
     counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
-    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -222,18 +218,9 @@ describe('SessionRail 分组区', () => {
     expect(groups.toggleCollapsed).toHaveBeenCalledWith('t1');
   });
 
-  it('搜索时整片摊开', () => {
-    groups.tags = [{ id: 't1', name: '会话页', source: 'human' }];
-    groups.map = { [B]: 't1' };
-    render(
-      <SessionRail state={railState(rows, { search: '会话' })} selectedId={null} onSelect={NOOP} />
-    );
-    expect(titles().some((t) => t.includes(B))).toBe(true);
-  });
-
-  it('筛状态、时间范围时空标签照样摆出来，搜索时空区不长标题', () => {
+  it('筛状态、时间范围时空标签照样摆出来', () => {
     groups.tags = [{ id: 't_empty', name: '刚建的', source: 'human' }];
-    const { unmount } = render(
+    render(
       <SessionRail
         state={railState(rows, { status: 'running', days: 1 })}
         selectedId={null}
@@ -241,11 +228,6 @@ describe('SessionRail 分组区', () => {
       />
     );
     expect(headers().some((h) => h.includes('刚建的'))).toBe(true);
-    unmount();
-    render(
-      <SessionRail state={railState(rows, { search: '会话' })} selectedId={null} onSelect={NOOP} />
-    );
-    expect(headers().some((h) => h.includes('刚建的'))).toBe(false);
   });
 
   it('置顶的那场不在分区里再出现一次', () => {

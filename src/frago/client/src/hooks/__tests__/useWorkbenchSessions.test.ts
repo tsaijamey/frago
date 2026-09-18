@@ -109,17 +109,6 @@ describe('useWorkbenchSessions', () => {
     expect(result.current.counts.all).toBe(2);
     expect(result.current.counts.done).toBe(1);
   });
-
-  it('搜索先收一道，时间范围再收一道', async () => {
-    const result = await loaded();
-    act(() => result.current.setStatus('all'));
-    act(() => result.current.setDays(0));
-
-    act(() => result.current.setSearch('动过'));
-    expect(result.current.counts.all).toBe(2);
-    act(() => result.current.setDays(1));
-    expect(result.current.visible.map((s) => s.session_id)).toEqual(['today']);
-  });
 });
 
 describe('切去别的菜单再回来', () => {
@@ -197,73 +186,5 @@ describe('排序与筛选用的时刻', () => {
     act(() => hook.result.current.setDays(7));
 
     expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['really-talked']);
-  });
-});
-
-describe('内容检索这条腿', () => {
-  it('太短的词不发请求，只走本地那一条', async () => {
-    const result = await loaded();
-
-    act(() => result.current.setSearch('动'));
-
-    expect(result.current.content.searching).toBe(false);
-    expect(result.current.content.matches.size).toBe(0);
-  });
-
-  it('内容命中的会话即使标题对不上也要留在清单里', async () => {
-    vi.useFakeTimers();
-    try {
-      const calls: string[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (url: string) => {
-          calls.push(url);
-          if (url.includes('/api/workbench/search')) {
-            return {
-              ok: true,
-              json: async () => ({
-                sessions: [
-                  {
-                    session_id: 'old',
-                    family: 'opencode',
-                    hit_count: 3,
-                    capped: false,
-                    hits: [
-                      {
-                        record_id: 'r1',
-                        kind: 'user.say',
-                        ts: 1,
-                        snippet: '…把飞书那条推送修一下…',
-                      },
-                    ],
-                  },
-                ],
-                warnings: ['ripgrep 不在 PATH 上'],
-              }),
-            };
-          }
-          return { ok: true, json: async () => fixture() };
-        }) as unknown as typeof fetch
-      );
-
-      const hook = renderHook(() => useWorkbenchSessions());
-      await vi.waitFor(() => expect(hook.result.current.sessions).toHaveLength(3));
-
-      act(() => hook.result.current.setStatus('all'));
-      act(() => hook.result.current.setDays(0));
-      act(() => hook.result.current.setSearch('飞书推送'));
-      // 敲完字要等一拍才发，这一拍之内不该有请求。
-      expect(calls.some((u) => u.includes('/api/workbench/search'))).toBe(false);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(600);
-      });
-
-      // 标题里没有「飞书推送」，纯靠内容命中留下来。
-      expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['old']);
-      expect(hook.result.current.content.matches.get('old')?.hit_count).toBe(3);
-      expect(hook.result.current.content.warnings).toEqual(['ripgrep 不在 PATH 上']);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });
