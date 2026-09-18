@@ -100,6 +100,10 @@
   category: must
   brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"
 
+- name: must-diagram-reply
+  category: must
+  brief: "回复里用 ```mermaid 代码块画图代替文字，NEVER 用字符拼图：多方交接画时序图、进度画进度流程图、几条路选一条画决策图、用户点名要流程就画流程图；图替代散文不做补充，图后一到三句结论；状态标记只用在进度图，NEVER 写颜色"
+
 # 偏好类 — 有更好的方式
 - name: better-recipe-gate
   category: better
