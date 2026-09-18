@@ -578,6 +578,73 @@
       "priority": 290,
       "description": "why: 会话内派子代理不经 Worker 配置，内置 Explore 更会按 Anthropic opus 档发请求、被第三方端点接成自家旗舰（2026-09-11 实测：Explore 子代理按 deepseek-v4-pro 计费，用户设的 flash 被绕过），与 frago 的 worker 路由并行成两套；how: 命中即否决，统一收敛到 frago agent，worker 会话内不递归。",
       "created_at": "2026-09-12T00:00:00"
+    },
+    {
+      "id": "builtin-bash-git-discard-worktree-deny",
+      "source": "builtin",
+      "event": "PreToolUse",
+      "match": {
+        "type": "any_of",
+        "clauses": [
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s--(\\s|$)"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s\\.(\\s|$|[;&|)])"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\scheckout\\b[^;&|\\n]*\\s(-f|--force)(\\s|$)"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\sreset\\b[^;&|\\n]*\\s--hard\\b"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\sclean\\b[^;&|\\n]*\\s(-[a-zA-Z]*f|--force)"
+          },
+          {
+            "type": "bash_regex",
+            "pattern": "\\bgit\\b[^;&|\\n]*\\sstash\\s+(drop|clear)\\b"
+          },
+          {
+            "type": "all_of",
+            "clauses": [
+              {
+                "type": "bash_regex",
+                "pattern": "\\bgit\\b[^;&|\\n]*\\srestore\\b"
+              },
+              {
+                "type": "any_of",
+                "clauses": [
+                  {
+                    "type": "not",
+                    "clause": {
+                      "type": "bash_regex",
+                      "pattern": "\\srestore\\b[^;&|\\n]*\\s(-S|--staged)(\\s|$)"
+                    }
+                  },
+                  {
+                    "type": "bash_regex",
+                    "pattern": "\\srestore\\b[^;&|\\n]*\\s(-W|--worktree)(\\s|$)"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "action": {
+        "type": "deny_tool_call",
+        "reason": "【已拦截·丢弃工作区改动】这条命令会把工作区里没提交的改动整批抹掉，不管是谁改的：别的会话的、用户手工改的都在里面，抹掉后 git 里找不回。2026-08-31 就有一次 `git checkout -- recipes` 这样冲掉了访问控制台、登录门户、ETF 结构 DMA 计划三个配方的成果。\n要撤你自己的改动：先用 `git status`、`git diff` 看清哪些是你这次改的，再用编辑工具逐处改回。整个文件都要退的，先 `git stash push -- <文件>` 留底，这样还能找回。\n确实要整批丢弃：把命令和 `git status` 的原样输出交给用户，由用户自己在终端执行。"
+      },
+      "dedup_scope": "always",
+      "priority": 290,
+      "description": "why: agent 拿 checkout -- / restore / reset --hard / clean -f / stash drop 当免检的「撤回」，一并抹掉别的会话与用户没提交的改动（2026-08-31 一次 git -C ~/.frago checkout -- recipes 冲掉三个配方，两周后才被发现）。损害落在会话之外、发起方收不回，只提醒拦不住。how: 命中即否决；切分支、只撤暂存、stash / stash push / stash pop 放过。已知误拦：命令某一行里原样写着这类 git 命令（提交说明、测试脚本）；已知漏网：git show HEAD:文件 > 文件 这类间接覆盖。",
+      "created_at": "2026-09-18T00:00:00"
     }
   ]
 }
