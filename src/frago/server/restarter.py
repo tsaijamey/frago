@@ -122,12 +122,6 @@ def start_new_server() -> bool:
         # Use the same Python that ran this script
         python_exe = sys.executable
 
-        # On Windows, try to use pythonw to avoid console window
-        if platform.system() == "Windows":
-            pythonw = Path(python_exe).parent / "pythonw.exe"
-            if pythonw.exists():
-                python_exe = str(pythonw)
-
         # Start server as daemon
         cmd = [python_exe, "-m", "frago.server.runner", "--daemon"]
 
@@ -143,15 +137,20 @@ def start_new_server() -> bool:
 
         spawn_env = sanctioned_spawn_env()  # Gate 1 token for the daemon child
         if platform.system() == "Windows":
+            # Keep python.exe and CREATE_NO_WINDOW only (no pythonw swap, no
+            # DETACHED_PROCESS): the daemon holds one hidden console that all
+            # descendants inherit. A console-less daemon forces every console
+            # subprocess it launches to allocate a fresh console, which
+            # Windows 11 renders as a visible terminal window when Windows
+            # Terminal is the default host.
             CREATE_NO_WINDOW = 0x08000000
-            DETACHED_PROCESS = 0x00000008
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=spawn_env,
-                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+                creationflags=CREATE_NO_WINDOW,
             )
         else:
             proc = subprocess.Popen(

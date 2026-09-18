@@ -508,26 +508,14 @@ def start_daemon() -> tuple[bool, str]:
     try:
         # Platform-specific subprocess creation
         if platform.system() == "Windows":
-            # Windows: use pythonw.exe to avoid console window
-            # Try multiple locations: venv Scripts, base Python install, shutil.which
-            import shutil
-
-            pythonw_candidates = [
-                Path(sys.executable).parent / "pythonw.exe",  # Same dir as python.exe
-                Path(sys.base_exec_prefix) / "pythonw.exe",   # Base Python install
-            ]
-            # Also try finding pythonw in PATH
-            pythonw_in_path = shutil.which("pythonw")
-            if pythonw_in_path:
-                pythonw_candidates.append(Path(pythonw_in_path))
-
-            executable = sys.executable  # Fallback to python.exe
-            for pythonw in pythonw_candidates:
-                if pythonw.exists():
-                    executable = str(pythonw)
-                    break
-
-            cmd = [executable, "-m", "frago.server.runner", "--daemon"]
+            # Deliberately keep python.exe (NOT pythonw) and spawn with
+            # CREATE_NO_WINDOW only (no DETACHED_PROCESS): the daemon then
+            # holds one hidden console that every descendant inherits. A
+            # console-less daemon (pythonw + DETACHED) forces each console
+            # subprocess it launches to allocate a fresh console, which
+            # Windows 11 renders as a visible terminal window when Windows
+            # Terminal is the default host — the "flashing cmd windows".
+            cmd = [sys.executable, "-m", "frago.server.runner", "--daemon"]
 
             # stdout/stderr → DEVNULL: the daemon process configures its own
             # RotatingFileHandler against server.log. Inheriting an open log_file
@@ -541,7 +529,7 @@ def start_daemon() -> tuple[bool, str]:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=sanctioned_spawn_env(),  # Gate 1 token for the daemon child
-                **get_windows_subprocess_kwargs(detach=True),
+                **get_windows_subprocess_kwargs(),
             )
         else:
             # Unix: use start_new_session to detach from terminal
