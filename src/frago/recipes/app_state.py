@@ -199,6 +199,24 @@ def machine_root(recipe_name: str) -> Path:
     return Path.home() / ".frago" / RECIPE_DATA / recipe_name
 
 
+#: The second file name under a recipe's machine-level tree that belongs to the
+#: platform rather than the recipe: which outside commands this recipe was
+#: allowed to run on this machine, and what each was allowed to see. Kept here,
+#: beside the recipe's own data, rather than in one table for the whole machine
+#: — a table somewhere else outlives the recipe it describes, and nobody thinks
+#: to clean an entry for a recipe they have already removed.
+#:
+#: The recipe can read it and never write it. The tree around it is the
+#: recipe's own and writable, so the isolation says so explicitly for this one
+#: file; a recipe that could write it could hand itself any directory it liked.
+GRANTS_FILE = "grants.json"
+
+
+def grants_path(recipe_name: str) -> Path:
+    """Where this machine records what one recipe's commands may see."""
+    return machine_root(recipe_name) / GRANTS_FILE
+
+
 def shared_subtree(recipe_name: str, declared: str) -> Path:
     """The directory a recipe's ``shares:`` names, or a refusal.
 

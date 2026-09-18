@@ -151,6 +151,9 @@ imports: {imports}
 # 要 shell 出去调 frago 自己的命令（browser / desktop …）才写 true。
 # 隔离下不写就调不动，validate 会拦。能走总线的优先走总线。
 # uses_frago_cli: false
+# 要调外部命令（gh、ffmpeg……）就写命令名，只写名字不写路径。它运行时要读的配置目录，
+# 每台机器第一次跑时由 CoreAgent 实地查看、判断，登记在 ~/.frago/recipe-data/<本模块>/grants.json。
+# uses_commands: []
 inputs:
   mode:
     type: string

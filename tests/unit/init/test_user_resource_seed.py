@@ -25,11 +25,13 @@ from frago.init import user_resource_seed
 @pytest.fixture
 def shipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A stand-in for the wheel's ``frago/resources``: one directory of hook
-    prompts, one book, and a loose file at the top."""
+    prompts, one book, CoreAgent's instructions, and a loose file at the top."""
     root = tmp_path / "resources"
     (root / "hook").mkdir(parents=True)
     (root / "book").mkdir()
+    (root / "coreagent").mkdir()
     (root / "hook" / "prompt.md").write_text("prompt v1\n", encoding="utf-8")
+    (root / "coreagent" / "audit.md").write_text("audit v1\n", encoding="utf-8")
     (root / "book" / "one.md").write_text("book v1\n", encoding="utf-8")
     (root / "constitution.md").write_text("constitution v1\n", encoding="utf-8")
     (root / "agent-disciplines.md").write_text("disciplines v1\n", encoding="utf-8")
@@ -77,6 +79,7 @@ class TestAFreshMachine:
             [
                 str(home / "hook" / "prompt.md"),
                 str(home / "book" / "one.md"),
+                str(home / "coreagent" / "audit.md"),
                 str(home / "constitution.md"),
                 str(home / "agent-disciplines.md"),
             ]
@@ -95,6 +98,7 @@ class TestAFreshMachine:
         assert manifest["version"] == "1.0.0"
         assert manifest["files"] == {
             "hook/prompt.md": digest("prompt v1\n"),
+            "coreagent/audit.md": digest("audit v1\n"),
             "book/one.md": digest("book v1\n"),
             "constitution.md": digest("constitution v1\n"),
             "agent-disciplines.md": digest("disciplines v1\n"),
@@ -282,6 +286,7 @@ class TestAMachineFromBeforeTheManifest:
             "version": "2.0.0",
             "files": {
                 "hook/prompt.md": digest("prompt v1\n"),
+                "coreagent/audit.md": digest("audit v1\n"),
                 "book/one.md": digest("book v1\n"),
                 "constitution.md": digest("constitution v1\n"),
                 "agent-disciplines.md": digest("disciplines v1\n"),
@@ -321,3 +326,16 @@ class TestOneBadFile:
         assert (home / "hook" / "prompt.md").read_text(encoding="utf-8") == "prompt v1\n"
         assert len(report.backed_up) == 1
         assert read_manifest(home)["version"] == "2.0.0"
+
+
+def test_coreagents_instructions_ship_and_are_laid_down(tmp_path):
+    """CoreAgent is called by name with ``--instructions <file>`` and reads it
+    from ``~/.frago/coreagent/``. A file that only ever existed on the machine
+    it was written on is a feature that works for one person."""
+    from importlib.resources import files as pkg_files
+
+    from frago.init.user_resource_seed import seed_user_resources
+
+    assert (pkg_files("frago.resources") / "coreagent" / "command-audit.md").is_file()
+    seed_user_resources(tmp_path)
+    assert (tmp_path / "coreagent" / "command-audit.md").is_file()

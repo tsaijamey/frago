@@ -77,6 +77,18 @@ class RecipeMetadata:
     #: is named in ``frago.recipes.isolation._platform_cli_paths`` — frago's own
     #: machinery, never anybody's data.
     uses_frago_cli: bool = False
+    #: The outside commands this recipe starts — ``[gh]``, ``[ffmpeg, yt-dlp]``.
+    #: Names only, never paths.
+    #:
+    #: A command is more than its binary: ``gh`` reads its login from a config
+    #: directory, and where that directory is depends on how this machine
+    #: installed it — Homebrew, apt, a snap that moves the whole home. No rule
+    #: written into the platform covers every install on every distribution, so
+    #: none is: the first run on a machine asks CoreAgent to look at how the
+    #: command is installed here, judge whether handing it over is safe, and
+    #: record the answer next to the recipe's data (``app_state.GRANTS_FILE``).
+    #: Every later run reads the record. See ``frago.recipes.command_grants``.
+    uses_commands: list[str] = field(default_factory=list)
 
     #: Retired frontmatter keys this file still carries. Recorded rather than
     #: dropped so ``validate_metadata`` can say so out loud.
@@ -115,6 +127,27 @@ def _iso_or_none(value: Any) -> str | None:
         return value.strip() or None
     isoformat = getattr(value, "isoformat", None)
     return isoformat() if callable(isoformat) else str(value)
+
+
+def _command_list(value: Any) -> list[str]:
+    """``uses_commands`` as written: a list, or one name on its own.
+
+    Kept as strings exactly as written — whether each one is an acceptable
+    command name is ``validate_metadata``'s to say, out loud, rather than this
+    function's to quietly drop.
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [value.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(one).strip() for one in value]
+    return [str(value).strip()]
+
+
+#: A command name: what ``which`` would be asked for. No slashes, so a
+#: declaration can never name a place on disk.
+COMMAND_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -179,6 +212,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             reads_common=data.get('reads_common') or [],
             shares=str(data.get('shares') or '').strip(),
             uses_frago_cli=bool(data.get('uses_frago_cli', False)),
+            uses_commands=_command_list(data.get('uses_commands')),
             retired_fields=tuple(k for k in RETIRED_KEYS if k in data),
             imports=data.get('imports') or {},
             created_at=_iso_or_none(data.get('created_at')),
@@ -263,6 +297,21 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
             shared_subtree(metadata.name, metadata.shares)
         except (InvalidShare, InvalidSlotName) as err:
             errors.append(str(err))
+
+    # Outside commands. A name, never a path: the declaration says which command,
+    # and where it lives on this machine is found out here, not written down by
+    # the recipe's author on theirs.
+    for command in metadata.uses_commands:
+        if command == "frago":
+            errors.append(
+                "uses_commands 里写了 frago。frago 自己的命令另有声明："
+                "在 recipe.md 里写 uses_frago_cli: true，把 frago 从 uses_commands 里删掉。"
+            )
+        elif not COMMAND_NAME.match(command):
+            errors.append(
+                f"uses_commands 里的 {command!r} 不是一个命令名。只写命令名本身（如 gh、ffmpeg），"
+                f"不写路径、不带参数——命令装在哪由这台机器自己回答。"
+            )
 
     # Validate inputs
     for param_name, param_def in metadata.inputs.items():

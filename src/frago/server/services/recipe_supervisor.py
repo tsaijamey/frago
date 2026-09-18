@@ -192,7 +192,13 @@ class RecipeSupervisor:
         # daemon that did get that far had no landing spot, so it would have
         # written wherever its author once guessed.
         from frago.recipes.runner import prepare_platform_env
-        _, run_cwd, view = prepare_platform_env(self._spec.recipe, env, recipe=recipe)
+        # ``may_audit=False``: this runs on the server's event loop, and a first
+        # audit of an outside command is a model call that can take a minute.
+        # What is already recorded is used; what is not refuses, saying to run
+        # the recipe once by hand. A refused spawn counts as a failure below.
+        _, run_cwd, view = prepare_platform_env(
+            self._spec.recipe, env, recipe=recipe, may_audit=False
+        )
         if getattr(recipe.metadata, "no_proxy", False):
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                       "http_proxy", "https_proxy", "all_proxy"):

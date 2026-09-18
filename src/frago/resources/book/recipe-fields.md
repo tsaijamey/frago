@@ -36,6 +36,7 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | shares | string | 我把自己数据里的哪一块交出去给别的配方读，写子路径（如 `share/common`）；交出去的那块在对方眼里只读 |
 | reads_common | list | 我要读哪些配方的数据，写生产者的配方名；对方也写了 `shares` 才拿得到 |
 | uses_frago_cli | bool | 脚本会 shell 调 frago 命令（`frago browser` / `frago recipe publish` / `frago <domain>` 等）；不写就拿不到 frago 命令的工作目录 |
+| uses_commands | list | 脚本会调的外部命令，只写命令名（如 `[gh]`、`[ffmpeg, yt-dlp]`），不写路径。命令运行时要读的配置目录因机器而异，每台机器第一次运行时由 CoreAgent 实地查看、判断能否只读交出，结论登记在 `~/.frago/recipe-data/<配方名>/grants.json`（配方只读），之后每次运行照登记开放；配方代码（不含测试）改了会重审。登记里删掉某条即撤销，下次运行重审。服务端常驻启动不做审计，没登记就拒起 |
 
 ## flow 字段（workflow 必填）
 
@@ -110,7 +111,7 @@ uv run 自动解析依赖并创建临时虚拟环境，首次运行后使用缓�
 5. Python 脚本语法检查
 6. 依赖检查（workflow 类型检查依赖 recipe 是否已注册）
 7. flow 结构检查（workflow 类型）
-8. 隔离预检（runtime 为 python/shell 时）：脚本里写下的路径落在本次视野之外，或起了 frago 命令却没写 `uses_frago_cli`——都是 error，不是警告；配方自带的测试文件不扫
+8. 隔离预检（runtime 为 python/shell 时）：脚本里写下的路径落在本次视野之外，或起了 frago 命令却没写 `uses_frago_cli`——都是 error，不是警告；配方自带的测试文件不扫。`uses_commands` 里还没在这台机器上审计过的命令只出提示，不在这里审计
 9. 共读声明配对：`reads_common` 点名的生产者在这台机器上要存在，且对方 recipe.md 写了 `shares`。缺一句 **直接拒绝**（从前只是警告）
 
 ## 完整 recipe.md 模板

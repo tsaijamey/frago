@@ -73,6 +73,11 @@ SEED_MAP: tuple[tuple[str, str], ...] = (
     # the machine's layout are the one thing a reader should not have to hold
     # two versions of in their head.
     ("hook", "hook"),
+    # CoreAgent's instructions — what it is told when frago calls it for a job
+    # of its own, such as deciding what an outside command a recipe declared
+    # may see on this machine. Read by name from ``~/.frago/coreagent/``, so
+    # they have to be there on a machine nobody has written them onto.
+    ("coreagent", "coreagent"),
 )
 
 

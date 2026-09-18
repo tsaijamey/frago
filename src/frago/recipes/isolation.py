@@ -94,6 +94,17 @@ class NoBackend(RuntimeError):
     """
 
 
+class NotGranted(RuntimeError):
+    """This run declared a command this machine has not allowed it to use.
+
+    Raised at the same door as ``NoBackend`` and for a similar reason: the
+    alternative is starting the recipe anyway, where the command fails on its
+    first line with ``operation not permitted`` against a file the person has
+    never heard of — which is exactly how ``github_star_watch`` sat unable to
+    update from 2026-08-31 with nothing anywhere saying why.
+    """
+
+
 @dataclass(frozen=True)
 class View:
     """Everything one run may reach, and how far.
@@ -126,6 +137,19 @@ class View:
     #: that depends on rule ordering is a sentence again.
     shared: tuple[Path, ...] = ()
 
+    #: Files inside this run's own writable tree that belong to the platform.
+    #: Readable, refused for writing the same way ``shared`` is and for the same
+    #: reason: a broad writable root covers them. Today that is the record of
+    #: which outside commands this recipe was allowed (``GRANTS_FILE``) — a
+    #: recipe able to rewrite it could grant itself any directory it liked.
+    platform_owned: tuple[Path, ...] = ()
+
+    #: Why this run must not start, or empty. Carried on the view because the
+    #: view is what both doors into starting a recipe hand to ``wrap``; a
+    #: refusal kept anywhere else would be honoured by one door and not the
+    #: other.
+    refusal: str = ""
+
     #: Why each entry is here, keyed by path. Carried for the sake of the person
     #: reading a refusal — "this run could not see X" is only actionable next to
     #: "and here is what it could see, and who asked for it".
@@ -141,6 +165,11 @@ class View:
 
     def may_write(self, path: Path) -> bool:
         target = Path(path)
+        if any(
+            target == held or target.is_relative_to(held)
+            for held in (*self.shared, *self.platform_owned)
+        ):
+            return False
         return any(
             target == root or target.is_relative_to(root) for root in self.writable
         )
@@ -321,6 +350,8 @@ def view_for(
     recipe_dir: Path | None,
     shared: dict[str, Path] | None = None,
     uses_frago_cli: bool = False,
+    granted: dict[str, list[Path]] | None = None,
+    refusal: str = "",
 ) -> View:
     """The view one run gets, assembled from what this run actually is.
 
@@ -330,8 +361,15 @@ def view_for(
     made into something a kernel can hold to. Keeping the two apart is what
     lets ``frago recipe validate`` answer "what will this run be able to see"
     without starting anything.
+
+    ``granted`` is ``{command: [paths]}`` and follows the same rule: which
+    directories an outside command needs, and whether handing them over is
+    safe, was decided by ``frago.recipes.command_grants`` and recorded on this
+    machine. Nothing here knows what ``gh`` is. ``refusal`` is that module's
+    other possible answer — the command was not allowed — carried through so
+    ``wrap`` can refuse at the one door both callers use.
     """
-    from frago.recipes.app_state import RECIPE_DATA
+    from frago.recipes.app_state import GRANTS_FILE, RECIPE_DATA
 
     because: dict[str, str] = {}
 
@@ -387,6 +425,19 @@ def view_for(
         readable += note(cli_readable, "frago 命令自己的东西（配方声明了 uses_frago_cli）")
         writable += note(cli_writable, "frago 命令自己的工作目录（配方声明了 uses_frago_cli）")
 
+    for command, paths in (granted or {}).items():
+        readable += note(
+            _existing(*paths),
+            f"命令 {command} 要用的（本机审计放行，记录在 {own_tree / GRANTS_FILE}）",
+        )
+
+    # Listed for every recipe, declared commands or not. The record is only
+    # consulted for a recipe that declares a command, but a recipe that could
+    # write it today could declare one tomorrow and find its own forgery
+    # waiting there as a grant.
+    platform_owned = [own_tree / GRANTS_FILE]
+    note(platform_owned, "平台记录的命令放行登记（配方只读）")
+
     # A path already inside a writable root is writable: the narrower statement
     # would be the read-only one, and a run that cannot write its own landing
     # spot because some machinery rule also named it fails in a way nobody could
@@ -401,6 +452,8 @@ def view_for(
         writable=tuple(dict.fromkeys(writable)),
         readable=tuple(dict.fromkeys(readable)),
         shared=tuple(dict.fromkeys(shared_roots)),
+        platform_owned=tuple(platform_owned),
+        refusal=refusal,
         because=because,
     )
 
@@ -485,11 +538,15 @@ class SandboxExec(Backend):
             else f"(deny file-write*{tag})",
         ]
         # Last, because the last matching rule is the one that applies. Another
-        # module's data is read-only even where a writable root covers it.
-        if view.shared:
+        # module's data is read-only even where a writable root covers it, and
+        # so is the platform's own record inside the recipe's tree. A subpath
+        # rule holds whether or not the file exists yet, so a recipe cannot
+        # create it first either.
+        held = (*view.shared, *view.platform_owned)
+        if held:
             lines.append(
                 f"(deny file-write*{tag} "
-                + " ".join(f"(subpath {_sbpl_quote(p)})" for p in view.shared)
+                + " ".join(f"(subpath {_sbpl_quote(p)})" for p in held)
                 + ")"
             )
         return "\n".join(lines) + "\n"
@@ -575,6 +632,14 @@ class Bubblewrap(Backend):
         # covered *by* this one rather than the other way round. Same reason the
         # macOS profile puts its refusal at the end.
         for path in view.shared:
+            argv += ["--ro-bind-try", str(path), str(path)]
+        # The platform's own files inside the recipe's tree, bound over it the
+        # same way. **Only a file that exists can be bound**, so the one thing a
+        # mount cannot say — "and you may not create it" — is said by the file
+        # being there already: ``command_grants.seal`` lays down an empty record
+        # before every run whose tree exists. A tree that does not exist is
+        # absent here and cannot be written into at all.
+        for path in view.platform_owned:
             argv += ["--ro-bind-try", str(path), str(path)]
         if cwd is not None:
             argv += ["--chdir", str(cwd)]
@@ -1109,6 +1174,7 @@ def foresee(
     uses_frago_cli: bool = False,
     shared: dict[str, Path] | None = None,
     landing_spot: Path | None = None,
+    granted: dict[str, list[Path]] | None = None,
 ) -> list[Blocked]:
     """What this recipe does that its own view will refuse, before it runs.
 
@@ -1128,12 +1194,13 @@ def foresee(
         recipe_dir=recipe_dir,
         shared=shared,
         uses_frago_cli=uses_frago_cli,
+        granted=granted,
     )
     # The same view with the platform's own machinery added, used only to tell
     # a path that one declaration would fix from one that needs the code changed.
     cli_view = None if uses_frago_cli else view_for(
         recipe_name, landing_spot=landing_spot, recipe_dir=recipe_dir,
-        shared=shared, uses_frago_cli=True,
+        shared=shared, uses_frago_cli=True, granted=granted,
     )
 
     found: list[Blocked] = []
@@ -1162,7 +1229,12 @@ def wrap(
 
     Raises ``NoBackend`` when isolation is on and this machine has none. The
     caller turns that into a refusal to run; it must not turn it into a run.
+
+    Raises ``NotGranted`` when the view carries a refusal: the recipe declared
+    an outside command this machine did not allow. Same rule.
     """
+    if view.refusal:
+        raise NotGranted(view.refusal)
     if configured() == OFF:
         logger.warning(
             "配方 %s 不在隔离下运行：recipe.isolation 被设成了 off。"

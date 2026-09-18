@@ -173,6 +173,7 @@ def prepare_platform_env(
     ctx: "context.InvocationContext | None" = None,
     execution_id: str = "",
     recipe: Any = None,
+    may_audit: bool = True,
 ) -> tuple["context.InvocationContext | None", str | None, "isolation.View"]:
     """Everything the platform tells a recipe before it starts, in one place.
 
@@ -255,13 +256,15 @@ def prepare_platform_env(
         # them. Fall back to the old behaviour of inheriting.
         run_cwd = None
 
-    return ctx, run_cwd, _view_for_run(name, ctx, recipe)
+    return ctx, run_cwd, _view_for_run(name, ctx, recipe, may_audit=may_audit)
 
 
 def _view_for_run(
     name: str,
     ctx: "context.InvocationContext | None",
     recipe: Any = None,
+    *,
+    may_audit: bool = True,
 ) -> "isolation.View":
     """What this run will be able to see, worked out from what this run is.
 
@@ -270,7 +273,14 @@ def _view_for_run(
     fails the view still names the run's own landing spot. A view assembled from
     less than the full answer confines *more* than intended rather than less,
     which is the direction a mistake here has to fail in.
+
+    Outside commands the recipe declared are settled here too, for both doors:
+    what this machine recorded about each, or — the first time, and only where
+    ``may_audit`` allows it — a question to CoreAgent whose answer is recorded.
+    A command that was not allowed becomes the view's refusal, which ``wrap``
+    turns into a run that does not start.
     """
+    from frago.recipes import command_grants
     from frago.recipes.registry import get_registry
 
     if recipe is None:
@@ -288,13 +298,22 @@ def _view_for_run(
     if landing is None:
         landing = context.working_dir(name, ctx)
 
+    metadata = getattr(recipe, "metadata", None)
+    recipe_dir = Path(base_dir) if base_dir else None
+    command_grants.seal(name)
+    granted, refusal = command_grants.for_run(
+        name, recipe_dir, list(getattr(metadata, "uses_commands", None) or []),
+        may_audit=may_audit,
+    )
+
     return isolation.view_for(
         name,
         landing_spot=landing,
-        recipe_dir=Path(base_dir) if base_dir else None,
+        recipe_dir=recipe_dir,
         shared=dict(ctx.shared) if ctx is not None else {},
-        uses_frago_cli=bool(getattr(getattr(recipe, "metadata", None),
-                                    "uses_frago_cli", False)),
+        uses_frago_cli=bool(getattr(metadata, "uses_frago_cli", False)),
+        granted=granted,
+        refusal=refusal,
     )
 
 
@@ -944,6 +963,13 @@ class RecipeRunner:
                     f'"recipe": {{"isolation": "off"}}——这句话有名有姓，'
                     f"不是一次静默的降级。"
                 ),
+            ) from err
+        except isolation.NotGranted as err:
+            raise RecipeExecutionError(
+                recipe_name=recipe_name,
+                runtime=runtime,
+                exit_code=-1,
+                stderr=str(err),
             ) from err
         if backend_name:
             logger.debug("recipe %s confined by %s", recipe_name, backend_name)

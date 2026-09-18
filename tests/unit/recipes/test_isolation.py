@@ -153,6 +153,16 @@ class TestTheProfileMacOSIsHeldTo:
         # writable in fact.
         assert shared > outside
 
+    def test_the_platforms_record_ends_in_a_refusal_to_write_it(self, tmp_path):
+        """Same shape as a shared block: the recipe's writable tree covers it,
+        so the refusal has to come after."""
+        record = tmp_path / "grants.json"
+        view = isolation.View(writable=(tmp_path,), platform_owned=(record,))
+        profile = isolation.SandboxExec().profile(view, cwd=None)
+        outside = profile.index("(deny file-write* (require-all")
+        held = profile.index(f'(subpath "{record}")')
+        assert held > outside
+
     def test_the_working_directory_is_writable_even_if_nobody_listed_it(self, tmp_path):
         profile = isolation.SandboxExec().profile(isolation.View(), cwd=tmp_path)
         assert str(tmp_path) in profile
@@ -234,6 +244,15 @@ class TestTheMountsLinuxIsHeldTo:
         argv = isolation.Bubblewrap().wrap(["echo"], view, cwd=None)
         assert argv[-2:] == ["--", "echo"]
         assert argv.index("--ro-bind-try") > argv.index("--bind-try")
+
+    def test_the_platforms_record_is_bound_read_only_after_the_tree_around_it(self, tmp_path):
+        record = tmp_path / "grants.json"
+        view = isolation.View(writable=(tmp_path,), platform_owned=(record,))
+        argv = isolation.Bubblewrap().wrap(["true"], view, cwd=None)
+        tree = argv.index(str(tmp_path))
+        held = max(i for i, one in enumerate(argv) if one == str(record))
+        assert argv[held - 2] == "--ro-bind-try"
+        assert held > tree
 
     def test_the_hosts_dev_keeps_its_devices_and_is_not_bound_over(self, tmp_path):
         """The host's /dev bound the ordinary way is what broke every recipe on
@@ -521,6 +540,51 @@ class TestWhatTheKernelActuallyRefuses:
 
     def test_it_can_write_its_own_landing_spot(self, run):
         assert run()["write_land"] == "allowed"
+
+    @pytest.mark.parametrize("exists", [True, False])
+    def test_it_cannot_write_the_record_of_what_it_was_allowed(
+        self, tmp_path, monkeypatch, exists
+    ):
+        """The record sits in the recipe's own writable tree. A recipe able to
+        write it — or to create it before the platform does — could grant
+        itself any directory it liked. On Linux the platform lays the file down
+        first (``command_grants.seal``); that step is part of what is tested."""
+        from frago.recipes import command_grants
+
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", lambda: home)
+        monkeypatch.setattr(isolation, "_interpreter_writable",
+                            lambda: [tmp_path / "scratch"])
+        (tmp_path / "scratch").mkdir()
+        tree = home / ".frago" / "recipe-data" / "demo"
+        tree.mkdir(parents=True)
+        record = tree / "grants.json"
+        if exists:
+            record.write_text('{"commands": {}}')
+        command_grants.seal("demo")
+        if platform.system() == "Darwin" and not exists:
+            record.unlink()  # macOS holds an absent path too; prove it without the file
+
+        view = isolation.view_for("demo", landing_spot=None, recipe_dir=None)
+        script = (
+            "import sys, pathlib\n"
+            "tree = pathlib.Path(sys.argv[1])\n"
+            "out = []\n"
+            "for target in (tree / 'grants.json', tree / 'cache.json'):\n"
+            "    try:\n"
+            "        target.write_text('{\"commands\": {\"gh\": {}}}')\n"
+            "        out.append('allowed')\n"
+            "    except OSError as e:\n"
+            "        out.append('denied')\n"
+            "print(' '.join(out))\n"
+        )
+        cmd, _ = isolation.wrap([sys.executable, "-c", script, str(tree)], view, cwd=None)
+        done = subprocess.run(cmd, capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        record_write, own_write = done.stdout.split()
+        assert record_write == "denied"
+        assert own_write == "allowed"
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="no ~/.ssh here")
     def test_it_cannot_read_the_owners_keys(self, tmp_path):

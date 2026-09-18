@@ -1798,12 +1798,22 @@ def validate_recipe(path: str, output_format: str):
     # second list: two gates that describe different boundaries are not two
     # gates, they are one gate and one document.
     if metadata and metadata.runtime in ('python', 'shell'):
-        from frago.recipes import isolation
+        from frago.recipes import command_grants, isolation
+
+        # Outside commands: what this machine already recorded, never a new
+        # question — validate describes a recipe, it does not spend a model
+        # call deciding things. A command not yet asked about is a note, not an
+        # error: its first run is where it gets asked.
+        granted, pending = command_grants.recorded(
+            metadata.name, recipe_dir, list(getattr(metadata, 'uses_commands', []) or []),
+        )
+        warnings.extend(pending)
 
         for blocked in isolation.foresee(
             recipe_dir, metadata.name,
             uses_frago_cli=bool(getattr(metadata, 'uses_frago_cli', False)),
             shared=shared_subtrees,
+            granted=granted,
         ):
             errors.append(blocked.render(recipe_dir).replace("\n", " "))
 
