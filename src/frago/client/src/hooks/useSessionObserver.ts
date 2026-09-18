@@ -1,5 +1,5 @@
 /**
- * useSessionObserver — 会话页右栏那五格的数据。
+ * useSessionObserver — 会话页右栏的数据。
  *
  * 取法有推有拉，缺一不可：
  *
@@ -31,14 +31,22 @@ export const OBSERVER_POLL_MS = 15_000;
 /** ok 填过 / failed 上一次没问到 / empty 还没填过 / unbound 旁路 AI 没绑模型。 */
 export type ObserverStatus = 'ok' | 'failed' | 'empty' | 'unbound';
 
+/**
+ * 「已经发生的事」的最后一条，也就是眼下的状态。agent 在做是「此刻」，东西落地了是
+ * 「产出」；产出被下一个状态顶掉时，服务端把它挪进 happened。
+ */
+export interface ObserverTail {
+  kind: 'now' | 'output';
+  text: string;
+}
+
 export interface ObserverState {
   bound: boolean;
   /** 这场在做什么：人说过的原话，不经模型改写。 */
   anchor: string | null;
-  now: string;
+  tail: ObserverTail | null;
   decision: string;
-  output: string;
-  /** 已经发生的事，新的在前。 */
+  /** 已经发生的事（不含末条），新的在前。 */
   happened: string[];
   /**
    * 每一格自己上次变样的时刻（毫秒），跟正文一一对应。右栏按时间线读要用它。
@@ -48,9 +56,8 @@ export interface ObserverState {
    */
   happened_at?: (number | null)[];
   anchor_at?: number | null;
-  now_at?: number | null;
+  tail_at?: number | null;
   decision_at?: number | null;
-  output_at?: number | null;
   /** 毫秒时间戳。槽位真的变过才会动。 */
   updated_at: number | null;
   model: string | null;
@@ -112,7 +119,7 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
   }, []);
 
   useEffect(() => {
-    // 换会话先清空：上一场的五格留在这里，人会以为说的是眼下这一场。
+    // 换会话先清空：上一场的内容留在这里，人会以为说的是眼下这一场。
     setState(null);
     setError(null);
     if (!sessionId) {

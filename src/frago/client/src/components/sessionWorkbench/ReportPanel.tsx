@@ -1,5 +1,5 @@
 /**
- * ReportPanel — 右栏。旁路 AI 看着这场会话，把它填进五个槽位。
+ * ReportPanel — 右栏。旁路 AI 看着这场会话，把它填进右栏。
  *
  * 数据从哪来见 `useSessionObserver`：选中或切回一场会话时先读槽位文件，停在这场会话上时
  * 听推送。旁路 AI 在服务端跑，跟这一页停在哪场会话无关——切走打断不了它。
@@ -11,19 +11,21 @@
  * 常亮的高亮等于没有高亮，而栏顶那块地方太贵，不该长期摆一个「（无）」。没有待决时整条
  * 不存在：**有东西在顶上亮着本身就是信号**，不用读字就知道该看一眼。
  *
- * 下面四格是一条时间线，从「要干嘛」走到「眼下」：这场在做什么 → 已经发生的事 →
- * 最近一次产出 → 此刻在做什么。左边一条导轨把它们串起来，最后一个节点是实心的＝现在；
- * 每格右上角标它自己上次变样的时刻，人一眼分得出哪些是刚发生的、哪些半小时前就停在
- * 那儿了。从前五格是平铺的、顺序也不按时间，读起来看不出谁先谁后、谁导致了谁。
+ * 下面两块是一条时间线，从「要干嘛」走到「眼下」：这场在做什么 → 已经发生的事。左边
+ * 一条导轨把它们串起来，最后一个节点是实心的＝现在；每块右上角标它自己上次变样的时刻。
  *
- * 槽位分两型：
+ * **「已经发生的事」的最后一条就是眼下的状态**，只有两种：agent 在做是「此刻」，东西落地
+ * 了是「产出」。产出一出来，「此刻」就没有了；agent 接着干下一件事，末条切回「此刻」，
+ * 那份产出退进上面当普通历史。从前「此刻在做什么」「最近一次产出」各占一格，跟「已经
+ * 发生的事」最后一两条说的常常是同一件事，一屏里同一句话出现三遍（2026-09-18 并掉）。
  *
- * - **覆盖型** 新值把旧值盖掉，格子高度不跟着内容跳，人的视线不用重新找位置。多高由人
- *   来定：格与格之间的分隔线可以拖（也可以用方向键），双击或按 Home 回到默认。内容超出
- *   时标题旁出现「展开全文」，底下一道渐隐提示下面还有——从前超出的部分直接被裁掉，
- *   人看不全也没处去看。
- * - **增长型** 随内容长，默认只露最新三条，展开按钮写「展开更早的 N 条」——N 是已经
- *   发生的绝对数，没有分母。
+ * 两块分两型：
+ *
+ * - **覆盖型**（这场在做什么）新值把旧值盖掉，格子高度不跟着内容跳，人的视线不用重新找
+ *   位置。多高由人来定：底下的分隔线可以拖（也可以用方向键），双击或按 Home 回到默认。
+ *   内容超出时标题旁出现「展开全文」，底下一道渐隐提示下面还有。
+ * - **增长型**（已经发生的事）随内容长，默认只露末条，其余都收在「展开更早的 N 条」
+ *   里——N 是已经发生的绝对数，没有分母。
  *
  * 每一格都能点标题折起来只剩标题。高度、折叠、整栏宽度都记在这个浏览器里，见
  * `useReportLayout`。
@@ -51,6 +53,7 @@ import { ChevronDown, ChevronRight, FlaskConical, Hand } from 'lucide-react';
 import {
   useSessionObserver,
   type ObserverState,
+  type ObserverTail,
   type SessionObserverView,
 } from '@/hooks/useSessionObserver';
 import {
@@ -66,7 +69,7 @@ import {
 } from '@/hooks/useReportLayout';
 
 /**
- * 槽位标题的写法。五个槽位共用一套：11px、次级灰、字重加一档、字距略开。
+ * 槽位标题的写法。各块共用一套：11px、次级灰、字重加一档、字距略开。
  *
  * 这一栏是几段并置的短文，彼此之间没有从属关系。标题要能一眼与正文分开，但不该比正文
  * 更抢眼——所以走的是"更小更淡但更紧"，而不是"更大更重"。
@@ -342,7 +345,10 @@ function CoverSlot({
 }
 
 /**
- * 增长型槽位：只追加不覆盖，默认露最新三条。
+ * 增长型槽位：只追加不覆盖，默认只露末条。
+ *
+ * 末条是眼下的状态（此刻 / 产出），前面带一个小标说它是哪一种；服务端没给末条时（老的
+ * 槽位文件、还没跑过），最新一条历史就是末条，不带小标。
  *
  * **条目按时间正序排，老的在上。** 传进来的是新的在前，这里倒过来：整栏是一条从上往下
  * 走的时间线，这一格里却从下往上读，两个方向打架，人就看不出谁先谁后了。「展开更早的」
@@ -352,39 +358,46 @@ function GrowSlot({
   label,
   items,
   times,
+  tail,
+  tailAt,
   collapsed,
   onToggleCollapsed,
 }: {
   label: string;
-  /** 新的在前。 */
+  /** 新的在前，不含末条。 */
   items: string[];
   /** 跟 items 一一对应；老的槽位文件没有时刻，这里会是一串 null。 */
   times: (number | null)[];
+  tail: ObserverTail | null;
+  tailAt: number | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const newestFirst = expanded ? items : items.slice(0, 3);
-  const shown = [...newestFirst].reverse();
-  const hidden = items.length - newestFirst.length;
+  const entries: { text: string; kind: ObserverTail['kind'] | null }[] = [
+    ...[...items].reverse().map((text) => ({ text, kind: null })),
+    ...(tail?.text ? [{ text: tail.text, kind: tail.kind }] : []),
+  ];
+  const hidden = expanded ? 0 : Math.max(0, entries.length - 1);
+  const shown = entries.slice(hidden);
   return (
     <section className="relative py-3 pl-7 pr-3">
-      <RailNode first={false} last={false} />
+      <RailNode first={false} last />
       <SlotHeader
         label={
           <>
             <span>{label}</span>
             <span className="font-mono opacity-70">
-              {t('workbench.report.itemCount', { n: items.length })}
+              {t('workbench.report.itemCount', { n: entries.length })}
             </span>
           </>
         }
         collapsed={collapsed}
         onToggle={onToggleCollapsed}
-        time={ago(times[0], t)}
+        time={ago(tail?.text ? tailAt : times[0], t)}
         actions={
-          !collapsed && expanded && items.length > 3 ? (
+          !collapsed && expanded && entries.length > 1 ? (
             <button type="button" onClick={() => setExpanded(false)} className={SLOT_ACTION}>
               {t('workbench.report.showLess')}
             </button>
@@ -398,7 +411,7 @@ function GrowSlot({
               {t('workbench.report.expandOlder', { n: hidden })}
             </button>
           ) : null}
-          {items.length === 0 ? (
+          {entries.length === 0 ? (
             <p className="text-[13px] leading-[1.72] text-text-muted">
               {t('workbench.report.none')}
             </p>
@@ -407,12 +420,21 @@ function GrowSlot({
             // 长句接长句读起来是一整段，分不清一条在哪儿结束。用虚线不用实线，是为了跟
             // 格与格之间那根实线分开——这是同一格里的条目，不是另一格。
             <ul className="divide-y divide-dashed divide-border-color">
-              {shown.map((item, i) => (
+              {shown.map((entry, i) => (
                 <li
-                  key={i}
-                  className="whitespace-pre-wrap break-words py-2 text-[13px] leading-[1.72] text-text-secondary first:pt-0 last:pb-0"
+                  key={hidden + i}
+                  className={`whitespace-pre-wrap break-words py-2 text-[13px] leading-[1.72] first:pt-0 last:pb-0 ${
+                    entry.kind ? 'text-text-primary' : 'text-text-secondary'
+                  }`}
                 >
-                  {item}
+                  {entry.kind ? (
+                    <span className="mr-1.5 text-[11px] font-medium tracking-wide text-accent-primary">
+                      {entry.kind === 'output'
+                        ? t('workbench.report.tailOutput')
+                        : t('workbench.report.tailNow')}
+                    </span>
+                  ) : null}
+                  {entry.text}
                 </li>
               ))}
             </ul>
@@ -424,7 +446,7 @@ function GrowSlot({
 }
 
 /**
- * 五格本身。按会话换一次：「展开全文」「展开更早的」是看这一场时的动作，不该带到下一场；
+ * 两块本身。按会话换一次：「展开全文」「展开更早的」是看这一场时的动作，不该带到下一场；
  * 高度和折叠是人对版面的偏好，跨会话保留。
  */
 function SlotStack({
@@ -438,32 +460,16 @@ function SlotStack({
   useTick();
   const [expanded, setExpanded] = useState<CoverKey[]>([]);
 
-  // 顺序就是时间顺序：从「这场要干嘛」走到「眼下在干嘛」。最后一格的节点是实心的＝现在。
-  // 「已经发生的事」夹在中间——它是走过来的那一路，默认只露最新三条，不会把下面顶下去。
-  const covers: { key: CoverKey; label: string; value: string; at: number | null }[] = [
-    {
-      key: 'anchor',
-      label: t('workbench.report.slotAnchor'),
-      value: state?.anchor ?? '',
-      at: state?.anchor_at ?? null,
-    },
-    {
-      key: 'output',
-      label: t('workbench.report.slotOutput'),
-      value: state?.output ?? '',
-      at: state?.output_at ?? null,
-    },
-    {
-      key: 'now',
-      label: t('workbench.report.slotNow'),
-      value: state?.now ?? '',
-      at: state?.now_at ?? null,
-    },
-  ];
-  const happened = state?.happened ?? [];
+  // 顺序就是时间顺序：从「这场要干嘛」走到「眼下在干嘛」。「已经发生的事」是最后一块，
+  // 它的末条就是现在，节点实心；底下不画线——那是时间线的终点。
+  const anchor = {
+    key: 'anchor' as CoverKey,
+    label: t('workbench.report.slotAnchor'),
+    value: state?.anchor ?? '',
+    at: state?.anchor_at ?? null,
+  };
 
-  const slot = ({ key, label, value, at }: (typeof covers)[number], last: boolean) => {
-    const first = key === 'anchor';
+  const slot = ({ key, label, value, at }: typeof anchor) => {
     const collapsed = layout.collapsed.includes(key);
     const isExpanded = expanded.includes(key);
     return (
@@ -472,8 +478,8 @@ function SlotStack({
           label={label}
           value={value}
           time={ago(at, t)}
-          first={first}
-          last={last}
+          first
+          last={false}
           height={layout.heights[key]}
           collapsed={collapsed}
           expanded={isExpanded}
@@ -484,8 +490,7 @@ function SlotStack({
             )
           }
         />
-        {/* 最后一格底下不画线：那是时间线的终点，再画一道就像下面还有一段。 */}
-        {last ? null : collapsed || isExpanded ? (
+        {collapsed || isExpanded ? (
           // 折起来或展开全文时这一格没有「高度」可调，分隔线只是一根线。
           <div className="h-px bg-border-color" />
         ) : (
@@ -508,17 +513,16 @@ function SlotStack({
     // 滚动容器的内距契约：分段自带上下内距，容器只在最底下补一段留白，最后一段滚到底时
     // 不会被硬切在边框上。
     <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-      {slot(covers[0], false)}
+      {slot(anchor)}
       <GrowSlot
         label={t('workbench.report.slotHappened')}
-        items={happened}
+        items={state?.happened ?? []}
         times={state?.happened_at ?? []}
+        tail={state?.tail ?? null}
+        tailAt={state?.tail_at ?? null}
         collapsed={layout.collapsed.includes('happened')}
         onToggleCollapsed={() => layout.toggleCollapsed('happened')}
       />
-      <div className="h-px bg-border-color" />
-      {slot(covers[1], false)}
-      {slot(covers[2], true)}
     </div>
   );
 }

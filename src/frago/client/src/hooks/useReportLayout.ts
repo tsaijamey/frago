@@ -12,19 +12,19 @@
 import { useCallback, useState } from 'react';
 
 /**
- * 会被整格替换的三格。
+ * 会被整格替换的格子，现在只剩「这场在做什么」。
+ *
+ * 「此刻在做什么」「最近一次产出」曾经也是两格，2026-09-18 并成「已经发生的事」的末条。
+ * 本地存储里还留着它们的高度和折叠，读的时候按下面的键过滤掉，不用换存储键。
  *
  * 「需要你决策」不在这里：它不是时间线上的一段，是唯一一条要人动手的信息，钉在栏顶
  * 单独画（见 ReportPanel 的 CallBanner），不参与折叠和拖高度。
  */
-export type CoverKey = 'anchor' | 'now' | 'output';
+export type CoverKey = 'anchor';
 export type SlotKey = CoverKey | 'happened';
 
-/** 默认高度沿用原来写死的两档：长文的格高一档。 */
 export const DEFAULT_HEIGHTS: Record<CoverKey, number> = {
   anchor: 112,
-  now: 76,
-  output: 76,
 };
 export const MIN_SLOT_HEIGHT = 44;
 export const MAX_SLOT_HEIGHT = 640;
@@ -62,7 +62,7 @@ interface SlotLayout {
   collapsed: SlotKey[];
 }
 
-const SLOT_KEYS: SlotKey[] = ['anchor', 'now', 'output', 'happened'];
+const SLOT_KEYS: SlotKey[] = ['anchor', 'happened'];
 
 function initialSlots(): SlotLayout {
   const saved = read(SLOTS_KEY) as Partial<SlotLayout> | null;

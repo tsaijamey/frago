@@ -1500,9 +1500,9 @@
       }
     },
     "report": {
-      "slotNow": "此刻在做什么",
+      "tailNow": "此刻",
       "slotDecision": "需要你决策",
-      "slotOutput": "最近一次产出",
+      "tailOutput": "产出",
       "slotHappened": "已经发生的事",
       "itemCount": "{{n}} 条",
       "expandOlder": "展开更早的 {{n}} 条",

@@ -1500,9 +1500,9 @@
       }
     },
     "report": {
-      "slotNow": "What's happening now",
+      "tailNow": "Now",
       "slotDecision": "Needs your call",
-      "slotOutput": "Latest output",
+      "tailOutput": "Output",
       "slotHappened": "What has happened",
       "itemCount": "{{n}} items",
       "expandOlder": "Show {{n}} earlier",

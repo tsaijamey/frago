@@ -12,6 +12,10 @@
 人那句话一到就跑一次，是因为「这场在做什么」「此刻在做什么」说的都是眼下：只等一轮结束
 才更新，人刚下的指令要整整等一轮才出现在右栏，而那一刻正是他最想看右栏的时候。
 
+agent 干活途中也叫，但离上次叫满 ``WORKING_GAP_S`` 才叫一次。不叫的话，一轮干十分钟，
+「此刻」就停在「人提出了什么、agent 还没回话」十分钟，一轮结束直接跳成产出——人永远看
+不到 agent 正在做什么（2026-09-18 实测：16:50 到 16:59 那一轮，末条一动没动）。
+
 ## 切换会话不能打断它
 
 检测和运行都在服务端，跟页面停在哪场会话无关：
@@ -54,7 +58,19 @@ RUNS_FILENAME = "observer-runs.jsonl"
 
 #: 槽位文件的结构版本。字段或判据一改就升：读到别的版本当作没有，从头重算——槽位是从
 #: 会话记录投影出来的，丢了能重建，旧数据被当成新数据读才是真麻烦。
-SLOTS_VERSION = 1
+#:
+#: 2 起「此刻在做什么」「最近一次产出」并成一个末条。1 版能就地转过来（见
+#: ``_from_v1``），不必从头重算。
+SLOTS_VERSION = 2
+
+#: 末条的两种状态。
+TAIL_NOW = "now"
+TAIL_OUTPUT = "output"
+TAIL_KINDS = (TAIL_NOW, TAIL_OUTPUT)
+
+#: agent 干活途中叫旁路 AI 的最短间隔（秒）。离上一次跑还不到这么久，这一批就不叫。
+WORKING_GAP_S = 60
+WORKING = "working"
 
 #: 说明书的文件名，在 ``~/.frago/hook/`` 下，随包发、人可以改，改过的升级时不覆盖。
 INSTRUCTIONS_FILE = "observer.md"
@@ -129,18 +145,19 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         "cursor_id": None,
         # {"seq": 这句人话的记录序号, "text": 原话}，还没找到时为 None。
         "anchor": None,
-        "now": "",
+        # 「已经发生的事」的最后一条，也就是眼下的状态：{"kind": "now" | "output", "text": …}。
+        # agent 在做就是「此刻」，东西落地了就是「产出」；产出被下一个状态顶掉时退进
+        # happened，此刻被顶掉就不留（做完的事由 happened 记）。
+        "tail": None,
         "decision": "",
-        "output": "",
         # 从旧到新。
         "happened": [],
         # 每一格自己上次变样的时刻（毫秒）。整份只记一个总的更新时刻不够用：右栏是按
         # 时间线读的，人要分得出哪一格是刚刚变的、哪一格半小时前就停在那儿了。老的槽位
         # 文件里没有这几格，读出来是 None，那几格照常显示，只是暂时不带时间。
         "anchor_at": None,
-        "now_at": None,
+        "tail_at": None,
         "decision_at": None,
-        "output_at": None,
         # 跟 happened 一一对齐，同样从旧到新。
         "happened_at": [],
         "updated_at": None,
@@ -162,11 +179,36 @@ def load_slots(directory: Path, session_id: str, family: str) -> dict[str, Any]:
         data = json.loads((directory / SLOTS_FILENAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return empty_slots(session_id, family)
+    if isinstance(data, dict) and data.get("version") == 1:
+        data = _from_v1(data)
     if not isinstance(data, dict) or data.get("version") != SLOTS_VERSION:
         return empty_slots(session_id, family)
     base = empty_slots(session_id, family)
     base.update({k: v for k, v in data.items() if k in base})
     return base
+
+
+def _from_v1(data: dict[str, Any]) -> dict[str, Any]:
+    """1 版槽位就地转成 2 版。
+
+    末条取「此刻」「产出」里后变样的那一个；两个都没时刻时，有产出取产出。另一个丢掉：
+    旧文件里的「此刻」说的是过程，做完的事 happened 里已经记着；被压下去的那份产出，
+    按 1 版的写法它本来也只是一格覆盖型的内容，没进过 happened。happened 原样保留，
+    游标也不动——不从头重算，免得每场会话再问一遍模型。
+    """
+    out = dict(data)
+    now, output = data.get("now") or "", data.get("output") or ""
+    now_at, output_at = data.get("now_at"), data.get("output_at")
+    if output and (not now or (output_at or 0) >= (now_at or 0)):
+        tail, at = {"kind": TAIL_OUTPUT, "text": output}, output_at
+    elif now:
+        tail, at = {"kind": TAIL_NOW, "text": now}, now_at
+    else:
+        tail, at = None, None
+    for key in ("now", "output", "now_at", "output_at"):
+        out.pop(key, None)
+    out.update(version=SLOTS_VERSION, tail=tail, tail_at=at)
+    return out
 
 
 def save_slots(directory: Path, slots: dict[str, Any]) -> None:
@@ -196,15 +238,13 @@ def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
     return {
         "bound": bound,
         "anchor": anchor.get("text"),
-        "now": slots.get("now") or "",
+        "tail": slots.get("tail") or None,
         "decision": slots.get("decision") or "",
-        "output": slots.get("output") or "",
         "happened": list(reversed(happened)),
         "happened_at": list(reversed(times)),
         "anchor_at": slots.get("anchor_at"),
-        "now_at": slots.get("now_at"),
+        "tail_at": slots.get("tail_at"),
         "decision_at": slots.get("decision_at"),
-        "output_at": slots.get("output_at"),
         "updated_at": slots.get("updated_at"),
         "model": slots.get("model"),
         "status": "unbound" if not bound else slots.get("status") or "empty",
@@ -373,27 +413,38 @@ def showable(records: Sequence[UnifiedRecord]) -> list[str]:
     return [line for line in (record_line(r) for r in records) if line]
 
 
+_TAIL_LABEL = {TAIL_NOW: "此刻", TAIL_OUTPUT: "产出"}
+
+
 def build_prompt(
     slots: dict[str, Any],
     fed: Sequence[UnifiedRecord],
     dropped: int,
     candidates: dict[int, str],
+    trigger: str | None = None,
 ) -> str:
     anchor = (slots.get("anchor") or {}).get("text")
     happened = list(slots.get("happened") or [])[-8:]
+    tail = slots.get("tail") or {}
+    tail_line = (
+        f"[{_TAIL_LABEL.get(tail.get('kind'), '此刻')}] {tail.get('text')}"
+        if tail.get("text")
+        else EMPTY_MARK
+    )
     lines = [
         "## 当前右栏",
         f"- 这场在做什么（人的原话）：{_clip(anchor, 300) if anchor else EMPTY_MARK}",
-        f"- 此刻在做什么：{slots.get('now') or EMPTY_MARK}",
         f"- 需要你决策：{slots.get('decision') or NONE_MARK}",
-        f"- 最近一次产出：{slots.get('output') or NONE_MARK}",
         "- 已经发生的事（最近几条，从旧到新）：",
     ]
     lines += [f"  - {h}" for h in happened] or [f"  - {EMPTY_MARK}"]
+    lines.append(f"- 末条（眼下的状态）：{tail_line}")
     shown = showable(fed)
     head = f"## 这一段新增的会话记录（{len(shown)} 条"
     head += f"；更早的 {dropped} 条太多，没给）" if dropped else "）"
     lines += ["", head]
+    if trigger == WORKING:
+        lines.append("（这一段截在 agent 干活途中，它还没停下。）")
     lines += shown or [NOTHING_TO_READ]
     lines += ["", "## 这一段里人说过的话（换目标时 anchor_seq 只能填这里的编号）"]
     lines += [f"- 第 {seq} 条：{_clip(text, 200)}" for seq, text in candidates.items()] or [
@@ -406,7 +457,7 @@ def build_prompt(
 
 
 def parse_answer(text: str) -> dict[str, Any]:
-    """从回答里取出那个 JSON 对象，整理成固定的五个字段。
+    """从回答里取出那个 JSON 对象，整理成固定的四个字段。
 
     容忍代码块围栏和前后多出来的话；取不出对象就是没答对，抛 ValueError。
     """
@@ -427,11 +478,17 @@ def parse_answer(text: str) -> dict[str, Any]:
         if isinstance(adds, list)
         else []
     )
+    raw_tail = obj.get("tail")
+    tail = None
+    if isinstance(raw_tail, dict) and raw_tail.get("kind") in TAIL_KINDS:
+        text = raw_tail.get("text")
+        text = _unplaceholder(text.strip()) if isinstance(text, str) else ""
+        if text:
+            tail = {"kind": raw_tail["kind"], "text": text}
     seq = obj.get("anchor_seq")
     return {
-        "now": field("now"),
+        "tail": tail,
         "decision": field("decision"),
-        "output": field("output"),
         "happened_add": happened[:HAPPENED_PER_RUN],
         "anchor_seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
     }
@@ -439,7 +496,8 @@ def parse_answer(text: str) -> dict[str, Any]:
 
 def violation(answer: dict[str, Any]) -> str | None:
     """回答里有没有犯禁令。有就说出犯在哪一格、犯了什么。"""
-    plain = [("此刻在做什么", answer["now"]), ("最近一次产出", answer["output"])]
+    tail = answer["tail"] or {}
+    plain = [(f"末条（{_TAIL_LABEL.get(tail.get('kind'), '')}）", tail.get("text") or "")]
     plain += [("已经发生的事", h) for h in answer["happened_add"]]
     for name, text in plain + [("需要你决策", answer["decision"])]:
         for pattern, why in _ALWAYS_BANNED:
@@ -453,7 +511,7 @@ def violation(answer: dict[str, Any]) -> str | None:
 
 
 def _content(slots: dict[str, Any]) -> str:
-    keys = ("anchor", "now", "decision", "output", "happened")
+    keys = ("anchor", "tail", "decision", "happened")
     return json.dumps({k: slots.get(k) for k in keys}, ensure_ascii=False, sort_keys=True)
 
 
@@ -465,14 +523,15 @@ def apply_answer(
 ) -> bool:
     """把回答合进槽位，返回槽位是否真的变了。
 
-    - 此刻在做什么：有新值就盖掉。
+    - 末条：有新值就换。换下来的如果是一份产出，先退进「已经发生的事」，排在这一段新加的
+      几条前面——它比这一段的事早；换下来的是「此刻」就不留，它说的是过程，做完的事由
+      「已经发生的事」记。没给新值就不动。
     - 需要你决策：**只有人在这一段里开过口，空串才算「已经答了、清掉」。**
       这一格说的是眼下还有什么在等人回话，是个常驻状态；模型每次只看得见新增的那一段，
       问题是上一段提的，这一段里自然不会再出现一遍。人没开口就把空串当成「没有待决」，
       等于agent 一问完、下一批记录一到就把问题擦掉——实测就是这么丢的：21:08:23 填上
       「改法要人挑」，21:08:25 一条轮次边界落盘，这一格就空了。人只要没答，问题就还在。
-    - 最近一次产出：空串表示这一段没有新产出，沿用上一次。
-    - 已经发生的事：只追加，跟最近几条重复的不加。
+    - 已经发生的事：只追加，跟最近几条或末条重复的不加。
     - 锚：只认这一段里人说过的话的编号；指别的编号当没指。
 
     每一格另记它自己上次变样的时刻，右栏按时间线读要用。``stamp_ms`` 只给测试用。
@@ -490,22 +549,32 @@ def apply_answer(
             slots[key] = value
             slots[f"{key}_at"] = at
 
-    if answer["now"]:
-        put("now", answer["now"])
     if answer["decision"] or candidates:
         put("decision", answer["decision"])
-    if answer["output"]:
-        put("output", answer["output"])
 
     happened = list(slots.get("happened") or [])
     # 老槽位文件只有正文没有时刻，左边补空对齐，别让新加的那条错位到老内容头上。
     times = list(slots.get("happened_at") or [])
     times = times[-len(happened) :] if happened and len(times) > len(happened) else times
     times = [None] * max(0, len(happened) - len(times)) + times
-    for item in answer["happened_add"]:
+
+    def add(item: str, when: int | None) -> None:
         if item not in happened[-20:]:
             happened.append(item)
-            times.append(at)
+            times.append(when)
+
+    old_tail = slots.get("tail") or None
+    new_tail = answer["tail"]
+    if new_tail and new_tail != old_tail:
+        if old_tail and old_tail.get("kind") == TAIL_OUTPUT and old_tail.get("text"):
+            # 产出不丢：被顶掉时退成历史，带着它当初落地的时刻。
+            add(old_tail["text"], slots.get("tail_at"))
+        slots["tail"] = new_tail
+        slots["tail_at"] = at
+    tail_text = (slots.get("tail") or {}).get("text")
+    for item in answer["happened_add"]:
+        if item != tail_text:
+            add(item, at)
     slots["happened"] = happened[-HAPPENED_KEEP:]
     slots["happened_at"] = times[-HAPPENED_KEEP:]
 
@@ -526,6 +595,8 @@ class _Lane:
     #: 跑着的时候又来了触发，记下最后一次的原因。多次触发并成一次：下一次本来就会读到
     #: 游标之后的全部新增，不丢东西。
     owed: str | None = None
+    #: 上一次开跑的时刻（单调钟）。干活途中的触发按它节流。
+    last_started: float = float("-inf")
 
 
 AskFn = Callable[[str], dict]
@@ -568,13 +639,21 @@ class SessionObserver:
     # ---- 投任务 ---------------------------------------------------------
 
     def notify(self, session_id: str, trigger: str) -> None:
-        """投一个任务就走。从监听线上调，NEVER 在这里等模型。"""
+        """投一个任务就走。从监听线上调，NEVER 在这里等模型。
+
+        干活途中的触发（``working``）每批新记录都会来一次，离上一次开跑不满
+        ``WORKING_GAP_S`` 就直接丢掉；也不去顶掉已经欠着的别的触发——人发话、一轮结束
+        这些原因要留在执行记录里。
+        """
         with self._lock:
             if self._closed:
                 return
             lane = self._lanes.setdefault(session_id, _Lane())
+            if trigger == WORKING and time.monotonic() - lane.last_started < WORKING_GAP_S:
+                return
             if lane.running:
-                lane.owed = trigger
+                if trigger != WORKING or lane.owed is None:
+                    lane.owed = trigger
                 return
             lane.running = True
         try:
@@ -586,6 +665,8 @@ class SessionObserver:
 
     def _drain(self, session_id: str, trigger: str) -> None:
         while True:
+            with self._lock:
+                self._lanes[session_id].last_started = time.monotonic()
             try:
                 self.run_once(session_id, trigger)
             except Exception:  # noqa: BLE001 — 一场会话出错不能把这条队列卡死
@@ -658,7 +739,7 @@ class SessionObserver:
             text = human_text(record)
             if text:
                 candidates[record.seq] = text
-        prompt = build_prompt(slots, new, total - len(new), candidates)
+        prompt = build_prompt(slots, new, total - len(new), candidates, trigger)
         entry["fed"] = len(new)
 
         reply = self._ask(prompt)

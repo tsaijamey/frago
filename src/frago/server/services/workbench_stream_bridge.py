@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 WS_SESSION_RECORDS_APPEND = "session_records_append"
 WS_SESSION_TURN_DONE = "session_turn_done"
 
+#: 这几类记录落盘，说明 agent 正在干活，右栏的「此刻」该跟一跟。
+_AGENT_AT_WORK = frozenset({"agent.say", "tool.call", "subagent.dispatch"})
+
 
 class WorkbenchStreamBridge:
     """Singleton that lazily starts ``SessionStream`` instances per project.
@@ -179,15 +182,17 @@ class WorkbenchStreamBridge:
     def _trigger_the_observer(self, session_id: str, records: list[dict]) -> None:
         """这批新记录里有没有「该叫一次旁路观察」的事。
 
-        两个额外的触发点，都不是等 agent 把话交还才叫：
+        三个额外的触发点，都不是等 agent 把话交还才叫：
 
         * 人按了打断——这一轮不算「交还」，不会有轮次结束的信号，不在这里投，右栏会停在
           打断之前。
         * 人发来一句话——「这场在做什么」「此刻在做什么」说的都是眼下，等这一轮跑完再更新
           就整整慢一轮，而人刚把话说出口的那一刻，正是他最想看右栏的时候。
+        * agent 在干活（说话、调工具、派子 agent）——每批都投，旁路那边离上次跑不满一分钟
+          就丢掉。不投的话，一轮干十分钟，「此刻」就十分钟停在「agent 还没回话」。
         """
         try:
-            from frago.server.services.session_observer import person_spoke
+            from frago.server.services.session_observer import WORKING, person_spoke
         except Exception:
             logger.exception("WorkbenchStreamBridge: observer import failed")
             return
@@ -195,6 +200,8 @@ class WorkbenchStreamBridge:
             self._observe(session_id, "interrupt")
         elif person_spoke(records):
             self._observe(session_id, "prompt")
+        elif any(isinstance(r, dict) and r.get("kind") in _AGENT_AT_WORK for r in records):
+            self._observe(session_id, WORKING)
 
     def _on_new_records(self, session_id: str, records: list[dict]) -> None:
         """Called by SessionStream when new records arrive."""

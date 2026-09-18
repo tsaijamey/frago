@@ -1,4 +1,4 @@
-"""Tests for the session observer — the side panel's five slots.
+"""Tests for the session observer — what fills the side panel.
 
 Nothing here touches a real frago-core, a real session or the real settings: the
 observer takes its reader, its asker and its binding check as arguments.
@@ -45,10 +45,27 @@ class FakeSession:
         return [r for r in self.records if r.seq >= after][:limit]
 
 
-def answer(**fields):
-    body = {"now": "", "decision": "", "output": "", "happened_add": [], "anchor_seq": None}
+def NOW(text):
+    return {"kind": "now", "text": text}
+
+
+def OUT(text):
+    return {"kind": "output", "text": text}
+
+
+def reply(**fields):
+    """模型回答的正文。``now=`` / ``output=`` 是末条两种状态的简写。"""
+    body = {"tail": None, "decision": "", "happened_add": [], "anchor_seq": None}
+    if "now" in fields:
+        body["tail"] = NOW(fields.pop("now"))
+    if "output" in fields:
+        body["tail"] = OUT(fields.pop("output"))
     body.update(fields)
-    return {"ok": True, "text": json.dumps(body, ensure_ascii=False), "model": "deepseek-v4-flash"}
+    return json.dumps(body, ensure_ascii=False)
+
+
+def answer(**fields):
+    return {"ok": True, "text": reply(**fields), "model": "deepseek-v4-flash"}
 
 
 def observer(tmp_path, session, ask, bound=True):
@@ -152,33 +169,32 @@ class TestWhatTheModelIsShown:
 class TestTheRules:
     def test_percentages_counts_and_estimates_are_refused(self):
         for bad in ("测试过了 80%", "5 个里做完 3/5", "预计十分钟"):
-            ans = so.parse_answer(json.dumps({"now": bad}))
-            assert so.violation(ans), bad
+            for tail in (NOW(bad), OUT(bad)):
+                ans = so.parse_answer(reply(tail=tail))
+                assert so.violation(ans), bad
 
     def test_future_steps_are_refused_outside_the_decision_slot(self):
-        assert so.violation(so.parse_answer(json.dumps({"now": "下一步改前端"})))
-        ok = so.parse_answer(json.dumps({"decision": "下一步先改前端还是先部署？"}))
+        assert so.violation(so.parse_answer(reply(now="下一步改前端")))
+        ok = so.parse_answer(reply(decision="下一步先改前端还是先部署？"))
         assert so.violation(ok) is None
 
     def test_dates_and_paths_are_not_counts(self):
-        ans = so.parse_answer(json.dumps({"output": "2026/09/11 写好了 src/v1/messages.rs"}))
+        ans = so.parse_answer(reply(output="2026/09/11 写好了 src/v1/messages.rs"))
         assert so.violation(ans) is None
 
     def test_code_fences_around_the_answer_are_tolerated(self):
-        ans = so.parse_answer('```json\n{"now": "在跑测试"}\n```')
-        assert ans["now"] == "在跑测试"
+        ans = so.parse_answer('```json\n{"tail": {"kind": "now", "text": "在跑测试"}}\n```')
+        assert ans["tail"] == NOW("在跑测试")
 
     def test_the_empty_marks_it_was_shown_are_not_taken_as_content(self):
         """The prompt writes （还没有） for an empty slot; a model copying it back is not saying anything."""
-        ans = so.parse_answer(
-            json.dumps(
-                {"now": "（还没有）", "output": " （无） ", "happened_add": ["（还没有）", "真的一件事"]},
-                ensure_ascii=False,
-            )
-        )
-        assert ans["now"] == ""
-        assert ans["output"] == ""
+        ans = so.parse_answer(reply(tail=OUT(" （还没有） "), happened_add=["（还没有）", "真的一件事"]))
+        assert ans["tail"] is None
         assert ans["happened_add"] == ["真的一件事"]
+
+    def test_a_tail_of_an_unknown_kind_is_no_tail(self):
+        assert so.parse_answer(reply(tail={"kind": "plan", "text": "改前端"}))["tail"] is None
+        assert so.parse_answer(reply(tail="在改前端"))["tail"] is None
 
     def test_no_json_is_a_format_error(self):
         with pytest.raises(ValueError):
@@ -188,17 +204,138 @@ class TestTheRules:
 class TestMerging:
     def test_each_slot_follows_its_own_rule(self):
         slots = so.empty_slots(SID, "claude-code")
-        slots.update(output="旧产出", decision="要不要部署", happened=["a"])
+        slots.update(tail=NOW("在读代码"), decision="要不要部署", happened=["a"])
         changed = so.apply_answer(
-            slots,
-            so.parse_answer(json.dumps({"now": "在改前端", "happened_add": ["a", "b"]})),
-            {7: "部署吧"},
+            slots, so.parse_answer(reply(now="在改前端", happened_add=["a", "b"])), {7: "部署吧"}
         )
         assert changed
-        assert slots["now"] == "在改前端"
-        assert slots["output"] == "旧产出", "no new output keeps the last one"
+        assert slots["tail"] == NOW("在改前端")
         assert slots["decision"] == "", "an answered question clears the slot"
-        assert slots["happened"] == ["a", "b"], "only appended, never repeated"
+        assert slots["happened"] == ["a", "b"], "only appended, never repeated; a replaced 此刻 is not kept"
+
+    def test_no_tail_in_the_answer_keeps_the_last_one(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots["tail"] = OUT("写好了 a.py")
+        so.apply_answer(slots, so.parse_answer(reply(happened_add=["读了 b.py"])), {})
+        assert slots["tail"] == OUT("写好了 a.py")
+
+
+class TestTheTail:
+    """「已经发生的事」的最后一条是眼下的状态：此刻或产出，同一时刻只有一个。
+
+    截图里那场会话（2026-09-18）的毛病：「此刻在做什么」「最近一次产出」各占一格，跟
+    「已经发生的事」最后一两条说的是同一件事，一屏里同一句话出现三遍。
+    """
+
+    def test_an_output_replaces_the_now_and_the_now_is_not_kept(self):
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(slots, so.parse_answer(reply(now="人提出改配方，agent 还没回话")), {}, 1000)
+        so.apply_answer(slots, so.parse_answer(reply(output="配方改好，测试 15 个通过")), {}, 2000)
+        assert slots["tail"] == OUT("配方改好，测试 15 个通过")
+        assert slots["tail_at"] == 2000
+        assert slots["happened"] == [], "此刻说的是过程，被顶掉就不留"
+
+    def test_new_work_after_an_output_retires_it_into_history_with_its_own_time(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots.update(happened=["更早的事"], happened_at=[500])
+        so.apply_answer(slots, so.parse_answer(reply(output="配方改好")), {}, 2000)
+        so.apply_answer(
+            slots,
+            so.parse_answer(reply(now="人同意 A 方案，agent 还没回话", happened_add=["人同意 A 方案"])),
+            {9: "同意"},
+            3000,
+        )
+        assert slots["tail"] == NOW("人同意 A 方案，agent 还没回话")
+        assert slots["happened"] == ["更早的事", "配方改好", "人同意 A 方案"], "退下来的产出排在这一段的事前面"
+        assert slots["happened_at"] == [500, 2000, 3000], "产出带着它当初落地的时刻"
+
+    def test_one_output_after_another_keeps_both(self):
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(slots, so.parse_answer(reply(output="提交了 a")), {}, 1000)
+        so.apply_answer(slots, so.parse_answer(reply(output="提交了 b")), {}, 2000)
+        assert slots["tail"] == OUT("提交了 b")
+        assert slots["happened"] == ["提交了 a"]
+
+    def test_the_same_tail_again_changes_nothing(self):
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(slots, so.parse_answer(reply(output="提交了 a")), {}, 1000)
+        assert not so.apply_answer(slots, so.parse_answer(reply(output="提交了 a")), {}, 2000)
+        assert slots["tail_at"] == 1000
+        assert slots["happened"] == []
+
+    def test_history_does_not_repeat_what_the_tail_says(self):
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(
+            slots, so.parse_answer(reply(output="配方改好", happened_add=["读了配方", "配方改好"])), {}
+        )
+        assert slots["happened"] == ["读了配方"]
+
+    def test_the_prompt_shows_the_tail_with_its_kind(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots["tail"] = OUT("配方改好")
+        prompt = so.build_prompt(slots, [rec(1, "agent.say", text="在")], 0, {})
+        assert "末条（眼下的状态）：[产出] 配方改好" in prompt
+        assert "此刻在做什么" not in prompt and "最近一次产出" not in prompt
+
+    def test_a_working_run_tells_the_model_the_agent_has_not_stopped(self):
+        slots = so.empty_slots(SID, "claude-code")
+        fed = [rec(1, "tool.call", tool_name="Bash", args={"command": "ls"})]
+        assert "干活途中" in so.build_prompt(slots, fed, 0, {}, so.WORKING)
+        assert "干活途中" not in so.build_prompt(slots, fed, 0, {}, "turn")
+
+    def test_the_page_gets_the_tail_not_the_two_old_slots(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots.update(tail=OUT("配方改好"), tail_at=2000)
+        view = so.public_state(slots, bound=True)
+        assert view["tail"] == OUT("配方改好") and view["tail_at"] == 2000
+        assert "now" not in view and "output" not in view
+
+
+class TestAVersionOneSlotsFile:
+    """1 版槽位文件就地转过来，不从头重算：已经发生的事和游标都留着。"""
+
+    def write(self, tmp_path, **fields):
+        directory = tmp_path / "claude-code" / SID
+        directory.mkdir(parents=True)
+        old = {
+            "version": 1,
+            "session_id": SID,
+            "family": "claude-code",
+            "cursor": 42,
+            "cursor_id": "r41",
+            "anchor": {"seq": 0, "text": "原目标"},
+            "now": "",
+            "decision": "",
+            "output": "",
+            "happened": ["a", "b"],
+            "happened_at": [1, 2],
+            "now_at": None,
+            "output_at": None,
+        }
+        old.update(fields)
+        (directory / so.SLOTS_FILENAME).write_text(json.dumps(old, ensure_ascii=False))
+        return so.load_slots(directory, SID, "claude-code")
+
+    def test_the_later_of_the_two_becomes_the_tail(self, tmp_path):
+        slots = self.write(tmp_path, now="在跑测试", now_at=900, output="写好了 a.py", output_at=500)
+        assert slots["version"] == 2
+        assert slots["tail"] == NOW("在跑测试") and slots["tail_at"] == 900
+        assert slots["happened"] == ["a", "b"] and slots["cursor"] == 42
+        assert "now" not in slots and "output" not in slots
+
+    def test_an_output_newer_than_the_now_wins(self, tmp_path):
+        slots = self.write(tmp_path, now="在跑测试", now_at=500, output="写好了 a.py", output_at=900)
+        assert slots["tail"] == OUT("写好了 a.py")
+
+    def test_without_times_an_output_wins(self, tmp_path):
+        slots = self.write(tmp_path, now="在跑测试", output="写好了 a.py")
+        assert slots["tail"] == OUT("写好了 a.py")
+
+    def test_both_empty_is_no_tail(self, tmp_path):
+        assert self.write(tmp_path)["tail"] is None
+
+
+class TestMergingTheRest:
 
     def test_a_pending_question_survives_a_stretch_where_nobody_answered_it(self):
         """「需要你决策」是常驻状态，不是「这一段里新出现的待决」。
@@ -210,10 +347,10 @@ class TestMerging:
         slots = so.empty_slots(SID, "claude-code")
         slots["decision"] = "三条改法要人挑一条"
 
-        so.apply_answer(slots, so.parse_answer('{"now": "还在跑测试"}'), {})
+        so.apply_answer(slots, so.parse_answer(reply(now="还在跑测试")), {})
         assert slots["decision"] == "三条改法要人挑一条", "人没开口，问题就还挂着"
 
-        so.apply_answer(slots, so.parse_answer('{"now": "在改前端"}'), {9: "选 C"})
+        so.apply_answer(slots, so.parse_answer(reply(now="在改前端")), {9: "选 C"})
         assert slots["decision"] == "", "人开了口又没有新的待决，这一格才算清掉"
 
     def test_each_slot_carries_the_moment_it_last_changed(self):
@@ -223,16 +360,16 @@ class TestMerging:
         写时刻的话，一格几小时没动的内容会一直显示成「刚刚」。
         """
         slots = so.empty_slots(SID, "claude-code")
-        so.apply_answer(slots, so.parse_answer('{"now": "在改前端", "happened_add": ["读了 a.py"]}'), {}, 1000)
-        assert slots["now_at"] == 1000
+        so.apply_answer(slots, so.parse_answer(reply(now="在改前端", happened_add=["读了 a.py"])), {}, 1000)
+        assert slots["tail_at"] == 1000
         assert slots["happened_at"] == [1000]
-        assert slots["output_at"] is None, "没填过的格子没有时刻"
+        assert slots["decision_at"] is None, "没填过的格子没有时刻"
 
-        so.apply_answer(slots, so.parse_answer('{"now": "在改前端"}'), {}, 9000)
-        assert slots["now_at"] == 1000, "值没变，时刻不许动"
+        so.apply_answer(slots, so.parse_answer(reply(now="在改前端")), {}, 9000)
+        assert slots["tail_at"] == 1000, "值没变，时刻不许动"
 
-        so.apply_answer(slots, so.parse_answer('{"now": "在跑测试"}'), {}, 9000)
-        assert slots["now_at"] == 9000
+        so.apply_answer(slots, so.parse_answer(reply(now="在跑测试")), {}, 9000)
+        assert slots["tail_at"] == 9000
 
     def test_an_old_slots_file_without_times_lines_up_instead_of_skewing(self):
         """老槽位文件只有正文没有时刻。新加的那条不能错位标到老内容头上。"""
@@ -277,7 +414,7 @@ class TestOneRun:
         assert entry["changed"] is True
         assert slots["cursor"] == 3
         assert slots["anchor"] == {"seq": 0, "text": "把会话记录归一成同一种形状"}
-        assert slots["now"] == "十五种形态已经对齐"
+        assert slots["tail"] == NOW("十五种形态已经对齐")
         assert "[工具] Read unified_record.py" in seen["prompt"]
         assert runs_of(tmp_path)[-1]["trigger"] == "turn"
 
@@ -306,7 +443,7 @@ class TestOneRun:
         entry = observer(tmp_path, session, lambda p: answer(now="做完了 90%")).run_once(SID, "turn")
         slots = slots_of(tmp_path)
         assert entry["rejected"]
-        assert slots["now"] == ""
+        assert slots["tail"] is None
         assert slots["cursor"] == 2
 
     def test_a_batch_with_nothing_to_read_never_reaches_the_model(self, tmp_path):
@@ -490,6 +627,74 @@ class TestLanes:
         assert len(calls) == 2, "two triggers during one run fold into one more run"
         assert slots_of(tmp_path)["cursor"] == 3
 
+    def test_work_wakes_it_at_most_once_a_minute(self, tmp_path, monkeypatch):
+        """干活途中每批记录都会来叫，离上次开跑不满一分钟的一律丢掉。"""
+        session = FakeSession([human(0, "你好"), rec(1, "tool.call", tool_name="Bash")])
+        calls = []
+        clock = [1000.0]
+        monkeypatch.setattr(so.time, "monotonic", lambda: clock[0])
+        obs = observer(tmp_path, session, lambda p: calls.append(p) or answer(now="在跑命令"))
+        try:
+            obs.notify(SID, so.WORKING)
+            _wait_idle(obs)
+            assert len(calls) == 1
+
+            session.records.append(rec(2, "tool.call", tool_name="Read"))
+            clock[0] += so.WORKING_GAP_S - 1
+            obs.notify(SID, so.WORKING)
+            _wait_idle(obs)
+            assert len(calls) == 1, "不满一分钟，不叫"
+
+            obs.notify(SID, "turn")
+            _wait_idle(obs)
+            assert len(calls) == 2, "一轮结束、人发话不受节流"
+
+            session.records.append(rec(3, "tool.call", tool_name="Edit"))
+            clock[0] += so.WORKING_GAP_S
+            obs.notify(SID, so.WORKING)
+            _wait_idle(obs)
+            assert len(calls) == 3
+        finally:
+            obs.shutdown()
+
+    def test_work_does_not_push_out_an_owed_prompt(self, tmp_path):
+        """跑着的时候人说了话又来了一批干活记录：欠着的那一次要记成「人发话」。"""
+        session = FakeSession([human(0, "你好"), rec(1, "agent.say", text="在")])
+        release = threading.Event()
+        started = threading.Event()
+
+        def ask(prompt):
+            started.set()
+            release.wait(5)
+            return answer(now="在")
+
+        obs = observer(tmp_path, session, ask)
+        obs.notify(SID, "turn")
+        assert started.wait(5)
+        session.records.append(human(2, "停一下"))
+        obs.notify(SID, "prompt")
+        with obs._lock:
+            obs._lanes[SID].last_started = float("-inf")
+        obs.notify(SID, so.WORKING)
+        assert obs._lanes[SID].owed == "prompt"
+        release.set()
+        obs._pool.shutdown(wait=True)
+        assert [r["trigger"] for r in runs_of(tmp_path)] == ["turn", "prompt"]
+
+
+def _wait_idle(obs, timeout=5.0):
+    """等这场会话的队列跑空。"""
+    import time as _time
+
+    deadline = _time.perf_counter() + timeout
+    while _time.perf_counter() < deadline:
+        with obs._lock:
+            lane = obs._lanes.get(SID)
+            if lane is None or not lane.running:
+                return
+        _time.sleep(0.01)
+    raise AssertionError("observer lane never went idle")
+
 
 class TestTheExtraWakePoints:
     """监听线上新来一批记录时，除了「一轮结束」还有两处要当场叫一次。"""
@@ -512,10 +717,24 @@ class TestTheExtraWakePoints:
         bridge._trigger_the_observer(SID, [raw(1, "user.say", text="把这件事改了")])
         assert seen == ["prompt"]
 
-    def test_the_agent_talking_alone_does_not(self, woken):
+    def test_the_agent_at_work_wakes_it_as_working(self, woken):
+        """一轮干十分钟，「此刻」不能十分钟停在「agent 还没回话」。节流在旁路那边。"""
         bridge, seen = woken
         bridge._trigger_the_observer(SID, [raw(1, "agent.say", text="改好了")])
+        bridge._trigger_the_observer(SID, [raw(2, "tool.call", tool_name="Bash")])
+        assert seen == [so.WORKING, so.WORKING]
+
+    def test_records_that_show_no_work_do_not(self, woken):
+        bridge, seen = woken
+        bridge._trigger_the_observer(SID, [raw(1, "tool.result", body="ok"), raw(2, "usage.tick")])
         assert seen == []
+
+    def test_a_person_speaking_amid_work_is_named_as_a_prompt(self, woken):
+        bridge, seen = woken
+        bridge._trigger_the_observer(
+            SID, [raw(1, "tool.call", tool_name="Bash"), raw(2, "user.say", text="停一下")]
+        )
+        assert seen == ["prompt"]
 
     def test_an_interrupt_is_named_and_does_not_wake_it_twice(self, woken):
         bridge, seen = woken
