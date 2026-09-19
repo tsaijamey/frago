@@ -1348,12 +1348,16 @@ def explain_refusals(marker: str, since: float) -> str:
     chosen = backend()
     if isinstance(chosen, Bubblewrap):
         return ("（Linux 上视图外的路径是直接不存在，没有拦截记录可取。"
-                "报错里出现 No such file or directory 且路径在落点之外，多半就是它。）")
+                "报错里出现 No such file or directory 且路径在落点之外，多半就是它。"
+                f"{_COMMAND_HINT}）")
     if not isinstance(chosen, SandboxExec):
         return ""
     found = refusals(marker, since)
     if found is None:
-        return "（读不到系统日志，取不出这次运行被隔离拦下了什么。）"
+        # The case where a direction matters most: nothing is listed, so the
+        # person has only the recipe's own error to go on — and when that error
+        # is a command's "operation not permitted", the declaration is the fix.
+        return f"（读不到系统日志，取不出这次运行被隔离拦下了什么。{_COMMAND_HINT}）"
     if not found:
         return ""
     shown = "\n".join(f"  - {line}" for line in found[:_REFUSALS_SHOWN])
@@ -1364,4 +1368,17 @@ def explain_refusals(marker: str, since: float) -> str:
         "这些路径不在配方的视图里。配方自己的数据写到平台给的落点；"
         "第三方库往家目录写的缓存，用它的环境变量改指到落点"
         "（见 frago book recipe-creation 硬规矩第 6 条「配方跑在视图里」）。"
+        f"{_COMMAND_HINT}"
     )
+
+
+#: The third kind of refusal, said in both platforms' notes. It is the one a
+#: person is least likely to guess: the path belongs to a command the recipe
+#: started, not to the recipe, and neither a landing spot nor an environment
+#: variable fixes it — ``github_star_watch`` failed this way for eighteen days
+#: while its note pointed only at the other two.
+_COMMAND_HINT = (
+    "被拦的若是配方调用的外部命令读它自己的配置或登录态（例如 gh 读 ~/.config/gh），"
+    "在 recipe.md 写 uses_commands: [命令名]，首次运行时平台会审计并放行"
+    "（见 frago book recipe-creation 硬规矩第 6 条「外部命令读不到自己的配置」）。"
+)

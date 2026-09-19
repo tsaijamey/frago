@@ -50,7 +50,7 @@
 
 - name: must-recipe-data
   category: must
-  brief: "配方的工作数据落 <根>/recipe-data/<配方名>/[projects/<项目>/]，根是这次运行绑定的身份；单例还是多份由配方显式声明；跨用户数据分起步(复制后脱钩)与共读(绝不复制)，判据=复制后原件还会不会更新；运行必须绑定用户，绑不上就拒跑；配方 NEVER 自己拼数据路径"
+  brief: "配方的工作数据落 <根>/recipe-data/<配方名>/[projects/<项目>/]，根是这次运行绑定的身份；单例还是多份由配方显式声明；跨用户数据分起步(复制后脱钩)与共读(绝不复制)，判据=复制后原件还会不会更新；运行必须绑定用户，绑不上就拒跑；配方 NEVER 自己拼数据路径；state.json 与机器级 grants.json 是平台保留文件名"
 
 - name: desktop-usage
   category: must
@@ -144,7 +144,7 @@
 
 - name: recipe-execution
   category: available
-  brief: "frago recipe list/run 查询和执行已有 recipe"
+  brief: "frago recipe list/run 查询和执行已有 recipe；配方跑在只拦文件的视图里；调外部命令（gh/ffmpeg…）MUST 在 recipe.md 写 uses_commands，首次运行由 CoreAgent 审计并登记"
 
 - name: interactive-recipe
   category: available
@@ -152,7 +152,7 @@
 
 - name: recipe-deploy
   category: available
-  brief: "把配方送上服务器并让指定的人能用：四段链路 ①问清谁能看（首次开放没有默认值，会被拒）②rsync 送代码（base_dir 别猜、--delete、属主归位）③服务端 validate+假 mode 冒烟 ④expose --public/--signed-in/--allow[+--shared]；部署≠开放≠看得到数据；调度/凭证/channel/published.json 都不跟着走；部署机重启走 systemd 否则丢安全环境变量"
+  brief: "把配方送上服务器并让指定的人能用：四段链路 ①问清谁能看（首次开放没有默认值，会被拒）②rsync 送代码（base_dir 别猜、--delete、属主归位）③服务端 validate+假 mode 冒烟 ④expose --public/--signed-in/--allow[+--shared]；部署≠开放≠看得到数据；调度/凭证/channel/published.json/外部命令放行登记 grants.json 都不跟着走（命令别用 snap 装、CoreAgent 要绑连接、部署后先手动跑一次）；版本号不变书不更新；部署机重启走 systemd 否则丢安全环境变量"
 
 - name: recipe-expose
   category: available
@@ -168,7 +168,7 @@
 
 - name: recipe-fields
   category: available
-  brief: "Recipe 元数据必填/可选字段、flow/env 规范、validate 检查项"
+  brief: "Recipe 元数据必填/可选字段（含 uses_frago_cli、uses_commands 外部命令声明）、flow/env 规范、validate 检查项"
 
 - name: domain-insights
   category: available
@@ -180,7 +180,7 @@
 
 - name: recipe-creation
   category: available
-  brief: "Recipe 创建规范：从 spec.md 到 recipe.md + 脚本的完整流程"
+  brief: "Recipe 创建规范：从 spec.md 到 recipe.md + 脚本的完整流程；硬规矩含视图里被拦的三类：自己的数据、第三方库缓存、外部命令的配置（uses_commands）"
 
 - name: def-knowledge
   category: available

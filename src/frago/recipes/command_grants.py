@@ -419,6 +419,18 @@ def audit(recipe_name: str, recipe_dir: Path | None, command: str,
 # ── what a run gets ────────────────────────────────────────────────────────
 
 
+def _declarable(command: str) -> bool:
+    """Whether a declared name is one this module may ask about.
+
+    ``validate_metadata`` says why a bad one is bad; this only keeps it out of
+    an audit. A path handed to CoreAgent as a "command" would be looked up and
+    judged as if it were one, and ``frago`` has its own declaration.
+    """
+    from frago.recipes.metadata import COMMAND_NAME
+
+    return command != "frago" and bool(COMMAND_NAME.match(command))
+
+
 def _confined() -> bool:
     """Whether anything is confined on this machine. Where nothing is, a
     command sees everything already and there is nothing to hand over."""
@@ -452,6 +464,13 @@ def for_run(
     where = grants_path(recipe_name)
 
     for command in dict.fromkeys(commands):
+        if not _declarable(command):
+            refusals.append(
+                f"配方 {recipe_name} 的 uses_commands 里写了 {command!r}，这不是一个能审计的命令名"
+                f"（只写命令名，不写路径、不带参数；frago 自己的命令写 uses_frago_cli）。"
+                f"先改 recipe.md，frago recipe validate 会说清楚。"
+            )
+            continue
         lines = mentions(recipe_dir, command)
         current = fingerprint(command, recipe_dir)
         entry = record["commands"].get(command)
@@ -514,6 +533,8 @@ def recorded(
     granted: dict[str, list[Path]] = {}
     notes: list[str] = []
     for command in dict.fromkeys(commands):
+        if not _declarable(command):
+            continue  # validate_metadata already says what is wrong with it
         entry = record["commands"].get(command)
         current = fingerprint(command, recipe_dir)
         if not isinstance(entry, dict):

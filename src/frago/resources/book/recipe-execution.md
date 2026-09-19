@@ -15,6 +15,7 @@ frago recipe 系统提供可复用的自动化脚本。执行前先查询可用 
 
 - 配方跑在一个只看得见指定目录的视图里：本次运行的落点、自己的 `~/.frago/recipe-data/<配方>/` 可写；别人写了 `shares` 的那块、系统与解释器、配方源码只读；其余一切不存在，越界当场失败。
 - 视图只管文件：麦克风、摄像头、显卡、系统服务、屏幕窗口都不拦，是否放行由操作系统自己的授权决定。
+- **配方要调外部命令（gh、ffmpeg、yt-dlp……）MUST 在 recipe.md 写 `uses_commands: [命令名]`**。不写的话，命令本身多半启动得了，但读不到它放在家目录里的配置和登录态，第一行就报 `operation not permitted` 或 `No such file or directory`。写了之后，每台机器**第一次运行**时由 CoreAgent 实地查看这个命令装在哪、要读哪些目录、只读交出去是否安全，结论登记在 `~/.frago/recipe-data/<配方>/grants.json`，之后照登记开放；配方代码改了会重审；审计没过就拒绝运行并说明原因。服务端常驻启动不做审计，新机器上先手动跑一次。细则：`frago book recipe-fields`。
 - 后端由内核来管：macOS 用自带的 `sandbox-exec`；Linux 用 `bwrap`，**没装 bubblewrap 就拒绝起配方**（`apt install bubblewrap`）。要关掉，MUST 在 `~/.frago/config.json` 明写 `"recipe": {"isolation": "off"}`。
 - frago 包里不带任何配方，`frago init` 也装不来配方。要配方去社区仓库 `tsaijamey/frago-recipe-community` 取。
 

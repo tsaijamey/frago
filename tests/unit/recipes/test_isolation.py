@@ -221,6 +221,18 @@ class TestSayingSoAfterItHappened:
         monkeypatch.setattr(isolation, "backend", lambda: isolation.Bubblewrap())
         assert "Linux" in isolation.explain_refusals("frago-run-abc", 0)
 
+    def test_both_notes_point_at_the_command_declaration(self, monkeypatch):
+        """The third kind of refusal — a command reading its own config — is
+        the one nobody guesses, and neither the landing spot nor an environment
+        variable fixes it. Both platforms' notes have to name the declaration."""
+        monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
+        monkeypatch.setattr(isolation, "backend", lambda: isolation.Bubblewrap())
+        assert "uses_commands" in isolation.explain_refusals("frago-run-abc", 0)
+        monkeypatch.setattr(isolation, "backend", lambda: isolation.SandboxExec())
+        monkeypatch.setattr(isolation, "refusals",
+                            lambda marker, since: ["gh 读 /Users/x/.config/gh/config.yml"])
+        assert "uses_commands" in isolation.explain_refusals("frago-run-abc", 0)
+
     def test_macos_lists_them_and_says_what_to_do(self, monkeypatch):
         monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
         monkeypatch.setattr(isolation, "backend", lambda: isolation.SandboxExec())
@@ -233,7 +245,10 @@ class TestSayingSoAfterItHappened:
         monkeypatch.setenv("FRAGO_RECIPE_ISOLATION", "enforce")
         monkeypatch.setattr(isolation, "backend", lambda: isolation.SandboxExec())
         monkeypatch.setattr(isolation, "refusals", lambda marker, since: None)
-        assert "读不到系统日志" in isolation.explain_refusals("frago-run-abc", 0)
+        note = isolation.explain_refusals("frago-run-abc", 0)
+        assert "读不到系统日志" in note
+        # Nothing listed is when a direction matters most.
+        assert "uses_commands" in note
 
 
 class TestTheMountsLinuxIsHeldTo:

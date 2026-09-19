@@ -188,6 +188,16 @@ class TestWhatARunGets:
         command_grants.for_run("demo", recipe, ["gh"])
         assert asked == [1]
 
+    @pytest.mark.parametrize("bad", ["/usr/bin/gh", "frago", "gh api"])
+    def test_a_name_that_is_not_a_command_is_refused_not_audited(
+        self, machine, recipe, monkeypatch, bad
+    ):
+        monkeypatch.setattr(command_grants, "audit", never_asked)
+        granted, refusal = command_grants.for_run("demo", recipe, [bad])
+        assert granted == {} and repr(bad) in refusal
+        _, notes = command_grants.recorded("demo", recipe, [bad])
+        assert notes == []  # validate's own error says it; no "will be audited" beside it
+
     def test_validate_reads_the_record_and_never_asks(self, machine, recipe, monkeypatch):
         monkeypatch.setattr(command_grants, "audit", never_asked)
         granted, notes = command_grants.recorded("demo", recipe, ["gh"])

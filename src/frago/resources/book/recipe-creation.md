@@ -287,6 +287,29 @@ def mode_transcribe(self) -> dict:
 
 库认哪个变量查它自己的文档；Linux 上遵循 XDG 约定的库认 `XDG_CACHE_HOME`。
 
+**外部命令读不到自己的配置。** 配方 shell 出去调 `gh`、`ffmpeg`、`yt-dlp` 这类命令，
+命令本身装在系统目录里多半启动得了，但它要读的配置、登录态在家目录里——视图外。
+这一类不能像缓存那样改指到落点：`gh` 的登录就在它的配置目录里，指走了就等于没登录。
+改法是在 recipe.md 里声明，**只写命令名，不写路径**：
+
+```yaml
+uses_commands: [gh]
+```
+
+之后每台机器上的事都由平台办：
+
+- **第一次运行时审计。** 平台请 CoreAgent 在这台机器上实地查看：命令装在哪（Homebrew、apt、
+  snap 各不相同）、运行时读哪些目录、只读交给这个配方是否安全。你不用、也不能自己写路径。
+- **结论登记在 `~/.frago/recipe-data/<本配方>/grants.json`。** 之后每次运行照登记开放那些目录，
+  只读；配方读得到这份登记，改不了它。
+- **配方代码（不含测试）改了，下次运行重审**；删掉登记里某个命令那一条，也会重审。
+- **审计没过、或没做成（CoreAgent 没绑连接），配方不启动**，报错里写原因和登记位置。
+- **服务端常驻启动不审计**，只认已有登记——新机器上先 `frago recipe run` 手动跑一次。
+- 没有隔离的机器（Windows、`isolation: off`）不审计，命令本来就什么都看得见。
+- `frago` 自己的命令不走这条，写 `uses_frago_cli: true`。
+
+字段细则见 `frago book recipe-fields`。
+
 **被拦了怎么查。**
 
 - 配方**跑失败**时，macOS 上报错末尾会自动附一段「隔离拦下了这次运行的 N 处文件访问」，
@@ -299,6 +322,8 @@ def mode_transcribe(self) -> dict:
   每条长这样：`Sandbox: python3.13(81657) deny(1) file-write-create /Users/…/Library/Caches/…`。
 - **Linux 上没有拦截记录**：视图外的路径是直接不存在，表现为
   `No such file or directory`。报错里出现落点以外的路径，先按这条想。
+- 被拦的路径是**某个命令自己的配置**（`~/.config/gh`、`~/.gitconfig` 之类），或者报错来自
+  配方调的外部命令而不是配方自己，那不是缓存问题：recipe.md 里补 `uses_commands`，见上文。
 
 ## 说话的规矩
 
@@ -349,8 +374,11 @@ workflow，`runtime` 是 python / chrome-js / shell，`version` 形如 1.0 或 1
 标了 `@action` 却不读落点；`reads_common` 点名的生产者不存在、或对方没写 `shares`。
 
 **隔离预检**——代码里写下的路径落在本次视野之外；
-或者起了 frago 命令却没在 recipe.md 写 `uses_frago_cli`。
+或者起了 frago 命令却没在 recipe.md 写 `uses_frago_cli`；
+`uses_commands` 里写了路径、带了参数，或者写了 `frago`。
 它只看得见代码里写下的路径，第三方库在运行时自己拼的缓存路径看不到，见硬规矩第 6 条。
+**调了外部命令却没写 `uses_commands`，这里查不出来**——只有运行时才会失败；
+声明了但这台机器还没审计过的命令，这里只提示，不拒，也不替你审计。
 
 另有几条在这里只报警告，但页面要开放给别人时会在 `frago recipe expose` 那一步
 被拦下：页面按绝对路径去平台取文件；代码里有只在这台机器上存在的绝对路径；
