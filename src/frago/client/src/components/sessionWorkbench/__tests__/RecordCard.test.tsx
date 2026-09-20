@@ -459,6 +459,22 @@ describe('顶着「你说」出现的那几种机器记事', () => {
     expect(document.body.textContent).not.toContain('task-notification');
   });
 
+  it('后台任务卡的底色跟着下场走：失败整卡报错红，完成不上色', () => {
+    const card = (status: string) =>
+      render(
+        <RecordCard
+          record={makeRecord('context.inject', {
+            payload: { channel: 'task-notification', source: 'task-notification', body: 'x', task_status: status },
+          })}
+          sessionId={SID}
+        />
+      ).container.querySelector('article')!.className;
+    expect(card('failed')).toContain('bg-accent-error-10');
+    const done = card('completed');
+    expect(done).toContain('bg-bg-card');
+    expect(done).not.toMatch(/accent-(error|warning|primary)/);
+  });
+
   it('本机命令的输出走等宽块，默认折起来', () => {
     const { container } = render(
       <RecordCard

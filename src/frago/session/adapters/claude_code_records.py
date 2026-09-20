@@ -258,6 +258,22 @@ def _tagged(text: str, tag: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _task_notification_payload(text: str) -> dict[str, Any]:
+    """后台任务通知那张卡的内容。两条来路（独立一条用户消息、agent 忙时走插话队列）共用。"""
+    text = text.strip()
+    status = _tagged(text, "status")
+    return {
+        "channel": "task-notification",
+        "source": "task-notification",
+        "label": _TASK_STATUS_LABEL.get(status, "后台任务有动静"),
+        # 摘要是唯一一个每条都有的字段（1277 条全覆盖），正文取它。
+        "body": _tagged(text, "summary") or text,
+        "task_status": status,
+        "task_id": _tagged(text, "task-id"),
+        "output_file": _tagged(text, "output-file"),
+    }
+
+
 def _is_command_envelope(text: str) -> bool:
     """这条正文是不是整条都由斜杠命令那层包装构成。
 
@@ -1131,6 +1147,12 @@ class _Translator:
             "stdout": attachment.get("stdout"),
             "stderr": attachment.get("stderr"),
         }
+        if atype == "queued_command" and attachment.get("commandMode") == "task-notification":
+            # 后台任务在 agent 忙时跑完，通知也走插话这条队列进来——本机 3676 条插话里
+            # 1908 条是它，``commandMode`` 两边分得一条不差。它不是人说的话，当插话摆出来
+            # 就是一张「插话」卡里躺着一坨尖括号；跟序 22b 那一路的任务通知是同一件事。
+            self._emit(row, "context.inject", _task_notification_payload(payload["body"]))
+            return
         if atype == "queued_command":
             # 这是**人在 agent 干活时插的一句话**，不是引擎记账。它在会话记录里没有
             # 「用户消息」那种形态，这张卡是它唯一的痕迹——所以下场必须写在卡上：
@@ -1448,21 +1470,7 @@ class _Translator:
         # 后台任务跑完的通知。判在字段上，不认正文——正文的标签集合随任务类型变化
         # （``event`` / ``note`` / ``result`` 只在一部分里出现），认字段稳得多。
         if _as_dict(row.get("origin")).get("kind") == "task-notification":
-            status = _tagged(stripped, "status")
-            self._emit(
-                row,
-                "context.inject",
-                {
-                    "channel": "task-notification",
-                    "source": "task-notification",
-                    "label": _TASK_STATUS_LABEL.get(status, "后台任务有动静"),
-                    # 摘要是唯一一个每条都有的字段（1277 条全覆盖），正文取它。
-                    "body": _tagged(stripped, "summary") or stripped,
-                    "task_status": status,
-                    "task_id": _tagged(stripped, "task-id"),
-                    "output_file": _tagged(stripped, "output-file"),
-                },
-            )
+            self._emit(row, "context.inject", _task_notification_payload(stripped))
             return True
 
         # 斜杠命令。落盘时被拆成三段：命令名、命令说明、参数。**命令说明丢掉**——它是

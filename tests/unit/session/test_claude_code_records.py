@@ -465,6 +465,34 @@ def test_rule10_queued_command_keeps_the_prompt_as_its_body() -> None:
     assert records[0].payload["body"] == "顺便把版本号 bump 了"
 
 
+def test_rule10_task_notification_through_the_queue_is_not_an_interjection() -> None:
+    """后台任务在 agent 忙时跑完，通知走插话队列进来。它不是人说的话，出任务通知卡。"""
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={
+                "type": "queued_command",
+                "commandMode": "task-notification",
+                "prompt": "<task-notification>\n<task-id>bcpac3fgw</task-id>\n"
+                "<output-file>/tmp/tasks/bcpac3fgw.output</output-file>\n"
+                "<status>failed</status>\n"
+                '<summary>Background command "Start local service" failed with exit code 144</summary>\n'
+                "</task-notification>",
+            },
+        )
+    ]
+    records = translate_records(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    payload = records[0].payload
+    assert payload["source"] == "task-notification"
+    assert payload["channel"] == "task-notification"
+    assert payload["task_status"] == "failed"
+    assert payload["output_file"] == "/tmp/tasks/bcpac3fgw.output"
+    assert payload["body"] == 'Background command "Start local service" failed with exit code 144'
+    assert "queue_state" not in payload
+
+
 # ── 序 11～16：模型回复 ─────────────────────────────────────────────
 def test_rule11_api_error_bubble_is_not_a_model_utterance() -> None:
     """报错气泡的 type 也是 assistant、也有 text 块，不看布尔值就会显示成模型自述故障。"""

@@ -7,7 +7,7 @@
 
 import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import RecordStream, { groupRecords } from '../RecordStream';
+import RecordStream, { groupRecords, lensOf, talkView } from '../RecordStream';
 import SessionRail from '../SessionRail';
 import { relativeTime } from '../SessionItem';
 import { ReportBody } from '../ReportPanel';
@@ -71,6 +71,38 @@ describe('groupRecords 视觉归组', () => {
       record({ id: 'c', seq: 2, group_id: GROUP }),
     ]);
     expect(groups).toHaveLength(3);
+  });
+});
+
+describe('lensOf 镜头归属', () => {
+  it('后台任务通知归对话：agent 读到它才转向，筛掉了对话里就只剩没头没尾的转向', () => {
+    const r = record({
+      id: 'n',
+      seq: 0,
+      kind: 'context.inject',
+      payload: { channel: 'task-notification', source: 'task-notification', body: 'x' },
+    });
+    expect(lensOf(r)).toBe('talk');
+  });
+});
+
+describe('talkView 对话档捎带用量', () => {
+  it('两段对话之间只留最后一条用量，工具不进来', () => {
+    const tick = (id: string, seq: number) =>
+      record({ id, seq, kind: 'usage.tick', payload: { context_tokens: seq, total_tokens: seq } });
+    const view = talkView([
+      record({ id: 'u', seq: 0, kind: 'user.say', payload: { text: '开工' } }),
+      tick('t1', 1),
+      record({ id: 'c', seq: 2, kind: 'tool.call', payload: { tool_name: 'Bash' } }),
+      tick('t2', 3),
+      record({ id: 'a', seq: 4, kind: 'agent.say', payload: { text: '好了' } }),
+      tick('t3', 5),
+    ]);
+    expect(view.map((r) => r.id)).toEqual(['u', 't2', 'a', 't3']);
+  });
+
+  it('用量仍归系统档，条数不重复计', () => {
+    expect(lensOf(record({ id: 't', seq: 0, kind: 'usage.tick', payload: {} }))).toBe('system');
   });
 });
 

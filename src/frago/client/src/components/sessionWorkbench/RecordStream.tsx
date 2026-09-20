@@ -63,9 +63,37 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     // 后果不是不好看：切到「对话」看这段会话，会看到 agent 突然转向去做另一件事，而
     // 没有任何东西解释它为什么转向——那句话明明是人说的，却在人的发言里找不到。
     if (record.payload.channel === 'queued_command') return 'talk';
+    // 后台任务通知同理：agent 常常是读到"任务失败了"才转去查原因，把它筛掉，对话里
+    // 就只剩一次没头没尾的转向。
+    if (record.payload.source === 'task-notification') return 'talk';
     return record.payload.source === 'hook' ? 'hook' : 'system';
   }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
+
+/**
+ * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度。
+ *
+ * 刻度归「系统」档、条数也记在那边——这里只是**捎带显示**，不改归属，各档条数加起来
+ * 照旧正好是全部。捎带的规矩是**两段对话之间只留最后一条**：agent 一口气调二三十次
+ * 工具就有二三十条刻度，而刻度报的是水位与累计，同一段里只有最后那条是"到这里为止"
+ * 的数，前面的全被它覆盖了。摆在它原本的位置，也就是下一条对话之前。
+ */
+export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const out: WorkbenchRecord[] = [];
+  let tick: WorkbenchRecord | null = null;
+  for (const record of records) {
+    if (record.kind === 'usage.tick') {
+      tick = record;
+      continue;
+    }
+    if (lensOf(record) !== 'talk') continue;
+    if (tick) out.push(tick);
+    tick = null;
+    out.push(record);
+  }
+  if (tick) out.push(tick);
+  return out;
 }
 
 /** 一段连续的、属于同一次模型回复的记录。`groupId` 只用于分段，永不显示。 */
@@ -181,7 +209,12 @@ export default function RecordStream({
   }, [records]);
 
   const visible = useMemo(
-    () => (lens === 'all' ? records : records.filter((r) => lensOf(r) === lens)),
+    () =>
+      lens === 'all'
+        ? records
+        : lens === 'talk'
+          ? talkView(records)
+          : records.filter((r) => lensOf(r) === lens),
     [records, lens]
   );
 

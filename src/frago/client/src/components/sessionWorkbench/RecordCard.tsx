@@ -80,6 +80,7 @@ const ERR_BG = 'bg-accent-error-10';
 const ERR_RING = 'ring-1 ring-accent-error/35';
 const WAIT_TEXT = 'text-accent-warning';
 const WAIT_BG = 'bg-accent-warning-10';
+const WAIT_RING = 'ring-1 ring-accent-warning/35';
 const OK_TEXT = 'text-text-secondary';
 const DONE_TEXT = 'text-text-muted';
 const DONE_BG = 'bg-bg-subtle';
@@ -89,6 +90,8 @@ const DONE_BG = 'bg-bg-subtle';
 const HOOK_TEXT = 'text-text-secondary';
 const HOOK_BG = 'bg-bg-subtle';
 const HOOK_RING = 'border border-dashed border-border-strong';
+// 后台任务完成：不上色，卡底加一圈实线边，跟工具卡同一个形状。
+const TASK_CARD_NEUTRAL = 'border border-border-color bg-bg-card';
 
 // ── 三组归属 ──────────────────────────────────────────────────────────
 export type KindGroup = 'text' | 'tool' | 'system';
@@ -958,12 +961,35 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   );
 }
 
-/** 后台任务四种下场。完成是常态不给颜色，另外三种都要人回头看一眼。 */
-const TASK_STATUS: Record<string, { key: string; tone: string }> = {
-  completed: { key: 'workbench.record.taskStatus.completed', tone: `${DONE_BG} ${DONE_TEXT}` },
-  failed: { key: 'workbench.record.taskStatus.failed', tone: `${ERR_BG} ${ERR_TEXT}` },
-  killed: { key: 'workbench.record.taskStatus.killed', tone: `${ERR_BG} ${ERR_TEXT}` },
-  stopped: { key: 'workbench.record.taskStatus.stopped', tone: `${WAIT_BG} ${WAIT_TEXT}` },
+/**
+ * 后台任务四种下场。完成是常态不给颜色，另外三种都要人回头看一眼。
+ *
+ * `card` 是整张卡的底：它落在「对话」那一档里，夹在人和 agent 的发言中间，从前那层
+ * `bg-bg-subtle` 跟纸面几乎同色，一眼认不出这是一条外来的通知。**底色跟着下场走**——
+ * 出错整卡报错红、叫停整卡告警橙；完成不上色，只用卡底加一圈边把它从正文里托出来，
+ * 跟工具卡同一个形状。颜色预算照旧只花在要人做点什么的那两档上。
+ */
+const TASK_STATUS: Record<string, { key: string; tone: string; card: string }> = {
+  completed: {
+    key: 'workbench.record.taskStatus.completed',
+    tone: `${DONE_BG} ${DONE_TEXT}`,
+    card: TASK_CARD_NEUTRAL,
+  },
+  failed: {
+    key: 'workbench.record.taskStatus.failed',
+    tone: `${ERR_BG} ${ERR_TEXT}`,
+    card: `${ERR_BG} ${ERR_RING}`,
+  },
+  killed: {
+    key: 'workbench.record.taskStatus.killed',
+    tone: `${ERR_BG} ${ERR_TEXT}`,
+    card: `${ERR_BG} ${ERR_RING}`,
+  },
+  stopped: {
+    key: 'workbench.record.taskStatus.stopped',
+    tone: `${WAIT_BG} ${WAIT_TEXT}`,
+    card: `${WAIT_BG} ${WAIT_RING}`,
+  },
 };
 
 /**
@@ -983,7 +1009,7 @@ function TaskNotification({ record }: { record: WorkbenchRecord }) {
       record={record}
       icon={<Zap size={12} />}
       label={t('workbench.record.taskNotification')}
-      tone="bg-bg-subtle"
+      tone={status?.card ?? TASK_CARD_NEUTRAL}
       meta={
         status ? (
           <span className={`rounded-full px-2 py-[1px] ${status.tone}`}>{t(status.key)}</span>
