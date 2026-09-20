@@ -105,6 +105,9 @@ class RecipeSupervisor:
         # Label and start time of the current spawn's isolation refusals.
         self._marker: str | None = None
         self._spawned_at = 0.0
+        #: Refusal reports still being read. Held so they are not garbage
+        #: collected mid-flight.
+        self._reports: set[asyncio.Task] = set()
 
     async def run(self) -> None:
         """Supervise the recipe until the stop event fires.
@@ -130,7 +133,13 @@ class RecipeSupervisor:
                     "Daemon %s: recipe %s exited (code=%s)",
                     label, self._spec.recipe, proc.returncode,
                 )
-                await self._report_refusals(proc)
+                # Off to one side: reading the system log takes seconds, and a
+                # daemon that died must come back now, not after a diagnostic.
+                # Measured: a daemon that had been up overnight took 48s to
+                # restart because the restart waited for this.
+                self._reports.add(task := asyncio.create_task(
+                    self._report_refusals(proc)))
+                task.add_done_callback(self._reports.discard)
             except Exception:
                 logger.exception("Daemon %s: spawn/read failed", label)
             finally:
@@ -238,15 +247,25 @@ class RecipeSupervisor:
             **kwargs,
         )
 
+    #: How far back a dead daemon's refusals are looked for. A daemon that has
+    #: been up for a day would otherwise have the whole day's system log read,
+    #: which takes long enough to time out and produce nothing.
+    REFUSAL_LOOKBACK = 600
+
     async def _report_refusals(self, proc: asyncio.subprocess.Process) -> None:
         """A daemon that died is told, in the server log, what the isolation
-        refused while it ran — the same note a failed one-shot run gets."""
+        refused while it ran — the same note a failed one-shot run gets.
+
+        Only the last few minutes of it: what kills a long-lived daemon happens
+        just before it dies, and asking for more costs the answer itself.
+        """
         if proc.returncode in (0, None) or not self._marker:
             return
         from frago.recipes import isolation
+        since = max(self._spawned_at, time.time() - self.REFUSAL_LOOKBACK)
         try:
             note = await asyncio.to_thread(
-                isolation.explain_refusals, self._marker, self._spawned_at
+                isolation.explain_refusals, self._marker, since
             )
         except Exception:
             logger.debug("reading isolation refusals failed", exc_info=True)

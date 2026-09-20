@@ -6,6 +6,7 @@ a controllable fake subprocess.
 """
 
 import asyncio
+import time
 
 import pytest
 
@@ -202,21 +203,65 @@ async def test_a_daemon_that_died_logs_what_isolation_refused(monkeypatch, caplo
     person reading about a daemon looks."""
     from frago.recipes import isolation
 
-    seen: list[str] = []
+    seen: list[tuple[str, float]] = []
 
     def fake_explain(marker, since):
-        seen.append(marker)
+        seen.append((marker, since))
         return "隔离拦下了这次运行的 1 处文件访问"
 
     monkeypatch.setattr(isolation, "explain_refusals", fake_explain)
     sup = RecipeSupervisor(SupervisedRecipe(recipe="x"), LogSink("x"),
                            runner=object(), stop_event=asyncio.Event())
     sup._marker = "frago-run-daemon-x-1"
+    sup._spawned_at = time.time()
     with caplog.at_level("WARNING"):
         await sup._report_refusals(_FakeProc(returncode=1))
         await sup._report_refusals(_FakeProc(returncode=0))
-    assert seen == ["frago-run-daemon-x-1"]            # 干净退出不查
+    assert [one[0] for one in seen] == ["frago-run-daemon-x-1"]   # 干净退出不查
     assert "隔离拦下了" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_restart_does_not_wait_for_the_refusal_report(monkeypatch):
+    """读系统日志要几秒；一个死掉的常驻配方得立刻回来。实测过一次 48 秒的重启，
+    等的就是这份诊断。"""
+    from frago.recipes import isolation
+
+    started = asyncio.Event()
+
+    async def never_finishes(*_a, **_kw):
+        started.set()
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(asyncio, "to_thread", never_finishes)
+    monkeypatch.setattr(isolation, "explain_refusals", lambda *_: "")
+    spec = SupervisedRecipe(recipe="x", restart_policy="on-failure",
+                            initial_backoff=0, max_backoff=0, startup_delay=0)
+    sup = _supervisor(spec, [_FakeProc(returncode=1), _FakeProc(returncode=0)])
+    sup._marker = "frago-run-daemon-x-1"
+    sup._spawned_at = time.time()
+
+    await asyncio.wait_for(sup.run(), timeout=2)
+    assert len(sup._spawn_calls) == 2        # 崩了之后照常重起，没等诊断
+    assert started.is_set()                  # 诊断确实起了，只是在一边跑
+    for task in list(sup._reports):
+        task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_only_the_last_few_minutes_are_looked_at(monkeypatch):
+    """跑了一整天的常驻配方，要的是它死前那几分钟，不是一整天的系统日志。"""
+    from frago.recipes import isolation
+
+    seen: list[float] = []
+    monkeypatch.setattr(isolation, "explain_refusals",
+                        lambda marker, since: seen.append(since) or "")
+    sup = RecipeSupervisor(SupervisedRecipe(recipe="x"), LogSink("x"),
+                           runner=object(), stop_event=asyncio.Event())
+    sup._marker = "frago-run-daemon-x-1"
+    sup._spawned_at = time.time() - 86400
+    await sup._report_refusals(_FakeProc(returncode=1))
+    assert seen and seen[0] >= time.time() - sup.REFUSAL_LOOKBACK - 5
 
 
 def test_should_restart_matrix():
