@@ -34,6 +34,9 @@ start 自动完成：没有 CfT 就先取一份 → 选浏览器 → 拉起 nati
 除 Chrome for Testing 外，使用所选浏览器**自己的默认 profile**，不拷贝、不隔离。CfT 是例外：它不是装出来的，没有厂商认定的 profile 位置，所以 profile 也归 frago，落在 `~/.frago/profiles/cft/extension/`。用户在该浏览器里手动登录、存的密码，agent 立即可见。该浏览器专给 agent 用，日常浏览器是另一个品牌，互不干扰。
 
 同一 profile 同时只能有一个浏览器实例：start 撞锁会报错，先 `frago browser stop` 或手动关窗口。
+**带 `--app --app-url` 时例外**：浏览器已经在这份 profile 上跑着，就把页面交给它，以 app 窗口打开，
+不报错（回执里 `handed_to_running: true`）。给人开页面的场合（配方、舞台）平时浏览器都开着，
+所以这是常态，不是冲突。
 
 ## 启动后
 
@@ -47,6 +50,6 @@ frago browser stop       # 关浏览器 + 停 daemon + 清 socket
 
 - `frago browser start --browser <任意值>`：默认后端下换不了浏览器，只会让 profile 目录错位（见上）。`-b cdp` 下它有效，但除 agent_os 拉舞台之外没有该用它的场合
 - `frago browser navigate --browser edge`：`--browser` 只有 start 有，别的命令会报 `No such option`
-- 无理由加 `-b`/`--backend`：默认后端就是标准路径；有理由时（真无头、独立实例、`--void`/`--app`）才显式降到 `-b cdp`
-- 在默认后端下写 `--headless` / `--void` / `--app` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，会被静默丢弃，写了不生效——要用就 `frago browser -b cdp start --headless`
+- 无理由加 `-b`/`--backend`：默认后端就是标准路径；有理由时（真无头、独立实例、`--void`）才显式降到 `-b cdp`
+- 在默认后端下写 `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，会被静默丢弃，写了不生效——要用就 `frago browser -b cdp start --headless`。`--app --app-url` 例外，两个后端都认（给人开页面走默认后端，见上文）
 - 自己起浏览器进程（`chrome --headless`、`--remote-debugging-port`）：一律禁止，上面那条降级路线已经覆盖这些需求，见 `frago book browser-backend-choice`

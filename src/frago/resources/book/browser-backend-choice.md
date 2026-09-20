@@ -3,7 +3,7 @@
 使用浏览器的优先级只有三层，从上往下降级：
 
 1. **`frago browser <cmd>`** —— extension 后端（默认，无需任何 flag）。标准路径，绝大多数场景直接跑，不需要做后端选择。
-2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--app` / `--profile-dir` 这类启动形态（agent_os 的舞台浏览器与录制机位都走这条）。
+2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--profile-dir` 这类启动形态（agent_os 的舞台浏览器与录制机位都走这条）。
 3. **自起浏览器进程**（`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP）—— 禁止，没有例外。
 
 先默认，做不到再 `-b cdp`；两条都在 `frago browser` 之内，任何绕过 frago 直连浏览器的做法都不在选项里。
@@ -35,7 +35,7 @@ frago browser stop         # 对称拆除
 
 - 不要为了"更保险"顺手加 `-b cdp`——默认后端够用时就用默认，降级要有具体理由（见下节）。
 - 不要给 start 加 `--browser`：默认后端下它**不换浏览器**，只把 profile 目录换成该品牌的目录，启动的仍是自动挑中的那个浏览器。结果是拿 A 浏览器去开 B 浏览器的数据目录。让它自动挑。
-- 不要用 `--headless` / `--void` / `--app` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，默认后端下被静默丢弃，写了也不生效。要用它们就显式降到 `-b cdp`。
+- 不要用 `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，默认后端下被静默丢弃，写了也不生效。要用它们就显式降到 `-b cdp`。`--app --app-url` 例外，默认后端也认。
 - 不要手动管理 profile 目录：profile 就是浏览器自己的，frago 不拷贝、不清理。
 
 ## 第二层：`-b cdp` 怎么用
@@ -44,7 +44,7 @@ frago browser stop         # 对称拆除
 
 - 要**真无头**（不弹窗口、不占屏幕）。extension 后端只给**前台**标签产帧，要连续拿画面就得让那个标签一直占着人的屏幕——agent_os 的舞台浏览器正是因为这一条从 extension 换回了 `-b cdp`。
 - 要一个**独立实例**，不能占用/干扰 agent 那个常驻浏览器（如 agent_os 的录制机位）
-- 要 `--void`（移出屏幕）/ `--app`（无边框窗口）/ `--profile-dir`（指定 profile）这类只有 CDP 后端提供的启动形态
+- 要 `--void`（移出屏幕）/ `--profile-dir`（指定 profile）这类只有 CDP 后端提供的启动形态
 
 ```bash
 frago browser -b cdp start --headless          # 独立无头实例，端口默认 9222

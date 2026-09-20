@@ -70,6 +70,43 @@ def test_profile_lock_blocks_start(tmp_path):
         lc.start_extension_bridge(profile_dir=profile)
 
 
+def _locked_start(tmp_path, run_result, **kw):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    with patch.object(lc, "bundle_path", return_value=tmp_path / "bundle"), \
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
+               return_value=MagicMock(path="/x/Google Chrome for Testing",
+                                       brand="cft")), \
+         patch.object(lc, "_profile_locked", return_value=True), \
+         patch.object(lc, "_read_profile_lock_pid", return_value=4242), \
+         patch.object(lc, "_daemon_alive", return_value=True), \
+         patch.object(lc.subprocess, "run", return_value=run_result) as run, \
+         patch("frago.browser.backends.extension.launch_chrome_with_extension") as launch:
+        result = lc.start_extension_bridge(profile_dir=profile, **kw)
+    return result, run, launch, profile
+
+
+def test_an_app_window_on_a_running_browser_is_handed_to_it(tmp_path):
+    """The stage keeps this browser up, so "already running" is the ordinary
+    case for opening a page for a person. The page goes to the running one —
+    same binary, same profile, and Chromium passes the command line over."""
+    result, run, launch, profile = _locked_start(
+        tmp_path, MagicMock(returncode=0, stderr=b""),
+        app_url="http://127.0.0.1:8093/")
+    assert run.call_args[0][0] == [
+        "/x/Google Chrome for Testing", f"--user-data-dir={profile}",
+        "--app=http://127.0.0.1:8093/"]
+    launch.assert_not_called()
+    assert result.handed_to_running is True
+    assert result.browser_pid == 4242
+
+
+def test_a_failed_handoff_is_reported(tmp_path):
+    with pytest.raises(RuntimeError, match="handing the app window"):
+        _locked_start(tmp_path, MagicMock(returncode=21, stderr=b"in use"),
+                      app_url="http://127.0.0.1:8093/")
+
+
 def test_missing_bundle_manifest_raises(tmp_path):
     """Bundle dir without manifest.json → install probably broken."""
     bundle = tmp_path / "bundle"

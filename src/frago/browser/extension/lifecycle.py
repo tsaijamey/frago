@@ -9,7 +9,9 @@ The orchestration is **idempotent**:
 - Daemon: if a healthy daemon is already running, reuse it.
 - Manifest: write unconditionally (small file, content-deterministic).
 - Browser: launch fresh; if profile is already locked by another Chrome
-  instance, fail loud pointing the caller at ``frago browser stop``.
+  instance, fail loud pointing the caller at ``frago browser stop`` —
+  unless an app window was asked for, which is handed to the running
+  instance instead.
 """
 from __future__ import annotations
 
@@ -42,6 +44,9 @@ class BridgeStartupResult:
     bundle_dir: str
     manifest_path: str
     extension_id: str
+    #: True when the browser was already up and only an app window was handed
+    #: to it — nothing was launched, the bridge is whatever it already was.
+    handed_to_running: bool = False
 
 
 @dataclass
@@ -258,6 +263,61 @@ def _fetch_cft_if_missing() -> None:
               file=sys.stderr)
 
 
+#: Seconds the second launch may take to hand its page over. Measured at well
+#: under one; a running instance that does not answer makes Chromium wait
+#: about twenty before it gives up and says the profile is in use.
+HANDOFF_TIMEOUT = 30.0
+
+
+def _hand_app_window_to_running(
+    binary: str, brand: str, profile: Path, bundle_dir: Path | None, app_url: str,
+) -> BridgeStartupResult:
+    """The browser is already up on this profile: have it open the app window.
+
+    Launching the same binary on the same profile does not start a second
+    browser. Chromium finds the running one through the profile's singleton
+    socket, passes the command line over, and exits — the running browser opens
+    ``app_url`` as an app window. So "already running" is the ordinary case for
+    anything that opens a page for a person (the agent_os stage keeps this
+    browser up), not an error to report: refusing it meant every such request
+    failed whenever the browser was open, which is most of the time.
+
+    Only for ``app_url``. A plain ``start`` on a locked profile still refuses:
+    what it asks for is a fresh bridge, and a second launch would not give it
+    one.
+    """
+    try:
+        done = subprocess.run(
+            [binary, f"--user-data-dir={profile}", f"--app={app_url}"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, timeout=HANDOFF_TIMEOUT, check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"the browser already running on {profile} did not take the app "
+            f"window within {HANDOFF_TIMEOUT:.0f}s — it may be hung; "
+            f"`frago browser stop` and retry"
+        ) from e
+    if done.returncode != 0:
+        tail = (done.stderr or b"").decode("utf-8", "replace").strip()[-300:]
+        raise RuntimeError(
+            f"handing the app window to the browser already running on "
+            f"{profile} failed (exit {done.returncode}): {tail}"
+        )
+    return BridgeStartupResult(
+        daemon_pid=None,
+        daemon_was_already_running=_daemon_alive(),
+        browser_pid=_read_profile_lock_pid(profile) or 0,
+        browser_path=binary,
+        browser_brand=brand,
+        profile_dir=str(profile),
+        bundle_dir=str(bundle_dir or bundle_path()),
+        manifest_path=str(profile / "NativeMessagingHosts"),
+        extension_id=STABLE_EXTENSION_ID,
+        handed_to_running=True,
+    )
+
+
 # ─────────────────────────── public API ─────────────────────────────
 
 
@@ -345,6 +405,8 @@ def start_extension_bridge(
     from ..backends.extension import extension_profile_dir
     profile = profile_dir or extension_profile_dir(brand)
     profile.mkdir(parents=True, exist_ok=True)
+    if _profile_locked(profile) and app_url:
+        return _hand_app_window_to_running(binary, brand, profile, bundle_dir, app_url)
     if _profile_locked(profile):
         raise RuntimeError(
             f"profile {profile} is locked — another browser instance is "
