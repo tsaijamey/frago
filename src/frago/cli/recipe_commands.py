@@ -1804,8 +1804,9 @@ def validate_recipe(path: str, output_format: str):
         # question — validate describes a recipe, it does not spend a model
         # call deciding things. A command not yet asked about is a note, not an
         # error: its first run is where it gets asked.
+        declared_commands = list(getattr(metadata, 'uses_commands', []) or [])
         granted, pending = command_grants.recorded(
-            metadata.name, recipe_dir, list(getattr(metadata, 'uses_commands', []) or []),
+            metadata.name, recipe_dir, declared_commands,
         )
         warnings.extend(pending)
 
@@ -1814,6 +1815,9 @@ def validate_recipe(path: str, output_format: str):
             uses_frago_cli=bool(getattr(metadata, 'uses_frago_cli', False)),
             shared=shared_subtrees,
             granted=granted,
+            granted_writable=command_grants.writable(
+                metadata.name, recipe_dir, declared_commands,
+            ),
         ):
             errors.append(blocked.render(recipe_dir).replace("\n", " "))
 

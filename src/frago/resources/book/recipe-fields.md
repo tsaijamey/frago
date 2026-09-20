@@ -36,7 +36,7 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | shares | string | 我把自己数据里的哪一块交出去给别的配方读，写子路径（如 `share/common`）；交出去的那块在对方眼里只读 |
 | reads_common | list | 我要读哪些配方的数据，写生产者的配方名；对方也写了 `shares` 才拿得到 |
 | uses_frago_cli | bool | 脚本会 shell 调 frago 命令（`frago browser` / `frago recipe publish` / `frago <domain>` 等）；不写就拿不到 frago 命令的工作目录 |
-| uses_commands | list | 脚本会调的外部命令，只写命令名（如 `[gh]`、`[ffmpeg, yt-dlp]`），不写路径。命令运行时要读的配置目录因机器而异，每台机器第一次运行时由 CoreAgent 实地查看、判断能否只读交出，结论登记在 `~/.frago/recipe-data/<配方名>/grants.json`（配方只读），之后每次运行照登记开放；配方代码（不含测试）改了会重审。登记里删掉某条即撤销，下次运行重审。服务端常驻启动不做审计，没登记就拒起 |
+| uses_commands | list | 脚本会调的外部命令，只写命令名（如 `[gh]`、`[ffmpeg, yt-dlp]`），不写路径。命令运行时要读的配置目录因机器而异，配方拿它处理的地方（`du` 统计的目录、`mv` 挪进的废纸篓）也要交出，每台机器第一次运行时由 CoreAgent 读配方代码、实地查看，逐项判断能否交出、只读还是可写（可写只放行挪进废纸篓这类能还原的动作），结论登记在 `~/.frago/recipe-data/<配方名>/grants.json`（配方只读），之后每次运行照登记开放；配方代码（不含测试）改了会重审。登记里删掉某条即撤销，下次运行重审。服务端常驻启动不做审计，没登记就拒起 |
 
 ## flow 字段（workflow 必填）
 

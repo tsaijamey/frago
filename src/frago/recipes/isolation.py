@@ -351,6 +351,7 @@ def view_for(
     shared: dict[str, Path] | None = None,
     uses_frago_cli: bool = False,
     granted: dict[str, list[Path]] | None = None,
+    granted_writable: dict[str, list[Path]] | None = None,
     refusal: str = "",
 ) -> View:
     """The view one run gets, assembled from what this run actually is.
@@ -365,7 +366,11 @@ def view_for(
     ``granted`` is ``{command: [paths]}`` and follows the same rule: which
     directories an outside command needs, and whether handing them over is
     safe, was decided by ``frago.recipes.command_grants`` and recorded on this
-    machine. Nothing here knows what ``gh`` is. ``refusal`` is that module's
+    machine. Nothing here knows what ``gh`` is. ``granted_writable`` is the same
+    record's other half — places a command was allowed to write, such as the
+    Trash ``mv`` moves into — and becomes writable roots. The platform's own
+    record stays refused for writing even under one of them, for the reason
+    ``platform_owned`` gives. ``refusal`` is that module's
     other possible answer — the command was not allowed — carried through so
     ``wrap`` can refuse at the one door both callers use.
     """
@@ -429,6 +434,11 @@ def view_for(
         readable += note(
             _existing(*paths),
             f"命令 {command} 要用的（本机审计放行，记录在 {own_tree / GRANTS_FILE}）",
+        )
+    for command, paths in (granted_writable or {}).items():
+        writable += note(
+            _existing(*paths),
+            f"命令 {command} 要写的（本机审计放行，记录在 {own_tree / GRANTS_FILE}）",
         )
 
     # Listed for every recipe, declared commands or not. The record is only
@@ -1175,6 +1185,7 @@ def foresee(
     shared: dict[str, Path] | None = None,
     landing_spot: Path | None = None,
     granted: dict[str, list[Path]] | None = None,
+    granted_writable: dict[str, list[Path]] | None = None,
 ) -> list[Blocked]:
     """What this recipe does that its own view will refuse, before it runs.
 
@@ -1195,12 +1206,14 @@ def foresee(
         shared=shared,
         uses_frago_cli=uses_frago_cli,
         granted=granted,
+        granted_writable=granted_writable,
     )
     # The same view with the platform's own machinery added, used only to tell
     # a path that one declaration would fix from one that needs the code changed.
     cli_view = None if uses_frago_cli else view_for(
         recipe_name, landing_spot=landing_spot, recipe_dir=recipe_dir,
         shared=shared, uses_frago_cli=True, granted=granted,
+        granted_writable=granted_writable,
     )
 
     found: list[Blocked] = []

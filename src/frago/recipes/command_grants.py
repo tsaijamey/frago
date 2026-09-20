@@ -34,6 +34,17 @@ it, frago's own tree, or a handful of places that are never a command's own
 (keys, cloud credentials). The model is asked to hold to the same rules; this is
 the part that does not depend on it having done so.
 
+**What the command works on counts too, and so does writing.** ``du`` has no
+config of its own; what it needs is the directories the recipe hands it to
+measure, and ``mv`` needs to write where it moves things. Measured on
+2026-09-18 with a probe declaring ``[du, mv]``: both were allowed with nothing
+handed over, and the run could not read ``~/Library/Caches`` or make a
+directory in ``~/.Trash``. So an answer names, besides the command's own
+places, the places the recipe's code points the command at, each marked
+``read`` or ``write``. Writing is still judged by CoreAgent against the code it
+reads, and screened here by the same rules as reading; an entry recorded before
+this distinction existed reads as ``read``.
+
 **What this does not do.** Where nothing is confined — isolation turned off,
 or a machine with no backend (Windows) — there is nothing to hand over, and no
 question is asked.
@@ -61,10 +72,13 @@ logger = logging.getLogger(__name__)
 #: Shipped in the package and laid down by ``frago.init.user_resource_seed``.
 INSTRUCTIONS = "command-audit.md"
 
-#: Seconds CoreAgent gets for one command. It runs a handful of ``which`` and
-#: ``ls`` calls; this is room for a slow connection, not for thinking.
-AUDIT_TIMEOUT = 180
-AUDIT_MAX_ROUNDS = 16
+#: Seconds CoreAgent gets for one command. It reads the recipe's code, then
+#: runs a handful of ``which`` and ``ls`` calls to check each place the code
+#: names. Sixteen rounds were enough while the question was only "where is
+#: this command's config"; a recipe that points ``mv`` at a dozen places used
+#: all sixteen without an answer (2026-09-19).
+AUDIT_TIMEOUT = 300
+AUDIT_MAX_ROUNDS = 40
 
 #: How many superseded answers each command keeps, so "what did it say last
 #: time" is in the file rather than in a log nobody keeps.
@@ -215,12 +229,25 @@ def _never(home: Path) -> list[Path]:
     ]
 
 
+#: How far a place is handed over. Anything CoreAgent writes that is not one
+#: of these reads as the narrower one.
+READ = "read"
+WRITE = "write"
+
+
+def _access(one: dict[str, Any]) -> str:
+    return WRITE if str((one or {}).get("access") or "").strip().lower() == WRITE else READ
+
+
 def screen(paths: list[dict[str, Any]], home: Path | None = None
            ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """Split CoreAgent's list into what may be handed over and what may not.
 
-    Returns ``(kept, dropped)``, each ``[{"path", "why"}]``. The model is told
-    the same rules; this is the half that holds when it did not follow them.
+    Returns ``(kept, dropped)``, each ``[{"path", "why", "access"}]``. The model
+    is told the same rules; this is the half that holds when it did not follow
+    them. Writing is screened by exactly the rules reading is: a place that may
+    never be read may never be written either, and the reverse needs no rule of
+    its own because writing is only ever asked for places already named.
     """
     home = (home or Path.home()).resolve()
     never = [p.resolve() if p.exists() else p for p in _never(home)]
@@ -229,6 +256,7 @@ def screen(paths: list[dict[str, Any]], home: Path | None = None
     for one in paths:
         raw = str((one or {}).get("path") or "").strip()
         why = str((one or {}).get("why") or "").strip()
+        access = _access(one)
         if not raw:
             continue
         path = Path(raw).expanduser()
@@ -247,8 +275,14 @@ def screen(paths: list[dict[str, Any]], home: Path | None = None
         if hit is not None:
             dropped.append({"path": raw, "why": f"碰到了 {hit}，那里从来不是某个命令自己的东西"})
             continue
-        kept.append({"path": str(path), "why": why})
+        kept.append({"path": str(path), "why": why, "access": access})
     return kept, dropped
+
+
+def _paths(entry: dict[str, Any], access: str) -> list[Path]:
+    """The places one recorded answer hands over at one level."""
+    return [Path(one["path"]) for one in entry.get("paths") or []
+            if isinstance(one, dict) and one.get("path") and _access(one) == access]
 
 
 def _instructions_ready() -> bool:
@@ -275,7 +309,12 @@ def _allowed_tools(command: str, recipe_dir: Path | None) -> list[str]:
     tokens, and the model is somebody else's server. The recipe's code it may
     read in full: how the command is called is half of the question.
     """
-    own = [f"Read({Path(recipe_dir)}/**)"] if recipe_dir else []
+    # ``//`` marks an absolute path. A single leading ``/`` is read the way
+    # Claude Code reads it — relative to the working directory — so the rule
+    # this line used to write, ``Read(/Users/…/<recipe>/**)``, allowed nothing,
+    # and CoreAgent was refused every file of the code it was asked to judge
+    # (measured 2026-09-19: ``du`` denied because the target list was unreadable).
+    own = [f"Read(//{str(Path(recipe_dir)).lstrip('/')}/**)"] if recipe_dir else []
     return [*own,
         "Bash(which:*)", "Bash(command -v:*)", "Bash(type:*)",
         "Bash(ls:*)", "Bash(readlink:*)", "Bash(realpath:*)", "Bash(file:*)",
@@ -308,7 +347,8 @@ def _prompt(recipe_name: str, command: str,
         f"配方源码里提到 `{command}` 的行：",
         *(context or ["（没找到，配方可能是拼出命令名再调用的）"]),
         "",
-        "按说明书查清这个命令在这台机器上运行时要读哪些目录，判断只读交给这个配方是否安全，"
+        "按说明书查清两件事：这个命令在这台机器上运行时自己要读哪些目录；"
+        "配方代码拿这个命令去读、去写哪些地方。逐项判断交给这个配方是否安全，"
         "最后一条回复只交那个 JSON 对象。",
     ])
 
@@ -333,8 +373,36 @@ def _last_json(text: str) -> dict[str, Any] | None:
     return None
 
 
+#: How many times one audit is asked when an answer comes back without the
+#: object it was asked for. The model sometimes ends on prose; the same
+#: question asked again answered properly (measured 2026-09-19, ``du``).
+AUDIT_ATTEMPTS = 2
+
+
 def audit(recipe_name: str, recipe_dir: Path | None, command: str,
           lines: list[tuple[str, int, str]]) -> dict[str, Any]:
+    """Ask CoreAgent, and return the entry to record.
+
+    An answer without a usable verdict is asked again, up to
+    ``AUDIT_ATTEMPTS`` times in all; every other failure is final at once,
+    because asking again would only repeat it.
+    """
+    for attempt in range(1, AUDIT_ATTEMPTS + 1):
+        try:
+            return _audit_once(recipe_name, recipe_dir, command, lines)
+        except _NoVerdict as err:
+            if attempt == AUDIT_ATTEMPTS:
+                raise AuditFailed(str(err)) from None
+            logger.warning("命令 %s 的审计回答里没有结论，再问一次", command)
+    raise AssertionError("unreachable")
+
+
+class _NoVerdict(AuditFailed):
+    """The answer came back, without the object it was asked for."""
+
+
+def _audit_once(recipe_name: str, recipe_dir: Path | None, command: str,
+                lines: list[tuple[str, int, str]]) -> dict[str, Any]:
     """Ask CoreAgent once, and return the entry to record.
 
     Raises ``AuditFailed`` when there is no answer to record: CoreAgent not
@@ -398,9 +466,14 @@ def audit(recipe_name: str, recipe_dir: Path | None, command: str,
     if not final.get("ok"):
         raise AuditFailed(str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完"))
 
-    answer = _last_json(str(final.get("text") or ""))
+    text = str(final.get("text") or "")
+    answer = _last_json(text)
     if answer is None or answer.get("verdict") not in ("allow", "deny"):
-        raise AuditFailed("CoreAgent 的回答里没有可用的结论（要一个带 verdict 的 JSON 对象）")
+        tail = " ".join(text.split())[-300:]
+        raise _NoVerdict(
+            "CoreAgent 的回答里没有可用的结论（要一个带 verdict 的 JSON 对象）"
+            + (f"，它最后说的是：…{tail}" if tail else "，回答是空的")
+        )
 
     kept, dropped = screen(answer.get("paths") or []) if answer["verdict"] == "allow" else ([], [])
     return {
@@ -500,8 +573,7 @@ def for_run(
             changed = True
 
         if entry.get("verdict") == "allow":
-            granted[command] = [Path(one["path"]) for one in entry.get("paths") or []
-                                if isinstance(one, dict) and one.get("path")]
+            granted[command] = _paths(entry, READ)
         else:
             refusals.append(
                 f"配方 {recipe_name} 要用命令 {command}，这台机器审计没放行："
@@ -544,6 +616,33 @@ def recorded(
         elif entry.get("verdict") != "allow":
             notes.append(f"命令 {command} 在这台机器上审计没放行：{entry.get('reason') or '没写理由'}")
         else:
-            granted[command] = [Path(one["path"]) for one in entry.get("paths") or []
-                                if isinstance(one, dict) and one.get("path")]
+            granted[command] = _paths(entry, READ)
     return granted, notes
+
+
+def writable(
+    recipe_name: str, recipe_dir: Path | None, commands: list[str]
+) -> dict[str, list[Path]]:
+    """The places each declared command was allowed to *write*, from the record.
+
+    Kept apart from ``for_run`` and ``recorded`` so their answer keeps meaning
+    what it always meant — what may be read. Read after ``for_run`` has had its
+    chance to ask, so a first run gets what its own audit just recorded. Only an
+    answer that still matches the code counts: an outdated one was never about
+    the code that is about to run.
+    """
+    if not commands or not _confined():
+        return {}
+    record = load(recipe_name)
+    out: dict[str, list[Path]] = {}
+    for command in dict.fromkeys(commands):
+        if not _declarable(command):
+            continue
+        entry = record["commands"].get(command)
+        if (not isinstance(entry, dict) or entry.get("verdict") != "allow"
+                or entry.get("fingerprint") != fingerprint(command, recipe_dir)):
+            continue
+        paths = _paths(entry, WRITE)
+        if paths:
+            out[command] = paths
+    return out

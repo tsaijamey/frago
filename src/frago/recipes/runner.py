@@ -301,9 +301,9 @@ def _view_for_run(
     metadata = getattr(recipe, "metadata", None)
     recipe_dir = Path(base_dir) if base_dir else None
     command_grants.seal(name)
+    commands = list(getattr(metadata, "uses_commands", None) or [])
     granted, refusal = command_grants.for_run(
-        name, recipe_dir, list(getattr(metadata, "uses_commands", None) or []),
-        may_audit=may_audit,
+        name, recipe_dir, commands, may_audit=may_audit,
     )
 
     return isolation.view_for(
@@ -313,6 +313,7 @@ def _view_for_run(
         shared=dict(ctx.shared) if ctx is not None else {},
         uses_frago_cli=bool(getattr(metadata, "uses_frago_cli", False)),
         granted=granted,
+        granted_writable=command_grants.writable(name, recipe_dir, commands),
         refusal=refusal,
     )
 
