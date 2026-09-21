@@ -299,6 +299,7 @@ class StateManager:
             {
                 "name": r.name,
                 "description": r.description,
+                "title": r.title,
                 "category": r.category,
                 "icon": r.icon,
                 "tags": r.tags,

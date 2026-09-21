@@ -31,6 +31,7 @@ class StateLoader:
                     Recipe(
                         name=r.get("name", ""),
                         description=r.get("description"),
+                        title=r.get("title") or {},
                         category=r.get("category", "atomic"),
                         icon=r.get("icon"),
                         tags=r.get("tags", []),

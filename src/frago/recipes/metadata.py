@@ -31,6 +31,16 @@ class RecipeMetadata:
     description: str  # AI-understandable field
     use_cases: list[str]  # AI-understandable field
     output_targets: list[str]  # AI-understandable field: stdout | file | clipboard
+    #: 给人看的名字，中英两门：``{"zh-CN": "A股 DMA 信号盘", "en": "DMA Signal Board"}``。
+    #:
+    #: ``name`` 一直在当两样东西用。它是标识——进目录名、进命令行、进依赖声明，只
+    #: 能是字母数字下划线；它又被界面拿去当标题，把下划线换成空格显示完事。两个用
+    #: 途的要求正好相反：标识要稳定，改了等于换一张配方；标题要好看、要能随时改、
+    #: 要能写中文。分开之后，改标题不再惊动任何引用它的地方。
+    #:
+    #: 可选，两门写一门也行：存量配方一张都没写，没写就回落到 ``name`` 的老样子。
+    #: 取值用 :func:`display_title`，不要直接读这个字段——回落规则只该有一份。
+    title: dict[str, str] = field(default_factory=dict)
     inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     outputs: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
@@ -149,6 +159,48 @@ def _command_list(value: Any) -> list[str]:
 #: declaration can never name a place on disk.
 COMMAND_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 
+#: ``title`` 支持的两门语言，与文件夹表、帮助手册的分类表同键。
+TITLE_LANGS = ("zh-CN", "en")
+
+#: 标题长度上限。卡片上标题只有一两行的位置，长了会被挤成省略号——这里挡住，好过
+#: 让人在界面上才发现自己写长了。
+MAX_TITLE = 40
+
+
+def _title_map(value: Any) -> dict[str, str]:
+    """``title`` as written, normalized to ``{lang: text}``.
+
+    A bare string is taken as the Chinese title: it is what someone writing
+    ``title: "行情看板"`` means, and refusing it would teach nothing. Keys that
+    are not one of the two languages are kept here rather than dropped —
+    ``validate_metadata`` says so out loud, because a title filed under a
+    language nobody reads is a title that silently never shows.
+    """
+    if value is None or value == "":
+        return {}
+    if isinstance(value, str):
+        return {"zh-CN": value.strip()}
+    if isinstance(value, dict):
+        return {str(k): str(v).strip() for k, v in value.items()}
+    return {"zh-CN": str(value).strip()}
+
+
+def display_title(metadata: "RecipeMetadata", lang: str = "zh-CN") -> str:
+    """这张配方在界面上该显示的名字。
+
+    写了这门语言的标题就用它；只写了另一门就用另一门；一门都没写就回落到从前的样
+    子——``name`` 里的下划线换成空格。
+
+    命令行和服务端一律问这里。界面问不了：它在本地切语言，不会为换一门语言回服务
+    端要一次数据，所以接口把 ``title`` 原样传过去，由客户端的 ``recipeTitle`` 按同
+    一套规则回落。这两处必须一起改。
+    """
+    for key in (lang, *TITLE_LANGS):
+        text = metadata.title.get(key)
+        if text:
+            return text
+    return metadata.name.replace('_', ' ')
+
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
     """
@@ -197,6 +249,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             description=data['description'],
             use_cases=data['use_cases'],
             output_targets=data['output_targets'],
+            title=_title_map(data.get('title')),
             inputs=data.get('inputs', {}),
             outputs=data.get('outputs', {}),
             dependencies=data.get('dependencies', []),
@@ -260,6 +313,22 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
 
     if not metadata.use_cases or len(metadata.use_cases) == 0:
         errors.append("use_cases must contain at least one use case")
+
+    # 给人看的标题。可选——没写就回落到 name——但写了就得写对：一个填在
+    # `title: {zh: ...}` 下的标题，界面按 `zh-CN` 去取，永远取不到，在卡片上表现为
+    # "这张配方没改过名"，没有任何一处会报错。所以语言键写错是 error。
+    for lang, text in metadata.title.items():
+        if lang not in TITLE_LANGS:
+            errors.append(
+                f"title 里的语言 {lang!r} 不认识，只有 {' / '.join(TITLE_LANGS)} 两门——"
+                f"写在别的键下面，界面取不到，卡片上还是显示 name"
+            )
+        elif not text:
+            errors.append(f"title.{lang} 是空的；不想写这门就把这一行删掉")
+        elif len(text) > MAX_TITLE:
+            errors.append(
+                f"title.{lang} 太长：{len(text)} 字，最多 {MAX_TITLE} 字"
+            )
 
     if not metadata.output_targets or len(metadata.output_targets) == 0:
         errors.append("output_targets must contain at least one output target")

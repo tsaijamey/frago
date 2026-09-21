@@ -14,7 +14,7 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 
 | 字段 | 类型 | 要求 |
 |------|------|------|
-| name | string | 只含 [a-zA-Z0-9_-] |
+| name | string | 只含 [a-zA-Z0-9_-]。这是**标识**，不是标题：它进目录名、进命令行、进依赖声明，改了等于换一张配方。给人看的名字写 `title` |
 | type | string | atomic 或 workflow |
 | runtime | string | chrome-js, python, shell |
 | version | string | 格式 1.0 或 1.0.0 |
@@ -29,6 +29,7 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | inputs | dict | 输入参数定义（需含 type 和 required） |
 | outputs | dict | 输出定义 |
 | dependencies | list | 依赖的其他 recipe（workflow 类型） |
+| title | dict | 给人看的名字，中英两门：`{zh-CN: ..., en: ...}`。只写一门也行，另一门回落到它；一门都不写就回落到 `name` 换掉下划线（存量配方的样子）。语言键只认 `zh-CN` 和 `en`，写别的键是 error——界面取不到，卡片上还是显示 `name`，没有任何一处会报错。每门不超过 40 字 |
 | tags | list | 标签（AI 可理解的分类） |
 | env | dict | 环境变量定义 |
 | system_packages | bool | 是否使用系统 Python |
@@ -106,7 +107,7 @@ uv run 自动解析依赖并创建临时虚拟环境，首次运行后使用缓�
 
 1. YAML frontmatter 解析
 2. 必填字段存在性
-3. 字段格式（name 字符规则、version 格式、枚举值）
+3. 字段格式（name 字符规则、version 格式、枚举值、title 的语言键与长度）
 4. 脚本文件存在性（根据 runtime 检查 recipe.js/py/sh）
 5. Python 脚本语法检查
 6. 依赖检查（workflow 类型检查依赖 recipe 是否已注册）
@@ -122,6 +123,9 @@ uv run 自动解析依赖并创建临时虚拟环境，首次运行后使用缓�
   runtime: chrome-js
   version: "1.0.0"
   description: "一句话描述 recipe 功能（≤200 字符）"
+  title:
+    zh-CN: "给人看的名字"
+    en: "Human-facing name"
   use_cases:
     - "场景 1: 用户需要..."
     - "场景 2: 当..."

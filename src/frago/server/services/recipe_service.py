@@ -52,6 +52,9 @@ class RecipeService:
             for recipe in registry.list_all():
                 recipes.append({
                     "name": recipe.metadata.name,
+                    # 原样传，不在这里挑语言：界面在本地切中英，不会为换一门语言
+                    # 回来要一次数据。回落到 name 由客户端按同一套规则做。
+                    "title": dict(recipe.metadata.title),
                     "description": recipe.metadata.description,
                     "category": recipe.metadata.type,
                     "tags": recipe.metadata.tags or [],
@@ -127,6 +130,7 @@ class RecipeService:
             m = recipe.metadata
             data = {
                 "name": m.name,
+                "title": dict(m.title),
                 "type": m.type,
                 "runtime": m.runtime,
                 "version": m.version,

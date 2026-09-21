@@ -95,6 +95,9 @@ class Recipe:
 
     name: str
     description: Optional[str] = None
+    #: 给人看的中英标题 {"zh-CN": ..., "en": ...}；空着表示这张配方还没起过名，
+    #: 界面回落到 name。
+    title: dict[str, str] = field(default_factory=dict)
     category: str = "atomic"  # atomic, workflow
     icon: Optional[str] = None
     tags: List[str] = field(default_factory=list)
