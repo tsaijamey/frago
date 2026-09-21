@@ -130,7 +130,7 @@ async def api_remove_schedule(schedule_id: str) -> dict[str, str]:
 async def api_run_schedule(schedule_id: str) -> dict[str, str]:
     """立即跑一次，不改它的正常周期。
 
-    接口不等它跑完就返回：三种形态最长都可以跑到超时上限（默认 5 分钟），浏览器等不了
+    接口不等它跑完就返回：三种形态最长都可以跑到超时上限（默认 2 小时），浏览器等不了
     那么久。结果照常写进执行记录，界面刷新就能看到。
     """
     service = SchedulerService.get_instance()
