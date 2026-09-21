@@ -306,7 +306,24 @@
     "leaveEmptyToKeep": "留空以保持现有值",
     "configuredHint": "此变量已配置。留空以保持现有值，或输入新值以覆盖。",
     "show": "显示",
-    "hide": "隐藏"
+    "hide": "隐藏",
+    "folder": {
+      "create": "新建文件夹",
+      "rename": "改名",
+      "remove": "删除文件夹",
+      "select": "挑选",
+      "picked": "挑中 {{count}} 张",
+      "moveTo": "移到文件夹",
+      "takeOut": "移出文件夹",
+      "empty": "这个文件夹还是空的，把配方拖进来，或者用卡片上的「…」移进来。",
+      "openHint": "打开 {{name}}",
+      "willHold": "这一下会把 {{count}} 张配方放进新文件夹。",
+      "nameZh": "中文名",
+      "nameEn": "英文名（可空）",
+      "nameZhPlaceholder": "例如：行情研究",
+      "nameEnPlaceholder": "留空就跟着中文名显示",
+      "trouble": "文件夹表这次没读进来，先按没有文件夹显示：{{detail}}"
+    }
   },
   "skills": {
     "title": "技能",

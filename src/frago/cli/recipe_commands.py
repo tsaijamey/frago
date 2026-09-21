@@ -3760,3 +3760,156 @@ def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], li
         )
 
     return errors, warnings
+
+
+# ── 文件夹 ──────────────────────────────────────────────────────────────
+#
+# 桌面上怎么摆图标，是这台机器主人的事。配方文件里一个字都不提自己属于哪个文件夹，
+# 归属全记在 ~/.frago/recipes/folders.json 里。细则见 frago.recipes.folders 的模块
+# 说明，这里只管把它接到命令行上。
+
+
+def _folder_call(fn, *args, **kwargs):
+    from frago.recipes.folders import FolderError
+
+    try:
+        return fn(*args, **kwargs)
+    except FolderError as e:
+        raise click.ClickException(str(e)) from None
+
+
+def _print_folders():
+    from frago.recipes import folders as F
+
+    current = F.list_folders()
+    if not current:
+        click.echo(
+            "\nNo folders yet. Recipes show up in one flat grid until you make one:\n"
+            "  frago recipe folder add <id> <中文名> [英文名]\n"
+        )
+    else:
+        click.echo(f"\n{'#':>2s}  {'ID':<20s} {'RECIPES':>7s}  NAME")
+        click.echo("-" * 60)
+        for i, f in enumerate(current, 1):
+            both = f.label()
+            if f.label('en') != both:
+                both = f"{both} / {f.label('en')}"
+            click.echo(f"{i:>2d}  {f.id:<20s} {len(f.recipes):>7d}  {both}")
+        click.echo(f"\n({len(current)}/{F.MAX_FOLDERS} folders; "
+                   "this order is the order on the grid, unfiled recipes last)")
+
+    # 表读坏了，list_folders 会当成空表咽下去，好让配方列表照常打开。咽下去的话在
+    # 这里说出来——不说的话，人看到的是「我的文件夹全没了」，查不到任何线索。
+    trouble = F.diagnose()
+    if trouble:
+        click.echo(f"[!] folder table ignored: {trouble}")
+
+
+@recipe_group.group(name='folder', cls=AgentFriendlyGroup, invoke_without_command=True)
+@click.pass_context
+def folder_group(ctx):
+    """Arrange recipes into folders on this machine (order = order on the grid)."""
+    if ctx.invoked_subcommand is None:
+        _print_folders()
+
+
+@folder_group.command(name='list', cls=AgentFriendlyCommand)
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']),
+              default='text', help='Output format')
+def folder_list(output_format):
+    """Show folders in grid order, with how many recipes each holds."""
+    from frago.recipes import folders as F
+
+    if output_format == 'json':
+        click.echo(json.dumps(
+            {'folders': [f.to_json() for f in F.list_folders()]},
+            ensure_ascii=False, indent=2,
+        ))
+        return
+    _print_folders()
+
+
+@folder_group.command(name='add', cls=AgentFriendlyCommand)
+@click.argument('folder_id')
+@click.argument('name_zh')
+@click.argument('name_en', required=False, default='')
+@click.option('--icon', default='', help='Icon name shown on the folder')
+@click.option('--position', type=int, default=None, help='1-based position (default: last)')
+def folder_add(folder_id, name_zh, name_en, icon, position):
+    """Create a folder: ID (lowercase) plus its Chinese and optional English name."""
+    from frago.recipes import folders as F
+
+    _folder_call(F.add_folder, folder_id, name_zh, name_en, icon=icon, position=position)
+    click.echo(f"Added folder {folder_id} ({name_zh})")
+    _print_folders()
+
+
+@folder_group.command(name='rename', cls=AgentFriendlyCommand)
+@click.argument('folder_id')
+@click.option('--zh', default=None, help='New Chinese name (empty string drops it)')
+@click.option('--en', default=None, help='New English name (empty string drops it)')
+def folder_rename(folder_id, zh, en):
+    """Change a folder's display name. The id and the recipes inside stay put."""
+    from frago.recipes import folders as F
+
+    if zh is None and en is None:
+        raise click.ClickException("nothing to rename: pass --zh and/or --en")
+    _folder_call(F.rename_folder, folder_id, zh, en)
+    _print_folders()
+
+
+@folder_group.command(name='icon', cls=AgentFriendlyCommand)
+@click.argument('folder_id')
+@click.argument('icon')
+def folder_icon(folder_id, icon):
+    """Set the icon shown on a folder."""
+    from frago.recipes import folders as F
+
+    _folder_call(F.set_icon, folder_id, icon)
+    click.echo(f"{folder_id} icon -> {icon}")
+
+
+@folder_group.command(name='move', cls=AgentFriendlyCommand)
+@click.argument('folder_id')
+@click.argument('position', type=int)
+def folder_move(folder_id, position):
+    """Move a folder to POSITION (1 = first; out of range sticks to an end)."""
+    from frago.recipes import folders as F
+
+    _folder_call(F.move_folder, folder_id, position)
+    _print_folders()
+
+
+@folder_group.command(name='rm', cls=AgentFriendlyCommand)
+@click.argument('folder_id')
+def folder_rm(folder_id):
+    """Remove a folder. The recipes inside go back to unfiled; none are deleted."""
+    from frago.recipes import folders as F
+
+    held = len(next((f.recipes for f in F.list_folders() if f.id == folder_id), []))
+    _folder_call(F.remove_folder, folder_id)
+    click.echo(f"Removed folder {folder_id}"
+               + (f"; {held} recipe(s) back to unfiled" if held else ""))
+    _print_folders()
+
+
+@folder_group.command(name='put', cls=AgentFriendlyCommand)
+@click.argument('recipe_names', nargs=-1, required=True)
+@click.option('--into', 'folder_id', required=True,
+              help='Folder id (must already exist; see `frago recipe folder list`)')
+def folder_put(recipe_names, folder_id):
+    """Put recipes into a folder, taking them out of whichever one they were in."""
+    from frago.recipes import folders as F
+
+    _folder_call(F.put, list(recipe_names), folder_id)
+    click.echo(f"{len(recipe_names)} recipe(s) -> {folder_id}")
+
+
+@folder_group.command(name='take', cls=AgentFriendlyCommand)
+@click.argument('recipe_names', nargs=-1, required=True)
+def folder_take(recipe_names):
+    """Take recipes out of their folder, back to unfiled."""
+    from frago.recipes import folders as F
+
+    _folder_call(F.take, list(recipe_names))
+    click.echo(f"{len(recipe_names)} recipe(s) -> unfiled")

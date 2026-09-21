@@ -8,12 +8,18 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from frago.recipes import folders
 from frago.server.models import (
     RecipeItemResponse,
     RecipeDetailResponse,
     RecipeInputSchema,
     RecipeOutputSchema,
     RecipeFlowStep,
+    RecipeFolderItem,
+    RecipeFoldersResponse,
+    RecipeFolderCreateRequest,
+    RecipeFolderUpdateRequest,
+    RecipeFolderAssignRequest,
     RecipeRunRequest,
     TaskItemResponse,
     CommunityRecipeItemResponse,
@@ -48,9 +54,12 @@ async def list_recipes() -> List[RecipeItemResponse]:
             pass
 
         recipes = state_manager.get_recipes()
+        filed = folders.assignments()
         return [
             RecipeItemResponse(
                 name=r.name,
+                title=r.title,
+                folder=filed.get(r.name),
                 description=r.description,
                 category=r.category,
                 icon=r.icon,
@@ -64,9 +73,12 @@ async def list_recipes() -> List[RecipeItemResponse]:
 
     # Fallback to direct service call
     recipes = RecipeService.get_recipes()
+    filed = folders.assignments()
     return [
         RecipeItemResponse(
             name=r.get("name", ""),
+            title=r.get("title") or {},
+            folder=filed.get(r.get("name", "")),
             description=r.get("description"),
             category=r.get("category", "atomic"),
             icon=r.get("icon"),
@@ -77,6 +89,86 @@ async def list_recipes() -> List[RecipeItemResponse]:
         )
         for r in recipes
     ]
+
+
+# ── 文件夹 ──────────────────────────────────────────────────────────────
+#
+# 这几条必须排在 /recipes/{name} 前面：路由按声明先后匹配，摆到后面的话 "folders"
+# 会被当成一张叫 folders 的配方的名字。
+
+
+def _folders_response() -> RecipeFoldersResponse:
+    return RecipeFoldersResponse(
+        folders=[RecipeFolderItem(**f.to_json()) for f in folders.list_folders()],
+        max_folders=folders.MAX_FOLDERS,
+        trouble=folders.diagnose(),
+    )
+
+
+def _folder_guard(fn, *args, **kwargs):
+    """把文件夹那边的拒绝原样转成 400。
+
+    话是那边写好的——「没有叫 nope 的文件夹；现有的是 market(行情研究)；要建它就
+    跑这条命令」。在这里重写一遍只会让命令行和界面上看到的说法对不上。
+    """
+    try:
+        return fn(*args, **kwargs)
+    except folders.FolderError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+
+@router.get("/recipes/folders", response_model=RecipeFoldersResponse)
+async def list_recipe_folders() -> RecipeFoldersResponse:
+    """The folders on this machine, in grid order. Empty until the owner makes one."""
+    return _folders_response()
+
+
+@router.post("/recipes/folders", response_model=RecipeFoldersResponse)
+async def create_recipe_folder(request: RecipeFolderCreateRequest) -> RecipeFoldersResponse:
+    """Create a folder, optionally putting recipes into it in the same move."""
+    if request.recipes:
+        _folder_guard(
+            folders.create_with, request.id, request.recipes,
+            request.name_zh, request.name_en, icon=request.icon,
+        )
+    else:
+        _folder_guard(
+            folders.add_folder, request.id,
+            request.name_zh, request.name_en, icon=request.icon,
+        )
+    return _folders_response()
+
+
+@router.patch("/recipes/folders/{folder_id}", response_model=RecipeFoldersResponse)
+async def update_recipe_folder(
+    folder_id: str, request: RecipeFolderUpdateRequest
+) -> RecipeFoldersResponse:
+    """Rename a folder, change its icon, or move it along the grid."""
+    if request.name_zh is not None or request.name_en is not None:
+        _folder_guard(folders.rename_folder, folder_id, request.name_zh, request.name_en)
+    if request.icon is not None:
+        _folder_guard(folders.set_icon, folder_id, request.icon)
+    if request.position is not None:
+        _folder_guard(folders.move_folder, folder_id, request.position)
+    return _folders_response()
+
+
+@router.delete("/recipes/folders/{folder_id}", response_model=RecipeFoldersResponse)
+async def delete_recipe_folder(folder_id: str) -> RecipeFoldersResponse:
+    """Remove a folder. The recipes inside go back to unfiled; none are deleted."""
+    _folder_guard(folders.remove_folder, folder_id)
+    return _folders_response()
+
+
+@router.post("/recipes/folders/assign", response_model=RecipeFoldersResponse)
+async def assign_recipe_folder(request: RecipeFolderAssignRequest) -> RecipeFoldersResponse:
+    """Move recipes into a folder, or out of whichever one they are in."""
+    target = request.folder
+    if target is None or target == folders.UNFILED:
+        _folder_guard(folders.take, request.recipes)
+    else:
+        _folder_guard(folders.put, request.recipes, target)
+    return _folders_response()
 
 
 @router.get("/recipes/{name}", response_model=RecipeDetailResponse)
@@ -138,6 +230,8 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
 
     return RecipeDetailResponse(
         name=recipe.get("name", name),
+        title=recipe.get("title") or {},
+        folder=folders.folder_of(recipe.get("name", name)),
         description=recipe.get("description"),
         category=recipe.get("type") or recipe.get("category") or "atomic",
         icon=recipe.get("icon"),

@@ -26,6 +26,10 @@ export interface ServerStatus {
 
 export interface RecipeItem {
   name: string;
+  /** 作者起的中英标题；空着表示还没起过名，界面回落到 name。一律走 `recipeTitle()`。 */
+  title: Record<string, string>;
+  /** 主人把它摆进了哪个文件夹；没摆过是 null。归属记在服务端那张表里，不在配方文件里。 */
+  folder: string | null;
   description: string | null;
   category: string;
   icon: string | null;
@@ -33,6 +37,26 @@ export interface RecipeItem {
   path: string | null;
   source: string | null;
   runtime: string | null;
+}
+
+/**
+ * 桌面上的一个配方文件夹。
+ *
+ * `recipes` 的顺序就是文件夹里图标的顺序；文件夹在数组里的位置就是它在网格上的位
+ * 置，不另设 order 字段，省得两处打架。
+ */
+export interface RecipeFolder {
+  id: string;
+  name: Record<string, string>;
+  icon: string;
+  recipes: string[];
+}
+
+export interface RecipeFoldersPayload {
+  folders: RecipeFolder[];
+  max_folders: number;
+  /** 表读坏了的那句人话。表坏了照样给空列表让界面能开，但不能不吭声。 */
+  trouble: string | null;
 }
 
 export interface TaskItem {

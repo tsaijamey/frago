@@ -107,6 +107,8 @@ export const getRecipes = withMode(
     const recipes = await httpApi.getRecipes();
     return recipes.map((r) => ({
       name: r.name,
+      title: r.title ?? {},
+      folder: r.folder ?? null,
       description: r.description,
       category: r.category as RecipeItem['category'],
       icon: r.icon,
@@ -131,6 +133,8 @@ export const getRecipeDetail = withMode(
     const recipe = await httpApi.getRecipe(name) as unknown as Record<string, unknown>;
     return {
       name: recipe.name as string,
+      title: (recipe.title as Record<string, string>) ?? {},
+      folder: (recipe.folder as string | null) ?? null,
       description: recipe.description as string | null,
       category: ((recipe.type || recipe.category) as RecipeDetail['category']) || 'atomic',
       icon: (recipe.icon as string) || null,

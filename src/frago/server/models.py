@@ -101,6 +101,12 @@ class RecipeItemResponse(BaseModel):
     """Response for recipe list endpoints"""
 
     name: str
+    #: 作者起的中英标题。原样传，不在服务端挑语言——界面在本地切中英，不会为换一门
+    #: 语言回来要一次数据。空着表示还没起过名，界面回落到 name。
+    title: dict[str, str] = Field(default_factory=dict)
+    #: 主人把这张配方摆进了哪个文件夹，没摆过就是 None。这不是配方自己的属性：它
+    #: 记在 ~/.frago/recipes/folders.json 里，recipe.md 一个字都不提。
+    folder: str | None = None
     description: str | None = None
     category: str = "atomic"
     icon: str | None = None
@@ -153,6 +159,8 @@ class RecipeDetailResponse(BaseModel):
     """Response for recipe detail endpoint with rich metadata"""
 
     name: str
+    title: dict[str, str] = Field(default_factory=dict)
+    folder: str | None = None
     description: str | None = None
     category: str = "atomic"
     icon: str | None = None
@@ -579,6 +587,65 @@ class CommunityRecipeInstallResponse(BaseModel):
     recipe_name: str | None = None
     message: str | None = None
     error: str | None = None
+
+
+class RecipeFolderItem(BaseModel):
+    """桌面上的一个配方文件夹。
+
+    ``recipes`` 是摆在里面的配方名，顺序就是文件夹里的顺序。文件夹本身在列表里的
+    位置同理——数组顺序即网格上的顺序，不另设 order 字段，省得两处打架。
+    """
+
+    id: str
+    name: dict[str, str] = Field(default_factory=dict)
+    icon: str = ""
+    recipes: list[str] = Field(default_factory=list)
+
+
+class RecipeFoldersResponse(BaseModel):
+    """整张文件夹表。
+
+    ``trouble`` 是表读坏时的那句人话。表坏了照样返回空列表让界面能打开，但不能不
+    吭声——静默吞掉的话，人看到的是「我的文件夹全没了」，没有任何线索可查。
+    """
+
+    folders: list[RecipeFolderItem] = Field(default_factory=list)
+    max_folders: int
+    trouble: str | None = None
+
+
+class RecipeFolderCreateRequest(BaseModel):
+    """建一个文件夹，可以当场把几张配方放进去。
+
+    ``recipes`` 给了值，就是界面上把一张卡拖到另一张卡上那个动作：手机上新文件夹
+    就是这么诞生的，中间不该出现一个空文件夹的状态。
+    """
+
+    id: str
+    name_zh: str = ""
+    name_en: str = ""
+    icon: str = ""
+    recipes: list[str] = Field(default_factory=list)
+
+
+class RecipeFolderUpdateRequest(BaseModel):
+    """改一个文件夹：名字、图标、在网格上的位次。给谁改谁，没给的不动。"""
+
+    name_zh: str | None = None
+    name_en: str | None = None
+    icon: str | None = None
+    position: int | None = None
+
+
+class RecipeFolderAssignRequest(BaseModel):
+    """把几张配方放进一个文件夹，或者拿出来。
+
+    ``folder`` 写 ``null`` 或 ``none`` 就是拿出来、回到未分类。写一个表里没有的 id
+    会被拒——建文件夹是一个单独的动作，这里不替人建。
+    """
+
+    recipes: list[str]
+    folder: str | None = None
 
 
 class TmuxSessionItem(BaseModel):

@@ -105,6 +105,14 @@ export interface TaskStepsResponse {
 
 export interface RecipeItem {
   name: string;
+  /**
+   * 作者起的中英标题。`name` 是标识（进目录名、进命令行、进依赖声明），这个是给人
+   * 看的名字。空着表示还没起过名，回落到 name —— 一律走 `recipeTitle()`，别在各处
+   * 自己拼回落规则。
+   */
+  title?: Record<string, string>;
+  /** 主人把它摆进了哪个文件夹；没摆过是 null。归属记在服务端那张表里，不在配方文件里。 */
+  folder?: string | null;
   description: string | null;
   category: RecipeCategory;
   icon: string | null;
@@ -153,6 +161,27 @@ export interface RecipeDetail extends RecipeItem {
   flow?: RecipeFlowStep[];
   /** 有页面（/app/<名字>/ 开得出东西）才给「打开页面」。 */
   has_page?: boolean;
+}
+
+/**
+ * 桌面上的一个配方文件夹。
+ *
+ * `recipes` 的顺序就是文件夹里图标的顺序；文件夹在列表里的位置就是它在网格上的位
+ * 置，不另设 order 字段。初装一个文件夹都没有——配方能分的角度太多，系统不替人
+ * 预设，第一个由主人亲手建。
+ */
+export interface RecipeFolder {
+  id: string;
+  name: Record<string, string>;
+  icon: string;
+  recipes: string[];
+}
+
+export interface RecipeFoldersPayload {
+  folders: RecipeFolder[];
+  max_folders: number;
+  /** 表读坏了的那句人话。表坏了照样给空列表让界面能开，但要说出来。 */
+  trouble: string | null;
 }
 
 // ============================================================

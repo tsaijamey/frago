@@ -4557,6 +4557,353 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   filter: brightness(1.08);
 }
 
+/* ── 配方文件夹 ─────────────────────────────────────────────────────────
+   桌面上怎么摆图标是主人的事。一个文件夹都没有时这一段整个不出现，界面跟从前一样
+   平铺一屏卡片——系统不替人预设分类，第一个文件夹由他亲手建。 */
+
+.rl-folders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 0 var(--tdp-gutter);
+}
+
+.rl-folder {
+  position: relative;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.rl-folder:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+/* 打开的那个：整块换一副样子，不靠任何一条边上的色条。 */
+.rl-folder--open {
+  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
+  border-color: var(--accent-primary);
+}
+
+/* 有东西拖到上面了。只有正被指着的那个亮起来，别的一个都不许动位置。 */
+.rl-folder--over {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 2px var(--accent-primary);
+}
+
+.rl-folder-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 14px 10px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rl-folder-hit:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+  border-radius: var(--radius-lg);
+}
+
+/* 文件夹的方块：里面摆前四张配方的首字，空文件夹摆一个文件夹图标。 */
+.rl-folder-box {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  place-items: center;
+  gap: 3px;
+  width: 46px;
+  height: 46px;
+  padding: 5px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+}
+
+.rl-folder-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1;
+}
+
+.rl-folder-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-primary);
+}
+
+.rl-folder-count {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* 改名和删除：平时藏着，鼠标进到这个文件夹上才出现——一排文件夹上挂着一排小按钮
+   是噪音，但真要用时不该还得再翻一层菜单。 */
+.rl-folder-acts {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.rl-folder:hover .rl-folder-acts,
+.rl-folder:focus-within .rl-folder-acts {
+  opacity: 1;
+}
+
+.rl-folder-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.rl-folder-act:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* 打开的文件夹就地展开在这一排下面，不换页。 */
+.rl-folder-open {
+  margin-top: 12px;
+  padding: 12px var(--tdp-gutter) 0;
+}
+
+.rl-folder-empty {
+  padding: 8px 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* 卡片外壳：卡片本身是个按钮，「…」和勾选要浮在它上面，所以外面套一层。 */
+.rl-card-wrap,
+.rl-row-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.rl-card-wrap .rl-card,
+.rl-row-wrap .rl-row {
+  width: 100%;
+}
+
+/* 一张卡被拖到另一张上：松手就建一个新文件夹，两张都进去。 */
+.rl-card-wrap--over .rl-card {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 2px var(--accent-primary);
+}
+
+/* 挑中的卡：整块换底色加一圈描边，不在任何一条边上加色条。 */
+.rl-picked .rl-card,
+.rl-picked .rl-row {
+  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
+  border-color: var(--accent-primary);
+}
+
+.rl-pick {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-primary);
+}
+
+.rl-card-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.rl-card-wrap:hover .rl-card-menu,
+.rl-row-wrap:hover .rl-card-menu,
+.rl-card-menu:focus-visible {
+  opacity: 1;
+}
+
+.rl-card-menu:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* 作者自己起的名字不套 capitalize：那条规则是给「下划线换空格」那种凑出来的名字
+   准备的，套在人写的名字上等于替他改写。 */
+.rl-page .rl-card .rl-card-title--named,
+.rl-page .rl-row .rl-card-title--named {
+  text-transform: none;
+}
+
+/* 工具栏上的文字按钮：建文件夹、挑选。比来源切换轻，比网格/清单切换重。 */
+.rl-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rl-tool-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.rl-tool-btn--active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+/* 挑中几张之后的那一条：挑了几张、下一步去哪儿。 */
+.rl-pickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px var(--tdp-gutter) 0;
+  padding: 8px 12px;
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
+}
+
+.rl-pickbar-count {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-primary);
+}
+
+.rl-pickbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rl-pickbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.rl-pickbar-clear {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+/* 「…」菜单：浮在整页上，点别处就关。 */
+.rl-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 18%));
+}
+
+.rl-menu-head {
+  padding: 6px 10px 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.rl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rl-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+
+/* 文件夹表出毛病时的那一条。表坏了界面照常开，但不能不吭声。 */
+.rl-folder-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px var(--tdp-gutter) 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-warning-10);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.rl-folder-banner button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
 /* GitHub 未登录的提示条：整条琥珀淡底加整圈描边，颜色取主题令牌。 */
 .rl-notice {
   display: flex;

@@ -306,7 +306,24 @@
     "leaveEmptyToKeep": "Leave empty to keep existing value",
     "configuredHint": "This variable is already configured. Leave empty to keep, or enter a new value to update.",
     "show": "Show",
-    "hide": "Hide"
+    "hide": "Hide",
+    "folder": {
+      "create": "New folder",
+      "rename": "Rename",
+      "remove": "Delete folder",
+      "select": "Select",
+      "picked": "{{count}} selected",
+      "moveTo": "Move to folder",
+      "takeOut": "Take out of folder",
+      "empty": "This folder is empty. Drag recipes in, or use the … menu on a card.",
+      "openHint": "Open {{name}}",
+      "willHold": "{{count}} recipe(s) will go into the new folder.",
+      "nameZh": "Chinese name",
+      "nameEn": "English name (optional)",
+      "nameZhPlaceholder": "e.g. 行情研究",
+      "nameEnPlaceholder": "Left blank, the Chinese name is shown",
+      "trouble": "The folder table could not be read this time; showing no folders: {{detail}}"
+    }
   },
   "skills": {
     "title": "Skills",

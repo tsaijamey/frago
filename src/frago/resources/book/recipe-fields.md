@@ -30,7 +30,7 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | outputs | dict | 输出定义 |
 | dependencies | list | 依赖的其他 recipe（workflow 类型） |
 | title | dict | 给人看的名字，中英两门：`{zh-CN: ..., en: ...}`。只写一门也行，另一门回落到它；一门都不写就回落到 `name` 换掉下划线（存量配方的样子）。语言键只认 `zh-CN` 和 `en`，写别的键是 error——界面取不到，卡片上还是显示 `name`，没有任何一处会报错。每门不超过 40 字 |
-| tags | list | 标签（AI 可理解的分类） |
+| tags | list | 标签（AI 可理解的分类）。它说「这是什么东西」，供搜索和归类提示用；「摆在桌面哪个文件夹」是另一回事，不在配方里写，见下 |
 | env | dict | 环境变量定义 |
 | system_packages | bool | 是否使用系统 Python |
 | secrets | dict | 凭证 schema（含 type/required/description）；runner 按它过滤后经 `FRAGO_SECRETS` 注入 |
@@ -38,6 +38,23 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | reads_common | list | 我要读哪些配方的数据，写生产者的配方名；对方也写了 `shares` 才拿得到 |
 | uses_frago_cli | bool | 脚本会 shell 调 frago 命令（`frago browser` / `frago recipe publish` / `frago <domain>` 等）；不写就拿不到 frago 命令的工作目录 |
 | uses_commands | list | 脚本会调的外部命令，只写命令名（如 `[gh]`、`[ffmpeg, yt-dlp]`），不写路径。命令运行时要读的配置目录因机器而异，配方拿它处理的地方（`du` 统计的目录、`mv` 挪进的废纸篓）也要交出，每台机器第一次运行时由 CoreAgent 读配方代码、实地查看，逐项判断能否交出、只读还是可写（可写只放行挪进废纸篓这类能还原的动作），结论登记在 `~/.frago/recipe-data/<配方名>/grants.json`（配方只读），之后每次运行照登记开放；配方代码（不含测试）改了会重审。登记里删掉某条即撤销，下次运行重审。服务端常驻启动不做审计，没登记就拒起 |
+
+## 文件夹不是配方的字段
+
+配方在 WebUI 上摆进哪个文件夹，**recipe.md 里一个字都不写**。归属记在本机的
+`~/.frago/recipes/folders.json` 里，因为 recipe.md 要发社区、要部署到服务器，它不该
+记着「我在这台机器的哪个文件夹」；界面上拖一下图标也不该改写一份要分发出去的文件。
+
+    frago recipe folder                       # 现有的文件夹，顺序就是网格上的顺序
+    frago recipe folder add <id> <中文名> [英文名]
+    frago recipe folder put <配方名>... --into <id>
+    frago recipe folder take <配方名>...       # 拿出来，回到未分类
+    frago recipe folder rename|move|rm <id>
+
+初装一个文件夹都没有，这是有意的：配方接近 app，能拿来分类的角度太多，任何默认清单
+都只是替主人预设了一种他未必认同的看法。**`--into` 只收表里已有的 id**，写了没有的
+当场拒绝并列出现有的——放行的话系统就替人凭空建了一个文件夹，相差一字的两个文件夹
+全是这么来的。建文件夹永远是一个单独的动作。
 
 ## flow 字段（workflow 必填）
 

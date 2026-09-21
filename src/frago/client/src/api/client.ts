@@ -13,6 +13,8 @@ import type {
   ServerInfo,
   ServerStatus,
   RecipeItem,
+  RecipeFolder,
+  RecipeFoldersPayload,
   TaskItem,
   TaskStep,
   ToolUsageStat,
@@ -128,6 +130,8 @@ export type {
   ServerInfo,
   ServerStatus,
   RecipeItem,
+  RecipeFolder,
+  RecipeFoldersPayload,
   TaskItem,
   TaskStep,
   ToolUsageStat,
@@ -299,6 +303,56 @@ export async function getRecipes(): Promise<RecipeItem[]> {
 
 export async function getRecipe(name: string): Promise<RecipeItem> {
   return fetchApi<RecipeItem>(`/recipes/${encodeURIComponent(name)}`);
+}
+
+// ── 文件夹 ──────────────────────────────────────────────────────────────
+//
+// 每一条写操作都回整张表：摆图标这件事一次动好几处（从原文件夹拿出来、放进新的、
+// 顺序跟着变），各自回各自那一块的话，界面得自己把几块拼回去，拼错了就是图标凭空
+// 多一个少一个。整张回来最省事，表也就几十行。
+
+export async function getRecipeFolders(): Promise<RecipeFoldersPayload> {
+  return fetchApi<RecipeFoldersPayload>('/recipes/folders');
+}
+
+export async function createRecipeFolder(body: {
+  id: string;
+  name_zh?: string;
+  name_en?: string;
+  icon?: string;
+  recipes?: string[];
+}): Promise<RecipeFoldersPayload> {
+  return fetchApi<RecipeFoldersPayload>('/recipes/folders', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateRecipeFolder(
+  id: string,
+  body: { name_zh?: string; name_en?: string; icon?: string; position?: number },
+): Promise<RecipeFoldersPayload> {
+  return fetchApi<RecipeFoldersPayload>(`/recipes/folders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteRecipeFolder(id: string): Promise<RecipeFoldersPayload> {
+  return fetchApi<RecipeFoldersPayload>(`/recipes/folders/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 把几张配方放进 `folder`，`null` 表示拿出来回到未分类。 */
+export async function assignRecipeFolder(
+  recipes: string[],
+  folder: string | null,
+): Promise<RecipeFoldersPayload> {
+  return fetchApi<RecipeFoldersPayload>('/recipes/folders/assign', {
+    method: 'POST',
+    body: JSON.stringify({ recipes, folder }),
+  });
 }
 
 /** 配方页面的地址。开发模式下接口在另一个端口，页面也得跟着去那边取。 */
