@@ -72,7 +72,7 @@ def test_migrate_schedule_old_format():
     assert m["recipe"] == "daily_report"
     assert m["cron"] is None
     assert m["overlap"] == "skip"
-    assert m["timeout"] == 300
+    assert m["timeout"] == 7200
     assert m["history"] == []
     assert m["reply_channel"] is None
     assert m["reply_context"] == {}

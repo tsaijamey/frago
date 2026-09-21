@@ -158,7 +158,7 @@ class SchedulerService:
         if "overlap" not in s:
             s["overlap"] = "skip"
         if "timeout" not in s:
-            s["timeout"] = 300
+            s["timeout"] = 7200
         if "history" not in s:
             s["history"] = []
         if "reply_channel" not in s:
@@ -204,7 +204,7 @@ class SchedulerService:
         prompt: str | None = None,
         cron: str | None = None,
         overlap: str = "skip",
-        timeout: int = 300,
+        timeout: int = 7200,
         reply_channel: str | None = None,
         reply_context: dict[str, Any] | None = None,
         command: str | None = None,

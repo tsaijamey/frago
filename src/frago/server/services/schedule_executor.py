@@ -498,7 +498,7 @@ def _deliver_desktop(schedule: dict[str, Any], text: str) -> dict[str, Any]:
 async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
     """按 kind 执行。阻塞动作丢进线程，别把调度循环卡住。"""
     kind = schedule.get("kind") or ("recipe" if schedule.get("recipe") else "prompt")
-    timeout = int(schedule.get("timeout") or 300)
+    timeout = int(schedule.get("timeout") or 7200)
 
     if kind == "command":
         return await asyncio.to_thread(

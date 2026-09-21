@@ -52,7 +52,7 @@ export function frequencyText(s: ScheduleItem, t: TFunction): string {
   return t('schedules.freq.seconds', { n: sec });
 }
 
-/** 一次最多跑多久，到点就被掐掉。没显式给过的任务是默认的 300 秒。 */
+/** 一次最多跑多久，到点就被掐掉。没显式给过的任务是默认的 2 小时。 */
 export function timeoutText(s: ScheduleItem, t: TFunction): string {
   const sec = s.timeout;
   if (!sec) return '—';

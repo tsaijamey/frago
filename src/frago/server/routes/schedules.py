@@ -54,7 +54,7 @@ class ScheduleItem(BaseModel):
     interval_seconds: int | None = None
     cron: str | None = None
     overlap: str = "skip"
-    timeout: int = 300
+    timeout: int = 7200
     start_at: str | None = None
     end_at: str | None = None
     enabled: bool = True

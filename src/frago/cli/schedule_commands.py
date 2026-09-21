@@ -75,7 +75,7 @@ def schedule_group():
     default="skip",
     help="Overlap control: skip (default) or queue",
 )
-@click.option("--timeout", type=int, default=300, help="Execution timeout in seconds (default: 300)")
+@click.option("--timeout", type=int, default=7200, help="Execution timeout in seconds (default: 7200 = 2h)")
 def schedule_add(
     recipe_name: str | None,
     every: str | None,
