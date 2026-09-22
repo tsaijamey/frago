@@ -178,6 +178,23 @@ class View:
 # ── what a run is allowed to see ───────────────────────────────────────────
 
 
+def _made(path: Path) -> Path:
+    """确保这个目录在起进程之前就存在，返回它。
+
+    只用于**这次运行自己拥有的**那两个目录。别人的东西一律不碰：给别人建目录等于
+    替他决定他的数据放哪儿，而那正是这套边界要拦的事。
+
+    建不出来（磁盘满、权限不对）也不在这里抛：这个函数的调用方是在描述一个视图，
+    而视图描述不该因为磁盘的临时状况就整个失败。建不成的后果由内核在起进程时报出来，
+    那时的报错带着完整的上下文。
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.debug("建不出 %s，交给内核在起进程时报", path, exc_info=True)
+    return path
+
+
 def _existing(*candidates: str | Path | None) -> list[Path]:
     """The ones that are actually on this machine.
 
@@ -386,12 +403,30 @@ def view_for(
     writable: list[Path] = []
     readable: list[Path] = []
 
-    # The two directories this run owns are listed whether or not they exist
-    # yet. Both backends accept a path that is not there — bwrap skips the bind,
-    # sandbox-exec matches a prefix rather than an inode — and the alternative
-    # is worse than untidy: a recipe's very first run is exactly the run whose
-    # landing spot does not exist yet, and it would be the one run confined out
-    # of its own directory.
+    # The two directories this run owns, listed whether or not they exist yet.
+    # **This function only describes a view; it never touches the disk** —
+    # ``frago recipe validate`` asks it about recipes nobody is starting.
+    #
+    # Whether they have to exist before the process starts is the backends'
+    # business, and they disagree about a path that does not exist, and the
+    # disagreement is silent in the worst possible way:
+    #
+    # * ``sandbox-exec`` matches a path prefix, so a directory the run creates
+    #   for itself is writable whether or not it existed beforehand.
+    # * ``bwrap`` mounts, and ``--bind-try`` **skips a source that is not
+    #   there**. The path is then absent from the namespace — except that bwrap
+    #   synthesises the parent directories needed to place the other mounts, and
+    #   those synthetic parents live on the run's own root. So the recipe's
+    #   ``mkdir`` succeeds, its writes succeed, and every byte disappears when
+    #   the process exits. Nothing anywhere reports a problem.
+    #
+    # Measured 2026-09-22 on a server: a relay recipe answered "team created,
+    # here is the code" and the next call could not find that team. Its data had
+    # been written into a directory that stopped existing, and the same recipe
+    # on macOS was fine — which is the shape that costs the most to find.
+    #
+    # So ``Bubblewrap.wrap`` makes them before it mounts anything. macOS needs
+    # nothing, and gets nothing.
     if landing_spot is not None:
         writable += note([Path(landing_spot)], "本次运行的落点")
     # The recipe's own machine-level tree: where a producer keeps the data it
@@ -623,6 +658,27 @@ class Bubblewrap(Backend):
         # ``marker`` is accepted and has nothing to attach to: a path this view
         # does not contain is absent from the mount namespace, so there is no
         # refusal for the kernel to report. See ``explain_refusals``.
+        # **A writable root has to exist before it can be bound.**
+        #
+        # ``--bind-try`` skips a source that is not there, and bwrap then
+        # synthesises that path's parents on the run's own root so the other
+        # mounts have somewhere to sit. The recipe's ``mkdir`` succeeds, its
+        # writes succeed, and every byte disappears when the process exits.
+        # Nothing anywhere reports a problem.
+        #
+        # Measured 2026-09-22 on a server: a relay recipe answered "team
+        # created, here is the code" and the next call could not find that
+        # team. The same recipe on macOS was fine, because ``sandbox-exec``
+        # matches a path prefix and does not care whether the directory is
+        # there — which is what made it expensive to find.
+        #
+        # Only this backend needs it, so only this backend does it. Creating
+        # them in ``view_for`` would make describing a view touch the disk, and
+        # ``frago recipe validate`` asks for views of recipes nobody is
+        # starting.
+        for root in view.writable:
+            _made(root)
+
         argv = ["bwrap", "--die-with-parent", "--unshare-pid", "--proc", "/proc",
                 "--dev-bind", "/dev", "/dev", "--tmpfs", "/tmp"]
         for path in self._system_services():
