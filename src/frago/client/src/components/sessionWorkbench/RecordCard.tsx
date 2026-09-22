@@ -333,12 +333,20 @@ function AgentPath({ path }: { path: string[] }) {
 }
 
 /**
- * 每一条记录的头一行都长这样：类型标签在最左，元信息居中省略，时刻钉在最右。
+ * 每一条记录的头一行都长这样：类型标签、元信息、时刻，三样紧挨着排在左边。
  *
  * **类型靠"标签是什么样"来分，不是靠"标签写了什么"。** 十五种形态的名字都是两到四个
  * 汉字、同一个字号、同一个灰——静止时它们看上去是同一种东西，人必须逐条读字才知道
  * 这条是回复还是工具还是记账。所以标签自己带三种形状：说话的是实心字，工具的是等宽
  * 字，系统记账的是更小更淡的字。一屏扫过去，不读字也认得出哪几条是对话。
+ *
+ * **时刻跟在身份后面，不钉在最右。** 从前它被一段 `flex-1` 顶到栏的右边缘，一次回复
+ * 循环有四五条记录，就有四五个时刻顺着右边缘往下排，彼此只差几秒，中间横着一千像素
+ * 的空档——那一列既没人扫，又把每一行都拉成了跨越整栏的长条。写成"回复 模型名
+ * 09:45:08"，它就只是这句话的一部分，读到哪儿看到哪儿。
+ *
+ * **右边缘留给结局。** 状态、截断、退出码这些"成没成"的东西才配站在右边：一栏记录
+ * 扫下来，人真正顺着右边缘找的就是它们。
  */
 function CardHead({
   record,
@@ -385,10 +393,12 @@ function CardHead({
       ) : (
         name
       )}
-      <span className="min-w-0 flex-1 truncate">{meta}</span>
+      {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
+      <Timestamp ts={record.ts} />
+      {/* 撑开的空档摆在时刻**之后**：左边那几样紧挨着连成一句，右边缘只接结局。 */}
+      <span className="flex-1" />
       {trailing}
       <AgentPath path={record.agent_path} />
-      <Timestamp ts={record.ts} />
     </header>
   );
 }
@@ -399,6 +409,12 @@ function CardHead({
  * **默认没有容器。** agent 的回复是这一栏里字最多、也最该被读进去的东西；给它套一个
  * 卡底，一屏就成了五六个灰盒子叠在一起，读一段要先跨过一道边。只有需要被认出来的那
  * 几种（你说、思考、旁路）才自带纸色或虚线轮廓——由调用方经 `tone` 指定。
+ *
+ * **左内距与有没有纸色无关。** 从前只有带纸色的才给内距，结果一次回复循环里，带纸色
+ * 的"你说"缩进十二像素，不带纸色的回复贴着栏边起字，分组头又是另一个位置——一屏下来
+ * 五六个不同的左边界。眼睛每换一条记录就要重新找一次行首，读一段话的力气全花在这上
+ * 面了。现在**每一条记录的字都从同一条线起**，纸色只决定它有没有底，不决定它站在哪儿。
+ * 上下内距照旧只给有纸色的：没有底的那几条不需要把字撑开，撑开反而拉散了行距。
  */
 function TextShell({
   record,
@@ -407,6 +423,7 @@ function TextShell({
   labelTone,
   meta,
   tone = '',
+  toneOpenOnly = false,
   collapsible = false,
   defaultOpen = true,
   children,
@@ -416,17 +433,27 @@ function TextShell({
   labelTone?: string;
   meta?: ReactNode;
   tone?: string;
+  /**
+   * 收起来时不上纸色，摊开了才上。
+   *
+   * 给那些**收起来只是一行、摊开才是一块内容**的形态用。一条折着的记录本来就只有一行
+   * 字，给它铺一张跨满整栏的纸，纸上百分之九十是空的——「系统」那一档里这种条目占了
+   * 大半，一屏下来就是十几条长灰条隔行排开，人看到的是灰条的节奏，不是那几行字写了
+   * 什么。摊开之后它真的有一块内容要兜住，那时纸色才有活干。
+   */
+  toneOpenOnly?: boolean;
   collapsible?: boolean;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  // 有纸色的才需要内距把字撑开；没纸色的不加，否则正文会莫名其妙地缩在中间。
-  const padded = tone && tone !== 'bg-transparent';
+  const effectiveTone = toneOpenOnly && !open ? '' : tone;
+  // 有纸色的才撑上下；左右一律给，那是全栏共用的那条起字线。
+  const padded = effectiveTone && effectiveTone !== 'bg-transparent';
   return (
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
-      className={`min-w-0 rounded-[8px] ${padded ? 'px-3 py-2' : ''} ${tone}`}
+      className={`min-w-0 rounded-[8px] px-3 ${padded ? 'py-2' : 'py-0.5'} ${effectiveTone}`}
     >
       <CardHead
         record={record}
@@ -506,13 +533,14 @@ function ToolShell({
         <span className="shrink-0 font-mono text-[12px] font-semibold text-text-primary">
           {title}
         </span>
+        {/* 时刻紧跟工具名，跟别的形态一个写法；中间那段让给参数预览，右边缘只接结局。 */}
+        <Timestamp ts={record.ts} />
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
           {subtitle}
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
           {chips}
           <AgentPath path={record.agent_path} />
-          <Timestamp ts={record.ts} />
         </span>
       </header>
       {hasBody && open ? (
@@ -555,7 +583,8 @@ function SystemShell({
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
-      className={`min-w-0 rounded-[8px] ${padded ? 'px-3 py-2' : 'px-1 py-0.5'} ${tone}`}
+      // 左内距跟对话卡一样，记账行的字才与上下两句发言起在同一条线上。
+      className={`min-w-0 rounded-[8px] px-3 ${padded ? 'py-2' : 'py-0.5'} ${tone}`}
     >
       <div className="flex items-center gap-2 text-[11px] text-text-muted">
         {collapsible && hasBody ? (
@@ -574,9 +603,10 @@ function SystemShell({
         ) : null}
         <span className="shrink-0">{icon}</span>
         <span className="shrink-0">{label}</span>
-        <span className="min-w-0 flex-1 truncate">{meta}</span>
-        <AgentPath path={record.agent_path} />
+        {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
         <Timestamp ts={record.ts} />
+        <span className="flex-1" />
+        <AgentPath path={record.agent_path} />
       </div>
       {hasBody && open ? <div className="mt-1.5 min-w-0">{children}</div> : null}
     </article>
@@ -758,7 +788,7 @@ function Reminders({ items }: { items: string[] }) {
   );
 }
 
-function AgentSay({ record }: { record: WorkbenchRecord }) {
+function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: boolean }) {
   const { t } = useTranslation();
   const p = record.payload;
   return (
@@ -766,9 +796,15 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
       record={record}
       icon={<Bot size={12} />}
       label={t(KIND_LABEL_KEY['agent.say'])}
-      labelTone="text-[11px] font-semibold text-text-primary"
+      /* 署名不该跟它署的那段话一样黑。正文就在下一行、14px、最深的墨色；头上再压一行
+         同色的粗字，两个都想当主角，读到的人先看到的是"回复"两个字而不是回复本身。
+         降到次级墨色加中等字重——认得出是发言（实心字），但不跟正文抢。 */
+      labelTone="text-[11px] font-medium text-text-secondary"
       tone="bg-transparent"
-      meta={str(p, 'model')}
+      /* 归组头已经把模型名写在上一行了，隔着四像素再写一遍不是两件事。归组头在的时候
+         这里就让开，归组头不在（这条记录自己独立成段）时照写——模型名一条记录上必须
+         有，只是不必有两遍。 */
+      meta={hideModel ? undefined : str(p, 'model')}
     >
       <Rich text={str(p, 'text')} />
     </TextShell>
@@ -781,18 +817,21 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
   // 正文没落盘的思考（模型这一轮的推理是加密的，落盘时只剩一个空壳）照常出卡的话，
   // 一屏能排下八九个「思考 0 字」的空盒子，把真正有内容的对话挤没了。它确实发生过，
   // 所以 NEVER 丢掉——但它只值一行，不值一张卡。
+  //
+  // 这一行从前拿一条虚线横贯整栏、把时刻推到右边缘。它想说的只是"这一轮想过，但没留下
+  // 字"——一句话的事；那条线却是整屏最长的图形，读起来像一道分节线，而那里什么都没被
+  // 分开。现在它就是一行字：标记、一句话、时刻，说完即止。
   if (!text) {
     return (
       <div
         data-kind={record.kind}
         data-group="text"
         data-testid="think-empty"
-        className="flex min-w-0 items-center gap-2 px-1 text-[11px] text-text-muted"
+        className="flex min-w-0 items-center gap-2 px-3 py-0.5 text-[11px] text-text-muted"
       >
-        <Circle size={7} />
-        <span>{t('workbench.record.thinkEmpty')}</span>
-        <span className="h-px flex-1 border-t border-dashed border-border-color" />
-        <span className="font-mono">{formatClock(record.ts)}</span>
+        <Circle size={7} className="shrink-0" />
+        <span className="min-w-0 truncate">{t('workbench.record.thinkEmpty')}</span>
+        <span className="shrink-0 font-mono">{formatClock(record.ts)}</span>
       </div>
     );
   }
@@ -803,6 +842,7 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
       label={t(KIND_LABEL_KEY['agent.think'])}
       labelTone="text-[11px] text-text-muted"
       tone="border border-dashed border-border-color"
+      toneOpenOnly
       meta={t('workbench.record.charCount', { n: text.length })}
       collapsible
       defaultOpen={false}
@@ -850,7 +890,16 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
   const failed = exit !== null && exit !== 0;
   const stderr = str(p, 'stderr');
   const prevented = p.prevented_continuation === true;
-  const [open, setOpen] = useState(true);
+  // 收尾那一轮叫起了哪几个 hook、各跑了多久。没说话的收尾卡上就剩这个，没有它，
+  // 卡上会是一片空白，跟"什么都没发生"分不开。
+  const infos = list(p, 'hook_infos').map(dict);
+  // 三种"跑过但没留下话"的情形，各自标出来。它们占一屏里的大多数，所以**不铺纸、
+  // 不撑高、默认收着**——看得见是底线，抢注意力不是。
+  const silent = p.silent === true;
+  const echo = p.echo === true;
+  const quiet = p.quiet === true;
+  const light = (silent || echo || quiet) && !failed && !prevented && !stderr;
+  const [open, setOpen] = useState(!light);
 
   return (
     <article
@@ -858,14 +907,17 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
       data-group="text"
       data-source="hook"
       data-testid="hook-inject"
-      className={`min-w-0 rounded-[8px] px-3 py-2 ${HOOK_BG} ${HOOK_RING}`}
+      data-light={light ? 'true' : undefined}
+      className={`min-w-0 rounded-[8px] px-3 ${light ? 'py-0.5' : `py-2 ${HOOK_BG} ${HOOK_RING}`}`}
     >
       <header className="flex items-center gap-2 text-[11px]">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className={`inline-flex shrink-0 items-center gap-1 font-semibold ${HOOK_TEXT}`}
+          className={`inline-flex shrink-0 items-center gap-1 ${
+            light ? 'text-text-muted' : `font-semibold ${HOOK_TEXT}`
+          }`}
         >
           <ChevronRight
             size={12}
@@ -874,10 +926,28 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           <Zap size={12} />
           <span>{t('workbench.record.hookInject')}</span>
         </button>
-        <span className="min-w-0 flex-1 truncate text-text-secondary">
+        <span className={`min-w-0 truncate ${light ? 'text-text-muted' : 'text-text-secondary'}`}>
           {HOOK_EVENT_LABEL_KEY[event] ? t(HOOK_EVENT_LABEL_KEY[event]) : event}
           {target ? <span className="ml-1 font-mono text-text-muted">{target}</span> : null}
         </span>
+        {/* 「跑过但没留下话」写在事件名旁边，不写在正文里——正文是空的，人打开一看
+            什么都没有，只会以为是界面坏了。 */}
+        {silent ? (
+          <span className="shrink-0 text-text-dim">{t('workbench.record.hookSilent')}</span>
+        ) : null}
+        {echo ? (
+          <span className="shrink-0 text-text-dim">{t('workbench.record.hookEcho')}</span>
+        ) : null}
+        {quiet ? (
+          <span className="shrink-0 text-text-dim">{t('workbench.record.stopHookQuiet')}</span>
+        ) : null}
+        {infos.length ? (
+          <span className="shrink-0 font-mono text-text-dim">
+            {t('workbench.record.stopHooksRan', { n: infos.length })}
+          </span>
+        ) : null}
+        <Timestamp ts={record.ts} />
+        <span className="flex-1" />
         {segments.length > 1 ? (
           <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
             {t('workbench.record.segments', { n: segments.length })}
@@ -894,11 +964,28 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         <AgentPath path={record.agent_path} />
-        <Timestamp ts={record.ts} />
       </header>
 
       {open ? (
         <div className="mt-2 min-w-0 space-y-2">
+          {/* 收尾那一轮各个 hook 的名字与耗时。这是「没说话的收尾」唯一的内容，
+              从前跟着整行一起被丢掉，于是"收尾 hook 跑了几十次"在界面上完全看不到。 */}
+          {infos.length ? (
+            <dl className="space-y-0.5 text-[11px]">
+              {infos.map((info, i) => (
+                <div key={i} className="flex gap-2">
+                  <dt className="min-w-0 flex-1 truncate font-mono text-text-secondary">
+                    {str(info, 'name')}
+                  </dt>
+                  <dd className="shrink-0 font-mono tabular-nums text-text-muted">
+                    {num(info, 'duration_ms') !== null
+                      ? t('workbench.record.hookDuration', { n: num(info, 'duration_ms') })
+                      : ''}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           {segments.length ? (
             segments.map((text, i) => (
               <div
@@ -908,7 +995,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
                 {text}
               </div>
             ))
-          ) : (
+          ) : infos.length ? null : (
             <p className="text-[12px] italic text-text-muted">
               {t('workbench.record.hookSaidNothing')}
             </p>
@@ -1045,6 +1132,7 @@ function LocalCommandOutput({ record }: { record: WorkbenchRecord }) {
       icon={<Terminal size={12} />}
       label={t('workbench.record.localCommandOutput')}
       tone="bg-bg-subtle"
+      toneOpenOnly
       meta={
         stderr ? (
           <span className={`rounded-full px-2 py-[1px] ${ERR_BG} ${ERR_TEXT}`}>
@@ -1073,19 +1161,27 @@ function ContextInject({ record }: { record: WorkbenchRecord }) {
   const exit = num(p, 'exit_code');
   const unrecognized = p.unrecognized === true;
   const label = str(p, 'label') || str(p, 'channel') || t(KIND_LABEL_KEY['context.inject']);
+  // 渠道名与标签在多数注入上是同一个串（`date date`、`mcp_instructions_delta
+  // mcp_instructions_delta`）。同一个词并排印两遍不是两件事，是同一件事被印了两遍——
+  // 人读到第二个会先愣一下去找两者的差别，找不到才作罢。一样就只印一次。
+  const channel = str(p, 'channel');
+  const showChannel = channel && channel !== label;
   return (
     <TextShell
       record={record}
       icon={<Download size={12} />}
       label={unrecognized ? t('workbench.record.unrecognized', { label }) : label}
       tone="bg-bg-subtle"
+      toneOpenOnly
       meta={
-        <span className="flex items-center gap-2">
-          <span className="truncate">{str(p, 'channel')}</span>
-          {exit !== null ? (
-            <span className="font-mono">{t('workbench.record.exitCode', { code: exit })}</span>
-          ) : null}
-        </span>
+        showChannel || exit !== null ? (
+          <span className="flex items-center gap-2">
+            {showChannel ? <span className="truncate">{channel}</span> : null}
+            {exit !== null ? (
+              <span className="font-mono">{t('workbench.record.exitCode', { code: exit })}</span>
+            ) : null}
+          </span>
+        ) : undefined
       }
       collapsible
       defaultOpen={false}
@@ -1389,9 +1485,9 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
         <span className={`text-[13px] font-semibold ${ERR_TEXT}`}>
           {t(KIND_LABEL_KEY.error)}
         </span>
+        <Timestamp ts={record.ts} />
         <span className="flex-1" />
         <AgentPath path={record.agent_path} />
-        <Timestamp ts={record.ts} />
       </header>
       <dl className="space-y-1 text-[12px]">
         <div className="flex gap-2">
@@ -1447,32 +1543,63 @@ function Interrupt({ record }: { record: WorkbenchRecord }) {
   );
 }
 
+/**
+ * 会话上发生的状态变更，以及引擎给自己留的那些坐标行。
+ *
+ * 两类摆在同一种行里，但读法不同：**状态变更有前值**（模式从 A 换成 B），**坐标行没有**
+ * （续接位置指向哪条记录，本来就不存在"从哪儿变过来"）。所以箭头只在真的换了值时出现
+ * ——给坐标行摆箭头等于谎称它动过。
+ *
+ * 还有第三种：**值没变、引擎照旧重写了一遍**。这种一场会话里能有两三百条（实测标题写了
+ * 262 次，取值自始至终只有一个）。它们从前整条不出卡，人读到的是"标题定过一次"；实际
+ * 发生的是"每轮都重写了一遍"。现在都在，只是标一句"原值重写"并且整行退到最淡那一档
+ * ——看得见，但不跟真的变更抢。
+ */
+const STATE_FIELD_KEY: Record<string, string> = {
+  title: 'workbench.record.stateField.title',
+  model: 'workbench.record.stateField.model',
+  agent: 'workbench.record.stateField.agent',
+  mode: 'workbench.record.stateField.mode',
+  'permission-mode': 'workbench.record.stateField.permissionMode',
+  'last-prompt': 'workbench.record.stateField.lastPrompt',
+  'queue-operation': 'workbench.record.stateField.queueOperation',
+  'file-history-snapshot': 'workbench.record.stateField.fileHistorySnapshot',
+  'file-history-delta': 'workbench.record.stateField.fileHistoryDelta',
+  'bridge-session': 'workbench.record.stateField.bridgeSession',
+  'pr-link': 'workbench.record.stateField.prLink',
+  'frame-link': 'workbench.record.stateField.frameLink',
+};
+
 function SessionState({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const from = str(p, 'from');
   const to = str(p, 'to');
-  const FIELD_KEY: Record<string, string> = {
-    title: 'workbench.record.stateField.title',
-    model: 'workbench.record.stateField.model',
-    agent: 'workbench.record.stateField.agent',
-    mode: 'workbench.record.stateField.mode',
-    'permission-mode': 'workbench.record.stateField.permissionMode',
-  };
   const field = str(p, 'field');
+  const repeat = p.repeat === true;
+  const pointer = p.pointer === true;
+  // 重写与坐标行都退一档：一屏里它们占多数，跟真正的状态变更同色会把变更淹掉。
+  const quiet = repeat || pointer;
   return (
     <SystemShell
       record={record}
       icon={<Circle size={7} className="text-text-muted" />}
       label={
-        <span className="text-text-secondary">
-          {FIELD_KEY[field] ? t(FIELD_KEY[field]) : field}
+        <span className={quiet ? 'text-text-muted' : 'text-text-secondary'}>
+          {STATE_FIELD_KEY[field] ? t(STATE_FIELD_KEY[field]) : field}
         </span>
       }
       meta={
         <span className="font-mono">
           {from ? `${from} → ` : ''}
-          <span className="text-text-primary">{to || t('workbench.record.emptyValue')}</span>
+          <span className={quiet ? 'text-text-muted' : 'text-text-primary'}>
+            {to || t('workbench.record.emptyValue')}
+          </span>
+          {repeat ? (
+            <span className="ml-2 not-italic text-text-dim">
+              {t('workbench.record.stateRepeat')}
+            </span>
+          ) : null}
         </span>
       }
     />
@@ -1610,7 +1737,10 @@ function UsageTick({ record }: { record: WorkbenchRecord }) {
     <SystemShell
       record={record}
       icon={<Gauge size={12} className="text-text-muted" />}
-      label={<span className="text-text-secondary">{t(KIND_LABEL_KEY['usage.tick'])}</span>}
+      /* 刻度是记账，不是发言。它在「对话」那一档里夹在两句话中间，字色跟发言同级的话，
+         一屏看下来是"说一句、记一笔、说一句、记一笔"，两种东西轮流抢同一份注意力。
+         退到最淡那一档：要查的时候它在原位，不查的时候它是背景。 */
+      label={<span className="text-text-muted">{t(KIND_LABEL_KEY['usage.tick'])}</span>}
       meta={<span className="font-mono">{headline.join(' · ')}</span>}
       collapsible
     >
@@ -1635,6 +1765,8 @@ export interface RecordCardProps {
   record: WorkbenchRecord;
   /** 取原文要带会话编号——记录编号自己定位不到档案。 */
   sessionId: string;
+  /** 外面的归组头已经写了模型名，这张卡就别再写一遍。 */
+  hideModel?: boolean;
 }
 
 /**
@@ -1642,13 +1774,13 @@ export interface RecordCardProps {
  * 重渲染一次整栏；不记忆化的话那两百张全部重跑一遍分发与格式化，追加越密越卡，正是
  * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
  */
-function RecordCardInner({ record, sessionId }: RecordCardProps) {
+function RecordCardInner({ record, sessionId, hideModel }: RecordCardProps) {
   switch (record.kind) {
     // 文本类
     case 'user.say':
       return <UserSay record={record} />;
     case 'agent.say':
-      return <AgentSay record={record} />;
+      return <AgentSay record={record} hideModel={hideModel} />;
     case 'agent.think':
       return <AgentThink record={record} />;
     case 'context.inject':

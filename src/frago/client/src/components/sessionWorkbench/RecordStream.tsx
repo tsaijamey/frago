@@ -437,7 +437,11 @@ export default function RecordStream({
         className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-4"
         data-testid="record-stream-scroll"
       >
-        <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-3">
+        {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
+            人不读一个字也看得出哪几条是一伙的——疏密的对比比任何标签都快。从前两边都是
+            12px，密疏没有对比，所以只好另画一条横线来说"这里是一组"，而那条线是整屏最长
+            的图形，喊得比它要标的内容还响。 */}
+        <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-4">
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
@@ -487,19 +491,25 @@ export default function RecordStream({
               <section
                 key={`${group.groupId}-${index}`}
                 data-testid="record-group"
-                className="flex min-w-0 flex-col gap-1.5"
+                className="flex min-w-0 flex-col gap-1"
               >
-                {/* 容器头只写模型名与本组条数。分组编号一个字都不露。 */}
-                <header className="flex items-center gap-2 px-1 text-[11px] text-text-dim">
-                  <span>{t('workbench.stream.sameReply')}</span>
-                  {model ? <span className="font-mono">{model}</span> : null}
-                  <span className="font-mono">
+                {/* 容器头只写模型名与本组条数。分组编号一个字都不露。
+                    字从 px-3 那条线起，跟组里每一条记录的行首对齐——它是这一组的第一行，
+                    不是浮在组上方的另一种东西。 */}
+                <header className="flex min-w-0 items-center gap-1.5 px-3 text-[11px] text-text-dim">
+                  <span className="shrink-0">{t('workbench.stream.sameReply')}</span>
+                  {model ? <span className="truncate font-mono">{model}</span> : null}
+                  <span className="shrink-0 font-mono">
                     {t('workbench.stream.groupCount', { n: group.records.length })}
                   </span>
-                  <span className="h-px flex-1 bg-border-color" />
                 </header>
                 {group.records.map((record) => (
-                  <RecordCard key={record.id} record={record} sessionId={sessionId} />
+                  <RecordCard
+                    key={record.id}
+                    record={record}
+                    sessionId={sessionId}
+                    hideModel={Boolean(model)}
+                  />
                 ))}
               </section>
             );

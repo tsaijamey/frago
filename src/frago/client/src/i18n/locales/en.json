@@ -1434,7 +1434,14 @@
         "model": "Model",
         "agent": "Agent",
         "mode": "Mode",
-        "permissionMode": "Permission mode"
+        "permissionMode": "Permission mode",
+        "lastPrompt": "Resume point",
+        "queueOperation": "Queued input",
+        "fileHistorySnapshot": "File snapshot",
+        "fileHistoryDelta": "File change record",
+        "bridgeSession": "Bridge session",
+        "prLink": "Pull request",
+        "frameLink": "Canvas link"
       },
       "duration": {
         "ms": "{{n}} ms",
@@ -1523,7 +1530,13 @@
         "output": "out",
         "cacheCreation": "cache write",
         "cacheRead": "cache read"
-      }
+      },
+      "stateRepeat": "rewritten, unchanged",
+      "hookSilent": "said nothing",
+      "hookEcho": "raw form",
+      "stopHooksRan": "{{n}} hooks ran",
+      "hookDuration": "{{n}} ms",
+      "stopHookQuiet": "nothing added, nothing blocked"
     },
     "report": {
       "tailNow": "Now",

@@ -60,7 +60,11 @@ __all__ = [
 # 实际只对应 1120 个会话的标题演化）。
 _STANDING_TITLE_TYPES = ("ai-title", "custom-title", "agent-name")
 _STANDING_MODE_TYPES = ("mode", "permission-mode")
-_STANDING_DROP_TYPES = (
+# 这几类是引擎给自己留的坐标与账目：续接从哪接、插话队列怎么动、哪些文件被备份过、
+# 桥接会话是哪个。它们从前整条不出卡——理由是"一个字的人类内容都没有"。那个理由站不住：
+# 界面上看不见，等于它们没发生过，而人无从知道自己看到的是全部还是被筛过的一部分。
+# 现在一条不落全部出卡，摆法上降到最轻的一档，靠疏密而不是靠隐藏来控制注意力。
+_STANDING_POINTER_TYPES = (
     "last-prompt",
     "queue-operation",
     "file-history-snapshot",
@@ -68,22 +72,70 @@ _STANDING_DROP_TYPES = (
     "bridge-session",
     "pr-link",
     "frame-link",
-    # 这三类同属纯指针，一个字的人类内容都没有，从前全落进兜底、在中栏铺成一张张
-    # 「未识别」的原始 JSON 卡。``atis-latch`` 尤其密（抽样 120 场里 1070 条，平均一场
-    # 九条），够把系统那一档淹掉。
     "atis-latch",
     "artifact-comment-monitor",
     "artifact-autoreact-ledger",
 )
-# 同一个键被反复覆写，只留最后那一条。花费账本每轮都重写一次，全留下来等于把同一件事
-# 说几十遍；一条都不留又会让"这场烧了多少钱"彻底看不见。
+# 花费账本每轮重写一次。从前只留最后一条，现在每一次重写都出卡。
 _STANDING_LAST_ONLY_TYPES = ("cost-state",)
 _STANDING_TYPES = frozenset(
     _STANDING_TITLE_TYPES
     + _STANDING_MODE_TYPES
-    + _STANDING_DROP_TYPES
+    + _STANDING_POINTER_TYPES
     + _STANDING_LAST_ONLY_TYPES
 )
+
+def _stop_hook_infos(value: Any) -> list[dict[str, Any]]:
+    """收尾时叫起的那几个 hook：各是哪个命令、跑了多久。
+
+    命令是一条绝对路径，摆全等于让人横着读一行路径。只留末段的文件名——认出是哪个 hook
+    靠的就是那个名字，路径其余部分在回查原文时仍在。
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(value, list):
+        return out
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        command = str(item.get("command") or "")
+        out.append(
+            {
+                "name": command.rsplit("/", 1)[-1] or command,
+                "command": command,
+                "duration_ms": item.get("durationMs"),
+            }
+        )
+    return out
+
+
+def _pointer_summary(rtype: str, row: dict[str, Any]) -> str:
+    """这一行坐标里，值得摆在卡上的那一个事实。
+
+    取的是这类记录自己那个主键：续接位置取它指向的那条记录，插话队列取动作与那句话，
+    文件改动取路径。形状拿不准的那几类（``atis-latch``、画布那两类）不编名字也不挑字段，
+    整行压成一句摆上去——编一个名字比不解释更糟，人无从核对。
+    """
+    if rtype == "last-prompt":
+        return str(row.get("leafUuid") or "")
+    if rtype == "queue-operation":
+        op = str(row.get("operation") or "")
+        content = str(row.get("content") or "").strip()
+        return f"{op} {content}".strip()
+    if rtype == "file-history-delta":
+        return str(row.get("trackingPath") or "")
+    if rtype == "file-history-snapshot":
+        return str(row.get("messageId") or "")
+    if rtype == "bridge-session":
+        return str(row.get("bridgeSessionId") or "")
+    if rtype == "pr-link":
+        return str(row.get("prUrl") or row.get("prNumber") or "")
+    if rtype == "frame-link":
+        return str(row.get("title") or row.get("frameUrl") or "")
+    rest = {
+        k: v for k, v in row.items() if k not in ("type", "sessionId", "uuid", "timestamp")
+    }
+    return json.dumps(rest, ensure_ascii=False)[:200] if rest else ""
+
 
 # 旁挂状态各自把值存在哪个键上。
 _STANDING_VALUE_KEY = {
@@ -315,9 +367,12 @@ def _split_trailing_reminders(text: str) -> tuple[str, list[str]]:
 class TranslationStats:
     """一次翻译的进出账。差额要能逐条解释，不能只报一个总数。
 
-    ``lines_in`` 减去各类 ``dropped_*`` 与 ``merged_*``，再展开成块、加上
-    ``emitted_usage_ticks``，等于 ``records_out``。任何一条记录的去向都在这张账上，
-    NEVER 出现"不知道去哪了"。
+    ``lines_in`` 减去各类 ``merged_*``，再展开成块、加上 ``emitted_usage_ticks``，等于
+    ``records_out``。**没有 ``dropped_*`` 这一项了**：除了并进别的卡的那三类，档案里的每
+    一行都出卡。
+
+    下面这五个计数器不参与配平，它们报的是"出了卡，但属于哪一类不起眼的东西"——用来回答
+    "这一屏为什么这么长"，而不是用来解释差额。
     """
 
     lines_in: int = 0
@@ -326,21 +381,20 @@ class TranslationStats:
     records_out: int = 0
     """吐出多少条统一记录。"""
 
-    dropped_standing: int = 0
-    """序 1：``last-prompt`` / ``queue-operation`` / ``file-history-*`` 等纯指针状态。"""
+    pointer_states: int = 0
+    """序 1：``last-prompt`` / ``queue-operation`` / ``file-history-*`` 等坐标行。"""
 
-    dropped_standing_stale: int = 0
-    """序 1：标题被后来的覆写、模式同值连发，去重掉的那些。"""
+    standing_repeats: int = 0
+    """序 1：值没变、引擎照旧重写了一遍的那些（标题、模式、花费账本）。"""
 
-    dropped_hook_noise: int = 0
-    """序 9：``hook_success`` 里正文空、标准输出没话说（空串或空对象）、退出码为 0 的纯噪音。"""
+    hook_silent: int = 0
+    """序 9：hook 跑过、退出码 0、一个字没说的那些。跑过本身是结果，照常出卡。"""
 
-    dropped_hook_echo: int = 0
-    """序 9：``hook_success`` 说的话已经由 ``hook_additional_context`` 原样记过一遍，
-    去掉的那一份回声。同一次注入摆两张卡，其中一张还是 JSON，人只会以为注了两次。"""
+    hook_echo: int = 0
+    """序 9：说的话已经由 ``hook_additional_context`` 记过一遍，这是同一句话的原始形态。"""
 
-    dropped_stop_hook: int = 0
-    """序 5：``stop_hook_summary`` 里没追加上下文也没拦截的那些。"""
+    stop_hook_quiet: int = 0
+    """序 5：收尾 hook 既没追加上下文也没拦截的那些。卡上仍写着叫起了谁、各跑了多久。"""
 
     merged_truncation_notice: int = 0
     """序 7：并进对应工具结果的分页截断通知。"""
@@ -900,26 +954,36 @@ class _Translator:
 
     # 序 1：十二种旁挂状态
     def _rule_01_standing(self, index: int, rtype: str, row: dict[str, Any]) -> None:
-        if rtype in _STANDING_DROP_TYPES:
-            self._stats.dropped_standing += 1
+        if rtype in _STANDING_POINTER_TYPES:
+            self._stats.pointer_states += 1
+            self._emit(
+                row,
+                "session.state",
+                {
+                    "field": rtype,
+                    "source_type": rtype,
+                    "from": None,
+                    "to": _pointer_summary(rtype, row),
+                    # 坐标行不是"某个值从 A 变成了 B"，它没有前值可言。标出来，好让界面
+                    # 知道别按状态变更那套摆法去找箭头。
+                    "pointer": True,
+                },
+                record_id=f"{self._session_id}#state-{index}",
+            )
             return
         if rtype in _STANDING_LAST_ONLY_TYPES:
             self._rule_01_cost(index, rtype, row)
             return
         value = str(row.get(_STANDING_VALUE_KEY[rtype], ""))
-        if rtype in _STANDING_TITLE_TYPES:
-            # 标题被反复覆写，同会话只保留最后一条。
-            if index != self._last_title_index:
-                self._stats.dropped_standing_stale += 1
-                return
-            field_name = "title"
-        else:
-            # 模式快照同值连发，去重。
-            if self._standing_value.get(rtype) == value:
-                self._stats.dropped_standing_stale += 1
-                return
-            field_name = rtype
+        field_name = "title" if rtype in _STANDING_TITLE_TYPES else rtype
         previous = self._standing_value.get(rtype)
+        # 同一个值被反复重写是常态（实测一场里标题写了 262 次，取值自始至终只有一个）。
+        # 从前这些重写整条不出卡，人看到的是"标题定过一次"；实际发生的是"引擎每轮都把它
+        # 重写了一遍"。两件事不一样，所以每一次重写都出卡，只是把没变的那些标出来——
+        # 没变就不摆箭头，摆箭头等于谎称值动过。
+        repeat = previous == value
+        if repeat:
+            self._stats.standing_repeats += 1
         self._standing_value[rtype] = value
         self._emit(
             row,
@@ -927,21 +991,22 @@ class _Translator:
             {
                 "field": field_name,
                 "source_type": rtype,
-                "from": previous,
+                "from": None if repeat else previous,
                 "to": value,
+                "repeat": repeat,
             },
             record_id=f"{self._session_id}#state-{index}",
         )
 
     def _rule_01_cost(self, index: int, rtype: str, row: dict[str, Any]) -> None:
-        """这场会话的花费账本。每轮重写一次，只留最后那一条。
+        """这场会话的花费账本。每轮重写一次，每一次都出卡。
 
         账本本身是一坨数字，机器名摆出来等于没说。正文写成一句人话，原始数字留在载荷里
-        给要细看的人。
+        给要细看的人。从前只留最后一条，那一条报的是终值，中途涨得快还是慢一概看不出；
+        现在每轮那一条都在，账是怎么涨起来的看得见。
         """
         if index != self._last_standing_index.get(rtype, index):
-            self._stats.dropped_standing_stale += 1
-            return
+            self._stats.standing_repeats += 1
         cost = row.get("totalCostUSD")
         duration_ms = row.get("totalDuration")
         pieces: list[str] = []
@@ -1035,12 +1100,15 @@ class _Translator:
             if self._emit_local_output(row, content):
                 return
 
-        # 序 5：其余 subtype 归注入内容；Stop hook 汇总里没追加上下文也没拦截的丢弃
+        # 序 5：其余 subtype 归注入内容；Stop hook 汇总一条不落全部出卡
         if subtype == "stop_hook_summary":
             blocks = _hook_blocks(row.get("hookAdditionalContext"))
-            if not blocks and row.get("preventedContinuation") is not True:
-                self._stats.dropped_stop_hook += 1
-                return
+            # 既没追加上下文也没拦住的那些从前整条丢掉，理由是"它是空的"。它不空：这一行
+            # 记着这一轮收尾时叫起了哪几个 hook、各跑了多少毫秒、有没有报错。丢掉之后，
+            # 一场会话里收尾 hook 跑了几十次这件事在界面上完全看不到。
+            quiet = not blocks and row.get("preventedContinuation") is not True
+            if quiet:
+                self._stats.stop_hook_quiet += 1
             # 收尾时被拦下来的那次，追加的上下文就在 ``hookAdditionalContext`` 里，
             # 而 ``content`` 这个键在这类记录上压根不存在。照 ``content`` 取，正文永远
             # 是空的，人会以为拦是拦了但没说理由。
@@ -1058,6 +1126,11 @@ class _Translator:
                     "level": row.get("level"),
                     "prevented_continuation": row.get("preventedContinuation"),
                     "stop_reason": row.get("stopReason"),
+                    # 这一轮收尾叫起了谁、各跑了多久、谁报了错。没说话的那些卡上就剩这个，
+                    # 没有它，卡上会是一片空白，跟"什么都没发生"分不开。
+                    "hook_infos": _stop_hook_infos(row.get("hookInfos")),
+                    "hook_errors": _hook_blocks(row.get("hookErrors")),
+                    "quiet": quiet,
                 },
             )
             return
@@ -1207,14 +1280,17 @@ class _Translator:
         self._emit(row, "context.inject", payload)
 
     def _rule_09_hook_result(self, row: dict[str, Any], attachment: dict[str, Any]) -> None:
-        """序 9：hook 进程自己那条执行记录。
+        """序 9：hook 进程自己那条执行记录。**一条不落全部出卡。**
 
-        两种情况不出卡：**什么都没说**（本机 52604 条里 46531 条，正文空、标准输出是
-        空对象、退出码为 0），以及**说过的话引擎已经原样记过一遍**——那句话会由
-        ``hook_additional_context`` 再出一张卡，两张摆在一起人只会以为注了两次，而
-        这一张的正文还是没解析过的 JSON。
+        两种情况从前不出卡，现在都出：**什么都没说**（本机 52604 条里 46531 条，正文空、
+        标准输出是空对象、退出码为 0），以及**说过的话引擎已经原样记过一遍**。
 
-        退出码非零或有标准错误时一律出卡，哪怕它一个字没说：hook 挂了要看得见。
+        改回来的理由是同一条：跑过而没说话，本身就是一个结果。藏起来之后，人在
+        「hook 注入」那一档看到的是"这一轮没有 hook 动过"，而实际上动过十几个、只是都
+        没开口——这两件事在界面上必须分得开。回声同理：它不是重复信息，它是同一句话的
+        原始形态，收着就是了，不该当不存在。
+
+        两类各自标出来（``silent`` / ``echo``），界面据此决定摆多重，而不是决定摆不摆。
         """
         stdout = attachment.get("stdout")
         content = attachment.get("content")
@@ -1223,14 +1299,26 @@ class _Translator:
         healthy = exit_code == 0 and not stderr
 
         if healthy and not content and _is_silent_stdout(stdout):
-            self._stats.dropped_hook_noise += 1
+            self._stats.hook_silent += 1
+            self._emit_hook_inject(
+                row,
+                attachment,
+                [],
+                {"exit_code": exit_code, "stderr": stderr, "silent": True},
+            )
             return
 
         injected = _hook_stdout_context(stdout)
         call_id = attachment.get("toolUseID")
         echoed = self._injected_by_call.get(call_id, set()) if isinstance(call_id, str) else set()
         if healthy and injected and (injected in echoed or injected in self._injected_texts):
-            self._stats.dropped_hook_echo += 1
+            self._stats.hook_echo += 1
+            self._emit_hook_inject(
+                row,
+                attachment,
+                _hook_blocks(injected),
+                {"exit_code": exit_code, "stderr": stderr, "echo": True},
+            )
             return
 
         blocks = _hook_blocks(injected) or _hook_blocks(content) or _hook_blocks(stdout)

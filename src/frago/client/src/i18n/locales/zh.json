@@ -1434,7 +1434,14 @@
         "model": "模型",
         "agent": "agent",
         "mode": "模式",
-        "permissionMode": "权限模式"
+        "permissionMode": "权限模式",
+        "lastPrompt": "续接位置",
+        "queueOperation": "插话队列",
+        "fileHistorySnapshot": "文件快照",
+        "fileHistoryDelta": "文件改动记录",
+        "bridgeSession": "桥接会话",
+        "prLink": "合并请求",
+        "frameLink": "画布链接"
       },
       "duration": {
         "ms": "{{n}} 毫秒",
@@ -1523,7 +1530,13 @@
         "output": "出",
         "cacheCreation": "缓存写",
         "cacheRead": "缓存读"
-      }
+      },
+      "stateRepeat": "原值重写",
+      "hookSilent": "没说话",
+      "hookEcho": "原始形态",
+      "stopHooksRan": "叫起 {{n}} 个",
+      "hookDuration": "{{n}} ms",
+      "stopHookQuiet": "没加话也没拦"
     },
     "report": {
       "tailNow": "此刻",

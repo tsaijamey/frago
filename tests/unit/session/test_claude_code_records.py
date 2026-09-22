@@ -72,37 +72,80 @@ def _by_kind(records: list[Any], kind: str) -> list[Any]:
 
 
 # ── 判据表序 1：十二种旁挂状态 ──────────────────────────────────────
-def test_rule01_pointer_standing_types_are_dropped() -> None:
-    """纯指针状态不进时间线，但要在账上留下计数。"""
+def test_rule01_pointer_standing_types_all_surface() -> None:
+    """坐标行一条不落全部出卡，各自带上那一行里值得看的那个事实。
+
+    从前它们整条不出卡。看不见就等于没发生过，而人无从知道自己看到的是全部还是
+    被筛过的一部分——这是把它们放回来的全部理由。
+    """
     rows = [
         {"type": "last-prompt", "leafUuid": "u1", "sessionId": SESSION},
-        {"type": "queue-operation", "operation": "remove", "sessionId": SESSION},
+        {"type": "queue-operation", "operation": "remove", "content": "先停一下", "sessionId": SESSION},
         {"type": "file-history-snapshot", "messageId": "m1"},
-        {"type": "file-history-delta", "messageId": "m2"},
-        {"type": "bridge-session", "sessionId": SESSION},
-        {"type": "pr-link", "sessionId": SESSION},
-        {"type": "frame-link", "sessionId": SESSION},
+        {"type": "file-history-delta", "messageId": "m2", "trackingPath": "src/a.py"},
+        {"type": "bridge-session", "bridgeSessionId": "cse_1", "sessionId": SESSION},
+        {"type": "pr-link", "prUrl": "https://example.test/pr/1", "sessionId": SESSION},
+        {"type": "frame-link", "title": "某张画布", "sessionId": SESSION},
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert records == []
-    assert stats.dropped_standing == 7
+    assert _kinds(records) == ["session.state"] * 7
+    assert stats.pointer_states == 7
+    assert all(r.payload["pointer"] is True for r in records)
+    # 没有前值可言，所以不许摆箭头。
+    assert all(r.payload["from"] is None for r in records)
+    assert [r.payload["field"] for r in records] == [
+        "last-prompt",
+        "queue-operation",
+        "file-history-snapshot",
+        "file-history-delta",
+        "bridge-session",
+        "pr-link",
+        "frame-link",
+    ]
+    assert records[0].payload["to"] == "u1"
+    assert records[1].payload["to"] == "remove 先停一下"
+    assert records[3].payload["to"] == "src/a.py"
+    assert records[4].payload["to"] == "cse_1"
+    assert records[5].payload["to"] == "https://example.test/pr/1"
+    assert records[6].payload["to"] == "某张画布"
 
 
-def test_rule01_title_keeps_only_the_last_one() -> None:
-    """``ai-title`` 会反复覆写：13282 条只对应 1120 个会话，只留最后一条。"""
+def test_rule01_unknown_pointer_shape_is_shown_whole_not_named() -> None:
+    """形状拿不准的坐标行整行摆上去，NEVER 替它编一个名字——编了人也无从核对。"""
+    rows = [{"type": "atis-latch", "atis": "abc", "sessionId": SESSION}]
+    records, _ = translate_with_stats(rows, SESSION)
+    assert records[0].payload["field"] == "atis-latch"
+    assert "abc" in records[0].payload["to"]
+
+
+def test_rule01_title_rewrites_all_surface_repeats_marked() -> None:
+    """标题每一次重写都出卡；值没变的标出来，且不摆箭头。
+
+    实测一场会话里标题写了 262 次、取值自始至终只有一个。只留最后一条时，人读到的是
+    "标题定过一次"；实际发生的是"引擎每轮都重写了一遍"。两件事不一样。
+    """
     rows = [
+        {"type": "ai-title", "aiTitle": "第一版标题", "sessionId": SESSION},
         {"type": "ai-title", "aiTitle": "第一版标题", "sessionId": SESSION},
         {"type": "ai-title", "aiTitle": "第二版标题", "sessionId": SESSION},
         {"type": "custom-title", "customTitle": "人改的标题", "sessionId": SESSION},
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["session.state"]
-    assert records[0].payload["field"] == "title"
-    assert records[0].payload["to"] == "人改的标题"
-    assert stats.dropped_standing_stale == 2
+    assert _kinds(records) == ["session.state"] * 4
+    assert [r.payload["to"] for r in records] == [
+        "第一版标题",
+        "第一版标题",
+        "第二版标题",
+        "人改的标题",
+    ]
+    assert [r.payload["repeat"] for r in records] == [False, True, False, False]
+    assert records[1].payload["from"] is None
+    assert records[2].payload["from"] == "第一版标题"
+    assert stats.standing_repeats == 1
+    assert all(r.payload["field"] == "title" for r in records)
 
 
-def test_rule01_mode_dedupes_consecutive_same_value() -> None:
+def test_rule01_mode_same_value_repeats_all_surface() -> None:
     rows = [
         {"type": "mode", "mode": "normal", "sessionId": SESSION},
         {"type": "mode", "mode": "normal", "sessionId": SESSION},
@@ -110,10 +153,16 @@ def test_rule01_mode_dedupes_consecutive_same_value() -> None:
         {"type": "permission-mode", "permissionMode": "bypassPermissions", "sessionId": SESSION},
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["session.state"] * 3
-    assert [r.payload["to"] for r in records] == ["normal", "plan", "bypassPermissions"]
-    assert records[1].payload["from"] == "normal"
-    assert stats.dropped_standing_stale == 1
+    assert _kinds(records) == ["session.state"] * 4
+    assert [r.payload["to"] for r in records] == [
+        "normal",
+        "normal",
+        "plan",
+        "bypassPermissions",
+    ]
+    assert [r.payload["repeat"] for r in records] == [False, True, False, False]
+    assert records[2].payload["from"] == "normal"
+    assert stats.standing_repeats == 1
 
 
 # ── 序 2：上下文压缩边界 ────────────────────────────────────────────
@@ -175,7 +224,12 @@ def test_rule04_informational_without_warning_is_not_an_error() -> None:
 
 
 # ── 序 5：其余引擎事件 ──────────────────────────────────────────────
-def test_rule05_silent_stop_hook_summary_is_dropped() -> None:
+def test_rule05_quiet_stop_hook_summary_still_says_who_ran() -> None:
+    """收尾 hook 既没加话也没拦住，照常出卡——卡上写着叫起了谁、各跑了多久。
+
+    这一行从前整条丢掉，理由是"它是空的"。它不空：一场会话里收尾 hook 跑了几十次这件
+    事，丢掉之后在界面上完全看不到。
+    """
     rows = [
         _row(
             "u1",
@@ -184,11 +238,21 @@ def test_rule05_silent_stop_hook_summary_is_dropped() -> None:
             hookAdditionalContext=[],
             preventedContinuation=False,
             stopReason="",
+            hookInfos=[
+                {"command": "/Users/x/.claude/hooks/bell.sh", "durationMs": 3935},
+                {"command": "/Users/x/.frago/bin/frago-core", "durationMs": 51},
+            ],
+            hookErrors=[],
         )
     ]
-    records, stats = translate_records(rows, SESSION), translate_with_stats(rows, SESSION)[1]
-    assert records == []
-    assert stats.dropped_stop_hook == 1
+    records, stats = translate_with_stats(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    payload = records[0].payload
+    assert payload["quiet"] is True
+    assert payload["source"] == "hook"
+    assert [h["name"] for h in payload["hook_infos"]] == ["bell.sh", "frago-core"]
+    assert [h["duration_ms"] for h in payload["hook_infos"]] == [3935, 51]
+    assert stats.stop_hook_quiet == 1
 
 
 def test_rule05_stop_hook_with_context_survives() -> None:
@@ -242,8 +306,12 @@ def test_rule08_file_attachments_become_media() -> None:
         assert records[0].payload["display_name"] == "../示意.sh"
 
 
-def test_rule09_empty_hook_success_is_noise() -> None:
-    """本机 52604 条 hook_success 里 46531 条是纯噪音，留着会淹没真正的对话。"""
+def test_rule09_silent_hook_still_gets_a_record() -> None:
+    """hook 跑过、退出码 0、一个字没说——**跑过本身就是结果**，照常出卡并标成没说话。
+
+    藏起来之后，人在「hook 注入」那一档看到的是"这一轮没有 hook 动过"，而实际上动过
+    十几个、只是都没开口。这两件事在界面上必须分得开。
+    """
     rows = [
         _row(
             "u1",
@@ -260,15 +328,18 @@ def test_rule09_empty_hook_success_is_noise() -> None:
         )
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert records == []
-    assert stats.dropped_hook_noise == 1
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["silent"] is True
+    assert records[0].payload["source"] == "hook"
+    assert records[0].payload["blocks"] == []
+    assert stats.hook_silent == 1
 
 
-def test_rule09_empty_json_object_stdout_is_also_noise() -> None:
+def test_rule09_empty_json_object_stdout_counts_as_silent_not_gone() -> None:
     """hook 的惯例是吐一个空的 JSON 对象表示「我没话说」。
 
     只认空串等于零命中：本机 52604 条 hook 记录的标准输出没有一条是空串，46531 条
-    是 ``{}``。放这些进时间线，中栏会被五万条纯噪音淹掉。
+    是 ``{}``。这些照样出卡，只是标成没说话。
     """
     rows = [
         _row(
@@ -295,12 +366,13 @@ def test_rule09_empty_json_object_stdout_is_also_noise() -> None:
         ),
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert records == []
-    assert stats.dropped_hook_noise == 2
+    assert _kinds(records) == ["context.inject"] * 2
+    assert all(r.payload["silent"] is True for r in records)
+    assert stats.hook_silent == 2
 
 
-def test_rule09_hook_with_specific_output_is_never_dropped() -> None:
-    """带 ``hookSpecificOutput`` 的 6073 条是真有话说的，一条都不许拦。"""
+def test_rule09_hook_with_specific_output_is_not_marked_silent() -> None:
+    """带 ``hookSpecificOutput`` 的 6073 条是真有话说的，不许被当成没说话。"""
     rows = [
         _row(
             "u1",
@@ -316,7 +388,8 @@ def test_rule09_hook_with_specific_output_is_never_dropped() -> None:
     ]
     records, stats = translate_with_stats(rows, SESSION)
     assert _kinds(records) == ["context.inject"]
-    assert stats.dropped_hook_noise == 0
+    assert stats.hook_silent == 0
+    assert records[0].payload.get("silent") is not True
 
 
 def test_rule09_hook_success_with_output_survives() -> None:
@@ -367,11 +440,10 @@ def test_rule09_hook_injection_carries_event_and_target() -> None:
     assert payload["body"] == "第一条规则\n\n第二条规则"
 
 
-def test_rule09_hook_result_echoing_the_injection_is_dropped() -> None:
+def test_rule09_hook_result_echoing_the_injection_is_marked_not_dropped() -> None:
     """同一次注入落盘两条：hook 进程的原始标准输出，与引擎真的注进去的那份人话。
 
-    两条都出卡的话，中栏会把同一句话摆两遍，其中一张还是没解析过的 JSON，人只会
-    以为注了两次。
+    两条都在。后一条标成回声，界面据此把它摆得轻一些——摆多重是界面的事，摆不摆不是。
     """
     injected = "落盘前先查现成落点"
     rows = [
@@ -402,9 +474,13 @@ def test_rule09_hook_result_echoing_the_injection_is_dropped() -> None:
         ),
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert _kinds(records) == ["context.inject"]
+    assert _kinds(records) == ["context.inject"] * 2
+    assert records[0].payload["echo"] is True
     assert records[0].payload["body"] == injected
-    assert stats.dropped_hook_echo == 1
+    # 引擎真注进去的那一份不是回声，不许标。
+    assert records[1].payload.get("echo") is not True
+    assert records[1].payload["body"] == injected
+    assert stats.hook_echo == 1
 
 
 def test_rule09_failed_hook_is_shown_even_when_it_says_nothing() -> None:
@@ -427,7 +503,9 @@ def test_rule09_failed_hook_is_shown_even_when_it_says_nothing() -> None:
     assert _kinds(records) == ["context.inject"]
     assert records[0].payload["exit_code"] == 2
     assert records[0].payload["stderr"] == "boom"
-    assert stats.dropped_hook_noise == 0
+    # 挂了的那条不是"没说话"，它说的是"我挂了"。
+    assert records[0].payload.get("silent") is not True
+    assert stats.hook_silent == 0
 
 
 def test_rule05_stop_hook_context_lands_in_the_body() -> None:
@@ -1017,13 +1095,16 @@ def test_stats_account_for_every_line() -> None:
     ]
     records, stats = translate_with_stats(rows, SESSION)
     assert stats.lines_in == 5
-    # 5 行进：1 行是纯指针状态、1 行是 hook 噪音，各自显式丢弃；剩下 3 行里有一行
-    # 含两个块，展成两条；那一次调用返回后再加一条用量刻度。5 条出，差额逐项可解释。
-    assert stats.dropped_standing == 1
-    assert stats.dropped_hook_noise == 1
+    # 5 行进，5 行全部出卡——一条不落。其中 1 行是坐标行、1 行是没说话的 hook，两者
+    # 照常出卡、只在账上单独计数；剩下 3 行里有一行含两个块，展成两条；那一次调用返回
+    # 后再加一条用量刻度。7 条出，差额逐项可解释。
+    assert stats.pointer_states == 1
+    assert stats.hook_silent == 1
     assert stats.emitted_usage_ticks == 1
-    assert stats.records_out == len(records) == 5
+    assert stats.records_out == len(records) == 7
     assert _kinds(records) == [
+        "session.state",
+        "context.inject",
         "agent.say",
         "tool.call",
         "usage.tick",
@@ -1073,8 +1154,12 @@ def test_to_unified_reads_a_file_and_numbers_from_zero(tmp_path: Path) -> None:
     assert all(r.session_id == SESSION for r in records)
 
 
-def test_empty_shell_session_yields_no_records(tmp_path: Path) -> None:
-    """本机 4 个文件只有三四行旁挂状态，一条可渲染记录都没有。这是空壳，不是损坏。"""
+def test_empty_shell_session_yields_only_standing_records(tmp_path: Path) -> None:
+    """本机 4 个文件只有三四行旁挂状态，没有任何对话。这是空壳，不是损坏。
+
+    空壳现在也出卡：三行旁挂状态出三条。看到"这场只有三条状态行"与看到"这场什么都
+    没有"是两回事——后者让人以为文件坏了。
+    """
     path = tmp_path / f"{SESSION}.jsonl"
     path.write_text(
         "\n".join(
@@ -1089,7 +1174,10 @@ def test_empty_shell_session_yields_no_records(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     records = to_unified(path)
-    assert _kinds(records) == ["session.state", "session.state"]
+    assert _kinds(records) == ["session.state"] * 3
+    assert records[0].payload["field"] == "last-prompt"
+    assert records[0].payload["pointer"] is True
+    assert [r.payload["to"] for r in records[1:]] == ["normal", "default"]
 
 
 def test_subagent_trace_presence_is_detected(tmp_path: Path) -> None:
@@ -1158,11 +1246,11 @@ def test_adapter_read_raw_refuses_error_records(tmp_path: Path) -> None:
 
 
 # ── 判据表序 1 与 10：本机真出现过、从前没被认出来的那些类型 ──────────
-def test_pointer_only_top_level_types_are_dropped_with_accounting() -> None:
-    """纯指针状态不出卡，但要在账上留下数。
+def test_pointer_only_top_level_types_surface_as_named_states() -> None:
+    """形状拿不准的坐标行照样出卡，但归到状态而不是兜底的「未识别」。
 
-    从前 ``atis-latch`` 这三类全落进兜底，在中栏铺成一张张「未识别」的原始 JSON 卡。
-    抽样 120 场里 ``atis-latch`` 就有 1070 条（平均一场九条），够把系统那一档淹掉。
+    它们不是判据表没认出来的东西——认出来了，只是没有人类内容。归兜底会在中栏铺成一张张
+    「未识别」的原始 JSON 卡，那是在说"这里有东西我不懂"，而实情是"这里有东西，不重要"。
     """
     rows = [
         {"type": "atis-latch", "atis": "", "sessionId": SESSION},
@@ -1170,13 +1258,21 @@ def test_pointer_only_top_level_types_are_dropped_with_accounting() -> None:
         {"type": "artifact-autoreact-ledger", "v": 1, "sessionId": SESSION, "artifacts": {}},
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert records == []
-    assert stats.dropped_standing == 3
+    assert _kinds(records) == ["session.state"] * 3
+    assert [r.payload["field"] for r in records] == [
+        "atis-latch",
+        "artifact-comment-monitor",
+        "artifact-autoreact-ledger",
+    ]
+    assert stats.pointer_states == 3
     assert stats.unrecognized == 0
 
 
-def test_cost_state_keeps_only_the_last_one_and_reads_as_chinese() -> None:
-    """花费账本每轮重写一次，只留最后那条；正文是一句人话不是一坨数字。"""
+def test_cost_state_every_rewrite_surfaces_and_reads_as_chinese() -> None:
+    """花费账本每轮重写一次，每一次都出卡；正文是一句人话不是一坨数字。
+
+    只留最后一条时，报的是终值——这一场的账是怎么涨起来的一概看不出。
+    """
     rows = [
         {"type": "cost-state", "sessionId": SESSION, "totalCostUSD": 0.5, "totalDuration": 60000},
         _user("u1", "先说一句", promptSource="typed"),
@@ -1191,13 +1287,14 @@ def test_cost_state_keeps_only_the_last_one_and_reads_as_chinese() -> None:
     ]
     records, stats = translate_with_stats(rows, SESSION)
     states = _by_kind(records, "session.state")
-    assert len(states) == 1, "同一场里的花费账本只该留最后一条"
-    assert states[0].payload["field"] == "cost"
-    assert "$2.7507" in states[0].payload["to"]
-    assert "5.7 分钟" in states[0].payload["to"]
-    assert "+12 / -3 行" in states[0].payload["to"]
-    assert states[0].payload["total_cost_usd"] == 2.7506665
-    assert stats.dropped_standing_stale == 1
+    assert len(states) == 2, "每一次重写都该出卡"
+    assert all(s.payload["field"] == "cost" for s in states)
+    assert "$0.5000" in states[0].payload["to"]
+    assert "$2.7507" in states[1].payload["to"]
+    assert "5.7 分钟" in states[1].payload["to"]
+    assert "+12 / -3 行" in states[1].payload["to"]
+    assert states[1].payload["total_cost_usd"] == 2.7506665
+    assert stats.standing_repeats == 1
     assert stats.unrecognized == 0
 
 
@@ -1426,16 +1523,23 @@ def test_two_interjections_keep_their_own_fates_in_order() -> None:
     assert [c.payload["queue_state"] for c in cards] == ["submitted", "absorbed"]
 
 
-def test_queue_bookkeeping_itself_stays_out_of_the_stream() -> None:
-    """入队/出队那两条是记账，不出卡——一句插话只该在中栏留下一张卡，不是三张。"""
+def test_queue_bookkeeping_surfaces_as_state_not_as_a_second_utterance() -> None:
+    """入队/出队那两条是记账，照常出卡——但出的是状态行，不是第二张「插话」卡。
+
+    人说的那句话在中栏只该出现一次，那是「插话」那张卡。队列怎么动是另一回事，归到
+    「系统」那一档，跟发言分得开。
+    """
     rows = [
         _queue_op("enqueue", "一句话"),
         _queue_op("remove", "一句话"),
         _queued("u1", "一句话"),
     ]
     records, stats = translate_with_stats(rows, SESSION)
-    assert len(records) == 1
-    assert stats.dropped_standing == 2
+    assert _kinds(records) == ["session.state", "session.state", "context.inject"]
+    assert [r.payload["to"] for r in records[:2]] == ["enqueue 一句话", "remove 一句话"]
+    # 发言只有一张卡：插话那一张。
+    assert records[2].payload["channel"] == "queued_command"
+    assert stats.pointer_states == 2
     assert stats.unrecognized == 0
 
 
