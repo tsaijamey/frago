@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import click
@@ -11,9 +14,10 @@ import pytest
 from frago.cli import server_command
 from frago.cli.server_command import (
     REINSTALL_SENTINEL_ENV,
-    _bump_patch_version,
+    _local_build_version,
     _reinstall_and_exec_if_source_checkout,
     _system_frago_path,
+    _wheel_source_files,
 )
 
 PYPROJECT_TEMPLATE = """\
@@ -41,30 +45,124 @@ def same_path(a: str, b: str) -> bool:
     return os.path.normcase(a) == os.path.normcase(b)
 
 
-class TestBumpPatchVersion:
-    def test_bumps_only_patch_segment(self, tmp_path: Path) -> None:
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(PYPROJECT_TEMPLATE, encoding="utf-8")
+def _init_git_repo(repo: Path) -> str:
+    """Make ``repo`` a git repo with one commit. Returns its short HEAD sha."""
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.test",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.test",
+    }
 
-        new = _bump_patch_version(pyproject)
+    def git(*args: str) -> str:
+        done = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, env=env
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
 
-        assert new == "1.2.1"
-        text = pyproject.read_text(encoding="utf-8")
-        assert 'version = "1.2.1"' in text
-        # rest of the file is byte-identical
-        assert text == PYPROJECT_TEMPLATE.replace('"1.2.0"', '"1.2.1"')
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+    return git("rev-parse", "--short=12", "HEAD")
 
-    def test_rejects_non_xyz_version(self, tmp_path: Path) -> None:
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text('version = "1.2.0rc1"\n', encoding="utf-8")
-        with pytest.raises(click.ClickException):
-            _bump_patch_version(pyproject)
 
-    def test_rejects_missing_version_line(self, tmp_path: Path) -> None:
+def _repo_with_pyproject(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(PYPROJECT_TEMPLATE, encoding="utf-8")
+    return repo
+
+
+class TestLocalBuildVersion:
+    """本机构建报的号 = 发布号 + 一段本地标识，发布号一个字不动。
+
+    从前这里是给发布号的补丁位加一、写回 pyproject.toml，于是同一个号有了两个写者：
+    发布照仓库现状发，本机每部署一次把号往上推一格，两边迟早对不上——发出去的是 a，
+    本机跑的是 a+1，代码其实是同一份。
+    """
+
+    def test_release_number_is_left_alone(self, tmp_path: Path) -> None:
+        repo = _repo_with_pyproject(tmp_path)
+        _init_git_repo(repo)
+
+        version = _local_build_version(repo)
+
+        assert version.startswith("1.2.0+local.")
+        # 仓库那份一个字节都没动
+        assert (repo / "pyproject.toml").read_text(encoding="utf-8") == PYPROJECT_TEMPLATE
+
+    def test_stamp_names_the_commit_it_came_from(self, tmp_path: Path) -> None:
+        """认得出是哪个提交，发布那边才能回答「本机跑的是不是要发的这一份」。"""
+        repo = _repo_with_pyproject(tmp_path)
+        sha = _init_git_repo(repo)
+
+        assert f"g{sha}" in _local_build_version(repo)
+
+    def test_uncommitted_work_is_marked(self, tmp_path: Path) -> None:
+        """带未提交改动的构建不是任何一个提交，得看得出来。"""
+        repo = _repo_with_pyproject(tmp_path)
+        _init_git_repo(repo)
+        (repo / "untracked.py").write_text("x = 1\n", encoding="utf-8")
+
+        assert ".dirty" in _local_build_version(repo)
+
+    def test_without_git_it_still_reports_something(self, tmp_path: Path) -> None:
+        """认不出提交也不能变成空段——这一段的作用是让两次构建分得开。"""
+        repo = _repo_with_pyproject(tmp_path)
+
+        assert re.fullmatch(r"1\.2\.0\+local\.\d{8}T\d{6}", _local_build_version(repo))
+
+    def test_missing_version_line_still_raises(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[project]\nname = 'x'\n", encoding="utf-8")
         with pytest.raises(click.ClickException):
-            _bump_patch_version(pyproject)
+            _local_build_version(tmp_path)
+
+
+class TestWheelSourceFiles:
+    """构建要从仓库里搬哪些文件。
+
+    这份名单从前是手写的跳过列表，而列表只是规则的近似：它跳掉了
+    node_modules 和缓存，却漏掉被 gitignore 的 *.log，于是那些文件进了
+    本机构建的 wheel，而真正的发布构建不要它们——本机装的那份因此不是
+    同一件东西。现在问 git 自己，跟 hatchling 构建时用的是同一套规则。
+    """
+
+    def test_gitignored_files_stay_out(self, tmp_path: Path) -> None:
+        repo = _repo_with_pyproject(tmp_path)
+        package = repo / "src" / "frago"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (repo / ".gitignore").write_text("*.log\njunk/\n", encoding="utf-8")
+        (package / "process.log").write_text("noise\n", encoding="utf-8")
+        (package / "junk").mkdir()
+        (package / "junk" / "big.bin").write_bytes(b"x" * 32)
+        _init_git_repo(repo)
+
+        files = _wheel_source_files(repo)
+
+        assert "src/frago/__init__.py" in files
+        assert "src/frago/process.log" not in files
+        assert not any(f.startswith("src/frago/junk/") for f in files)
+
+    def test_untracked_work_still_ships(self, tmp_path: Path) -> None:
+        """没提交的改动要跟着走——本机构建的意义就是部署手头这一份。"""
+        repo = _repo_with_pyproject(tmp_path)
+        package = repo / "src" / "frago"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        _init_git_repo(repo)
+        (package / "brand_new.py").write_text("x = 1\n", encoding="utf-8")
+
+        assert "src/frago/brand_new.py" in _wheel_source_files(repo)
+
+    def test_without_git_it_says_nothing(self, tmp_path: Path) -> None:
+        """git 答不出来就交白卷，让调用方退回照抄整棵树。"""
+        repo = _repo_with_pyproject(tmp_path)
+
+        assert _wheel_source_files(repo) == []
 
 
 def _make_frago(directory: Path) -> Path:
@@ -177,12 +275,14 @@ class TestReinstallHandoff:
     def test_full_handoff_flow(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        (repo / "pyproject.toml").write_text(PYPROJECT_TEMPLATE, encoding="utf-8")
+        repo = _repo_with_pyproject(tmp_path)
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "src" / "frago" / "__init__.py").write_text("", encoding="utf-8")
+        _init_git_repo(repo)
 
         system_frago = _make_frago(tmp_path / "local_bin")
         system_bin = system_frago.parent
+        git_exe = shutil.which("git")
 
         monkeypatch.delenv(REINSTALL_SENTINEL_ENV, raising=False)
         monkeypatch.setenv("PATH", str(system_bin))
@@ -192,16 +292,29 @@ class TestReinstallHandoff:
         monkeypatch.setattr("sys.argv", ["frago", "server", "restart"])
 
         commands: list[list[str]] = []
+        built_from: list[Path] = []
+        real_run = subprocess.run
 
         class FakeCompleted:
             returncode = 0
             stderr = ""
+            stdout = ""
 
-        def fake_run(cmd, **_kwargs):
+        def fake_run(cmd, **kwargs):
+            # Patching server_command.subprocess.run patches subprocess.run
+            # itself, so the version stamp's git lookups land here too. Let
+            # them through to the real thing, by absolute path — the narrowed
+            # PATH above hides git, and stubbing these out would only exercise
+            # the no-git fallback.
+            if cmd[:1] == ["git"]:
+                return real_run([git_exe, *cmd[1:]], **kwargs)
             commands.append(list(cmd))
             if cmd[:2] == ["uv", "build"]:
+                # the source is the last positional; it must not be the checkout
+                source = Path(cmd[-1])
+                built_from.append(source)
                 out_dir = Path(cmd[cmd.index("--out-dir") + 1])
-                (out_dir / "frago_cli-1.2.1-py3-none-any.whl").write_bytes(b"")
+                (out_dir / "frago_cli-1.2.0+local.test-py3-none-any.whl").write_bytes(b"")
             return FakeCompleted()
 
         monkeypatch.setattr(server_command.subprocess, "run", fake_run)
@@ -229,8 +342,11 @@ class TestReinstallHandoff:
         assert same_path(handed_over[0], str(system_frago))
         assert handed_over[1:] == ["server", "restart"]
 
-        # version bumped in place
-        assert 'version = "1.2.1"' in (repo / "pyproject.toml").read_text()
+        # the checkout is left exactly as it was found
+        assert (repo / "pyproject.toml").read_text(encoding="utf-8") == PYPROJECT_TEMPLATE
+        # built from a throwaway copy, not from the checkout
+        assert len(built_from) == 1
+        assert built_from[0] != repo
         # wheel built then installed with --force
         assert commands[0][:4] == ["uv", "build", "--wheel", "--out-dir"]
         assert commands[1][:4] == ["uv", "tool", "install", "--force"]
@@ -238,6 +354,57 @@ class TestReinstallHandoff:
         # temp wheel dir cleaned up
         assert not Path(commands[1][4]).exists()
         assert os.environ[REINSTALL_SENTINEL_ENV] == "1"
+
+    def test_built_copy_carries_the_local_version(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The version the wheel is built under is the release number plus the
+        local segment — and the release number in the copy is what moved, not
+        the one in the checkout."""
+        repo = _repo_with_pyproject(tmp_path)
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "src" / "frago" / "__init__.py").write_text("", encoding="utf-8")
+        sha = _init_git_repo(repo)
+        git_exe = shutil.which("git")
+
+        monkeypatch.delenv(REINSTALL_SENTINEL_ENV, raising=False)
+        monkeypatch.setattr(
+            "frago.server.launch_guard.source_checkout_root", lambda: repo
+        )
+        monkeypatch.setenv("PATH", str(_make_frago(tmp_path / "local_bin").parent))
+        monkeypatch.setattr("sys.argv", ["frago", "server", "restart"])
+
+        seen: list[str] = []
+        real_run = subprocess.run
+
+        class FakeCompleted:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        def fake_run(cmd, **kwargs):
+            # by absolute path: the narrowed PATH above hides git
+            if cmd[:1] == ["git"]:
+                return real_run([git_exe, *cmd[1:]], **kwargs)
+            if cmd[:2] == ["uv", "build"]:
+                source = Path(cmd[-1])
+                text = (source / "pyproject.toml").read_text(encoding="utf-8")
+                seen.append(text)
+                out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+                (out_dir / "frago_cli-1.2.0+local.test-py3-none-any.whl").write_bytes(b"")
+            return FakeCompleted()
+
+        monkeypatch.setattr(server_command.subprocess, "run", fake_run)
+        monkeypatch.setattr(os, "execv", lambda *_a: None)
+
+        _reinstall_and_exec_if_source_checkout()
+
+        assert len(seen) == 1
+        # the built copy names the commit it came from, so the publish side can
+        # answer "is the running copy the one about to go out"
+        assert f"1.2.0+local.g{sha}." in seen[0]
+        # the release number in the checkout survived untouched
+        assert 'version = "1.2.0"' in (repo / "pyproject.toml").read_text(encoding="utf-8")
 
     def test_blocked_handover_explains_itself(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -249,9 +416,9 @@ class TestReinstallHandoff:
         message has to say what is done and what to change — a traceback tells
         the reader neither.
         """
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        (repo / "pyproject.toml").write_text(PYPROJECT_TEMPLATE, encoding="utf-8")
+        repo = _repo_with_pyproject(tmp_path)
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "src" / "frago" / "__init__.py").write_text("", encoding="utf-8")
         system_frago = _make_frago(tmp_path / "local_bin")
 
         monkeypatch.delenv(REINSTALL_SENTINEL_ENV, raising=False)
@@ -267,11 +434,12 @@ class TestReinstallHandoff:
         class FakeCompleted:
             returncode = 0
             stderr = ""
+            stdout = ""
 
         def fake_run(cmd, **_kwargs):
             if cmd[:2] == ["uv", "build"]:
                 out_dir = Path(cmd[cmd.index("--out-dir") + 1])
-                (out_dir / "frago_cli-1.2.1-py3-none-any.whl").write_bytes(b"")
+                (out_dir / "frago_cli-1.2.0+local.test-py3-none-any.whl").write_bytes(b"")
                 return FakeCompleted()
             if cmd[:3] == ["uv", "tool", "install"]:
                 return FakeCompleted()
@@ -286,14 +454,14 @@ class TestReinstallHandoff:
         message = str(exc_info.value)
         assert "Smart App Control" in message
         # the install already happened — say so, or the reader retries for nothing
-        assert "1.2.1 is installed" in message
+        assert "1.2.0+local." in message and "is installed" in message
 
     def test_build_failure_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        (repo / "pyproject.toml").write_text(PYPROJECT_TEMPLATE, encoding="utf-8")
+        repo = _repo_with_pyproject(tmp_path)
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "src" / "frago" / "__init__.py").write_text("", encoding="utf-8")
         monkeypatch.delenv(REINSTALL_SENTINEL_ENV, raising=False)
         monkeypatch.setattr(
             "frago.server.launch_guard.source_checkout_root", lambda: repo

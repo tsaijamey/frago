@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import click
@@ -26,29 +27,173 @@ REINSTALL_SENTINEL_ENV = "FRAGO_REINSTALL_DONE"
 WINDOWS_APP_CONTROL_ERROR = 4551
 
 
-def _bump_patch_version(pyproject: Path) -> str:
-    """Increment the patch segment of `version = "x.y.z"` in pyproject.toml.
-
-    Rewrites only the version line, leaving the rest of the file untouched.
-    Returns the new version string. Raises ClickException when the version is
-    not a plain three-segment x.y.z number.
-    """
+def _repo_version(pyproject: Path) -> str:
+    """Read `version = "x.y.z"` out of pyproject.toml. Raises when absent."""
     text = pyproject.read_text(encoding="utf-8")
     pattern = re.compile(r'^(version\s*=\s*")([^"]+)(")', flags=re.MULTILINE)
     match = pattern.search(text)
     if not match:
         raise click.ClickException(f"No version line found in {pyproject}")
-    current = match.group(2)
-    parts = current.split(".")
-    if len(parts) != 3 or not all(p.isdigit() for p in parts):
-        raise click.ClickException(
-            f"Version {current!r} in {pyproject} is not a plain x.y.z number; "
-            "refusing to guess."
+    return match.group(2)
+
+
+def _local_stamp(root: Path) -> str:
+    """Which commit this build came from, whether it carries uncommitted work,
+    and when it was made.
+
+    The commit is what lets the publish side answer "is the copy running on this
+    machine the one being released". The timestamp is what keeps two builds of
+    the same commit from being indistinguishable — the release number used to
+    carry that job, by counting up. Falls back to a bare timestamp when git
+    cannot answer, because an unidentifiable build is still better than an
+    empty segment.
+    """
+
+    def git(*args: str) -> str | None:
+        try:
+            done = subprocess.run(
+                ["git", *args], cwd=root, capture_output=True, text=True
+            )
+        except OSError:
+            return None
+        return done.stdout.strip() if done.returncode == 0 else None
+
+    when = time.strftime("%Y%m%dT%H%M%S")
+    sha = git("rev-parse", "--short=12", "HEAD")
+    if not sha:
+        return when
+    dirty = ".dirty" if git("status", "--porcelain") else ""
+    return f"g{sha}{dirty}.{when}"
+
+
+def _local_build_version(root: Path) -> str:
+    """The version to build this machine's copy under: the repo's release number
+    plus a local segment.
+
+    This used to increment the patch segment and write it back into
+    pyproject.toml. That gave one number two writers — the release path publishes
+    whatever the repo says, while every local deploy pushed the number up a
+    notch — so the two drifted apart while the code stayed identical: PyPI
+    holding `a`, this machine running `a+1`, both built from the same commit.
+
+    Now the release number is never touched here. A local build only appends
+    after the `+`: which commit it came from, whether the tree was dirty, when
+    it was made. The release number stays a promise made to the outside, and
+    only the release action moves it; the local segment answers "where did this
+    copy on my machine come from".
+
+    PyPI refuses local version segments outright, so a local build cannot be
+    published even by mistake. The two can never collide.
+    """
+    base = _repo_version(root / "pyproject.toml").split("+", 1)[0]
+    return f"{base}+local.{_local_stamp(root)}"
+
+
+# What the wheel is built from, relative to the checkout root.
+_WHEEL_COPY_PATHS = ("src/frago", "README.md", "LICENSE", "pyproject.toml")
+
+# The fallback when git cannot answer: copy the tree, skipping by directory name.
+# ``client`` alone is 599M of node_modules; carrying it would make every restart
+# pay for a copy the build then throws away.
+_WHEEL_COPY_SKIP = ("client", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache")
+
+
+def _wheel_source_files(root: Path) -> list[str]:
+    """The files this build packs, relative to the checkout root.
+
+    Ask git rather than carrying a skip list: a list is an approximation of
+    "what belongs in the repo", and the approximation is what goes wrong. The
+    hand-written version skipped node_modules and caches but not gitignored
+    ``*.log`` files, so those reached the wheel built from the copy while the
+    real build left them out — the local install was not the same artifact.
+    Hatchling builds from git's answer, so taking the same answer makes the two
+    wheels hold the same files, differing only in the version string.
+
+    Empty list when git cannot answer (not a repo, no git on PATH); the caller
+    then falls back to copying the tree.
+    """
+    try:
+        done = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                *_WHEEL_COPY_PATHS,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
         )
-    new_version = f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
-    text = text[: match.start(2)] + new_version + text[match.end(2) :]
-    pyproject.write_text(text, encoding="utf-8")
-    return new_version
+    except OSError:
+        return []
+    if done.returncode != 0:
+        return []
+    return [line for line in done.stdout.splitlines() if line]
+
+
+def _build_wheel_with_local_version(root: Path, version: str, out_dir: Path) -> Path:
+    """Build the wheel under ``version`` from a throwaway copy of the checkout.
+
+    The copy exists so the version can be rewritten without touching the
+    checkout. Writing it in place and restoring afterwards would be shorter, but
+    a build killed halfway leaves a version line in pyproject.toml that no one
+    meant to commit — which is the very thing this is meant to end.
+
+    Hatchling's include/exclude patterns are path-relative and still apply, so
+    the copy builds the same wheel.
+    """
+    project = Path(tempfile.mkdtemp(prefix="frago-build-"))
+    try:
+        files = _wheel_source_files(root)
+        if files:
+            for relative in files:
+                source = root / relative
+                if not source.exists():  # deleted in the working tree
+                    continue
+                target = project / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+        else:
+            shutil.copy2(root / "pyproject.toml", project / "pyproject.toml")
+            for name in ("README.md", "LICENSE"):
+                if (root / name).exists():
+                    shutil.copy2(root / name, project / name)
+            shutil.copytree(
+                root / "src" / "frago",
+                project / "src" / "frago",
+                ignore=shutil.ignore_patterns(*_WHEEL_COPY_SKIP),
+            )
+
+        pyproject = project / "pyproject.toml"
+        text = pyproject.read_text(encoding="utf-8")
+        rewritten = re.sub(
+            r'^(version\s*=\s*")([^"]+)(")',
+            lambda m: f"{m.group(1)}{version}{m.group(3)}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if rewritten == text:
+            raise click.ClickException(f"No version line found in {pyproject}")
+        pyproject.write_text(rewritten, encoding="utf-8")
+
+        build = subprocess.run(
+            ["uv", "build", "--wheel", "--out-dir", str(out_dir), str(project)],
+            capture_output=True,
+            text=True,
+        )
+        if build.returncode != 0:
+            raise click.ClickException(f"uv build failed:\n{build.stderr.strip()}")
+
+        wheels = sorted(Path(out_dir).glob("*.whl"))
+        if not wheels:
+            raise click.ClickException(f"uv build produced no wheel in {out_dir}")
+        return wheels[-1]
+    finally:
+        shutil.rmtree(project, ignore_errors=True)
 
 
 def _is_inside(path: Path, root: Path) -> bool:
@@ -121,12 +266,15 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     """From a source checkout: build + install the repo as the system frago, then exec it.
 
     The repo venv's frago must never be the server runtime. When the CLI runs
-    from inside the frago source tree, bump the patch version, build a wheel,
-    `uv tool install --force` it, and hand the original argv over to the
-    system-installed frago — by ``os.execv`` where that exists, as a child
+    from inside the frago source tree, build a wheel under a local version
+    segment, `uv tool install --force` it, and hand the original argv over to
+    the system-installed frago — by ``os.execv`` where that exists, as a child
     process whose status we adopt on Windows where it does not. No-op on a
     global/uv-tool install or when the reinstall sentinel is already set (we ARE
     the re-exec'd process).
+
+    The build reads the checkout but never writes it: the version line lives in
+    a throwaway copy, so the working tree is left exactly as it was found.
 
     The sentinel is dropped the moment it is read. Left in place, the server
     inherits it, tmux inherits it from the server, and every agent session in
@@ -142,25 +290,16 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     if root is None:
         return  # already the system install — nothing to do
 
-    new_version = _bump_patch_version(root / "pyproject.toml")
+    new_version = _local_build_version(root)
     click.echo(f"[reinstall] source checkout detected at {root}")
-    click.echo(f"[reinstall] bumped version to {new_version}")
+    click.echo(
+        f"[reinstall] building local version {new_version} "
+        f"(the release number in pyproject.toml stays put)"
+    )
 
     with tempfile.TemporaryDirectory(prefix="frago-wheel-") as tmpdir:
         click.echo(f"[reinstall] building wheel ({new_version}) ...")
-        build = subprocess.run(
-            ["uv", "build", "--wheel", "--out-dir", tmpdir],
-            cwd=root,
-            capture_output=True,
-            text=True,
-        )
-        if build.returncode != 0:
-            raise click.ClickException(f"uv build failed:\n{build.stderr.strip()}")
-
-        wheels = sorted(Path(tmpdir).glob("*.whl"))
-        if not wheels:
-            raise click.ClickException(f"uv build produced no wheel in {tmpdir}")
-        wheel = wheels[-1]
+        wheel = _build_wheel_with_local_version(root, new_version, Path(tmpdir))
 
         click.echo(f"[reinstall] installing {wheel.name} via uv tool install --force ...")
         install = subprocess.run(
