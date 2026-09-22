@@ -46,9 +46,9 @@ import logging
 import os
 import platform
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -107,13 +107,13 @@ class APIProfile(BaseModel):
     endpoint_type: str  # deepseek, aliyun, kimi, minimax, custom
     # Empty for the kinds whose credential is not frago's to hold.
     api_key: str = ""
-    url: Optional[str] = None
+    url: str | None = None
     # vendor_cli only: which agent CLI to run. Meaningless for the other kinds,
     # where the core is whatever the caller is already running.
-    agent_type: Optional[str] = None
-    default_model: Optional[str] = None
-    sonnet_model: Optional[str] = None
-    haiku_model: Optional[str] = None
+    agent_type: str | None = None
+    default_model: str | None = None
+    sonnet_model: str | None = None
+    haiku_model: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -125,7 +125,7 @@ class ProfileStore(BaseModel):
     # What the main role is bound to: the profile written into the agent CLIs'
     # own configuration. None means nothing was written, which is the plain
     # subscription.
-    active_profile_id: Optional[str] = None
+    active_profile_id: str | None = None
     # Which agent CLIs the active profile was written into. Empty when nothing
     # is active. A store written before targets existed has no such key at all,
     # and load_profiles fills it in — see there for why.
@@ -134,7 +134,7 @@ class ProfileStore(BaseModel):
     # nothing anywhere — it is read when `frago agent` opens a session and
     # applied to that session alone, so a worker can run somewhere the person's
     # own agent does not.
-    worker_profile_id: Optional[str] = None
+    worker_profile_id: str | None = None
     # What the light agent is bound to. None keeps what it always used: the active
     # profile, else the first saved one. frago-core reads this field directly, so
     # it has to be declared here — an undeclared key is dropped on the next save.
@@ -198,6 +198,52 @@ def workbuddy_usable_models() -> list[str] | None:
     ]
 
 
+#: 探过多久就该提醒重探。探一轮是四十多个模型的实调，天数定得比「常看常新」宽。
+WORKBUDDY_STALE_DAYS = 14
+
+
+def workbuddy_login() -> dict[str, str] | None:
+    """调 WorkBuddy 网关要用的那几项身份，读不到或不全就是 None。
+
+    每次现读，不缓存——令牌随时被客户端换掉。
+    """
+    try:
+        data = json.loads(workbuddy_login_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    def field(section: str, key: str) -> str:
+        block = data.get(section)
+        value = block.get(key) if isinstance(block, dict) else None
+        return value.strip() if isinstance(value, str) else ""
+
+    uid, token = field("account", "uid"), field("auth", "accessToken")
+    if not uid or not token:
+        return None
+    login = {"uid": uid, "access_token": token}
+    for section, key, name in (
+        ("account", "enterpriseId", "enterprise_id"),
+        ("auth", "domain", "domain"),
+    ):
+        if value := field(section, key):
+            login[name] = value
+    return login
+
+
+def workbuddy_login_state() -> str:
+    """本机的 WorkBuddy 客户端此刻能不能鉴权过去。
+
+    ``ok`` / ``logged_out`` / ``no_client``。只看登录文件在不在是不够的：客户端退出
+    登录时文件留在原处，里面的令牌字段变空，界面照样显示「已登录」，等第一次真调用才
+    失败。frago-core 读这个文件时本来就分得清这两种，这里跟它对齐。
+    """
+    if not workbuddy_login_path().is_file():
+        return "no_client"
+    return "ok" if workbuddy_login() else "logged_out"
+
+
 def workbuddy_login_path() -> Path:
     """Where the WorkBuddy client keeps its login. Mirrors frago-core's lookup."""
     rel = ("CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
@@ -245,7 +291,7 @@ def list_connections() -> list[APIProfile]:
     return [official_connection(), *load_profiles().profiles]
 
 
-def find_connection(profile_id: Optional[str]) -> Optional[APIProfile]:
+def find_connection(profile_id: str | None) -> APIProfile | None:
     """Resolve an id to a connection, including the built-in subscription."""
     if not profile_id:
         return None
@@ -257,9 +303,9 @@ def find_connection(profile_id: Optional[str]) -> Optional[APIProfile]:
 def _validate_profile(
     name: str,
     endpoint_type: str,
-    url: Optional[str],
+    url: str | None,
     kind: str = KIND_ENDPOINT,
-    agent_type: Optional[str] = None,
+    agent_type: str | None = None,
     models: Sequence[str | None] = (),
 ) -> None:
     """Reject the profile shapes that break something later and quietly.
@@ -441,7 +487,7 @@ def delete_profile(profile_id: str) -> ProfileStore:
     return store
 
 
-def get_profile(profile_id: str) -> Optional[APIProfile]:
+def get_profile(profile_id: str) -> APIProfile | None:
     """Get a single profile by ID."""
     store = load_profiles()
     for profile in store.profiles:
@@ -451,7 +497,7 @@ def get_profile(profile_id: str) -> Optional[APIProfile]:
 
 
 def activate_profile(
-    profile_id: str, targets: Optional[Sequence[str]] = None
+    profile_id: str, targets: Sequence[str] | None = None
 ) -> list[str]:
     """Activate a profile on the chosen agent CLIs.
 
@@ -533,7 +579,7 @@ def activate_profile(
     return resolved
 
 
-def deactivate_profile(targets: Optional[Sequence[str]] = None) -> list[str]:
+def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     """Deactivate the current profile, restoring each target's own config.
 
     Args:
@@ -569,7 +615,7 @@ def deactivate_profile(targets: Optional[Sequence[str]] = None) -> list[str]:
     return handing_back
 
 
-def role_binding_id(role: str) -> Optional[str]:
+def role_binding_id(role: str) -> str | None:
     """The raw id a role is bound to, or None when it is on the subscription.
 
     Reads the main binding out of ``active_profile_id`` rather than a field of
@@ -631,7 +677,7 @@ def role_view(role: str) -> APIProfile | None:
 
 
 def bind_role(
-    role: str, profile_id: str, targets: Optional[Sequence[str]] = None
+    role: str, profile_id: str, targets: Sequence[str] | None = None
 ) -> APIProfile | None:
     """Point a role at a connection.
 
@@ -714,7 +760,7 @@ def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
     return connection
 
 
-def create_profile_from_current(name: str) -> Optional[APIProfile]:
+def create_profile_from_current(name: str) -> APIProfile | None:
     """Create a profile from the current ~/.claude/settings.json configuration.
 
     Args:

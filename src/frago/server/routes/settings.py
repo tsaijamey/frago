@@ -5,12 +5,11 @@ Provides endpoints for main config, environment variables, and GitHub integratio
 
 import os
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from frago.server.state import StateManager
 from frago.server.services.gh_install_service import GhInstallService, detect_install_plan
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
@@ -18,6 +17,10 @@ from frago.server.services.recipe_secrets_service import RecipeSecretsService
 from frago.server.services.system_service import SystemService
 from frago.server.services.update_service import UpdateService
 from frago.server.services.version_service import VersionCheckService
+from frago.server.state import StateManager
+
+if TYPE_CHECKING:
+    from frago.init.profile_manager import APIProfile
 
 router = APIRouter()
 
@@ -40,13 +43,13 @@ class GhCliStatusResponse(BaseModel):
     """GitHub CLI status response"""
     installed: bool
     authenticated: bool
-    version: Optional[str] = None
-    username: Optional[str] = None
+    version: str | None = None
+    username: str | None = None
     # Whether GitHub confirmed the credential just now. False with
     # authenticated=True means a token is stored but github.com could not be
     # reached to check it — a network problem, not a logged-out user.
     verified: bool = False
-    verify_error: Optional[str] = None
+    verify_error: str | None = None
     # Filled in only when nobody is logged in — that is when the number
     # matters, and it is the one case where 60 requests an hour runs out.
     rate_limit: GhRateLimitResponse | None = None
@@ -64,27 +67,27 @@ class GhInstallStartResponse(BaseModel):
     """Acknowledgement that a background install is under way."""
     status: str
     already_running: bool
-    method: Optional[str] = None
+    method: str | None = None
 
 
 class GhInstallStatusResponse(BaseModel):
     """Progress of the running (or last) gh install."""
     status: str  # idle | running | success | error
-    method: Optional[str] = None
+    method: str | None = None
     message: str = ""
-    error: Optional[str] = None
-    log: List[str] = []
+    error: str | None = None
+    log: list[str] = []
     # Set only for the archive install, whose target sits outside the shell
     # PATH; it is the line the user adds so their own terminal finds gh too.
-    path_hint: Optional[str] = None
+    path_hint: str | None = None
 
 
 class GhDeviceLoginResponse(BaseModel):
     """The one-time code GitHub wants typed into github.com/login/device."""
     status: str
-    code: Optional[str] = None
-    url: Optional[str] = None
-    error: Optional[str] = None
+    code: str | None = None
+    url: str | None = None
+    error: str | None = None
 
 
 class GhDeviceLoginStatusResponse(BaseModel):
@@ -92,57 +95,57 @@ class GhDeviceLoginStatusResponse(BaseModel):
     status: str
     completed: bool
     authenticated: bool
-    username: Optional[str] = None
-    error: Optional[str] = None
+    username: str | None = None
+    error: str | None = None
 
 
 class APIEndpointResponse(BaseModel):
     """API endpoint configuration response"""
     type: str
-    url: Optional[str] = None
+    url: str | None = None
     api_key: str
-    default_model: Optional[str] = None
-    sonnet_model: Optional[str] = None
-    haiku_model: Optional[str] = None
+    default_model: str | None = None
+    sonnet_model: str | None = None
+    haiku_model: str | None = None
 
 
 class MainConfigResponse(BaseModel):
     """Main configuration response"""
     working_directory: str
     auth_method: str
-    api_endpoint: Optional[APIEndpointResponse] = None
+    api_endpoint: APIEndpointResponse | None = None
     resources_installed: bool = True
-    resources_version: Optional[str] = None
+    resources_version: str | None = None
     init_completed: bool = True
 
 
 class MainConfigUpdateRequest(BaseModel):
     """Main configuration update request"""
-    working_directory: Optional[str] = None
-    auth_method: Optional[str] = None
+    working_directory: str | None = None
+    auth_method: str | None = None
 
 
 class APIEndpointRequest(BaseModel):
     """API endpoint configuration"""
     type: str  # deepseek, aliyun, kimi, minimax, custom
-    api_key: Optional[str] = None  # Optional - if not provided, existing key is preserved
-    url: Optional[str] = None  # Only for custom type
-    default_model: Optional[str] = None  # Override for ANTHROPIC_MODEL
-    sonnet_model: Optional[str] = None   # Override for ANTHROPIC_DEFAULT_SONNET_MODEL
-    haiku_model: Optional[str] = None    # Override for ANTHROPIC_DEFAULT_HAIKU_MODEL
+    api_key: str | None = None  # Optional - if not provided, existing key is preserved
+    url: str | None = None  # Only for custom type
+    default_model: str | None = None  # Override for ANTHROPIC_MODEL
+    sonnet_model: str | None = None   # Override for ANTHROPIC_DEFAULT_SONNET_MODEL
+    haiku_model: str | None = None    # Override for ANTHROPIC_DEFAULT_HAIKU_MODEL
 
 
 class AuthUpdateRequest(BaseModel):
     """Authentication update request"""
     auth_method: str  # official or custom
-    api_endpoint: Optional[APIEndpointRequest] = None
+    api_endpoint: APIEndpointRequest | None = None
 
 
 class ApiResponse(BaseModel):
     """Generic API response"""
     status: str
-    message: Optional[str] = None
-    error: Optional[str] = None
+    message: str | None = None
+    error: str | None = None
 
 
 class RecipeSecretsFieldResponse(BaseModel):
@@ -176,10 +179,10 @@ class VSCodeStatusResponse(BaseModel):
 class VersionInfoResponse(BaseModel):
     """Version information response"""
     current_version: str
-    latest_version: Optional[str] = None
+    latest_version: str | None = None
     update_available: bool = False
-    checked_at: Optional[str] = None
-    error: Optional[str] = None
+    checked_at: str | None = None
+    error: str | None = None
 
 
 class UpdateStatusResponse(BaseModel):
@@ -187,7 +190,7 @@ class UpdateStatusResponse(BaseModel):
     status: str  # idle, updating, restarting, completed, error
     progress: int = 0
     message: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # ============================================================
@@ -337,8 +340,8 @@ async def get_main_config() -> MainConfigResponse:
     """
     from frago.init.configurator import (
         PRESET_ENDPOINTS,
-        parse_api_config_from_claude_settings,
         get_auth_method_from_settings,
+        parse_api_config_from_claude_settings,
     )
 
     state_manager = StateManager.get_instance()
@@ -564,8 +567,8 @@ async def open_in_vscode() -> ApiResponse:
 class OfficialSyncStatusResponse(BaseModel):
     """Official resource sync status response"""
     enabled: bool
-    last_sync: Optional[str] = None
-    last_commit: Optional[str] = None
+    last_sync: str | None = None
+    last_commit: str | None = None
     repo: str
     branch: str
 
@@ -573,13 +576,13 @@ class OfficialSyncStatusResponse(BaseModel):
 class OfficialSyncResultResponse(BaseModel):
     """Official resource sync result response"""
     status: str  # "ok", "running", "idle", "error", "partial"
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    commit: Optional[str] = None
-    commands: Optional[Dict] = None
-    skills: Optional[Dict] = None
-    error: Optional[str] = None
-    message: Optional[str] = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    commit: str | None = None
+    commands: dict | None = None
+    skills: dict | None = None
+    error: str | None = None
+    message: str | None = None
 
 
 class OfficialSyncEnableRequest(BaseModel):
@@ -674,7 +677,7 @@ class StaticRulesResponse(BaseModel):
     "in effect" without a number rather than showing a fabricated one.
     """
     available: bool = True
-    count: Optional[int] = None
+    count: int | None = None
 
 
 class LightAgentResponse(BaseModel):
@@ -684,9 +687,9 @@ class LightAgentResponse(BaseModel):
     ``no_key`` — see HookReviewService for how the four are told apart.
     """
     status: str
-    profile_name: Optional[str] = None
-    model: Optional[str] = None
-    detail: Optional[str] = None
+    profile_name: str | None = None
+    model: str | None = None
+    detail: str | None = None
 
 
 class HookReviewStatusResponse(BaseModel):
@@ -823,7 +826,7 @@ class EndpointPresetResponse(BaseModel):
 
 class EndpointPresetListResponse(BaseModel):
     """All built-in endpoints. 'custom' is not in here — it is not a preset."""
-    presets: List[EndpointPresetResponse]
+    presets: list[EndpointPresetResponse]
 
 
 @router.get("/settings/endpoint-presets", response_model=EndpointPresetListResponse)
@@ -849,12 +852,12 @@ class ProfileResponse(BaseModel):
     kind: str = "endpoint"
     endpoint_type: str
     api_key_masked: str
-    url: Optional[str] = None
+    url: str | None = None
     # vendor_cli only: which core this connection runs.
-    agent_type: Optional[str] = None
-    default_model: Optional[str] = None
-    sonnet_model: Optional[str] = None
-    haiku_model: Optional[str] = None
+    agent_type: str | None = None
+    default_model: str | None = None
+    sonnet_model: str | None = None
+    haiku_model: str | None = None
     is_active: bool = False
     created_at: str
     updated_at: str
@@ -862,13 +865,13 @@ class ProfileResponse(BaseModel):
 
 class ProfileListResponse(BaseModel):
     """Profile list response"""
-    profiles: List[ProfileResponse]
-    active_profile_id: Optional[str] = None
+    profiles: list[ProfileResponse]
+    active_profile_id: str | None = None
     # The agent CLIs the active profile was written into. Empty when nothing is
     # active — the card that shows "active" needs to be able to say where.
-    active_targets: List[str] = []
+    active_targets: list[str] = []
     # What the worker role is bound to. None means the plain subscription.
-    worker_profile_id: Optional[str] = None
+    worker_profile_id: str | None = None
 
 
 class ActivationTargetResponse(BaseModel):
@@ -878,17 +881,17 @@ class ActivationTargetResponse(BaseModel):
     supported: bool
     installed: bool
     selectable: bool
-    path: Optional[str] = None
+    path: str | None = None
     # Why this CLI can never take a frago profile. Shown next to the disabled
     # checkbox: a missing option reads as a bug, an explained one does not.
-    unsupported_reason: Optional[str] = None
+    unsupported_reason: str | None = None
 
 
 class ActivationTargetListResponse(BaseModel):
     """Every known agent CLI, offerable or not, in display order."""
-    targets: List[ActivationTargetResponse]
+    targets: list[ActivationTargetResponse]
     # What gets used when the caller names no targets.
-    default_targets: List[str] = []
+    default_targets: list[str] = []
 
 
 class ActivateProfileRequest(BaseModel):
@@ -897,7 +900,7 @@ class ActivateProfileRequest(BaseModel):
     Omitted entirely means the historical behavior — Claude Code only — so an
     older client that posts no body keeps working unchanged.
     """
-    targets: Optional[List[str]] = None
+    targets: list[str] | None = None
 
 
 class CreateProfileRequest(BaseModel):
@@ -909,24 +912,24 @@ class CreateProfileRequest(BaseModel):
     endpoint_type: str
     # Empty for a vendor CLI connection: its credential is that CLI's own login.
     api_key: str = ""
-    url: Optional[str] = None
-    agent_type: Optional[str] = None
-    default_model: Optional[str] = None
-    sonnet_model: Optional[str] = None
-    haiku_model: Optional[str] = None
+    url: str | None = None
+    agent_type: str | None = None
+    default_model: str | None = None
+    sonnet_model: str | None = None
+    haiku_model: str | None = None
 
 
 class UpdateProfileRequest(BaseModel):
     """Update profile request"""
-    name: Optional[str] = None
-    kind: Optional[str] = None
-    endpoint_type: Optional[str] = None
-    api_key: Optional[str] = None  # None = keep existing
-    url: Optional[str] = None
-    agent_type: Optional[str] = None
-    default_model: Optional[str] = None
-    sonnet_model: Optional[str] = None
-    haiku_model: Optional[str] = None
+    name: str | None = None
+    kind: str | None = None
+    endpoint_type: str | None = None
+    api_key: str | None = None  # None = keep existing
+    url: str | None = None
+    agent_type: str | None = None
+    default_model: str | None = None
+    sonnet_model: str | None = None
+    haiku_model: str | None = None
 
 
 class SaveCurrentAsProfileRequest(BaseModel):
@@ -934,7 +937,7 @@ class SaveCurrentAsProfileRequest(BaseModel):
     name: str
 
 
-def _blank_to_none(value: Optional[str]) -> Optional[str]:
+def _blank_to_none(value: str | None) -> str | None:
     """Treat a whitespace-only field as absent.
 
     Optional profile fields are either a real value or nothing; a form that
@@ -948,7 +951,7 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
 
 
 def _profile_to_response(
-    profile: "APIProfile", active_id: Optional[str]
+    profile: "APIProfile", active_id: str | None
 ) -> ProfileResponse:
     """Convert APIProfile to ProfileResponse with masked API key."""
     from frago.init.configurator import _mask_api_key
@@ -1035,7 +1038,7 @@ async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest
         return ApiResponse(status="ok", message="Profile updated")
     except ValueError as e:
         if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
         return ApiResponse(status="error", error=str(e))
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
@@ -1050,7 +1053,7 @@ async def delete_profile_endpoint(profile_id: str) -> ApiResponse:
         delete_profile(profile_id)
         return ApiResponse(status="ok", message="Profile deleted")
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
 
@@ -1081,7 +1084,7 @@ async def get_activation_targets() -> ActivationTargetListResponse:
 
 @router.post("/settings/profiles/{profile_id}/activate", response_model=ApiResponse)
 async def activate_profile_endpoint(
-    profile_id: str, request: Optional[ActivateProfileRequest] = None
+    profile_id: str, request: ActivateProfileRequest | None = None
 ) -> ApiResponse:
     """Activate a profile on the chosen agent CLIs (Claude Code if none named)."""
     from frago.init.profile_manager import activate_profile
@@ -1101,7 +1104,7 @@ async def activate_profile_endpoint(
         # request being wrong about this machine, not a missing resource, and
         # its message is written to be shown to the person as-is.
         if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
         return ApiResponse(status="error", error=str(e))
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
@@ -1139,12 +1142,12 @@ class VendorCoreResponse(BaseModel):
     agent_type: str
     display_name: str
     installed: bool
-    path: Optional[str] = None
+    path: str | None = None
     # Model names this CLI's own service offers. Candidates for the form, not a
     # whitelist — a name typed by hand is passed through unchanged.
-    known_models: List[str] = []
+    known_models: list[str] = []
     # Why it takes no frago profile, in the driver's own words.
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class RoleBindingResponse(BaseModel):
@@ -1152,18 +1155,18 @@ class RoleBindingResponse(BaseModel):
     role: str
     # None means nothing is bound: the plain subscription for main and worker,
     # the fallback for the light agent, not running for the observer.
-    profile_id: Optional[str] = None
+    profile_id: str | None = None
     # None only for an unbound observer — there is nothing it runs on.
     connection: ProfileResponse | None = None
     # main only: the agent CLIs this connection was written into.
-    targets: List[str] = []
+    targets: list[str] = []
 
 
 class ConnectionsResponse(BaseModel):
     """Everything the two role pickers need, in one round trip."""
-    connections: List[ProfileResponse]
-    bindings: List[RoleBindingResponse]
-    vendor_cores: List[VendorCoreResponse]
+    connections: list[ProfileResponse]
+    bindings: list[RoleBindingResponse]
+    vendor_cores: list[VendorCoreResponse]
 
 
 class BindRoleRequest(BaseModel):
@@ -1171,10 +1174,10 @@ class BindRoleRequest(BaseModel):
     profile_id: str
     # main only: which agent CLIs to write it into. Omitted keeps frago's
     # historical default (Claude Code).
-    targets: Optional[List[str]] = None
+    targets: list[str] | None = None
 
 
-def _vendor_cores() -> List[VendorCoreResponse]:
+def _vendor_cores() -> list[VendorCoreResponse]:
     """The cores that come with their own account.
 
     Derived from the driver registry rather than a list kept here: a CLI that
@@ -1184,7 +1187,7 @@ def _vendor_cores() -> List[VendorCoreResponse]:
     """
     from frago.agent_driver.driver import registered_drivers
 
-    cores: List[VendorCoreResponse] = []
+    cores: list[VendorCoreResponse] = []
     for agent_type, driver in sorted(registered_drivers().items()):
         if driver.profile_apply is not None:
             continue
@@ -1257,7 +1260,7 @@ async def bind_role_endpoint(role: str, request: BindRoleRequest) -> ApiResponse
         bound = bind_role(role, request.profile_id, request.targets)
     except ValueError as e:
         if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
         # A refused binding (a vendor CLI on main, an unknown role) is the
         # request being wrong, and its message is written to be shown as-is.
         return ApiResponse(status="error", error=str(e))
@@ -1272,53 +1275,160 @@ async def bind_role_endpoint(role: str, request: BindRoleRequest) -> ApiResponse
 
 
 class WorkBuddyModelResponse(BaseModel):
-    """One model as the last probe found it."""
+    """One model the client offers, as the last probe found it."""
     id: str
     name: str = ""
-    # On the catalog WorkBuddy hands out. Not being there does not mean unusable.
-    listed: bool = False
+    # What a call on this model costs, as the client writes it: "x0.79".
+    credits: str | None = None
     ok: bool
     # openai / anthropic — which of the gateway's two doors this model answers at.
     wire: str | None = None
+    # Still measured, still recorded: it decides whether the model is usable at
+    # all and which door it answers at. It is no longer what the page leads with.
     first_ms: int | None = None
     thinks: bool = False
     error: str | None = None
 
 
+class WorkBuddyUnprobedModelResponse(BaseModel):
+    """A model on the client's menu that the last probe never tried."""
+    id: str
+    name: str = ""
+    credits: str | None = None
+
+
+class WorkBuddyBalanceResponse(BaseModel):
+    """Credits left this cycle, and the first lot to expire.
+
+    A total on its own would mislead: the account holds separate lots and they
+    are burnt earliest-expiry-first, so credits saved up past their month are
+    written off whole.
+    """
+    remaining: int
+    expires_at: str | None = None
+    expiring: int | None = None
+
+
 class WorkBuddyModelsResponse(BaseModel):
     """What a WorkBuddy connection can be pointed at."""
-    # Whether the WorkBuddy client is logged in on this machine. Without it every
+    # Whether the WorkBuddy client can authenticate right now. Without it every
     # call fails, so the form says so before anyone picks a model.
     logged_in: bool
+    # ok / logged_out / no_client — a client that quit its session leaves the
+    # login file behind with an empty token, and "not installed" is a different
+    # thing for the person reading the page to do about it.
+    login_state: str = "no_client"
     probed_at: str | None = None
+    # The list has not been re-probed in WORKBUDDY_STALE_DAYS. Nothing refreshes
+    # it on its own, so age is the only thing that can prompt anyone.
+    stale: bool = False
+    stale_after_days: int = 0
+    # A probe is running right now, started from this page.
+    probing: bool = False
+    probe_error: str | None = None
+    # Cheapest first. Only models the client itself offers for chat.
     models: list[WorkBuddyModelResponse] = []
+    # On the client's menu but never probed — added since the last round.
+    catalog_new: list[WorkBuddyUnprobedModelResponse] = []
+    balance: WorkBuddyBalanceResponse | None = None
 
 
 @router.get("/settings/workbuddy-models", response_model=WorkBuddyModelsResponse)
 async def get_workbuddy_models() -> WorkBuddyModelsResponse:
-    """The last probe's findings. Re-probing is `frago-core models probe-workbuddy`."""
+    """What the client offers, crossed with what the last probe found answering.
+
+    Which models exist comes from the client's own menu; whether one answers
+    through the gateway only a probe can say, and probing costs a real call per
+    model, so that stays manual. Reading the menu costs nothing, and the credit
+    balance costs one request and no model budget.
+    """
     import json as _json
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
-    from frago.init.profile_manager import WORKBUDDY_MODELS_PATH, workbuddy_login_path
+    from frago.init.profile_manager import (
+        WORKBUDDY_MODELS_PATH,
+        WORKBUDDY_STALE_DAYS,
+        workbuddy_login_state,
+    )
+    from frago.server.services import workbuddy_service
 
-    logged_in = workbuddy_login_path().is_file()
+    login_state = workbuddy_login_state()
+    probe = workbuddy_service.probe_state()
+    base = {
+        "logged_in": login_state == "ok",
+        "login_state": login_state,
+        "stale_after_days": WORKBUDDY_STALE_DAYS,
+        "probing": bool(probe.get("running")),
+        "probe_error": probe.get("error"),
+    }
+    balance = workbuddy_service.credit_balance()
+    if balance:
+        base["balance"] = WorkBuddyBalanceResponse(**balance)
+
+    offered = workbuddy_service.chat_models()
     try:
         data = _json.loads(WORKBUDDY_MODELS_PATH.read_text(encoding="utf-8"))
+        probed = {
+            m["id"]: m
+            for m in data.get("models", [])
+            if isinstance(m, dict) and isinstance(m.get("id"), str) and "ok" in m
+        }
     except (OSError, ValueError):
-        return WorkBuddyModelsResponse(logged_in=logged_in)
-    models = [
-        WorkBuddyModelResponse(**{k: v for k, v in m.items() if k in WorkBuddyModelResponse.model_fields})
-        for m in data.get("models", [])
-        if isinstance(m, dict) and isinstance(m.get("id"), str) and "ok" in m
+        probed = {}
+
+    # The probe's own roster is the gateway's, which carries completion models and
+    # leaves out the newer chat ones. Crossing the two here is what keeps both out
+    # of the dropdown: nothing the client does not offer, nothing never tried.
+    rows = [
+        {**offered[mid], **{k: v for k, v in row.items() if k != "name"}}
+        for mid, row in probed.items()
+        if mid in offered
     ]
+    rows.sort(key=workbuddy_service.sort_key)
+    models = [
+        WorkBuddyModelResponse(
+            **{k: v for k, v in r.items() if k in WorkBuddyModelResponse.model_fields}
+        )
+        for r in rows
+    ]
+    unprobed = [
+        WorkBuddyUnprobedModelResponse(id=m["id"], name=m["name"], credits=m["credits"])
+        for m in sorted(
+            (m for mid, m in offered.items() if mid not in probed),
+            key=lambda m: (m["credits_value"], m["id"]),
+        )
+    ]
+
+    if not probed:
+        return WorkBuddyModelsResponse(**base, catalog_new=unprobed)
+
     # frago-core stamps the probe in UTC while every other time on the page is
     # local, so 13:30 read as 05:30. The file is written the moment the probe
     # finishes; its modification time is that moment, and it reads as local time.
-    probed_at = datetime.fromtimestamp(WORKBUDDY_MODELS_PATH.stat().st_mtime).isoformat(
-        timespec="seconds"
+    written = datetime.fromtimestamp(WORKBUDDY_MODELS_PATH.stat().st_mtime)
+    return WorkBuddyModelsResponse(
+        **base,
+        probed_at=written.isoformat(timespec="seconds"),
+        stale=datetime.now() - written > timedelta(days=WORKBUDDY_STALE_DAYS),
+        models=models,
+        catalog_new=unprobed,
     )
-    return WorkBuddyModelsResponse(logged_in=logged_in, probed_at=probed_at, models=models)
+
+
+@router.post("/settings/workbuddy-models/probe", response_model=ApiResponse)
+async def probe_workbuddy_models() -> ApiResponse:
+    """Run the probe now. Returns as soon as it has started, not when it ends.
+
+    A round asks every model on the gateway a real question on up to two wires;
+    it takes minutes and spends model budget, which is why nothing but this
+    button starts it.
+    """
+    from frago.server.services import workbuddy_service
+
+    started, error = workbuddy_service.start_probe()
+    if not started:
+        return ApiResponse(status="error", error=error)
+    return ApiResponse(status="ok", message="探测已开始，跑完后清单会自动刷新")
 
 
 @router.post("/settings/profiles/from-current", response_model=ApiResponse)
@@ -1356,20 +1466,20 @@ class TaskIngestionChannelDTO(BaseModel):
 class TaskIngestionConfigDTO(BaseModel):
     """Top-level task-ingestion config payload."""
     enabled: bool = False
-    channels: List[TaskIngestionChannelDTO] = []
+    channels: list[TaskIngestionChannelDTO] = []
 
 
 class TaskIngestionGetResponse(BaseModel):
     enabled: bool
-    channels: List[TaskIngestionChannelDTO]
-    available_recipes: List[str]
+    channels: list[TaskIngestionChannelDTO]
+    available_recipes: list[str]
     restart_supported: bool
 
 
 class TaskIngestionPutResponse(BaseModel):
     status: str
     requires_restart: bool
-    message: Optional[str] = None
+    message: str | None = None
 
 
 @router.get(
