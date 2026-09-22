@@ -30,7 +30,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 /** 删掉之后服务端交代的账。``warnings`` 是删了但没收拾干净的地方。 */
 export interface DeleteSessionResult {
   sid: string;
-  family: 'claude-code' | 'opencode' | 'codex';
+  family: 'claude-code' | 'opencode' | 'codex' | 'coreagent';
   /** 删掉了哪几样，服务端写好的人话，原样摆出来。 */
   removed: string[];
   warnings: string[];

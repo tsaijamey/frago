@@ -691,6 +691,13 @@ export interface ScheduleHistoryEntry {
   notify_status?: string | null;
   notify_reason?: string | null;
   task_id?: string | null;
+  /**
+   * 自然语言任务这一趟 CoreAgent 开的那场会话。会话页据此摆出整场过程——中途执行了
+   * 哪些命令、哪些被拦下。命令与配方不起 agent，恒为空。
+   */
+  session_id?: string | null;
+  /** CoreAgent 最后答的那句话。过长会在服务端截断。 */
+  answer?: string | null;
 }
 
 /** 一条定时任务。字段取自 ~/.frago/schedules.json，外加服务端现算的 next_run_at 与 running。 */

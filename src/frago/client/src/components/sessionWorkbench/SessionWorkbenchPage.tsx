@@ -191,7 +191,12 @@ export default function SessionWorkbenchPage() {
             转成"在跑"、升到顶部。
             信封由记录流照着真记录判档：还找不到它就是"已发送"，找到的是一张还在队列上的
             插话卡就是"已入队列"。输入区只管画，不自己猜。 */}
-        {showLaunch ? null : (
+        {/* CoreAgent 那一家没有输入区：它每次运行都是一个跑完就退出的进程，接不上话。
+            摆一个输入框在那儿等于请人打一段字进去，而那一句必定被服务端拒掉——不如
+            当场说清这场只能回看。 */}
+        {selected?.family === 'coreagent' ? (
+          <div className="sw-readonly-note">{t('workbench.composer.readOnlyCoreagent')}</div>
+        ) : showLaunch ? null : (
         <Composer
           sessionId={selectedId}
           family={selected?.family ?? null}

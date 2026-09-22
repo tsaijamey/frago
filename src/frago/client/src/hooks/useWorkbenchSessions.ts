@@ -20,8 +20,14 @@ import { useAutoRefresh } from './useAutoRefresh';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-/** 会话属于哪一家。判定全在服务端做完，界面只负责显示。 */
-export type SessionFamily = 'claude-code' | 'opencode' | 'codex';
+/**
+ * 会话属于哪一家。判定全在服务端做完，界面只负责显示。
+ *
+ * `coreagent` 是 frago 自己那个 agent——定时任务里的自然语言任务由它去办，没人在旁边
+ * 看着。它的记录形状与 Claude Code 的一模一样，单列一家是因为**来源要分得开**：跟人
+ * 自己开的会话混在一起就找不着了。
+ */
+export type SessionFamily = 'claude-code' | 'opencode' | 'codex' | 'coreagent';
 
 /**
  * 会话现在什么情况。四档，没有第五档。
@@ -108,6 +114,7 @@ export const FAMILY_LABEL_KEY: Record<SessionFamily, string> = {
   'claude-code': 'workbench.family.claude-code',
   opencode: 'workbench.family.opencode',
   codex: 'workbench.family.codex',
+  coreagent: 'workbench.family.coreagent',
 };
 
 export const STATUS_LABEL_KEY: Record<SessionStatus, string> = {

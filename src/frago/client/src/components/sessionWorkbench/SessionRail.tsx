@@ -245,12 +245,14 @@ export default function SessionRail({
     let cc = 0;
     let oc = 0;
     let cx = 0;
+    let ca = 0;
     for (const s of sessions) {
       if (s.family === 'claude-code') cc += 1;
       else if (s.family === 'opencode') oc += 1;
       else if (s.family === 'codex') cx += 1;
+      else if (s.family === 'coreagent') ca += 1;
     }
-    return { cc, oc, cx };
+    return { cc, oc, cx, ca };
   }, [sessions]);
 
   /**
@@ -1047,6 +1049,7 @@ export default function SessionRail({
           cc: familyCounts.cc,
           oc: familyCounts.oc,
           cx: familyCounts.cx,
+          ca: familyCounts.ca,
         })}
       </div>
 

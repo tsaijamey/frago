@@ -534,7 +534,9 @@
       "duration": "{{ms}} ms",
       "exitCode": "退出码 {{code}}",
       "notified": "已通知（{{status}}）",
-      "notNotified": "未通知：{{reason}}"
+      "notNotified": "未通知：{{reason}}",
+      "answer": "它的答复",
+      "openSession": "看这一场的全过程"
     },
     "runStatus": {
       "success": "成功",
@@ -1296,7 +1298,8 @@
     "family": {
       "claude-code": "Claude Code",
       "opencode": "opencode",
-      "codex": "codex"
+      "codex": "codex",
+      "coreagent": "CoreAgent"
     },
     "rail": {
       "newSession": "新建会话",
@@ -1312,7 +1315,7 @@
       "workerCount": "派出去 {{n}} 个 worker",
       "expandWorkers": "展开这场派出去的 {{n}} 个 worker",
       "collapseWorkers": "折起这场派出去的 worker",
-      "summary": "共 {{total}} 场 · Claude Code {{cc}} 场 · opencode {{oc}} 场 · codex {{cx}} 场",
+      "summary": "共 {{total}} 场 · Claude Code {{cc}} 场 · opencode {{oc}} 场 · codex {{cx}} 场 · CoreAgent {{ca}} 场",
       "pinnedToastCollapsed": "已置顶，在折起来的置顶区里",
       "copied": "恢复命令已复制",
       "copyFailed": "复制失败",
@@ -1553,6 +1556,7 @@
       "addImage": "添加图片",
       "placeholder": "说点什么。图片和文档可以直接粘贴或拖进来",
       "placeholderWithFamily": "对 {{family}} 说点什么。图片和文档可以直接粘贴或拖进来",
+      "readOnlyCoreagent": "这一场只能回看。CoreAgent 每次运行都是一个跑完就退出的进程，接不上话。",
       "send": "发送",
       "sending": "发送中",
       "addAttachment": "添加图片或文档",

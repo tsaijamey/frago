@@ -534,7 +534,9 @@
       "duration": "{{ms}} ms",
       "exitCode": "exit {{code}}",
       "notified": "Notified ({{status}})",
-      "notNotified": "Not notified: {{reason}}"
+      "notNotified": "Not notified: {{reason}}",
+      "answer": "Its answer",
+      "openSession": "See the whole run"
     },
     "runStatus": {
       "success": "Success",
@@ -1296,7 +1298,8 @@
     "family": {
       "claude-code": "Claude Code",
       "opencode": "opencode",
-      "codex": "codex"
+      "codex": "codex",
+      "coreagent": "CoreAgent"
     },
     "rail": {
       "newSession": "New session",
@@ -1312,7 +1315,7 @@
       "workerCount": "launched {{n}} workers",
       "expandWorkers": "Show the {{n}} workers this session launched",
       "collapseWorkers": "Hide the workers this session launched",
-      "summary": "{{total}} sessions · Claude Code {{cc}} · opencode {{oc}} · codex {{cx}}",
+      "summary": "{{total}} sessions · Claude Code {{cc}} · opencode {{oc}} · codex {{cx}} · CoreAgent {{ca}}",
       "pinnedToastCollapsed": "Pinned — it's in the collapsed pinned section",
       "copied": "Resume command copied",
       "copyFailed": "Copy failed",
@@ -1553,6 +1556,7 @@
       "addImage": "Add an image",
       "placeholder": "Say something. Images and documents can be pasted or dropped straight in",
       "placeholderWithFamily": "Say something to {{family}}. Images and documents can be pasted or dropped straight in",
+      "readOnlyCoreagent": "This run is read-only. CoreAgent exits when it is done, so there is nothing here to reply to.",
       "send": "Send",
       "sending": "Sending",
       "addAttachment": "Add an image or a document",

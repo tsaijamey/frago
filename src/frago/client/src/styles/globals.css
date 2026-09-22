@@ -7280,6 +7280,56 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   word-break: break-word;
 }
 
+/* 只能回看的那一场，输入区的位置上摆这一句。占位与输入区相当，免得切换会话时中栏
+   底部忽高忽低。 */
+.sw-readonly-note {
+  flex-shrink: 0;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border-color);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* CoreAgent 交回来的那句答复。它是这一行里唯一一段人要逐字读的内容，所以跟上面那排
+   机器字段隔开、缩进对齐时间那一列，正文按正文的字号排而不是按 meta 的字号。 */
+.sc-run-answer {
+  margin: 6px 0 0;
+  padding-left: 24px;
+}
+
+.sc-run-answer-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.sc-run-answer-body {
+  margin: 2px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 进那一场会话的入口。做成一行安静的文字按钮：它是补充去处，不该跟上面「立即跑」那排
+   实心按钮抢眼。 */
+.sc-run-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 0 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--font-size-xs);
+  color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.sc-run-link:hover {
+  text-decoration: underline;
+}
+
 /* === 环境仪表盘 === */
 /* 遮罩带模糊：这扇窗盖住的是整片工作区，底下那些字如果还清清楚楚，眼睛会一直被它们
    拽回去。模糊不是装饰，是把注意力交给上面这张表。

@@ -11,8 +11,9 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Pause, Play, Trash2, X, Zap } from 'lucide-react';
+import { ExternalLink, Loader2, Pause, Play, Trash2, X, Zap } from 'lucide-react';
 import type { ScheduleHistoryEntry, ScheduleItem } from '@/api';
+import { usePageStore } from '@/stores/appStore';
 import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   STATE_CHIP,
@@ -53,7 +54,22 @@ function Prop({
 
 function HistoryRow({ entry }: { entry: ScheduleHistoryEntry }) {
   const { t } = useTranslation();
+  const switchPage = usePageStore((s) => s.switchPage);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const failed = entry.status === 'failed';
+
+  /**
+   * 跳到这一趟 CoreAgent 开的那场会话。
+   *
+   * 这一行摆得下的只有成败、耗时和那句答复；它中途执行了哪些命令、哪些被拦下，全在那
+   * 场会话里。没有这个入口的话，那些过程虽然落了盘，人也没有路径走到它。
+   */
+  const openSession = () => {
+    if (!entry.session_id) return;
+    setWorkbenchSessionId(entry.session_id);
+    switchPage('session_workbench');
+  };
+
   return (
     <li className={`sc-run ${failed ? 'sc-run--failed' : ''}`}>
       <div className="sc-run-head">
@@ -76,6 +92,18 @@ function HistoryRow({ entry }: { entry: ScheduleHistoryEntry }) {
         )}
       </div>
       {entry.error && <pre className="sc-run-error">{entry.error}</pre>}
+      {entry.answer && (
+        <div className="sc-run-answer">
+          <div className="sc-run-answer-label">{t('schedules.history.answer')}</div>
+          <pre className="sc-run-answer-body">{entry.answer}</pre>
+        </div>
+      )}
+      {entry.session_id && (
+        <button type="button" className="sc-run-link" onClick={openSession}>
+          <ExternalLink size={12} />
+          {t('schedules.history.openSession')}
+        </button>
+      )}
       {entry.notify_reason && (
         <div className="sc-run-meta">
           {entry.notified
