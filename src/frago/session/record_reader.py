@@ -232,9 +232,11 @@ def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
     字段全部走 Claude Code 那条路径——记录的形状就是那一套，只是根目录换成 CoreAgent
     自己的，索引也另存一份（两侧的文件混在同一份缓存里，删掉一侧会连带另一侧重算）。
 
-    **标题只能取开口第一句**：CoreAgent 不给会话起名，也不让模型生成标题。开口第一句正是
-    交给它的那句任务，摆在左栏刚好答"这一场是去干什么的"。取不到时用会话编号，NEVER 留
-    空串——左栏一行没有字，人点不动它。
+    **标题先认发起方给的名字，再退回开口第一句。** 起 CoreAgent 的人可以在启动时命名
+    （``frago-core --title``），名字写在记录里，与 Claude Code 给会话命名用的是同一种行。
+    定时任务、待办拟稿这些由程序发起的会话都有名字——它们的开口第一句是一整段说明书，
+    二十场摆在左栏长得一模一样。没有名字时才用开口第一句：那正是人交给它的那句任务。
+    两样都没有时用会话编号，NEVER 留空串——左栏一行没有字，人点不动它。
     """
     now = time.time()
     cards: list[SessionCard] = []
@@ -252,7 +254,7 @@ def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
             SessionCard(
                 session_id=sid,
                 family="coreagent",
-                title=(row.first_user or "")[:100] or sid,
+                title=row.ai_title or (row.first_user or "")[:100] or sid,
                 directory=str(row.cwd or ""),
                 created_at=created if created is not None else last_active,
                 last_active_at=last_active,

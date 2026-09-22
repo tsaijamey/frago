@@ -20,6 +20,20 @@ driver、跑得起来，但它的 jsonl 落在 ``~/.codebuddy/projects``，工�
 让人从这里起一场 codebuddy 会话，结果是会话真的起来了、真的在干活，而页面上那一行永远
 不出现。这比不给这个选项坏得多，所以它列出来但不可选，理由照实说。
 
+## CoreAgent 不从注册表来，它的两道门后面换了东西
+
+工作台里还有第四家：frago 自己的内核（CoreAgent）。它压根没有 driver，也不该有——另外
+三家都是挂在 tmux 里的交互式程序，起一次挂着、之后每句话敲进去；CoreAgent 是交一件事、
+跑完就退的进程，没有可挂的 TUI。所以它在这里单写一行，判据自己算。仍然是两道门，只是
+门后的东西换了：
+
+**内核在不在。** 装的是 ``~/.frago/bin`` 下那个二进制（与 hook 引擎同一个文件）。不在
+就不可挑，理由是"跑一次 ``frago init`` 补上"。
+
+**有没有连接可用。** 内核要拿一个模型连接去调模型。一个都没配时它起来就退，而这种失败
+发生在写下任何一行记录之前——人点完创建跳进那一场，看到的是一片空白，界面上没有任何
+线索可说。所以这道门在这里先关上，理由照实说。
+
 ## 编号谁来 mint，是两种交互而不是一个开关
 
 claude 接受 ``--session-id``：页面先 mint 一个编号，会话编号当场就有，点完"创建"直接
@@ -36,7 +50,7 @@ import logging
 from dataclasses import dataclass
 
 from frago.agent_driver.driver import registered_drivers
-from frago.server.services.session_send import AGENT_TYPE_BY_FAMILY
+from frago.server.services.session_send import AGENT_TYPE_BY_FAMILY, COREAGENT_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +62,22 @@ FAMILY_BY_AGENT_TYPE: dict[str, str] = {
 
 #: 清单次序。摆在前面的是更可能被挑的那几家；表里没有的新家按名字排在后面——次序不对
 #: 只是不好看，而漏掉一家是功能缺失，所以这里 NEVER 拿它当白名单用。
-_PREFERRED_ORDER = ("claude", "codex", "opencode")
+_PREFERRED_ORDER = ("claude", "coreagent", "codex", "opencode")
+
+#: CoreAgent 那一行的 ``agent_type``。取自 ``session_send`` 那份，NEVER 在这里另拼一个
+#: 字符串：两处各写一遍，页面上挑的名字与发送那条路认的名字就会各走各的。
+COREAGENT_AGENT_TYPE = COREAGENT_AGENT
+
+#: CoreAgent 的会话在工作台里的家族名。它与 agent_type 同名只是巧合，两者是两件事。
+COREAGENT_FAMILY = "coreagent"
+
+_COREAGENT_DISPLAY_NAME = "CoreAgent"
 
 _NOT_INSTALLED = "本机没找到这个命令，装好之后它会自己出现在这里"
 _NOT_READABLE = "frago 驱动得动它，但它的会话记录读不进工作台，起了也不会出现在左栏"
 _UNKNOWN_INSTALL = "这一家没提供探测方式，判不出装没装"
+_NO_KERNEL = "frago 的内核还没装好（~/.frago/bin 下找不到），跑一次 frago init 补上"
+_NO_CONNECTION = "还没给 CoreAgent 配连接，去设置页的连接里给它挑一个，它才调得动模型"
 
 
 class AgentUnavailable(ValueError):
@@ -94,6 +119,57 @@ def _locate(agent_type: str, driver) -> tuple[bool | None, str | None]:  # noqa:
     return path is not None, path
 
 
+def _kernel_binary() -> tuple[bool, str | None]:
+    """内核二进制在不在、在哪。"""
+    try:
+        from frago.server.services import coreagent_runner
+
+        return True, str(coreagent_runner.binary())
+    except Exception:  # noqa: BLE001 — 不在（或问不出来）都只是"现在挑不了"
+        return False, None
+
+
+def _kernel_connection_missing() -> bool:
+    """CoreAgent 现在有连接可调吗；一个都没有时为 True。
+
+    读不动连接配置时**当作配过了**：与探测装没装那一处同一条判断——拦下来的代价是一台
+    配好的机器用不了，放行的代价只是启动那一刻失败。
+    """
+    try:
+        from frago.init import profile_manager
+
+        return profile_manager.role_view(profile_manager.COREAGENT_ROLE) is None
+    except Exception:  # noqa: BLE001 — 读不动只说明判不出，不说明没配
+        logger.warning("读 CoreAgent 的连接配置时出错，当作配过了", exc_info=True)
+        return False
+
+
+def _coreagent_agent() -> WorkbenchAgent:
+    """CoreAgent 那一行。见模块头："CoreAgent 不从注册表来"。
+
+    ``id_origin`` 恒为 ``caller``：编号由发起方现发（``core_`` 前缀是会话页认出这一家的
+    唯一判据），所以点完创建当场就知道这一场叫什么，没有等编号的空窗。
+    """
+    installed, path = _kernel_binary()
+    if not installed:
+        selectable, reason = False, _NO_KERNEL
+    elif _kernel_connection_missing():
+        selectable, reason = False, _NO_CONNECTION
+    else:
+        selectable, reason = True, None
+
+    return WorkbenchAgent(
+        agent_type=COREAGENT_AGENT_TYPE,
+        display_name=_COREAGENT_DISPLAY_NAME,
+        installed=installed,
+        path=path,
+        family=COREAGENT_FAMILY,
+        selectable=selectable,
+        reason=reason,
+        id_origin="caller",
+    )
+
+
 def _order_key(agent_type: str) -> tuple[int, str]:
     if agent_type in _PREFERRED_ORDER:
         return (_PREFERRED_ORDER.index(agent_type), "")
@@ -105,6 +181,9 @@ def list_agents() -> list[WorkbenchAgent]:
 
     **不能挑的也在清单里。** 藏起来等于告诉人"frago 不支持它"，而真相往往只是没装。
     每一行都带着不能挑的理由，界面原样转述。
+
+    CoreAgent 单独补一行：它不是一家 CLI，注册表里没有它（见模块头）。万一将来真有人以
+    这个名字注册了一个 driver，就认注册表那一份——两行同名摆在界面上，人不知道该点哪个。
     """
     agents: list[WorkbenchAgent] = []
     for agent_type, driver in registered_drivers().items():
@@ -134,6 +213,9 @@ def list_agents() -> list[WorkbenchAgent]:
                 id_origin="caller" if driver.accepts_session_id else "claimed",
             )
         )
+
+    if not any(a.agent_type == COREAGENT_AGENT_TYPE for a in agents):
+        agents.append(_coreagent_agent())
 
     agents.sort(key=lambda a: (not a.selectable, _order_key(a.agent_type)))
     return agents

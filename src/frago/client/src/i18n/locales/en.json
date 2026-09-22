@@ -1580,7 +1580,6 @@
       "addImage": "Add an image",
       "placeholder": "Say something. Images and documents can be pasted or dropped straight in",
       "placeholderWithFamily": "Say something to {{family}}. Images and documents can be pasted or dropped straight in",
-      "readOnlyCoreagent": "This run is read-only. CoreAgent exits when it is done, so there is nothing here to reply to.",
       "send": "Send",
       "sending": "Sending",
       "addAttachment": "Add an image or a document",

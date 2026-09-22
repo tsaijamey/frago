@@ -1,15 +1,20 @@
-"""发送这条通道：三家的会话都发得出去，且各回各家。
+"""发送这条通道：四家的会话都发得出去，且各回各家。
 
 这份用例盯的是一件事——**发给谁**。从前这条路背后写死了一个 claude，codex 与
 opencode 的会话编号发过去不报错，claude 拿它当没见过的 ``--session-id`` 当场开一场
 空白会话，原来那场一个字没动。所以这里的核心断言不是"返回 200"，而是"这一轮交给
 哪个 driver、在哪个目录起"。
 
-不碰真 tmux：会话池换成替身，只记下每轮收到的 (agent_type, cwd)。
+第四家 CoreAgent 走的是另一条投喂路：它没有挂在 tmux 里的交互界面，一轮就是一个进程，
+靠把那一场的记录读回来接上前文。所以它的断言是"这句话交给了内核那条路、带着记录里那个
+目录，且一个字都没落到会话池上"。
+
+不碰真 tmux、不起真进程：会话池与内核那条路都换成替身，只记下每轮收到了什么。
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -23,6 +28,7 @@ from frago.session import transcript_completion as tc
 CC_SID = "00a02979-7eb4-5c70-94ae-867c8281e3f6"
 CODEX_SID = "01a01a98-82e9-7013-b24e-e5e91b03995a"
 OC_SID = "ses_058288655ffeYMxYC1AZKCcv56"
+CORE_SID = "core_0e85b8c598db4a7ebc35903990c61c35"
 
 
 class StubRunner:
@@ -91,6 +97,55 @@ def three_families(monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def coreagent_record(monkeypatch, tmp_path):
+    """CoreAgent 那一场的记录：形状与 claude 的一样，只是躺在它自己的根目录下。
+
+    第一行是启动时贴的名牌（不带 ``cwd``），目录得从后面那些行里读——这正是实际记录的
+    样子，读法要跳过它。
+    """
+    from frago.session import coreagent_store
+
+    path = tmp_path / f"{CORE_SID}.jsonl"
+    rows = [
+        {"type": "ai-title", "aiTitle": "定时任务：事务分类", "sessionId": CORE_SID},
+        {
+            "type": "user",
+            "cwd": "/repos/core-repo",
+            "message": {"role": "user", "content": [{"type": "text", "text": "给事务分类"}]},
+        },
+    ]
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        coreagent_store, "find_session_file", lambda sid: path if sid == CORE_SID else None
+    )
+    return path
+
+
+class StubCoreAgent:
+    """coreagent_runner 替身：只记账，不起进程。"""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def send(self, session_id, prompt, *, cwd, title=None, wait_s=180.0):
+        from frago.server.services.ui_session_runner import SessionActivation
+
+        self.calls.append({"sid": session_id, "text": prompt, "cwd": cwd})
+        return SessionActivation(session_id=session_id, status="activating", text="接着办")
+
+
+@pytest.fixture
+def core_runner(monkeypatch):
+    from frago.server.services import coreagent_runner
+
+    stub = StubCoreAgent()
+    monkeypatch.setattr(coreagent_runner, "send", stub.send)
+    return stub
+
+
+@pytest.fixture
 def client():
     from frago.server.app import create_app
 
@@ -148,10 +203,11 @@ class TestResolveTarget:
         with pytest.raises(session_send.SessionDirectoryUnknown):
             session_send.resolve_target(OC_SID)
 
-    def test_每个能续接的家族都有驱动(self):
+    def test_挂在tmux里的每一家都有驱动(self):
         """少一家就等于那一家的会话在页面上发不出去。
 
-        CoreAgent 不在这张表里，而且不该在——它不是一个能续接的 CLI。
+        CoreAgent 不在这张表里：这张表说的是"哪一家 CLI 挂在 tmux 里等着被 send-keys"，
+        而它没有可以挂着的交互界面，续接走的是另一条路（起一个新进程、把记录读回来）。
         """
         assert set(session_send.AGENT_TYPE_BY_FAMILY) == {
             "claude-code",
@@ -159,15 +215,20 @@ class TestResolveTarget:
             "codex",
         }
 
-    def test_coreagent的会话只能回看接不上话(self):
-        """它每次运行都是一个跑完就退出的进程，没有续接这回事。
+    def test_coreagent会话落回它当初跑的那个目录(self, coreagent_record):
+        """它没有 driver，但同样要有目录——猜一个等于把它挪到另一个仓库里接着干。"""
+        target = session_send.resolve_target(CORE_SID)
+        assert (target.family, target.agent_type) == ("coreagent", "coreagent")
+        assert target.cwd == "/repos/core-repo"
+        assert target.is_new is False
 
-        这一档必须说得出口：落进 ``AGENT_TYPE_BY_FAMILY`` 的 KeyError 的话，页面上只剩
-        一个 500，人只知道"发失败了"，不知道这件事本来就做不到。
-        """
-        with pytest.raises(session_send.SessionNotResumable) as caught:
-            session_send.resolve_target("core_0e85b8c598db4a7ebc35903990c61c35")
-        assert "只能回看" in str(caught.value)
+    def test_记录不在的coreagent会话续不上(self, coreagent_record, monkeypatch):
+        """没有记录就没有前文可读，这一场接不上——明说，NEVER 悄悄开一场新的。"""
+        from frago.session import coreagent_store
+
+        monkeypatch.setattr(coreagent_store, "find_session_file", lambda _sid: None)
+        with pytest.raises(session_send.SessionGone):
+            session_send.resolve_target(CORE_SID)
 
 
 class TestSendRoute:
@@ -189,12 +250,42 @@ class TestSendRoute:
         assert runner.calls[0]["agent_type"] == "opencode"
         assert runner.calls[0]["cwd"] == "/repos/opencode-repo"
 
-    def test_往coreagent会话发话回409并说清为什么(self, client, runner, three_families):
-        """不是 500。接不上话是这一家的性质，不是一次故障。"""
-        res = self._send(client, "core_0e85b8c598db4a7ebc35903990c61c35")
+    def test_coreagent会话交给内核不经过tmux(
+        self, client, runner, core_runner, three_families, coreagent_record
+    ):
+        """这一家没有挂在 tmux 里的 TUI：这句话该交给内核那条路，一个字都不该落到会话池上。"""
+        assert self._send(client, CORE_SID).status_code == 200
+        assert core_runner.calls[0]["cwd"] == "/repos/core-repo"
+        assert core_runner.calls[0]["text"] == "接着干"
+        assert runner.calls == [], "CoreAgent 的话 NEVER 落到 tmux 会话池上"
+
+    def test_那一场还在跑时回409而不是搅掉它的记录(
+        self, client, runner, three_families, coreagent_record, monkeypatch
+    ):
+        """两个进程对着同一场写记录，会把两轮搅成一场，而页面上看不出异样。"""
+        from frago.server.services import coreagent_runner
+
+        def busy(*_a, **_k):
+            raise coreagent_runner.CoreAgentBusy("这一场 CoreAgent 还在跑（已经 3 秒）")
+
+        monkeypatch.setattr(coreagent_runner, "send", busy)
+        res = self._send(client, CORE_SID)
         assert res.status_code == 409
-        assert "只能回看" in res.json()["detail"]
-        assert runner.calls == [], "被拒的那一句 NEVER 落到驱动上"
+        assert "还在跑" in res.json()["detail"]
+
+    def test_内核起不来时把原因带到页面上(
+        self, client, runner, three_families, coreagent_record, monkeypatch
+    ):
+        """这一轮在会话记录里一行都没留下，理由只能从这条响应带出去。"""
+        from frago.server.services import coreagent_runner
+
+        def unavailable(*_a, **_k):
+            raise coreagent_runner.CoreAgentUnavailable("CoreAgent 还没配连接")
+
+        monkeypatch.setattr(coreagent_runner, "send", unavailable)
+        res = self._send(client, CORE_SID)
+        assert res.status_code == 503
+        assert "还没配连接" in res.json()["detail"]
 
     def test_activation_state_comes_back(self, client, runner, three_families):
         body = self._send(client, OC_SID).json()

@@ -45,12 +45,28 @@ const STATUS_TEXT: Record<SessionStatus, string> = {
   idle: 'text-text-muted',
 };
 
-export function resumeCommand(session: WorkbenchSession): string {
+/**
+ * 在终端里接着这一场说话的那条命令 —— 复制按钮给的就是它。
+ *
+ * 每一家只认自己那一种写法：claude 是 `--resume <编号>`，codex 是 `resume <编号>`，
+ * opencode 是 `-s <编号>`。三条都与 frago 起这些会话时用的续接命令同一个写法（见各家
+ * driver 的 `_launch`），只是不带自动化用的那几个免确认开关——人自己在终端里跑，该问
+ * 的还是要问。
+ *
+ * **CoreAgent 没有这样一条命令，所以返回 null，按钮不长出来。** 它不是一个能挂在终端里
+ * 的交互程序：一轮就是一个进程，接着说话要同时给出这一轮要说的话和它当初跑的目录。
+ * 从前这一家落进 claude 那条默认分支，复制出来的是 `claude --resume core_…`——那个编号
+ * 在 claude 的档案里根本不存在，粘到终端里 claude 会拿它当新编号开一场空白会话，人以为
+ * 自己接上了原来那场。要接着说话就在页面上说，CoreAgent 那一家已经能在中栏直接回话。
+ */
+export function resumeCommand(session: WorkbenchSession): string | null {
   switch (session.family) {
     case 'opencode':
       return `opencode -s ${session.session_id}`;
     case 'codex':
       return `codex resume ${session.session_id}`;
+    case 'coreagent':
+      return null;
     default:
       return `claude --resume ${session.session_id}`;
   }
@@ -357,21 +373,25 @@ export default function SessionItem({
             <Pin size={12} fill={pinned ? 'currentColor' : 'none'} />
           </button>
         ) : null}
-        <button
-          type="button"
-          title={cmd}
-          aria-label={t('workbench.rail.copyResume')}
-          data-testid="copy-resume"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCopy(session);
-          }}
-          className={`shrink-0 rounded-[5px] p-1 transition-colors duration-200 ${
-            copied ? ACCENT_TEXT : 'text-text-muted hover:text-text-primary'
-          }`}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-        </button>
+        {/* 没有续接命令的那一家（CoreAgent）不长这颗按钮：一颗点了会把错命令放进剪贴板
+            的按钮，比没有按钮坏得多。 */}
+        {cmd ? (
+          <button
+            type="button"
+            title={cmd}
+            aria-label={t('workbench.rail.copyResume')}
+            data-testid="copy-resume"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy(session);
+            }}
+            className={`shrink-0 rounded-[5px] p-1 transition-colors duration-200 ${
+              copied ? ACCENT_TEXT : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+          </button>
+        ) : null}
       </div>
 
       {session.digest_done ? (

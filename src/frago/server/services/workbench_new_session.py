@@ -14,6 +14,20 @@
 那段空窗必须如实呈现，不能假装编号已经有了。所以这里给出的是一个**把手**
 （``handle``）：页面拿着把手来问"认到编号没有"，认到了再跳进去。
 
+## CoreAgent 是第三条路：编号当场就有，但起法完全不同
+
+上面两条路说的都是"起一个 tmux、把交互式程序挂在里面"。CoreAgent 不是那样的东西——它是
+frago 自己的内核，交一件事、跑完就退，没有可挂的 TUI，也就没有 send-keys 这回事。所以
+它的第一句话不交给 tmux，直接交给内核进程（见
+:mod:`~frago.server.services.coreagent_runner`）。
+
+编号这一头反而最省事：CoreAgent 的编号一律由发起方现发（``core_`` 前缀是会话页认出这一
+家的唯一判据），点完创建当场就知道这一场叫什么，没有等编号的空窗。
+
+它与 claude 那条路还差一件事：**不登记 webui 会话**。那张登记表是为了让扫描那一侧认出
+"这场是人从网页开的"——claude 用编号起会话时不带 slug，只能靠它对照。CoreAgent 的记录
+落在自己的根目录下，压根不走 claude 那套判人工的路。
+
 ## 把手不是会话编号，形状上就不许像
 
 把手一律带 ``webui-`` 前缀。三家的编号要么是 UUID 形状（claude/codex）、要么是 ``ses_``
@@ -132,6 +146,11 @@ def start_with_id(
     agent = workbench_agents.require_selectable(agent_type)
     directory = str(Path(cwd).expanduser()) if cwd.strip() else str(Path.home())
 
+    if agent.family == workbench_agents.COREAGENT_FAMILY:
+        # 判的是家族而不是名字：「这一场的记录属于哪一家」本来就是整个工作台的轴，而
+        # CoreAgent 与另外三家的差别正在这条轴上——它没有可挂的 TUI。
+        return _start_coreagent(agent, directory, prompt, session_id=session_id)
+
     if agent.id_origin == "caller":
         # 编号页面这边定：claude 拿 ``--session-id`` 用它新建，记录自己落到该去的地方，
         # 下一次扫描它就是一行普通会话。
@@ -173,6 +192,76 @@ def start_with_id(
     )
     thread.start()
     return launch
+
+
+def _coreagent_session_id(given: str | None) -> str:
+    """这一场 CoreAgent 会话的编号。``core_`` 前缀是会话页认出这一家的唯一判据。
+
+    调用方给的编号照它那串十六进制拼：页面把第一句话的附件落在以调用方那个编号命名的
+    目录下，两边共用同一串十六进制，事后翻 ``~/.frago/webui_uploads/`` 一眼就对得上是哪
+    一场。给的不是 UUID 形状（或压根没给）时现发一个。
+    """
+    from frago.server.services import coreagent_runner
+
+    if given:
+        if given.startswith("core_"):
+            return given
+        try:
+            return f"core_{uuid.UUID(given).hex}"
+        except (ValueError, AttributeError, TypeError):
+            pass
+    return coreagent_runner.new_session_id()
+
+
+def _start_coreagent(
+    agent: workbench_agents.WorkbenchAgent, cwd: str, prompt: str, *, session_id: str | None
+) -> PendingLaunch:
+    """起一场 CoreAgent 会话并把第一句话交给内核。见模块头："CoreAgent 是第三条路"。
+
+    **不给它起名字。** 内核认 ``--title``，定时任务那几处都用它——那些会话的开口第一句
+    是一整段说明书，二十场摆在左栏长得一模一样。人自己开的这一场恰恰相反：开口第一句就
+    是他交代的那件事，左栏拿它当标题正合适，与另外三家一致。
+
+    **也不归组。** 「本机管理」那一组装的是 frago 自己要起的活（定时任务、待办拟稿）。
+    人自己开的会话归进去，等于把他这一场埋进一堆机器活里。
+    """
+    launch = PendingLaunch(
+        handle=_coreagent_session_id(session_id),
+        agent_type=agent.agent_type,
+        display_name=agent.display_name,
+        cwd=cwd,
+    )
+    launch.session_id = launch.handle
+    with _lock:
+        _prune_locked()
+        _launches[launch.handle] = launch
+
+    thread = threading.Thread(
+        target=_run_coreagent_first_turn,
+        args=(launch, prompt),
+        name=f"webui-new-coreagent-{launch.handle[:16]}",
+        daemon=True,
+    )
+    thread.start()
+    return launch
+
+
+def _run_coreagent_first_turn(launch: PendingLaunch, prompt: str) -> None:
+    """后台跑 CoreAgent 的首轮。
+
+    走 ``send`` 而不是 ``send_queued``：起不来的那几种（内核不在、连接调不动）在写下任何
+    一行记录之前就失败了，页面上除了这里记下的这句话没有别的线索。等到了就记进 ``error``，
+    等不到（一轮真在跑）时记录流那条路自己看得见。
+    """
+    from frago.server.services import coreagent_runner
+
+    try:
+        coreagent_runner.send(launch.handle, prompt, cwd=launch.cwd)
+    except Exception as e:  # noqa: BLE001 — 起不来照实记下，页面据此停下来报
+        launch.error = f"{launch.display_name} 没起来：{e}"
+        logger.warning("新建 CoreAgent 会话失败（session=%s）", launch.handle, exc_info=True)
+    finally:
+        launch.finished = True
 
 
 def _run_first_turn(launch: PendingLaunch, prompt: str, native: bool) -> None:

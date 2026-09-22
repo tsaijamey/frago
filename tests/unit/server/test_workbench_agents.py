@@ -8,9 +8,12 @@
    是会话真的起来了、真的在干活，而页面上那一行永远不出现——比不给这个选项坏得多。
 3. **清单来自 driver 注册表**，不是一张手写名单。注册了新的一家，它自己就出现在这里；
    前端与后端各写一张，接新家的人改完 driver 会发现界面上它根本不出现。
+4. **CoreAgent 也在清单里，判据另算**。它没有 driver（没有可挂的 TUI），两道门换成了
+   "内核在不在"和"有没有连接可调"。连接一个都没配时它起来就退，而那种失败发生在写下
+   任何一行记录之前——放它进去，人点完创建跳进一场永远空白的会话。
 
-全程用假的 driver 注册表，NEVER 依赖跑用例这台机器上装了什么——那样的用例在 CI 上和在
-本机上答案不一样，而两边都说自己是对的。
+全程用假的 driver 注册表与假的内核探测，NEVER 依赖跑用例这台机器上装了什么——那样的用例
+在 CI 上和在本机上答案不一样，而两边都说自己是对的。
 """
 
 from __future__ import annotations
@@ -39,7 +42,16 @@ def _driver(agent_type: str, *, display_name: str, locate, accepts_session_id: b
 
 
 @pytest.fixture
-def registry(monkeypatch):
+def kernel(monkeypatch):
+    """内核装着、也有连接可调。CoreAgent 那一行不该跟着这台机器的状况变。"""
+    monkeypatch.setattr(
+        workbench_agents, "_kernel_binary", lambda: (True, "/home/x/.frago/bin/frago-core")
+    )
+    monkeypatch.setattr(workbench_agents, "_kernel_connection_missing", lambda: False)
+
+
+@pytest.fixture
+def registry(monkeypatch, kernel):
     """一张假注册表：装了的 claude、没装的 codex、记录读不回来的 codebuddy。"""
     drivers = {
         "claude": _driver(
@@ -112,7 +124,39 @@ class TestList:
         selectable = [a.selectable for a in agents]
         assert selectable == sorted(selectable, reverse=True)
 
-    def test_探测抛异常只算判不出不会拖垮整份清单(self, monkeypatch):
+    def test_CoreAgent在清单里且不来自注册表(self, registry):
+        """它没有 driver，注册表里一个字都没有它——清单里却必须有这一行。"""
+        assert "coreagent" not in registry
+        agents = _by_type(workbench_agents.list_agents())
+        assert agents["coreagent"].selectable is True
+        assert agents["coreagent"].family == "coreagent"
+        # 编号由发起方现发，所以点完创建当场就有，没有等编号的空窗。
+        assert agents["coreagent"].id_origin == "caller"
+
+    def test_内核没装时CoreAgent列出来但不可挑(self, registry, monkeypatch):
+        monkeypatch.setattr(workbench_agents, "_kernel_binary", lambda: (False, None))
+        agents = _by_type(workbench_agents.list_agents())
+        assert "coreagent" in agents, "没装的那一行 MUST 仍然出现在清单里"
+        assert agents["coreagent"].selectable is False
+        assert "frago init" in agents["coreagent"].reason
+
+    def test_一个连接都没配时CoreAgent不可挑(self, registry, monkeypatch):
+        """它起来就退，而那时记录里一行都没有——放进去人只会看到一片空白。"""
+        monkeypatch.setattr(workbench_agents, "_kernel_connection_missing", lambda: True)
+        agents = _by_type(workbench_agents.list_agents())
+        assert agents["coreagent"].selectable is False
+        assert "连接" in agents["coreagent"].reason
+
+    def test_读不动连接配置时当作配过了(self, monkeypatch):
+        """判不出与没配是两回事：拦下来的代价是一台配好的机器用不了。"""
+
+        def boom(*_a, **_k):
+            raise OSError("profiles.json 读不动")
+
+        monkeypatch.setattr("frago.init.profile_manager.role_view", boom, raising=False)
+        assert workbench_agents._kernel_connection_missing() is False
+
+    def test_探测抛异常只算判不出不会拖垮整份清单(self, monkeypatch, kernel):
         """一家探测失败 NEVER 让别家也列不出来——那是一次读盘失败换一个空对话框。"""
 
         def boom():
@@ -175,6 +219,8 @@ class TestDefault:
             )
         }
         monkeypatch.setattr(workbench_agents, "registered_drivers", lambda: drivers)
+        # 内核也没装，CoreAgent 那一行同样挑不了——不然这台机器上默认值就是它。
+        monkeypatch.setattr(workbench_agents, "_kernel_binary", lambda: (False, None))
         assert workbench_agents.default_agent() is None
 
 
@@ -199,7 +245,7 @@ class TestRoutes:
     def test_清单接口把挑不了的也回给界面(self, client):
         body = client.get("/api/workbench/agents").json()
         types = {a["agent_type"] for a in body["agents"]}
-        assert types == {"claude", "codex", "opencode", "codebuddy"}
+        assert types == {"claude", "coreagent", "codex", "opencode", "codebuddy"}
         codex = next(a for a in body["agents"] if a["agent_type"] == "codex")
         assert codex["selectable"] is False and codex["reason"]
 

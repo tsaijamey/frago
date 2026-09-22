@@ -645,8 +645,12 @@ export default function SessionRail({
   );
 
   const handleCopy = async (session: WorkbenchSession) => {
+    const cmd = resumeCommand(session);
+    // 这一家没有续接命令（CoreAgent）。按钮本来就不长出来，这里再拦一道：拦不住的话
+    // 剪贴板里会落进一句 "null"，人粘到终端里才发现。
+    if (!cmd) return;
     try {
-      await navigator.clipboard.writeText(resumeCommand(session));
+      await navigator.clipboard.writeText(cmd);
       setCopiedId(session.session_id);
       showToast(t('workbench.rail.copied'), 'success');
       setTimeout(() => setCopiedId((cur) => (cur === session.session_id ? null : cur)), 1500);

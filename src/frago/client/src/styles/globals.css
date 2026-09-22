@@ -7295,17 +7295,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   word-break: break-word;
 }
 
-/* 只能回看的那一场，输入区的位置上摆这一句。占位与输入区相当，免得切换会话时中栏
-   底部忽高忽低。 */
-.sw-readonly-note {
-  flex-shrink: 0;
-  padding: 16px 20px;
-  border-top: 1px solid var(--border-color);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  text-align: center;
-}
-
 /* CoreAgent 交回来的那句答复。它是这一行里唯一一段人要逐字读的内容，所以跟上面那排
    机器字段隔开、缩进对齐时间那一列，正文按正文的字号排而不是按 meta 的字号。 */
 .sc-run-answer {

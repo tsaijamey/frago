@@ -135,17 +135,46 @@ def test_整趟过程读得全含被拦下的那次(tmp_path):
     assert records[6].payload["text"] == "这一步被拦下了，我没有动手。"
 
 
-def test_清单里单独成一家且标题取那句任务(tmp_path):
+def _card_title(monkeypatch, root, session_id=_SID):
+    """左栏那一行实际摆出来的标题。清单的根目录与索引都挪到临时目录，不碰真 ``~/.frago``。"""
+    from frago.session.session_origin import OriginIndex
+
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: root)
+    monkeypatch.setattr(session_index, "COREAGENT_CACHE_FILE", root / "index.json")
+    cards = record_reader._coreagent_cards(OriginIndex(parents={}, workers=frozenset()))
+    return next(c.title for c in cards if c.session_id == session_id)
+
+
+def test_清单里单独成一家且标题取那句任务(monkeypatch, tmp_path):
     """左栏要看得出这一场是去干什么的。
 
-    CoreAgent 不给会话起名、也不让模型生成标题，所以标题只能取开口第一句——那句正是交给
-    它的任务。取不到时用会话编号，NEVER 留空串。
+    没人给这一场起过名字时，标题取开口第一句——那句正是交给它的任务。取不到时用会话
+    编号，NEVER 留空串。
     """
     _write(tmp_path)
     rows = session_index.list_session_summaries(tmp_path, tmp_path / "index.json")
     assert [r.sid for r in rows] == [_SID]
     assert rows[0].first_user == "清一下临时目录"
     assert rows[0].cwd == _CWD
+    assert rows[0].ai_title is None
+    assert _card_title(monkeypatch, tmp_path) == "清一下临时目录"
+
+
+def test_启动时起的名字盖过开口第一句(monkeypatch, tmp_path):
+    """定时任务、待办拟稿这些由程序发起的会话，开口第一句是一整段说明书。
+
+    二十场摆在左栏长得一模一样，人分不出哪行是哪条任务。所以发起方可以在启动时命名
+    （``frago-core --title``），名字写成记录里的一行，清单优先认它。
+    """
+    named = [
+        {"type": "ai-title", "aiTitle": "定时任务：清临时目录", "sessionId": _SID},
+        *_transcript(),
+    ]
+    _write(tmp_path, rows=named)
+    rows = session_index.list_session_summaries(tmp_path, tmp_path / "index.json")
+    assert rows[0].ai_title == "定时任务：清临时目录"
+    assert rows[0].first_user == "清一下临时目录", "开口第一句照旧读得到，只是不再当标题"
+    assert _card_title(monkeypatch, tmp_path) == "定时任务：清临时目录"
 
 
 def test_删掉之后清单里就没有它了(tmp_path):

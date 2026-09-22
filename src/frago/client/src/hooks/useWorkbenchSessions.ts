@@ -23,9 +23,10 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 /**
  * 会话属于哪一家。判定全在服务端做完，界面只负责显示。
  *
- * `coreagent` 是 frago 自己那个 agent——定时任务里的自然语言任务由它去办，没人在旁边
- * 看着。它的记录形状与 Claude Code 的一模一样，单列一家是因为**来源要分得开**：跟人
- * 自己开的会话混在一起就找不着了。
+ * `coreagent` 是 frago 自己那个 agent——定时任务、待办拟稿这些活儿由它去办，起头时没人
+ * 在旁边看着。它的记录形状与 Claude Code 的一模一样，单列一家是因为**来源要分得开**：
+ * 跟人自己开的会话混在一起就找不着了。这一家在中栏同样能接着说话，只是它没有挂在终端
+ * 里的交互界面，所以清单上不给「复制续接命令」那颗按钮。
  */
 export type SessionFamily = 'claude-code' | 'opencode' | 'codex' | 'coreagent';
 

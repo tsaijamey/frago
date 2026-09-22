@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from frago.server.services import (
+    coreagent_runner,
     session_send,
     workbench_agents,
     workbench_groups,
@@ -422,17 +423,20 @@ class SendRequest(BaseModel):
 
 @router.post("/workbench/sessions/{sid}/send")
 async def send_to_session(sid: str, request: SendRequest) -> dict:
-    """把这段话投进那场会话所属的 CLI（Claude Code / opencode / codex 都走这里）。
+    """把这段话投进那场会话（Claude Code / opencode / codex / CoreAgent 都走这里）。
 
-    会话已经常驻就直接投喂（上下文原样保留），冷的那些由会话池按各家自己的续接命令
-    重建之后再投。返回激活态，页面据此在冷启动那一轮显示进度条。
+    前三家：会话已经常驻就直接投喂（上下文原样保留），冷的那些由会话池按各家自己的续接
+    命令重建之后再投。CoreAgent 每一轮新起一个进程，靠把那一场的记录读回来接上前文。
+    返回激活态，页面据此在冷启动那一轮显示进度条。
 
-    四类拒绝各有各的意思，NEVER 合并成一个 500：
+    六类拒绝各有各的意思，NEVER 合并成一个 500：
 
     - 编号三家的形状都不像 → 404，这不是一场会话；
     - 记录已经不在了（用户删了那场会话）→ 409。**这一档最要紧**：驱动层遇到续不上的
       目标会自愈成裸起一场新的，那正是页面上最不该发生的事——人以为在跟原来那场说话；
     - 问不出这场会话当初跑在哪个目录 → 409，替它猜一个目录等于把 agent 挪进另一个仓库；
+    - CoreAgent 那一场还在跑 → 409，等它答完就能发；
+    - 内核不在或者 CoreAgent 没配连接 → 503，这一轮连记录都没留下，理由只能从这里带出去；
     - 一个字没有也没有附件 → 400，空轮次投进去只会白占一次冷启动。
     """
     if not request.text.strip() and not request.images and not request.documents:
@@ -457,11 +461,17 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     except (
         session_send.SessionGone,
         session_send.SessionDirectoryUnknown,
-        # 这一家的会话本来就接不上话（CoreAgent 跑完即退）。照实说，NEVER 让它落进
-        # 下面那个 500——那在页面上只剩一句"没发出去"，人会以为是出了故障。
+        # 这一家的会话接不上话。照实说，NEVER 让它落进下面那个 500——那在页面上只剩
+        # 一句"没发出去"，人会以为是出了故障。
         session_send.SessionNotResumable,
+        # CoreAgent 那一场还在跑：等它答完就能发，跟"发失败"不是一回事。
+        coreagent_runner.CoreAgentBusy,
     ) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except coreagent_runner.CoreAgentUnavailable as e:
+        # 内核不在、或者 CoreAgent 还没配连接：这一轮在会话记录里一行都没留下，
+        # 页面上除了这句话没有别的线索，所以理由必须原样带出去。
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001 — 驱动失败照实交代，NEVER 吞成"发出去了"
         raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
 

@@ -74,7 +74,12 @@ def selectable(monkeypatch):
     """让三家都可挑，免得用例的答案取决于跑它的这台机器上装了什么。"""
 
     def fake_require(agent_type: str):
-        origins = {"claude": "caller", "codex": "claimed", "opencode": "claimed"}
+        origins = {
+            "claude": "caller",
+            "codex": "claimed",
+            "opencode": "claimed",
+            "coreagent": "caller",
+        }
         if agent_type not in origins:
             raise workbench_agents.AgentUnavailable(agent_type)
         return workbench_agents.WorkbenchAgent(
@@ -114,6 +119,90 @@ def _finish(runner: FakeRunner) -> None:
     for thread in threading.enumerate():
         if thread.name.startswith(("webui-new-session-", "webui-claim-")):
             thread.join(timeout=5)
+
+
+class _KernelCalls(list):
+    """交给内核的那几轮，外加一格"这一轮让它失败"。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_with: list[Exception] = []
+
+
+class TestCoreAgent:
+    """第三条路：编号当场就有，但第一句话不交给 tmux。
+
+    它没有可挂的 TUI——交一件事、跑完就退。把它当另外三家去起，等来的是一个永远找不到
+    的 pane，而页面上只会显示"还在起"。
+    """
+
+    @pytest.fixture
+    def kernel(self, monkeypatch):
+        """记下交给内核的那一轮，不真起进程。"""
+        calls = _KernelCalls()
+
+        def fake_send(session_id, prompt, *, cwd, title=None, wait_s=None):
+            calls.append(
+                {"session_id": session_id, "prompt": prompt, "cwd": cwd, "title": title}
+            )
+            if calls.fail_with:
+                raise calls.fail_with[0]
+            return None
+
+        monkeypatch.setattr(
+            "frago.server.services.coreagent_runner.send", fake_send, raising=False
+        )
+        return calls
+
+    @staticmethod
+    def _join() -> None:
+        for thread in threading.enumerate():
+            if thread.name.startswith("webui-new-coreagent-"):
+                thread.join(timeout=5)
+
+    def test_编号当场就有且会话页认得出这一家(self, runner, selectable, kernel):
+        launch = workbench_new_session.start("coreagent", "/tmp/repo", "帮我把这件事办完")
+        self._join()
+
+        assert launch.session_id == launch.handle
+        # ``core_`` 前缀是会话页认出这一家的唯一判据，形状不对记录就永远读不回来。
+        assert record_reader.detect_family(launch.session_id) == "coreagent"
+
+    def test_第一句话交给内核而不是tmux(self, runner, selectable, kernel):
+        launch = workbench_new_session.start("coreagent", "/tmp/repo", "帮我把这件事办完")
+        self._join()
+
+        assert runner.calls == [], "CoreAgent MUST NOT 走起 tmux 那条路"
+        assert kernel[0]["session_id"] == launch.session_id
+        assert kernel[0]["prompt"] == "帮我把这件事办完"
+        assert kernel[0]["cwd"] == "/tmp/repo"
+
+    def test_不给它起名字左栏就拿开口第一句当标题(self, runner, selectable, kernel):
+        """定时任务那几处才需要 --title：它们的开口第一句是一整段说明书。
+
+        人自己开的这一场相反——开口第一句就是他交代的那件事，与另外三家一致。
+        """
+        workbench_new_session.start("coreagent", "/tmp/repo", "帮我把这件事办完")
+        self._join()
+        assert kernel[0]["title"] is None
+
+    def test_调用方给的编号照它那串十六进制拼(self, runner, selectable, kernel):
+        """页面把附件落在以调用方那个编号命名的目录下，两边得对得上是哪一场。"""
+        given = "550e8400-e29b-41d4-a716-446655440000"
+        launch = workbench_new_session.start_with_id(
+            "coreagent", "/tmp/repo", "干活", session_id=given
+        )
+        self._join()
+        assert launch.session_id == "core_550e8400e29b41d4a716446655440000"
+
+    def test_内核起不来时如实记下(self, runner, selectable, kernel):
+        """没配连接这类失败发生在写下任何一行记录之前，页面上没有别的线索。"""
+        kernel.fail_with.append(RuntimeError("还没给 CoreAgent 配连接"))
+        launch = workbench_new_session.start("coreagent", "/tmp/repo", "干活")
+        self._join()
+
+        assert launch.finished is True
+        assert "配连接" in (launch.error or "")
 
 
 class TestCallerMintsTheId:

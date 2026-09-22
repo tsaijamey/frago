@@ -1,4 +1,4 @@
-"""把工作台中栏的一句话送进那场会话所在的 CLI —— 三家共用这一条路。
+"""把工作台中栏的一句话送进那场会话 —— 四家共用这一条判落点的路。
 
 在这个模块出现之前，发送这条通道背后写死了一个 claude：会话编号原样交给 claude
 driver、工作目录只从 claude 的 jsonl 里读。codex 与 opencode 的会话编号在 claude
@@ -18,6 +18,10 @@ driver 里都有 native 分支），缺的只是"告诉 runner 这个编号是�
   不带目录，tmux 在哪儿起，agent 的工作目录就是哪儿；给错目录续接照样成功，但 agent
   看到的是另一个仓库——比起不了还难发现。
 
+第四家 CoreAgent 判落点走同一条路，投喂换一条：它没有挂在 tmux 里的交互界面，一轮就是
+一个进程，靠 ``--session-id`` 把上一场的记录读回来接上前文（见
+:mod:`~frago.server.services.coreagent_runner`）。
+
 分层：服务层。可以 import ``session/`` 与 ``agent_driver/``，NEVER import ``cli/``。
 """
 
@@ -28,6 +32,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 from frago.session import claude_sessions as claude_svc
 from frago.session import codex_store, opencode_store, record_reader
@@ -39,13 +44,19 @@ logger = logging.getLogger(__name__)
 # 家族 → 驱动这一家的 agent driver key（``frago.agent_driver.drivers`` 里注册的名字）。
 # 三家齐全：少一家就等于那一家的会话在页面上发不出去，而不是发错地方。
 #
-# **CoreAgent 不在这张表里，而且不该在。** 它不是一个能续接的 CLI：每次运行都是一个跑完
-# 就退出的子进程，没有 resume 这回事。它的会话记录可以回看，但接不上话。
+# **CoreAgent 不在这张表里。** 这张表说的是"哪一家 CLI 挂在 tmux 里等着被 send-keys"，
+# 而 CoreAgent 没有可以挂着的交互界面——它是 frago 自己的 agent 循环，一轮就是一个进程。
+# 它接着说话走另一条路（:mod:`~frago.server.services.coreagent_runner`）：把上一场的记录
+# 读回来当记忆，重新起一个进程。所以它有落点、有目录，只是没有 driver key。
 AGENT_TYPE_BY_FAMILY: dict[RecordFamily, str] = {
     "claude-code": "claude",
     "opencode": "opencode",
     "codex": "codex",
 }
+
+#: CoreAgent 那一家在落点里的 agent 名。不是 driver key（没有这个 driver），只是让日志
+#: 与页面上那一格有个名字可说。
+COREAGENT_AGENT = "coreagent"
 
 
 class SessionNotResumable(LookupError):
@@ -91,7 +102,21 @@ def _claude_cwd(session_id: str) -> str | None:
     读不到返回 None（会话还不存在，或档案损坏），调用方据此判断这是不是一场新会话。
     只读首批记录里的 cwd 字段，不整读几十 MB 的流水账。
     """
-    path = tc.locate_transcript(session_id)
+    return _recorded_cwd(tc.locate_transcript(session_id))
+
+
+def _coreagent_cwd(session_id: str) -> str | None:
+    """这场 CoreAgent 会话当初跑在哪个目录。
+
+    记录的形状与 claude 那一套一样，只是躺在 CoreAgent 自己的根目录下，所以读法共用。
+    """
+    from frago.session import coreagent_store
+
+    return _recorded_cwd(coreagent_store.find_session_file(session_id))
+
+
+def _recorded_cwd(path: Path | None) -> str | None:
+    """记录里第一处写着的工作目录。没有记录、或者记录里一行都没写就返回 None。"""
     if path is None:
         return None
     with contextlib.suppress(OSError), open(path, encoding="utf-8", errors="replace") as fh:
@@ -121,6 +146,20 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
     :class:`SessionDirectoryUnknown`（问不出目录）。
     """
     family = record_reader.detect_family(session_id)
+
+    if family == "coreagent":
+        # CoreAgent 每一轮都是一个新进程，靠把这一场的记录读回来接上前文。所以这里要的
+        # 只有一样：它当初跑在哪个目录。问不出来就不发——猜一个目录等于把它挪到另一个
+        # 仓库里接着干活。
+        recorded = _coreagent_cwd(session_id)
+        if recorded is None:
+            raise SessionGone(f"CoreAgent 那边找不到会话 {session_id} 的记录，续不上")
+        if not recorded.strip():
+            raise SessionDirectoryUnknown(
+                f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
+            )
+        return SendTarget(session_id, family, COREAGENT_AGENT, recorded, is_new=False)
+
     agent_type = AGENT_TYPE_BY_FAMILY.get(family)
     if agent_type is None:
         raise SessionNotResumable(
@@ -175,6 +214,10 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
         target.agent_type,
         target.cwd,
     )
+    if target.family == "coreagent":
+        from frago.server.services import coreagent_runner
+
+        return coreagent_runner.send(session_id, prompt, cwd=target.cwd or str(Path.home()))
     return get_runner().send(
         session_id,
         prompt,
@@ -199,6 +242,13 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
     target = resolve_target(session_id, cwd_hint=cwd_hint)
     if target.is_new and cwd_hint:
         claude_svc.register_webui_session(session_id)
+
+    if target.family == "coreagent":
+        from frago.server.services import coreagent_runner
+
+        return coreagent_runner.send_queued(
+            session_id, prompt, cwd=target.cwd or str(Path.home())
+        )
 
     def _feed() -> None:
         try:
