@@ -87,6 +87,8 @@ import type {
   ConnectionsResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyBalance,
+  WorkBuddyCatalogModel,
   WorkBuddyModel,
   WorkBuddyModelsResponse,
   RoleBinding,
@@ -204,6 +206,8 @@ export type {
   ConnectionsResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyBalance,
+  WorkBuddyCatalogModel,
   WorkBuddyModel,
   WorkBuddyModelsResponse,
   RoleBinding,
@@ -1337,11 +1341,19 @@ export async function bindRole(
 
 /**
  * What a WorkBuddy connection can be pointed at: the models the last probe found
- * answering, and whether the WorkBuddy client is logged in here. Re-probing is
- * `frago-core models probe-workbuddy`.
+ * answering (fastest first), whether the client can authenticate, how old the
+ * list is, and what the gateway has added since it was probed.
  */
 export async function getWorkbuddyModels(): Promise<WorkBuddyModelsResponse> {
   return fetchApi<WorkBuddyModelsResponse>('/settings/workbuddy-models');
+}
+
+/**
+ * Probe the WorkBuddy models now. Returns once the round has *started* — it asks
+ * every model a real question and takes minutes, so the page polls for the result.
+ */
+export async function probeWorkbuddyModels(): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/workbuddy-models/probe', { method: 'POST' });
 }
 
 export async function saveCurrentAsProfile(name: string): Promise<ApiResponse> {

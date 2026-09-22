@@ -7,6 +7,8 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     presets,
     vendorCores,
     workbuddy,
+    probingWorkbuddy,
+    startWorkbuddyProbe,
     viewMode,
     formName,
     setFormName,
@@ -49,7 +51,15 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   // frago-core that calls the gateway, so the model can only be one the last
   // probe found answering. Half the names WorkBuddy hands out do not answer.
   const isWorkbuddy = formKind === 'workbuddy';
+  // The backend hands these back cheapest-first, so the order here is the order
+  // to show. What a call costs is the thing to pick on; how fast the first token
+  // arrives is still measured, it just no longer leads.
   const usableModels = (workbuddy?.models ?? []).filter((m) => m.ok);
+  // On the client's menu but never probed. Whether they answer through the
+  // gateway is unknown until a round runs, which is why they are named rather
+  // than offered.
+  const unprobedModels = workbuddy?.catalog_new ?? [];
+  const balance = workbuddy?.balance;
 
   return (
     <div className="space-y-3">
@@ -115,15 +125,19 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
 
       {isWorkbuddy ? (
         <>
-          {!workbuddy?.logged_in && (
+          {/* A client that quit its session leaves its login file behind, so
+              "logged out" has to read differently from "never installed" —
+              they are different things for the person to go and do. */}
+          {workbuddy && workbuddy.login_state !== 'ok' && (
             <p className="text-xs text-[var(--accent-error)]">
-              {t('settings.profiles.workbuddyNotLoggedIn')}
+              {workbuddy.login_state === 'logged_out'
+                ? t('settings.profiles.workbuddyLoggedOut')
+                : t('settings.profiles.workbuddyNotLoggedIn')}
             </p>
           )}
           {usableModels.length === 0 ? (
             <p className="text-xs text-[var(--text-muted)]">
-              {t('settings.profiles.workbuddyNotProbed')}{' '}
-              <code className="font-mono">frago-core models probe-workbuddy</code>
+              {t('settings.profiles.workbuddyNotProbed')}
             </p>
           ) : (
             <div>
@@ -139,20 +153,72 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
                 {usableModels.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.id}
-                    {m.first_ms != null ? ` · ${t('settings.profiles.firstToken', { ms: m.first_ms })}` : ''}
+                    {m.credits ? ` · ${m.credits}` : ''}
                     {m.thinks ? ` · ${t('settings.profiles.thinks')}` : ''}
                   </option>
                 ))}
               </select>
-              {workbuddy?.probed_at && (
-                <p className="text-xs text-[var(--text-muted)] mt-1">
-                  {t('settings.profiles.workbuddyProbedAt', {
-                    time: workbuddy.probed_at.slice(0, 16).replace('T', ' '),
-                  })}
-                </p>
-              )}
             </div>
           )}
+
+          {/* What is left to spend. A total on its own would mislead: the lots
+              are burnt earliest-expiry-first, so the nearest date matters as
+              much as the number. */}
+          {balance && (
+            <p className="text-xs text-[var(--text-secondary)]">
+              {t('settings.profiles.workbuddyBalance', { credits: balance.remaining })}
+              {balance.expires_at && (
+                <span className="ml-2 text-[var(--text-muted)]">
+                  {t('settings.profiles.workbuddyBalanceExpiring', {
+                    credits: balance.expiring,
+                    date: balance.expires_at,
+                  })}
+                </span>
+              )}
+            </p>
+          )}
+
+          {/* Nothing refreshes the list on its own, so the page has to say how
+              old it is and what the client has added since. */}
+          <div className="rounded-md bg-[var(--bg-subtle)] px-3 py-2 space-y-1.5">
+            {workbuddy?.probed_at && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {t('settings.profiles.workbuddyProbedAtPlain', {
+                  time: workbuddy.probed_at.slice(0, 16).replace('T', ' '),
+                })}
+                {workbuddy.stale && (
+                  <span className="ml-2 text-[var(--accent-warning)]">
+                    {t('settings.profiles.workbuddyStale', { days: workbuddy.stale_after_days })}
+                  </span>
+                )}
+              </p>
+            )}
+            {unprobedModels.length > 0 && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {t('settings.profiles.workbuddyUnprobed', { count: unprobedModels.length })}
+                <span className="ml-1 font-mono break-all">
+                  {unprobedModels
+                    .map((m) => (m.credits ? `${m.id} ${m.credits}` : m.id))
+                    .join('、')}
+                </span>
+              </p>
+            )}
+            <div className="flex items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={startWorkbuddyProbe}
+                disabled={probingWorkbuddy || workbuddy?.login_state !== 'ok'}
+                className="btn btn-ghost btn-sm disabled:opacity-50"
+              >
+                {probingWorkbuddy
+                  ? t('settings.profiles.workbuddyProbing')
+                  : t('settings.profiles.workbuddyProbeNow')}
+              </button>
+              <span className="text-xs text-[var(--text-muted)]">
+                {t('settings.profiles.workbuddyProbeCost')}
+              </span>
+            </div>
+          </div>
         </>
       ) : isVendorCli ? (
         <>

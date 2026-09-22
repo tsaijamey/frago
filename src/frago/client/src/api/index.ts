@@ -1162,6 +1162,8 @@ export type {
   ProfileListResponse,
   ConnectionKind,
   ConnectionRole,
+  WorkBuddyBalance,
+  WorkBuddyCatalogModel,
   WorkBuddyModel,
   WorkBuddyModelsResponse,
   ConnectionsResponse,
@@ -1200,7 +1202,22 @@ export const getConnections = withMode(
 export const getWorkbuddyModels = withMode(
   (): Promise<httpApi.WorkBuddyModelsResponse> => httpApi.getWorkbuddyModels(),
   (): Promise<httpApi.WorkBuddyModelsResponse> =>
-    Promise.resolve({ logged_in: false, probed_at: null, models: [] }),
+    Promise.resolve({
+      logged_in: false,
+      login_state: 'no_client',
+      probed_at: null,
+      stale: false,
+      stale_after_days: 0,
+      probing: false,
+      models: [],
+      catalog_new: [],
+    }),
+);
+
+export const probeWorkbuddyModels = withMode(
+  (): Promise<ApiResponse> => httpApi.probeWorkbuddyModels(),
+  (): Promise<ApiResponse> =>
+    Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
 );
 
 export const bindRole = withMode(
