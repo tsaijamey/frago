@@ -1758,5 +1758,27 @@
     "open": "Open",
     "search": "Search",
     "close": "Close"
+  },
+  "team": {
+    "loading": "Reading this machine's team state…",
+    "empty": "No team going yet. Press Start above to get a code for your partner, or join with theirs.",
+    "setupTitle": "Tell frago where the relay is",
+    "setupWhy": "Neither personal machine has a public address, so both sides fetch from one relay on a server. That server runs frago with the vibe_teaming_relay recipe installed.",
+    "setupNote": "The password is typed at a prompt only: on the command line another account on the same machine can read it, and it lands in shell history.",
+    "open": "Start",
+    "openHint": "Start a team with the session you have open, and get a code",
+    "join": "Join",
+    "joinWithCode": "Join with a code",
+    "codePlaceholder": "code",
+    "leave": "Leave",
+    "leaveHint": "The code stays valid while your partner is still in; it dies when both have left",
+    "needSession": "Pick a session on the sessions page first — a team takes one",
+    "mine": "My side",
+    "peer": "Partner",
+    "peerPresent": "Partner is here",
+    "peerAbsent": "Partner is away",
+    "refresh": "Fetch again now",
+    "composerPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)",
+    "sendHint": "Goes into their session as a user turn carrying its prefix"
   }
 }

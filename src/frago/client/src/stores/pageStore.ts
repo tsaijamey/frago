@@ -17,6 +17,7 @@ import { pathForPage, readLocationRoute, writeLocationRoute } from '@/routes';
 export type PageType =
   | 'live'
   | 'session_workbench'
+  | 'vibe_teaming'
   | 'dashboard'
   | 'tasks'
   | 'task_detail'

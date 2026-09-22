@@ -44,6 +44,7 @@ from .init_command import init  # New environment init command
 from .profile_commands import profile_group
 from .recipe_commands import recipe_group
 from .remote_commands import remote_group
+from .team_commands import team_group
 from .reply_command import reply_cmd
 from .schedule_commands import schedule_group
 from .serve_command import serve
@@ -441,6 +442,9 @@ cli.add_command(channel_group, name="channel")
 
 # Drive another frago (server deployment) through its PA intake
 cli.add_command(remote_group, name="remote")
+
+# vibe teaming - pair this machine's session with another frago user's
+cli.add_command(team_group, name="team")
 
 # Daemon command group - supervise long-lived recipe daemons
 cli.add_command(daemon_group, name="daemon")

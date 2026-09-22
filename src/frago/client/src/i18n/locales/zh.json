@@ -1758,5 +1758,27 @@
     "open": "打开",
     "search": "搜索",
     "close": "关闭"
+  },
+  "team": {
+    "loading": "正在读本机的 team 状态…",
+    "empty": "还没有进行中的 team。上面「发起」拿一个连接码给对方，或者用对方给的码加入。",
+    "setupTitle": "先告诉 frago 中继在哪",
+    "setupWhy": "两台个人机器都没有公网入口，所以两边都朝同一台服务器上的中继要东西。那台服务器上要跑着 frago，并且装了 vibe_teaming_relay 这张配方。",
+    "setupNote": "口令只能在提示符里敲：写在命令行上，同一台机器上别的账号看得见，而且会进 shell 的历史。",
+    "open": "发起",
+    "openHint": "用当前这场会话发起一个 team，拿到连接码",
+    "join": "加入",
+    "joinWithCode": "用连接码加入",
+    "codePlaceholder": "连接码",
+    "leave": "退出",
+    "leaveHint": "只有你退出时连接码仍然有效；两边都退出，码才作废",
+    "needSession": "先到会话页挑一场会话，team 要用它参加",
+    "mine": "我这一侧",
+    "peer": "对方",
+    "peerPresent": "对方在",
+    "peerAbsent": "对方不在",
+    "refresh": "现在就重取一次",
+    "composerPlaceholder": "让对方的 agent 做什么…（⌘/Ctrl + Enter 发出）",
+    "sendHint": "投进对方的会话，它在那边是一条带前缀的用户发言"
   }
 }

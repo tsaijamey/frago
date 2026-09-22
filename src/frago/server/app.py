@@ -257,6 +257,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     orphan_cleanup = OrphanRecipeCleanupService.get_instance()
     await orphan_cleanup.start()
 
+    # Start the vibe teaming sync loop. Both sides' agents are only awake while
+    # somebody is talking to them, so something that stays awake has to fetch
+    # the peer's messages and feed them in. Idles without touching the network
+    # when this machine is in no team, which is the normal state.
+    from frago.server.services.team_sync_service import TeamSyncService
+
+    team_sync = TeamSyncService.get_instance()
+    await team_sync.start()
+
     # Deploy frago-core binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
@@ -618,6 +627,19 @@ def create_app(
 
     from frago.server.routes.workbench import router as workbench_router
     app.include_router(workbench_router, prefix="/api", tags=["workbench"])
+
+    # vibe teaming: the right-hand column of the paired view. The left column is
+    # this machine's own session and already has a route; only the peer's side
+    # has to come from the relay.
+    from frago.server.routes.team import router as team_router
+
+    app.include_router(team_router, prefix="/api", tags=["team"])
+
+    # vibe teaming 的那扇门：拿着连接码的机器从这里进来，不用登录、也不用这台机器
+    # 的 token。它不开页面，所以不会出现在任何人登录后的应用清单里。
+    from frago.server.routes.teaming import router as teaming_router
+
+    app.include_router(teaming_router, prefix="/api", tags=["teaming"])
 
     # 会话页右栏读槽位
     from frago.server.routes.session_observer import router as session_observer_router

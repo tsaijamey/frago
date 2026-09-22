@@ -126,7 +126,20 @@ ZONES = ("local", "public", "identity", "token")
 # OPTIONS is deliberately absent. A cross-origin preflight is refused with 401
 # and never reaches CORS, so a browser cannot be talked into sending a
 # non-simple cross-site request here at all.
-_ANON_POST = frozenset({("POST", "/api/auth/login")})
+_ANON_POST = frozenset({
+    ("POST", "/api/auth/login"),
+    # vibe teaming 的那扇门。
+    #
+    # 两台个人机器要隔着这台服务器互相传话，而它们手里只有一个连接码——没有这台
+    # 机器的 token（那是整台机器的钥匙，不可能发给别人），也没有这台机器上的账号
+    # （用户装完 frago 并不会为此去注册一个）。**连接码本身就是凭证**，所以这扇门
+    # 必须在登录之外单独开一条。
+    #
+    # 它与上面那条登录一样，是按「方法 + 精确路径」登记的一条，不是前缀——前缀会
+    # 让以后每一个新接口自动混进匿名面。放行的只是「能敲门」，敲开与否由路由自己
+    # 拿连接码去判，而在判之前先过限流：连接码是唯一凭证，猜是唯一的攻击方式。
+    ("POST", "/api/teaming"),
+})
 
 # What a signed-in visitor may reach beyond published pages. A closed list: a
 # new endpoint lands in the token zone by default and gets in here only by

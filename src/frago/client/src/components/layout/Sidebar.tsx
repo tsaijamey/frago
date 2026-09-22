@@ -39,6 +39,7 @@ import {
   Moon,
   Sun,
   Terminal,
+  Users,
   X,
 } from 'lucide-react';
 import { useAppStore, type PageType } from '@/stores/appStore';
@@ -71,6 +72,8 @@ const ICON = { size: 16, strokeWidth: 1.5 } as const;
 export const NAV_ITEMS: RailItem[] = [
   // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 sessions。
   { id: 'session_workbench', label: 'sessions', icon: <MessageSquare {...ICON} /> },
+  // 结对会话：两个人的会话并排摆着。紧跟 sessions，因为它就是会话的另一种看法。
+  { id: 'vibe_teaming', label: 'teaming', icon: <Users {...ICON} /> },
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
   { id: 'todos', label: 'todos', icon: <ListChecks {...ICON} /> },
@@ -83,6 +86,7 @@ export const NAV_ITEMS: RailItem[] = [
 
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
+  if (id === 'vibe_teaming') return currentPage === 'vibe_teaming';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
   if (id === 'schedules') return currentPage === 'schedules' || currentPage === 'schedule_detail';

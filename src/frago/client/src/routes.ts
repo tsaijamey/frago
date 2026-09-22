@@ -25,6 +25,7 @@ export const HOME_PAGE: PageType = 'session_workbench';
 const PAGE_SEGMENT: Record<PageType, string> = {
   live: 'live',
   session_workbench: 'sessions',
+  vibe_teaming: 'teaming',
   dashboard: 'dashboard',
   tasks: 'tasks',
   task_detail: 'tasks',

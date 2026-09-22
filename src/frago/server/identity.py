@@ -1239,6 +1239,16 @@ class Backoff:
 
 
 LOGIN_LIMIT = RateLimiter(30, 300)       # per client address: 30 attempts / 5 min
+
+# vibe teaming 那扇不用登录的门。两条限流叠着用，挡的是两种不同的人：
+#
+# TEAMING_ADDR_LIMIT 按来源地址算——一台机器拿着脚本一个个试连接码，这一条先把它
+# 按住。额度给得比登录松，因为正常的两侧每十五秒各敲一次，一分钟就有八次。
+#
+# TEAMING_CODE_LIMIT 按连接码算——换着地址试同一个码（或者一群机器分头试），
+# 地址那条就拦不住了，这一条按码收口。
+TEAMING_ADDR_LIMIT = RateLimiter(120, 60)   # per client address: 120 次 / 分钟
+TEAMING_CODE_LIMIT = RateLimiter(60, 60)    # per connect code: 60 次 / 分钟
 SIGNUP_LIMIT = RateLimiter(5, 3600)      # per client address: 5 new accounts / hour
 LOGIN_BACKOFF = Backoff()                # per account
 
@@ -1290,6 +1300,23 @@ def allow_visitor_request(identity: str | None) -> bool:
     on, matching every other limiter in this module.
     """
     return VISITOR_REQUEST_LIMIT.allow(identity)
+
+
+def allow_teaming(ip: str | None) -> bool:
+    """这个来源还能不能再敲 teaming 那扇门。
+
+    在任何验证之前调用。连接码是这扇门唯一的凭证，所以「猜」是唯一的攻击方式，
+    而挡住猜的办法只有一个：让猜的代价高。一个跑在验证之后的计数器不叫限流。
+    """
+    return TEAMING_ADDR_LIMIT.allow(ip)
+
+
+def allow_teaming_code(code: str | None) -> bool:
+    """这个连接码这一分钟还能不能再被敲。
+
+    与按地址那条一起用：换着地址试同一个码，按地址算就拦不住了。
+    """
+    return TEAMING_CODE_LIMIT.allow(code)
 
 
 def allow_login(ip: str | None) -> bool:
