@@ -175,7 +175,7 @@ class RecipeService:
     def run_recipe(
         name: str,
         params: dict[str, Any] | None = None,
-        timeout: int = 300,  # noqa: ARG004 — kept for API compatibility
+        timeout: int | None = None,
         ctx: Any = None,
         show_page: bool = True,
     ) -> dict[str, Any]:
@@ -187,7 +187,11 @@ class RecipeService:
         Args:
             name: Recipe name.
             params: Optional parameters.
-            timeout: Timeout in seconds (default 300).
+            timeout: Timeout in seconds. None means no limit, which is what
+                the runner already does with a timeout it was not given.
+                Accepted and then dropped until 2026-09-22 — a caller asking
+                for two hours and a caller asking for five minutes got the
+                same thing: a recipe nobody was timing.
             ctx: Whose run this is. ``None`` means the owner — which is right
                 for a run nobody signed in for, and wrong for every other kind.
                 Leaving it out was how a signed-in person's page read came back
@@ -206,7 +210,9 @@ class RecipeService:
             from frago.recipes.runner import RecipeRunner
 
             runner = RecipeRunner()
-            result = runner.run(name, params or {}, ctx=ctx, show_page=show_page)
+            result = runner.run(
+                name, params or {}, timeout=timeout, ctx=ctx, show_page=show_page
+            )
 
             duration_ms = int((time.time() - start_time) * 1000)
 

@@ -21,7 +21,16 @@ class RecipeRunRequest(BaseModel):
         default=None, description="Recipe parameters as key-value pairs"
     )
     timeout: int | None = Field(
-        default=None, ge=1, le=3600, description="Timeout in seconds (1-3600)"
+        default=None,
+        ge=1,
+        description=(
+            "Timeout in seconds. Omit it for no limit — that is what the "
+            "runner does with a timeout it was not given, and a long upload "
+            "or transcode legitimately outlives any ceiling worth writing "
+            "here. Capped at 3600 until 2026-09-22: the cap refused the run "
+            "outright while never bounding anything, because the sync path "
+            "dropped the value before it reached the runner."
+        ),
     )
 
 

@@ -259,5 +259,5 @@ class TestRecipeServiceRunRecipe:
         # show_page defaults to True: only a run from the recipe's own page
         # passes False, so a result's open_url does not reopen that page.
         mock_runner.run.assert_called_once_with(
-            "param-recipe", {"key": "value"}, ctx=None, show_page=True
+            "param-recipe", {"key": "value"}, timeout=None, ctx=None, show_page=True
         )
