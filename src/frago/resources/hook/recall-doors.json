@@ -1,0 +1,45 @@
+{
+  "_note": "取用核对的门表。判读点了哪几道取数入口的名、这一轮有没有走过，都按这里的写法认。两处用它：动手前那道闸在一道门都没推开时拦一次（gate），收尾闸门在有任何一道没推开时上报给模型判（stop_describe）。改这里不用重建引擎，下一轮生效。整张表读不动就等于没有这一层，不拦也不报。",
+  "_door_note": "named_regex 在判读那段话里认「有人要你走这道门」，opened_regex 在实际跑的命令里认「这道门被推开了」。两边分开写，是因为判读写的命令形状和 agent 真跑的常常不是同一种；认的是门，不是命令原文。写宽一点没关系——这一层的错误方向应该是漏报，不是误拦。",
+  "doors": [
+    {
+      "name": "book",
+      "label": "手册",
+      "named_regex": "frago\\s+book\\b",
+      "opened_regex": "frago\\s+book\\b"
+    },
+    {
+      "name": "def",
+      "label": "知识域",
+      "named_regex": "frago\\s+def\\b|frago\\s+[a-z0-9_-]+\\s+find\\b",
+      "opened_regex": "frago\\s+def\\b|frago\\s+[a-z0-9_-]+\\s+find\\b"
+    },
+    {
+      "name": "session",
+      "label": "历史会话",
+      "named_regex": "frago\\s+session\\s+search",
+      "opened_regex": "frago\\s+session\\s+search"
+    },
+    {
+      "name": "context",
+      "label": "过往产出",
+      "named_regex": "frago\\s+context\\b",
+      "opened_regex": "frago\\s+context\\b"
+    },
+    {
+      "name": "recipe",
+      "label": "现成配方",
+      "named_regex": "frago\\s+recipe\\s+(list|info)\\b",
+      "opened_regex": "frago\\s+recipe\\s+(list|info)\\b"
+    }
+  ],
+  "gate": {
+    "_note": "动手前那道闸。只在这一轮点过名的入口一道都没推开、且这次要动手改东西时拦，一轮至多一次。enabled 设 false 只关拦截，记账和收尾上报照旧；单场会话临时关用 FRAGO_RECALL_GATE=off。",
+    "enabled": true,
+    "tool_name_in": ["Edit", "Write", "MultiEdit", "NotebookEdit"],
+    "_bash_note": "只认命令开头那个词，别去认重定向本身：`… 2>/dev/null` 在只读命令里太常见，按重定向算会把大量查东西的命令误判成动手。写文件的常见形状 cat/echo/printf 重定向单列一条。",
+    "bash_regex": "(^|\\||&&|;)\\s*(rm|mv|cp|mkdir|touch|tee|install|chmod|chown|truncate|sed\\s+-i)\\s|(^|\\||&&|;)\\s*(cat|echo|printf)\\b[^|;]*>|\\bgit\\s+(commit|push|checkout|restore|reset|merge|rebase|tag|apply)\\b|\\buv\\s+(add|remove|sync|publish)\\b|\\bnpm\\s+(install|publish)\\b|\\bcargo\\s+(add|publish)\\b",
+    "reason": "【frago·先取后动】这一轮点名要查的是：{{missed}}。到这一刻一道都没查过，而你正要动手改东西。\n先把这几处取回来再改——不是走过场，是那里多半已经写着这件事该怎么做、上次为什么那样定。\n取完直接动手，不用回来报备。真判断跟这次的活无关，说一句为什么，然后照常改：这道闸一轮只拦一次，不会再挡第二回。"
+  },
+  "stop_describe": "这一轮点名要查 {{missed}}，收尾时仍然没查过"
+}

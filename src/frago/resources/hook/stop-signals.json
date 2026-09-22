@@ -1,6 +1,5 @@
 {
   "_note": "收尾闸门的信号表。闸门是不花钱的字面判断，决定这一轮值不值得问模型；命中任何一条才会去问。改这里不用重建引擎，下一轮生效。写法见 frago book stop-signals-authoring。",
-
   "signals": [
     {
       "name": "admitted",
@@ -16,7 +15,12 @@
       "name": "code_edit",
       "describe": "改了代码但整轮一条检查命令都没跑",
       "describe_when_cleared": "改了代码，本轮跑过检查命令（是否够用你判断）",
-      "tool_name_in": ["Edit", "Write", "MultiEdit", "NotebookEdit"],
+      "tool_name_in": [
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit"
+      ],
       "tool_arg_regex": "\\.(py|rs|ts|tsx|js|jsx|mjs|vue|svelte|go|java|c|cc|cpp|h|hpp|rb|sh|bash|zsh)$",
       "cleared_by_tool_regex": "\\b(pytest|tox|jest|vitest|playwright|mocha|npm\\s+(run\\s+)?(test|build|lint)|yarn\\s+(test|build)|pnpm\\s+(test|build)|cargo\\s+(test|build|check|clippy|zigbuild)|go\\s+(test|build|vet)|make\\s+(test|check|build|lint)|uv\\s+run\\s+pytest|python3?\\s+-m\\s+(pytest|py_compile|unittest)|py_compile|node\\s+--check|ruff|eslint|tsc|mypy|shellcheck|alembic\\s+upgrade|frago\\s+recipe\\s+validate|frago\\s+hook-rules\\s+validate)\\b"
     },
@@ -32,7 +36,7 @@
       "closing_text_regex": "\\|\\s*时刻\\s*\\||→[^。\\n]{1,24}→[^。\\n]{1,24}→|方案\\s*[ABC][：:｜|]|A[^|｜\\n]{0,12}[｜|]\\s*B[^|｜\\n]{0,12}[｜|]\\s*C|第[一二三四五]步[^。\\n]{0,30}第[二三四五六]步|已完成[^。\\n]{0,40}(进行中|正在)[^。\\n]{0,40}(未开始|还没)"
     }
   ],
-
   "_discard_note": "判读给出的理由里出现这些措辞就整条丢弃。它们会留在会话记录里影响后面每一轮，不只是这一轮。",
-  "discard_reason_regex": "别问用户|不要问用户|别再问|不用问用户|别管用户|无需征求|不必征求|不用等用户|别等用户|自己决定就行|别把.{0,6}推给用户|不要征求"
+  "discard_reason_regex": "别问用户|不要问用户|别再问|不用问用户|别管用户|无需征求|不必征求|不用等用户|别等用户|自己决定就行|别把.{0,6}推给用户|不要征求",
+  "_extra_signal_note": "还有一条信号不在这张表里：recall_skipped（这一轮点名要查的东西收尾时仍没查过）。它要对照的是本轮判读点了什么名，正则看不出来，所以机制在引擎里，门的认法与措辞在 ~/.frago/hook/recall-doors.json。"
 }
