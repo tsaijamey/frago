@@ -19,7 +19,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from frago.session import adapters, codex_store, opencode_store, session_index, session_origin
+from frago.session import (
+    adapters,
+    codex_store,
+    coreagent_store,
+    opencode_store,
+    session_index,
+    session_origin,
+)
 from frago.session.adapters import claude_code_records
 from frago.session.session_index import SessionStatus, TailSignals, derive_status
 from frago.session.session_origin import OriginIndex, SessionOrigin
@@ -108,8 +115,9 @@ class SessionCard:
 def detect_family(session_id: str) -> RecordFamily:
     """判出这个会话编号属于哪一家。
 
-    opencode 靠形状就能分出来：它的编号一律带 ``ses_`` 前缀，而 UUID 的字符集不含
-    下划线，两套编号规则天生撞不上。
+    opencode 与 CoreAgent 靠形状就能分出来：它们的编号一律带前缀（``ses_`` / ``core_``），
+    而 UUID 的字符集不含下划线，几套编号规则天生撞不上。CoreAgent 的记录形状虽然与
+    Claude Code 一模一样，编号却是 frago 自己发的，所以这一眼不用落盘。
 
     **Claude Code 与 codex 分不开。** codex 的会话编号也是 UUID 形状
     （``01a01a98-82e9-7013-b24e-e5e91b03995a`` 是 UUIDv7），与 Claude Code 的编号空间
@@ -126,6 +134,8 @@ def detect_family(session_id: str) -> RecordFamily:
     sid = session_id.strip()
     if sid.startswith(_OPENCODE_SESSION_PREFIX):
         return "opencode"
+    if sid.startswith(coreagent_store.SESSION_ID_PREFIX):
+        return "coreagent"
     if _UUID_SHAPE.match(sid):
         if _is_codex_session(sid):
             return "codex"
@@ -205,6 +215,48 @@ def _claude_cards(origins: OriginIndex) -> list[SessionCard]:
                 last_reply_at=_ms(row.tail.last_reply_ts),
                 # 子 agent 轨迹要翻完整场会话才数得出来，本机 1127 个文件全翻一遍是分钟
                 # 量级。清单这一层不给，展开某一场时由记录本身的 ``agent_path`` 表达。
+                agent_paths=[],
+                status=status,
+                digest_done=digest_done,
+                digest_stuck=digest_stuck,
+                origin=origins.origin_of(sid),
+                parent_session_id=origins.parent_of(sid),
+            )
+        )
+    return cards
+
+
+def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
+    """CoreAgent 那一侧的会话卡片。
+
+    字段全部走 Claude Code 那条路径——记录的形状就是那一套，只是根目录换成 CoreAgent
+    自己的，索引也另存一份（两侧的文件混在同一份缓存里，删掉一侧会连带另一侧重算）。
+
+    **标题只能取开口第一句**：CoreAgent 不给会话起名，也不让模型生成标题。开口第一句正是
+    交给它的那句任务，摆在左栏刚好答"这一场是去干什么的"。取不到时用会话编号，NEVER 留
+    空串——左栏一行没有字，人点不动它。
+    """
+    now = time.time()
+    cards: list[SessionCard] = []
+    for row in session_index.list_session_summaries(
+        coreagent_store.sessions_root(), session_index.COREAGENT_CACHE_FILE
+    ):
+        sid = row.sid
+        if not sid:
+            continue
+        last_active = _ms(row.last_active_ts) or 0
+        created = _ms(row.first_ts)
+        status = derive_status(row.tail.last_kind, row.last_active_ts, now)
+        digest_done, digest_stuck = _digests(status, row.tail)
+        cards.append(
+            SessionCard(
+                session_id=sid,
+                family="coreagent",
+                title=(row.first_user or "")[:100] or sid,
+                directory=str(row.cwd or ""),
+                created_at=created if created is not None else last_active,
+                last_active_at=last_active,
+                last_reply_at=_ms(row.tail.last_reply_ts),
                 agent_paths=[],
                 status=status,
                 digest_done=digest_done,
@@ -310,16 +362,21 @@ def sort_key(card: SessionCard) -> int:
 
 
 def list_sessions() -> list[SessionCard]:
-    """三家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
+    """四家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
 
-    一家读不出来（库不存在、目录不存在）不影响另外两家——各家的读取层各自把失败收敛成
+    一家读不出来（库不存在、目录不存在）不影响其余几家——各家的读取层各自把失败收敛成
     空列表，这里不做二次兜底，也 NEVER 因为一家没数据就整份返回空。
 
-    出身索引（人开的 / frago 派的 worker、以及谁派的）取**一份**给三家共用：三家各取
-    各的，同一批卡片会按两份数据判，界面上就会出现一场会话在这一刻是主干、下一刻是子项。
+    出身索引（人开的 / frago 派的 worker、以及谁派的）取**一份**给各家共用：各取各的，
+    同一批卡片会按两份数据判，界面上就会出现一场会话在这一刻是主干、下一刻是子项。
     """
     origins = session_origin.load_origin_index()
-    cards = _claude_cards(origins) + _opencode_cards(origins) + _codex_cards(origins)
+    cards = (
+        _claude_cards(origins)
+        + _opencode_cards(origins)
+        + _codex_cards(origins)
+        + _coreagent_cards(origins)
+    )
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
     cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
     return cards
@@ -407,8 +464,9 @@ def delete_session(session_id: str) -> DeletedSession:
     - 本机已经没有这场会话 → 抛 :class:`SessionFilesMissing`；
     - 引擎拒绝动手 → 抛 :class:`~frago.session.engine_cli.EngineCliFailed`。
 
-    **三家走两种路。** Claude Code 的记录就是一个 JSONL 加一个同名目录，位置稳定、
-    格式公开，直接删干净。另两家借引擎自己的删除命令——不是偷懒，是因为它们的会话
+    **四家走两种路。** Claude Code 与 CoreAgent 的记录就是一个 JSONL（外加 Claude Code
+    那边的同名目录），位置稳定、格式公开，直接删干净。另两家借引擎自己的删除命令——不是
+    偷懒，是因为它们的会话
     横跨多张表与多个库，对着别人的库手写 ``DELETE`` 只会留下看不见的残渣（详见
     :mod:`frago.session.engine_cli` 开头）。
 
@@ -432,6 +490,12 @@ def delete_session(session_id: str) -> DeletedSession:
         if files.directory_removed:
             removed.append(f"会话目录 {files.directory}")
         return DeletedSession(sid, family, removed, list(files.problems))
+
+    if family == "coreagent":
+        files = coreagent_store.delete_session_files(sid)
+        if files is None:
+            raise SessionFilesMissing(f"本机已经找不到这场 CoreAgent 会话的记录了：{sid}")
+        return DeletedSession(sid, family, [f"会话记录 {files.file}"], list(files.problems))
 
     if family == "opencode":
         if not opencode_store.session_exists(sid):

@@ -38,11 +38,22 @@ logger = logging.getLogger(__name__)
 
 # 家族 → 驱动这一家的 agent driver key（``frago.agent_driver.drivers`` 里注册的名字）。
 # 三家齐全：少一家就等于那一家的会话在页面上发不出去，而不是发错地方。
+#
+# **CoreAgent 不在这张表里，而且不该在。** 它不是一个能续接的 CLI：每次运行都是一个跑完
+# 就退出的子进程，没有 resume 这回事。它的会话记录可以回看，但接不上话。
 AGENT_TYPE_BY_FAMILY: dict[RecordFamily, str] = {
     "claude-code": "claude",
     "opencode": "opencode",
     "codex": "codex",
 }
+
+
+class SessionNotResumable(LookupError):
+    """这一家的会话只能回看，接不上话。
+
+    单立一档而不是让 :data:`AGENT_TYPE_BY_FAMILY` 抛 KeyError：后者在页面上是一个没头
+    没脑的 500，人只知道"发失败了"，不知道这件事本来就做不到。
+    """
 
 
 class SessionGone(LookupError):
@@ -105,11 +116,17 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
     起始目录）。已经有记录的会话一律以档案里记着的目录为准，NEVER 让页面传来的值
     覆盖它——同一场会话换个目录续接，等于把 agent 挪到另一个仓库里接着干。
 
-    抛 :class:`~frago.session.record_reader.UnknownSessionFamily`（编号形状三家都不像）、
-    :class:`SessionGone`（记录没了）、:class:`SessionDirectoryUnknown`（问不出目录）。
+    抛 :class:`~frago.session.record_reader.UnknownSessionFamily`（编号形状各家都不像）、
+    :class:`SessionNotResumable`（这一家的会话只能回看）、:class:`SessionGone`（记录没了）、
+    :class:`SessionDirectoryUnknown`（问不出目录）。
     """
     family = record_reader.detect_family(session_id)
-    agent_type = AGENT_TYPE_BY_FAMILY[family]
+    agent_type = AGENT_TYPE_BY_FAMILY.get(family)
+    if agent_type is None:
+        raise SessionNotResumable(
+            f"{family} 的会话只能回看，接不上话：它每次运行都是一个跑完就退出的进程，"
+            "没有续接这回事"
+        )
 
     if family == "claude-code":
         recorded = _claude_cwd(session_id)

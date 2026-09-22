@@ -86,7 +86,11 @@ from frago.session.adapters.claude_code_records import (  # noqa: E402
 )
 from frago.session.adapters.codex_records import CodexRecordAdapter  # noqa: E402
 from frago.session.adapters.opencode_records import OpencodeRecordAdapter  # noqa: E402
+from frago.session.coreagent_store import CoreAgentRecordAdapter  # noqa: E402
 
 register_adapter("claude-code", ClaudeCodeRecordAdapter())
 register_adapter("opencode", OpencodeRecordAdapter())
 register_adapter("codex", CodexRecordAdapter())
+# CoreAgent 的记录形状就是 Claude Code 的形状，只是落在别处，所以这一家的翻译层是上面
+# 那一份换了个根目录，不另写判据。
+register_adapter("coreagent", CoreAgentRecordAdapter())

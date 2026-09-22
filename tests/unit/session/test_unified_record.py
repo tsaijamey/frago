@@ -197,10 +197,14 @@ class TestUnifiedRecord:
         assert isinstance(record.ts, int)
 
 
-# ── 三家的判定 ──────────────────────────────────────────────────────
+# ── 各家的判定 ──────────────────────────────────────────────────────
 class TestDetectFamily:
-    def test_三家一共三家(self) -> None:
-        assert {"claude-code", "opencode", "codex"} == RECORD_FAMILIES
+    def test_一共四家(self) -> None:
+        assert {"claude-code", "opencode", "codex", "coreagent"} == RECORD_FAMILIES
+
+    def test_coreagent靠编号前缀分出来(self) -> None:
+        """CoreAgent 的编号是 frago 自己发的，判它不用落盘——与 codex 的区别正在这里。"""
+        assert detect_family("core_18d757c0c11a54180001679f0000") == "coreagent"
 
     @pytest.mark.parametrize(
         "session_id",
@@ -282,9 +286,9 @@ class TestReaderSkeleton:
         assert DEFAULT_LIMIT == 200
         assert MAX_LIMIT == 500
 
-    def test_三家的翻译层都已登记(self) -> None:
+    def test_各家的翻译层都已登记(self) -> None:
         """入口不写 if/else，家族到翻译层的对应关系全在注册表里。"""
-        assert set(list_adapters()) == {"claude-code", "opencode", "codex"}
+        assert set(list_adapters()) == {"claude-code", "opencode", "codex", "coreagent"}
 
     def test_取不到不等于没接上(self) -> None:
         """接上翻译层之后，本机没有的那场会话取回空结果，NEVER 再抛未实现。
@@ -298,8 +302,12 @@ class TestReaderSkeleton:
         assert reader.read_records(absent) == []
         assert reader.read_raw(absent, "rec-1") is None
 
-    def test_三家的会话合并后按最后活动时刻倒序(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-        """左栏只有一份清单。谁新谁在上，与它属于哪一家无关。"""
+    def test_各家的会话合并后按最后活动时刻倒序(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """左栏只有一份清单。谁新谁在上，与它属于哪一家无关。
+
+        清单字段那一路两家共用（Claude Code 与 CoreAgent 的记录形状一样），靠入参分开：
+        不带根目录的那一次是 Claude Code，带根目录的是 CoreAgent。
+        """
         import frago.session.record_reader as reader
         from frago.session.opencode_store import OpencodeSessionRow
         from frago.session.session_index import SessionSummary
@@ -307,7 +315,7 @@ class TestReaderSkeleton:
         monkeypatch.setattr(
             reader.session_index,
             "list_session_summaries",
-            lambda **_: [
+            lambda *a, **k: [] if (a or k) else [
                 SessionSummary(
                     sid="00a02979-7eb4-5c70-94ae-867c8281e3f6",
                     slug=None,
@@ -368,7 +376,8 @@ class TestSessionCardStatus:
         monkeypatch.setattr(
             reader.session_index,
             "list_session_summaries",
-            lambda **_: [self._summary(tail, last_active_ts)],
+            # 带根目录的那一次是 CoreAgent 那一侧，这组测试里它是空的。
+            lambda *a, **k: [] if (a or k) else [self._summary(tail, last_active_ts)],
         )
         monkeypatch.setattr(reader.opencode_store, "list_sessions", list)
         monkeypatch.setattr(reader.codex_store, "list_sessions", list)
@@ -445,7 +454,9 @@ class TestSessionCardStatus:
         from frago.session.session_index import TailSignals
 
         long_ago_ms = int((time.time() - 86_400) * 1000)
-        monkeypatch.setattr(reader.session_index, "list_session_summaries", lambda **_: [])
+        monkeypatch.setattr(
+            reader.session_index, "list_session_summaries", lambda *_a, **_k: []
+        )
         monkeypatch.setattr(
             reader.opencode_store,
             "list_sessions",

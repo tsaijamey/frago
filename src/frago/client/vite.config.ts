@@ -62,6 +62,10 @@ export default defineConfig({
     // mermaid 图的样式放在包内资源目录，与 frago view、frago apps 共用一份，不在前端根下。
     fs: { allow: ['.', '../resources/viewer/mermaid'] },
     // dev 下前端独立起服务，接口与推送转给本机后端，页面拿到的是真实数据。
+    //
+    // 8093 上跑的是**装好的那份 frago**，不是仓库这份。改了 Python 之后在 dev 页面上
+    // 看不出来——页面拿到的记录仍然由装好的那份翻译。要验 Python 改动，先
+    // `uv run frago server restart` 把仓库这份装成系统 frago。
     proxy: {
       '/api': { target: 'http://127.0.0.1:8093', changeOrigin: true },
       '/ws': { target: 'ws://127.0.0.1:8093', ws: true },

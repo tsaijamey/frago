@@ -69,6 +69,7 @@ from frago.session.unified_record import UnifiedRecord
 __all__ = [
     "CACHE_FILE",
     "CODEX_CACHE_FILE",
+    "COREAGENT_CACHE_FILE",
     "FRAGO_WAKE_MARKERS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
@@ -97,6 +98,12 @@ OPENCODE_CACHE_FILE = CACHE_DIR / "opencode-session-index.json"
 # 时刻"这一对——与 Claude Code 同一个道理，只是不做尾部读取：整场翻一遍是毫秒量级，
 # 而且只在真变过的那几场上发生。
 CODEX_CACHE_FILE = CACHE_DIR / "codex-session-index.json"
+
+# CoreAgent 的记录与 Claude Code 的形状一模一样，只是落在 ``~/.frago/coreagent/sessions/``
+# 下，所以提取与失效判据整套照用，**只是索引另存一份**。混进同一份缓存的话，两侧任一方
+# 的条目会被对方的整份覆盖清掉（见 ``list_session_summaries`` 末尾那句"整份覆盖"），
+# 下一次列会话就得把另一侧全部重算一遍。
+COREAGENT_CACHE_FILE = CACHE_DIR / "coreagent-session-index.json"
 
 # 提取规则改了就得让旧条目全部失效，否则会拿着按老规则算出来的字段一直用下去。
 # 版本 2 起条目里多了状态与摘要三个字段；版本 3 起多了"最后那句回复是什么时候说的"；
@@ -667,12 +674,12 @@ def _save_cache(cache_file: Path, entries: dict[str, dict[str, Any]]) -> None:
 def clear_cache(cache_file: Path | None = None) -> None:
     """删掉索引。下一次列会话会全量重算。
 
-    不指定路径时两家的索引一起删——只删一半会让下一次列会话半新半旧，比全删更难解释。
+    不指定路径时各家的索引一起删——只删一部分会让下一次列会话半新半旧，比全删更难解释。
     """
     targets = (
         [cache_file]
         if cache_file is not None
-        else [CACHE_FILE, OPENCODE_CACHE_FILE, CODEX_CACHE_FILE]
+        else [CACHE_FILE, OPENCODE_CACHE_FILE, CODEX_CACHE_FILE, COREAGENT_CACHE_FILE]
     )
     for target in targets:
         with contextlib.suppress(OSError):

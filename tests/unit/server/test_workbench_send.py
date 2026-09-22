@@ -148,13 +148,26 @@ class TestResolveTarget:
         with pytest.raises(session_send.SessionDirectoryUnknown):
             session_send.resolve_target(OC_SID)
 
-    def test_every_family_has_a_driver(self):
-        """少一家就等于那一家的会话在页面上发不出去。"""
+    def test_每个能续接的家族都有驱动(self):
+        """少一家就等于那一家的会话在页面上发不出去。
+
+        CoreAgent 不在这张表里，而且不该在——它不是一个能续接的 CLI。
+        """
         assert set(session_send.AGENT_TYPE_BY_FAMILY) == {
             "claude-code",
             "opencode",
             "codex",
         }
+
+    def test_coreagent的会话只能回看接不上话(self):
+        """它每次运行都是一个跑完就退出的进程，没有续接这回事。
+
+        这一档必须说得出口：落进 ``AGENT_TYPE_BY_FAMILY`` 的 KeyError 的话，页面上只剩
+        一个 500，人只知道"发失败了"，不知道这件事本来就做不到。
+        """
+        with pytest.raises(session_send.SessionNotResumable) as caught:
+            session_send.resolve_target("core_0e85b8c598db4a7ebc35903990c61c35")
+        assert "只能回看" in str(caught.value)
 
 
 class TestSendRoute:
@@ -175,6 +188,13 @@ class TestSendRoute:
         assert self._send(client, OC_SID).status_code == 200
         assert runner.calls[0]["agent_type"] == "opencode"
         assert runner.calls[0]["cwd"] == "/repos/opencode-repo"
+
+    def test_往coreagent会话发话回409并说清为什么(self, client, runner, three_families):
+        """不是 500。接不上话是这一家的性质，不是一次故障。"""
+        res = self._send(client, "core_0e85b8c598db4a7ebc35903990c61c35")
+        assert res.status_code == 409
+        assert "只能回看" in res.json()["detail"]
+        assert runner.calls == [], "被拒的那一句 NEVER 落到驱动上"
 
     def test_activation_state_comes_back(self, client, runner, three_families):
         body = self._send(client, OC_SID).json()

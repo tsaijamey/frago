@@ -454,7 +454,13 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         activation = await asyncio.to_thread(session_send.send, sid, prompt, cwd_hint=request.cwd)
     except UnknownSessionFamily as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    except (session_send.SessionGone, session_send.SessionDirectoryUnknown) as e:
+    except (
+        session_send.SessionGone,
+        session_send.SessionDirectoryUnknown,
+        # 这一家的会话本来就接不上话（CoreAgent 跑完即退）。照实说，NEVER 让它落进
+        # 下面那个 500——那在页面上只剩一句"没发出去"，人会以为是出了故障。
+        session_send.SessionNotResumable,
+    ) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001 — 驱动失败照实交代，NEVER 吞成"发出去了"
         raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e

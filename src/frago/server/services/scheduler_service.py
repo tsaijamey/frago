@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 # How often the scheduler checks for due recipes (seconds)
 TICK_INTERVAL = 5
 
+# 执行记录里存多长的那句答复。整份记录跟着任务一起写在 schedules.json 里、最多留 50 条，
+# 答复不设上限的话，一个爱长篇大论的任务能把那个文件撑到读写都变慢。再长的属于「去看那
+# 场会话」——会话编号就在同一条记录上。
+_ANSWER_LIMIT = 1200
+
 
 def _now_utc() -> datetime:
     return datetime.now()
@@ -517,6 +522,11 @@ class SchedulerService:
                 "notify_status": notify_result.get("status"),
                 "notify_reason": decision.reason,
                 "task_id": None,
+                # 自然语言任务这一趟 CoreAgent 开的那场会话，以及它最后答的那句话。
+                # 从前这两样都不存：执行记录只有成败、耗时、错误，任务跑完连它自己的
+                # 汇报都留不下，事后要核对它做了什么只能去比对数据前后的变化。
+                "session_id": outcome.session_id or None,
+                "answer": outcome.stdout[:_ANSWER_LIMIT] if outcome.kind == "prompt" else None,
             })
             if len(history) > 50:
                 s["history"] = history[-50:]

@@ -43,6 +43,7 @@ import logging
 import shutil
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -82,6 +83,9 @@ class RunOutcome:
     # 用来判断「跟上次比有没有变」的指纹
     digest: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
+    # CoreAgent 这一趟的会话编号。执行记录存下它，人从那条记录就能点进这一场，看它中途
+    # 执行了哪些命令、哪些被拦下。只有自然语言任务有；命令与配方不起 agent，恒为空。
+    session_id: str = ""
 
 
 # --- 执行 ------------------------------------------------------------------
@@ -193,10 +197,17 @@ def execute_prompt(
     ``--output-format json`` 让它结束时只交一行结论，成败、答案、失败类别都在里面，
     这边不用读它的过程。
 
+    **过程另有去处。** 这边这一路只收结论，但 CoreAgent 自己会把每一步写成一份会话记录
+    （落在 ``~/.frago/coreagent/sessions/``，形状与 Claude Code 的会话记录一样）。会话编号
+    在这里现发、用 ``--session-id`` 交给它，回头连同答复一起记进执行记录——人从那条记录
+    点进去，就能看见它中途执行了哪些命令、哪些被拦下。不这么做的话，任务跑完只剩成败与
+    耗时，事后要核对它到底做了什么，只能去比对数据前后的变化。
+
     ``cwd`` 是它干活的目录：命令从这里执行，项目说明（CLAUDE.md 等）也从这里往上找。
     没给就是家目录。两张工具名单原样转交，写法是 Claude Code 的权限规则。
     """
     started = time.monotonic()
+    session_id = f"core_{uuid.uuid4().hex}"
     try:
         from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
 
@@ -207,6 +218,7 @@ def execute_prompt(
         cmd = [
             str(binary), "--mode", "agent", "--output-format", "json",
             "--timeout", str(timeout), "--prompt", prompt,
+            "--session-id", session_id,
         ]
         workdir = cwd or str(Path.home())
         cmd += ["--cwd", workdir]
@@ -228,12 +240,12 @@ def execute_prompt(
     except subprocess.TimeoutExpired:
         return RunOutcome(
             ok=False, kind="prompt", error=f"CoreAgent 超时（{timeout}s 未结束）",
-            duration_ms=int((time.monotonic() - started) * 1000),
+            duration_ms=int((time.monotonic() - started) * 1000), session_id=session_id,
         )
     except Exception as e:  # noqa: BLE001
         return RunOutcome(
             ok=False, kind="prompt", error=str(e),
-            duration_ms=int((time.monotonic() - started) * 1000),
+            duration_ms=int((time.monotonic() - started) * 1000), session_id=session_id,
         )
 
     duration = int((time.monotonic() - started) * 1000)
@@ -243,7 +255,7 @@ def execute_prompt(
         return RunOutcome(
             ok=False, kind="prompt", exit_code=proc.returncode, stderr=proc.stderr or "",
             error=(detail[-1] if detail else f"CoreAgent 没交结论，退出码 {proc.returncode}")[:NOTIFY_EXCERPT_LIMIT],
-            duration_ms=duration,
+            duration_ms=duration, session_id=session_id,
         )
 
     text = str(final.get("text") or "").strip()
@@ -258,6 +270,7 @@ def execute_prompt(
         error="" if ok else str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完")[:NOTIFY_EXCERPT_LIMIT],
         digest=_digest(text),
         payload=final,
+        session_id=session_id,
     )
 
 
