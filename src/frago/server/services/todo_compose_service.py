@@ -42,6 +42,10 @@ MAX_ROUNDS = 8
 # 的余量，不是常态。到点仍未结束就是出事了，界面得拿到一个明确的失败。
 TIMEOUT_SECONDS = 120
 
+# 这一场在会话页左栏叫什么。固定一句：这条路上每一场干的是同一件事，区分靠的是时刻
+# 与内容，不靠名字。
+_SESSION_TITLE = "待办拟稿"
+
 # `frago todo add` 成功时打的那行。id 是它自己定的（由标题 slugify 而来），所以只
 # 能从输出里读，不能在这边预测。
 _CREATED_RE = re.compile(r"Created todo\s+(\S+)")
@@ -159,11 +163,22 @@ class TodoComposeService:
         TodoComposeService._require_model()
         binary = TodoComposeService._binary_path()
 
+        # 这一场的编号在这里现发：不发的话内核自己发一个，而 frago 这边就不知道它是
+        # 哪一场，既贴不上名字也归不了组。名字是固定的那一句——左栏摆开口第一句的话，
+        # 每一场摆的都是同一段说明书，二十场长得一模一样。
+        from frago.server.services import coreagent_runner
+
+        session_id = coreagent_runner.start_local_ops(_SESSION_TITLE)
+
         # 逐步输出才带得回「它执行了哪条命令」；CoreAgent 默认只打印最终答案文字。
         cmd = [
             str(binary),
             "--output-format",
             "stream-json",
+            "--session-id",
+            session_id,
+            "--title",
+            _SESSION_TITLE,
             "--prompt",
             _PROMPT.format(description=text),
             "--max-rounds",

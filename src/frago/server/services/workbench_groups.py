@@ -70,6 +70,14 @@ ASSIGN_INSTRUCTIONS = "group-assign.md"
 #: 标签名最长多少字。左栏分区标题是一行，再长就只能截断，截断后两个标签可能看起来一样。
 MAX_TAG_NAME = 40
 
+#: 程序自己发起的那些会话归这一组：定时任务、待办拟稿、外部命令审计。
+#: 名字写英文，与左栏里另外那几个组名（Frago / WebUI / Agent OS）一路。
+LOCAL_OPS_TAG = "Local Management"
+
+#: :data:`LOCAL_OPS_TAG` 那个组在存档里的记号。人把组名改了之后，程序靠这个记号仍然
+#: 找得到同一个组，不会再建一个原名的新组（见 :func:`file_under`）。
+LOCAL_OPS_KEY = "local_ops"
+
 #: 会话编号最长多少字符，与置顶名单同一道线。
 MAX_ID_LEN = 128
 
@@ -99,7 +107,7 @@ _UUID_LIKE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 # ── 存盘 ────────────────────────────────────────────────────────────
 def _empty() -> dict[str, Any]:
-    return {"tags": [], "sessions": {}, "ai_tags_created": False}
+    return {"tags": [], "sessions": {}, "ai_tags_created": False, "system_tags": {}}
 
 
 def _normalize(data: Any) -> dict[str, Any]:
@@ -120,7 +128,7 @@ def _normalize(data: Any) -> dict[str, Any]:
             continue
         if not isinstance(name, str) or not name.strip():
             continue
-        source = item.get("source") if item.get("source") in ("ai", "human") else "human"
+        source = item.get("source") if item.get("source") in ("ai", "human", "system") else "human"
         seen_ids.add(tag_id)
         tags.append({"id": tag_id, "name": name.strip(), "source": source})
 
@@ -135,10 +143,19 @@ def _normalize(data: Any) -> dict[str, Any]:
                 members.append(sid)
         sessions[tag["id"]] = members
 
+    # 程序建的那几个组的记号：指向已经不存在的标签时丢掉，下次照常重建。
+    raw_marks = data.get("system_tags") if isinstance(data.get("system_tags"), dict) else {}
+    marks = {
+        key: tag_id
+        for key, tag_id in raw_marks.items()
+        if isinstance(key, str) and isinstance(tag_id, str) and tag_id in sessions
+    }
+
     return {
         "tags": tags,
         "sessions": sessions,
         "ai_tags_created": bool(data.get("ai_tags_created")),
+        "system_tags": marks,
     }
 
 
@@ -255,6 +272,42 @@ def assign(session_id: str, tag_id: str | None) -> dict[str, Any]:
         _place(state, sid, tag_id)
         _write(state)
         return state
+
+
+def file_under(
+    session_id: str, tag_name: str, *, key: str | None = None, source: str = "system"
+) -> str | None:
+    """把这场会话放进那个组，组不存在就先建。返回组的 id；没放（已经在别处）返回 None。
+
+    给**程序自己发起的那些会话**用：定时任务、待办拟稿、外部命令审计。这些会话不是人在
+    页面上开的，人也不会一场场去归类，而它们又天天在产生——不给固定落点，左栏的未分组
+    区会被它们填满，人自己那几场反倒被埋掉。
+
+    **人的表态压过程序的默认归类。** 这场已经在某个组里了就一动不动，哪怕在的是别的组：
+    那只可能是人搬过去的（或者 AI 归过一次而人没反对），程序不该把它抢回来。
+
+    **认组按记号，其次按名字。** ``key`` 给了就把组的 id 记在存档里，人后来把组名改了，
+    下次照样落进同一个组；没有记号时按名字找（不分大小写），都没有才新建。
+    """
+    sid = session_id.strip()
+    if not sid:
+        raise ValueError("会话编号不能是空的")
+    if len(sid) > MAX_ID_LEN:
+        raise ValueError(f"会话编号太长了（超过 {MAX_ID_LEN} 字符）")
+    cleaned = _clean_name(tag_name)
+    with _LOCK:
+        state = _read()
+        if sid in _grouped_ids(state):
+            return None
+        tag_id = state["system_tags"].get(key) if key else None
+        if tag_id is None:
+            tag = _find_tag_by_name(state, cleaned) or _add_tag(state, cleaned, source)
+            tag_id = tag["id"]
+        if key:
+            state["system_tags"][key] = tag_id
+        _place(state, sid, tag_id)
+        _write(state)
+        return tag_id
 
 
 def remove_session(session_id: str) -> dict[str, Any]:
@@ -541,7 +594,12 @@ def run_ai_grouping(cards: list[CardLike], ask: AskFn | None = None) -> None:
             return
 
         # 1. 从零拟标签：一个标签都没有、且从没拟过。
-        if not state["tags"] and not state["ai_tags_created"]:
+        #
+        # 程序自己建的那个组（:data:`LOCAL_OPS_TAG`）不算"这台机器已经有标签了"：它是
+        # frago 自己为定时任务、待办这些会话准备的固定落点，第一次跑定时任务就会出现。
+        # 把它算进来，这台机器就再也等不到 AI 拟第一套标签了。
+        human_or_ai_tags = [t for t in state["tags"] if t.get("source") != "system"]
+        if not human_or_ai_tags and not state["ai_tags_created"]:
             _update_job(phase="tags")
             try:
                 names = _draft_tags(pending, ask)

@@ -43,6 +43,9 @@ _ALLOWED_TOOLS = [
 # 查一遍现有任务、确认配方或通知落点、再落一次命令，比建事务多一两步。
 MAX_ROUNDS = 10
 
+# 这一场在会话页左栏叫什么。固定一句，理由同 todo_compose_service 里那一处。
+_SESSION_TITLE = "定时任务拟稿"
+
 # `frago schedule add` 成功时打的那行。id 是服务层随机生成的，只能从输出里读。
 _CREATED_RE = re.compile(r"Schedule created:\s+(\S+)")
 
@@ -99,10 +102,20 @@ class ScheduleComposeService:
         TodoComposeService._require_model()
         binary = TodoComposeService._binary_path()
 
+        # 编号在这里现发（不发就贴不上名字、归不了组），名字固定，与「待办拟稿」同一个
+        # 道理：这条路上每一场干的都是同一件事。
+        from frago.server.services import coreagent_runner
+
+        session_id = coreagent_runner.start_local_ops(_SESSION_TITLE)
+
         cmd = [
             str(binary),
             "--output-format",
             "stream-json",
+            "--session-id",
+            session_id,
+            "--title",
+            _SESSION_TITLE,
             "--prompt",
             _PROMPT.format(description=text),
             "--max-rounds",

@@ -50,7 +50,13 @@ def tag_id(state, name):
 
 class TestStore:
     def test_一开始没有任何标签(self):
-        assert groups.load() == {"tags": [], "sessions": {}, "ai_tags_created": False}
+        assert groups.load() == {
+            "tags": [],
+            "sessions": {},
+            "ai_tags_created": False,
+            # 程序建的那几个组的记号（现在只有「本机管理」那一个）。
+            "system_tags": {},
+        }
 
     def test_人建的标签记成人建的(self):
         state = groups.create_tag("会话页")
@@ -117,11 +123,11 @@ class TestStore:
         assert state["sessions"] == {"t1": [CC_SID], "t2": [OC_SID]}
         assert [t["source"] for t in state["tags"]] == ["human", "ai"]
 
-    def test_落盘就是两部分外加一个开关(self, groups_file):
+    def test_落盘就是两部分外加一个开关和一组记号(self, groups_file):
         state = groups.create_tag("甲")
         groups.assign(CC_SID, tag_id(state, "甲"))
         on_disk = json.loads(groups_file.read_text(encoding="utf-8"))
-        assert set(on_disk) == {"tags", "sessions", "ai_tags_created"}
+        assert set(on_disk) == {"tags", "sessions", "ai_tags_created", "system_tags"}
 
 
 class TestCandidates:
@@ -242,7 +248,12 @@ class TestAiGrouping:
         groups.run_ai_grouping([Card(CC_SID, "会话页左栏分页")], lambda instructions, prompt: None)
         job = groups.job_state()
         assert job["error"] and job["running"] is False
-        assert groups.load() == {"tags": [], "sessions": {}, "ai_tags_created": False}
+        assert groups.load() == {
+            "tags": [],
+            "sessions": {},
+            "ai_tags_created": False,
+            "system_tags": {},
+        }
 
     def test_没问到时把原因报给人(self):
         def ask(instructions, prompt):

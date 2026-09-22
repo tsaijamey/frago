@@ -125,12 +125,14 @@ class TestRunNow:
         s = service.add_schedule(
             prompt="给事务分类", interval_seconds=60,
             instructions="todo-triage.md", allowed_tools=["Bash(frago todo:*)"],
-            cwd="/tmp",
+            cwd="/tmp", name="事务分类",
         )
         seen = {}
 
-        def fake_prompt(prompt, timeout, instructions, allowed, disallowed, cwd):
-            seen.update(prompt=prompt, instructions=instructions, allowed=allowed, cwd=cwd)
+        def fake_prompt(prompt, timeout, instructions, allowed, disallowed, cwd, title=None):
+            seen.update(
+                prompt=prompt, instructions=instructions, allowed=allowed, cwd=cwd, title=title
+            )
             return ex.RunOutcome(ok=True, kind="prompt", stdout="分好了", digest="d")
 
         monkeypatch.setattr(ex, "execute_prompt", fake_prompt)
@@ -141,9 +143,10 @@ class TestRunNow:
                 break
             asyncio.run(asyncio.sleep(0.02))
 
+        # 名字带着这条任务自己的名字下去：会话页左栏摆的是它，不是开口第一句那一整段。
         assert seen == {
             "prompt": "给事务分类", "instructions": "todo-triage.md",
-            "allowed": ["Bash(frago todo:*)"], "cwd": "/tmp",
+            "allowed": ["Bash(frago todo:*)"], "cwd": "/tmp", "title": "定时任务：事务分类",
         }
         row = client.get("/api/schedules").json()["schedules"][0]
         assert row["history"][-1]["status"] == "success"

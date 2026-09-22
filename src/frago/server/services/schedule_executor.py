@@ -43,7 +43,6 @@ import logging
 import shutil
 import subprocess
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -187,6 +186,7 @@ def execute_prompt(
     allowed_tools: list[str] | None = None,
     disallowed_tools: list[str] | None = None,
     cwd: str | None = None,
+    title: str | None = None,
 ) -> RunOutcome:
     """把一句自然语言任务交给 CoreAgent（frago-core 自己的 agent 循环）去办。
 
@@ -205,9 +205,15 @@ def execute_prompt(
 
     ``cwd`` 是它干活的目录：命令从这里执行，项目说明（CLAUDE.md 等）也从这里往上找。
     没给就是家目录。两张工具名单原样转交，写法是 Claude Code 的权限规则。
+
+    ``title`` 是这一场在会话页上的名字，给的是这条定时任务自己的名字。不给名字的话，
+    左栏摆的是开口第一句——同一条任务每天跑一次，二十行长得一模一样，人分不出哪行是
+    哪天的哪条。这一场同时归到「本机管理」那一组：它不是人开的会话，不该堆在未分组区。
     """
     started = time.monotonic()
-    session_id = f"core_{uuid.uuid4().hex}"
+    from frago.server.services import coreagent_runner
+
+    session_id = coreagent_runner.start_local_ops(title or "定时任务")
     try:
         from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
 
@@ -219,6 +225,7 @@ def execute_prompt(
             str(binary), "--mode", "agent", "--output-format", "json",
             "--timeout", str(timeout), "--prompt", prompt,
             "--session-id", session_id,
+            "--title", title or "定时任务",
         ]
         workdir = cwd or str(Path.home())
         cmd += ["--cwd", workdir]
@@ -522,11 +529,13 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
             execute_recipe, schedule.get("recipe") or "", schedule.get("params") or {}, timeout,
         )
     if kind == "prompt":
+        name = str(schedule.get("name") or "").strip()
         return await asyncio.to_thread(
             execute_prompt, schedule.get("prompt") or "", timeout,
             schedule.get("instructions"),
             schedule.get("allowed_tools") or [], schedule.get("disallowed_tools") or [],
             schedule.get("cwd"),
+            f"定时任务：{name}" if name else "定时任务",
         )
     raise ValueError(f"run_scheduled 不认识 kind={kind}")
 
