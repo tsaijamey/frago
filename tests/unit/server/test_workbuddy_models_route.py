@@ -318,6 +318,7 @@ def test_only_models_with_a_credit_rate_count_as_chat_models(tmp_path):
     with (
         patch.object(workbuddy_service, "PRODUCT_CONFIG", config),
         patch.object(workbuddy_service, "PRODUCT_CONFIG_SPILL", tmp_path / "nope"),
+        patch.object(workbuddy_service, "fetch_roster", return_value=None),
     ):
         offered = workbuddy_service.chat_models()
 
@@ -341,5 +342,36 @@ def test_the_menu_falls_back_to_the_newest_historical_copy(tmp_path):
     with (
         patch.object(workbuddy_service, "PRODUCT_CONFIG", tmp_path / "missing.json"),
         patch.object(workbuddy_service, "PRODUCT_CONFIG_SPILL", spill),
+        patch.object(workbuddy_service, "fetch_roster", return_value=None),
     ):
         assert sorted(workbuddy_service.chat_models()) == ["fresh"]
+
+
+def test_the_user_agent_carries_both_versions_because_the_server_keys_on_it():
+    """两段都在才拿到带倍率那份名单。只写一段回的是另一份、一个倍率都没有。"""
+    from frago.server.services import workbuddy_service
+
+    with patch.object(workbuddy_service, "local_versions", return_value=("5.5.4", "2.137.1")):
+        ua = workbuddy_service.user_agent()
+
+    assert ua == "WorkBuddy/5.5.4 CLI/2.137.1"
+
+
+def test_the_roster_comes_from_the_gateway_and_falls_back_to_the_client_cache(tmp_path):
+    """自己去要，客户端不开也能拿到最新的；要不到才退回客户端上次写下的那份。"""
+    from frago.server.services import workbuddy_service
+
+    config = tmp_path / "acc-product-config-v3.json"
+    config.write_text(
+        json.dumps({"models": [{"id": "from-cache", "credits": "x0.50"}]}), encoding="utf-8"
+    )
+    live = [{"id": "from-gateway", "credits": "x0.10"}]
+
+    with (
+        patch.object(workbuddy_service, "PRODUCT_CONFIG", config),
+        patch.object(workbuddy_service, "PRODUCT_CONFIG_SPILL", tmp_path / "nope"),
+    ):
+        with patch.object(workbuddy_service, "fetch_roster", return_value=live):
+            assert sorted(workbuddy_service.chat_models()) == ["from-gateway"]
+        with patch.object(workbuddy_service, "fetch_roster", return_value=None):
+            assert sorted(workbuddy_service.chat_models()) == ["from-cache"]

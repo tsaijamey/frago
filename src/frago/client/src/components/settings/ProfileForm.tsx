@@ -1,4 +1,4 @@
-import { Eye, EyeOff } from 'lucide-react';
+import { Coins, Eye, EyeOff, Loader2, Radar } from 'lucide-react';
 import type { ProfilesController } from './useProfiles';
 
 export default function ProfileForm({ pm }: { pm: ProfilesController }) {
@@ -117,9 +117,19 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
           </p>
         )}
         {isWorkbuddy && (
-          <p className="text-xs text-[var(--text-muted)] mt-1">
-            {t('settings.profiles.workbuddyHint')}
-          </p>
+          <>
+            <p className="text-xs text-[var(--text-muted)] mt-1">
+              {t('settings.profiles.workbuddyHint')}
+            </p>
+            {/* 选了这种连接就会花到积分。花在哪、花多少，不该等点下按钮才知道，更不该
+                跟普通说明混成同一级灰字——那等于没说。 */}
+            <div className="flex gap-2 mt-2 px-3 py-2 rounded-md bg-[var(--accent-warning-10)] border border-[var(--accent-warning)]">
+              <Coins size={16} className="shrink-0 mt-0.5 text-[var(--accent-warning)]" />
+              <p className="text-xs leading-relaxed text-[var(--text-primary)]">
+                {t('settings.profiles.workbuddyProbeNotice')}
+              </p>
+            </div>
+          </>
         )}
       </div>
 
@@ -135,7 +145,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
                 : t('settings.profiles.workbuddyNotLoggedIn')}
             </p>
           )}
-          {usableModels.length === 0 ? (
+          {usableModels.length === 0 && unprobedModels.length === 0 ? (
             <p className="text-xs text-[var(--text-muted)]">
               {t('settings.profiles.workbuddyNotProbed')}
             </p>
@@ -144,19 +154,41 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
               <label htmlFor="profile-workbuddy-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                 {t('settings.profiles.workbuddyModel')}
               </label>
+              {/* 客户端菜单上的模型全部列在这里，分两组。还没探过的也进下拉，置灰不可
+                  选、名字后面写明「要先探测」——把它们留在下拉外面的一行说明里，人在
+                  下拉里找不到那个名字，也看不出下一步该点什么。 */}
               <select
                 id="profile-workbuddy-model"
                 value={formDefaultModel}
                 onChange={(e) => setFormDefaultModel(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
               >
-                {usableModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                    {m.credits ? ` · ${m.credits}` : ''}
-                    {m.thinks ? ` · ${t('settings.profiles.thinks')}` : ''}
-                  </option>
-                ))}
+                {usableModels.length > 0 && (
+                  <optgroup label={t('settings.profiles.workbuddyGroupUsable')}>
+                    {usableModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.id}
+                        {m.credits ? ` · ${m.credits}` : ''}
+                        {m.thinks ? ` · ${t('settings.profiles.thinks')}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {unprobedModels.length > 0 && (
+                  <optgroup
+                    label={t('settings.profiles.workbuddyGroupUnprobed', {
+                      count: unprobedModels.length,
+                    })}
+                  >
+                    {unprobedModels.map((m) => (
+                      <option key={m.id} value={m.id} disabled>
+                        {m.id}
+                        {m.credits ? ` · ${m.credits}` : ''}
+                        {` — ${t('settings.profiles.workbuddyNeedsProbe')}`}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           )}
@@ -193,26 +225,32 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
                 )}
               </p>
             )}
+            {/* 名字已经在下拉里置灰列着了，这里不再重复念一遍，只说清还差几个、
+                以及点下面那个按钮就能把它们变成可选。 */}
             {unprobedModels.length > 0 && (
               <p className="text-xs text-[var(--text-muted)]">
                 {t('settings.profiles.workbuddyUnprobed', { count: unprobedModels.length })}
-                <span className="ml-1 font-mono break-all">
-                  {unprobedModels
-                    .map((m) => (m.credits ? `${m.id} ${m.credits}` : m.id))
-                    .join('、')}
-                </span>
               </p>
             )}
+            {/* 这个按钮一按就花积分，跟「保存」「取消」不是一类动作，长得也不该一样：
+                带上警示色的描边和一枚图标，把代价写在按钮自己身上，而不是旁边一行灰字。 */}
             <div className="flex items-center gap-2 pt-0.5">
               <button
                 type="button"
                 onClick={startWorkbuddyProbe}
                 disabled={probingWorkbuddy || workbuddy?.login_state !== 'ok'}
-                className="btn btn-ghost btn-sm disabled:opacity-50"
+                className="btn btn-sm inline-flex items-center gap-1.5 border border-[var(--accent-warning)] bg-[var(--accent-warning-10)] text-[var(--text-primary)] hover:bg-[var(--accent-warning)] hover:text-[var(--bg-base)] disabled:opacity-50"
               >
+                {probingWorkbuddy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Radar size={14} />
+                )}
                 {probingWorkbuddy
                   ? t('settings.profiles.workbuddyProbing')
-                  : t('settings.profiles.workbuddyProbeNow')}
+                  : t('settings.profiles.workbuddyProbeNow', {
+                      count: unprobedModels.length,
+                    })}
               </button>
               <span className="text-xs text-[var(--text-muted)]">
                 {t('settings.profiles.workbuddyProbeCost')}

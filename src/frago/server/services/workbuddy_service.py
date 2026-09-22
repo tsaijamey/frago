@@ -41,8 +41,22 @@ logger = logging.getLogger(__name__)
 #: 账务与鉴权那一侧。签到、续期、余额都在这儿；模型网关是另一个 host。
 ACCOUNT_BASE = "https://www.workbuddy.cn"
 
-#: 请求必须带客户端身份头，缺了对面会拒（400 或 403 code 10085）。
+#: 模型网关那一侧。名单从这儿取。
+GATEWAY_BASE = "https://copilot.tencent.com"
+
+#: 版本号在本机读不到时的兜底：桌面应用的版本，与它自带命令行的版本。
+#: 两段都要，缺一段服务端就换另一份名单发——见 fetch_roster。
+DESKTOP_VERSION = "5.5.4"
 CLIENT_VERSION = "2.137.1"
+
+#: 取名单的超时。它挂在「打开设置页」上，宁可取不到、退回本地缓存，也不让页面等。
+ROSTER_TIMEOUT_SECONDS = 8
+
+#: 名单缓存多久。反复开关表单不该每次都发请求。
+ROSTER_CACHE_SECONDS = 300
+
+_roster_cache: tuple[float, list[dict[str, Any]]] | None = None
+_roster_lock = threading.Lock()
 
 #: 余额那一次请求的超时。它挂在「打开设置页」上，宁可取不到也不能让页面等。
 BALANCE_TIMEOUT_SECONDS = 8
@@ -63,12 +77,40 @@ _balance_cache: tuple[float, dict[str, Any] | None] | None = None
 _balance_lock = threading.Lock()
 
 
+def local_versions() -> tuple[str, str]:
+    """本机客户端的两个版本号：桌面应用的、它自带命令行的。读不到就用兜底值。"""
+    desktop = DESKTOP_VERSION
+    plist = Path("/Applications/WorkBuddy.app/Contents/Info.plist")
+    if plist.is_file():
+        try:
+            out = subprocess.run(
+                ["defaults", "read", str(plist), "CFBundleShortVersionString"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                desktop = out.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return desktop, CLIENT_VERSION
+
+
+def user_agent() -> str:
+    """服务端按这一行决定发哪一份模型名单。
+
+    实测：两段都在（`WorkBuddy/5.5.4 CLI/2.137.1`）回的是客户端菜单那 52 个、带倍率；
+    只写桌面版本或只写命令行版本，回的都是另一份 37 个、一个倍率都没有；整个头不带，
+    一个模型都不回。所以这一行不是装饰，是选名单的开关。
+    """
+    desktop, cli = local_versions()
+    return f"WorkBuddy/{desktop} CLI/{cli}"
+
+
 def headers(login: dict[str, str]) -> dict[str, str]:
     """一次请求要带的全部头。企业账号多带两个，有域名的多带一个——少了对面会拒。"""
     out = {
         "Authorization": f"Bearer {login['access_token']}",
         "X-User-Id": login["uid"],
-        "User-Agent": f"WorkBuddy/{CLIENT_VERSION}",
+        "User-Agent": user_agent(),
         "X-IDE-Type": "WorkBuddy",
         "X-IDE-Name": "WorkBuddy",
         "X-Product": "WorkBuddy",
@@ -86,11 +128,47 @@ def headers(login: dict[str, str]) -> dict[str, str]:
 # ── 能选哪些模型 ────────────────────────────────────────────────────────────
 
 
-def _load_product_config() -> list[dict[str, Any]]:
-    """客户端缓存的那份名单。读不到就空着。
+def fetch_roster(*, use_cache: bool = True) -> list[dict[str, Any]] | None:
+    """直接向网关要那份名单。None = 没登录或取不到。
 
-    客户端只在运行时写它，本机没有别的东西会更新——客户端一直不开，名单就一直是旧的。
-    那不是这里能解决的事，如实空着比编一份出来好。
+    客户端拿的就是这一份，区别只在请求头——见 user_agent。自己去要而不是读客户端写下的
+    缓存，好处是客户端不开也能拿到最新的；取不到时退回缓存，那份至少是客户端上次写的。
+    """
+    global _roster_cache
+
+    if use_cache and _roster_cache and time.time() - _roster_cache[0] < ROSTER_CACHE_SECONDS:
+        return _roster_cache[1]
+
+    from frago.init.profile_manager import workbuddy_login
+
+    login = workbuddy_login()
+    if not login:
+        return None
+    try:
+        payload = requests.get(
+            f"{GATEWAY_BASE}/v3/config",
+            headers=headers(login),
+            timeout=ROSTER_TIMEOUT_SECONDS,
+        ).json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.debug("取 WorkBuddy 模型名单失败：%s", exc)
+        return None
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        logger.debug("WorkBuddy 模型名单返回 code=%s", (payload or {}).get("code"))
+        return None
+    models = (payload.get("data") or {}).get("models")
+    if not isinstance(models, list):
+        return None
+    models = [m for m in models if isinstance(m, dict) and m.get("id")]
+    with _roster_lock:
+        _roster_cache = (time.time(), models)
+    return models
+
+
+def _load_product_config() -> list[dict[str, Any]]:
+    """客户端缓存的那份名单，取不到网络时的兜底。
+
+    客户端只在运行时写它，本机没有别的东西会更新——客户端一直不开，这份就一直是旧的。
     """
     paths = [PRODUCT_CONFIG]
     if PRODUCT_CONFIG_SPILL.is_dir():
@@ -123,13 +201,16 @@ def credits_value(raw: Any) -> float | None:
 
 
 def chat_models() -> dict[str, dict[str, Any]]:
-    """客户端菜单里能选的那些模型，按 id 索引。
+    """客户端菜单里能选的那些模型，按 id 索引。先问网关，取不到退回客户端缓存。
 
     判据是带倍率。不带倍率的是补全模型、小模型和图像模型——把它们列进下拉，
     等于让人从一堆根本不是用来对话的东西里挑。
     """
+    roster = fetch_roster()
+    if roster is None:
+        roster = _load_product_config()
     out: dict[str, dict[str, Any]] = {}
-    for m in _load_product_config():
+    for m in roster:
         value = credits_value(m.get("credits"))
         if value is None:
             continue
