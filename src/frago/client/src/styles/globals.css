@@ -728,6 +728,21 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: none;
 }
 
+/* 进过的页面切走时藏起来但不卸载，页面里没保存的输入、选到哪一行、滚到哪儿都还在
+   （见 PageHost）。这一层要替原来那个"页面根元素直接挂在 .main-content 下面"的位
+   置：高度撑满、自身是个纵向弹性盒子，页面里的 flex-1 与 page-scroll 照旧生效。 */
+.page-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 上面那个 display:flex 会压过 hidden 属性自带的隐藏，这里补回来。 */
+.page-slot[hidden] {
+  display: none;
+}
+
 .recipe-app-bar {
   display: flex;
   align-items: center;

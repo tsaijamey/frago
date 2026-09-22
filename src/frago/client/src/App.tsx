@@ -8,19 +8,7 @@ import { useRecipeAppOpen } from '@/hooks/useRecipeAppOpen';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
-
-// Pages
-import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
-import RecipeList from '@/components/recipes/RecipeList';
-import RecipeDetail from '@/components/recipes/RecipeDetail';
-import DataRepoPage from '@/components/dataRepo/DataRepoPage';
-import SkillList from '@/components/skills/SkillList';
-import SettingsPage from '@/components/settings/SettingsPage';
-import NewTaskPage from '@/components/newTask/NewTaskPage';
-import { WorkspacePage } from '@/components/workspace';
-import { TodoPage } from '@/components/todos';
-import { SchedulePage } from '@/components/schedules';
-import { GuidePage } from '@/components/guide';
+import PageHost from '@/components/layout/PageHost';
 
 // UI
 import Toast from '@/components/ui/Toast';
@@ -30,7 +18,7 @@ import ReconnectOverlay from '@/components/ui/ReconnectOverlay';
 import { InitWizardPage } from '@/components/init';
 
 function App() {
-  const { currentPage, loadConfig, toasts } = useAppStore();
+  const { loadConfig, toasts } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
   const [initCompleted, setInitCompleted] = useState<boolean | null>(null);
 
@@ -100,43 +88,6 @@ function App() {
     console.log('App mounted, apiReady:', apiReady);
   }, [apiReady]);
 
-  // Render content based on current page
-  // Default page is 'live' (timeline, set in appStore)
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'session_workbench':
-        return <SessionWorkbenchPage />;
-      case 'recipes':
-        return <RecipeList />;
-      case 'recipe_detail':
-        return <RecipeDetail />;
-      case 'recipe_app':
-        // 配方页面由主布局里的常驻宿主渲染，切走也不卸载（见 RecipeAppHost）。
-        return null;
-      case 'data_repo':
-        return <DataRepoPage />;
-      case 'todos':
-      case 'todo_detail':
-        return <TodoPage />;
-      case 'schedules':
-      case 'schedule_detail':
-        return <SchedulePage />;
-      case 'skills':
-        return <SkillList />;
-      case 'guide':
-        return <GuidePage />;
-      case 'settings':
-        return <SettingsPage />;
-      case 'newTask':
-        return <NewTaskPage />;
-      case 'workspace':
-      case 'project_detail':
-        return <WorkspacePage />;
-      default:
-        return <SessionWorkbenchPage />;
-    }
-  };
-
   // Show init wizard page if not completed
   if (initCompleted === false) {
     return (
@@ -155,7 +106,9 @@ function App() {
   // Show main app if init completed
   return (
     <>
-      <MainLayout>{renderPage()}</MainLayout>
+      <MainLayout>
+        <PageHost />
+      </MainLayout>
 
       {/* Toast container */}
       {toasts.length > 0 && (
