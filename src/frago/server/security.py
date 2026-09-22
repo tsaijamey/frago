@@ -700,6 +700,45 @@ def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None
     return True, identity, False
 
 
+def _locked_out_locally(scope: dict, identity: str | None) -> bool:
+    """本机这条路上，这张 cookie 欠着一次改密，而它要开的正是被锁住的东西。
+
+    local 区的意思是「这台机器的主人，无条件放行」，所以它不问身份分支——而
+    `must_change_password` 这道锁只写在身份分支里。后果是主人浏览器里躺着的一张
+    被重置账号的 cookie，走这条路把身份页面整张打开了：`/app/<页面>/` 回 200，
+    正文照发。`/api/auth/pages` 当初已经在路由里把这道锁又写了一遍，漏的是页面
+    本身、它的 config.json、它的 data/ 和它的 run。
+
+    拦的只有身份模式的页面。公开的门口必须还能开，不然那个人没有地方去换掉手里
+    那段口令；工作台、`/api/status` 和不带 cookie 的 CLI 也照旧——那些是主人
+    的请求，不是那个账号的。
+
+    返回 True 时中间件不发 local 通行证，这个请求照普通访客再走一遍：身份分支那
+    边拒，浏览器被送到门口。判定仍然只有一处,不是两份各自解释同一个请求。
+    """
+    if identity is None or scope.get("type") != "http":
+        return False
+    path = scope.get("path") or ""
+    match = _APP_PATH.match(path) if _path_is_safe(path) else None
+    if not match:
+        return False
+
+    from frago.server.identity import must_change_password
+
+    try:
+        if not must_change_password(identity):
+            return False
+        from frago.recipes.publish import MODE_IDENTITY, published_entry
+
+        entry = published_entry(match.group("name"))
+    except Exception:
+        # 账号表或发布名单读不出来，是这台机器自己的故障,不该让主人的页面全变 500。
+        # 身份分支那边遇到同一份坏数据会拒；这里放行，坏数据修好前后行为一致可查。
+        logger.exception("could not tell whether %s still owes a password change", identity)
+        return False
+    return entry is not None and entry["mode"] == MODE_IDENTITY
+
+
 def _anon_post_allowed(scope: dict) -> bool:
     """Whether this is the one POST an anonymous caller may make.
 
@@ -909,7 +948,7 @@ class AccessZoneMiddleware:
         proxied = _is_proxied(headers)
         identity = _resolve_identity(headers)
 
-        if _peer_is_trusted(scope) and not proxied:
+        if _peer_is_trusted(scope) and not proxied and not _locked_out_locally(scope, identity):
             # The owner's own machine. Their `?key=` still chooses the slot, so
             # no `frago_slot` is set here on purpose.
             self._admit(scope, "local", None, identity)

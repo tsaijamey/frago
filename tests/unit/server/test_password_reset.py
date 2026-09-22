@@ -213,6 +213,70 @@ class TestTheRouteSaysItAgainForTheOwnersOwnBrowser:
         assert response.json()["error"] == "password_reset_required"
 
 
+class TestTheLockHoldsOnTheOwnersOwnPath:
+    """本机那条路上，那张欠着改密的 cookie 也开不了页面。
+
+    上面那个类补的只是 `/api/auth/pages` 一个口。页面本身、它的 config.json、
+    它的 data/ 和它的 run 都没补——local 区不问身份分支，所以走这条路时
+    `/app/<页面>/` 回的是 200，正文照发。现象和访客那边完全相反,而两边握的是
+    同一张 cookie。
+
+    发现于 2026-09-22：主人在自己机器上用临时口令登进去，页面照样打开。
+    """
+
+    @pytest.fixture
+    def locked_owner(self, site):
+        """本机来的一个客户端，手里是被重置账号的活会话。"""
+        visitor = TestClient(site, client=VISITOR)
+        _sign_in(visitor, FIRST_PASSWORD)
+        temporary = ident.issue_temporary_password(ident.find_user_by_email(EMAIL).id)
+        owner = TestClient(site, client=OWNER, follow_redirects=False)
+        _sign_in(owner, temporary)
+        return owner, temporary
+
+    def test_the_page_itself_is_shut(self, locked_owner):
+        owner, _ = locked_owner
+        assert owner.get(f"/app/{MINE}/").status_code == 401
+
+    def test_the_pages_own_config_is_shut(self, locked_owner):
+        """页面挡住了、config.json 没挡,等于把这张页面的形状和这个人的槽位名
+        交给一个还握着主人给出去的口令的会话。"""
+        owner, _ = locked_owner
+        assert owner.get(f"/app/{MINE}/config.json").status_code == 401
+
+    def test_the_pages_data_is_shut(self, locked_owner):
+        owner, _ = locked_owner
+        assert owner.get(f"/app/{MINE}/data/anything.json").status_code == 401
+
+    def test_running_the_recipe_is_shut(self, locked_owner):
+        """读挡住、写没挡是最坏的一种:这个会话按不动界面,却能让配方替它干活。"""
+        owner, _ = locked_owner
+        assert owner.post(f"/app/{MINE}/run", json={}).status_code == 401
+
+    def test_the_door_still_opens(self, locked_owner):
+        """锁的目的是逼他去改密码,所以改密码的那扇门必须还开着——
+        公开的门口连在 local 区都关掉的话,他没有任何地方可去。"""
+        owner, _ = locked_owner
+        assert owner.get(f"/app/{PORTAL}/").status_code == 200
+
+    def test_changing_it_brings_the_page_back(self, locked_owner):
+        owner, temporary = locked_owner
+        assert owner.post(
+            "/api/auth/password",
+            json={"current_password": temporary, "new_password": CHOSEN_PASSWORD},
+        ).status_code == 200
+        assert owner.get(f"/app/{MINE}/").status_code == 200
+
+    def test_a_cookieless_request_from_here_is_untouched(self, site):
+        """拦的是那张 cookie,不是这条路。主人的 CLI 和工作台不带 cookie,
+        它们看见的必须和从前一模一样。"""
+        visitor = TestClient(site, client=VISITOR)
+        _sign_in(visitor, FIRST_PASSWORD)
+        ident.issue_temporary_password(ident.find_user_by_email(EMAIL).id)
+        bare = TestClient(site, client=OWNER)
+        assert bare.get(f"/app/{MINE}/").status_code == 200
+
+
 class TestTheOwnerIsNotLockedOut:
     def test_the_owners_own_machine_still_reaches_the_server(self, site):
         """锁的是那个访客账号，不是这台机器。主人的浏览器里可能正好躺着

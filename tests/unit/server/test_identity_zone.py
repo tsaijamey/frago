@@ -89,9 +89,19 @@ class TestTheClosedList:
         assert security._MUST_CHANGE_ENDPOINTS < security._IDENTITY_ENDPOINTS
         assert not any(path.endswith("/pages") for _, path in security._MUST_CHANGE_ENDPOINTS)
 
-    def test_the_anonymous_list_holds_exactly_one_door(self):
-        """攻击面按「匿名能触发的动作」数。多一个就要重新论证一次。"""
-        assert set(security._ANON_POST) == {("POST", "/api/auth/login")}
+    def test_the_anonymous_list_holds_only_the_doors_that_were_argued_for(self):
+        """攻击面按「匿名能触发的动作」数。多一个就要重新论证一次。
+
+        两扇，各自的理由写在 `_ANON_POST` 上：登录是唯一的入口；vibe teaming 那扇
+        收的是连接码，而两台个人机器手里只有连接码——没有这台机器的 token，也没有
+        这台机器上的账号，所以它不可能走登录那扇。
+
+        这条断言是一张闸门，不是一个计数:再加一扇就要先在那里写清为什么,然后才
+        改这里。"""
+        assert set(security._ANON_POST) == {
+            ("POST", "/api/auth/login"),
+            ("POST", "/api/teaming"),
+        }
 
     def test_the_anonymous_list_does_not_contain_a_preflight(self):
         assert not any(method == "OPTIONS" for method, _ in security._ANON_POST)
