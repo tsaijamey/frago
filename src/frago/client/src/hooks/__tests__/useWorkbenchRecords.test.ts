@@ -355,6 +355,36 @@ describe('送达信号：输入区靠它放行', () => {
     await waitFor(() => expect(result.current.deliveredAt).not.toBeNull(), { timeout: 4000 });
   });
 
+  it('带图的插话，卡上原文后面接着图片路径，也要能算送达', async () => {
+    // 服务端把落盘路径接在人打的那句后面再投进去，插话卡记下的是接过之后的全文。
+    // 要求一字不差的话，信封一直挂着"已发送"，发送按钮也放不回来。
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? {
+              ...record(3),
+              ts: Date.now(),
+              kind: 'context.inject',
+              payload: {
+                channel: 'queued_command',
+                body: '插一句\n\n[附带图片，请用读文件的工具逐一打开查看]:\n/tmp/a.png',
+                queue_state: 'absorbed',
+              },
+            }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => result.current.markSent('插一句', 1));
+    landed = true;
+    await waitFor(() => expect(result.current.deliveredAt).not.toBeNull(), { timeout: 4000 });
+    expect(result.current.outbound).toHaveLength(0);
+  });
+
   it('流里的老记录不算送达——同一句话重发一遍不许被上一轮那条顶掉', async () => {
     vi.stubGlobal(
       'fetch',

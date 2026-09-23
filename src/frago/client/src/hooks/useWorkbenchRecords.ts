@@ -134,7 +134,8 @@ function landingOf(r: WorkbenchRecord, msg: OutboundMessage): Landing | null {
   }
   if (r.kind === 'context.inject' && r.payload.channel === 'queued_command') {
     const body = typeof r.payload.body === 'string' ? r.payload.body : '';
-    if (mine && flatten(body) !== mine) return null;
+    // 带附件的插话，卡上的原文同样被服务端接上了图片路径，所以也只比开头。
+    if (mine && !flatten(body).startsWith(mine)) return null;
     // 插话卡自己带着下场：还在队列里的才算"已入队列"，已并入或已发出的那一轮已经开始，
     // 信封该退场了。
     return r.payload.queue_state === 'pending' ? 'queued' : 'drained';
