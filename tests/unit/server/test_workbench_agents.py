@@ -99,7 +99,8 @@ class TestList:
         assert "codex" in agents, "没装的那一家 MUST 仍然出现在清单里"
         assert agents["codex"].selectable is False
         assert agents["codex"].installed is False
-        assert "没找到" in agents["codex"].reason
+        assert agents["codex"].reason == workbench_agents.REASON_NOT_INSTALLED
+        assert "没找到" in workbench_agents.reason_text(agents["codex"].reason)
 
     def test_记录读不进工作台的那一家不可挑(self, registry):
         """codebuddy 装着、也驱动得动，但它的记录落在工作台读不到的地方。
@@ -110,7 +111,8 @@ class TestList:
         assert agents["codebuddy"].installed is True
         assert agents["codebuddy"].selectable is False
         assert agents["codebuddy"].family is None
-        assert "读不进工作台" in agents["codebuddy"].reason
+        assert agents["codebuddy"].reason == workbench_agents.REASON_NOT_READABLE
+        assert "读不进工作台" in workbench_agents.reason_text(agents["codebuddy"].reason)
 
     def test_编号谁来定出自driver而不是名字(self, registry):
         """新建时等不等编号是两种交互，判据 MUST 来自 driver。"""
@@ -138,14 +140,16 @@ class TestList:
         agents = _by_type(workbench_agents.list_agents())
         assert "coreagent" in agents, "没装的那一行 MUST 仍然出现在清单里"
         assert agents["coreagent"].selectable is False
-        assert "frago init" in agents["coreagent"].reason
+        assert agents["coreagent"].reason == workbench_agents.REASON_NO_KERNEL
+        assert "frago init" in workbench_agents.reason_text(agents["coreagent"].reason)
 
     def test_一个连接都没配时CoreAgent不可挑(self, registry, monkeypatch):
         """它起来就退，而那时记录里一行都没有——放进去人只会看到一片空白。"""
         monkeypatch.setattr(workbench_agents, "_kernel_connection_missing", lambda: True)
         agents = _by_type(workbench_agents.list_agents())
         assert agents["coreagent"].selectable is False
-        assert "连接" in agents["coreagent"].reason
+        assert agents["coreagent"].reason == workbench_agents.REASON_NO_CONNECTION
+        assert "连接" in workbench_agents.reason_text(agents["coreagent"].reason)
 
     def test_读不动连接配置时当作配过了(self, monkeypatch):
         """判不出与没配是两回事：拦下来的代价是一台配好的机器用不了。"""
@@ -179,7 +183,8 @@ class TestList:
         assert agents["claude"].installed is None
         # 判不出**放行**：拦下来的代价是一台装了的机器用不了，放行只是启动那一刻报错。
         assert agents["claude"].selectable is True
-        assert "判不出" in agents["claude"].reason
+        assert agents["claude"].reason == workbench_agents.REASON_UNKNOWN_INSTALL
+        assert "判不出" in workbench_agents.reason_text(agents["claude"].reason)
         assert agents["opencode"].selectable is True
 
     def test_新注册一家就自己出现在清单里(self, registry, monkeypatch):
@@ -189,7 +194,9 @@ class TestList:
         assert "newcomer" not in before
 
         registry["newcomer"] = _driver(
-            "newcomer", display_name="Newcomer", locate=lambda: "/bin/newcomer",
+            "newcomer",
+            display_name="Newcomer",
+            locate=lambda: "/bin/newcomer",
             accepts_session_id=True,
         )
         after = _by_type(workbench_agents.list_agents())
