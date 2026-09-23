@@ -45,7 +45,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Mail, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
+import { GitBranchPlus, Loader2, Mail, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import NoiseField from '@/components/ui/NoiseField';
@@ -86,6 +86,29 @@ export interface ComposerProps {
    * 接着说什么，在框里一眼分得开。
    */
   quote?: { text: string; at: number } | null;
+  /**
+   * 这场此刻的上下文水位（最后一道用量刻度报的提示词大小）。null = 还没读到刻度。
+   *
+   * 「交接到新会话」只在它到了 {@link HANDOFF_MIN_CONTEXT} 才放开：没那么长的会话换场只会
+   * 丢细节，换不来速度。
+   */
+  contextTokens?: number | null;
+  /** 按下「交接到新会话」。不给就不画那个按钮。 */
+  onHandoff?: () => void;
+  /** 交接请求还在路上。 */
+  handingOff?: boolean;
+}
+
+/**
+ * 上下文到多大才放开「交接到新会话」。
+ *
+ * 取的是人自己的体感：到三十万上下，模型明显变慢、变笨，换一场接着做才划算。
+ */
+export const HANDOFF_MIN_CONTEXT = 300_000;
+
+/** 悬停说明里那种 k 为单位的写法：312k。 */
+function formatK(n: number): string {
+  return `${Math.round(n / 1000)}k`;
 }
 
 /**
@@ -206,6 +229,9 @@ export default function Composer({
   deliveredAt,
   outbound = [],
   quote = null,
+  contextTokens = null,
+  onHandoff,
+  handingOff = false,
 }: ComposerProps) {
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
@@ -512,6 +538,37 @@ export default function Composer({
               <Plus size={16} strokeWidth={1.5} />
             </button>
             <span className="flex-1" />
+            {/* 「交接到新会话」挨着发送，但比发送低一档：发送是实心品牌色，它只描品牌色
+                的边、字用品牌色，底是透明的——看得出是件正经事，又不跟发送抢眼。上下文
+                不到三十万时整颗置灰，悬停说明还差多少。 */}
+            {onHandoff && !blocked ? (
+              <button
+                type="button"
+                data-testid="composer-handoff"
+                disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
+                onClick={onHandoff}
+                title={
+                  contextTokens === null
+                    ? t('workbench.composer.handoffLockedUnknown', {
+                        limit: formatK(HANDOFF_MIN_CONTEXT),
+                      })
+                    : contextTokens < HANDOFF_MIN_CONTEXT
+                      ? t('workbench.composer.handoffLocked', {
+                          limit: formatK(HANDOFF_MIN_CONTEXT),
+                          now: formatK(contextTokens),
+                        })
+                      : t('workbench.composer.handoffHint')
+                }
+                className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+              >
+                {handingOff ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <GitBranchPlus size={13} />
+                )}
+                {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
+              </button>
+            ) : null}
             <button
               type="button"
               data-testid="composer-send"

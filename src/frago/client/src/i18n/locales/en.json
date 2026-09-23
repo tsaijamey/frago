@@ -1591,7 +1591,15 @@
       "sent": "Sent",
       "queued": "Queued",
       "attachmentsOnly": "(attachments only, no text)",
-      "outboundAttachments": "with {{n}} attachment(s)"
+      "outboundAttachments": "with {{n}} attachment(s)",
+      "handoff": "Hand to new session",
+      "handingOff": "Handing off",
+      "handoffDone": "This session is now \"{{old}}\", the new one \"{{new}}\"",
+      "handoffHint": "Start a new session that picks up from here: same agent, same folder, this session's progress handed over",
+      "handoffLocked": "Only worth switching once context reaches {{limit}} (now {{now}})",
+      "handoffLockedUnknown": "No context usage read for this session yet; only worth switching at {{limit}}",
+      "handoffLaunchText": "Taking over \"{{title}}\"",
+      "handoffFailed": "Handoff didn't go out: {{reason}}"
     },
     "newSession": {
       "title": "New session",

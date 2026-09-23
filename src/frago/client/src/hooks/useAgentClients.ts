@@ -101,6 +101,35 @@ export async function createSession(input: {
   return (await res.json()) as PendingLaunch;
 }
 
+/** 一次交接的回执：新会话照常是一次新建，外加第一句话与两场各起的名字。 */
+export interface HandoffLaunch extends PendingLaunch {
+  /** 服务端拼好、已经投给新会话的第一句话。 */
+  text: string;
+  /** 原会话改成的名字。 */
+  old_title: string;
+  /** 新会话的名字。 */
+  new_title: string;
+}
+
+/**
+ * 把这场会话交接给一场新会话：同一家、同一目录，第一句话由服务端拼好。
+ *
+ * 拼什么、怎么起名都在服务端（`POST /api/workbench/sessions/{sid}/handoff`），这一侧只拿
+ * 回执接上启动流程，NEVER 在页面上另拼一份。
+ */
+export async function handoffSession(sessionId: string): Promise<HandoffLaunch> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/handoff`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('workbench.errors.createFailed', { status: res.status }))
+    );
+  }
+  return (await res.json()) as HandoffLaunch;
+}
+
 export async function fetchPending(handle: string): Promise<PendingLaunch> {
   const res = await fetch(
     `${API_BASE_URL}/api/workbench/sessions/pending/${encodeURIComponent(handle)}`

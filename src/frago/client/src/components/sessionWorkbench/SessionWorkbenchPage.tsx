@@ -16,7 +16,7 @@
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -31,12 +31,15 @@ import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { usePageStore } from '@/stores/pageStore';
+import { useAppStore } from '@/stores/appStore';
+import { handoffSession } from '@/hooks/useAgentClients';
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
   const selectedId = usePageStore((s) => s.workbenchSessionId);
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const { t } = useTranslation();
+  const showToast = useAppStore((s) => s.showToast);
   const sessions = useWorkbenchSessions();
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
   const report = useReportWidth();
@@ -91,6 +94,50 @@ export default function SessionWorkbenchPage() {
 
   // 中栏此刻该让给启动面板：正在起，而且人没有把中栏切到别的会话上去。
   const showLaunch = Boolean(launch) && (selectedId === null || selectedId === launch?.sessionId);
+
+  /**
+   * 这场此刻的上下文水位：主会话最后一道用量刻度报的提示词大小。
+   *
+   * 只认主会话的刻度——子 agent 各有各的上下文，它们的水位说的不是这一场。手上这批记录
+   * 是别的会话的（切换那一拍）就当还没读到。
+   */
+  const contextTokens = useMemo(() => {
+    if (recordsSessionId !== selectedId) return null;
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const r = records[i];
+      if (r.kind !== 'usage.tick' || r.agent_path.length) continue;
+      const v = r.payload.context_tokens;
+      return typeof v === 'number' ? v : null;
+    }
+    return null;
+  }, [records, recordsSessionId, selectedId]);
+
+  /**
+   * 交接到新会话。拼第一句话、起名都在服务端；这里只把回执当成一次普通的新建接过去——
+   * 左栏「正在启动」、认到编号自动切过去，都走新建会话那一条路。
+   */
+  const [handingOff, setHandingOff] = useState(false);
+  const handoff = async () => {
+    if (!selectedId || handingOff) return;
+    setHandingOff(true);
+    try {
+      const pending = await handoffSession(selectedId);
+      setWorkbenchSessionId(null);
+      begin(pending, t('workbench.composer.handoffLaunchText', { title: pending.old_title }));
+      void sessions.reload();
+      showToast(
+        t('workbench.composer.handoffDone', { old: pending.old_title, new: pending.new_title }),
+        'success'
+      );
+    } catch (e) {
+      showToast(
+        t('workbench.composer.handoffFailed', { reason: e instanceof Error ? e.message : String(e) }),
+        'error'
+      );
+    } finally {
+      setHandingOff(false);
+    }
+  };
 
   return (
     <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[232px_minmax(0,1fr)_var(--report-w,280px)] tablet:grid-cols-[232px_minmax(0,1fr)] phone:grid-cols-1 desktop:grid-cols-[302px_minmax(0,1fr)_var(--report-w,346px)]"
@@ -203,6 +250,9 @@ export default function SessionWorkbenchPage() {
           deliveredAt={deliveredAt}
           outbound={outbound}
           quote={quote}
+          contextTokens={contextTokens}
+          onHandoff={() => void handoff()}
+          handingOff={handingOff}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();

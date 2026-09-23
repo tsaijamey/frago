@@ -1591,7 +1591,15 @@
       "sent": "已发送",
       "queued": "已入队列",
       "attachmentsOnly": "（只有附件，没打字）",
-      "outboundAttachments": "含 {{n}} 个附件"
+      "outboundAttachments": "含 {{n}} 个附件",
+      "handoff": "交接到新会话",
+      "handingOff": "交接中",
+      "handoffDone": "这场改名为「{{old}}」，新的那场叫「{{new}}」",
+      "handoffHint": "开一场新会话接着做：同一个 agent、同一个目录，这场的进展自动交给它",
+      "handoffLocked": "上下文到 {{limit}} 才需要换场（现在 {{now}}）",
+      "handoffLockedUnknown": "还没读到这场的上下文用量，到 {{limit}} 才需要换场",
+      "handoffLaunchText": "接手「{{title}}」",
+      "handoffFailed": "没交接出去：{{reason}}"
     },
     "newSession": {
       "title": "新建会话",

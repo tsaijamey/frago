@@ -481,3 +481,40 @@ describe('Composer 小人的走法', () => {
     }
   });
 });
+
+describe('交接到新会话', () => {
+  it('上下文不到三十万时置灰，悬停说明还差多少', () => {
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={120_000} onHandoff={NOOP} />);
+    const btn = screen.getByTestId('composer-handoff');
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    expect(btn.getAttribute('title')).toBe('上下文到 300k 才需要换场（现在 120k）');
+  });
+
+  it('还没读到用量刻度时也置灰', () => {
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={null} onHandoff={NOOP} />);
+    expect((screen.getByTestId('composer-handoff') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('到了三十万放开，按下去交给页面', () => {
+    const onHandoff = vi.fn();
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={300_000} onHandoff={onHandoff} />);
+    const btn = screen.getByTestId('composer-handoff');
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(btn);
+    expect(onHandoff).toHaveBeenCalledTimes(1);
+  });
+
+  it('比发送低一档：只描边不填色', () => {
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
+    const handoff = screen.getByTestId('composer-handoff').className;
+    const send = screen.getByTestId('composer-send').className;
+    expect(send).toContain('bg-accent-primary');
+    expect(handoff).not.toMatch(/(^|\s)bg-accent-primary(\s|$)/);
+    expect(handoff).toContain('border-border-accent');
+  });
+
+  it('一场都没选时不画', () => {
+    render(<Composer sessionId={null} family={null} onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
+    expect(screen.queryByTestId('composer-handoff')).toBeNull();
+  });
+});

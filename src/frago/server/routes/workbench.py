@@ -28,8 +28,10 @@ from frago.server.services import (
     session_send,
     workbench_agents,
     workbench_groups,
+    workbench_handoff,
     workbench_new_session,
     workbench_pins,
+    workbench_titles,
     workbench_views,
 )
 from frago.server.services.webui_uploads import (
@@ -69,11 +71,16 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     )
     # ``tmux_name``：开着时那个 tmux 会话的名字，页面「关闭 tmux 会话」的弹窗原样摆出来，
     # 命名规则不在前端再抄一份。没开着为 null。
+    # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
+    titles = await asyncio.to_thread(workbench_titles.load)
     rows = []
     for card in cards:
         name = tmux_name_for(card.session_id)
         alive = name in open_names
-        rows.append({**asdict(card), "in_tmux": alive, "tmux_name": name if alive else None})
+        row = {**asdict(card), "in_tmux": alive, "tmux_name": name if alive else None}
+        if card.session_id in titles:
+            row["title"] = titles[card.session_id]
+        rows.append(row)
     return rows
 
 
@@ -172,6 +179,52 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     return _launch_payload(launch)
+
+
+@router.post("/workbench/sessions/{sid}/handoff", status_code=201)
+async def handoff_workbench_session(sid: str) -> dict[str, Any]:
+    """把这场会话交接给一场新会话：同一家、同一目录，第一句话由服务端拼好。
+
+    拼法见 :mod:`~frago.server.services.workbench_handoff`。起会话走的是与新建会话完全
+    相同的一条路，回的形状也相同——页面接过去就是一次普通的「正在启动」。原会话不动。
+
+    拒绝的几档与发送那条接口同义：编号不认 404；记录没了、问不出目录、接不上话、还没有
+    任何记录 409；那一家此刻挑不了 400。
+
+    **两场各起一个带序号的名字**（原会话「甲 #1」、新会话「甲 #2」），不然左栏并排两场
+    说同一件事的会话，人分不清。起名只写 frago 自己那份名字表，原会话的档案一个字不动。
+    编号要等认领的那两家（codex / opencode），新会话的名字等认到编号再起。
+    """
+    try:
+        handoff = await asyncio.to_thread(workbench_handoff.compose, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (
+        session_send.SessionGone,
+        session_send.SessionDirectoryUnknown,
+        session_send.SessionNotResumable,
+        workbench_handoff.HandoffUnavailable,
+    ) as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    try:
+        launch = await asyncio.to_thread(
+            workbench_new_session.start_with_id,
+            handoff.agent_type,
+            handoff.cwd,
+            handoff.text,
+            session_id=str(uuid.uuid4()),
+        )
+    except workbench_agents.AgentUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    old_title, new_title = await asyncio.to_thread(workbench_handoff.name_pair, sid, launch)
+    return {
+        **_launch_payload(launch),
+        "text": handoff.text,
+        "old_title": old_title,
+        "new_title": new_title,
+    }
 
 
 @router.get("/workbench/sessions/pending/{handle}")
