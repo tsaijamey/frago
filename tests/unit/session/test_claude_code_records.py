@@ -104,6 +104,9 @@ def test_rule01_pointer_standing_types_all_surface() -> None:
     ]
     assert records[0].payload["to"] == "u1"
     assert records[1].payload["to"] == "remove 先停一下"
+    # 插话队列那一行把动作与原文分开给：界面拿原文对信封、按动作推下场。
+    assert records[1].payload["operation"] == "remove"
+    assert records[1].payload["content"] == "先停一下"
     assert records[3].payload["to"] == "src/a.py"
     assert records[4].payload["to"] == "cse_1"
     assert records[5].payload["to"] == "https://example.test/pr/1"

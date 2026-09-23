@@ -72,6 +72,7 @@ export const AWAIT_REPLY_CEILING_MS = 180_000;
  *
  * 成为真正的一轮之后（用户发言落盘，或那张插话卡的下场从"还在队列里"变成"已并入"
  * 「已发出」）它就退出这个清单——那时它在记录流里有自己的位置，不需要信封替它站着。
+ * 插话队列里出现它的入队行也算：那一行在记录流里写着原文与下场，「对话」档也摆它。
  */
 export type OutboundState = 'sent' | 'queued';
 
@@ -87,7 +88,12 @@ export interface OutboundMessage {
   state: OutboundState;
 }
 
-/** 这条记录是不是那条消息的落地形态，以及落成了哪一种。 */
+/**
+ * 这条记录是不是那条消息的落地形态，以及落成了哪一种。
+ *
+ * `drained` 泛指"它已经在记录流里有自己的位置了"：成为一轮、插话卡已并入或已发出，
+ * 以及插话队列里出现了它的入队行。
+ */
 type Landing = 'say' | 'queued' | 'drained';
 
 /** 比对前把空白抹平：档案里那份带着换行与缩进，人打的那份没有。 */
@@ -115,6 +121,56 @@ function unwrapCommandEcho(record: WorkbenchRecord, text: string): string | null
   return flatten(`${name[1]} ${args?.[1] ?? ''}`);
 }
 
+/** 插话队列那一行做了什么、带着哪句话。不是那一类记录返回 null。 */
+export function queueOpOf(r: WorkbenchRecord): { op: string; content: string } | null {
+  if (r.kind !== 'session.state' || r.payload.field !== 'queue-operation') return null;
+  const op = typeof r.payload.operation === 'string' ? r.payload.operation : '';
+  if (op) {
+    const content = typeof r.payload.content === 'string' ? r.payload.content : '';
+    return { op, content: content.trim() };
+  }
+  // 早先翻好的记录只有 `to` 那一句（"动作 原文"），从那里拆回来。
+  const to = typeof r.payload.to === 'string' ? r.payload.to : '';
+  const cut = to.indexOf(' ');
+  return cut < 0 ? { op: to, content: '' } : { op: to.slice(0, cut), content: to.slice(cut + 1).trim() };
+}
+
+/** 入队的那句话后来怎么了。三种下场与插话卡同名。 */
+export type QueueOutcome = 'pending' | 'absorbed' | 'submitted';
+
+/**
+ * 按手头这批记录推每一句入队的话走到了哪。键是入队那一行的记录编号。
+ *
+ * **不能用服务端翻译时写下的下场。** 入队那一行在 agent 还忙着的时候就推过来了，那一刻
+ * 它的下场只能是"还在队列里"；后来被并入或发出，服务端整份重翻，可页面按编号去重，已经
+ * 拿在手上的那一行不会被换掉。所以下场每次都从后面跟着的出队、移除两类行重新推一遍。
+ *
+ * 规则与服务端推插话卡下场的那一套一致：移除带原文，按原文摘（已并入）；出队不带原文，
+ * 按先进先出弹队首（作为独立一轮发出）。
+ */
+export function queueOutcomes(records: WorkbenchRecord[]): Map<string, QueueOutcome> {
+  const out = new Map<string, QueueOutcome>();
+  const waiting: { id: string; content: string }[] = [];
+  for (const r of records) {
+    const q = queueOpOf(r);
+    if (!q) continue;
+    if (q.op === 'enqueue') {
+      waiting.push({ id: r.id, content: q.content });
+      out.set(r.id, 'pending');
+    } else if (q.op === 'remove') {
+      const at = q.content ? waiting.findIndex((w) => w.content === q.content) : 0;
+      if (at >= 0 && waiting[at]) {
+        out.set(waiting[at].id, 'absorbed');
+        waiting.splice(at, 1);
+      }
+    } else if (q.op === 'dequeue') {
+      const head = waiting.shift();
+      if (head) out.set(head.id, 'submitted');
+    }
+  }
+  return out;
+}
+
 /**
  * 拿一条记录对一条待落地的消息。对不上返回 null。
  *
@@ -139,6 +195,14 @@ function landingOf(r: WorkbenchRecord, msg: OutboundMessage): Landing | null {
     // 插话卡自己带着下场：还在队列里的才算"已入队列"，已并入或已发出的那一轮已经开始，
     // 信封该退场了。
     return r.payload.queue_state === 'pending' ? 'queued' : 'drained';
+  }
+  // agent 正忙时，那句话最早的痕迹是插话队列里的入队那一行，插话卡要等它被并入或发出
+  // 才落盘——中间可能隔一分钟。入队行一出现，那句话就已经在这场会话里了：它由记录流里
+  // 那一行接着站（原文与下场都写在那儿），信封退场。
+  const q = queueOpOf(r);
+  if (q && q.op === 'enqueue') {
+    if (mine && !flatten(q.content).startsWith(mine)) return null;
+    return 'drained';
   }
   return null;
 }

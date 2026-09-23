@@ -86,6 +86,70 @@ describe('lensOf 镜头归属', () => {
   });
 });
 
+describe('插话队列的入队行', () => {
+  const enqueue = (id: string, seq: number, content: string) =>
+    record({
+      id,
+      seq,
+      kind: 'session.state',
+      payload: {
+        field: 'queue-operation',
+        pointer: true,
+        to: `enqueue ${content}`,
+        operation: 'enqueue',
+        content,
+      },
+    });
+  const streamProps = (records: WorkbenchRecord[]) => ({
+    sessionId: SID,
+    records,
+    loading: false,
+    loadingOlder: false,
+    hasOlder: false,
+    error: null,
+    onLoadOlder: NOOP,
+  });
+
+  it('还在排的那句在「对话」档摆出原文与下场；「全部」档同样摆', () => {
+    const records = [
+      record({ id: 'u', seq: 0, kind: 'user.say', payload: { text: '开工' } }),
+      enqueue('q', 1, '本机需要管理什么state？'),
+    ];
+    render(<RecordStream {...streamProps(records)} />);
+    expect(screen.getByTestId('lens-talk').textContent).toContain('2');
+    expect(screen.getByText('本机需要管理什么state？')).toBeTruthy();
+    expect(screen.getByText(i18n.t('workbench.record.queueState.pending'))).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('lens-all'));
+    expect(screen.getByText('本机需要管理什么state？')).toBeTruthy();
+  });
+
+  it('出队之后退出「对话」档——那一轮的「你说」接着站，同一句话不摆两遍', () => {
+    const records = [
+      enqueue('q', 0, '插一句'),
+      record({
+        id: 'd',
+        seq: 1,
+        kind: 'session.state',
+        payload: { field: 'queue-operation', pointer: true, to: 'dequeue', operation: 'dequeue', content: '' },
+      }),
+      record({ id: 'u', seq: 2, kind: 'user.say', payload: { text: '插一句' } }),
+    ];
+    render(<RecordStream {...streamProps(records)} />);
+    expect(screen.getByTestId('lens-talk').textContent).toContain('1');
+
+    fireEvent.click(screen.getByTestId('lens-all'));
+    expect(screen.getByText(i18n.t('workbench.record.queueState.submitted'))).toBeTruthy();
+  });
+
+  it('后台任务通知也走这条队列，它不是人说的话，不进对话', () => {
+    const r = record({
+      ...enqueue('n', 0, '<task-notification>x</task-notification>'),
+    });
+    expect(lensOf({ ...r, payload: { ...r.payload, queue_state: 'pending' } })).toBe('system');
+  });
+});
+
 describe('talkView 对话档捎带用量', () => {
   it('两段对话之间只留最后一条用量，工具不进来', () => {
     const tick = (id: string, seq: number) =>

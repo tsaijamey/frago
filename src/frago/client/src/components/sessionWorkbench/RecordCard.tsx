@@ -57,6 +57,7 @@ import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import {
   fetchWorkbenchRaw,
+  queueOpOf,
   type RecordKind,
   type WorkbenchRecord,
 } from '@/hooks/useWorkbenchRecords';
@@ -1570,7 +1571,60 @@ const STATE_FIELD_KEY: Record<string, string> = {
   'frame-link': 'workbench.record.stateField.frameLink',
 };
 
+/**
+ * 插话队列里入队的那一行 —— 人在 agent 忙时打进去的那句话，最早落进会话的样子。
+ *
+ * 输入区的信封见到这一行就退场，此后那句话只在这里看得见，所以它不能再是一行灰字：
+ * 原文完整摊开，旁边写下场。还在排的时候按插话卡的样子摆（对话档也摆它）；已经被并入或
+ * 发出，后面自有插话卡或那一轮的「你说」接着站，这里退成一行记账，原文与下场照旧写着。
+ * 下场由记录流按后面的出队、移除行推出来（见 `queueOutcomes`）。
+ */
+function QueuedInput({ record, content }: { record: WorkbenchRecord; content: string }) {
+  const { t } = useTranslation();
+  const raw = str(record.payload, 'queue_state');
+  const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
+  const chip = (
+    <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
+  );
+  if (raw === 'pending' || !raw) {
+    return (
+      <TextShell
+        record={record}
+        icon={<CornerDownRight size={12} />}
+        label={t('workbench.record.stateField.queueOperation')}
+        tone={`${ACCENT_BG} ${ACCENT_RING}`}
+        meta={chip}
+      >
+        <Prose text={content} />
+      </TextShell>
+    );
+  }
+  return (
+    <SystemShell
+      record={record}
+      icon={<CornerDownRight size={11} className="text-text-muted" />}
+      label={
+        <span className="text-text-secondary">
+          {t('workbench.record.stateField.queueOperation')}
+        </span>
+      }
+      meta={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[10px]">{chip}</span>
+          <span className="truncate text-text-secondary">{content}</span>
+        </span>
+      }
+    />
+  );
+}
+
 function SessionState({ record }: { record: WorkbenchRecord }) {
+  const q = queueOpOf(record);
+  if (q?.op === 'enqueue' && q.content) return <QueuedInput record={record} content={q.content} />;
+  return <StateRow record={record} />;
+}
+
+function StateRow({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const from = str(p, 'from');

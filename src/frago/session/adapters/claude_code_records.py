@@ -956,18 +956,25 @@ class _Translator:
     def _rule_01_standing(self, index: int, rtype: str, row: dict[str, Any]) -> None:
         if rtype in _STANDING_POINTER_TYPES:
             self._stats.pointer_states += 1
+            payload: dict[str, Any] = {
+                "field": rtype,
+                "source_type": rtype,
+                "from": None,
+                "to": _pointer_summary(rtype, row),
+                # 坐标行不是"某个值从 A 变成了 B"，它没有前值可言。标出来，好让界面
+                # 知道别按状态变更那套摆法去找箭头。
+                "pointer": True,
+            }
+            if rtype == "queue-operation":
+                # 入队那一行是人刚插的那句话最早的痕迹：agent 还在忙，插话卡要等它被并入
+                # 或发出才落盘。动作与原文分开给，界面拿原文去对输入区的信封、按动作推下场，
+                # 不必再从 ``to`` 那一句里拆。
+                payload["operation"] = str(row.get("operation") or "")
+                payload["content"] = str(row.get("content") or "").strip()
             self._emit(
                 row,
                 "session.state",
-                {
-                    "field": rtype,
-                    "source_type": rtype,
-                    "from": None,
-                    "to": _pointer_summary(rtype, row),
-                    # 坐标行不是"某个值从 A 变成了 B"，它没有前值可言。标出来，好让界面
-                    # 知道别按状态变更那套摆法去找箭头。
-                    "pointer": True,
-                },
+                payload,
                 record_id=f"{self._session_id}#state-{index}",
             )
             return

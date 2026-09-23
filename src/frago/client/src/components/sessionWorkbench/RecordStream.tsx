@@ -36,7 +36,7 @@ import { useTranslation } from 'react-i18next';
 import { Inbox, Loader2 } from 'lucide-react';
 import RecordCard, { KIND_GROUP } from './RecordCard';
 import SelectionQuote from './SelectionQuote';
-import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import { queueOpOf, queueOutcomes, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -68,7 +68,35 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     if (record.payload.source === 'task-notification') return 'talk';
     return record.payload.source === 'hook' ? 'hook' : 'system';
   }
+  // 插话队列里还在排的那句话归**对话**：agent 正忙，那句话此刻只有入队这一行痕迹，
+  // 输入区的信封见到它就退场了，对话里再不摆，人就找不到自己刚说的话。等它被并入或
+  // 发出，插话卡或那一轮的「你说」会接着站，这一行退回系统档，免得同一句话摆两遍。
+  // 后台任务的通知也走这条队列，那不是人说的话，不进对话。
+  const q = queueOpOf(record);
+  if (
+    q?.op === 'enqueue' &&
+    record.payload.queue_state === 'pending' &&
+    !q.content.startsWith('<task-notification>')
+  ) {
+    return 'talk';
+  }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
+
+/**
+ * 给入队的那几行写上此刻的下场（见 `queueOutcomes`）。其余记录原样返回，一条不复制。
+ *
+ * 镜头归属与卡上那枚下场标签都照这个值走，所以必须在分档之前做。
+ */
+export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const outcomes = queueOutcomes(records);
+  if (!outcomes.size) return records;
+  return records.map((r) => {
+    const state = outcomes.get(r.id);
+    return state && r.payload.queue_state !== state
+      ? { ...r, payload: { ...r.payload, queue_state: state } }
+      : r;
+  });
 }
 
 /**
@@ -196,26 +224,28 @@ export default function RecordStream({
   const [lens, setLens] = useState<StreamLens>('talk');
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
+  const resolved = useMemo(() => withQueueOutcomes(records), [records]);
+
   const counts = useMemo(() => {
     const tally: Record<StreamLens, number> = {
-      all: records.length,
+      all: resolved.length,
       talk: 0,
       hook: 0,
       tool: 0,
       system: 0,
     };
-    for (const record of records) tally[lensOf(record)] += 1;
+    for (const record of resolved) tally[lensOf(record)] += 1;
     return tally;
-  }, [records]);
+  }, [resolved]);
 
   const visible = useMemo(
     () =>
       lens === 'all'
-        ? records
+        ? resolved
         : lens === 'talk'
-          ? talkView(records)
-          : records.filter((r) => lensOf(r) === lens),
-    [records, lens]
+          ? talkView(resolved)
+          : resolved.filter((r) => lensOf(r) === lens),
+    [resolved, lens]
   );
 
   const groups = useMemo(() => groupRecords(visible), [visible]);

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PAGE_SIZE,
   POLL_INTERVAL_MS,
+  queueOutcomes,
   useWorkbenchRecords,
   type WorkbenchRecord,
 } from '../useWorkbenchRecords';
@@ -498,6 +499,66 @@ describe('信封：已发送 → 已入队列 → 成为一轮', () => {
     await waitFor(() => expect(result.current.outbound).toHaveLength(0), { timeout: 4000 });
   });
 
+  it('插话队列里出现了它的入队行，信封退场——那一行接着替它站', async () => {
+    // agent 正忙时，入队行先落盘，插话卡要等它被并入或发出才出现，中间可能隔一分钟。
+    // 形状取自真会话档案：动作 enqueue，原文原样。
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? {
+              ...record(3),
+              ts: Date.now(),
+              kind: 'session.state',
+              payload: {
+                field: 'queue-operation',
+                to: 'enqueue 本机需要管理什么state？',
+                pointer: true,
+                operation: 'enqueue',
+                content: '本机需要管理什么state？',
+              },
+            }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => {
+      result.current.markSent('本机需要管理什么state？');
+    });
+    expect(result.current.outbound).toHaveLength(1);
+    landed = true;
+    await waitFor(() => expect(result.current.outbound).toHaveLength(0), { timeout: 4000 });
+    expect(result.current.deliveredAt).not.toBeNull();
+  });
+
+  it('早先翻好的入队行只有「动作 原文」一句，照样认得出', async () => {
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? {
+              ...record(3),
+              ts: Date.now(),
+              kind: 'session.state',
+              payload: { field: 'queue-operation', to: 'enqueue 插一句', pointer: true },
+            }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => {
+      result.current.markSent('插一句');
+    });
+    landed = true;
+    await waitFor(() => expect(result.current.outbound).toHaveLength(0), { timeout: 4000 });
+  });
+
   it('agent 当时闲着，它直接成了用户发言：信封同样退场', async () => {
     let landed = false;
     vi.stubGlobal(
@@ -667,6 +728,29 @@ describe('信封：已发送 → 已入队列 → 成为一轮', () => {
 
     rerender({ sid: other });
     expect(result.current.outbound).toHaveLength(0);
+  });
+});
+
+describe('插话队列：入队的那句话后来怎么了', () => {
+  function op(seq: number, operation: string, content = ''): WorkbenchRecord {
+    return {
+      ...record(seq),
+      kind: 'session.state',
+      payload: { field: 'queue-operation', pointer: true, operation, content },
+    };
+  }
+
+  it('没有后续就还在排；移除按原文摘成已并入，出队按先进先出弹成独立一轮', () => {
+    const out = queueOutcomes([
+      op(0, 'enqueue', '甲'),
+      op(1, 'enqueue', '乙'),
+      op(2, 'enqueue', '丙'),
+      op(3, 'remove', '乙'),
+      op(4, 'dequeue'),
+    ]);
+    expect(out.get('rec-0')).toBe('submitted');
+    expect(out.get('rec-1')).toBe('absorbed');
+    expect(out.get('rec-2')).toBe('pending');
   });
 });
 
