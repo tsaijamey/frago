@@ -38,6 +38,23 @@ def _frago_argv() -> list[str]:
 _active_processes: dict[str, subprocess.Popen[bytes]] = {}
 _process_lock = threading.Lock()
 
+#: 参数超过这么多字节，就不放命令行，改走标准输入。
+#:
+#: Linux 对**单个**命令行参数卡 131072 字节，超了进程根本起不来（Argument list too
+#: long），而配方的参数是整段 JSON 塞进一个参数里——``json.dumps`` 还把每个中文字
+#: 写成六个字节的 ``\uXXXX``。vibe teaming 的中继就这样卡住过：对话多的那一侧每推一批
+#: 记录都起不来，那一侧的会话在对方屏幕上永远是空的。留一半余量，Windows 的整行上限
+#: 也更紧。
+#:
+#: **只有 Python 配方有这条路**，而且要靠基类 ``frago_recipe`` 认得那个 ``-``。参数不超
+#: 这条线时照旧放命令行，没继承基类的 Python 配方因此不受影响。Shell 配方
+#: （``_run_shell``）和浏览器类配方（往页面里注入参数那条）**仍然整段放命令行**，
+#: 参数过大照样起不来——那两条没改，是有意留下的已知上限，不是漏了。
+ARGV_PARAMS_LIMIT = 64 * 1024
+
+#: 参数改走标准输入时，命令行上那个位置放的记号。基类 ``frago_recipe`` 认它。
+PARAMS_FROM_STDIN = "-"
+
 #: Whose run each live execution belongs to.
 #
 # A recipe is allowed to ask another module for data, and that question comes
@@ -983,6 +1000,7 @@ class RecipeRunner:
         env: dict[str, str],
         timeout: int | None = None,
         cwd: str | None = None,
+        stdin_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run a command via Popen, tracking the process for cancellation.
 
@@ -992,6 +1010,8 @@ class RecipeRunner:
             env: Environment variables.
             timeout: Timeout in seconds (None = no limit).
             cwd: Directory to start the process in (the run's own directory).
+            stdin_text: Written to the child's stdin, then closed. None leaves
+                stdin alone.
 
         Returns:
             CompletedProcess with stdout, stderr, returncode.
@@ -1001,6 +1021,7 @@ class RecipeRunner:
         """
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -1011,7 +1032,10 @@ class RecipeRunner:
             _active_processes[execution_id] = proc
 
         try:
-            stdout_bytes, stderr_bytes = proc.communicate(timeout=timeout)
+            stdout_bytes, stderr_bytes = proc.communicate(
+                input=stdin_text.encode("utf-8") if stdin_text is not None else None,
+                timeout=timeout,
+            )
             return subprocess.CompletedProcess(
                 args=cmd,
                 returncode=proc.returncode,
@@ -1263,6 +1287,11 @@ class RecipeRunner:
             RecipeExecutionError: Execution failed
         """
         params_json = json.dumps(params)
+        # 参数大了就改走标准输入，命令行只留一个 ``-``（见 ARGV_PARAMS_LIMIT）。
+        stdin_text: str | None = None
+        params_arg = params_json
+        if len(params_json.encode("utf-8")) > ARGV_PARAMS_LIMIT:
+            stdin_text, params_arg = params_json, PARAMS_FROM_STDIN
 
         # Force UTF-8 stdio in child Python so recipes printing 中文/UTF-8 to
         # stderr don't crash on Windows consoles whose default encoding is
@@ -1278,22 +1307,22 @@ class RecipeRunner:
             else:
                 # Unix: prefer system Python
                 python_path = shutil.which('python3') or '/usr/bin/python3'
-            cmd = [python_path, str(script_path), params_json]
+            cmd = [python_path, str(script_path), params_arg]
             # Create environment without virtual environment variables
             clean_env = {k: v for k, v in env.items() if k not in ('VIRTUAL_ENV', 'PYTHONHOME')}
             env = clean_env
         else:
             # Build command: uv run <script_path> <params_json>
             # uv will automatically handle PEP 723 inline dependencies (# /// script ... # ///)
-            cmd = ['uv', 'run', str(script_path), params_json]
+            cmd = ['uv', 'run', str(script_path), params_arg]
 
         cmd = self._confine(cmd, view, cwd=cwd, recipe_name=recipe_name,
                             runtime='python', execution_id=execution_id)
 
         try:
-            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(
+            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd, stdin_text=stdin_text) if execution_id else subprocess.run(
                 cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
-                cwd=cwd,
+                cwd=cwd, input=stdin_text,
                 **get_windows_subprocess_kwargs(),
             )
 

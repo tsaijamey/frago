@@ -805,9 +805,12 @@ class Recipe:
         argv = sys.argv[1:] if argv is None else argv
         me = cls()
         params: dict = {}
-        if argv and argv[0].strip().startswith("{"):
+        # 参数大的时候运行器不放命令行（Linux 单个参数上限 128KB），命令行上只留
+        # 一个 ``-``，完整 JSON 从标准输入送进来。
+        raw = sys.stdin.read() if argv and argv[0] == "-" else (argv[0] if argv else "")
+        if raw.strip().startswith("{"):
             try:
-                params = json.loads(argv[0])
+                params = json.loads(raw)
             except json.JSONDecodeError as err:
                 _result(cls, None, error={"code": "bad-params",
                                           "message": f"参数解析失败：{err}"})
