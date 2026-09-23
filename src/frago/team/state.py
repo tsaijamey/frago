@@ -8,9 +8,11 @@
 是「谁发起、谁加入」，跟账号体系没有关系。同一个人换机器重装，把 ``member`` 带过去
 就能接回原来那一侧。
 
-**凭证是明文的，而且文件权限是 0600。** 这里存的是中继那台服务器的账号口令或 token，
-不做额外加密：能读到这个文件的人已经在这台机器上以这个账号的身份运行，加密只是把钥匙
-和锁放在同一个抽屉里。写成 0600 是为了挡住同一台机器上的**别的**账号。
+**这里没有中继那台服务器的账号口令。** 那扇门认的是连接码本身，所以中继这一项只剩
+一个地址。真正值钱的是每个连接码下面那把 ``secret``——进场之后各自领的钥匙，码泄露了
+也顶不掉已经坐满的位置。文件权限 0600 挡的就是同一台机器上的**别的**账号；不做额外
+加密，因为能读到这个文件的人已经在以这个账号的身份运行，加密只是把钥匙和锁放进同一个
+抽屉。
 
 分层：核心数据层，NEVER import ``server/`` 或 ``cli/``。
 """
@@ -216,13 +218,12 @@ def load_state() -> TeamState:
     if not isinstance(raw, dict):
         raw = {}
 
+    # 只取地址。中继早先要配账号口令，后来定成「连接码本身就是凭证」，
+    # :class:`Relay` 上那三个字段随之删掉——磁盘上那份是旧版写的，里面还留着它们，
+    # 照单全收会当场抛「不认识这个参数」。多出来的键一律忽略：这个文件的形状由
+    # 代码说了算，读的时候点名要什么就只拿什么。
     relay_raw = raw.get("relay")
-    relay = Relay(
-        url=str((relay_raw or {}).get("url", "")),
-        email=str((relay_raw or {}).get("email", "")),
-        password=str((relay_raw or {}).get("password", "")),
-        token=str((relay_raw or {}).get("token", "")),
-    )
+    relay = Relay(url=str((relay_raw or {}).get("url", "")))
 
     teams: dict[str, TeamBinding] = {}
     for code, one in (raw.get("teams") or {}).items():
