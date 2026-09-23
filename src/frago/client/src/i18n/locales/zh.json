@@ -1842,7 +1842,8 @@
     "joinBusyCount": "{{secs}} 秒后可以再试",
     "joinRetry": "再试一次",
     "joinBackToCode": "改那串码",
-    "joinStepCode": "拿这个码进去"
+    "joinStepCode": "拿这个码进去",
+    "leftLocalOnly": "已退出。没能通知中继，对方那边可能还显示你在，直到它自己超时。"
   },
   "agent": {
     "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",

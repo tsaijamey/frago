@@ -137,10 +137,15 @@ def leave_cmd(code) -> None:
     """退出这个 team。
 
     只有本机退出时连接码仍然有效，这是为了兜住网络断开；两侧都退出，码才作废。
+
+    **本机一定退得掉**，哪怕中继连不上、或者它早把这个码扫掉了。那种时候只是对方那边
+    还会显示你在，直到它自己超时。
     """
     state = load_state()
-    _guard(lambda: team_sync.leave_team(state, code))
+    reach = _guard(lambda: team_sync.leave_team(state, code))
     click.echo(f"已退出 {code}。对方还在的话，这个码仍然有效")
+    if reach == "local-only":
+        click.echo("没能通知中继，所以对方那边可能还显示你在，直到它自己超时")
 
 
 @team_group.command("send")

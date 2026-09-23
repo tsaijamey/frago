@@ -174,8 +174,22 @@ export async function joinTeam(code: string, sessionId: string): Promise<{ code:
   });
 }
 
-export async function leaveTeam(code: string): Promise<void> {
-  await readJson(`/api/team/${encodeURIComponent(code)}/leave`, { method: 'POST' });
+/** 中继那边知不知道这次退出。两种都算退成功。 */
+export type LeaveReach = 'done' | 'local-only';
+
+/**
+ * 退出一个 team。**本机这一侧一定退得掉。**
+ *
+ * 回来的是「对方多久才知道」：`done` 中继收到了，`local-only` 只有本机知道——中继连
+ * 不上，或者它早把这个码扫掉了。后者补一句「对方那边可能还显示你在」，NEVER 当失败：
+ * 从前那样做的后果是一个中继不认识的旧 team 在本机永远退不掉，点一次只多一行红字。
+ */
+export async function leaveTeam(code: string): Promise<LeaveReach> {
+  const got = await readJson<{ reach?: LeaveReach }>(
+    `/api/team/${encodeURIComponent(code)}/leave`,
+    { method: 'POST' },
+  );
+  return got?.reach ?? 'done';
 }
 
 export async function sendToPeer(code: string, text: string): Promise<void> {

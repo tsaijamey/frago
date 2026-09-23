@@ -1842,7 +1842,8 @@
     "joinBusyCount": "You can try again in {{secs}}s",
     "joinRetry": "Try again",
     "joinBackToCode": "Edit the code",
-    "joinStepCode": "Going in with this code"
+    "joinStepCode": "Going in with this code",
+    "leftLocalOnly": "Left. The relay wasn't reachable, so your teammate may still see you as here until it times out on its own."
   },
   "agent": {
     "notInstalled": "Not found on this machine — install it and it shows up here by itself",

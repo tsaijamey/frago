@@ -160,15 +160,21 @@ async def join_team(request: JoinRequest) -> dict[str, Any]:
 
 @router.post("/team/{code}/leave")
 async def leave_team(code: str) -> dict[str, Any]:
+    """退出。**本机这一侧一定退得掉。**
+
+    ``reach`` 说的是中继那边知不知道这件事：``done`` 两边都知道了，``local-only``
+    只有本机知道（中继连不上、或者它早把这个码扫掉了）。两种都算退出成功——界面据此
+    决定要不要补一句「对方那边可能还显示你在」，NEVER 据此判失败。
+    """
     from frago.team import sync as team_sync
     from frago.team.state import load_state
 
     state = load_state()
     try:
-        await asyncio.to_thread(team_sync.leave_team, state, code)
-    except Exception as err:  # noqa: BLE001
+        reach = await asyncio.to_thread(team_sync.leave_team, state, code)
+    except Exception as err:  # noqa: BLE001 — 本机压根没有这个码，才是真失败
         raise _refuse(err) from err
-    return {"left": code}
+    return {"left": code, "reach": reach}
 
 
 @router.get("/team/{code}/status")

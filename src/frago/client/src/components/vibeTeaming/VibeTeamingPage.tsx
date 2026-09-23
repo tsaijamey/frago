@@ -453,14 +453,18 @@ function TeamBar({
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [panel, setPanel] = useState<'open' | 'join' | null>(null);
 
   const leave = async () => {
     if (!selected || busy) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await leaveTeam(selected);
+      const reach = await leaveTeam(selected);
+      // 没通知到中继也是退出成功——这一句是知会，不是报错，所以不走红字那一档。
+      if (reach === 'local-only') setNotice(t('team.leftLocalOnly'));
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -545,6 +549,7 @@ function TeamBar({
         </div>
       )}
       {error && <p className="px-4 pb-2 text-xs text-accent-error">{error}</p>}
+      {notice && <p className="px-4 pb-2 text-xs text-text-muted">{notice}</p>}
     </div>
   );
 }

@@ -121,16 +121,38 @@ def join_team(state: TeamState, code: str, session_id: str) -> TeamBinding:
     return binding
 
 
-def leave_team(state: TeamState, code: str) -> None:
+def leave_team(state: TeamState, code: str) -> str:
     """退出这个 team。
 
     只有这一侧退出时连接码**仍然有效**：这是为了兜住网络断开——断线的人回来还接得上。
     两侧都退出，中继那边才把这个码作废。
+
+    **本机这一侧先落定，中继通不通只决定对方多久才知道。**
+
+    「我不干了」是这台机器自己的决定，不需要任何人批准。从前这里先敲中继、敲不通就整个
+    失败，于是一个中继早已扫掉的旧 team——码过期、服务器重装过、网断了——在本机永远退不
+    掉：人点一次退出，界面原地不动，只多一行「这个连接码在中继上不可用」的红字，再点还是
+    那样。越是中继不认识它，越该让它从本机消失，而那时的行为恰好相反。
+
+    「两侧都退出才作废」说的是中继那边何时销号，不是本机能不能退——这两件事从前被绑成
+    了一件。
+
+    告诉中继仍然要做，只是挪到后面，而且它失败不改变结果。返回说明是哪一种：``done``
+    两边都知道了，``local-only`` 只有本机知道，调用方据此决定要不要提醒「对方那边可能
+    还显示你在」。
     """
     binding = state.require(code)
-    _call(state, binding, "leave")
     binding.active = False
     save_state(state)
+
+    try:
+        _call(state, binding, "leave")
+    except (RelayError, TeamRefused, LookupError) as err:
+        # 中继那边没销号。对方会看到「队友在」再挂一阵，直到它自己超时——这是一个会
+        # 自己愈合的小偏差，而「本机退不掉」不会自己好。
+        logger.info("退出 %s 时没能通知中继：%s", code, err)
+        return "local-only"
+    return "done"
 
 
 # ── 隔着中继说话 ────────────────────────────────────────────────────────
