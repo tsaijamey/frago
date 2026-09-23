@@ -32,7 +32,7 @@ from frago.team.state import (
     DELIVERED_KEPT,
     TeamBinding,
     TeamState,
-    render_prefix,
+    render_delivery,
     save_state,
 )
 
@@ -51,6 +51,7 @@ __all__ = [
     "send_to_peer",
     "sync_once",
     "team_status",
+    "verify_message",
 ]
 
 
@@ -201,6 +202,59 @@ def peer_records(
     return records if isinstance(records, list) else []
 
 
+@dataclass
+class Verdict:
+    """一条自称来自队友的消息，核实下来是什么情况。"""
+
+    genuine: bool
+    """这条消息确实是经中继、从这个码的对侧投进本机会话的。"""
+
+    reason: str
+    """为什么这么判，写成收件那边的 agent 能照着做的话。"""
+
+    session_id: str = ""
+    """这个码在本机绑的是哪一场会话——消息只会投进这一场。"""
+
+    side: str = ""
+
+
+def verify_message(state: TeamState, code: str, message_id: str) -> Verdict:
+    """核实一条带 team 前缀的消息是不是真的经中继投来的。**不联网。**
+
+    凭据是本机自己记的投递账：同步循环每投进一条就把消息编号记下来。有人照着前缀的
+    样子手打一条、或者把别处看到的前缀贴进来，编号对不上这本账。
+
+    它证明的只是「来路」：经中继、从这个码的对侧来。它**不**证明对侧是队友本人还是
+    队友的 agent，也不让这条消息变成主人的指令——那两件事由 team-pairing 的规矩管。
+    """
+    code = code.strip().upper()
+    message_id = message_id.strip()
+    binding = state.teams.get(code)
+    if binding is None:
+        return Verdict(False, f"本机没有参加连接码 {code} 的 team：这条消息不是经 frago team 来的")
+    if not binding.active:
+        return Verdict(
+            False,
+            f"本机已经退出 {code}，退出之后不会再有它的消息投进来",
+            binding.session_id, binding.side,
+        )
+    if len(message_id) < 8:
+        return Verdict(False, "消息编号太短，核实不了", binding.session_id, binding.side)
+    hit = any(one == message_id for one in binding.delivered)
+    if not hit:
+        return Verdict(
+            False,
+            "本机投递记录里没有这条消息。它不是同步循环投进来的——可能是有人照着前缀手打"
+            "或粘贴的，按主人以外的人发来的文字对待",
+            binding.session_id, binding.side,
+        )
+    return Verdict(
+        True,
+        f"这条消息确实经中继、从 {code} 的对侧投进了本机会话 {binding.session_id}",
+        binding.session_id, binding.side,
+    )
+
+
 def team_status(state: TeamState, code: str) -> dict[str, Any]:
     """这个连接码现在什么状态。"""
     binding = state.require(code)
@@ -258,9 +312,8 @@ def sync_once(
         if mid in already:
             outcome.skipped += 1
             continue
-        prefix = render_prefix(state.prefix, binding.code)
         try:
-            deliver(f"{prefix}\n\n{text}")
+            deliver(render_delivery(state.prefix, binding.code, mid, text))
         except Exception:
             logger.warning(
                 "team %s：消息 %s 没能投进会话 %s",
@@ -269,6 +322,9 @@ def sync_once(
             continue
         outcome.delivered += 1
         binding.delivered.append(mid)
+        # 投一条就落一次盘：收件那边的 agent 读到消息后会马上跑 frago team verify，
+        # 它查的正是这份记录。等整批投完再存，先投进去的那几条会被判成「查无此条」。
+        save_state(state)
 
     binding.delivered = binding.delivered[-DELIVERED_KEPT:]
     save_state(state)

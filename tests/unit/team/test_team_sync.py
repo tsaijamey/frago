@@ -141,7 +141,11 @@ def test_同步把对方的消息加上前缀投进会话(monkeypatch, state):
     outcome = team_sync.sync_once(state, binding, got.append)
 
     assert outcome.delivered == 1
-    assert got == ["来自 ABCD234567 的队友：\n\n请你跑一遍测试"]
+    # 末尾那一行让收件方能自己核实来路，不管前缀被改成什么样都在
+    assert got == [
+        "来自 ABCD234567 的队友：\n\n请你跑一遍测试\n\n"
+        "（核实来源：frago team verify --team-code ABCD234567 --message m1）"
+    ]
 
 
 def test_投递失败不算已投下一轮还会再来(monkeypatch, state):
