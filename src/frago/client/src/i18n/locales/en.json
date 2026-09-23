@@ -1821,6 +1821,8 @@
     "peerAwayTitle": "Your teammate isn't here yet",
     "peerAwayWhy": "They show up here once they type in the code above. This side carries on regardless.",
     "peerSilent": "They're here, nothing said yet",
+    "pushTroubleTitle": "This side's records aren't reaching the relay. ",
+    "pushTroubleWhy": "Your teammate's messages still arrive, but on their screen this column stays empty. The relay said:",
     "instructTitle": "Ask their agent to do something",
     "instructWhy": "This lands in their session as a user turn, carrying a line that says it came from you.",
     "instructPreview": "What they'll see",

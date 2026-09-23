@@ -95,6 +95,13 @@ class TeamBinding:
 
     起始值是 -1 而不是 0：``seq`` 从 0 起算，用 0 当「还没推过」会把第一条记录跳掉。"""
 
+    push_trouble: str = ""
+    """最近一轮把本机记录推给中继时出了什么错；推成功就清空。
+
+    推不上去时同步循环照样去收消息，这一侧照样显示「在」、对方的话照样投得进来——
+    唯一的症状是对方屏幕上这一侧永远是空的，而对方看不到原因。所以原因要落在本机、
+    摆到本机界面上，不能只进日志。"""
+
     active: bool = True
     """还在这个 team 里。``frago team leave`` 之后置 False，但不删这一条——
     留着是为了让人还能看到自己参加过什么、以及上次推到哪儿了。"""
@@ -254,6 +261,7 @@ def load_state() -> TeamState:
             side=side,
             secret=str(one.get("secret", "")),
             pushed_seq=int(one.get("pushed_seq", -1)),
+            push_trouble=str(one.get("push_trouble") or ""),
             active=bool(one.get("active", True)),
             delivered=[str(x) for x in (one.get("delivered") or [])][-DELIVERED_KEPT:],
         )

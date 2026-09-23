@@ -117,9 +117,17 @@ async def teaming(request: Request):
 
     data = result.get("data") if isinstance(result, dict) else None
     if isinstance(result, dict) and result.get("status") == "error":
-        # 配方自己说不行。它对「码不对 / 你是第三台机器」回的就是那个统一的拒绝，
-        # 这里照着翻成同一个 404。
-        return _no_such_team()
+        # 配方**跑失败了**，不是它拒绝了。「码不对 / 你是第三台机器」配方是用数据回答
+        # 的（下面的 ``refused``），从不走这条路；走到这里的是参数不对、对方信箱满了、
+        # 进程起不来这类事，它们都在验过码之后或者跟码无关，说出来不给猜码的人任何
+        # 指示。从前这里也翻成那个 404，于是一侧的推送因为参数过大连续两个多小时起不来，
+        # 两边看到的都只是「码不可用」。
+        detail = str(result.get("error") or "中继处理这一下失败了")
+        logger.warning("teaming: %s 失败：%s", action, detail)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "relay_failed", "detail": detail[:500]},
+        )
     if not isinstance(data, dict):
         return _no_such_team()
     if data.get("refused"):

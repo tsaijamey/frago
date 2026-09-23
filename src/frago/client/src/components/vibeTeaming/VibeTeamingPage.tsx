@@ -664,7 +664,7 @@ function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
 
   return (
     <div className="grid min-h-0 flex-1 auto-rows-fr gap-px overflow-hidden bg-border-color md:auto-rows-auto md:grid-cols-2">
-      <MySide sessionId={binding.session_id} />
+      <MySide sessionId={binding.session_id} pushTrouble={binding.push_trouble ?? ''} />
       {here ? (
         <PeerSide binding={binding} prefix={prefix} peer={peer} />
       ) : (
@@ -684,7 +684,7 @@ function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
  * 发言，跟我自己说的话排在一起。所以这一列必须能说话：队友让我的 agent 做了一件事，
  * 我要在同一个地方看见它、接着它往下说。
  */
-function MySide({ sessionId }: { sessionId: string }) {
+function MySide({ sessionId, pushTrouble }: { sessionId: string; pushTrouble: string }) {
   const { t } = useTranslation();
   const sessions = useWorkbenchSessions();
   const mine = useWorkbenchRecords(sessionId, { live: true });
@@ -696,6 +696,15 @@ function MySide({ sessionId }: { sessionId: string }) {
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
       <ColumnHeader title={t('team.mine')} note={session?.title ?? undefined} />
+      {/* 推不上去时这一侧照常收消息、看起来一切正常，只有队友那边是空的——他看不到
+          原因，所以原因只能摆在这里。 */}
+      {pushTrouble && (
+        <div role="alert" className="mx-3 mt-2 rounded-md bg-red-500/10 px-3 py-2 text-xs leading-relaxed text-accent-error">
+          <span className="font-medium">{t('team.pushTroubleTitle')}</span>
+          <span className="text-text-muted">{t('team.pushTroubleWhy')}</span>
+          <div className="mt-1 break-all font-mono">{pushTrouble}</div>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">
         <RecordStream
           sessionId={sessionId}

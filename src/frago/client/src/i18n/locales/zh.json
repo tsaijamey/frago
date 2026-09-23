@@ -1821,6 +1821,8 @@
     "peerAwayTitle": "队友还没进来",
     "peerAwayWhy": "他填了上面那串码就会出现在这里，这一侧的对话不受影响，照常进行。",
     "peerSilent": "队友在，还没说过话",
+    "pushTroubleTitle": "这一侧的记录推不上中继。",
+    "pushTroubleWhy": "队友的消息照常能收到，但他那边看到的这一列是空的。中继的原话：",
     "instructTitle": "让队友的 agent 做一件事",
     "instructWhy": "这句话落到队友的会话里，是一条用户发言，前面带一句说明它来自你。",
     "instructPreview": "他那边看到的是",

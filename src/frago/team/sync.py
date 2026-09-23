@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -36,6 +37,9 @@ from frago.team.state import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: 一批推送最多多少字节。旧中继的硬上限是 128KB（连同码、指纹、钥匙），留足余量。
+PUSH_BYTES = 96 * 1024
 
 __all__ = [
     "SyncOutcome",
@@ -222,8 +226,16 @@ def sync_once(
     try:
         outcome.pushed = _push_records(state, binding, batch)
     except RelayError as err:
-        # 推不上去不该让收消息那一半也停——对方可能正等着这边回话。
+        # 推不上去不该让收消息那一半也停——对方可能正等着这边回话。但原因要记下来
+        # 摆到界面上：收消息照常，这一侧看起来一切正常，只有对方看得到「空的」。
         outcome.note = str(err)
+        if binding.push_trouble != outcome.note:
+            binding.push_trouble = outcome.note
+            save_state(state)
+    else:
+        if binding.push_trouble:
+            binding.push_trouble = ""
+            save_state(state)
 
     got = _call(state, binding, "pull")
     messages = got.get("messages")
@@ -285,8 +297,14 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
         _call(state, binding, "push", records=[])
         return 0
 
+    # 按字节切批，不只按条数。中继那头把整批塞进一个命令行参数，Linux 对单个参数卡
+    # 128KB，超了连进程都起不来；而中继把这种失败说成「码不可用」，这边又把推送失败
+    # 吞掉接着收——于是对话多的那一侧，在对方屏幕上永远是空的。新中继改走标准输入之后
+    # 不再有这道坎，但还没升级的中继仍然有，所以这边自己先切小。
     payload = [asdict(one) for one in records]
+    while len(payload) > 1 and len(json.dumps(payload).encode("utf-8")) > PUSH_BYTES:
+        payload = payload[: len(payload) // 2]
     _call(state, binding, "push", records=payload)
-    binding.pushed_seq = max(one.seq for one in records)
+    binding.pushed_seq = max(one["seq"] for one in payload)
     save_state(state)
     return len(payload)

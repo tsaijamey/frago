@@ -122,6 +122,7 @@ async def read_team_state() -> dict[str, Any]:
                 "side": one.side,
                 "active": one.active,
                 "pushed_seq": one.pushed_seq,
+                "push_trouble": one.push_trouble,
             }
             for one in state.teams.values()
         ],

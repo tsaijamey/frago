@@ -26,6 +26,8 @@ export interface TeamBinding {
   side: 'A' | 'B';
   active: boolean;
   pushed_seq: number;
+  /** 最近一轮把本机记录推给中继时出的错；推成功后是空串。 */
+  push_trouble?: string;
 }
 
 export interface TeamState {
@@ -103,8 +105,12 @@ export function useTeamState() {
     }
   }, []);
 
+  // 跟对方那一列同一个节奏重读：推送出没出错是同步循环每一轮才知道的事，只读一次
+  // 的话，推不上去这件事永远到不了界面上。这个接口不联网，只读本机文件。
   useEffect(() => {
     void reload();
+    const timer = window.setInterval(() => void reload(), PEER_POLL_MS);
+    return () => window.clearInterval(timer);
   }, [reload]);
 
   return { state, error, loading, reload };

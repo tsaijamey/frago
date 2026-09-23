@@ -108,7 +108,7 @@ class TeamSyncService:
                     f"，跳过重复 {outcome.skipped} 条" if outcome.skipped else "",
                 )
             if outcome.note:
-                logger.info("team %s：%s", binding.code, outcome.note)
+                logger.warning("team %s：%s", binding.code, outcome.note)
 
         return state.interval_seconds
 
