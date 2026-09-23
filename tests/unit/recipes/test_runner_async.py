@@ -12,8 +12,15 @@ from frago.recipes.runner import RecipeRunner
 
 
 @pytest.fixture
-def runner(tmp_path):
-    """Create a RecipeRunner with mock registry and tmp store."""
+def runner(tmp_path, monkeypatch):
+    """Create a RecipeRunner with mock registry and tmp store.
+
+    家目录指到临时目录：跑一次配方会在 ``~/.frago/recipe-data/<配方>/`` 下登记放行
+    （grants.json），不改的话测试会去写真人的那份。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("pathlib.Path.home", lambda: home)
     mock_registry = MagicMock()
     runner = RecipeRunner(registry=mock_registry, project_root=tmp_path)
     runner.store = MagicMock()
@@ -71,12 +78,14 @@ class TestRunWithExecution:
         runner.store.transition = MagicMock()
         runner.store.complete = MagicMock()
 
+        # 失败时运行器会去翻内核的拒绝记录，在 macOS 上要二十多秒；这一条不测那个。
         with patch.object(
             runner, "_run_python",
             side_effect=RecipeExecutionError(
                 recipe_name="test_recipe", runtime="python", exit_code=1, stderr="boom"
             ),
-        ), pytest.raises(RecipeExecutionError):
+        ), patch("frago.recipes.isolation.explain_refusals", return_value=""), \
+                pytest.raises(RecipeExecutionError):
             runner._run_with_execution(
                     execution_id="exec_fail",
                     name="test_recipe",
