@@ -51,6 +51,14 @@ class RelayError(RuntimeError):
     """
 
 
+class RelayUnreachable(RelayError):
+    """这一下没够着中继：网络断了、握手被掐了、被限流挡住了。
+
+    跟「够着了、中继说不行」分开，是因为两者对人的意义相反：这一类过一会儿自己就好，
+    同步循环十五秒后照样重试，不该惊动人；另一类重试多少遍都是同一句拒绝，得有人管。
+    """
+
+
 class RelayClient:
     """一个配好的中继，和一次同步里对它的全部调用。"""
 
@@ -72,12 +80,12 @@ class RelayClient:
             try:
                 reply = self._http.post(url, json=body, timeout=TIMEOUT_SECONDS)
             except requests.RequestException as err:
-                raise RelayError(f"连不上中继 {self._relay.base()}：{err}") from err
+                raise RelayUnreachable(f"连不上中继 {self._relay.base()}：{err}") from err
             if reply.status_code == 429 and attempt < BUSY_RETRIES:
                 time.sleep(BUSY_BACKOFF)
                 continue
             return self._unwrap(reply, action)
-        raise RelayError(
+        raise RelayUnreachable(
             f"中继一直在限流，{action} 发不进去。"
             f"要么这台机器敲得太密，要么那边正在被人猛试连接码"
         )
@@ -99,7 +107,7 @@ class RelayClient:
                 "免得有人靠试错筛出活的连接码"
             )
         if reply.status_code == 429:
-            raise RelayError("中继在限流，等一会儿再来")
+            raise RelayUnreachable("中继在限流，等一会儿再来")
         if reply.status_code >= 400:
             detail = ""
             if isinstance(payload, dict):

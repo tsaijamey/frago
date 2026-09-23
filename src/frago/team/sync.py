@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from frago.session import record_reader
-from frago.team.relay import RelayClient, RelayError
+from frago.team.relay import RelayClient, RelayError, RelayUnreachable
 from frago.team.state import (
     DEFAULT_PUSH_BATCH,
     DELIVERED_KEPT,
@@ -226,15 +226,19 @@ def sync_once(
     try:
         outcome.pushed = _push_records(state, binding, batch)
     except RelayError as err:
-        # 推不上去不该让收消息那一半也停——对方可能正等着这边回话。但原因要记下来
-        # 摆到界面上：收消息照常，这一侧看起来一切正常，只有对方看得到「空的」。
+        # 推不上去不该让收消息那一半也停——对方可能正等着这边回话。但原因要记下来：
+        # 收消息照常，这一侧看起来一切正常，只有对方看得到「空的」。连续几轮、哪一类，
+        # 界面凭这两样决定亮不亮、亮多重。
         outcome.note = str(err)
-        if binding.push_trouble != outcome.note:
-            binding.push_trouble = outcome.note
-            save_state(state)
+        binding.push_trouble = outcome.note
+        binding.push_trouble_transient = isinstance(err, RelayUnreachable)
+        binding.push_fail_rounds += 1
+        save_state(state)
     else:
-        if binding.push_trouble:
+        if binding.push_trouble or binding.push_fail_rounds:
             binding.push_trouble = ""
+            binding.push_trouble_transient = False
+            binding.push_fail_rounds = 0
             save_state(state)
 
     got = _call(state, binding, "pull")

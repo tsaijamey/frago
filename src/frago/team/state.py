@@ -68,6 +68,10 @@ DELIVERED_KEPT = 50
 #: 的一次请求撑到几十兆——所以推的是增量，而且每轮有上限，没推完的下一轮接着推。
 DEFAULT_PUSH_BATCH = 60
 
+#: 连续推不上去几轮，界面才亮提示。按默认节奏约一分钟：网络抖一下、握手被掐一次，
+#: 下一轮就补上了，不值得惊动人；持续一分钟还不通，才是人该知道的事。
+PUSH_TROUBLE_AFTER_ROUNDS = 4
+
 
 @dataclass
 class TeamBinding:
@@ -101,6 +105,18 @@ class TeamBinding:
     推不上去时同步循环照样去收消息，这一侧照样显示「在」、对方的话照样投得进来——
     唯一的症状是对方屏幕上这一侧永远是空的，而对方看不到原因。所以原因要落在本机、
     摆到本机界面上，不能只进日志。"""
+
+    push_fail_rounds: int = 0
+    """连续推不上去了几轮；推成功就归零。
+
+    界面凭它决定亮不亮提示：同步每十五秒一轮，断一两轮下一轮就补上了，那时候亮一块
+    提示只会吓人（:data:`PUSH_TROUBLE_AFTER_ROUNDS`）。"""
+
+    push_trouble_transient: bool = False
+    """最近那次失败是不是「没够着中继」（网络、握手、限流）——会自己好的那一类。
+
+    False 是中继够着了、但它不收：重试多少遍都是同一句，得有人管。两类在界面上
+    分开说，前者轻、后者重。"""
 
     active: bool = True
     """还在这个 team 里。``frago team leave`` 之后置 False，但不删这一条——
@@ -262,6 +278,8 @@ def load_state() -> TeamState:
             secret=str(one.get("secret", "")),
             pushed_seq=int(one.get("pushed_seq", -1)),
             push_trouble=str(one.get("push_trouble") or ""),
+            push_fail_rounds=int(one.get("push_fail_rounds") or 0),
+            push_trouble_transient=bool(one.get("push_trouble_transient", False)),
             active=bool(one.get("active", True)),
             delivered=[str(x) for x in (one.get("delivered") or [])][-DELIVERED_KEPT:],
         )

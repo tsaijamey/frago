@@ -106,7 +106,7 @@ async def read_team_state() -> dict[str, Any]:
     界面第一屏就要它，所以它不能去敲中继——中继连不上时这一屏还得画得出来，
     不然人连「中继没配」这件事都看不见。
     """
-    from frago.team.state import ensure_member
+    from frago.team.state import PUSH_TROUBLE_AFTER_ROUNDS, ensure_member
 
     state = ensure_member()
     return {
@@ -122,7 +122,13 @@ async def read_team_state() -> dict[str, Any]:
                 "side": one.side,
                 "active": one.active,
                 "pushed_seq": one.pushed_seq,
-                "push_trouble": one.push_trouble,
+                # 断一两轮下一轮就补上了，界面不该为它亮提示；连续够了轮数才交出去。
+                "push_trouble": (
+                    one.push_trouble
+                    if one.push_fail_rounds >= PUSH_TROUBLE_AFTER_ROUNDS
+                    else ""
+                ),
+                "push_trouble_transient": one.push_trouble_transient,
             }
             for one in state.teams.values()
         ],

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from frago.team import state as team_state
 from frago.team import sync
-from frago.team.relay import RelayError
+from frago.team.relay import RelayError, RelayUnreachable
 from frago.team.state import TeamBinding, TeamState
 
 
@@ -55,21 +55,58 @@ def test_一批超了字节上限就切小再推(monkeypatch):
     assert binding.pushed_seq == sent[0][-1]["seq"]
 
 
-def test_推不上去的原因落在本机状态里_推成功后清掉(monkeypatch):
-    state, binding = _state()
+def _fail_with(monkeypatch, err: Exception) -> None:
     monkeypatch.setattr(sync, "_call", lambda *a, **k: {"messages": [], "peer_present": True})
 
     def boom(*a, **k):
-        raise RelayError("中继拒绝了 push（HTTP 502）：Argument list too long")
+        raise err
 
     monkeypatch.setattr(sync, "_push_records", boom)
-    outcome = sync.sync_once(state, binding, deliver=lambda _: None)
+
+
+def test_推不上去的原因和轮数落在本机状态里_推成功后清掉(monkeypatch):
+    state, binding = _state()
+    _fail_with(monkeypatch, RelayError("中继拒绝了 push（HTTP 502）：Argument list too long"))
+    for _ in range(2):
+        outcome = sync.sync_once(state, binding, deliver=lambda _: None)
     assert "Argument list too long" in outcome.note
-    assert "Argument list too long" in team_state.load_state().teams[binding.code].push_trouble
+    saved = team_state.load_state().teams[binding.code]
+    assert "Argument list too long" in saved.push_trouble
+    assert saved.push_fail_rounds == 2
+    assert saved.push_trouble_transient is False  # 中继够着了、不收：要人管的那一类
 
     monkeypatch.setattr(sync, "_push_records", lambda *a, **k: 0)
     sync.sync_once(state, binding, deliver=lambda _: None)
-    assert team_state.load_state().teams[binding.code].push_trouble == ""
+    saved = team_state.load_state().teams[binding.code]
+    assert (saved.push_trouble, saved.push_fail_rounds) == ("", 0)
+
+
+def test_没够着中继算会自己好的那一类(monkeypatch):
+    state, binding = _state()
+    _fail_with(monkeypatch, RelayUnreachable("连不上中继 https://x：SSLEOFError"))
+    sync.sync_once(state, binding, deliver=lambda _: None)
+    assert team_state.load_state().teams[binding.code].push_trouble_transient is True
+
+
+def test_界面只在连续够了轮数之后才拿到原因(monkeypatch):
+    from frago.server.routes import team as team_routes
+
+    state, binding = _state()
+    team_state.save_state(state)
+    monkeypatch.setattr(team_state, "ensure_member", lambda: team_state.load_state())
+    _fail_with(monkeypatch, RelayUnreachable("连不上中继 https://x：SSLEOFError"))
+    app = FastAPI()
+    app.include_router(team_routes.router, prefix="/api")
+    client = TestClient(app)
+
+    def shown() -> str:
+        return client.get("/api/team").json()["teams"][0]["push_trouble"]
+
+    for _ in range(team_state.PUSH_TROUBLE_AFTER_ROUNDS - 1):
+        sync.sync_once(state, binding, deliver=lambda _: None)
+        assert shown() == ""  # 断一两轮下一轮就补上，不惊动人
+    sync.sync_once(state, binding, deliver=lambda _: None)
+    assert "SSLEOFError" in shown()
 
 
 def _door(monkeypatch, result: dict) -> TestClient:

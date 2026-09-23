@@ -26,8 +26,10 @@ export interface TeamBinding {
   side: 'A' | 'B';
   active: boolean;
   pushed_seq: number;
-  /** 最近一轮把本机记录推给中继时出的错；推成功后是空串。 */
+  /** 本机记录连续一阵推不上中继时的原因；偶尔断一两轮、或推成功后是空串。 */
   push_trouble?: string;
+  /** 那次失败是不是「没够着中继」（网络、握手、限流），会自己好的那一类。 */
+  push_trouble_transient?: boolean;
 }
 
 export interface TeamState {

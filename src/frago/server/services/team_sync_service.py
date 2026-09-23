@@ -82,7 +82,7 @@ class TeamSyncService:
         每个 team 各自成败，互不牵连：一个 team 的中继连不上，不该让另一个 team 停摆。
         """
         from frago.team import sync as team_sync
-        from frago.team.state import load_state
+        from frago.team.state import PUSH_TROUBLE_AFTER_ROUNDS, load_state
 
         state = load_state()
         if not state.relay.configured():
@@ -108,7 +108,13 @@ class TeamSyncService:
                     f"，跳过重复 {outcome.skipped} 条" if outcome.skipped else "",
                 )
             if outcome.note:
-                logger.warning("team %s：%s", binding.code, outcome.note)
+                # 偶尔没够着中继是常事，下一轮就补上；中继不收、或者连续一阵都不通，
+                # 才值得一条警告。
+                serious = (not binding.push_trouble_transient
+                           or binding.push_fail_rounds >= PUSH_TROUBLE_AFTER_ROUNDS)
+                (logger.warning if serious else logger.info)(
+                    "team %s：%s", binding.code, outcome.note
+                )
 
         return state.interval_seconds
 
