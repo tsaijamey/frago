@@ -1790,7 +1790,6 @@
     "joinNeedFull": "连接码是 10 位",
     "leave": "退出",
     "leaveHint": "只有你退出时连接码仍然有效；两边都退出，码才作废",
-    "needSession": "先到会话页挑一场会话，team 要用它参加",
     "mine": "我这一侧",
     "peer": "队友",
     "refresh": "现在就重取一次",
@@ -1826,7 +1825,12 @@
     "instructWhy": "这句话落到队友的会话里，是一条用户发言，前面带一句说明它来自你。",
     "instructPreview": "他那边看到的是",
     "instructSend": "发过去",
-    "instructPlaceholder": "要队友的 agent 做什么…（⌘/Ctrl + Enter 发出）"
+    "instructPlaceholder": "要队友的 agent 做什么…（⌘/Ctrl + Enter 发出）",
+    "joinPickTitle": "拿哪一场会话进去？",
+    "joinPickHint": "队友会看到你这一场。挑一场现成的，或者新开一场跟他从头做。",
+    "joinConfirm": "用这一场加入",
+    "joinCodeTitle": "填队友给的连接码",
+    "joinNext": "下一步"
   },
   "agent": {
     "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",

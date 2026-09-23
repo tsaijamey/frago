@@ -29,7 +29,6 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePageStore } from '@/stores/pageStore';
 import { useTranslation } from 'react-i18next';
 import { Check, Copy, Link2, LogOut, Plus, RefreshCw, Send, UserPlus, Users } from 'lucide-react';
 
@@ -155,8 +154,8 @@ function Intro({ onChanged }: { onChanged: () => void }) {
         </div>
       )}
       {path === 'join' && (
-        <div className="mt-4 rounded-lg border border-border p-4">
-          <JoinForm onDone={onChanged} onCancel={() => setPath(null)} />
+        <div className="mt-4">
+          <JoinFlow onDone={onChanged} onCancel={() => setPath(null)} />
         </div>
       )}
     </div>
@@ -195,52 +194,65 @@ function PathCard({
   );
 }
 
-/** 填一串别人给的码。 */
-function JoinForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+/**
+ * 加入：填码，然后挑一场会话带进去。**两步都在这一页里走完。**
+ *
+ * 从前这里要求人先去会话页把某一场"选中"，否则按钮点不动。那是把发起那一侧的老做法
+ * 照搬过来的：发起时页面偷偷拿工作台停着的那一场，加入时同一份东西拿不到，就变成一句
+ * 让人出门的提示。
+ *
+ * 对着屏幕的人是这样的处境：他手里攥着队友刚发来的码，刚敲进去，被告知要先去另一个
+ * 页面做一件没说清楚是什么的事，回来时输入框里的码还在不在都不知道。这一步没人过得去。
+ *
+ * 挑会话这件事发起那边已经有了一整套——挑现成的、或者新开一场，连等编号都摆在明处。
+ * 加入要的是同一样东西，所以直接共用，一个字都不必另写。
+ */
+function JoinFlow({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const { t } = useTranslation();
-  const sessionId = useSelectedSessionId();
   const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState<string | null>(null);
 
   const full = code.length === CODE_LENGTH;
 
-  const submit = async () => {
-    if (!full || !sessionId || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await joinTeam(code, sessionId);
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // 码填全了才谈会话。反过来先挑会话再填码也说得通，但码是队友刚发来的、正攥在手里
+  // 的那样东西，让它先落地，人才知道自己在加入哪一个。
+  if (locked) {
+    return (
+      <StartTeamPanel
+        title={t('team.joinPickTitle')}
+        hint={t('team.joinPickHint')}
+        confirmLabel={t('team.joinConfirm')}
+        commit={(sessionId) => joinTeam(locked, sessionId)}
+        onDone={onDone}
+        onCancel={() => setLocked(null)}
+      />
+    );
+  }
 
   return (
     <form
+      className="rounded-lg border border-border p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        void submit();
+        if (full) setLocked(code);
       }}
     >
-      <div className="flex items-center gap-2">
+      <p className="text-sm font-medium">{t('team.joinCodeTitle')}</p>
+      <div className="mt-2 flex items-center gap-2">
         <input
           autoFocus
           value={code}
           onChange={(e) => setCode(cleanCode(e.target.value))}
           placeholder={t('team.codePlaceholder')}
           maxLength={CODE_LENGTH}
-          className="w-40 rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-sm tracking-widest"
+          className="w-44 rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-sm tracking-widest"
         />
         <button
           type="submit"
-          disabled={!full || !sessionId || busy}
+          disabled={!full}
           className="rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent disabled:opacity-40"
         >
-          {t('team.join')}
+          {t('team.joinNext')}
         </button>
         <button
           type="button"
@@ -256,8 +268,6 @@ function JoinForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => vo
           {t('team.joinNeedFull')}（{code.length}/{CODE_LENGTH}）
         </p>
       )}
-      {!sessionId && <p className="mt-1.5 text-xs text-fg-muted">{t('team.needSession')}</p>}
-      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
     </form>
   );
 }
@@ -343,7 +353,7 @@ function TeamBar({
       )}
       {panel === 'join' && (
         <div className="px-4 pb-3">
-          <JoinForm onDone={done} onCancel={() => setPanel(null)} />
+          <JoinFlow onDone={done} onCancel={() => setPanel(null)} />
         </div>
       )}
       {error && <p className="px-4 pb-2 text-xs text-danger">{error}</p>}
@@ -447,11 +457,6 @@ function BarAction({
       {label}
     </button>
   );
-}
-
-/** 工作台中栏此刻停着的那一场会话。加入一个 team 时用它。 */
-function useSelectedSessionId(): string | null {
-  return usePageStore((s) => s.workbenchSessionId);
 }
 
 /**

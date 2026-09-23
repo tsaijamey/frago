@@ -62,17 +62,38 @@ const STEPS: Phase[] = ['creating', 'awaitingId', 'askingCode'];
 export interface StartTeamPanelProps {
   onDone: () => void;
   onCancel: () => void;
+  /**
+   * 挑好会话之后拿它去做什么。**发起和加入在这一步之前是同一件事**：两边都要一场
+   * 本机的会话，挑法、新开法、要交出什么、等编号那一段，一模一样。
+   *
+   * 不给就是发起。加入那一侧给一个「拿这个码进去」。
+   */
+  commit?: (sessionId: string) => Promise<unknown>;
+  /** 标题与说明。加入那一侧要说的是「拿哪一场进去」，不是「拿哪一场发起」。 */
+  title?: string;
+  hint?: string;
+  /** 确认按钮上写什么。 */
+  confirmLabel?: string;
 }
 
-export default function StartTeamPanel({ onDone, onCancel }: StartTeamPanelProps) {
+export default function StartTeamPanel({
+  onDone,
+  onCancel,
+  commit,
+  title,
+  hint,
+  confirmLabel,
+}: StartTeamPanelProps) {
   const { t } = useTranslation();
   const [source, setSource] = useState<Source>('existing');
+  const take = commit ?? openTeam;
+  const shared = { onDone, onCancel, commit: take, confirmLabel };
 
   return (
     <div className="rounded-lg border border-border">
       <div className="border-b border-border px-4 py-3">
-        <h3 className="text-sm font-medium">{t('team.pickTitle')}</h3>
-        <p className="mt-1 text-xs text-fg-muted">{t('team.pickHint')}</p>
+        <h3 className="text-sm font-medium">{title ?? t('team.pickTitle')}</h3>
+        <p className="mt-1 text-xs text-fg-muted">{hint ?? t('team.pickHint')}</p>
       </div>
 
       <div className="flex gap-2 border-b border-border px-4 py-2.5">
@@ -90,11 +111,7 @@ export default function StartTeamPanel({ onDone, onCancel }: StartTeamPanelProps
         />
       </div>
 
-      {source === 'existing' ? (
-        <ExistingSource onDone={onDone} onCancel={onCancel} />
-      ) : (
-        <FreshSource onDone={onDone} onCancel={onCancel} />
-      )}
+      {source === 'existing' ? <ExistingSource {...shared} /> : <FreshSource {...shared} />}
     </div>
   );
 }
@@ -129,7 +146,14 @@ function SourceTab({
 
 /* ── 用一场现成的 ─────────────────────────────────────────────────────────── */
 
-function ExistingSource({ onDone, onCancel }: StartTeamPanelProps) {
+interface SourceProps {
+  onDone: () => void;
+  onCancel: () => void;
+  commit: (sessionId: string) => Promise<unknown>;
+  confirmLabel?: string;
+}
+
+function ExistingSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
   const { t } = useTranslation();
   const { sessions, loading } = useWorkbenchSessions();
   const [chosen, setChosen] = useState<string | null>(null);
@@ -154,7 +178,7 @@ function ExistingSource({ onDone, onCancel }: StartTeamPanelProps) {
     setBusy(true);
     setError(null);
     try {
-      await openTeam(chosen);
+      await commit(chosen);
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -199,7 +223,7 @@ function ExistingSource({ onDone, onCancel }: StartTeamPanelProps) {
 
       <Footer
         onCancel={onCancel}
-        confirmLabel={t('team.pickConfirm')}
+        confirmLabel={confirmLabel ?? t('team.pickConfirm')}
         disabled={!chosen || busy}
         onConfirm={() => void confirm()}
       />
@@ -249,7 +273,7 @@ function whenShort(ms: number): string {
 
 /* ── 新开一场 ─────────────────────────────────────────────────────────────── */
 
-function FreshSource({ onDone, onCancel }: StartTeamPanelProps) {
+function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
   const { t } = useTranslation();
   const { agents, fallbackDefault, loading: agentsLoading, error: agentsError } =
     useAgentClients(true);
@@ -316,7 +340,7 @@ function FreshSource({ onDone, onCancel }: StartTeamPanelProps) {
       }
 
       setPhase('askingCode');
-      await openTeam(sessionId);
+      await commit(sessionId);
       onDone();
     } catch (err) {
       if (controller.signal.aborted) {
@@ -401,7 +425,7 @@ function FreshSource({ onDone, onCancel }: StartTeamPanelProps) {
 
       <Footer
         onCancel={onCancel}
-        confirmLabel={t('team.freshGo')}
+        confirmLabel={confirmLabel ?? t('team.freshGo')}
         disabled={!agent || !cwd.trim() || !opening.trim()}
         onConfirm={() => void go()}
       />

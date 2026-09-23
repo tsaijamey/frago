@@ -1790,7 +1790,6 @@
     "joinNeedFull": "A code is 10 characters",
     "leave": "Leave",
     "leaveHint": "The code stays valid while your partner is still in; it dies when both have left",
-    "needSession": "Pick a session on the sessions page first — a team takes one",
     "mine": "My side",
     "peer": "Teammate",
     "refresh": "Fetch again now",
@@ -1826,7 +1825,12 @@
     "instructWhy": "This lands in their session as a user turn, carrying a line that says it came from you.",
     "instructPreview": "What they'll see",
     "instructSend": "Send",
-    "instructPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)"
+    "instructPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)",
+    "joinPickTitle": "Which session do you want to bring in?",
+    "joinPickHint": "Your teammate will see this one. Pick something you already have, or open a fresh one and start together.",
+    "joinConfirm": "Join with this one",
+    "joinCodeTitle": "Type the code your teammate gave you",
+    "joinNext": "Next"
   },
   "agent": {
     "notInstalled": "Not found on this machine — install it and it shows up here by itself",
