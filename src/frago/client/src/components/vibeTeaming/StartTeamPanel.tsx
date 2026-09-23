@@ -208,7 +208,7 @@ function ExistingSource({ onDone, onCancel, commit, confirmLabel }: SourceProps)
         />
       </div>
 
-      <div className="max-h-64 overflow-auto">
+      <div className="max-h-[38vh] min-h-24 overflow-auto overscroll-contain">
         {loading && <p className="px-4 py-6 text-xs text-text-muted">{t('team.loading')}</p>}
         {!loading && rows.length === 0 && (
           <p className="px-4 py-6 text-xs text-text-muted">{t('team.pickNone')}</p>
@@ -381,7 +381,7 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel, lastStepLabel }: 
 
   return (
     <>
-      <div className="space-y-3 px-4 py-3">
+      <div className="max-h-[46vh] space-y-3 overflow-y-auto overscroll-contain px-4 py-3">
         <Field label={t('team.freshAgent')}>
           <div className="flex flex-wrap gap-1.5">
             {agents.map((a) => (

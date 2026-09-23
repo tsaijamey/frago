@@ -127,7 +127,7 @@ function Intro({ onChanged }: { onChanged: () => void }) {
   const joined: string[] = [];
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-6 py-12">
+    <div className="mx-auto h-full w-full max-w-2xl overflow-y-auto px-6 py-12">
       <div className="flex items-center gap-2 text-text-muted">
         <Users size={18} strokeWidth={1.5} />
         <h2 className="text-base font-semibold text-text-primary">{t('team.title')}</h2>
@@ -474,8 +474,22 @@ function TeamBar({
     onChanged();
   };
 
+  const open = panel !== null;
+
   return (
-    <div className="shrink-0 border-b border-border-color">
+    // 展开发起／加入那块之后，这条带可能比它能占的地方还高——小屏上尤其明显，确认
+    // 按钮掉在下边缘外面，而外层是 overflow:hidden，怎么划都划不到。所以这里自己
+    // 能滚，并且封一个上限，剩下的留给下面两列：把两列挤没，人就看不见自己正在哪
+    // 一场会话里挑，而那正是这一步要他判断的东西。
+    //
+    // 上限按**这一页实际有多高**算（`basis` + `min-h-0`），NEVER 按视口的百分比：
+    // 这一页嵌在外壳里，它拿到的高度比视口小，按视口算出来的上限永远够不着，于是
+    // 这条规则形同虚设——而且只在小屏上现形。
+    <div
+      className={`${
+        open ? 'flex min-h-0 basis-2/3 flex-col overflow-y-auto overscroll-contain' : 'shrink-0'
+      } border-b border-border-color`}
+    >
       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
         {teams.map((one) => (
           <CodeBlock
@@ -644,7 +658,7 @@ function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
   const here = !!peer.status?.peer_present;
 
   return (
-    <div className="grid min-h-0 flex-1 gap-px overflow-hidden bg-border-color md:grid-cols-2">
+    <div className="grid min-h-0 flex-1 auto-rows-fr gap-px overflow-hidden bg-border-color md:auto-rows-auto md:grid-cols-2">
       <MySide sessionId={binding.session_id} />
       {here ? (
         <PeerSide binding={binding} prefix={prefix} peer={peer} />
