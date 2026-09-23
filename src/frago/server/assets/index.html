@@ -29,12 +29,16 @@
     </script>
     <script>
       // Calculate font scale based on SCREEN resolution (not viewport)
-      // Base: 1080p screen height = 13px, linear scale with min/max limits
+      // Base: 1080p screen height = 13px; screens shorter than that shrink linearly.
+      // Taller screens do NOT grow: screen.height is already in CSS pixels, so a
+      // 1440-tall display just has more room, not smaller glyphs. Growing past 13px
+      // also only hit text sized via --font-scale, while Tailwind text-[13px] stayed
+      // put, so the rail and chat body ballooned next to the session list.
       (function () {
         var baseHeight = 1080;
         var baseFontSize = 13;
         var minFontSize = 10;
-        var maxFontSize = 18;
+        var maxFontSize = baseFontSize;
 
         // Use screen.height (screen resolution), not innerHeight (viewport)
         var screenHeight = window.screen.height;
