@@ -217,3 +217,20 @@ export function pickDefaultAgent(
   }
   return selectable[0].agent_type;
 }
+
+/**
+ * 把服务端给的那个「为什么挑不了」的代号说成当前语言。
+ *
+ * 服务端只判断是哪一种情况，不发成品文案——它不知道此刻的人在读中文还是英文。从前它
+ * 发的是现成的中文句子，于是英文界面上那一行冒出一句中文，而且两侧都修不了：前端拿到
+ * 的是一句话，看不出它在说什么；后端不知道该说哪种语言。
+ *
+ * 查不到词条时原样返回那个代号。难看，但看得出是哪一种情况——显示空白则什么都看不出，
+ * 而这一行存在的全部意义就是告诉人为什么这一家点不了。
+ */
+export function agentReasonText(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const key = `agent.${code.replace(/^agent\./, '')}`;
+  const said = i18n.t(key);
+  return said === key ? code : said;
+}

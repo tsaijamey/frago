@@ -73,11 +73,39 @@ COREAGENT_FAMILY = "coreagent"
 
 _COREAGENT_DISPLAY_NAME = "CoreAgent"
 
-_NOT_INSTALLED = "本机没找到这个命令，装好之后它会自己出现在这里"
-_NOT_READABLE = "frago 驱动得动它，但它的会话记录读不进工作台，起了也不会出现在左栏"
-_UNKNOWN_INSTALL = "这一家没提供探测方式，判不出装没装"
-_NO_KERNEL = "frago 的内核还没装好（~/.frago/bin 下找不到），跑一次 frago init 补上"
-_NO_CONNECTION = "还没给 CoreAgent 配连接，去设置页的连接里给它挑一个，它才调得动模型"
+#: 那一句话发的是**代号**，不是成品文案。
+#:
+#: 界面有中英两套，而这里只认得一种语言——发成品字的后果是英文界面上冒出一句中文，
+#: 而且没有任何一侧能修：前端拿到的是一句话，看不出它在说什么；后端不知道此刻的人
+#: 在读哪一种语言。代号让这条界线落在该落的地方：这一层判断"为什么挑不了"，界面
+#: 负责"这件事用当前语言怎么说"。
+#:
+#: 代号一律加前缀，与随手写的字符串区分得开。界面照着这几个值查词条，查不到时原样
+#: 显示——一个没翻译的代号难看，但看得出是哪一种情况；显示空白则什么都看不出。
+REASON_NOT_INSTALLED = "agent.notInstalled"
+REASON_NOT_READABLE = "agent.notReadable"
+REASON_UNKNOWN_INSTALL = "agent.unknownInstall"
+REASON_NO_KERNEL = "agent.noKernel"
+REASON_NO_CONNECTION = "agent.noConnection"
+
+#: 这一层自己要用人话时（比如 CLI 的报错）照这张表取。界面不读它。
+REASON_TEXT_ZH = {
+    REASON_NOT_INSTALLED: "本机没找到这个命令，装好之后它会自己出现在这里",
+    REASON_NOT_READABLE: "frago 驱动得动它，但它的会话记录读不进工作台，起了也不会出现在左栏",
+    REASON_UNKNOWN_INSTALL: "这一家没提供探测方式，判不出装没装",
+    REASON_NO_KERNEL: "frago 的内核还没装好（~/.frago/bin 下找不到），跑一次 frago init 补上",
+    REASON_NO_CONNECTION: "还没给 CoreAgent 配连接，去设置页的连接里给它挑一个，它才调得动模型",
+}
+
+
+def reason_text(code: str | None) -> str:
+    """把代号说成人话（中文）。**只给不经过界面的那些出口用**——CLI 的报错、日志。
+
+    界面有自己的两套词条，走它自己那条路。
+    """
+    if not code:
+        return ""
+    return REASON_TEXT_ZH.get(code, code)
 
 
 class AgentUnavailable(ValueError):
@@ -99,8 +127,8 @@ class WorkbenchAgent:
     family: str | None
     #: 现在能不能挑。
     selectable: bool
-    #: 摆在名字底下的那一句话：挑不了时是为什么挑不了，能挑但探测不出装没装时是那句
-    #: 提醒。两种都值得说，没什么要说时为 None。
+    #: 为什么挑不了（或能挑但有话要说）的**代号**，见上面那几个 ``REASON_*``。
+    #: 不是成品文案：这一层不知道读它的人用哪种语言。没什么要说时为 None。
     reason: str | None
     #: 会话编号谁 mint："caller" = 页面先给（claude），"claimed" = 起来后认领
     #: （codex / opencode），后者新建时有一段等编号的空窗。
@@ -152,9 +180,9 @@ def _coreagent_agent() -> WorkbenchAgent:
     """
     installed, path = _kernel_binary()
     if not installed:
-        selectable, reason = False, _NO_KERNEL
+        selectable, reason = False, REASON_NO_KERNEL
     elif _kernel_connection_missing():
-        selectable, reason = False, _NO_CONNECTION
+        selectable, reason = False, REASON_NO_CONNECTION
     else:
         selectable, reason = True, None
 
@@ -191,13 +219,13 @@ def list_agents() -> list[WorkbenchAgent]:
         family = FAMILY_BY_AGENT_TYPE.get(agent_type)
 
         if family is None:
-            selectable, reason = False, _NOT_READABLE
+            selectable, reason = False, REASON_NOT_READABLE
         elif installed is False:
-            selectable, reason = False, _NOT_INSTALLED
+            selectable, reason = False, REASON_NOT_INSTALLED
         elif installed is None:
             # 判不出装没装时**放行**：拦下来的代价是一台装了的机器用不了，而放行的
             # 代价只是没装时启动那一刻报错，pane 上看得见。话得说在明处。
-            selectable, reason = True, _UNKNOWN_INSTALL
+            selectable, reason = True, REASON_UNKNOWN_INSTALL
         else:
             selectable, reason = True, None
 
@@ -252,7 +280,9 @@ def require_selectable(agent_type: str) -> WorkbenchAgent:
     for agent in list_agents():
         if agent.agent_type == agent_type:
             if not agent.selectable:
-                raise AgentUnavailable(f"{agent.display_name} 现在挑不了：{agent.reason}")
+                raise AgentUnavailable(
+                    f"{agent.display_name} 现在挑不了：{reason_text(agent.reason)}"
+                )
             return agent
     known = ", ".join(a.agent_type for a in list_agents()) or "<无>"
     raise AgentUnavailable(f"没有叫 {agent_type!r} 的客户端（本机认得的：{known}）")

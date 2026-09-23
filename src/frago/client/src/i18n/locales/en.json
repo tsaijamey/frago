@@ -1830,5 +1830,12 @@
     "instructPreview": "What they'll see",
     "instructSend": "Send",
     "instructPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)"
+  },
+  "agent": {
+    "notInstalled": "Not found on this machine — install it and it shows up here by itself",
+    "notReadable": "frago can drive it, but its session records don't reach the workbench, so it would never appear in the left rail",
+    "unknownInstall": "This one offers no way to probe for it, so whether it's installed can't be told",
+    "noKernel": "frago's kernel isn't installed yet (nothing under ~/.frago/bin) — run frago init once",
+    "noConnection": "CoreAgent has no connection yet — pick one for it under connections in settings, or it can't reach a model"
   }
 }

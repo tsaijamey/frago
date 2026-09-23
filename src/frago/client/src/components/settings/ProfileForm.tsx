@@ -1,4 +1,5 @@
 import { Coins, Eye, EyeOff, Loader2, Radar } from 'lucide-react';
+import { agentReasonText } from '@/hooks/useAgentClients';
 import type { ProfilesController } from './useProfiles';
 
 export default function ProfileForm({ pm }: { pm: ProfilesController }) {
@@ -279,7 +280,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
               ))}
             </select>
             {core?.reason && (
-              <p className="text-xs text-[var(--text-muted)] mt-1">{core.reason}</p>
+              <p className="text-xs text-[var(--text-muted)] mt-1">{agentReasonText(core.reason)}</p>
             )}
           </div>
 

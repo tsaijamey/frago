@@ -1830,5 +1830,12 @@
     "instructPreview": "他那边看到的是",
     "instructSend": "发过去",
     "instructPlaceholder": "要队友的 agent 做什么…（⌘/Ctrl + Enter 发出）"
+  },
+  "agent": {
+    "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",
+    "notReadable": "frago 驱动得动它，但它的会话记录读不进工作台，起了也不会出现在左栏",
+    "unknownInstall": "这一家没提供探测方式，判不出装没装",
+    "noKernel": "frago 的内核还没装好（~/.frago/bin 下找不到），跑一次 frago init 补上",
+    "noConnection": "还没给 CoreAgent 配连接，去设置页的连接里给它挑一个，它才调得动模型"
   }
 }

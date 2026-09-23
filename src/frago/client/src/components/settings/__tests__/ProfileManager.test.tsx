@@ -13,8 +13,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+// 这一页会间接用到 i18n 的初始化（挑不了的那一家，理由要按当前语言说），所以
+// 这个替身除了 `useTranslation` 还要给出初始化那一项——少一项，整个用例文件在
+// 加载阶段就崩，而崩的原因跟这一页要验的事情毫无关系。
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+  initReactI18next: { type: '3rdParty', init: () => {} },
 }));
 
 vi.mock('@/stores/appStore', () => ({

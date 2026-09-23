@@ -91,6 +91,7 @@ import {
   pickDefaultAgent,
   rememberLastAgent,
   useAgentClients,
+  agentReasonText,
   type PendingLaunch,
 } from '@/hooks/useAgentClients';
 
@@ -356,7 +357,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                     >
                       <span className="text-[var(--text-secondary)]">{c.display_name}</span>
                       {' — '}
-                      {c.reason}
+                      {agentReasonText(c.reason)}
                     </p>
                   ))
                 : null}
