@@ -65,3 +65,46 @@ def test_敲中继的活不跑在接单线上(monkeypatch, patched, call):
 
     monkeypatch.setattr(team_sync, patched, stub)
     asyncio.run(call())
+
+
+class TestTheRefusalSaysWhichKind:
+    """一次失败属于哪一类，由这一层说，NEVER 让界面去那句话里找词。
+
+    三类各自的下一步完全不同——改码、等网络、等一会儿。从前这里只回一句中文，界面
+    靠在里面找「限流」「连不上中继」这几个字来分支：换个说法、翻成别的语言，判读当场
+    失效，而且不报错，只会把三种处境一律显示成同一种。
+    """
+
+    def test_码不对是一类(self):
+        from frago.server.routes import team as route
+
+        err = Exception("这个连接码在中继上不可用。它可能打错了、已经作废了")
+        assert route._classify(err) == route.TROUBLE_BAD_CODE
+
+    def test_够不着中继是另一类(self):
+        from frago.server.routes import team as route
+
+        assert route._classify(Exception("连不上中继 https://www.frago.ai：timed out")) == (
+            route.TROUBLE_RELAY_DOWN
+        )
+
+    def test_被限流又是一类(self):
+        from frago.server.routes import team as route
+
+        assert route._classify(Exception("中继在限流，等一会儿再来")) == route.TROUBLE_BUSY
+
+    def test_认不出的落到够不着那一类(self):
+        """那一类的说法最不武断，给的也是「再试一次」，不会把人引到改码那条错路上。"""
+        from frago.server.routes import team as route
+
+        assert route._classify(Exception("某种谁也没见过的故障")) == route.TROUBLE_RELAY_DOWN
+
+    def test_那句原话一个字都没丢(self):
+        """上面那句是给人看的，这句是排查时对得上的那一句。两样都要。"""
+        from frago.server.routes import team as route
+
+        refused = route._refuse(Exception("中继在限流，等一会儿再来"))
+
+        assert refused.status_code == 400
+        assert refused.detail["detail"] == "中继在限流，等一会儿再来"
+        assert refused.detail["trouble"] == route.TROUBLE_BUSY

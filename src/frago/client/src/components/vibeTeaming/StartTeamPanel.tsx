@@ -74,6 +74,14 @@ export interface StartTeamPanelProps {
   hint?: string;
   /** 确认按钮上写什么。 */
   confirmLabel?: string;
+  /**
+   * 等待那三档里最后一档写什么。
+   *
+   * 发起那一侧是「朝中继要连接码」，加入那一侧手里已经攥着码，要的是「拿这个码进去」。
+   * 两边共用这套面板，但这一档说的是两件不同的事，照搬会让加入的人看见一句莫名其妙的
+   * 「朝中继要连接码」——他刚亲手填完那串码。
+   */
+  lastStepLabel?: string;
 }
 
 export default function StartTeamPanel({
@@ -83,20 +91,21 @@ export default function StartTeamPanel({
   title,
   hint,
   confirmLabel,
+  lastStepLabel,
 }: StartTeamPanelProps) {
   const { t } = useTranslation();
   const [source, setSource] = useState<Source>('existing');
   const take = commit ?? openTeam;
-  const shared = { onDone, onCancel, commit: take, confirmLabel };
+  const shared = { onDone, onCancel, commit: take, confirmLabel, lastStepLabel };
 
   return (
-    <div className="rounded-lg border border-border">
-      <div className="border-b border-border px-4 py-3">
+    <div className="rounded-lg border border-border-color">
+      <div className="border-b border-border-color px-4 py-3">
         <h3 className="text-sm font-medium">{title ?? t('team.pickTitle')}</h3>
-        <p className="mt-1 text-xs text-fg-muted">{hint ?? t('team.pickHint')}</p>
+        <p className="mt-1 text-xs text-text-muted">{hint ?? t('team.pickHint')}</p>
       </div>
 
-      <div className="flex gap-2 border-b border-border px-4 py-2.5">
+      <div className="flex gap-2 border-b border-border-color px-4 py-2.5">
         <SourceTab
           label={t('team.startFromExisting')}
           why={t('team.startFromExistingWhy')}
@@ -134,12 +143,12 @@ function SourceTab({
       aria-pressed={active}
       className={`flex-1 rounded-lg border px-3 py-2 text-left transition-shadow ${
         active
-          ? 'border-accent bg-surface-2 shadow-[0_0_0_3px_var(--accent-primary-10,rgba(139,124,255,0.18))]'
-          : 'border-border hover:bg-surface-2'
+          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
+          : 'border-border-color hover:bg-bg-hover'
       }`}
     >
       <span className="block text-xs font-medium">{label}</span>
-      <span className="mt-0.5 block text-[11px] leading-relaxed text-fg-muted">{why}</span>
+      <span className="mt-0.5 block text-[11px] leading-relaxed text-text-muted">{why}</span>
     </button>
   );
 }
@@ -151,6 +160,7 @@ interface SourceProps {
   onCancel: () => void;
   commit: (sessionId: string) => Promise<unknown>;
   confirmLabel?: string;
+  lastStepLabel?: string;
 }
 
 function ExistingSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
@@ -189,19 +199,19 @@ function ExistingSource({ onDone, onCancel, commit, confirmLabel }: SourceProps)
 
   return (
     <>
-      <div className="border-b border-border px-4 py-2">
+      <div className="border-b border-border-color px-4 py-2">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('team.pickSearch')}
-          className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs"
+          className="w-full rounded-md border border-border-color bg-bg-card px-2 py-1 text-xs"
         />
       </div>
 
       <div className="max-h-64 overflow-auto">
-        {loading && <p className="px-4 py-6 text-xs text-fg-muted">{t('team.loading')}</p>}
+        {loading && <p className="px-4 py-6 text-xs text-text-muted">{t('team.loading')}</p>}
         {!loading && rows.length === 0 && (
-          <p className="px-4 py-6 text-xs text-fg-muted">{t('team.pickNone')}</p>
+          <p className="px-4 py-6 text-xs text-text-muted">{t('team.pickNone')}</p>
         )}
         {rows.map((s) => (
           <SessionRow
@@ -215,9 +225,9 @@ function ExistingSource({ onDone, onCancel, commit, confirmLabel }: SourceProps)
 
       {/* 后果写在确认按钮旁边，不写在别处：人读完这句才按得下去。 */}
       {chosen && (
-        <div className="border-t border-border px-4 py-3">
-          <p className="text-xs leading-relaxed text-warning">{t('team.pickConfirmWarn')}</p>
-          {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
+        <div className="border-t border-border-color px-4 py-3">
+          <p className="text-xs leading-relaxed text-accent-warning">{t('team.pickConfirmWarn')}</p>
+          {error && <p className="mt-1.5 text-xs text-accent-error">{error}</p>}
         </div>
       )}
 
@@ -244,20 +254,20 @@ function SessionRow({
     <button
       onClick={onChoose}
       aria-pressed={chosen}
-      className={`flex w-full items-start gap-2 border-b border-border px-4 py-2.5 text-left last:border-b-0 ${
-        chosen ? 'bg-surface-2' : 'hover:bg-surface-2'
+      className={`flex w-full items-start gap-2 border-b border-border-color px-4 py-2.5 text-left last:border-b-0 ${
+        chosen ? 'bg-bg-hover' : 'hover:bg-bg-hover'
       }`}
     >
-      <span className="mt-0.5 w-4 shrink-0 text-accent">{chosen && <Check size={14} />}</span>
+      <span className="mt-0.5 w-4 shrink-0 text-accent-primary">{chosen && <Check size={14} />}</span>
       <span className="min-w-0 flex-1">
         {/* 会话名是人认得出来的那个东西。会话号不摆在脸上——它长到读不了，而人从来
             不是靠它认一场对话。 */}
         <span className="block truncate text-xs font-medium">{session.title}</span>
-        <span className="mt-0.5 block truncate text-[11px] text-fg-muted">
+        <span className="mt-0.5 block truncate text-[11px] text-text-muted">
           {session.directory}
         </span>
       </span>
-      <span className="shrink-0 text-[11px] text-fg-muted">{whenShort(activityTs(session))}</span>
+      <span className="shrink-0 text-[11px] text-text-muted">{whenShort(activityTs(session))}</span>
     </button>
   );
 }
@@ -273,7 +283,7 @@ function whenShort(ms: number): string {
 
 /* ── 新开一场 ─────────────────────────────────────────────────────────────── */
 
-function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
+function FreshSource({ onDone, onCancel, commit, confirmLabel, lastStepLabel }: SourceProps) {
   const { t } = useTranslation();
   const { agents, fallbackDefault, loading: agentsLoading, error: agentsError } =
     useAgentClients(true);
@@ -363,6 +373,7 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
         agentName={chosenAgent?.display_name ?? agent}
         idIsInstant={!!idIsInstant}
         startedAt={startedAt}
+        lastStepLabel={lastStepLabel}
         onCancel={() => abort.current?.abort()}
       />
     );
@@ -381,8 +392,8 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
                 onClick={() => setAgent(a.agent_type)}
               />
             ))}
-            {agentsLoading && <span className="text-xs text-fg-muted">{t('team.loading')}</span>}
-            {agentsError && <span className="text-xs text-danger">{agentsError}</span>}
+            {agentsLoading && <span className="text-xs text-text-muted">{t('team.loading')}</span>}
+            {agentsError && <span className="text-xs text-accent-error">{agentsError}</span>}
           </div>
         </Field>
 
@@ -391,7 +402,7 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
             spellCheck={false}
-            className="w-full rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-xs"
+            className="w-full rounded-md border border-border-color bg-bg-card px-2 py-1.5 font-mono text-xs"
           />
           {!cwd.trim() && <Hint text={t('team.freshNeedCwd')} />}
         </Field>
@@ -404,23 +415,23 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
               setOpening(e.target.value);
             }}
             rows={2}
-            className="w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-xs"
+            className="w-full resize-none rounded-md border border-border-color bg-bg-card px-2 py-1.5 text-xs"
           />
           {!opening.trim() && <Hint text={t('team.freshNeedOpening')} />}
         </Field>
 
         {/* 新开一场也要交出记录，这句和挑现成的那条路上说的是同一件事。 */}
-        <p className="text-xs leading-relaxed text-warning">{t('team.pickConfirmWarn')}</p>
+        <p className="text-xs leading-relaxed text-accent-warning">{t('team.pickConfirmWarn')}</p>
 
         {/* 慢的那一家在按下去之前就把等待说在前面，不等人按完才发现。 */}
         {chosenAgent && (
-          <p className="text-[11px] text-fg-muted">
+          <p className="text-[11px] text-text-muted">
             {idIsInstant ? t('team.waitIdFast') : t('team.waitIdSlow')}
           </p>
         )}
 
-        {cancelled && <p className="text-xs text-fg-muted">{t('team.waitCancelled')}</p>}
-        {error && <p className="text-xs text-danger">{error}</p>}
+        {cancelled && <p className="text-xs text-text-muted">{t('team.waitCancelled')}</p>}
+        {error && <p className="text-xs text-accent-error">{error}</p>}
       </div>
 
       <Footer
@@ -434,7 +445,7 @@ function FreshSource({ onDone, onCancel, commit, confirmLabel }: SourceProps) {
 }
 
 function Hint({ text }: { text: string }) {
-  return <span className="mt-1 block text-[11px] text-fg-muted">{text}</span>;
+  return <span className="mt-1 block text-[11px] text-text-muted">{text}</span>;
 }
 
 function Field({
@@ -448,8 +459,8 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[11px] font-medium text-fg-muted">{label}</span>
-      {why && <span className="mb-1 block text-[11px] text-fg-muted">{why}</span>}
+      <span className="block text-[11px] font-medium text-text-muted">{label}</span>
+      {why && <span className="mb-1 block text-[11px] text-text-muted">{why}</span>}
       <span className="mt-1 block">{children}</span>
     </label>
   );
@@ -474,13 +485,13 @@ function AgentChip({
       title={agentReasonText(agent.reason) ?? undefined}
       className={`rounded-lg border px-2.5 py-1 text-xs transition-shadow disabled:cursor-not-allowed disabled:opacity-40 ${
         active
-          ? 'border-accent bg-surface-2 shadow-[0_0_0_3px_var(--accent-primary-10,rgba(139,124,255,0.18))]'
-          : 'border-border hover:bg-surface-2'
+          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
+          : 'border-border-color hover:bg-bg-hover'
       }`}
     >
       {agent.display_name}
       {!agent.selectable && (
-        <span className="ml-1 text-[10px] text-fg-muted">
+        <span className="ml-1 text-[10px] text-text-muted">
           · {agentReasonText(agent.reason) ?? t('team.freshAgentUnavailable')}
         </span>
       )}
@@ -500,12 +511,14 @@ export function WaitingView({
   agentName,
   idIsInstant,
   startedAt,
+  lastStepLabel,
   onCancel,
 }: {
   phase: Phase;
   agentName: string;
   idIsInstant: boolean;
   startedAt: number | null;
+  lastStepLabel?: string;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
@@ -534,7 +547,7 @@ export function WaitingView({
       <p className="text-sm font-medium">{t('team.waitTitle')}</p>
 
       <div
-        className="mt-3 h-1 overflow-hidden rounded-full bg-surface-2"
+        className="mt-3 h-1 overflow-hidden rounded-full bg-bg-hover"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
@@ -543,7 +556,7 @@ export function WaitingView({
       >
         <div
           data-testid="team-start-progress"
-          className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
+          className="h-full rounded-full bg-accent-primary transition-[width] duration-500 ease-out"
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -551,18 +564,18 @@ export function WaitingView({
       <div className="mt-3 space-y-1.5">
         <Step state={stepState('creating')} label={t('team.waitStepCreate', { name: agentName })} />
         <Step state={stepState('awaitingId')} label={t('team.waitStepId')} />
-        <Step state={stepState('askingCode')} label={t('team.waitStepCode')} />
+        <Step state={stepState('askingCode')} label={lastStepLabel ?? t('team.waitStepCode')} />
       </div>
 
-      <p className="mt-3 text-[11px] leading-relaxed text-fg-muted">
+      <p className="mt-3 text-[11px] leading-relaxed text-text-muted">
         {idIsInstant ? t('team.waitIdFast') : t('team.waitIdSlow')}
         {' · '}
         {t('team.waitElapsed', { secs: Math.floor(elapsed / 1000) })}
       </p>
-      <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">{t('team.waitWhyNoCode')}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{t('team.waitWhyNoCode')}</p>
 
       <div className="mt-3">
-        <button onClick={onCancel} className="text-xs text-fg-muted hover:underline">
+        <button onClick={onCancel} className="text-xs text-text-muted hover:underline">
           {t('team.waitCancel')}
         </button>
       </div>
@@ -593,17 +606,17 @@ function Step({
     <div
       data-testid="team-start-step"
       data-state={state}
-      className={`flex items-center gap-2 text-xs text-fg-muted ${
+      className={`flex items-center gap-2 text-xs text-text-muted ${
         state === 'waiting' ? 'opacity-60' : ''
       }`}
     >
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
         {state === 'done' ? (
-          <Check size={13} className="text-accent" />
+          <Check size={13} className="text-accent-primary" />
         ) : state === 'active' ? (
-          <Loader2 size={13} className="animate-spin text-accent" />
+          <Loader2 size={13} className="animate-spin text-accent-primary" />
         ) : (
-          <span className="h-1.5 w-1.5 rounded-full bg-fg-muted" />
+          <span className="h-1.5 w-1.5 rounded-full bg-text-muted" />
         )}
       </span>
       <span>{label}</span>
@@ -624,14 +637,14 @@ function Footer({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-      <button onClick={onCancel} className="px-2 py-1 text-xs text-fg-muted hover:underline">
+    <div className="flex items-center justify-end gap-2 border-t border-border-color px-4 py-2.5">
+      <button onClick={onCancel} className="px-2 py-1 text-xs text-text-muted hover:underline">
         {t('team.cancel')}
       </button>
       <button
         disabled={disabled}
         onClick={onConfirm}
-        className="flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent disabled:opacity-40"
+        className="flex items-center gap-1 rounded-md bg-accent-primary px-3 py-1.5 text-xs text-[var(--text-on-accent)] disabled:opacity-40"
       >
         <Plus size={13} strokeWidth={1.5} />
         {confirmLabel}

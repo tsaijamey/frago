@@ -1830,7 +1830,19 @@
     "joinPickHint": "队友会看到你这一场。挑一场现成的，或者新开一场跟他从头做。",
     "joinConfirm": "用这一场加入",
     "joinCodeTitle": "填队友给的连接码",
-    "joinNext": "下一步"
+    "joinNext": "下一步",
+    "joinAlready": "你已经在这个 team 里了",
+    "joinAlreadyWhy": "顶上那块就是它。要换一场会话带进去，先退出再重新加入。",
+    "joinAlreadyGo": "去看它",
+    "joinBadCode": "这个码用不了",
+    "joinBadCodeWhy": "可能打错了、已经作废了，或者两个位置已经被别的机器占着。中继不区分这几种——分开说等于给猜码的人一盏指示灯。码还在上面，改一改再试。",
+    "joinRelayDown": "连不上中继",
+    "joinRelayDownWhy": "是中继那一侧不通，不是你的码有问题。网络恢复后再试一次。",
+    "joinBusy": "中继在限流，等一会儿",
+    "joinBusyCount": "{{secs}} 秒后可以再试",
+    "joinRetry": "再试一次",
+    "joinBackToCode": "改那串码",
+    "joinStepCode": "拿这个码进去"
   },
   "agent": {
     "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",

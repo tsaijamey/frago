@@ -51,13 +51,52 @@ class SendRequest(BaseModel):
     note: str = ""
 
 
-def _refuse(err: Exception) -> HTTPException:
-    """把本机这一侧的三类失败变成界面能照着说的一句话。
+#: 一次失败属于哪一类。**界面照这个分支，NEVER 去猜那句话里的字眼。**
+#:
+#: 三类各自的下一步完全不同，所以必须分开：
+#:
+#: * ``bad_code`` —— 中继不认这个码。它对「打错了」「已作废」「位置被别的机器占了」
+#:   回的是**逐字节相同**的一句话，分开说等于给猜码的人一盏指示灯，所以这一层也只给
+#:   一个类别，不替它猜是哪一种。人该做的是改那串码。
+#: * ``relay_down`` —— 够不着中继。跟码没关系，人该做的是等网络。
+#: * ``busy`` —— 被限流挡住。人该做的是等一会儿再来。
+#:
+#: 从前这里只回一句话，界面要靠在中文里找「限流」「连不上中继」这几个词来分支——
+#: 换个说法、翻成别的语言，判读当场失效，而且不报错，只会一律显示成同一种错。
+TROUBLE_BAD_CODE = "bad_code"
+TROUBLE_RELAY_DOWN = "relay_down"
+TROUBLE_BUSY = "busy"
 
-    都回 400 而不是 500：这些不是这台机器坏了，是中继那边不接受、或者本机还没配好。
-    500 会让界面显示「服务器错误」，而人要看的是「对方还没加入」。
+
+def _classify(err: Exception) -> str:
+    """这次失败属于哪一类。
+
+    判据取自本机同一份代码抛出来的那几句话（见 ``frago/team/relay.py``），不是外面
+    来的文本。对不上的落到「够不着中继」——那一类的说法最不武断，给的也是「再试
+    一次」，不会把人引到改码那条错路上。
     """
-    return HTTPException(status_code=400, detail=str(err))
+    said = str(err)
+    if "限流" in said:
+        return TROUBLE_BUSY
+    if "连不上中继" in said or "看不懂" in said:
+        return TROUBLE_RELAY_DOWN
+    if "连接码" in said or "不可用" in said:
+        return TROUBLE_BAD_CODE
+    return TROUBLE_RELAY_DOWN
+
+
+def _refuse(err: Exception) -> HTTPException:
+    """把本机这一侧的失败变成界面能照着分支的一份答复。
+
+    都回 400 而不是 500：这些不是这台机器坏了，是中继那边不接受、或者够不着它。
+    500 会让界面显示「服务器错误」，而人要看的是「这个码用不了」。
+
+    ``detail`` 仍然是那句话（命令行和日志照旧读它），``trouble`` 是给界面的类别。
+    """
+    return HTTPException(
+        status_code=400,
+        detail={"detail": str(err), "trouble": _classify(err)},
+    )
 
 
 @router.get("/team")

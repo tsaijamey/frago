@@ -49,6 +49,26 @@ export interface TeamStatus {
 /** 对方那一列每隔多久重取一次。与服务端同步循环的默认节奏对齐。 */
 const PEER_POLL_MS = 15_000;
 
+/** 一次失败属于哪一类。与服务端那三个值一一对应。 */
+export type TeamTrouble = 'bad_code' | 'relay_down' | 'busy';
+
+/**
+ * 一次 team 操作没成。
+ *
+ * 除了那句话，还带着**类别**——界面照类别分支，NEVER 去那句话里找「限流」「连不上」
+ * 这几个词。换个说法、翻成别的语言，找词那套当场失效，而且不报错，只会把三种完全
+ * 不同的处境一律显示成同一种。
+ */
+export class TeamError extends Error {
+  readonly trouble: TeamTrouble;
+
+  constructor(message: string, trouble: TeamTrouble) {
+    super(message);
+    this.name = 'TeamError';
+    this.trouble = trouble;
+  }
+}
+
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -56,11 +76,12 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    // 服务端把本机这一侧的三类失败都写成 detail 里那一句人能照着做的话
-    // （对方还没加入、中继没配好、连接码作废了）。原样交给界面，NEVER 换成
-    // 「请求失败」——那句话让人无从下手。
-    const detail = body && typeof body === 'object' ? (body as { detail?: string }).detail : null;
-    throw new Error(detail || `HTTP ${res.status}`);
+    // 服务端那一句人能照着做的话原样交给界面，NEVER 换成「请求失败」——那句话让人
+    // 无从下手。类别另走 `trouble`，见 `TeamError`。
+    const raw = body && typeof body === 'object' ? (body as { detail?: unknown }).detail : null;
+    const said = typeof raw === 'string' ? raw : (raw as { detail?: string } | null)?.detail;
+    const trouble = (raw as { trouble?: TeamTrouble } | null)?.trouble;
+    throw new TeamError(said || `HTTP ${res.status}`, trouble ?? 'relay_down');
   }
   return body as T;
 }

@@ -38,12 +38,14 @@ import StartTeamPanel from '@/components/vibeTeaming/StartTeamPanel';
 import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import {
+  TeamError,
   joinTeam,
   leaveTeam,
   sendToPeer,
   usePeerRecords,
   useTeamState,
   type TeamBinding,
+  type TeamTrouble,
 } from '@/hooks/useTeam';
 
 const ICON = { size: 16, strokeWidth: 1.5 } as const;
@@ -90,11 +92,11 @@ export default function VibeTeamingPage() {
   const binding = active.find((one) => one.code === selected) ?? null;
 
   if (loading) {
-    return <div className="p-6 text-sm text-fg-muted">{t('team.loading')}</div>;
+    return <div className="p-6 text-sm text-text-muted">{t('team.loading')}</div>;
   }
 
   if (stateError) {
-    return <div className="p-6 text-sm text-danger">{stateError}</div>;
+    return <div className="p-6 text-sm text-accent-error">{stateError}</div>;
   }
 
   // 一个 team 都没有时整页就是这张说明书，上面不再摆那条工具栏——两个动作已经
@@ -121,15 +123,17 @@ export default function VibeTeamingPage() {
 function Intro({ onChanged }: { onChanged: () => void }) {
   const { t } = useTranslation();
   const [path, setPath] = useState<'open' | 'join' | null>(null);
+  // 这一屏只在一个 team 都没有时出现，所以没有「已经在里面」这种情况。
+  const joined: string[] = [];
 
   return (
     <div className="mx-auto w-full max-w-2xl px-6 py-12">
-      <div className="flex items-center gap-2 text-fg-muted">
+      <div className="flex items-center gap-2 text-text-muted">
         <Users size={18} strokeWidth={1.5} />
-        <h2 className="text-base font-semibold text-fg">{t('team.title')}</h2>
+        <h2 className="text-base font-semibold text-text-primary">{t('team.title')}</h2>
       </div>
-      <p className="mt-3 text-sm leading-relaxed text-fg-muted">{t('team.pitch')}</p>
-      <p className="mt-2 text-sm leading-relaxed text-fg-muted">{t('team.pitchCode')}</p>
+      <p className="mt-3 text-sm leading-relaxed text-text-muted">{t('team.pitch')}</p>
+      <p className="mt-2 text-sm leading-relaxed text-text-muted">{t('team.pitchCode')}</p>
 
       <div className="mt-8 grid gap-3 sm:grid-cols-2">
         <PathCard
@@ -155,7 +159,12 @@ function Intro({ onChanged }: { onChanged: () => void }) {
       )}
       {path === 'join' && (
         <div className="mt-4">
-          <JoinFlow onDone={onChanged} onCancel={() => setPath(null)} />
+          <JoinFlow
+            onDone={onChanged}
+            onCancel={() => setPath(null)}
+            joined={joined}
+            onGoTo={() => setPath(null)}
+          />
         </div>
       )}
     </div>
@@ -181,60 +190,80 @@ function PathCard({
       aria-pressed={active}
       className={`rounded-lg border p-4 text-left transition-shadow ${
         active
-          ? 'border-accent bg-surface-2 shadow-[0_0_0_3px_var(--accent-primary-10,rgba(139,124,255,0.18))]'
-          : 'border-border hover:bg-surface-2'
+          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
+          : 'border-border-color hover:bg-bg-hover'
       }`}
     >
       <span className="flex items-center gap-2 text-sm font-medium">
         {icon}
         {title}
       </span>
-      <span className="mt-1.5 block text-xs leading-relaxed text-fg-muted">{why}</span>
+      <span className="mt-1.5 block text-xs leading-relaxed text-text-muted">{why}</span>
     </button>
   );
 }
 
 /**
- * 加入：填码，然后挑一场会话带进去。**两步都在这一页里走完。**
+ * 加入：填码 → 挑一场会话带进去。**两步都在这一页里走完。**
  *
  * 从前这里要求人先去会话页把某一场"选中"，否则按钮点不动。那是把发起那一侧的老做法
  * 照搬过来的：发起时页面偷偷拿工作台停着的那一场，加入时同一份东西拿不到，就变成一句
- * 让人出门的提示。
+ * 让人出门的提示。对着屏幕的人是这样的处境——他手里攥着队友刚发来的码，刚敲进去，被
+ * 告知要先去另一个页面做一件没说清楚是什么的事，回来时码还在不在都不知道。
  *
- * 对着屏幕的人是这样的处境：他手里攥着队友刚发来的码，刚敲进去，被告知要先去另一个
- * 页面做一件没说清楚是什么的事，回来时输入框里的码还在不在都不知道。这一步没人过得去。
+ * 挑会话这件事发起那边已经有一整套（挑现成的、或者新开一场，连等编号都摆在明处），
+ * 加入要的是同一样东西，直接共用。
  *
- * 挑会话这件事发起那边已经有了一整套——挑现成的、或者新开一场，连等编号都摆在明处。
- * 加入要的是同一样东西，所以直接共用，一个字都不必另写。
+ * ## 三种收场，三条不同的下一步
+ *
+ * **这个码用不了。** 中继对「打错了」「已作废」「位置被别的机器占了」回的是逐字节
+ * 相同的一句话——分开说等于给猜码的人一盏指示灯。所以这里也不猜是哪一种，只把码留在
+ * 框里让人改。
+ *
+ * **够不着中继。** 跟码没关系，说清是那一侧不通，给一个重试，码原样留着。
+ *
+ * **被限流。** 说清还要等几秒，倒数到点按钮自己解禁——让人对着一个永远点不动的按钮
+ * 猜要等多久，比不给按钮还糟。
+ *
+ * 还有一种在发请求之前就拦下：**本机已经在这个 team 里**。再 join 一次不会有新东西，
+ * 只会让人以为自己进了个新的。当场说清，指向顶上那块。
  */
-function JoinFlow({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+function JoinFlow({
+  onDone,
+  onCancel,
+  joined,
+  onGoTo,
+}: {
+  onDone: () => void;
+  onCancel: () => void;
+  /** 本机已经在里面的那些码。填到其中之一时不发请求。 */
+  joined: string[];
+  /** 人说「去看它」时把顶上那块切过去。 */
+  onGoTo: (code: string) => void;
+}) {
   const { t } = useTranslation();
   const [code, setCode] = useState('');
   const [locked, setLocked] = useState<string | null>(null);
 
   const full = code.length === CODE_LENGTH;
+  const already = full && joined.includes(code);
 
-  // 码填全了才谈会话。反过来先挑会话再填码也说得通，但码是队友刚发来的、正攥在手里
-  // 的那样东西，让它先落地，人才知道自己在加入哪一个。
   if (locked) {
     return (
-      <StartTeamPanel
-        title={t('team.joinPickTitle')}
-        hint={t('team.joinPickHint')}
-        confirmLabel={t('team.joinConfirm')}
-        commit={(sessionId) => joinTeam(locked, sessionId)}
+      <JoinPick
+        code={locked}
         onDone={onDone}
-        onCancel={() => setLocked(null)}
+        onBackToCode={() => setLocked(null)}
       />
     );
   }
 
   return (
     <form
-      className="rounded-lg border border-border p-4"
+      className="rounded-lg border border-border-color p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        if (full) setLocked(code);
+        if (full && !already) setLocked(code);
       }}
     >
       <p className="text-sm font-medium">{t('team.joinCodeTitle')}</p>
@@ -245,30 +274,167 @@ function JoinFlow({ onDone, onCancel }: { onDone: () => void; onCancel: () => vo
           onChange={(e) => setCode(cleanCode(e.target.value))}
           placeholder={t('team.codePlaceholder')}
           maxLength={CODE_LENGTH}
-          className="w-44 rounded-md border border-border bg-surface px-2 py-1.5 font-mono text-sm tracking-widest"
+          aria-invalid={already || undefined}
+          className="w-44 rounded-md border border-border-color bg-bg-card px-2 py-1.5 font-mono text-sm tracking-widest"
         />
         <button
           type="submit"
-          disabled={!full}
-          className="rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent disabled:opacity-40"
+          disabled={!full || already}
+          className="rounded-md bg-accent-primary px-3 py-1.5 text-xs text-[var(--text-on-accent)] disabled:opacity-40"
         >
           {t('team.joinNext')}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-2 py-1 text-xs text-fg-muted hover:underline"
+          className="px-2 py-1 text-xs text-text-muted hover:underline"
         >
           {t('team.cancel')}
         </button>
       </div>
+
       {/* 差几位就说差几位。从前这里限死 6 位，粘进来被悄悄截断，人看不出为什么对不上。 */}
       {!full && code.length > 0 && (
-        <p className="mt-1.5 text-xs text-fg-muted">
+        <p className="mt-1.5 text-xs text-text-muted">
           {t('team.joinNeedFull')}（{code.length}/{CODE_LENGTH}）
         </p>
       )}
+
+      {/* 已经在里面了。在发请求之前就拦下——再 join 一次不会有新东西。 */}
+      {already && (
+        <div className="mt-2.5 rounded-md border border-border-color bg-bg-subtle p-3">
+          <p className="text-xs font-medium">{t('team.joinAlready')}</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+            {t('team.joinAlreadyWhy')}
+          </p>
+          <button
+            type="button"
+            onClick={() => onGoTo(code)}
+            className="mt-2 text-[11px] text-accent-primary hover:underline"
+          >
+            {t('team.joinAlreadyGo')}
+          </button>
+        </div>
+      )}
     </form>
+  );
+}
+
+/** 第二步：拿这个码，挑一场会话进去。三类失败各自一套说法。 */
+function JoinPick({
+  code,
+  onDone,
+  onBackToCode,
+}: {
+  code: string;
+  onDone: () => void;
+  onBackToCode: () => void;
+}) {
+  const { t } = useTranslation();
+  const [trouble, setTrouble] = useState<TeamTrouble | null>(null);
+  const [said, setSaid] = useState<string>('');
+  const [waitSecs, setWaitSecs] = useState(0);
+
+  // 被限流时倒数。让人对着一个永远点不动的按钮猜要等多久，比不给按钮还糟。
+  useEffect(() => {
+    if (trouble !== 'busy' || waitSecs <= 0) return;
+    const timer = window.setTimeout(() => setWaitSecs((n) => n - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [trouble, waitSecs]);
+
+  const go = async (sessionId: string) => {
+    setTrouble(null);
+    try {
+      await joinTeam(code, sessionId);
+    } catch (err) {
+      const kind = err instanceof TeamError ? err.trouble : 'relay_down';
+      setTrouble(kind);
+      setSaid(err instanceof Error ? err.message : String(err));
+      if (kind === 'busy') setWaitSecs(RELAY_BUSY_WAIT_SECS);
+      throw err;
+    }
+  };
+
+  if (trouble) {
+    return (
+      <JoinTroubleCard
+        trouble={trouble}
+        said={said}
+        waitSecs={waitSecs}
+        onRetry={() => setTrouble(null)}
+        onBackToCode={onBackToCode}
+      />
+    );
+  }
+
+  return (
+    <StartTeamPanel
+      title={t('team.joinPickTitle')}
+      hint={t('team.joinPickHint')}
+      confirmLabel={t('team.joinConfirm')}
+      lastStepLabel={t('team.joinStepCode')}
+      commit={go}
+      onDone={onDone}
+      onCancel={onBackToCode}
+    />
+  );
+}
+
+/** 被限流之后让人等几秒。与中继那一侧的退避节奏对齐。 */
+const RELAY_BUSY_WAIT_SECS = 10;
+
+function JoinTroubleCard({
+  trouble,
+  said,
+  waitSecs,
+  onRetry,
+  onBackToCode,
+}: {
+  trouble: TeamTrouble;
+  said: string;
+  waitSecs: number;
+  onRetry: () => void;
+  onBackToCode: () => void;
+}) {
+  const { t } = useTranslation();
+  const copy = {
+    bad_code: { title: t('team.joinBadCode'), why: t('team.joinBadCodeWhy') },
+    relay_down: { title: t('team.joinRelayDown'), why: t('team.joinRelayDownWhy') },
+    busy: { title: t('team.joinBusy'), why: t('team.joinBusyCount', { secs: waitSecs }) },
+  }[trouble];
+
+  // 码这一类唯一该做的是改那串码，别的两类码没问题，重试才对。
+  const canRetry = trouble !== 'bad_code' && !(trouble === 'busy' && waitSecs > 0);
+
+  return (
+    <div className="rounded-lg border border-border-color p-4">
+      <p className="text-sm font-medium text-accent-error">{copy.title}</p>
+      <p className="mt-1.5 text-xs leading-relaxed text-text-muted">{copy.why}</p>
+
+      {/* 中继原话只在「够不着」那一类摆出来——那一句带着地址和底层的网络错误，是排查
+          时真用得上的东西。另外两类它只是把上面那句用另一种语言又说了一遍，而它出自
+          服务端、恒为中文，摆在英文界面上就是一段没人要的中文。 */}
+      {trouble === 'relay_down' && said && (
+        <p className="mt-2 font-mono text-[11px] leading-relaxed text-text-dim">{said}</p>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        {canRetry && (
+          <button
+            onClick={onRetry}
+            className="rounded-md bg-accent-primary px-3 py-1.5 text-xs text-[var(--text-on-accent)]"
+          >
+            {t('team.joinRetry')}
+          </button>
+        )}
+        <button
+          onClick={onBackToCode}
+          className="px-2 py-1 text-xs text-text-muted hover:underline"
+        >
+          {t('team.joinBackToCode')}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -309,7 +475,7 @@ function TeamBar({
   };
 
   return (
-    <div className="shrink-0 border-b border-border">
+    <div className="shrink-0 border-b border-border-color">
       <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
         {teams.map((one) => (
           <CodeBlock
@@ -353,10 +519,18 @@ function TeamBar({
       )}
       {panel === 'join' && (
         <div className="px-4 pb-3">
-          <JoinFlow onDone={done} onCancel={() => setPanel(null)} />
+          <JoinFlow
+            onDone={done}
+            onCancel={() => setPanel(null)}
+            joined={teams.map((one) => one.code)}
+            onGoTo={(code) => {
+              onSelect(code);
+              setPanel(null);
+            }}
+          />
         </div>
       )}
-      {error && <p className="px-4 pb-2 text-xs text-danger">{error}</p>}
+      {error && <p className="px-4 pb-2 text-xs text-accent-error">{error}</p>}
     </div>
   );
 }
@@ -407,11 +581,11 @@ function CodeBlock({
       aria-label={`${t('team.codeLabel')} ${binding.code} — ${t('team.codeCopy')}`}
       className={`rounded-lg border px-3 py-1.5 text-left transition-shadow ${
         selected
-          ? 'border-accent bg-surface-2 shadow-[0_0_0_3px_var(--accent-primary-10,rgba(139,124,255,0.18))]'
-          : 'border-border hover:bg-surface-2'
+          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
+          : 'border-border-color hover:bg-bg-hover'
       }`}
     >
-      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
+      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-text-muted">
         {t('team.codeLabel')}
         <span className="normal-case tracking-normal">
           · {binding.side === 'A' ? t('team.sideA') : t('team.sideB')}
@@ -419,7 +593,7 @@ function CodeBlock({
       </span>
       <span className="mt-0.5 flex items-center gap-2">
         <span className="font-mono text-base font-semibold tracking-[0.2em]">{binding.code}</span>
-        <span className="flex items-center gap-1 text-[11px] font-normal text-fg-muted">
+        <span className="flex items-center gap-1 text-[11px] font-normal text-text-muted">
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? t('team.codeCopied') : t('team.codeCopy')}
         </span>
@@ -449,8 +623,8 @@ function BarAction({
       disabled={disabled}
       title={title}
       aria-pressed={active}
-      className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-40 ${
-        active ? 'bg-surface-2 text-fg' : 'text-fg-muted'
+      className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-40 ${
+        active ? 'bg-bg-hover text-text-primary' : 'text-text-muted'
       }`}
     >
       {icon}
@@ -470,7 +644,7 @@ function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
   const here = !!peer.status?.peer_present;
 
   return (
-    <div className="grid min-h-0 flex-1 gap-px overflow-hidden bg-border md:grid-cols-2">
+    <div className="grid min-h-0 flex-1 gap-px overflow-hidden bg-border-color md:grid-cols-2">
       <MySide sessionId={binding.session_id} />
       {here ? (
         <PeerSide binding={binding} prefix={prefix} peer={peer} />
@@ -501,7 +675,7 @@ function MySide({ sessionId }: { sessionId: string }) {
   const session = sessions.sessions.find((s) => s.session_id === sessionId) ?? null;
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-surface">
+    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
       <ColumnHeader title={t('team.mine')} note={session?.title ?? undefined} />
       <div className="min-h-0 flex-1 overflow-auto">
         <RecordStream
@@ -539,13 +713,13 @@ function MySide({ sessionId }: { sessionId: string }) {
 function PeerAway({ onRefresh }: { onRefresh: () => void }) {
   const { t } = useTranslation();
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-surface">
+    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
       <ColumnHeader
         title={t('team.peer')}
         action={
           <button
             onClick={onRefresh}
-            className="rounded-md p-1 text-fg-muted hover:bg-surface-2"
+            className="rounded-md p-1 text-text-muted hover:bg-bg-hover"
             title={t('team.refresh')}
           >
             <RefreshCw {...ICON} />
@@ -553,9 +727,9 @@ function PeerAway({ onRefresh }: { onRefresh: () => void }) {
         }
       />
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-        <UserPlus size={22} strokeWidth={1.5} className="text-fg-muted" />
+        <UserPlus size={22} strokeWidth={1.5} className="text-text-muted" />
         <p className="text-sm font-medium">{t('team.peerAwayTitle')}</p>
-        <p className="max-w-xs text-xs leading-relaxed text-fg-muted">{t('team.peerAwayWhy')}</p>
+        <p className="max-w-xs text-xs leading-relaxed text-text-muted">{t('team.peerAwayWhy')}</p>
       </div>
     </section>
   );
@@ -575,14 +749,14 @@ function PeerSide({
   const silent = peer.records.length === 0;
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-surface">
+    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
       <ColumnHeader
         title={t('team.peer')}
         note={silent ? t('team.peerSilent') : undefined}
         action={
           <button
             onClick={() => void peer.reload()}
-            className="rounded-md p-1 text-fg-muted hover:bg-surface-2"
+            className="rounded-md p-1 text-text-muted hover:bg-bg-hover"
             title={t('team.refresh')}
           >
             <RefreshCw {...ICON} />
@@ -616,9 +790,9 @@ function ColumnHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
+    <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color px-3">
       <span className="shrink-0 text-xs font-medium">{title}</span>
-      {note && <span className="min-w-0 truncate text-[11px] text-fg-muted">· {note}</span>}
+      {note && <span className="min-w-0 truncate text-[11px] text-text-muted">· {note}</span>}
       <span className="flex-1" />
       {action}
     </header>
@@ -665,12 +839,12 @@ function Instruct({
   };
 
   return (
-    <div className="shrink-0 border-t border-border bg-surface-2/40 p-3">
+    <div className="shrink-0 border-t border-border-color bg-bg-subtle p-3">
       <p className="flex items-center gap-1.5 text-[11px] font-medium">
         <Send size={12} strokeWidth={1.5} />
         {t('team.instructTitle')}
       </p>
-      <p className="mt-0.5 text-[11px] leading-relaxed text-fg-muted">{t('team.instructWhy')}</p>
+      <p className="mt-0.5 text-[11px] leading-relaxed text-text-muted">{t('team.instructWhy')}</p>
 
       <div className="mt-2 flex gap-2">
         <textarea
@@ -681,12 +855,12 @@ function Instruct({
           }}
           rows={2}
           placeholder={t('team.instructPlaceholder')}
-          className="min-w-0 flex-1 resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+          className="min-w-0 flex-1 resize-none rounded-md border border-border-color bg-bg-card px-2 py-1.5 text-sm"
         />
         <button
           onClick={() => void submit()}
           disabled={busy || !text.trim()}
-          className="self-end rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent disabled:opacity-40"
+          className="self-end rounded-md bg-accent-primary px-3 py-1.5 text-xs text-[var(--text-on-accent)] disabled:opacity-40"
         >
           {t('team.instructSend')}
         </button>
@@ -694,7 +868,7 @@ function Instruct({
 
       {/* 打了字才预览。空着的时候摆一行别人口气的话，读起来像有人在对我说话。 */}
       {text.trim() && (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-fg-muted">
+        <p className="mt-1.5 text-[11px] leading-relaxed text-text-muted">
           {t('team.instructPreview')}：
           <span className="italic">
             {prefix.replace('{code}', code)}
@@ -702,7 +876,7 @@ function Instruct({
           </span>
         </p>
       )}
-      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-accent-error">{error}</p>}
     </div>
   );
 }

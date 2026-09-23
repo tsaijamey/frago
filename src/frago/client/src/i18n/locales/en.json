@@ -1830,7 +1830,19 @@
     "joinPickHint": "Your teammate will see this one. Pick something you already have, or open a fresh one and start together.",
     "joinConfirm": "Join with this one",
     "joinCodeTitle": "Type the code your teammate gave you",
-    "joinNext": "Next"
+    "joinNext": "Next",
+    "joinAlready": "You're already in this team",
+    "joinAlreadyWhy": "It's the one up top. To bring a different session in, leave it first and join again.",
+    "joinAlreadyGo": "Go to it",
+    "joinBadCode": "That code won't work",
+    "joinBadCodeWhy": "It may be mistyped, already dead, or both seats are taken by other machines. The relay doesn't say which — telling them apart would hand a code-guesser a signal. Your code is still above; edit it and try again.",
+    "joinRelayDown": "Can't reach the relay",
+    "joinRelayDownWhy": "This is the relay side being unreachable, not a problem with your code. Try again once the network is back.",
+    "joinBusy": "The relay is throttling — hold on",
+    "joinBusyCount": "You can try again in {{secs}}s",
+    "joinRetry": "Try again",
+    "joinBackToCode": "Edit the code",
+    "joinStepCode": "Going in with this code"
   },
   "agent": {
     "notInstalled": "Not found on this machine — install it and it shows up here by itself",
