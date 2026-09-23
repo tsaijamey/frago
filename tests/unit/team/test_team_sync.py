@@ -234,4 +234,4 @@ def test_不需要账号口令就能用():
 
     要求他们先在中继那台服务器上注册账号，等于把一个两人之间的暗号换成一套账号体系。
     """
-    assert Relay(url="https://demo.frago.ai").configured()
+    assert Relay(url="https://www.frago.ai").configured()

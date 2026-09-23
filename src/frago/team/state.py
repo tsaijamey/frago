@@ -26,13 +26,24 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-#: 出厂默认的中继地址。
+#: 中继在哪。**现阶段这是唯一的来源，谁也改不了它。**
 #:
-#: **这里必须是一台公网上的服务器，NEVER 是本机。** 中继的用处是给两台各自没有
-#: 公网入口的机器当中间人；指向本机等于让同一台机器既当甲方又当乙方又当中间人，
-#: 那不是协作，是自己跟自己说话。装完 frago 的人不该为了跟朋友结对再去搭一台服务器，
-#: 所以这里给一个开箱就能用的。
-DEFAULT_RELAY_URL = "https://demo.frago.ai"
+#: 中继的用处是给两台各自没有公网入口的机器当中间人，而现在全世界只有这一台。它是
+#: frago 自己的服务器，装完 frago 的人不该知道它在哪，更不该被要求去填。
+#:
+#: 从前它是本机状态文件里的一项，可以用 ``frago team config --url`` 改。那样做有两处
+#: 坏：改过的机器指向哪儿只有那台机器自己知道；而地址一换（2026-09-23 刚换过一次），
+#: 所有改过的机器都不跟着走，各指各的，谁都不报错。所以这一项不再是配置。
+#:
+#: 状态文件里那一项**保留但不读**——老机器上写着什么都行，下次写回去时它自然消失。
+#: 照 ``frago agent --yes`` 那条先例：开关留着、收到即忽略，历史调用方不会因此炸掉。
+#:
+#: 2026-09-23 从 ``demo.frago.ai`` 换到这里：demo 那个站已经弃用，上面的配方页面
+#: 整体 301 跳到 www.frago.ai，而中继那扇门只开在 www 这一侧。
+RELAY_URL = "https://www.frago.ai"
+
+#: 旧名。留给还在按老名字引用它的地方，值与 :data:`RELAY_URL` 同一个。
+DEFAULT_RELAY_URL = RELAY_URL
 
 #: 本机 team 状态的落点。放在 ``~/.frago/team/`` 而不是配方的数据树下：这是 frago
 #: 自己的东西，配方那棵树属于中继那一侧，两边在同一台机器上都跑得起来（自己跟自己
@@ -108,8 +119,11 @@ class TeamBinding:
 class Relay:
     """中继在哪、拿什么身份去敲它。"""
 
-    url: str = DEFAULT_RELAY_URL
+    url: str = RELAY_URL
     """中继那台 frago 服务器的地址。末尾的斜杠在 :meth:`base` 里剥掉。
+
+    **现阶段它恒为 :data:`RELAY_URL`。** 本机状态文件里那一项不再被读，命令行上也
+    没有改它的路——见 :data:`RELAY_URL` 那段说的为什么。
 
     **不需要任何账号或 token。** 那扇门认的是连接码本身。"""
 
@@ -218,12 +232,12 @@ def load_state() -> TeamState:
     if not isinstance(raw, dict):
         raw = {}
 
-    # 只取地址。中继早先要配账号口令，后来定成「连接码本身就是凭证」，
-    # :class:`Relay` 上那三个字段随之删掉——磁盘上那份是旧版写的，里面还留着它们，
-    # 照单全收会当场抛「不认识这个参数」。多出来的键一律忽略：这个文件的形状由
-    # 代码说了算，读的时候点名要什么就只拿什么。
-    relay_raw = raw.get("relay")
-    relay = Relay(url=str((relay_raw or {}).get("url", "")))
+    # **中继地址不从这个文件读。** 老机器的文件里可能写着任何东西——出厂旧地址、
+    # 调试时指的回环、某次手改。全部忽略，一律用代码里那一个。见 :data:`RELAY_URL`。
+    #
+    # 这个文件里其余几项（本机指纹、投递前缀、同步间隔、参加了哪些 team）仍然是这台
+    # 机器自己的事，照读。
+    relay = Relay()
 
     teams: dict[str, TeamBinding] = {}
     for code, one in (raw.get("teams") or {}).items():
@@ -281,6 +295,9 @@ def save_state(state: TeamState) -> None:
         "member": state.member,
         "prefix": state.prefix,
         "interval_seconds": state.interval_seconds,
+        # 地址这一项照写，写的是代码里那一个（读的时候本来也只认它）。于是老机器上
+        # 手改过的值——调试指的回环、出厂旧地址——下次写盘时自己就被纠正过来，不必
+        # 另跑一趟迁移。文件里看到的永远是当前这台 frago 真正在用的那个地址。
         "relay": asdict(state.relay),
         "teams": {code: asdict(one) for code, one in state.teams.items()},
     }

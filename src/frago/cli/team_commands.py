@@ -60,26 +60,33 @@ def team_group() -> None:
 
 
 @team_group.command("config")
-@click.option("--url", default=None, help="中继那台 frago 服务器的地址")
-@click.option("--relay-default", is_flag=True, help="把中继地址改回出厂默认")
+@click.option("--url", default=None, help="【已停用】中继地址现阶段改不了，传了忽略")
+@click.option("--relay-default", is_flag=True, help="【已停用】传了忽略")
 @click.option("--prefix", default=None,
               help="对方投来的消息落进本机会话时，前面加哪一句。可用 {code} 占位")
 @click.option("--interval", type=int, default=None, help="两轮同步之间隔几秒")
 def config_cmd(url, relay_default, prefix, interval) -> None:
-    """看或改中继在哪。不带参数就打印现状。
+    """看这台机器的 team 设置。
 
-    **不需要任何账号或口令。** 中继那扇门认的是连接码本身——两个想结对的人，手里
-    只有一个码，不该为此在那台服务器上注册账号，更不该拿到那台机器的钥匙。
+    **中继地址改不了，也不用配。** 它写死在代码里，装完 frago 就能用——全世界只有
+    那一台中继，它是 frago 自己的服务器。改过的机器指向哪儿只有那台机器自己知道，
+    而地址一换，改过的机器全都不跟着走，各指各的，谁都不报错。
+
+    ``--url`` 与 ``--relay-default`` 两个开关留着但**收到即忽略**：照
+    ``frago agent --yes`` 那条先例，历史脚本传了不会炸，只是不起作用。
+
+    前缀和同步间隔仍然可以改——那两项是这台机器自己的偏好，跟中继在哪是两回事。
     """
-    from frago.team.state import DEFAULT_RELAY_URL
+    from frago.team.state import RELAY_URL
 
     state = ensure_member()
-    if relay_default:
-        url = DEFAULT_RELAY_URL
+
+    # 传了就说一声它没起作用。默默吞掉更糟：人以为改成了，下次还按自己填的那个去排查。
+    if url is not None or relay_default:
+        click.echo("--url / --relay-default 已停用，中继地址现阶段改不了。这次忽略了它们")
+        click.echo("")
+
     touched = False
-    if url is not None:
-        state.relay.url = url.strip()
-        touched = True
     if prefix is not None:
         state.prefix = prefix
         touched = True
@@ -90,13 +97,10 @@ def config_cmd(url, relay_default, prefix, interval) -> None:
     if touched:
         save_state(state)
 
-    click.echo(f"中继地址   {state.relay.url or '（还没配）'}")
+    click.echo(f"中继地址   {RELAY_URL}   （写死，改不了）")
     click.echo(f"本机指纹   {state.member}")
     click.echo(f"同步间隔   {state.interval_seconds} 秒")
     click.echo(f"投递前缀   {state.prefix}")
-    if not state.relay.configured():
-        click.echo("")
-        click.echo("还没有中继地址。跑：frago team config --relay-default")
 
 
 @team_group.command("open")

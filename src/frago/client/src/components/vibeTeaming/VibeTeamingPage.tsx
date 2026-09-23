@@ -98,10 +98,6 @@ export default function VibeTeamingPage() {
     return <div className="p-6 text-sm text-danger">{stateError}</div>;
   }
 
-  if (!state?.configured) {
-    return <NotConfigured relayUrl={state?.relay_url ?? ''} />;
-  }
-
   // 一个 team 都没有时整页就是这张说明书，上面不再摆那条工具栏——两个动作已经
   // 是说明书里并排的两条路，再在顶上摆一遍就是同一件事说两遍。
   if (active.length === 0) {
@@ -111,23 +107,7 @@ export default function VibeTeamingPage() {
   return (
     <div className="flex h-full flex-col">
       <TeamBar teams={active} selected={selected} onSelect={setSelected} onChanged={reload} />
-      {binding && <Paired binding={binding} prefix={state.prefix} />}
-    </div>
-  );
-}
-
-/** 中继还没配好时这一页说什么。 */
-function NotConfigured({ relayUrl }: { relayUrl: string }) {
-  const { t } = useTranslation();
-  return (
-    <div className="mx-auto max-w-xl p-8">
-      <h2 className="text-base font-semibold">{t('team.setupTitle')}</h2>
-      <p className="mt-2 text-sm text-fg-muted">{t('team.setupWhy')}</p>
-      {/* 命令原样摆出来：地址这一项没有别处可填，而它要落到本机的状态文件里。 */}
-      <pre className="mt-4 overflow-x-auto rounded-md bg-surface-2 p-3 text-xs">
-        {`frago team config --url ${relayUrl || 'https://你的服务器'}`}
-      </pre>
-      <p className="mt-3 text-xs text-fg-muted">{t('team.setupNote')}</p>
+      {binding && <Paired binding={binding} prefix={state?.prefix ?? ''} />}
     </div>
   );
 }
