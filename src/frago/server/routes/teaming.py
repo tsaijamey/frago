@@ -40,7 +40,10 @@ RELAY_RECIPE = "vibe_teaming_relay"
 
 #: 这扇门收哪几个动作。封闭清单，不是转发一切——把 ``mode`` 原样递给配方，等于让
 #: 外面的人挑这台机器上那张配方的任何一个入口。
-ACTIONS = frozenset({"open", "join", "push", "pull", "peer", "status", "leave"})
+#:
+#: 本机那一侧（``frago/team/sync.py``）敲的每个动作都必须在这里。漏一个不会报错，只会
+#: 得到上面那句「码不可用」——``send`` 就这样漏过一次：码和钥匙都对，消息一条也投不出去。
+ACTIONS = frozenset({"open", "join", "push", "pull", "send", "peer", "status", "leave"})
 
 #: 码不存在、和「码对但你是第三台机器」，共用这一个回答。**逐字节相同**是这条的全部
 #: 意义，改动它之前先想清楚泄的是什么。
