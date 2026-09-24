@@ -250,6 +250,10 @@ export interface PendingFile {
 export interface AreaCount {
   area: string;
   count: number;
+  /** Per-kind breakdown for this area alone. Absent from servers older than this field. */
+  counts?: Record<string, number>;
+  /** This area's first few paths, independent of the capped `files` sample. */
+  sample?: PendingFile[];
 }
 
 export interface LastCommit {
