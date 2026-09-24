@@ -7374,6 +7374,105 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-muted);
 }
 
+/* 清单是一张四列表：计划 / 何时 / 上次运行 / 次数。后三列定宽，名字那列吃掉余下的，
+   详情面板打开变窄时只截名字和执行内容，四列都留着、不换行。 */
+.sc-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.sc-col-when {
+  width: 190px;
+}
+
+.sc-col-last {
+  width: 150px;
+}
+
+.sc-col-runs {
+  width: 84px;
+}
+
+.sc-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sc-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+
+.sc-tr {
+  cursor: pointer;
+}
+
+.sc-tr:hover td {
+  background: var(--bg-hover);
+}
+
+/* 选中是整行换底色并描一圈边，不靠单边竖条。 */
+.sc-tr--selected td,
+.sc-tr--selected:hover td {
+  background: var(--sel-bg);
+}
+
+.sc-tr--selected {
+  outline: 1px solid var(--sel-border);
+  outline-offset: -1px;
+}
+
+.sc-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.sc-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+}
+
+.sc-name:focus-visible {
+  outline: 2px solid var(--sel-border);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.sc-cell-name .td-chip {
+  flex-shrink: 0;
+}
+
+.sc-sub {
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 执行内容是命令或配方名，等宽才认得出空格和引号。 */
 .sc-target-line {
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -7390,6 +7489,42 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-dim);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-xs);
+}
+
+.sc-fail {
+  color: var(--accent-error);
+}
+
+.sc-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-table th.sc-num {
+  text-align: right;
+}
+
+/* 页头下的告警条：全部停用、或调度器没在跑。两者都是「现在什么都不会自动跑」。 */
+.sc-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 var(--spacing-md) var(--spacing-sm);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--accent-warning-10);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.sc-banner > svg {
+  flex-shrink: 0;
+  color: var(--accent-warning);
+}
+
+.sc-banner b {
+  font-weight: var(--font-weight-bold);
 }
 
 .sc-warn {
@@ -7507,147 +7642,12 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .tdp-panel .td-section .sc-run-meta {
-/* 清单是一张四列表：计划 / 何时 / 上次运行 / 次数。后三列定宽，名字那列吃掉余下的，
-   详情面板打开变窄时只截名字和执行内容，四列都留着、不换行。 */
-.sc-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-.sc-col-when {
-  width: 190px;
-}
-
-.sc-col-last {
-  width: 150px;
-}
-
-.sc-col-runs {
-  width: 84px;
-}
-
-.sc-table th {
-  position: sticky;
-  top: 0;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.04em;
-  text-align: left;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.sc-table td {
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--border-color);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  vertical-align: top;
-}
-
-.sc-tr {
-  cursor: pointer;
-}
-
-.sc-tr:hover td {
-  background: var(--bg-hover);
-}
-
-/* 选中是整行换底色并描一圈边，不靠单边竖条。 */
-.sc-tr--selected td,
-.sc-tr--selected:hover td {
-  background: var(--sel-bg);
-}
-
-.sc-tr--selected {
-  outline: 1px solid var(--sel-border);
-  outline-offset: -1px;
-}
-
-.sc-cell-name {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.sc-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  text-align: left;
-}
-
-.sc-name:focus-visible {
-  outline: 2px solid var(--sel-border);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-.sc-cell-name .td-chip {
-  flex-shrink: 0;
-}
-
-.sc-sub {
-  margin-top: 1px;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
   margin-top: 6px;
 }
 
 .sc-runs {
   list-style: none;
   margin: 0;
-.sc-fail {
-  color: var(--accent-error);
-}
-
-.sc-num {
-  text-align: right;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.sc-table th.sc-num {
-  text-align: right;
-}
-
-/* 页头下的告警条：全部停用、或调度器没在跑。两者都是「现在什么都不会自动跑」。 */
-.sc-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 var(--spacing-md) var(--spacing-sm);
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: var(--accent-warning-10);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-}
-
-.sc-banner > svg {
-  flex-shrink: 0;
-  color: var(--accent-warning);
-}
-
-.sc-banner b {
-  font-weight: var(--font-weight-bold);
-}
-
   padding: 0;
   display: flex;
   flex-direction: column;
