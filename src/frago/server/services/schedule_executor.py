@@ -267,6 +267,11 @@ def execute_prompt(
 
     text = str(final.get("text") or "").strip()
     ok = bool(final.get("ok")) and proc.returncode == 0
+    # 答案为空不算办完。新版 CoreAgent 自己会把空答案判成 empty_answer；这一道兜住
+    # 还没换新的那一版——旧版把「一个字没说」报成 ok，09-22~09-24 连着三天零提交都记了成功。
+    if ok and not text:
+        ok = False
+        final = {**final, "error": "CoreAgent 报了成功，但答案是空的——当作没办完"}
     return RunOutcome(
         ok=ok,
         kind="prompt",

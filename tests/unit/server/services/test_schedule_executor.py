@@ -274,6 +274,16 @@ class TestPromptViaCoreAgent:
         out = ex.execute_prompt("x", 60)
         assert not out.ok and "轮数到顶" in out.error
 
+    def test_报了成功但答案为空_算没办完(self, core):
+        core('{"type":"final","ok":true,"text":"  "}\n')
+        out = ex.execute_prompt("x", 60)
+        assert not out.ok and "答案是空的" in out.error
+
+    def test_空答案被判失败时原因带出来(self, core):
+        core('{"type":"final","ok":false,"text":"","error_kind":"empty_answer","error":"模型这一轮既没有文字也没有工具调用"}\n', returncode=1)
+        out = ex.execute_prompt("x", 60)
+        assert not out.ok and "既没有文字" in out.error
+
     def test_一行结论都没交就算失败_不假装成功(self, core):
         core("not json\n", returncode=2, stderr="frago-core: 连接解析失败")
         out = ex.execute_prompt("x", 60)
