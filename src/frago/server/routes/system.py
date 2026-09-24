@@ -21,6 +21,7 @@ from frago.server.models import (
     SystemStatusResponse,
     TmuxSessionsCountResponse,
     TmuxSessionsResponse,
+    TmuxWaitingResponse,
 )
 from frago.server.services.system_service import SystemService
 from frago.server.utils import get_server_info
@@ -198,6 +199,19 @@ async def count_tmux_sessions() -> TmuxSessionsCountResponse:
     from frago.server.services import tmux_sessions_service as svc
 
     return TmuxSessionsCountResponse(**await asyncio.to_thread(svc.count_sessions))
+
+
+@router.get("/system/tmux-sessions/waiting", response_model=TmuxWaitingResponse)
+async def list_waiting_tmux_sessions() -> TmuxWaitingResponse:
+    """哪几场会话停在输入框前等人——会话页「For you」每 15 秒问这一条。
+
+    与浮窗那条同源同判据，但不算内存、不截正文；会话记录按（大小, 修改时刻）缓存，
+    没多写一行就不重读。逐个带颜色读屏是阻塞 IO，挪到线程里跑。
+    """
+    from frago.server.services import tmux_sessions_service as svc
+
+    rows = await asyncio.to_thread(svc.list_waiting)
+    return TmuxWaitingResponse(sessions=svc.as_dicts(rows))
 
 
 @router.get("/system/environment", response_model=EnvironmentResponse)

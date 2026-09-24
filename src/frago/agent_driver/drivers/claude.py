@@ -171,6 +171,103 @@ _WORKING = PaneMatcher(
 #      后台 worker 没干完，绝不能当空闲回收 / 插话喂下一条。
 _SHELL_RUNNING = re.compile(r"shells?\s+still\s+running", re.IGNORECASE)
 
+# 带颜色读屏（``capture-pane -e``）里的一段转义。只有 SGR（``…m``）改字形，其余
+# （光标移动、OSC 标题等）对「屏上写着什么」没有意义，直接丢掉。
+_ANSI = re.compile(
+    r"\x1b\[([0-9;:?]*)([A-Za-z])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]"
+)
+
+
+def strip_ansi(ansi: str) -> str:
+    """带颜色的屏面去掉全部转义，得到与 ``capture-pane -p``（不带 ``-e``）一样的文字。"""
+    return _ANSI.sub("", ansi)
+
+
+def blank_dim_runs(ansi: str) -> str:
+    """把带颜色的屏面还原成纯文本，**暗色（SGR 2）的字换成空格**。
+
+    Claude Code 答完会在空输入框里放一句灰色建议（``❯ A, go ahead``），输入框没字时
+    还有一句灰色的输入提示——两者都是暗色字，都不是人打进去的。不带颜色读屏，它们
+    看起来就是输入框里有字，``_READY_BOX`` 判没就绪，一场明明停在输入框等人的会话
+    被当成在忙。
+
+    光标压在输入提示第一个字上时，那个字是反显（SGR 7）而不是暗色：紧跟着暗色段的
+    反显字同样当空。人自己打的字不是暗色，原样保留——只有它们能让输入框「非空」。
+    """
+    out: list[str] = []
+    dim = False
+    reverse = False
+    # 反显字先挂起，看它后面紧跟的是不是暗色再决定去留
+    pending: list[str] = []
+
+    def flush(blank: bool) -> None:
+        out.extend(" " if (blank and not c.isspace()) else c for c in pending)
+        pending.clear()
+
+    def emit(text: str) -> None:
+        for c in text:
+            if c == "\n":
+                flush(False)
+                out.append(c)
+            elif reverse:
+                pending.append(c)
+            else:
+                if pending:
+                    flush(dim)
+                out.append(" " if (dim and not c.isspace()) else c)
+
+    pos = 0
+    for m in _ANSI.finditer(ansi):
+        emit(ansi[pos : m.start()])
+        pos = m.end()
+        if m.group(2) != "m":
+            continue
+        params = (m.group(1) or "0").replace(":", ";").split(";")
+        i = 0
+        while i < len(params):
+            p = params[i] or "0"
+            if p == "0":
+                dim = reverse = False
+            elif p == "2":
+                dim = True
+            elif p == "22":
+                dim = False
+            elif p == "7":
+                reverse = True
+            elif p == "27":
+                reverse = False
+            elif p in ("38", "48", "58") and i + 1 < len(params):
+                # 扩展色的参数跟在后面（5;n 或 2;r;g;b），不能当成独立的 SGR 码读
+                i += 2 if params[i + 1] == "5" else 4
+            i += 1
+    emit(ansi[pos:])
+    flush(False)
+    return "".join(out)
+
+
+def awaiting_input(pane_ansi: str) -> bool:
+    """这场 Claude Code 是不是停在待输入态、等人说下一句。
+
+    就绪判据与驱动投喂前的那一道同源：没有转轮 / 计时 / token 计数，没有后台 shell
+    没回来，没有编号菜单，没有启动失败，且输入框那一行 ``❯`` 后为空。多出来的只有
+    一步——**先把暗色字抹成空**（见 ``blank_dim_runs``），否则答完后的灰色建议和
+    输入提示会让它永远判「输入框里有字」。
+
+    只给 webUI 的「For you」用。驱动自己决定何时投喂仍走原判据，这里不改它。
+    """
+    # 忙碌标记（``esc to interrupt``、计时）本身常是暗色字：它们要在原文上认，
+    # 只有「输入框空没空」这一问用抹过暗色的那份
+    plain = strip_ansi(pane_ansi)
+    if _BUSY.search(plain) is not None or _WORKING.matches(plain):
+        return False
+    if _SHELL_RUNNING.search(plain) is not None:
+        return False
+    if re.search(_SELECT_MENU_PAT, plain, re.MULTILINE) is not None:
+        return False
+    if _FATAL_STARTUP.search(plain) is not None:
+        return False
+    return _READY_BOX.matches(blank_dim_runs(pane_ansi))
+
 # 提交后确认进入忙碌态的最大轮询次数。跨过"提交到开始思考"的极短空窗，避免
 # done 检测在空窗里误触（彼时提示符已在、忙碌标记尚未出现）。生产按 session
 # 的 poll_interval 真实间隔轮询；单测注入 no-op sleep，N 次瞬间走完。

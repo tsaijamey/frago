@@ -86,6 +86,32 @@ class TmuxSessionInfo:
     memory_mb: int
     busy: bool  # 屏上仍在干活（转轮 / 后台 shell 在跑）——批量关时必须排除
     managed: bool  # 是不是工作台那个池子管着的会话
+    # 窗格前台跑的不是登录 shell（agent 还在）；问不出为 None
+    client_alive: bool | None = None
+    # 停在待输入态等人说下一句；判不出（不是 Claude Code、认不出是哪一场）为 None
+    awaiting_input: bool | None = None
+    # 收尾原话：保留句末，超长截开头。要的东西（问句、选项）多在句末
+    closing_text: str = ""
+
+
+@dataclass
+class TmuxWaitingInfo:
+    """「For you」要的那几项，给会话页每 15 秒问一次。
+
+    与 ``TmuxSessionInfo`` 同源同判据，少了内存和截取——那两样只有人点开浮窗才要。
+    """
+
+    name: str
+    session_id: str | None
+    client_alive: bool | None
+    awaiting_input: bool | None
+    stop_reason: str | None
+    last_stop_at: str | None
+    closing_text: str
+
+
+# 收尾原话留多长。前端还要从里面挑出问句那一句，给短了就挑不着。
+CLOSING_CHARS = 600
 
 
 def _tmux(*args: str) -> str:
@@ -159,6 +185,152 @@ def _excerpt(text: str, limit: int) -> str:
     if len(body) <= limit:
         return body
     return body[:limit].rstrip() + "…"
+
+
+def _closing_text(text: str, limit: int = CLOSING_CHARS) -> str:
+    """收尾原话：去掉标题行、分隔线和行内标记，**段落之间保留空行**，超长截开头。
+
+    与 ``_excerpt`` 方向相反——那边认会话要开头，这边等人回话要结尾：「…A or B.」
+    截掉了，人就不知道它在问什么。段落留着，前端才能分出「最后一段」。
+    """
+    paras: list[str] = []
+    current: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or _RULE_ONLY.match(line) or _TABLE_RULE.match(line):
+            if current:
+                paras.append(" ".join(current))
+                current = []
+            continue
+        if _HEADING_ONLY.match(line):
+            continue
+        current.append(line)
+    if current:
+        paras.append(" ".join(current))
+    body = "\n\n".join(re.sub(r"\s{2,}", " ", _INLINE_MARKS.sub("", p)).strip() for p in paras)
+    body = body.strip()
+    if len(body) <= limit:
+        return body
+    return "…" + body[-limit:].lstrip()
+
+
+def _pane_commands() -> dict[str, str]:
+    """每场 tmux 会话窗格前台在跑什么，一条 ``list-panes`` 拿全。"""
+    out: dict[str, str] = {}
+    for line in _tmux(
+        "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_command}"
+    ).splitlines():
+        name, _, command = line.partition("\t")
+        if name and name not in out:
+            out[name] = command.strip()
+    return out
+
+
+def _client_alive(command: str | None) -> bool | None:
+    """前台是不是登录 shell——是就说明 agent 已经退了。
+
+    表与驱动 ``has_live_agent`` 用同一张 ``_SHELL_COMMANDS``：claude 把进程名改成自己
+    的版本号（实测 ``2.1.281``），按「叫不叫 claude」判等于每升一版失灵一次。
+    """
+    if not command:
+        return None
+    from frago.agent_driver.tmux_session import _SHELL_COMMANDS
+
+    return command not in _SHELL_COMMANDS
+
+
+def _awaiting_input(pane_ansi: str, alive: bool | None) -> bool | None:
+    """客户端退了就不可能在等人（False）；前台问不出就判不出（None）。"""
+    if alive is not True:
+        return None if alive is None else False
+    try:
+        from frago.agent_driver.drivers import claude as claude_driver
+
+        return claude_driver.awaiting_input(pane_ansi)
+    except Exception:  # noqa: BLE001 — 判不出就不挂，宁可漏挂也不误挂
+        return None
+
+
+def _plain(pane_ansi: str) -> str:
+    try:
+        from frago.agent_driver.drivers import claude as claude_driver
+
+        return claude_driver.strip_ansi(pane_ansi)
+    except Exception:  # noqa: BLE001
+        return re.sub(r"\x1b\[[0-9;:?]*[A-Za-z]", "", pane_ansi)
+
+
+# 记录判读的缓存：按（大小, 修改时刻）失效。「For you」每 15 秒问一次，十几场会话的
+# 记录没变就不必每次整份重读——只有真的多写了一行，才重新判一次。
+_VERDICT_CACHE: dict[str, tuple[tuple[int, float], tuple[str | None, str | None, str]]] = {}
+
+
+def _transcript_tail(path: Path) -> tuple[str | None, str | None, str]:
+    """(stop_reason, last_stop_at, 最后一段回答全文)，带缓存。"""
+    from frago.session import transcript_completion as tc
+
+    try:
+        st = path.stat()
+    except OSError:
+        return None, None, ""
+    key = (st.st_size, st.st_mtime)
+    hit = _VERDICT_CACHE.get(str(path))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    stop_reason: str | None = None
+    last_stop_at: str | None = None
+    text = ""
+    try:
+        verdict = tc.evaluate_file(path)
+        stop_reason = verdict.stop_reason
+        if verdict.done and verdict.last_terminal_ts is not None:
+            last_stop_at = verdict.last_terminal_ts.isoformat()
+        text = verdict.final_text or ""
+        if not text.strip():
+            text = _last_assistant_text(path)
+    except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
+        logger.debug("transcript probe failed for %s: %s", path, e)
+    value = (stop_reason, last_stop_at, text)
+    _VERDICT_CACHE[str(path)] = (key, value)
+    return value
+
+
+def list_waiting() -> list[TmuxWaitingInfo]:
+    """「For you」那三条判据要的全部：开在 tmux 里、客户端活着、停在待输入态。
+
+    **awaiting_input 只对认得出记录的 Claude Code 会话判。** opencode、codex、
+    codebuddy 的会话在 ``~/.claude/projects`` 里没有记录，非 frago 起的 tmux 解不出
+    编号——这些一律给 None，前端一律不挂。判不出宁可漏挂，也不拿 claude 的判据去套
+    别家的界面。
+    """
+    names = _session_names()
+    commands = _pane_commands()
+    rows: list[TmuxWaitingInfo] = []
+    for name in names:
+        if not name.startswith(_PREFIX):
+            alive = _client_alive(commands.get(name))
+            rows.append(TmuxWaitingInfo(name, None, alive, None, None, None, ""))
+            continue
+        pane_ansi = _tmux("capture-pane", "-p", "-e", "-t", name)
+        session_id = _resolve_session_id(name[len(_PREFIX) :], _plain(pane_ansi))
+        path = _transcript_path(session_id) if session_id else None
+        alive = _client_alive(commands.get(name))
+        if path is None:
+            rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
+            continue
+        stop_reason, last_stop_at, text = _transcript_tail(path)
+        rows.append(
+            TmuxWaitingInfo(
+                name=name,
+                session_id=session_id,
+                client_alive=alive,
+                awaiting_input=_awaiting_input(pane_ansi, alive),
+                stop_reason=stop_reason,
+                last_stop_at=last_stop_at,
+                closing_text=_closing_text(text),
+            )
+        )
+    return rows
 
 
 def _last_assistant_text(path: Path) -> str:
@@ -291,6 +463,7 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
     pids = _pane_pids()
     mem = _memory_mb()
     managed = _managed_ids()
+    commands = _pane_commands()
     now = time.time()
 
     rows: list[TmuxSessionInfo] = []
@@ -299,25 +472,34 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
         # 记录读不到，那一行上除了名字和内存没有别的可说。
         label = name[len(_PREFIX) :] if name.startswith(_PREFIX) else name
 
-        pane = _tmux("capture-pane", "-p", "-t", name)
+        # 带颜色读一次：纯文字给认编号、判忙用，颜色留给「停在待输入态」那一问
+        pane_ansi = _tmux("capture-pane", "-p", "-e", "-t", name)
+        pane = _plain(pane_ansi)
         session_id = _resolve_session_id(label, pane) if name.startswith(_PREFIX) else None
+        alive = _client_alive(commands.get(name))
 
         stop_reason: str | None = None
         last_stop_at: str | None = None
         idle_secs: float | None = None
         excerpt = ""
+        closing = ""
+        awaiting: bool | None = None
         if session_id:
             path = _transcript_path(session_id)
             if path is not None:
+                # 认得出记录才是 Claude Code 会话，才套它的就绪判据
+                awaiting = _awaiting_input(pane_ansi, alive)
                 try:
                     verdict = tc.evaluate_file(path)
                     stop_reason = verdict.stop_reason
                     if verdict.done and verdict.last_terminal_ts is not None:
                         last_stop_at = verdict.last_terminal_ts.isoformat()
                         idle_secs = max(0.0, now - verdict.last_terminal_ts.timestamp())
-                    excerpt = _excerpt(verdict.final_text, excerpt_chars)
-                    if not excerpt:
-                        excerpt = _excerpt(_last_assistant_text(path), excerpt_chars)
+                    text = verdict.final_text or ""
+                    if not text.strip():
+                        text = _last_assistant_text(path)
+                    excerpt = _excerpt(text, excerpt_chars)
+                    closing = _closing_text(text)
                 except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
                     logger.debug("transcript probe failed for %s: %s", session_id, e)
 
@@ -333,6 +515,9 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
                 memory_mb=sum(mem.get(p, 0) for p in pids.get(name, ())),
                 busy=_is_busy(pane),
                 managed=bool(session_id and session_id in managed),
+                client_alive=alive,
+                awaiting_input=awaiting,
+                closing_text=closing,
             )
         )
 
@@ -473,17 +658,20 @@ def open_session_names() -> set[str]:
     return set(_session_names())
 
 
-def as_dicts(rows: list[TmuxSessionInfo]) -> list[dict]:
+def as_dicts(rows: list[TmuxSessionInfo] | list[TmuxWaitingInfo]) -> list[dict]:
     return [asdict(r) for r in rows]
 
 
 __all__ = [
+    "CLOSING_CHARS",
     "DEFAULT_EXCERPT_CHARS",
     "TmuxSessionInfo",
     "TmuxSessionLink",
+    "TmuxWaitingInfo",
     "as_dicts",
     "close_sessions",
     "find_for_session",
     "list_sessions",
+    "list_waiting",
     "open_session_names",
 ]
