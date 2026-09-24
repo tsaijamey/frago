@@ -125,7 +125,8 @@ def get_server_port() -> int:
 def get_server_host() -> str:
     """Get the server host from environment or default.
 
-    Priority: FRAGO_SERVER_HOST env var > default (0.0.0.0, LAN accessible)
+    Priority: FRAGO_SERVER_HOST env var > default (0.0.0.0; LAN callers need the
+    server token unless FRAGO_TRUST_LAN=1)
     """
     return os.environ.get("FRAGO_SERVER_HOST", DEFAULT_SERVER_HOST)
 

@@ -331,22 +331,24 @@ def in_container() -> bool:
 def lan_is_trusted() -> bool:
     """Whether other machines on this network count as "here".
 
-    frago binds ``0.0.0.0`` by default and ``frago server status`` prints the
-    LAN URLs it can be reached at — opening the workbench from your phone is a
-    feature the tool advertises, and the CORS policy already declares private
-    ranges trusted. Defaulting this off would silently break every install that
-    uses it, to protect a deployment that the docs already tell you to bind to
-    loopback.
+    Off unless ``FRAGO_TRUST_LAN=1`` says otherwise. frago binds ``0.0.0.0``,
+    and trusting the LAN by default meant every machine on the same network —
+    an office or café subnet of tens of thousands of addresses as much as a
+    home one — could read and write any file, start an agent and run a recipe
+    here with no token. A private address says which network the caller is on,
+    not who they are.
 
-    So it defaults on, and a server deployment turns it off:
-    ``FRAGO_TRUST_LAN=0`` alongside ``FRAGO_SERVER_HOST=127.0.0.1``.
+    A LAN caller now needs the server token like any other remote caller, and a
+    refused attempt is logged by ``_reject`` instead of passing unrecorded.
+    Opening the workbench from your phone is one ``FRAGO_TRUST_LAN=1`` away, on
+    a network you actually trust.
 
-    Inside a container the default inverts. There is no home network in a
-    container — the private address every request seems to come from is the
-    bridge gateway, so "trust the LAN" would mean "trust whatever the port
-    publish forwards", i.e. the internet.
+    Containers needed a special case while the default was on: the bridge
+    gateway every forwarded request arrives from is RFC1918. With the default
+    off they are refused like any other neighbour, and opting in inside a
+    container means trusting whatever the port publish forwards — the internet.
     """
-    return _enabled("FRAGO_TRUST_LAN", default=not in_container())
+    return _enabled("FRAGO_TRUST_LAN", default=False)
 
 
 def _peer_zone(scope: dict) -> str:
@@ -1056,9 +1058,9 @@ def deployment_warning() -> str | None:
     host = (get_server_host() or "").strip()
     bound_to_loopback = host in ("127.0.0.1", "localhost", "::1")
     containerised = in_container()
-    # Not `lan_is_trusted()`: on a personal machine that is the documented
-    # normal state, and a warning printed on every install is a warning nobody
-    # reads by the time it matters.
+    # Not `lan_is_trusted()`: opting into LAN trust is a deliberate choice on a
+    # personal machine, and a warning printed on every such install is a warning
+    # nobody reads by the time it matters.
     if not (bound_to_loopback or containerised):
         return None
 
