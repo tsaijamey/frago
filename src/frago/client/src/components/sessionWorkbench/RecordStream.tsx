@@ -439,6 +439,8 @@ export default function RecordStream({
               onClick={() => setLens(id)}
               aria-pressed={lens === id}
               data-testid={`lens-${id}`}
+              /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+              title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
               disabled={counts[id] === 0}
               /* 镜头是操作面，不是数据：选中态走中性填充加一档字重。
                  与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。 */

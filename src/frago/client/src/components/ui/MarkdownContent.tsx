@@ -45,6 +45,14 @@ const components: Components = {
     }
     return <code {...props}>{children}</code>;
   },
+  // 表格外包一层能横向滚的框：窄栏里放不下时在框内滚，不撑宽整栏。
+  table({ children, node: _node, ...props }) {
+    return (
+      <div className="table-scroll">
+        <table {...props}>{children}</table>
+      </div>
+    );
+  },
   a({ href, children, ...props }) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" {...props}>

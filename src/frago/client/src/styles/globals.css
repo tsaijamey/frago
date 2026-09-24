@@ -84,6 +84,12 @@
   /* 选中态＝「你在看哪一条」，不是动作：整张卡换中性底，再加一圈完整描边。不用绿，不用单边条。 */
   --sel-bg: rgba(255, 255, 255, 0.08);
   --sel-border: rgba(255, 255, 255, 0.2);
+
+  /* 队友那一侧：Teams 页右栏整栏底色、队友头像与「Read-only」标签、左栏队友请求块、
+     决定卡上「From your teammate」标签共用这一组冷色。只有这三个名字，别处 NEVER 另定一份。 */
+  --peer-bg: #1c1e25;
+  --peer-ink: #a9b6f5;
+  --peer-chip: rgba(140, 160, 255, 0.14);
   --accent-success: #15b34d;
   --accent-warning: #e5a93c;
   --accent-warning-10: rgba(229, 169, 60, 0.14);
@@ -229,6 +235,9 @@
   --usage-fill: rgba(0, 0, 0, 0.45);
   --sel-bg: rgba(0, 0, 0, 0.05);
   --sel-border: rgba(0, 0, 0, 0.2);
+  --peer-bg: #f3f5fb;
+  --peer-ink: #3f4f9e;
+  --peer-chip: rgba(63, 79, 158, 0.1);
   --accent-success: #0a8f33;
   --accent-warning: #a97609;
   --accent-warning-10: rgba(169, 118, 9, 0.12);
@@ -2710,6 +2719,23 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   width: 100%;
   margin: 0.5em 0;
   border-collapse: collapse;
+}
+
+/* 表格放不下时在自己的框里横向滚，不把栏撑宽、也不把格子里的字挤成一字一行。
+   外面这层由 MarkdownContent 包上；表格照旧占满一行，只有超宽时才出滚动条。 */
+.markdown-content .table-scroll {
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+
+.markdown-content .table-scroll > table {
+  margin: 0;
+}
+
+/* 格子里的行内代码是一个整体（`frago --version`），拆成几行就读不出是一条命令了。 */
+.markdown-content td .inline-code,
+.markdown-content th .inline-code {
+  white-space: nowrap;
 }
 
 .markdown-content th,

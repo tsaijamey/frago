@@ -113,7 +113,7 @@ describe('换语言不用刷新页面', () => {
     expect(screen.getByTestId('lens-hook').textContent).toContain('旁路注入');
 
     await switchTo('en');
-    expect(screen.getByTestId('lens-hook').textContent).toContain('Hook injections');
+    expect(screen.getByTestId('lens-hook').textContent).toContain('Hooks');
   });
 
   it('记录卡的形态名与已发生的量当场跟着变', async () => {

@@ -26,7 +26,7 @@
  * 变量（跟着 `[data-theme]` 走），强调色与状态色照搬工作台设计稿的色相。
  */
 
-import { memo, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -671,6 +671,7 @@ function Mono({ text }: { text: string }) {
  */
 function UserSay({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
+  const voice = useContext(RecordVoiceContext);
   const p = record.payload;
   const images = list(p, 'images');
   const mode = str(p, 'input_mode');
@@ -687,7 +688,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
     <TextShell
       record={record}
       icon={command ? <Terminal size={12} /> : <User size={12} />}
-      label={t(KIND_LABEL_KEY['user.say'])}
+      label={voice?.user ?? t(KIND_LABEL_KEY['user.say'])}
       labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
       tone={`${ACCENT_BG} ${ACCENT_RING}`}
       meta={modeKey ? t(modeKey) : undefined}
@@ -791,12 +792,13 @@ function Reminders({ items }: { items: string[] }) {
 
 function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: boolean }) {
   const { t } = useTranslation();
+  const voice = useContext(RecordVoiceContext);
   const p = record.payload;
   return (
     <TextShell
       record={record}
       icon={<Bot size={12} />}
-      label={t(KIND_LABEL_KEY['agent.say'])}
+      label={voice?.agent ?? t(KIND_LABEL_KEY['agent.say'])}
       /* 署名不该跟它署的那段话一样黑。正文就在下一行、14px、最深的墨色；头上再压一行
          同色的粗字，两个都想当主角，读到的人先看到的是"回复"两个字而不是回复本身。
          降到次级墨色加中等字重——认得出是发言（实心字），但不跟正文抢。 */
@@ -1815,6 +1817,30 @@ function UsageTick({ record }: { record: WorkbenchRecord }) {
 }
 
 // ── 分发 ──────────────────────────────────────────────────────────────
+/**
+ * 说话人怎么称呼。只有主会话里的人与 agent 两种发言换叫法，子 agent 照旧。
+ *
+ * Teams 页两栏各说各的：左栏「You said / Your agent replied」，右栏「Your teammate said /
+ * Their agent replied」。会话页不提供，照现状。走上下文而不是逐层传参：卡片是记忆化的，
+ * 叫法对一整栏是同一个值，不值得让两百张卡都多收一个参数。
+ */
+export interface RecordVoice {
+  user: string;
+  agent: string;
+}
+
+export const RecordVoiceContext = createContext<RecordVoice | null>(null);
+
+/**
+ * 某几条记录整条换一种画法：返回非空就用它代替这张卡。
+ *
+ * Teams 页用它把带核实行的用户发言画成「Your request」卡（右栏）或队友请求块（左栏）。
+ * 会话页不提供，一条都不换。
+ */
+export type RecordOverride = (record: WorkbenchRecord) => ReactNode | null;
+
+export const RecordOverrideContext = createContext<RecordOverride | null>(null);
+
 export interface RecordCardProps {
   record: WorkbenchRecord;
   /** 取原文要带会话编号——记录编号自己定位不到档案。 */
@@ -1829,6 +1855,9 @@ export interface RecordCardProps {
  * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
  */
 function RecordCardInner({ record, sessionId, hideModel }: RecordCardProps) {
+  const override = useContext(RecordOverrideContext);
+  const special = override ? override(record) : null;
+  if (special) return <>{special}</>;
   switch (record.kind) {
     // 文本类
     case 'user.say':

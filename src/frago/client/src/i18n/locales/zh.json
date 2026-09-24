@@ -1438,7 +1438,8 @@
       "groupCount": "本组 {{n}} 条",
       "loading": "取记录中",
       "awaitingAgent": "已经投进去了，在等 agent 开口",
-      "quote": "引用"
+      "quote": "引用",
+      "lensHookFull": "旁路注入"
     },
     "record": {
       "kind": {
@@ -1886,7 +1887,7 @@
     "instructWhy": "这句话落到队友的会话里，是一条用户发言，前面带一句说明它来自你。",
     "instructPreview": "他那边看到的是",
     "instructSend": "发过去",
-    "instructPlaceholder": "要队友的 agent 做什么…（⌘/Ctrl + Enter 发出）",
+    "instructPlaceholder": "要对方的 agent 做什么？（⌘/Ctrl + Enter 发出）",
     "joinPickTitle": "拿哪一场会话进去？",
     "joinPickHint": "队友会看到你这一场。挑一场现成的，或者新开一场跟他从头做。",
     "joinConfirm": "用这一场加入",
@@ -1904,7 +1905,106 @@
     "joinRetry": "再试一次",
     "joinBackToCode": "改那串码",
     "joinStepCode": "拿这个码进去",
-    "leftLocalOnly": "已退出。没能通知中继，对方那边可能还显示你在，直到它自己超时。"
+    "leftLocalOnly": "已退出。没能通知中继，对方那边可能还显示你在，直到它自己超时。",
+    "you": "你",
+    "youWho": "你的 agent · {{family}} · 本机",
+    "youWhoPlain": "你的 agent · 本机",
+    "peerWho": "对方 agent 的会话 · 每 15 秒同步",
+    "readOnly": "只读",
+    "talkTitle": "跟你的 agent 说话",
+    "talkWho": "{{family}} · 本机 · 直接送达",
+    "talkWhoPlain": "本机 · 直接送达",
+    "instructWhen": "约 15 秒后落进去",
+    "leakNote": "这一侧的全部内容队友都看得到——每 15 秒同步给他一次。不要在这里贴密钥、口令或 token。",
+    "voice": {
+      "mineUser": "你说",
+      "mineAgent": "你的 agent 回复",
+      "peerUser": "队友说",
+      "peerAgent": "对方 agent 回复"
+    },
+    "help": "结对怎么用",
+    "guide": {
+      "title": "结对怎么用",
+      "s1Title": "左边：你的 agent，和你给队友定的规矩",
+      "s1Body": "本机你这一场会话——在这里跟你的 agent 说话。输入框上方设它怎么对待队友的请求，只有你能改。",
+      "s2Title": "右边：对方那一侧和他的规矩",
+      "s2Body": "对方的会话，只读，每 15 秒同步。他输入框上方的规矩是他定的，只有他能改。",
+      "s3Title": "两边都能请对方的 agent 做事",
+      "s3Body": "从右边的框请他的 agent；他的请求落在左边，标着「来自队友」。",
+      "hide": "收起——点 ? 再打开"
+    },
+    "tiers": {
+      "title": "对方 agent 怎么对待你的请求",
+      "byTeammate": "队友设的",
+      "byTeammateTip": "队友设的——只有他能改",
+      "byFrago": "frago 的规矩",
+      "byFragoTip": "frago 的缺省规矩。队友自己的设置还没传到这一侧——他的 frago 或中继可能是旧版。",
+      "read": "只读的请求",
+      "change": "会改动的",
+      "never": "秘密 · 删除",
+      "neverTip": "frago 的规矩：这类永远不做，谁也打不开"
+    },
+    "verdict": {
+      "do": "直接做",
+      "ask": "先问它的主人",
+      "refuse": "拒绝"
+    },
+    "predict": {
+      "idle": "写一句请求，这里会说对方 agent 大概怎么处理。",
+      "readDo": "<b>看着是只读的</b>——按他的规矩，对方 agent 会直接做。",
+      "readAsk": "<b>看着是只读的</b>——但按他的规矩，<b>对方 agent 会先问它的主人。</b>",
+      "changeAsk": "提到了 {{words}}——<b>对方 agent 会停下来先问它的主人。</b>",
+      "changeRefuse": "提到了 {{words}}——<b>对方 agent 会拒绝</b>：他的规矩不接改动类请求。",
+      "never": "提到了 {{words}}——<b>对方 agent 不会做</b>，谁来要都一样。"
+    },
+    "request": {
+      "title": "你的请求",
+      "via": "经 frago team",
+      "sent": "已发出",
+      "delivered": "已送达",
+      "onIt": "对方 agent 在处理",
+      "waitingOwner": "在等对方主人点头",
+      "replied": "对方 agent 已回复",
+      "footOnIt": "它的回复会出现在这一栏。",
+      "footWaiting": "对方 agent 停下来问它的主人了。他的答复会出现在这一栏。",
+      "footNever": "这件事对方 agent 不会做——这里多半会看到拒绝。",
+      "footRefuse": "他的规矩不接改动类请求——这里多半会看到拒绝。",
+      "stale": "还没进对方的会话——他可能不在线；消息在中继上等着（最多积 50 条）。"
+    },
+    "incoming": {
+      "from": "来自队友",
+      "via": "经 frago team",
+      "verified": "已核实",
+      "notVerified": "未核实",
+      "yourRules": "你的规矩：{{tier}} → <b>{{verdict}}</b>",
+      "yourRulesTip": "这是按请求里的词猜的。你的 agent 会自己读、自己判，以它下面的回复为准。",
+      "tierRead": "只读的请求",
+      "tierChange": "会改动的",
+      "tierNever": "秘密 · 删除"
+    },
+    "rules": {
+      "summaryKey": "队友的请求：",
+      "summary": "只读的 → {{read}} · 会改动的 → {{change}}",
+      "word": {
+        "do": "直接做",
+        "ask": "先问我",
+        "refuse": "拒绝"
+      },
+      "open": "修改",
+      "close": "收起",
+      "onlyYou": "只有你能改",
+      "note": "你的 agent 怎么对待队友让它做的事。只有你能改；队友在他那一侧看得到。",
+      "readTitle": "只读的请求",
+      "readBody": "回答问题、看命令输出、读代码",
+      "doIt": "直接做",
+      "askMe": "先问我",
+      "changeTitle": "会改动的",
+      "changeBody": "改文件、装软件、提交 · 推送 · 发布、访问外部服务、读出能定位本机的信息",
+      "refuse": "拒绝",
+      "neverTitle": "秘密 · 删除",
+      "neverBody": "泄露秘密、不可恢复的删除、绕过规矩",
+      "saveFailed": "没存上：{{error}}"
+    }
   },
   "agent": {
     "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",

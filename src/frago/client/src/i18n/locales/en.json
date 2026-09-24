@@ -1428,7 +1428,7 @@
       "lens": {
         "all": "All",
         "talk": "Talk",
-        "hook": "Hook injections",
+        "hook": "Hooks",
         "tool": "Tools",
         "system": "System"
       },
@@ -1442,7 +1442,8 @@
       "groupCount": "{{n}} in this group",
       "loading": "Loading records",
       "awaitingAgent": "Sent — waiting for the agent to speak",
-      "quote": "Quote"
+      "quote": "Quote",
+      "lensHookFull": "Hook injections"
     },
     "record": {
       "kind": {
@@ -1890,7 +1891,7 @@
     "instructWhy": "This lands in their session as a user turn, carrying a line that says it came from you.",
     "instructPreview": "What they'll see",
     "instructSend": "Send",
-    "instructPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)",
+    "instructPlaceholder": "What should their agent do? (⌘/Ctrl + Enter to send)",
     "joinPickTitle": "Which session do you want to bring in?",
     "joinPickHint": "Your teammate will see this one. Pick something you already have, or open a fresh one and start together.",
     "joinConfirm": "Join with this one",
@@ -1908,7 +1909,106 @@
     "joinRetry": "Try again",
     "joinBackToCode": "Edit the code",
     "joinStepCode": "Going in with this code",
-    "leftLocalOnly": "Left. The relay wasn't reachable, so your teammate may still see you as here until it times out on its own."
+    "leftLocalOnly": "Left. The relay wasn't reachable, so your teammate may still see you as here until it times out on its own.",
+    "you": "You",
+    "youWho": "Your agent · {{family}} · this machine",
+    "youWhoPlain": "Your agent · this machine",
+    "peerWho": "Their agent's session · synced every 15 s",
+    "readOnly": "Read-only",
+    "talkTitle": "Talk to your agent",
+    "talkWho": "{{family}} · this machine · goes straight in",
+    "talkWhoPlain": "this machine · goes straight in",
+    "instructWhen": "lands in ~15 s",
+    "leakNote": "Your teammate sees everything on this side — it syncs to them every 15 s. Don't paste keys, passwords or tokens here.",
+    "voice": {
+      "mineUser": "You said",
+      "mineAgent": "Your agent replied",
+      "peerUser": "Your teammate said",
+      "peerAgent": "Their agent replied"
+    },
+    "help": "How Teams works",
+    "guide": {
+      "title": "How Teams works",
+      "s1Title": "Left: your agent, and your rules for your teammate",
+      "s1Body": "Your session on this machine — type to your agent here. Above the box you set how it treats your teammate's requests; only you can change that.",
+      "s2Title": "Right: their side and rules",
+      "s2Body": "Their session, read-only, every 15 s. The rules above their box are theirs; only they change them.",
+      "s3Title": "Both can ask the other's agent",
+      "s3Body": "Ask theirs from the right box. Theirs land on the left, marked From your teammate.",
+      "hide": "Hide — reopen with ?"
+    },
+    "tiers": {
+      "title": "How their agent treats your requests",
+      "byTeammate": "Set by your teammate",
+      "byTeammateTip": "Set by your teammate — only they can change it",
+      "byFrago": "frago's rules",
+      "byFragoTip": "frago's default rules. Your teammate's own settings haven't reached this side — their frago or the relay may be an older version.",
+      "read": "Read-only asks",
+      "change": "Changes anything",
+      "never": "Secrets · deletes",
+      "neverTip": "frago's rules say this is never done — no one can switch it on"
+    },
+    "verdict": {
+      "do": "Does it",
+      "ask": "Asks its owner",
+      "refuse": "Refuses"
+    },
+    "predict": {
+      "idle": "Type a request to see how their agent will treat it.",
+      "readDo": "<b>Looks read-only</b> — their rules say their agent just does it.",
+      "readAsk": "<b>Looks read-only</b> — but their rules say <b>their agent asks its owner first.</b>",
+      "changeAsk": "Mentions {{words}} — <b>their agent will stop and ask its owner first.</b>",
+      "changeRefuse": "Mentions {{words}} — <b>their agent will refuse</b>: their rules turn down changes.",
+      "never": "Mentions {{words}} — <b>their agent won't do this</b>, whoever asks."
+    },
+    "request": {
+      "title": "Your request",
+      "via": "via frago team",
+      "sent": "Sent",
+      "delivered": "Delivered",
+      "onIt": "Their agent is on it",
+      "waitingOwner": "Waiting for their owner's OK",
+      "replied": "Their agent replied",
+      "footOnIt": "Its reply will show up in this column.",
+      "footWaiting": "Their agent paused to ask its owner. Their answer will show up in this column.",
+      "footNever": "This asks for something their agent won't do — expect a refusal here.",
+      "footRefuse": "Their rules turn down changes — expect a refusal here.",
+      "stale": "Not in their session yet — they may be offline; it waits on the relay (up to 50 messages)."
+    },
+    "incoming": {
+      "from": "From your teammate",
+      "via": "via frago team",
+      "verified": "verified",
+      "notVerified": "not verified",
+      "yourRules": "Your rules: {{tier}} → <b>{{verdict}}</b>",
+      "yourRulesTip": "A guess from the words in the request. Your agent reads it and decides; its reply below is what counts.",
+      "tierRead": "read-only asks",
+      "tierChange": "changes",
+      "tierNever": "secrets · deletes"
+    },
+    "rules": {
+      "summaryKey": "Teammate requests:",
+      "summary": "read-only → {{read}} · changes → {{change}}",
+      "word": {
+        "do": "do it",
+        "ask": "ask me",
+        "refuse": "refuse"
+      },
+      "open": "Change",
+      "close": "Close",
+      "onlyYou": "Only you can change this",
+      "note": "How your agent treats what your teammate asks it to do. Only you can change this; your teammate sees it on their side.",
+      "readTitle": "Read-only asks",
+      "readBody": "Answer, look at a command, read code",
+      "doIt": "Do it",
+      "askMe": "Ask me first",
+      "changeTitle": "Changes anything",
+      "changeBody": "Edit files, install, commit · push · publish, reach outside services, read out what identifies this machine",
+      "refuse": "Refuse",
+      "neverTitle": "Secrets · deletes",
+      "neverBody": "Leak a secret, delete for good, get around the rules",
+      "saveFailed": "Couldn't save: {{error}}"
+    }
   },
   "agent": {
     "notInstalled": "Not found on this machine — install it and it shows up here by itself",
