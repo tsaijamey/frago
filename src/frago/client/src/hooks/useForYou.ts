@@ -143,9 +143,12 @@ export function forYouOf(
   };
 }
 
-/** 能关的终端：客户端已经退出、只剩一个 shell。在等你的、在忙的都不算。 */
+/**
+ * 能关的终端：frago 起的、客户端已经退出、只剩一个 shell。在等你的、在忙的都不算。
+ * 人自己开的 tmux 停在 shell 是常态，不是 agent 退出后的空壳，NEVER 列进来让人一键关掉。
+ */
 export function closableTerminals(rows: TmuxWaitingItem[]): TmuxWaitingItem[] {
-  return rows.filter((r) => r.client_alive === false);
+  return rows.filter((r) => r.client_alive === false && r.name.startsWith('frago-agent-'));
 }
 
 export interface ForYouState {

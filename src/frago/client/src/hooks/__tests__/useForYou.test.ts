@@ -138,11 +138,15 @@ describe('原话与看过没', () => {
 describe('可关的终端', () => {
   it('只认客户端已退出的；在等你的、在忙的、问不出的都不算', () => {
     const rows = [
-      row({ name: 'a', client_alive: false }),
-      row({ name: 'b', client_alive: true, awaiting_input: true }),
-      row({ name: 'c', client_alive: true, awaiting_input: false }),
-      row({ name: 'd', client_alive: null }),
+      row({ name: 'frago-agent-a', client_alive: false }),
+      row({ name: 'frago-agent-b', client_alive: true, awaiting_input: true }),
+      row({ name: 'frago-agent-c', client_alive: true, awaiting_input: false }),
+      row({ name: 'frago-agent-d', client_alive: null }),
     ];
-    expect(closableTerminals(rows).map((r) => r.name)).toEqual(['a']);
+    expect(closableTerminals(rows).map((r) => r.name)).toEqual(['frago-agent-a']);
+  });
+
+  it('人自己开的 tmux 停在 shell 不算可关', () => {
+    expect(closableTerminals([row({ name: 'work', client_alive: false })])).toEqual([]);
   });
 });
