@@ -736,6 +736,24 @@
       "priority": 90,
       "created_at": "2026-09-23T00:00:00",
       "description": "主人说起结对、队友、连接码时把 frago team 的指令表带上。此前 agent 不知道有 team 这套命令：让它核实连接码，它去查了 channel 和 remote，查无此码就拒绝；让它指挥队友的 agent，它不知道有 team send / read。"
+    },
+    {
+      "id": "builtin-prompt-decision-answer",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "prompt_regex",
+        "pattern": "^【answer】"
+      },
+      "action": {
+        "type": "inject_book_section",
+        "topic": "answer-needed-by-human",
+        "section": "收到之后"
+      },
+      "dedup_scope": "session",
+      "priority": 90,
+      "created_at": "2026-09-24T00:00:00",
+      "description": "Fires when the human answers a decision card in the WebUI (the message starts with 【answer】). Reminds the agent that the effect text quoted in the message is the exact scope it is authorised to act on this turn."
     }
   ]
 }
