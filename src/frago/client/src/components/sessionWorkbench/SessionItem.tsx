@@ -301,7 +301,7 @@ export default function SessionItem({
           />
         ) : null}
         <span
-          className={`line-clamp-2 min-w-0 flex-1 leading-[1.5] ${
+          className={`min-w-0 flex-1 truncate leading-[1.5] ${
             nested ? 'text-[12px]' : 'text-[13px]'
           } ${bold ? 'font-semibold' : 'font-medium'} ${
             nested && !selected ? 'text-text-secondary' : 'text-text-primary'

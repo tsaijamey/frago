@@ -336,9 +336,8 @@ export default function SessionWorkbenchPage() {
               <span className="min-w-0 truncate font-mono">{selected.directory}</span>
             </span>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
-              {t('workbench.page.subtitle')}
-            </span>
+            // 没选会话时标题后面留空：全局第 2 条删掉页头里开发者口吻的说明
+            <span className="min-w-0 flex-1" />
           )}
           {/* 用量月历的入口搬去了左栏底部：那里是「我还剩多少」的位置，与额度条并排。
               它本来就不是会话页专属的东西，挂在这一页的标题栏上只是它当初落脚的地方。 */}
