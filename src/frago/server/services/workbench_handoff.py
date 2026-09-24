@@ -84,6 +84,8 @@ _FAMILY_LABEL = {
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path")
 #: codex 的 apply_patch 没有路径参数，路径写在补丁正文里。
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+#: Claude Code 输入框里「第 N 张粘贴的图」的写法。见 :func:`render` 末尾。
+_IMAGE_REF = re.compile(r"\[Image #\d+\]")
 
 
 class HandoffUnavailable(LookupError):
@@ -273,7 +275,15 @@ def render(
     label = _FAMILY_LABEL.get(family, family)
     parts = [
         f"你接手会话 {session_id}（{label}，目录 {cwd}）。"
-        "原会话上下文太长、已经变慢，人让你把没做完的接着做完。"
+        "原会话上下文太长、已经变慢，换到这里接着聊。下面是原会话的现状，读完记住就行。\n\n"
+        "**现在不要做任何事**：不跑命令、不读文件、不翻原会话。只回一句「已接手，等你下一句」，"
+        "然后停下。\n\n"
+        "**人发来下一句之后**：\n"
+        "1. 把它当成原会话的下一句来接，不要当成新话题从头问起。\n"
+        "2. 起点就是下面「停在哪」和「原会话最后一段回复」：原会话停在那一步，你从那一步往下走。\n"
+        "3. 如果「等人拍板的事」有内容，人这一句多半就是在答它，按他的答复接着做。\n"
+        "4. 人的话里指到原会话的内容（「刚才那个报错」「那张截图」），先对照下面的材料；"
+        "材料里没有，再回原会话按需翻。"
     ]
 
     anchor = slots.get("anchor")
@@ -310,16 +320,13 @@ def render(
         parts.append("## 动过的文件\n" + "\n".join(f"- {f}" for f in files))
 
     parts.append(
-        "## 需要细节时回原话\n"
+        "## 之后需要细节时回原话\n"
         f"`frago session show {session_id} --steps`（查不到就先 `frago session sync`），"
-        '或 `frago session search "<一句话>"`。只按需翻，不要整场读进来——换场就是为了躲开它。'
+        '或 `frago session search "<一句话>"`。原话里附过的图也在那里。只按需翻，'
+        "不要整场读进来——换场就是为了躲开它。"
     )
 
-    steps = ["看一眼现状（git status、打开上面列的文件），确认跟上面说的一致"]
-    if decision:
-        steps.append("「等人拍板的事」还没定，先问人，得到答复再动手")
-    else:
-        steps.append("核对完直接接着做")
-    parts.append("## 你第一步\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1)))
-
-    return "\n\n".join(parts)
+    # 这段话是当成人的输入投进新会话的。Claude Code 会把输入里的 ``[Image #N]`` 认成
+    # 「附上第 N 张粘贴的图」，真的挂上图（2026-09-24 实测，挂上的是新会话那边编号对得上
+    # 的图，不是原话里那张）。图不随交接带过去：新会话要看，自己回原会话翻。
+    return _IMAGE_REF.sub("（这里附了图）", "\n\n".join(parts))
