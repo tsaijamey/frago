@@ -4654,13 +4654,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   max-width: 280px;
 }
 
+/* 窄窗只收窄标题列，右端「类型 · 运行时 · #标签」留着：1020 宽下行还有 770px，放得下 */
 @media (max-width: 1100px) {
   .rl-row {
-    grid-template-columns: minmax(160px, 34%) minmax(0, 1fr);
+    grid-template-columns: minmax(160px, 30%) minmax(0, 1fr) auto;
   }
 
   .rl-row .rl-card-meta {
-    display: none;
+    max-width: 220px;
   }
 }
 
@@ -7474,8 +7475,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* 执行内容是命令或配方名，等宽才认得出空格和引号。 */
+/* 执行内容照原型用正文字体、12 档；原式 cron 那行才用等宽 */
 .sc-target-line {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-sm);
 }
 
 .sc-when {
