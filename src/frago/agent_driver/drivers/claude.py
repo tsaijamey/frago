@@ -242,6 +242,12 @@ def _ensure_workspace_trusted(cwd: str) -> None:
     """
     try:
         abspath = os.path.abspath(cwd)
+        # 登记键的形态 MUST 与 claude 自己手点 "Yes" 时落的键一致：claude 在 Windows
+        # 上以**正斜杠**路径登记 projects 键（2026-09-24 实测 2.1.263，手点 Yes 后
+        # 落的是 ``C:/Users/...``），``os.path.abspath`` 给的是反斜杠——键对不上，
+        # 预写的信任等于没写，新目录照样卡信任菜单。Linux/macOS 的 abspath 天然是
+        # 正斜杠，不受影响。
+        key = abspath.replace(os.sep, "/") if os.sep == "\\" else abspath
         path = _claude_config_path()
         data: dict = {}
         if path.exists():
@@ -255,13 +261,13 @@ def _ensure_workspace_trusted(cwd: str) -> None:
         projects = data.get("projects")
         if not isinstance(projects, dict):
             projects = {}
-        entry = projects.get(abspath)
+        entry = projects.get(key)
         if not isinstance(entry, dict):
             entry = {}
         if entry.get("hasTrustDialogAccepted") is True:
             return  # 已信任：幂等，不写、不与运行中的 claude 抢盘
         entry["hasTrustDialogAccepted"] = True
-        projects[abspath] = entry
+        projects[key] = entry
         data["projects"] = projects
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")

@@ -732,3 +732,124 @@ def test_an_unanswerable_query_reports_none_not_false() -> None:
     """
     assert _session_with_pane_command(None).has_live_agent() is None
     assert _session_with_pane_command("").has_live_agent() is None
+
+
+# ── 原生 Windows 兼容（win32 tmux 移植版，2026-09-24 实测 3.6a-win32）────────
+def test_open_on_windows_omits_dash_c_and_cds_in_shell(monkeypatch) -> None:
+    """Windows 上 new-session 不带 ``-c``（移植版带 -c 一律 spawn failed）。
+
+    工作目录改经 shell 落地：投喂的启动命令前缀 ``cd '<cwd>' &&``，与借住模式
+    同一套做法。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w1", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "-c" not in new_sess
+    # 启动文本是第一条 -l 字面投喂，形如 cd 'E:\Lenovo' && echo-agent。
+    literal = [c for c in fake.sent_keys() if "-l" in c]
+    assert literal and literal[0][-1] == "cd 'E:\Lenovo' && echo-agent"
+
+
+def test_open_off_windows_keeps_dash_c(monkeypatch) -> None:
+    """Linux/macOS 主路径不变：-c 原样带，启动命令不加 cd 前缀。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", False)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w2", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert new_sess[new_sess.index("-c") + 1] == "/tmp"
+    literal = [c for c in fake.sent_keys() if "-l" in c]
+    assert literal and literal[0][-1] == "echo-agent"
+
+
+def test_a_truncated_windows_path_reports_none_not_true() -> None:
+    """win32 移植版把前台进程名报成被空格截断的路径（bash 报 ``C:\Program``）。
+
+    认不出本体时按"问不出来"降级：过 shell 名单必然判 True（路径不含纯 shell 名），
+    把"只剩 shell 壳"误判成"agent 还活着"。斜杠与盘符两种形态都要拦。
+    """
+    assert _session_with_pane_command("C:\Program").has_live_agent() is None
+    assert _session_with_pane_command("C:/Users/x/AppData").has_live_agent() is None
+    assert _session_with_pane_command("/usr/bin/bash").has_live_agent() is None
+
+
+def test_default_runner_decodes_utf8_explicitly(monkeypatch) -> None:
+    """tmux 输出按 UTF-8 解码，不随系统 locale（Windows 默认 GBK 会解崩 pane 文本）。
+
+    解码失败时 reader 线程把 stdout 记成 None，读屏返回 None 后一切 pane 正则判断
+    全线 TypeError。
+    """
+    from frago.agent_driver.tmux_session import _default_runner
+
+    captured: dict = {}
+
+    class _Proc:
+        stdout = "pane 文本"
+
+    def _fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return _Proc()
+
+    monkeypatch.setattr("frago.agent_driver.tmux_session.subprocess.run", _fake_run)
+    assert _default_runner(["tmux", "capture-pane"]) == "pane 文本"
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
+def test_send_text_non_ascii_on_ansi_windows_raises_instead_of_mojibake(
+    monkeypatch,
+) -> None:
+    """win32 移植版按系统 ANSI 代码页收窄 argv，非 ASCII 必坏且不可逆（实测中文→
+    U+FFFD、emoji→``?``）。与其把乱码喂给 agent，不如当场报错并给出切系统 UTF-8
+    的修复指引；纯 ASCII 不受影响照常发送。
+    """
+    from frago.agent_driver import tmux_session
+    from frago.agent_driver.tmux_session import TmuxTextEncodingError
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda: 936)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w3", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    with pytest.raises(TmuxTextEncodingError, match="UTF-8"):
+        sess.send_text("你好 world")
+    # 同样的代码页下，纯 ASCII 文本不受影响。
+    sess.send_text("plain ascii only")
+    assert fake.sent_keys()
+
+
+def test_send_text_non_ascii_passes_when_system_ansi_is_utf8(monkeypatch) -> None:
+    """系统 ANSI 代码页已是 65001（"Beta: Unicode UTF-8"）时收窄产物即正确 UTF-8，
+    非 ASCII 照常放行——闸门只在确知会坏的代码页上拦。代码页问不出来（None）同样
+    放行：真实 Windows 上 GetACP 不会失败，这个分支只服务测试/非 Windows 环境。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w4", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    for cp in (65001, None):
+        monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda cp=cp: cp)
+        sess.send_text("中文 mixed")
+    assert any("中文 mixed" in c for c in fake.sent_keys())
+
+
+def test_send_text_off_windows_never_gates(monkeypatch) -> None:
+    """非 Windows 平台与代码页无关，任何文本直接走发送。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", False)
+    # Linux 上 _ansi_codepage 直接短路返回 None，但闸门先看 _WINDOWS，根本不会问。
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w5", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess.send_text("中文 mixed")
+    assert any("中文 mixed" in c for c in fake.sent_keys())
