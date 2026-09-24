@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import PageHeader from '@/components/layout/PageHeader';
 import { useAppStore } from '@/stores/appStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { useRecipeFolders, suggestFolderId } from '@/stores/recipeFolders';
@@ -385,20 +386,20 @@ export default function RecipeList() {
 
   return (
     <div className="flex flex-col h-full tdp rl-page">
-      <div className="cs-header tdp-header">
-        <div className="min-w-0">
-          <h1 className="cs-title">{t('recipes.title')}</h1>
-          <p className="cs-subtitle">{t('recipes.pageDesc')}</p>
-        </div>
-        {/* 创建配方：过去只能在命令行下开发配方，这个入口把它搬进图形界面——
-            人写需求，然后在虚拟桌面那扇窗口里看着配方被做出来。 */}
-        <div className="td-head-actions">
-          <button type="button" className="td-add" onClick={() => setForgeOpen(true)}>
-            <Wand2 size={14} />
-            {t('recipes.forge.button')}
-          </button>
-        </div>
-      </div>
+      {/* 创建配方：过去只能在命令行下开发配方，这个入口把它搬进图形界面——
+          人写需求，然后在虚拟桌面那扇窗口里看着配方被做出来。 */}
+      <PageHeader
+        title={t('recipes.title')}
+        meta={t('recipes.headerMeta', {
+          local: recipes.length,
+          community: communityRecipes.length,
+        })}
+        primary={{
+          label: t('recipes.forge.button'),
+          icon: <Wand2 size={14} />,
+          onClick: () => setForgeOpen(true),
+        }}
+      />
       {forgeOpen && <RecipeForgeModal onClose={() => setForgeOpen(false)} />}
 
       <div className="td-toolbar tdp-toolbar">

@@ -18,8 +18,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import PageHeader from '@/components/layout/PageHeader';
 import {
-  Database,
   UploadCloud,
   RefreshCw,
   Loader2,
@@ -179,48 +179,42 @@ export default function DataRepoPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-color)] px-5 py-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--text-primary)]">
-            <Database size={18} className="text-[var(--accent-primary)]" />
-            {t('dataRepo.title')}
-          </h2>
-          {status?.remote_url && (
+      {/* 标题前的绿色数据库图标去掉了：绿只给主动作，这一屏的绿留给「同步」。
+          仓库链接暂时照旧挂在计数的位置；它的去留与这一页的计数由 20260924-webui-data 定。 */}
+      <PageHeader
+        title={t('dataRepo.title')}
+        meta={
+          status?.remote_url ? (
             <a
               href={status.remote_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-0.5 inline-flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:underline"
+              className="inline-flex items-center gap-1 hover:underline"
             >
               {status.remote_url.replace(/^https:\/\/github\.com\//, '')}
               <ExternalLink size={11} />
             </a>
-          )}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2">
+          ) : undefined
+        }
+        secondary={
           <button
             type="button"
             onClick={loadStatus}
             disabled={refreshing}
-            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+            className="page-header-btn page-header-btn--icon page-header-btn--ghost"
             aria-label={t('dataRepo.refresh')}
             title={t('dataRepo.refresh')}
           >
-            <RefreshCw size={15} className={refreshing ? 'animate-spin' : undefined} />
+            <RefreshCw size={14} className={refreshing ? 'animate-spin' : undefined} />
           </button>
-          <button
-            type="button"
-            onClick={() => setSyncDialogOpen(true)}
-            disabled={running || !status?.configured}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-primary)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] hover:opacity-90 disabled:opacity-50"
-          >
-            {running ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />}
-            {running ? t('dataRepo.syncing') : t('dataRepo.syncButton')}
-          </button>
-        </div>
-      </div>
+        }
+        primary={{
+          label: running ? t('dataRepo.syncing') : t('dataRepo.syncButton'),
+          icon: running ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />,
+          onClick: () => setSyncDialogOpen(true),
+          disabled: running || !status?.configured,
+        }}
+      />
 
       <div className="page-scroll flex-1 space-y-4 p-5">
         {loading && !status ? (

@@ -14,6 +14,7 @@
 
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import PageHeader from '@/components/layout/PageHeader';
 import { ListChecks, Loader2, Plus, RefreshCw, Search, Tags, X } from 'lucide-react';
 import * as api from '@/api';
 import type { TodoItem, TodoListResponse } from '@/api';
@@ -143,6 +144,10 @@ export default function TodoPage() {
     [todos, activeCategory, categories]
   );
   const counts = useMemo(() => countStatuses(inCategory), [inCategory]);
+  const openCount = useMemo(
+    () => todos.filter((todo) => todo.status === 'todo' || todo.status === 'doing').length,
+    [todos]
+  );
   const categoryCounts = useMemo(() => {
     const out: Record<string, number> = { all: 0, [UNCATEGORIZED]: 0 };
     for (const todo of todos) {
@@ -223,44 +228,42 @@ export default function TodoPage() {
 
   return (
     <div className="td-page tdp">
-      <div className="cs-header tdp-header">
-        <div className="min-w-0">
-          <h1 className="cs-title">{t('todos.title')}</h1>
-          <p className="cs-subtitle">{t('todos.pageDesc')}</p>
-        </div>
-        {/* 主次从右往左排：刷新会自己跑，只留图标；分类是偶尔的管理动作；添一件是这页的主动作，最右最实。 */}
-        <div className="td-head-actions">
-          <button
-            type="button"
-            className="cs-refresh tdp-icon-btn"
-            onClick={refresh}
-            disabled={refreshing}
-            title={t('common.refresh')}
-            aria-label={t('common.refresh')}
-          >
-            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
-          </button>
-          <button
-            type="button"
-            className={`cs-refresh ${editingCategories ? 'td-cat-toggle--open' : ''}`}
-            onClick={() => setEditingCategories((open) => !open)}
-            aria-expanded={editingCategories}
-            disabled={body === null}
-          >
-            <Tags size={14} />
-            {t('todos.category.edit')}
-          </button>
-          <button
-            type="button"
-            className={`td-add ${composerOpen ? 'td-add--open' : ''}`}
-            onClick={() => setComposerOpen((open) => !open)}
-            aria-expanded={composerOpen}
-          >
-            {composerOpen ? <X size={14} /> : <Plus size={14} />}
-            {t('todos.compose.button')}
-          </button>
-        </div>
-      </div>
+      {/* 主次从右往左排：刷新会自己跑，只留图标；分类是偶尔的管理动作；添一件是这页的主动作，最右最实。
+          计数数的是全部未完成（待办 + 进行中），不跟着下面的筛选走。 */}
+      <PageHeader
+        title={t('todos.title')}
+        meta={body ? t('todos.headerMeta', { count: openCount }) : undefined}
+        secondary={
+          <>
+            <button
+              type="button"
+              className="page-header-btn page-header-btn--icon page-header-btn--ghost"
+              onClick={refresh}
+              disabled={refreshing}
+              title={t('common.refresh')}
+              aria-label={t('common.refresh')}
+            >
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+            <button
+              type="button"
+              className={`page-header-btn ${editingCategories ? 'page-header-btn--pressed' : ''}`}
+              onClick={() => setEditingCategories((open) => !open)}
+              aria-expanded={editingCategories}
+              disabled={body === null}
+            >
+              <Tags size={14} />
+              {t('todos.category.edit')}
+            </button>
+          </>
+        }
+        primary={{
+          label: t('todos.compose.button'),
+          icon: composerOpen ? <X size={14} /> : <Plus size={14} />,
+          onClick: () => setComposerOpen((open) => !open),
+          pressed: composerOpen,
+        }}
+      />
 
       {composerOpen && (
         <div className="td-composer">

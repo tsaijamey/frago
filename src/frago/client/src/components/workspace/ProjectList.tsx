@@ -133,7 +133,7 @@ function ProjectItem({
             <Clock className="w-3 h-3" />
             <span>{formatDate(project.last_accessed)}</span>
             <span className={`
-              px-1.5 py-0.5 rounded text-[10px]
+              px-1.5 py-0.5 rounded text-[11px]
               ${project.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}
             `}>
               {project.status}

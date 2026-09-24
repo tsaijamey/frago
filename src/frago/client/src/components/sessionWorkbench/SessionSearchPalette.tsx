@@ -114,7 +114,7 @@ function HitRow({
 
 function Key({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[4px] border border-border-color px-1 font-mono text-[10px] text-text-muted">
+    <kbd className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[4px] border border-border-color px-1 font-mono text-[11px] text-text-muted">
       {children}
     </kbd>
   );

@@ -604,7 +604,7 @@ function CodeBlock({
           : 'border-border-color hover:bg-bg-hover'
       }`}
     >
-      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-text-muted">
+      <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-text-muted">
         {t('team.codeLabel')}
         <span className="normal-case tracking-normal">
           · {binding.side === 'A' ? t('team.sideA') : t('team.sideB')}

@@ -685,7 +685,7 @@ export default function SessionRail({
         >
           <Search size={14} strokeWidth={1.5} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">{t('sessionSearch.trigger')}</span>
-          <kbd className="shrink-0 rounded-[4px] border border-border-color px-1 font-mono text-[10px] leading-[16px]">
+          <kbd className="shrink-0 rounded-[4px] border border-border-color px-1 font-mono text-[11px] leading-[16px]">
             {modKey}K
           </kbd>
         </button>

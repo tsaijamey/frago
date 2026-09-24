@@ -13,6 +13,7 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import PageHeader from '@/components/layout/PageHeader';
 import { Clock, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
 import * as api from '@/api';
 import type { ScheduleItem, ScheduleListResponse } from '@/api';
@@ -196,34 +197,36 @@ export default function SchedulePage() {
 
   return (
     <div className="td-page tdp">
-      <div className="cs-header tdp-header">
-        <div className="min-w-0">
-          <h1 className="cs-title">{t('schedules.title')}</h1>
-          <p className="cs-subtitle">{t('schedules.pageDesc')}</p>
-        </div>
-        {/* 与事务页同一个主次：刷新会自己跑，只留图标；新建是主动作，放最右。 */}
-        <div className="td-head-actions">
+      {/* 与事务页同一个主次：刷新会自己跑，只留图标；新建是主动作，放最右。 */}
+      <PageHeader
+        title={t('schedules.title')}
+        meta={
+          body
+            ? t('schedules.headerMeta', {
+                count: schedules.length,
+                enabled: schedules.filter((s) => s.enabled).length,
+              })
+            : undefined
+        }
+        secondary={
           <button
             type="button"
-            className="cs-refresh tdp-icon-btn"
+            className="page-header-btn page-header-btn--icon page-header-btn--ghost"
             onClick={refresh}
             disabled={refreshing}
             title={t('common.refresh')}
             aria-label={t('common.refresh')}
           >
-            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
           </button>
-          <button
-            type="button"
-            className={`td-add ${composerOpen ? 'td-add--open' : ''}`}
-            onClick={() => setComposerOpen((open) => !open)}
-            aria-expanded={composerOpen}
-          >
-            {composerOpen ? <X size={14} /> : <Plus size={14} />}
-            {t('schedules.compose.button')}
-          </button>
-        </div>
-      </div>
+        }
+        primary={{
+          label: t('schedules.compose.button'),
+          icon: composerOpen ? <X size={14} /> : <Plus size={14} />,
+          onClick: () => setComposerOpen((open) => !open),
+          pressed: composerOpen,
+        }}
+      />
 
       {composerOpen && (
         <div className="td-composer">

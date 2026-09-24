@@ -462,9 +462,11 @@ describe('SessionRail 左栏', () => {
     const [first] = screen.getAllByTestId('session-item');
     expect(first.getAttribute('aria-current')).toBe('true');
     const className = first.className;
-    // 整行换底。这一条从前钉的是「有没有 ring-」——那是当时的实现（淡底加一圈绿环），
-    // 不是这条规矩本身。绿环后来去掉了，规矩没变：状态由整行承担。
-    expect(className).toContain('bg-accent-primary-10');
+    // 整行换底加整圈描边。这一条从前钉的是绿淡底——那是当时的实现，不是这条规矩本身。
+    // 选中不是动作，现在换成中性底（--sel-bg）加一圈 --sel-border，规矩没变：状态由整行承担。
+    expect(className).toContain('bg-[var(--sel-bg)]');
+    expect(className).toContain('var(--sel-border)');
+    expect(className).not.toContain('accent-primary');
     // 真正的禁令：任何单边色条都不许出现。
     expect(className).not.toMatch(/border-[lrtb]-\d/);
     expect(className).not.toMatch(/\bborder-[lrtb]\b/);

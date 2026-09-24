@@ -14,7 +14,8 @@ import {
 } from '@/hooks/useWorkbenchSessions';
 
 const ACCENT_TEXT = 'text-accent-primary';
-const ACCENT_BG = 'bg-accent-primary-10';
+/** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
+const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
 
 /**
  * 每一档的点。
@@ -242,12 +243,12 @@ export default function SessionItem({
         data-stacked={stacked ? 'true' : undefined}
         /* **平时不是一张卡。** 从前每一场会话都有自己的边框与卡底，一屏摆下五六张，人看到
            的先是五六个方框，然后才是里面的字。清单要的是一列可扫读的行：平时没有任何容器，
-           鼠标经过才浮出一层底，选中的那一场换成品牌绿淡底——整行换底，不靠任何单边色条。
-           绿环去掉了：淡底加标题转绿已经足够把它从一列灰字里分出来，再加一圈亮绿只是喊。
+           鼠标经过才浮出一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，
+           不靠任何单边色条，也不用绿：绿只留给在跑，选中不是动作。
            **底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠才立得住。
            容器在这里不是装饰，它就是"这下面还有东西"这句话本身。 */
         className={`group/session relative w-full cursor-pointer rounded-[8px] px-2.5 py-2 text-left transition-colors duration-200 ${
-          selected ? ACCENT_BG : 'hover:bg-bg-hover'
+          selected ? SELECTED : 'hover:bg-bg-hover'
         }`}
       >
       <div className="flex items-start gap-2">
@@ -302,7 +303,7 @@ export default function SessionItem({
         <span
           className={`line-clamp-2 min-w-0 flex-1 font-medium leading-[1.5] ${
             nested ? 'text-[12px]' : 'text-[13px]'
-          } ${selected ? ACCENT_TEXT : nested ? 'text-text-secondary' : 'text-text-primary'}`}
+          } ${nested && !selected ? 'text-text-secondary' : 'text-text-primary'}`}
         >
           {session.title}
         </span>

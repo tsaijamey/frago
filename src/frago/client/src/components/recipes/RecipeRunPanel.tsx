@@ -141,7 +141,7 @@ export default function RecipeRunPanel({
                   <div className="flex items-center gap-2">
                     <code className="text-xs font-mono text-[var(--text-primary)] truncate">{field.key}</code>
                     {field.required && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)] shrink-0">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)] shrink-0">
                         {t('recipes.required')}
                       </span>
                     )}

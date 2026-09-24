@@ -77,12 +77,13 @@
   --accent-primary-10: rgba(21, 179, 77, 0.12);
   --accent-primary-20: rgba(21, 179, 77, 0.22);
 
-  /* 额度条的三档。同一色相分三个深浅：它们是同一件事（我还剩多少）的三个尺度，
-     换三种色相会读成三件互不相干的事。中间那一档就是 logo 绿本身。 */
-  --usage-week-model: #0d7a34;
-  --usage-week-all: #15b34d;
-  --usage-session: #5ad884;
   --usage-track: rgba(255, 255, 255, 0.08);
+  /* 额度条改用一个中性灰，达到 80% 转告警橙：它说的是「还剩多少」，不是动作也不是在跑。 */
+  --usage-fill: rgba(255, 255, 255, 0.5);
+
+  /* 选中态＝「你在看哪一条」，不是动作：整张卡换中性底，再加一圈完整描边。不用绿，不用单边条。 */
+  --sel-bg: rgba(255, 255, 255, 0.08);
+  --sel-border: rgba(255, 255, 255, 0.2);
   --accent-success: #15b34d;
   --accent-warning: #e5a93c;
   --accent-warning-10: rgba(229, 169, 60, 0.14);
@@ -134,15 +135,22 @@
      there, not here. */
   --font-scale: 1;
 
-  /* 字号只有四档在日常界面上出现：14 菜单与正文、13 次级正文、12 元信息、11 微标。
-     16 与 20 留给页面标题。档位之间不再插值——多一档就多一次"这两个到底一不一样大"。 */
+  /* 日常界面只用三档：13 正文、列表标题、菜单；12 元信息、按钮字；11 微标。页标题 15，全站只此一处。
+     照原型有两处例外：侧栏菜单 14，会话页、结对页页头标题 14。
+     md 与 lg/xl/2xl 是旧档位的名字，留着让既有写法落到新标度上，不再代表另外的字号。
+     档位之间不再插值——多一档就多一次"这两个到底一不一样大"。 */
   --font-size-xs: calc(11px * var(--font-scale));
   --font-size-sm: calc(12px * var(--font-scale));
   --font-size-base: calc(13px * var(--font-scale));
-  --font-size-md: calc(14px * var(--font-scale));
-  --font-size-lg: calc(16px * var(--font-scale));
-  --font-size-xl: calc(20px * var(--font-scale));
-  --font-size-2xl: calc(24px * var(--font-scale));
+  --font-size-md: calc(13px * var(--font-scale));
+  --font-size-lg: calc(15px * var(--font-scale));
+  --font-size-xl: calc(15px * var(--font-scale));
+  --font-size-2xl: calc(15px * var(--font-scale));
+  --font-size-title: calc(15px * var(--font-scale));
+
+  /* 行高：正文 1.5；记录与 Markdown 正文 1.65。其余元素逐个照原型取值。 */
+  --line-height-body: 1.5;
+  --line-height-long: 1.65;
 
   /* 图标只有两档：16px 是全局默认（菜单、按钮、行内），13px 给微标行。
      stroke 1.5 —— 2 在 16px 上过粗显脏，1 在近黑底上会糊。 */
@@ -217,11 +225,10 @@
   --accent-primary-10: rgba(10, 143, 51, 0.1);
   --accent-primary-20: rgba(10, 143, 51, 0.2);
 
-  /* 白底上同样三档，整体压暗一级以保住对比度。 */
-  --usage-week-model: #05602a;
-  --usage-week-all: #0a8f33;
-  --usage-session: #3fb968;
-  --usage-track: rgba(0, 0, 0, 0.1);
+  --usage-track: rgba(0, 0, 0, 0.08);
+  --usage-fill: rgba(0, 0, 0, 0.45);
+  --sel-bg: rgba(0, 0, 0, 0.05);
+  --sel-border: rgba(0, 0, 0, 0.2);
   --accent-success: #0a8f33;
   --accent-warning: #a97609;
   --accent-warning-10: rgba(169, 118, 9, 0.12);
@@ -425,8 +432,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* === Main Layout ===
-   地 (--page-bg) 是窗口底，内容区是浮在它上面的一块面。左栏与内容区之间留 12px
-   的地色缝，两块面才读得出是两块，而不是一整片被一根线切开。 */
+   侧栏是地 (--page-bg)，内容区是面 (--bg-primary)。两者之间只留一道发丝线：内容区不再是
+   浮起的卡片——从前四周留地色缝、再加一圈描边和圆角，与各页自己的描边叠成双层边框，
+   横向白吃掉约 40px。 */
 .main-layout {
   display: flex;
   flex: 1;
@@ -441,10 +449,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  margin: 10px 10px 10px 0;
-  border-radius: var(--radius-lg);
   background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
 }
 
 .main-content {
@@ -453,9 +459,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   background: transparent;
-  /* 内容区自己是圆角的，里面任何贴边的东西都要被这一层裁掉，
-     否则子元素的方角会从圆角上探出来。 */
-  border-radius: inherit;
 }
 
 /* === New Layout: No Sidebar === */
@@ -473,40 +476,42 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 @media (max-width: 640px) {
   .content-area {
-    margin: 0;
-    border: none;
-    border-radius: 0;
+    border-left: none;
   }
 }
 
 /* === Left navigation rail ===
    实体栏，不是浮层。它占自己的位置，宽窄由人自己按 .rail--expanded 切换。
-   收起 56px 只放图标，展开 200px 图标加名字；两档之间的宽度动画是唯一的位移。 */
+   收起 56px 只放图标，展开 184px 图标加名字；两档之间的宽度动画是唯一的位移。
+   logo、展开按钮、菜单图标共用一条竖中线，两态都在距栏左 28px 处（56px 栏的正中），
+   切换时它们都不横移：栏左内边距 8 + 菜单行左内边距 12 + 半个 16px 图标 = 28；
+   logo 左边 8 + 9 = 17，加半个 22px = 28。 */
 .rail {
   flex-shrink: 0;
   width: 56px;
   display: flex;
   flex-direction: column;
   background: var(--sidebar-bg);
-  padding: 8px;
+  padding: 10px 8px 8px;
   gap: 2px;
   transition: width 0.16s ease;
   z-index: 20;
 }
 
 .rail--expanded {
-  width: 200px;
+  width: 184px;
 }
 
-/* 栏顶：logo 与折叠开关。展开时中间插字标。 */
+/* 栏顶：logo 与展开按钮，展开时中间插字标。高 32、下距 10，两态相同，首个菜单项起点不跳。 */
 .rail-head {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  padding: 0 4px;
-  margin-bottom: 6px;
+  height: 32px;
+  padding: 0 6px 0 9px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .rail-logo {
@@ -519,45 +524,59 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .rail-wordmark {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
-  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
-/* 收起时开关压在 logo 上：56px 的栏里塞不下两个 28px 的方块并排。
-   鼠标进栏才浮出来，静止时栏顶只有 logo。 */
+/* 展开按钮：16 图标 + 4 内边距 = 24 的方块。展开时常显在最右。 */
 .rail-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
+  margin-left: auto;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
-    opacity var(--transition-fast);
-}
-
-.rail:not(.rail--expanded) .rail-toggle {
-  position: absolute;
-  margin-left: -3px;
-  background: var(--sidebar-bg);
-  opacity: 0;
-}
-
-.rail:not(.rail--expanded):hover .rail-toggle {
-  opacity: 1;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .rail-toggle:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.rail-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 收起时 logo 与按钮占同一个位置、二选一：静止只有 logo；鼠标进栏顶这一行、或键盘
+   Tab 到按钮，logo 隐去、按钮出现在它原来的中线上。只认栏顶这一行——鼠标在下面点菜单
+   时 logo 不闪。按钮不用 display:none 藏，否则键盘走不到它。 */
+.rail:not(.rail--expanded) .rail-toggle {
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  margin-left: 0;
+  opacity: 0;
+}
+
+.rail:not(.rail--expanded) .rail-head:hover .rail-toggle,
+.rail:not(.rail--expanded) .rail-toggle:focus-visible {
+  opacity: 1;
+}
+
+.rail:not(.rail--expanded) .rail-head:hover .rail-logo,
+.rail:not(.rail--expanded) .rail-head:focus-within .rail-logo {
+  visibility: hidden;
 }
 
 .rail-nav {
@@ -573,7 +592,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   align-items: center;
   gap: 10px;
   height: var(--nav-item-height);
-  padding: 0 10px;
+  padding: 0 12px;
   width: 100%;
   border: none;
   background: transparent;
@@ -611,8 +630,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .rail-item-label {
   min-width: 0;
-  /* 与中间会话列表同号（13px）。栏里的字不是标题，比列表大一号只会显得喧宾夺主。 */
-  font-size: var(--font-size-base);
+  /* 14px，照原型。它是全站「11/12/13」三档之外的两处例外之一（另一处是会话页、结对页页头标题）。 */
+  font-size: calc(14px * var(--font-scale));
   font-weight: var(--font-weight-normal);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -667,7 +686,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   align-items: center;
   gap: 10px;
   height: 100%;
-  padding: 0 10px;
+  padding: 0 12px;
   border: none;
   background: transparent;
   color: inherit;
@@ -743,6 +762,111 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: none;
 }
 
+/* === 统一页头（components/layout/PageHeader）===
+   一条 52px 的横条：标题 15px 加一个短计数，右边次要按钮，最右至多一个实心绿主动作。
+   会话页、结对页的页头借用这一条的外壳（高度、内边距、下分隔线），标题照原型 14px。 */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.page-header-title {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* 放不下时截计数，按钮不截。 */
+.page-header-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.page-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 次要按钮：28px 高、中性描边。只有图标的加 --icon，连描边也不要的加 --ghost（如刷新）。 */
+.page-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: calc(12.5px * var(--font-scale));
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.page-header-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.page-header-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.page-header-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.page-header-btn--icon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+.page-header-btn--ghost {
+  border-color: transparent;
+}
+
+/* 展开着的次要按钮或主动作（如分类编辑、Add 打开了输入框）：中性实底，不用绿。 */
+.page-header-btn--pressed {
+  background: var(--bg-active);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+/* 主动作：这一屏唯一的实心绿。 */
+.page-header-primary {
+  background: var(--accent-primary);
+  border-color: transparent;
+  color: var(--text-on-accent);
+  font-weight: 500;
+}
+
+.page-header-primary:hover:not(:disabled) {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  filter: brightness(1.08);
+}
+
 .recipe-app-bar {
   display: flex;
   align-items: center;
@@ -812,155 +936,164 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   flex: 1;
 }
 
-/* 栏底：额度与两颗深浅色按钮。原来这里挂的是一颗开浮层的「外观与状态」按钮，
-   浮层里的「引擎 · 空闲」报的是服务端有没有回 CPU 数字，对着屏幕的人用不上，已去掉。 */
+/* 栏底两块：上面「Usage」三行，下面一行图标（环境检查、tmux、用量月历，最右深浅切换）。 */
 .rail-foot {
   position: relative;
   margin-top: 6px;
-  padding-top: 8px;
+  padding: 10px 4px 0;
   border-top: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-/* 三圈同心圆环，由内到外：型号 → 本周全模型 → 五小时，都从 12 点顺时针走。
-   线宽 3px 是因为它常驻在那里：它要能被瞥见，不该被读。收起时栏里只剩圆环；展开时
-   圆环在左，图例在右。 */
+.rail:not(.rail--expanded) .rail-foot {
+  padding: 10px 0 0;
+}
+
 .rail-usage {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 4px;
+  flex-direction: column;
   cursor: default;
 }
 
-.rail-usage-rings {
-  flex-shrink: 0;
-  display: block;
-}
-
-.rail-usage-ring-track,
-.rail-usage-ring-fill {
-  fill: none;
-  stroke-width: 3px;
-}
-
-.rail-usage-ring-track {
-  stroke: var(--usage-track);
-}
-
-/* 端头平切，跟图例色块的直角一致；圆头会让 0% 也冒出一个点。 */
-.rail-usage-ring-fill {
-  stroke-linecap: butt;
-  transition: stroke-dasharray 0.3s ease;
-}
-
-.rail-usage-ring--model .rail-usage-ring-fill {
-  stroke: var(--usage-week-model);
-}
-
-.rail-usage-ring--all .rail-usage-ring-fill {
-  stroke: var(--usage-week-all);
-}
-
-.rail-usage-ring--session .rail-usage-ring-fill {
-  stroke: var(--usage-session);
-}
-
-/* 展开时才写数字。收起时栏宽只有 40px，写不下，也不该写——细账在用量月历里。
-
-   字号取整套刻度里最小的那一档。从前它是 12px，比同一根栏里的导航项（13px）只小 1px，
-   于是"额度"这行脚注读起来跟"去哪一页"一样重；而条子本身细到 3px，为的就是被瞥见而
-   不被读。图例是那三根条子的注脚，得跟着一起退到背景里去。 */
-.rail-usage-legend {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  /* 跌出字号表一档。表里最小的是 11px，那是给「还要读」的次要文字用的；这三行是瞥一眼
-     的注脚，条子才是主体。仍然乘 --font-scale，跟着整体字号设置走。 */
-  font-size: calc(10px * var(--font-scale));
+.rail-usage-head {
+  padding: 0 4px 6px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
-.rail-usage-legend-item {
-  display: flex;
+/* 一行一档：62px 名称 · 细条 · 30px 百分比。收起时只剩细条，占满 40px。 */
+.rail-usage-row {
+  display: grid;
+  grid-template-columns: 62px 1fr 30px;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 8px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
-/* 名字先让位。栏宽是固定的，两者必有一个要挨切，挨切的该是能猜出来的那个。 */
-.rail-usage-legend-name {
-  flex: 1 1 auto;
+.rail:not(.rail--expanded) .rail-usage-row {
+  grid-template-columns: 1fr;
+  padding: 0;
+  height: 10px;
+}
+
+.rail-usage-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rail-usage-legend-value {
-  flex-shrink: 0;
+.rail-usage-bar {
+  height: 4px;
+  border-radius: 4px;
+  background: var(--usage-track);
+  overflow: hidden;
+}
+
+/* 中性灰，达到 80% 转告警橙：快用完时才需要人注意。 */
+.rail-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--usage-fill);
+  transition: width 0.3s ease;
+}
+
+.rail-usage-fill--hot {
+  background: var(--accent-warning);
+}
+
+.rail-usage-pct {
+  text-align: right;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
 }
 
-/* 图例前的小色块是那根条子的缩样，跟着一起收成直角。 */
-.rail-usage-chip {
-  flex-shrink: 0;
-  width: 8px;
-  height: 3px;
-  border-radius: 0;
-}
-
-.rail-usage-chip--model {
-  background: var(--usage-week-model);
-}
-
-.rail-usage-chip--all {
-  background: var(--usage-week-all);
-}
-
-.rail-usage-chip--session {
-  background: var(--usage-session);
-}
-
-/* 图标排。展开时一行三颗，收起时 40px 宽装不下三颗，自己折成一列。 */
+/* 图标行。展开时一行排开、深浅切换靠右；收起时 40px 宽排不下，竖成一列。
+   展开时可用宽度只有 160px（184 − 两侧内边距），照原型排得很紧：带角标的两颗各 38、
+   月历 26、深浅切换 56，按钮之间不再留缝。 */
 .rail-tools {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.rail:not(.rail--expanded) .rail-tools {
+  flex-direction: column;
   gap: 2px;
 }
 
 .rail-tool {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  gap: 2px;
+  height: 28px;
+  min-width: 26px;
+  padding: 0 3px;
   flex-shrink: 0;
   border: none;
   background: transparent;
-  border-radius: var(--nav-item-radius);
-  color: var(--sidebar-item-unselected-text);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .rail-tool:hover {
   background: var(--bg-hover);
-  color: var(--sidebar-item-selected-text);
-}
-
-/* 当前这一档：整颗换底，跟菜单的选中态同一个手法。 */
-.rail-tool--on {
-  background: var(--sidebar-item-selected-bg);
-  color: var(--sidebar-item-selected-text);
+  color: var(--text-primary);
 }
 
 .rail-tool:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* 深浅切换：一组两颗，写的是「现在是哪一档」。当前那颗换正文底加一圈描边。 */
+.rail-theme {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+
+.rail:not(.rail--expanded) .rail-theme {
+  margin-left: 0;
+  flex-direction: column;
+}
+
+.rail-theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rail-theme-btn--on {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+
+.rail-theme-btn:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -1019,15 +1152,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
     line-height: 1;
   }
 
-  /* Selected state: icon sits in a filled accent pill and the whole tab
-     takes the accent color — no single-edge accent bars anywhere. */
+  /* 选中：图标落在中性底加一圈描边的小块里，整项换正文色。选中不是动作，不用绿，也不用单边条。 */
   .tabbar-item--active {
-    color: var(--accent-primary);
+    color: var(--text-primary);
   }
 
   .tabbar-item--active .tabbar-item-icon {
-    background: var(--accent-primary-10);
-    box-shadow: inset 0 0 0 1px var(--accent-primary-20);
+    background: var(--sel-bg);
+    box-shadow: inset 0 0 0 1px var(--sel-border);
   }
 
   .tabbar-item:focus-visible {
@@ -2483,7 +2615,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 /* === Markdown Content Styles === */
 .markdown-content {
-  line-height: 1.6;
+  line-height: var(--line-height-long);
   word-wrap: break-word;
 }
 
@@ -3114,29 +3246,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* === Claude Sessions Page === */
-.cs-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-md);
-}
-
-/* 页面标题。24px 是海报的尺度，不是工具的尺度——一个只有两三个字的页面名顶在
-   每一页最上面，占掉的高度比它说的信息多得多。20px 已经足够把它与正文分开。 */
-.cs-title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-primary);
-  margin: 0;
-  line-height: 1.3;
-}
-
-.cs-subtitle {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  margin: 3px 0 0;
-}
-
 /* 重新取一次数据是次要动作：它不改变任何东西，失败了再点一次就行。
    把它做成品牌色，页面上最显眼的位置就被一个「原地不动」的按钮占着。 */
 .cs-refresh {
@@ -3153,18 +3262,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
-}
-
-/* Starting a session is the page's primary action — solid, not tinted. */
-.cs-refresh--primary {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: var(--text-on-accent);
-  font-weight: var(--font-weight-semibold, 600);
-}
-
-.cs-refresh--primary:hover {
-  filter: brightness(1.08);
 }
 
 .cs-refresh:hover:not(:disabled) {
@@ -4597,10 +4694,10 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border-color: var(--border-strong);
 }
 
-/* 打开的那个：整块换一副样子，不靠任何一条边上的色条。 */
+/* 打开的那个：整块换中性底加一圈描边，不靠任何一条边上的色条，也不用绿。 */
 .rl-folder--open {
-  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
-  border-color: var(--accent-primary);
+  background: var(--sel-bg);
+  border-color: var(--sel-border);
 }
 
 /* 有东西拖到上面了。只有正被指着的那个亮起来，别的一个都不许动位置。 */
@@ -4652,7 +4749,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border-radius: 4px;
   background: var(--bg-card);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold, 600);
   line-height: 1;
 }
@@ -4737,11 +4834,11 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   box-shadow: inset 0 0 0 2px var(--accent-primary);
 }
 
-/* 挑中的卡：整块换底色加一圈描边，不在任何一条边上加色条。 */
+/* 挑中的卡：整块换中性底加一圈描边，不在任何一条边上加色条，也不用绿。 */
 .rl-picked .rl-card,
 .rl-picked .rl-row {
-  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
-  border-color: var(--accent-primary);
+  background: var(--sel-bg);
+  border-color: var(--sel-border);
 }
 
 .rl-pick {
@@ -5685,9 +5782,9 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .td-row--selected {
-  background: var(--accent-primary-10);
-  border-color: var(--border-primary);
-  box-shadow: 0 0 0 1px var(--border-primary) inset;
+  background: var(--sel-bg);
+  border-color: var(--sel-border);
+  box-shadow: 0 0 0 1px var(--sel-border) inset;
 }
 
 .td-row-head {
@@ -5909,13 +6006,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-muted);
 }
 
-/* 分类编辑器：借 td-composer 的外框，里面是一张可挪动的表。 */
-.td-cat-toggle--open {
-  background: var(--bg-active);
-  border-color: transparent;
-  color: var(--text-primary);
-}
-
 .td-cat-editor-head {
   display: flex;
   align-items: baseline;
@@ -6039,26 +6129,32 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 /* === 本机会话清点（左栏底部那颗按钮 + 它的浮窗） ===
    会话数常驻在栏底，跟额度条一样属于「我这台机器现在什么状况」。 */
 
-/* 图标右下角贴一个数字。做成角标而不是把数字写在图标旁边，是因为这根栏收起时
-   只有 40px 宽，一排四颗按钮已经占满，横向再挤一个数字会把整排推变形。 */
-.rail-tool--count {
-  position: relative;
-}
-
+/* 图标旁边的数字角标。展开时写在图标旁边；收起时栏只有 40px 宽，横着放不下，贴到右上角。
+   数字不做成小红点：人是照着这个数字决定要不要点开的，一个点只说「有」，说不出「几样」。 */
 .rail-tool-count {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  min-width: 13px;
-  padding: 0 2px;
-  font-size: 9px;
-  line-height: 13px;
+  min-width: 14px;
+  padding: 0 3px;
+  font-size: var(--font-size-xs);
+  line-height: 14px;
   font-weight: 600;
   text-align: center;
   border-radius: 7px;
-  background: var(--bg-tertiary, var(--bg-hover));
+  background: var(--bg-active);
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+
+/* 环境检查的角标：有几样要你处理，告警橙。 */
+.rail-tool-count--warn {
+  background: var(--accent-warning-10);
+  color: var(--accent-warning);
+}
+
+.rail:not(.rail--expanded) .rail-tool-count {
+  position: absolute;
+  right: -2px;
+  top: -2px;
 }
 
 .tmux-overlay {
@@ -6409,41 +6505,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    加一次等待，外加"它替我执行了什么"的回执——看不见执行了什么的按钮，没人敢按
    第二次。 */
 
-.td-head-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-}
-
-/* 添一件是这一页的主动作，用实心；刷新在旁边保持描边，主次一眼分得开。 */
-.td-add {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: 6px 12px;
-  background: var(--accent-primary);
-  border: 1px solid var(--accent-primary);
-  border-radius: var(--radius-md);
-  color: var(--text-on-accent);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold, 600);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  white-space: nowrap;
-}
-
-.td-add:hover {
-  filter: brightness(1.08);
-}
-
-/* 展开着的时候退成描边：面板本身已经在喊"你正在添一件"，按钮不必再喊一遍。 */
-.td-add--open {
-  background: transparent;
-  border-color: var(--border-color);
-  color: var(--text-secondary);
-  font-weight: var(--font-weight-medium);
-}
-
 .td-composer {
   margin: 0 var(--spacing-md) var(--spacing-sm);
   padding: var(--spacing-md);
@@ -6561,31 +6622,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .tdp {
   --tdp-gutter: 24px;
   --tdp-control-h: 32px;
-}
-
-.tdp-header {
-  padding: 20px var(--tdp-gutter) 0;
-  align-items: center;
-}
-
-.tdp .td-head-actions {
-  flex-shrink: 0;
-}
-
-.tdp .td-head-actions > button {
-  height: var(--tdp-control-h);
-}
-
-.tdp-icon-btn {
-  width: var(--tdp-control-h);
-  padding: 0;
-  justify-content: center;
-}
-
-.tdp .td-add--open {
-  background: var(--bg-active);
-  border-color: transparent;
-  color: var(--text-primary);
 }
 
 /* 工具栏：左边状态分段控件，右边搜索框，同一高度同一基线。 */
@@ -6764,11 +6800,11 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   outline-offset: -2px;
 }
 
-/* 选中：整块淡绿底，再用一圈同色细环把形状收住。 */
+/* 选中：整块中性底，再用一圈细环把形状收住。 */
 .tdp .tdp-row.td-row--selected,
 .tdp .tdp-row.td-row--selected:hover {
-  background: var(--accent-primary-10);
-  box-shadow: inset 0 0 0 1px var(--border-accent);
+  background: var(--sel-bg);
+  box-shadow: inset 0 0 0 1px var(--sel-border);
 }
 
 .tdp-row-main {
@@ -7541,7 +7577,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border-radius: 999px;
   background: var(--bg-hover);
   color: var(--text-muted);
-  font-size: calc(10px * var(--font-scale));
+  font-size: calc(11px * var(--font-scale));
   line-height: 15px;
 }
 
@@ -7584,74 +7620,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   /* 宁可折成两行也不截断：Chrome 的版本号有十几位，截成「外面 …」正好把人要核对的
      那个数字藏起来，而这一行存在的唯一理由就是给人核对。 */
   overflow-wrap: anywhere;
-}
-
-/* === 侧边栏上那颗入口按钮 === */
-/* 位置在额度条和深浅色那一排之间：上面是「我还剩多少」，下面是「界面怎么显示」，
-   中间这颗管的是「我这台机器齐不齐」，三件事同属栏底那一档。 */
-.rail-env {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 32px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  border-radius: var(--nav-item-radius);
-  color: var(--sidebar-item-unselected-text);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.rail-env:hover {
-  background: var(--bg-hover);
-  color: var(--sidebar-item-selected-text);
-}
-
-.rail-env:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.rail-env-icon {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-}
-
-.rail-env-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: calc(10px * var(--font-scale));
-  color: var(--text-muted);
-  text-align: left;
-}
-
-/* 待办数写成数字不写成小红点：人是照着这个数字决定要不要点开的，一个点只说「有」，
-   说不出「几样」。 */
-.rail-env-count {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  min-width: 13px;
-  padding: 0 2px;
-  font-size: 9px;
-  line-height: 13px;
-  font-weight: 600;
-  text-align: center;
-  border-radius: 7px;
-  background: var(--accent-warning);
-  color: var(--text-on-accent);
-  pointer-events: none;
 }
 
 /* === 环境仪表盘：升级动作 === */

@@ -32,7 +32,8 @@
     },
     "appearance": {
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "label": "Appearance"
     },
     "usage": {
       "label": "Subscription usage",
@@ -43,7 +44,17 @@
       "weekModelLong": "This week, this model",
       "sessionLong": "Current 5-hour window",
       "tooltip": "{{name}}: {{percent}}% used",
-      "tooltipReset": "{{name}}: {{percent}}% used · resets {{reset}}"
+      "tooltipReset": "{{name}}: {{percent}}% used · resets {{reset}}",
+      "heading": "Usage"
+    },
+    "nav": {
+      "sessions": "Sessions",
+      "teams": "Teams",
+      "recipes": "Recipes",
+      "todos": "Todos",
+      "schedules": "Schedules",
+      "data": "Data",
+      "settings": "Settings"
     }
   },
   "tokenCalendar": {
@@ -181,7 +192,6 @@
   },
   "recipes": {
     "title": "Recipes",
-    "pageDesc": "Browse and run reusable automation recipes",
     "noRecipes": "No Recipes",
     "noRecipesDescription": "Use frago recipe create to create a new recipe",
     "forge": {
@@ -323,7 +333,8 @@
       "nameZhPlaceholder": "e.g. 行情研究",
       "nameEnPlaceholder": "Left blank, the Chinese name is shown",
       "trouble": "The folder table could not be read this time; showing no folders: {{detail}}"
-    }
+    },
+    "headerMeta": "{{local}} local · {{community}} community"
   },
   "skills": {
     "title": "Skills",
@@ -333,7 +344,6 @@
   },
   "todos": {
     "title": "Todos",
-    "pageDesc": "Todos from frago todo, in the same order as frago todo list: by category rank, then highest priority, then oldest.",
     "searchPlaceholder": "Search title, context, tags or id",
     "empty": "Nothing in this bucket",
     "emptyDesc": "Try another bucket, or write a line with Add above.",
@@ -425,11 +435,11 @@
       "doneWhen": "Done when",
       "links": "Links",
       "sessions": "Sessions"
-    }
+    },
+    "headerMeta": "{{count}} open"
   },
   "schedules": {
     "title": "Schedules",
-    "pageDesc": "Scheduled tasks from frago schedule, run by the server's scheduler. Same order as frago schedule list.",
     "searchPlaceholder": "Search name, what it runs, id or notify target",
     "schedulerStopped": "The scheduler is not running: none of the next runs below will happen until the frago server restarts.",
     "empty": "Nothing in this bucket",
@@ -542,7 +552,9 @@
       "success": "Success",
       "failed": "Failed",
       "unknown": "—"
-    }
+    },
+    "headerMeta_one": "{{count}} schedule · {{enabled}} enabled",
+    "headerMeta_other": "{{count}} schedules · {{enabled}} enabled"
   },
   "guide": {
     "title": "Guide",
@@ -944,7 +956,8 @@
       "notForFragoCore": "frago-core cannot call it",
       "fragoCoreOnly": "CoreAgent, light agent or session observer only",
       "borrowedLogin": "Borrows the WorkBuddy login"
-    }
+    },
+    "headerMeta": "frago {{version}}"
   },
   "init": {
     "welcome": "Welcome to frago",
@@ -1215,7 +1228,7 @@
     "retry": "Try again"
   },
   "dataRepo": {
-    "title": "Data Repository",
+    "title": "Data",
     "loading": "Counting what is waiting to be backed up…",
     "refresh": "Count again",
     "syncButton": "Sync to repository",
@@ -1772,7 +1785,7 @@
   },
   "team": {
     "loading": "Reading this machine's team state…",
-    "title": "Teaming",
+    "title": "Teams",
     "pitch": "Two people's agent sessions side by side: you watch what is happening in theirs, and you can have your own agent drop a line into it.",
     "pitchCode": "The code is the credential — no account, no sign-in. Whoever holds it can come in.",
     "pathOpen": "I'll start one",

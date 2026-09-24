@@ -17,8 +17,12 @@
  * 服务端有没有报出 CPU 数字——这件事对着屏幕的人既看不懂也用不上，去掉了。深浅色不再
  * 藏在浮层里：两颗图标直接平铺在栏底，点哪颗就是哪档，少一次点击。
  *
- * 腾出来的位置给了额度：三根细条子报本机 Claude Code 的订阅用量，旁边一颗日历图标
- * 开用量月历——两件事都是「我还剩多少」，放在一起，与顶上的 logo 分居这根栏的两头。
+ * 腾出来的位置给了额度：「Usage」三行（名称 · 细条 · 百分比）报本机 Claude Code 的订阅
+ * 用量；下面一行图标依次是环境检查、tmux、用量月历，最右是深浅切换——都是「我还剩多少、
+ * 这台机器齐不齐」，与顶上的 logo 分居这根栏的两头。
+ *
+ * **菜单名走 i18n，与各页标题同名。** 中文界面下侧栏写「定时任务」，点进去页头也是
+ * 「定时任务」；手机底栏复用同一份清单，跟着一起变。
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -55,33 +59,33 @@ import type { ClaudeUsageBucket } from '@/types/api';
 
 export interface RailItem {
   id: PageType;
-  label: string;
+  /** 菜单名的 i18n 键，取出来的字与这一页的页标题同名。 */
+  labelKey: string;
   icon: React.ReactNode;
 }
 
 /** 图标尺寸与线宽全局只有这一处。16px / 1.5 是整套界面的默认。 */
 const ICON = { size: 16, strokeWidth: 1.5 } as const;
 
-/* settings 这一项显示的字从前是 config。旁边四项（sessions / recipes / todos / data）
-   写的都是那件东西的正常叫法，只有它写的是「配置文件」的意思，跟同一栏里的其余四个
-   不在一个语域；而这一页从内到外——页面标识、地址栏那一段、页面自己的标题——一直都叫
-   settings。收起时这颗按钮只剩一个图标，tooltip 就是它唯一的名字，所以那里跟着一起改。
+/* 七项都写那件东西的正常叫法，首字母大写，与页标题同名。settings 从前写的是 config
+   （「配置文件」的意思），跟同一栏里的其余几项不在一个语域，已改。收起时按钮只剩图标，
+   tooltip 就是它唯一的名字，所以 title 也取同一个字。
 
    它现在跟在 data 后面，跟其余四项排在同一串里。从前它被一根 flex 撑杆推到栏底，
    独自占着底部那一档；底部现在装的是额度，那是另一件事，设置回到它本来的位置上。 */
 export const NAV_ITEMS: RailItem[] = [
-  // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 sessions。
-  { id: 'session_workbench', label: 'sessions', icon: <MessageSquare {...ICON} /> },
-  // 结对会话：两个人的会话并排摆着。紧跟 sessions，因为它就是会话的另一种看法。
-  { id: 'vibe_teaming', label: 'teams', icon: <Users {...ICON} /> },
-  { id: 'recipes', label: 'recipes', icon: <LayoutGrid {...ICON} /> },
+  // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 Sessions。
+  { id: 'session_workbench', labelKey: 'sidebar.nav.sessions', icon: <MessageSquare {...ICON} /> },
+  // 结对会话：两个人的会话并排摆着。紧跟 Sessions，因为它就是会话的另一种看法。
+  { id: 'vibe_teaming', labelKey: 'sidebar.nav.teams', icon: <Users {...ICON} /> },
+  { id: 'recipes', labelKey: 'sidebar.nav.recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
-  { id: 'todos', label: 'todos', icon: <ListChecks {...ICON} /> },
+  { id: 'todos', labelKey: 'sidebar.nav.todos', icon: <ListChecks {...ICON} /> },
   // 定时任务：`frago schedule` 由服务端的调度器执行，跟事务一样不走配方，自成一项。
-  { id: 'schedules', label: 'schedules', icon: <Clock {...ICON} /> },
-  // 数据仓库：~/.frago 备份到用户自己的私有仓库，紧跟在 recipes 后面。
-  { id: 'data_repo', label: 'data', icon: <Database {...ICON} /> },
-  { id: 'settings', label: 'settings', icon: <Settings {...ICON} /> },
+  { id: 'schedules', labelKey: 'sidebar.nav.schedules', icon: <Clock {...ICON} /> },
+  // 数据仓库：~/.frago 备份到用户自己的私有仓库。
+  { id: 'data_repo', labelKey: 'sidebar.nav.data', icon: <Database {...ICON} /> },
+  { id: 'settings', labelKey: 'sidebar.nav.settings', icon: <Settings {...ICON} /> },
 ];
 
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
@@ -166,22 +170,18 @@ function readExpanded(): boolean {
   }
 }
 
-/* 圆环尺寸：收起时栏里能放的宽度是 32px。线宽 3、圈间留 1，三圈正好放满。 */
-const RING_SIZE = 32;
-const RING_STROKE = 3;
-const RING_STEP = RING_STROKE + 1;
-const RING_INNER_R = RING_SIZE / 2 - RING_STROKE / 2 - 2 * RING_STEP;
-const RING_ORDER = ['model', 'all', 'session'];
-
 /**
- * 三档额度，三圈同心圆环。
+ * 三档额度，三行：名称 · 细条 · 百分比。
  *
- * 三档说的是三件事，谁也替代不了谁：本周某个型号（额度最紧的那一档，深绿）、本周全模型
- * （logo 绿）、当前五小时窗口（浅绿）。同一色系分三个深浅，是因为它们是同一件事的三个
- * 尺度；换三种色相会读成三件互不相干的事。
+ * 三档说的是三件事，谁也替代不了谁：本周某个型号（额度最紧的那一档）、本周全模型、当前
+ * 五小时窗口。从前是三圈同心圆环加一列图例，环与图例要来回对，读不出哪圈是哪档；现在
+ * 一行一档，名字、条子、数字排在同一行上。
  *
- * 圆环只报「到哪了」，具体数字与重置时间挂在 tooltip 上——栏收起时只有 40px 宽，写不下
- * 也不该写；人要看细账，旁边就是用量月历。
+ * **条子是中性灰，达到 80% 才转告警橙。** 它常驻在栏底，说的是「还剩多少」，既不是动作
+ * 也不是在跑，不该占一块绿；快用完时才需要人注意。
+ *
+ * 收起时栏里只有 40px 宽，只留三根细条，不写名称与百分比；细账（含重置时间）在悬停
+ * 说明里，人要看更细的，旁边就是用量月历。
  */
 function UsageBars({ expanded }: { expanded: boolean }) {
   const { t } = useTranslation();
@@ -189,7 +189,7 @@ function UsageBars({ expanded }: { expanded: boolean }) {
 
   if (!usage?.available) return null;
 
-  /* 每一档有两个名字。栏里那行字只有一百来像素宽，长名一定被切掉，所以图例用短名；
+  /* 每一档有两个名字。行里的名字只有 62px 宽，长名一定被切掉，所以行里用短名；
      鼠标停下来时空间不要钱，tooltip 用把话说全的那个。 */
   const rows: Array<{ key: string; name: string; longName: string; bucket: ClaudeUsageBucket }> =
     [];
@@ -216,81 +216,56 @@ function UsageBars({ expanded }: { expanded: boolean }) {
   }
   if (rows.length === 0) return null;
 
+  const describe = ({ longName, bucket }: (typeof rows)[number]) =>
+    bucket.resets_at
+      ? t('sidebar.usage.tooltipReset', {
+          name: longName,
+          percent: bucket.percent,
+          reset: bucket.resets_at,
+        })
+      : t('sidebar.usage.tooltip', { name: longName, percent: bucket.percent });
+
   return (
     <div
       className="rail-usage"
       role="group"
       aria-label={t('sidebar.usage.label')}
-      title={rows
-        .map(({ longName, bucket }) =>
-          bucket.resets_at
-            ? t('sidebar.usage.tooltipReset', {
-                name: longName,
-                percent: bucket.percent,
-                reset: bucket.resets_at,
-              })
-            : t('sidebar.usage.tooltip', { name: longName, percent: bucket.percent })
-        )
-        .join('\n')}
+      title={expanded ? undefined : rows.map(describe).join('\n')}
     >
-      {/* 同心圆环：rows 的顺序就是由内到外（型号 → 本周全模型 → 五小时）。
-          每一圈从 12 点起顺时针走；pathLength 定成 100，百分比直接当弧长用。 */}
-      <svg
-        className="rail-usage-rings"
-        viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
-        width={RING_SIZE}
-        height={RING_SIZE}
-        role="img"
-        aria-label={rows
-          .map(({ longName, bucket }) =>
-            t('sidebar.usage.tooltip', { name: longName, percent: bucket.percent })
-          )
-          .join('; ')}
-      >
-        {rows.map(({ key, bucket }) => {
-          // 圈位按档位固定，某一档缺席时其余两圈不挪位置。
-          const r = RING_INNER_R + RING_ORDER.indexOf(key) * RING_STEP;
-          const c = RING_SIZE / 2;
-          const p = Math.min(100, Math.max(0, bucket.percent));
-          return (
-            <g key={key} className={`rail-usage-ring rail-usage-ring--${key}`}>
-              <circle className="rail-usage-ring-track" cx={c} cy={c} r={r} />
-              <circle
-                className="rail-usage-ring-fill"
-                cx={c}
-                cy={c}
-                r={r}
-                pathLength={100}
-                strokeDasharray={`${p} 100`}
-                transform={`rotate(-90 ${c} ${c})`}
+      {expanded ? <div className="rail-usage-head">{t('sidebar.usage.heading')}</div> : null}
+      {rows.map((row) => {
+        const p = Math.min(100, Math.max(0, row.bucket.percent));
+        return (
+          <div
+            key={row.key}
+            className="rail-usage-row"
+            data-usage={row.key}
+            title={expanded ? describe(row) : undefined}
+          >
+            {expanded ? <span className="rail-usage-name">{row.name}</span> : null}
+            <span className="rail-usage-bar" aria-hidden="true">
+              {/* 0% 也留 1% 的一丝，让人看得出这里是一根条子而不是一块空。 */}
+              <i
+                className={`rail-usage-fill ${row.bucket.percent >= 80 ? 'rail-usage-fill--hot' : ''}`}
+                style={{ width: `${Math.max(p, 1)}%` }}
               />
-            </g>
-          );
-        })}
-      </svg>
-      {expanded ? (
-        <div className="rail-usage-legend">
-          {rows.map(({ key, name, bucket }) => (
-            <span key={key} className="rail-usage-legend-item">
-              <i className={`rail-usage-chip rail-usage-chip--${key}`} />
-              {/* 名字挤不下就自己截断，百分比永远留在行尾——那是这行字唯一非有不可的东西。 */}
-              <span className="rail-usage-legend-name">{name}</span>
-              <span className="rail-usage-legend-value">{bucket.percent}%</span>
             </span>
-          ))}
-        </div>
-      ) : null}
+            {expanded ? <span className="rail-usage-pct">{row.bucket.percent}%</span> : null}
+            <span className="sr-only">{describe(row)}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 /**
- * 环境检查的入口，夹在额度条和深浅色那一排之间。
+ * 环境检查的入口，栏底图标行的第一颗。
  *
- * 上面是「我还剩多少」，下面是「界面怎么显示」，这一颗管的是「我这台机器齐不齐」，
- * 三件事同属栏底那一档。
+ * 从前它单占一行、旁边写着「Environment」，现在跟 tmux、月历排进同一行，只留图标与
+ * 角标，名字交给 title。
  *
- * 角上那个数字是「缺了的必装项 + 能升的那些」加起来的个数，没有就不显示——常年挂着
+ * 角标那个数字是「缺了的必装项 + 能升的那些」加起来的个数，没有就不显示——常年挂着
  * 一个 0 等于常年占着一块地方说「没事」。
  *
  * **升级的状态住在这里，不住在浮窗里。** 升级是关了窗还在继续的事——它跑在服务端，
@@ -300,7 +275,7 @@ function UsageBars({ expanded }: { expanded: boolean }) {
  *
  * 正在升级时图标上转起来，人不用打开浮窗也知道机器上还在装东西。
  */
-function RailEnvironment({ expanded }: { expanded: boolean }) {
+function RailEnvironment() {
   const { t } = useTranslation();
   const environment = useEnvironment();
   const [open, setOpen] = useState(false);
@@ -320,21 +295,15 @@ function RailEnvironment({ expanded }: { expanded: boolean }) {
     <>
       <button
         type="button"
-        className="rail-env"
+        className="rail-tool"
         onClick={() => setOpen(true)}
         title={tooltip}
         aria-label={tooltip}
       >
-        <span className="rail-env-icon">
-          {upgrade.busy ? <Loader2 {...ICON} className="cs-spin" /> : <Gauge {...ICON} />}
-          {!upgrade.busy && attention > 0 ? (
-            <span className="rail-env-count">{attention}</span>
-          ) : null}
-        </span>
-        {expanded ? (
-          <span className="rail-env-label">
-            {upgrade.busy ? t('envCheck.railUpgradingShort') : t('envCheck.railLabel')}
-          </span>
+        {upgrade.busy ? <Loader2 {...ICON} className="cs-spin" /> : <Gauge {...ICON} />}
+        {/* 角标用告警橙：这个数字说的是「有几样要你处理」。 */}
+        {!upgrade.busy && attention > 0 ? (
+          <span className="rail-tool-count rail-tool-count--warn">{attention}</span>
         ) : null}
       </button>
 
@@ -354,7 +323,7 @@ function RailEnvironment({ expanded }: { expanded: boolean }) {
 }
 
 /**
- * 栏底那一排图标：用量月历、浅色、深色。
+ * 栏底那一行图标：环境检查、tmux、用量月历，最右是深浅切换。
  *
  * 深浅色是两颗并排的按钮而不是一颗会变形的按钮：变形按钮上写的是「点了会变成什么」，
  * 人得先想一步才知道现在是哪一档；两颗并排写的是「现在是哪一档」，一眼就够。
@@ -379,11 +348,13 @@ function RailTools() {
 
   return (
     <div className="rail-tools">
+      <RailEnvironment />
+
       {/* 会话数就写在图标旁边，不做成小红点：这个数字本身要能读出来，人是照着它
           决定该不该去清理的，一个点只说「有」，说不出「几个」。 */}
       <button
         type="button"
-        className="rail-tool rail-tool--count"
+        className="rail-tool"
         onClick={() => setTmuxOpen(true)}
         title={t('tmuxSessions.railTooltip', { n: tmuxTotal, memory: totalMemoryMb })}
         aria-label={t('tmuxSessions.railTooltip', { n: tmuxTotal, memory: totalMemoryMb })}
@@ -402,27 +373,28 @@ function RailTools() {
         <CalendarDays {...ICON} />
       </button>
 
-      <button
-        type="button"
-        className={`rail-tool ${theme === 'light' ? 'rail-tool--on' : ''}`}
-        onClick={() => setTheme('light')}
-        title={t('sidebar.appearance.light')}
-        aria-label={t('sidebar.appearance.light')}
-        aria-pressed={theme === 'light'}
-      >
-        <Sun {...ICON} />
-      </button>
-
-      <button
-        type="button"
-        className={`rail-tool ${theme === 'dark' ? 'rail-tool--on' : ''}`}
-        onClick={() => setTheme('dark')}
-        title={t('sidebar.appearance.dark')}
-        aria-label={t('sidebar.appearance.dark')}
-        aria-pressed={theme === 'dark'}
-      >
-        <Moon {...ICON} />
-      </button>
+      <div className="rail-theme" role="group" aria-label={t('sidebar.appearance.label')}>
+        <button
+          type="button"
+          className={`rail-theme-btn ${theme === 'light' ? 'rail-theme-btn--on' : ''}`}
+          onClick={() => setTheme('light')}
+          title={t('sidebar.appearance.light')}
+          aria-label={t('sidebar.appearance.light')}
+          aria-pressed={theme === 'light'}
+        >
+          <Sun size={14} strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          className={`rail-theme-btn ${theme === 'dark' ? 'rail-theme-btn--on' : ''}`}
+          onClick={() => setTheme('dark')}
+          title={t('sidebar.appearance.dark')}
+          aria-label={t('sidebar.appearance.dark')}
+          aria-pressed={theme === 'dark'}
+        >
+          <Moon size={14} strokeWidth={1.5} />
+        </button>
+      </div>
 
       {/* 月历挂到 body 上，不留在这根栏里面。左栏是 flex 子项且带 z-index，自己就是一层
           堆叠上下文——浮层写多高的 z-index 都只在这一层里比，会被栏外的东西压住。 */}
@@ -465,11 +437,11 @@ export default function Sidebar() {
       type="button"
       className={`rail-item ${isActive(item.id) ? 'rail-item--active' : ''}`}
       onClick={() => switchPage(item.id)}
-      title={item.label}
+      title={t(item.labelKey)}
       aria-current={isActive(item.id) ? 'page' : undefined}
     >
       <span className="rail-item-icon">{item.icon}</span>
-      {expanded ? <span className="rail-item-label">{item.label}</span> : null}
+      {expanded ? <span className="rail-item-label">{t(item.labelKey)}</span> : null}
     </button>
   );
 
@@ -507,7 +479,6 @@ export default function Sidebar() {
 
       <div className="rail-foot">
         <UsageBars expanded={expanded} />
-        <RailEnvironment expanded={expanded} />
         <RailTools />
       </div>
     </nav>

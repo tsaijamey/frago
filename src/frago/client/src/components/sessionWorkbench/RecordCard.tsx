@@ -615,14 +615,14 @@ function SystemShell({
 }
 
 // ── 正文块 ────────────────────────────────────────────────────────────
-/** 中文正文：14px / 1.72。长会话一路读下来，这个行高比 1.5 明显省力。 */
+/** 记录正文：13px / 1.65，照原型。长会话一路读下来，长文行高比正文的 1.5 明显省力。 */
 function Prose({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
     return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.72] text-text-primary">
+    <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-text-primary">
       {text}
     </p>
   );
@@ -640,7 +640,7 @@ function Rich({ text }: { text: string }) {
   return (
     <MarkdownContent
       content={text}
-      className="min-w-0 break-words text-[14px] leading-[1.72] text-text-primary"
+      className="min-w-0 break-words text-[13px] leading-[1.65] text-text-primary"
     />
   );
 }
@@ -1393,7 +1393,7 @@ function TodoSnapshot({ record }: { record: WorkbenchRecord }) {
                 {doing ? (
                   <span className={`h-[5px] w-[5px] rounded-full ${ACCENT_TEXT} bg-current`} />
                 ) : null}
-                {done ? <span className="text-[10px] text-text-muted">✓</span> : null}
+                {done ? <span className="text-[11px] text-text-muted">✓</span> : null}
               </span>
               <span
                 className={
@@ -1610,7 +1610,7 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
       }
       meta={
         <span className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[10px]">{chip}</span>
+          <span className="shrink-0 text-[11px]">{chip}</span>
           <span className="truncate text-text-secondary">{content}</span>
         </span>
       }

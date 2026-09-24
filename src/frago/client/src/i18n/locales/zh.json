@@ -32,7 +32,8 @@
     },
     "appearance": {
       "light": "浅色",
-      "dark": "深色"
+      "dark": "深色",
+      "label": "外观"
     },
     "usage": {
       "label": "订阅额度",
@@ -43,7 +44,17 @@
       "weekModelLong": "本周型号",
       "sessionLong": "当前五小时窗口",
       "tooltip": "{{name}} 已用 {{percent}}%",
-      "tooltipReset": "{{name}} 已用 {{percent}}% · {{reset}} 重置"
+      "tooltipReset": "{{name}} 已用 {{percent}}% · {{reset}} 重置",
+      "heading": "用量"
+    },
+    "nav": {
+      "sessions": "会话",
+      "teams": "结对",
+      "recipes": "配方",
+      "todos": "事务",
+      "schedules": "定时任务",
+      "data": "数据",
+      "settings": "设置"
     }
   },
   "tokenCalendar": {
@@ -181,7 +192,6 @@
   },
   "recipes": {
     "title": "配方",
-    "pageDesc": "浏览并运行可复用的自动化配方",
     "noRecipes": "暂无配方",
     "noRecipesDescription": "使用 frago recipe create 创建新配方",
     "forge": {
@@ -323,7 +333,8 @@
       "nameZhPlaceholder": "例如：行情研究",
       "nameEnPlaceholder": "留空就跟着中文名显示",
       "trouble": "文件夹表这次没读进来，先按没有文件夹显示：{{detail}}"
-    }
+    },
+    "headerMeta": "本地 {{local}} · 社区 {{community}}"
   },
   "skills": {
     "title": "技能",
@@ -333,7 +344,6 @@
   },
   "todos": {
     "title": "事务",
-    "pageDesc": "frago todo 里的事务。顺序与 frago todo list 一致：先按分类名次，同一分类里优先级高的在前，同级早建的在前。",
     "searchPlaceholder": "按标题、背景、标签或编号找",
     "empty": "这一档一件都没有",
     "emptyDesc": "换一档看看，或者用上面的「添一件」写一句话。",
@@ -425,11 +435,11 @@
       "doneWhen": "做到什么算完",
       "links": "相关链接",
       "sessions": "谈过这件事的会话"
-    }
+    },
+    "headerMeta": "{{count}} 件未完成"
   },
   "schedules": {
     "title": "定时任务",
-    "pageDesc": "frago schedule 里的定时任务，由服务端的调度器到点执行。顺序与 frago schedule list 一致。",
     "searchPlaceholder": "按名字、执行内容、编号或通知落点找",
     "schedulerStopped": "调度器现在没在跑：下面每一条的「下次运行」都不会兑现。重启 frago 服务后恢复。",
     "empty": "这一档一条都没有",
@@ -542,7 +552,9 @@
       "success": "成功",
       "failed": "失败",
       "unknown": "—"
-    }
+    },
+    "headerMeta_one": "{{count}} 个定时任务 · {{enabled}} 个启用",
+    "headerMeta_other": "{{count}} 个定时任务 · {{enabled}} 个启用"
   },
   "guide": {
     "title": "使用指南",
@@ -944,7 +956,8 @@
       "notForFragoCore": "frago-core 用不了它",
       "fragoCoreOnly": "只能给 CoreAgent、轻量 ai 或旁路 AI",
       "borrowedLogin": "借用 WorkBuddy 登录"
-    }
+    },
+    "headerMeta": "frago {{version}}"
   },
   "init": {
     "welcome": "欢迎使用 frago",
@@ -1215,7 +1228,7 @@
     "retry": "再试一次"
   },
   "dataRepo": {
-    "title": "数据仓库",
+    "title": "数据",
     "loading": "正在清点待备份的内容…",
     "refresh": "重新清点",
     "syncButton": "同步到仓库",
