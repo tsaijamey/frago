@@ -489,14 +489,46 @@
     },
     "freq": {
       "cron": "cron {{expr}}",
-      "hours": "every {{n}}h",
-      "minutes": "every {{n}}m",
-      "seconds": "every {{n}}s"
+      "daily": "Every day at {{at}}",
+      "weekly": "Every {{day}} at {{at}}",
+      "weekdays": "Weekdays at {{at}}",
+      "monthly": "Monthly on day {{dom}} at {{at}}",
+      "listSep": ", ",
+      "and": " and ",
+      "dow": {
+        "0": "Sunday",
+        "1": "Monday",
+        "2": "Tuesday",
+        "3": "Wednesday",
+        "4": "Thursday",
+        "5": "Friday",
+        "6": "Saturday"
+      },
+      "hours_one": "Every hour",
+      "hours_other": "Every {{count}} hours",
+      "minutes_one": "Every minute",
+      "minutes_other": "Every {{count}} minutes",
+      "seconds": "Every {{count}} s"
     },
     "row": {
-      "next": "next {{time}}",
-      "runs": "{{n}} runs",
-      "failures": "{{n}} failures in a row"
+      "runs_one": "{{count}} run",
+      "runs_other": "{{count}} runs"
+    },
+    "table": {
+      "schedule": "Schedule",
+      "when": "When",
+      "lastRun": "Last run",
+      "runs": "Runs"
+    },
+    "lastRun": {
+      "today": "Today, {{time}}",
+      "yesterday": "Yesterday, {{time}}",
+      "date": "{{mon}} {{day}}, {{time}}"
+    },
+    "allDisabled": {
+      "title_one": "The only schedule is disabled.",
+      "title_other": "All {{count}} schedules are disabled.",
+      "body": "Nothing will run on its own until one is enabled."
     },
     "notify": {
       "never": "No notifications",

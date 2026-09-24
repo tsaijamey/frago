@@ -4,8 +4,8 @@
  * 任务存在 `~/.frago/schedules.json`，由服务端进程里的调度器每 5 秒读一遍、到点执行。
  * 顺序照搬服务端（按创建先后），跟 `frago schedule list` 一致。
  *
- * 调度器没在跑时页面顶上明说：清单里每一条「下次运行」都照常印着，但一条都不会兑现
- * ——不说出来，人会以为任务在跑。
+ * 调度器没在跑、或者一条都没启用时，页头下面明说：这时一条都不会自动跑，
+ * 不说出来，人会以为任务在跑。
  *
  * 新建走 agent：人写一句话，agent 去敲 `frago schedule add`。那条命令的校验（配方
  * 存不存在、cron 合不合法、通知落点配没配）只有走命令行才生效。
@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/layout/PageHeader';
-import { Clock, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { CirclePause, Clock, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import * as api from '@/api';
 import type { ScheduleItem, ScheduleListResponse } from '@/api';
 import { usePageStore } from '@/stores/pageStore';
@@ -24,8 +24,10 @@ import ScheduleDetail from './ScheduleDetail';
 import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   FILTERS,
+  cronRawText,
   formatTime,
   frequencyText,
+  lastRunText,
   matchesFilter,
   stateOf,
   targetText,
@@ -41,46 +43,62 @@ const RUN_FOLLOWUP_MS = 2_500;
 function ScheduleRow({
   schedule,
   selected,
+  now,
   onClick,
 }: {
   schedule: ScheduleItem;
   selected: boolean;
+  now: Date;
   onClick: () => void;
 }) {
   const { t } = useTranslation();
   const state = stateOf(schedule);
   const target = targetText(schedule);
+  const raw = cronRawText(schedule, t);
+  const status = schedule.last_status;
 
-  // 与事务页同一套行版式：档位落在行首圆圈，名字从同一条竖线起头；执行内容一行等宽，
-  // 频率与次数收在最底下一行灰字里。
+  // 表格四列：计划 / 何时 / 上次运行 / 次数。整行可点；键盘焦点落在名字那个按钮上，
+  // 读屏按表头念列名。「下次运行」和连续失败次数只在详情面板里（照原型）。
   return (
-    <button
-      type="button"
-      className={`td-row tdp-row ${selected ? 'td-row--selected' : ''} ${schedule.enabled ? '' : 'sc-row--disabled'}`}
+    <tr
+      className={`sc-tr ${selected ? 'sc-tr--selected' : ''} ${schedule.enabled ? '' : 'sc-row--disabled'}`}
       onClick={onClick}
-      aria-current={selected ? 'true' : undefined}
     >
-      <ScheduleStateIcon state={state} />
-      <span className="tdp-row-main">
-        <span className="tdp-row-top">
-          <span className="td-row-title">{schedule.name}</span>
+      <td>
+        <div className="sc-cell-name">
+          <ScheduleStateIcon state={state} />
+          <button
+            type="button"
+            className="sc-name"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick();
+            }}
+            aria-current={selected ? 'true' : undefined}
+          >
+            {schedule.name}
+          </button>
           <span className="td-chip td-chip--normal">{t(`schedules.kind.${schedule.kind}`)}</span>
-        </span>
-        {target && <span className="td-row-line sc-row-target">{target}</span>}
-        <span className="td-row-meta">
-          <span>{frequencyText(schedule, t)}</span>
-          {schedule.enabled && schedule.next_run_at && (
-            <span>{t('schedules.row.next', { time: formatTime(schedule.next_run_at) })}</span>
+          {!schedule.enabled && (
+            <span className="td-chip sc-chip--disabled">{t('schedules.filter.disabled')}</span>
           )}
-          <span>{t('schedules.row.runs', { n: schedule.run_count })}</span>
-          {schedule.consecutive_failures > 0 && (
-            <span className="sc-warn">
-              {t('schedules.row.failures', { n: schedule.consecutive_failures })}
-            </span>
-          )}
-        </span>
-      </span>
-    </button>
+        </div>
+        {target && <div className="sc-sub sc-target-line">{target}</div>}
+      </td>
+      <td className="sc-when">
+        <div>{frequencyText(schedule, t)}</div>
+        {raw && <div className="sc-raw">{raw}</div>}
+      </td>
+      <td className="sc-when" title={schedule.last_run_at ? formatTime(schedule.last_run_at) : undefined}>
+        <div>{lastRunText(schedule.last_run_at, now, t)}</div>
+        {schedule.last_run_at && status && (
+          <div className={`sc-sub ${status === 'failed' ? 'sc-fail' : ''}`}>
+            {t(`schedules.runStatus.${status}`, { defaultValue: status })}
+          </div>
+        )}
+      </td>
+      <td className="sc-num">{t('schedules.row.runs', { count: schedule.run_count })}</td>
+    </tr>
   );
 }
 
@@ -139,6 +157,11 @@ export default function SchedulePage() {
         .includes(q);
     });
   }, [schedules, filter, search]);
+
+  // 按全量清单判断，与筛选无关：筛到「Enabled」看到空表时，提示条照常在。
+  const allDisabled = schedules.length > 0 && counts.enabled === 0;
+  // 每 10 秒取数都会重画，「Today / Yesterday」跟着翻过零点，不会停在昨天的说法。
+  const now = new Date();
 
   const selected = currentScheduleId
     ? schedules.find((s) => s.id === currentScheduleId) ?? null
@@ -279,8 +302,23 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {body && !body.scheduler_running && (
-        <div className="td-error">{t('schedules.schedulerStopped')}</div>
+      {/* 一条都没启用时，调度器停不停没有区别，只说「全部停用」这一条。 */}
+      {allDisabled ? (
+        <div className="sc-banner" role="status">
+          <CirclePause size={16} aria-hidden="true" />
+          <span>
+            <b>{t('schedules.allDisabled.title', { count: schedules.length })}</b>{' '}
+            {t('schedules.allDisabled.body')}
+          </span>
+        </div>
+      ) : (
+        body &&
+        !body.scheduler_running && (
+          <div className="sc-banner" role="status">
+            <TriangleAlert size={16} aria-hidden="true" />
+            <span>{t('schedules.schedulerStopped')}</span>
+          </div>
+        )
       )}
 
       <div className="td-toolbar tdp-toolbar">
@@ -340,18 +378,39 @@ export default function SchedulePage() {
               }
             />
           ) : (
-            visible.map((s) => (
-              <ScheduleRow
-                key={s.id}
-                schedule={s}
-                selected={s.id === currentScheduleId}
-                onClick={() =>
-                  s.id === currentScheduleId
-                    ? switchPage('schedules')
-                    : switchPage('schedule_detail', s.id)
-                }
-              />
-            ))
+            <table className="sc-table">
+              <colgroup>
+                <col />
+                <col className="sc-col-when" />
+                <col className="sc-col-last" />
+                <col className="sc-col-runs" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">{t('schedules.table.schedule')}</th>
+                  <th scope="col">{t('schedules.table.when')}</th>
+                  <th scope="col">{t('schedules.table.lastRun')}</th>
+                  <th scope="col" className="sc-num">
+                    {t('schedules.table.runs')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((s) => (
+                  <ScheduleRow
+                    key={s.id}
+                    schedule={s}
+                    selected={s.id === currentScheduleId}
+                    now={now}
+                    onClick={() =>
+                      s.id === currentScheduleId
+                        ? switchPage('schedules')
+                        : switchPage('schedule_detail', s.id)
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
 

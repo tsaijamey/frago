@@ -17,6 +17,7 @@ import { usePageStore } from '@/stores/appStore';
 import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   STATE_CHIP,
+  cronRawText,
   formatTime,
   frequencyText,
   notifyText,
@@ -217,7 +218,10 @@ export default function ScheduleDetail({
           </span>
         </Prop>
         <Prop label={t('schedules.detail.kind')}>{t(`schedules.kind.${schedule.kind}`)}</Prop>
-        <Prop label={t('schedules.detail.frequency')}>{frequencyText(schedule, t)}</Prop>
+        <Prop label={t('schedules.detail.frequency')}>
+          {frequencyText(schedule, t)}
+          {cronRawText(schedule, t) && <div className="sc-raw">{cronRawText(schedule, t)}</div>}
+        </Prop>
         <Prop label={t('schedules.detail.timeout')}>{timeoutText(schedule, t)}</Prop>
         <Prop label={t('schedules.detail.nextRun')}>
           {schedule.enabled ? (

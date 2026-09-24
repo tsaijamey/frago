@@ -489,14 +489,42 @@
     },
     "freq": {
       "cron": "cron {{expr}}",
-      "hours": "每 {{n}} 小时",
-      "minutes": "每 {{n}} 分钟",
-      "seconds": "每 {{n}} 秒"
+      "daily": "每天 {{at}}",
+      "weekly": "每{{day}} {{at}}",
+      "weekdays": "工作日 {{at}}",
+      "monthly": "每月 {{dom}} 日 {{at}}",
+      "listSep": "、",
+      "and": " 和 ",
+      "dow": {
+        "0": "周日",
+        "1": "周一",
+        "2": "周二",
+        "3": "周三",
+        "4": "周四",
+        "5": "周五",
+        "6": "周六"
+      },
+      "hours_other": "每 {{count}} 小时",
+      "minutes_other": "每 {{count}} 分钟",
+      "seconds": "每 {{count}} 秒"
     },
     "row": {
-      "next": "下次 {{time}}",
-      "runs": "已跑 {{n}} 次",
-      "failures": "连续失败 {{n}} 次"
+      "runs_other": "已跑 {{count}} 次"
+    },
+    "table": {
+      "schedule": "任务",
+      "when": "何时",
+      "lastRun": "上次运行",
+      "runs": "次数"
+    },
+    "lastRun": {
+      "today": "今天 {{time}}",
+      "yesterday": "昨天 {{time}}",
+      "date": "{{month}}月{{day}}日 {{time}}"
+    },
+    "allDisabled": {
+      "title_other": "{{count}} 个定时任务全部停用。",
+      "body": "启用其中一个之前，什么都不会自动跑。"
     },
     "notify": {
       "never": "不通知",
