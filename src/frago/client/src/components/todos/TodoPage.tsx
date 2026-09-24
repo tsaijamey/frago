@@ -25,12 +25,13 @@ import TodoDetail from './TodoDetail';
 import TodoCategoryEditor from './TodoCategoryEditor';
 import TodoStatusIcon from './TodoStatusIcon';
 import {
-  PRIORITY_TONE,
   STATUS_FILTERS,
   UNCATEGORIZED,
   countFor,
   countStatuses,
   effectiveCategory,
+  formatRowDate,
+  groupTodos,
   matchesCategory,
   matchesFilter,
   type CategoryFilter,
@@ -47,14 +48,17 @@ interface TodoRowProps {
 }
 
 /**
- * 清单里的一行。
+ * 清单里的一行，压成两行字。
  *
- * 状态落在行首的圆圈上，标题因此总从同一条竖线起头，扫一眼就能顺着读下去；分类不再
- * 每行挂一颗，改由分组标题说一次——清单本来就按分类名次排，同一分类的事务天然挨在一起。
+ * 第一行回答「是什么、到哪了」：标题，右端是在做标记、步数、日期；第二行回答「讲的什么、
+ * 归哪类」：摘要后面跟标签。状态落在行首的圆圈上，标题因此总从同一条竖线起头。分类和
+ * 优先级都不在行上挂——分组标题与段头各说一次，清单本来就按这个顺序排。
  */
 function TodoRow({ todo, selected, onClick }: TodoRowProps) {
   const { t } = useTranslation();
   const line = todo.summary || todo.context || '';
+  const tags = todo.tags.slice(0, 3);
+  const doing = todo.status === 'doing';
 
   return (
     <button
@@ -63,27 +67,28 @@ function TodoRow({ todo, selected, onClick }: TodoRowProps) {
       onClick={onClick}
       aria-current={selected ? 'true' : undefined}
     >
-      <TodoStatusIcon status={todo.status} />
-      <span className="tdp-row-main">
-        <span className="tdp-row-top">
-          <span className="td-row-title">{todo.title}</span>
-          {todo.priority !== 'normal' && (
-            <span className={`td-chip ${PRIORITY_TONE[todo.priority].className}`}>
-              {t(`todos.priority.${todo.priority}`)}
+      {/* 在做的那条右端已经写了「Doing」，圆圈就不再给读屏念一遍。 */}
+      <TodoStatusIcon status={todo.status} decorative={doing} />
+      <span className="td-row-title">{todo.title}</span>
+      <span className="tdp-row-meta">
+        {doing && <span className="tdp-row-doing">{t('todos.status.doing')}</span>}
+        {todo.steps.length > 0 && <span>{t('todos.stepCount', { count: todo.steps.length })}</span>}
+        <span>{formatRowDate(todo.created)}</span>
+      </span>
+      {(line || tags.length > 0) && (
+        <span className="tdp-row-sub">
+          {line}
+          {tags.length > 0 && (
+            <span className="tdp-row-tags">
+              {tags.map((tag) => (
+                <span key={tag} className="td-tag">
+                  {tag}
+                </span>
+              ))}
             </span>
           )}
         </span>
-        {line && <span className="td-row-line">{line}</span>}
-        <span className="td-row-meta">
-          <span>{todo.created}</span>
-          {todo.steps.length > 0 && <span>{t('todos.stepCount', { n: todo.steps.length })}</span>}
-          {todo.tags.slice(0, 4).map((tag) => (
-            <span key={tag} className="td-tag">
-              {tag}
-            </span>
-          ))}
-        </span>
-      </span>
+      )}
     </button>
   );
 }
@@ -177,22 +182,11 @@ export default function TodoPage() {
     });
   }, [inCategory, filter, search]);
 
-  // 连续同分类的事务收成一组。只在分类变化处切开、不重排：服务端给的顺序原样保留，
-  // 分组只是把「分类名次在前」这条排序规则画出来。
-  const groups = useMemo(() => {
-    const out: { id: string; name: string; todos: TodoItem[] }[] = [];
-    for (const todo of visible) {
-      const id = effectiveCategory(todo.category, categories) ?? UNCATEGORIZED;
-      const last = out[out.length - 1];
-      if (last && last.id === id) {
-        last.todos.push(todo);
-      } else {
-        const name = categories.find((c) => c.id === id)?.name ?? t('todos.category.none');
-        out.push({ id, name, todos: [todo] });
-      }
-    }
-    return out;
-  }, [visible, categories, t]);
+  // 分类变化处切组、组内优先级变化处切段，都只切不排：服务端给的顺序原样保留。
+  const groups = useMemo(
+    () => groupTodos(visible, categories, t('todos.category.none')),
+    [visible, categories, t]
+  );
 
   /**
    * 把那句话交给 agent，等它把事务建出来。
@@ -227,7 +221,7 @@ export default function TodoPage() {
   const missing = Boolean(currentTodoId) && body !== null && selected === null;
 
   return (
-    <div className="td-page tdp">
+    <div className="td-page tdp tdp--todos">
       {/* 主次从右往左排：刷新会自己跑，只留图标；分类是偶尔的管理动作；添一件是这页的主动作，最右最实。
           计数数的是全部未完成（待办 + 进行中），不跟着下面的筛选走。 */}
       <PageHeader
@@ -410,19 +404,28 @@ export default function TodoPage() {
               <Fragment key={`${group.id}-${index}`}>
                 <div className="tdp-group-head">
                   <span className="tdp-group-name">{group.name}</span>
-                  <span className="tdp-group-count">{group.todos.length}</span>
+                  <span className="tdp-group-count">{group.count}</span>
                 </div>
-                {group.todos.map((todo) => (
-                  <TodoRow
-                    key={todo.id}
-                    todo={todo}
-                    selected={todo.id === currentTodoId}
-                    onClick={() =>
-                      todo.id === currentTodoId
-                        ? switchPage('todos')
-                        : switchPage('todo_detail', todo.id)
-                    }
-                  />
+                {group.sections.map((section, sectionIndex) => (
+                  <Fragment key={`${section.priority}-${sectionIndex}`}>
+                    {/* 优先级只在这里说一次；告警橙只给高优先级这一档。 */}
+                    <div className={`tdp-pri-head tdp-pri-head--${section.priority}`}>
+                      {t(`todos.section.${section.priority}`)}
+                      <span className="tdp-pri-count">{section.todos.length}</span>
+                    </div>
+                    {section.todos.map((todo) => (
+                      <TodoRow
+                        key={todo.id}
+                        todo={todo}
+                        selected={todo.id === currentTodoId}
+                        onClick={() =>
+                          todo.id === currentTodoId
+                            ? switchPage('todos')
+                            : switchPage('todo_detail', todo.id)
+                        }
+                      />
+                    ))}
+                  </Fragment>
                 ))}
               </Fragment>
             ))

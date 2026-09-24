@@ -368,7 +368,8 @@
     },
     "loadFailed": "事务清单取不到：{{message}}",
     "notFound": "地址里的这件事务不在清单里：{{id}}",
-    "stepCount": "{{n}} 步",
+    "stepCount_one": "{{count}} 步",
+    "stepCount_other": "{{count}} 步",
     "category": {
       "label": "分类",
       "all": "全部分类",
@@ -411,6 +412,11 @@
       "low": "低",
       "normal": "中",
       "high": "高"
+    },
+    "section": {
+      "high": "高优先级",
+      "normal": "中优先级",
+      "low": "低优先级"
     },
     "filter": {
       "active": "还没了结",

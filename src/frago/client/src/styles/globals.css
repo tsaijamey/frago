@@ -6902,6 +6902,118 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-dim);
 }
 
+/* ── 事务页专属（.tdp--todos） ──
+   清单按分类分组、组内按优先级分段，每条两行。只挂在事务页根节点的 .tdp--todos 下：
+   定时任务页也用 .tdp-row 那组 class，上面 .tdp .tdp-row 的共用规则 NEVER 在这里改。 */
+.tdp--todos .tdp-toolbar {
+  padding-top: 10px;
+}
+
+.tdp--todos .tdp-categories {
+  padding: 8px var(--tdp-gutter);
+}
+
+/* 清单区上方一道发丝线，把筛选与清单分开。 */
+.tdp--todos .td-split {
+  border-top: 1px solid var(--border-color);
+}
+
+.tdp--todos .td-list-pane {
+  gap: 0;
+}
+
+.tdp--todos .tdp-group-head {
+  padding-bottom: 4px;
+}
+
+/* 优先级段头：写一次，右侧拖一条发丝线到行尾。告警橙只给高优先级这一档，
+   全页别处不再出现。 */
+.tdp-pri-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 3px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tdp-pri-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  margin-left: 6px;
+  background: var(--border-color);
+}
+
+.tdp-pri-head--high {
+  color: var(--accent-warning);
+}
+
+.tdp-pri-count {
+  font-weight: var(--font-weight-medium, 500);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* 一条两行：圆圈 | 标题 | 右端元信息；第二行从标题那一列跨到末列。
+   清单变窄时右端元信息不收缩，标题先截断。 */
+.tdp--todos .tdp-row {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 0;
+  padding: 6px 12px;
+}
+
+.tdp--todos .tdp-row .td-row-title {
+  display: block;
+  font-size: var(--font-size-md);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tdp-row-meta {
+  display: flex;
+  gap: 8px;
+  padding-top: 2px;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* 除页头主动作外，这一屏唯一的绿：「在跑」的字。 */
+.tdp-row-doing {
+  color: var(--accent-primary);
+}
+
+.tdp-row-sub {
+  grid-column: 2 / 4;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.tdp-row-tags {
+  margin-left: 6px;
+}
+
+.tdp--todos .tdp-row .tdp-row-tags .td-tag {
+  display: inline;
+  margin-right: 6px;
+  font-size: inherit;
+  color: var(--text-dim);
+}
+
 /* ── 详情 ── */
 /* 详情栏跟着窗口伸缩：宽屏给到 480px 读正文，窄一些的窗口退到 360px，给清单留出地方。 */
 .tdp .td-detail-pane {

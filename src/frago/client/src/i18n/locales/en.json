@@ -368,7 +368,8 @@
     },
     "loadFailed": "Could not load todos: {{message}}",
     "notFound": "The todo in this link is not in the list: {{id}}",
-    "stepCount": "{{n}} steps",
+    "stepCount_one": "{{count}} step",
+    "stepCount_other": "{{count}} steps",
     "category": {
       "label": "Category",
       "all": "All categories",
@@ -411,6 +412,11 @@
       "low": "Low",
       "normal": "Normal",
       "high": "High"
+    },
+    "section": {
+      "high": "High priority",
+      "normal": "Normal",
+      "low": "Low"
     },
     "filter": {
       "active": "Open",
