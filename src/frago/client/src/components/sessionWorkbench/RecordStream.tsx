@@ -528,7 +528,7 @@ export default function RecordStream({
         <div
           data-testid="trail-bubble"
           data-fresh={fresh ? 'true' : undefined}
-          className={fresh ? 'rounded-[9px] outline-dashed outline-1 outline-offset-2 outline-border-strong' : ''}
+          className={fresh ? 'rounded-[9px] outline outline-1 outline-offset-2 outline-[var(--sel-border)]' : ''}
         >
           {card}
         </div>

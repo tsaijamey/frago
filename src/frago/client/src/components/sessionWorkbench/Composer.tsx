@@ -49,7 +49,6 @@ import { useTranslation } from 'react-i18next';
 import { ArrowUp, Clock, GitBranchPlus, Loader2, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
-import NoiseField from '@/components/ui/NoiseField';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
 import SendProgress from './SendProgress';
@@ -557,21 +556,13 @@ export default function Composer({
           </p>
         ) : null}
 
-        {/* **这圈边是两个容器叠出来的，不是 border。**
-            外层铺一块会自己生长的色场，内层盖住中间，只在四周露出 2px——于是那 2px
-            是活的，而 border 属性画不出会动的颜色。内层必须不透明，否则色场会从正文
-            底下透上来。 */}
-        <div className="relative rounded-[15px] p-[3px]">
-          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[15px]">
-            {/* 模糊只留 2px：3px 的边上抹 6px 的模糊，色场会被糊成一条均匀的颜色，
-                等于白做。scale 稍微放大一点，盖住模糊在四角透出的底。 */}
-            <NoiseField
-              animate={focused || sending}
-              className={`h-full w-full scale-105 blur-[2px] transition-opacity duration-500 ${
-                focused || sending ? 'opacity-100' : 'opacity-40'
-              }`}
-            />
-          </div>
+        {/* 外圈是一道中性描边，获得焦点时加深一档。这一屏的实心绿只给 Send，
+            输入框外圈不再铺绿色色场（主人 09-24 定的「绿色减量」）。 */}
+        <div
+          className={`relative rounded-[12px] border transition-colors ${
+            focused || sending ? 'border-text-muted' : 'border-border-strong'
+          }`}
+        >
 
           {/* 文本在上、控件在下一行。从前是一整行左右排：文本框有两行高，而 `+` 与发送
               贴着底边，于是占位话在最上面、`+` 在最下面，两者差了一行的距离，看着像是

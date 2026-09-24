@@ -78,6 +78,9 @@ import {
 const ACCENT_TEXT = 'text-accent-primary';
 const ACCENT_BG = 'bg-accent-primary-10';
 const ACCENT_RING = 'ring-1 ring-border-accent';
+// 人说的话：与输入框上方待发气泡同一副中性样子，不占这一屏的绿
+const YOU_LABEL = 'text-[11px] font-semibold text-text-muted';
+const YOU_TONE = 'bg-bg-subtle ring-1 ring-border-color';
 const ERR_TEXT = 'text-accent-error';
 const ERR_BG = 'bg-accent-error-10';
 const ERR_RING = 'ring-1 ring-accent-error/35';
@@ -691,8 +694,8 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       record={record}
       icon={command ? <Terminal size={12} /> : <User size={12} />}
       label={voice?.user ?? t(KIND_LABEL_KEY['user.say'])}
-      labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
-      tone={`${ACCENT_BG} ${ACCENT_RING}`}
+      labelTone={YOU_LABEL}
+      tone={YOU_TONE}
       meta={modeKey ? t(modeKey) : undefined}
     >
       {/* 命令摆成一枚等宽徽标。参数跟不跟它连排，看参数是**一个取值**还是**一段话**：
@@ -1122,8 +1125,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
       record={record}
       icon={<CornerDownRight size={12} />}
       label={t('workbench.record.youSaidWhileWorking')}
-      labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
-      tone={`${ACCENT_BG} ${ACCENT_RING}`}
+      labelTone={YOU_LABEL}
+      tone={YOU_TONE}
       meta={
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
@@ -1676,8 +1679,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         record={record}
         icon={<CornerDownRight size={12} />}
         label={t('workbench.record.youSaidWhileWorking')}
-        labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
-        tone={`${ACCENT_BG} ${ACCENT_RING}`}
+        labelTone={YOU_LABEL}
+        tone={YOU_TONE}
         meta={chip}
       >
         <Prose text={content} />
