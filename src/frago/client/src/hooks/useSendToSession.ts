@@ -14,6 +14,10 @@
  *    交给记录流开的那一个），信封会一路显示它是"已发送"还是"已入队列"。
  * 2. **失败一个字都不丢。** 输入框还空着就把这一单原样退回去；人已经在里面打了新的字
  *    就先收在 `failed` 里，重试重发的还是原来那一份。NEVER 让一次网络抖动吃掉几百字。
+ *    **但只有真没发出去才算失败。** 这条接口要挂整整一轮，服务器在这一轮里重启（常常就是
+ *    agent 自己重启的），请求会断在半路——那时候话早已进了会话。已经送达的，断了就当发成
+ *    了：不亮红条、不退回；连接断了而还没见送达的，先等记录流核对 {@link CONFIRM_WINDOW_MS}，
+ *    等不到才按失败退回。服务端明确回了错误的，照旧当场判失败。
  * 3. **发完重拉真记录，不在本地插假的。** 成功后调 `onSent`（页面把它接到记录流的
  *    `reload` 上）。本地插一条假的既没有真实序号也没有出处，刷新就没了。
  */
@@ -41,6 +45,18 @@ export type { AttachedDoc, AttachedImage };
  * 人就不用自己去点刷新。这是「看得到」的兜底，不是轮询，只补这一次。
  */
 const RELOAD_AGAIN_MS = 1500;
+
+/**
+ * 连接断了、又还没见送达时，等记录流核对多久。
+ *
+ * 断在半路的请求说明不了话有没有进会话：服务器可能是投完才重启的。重启一般几秒就回来，
+ * 回来后记录流的轮询会把那句话取回来、报出送达。这段时间里信封照旧挂着「已发送」；
+ * 等满还没见到，才当它真没发出去。
+ */
+export const CONFIRM_WINDOW_MS = 20_000;
+
+/** 请求没拿到任何回应就断了（服务器重启、断网）。区别于服务端明确回了一个错误。 */
+class ConnectionLostError extends Error {}
 
 export interface SendResult {
   sid: string;
@@ -89,14 +105,19 @@ export async function sendToSession(
   images: string[],
   documents: { name: string; data: string }[] = []
 ): Promise<SendResult> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/send`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, images, documents }),
-    }
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/send`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, images, documents }),
+      }
+    );
+  } catch (e) {
+    throw new ConnectionLostError(e instanceof Error ? e.message : String(e));
+  }
   if (!res.ok) {
     throw new Error(await explainFailure(res));
   }
@@ -165,6 +186,11 @@ export function useSendToSession(
   const clearedTicket = useRef(0);
   const mounted = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 连接断了、正等记录流核对的那一单。送达信号先到就作罢，等满了才按失败处理。
+  const unconfirmed = useRef<{
+    ticket: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
   // 这三个回调每渲染都是新的，放进 ref 让 send 保持稳定，同时永远调到最新那个。
   const onSentRef = useRef(onSent);
   onSentRef.current = onSent;
@@ -178,11 +204,16 @@ export function useSendToSession(
     return () => {
       mounted.current = false;
       if (timer.current !== null) clearTimeout(timer.current);
+      if (unconfirmed.current) clearTimeout(unconfirmed.current.timer);
     };
   }, []);
 
   // 换会话时把上一场没发出去的内容与错误一起收走：那段话是对上一场说的。
   useEffect(() => {
+    if (unconfirmed.current) {
+      clearTimeout(unconfirmed.current.timer);
+      unconfirmed.current = null;
+    }
     setText('');
     clear();
     setSending(false);
@@ -203,6 +234,11 @@ export function useSendToSession(
     if (ticket.current === 0 || clearedTicket.current === ticket.current) return;
     clearedTicket.current = ticket.current;
     setSending(false);
+    // 连接断了还在核对的那一单，送达信号一到就有了答案：它发出去了。
+    if (unconfirmed.current && unconfirmed.current.ticket <= clearedTicket.current) {
+      clearTimeout(unconfirmed.current.timer);
+      unconfirmed.current = null;
+    }
   }, [deliveredAt]);
 
   const body = text.trim();
@@ -211,11 +247,31 @@ export function useSendToSession(
     !sending &&
     (!!body || images.length > 0 || documents.length > 0 || failed !== null);
 
+  /**
+   * 确认没发出去：亮出原因，内容得有个去处。输入框还空着就原样退回去，人接着改就是；
+   * 人已经在里面打了新的字就先收着，重试重发的仍是这一份。两条路都一个字不丢。
+   */
+  const giveBack = useCallback(
+    (payload: OutboundPayload, reason: string, outboundId?: string) => {
+      setError(reason);
+      if (boxEmpty.current) {
+        setText(payload.text);
+        restore(payload.images, payload.documents);
+        setFailed(null);
+      } else {
+        setFailed(payload);
+      }
+      onSendFailedRef.current?.(outboundId);
+    },
+    [restore]
+  );
+
   /** 真正把一单投出去。内容此刻已经不在输入框里了，成败都只影响 `failed` 与错误提示。 */
   const dispatch = useCallback(
     async (payload: OutboundPayload) => {
       if (!sessionId) return;
       const mine = ++ticket.current;
+      let pending = false;
       setSending(true);
       setError(null);
       // 请求还没出门就先喊一声，顺手换回这一单的信封编号。这条接口要等整整一轮才回来，
@@ -241,24 +297,37 @@ export function useSendToSession(
         }, RELOAD_AGAIN_MS);
       } catch (e) {
         if (!mounted.current) return;
-        setError(e instanceof Error ? e.message : String(e));
-        // 没发出去，内容得有个去处。输入框还空着就原样退回去，人接着改就是；人已经在
-        // 里面打了新的字就先收着，重试重发的仍是这一份。两条路都一个字不丢。
-        if (boxEmpty.current) {
-          setText(payload.text);
-          restore(payload.images, payload.documents);
+        // 送达信号早就到过：话已经在会话里了，断的只是那条等整轮的请求。当它发成了，
+        // 不亮红条、不退回。也不去重拉记录——服务器这会儿多半还没起来，重拉只会在
+        // 记录流上再添一条报错；它回来后轮询自己会接上。
+        if (clearedTicket.current >= mine) {
           setFailed(null);
-        } else {
-          setFailed(payload);
+          return;
         }
-        onSendFailedRef.current?.(outboundId);
+        const reason = e instanceof Error ? e.message : String(e);
+        if (e instanceof ConnectionLostError) {
+          // 没见送达、连接却断了：说不准。信封留着，等记录流核对，等满了才判失败。
+          if (unconfirmed.current) clearTimeout(unconfirmed.current.timer);
+          unconfirmed.current = {
+            ticket: mine,
+            timer: setTimeout(() => {
+              if (!mounted.current || unconfirmed.current?.ticket !== mine) return;
+              unconfirmed.current = null;
+              giveBack(payload, reason, outboundId);
+              if (ticket.current === mine) setSending(false);
+            }, CONFIRM_WINDOW_MS),
+          };
+          pending = true;
+          return;
+        }
+        giveBack(payload, reason, outboundId);
       } finally {
         // 只有还是自己那一单时才落下"发送中"：放行之后人已经发了下一句的话，
-        // 这里再动一次会把后一单的状态抹掉。
-        if (mounted.current && ticket.current === mine) setSending(false);
+        // 这里再动一次会把后一单的状态抹掉。还在核对的那一单由核对的结果去落。
+        if (mounted.current && ticket.current === mine && !pending) setSending(false);
       }
     },
-    [sessionId, restore]
+    [sessionId, giveBack]
   );
 
   const send = useCallback(async () => {

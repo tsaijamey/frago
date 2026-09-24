@@ -11,6 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Composer, { blockReason } from '../Composer';
 import i18n from '@/i18n';
+import { CONFIRM_WINDOW_MS } from '@/hooks/useSendToSession';
 
 /**
  * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
@@ -360,6 +361,110 @@ describe('点了发送，输入框当场空出来', () => {
       await Promise.resolve();
     });
     expect(input.value).toBe('第二句还没发');
+  });
+});
+
+describe('服务器重启，等整轮的那条请求断在半路', () => {
+  /** 请求先挂着，由用例决定什么时候让它断：跟服务器重启时浏览器看到的一样，是连接失败。 */
+  function stubDroppableSend() {
+    let drop: (() => void) | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((_, reject) => {
+            drop = () => reject(new TypeError('Failed to fetch'));
+          })
+      )
+    );
+    return async () => {
+      await act(async () => {
+        drop?.();
+        await Promise.resolve();
+      });
+    };
+  }
+
+  it('话已经送达再断：当它发成了，不亮红条，也不退回输入框', async () => {
+    const dropConnection = stubDroppableSend();
+    const onSendFailed = vi.fn();
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendFailed={onSendFailed} deliveredAt={null} />
+    );
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '把名字改成 teams' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(input.value).toBe(''));
+
+    rerender(
+      <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendFailed={onSendFailed} deliveredAt={Date.now()} />
+    );
+    await dropConnection();
+
+    expect(screen.queryByTestId('composer-error')).toBeNull();
+    expect(input.value).toBe('');
+    expect(onSendFailed).not.toHaveBeenCalled();
+  });
+
+  it('还没见送达就断：先不判失败，服务器回来后记录里出现了就算发成', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const dropConnection = stubDroppableSend();
+      const onSendFailed = vi.fn();
+      const { rerender } = render(
+        <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendFailed={onSendFailed} deliveredAt={null} />
+      );
+      const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: '接着改' } });
+      fireEvent.click(screen.getByTestId('composer-send'));
+      await waitFor(() => expect(input.value).toBe(''));
+      await dropConnection();
+
+      expect(screen.queryByTestId('composer-error')).toBeNull();
+      expect(input.value).toBe('');
+
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      rerender(
+        <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendFailed={onSendFailed} deliveredAt={Date.now()} />
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(CONFIRM_WINDOW_MS);
+      });
+
+      expect(screen.queryByTestId('composer-error')).toBeNull();
+      expect(input.value).toBe('');
+      expect(onSendFailed).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('还没见送达就断、等满也没见到：这才判失败，原话退回并给重试', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const dropConnection = stubDroppableSend();
+      const onSendFailed = vi.fn();
+      render(
+        <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendFailed={onSendFailed} deliveredAt={null} />
+      );
+      const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: '这句真没出去' } });
+      fireEvent.click(screen.getByTestId('composer-send'));
+      await waitFor(() => expect(input.value).toBe(''));
+      await dropConnection();
+
+      await act(async () => {
+        vi.advanceTimersByTime(CONFIRM_WINDOW_MS);
+      });
+
+      expect(screen.getByTestId('composer-error').textContent).toContain('Failed to fetch');
+      expect(input.value).toBe('这句真没出去');
+      expect(onSendFailed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
