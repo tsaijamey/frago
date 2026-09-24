@@ -369,7 +369,7 @@ wheels = [
 
 [[package]]
 name = "frago-cli"
-version = "1.4.123"
+version = "1.4.124"
 source = { editable = "." }
 dependencies = [
     { name = "arxiv" },
