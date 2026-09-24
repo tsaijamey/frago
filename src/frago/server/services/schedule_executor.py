@@ -282,18 +282,10 @@ def execute_prompt(
 
 
 def _last_final_line(stdout: str) -> dict[str, Any] | None:
-    """CoreAgent 结束时交的那一行结论。标准输出里别的行不认。"""
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict) and obj.get("type") == "final":
-            return obj
-    return None
+    """CoreAgent 结束时交的那一行结论（新老两种形状都认，见 coreagent_output）。"""
+    from frago.server.services.coreagent_output import final_from
+
+    return final_from(stdout)
 
 
 def _coerce_payload(result: Any) -> Any:

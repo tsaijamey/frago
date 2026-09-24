@@ -230,6 +230,38 @@ class TestWhatItRanForMe:
         )
         assert TodoComposeService.compose("一件事")["command"] is None
 
+    def test_新版内核按_Claude_Code_形状输出时照样读得懂(self, kernel):
+        """2026-09-24 起内核的 stream-json 是 Claude Code 的形状；建成的、被拦的都要认得出。"""
+
+        def said(block):
+            return {"type": "assistant", "message": {"role": "assistant", "content": [block]}}
+
+        def back(tool_id, text, is_error=False):
+            return {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": is_error}]}}
+
+        kernel(
+            _proc(
+                [
+                    {"type": "system", "subtype": "init", "session_id": "core_x", "tools": ["Bash"]},
+                    said({"type": "tool_use", "id": "t1", "name": "Bash",
+                          "input": {"command": "frago todo add blocked-one"}}),
+                    back("t1", "〔not allowed〕不在允许范围", is_error=True),
+                    said({"type": "tool_use", "id": "t2", "name": "Bash",
+                          "input": {"command": "frago todo add webui-add-todo-button"}}),
+                    back("t2", "Created todo 20260909-webui-add-todo-button\nPath: /x.json"),
+                    said({"type": "text", "text": "建好了"}),
+                    {"type": "result", "subtype": "success", "is_error": False, "result": "建好了",
+                     "num_turns": 3, "session_id": "core_x"},
+                ]
+            )
+        )
+        result = TodoComposeService.compose("给事务页加个添加按钮")
+        assert result["todo_id"] == "20260909-webui-add-todo-button"
+        assert result["created"] is True
+        assert result["message"] == "建好了"
+        assert result["command"] == ["frago", "todo", "add", "webui-add-todo-button"]
+
     def test_只准它执行_frago_todo(self, kernel, monkeypatch):
         """它手上有 Bash，建一条待办用不着别的命令。"""
         seen = {}

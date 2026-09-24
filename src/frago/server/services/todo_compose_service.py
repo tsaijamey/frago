@@ -268,6 +268,8 @@ class TodoComposeService:
     @staticmethod
     def _parse_events(stdout: str) -> list[dict[str, Any]]:
         """内核的 stdout 是一行一个 JSON 事件。读不懂的行跳过，不要因此整单失败。"""
+        from frago.server.services.coreagent_output import legacy_events
+
         events: list[dict[str, Any]] = []
         for line in stdout.splitlines():
             line = line.strip()
@@ -279,7 +281,8 @@ class TodoComposeService:
                 logger.debug("skipping non-JSON kernel output: %s", line[:120])
                 continue
             if isinstance(event, dict):
-                events.append(event)
+                # 新版内核按 Claude Code 的形状输出，这里翻回老形状，下面的判断照旧。
+                events.extend(legacy_events(event))
         return events
 
     @staticmethod

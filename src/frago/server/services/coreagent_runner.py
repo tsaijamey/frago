@@ -212,20 +212,10 @@ def _run(
 
 
 def _final_line(stdout: str) -> dict | None:
-    """内核结束时交的那一行结论。标准输出里别的行不认。"""
-    import json
+    """内核结束时交的那一行结论（新老两种形状都认，见 coreagent_output）。"""
+    from frago.server.services.coreagent_output import final_from
 
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            row = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(row, dict) and row.get("type") == "final":
-            return row
-    return None
+    return final_from(stdout)
 
 
 def send(
