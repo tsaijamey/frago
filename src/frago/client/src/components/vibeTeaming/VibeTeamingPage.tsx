@@ -49,6 +49,8 @@ import PageHeader from '@/components/layout/PageHeader';
 import RecordStream from '@/components/sessionWorkbench/RecordStream';
 import { RecordOverrideContext, RecordVoiceContext } from '@/components/sessionWorkbench/RecordCard';
 import Composer from '@/components/sessionWorkbench/Composer';
+import { DecisionCardContext } from '@/components/sessionWorkbench/DecisionCard';
+import { useDecisionCards } from '@/hooks/useDecisionCards';
 import StartTeamPanel from '@/components/vibeTeaming/StartTeamPanel';
 import { useWorkbenchRecords, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import { FAMILY_LABEL_KEY, useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
@@ -826,6 +828,16 @@ function MySide({
     [binding.code, rules],
   );
 
+  // 决定卡片与会话页同一套：答过没有按记录判，点了交给左下输入区。右栏不提供，卡片只读。
+  // 左栏总绑着一场会话，输入区没有发不出去的时候，卡片也就没有「不能答」的原因。
+  const cards = useDecisionCards({
+    sessionId,
+    records,
+    blockedReason: null,
+    onSendStart: mine.markSent,
+    onSendFailed: mine.clearSent,
+  });
+
   return (
     <section data-testid="teams-mine" className="flex min-h-0 min-w-0 flex-col bg-bg-primary">
       <IdentityHeader
@@ -852,17 +864,19 @@ function MySide({
       <div className="min-h-0 flex-1 overflow-auto">
         <RecordVoiceContext.Provider value={voice}>
           <RecordOverrideContext.Provider value={override}>
-            <RecordStream
-              sessionId={sessionId}
-              records={records}
-              loading={mine.loading}
-              loadingOlder={mine.loadingOlder}
-              hasOlder={mine.hasOlder}
-              error={mine.error}
-              onLoadOlder={() => void mine.loadOlder()}
-              awaitingAgent={mine.awaitingAgent}
-              onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
-            />
+            <DecisionCardContext.Provider value={cards.host}>
+              <RecordStream
+                sessionId={sessionId}
+                records={records}
+                loading={mine.loading}
+                loadingOlder={mine.loadingOlder}
+                hasOlder={mine.hasOlder}
+                error={mine.error}
+                onLoadOlder={() => void mine.loadOlder()}
+                awaitingAgent={mine.awaitingAgent}
+                onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
+              />
+            </DecisionCardContext.Provider>
           </RecordOverrideContext.Provider>
         </RecordVoiceContext.Provider>
       </div>
@@ -879,11 +893,12 @@ function MySide({
           sessionId={sessionId}
           family={session?.family ?? null}
           running={session?.status === 'running' || mine.awaitingAgent}
-          onSendStart={mine.markSent}
-          onSendFailed={mine.clearSent}
+          onSendStart={cards.onSendStart}
+          onSendFailed={cards.onSendFailed}
           deliveredAt={mine.deliveredAt}
           outbound={mine.outbound}
           quote={quote}
+          answer={cards.answer}
           onSent={(outboundId) => {
             void mine.reload();
             void sessions.reload();
