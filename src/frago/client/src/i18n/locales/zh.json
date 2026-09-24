@@ -699,7 +699,7 @@
       "about": "关于"
     },
     "tabDesc": {
-      "capability": "静态规则与 LightAgent 此刻的状态",
+      "capability": "每次提交 prompt，frago 分两层加提示。下面是两层此刻在做什么。",
       "general": "认证与账号配置",
       "channels": "任务接入通道",
       "resources": "官方命令与技能同步",
@@ -708,20 +708,18 @@
       "about": "版本与许可"
     },
     "capability": {
-      "intro": "frago 在每次提交 prompt 时给 agent 注入提示，分两层：静态规则 (static rules) 常驻生效，LightAgent 需要一个模型 profile 才存在。下面是两层此刻的实际状态。",
       "loadFailed": "读取提示能力状态失败。",
       "saveFailed": "开关没有写入成功，配置保持原样。",
       "static": {
         "name": "静态规则 (static rules)",
-        "lede": "编译进 frago-core 二进制的路由规则，按事件匹配后直接注入，不经过模型。",
+        "lede": "规则按事件匹配后直接注入，不经过模型。",
         "badge": "已生效",
-        "count": "内置规则与用户规则合并后共 {{total}} 条参与匹配，判定在几十毫秒内完成。",
-        "countUnknown": "规则条数暂时读不出来，匹配本身照常进行。",
-        "noConfigNeeded": "这一层不需要任何配置，也不消耗模型额度。"
+        "count": "内置与用户规则共 {{total}} 条参与匹配。无需配置，不耗模型额度。",
+        "countUnknown": "条数暂时读不出，匹配照常。"
       },
       "ai": {
         "name": "LightAgent",
-        "lede": "每次提交 prompt 时，把最近几轮会话连同规则、book、经验域的索引交给一个便宜模型，换回一句该注入的提示。",
+        "lede": "把最近几轮连同规则、book、经验域索引交给便宜模型，换回一句提示。",
         "unknownModel": "未知模型",
         "unnamedProfile": "未命名 profile",
         "badge": {
@@ -731,23 +729,22 @@
           "no_key": "缺少 api key"
         },
         "body": {
-          "enabled": "当前使用模型 {{model}}，每次提交 prompt 会多一次该模型的调用。",
-          "disabled": "这一层被手动关闭了，不是出故障。重新打开下面的开关即可恢复。",
-          "not_configured": "没有找到可用的模型 profile，所以这一层从未被调用过。",
-          "no_key": "profile {{profile}} 的 api key 是空的，这一层调不动模型。"
+          "enabled": "使用 <b>{{model}}</b>，每次 prompt 多一次调用。",
+          "disabled": "手动关的，不是故障。打开开关即恢复。",
+          "not_configured": "没有可用的模型 profile，这一层从未运行。",
+          "no_key": "profile {{profile}} 没填 api key，调不动模型。"
         },
         "consequence": {
-          "not_configured": "后果：会话里不会出现按最近几轮内容生成的提示。静态规则不受影响，照常工作。",
-          "no_key": "后果：这一层完全不工作，而它本来只差一个 key。引擎发现 key 为空会直接跳过，不发请求。静态规则不受影响。"
+          "not_configured": "会话里不会出现按最近几轮生成的提示。静态规则照常。",
+          "no_key": "这一层完全不工作，只差一个 key。key 为空时不发请求。静态规则照常。"
         },
         "cta": {
           "not_configured": "去配置模型 profile",
           "no_key": "去填 api key"
         },
         "switch": "启用 LightAgent",
-        "switchDesc": "关掉后 frago 不再为提示调用模型，静态规则继续工作。",
-        "persistence": "开关写入 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>，引擎读的是同一个字段；这一段缺失时视为开启。",
-        "envOff": "环境变量 <c>FRAGO_REVIEW=off</c> 正在生效，它压过这里的开关：当前环境下 LightAgent 一律不运行，界面开关暂时不起作用。"
+        "switchDesc": "关掉后不再为提示调模型，静态规则照常。存于 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>。",
+        "envOff": "<c>FRAGO_REVIEW=off</c> 正在生效并压过这个开关，当前环境下 LightAgent 不运行。"
       }
     },
     "general": {

@@ -15,7 +15,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import {
   ShieldCheck,
   Sparkles,
-  CircleCheck,
+  Check,
   TriangleAlert,
   CircleSlash,
   KeyRound,
@@ -31,9 +31,10 @@ interface PromptCapabilitySettingsProps {
   onConfigureProfile: () => void;
 }
 
-/** 每种状态配一个语气：色调、图标、以及卡片的整体舒适态。 */
-const TONE: Record<LightAgentStatus, { tone: string; Icon: typeof CircleCheck }> = {
-  enabled: { tone: 'ok', Icon: CircleCheck },
+/** 每种状态配一个语气：色调与徽章图标。在跑那一档没有图标，换成一颗绿点——
+ *  这一屏的绿只给「在跑」。 */
+const TONE: Record<LightAgentStatus, { tone: string; Icon: typeof Check | null }> = {
+  enabled: { tone: 'ok', Icon: null },
   disabled: { tone: 'off', Icon: CircleSlash },
   not_configured: { tone: 'warn', Icon: TriangleAlert },
   no_key: { tone: 'alert', Icon: KeyRound },
@@ -96,8 +97,6 @@ export default function PromptCapabilitySettings({
 
   return (
     <div className="settings-cap">
-      <p className="settings-cap-intro">{t('settings.capability.intro')}</p>
-
       {error && <div className="settings-cap-error">{error}</div>}
 
       {/* ── 第一层：静态规则 ───────────────────────────────────── */}
@@ -111,7 +110,7 @@ export default function PromptCapabilitySettings({
             <p className="settings-cap-lede">{t('settings.capability.static.lede')}</p>
           </div>
           <span className="settings-cap-badge is-ok">
-            <CircleCheck size={13} />
+            <Check size={12} />
             {t('settings.capability.static.badge')}
           </span>
         </header>
@@ -123,7 +122,6 @@ export default function PromptCapabilitySettings({
             ? t('settings.capability.static.countUnknown')
             : t('settings.capability.static.count', { total: count })}
         </p>
-        <p className="settings-cap-note">{t('settings.capability.static.noConfigNeeded')}</p>
       </section>
 
       {/* ── 第二层：LightAgent ────────────────────────────────────── */}
@@ -137,16 +135,21 @@ export default function PromptCapabilitySettings({
             <p className="settings-cap-lede">{t('settings.capability.ai.lede')}</p>
           </div>
           <span className={`settings-cap-badge is-${tone}`}>
-            <Icon size={13} />
+            {Icon ? <Icon size={12} /> : <i className="settings-cap-dot" aria-hidden="true" />}
             {t(`settings.capability.ai.badge.${ai.status}`)}
           </span>
         </header>
 
+        {/* Trans, so the model name can be set in <b> by the string itself. */}
         <p className="settings-cap-body">
-          {t(`settings.capability.ai.body.${ai.status}`, {
-            model: ai.model || t('settings.capability.ai.unknownModel'),
-            profile: ai.profile_name || t('settings.capability.ai.unnamedProfile'),
-          })}
+          <Trans
+            i18nKey={`settings.capability.ai.body.${ai.status}`}
+            values={{
+              model: ai.model || t('settings.capability.ai.unknownModel'),
+              profile: ai.profile_name || t('settings.capability.ai.unnamedProfile'),
+            }}
+            components={{ b: <b /> }}
+          />
         </p>
 
         {(ai.status === 'not_configured' || ai.status === 'no_key') && (
@@ -168,7 +171,11 @@ export default function PromptCapabilitySettings({
         <div className="settings-cap-switch">
           <div className="settings-cap-switch-text">
             <span className="settings-cap-switch-label">{t('settings.capability.ai.switch')}</span>
-            <span className="settings-cap-switch-desc">{t('settings.capability.ai.switchDesc')}</span>
+            {/* Trans, so paths and env vars keep code styling inline without any
+                Chinese being hardcoded here and without a markdown dependency. */}
+            <span className="settings-cap-switch-desc">
+              <Trans i18nKey="settings.capability.ai.switchDesc" components={{ c: <code /> }} />
+            </span>
           </div>
           <label className="settings-cap-toggle">
             <input
@@ -181,12 +188,6 @@ export default function PromptCapabilitySettings({
             <span className="settings-cap-toggle-track" />
           </label>
         </div>
-
-        {/* Trans, so paths and env vars keep code styling inline without any
-            Chinese being hardcoded here and without a markdown dependency. */}
-        <p className="settings-cap-note">
-          <Trans i18nKey="settings.capability.ai.persistence" components={{ c: <code /> }} />
-        </p>
 
         {status.env_off && (
           <p className="settings-cap-consequence">

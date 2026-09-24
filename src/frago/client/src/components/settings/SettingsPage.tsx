@@ -115,27 +115,28 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
         title={t('settings.title')}
         meta={version ? t('settings.headerMeta', { version }) : undefined}
       />
-      <div className="page-scroll">
-        <div className="settings-layout">
-          <nav className="settings-nav" aria-label={t('settings.title')}>
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
-                onClick={() => setActive(tab.id)}
-                /* 描述搬到了右侧面板的标题下面。这里留一份 title，
-                   鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
-                title={t(`settings.tabDesc.${tab.id}`)}
-                aria-current={tab.id === active ? 'true' : undefined}
-              >
-                <tab.Icon size={16} strokeWidth={1.5} className="settings-nav-icon" />
-                <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
-              </button>
-            ))}
-          </nav>
+      {/* 页头以下两栏：二级菜单钉住不动，只有右侧正文自己滚。 */}
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label={t('settings.title')}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
+              onClick={() => setActive(tab.id)}
+              /* 描述搬到了右侧面板的标题下面。这里留一份 title，
+                 鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
+              title={t(`settings.tabDesc.${tab.id}`)}
+              aria-current={tab.id === active ? 'true' : undefined}
+            >
+              <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
+              <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
+            </button>
+          ))}
+        </nav>
 
-          <section className="settings-panel">
+        <section className="settings-panel">
+          <div className="settings-panel-inner">
             <div className="settings-panel-head">
               <h2 className="settings-panel-title">{t(`settings.tabs.${active}`)}</h2>
               <p className="settings-panel-desc">{t(`settings.tabDesc.${active}`)}</p>
@@ -147,8 +148,8 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
                 profileSignal,
               })}
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
       </div>
     </div>
   );

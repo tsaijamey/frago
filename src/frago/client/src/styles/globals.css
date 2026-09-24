@@ -5245,23 +5245,27 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* === Settings Page (category-tab layout) === */
+/* 页头以下占满：左 176 的二级菜单，右边正文。菜单与正文之间只隔一道发丝线，
+   不再另加间距——从前菜单外面还套着整页 20px 的内边距再加一段 spacing-xl，
+   宽屏上两边中间空出一大片。 */
 .settings-layout {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-xl);
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
 }
 
 .settings-nav {
-  flex: 0 0 176px;
-  position: sticky;
-  top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--nav-item-gap);
+  gap: 1px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
 }
 
-/* 分类项与左侧主导航长一样：高 32、圆角 8、图标 16、中性选中填充。
-   同一种东西在两个地方长得一样，人只需要认一次。
+/* 分类项比左侧主导航低一级：高 30、圆角 7、13px、图标 15（主导航是 32 / 8 / 14 / 16）。
+   它是页面里面的菜单，不该和整站的主菜单一样大。
 
    **描述那一行搬走了。** 从前每一项都是"名字 + 一行小字描述"，右侧面板的标题下面
    又把同一行小字原样写了一遍——同一句话在一屏里出现两次，还把分类栏撑成了两倍高。
@@ -5269,14 +5273,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
-  height: var(--nav-item-height);
+  height: 30px;
   text-align: left;
   padding: 0 10px;
   background: transparent;
   border: none;
-  border-radius: var(--nav-item-radius);
+  border-radius: 7px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -5293,7 +5297,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .settings-nav-item.active .settings-nav-label {
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-medium);
 }
 
 .settings-nav-icon {
@@ -5314,22 +5318,26 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   white-space: nowrap;
 }
 
-/* 面板限宽。设置项是一行行的短句，铺满一块 1400px 宽的画布之后，标签在最左、
-   控件在最右，眼睛要横跨整个屏幕才能把一对配起来。 */
+/* 正文自己滚，菜单不跟着走。 */
 .settings-panel {
-  flex: 1;
   min-width: 0;
-  max-width: 760px;
+  overflow-y: auto;
+  padding: 20px 28px 28px;
 }
 
+/* 面板限宽。设置项是一行行的短句，铺满一块 1400px 宽的画布之后，标签在最左、
+   控件在最右，眼睛要横跨整个屏幕才能把一对配起来。 */
+.settings-panel-inner {
+  max-width: 620px;
+}
+
+/* 标题与短说明直接接内容，不再拿横线隔开。 */
 .settings-panel-head {
-  padding-bottom: var(--spacing-md);
-  margin-bottom: var(--spacing-lg);
-  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 16px;
 }
 
 .settings-panel-title {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-title);
   font-weight: var(--font-weight-bold);
   color: var(--text-primary);
   margin: 0;
@@ -5338,7 +5346,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-panel-desc {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  margin: 4px 0 0;
+  margin: 3px 0 0;
 }
 
 .settings-panel-body {
@@ -5353,14 +5361,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-cap {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
-}
-
-.settings-cap-intro {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  line-height: 1.7;
-  margin: 0;
+  gap: 10px;
 }
 
 .settings-cap-loading,
@@ -5382,16 +5383,23 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--accent-error);
 }
 
+/* 卡片不填底色，只留一圈发丝描边。卡头之下的每一行（正文、后果、按钮、开关）
+   都左缩进 52，对齐卡头文字、越过 28px 图标。 */
 .settings-cap-card {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  padding: var(--spacing-md);
+  padding-bottom: 12px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
+  border-radius: 10px;
+  background: transparent;
   transition: background var(--transition-fast), box-shadow var(--transition-fast),
     border-color var(--transition-fast);
+}
+
+.settings-cap-card > :not(.settings-cap-head):not(.settings-cap-switch) {
+  margin-left: 52px;
+  margin-right: 14px;
 }
 
 /* One tone per state — the whole card, never a stripe.
@@ -5402,7 +5410,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    文字写着「已生效」。颜色留给需要人动手的两档。 */
 .settings-cap-card.is-ok {
   border-color: var(--border-color);
-  background: var(--bg-card);
+  background: transparent;
 }
 
 .settings-cap-card.is-warn {
@@ -5417,14 +5425,15 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .settings-cap-card.is-off {
   border-color: var(--border-color);
-  background: var(--bg-subtle);
+  background: transparent;
   box-shadow: none;
 }
 
 .settings-cap-head {
   display: flex;
   align-items: flex-start;
-  gap: var(--spacing-sm);
+  gap: 10px;
+  padding: 12px 14px 0;
 }
 
 .settings-cap-mark {
@@ -5434,15 +5443,15 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
+  border-radius: 7px;
+  background: var(--bg-hover);
   color: var(--text-secondary);
 }
 
-/* 正常这一档的图标只染字，不做成一块实心色砖。 */
+/* 正常这一档的图标是中性的。这一屏的绿只留给 LightAgent 在跑的那颗圆点。 */
 .settings-cap-card.is-ok .settings-cap-mark {
-  background: var(--bg-subtle);
-  color: var(--accent-primary);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .settings-cap-card.is-warn .settings-cap-mark {
@@ -5468,27 +5477,38 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .settings-cap-lede {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.6;
-  margin: 3px 0 0;
+  line-height: 1.55;
+  margin: 1px 0 0;
 }
 
 .settings-cap-badge {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
   border-radius: 999px;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
 
+/* 「In effect」和「Running」都是中性徽章：状态由文字说，Running 前面那颗绿点
+   是这一屏唯一的绿。 */
 .settings-cap-badge.is-ok {
-  background: var(--status-completed-bg);
-  color: var(--accent-primary);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.settings-cap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent-primary);
 }
 
 .settings-cap-badge.is-warn {
@@ -5509,8 +5529,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-cap-body {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  line-height: 1.75;
+  line-height: 1.6;
   margin: 0;
+}
+
+.settings-cap-body b {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
 }
 
 /* The "what you lose" line. Loud enough to be read before the button. */
@@ -5546,7 +5571,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .settings-cap-note code,
 .settings-cap-body code,
-.settings-cap-consequence code {
+.settings-cap-consequence code,
+.settings-cap-switch-desc code {
   font-family: var(--font-mono);
   font-size: 0.94em;
   padding: 1px 5px;
@@ -5559,12 +5585,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   align-self: flex-start;
 }
 
+/* 开关行上方的横线贯穿整卡；行内文字仍对齐卡头文字。 */
 .settings-cap-switch {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-md);
-  padding-top: var(--spacing-sm);
+  gap: 12px;
+  padding: 10px 14px 0 52px;
   margin-top: 2px;
   border-top: 1px solid var(--border-color);
 }
@@ -5603,11 +5630,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   opacity: 0;
 }
 
+/* 开关打开时是中性的：正文色轨道、底色圆钮。开与关靠轨道深浅和圆钮位置区分，
+   右上徽章同时写着 Running / Turned off。 */
 .settings-cap-toggle-track {
   position: relative;
   display: block;
-  width: 42px;
-  height: 24px;
+  width: 32px;
+  height: 18px;
   border-radius: 999px;
   background: var(--bg-tertiary);
   transition: background var(--transition-fast);
@@ -5616,22 +5645,22 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .settings-cap-toggle-track::after {
   content: '';
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--text-muted);
   transition: transform var(--transition-fast), background var(--transition-fast);
 }
 
 .settings-cap-toggle input:checked + .settings-cap-toggle-track {
-  background: var(--accent-primary);
+  background: var(--text-primary);
 }
 
 .settings-cap-toggle input:checked + .settings-cap-toggle-track::after {
-  background: var(--text-on-accent);
-  transform: translateX(18px);
+  background: var(--bg-primary);
+  transform: translateX(14px);
 }
 
 .settings-cap-toggle input:focus-visible + .settings-cap-toggle-track {
@@ -5656,16 +5685,25 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 /* Narrow viewport: rail becomes a horizontal scroll strip above the panel */
 @media (max-width: 640px) {
   .settings-layout {
+    display: flex;
     flex-direction: column;
   }
 
   .settings-nav {
     flex-direction: row;
     flex-wrap: nowrap;
+    flex-shrink: 0;
     width: 100%;
     overflow-x: auto;
-    position: static;
-    padding-bottom: 4px;
+    overflow-y: hidden;
+    padding: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .settings-panel {
+    flex: 1;
+    padding: 16px;
   }
 
   .settings-nav-item {
