@@ -73,7 +73,7 @@ export const NAV_ITEMS: RailItem[] = [
   // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 sessions。
   { id: 'session_workbench', label: 'sessions', icon: <MessageSquare {...ICON} /> },
   // 结对会话：两个人的会话并排摆着。紧跟 sessions，因为它就是会话的另一种看法。
-  { id: 'vibe_teaming', label: 'teaming', icon: <Users {...ICON} /> },
+  { id: 'vibe_teaming', label: 'teams', icon: <Users {...ICON} /> },
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
   { id: 'todos', label: 'todos', icon: <ListChecks {...ICON} /> },
