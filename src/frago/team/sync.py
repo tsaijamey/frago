@@ -175,18 +175,22 @@ def _call(state: TeamState, binding: TeamBinding, action: str, **params: Any) ->
     )
 
 
-def send_to_peer(state: TeamState, code: str, text: str, note: str = "") -> None:
-    """往对方的会话投一条消息。
+def send_to_peer(state: TeamState, code: str, text: str, note: str = "") -> str:
+    """往对方的会话投一条消息，返回中继给它的编号。
 
     **前缀不在这里加。** 中继只运原文，前缀由收的那一侧按自己的设置加上——两边对
     「队友的 agent 在跟我说话」想看到的措辞不一样，而措辞是收的人的事。
+
+    编号就是对方会话里那条发言核实行上的那一个。界面拿它认「这句送到了没有」：按原文
+    比的话，同一句话发两次，第二张进度卡会认到第一次的送达。中继没回编号时是空串。
     """
     if not text.strip():
         raise TeamRefused("要投的消息是空的")
     binding = state.require(code)
     if not binding.active:
         raise TeamRefused(f"本机已经退出 {code} 了，先 frago team join --team-code {code}")
-    _call(state, binding, "send", text=text, note=note)
+    got = _call(state, binding, "send", text=text, note=note)
+    return str(got.get("message_id") or "")
 
 
 def peer_records(
@@ -313,7 +317,11 @@ def sync_once(
             outcome.skipped += 1
             continue
         try:
-            deliver(render_delivery(state.prefix, binding.code, mid, text))
+            deliver(
+                render_delivery(
+                    state.prefix, binding.code, mid, text, rules=state.request_rules
+                )
+            )
         except Exception:
             logger.warning(
                 "team %s：消息 %s 没能投进会话 %s",
@@ -339,7 +347,14 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
 
     **一条新记录都没有时也要敲一下。** 心跳就搭在这上面，不发的话中继二十四小时后
     会把这个 team 当成没人要的清掉。
+
+    **每一次都带上本机主人的设置**（``rules``）。对方界面右下那三格要显示「对方主人设的
+    处理方式」，它只能从中继那里读到；搭在 push 上而不另开一个动作，是因为中继门口的
+    动作是封闭清单（``server/routes/teaming.py`` 的 ``ACTIONS``），新增一项要中继所在那台
+    frago 一起升级，而 push 本来每轮必跑，改了设置最迟一轮对方就看得到。旧中继不认识
+    这个参数，照样收下记录、把它丢掉，推送本身不受影响。
     """
+    rules = asdict(state.request_rules)
     try:
         records = record_reader.read_records(
             binding.session_id, after=binding.pushed_seq + 1, limit=batch
@@ -351,10 +366,10 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
             "team %s：读不到会话 %s 的记录",
             binding.code, binding.session_id, exc_info=True,
         )
-        _call(state, binding, "push", records=[])
+        _call(state, binding, "push", records=[], rules=rules)
         return 0
     if not records:
-        _call(state, binding, "push", records=[])
+        _call(state, binding, "push", records=[], rules=rules)
         return 0
 
     # 按字节切批，不只按条数。中继那头把整批塞进一个命令行参数，Linux 对单个参数卡
@@ -364,7 +379,7 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
     payload = [asdict(one) for one in records]
     while len(payload) > 1 and len(json.dumps(payload).encode("utf-8")) > PUSH_BYTES:
         payload = payload[: len(payload) // 2]
-    _call(state, binding, "push", records=payload)
+    _call(state, binding, "push", records=payload, rules=rules)
     binding.pushed_seq = max(one["seq"] for one in payload)
     save_state(state)
     return len(payload)

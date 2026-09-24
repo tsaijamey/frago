@@ -51,6 +51,13 @@ class SendRequest(BaseModel):
     note: str = ""
 
 
+class RequestRulesBody(BaseModel):
+    """本机主人给自己的 agent 定的「队友的请求怎么处理」。两项，各两种取值。"""
+
+    read: str
+    change: str
+
+
 #: 一次失败属于哪一类。**界面照这个分支，NEVER 去猜那句话里的字眼。**
 #:
 #: 三类各自的下一步完全不同，所以必须分开：
@@ -106,6 +113,8 @@ async def read_team_state() -> dict[str, Any]:
     界面第一屏就要它，所以它不能去敲中继——中继连不上时这一屏还得画得出来，
     不然人连「中继没配」这件事都看不见。
     """
+    from dataclasses import asdict
+
     from frago.team.state import PUSH_TROUBLE_AFTER_ROUNDS, ensure_member
 
     state = ensure_member()
@@ -115,6 +124,7 @@ async def read_team_state() -> dict[str, Any]:
         "relay_url": state.relay.url,
         "prefix": state.prefix,
         "interval_seconds": state.interval_seconds,
+        "request_rules": asdict(state.request_rules),
         "teams": [
             {
                 "code": one.code,
@@ -133,6 +143,38 @@ async def read_team_state() -> dict[str, Any]:
             for one in state.teams.values()
         ],
     }
+
+
+@router.put("/team/request-rules")
+async def save_request_rules(body: RequestRulesBody) -> dict[str, Any]:
+    """改本机「队友的请求怎么处理」。不联网，下一轮同步随 push 带给中继。
+
+    只收两项、各两种取值；取值不在清单上回 400，NEVER 悄悄换成缺省——人以为自己改成了
+    「拒绝」，实际落成了「先问」，这比报错糟得多。第三档（秘密、不可恢复的删除）没有
+    设置项，永远不做。
+    """
+    from dataclasses import asdict
+
+    from frago.team.state import (
+        CHANGE_CHOICES,
+        READ_CHOICES,
+        RequestRules,
+        load_state,
+        save_state,
+    )
+
+    if body.read not in READ_CHOICES or body.change not in CHANGE_CHOICES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"read 只能是 {'/'.join(READ_CHOICES)}，change 只能是 "
+                f"{'/'.join(CHANGE_CHOICES)}；这次给的是 read={body.read!r} change={body.change!r}"
+            ),
+        )
+    state = load_state()
+    state.request_rules = RequestRules(read=body.read, change=body.change)
+    save_state(state)
+    return {"request_rules": asdict(state.request_rules)}
 
 
 @router.post("/team/open")
@@ -191,9 +233,20 @@ async def team_status(code: str) -> dict[str, Any]:
 
     state = load_state()
     try:
-        return await asyncio.to_thread(team_sync.team_status, state, code)
+        got = await asyncio.to_thread(team_sync.team_status, state, code)
     except Exception as err:  # noqa: BLE001
         raise _refuse(err) from err
+    # 对方主人设的处理方式，中继从对方每轮 push 里存下来的。只在中继真给了时才交出去：
+    # 旧中继或对方还是旧版时没有它，界面据此退回「frago's rules」——NEVER 在这里补一份
+    # 缺省值冒充对方的设置。给了就按本机的取值清单过一遍，认不出的值不往界面上摆。
+    from dataclasses import asdict
+
+    from frago.team.state import RequestRules
+
+    raw = got.pop("peer_rules", None) if isinstance(got, dict) else None
+    if isinstance(raw, dict):
+        got["peer_rules"] = asdict(RequestRules.from_raw(raw))
+    return got
 
 
 @router.get("/team/{code}/records")
@@ -225,9 +278,25 @@ async def send_to_peer(code: str, request: SendRequest) -> dict[str, Any]:
 
     state = load_state()
     try:
-        await asyncio.to_thread(
+        message_id = await asyncio.to_thread(
             team_sync.send_to_peer, state, code, request.text, request.note
         )
     except Exception as err:  # noqa: BLE001
         raise _refuse(err) from err
-    return {"sent": True}
+    # 编号就是对方会话里那条发言核实行上的那一个。界面按它认「送到了没有」，同一句话
+    # 发两次也认不混。
+    return {"sent": True, "message_id": message_id}
+
+
+@router.get("/team/{code}/verify")
+async def verify_message(code: str, message: str) -> dict[str, Any]:
+    """核实本机会话里一条自称来自队友的发言。**不联网**，查的是本机自己的投递账。
+
+    与 ``frago team verify`` 同一个判据：界面凭它在队友请求块上写「verified」。它只证明
+    来路（经中继、从这个码的对侧投进来），不证明更多——处理照旧由 agent 按规矩判。
+    """
+    from frago.team import sync as team_sync
+    from frago.team.state import load_state
+
+    verdict = team_sync.verify_message(load_state(), code, message)
+    return {"genuine": verdict.genuine, "reason": verdict.reason}

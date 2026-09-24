@@ -108,3 +108,108 @@ class TestTheRefusalSaysWhichKind:
         assert refused.status_code == 400
         assert refused.detail["detail"] == "中继在限流，等一会儿再来"
         assert refused.detail["trouble"] == route.TROUBLE_BUSY
+
+
+class TestRequestRules:
+    """本机「队友的请求怎么处理」：读、改、改错了当场说。"""
+
+    @pytest.fixture
+    def state_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("frago.team.state.STATE_PATH", tmp_path / "state.json")
+        return tmp_path / "state.json"
+
+    def test_读本机状态时带着这份设置(self, state_file):
+        got = asyncio.run(team_routes.read_team_state())
+
+        assert got["request_rules"] == {"read": "do", "change": "ask"}
+
+    def test_改了落盘_下次读是新的(self, state_file):
+        from frago.team.state import load_state
+
+        body = team_routes.RequestRulesBody(read="ask", change="refuse")
+        got = asyncio.run(team_routes.save_request_rules(body))
+
+        assert got["request_rules"] == {"read": "ask", "change": "refuse"}
+        rules = load_state().request_rules
+        assert (rules.read, rules.change) == ("ask", "refuse")
+
+    @pytest.mark.parametrize("read, change", [("refuse", "ask"), ("do", "do"), ("", "")])
+    def test_取值不在清单上回400_不悄悄换成缺省(self, state_file, read, change):
+        """人以为自己改成了「拒绝」、实际落成了「先问」，比报错糟得多。"""
+        from fastapi import HTTPException
+
+        body = team_routes.RequestRulesBody(read=read, change=change)
+        with pytest.raises(HTTPException) as caught:
+            asyncio.run(team_routes.save_request_rules(body))
+        assert caught.value.status_code == 400
+        assert not state_file.exists()
+
+
+class TestPeerRules:
+    """对方主人设的处理方式：中继给了才交给界面，NEVER 拿缺省值冒充。"""
+
+    @pytest.fixture
+    def with_status(self, monkeypatch):
+        from frago.team import sync as team_sync
+        from frago.team.state import Relay, TeamBinding, TeamState
+
+        state = TeamState(member="m", relay=Relay(url="https://relay.example"))
+        state.teams["ABC234"] = TeamBinding(code="ABC234", session_id="s", side="A")
+        monkeypatch.setattr("frago.team.state.load_state", lambda: state)
+
+        def use(answer):
+            monkeypatch.setattr(team_sync, "team_status", lambda *_a: dict(answer))
+
+        return use
+
+    def test_旧中继没给就不出现(self, with_status):
+        with_status({"exists": True, "peer_present": True})
+
+        got = asyncio.run(team_routes.team_status("ABC234"))
+
+        assert "peer_rules" not in got
+
+    def test_给了就原样交出(self, with_status):
+        with_status({"exists": True, "peer_rules": {"read": "ask", "change": "refuse"}})
+
+        got = asyncio.run(team_routes.team_status("ABC234"))
+
+        assert got["peer_rules"] == {"read": "ask", "change": "refuse"}
+
+    def test_认不出的值按本机清单过一遍(self, with_status):
+        with_status({"exists": True, "peer_rules": {"read": "<script>", "change": "refuse"}})
+
+        got = asyncio.run(team_routes.team_status("ABC234"))
+
+        assert got["peer_rules"] == {"read": "do", "change": "refuse"}
+
+
+def test_投消息把中继给的编号交给界面(monkeypatch):
+    from frago.team import sync as team_sync
+    from frago.team.state import Relay, TeamBinding, TeamState
+
+    state = TeamState(member="m", relay=Relay(url="https://relay.example"))
+    state.teams["ABC234"] = TeamBinding(code="ABC234", session_id="s", side="A")
+    monkeypatch.setattr("frago.team.state.load_state", lambda: state)
+    monkeypatch.setattr(team_sync, "send_to_peer", lambda *_a: "abc123")
+
+    got = asyncio.run(team_routes.send_to_peer("ABC234", team_routes.SendRequest(text="hi")))
+
+    assert got == {"sent": True, "message_id": "abc123"}
+
+
+def test_核实接口只查本机投递账(monkeypatch):
+    """界面凭它在队友请求块上写 verified。与 frago team verify 同一个判据，不联网。"""
+    from frago.team.state import Relay, TeamBinding, TeamState
+
+    state = TeamState(member="m", relay=Relay(url="https://relay.example"))
+    state.teams["ABC234"] = TeamBinding(
+        code="ABC234", session_id="s", side="A", delivered=["m" * 32]
+    )
+    monkeypatch.setattr("frago.team.state.load_state", lambda: state)
+
+    ok = asyncio.run(team_routes.verify_message("ABC234", "m" * 32))
+    no = asyncio.run(team_routes.verify_message("ABC234", "x" * 32))
+
+    assert ok["genuine"] is True
+    assert no["genuine"] is False
