@@ -218,6 +218,7 @@ export default function DataRepoPage() {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      hourCycle: 'h23',
     }).format(date);
   }, [status?.last_commit?.committed_at, i18n?.language]);
 
