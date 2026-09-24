@@ -119,6 +119,36 @@ class TestGetStatus:
         assert result["truncated"] is False
         assert len(result["files"]) == 2
 
+    def test_each_area_carries_its_own_breakdown_and_first_rows(self, tmp_path: Path):
+        """页面按目录分组，每组要自己的细分和前几条；清单样本截断了也不能缺。"""
+        (tmp_path / ".git").mkdir()
+        entries = _porcelain(
+            *[f" M data/f{i}.json" for i in range(12)],
+            *[f"?? data/n{i}.json" for i in range(3)],
+            " M todo/a.md",
+            "?? todo/b.md",
+            " M hook-rules.json",
+        )
+        with patch.object(svc, "repo_path", return_value=tmp_path), patch.object(
+            svc, "_git", side_effect=_fake_git(entries)
+        ):
+            result = get_status(limit=5)
+
+        # 顶层清单只到 data/，todo/ 一条都没进样本
+        assert all(f["path"].startswith("data/") for f in result["files"])
+        by_area = {row["area"]: row for row in result["rollup"]}
+        for row in result["rollup"]:
+            assert sum(row["counts"].values()) == row["count"]
+            assert len(row["sample"]) <= svc.AREA_SAMPLE_SIZE
+            assert all(svc._top_level(f["path"]) == row["area"] for f in row["sample"])
+        assert by_area["data/"]["counts"] == {"modified": 12, "untracked": 3}
+        assert len(by_area["data/"]["sample"]) == svc.AREA_SAMPLE_SIZE
+        assert by_area["todo/"]["sample"] == [
+            {"path": "todo/a.md", "status": "modified"},
+            {"path": "todo/b.md", "status": "untracked"},
+        ]
+        assert by_area["hook-rules.json"]["counts"] == {"modified": 1}
+
     def test_rename_does_not_get_counted_twice(self, tmp_path: Path):
         """-z 下改名会多带一条旧路径，跟着算就会虚报待备份数量。"""
         (tmp_path / ".git").mkdir()

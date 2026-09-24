@@ -30,7 +30,15 @@ STATUS = {
     "behind": 0,
     "pending_total": 26062,
     "counts": {"modified": 351, "deleted": 23710, "untracked": 2001},
-    "rollup": [{"area": "sessions/", "count": 23700}, {"area": "data/", "count": 1915}],
+    "rollup": [
+        {
+            "area": "sessions/",
+            "count": 23700,
+            "counts": {"deleted": 23700},
+            "sample": [{"path": "sessions/claude-misc/a.jsonl", "status": "deleted"}],
+        },
+        {"area": "data/", "count": 1915},
+    ],
     "files": [{"path": "books/registry.json", "status": "modified"}],
     "truncated": True,
     "last_commit": {"sha": "4fddfa097", "subject": "chore(data): 上一次", "committed_at": "2026-08-20T23:49:52+08:00"},
@@ -47,6 +55,16 @@ class TestStatus:
         assert body["rollup"][0]["area"] == "sessions/"
         assert body["truncated"] is True
         assert body["files"][0]["path"] == "books/registry.json"
+
+    def test_each_area_carries_its_breakdown_and_sample(self, client):
+        with patch.object(routes, "get_status", return_value=STATUS):
+            body = client.get("/api/data-repo/status").json()
+
+        assert body["rollup"][0]["counts"] == {"deleted": 23700}
+        assert body["rollup"][0]["sample"][0]["path"] == "sessions/claude-misc/a.jsonl"
+        # 旧形状的服务端数据也能过：两项都有默认空值
+        assert body["rollup"][1]["counts"] == {}
+        assert body["rollup"][1]["sample"] == []
 
     def test_the_list_length_is_capped(self, client):
         """没有上限，一次请求就能把整份索引搬进浏览器。"""
