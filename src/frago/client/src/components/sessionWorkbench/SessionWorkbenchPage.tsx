@@ -22,7 +22,9 @@ import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import ReportPanel from './ReportPanel';
-import Composer from './Composer';
+import Composer, { blockReason } from './Composer';
+import { DecisionCardContext } from './DecisionCard';
+import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import StopRunButton from './StopRunButton';
 import DeleteSessionButton from './DeleteSessionButton';
@@ -32,6 +34,7 @@ import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
 import { formatClock, formatDuration } from './RecordCard';
 import { shortAge } from './SessionItem';
+import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { usePageStore } from '@/stores/pageStore';
@@ -51,7 +54,26 @@ export default function SessionWorkbenchPage() {
   const [isForYou, setIsForYou] = useState<(id: string) => boolean>(() => () => false);
   const sessions = useWorkbenchSessions(isForYou);
   const views = useSessionViews();
-  const forYou = useForYou(sessions.sessions, views.viewedAt);
+  /**
+   * 选中那场最后一条 agent 回复末尾留了一张合法的「要人拍板」卡片：左栏那一条的原话换成
+   * 卡片的问题、加重为告警橙。解析与校验用 decision-cards 那边的同一个函数，这里不另写。
+   * 区块写坏的不加重（`result.ok` 为假）。只判选中那一场——别的会话手上没有记录。
+   */
+  const [yamlReady, setYamlReady] = useState(() => yamlNow() !== null);
+  useEffect(() => {
+    if (yamlReady) return;
+    let alive = true;
+    void loadYaml().then(() => alive && setYamlReady(true));
+    return () => {
+      alive = false;
+    };
+  }, [yamlReady]);
+  const [cardQuestion, setCardQuestion] = useState<{ sid: string; question: string } | null>(null);
+  const decisionCardOf = useCallback(
+    (sid: string) => (cardQuestion && cardQuestion.sid === sid ? cardQuestion.question : null),
+    [cardQuestion]
+  );
+  const forYou = useForYou(sessions.sessions, views.viewedAt, decisionCardOf);
   useEffect(() => {
     setIsForYou(() => (id: string) => forYou.infoOf(id) !== null);
   }, [forYou]);
@@ -76,6 +98,25 @@ export default function SessionWorkbenchPage() {
     settleSent,
     trails,
   } = useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
+
+  useEffect(() => {
+    if (!selectedId || recordsSessionId !== selectedId || !yamlReady) {
+      setCardQuestion(null);
+      return;
+    }
+    let last: string | null = null;
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const r = records[i];
+      if (r.agent_path.length) continue;
+      if (r.kind === 'user.say') break;
+      if (r.kind === 'agent.say') {
+        last = typeof r.payload.text === 'string' ? r.payload.text : '';
+        break;
+      }
+    }
+    const card = last ? trailingDecision(last) : null;
+    setCardQuestion(card && card.result.ok ? { sid: selectedId, question: card.result.block.question } : null);
+  }, [records, recordsSessionId, selectedId, yamlReady]);
 
   /** 输入区「Show」要把记录流滚到的那一条。 */
   const [scrollTarget, setScrollTarget] = useState<{ recordId: string; at: number } | null>(null);
@@ -139,6 +180,18 @@ export default function SessionWorkbenchPage() {
     },
     [selectedId, forYou, markSent]
   );
+
+  /**
+   * 决定卡片：答过没有按记录判；点了就把那句答复交给输入区，跟「发送」走同一条路。
+   * 包过的出门、失败两处要替代原来那两处接给输入区——卡片凭它们认出是哪一单发失败了。
+   */
+  const cards = useDecisionCards({
+    sessionId: selectedId,
+    records: recordsSessionId === selectedId ? records : [],
+    blockedReason: blockReason(selectedId),
+    onSendStart,
+    onSendFailed: clearSent,
+  });
 
   /**
    * 人从记录流里引过来的那段话，等着落进输入框。
@@ -317,6 +370,7 @@ export default function SessionWorkbenchPage() {
           {showLaunch && launch ? (
             <SessionLaunchPanel launch={launch} onDismiss={dismiss} />
           ) : (
+            <DecisionCardContext.Provider value={cards.host}>
             <RecordStream
               sessionId={selectedId}
               records={records}
@@ -330,6 +384,7 @@ export default function SessionWorkbenchPage() {
               scrollTarget={scrollTarget}
               onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
             />
+            </DecisionCardContext.Provider>
           )}
         </div>
 
@@ -348,8 +403,9 @@ export default function SessionWorkbenchPage() {
           // 上沿那条线上的小人跟着这一场走：会话在跑、或者刚发出去还没等到 agent 开口，
           // 他就在线上踱步；两样都落下他才坐下。
           running={selected?.status === 'running' || awaitingAgent}
-          onSendStart={onSendStart}
-          onSendFailed={clearSent}
+          onSendStart={cards.onSendStart}
+          onSendFailed={cards.onSendFailed}
+          answer={cards.answer}
           deliveredAt={deliveredAt}
           outbound={outbound}
           trails={trails}

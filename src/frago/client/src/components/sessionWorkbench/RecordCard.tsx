@@ -55,6 +55,8 @@ import {
 } from 'lucide-react';
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
+import { splitTrailingBlock } from '@/utils/decisionBlock';
+import { DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
   queueOpOf,
@@ -790,10 +792,18 @@ function Reminders({ items }: { items: string[] }) {
   );
 }
 
+/**
+ * agent 的回复。末尾是 `answer-needed-by-human` 区块的，正文照常、区块换成决定卡片。
+ *
+ * 只认主会话的回复：子 agent 问的是主控，主控看的是 tmux 会话、看不到页面上的卡片，
+ * 画成可点的卡只会让人替主控作答。子 agent 那一块照普通代码块显示。
+ */
 function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: boolean }) {
   const { t } = useTranslation();
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
+  const text = str(p, 'text');
+  const trailing = record.agent_path.length ? null : splitTrailingBlock(text);
   return (
     <TextShell
       record={record}
@@ -809,7 +819,16 @@ function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: 
          有，只是不必有两遍。 */
       meta={hideModel ? undefined : str(p, 'model')}
     >
-      <Rich text={str(p, 'text')} />
+      {trailing ? (
+        <DecisionReply
+          recordId={record.id}
+          text={text}
+          split={trailing}
+          rich={(s) => <Rich text={s} />}
+        />
+      ) : (
+        <Rich text={text} />
+      )}
     </TextShell>
   );
 }

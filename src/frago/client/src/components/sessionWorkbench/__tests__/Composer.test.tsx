@@ -713,3 +713,53 @@ describe('交接到新会话', () => {
     expect(screen.queryByTestId('composer-handoff')).toBeNull();
   });
 });
+
+describe('决定卡片的答复', () => {
+  it('输入框里有字时收到卡片答复：投出的是答复，框里的字原样留着', async () => {
+    const onSent = vi.fn();
+    const onSendStart = vi.fn(() => 'out-1');
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={onSent} onSendStart={onSendStart} />
+    );
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '还没写完的一句' } });
+
+    const answer = { text: '【answer】A · 发布 —— 打 v1.4.111 tag 并上传 PyPI，发出去收不回', at: 1 };
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={onSent}
+        onSendStart={onSendStart}
+        answer={answer}
+      />
+    );
+
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    expect(sentBody(fetchMock)).toEqual({ text: answer.text, images: [], documents: [] });
+    // 同一条出门路：信封照开
+    expect(onSendStart).toHaveBeenCalledWith(answer.text, 0);
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('还没写完的一句');
+  });
+
+  it('发送失败：框里有字就收着等重试，不覆盖人在打的字', async () => {
+    fetchMock.mockImplementationOnce(async () => failResponse('send failed: tmux 会话没起来'));
+    const onSendFailed = vi.fn();
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendStart={() => 'out-9'} onSendFailed={onSendFailed} />
+    );
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '框里的字' } });
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        onSendStart={() => 'out-9'}
+        onSendFailed={onSendFailed}
+        answer={{ text: '【answer】B · 先不发 —— 改动留在 main，不打 tag', at: 1 }}
+      />
+    );
+    await waitFor(() => expect(onSendFailed).toHaveBeenCalledWith('out-9'));
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('框里的字');
+    expect(screen.getByTestId('composer-kept').textContent).toBe(i18n.t('workbench.composer.heldForRetry'));
+  });
+});

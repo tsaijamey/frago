@@ -14,6 +14,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
+import { DEMOS, wrap } from '@/utils/__tests__/decisionDemos';
 
 /**
  * 界面上的字全部走词表了，用例断言的是中文那一份，所以先把语言切到中文。
@@ -538,5 +539,51 @@ describe('用量刻度', () => {
       ['缓存读', '51,000'],
     ]);
     expect(container.textContent ?? '').not.toContain('缓存写');
+  });
+});
+
+describe('agent 回复末尾的「要人拍板」区块', () => {
+  const say = (text: string, overrides: Partial<WorkbenchRecord> = {}) =>
+    makeRecord('agent.say', { payload: { text, model: 'claude-opus-5' }, ...overrides });
+
+  it('没有区块：照旧按 Markdown 显示', () => {
+    render(<RecordCard record={say('测试全过。')} sessionId={SID} />);
+    expect(screen.queryByTestId('decision-card')).toBeNull();
+    expect(screen.queryByTestId('decision-broken')).toBeNull();
+    expect(screen.getByText('测试全过。')).toBeTruthy();
+  });
+
+  it('区块有效：正文照常，区块换成卡片', async () => {
+    const { container } = render(
+      <RecordCard record={say(wrap('测试全过。', DEMOS['single-choice-irreversible']))} sessionId={SID} />
+    );
+    expect(await screen.findByTestId('decision-card')).toBeTruthy();
+    expect(container.textContent).toContain('测试全过。');
+    expect(container.textContent).toContain('1.4.111 要发到 PyPI 吗？');
+    // 区块原文不再以代码块露出
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
+  it('区块写坏：照原文显示代码块，下一行写原因', async () => {
+    const { container } = render(<RecordCard record={say(wrap('测试全过。', DEMOS.broken))} sessionId={SID} />);
+    const reason = await screen.findByTestId('decision-broken');
+    expect(reason.textContent).toBe(
+      '照原文显示——这个 answer-needed-by-human 区块读不了，没有画成卡片：' +
+        'type「approve-irreversible」不在 4 型之内（single-choice, multi-choice, text-answer, choice-and-text）。'
+    );
+    expect(container.querySelector('pre')?.textContent).toContain('type: approve-irreversible');
+    expect(screen.queryByTestId('decision-card')).toBeNull();
+  });
+
+  it('子 agent 回复里的区块照普通代码块显示', () => {
+    const { container } = render(
+      <RecordCard
+        record={say(wrap('查完了。', DEMOS['single-choice']), { agent_path: ['toolu_sub'] })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.queryByTestId('decision-card')).toBeNull();
+    expect(screen.queryByTestId('decision-broken')).toBeNull();
+    expect(container.querySelector('pre')?.textContent).toContain('type: single-choice');
   });
 });

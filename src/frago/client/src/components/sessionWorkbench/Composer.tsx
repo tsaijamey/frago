@@ -98,6 +98,13 @@ export interface ComposerProps {
    */
   quote?: { text: string; at: number } | null;
   /**
+   * 人在决定卡片上点出来的那一句答复，等着整句投出。
+   *
+   * 走的是跟「发送」同一条路（信封、进度、失败退回），只是不经输入框：框里人正在打的字
+   * 原样留着。`at` 与引用同理——同一句答复发两次是两件事，光比文字会把第二次吃掉。
+   */
+  answer?: { text: string; at: number } | null;
+  /**
    * 这场此刻的上下文水位（最后一道用量刻度报的提示词大小）。null = 还没读到刻度。
    *
    * 「交接到新会话」只在它到了 {@link HANDOFF_MIN_CONTEXT} 才放开：没那么长的会话换场只会
@@ -242,6 +249,7 @@ export default function Composer({
   trails = [],
   onShowInStream,
   quote = null,
+  answer = null,
   contextTokens = null,
   onHandoff,
   handingOff = false,
@@ -261,6 +269,7 @@ export default function Composer({
     error,
     canSend,
     send,
+    sendText,
     held,
   } = useSendToSession(sessionId, {
       enabled: !blocked,
@@ -339,6 +348,16 @@ export default function Composer({
     caretTo.current = next.length;
     setText(next);
   }, [quoteAt, quoteText, setText]);
+
+  // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片。
+  const answerAt = answer?.at ?? 0;
+  const answerText = answer?.text ?? '';
+  useEffect(() => {
+    if (!answerText || !answerAt) return;
+    void sendText(answerText);
+    // 只盯「点了卡片」那一刻；sendText 换了引用不是又点了一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerAt, answerText]);
 
   /**
    * 高度跟着内容走，顺带把引用刚落进来的那一次光标安顿好。
