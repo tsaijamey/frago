@@ -11,10 +11,11 @@ import RecipeForgeModal from './RecipeForgeModal';
 import RecipeFolderTile from './RecipeFolderTile';
 import FolderNameModal from './FolderNameModal';
 import { recipeTitle } from './recipeTitle';
+import { recipeCardMeta } from './recipeMeta';
 import type { RecipeItem } from '@/types/pywebview';
 import type { RecipeFolder } from '@/types/api';
 import {
-  Package, Search, X, ChevronDown, ChevronRight, LayoutGrid, List, Wand2,
+  Package, Search, X, LayoutGrid, List, Wand2,
   FolderPlus, MoreHorizontal, CheckSquare, Square,
 } from 'lucide-react';
 
@@ -39,9 +40,10 @@ interface RecipeCardProps {
 /**
  * 一张配方卡（网格）或一行（清单）。
  *
- * 不再挂分类徽章和分类图标：配方已经按「工作流 / 原子」分成两段，段标题说过一次，
- * 每张卡再说一遍就是噪音；两种图标满屏重复，也不帮人认出任何一张。字号层级倒过来
- * 的问题一并改掉——名字比描述大，眼睛先落在名字上。
+ * 网格卡三层：标题 / 两行描述 / 卡底一行「类型 运行时 #标签」。清单行同样三栏：标题 /
+ * 描述 / 同一行「类型 运行时 #标签」。标识名（下划线那串）与来源不上卡：标识名与标题
+ * 几乎逐字相同，来源在详情页里有；搜索仍匹配标识名。卡底挂文字类型而不挂图标：文件夹
+ * 展开后两类混放，那时它是唯一能区分两类的地方。
  *
  * 显示的名字优先用作者写的 `title`，没写才回落到把 `name` 里的下划线换成空格。作者
  * 写过的名字不再套 capitalize：那条规则是为「下划线换空格」那种凑出来的名字准备
@@ -58,24 +60,23 @@ function RecipeCard({
   onDragStartRecipe,
   onDropRecipes,
 }: RecipeCardProps) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [over, setOver] = useState(false);
   const named = Object.keys(recipe.title ?? {}).length > 0;
   const shownName = recipeTitle(recipe, i18n.language);
-  const techMeta = [recipe.source, recipe.runtime].filter(Boolean).join(' · ');
   const isList = view === 'list';
-  const tagLimit = isList ? 3 : 4;
-  const visibleTags = recipe.tags.slice(0, tagLimit);
-  const extraTags = recipe.tags.length - visibleTags.length;
+  const meta = recipeCardMeta(recipe, t);
 
-  const tags = visibleTags.length > 0 && (
-    <span className="rl-tags">
-      {visibleTags.map((tag) => (
+  // 顺序固定：类型 → 运行时 → 标签。整行单行截断，放不下的标签被截掉，不换行。
+  const metaLine = (
+    <span className="rl-card-meta">
+      <span>{meta.kindLabel}</span>
+      {meta.runtime && <span>{meta.runtime}</span>}
+      {meta.tags.map((tag) => (
         <span key={tag} className="rl-tag">
           {tag}
         </span>
       ))}
-      {extraTags > 0 && <span className="rl-tag-more">+{extraTags}</span>}
     </span>
   );
 
@@ -108,12 +109,9 @@ function RecipeCard({
               {selected ? <CheckSquare size={14} /> : <Square size={14} />}
             </span>
           )}
-          <span className="rl-row-name">
-            {title}
-            <span className="rl-card-id">{recipe.name}</span>
-          </span>
-          <span className="rl-row-desc">{recipe.description || recipe.name}</span>
-          {tags}
+          <span className="rl-row-name">{title}</span>
+          <span className="rl-row-desc">{recipe.description}</span>
+          {metaLine}
         </button>
         <button
           type="button"
@@ -153,12 +151,9 @@ function RecipeCard({
           </span>
         )}
         {title}
-        <span className="rl-card-id">
-          {recipe.name}
-          {techMeta && ` · ${techMeta}`}
-        </span>
-        {recipe.description && <span className="rl-card-desc">{recipe.description}</span>}
-        {tags}
+        {/* 没有描述也留两行高，同一排卡的卡底对齐。 */}
+        <span className="rl-card-desc">{recipe.description}</span>
+        {metaLine}
       </button>
       <button
         type="button"
@@ -175,36 +170,18 @@ function RecipeCard({
   );
 }
 
-interface CollapsibleSectionProps {
-  title: string;
-  count: number;
-  expanded: boolean;
-  onToggle: () => void;
-  tip: string;
-  containerClass: string;
-  children: React.ReactNode;
-}
-
-function CollapsibleSection({
-  title,
-  count,
-  expanded,
-  onToggle,
-  tip,
-  containerClass,
-  children,
-}: CollapsibleSectionProps) {
+/**
+ * 段标题：名字、计数、一句灰色说明排在同一行。Folders、Workflow、Atomic 三段同一副
+ * 样子，照原型不带折叠箭头、不能点——一共三段，收起一段省下的那点地方不值一个开关。
+ * 数量为 0 的段由调用处整段略去，这里不画空标题。
+ */
+function SectionHead({ title, count, tip }: { title: string; count: number; tip?: string }) {
   return (
-    <section className="rl-section">
-      {/* 段标题与事务页的分组标题同一副样子：名字、计数、一句灰色说明排在同一行。 */}
-      <button type="button" className="rl-section-head" onClick={onToggle} aria-expanded={expanded}>
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span className="rl-section-title">{title}</span>
-        <span className="rl-section-count">{count}</span>
-        <span className="rl-section-tip">{tip}</span>
-      </button>
-      {expanded && <div className={containerClass}>{children}</div>}
-    </section>
+    <div className="rl-section-head">
+      <span className="rl-section-title">{title}</span>
+      <span className="rl-section-count">{count}</span>
+      {tip && <span className="rl-section-tip">{tip}</span>}
+    </div>
   );
 }
 
@@ -216,8 +193,6 @@ export default function RecipeList() {
   // 两个标签页各记各的搜索词：搜索框挪到共用的工具栏里之后，切过去再切回来，
   // 各自打过的字还在，跟以前两个标签页各有一个搜索框时一样。
   const [communitySearch, setCommunitySearch] = useState('');
-  const [atomicExpanded, setAtomicExpanded] = useState(true);
-  const [workflowExpanded, setWorkflowExpanded] = useState(true);
   const [activeTab, setActiveTab] = useState<'local' | 'community'>('local');
   const [forgeOpen, setForgeOpen] = useState(false);
 
@@ -250,7 +225,8 @@ export default function RecipeList() {
     }
   };
 
-  const sectionContainerClass = viewMode === 'grid' ? 'rl-grid' : 'rl-rows';
+  // 本地网格另挂 rl-grid--local：社区页也用 rl-grid，新的列宽与间距只给本地这一页。
+  const sectionContainerClass = viewMode === 'grid' ? 'rl-grid rl-grid--local' : 'rl-rows';
 
   // 配方是在本机文件系统上加加减减的，界面开着的时候它随时会变。服务端有一条
   // `data_recipes` 的推送通道，但至今没有任何地方真的推过——所以这里自己去取。
@@ -370,9 +346,10 @@ export default function RecipeList() {
     onDropRecipes: (names: string[]) => setCreating([...names, recipe.name]),
   });
 
-  // 工具栏从左到右按层级排：来源切换（决定整页看什么）→ 搜索（在这一页里找）→
-  // 行尾的网格/清单切换（只管怎么摆，仅本地页有）。搜索框贴着来源切换左对齐，
-  // 两个标签页之间切来切去它不挪位置。和原来一样，清单为空时不摆搜索框。
+  // 工具栏一行从左到右按层级排：来源切换（决定整页看什么）→ 搜索（在这一页里找）→
+  // 撑开的空白 →「New folder」「Select」→ 行尾的网格/清单切换（只管怎么摆，仅本地页
+  // 有）。搜索框定宽、贴着来源切换左对齐，两个标签页之间切来切去它不挪位置。和原来
+  // 一样，清单为空时不摆搜索框。
   const isCommunity = activeTab === 'community';
   const showSearch = isCommunity ? communityRecipes.length > 0 : recipes.length > 0;
   const searchValue = isCommunity ? communitySearch : search;
@@ -432,6 +409,7 @@ export default function RecipeList() {
             )}
           </div>
         )}
+        <span className="rl-toolbar-grow" aria-hidden="true" />
         {/* 建文件夹的第二个入口。第一个是把一张卡拖到另一张上——那个手感好但看不
             见，第一次用的人找不到它，所以这里摆一个明摆着的。两个入口通同一张表。 */}
         {!isCommunity && recipes.length > 0 && (
@@ -554,6 +532,7 @@ export default function RecipeList() {
                       图标，直到主人亲手建第一个。搜索时也不出现：人在找东西。 */}
                   {!search.trim() && folderStore.folders.length > 0 && (
                     <section className="rl-section">
+                      <SectionHead title={t('recipes.folder.sectionTitle')} count={folderStore.folders.length} />
                       <div className="rl-folders">
                         {folderStore.folders.map((f) => (
                           <RecipeFolderTile
@@ -591,44 +570,44 @@ export default function RecipeList() {
                   )}
 
                   {workflowRecipes.length > 0 && (
-                    <CollapsibleSection
-                      title={t('recipes.workflow')}
-                      count={workflowRecipes.length}
-                      expanded={workflowExpanded}
-                      onToggle={() => setWorkflowExpanded(!workflowExpanded)}
-                      tip={t('recipes.workflowTip')}
-                      containerClass={sectionContainerClass}
-                    >
-                      {workflowRecipes.map((recipe) => (
-                        <RecipeCard
-                          key={recipe.name}
-                          recipe={recipe}
-                          view={viewMode}
-                          onClick={() => switchPage('recipe_detail', recipe.name)}
-                          {...cardProps(recipe)}
-                        />
-                      ))}
-                    </CollapsibleSection>
+                    <section className="rl-section">
+                      <SectionHead
+                        title={t('recipes.workflow')}
+                        count={workflowRecipes.length}
+                        tip={t('recipes.workflowTip')}
+                      />
+                      <div className={sectionContainerClass}>
+                        {workflowRecipes.map((recipe) => (
+                          <RecipeCard
+                            key={recipe.name}
+                            recipe={recipe}
+                            view={viewMode}
+                            onClick={() => switchPage('recipe_detail', recipe.name)}
+                            {...cardProps(recipe)}
+                          />
+                        ))}
+                      </div>
+                    </section>
                   )}
                   {atomicRecipes.length > 0 && (
-                    <CollapsibleSection
-                      title={t('recipes.atomic')}
-                      count={atomicRecipes.length}
-                      expanded={atomicExpanded}
-                      onToggle={() => setAtomicExpanded(!atomicExpanded)}
-                      tip={t('recipes.atomicTip')}
-                      containerClass={sectionContainerClass}
-                    >
-                      {atomicRecipes.map((recipe) => (
-                        <RecipeCard
-                          key={recipe.name}
-                          recipe={recipe}
-                          view={viewMode}
-                          onClick={() => switchPage('recipe_detail', recipe.name)}
-                          {...cardProps(recipe)}
-                        />
-                      ))}
-                    </CollapsibleSection>
+                    <section className="rl-section">
+                      <SectionHead
+                        title={t('recipes.atomic')}
+                        count={atomicRecipes.length}
+                        tip={t('recipes.atomicTip')}
+                      />
+                      <div className={sectionContainerClass}>
+                        {atomicRecipes.map((recipe) => (
+                          <RecipeCard
+                            key={recipe.name}
+                            recipe={recipe}
+                            view={viewMode}
+                            onClick={() => switchPage('recipe_detail', recipe.name)}
+                            {...cardProps(recipe)}
+                          />
+                        ))}
+                      </div>
+                    </section>
                   )}
                 </div>
               )}

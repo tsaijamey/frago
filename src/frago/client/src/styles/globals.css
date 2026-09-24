@@ -4324,13 +4324,31 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    独有的东西：分段标题、网格卡、清单行、社区卡的操作底栏、GitHub 提示条。
    尺度与事务页一致：左右 24px、控件 32px 高；颜色只给动作与需要留意的状态。 */
 
-/* 工具栏的层级：来源切换（最重，浮起的分段控件）→ 搜索（贴着它左对齐）→
-   行尾的网格/清单切换（最轻）。
-   搜索框不再被推到右端：右端那颗切换只在本地页出现，搜索若靠右对齐，切一次标签页
-   它就横跳一次（实测 82px）。现在它挂在来源切换后面，位置只由左边决定。 */
+/* 工具栏一行：来源切换（最重，浮起的分段控件）→ 搜索（贴着它左对齐、定宽）→ 撑开的
+   空白 →「New folder」「Select」→ 行尾的网格/清单切换（最轻）。
+   搜索框不被推到右端：右端那几颗只在本地页出现，搜索若靠右对齐，切一次标签页它就
+   横跳一次（实测 82px）。它挂在来源切换后面，位置只由左边决定。
+   窄窗口放不下时按 .td-toolbar 原有的折行规则换行，不强行一行。 */
 .tdp.rl-page .td-search {
   margin-left: 0;
-  flex: 0 1 360px;
+  flex: 0 1 210px;
+  min-width: 160px;
+}
+
+/* 照原型收紧：间距 8px、来源切换两侧 9px，1020 宽的窗口里整条工具栏才放得进一行。
+   只写在配方页下面，待办页共用的 .td-toolbar / .tdp-segmented 不动。 */
+.tdp.rl-page .td-toolbar {
+  gap: 8px;
+}
+
+.tdp.rl-page .tdp-segmented .td-filter {
+  padding: 0 9px;
+}
+
+.rl-toolbar-grow {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
 }
 
 /* 网格 / 清单切换：两颗 28×28 的方形图标按钮，外框 32px 高，与搜索框同高同基线。
@@ -4340,7 +4358,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: inline-flex;
   flex-shrink: 0;
   gap: 2px;
-  margin-left: auto;
   padding: 1px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -4382,48 +4399,27 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   padding: 16px var(--tdp-gutter) 40px;
 }
 
-/* 段标题带 6px 的悬停热区，第一段往上收回这 6px，标题字仍落在 16px 的节奏线上。 */
-.rl-section:first-child > .rl-section-head {
-  margin-top: -6px;
-}
-
 .rl-section + .rl-section {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
-/* 分段标题：折叠箭头、名字、计数、灰色说明排成一行，与事务页的分组标题同一副样子。 */
+/* 分段标题：名字、计数、灰色说明排成一行。照原型不带折叠箭头，不能点。 */
 .rl-section-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  width: calc(100% + 16px);
-  margin: 0 -8px 6px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
+  margin-bottom: 8px;
   color: var(--text-muted);
-  text-align: left;
-  cursor: pointer;
-}
-
-.rl-section-head:hover {
-  background: var(--bg-hover);
-}
-
-.rl-section-head svg {
-  flex-shrink: 0;
-  align-self: center;
 }
 
 .rl-section-title {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold, 600);
   color: var(--text-primary);
 }
 
 .rl-section-count {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4432,13 +4428,20 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-dim);
 }
 
 .rl-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
+}
+
+/* 本地配方的网格：单列最小 220px，1020 宽的窗口出 3 列。社区页仍走上面的 300px。 */
+.rl-grid--local {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
 }
 
 .rl-rows {
@@ -4566,7 +4569,52 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   opacity: 0.6;
 }
 
-/* 清单行：名字一栏定宽，描述占满中间，标签收在右端；无描边，悬停整行换底色。 */
+/* 本地配方卡：标题 / 两行描述 / 卡底「类型 运行时 #标签」，约 110px 高。
+   只写在 .rl-card-wrap 之下：社区卡也用 .rl-card，但不包 .rl-card-wrap，不受影响。 */
+.rl-page .rl-card-wrap .rl-card {
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.rl-page .rl-card-wrap .rl-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+/* 不足两行（或没有描述）也留两行高，同一排卡的卡底对齐。 */
+.rl-page .rl-card-wrap .rl-card-desc {
+  margin-top: 0;
+  min-height: calc(2 * 1.55 * var(--font-size-sm));
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+/* 卡底一行：类型 → 运行时 → 标签，单行截断，放不下的标签截掉，不换行。 */
+.rl-card-meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.rl-card-meta > span {
+  margin-right: 8px;
+}
+
+.rl-card-meta > span:last-child {
+  margin-right: 0;
+}
+
+.rl-card-meta .rl-tag {
+  color: var(--text-dim);
+}
+
+/* 清单行：名字一栏定宽，描述占满中间，「类型 运行时 #标签」收在右端；无描边，悬停整行换底色。 */
 .rl-row {
   display: grid;
   grid-template-columns: minmax(180px, 28%) minmax(0, 1fr) auto;
@@ -4602,9 +4650,8 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-secondary);
 }
 
-.rl-row .rl-tags {
-  flex-wrap: nowrap;
-  margin-top: 0;
+.rl-row .rl-card-meta {
+  max-width: 280px;
 }
 
 @media (max-width: 1100px) {
@@ -4612,7 +4659,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
     grid-template-columns: minmax(160px, 34%) minmax(0, 1fr);
   }
 
-  .rl-row .rl-tags {
+  .rl-row .rl-card-meta {
     display: none;
   }
 }
@@ -4701,15 +4748,15 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .rl-folders {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
-  padding: 0 var(--tdp-gutter);
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
 }
 
 .rl-folder {
   position: relative;
+  min-width: 0;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border-radius: 10px;
   background: var(--bg-card);
   transition: background var(--transition-fast), border-color var(--transition-fast),
     box-shadow var(--transition-fast);
@@ -4732,17 +4779,19 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   box-shadow: inset 0 0 0 2px var(--accent-primary);
 }
 
+/* 横排一张卡：左边 32px 图标方块，右边「名称 + 数量」一行、前 3 个配方名一行。 */
 .rl-folder-hit {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   width: 100%;
-  padding: 14px 10px 12px;
+  min-width: 0;
+  padding: 9px 11px;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
@@ -4752,45 +4801,54 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border-radius: var(--radius-lg);
 }
 
-/* 文件夹的方块：里面摆前四张配方的首字，空文件夹摆一个文件夹图标。 */
-.rl-folder-box {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  place-items: center;
-  gap: 3px;
-  width: 46px;
-  height: 46px;
-  padding: 5px;
-  border-radius: var(--radius-md);
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-}
-
-.rl-folder-chip {
+.rl-folder-icon {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 100%;
-  border-radius: 4px;
-  background: var(--bg-card);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold, 600);
-  line-height: 1;
+}
+
+.rl-folder-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rl-folder-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .rl-folder-name {
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium, 500);
   color: var(--text-primary);
 }
 
 .rl-folder-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-folder-peek {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
@@ -4833,7 +4891,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 /* 打开的文件夹就地展开在这一排下面，不换页。 */
 .rl-folder-open {
   margin-top: 12px;
-  padding: 12px var(--tdp-gutter) 0;
 }
 
 .rl-folder-empty {

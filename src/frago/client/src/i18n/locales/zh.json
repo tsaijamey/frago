@@ -318,6 +318,7 @@
     "show": "显示",
     "hide": "隐藏",
     "folder": {
+      "sectionTitle": "文件夹",
       "create": "新建文件夹",
       "rename": "改名",
       "remove": "删除文件夹",
