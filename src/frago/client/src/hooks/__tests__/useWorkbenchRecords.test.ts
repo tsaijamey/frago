@@ -10,8 +10,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PAGE_SIZE,
   POLL_INTERVAL_MS,
+  advanceTrails,
   queueOutcomes,
   useWorkbenchRecords,
+  type SendTrail,
   type WorkbenchRecord,
 } from '../useWorkbenchRecords';
 
@@ -857,5 +859,141 @@ describe('这场会话的编号被重排过', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── 一句话的进度 ──────────────────────────────────────────────────────
+describe('advanceTrails：一句话走到哪一步', () => {
+  const AT = 1_753_800_000_000;
+  const fresh = (text: string, over: Partial<SendTrail> = {}): SendTrail => ({
+    id: 'out-1',
+    text,
+    attachments: 0,
+    recordId: null,
+    midTurn: false,
+    steps: { on_its_way: AT },
+    ...over,
+  });
+  const r = (
+    id: string,
+    kind: WorkbenchRecord['kind'],
+    payload: Record<string, unknown>,
+    ts = AT + 1_000
+  ): WorkbenchRecord => ({
+    id,
+    session_id: SID,
+    group_id: null,
+    seq: 0,
+    ts,
+    kind,
+    agent_path: [],
+    payload,
+    raw_available: false,
+  });
+
+  it('闲着：成为用户发言 → In the session；它之后第一条 agent 动静 → Picked up', () => {
+    const [landed] = advanceTrails([fresh('ping')], [r('u', 'user.say', { text: 'ping' })]);
+    expect(landed.recordId).toBe('u');
+    expect(landed.midTurn).toBe(false);
+    expect(landed.steps.in_the_session).toBeDefined();
+    expect(landed.steps.picked_up).toBeUndefined();
+
+    const [picked] = advanceTrails(
+      [landed],
+      [r('u', 'user.say', { text: 'ping' }), r('t', 'agent.think', {}, AT + 2_000)]
+    );
+    expect(picked.steps.picked_up).toBe(AT + 2_000);
+  });
+
+  it('正忙：入队行 → Queued；并入之后的插话卡 → Folded in，并把位置换到插话卡上', () => {
+    const enqueue = r('q', 'session.state', {
+      field: 'queue-operation',
+      operation: 'enqueue',
+      content: '标高优先级',
+      queue_state: 'pending',
+    });
+    const [queued] = advanceTrails([fresh('标高优先级')], [enqueue]);
+    expect(queued.midTurn).toBe(true);
+    expect(queued.recordId).toBe('q');
+    expect(queued.steps.queued).toBeDefined();
+    expect(queued.steps.folded_in).toBeUndefined();
+
+    const card = r('c', 'context.inject', {
+      channel: 'queued_command',
+      body: '标高优先级',
+      queue_state: 'absorbed',
+    });
+    const [folded] = advanceTrails([queued], [enqueue, card]);
+    expect(folded.recordId).toBe('c');
+    expect(folded.steps.folded_in).toBeDefined();
+    // 插话那一路没有 Picked up
+    expect(folded.steps.picked_up).toBeUndefined();
+  });
+
+  it('斜杠命令不惊动模型：见到本地命令输出即答完', () => {
+    const [done] = advanceTrails(
+      [fresh('/rename 新名字')],
+      [
+        r('u', 'user.say', { text: '新名字', command: '/rename' }),
+        r('o', 'context.inject', { channel: 'local-command-output', body: 'ok' }, AT + 1_500),
+      ]
+    );
+    expect(done.steps.answered).toBe(AT + 1_500);
+  });
+
+  it('同一句话重发：上一轮那条老记录不让新进度当场落地', () => {
+    const [still] = advanceTrails([fresh('ping')], [r('old', 'user.say', { text: 'ping' }, AT - 60_000)]);
+    expect(still.steps.in_the_session).toBeUndefined();
+  });
+
+  it('答完或没发出去的不再往前推', () => {
+    const failed = fresh('ping', { steps: { on_its_way: AT, failed: AT + 1 } });
+    const out = advanceTrails([failed], [r('u', 'user.say', { text: 'ping' })]);
+    expect(out[0]).toBe(failed);
+  });
+});
+
+describe('useWorkbenchRecords 的进度', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('发出去生成一份进度；没发出去记 failed；换会话清空', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => [] })) as unknown as typeof fetch
+    );
+    const hook = renderHook(({ sid }) => useWorkbenchRecords(sid), {
+      initialProps: { sid: SID as string | null },
+    });
+    // 历史记录不生成进度：打开一场会话时一份都没有
+    expect(hook.result.current.trails).toEqual([]);
+
+    let id = '';
+    act(() => {
+      id = hook.result.current.markSent('ping');
+    });
+    expect(hook.result.current.trails).toHaveLength(1);
+    expect(hook.result.current.trails[0].steps.on_its_way).toBeDefined();
+
+    act(() => hook.result.current.clearSent(id));
+    expect(hook.result.current.trails[0].steps.failed).toBeDefined();
+
+    hook.rerender({ sid: 'another' });
+    await waitFor(() => expect(hook.result.current.trails).toEqual([]));
+  });
+
+  it('发送接口回来即答完', () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => [] })) as unknown as typeof fetch
+    );
+    const hook = renderHook(() => useWorkbenchRecords(SID));
+    let id = '';
+    act(() => {
+      id = hook.result.current.markSent('ping');
+    });
+    act(() => hook.result.current.settleSent(id));
+    expect(hook.result.current.trails[0].steps.answered).toBeDefined();
   });
 });

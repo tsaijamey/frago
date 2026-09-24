@@ -89,6 +89,120 @@ export interface OutboundMessage {
 }
 
 /**
+ * 一句话从发出到答完走过的几步。界面上同一串步骤名在三处出现：输入框上方的气泡、
+ * 记录流里那句话下面、以及决定卡片发出的答复。
+ *
+ * | 发出时 agent | 步骤链 |
+ * |---|---|
+ * | 闲着 | on_its_way › in_the_session › picked_up › answered |
+ * | 正忙（插话） | on_its_way › queued › folded_in › answered |
+ * | 发送失败 | on_its_way › failed |
+ *
+ * **只记已经发生的。** 没发生的步骤在 `steps` 里没有键，界面也就不画它——工作台的全域
+ * 禁令：不预告还没发生的步骤。
+ */
+export type SendStep =
+  | 'on_its_way'
+  | 'in_the_session'
+  | 'queued'
+  | 'picked_up'
+  | 'folded_in'
+  | 'answered'
+  | 'failed';
+
+export interface SendTrail {
+  /** 与信封同一个编号（`out-<ts>-<n>`）。 */
+  id: string;
+  text: string;
+  attachments: number;
+  /** 落进记录流后对应的那条记录；插话先是入队那一行，插话卡落盘后换成插话卡。 */
+  recordId: string | null;
+  /** 发出时 agent 正忙，它成了插话。 */
+  midTurn: boolean;
+  /** 每一步发生的毫秒时刻，只记发生过的。 */
+  steps: Partial<Record<SendStep, number>>;
+  /** 纯附件那一路认不出落地、等满上限被撤掉的。界面不再画它。 */
+  expired?: boolean;
+}
+
+/** 这份进度走完了没有：答完或没发出去都算。 */
+export function trailSettled(trail: SendTrail): boolean {
+  return trail.steps.answered !== undefined || trail.steps.failed !== undefined;
+}
+
+/**
+ * 按手头这批记录，把每份进度往前推一步（或几步）。**纯函数**，一份都没变就原样返回。
+ *
+ * 判据全取现有信号：成为用户发言即「In the session」、认出插话卡或入队行还在排即
+ * 「Queued」、插话下场变成已并入或已发出即「Folded in」、它之后出现第一条 agent 动静即
+ * 「Picked up」、见到本地命令的输出即「Answered」（斜杠命令不惊动模型）。
+ */
+export function advanceTrails(trails: SendTrail[], records: WorkbenchRecord[]): SendTrail[] {
+  if (!trails.length || !records.length) return trails;
+  let changed = false;
+  const outcomes = queueOutcomes(records);
+  const next = trails.map((trail) => {
+    if (trailSettled(trail) || trail.expired) return trail;
+    const msg: OutboundMessage = {
+      id: trail.id,
+      text: trail.text,
+      attachments: trail.attachments,
+      at: trail.steps.on_its_way ?? 0,
+      state: 'sent',
+    };
+    const steps = { ...trail.steps };
+    let recordId = trail.recordId;
+    let midTurn = trail.midTurn;
+    let landedAt: number | null = null;
+    for (const r of records) {
+      const landing = landingOf(r, msg);
+      if (!landing) continue;
+      if (landing === 'say') {
+        steps.in_the_session ??= r.ts || Date.now();
+        recordId = r.id;
+        landedAt = r.ts;
+        break;
+      }
+      // 插话：入队行或插话卡。插话卡落盘时优先认它——那才是它在对话里的位置。
+      midTurn = true;
+      steps.queued ??= r.ts || Date.now();
+      const isCard = r.kind === 'context.inject';
+      if (isCard || recordId === null) recordId = r.id;
+      const outcome = isCard
+        ? String(r.payload.queue_state ?? 'pending')
+        : outcomes.get(r.id) ?? 'pending';
+      if (outcome === 'absorbed' || outcome === 'submitted') {
+        steps.folded_in ??= Date.now();
+      }
+      landedAt ??= r.ts;
+    }
+    if (!midTurn && steps.in_the_session !== undefined && steps.picked_up === undefined) {
+      const floor = (landedAt ?? steps.in_the_session) - 1_000;
+      for (const r of records) {
+        if (r.ts < floor) continue;
+        if (AGENT_ACTIVITY.has(r.kind)) {
+          steps.picked_up = r.ts || Date.now();
+          break;
+        }
+        // 斜杠命令跑在本机，不惊动模型：命令自己打印的那段就是回执
+        if (r.kind === 'context.inject' && r.payload.channel === 'local-command-output') {
+          steps.answered = r.ts || Date.now();
+          break;
+        }
+      }
+    }
+    const same =
+      recordId === trail.recordId &&
+      midTurn === trail.midTurn &&
+      Object.keys(steps).length === Object.keys(trail.steps).length;
+    if (same) return trail;
+    changed = true;
+    return { ...trail, steps, recordId, midTurn };
+  });
+  return changed ? next : trails;
+}
+
+/**
  * 这条记录是不是那条消息的落地形态，以及落成了哪一种。
  *
  * `drained` 泛指"它已经在记录流里有自己的位置了"：成为一轮、插话卡已并入或已发出，
@@ -219,7 +333,7 @@ function landingIn(records: WorkbenchRecord[], msg: OutboundMessage): Landing | 
 }
 
 /** 这几种形态出现，就算 agent 真的开口了。用户自己那句话不算。 */
-const AGENT_ACTIVITY: ReadonlySet<RecordKind> = new Set<RecordKind>([
+export const AGENT_ACTIVITY: ReadonlySet<RecordKind> = new Set<RecordKind>([
   'agent.say',
   'agent.think',
   'tool.call',
@@ -349,6 +463,11 @@ export interface WorkbenchRecordsState {
    * 将来还会变（斜杠命令就变过一次），比对总有认不出的那天，而这一条不依赖任何形状。
    */
   settleSent: (id?: string) => void;
+  /**
+   * 本页、本次打开期间发出的每一句话走到哪一步了（见 `SendTrail`）。换会话清空；
+   * 刷新页面也就没了——进度只属于这一次打开，历史记录里的「You said」不带进度。
+   */
+  trails: SendTrail[];
 }
 
 /**
@@ -463,6 +582,7 @@ export function useWorkbenchRecords(
   // 信封编号用单调自增：同一毫秒连发两条不会撞。
   const outboundSeq = useRef(0);
   const [deliveredAt, setDeliveredAt] = useState<number | null>(null);
+  const [trails, setTrails] = useState<SendTrail[]>([]);
 
   const loadTail = useCallback(async (sid: string) => {
     if (inflightNewer.current) return;
@@ -581,6 +701,17 @@ export function useWorkbenchRecords(
     setDeliveredAt(null);
     const id = `out-${now}-${outboundSeq.current++}`;
     setOutbound((prev) => [...prev, { id, text: text.trim(), attachments, at: now, state: 'sent' }]);
+    setTrails((prev) => [
+      ...prev,
+      {
+        id,
+        text: text.trim(),
+        attachments,
+        recordId: null,
+        midTurn: false,
+        steps: { on_its_way: now },
+      },
+    ]);
     setPace((n) => n + 1);
     return id;
   }, []);
@@ -588,6 +719,14 @@ export function useWorkbenchRecords(
   const clearSent = useCallback((id?: string) => {
     fastUntil.current = 0;
     setOutbound((prev) => (id ? prev.filter((m) => m.id !== id) : []));
+    const now = Date.now();
+    setTrails((prev) =>
+      prev.map((tr) =>
+        (!id || tr.id === id) && !trailSettled(tr)
+          ? { ...tr, steps: { ...tr.steps, failed: now } }
+          : tr
+      )
+    );
     setAwaitingSince(null);
     setPace((n) => n + 1);
   }, []);
@@ -595,7 +734,20 @@ export function useWorkbenchRecords(
   const settleSent = useCallback((id?: string) => {
     if (!id) return;
     setOutbound((prev) => prev.filter((m) => m.id !== id));
+    // 接口等整轮说完才回：它一回来，这一句就答完了
+    const now = Date.now();
+    setTrails((prev) =>
+      prev.map((tr) =>
+        tr.id === id && !trailSettled(tr) ? { ...tr, steps: { ...tr.steps, answered: now } } : tr
+      )
+    );
   }, []);
+
+  // 每来一批记录，把各份进度往前推。
+  const trailCount = trails.length;
+  useEffect(() => {
+    setTrails((prev) => advanceTrails(prev, records));
+  }, [records, trailCount]);
 
   /**
    * 刚投出去那些话，在流里走到哪一档了。
@@ -640,8 +792,19 @@ export function useWorkbenchRecords(
     const timer = setTimeout(
       () => {
         const now = Date.now();
-        setOutbound((prev) =>
-          prev.filter((m) => m.state !== 'sent' || now < m.at + AWAIT_REPLY_CEILING_MS)
+        const stale = new Set(
+          outbound
+            .filter((m) => m.state === 'sent' && now >= m.at + AWAIT_REPLY_CEILING_MS)
+            .map((m) => m.id)
+        );
+        setOutbound((prev) => prev.filter((m) => !stale.has(m.id)));
+        // 认不出落地的那几句（纯附件那一路）停在 On its way 并撤掉，不假装送达
+        setTrails((prev) =>
+          prev.map((tr) =>
+            stale.has(tr.id) && tr.steps.in_the_session === undefined && tr.steps.queued === undefined
+              ? { ...tr, expired: true }
+              : tr
+          )
         );
       },
       Math.max(0, due - Date.now())
@@ -685,6 +848,7 @@ export function useWorkbenchRecords(
     setAwaitingSince(null);
     setDeliveredAt(null);
     setOutbound([]);
+    setTrails([]);
     fastUntil.current = 0;
     if (!sessionId) return;
     void loadTail(sessionId);
@@ -799,6 +963,19 @@ export function useWorkbenchRecords(
       // 这一轮说完，队列就排到头了：还挂着"已入队列"的信封该退场。那句话此刻要么
       // 已经被并进刚说完的这一轮，要么正作为下一轮开跑，两种下场都在记录流里有位置。
       setOutbound((prev) => prev.filter((m) => m.state !== 'queued'));
+      // 这一轮说完：已经进了会话的那几句都答完了。插话若是作为下一轮发出（submitted），
+      // 那一轮的收尾还会再来一次，这里只收认得出落地的
+      const now = Date.now();
+      setTrails((prev) => {
+        let changed = false;
+        const next = prev.map((tr) => {
+          if (trailSettled(tr)) return tr;
+          if (tr.steps.in_the_session === undefined && tr.steps.folded_in === undefined) return tr;
+          changed = true;
+          return { ...tr, steps: { ...tr.steps, answered: now } };
+        });
+        return changed ? next : prev;
+      });
     };
 
     const client = getWebSocketClient();
@@ -826,5 +1003,6 @@ export function useWorkbenchRecords(
     markSent,
     clearSent,
     settleSent,
+    trails,
   };
 }

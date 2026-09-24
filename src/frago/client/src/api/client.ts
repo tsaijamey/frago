@@ -123,6 +123,7 @@ import type {
   ClaudeUsageBucket,
   TmuxSessionsResponse,
   TmuxSessionsCount,
+  TmuxWaitingResponse,
   CloseTmuxSessionsResponse,
   EnvironmentResponse,
   EnvironmentUpgradeResponse,
@@ -1493,6 +1494,11 @@ export async function setTmuxCleanupThreshold(hours: number): Promise<TmuxSessio
     method: 'PUT',
     body: JSON.stringify({ cleanup_idle_hours: hours }),
   });
+}
+
+/** 哪几场停在输入框前等人——会话页「For you」每 15 秒问一次。 */
+export async function getTmuxWaiting(): Promise<TmuxWaitingResponse> {
+  return fetchApi<TmuxWaitingResponse>('/system/tmux-sessions/waiting');
 }
 
 /** 只数个数和内存——左下角那个数字每分钟问一次的就是它，不读任何记录。 */

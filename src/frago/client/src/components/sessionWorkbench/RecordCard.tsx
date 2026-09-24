@@ -201,7 +201,7 @@ export function formatClock(ts: number): string {
 }
 
 /** 单行参数预览。多行一律压成一行，长了省略——卡头不许被一条长命令顶宽。 */
-function previewArgs(args: Payload): string {
+export function previewArgs(args: Payload): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(args)) {
     if (key.startsWith('__')) continue;
@@ -228,7 +228,7 @@ const TOOL_FAMILY_LABEL_KEY: Record<string, string> = {
   other: 'workbench.record.toolFamily.other',
 };
 
-function toolIcon(family: string) {
+export function toolIcon(family: string) {
   switch (family) {
     case 'shell':
       return <Terminal size={14} />;
@@ -903,6 +903,67 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
   const quiet = p.quiet === true;
   const light = (silent || echo || quiet) && !failed && !prevented && !stderr;
   const [open, setOpen] = useState(!light);
+  // 正文与各段都空、也没出错的注入缩成一行「Hook <时机>」。一屏里它们占大半，每条一张卡
+  // 等于让人读一整屏「跑过但没说话」。收尾 hook 的名字与耗时收在展开里。
+  const empty = light && !segments.length;
+  const eventLabel = HOOK_EVENT_LABEL_KEY[event] ? t(HOOK_EVENT_LABEL_KEY[event]) : event;
+  if (empty) {
+    return (
+      <article
+        data-kind={record.kind}
+        data-group="text"
+        data-source="hook"
+        data-testid="hook-inject"
+        data-light="true"
+        data-empty="true"
+        className="min-w-0 rounded-[8px] px-3 py-0.5"
+      >
+        <header className="flex items-center gap-2 text-[11px] text-text-muted">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="inline-flex shrink-0 items-center gap-1 hover:text-text-secondary"
+          >
+            <ChevronRight
+              size={12}
+              className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+            />
+            <Zap size={12} />
+            <span>{t('workbench.record.hookLine', { event: eventLabel })}</span>
+          </button>
+          {target ? <span className="min-w-0 truncate font-mono">{target}</span> : null}
+          <Timestamp ts={record.ts} />
+          <span className="flex-1" />
+          <AgentPath path={record.agent_path} />
+        </header>
+        {open ? (
+          <div className="mt-1 min-w-0 space-y-0.5 pl-4 text-[11px] text-text-muted">
+            {infos.length ? (
+              infos.map((info, i) => (
+                <p key={i} className="flex gap-2 font-mono">
+                  <span className="min-w-0 flex-1 truncate">{str(info, 'name')}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {num(info, 'duration_ms') !== null
+                      ? t('workbench.record.hookDuration', { n: num(info, 'duration_ms') })
+                      : ''}
+                  </span>
+                </p>
+              ))
+            ) : (
+              <p className="italic">
+                {silent
+                  ? t('workbench.record.hookSilent')
+                  : echo
+                    ? t('workbench.record.hookEcho')
+                    : t('workbench.record.stopHookQuiet')}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </article>
+    );
+  }
 
   return (
     <article
@@ -1036,11 +1097,13 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
+  // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
   return (
     <TextShell
       record={record}
       icon={<CornerDownRight size={12} />}
-      label={t('workbench.record.queuedCommand')}
+      label={t('workbench.record.youSaidWhileWorking')}
+      labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
       tone={`${ACCENT_BG} ${ACCENT_RING}`}
       meta={
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
@@ -1593,7 +1656,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
       <TextShell
         record={record}
         icon={<CornerDownRight size={12} />}
-        label={t('workbench.record.stateField.queueOperation')}
+        label={t('workbench.record.youSaidWhileWorking')}
+        labelTone={`text-[11px] font-semibold ${ACCENT_TEXT}`}
         tone={`${ACCENT_BG} ${ACCENT_RING}`}
         meta={chip}
       >
@@ -1813,6 +1877,210 @@ function UsageTick({ record }: { record: WorkbenchRecord }) {
         ))}
       </dl>
     </SystemShell>
+  );
+}
+
+// ── 连续同类合并 ──────────────────────────────────────────────────────
+/** 工具框里的一行：一次调用和它的结果（按 `call_id` 配对）。 */
+export interface ToolRow {
+  call: WorkbenchRecord | null;
+  result: WorkbenchRecord | null;
+}
+
+/**
+ * 工具框里的一行：图标 · 工具名 · 参数预览 · 耗时。结果还没到写「running…」。
+ *
+ * 点一行摊开成原来的调用卡与结果卡——框只是把一串调用收紧，内容一样不少。
+ */
+function ToolRunLine({
+  row,
+  sessionId,
+  live,
+}: {
+  row: ToolRow;
+  sessionId: string;
+  /** 这一框是记录流的最后一段：结果没到说明它还在跑。不是的话只是没留下结果。 */
+  live: boolean;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const call = row.call?.payload ?? {};
+  const result = row.result?.payload ?? {};
+  const name = str(call, 'tool_name') || str(result, 'tool_name') || t('workbench.record.unnamedTool');
+  const family = str(call, 'tool_family') || 'other';
+  const preview = str(call, 'title') || previewArgs(dict(call.args));
+  const status = str(result, 'status');
+  const elapsed =
+    num(result, 'duration_ms') ??
+    (row.call && row.result && row.result.ts >= row.call.ts ? row.result.ts - row.call.ts : null);
+  const failed = status === 'error';
+  return (
+    <li className="min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-testid="tool-run-line"
+        className={`flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left hover:bg-bg-hover ${
+          failed ? ERR_BG : ''
+        }`}
+      >
+        <ChevronRight
+          size={11}
+          className={`shrink-0 text-text-dim transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="shrink-0 text-text-muted">{toolIcon(family)}</span>
+        <span className="shrink-0 font-mono text-[12px] font-semibold text-text-primary">{name}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">{preview}</span>
+        {row.result ? (
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-text-muted">
+            {elapsed !== null ? formatDuration(elapsed) : null}
+            {failed || status === 'denied' || status === 'interrupted' ? (
+              <StatusChip status={status} />
+            ) : null}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[11px] text-text-muted">
+            {live ? t('workbench.record.toolRunning') : t('workbench.record.toolNoResult')}
+          </span>
+        )}
+      </button>
+      {open ? (
+        <div className="min-w-0 space-y-1 px-3 pb-2 pt-1">
+          {row.call ? <RecordCardInner record={row.call} sessionId={sessionId} /> : null}
+          {row.result ? <RecordCardInner record={row.result} sessionId={sessionId} /> : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * 连续的工具调用并进一个框，每行一条。
+ *
+ * 调用与结果之间常夹着空正文的 hook 注入、用量刻度、空的思考——它们不打断这一框，但也
+ * 不藏起来：框底写明并进了几条，点开按原顺序摊回原卡片。
+ */
+export function ToolRun({
+  rows,
+  extras,
+  sessionId,
+  live,
+}: {
+  rows: ToolRow[];
+  /** 夹在调用之间、被一并收进框里的其余记录。 */
+  extras: WorkbenchRecord[];
+  sessionId: string;
+  live: boolean;
+}) {
+  const { t } = useTranslation();
+  const [showExtras, setShowExtras] = useState(false);
+  return (
+    <section
+      data-testid="tool-run"
+      className="min-w-0 overflow-hidden rounded-[8px] border border-border-color bg-bg-card"
+    >
+      <header className="flex items-center gap-2 border-b border-border-color px-3 py-1 text-[11px] text-text-muted">
+        <Terminal size={11} />
+        <span>{t('workbench.record.toolRunCount', { count: rows.length })}</span>
+        {rows[0]?.call || rows[0]?.result ? (
+          <Timestamp ts={(rows[0].call ?? rows[0].result)!.ts} />
+        ) : null}
+      </header>
+      <ul className="divide-y divide-border-color">
+        {rows.map((row, i) => (
+          <ToolRunLine
+            key={(row.call ?? row.result)?.id ?? i}
+            row={row}
+            sessionId={sessionId}
+            live={live}
+          />
+        ))}
+      </ul>
+      {extras.length ? (
+        <div className="border-t border-border-color">
+          <button
+            type="button"
+            onClick={() => setShowExtras((v) => !v)}
+            aria-expanded={showExtras}
+            data-testid="tool-run-extras"
+            className="flex w-full items-center gap-1 px-3 py-1 text-left text-[11px] text-text-dim hover:text-text-secondary"
+          >
+            <ChevronRight
+              size={11}
+              className={`transition-transform duration-200 ${showExtras ? 'rotate-90' : ''}`}
+            />
+            {t('workbench.record.toolRunExtras', { count: extras.length })}
+          </button>
+          {showExtras ? (
+            <div className="space-y-1 px-3 pb-2">
+              {extras.map((r) => (
+                <RecordCardInner key={r.id} record={r} sessionId={sessionId} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * 连续的系统记录压成一行：「N system records · turn 1 min 50 s」。
+ *
+ * 后半句挑这一段里最能说明问题的一项：有调用边界取这一轮耗时，否则有用量刻度取上下文。
+ * 点开摊回原卡片。报错不进这里——它是要人注意的那一档。
+ */
+export function SystemRun({
+  records,
+  sessionId,
+}: {
+  records: WorkbenchRecord[];
+  sessionId: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  let fact = '';
+  for (const r of records) {
+    if (r.kind === 'call.envelope') {
+      const d = formatDuration(num(r.payload, 'duration_ms'));
+      if (d) fact = t('workbench.record.systemRunTurn', { duration: d });
+    }
+  }
+  if (!fact) {
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const n = records[i].kind === 'usage.tick' ? num(records[i].payload, 'context_tokens') : null;
+      if (n !== null) {
+        fact = t('workbench.record.systemRunContext', { n: formatTokens(n) });
+        break;
+      }
+    }
+  }
+  return (
+    <section data-testid="system-run" className="min-w-0 px-3 py-0.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted hover:text-text-secondary"
+      >
+        <ChevronRight
+          size={11}
+          className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <Circle size={7} className="shrink-0" />
+        <span className="shrink-0">{t('workbench.record.systemRunCount', { count: records.length })}</span>
+        {fact ? <span className="min-w-0 truncate font-mono">· {fact}</span> : null}
+        <Timestamp ts={records[0]?.ts ?? 0} />
+      </button>
+      {open ? (
+        <div className="mt-1 min-w-0 space-y-1">
+          {records.map((r) => (
+            <RecordCardInner key={r.id} record={r} sessionId={sessionId} />
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

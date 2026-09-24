@@ -147,15 +147,15 @@ export function useWorkbenchLabels() {
 }
 
 /**
- * 左栏的筛选维度是**状态**，不是来源。
+ * 左栏的筛选只剩两档：「For you」与「全部」。
  *
- * 左栏最值钱的是「一眼看出每场什么情况」，按来源分组答不了这个问题——本机 1139 场
- * Claude Code 会话摆在一起，知道它们都来自 Claude Code 没有任何用。来源仍留在卡片上
- * 看得见，只是不再当筛选维度。
+ * 人来清单要知道的是哪几场有 agent 停在输入框前等他，不是每场处在哪个状态——Running /
+ * Done / Idle / Error 四档随第四轮原型一起退场。「For you」挂不挂由 `useForYou` 从终端
+ * 读，所以筛选要由调用方把那份判定交进来（`isForYou`）。
  */
-export type StatusFilter = SessionStatus | 'all';
+export type ListFilter = 'for-you' | 'all';
 
-export type StatusCounts = Record<StatusFilter, number>;
+export type ListCounts = Record<ListFilter, number>;
 
 /**
  * 时间范围是**另一个维度**，与状态四档并存而不是二选一：状态答「现在什么情况」，
@@ -181,18 +181,17 @@ export interface WorkbenchSessionsState {
   visible: WorkbenchSession[];
   loading: boolean;
   error: string | null;
-  status: StatusFilter;
-  setStatus: (value: StatusFilter) => void;
+  filter: ListFilter;
+  setFilter: (value: ListFilter) => void;
   /** 只看最近几天有过动静的。0 = 不限。 */
   days: DayRange;
   setDays: (value: DayRange) => void;
   /**
-   * 每一档各有几场，外加总数。全是已经发生的绝对数，没有分母。
+   * 两档各有几场。全是已经发生的绝对数，没有分母。
    *
-   * 计数按**时间范围之后、状态筛选之前**算：筛掉的那几档也要报出真实条数，否则点进
-   * 「出错」看到 8 场、退回「全部」又变成另一个数，人会以为漏了。
+   * 计数按**时间范围之后、档位筛选之前**算：筛掉的那一档也要报出真实条数。
    */
-  counts: StatusCounts;
+  counts: ListCounts;
   reload: () => Promise<void>;
 }
 
@@ -212,7 +211,9 @@ export async function fetchWorkbenchSessions(): Promise<WorkbenchSession[]> {
  */
 const lastSessions = pageCache<WorkbenchSession[]>();
 
-export function useWorkbenchSessions(): WorkbenchSessionsState {
+export function useWorkbenchSessions(
+  isForYou: (sessionId: string) => boolean = () => false
+): WorkbenchSessionsState {
   const [sessions, setSessionsState] = useState<WorkbenchSession[]>(() => lastSessions.get() ?? []);
   const setSessions = useCallback((next: WorkbenchSession[]) => {
     lastSessions.set(next);
@@ -220,7 +221,7 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
   }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const [filter, setFilter] = useState<ListFilter>('all');
   const [days, setDays] = useState<DayRange>(1);
 
   /**
@@ -303,17 +304,17 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
     return sessions.filter((s) => activityTs(s) >= floor);
   }, [sessions, days]);
 
-  const counts = useMemo(() => {
-    const c: StatusCounts = { all: inRange.length, running: 0, error: 0, done: 0, idle: 0 };
-    for (const s of inRange) {
-      if (s.status in c) c[s.status] += 1;
-    }
-    return c;
-  }, [inRange]);
+  const counts = useMemo<ListCounts>(
+    () => ({
+      all: inRange.length,
+      'for-you': inRange.filter((s) => isForYou(s.session_id)).length,
+    }),
+    [inRange, isForYou]
+  );
 
   const visible = useMemo(
-    () => (status === 'all' ? inRange : inRange.filter((s) => s.status === status)),
-    [inRange, status]
+    () => (filter === 'all' ? inRange : inRange.filter((s) => isForYou(s.session_id))),
+    [inRange, filter, isForYou]
   );
 
   return {
@@ -321,8 +322,8 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
     visible,
     loading,
     error,
-    status,
-    setStatus,
+    filter,
+    setFilter,
     days,
     setDays,
     counts,

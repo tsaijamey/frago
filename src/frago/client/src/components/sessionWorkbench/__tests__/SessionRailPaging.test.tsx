@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import SessionRail from '../SessionRail';
+import { TestRail } from './railTestKit';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
 
@@ -102,11 +102,11 @@ function railState(
     visible: rows,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: NOOP,
+    filter: 'all',
+    setFilter: NOOP,
     days: 0,
     setDays: NOOP,
-    counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
+    counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
     ...over,
   };
@@ -130,26 +130,26 @@ beforeEach(() => {
 
 describe('SessionRail 分批加载', () => {
   it('七百多场只先摆五十场', () => {
-    render(<SessionRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
     expect(shownCount()).toBe(50);
   });
 
   it('摆的是最前面那五十场，次序不动', () => {
-    render(<SessionRail state={railState(trunkOf(120))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(120))} selectedId={null} onSelect={NOOP} />);
     const items = screen.getAllByTestId('session-item');
     expect(items[0].textContent).toContain('main-000');
     expect(items[49].textContent).toContain('main-049');
   });
 
   it('尾巴上报得出这一刻放了多少、一共多少', () => {
-    render(<SessionRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
     const progress = screen.getByTestId('rail-page-progress');
     expect(progress.textContent).toContain('50');
     expect(progress.textContent).toContain('765');
   });
 
   it('滚到底续上下一批', () => {
-    render(<SessionRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(765))} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('scroll-to-end'));
     expect(shownCount()).toBe(100);
     fireEvent.click(screen.getByTestId('scroll-to-end'));
@@ -157,13 +157,13 @@ describe('SessionRail 分批加载', () => {
   });
 
   it('一共不到五十场时，一次摆完且不报进度', () => {
-    render(<SessionRail state={railState(trunkOf(12))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(12))} selectedId={null} onSelect={NOOP} />);
     expect(shownCount()).toBe(12);
     expect(screen.queryByTestId('rail-page-progress')).toBeNull();
   });
 
   it('全部摆完之后进度那一行自己收掉', () => {
-    render(<SessionRail state={railState(trunkOf(60))} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(trunkOf(60))} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('rail-page-progress')).toBeTruthy();
     fireEvent.click(screen.getByTestId('scroll-to-end'));
     expect(shownCount()).toBe(60);
@@ -173,12 +173,12 @@ describe('SessionRail 分批加载', () => {
   it('换一个筛选档就回到第一批——那几页是上一批会话的进度', () => {
     const rows = trunkOf(765);
     const { rerender } = render(
-      <SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
     );
     fireEvent.click(screen.getByTestId('scroll-to-end'));
     expect(shownCount()).toBe(100);
     rerender(
-      <SessionRail state={railState(rows, { status: 'done' })} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState(rows, { filter: 'for-you' })} selectedId={null} onSelect={NOOP} />
     );
     expect(shownCount()).toBe(50);
   });
@@ -186,7 +186,7 @@ describe('SessionRail 分批加载', () => {
   it('置顶那几场不受这一套管，排在第几都摆得出来', () => {
     const rows = trunkOf(765);
     pins.pinned = ['main-700'];
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const titles = screen.getAllByTestId('session-item').map((el) => el.textContent ?? '');
     expect(titles.some((title) => title.includes('main-700'))).toBe(true);
   });
@@ -201,12 +201,12 @@ describe('SessionRail 分批加载与末尾那一区', () => {
   ];
 
   it('折着的时候一条都不占名额，主干照样先摆五十场', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(shownCount()).toBe(50);
   });
 
   it('点开那一区就看得见里面的会话，不是一个空标题', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('workers-header'));
     // 主干 60 场此时也一并摆开：名额提到了主干之后再加一批。
     expect(shownCount()).toBe(70);

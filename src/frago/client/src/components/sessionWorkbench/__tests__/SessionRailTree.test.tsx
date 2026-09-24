@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import SessionRail from '../SessionRail';
+import { TestRail } from './railTestKit';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
 
@@ -89,11 +89,11 @@ function railState(
     visible: rows,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: NOOP,
+    filter: 'all',
+    setFilter: NOOP,
     days: 0,
     setDays: NOOP,
-    counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
+    counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
     ...over,
   };
@@ -117,13 +117,13 @@ const FAMILY = [
 
 describe('SessionRail 两层清单', () => {
   it('派出去的 worker 默认不占主干', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getAllByTestId('session-item')).toHaveLength(1);
     expect(shownTitles()[0]).toContain(BOSS);
   });
 
   it('派活那一行长成一叠纸，不在行里塞数字', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     // 折着的时候是一叠：卡片本身标着"底下压着东西"，条数留给展开后那几行去回答——
     // 行里再塞一个数字，只会跟旁边那两颗图标挤成一排看不出所以然。
     expect(screen.getByTestId('session-item').getAttribute('data-stacked')).toBe('true');
@@ -131,18 +131,18 @@ describe('SessionRail 两层清单', () => {
   });
 
   it('展开之后那一叠就摊平了，不再画成一叠', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('toggle-workers'));
     expect(screen.getAllByTestId('session-item')[0].getAttribute('data-stacked')).toBeNull();
   });
 
   it('条数仍报得出来，只是改用提示文字', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('2');
   });
 
   it('点开才露出来，且标成从属', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('toggle-workers'));
     const items = screen.getAllByTestId('session-item');
     expect(items).toHaveLength(3);
@@ -155,13 +155,13 @@ describe('SessionRail 两层清单', () => {
 
   it('点展开钮不会顺手把这场会话选中', () => {
     const onSelect = vi.fn();
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={onSelect} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={onSelect} />);
     fireEvent.click(screen.getByTestId('toggle-workers'));
     expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('再点一下收回去', () => {
-    render(<SessionRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('toggle-workers'));
     fireEvent.click(screen.getByTestId('toggle-workers'));
     expect(screen.getAllByTestId('session-item')).toHaveLength(1);
@@ -169,7 +169,7 @@ describe('SessionRail 两层清单', () => {
 
   it('没派过 worker 的那几场不长展开钮', () => {
     render(
-      <SessionRail state={railState([session({ session_id: BOSS })])} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState([session({ session_id: BOSS })])} selectedId={null} onSelect={NOOP} />
     );
     expect(screen.queryByTestId('toggle-workers')).toBeNull();
   });
@@ -182,20 +182,20 @@ describe('SessionRail 认不出谁派的那些 worker', () => {
   ];
 
   it('单独成一区，默认折着', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('workers-header').textContent).toContain('不知道谁派的 worker');
     expect(shownTitles()).toHaveLength(1);
   });
 
   it('点标题才展开', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('workers-header'));
     expect(shownTitles()).toHaveLength(2);
   });
 
   it('一个都没有时连标题都不长', () => {
     render(
-      <SessionRail state={railState([session({ session_id: BOSS })])} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState([session({ session_id: BOSS })])} selectedId={null} onSelect={NOOP} />
     );
     expect(screen.queryByTestId('workers-header')).toBeNull();
   });
@@ -205,7 +205,7 @@ describe('SessionRail 认不出谁派的那些 worker', () => {
     const state = railState(FAMILY, {
       visible: FAMILY.filter((s) => s.session_id !== BOSS),
     });
-    render(<SessionRail state={state} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('workers-header'));
     expect(screen.getAllByTestId('session-item')).toHaveLength(2);
   });

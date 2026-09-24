@@ -75,10 +75,10 @@ async function loaded() {
 }
 
 describe('useWorkbenchSessions', () => {
-  it('默认只看最近 1 天、状态不限', async () => {
+  it('默认只看最近 1 天、档位是全部', async () => {
     const result = await loaded();
     expect(result.current.days).toBe(1);
-    expect(result.current.status).toBe('all');
+    expect(result.current.filter).toBe('all');
     expect(result.current.visible).toHaveLength(1);
     expect(result.current.counts.all).toBe(1);
 
@@ -88,7 +88,7 @@ describe('useWorkbenchSessions', () => {
 
   it('时间范围按最后活动时刻收窄，计数跟着一起收', async () => {
     const result = await loaded();
-    act(() => result.current.setStatus('all'));
+    act(() => result.current.setFilter('all'));
 
     act(() => result.current.setDays(1));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['today']);
@@ -96,18 +96,20 @@ describe('useWorkbenchSessions', () => {
 
     act(() => result.current.setDays(7));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['today', 'three-days']);
-    expect(result.current.counts.error).toBe(1);
+    expect(result.current.counts.all).toBe(2);
   });
 
-  it('时间范围与状态是两个维度，可以同时生效', async () => {
-    const result = await loaded();
+  it('For you 档只留判定为 For you 的那几场，计数在档位之前算完', async () => {
+    // 判定由页面交进来（它来自终端，不在这份清单里）
+    const hook = renderHook(() => useWorkbenchSessions((id) => id === 'three-days'));
+    await waitFor(() => expect(hook.result.current.sessions).toHaveLength(3));
+    const result = hook.result;
 
     act(() => result.current.setDays(7));
-    act(() => result.current.setStatus('error'));
+    act(() => result.current.setFilter('for-you'));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['three-days']);
-    // 计数在状态之前算完，所以点进「出错」之后别档的数还是原来那些。
     expect(result.current.counts.all).toBe(2);
-    expect(result.current.counts.done).toBe(1);
+    expect(result.current.counts['for-you']).toBe(1);
   });
 });
 
@@ -182,7 +184,7 @@ describe('排序与筛选用的时刻', () => {
     const hook = renderHook(() => useWorkbenchSessions());
     await waitFor(() => expect(hook.result.current.sessions).toHaveLength(2));
 
-    act(() => hook.result.current.setStatus('all'));
+    act(() => hook.result.current.setFilter('all'));
     act(() => hook.result.current.setDays(7));
 
     expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['really-talked']);

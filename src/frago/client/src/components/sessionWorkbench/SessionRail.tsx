@@ -1,55 +1,35 @@
 /**
- * SessionRail — 左栏：新建会话、搜索、时间范围、状态筛选、会话清单、底部汇总。
+ * SessionRail — 左栏：搜索与新建、时间范围、For you / 全部、会话清单、底部汇总。
  *
- * 三家（Claude Code / opencode / codex）的会话在核心数据层就合并排好了，这里不重排。
+ * 三家（Claude Code / opencode / codex）的会话在核心数据层就合并排好了，这里不重排时间序。
  *
- * **清单是两层的：主干是主会话，frago 派出去的 worker 折在派活的那一场下面。** 本机两千多
- * 场会话里一千五百场是 worker，摊平在同一列里，人找自己刚才谈的那一场要一直往下翻。判据
- * 全在服务端（每张卡带着「谁开的」与「谁派的活」两个字段），这里只负责摆位置：派活的那场
- * 也在清单里就折进去，认不出出处的收进末尾那一区，其余留在主干。
+ * **清单只回答一个问题：哪几场要我来读、来接着说。** 每一条要么挂「For you」（有 agent
+ * 停在输入框前等你，判据见 `useForYou`），要么什么状态都不挂。Running / Done / Idle /
+ * Error 这些状态词、来源字样、摘要预览都已退场——人来清单不是来看每场处在哪个状态的。
  *
- * **筛选是两个维度，不是一个。** 状态答「现在什么情况」，时间范围答「哪一段时间的」，
- * 两者并存、互不替代。按来源筛的那一维不在这里——一千多场 Claude Code 会话摆在一起，
- * 知道它们都来自 Claude Code 没有任何用；来源仍在每张卡上看得见，改由底部汇总报两家各几场。
+ * **分区顺序**：Pinned（组内 For you 在前）→ For you（等得最久的在上）→ Everything else
+ * （按时间）→ Workers with no parent session（默认折起）。worker 仍按派活的那场折在它下面。
+ * 按标签分组（含 AI 分组）随第三轮原型退场：Everything else 里只按时间排。
  *
- * **搜索不筛这张清单。** 顶上那一整行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗
- * （见 `SessionSearchPalette`），结果只摆在浮窗里。清单答的是「现在什么情况」，被一句
- * 搜索词筛过之后它既不是全部、也不像搜索结果。
+ * **搜索不筛这张清单。** 顶上那一行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗。
  *
- * **状态与摘要一个字都不在这里推导。** 服务端已经判完四档、填好两格摘要，界面照着显示。
- * 摆两处判据迟早各走各的，那时中栏和左栏会对同一场会话说两种话。
+ * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶的
+ * 次序，不跟时间范围与档位走。整组一块略浅的底加一圈发丝描边——窗口化列表里整组不是一个
+ * 节点，所以跟 worker 框一样拆成头、中、尾三段画。
  *
- * **选中态不用左侧竖条。** 整行换成品牌绿淡底、标题转品牌绿。单边竖条是肌肉记忆，
- * 不是设计决策。绿环后来也去掉了：淡底加标题转绿已经足够把那一行从一列灰字里分出来。
+ * **清单打开时停在顶部。** 选中那条不在视野里时，筛选区下面摆一行「Current session is
+ * below ↓」，点一下滚过去；行尾只跟 For you 或 Sending。
  *
- * **颜色一律走 CSS 变量。** 明暗两套主题各有一份品牌绿，写死色值会让其中一套失真。
- *
- * 底部汇总只报已经发生的绝对数：共几场、两家各几场。没有分母，也不该有。
- *
- * **列表走窗口化渲染。** 全量会话可能上千场，用 Virtuoso 只渲染视口内可见的卡片。
- *
- * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶
- * 的次序而不是活动时刻，数量不设上限，整片可以折起来。它**不跟状态与时间范围走**——那
- * 两道答的是「翻哪一段、翻哪一档」，而置顶答的是「这几场我随时要回来」，点一下「7 天」
- * 就让人挑出来的那几场消失，是把筛选的语义套到了一个不该被筛的地方。
- *
- * 一场都没置顶时不长分区标题，整片仍是从前那个单列清单——空着的分区标题只是噪音。
- *
- * **分组把主干按主题拆成几区。** 标签与每个标签下的会话编号存在服务端（见
- * `useSessionGroups`）。一个标签都没有时不长任何分区标题，清单还是从前那样。有了标签，
- * 主干拆成「未分组」加各标签几区：未分组排最前——新开的会话都落在这，人一眼要看见它们；
- * 各标签按组里最近一场的活动时刻排，正在推进的主题在上面。各标签默认折起，折着时标题上
- * 的数就是全部线索。置顶的那几场留在置顶区、worker 仍折在派活的那场下面，都不进分区。
- *
- * **分区标题是列表里的普通一行，不是窗口化列表的 group header。** group header 的位置要
- * 等列表量完每一行的高度才算得出来，量完之前那两行标题一个都不在页面上——真实浏览器里
- * 撞见过整片清单已经摆好、标题还没出现。标题上坐着折叠开关，它不该等任何东西。
+ * **列表走窗口化渲染。** 全量会话可能上千场，用 Virtuoso 只渲染视口内可见的卡片。分区标题
+ * 是列表里的普通一行，不是 group header——后者要等量完每一行的高度才摆得出来。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -58,81 +38,49 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Sparkles,
-  Trash2,
   X,
 } from 'lucide-react';
 import { useAppStore, useUIStore } from '@/stores/appStore';
 import { modKey } from '@/hooks/usePlatform';
-import Modal from '@/components/ui/Modal';
-import SessionItem, { resumeCommand } from './SessionItem';
+import { closeTmuxSessions } from '@/api';
+import SessionItem, { ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
-import GroupPicker from './GroupPicker';
 import { useSessionPins } from '@/hooks/useSessionPins';
-import { UNGROUPED, useSessionGroups, type GroupTag } from '@/hooks/useSessionGroups';
-import { useSessionViews } from '@/hooks/useSessionViews';
-import { LiveBorder, LiveRing } from '@/components/ui/LiveEdge';
+import type { SessionViewsState } from '@/hooks/useSessionViews';
+import type { ForYouState } from '@/hooks/useForYou';
+import { LiveBorder } from '@/components/ui/LiveEdge';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
-  activityTs,
   DAY_OPTIONS,
-  STATUS_LABEL_KEY,
   type DayRange,
-  type StatusFilter,
+  type ListFilter,
   type WorkbenchSession,
   type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
 
-/**
- * 品牌绿承担选中、当前、活跃。三处共用一套，别处不许再造。
- *
- * **筛选那两行不在这三处之内。** 时间范围与状态是页面自己的操作面，不是数据。
- * 五个筛选档同时用品牌绿点亮，会让页面上常年挂着两块绿——真正需要被看见的
- * 「哪一场会话被选中了」「哪一场在跑」反而没有地方可去。所以选中的筛选档换成
- * 中性填充加一档字重，颜色留给数据。
- */
-const ACCENT_TEXT = 'text-accent-primary';
-
-/** 筛选档选中态：中性填充 + 字重。整块换底，不靠任何单边色条。 */
+/** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
 const CHIP_ON = 'bg-bg-active text-text-primary font-medium';
 const CHIP_OFF = 'text-text-muted hover:bg-bg-hover hover:text-text-secondary';
 
-/** 在跑、已完成、出错，加一个全部。停着那一档不单列，归在「全部」里看。 */
-const FILTERS: StatusFilter[] = ['running', 'done', 'error', 'all'];
+/** 只剩两档：For you 与全部。 */
+const FILTERS: ListFilter[] = ['for-you', 'all'];
+
+const FILTER_LABEL_KEY: Record<ListFilter, string> = {
+  'for-you': 'workbench.forYou.label',
+  all: 'workbench.rail.filterAll',
+};
 
 /**
  * 一次往清单里放多少场。滚到底再放下一批。
  *
- * **窗口化渲染解决的是"画多少个节点"，不是"这条清单有多长"。** 时间范围默认不限，本机
- * 七百多场会话一次全摆进去，滚动条被压成一道几乎没有长度的细缝——人拖一下就滑过几百场，
- * 想回到刚才看的位置只能重新找。把清单切成一批一批之后，滚动条的长度重新与"我看过多少"
- * 对得上，而不是与"这台机器上一共存过多少场"对得上。
- *
- * 五十场是一屏半到两屏，滚到底那一下续上下一批，人不必去点任何东西。
+ * **窗口化渲染解决的是"画多少个节点"，不是"这条清单有多长"。** 七百多场会话一次全摆进去，
+ * 滚动条被压成一道细缝；切成一批一批之后，滚动条的长度重新与"我看过多少"对得上。
  */
 const PAGE_SIZE = 50;
 
-/** 筛选档的**词表键**。取字在渲染时做，换语言这一行跟着变。 */
-const FILTER_LABEL_KEY: Record<StatusFilter, string> = {
-  all: 'workbench.rail.filterAll',
-  ...STATUS_LABEL_KEY,
-};
-
-/** 时间范围：三档加不限。0 排在最后，与状态那一行的「全部」对齐。 */
+/** 时间范围：三档加不限。 */
 const DAY_FILTERS: DayRange[] = [...DAY_OPTIONS, 0];
-
-/**
- * 每一档点的颜色。与清单里那份保持一致（见 SessionItem 的同名表）：只有在跑与出错
- * 带颜色，已完成与停着用两级灰。图例与清单说的必须是同一套，否则人按图例去清单里找
- * 蓝点，会一个都找不到。
- */
-const STATUS_DOT: Record<string, string> = {
-  running: 'bg-accent-primary',
-  error: 'bg-accent-error',
-  done: 'bg-text-secondary',
-  idle: 'bg-text-dim',
-};
 
 /**
  * 列表里的一行：分区标题，或一张会话卡。
@@ -142,22 +90,11 @@ const STATUS_DOT: Record<string, string> = {
  */
 type RailRow =
   | { kind: 'pinned-header' }
-  | { kind: 'rest-header' }
+  | { kind: 'for-you-header'; count: number; pinnedAbove: number }
+  | { kind: 'rest-header'; count: number }
   | { kind: 'workers-header' }
-  /** 一个分区的标题。`tag` 为 null 是「未分组」那一区。 */
-  | {
-      kind: 'group-header';
-      key: string;
-      tag: GroupTag | null;
-      count: number;
-      open: boolean;
-      /** 这一区里有你还没回去看过的新回复。 */
-      unread: boolean;
-      /** 这一区有一场此刻开在 tmux 里。 */
-      inTmux: boolean;
-    }
-  /** 这一区这一批没放完，还剩几场。 */
-  | { kind: 'section-more'; key: string; remaining: number }
+  /** 置顶组的收尾：组是一块整的底，末一行要把框收上。 */
+  | { kind: 'pinned-tail' }
   | {
       kind: 'session';
       session: WorkbenchSession;
@@ -165,6 +102,8 @@ type RailRow =
       workerCount?: number;
       workersExpanded?: boolean;
       groupPos?: GroupPos;
+      /** 在置顶那一块里。 */
+      inPinned?: boolean;
     };
 
 /**
@@ -200,6 +139,12 @@ export interface SessionRailProps {
    * 那边的收起按钮他够不着，而没起来的卡不会自己消失。
    */
   onDismissLaunch?: () => void;
+  /** 上次点开各场的时刻与「开在 tmux 里」。页面那一层持有，For you 判「看过没」也用它。 */
+  views: SessionViewsState;
+  /** 哪几场挂 For you（页面那一层持有，页头也要读）。 */
+  forYou: ForYouState;
+  /** 本地刚发出一句、还在路上的那一场。 */
+  sendingId?: string | null;
 }
 
 export default function SessionRail({
@@ -209,29 +154,16 @@ export default function SessionRail({
   launch = null,
   onCreated,
   onDismissLaunch,
+  views,
+  forYou,
+  sendingId = null,
 }: SessionRailProps) {
-  const {
-    sessions,
-    visible,
-    counts,
-    loading,
-    error,
-    status,
-    setStatus,
-    days,
-    setDays,
-    reload,
-  } = state;
+  const { sessions, visible, counts, loading, error, filter, setFilter, days, setDays, reload } =
+    state;
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const openSearch = useUIStore((s) => s.setSessionSearchOpen);
   const pins = useSessionPins();
-  const groups = useSessionGroups();
-  const views = useSessionViews();
-  /** 「放进分组」那一小块开在哪一场、按钮在屏幕上的哪。 */
-  const [picker, setPicker] = useState<{ session: WorkbenchSession; rect: DOMRect } | null>(null);
-  /** 等人确认要删的那个标签。 */
-  const [deleting, setDeleting] = useState<GroupTag | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   /** 哪几场把自己派出去的 worker 展开着。默认一场都不展开——清单的主干是主会话。 */
@@ -265,10 +197,15 @@ export default function SessionRail({
   const pinnedRows = useMemo(() => {
     if (!pins.pinned.length) return [];
     const rank = new Map(pins.pinned.map((id, i) => [id, i]));
+    // 组内 For you 在前；同一档里保持置顶的次序
+    const waiting = (s: WorkbenchSession) => (forYou.infoOf(s.session_id) ? 0 : 1);
     return sessions
       .filter((s) => rank.has(s.session_id))
-      .sort((a, b) => rank.get(a.session_id)! - rank.get(b.session_id)!);
-  }, [sessions, pins.pinned]);
+      .sort(
+        (a, b) =>
+          waiting(a) - waiting(b) || rank.get(a.session_id)! - rank.get(b.session_id)!
+      );
+  }, [sessions, pins.pinned, forYou]);
 
   /**
    * 把那一列会话摆成两层：主干是主会话，frago 派出去的 worker 折在派活的那一场下面。
@@ -313,91 +250,54 @@ export default function SessionRail({
   }, [visible, pins]);
 
   /**
-   * 主干按分组拆成几区。一个标签都没有时为空，清单照从前那样摆。
-   *
-   * 「未分组」排最前：新开的会话都落在这，人一眼要看见它们。各标签按组里最近一场的活动
-   * 时刻排——主干本来就按活动时刻倒序，每组第一场就是最近那场——正在推进的主题在上面；
-   * 一场都没有的组排最后，照建的次序。
-   *
-   * 状态与时间范围不藏标题——左栏默认就停在「在跑、1 天」，按它藏的话一开页分组全不见了；
-   * 标题上的数跟着筛选走，人照样看得出这一档里哪几组有东西。
+   * 主干拆成两区：For you（等得最久的在上）与 Everything else（按时间，服务端排好的序）。
    */
-  const grouping = groups.tags.length > 0;
-  const { tags: groupTags, groupOf } = groups;
-  const sections = useMemo(() => {
-    if (!grouping) return [];
-    const known = new Set(groupTags.map((tag) => tag.id));
-    const buckets = new Map<string, WorkbenchSession[]>();
-    const ungrouped: WorkbenchSession[] = [];
-    for (const session of trunkRows) {
-      const tagId = groupOf(session.session_id);
-      if (tagId && known.has(tagId)) {
-        const bucket = buckets.get(tagId);
-        if (bucket) bucket.push(session);
-        else buckets.set(tagId, [session]);
-      } else {
-        ungrouped.push(session);
-      }
+  const { forYouRows, restRows } = useMemo(() => {
+    const waiting: WorkbenchSession[] = [];
+    const rest: WorkbenchSession[] = [];
+    for (const s of trunkRows) {
+      if (forYou.infoOf(s.session_id)) waiting.push(s);
+      else rest.push(s);
     }
-    const latest = (list: WorkbenchSession[]) => (list.length ? activityTs(list[0]) : -1);
-    const tagged = groupTags
-      .map((tag) => ({ key: tag.id, tag: tag as GroupTag | null, sessions: buckets.get(tag.id) ?? [] }))
-      .sort((a, b) => latest(b.sessions) - latest(a.sessions));
-    return [{ key: UNGROUPED, tag: null as GroupTag | null, sessions: ungrouped }, ...tagged].filter(
-      (section) => section.sessions.length > 0 || section.tag !== null
+    waiting.sort(
+      (a, b) =>
+        (forYou.infoOf(a.session_id)?.waitingSince ?? 0) -
+        (forYou.infoOf(b.session_id)?.waitingSince ?? 0)
     );
-  }, [grouping, groupTags, groupOf, trunkRows]);
-
-  /** 这一区摊没摊开。 */
-  const { isCollapsed } = groups;
-  const sectionOpen = useCallback((key: string) => !isCollapsed(key), [isCollapsed]);
+    return { forYouRows: waiting, restRows: rest };
+  }, [trunkRows, forYou]);
+  /** 置顶里也挂着 For you 的有几场——For you 组标题右端注明「+ N in Pinned above」。 */
+  const pinnedForYou = useMemo(
+    () => pinnedRows.filter((s) => forYou.infoOf(s.session_id)).length,
+    [pinnedRows, forYou]
+  );
 
   /**
-   * 这一批清单放到哪儿了。
-   *
-   * **预算先喂主干，主干摆完才轮到末尾那一区。** 那一区默认折着，折着的时候一条都不渲染，
-   * 也就不该占掉这一批的名额——否则人还没看见任何 worker，主干却已经被截断了。
-   *
-   * 换一个筛选档，清单换成了另一批会话，这时候还停在第三页是答非所问：
-   * 那三页是上一批的进度。所以那两样一变就回到第一页（见下面的重置）。置顶不在此列——
-   * 置顶区不受分页管，它本来就是人自己挑出来的几场，摆在最上面。
+   * 这一批清单放到哪儿了。预算只喂 Everything else：For you 那几场本来就不多，而且是人
+   * 来这一页最要看的，不该被截在「下一批」里。末尾那一区默认折着，折着不占名额。
    */
   const orphansVisible = orphansOpen;
-  /**
-   * 主干里这一刻摊开着的那几场。分了组就只算摊开的那几区——折着的区一场都不渲染，
-   * 不该占掉这一批的名额。
-   */
-  const openTrunk = useMemo(
-    () =>
-      grouping ? sections.flatMap((s) => (sectionOpen(s.key) ? s.sessions : [])) : trunkRows,
-    [grouping, sections, sectionOpen, trunkRows]
-  );
-  const pagedTrunk = useMemo(() => openTrunk.slice(0, shown), [openTrunk, shown]);
+  const pagedRest = useMemo(() => restRows.slice(0, shown), [restRows, shown]);
   const pagedOrphans = useMemo(
-    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - openTrunk.length)) : []),
-    [orphansVisible, orphanRows, shown, openTrunk.length]
+    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - restRows.length)) : []),
+    [orphansVisible, orphanRows, shown, restRows.length]
   );
-  /** 这一刻还能往下放多少场，与已经放了多少场。底下那行进度报的就是这两个数。 */
-  const loadable = openTrunk.length + (orphansVisible ? orphanRows.length : 0);
-  const loaded = pagedTrunk.length + pagedOrphans.length;
+  const loadable = restRows.length + (orphansVisible ? orphanRows.length : 0);
+  const loaded = pagedRest.length + pagedOrphans.length;
   const hasMore = loaded < loadable;
 
   useEffect(() => {
     setShown(PAGE_SIZE);
-  }, [status, days]);
+  }, [filter, days]);
 
   /**
    * 摆进列表的每一行：分区标题与会话卡走同一条队。
    *
-   * 分区标题做成**普通一行**而不是窗口化列表的 group header：group header 的位置要等
-   * 列表量完每一行的高度才算得出来，量完之前那两行标题一个都不在页面上——真实浏览器里
-   * 就撞见过整片清单已经摆好、标题还没出现。标题是折叠开关所在，它不该等任何东西。
-   *
-   * 一场都没置顶时连标题都不长，整片就是从前那个单列清单——空着的分区标题只是噪音。
-   * 末尾那一区同理：没有认不出出处的 worker 就不长那行标题。
+   * 一场都没置顶、也没有 For you 时不长任何分区标题，整片就是一个单列清单——空着的分区
+   * 标题只是噪音。末尾那一区同理：没有认不出出处的 worker 就不长那行标题。
    */
   const rows = useMemo<RailRow[]>(() => {
-    const trunkWithKids = (session: WorkbenchSession): RailRow[] => {
+    const trunkWithKids = (session: WorkbenchSession, inPinned = false): RailRow[] => {
       const kids = childrenOf.get(session.session_id) ?? [];
       const expanded = expandedWorkers.has(session.session_id);
       const head: RailRow = {
@@ -405,6 +305,7 @@ export default function SessionRail({
         session,
         workerCount: kids.length,
         workersExpanded: expanded,
+        inPinned,
       };
       if (!kids.length || !expanded) return [head];
       // 展开之后这一组被一个框圈起来：主会话那行画上半框，子会话画两侧，末一行收底。
@@ -414,81 +315,111 @@ export default function SessionRail({
           kind: 'session' as const,
           session: kid,
           nested: true,
+          inPinned,
           groupPos: (i === kids.length - 1 ? 'tail' : 'mid') as GroupPos,
         })),
       ];
     };
 
-    let body: RailRow[];
-    if (!grouping) {
-      body = pagedTrunk.flatMap(trunkWithKids);
-    } else {
-      // 名额按分区的先后依次用：前一区放完才轮到下一区，与不分组时"一批一批往下放"是同一件事。
-      let budget = shown;
-      body = [];
-      for (const section of sections) {
-        const open = sectionOpen(section.key);
-        body.push({
-          kind: 'group-header',
-          key: section.key,
-          tag: section.tag,
-          count: section.sessions.length,
-          open,
-          // 折起来的一区，里面的卡一张都不在页面上，这两件事只能由标题替它们说。
-          unread: section.sessions.some(views.isUnread),
-          inTmux: section.sessions.some(views.isInTmux),
-        });
-        if (!open) continue;
-        const take = section.sessions.slice(0, Math.max(0, budget));
-        budget -= take.length;
-        body.push(...take.flatMap(trunkWithKids));
-        // 这一区没放完就说一声还剩几场：它下面紧跟着别的分区标题，不说的话人会以为
-        // 这一区就这么多。
-        if (take.length < section.sessions.length) {
-          body.push({
-            kind: 'section-more',
-            key: section.key,
-            remaining: section.sessions.length - take.length,
-          });
-        }
-      }
+    const out: RailRow[] = [];
+    if (pins.pinned.length) {
+      out.push({ kind: 'pinned-header' });
+      if (!pins.collapsed) out.push(...pinnedRows.flatMap((s) => trunkWithKids(s, true)));
+      out.push({ kind: 'pinned-tail' });
     }
-    const tail: RailRow[] = orphanRows.length
-      ? [
-          { kind: 'workers-header' as const },
-          ...pagedOrphans.map((session) => ({
-            kind: 'session' as const,
-            session,
-            nested: true,
-          })),
-        ]
-      : [];
-
-    if (!pins.pinned.length) return [...body, ...tail];
-    return [
-      { kind: 'pinned-header' as const },
-      // 置顶的那几场同样带着自己那一叠：置顶只改"摆在哪儿"，不改"它底下有没有东西"。
-      ...(pins.collapsed ? [] : pinnedRows.flatMap(trunkWithKids)),
-      // 分了组的话下面紧跟着各分区标题，再长一行「其余」是多说一遍。
-      ...(grouping ? [] : [{ kind: 'rest-header' as const }]),
-      ...body,
-      ...tail,
-    ];
+    const sectioned = pins.pinned.length > 0 || forYouRows.length > 0;
+    if (forYouRows.length) {
+      out.push({ kind: 'for-you-header', count: forYouRows.length, pinnedAbove: pinnedForYou });
+      out.push(...forYouRows.flatMap((s) => trunkWithKids(s)));
+    }
+    if (sectioned && pagedRest.length) out.push({ kind: 'rest-header', count: restRows.length });
+    out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
+    if (orphanRows.length) {
+      out.push({ kind: 'workers-header' });
+      out.push(
+        ...pagedOrphans.map((session) => ({ kind: 'session' as const, session, nested: true }))
+      );
+    }
+    return out;
   }, [
     pins.pinned.length,
     pins.collapsed,
     pinnedRows,
-    pagedTrunk,
+    forYouRows,
+    pinnedForYou,
+    pagedRest,
+    restRows.length,
     childrenOf,
     orphanRows.length,
     pagedOrphans,
     expandedWorkers,
-    grouping,
-    sections,
-    sectionOpen,
-    shown,
-    views,
   ]);
+
+  /**
+   * 选中那一条在这张清单里排第几行，以及它此刻在不在视野里。
+   *
+   * 不在视野里就在筛选区下面摆一行「Current session is below ↓」。选中那条在折起的置顶组
+   * 里时同样摆：点一下先展开置顶组，再滚过去。
+   */
+  const virtuoso = useRef<VirtuosoHandle>(null);
+  const [range, setRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const selectedIndex = useMemo(
+    () =>
+      selectedId
+        ? rows.findIndex((r) => r.kind === 'session' && r.session.session_id === selectedId)
+        : -1,
+    [rows, selectedId]
+  );
+  const selectedHiddenInPins =
+    selectedIndex < 0 && Boolean(selectedId) && pins.collapsed && pins.isPinned(selectedId ?? '');
+  const pendingScroll = useRef(false);
+  const offscreen: 'above' | 'below' | null = selectedHiddenInPins
+    ? 'below'
+    : selectedIndex < 0 || !range
+      ? null
+      : selectedIndex < range.startIndex
+        ? 'above'
+        : selectedIndex > range.endIndex
+          ? 'below'
+          : null;
+  const scrollToSelected = () => {
+    if (selectedHiddenInPins) {
+      pendingScroll.current = true;
+      pins.setCollapsed(false);
+      return;
+    }
+    if (selectedIndex >= 0) virtuoso.current?.scrollToIndex({ index: selectedIndex, align: 'center' });
+  };
+  // 置顶组刚被展开：等它的行摆进清单再滚
+  useEffect(() => {
+    if (!pendingScroll.current || selectedIndex < 0) return;
+    pendingScroll.current = false;
+    virtuoso.current?.scrollToIndex({ index: selectedIndex, align: 'center' });
+  }, [selectedIndex]);
+  const selectedForYou = selectedId ? forYou.infoOf(selectedId) : null;
+
+  /** 可关终端那一块摊没摊开，以及勾了哪几个（默认全勾）。 */
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
+  const [closing, setClosing] = useState(false);
+  const closable = forYou.closable;
+  const toClose = closable.filter((r) => !unchecked.has(r.name));
+  const closeChecked = async () => {
+    if (!toClose.length) return;
+    setClosing(true);
+    try {
+      const res = await closeTmuxSessions(toClose.map((r) => r.name));
+      showToast(t('workbench.rail.closedTerminals', { count: res.closed }), res.failed ? 'error' : 'success');
+      setCloseOpen(false);
+      setUnchecked(new Set());
+      forYou.refresh();
+      void reload();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setClosing(false);
+    }
+  };
 
   /**
    * 展开末尾那一区。
@@ -498,7 +429,7 @@ export default function SessionRail({
    */
   const toggleOrphans = () => {
     const opening = !orphansOpen;
-    if (opening) setShown((s) => Math.max(s, openTrunk.length + PAGE_SIZE));
+    if (opening) setShown((s) => Math.max(s, restRows.length + PAGE_SIZE));
     setOrphansOpen(opening);
   };
 
@@ -525,83 +456,6 @@ export default function SessionRail({
       );
     }
   };
-
-  const openPicker = useCallback((session: WorkbenchSession, anchor: HTMLElement) => {
-    setPicker({ session, rect: anchor.getBoundingClientRect() });
-  }, []);
-  const closePicker = useCallback(() => setPicker(null), []);
-
-  /**
-   * 把这场放进某个组，或移出分组。
-   *
-   * 放进去之后这一场多半就从眼前消失了——它去了另一区，那一区可能还折着。说一句它去哪了。
-   */
-  const moveTo = async (session: WorkbenchSession, tag: GroupTag | null) => {
-    setPicker(null);
-    try {
-      await groups.assign(session.session_id, tag ? tag.id : null);
-      showToast(
-        tag
-          ? t('workbench.rail.groupMovedToast', { name: tag.name })
-          : t('workbench.rail.groupRemovedToast'),
-        'success'
-      );
-    } catch (e) {
-      showToast(
-        e instanceof Error ? e.message : t('workbench.errors.groupSaveFailedPlain'),
-        'error'
-      );
-    }
-  };
-
-  /** 建一个标签并把这场放进去。建不成就抛，浮层留着让人改名重试。 */
-  const createAndMove = async (session: WorkbenchSession, name: string) => {
-    const tag = await groups.createTag(name);
-    await moveTo(session, tag);
-  };
-
-  const confirmDelete = async () => {
-    const tag = deleting;
-    setDeleting(null);
-    if (!tag) return;
-    try {
-      await groups.deleteTag(tag.id);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e), 'error');
-    }
-  };
-
-  const handleRunAi = async () => {
-    try {
-      await groups.runAi();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e), 'error');
-    }
-  };
-
-  /**
-   * AI 那一趟跑完时报一句结果。
-   *
-   * 只在"这个页面看着它从在跑变成跑完"时报：开页面时它早就跑完了的那一趟，人没在等，
-   * 报出来是在说一件跟眼下无关的旧事。
-   */
-  const aiJob = groups.aiJob;
-  const wasRunning = useRef(aiJob.running);
-  useEffect(() => {
-    if (wasRunning.current && !aiJob.running) {
-      if (aiJob.error) {
-        showToast(t('workbench.rail.groupAiFailed', { error: aiJob.error }), 'error');
-      } else if (!aiJob.total) {
-        showToast(t('workbench.rail.groupAiNothing'), 'success');
-      } else {
-        showToast(
-          t('workbench.rail.groupAiDone', { assigned: aiJob.assigned, tags: aiJob.created_tags }),
-          'success'
-        );
-      }
-    }
-    wasRunning.current = aiJob.running;
-  }, [aiJob, showToast, t]);
 
   /**
    * 清单头尾那两块。
@@ -633,8 +487,8 @@ export default function SessionRail({
   /**
    * 点开一场会话。
    *
-   * 顺手记一笔「这一场我此刻看过了」——那个绿圈是拿这个时刻与会话最后一句回复比出来的，
-   * 不记的话它永远不灭。
+   * 顺手记一笔「这一场我此刻看过了」——For you 那一条停下之后没点开过的，标题加粗，
+   * 不记的话它一直是粗的。
    */
   const handleSelect = useCallback(
     (sessionId: string) => {
@@ -662,36 +516,35 @@ export default function SessionRail({
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-r border-border-color bg-bg-secondary">
       <div className="shrink-0 space-y-1.5 border-b border-border-color px-2.5 pb-2.5 pt-2.5">
-        {/* 新建会话是一行，不是一整块实心色。整条侧栏最抢眼的东西不该是一颗按钮——
-            人来这一页是为了找会话，不是为了建会话。 */}
-        <button
-          type="button"
-          onClick={() => setNewOpen(true)}
-          data-testid="new-session"
-          className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2.5 text-[13px] font-semibold bg-[var(--accent-primary)] text-[var(--text-on-accent)] transition-opacity duration-200 hover:opacity-90"
-        >
-          <Plus size={16} strokeWidth={1.5} className="shrink-0" />
-          <span>{t('workbench.rail.newSession')}</span>
-        </button>
+        {/* 搜索入口与新建挤在一行。新建从一整块实心绿降成右边一颗中性图标按钮：人来这一页
+            是为了找会话、接着说话，这一屏唯一的实心绿留给 Send。 */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => openSearch(true)}
+            data-testid="session-search-trigger"
+            aria-label={t('sessionSearch.label')}
+            className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] bg-bg-subtle px-2.5 text-[13px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
+          >
+            <Search size={14} strokeWidth={1.5} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-left">{t('sessionSearch.trigger')}</span>
+            <kbd className="shrink-0 rounded-[4px] border border-border-color px-1 font-mono text-[11px] leading-[16px]">
+              {modKey}K
+            </kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewOpen(true)}
+            data-testid="new-session"
+            aria-label={t('workbench.rail.newSession')}
+            title={t('workbench.rail.newSession')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border-color text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
+          >
+            <Plus size={16} strokeWidth={1.5} />
+          </button>
+        </div>
 
-        {/* 搜索入口独占一行。它不是输入框：点下去打开全站的搜会话浮窗，结果只在浮窗里，
-            这张清单不跟着筛。右端摆着快捷键，下回人就不必再伸手来点。 */}
-        <button
-          type="button"
-          onClick={() => openSearch(true)}
-          data-testid="session-search-trigger"
-          aria-label={t('sessionSearch.label')}
-          className="flex h-8 w-full items-center gap-1.5 rounded-[8px] bg-bg-subtle px-2.5 text-[13px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
-        >
-          <Search size={14} strokeWidth={1.5} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left">{t('sessionSearch.trigger')}</span>
-          <kbd className="shrink-0 rounded-[4px] border border-border-color px-1 font-mono text-[11px] leading-[16px]">
-            {modKey}K
-          </kbd>
-        </button>
-
-        {/* 时间范围这一行的右端顺带放刷新与 AI 分组：两颗都是对整张清单的动作，与筛选同属
-            「这张清单怎么摆」，不值得为它们另起一行，也不该挤占搜索那一整行。 */}
+        {/* 时间范围这一行的右端顺带放刷新：对整张清单的动作，与筛选同属「这张清单怎么摆」。 */}
         <div className="flex items-center gap-1">
           <div className="flex min-w-0 flex-1 flex-wrap gap-1">
             {DAY_FILTERS.map((d) => (
@@ -711,7 +564,10 @@ export default function SessionRail({
           </div>
           <button
             type="button"
-            onClick={() => void reload()}
+            onClick={() => {
+              void reload();
+              forYou.refresh();
+            }}
             disabled={loading}
             aria-label={t('workbench.rail.reload')}
             title={t('workbench.rail.reload')}
@@ -723,22 +579,6 @@ export default function SessionRail({
               <RefreshCw size={14} strokeWidth={1.5} />
             )}
           </button>
-          {/* AI 分组只在人按下去时跑：整理这件事人要看着。只动还没分组的主会话。 */}
-          <button
-            type="button"
-            onClick={() => void handleRunAi()}
-            disabled={aiJob.running}
-            aria-label={t('workbench.rail.groupAiHint')}
-            title={t('workbench.rail.groupAiHint')}
-            data-testid="group-ai"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
-          >
-            {aiJob.running ? (
-              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
-            ) : (
-              <Sparkles size={14} strokeWidth={1.5} />
-            )}
-          </button>
         </div>
 
         <div className="flex flex-wrap gap-1">
@@ -746,28 +586,73 @@ export default function SessionRail({
             <button
               key={id}
               type="button"
-              onClick={() => setStatus(id)}
-              aria-pressed={status === id}
-              data-testid={`status-filter-${id}`}
+              onClick={() => setFilter(id)}
+              aria-pressed={filter === id}
+              data-testid={`list-filter-${id}`}
               className={`flex items-center gap-1.5 rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
-                status === id ? CHIP_ON : CHIP_OFF
+                filter === id ? CHIP_ON : CHIP_OFF
               }`}
             >
-              {/* 点保留各档的语义色：那是数据，不是操作面。 */}
-              {id === 'all' ? null : <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[id]}`} />}
               <span>{t(FILTER_LABEL_KEY[id])}</span>
               <span className="font-mono opacity-60">{counts[id]}</span>
             </button>
           ))}
         </div>
 
-        {/* AI 在跑时一直报它走到哪：一批要几十秒，不报的话那颗转圈看起来像卡住了。 */}
-        {aiJob.running ? (
-          <p data-testid="group-ai-status" className="text-[11px] text-text-muted">
-            {aiJob.phase === 'tags'
-              ? t('workbench.rail.groupAiDrafting')
-              : t('workbench.rail.groupAiProgress', { done: aiJob.done, total: aiJob.total })}
-          </p>
+        {/* 可关的终端：客户端已经退出、只剩一个 shell 的那几个。在等你的、在忙的都不算。
+            一个都没有时这一行不出现。 */}
+        {closable.length ? (
+          <div data-testid="closable-terminals" className="text-[11px]">
+            <button
+              type="button"
+              onClick={() => setCloseOpen((v) => !v)}
+              aria-expanded={closeOpen}
+              className="flex items-center gap-1 text-text-muted hover:text-text-secondary"
+            >
+              {closeOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              {t('workbench.rail.idleTerminals', { count: closable.length })}
+            </button>
+            {closeOpen ? (
+              <div className="mt-1.5 space-y-1 rounded-[8px] border border-border-color bg-bg-primary p-2">
+                {closable.map((r) => (
+                  <label key={r.name} className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!unchecked.has(r.name)}
+                      onChange={() =>
+                        setUnchecked((prev) => {
+                          const next = new Set(prev);
+                          if (!next.delete(r.name)) next.add(r.name);
+                          return next;
+                        })
+                      }
+                      className="mt-[2px]"
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-mono text-text-secondary">
+                        {r.name.replace(/^frago-agent-/, '')}
+                      </span>
+                      <span className="text-text-muted">
+                        {r.last_stop_at
+                          ? t('workbench.rail.idleFor', { age: shortAge(Date.parse(r.last_stop_at)) })
+                          : t('workbench.rail.clientExited')}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  data-testid="close-terminals"
+                  disabled={!toClose.length || closing}
+                  onClick={() => void closeChecked()}
+                  className="mt-1 flex w-full items-center justify-center gap-1 rounded-[6px] border border-border-color px-2 py-1 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+                >
+                  {closing ? <Loader2 size={11} className="animate-spin" /> : null}
+                  {t('workbench.rail.closeTerminals', { count: toClose.length })}
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -781,14 +666,14 @@ export default function SessionRail({
             className={`flex items-center gap-2 rounded-[8px] border px-2.5 py-2 ${
               launch.phase === 'failed'
                 ? 'border-accent-error bg-accent-error-10'
-                : 'border-border-accent bg-accent-primary-10'
+                : 'border-border-strong bg-bg-subtle'
             }`}
           >
             <Mail
               size={14}
               strokeWidth={2}
               className={`shrink-0 ${
-                launch.phase === 'failed' ? 'text-accent-error' : 'text-accent-primary'
+                launch.phase === 'failed' ? 'text-accent-error' : 'text-text-secondary'
               }`}
             />
             <div className="flex min-w-0 flex-1 flex-col">
@@ -814,9 +699,34 @@ export default function SessionRail({
                 <X size={13} />
               </button>
             ) : (
-              <Loader2 size={13} className="shrink-0 animate-spin text-accent-primary" />
+              <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
             )}
           </div>
+        </div>
+      ) : null}
+
+      {/* 选中那条不在视野里：说一声它在哪，点一下滚过去。行尾只跟 For you 或 Sending。 */}
+      {offscreen ? (
+        <div className="shrink-0 px-2 pt-2">
+          <button
+            type="button"
+            data-testid="current-below"
+            data-direction={offscreen}
+            onClick={scrollToSelected}
+            className="flex w-full items-center gap-1.5 rounded-[8px] border border-border-color px-2.5 py-1.5 text-left text-[11px] text-text-secondary hover:bg-bg-hover"
+          >
+            {offscreen === 'above' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+            <span className="min-w-0 flex-1 truncate">
+              {offscreen === 'above'
+                ? t('workbench.rail.currentAbove')
+                : t('workbench.rail.currentBelow')}
+            </span>
+            {sendingId && sendingId === selectedId ? (
+              <SendingChip />
+            ) : selectedForYou ? (
+              <ForYouChip emphasis={selectedForYou.emphasis} />
+            ) : null}
+          </button>
         </div>
       ) : null}
 
@@ -840,142 +750,76 @@ export default function SessionRail({
           </div>
         ) : !rows.length ? (
           <p className="px-3 py-8 text-center text-[12px] text-text-muted">
-            {t('workbench.rail.empty')}
+            {filter === 'for-you' ? t('workbench.rail.emptyForYou') : t('workbench.rail.empty')}
           </p>
         ) : (
-          /* 置顶区与其余那一片共用同一条队、同一条滚动条。两个列表并排摆的话，置顶那一片
-             要么自己不窗口化（置顶数不设上限，迟早卡），要么各滚各的（两条滚动条挨着，
-             没人分得清该滚哪条）。 */
+          /* 置顶区与其余那一片共用同一条队、同一条滚动条。 */
           <Virtuoso
+            ref={virtuoso}
             data={rows}
             initialItemCount={Math.min(rows.length, 30)}
-            /* 滚动容器的内容不许贴着容器上下沿。顶上 8px 让第一张卡与筛选区之间有
-               一道呼吸，底下 16px 让最后一张滚到底时不是被硬切在边框上。 */
             components={listComponents}
-            /* 滚到底就续上下一批。不摆"加载更多"按钮：人已经滚到底了，那一下就是
-               "还要看"本身，再让他点一次是白让他动一次手。 */
+            rangeChanged={setRange}
+            /* 滚到底就续上下一批。人已经滚到底了，那一下就是"还要看"本身。 */
             endReached={() => {
               if (hasMore) setShown((s) => s + PAGE_SIZE);
             }}
-            /* 拿不到行也要给得出键。清单重算时行数会变短，而窗口化列表可能还按上一批的
-               位置来问键——问到一个已经不在的位置，这里要是伸手去读它，整页会当场抛错、
-               整棵界面被卸掉，人看到的是一片空白。 */
+            /* 拿不到行也要给得出键：清单重算时行数会变短，窗口化列表可能还按上一批的位置来问。 */
             computeItemKey={(index, row) =>
-              !row
-                ? `row-${index}`
-                : row.kind === 'session'
-                ? row.session.session_id
-                : row.kind === 'group-header'
-                  ? `group:${row.key}`
-                  : row.kind === 'section-more'
-                    ? `more:${row.key}`
-                    : row.kind
+              !row ? `row-${index}` : row.kind === 'session' ? row.session.session_id : row.kind
             }
             itemContent={(_, row) => {
               // 同上：位置对不上时给一个空位，NEVER 伸手去读一个不在的行。
               if (!row) return null;
               if (row.kind === 'pinned-header') {
+                /* 置顶整组一块略浅的底加一圈发丝描边，这是它的上半框。标题正常字重、正文色，
+                   右端写「Always on top」——不用绿，不用大写。 */
                 return (
-                  <button
-                    type="button"
-                    onClick={() => pins.setCollapsed(!pins.collapsed)}
-                    aria-expanded={!pins.collapsed}
-                    data-testid="pinned-header"
-                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
-                  >
-                    {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                    <Pin size={11} fill="currentColor" className={ACCENT_TEXT} />
-                    <span className={ACCENT_TEXT}>{t('workbench.rail.pinnedHeader')}</span>
-                    {/* 折起来时这个数就是全部线索：不报的话，人看不出自己折掉了什么。 */}
-                    <span className="font-mono opacity-70">{pinnedRows.length}</span>
-                  </button>
-                );
-              }
-              if (row.kind === 'rest-header') {
-                return (
-                  <div
-                    data-testid="rest-header"
-                    className="px-2.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-text-muted"
-                  >
-                    {t('workbench.rail.restHeader')}{' '}
-                    {/* 报的是主干那几场。折在各自主会话下面的 worker 算在那一行的展开钮上，
-                        认不出出处的算在下面那一区——每一场只被数一次。 */}
-                    <span className="font-mono opacity-70">{trunkRows.length}</span>
-                  </div>
-                );
-              }
-              if (row.kind === 'group-header') {
-                const tag = row.tag;
-                const framed = row.inTmux && !row.open;
-                const head = (
-                  <div className="group/section flex items-center pr-2">
+                  <div className="px-2 pt-2">
                     <button
                       type="button"
-                      onClick={() => groups.toggleCollapsed(row.key)}
-                      aria-expanded={row.open}
-                      data-testid="group-header"
-                      data-group-key={row.key}
-                      /* 标签名是人或 AI 起的字，不做大写变换——其余几行分区标题是界面自己
-                         的词，这一行是数据。套上绿边时，外框已经占了左边 8px + 1.5px，
-                         标题自己的左边距要让出这一截，箭头才和没套边的分类对在同一条竖线上，
-                         不然看着像上一组的子分类。 */
-                      className={`flex min-w-0 flex-1 items-center gap-1.5 ${framed ? 'pl-[0.5px] pr-2.5' : 'px-2.5'} pb-1 pt-3 text-[11px] font-medium tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary`}
+                      onClick={() => pins.setCollapsed(!pins.collapsed)}
+                      aria-expanded={!pins.collapsed}
+                      data-testid="pinned-header"
+                      className={`flex w-full items-center gap-1.5 border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-hover ${
+                        pins.collapsed ? 'rounded-[8px]' : 'rounded-t-[8px] border-b-0'
+                      }`}
                     >
-                      {row.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {/* 绿圈说的是「这一组里有你还没回去看过的新回复」。它长在标题左边，
-                          与「最近动过」那圈边分工：圈是提醒，边是找路。 */}
-                      {row.unread ? (
-                        <span data-testid="group-unread">
-                          <LiveRing label={t('workbench.rail.unreadMark')} />
-                        </span>
-                      ) : null}
-                      <span className="truncate">
-                        {tag ? tag.name : t('workbench.rail.ungroupedHeader')}
-                      </span>
-                      {tag?.source === 'ai' ? (
-                        <Sparkles
-                          size={10}
-                          className="shrink-0 text-text-dim"
-                          aria-label={t('workbench.rail.groupSourceAi')}
-                        />
-                      ) : null}
-                      {/* 折着时这个数就是全部线索：不报的话，人看不出这一区里有多少。 */}
-                      <span className="shrink-0 font-mono opacity-70">{row.count}</span>
+                      {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                      <Pin size={11} fill="currentColor" className="text-text-primary" />
+                      <span>{t('workbench.rail.pinnedHeader')}</span>
+                      <span className="font-mono text-[11px] text-text-muted">{pinnedRows.length}</span>
+                      <span className="flex-1" />
+                      <span className="text-[11px] text-text-muted">{t('workbench.rail.alwaysOnTop')}</span>
                     </button>
-                    {tag ? (
-                      <button
-                        type="button"
-                        onClick={() => setDeleting(tag)}
-                        aria-label={t('workbench.rail.groupDelete')}
-                        title={t('workbench.rail.groupDelete')}
-                        data-testid="group-delete"
-                        className="mt-2 shrink-0 rounded-[5px] p-1 text-text-muted opacity-0 transition-colors duration-200 hover:text-accent-error focus-visible:opacity-100 group-hover/section:opacity-100"
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    ) : null}
                   </div>
-                );
-                /* 折着的时候，整条标题外面长一圈活的绿边，说「这一组有一场开在 tmux 里」。展开之后
-                   这句话由组里那几张卡自己说，标题上再留一圈就是同一件事说了两遍。 */
-                return framed ? (
-                  <div className="px-2 pt-2" data-testid="group-in-tmux">
-                    <LiveBorder>{head}</LiveBorder>
-                  </div>
-                ) : (
-                  head
                 );
               }
-              if (row.kind === 'section-more') {
+              if (row.kind === 'pinned-tail') {
+                return pins.collapsed ? (
+                  <div className="h-2" />
+                ) : (
+                  <div className="px-2 pb-2">
+                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-bg-subtle" />
+                  </div>
+                );
+              }
+              if (row.kind === 'for-you-header' || row.kind === 'rest-header') {
+                const forYouHead = row.kind === 'for-you-header';
                 return (
-                  <button
-                    type="button"
-                    onClick={() => setShown((s) => s + PAGE_SIZE)}
-                    data-testid="section-more"
-                    className="w-full px-4 pb-2 pt-0.5 text-left text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                  <div
+                    data-testid={forYouHead ? 'for-you-header' : 'rest-header'}
+                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
                   >
-                    {t('workbench.rail.sectionMore', { n: row.remaining })}
-                  </button>
+                    <span className="font-medium text-text-secondary">
+                      {forYouHead ? t('workbench.forYou.label') : t('workbench.rail.everythingElse')}
+                    </span>
+                    <span className="font-mono opacity-70">{row.count}</span>
+                    <span className="flex-1" />
+                    {forYouHead && row.pinnedAbove ? (
+                      <span>{t('workbench.rail.inPinnedAbove', { n: row.pinnedAbove })}</span>
+                    ) : null}
+                  </div>
                 );
               }
               if (row.kind === 'workers-header') {
@@ -985,7 +829,7 @@ export default function SessionRail({
                     onClick={toggleOrphans}
                     aria-expanded={orphansVisible}
                     data-testid="workers-header"
-                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
                   >
                     {orphansVisible ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     <span>{t('workbench.rail.orphanWorkersHeader')}</span>
@@ -995,8 +839,7 @@ export default function SessionRail({
               }
               const session = row.session;
               const pos = row.groupPos;
-              /* 框的三段。同一套值：1px、清单的分隔线色、8px 圆角——与折叠时那张纸
-                 一模一样，展开只是把那张纸撑开成一个圈住整组的框。 */
+              /* worker 框的三段：1px、清单的分隔线色、8px 圆角。 */
               const box =
                 pos === 'head'
                   ? 'rounded-t-[8px] border border-b-0 border-border-color'
@@ -1005,42 +848,41 @@ export default function SessionRail({
                     : pos === 'tail'
                       ? 'rounded-b-[8px] border border-t-0 border-border-color'
                       : '';
-              return (
-                /* 从属行往里缩一格。缩进是**位置**，不是装饰：一眼就看得出这一行不与
-                   上面那一行并列，而且不占用颜色——颜色在这张清单里只留给在跑与出错。
-                   在框里的时候缩进改到框**内**做，否则框会被子会话推得比主会话窄一截，
-                   看起来是两个框而不是一个。 */
+              const item = (
                 <div className={row.nested && !pos ? 'pl-6 pr-2' : 'px-2'}>
                   <div className={box} data-group={pos}>
                     <div className={row.nested && pos ? 'pl-4' : ''}>
-                  <MaybeLive live={views.isInTmux(session)}>
-                  <SessionItem
-                    session={session}
-                    selected={session.session_id === selectedId}
-                    copied={copiedId === session.session_id}
-                    pinned={pins.isPinned(session.session_id)}
-                    unread={views.isUnread(session)}
-                    nested={row.nested}
-                    workerCount={row.workerCount}
-                    workersExpanded={row.workersExpanded}
-                    onSelect={handleSelect}
-                    onCopy={handleCopy}
-                    onTogglePin={handleTogglePin}
-                    onToggleWorkers={toggleWorkers}
-                    /* worker 跟着派活的那场走，不单独分组，卡上也就不长这颗按钮。 */
-                    onPickGroup={
-                      row.nested || session.origin === 'worker' ? undefined : openPicker
-                    }
-                      />
-                  </MaybeLive>
+                      {/* 开在 tmux 里的那几场外面一圈流光（主人 09-24 定：保留）。 */}
+                      <MaybeLive live={views.isInTmux(session)}>
+                        <SessionItem
+                          session={session}
+                          selected={session.session_id === selectedId}
+                          copied={copiedId === session.session_id}
+                          pinned={pins.isPinned(session.session_id)}
+                          forYou={forYou.infoOf(session.session_id)}
+                          sending={sendingId === session.session_id}
+                          nested={row.nested}
+                          workerCount={row.workerCount}
+                          workersExpanded={row.workersExpanded}
+                          onSelect={handleSelect}
+                          onCopy={handleCopy}
+                          onTogglePin={handleTogglePin}
+                          onToggleWorkers={toggleWorkers}
+                        />
+                      </MaybeLive>
                     </div>
                   </div>
-                  {/* 行与行之间的间隔。连同每行自己的 py-2，行间总共留出 24px，
-                      而行内最大的间距是 4px——差出六倍，清单才读得出是一行一行的。
-                      **一组之内不留这道缝**：留了框就断成几截，一眼看过去是几个小框
-                      挨着，而不是一个圈住整组的框。 */}
+                  {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
                   {pos === 'head' || pos === 'mid' ? null : <div className="h-2" />}
                 </div>
+              );
+              /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。 */
+              return row.inPinned ? (
+                <div className="px-2">
+                  <div className="border-x border-border-color bg-bg-subtle pt-0.5">{item}</div>
+                </div>
+              ) : (
+                item
               );
             }}
           />
@@ -1057,51 +899,8 @@ export default function SessionRail({
         })}
       </div>
 
-      {picker ? (
-        <GroupPicker
-          anchor={picker.rect}
-          tags={groups.tags}
-          current={groups.groupOf(picker.session.session_id)}
-          onPick={(tagId) =>
-            void moveTo(picker.session, groups.tags.find((tag) => tag.id === tagId) ?? null)
-          }
-          onCreate={(name) => createAndMove(picker.session, name)}
-          onClose={closePicker}
-        />
-      ) : null}
-
-      <Modal
-        isOpen={deleting !== null}
-        onClose={() => setDeleting(null)}
-        title={deleting ? t('workbench.rail.groupDeleteTitle', { name: deleting.name }) : ''}
-        footer={
-          <>
-            <button
-              type="button"
-              onClick={() => setDeleting(null)}
-              className="flex-1 rounded-[8px] px-3 py-1.5 text-[13px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover"
-            >
-              {t('workbench.rail.groupDeleteCancel')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void confirmDelete()}
-              data-testid="group-delete-confirm"
-              className="flex-1 rounded-[8px] bg-accent-error px-3 py-1.5 text-[13px] font-medium text-[var(--text-on-accent)] transition-opacity duration-200 hover:opacity-90"
-            >
-              {t('workbench.rail.groupDeleteOk')}
-            </button>
-          </>
-        }
-      >
-        <p className="text-[13px] leading-[1.6] text-text-secondary">
-          {deleting ? t('workbench.rail.groupDeleteConfirm', { n: groups.sizeOf(deleting.id) }) : null}
-        </p>
-      </Modal>
-
       {/* 建完就交出去。等编号、反复重取清单、把中栏切过去，这些事由页面那边的启动状态
-          统一管（见 `useSessionLaunch`）——左栏自己等的话，那段等待只有左栏知道，中栏
-          仍是一片空白，而人点完创建看的正是中栏。 */}
+          统一管（见 `useSessionLaunch`）。 */}
       <NewSessionModal
         isOpen={newOpen}
         onClose={() => setNewOpen(false)}

@@ -16,7 +16,7 @@
  * 一条长命令就能把整个版面顶宽。
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
@@ -27,7 +27,11 @@ import SessionLaunchPanel from './SessionLaunchPanel';
 import StopRunButton from './StopRunButton';
 import DeleteSessionButton from './DeleteSessionButton';
 import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
-import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
+import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
+import { useSessionViews } from '@/hooks/useSessionViews';
+import { useForYou } from '@/hooks/useForYou';
+import { formatClock, formatDuration } from './RecordCard';
+import { shortAge } from './SessionItem';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { usePageStore } from '@/stores/pageStore';
@@ -40,7 +44,17 @@ export default function SessionWorkbenchPage() {
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
-  const sessions = useWorkbenchSessions();
+  /**
+   * 「For you」要会话清单才判得出，清单的「For you N」档又要那份判定——两头互相要。
+   * 判定先经一格状态交给清单（晚一拍，15 秒一轮的东西不在乎这一拍）。
+   */
+  const [isForYou, setIsForYou] = useState<(id: string) => boolean>(() => () => false);
+  const sessions = useWorkbenchSessions(isForYou);
+  const views = useSessionViews();
+  const forYou = useForYou(sessions.sessions, views.viewedAt);
+  useEffect(() => {
+    setIsForYou(() => (id: string) => forYou.infoOf(id) !== null);
+  }, [forYou]);
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
   const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
@@ -60,7 +74,71 @@ export default function SessionWorkbenchPage() {
     markSent,
     clearSent,
     settleSent,
+    trails,
   } = useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
+
+  /** 输入区「Show」要把记录流滚到的那一条。 */
+  const [scrollTarget, setScrollTarget] = useState<{ recordId: string; at: number } | null>(null);
+  useEffect(() => setScrollTarget(null), [selectedId]);
+
+  /**
+   * 页头第二行与左栏跟着这一句话本地先变，不等清单那 15 秒一刷：
+   * 「Sending your message」→「● Agent on it · 41 s」→「Answered 13:05:38」。
+   * 这一场挂着 For you 时前面加「For you ·」，没有进行中的话就是「For you · waiting 44 min」。
+   */
+  const latestTrail = useMemo(() => {
+    for (let i = trails.length - 1; i >= 0; i -= 1) if (!trails[i].expired) return trails[i];
+    return null;
+  }, [trails]);
+  const inFlight = latestTrail !== null && !trailSettled(latestTrail);
+  const sendingId =
+    selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!inFlight) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [inFlight]);
+  const selectedForYou = selectedId ? forYou.infoOf(selectedId) : null;
+  const headStatus = useMemo(() => {
+    const prefix = selectedForYou ? `${t('workbench.forYou.label')} · ` : '';
+    if (latestTrail && inFlight) {
+      const landed =
+        latestTrail.steps.in_the_session !== undefined || latestTrail.steps.queued !== undefined;
+      if (!landed) return { live: false, text: t('workbench.page.sending') };
+      const since = latestTrail.steps.on_its_way ?? now;
+      return {
+        live: true,
+        text: t('workbench.page.agentOnIt', { duration: formatDuration(Math.max(0, now - since)) }),
+      };
+    }
+    const answered = latestTrail?.steps.answered;
+    if (answered !== undefined && !(selectedForYou && selectedForYou.waitingSince > answered + 5_000)) {
+      return {
+        live: false,
+        text: prefix
+          ? `${prefix}${t('workbench.page.answeredAt', { time: formatClock(answered) })}`
+          : t('workbench.page.answeredAtStart', { time: formatClock(answered) }),
+      };
+    }
+    if (selectedForYou) {
+      return {
+        live: false,
+        text: `${prefix}${t('workbench.page.waiting', { age: shortAge(selectedForYou.waitingSince, now) })}`,
+      };
+    }
+    return null;
+  }, [latestTrail, inFlight, now, selectedForYou, t]);
+
+  /** 发出那一刻，这一场的 For you 本地先撤：agent 接手期间清单上什么都不挂。 */
+  const onSendStart = useCallback(
+    (text: string, attachments: number) => {
+      if (selectedId) forYou.suppress(selectedId);
+      return markSent(text, attachments);
+    },
+    [selectedId, forYou, markSent]
+  );
 
   /**
    * 人从记录流里引过来的那段话，等着落进输入框。
@@ -140,7 +218,9 @@ export default function SessionWorkbenchPage() {
   };
 
   return (
-    <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[232px_minmax(0,1fr)_var(--report-w,280px)] tablet:grid-cols-[232px_minmax(0,1fr)] phone:grid-cols-1 desktop:grid-cols-[302px_minmax(0,1fr)_var(--report-w,346px)]"
+    /* 默认列宽照原型：清单 256 · 记录 · 观察者 228。人拖过的右栏宽度照旧优先（记在浏览器里）；
+       平板档照旧藏起观察者栏，断点不动。 */
+    <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[256px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[256px_minmax(0,1fr)] phone:grid-cols-1"
       style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
     >
       {/* 手机上一次只放得下一栏：没选会话时给清单，选了就整屏让给记录流。 */}
@@ -155,6 +235,9 @@ export default function SessionWorkbenchPage() {
             setWorkbenchSessionId(null);
             begin(pending, text);
           }}
+          views={views}
+          forYou={forYou}
+          sendingId={sendingId}
         />
       </div>
 
@@ -182,8 +265,22 @@ export default function SessionWorkbenchPage() {
                 : t('workbench.page.title')}
           </h1>
           {selected ? (
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
-              {selected.directory}
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-text-muted">
+              {headStatus ? (
+                <span
+                  data-testid="head-status"
+                  className={`flex shrink-0 items-center gap-1 ${
+                    headStatus.live ? 'text-accent-primary' : 'text-text-secondary'
+                  }`}
+                >
+                  {headStatus.live ? (
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent-primary" />
+                  ) : null}
+                  {headStatus.text}
+                  <span aria-hidden className="text-text-dim">·</span>
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate font-mono">{selected.directory}</span>
             </span>
           ) : (
             <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
@@ -196,7 +293,11 @@ export default function SessionWorkbenchPage() {
               还占着几百兆的壳收掉。会话本身不动——记录还在，还能翻。只在清单说这一场此刻
               开在 tmux 里时出现：tmux 里没有了还挂着按钮，按下去只得到一句「没在跑」。 */}
           {selected?.in_tmux ? (
-            <StopRunButton session={selected} onStopped={() => void sessions.reload()} />
+            <StopRunButton
+              session={selected}
+              busyTurn={inFlight}
+              onStopped={() => void sessions.reload()}
+            />
           ) : null}
           {/* 三家都摆。删法三家不一样（Claude Code 删文件，另两家借引擎自己的命令），
               那层差别由弹窗里的话交代，不靠"有没有这个按钮"来暗示。删成之后中栏要退回
@@ -225,6 +326,8 @@ export default function SessionWorkbenchPage() {
               error={error}
               onLoadOlder={loadOlder}
               awaitingAgent={awaitingAgent}
+              trails={trails}
+              scrollTarget={scrollTarget}
               onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
             />
           )}
@@ -245,10 +348,12 @@ export default function SessionWorkbenchPage() {
           // 上沿那条线上的小人跟着这一场走：会话在跑、或者刚发出去还没等到 agent 开口，
           // 他就在线上踱步；两样都落下他才坐下。
           running={selected?.status === 'running' || awaitingAgent}
-          onSendStart={markSent}
+          onSendStart={onSendStart}
           onSendFailed={clearSent}
           deliveredAt={deliveredAt}
           outbound={outbound}
+          trails={trails}
+          onShowInStream={(recordId) => setScrollTarget({ recordId, at: Date.now() })}
           quote={quote}
           contextTokens={contextTokens}
           onHandoff={() => void handoff()}

@@ -1291,6 +1291,11 @@ export const setTmuxCleanupThreshold = withMode(
     }),
 );
 
+export const getTmuxWaiting = withMode(
+  () => httpApi.getTmuxWaiting(),
+  () => Promise.resolve({ sessions: [] }),
+);
+
 export const getTmuxSessionCount = withMode(
   () => httpApi.getTmuxSessionCount(),
   () => Promise.resolve({ total: 0, total_memory_mb: 0 }),

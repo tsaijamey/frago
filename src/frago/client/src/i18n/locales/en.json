@@ -1327,7 +1327,12 @@
     "page": {
       "title": "Sessions",
       "subtitle": "Transcripts from every client, normalized into one shape and laid out record by record",
-      "backToList": "Back to the session list"
+      "backToList": "Back to the session list",
+      "sending": "Sending your message",
+      "agentOnIt": "Agent on it · {{duration}}",
+      "answeredAt": "answered {{time}}",
+      "waiting": "waiting {{age}}",
+      "answeredAtStart": "Answered {{time}}"
     },
     "stopRun": {
       "action": "Close tmux session",
@@ -1342,7 +1347,8 @@
       "forceOk": "Close anyway",
       "stopping": "Closing…",
       "absent": "This session is no longer in tmux. Nothing to close.",
-      "failed": "Couldn't close: {{error}}"
+      "failed": "Couldn't close: {{error}}",
+      "busyHint": "Still working — closing it interrupts this turn (you'll be asked first)"
     },
     "delete": {
       "action": "Delete session",
@@ -1420,7 +1426,27 @@
       "groupAiProgress": "AI grouping: {{done}} / {{total}} sessions",
       "groupAiDone": "AI grouping done: {{assigned}} sessions sorted, {{tags}} tags created",
       "groupAiNothing": "Nothing to sort — none of the ungrouped sessions has a usable title",
-      "groupAiFailed": "AI grouping didn't finish: {{error}}"
+      "groupAiFailed": "AI grouping didn't finish: {{error}}",
+      "pinHint": "Pin — keep it at the top of the list",
+      "unpinHint": "Unpin — move it back to its group",
+      "alwaysOnTop": "Always on top",
+      "everythingElse": "Everything else",
+      "inPinnedAbove": "+ {{n}} in Pinned above",
+      "currentBelow": "Current session is below",
+      "currentAbove": "Current session is above",
+      "emptyForYou": "Nothing is waiting for you",
+      "ageNow": "just now",
+      "ageMin": "{{n}} min",
+      "ageHour": "{{n}} h",
+      "ageDay": "{{n}} d",
+      "idleTerminals_one": "{{count}} idle terminal can be closed",
+      "idleTerminals_other": "{{count}} idle terminals can be closed",
+      "closeTerminals_one": "Close {{count}} terminal",
+      "closeTerminals_other": "Close {{count}} terminals",
+      "closedTerminals_one": "Closed {{count}} terminal",
+      "closedTerminals_other": "Closed {{count}} terminals",
+      "idleFor": "client exited · stopped {{age}} ago",
+      "clientExited": "client exited"
     },
     "stream": {
       "lens": {
@@ -1604,7 +1630,19 @@
       "hookEcho": "raw form",
       "stopHooksRan": "{{n}} hooks ran",
       "hookDuration": "{{n}} ms",
-      "stopHookQuiet": "nothing added, nothing blocked"
+      "stopHookQuiet": "nothing added, nothing blocked",
+      "hookLine": "Hook {{event}}",
+      "youSaidWhileWorking": "You said · while it was working",
+      "toolRunning": "running…",
+      "toolNoResult": "no result",
+      "toolRunCount_one": "{{count}} tool call",
+      "toolRunCount_other": "{{count}} tool calls",
+      "toolRunExtras_one": "{{count}} more record folded in (hooks, usage, thinking)",
+      "toolRunExtras_other": "{{count}} more records folded in (hooks, usage, thinking)",
+      "systemRunCount_one": "{{count}} system record",
+      "systemRunCount_other": "{{count}} system records",
+      "systemRunTurn": "turn {{duration}}",
+      "systemRunContext": "context {{n}}"
     },
     "report": {
       "tailNow": "Now",
@@ -1652,7 +1690,15 @@
       "handoffLocked": "Only worth switching once context reaches {{limit}} (now {{now}})",
       "handoffLockedUnknown": "No context usage read for this session yet; only worth switching at {{limit}}",
       "handoffLaunchText": "Taking over \"{{title}}\"",
-      "handoffFailed": "Handoff didn't go out: {{reason}}"
+      "handoffFailed": "Handoff didn't go out: {{reason}}",
+      "onItsWayHint": "Left this page, not in the session yet",
+      "queuedHint": "The agent is still on your previous message — this one will be folded into that turn or go out as the next one",
+      "movedUpOne": "Your message moved up into the conversation",
+      "movedUpMany": "{{n}} messages moved up into the conversation",
+      "movedUpBoth": "Both messages moved up into the conversation",
+      "show": "Show",
+      "textIsBack": "Your text is back in the box below — nothing was lost",
+      "heldForRetry": "You've started typing, so the original is kept aside — Retry sends that one"
     },
     "newSession": {
       "title": "New session",
@@ -1722,6 +1768,32 @@
       "railClaiming": "Starting {{name}}, waiting for its id",
       "railWarming": "{{name}} is up, waiting for its first record",
       "railFailed": "Didn't start — see the middle column"
+    },
+    "progress": {
+      "onItsWay": "On its way",
+      "inTheSession": "In the session",
+      "queued": "Queued",
+      "pickedUp": "Picked up",
+      "foldedIn": "Folded in",
+      "answered": "Answered",
+      "failed": "Didn't go out",
+      "answeredIn": "Answered in {{duration}}",
+      "agentOnIt": "Agent on it",
+      "doingNothingYet": "thinking, nothing written yet",
+      "doingThinking": "thinking",
+      "doingReplying": "replying",
+      "doingToolResult": "reading what {{tool}} returned",
+      "doingSubagent": "handing work to a subagent",
+      "doingError": "hit an error"
+    },
+    "forYou": {
+      "label": "For you",
+      "sending": "Sending",
+      "whyAnswer": "It's asking you something",
+      "whyPickOne": "It wants you to pick one",
+      "whyStopped": "It stopped on an error",
+      "whyDecisionCard": "It left you a decision card",
+      "stoppedAt": "Stopped at {{time}} and has been waiting for you since"
     }
   },
   "tmuxSessions": {

@@ -26,9 +26,14 @@ interface StopRunButtonProps {
   session: WorkbenchSession;
   /** tmux 里这一场没了（关掉了，或本来就没了）之后调它——清单重取，按钮随之消失。 */
   onStopped?: () => void;
+  /**
+   * 本页刚发出的一句还没答完。悬停说明据此换成「还在干活，关掉会打断这一轮」——单独的
+   * 「停止这一轮」不在这里，能停的仍只有关掉整个 tmux 会话。
+   */
+  busyTurn?: boolean;
 }
 
-export default function StopRunButton({ session, onStopped }: StopRunButtonProps) {
+export default function StopRunButton({ session, onStopped, busyTurn = false }: StopRunButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { phase, error, run, reset } = useStopSessionRun(session.session_id);
@@ -60,7 +65,7 @@ export default function StopRunButton({ session, onStopped }: StopRunButtonProps
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title={label}
+        title={busyTurn ? t('workbench.stopRun.busyHint') : label}
         aria-label={label}
         data-testid="session-stop-run"
         className="flex shrink-0 items-center justify-center rounded border border-border-color p-1.5 text-text-muted transition-colors hover:border-accent-warning/40 hover:text-accent-warning"

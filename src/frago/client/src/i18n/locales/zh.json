@@ -1323,7 +1323,12 @@
     "page": {
       "title": "会话",
       "subtitle": "两家的会话记录归一成同一种形状，逐条无损铺开",
-      "backToList": "回到会话清单"
+      "backToList": "回到会话清单",
+      "sending": "正在发送",
+      "agentOnIt": "Agent 在做 · {{duration}}",
+      "answeredAt": "{{time}} 答完",
+      "waiting": "等了 {{age}}",
+      "answeredAtStart": "{{time}} 答完"
     },
     "stopRun": {
       "action": "关闭 tmux 会话",
@@ -1338,7 +1343,8 @@
       "forceOk": "仍要关闭",
       "stopping": "关闭中…",
       "absent": "tmux 里已经没有这一场了，不用再关。",
-      "failed": "没关掉：{{error}}"
+      "failed": "没关掉：{{error}}",
+      "busyHint": "还在干活，关掉会打断这一轮（先确认）"
     },
     "delete": {
       "action": "删除会话",
@@ -1416,7 +1422,27 @@
       "groupAiProgress": "AI 分组中：{{done}} / {{total}} 场",
       "groupAiDone": "AI 分组完成：分好 {{assigned}} 场，新建 {{tags}} 个标签",
       "groupAiNothing": "没有要分的会话，还没分组的主会话都没有可判的标题",
-      "groupAiFailed": "AI 分组没做完：{{error}}"
+      "groupAiFailed": "AI 分组没做完：{{error}}",
+      "pinHint": "置顶——一直摆在清单最上面",
+      "unpinHint": "取消置顶——放回原来的位置",
+      "alwaysOnTop": "一直在最上面",
+      "everythingElse": "其余",
+      "inPinnedAbove": "置顶里还有 {{n}} 场",
+      "currentBelow": "当前会话在下面",
+      "currentAbove": "当前会话在上面",
+      "emptyForYou": "没有在等你的会话",
+      "ageNow": "刚刚",
+      "ageMin": "{{n}} 分钟",
+      "ageHour": "{{n}} 小时",
+      "ageDay": "{{n}} 天",
+      "idleTerminals_one": "{{count}} 个闲置终端可以关掉",
+      "idleTerminals_other": "{{count}} 个闲置终端可以关掉",
+      "closeTerminals_one": "关掉 {{count}} 个终端",
+      "closeTerminals_other": "关掉 {{count}} 个终端",
+      "closedTerminals_one": "已关掉 {{count}} 个终端",
+      "closedTerminals_other": "已关掉 {{count}} 个终端",
+      "idleFor": "客户端已退出 · {{age}}前停下",
+      "clientExited": "客户端已退出"
     },
     "stream": {
       "lens": {
@@ -1600,7 +1626,19 @@
       "hookEcho": "原始形态",
       "stopHooksRan": "叫起 {{n}} 个",
       "hookDuration": "{{n}} ms",
-      "stopHookQuiet": "没加话也没拦"
+      "stopHookQuiet": "没加话也没拦",
+      "hookLine": "Hook {{event}}",
+      "youSaidWhileWorking": "你说 · 它干活时",
+      "toolRunning": "在跑…",
+      "toolNoResult": "没有结果",
+      "toolRunCount_one": "{{count}} 次工具调用",
+      "toolRunCount_other": "{{count}} 次工具调用",
+      "toolRunExtras_one": "另收进 {{count}} 条（hook、用量、思考）",
+      "toolRunExtras_other": "另收进 {{count}} 条（hook、用量、思考）",
+      "systemRunCount_one": "{{count}} 条系统记录",
+      "systemRunCount_other": "{{count}} 条系统记录",
+      "systemRunTurn": "这一轮 {{duration}}",
+      "systemRunContext": "上下文 {{n}}"
     },
     "report": {
       "tailNow": "此刻",
@@ -1648,7 +1686,15 @@
       "handoffLocked": "上下文到 {{limit}} 才需要换场（现在 {{now}}）",
       "handoffLockedUnknown": "还没读到这场的上下文用量，到 {{limit}} 才需要换场",
       "handoffLaunchText": "接手「{{title}}」",
-      "handoffFailed": "没交接出去：{{reason}}"
+      "handoffFailed": "没交接出去：{{reason}}",
+      "onItsWayHint": "已离开这个页面，还没进会话",
+      "queuedHint": "agent 还在处理你上一句，这句会并进那一轮，或排在下一轮",
+      "movedUpOne": "这句话已经移进上面的对话",
+      "movedUpMany": "{{n}} 句话已经移进上面的对话",
+      "movedUpBoth": "两句话都已经移进上面的对话",
+      "show": "看看",
+      "textIsBack": "原文已经退回下面的输入框，一个字没丢",
+      "heldForRetry": "你已经在打新的字，原文先收着——重试发的是原来那一份"
     },
     "newSession": {
       "title": "新建会话",
@@ -1718,6 +1764,32 @@
       "railClaiming": "正在起 {{name}}，等它报出编号",
       "railWarming": "{{name}} 起来了，在等它写下第一笔",
       "railFailed": "没起来，去中栏看原因"
+    },
+    "progress": {
+      "onItsWay": "在路上",
+      "inTheSession": "进了会话",
+      "queued": "排队中",
+      "pickedUp": "已接手",
+      "foldedIn": "已并入",
+      "answered": "已答完",
+      "failed": "没发出去",
+      "answeredIn": "{{duration}} 答完",
+      "agentOnIt": "Agent 在做",
+      "doingNothingYet": "在想，还没写字",
+      "doingThinking": "在想",
+      "doingReplying": "在回复",
+      "doingToolResult": "在看 {{tool}} 的结果",
+      "doingSubagent": "在派子 agent",
+      "doingError": "碰上了报错"
+    },
+    "forYou": {
+      "label": "For you",
+      "sending": "发送中",
+      "whyAnswer": "它在问你",
+      "whyPickOne": "它要你选一个",
+      "whyStopped": "它出错停下了",
+      "whyDecisionCard": "它留了一张决定卡片",
+      "stoppedAt": "{{time}} 停下，一直在等你"
     }
   },
   "tmuxSessions": {

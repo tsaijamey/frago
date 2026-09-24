@@ -1087,6 +1087,32 @@ export interface TmuxSessionItem {
   busy: boolean;
   /** 归工作台那个会话池管 */
   managed: boolean;
+  /** 窗格前台跑的不是登录 shell（agent 还在）；问不出为 null。旧服务端不给 */
+  client_alive?: boolean | null;
+  /** 停在待输入态等人说下一句；判不出（不是 Claude Code）为 null。旧服务端不给 */
+  awaiting_input?: boolean | null;
+  /** 收尾原话：保留句末，超长截开头。旧服务端不给 */
+  closing_text?: string;
+}
+
+/**
+ * 会话页「For you」要的一行（`GET /api/system/tmux-sessions/waiting`）。
+ *
+ * 与清点浮窗同源同判据，少了内存与截取。`awaiting_input` 只对认得出记录的 Claude Code
+ * 会话判，别家客户端与非 frago 起的 tmux 一律 null，界面一律不挂。
+ */
+export interface TmuxWaitingItem {
+  name: string;
+  session_id: string | null;
+  client_alive: boolean | null;
+  awaiting_input: boolean | null;
+  stop_reason: string | null;
+  last_stop_at: string | null;
+  closing_text: string;
+}
+
+export interface TmuxWaitingResponse {
+  sessions: TmuxWaitingItem[];
 }
 
 export interface TmuxSessionsResponse {

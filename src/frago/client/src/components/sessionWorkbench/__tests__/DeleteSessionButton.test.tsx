@@ -226,11 +226,11 @@ vi.mock('@/hooks/useWorkbenchSessions', async (importOriginal) => ({
     visible: page.sessions,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: () => {},
+    filter: 'all',
+    setFilter: () => {},
     days: 0,
     setDays: () => {},
-    counts: { all: 0, running: 0, error: 0, done: 0, idle: 0 },
+    counts: { all: 0, 'for-you': 0 },
     reload: async () => {},
   }),
 }));
@@ -251,7 +251,37 @@ vi.mock('@/hooks/useWorkbenchRecords', async (importOriginal) => ({
     markSent: () => 'out-0',
     clearSent: () => {},
     settleSent: () => {},
+    trails: [],
   }),
+}));
+
+// For you 与已看记录都要问服务端；头部这几条用例不关心它们。
+// 替身必须每次交出同一个对象：真的那两个都记忆化过，页面拿「For you 变了没有」去更新清单
+// 的判定，每渲染一次换一个新对象会让页面一直重渲染下去。
+const stable = vi.hoisted(() => ({
+  forYou: {
+    infoOf: () => null,
+    count: 0,
+    closable: [],
+    rows: [],
+    suppress: () => {},
+    refresh: () => {},
+  },
+  views: {
+    viewedAt: () => undefined,
+    isInTmux: () => false,
+    markViewed: () => {},
+  },
+}));
+
+vi.mock('@/hooks/useForYou', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useForYou: () => stable.forYou,
+}));
+
+vi.mock('@/hooks/useSessionViews', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useSessionViews: () => stable.views,
 }));
 
 vi.mock('@/hooks/useSessionLaunch', async (importOriginal) => ({

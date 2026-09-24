@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import SessionRail from '../SessionRail';
+import { TestRail } from './railTestKit';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
 
@@ -78,11 +78,11 @@ function railState(
     visible: rows,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: NOOP,
+    filter: 'all',
+    setFilter: NOOP,
     days: 0,
     setDays: NOOP,
-    counts: { all: rows.length, running: 0, error: 0, done: rows.length, idle: 0 },
+    counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
     ...over,
   };
@@ -103,40 +103,40 @@ describe('SessionRail 置顶区', () => {
   const rows = [session({ session_id: SID }), session({ session_id: OC_SID }), session({ session_id: CX_SID })];
 
   it('一场都没置顶时不长分区标题', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.queryByTestId('pinned-header')).toBeNull();
     expect(screen.queryByTestId('rest-header')).toBeNull();
     expect(screen.getAllByTestId('session-item')).toHaveLength(3);
   });
 
   it('每张卡上都有置顶开关', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getAllByTestId('toggle-pin')).toHaveLength(3);
   });
 
   it('点图钉把这场交给置顶名单', () => {
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getAllByTestId('toggle-pin')[0]);
     expect(pins.toggle).toHaveBeenCalledWith(SID);
   });
 
   it('点图钉不会顺手把这场会话选中', () => {
     const onSelect = vi.fn();
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
     fireEvent.click(screen.getAllByTestId('toggle-pin')[0]);
     expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('置顶的那几场单独成区，排在最前', () => {
     pins.pinned = [OC_SID];
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('pinned-header').textContent).toContain('置顶');
     expect(titles()[0]).toContain(OC_SID);
   });
 
   it('置顶的那场不在下面再出现一次', () => {
     pins.pinned = [OC_SID];
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(titles().filter((t) => t.includes(OC_SID))).toHaveLength(1);
     expect(screen.getByTestId('rest-header').textContent).toContain('2');
   });
@@ -149,7 +149,7 @@ describe('SessionRail 置顶区', () => {
       session({ session_id: OC_SID, last_active_at: 1_753_900_000_000 }),
       session({ session_id: CX_SID, last_active_at: 1_753_100_000_000 }),
     ];
-    render(<SessionRail state={railState(withTimes)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(withTimes)} selectedId={null} onSelect={NOOP} />);
     const shown = titles();
     expect(shown[0]).toContain(CX_SID);
     expect(shown[1]).toContain(OC_SID);
@@ -158,21 +158,21 @@ describe('SessionRail 置顶区', () => {
   it('折起来之后置顶那几场不再摆出来', () => {
     pins.pinned = [OC_SID];
     pins.collapsed = true;
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(titles().some((t) => t.includes(OC_SID))).toBe(false);
   });
 
   it('折起来之后仍报得出折掉了几场', () => {
     pins.pinned = [OC_SID, CX_SID];
     pins.collapsed = true;
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     // 不报的话，人看不出自己折掉了什么。
     expect(screen.getByTestId('pinned-header').textContent).toContain('2');
   });
 
   it('点分区标题就把整片折起来 / 摊开', () => {
     pins.pinned = [OC_SID];
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const header = screen.getByTestId('pinned-header');
     expect(header.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(header);
@@ -182,7 +182,7 @@ describe('SessionRail 置顶区', () => {
   it('置顶数量不设上限', () => {
     const many = Array.from({ length: 120 }, (_, i) => session({ session_id: `ses_${i}` }));
     pins.pinned = many.map((s) => s.session_id);
-    render(<SessionRail state={railState(many)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(many)} selectedId={null} onSelect={NOOP} />);
     // 上限是替人做决定。名单报的是真数，不是截断后的数。
     expect(screen.getByTestId('pinned-header').textContent).toContain('120');
   });
@@ -192,18 +192,55 @@ describe('SessionRail 置顶区', () => {
     pins.pinned = [OC_SID];
     const state = railState(rows, {
       visible: [rows[0]],
-      status: 'running',
+      filter: 'for-you',
       days: 7,
     });
-    render(<SessionRail state={state} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
     expect(titles().some((t) => t.includes(OC_SID))).toBe(true);
   });
 
   it('名单里有编号、清单里没那场时就是不显示，也不报错', () => {
     // 会话档案被滚删了。NEVER 因此把编号从名单里踢掉——一次滚删不该清空人的置顶。
     pins.pinned = ['ses_已经被滚删的那场'];
-    render(<SessionRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('pinned-header').textContent).toContain('0');
     expect(screen.getAllByTestId('session-item')).toHaveLength(3);
+  });
+
+  it('置顶按钮带字：没置顶的写「置顶」，置顶了写「取消置顶」，悬停说明点了会怎样', () => {
+    pins.pinned = [OC_SID];
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const buttons = screen.getAllByTestId('toggle-pin');
+    const labels = buttons.map((b) => b.textContent);
+    expect(labels).toContain('置顶');
+    expect(labels).toContain('取消置顶');
+    const unpin = buttons.find((b) => b.textContent === '取消置顶')!;
+    expect(unpin.getAttribute('title')).toBe('取消置顶——放回原来的位置');
+    // 不用品牌绿
+    expect(buttons.every((b) => !b.className.includes('accent-primary'))).toBe(true);
+  });
+
+  it('置顶标题正常字重、正文色，右端写「一直在最上面」，不用绿', () => {
+    pins.pinned = [OC_SID];
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const header = screen.getByTestId('pinned-header');
+    expect(header.textContent).toContain('一直在最上面');
+    expect(header.outerHTML).not.toContain('text-accent-primary');
+    expect(header.className).not.toContain('uppercase');
+  });
+
+  it('选中那条在折起的置顶组里：出现「当前会话在下面」，点一下先把置顶组摊开', () => {
+    pins.pinned = [OC_SID];
+    pins.collapsed = true;
+    render(<TestRail state={railState(rows)} selectedId={OC_SID} onSelect={NOOP} />);
+    const hint = screen.getByTestId('current-below');
+    expect(hint.textContent).toContain('当前会话在下面');
+    fireEvent.click(hint);
+    expect(pins.setCollapsed).toHaveBeenCalledWith(false);
+  });
+
+  it('选中那条就在眼前时不出现提示行', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    expect(screen.queryByTestId('current-below')).toBeNull();
   });
 });

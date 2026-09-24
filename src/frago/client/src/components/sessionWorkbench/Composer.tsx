@@ -18,14 +18,15 @@
  * 1. **发完要能在中栏看到自己刚说的话。** 成功后调 `onSent`，页面把它接到记录流的
  *    `reload` 上，重新拉一次真记录。NEVER 在本地插一条假的——假的没有真实序号与出处，
  *    刷新就没了。
- * 2. **点了发送，输入框当场空出来，那句话搬到上方的信封里。** 从前它留在输入框里等着
- *    "送达"才清：撤又撤不回（话已经交出去了），看着又像没发成功。信封分两档，人一眼
- *    分得清它走到哪了：
+ * 2. **点了发送，输入框当场空出来，那句话搬到上方的气泡里。** 气泡与记录流里的「You
+ *    said」同一种画法，下面挂同一串步骤名（见 `SendProgress`）：
  *
  *    | 档 | 什么意思 | 长什么样 |
  *    |---|---|---|
- *    | 已发送 | 请求出了门，会话里还找不到它 | 描边信封，虚线框，弱色 |
- *    | 已入队列 | 进了会话，但 agent 正忙，它排在队列上 | 填充信封（更大），实线框，品牌色，带排队指示 |
+ *    | On its way | 请求出了门，会话里还找不到它 | 虚线框、转圈 |
+ *    | Queued | 进了会话，但 agent 正忙，它排在队列上 | 中性实线框加时钟，不用绿 |
+ *
+ *    全部落进记录流之后留一行「↑ … moved up into the conversation · Show」交代去处。
  *
  * 3. **失败不丢字。** 输入框还空着就把这一单原样退回去，人已经在打新的字就先收着，
  *    重试重发的仍是原来那一份。错误原因照抄服务端的说法，旁边给重试。
@@ -45,12 +46,13 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GitBranchPlus, Loader2, Mail, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
+import { ArrowUp, Clock, GitBranchPlus, Loader2, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import NoiseField from '@/components/ui/NoiseField';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
-import type { OutboundMessage } from '@/hooks/useWorkbenchRecords';
+import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
+import SendProgress from './SendProgress';
 
 export interface ComposerProps {
   sessionId: string | null;
@@ -78,6 +80,15 @@ export interface ComposerProps {
    * 输入框在点发送那一刻就空了，这里是那句话此后唯一看得见的去处。空数组就什么都不画。
    */
   outbound?: OutboundMessage[];
+  /**
+   * 每一句话的进度（页面接的是记录流的 `trails`）。待发气泡下面、报错条里各挂一行。
+   */
+  trails?: SendTrail[];
+  /**
+   * 「↑ … moved up into the conversation · Show」里的 Show：把记录流滚到那句话。
+   * 不给就不画 Show。
+   */
+  onShowInStream?: (recordId: string) => void;
   /**
    * 人在记录流里圈了一段话、按了「引用」交过来的那一份。
    *
@@ -228,6 +239,8 @@ export default function Composer({
   onSendFailed,
   deliveredAt,
   outbound = [],
+  trails = [],
+  onShowInStream,
   quote = null,
   contextTokens = null,
   onHandoff,
@@ -248,6 +261,7 @@ export default function Composer({
     error,
     canSend,
     send,
+    held,
   } = useSendToSession(sessionId, {
       enabled: !blocked,
       onSendStart,
@@ -273,6 +287,45 @@ export default function Composer({
   const [focused, setFocused] = useState(false);
   const filePicker = useRef<HTMLInputElement>(null);
   const attachCount = images.length + documents.length;
+  const trailOf = new Map(trails.map((tr) => [tr.id, tr]));
+  /**
+   * 气泡全部落进记录流之后，输入框上方留一行交代它们去了哪。
+   *
+   * 数的是**这一批**：从上一次输入框上方空着算起发出的那几句。下一次发送或换会话时
+   * 这一行消失——那时上方又有了新的气泡，或者说的已是另一场。
+   */
+  const [movedUp, setMovedUp] = useState<string[]>([]);
+  const batch = useRef<string[]>([]);
+  const outboundIds = outbound.map((m) => m.id).join(',');
+  // 换会话先清——这一条必须排在下面那条前面：挂载那一拍两条都跑，排在后面会把刚记下的
+  // 这一批一起清掉
+  useEffect(() => {
+    batch.current = [];
+    setMovedUp([]);
+  }, [sessionId]);
+  useEffect(() => {
+    if (outbound.length) {
+      if (!batch.current.length) setMovedUp([]);
+      for (const m of outbound) if (!batch.current.includes(m.id)) batch.current.push(m.id);
+      return;
+    }
+    if (!batch.current.length) return;
+    const landed = batch.current.filter((id) => {
+      const tr = trails.find((x) => x.id === id);
+      return tr && tr.recordId && tr.steps.failed === undefined && !tr.expired;
+    });
+    batch.current = [];
+    setMovedUp(landed);
+    // 只在气泡清单变化时判一次；进度随后的变化不该让这一行闪
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outboundIds]);
+  const movedTarget = movedUp
+    .map((id) => trails.find((tr) => tr.id === id)?.recordId)
+    .find((rid): rid is string => Boolean(rid));
+  /** 刚失败的那一份：报错条里画它的步骤链。 */
+  const failedTrail = error
+    ? [...trails].reverse().find((tr) => tr.steps.failed !== undefined)
+    : undefined;
 
   // 引用落进输入框。同一段话连引两次也是两次，靠的是按下的时刻，不是文字本身。
   const quoteAt = quote?.at ?? 0;
@@ -381,8 +434,14 @@ export default function Composer({
             data-testid="composer-error"
             className="flex items-start gap-2 rounded-[8px] bg-bg-subtle px-3 py-2 text-[12px] text-accent-error"
           >
-            <span className="min-w-0 flex-1 break-words">
-              {t('workbench.composer.sendFailed', { reason: error })}
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="break-words">
+                {t('workbench.composer.sendFailed', { reason: error })}
+              </span>
+              {failedTrail ? <SendProgress trail={failedTrail} /> : null}
+              <span data-testid="composer-kept" className="text-[11px] text-text-muted">
+                {held ? t('workbench.composer.heldForRetry') : t('workbench.composer.textIsBack')}
+              </span>
             </span>
             <button
               type="button"
@@ -405,71 +464,78 @@ export default function Composer({
           idPrefix="composer"
         />
 
-        {/* 信封区：已经点了发送、还没成为新一轮的那些话在这儿等着。
-            两档的分野是**它进没进这场会话**，不是"发了多久"：
-            已发送＝请求出了门、会话里还找不到它；已入队列＝进来了但 agent 正忙，
-            引擎把它挂在队列上。后一档在前一档的形态上加重：信封填实、放大、换成品牌色，
-            再补一行会跳的点表示还在排。 */}
+        {/* 待发的气泡：已经点了发送、还没落进记录流的那几句，与记录流里的「You said」
+            同一种画法，下面挂同一串步骤名。两档的分野是**它进没进这场会话**：
+            On its way＝请求出了门、会话里还找不到它（虚线框、转圈）；Queued＝进来了但
+            agent 正忙，排在队列上（中性实线框加时钟）。都不用绿——排队不是成功，也不是
+            动作，这一屏的实心绿只给 Send。 */}
         {outbound.length ? (
           <div className="flex flex-col gap-1.5">
             {outbound.map((msg) => {
               const queued = msg.state === 'queued';
+              const trail = trailOf.get(msg.id);
               return (
                 <div
                   key={msg.id}
                   data-testid="composer-outbound"
                   data-state={msg.state}
-                  className={`flex items-center gap-2.5 rounded-[10px] px-3 py-2 ${
-                    queued
-                      ? 'border border-border-accent bg-accent-primary-10'
-                      : 'border border-dashed border-border-color bg-bg-subtle'
+                  className={`flex min-w-0 flex-col gap-1 rounded-[10px] bg-bg-subtle px-3 py-2 ${
+                    queued ? 'border border-border-strong' : 'border border-dashed border-border-strong'
                   }`}
                 >
-                  {queued ? (
-                    <span className="flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[8px] bg-accent-primary text-[var(--text-on-accent)]">
-                      <Mail size={15} strokeWidth={2} />
+                  <div className="flex min-w-0 items-center gap-2">
+                    {queued ? (
+                      <Clock size={13} className="shrink-0 text-text-muted" />
+                    ) : (
+                      <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
+                    )}
+                    <span className="shrink-0 text-[11px] font-medium text-text-secondary">
+                      {t(queued ? 'workbench.progress.queued' : 'workbench.progress.onItsWay')}
                     </span>
-                  ) : (
-                    <Mail
-                      size={15}
-                      strokeWidth={1.5}
-                      className="shrink-0 animate-pulse text-text-muted"
-                    />
-                  )}
-                  <span
-                    className={`shrink-0 text-[11px] font-medium ${
-                      queued ? 'text-accent-primary' : 'text-text-muted'
-                    }`}
-                  >
-                    {t(queued ? 'workbench.composer.queued' : 'workbench.composer.sent')}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
-                    {msg.text || t('workbench.composer.attachmentsOnly')}
-                  </span>
-                  {msg.attachments ? (
-                    <span className="shrink-0 text-[11px] text-text-muted">
-                      {t('workbench.composer.outboundAttachments', { n: msg.attachments })}
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
+                      {msg.text || t('workbench.composer.attachmentsOnly')}
                     </span>
-                  ) : null}
-                  {queued ? (
-                    <span
-                      aria-hidden
-                      data-testid="composer-outbound-queue-dots"
-                      className="flex shrink-0 items-center gap-[3px]"
-                    >
-                      {[0, 1, 2].map((i) => (
-                        <span
-                          key={i}
-                          className="h-[3px] w-[3px] animate-pulse rounded-full bg-accent-primary"
-                          style={{ animationDelay: `${i * 180}ms` }}
-                        />
-                      ))}
-                    </span>
-                  ) : null}
+                    {msg.attachments ? (
+                      <span className="shrink-0 text-[11px] text-text-muted">
+                        {t('workbench.composer.outboundAttachments', { n: msg.attachments })}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] text-text-muted">
+                    {t(queued ? 'workbench.composer.queuedHint' : 'workbench.composer.onItsWayHint')}
+                  </p>
+                  {trail ? <SendProgress trail={trail} /> : null}
                 </div>
               );
             })}
           </div>
+        ) : movedUp.length ? (
+          <p
+            data-testid="composer-moved-up"
+            className="flex items-center gap-1.5 text-[11px] text-text-muted"
+          >
+            <ArrowUp size={12} className="shrink-0" />
+            <span>
+              {movedUp.length === 1
+                ? t('workbench.composer.movedUpOne')
+                : movedUp.length === 2
+                  ? t('workbench.composer.movedUpBoth')
+                  : t('workbench.composer.movedUpMany', { n: movedUp.length })}
+            </span>
+            {onShowInStream && movedTarget ? (
+              <>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  data-testid="composer-moved-up-show"
+                  onClick={() => onShowInStream(movedTarget)}
+                  className="text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                >
+                  {t('workbench.composer.show')}
+                </button>
+              </>
+            ) : null}
+          </p>
         ) : null}
 
         {/* **这圈边是两个容器叠出来的，不是 border。**
@@ -576,8 +642,13 @@ export default function Composer({
               disabled={!canSend}
               onClick={() => void send()}
               /* 字色走 --text-on-accent 而不是写死白：深色主题的品牌绿被提亮过，白字压在
-                 上面对比度不够；那个变量在两套主题下各是各的答案。 */
-              className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] bg-accent-primary px-3 text-[12px] font-medium text-[var(--text-on-accent)] disabled:opacity-40"
+                 上面对比度不够；那个变量在两套主题下各是各的答案。
+                 **发送中整颗变灰**：那一刻这一屏也就没有实心绿——话在路上，不是等人按的动作。 */
+              className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-medium disabled:opacity-40 ${
+                sending
+                  ? 'bg-bg-active text-text-secondary'
+                  : 'bg-accent-primary text-[var(--text-on-accent)]'
+              }`}
             >
               {sending ? (
                 <Loader2 size={13} className="animate-spin" />

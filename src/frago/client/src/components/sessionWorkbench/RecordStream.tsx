@@ -24,6 +24,7 @@
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -34,9 +35,24 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Inbox, Loader2 } from 'lucide-react';
-import RecordCard, { KIND_GROUP } from './RecordCard';
+import RecordCard, {
+  KIND_GROUP,
+  SystemRun,
+  ToolRun,
+  formatDuration,
+  previewArgs,
+  type ToolRow,
+} from './RecordCard';
 import SelectionQuote from './SelectionQuote';
-import { queueOpOf, queueOutcomes, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import SendProgress from './SendProgress';
+import {
+  AGENT_ACTIVITY,
+  queueOpOf,
+  queueOutcomes,
+  trailSettled,
+  type SendTrail,
+  type WorkbenchRecord,
+} from '@/hooks/useWorkbenchRecords';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -148,6 +164,202 @@ export function groupRecords(records: WorkbenchRecord[]): RecordGroup[] {
   return groups;
 }
 
+/**
+ * 记录流里的一段：一条原样的记录，或一串被并起来的同类记录。
+ *
+ * - `tools`：连续的工具调用与结果，按 `call_id` 配对成行。夹在中间的空正文 hook 注入、
+ *   用量刻度、空思考不打断这一段，收进 `extras`，框底写明并进了几条。
+ * - `system`：连续的系统记录（报错除外）压成一行。
+ */
+export type StreamSegment =
+  | { kind: 'record'; record: WorkbenchRecord }
+  | { kind: 'tools'; key: string; rows: ToolRow[]; extras: WorkbenchRecord[]; records: WorkbenchRecord[] }
+  | { kind: 'system'; key: string; records: WorkbenchRecord[] };
+
+function isToolRecord(r: WorkbenchRecord): boolean {
+  return r.kind === 'tool.call' || r.kind === 'tool.result';
+}
+
+/** 跑过但一个字没说的 hook 注入：正文、各段、报错全空。 */
+export function isSilentHook(r: WorkbenchRecord): boolean {
+  if (r.kind !== 'context.inject' || r.payload.source !== 'hook') return false;
+  const p = r.payload;
+  const blocks = Array.isArray(p.blocks) ? p.blocks.filter((b) => typeof b === 'string' && b) : [];
+  const body = typeof p.body === 'string' ? p.body : '';
+  const exit = typeof p.exit_code === 'number' ? p.exit_code : null;
+  return (
+    !blocks.length &&
+    !body &&
+    !(typeof p.stderr === 'string' && p.stderr) &&
+    p.prevented_continuation !== true &&
+    (exit === null || exit === 0)
+  );
+}
+
+/** 夹在工具调用之间也不算打断的那几种：空 hook、用量刻度、没落盘的空思考。 */
+function isTransparent(r: WorkbenchRecord): boolean {
+  if (r.kind === 'usage.tick') return true;
+  if (r.kind === 'agent.think') {
+    const text = typeof r.payload.thinking === 'string' ? r.payload.thinking : '';
+    return !text.trim();
+  }
+  return isSilentHook(r);
+}
+
+function isSystemRecord(r: WorkbenchRecord): boolean {
+  return r.kind !== 'error' && lensOf(r) === 'system';
+}
+
+/**
+ * 相邻且同属一类的记录并成一段；三类以外的原样独立成段。只并相邻的，不改顺序。
+ *
+ * `tools` / `system` 两个开关由镜头决定：「系统」那一档本来就是要逐条看系统记录的，
+ * 在那里再压成一行等于什么都不给看。
+ */
+export function collapseRuns(
+  records: WorkbenchRecord[],
+  opts: { tools: boolean; system: boolean }
+): StreamSegment[] {
+  const out: StreamSegment[] = [];
+  let i = 0;
+  while (i < records.length) {
+    const r = records[i];
+    if (opts.tools && isToolRecord(r)) {
+      const rows: ToolRow[] = [];
+      const byCall = new Map<string, ToolRow>();
+      const extras: WorkbenchRecord[] = [];
+      const members: WorkbenchRecord[] = [];
+      let pending: WorkbenchRecord[] = [];
+      let j = i;
+      while (j < records.length) {
+        const x = records[j];
+        if (isToolRecord(x)) {
+          extras.push(...pending);
+          members.push(...pending, x);
+          pending = [];
+          const cid = typeof x.payload.call_id === 'string' ? x.payload.call_id : '';
+          if (x.kind === 'tool.call') {
+            const row: ToolRow = { call: x, result: null };
+            rows.push(row);
+            if (cid) byCall.set(cid, row);
+          } else {
+            const row = cid ? byCall.get(cid) : undefined;
+            if (row && !row.result) row.result = x;
+            else rows.push({ call: null, result: x });
+          }
+          j += 1;
+        } else if (isTransparent(x)) {
+          pending.push(x);
+          j += 1;
+        } else {
+          break;
+        }
+      }
+      out.push({ kind: 'tools', key: `tools:${r.id}`, rows, extras, records: members });
+      // 框尾那几条透明记录没被框收下，退回去照常分段
+      i = j - pending.length;
+      continue;
+    }
+    if (opts.system && isSystemRecord(r)) {
+      let j = i;
+      while (j < records.length && isSystemRecord(records[j])) j += 1;
+      out.push({ kind: 'system', key: `system:${r.id}`, records: records.slice(i, j) });
+      i = j;
+      continue;
+    }
+    out.push({ kind: 'record', record: r });
+    i += 1;
+  }
+  return out;
+}
+
+/** 一段连续的、属于同一次模型回复的分段。 */
+export interface SegmentGroup {
+  groupId: string | null;
+  segments: StreamSegment[];
+  /** 这一组底下一共几条原始记录。 */
+  size: number;
+}
+
+function segmentRecords(seg: StreamSegment): WorkbenchRecord[] {
+  return seg.kind === 'record' ? [seg.record] : seg.records;
+}
+
+/** 一段属于哪一次回复：组内记录同属一次回复才算，跨了回复的并段不归组。 */
+function segmentGroupId(seg: StreamSegment): string | null {
+  const recs = segmentRecords(seg).filter((r) => r.group_id);
+  if (!recs.length) return null;
+  const id = recs[0].group_id;
+  return recs.every((r) => r.group_id === id) && recs.length === segmentRecords(seg).length
+    ? id
+    : null;
+}
+
+/** 与 `groupRecords` 同一个规矩（只并相邻），单位从记录换成分段。 */
+export function groupSegments(segments: StreamSegment[]): SegmentGroup[] {
+  const groups: SegmentGroup[] = [];
+  for (const seg of segments) {
+    const id = segmentGroupId(seg);
+    const size = segmentRecords(seg).length;
+    const last = groups[groups.length - 1];
+    if (id && last && last.groupId === id) {
+      last.segments.push(seg);
+      last.size += size;
+      continue;
+    }
+    groups.push({ groupId: id, segments: [seg], size });
+  }
+  return groups;
+}
+
+/**
+ * 「Agent on it — 在做什么」里的「在做什么」：那句话之后最后一条 agent 动静的短描述。
+ * 取记录流本身（确定、即时），不取观察者栏那句意译。
+ */
+export function describeActivity(
+  records: WorkbenchRecord[],
+  since: number,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  let last: WorkbenchRecord | null = null;
+  for (const r of records) {
+    if (r.ts >= since - 1_000 && AGENT_ACTIVITY.has(r.kind)) last = r;
+  }
+  if (!last) return t('workbench.progress.doingNothingYet');
+  const p = last.payload;
+  const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
+  switch (last.kind) {
+    case 'agent.think':
+      return t('workbench.progress.doingThinking');
+    case 'agent.say':
+      return t('workbench.progress.doingReplying');
+    case 'tool.call': {
+      const title = typeof p.title === 'string' && p.title ? p.title : previewArgs((p.args ?? {}) as Record<string, unknown>);
+      return `${tool} ${title}`.trim().slice(0, 120);
+    }
+    case 'tool.result':
+      return t('workbench.progress.doingToolResult', { tool });
+    case 'subagent.dispatch':
+      return t('workbench.progress.doingSubagent');
+    case 'error':
+      return t('workbench.progress.doingError');
+    default:
+      return t('workbench.progress.doingNothingYet');
+  }
+}
+
+/** 每秒一跳的钟。只在 `on` 时走，停下不占定时器。 */
+function useTicking(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [on]);
+  return now;
+}
+
 /** 这一组里模型叫什么。取组内第一条报了模型的记录，报不出就不显示。 */
 function modelOf(records: WorkbenchRecord[]): string {
   for (const record of records) {
@@ -198,8 +410,12 @@ export interface RecordStreamProps {
   hasOlder: boolean;
   error: string | null;
   onLoadOlder: () => void;
-  /** 刚投了一句话进去、还没见 agent 有任何动静。为真时流的末尾挂一条"在等"。 */
+  /** 刚投了一句话进去、还没见 agent 有任何动静。为真时跟到底，让那句话下面的「Agent on it」露出来。 */
   awaitingAgent?: boolean;
+  /** 本页本次发出的每一句话的进度。按 `recordId` 挂到对应气泡下面。 */
+  trails?: SendTrail[];
+  /** 滚到这条记录（输入区「Show」）。`at` 让同一条连点两次也各算一次。 */
+  scrollTarget?: { recordId: string; at: number } | null;
   /**
    * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
    * 接住它的是输入区——这一侧不碰输入框的内容。
@@ -216,6 +432,8 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
+  trails = [],
+  scrollTarget = null,
   onQuote,
 }: RecordStreamProps) {
   const { t } = useTranslation();
@@ -248,7 +466,93 @@ export default function RecordStream({
     [resolved, lens]
   );
 
-  const groups = useMemo(() => groupRecords(visible), [visible]);
+  // 连续同类合并：「对话」档不并（那里本来只摆对话），「系统」档不压系统记录。
+  const segments = useMemo(
+    () =>
+      lens === 'talk'
+        ? visible.map((record) => ({ kind: 'record' as const, record }))
+        : collapseRuns(visible, { tools: lens === 'all' || lens === 'tool', system: lens === 'all' }),
+    [visible, lens]
+  );
+  const groups = useMemo(() => groupSegments(segments), [segments]);
+  const lastSegment = segments[segments.length - 1];
+
+  /** 记录编号 → 挂在它下面的那份进度。 */
+  const trailOf = useMemo(() => {
+    const map = new Map<string, SendTrail>();
+    for (const tr of trails) if (tr.recordId && !tr.expired) map.set(tr.recordId, tr);
+    return map;
+  }, [trails]);
+  /** 眼下这一轮在跑的那一句：最后一份已落地、还没答完的进度。「Agent on it」只挂它下面。 */
+  const activeTrail = useMemo(() => {
+    for (let i = trails.length - 1; i >= 0; i -= 1) {
+      const tr = trails[i];
+      if (tr.expired || trailSettled(tr)) continue;
+      if (tr.recordId) return tr;
+    }
+    return null;
+  }, [trails]);
+  const now = useTicking(activeTrail !== null);
+  const activeShown = activeTrail?.recordId
+    ? visible.some((r) => r.id === activeTrail.recordId)
+    : false;
+
+  const agentOnIt = activeTrail ? (
+    <p
+      data-testid="agent-on-it"
+      className="flex min-w-0 items-center gap-1.5 px-3 text-[11px] text-text-muted"
+    >
+      <span aria-hidden className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary" />
+      <span className="shrink-0 text-accent-primary">{t('workbench.progress.agentOnIt')}</span>
+      <span className="min-w-0 truncate">
+        — {describeActivity(records, activeTrail.steps.in_the_session ?? activeTrail.steps.queued ?? 0, t)}
+      </span>
+      <span className="shrink-0 font-mono text-text-dim">
+        · {formatDuration(Math.max(0, now - (activeTrail.steps.on_its_way ?? now)))}
+      </span>
+    </p>
+  ) : null;
+
+  /** 一条记录连同挂在它下面的进度。只有对得上某份进度的记录才多包一层。 */
+  const renderRecord = (record: WorkbenchRecord, hideModel?: boolean) => {
+    const trail = trailOf.get(record.id);
+    const card = (
+      <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} hideModel={hideModel} />
+    );
+    if (!trail) return card;
+    // 刚落地、agent 还没接手：气泡外多一圈淡描边，说「这是你刚发的那句」
+    const fresh =
+      !trail.midTurn && trail.steps.picked_up === undefined && !trailSettled(trail);
+    return (
+      <div key={record.id} data-record-id={record.id} className="flex min-w-0 flex-col gap-1">
+        <div
+          data-testid="trail-bubble"
+          data-fresh={fresh ? 'true' : undefined}
+          className={fresh ? 'rounded-[9px] outline-dashed outline-1 outline-offset-2 outline-border-strong' : ''}
+        >
+          {card}
+        </div>
+        <SendProgress trail={trail} className="px-3" />
+        {activeTrail?.id === trail.id ? agentOnIt : null}
+      </div>
+    );
+  };
+
+  const renderSegment = (seg: StreamSegment, hideModel?: boolean) => {
+    if (seg.kind === 'record') return renderRecord(seg.record, hideModel);
+    if (seg.kind === 'tools') {
+      return (
+        <ToolRun
+          key={seg.key}
+          rows={seg.rows}
+          extras={seg.extras}
+          sessionId={sessionId ?? ''}
+          live={seg === lastSegment}
+        />
+      );
+    }
+    return <SystemRun key={seg.key} records={seg.records} sessionId={sessionId ?? ''} />;
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 自动滚动是否武装。开一场新会话时武装，人手动离开底部解除。 */
@@ -360,6 +664,26 @@ export default function RecordStream({
   useLayoutEffect(() => {
     if (awaitingAgent && followArmed.current) scrollToBottom('smooth');
   }, [awaitingAgent, scrollToBottom]);
+
+  // 输入区「Show」：滚到那句话。它可能在当前镜头里看不见，那就先回到「对话」档。
+  const scrollAt = scrollTarget?.at ?? 0;
+  const scrollId = scrollTarget?.recordId ?? '';
+  useEffect(() => {
+    if (!scrollAt || !scrollId) return;
+    if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
+      setLens('talk');
+      return;
+    }
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-record-id="${CSS.escape(scrollId)}"]`
+    );
+    if (!el) return;
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
+    followArmed.current = false;
+    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollAt, scrollId, lens]);
 
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
@@ -508,12 +832,10 @@ export default function RecordStream({
           ) : null}
 
           {groups.map((group, index) => {
-            if (!group.groupId || group.records.length === 1) {
-              return group.records.map((record) => (
-                <RecordCard key={record.id} record={record} sessionId={sessionId} />
-              ));
+            if (!group.groupId || group.size === 1) {
+              return group.segments.map((seg) => renderSegment(seg));
             }
-            const model = modelOf(group.records);
+            const model = modelOf(group.segments.flatMap(segmentRecords));
             return (
               /* **归组不再是一个盒子。**
                  从前这里是一圈边加一层纸色，里面每张卡自己又是一圈边加一层纸色，
@@ -532,17 +854,10 @@ export default function RecordStream({
                   <span className="shrink-0">{t('workbench.stream.sameReply')}</span>
                   {model ? <span className="truncate font-mono">{model}</span> : null}
                   <span className="shrink-0 font-mono">
-                    {t('workbench.stream.groupCount', { n: group.records.length })}
+                    {t('workbench.stream.groupCount', { n: group.size })}
                   </span>
                 </header>
-                {group.records.map((record) => (
-                  <RecordCard
-                    key={record.id}
-                    record={record}
-                    sessionId={sessionId}
-                    hideModel={Boolean(model)}
-                  />
-                ))}
+                {group.segments.map((seg) => renderSegment(seg, Boolean(model)))}
               </section>
             );
           })}
@@ -554,17 +869,9 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {/* 从按下发送到第一条新记录落盘，中间隔着一次投喂加一轮冷启动。那段空窗里
-              界面上一个字都不变，人只能猜「是没发出去还是它在想」。这一条就是答它。 */}
-          {awaitingAgent ? (
-            <p
-              data-testid="awaiting-agent"
-              className="flex items-center justify-center gap-2 py-3 text-[12px] text-text-muted"
-            >
-              <Loader2 size={13} className="animate-spin" />
-              {t('workbench.stream.awaitingAgent')}
-            </p>
-          ) : null}
+          {/* 「Agent on it」紧贴在那句话下面。那句话在当前镜头里看不见时（切到了工具档），
+              退到流的末尾，安静期照样有东西撑着。 */}
+          {activeTrail && !activeShown ? agentOnIt : null}
         </div>
       </div>
 

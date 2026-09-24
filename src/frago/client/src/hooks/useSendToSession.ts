@@ -79,6 +79,11 @@ export interface SendToSessionState {
   /** 有内容（或手上还压着一单没发成的）、不在发送中、且这场会话本来就能发。 */
   canSend: boolean;
   send: () => Promise<void>;
+  /**
+   * 没发成的那一单被先收着了（人已经在输入框里打了新的字）。报错条据此换说法：
+   * 不是「原文回到了输入框」，而是「重试发的是原来那一份」。
+   */
+  held: boolean;
 }
 
 /** 一次投出去的全部内容。发送那一刻从输入框里整份取走，之后输入框与它再无关系。 */
@@ -359,5 +364,6 @@ export function useSendToSession(
     error,
     canSend,
     send,
+    held: failed !== null,
   };
 }
