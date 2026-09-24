@@ -10,7 +10,11 @@ NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 Agent
 from __future__ import annotations
 
 import contextlib
+import os
+import platform
+import re
 import shlex
+import shutil
 import subprocess
 import threading
 import time
@@ -28,6 +32,30 @@ from frago.agent_driver.driver import (
 
 # 注入点：测试以 fake runner 替换真实 tmux 调用，单测不拉真实 tmux。
 TmuxRunner = Callable[[list[str]], str]
+
+# 是否跑在原生 Windows 上（WSL 里是 Linux，不在此列）。与 compat.py 的判法一致，
+# 集中成模块级常量供测试 monkeypatch。
+_WINDOWS = platform.system() == "Windows"
+
+# win32 tmux 移植版（winget arndawg.tmux-windows，实测 3.6a-win32）把 pane 前台进程名
+# 报成**被空格截断的可执行路径**（bash 报 ``C:\Program``，来自
+# ``C:\Program Files\Git\usr\bin\bash.exe``）。凡长得像路径的值都认不出本体，见
+# :func:`TmuxAgentSession.has_live_agent`。
+_PATH_LIKE_COMMAND = re.compile(r"[\\/]|^[A-Za-z]:")
+
+
+def _ansi_codepage() -> int | None:
+    """本机 ANSI 代码页（Windows 的 GetACP）。问不出来（非 Windows / 测试环境）→ None。
+
+    模块级函数供测试 monkeypatch：判损坏阈值只依赖它的返回值，不依赖真在 Windows 上。
+    """
+    if not _WINDOWS:
+        return None
+    import ctypes
+
+    with contextlib.suppress(Exception):
+        return int(ctypes.windll.kernel32.GetACP())  # type: ignore[attr-defined]
+    return None
 
 
 class TmuxStartupError(RuntimeError):
@@ -47,6 +75,19 @@ class TmuxStartupError(RuntimeError):
         )
 
 
+class TmuxTextEncodingError(RuntimeError):
+    """win32 tmux 移植版无法无损携带这段文本（非 ASCII + 系统 ANSI 代码页非 UTF-8）。
+
+    移植版客户端把宽字符命令行参数按系统 ANSI 代码页收窄后再发给服务端（2026-09-24
+    实测 3.6a-win32：中文 ``中`` UTF-8 应为 e4b8ad，落进 pane 是 GBK 的 d6d0，被 pane
+    按 UTF-8 解码成两个 U+FFFD；emoji 直接变 ``?``——WideCharToMultiByte best-fit 特征）。
+    损坏**不可逆**且发生在 tmux 客户端进程内部，send-keys / set-buffer / display-message
+    全部经 argv，无一幸免；文件载体 ``load-buffer`` 在移植版上挂死、``send-keys -H``
+    静默无效（rc=0 什么都不发）。唯一出路是把系统 ANSI 代码页切成 UTF-8（65001），
+    客户端收窄产物随即就是正确的 UTF-8 字节。
+    """
+
+
 class _SessionVanished(RuntimeError):
     """抓屏失败且复核确认 tmux 会话已不存在。
 
@@ -62,12 +103,53 @@ class _SessionVanished(RuntimeError):
         super().__init__("tmux session vanished")
 
 
+def _windows_posix_shell() -> str | None:
+    """定位 Windows 下可当 tmux 面板默认 shell 的 Git Bash，找不到返回 None。
+
+    win32 tmux 移植版给新面板挑默认 shell 的规则：server 进程的环境里有
+    ``SHELL`` 就用它，没有就落到 cmd.exe。而 tmux server 的环境继承自「第一次
+    把它拉起来的那个进程」——frago server 若从非 bash 环境（PowerShell / 开机
+    自启 / 双击图标）启动，之后所有面板都是 cmd.exe，frago 拼的启动命令却是
+    POSIX 语法（单引号 ``cd`` 前缀、``env K=V`` 前缀），cmd 一个都不认（2026-09-24
+    实测）。故冷启动前显式 ``set-option -g default-shell`` 钉到 Git Bash，对已
+    运行的 server 也生效，不再依赖它的启动环境。
+
+    查找顺序：git.exe 同仓的 ``bin\\bash.exe``（常规安装 PATH 里有 git 没 bash）
+    → 常见安装路径 → ``shutil.which``。``C:\\Windows\\System32\\bash.exe`` 是 WSL
+    的入口，tmux 面板里起不出来 POSIX 语义，命中也必须跳过。
+    """
+    git = shutil.which("git.exe")
+    if git:
+        sibling = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
+        if os.path.isfile(sibling):
+            return sibling
+    for cand in (
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ):
+        if os.path.isfile(cand):
+            return cand
+    found = shutil.which("bash.exe")
+    if found and "system32" not in found.lower():
+        return found
+    return None
+
+
 def _default_runner(argv: list[str]) -> str:
-    """跑一条 tmux 命令，返回 stdout。"""
+    """跑一条 tmux 命令，返回 stdout。
+
+    显式按 UTF-8 解码：tmux 输出的 pane 文本就是 UTF-8（agent TUI 的框线符/中文），
+    ``text=True`` 不给 encoding 时按系统 locale 解码，Windows 上默认 GBK——一旦 pane
+    里出现 GBK 解不开的字节，reader 线程解码失败会把 stdout 记成 None，
+    capture-pane 由此返回 None，后续一切 pane 正则判断全线 TypeError（原生
+    Windows 实测，见 2026-09-24 webui 发消息排查）。
+    """
     proc = subprocess.run(
         argv,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     )
     return proc.stdout
@@ -206,10 +288,33 @@ class TmuxAgentSession:
         # 结束时刷新。空闲回收据此算 idle 时长——NEVER 用 transcript 时间戳：--resume 一个
         # 旧 transcript 时它的最后记录可能是几小时前，会让刚预热的会话被秒判「闲了几小时」回收。
         self.last_active_at: datetime | None = None
+        # Windows 冷态钉 default-shell 时撑住 server 用的一次性引导会话名；
+        # None = 没建过（server 本来就在 / 已拆 / 非 Windows）。open() 建起真会话后拆。
+        self._boot_session: str | None = None
 
     # ── tmux 三件套 ────────────────────────────────────────────────
     def _tmux(self, *args: str) -> str:
         return self._run(["tmux", *args])
+
+    def _pin_windows_default_shell(self, bash: str) -> None:
+        """把 tmux server 的 default-shell 钉到 Git Bash（缘由见 _windows_posix_shell）。
+
+        移植版冷态下（server 还没起）``set-option`` 不像官方 tmux 那样自动拉
+        server，而是直接 "no server running" 退非零（2026-09-24 实测；``start-server``
+        也救不了——无会话时 server 立即退出）。故失败时先用一次性引导会话把
+        server 撑住再设；引导会话由 open() 在真会话建起后拆掉。
+        """
+        try:
+            self._tmux("set-option", "-g", "default-shell", bash)
+            return
+        except Exception:
+            pass
+        # 名字带 pid 与本会话名：同进程多会话并发冷启动互不抢，跨进程也不会撞。
+        boot = f"__frago_boot_{os.getpid()}_{self.tmux_name}"
+        with contextlib.suppress(Exception):
+            self._tmux("new-session", "-d", "-s", boot)
+        self._boot_session = boot
+        self._tmux("set-option", "-g", "default-shell", bash)
 
     def capture_pane(self, *, full: bool = False) -> str:
         """读屏。full=True 抓全 scrollback（-S -），否则只抓可见 pane。"""
@@ -252,10 +357,24 @@ class TmuxAgentSession:
           `--- 待处理消息（N 条）---` 前缀）会被 send-keys 当成非法 flag 而退非零。
         - 超长文本按块切分多次发送：claude TUI 字面模式下不带 Enter，分块投喂
           会原样拼接成同一行输入，提交（Enter）由 submit 单独负责。
+        - 原生 Windows 上非 ASCII 文本先过编码闸：移植版客户端会把这类文本按系统
+          ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），与其把乱码
+          喂给 agent，不如当场报错并给出把系统切到 UTF-8 的修复指引。
         """
         if not text:
             self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", "")
             return
+        if _WINDOWS and not text.isascii() and _ansi_codepage() not in (None, 65001):
+            cp = _ansi_codepage()
+            raise TmuxTextEncodingError(
+                f"win32 tmux 移植版无法无损投喂非 ASCII 文本（本机系统 ANSI 代码页为 "
+                f"{cp}）：文本会在 tmux 客户端内被按该代码页收窄、进 pane 即乱码，且"
+                "send-keys/set-buffer 走 argv 全部如此、load-buffer 在移植版上挂死，"
+                "代码层无绕法。请开启 Windows 系统级 UTF-8 后重启系统再试："
+                "设置 → 时间和语言 → 语言和区域 → 管理语言设置 → 更改系统区域设置 → "
+                "勾选「Beta 版: 使用 Unicode UTF-8 提供全球语言支持」。纯 ASCII 内容"
+                "不受影响。"
+            )
         for i in range(0, len(text), self._SEND_TEXT_CHUNK):
             chunk = text[i : i + self._SEND_TEXT_CHUNK]
             self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", chunk)
@@ -298,17 +417,41 @@ class TmuxAgentSession:
                 str(self.width),
                 "-y",
                 str(self.height),
-                "-c",
-                self.cwd,
             ]
+            # win32 tmux 移植版的 ``new-session -c <目录>`` 无论路径怎么写（POSIX /
+            # Windows、正反斜杠）一律 "create window failed: spawn failed"，不带 -c
+            # 才建得起来（2026-09-24 实测 3.6a-win32）。工作目录改经 shell 落地：先
+            # ``cd`` 再启动，与借住模式（_enter_target）同一套做法。
+            if not _WINDOWS:
+                argv += ["-c", self.cwd]
             # 把干净 conv_key 注入会话环境（tmux 3.0+ 支持 ``-e``）：会话内任何子命令
             # （尤其 ``frago agent attach``）据 FRAGO_CONV_KEY 自解析自己归属哪个 conv，
             # 把产出文件登记进该 conv 的 outbox。conv_key 缺省（WebUI 等非 PA 路径）时不注入。
-            # profile/自定义端点等注入的环境变量，同样经 new-session -e 落进会话环境。
+            # profile/自定义端点等注入的环境变量，同样经 new-session -e 落进会话环境
+            # （移植版对 -e 实测可用）。
             for _k, _v in merged_env.items():
                 argv += ["-e", f"{_k}={_v}"]
-            self._tmux(*argv)
-            self.send_text(self.driver.launch_command(ctx))
+            if _WINDOWS:
+                # 面板必须跑 POSIX shell（启动命令是 bash 语法）。tmux server 若从
+                # 非 bash 环境拉起，新面板默认 cmd.exe，这里把 default-shell 钉到
+                # Git Bash——set-option 影响该 server 之后建的一切面板，先于
+                # new-session 执行。找不到 Git Bash 时不多打这条命令，行为与从前一致。
+                bash = _windows_posix_shell()
+                if bash:
+                    self._pin_windows_default_shell(bash)
+            try:
+                self._tmux(*argv)
+            finally:
+                # 引导会话（见 _pin_windows_default_shell）只为撑住 server 而生，
+                # 真会话建起（或明确失败）后即拆，绝不留孤儿 cmd 面板。
+                if self._boot_session is not None:
+                    with contextlib.suppress(Exception):
+                        self._tmux("kill-session", "-t", self._boot_session)
+                    self._boot_session = None
+            launch = self.driver.launch_command(ctx)
+            if _WINDOWS:
+                launch = f"cd {shlex.quote(self.cwd)} && {launch}"
+            self.send_text(launch)
             self.send_keys("Enter")
         try:
             reached = self._wait_for(self.driver.ready_signal.matches, ready_timeout_s)
@@ -446,6 +589,12 @@ class TmuxAgentSession:
         """
         command = self.pane_command()
         if not command:
+            return None
+        # 长得像路径 → 认不出前台到底是什么（win32 移植版的截断进程名，见
+        # ``_PATH_LIKE_COMMAND`` 处的说明）。按"问不出来"降级而不是硬猜：复用侧
+        # （pool 自家会话）当还活着、不误杀；接管侧（来路不明的孤儿）当不接管、
+        # 宁可重建——两个调用点的安全方向各自落位，NEVER 拿猜的值过 shell 名单。
+        if _PATH_LIKE_COMMAND.search(command):
             return None
         return command not in _SHELL_COMMANDS
 

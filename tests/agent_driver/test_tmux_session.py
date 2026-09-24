@@ -732,3 +732,255 @@ def test_an_unanswerable_query_reports_none_not_false() -> None:
     """
     assert _session_with_pane_command(None).has_live_agent() is None
     assert _session_with_pane_command("").has_live_agent() is None
+
+
+# ── 原生 Windows 兼容（win32 tmux 移植版，2026-09-24 实测 3.6a-win32）────────
+def test_open_on_windows_omits_dash_c_and_cds_in_shell(monkeypatch) -> None:
+    """Windows 上 new-session 不带 ``-c``（移植版带 -c 一律 spawn failed）。
+
+    工作目录改经 shell 落地：投喂的启动命令前缀 ``cd '<cwd>' &&``，与借住模式
+    同一套做法。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w1", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "-c" not in new_sess
+    # 启动文本是第一条 -l 字面投喂，形如 cd 'E:\Lenovo' && echo-agent。
+    literal = [c for c in fake.sent_keys() if "-l" in c]
+    assert literal and literal[0][-1] == "cd 'E:\Lenovo' && echo-agent"
+
+
+def test_open_on_windows_pins_default_shell_before_new_session(monkeypatch) -> None:
+    """Windows 冷启动前把 tmux default-shell 钉到 Git Bash，且先于 new-session。
+
+    tmux server 从非 bash 环境拉起时新面板默认 cmd.exe，bash 语法的启动命令在
+    cmd 里直接语法错误（2026-09-24 实测）。set-option 对已运行的 server 也生效，
+    使面板 shell 不再依赖 server 的启动环境。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(
+        tmux_session, "_windows_posix_shell", lambda: r"C:\Program Files\Git\bin\bash.exe"
+    )
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w3", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    opts = [c for c in fake.commands if c[1:2] == ["set-option"]]
+    assert opts, "Windows 冷启动必须先 set-option default-shell"
+    assert opts[0][opts[0].index("default-shell") + 1] == r"C:\Program Files\Git\bin\bash.exe"
+    new_at = [i for i, c in enumerate(fake.commands) if c[1:2] == ["new-session"]][0]
+    assert fake.commands.index(opts[0]) < new_at
+
+
+def test_open_on_windows_without_bash_skips_set_option(monkeypatch) -> None:
+    """机器上找不到 Git Bash 时不打 set-option（与修复前行为一致，不添乱）。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(tmux_session, "_windows_posix_shell", lambda: None)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w4", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    assert not [c for c in fake.commands if c[1:2] == ["set-option"]]
+
+
+def test_open_off_windows_never_sets_default_shell(monkeypatch) -> None:
+    """Linux/macOS 主路径不受影响：不多打 set-option。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", False)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w5", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    assert not [c for c in fake.commands if c[1:2] == ["set-option"]]
+
+
+def test_windows_posix_shell_skips_wsl_bash_and_uses_git_sibling(monkeypatch) -> None:
+    """which 命中 System32 的 WSL bash 时必须跳过，改用 git.exe 同仓的 Git Bash。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "shutil", type("S", (), {"which": staticmethod(
+        lambda name: {
+            "git.exe": r"C:\Program Files\Git\cmd\git.exe",
+            "bash.exe": r"C:\Windows\System32\bash.exe",
+        }[name]
+    )})())
+    monkeypatch.setattr(tmux_session.os.path, "isfile", lambda p: True)
+    assert (
+        tmux_session._windows_posix_shell() == r"C:\Program Files\Git\bin\bash.exe"
+    )
+
+
+def test_windows_posix_shell_falls_back_to_common_paths(monkeypatch) -> None:
+    """git.exe 不在 PATH 时退到常见安装路径。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "shutil", type("S", (), {"which": staticmethod(
+        lambda name: None
+    )})())
+    monkeypatch.setattr(
+        tmux_session.os.path, "isfile",
+        lambda p: p == r"C:\Program Files\Git\bin\bash.exe",
+    )
+    assert (
+        tmux_session._windows_posix_shell() == r"C:\Program Files\Git\bin\bash.exe"
+    )
+
+
+class ColdServerTmux(FakeTmux):
+    """模拟移植版冷态：server 未起时 set-option 直接退非零。
+
+    第一个 new-session 出现之前的 set-option 一律失败，之后的照常成功——
+    open() 须先用引导会话把 server 撑住再重试 set-option。
+    """
+
+    def __call__(self, argv: list[str]) -> str:
+        if argv[1:2] == ["set-option"] and not any(
+            c[1:2] == ["new-session"] for c in self.commands
+        ):
+            raise subprocess.CalledProcessError(1, argv)
+        return super().__call__(argv)
+
+
+def test_open_on_windows_cold_server_bootstraps_then_pins_shell(monkeypatch) -> None:
+    """冷态（tmux server 不存在）也要钉住 default-shell。
+
+    移植版 set-option 冷态退非零；须先建引导会话撑住 server → 重试 set-option →
+    建真会话 → 拆引导会话。真会话面板因此是 Git Bash 而非 cmd.exe。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(
+        tmux_session, "_windows_posix_shell", lambda: r"C:\Program Files\Git\bin\bash.exe"
+    )
+    fake = ColdServerTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w6", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    # 引导会话建起 → set-option 成功 → 真会话 → 引导会话被拆。
+    boot = [c for c in fake.commands if c[1:2] == ["new-session"] and "__frago_boot_" in c[4]]
+    assert boot, "冷态必须先建 __frago_boot_ 引导会话撑住 server"
+    pins = [c for c in fake.commands if c[1:2] == ["set-option"]]
+    assert pins, "引导会话建起后必须重试 set-option"
+    real_new = [
+        i for i, c in enumerate(fake.commands)
+        if c[1:2] == ["new-session"] and "__frago_boot_" not in c[4]
+    ][0]
+    assert fake.commands.index(pins[-1]) < real_new, "重试的 set-option 必须先于真会话"
+    killed = [c for c in fake.commands if c[1:2] == ["kill-session"] and c[3] == boot[0][4]]
+    assert killed, "真会话建起后必须拆掉引导会话"
+    assert sess._boot_session is None
+
+
+def test_open_off_windows_keeps_dash_c(monkeypatch) -> None:
+    """Linux/macOS 主路径不变：-c 原样带，启动命令不加 cd 前缀。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", False)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "w2", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert new_sess[new_sess.index("-c") + 1] == "/tmp"
+    literal = [c for c in fake.sent_keys() if "-l" in c]
+    assert literal and literal[0][-1] == "echo-agent"
+
+
+def test_a_truncated_windows_path_reports_none_not_true() -> None:
+    """win32 移植版把前台进程名报成被空格截断的路径（bash 报 ``C:\Program``）。
+
+    认不出本体时按"问不出来"降级：过 shell 名单必然判 True（路径不含纯 shell 名），
+    把"只剩 shell 壳"误判成"agent 还活着"。斜杠与盘符两种形态都要拦。
+    """
+    assert _session_with_pane_command("C:\Program").has_live_agent() is None
+    assert _session_with_pane_command("C:/Users/x/AppData").has_live_agent() is None
+    assert _session_with_pane_command("/usr/bin/bash").has_live_agent() is None
+
+
+def test_default_runner_decodes_utf8_explicitly(monkeypatch) -> None:
+    """tmux 输出按 UTF-8 解码，不随系统 locale（Windows 默认 GBK 会解崩 pane 文本）。
+
+    解码失败时 reader 线程把 stdout 记成 None，读屏返回 None 后一切 pane 正则判断
+    全线 TypeError。
+    """
+    from frago.agent_driver.tmux_session import _default_runner
+
+    captured: dict = {}
+
+    class _Proc:
+        stdout = "pane 文本"
+
+    def _fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return _Proc()
+
+    monkeypatch.setattr("frago.agent_driver.tmux_session.subprocess.run", _fake_run)
+    assert _default_runner(["tmux", "capture-pane"]) == "pane 文本"
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
+def test_send_text_non_ascii_on_ansi_windows_raises_instead_of_mojibake(
+    monkeypatch,
+) -> None:
+    """win32 移植版按系统 ANSI 代码页收窄 argv，非 ASCII 必坏且不可逆（实测中文→
+    U+FFFD、emoji→``?``）。与其把乱码喂给 agent，不如当场报错并给出切系统 UTF-8
+    的修复指引；纯 ASCII 不受影响照常发送。
+    """
+    from frago.agent_driver import tmux_session
+    from frago.agent_driver.tmux_session import TmuxTextEncodingError
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda: 936)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w3", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    with pytest.raises(TmuxTextEncodingError, match="UTF-8"):
+        sess.send_text("你好 world")
+    # 同样的代码页下，纯 ASCII 文本不受影响。
+    sess.send_text("plain ascii only")
+    assert fake.sent_keys()
+
+
+def test_send_text_non_ascii_passes_when_system_ansi_is_utf8(monkeypatch) -> None:
+    """系统 ANSI 代码页已是 65001（"Beta: Unicode UTF-8"）时收窄产物即正确 UTF-8，
+    非 ASCII 照常放行——闸门只在确知会坏的代码页上拦。代码页问不出来（None）同样
+    放行：真实 Windows 上 GetACP 不会失败，这个分支只服务测试/非 Windows 环境。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w4", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    for cp in (65001, None):
+        monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda cp=cp: cp)
+        sess.send_text("中文 mixed")
+    assert any("中文 mixed" in c for c in fake.sent_keys())
+
+
+def test_send_text_off_windows_never_gates(monkeypatch) -> None:
+    """非 Windows 平台与代码页无关，任何文本直接走发送。"""
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", False)
+    # Linux 上 _ansi_codepage 直接短路返回 None，但闸门先看 _WINDOWS，根本不会问。
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w5", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess.send_text("中文 mixed")
+    assert any("中文 mixed" in c for c in fake.sent_keys())

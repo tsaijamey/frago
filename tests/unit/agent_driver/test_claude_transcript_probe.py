@@ -227,12 +227,20 @@ def test_claude_launch_injects_session_id(tmp_path, monkeypatch):
     uuid.UUID(sid)
 
 
+def _project_key(cwd: str) -> str:
+    """产品侧的 projects 登记键：Windows 上 claude 用正斜杠形态（与手点 Yes 一致）。"""
+    import os
+
+    key = os.path.abspath(cwd)
+    return key.replace(os.sep, "/") if os.sep == "\\" else key
+
+
 def _read_trust(config_dir, cwd) -> object:
     import json
     import os
 
     data = json.loads((config_dir / ".claude.json").read_text(encoding="utf-8"))
-    return data["projects"][os.path.abspath(cwd)]["hasTrustDialogAccepted"]
+    return data["projects"][_project_key(cwd)]["hasTrustDialogAccepted"]
 
 
 def test_launch_pretrusts_cwd(tmp_path, monkeypatch):
@@ -268,7 +276,7 @@ def test_ensure_trusted_preserves_existing_config(tmp_path, monkeypatch):
     data = json.loads(cfg.read_text(encoding="utf-8"))
     assert data["userID"] == "keep-me"                       # 顶层其他键不丢
     assert data["projects"]["/other"] == {"hasTrustDialogAccepted": True, "note": "x"}
-    assert data["projects"]["/new/dir"]["hasTrustDialogAccepted"] is True
+    assert data["projects"][_project_key("/new/dir")]["hasTrustDialogAccepted"] is True
 
 
 def test_ensure_trusted_idempotent_skips_write(tmp_path, monkeypatch):
@@ -280,7 +288,7 @@ def test_ensure_trusted_idempotent_skips_write(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     cfg = tmp_path / ".claude.json"
     cfg.write_text(
-        json.dumps({"projects": {"/abs/x": {"hasTrustDialogAccepted": True}}}),
+        json.dumps({"projects": {_project_key("/abs/x"): {"hasTrustDialogAccepted": True}}}),
         encoding="utf-8",
     )
     before = cfg.stat().st_mtime_ns
@@ -301,7 +309,7 @@ def test_ensure_trusted_tolerates_corrupt_config(tmp_path, monkeypatch):
     claude_driver._ensure_workspace_trusted("/abs/y")
 
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert data["projects"]["/abs/y"]["hasTrustDialogAccepted"] is True
+    assert data["projects"][_project_key("/abs/y")]["hasTrustDialogAccepted"] is True
 
 
 def test_ensure_trusted_never_raises(tmp_path, monkeypatch):
@@ -321,3 +329,23 @@ def load_claude_driver() -> AgentDriver:
     from frago.agent_driver.driver import load_driver
 
     return load_driver("claude")
+
+
+def test_ensure_trusted_keys_by_forward_slash_on_windows(tmp_path, monkeypatch):
+    """Windows 上登记键用正斜杠——与 claude 手点 "Yes" 落的键一致。
+
+    claude（2.1.263 起）在 Windows 上以 ``C:/Users/...`` 形态登记 projects 键，
+    反斜杠键永远对不上、预写等于没写，新目录照样卡信任菜单。Linux/macOS 的
+    abspath 天然正斜杠，不受影响。
+    """
+    import json
+    import os
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    claude_driver._ensure_workspace_trusted(r"C:\work\project")
+    data = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    expected = "C:/work/project" if os.sep == "\\" else os.path.abspath("C:\work\project")
+    assert data["projects"][expected]["hasTrustDialogAccepted"] is True
+    assert "\\" not in expected
