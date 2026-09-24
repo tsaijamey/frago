@@ -10,9 +10,11 @@ NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 Agent
 from __future__ import annotations
 
 import contextlib
+import os
 import platform
 import re
 import shlex
+import shutil
 import subprocess
 import threading
 import time
@@ -99,6 +101,38 @@ class _SessionVanished(RuntimeError):
         # 是否曾成功抓到过至少一次 pane：决定错误消息里给不给末屏。
         self.saw_pane = saw_pane
         super().__init__("tmux session vanished")
+
+
+def _windows_posix_shell() -> str | None:
+    """定位 Windows 下可当 tmux 面板默认 shell 的 Git Bash，找不到返回 None。
+
+    win32 tmux 移植版给新面板挑默认 shell 的规则：server 进程的环境里有
+    ``SHELL`` 就用它，没有就落到 cmd.exe。而 tmux server 的环境继承自「第一次
+    把它拉起来的那个进程」——frago server 若从非 bash 环境（PowerShell / 开机
+    自启 / 双击图标）启动，之后所有面板都是 cmd.exe，frago 拼的启动命令却是
+    POSIX 语法（单引号 ``cd`` 前缀、``env K=V`` 前缀），cmd 一个都不认（2026-09-24
+    实测）。故冷启动前显式 ``set-option -g default-shell`` 钉到 Git Bash，对已
+    运行的 server 也生效，不再依赖它的启动环境。
+
+    查找顺序：git.exe 同仓的 ``bin\\bash.exe``（常规安装 PATH 里有 git 没 bash）
+    → 常见安装路径 → ``shutil.which``。``C:\\Windows\\System32\\bash.exe`` 是 WSL
+    的入口，tmux 面板里起不出来 POSIX 语义，命中也必须跳过。
+    """
+    git = shutil.which("git.exe")
+    if git:
+        sibling = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
+        if os.path.isfile(sibling):
+            return sibling
+    for cand in (
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ):
+        if os.path.isfile(cand):
+            return cand
+    found = shutil.which("bash.exe")
+    if found and "system32" not in found.lower():
+        return found
+    return None
 
 
 def _default_runner(argv: list[str]) -> str:
@@ -254,10 +288,33 @@ class TmuxAgentSession:
         # 结束时刷新。空闲回收据此算 idle 时长——NEVER 用 transcript 时间戳：--resume 一个
         # 旧 transcript 时它的最后记录可能是几小时前，会让刚预热的会话被秒判「闲了几小时」回收。
         self.last_active_at: datetime | None = None
+        # Windows 冷态钉 default-shell 时撑住 server 用的一次性引导会话名；
+        # None = 没建过（server 本来就在 / 已拆 / 非 Windows）。open() 建起真会话后拆。
+        self._boot_session: str | None = None
 
     # ── tmux 三件套 ────────────────────────────────────────────────
     def _tmux(self, *args: str) -> str:
         return self._run(["tmux", *args])
+
+    def _pin_windows_default_shell(self, bash: str) -> None:
+        """把 tmux server 的 default-shell 钉到 Git Bash（缘由见 _windows_posix_shell）。
+
+        移植版冷态下（server 还没起）``set-option`` 不像官方 tmux 那样自动拉
+        server，而是直接 "no server running" 退非零（2026-09-24 实测；``start-server``
+        也救不了——无会话时 server 立即退出）。故失败时先用一次性引导会话把
+        server 撑住再设；引导会话由 open() 在真会话建起后拆掉。
+        """
+        try:
+            self._tmux("set-option", "-g", "default-shell", bash)
+            return
+        except Exception:
+            pass
+        # 名字带 pid 与本会话名：同进程多会话并发冷启动互不抢，跨进程也不会撞。
+        boot = f"__frago_boot_{os.getpid()}_{self.tmux_name}"
+        with contextlib.suppress(Exception):
+            self._tmux("new-session", "-d", "-s", boot)
+        self._boot_session = boot
+        self._tmux("set-option", "-g", "default-shell", bash)
 
     def capture_pane(self, *, full: bool = False) -> str:
         """读屏。full=True 抓全 scrollback（-S -），否则只抓可见 pane。"""
@@ -374,7 +431,23 @@ class TmuxAgentSession:
             # （移植版对 -e 实测可用）。
             for _k, _v in merged_env.items():
                 argv += ["-e", f"{_k}={_v}"]
-            self._tmux(*argv)
+            if _WINDOWS:
+                # 面板必须跑 POSIX shell（启动命令是 bash 语法）。tmux server 若从
+                # 非 bash 环境拉起，新面板默认 cmd.exe，这里把 default-shell 钉到
+                # Git Bash——set-option 影响该 server 之后建的一切面板，先于
+                # new-session 执行。找不到 Git Bash 时不多打这条命令，行为与从前一致。
+                bash = _windows_posix_shell()
+                if bash:
+                    self._pin_windows_default_shell(bash)
+            try:
+                self._tmux(*argv)
+            finally:
+                # 引导会话（见 _pin_windows_default_shell）只为撑住 server 而生，
+                # 真会话建起（或明确失败）后即拆，绝不留孤儿 cmd 面板。
+                if self._boot_session is not None:
+                    with contextlib.suppress(Exception):
+                        self._tmux("kill-session", "-t", self._boot_session)
+                    self._boot_session = None
             launch = self.driver.launch_command(ctx)
             if _WINDOWS:
                 launch = f"cd {shlex.quote(self.cwd)} && {launch}"
