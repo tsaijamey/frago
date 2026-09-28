@@ -754,6 +754,24 @@
       "priority": 90,
       "created_at": "2026-09-24T00:00:00",
       "description": "Fires when the human answers a decision card in the WebUI (the message starts with 【answer】). Reminds the agent that the effect text quoted in the message is the exact scope it is authorised to act on this turn."
+    },
+    {
+      "id": "builtin-prompt-decision-card",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "env_ne",
+        "name": "FRAGO_AGENT_ROLE",
+        "value": "worker"
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），把可选的答案写进回复最末尾的 answer-needed-by-human 区块，写完就停；没写的收尾会被推回来补。写法：frago book answer-needed-by-human"
+      },
+      "dedup_scope": "always",
+      "priority": 90,
+      "created_at": "2026-09-28T00:00:00",
+      "description": "Fires on every prompt in a main session (workers answer to a terminal, not the page). The decision card only appears if the agent writes the block, and a reminder given once at session start is too far from the moment the agent stops to ask; one line every turn keeps it next to that moment. The Stop-side decision-card pass pushes back any turn that waited on a pickable answer without the block."
     }
   ]
 }
