@@ -646,6 +646,11 @@ def create_app(
 
     app.include_router(session_observer_router, prefix="/api", tags=["workbench"])
 
+    # 会话页的引用与暂存标注
+    from frago.server.routes.workbench_marks import router as workbench_marks_router
+
+    app.include_router(workbench_marks_router, prefix="/api", tags=["workbench"])
+
     from frago.server.routes.todos import router as todos_router
     app.include_router(todos_router, prefix="/api", tags=["todos"])
 
