@@ -1191,3 +1191,39 @@ export interface EnvironmentUpgradeResponse {
   started_at: number | null;
   finished_at: number | null;
 }
+
+// ============================================================
+// 会话页标注 — 记录流里被引用或暂存过的文字
+// ============================================================
+
+/** quote＝点过「引用」；stack＝点过「暂存」，进右栏下半的列表。 */
+export type WorkbenchMarkKind = 'quote' | 'stack';
+
+/**
+ * 记录流里被引用或暂存过的一段文字。存在该会话备份目录的 `workbench-marks.json` 里，
+ * 换浏览器、刷新都还在。
+ */
+export interface WorkbenchMark {
+  /** 页面生成，`mk_` 加一串随机字。 */
+  id: string;
+  kind: WorkbenchMarkKind;
+  /** 圈选起点所在那条记录的编号。编号来自原始会话，刷新后不变。 */
+  record_id: string;
+  /** 圈中的原文，去掉首尾空白。 */
+  text: string;
+  /** 这段文字在那条记录正文里第几次出现（从 0 起），区分同一条里的重复文字。 */
+  occurrence: number;
+  /** 暂存时写下的想法，可为空。引用不用。 */
+  note: string;
+  /** 只有暂存用：经列表「填入」进过输入框、随后发出去了。 */
+  used: boolean;
+  /** 毫秒时间戳。 */
+  created_at: number;
+  used_at: number | null;
+}
+
+/** 一场会话的全部标注。数组顺序就是暂存列表的显示顺序（引用也在里面，只是不进列表）。 */
+export interface SessionMarks {
+  version: number;
+  marks: WorkbenchMark[];
+}

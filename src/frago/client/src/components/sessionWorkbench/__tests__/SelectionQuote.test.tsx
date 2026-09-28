@@ -14,7 +14,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
-import SelectionQuote, { ECHO_MAX_CHARS, echoRanges } from '../SelectionQuote';
+import SelectionQuote, {
+  ECHO_MAX_CHARS,
+  echoRanges,
+  findMarkRange,
+  markAnchor,
+} from '../SelectionQuote';
 import i18n from '@/i18n';
 
 beforeAll(async () => {
@@ -187,5 +192,147 @@ describe('echoRanges', () => {
 
   it('分野写死在常量上：不到五个字才标绿', () => {
     expect(ECHO_MAX_CHARS).toBe(5);
+  });
+});
+
+describe('暂存按钮', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeHighlights();
+    fakeGeometry();
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    dropGeometry();
+    document.getSelection()?.removeAllRanges();
+  });
+
+  /** 记录流里两条正文记录，第二条里「配方」出现两次。 */
+  function mountBodies(onStack = vi.fn(), onQuote = vi.fn()) {
+    const ref = createRef<HTMLDivElement>();
+    render(
+      <div>
+        <div ref={ref} data-testid="stream">
+          <div data-record-id="r1" data-record-body="">
+            <p>配方 A 跑完了</p>
+          </div>
+          <div data-record-id="r2" data-record-body="">
+            <p>配方 B 还没跑，配方 C 也没跑</p>
+          </div>
+          <p>工具输出里的字</p>
+        </div>
+        <SelectionQuote containerRef={ref} sessionId="s-1" onQuote={onQuote} onStack={onStack} />
+      </div>
+    );
+    return { onStack, onQuote, container: screen.getByTestId('stream') };
+  }
+
+  it('两颗按钮都只画图标，名字在悬停时给', () => {
+    const { container } = mountBodies();
+    pick(container, 0, 0, 7);
+    const quote = screen.getByTestId('selection-quote-btn');
+    const stack = screen.getByTestId('selection-stack-btn');
+    expect(quote.textContent).toBe('');
+    expect(stack.textContent).toBe('');
+    expect(quote.getAttribute('title')).toBe('引用');
+    expect(stack.getAttribute('title')).toBe('暂存');
+  });
+
+  it('点暂存、写想法、回车：交出锚点与想法，数得出是第几次出现', () => {
+    const { container, onStack } = mountBodies();
+    pick(container, 1, 9, 11); // 第二条里第二个「配方」
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-stack-btn'));
+    });
+    const input = screen.getByTestId('selection-stack-input');
+    act(() => {
+      fireEvent.change(input, { target: { value: '  先放一放 ' } });
+      fireEvent.submit(screen.getByTestId('selection-stack-note'));
+    });
+    expect(onStack).toHaveBeenCalledWith({ record_id: 'r2', text: '配方', occurrence: 1 }, '先放一放');
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('Esc 也存，留空就是不写想法', () => {
+    const { container, onStack } = mountBodies();
+    pick(container, 0, 0, 7);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-stack-btn'));
+    });
+    act(() => {
+      fireEvent.keyDown(screen.getByTestId('selection-stack-input'), { key: 'Escape' });
+    });
+    expect(onStack).toHaveBeenCalledWith({ record_id: 'r1', text: '配方 A 跑完', occurrence: 0 }, '');
+  });
+
+  it('写想法时点外面：不存', () => {
+    const { container, onStack } = mountBodies();
+    pick(container, 0, 0, 7);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-stack-btn'));
+    });
+    act(() => {
+      fireEvent.pointerDown(container);
+    });
+    expect(onStack).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('引用交出锚点', () => {
+    const { container, onQuote } = mountBodies();
+    pick(container, 0, 0, 2);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-quote-btn'));
+    });
+    expect(onQuote).toHaveBeenCalledWith('配方', { record_id: 'r1', text: '配方', occurrence: 0 });
+  });
+
+  it('选区起点不在正文记录里：只给引用，不给暂存', () => {
+    const { container } = mountBodies();
+    pick(container, 2, 0, 4);
+    expect(screen.getByTestId('selection-quote-btn')).toBeTruthy();
+    expect(screen.queryByTestId('selection-stack-btn')).toBeNull();
+  });
+});
+
+describe('标注的锚点', () => {
+  function body(html: string): HTMLElement {
+    const root = document.createElement('div');
+    root.innerHTML = `<div data-record-id="r" data-record-body="">${html}</div>`;
+    document.body.appendChild(root);
+    return root;
+  }
+
+  it('记下与找回用同一把尺子：分段多出来的换行不影响', () => {
+    const root = body('<p>第一段结尾</p><p>第二段开头，第二段开头</p>');
+    const el = root.querySelector('[data-record-body]') as Element;
+    const second = root.querySelectorAll('p')[1].firstChild as Text;
+    const range = document.createRange();
+    range.setStart(second, 6);
+    range.setEnd(second, 11);
+    const anchor = markAnchor(root, range, '第二段开头');
+    expect(anchor).toEqual({ record_id: 'r', text: '第二段开头', occurrence: 1 });
+    const found = findMarkRange(el, '第二段开头', 1) as Range;
+    expect(found.startOffset).toBe(6);
+    expect(found.toString()).toBe('第二段开头');
+    // 选区文本跨段时带着换行，找回照样对得上
+    expect(findMarkRange(el, '结尾\n\n第二段', 0)?.toString()).toBe('结尾第二段');
+    root.remove();
+  });
+
+  it('出现次数不够算找不到', () => {
+    const root = body('<p>只有一处配方</p>');
+    expect(findMarkRange(root, '配方', 1)).toBeNull();
+    root.remove();
+  });
+
+  it('跨记录圈的：只着起点那条末尾能对上的那一截', () => {
+    const root = body('<p>上一条的最后几个字</p>');
+    expect(findMarkRange(root, '最后几个字下一条开头', 0)?.toString()).toBe('最后几个字');
+    expect(findMarkRange(root, '完全无关的一段', 0)).toBeNull();
+    root.remove();
   });
 });

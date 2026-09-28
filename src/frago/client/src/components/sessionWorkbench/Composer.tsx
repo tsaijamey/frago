@@ -94,8 +94,11 @@ export interface ComposerProps {
    * `at` 是按下的时刻：同一段话连引两次是两件事，光比文字会把第二次吃掉。落进输入框
    * 的形状是三引号包住原话、下面一行 `>>> `，光标停在 `>>> ` 后面——引的是什么和要
    * 接着说什么，在框里一眼分得开。
+   *
+   * 从右栏暂存列表「填入」的那一份还带着当时写下的想法 `note`，接在 `>>> ` 后面，光标
+   * 停在想法末尾——人多半是顺着那句想法往下补完决定。
    */
-  quote?: { text: string; at: number } | null;
+  quote?: { text: string; note?: string; at: number } | null;
   /**
    * 人在决定卡片上点出来的那一句答复，等着整句投出。
    *
@@ -338,15 +341,16 @@ export default function Composer({
   // 引用落进输入框。同一段话连引两次也是两次，靠的是按下的时刻，不是文字本身。
   const quoteAt = quote?.at ?? 0;
   const quoteText = quote?.text ?? '';
+  const quoteNote = quote?.note ?? '';
   useEffect(() => {
     // 时刻为 0 表示这一场还没有人引用过任何东西。
     if (!quoteText || !quoteAt) return;
     const prev = textRef.current;
     const lead = prev && !prev.endsWith('\n') ? '\n' : '';
-    const next = `${prev}${lead}"""\n${quoteText}\n"""\n>>> `;
+    const next = `${prev}${lead}"""\n${quoteText}\n"""\n>>> ${quoteNote}`;
     caretTo.current = next.length;
     setText(next);
-  }, [quoteAt, quoteText, setText]);
+  }, [quoteAt, quoteText, quoteNote, setText]);
 
   // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片。
   const answerAt = answer?.at ?? 0;

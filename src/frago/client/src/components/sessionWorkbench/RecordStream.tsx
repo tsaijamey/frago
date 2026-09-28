@@ -43,8 +43,20 @@ import RecordCard, {
   previewArgs,
   type ToolRow,
 } from './RecordCard';
-import SelectionQuote from './SelectionQuote';
+import SelectionQuote, {
+  HIGHLIGHT_PRIORITY,
+  RECORD_BODY_ATTR,
+  findMarkRange,
+  flatten,
+  markSpan,
+  paintHighlight,
+  rangeOf,
+  type MarkAnchor,
+} from './SelectionQuote';
+import type { LocateState } from './StackPanel';
+import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
+import StreamMinimap from './StreamMinimap';
 import {
   AGENT_ACTIVITY,
   queueOpOf,
@@ -97,6 +109,19 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     return 'talk';
   }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
+
+/**
+ * 正文类记录：人发言、代理回复、思考、插话。
+ *
+ * 引用与暂存的标注只在这几种里记锚点、着色、找原处；工具调用、钩子、系统记录大多是折叠
+ * 的卡，文字时有时无，定位不稳（spec 20260928-webui-session-stack「不做什么」第 5 条）。
+ */
+export function isBodyRecord(record: WorkbenchRecord): boolean {
+  if (record.kind === 'user.say' || record.kind === 'agent.say' || record.kind === 'agent.think') {
+    return true;
+  }
+  return record.kind === 'context.inject' && record.payload.channel === 'queued_command';
 }
 
 /**
@@ -369,6 +394,77 @@ function modelOf(records: WorkbenchRecord[]): string {
   return '';
 }
 
+/** 标注在浏览器里的高亮名字，与 `globals.css` 里 `::highlight()` 同名。 */
+const MARK_STACK = 'workbench-mark-stack';
+const MARK_QUOTE = 'workbench-mark-quote';
+const MARK_FLASH = 'workbench-mark-flash';
+/** 跳回原处之后那段文字亮多久。 */
+const FLASH_MS = 1_400;
+
+/** 一段标注在记录流里找到的位置。缩略滚动条按它画刻度。 */
+export interface MarkTick {
+  id: string;
+  /** stack＝没用过的暂存（琥珀）；quote＝引用与用过的暂存（蓝）。 */
+  tone: 'stack' | 'quote';
+  recordId: string;
+  range: Range;
+}
+
+/** 从 `[from, to)` 里挖掉 `cuts` 盖住的部分，剩下的几截。 */
+function subtractSpans(span: [number, number], cuts: [number, number][]): [number, number][] {
+  let pieces: [number, number][] = [span];
+  for (const [c0, c1] of cuts) {
+    pieces = pieces.flatMap(([a, b]): [number, number][] => {
+      if (c1 <= a || c0 >= b) return [[a, b]];
+      const out: [number, number][] = [];
+      if (a < c0) out.push([a, c0]);
+      if (c1 < b) out.push([c1, b]);
+      return out;
+    });
+  }
+  return pieces;
+}
+
+/**
+ * 在记录流里找出每一条标注，按颜色分成两组交给浏览器去涂，顺手交回刻度。
+ *
+ * 重叠处按「没用过的暂存 > 引用」取色：两种底色都是半透明的，只靠上下叠会混出第三种
+ * 颜色，所以引用那一组先把被暂存盖住的部分挖掉。同一组里的范围相接或重叠，浏览器自然
+ * 画成一段，不会叠深。找不到的标注跳过，不报错。
+ */
+export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[] {
+  const byRecord = new Map<string, WorkbenchMark[]>();
+  for (const mark of marks) {
+    const list = byRecord.get(mark.record_id);
+    if (list) list.push(mark);
+    else byRecord.set(mark.record_id, [mark]);
+  }
+  const stackRanges: Range[] = [];
+  const quoteRanges: Range[] = [];
+  const ticks: MarkTick[] = [];
+  for (const [recordId, list] of byRecord) {
+    const el = root.querySelector(`[data-record-id="${CSS.escape(recordId)}"][${RECORD_BODY_ATTR}]`);
+    if (!el) continue;
+    const flat = flatten(el);
+    const hot: [number, number][] = [];
+    const cold: [number, number][] = [];
+    for (const mark of list) {
+      const span = markSpan(flat, mark.text, mark.occurrence);
+      if (!span) continue;
+      const tone = mark.kind === 'stack' && !mark.used ? 'stack' : 'quote';
+      (tone === 'stack' ? hot : cold).push(span);
+      ticks.push({ id: mark.id, tone, recordId, range: rangeOf(flat, span[0], span[1]) });
+    }
+    for (const [a, b] of hot) stackRanges.push(rangeOf(flat, a, b));
+    for (const span of cold) {
+      for (const [a, b] of subtractSpans(span, hot)) quoteRanges.push(rangeOf(flat, a, b));
+    }
+  }
+  paintHighlight(MARK_STACK, stackRanges, HIGHLIGHT_PRIORITY.stack);
+  paintHighlight(MARK_QUOTE, quoteRanges, HIGHLIGHT_PRIORITY.quote);
+  return ticks;
+}
+
 /** 离顶部多近算「在翻更早的」，触发前插。 */
 const NEAR_TOP_PX = 240;
 /** 离底部多近算「人就在底部」，手动滚到这里立即重新武装自动滚动。 */
@@ -420,8 +516,23 @@ export interface RecordStreamProps {
    * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
    * 接住它的是输入区——这一侧不碰输入框的内容。
    */
-  onQuote?: (text: string) => void;
+  onQuote?: (text: string, anchor?: MarkAnchor) => void;
+  /** 人圈了一段正文、按了「暂存」并写完想法。不给就不出暂存按钮。 */
+  onStack?: (anchor: MarkAnchor, note: string) => void;
+  /** 这场会话的全部标注。按它给正文着色、给缩略滚动条画刻度。 */
+  marks?: WorkbenchMark[];
+  /** 暂存列表「点原文」：滚回那段文字并闪一下。`at` 让同一条连点两次也各算一次。 */
+  locateTarget?: { mark: WorkbenchMark; at: number } | null;
+  /** 跳回原处的下场：找到了、正在往前翻页找、翻到开头也没找到。 */
+  onLocateResult?: (id: string, result: LocateState | 'found') => void;
+  /**
+   * 挂不挂缩略滚动条。会话页挂；Teams 页也用这条记录流，但那一页守着「一屏只有一处实心
+   * 绿」，人发言的绿条放过去就破了它，所以默认不挂。
+   */
+  minimap?: boolean;
 }
+
+const NO_MARKS: WorkbenchMark[] = [];
 
 export default function RecordStream({
   sessionId,
@@ -435,6 +546,11 @@ export default function RecordStream({
   trails = [],
   scrollTarget = null,
   onQuote,
+  onStack,
+  marks = NO_MARKS,
+  locateTarget = null,
+  onLocateResult,
+  minimap = false,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
@@ -516,8 +632,24 @@ export default function RecordStream({
   /** 一条记录连同挂在它下面的进度。只有对得上某份进度的记录才多包一层。 */
   const renderRecord = (record: WorkbenchRecord, hideModel?: boolean) => {
     const trail = trailOf.get(record.id);
-    const card = (
+    const bare = (
       <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} hideModel={hideModel} />
+    );
+    // 正文类记录外面多一层只装这张卡的壳：标注的锚点、着色、跳回原处都认这一层，
+    // 缩略滚动条也按它量高度、分颜色。挂着进度的那几条外层另有一个 data-record-id
+    // （输入区「Show」认它），这一层套在里面，只包卡、不包进度。
+    const card = isBodyRecord(record) ? (
+      <div
+        key={record.id}
+        data-record-id={record.id}
+        data-record-kind={record.kind}
+        {...{ [RECORD_BODY_ATTR]: '' }}
+        className="min-w-0"
+      >
+        {bare}
+      </div>
+    ) : (
+      bare
     );
     if (!trail) return card;
     // 刚落地、agent 还没接手：气泡外多一圈淡描边，说「这是你刚发的那句」
@@ -685,11 +817,124 @@ export default function RecordStream({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollAt, scrollId, lens]);
 
+  /**
+   * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
+   * 那些文本节点就换了一批，上一轮交给浏览器的范围全都指着已经不在的节点。
+   */
+  const [ticks, setTicks] = useState<MarkTick[]>([]);
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !marks.length) {
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
+      setTicks([]);
+      return;
+    }
+    setTicks(paintMarks(root, marks));
+  }, [marks, groups, sessionId]);
+  // 这块走了，底色一起走：高亮挂在浏览器上，不随 React 的树消失。
+  useEffect(
+    () => () => {
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
+      paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash);
+    },
+    []
+  );
+
+  /**
+   * 暂存列表「点原文」：滚回那段文字，居中，闪一下。
+   *
+   * 原处那条记录还没加载，就往前翻一页再看，直到找到或翻到会话开头；那条在当前镜头里
+   * 看不见，先切回「对话」（与输入区「Show」同一个做法）。翻完也找不到、或者那条在但
+   * 文字对不上，就报「没找到原处」，NEVER 跳去别的地方。
+   */
+  const locateDone = useRef(0);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+  }, []);
+  const locateAt = locateTarget?.at ?? 0;
+  /** 这一次找原处最近一回往前翻页时，最早那条是谁。翻完它没变，就是这一页没取回来。 */
+  const locatePaged = useRef<{ at: number; first: string | undefined } | null>(null);
+  /**
+   * 跳回原处那次平滑滚动的有效期。原处常在已加载内容的顶上，一路滑过去会碰到「到顶取更早
+   * 那一页」的线；那一页前插时视口被钉回半路，动画就此断掉，落点离原处差出一截。这段时间里
+   * 不自动取更早的页，人一伸手就作废。
+   */
+  const locateScrollUntil = useRef(0);
+  useEffect(() => {
+    if (!locateTarget || locateDone.current === locateAt) return;
+    const { mark } = locateTarget;
+    const finish = (result: LocateState | 'found') => {
+      locateDone.current = locateAt;
+      locatePaged.current = null;
+      onLocateResult?.(mark.id, result);
+    };
+    if (!records.some((r) => r.id === mark.record_id)) {
+      if (hasOlder) {
+        if (loadingOlder) {
+          onLocateResult?.(mark.id, 'searching');
+          return;
+        }
+        // 上一页翻完了、最早那条却没变：这一页没取回来（接口失败之类）。不原地连着重翻，
+        // 报「没找到原处」，人再点一次原文就从头再找。
+        const paged = locatePaged.current;
+        if (paged && paged.at === locateAt && paged.first === records[0]?.id) {
+          finish('notFound');
+          return;
+        }
+        locatePaged.current = { at: locateAt, first: records[0]?.id };
+        onLocateResult?.(mark.id, 'searching');
+        onLoadOlder();
+        return;
+      }
+      if (!loadingOlder) finish('notFound');
+      return;
+    }
+    if (!visible.some((r) => r.id === mark.record_id)) {
+      if (lens !== 'talk') setLens('talk');
+      else finish('notFound');
+      return;
+    }
+    const box = scrollRef.current;
+    const el = box?.querySelector<HTMLElement>(
+      `[data-record-id="${CSS.escape(mark.record_id)}"][${RECORD_BODY_ATTR}]`
+    );
+    const range = el ? findMarkRange(el, mark.text, mark.occurrence) : null;
+    if (!box || !el || !range) {
+      finish('notFound');
+      return;
+    }
+    // 居中落位。Range 量不出位置（老浏览器、测试环境）就退到那条记录本身。
+    const rect =
+      typeof range.getBoundingClientRect === 'function'
+        ? range.getBoundingClientRect()
+        : el.getBoundingClientRect();
+    const view = box.getBoundingClientRect();
+    const top = box.scrollTop + rect.top - view.top - (box.clientHeight - rect.height) / 2;
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
+    locateScrollUntil.current = programmaticUntil.current;
+    followArmed.current = false;
+    if (typeof box.scrollTo === 'function') box.scrollTo({ top, behavior: 'smooth' });
+    else box.scrollTop = top;
+    paintHighlight(MARK_FLASH, [range], HIGHLIGHT_PRIORITY.flash);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(
+      () => paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash),
+      FLASH_MS
+    );
+    finish('found');
+    // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens]);
+
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
     manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
     // 人一伸手，程序那次滚动就作废——接下来的每一个事件都是人的，不许再被当成动画余波。
     programmaticUntil.current = 0;
+    locateScrollUntil.current = 0;
   }, []);
 
   const handleKeyDown = useCallback(
@@ -728,7 +973,8 @@ export default function RecordStream({
 
       // 翻到顶附近：钉住当前几何，取更早的一页前插。
       if (el.scrollTop < NEAR_TOP_PX) {
-        if (olderArmed.current && hasOlder && !loadingOlder) {
+        // 跳回原处正滑着：不取（见 locateScrollUntil）。
+        if (now > locateScrollUntil.current && olderArmed.current && hasOlder && !loadingOlder) {
           olderArmed.current = false;
           anchor.current = { height: el.scrollHeight, top: el.scrollTop };
           onLoadOlder();
@@ -739,6 +985,9 @@ export default function RecordStream({
     },
     [hasOlder, loadingOlder, onLoadOlder]
   );
+
+  // 缩略滚动条只在「全部」「对话」两档出现（spec 20260928-webui-session-stack 已定）。
+  const showMinimap = minimap && (lens === 'all' || lens === 'talk') && visible.length > 0;
 
   if (!sessionId) {
     return (
@@ -781,16 +1030,21 @@ export default function RecordStream({
         </div>
       ) : null}
 
+      {/* 缩略滚动条压在滚动区右侧那条空白里，所以两者包在同一个定位框里；它只在「全部」
+          「对话」两档出现，其余几档本来就没有人发言和代理回复可画。 */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
+        id="record-stream-scroll"
         onScroll={handleScroll}
         onWheel={noteManualIntent}
         onTouchMove={noteManualIntent}
         onKeyDown={handleKeyDown}
         onMouseDown={handleMouseDown}
         /* 滚动容器的内距契约：上 16 下 40。底下比上面厚，是因为滚到底那一刻最后一条
-           不该被硬切在容器边框上，而输入框就压在下面。 */
-        className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-4"
+           不该被硬切在容器边框上，而输入框就压在下面。挂着缩略滚动条时右边多让出它那
+           一条，窄窗下正文不会钻到它底下。 */
+        className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-5 pt-4 ${showMinimap ? 'record-stream-no-bar pr-9' : 'pr-5'}`}
         data-testid="record-stream-scroll"
       >
         {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
@@ -874,11 +1128,25 @@ export default function RecordStream({
           {activeTrail && !activeShown ? agentOnIt : null}
         </div>
       </div>
+      {showMinimap ? (
+        <StreamMinimap
+          scrollRef={scrollRef}
+          ticks={ticks}
+          version={groups}
+          onUserScroll={noteManualIntent}
+        />
+      ) : null}
+      </div>
 
       {/* 圈中一段文字之后冒出来的「引用」按钮，以及短选区的同字标绿。
           它挂在滚动容器外面：摆在里面会被 `overflow-y-auto` 裁掉一半。 */}
       {onQuote ? (
-        <SelectionQuote containerRef={scrollRef} sessionId={sessionId} onQuote={onQuote} />
+        <SelectionQuote
+          containerRef={scrollRef}
+          sessionId={sessionId}
+          onQuote={onQuote}
+          onStack={onStack}
+        />
       ) : null}
     </div>
   );

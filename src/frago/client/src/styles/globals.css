@@ -358,6 +358,17 @@ select,
   scrollbar-color: var(--border-color) transparent;
 }
 
+/* 记录流挂着区段条时不画原生竖条：区段条的滑块已经在报位置、也能拖，两根并排是同一件事
+   画两遍。只藏竖条，滚轮、触控板、键盘翻页照常。区段条不在的那几档（Hooks / Tools /
+   System、Teams 页）不挂这个类，竖条照旧。 */
+.record-stream-no-bar {
+  scrollbar-width: none;
+}
+
+.record-stream-no-bar::-webkit-scrollbar {
+  display: none;
+}
+
 /* === Utility Classes === */
 .font-mono {
   font-family: var(--font-mono);
@@ -8280,4 +8291,26 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 ::highlight(workbench-quote-echo) {
   background-color: var(--accent-primary-20);
   color: var(--accent-primary);
+}
+
+/* === 记录流里的引用与暂存底色 ================================================
+   颜色只有一个意思：蓝 = 回应过了（引用、用过了的暂存），琥珀 = 还等着你（没用过的
+   暂存）。绿色留给上面那套同字标绿和缩略滚动条上的人发言，这里不用。
+
+   与同字标绿同一套写法：只递交文本范围，DOM 一个字不动。谁压谁由脚本给每套高亮的
+   priority 决定（同字标绿 > 暂存 > 引用），重叠处引用那一组先被挖掉，所以这里只管
+   各自的底色。深浅主题各自沿用已有的淡底变量，不另起颜色。字色不动：底色够淡，正文
+   原来什么颜色就还是什么颜色，读起来不打断。 */
+::highlight(workbench-mark-quote) {
+  background-color: var(--accent-info-10);
+}
+
+::highlight(workbench-mark-stack) {
+  background-color: var(--accent-warning-10);
+}
+
+/* 从暂存列表跳回原处时那段文字亮一瞬：叠一层中性的选区色，压在标注底色上面，
+   人一眼就找得到落点。不用新的颜色——它不表达状态，只是「在这儿」。 */
+::highlight(workbench-mark-flash) {
+  background-color: var(--sel-border);
 }

@@ -30,6 +30,11 @@
  * 每一格都能点标题折起来只剩标题。高度、折叠、整栏宽度都记在这个浏览器里，见
  * `useReportLayout`。
  *
+ * **整栏上下切成两块。** 上方是上面说的这些摘要，原样一项不少；下方是这场会话的暂存列表
+ * （见 `StackPanel`）。中间一根分割线，拖它改上下比例，比例同样记在浏览器里；两块各自
+ * 滚动，互不牵连。暂存列表空着时下方只剩一行怎么用的说明，高度收到最小，分割线也不给
+ * 拖——空列表没有什么可以分到高度的。
+ *
  * 全域禁令在这一栏同样成立：没有百分比、没有 X 比 Y 计数、没有进度条、没有预计剩余
  * 时间、没有还没发生的步骤名。允许出现的量只有已发生的绝对数。这条不是审美偏好：
  * Cline、OpenAI Codex、Claude Code 三家都在撤掉前瞻式待办清单，Codex issue #21327 记下
@@ -61,8 +66,11 @@ import {
   MAX_SLOT_HEIGHT,
   MIN_PANEL_WIDTH,
   MIN_SLOT_HEIGHT,
+  MIN_SPLIT_PX,
   RESIZE_STEP,
   clamp,
+  splitHeight,
+  useReportSplit,
   useSlotLayout,
   type CoverKey,
   type SlotLayoutController,
@@ -97,6 +105,7 @@ function Handle({
   onChange,
   onReset,
   invert = false,
+  strong = false,
   className = '',
 }: {
   orientation: 'horizontal' | 'vertical';
@@ -108,6 +117,8 @@ function Handle({
   onReset: () => void;
   /** 竖线在右栏左边缘：往左拖是变宽，方向反过来。 */
   invert?: boolean;
+  /** 线画深一档。分开两块不同东西（摘要与暂存）的那一根要一眼看得出来。 */
+  strong?: boolean;
   className?: string;
 }) {
   const start = useRef<{ pos: number; size: number } | null>(null);
@@ -157,7 +168,9 @@ function Handle({
       <div
         className={
           horizontal
-            ? 'absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-color transition-colors group-hover:bg-text-muted group-focus-visible:bg-text-muted'
+            ? `absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors group-hover:bg-text-muted group-focus-visible:bg-text-muted ${
+                strong ? 'bg-border-strong' : 'bg-border-color'
+              }`
             : 'absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors group-hover:bg-text-muted group-focus-visible:bg-text-muted'
         }
       />
@@ -575,12 +588,17 @@ function stamp(ms: number): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 上下两块之间那根分割线能按住的厚度。 */
+const SPLIT_HANDLE_PX = 9;
+
 /** 画右栏。跟数据从哪来无关，测试直接喂它。 */
 export function ReportBody({
   sessionId,
   view,
   width = null,
   onWidthChange,
+  lower,
+  lowerEmpty = false,
 }: {
   sessionId: string | null;
   view: SessionObserverView;
@@ -588,11 +606,31 @@ export function ReportBody({
   width?: number | null;
   /** 给了才出现左边缘那根可拖的竖线。 */
   onWidthChange?: (next: number | null) => void;
+  /** 下半那一块（暂存列表）。不给就整栏都是摘要。 */
+  lower?: ReactNode;
+  /** 下半空着：高度收到最小，分割线不给拖。 */
+  lowerEmpty?: boolean;
 }) {
   const { t } = useTranslation();
   const layout = useSlotLayout();
+  const split = useReportSplit();
   const asideRef = useRef<HTMLElement>(null);
   const [measured, setMeasured] = useState<number | null>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [splitTotal, setSplitTotal] = useState(0);
+  const splitOn = lower !== undefined;
+
+  // 上下两块按比例分，得知道此刻一共多高；窗口一变就重量。
+  useLayoutEffect(() => {
+    const el = splitRef.current;
+    if (!el) return undefined;
+    const measure = () => setSplitTotal(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [sessionId, splitOn]);
 
   // 没调过宽度时要知道此刻实际多宽，才能从这个宽度起拖。
   useLayoutEffect(() => {
@@ -643,9 +681,8 @@ export function ReportBody({
         ? t('workbench.report.empty')
         : null;
 
-  return (
-    <aside ref={asideRef} className={aside}>
-      {widthHandle}
+  const upper = (
+    <>
       {state?.decision ? (
         <CallBanner text={state.decision} time={ago(state.decision_at, t)} />
       ) : null}
@@ -661,6 +698,61 @@ export function ReportBody({
           {footer}
         </div>
       ) : null}
+    </>
+  );
+
+  if (!splitOn) {
+    return (
+      <aside ref={asideRef} className={aside}>
+        {widthHandle}
+        {upper}
+      </aside>
+    );
+  }
+
+  // 可分的高度要扣掉分割线自己那一条；还没量到（首帧、测试环境）就先按比例的百分数画。
+  const room = splitTotal - SPLIT_HANDLE_PX;
+  const upperPx = room > 0 ? splitHeight(split.ratio, room) : null;
+
+  return (
+    <aside ref={asideRef} className={aside}>
+      {widthHandle}
+      <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
+        <div
+          data-testid="report-upper"
+          className={`flex min-h-0 flex-col ${lowerEmpty ? 'flex-1' : 'shrink-0'}`}
+          style={
+            lowerEmpty
+              ? undefined
+              : { height: upperPx ?? `${Math.round(split.ratio * 100)}%` }
+          }
+        >
+          {upper}
+        </div>
+        {lowerEmpty ? (
+          <div aria-hidden className="h-px shrink-0 bg-border-strong" />
+        ) : (
+          <Handle
+            orientation="horizontal"
+            strong
+            label={t('workbench.stack.resize')}
+            value={upperPx ?? MIN_SPLIT_PX}
+            min={MIN_SPLIT_PX}
+            max={Math.max(MIN_SPLIT_PX, room - MIN_SPLIT_PX)}
+            onChange={(h) => {
+              if (room > 0) split.setRatio(splitHeight(h / room, room) / room);
+            }}
+            onReset={() => split.setRatio(null)}
+            className="relative z-10 h-[9px] shrink-0 cursor-row-resize"
+          />
+        )}
+        <div
+          data-testid="report-lower"
+          className={lowerEmpty ? 'shrink-0' : 'min-h-0 flex-1'}
+        >
+          {lower}
+        </div>
+      </div>
     </aside>
   );
 }
@@ -669,13 +761,25 @@ export default function ReportPanel({
   sessionId,
   width,
   onWidthChange,
+  lower,
+  lowerEmpty,
 }: {
   sessionId: string | null;
   width?: number | null;
   onWidthChange?: (next: number | null) => void;
+  /** 下半那一块（暂存列表）。 */
+  lower?: ReactNode;
+  lowerEmpty?: boolean;
 }) {
   const view = useSessionObserver(sessionId);
   return (
-    <ReportBody sessionId={sessionId} view={view} width={width} onWidthChange={onWidthChange} />
+    <ReportBody
+      sessionId={sessionId}
+      view={view}
+      width={width}
+      onWidthChange={onWidthChange}
+      lower={lower}
+      lowerEmpty={lowerEmpty}
+    />
   );
 }

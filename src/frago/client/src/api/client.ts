@@ -127,6 +127,9 @@ import type {
   CloseTmuxSessionsResponse,
   EnvironmentResponse,
   EnvironmentUpgradeResponse,
+  WorkbenchMark,
+  WorkbenchMarkKind,
+  SessionMarks,
 } from '@/types/api';
 
 export type {
@@ -241,6 +244,9 @@ export type {
   TokenDayBucket,
   ClaudeUsage,
   ClaudeUsageBucket,
+  WorkbenchMark,
+  WorkbenchMarkKind,
+  SessionMarks,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -1531,4 +1537,24 @@ export async function startEnvironmentUpgrade(ids: string[]): Promise<Environmen
 /** 这一批升级到哪一步了。 */
 export async function getEnvironmentUpgradeStatus(): Promise<EnvironmentUpgradeResponse> {
   return fetchApi<EnvironmentUpgradeResponse>('/system/environment/upgrade');
+}
+
+// ============================================================
+// 会话页标注 — 引用与暂存
+// ============================================================
+
+/** 这场会话的全部标注。还没有就是空列表。 */
+export async function getSessionMarks(sessionId: string): Promise<SessionMarks> {
+  return fetchApi<SessionMarks>(`/workbench/sessions/${encodeURIComponent(sessionId)}/marks`);
+}
+
+/** 整份覆盖。服务端交回落盘后的那一份。 */
+export async function putSessionMarks(
+  sessionId: string,
+  marks: SessionMarks
+): Promise<SessionMarks> {
+  return fetchApi<SessionMarks>(`/workbench/sessions/${encodeURIComponent(sessionId)}/marks`, {
+    method: 'PUT',
+    body: JSON.stringify(marks),
+  });
 }

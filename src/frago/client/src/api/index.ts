@@ -1328,3 +1328,25 @@ export const getEnvironmentUpgradeStatus = withMode(
   () => httpApi.getEnvironmentUpgradeStatus(),
   () => Promise.resolve(IDLE_UPGRADE),
 );
+
+// ============================================================
+// 会话页标注 — 引用与暂存
+// ============================================================
+
+export type { WorkbenchMark, WorkbenchMarkKind, SessionMarks } from './client';
+
+// 标注存在会话备份目录里，只有服务端读写得到。桌面壳那一路没有桥，把取不到说出来。
+const MARKS_UNAVAILABLE = 'Session marks API not available in pywebview mode';
+
+export const getSessionMarks = withMode(
+  (sessionId: string): Promise<httpApi.SessionMarks> => httpApi.getSessionMarks(sessionId),
+  (_sessionId: string): Promise<httpApi.SessionMarks> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);
+
+export const putSessionMarks = withMode(
+  (sessionId: string, marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
+    httpApi.putSessionMarks(sessionId, marks),
+  (_sessionId: string, _marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);

@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import ReportPanel from './ReportPanel';
+import StackPanel, { marksAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason } from './Composer';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
@@ -37,6 +38,7 @@ import { shortAge } from './SessionItem';
 import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
+import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { handoffSession } from '@/hooks/useAgentClients';
@@ -172,13 +174,63 @@ export default function SessionWorkbenchPage() {
     return null;
   }, [latestTrail, inFlight, now, selectedForYou, t]);
 
+  /**
+   * 这场会话的标注：引用过、暂存过的那些文字。存在服务端的会话备份目录里，记录流按它
+   * 着色，右栏下半按它列暂存。
+   */
+  const marks = useSessionMarks(selectedId);
+  const marksRef = useRef<WorkbenchMark[]>(marks.marks);
+  marksRef.current = marks.marks;
+
+  /**
+   * 暂存条目「用过了」的判定：点了「填入」只算**待发出**（只在内存里）；随后这场会话从
+   * 输入框发出成功一次，才把那几条标成用过。填了不发、切走会话，都不算。
+   *
+   * 出门那一刻再核一遍：只有发出去的那句话里**确实还带着这条原文**的才算用上——填进去
+   * 之后又删掉、改填了别的，那条就没用上，留在待发出里。一次发出之前填了好几条，这几条
+   * 都带着就都算。
+   */
+  const [pendingUse, setPendingUse] = useState<string[]>([]);
+  const pendingUseRef = useRef<string[]>([]);
+  pendingUseRef.current = pendingUse;
+  /**
+   * 信封编号 → 这一单是哪一场发的、带出去了哪几条暂存。接口回来成功才标用过，失败退回
+   * 待发出。换会话**不清**这份：接口要等整整一轮才回来，人发完就切去别处是常事，回来时
+   * 照样要把那一场的那几条标上。
+   */
+  const riding = useRef(new Map<string, { sid: string; ids: string[] }>());
+  // 换会话只清待发出：填了还没发的，切走就不算。
+  useEffect(() => setPendingUse([]), [selectedId]);
+
   /** 发出那一刻，这一场的 For you 本地先撤：agent 接手期间清单上什么都不挂。 */
   const onSendStart = useCallback(
     (text: string, attachments: number) => {
       if (selectedId) forYou.suppress(selectedId);
-      return markSent(text, attachments);
+      const id = markSent(text, attachments);
+      const aboard = marksAboard(text, pendingUseRef.current, marksRef.current);
+      if (id && selectedId && aboard.length) {
+        riding.current.set(id, { sid: selectedId, ids: aboard });
+        setPendingUse((prev) => prev.filter((mid) => !aboard.includes(mid)));
+      }
+      return id;
     },
     [selectedId, forYou, markSent]
+  );
+
+  /** 没发出去：这一单带着的暂存退回待发出，重试时照样算。 */
+  const onSendFailed = useCallback(
+    (outboundId?: string) => {
+      const aboard = outboundId ? riding.current.get(outboundId) : undefined;
+      if (outboundId && aboard) {
+        riding.current.delete(outboundId);
+        // 人已经切去别的会话就不退了：待发出只在当前这一场里有意义。
+        if (aboard.sid === selectedId) {
+          setPendingUse((prev) => [...prev, ...aboard.ids.filter((mid) => !prev.includes(mid))]);
+        }
+      }
+      clearSent(outboundId);
+    },
+    [clearSent, selectedId]
   );
 
   /**
@@ -190,7 +242,7 @@ export default function SessionWorkbenchPage() {
     records: recordsSessionId === selectedId ? records : [],
     blockedReason: blockReason(selectedId),
     onSendStart,
-    onSendFailed: clearSent,
+    onSendFailed,
   });
 
   /**
@@ -199,10 +251,35 @@ export default function SessionWorkbenchPage() {
    * 编号用自增的次数而不是时间：同一段话连引两次，时间戳可能一模一样，输入区会以为
    * 是同一件事而把第二次吃掉。
    */
-  const [quote, setQuote] = useState<{ text: string; at: number } | null>(null);
+  const [quote, setQuote] = useState<{ text: string; note?: string; at: number } | null>(null);
   const quoteSeq = useRef(0);
   // 换会话把没落地的引用收掉——那段话是从上一场的记录里圈的。
   useEffect(() => setQuote(null), [selectedId]);
+
+  /** 暂存列表「填入」：按引用格式落进输入框，想法接在后面；这一条进入待发出。 */
+  const fillFromStack = useCallback((mark: WorkbenchMark) => {
+    setQuote({ text: mark.text, note: mark.note, at: (quoteSeq.current += 1) });
+    setPendingUse((prev) => (prev.includes(mark.id) ? prev : [...prev, mark.id]));
+  }, []);
+
+  /**
+   * 暂存列表「点原文」：让记录流滚回那段文字。原处还没加载就往前翻页找，找到之前条目上
+   * 写「正在往前找」，翻到开头也找不到就写「没找到原处」，NEVER 跳去别的地方。
+   */
+  const [locateTarget, setLocateTarget] = useState<{ mark: WorkbenchMark; at: number } | null>(null);
+  const [locateState, setLocateState] = useState<Record<string, LocateState>>({});
+  useEffect(() => {
+    setLocateTarget(null);
+    setLocateState({});
+  }, [selectedId]);
+  const onLocateResult = useCallback((id: string, result: LocateState | 'found') => {
+    setLocateState((prev) => {
+      const next = { ...prev };
+      if (result === 'found') delete next[id];
+      else next[id] = result;
+      return next;
+    });
+  }, []);
 
   /**
    * 新建那一场从「点了创建」到「界面上真的有它」之间的那段路。
@@ -381,7 +458,16 @@ export default function SessionWorkbenchPage() {
               awaitingAgent={awaitingAgent}
               trails={trails}
               scrollTarget={scrollTarget}
-              onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
+              onQuote={(text, anchor) => {
+                setQuote({ text, at: (quoteSeq.current += 1) });
+                // 引用也留痕：记录流里这段转成蓝底，看得出哪些已经回应过。
+                if (anchor) marks.addMark({ kind: 'quote', ...anchor });
+              }}
+              onStack={(anchor, note) => marks.addMark({ kind: 'stack', ...anchor, note })}
+              marks={marks.marks}
+              minimap
+              locateTarget={locateTarget}
+              onLocateResult={onLocateResult}
             />
             </DecisionCardContext.Provider>
           )}
@@ -416,6 +502,12 @@ export default function SessionWorkbenchPage() {
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
+            // 这一单带出去的暂存到此才算用过了：记录流里的底色从琥珀转蓝。
+            const aboard = outboundId ? riding.current.get(outboundId) : undefined;
+            if (outboundId && aboard) {
+              riding.current.delete(outboundId);
+              marks.markUsed(aboard.ids, aboard.sid);
+            }
             // 接口回来了就说明这一轮已经说完，那句话必定在会话里了：信封该收，
             // 不必等记录流认出它长什么样。
             settleSent(outboundId);
@@ -425,10 +517,29 @@ export default function SessionWorkbenchPage() {
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
+        {/* 右栏下半是这场会话的暂存列表。没选会话时右栏只有一句说明，不分上下。 */}
         <ReportPanel
           sessionId={selectedId}
           width={report.width}
           onWidthChange={report.setWidth}
+          lowerEmpty={!marks.marks.some((m) => m.kind === 'stack')}
+          lower={
+            selectedId ? (
+              <StackPanel
+                marks={marks.marks}
+                pendingIds={pendingUse}
+                locate={locateState}
+                onFill={fillFromStack}
+                onLocate={(mark) => {
+                  onLocateResult(mark.id, 'found');
+                  setLocateTarget({ mark, at: Date.now() });
+                }}
+                onDelete={marks.remove}
+                onMove={marks.move}
+                onNoteChange={marks.setNote}
+              />
+            ) : undefined
+          }
         />
       </div>
     </div>

@@ -1,5 +1,5 @@
 /**
- * useReportLayout — 右栏的版面：每一格多高、哪几格折起来、整栏多宽。
+ * useReportLayout — 右栏的版面：每一格多高、哪几格折起来、整栏多宽、摘要与暂存上下怎么分。
  *
  * 由人来定，记在这个浏览器里，下次打开照旧。旁路 AI 每次改的只是格子里的字，格子的
  * 位置和大小不跟着内容跳——人的视线不用重新找位置，这是覆盖型槽位固定高度的本意；
@@ -144,4 +144,37 @@ export function useReportWidth() {
   }, []);
 
   return { width, setWidth };
+}
+
+/**
+ * 右栏上下切分：上方旁路 AI 摘要，下方暂存列表。记的是上方占整栏的比例，不是像素——
+ * 窗口一高一矮，两块跟着按比例伸缩，人拖出来的那个「大概一半一半」不会变形。
+ *
+ * 两块各自最低 {@link MIN_SPLIT_PX}：再矮就只剩标题，那一块等于没有。这条在画的时候按
+ * 实际高度夹，存下来的比例本身不改——窗口放大后还原成人拖的样子。
+ */
+export const DEFAULT_SPLIT = 0.6;
+export const MIN_SPLIT_PX = 120;
+
+const SPLIT_KEY = 'frago.workbench.reportSplit.v1';
+
+/** 把比例换成此刻上方该有多高，两头各留够 {@link MIN_SPLIT_PX}。 */
+export function splitHeight(ratio: number, total: number): number {
+  if (total <= MIN_SPLIT_PX * 2) return Math.round(total / 2);
+  return clamp(ratio * total, MIN_SPLIT_PX, total - MIN_SPLIT_PX);
+}
+
+export function useReportSplit() {
+  const [ratio, setRatioState] = useState<number>(() => {
+    const r = read(SPLIT_KEY);
+    return typeof r === 'number' && Number.isFinite(r) && r > 0 && r < 1 ? r : DEFAULT_SPLIT;
+  });
+
+  const setRatio = useCallback((r: number | null) => {
+    const value = r === null ? null : Math.min(0.95, Math.max(0.05, r));
+    setRatioState(value ?? DEFAULT_SPLIT);
+    write(SPLIT_KEY, value);
+  }, []);
+
+  return { ratio, setRatio };
 }
