@@ -973,12 +973,19 @@ function PeerSide({
   const [sent, setSent] = useState<SentRequest[]>([]);
   const sentSeq = useRef(0);
   const [now, setNow] = useState(() => Date.now());
+  // 在对方记录里找到过的请求。右栏只拿对方最近 80 条，对方忙起来，送达的那条很快被
+  // 挤出这个范围——找不到不等于没送到。从前找不到就退回流末尾停在 Sent，10 分钟后
+  // 还挂上「还没进对方的会话」，而对方早已收到并做完了。找到过一次就不再回头。
+  const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set());
 
   // 换 team 时清掉上一个 team 的待核对清单。
-  useEffect(() => setSent([]), [binding.code]);
+  useEffect(() => {
+    setSent([]);
+    setSeen(new Set());
+  }, [binding.code]);
 
   // 有还没送达的请求时每分钟看一眼钟，让「还没进对方的会话」那一句按时出现。
-  const waiting = sent.length > 0;
+  const waiting = sent.some((one) => !seen.has(one.key));
   useEffect(() => {
     if (!waiting) return;
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -998,10 +1005,19 @@ function PeerSide({
     for (const request of sent) {
       const got = stepsFor(request, records);
       if (got.deliveredRecordId) byRecord.set(got.deliveredRecordId, { request, steps: got.steps });
-      else pending.push({ request, steps: got.steps });
+      // 送达过、只是被挤出了范围：跟别的旧记录一样不再显示。
+      else if (!seen.has(request.key)) pending.push({ request, steps: got.steps });
     }
     return { byRecord, pending };
-  }, [sent, records]);
+  }, [sent, records, seen]);
+
+  // 这一轮新找到的记下来。
+  useEffect(() => {
+    const found = [...progress.byRecord.values()]
+      .map(({ request }) => request.key)
+      .filter((key) => !seen.has(key));
+    if (found.length) setSeen((was) => new Set([...was, ...found]));
+  }, [progress, seen]);
 
   // 还没送达的挂在流末尾。给它们一条假的用户发言占位，这样它们跟真实记录走同一条
   // 渲染与跟到底的路，不必在记录流组件里另开一个口子。
