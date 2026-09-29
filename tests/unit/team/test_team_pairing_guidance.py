@@ -82,8 +82,9 @@ def test_真经中继投进来的消息核实得过(monkeypatch):
     _pull_one(monkeypatch, mid)
     seen: list[str] = []
 
-    def deliver(prompt: str) -> None:
+    def deliver(prompt: str, _landed) -> str:
         seen.append(prompt)
+        return sync.LANDED
 
     sync.sync_once(state, binding, deliver)
     line = re.search(r"--team-code (\S+) --message (\S+)）", seen[0])
@@ -100,10 +101,11 @@ def test_投一条就落盘_收件方马上核实也查得到(monkeypatch):
     ], "peer_present": True})
     checked: list[bool] = []
 
-    def deliver(prompt: str) -> None:
+    def deliver(prompt: str, _landed) -> str:
         if "第二条" in prompt:
             # 第二条投进去的那一刻，第一条必须已经在盘上
             checked.append(sync.verify_message(team_state.load_state(), CODE, "1" * 32).genuine)
+        return sync.LANDED
 
     sync.sync_once(state, binding, deliver)
     assert checked == [True]

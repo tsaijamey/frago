@@ -25,6 +25,7 @@ import secrets
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 #: 中继在哪。**现阶段这是唯一的来源，谁也改不了它。**
 #:
@@ -163,7 +164,18 @@ class TeamBinding:
     agent 会老老实实照做两遍。
 
     只留最近 :data:`DELIVERED_KEPT` 条：中继那边消息取走就删了，一条被删掉的消息
-    不会再出现，留着它的编号没有意义。"""
+    不会再出现，留着它的编号没有意义。
+
+    **进这一格的依据是会话记录里真出现了那条发言**，不是「送字那一步没报错」。从前是
+    后者：会话正忙时打进输入框的字，回车被吞了也照样记成已投递，那条消息在对方输入框
+    里一停四十分钟，最后跟主人自己打的一句拼成一条发言交了出去（2026-09-29）。"""
+
+    pending: list[dict[str, Any]] = field(default_factory=list)
+    """已经从中继取下、还没在本机会话记录里看到的消息，按到达顺序。每条是
+    ``{"id": 编号, "text": 原文, "handed": 是否已交给会话自己排队}``。
+
+    **这一格是必需的**：中继取信即删，取下之后送不进会话，本机不留一份就永远丢了。
+    每轮同步先查它们进没进会话，没进的等会话空闲时再送。"""
 
     def __post_init__(self) -> None:
         if self.side not in ("A", "B"):
@@ -368,6 +380,11 @@ def load_state() -> TeamState:
             push_trouble_transient=bool(one.get("push_trouble_transient", False)),
             active=bool(one.get("active", True)),
             delivered=[str(x) for x in (one.get("delivered") or [])][-DELIVERED_KEPT:],
+            pending=[
+                {"id": str(x["id"]), "text": str(x["text"]), "handed": bool(x.get("handed"))}
+                for x in (one.get("pending") or [])
+                if isinstance(x, dict) and x.get("id") and x.get("text")
+            ],
         )
 
     interval = int(raw.get("interval_seconds") or DEFAULT_INTERVAL_SECONDS)

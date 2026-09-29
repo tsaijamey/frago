@@ -11,8 +11,10 @@
 时用一次——它是入场券，转交给对方的那张；钥匙留在本机，证明「我就是已经坐在这一侧的
 那台机器」。券可能在转交途中被人看见，钥匙不会。
 
-**投递交给调用方。** 把一句话送进正在跑的会话要驱动 tmux，那是服务层的事。这里只把
-取下来的消息连同前缀交出去——这条分界让整个包在没有服务端的地方也能引用与测试。
+**投递交给调用方，算不算送到由这里判。** 把一句话送进正在跑的会话要驱动 tmux，那是
+服务层的事。这里把取下来的消息连同前缀交出去，再拿会话记录核对它进没进去——只有
+记录里出现了带这条消息编号的用户发言才算送到。这条分界让整个包在没有服务端的地方
+也能引用与测试。
 
 分层：核心数据层，NEVER import ``server/`` 或 ``cli/``。
 """
@@ -44,8 +46,12 @@ PUSH_BYTES = 96 * 1024
 __all__ = [
     "SyncOutcome",
     "TeamRefused",
+    "HANDED",
+    "LANDED",
+    "NOT_NOW",
     "join_team",
     "leave_team",
+    "message_landed",
     "open_team",
     "peer_records",
     "send_to_peer",
@@ -72,8 +78,29 @@ class SyncOutcome:
     pushed: int = 0
     delivered: int = 0
     skipped: int = 0
+    waiting: int = 0
+    """取下来了、还没在本机会话里看到的消息有几条（会话在忙，或送了没进去）。"""
     peer_present: bool = False
     note: str = ""
+
+
+# ── 投递那一步的三种回答 ────────────────────────────────────────────────
+#
+# 调用方给的 ``deliver(prompt, landed)`` 回其中一个。``landed`` 是这里递过去的核对动作：
+# 问会话记录里有没有这条发言，调用方送完字拿它等结果。
+
+LANDED = "landed"
+"""送进去了，会话记录里已经看得到这条发言。"""
+
+HANDED = "handed"
+"""交给了会话自己的排队（不经输入框的那一类会话），它会在当前这一轮结束后接着处理。
+不要再送第二遍，之后每轮只查它出现没有。"""
+
+NOT_NOW = "not_now"
+"""这一轮没送成：会话在忙、输入框里已经有字，或者送了但记录里没出现（调用方已把
+自己打进去的字清掉）。消息留在待送清单里，下一轮再来。"""
+
+Deliver = Callable[[str, Callable[[], bool]], str]
 
 
 # ── 结成 team ──────────────────────────────────────────────────────────
@@ -244,7 +271,11 @@ def verify_message(state: TeamState, code: str, message_id: str) -> Verdict:
         )
     if len(message_id) < 8:
         return Verdict(False, "消息编号太短，核实不了", binding.session_id, binding.side)
-    hit = any(one == message_id for one in binding.delivered)
+    # 待送清单里的也算：它确实是从中继取下来的。收件那边的 agent 读到消息后马上就会来
+    # 核实，那一刻同步循环可能还在等记录落盘、没来得及把它挪进已投递。
+    hit = message_id in binding.delivered or any(
+        one.get("id") == message_id for one in binding.pending
+    )
     if not hit:
         return Verdict(
             False,
@@ -268,16 +299,36 @@ def team_status(state: TeamState, code: str) -> dict[str, Any]:
 # ── 一轮同步 ────────────────────────────────────────────────────────────
 
 
+def message_landed(session_id: str, message_id: str) -> bool:
+    """这条队友消息进没进这场会话：最近的记录里有没有一条带它编号的用户发言。
+
+    认的是核实行里那串编号，不比整段原文——对方 agent 的界面可能把粘贴进来的字包上
+    一层标签（``<pasted_content>``），原文比对会对不上。读不到记录一律当没进。
+    """
+    try:
+        records = record_reader.read_records(
+            session_id, tail=True, limit=record_reader.MAX_LIMIT
+        )
+    except Exception:  # noqa: BLE001 — 读不到就是还没看到，下一轮再问
+        return False
+    return any(
+        one.kind == "user.say" and message_id in str(one.payload.get("text") or "")
+        for one in records
+    )
+
+
 def sync_once(
     state: TeamState,
     binding: TeamBinding,
-    deliver: Callable[[str], None],
+    deliver: Deliver,
     *,
     batch: int = DEFAULT_PUSH_BATCH,
 ) -> SyncOutcome:
-    """跑一轮：先把自己这边的新记录推上去，再把对方投来的消息交给 ``deliver``。
+    """跑一轮：先把自己这边的新记录推上去，再取对方投来的消息，逐条交给 ``deliver``。
 
-    ``deliver`` 收到的是**已经加好前缀的整段话**，直接投进会话即可。
+    ``deliver(prompt, landed)`` 收到的是**已经加好前缀的整段话**和一个核对动作，回
+    :data:`LANDED` / :data:`HANDED` / :data:`NOT_NOW` 之一。消息按到达顺序一条一条送：
+    前一条没进会话，后面的不越过它——对方常是一条接着一条补充，顺序乱了意思就变了。
     """
     outcome = SyncOutcome(code=binding.code)
 
@@ -302,41 +353,82 @@ def sync_once(
     got = _call(state, binding, "pull")
     messages = got.get("messages")
     outcome.peer_present = bool(got.get("peer_present", True))
-    if not isinstance(messages, list) or not messages:
-        return outcome
 
-    already = set(binding.delivered)
-    for one in messages:
+    # 取下来的先进待送清单并当场落盘：中继取信即删，这一轮送不进去、或者进程在送的
+    # 途中退了，本机不留一份这条消息就再也找不回来。
+    known = set(binding.delivered) | {one["id"] for one in binding.pending}
+    fresh = False
+    for one in messages if isinstance(messages, list) else []:
         if not isinstance(one, dict):
             continue
         mid = str(one.get("id") or "")
         text = str(one.get("text") or "")
         if not mid or not text:
             continue
-        if mid in already:
+        if mid in known:
             outcome.skipped += 1
             continue
-        try:
-            deliver(
-                render_delivery(
-                    state.prefix, binding.code, mid, text, rules=state.request_rules
-                )
-            )
-        except Exception:
-            logger.warning(
-                "team %s：消息 %s 没能投进会话 %s",
-                binding.code, mid, binding.session_id, exc_info=True,
-            )
-            continue
-        outcome.delivered += 1
-        binding.delivered.append(mid)
-        # 投一条就落一次盘：收件那边的 agent 读到消息后会马上跑 frago team verify，
-        # 它查的正是这份记录。等整批投完再存，先投进去的那几条会被判成「查无此条」。
+        binding.pending.append({"id": mid, "text": text, "handed": False})
+        known.add(mid)
+        fresh = True
+    if fresh:
         save_state(state)
 
-    binding.delivered = binding.delivered[-DELIVERED_KEPT:]
-    save_state(state)
+    _drain(state, binding, deliver, outcome)
+    outcome.waiting = len(binding.pending)
     return outcome
+
+
+def _drain(
+    state: TeamState, binding: TeamBinding, deliver: Deliver, outcome: SyncOutcome
+) -> None:
+    """把待送清单里的消息按顺序送进会话，送到哪条卡住就停在哪条。"""
+    while binding.pending:
+        head = binding.pending[0]
+        mid = head["id"]
+
+        def landed(m: str = mid) -> bool:
+            return message_landed(binding.session_id, m)
+
+        # 先查再送：上一轮送了、当时没等到，它可能后来还是进去了（记录落盘慢一拍）。
+        # 不先查就再送一遍，对方会话里同一句话出现两次。
+        if landed():
+            _mark_delivered(state, binding, outcome)
+            continue
+        if head.get("handed"):
+            break
+
+        prompt = render_delivery(
+            state.prefix, binding.code, mid, head["text"], rules=state.request_rules
+        )
+        try:
+            verdict = deliver(prompt, landed)
+        except Exception:
+            logger.warning(
+                "team %s：消息 %s 没能送进会话 %s，留着下一轮再送",
+                binding.code, mid, binding.session_id, exc_info=True,
+            )
+            break
+        if verdict == LANDED:
+            _mark_delivered(state, binding, outcome)
+            continue
+        if verdict == HANDED:
+            head["handed"] = True
+            save_state(state)
+        break
+
+
+def _mark_delivered(state: TeamState, binding: TeamBinding, outcome: SyncOutcome) -> None:
+    """待送清单的第一条确认进了会话：挪进已投递，当场落盘。
+
+    当场落盘是因为收件那边的 agent 读到消息后会马上跑 frago team verify，它查的正是
+    这份记录。
+    """
+    head = binding.pending.pop(0)
+    binding.delivered.append(head["id"])
+    binding.delivered = binding.delivered[-DELIVERED_KEPT:]
+    outcome.delivered += 1
+    save_state(state)
 
 
 def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:

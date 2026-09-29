@@ -353,7 +353,7 @@ def sync_cmd(code) -> None:
     平时不用敲：服务端有一条循环在按间隔自己跑。这条命令是给「现在就想知道对方说了
     什么」和排查用的。
     """
-    from frago.server.services import session_send
+    from frago.server.services.team_sync_service import deliver_to
 
     state = load_state()
     todo = [state.require(code)] if code else state.active_teams()
@@ -361,13 +361,12 @@ def sync_cmd(code) -> None:
         click.echo("本机没有在任何 team 里")
         return
     for binding in todo:
-        def deliver(prompt: str, sid: str = binding.session_id) -> None:
-            session_send.send_queued(sid, prompt)
-
-        outcome = _guard(lambda b=binding: team_sync.sync_once(state, b, deliver))
+        deliver = deliver_to(binding.session_id)
+        outcome = _guard(lambda b=binding, d=deliver: team_sync.sync_once(state, b, d))
         click.echo(
             f"{outcome.code}：推了 {outcome.pushed} 条记录，投了 {outcome.delivered} 条消息"
             + (f"，跳过重复 {outcome.skipped} 条" if outcome.skipped else "")
+            + (f"，{outcome.waiting} 条还没进会话（会话在忙，空闲了再送）" if outcome.waiting else "")
         )
         if outcome.note:
             click.echo(f"  {outcome.note}")

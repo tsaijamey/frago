@@ -131,3 +131,101 @@ def test_load_config_self_heals_missing_webui_sessions(monkeypatch, tmp_path):
     persisted = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert persisted["webui_sessions"]["max_resident"] == 10
     assert persisted["webui_sessions"]["idle_timeout_secs"] == 1800
+
+
+# ── 替别人投话：空闲才送、送完看记录 ────────────────────────────────────
+#
+# 2026-09-29：队友消息在对方 agent 干活时被打进输入框，回车被吞，字在输入框里停了
+# 四十分钟，最后跟主人自己打的一句拼成一条发言交了出去。
+
+
+class _AcquirePool:
+    """只会 acquire 的 pool 替身：交出同一个会话替身。"""
+
+    def __init__(self, session) -> None:
+        self.session = session
+
+    def acquire(self, agent_type, session_id, cwd, *, native_session_id=False):  # noqa: ARG002
+        return self.session
+
+
+def _fake_session(*, finished: bool, clear=True):
+    import threading
+
+    typed: list[str] = []
+    cleared: list[bool] = []
+
+    def submit(_session, text):
+        typed.append(text)
+
+    def clear_input(_session):
+        cleared.append(True)
+        return True
+
+    driver = SimpleNamespace(
+        agent_type="claude",
+        submit=submit,
+        clear_input=clear_input if clear else None,
+    )
+    session = SimpleNamespace(
+        status="idle", driver=driver, _submit_lock=threading.Lock(), last_active_at=None
+    )
+    return session, typed, cleared
+
+
+def _runner_for(monkeypatch, session, *, finished: bool):
+    monkeypatch.setattr(
+        "frago.server.services.ui_session_runner._turn_finished", lambda _s: finished
+    )
+    return UiSessionRunner(pool=_AcquirePool(session), cwd="/tmp")
+
+
+def test_会话在忙一个字都不打(monkeypatch):
+    session, typed, _ = _fake_session(finished=False)
+    runner = _runner_for(monkeypatch, session, finished=False)
+
+    got = runner.submit_when_idle("s", "队友的话", landed=lambda: True, sleep=lambda _s: None)
+
+    assert got == "not_now"
+    assert typed == [], "会话在忙时打进去的字，回车会被吞，留在输入框里等着跟别人的话拼起来"
+
+
+def test_本进程正驱动着一轮也算忙(monkeypatch):
+    session, typed, _ = _fake_session(finished=True)
+    session.status = "busy"
+    runner = _runner_for(monkeypatch, session, finished=True)
+
+    assert runner.submit_when_idle("s", "x", landed=lambda: True) == "not_now"
+    assert typed == []
+
+
+def test_空闲时送进去且记录里看到了才算到(monkeypatch):
+    session, typed, cleared = _fake_session(finished=True)
+    runner = _runner_for(monkeypatch, session, finished=True)
+    seen = iter([False, False, True])
+
+    got = runner.submit_when_idle(
+        "s", "队友的话", landed=lambda: next(seen), sleep=lambda _s: None
+    )
+
+    assert got == "landed"
+    assert typed == ["队友的话"]
+    assert cleared == []
+
+
+def test_等不到就把自己打的字清掉(monkeypatch):
+    session, typed, cleared = _fake_session(finished=True)
+    runner = _runner_for(monkeypatch, session, finished=True)
+    now = [0.0]
+
+    def tick(seconds):
+        now[0] += seconds
+
+    got = runner.submit_when_idle(
+        "s", "队友的话", landed=lambda: False, confirm_s=5, poll_s=1,
+        sleep=tick, clock=lambda: now[0],
+    )
+
+    assert got == "not_now"
+    assert typed == ["队友的话"]
+    assert cleared == [True], "留在输入框里，下一个按回车的人会把它连同自己的话一起交出去"

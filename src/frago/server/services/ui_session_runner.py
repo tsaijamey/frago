@@ -25,8 +25,11 @@ Phase 2 的空闲回收（idle eviction）落在 ``evict_idle`` + 模块级 ``_i
 
 from __future__ import annotations
 
+import contextlib
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -120,6 +123,59 @@ class UiSessionRunner:
             session_id=session_id, status=status, text=result.text
         )
 
+    def submit_when_idle(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        landed: Callable[[], bool],
+        agent_type: str | None = None,
+        cwd: str | None = None,
+        native_session_id: bool = True,
+        confirm_s: float = 30.0,
+        poll_s: float = 1.0,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> Literal["landed", "not_now"]:
+        """会话空闲时把这段话打进去，等它出现在会话记录里；不等这一轮答完。
+
+        **为什么非得空闲。** driver 判「回车生效了」看的是会话记录文件有没有变长——这条
+        判据是按「空闲时送字」定的（见 claude driver 的 ``_SUBMIT_VERIFY_POLLS``）。会话
+        正在干活时文件本来就一直在长，回车被吞了也会被判成提交成功。空闲判据与空闲回收
+        共用 :func:`_turn_finished`：claude 那一家包括「输入框是空的」，所以也不会把话接在
+        别人没发出去的字后面。
+
+        **没等到就清掉自己打的字。** 留在输入框里，下一个按回车的人会把它连同自己的话
+        一起交出去。清空走 driver 自己的 ``clear_input``（没有的那一家就不清）。
+
+        阻塞调用，最长约 ``confirm_s`` 加一次提交的工夫，调用方在线程里跑。
+        """
+        session = self._pool.acquire(
+            agent_type or self._agent_type,
+            session_id,
+            cwd or self._cwd,
+            native_session_id=native_session_id,
+        )
+        if getattr(session, "status", None) == "busy" or not _turn_finished(session):
+            return "not_now"
+        with session._submit_lock:
+            session.driver.submit(session, text)
+        session.last_active_at = datetime.now(UTC)
+
+        deadline = clock() + confirm_s
+        while True:
+            if landed():
+                return "landed"
+            if clock() >= deadline:
+                break
+            sleep(poll_s)
+
+        clear = session.driver.clear_input
+        if clear is not None:
+            with session._submit_lock, contextlib.suppress(Exception):
+                clear(session)
+        return "not_now"
+
     def evict_idle(self, timeout_s: float) -> list[str]:
         """回收空闲超阈值的常驻会话——**停没停**看会话自己的记录，**停了多久**看池。
 
@@ -128,8 +184,6 @@ class UiSessionRunner:
         问不出来、或本进程正驱动着这一轮，都返回 None，NEVER 被回收。返回被驱逐的
         session_id 列表。
         """
-        from datetime import datetime
-
         now = datetime.now(UTC).timestamp()
         return self._pool.evict_idle(lambda session: _idle_age(session, now), timeout_s)
 
