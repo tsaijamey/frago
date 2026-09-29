@@ -1,16 +1,18 @@
 /**
  * 左栏只留一个标记「For you」之后的用例。
  *
- * 盯的是摆放与字样：For you 的两行、其余一行；分区顺序 Pinned → For you → Everything
- * else；档位只剩 For you / All；状态词一个都不出现；可关终端那一行；开在 tmux 里的流光
- * 照旧（主人 09-24 定）；点开记一笔看过了。挂不挂的判据由 `useForYou.test.ts` 把关，
- * 这里直接给定判定结果。
+ * 盯的是摆放与字样：每张卡三行（标题、预览、状态行），For you 与其余同一结构；分区顺序
+ * Pinned → For you → Everything else；所有 For you 标签同一画法（品牌绿）；档位只剩
+ * For you / All；状态词一个都不出现；可关终端那一行；开在 tmux 里的流光照旧（主人 09-24
+ * 定）；点开记一笔看过了、但不撤 For you；选中那张发出后原位不动、切走才归位（第五轮）。
+ * 挂不挂的判据由 `useForYou.test.ts` 把关，这里直接给定判定结果。
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import { TestRail, fakeForYou, fakeViews } from './railTestKit';
+import { placeHeld, slotOf, type RailSections } from '../SessionRail';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import type { ForYouInfo } from '@/hooks/useForYou';
 import i18n from '@/i18n';
@@ -71,7 +73,7 @@ function railState(rows: WorkbenchSession[]): WorkbenchSessionsState {
 }
 
 function info(over: Partial<ForYouInfo> = {}): ForYouInfo {
-  return { emphasis: null, waitingSince: NOW - 44 * 60_000, words: 'Want me to log it?', unseen: false, ...over };
+  return { waitingSince: NOW - 44 * 60_000, words: 'Want me to log it?', unseen: false, ...over };
 }
 
 const rows = [session('a'), session('b'), session('c')];
@@ -82,12 +84,20 @@ beforeEach(() => {
 });
 
 describe('For you 在清单上', () => {
-  it('挂着的两行：标签加收尾原话；其余只剩一行', () => {
+  it('每张卡三行：标题、预览（人人都有）、状态行；For you 与其余同一结构', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ b: info() })} />);
     const items = screen.getAllByTestId('session-item');
+    for (const el of items) {
+      expect(el.querySelector('[data-testid=session-title]')).toBeTruthy();
+      expect(el.querySelector('[data-testid=session-preview]')).toBeTruthy();
+      expect(el.querySelector('[data-testid=session-status] [data-testid=session-menu-button]')).toBeTruthy();
+    }
     const waiting = items.find((el) => el.getAttribute('data-for-you') === 'true')!;
-    expect(waiting.textContent).toContain('For you');
-    expect(waiting.textContent).toContain('Want me to log it?');
+    expect(waiting.querySelector('[data-testid=session-status]')?.textContent).toContain('For you');
+    expect(waiting.querySelector('[data-testid=session-preview]')?.textContent).toBe('Want me to log it?');
+    // 不在 For you 的也有预览：会话清单的回复摘要
+    const other = items.find((el) => !el.getAttribute('data-for-you'))!;
+    expect(other.querySelector('[data-testid=session-preview]')?.textContent).toBe('did a thing');
     expect(screen.getAllByTestId('for-you-chip')).toHaveLength(1);
     // 摘要、来源、状态词都退场了
     expect(screen.queryByTestId('digest-done')).toBeNull();
@@ -135,29 +145,58 @@ describe('For you 在清单上', () => {
     expect(titles[1]).toContain('title a');
   });
 
-  it('加重的换告警橙，悬停说明原因；中性的没有颜色', () => {
+  it('所有 For you 标签同一画法：品牌绿，没有橙色，没有悬停原因', () => {
     render(
       <TestRail
         state={railState(rows)}
         selectedId={null}
         onSelect={NOOP}
-        forYou={fakeForYou({ a: info({ emphasis: 'pick-one' }), b: info() })}
+        forYou={fakeForYou({
+          a: info({ words: 'Reply with one letter: A or B.' }),
+          b: info({ words: 'Want me to log it?' }),
+          c: info({ words: 'API Error: connection reset' }),
+        })}
       />
     );
     const chips = screen.getAllByTestId('for-you-chip');
-    const loud = chips.find((c) => c.getAttribute('data-emphasis') === 'pick-one')!;
-    expect(loud.className).toContain('accent-warning');
-    expect(loud.getAttribute('title')).toBe('It wants you to pick one');
-    const quiet = chips.find((c) => c.getAttribute('data-emphasis') === 'none')!;
-    expect(quiet.className).not.toContain('accent');
+    expect(chips).toHaveLength(3);
+    expect(new Set(chips.map((c) => c.className)).size).toBe(1);
+    for (const c of chips) {
+      expect(c.className).toContain('text-accent-primary');
+      expect(c.className).not.toContain('warning');
+      expect(c.getAttribute('title')).toBeNull();
+      expect(c.hasAttribute('data-emphasis')).toBe(false);
+    }
   });
 
-  it('停下之后没点开过的，标题加粗', () => {
-    render(
-      <TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ a: info({ unseen: true }) })} />
-    );
+  it('标题最多两行、悬停看全文；时长只写时长，悬停仍说停在几点', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ a: info() })} />);
     const item = screen.getAllByTestId('session-item').find((el) => el.getAttribute('data-for-you'))!;
-    expect(item.querySelector('.font-semibold')).toBeTruthy();
+    const title = item.querySelector('[data-testid=session-title]')!;
+    expect(title.className).toContain('line-clamp-2');
+    expect(title.className).toContain('font-semibold');
+    expect(title.getAttribute('title')).toBe('title a');
+    const age = item.querySelector('[data-testid=session-age]')!;
+    expect(age.textContent).toBe('44 min');
+    expect(age.getAttribute('title')).toMatch(/^Stopped at .* has been waiting for you since$/);
+  });
+
+  it('清单上没有 Set aside / dismiss 这类手动移出', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ a: info() })} />);
+    fireEvent.click(screen.getAllByTestId('session-menu-button')[0]);
+    const text = (document.body.textContent ?? '').toLowerCase();
+    expect(text).not.toContain('set aside');
+    expect(text).not.toContain('dismiss');
+  });
+
+  it('点开一张 For you 不撤它：没有调 suppress，它仍挂着', () => {
+    const forYou = fakeForYou({ b: info() });
+    const { rerender } = render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={forYou} />);
+    fireEvent.click(screen.getAllByTestId('session-item')[0]);
+    rerender(<TestRail state={railState(rows)} selectedId="b" onSelect={NOOP} forYou={forYou} />);
+    expect(forYou.suppress).not.toHaveBeenCalled();
+    const b = screen.getAllByTestId('session-item').find((el) => el.textContent?.includes('title b'))!;
+    expect(b.getAttribute('data-for-you')).toBe('true');
   });
 
   it('档位只剩 For you / All，清单上搜不到状态词', () => {
@@ -179,6 +218,70 @@ describe('For you 在清单上', () => {
     render(<TestRail state={railState(rows)} selectedId="a" onSelect={NOOP} sendingId="a" />);
     const item = screen.getAllByTestId('session-item')[0];
     expect(item.textContent).toContain('Sending');
+  });
+});
+
+describe('不瞬移：选中那张发出后原位不动，切走才归位', () => {
+  const titles = () => screen.getAllByTestId('session-item').map((el) => el.querySelector('[data-testid=session-title]')?.textContent);
+
+  it('发出之后留在 For you 那一格、状态行 Agent on it；切走后回到 Everything else', () => {
+    const before = fakeForYou({ b: info() });
+    const { rerender } = render(
+      <TestRail state={railState(rows)} selectedId="b" onSelect={NOOP} forYou={before} />
+    );
+    expect(titles()).toEqual(['title b', 'title a', 'title c']);
+
+    // 发出那一刻：这一场离开 For you（suppress 之后判定里没有它了），页面交出 holdId
+    const after = fakeForYou({});
+    rerender(
+      <TestRail state={railState(rows)} selectedId="b" onSelect={NOOP} forYou={after} holdId="b" busyId="b" />
+    );
+    expect(titles()).toEqual(['title b', 'title a', 'title c']);
+    expect(screen.getByTestId('for-you-header')).toBeTruthy();
+    const b = screen.getAllByTestId('session-item')[0];
+    expect(b.querySelector('[data-testid=agent-on-it-chip]')).toBeTruthy();
+    expect(b.querySelector('[data-testid=for-you-chip]')).toBeNull();
+
+    // 切到别的会话：放开，按时间回到 Everything else
+    rerender(<TestRail state={railState(rows)} selectedId="a" onSelect={NOOP} forYou={after} holdId={null} />);
+    expect(titles()).toEqual(['title a', 'title b', 'title c']);
+    expect(screen.queryByTestId('for-you-header')).toBeNull();
+  });
+
+  it('发出时还在路上：状态行 Sending，不写时长', () => {
+    render(<TestRail state={railState(rows)} selectedId="a" onSelect={NOOP} sendingId="a" busyId="a" />);
+    const item = screen.getAllByTestId('session-item')[0];
+    expect(item.querySelector('[data-testid=sending-chip]')).toBeTruthy();
+    expect(item.querySelector('[data-testid=session-age]')).toBeNull();
+  });
+});
+
+describe('原位保留的纯函数', () => {
+  const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => session(id));
+  const sections: RailSections = { pinned: [], 'for-you': [b, c], rest: [a, d] };
+
+  it('slotOf 记下分区与序位；不在主干里返回 null', () => {
+    expect(slotOf(sections, 'c')).toMatchObject({ section: 'for-you', index: 1 });
+    expect(slotOf(sections, 'd')).toMatchObject({ section: 'rest', index: 1 });
+    expect(slotOf(sections, 'zz')).toBeNull();
+  });
+
+  it('placeHeld 把它从新位置拿出来、摆回当时那一格，其余相对次序不变', () => {
+    const held = slotOf(sections, 'c')!;
+    const moved: RailSections = { pinned: [], 'for-you': [b], rest: [c, a, d] };
+    const out = placeHeld(moved, held);
+    expect(out['for-you'].map((s) => s.session_id)).toEqual(['b', 'c']);
+    expect(out.rest.map((s) => s.session_id)).toEqual(['a', 'd']);
+  });
+
+  it('一时找不到它（比如筛在 For you 档）照当时那一份摆回去', () => {
+    const held = slotOf(sections, 'b')!;
+    const out = placeHeld({ pinned: [], 'for-you': [c], rest: [a, d] }, held);
+    expect(out['for-you'].map((s) => s.session_id)).toEqual(['b', 'c']);
+  });
+
+  it('没有保留时原样返回', () => {
+    expect(placeHeld(sections, null)).toBe(sections);
   });
 });
 

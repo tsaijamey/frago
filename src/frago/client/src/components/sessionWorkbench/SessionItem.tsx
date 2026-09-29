@@ -1,24 +1,29 @@
 /**
- * SessionItem — 左栏清单里的一行，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
+ * SessionItem — 左栏清单里的一张会话卡，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
+ *
+ * **三行，每行独占整宽**（09-29 第五轮）。任何图标、按钮、标签都不和标题或预览挤在同一行：
+ *
+ * | 行 | 内容 |
+ * |---|---|
+ * | 标题 | 最多两行，放不下截断，悬停看全文 |
+ * | 预览 | agent 最近一次回复，截开头留结尾，灰字最多两行；所有会话都有这一行 |
+ * | 状态行 | For you（发出后是 Sending / Agent on it）· 时长 · 终端 · 子会话数 · 图钉；最右「…」 |
+ *
+ * For you 与其余会话同一结构；三档字：标题 13/600、预览 12/400、状态行 11，只有 For you
+ * 标签带颜色。
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, CornerDownRight, GitBranch, Loader2, Pin } from 'lucide-react';
+import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
 import { formatClock } from './RecordCard';
 import { activityTs, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
-import type { ForYouEmphasis, ForYouInfo } from '@/hooks/useForYou';
+import { keepTail, type ForYouInfo } from '@/hooks/useForYou';
+import SessionMenu from './SessionMenu';
+import type { DeleteSessionResult } from './DeleteSessionButton';
 
 /** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
 const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
-
-/** 加重的 For you 悬停说什么。 */
-const EMPHASIS_HINT_KEY: Record<ForYouEmphasis, string> = {
-  answer: 'workbench.forYou.whyAnswer',
-  'pick-one': 'workbench.forYou.whyPickOne',
-  stopped: 'workbench.forYou.whyStopped',
-  'decision-card': 'workbench.forYou.whyDecisionCard',
-};
 
 /**
  * 在终端里接着这一场说话的那条命令 —— 复制按钮给的就是它。
@@ -95,19 +100,17 @@ export function shortAge(ts: number, now: number = Date.now()): string {
   ).padStart(2, '0')}`;
 }
 
-/** 「For you」标签。加重的换告警橙底，其余中性描边；都不用绿。 */
-export function ForYouChip({ emphasis }: { emphasis: ForYouEmphasis | null }) {
+/**
+ * 「For you」标签。所有 For you 长一个样：品牌绿淡底绿字，与 Send 同色系——它标的是人要做
+ * 的决定（主人 09-29 定）。从前按问句 / 选项 / 出错 / 决策卡加重成告警橙、悬停说原因，
+ * 第五轮一并删掉。
+ */
+export function ForYouChip() {
   const { t } = useTranslation();
   return (
     <span
       data-testid="for-you-chip"
-      data-emphasis={emphasis ?? 'none'}
-      title={emphasis ? t(EMPHASIS_HINT_KEY[emphasis]) : undefined}
-      className={`inline-flex shrink-0 items-center rounded-[5px] px-1.5 py-[1px] text-[11px] font-medium leading-[1.4] ${
-        emphasis
-          ? 'bg-accent-warning-10 text-accent-warning'
-          : 'border border-border-strong text-text-secondary'
-      }`}
+      className="inline-flex shrink-0 items-center rounded-[5px] bg-accent-primary-10 px-1.5 text-[11px] font-medium leading-[17px] text-accent-primary"
     >
       {t('workbench.forYou.label')}
     </span>
@@ -120,7 +123,7 @@ export function SendingChip() {
   return (
     <span
       data-testid="sending-chip"
-      className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border-color px-1.5 py-[1px] text-[11px] leading-[1.4] text-text-muted"
+      className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border-color px-1.5 text-[11px] leading-[15px] text-text-muted"
     >
       <Loader2 size={10} className="animate-spin" />
       {t('workbench.forYou.sending')}
@@ -128,33 +131,34 @@ export function SendingChip() {
   );
 }
 
-/**
- * 展开那一叠的三角。
- *
- * **实心，不是细线。** 从前这里是一条 lucide 的箭头，1.5px 描边、中性灰、没有底——
- * 在 11px 的字号旁边它和右边那两颗图标一样重，读出来是"又一个图标"，不是"这里能按"。
- * 实心三角是文件夹展开这件事几十年的常规写法（访达就是它），同样大小下面积大得多，
- * 一眼分得出。
- *
- * **不用品牌绿。** 侧栏的规矩是绿色只承担选中、当前、活跃这几样；能展开是个不带状态的
- * 控件，主干里两百来张卡常年挂着一点绿，会把真正需要被看见的那两档淹掉。让它看得出能按，
- * 靠的是形状与底色，不是颜色。
- *
- * 转 90 度而不是换一个图标：形状不变、方向变，人才看得出是同一个东西的两个状态。
- */
-function DisclosureTriangle({ expanded }: { expanded: boolean }) {
+/** 话已进会话、agent 接手了：中性圆点加字，不用绿（这一屏的绿只给 Send 与 For you）。 */
+export function AgentOnItChip() {
+  const { t } = useTranslation();
   return (
-    <svg
-      width="9"
-      height="9"
-      viewBox="0 0 8 8"
-      fill="currentColor"
-      aria-hidden="true"
-      className={`transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+    <span
+      data-testid="agent-on-it-chip"
+      className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium leading-[17px] text-text-secondary"
     >
-      <path d="M2 0.5 L7 4 L2 7.5 Z" />
-    </svg>
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-muted" />
+      {t('workbench.forYou.agentOnIt')}
+    </span>
   );
+}
+
+/**
+ * 卡片第二行的预览。For you 那几场取收尾原话（tmux 清单的 `closing_text`，已截开头留结尾，
+ * 有合法卡片时是卡片的问题）；其余取会话清单的 `digest_done`——它是最近一条回复的**开头**
+ * 一段，服务端还没出「回复结尾」字段之前先用它，照样截开头留结尾，去掉开头的 Markdown
+ * 标题符号。有卡片的换成卡片的问题。都没有返回空串，由卡片写「No reply from the agent yet」。
+ */
+export function previewOf(
+  session: WorkbenchSession,
+  forYou: ForYouInfo | null,
+  card: string | null = null
+): string {
+  if (forYou?.words) return forYou.words;
+  const text = card ?? session.digest_done ?? '';
+  return keepTail(text.replace(/^\s*#{1,6}\s+/, ''));
 }
 
 export default function SessionItem({
@@ -162,8 +166,13 @@ export default function SessionItem({
   selected,
   copied,
   pinned = false,
+  inPinnedGroup = false,
   forYou = null,
   sending = false,
+  agentOnIt = false,
+  inTmux = false,
+  card = null,
+  busyTurn = false,
   nested = false,
   branchOf = null,
   workerCount = 0,
@@ -172,6 +181,8 @@ export default function SessionItem({
   onCopy,
   onTogglePin,
   onToggleWorkers,
+  onStopped,
+  onDeleted,
 }: {
   session: WorkbenchSession;
   selected: boolean;
@@ -179,12 +190,22 @@ export default function SessionItem({
   /** 这场会话在不在置顶名单里。 */
   pinned?: boolean;
   /**
-   * 这一场挂着 For you：有 agent 停在输入框前等你（判据见 `useForYou`）。挂着的两行，
-   * 没挂的一行——清单上没有别的状态词。
+   * 这张卡摆在 Pinned 那一块里：整组已经有底色、描边和「Always on top」，每张再画一个图钉
+   * 是重复，不画。组外（按筛选单独看到的置顶会话）照旧画。
    */
+  inPinnedGroup?: boolean;
+  /** 这一场挂着 For you：有 agent 停在输入框前等你（判据见 `useForYou`）。 */
   forYou?: ForYouInfo | null;
   /** 这一场本地刚发出一句话、还在路上。 */
   sending?: boolean;
+  /** 这一场本地发出的那句已进会话、这一轮还没答完。 */
+  agentOnIt?: boolean;
+  /** 此刻开在 tmux 里：状态行画终端图标，「…」菜单才有 Close tmux session。 */
+  inTmux?: boolean;
+  /** 选中那场末条回复里留了合法的「要人拍板」卡片：预览换成卡片的问题。 */
+  card?: string | null;
+  /** 本页刚发出的一句还没答完：菜单里关 tmux 先问。 */
+  busyTurn?: boolean;
   /**
    * 这一行是挂在别人下面的 worker。
    *
@@ -196,23 +217,28 @@ export default function SessionItem({
    * 出处只在这一行说：「分支自 <原会话>」，点它切到原会话。原会话标题认不出时写编号开头。
    */
   branchOf?: { id: string; title: string | null } | null;
-  /** 这场派出去过几个 worker。0 就不长展开按钮。 */
+  /** 这场派出去过几个 worker。0 就不长子会话数。 */
   workerCount?: number;
   workersExpanded?: boolean;
   onSelect: (id: string) => void;
   onCopy: (session: WorkbenchSession) => void;
-  /** 置顶开关。不给就不长这颗按钮——骨架屏与只读场景用得上。 */
+  /** 置顶开关。不给就没有「…」菜单里那一项——骨架屏与只读场景用得上。 */
   onTogglePin?: (session: WorkbenchSession) => void;
-  /** 展开/折起这场派出去的 worker。不给就不长这颗按钮。 */
+  /** 展开/折起这场派出去的 worker。不给就不长子会话数。 */
   onToggleWorkers?: (session: WorkbenchSession) => void;
+  /** 从「…」菜单关掉了 tmux。 */
+  onStopped?: (session: WorkbenchSession) => void;
+  /** 从「…」菜单删掉了这一场。 */
+  onDeleted?: (session: WorkbenchSession, result: DeleteSessionResult) => void;
 }) {
   const { t } = useTranslation();
-  const cmd = resumeCommand(session);
   const age = forYou ? forYou.waitingSince : activityTs(session);
-  const bold = forYou?.unseen ?? false;
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
   const stacked = hasWorkers && !workersExpanded;
+  const preview = previewOf(session, forYou, card);
+  /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
+  const progress = sending ? 'sending' : agentOnIt ? 'agent' : null;
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
@@ -260,154 +286,136 @@ export default function SessionItem({
         data-origin={session.origin}
         data-nested={nested ? 'true' : undefined}
         data-stacked={stacked ? 'true' : undefined}
-        /* **平时不是一张卡。** 从前每一场会话都有自己的边框与卡底，一屏摆下五六张，人看到
-           的先是五六个方框，然后才是里面的字。清单要的是一列可扫读的行：平时没有任何容器，
-           鼠标经过才浮出一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，
-           不靠任何单边色条，也不用绿：绿只留给在跑，选中不是动作。
-           **底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠才立得住。
-           容器在这里不是装饰，它就是"这下面还有东西"这句话本身。 */
-        className={`group/session relative w-full cursor-pointer rounded-[8px] px-2.5 py-2 text-left transition-colors duration-200 ${
+        /* **平时不是一张卡。** 清单要的是一列可扫读的行：平时没有任何容器，鼠标经过才浮出
+           一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，不靠任何单边色条，
+           也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
+           才立得住。内边距上下 10、左右 12（第五轮二改）。 */
+        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${
           selected ? SELECTED : 'hover:bg-bg-hover'
         }`}
       >
-      <div className="flex items-start gap-2">
-        {/* 展开钮在标题**前面**，不在下面那行里。从前它挤在目录与复制按钮中间，跟旁边
-            两颗图标一样大小、一样灰，读出来是"又一个图标"而不是"这里能展开"，还把目录
-            挤短了一截。挪到行首之后它自成一列，与缩进对齐，一眼就知道是层级。 */}
-        {hasWorkers ? (
-          <button
-            type="button"
-            aria-expanded={workersExpanded}
-            aria-label={
-              workersExpanded
-                ? t('workbench.rail.collapseWorkers')
-                : t('workbench.rail.expandWorkers', { n: workerCount })
-            }
-            title={t('workbench.rail.workerCount', { n: workerCount })}
-            data-testid="toggle-workers"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleWorkers?.(session);
-            }}
-            /* 给它一个真的能按的形状：20×20 的方块、有底、有圆角。没有底的时候它只是
-               一个漂在标题左边的符号，和"可以点"这件事对不上；有了底，它和旁边那两颗
-               图标的区别也立刻出来了——那两颗是悬停才浮出来的，这一颗一直在。 */
-            className="-ml-0.5 mt-[1px] flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] bg-bg-hover text-text-secondary transition-colors duration-200 hover:bg-bg-active hover:text-text-primary"
+        {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
+        <div className="flex min-w-0 items-start gap-1.5">
+          {nested ? (
+            <CornerDownRight size={11} className="mt-[3px] shrink-0 text-text-dim" aria-hidden="true" />
+          ) : null}
+          <span
+            data-testid="session-title"
+            title={session.title}
+            className={`line-clamp-2 min-w-0 flex-1 break-words font-semibold leading-[1.35] ${
+              nested ? 'text-[12px]' : 'text-[13px]'
+            } ${nested && !selected ? 'text-text-secondary' : 'text-text-primary'}`}
           >
-            <DisclosureTriangle expanded={workersExpanded} />
-          </button>
-        ) : null}
-        {/* 折角只在从属行上出现，且不可点——它说的是"这一行属于上面那一行"，
-            不是"点我会发生什么"。 */}
-        {nested ? (
-          <CornerDownRight
-            size={11}
-            className="mt-[3px] shrink-0 text-text-dim"
-            aria-hidden="true"
-          />
-        ) : null}
-        <span
-          className={`min-w-0 flex-1 truncate leading-[1.5] ${
-            nested ? 'text-[12px]' : 'text-[13px]'
-          } ${bold ? 'font-semibold' : 'font-medium'} ${
-            nested && !selected ? 'text-text-secondary' : 'text-text-primary'
+            {session.title}
+          </span>
+        </div>
+
+        {/* 第 2 行：预览。所有会话都有这一行。 */}
+        <p
+          data-testid="session-preview"
+          className={`mt-[3px] line-clamp-2 break-words leading-[1.5] ${nested ? 'text-[11px]' : 'text-[12px]'} ${
+            preview ? 'text-[var(--card-pv)]' : 'text-[var(--card-meta)]'
           }`}
         >
-          {session.title}
-        </span>
-        {/* 时间与悬停按钮叠在同一格：平时是时间，鼠标进卡（或键盘走到）换成按钮。 */}
-        <span className="relative flex shrink-0 items-center">
-          <span
-            className={`flex items-center gap-1 font-mono text-[11px] text-text-muted ${
-              onTogglePin || cmd ? 'group-hover/session:invisible group-focus-within/session:invisible' : ''
-            }`}
-            title={
-              forYou
-                ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
-                : session.last_reply_at
-                  ? t('workbench.rail.tsLastReply')
-                  : t('workbench.rail.tsLastActive')
-            }
+          {preview || t('workbench.rail.noReply')}
+        </p>
+
+        {/* 分支的出处。中性灰小字，点它去原会话，不点就是普通的一行说明。 */}
+        {branchOf ? (
+          <button
+            type="button"
+            data-testid="branch-of"
+            title={t('workbench.rail.branchOfHint')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(branchOf.id);
+            }}
+            className="mt-1 flex max-w-full items-center gap-1 text-left text-[11px] leading-[1.5] text-[var(--card-meta)] hover:text-text-secondary"
           >
-            {pinned ? (
-              <Pin size={10} fill="currentColor" className="text-text-primary" aria-hidden />
-            ) : null}
-            {shortAge(age)}
-          </span>
-          <span className="absolute right-0 top-1/2 hidden -translate-y-1/2 items-center gap-1 group-hover/session:flex group-focus-within/session:flex">
-            {onTogglePin ? (
-              <button
-                type="button"
-                title={pinned ? t('workbench.rail.unpinHint') : t('workbench.rail.pinHint')}
-                aria-label={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
-                aria-pressed={pinned}
-                data-testid="toggle-pin"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTogglePin(session);
-                }}
-                /* 带字的按钮：图钉图标不说「点了会怎样」，字说。中性色，不用品牌绿。 */
-                className="flex items-center gap-1 rounded-[5px] border border-border-color bg-bg-secondary px-1.5 py-[1px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              >
-                <Pin size={10} fill={pinned ? 'currentColor' : 'none'} />
-                {pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
-              </button>
-            ) : null}
-            {/* 没有续接命令的那一家（CoreAgent）不长这颗按钮：一颗点了会把错命令放进剪贴板
-                的按钮，比没有按钮坏得多。 */}
-            {cmd ? (
-              <button
-                type="button"
-                title={cmd}
-                aria-label={t('workbench.rail.copyResume')}
-                data-testid="copy-resume"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopy(session);
-                }}
-                className="rounded-[5px] border border-border-color bg-bg-secondary p-[3px] text-text-muted hover:text-text-primary"
-              >
-                {copied ? <Check size={11} /> : <Copy size={11} />}
-              </button>
-            ) : null}
-          </span>
-        </span>
-      </div>
+            <GitBranch size={12} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 truncate">
+              {t('workbench.rail.branchOf', { title: branchOf.title ?? branchOf.id.slice(0, 8) })}
+            </span>
+          </button>
+        ) : null}
 
-      {/* 第二行只有两种可能：For you 加它收尾的原话，或者刚发出、还在路上的 Sending。
-          其余的会话只有一行——状态词、来源、目录、摘要都退场了。 */}
-      {forYou || sending ? (
-        <div className="mt-1 flex min-w-0 items-start gap-1.5">
-          {sending ? <SendingChip /> : forYou ? <ForYouChip emphasis={forYou.emphasis} /> : null}
-          {!sending && forYou?.words ? (
-            <p
-              data-testid="for-you-words"
-              className="line-clamp-2 min-w-0 flex-1 text-[11px] leading-[1.5] text-text-secondary"
-            >
-              {forYou.words}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* 分支的出处。中性灰小字，不抢 For you 那一行；点它去原会话，不点就是普通的一行说明。 */}
-      {branchOf ? (
-        <button
-          type="button"
-          data-testid="branch-of"
-          title={t('workbench.rail.branchOfHint')}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(branchOf.id);
-          }}
-          className="mt-1 flex max-w-full items-center gap-1 text-left text-[11px] leading-[1.5] text-text-muted hover:text-text-secondary"
+        {/* 第 3 行：状态行。左组可收缩，放不下时时长先截断；「…」固定最右、不收缩。 */}
+        <div
+          data-testid="session-status"
+          className="mt-2 flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]"
         >
-          <GitBranch size={11} className="shrink-0" aria-hidden="true" />
-          <span className="min-w-0 truncate">
-            {t('workbench.rail.branchOf', { title: branchOf.title ?? branchOf.id.slice(0, 8) })}
-          </span>
-        </button>
-      ) : null}
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {progress === 'sending' ? (
+              <SendingChip />
+            ) : progress === 'agent' ? (
+              <AgentOnItChip />
+            ) : forYou ? (
+              <ForYouChip />
+            ) : null}
+            {progress ? null : (
+              <span
+                data-testid="session-age"
+                className="min-w-0 truncate"
+                title={
+                  forYou
+                    ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
+                    : session.last_reply_at
+                      ? t('workbench.rail.tsLastReply')
+                      : t('workbench.rail.tsLastActive')
+                }
+              >
+                {shortAge(age)}
+              </span>
+            )}
+            {inTmux ? (
+              <SquareTerminal
+                size={12}
+                data-testid="session-in-tmux"
+                className="shrink-0"
+                aria-label="tmux"
+              />
+            ) : null}
+            {hasWorkers ? (
+              <button
+                type="button"
+                aria-expanded={workersExpanded}
+                aria-label={
+                  workersExpanded
+                    ? t('workbench.rail.collapseWorkers')
+                    : t('workbench.rail.expandWorkers', { n: workerCount })
+                }
+                title={t('workbench.rail.workerCount', { n: workerCount })}
+                data-testid="toggle-workers"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleWorkers?.(session);
+                }}
+                className="flex shrink-0 items-center gap-0.5 rounded-[4px] px-0.5 hover:bg-bg-hover hover:text-text-primary"
+              >
+                <ChevronRight
+                  size={12}
+                  className={`transition-transform duration-200 ${workersExpanded ? 'rotate-90' : ''}`}
+                  aria-hidden="true"
+                />
+                <span className="font-mono">{workerCount}</span>
+              </button>
+            ) : null}
+            {pinned && !inPinnedGroup ? (
+              <Pin size={12} fill="currentColor" data-testid="session-pinned" className="shrink-0" aria-hidden />
+            ) : null}
+          </div>
+          <SessionMenu
+            session={session}
+            pinned={pinned}
+            onTogglePin={onTogglePin}
+            inTmux={inTmux}
+            busyTurn={busyTurn}
+            onStopped={() => onStopped?.(session)}
+            onDeleted={(result) => onDeleted?.(session, result)}
+            onCopy={onCopy}
+            copied={copied}
+          />
+        </div>
       </div>
     </div>
   );

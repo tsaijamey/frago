@@ -15,6 +15,10 @@
  *
  * **搜索不筛这张清单。** 顶上那一行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗。
  *
+ * **For you 只有一个出口，而且不瞬移。** 人在选中的那张卡上发出一句话，这一场就离开 For you
+ * （页面那一层 `forYou.suppress`）；但这张卡在清单里**原位不动**，状态行换成 Sending →
+ * Agent on it，直到人切到别的会话才回到该在的位置（见 `HeldSlot`）。点开、看过都不算离开。
+ *
  * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶的
  * 次序，不跟时间范围与档位走。整组一块略浅的底加一圈发丝描边——窗口化列表里整组不是一个
  * 节点，所以跟 worker 框一样拆成头、中、尾三段画。
@@ -45,9 +49,9 @@ import {
 import { useAppStore, useUIStore } from '@/stores/appStore';
 import { modKey } from '@/hooks/usePlatform';
 import { closeTmuxSessions } from '@/api';
-import SessionItem, { ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
+import SessionItem, { AgentOnItChip, ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
-import { useSessionPins } from '@/hooks/useSessionPins';
+import { useSessionPins, type SessionPinsState } from '@/hooks/useSessionPins';
 import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import { LiveBorder } from '@/components/ui/LiveEdge';
@@ -118,6 +122,53 @@ type RailRow =
  */
 type GroupPos = 'head' | 'mid' | 'tail';
 
+/** 清单主干的三个分区。末尾那一区（认不出出处的 worker）不参与原位保留。 */
+export type RailSection = 'pinned' | 'for-you' | 'rest';
+export type RailSections = Record<RailSection, WorkbenchSession[]>;
+
+/**
+ * 「原位保留」：人在选中的那张卡上发出消息那一刻，它在哪个分区、排第几。
+ *
+ * 发出那一刻这一场离开 For you，按新集合重排的话，人刚发完话的那张卡会立刻从 For you 组
+ * 跳进 Everything else，眼前那一格换成了别的会话。所以选中不变期间它按这一格摆；人切到
+ * 别的会话那一刻放开，它回到该在的位置。原位期间这一轮答完又挂回 For you，位置本来就在
+ * For you 组里，不跳。
+ */
+export interface HeldSlot {
+  sessionId: string;
+  section: RailSection;
+  index: number;
+  /** 当时那一场。清单里一时找不到它（比如筛在 For you 档）时照这一份摆。 */
+  session: WorkbenchSession;
+}
+
+/** 这一场此刻在哪个分区、排第几；不在主干三区里（比如是折在别人下面的 worker）返回 null。 */
+export function slotOf(sections: RailSections, sessionId: string): HeldSlot | null {
+  for (const section of ['pinned', 'for-you', 'rest'] as RailSection[]) {
+    const index = sections[section].findIndex((s) => s.session_id === sessionId);
+    if (index >= 0) return { sessionId, section, index, session: sections[section][index] };
+  }
+  return null;
+}
+
+/** 把保留的那一场从它现在所在的分区拿出来，摆回当时那一格。其余的相对次序不变。 */
+export function placeHeld(sections: RailSections, held: HeldSlot | null): RailSections {
+  if (!held) return sections;
+  let found: WorkbenchSession | null = null;
+  const out = {} as RailSections;
+  for (const section of ['pinned', 'for-you', 'rest'] as RailSection[]) {
+    out[section] = sections[section].filter((s) => {
+      if (s.session_id !== held.sessionId) return true;
+      found = s;
+      return false;
+    });
+  }
+  const target = [...out[held.section]];
+  target.splice(Math.min(held.index, target.length), 0, found ?? held.session);
+  out[held.section] = target;
+  return out;
+}
+
 /** 此刻开在 tmux 里的那几场，卡片外面长一圈流光；其余原样摆着，不多包一层节点。 */
 function MaybeLive({ live, children }: { live: boolean; children: ReactNode }) {
   return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
@@ -147,6 +198,21 @@ export interface SessionRailProps {
   forYou: ForYouState;
   /** 本地刚发出一句、还在路上的那一场。 */
   sendingId?: string | null;
+  /** 本地发出的那句已进会话、这一轮还没答完的那一场（状态行 Agent on it，菜单里关 tmux 先问）。 */
+  busyId?: string | null;
+  /**
+   * 原位保留哪一场：人在它上面发出了消息、还没切走。有值的那一刻记下它当时的分区与序位。
+   */
+  holdId?: string | null;
+  /** 这一场留了合法的「要人拍板」卡片：预览换成卡片的问题。 */
+  decisionCardOf?: (sessionId: string) => string | null;
+  /** 从「…」菜单删掉了一场：选中的正是它时页面退回清单态。 */
+  onSessionDeleted?: (sessionId: string) => void;
+  /**
+   * 置顶名单。页头的「…」菜单也能置顶，两处要改同一份，所以页面那一层持有时从这里传进来；
+   * 不传（用例、单独摆左栏）就自己持有一份。
+   */
+  pins?: SessionPinsState;
 }
 
 export default function SessionRail({
@@ -159,13 +225,19 @@ export default function SessionRail({
   views,
   forYou,
   sendingId = null,
+  busyId = null,
+  holdId = null,
+  decisionCardOf,
+  onSessionDeleted,
+  pins: pinsProp,
 }: SessionRailProps) {
   const { sessions, visible, counts, loading, error, filter, setFilter, days, setDays, reload } =
     state;
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const openSearch = useUIStore((s) => s.setSessionSearchOpen);
-  const pins = useSessionPins();
+  const ownPins = useSessionPins();
+  const pins = pinsProp ?? ownPins;
   const [newOpen, setNewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   /** 哪几场把自己派出去的 worker 展开着。默认一场都不展开——清单的主干是主会话。 */
@@ -275,6 +347,29 @@ export default function SessionRail({
     );
     return { forYouRows: waiting, restRows: rest };
   }, [trunkRows, forYou]);
+  /**
+   * 原位保留。记的是**上一次画出来的**分区：发出那一刻这一场已经被撤出 For you，按这一拍的
+   * 分区去找只会找到它的新位置。
+   */
+  const natural = useMemo<RailSections>(
+    () => ({ pinned: pinnedRows, 'for-you': forYouRows, rest: restRows }),
+    [pinnedRows, forYouRows, restRows]
+  );
+  const lastNatural = useRef(natural);
+  useEffect(() => {
+    lastNatural.current = natural;
+  });
+  const [held, setHeld] = useState<HeldSlot | null>(null);
+  const [heldFor, setHeldFor] = useState<string | null>(null);
+  if (heldFor !== holdId) {
+    setHeldFor(holdId);
+    setHeld(holdId ? slotOf(lastNatural.current, holdId) : null);
+  }
+  // 保留期间在菜单里置顶 / 取消置顶了：它该去置顶区或离开置顶区，不再按原位摆。
+  const heldValid = held !== null && (held.section === 'pinned') === pins.isPinned(held.sessionId);
+  const placed = useMemo(() => placeHeld(natural, heldValid ? held : null), [natural, held, heldValid]);
+  const { pinned: pinnedPlaced, 'for-you': forYouPlaced, rest: restPlaced } = placed;
+
   /** 置顶里也挂着 For you 的有几场——For you 组标题右端注明「+ N in Pinned above」。 */
   const pinnedForYou = useMemo(
     () => pinnedRows.filter((s) => forYou.infoOf(s.session_id)).length,
@@ -286,12 +381,12 @@ export default function SessionRail({
    * 来这一页最要看的，不该被截在「下一批」里。末尾那一区默认折着，折着不占名额。
    */
   const orphansVisible = orphansOpen;
-  const pagedRest = useMemo(() => restRows.slice(0, shown), [restRows, shown]);
+  const pagedRest = useMemo(() => restPlaced.slice(0, shown), [restPlaced, shown]);
   const pagedOrphans = useMemo(
-    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - restRows.length)) : []),
-    [orphansVisible, orphanRows, shown, restRows.length]
+    () => (orphansVisible ? orphanRows.slice(0, Math.max(0, shown - restPlaced.length)) : []),
+    [orphansVisible, orphanRows, shown, restPlaced.length]
   );
-  const loadable = restRows.length + (orphansVisible ? orphanRows.length : 0);
+  const loadable = restPlaced.length + (orphansVisible ? orphanRows.length : 0);
   const loaded = pagedRest.length + pagedOrphans.length;
   const hasMore = loaded < loadable;
 
@@ -333,15 +428,15 @@ export default function SessionRail({
     const out: RailRow[] = [];
     if (pins.pinned.length) {
       out.push({ kind: 'pinned-header' });
-      if (!pins.collapsed) out.push(...pinnedRows.flatMap((s) => trunkWithKids(s, true)));
+      if (!pins.collapsed) out.push(...pinnedPlaced.flatMap((s) => trunkWithKids(s, true)));
       out.push({ kind: 'pinned-tail' });
     }
-    const sectioned = pins.pinned.length > 0 || forYouRows.length > 0;
-    if (forYouRows.length) {
-      out.push({ kind: 'for-you-header', count: forYouRows.length, pinnedAbove: pinnedForYou });
-      out.push(...forYouRows.flatMap((s) => trunkWithKids(s)));
+    const sectioned = pins.pinned.length > 0 || forYouPlaced.length > 0;
+    if (forYouPlaced.length) {
+      out.push({ kind: 'for-you-header', count: forYouPlaced.length, pinnedAbove: pinnedForYou });
+      out.push(...forYouPlaced.flatMap((s) => trunkWithKids(s)));
     }
-    if (sectioned && pagedRest.length) out.push({ kind: 'rest-header', count: restRows.length });
+    if (sectioned && pagedRest.length) out.push({ kind: 'rest-header', count: restPlaced.length });
     out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
     if (orphanRows.length) {
       out.push({ kind: 'workers-header' });
@@ -353,11 +448,11 @@ export default function SessionRail({
   }, [
     pins.pinned.length,
     pins.collapsed,
-    pinnedRows,
-    forYouRows,
+    pinnedPlaced,
+    forYouPlaced,
     pinnedForYou,
     pagedRest,
-    restRows.length,
+    restPlaced.length,
     childrenOf,
     orphanRows.length,
     pagedOrphans,
@@ -438,7 +533,7 @@ export default function SessionRail({
    */
   const toggleOrphans = () => {
     const opening = !orphansOpen;
-    if (opening) setShown((s) => Math.max(s, restRows.length + PAGE_SIZE));
+    if (opening) setShown((s) => Math.max(s, restPlaced.length + PAGE_SIZE));
     setOrphansOpen(opening);
   };
 
@@ -506,6 +601,29 @@ export default function SessionRail({
     },
     [views, onSelect]
   );
+
+  /**
+   * 这一场此刻开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它（按
+   * 屏底自报的编号，`frago agent` 拉起的那些名字对不上也认得出）。
+   */
+  const tmuxIds = useMemo(
+    () => new Set(forYou.rows.map((r) => r.session_id).filter(Boolean) as string[]),
+    [forYou.rows]
+  );
+  const inTmuxOf = (session: WorkbenchSession) =>
+    views.isInTmux(session) || tmuxIds.has(session.session_id);
+
+  /** 从「…」菜单关掉了 tmux：两份清单都重取，流光与菜单里那一项随之消失。 */
+  const handleStopped = () => {
+    forYou.refresh();
+    void reload();
+  };
+
+  /** 从「…」菜单删掉了一场：清单重取；删的正是选中那场由页面退回清单态。 */
+  const handleDeleted = (session: WorkbenchSession) => {
+    onSessionDeleted?.(session.session_id);
+    void reload();
+  };
 
   const handleCopy = async (session: WorkbenchSession) => {
     const cmd = resumeCommand(session);
@@ -732,15 +850,17 @@ export default function SessionRail({
             </span>
             {sendingId && sendingId === selectedId ? (
               <SendingChip />
+            ) : busyId && busyId === selectedId ? (
+              <AgentOnItChip />
             ) : selectedForYou ? (
-              <ForYouChip emphasis={selectedForYou.emphasis} />
+              <ForYouChip />
             ) : null}
           </button>
         </div>
       ) : null}
 
       {/* 列表区：Virtuoso 只渲染视口内卡片。装载时给骨架屏占位，有数据才展示窗口化列表。 */}
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1" data-session-menu-bound>
         {/* 报错摆在清单**上面**而不是替掉清单：定时重取偶尔失手时，手上那份清单仍
             比一句错误有用得多。 */}
         {error && (
@@ -749,11 +869,12 @@ export default function SessionRail({
           </p>
         )}
         {loading && !visible.length ? (
-          <div className="animate-pulse px-2 pt-2">
+          <div className="animate-pulse px-1 pt-2">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="mb-0.5 w-full rounded-[8px] px-2.5 py-2">
+              <div key={i} className="mb-0.5 w-full rounded-[8px] px-3 py-2.5">
                 <div className="mb-2 h-3.5 w-2/3 rounded bg-bg-hover" />
-                <div className="h-2.5 w-1/2 rounded bg-bg-hover" />
+                <div className="mb-2 h-2.5 w-5/6 rounded bg-bg-hover" />
+                <div className="h-2.5 w-1/3 rounded bg-bg-hover" />
               </div>
             ))}
           </div>
@@ -767,6 +888,8 @@ export default function SessionRail({
             ref={virtuoso}
             data={rows}
             initialItemCount={Math.min(rows.length, 30)}
+            /* 条目高度基线：标题一行、预览两行约 102px（第五轮三行卡）。 */
+            defaultItemHeight={102}
             components={listComponents}
             rangeChanged={setRange}
             /* 滚到底就续上下一批。人已经滚到底了，那一下就是"还要看"本身。 */
@@ -784,7 +907,7 @@ export default function SessionRail({
                 /* 置顶整组一块略浅的底加一圈发丝描边，这是它的上半框。标题正常字重、正文色，
                    右端写「Always on top」——不用绿，不用大写。 */
                 return (
-                  <div className="px-2 pt-2">
+                  <div className="px-1 pt-2">
                     <button
                       type="button"
                       onClick={() => pins.setCollapsed(!pins.collapsed)}
@@ -808,7 +931,7 @@ export default function SessionRail({
                 return pins.collapsed ? (
                   <div className="h-2" />
                 ) : (
-                  <div className="px-2 pb-2">
+                  <div className="px-1 pb-2">
                     <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-bg-subtle" />
                   </div>
                 );
@@ -858,7 +981,7 @@ export default function SessionRail({
                       ? 'rounded-b-[8px] border border-t-0 border-border-color'
                       : '';
               const item = (
-                <div className={row.nested && !pos ? 'pl-6 pr-2' : 'px-2'}>
+                <div className={row.nested && !pos ? 'pl-6 pr-1' : row.inPinned ? 'px-[3px]' : 'px-1'}>
                   <div className={box} data-group={pos}>
                     <div className={row.nested && pos ? 'pl-4' : ''}>
                       {/* 开在 tmux 里的那几场外面一圈流光（主人 09-24 定：保留）。 */}
@@ -868,8 +991,13 @@ export default function SessionRail({
                           selected={session.session_id === selectedId}
                           copied={copiedId === session.session_id}
                           pinned={pins.isPinned(session.session_id)}
+                          inPinnedGroup={row.inPinned}
                           forYou={forYou.infoOf(session.session_id)}
                           sending={sendingId === session.session_id}
+                          agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
+                          busyTurn={busyId === session.session_id}
+                          inTmux={inTmuxOf(session)}
+                          card={decisionCardOf?.(session.session_id) ?? null}
                           nested={row.nested}
                           branchOf={
                             session.relation?.kind === 'branch' && session.parent_session_id
@@ -885,17 +1013,19 @@ export default function SessionRail({
                           onCopy={handleCopy}
                           onTogglePin={handleTogglePin}
                           onToggleWorkers={toggleWorkers}
+                          onStopped={handleStopped}
+                          onDeleted={handleDeleted}
                         />
                       </MaybeLive>
                     </div>
                   </div>
                   {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
-                  {pos === 'head' || pos === 'mid' ? null : <div className="h-2" />}
+                  {pos === 'head' || pos === 'mid' ? null : <div className="h-0.5" />}
                 </div>
               );
               /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。 */
               return row.inPinned ? (
-                <div className="px-2">
+                <div className="px-1">
                   <div className="border-x border-border-color bg-bg-subtle pt-0.5">{item}</div>
                 </div>
               ) : (

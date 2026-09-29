@@ -122,12 +122,14 @@ describe('SessionRail 两层清单', () => {
     expect(shownTitles()[0]).toContain(BOSS);
   });
 
-  it('派活那一行长成一叠纸，不在行里塞数字', () => {
+  it('派活那一行长成一叠纸，子会话数「› N」在状态行里（第五轮）', () => {
     render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
-    // 折着的时候是一叠：卡片本身标着"底下压着东西"，条数留给展开后那几行去回答——
-    // 行里再塞一个数字，只会跟旁边那两颗图标挤成一排看不出所以然。
     expect(screen.getByTestId('session-item').getAttribute('data-stacked')).toBe('true');
-    expect(screen.getByTestId('toggle-workers').textContent).not.toContain('2');
+    const toggle = screen.getByTestId('toggle-workers');
+    expect(toggle.textContent).toBe('2');
+    expect(toggle.closest('[data-testid=session-status]')).toBeTruthy();
+    // 标题那一行不再放三角钮
+    expect(screen.getByTestId('session-title').parentElement?.querySelector('[data-testid=toggle-workers]')).toBeNull();
   });
 
   it('展开之后那一叠就摊平了，不再画成一叠', () => {
@@ -216,7 +218,7 @@ describe('SessionRail 分支会话不折', () => {
         selectedId={null}
         onSelect={NOOP}
         forYou={fakeForYou({
-          [BRANCH]: { emphasis: 'pick-one', waitingSince: 1_753_800_000_000, words: '保留还是去掉？', unseen: true },
+          [BRANCH]: { waitingSince: 1_753_800_000_000, words: '保留还是去掉？', unseen: true },
         })}
       />
     );

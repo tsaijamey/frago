@@ -14,7 +14,12 @@
  * 判不出的（opencode、codex、codebuddy、非 frago 起的 tmux）一律不挂——宁可漏挂，不误挂。
  * worker 也不挂：它等的是主控，不是你。
  *
- * 挂上之后再看要不要**加重**（告警橙）：收尾在问你、让你选、出错停下。问句只认字面。
+ * **只有一个出口**：人发出一条消息、agent 开始干活（`suppress`）。另外终端关了、客户端
+ * 退出，三条不再成立，自然消失。点开、看过都不算离开，NEVER 加 Set aside / dismiss 这类
+ * 手动移出——人什么都不做，它就一直留着。
+ *
+ * 所有 For you 长一个样（品牌绿）。从前按收尾像不像问句、带不带选项、是否出错停下、有没有
+ * 「要人拍板」卡片把它加重成告警橙，09-29 第五轮连同那几条文字判据一并删掉。
  *
  * 判据写成纯函数，用例直接盯它们（照 `useSessionViews` 的做法）。
  */
@@ -25,18 +30,10 @@ import type { TmuxWaitingItem } from '@/types/api';
 import { useAutoRefresh } from './useAutoRefresh';
 import { SESSION_REFRESH_MS, activityTs, type WorkbenchSession } from './useWorkbenchSessions';
 
-/**
- * 加重的理由。`decision-card` 留给「要人拍板」卡片：卡片的解析与校验归
- * `20260924-webui-decision-cards`，那边落地后由调用方经 `decisionCardOf` 接进来。
- */
-export type ForYouEmphasis = 'answer' | 'pick-one' | 'stopped' | 'decision-card';
-
 export interface ForYouInfo {
-  /** null = 中性描边 */
-  emphasis: ForYouEmphasis | null;
   /** 从什么时候开始等你（毫秒）：tmux 行的 `last_stop_at`，给不出时退回会话的最后回复。 */
   waitingSince: number;
-  /** 收尾原话；有合法卡片时是卡片的问题。 */
+  /** 预览：回复结尾（截开头留结尾）；有合法卡片时是卡片的问题。 */
   words: string;
   /** 停下之后你没点开过 → 标题加粗。它不决定挂不挂。 */
   unseen: boolean;
@@ -44,24 +41,6 @@ export interface ForYouInfo {
 
 /** 原话最多留多少字：两行放得下，截开头留结尾。 */
 export const WORDS_MAX = 140;
-
-/** 让你选：「A or B」「你来定」「选一个」。 */
-const PICK_ONE = [/\b[A-Z]\s+or\s+[A-Z]\b/, /你来定|选一个|选哪个/, /\bpick one\b/i];
-
-/**
- * 在问你：句末是问号，或带「要我…吗 / 告诉我 / 说一声 / Say the word」。
- *
- * 「报完工，等你验收」不算——本机 7 天 81 场，挂上等于每条都亮；「验收」只认「请你验收 /
- * 请你确认」这种明说的字面。
- */
-const ASKING = [/[?？]\s*$/, /要我[^。！？\n]{0,40}吗/, /告诉我|说一声|请你验收|请你确认/, /\bsay the word\b/i];
-
-/** 一段话切成句子，句末标点留在句子上。 */
-function sentences(paragraph: string): string[] {
-  return (paragraph.match(/[^。！？!?.\n]+[。！？!?.]*/g) ?? [])
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
 
 function lastParagraph(text: string): string {
   const paras = text
@@ -78,27 +57,6 @@ export function keepTail(text: string, max = WORDS_MAX): string {
   return `…${flat.slice(flat.length - max + 1).trimStart()}`;
 }
 
-/** 收尾里在让你选、在问你的那一句；都没有返回 null。 */
-function pickSentence(text: string): { kind: 'answer' | 'pick-one'; sentence: string } | null {
-  const para = lastParagraph(text);
-  const all = sentences(para);
-  for (let i = all.length - 1; i >= 0; i -= 1) {
-    if (PICK_ONE.some((re) => re.test(all[i]))) return { kind: 'pick-one', sentence: all[i] };
-  }
-  if (PICK_ONE.some((re) => re.test(para))) return { kind: 'pick-one', sentence: para };
-  for (let i = all.length - 1; i >= 0; i -= 1) {
-    if (ASKING.some((re) => re.test(all[i]))) return { kind: 'answer', sentence: all[i] };
-  }
-  if (ASKING.some((re) => re.test(para))) return { kind: 'answer', sentence: para };
-  return null;
-}
-
-/** 出错停下：卡住摘要有值、会话报错，或最后一轮的停止原因是出错。 */
-function stoppedOnError(session: WorkbenchSession, row: TmuxWaitingItem): boolean {
-  if (session.digest_stuck || session.status === 'error') return true;
-  return /error|refus/i.test(row.stop_reason ?? '');
-}
-
 function parseTs(iso: string | null): number | null {
   if (!iso) return null;
   const n = Date.parse(iso);
@@ -108,7 +66,7 @@ function parseTs(iso: string | null): number | null {
 /**
  * 这一场挂不挂 For you，挂的话带什么。三条缺一条就是 null。
  *
- * `card` 是「要人拍板」卡片的问题（有合法卡片时）：原话换成它，加重为 decision-card。
+ * `card` 是「要人拍板」卡片的问题（有合法卡片时）：预览换成它，别的不变。
  */
 export function forYouOf(
   session: WorkbenchSession,
@@ -123,22 +81,9 @@ export function forYouOf(
 
   const waitingSince = parseTs(row.last_stop_at) ?? session.last_reply_at ?? activityTs(session);
   const text = row.closing_text || session.digest_done || '';
-  const picked = pickSentence(text);
-  let emphasis: ForYouEmphasis | null = null;
-  let words = picked ? picked.sentence : lastParagraph(text);
-  if (card) {
-    emphasis = 'decision-card';
-    words = card;
-  } else if (stoppedOnError(session, row)) {
-    emphasis = 'stopped';
-    if (session.digest_stuck) words = session.digest_stuck;
-  } else if (picked) {
-    emphasis = picked.kind;
-  }
   return {
-    emphasis,
     waitingSince,
-    words: keepTail(words),
+    words: keepTail(card ?? lastParagraph(text)),
     unseen: viewedAt === undefined || viewedAt < waitingSince,
   };
 }

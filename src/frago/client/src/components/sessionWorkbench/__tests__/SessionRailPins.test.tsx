@@ -12,6 +12,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import { TestRail } from './railTestKit';
+import SessionItem from '../SessionItem';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
 
@@ -109,22 +110,46 @@ describe('SessionRail 置顶区', () => {
     expect(screen.getAllByTestId('session-item')).toHaveLength(3);
   });
 
-  it('每张卡上都有置顶开关', () => {
+  it('每张卡状态行最右都有「…」，悬停带字的置顶按钮已退场', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
-    expect(screen.getAllByTestId('toggle-pin')).toHaveLength(3);
+    expect(screen.getAllByTestId('session-menu-button')).toHaveLength(3);
+    expect(screen.queryByTestId('toggle-pin')).toBeNull();
   });
 
-  it('点图钉把这场交给置顶名单', () => {
+  it('经「…」菜单置顶：把这场交给置顶名单', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
-    fireEvent.click(screen.getAllByTestId('toggle-pin')[0]);
+    fireEvent.click(screen.getAllByTestId('session-menu-button')[0]);
+    fireEvent.click(screen.getByTestId('session-menu-pin'));
     expect(pins.toggle).toHaveBeenCalledWith(SID);
   });
 
-  it('点图钉不会顺手把这场会话选中', () => {
+  it('开菜单、点置顶都不会顺手把这场会话选中', () => {
     const onSelect = vi.fn();
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
-    fireEvent.click(screen.getAllByTestId('toggle-pin')[0]);
+    fireEvent.click(screen.getAllByTestId('session-menu-button')[0]);
+    fireEvent.click(screen.getByTestId('session-menu-pin'));
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('Pinned 组里的卡不画图钉；组外的置顶卡照旧画', () => {
+    pins.pinned = [OC_SID];
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const pinnedCard = screen.getAllByTestId('session-item').find((el) => el.getAttribute('data-pinned'))!;
+    expect(pinnedCard.querySelector('[data-testid=session-pinned]')).toBeNull();
+
+    render(
+      <SessionItem
+        session={session({ session_id: 'solo' })}
+        selected={false}
+        copied={false}
+        pinned
+        inPinnedGroup={false}
+        onSelect={NOOP}
+        onCopy={NOOP}
+      />
+    );
+    const solo = screen.getAllByTestId('session-item').find((el) => el.textContent?.includes('会话 solo'))!;
+    expect(solo.querySelector('[data-testid=session-pinned]')).toBeTruthy();
   });
 
   it('置顶的那几场单独成区，排在最前', () => {
@@ -207,17 +232,19 @@ describe('SessionRail 置顶区', () => {
     expect(screen.getAllByTestId('session-item')).toHaveLength(3);
   });
 
-  it('置顶按钮带字：没置顶的写「置顶」，置顶了写「取消置顶」，悬停说明点了会怎样', () => {
+  it('菜单里的置顶项带字：没置顶的写「置顶」，置顶了写「取消置顶」，悬停说明点了会怎样', () => {
     pins.pinned = [OC_SID];
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
-    const buttons = screen.getAllByTestId('toggle-pin');
-    const labels = buttons.map((b) => b.textContent);
-    expect(labels).toContain('置顶');
-    expect(labels).toContain('取消置顶');
-    const unpin = buttons.find((b) => b.textContent === '取消置顶')!;
+    const menus = screen.getAllByTestId('session-menu-button');
+    // 置顶那一场排在最前
+    fireEvent.click(menus[0]);
+    const unpin = screen.getByTestId('session-menu-pin');
+    expect(unpin.textContent).toBe('取消置顶');
     expect(unpin.getAttribute('title')).toBe('取消置顶——放回原来的位置');
-    // 不用品牌绿
-    expect(buttons.every((b) => !b.className.includes('accent-primary'))).toBe(true);
+    expect(unpin.className).not.toContain('accent-primary');
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(menus[1]);
+    expect(screen.getByTestId('session-menu-pin').textContent).toBe('置顶');
   });
 
   it('置顶标题正常字重、正文色，右端写「一直在最上面」，不用绿', () => {

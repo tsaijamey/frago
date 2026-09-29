@@ -1,15 +1,14 @@
 /**
- * 标题栏那个「关闭 tmux 会话」。
+ * 「…」菜单里的 Close tmux session（流程在 `StopRunButton.tsx` 的 `useCloseTmux`）。
  *
- * 钉住的是几件按错了就出事的事：点按钮只开弹窗不出门（否则手滑就把会话打断了）、
- * 弹窗里摆出要关的 tmux 会话名、服务端说「还在干活」时界面不许当成关掉了、
- * tmux 里已经没了时照实说，以及**按钮上不留文字**——那一行还挤着标题、工作目录和
- * 删除按钮，带字就把标题挤没。
+ * 钉住的是几件按错了就出事的事：本页知道还在干活时先确认、一个请求都不出门；不在干活直接
+ * 关；服务端说「还在干活」时界面不许当成关掉了，换成确认再问一次、人确认了才带 force；
+ * tmux 里已经没了时照实说；这场不在 tmux 里时菜单里根本没有这一项。
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import StopRunButton from '../StopRunButton';
+import SessionMenu from '../SessionMenu';
 import i18n from '@/i18n';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 
@@ -18,6 +17,7 @@ const TMUX = `frago-agent-${SID}`;
 
 const SESSION = {
   session_id: SID,
+  family: 'claude-code',
   title: 'SG服务器端trade history配方陈旧',
   directory: '/Users/frago',
   in_tmux: true,
@@ -28,19 +28,26 @@ beforeAll(async () => {
   await i18n.changeLanguage('zh');
 });
 
-function mockStop(body: Record<string, unknown>) {
-  const fetchMock = vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ sid: SID, name: TMUX, via: null, error: null, ...body }),
-  });
+function mockStop(...bodies: Record<string, unknown>[]) {
+  const fetchMock = vi.fn();
+  for (const body of bodies) {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ sid: SID, name: TMUX, via: null, error: null, ...body }),
+    });
+  }
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
 
-async function openAndConfirm() {
-  fireEvent.click(screen.getByTestId('session-stop-run'));
+function forceOf(fetchMock: ReturnType<typeof vi.fn>, i: number) {
+  return JSON.parse((fetchMock.mock.calls[i][1] as RequestInit).body as string).force;
+}
+
+async function clickClose() {
+  fireEvent.click(screen.getByTestId('session-menu-button'));
   await act(async () => {
-    fireEvent.click(screen.getByTestId('session-stop-run-confirm'));
+    fireEvent.click(screen.getByTestId('session-menu-close'));
   });
 }
 
@@ -48,68 +55,81 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('StopRunButton', () => {
-  it('按钮上只有图标，名字挂在无障碍名称上', () => {
-    mockStop({ alive: true, busy: false, stopped: true });
-    render(<StopRunButton session={SESSION} />);
-
-    const btn = screen.getByRole('button', { name: '关闭 tmux 会话' });
-    expect(btn.textContent).toBe('');
+describe('Close tmux session（菜单项）', () => {
+  it('不在 tmux 里：菜单里没有这一项，连同它那一段', () => {
+    render(<SessionMenu session={SESSION} pinned={false} inTmux={false} />);
+    fireEvent.click(screen.getByTestId('session-menu-button'));
+    expect(screen.queryByTestId('session-menu-close')).toBeNull();
+    const sections = screen.getAllByTestId('session-menu-section').map((el) => el.dataset.section);
+    expect(sections).toEqual(['organize', 'delete']);
   });
 
-  it('点按钮只开弹窗不出门，弹窗里摆出 tmux 会话名和后果', () => {
-    const fetchMock = mockStop({ alive: true, busy: false, stopped: true });
-    render(<StopRunButton session={SESSION} />);
+  it('悬停说明写清关掉会怎样', () => {
+    render(<SessionMenu session={SESSION} pinned={false} inTmux />);
+    fireEvent.click(screen.getByTestId('session-menu-button'));
+    expect(screen.getByTestId('session-menu-close').getAttribute('title')).toContain('会话记录还在');
+  });
 
-    fireEvent.click(screen.getByTestId('session-stop-run'));
+  it('本页知道还在干活：先确认，一个请求都不出门；确认了才带 force 去关', async () => {
+    const fetchMock = mockStop({ alive: true, busy: true, stopped: true });
+    const onStopped = vi.fn();
+    render(<SessionMenu session={SESSION} pinned={false} inTmux busyTurn onStopped={onStopped} />);
 
+    await clickClose();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText(`tmux: ${TMUX}`)).toBeTruthy();
-    expect(screen.getByText(/会话记录不动/)).toBeTruthy();
+    expect(screen.getByTestId('session-menu-confirm-close').textContent).toContain('还在干活');
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('session-stop-run-confirm'));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(forceOf(fetchMock, 0)).toBe(true);
+    await waitFor(() => expect(onStopped).toHaveBeenCalled());
+    expect(screen.queryByTestId('session-menu')).toBeNull();
   });
 
-  it('确认才真去关，关掉之后弹窗收起并叫人重拉清单', async () => {
+  it('不在干活直接关，关掉之后菜单收起并叫人重拉清单', async () => {
     const fetchMock = mockStop({ alive: true, busy: false, stopped: true });
     const onStopped = vi.fn();
-    render(<StopRunButton session={SESSION} onStopped={onStopped} />);
+    render(<SessionMenu session={SESSION} pinned={false} inTmux onStopped={onStopped} />);
 
-    await openAndConfirm();
+    await clickClose();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url] = fetchMock.mock.calls[0];
     expect(url).toContain(`/api/workbench/sessions/${SID}/stop`);
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ force: false });
+    expect(forceOf(fetchMock, 0)).toBe(false);
     await waitFor(() => expect(onStopped).toHaveBeenCalled());
-    expect(screen.queryByTestId('session-stop-run-confirm')).toBeNull();
+    expect(screen.queryByTestId('session-menu')).toBeNull();
   });
 
-  it('服务端说还在干活时，弹窗换成「仍要关闭」再问一次，NEVER 当成已经关掉', async () => {
-    const fetchMock = mockStop({ alive: true, busy: true, stopped: false });
-    const onStopped = vi.fn();
-    render(<StopRunButton session={SESSION} onStopped={onStopped} />);
-
-    await openAndConfirm();
-
-    await waitFor(() =>
-      expect(screen.getByTestId('session-stop-run-confirm').textContent).toBe('仍要关闭')
+  it('服务端说还在干活时换成确认再问一次，NEVER 当成已经关掉', async () => {
+    const fetchMock = mockStop(
+      { alive: true, busy: true, stopped: false },
+      { alive: true, busy: true, stopped: true }
     );
-    expect(screen.getByTestId('session-stop-run-interrupt').textContent).toContain('打断');
+    const onStopped = vi.fn();
+    render(<SessionMenu session={SESSION} pinned={false} inTmux onStopped={onStopped} />);
+
+    await clickClose();
+
+    await waitFor(() => expect(screen.getByTestId('session-menu-confirm-close')).toBeTruthy());
+    expect(screen.getByTestId('session-menu-confirm-close').textContent).toContain('结束这一轮');
     expect(onStopped).not.toHaveBeenCalled();
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('session-stop-run-confirm'));
     });
-    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
-      force: true,
-    });
+    expect(forceOf(fetchMock, 1)).toBe(true);
+    await waitFor(() => expect(onStopped).toHaveBeenCalled());
   });
 
-  it('tmux 里已经没了就照实说，并叫人重拉清单让按钮消失', async () => {
+  it('tmux 里已经没了就照实说，并叫人重拉清单让这一项消失', async () => {
     mockStop({ alive: false, busy: false, stopped: false });
     const onStopped = vi.fn();
-    render(<StopRunButton session={SESSION} onStopped={onStopped} />);
+    render(<SessionMenu session={SESSION} pinned={false} inTmux onStopped={onStopped} />);
 
-    await openAndConfirm();
+    await clickClose();
 
     await waitFor(() =>
       expect(screen.getByTestId('session-stop-run-result').textContent).toContain('已经没有')

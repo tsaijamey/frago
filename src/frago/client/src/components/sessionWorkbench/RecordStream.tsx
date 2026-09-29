@@ -1108,8 +1108,10 @@ export default function RecordStream({
               title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
               disabled={counts[id] === 0}
               /* 镜头是操作面，不是数据：选中态走中性填充加一档字重。
-                 与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。 */
-              className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
+                 与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。
+                 左右内边距 5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下（第五轮三改）；
+                 仍放不下照 flex-wrap 换行，档内不折字、不截字。 */
+              className={`whitespace-nowrap rounded-[6px] px-[5px] py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
                 lens === id
                   ? 'bg-bg-active font-medium text-text-primary'
                   : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'

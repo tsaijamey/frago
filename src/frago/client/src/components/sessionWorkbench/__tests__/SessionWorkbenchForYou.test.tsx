@@ -17,7 +17,11 @@ beforeAll(async () => {
 const NOW = Date.now();
 const SID = 'waiting-one';
 
-const page = vi.hoisted(() => ({ sessions: [] as WorkbenchSession[] }));
+const page = vi.hoisted(() => ({
+  sessions: [] as WorkbenchSession[],
+  records: [] as unknown[],
+  recordsSessionId: null as string | null,
+}));
 
 vi.mock('@/hooks/useWorkbenchSessions', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/hooks/useWorkbenchSessions')>();
@@ -44,8 +48,8 @@ vi.mock('@/hooks/useWorkbenchSessions', async (importOriginal) => {
 vi.mock('@/hooks/useWorkbenchRecords', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useWorkbenchRecords: () => ({
-    records: [],
-    recordsSessionId: null,
+    records: page.records,
+    recordsSessionId: page.recordsSessionId,
     loading: false,
     loadingOlder: false,
     hasOlder: false,
@@ -105,30 +109,67 @@ function session(id: string, over: Partial<WorkbenchSession> = {}): WorkbenchSes
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  page.records = [];
+  page.recordsSessionId = null;
 });
 
+async function openPage() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, json: async () => ({ viewed: {} }) })) as unknown as typeof fetch
+  );
+  const { usePageStore } = await import('@/stores/pageStore');
+  usePageStore.getState().setWorkbenchSessionId(SID);
+  const { default: SessionWorkbenchPage } = await import('../SessionWorkbenchPage');
+  await act(async () => {
+    render(<SessionWorkbenchPage />);
+  });
+  return () => usePageStore.getState().setWorkbenchSessionId(null);
+}
+
+function previewOfCard(sid: string) {
+  const item = screen
+    .getAllByTestId('session-item')
+    .find((el) => el.querySelector('[data-testid=session-title]')?.textContent === `title ${sid}`)!;
+  return item.querySelector('[data-testid=session-preview]')?.textContent ?? '';
+}
+
 describe('页面接上 For you', () => {
-  it('终端报出在等你的那一场：左栏挂 For you 并加重，页头写 For you · waiting', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, json: async () => ({ viewed: {} }) })) as unknown as typeof fetch
-    );
+  it('终端报出在等你的那一场：左栏挂 For you（品牌绿、不加重），页头写 For you · waiting', async () => {
     page.sessions = [session(SID), session('other')];
-    const { usePageStore } = await import('@/stores/pageStore');
-    usePageStore.getState().setWorkbenchSessionId(SID);
-    const { default: SessionWorkbenchPage } = await import('../SessionWorkbenchPage');
-    await act(async () => {
-      render(<SessionWorkbenchPage />);
-    });
+    const done = await openPage();
 
     await waitFor(() =>
       expect(document.querySelectorAll('[data-for-you="true"]')).toHaveLength(1)
     );
     const chip = screen.getAllByTestId('for-you-chip')[0];
-    expect(chip.getAttribute('data-emphasis')).toBe('pick-one');
-    expect(screen.getByTestId('for-you-words').textContent).toContain('A or B');
+    expect(chip.hasAttribute('data-emphasis')).toBe(false);
+    expect(chip.className).toContain('text-accent-primary');
+    expect(previewOfCard(SID)).toContain('A or B');
     expect(screen.getByTestId('list-filter-for-you').textContent).toContain('1');
     expect(screen.getByTestId('head-status').textContent).toContain('For you · waiting 44 min');
-    usePageStore.getState().setWorkbenchSessionId(null);
+    done();
+  });
+
+  it('选中那场留了合法卡片：左栏预览换成卡片的问题，For you 标签照旧不加重', async () => {
+    const { DEMOS, wrap } = await import('@/utils/__tests__/decisionDemos');
+    page.sessions = [session(SID), session('other')];
+    page.recordsSessionId = SID;
+    page.records = [
+      {
+        id: 'r1',
+        kind: 'agent.say',
+        agent_path: [],
+        ts: NOW - 44 * 60_000,
+        payload: { text: wrap('两种改法。', DEMOS['single-choice']) },
+      },
+    ];
+    const done = await openPage();
+
+    await waitFor(() => expect(previewOfCard(SID)).toContain('地址要不要也从'));
+    const chip = screen.getAllByTestId('for-you-chip')[0];
+    expect(chip.hasAttribute('data-emphasis')).toBe(false);
+    expect(chip.getAttribute('title')).toBeNull();
+    done();
   });
 });

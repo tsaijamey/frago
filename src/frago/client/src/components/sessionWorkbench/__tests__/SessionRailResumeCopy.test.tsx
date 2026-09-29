@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import SessionItem, { resumeCommand } from '../SessionItem';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
@@ -58,7 +58,7 @@ describe('复制续接命令', () => {
     expect(cmd).toBeNull();
   });
 
-  it('有命令的那几家长按钮，CoreAgent 不长', () => {
+  it('有命令的那几家「…」菜单里有复制这一项，CoreAgent 没有', () => {
     const { rerender } = render(
       <SessionItem
         session={session({ session_id: 'abc-123' })}
@@ -68,7 +68,9 @@ describe('复制续接命令', () => {
         onCopy={NOOP}
       />
     );
+    fireEvent.click(screen.getByTestId('session-menu-button'));
     expect(screen.getByTestId('copy-resume')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('session-menu-button'));
 
     rerender(
       <SessionItem
@@ -79,6 +81,7 @@ describe('复制续接命令', () => {
         onCopy={NOOP}
       />
     );
+    fireEvent.click(screen.getByTestId('session-menu-button'));
     expect(screen.queryByTestId('copy-resume')).toBeNull();
   });
 });

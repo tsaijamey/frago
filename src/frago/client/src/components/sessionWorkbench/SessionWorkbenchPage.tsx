@@ -28,8 +28,8 @@ import { squeeze, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
-import StopRunButton from './StopRunButton';
-import DeleteSessionButton from './DeleteSessionButton';
+import SessionMenu from './SessionMenu';
+import { useSessionPins } from '@/hooks/useSessionPins';
 import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionViews } from '@/hooks/useSessionViews';
@@ -83,10 +83,11 @@ export default function SessionWorkbenchPage() {
   const [isForYou, setIsForYou] = useState<(id: string) => boolean>(() => () => false);
   const sessions = useWorkbenchSessions(isForYou);
   const views = useSessionViews();
+  const pins = useSessionPins();
   /**
-   * 选中那场最后一条 agent 回复末尾留了一张合法的「要人拍板」卡片：左栏那一条的原话换成
-   * 卡片的问题、加重为告警橙。解析与校验用 decision-cards 那边的同一个函数，这里不另写。
-   * 区块写坏的不加重（`result.ok` 为假）。只判选中那一场——别的会话手上没有记录。
+   * 选中那场最后一条 agent 回复末尾留了一张合法的「要人拍板」卡片：左栏那一条的预览换成
+   * 卡片的问题（第五轮起不再加重）。解析与校验用 decision-cards 那边的同一个函数，这里不另写。
+   * 区块写坏的不换（`result.ok` 为假）。只判选中那一场——别的会话手上没有记录。
    */
   const [yamlReady, setYamlReady] = useState(() => yamlNow() !== null);
   useEffect(() => {
@@ -163,6 +164,7 @@ export default function SessionWorkbenchPage() {
   const inFlight = latestTrail !== null && !trailSettled(latestTrail);
   const sendingId =
     selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
+  const busyId = selectedId && inFlight ? selectedId : null;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!inFlight) return;
@@ -268,10 +270,23 @@ export default function SessionWorkbenchPage() {
   /** 信封编号 → 这一单发出成功后要收口的那条分支。与暂存的 `riding` 同一个道理。 */
   const ridingBranch = useRef(new Map<string, BringBack>());
 
-  /** 发出那一刻，这一场的 For you 本地先撤：agent 接手期间清单上什么都不挂。 */
+  /**
+   * 原位保留哪一场：人在选中的那张卡上发出了消息。切到别的会话那一刻放开，它回到该在的
+   * 位置（见 `SessionRail` 的 `HeldSlot`）。
+   */
+  const [holdId, setHoldId] = useState<string | null>(null);
+  useEffect(() => setHoldId(null), [selectedId]);
+
+  /**
+   * 发出那一刻这一场离开 For you——这是它唯一由人触发的出口。左栏那张卡原位不动，状态行
+   * 换成 Sending → Agent on it，切走才归位。
+   */
   const onSendStart = useCallback(
     (text: string, attachments: number) => {
-      if (selectedId) forYou.suppress(selectedId);
+      if (selectedId) {
+        forYou.suppress(selectedId);
+        setHoldId(selectedId);
+      }
       const id = markSent(text, attachments);
       const aboard = marksAboard(text, pendingUseRef.current, marksRef.current);
       if (id && selectedId && aboard.length) {
@@ -644,9 +659,10 @@ export default function SessionWorkbenchPage() {
   };
 
   return (
-    /* 默认列宽照原型：清单 256 · 记录 · 观察者 228。人拖过的右栏宽度照旧优先（记在浏览器里）；
-       平板档照旧藏起观察者栏，断点不动。 */
-    <div className="grid h-full min-h-0 w-full flex-1 grid-cols-[256px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[256px_minmax(0,1fr)] phone:grid-cols-1"
+    /* 默认列宽照原型：清单 288 · 记录 · 观察者 228（清单 09-24 定 256，09-29 第五轮卡片改成三行、
+       状态行要摆 For you · 时长 · 终端 · 子会话数 · 「…」，放不下，改 288）。人拖过的右栏宽度
+       照旧优先（记在浏览器里）；平板档照旧藏起观察者栏，断点不动。 */
+    <div data-session-menu-page className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
       style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
     >
       {/* 手机上一次只放得下一栏：没选会话时给清单，选了就整屏让给记录流。 */}
@@ -664,6 +680,13 @@ export default function SessionWorkbenchPage() {
           views={views}
           forYou={forYou}
           sendingId={sendingId}
+          busyId={busyId}
+          pins={pins}
+          holdId={holdId}
+          decisionCardOf={decisionCardOf}
+          onSessionDeleted={(sid) => {
+            if (sid === selectedId) setWorkbenchSessionId(null);
+          }}
         />
       </div>
 
@@ -714,26 +737,31 @@ export default function SessionWorkbenchPage() {
           )}
           {/* 用量月历的入口搬去了左栏底部：那里是「我还剩多少」的位置，与额度条并排。
               它本来就不是会话页专属的东西，挂在这一页的标题栏上只是它当初落脚的地方。 */}
-          {/* 这一行的最右留给「关闭 tmux 会话」：人认为这一场暂时谈完了，按它把 tmux 里那具
-              还占着几百兆的壳收掉。会话本身不动——记录还在，还能翻。只在清单说这一场此刻
-              开在 tmux 里时出现：tmux 里没有了还挂着按钮，按下去只得到一句「没在跑」。 */}
-          {selected?.in_tmux ? (
-            <StopRunButton
-              session={selected}
-              busyTurn={inFlight}
-              onStopped={() => void sessions.reload()}
-            />
-          ) : null}
-          {/* 三家都摆。删法三家不一样（Claude Code 删文件，另两家借引擎自己的命令），
-              那层差别由弹窗里的话交代，不靠"有没有这个按钮"来暗示。删成之后中栏要退回
-              清单态——再停在那一场上，记录流对着一个已经不存在的编号接着问。 */}
+          {/* 这一行的最右是一个「…」，与左栏会话卡上的是同一份菜单：Pin / Unpin、Put in group ｜
+              Close tmux session（只在开在 tmux 里时出现，在干活先确认）｜ Delete session（先确认）。
+              关掉之后清单重取；删掉之后中栏退回清单态——再停在那一场上，记录流对着一个已经
+              不存在的编号接着问。 */}
           {selected ? (
-            <DeleteSessionButton
+            <SessionMenu
               session={selected}
+              variant="header"
+              pinned={pins.isPinned(selected.session_id)}
+              onTogglePin={(s) => void pins.toggle(s.session_id).catch((e: unknown) =>
+                showToast(e instanceof Error ? e.message : t('workbench.errors.pinSaveFailedPlain'), 'error')
+              )}
+              inTmux={
+                selected.in_tmux === true || forYou.rows.some((r) => r.session_id === selected.session_id)
+              }
+              busyTurn={inFlight}
+              onStopped={() => {
+                forYou.refresh();
+                void sessions.reload();
+              }}
               onDeleted={() => {
                 setWorkbenchSessionId(null);
                 void sessions.reload();
               }}
+              boundSelector="[data-session-menu-page]"
             />
           ) : null}
         </header>

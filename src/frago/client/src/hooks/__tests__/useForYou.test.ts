@@ -2,7 +2,7 @@
  * For you 的判据。
  *
  * 三条缺一条就不挂；worker 不挂；判不出（非 Claude Code，`awaiting_input` 为 null）不挂；
- * 加重只认字面；原话截开头留结尾；卡片的问题覆盖原话。
+ * 所有 For you 长一个样（09-29 第五轮删掉加重与文字判据）；预览截开头留结尾；卡片的问题覆盖预览。
  */
 
 import { describe, expect, it } from 'vitest';
@@ -83,41 +83,43 @@ describe('挂不挂', () => {
   });
 });
 
-describe('加重', () => {
-  it('问句 → answer，原话取那一句', () => {
-    const info = forYouOf(session(), row({ closing_text: '三条都记下了。\n\n要我把它们标成高优先级吗？' }), undefined);
-    expect(info?.emphasis).toBe('answer');
-    expect(info?.words).toBe('要我把它们标成高优先级吗？');
+describe('只有一种样子（第五轮）', () => {
+  it('问句、A or B、出错停下、决策卡都不再带加重：ForYouInfo 上没有 emphasis', () => {
+    const cases = [
+      forYouOf(session(), row({ closing_text: '要我把它们标成高优先级吗？' }), undefined),
+      forYouOf(session(), row({ closing_text: 'Reply with one letter: A or B.' }), undefined),
+      forYouOf(session({ digest_stuck: 'API Error: 连接中断' }), row(), undefined),
+      forYouOf(session(), row(), undefined, '选哪一条改法？'),
+    ];
+    for (const info of cases) {
+      expect(info).not.toBeNull();
+      expect(Object.keys(info as object).sort()).toEqual(['unseen', 'waitingSince', 'words']);
+    }
   });
 
-  it('A or B → pick-one', () => {
-    const info = forYouOf(session(), row({ closing_text: 'Two ways to fix it. Reply with one letter for the hook item: A or B.' }), undefined);
-    expect(info?.emphasis).toBe('pick-one');
-    expect(info?.words).toContain('A or B');
+  it('出错停下不再拿卡住摘要换预览：预览仍是回复结尾', () => {
+    const info = forYouOf(session({ digest_stuck: 'API Error: 连接中断' }), row({ closing_text: '做完了。' }), undefined);
+    expect(info?.words).toBe('做完了。');
   });
 
-  it('出错停下 → stopped，原话取卡住摘要', () => {
-    const info = forYouOf(session({ digest_stuck: 'API Error: 连接中断' }), row(), undefined);
-    expect(info?.emphasis).toBe('stopped');
-    expect(info?.words).toBe('API Error: 连接中断');
-  });
-
-  it('「请你验收」要明说才算；「你可以再发一次试试」是建议不是问', () => {
-    expect(forYouOf(session(), row({ closing_text: '修好了，请你验收。' }), undefined)?.emphasis).toBe('answer');
-    expect(forYouOf(session(), row({ closing_text: '修好了，你可以再发一次试试。' }), undefined)?.emphasis).toBeNull();
-  });
-
-  it('卡片的问题覆盖原话，加重为 decision-card', () => {
+  it('卡片的问题覆盖预览', () => {
     const info = forYouOf(session(), row({ closing_text: '要我记下来吗？' }), undefined, '选哪一条改法？');
-    expect(info?.emphasis).toBe('decision-card');
     expect(info?.words).toBe('选哪一条改法？');
   });
 });
 
-describe('原话与看过没', () => {
-  it('没有问句取最后一段', () => {
+describe('预览与看过没', () => {
+  it('取收尾最后一段，不再挑问句那一句', () => {
     const info = forYouOf(session(), row({ closing_text: '第一段。\n\n最后一段说完了。' }), undefined);
     expect(info?.words).toBe('最后一段说完了。');
+  });
+
+  it('收尾里有问句也照样取最后一段、截开头留结尾', () => {
+    const info = forYouOf(session(), row({ closing_text: '要不要改？另外三条都记下了，下一步等你。' }), undefined);
+    expect(info?.words).toBe('要不要改？另外三条都记下了，下一步等你。');
+    const long = forYouOf(session(), row({ closing_text: `${'前情'.repeat(200)}A or B.` }), undefined);
+    expect(long?.words.startsWith('…')).toBe(true);
+    expect(long?.words.endsWith('A or B.')).toBe(true);
   });
 
   it('超长截开头、留结尾', () => {

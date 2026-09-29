@@ -1401,7 +1401,7 @@
       "what": "{{engine}} 为这一场留下的记录会全部删掉——聊过什么、跑过什么，都不在了。",
       "effect": "删完就从会话列表里消失，再也打不开。",
       "irreversible": "这一步不能撤回，删了就找不回来了。",
-      "running": "这一场还在跑，先按右上角「关闭 tmux 会话」把它停下来，再回来删。",
+      "running": "这一场还在跑，先在同一个菜单里「关闭 tmux 会话」，再回来删。",
       "gone": "本机已经没有这场会话了，不用再删——刷新一下列表就好。",
       "cancel": "取消",
       "ok": "删除",
@@ -1493,7 +1493,8 @@
       "closedTerminals_one": "已关掉 {{count}} 个终端",
       "closedTerminals_other": "已关掉 {{count}} 个终端",
       "idleFor": "客户端已退出 · {{age}}前停下",
-      "clientExited": "客户端已退出"
+      "clientExited": "客户端已退出",
+      "noReply": "agent 还没有回复"
     },
     "stream": {
       "lens": {
@@ -1887,11 +1888,19 @@
     "forYou": {
       "label": "For you",
       "sending": "发送中",
-      "whyAnswer": "它在问你",
-      "whyPickOne": "它要你选一个",
-      "whyStopped": "它出错停下了",
-      "whyDecisionCard": "它留了一张决定卡片",
-      "stoppedAt": "{{time}} 停下，一直在等你"
+      "stoppedAt": "{{time}} 停下，一直在等你",
+      "agentOnIt": "Agent 在干活"
+    },
+    "menu": {
+      "button": "更多操作",
+      "putInGroup": "放进分组",
+      "putInGroupSoon": "分组稍后接回",
+      "closeHint": "腾出它占的内存，会话记录还在",
+      "closeBusyTitle": "还在干活——关掉会结束这一轮",
+      "closeBusyBody": "会话记录还在；tmux 会话和它占的内存会释放。",
+      "deleteTitle": "删除这场会话？",
+      "deleteBody": "它的记录和标注都会删掉，不能撤回。",
+      "copyResume": "复制续接命令"
     }
   },
   "tmuxSessions": {

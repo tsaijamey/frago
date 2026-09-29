@@ -515,7 +515,7 @@ describe('SessionRail 左栏', () => {
     expect(setFilter).toHaveBeenCalledWith('for-you');
   });
 
-  it('会话卡不再摆状态、来源与摘要', () => {
+  it('会话卡不再摆状态与来源；预览行取回复摘要，卡住摘要不上卡', () => {
     const one = session({
       session_id: SID,
       status: 'error',
@@ -533,7 +533,10 @@ describe('SessionRail 左栏', () => {
     expect(item.getAttribute('data-status')).toBeNull();
     expect(screen.queryByTestId('digest-done')).toBeNull();
     expect(screen.queryByTestId('digest-stuck')).toBeNull();
-    expect(item.textContent).not.toContain('verdict.jsonl');
+    expect(item.textContent).not.toContain('Claude Code');
+    expect(item.textContent).not.toContain('API Error');
+    // 第五轮：所有会话都有预览行，服务端出「回复结尾」之前取最近一条回复的摘要
+    expect(item.querySelector('[data-testid=session-preview]')?.textContent).toContain('verdict.jsonl');
   });
 
   it('没有等你决策那一档', () => {
@@ -613,13 +616,16 @@ describe('SessionRail 左栏', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
-    const [cc, oc] = screen.getAllByTestId('copy-resume');
+    // 复制续接命令收进了「…」菜单第一段
+    const [ccMenu, ocMenu] = screen.getAllByTestId('session-menu-button');
+    fireEvent.click(ccMenu);
     await act(async () => {
-      fireEvent.click(cc);
+      fireEvent.click(screen.getByTestId('copy-resume'));
     });
     expect(writeText).toHaveBeenCalledWith(`claude --resume ${SID}`);
+    fireEvent.click(ocMenu);
     await act(async () => {
-      fireEvent.click(oc);
+      fireEvent.click(screen.getByTestId('copy-resume'));
     });
     expect(writeText).toHaveBeenCalledWith('opencode -s ses_058288655ffeYMxYC1AZKCcv56');
   });
@@ -631,8 +637,9 @@ describe('SessionRail 左栏', () => {
       configurable: true,
     });
     render(<TestRail state={railState()} selectedId={null} onSelect={onSelect} />);
+    fireEvent.click(screen.getAllByTestId('session-menu-button')[0]);
     await act(async () => {
-      fireEvent.click(screen.getAllByTestId('copy-resume')[0]);
+      fireEvent.click(screen.getByTestId('copy-resume'));
     });
     expect(onSelect).not.toHaveBeenCalled();
   });

@@ -1405,7 +1405,7 @@
       "what": "Everything {{engine}} recorded for this session is deleted — what was said, what was run, all of it.",
       "effect": "Afterwards it's gone from the session list and won't open again.",
       "irreversible": "This can't be undone — once it's gone, it's gone.",
-      "running": "This session is still running. Use \"Close tmux session\" first, then come back and delete it.",
+      "running": "This session is still running. Use \"Close tmux session\" in this same menu first, then delete it.",
       "gone": "This session is already gone from this machine — there is nothing left to delete. Refresh the list.",
       "cancel": "Cancel",
       "ok": "Delete",
@@ -1497,7 +1497,8 @@
       "closedTerminals_one": "Closed {{count}} terminal",
       "closedTerminals_other": "Closed {{count}} terminals",
       "idleFor": "client exited · stopped {{age}} ago",
-      "clientExited": "client exited"
+      "clientExited": "client exited",
+      "noReply": "No reply from the agent yet"
     },
     "stream": {
       "lens": {
@@ -1891,11 +1892,19 @@
     "forYou": {
       "label": "For you",
       "sending": "Sending",
-      "whyAnswer": "It's asking you something",
-      "whyPickOne": "It wants you to pick one",
-      "whyStopped": "It stopped on an error",
-      "whyDecisionCard": "It left you a decision card",
-      "stoppedAt": "Stopped at {{time}} and has been waiting for you since"
+      "stoppedAt": "Stopped at {{time}} and has been waiting for you since",
+      "agentOnIt": "Agent on it"
+    },
+    "menu": {
+      "button": "More actions",
+      "putInGroup": "Put in group",
+      "putInGroupSoon": "Groups are coming back in a later update",
+      "closeHint": "Frees its memory; the transcript stays",
+      "closeBusyTitle": "Still working — closing ends this turn",
+      "closeBusyBody": "The transcript stays; the tmux session and its memory go.",
+      "deleteTitle": "Delete this session?",
+      "deleteBody": "Its transcript and marks are removed. This can't be undone.",
+      "copyResume": "Copy resume command"
     }
   },
   "tmuxSessions": {

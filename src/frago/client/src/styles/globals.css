@@ -58,6 +58,9 @@
   --text-secondary: rgba(255, 255, 255, 0.62);
   --text-muted: rgba(255, 255, 255, 0.42);
   --text-dim: rgba(255, 255, 255, 0.3);
+  /* 会话卡的预览与状态行（09-29 第五轮二改）：两档灰，与 --text-muted / --text-dim 都对不上 */
+  --card-pv: rgba(255, 255, 255, 0.38);
+  --card-meta: rgba(255, 255, 255, 0.3);
   --text-link: #15b34d;
   --text-on-accent: #06210f;
   --text-white: #ffffff;
@@ -217,6 +220,8 @@
   --text-secondary: rgba(0, 0, 0, 0.6);
   --text-muted: rgba(0, 0, 0, 0.45);
   --text-dim: rgba(0, 0, 0, 0.32);
+  --card-pv: rgba(0, 0, 0, 0.42);
+  --card-meta: rgba(0, 0, 0, 0.34);
   --text-link: #0a8f33;
   --text-on-accent: #FFFFFF;
   --text-white: rgba(0, 0, 0, 0.9);
