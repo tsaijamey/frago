@@ -444,7 +444,11 @@ function subtractSpans(span: [number, number], cuts: [number, number][]): [numbe
  * 那一组先把被高一档盖住的部分挖掉，重叠处只剩优先的那一种。同一组里的范围相接或重叠，
  * 浏览器自然画成一段，不会叠深。找不到的标注跳过，不报错。
  */
-export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[] {
+export function paintMarks(
+  root: ParentNode,
+  marks: WorkbenchMark[],
+  owner?: object
+): MarkTick[] {
   const byRecord = new Map<string, WorkbenchMark[]>();
   for (const mark of marks) {
     const list = byRecord.get(mark.record_id);
@@ -479,9 +483,9 @@ export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[]
       }
     }
   }
-  paintHighlight(MARK_STACK, stackRanges, HIGHLIGHT_PRIORITY.stack);
-  paintHighlight(MARK_BRANCH, branchRanges, HIGHLIGHT_PRIORITY.branch);
-  paintHighlight(MARK_QUOTE, quoteRanges, HIGHLIGHT_PRIORITY.quote);
+  paintHighlight(MARK_STACK, stackRanges, HIGHLIGHT_PRIORITY.stack, owner);
+  paintHighlight(MARK_BRANCH, branchRanges, HIGHLIGHT_PRIORITY.branch, owner);
+  paintHighlight(MARK_QUOTE, quoteRanges, HIGHLIGHT_PRIORITY.quote, owner);
   return ticks;
 }
 
@@ -859,26 +863,29 @@ export default function RecordStream({
    * 那些文本节点就换了一批，上一轮交给浏览器的范围全都指着已经不在的节点。
    */
   const [ticks, setTicks] = useState<MarkTick[]>([]);
+  // 这一块记录流在高亮登记里的身份。会话页、Teams 页各挂着记录流，高亮名字却是全网页
+  // 共用的；每块只交、只撤自己那一份，藏着的那块重涂时不会把别处的底色撤掉。
+  const painter = useRef({}).current;
   useEffect(() => {
     const root = scrollRef.current;
     if (!root || !marks.length) {
-      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
-      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch);
-      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack, painter);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch, painter);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote, painter);
       setTicks([]);
       return;
     }
-    setTicks(paintMarks(root, marks));
-  }, [marks, groups, sessionId]);
+    setTicks(paintMarks(root, marks, painter));
+  }, [marks, groups, sessionId, painter]);
   // 这块走了，底色一起走：高亮挂在浏览器上，不随 React 的树消失。
   useEffect(
     () => () => {
-      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
-      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch);
-      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
-      paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash);
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack, painter);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch, painter);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote, painter);
+      paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash, painter);
     },
-    []
+    [painter]
   );
 
   /**
@@ -1003,10 +1010,10 @@ export default function RecordStream({
     followArmed.current = false;
     if (typeof box.scrollTo === 'function') box.scrollTo({ top, behavior: 'smooth' });
     else box.scrollTop = top;
-    paintHighlight(MARK_FLASH, [range], HIGHLIGHT_PRIORITY.flash);
+    paintHighlight(MARK_FLASH, [range], HIGHLIGHT_PRIORITY.flash, painter);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(
-      () => paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash),
+      () => paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash, painter),
       FLASH_MS
     );
     finish('found');

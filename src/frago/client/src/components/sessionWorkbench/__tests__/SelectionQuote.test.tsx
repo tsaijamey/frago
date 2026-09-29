@@ -16,7 +16,9 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
 import SelectionQuote, {
   ECHO_MAX_CHARS,
+  HIGHLIGHT_PRIORITY,
   echoRanges,
+  paintHighlight,
   findMarkRange,
   markAnchor,
 } from '../SelectionQuote';
@@ -192,6 +194,24 @@ describe('echoRanges', () => {
 
   it('分野写死在常量上：不到五个字才标绿', () => {
     expect(ECHO_MAX_CHARS).toBe(5);
+  });
+});
+
+describe('paintHighlight 分份登记', () => {
+  // 会话页与藏起来的 Teams 页各有一块记录流，共用同一个高亮名字。从前 Teams 那块一重涂
+  // 就交一份空的，把会话页的引用底色整个撤掉。
+  it('一块交空只撤自己那一份，别块涂的照旧留着', () => {
+    const box = fakeHighlights();
+    const root = document.createElement('div');
+    root.innerHTML = '<p>引用这一段</p>';
+    const [range] = echoRanges(root, '引用');
+    const session = {};
+    const teams = {};
+    paintHighlight('workbench-mark-quote', [range], HIGHLIGHT_PRIORITY.quote, session);
+    paintHighlight('workbench-mark-quote', [], HIGHLIGHT_PRIORITY.quote, teams);
+    expect((box.get('workbench-mark-quote') as { ranges: Range[] }).ranges).toEqual([range]);
+    paintHighlight('workbench-mark-quote', [], HIGHLIGHT_PRIORITY.quote, session);
+    expect(box.has('workbench-mark-quote')).toBe(false);
   });
 });
 

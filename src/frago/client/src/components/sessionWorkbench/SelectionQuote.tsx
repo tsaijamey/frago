@@ -86,18 +86,43 @@ export const HIGHLIGHT_PRIORITY = {
   quote: 1,
 } as const;
 
-/** 按名字交一组范围给浏览器去涂；空的就把这个名字撤掉。浏览器不认这套就什么都不做。 */
-export function paintHighlight(name: string, ranges: Range[], priority: number): void {
+/** 不报自己是谁的那些调用（同字标绿、测试）共用这一份。 */
+const SHARED_OWNER = {};
+
+/** 每个高亮名字底下，各块记录流此刻各自交了哪些范围。 */
+const painted = new Map<string, Map<object, Range[]>>();
+
+/**
+ * 按名字交一组范围给浏览器去涂；这一份交空了就撤掉这一份。浏览器不认这套就什么都不做。
+ *
+ * **高亮名字是整个网页共用的，交范围的却不止一块记录流。** 会话页、Teams 页各挂着记录流，
+ * 切走的页面只藏不卸，藏着的那几块照样随新记录重涂。从前谁涂都是整份替换：Teams 页那块
+ * 没有标注，一有新记录就交一份空的，把会话页刚涂好的引用底色整个撤掉——症状是「标注过
+ * 一会儿自己没了，切个页回来又有，过一会儿又没了」。所以按 `owner` 分份登记，浏览器上
+ * 涂的是各份的合集，谁都只能撤自己那一份。
+ */
+export function paintHighlight(
+  name: string,
+  ranges: Range[],
+  priority: number,
+  owner: object = SHARED_OWNER
+): void {
+  const shares = painted.get(name) ?? new Map<object, Range[]>();
+  if (ranges.length) shares.set(owner, ranges);
+  else shares.delete(owner);
+  if (shares.size) painted.set(name, shares);
+  else painted.delete(name);
   const box = highlightBox();
   if (!box) return;
-  if (!ranges.length) {
+  const all = [...shares.values()].flat();
+  if (!all.length) {
     box.delete(name);
     return;
   }
   const Ctor = (window as unknown as { Highlight?: new (...r: Range[]) => { priority?: number } })
     .Highlight;
   if (!Ctor) return;
-  const highlight = new Ctor(...ranges);
+  const highlight = new Ctor(...all);
   highlight.priority = priority;
   box.set(name, highlight);
 }
@@ -307,7 +332,7 @@ export default function SelectionQuote({
   const menu = useRef<HTMLDivElement>(null);
 
   const dropEcho = useCallback(() => {
-    highlightBox()?.delete(ECHO_NAME);
+    paintHighlight(ECHO_NAME, [], HIGHLIGHT_PRIORITY.echo);
   }, []);
 
   const clear = useCallback(() => {
@@ -361,7 +386,7 @@ export default function SelectionQuote({
     if (!box) return;
     // 短选区才点亮同字。长选区在别处不会原样重现，标出来只有自己这一处。
     if ([...text].length >= ECHO_MAX_CHARS) {
-      box.delete(ECHO_NAME);
+      paintHighlight(ECHO_NAME, [], HIGHLIGHT_PRIORITY.echo);
       return;
     }
     // 同字标绿压在引用、暂存的底色上面：人此刻圈它，就是想看它还出现在哪。
