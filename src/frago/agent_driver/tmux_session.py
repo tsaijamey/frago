@@ -10,6 +10,7 @@ NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 Agent
 from __future__ import annotations
 
 import contextlib
+import re
 import shlex
 import subprocess
 import threading
@@ -92,6 +93,11 @@ def tmux_name_for(session_id: str) -> str:
     safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in session_id)
     return f"frago-agent-{safe}"
 
+
+# ``capture-pane -e`` 里的转义（SGR、光标移动、OSC 标题等），去掉后与不带 ``-e`` 抓的纯文本一致。
+_ESCAPES = re.compile(
+    r"\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]"
+)
 
 @dataclass
 class TurnResult:
@@ -211,29 +217,40 @@ class TmuxAgentSession:
     def _tmux(self, *args: str) -> str:
         return self._run(["tmux", *args])
 
-    def capture_pane(self, *, full: bool = False) -> str:
-        """读屏。full=True 抓全 scrollback（-S -），否则只抓可见 pane。"""
+    def capture_pane(self, *, full: bool = False, colors: bool = False) -> str:
+        """读屏。full=True 抓全 scrollback（-S -）；colors=True 带转义抓（-e）。"""
         argv = ["capture-pane", "-p", "-t", self.tmux_name]
         if full:
             argv += ["-S", "-"]
+        if colors:
+            argv += ["-e"]
         return self._tmux(*argv)
 
-    def _capture_resilient(self, *, full: bool = False) -> str:
+    def _capture_resilient(self, *, full: bool = False, colors: bool = False) -> str:
         """轮询专用读屏：把"抓不到"和"会话没了"分开。
 
         `tmux capture-pane` 对已消失的会话退非零，而会话消失的原因可能是 agent 自己
         崩了、也可能只是这一拍 tmux 忙。两者后果天差地别，故失败后必先复核会话是否
         还活着：活着就沿用上一拍的 pane 当本拍内容继续轮询（NEVER 因一次瞬时失败判死），
         确认已死才抛 _SessionVanished 交给上层收口。
+
+        ``colors`` 只在 driver 声明要吃带颜色 pane 时打开（见 ``ready_signal_ansi``）。
+        带颜色抓到的 pane 去掉转义才进 ``_last_pane``：那份缓存要喂给不带颜色的调用方（投喂 /
+        完成轮询），夹着转义会污染它们的匹配。
         """
         try:
-            pane = self.capture_pane(full=full)
+            if colors:
+                pane = self.capture_pane(full=full, colors=True)
+            else:
+                pane = self.capture_pane(full=full)
         except Exception:
             if self.is_alive():
                 return self._last_pane or ""
             raise _SessionVanished(self._last_pane or "", self._last_pane is not None) from None
         if not full:
-            self._last_pane = pane
+            # 带颜色抓的那份去掉转义再进缓存：投喂 / 完成轮询吃的是纯文本，而就绪前会话
+            # 自己退掉时报错附的末屏也从这里取——不存就只剩一句「未留下任何屏幕内容」。
+            self._last_pane = _ESCAPES.sub("", pane) if colors else pane
         return pane
 
     def send_keys(self, *keys: str) -> None:
@@ -311,7 +328,11 @@ class TmuxAgentSession:
             self.send_text(self.driver.launch_command(ctx))
             self.send_keys("Enter")
         try:
-            reached = self._wait_for(self.driver.ready_signal.matches, ready_timeout_s)
+            reached = self._wait_for(
+                self.driver.ready_signal.matches,
+                ready_timeout_s,
+                colors=self.driver.ready_signal_ansi,
+            )
         except _SessionVanished as vanished:
             # agent 在就绪前自己退了（崩溃 / 启动失败 / 撞 id），tmux 会话随之消失。
             # 这同样是启动失败，走与"等不到就绪"完全相同的处置，只是末屏取最后一份
@@ -566,12 +587,18 @@ class TmuxAgentSession:
         )
 
     # ── 轮询辅助 ───────────────────────────────────────────────────
-    def _wait_for(self, predicate: Callable[[str], bool], timeout_s: float | None) -> bool:
+    def _wait_for(
+        self, predicate: Callable[[str], bool], timeout_s: float | None, *, colors: bool = False
+    ) -> bool:
         """轮询 pane 直到 predicate 命中或超时；命中返回 True，超时 False。"""
-        return self._wait_for_any({"hit": predicate}, timeout_s) == "hit"
+        return self._wait_for_any({"hit": predicate}, timeout_s, colors=colors) == "hit"
 
     def _wait_for_any(
-        self, predicates: dict[str, Callable[[str], bool]], timeout_s: float | None
+        self,
+        predicates: dict[str, Callable[[str], bool]],
+        timeout_s: float | None,
+        *,
+        colors: bool = False,
     ) -> str | None:
         """轮询 pane，命中任一 predicate 返回其 key；超时返回 None。
 
@@ -580,10 +607,13 @@ class TmuxAgentSession:
         ``timeout_s`` 为 None 或 <=0 → **不设墙钟上限**，一直轮询到某个 predicate
         命中，或会话消失（``_capture_resilient`` 抛 _SessionVanished）为止。等待不是
         空转：每拍都在读屏，会话真死了当拍就会被发现，NEVER 变成静默挂起。
+
+        ``colors`` 传给读屏：等就绪那一路由 driver 声明是否要吃带颜色的 pane
+        （``ready_signal_ansi``），其余轮询（完成 / needs_input）照旧不带。
         """
         deadline = None if timeout_s is None or timeout_s <= 0 else self._clock() + timeout_s
         while True:
-            pane = self._capture_resilient()
+            pane = self._capture_resilient(colors=colors)
             for key, predicate in predicates.items():
                 if predicate(pane):
                     return key

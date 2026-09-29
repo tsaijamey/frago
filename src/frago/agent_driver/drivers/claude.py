@@ -68,6 +68,8 @@ _PROMPT_BOX = PaneMatcher(name="claude-prompt", pattern=r"(?m)^\s*│?\s*[>❯]\
 # 就绪信号：claude 输入框**空载**（``❯ `` 后整行无内容）。区别于 shell 回显的
 # ``❯ claude --dangerously-skip-permissions``（``❯`` 后有命令文本），避免在 TUI
 # 尚未可交互时就误判就绪、过早投喂导致 Enter 被吞、prompt 永不提交。
+# 就绪判定（``_ClaudeReady``）先经 ``blank_dim_runs`` 把暗色输入提示/建议抹成空再套
+# 本式，故这条只写"空行"这个形状，暗色字的事在判定里管，见下。
 _READY_BOX = PaneMatcher(name="claude-ready", pattern=r"(?m)^\s*│?\s*[>❯]\s*$")
 
 # 启动期的致命失败：claude 报完这一句就退出，pane 落回 shell。
@@ -93,6 +95,16 @@ _FATAL_STARTUP = re.compile(
 class _ClaudeReady:
     """就绪 = 空输入框在 **且** 屏上没有启动失败。鸭子兼容 ``PaneMatcher``。
 
+    **空输入框那半句先经 ``blank_dim_runs`` 抹掉暗色字。** claude 2026-09-25 自动升
+    2.1.282 之后，输入框没字时会显示一句灰色输入提示（``❯ Try "fix typecheck
+    errors"``），答完还有灰色建议——都是 SGR 2 暗色字，都不是人打进去的。不带颜色
+    读屏（``open()`` 缺省喂纯文本），它们看起来就是框里有字，``_READY_BOX`` 永不命中、
+    30 秒后误判启动失败。本 driver 置了 ``ready_signal_ansi``，``open()`` 等就绪那一路
+    带颜色抓屏喂进来，这里先抹暗色再判空。
+
+    **启动失败那半句在去掉颜色的纯文本上认**（``strip_ansi`` 而非 ``blank_dim_runs``）：
+    错误字样若自己也带暗色，抹空会把要认的字一起抹掉。
+
     只作为 driver 对外的 ``ready_signal``。模块内那两处「输入框空没空」的判断
     （``_clear_input`` / ``_submitted``）仍直接用 ``_READY_BOX``——它们问的是别的问题，
     不该被启动失败这件事影响。
@@ -101,7 +113,9 @@ class _ClaudeReady:
     name = "claude-ready"
 
     def matches(self, text: str) -> bool:
-        return _READY_BOX.matches(text) and _FATAL_STARTUP.search(text) is None
+        return _READY_BOX.matches(blank_dim_runs(text)) and _FATAL_STARTUP.search(
+            strip_ansi(text)
+        ) is None
 
 
 _READY = _ClaudeReady()
@@ -689,6 +703,7 @@ register_driver(
         locate=find_claude_cli,
         accepts_session_id=True,
         ready_signal=_READY,
+        ready_signal_ansi=True,
         submit=_submit,
         done_signal=_DONE,
         extract=_extract,
