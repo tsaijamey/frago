@@ -1433,6 +1433,8 @@
       "pinnedHeader": "Pinned",
       "restHeader": "Everything else",
       "orphanWorkersHeader": "Workers with no known caller",
+      "branchOf": "Branched from {{title}}",
+      "branchOfHint": "Open the session this branch came from",
       "pageProgress": "Showing {{shown}} of {{total}} — keep scrolling for more",
       "workerCount": "launched {{n}} workers",
       "expandWorkers": "Show the {{n}} workers this session launched",
@@ -1519,6 +1521,10 @@
       "stack": "Stack",
       "stackNotePlaceholder": "A thought on this (optional) — Enter to save",
       "stackNoteSave": "Save",
+      "branch": "Branch",
+      "branchNotePlaceholder": "What should the new session look into? — Enter to start",
+      "branchNoteStart": "Start",
+      "branchNoteRequired": "Write one line first — the new session starts from it",
       "minimap": "Conversation overview — drag or click to scroll",
       "lensHookFull": "Hook injections"
     },
@@ -1743,6 +1749,22 @@
       "expand": "Show more",
       "collapse": "Show less",
       "resize": "Drag to split the summary and the stack, double-click to reset"
+    },
+    "branch": {
+      "starting": "Starting a branch…",
+      "startingTitled": "Starting a branch: {{title}}…",
+      "started": "Handling it in a new session: {{title}}",
+      "open": "Open",
+      "dismiss": "Close",
+      "failed": "The branch didn't start: {{reason}}",
+      "notRecorded": "The branch started, but its session id never came back — the link wasn't recorded",
+      "markNotSaved": "(This session can't keep highlights, so the text isn't underlined.)",
+      "bringBack": "Bring back",
+      "bringBackHint": "Go back to the main session with this branch's last reply quoted in the message box — nothing is sent",
+      "noReply": "This branch has no reply yet to bring back",
+      "menuOpen": "Open branch",
+      "menuClose": "Mark as closed",
+      "closeFailed": "Didn't mark the branch closed: {{reason}}"
     },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",

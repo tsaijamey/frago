@@ -136,9 +136,7 @@
   /* Accent focus ring — keyboard/active emphasis */
   --focus-ring: 0 0 0 3px rgba(21, 179, 77, 0.32);
 
-  /* Fallback only — index.html's inline script overrides this on <html> with a
-     resolution-derived scale (× readabilityBoost). Tune the effective size
-     there, not here. */
+  /* 字号不随屏幕高度缩放，所有屏幕都按下面的三档原值显示。 */
   --font-scale: 1;
 
   /* 日常界面只用三档：13 正文、列表标题、菜单；12 元信息、按钮字；11 微标。页标题 15，全站只此一处。
@@ -8293,20 +8291,52 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--accent-primary);
 }
 
-/* === 记录流里的引用与暂存底色 ================================================
-   颜色只有一个意思：蓝 = 回应过了（引用、用过了的暂存），琥珀 = 还等着你（没用过的
-   暂存）。绿色留给上面那套同字标绿和缩略滚动条上的人发言，这里不用。
+/* === 记录流里的引用、暂存与分支标注 ==========================================
+   颜色只用原型配色（spec 20260928-webui-session-branch 改版，原先引用那一档的蓝撤掉）：
+
+   | 标注 | 画法 |
+   |---|---|
+   | 引用、用过的暂存、收了口的分支 | 中性底（--border-strong）+ 同色系实线下划线（--text-muted）：这件事已经回应过了 |
+   | 没用过的暂存 | 橙底（品牌橙 24%）+ 橙色实线下划线（--accent-warning）：还等着你 |
+   | 没收口的分支 | 正文色虚线下划线，无底色：交出去了，还没回来 |
+
+   绿色留给上面那套同字标绿和缩略滚动条上的人发言，这里不用。
+
+   **底色加深一档、再压一条实线下划线**（主人 09-28 定）：从前只有一层很淡的底色，浮在正文
+   里几乎认不出。主人要的是「带边框的色块」，但这套高亮只认颜色、底色、下划线和文字阴影，
+   内边距、边框、圆角一概不认；在文字上方另画一层方框、或把文字包进标签都代价更大，
+   所以留在这套画法里：底色加深一档，下沿一条比底色深的实线下划线当作边。
+   橙色那一档原型里只有 --accent-warning-10 一档淡底，更深的一档按同一个品牌橙调浓度
+   得出，不另起色相。
 
    与同字标绿同一套写法：只递交文本范围，DOM 一个字不动。谁压谁由脚本给每套高亮的
-   priority 决定（同字标绿 > 暂存 > 引用），重叠处引用那一组先被挖掉，所以这里只管
-   各自的底色。深浅主题各自沿用已有的淡底变量，不另起颜色。字色不动：底色够淡，正文
-   原来什么颜色就还是什么颜色，读起来不打断。 */
+   priority 决定（同字标绿 > 没用过的暂存 > 没收口的分支 > 中性底），重叠处低一档的那一组
+   先被挖掉，所以这里只管各自的样子。深浅主题各自沿用已有的变量。字色不动：正文原来
+   什么颜色就还是什么颜色，读起来不打断。 */
 ::highlight(workbench-mark-quote) {
-  background-color: var(--accent-info-10);
+  background-color: var(--border-strong);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--text-muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 ::highlight(workbench-mark-stack) {
-  background-color: var(--accent-warning-10);
+  background-color: color-mix(in srgb, var(--accent-warning) 24%, transparent);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--accent-warning);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+::highlight(workbench-mark-branch) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: var(--text-primary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 /* 从暂存列表跳回原处时那段文字亮一瞬：叠一层中性的选区色，压在标注底色上面，

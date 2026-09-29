@@ -12,13 +12,17 @@
  * | 原文 | 折到三行，可展开；点它记录流滚回原处并闪一下 |
  * | 想法 | 点开就地改；没写过的给一个「写想法」 |
  * | 「填入」 | 按引用格式填进输入框，想法接在 `>>> ` 后面 |
- * | 状态 | 没用过（琥珀）/ 已填入待发出 / 用过了（蓝、整条降一档）/ 没找到原处 |
+ * | 状态 | 没用过（橙）/ 已填入待发出 / 用过了（中性、整条降一档）/ 没找到原处 |
  * | 顺序 | 拖动，或「更多」里的上移、下移；删除也在那里，直接删 |
  *
- * 颜色只有一个意思：琥珀 = 还等着你，蓝 = 回应过了。条目前面那颗小圆点与记录流里的
+ * 颜色只有一个意思：橙 = 还等着你，中性 = 回应过了。条目前面那颗小圆点与记录流里的
  * 底色、缩略滚动条上的刻度是同一个颜色，三处说的是同一件事。
  *
  * 右栏被拖得很窄时原文截断，「填入」不换行、不消失——它是这张列表存在的理由。
+ *
+ * 「更多」那个小菜单挂在列表的滚动区里，滚动区会把伸出去的部分裁掉。末尾那几条往下展开
+ * 就被列表底边切掉一截，所以打开那一刻量一下：下面放不下、上面放得下，就往上展开
+ * （见 {@link menuOpensUp}）。
  */
 
 import { useLayoutEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
@@ -40,6 +44,38 @@ export function marksAboard(text: string, pendingIds: string[], marks: Workbench
     const needle = mark ? squeeze(mark.text) : '';
     return needle ? sent.includes(needle) : false;
   });
+}
+
+/**
+ * 这一句话出门时带走了哪几条待发出的引用。
+ *
+ * 点「引用」只是把原文填进输入框，那一刻不留痕；这句话发出去、而且**还带着那段原文**，
+ * 才算真的回应过它。判法与 `marksAboard` 相同，只是引用在发出之前还没有标注编号，
+ * 手上拿的是划选时的锚点本身。
+ */
+export function quotesAboard<T extends { text: string }>(text: string, pending: T[]): T[] {
+  const sent = squeeze(text);
+  return pending.filter((q) => {
+    const needle = squeeze(q.text);
+    return needle ? sent.includes(needle) : false;
+  });
+}
+
+/**
+ * 「更多」菜单该不该往上展开：按钮下沿加菜单高度超出列表可视区的底边，而上面放得下，
+ * 就往上；两边都放不下时往空间大的那边开。
+ */
+export function menuOpensUp(
+  button: { top: number; bottom: number },
+  list: { top: number; bottom: number },
+  menuHeight: number,
+  gap = 4
+): boolean {
+  const below = list.bottom - button.bottom - gap;
+  const above = button.top - list.top - gap;
+  if (below >= menuHeight) return false;
+  if (above >= menuHeight) return true;
+  return above > below;
 }
 
 /** 某一条跳回原处的下场。searching 是正在往前翻页找。 */
@@ -101,8 +137,11 @@ function StackItem({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(mark.note);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuUp, setMenuUp] = useState(false);
   const [dropTarget, setDropTarget] = useState(false);
   const body = useRef<HTMLButtonElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   // Esc 放弃之后输入框随即卸掉，有的浏览器会在那一刻补发一次失焦——不许它把草稿存进去。
   const discarded = useRef(false);
 
@@ -117,6 +156,21 @@ function StackItem({
     observer.observe(el);
     return () => observer.disconnect();
   }, [mark.text, expanded]);
+
+  // 菜单一打开就量：往下放不放得下。画出来之后、浏览器上屏之前量，不会闪一下再跳。
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuUp(false);
+      return;
+    }
+    const btn = moreButton.current;
+    const box = btn?.closest('[data-stack-list]');
+    const el = menu.current;
+    if (!btn || !box || !el) return;
+    setMenuUp(
+      menuOpensUp(btn.getBoundingClientRect(), box.getBoundingClientRect(), el.offsetHeight)
+    );
+  }, [menuOpen]);
 
   const saveNote = () => {
     if (discarded.current) {
@@ -165,11 +219,11 @@ function StackItem({
       >
         <GripVertical size={12} />
       </span>
-      {/* 琥珀 = 还等着你，蓝 = 回应过了。与记录流底色、缩略滚动条刻度同色。 */}
+      {/* 橙 = 还等着你，中性 = 回应过了。与记录流底色、缩略滚动条刻度同色。 */}
       <span
         aria-hidden
         className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${
-          mark.used ? 'bg-accent-info' : 'bg-accent-warning'
+          mark.used ? 'bg-text-muted' : 'bg-accent-warning'
         }`}
       />
       <div className={`flex min-w-0 flex-1 flex-col gap-1 ${mark.used ? 'opacity-60' : ''}`}>
@@ -239,7 +293,7 @@ function StackItem({
 
         <div className="flex min-w-0 items-center gap-2">
           {mark.used ? (
-            <span data-testid="stack-item-used" className="shrink-0 text-[11px] text-accent-info">
+            <span data-testid="stack-item-used" className="shrink-0 text-[11px] text-text-secondary">
               {t('workbench.stack.used')}
             </span>
           ) : null}
@@ -280,6 +334,7 @@ function StackItem({
           <span className="flex-1" />
           <div className="relative shrink-0">
             <button
+              ref={moreButton}
               type="button"
               data-testid="stack-item-more"
               aria-label={t('workbench.stack.more')}
@@ -292,9 +347,14 @@ function StackItem({
             </button>
             {menuOpen ? (
               <div
+                ref={menu}
                 role="menu"
+                data-testid="stack-item-menu"
+                data-direction={menuUp ? 'up' : 'down'}
                 onMouseLeave={() => setMenuOpen(false)}
-                className="absolute right-0 top-full z-20 mt-1 flex min-w-[112px] flex-col rounded-[8px] border border-border-color bg-bg-card py-1 shadow-lg"
+                className={`absolute right-0 z-20 flex min-w-[112px] flex-col rounded-[8px] border border-border-color bg-bg-card py-1 shadow-lg ${
+                  menuUp ? 'bottom-full mb-1' : 'top-full mt-1'
+                }`}
               >
                 <MenuItem
                   testId="stack-item-up"
@@ -405,7 +465,11 @@ export default function StackPanel({
         </p>
       ) : (
         // 条与条之间用虚线：与摘要里「已经发生的事」同一种写法，是同一格里的条目。
-        <ul className="min-h-0 flex-1 divide-y divide-dashed divide-border-color overflow-y-auto pb-4 pl-2">
+        <ul
+          data-stack-list=""
+          data-testid="stack-list"
+          className="min-h-0 flex-1 divide-y divide-dashed divide-border-color overflow-y-auto pb-4 pl-2"
+        >
           {stacks.map((mark, index) => (
             <StackItem
               key={mark.id}

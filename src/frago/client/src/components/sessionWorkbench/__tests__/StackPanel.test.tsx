@@ -3,12 +3,13 @@
  *
  * 盯的是列表自己的承诺：只摆暂存（引用不进来）、「填入」「点原文」交出的是那一条、删除
  * 直接删、上移下移换算到整份数组里的正确位置、用过了的那条看得出来、空列表给一句怎么用、
- * 找不到原处时条目上有提示、想法能补写。
+ * 找不到原处时条目上有提示、想法能补写；分支标注不进列表；末尾几条的「⋯」菜单往上展开，
+ * 不被列表底边裁掉。
  */
 
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import StackPanel, { marksAboard, type StackPanelProps } from '../StackPanel';
+import StackPanel, { marksAboard, menuOpensUp, quotesAboard, type StackPanelProps } from '../StackPanel';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import i18n from '@/i18n';
 
@@ -170,5 +171,74 @@ describe('marksAboard 「用过了」的判定', () => {
 
   it('人在框里调了换行照样认得', () => {
     expect(marksAboard('第一个\n决策点', ['a'], marks)).toEqual(['a']);
+  });
+});
+
+describe('quotesAboard 引用何时留痕', () => {
+  const one = { record_id: 'r1', text: '第一段原话', occurrence: 0 };
+  const two = { record_id: 'r2', text: '第二段原话', occurrence: 0 };
+
+  it('发出去的话里还带着原文才留痕；引了几段就算几段', () => {
+    const sent = '"""\n第一段原话\n"""\n>>> 同意\n"""\n第二段原话\n"""\n>>> 不同意';
+    expect(quotesAboard(sent, [one, two])).toEqual([one, two]);
+  });
+
+  it('引进去又删掉、改写成别的：不留痕', () => {
+    expect(quotesAboard('算了，不说这个', [one])).toEqual([]);
+    expect(quotesAboard('"""\n第二段原话\n"""\n>>> ', [one, two])).toEqual([two]);
+  });
+
+  it('没点过引用的不算，哪怕原文恰好出现在话里', () => {
+    expect(quotesAboard('第一段原话', [])).toEqual([]);
+  });
+
+  it('人在框里调了换行照样认得', () => {
+    expect(quotesAboard('第一段\n原话', [one])).toEqual([one]);
+  });
+});
+
+describe('「⋯」菜单靠近列表底边时往上展开', () => {
+  it('下面放得下就往下，放不下而上面放得下就往上', () => {
+    const list = { top: 0, bottom: 300 };
+    expect(menuOpensUp({ top: 40, bottom: 60 }, list, 90)).toBe(false);
+    expect(menuOpensUp({ top: 260, bottom: 280 }, list, 90)).toBe(true);
+  });
+
+  it('两边都放不下时往空间大的那边开', () => {
+    const list = { top: 0, bottom: 120 };
+    expect(menuOpensUp({ top: 80, bottom: 100 }, list, 110)).toBe(true);
+    expect(menuOpensUp({ top: 10, bottom: 30 }, list, 110)).toBe(false);
+  });
+
+  it('列表末一条：量出来放不下，菜单往上开', () => {
+    const marks = Array.from({ length: 7 }, (_, i) => mark(`m${i}`));
+    mount({ marks });
+    const list = screen.getByTestId('stack-list');
+    list.getBoundingClientRect = () => ({ top: 0, bottom: 300 }) as DOMRect;
+    const items = screen.getAllByTestId('stack-item');
+    const lastMore = within(items[6]).getByTestId('stack-item-more');
+    lastMore.getBoundingClientRect = () => ({ top: 270, bottom: 290 }) as DOMRect;
+    const offset = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(90);
+    fireEvent.click(lastMore);
+    expect(within(items[6]).getByTestId('stack-item-menu').getAttribute('data-direction')).toBe('up');
+    offset.mockRestore();
+  });
+
+  it('第一条：往下开', () => {
+    mount({ marks: [mark('a'), mark('b')] });
+    const list = screen.getByTestId('stack-list');
+    list.getBoundingClientRect = () => ({ top: 0, bottom: 300 }) as DOMRect;
+    const first = screen.getAllByTestId('stack-item')[0];
+    const more = within(first).getByTestId('stack-item-more');
+    more.getBoundingClientRect = () => ({ top: 10, bottom: 30 }) as DOMRect;
+    const offset = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(90);
+    fireEvent.click(more);
+    expect(within(first).getByTestId('stack-item-menu').getAttribute('data-direction')).toBe('down');
+    offset.mockRestore();
+  });
+
+  it('分支标注不进暂存列表', () => {
+    mount({ marks: [mark('a'), mark('b', { kind: 'branch', child_session_id: 'kid' })] });
+    expect(screen.getAllByTestId('stack-item')).toHaveLength(1);
   });
 });

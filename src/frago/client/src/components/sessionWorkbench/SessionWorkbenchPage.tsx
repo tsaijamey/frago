@@ -22,8 +22,9 @@ import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import ReportPanel from './ReportPanel';
-import StackPanel, { marksAboard, type LocateState } from './StackPanel';
-import Composer, { blockReason } from './Composer';
+import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
+import Composer, { blockReason, type ComposerNotice } from './Composer';
+import { squeeze, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
@@ -41,7 +42,33 @@ import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
-import { handoffSession } from '@/hooks/useAgentClients';
+import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
+import { closeBranch, startBranch } from '@/api';
+
+/**
+ * 起分支之后输入框上方那一行说到哪一步了。只属于起分支的那场会话（`parent`），切走就撤。
+ *
+ * - starting：请求在路上，或者分支会话的编号还在等认领；
+ * - ready：起来了，关联也记上了，给「打开」；
+ * - unrecorded：分支起来了，但编号没认到（或关系账没写上），关联没记上；
+ * - failed：没起来，换成失败原因。
+ */
+interface BranchNotice {
+  parent: string;
+  state: 'starting' | 'ready' | 'unrecorded' | 'failed';
+  title?: string;
+  child?: string | null;
+  reason?: string;
+  /** 分支起来了、关联记上了，但这场主线存不了标注（CoreAgent 那一家），原文上不画线。 */
+  markNotSaved?: boolean;
+}
+
+/** 分支会话里「带回主线」要带走的那一份：切回哪一场、哪一条分支、最后一段回复。 */
+interface BringBack {
+  parent: string;
+  child: string;
+  text: string;
+}
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
@@ -202,6 +229,45 @@ export default function SessionWorkbenchPage() {
   // 换会话只清待发出：填了还没发的，切走就不算。
   useEffect(() => setPendingUse([]), [selectedId]);
 
+  /**
+   * 引用的留痕时机与暂存「用过了」同一个道理：点「引用」只把原文填进输入框，那一刻
+   * **不**记标注——填进去之后删掉、改写、或者干脆没发，那段话就没被回应过，涂上「回应过
+   * 了」的底色是在说假话，而且刷新也撤不掉。点了只记成待发出（只在内存里）；这场会话发出
+   * 成功、发出去的那句话里还带着那段原文，才落成引用标注。
+   */
+  const [pendingQuotes, setPendingQuotes] = useState<MarkAnchor[]>([]);
+  const pendingQuotesRef = useRef<MarkAnchor[]>([]);
+  pendingQuotesRef.current = pendingQuotes;
+  /** 信封编号 → 这一单是哪一场发的、带出去了哪几段引用。与 `riding` 同一个道理。 */
+  const ridingQuotes = useRef(new Map<string, { sid: string; anchors: MarkAnchor[] }>());
+  useEffect(() => setPendingQuotes([]), [selectedId]);
+
+  /** 这一单带出去的引用落成标注。同一单只落一次——见下面 `landOutbound`。 */
+  const { addMarks, markUsed } = marks;
+  const landQuotes = useCallback(
+    (outboundId: string) => {
+      const quoted = ridingQuotes.current.get(outboundId);
+      if (!quoted) return;
+      ridingQuotes.current.delete(outboundId);
+      addMarks(
+        quoted.anchors.map((a) => ({ kind: 'quote' as const, ...a })),
+        quoted.sid
+      );
+    },
+    [addMarks]
+  );
+
+  /**
+   * 带回主线那一份（见下面 `bringBack`）：切过去之前先记在这里，到了原会话再填进输入框；
+   * 填进去之后转成「待收口」，那一句发出成功才收口。
+   */
+  const bringBackRef = useRef<BringBack | null>(null);
+  const [pendingClose, setPendingClose] = useState<BringBack | null>(null);
+  const pendingCloseRef = useRef<BringBack | null>(null);
+  pendingCloseRef.current = pendingClose;
+  /** 信封编号 → 这一单发出成功后要收口的那条分支。与暂存的 `riding` 同一个道理。 */
+  const ridingBranch = useRef(new Map<string, BringBack>());
+
   /** 发出那一刻，这一场的 For you 本地先撤：agent 接手期间清单上什么都不挂。 */
   const onSendStart = useCallback(
     (text: string, attachments: number) => {
@@ -211,6 +277,17 @@ export default function SessionWorkbenchPage() {
       if (id && selectedId && aboard.length) {
         riding.current.set(id, { sid: selectedId, ids: aboard });
         setPendingUse((prev) => prev.filter((mid) => !aboard.includes(mid)));
+      }
+      const quoted = quotesAboard(text, pendingQuotesRef.current);
+      if (id && selectedId && quoted.length) {
+        ridingQuotes.current.set(id, { sid: selectedId, anchors: quoted });
+        setPendingQuotes((prev) => prev.filter((q) => !quoted.includes(q)));
+      }
+      // 带回主线的那段回复还在这句话里，这一单发出成功就收口。
+      const back = pendingCloseRef.current;
+      if (id && back && back.parent === selectedId && squeeze(text).includes(squeeze(back.text))) {
+        ridingBranch.current.set(id, back);
+        setPendingClose(null);
       }
       return id;
     },
@@ -227,6 +304,20 @@ export default function SessionWorkbenchPage() {
         if (aboard.sid === selectedId) {
           setPendingUse((prev) => [...prev, ...aboard.ids.filter((mid) => !prev.includes(mid))]);
         }
+      }
+      // 带出去的引用也退回待发出。
+      const quoted = outboundId ? ridingQuotes.current.get(outboundId) : undefined;
+      if (outboundId && quoted) {
+        ridingQuotes.current.delete(outboundId);
+        if (quoted.sid === selectedId) {
+          setPendingQuotes((prev) => [...prev, ...quoted.anchors.filter((q) => !prev.includes(q))]);
+        }
+      }
+      // 带回主线的那一单没发出去：退回待收口，重试发出照样收。
+      const back = outboundId ? ridingBranch.current.get(outboundId) : undefined;
+      if (outboundId && back) {
+        ridingBranch.current.delete(outboundId);
+        if (back.parent === selectedId) setPendingClose(back);
       }
       clearSent(outboundId);
     },
@@ -319,6 +410,211 @@ export default function SessionWorkbenchPage() {
     }
     return null;
   }, [records, recordsSessionId, selectedId]);
+
+  /**
+   * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
+   * 专门处理这个旁支问题。**页面不跳走**——主线接着谈，输入框上方一行说分支去了哪，点「打开」
+   * 才过去。切走会话或点关闭，这一行就撤。
+   */
+  const [branchNotice, setBranchNotice] = useState<BranchNotice | null>(null);
+  useEffect(() => setBranchNotice(null), [selectedId]);
+  /** 每起一次分支加一：回来晚的那次不许盖掉后来那次的提示。 */
+  const branchSeq = useRef(0);
+  const onBranch = useCallback(
+    async (anchor: MarkAnchor, note: string) => {
+      const parent = selectedId;
+      if (!parent) return;
+      const seq = (branchSeq.current += 1);
+      // 人已经切走、或者又起了一次：这一次的下场不再往那一行上写。
+      const current = () =>
+        branchSeq.current === seq && usePageStore.getState().workbenchSessionId === parent;
+      const show = (next: Omit<BranchNotice, 'parent'>) => {
+        if (current()) setBranchNotice({ parent, ...next });
+      };
+      show({ state: 'starting' });
+      let launch;
+      try {
+        launch = await startBranch(parent, { ...anchor, note });
+      } catch (e) {
+        show({ state: 'failed', reason: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      const title = launch.title;
+      if (launch.session_id) {
+        show({
+          state: launch.recorded === false ? 'unrecorded' : 'ready',
+          title,
+          child: launch.session_id,
+          markNotSaved: launch.mark_saved === false,
+        });
+        if (current()) void marks.syncBranches();
+        void sessions.reload();
+        return;
+      }
+      // 编号要等认领的那两家：先说「正在起」，认到了再给「打开」。服务端认到编号才记账，
+      // 所以标注比编号晚到一拍，隔一会儿再取一次。
+      show({ state: 'starting', title });
+      try {
+        const child = await waitForSession(launch.handle);
+        show({ state: 'ready', title, child });
+        void sessions.reload();
+        if (current()) {
+          void marks.syncBranches();
+          setTimeout(() => {
+            if (current()) void marks.syncBranches();
+          }, 2_000);
+        }
+      } catch (e) {
+        // 首轮跑完仍没认到编号：分支是起了的，只是关联记不上——与「没起来」分开说。
+        const last = await fetchPending(launch.handle).catch(() => null);
+        if (last && last.finished && !last.session_id && !last.error) {
+          show({ state: 'unrecorded', title, child: null });
+        } else {
+          show({ state: 'failed', reason: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    },
+    [selectedId, marks, sessions]
+  );
+
+  const openSession = useCallback(
+    (sid: string) => {
+      setWorkbenchSessionId(sid);
+      void sessions.reload();
+    },
+    [setWorkbenchSessionId, sessions]
+  );
+
+  const composerNotice = useMemo<ComposerNotice | null>(() => {
+    if (!branchNotice || branchNotice.parent !== selectedId) return null;
+    const dismiss = () => setBranchNotice(null);
+    const child = branchNotice.child;
+    const open = child
+      ? { actionLabel: t('workbench.branch.open'), onAction: () => openSession(child) }
+      : {};
+    switch (branchNotice.state) {
+      case 'starting':
+        return {
+          text: branchNotice.title
+            ? t('workbench.branch.startingTitled', { title: branchNotice.title })
+            : t('workbench.branch.starting'),
+          onDismiss: dismiss,
+        };
+      case 'ready':
+        return {
+          text: branchNotice.markNotSaved
+            ? `${t('workbench.branch.started', { title: branchNotice.title ?? '' })} ${t('workbench.branch.markNotSaved')}`
+            : t('workbench.branch.started', { title: branchNotice.title ?? '' }),
+          ...open,
+          onDismiss: dismiss,
+        };
+      case 'unrecorded':
+        return { text: t('workbench.branch.notRecorded'), ...open, onDismiss: dismiss };
+      default:
+        return {
+          text: t('workbench.branch.failed', { reason: branchNotice.reason ?? '' }),
+          tone: 'error',
+          onDismiss: dismiss,
+        };
+    }
+  }, [branchNotice, selectedId, t, openSession]);
+
+  /**
+   * 带回主线：分支会话里点了，切回原会话，把分支最后一段代理回复按引用格式落进输入框，
+   * 不自动发出。主线那一句**发出成功**才算这条分支收口；填了没发、切走、或者发出去的话里
+   * 已经没有这段回复了，都不算——与暂存「用过了」同一个判法。
+   */
+  // 必须排在上面「换会话把引用收掉」那条之后：同一拍里先清、再填，填进去的才留得住。
+  useEffect(() => {
+    const back = bringBackRef.current;
+    bringBackRef.current = null;
+    if (back && selectedId === back.parent) {
+      setQuote({ text: back.text, at: (quoteSeq.current += 1) });
+      setPendingClose(back);
+    } else {
+      setPendingClose(null);
+    }
+  }, [selectedId]);
+
+  const branchParent =
+    selected?.relation?.kind === 'branch' && selected.parent_session_id
+      ? selected.parent_session_id
+      : null;
+  // 原会话被删了、或者不在清单里：「带回主线」不出现（spec 边界情况）。
+  const canBringBack =
+    Boolean(branchParent) && sessions.sessions.some((s) => s.session_id === branchParent);
+  const bringBack = useCallback(() => {
+    if (!selectedId || !branchParent) return;
+    let reply = '';
+    if (recordsSessionId === selectedId) {
+      for (let i = records.length - 1; i >= 0; i -= 1) {
+        const r = records[i];
+        if (r.kind !== 'agent.say' || r.agent_path.length) continue;
+        const text = typeof r.payload.text === 'string' ? r.payload.text.trim() : '';
+        if (text) {
+          reply = text;
+          break;
+        }
+      }
+    }
+    if (!reply) {
+      showToast(t('workbench.branch.noReply'), 'error');
+      return;
+    }
+    bringBackRef.current = { parent: branchParent, child: selectedId, text: reply };
+    setWorkbenchSessionId(branchParent);
+  }, [selectedId, branchParent, records, recordsSessionId, setWorkbenchSessionId, showToast, t]);
+
+  /** 关系账与主线标注由服务端一起改；改完把主线的虚线换成中性底、左栏跟着刷新。 */
+  const settleBranch = useCallback(
+    async (parent: string, child: string, by: 'bring-back' | 'manual') => {
+      try {
+        await closeBranch(parent, child, by);
+        if (usePageStore.getState().workbenchSessionId === parent) await marks.syncBranches();
+        void sessions.reload();
+      } catch (e) {
+        showToast(
+          t('workbench.branch.closeFailed', { reason: e instanceof Error ? e.message : String(e) }),
+          'error'
+        );
+      }
+    },
+    [marks, sessions, showToast, t]
+  );
+
+  /**
+   * 一单发出成功之后该发生的三件事：带出去的引用落成标注、带出去的暂存标用过、带回主线
+   * 的那条分支收口。三张账各自按信封编号取、取完即删，所以同一单每件事只做一次，谁先到
+   * 谁做。
+   *
+   * **「发出成功」认的是这句话落进会话，不是发送接口回来。** 那条接口要等整整一轮说完
+   * 才回来，上限 180 秒；这一轮跑得比它久（常事），它就以超时收场，而那时话早已在会话
+   * 里，页面按「已送达」悄悄收掉、不再走成功那条路——症状是发出去了、引用不上色、暂存
+   * 不转用过、分支不收口。所以主路是进度里「进了会话 / 进了插话队列」那一步，接口回来
+   * 那条留着兜底（人早切走了、进度认不出落地时靠它）。
+   */
+  const landOutbound = useCallback(
+    (outboundId: string) => {
+      landQuotes(outboundId);
+      const aboard = riding.current.get(outboundId);
+      if (aboard) {
+        riding.current.delete(outboundId);
+        markUsed(aboard.ids, aboard.sid);
+      }
+      const back = ridingBranch.current.get(outboundId);
+      if (back) {
+        ridingBranch.current.delete(outboundId);
+        void settleBranch(back.parent, back.child, 'bring-back');
+      }
+    },
+    [landQuotes, markUsed, settleBranch]
+  );
+  useEffect(() => {
+    for (const tr of trails) {
+      if (tr.steps.failed !== undefined) continue;
+      if (tr.steps.in_the_session !== undefined || tr.steps.queued !== undefined) landOutbound(tr.id);
+    }
+  }, [trails, landOutbound]);
 
   /**
    * 交接到新会话。拼第一句话、起名都在服务端；这里只把回执当成一次普通的新建接过去——
@@ -460,10 +756,17 @@ export default function SessionWorkbenchPage() {
               scrollTarget={scrollTarget}
               onQuote={(text, anchor) => {
                 setQuote({ text, at: (quoteSeq.current += 1) });
-                // 引用也留痕：记录流里这段转成蓝底，看得出哪些已经回应过。
-                if (anchor) marks.addMark({ kind: 'quote', ...anchor });
+                // 这一刻只记成待发出，发出成功才留痕——见 `pendingQuotes`。
+                if (anchor) setPendingQuotes((prev) => [...prev, anchor]);
               }}
               onStack={(anchor, note) => marks.addMark({ kind: 'stack', ...anchor, note })}
+              onBranch={(anchor, note) => void onBranch(anchor, note)}
+              onOpenBranch={openSession}
+              onCloseBranch={(mark) => {
+                if (selectedId && mark.child_session_id) {
+                  void settleBranch(selectedId, mark.child_session_id, 'manual');
+                }
+              }}
               marks={marks.marks}
               minimap
               locateTarget={locateTarget}
@@ -499,15 +802,13 @@ export default function SessionWorkbenchPage() {
           contextTokens={contextTokens}
           onHandoff={() => void handoff()}
           handingOff={handingOff}
+          notice={composerNotice}
+          onBringBack={canBringBack ? bringBack : undefined}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
-            // 这一单带出去的暂存到此才算用过了：记录流里的底色从琥珀转蓝。
-            const aboard = outboundId ? riding.current.get(outboundId) : undefined;
-            if (outboundId && aboard) {
-              riding.current.delete(outboundId);
-              marks.markUsed(aboard.ids, aboard.sid);
-            }
+            // 兜底：进度里没认出落地（比如人早切走了），接口回来这一刻照样落。
+            if (outboundId) landOutbound(outboundId);
             // 接口回来了就说明这一轮已经说完，那句话必定在会话里了：信封该收，
             // 不必等记录流认出它长什么样。
             settleSent(outboundId);

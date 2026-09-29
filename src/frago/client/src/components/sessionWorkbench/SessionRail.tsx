@@ -9,6 +9,8 @@
  *
  * **分区顺序**：Pinned（组内 For you 在前）→ For you（等得最久的在上）→ Everything else
  * （按时间）→ Workers with no parent session（默认折起）。worker 仍按派活的那场折在它下面。
+ * **分支会话不折**：它是人亲手起的、等的也是人，和人开的会话一样摆在主干上（等你时进
+ * For you），出处只在卡片上一行「分支自 <原会话>」里说（主人 09-28 定）。
  * 按标签分组（含 AI 分组）随第三轮原型退场：Everything else 里只按时间排。
  *
  * **搜索不筛这张清单。** 顶上那一行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗。
@@ -219,6 +221,9 @@ export default function SessionRail({
    * - 是 worker 但认不出谁派的（或派活的那场被筛掉了）→ 收进末尾那一区。
    * - 其余 → 主干。
    */
+  /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
+  const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
+
   const { trunkRows, childrenOf, orphanRows } = useMemo(() => {
     // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
     // 只看下面那一片的话，它的 worker 会认不出父亲、掉进末尾那一区——而它的父亲就摆在
@@ -229,7 +234,11 @@ export default function SessionRail({
     const orphans: WorkbenchSession[] = [];
     for (const session of visible) {
       const parent = session.parent_session_id;
+      // **分支会话不折。** 它是人亲手起的、等的也是人：起完要一眼看见它在不在，停下来等你
+      // 拍板时要出现在 For you 那一组里。折进原会话底下，这两件事全被藏住了——worker 能折，
+      // 是因为它等的是派它的那个 agent，不是人。和原会话的关系只写在卡片上那一行出处里。
       const nestable =
+        session.relation?.kind !== 'branch' &&
         Boolean(parent) &&
         parent !== session.session_id &&
         present.has(parent as string) &&
@@ -862,6 +871,14 @@ export default function SessionRail({
                           forYou={forYou.infoOf(session.session_id)}
                           sending={sendingId === session.session_id}
                           nested={row.nested}
+                          branchOf={
+                            session.relation?.kind === 'branch' && session.parent_session_id
+                              ? {
+                                  id: session.parent_session_id,
+                                  title: titleOf.get(session.parent_session_id) ?? null,
+                                }
+                              : null
+                          }
                           workerCount={row.workerCount}
                           workersExpanded={row.workersExpanded}
                           onSelect={handleSelect}

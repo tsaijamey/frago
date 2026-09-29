@@ -33,6 +33,12 @@
  * 算作不存。两个按钮只画图标，名字在悬停时给：两颗带字的按钮浮在正文上，挡住的字比
  * 它们要引的那段还多。
  *
+ * **「分支」是第三颗。** 圈的这段引出一个跟主线相关、却不该在主线里展开的问题：点了在原地
+ * 展开一个小框写「要在新会话里问什么」，回车就起一场分支会话，页面原地不动
+ * （spec 20260928-webui-session-branch）。与暂存不同，**这句话必填**：新会话就从这句开始，
+ * 空着起出去的会话不知道自己该干什么——空着回车只提示，不起会话；Esc 或点外面算作不起。
+ * 图标用分叉（`GitBranch`），NEVER 用合并那一个，那是反方向的事。
+ *
  * **标注要能在刷新之后找回原处。** 暂存与引用都会记下「圈选起点在哪一条记录里、这段文字
  * 在那一条里是第几次出现」（见 {@link markAnchor}）。找回时用同一套算法（见
  * {@link findMarkRange}），记下与找回永远对得上。只认正文类记录（挂着 `data-record-body`
@@ -41,7 +47,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layers, Quote } from 'lucide-react';
+import { GitBranch, Layers, Quote } from 'lucide-react';
 
 /** 这套高亮在浏览器里的名字，与 `globals.css` 里 `::highlight()` 那条选择器同名。 */
 const ECHO_NAME = 'workbench-quote-echo';
@@ -67,14 +73,16 @@ function highlightBox(): HighlightBox | null {
 }
 
 /**
- * 记录流里几套高亮谁压谁：同字标绿 > 没用过的暂存 > 引用（含用过的暂存）。
+ * 记录流里几套高亮谁压谁：同字标绿 > 没用过的暂存 > 没收口的分支 > 中性底（引用、用过的
+ * 暂存、收了口的分支）。
  *
  * 跳回原处时「闪一下」压在所有人上面：它只亮一瞬，那一瞬就是要人一眼找到落点。
  */
 export const HIGHLIGHT_PRIORITY = {
-  flash: 4,
-  echo: 3,
-  stack: 2,
+  flash: 5,
+  echo: 4,
+  stack: 3,
+  branch: 2,
   quote: 1,
 } as const;
 
@@ -269,22 +277,30 @@ export interface SelectionQuoteProps {
   onQuote: (text: string, anchor?: MarkAnchor) => void;
   /** 按了「暂存」并写完（或跳过）想法。不给就不画暂存按钮。 */
   onStack?: (anchor: MarkAnchor, note: string) => void;
+  /** 按了「分支」并写好那句话（必填，交出去的已去掉首尾空白）。不给就不画分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string) => void;
 }
+
+/** 正在按钮原地写的那句话属于哪一颗：暂存的想法（可空）或分支的问题（必填）。 */
+type NoteMode = 'stack' | 'branch';
 
 export default function SelectionQuote({
   containerRef,
   sessionId,
   onQuote,
   onStack,
+  onBranch,
 }: SelectionQuoteProps) {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string>('');
   const [anchor, setAnchor] = useState<MarkAnchor | null>(null);
   const [spot, setSpot] = useState<{ left: number; top: number } | null>(null);
-  /** 点了暂存、正在写想法。这时选区已经让给了输入框，不许再按选区收摊。 */
-  const [noting, setNoting] = useState(false);
+  /** 点了暂存或分支、正在原地写那句话。这时选区已经让给了输入框，不许再按选区收摊。 */
+  const [noting, setNoting] = useState<NoteMode | null>(null);
   const notingRef = useRef(false);
   const [note, setNote] = useState('');
+  /** 分支那句话空着就回车了：提示必填，不起会话。 */
+  const [required, setRequired] = useState(false);
   // 按住拖的过程中不弹按钮：选区每动一下都会来一次通知，那时候摆出来它只会挡住正在选的字。
   const dragging = useRef(false);
   // 按钮自己那一块。手按下去的那一刻要先问一句「按的是不是它」——见下面 onPointerDown。
@@ -298,9 +314,10 @@ export default function SelectionQuote({
     setPicked('');
     setAnchor(null);
     setSpot(null);
-    setNoting(false);
+    setNoting(null);
     notingRef.current = false;
     setNote('');
+    setRequired(false);
     dropEcho();
   }, [dropEcho]);
 
@@ -406,8 +423,26 @@ export default function SelectionQuote({
     done();
   };
 
+  /** 分支落定：那句话必填，空着只提示、不起会话。 */
+  const branch = () => {
+    const said = note.trim();
+    if (!said) {
+      setRequired(true);
+      return;
+    }
+    if (anchor && onBranch) onBranch(anchor, said);
+    done();
+  };
+
+  const startNoting = (mode: NoteMode) => {
+    notingRef.current = true;
+    setNote('');
+    setRequired(false);
+    setNoting(mode);
+  };
+
   /* 实心品牌绿，32px 见方，与 Send 同一种写法（字色走 --text-on-accent，两套主题各有
-     答案）。「每屏至多一个实心绿」不管这两颗：它们只在圈选松手后出现，那一刻人手要点的
+     答案）。「每屏至多一个实心绿」不管这三颗：它们只在圈选松手后出现，那一刻人手要点的
      就是它们，是这一瞬间的主动作（主人 09-28 定，例外写在原型 design-notes.md）。
      从前是中性浮层底加细边，跟记录流底色太近，浮在正文上认不出按钮在哪。
      悬停不许换成半透明底色（`--bg-hover` 压上去，底下的正文会透上来跟图标叠在一起），
@@ -422,7 +457,7 @@ export default function SelectionQuote({
       style={{ left: spot.left, top: spot.top }}
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
     >
-      {noting ? (
+      {noting === 'stack' ? (
         <form
           data-testid="selection-stack-note"
           onSubmit={(e) => {
@@ -456,6 +491,51 @@ export default function SelectionQuote({
             {t('workbench.stream.stackNoteSave')}
           </button>
         </form>
+      ) : noting === 'branch' ? (
+        <form
+          data-testid="selection-branch-note"
+          onSubmit={(e) => {
+            e.preventDefault();
+            branch();
+          }}
+          className="flex w-[300px] max-w-[80vw] flex-col gap-1 rounded-[10px] border border-border-color bg-bg-card p-1.5 shadow-lg"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <GitBranch size={13} strokeWidth={1.8} className="ml-1 shrink-0 text-text-secondary" />
+            <input
+              autoFocus
+              data-testid="selection-branch-input"
+              value={note}
+              onChange={(e) => {
+                setNote(e.target.value);
+                if (e.target.value.trim()) setRequired(false);
+              }}
+              onKeyDown={(e) => {
+                // 与暂存相反，Esc 算作不起：分支要起一场会话，不能拿一个空问题去起。
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  done();
+                }
+              }}
+              placeholder={t('workbench.stream.branchNotePlaceholder')}
+              aria-label={t('workbench.stream.branchNotePlaceholder')}
+              aria-invalid={required || undefined}
+              className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+            />
+            <button
+              type="submit"
+              data-testid="selection-branch-save"
+              className="shrink-0 rounded-[6px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary transition-colors hover:border-border-accent hover:text-accent-primary"
+            >
+              {t('workbench.stream.branchNoteStart')}
+            </button>
+          </div>
+          {required ? (
+            <p data-testid="selection-branch-required" className="px-1 text-[11px] text-text-secondary">
+              {t('workbench.stream.branchNoteRequired')}
+            </p>
+          ) : null}
+        </form>
       ) : (
         <div className="flex items-center gap-1">
           <button
@@ -482,13 +562,25 @@ export default function SelectionQuote({
               title={t('workbench.stream.stack')}
               aria-label={t('workbench.stream.stack')}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                notingRef.current = true;
-                setNoting(true);
-              }}
+              onClick={() => startNoting('stack')}
               className={iconBtn}
             >
               <Layers size={15} strokeWidth={1.9} />
+            </button>
+          ) : null}
+          {/* 选区起点不在正文类记录里时不给：分支要记下从主线哪段原文分出去，锚点落不下就
+              记不成标注，事后也找不回原处。 */}
+          {onBranch && anchor ? (
+            <button
+              type="button"
+              data-testid="selection-branch-btn"
+              title={t('workbench.stream.branch')}
+              aria-label={t('workbench.stream.branch')}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => startNoting('branch')}
+              className={iconBtn}
+            >
+              <GitBranch size={15} strokeWidth={1.9} />
             </button>
           ) : null}
         </div>

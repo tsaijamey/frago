@@ -3,7 +3,7 @@
  *
  * 盯五件事：标注从服务端读（跟着会话走）、增删改排序标用过都是点下去就改并整份送出、
  * 存不下时界面退回最后一份落盘的并只提示一次、读回来之前的改动不会把盘上原有的抹掉、
- * 换会话先清空再读。
+ * 换会话先清空再读。分支标注归服务端管：起完分支、收完口取回盘上那几条，不往回送。
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -16,7 +16,7 @@ vi.mock('@/api', () => ({
   putSessionMarks: (sid: string, body: unknown) => putSessionMarks(sid, body),
 }));
 
-import { useSessionMarks, type WorkbenchMark } from '../useSessionMarks';
+import { useSessionMarks, withServerBranches, type WorkbenchMark } from '../useSessionMarks';
 import { useUIStore } from '@/stores/uiStore';
 
 const A = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
@@ -156,6 +156,41 @@ describe('useSessionMarks', () => {
     expect(result.current.marks.map((m) => m.id)).toEqual(['here']);
   });
 
+  it('一次落几条引用：眼下这一场就接在最后、整份送出', async () => {
+    getSessionMarks.mockResolvedValueOnce({ version: 1, marks: [mark('a')] });
+    const { result } = await loadedHook(A);
+    act(() =>
+      result.current.addMarks(
+        [
+          { kind: 'quote', record_id: 'rec-2', text: '第一段', occurrence: 0 },
+          { kind: 'quote', record_id: 'rec-3', text: '第二段', occurrence: 0 },
+        ],
+        A
+      )
+    );
+    await waitFor(() => expect(putSessionMarks).toHaveBeenCalledTimes(1));
+    expect(result.current.marks.map((m) => [m.kind, m.text])).toEqual([
+      ['stack', '原文 a'],
+      ['quote', '第一段'],
+      ['quote', '第二段'],
+    ]);
+  });
+
+  it('落引用时人已经切去别的会话：接在那一场的文件后面，不碰眼下这一场', async () => {
+    getSessionMarks.mockResolvedValueOnce({ version: 1, marks: [mark('here')] });
+    const { result } = await loadedHook(A);
+    getSessionMarks.mockResolvedValueOnce({ version: 1, marks: [mark('x')] });
+    act(() => result.current.addMarks([{ kind: 'quote', record_id: 'rec-1', text: '那一段', occurrence: 0 }], B));
+    await waitFor(() => expect(putSessionMarks).toHaveBeenCalledTimes(1));
+    expect(putSessionMarks.mock.calls[0][0]).toBe(B);
+    const body = putSessionMarks.mock.calls[0][1] as { marks: WorkbenchMark[] };
+    expect(body.marks.map((m) => [m.id === 'x' ? 'x' : m.kind, m.text])).toEqual([
+      ['x', '原文 x'],
+      ['quote', '那一段'],
+    ]);
+    expect(result.current.marks.map((m) => m.id)).toEqual(['here']);
+  });
+
   it('存不下：退回最后一份落盘的，连着失败只提示一次', async () => {
     getSessionMarks.mockResolvedValueOnce({ version: 1, marks: [mark('a')] });
     const { result } = await loadedHook();
@@ -219,5 +254,51 @@ describe('useSessionMarks', () => {
     });
     expect(added).toBeNull();
     expect(getSessionMarks).not.toHaveBeenCalled();
+  });
+});
+
+describe('分支标注归服务端管', () => {
+  const branch = (id: string, fields: Partial<WorkbenchMark> = {}) =>
+    mark(id, { kind: 'branch', child_session_id: `kid-${id}`, closed: false, ...fields });
+
+  it('取回盘上的分支标注：只动分支，手上的引用、暂存原样留着，不往回送', async () => {
+    getSessionMarks.mockResolvedValueOnce({ version: 1, marks: [mark('a'), branch('b1')] });
+    const { result } = await loadedHook();
+    act(() => {
+      result.current.setNote('a', '手上还没送到的想法');
+    });
+    await waitFor(() => expect(putSessionMarks).toHaveBeenCalledTimes(1));
+    putSessionMarks.mockClear();
+
+    getSessionMarks.mockResolvedValueOnce({
+      version: 1,
+      marks: [mark('a'), branch('b1', { closed: true }), branch('b2')],
+    });
+    await act(async () => {
+      await result.current.syncBranches();
+    });
+    const byId = Object.fromEntries(result.current.marks.map((m) => [m.id, m]));
+    expect(Object.keys(byId)).toEqual(['a', 'b1', 'b2']);
+    expect(byId.a.note).toBe('手上还没送到的想法');
+    expect(byId.b1.closed).toBe(true);
+    expect(putSessionMarks).not.toHaveBeenCalled();
+  });
+
+  it('取不回来不打断人', async () => {
+    const { result } = await loadedHook();
+    getSessionMarks.mockRejectedValueOnce(new Error('断网'));
+    await act(async () => {
+      await result.current.syncBranches();
+    });
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('withServerBranches：位置照旧，新的接在后面', () => {
+    const merged = withServerBranches(
+      [branch('x'), mark('s'), branch('y')],
+      [branch('y', { closed: true }), branch('z'), mark('ignored')]
+    );
+    expect(merged.map((m) => m.id)).toEqual(['x', 's', 'y', 'z']);
+    expect(merged[2].closed).toBe(true);
   });
 });

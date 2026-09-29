@@ -1196,8 +1196,11 @@ export interface EnvironmentUpgradeResponse {
 // 会话页标注 — 记录流里被引用或暂存过的文字
 // ============================================================
 
-/** quote＝点过「引用」；stack＝点过「暂存」，进右栏下半的列表。 */
-export type WorkbenchMarkKind = 'quote' | 'stack';
+/**
+ * quote＝点过「引用」；stack＝点过「暂存」，进右栏下半的列表；branch＝从这段原文起过分支会话
+ * （spec 20260928-webui-session-branch）。branch 只由服务端在起分支时追加，页面不新建。
+ */
+export type WorkbenchMarkKind = 'quote' | 'stack' | 'branch';
 
 /**
  * 记录流里被引用或暂存过的一段文字。存在该会话备份目录的 `workbench-marks.json` 里，
@@ -1220,10 +1223,61 @@ export interface WorkbenchMark {
   /** 毫秒时间戳。 */
   created_at: number;
   used_at: number | null;
+  /** 只有分支用：分出去的那场会话。 */
+  child_session_id?: string;
+  /** 只有分支用：收口没有。与会话关系账里那一条由服务端同一个动作一起改，页面只读。 */
+  closed?: boolean;
 }
 
 /** 一场会话的全部标注。数组顺序就是暂存列表的显示顺序（引用也在里面，只是不进列表）。 */
 export interface SessionMarks {
   version: number;
   marks: WorkbenchMark[];
+}
+
+// ============================================================
+// 会话分支 — 圈一段原文起一场新会话处理旁支问题
+// ============================================================
+
+/** 起分支：从哪条记录、哪段原文分出去，人写的那句话（必填）。 */
+export interface BranchRequest {
+  record_id: string;
+  text: string;
+  occurrence: number;
+  note: string;
+}
+
+/**
+ * 起分支的回执。前七项与新建会话同一个形状（编号要等认领时 `session_id` 为 null，拿
+ * `handle` 去问），外加第一句话、原地提示用的标题与记账结果。
+ */
+export interface BranchLaunch {
+  handle: string;
+  agent: string;
+  display_name: string;
+  cwd: string;
+  session_id: string | null;
+  error: string | null;
+  finished: boolean;
+  /** 服务端拼好、已经投给分支会话的第一句话。 */
+  text: string;
+  /** 原地提示里这场分支叫什么（人写的那句话开头）。 */
+  title: string;
+  /** 关系账记上没有。编号要等认领时起的那一刻还不知道，为 null。 */
+  recorded: boolean | null;
+  /** 主线的分支标注存下没有。存不了标注的那一家为 false；还不知道为 null。 */
+  mark_saved: boolean | null;
+  mark_id: string | null;
+}
+
+/** 收口的两种来路：分支里「带回主线」后发出，或主线上手动标记。 */
+export type BranchCloseBy = 'bring-back' | 'manual';
+
+export interface BranchCloseResult {
+  parent_session_id: string;
+  child_session_id: string;
+  closed_at: number | null;
+  closed_by: BranchCloseBy | null;
+  /** 主线标注改上没有。那一家存不了标注时为 false，不算失败。 */
+  mark_updated: boolean;
 }

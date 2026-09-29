@@ -1350,3 +1350,26 @@ export const putSessionMarks = withMode(
   (_sessionId: string, _marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
     Promise.reject(new Error(MARKS_UNAVAILABLE)),
 );
+
+// ============================================================
+// 会话分支
+// ============================================================
+
+export type { BranchRequest, BranchLaunch, BranchCloseBy, BranchCloseResult } from './client';
+
+// 起会话、记关系账都在服务端，桌面壳那一路没有桥，把做不到说出来。
+const BRANCH_UNAVAILABLE = 'Session branch API not available in pywebview mode';
+
+export const startBranch = withMode(
+  (sessionId: string, body: httpApi.BranchRequest): Promise<httpApi.BranchLaunch> =>
+    httpApi.startBranch(sessionId, body),
+  (_sessionId: string, _body: httpApi.BranchRequest): Promise<httpApi.BranchLaunch> =>
+    Promise.reject(new Error(BRANCH_UNAVAILABLE)),
+);
+
+export const closeBranch = withMode(
+  (parentId: string, childId: string, by: httpApi.BranchCloseBy): Promise<httpApi.BranchCloseResult> =>
+    httpApi.closeBranch(parentId, childId, by),
+  (_parentId: string, _childId: string, _by: httpApi.BranchCloseBy): Promise<httpApi.BranchCloseResult> =>
+    Promise.reject(new Error(BRANCH_UNAVAILABLE)),
+);

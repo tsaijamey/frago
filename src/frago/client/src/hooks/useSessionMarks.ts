@@ -16,6 +16,10 @@
  *    后到，把后面的改动盖回去。所以一份送完再送下一份，每次送的都是此刻最新的那一份。
  *
  * 换会话先清空再读：上一场的标注不许在下一场的记录流里着色哪怕一帧。
+ *
+ * **分支标注归服务端管**（spec 20260928-webui-session-branch）。它是起分支、收口时由服务端
+ * 写进同一个文件的，页面既不新建也不改它，只在服务端动过之后用 `syncBranches` 把盘上那几条
+ * 取回来。整份交回去时带着手上那份旧的也不要紧：服务端以盘上的分出去的会话与收口状态为准。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -28,7 +32,8 @@ export type { WorkbenchMark, WorkbenchMarkKind } from '@/types/api';
 
 /** 暂存或引用那一刻，划选按钮交过来的东西。其余字段由这里补齐。 */
 export interface NewMark {
-  kind: WorkbenchMarkKind;
+  /** 分支标注只由服务端追加，页面不新建。 */
+  kind: Exclude<WorkbenchMarkKind, 'branch'>;
   record_id: string;
   text: string;
   occurrence: number;
@@ -42,6 +47,12 @@ export interface SessionMarksState {
   loaded: boolean;
   /** 新增一条，交回补齐之后的那一条。没选会话时什么都不做，交回 null。 */
   addMark: (input: NewMark) => WorkbenchMark | null;
+  /**
+   * 一次新增几条，可以指定是哪一场。引用发出成功才落标注，而接口要等整整一轮才回来，
+   * 人这中间常常已经切去别的会话——`sessionId` 不是眼下这一场时，读那一场、接上、整份
+   * 写回去，不碰眼下这一场的列表（与 `markUsed` 同一个道理）。
+   */
+  addMarks: (inputs: NewMark[], sessionId?: string) => void;
   /** 改想法。 */
   setNote: (id: string, note: string) => void;
   /** 删一条。 */
@@ -55,12 +66,41 @@ export interface SessionMarksState {
    * 已经切去别的会话。那就直接读那一场的标注、改完写回去，不碰眼下这一场的列表。
    */
   markUsed: (ids: string[], sessionId?: string) => void;
+  /**
+   * 把盘上的分支标注取回来并进手上这一份：起完分支、收完口之后调。只动分支那几条，
+   * 人手上还没送出去的引用、暂存改动原样留着；不往回送。
+   */
+  syncBranches: () => Promise<void>;
+}
+
+/** 用盘上的分支标注替换手上那一份里的分支标注；位置照旧，新的接在后面。 */
+export function withServerBranches(list: WorkbenchMark[], server: WorkbenchMark[]): WorkbenchMark[] {
+  const fresh = new Map(server.filter((m) => m.kind === 'branch').map((m) => [m.id, m]));
+  const out = list.map((m) => (m.kind === 'branch' ? (fresh.get(m.id) ?? m) : m));
+  const known = new Set(list.map((m) => m.id));
+  for (const [id, m] of fresh) if (!known.has(id)) out.push(m);
+  return out;
 }
 
 /** 在一份标注里把这几条标成用过了。已经用过的不再改时刻。 */
 function withUsed(list: WorkbenchMark[], ids: string[], now: number): WorkbenchMark[] {
   const want = new Set(ids);
   return list.map((m) => (want.has(m.id) && !m.used ? { ...m, used: true, used_at: now } : m));
+}
+
+/** 划选按钮交过来的那几项补齐成一条完整的标注。 */
+function toMark(input: NewMark): WorkbenchMark {
+  return {
+    id: newMarkId(),
+    kind: input.kind,
+    record_id: input.record_id,
+    text: input.text,
+    occurrence: input.occurrence,
+    note: input.note ?? '',
+    used: false,
+    created_at: Date.now(),
+    used_at: null,
+  };
 }
 
 /** `mk_` 加一串随机字。服务端只认它非空、不重复。 */
@@ -189,19 +229,35 @@ export function useSessionMarks(sessionId: string | null): SessionMarksState {
   const addMark = useCallback(
     (input: NewMark): WorkbenchMark | null => {
       if (!sidRef.current) return null;
-      const mark: WorkbenchMark = {
-        id: newMarkId(),
-        kind: input.kind,
-        record_id: input.record_id,
-        text: input.text,
-        occurrence: input.occurrence,
-        note: input.note ?? '',
-        used: false,
-        created_at: Date.now(),
-        used_at: null,
-      };
+      const mark = toMark(input);
       commit([...current.current, mark]);
       return mark;
+    },
+    [commit]
+  );
+
+  const addMarks = useCallback(
+    (inputs: NewMark[], sessionId?: string) => {
+      if (!inputs.length) return;
+      if (sessionId && sessionId !== sidRef.current) {
+        void (async () => {
+          try {
+            const body = await getSessionMarks(sessionId);
+            const list = Array.isArray(body?.marks) ? body.marks : [];
+            await putSessionMarks(sessionId, { version: 1, marks: [...list, ...inputs.map(toMark)] });
+          } catch (e) {
+            useUIStore.getState().showToast(
+              i18n.t('workbench.errors.marksSaveFailed', {
+                reason: e instanceof Error ? e.message : String(e),
+              }),
+              'error'
+            );
+          }
+        })();
+        return;
+      }
+      if (!sidRef.current) return;
+      commit([...current.current, ...inputs.map(toMark)]);
     },
     [commit]
   );
@@ -268,5 +324,19 @@ export function useSessionMarks(sessionId: string | null): SessionMarksState {
     [commit]
   );
 
-  return { marks, loaded, addMark, setNote, remove, move, markUsed };
+  const syncBranches = useCallback(async () => {
+    const sid = sidRef.current;
+    if (!sid) return;
+    try {
+      const body = await getSessionMarks(sid);
+      if (sidRef.current !== sid) return;
+      const server = Array.isArray(body?.marks) ? body.marks : [];
+      confirmed.current = withServerBranches(confirmed.current, server);
+      apply(withServerBranches(current.current, server));
+    } catch {
+      // 取不回来只是这一刻看不到虚线，下次换回这场会话会重读。不打断人。
+    }
+  }, [apply]);
+
+  return { marks, loaded, addMark, addMarks, setNote, remove, move, markUsed, syncBranches };
 }

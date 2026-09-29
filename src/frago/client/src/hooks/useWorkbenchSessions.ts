@@ -48,6 +48,15 @@ export type SessionStatus = 'running' | 'error' | 'done' | 'idle';
  */
 export type SessionOrigin = 'human' | 'worker';
 
+/**
+ * 这场会话作为子会话的那层关系：派活（worker）、分支（人从原会话圈一段原文分出来的，
+ * 算人开的）、交接（留位）。收口只对分支有意义。判定在服务端（会话关系账）。
+ */
+export interface SessionRelation {
+  kind: 'dispatch' | 'branch' | 'handoff';
+  closed: boolean;
+}
+
 /** 左栏一行 = 一场会话。字段与 `record_reader.SessionCard` 逐字对齐。 */
 export interface WorkbenchSession {
   session_id: string;
@@ -74,12 +83,17 @@ export interface WorkbenchSession {
   /** 人自己开的，还是 frago 派出去的 worker。 */
   origin: SessionOrigin;
   /**
-   * 派活的那场会话。只有认得出来的 worker 才有值。
+   * 派活的那场会话（或分支的原会话）。只有认得出来的 worker 与分支才有值。
    *
    * 左栏据此把 worker 折到派活的那一场下面。认不出父亲的 worker 仍是 worker，只是
    * 没地方可挂，另有一处收它们（见 `SessionRail`）。
    */
   parent_session_id: string | null;
+  /**
+   * 作为子会话的种类与收口没有；不是谁的子会话时为 null。分支会话也有 `parent_session_id`，
+   * 所以同样折在原会话下面，但它算人开的，等你时照样挂 For you。旧服务端不给，没给就当 null。
+   */
+  relation?: SessionRelation | null;
   /**
    * 这一场此刻开在某个 tmux 会话里。左栏据此给卡片挂流光。
    *

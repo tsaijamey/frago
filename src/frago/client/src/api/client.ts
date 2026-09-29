@@ -130,6 +130,10 @@ import type {
   WorkbenchMark,
   WorkbenchMarkKind,
   SessionMarks,
+  BranchRequest,
+  BranchLaunch,
+  BranchCloseBy,
+  BranchCloseResult,
 } from '@/types/api';
 
 export type {
@@ -247,6 +251,10 @@ export type {
   WorkbenchMark,
   WorkbenchMarkKind,
   SessionMarks,
+  BranchRequest,
+  BranchLaunch,
+  BranchCloseBy,
+  BranchCloseResult,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -1557,4 +1565,31 @@ export async function putSessionMarks(
     method: 'PUT',
     body: JSON.stringify(marks),
   });
+}
+
+// ============================================================
+// 会话分支
+// ============================================================
+
+/**
+ * 从这场会话圈的一段原文起一场分支会话。第一句话、记账都在服务端
+ * （`POST /api/workbench/sessions/{sid}/branch`），这一侧 NEVER 另拼一份。
+ */
+export async function startBranch(sessionId: string, body: BranchRequest): Promise<BranchLaunch> {
+  return fetchApi<BranchLaunch>(`/workbench/sessions/${encodeURIComponent(sessionId)}/branch`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** 把 `parentId` 分到 `childId` 的那条分支记为已收口：关系账与主线标注由服务端一起改。 */
+export async function closeBranch(
+  parentId: string,
+  childId: string,
+  by: BranchCloseBy
+): Promise<BranchCloseResult> {
+  return fetchApi<BranchCloseResult>(
+    `/workbench/sessions/${encodeURIComponent(parentId)}/branches/${encodeURIComponent(childId)}/close`,
+    { method: 'POST', body: JSON.stringify({ by }) }
+  );
 }

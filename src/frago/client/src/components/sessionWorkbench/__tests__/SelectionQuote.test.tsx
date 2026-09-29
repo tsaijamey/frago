@@ -298,6 +298,112 @@ describe('暂存按钮', () => {
   });
 });
 
+describe('分支按钮', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeHighlights();
+    fakeGeometry();
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    dropGeometry();
+    document.getSelection()?.removeAllRanges();
+  });
+
+  function mountBodies(onBranch = vi.fn()) {
+    const ref = createRef<HTMLDivElement>();
+    render(
+      <div>
+        <div ref={ref} data-testid="stream">
+          <div data-record-id="r1" data-record-body="">
+            <p>配方 A 跑完了</p>
+          </div>
+          <p>工具输出里的字</p>
+        </div>
+        <SelectionQuote
+          containerRef={ref}
+          sessionId="s-1"
+          onQuote={vi.fn()}
+          onStack={vi.fn()}
+          onBranch={onBranch}
+        />
+      </div>
+    );
+    return { onBranch, container: screen.getByTestId('stream') };
+  }
+
+  it('第三颗只画分叉图标，悬停给名字', () => {
+    const { container } = mountBodies();
+    pick(container, 0, 0, 7);
+    const btn = screen.getByTestId('selection-branch-btn');
+    expect(btn.textContent).toBe('');
+    expect(btn.getAttribute('title')).toBe('分支');
+    expect(btn.querySelector('svg.lucide-git-branch')).toBeTruthy();
+    expect(btn.querySelector('svg.lucide-git-merge')).toBeNull();
+  });
+
+  it('写一句话回车：交出锚点与那句话', () => {
+    const { container, onBranch } = mountBodies();
+    pick(container, 0, 0, 2);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    act(() => {
+      fireEvent.change(screen.getByTestId('selection-branch-input'), {
+        target: { value: '  这个配方是干什么的 ' },
+      });
+      fireEvent.submit(screen.getByTestId('selection-branch-note'));
+    });
+    expect(onBranch).toHaveBeenCalledWith(
+      { record_id: 'r1', text: '配方', occurrence: 0 },
+      '这个配方是干什么的'
+    );
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('那句话必填：空着回车只提示，不起会话', () => {
+    const { container, onBranch } = mountBodies();
+    pick(container, 0, 0, 2);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    act(() => {
+      fireEvent.submit(screen.getByTestId('selection-branch-note'));
+    });
+    expect(onBranch).not.toHaveBeenCalled();
+    expect(screen.getByTestId('selection-branch-required')).toBeTruthy();
+    // 打了字，提示就收起
+    act(() => {
+      fireEvent.change(screen.getByTestId('selection-branch-input'), { target: { value: '问' } });
+    });
+    expect(screen.queryByTestId('selection-branch-required')).toBeNull();
+  });
+
+  it('Esc 算作不起', () => {
+    const { container, onBranch } = mountBodies();
+    pick(container, 0, 0, 2);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    act(() => {
+      fireEvent.change(screen.getByTestId('selection-branch-input'), { target: { value: '问一句' } });
+      fireEvent.keyDown(screen.getByTestId('selection-branch-input'), { key: 'Escape' });
+    });
+    expect(onBranch).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('选区起点不在正文记录里：不给分支', () => {
+    const { container } = mountBodies();
+    pick(container, 1, 0, 4);
+    expect(screen.getByTestId('selection-quote-btn')).toBeTruthy();
+    expect(screen.queryByTestId('selection-branch-btn')).toBeNull();
+  });
+});
+
 describe('标注的锚点', () => {
   function body(html: string): HTMLElement {
     const root = document.createElement('div');

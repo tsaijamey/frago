@@ -34,7 +34,7 @@ import {
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Inbox, Loader2 } from 'lucide-react';
+import { CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
 import RecordCard, {
   KIND_GROUP,
   SystemRun,
@@ -396,6 +396,7 @@ function modelOf(records: WorkbenchRecord[]): string {
 
 /** 标注在浏览器里的高亮名字，与 `globals.css` 里 `::highlight()` 同名。 */
 const MARK_STACK = 'workbench-mark-stack';
+const MARK_BRANCH = 'workbench-mark-branch';
 const MARK_QUOTE = 'workbench-mark-quote';
 const MARK_FLASH = 'workbench-mark-flash';
 /** 跳回原处之后那段文字亮多久。 */
@@ -404,10 +405,20 @@ const FLASH_MS = 1_400;
 /** 一段标注在记录流里找到的位置。缩略滚动条按它画刻度。 */
 export interface MarkTick {
   id: string;
-  /** stack＝没用过的暂存（琥珀）；quote＝引用与用过的暂存（蓝）。 */
-  tone: 'stack' | 'quote';
+  /**
+   * stack＝没用过的暂存（橙）；branch＝没收口的分支（正文色虚线）；quote＝其余的中性底：
+   * 引用、用过的暂存、收了口的分支。
+   */
+  tone: 'stack' | 'branch' | 'quote';
   recordId: string;
   range: Range;
+}
+
+/** 这条标注在记录流里画成哪一种。与 `MarkTick.tone` 同一套。 */
+export function markTone(mark: WorkbenchMark): MarkTick['tone'] {
+  if (mark.kind === 'stack' && !mark.used) return 'stack';
+  if (mark.kind === 'branch' && !mark.closed) return 'branch';
+  return 'quote';
 }
 
 /** 从 `[from, to)` 里挖掉 `cuts` 盖住的部分，剩下的几截。 */
@@ -426,11 +437,12 @@ function subtractSpans(span: [number, number], cuts: [number, number][]): [numbe
 }
 
 /**
- * 在记录流里找出每一条标注，按颜色分成两组交给浏览器去涂，顺手交回刻度。
+ * 在记录流里找出每一条标注，按画法分成三组交给浏览器去涂，顺手交回刻度。
  *
- * 重叠处按「没用过的暂存 > 引用」取色：两种底色都是半透明的，只靠上下叠会混出第三种
- * 颜色，所以引用那一组先把被暂存盖住的部分挖掉。同一组里的范围相接或重叠，浏览器自然
- * 画成一段，不会叠深。找不到的标注跳过，不报错。
+ * 重叠处按「没用过的暂存 > 没收口的分支 > 中性底」取样子：底色是半透明的，只靠上下叠会
+ * 混出第三种颜色；虚线下划线与底色又是两种属性，叠在一处两样都会画出来。所以低一档的
+ * 那一组先把被高一档盖住的部分挖掉，重叠处只剩优先的那一种。同一组里的范围相接或重叠，
+ * 浏览器自然画成一段，不会叠深。找不到的标注跳过，不报错。
  */
 export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[] {
   const byRecord = new Map<string, WorkbenchMark[]>();
@@ -440,6 +452,7 @@ export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[]
     else byRecord.set(mark.record_id, [mark]);
   }
   const stackRanges: Range[] = [];
+  const branchRanges: Range[] = [];
   const quoteRanges: Range[] = [];
   const ticks: MarkTick[] = [];
   for (const [recordId, list] of byRecord) {
@@ -447,22 +460,37 @@ export function paintMarks(root: ParentNode, marks: WorkbenchMark[]): MarkTick[]
     if (!el) continue;
     const flat = flatten(el);
     const hot: [number, number][] = [];
+    const open: [number, number][] = [];
     const cold: [number, number][] = [];
     for (const mark of list) {
       const span = markSpan(flat, mark.text, mark.occurrence);
       if (!span) continue;
-      const tone = mark.kind === 'stack' && !mark.used ? 'stack' : 'quote';
-      (tone === 'stack' ? hot : cold).push(span);
+      const tone = markTone(mark);
+      (tone === 'stack' ? hot : tone === 'branch' ? open : cold).push(span);
       ticks.push({ id: mark.id, tone, recordId, range: rangeOf(flat, span[0], span[1]) });
     }
     for (const [a, b] of hot) stackRanges.push(rangeOf(flat, a, b));
+    for (const span of open) {
+      for (const [a, b] of subtractSpans(span, hot)) branchRanges.push(rangeOf(flat, a, b));
+    }
     for (const span of cold) {
-      for (const [a, b] of subtractSpans(span, hot)) quoteRanges.push(rangeOf(flat, a, b));
+      for (const [a, b] of subtractSpans(span, [...hot, ...open])) {
+        quoteRanges.push(rangeOf(flat, a, b));
+      }
     }
   }
   paintHighlight(MARK_STACK, stackRanges, HIGHLIGHT_PRIORITY.stack);
+  paintHighlight(MARK_BRANCH, branchRanges, HIGHLIGHT_PRIORITY.branch);
   paintHighlight(MARK_QUOTE, quoteRanges, HIGHLIGHT_PRIORITY.quote);
   return ticks;
+}
+
+/** 这一点落没落在这段文字上。量不出位置（老浏览器、测试环境）一律算没落上。 */
+function rangeHit(range: Range, x: number, y: number): boolean {
+  if (typeof range.getClientRects !== 'function') return false;
+  return Array.from(range.getClientRects()).some(
+    (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+  );
 }
 
 /** 离顶部多近算「在翻更早的」，触发前插。 */
@@ -519,6 +547,12 @@ export interface RecordStreamProps {
   onQuote?: (text: string, anchor?: MarkAnchor) => void;
   /** 人圈了一段正文、按了「暂存」并写完想法。不给就不出暂存按钮。 */
   onStack?: (anchor: MarkAnchor, note: string) => void;
+  /** 人圈了一段正文、按了「分支」并写好那句话。不给就不出分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /** 没收口的分支标注上点出来的小菜单：「打开分支」。不给就不弹菜单。 */
+  onOpenBranch?: (childSessionId: string) => void;
+  /** 同一个小菜单：「标记已收口」。 */
+  onCloseBranch?: (mark: WorkbenchMark) => void;
   /** 这场会话的全部标注。按它给正文着色、给缩略滚动条画刻度。 */
   marks?: WorkbenchMark[];
   /** 暂存列表「点原文」：滚回那段文字并闪一下。`at` 让同一条连点两次也各算一次。 */
@@ -547,6 +581,9 @@ export default function RecordStream({
   scrollTarget = null,
   onQuote,
   onStack,
+  onBranch,
+  onOpenBranch,
+  onCloseBranch,
   marks = NO_MARKS,
   locateTarget = null,
   onLocateResult,
@@ -826,6 +863,7 @@ export default function RecordStream({
     const root = scrollRef.current;
     if (!root || !marks.length) {
       paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch);
       paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
       setTicks([]);
       return;
@@ -836,11 +874,58 @@ export default function RecordStream({
   useEffect(
     () => () => {
       paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch);
       paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote);
       paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash);
     },
     []
   );
+
+  /**
+   * 点在没收口的分支那道虚线上，就地弹一个小菜单：「打开分支」「标记已收口」。
+   *
+   * 虚线是浏览器按文本范围画的，DOM 里没有一个元素可挂点击，所以这里拿点下去的那一点
+   * 去比每一道虚线的屏幕矩形。人正在圈字（选区不空）时不弹：那一下是在选，不是在点。
+   */
+  const [branchMenu, setBranchMenu] = useState<{ mark: WorkbenchMark; x: number; y: number } | null>(
+    null
+  );
+  useEffect(() => setBranchMenu(null), [sessionId]);
+  const handleStreamClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (!onOpenBranch && !onCloseBranch) return;
+      const picked = document.getSelection();
+      if (picked && !picked.isCollapsed) return;
+      const hit = ticks.find(
+        (tick) => tick.tone === 'branch' && rangeHit(tick.range, e.clientX, e.clientY)
+      );
+      const mark = hit ? marks.find((m) => m.id === hit.id) : undefined;
+      setBranchMenu(mark ? { mark, x: e.clientX, y: e.clientY } : null);
+    },
+    [ticks, marks, onOpenBranch, onCloseBranch]
+  );
+  // 菜单开着时，点别处、按 Esc、记录流一滚都收起——它贴着那道虚线，线一动它就指错了地方。
+  const branchMenuEl = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!branchMenu) return undefined;
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && branchMenuEl.current?.contains(e.target)) return;
+      setBranchMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBranchMenu(null);
+    };
+    const onScroll = () => setBranchMenu(null);
+    const box = scrollRef.current;
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    box?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+      box?.removeEventListener('scroll', onScroll);
+    };
+  }, [branchMenu]);
 
   /**
    * 暂存列表「点原文」：滚回那段文字，居中，闪一下。
@@ -1041,6 +1126,7 @@ export default function RecordStream({
         onTouchMove={noteManualIntent}
         onKeyDown={handleKeyDown}
         onMouseDown={handleMouseDown}
+        onClick={handleStreamClick}
         /* 滚动容器的内距契约：上 16 下 40。底下比上面厚，是因为滚到底那一刻最后一条
            不该被硬切在容器边框上，而输入框就压在下面。挂着缩略滚动条时右边多让出它那
            一条，窄窗下正文不会钻到它底下。 */
@@ -1146,7 +1232,51 @@ export default function RecordStream({
           sessionId={sessionId}
           onQuote={onQuote}
           onStack={onStack}
+          onBranch={onBranch}
         />
+      ) : null}
+
+      {branchMenu ? (
+        <div
+          ref={branchMenuEl}
+          role="menu"
+          data-testid="branch-mark-menu"
+          style={{ left: branchMenu.x, top: branchMenu.y + 6 }}
+          className="fixed z-30 flex min-w-[132px] flex-col rounded-[8px] border border-border-color bg-bg-card py-1 shadow-lg"
+        >
+          {onOpenBranch && branchMenu.mark.child_session_id ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="branch-mark-open"
+              onClick={() => {
+                const child = branchMenu.mark.child_session_id as string;
+                setBranchMenu(null);
+                onOpenBranch(child);
+              }}
+              className="flex items-center gap-2 px-3 py-1 text-left text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            >
+              <ExternalLink size={12} />
+              {t('workbench.branch.menuOpen')}
+            </button>
+          ) : null}
+          {onCloseBranch ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="branch-mark-close"
+              onClick={() => {
+                const mark = branchMenu.mark;
+                setBranchMenu(null);
+                onCloseBranch(mark);
+              }}
+              className="flex items-center gap-2 px-3 py-1 text-left text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            >
+              <CheckCheck size={12} />
+              {t('workbench.branch.menuClose')}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

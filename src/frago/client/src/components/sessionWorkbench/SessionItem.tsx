@@ -3,7 +3,7 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, CornerDownRight, Loader2, Pin } from 'lucide-react';
+import { Check, Copy, CornerDownRight, GitBranch, Loader2, Pin } from 'lucide-react';
 import i18n from '@/i18n';
 import { formatClock } from './RecordCard';
 import { activityTs, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
@@ -165,6 +165,7 @@ export default function SessionItem({
   forYou = null,
   sending = false,
   nested = false,
+  branchOf = null,
   workerCount = 0,
   workersExpanded = false,
   onSelect,
@@ -190,6 +191,11 @@ export default function SessionItem({
    * 区分**不靠颜色**：从属关系靠三样一起说：缩进（位置本身）、行首那个折角、标题降一档字色。
    */
   nested?: boolean;
+  /**
+   * 这一场是从哪场会话分出来的分支。分支会话和人自己开的会话一样摆在主干上（它等的是人），
+   * 出处只在这一行说：「分支自 <原会话>」，点它切到原会话。原会话标题认不出时写编号开头。
+   */
+  branchOf?: { id: string; title: string | null } | null;
   /** 这场派出去过几个 worker。0 就不长展开按钮。 */
   workerCount?: number;
   workersExpanded?: boolean;
@@ -382,6 +388,25 @@ export default function SessionItem({
             </p>
           ) : null}
         </div>
+      ) : null}
+
+      {/* 分支的出处。中性灰小字，不抢 For you 那一行；点它去原会话，不点就是普通的一行说明。 */}
+      {branchOf ? (
+        <button
+          type="button"
+          data-testid="branch-of"
+          title={t('workbench.rail.branchOfHint')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(branchOf.id);
+          }}
+          className="mt-1 flex max-w-full items-center gap-1 text-left text-[11px] leading-[1.5] text-text-muted hover:text-text-secondary"
+        >
+          <GitBranch size={11} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            {t('workbench.rail.branchOf', { title: branchOf.title ?? branchOf.id.slice(0, 8) })}
+          </span>
+        </button>
       ) : null}
       </div>
     </div>

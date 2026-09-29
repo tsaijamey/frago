@@ -1429,6 +1429,8 @@
       "pinnedHeader": "置顶",
       "restHeader": "其余",
       "orphanWorkersHeader": "不知道谁派的 worker",
+      "branchOf": "分支自 {{title}}",
+      "branchOfHint": "打开这条分支出自的会话",
       "pageProgress": "已显示 {{shown}} / {{total}}，继续往下滚",
       "workerCount": "派出去 {{n}} 个 worker",
       "expandWorkers": "展开这场派出去的 {{n}} 个 worker",
@@ -1515,6 +1517,10 @@
       "stack": "暂存",
       "stackNotePlaceholder": "对这段的想法（可不写），回车保存",
       "stackNoteSave": "确定",
+      "branch": "分支",
+      "branchNotePlaceholder": "要在新会话里问什么，回车起分支",
+      "branchNoteStart": "起分支",
+      "branchNoteRequired": "先写一句话：新会话就从这句开始",
       "minimap": "对话缩略，拖动或点击可滚动",
       "lensHookFull": "旁路注入"
     },
@@ -1739,6 +1745,22 @@
       "expand": "展开",
       "collapse": "收起",
       "resize": "拖动调整摘要与暂存的上下比例，双击恢复"
+    },
+    "branch": {
+      "starting": "正在起分支…",
+      "startingTitled": "正在起分支：{{title}}…",
+      "started": "已在新会话处理：{{title}}",
+      "open": "打开",
+      "dismiss": "关闭",
+      "failed": "分支没起来：{{reason}}",
+      "notRecorded": "分支已起，但没认到编号，关联没记上",
+      "markNotSaved": "（这场会话存不了标注，原文上不画线。）",
+      "bringBack": "带回主线",
+      "bringBackHint": "切回原会话，把这里最后一段回复按引用格式填进输入框，不自动发出",
+      "noReply": "这场分支还没有回复可带回",
+      "menuOpen": "打开分支",
+      "menuClose": "标记已收口",
+      "closeFailed": "没标记上收口：{{reason}}"
     },
     "composer": {
       "blockedNoSession": "从左边挑一场会话，再在这里说话",

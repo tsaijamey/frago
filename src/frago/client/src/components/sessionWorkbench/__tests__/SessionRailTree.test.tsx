@@ -11,7 +11,7 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { TestRail } from './railTestKit';
+import { TestRail, fakeForYou } from './railTestKit';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
 import i18n from '@/i18n';
 
@@ -172,6 +172,64 @@ describe('SessionRail 两层清单', () => {
       <TestRail state={railState([session({ session_id: BOSS })])} selectedId={null} onSelect={NOOP} />
     );
     expect(screen.queryByTestId('toggle-workers')).toBeNull();
+  });
+});
+
+describe('SessionRail 分支会话不折', () => {
+  const BRANCH = '9a1d2c3e-4b5f-4a6b-8c7d-0e1f2a3b4c5d';
+  const rows = [
+    session({ session_id: BOSS, title: '主线：全局字号' }),
+    session({ session_id: WORKER_A, origin: 'worker', parent_session_id: BOSS }),
+    session({
+      session_id: BRANCH,
+      title: '全局字号倍率处理',
+      parent_session_id: BOSS,
+      relation: { kind: 'branch', closed: false },
+    }),
+  ];
+
+  it('分支和人开的会话一样摆在主干上，worker 照旧折在原会话下', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const items = screen.getAllByTestId('session-item');
+    expect(items).toHaveLength(2);
+    const branch = items.find((el) => el.textContent?.includes('全局字号倍率处理'));
+    expect(branch).toBeTruthy();
+    expect(branch?.getAttribute('data-nested')).toBeNull();
+    // 原会话那一叠只装 worker：条数是 1，不是 2
+    expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('1');
+  });
+
+  it('卡片上写出处，点它切到原会话、不选中分支本身', () => {
+    const onSelect = vi.fn();
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
+    const line = screen.getByTestId('branch-of');
+    expect(line.textContent).toContain('分支自 主线：全局字号');
+    fireEvent.click(line);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(BOSS);
+  });
+
+  it('分支停下等你：进 For you 那一组，不藏在原会话下', () => {
+    render(
+      <TestRail
+        state={railState(rows)}
+        selectedId={null}
+        onSelect={NOOP}
+        forYou={fakeForYou({
+          [BRANCH]: { emphasis: 'pick-one', waitingSince: 1_753_800_000_000, words: '保留还是去掉？', unseen: true },
+        })}
+      />
+    );
+    expect(screen.getByTestId('for-you-header').textContent).toContain('1');
+    const first = screen.getAllByTestId('session-item')[0];
+    expect(first.textContent).toContain('全局字号倍率处理');
+    expect(first.getAttribute('data-for-you')).toBe('true');
+  });
+
+  it('只有 worker 折；原会话被筛掉时分支照样在主干上', () => {
+    const state = railState(rows, { visible: rows.filter((s) => s.session_id !== BOSS) });
+    render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
+    expect(shownTitles().some((t) => t.includes('全局字号倍率处理'))).toBe(true);
   });
 });
 

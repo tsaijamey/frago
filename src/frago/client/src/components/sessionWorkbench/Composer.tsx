@@ -46,7 +46,18 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowUp, Clock, GitBranchPlus, Loader2, Plus, RotateCcw, SendHorizontal } from 'lucide-react';
+import {
+  ArrowUp,
+  Clock,
+  CornerUpLeft,
+  GitBranch,
+  GitBranchPlus,
+  Loader2,
+  Plus,
+  RotateCcw,
+  SendHorizontal,
+  X,
+} from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
@@ -117,6 +128,28 @@ export interface ComposerProps {
   onHandoff?: () => void;
   /** 交接请求还在路上。 */
   handingOff?: boolean;
+  /**
+   * 输入框上方那一行原地提示，与「↑ … moved up into the conversation · Show」同一个位置、同一种
+   * 写法。起分支之后用它说「已在新会话处理：<标题> · 打开」，起失败时换成失败原因。
+   * 页面切走会话或人点了关闭，页面就把它撤掉。
+   */
+  notice?: ComposerNotice | null;
+  /**
+   * 按下「带回主线」。只有分支会话、而且它的原会话还在清单里时页面才给，不给就不画。
+   * 切回原会话、把最后一段回复按引用格式填进去都由页面做，这里只是一颗按钮。
+   */
+  onBringBack?: () => void;
+}
+
+/** 输入框上方那一行原地提示。 */
+export interface ComposerNotice {
+  text: string;
+  /** error＝起失败了，字走报错色；plain＝中性。 */
+  tone?: 'plain' | 'error';
+  /** 行尾的动作（「打开」）。不给就不画。 */
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss?: () => void;
 }
 
 /**
@@ -255,6 +288,8 @@ export default function Composer({
   contextTokens = null,
   onHandoff,
   handingOff = false,
+  notice = null,
+  onBringBack,
 }: ComposerProps) {
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
@@ -560,6 +595,46 @@ export default function Composer({
           </p>
         ) : null}
 
+        {/* 起分支之后的原地提示：页面不跳走，人在这一行上看见分支去了哪、点「打开」才过去。
+            与上面「moved up」那一行同一种写法——都是「刚才那件事去了哪」。 */}
+        {notice ? (
+          <p
+            data-testid="composer-notice"
+            data-tone={notice.tone ?? 'plain'}
+            className={`flex min-w-0 items-center gap-1.5 text-[11px] ${
+              notice.tone === 'error' ? 'text-accent-error' : 'text-text-muted'
+            }`}
+          >
+            <GitBranch size={12} className="shrink-0" />
+            <span className="min-w-0 truncate">{notice.text}</span>
+            {notice.actionLabel && notice.onAction ? (
+              <>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  data-testid="composer-notice-action"
+                  onClick={notice.onAction}
+                  className="shrink-0 text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                >
+                  {notice.actionLabel}
+                </button>
+              </>
+            ) : null}
+            {notice.onDismiss ? (
+              <button
+                type="button"
+                data-testid="composer-notice-dismiss"
+                aria-label={t('workbench.branch.dismiss')}
+                title={t('workbench.branch.dismiss')}
+                onClick={notice.onDismiss}
+                className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:text-text-primary"
+              >
+                <X size={11} />
+              </button>
+            ) : null}
+          </p>
+        ) : null}
+
         {/* 外圈是一道中性描边，获得焦点时加深一档。这一屏的实心绿只给 Send，
             输入框外圈不再铺绿色色场（主人 09-24 定的「绿色减量」）。 */}
         <div
@@ -618,6 +693,20 @@ export default function Composer({
               <Plus size={16} strokeWidth={1.5} />
             </button>
             <span className="flex-1" />
+            {/* 「带回主线」只在分支会话里出现，挨着交接，同一档写法：描品牌色的边，不跟发送
+                抢眼。点了切回原会话，最后一段回复按引用格式落进输入框，不自动发出。 */}
+            {onBringBack && !blocked ? (
+              <button
+                type="button"
+                data-testid="composer-bring-back"
+                onClick={onBringBack}
+                title={t('workbench.branch.bringBackHint')}
+                className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10"
+              >
+                <CornerUpLeft size={13} />
+                {t('workbench.branch.bringBack')}
+              </button>
+            ) : null}
             {/* 「交接到新会话」挨着发送，但比发送低一档：发送是实心品牌色，它只描品牌色
                 的边、字用品牌色，底是透明的——看得出是件正经事，又不跟发送抢眼。上下文
                 不到三十万时整颗置灰，悬停说明还差多少。 */}

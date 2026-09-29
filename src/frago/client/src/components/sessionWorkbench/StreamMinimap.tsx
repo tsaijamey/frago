@@ -9,7 +9,7 @@
  * |---|---|
  * | 人发言 | 绿条（品牌色） |
  * | 代理回复 | 灰条 |
- * | 标注 | 与正文底色同色的横向刻度：琥珀 = 没用过的暂存，蓝 = 引用与用过的暂存 |
+ * | 标注 | 横向刻度，与正文同一个意思：橙 = 没用过的暂存，正文色 = 没收口的分支，中性 = 引用、用过的暂存、收了口的分支 |
  *
  * 其余内容留空。当前可视的那一屏用一块半透明滑块盖在上面，拖它滚动，点空白处跳到对应
  * 位置。只在「全部」「对话」两档出现：「全部」档里绿灰之间隔着大段工具输出的空白，
@@ -52,6 +52,16 @@ interface Layout {
 }
 
 const EMPTY: Layout = { bars: [], ticks: [], thumbTop: 0, thumbHeight: 0, scale: 1 };
+
+/**
+ * 刻度的颜色。与记录流里那段文字同一个意思（spec 20260928-webui-session-branch 的配色表）：
+ * 橙只给还等着你的暂存；没收口的分支用正文色；其余回应过了的一律中性。
+ */
+const TICK_CLASS: Record<MarkTick['tone'], string> = {
+  stack: 'bg-accent-warning',
+  branch: 'bg-text-primary',
+  quote: 'bg-text-muted',
+};
 
 export interface StreamMinimapProps {
   /** 记录流的滚动容器。 */
@@ -202,9 +212,7 @@ export default function StreamMinimap({ scrollRef, ticks, version, onUserScroll 
           key={tick.key}
           data-minimap-tick={tick.tone}
           style={{ top: tick.top }}
-          className={`pointer-events-none absolute inset-x-0 h-[2px] ${
-            tick.tone === 'stack' ? 'bg-accent-warning' : 'bg-accent-info'
-          }`}
+          className={`pointer-events-none absolute inset-x-0 h-[2px] ${TICK_CLASS[tick.tone]}`}
         />
       ))}
       {layout.thumbHeight > 0 ? (
