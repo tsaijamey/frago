@@ -1792,12 +1792,12 @@
       "handoffFailed": "Handoff didn't go out: {{reason}}",
       "onItsWayHint": "Left this page, not in the session yet",
       "queuedHint": "The agent is still on your previous message — this one will be folded into that turn or go out as the next one",
-      "movedUpOne": "Your message moved up into the conversation",
-      "movedUpMany": "{{n}} messages moved up into the conversation",
-      "movedUpBoth": "Both messages moved up into the conversation",
       "show": "Show",
       "textIsBack": "Your text is back in the box below — nothing was lost",
-      "heldForRetry": "You've started typing, so the original is kept aside — Retry sends that one"
+      "heldForRetry": "You've started typing, so the original is kept aside — Retry sends that one",
+      "movedUpBoth": "Both messages moved up into the conversation",
+      "movedUpOne": "Your message moved up into the conversation",
+      "movedUpMany": "{{n}} messages moved up into the conversation"
     },
     "newSession": {
       "title": "New session",
@@ -1865,6 +1865,7 @@
       "hint": "This panel gives way to the record stream once the session is up — usually a few seconds.",
       "failed": "Didn't start: {{reason}}",
       "dismiss": "Dismiss",
+      "ceilingTimeout": "Still not in the list after {{seconds}}s — it may not have started; check the server log",
       "railTitle": "New session",
       "railClaiming": "Starting {{name}}, waiting for its id",
       "railWarming": "{{name}} is up, waiting for its first record",

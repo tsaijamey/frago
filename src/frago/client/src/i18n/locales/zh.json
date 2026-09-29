@@ -1788,12 +1788,12 @@
       "handoffFailed": "没交接出去：{{reason}}",
       "onItsWayHint": "已离开这个页面，还没进会话",
       "queuedHint": "agent 还在处理你上一句，这句会并进那一轮，或排在下一轮",
-      "movedUpOne": "这句话已经移进上面的对话",
-      "movedUpMany": "{{n}} 句话已经移进上面的对话",
-      "movedUpBoth": "两句话都已经移进上面的对话",
       "show": "看看",
       "textIsBack": "原文已经退回下面的输入框，一个字没丢",
-      "heldForRetry": "你已经在打新的字，原文先收着——重试发的是原来那一份"
+      "heldForRetry": "你已经在打新的字，原文先收着——重试发的是原来那一份",
+      "movedUpBoth": "两句话都已经移进上面的对话",
+      "movedUpOne": "这句话已经移进上面的对话",
+      "movedUpMany": "{{n}} 句话已经移进上面的对话"
     },
     "newSession": {
       "title": "新建会话",
@@ -1861,6 +1861,7 @@
       "hint": "会话起来之后这块就会让位给记录流，通常几秒到十几秒。",
       "failed": "没起来：{{reason}}",
       "dismiss": "收起",
+      "ceilingTimeout": "等了 {{seconds}} 秒还没在清单里出现，可能没起来——看看服务日志",
       "railTitle": "新会话",
       "railClaiming": "正在起 {{name}}，等它报出编号",
       "railWarming": "{{name}} 起来了，在等它写下第一笔",
