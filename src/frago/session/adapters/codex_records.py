@@ -13,6 +13,11 @@ codex 把一次对话同时记两份：``response_item`` 是发给模型的那�
 - **用户发言取 ``event_msg``**。``response_item`` 那份的正文里裹着 codex 自己拼进去
   的 ``<environment_context>``，收它会让每条用户消息都顶着一段环境说明，真正的提问
   被淹没。那一份改归「注入内容」，人想看仍然看得到。
+- **整场没有 ``event_msg`` 用户发言时，用户发言改取 ``response_item``**。本机 0.147
+  起的一部分会话（0.149 / 0.153 / 0.155 全是）不再写 ``user_message`` 事件，用户原话
+  只在 ``response_item`` 里；环境说明在那里是单独一条、以 ``<environment_context>``
+  开头。不退到这里取，这类会话在详情里一句用户发言都没有、清单上也没有标题。判据按
+  **整场**定而不是逐条定：有事件的会话里两份并存，逐条收会让每句话出现两次。
 - **agent 正文取 ``response_item``**。它是模型确实产出过的那条记录；``event_msg``
   的 ``agent_message`` 是界面回显，一轮里可能只在最终相位出现。取前者才不会因为
   某种流程里没有回显而把答案整段丢掉——丢掉的记录在界面上等于没发生过。
@@ -132,10 +137,47 @@ def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+# codex 拼进 ``response_item`` 用户消息里的非用户内容，都以这几种开头。
+_INJECTED_USER_PREFIXES = ("<environment_context>", "<user_instructions>", "# AGENTS.md instructions")
+
+
+def is_injected_user_text(text: str) -> bool:
+    """``response_item`` 里这条用户消息是不是 codex 自己拼进去的环境说明 / 指令。"""
+    return text.lstrip().startswith(_INJECTED_USER_PREFIXES)
+
+
+def has_user_events(lines: list[str]) -> bool:
+    """整场会话里有没有 ``event_msg`` 的 ``user_message``。
+
+    有：用户发言取事件那份；没有：退到 ``response_item`` 那份取（见模块说明）。
+    """
+    for raw in lines:
+        if '"user_message"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(record, dict) or record.get("type") != "event_msg":
+            continue
+        payload = record.get("payload")
+        if isinstance(payload, dict) and payload.get("type") == "user_message":
+            return True
+    return False
+
+
 def _drafts_for(
-    record: dict[str, Any], line: int, current_turn: str | None
+    record: dict[str, Any],
+    line: int,
+    current_turn: str | None,
+    *,
+    user_from_items: bool = False,
 ) -> tuple[list[_Draft], str | None]:
-    """一条 rollout 记录 → 0~2 条待编号记录，以及翻完之后的当前轮次。"""
+    """一条 rollout 记录 → 0~2 条待编号记录，以及翻完之后的当前轮次。
+
+    ``user_from_items`` 为真时，``response_item`` 里不是环境说明的用户消息翻成用户发言
+    （整场没有 ``user_message`` 事件时才这样取）。
+    """
     outer = record.get("type")
     payload = record.get("payload")
     payload = payload if isinstance(payload, dict) else {}
@@ -299,6 +341,16 @@ def _drafts_for(
                 ),
                 turn,
             )
+        if user_from_items and text.strip() and not is_injected_user_text(text):
+            return (
+                draft(
+                    "user.say",
+                    {"text": text, "input_mode": None, "agent": None},
+                    rid=f"cx{line}",
+                    group_id=None,
+                ),
+                turn,
+            )
         # role == "user"：模型侧那份，裹着 environment_context。归注入内容。
         return (
             draft(
@@ -456,7 +508,9 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
     drafts: list[_Draft] = []
     turn: str | None = None
     last_total: Any = None
-    for line, raw in enumerate(_raw_lines(session_id)):
+    lines = _raw_lines(session_id)
+    user_from_items = not has_user_events(lines)
+    for line, raw in enumerate(lines):
         raw = raw.strip()
         if not raw:
             continue
@@ -466,7 +520,7 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
             continue
         if not isinstance(record, dict):
             continue
-        produced, turn = _drafts_for(record, line, turn)
+        produced, turn = _drafts_for(record, line, turn, user_from_items=user_from_items)
         for produced_draft in produced:
             # 累计一个字没动的用量刻度不插。codex 在一轮里会把同一份统计重报几次（限流
             # 信息变了也重报），照单全收会在流里连着摆几道一模一样的刻度，人会以为那几
@@ -511,6 +565,7 @@ class CodexRecordAdapter:
         报错类记录恒不给原文（``raw_available`` 为 False，服务层也会再拦一道）。
         """
         lines = _raw_lines(session_id)
+        user_from_items = not has_user_events(lines)
         turn: str | None = None
         for line, raw in enumerate(lines):
             raw = raw.strip()
@@ -522,7 +577,7 @@ class CodexRecordAdapter:
                 continue
             if not isinstance(record, dict):
                 continue
-            produced, turn = _drafts_for(record, line, turn)
+            produced, turn = _drafts_for(record, line, turn, user_from_items=user_from_items)
             for draft in produced:
                 if draft.id != record_id:
                     continue

@@ -94,18 +94,19 @@ class TeamSyncService:
         for binding in active:
             try:
                 outcome = team_sync.sync_once(
-                    state, binding, _deliver_to(binding.session_id)
+                    state, binding, deliver_to(binding.session_id)
                 )
             except Exception as err:  # noqa: BLE001
                 logger.debug("team %s 这一轮没跑成：%s", binding.code, err)
                 continue
-            if outcome.delivered or outcome.pushed:
+            if outcome.delivered or outcome.pushed or outcome.waiting:
                 logger.info(
-                    "team %s：推了 %d 条记录，投了 %d 条消息%s",
+                    "team %s：推了 %d 条记录，投了 %d 条消息%s%s",
                     binding.code,
                     outcome.pushed,
                     outcome.delivered,
                     f"，跳过重复 {outcome.skipped} 条" if outcome.skipped else "",
+                    f"，{outcome.waiting} 条等会话空闲再送" if outcome.waiting else "",
                 )
             if outcome.note:
                 # 偶尔没够着中继是常事，下一轮就补上；中继不收、或者连续一阵都不通，
@@ -119,18 +120,20 @@ class TeamSyncService:
         return state.interval_seconds
 
 
-def _deliver_to(session_id: str):
+def deliver_to(session_id: str):
     """做一个「把这段话投进那场会话」的动作交给同步层。
 
-    用 :func:`~frago.server.services.session_send.send_queued` 而不是 ``send``：
-    那场会话这一轮可能还在跑，而 agent 的界面本来就会把干活期间到达的话排队，等这
-    一轮停下来接着处理。在这里等一整轮结束，会让同步循环被一场跑四十分钟的会话卡住，
-    另一个 team 跟着一起停。
+    走 :func:`~frago.server.services.session_send.send_when_idle`：会话空闲才送，送完
+    等它出现在记录里，最多等半分钟，**不等这一轮答完**——等一整轮会让同步循环被一场
+    跑四十分钟的会话卡住，另一个 team 跟着一起停。会话在忙就这一轮不送，下一轮再问。
+
+    从前走 ``send_queued``：不管会话忙不忙都往输入框里打字，指望界面自己排队。回车
+    在忙的时候会被吞，字留在输入框里没人知道，见 ``send_when_idle`` 那段事故说明。
     """
 
-    def deliver(prompt: str) -> None:
+    def deliver(prompt: str, landed) -> str:
         from frago.server.services import session_send
 
-        session_send.send_queued(session_id, prompt)
+        return session_send.send_when_idle(session_id, prompt, landed=landed)
 
     return deliver

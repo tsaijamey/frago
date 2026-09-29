@@ -267,6 +267,11 @@ def execute_prompt(
 
     text = str(final.get("text") or "").strip()
     ok = bool(final.get("ok")) and proc.returncode == 0
+    # 答案为空不算办完。新版 CoreAgent 自己会把空答案判成 empty_answer；这一道兜住
+    # 还没换新的那一版——旧版把「一个字没说」报成 ok，09-22~09-24 连着三天零提交都记了成功。
+    if ok and not text:
+        ok = False
+        final = {**final, "error": "CoreAgent 报了成功，但答案是空的——当作没办完"}
     return RunOutcome(
         ok=ok,
         kind="prompt",
@@ -282,18 +287,10 @@ def execute_prompt(
 
 
 def _last_final_line(stdout: str) -> dict[str, Any] | None:
-    """CoreAgent 结束时交的那一行结论。标准输出里别的行不认。"""
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict) and obj.get("type") == "final":
-            return obj
-    return None
+    """CoreAgent 结束时交的那一行结论（新老两种形状都认，见 coreagent_output）。"""
+    from frago.server.services.coreagent_output import final_from
+
+    return final_from(stdout)
 
 
 def _coerce_payload(result: Any) -> Any:

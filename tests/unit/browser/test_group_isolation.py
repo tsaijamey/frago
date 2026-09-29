@@ -291,7 +291,7 @@ def test_service_worker_ceiling_matches_the_python_one():
 
     import frago
     sw = (Path(frago.__file__).parent / "_resources" / "extension_bundle"
-          / "background" / "service-worker-v11.js").read_text(encoding="utf-8")
+          / "background" / "service-worker-v13.js").read_text(encoding="utf-8")
 
     limit = re.search(r"const MAX_TABS_PER_GROUP\s*=\s*(\d+)", sw)
     assert limit, "service worker no longer declares MAX_TABS_PER_GROUP"
@@ -380,7 +380,7 @@ def test_service_worker_names_every_group_error():
 
     import frago
     sw = (Path(frago.__file__).parent / "_resources" / "extension_bundle"
-          / "background" / "service-worker-v11.js").read_text(encoding="utf-8")
+          / "background" / "service-worker-v13.js").read_text(encoding="utf-8")
 
     named = set(re.findall(r'groupError\(\s*-?\d+,\s*"([A-Z_]+)"', sw))
     assert {"NO_GROUP", "GROUP_TAB_LIMIT", "TAB_NOT_IN_GROUP",

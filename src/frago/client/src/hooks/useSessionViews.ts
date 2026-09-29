@@ -1,49 +1,26 @@
 /**
- * useSessionViews — 每场会话你上次点开它的时刻，以及据此判出来的两个标记。
+ * useSessionViews — 每场会话你上次点开它的时刻，以及「开在 tmux 里」那道流光。
  *
  * 记录存在服务端（`GET /api/workbench/views`、`PUT /api/workbench/views/{id}`），不存浏览器
  * 本地：换一个浏览器、换一台设备，本地存储天生不通，在一处看过的那几场换个地方打开又全
  * 成了「没看过」。
  *
- * **两个标记各答一个问题。**
+ * **「看过没」只是次要标记。** 从前它决定一个绿圈亮不亮（停下一小时内、之后没点开过）。
+ * 那个口径在 09-24 13:52 那一刻会点亮 7 场，其中 6 场是早已不在 tmux 里的 worker，没人
+ * 在等；而一场点开看过、仍开着终端等回话的会话，绿圈却灭了。现在「要不要你来」由
+ * `useForYou` 从终端直接读，这里只交出上次点开的时刻，供 For you 那一条判「停下之后看过
+ * 没」、没看过的标题加粗。
  *
- * - 「没看过」（绿圈）：agent 说完话停下了，而你还没回去看这一场。判据是停下来那一刻——
- *   也就是最后一句回复的时刻——在一小时之内，且你没在那之后点开过它。没有点开记录的
- *   同样算，一小时这道窗口已经挡住了那些旧会话：它们停在几天前，不会亮。
- * - 「开在 tmux 里」（流光）：这一场此刻有一个活着的 tmux 会话，与时间、看没看过都无关。
- *   它答的是「哪几场还占着一个在跑的 agent」，tmux 关掉它才灭。判据由服务端给
- *   （`in_tmux`），只按名字对，飞书群、语音会话开着也不亮。
- *
- * 判据写成下面两个纯函数，用例直接盯它们——这种口径一旦只活在界面代码里，过几天就没人
- * 说得清绿圈到底什么时候亮。
+ * 「开在 tmux 里」（流光）答的是「哪几场还占着一个在跑的 agent」，与时间、看没看过都无关，
+ * tmux 关掉它才灭。判据由服务端给（`in_tmux`），只按名字对。
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import i18n from '@/i18n';
 import { pageCache } from './pageCache';
-import { activityTs, type WorkbenchSession } from './useWorkbenchSessions';
+import type { WorkbenchSession } from './useWorkbenchSessions';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-
-/** 绿圈的时间窗：一小时。 */
-export const RECENT_MS = 60 * 60 * 1000;
-
-/**
- * 这一场 agent 说完话停下了、你还没回去看。
- *
- * `viewedAt` 是你上次点开它的时刻，从没点开过就是 undefined。还在跑的不算——它还没停下，
- * 没有"说完了"这回事。
- */
-export function isUnreadAt(
-  session: WorkbenchSession,
-  viewedAt: number | undefined,
-  now: number
-): boolean {
-  if (session.status === 'running') return false;
-  const stopped = activityTs(session);
-  if (!stopped || now - stopped >= RECENT_MS) return false;
-  return viewedAt === undefined || stopped > viewedAt;
-}
 
 /** 这一场此刻开在 tmux 里。 */
 export function isInTmux(session: WorkbenchSession): boolean {
@@ -51,11 +28,11 @@ export function isInTmux(session: WorkbenchSession): boolean {
 }
 
 export interface SessionViewsState {
-  /** 这场会话有没有你还没看过的新回复。 */
-  isUnread: (session: WorkbenchSession) => boolean;
+  /** 你上次点开这场会话的时刻（毫秒）；从没点开过为 undefined。 */
+  viewedAt: (sessionId: string) => number | undefined;
   /** 这场会话此刻开在 tmux 里没有。 */
   isInTmux: (session: WorkbenchSession) => boolean;
-  /** 记下此刻点开了这场会话。失败不抛——少记一次只是标记多亮一会儿。 */
+  /** 记下此刻点开了这场会话。失败不抛——少记一次只是标题多粗一会儿。 */
   markViewed: (sessionId: string) => void;
 }
 
@@ -76,7 +53,7 @@ export async function putView(sessionId: string): Promise<number> {
   return body.viewed_at ?? Date.now();
 }
 
-/** 最近一次拿到手的已读记录（见 `pageCache`）。切菜单回来未读标记不再先全亮一下。 */
+/** 最近一次拿到手的已读记录（见 `pageCache`）。切菜单回来标题不再先全粗一下。 */
 const lastViewed = pageCache<Record<string, number>>();
 
 export function useSessionViews(): SessionViewsState {
@@ -93,7 +70,7 @@ export function useSessionViews(): SessionViewsState {
         if (alive) setViewed(map);
       })
       .catch(() => {
-        // 取不到就当一场都没点开过：左栏照常摆得出清单，绿圈只会多亮几个。
+        // 取不到就当一场都没点开过：左栏照常摆得出清单，只是多几行标题加粗。
       });
     return () => {
       alive = false;
@@ -109,13 +86,7 @@ export function useSessionViews(): SessionViewsState {
       .catch(() => {});
   }, []);
 
-  return useMemo(
-    () => ({
-      isUnread: (session: WorkbenchSession) =>
-        isUnreadAt(session, viewed[session.session_id], Date.now()),
-      isInTmux,
-      markViewed,
-    }),
-    [viewed, markViewed]
-  );
+  const viewedAt = useCallback((sessionId: string) => viewed[sessionId], [viewed]);
+
+  return useMemo(() => ({ viewedAt, isInTmux, markViewed }), [viewedAt, markViewed]);
 }

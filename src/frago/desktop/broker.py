@@ -761,8 +761,8 @@ class StageBrowser:
                 await self.ws.close()
         self.ws = None
         self.alive = False
-        # 浏览器不收：9222 是 `frago browser -b cdp` 的公用实例，profile 里那批
-        # 登录态是它存在的理由。停录时收走的是机位（9223），不是这一台。
+        # 这里只断连接、不收浏览器：断线重连也走这条。整台演员在 `desktop down`
+        # 时由 aos 收走；停录时收走的是机位（9223），不是这一台。
 
     # ── 协议 ──
 

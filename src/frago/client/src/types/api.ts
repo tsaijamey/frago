@@ -250,6 +250,10 @@ export interface PendingFile {
 export interface AreaCount {
   area: string;
   count: number;
+  /** Per-kind breakdown for this area alone. Absent from servers older than this field. */
+  counts?: Record<string, number>;
+  /** This area's first few paths, independent of the capped `files` sample. */
+  sample?: PendingFile[];
 }
 
 export interface LastCommit {
@@ -1083,6 +1087,32 @@ export interface TmuxSessionItem {
   busy: boolean;
   /** 归工作台那个会话池管 */
   managed: boolean;
+  /** 窗格前台跑的不是登录 shell（agent 还在）；问不出为 null。旧服务端不给 */
+  client_alive?: boolean | null;
+  /** 停在待输入态等人说下一句；判不出（不是 Claude Code）为 null。旧服务端不给 */
+  awaiting_input?: boolean | null;
+  /** 收尾原话：保留句末，超长截开头。旧服务端不给 */
+  closing_text?: string;
+}
+
+/**
+ * 会话页「For you」要的一行（`GET /api/system/tmux-sessions/waiting`）。
+ *
+ * 与清点浮窗同源同判据，少了内存与截取。`awaiting_input` 只对认得出记录的 Claude Code
+ * 会话判，别家客户端与非 frago 起的 tmux 一律 null，界面一律不挂。
+ */
+export interface TmuxWaitingItem {
+  name: string;
+  session_id: string | null;
+  client_alive: boolean | null;
+  awaiting_input: boolean | null;
+  stop_reason: string | null;
+  last_stop_at: string | null;
+  closing_text: string;
+}
+
+export interface TmuxWaitingResponse {
+  sessions: TmuxWaitingItem[];
 }
 
 export interface TmuxSessionsResponse {
@@ -1160,4 +1190,94 @@ export interface EnvironmentUpgradeResponse {
   items: Record<string, EnvironmentUpgradeItemState>;
   started_at: number | null;
   finished_at: number | null;
+}
+
+// ============================================================
+// 会话页标注 — 记录流里被引用或暂存过的文字
+// ============================================================
+
+/**
+ * quote＝点过「引用」；stack＝点过「暂存」，进右栏下半的列表；branch＝从这段原文起过分支会话
+ * （spec 20260928-webui-session-branch）。branch 只由服务端在起分支时追加，页面不新建。
+ */
+export type WorkbenchMarkKind = 'quote' | 'stack' | 'branch';
+
+/**
+ * 记录流里被引用或暂存过的一段文字。存在该会话备份目录的 `workbench-marks.json` 里，
+ * 换浏览器、刷新都还在。
+ */
+export interface WorkbenchMark {
+  /** 页面生成，`mk_` 加一串随机字。 */
+  id: string;
+  kind: WorkbenchMarkKind;
+  /** 圈选起点所在那条记录的编号。编号来自原始会话，刷新后不变。 */
+  record_id: string;
+  /** 圈中的原文，去掉首尾空白。 */
+  text: string;
+  /** 这段文字在那条记录正文里第几次出现（从 0 起），区分同一条里的重复文字。 */
+  occurrence: number;
+  /** 暂存时写下的想法，可为空。引用不用。 */
+  note: string;
+  /** 只有暂存用：经列表「填入」进过输入框、随后发出去了。 */
+  used: boolean;
+  /** 毫秒时间戳。 */
+  created_at: number;
+  used_at: number | null;
+  /** 只有分支用：分出去的那场会话。 */
+  child_session_id?: string;
+  /** 只有分支用：收口没有。与会话关系账里那一条由服务端同一个动作一起改，页面只读。 */
+  closed?: boolean;
+}
+
+/** 一场会话的全部标注。数组顺序就是暂存列表的显示顺序（引用也在里面，只是不进列表）。 */
+export interface SessionMarks {
+  version: number;
+  marks: WorkbenchMark[];
+}
+
+// ============================================================
+// 会话分支 — 圈一段原文起一场新会话处理旁支问题
+// ============================================================
+
+/** 起分支：从哪条记录、哪段原文分出去，人写的那句话（必填）。 */
+export interface BranchRequest {
+  record_id: string;
+  text: string;
+  occurrence: number;
+  note: string;
+}
+
+/**
+ * 起分支的回执。前七项与新建会话同一个形状（编号要等认领时 `session_id` 为 null，拿
+ * `handle` 去问），外加第一句话、原地提示用的标题与记账结果。
+ */
+export interface BranchLaunch {
+  handle: string;
+  agent: string;
+  display_name: string;
+  cwd: string;
+  session_id: string | null;
+  error: string | null;
+  finished: boolean;
+  /** 服务端拼好、已经投给分支会话的第一句话。 */
+  text: string;
+  /** 原地提示里这场分支叫什么（人写的那句话开头）。 */
+  title: string;
+  /** 关系账记上没有。编号要等认领时起的那一刻还不知道，为 null。 */
+  recorded: boolean | null;
+  /** 主线的分支标注存下没有。存不了标注的那一家为 false；还不知道为 null。 */
+  mark_saved: boolean | null;
+  mark_id: string | null;
+}
+
+/** 收口的两种来路：分支里「带回主线」后发出，或主线上手动标记。 */
+export type BranchCloseBy = 'bring-back' | 'manual';
+
+export interface BranchCloseResult {
+  parent_session_id: string;
+  child_session_id: string;
+  closed_at: number | null;
+  closed_by: BranchCloseBy | null;
+  /** 主线标注改上没有。那一家存不了标注时为 false，不算失败。 */
+  mark_updated: boolean;
 }

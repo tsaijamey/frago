@@ -54,6 +54,12 @@ describe('parsePath', () => {
     expect(parsePath('#/根本没有这一页')).toEqual({ page: HOME_PAGE, id: null });
   });
 
+  it('结对页叫 /teams；旧地址 /teaming 还认得，落到同一页', () => {
+    expect(pathForPage('vibe_teaming')).toBe('/teams');
+    expect(parsePath('#/teams')).toEqual({ page: 'vibe_teaming', id: null });
+    expect(parsePath('#/teaming')).toEqual({ page: 'vibe_teaming', id: null });
+  });
+
   it('没有详情页的那一段，多出来的一截不当编号', () => {
     expect(parsePath('#/settings/oauth')).toEqual({ page: 'settings', id: null });
   });

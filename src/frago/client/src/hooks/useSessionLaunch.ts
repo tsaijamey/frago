@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import i18n from '@/i18n';
-import { waitForSession, type PendingLaunch } from '@/hooks/useAgentClients';
+import { fetchPending, waitForSession, type PendingLaunch } from '@/hooks/useAgentClients';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 
 /**
@@ -41,8 +41,9 @@ const LAUNCH_RELOAD_STEPS = [1500, 3000, 6000, 12000];
 /**
  * 「正在启动」最多挂多久。
  *
- * 到点还没在清单里也没写下第一笔就撤掉——挂着一个永远在启动的东西，比不提示还糟：
- * 人分不出是它还在起，还是这块提示自己坏了。会话本身不受影响，它该在的时候还是会
+ * 到点还没在清单里也没写下第一笔就不再空等：起失败的会话由服务端在后台记着手把里，问过
+ * 好几拍都问不到，就按「可能没起来」停下来报——挂着一个永远在启动的东西，比不提示还糟；
+ * 但让卡悄悄消失更糟，失败要留在人眼前由他自己收。会话本身不受影响，它该在的时候还是会
  * 出现在左栏。
  */
 export const LAUNCH_CEILING_MS = 90_000;
@@ -156,15 +157,40 @@ export function useSessionLaunch({
     };
   }, [launch]);
 
-  // 编号有了就反复重取清单：新会话的档案是 agent 自己写的，写完才扫得到。
+  // 编号有了就反复重取清单，同时照认领那一档的做法问服务端「起失败没有」。两件事同一套
+  // 节奏：新会话的档案是 agent 自己写的，写完才扫得到；起失败是后台线程在写，error 也是
+  // 写完才问得到——都要等一拍。问到手把里有了 error 就停下来报，NEVER 继续等一个明说了
+  // 没起来的会话。
   useEffect(() => {
     if (!launch || launch.phase !== 'warming') return;
+    const handle = launch.handle;
     let cancelled = false;
+
+    const checkPending = async () => {
+      try {
+        const pending = await fetchPending(handle);
+        if (cancelled) return;
+        if (pending.error) {
+          setLaunch((cur) =>
+            cur && cur.handle === handle ? { ...cur, phase: 'failed', error: pending.error } : cur
+          );
+        }
+      } catch (e) {
+        if (cancelled) return;
+        // 问不到（手把过期回 404、服务重启）照认领那一档「跟丢了」的口径办：不无限问
+        // 一个没有答案的手把。
+        const reason = e instanceof Error ? e.message : i18n.t('workbench.errors.launchFailed');
+        setLaunch((cur) =>
+          cur && cur.handle === handle ? { ...cur, phase: 'failed', error: reason } : cur
+        );
+      }
+    };
 
     void (async () => {
       for (const delay of LAUNCH_RELOAD_STEPS) {
         await new Promise((r) => setTimeout(r, delay));
         if (cancelled) return;
+        await checkPending();
         await reloadRef.current();
       }
     })();
@@ -184,11 +210,23 @@ export function useSessionLaunch({
     if (inList || wrote) setLaunch(null);
   }, [launch, sessions, recordsSessionId, recordCount]);
 
-  // 等太久就撤。会话本身不受影响，该出现时还是会出现在左栏。
+  // 等太久就按「没起来」收，不再悄悄撤掉：到点还不在清单里也没写下第一笔，失败的原因
+  // 和那句话要留在人眼前，由他自己收。会话本身不受影响，该出现时还是会出现在左栏。
   useEffect(() => {
     if (!launch || launch.phase === 'failed') return;
     const timer = setTimeout(
-      () => setLaunch((cur) => (cur && cur.handle === launch.handle ? null : cur)),
+      () =>
+        setLaunch((cur) =>
+          cur && cur.handle === launch.handle
+            ? {
+                ...cur,
+                phase: 'failed',
+                error: i18n.t('workbench.launch.ceilingTimeout', {
+                  seconds: Math.round(LAUNCH_CEILING_MS / 1000),
+                }),
+              }
+            : cur
+        ),
       Math.max(0, launch.at + LAUNCH_CEILING_MS - Date.now())
     );
     return () => clearTimeout(timer);

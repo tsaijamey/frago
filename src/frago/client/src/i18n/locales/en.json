@@ -32,7 +32,8 @@
     },
     "appearance": {
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "label": "Appearance"
     },
     "usage": {
       "label": "Subscription usage",
@@ -43,7 +44,17 @@
       "weekModelLong": "This week, this model",
       "sessionLong": "Current 5-hour window",
       "tooltip": "{{name}}: {{percent}}% used",
-      "tooltipReset": "{{name}}: {{percent}}% used · resets {{reset}}"
+      "tooltipReset": "{{name}}: {{percent}}% used · resets {{reset}}",
+      "heading": "Usage"
+    },
+    "nav": {
+      "sessions": "Sessions",
+      "teams": "Teams",
+      "recipes": "Recipes",
+      "todos": "Todos",
+      "schedules": "Schedules",
+      "data": "Data",
+      "settings": "Settings"
     }
   },
   "tokenCalendar": {
@@ -181,7 +192,6 @@
   },
   "recipes": {
     "title": "Recipes",
-    "pageDesc": "Browse and run reusable automation recipes",
     "noRecipes": "No Recipes",
     "noRecipesDescription": "Use frago recipe create to create a new recipe",
     "forge": {
@@ -308,6 +318,7 @@
     "show": "Show",
     "hide": "Hide",
     "folder": {
+      "sectionTitle": "Folders",
       "create": "New folder",
       "rename": "Rename",
       "remove": "Delete folder",
@@ -323,7 +334,8 @@
       "nameZhPlaceholder": "e.g. 行情研究",
       "nameEnPlaceholder": "Left blank, the Chinese name is shown",
       "trouble": "The folder table could not be read this time; showing no folders: {{detail}}"
-    }
+    },
+    "headerMeta": "{{local}} local · {{community}} community"
   },
   "skills": {
     "title": "Skills",
@@ -333,7 +345,6 @@
   },
   "todos": {
     "title": "Todos",
-    "pageDesc": "Todos from frago todo, in the same order as frago todo list: by category rank, then highest priority, then oldest.",
     "searchPlaceholder": "Search title, context, tags or id",
     "empty": "Nothing in this bucket",
     "emptyDesc": "Try another bucket, or write a line with Add above.",
@@ -358,7 +369,8 @@
     },
     "loadFailed": "Could not load todos: {{message}}",
     "notFound": "The todo in this link is not in the list: {{id}}",
-    "stepCount": "{{n}} steps",
+    "stepCount_one": "{{count}} step",
+    "stepCount_other": "{{count}} steps",
     "category": {
       "label": "Category",
       "all": "All categories",
@@ -402,6 +414,11 @@
       "normal": "Normal",
       "high": "High"
     },
+    "section": {
+      "high": "High priority",
+      "normal": "Normal",
+      "low": "Low"
+    },
     "filter": {
       "active": "Open",
       "todo": "Todo",
@@ -425,11 +442,11 @@
       "doneWhen": "Done when",
       "links": "Links",
       "sessions": "Sessions"
-    }
+    },
+    "headerMeta": "{{count}} open"
   },
   "schedules": {
     "title": "Schedules",
-    "pageDesc": "Scheduled tasks from frago schedule, run by the server's scheduler. Same order as frago schedule list.",
     "searchPlaceholder": "Search name, what it runs, id or notify target",
     "schedulerStopped": "The scheduler is not running: none of the next runs below will happen until the frago server restarts.",
     "empty": "Nothing in this bucket",
@@ -473,14 +490,46 @@
     },
     "freq": {
       "cron": "cron {{expr}}",
-      "hours": "every {{n}}h",
-      "minutes": "every {{n}}m",
-      "seconds": "every {{n}}s"
+      "daily": "Every day at {{at}}",
+      "weekly": "Every {{day}} at {{at}}",
+      "weekdays": "Weekdays at {{at}}",
+      "monthly": "Monthly on day {{dom}} at {{at}}",
+      "listSep": ", ",
+      "and": " and ",
+      "dow": {
+        "0": "Sunday",
+        "1": "Monday",
+        "2": "Tuesday",
+        "3": "Wednesday",
+        "4": "Thursday",
+        "5": "Friday",
+        "6": "Saturday"
+      },
+      "hours_one": "Every hour",
+      "hours_other": "Every {{count}} hours",
+      "minutes_one": "Every minute",
+      "minutes_other": "Every {{count}} minutes",
+      "seconds": "Every {{count}} s"
     },
     "row": {
-      "next": "next {{time}}",
-      "runs": "{{n}} runs",
-      "failures": "{{n}} failures in a row"
+      "runs_one": "{{count}} run",
+      "runs_other": "{{count}} runs"
+    },
+    "table": {
+      "schedule": "Schedule",
+      "when": "When",
+      "lastRun": "Last run",
+      "runs": "Runs"
+    },
+    "lastRun": {
+      "today": "Today, {{time}}",
+      "yesterday": "Yesterday, {{time}}",
+      "date": "{{mon}} {{day}}, {{time}}"
+    },
+    "allDisabled": {
+      "title_one": "The only schedule is disabled.",
+      "title_other": "All {{count}} schedules are disabled.",
+      "body": "Nothing will run on its own until one is enabled."
     },
     "notify": {
       "never": "No notifications",
@@ -542,7 +591,9 @@
       "success": "Success",
       "failed": "Failed",
       "unknown": "—"
-    }
+    },
+    "headerMeta_one": "{{count}} schedule · {{enabled}} enabled",
+    "headerMeta_other": "{{count}} schedules · {{enabled}} enabled"
   },
   "guide": {
     "title": "Guide",
@@ -653,7 +704,7 @@
       "about": "About"
     },
     "tabDesc": {
-      "capability": "Current state of static rules and LightAgent",
+      "capability": "On every prompt, frago adds guidance in two layers. Here is what each is doing right now.",
       "general": "Authentication and account profiles",
       "channels": "Task ingestion channels",
       "resources": "Official commands & skills sync",
@@ -662,20 +713,18 @@
       "about": "Version and license"
     },
     "capability": {
-      "intro": "frago injects guidance into the agent on every prompt submission, in two layers: static rules are always in effect, while LightAgent only exists once a model profile is configured. Below is what each layer is actually doing right now.",
       "loadFailed": "Failed to read prompting capability status.",
       "saveFailed": "The switch was not saved; the configuration is unchanged.",
       "static": {
         "name": "Static rules",
-        "lede": "Routing rules compiled into the frago-core binary, matched by event and injected directly, with no model involved.",
+        "lede": "Rules matched by event and injected directly — no model involved.",
         "badge": "In effect",
-        "count": "{{total}} rules are matching, built-in and user rules combined; the decision takes tens of milliseconds.",
-        "countUnknown": "The rule count could not be read right now; matching itself is unaffected.",
-        "noConfigNeeded": "This layer needs no configuration and consumes no model quota."
+        "count": "{{total}} rules matching, built-in and user combined. No configuration, no model quota.",
+        "countUnknown": "Rule count unavailable right now; matching is unaffected."
       },
       "ai": {
         "name": "LightAgent",
-        "lede": "On every prompt submission, the last few turns of the conversation are sent to a cheap model along with the rule, book, and knowledge-domain indexes, which returns one line of guidance to inject.",
+        "lede": "Sends the last few turns plus the rule, book and domain indexes to a cheap model, which returns one line of guidance.",
         "unknownModel": "unknown model",
         "unnamedProfile": "unnamed profile",
         "badge": {
@@ -685,23 +734,22 @@
           "no_key": "No api key"
         },
         "body": {
-          "enabled": "Currently using {{model}}. Each prompt submission adds one call to that model.",
-          "disabled": "This layer was turned off by hand — nothing is broken. Flip the switch below to bring it back.",
-          "not_configured": "No usable model profile was found, so this layer has never been called.",
-          "no_key": "The api key on profile {{profile}} is empty, so this layer cannot reach a model."
+          "enabled": "Using <b>{{model}}</b> — one extra call per prompt.",
+          "disabled": "Turned off by hand — nothing is broken. Flip the switch to bring it back.",
+          "not_configured": "No usable model profile, so this layer has never run.",
+          "no_key": "Profile {{profile}} has no api key, so this layer can't reach a model."
         },
         "consequence": {
-          "not_configured": "Consequence: no guidance generated from your recent turns will appear in the session. Static rules are unaffected and keep working.",
-          "no_key": "Consequence: this layer does nothing at all, and it is only one key short of working. The engine skips it outright when the key is empty — no request is sent. Static rules are unaffected."
+          "not_configured": "No guidance from your recent turns will appear. Static rules keep working.",
+          "no_key": "This layer does nothing — it is one key short. With an empty key no request is sent. Static rules keep working."
         },
         "cta": {
           "not_configured": "Configure a model profile",
           "no_key": "Add an api key"
         },
         "switch": "Enable LightAgent",
-        "switchDesc": "When off, frago no longer calls a model for guidance; static rules keep working.",
-        "persistence": "The switch is written to <c>hook_review.enabled</c> in <c>~/.frago/config.json</c>, the same field the engine reads; a missing section counts as on.",
-        "envOff": "The environment variable <c>FRAGO_REVIEW=off</c> is in effect and overrides this switch: LightAgent will not run in this environment, and the switch above has no effect for now."
+        "switchDesc": "Off: no model call for guidance; static rules keep working. Stored in <c>hook_review.enabled</c> of <c>~/.frago/config.json</c>.",
+        "envOff": "<c>FRAGO_REVIEW=off</c> is set and overrides this switch — LightAgent won't run in this environment."
       }
     },
     "general": {
@@ -745,8 +793,8 @@
       "model": "Model",
       "dangerZone": "Danger zone",
       "claudeSettingsFile": "Claude Code settings file",
-      "claudeSettingsFileDesc": "This is Claude Code's own configuration, not frago's working directory.",
-      "claudeSettingsFileWarning": "frago registers its hooks in this file. A broken edit can stop Claude Code from starting and silently disable every frago hook. Change it only if you know exactly what you are editing.",
+      "claudeSettingsFileDesc": "Claude Code's own configuration, not frago's.",
+      "claudeSettingsFileWarning": "frago's hooks are registered here. A broken edit can stop Claude Code from starting and silently disable every frago hook.",
       "openInVSCode": "Open in VSCode"
     },
     "profiles": {
@@ -765,7 +813,7 @@
       "confirmDelete": "Delete this profile?",
       "confirmDeleteDesc": "This will remove the saved profile. If it's currently active, the active configuration will not be affected.",
       "noProfiles": "No saved profiles",
-      "noProfilesDesc": "Save your API endpoint configurations as profiles for quick switching.",
+      "noProfilesDesc": "Save endpoints as profiles to switch between them quickly.",
       "switchedTo": "Switched to",
       "savedProfile": "Profile saved",
       "deletedProfile": "Profile deleted",
@@ -784,32 +832,32 @@
       "activeProfileTitle": "Active API Profile",
       "switchProfile": "Switch Profile",
       "confirmDeactivate": "Deactivate Custom API?",
-      "confirmDeactivateDesc": "This will switch back to Claude Code official API. Your profile will be saved and can be reactivated later.",
+      "confirmDeactivateDesc": "Switches back to the official Claude Code API. The profile is kept and can be reactivated.",
       "customEndpoint": "Custom URL",
       "changeTargets": "Change targets",
       "activeOn": "Active on",
       "targetsTitle": "Activate on which agent CLIs?",
-      "targetsUnavailable": "Could not read this machine's agent CLI roster; activation will apply to Claude Code only.",
+      "targetsUnavailable": "Couldn't read this machine's agent CLIs; activation applies to Claude Code only.",
       "targetNotInstalled": "Not installed on this machine",
       "kindEndpoint": "API endpoint",
       "kindVendorCli": "Vendor CLI (its own account)",
       "connectionKind": "Connection type",
       "agentCore": "Agent core",
       "modelCandidates": "Models this CLI offers",
-      "vendorCliHint": "frago holds no key for this one — it runs on the CLI's own login. Pick which core and which model.",
+      "vendorCliHint": "Runs on the CLI's own login; frago holds no key. Pick a core and a model.",
       "notInstalled": "not installed on this machine",
       "vendorOwnAccount": "runs on its own account",
       "kindWorkbuddy": "Borrow the WorkBuddy login",
-      "workbuddyHint": "frago-core calls the WorkBuddy model gateway on this machine's WorkBuddy client login. No key is stored. It can serve the light agent or the session observer only.",
-      "workbuddyNotLoggedIn": "No WorkBuddy client on this machine, or it has never logged in, so this connection cannot reach anything right now.",
-      "workbuddyProbeNotice": "To confirm a model actually answers, frago sends it one probe request. Each model is probed once and never again, at roughly 0.2 credits a time.",
-      "workbuddyLoggedOut": "The WorkBuddy client has signed out. Log in there once and this connection works again.",
-      "workbuddyNotProbed": "No WorkBuddy models have been probed yet. Use \"Probe now\" below to run a round.",
+      "workbuddyHint": "Calls the WorkBuddy model gateway with this machine's WorkBuddy login; no key is stored. Light agent or session observer only.",
+      "workbuddyNotLoggedIn": "WorkBuddy isn't installed here or has never logged in, so this connection can't reach anything.",
+      "workbuddyProbeNotice": "Each model gets one probe request to confirm it answers — once only, about 0.2 credits each.",
+      "workbuddyLoggedOut": "WorkBuddy has signed out. Log in there once to bring this connection back.",
+      "workbuddyNotProbed": "No WorkBuddy models probed yet. Use the probe button below.",
       "workbuddyModel": "Model (cheapest first)",
       "workbuddyProbedAt": "Probed at {{time}}. Re-probe: frago-core models probe-workbuddy",
       "workbuddyProbedAtPlain": "List probed at {{time}}",
       "workbuddyStale": "not probed in over {{days}} days",
-      "workbuddyUnprobed": "{{count}} greyed-out model(s) in the list have not been probed. The button below makes them selectable.",
+      "workbuddyUnprobed": "{{count}} greyed-out model(s) not probed yet; the button below makes them selectable.",
       "workbuddyGroupUsable": "Verified working",
       "workbuddyGroupUnprobed": "Not verified, probe first ({{count}})",
       "workbuddyNeedsProbe": "probe first",
@@ -848,7 +896,7 @@
       "agentCliMissing": "Not found — frago needs it to drive sessions",
       "node": "Node.js",
       "nodeFound": "{{version}} installed",
-      "nodeAbsent": "Not installed. frago does not need it — only the npm route for installing an agent CLI does",
+      "nodeAbsent": "Not installed — frago doesn't need it; only installing an agent CLI via npm does",
       "resourcesInstalled": "Resource pack {{version}}",
       "resourcesMissing": "Not installed",
       "resourcesUpdate": "(frago is at {{version}}; resources can be updated)",
@@ -887,7 +935,7 @@
     },
     "channels": {
       "title": "Task ingestion",
-      "description": "Channels poll external sources (email, Slack, feishu…) and hand messages to the primary agent.",
+      "description": "Pull messages from email, Slack, feishu… and hand them to the main agent.",
       "refresh": "Refresh",
       "loading": "Reading task ingestion…",
       "noData": "No task ingestion configuration could be read",
@@ -909,7 +957,7 @@
       "colInterval": "Interval",
       "editChannel": "Edit channel",
       "removeChannel": "Remove channel",
-      "noRecipes": "No recipes installed yet. Put recipes under <c>~/.frago/recipes/</c> (one poll and one notify per channel) before adding a channel.",
+      "noRecipes": "No recipes yet. Each channel needs a poll and a notify recipe under <c>~/.frago/recipes/</c>.",
       "dialogAdd": "Add channel",
       "dialogEdit": "Edit channel: {{name}}",
       "namePlaceholder": "e.g. feishu, email",
@@ -924,8 +972,8 @@
       "title": "Connections",
       "mainRole": "Main agent",
       "workerRole": "Worker",
-      "mainRoleHint": "Written into each agent CLI's own configuration — sessions you start by hand use it too.",
-      "workerRoleHint": "Read each time `frago agent` opens a session. Nothing is written anywhere.",
+      "mainRoleHint": "Written into each agent CLI's own config, so sessions you start by hand use it too.",
+      "workerRoleHint": "Read each time `frago agent` opens a session; nothing is written.",
       "officialName": "Official subscription",
       "writtenInto": "Written into",
       "onCore": "on",
@@ -933,18 +981,19 @@
       "switching": "Switching…",
       "bindFailed": "Could not change this connection",
       "lightagentRole": "Light agent",
-      "lightagentRoleHint": "The hook's review passes. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
+      "lightagentRoleHint": "The hook's review passes. Takes a connection with its own key or the borrowed WorkBuddy login.",
       "observerRole": "Session observer",
-      "observerRoleHint": "The session page's side panel. Called by frago-core, which takes a connection with its own key or one borrowing the WorkBuddy login.",
+      "observerRoleHint": "The session page's side panel. Takes a connection with its own key or the borrowed WorkBuddy login.",
       "coreagentRole": "CoreAgent",
-      "coreagentRoleHint": "frago-core's own agent: prompt-based schedules run on it. Takes a connection with its own key or one borrowing the WorkBuddy login, on its default model.",
+      "coreagentRoleHint": "frago-core's own agent; prompt-based schedules run on it. Takes a connection with its own key or the borrowed WorkBuddy login, on its default model.",
       "followDefault": "Follow the default (the active one, else the first)",
       "followingDefault": "Following the default: {{name}}",
       "observerOff": "Not bound (does not run)",
       "notForFragoCore": "frago-core cannot call it",
       "fragoCoreOnly": "CoreAgent, light agent or session observer only",
       "borrowedLogin": "Borrows the WorkBuddy login"
-    }
+    },
+    "headerMeta": "frago {{version}}"
   },
   "init": {
     "welcome": "Welcome to frago",
@@ -1215,19 +1264,22 @@
     "retry": "Try again"
   },
   "dataRepo": {
-    "title": "Data Repository",
+    "title": "Data",
     "loading": "Counting what is waiting to be backed up…",
     "refresh": "Count again",
     "syncButton": "Sync to repository",
     "syncing": "Syncing…",
     "pending": "Files pending",
     "unpushed": "Unpushed commits",
+    "behind": "{{count}} behind",
     "branch": "Branch",
     "lastCommit": "Last commit",
+    "lastCommitAt": "Last commit · {{when}}",
     "allBackedUp": "Everything is backed up — the working tree is clean and local matches the remote.",
     "byArea": "By directory",
     "fileList": "Files",
-    "truncated": "showing the first {{shown}} of {{total}}",
+    "filesGrouped": "{{total}}, grouped by directory",
+    "moreInArea": "{{n}} more in {{area}}",
     "status": {
       "modified": "modified",
       "added": "added",
@@ -1272,10 +1324,64 @@
     "unverified": "A GitHub credential is stored here, but github.com could not be reached to confirm it. Backup can still be attempted; if the credential has expired the push will say so."
   },
   "workbench": {
+    "decision": {
+      "head": {
+        "single-choice": "Pick one",
+        "multi-choice": "Pick any",
+        "text-answer": "Type the answer",
+        "choice-and-text": "Pick one, write, or both",
+        "choice-and-text-multi": "Pick any, write, or both"
+      },
+      "cantUndoSuffix": " · Can't be undone",
+      "fromTeammate": "From your teammate",
+      "recommended": "Recommended",
+      "cantUndo": "Can't be undone",
+      "selectAll": "Select all",
+      "clearAll": "Clear all",
+      "theirRequest": "Their request, as relayed",
+      "wouldChange": "What it would change here",
+      "typePlaceholder": "Type the answer",
+      "writeOwn": "Or write your own",
+      "answer": "Answer",
+      "answerPicked": "Answer with {{count}} picked",
+      "pickAtLeastOne": "Pick at least one",
+      "suggested": "Suggested answers — click one to fill it in",
+      "draft": "Draft",
+      "asIs": "As is",
+      "edit": "Edit",
+      "draftHint": "If you edit the draft, your version goes along with the option you pick.",
+      "hint": "Pick, write, or both — then Answer.",
+      "confirm": "This can't be undone — do it?",
+      "cancel": "Cancel",
+      "yesDoIt": "Yes, do it",
+      "answeredAt": "You answered at {{time}} — sent to the session as your message below",
+      "repliedOwn": "You replied in your own words below",
+      "brokenLead": "Shown as written — this answer-needed-by-human block couldn't be read, so there's no card: {{reason}}.",
+      "broken": {
+        "yaml": "{{detail}}",
+        "notMapping": "not a key: value block",
+        "type": "type “{{type}}” is not one of the 4 ({{types}})",
+        "question": "question is missing",
+        "optionsNotList": "options is not a list",
+        "needsOptions": "{{type}} needs options",
+        "textAnswerNoOptions": "text-answer takes no options — suggested answers go under suggestions",
+        "optionFields": "every option needs key, label and effect",
+        "recommendedMany": "more than one option is recommended",
+        "fromValue": "from “{{from}}” — the only value is teammate",
+        "draftPlace": "draft only goes with text-answer or choice-and-text",
+        "suggestionsPlace": "suggestions is a list and only goes with text-answer",
+        "multiPlace": "multi only goes with choice-and-text"
+      }
+    },
     "page": {
       "title": "Sessions",
       "subtitle": "Transcripts from every client, normalized into one shape and laid out record by record",
-      "backToList": "Back to the session list"
+      "backToList": "Back to the session list",
+      "sending": "Sending your message",
+      "agentOnIt": "Agent on it · {{duration}}",
+      "answeredAt": "answered {{time}}",
+      "waiting": "waiting {{age}}",
+      "answeredAtStart": "Answered {{time}}"
     },
     "stopRun": {
       "action": "Close tmux session",
@@ -1290,7 +1396,8 @@
       "forceOk": "Close anyway",
       "stopping": "Closing…",
       "absent": "This session is no longer in tmux. Nothing to close.",
-      "failed": "Couldn't close: {{error}}"
+      "failed": "Couldn't close: {{error}}",
+      "busyHint": "Still working — closing it interrupts this turn (you'll be asked first)"
     },
     "delete": {
       "action": "Delete session",
@@ -1326,6 +1433,8 @@
       "pinnedHeader": "Pinned",
       "restHeader": "Everything else",
       "orphanWorkersHeader": "Workers with no known caller",
+      "branchOf": "Branched from {{title}}",
+      "branchOfHint": "Open the session this branch came from",
       "pageProgress": "Showing {{shown}} of {{total}} — keep scrolling for more",
       "workerCount": "launched {{n}} workers",
       "expandWorkers": "Show the {{n}} workers this session launched",
@@ -1368,13 +1477,33 @@
       "groupAiProgress": "AI grouping: {{done}} / {{total}} sessions",
       "groupAiDone": "AI grouping done: {{assigned}} sessions sorted, {{tags}} tags created",
       "groupAiNothing": "Nothing to sort — none of the ungrouped sessions has a usable title",
-      "groupAiFailed": "AI grouping didn't finish: {{error}}"
+      "groupAiFailed": "AI grouping didn't finish: {{error}}",
+      "pinHint": "Pin — keep it at the top of the list",
+      "unpinHint": "Unpin — move it back to its group",
+      "alwaysOnTop": "Always on top",
+      "everythingElse": "Everything else",
+      "inPinnedAbove": "+ {{n}} in Pinned above",
+      "currentBelow": "Current session is below",
+      "currentAbove": "Current session is above",
+      "emptyForYou": "Nothing is waiting for you",
+      "ageNow": "just now",
+      "ageMin": "{{n}} min",
+      "ageHour": "{{n}} h",
+      "ageDay": "{{n}} d",
+      "idleTerminals_one": "{{count}} idle terminal can be closed",
+      "idleTerminals_other": "{{count}} idle terminals can be closed",
+      "closeTerminals_one": "Close {{count}} terminal",
+      "closeTerminals_other": "Close {{count}} terminals",
+      "closedTerminals_one": "Closed {{count}} terminal",
+      "closedTerminals_other": "Closed {{count}} terminals",
+      "idleFor": "client exited · stopped {{age}} ago",
+      "clientExited": "client exited"
     },
     "stream": {
       "lens": {
         "all": "All",
         "talk": "Talk",
-        "hook": "Hook injections",
+        "hook": "Hooks",
         "tool": "Tools",
         "system": "System"
       },
@@ -1388,7 +1517,16 @@
       "groupCount": "{{n}} in this group",
       "loading": "Loading records",
       "awaitingAgent": "Sent — waiting for the agent to speak",
-      "quote": "Quote"
+      "quote": "Quote",
+      "stack": "Stack",
+      "stackNotePlaceholder": "A thought on this (optional) — Enter to save",
+      "stackNoteSave": "Save",
+      "branch": "Branch",
+      "branchNotePlaceholder": "What should the new session look into? — Enter to start",
+      "branchNoteStart": "Start",
+      "branchNoteRequired": "Write one line first — the new session starts from it",
+      "minimap": "Conversation overview — drag or click to scroll",
+      "lensHookFull": "Hook injections"
     },
     "record": {
       "kind": {
@@ -1551,7 +1689,19 @@
       "hookEcho": "raw form",
       "stopHooksRan": "{{n}} hooks ran",
       "hookDuration": "{{n}} ms",
-      "stopHookQuiet": "nothing added, nothing blocked"
+      "stopHookQuiet": "nothing added, nothing blocked",
+      "hookLine": "Hook {{event}}",
+      "youSaidWhileWorking": "You said · while it was working",
+      "toolRunning": "running…",
+      "toolNoResult": "no result",
+      "toolRunCount_one": "{{count}} tool call",
+      "toolRunCount_other": "{{count}} tool calls",
+      "toolRunExtras_one": "{{count}} more record folded in (hooks, usage, thinking)",
+      "toolRunExtras_other": "{{count}} more records folded in (hooks, usage, thinking)",
+      "systemRunCount_one": "{{count}} system record",
+      "systemRunCount_other": "{{count}} system records",
+      "systemRunTurn": "turn {{duration}}",
+      "systemRunContext": "context {{n}}"
     },
     "report": {
       "tailNow": "Now",
@@ -1576,6 +1726,46 @@
       "minutesAgo": "{{n}} min ago",
       "hoursAgo": "{{n}} h ago"
     },
+    "stack": {
+      "title": "Stack",
+      "count": "{{n}} items",
+      "empty": "Select text in the conversation and press Stack to keep it here, then work through the items one at a time.",
+      "fill": "Fill in",
+      "fillHint": "Put this into the message box, quoted, with your thought after it",
+      "pending": "Filled in — sending it marks this used",
+      "used": "Used",
+      "locate": "Jump back to where this came from",
+      "searching": "Looking for it…",
+      "notFound": "Couldn't find where this came from",
+      "addNote": "Add a thought",
+      "notePlaceholder": "A thought on this (optional)",
+      "noteSave": "Save",
+      "noteCancel": "Cancel",
+      "delete": "Delete",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "more": "More",
+      "drag": "Drag to reorder",
+      "expand": "Show more",
+      "collapse": "Show less",
+      "resize": "Drag to split the summary and the stack, double-click to reset"
+    },
+    "branch": {
+      "starting": "Starting a branch…",
+      "startingTitled": "Starting a branch: {{title}}…",
+      "started": "Handling it in a new session: {{title}}",
+      "open": "Open",
+      "dismiss": "Close",
+      "failed": "The branch didn't start: {{reason}}",
+      "notRecorded": "The branch started, but its session id never came back — the link wasn't recorded",
+      "markNotSaved": "(This session can't keep highlights, so the text isn't underlined.)",
+      "bringBack": "Bring back",
+      "bringBackHint": "Go back to the main session with this branch's last reply quoted in the message box — nothing is sent",
+      "noReply": "This branch has no reply yet to bring back",
+      "menuOpen": "Open branch",
+      "menuClose": "Mark as closed",
+      "closeFailed": "Didn't mark the branch closed: {{reason}}"
+    },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",
       "sendFailed": "Didn't go out: {{reason}}",
@@ -1599,7 +1789,15 @@
       "handoffLocked": "Only worth switching once context reaches {{limit}} (now {{now}})",
       "handoffLockedUnknown": "No context usage read for this session yet; only worth switching at {{limit}}",
       "handoffLaunchText": "Taking over \"{{title}}\"",
-      "handoffFailed": "Handoff didn't go out: {{reason}}"
+      "handoffFailed": "Handoff didn't go out: {{reason}}",
+      "onItsWayHint": "Left this page, not in the session yet",
+      "queuedHint": "The agent is still on your previous message — this one will be folded into that turn or go out as the next one",
+      "show": "Show",
+      "textIsBack": "Your text is back in the box below — nothing was lost",
+      "heldForRetry": "You've started typing, so the original is kept aside — Retry sends that one",
+      "movedUpBoth": "Both messages moved up into the conversation",
+      "movedUpOne": "Your message moved up into the conversation",
+      "movedUpMany": "{{n}} messages moved up into the conversation"
     },
     "newSession": {
       "title": "New session",
@@ -1644,6 +1842,8 @@
       "tagCreateFailedPlain": "Tag wasn't created",
       "tagDeleteFailed": "Tag wasn't deleted (HTTP {{status}})",
       "groupAiStartFailed": "AI grouping didn't start (HTTP {{status}})",
+      "marksSaveFailed": "The stack and highlights didn't save: {{reason}}",
+      "marksNotLoaded": "this session's saved marks couldn't be read, so nothing is written over them",
       "agentsFetchFailed": "Couldn't get this machine's client list (HTTP {{status}})",
       "agentsFetchFailedPlain": "Couldn't get this machine's client list",
       "createFailed": "Couldn't start it (HTTP {{status}})",
@@ -1665,10 +1865,37 @@
       "hint": "This panel gives way to the record stream once the session is up — usually a few seconds.",
       "failed": "Didn't start: {{reason}}",
       "dismiss": "Dismiss",
+      "ceilingTimeout": "Still not in the list after {{seconds}}s — it may not have started; check the server log",
       "railTitle": "New session",
       "railClaiming": "Starting {{name}}, waiting for its id",
       "railWarming": "{{name}} is up, waiting for its first record",
       "railFailed": "Didn't start — see the middle column"
+    },
+    "progress": {
+      "onItsWay": "On its way",
+      "inTheSession": "In the session",
+      "queued": "Queued",
+      "pickedUp": "Picked up",
+      "foldedIn": "Folded in",
+      "answered": "Answered",
+      "failed": "Didn't go out",
+      "answeredIn": "Answered in {{duration}}",
+      "agentOnIt": "Agent on it",
+      "doingNothingYet": "thinking, nothing written yet",
+      "doingThinking": "thinking",
+      "doingReplying": "replying",
+      "doingToolResult": "reading what {{tool}} returned",
+      "doingSubagent": "handing work to a subagent",
+      "doingError": "hit an error"
+    },
+    "forYou": {
+      "label": "For you",
+      "sending": "Sending",
+      "whyAnswer": "It's asking you something",
+      "whyPickOne": "It wants you to pick one",
+      "whyStopped": "It stopped on an error",
+      "whyDecisionCard": "It left you a decision card",
+      "stoppedAt": "Stopped at {{time}} and has been waiting for you since"
     }
   },
   "tmuxSessions": {
@@ -1772,7 +1999,7 @@
   },
   "team": {
     "loading": "Reading this machine's team state…",
-    "title": "Teaming",
+    "title": "Teams",
     "pitch": "Two people's agent sessions side by side: you watch what is happening in theirs, and you can have your own agent drop a line into it.",
     "pitchCode": "The code is the credential — no account, no sign-in. Whoever holds it can come in.",
     "pathOpen": "I'll start one",
@@ -1836,7 +2063,7 @@
     "instructWhy": "This lands in their session as a user turn, carrying a line that says it came from you.",
     "instructPreview": "What they'll see",
     "instructSend": "Send",
-    "instructPlaceholder": "What should their agent do… (⌘/Ctrl + Enter to send)",
+    "instructPlaceholder": "What should their agent do? (⌘/Ctrl + Enter to send)",
     "joinPickTitle": "Which session do you want to bring in?",
     "joinPickHint": "Your teammate will see this one. Pick something you already have, or open a fresh one and start together.",
     "joinConfirm": "Join with this one",
@@ -1854,7 +2081,106 @@
     "joinRetry": "Try again",
     "joinBackToCode": "Edit the code",
     "joinStepCode": "Going in with this code",
-    "leftLocalOnly": "Left. The relay wasn't reachable, so your teammate may still see you as here until it times out on its own."
+    "leftLocalOnly": "Left. The relay wasn't reachable, so your teammate may still see you as here until it times out on its own.",
+    "you": "You",
+    "youWho": "Your agent · {{family}} · this machine",
+    "youWhoPlain": "Your agent · this machine",
+    "peerWho": "Their agent's session · synced every 15 s",
+    "readOnly": "Read-only",
+    "talkTitle": "Talk to your agent",
+    "talkWho": "{{family}} · this machine · goes straight in",
+    "talkWhoPlain": "this machine · goes straight in",
+    "instructWhen": "lands in ~15 s",
+    "leakNote": "Your teammate sees everything on this side — it syncs to them every 15 s. Don't paste keys, passwords or tokens here.",
+    "voice": {
+      "mineUser": "You said",
+      "mineAgent": "Your agent replied",
+      "peerUser": "Your teammate said",
+      "peerAgent": "Their agent replied"
+    },
+    "help": "How Teams works",
+    "guide": {
+      "title": "How Teams works",
+      "s1Title": "Left: your agent, and your rules for your teammate",
+      "s1Body": "Your session on this machine — type to your agent here. Above the box you set how it treats your teammate's requests; only you can change that.",
+      "s2Title": "Right: their side and rules",
+      "s2Body": "Their session, read-only, every 15 s. The rules above their box are theirs; only they change them.",
+      "s3Title": "Both can ask the other's agent",
+      "s3Body": "Ask theirs from the right box. Theirs land on the left, marked From your teammate.",
+      "hide": "Hide — reopen with ?"
+    },
+    "tiers": {
+      "title": "How their agent treats your requests",
+      "byTeammate": "Set by your teammate",
+      "byTeammateTip": "Set by your teammate — only they can change it",
+      "byFrago": "frago's rules",
+      "byFragoTip": "frago's default rules. Your teammate's own settings haven't reached this side — their frago or the relay may be an older version.",
+      "read": "Read-only asks",
+      "change": "Changes anything",
+      "never": "Secrets · deletes",
+      "neverTip": "frago's rules say this is never done — no one can switch it on"
+    },
+    "verdict": {
+      "do": "Does it",
+      "ask": "Asks its owner",
+      "refuse": "Refuses"
+    },
+    "predict": {
+      "idle": "Type a request to see how their agent will treat it.",
+      "readDo": "<b>Looks read-only</b> — their rules say their agent just does it.",
+      "readAsk": "<b>Looks read-only</b> — but their rules say <b>their agent asks its owner first.</b>",
+      "changeAsk": "Mentions {{words}} — <b>their agent will stop and ask its owner first.</b>",
+      "changeRefuse": "Mentions {{words}} — <b>their agent will refuse</b>: their rules turn down changes.",
+      "never": "Mentions {{words}} — <b>their agent won't do this</b>, whoever asks."
+    },
+    "request": {
+      "title": "Your request",
+      "via": "via frago team",
+      "sent": "Sent",
+      "delivered": "Delivered",
+      "onIt": "Their agent is on it",
+      "waitingOwner": "Waiting for their owner's OK",
+      "replied": "Their agent replied",
+      "footOnIt": "Its reply will show up in this column.",
+      "footWaiting": "Their agent paused to ask its owner. Their answer will show up in this column.",
+      "footNever": "This asks for something their agent won't do — expect a refusal here.",
+      "footRefuse": "Their rules turn down changes — expect a refusal here.",
+      "stale": "Not in their session yet — they may be offline; it waits on the relay (up to 50 messages)."
+    },
+    "incoming": {
+      "from": "From your teammate",
+      "via": "via frago team",
+      "verified": "verified",
+      "notVerified": "not verified",
+      "yourRules": "Your rules: {{tier}} → <b>{{verdict}}</b>",
+      "yourRulesTip": "A guess from the words in the request. Your agent reads it and decides; its reply below is what counts.",
+      "tierRead": "read-only asks",
+      "tierChange": "changes",
+      "tierNever": "secrets · deletes"
+    },
+    "rules": {
+      "summaryKey": "Teammate requests:",
+      "summary": "read-only → {{read}} · changes → {{change}}",
+      "word": {
+        "do": "do it",
+        "ask": "ask me",
+        "refuse": "refuse"
+      },
+      "open": "Change",
+      "close": "Close",
+      "onlyYou": "Only you can change this",
+      "note": "How your agent treats what your teammate asks it to do. Only you can change this; your teammate sees it on their side.",
+      "readTitle": "Read-only asks",
+      "readBody": "Answer, look at a command, read code",
+      "doIt": "Do it",
+      "askMe": "Ask me first",
+      "changeTitle": "Changes anything",
+      "changeBody": "Edit files, install, commit · push · publish, reach outside services, read out what identifies this machine",
+      "refuse": "Refuse",
+      "neverTitle": "Secrets · deletes",
+      "neverBody": "Leak a secret, delete for good, get around the rules",
+      "saveFailed": "Couldn't save: {{error}}"
+    }
   },
   "agent": {
     "notInstalled": "Not found on this machine — install it and it shows up here by itself",

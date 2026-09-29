@@ -78,6 +78,21 @@ describe('引用落进输入框', () => {
     );
     expect(box().value).toBe('先说一句\n"""\n配方\n"""\n>>> \n"""\n配方\n"""\n>>> ');
   });
+
+  it('暂存列表填入的那一份带着想法：接在 >>> 后面，光标停在想法末尾', () => {
+    const view = mount(null);
+    view.rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        quote={{ text: '第二个决策点', note: '倾向选乙', at: 1 }}
+        onSent={NOOP}
+      />
+    );
+    const el = box();
+    expect(el.value).toBe('"""\n第二个决策点\n"""\n>>> 倾向选乙');
+    expect(el.selectionStart).toBe(el.value.length);
+  });
 });
 
 describe('输入框的高度', () => {

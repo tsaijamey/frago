@@ -123,9 +123,17 @@ import type {
   ClaudeUsageBucket,
   TmuxSessionsResponse,
   TmuxSessionsCount,
+  TmuxWaitingResponse,
   CloseTmuxSessionsResponse,
   EnvironmentResponse,
   EnvironmentUpgradeResponse,
+  WorkbenchMark,
+  WorkbenchMarkKind,
+  SessionMarks,
+  BranchRequest,
+  BranchLaunch,
+  BranchCloseBy,
+  BranchCloseResult,
 } from '@/types/api';
 
 export type {
@@ -240,6 +248,13 @@ export type {
   TokenDayBucket,
   ClaudeUsage,
   ClaudeUsageBucket,
+  WorkbenchMark,
+  WorkbenchMarkKind,
+  SessionMarks,
+  BranchRequest,
+  BranchLaunch,
+  BranchCloseBy,
+  BranchCloseResult,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -1495,6 +1510,11 @@ export async function setTmuxCleanupThreshold(hours: number): Promise<TmuxSessio
   });
 }
 
+/** 哪几场停在输入框前等人——会话页「For you」每 15 秒问一次。 */
+export async function getTmuxWaiting(): Promise<TmuxWaitingResponse> {
+  return fetchApi<TmuxWaitingResponse>('/system/tmux-sessions/waiting');
+}
+
 /** 只数个数和内存——左下角那个数字每分钟问一次的就是它，不读任何记录。 */
 export async function getTmuxSessionCount(): Promise<TmuxSessionsCount> {
   return fetchApi<TmuxSessionsCount>('/system/tmux-sessions/count');
@@ -1525,4 +1545,51 @@ export async function startEnvironmentUpgrade(ids: string[]): Promise<Environmen
 /** 这一批升级到哪一步了。 */
 export async function getEnvironmentUpgradeStatus(): Promise<EnvironmentUpgradeResponse> {
   return fetchApi<EnvironmentUpgradeResponse>('/system/environment/upgrade');
+}
+
+// ============================================================
+// 会话页标注 — 引用与暂存
+// ============================================================
+
+/** 这场会话的全部标注。还没有就是空列表。 */
+export async function getSessionMarks(sessionId: string): Promise<SessionMarks> {
+  return fetchApi<SessionMarks>(`/workbench/sessions/${encodeURIComponent(sessionId)}/marks`);
+}
+
+/** 整份覆盖。服务端交回落盘后的那一份。 */
+export async function putSessionMarks(
+  sessionId: string,
+  marks: SessionMarks
+): Promise<SessionMarks> {
+  return fetchApi<SessionMarks>(`/workbench/sessions/${encodeURIComponent(sessionId)}/marks`, {
+    method: 'PUT',
+    body: JSON.stringify(marks),
+  });
+}
+
+// ============================================================
+// 会话分支
+// ============================================================
+
+/**
+ * 从这场会话圈的一段原文起一场分支会话。第一句话、记账都在服务端
+ * （`POST /api/workbench/sessions/{sid}/branch`），这一侧 NEVER 另拼一份。
+ */
+export async function startBranch(sessionId: string, body: BranchRequest): Promise<BranchLaunch> {
+  return fetchApi<BranchLaunch>(`/workbench/sessions/${encodeURIComponent(sessionId)}/branch`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** 把 `parentId` 分到 `childId` 的那条分支记为已收口：关系账与主线标注由服务端一起改。 */
+export async function closeBranch(
+  parentId: string,
+  childId: string,
+  by: BranchCloseBy
+): Promise<BranchCloseResult> {
+  return fetchApi<BranchCloseResult>(
+    `/workbench/sessions/${encodeURIComponent(parentId)}/branches/${encodeURIComponent(childId)}/close`,
+    { method: 'POST', body: JSON.stringify({ by }) }
+  );
 }

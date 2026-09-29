@@ -3,46 +3,21 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, CornerDownRight, Pin, Tag } from 'lucide-react';
-import { LiveRing } from '@/components/ui/LiveEdge';
+import { Check, Copy, CornerDownRight, GitBranch, Loader2, Pin } from 'lucide-react';
 import i18n from '@/i18n';
-import {
-  activityTs,
-  useWorkbenchLabels,
-  type SessionStatus,
-  type WorkbenchSession,
-} from '@/hooks/useWorkbenchSessions';
+import { formatClock } from './RecordCard';
+import { activityTs, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
+import type { ForYouEmphasis, ForYouInfo } from '@/hooks/useForYou';
 
-const ACCENT_TEXT = 'text-accent-primary';
-const ACCENT_BG = 'bg-accent-primary-10';
+/** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
+const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
 
-/**
- * 每一档的点。
- *
- * **只有两档带颜色。** 在跑是绿、出错是红——这两档要人回来看一眼。已完成与停着占了清单
- * 的九成，它们是会话正常的归宿，给颜色等于把整条清单染花。这两档改用两级灰区分：
- * 已完成亮一档、停着暗一档，旁边本来就写着字，不靠颜色也读得出。
- */
-const STATUS_DOT: Record<SessionStatus, string> = {
-  running: 'bg-accent-primary',
-  error: 'bg-accent-error',
-  done: 'bg-text-secondary',
-  idle: 'bg-text-dim',
-};
-
-/**
- * 状态文字的颜色。
- *
- * 「已完成」从前是蓝的。一千多场会话里六成是这一档，于是整条清单常年泛着蓝——一个占
- * 多数的、且不需要人做任何事的状态，不该拿一个颜色去标它。现在它跟其余静态信息一样是
- * 中性灰，颜色只留给需要人注意的两档：在跑（绿）与出错（红）。
- * 筛选行那几个点仍各有各的颜色——那里是图例，要的正是彼此可辨。
- */
-const STATUS_TEXT: Record<SessionStatus, string> = {
-  running: 'text-accent-primary',
-  error: 'text-accent-error',
-  done: 'text-text-muted',
-  idle: 'text-text-muted',
+/** 加重的 For you 悬停说什么。 */
+const EMPHASIS_HINT_KEY: Record<ForYouEmphasis, string> = {
+  answer: 'workbench.forYou.whyAnswer',
+  'pick-one': 'workbench.forYou.whyPickOne',
+  stopped: 'workbench.forYou.whyStopped',
+  'decision-card': 'workbench.forYou.whyDecisionCard',
 };
 
 /**
@@ -98,6 +73,62 @@ export function relativeTime(ts: number, now: number = Date.now()): string {
 }
 
 /**
+ * 过了多久，不带「ago」：「just now」「5 min」「3 h」「2 d」，一个月以上写日期。
+ *
+ * 清单第一行的时间只剩这一种写法。For you 那几场它就是「停了多久」，其余是「多久前说的
+ * 最后一句」——两种读法都不需要「ago」来撑。
+ */
+export function shortAge(ts: number, now: number = Date.now()): string {
+  if (!ts) return '';
+  const delta = Math.max(0, now - ts);
+  const minute = 60_000;
+  if (delta < minute) return i18n.t('workbench.rail.ageNow');
+  if (delta < 60 * minute) return i18n.t('workbench.rail.ageMin', { n: Math.floor(delta / minute) });
+  if (delta < 24 * 60 * minute) {
+    return i18n.t('workbench.rail.ageHour', { n: Math.floor(delta / (60 * minute)) });
+  }
+  const days = Math.floor(delta / (24 * 60 * minute));
+  if (days < 30) return i18n.t('workbench.rail.ageDay', { n: days });
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+}
+
+/** 「For you」标签。加重的换告警橙底，其余中性描边；都不用绿。 */
+export function ForYouChip({ emphasis }: { emphasis: ForYouEmphasis | null }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-testid="for-you-chip"
+      data-emphasis={emphasis ?? 'none'}
+      title={emphasis ? t(EMPHASIS_HINT_KEY[emphasis]) : undefined}
+      className={`inline-flex shrink-0 items-center rounded-[5px] px-1.5 py-[1px] text-[11px] font-medium leading-[1.4] ${
+        emphasis
+          ? 'bg-accent-warning-10 text-accent-warning'
+          : 'border border-border-strong text-text-secondary'
+      }`}
+    >
+      {t('workbench.forYou.label')}
+    </span>
+  );
+}
+
+/** 本地先挂的「Sending」：话刚出门，不等清单那 15 秒一刷。 */
+export function SendingChip() {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-testid="sending-chip"
+      className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border-color px-1.5 py-[1px] text-[11px] leading-[1.4] text-text-muted"
+    >
+      <Loader2 size={10} className="animate-spin" />
+      {t('workbench.forYou.sending')}
+    </span>
+  );
+}
+
+/**
  * 展开那一叠的三角。
  *
  * **实心，不是细线。** 从前这里是一条 lucide 的箭头，1.5px 描边、中性灰、没有底——
@@ -126,34 +157,21 @@ function DisclosureTriangle({ expanded }: { expanded: boolean }) {
   );
 }
 
-function StatusDot({ status }: { status: SessionStatus }) {
-  const { statusLabel } = useWorkbenchLabels();
-  return (
-    <span
-      data-status={status}
-      title={statusLabel(status)}
-      className={`inline-flex shrink-0 items-center gap-1 text-[11px] ${STATUS_TEXT[status]}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
-      {statusLabel(status)}
-    </span>
-  );
-}
-
 export default function SessionItem({
   session,
   selected,
   copied,
   pinned = false,
-  unread = false,
+  forYou = null,
+  sending = false,
   nested = false,
+  branchOf = null,
   workerCount = 0,
   workersExpanded = false,
   onSelect,
   onCopy,
   onTogglePin,
   onToggleWorkers,
-  onPickGroup,
 }: {
   session: WorkbenchSession;
   selected: boolean;
@@ -161,19 +179,23 @@ export default function SessionItem({
   /** 这场会话在不在置顶名单里。 */
   pinned?: boolean;
   /**
-   * agent 说完了话、你还没回去看过这一场。
-   *
-   * 判据在 `useSessionViews`：这场已经不在跑、最后一句回复比你上次点开它的时刻新，
-   * 而且你至少点开过它一次。
+   * 这一场挂着 For you：有 agent 停在输入框前等你（判据见 `useForYou`）。挂着的两行，
+   * 没挂的一行——清单上没有别的状态词。
    */
-  unread?: boolean;
+  forYou?: ForYouInfo | null;
+  /** 这一场本地刚发出一句话、还在路上。 */
+  sending?: boolean;
   /**
    * 这一行是挂在别人下面的 worker。
    *
-   * 区分**不靠颜色**：颜色在这张清单里只有两个用处——在跑是绿、出错是红，多一种就把
-   * 那两档淹了。从属关系靠三样一起说：缩进（位置本身）、行首那个折角、标题降一档字色。
+   * 区分**不靠颜色**：从属关系靠三样一起说：缩进（位置本身）、行首那个折角、标题降一档字色。
    */
   nested?: boolean;
+  /**
+   * 这一场是从哪场会话分出来的分支。分支会话和人自己开的会话一样摆在主干上（它等的是人），
+   * 出处只在这一行说：「分支自 <原会话>」，点它切到原会话。原会话标题认不出时写编号开头。
+   */
+  branchOf?: { id: string; title: string | null } | null;
   /** 这场派出去过几个 worker。0 就不长展开按钮。 */
   workerCount?: number;
   workersExpanded?: boolean;
@@ -183,13 +205,11 @@ export default function SessionItem({
   onTogglePin?: (session: WorkbenchSession) => void;
   /** 展开/折起这场派出去的 worker。不给就不长这颗按钮。 */
   onToggleWorkers?: (session: WorkbenchSession) => void;
-  /** 放进分组。`anchor` 是按钮本身，浮层按它的位置摆。不给就不长这颗按钮。 */
-  onPickGroup?: (session: WorkbenchSession, anchor: HTMLElement) => void;
 }) {
   const { t } = useTranslation();
-  const { familyLabel } = useWorkbenchLabels();
-  const dirTail = session.directory.split('/').filter(Boolean).slice(-2).join('/');
   const cmd = resumeCommand(session);
+  const age = forYou ? forYou.waitingSince : activityTs(session);
+  const bold = forYou?.unseen ?? false;
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
   const stacked = hasWorkers && !workersExpanded;
@@ -235,19 +255,19 @@ export default function SessionItem({
         }}
         aria-current={selected ? 'true' : undefined}
         data-testid="session-item"
-        data-status={session.status}
+        data-for-you={forYou ? 'true' : undefined}
         data-pinned={pinned ? 'true' : undefined}
         data-origin={session.origin}
         data-nested={nested ? 'true' : undefined}
         data-stacked={stacked ? 'true' : undefined}
         /* **平时不是一张卡。** 从前每一场会话都有自己的边框与卡底，一屏摆下五六张，人看到
            的先是五六个方框，然后才是里面的字。清单要的是一列可扫读的行：平时没有任何容器，
-           鼠标经过才浮出一层底，选中的那一场换成品牌绿淡底——整行换底，不靠任何单边色条。
-           绿环去掉了：淡底加标题转绿已经足够把它从一列灰字里分出来，再加一圈亮绿只是喊。
+           鼠标经过才浮出一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，
+           不靠任何单边色条，也不用绿：绿只留给在跑，选中不是动作。
            **底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠才立得住。
            容器在这里不是装饰，它就是"这下面还有东西"这句话本身。 */
         className={`group/session relative w-full cursor-pointer rounded-[8px] px-2.5 py-2 text-left transition-colors duration-200 ${
-          selected ? ACCENT_BG : 'hover:bg-bg-hover'
+          selected ? SELECTED : 'hover:bg-bg-hover'
         }`}
       >
       <div className="flex items-start gap-2">
@@ -286,131 +306,107 @@ export default function SessionItem({
             aria-hidden="true"
           />
         ) : null}
-        {/* 绿圈与分区标题上那个是同一个东西：这一场 agent 说完了话，你还没回来看。
-            点开这张卡它就灭。 */}
-        {unread ? (
-          /* 这一格的高度就是标题第一行的高度（字号 × 1.5 的行高），圈在格子里上下居中，
-             于是圈的中线正好落在标题第一行的中线上。从前靠一个 5px 的下推去凑，而这一格
-             自己的高度跟着继承来的行高走、圈又按文字基线摆，两边各算各的，对不齐。 */
-          <span
-            data-testid="session-unread"
-            className={`flex shrink-0 items-center ${nested ? 'h-[18px]' : 'h-[19.5px]'}`}
-          >
-            <LiveRing label={t('workbench.rail.unreadMark')} />
-          </span>
-        ) : null}
         <span
-          className={`line-clamp-2 min-w-0 flex-1 font-medium leading-[1.5] ${
+          className={`min-w-0 flex-1 truncate leading-[1.5] ${
             nested ? 'text-[12px]' : 'text-[13px]'
-          } ${selected ? ACCENT_TEXT : nested ? 'text-text-secondary' : 'text-text-primary'}`}
+          } ${bold ? 'font-semibold' : 'font-medium'} ${
+            nested && !selected ? 'text-text-secondary' : 'text-text-primary'
+          }`}
         >
           {session.title}
         </span>
-        <span
-          className="shrink-0 font-mono text-[11px] text-text-muted"
-          title={
-            session.last_reply_at
-              ? t('workbench.rail.tsLastReply')
-              : t('workbench.rail.tsLastActive')
-          }
-        >
-          {relativeTime(activityTs(session))}
+        {/* 时间与悬停按钮叠在同一格：平时是时间，鼠标进卡（或键盘走到）换成按钮。 */}
+        <span className="relative flex shrink-0 items-center">
+          <span
+            className={`flex items-center gap-1 font-mono text-[11px] text-text-muted ${
+              onTogglePin || cmd ? 'group-hover/session:invisible group-focus-within/session:invisible' : ''
+            }`}
+            title={
+              forYou
+                ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
+                : session.last_reply_at
+                  ? t('workbench.rail.tsLastReply')
+                  : t('workbench.rail.tsLastActive')
+            }
+          >
+            {pinned ? (
+              <Pin size={10} fill="currentColor" className="text-text-primary" aria-hidden />
+            ) : null}
+            {shortAge(age)}
+          </span>
+          <span className="absolute right-0 top-1/2 hidden -translate-y-1/2 items-center gap-1 group-hover/session:flex group-focus-within/session:flex">
+            {onTogglePin ? (
+              <button
+                type="button"
+                title={pinned ? t('workbench.rail.unpinHint') : t('workbench.rail.pinHint')}
+                aria-label={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
+                aria-pressed={pinned}
+                data-testid="toggle-pin"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTogglePin(session);
+                }}
+                /* 带字的按钮：图钉图标不说「点了会怎样」，字说。中性色，不用品牌绿。 */
+                className="flex items-center gap-1 rounded-[5px] border border-border-color bg-bg-secondary px-1.5 py-[1px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+              >
+                <Pin size={10} fill={pinned ? 'currentColor' : 'none'} />
+                {pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
+              </button>
+            ) : null}
+            {/* 没有续接命令的那一家（CoreAgent）不长这颗按钮：一颗点了会把错命令放进剪贴板
+                的按钮，比没有按钮坏得多。 */}
+            {cmd ? (
+              <button
+                type="button"
+                title={cmd}
+                aria-label={t('workbench.rail.copyResume')}
+                data-testid="copy-resume"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy(session);
+                }}
+                className="rounded-[5px] border border-border-color bg-bg-secondary p-[3px] text-text-muted hover:text-text-primary"
+              >
+                {copied ? <Check size={11} /> : <Copy size={11} />}
+              </button>
+            ) : null}
+          </span>
         </span>
       </div>
 
-      {/* 行内挤、行间松——这一行贴着标题走，它是标题的附属而不是并列的另一件事。
-          行与行之间留 8px（见 SessionRail 里那道间隔），内外差出四倍，
-          眼睛才分得清「一行从哪开始」。workbuddy 的清单也不画分隔线，靠的就是这个比例。 */}
-      <div className="mt-0.5 flex items-center gap-2">
-        <StatusDot status={session.status} />
-        {/* 来源从前套着一颗药丸。行没有卡底之后，药丸的底色与清单底色是同一个值——
-            那圈药丸只剩一个看不见的轮廓在占位。改成一段普通的次要文字，
-            用一个间隔点与目录分开就够了。 */}
-        <span className="shrink-0 text-[11px] text-text-muted">
-          {familyLabel(session.family)}
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-dim">
-          {dirTail}
-        </span>
-        {onPickGroup ? (
-          <button
-            type="button"
-            title={t('workbench.rail.groupPick')}
-            aria-label={t('workbench.rail.groupPick')}
-            data-testid="pick-group"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPickGroup(session, e.currentTarget);
-            }}
-            /* 与图钉同一个规矩：平时不显形，鼠标进卡或键盘走到才浮出来。这张卡在哪个组，
-               分区标题已经说了，卡上不必再常驻一颗。 */
-            className="shrink-0 rounded-[5px] p-1 text-text-muted opacity-0 transition-colors duration-200 hover:text-text-primary focus-visible:opacity-100 group-hover/session:opacity-100"
-          >
-            <Tag size={12} />
-          </button>
-        ) : null}
-        {onTogglePin ? (
-          <button
-            type="button"
-            title={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pinThis')}
-            aria-label={pinned ? t('workbench.rail.unpin') : t('workbench.rail.pin')}
-            aria-pressed={pinned}
-            data-testid="toggle-pin"
-            onClick={(e) => {
-              e.stopPropagation();
-              onTogglePin(session);
-            }}
-            /* 置顶的那几场图钉一直亮着，其余的平时不显形、鼠标进卡才浮出来：一千多张卡
-               每张都常驻一颗图钉，视觉噪音远大于它的用处。键盘走到时同样显形。 */
-            className={`shrink-0 rounded-[5px] p-1 transition-colors duration-200 ${
-              pinned
-                ? ACCENT_TEXT
-                : 'text-text-muted opacity-0 hover:text-text-primary focus-visible:opacity-100 group-hover/session:opacity-100'
-            }`}
-          >
-            {/* 图钉的形状不随状态变，只有颜色与实心变：形状一换（图钉↔断了的图钉），
-                静止时看到的就成了"这一下会发生什么"，而不是"这场现在是什么状态"。 */}
-            <Pin size={12} fill={pinned ? 'currentColor' : 'none'} />
-          </button>
-        ) : null}
-        {/* 没有续接命令的那一家（CoreAgent）不长这颗按钮：一颗点了会把错命令放进剪贴板
-            的按钮，比没有按钮坏得多。 */}
-        {cmd ? (
-          <button
-            type="button"
-            title={cmd}
-            aria-label={t('workbench.rail.copyResume')}
-            data-testid="copy-resume"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopy(session);
-            }}
-            className={`shrink-0 rounded-[5px] p-1 transition-colors duration-200 ${
-              copied ? ACCENT_TEXT : 'text-text-muted hover:text-text-primary'
-            }`}
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-          </button>
-        ) : null}
-      </div>
-
-      {session.digest_done ? (
-        <p
-          data-testid="digest-done"
-          className="mt-1 line-clamp-2 text-[11px] leading-[1.5] text-text-muted"
-        >
-          <span className="text-text-muted">{t('workbench.rail.digestDone')} </span>
-          {session.digest_done}
-        </p>
+      {/* 第二行只有两种可能：For you 加它收尾的原话，或者刚发出、还在路上的 Sending。
+          其余的会话只有一行——状态词、来源、目录、摘要都退场了。 */}
+      {forYou || sending ? (
+        <div className="mt-1 flex min-w-0 items-start gap-1.5">
+          {sending ? <SendingChip /> : forYou ? <ForYouChip emphasis={forYou.emphasis} /> : null}
+          {!sending && forYou?.words ? (
+            <p
+              data-testid="for-you-words"
+              className="line-clamp-2 min-w-0 flex-1 text-[11px] leading-[1.5] text-text-secondary"
+            >
+              {forYou.words}
+            </p>
+          ) : null}
+        </div>
       ) : null}
-      {session.digest_stuck ? (
-        <p
-          data-testid="digest-stuck"
-          className="mt-1 line-clamp-2 text-[11px] leading-[1.55] text-accent-error"
+
+      {/* 分支的出处。中性灰小字，不抢 For you 那一行；点它去原会话，不点就是普通的一行说明。 */}
+      {branchOf ? (
+        <button
+          type="button"
+          data-testid="branch-of"
+          title={t('workbench.rail.branchOfHint')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(branchOf.id);
+          }}
+          className="mt-1 flex max-w-full items-center gap-1 text-left text-[11px] leading-[1.5] text-text-muted hover:text-text-secondary"
         >
-          <span className="opacity-70">{t('workbench.rail.digestStuck')} </span>
-          {session.digest_stuck}
-        </p>
+          <GitBranch size={11} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            {t('workbench.rail.branchOf', { title: branchOf.title ?? branchOf.id.slice(0, 8) })}
+          </span>
+        </button>
       ) : null}
       </div>
     </div>

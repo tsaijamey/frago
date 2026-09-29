@@ -204,3 +204,66 @@ class TestFindForSession:
 
     def test_no_tmux_at_all_returns_nothing(self):
         assert self._find([]) is None
+
+
+class TestForYouSignals:
+    """会话页「For you」要的三项：客户端活不活、停没停在待输入态、收尾原话。
+
+    判不出一律给 None，前端一律不挂——宁可漏挂，也不误挂。
+    """
+
+    def test_shell_in_the_foreground_means_the_client_is_gone(self):
+        assert svc._client_alive("zsh") is False
+        assert svc._client_alive("-bash") is False
+
+    def test_a_version_number_in_the_foreground_is_a_live_claude(self):
+        # claude 把进程名改成自己的版本号，按「叫不叫 claude」判会失灵
+        assert svc._client_alive("2.1.281") is True
+
+    def test_unknown_foreground_is_unknown(self):
+        assert svc._client_alive("") is None
+        assert svc._client_alive(None) is None
+
+    def test_dead_client_is_never_waiting(self):
+        assert svc._awaiting_input("❯ \n", False) is False
+
+    def test_unknown_client_cannot_be_judged(self):
+        assert svc._awaiting_input("❯ \n", None) is None
+
+    def test_closing_text_keeps_the_end(self):
+        text = "前情" * 400 + "\n\n要我把这条记成待办吗？"
+        out = svc._closing_text(text, 50)
+        assert out.startswith("…")
+        assert out.endswith("要我把这条记成待办吗？")
+
+    def test_closing_text_keeps_paragraphs_and_drops_headings(self):
+        text = "**结论**\n\n做完了。\n\n---\n\n你来定：A or B."
+        assert svc._closing_text(text) == "做完了。\n\n你来定：A or B."
+
+    def test_non_claude_rows_are_not_judged(self):
+        # 认不出记录（opencode / codex / 非 frago 起的）不套 claude 的判据
+        with (
+            patch.object(svc, "_session_names", return_value=["frago-agent-oc", "misc"]),
+            patch.object(svc, "_pane_commands", return_value={"frago-agent-oc": "opencode", "misc": "vim"}),
+            patch.object(svc, "_tmux", return_value="┃ Build · Ask anything\n"),
+            patch.object(svc, "_resolve_session_id", return_value="sid-oc"),
+            patch.object(svc, "_transcript_path", return_value=None),
+        ):
+            rows = svc.list_waiting()
+        assert [r.awaiting_input for r in rows] == [None, None]
+        assert rows[0].client_alive is True
+
+    def test_claude_row_waiting_in_an_empty_box(self):
+        pane = "⏺ 做完了。\n\n────\n❯\xa0\x1b[2mA, go ahead\x1b[0m\n────\n"
+        with (
+            patch.object(svc, "_session_names", return_value=["frago-agent-s1"]),
+            patch.object(svc, "_pane_commands", return_value={"frago-agent-s1": "2.1.281"}),
+            patch.object(svc, "_tmux", return_value=pane),
+            patch.object(svc, "_resolve_session_id", return_value="sid-1"),
+            patch.object(svc, "_transcript_path", return_value=__import__("pathlib").Path("/x")),
+            patch.object(svc, "_transcript_tail", return_value=("end_turn", "2026-09-24T13:11:00+00:00", "A or B?")),
+        ):
+            (row,) = svc.list_waiting()
+        assert row.awaiting_input is True
+        assert row.last_stop_at == "2026-09-24T13:11:00+00:00"
+        assert row.closing_text == "A or B?"

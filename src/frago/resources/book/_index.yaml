@@ -62,7 +62,7 @@
 
 - name: browser-backend-choice
   category: must
-  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动 frago 自己那份 Chrome for Testing，没有才退到 Edge 的真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口默认 9222，白名单另有 9223 供 agent_os 机位专用；9222 上还住着 agent_os 演员，舞台跑着时别起别停）> 自起进程（禁止）；group 规则两端一致"
+  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动 frago 自己那份 Chrome for Testing，没有才退到 Edge 的真实 profile，anti-bot 天然过检）> -b cdp（仅限 agent_os：舞台真无头/机位独立实例；extension 没连上一律 frago browser start，不降级；端口默认 9222，白名单另有 9223 供 agent_os 机位专用；9222 上还住着 agent_os 演员，舞台跑着时别起别停）> 自起进程（禁止）；group 规则两端一致"
 
 - name: browser-anti-bot
   category: available
@@ -87,6 +87,10 @@
 - name: prompt-form-protocol
   category: must
   brief: "prompt 形态判定协议：命令/真提问/反问/宣泄四形态各自义务、判不清按真提问、改状态动作须指向当轮明示指令"
+
+- name: answer-needed-by-human
+  category: must
+  brief: "要人拍板时把全部选项写进回复末尾的 answer-needed-by-human 区块（4 型 + 标记），WebUI 画成卡片；收到【answer】开头的答复，effect 原文就是本轮授权范围"
 
 - name: must-explain-in-business-language
   category: must

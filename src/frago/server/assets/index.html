@@ -27,35 +27,6 @@
         }
       })();
     </script>
-    <script>
-      // Calculate font scale based on SCREEN resolution (not viewport)
-      // Base: 1080p screen height = 13px; screens shorter than that shrink linearly.
-      // Taller screens do NOT grow: screen.height is already in CSS pixels, so a
-      // 1440-tall display just has more room, not smaller glyphs. Growing past 13px
-      // also only hit text sized via --font-scale, while Tailwind text-[13px] stayed
-      // put, so the rail and chat body ballooned next to the session list.
-      (function () {
-        var baseHeight = 1080;
-        var baseFontSize = 13;
-        var minFontSize = 10;
-        var maxFontSize = baseFontSize;
-
-        // Use screen.height (screen resolution), not innerHeight (viewport)
-        var screenHeight = window.screen.height;
-        var calculatedSize = (screenHeight / baseHeight) * baseFontSize;
-        var clampedSize = Math.max(minFontSize, Math.min(maxFontSize, calculatedSize));
-        var scale = clampedSize / baseFontSize;
-
-        // Readability boost: the resolution-derived scale alone left body text
-        // small (≈12px) for sustained reading. Lift everything ~15%.
-        var readabilityBoost = 1.15;
-        scale = scale * readabilityBoost;
-
-        // Inline style on <html> wins over the :root fallback in globals.css,
-        // so THIS is the effective font scale — tune it here, not in CSS.
-        document.documentElement.style.setProperty('--font-scale', scale);
-      })();
-    </script>
     <style>
       /* Prerendered loading UI */
       #frago-loading {
@@ -189,6 +160,6 @@
         }
       };
     </script>
-    <script src="./assets/index-BmA6o1rA.js"></script>
+    <script src="./assets/index-CcK_jOsE.js"></script>
   </body>
 </html>

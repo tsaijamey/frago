@@ -284,8 +284,8 @@ def validate_cdp_port(ctx: Context, param: object, value: int | None) -> int | N
         f"agent_os 演员也常驻在这一台上）与 {STAGE_RECORDER_CDP_PORT}"
         f"（agent_os 录制机位专用），收到 {value}。\n"
         f"  自创端口会在 ~/.frago/profiles/edge/{value}/ 生成垃圾 profile 目录。\n"
-        f"  常规浏览器操作走默认 extension 后端，本就不需要 --port；需要真无头 / "
-        f"独立实例时降级到 `frago browser -b cdp`，端口默认就是 "
+        f"  常规浏览器操作走默认 extension 后端，本就不需要 --port；`frago browser -b cdp`"
+        f"（真无头 / 独立实例）仅限 agent_os，端口默认就是 "
         f"{DEFAULT_CDP_PORT}，不用传 --port（见 frago book browser-backend-choice）。",
         ctx=ctx,
         param=param if isinstance(param, click.Parameter) else None,

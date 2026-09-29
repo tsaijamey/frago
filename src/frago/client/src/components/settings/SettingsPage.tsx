@@ -7,7 +7,7 @@
  * tallest single category. Styling matches the Claude Sessions page tokens.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   KeyRound,
@@ -27,6 +27,8 @@ import { InitSettings } from './InitSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
 import OfficialResourceSettings from './OfficialResourceSettings';
 import PromptCapabilitySettings from './PromptCapabilitySettings';
+import PageHeader from '@/components/layout/PageHeader';
+import { getInitStatus } from '../../api/client';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
@@ -89,11 +91,31 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
 
   const activeTab = TABS.find((tab) => tab.id === active) ?? TABS[0];
 
+  // 页头的计数写正在跑的 frago 版本。取的是 About 面板已在用的初始化状态接口，
+  // 不另开接口；取不到就不写，页头只剩标题。
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getInitStatus()
+      .then((status) => {
+        if (alive) setVersion(status.current_frago_version || null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
-    /* 页面自己的标题去掉了。左侧主导航上「config」那一项已经亮着，右侧面板的标题又写着
-       分类名——中间再夹一个「设置 / 配置 frago 功能」，是同一件事说第三遍，
-       还把真正的内容往下推了七十多像素。 */
-    <div className="page-scroll">
+    /* 页头补回来了，跟其余几页同一条 52px 的统一页头：标题「Settings」加版本号，只有一行。
+       从前去掉它，是因为那一版页头是大标题压一句「配置 frago 功能」，占掉七十多像素又没说
+       什么；统一页头没有第二行，这个理由不在了，而少了它，这一页是全站唯一顶上没有名字的。 */
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader
+        title={t('settings.title')}
+        meta={version ? t('settings.headerMeta', { version }) : undefined}
+      />
+      {/* 页头以下两栏：二级菜单钉住不动，只有右侧正文自己滚。 */}
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('settings.title')}>
           {TABS.map((tab) => (
@@ -107,23 +129,25 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               title={t(`settings.tabDesc.${tab.id}`)}
               aria-current={tab.id === active ? 'true' : undefined}
             >
-              <tab.Icon size={16} strokeWidth={1.5} className="settings-nav-icon" />
+              <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
               <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
             </button>
           ))}
         </nav>
 
         <section className="settings-panel">
-          <div className="settings-panel-head">
-            <h2 className="settings-panel-title">{t(`settings.tabs.${active}`)}</h2>
-            <p className="settings-panel-desc">{t(`settings.tabDesc.${active}`)}</p>
-          </div>
-          <div className="settings-panel-body">
-            {activeTab.render({
-              onOpenInitWizard,
-              onConfigureProfile: handleConfigureProfile,
-              profileSignal,
-            })}
+          <div className="settings-panel-inner">
+            <div className="settings-panel-head">
+              <h2 className="settings-panel-title">{t(`settings.tabs.${active}`)}</h2>
+              <p className="settings-panel-desc">{t(`settings.tabDesc.${active}`)}</p>
+            </div>
+            <div className="settings-panel-body">
+              {activeTab.render({
+                onOpenInitWizard,
+                onConfigureProfile: handleConfigureProfile,
+                profileSignal,
+              })}
+            </div>
           </div>
         </section>
       </div>

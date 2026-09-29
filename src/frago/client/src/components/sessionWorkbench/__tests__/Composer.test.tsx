@@ -9,6 +9,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { SendTrail } from '@/hooks/useWorkbenchRecords';
 import Composer, { blockReason } from '../Composer';
 import i18n from '@/i18n';
 import { CONFIRM_WINDOW_MS } from '@/hooks/useSendToSession';
@@ -190,6 +191,8 @@ describe('Composer 输入区', () => {
 
     await waitFor(() => expect(screen.getByTestId('composer-error')).toBeTruthy());
     expect(screen.getByTestId('composer-error').textContent).toContain('tmux 会话没起来');
+    // 报错条交代原文去哪了：退回了下面的输入框
+    expect(screen.getByTestId('composer-kept').textContent).toContain('退回下面的输入框');
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('这段话不许丢');
     expect(screen.getAllByTestId('composer-thumb')).toHaveLength(1);
 
@@ -468,7 +471,7 @@ describe('服务器重启，等整轮的那条请求断在半路', () => {
   });
 });
 
-describe('信封：已发送与已入队列是两副面孔', () => {
+describe('待发的气泡：与记录流里的「你说」同一种画法', () => {
   const WAITING = {
     id: 'out-1',
     text: '把 recipes 目录清一遍',
@@ -476,37 +479,61 @@ describe('信封：已发送与已入队列是两副面孔', () => {
     at: Date.now(),
     state: 'sent' as const,
   };
-
-  it('已发送：那句话摆在输入区上方等着，输入框是空的', () => {
-    render(
-      <Composer sessionId={SID} family="claude-code" onSent={NOOP} outbound={[WAITING]} />
-    );
-
-    const envelope = screen.getByTestId('composer-outbound');
-    expect(envelope.getAttribute('data-state')).toBe('sent');
-    expect(envelope.textContent).toContain('已发送');
-    expect(envelope.textContent).toContain('把 recipes 目录清一遍');
-    // 排队那一档才有的东西，这一档不许出现。
-    expect(screen.queryByTestId('composer-outbound-queue-dots')).toBeNull();
+  const trail = (over: Partial<SendTrail> = {}): SendTrail => ({
+    id: 'out-1',
+    text: '把 recipes 目录清一遍',
+    attachments: 0,
+    recordId: null,
+    midTurn: false,
+    steps: { on_its_way: Date.now() },
+    ...over,
   });
 
-  it('已入队列：同一个信封换一副更重的样子，并说出它在排队', () => {
+  it('在路上：虚线气泡，说清它离开了页面还没进会话；标题已说了这一档，步骤链不重复', () => {
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        outbound={[WAITING]}
+        trails={[trail()]}
+      />
+    );
+
+    const bubble = screen.getByTestId('composer-outbound');
+    expect(bubble.getAttribute('data-state')).toBe('sent');
+    expect(bubble.className).toContain('border-dashed');
+    expect(bubble.textContent).toContain('在路上');
+    expect(bubble.textContent).toContain('已离开这个页面，还没进会话');
+    expect(bubble.textContent).toContain('把 recipes 目录清一遍');
+    expect(bubble.textContent?.split('在路上').length).toBe(2);
+    expect(screen.queryByTestId('send-progress')).toBeNull();
+  });
+
+  it('排队中：实线中性框加时钟，不用绿', () => {
     render(
       <Composer
         sessionId={SID}
         family="claude-code"
         onSent={NOOP}
         outbound={[{ ...WAITING, state: 'queued' }]}
+        trails={[trail({ midTurn: true, steps: { on_its_way: 1, queued: 2 } })]}
       />
     );
 
-    const envelope = screen.getByTestId('composer-outbound');
-    expect(envelope.getAttribute('data-state')).toBe('queued');
-    expect(envelope.textContent).toContain('已入队列');
-    expect(screen.getByTestId('composer-outbound-queue-dots')).toBeTruthy();
+    const bubble = screen.getByTestId('composer-outbound');
+    expect(bubble.getAttribute('data-state')).toBe('queued');
+    // 标题写着排队中，步骤链只留之前那一步
+    expect(bubble.textContent?.split('排队中').length).toBe(2);
+    expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('on_its_way');
+    expect(bubble.textContent).toContain('排队中');
+    expect(bubble.textContent).toContain('agent 还在处理你上一句');
+    expect(bubble.className).not.toContain('border-dashed');
+    // 排队不是成功，也不是动作：这一块里一处品牌绿都没有
+    expect(bubble.outerHTML).not.toContain('accent-primary');
   });
 
-  it('纯附件那一单没有正文，信封照样说得清它是什么', () => {
+  it('纯附件那一单没有正文，气泡照样说得清它是什么', () => {
     render(
       <Composer
         sessionId={SID}
@@ -516,14 +543,82 @@ describe('信封：已发送与已入队列是两副面孔', () => {
       />
     );
 
-    const envelope = screen.getByTestId('composer-outbound');
-    expect(envelope.textContent).toContain('只有附件');
-    expect(envelope.textContent).toContain('2');
+    const bubble = screen.getByTestId('composer-outbound');
+    expect(bubble.textContent).toContain('只有附件');
+    expect(bubble.textContent).toContain('2');
   });
 
   it('一条都没有就什么都不画——输入区上方不该无故多出一块', () => {
     render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} />);
     expect(screen.queryByTestId('composer-outbound')).toBeNull();
+    expect(screen.queryByTestId('composer-moved-up')).toBeNull();
+  });
+
+  it('全部落进记录流之后留一行「移进上面的对话 · 看看」，点看看交出那条记录', () => {
+    const onShow = vi.fn();
+    const { rerender } = render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        outbound={[WAITING]}
+        trails={[trail()]}
+        onShowInStream={onShow}
+      />
+    );
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        outbound={[]}
+        trails={[trail({ recordId: 'rec-9', steps: { on_its_way: 1, in_the_session: 2 } })]}
+        onShowInStream={onShow}
+      />
+    );
+    const line = screen.getByTestId('composer-moved-up');
+    expect(line.textContent).toContain('这句话已经移进上面的对话');
+    fireEvent.click(screen.getByTestId('composer-moved-up-show'));
+    expect(onShow).toHaveBeenCalledWith('rec-9');
+  });
+
+  it('发送中那颗按钮变灰，这一屏没有实心绿', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} />);
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: 'ping' } });
+    expect(screen.getByTestId('composer-send').className).toContain('bg-accent-primary');
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-send').className).not.toContain('bg-accent-primary')
+    );
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('没发出去：报错条里带同一串步骤名', () => {
+  it('✓ 在路上 › ✕ 没发出去，并说原文退回了输入框', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => failResponse('send failed: tmux 会话没起来'))
+    );
+    const failed: SendTrail = {
+      id: 'out-1',
+      text: 'x',
+      attachments: 0,
+      recordId: null,
+      midTurn: false,
+      steps: { on_its_way: 1, failed: 2 },
+    };
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} trails={[failed]} />);
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(screen.getByTestId('composer-error')).toBeTruthy());
+    const bar = screen.getByTestId('composer-error');
+    const progress = bar.querySelector('[data-testid=send-progress]');
+    expect(progress?.textContent).toContain('在路上');
+    expect(progress?.textContent).toContain('没发出去');
+    expect(bar.textContent).toContain('一个字没丢');
+    vi.unstubAllGlobals();
   });
 });
 
@@ -621,5 +716,55 @@ describe('交接到新会话', () => {
   it('一场都没选时不画', () => {
     render(<Composer sessionId={null} family={null} onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
     expect(screen.queryByTestId('composer-handoff')).toBeNull();
+  });
+});
+
+describe('决定卡片的答复', () => {
+  it('输入框里有字时收到卡片答复：投出的是答复，框里的字原样留着', async () => {
+    const onSent = vi.fn();
+    const onSendStart = vi.fn(() => 'out-1');
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={onSent} onSendStart={onSendStart} />
+    );
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '还没写完的一句' } });
+
+    const answer = { text: '【answer】A · 发布 —— 打 v1.4.111 tag 并上传 PyPI，发出去收不回', at: 1 };
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={onSent}
+        onSendStart={onSendStart}
+        answer={answer}
+      />
+    );
+
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    expect(sentBody(fetchMock)).toEqual({ text: answer.text, images: [], documents: [] });
+    // 同一条出门路：信封照开
+    expect(onSendStart).toHaveBeenCalledWith(answer.text, 0);
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('还没写完的一句');
+  });
+
+  it('发送失败：框里有字就收着等重试，不覆盖人在打的字', async () => {
+    fetchMock.mockImplementationOnce(async () => failResponse('send failed: tmux 会话没起来'));
+    const onSendFailed = vi.fn();
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={NOOP} onSendStart={() => 'out-9'} onSendFailed={onSendFailed} />
+    );
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '框里的字' } });
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        onSendStart={() => 'out-9'}
+        onSendFailed={onSendFailed}
+        answer={{ text: '【answer】B · 先不发 —— 改动留在 main，不打 tag', at: 1 }}
+      />
+    );
+    await waitFor(() => expect(onSendFailed).toHaveBeenCalledWith('out-9'));
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('框里的字');
+    expect(screen.getByTestId('composer-kept').textContent).toBe(i18n.t('workbench.composer.heldForRetry'));
   });
 });

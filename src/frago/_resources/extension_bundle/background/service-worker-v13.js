@@ -627,9 +627,33 @@ async function assertRoomInGroup(name) {
         });
 }
 
+// 启动时留下的那张空白页：`frago browser start` 拉起浏览器时带着
+// about:blank，窗口里先有这一页。第一个 group 开页时接过来用，不然它会
+// 一直挂在组外。不能关掉它了事——有头浏览器关掉最后一个标签连窗口一起
+// 没了，Linux / Windows 上浏览器直接退出。
+// 不能要求「整个浏览器只有这一页」：profile 会恢复上次没关的页面，
+// about:blank 夹在它们中间（2026-09-28 实测 4 页）。人按 Cmd+T 开的是
+// chrome://newtab，about:blank 基本只会是程序开的，所以只认：正好是
+// about:blank、不在任何标签组、也不归任何 group。一次只接管一张。
+// 多出来的那些由启动清理关掉，见 sweepStartupBlanks。
+function isStrayBlank(t) {
+    return t.url === "about:blank" && !t.pendingUrl
+        && (t.groupId == null || t.groupId === -1)
+        && !groupOwning(t.id);
+}
+
+async function launchPlaceholderTab() {
+    let tabs;
+    try { tabs = await chrome.tabs.query({}); } catch (_) { return null; }
+    return tabs.find(isStrayBlank) || null;
+}
+
 async function openTabInGroup(name, url) {
     const g = await assertRoomInGroup(name);
-    const tab = await chrome.tabs.create({ url, active: false });
+    const spare = await launchPlaceholderTab();
+    const tab = spare
+        ? await chrome.tabs.update(spare.id, { url })
+        : await chrome.tabs.create({ url, active: false });
     g.tabs.push(tab.id);
     g.current = tab.id;
     g.lastActivity = Date.now();
@@ -1622,6 +1646,70 @@ function bootstrap() {
         return expireIdleGroups();
     }).catch((e) => console.warn("[frago] bootstrap failed:", e));
 }
+
+// ══════════ 启动清理：关掉组外多余的 about:blank ══════════
+//
+// 每次启动窗口里都会攒下 about:blank：启动参数带来一张，profile 又把上次
+// 没关的那些恢复出来。只在启动后这一段清——运行途中网页自己也会弹
+// about:blank（有些登录弹窗先开空白页再往里写），那时候关就把人家弄断了。
+// 旧的 CDP 启动流程也只在启动时清一次孤儿页，界线划在同一处。
+//
+// 页数大于 1 才关；整个浏览器只剩一张 about:blank 时留着它，等出现第二张
+// 页再关——关掉最后一个标签，窗口跟着没了，Linux / Windows 上浏览器退出。
+// 恢复出来的页面是陆续到的，所以启动后 STARTUP_SWEEP_MS 内每来一页都再查。
+// 标记放 session storage：SW 中途被回收再唤醒不丢，浏览器一关就清空。
+
+const STARTUP_SWEEP_KEY = "fragoStartupSweep";
+const STARTUP_SWEEP_MS = 15_000;
+
+async function armStartupSweep() {
+    await chrome.storage.session.set({
+        [STARTUP_SWEEP_KEY]: { until: Date.now() + STARTUP_SWEEP_MS },
+    });
+    await sweepStartupBlanks();
+}
+
+async function sweepStartupBlanks() {
+    try {
+        const st = (await chrome.storage.session.get(STARTUP_SWEEP_KEY))
+            [STARTUP_SWEEP_KEY];
+        if (!st) return;
+        await ready;   // groupOwning 读的组表要先复活
+        const tabs = await chrome.tabs.query({});
+        const blanks = tabs.filter(isStrayBlank);
+        if (tabs.length === 1 && blanks.length === 1) {
+            // 只剩这一页：不关，等第二张页出现，过了时限也等。
+            if (!st.waiting) {
+                await chrome.storage.session.set(
+                    { [STARTUP_SWEEP_KEY]: { ...st, waiting: true } });
+            }
+            return;
+        }
+        const expired = Date.now() > st.until;
+        if (!expired || st.waiting) {
+            // 全是空白页时留一张，窗口里总得有页。
+            const doomed = blanks.length === tabs.length
+                ? blanks.slice(1) : blanks;
+            if (doomed.length) await chrome.tabs.remove(doomed.map((t) => t.id));
+        }
+        if (expired || st.waiting) {
+            await chrome.storage.session.remove(STARTUP_SWEEP_KEY);
+        }
+    } catch (e) {
+        console.warn("[frago] startup sweep failed:", e);
+    }
+}
+
+chrome.tabs.onCreated.addListener(() => { sweepStartupBlanks(); });
+chrome.tabs.onUpdated.addListener((_id, change) => {
+    if (change.status === "complete") sweepStartupBlanks();
+});
+
+// onStartup 是浏览器启动；扩展升级后的第一次启动只发 onInstalled
+// (reason=update)，不发 onStartup，所以两处都挂。手动重新加载扩展也会
+// 走 onInstalled，那时清掉的仍只是组外的 about:blank。
+chrome.runtime.onStartup.addListener(armStartupSweep);
+chrome.runtime.onInstalled.addListener(armStartupSweep);
 
 chrome.runtime.onInstalled.addListener(bootstrap);
 chrome.runtime.onStartup.addListener(bootstrap);

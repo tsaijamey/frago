@@ -8,8 +8,8 @@
 import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import RecordStream, { groupRecords, lensOf, talkView } from '../RecordStream';
-import SessionRail from '../SessionRail';
-import { relativeTime } from '../SessionItem';
+import { TestRail } from './railTestKit';
+import { relativeTime, shortAge } from '../SessionItem';
 import { ReportBody } from '../ReportPanel';
 import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObserver';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
@@ -138,7 +138,9 @@ describe('插话队列的入队行', () => {
     render(<RecordStream {...streamProps(records)} />);
     expect(screen.getByTestId('lens-talk').textContent).toContain('1');
 
+    // 「全部」档里连续的系统记录压成一行，点开才摊回原卡
     fireEvent.click(screen.getByTestId('lens-all'));
+    fireEvent.click(screen.getByTestId('system-run').querySelector('button')!);
     expect(screen.getByText(i18n.t('workbench.record.queueState.submitted'))).toBeTruthy();
   });
 
@@ -420,28 +422,27 @@ function railState(over: Partial<WorkbenchSessionsState> = {}): WorkbenchSession
     visible: sessions,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: NOOP,
+    filter: 'all',
+    setFilter: NOOP,
     days: 0,
     setDays: NOOP,
-    counts: { all: 2, running: 0, error: 0, done: 1, idle: 1 },
+    counts: { all: 2, 'for-you': 0 },
     reload: async () => {},
     ...over,
   };
 }
 
 describe('SessionRail 左栏', () => {
-  it('两家的会话都列出来，各自标出来源', () => {
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+  it('两家的会话都列出来，卡上不再标来源', () => {
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     expect(screen.getAllByTestId('session-item')).toHaveLength(2);
-    // 来源不再是筛选维度，所以每家只在自己那张卡上露一次脸。
-    expect(screen.getAllByText('Claude Code')).toHaveLength(1);
-    expect(screen.getAllByText('opencode')).toHaveLength(1);
+    // 来源字样随第四轮退场：没挂 For you 的卡只剩一行标题加时间。
+    expect(screen.queryByText('Claude Code')).toBeNull();
   });
 
   it('底部汇总只有已经发生的绝对数', () => {
     const { container } = render(
-      <SessionRail state={railState()} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState()} selectedId={null} onSelect={NOOP} />
     );
     expect(screen.getByText(/共 2 场/)).toBeTruthy();
     const text = container.textContent ?? '';
@@ -452,19 +453,21 @@ describe('SessionRail 左栏', () => {
 
   it('点一场会话把编号交出去', () => {
     const onSelect = vi.fn();
-    render(<SessionRail state={railState()} selectedId={null} onSelect={onSelect} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={onSelect} />);
     fireEvent.click(screen.getAllByTestId('session-item')[0]);
     expect(onSelect).toHaveBeenCalledWith(SID);
   });
 
   it('选中的那一行整行换状态，不靠单边竖条', () => {
-    render(<SessionRail state={railState()} selectedId={SID} onSelect={NOOP} />);
+    render(<TestRail state={railState()} selectedId={SID} onSelect={NOOP} />);
     const [first] = screen.getAllByTestId('session-item');
     expect(first.getAttribute('aria-current')).toBe('true');
     const className = first.className;
-    // 整行换底。这一条从前钉的是「有没有 ring-」——那是当时的实现（淡底加一圈绿环），
-    // 不是这条规矩本身。绿环后来去掉了，规矩没变：状态由整行承担。
-    expect(className).toContain('bg-accent-primary-10');
+    // 整行换底加整圈描边。这一条从前钉的是绿淡底——那是当时的实现，不是这条规矩本身。
+    // 选中不是动作，现在换成中性底（--sel-bg）加一圈 --sel-border，规矩没变：状态由整行承担。
+    expect(className).toContain('bg-[var(--sel-bg)]');
+    expect(className).toContain('var(--sel-border)');
+    expect(className).not.toContain('accent-primary');
     // 真正的禁令：任何单边色条都不许出现。
     expect(className).not.toMatch(/border-[lrtb]-\d/);
     expect(className).not.toMatch(/\bborder-[lrtb]\b/);
@@ -472,10 +475,10 @@ describe('SessionRail 左栏', () => {
 
   it('一场都没匹配上时说清楚，不当成坏了', () => {
     render(
-      <SessionRail
+      <TestRail
         state={railState({
           visible: [],
-          counts: { all: 0, running: 0, error: 0, done: 0, idle: 0 },
+          counts: { all: 0, 'for-you': 0 },
         })}
         selectedId={null}
         onSelect={NOOP}
@@ -484,38 +487,35 @@ describe('SessionRail 左栏', () => {
     expect(screen.getByText('没有匹配的会话')).toBeTruthy();
   });
 
-  it('筛选是在跑、已完成、出错加全部，来源不再当筛选维度', () => {
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+  it('档位只剩 For you 与全部，状态与来源都不再当筛选维度', () => {
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     const ids = screen
-      .getAllByTestId(/^status-filter-/)
+      .getAllByTestId(/^list-filter-/)
       .map((el) => el.getAttribute('data-testid'));
-    expect(ids).toEqual(['running', 'done', 'error', 'all'].map((id) => `status-filter-${id}`));
-    // 来源仍在卡片上看得见，但没有一个按来源筛的按钮。
-    expect(screen.queryByTestId('status-filter-claude-code')).toBeNull();
-    expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
+    expect(ids).toEqual(['list-filter-for-you', 'list-filter-all']);
+    expect(screen.queryByTestId(/^status-filter-/)).toBeNull();
   });
 
   it('每一档带真实条数，不是摆设', () => {
     render(
-      <SessionRail
-        state={railState({ counts: { all: 12, running: 1, error: 3, done: 6, idle: 2 } })}
+      <TestRail
+        state={railState({ counts: { all: 12, 'for-you': 3 } })}
         selectedId={null}
         onSelect={NOOP}
       />
     );
-    expect(screen.getByTestId('status-filter-error').textContent).toContain('3');
-    expect(screen.getByTestId('status-filter-done').textContent).toContain('6');
-    expect(screen.getByTestId('status-filter-all').textContent).toContain('12');
+    expect(screen.getByTestId('list-filter-for-you').textContent).toContain('3');
+    expect(screen.getByTestId('list-filter-all').textContent).toContain('12');
   });
 
   it('点某一档把它交出去', () => {
-    const setStatus = vi.fn();
-    render(<SessionRail state={railState({ setStatus })} selectedId={null} onSelect={NOOP} />);
-    fireEvent.click(screen.getByTestId('status-filter-error'));
-    expect(setStatus).toHaveBeenCalledWith('error');
+    const setFilter = vi.fn();
+    render(<TestRail state={railState({ setFilter })} selectedId={null} onSelect={NOOP} />);
+    fireEvent.click(screen.getByTestId('list-filter-for-you'));
+    expect(setFilter).toHaveBeenCalledWith('for-you');
   });
 
-  it('会话卡带状态与两格摘要', () => {
+  it('会话卡不再摆状态、来源与摘要', () => {
     const one = session({
       session_id: SID,
       status: 'error',
@@ -523,26 +523,22 @@ describe('SessionRail 左栏', () => {
       digest_stuck: 'API Error: 连接中断',
     });
     render(
-      <SessionRail
+      <TestRail
         state={railState({ sessions: [one], visible: [one] })}
         selectedId={null}
         onSelect={NOOP}
       />
     );
-    expect(screen.getAllByTestId('session-item')[0].getAttribute('data-status')).toBe('error');
-    expect(screen.getByTestId('digest-done').textContent).toContain('verdict.jsonl');
-    expect(screen.getByTestId('digest-stuck').textContent).toContain('连接中断');
-  });
-
-  it('摘要取不到时整行不出现，不留一句占位的话', () => {
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    const item = screen.getAllByTestId('session-item')[0];
+    expect(item.getAttribute('data-status')).toBeNull();
     expect(screen.queryByTestId('digest-done')).toBeNull();
     expect(screen.queryByTestId('digest-stuck')).toBeNull();
+    expect(item.textContent).not.toContain('verdict.jsonl');
   });
 
   it('没有等你决策那一档', () => {
     const { container } = render(
-      <SessionRail state={railState()} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState()} selectedId={null} onSelect={NOOP} />
     );
     const text = container.textContent ?? '';
     expect(text).not.toContain('等你');
@@ -552,7 +548,7 @@ describe('SessionRail 左栏', () => {
 
   it('搜索那一行只是入口：点它打开全站的搜会话浮窗，清单不跟着筛', () => {
     useUIStore.getState().setSessionSearchOpen(false);
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     expect(screen.queryByRole('textbox', { name: '搜会话' })).toBeNull();
     fireEvent.click(screen.getByTestId('session-search-trigger'));
     expect(useUIStore.getState().sessionSearchOpen).toBe(true);
@@ -561,14 +557,14 @@ describe('SessionRail 左栏', () => {
 
   it('时间范围三档与不限并排，且与状态筛选各管各的', () => {
     const setDays = vi.fn();
-    render(<SessionRail state={railState({ setDays })} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState({ setDays })} selectedId={null} onSelect={NOOP} />);
     const ids = screen.getAllByTestId(/^day-filter-/).map((el) => el.getAttribute('data-testid'));
     expect(ids).toEqual([1, 2, 7, 0].map((d) => `day-filter-${d}`));
     expect(screen.getByTestId('day-filter-0').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByTestId('day-filter-7'));
     expect(setDays).toHaveBeenCalledWith(7);
-    // 点时间范围不动状态那一维。
-    expect(screen.getByTestId('status-filter-all').getAttribute('aria-pressed')).toBe('true');
+    // 点时间范围不动档位那一维。
+    expect(screen.getByTestId('list-filter-all').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('正在起的那一场先在清单上方占一行，直到它自己长出来', () => {
@@ -583,7 +579,7 @@ describe('SessionRail 左栏', () => {
       at: Date.now(),
     };
     render(
-      <SessionRail state={railState()} selectedId={null} onSelect={NOOP} launch={launch} />
+      <TestRail state={railState()} selectedId={null} onSelect={NOOP} launch={launch} />
     );
 
     const card = screen.getByTestId('rail-launch');
@@ -593,12 +589,16 @@ describe('SessionRail 左栏', () => {
   });
 
   it('没有正在起的会话时，清单上方不多出任何东西', () => {
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     expect(screen.queryByTestId('rail-launch')).toBeNull();
   });
 
   it('新建会话的入口在左栏顶部，点开是弹窗不是跳页', async () => {
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    // 搜索框右边一颗中性图标按钮，不再是一整块实心绿
+    const entry = screen.getByTestId('new-session');
+    expect(entry.getAttribute('aria-label')).toBe('新建会话');
+    expect(entry.className).not.toContain('accent-primary');
     expect(screen.queryByText('让它在哪个项目里干活？')).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByTestId('new-session'));
@@ -612,7 +612,7 @@ describe('SessionRail 左栏', () => {
   it('每张卡都能复制恢复命令，两家各按自己的形状', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    render(<SessionRail state={railState()} selectedId={null} onSelect={NOOP} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     const [cc, oc] = screen.getAllByTestId('copy-resume');
     await act(async () => {
       fireEvent.click(cc);
@@ -630,7 +630,7 @@ describe('SessionRail 左栏', () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,
     });
-    render(<SessionRail state={railState()} selectedId={null} onSelect={onSelect} />);
+    render(<TestRail state={railState()} selectedId={null} onSelect={onSelect} />);
     await act(async () => {
       fireEvent.click(screen.getAllByTestId('copy-resume')[0]);
     });
@@ -643,6 +643,13 @@ describe('SessionRail 左栏', () => {
     expect(relativeTime(now - 12 * 60_000, now)).toBe('12 分钟前');
     expect(relativeTime(now - 3 * 3_600_000, now)).toBe('3 小时前');
     expect(relativeTime(0, now)).toBe('');
+  });
+
+  it('清单上的时间不带「前」', () => {
+    const now = 1_753_800_000_000;
+    expect(shortAge(now - 30_000, now)).toBe('刚刚');
+    expect(shortAge(now - 12 * 60_000, now)).toBe('12 分钟');
+    expect(shortAge(now - 3 * 3_600_000, now)).toBe('3 小时');
   });
 });
 
@@ -1003,11 +1010,25 @@ describe('RecordStream 自动跟随的滑法', () => {
     }
   });
 
-  it('刚发完话，流的末尾挂一条"在等 agent 开口"', () => {
-    const { rerender } = render(<RecordStream {...props()} />);
+  it('刚发完话，那句话下面挂进度与「Agent 在做」，流末尾不再有居中灰字', () => {
+    const said = rec({ id: 'u', seq: 2, kind: 'user.say', payload: { text: '都记成 todo。' } });
+    const trail = {
+      id: 'out-1',
+      text: '都记成 todo。',
+      attachments: 0,
+      recordId: 'u',
+      midTurn: false,
+      steps: { on_its_way: Date.now() - 3_000, in_the_session: Date.now() - 2_000 },
+    };
+    render(
+      <RecordStream
+        {...props({ records: [...base, said], awaitingAgent: true, trails: [trail] })}
+      />
+    );
     expect(screen.queryByTestId('awaiting-agent')).toBeNull();
-    rerender(<RecordStream {...props({ awaitingAgent: true })} />);
-    expect(screen.getByTestId('awaiting-agent')).toBeTruthy();
-    expect(screen.getByText(/在等 agent 开口/)).toBeTruthy();
+    const bubble = screen.getByTestId('trail-bubble');
+    expect(bubble.getAttribute('data-fresh')).toBe('true');
+    expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('in_the_session');
+    expect(screen.getByTestId('agent-on-it').textContent).toContain('在想，还没写字');
   });
 });

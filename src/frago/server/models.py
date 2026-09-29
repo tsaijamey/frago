@@ -674,6 +674,32 @@ class TmuxSessionItem(BaseModel):
     memory_mb: int = 0
     busy: bool = False
     managed: bool = False
+    # 「For you」的两条判据与收尾原话；判不出为 None / 空串，旧前端不受影响
+    client_alive: bool | None = None
+    awaiting_input: bool | None = None
+    closing_text: str = ""
+
+
+class TmuxWaitingItem(BaseModel):
+    """会话页「For you」要的一行：开在 tmux 里、客户端活不活、停没停在待输入态。
+
+    ``awaiting_input`` 只对认得出记录的 Claude Code 会话判；别家客户端、非 frago
+    起的 tmux 一律 None，前端一律不挂。
+    """
+
+    name: str
+    session_id: str | None = None
+    client_alive: bool | None = None
+    awaiting_input: bool | None = None
+    stop_reason: str | None = None
+    last_stop_at: str | None = None
+    closing_text: str = ""
+
+
+class TmuxWaitingResponse(BaseModel):
+    """Response for GET /api/system/tmux-sessions/waiting"""
+
+    sessions: list[TmuxWaitingItem] = Field(default_factory=list)
 
 
 class TmuxSessionsResponse(BaseModel):

@@ -121,8 +121,9 @@ class TestCompose:
         for heading in ("## 这场在做什么", "## 已经发生的事", "## 停在哪", "## 等人拍板的事"):
             assert heading in text
         assert "邮件模板用旧的还是新写一套" in text
-        # 有待决的事，第一步就是先问人。
-        assert "先问人" in text
+        # 新会话起来先不动手，等人发下一句。
+        assert "现在不要做任何事" in text
+        assert "## 你第一步" not in text
 
     def test_人的原话逐字_工具结果不算(self, patched):
         text = workbench_handoff.compose(SID).text
@@ -147,7 +148,21 @@ class TestCompose:
         assert "## 人的原话" in text
         assert "## 原会话最后一段回复" in text
         assert "## 动过的文件" in text
-        assert "直接接着做" in text
+        assert "人发来下一句之后" in text
+
+    def test_图片标记不带过去_免得被认成附图(self, patched, monkeypatch):
+        records = [
+            *RECORDS,
+            _rec(9, "user.say", {"text": "这是什么错误 [Image #1] [Image #2]"}),
+        ]
+        monkeypatch.setattr(
+            record_reader,
+            "read_records",
+            lambda sid, after=0, limit=200, tail=False: list(records),
+        )
+        text = workbench_handoff.compose(SID).text
+        assert "[Image #" not in text
+        assert "这是什么错误 （这里附了图） （这里附了图）" in text
 
     def test_还没有记录的会话交接不了(self, monkeypatch):
         monkeypatch.setattr(

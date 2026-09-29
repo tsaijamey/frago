@@ -774,10 +774,13 @@ def launch_chrome_with_extension(bundle_dir: Path,
         args.append(f"--proxy-server={proxy}")
         args.append(f"--proxy-bypass-list={proxy_bypass_list()}")
 
-    # Opening a real URL on startup triggers the content script, which
-    # pings the service worker and forces it to wake up and connect to
-    # the native host. Without this, MV3 SWs may stay dormant. An app
-    # window's page is a real URL too, so it wakes the SW the same way.
+    # A headful browser needs a window, and a window needs a tab: without
+    # a URL here Chrome opens its New Tab page instead. about:blank does
+    # not wake the service worker (the content script never injects into
+    # it); the SW connects on its own onStartup. The service worker closes
+    # stray about:blank tabs right after startup (sweepStartupBlanks) and
+    # a group opening its first page takes a remaining one over
+    # (launchPlaceholderTab), so this tab never lingers outside every group.
     args.append(f"--app={app_url}" if app_url else "about:blank")
     stdio = subprocess.DEVNULL
     if log_path:

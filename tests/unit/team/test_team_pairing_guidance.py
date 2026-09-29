@@ -82,8 +82,9 @@ def test_真经中继投进来的消息核实得过(monkeypatch):
     _pull_one(monkeypatch, mid)
     seen: list[str] = []
 
-    def deliver(prompt: str) -> None:
+    def deliver(prompt: str, _landed) -> str:
         seen.append(prompt)
+        return sync.LANDED
 
     sync.sync_once(state, binding, deliver)
     line = re.search(r"--team-code (\S+) --message (\S+)）", seen[0])
@@ -100,10 +101,11 @@ def test_投一条就落盘_收件方马上核实也查得到(monkeypatch):
     ], "peer_present": True})
     checked: list[bool] = []
 
-    def deliver(prompt: str) -> None:
+    def deliver(prompt: str, _landed) -> str:
         if "第二条" in prompt:
             # 第二条投进去的那一刻，第一条必须已经在盘上
             checked.append(sync.verify_message(team_state.load_state(), CODE, "1" * 32).genuine)
+        return sync.LANDED
 
     sync.sync_once(state, binding, deliver)
     assert checked == [True]
@@ -212,3 +214,36 @@ def test_手册覆盖了全部子命令():
     book = (RESOURCES / "book" / "team-pairing.md").read_text(encoding="utf-8")
     for name in team_group.commands:
         assert f"frago team {name}" in book, name
+
+
+def test_手册与短版提醒都改成照本机主人的设置处理():
+    """每条队友消息都带着本机主人的设置；给 agent 的三处说明若还写死三档，设置就等于没设。"""
+    book = (RESOURCES / "book" / "team-pairing.md").read_text(encoding="utf-8")
+    section = book.split("## 收到队友的消息", 1)[1].split("\n## ", 1)[0]
+    assert "本机主人的设置" in section
+    assert "from: teammate" in section
+    assert "没有设置项" in section  # 第三档仍写死
+
+    rules = json.loads((RESOURCES / "hook" / "builtin-rules.json").read_text(encoding="utf-8"))
+    rules = rules["rules"] if isinstance(rules, dict) else rules
+    guard = next(r for r in rules if r["id"] == "builtin-prompt-team-message-guard")
+    assert "本机主人的设置" in guard["action"]["text"]
+
+
+def test_投递那一行与手册里的说法对得上():
+    """手册说「核实行正上方那一行」，投递时真的就在那个位置。"""
+    rules = team_state.RequestRules(read="ask", change="refuse")
+    out = team_state.render_delivery("x", CODE, "a" * 32, "y", rules=rules)
+    lines = out.splitlines()
+    assert lines[-1].startswith("（核实来源：")
+    assert lines[-2].startswith("（本机主人的设置：") and "拒绝" in lines[-2]
+
+
+def test_场景说明写出本机当前的设置(monkeypatch):
+    _paired("s-1")
+    state = team_state.load_state()
+    state.request_rules = team_state.RequestRules(read="do", change="refuse")
+    team_state.save_state(state)
+    _as_session(monkeypatch, "s-1")
+    out = CliRunner().invoke(team_group, ["scene", "--for-hook"]).output
+    assert "只读的→直接做；会改动的→拒绝" in out

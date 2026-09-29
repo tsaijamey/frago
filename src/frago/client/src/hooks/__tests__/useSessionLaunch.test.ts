@@ -8,8 +8,8 @@
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { useSessionLaunch } from '../useSessionLaunch';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LAUNCH_CEILING_MS, useSessionLaunch } from '../useSessionLaunch';
 import type { PendingLaunch } from '../useAgentClients';
 import type { WorkbenchSession } from '../useWorkbenchSessions';
 import i18n from '@/i18n';
@@ -21,7 +21,14 @@ beforeAll(async () => {
   await i18n.changeLanguage('zh');
 });
 
+beforeEach(() => {
+  // 「正在启动」那一档现在会问手把。默认答一个没出错、编号已有的假手把，让没在测这条
+  // 路的用例不因一次真实 fetch 被带进失败档。
+  stubPending(() => pending({ session_id: SID }));
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -205,6 +212,68 @@ describe('新会话正在启动', () => {
     await waitFor(() => expect(result.current.launch?.phase).toBe('failed'), { timeout: 4000 });
     expect(result.current.launch?.error).toContain('命令没找到');
     expect(result.current.launch?.text).toBe('起一场新的');
+
+    act(() => result.current.dismiss());
+    expect(result.current.launch).toBeNull();
+  });
+
+  it('claude 的编号当场就有，后台起失败会照抄服务端的原话转成失败', async () => {
+    stubPending(() => pending({ session_id: SID, error: 'Claude Code 没起来：tmux 会话起不来' }));
+    const { result } = renderHook(() =>
+      useSessionLaunch({ sessions: [], reload: () => {}, onReady: () => {} })
+    );
+
+    act(() => {
+      result.current.begin(pending({ session_id: SID, display_name: 'Claude Code' }), '把日志翻出来');
+    });
+    expect(result.current.launch?.phase).toBe('warming');
+
+    await waitFor(() => expect(result.current.launch?.phase).toBe('failed'), { timeout: 4000 });
+    // 原因照抄服务端的说法，不是页面自己编的一句。
+    expect(result.current.launch?.error).toContain('Claude Code 没起来');
+    // 那句话和原因都留着，等人自己收——一关了之，人连刚打的字都找不回来。
+    expect(result.current.launch?.text).toBe('把日志翻出来');
+
+    act(() => result.current.dismiss());
+    expect(result.current.launch).toBeNull();
+  });
+
+  it('claude 路径下会话先进了清单，就让位——后台问到的失败不抢这一下', async () => {
+    // 手把里其实已经写了起失败，但清单先扫到这一场了：该让位就让位。
+    stubPending(() => pending({ session_id: SID, error: 'Claude Code 没起来' }));
+    const { result, rerender } = renderHook(
+      ({ sessions }) =>
+        useSessionLaunch({ sessions, reload: () => {}, onReady: () => {} }),
+      { initialProps: { sessions: [] as WorkbenchSession[] } }
+    );
+
+    act(() => {
+      result.current.begin(pending({ session_id: SID, display_name: 'Claude Code' }), '起一场新的');
+    });
+    expect(result.current.launch?.phase).toBe('warming');
+
+    rerender({ sessions: [session(SID)] });
+    await waitFor(() => expect(result.current.launch).toBeNull(), { timeout: 4000 });
+  });
+
+  it('90 秒还没在清单里出现，转成失败而不是悄悄消失', async () => {
+    vi.useFakeTimers();
+    stubPending(() => pending({ session_id: SID }));
+    const { result } = renderHook(() =>
+      useSessionLaunch({ sessions: [], reload: () => {}, onReady: () => {} })
+    );
+
+    act(() => {
+      result.current.begin(pending({ session_id: SID, display_name: 'Claude Code' }), '起一场新的');
+    });
+    expect(result.current.launch?.phase).toBe('warming');
+
+    act(() => {
+      vi.advanceTimersByTime(LAUNCH_CEILING_MS + 1000);
+    });
+    // 不消失：转成失败，原因是句人话，卡留着等人收。
+    expect(result.current.launch?.phase).toBe('failed');
+    expect(result.current.launch?.error).toContain('90');
 
     act(() => result.current.dismiss());
     expect(result.current.launch).toBeNull();

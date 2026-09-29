@@ -1,9 +1,11 @@
 /**
  * 网格上的一个文件夹图标。
  *
- * 画成手机桌面那样：一个方块，里面是前四张配方的首字，底下是文件夹名和数量。点一
- * 下打开，再点一下收起——文件夹在这一页里就地展开，不换页，因为人往文件夹里摆东西
- * 时通常一口气摆好几张，每开一个就跳走一次会把这件事拆得很碎。
+ * 横排一张卡：左边小方块里一个文件夹图标，右边上行是名称和数量，下行是前 3 张配方
+ * 的标题——卡片回答「里面是什么、有几张」。过去方块里摆的是前四张标题的首字母，本
+ * 机配方标题多是英文大写开头，拼出来的「AA / VV」认不出任何一张，还把卡撑到 240px。
+ * 点一下打开，再点一下收起——文件夹在这一页里就地展开，不换页，因为人往文件夹里摆
+ * 东西时通常一口气摆好几张，每开一个就跳走一次会把这件事拆得很碎。
  *
  * 它同时是拖放的落点：把一张配方卡拖到这里松手就是放进去。拖着经过时描边变色，不
  * 变大不抖动——一排文件夹里只有一个该亮起来，其余的位置不许动。
@@ -40,7 +42,16 @@ export default function RecipeFolderTile({
   const [over, setOver] = useState(false);
   const label = folderLabel(folder, i18n.language);
 
-  const preview = items.slice(0, 4);
+  // 空文件夹没有第二行，卡片只剩「名称 + 数量」。没起过名的配方，标题是标识名换掉
+  // 下划线凑出来的，照配方卡的规矩把每个词首字母大写；作者写过的标题原样不动。
+  const peek = items
+    .slice(0, 3)
+    .map((r) => {
+      const shown = recipeTitle(r, i18n.language);
+      const named = Object.keys(r.title ?? {}).length > 0;
+      return named ? shown : shown.replace(/\b\w/g, (c) => c.toUpperCase());
+    })
+    .join(' · ');
 
   const takeDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -72,19 +83,16 @@ export default function RecipeFolderTile({
         aria-expanded={open}
         title={t('recipes.folder.openHint', { name: label })}
       >
-        <span className="rl-folder-box" aria-hidden="true">
-          {preview.length === 0 ? (
-            open ? <FolderOpen size={20} /> : <Folder size={20} />
-          ) : (
-            preview.map((r) => (
-              <span key={r.name} className="rl-folder-chip">
-                {recipeTitle(r, i18n.language).trim().charAt(0).toUpperCase()}
-              </span>
-            ))
-          )}
+        <span className="rl-folder-icon" aria-hidden="true">
+          {open ? <FolderOpen size={16} /> : <Folder size={16} />}
         </span>
-        <span className="rl-folder-name">{label}</span>
-        <span className="rl-folder-count">{folder.recipes.length}</span>
+        <span className="rl-folder-text">
+          <span className="rl-folder-line">
+            <span className="rl-folder-name">{label}</span>
+            <span className="rl-folder-count">{folder.recipes.length}</span>
+          </span>
+          {peek && <span className="rl-folder-peek">{peek}</span>}
+        </span>
       </button>
       {/* 改名和删除挂在图标上，不藏进另一层菜单：一共就两个动作，为它们再开一级
           菜单，等于让人多点一下才能看见本来就该看见的东西。 */}

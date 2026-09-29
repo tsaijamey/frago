@@ -200,35 +200,50 @@ def test_local_page_request_is_not_marked_public(app, token, published):
 
 # --- the home network ----------------------------------------------------
 #
-# frago binds 0.0.0.0 by default and prints its LAN URLs on `frago server
-# status`: reading the workbench from your phone is an advertised feature. A
-# gate that silently 401s it would be a regression for every personal install,
-# so LAN peers stay trusted unless a deployment turns them off.
+# frago binds 0.0.0.0, so "private address" covers whatever network the laptop
+# happens to be on — an office subnet as much as a home one. LAN peers are
+# refused unless the owner opts in with FRAGO_TRUST_LAN=1; with the token they
+# get in like any other remote caller.
 
 LAN = ("192.168.1.50", 41234)
 
 
-def test_the_home_network_is_trusted_by_default(app, token, published):
+def test_the_home_network_is_not_trusted_by_default(app, token, published, monkeypatch):
+    monkeypatch.delenv("FRAGO_TRUST_LAN", raising=False)
+    assert client(app, LAN).get("/api/file").status_code == 401
+
+
+@pytest.mark.parametrize("peer", [("10.0.0.5", 1), ("172.16.3.9", 1), ("169.254.4.4", 1)])
+def test_no_private_range_counts_as_home_by_default(app, token, published, monkeypatch, peer):
+    monkeypatch.delenv("FRAGO_TRUST_LAN", raising=False)
+    assert client(app, peer).get("/api/file").status_code == 401
+
+
+def test_a_lan_caller_with_the_token_gets_in(app, token, published, monkeypatch):
+    monkeypatch.delenv("FRAGO_TRUST_LAN", raising=False)
+    resp = client(app, LAN).get("/api/file", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
+def test_the_owner_can_opt_the_home_network_in(app, token, published, monkeypatch, value):
+    monkeypatch.setenv("FRAGO_TRUST_LAN", value)
     assert client(app, LAN).get("/api/file").status_code == 200
 
 
 @pytest.mark.parametrize("peer", [("10.0.0.5", 1), ("172.16.3.9", 1), ("169.254.4.4", 1)])
-def test_every_private_range_counts_as_home(app, token, published, peer):
+def test_opting_in_covers_every_private_range(app, token, published, monkeypatch, peer):
+    monkeypatch.setenv("FRAGO_TRUST_LAN", "1")
     assert client(app, peer).get("/api/file").status_code == 200
 
 
-@pytest.mark.parametrize("value", ["0", "false", "no", "FALSE"])
-def test_a_deployment_can_shut_the_home_network_out(app, token, published, monkeypatch, value):
-    monkeypatch.setenv("FRAGO_TRUST_LAN", value)
-    assert client(app, LAN).get("/api/file").status_code == 401
-
-
 def test_shutting_out_the_lan_does_not_shut_out_this_machine(app, token, published, monkeypatch):
-    monkeypatch.setenv("FRAGO_TRUST_LAN", "0")
+    monkeypatch.delenv("FRAGO_TRUST_LAN", raising=False)
     assert client(app, LOCAL).get("/api/file").status_code == 200
 
 
-def test_a_lan_caller_behind_a_proxy_is_still_not_trusted(app, token, published):
+def test_a_lan_caller_behind_a_proxy_is_still_not_trusted(app, token, published, monkeypatch):
+    monkeypatch.setenv("FRAGO_TRUST_LAN", "1")
     resp = client(app, LAN).get("/api/file", headers={"X-Real-IP": "93.184.216.34"})
     assert resp.status_code == 401
 
@@ -365,6 +380,8 @@ def test_behind_a_proxy_the_peer_address_grants_nothing(app, token, published, m
     recognised header still cannot hand a visitor the owner's seat.
     """
     monkeypatch.setenv("FRAGO_BEHIND_PROXY", "1")
+    # Opted in, so the LAN refusal below is the proxy switch's doing, not the default's.
+    monkeypatch.setenv("FRAGO_TRUST_LAN", "1")
     assert client(app, LOCAL).get("/api/file").status_code == 401
     assert client(app, LAN).get("/api/file").status_code == 401
 

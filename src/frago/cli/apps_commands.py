@@ -5,9 +5,11 @@ apps 是「输入 → 交付成品」的内置能力集合。与 recipe / skill 
 引擎是每个 app 自己的实现细节，框架只定义契约：``apps use <app> "<输入>"``
 产出成品，默认 stdout，``--output`` 落盘。
 
-首个 app 是 mermaid：输入 mermaid 文本 → SVG。渲染走 ``frago browser
--b cdp`` 无头模式——复用系统 Chromium + 包内已分发的 mermaid.min.js
-（viewer 在用同一份），不弹用户浏览器窗口、不引入任何新增体积。
+首个 app 是 mermaid：输入 mermaid 文本 → SVG。渲染走 ``frago browser``
+默认的扩展桥——在 agent 浏览器的后台标签里画，画完关组；引擎用包内已分发的
+mermaid.min.js（viewer 在用同一份），不引入任何新增体积。
+不走 ``-b cdp``：那条只属于 agent_os，9222 上住着舞台演员，
+自己起无头实例会跟它抢端口、或把渲染页开进演员的虚拟标签条。
 样式读包内 frago-theme.js，与 WebUI、``frago view`` 画出来的图是同一套；
 导出的 SVG 多半要贴进白底的文档和幻灯片，所以用浅色那一版。
 """
@@ -30,10 +32,10 @@ import click
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
-# 无头渲染专属 tab group。独立于任何用户 group，用完即关。
+# 渲染专属 tab group。独立于任何用户 group，用完即关。
 APPS_GROUP = "frago-apps"
 
-# 浏览器启动/停止的等待上限（秒）。首次起浏览器要 seed profile，给足余量。
+# 单条 frago browser 命令的等待上限（秒）。start 要拉浏览器、等桥握手，给足余量。
 BROWSER_START_TIMEOUT = 60
 
 
@@ -53,8 +55,8 @@ class App:
 
 
 def _browser_command(*args: str) -> list[str]:
-    """构造 frago browser 命令（-b cdp 显式选无头后端）。"""
-    return ["frago", "browser", "-b", "cdp", *args]
+    """构造 frago browser 命令（默认扩展桥后端，不显式选后端）。"""
+    return ["frago", "browser", *args]
 
 
 def _run_browser(*args: str) -> subprocess.CompletedProcess:
@@ -68,34 +70,33 @@ def _run_browser(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _browser_running() -> bool:
-    """检查 CDP 无头浏览器是否已在跑（9222 端口是否在听）。
-
-    直接探测端口，不依赖 status 命令的日志格式——``-b cdp status``
-    输出的是日志行不是 JSON，按字符串解析易碎。
-    """
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.3)
-        return sock.connect_ex(("127.0.0.1", 9222)) == 0
+def _bridge_connected() -> bool:
+    """扩展桥是否已连上：``status`` 退出码为 0 且 JSON 里 ``ok`` 为真。"""
+    status = _run_browser("status")
+    if status.returncode != 0:
+        return False
+    try:
+        return bool(json.loads(status.stdout).get("ok"))
+    except (json.JSONDecodeError, AttributeError):
+        return False
 
 
 def _ensure_browser_up() -> None:
-    """保证 -b cdp 无头浏览器在跑（幂等：已在跑就跳过）。
+    """保证扩展桥在线（幂等：已连上就跳过）。
 
+    没连上唯一的动作是 ``frago browser start``（可能弹出浏览器窗口，属预期）；
     启动失败时给出可执行的修复指引，不静默。
     """
-    if _browser_running():
+    if _bridge_connected():
         return
 
-    start = _run_browser("start", "--headless")
+    start = _run_browser("start")
     if start.returncode != 0:
-        click.echo("Error: 无头浏览器启动失败", err=True)
+        click.echo("Error: 扩展桥启动失败", err=True)
         click.echo(start.stdout, err=True)
         click.echo(start.stderr, err=True)
-        click.echo("[Fix] frago browser -b cdp start --headless", err=True)
-        raise click.ClickException("无法启动无头渲染浏览器")
+        click.echo("[Fix] frago browser start", err=True)
+        raise click.ClickException("无法连上渲染用的浏览器扩展桥")
 
 
 def _mermaid_asset(name: str = "mermaid.min.js") -> str:
@@ -116,10 +117,10 @@ def _mermaid_asset(name: str = "mermaid.min.js") -> str:
 
 
 def _render_mermaid(mermaid_text: str) -> str:
-    """mermaid 文本 → SVG（无头渲染，不打扰用户）。
+    """mermaid 文本 → SVG（扩展桥后台标签渲染，画完关组）。
 
     流程：内联 mermaid.js + 样式脚本 + 用户文本拼单个 HTML → 写临时目录 →
-    navigate file:// → exec-js 抓 .mermaid svg outerHTML → 清理。
+    navigate file:// → exec-js 抓 .mermaid svg outerHTML → 关组、清理。
 
     页面画完（含样式后处理）才在 body 上打 ``data-done``，画不出来打
     ``data-error``；轮询只认这两个标记，不会抓到后处理之前的半成品。
@@ -187,25 +188,29 @@ def _render_mermaid(mermaid_text: str) -> str:
             )
         return svg
     finally:
+        _run_browser("group-close", APPS_GROUP)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _extract_exec_result(result: object) -> str | None:
-    """从 exec-js 输出中提取 `Execution result: <值>` 后的内容。
+    """从 exec-js 的 JSON 输出（``{"value": ...}``）中取出返回值。
 
     result 是 subprocess.CompletedProcess（测试注入同形态 fake），
-    只读 returncode 与 stdout 两个属性。
+    只读 returncode 与 stdout 两个属性。值为空或 null 时返回 None。
     """
     if getattr(result, "returncode", None) != 0:
         return None
     stdout: str = getattr(result, "stdout", "") or ""
-    for line in stdout.splitlines():
-        if "Execution result:" in line:
-            _, _, value = line.partition("Execution result: ")
-            value = value.strip()
-            if value and value != "None":
-                return value
-    return None
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("value")
+    if value is None or value == "":
+        return None
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 # ── 内置 app 注册表（静态，不可插拔） ────────────────────────────────

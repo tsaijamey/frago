@@ -36,6 +36,12 @@ export function useHashRoute(): void {
         state.currentProjectId ??
         state.currentTodoId ??
         state.currentRecipeAppId;
+      // 旧名字的地址（`/teaming`）读得出页面，但地址栏要改写成现在的名字，否则人
+      // 从这里复制出去的还是旧的那个。
+      const canonical = pathForPage(route.page, route.id);
+      if (window.location.hash.replace(/^#/, '').split('?')[0] !== canonical) {
+        writeLocationRoute(canonical, true);
+      }
       // 地址栏说的就是现在这一页时不动手：`switchPage` 刚写完地址也会触发
       // hashchange，再落一次状态等于把同一次跳转做两遍。
       if (state.currentPage === route.page && currentId === route.id) return;

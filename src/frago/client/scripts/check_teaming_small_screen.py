@@ -188,7 +188,7 @@ def measure(pattern: str) -> str:
 
 
 def run(site: str, port: int) -> int:
-    page = Page(port, f"{site}/#/teaming")
+    page = Page(port, f"{site}/#/teams")
     bad: list[str] = []
     try:
         page.send("Runtime.enable")
@@ -211,7 +211,7 @@ def run(site: str, port: int) -> int:
                 # 换 hash 不会重挂这一页，上一档留下的面板仍然开着；这一档再点一次
                 # 「发起」，点中的是同一个开关，于是面板被关掉——看起来像「这一步点
                 # 不动」，而真正的原因是上一档没收干净。踩过一次，排查绕了一大圈。
-                page.send("Page.navigate", {"url": f"{site}/#/teaming"})
+                page.send("Page.navigate", {"url": f"{site}/#/teams"})
                 time.sleep(0.6)
                 page.send("Page.reload", {"ignoreCache": False})
                 time.sleep(3.0)

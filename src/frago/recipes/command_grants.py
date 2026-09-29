@@ -448,15 +448,10 @@ def _audit_once(recipe_name: str, recipe_dir: Path | None, command: str,
     except OSError as err:
         raise AuditFailed(f"起不来 frago-core：{err}") from err
 
-    final: dict[str, Any] | None = None
-    for line in reversed((done.stdout or "").splitlines()):
-        try:
-            value = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(value, dict) and value.get("type") == "final":
-            final = value
-            break
+    # 新老两种输出形状都认（新版内核按 Claude Code 的 result 行交结论）。
+    from frago.server.services.coreagent_output import final_from
+
+    final: dict[str, Any] | None = final_from(done.stdout or "")
     if final is None:
         # frago-core ends a failure with a line of advice for a person at a
         # terminal ("hint: …"); the reason is the line before it.

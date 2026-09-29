@@ -491,7 +491,7 @@ function AgentChip({
     >
       {agent.display_name}
       {!agent.selectable && (
-        <span className="ml-1 text-[10px] text-text-muted">
+        <span className="ml-1 text-[11px] text-text-muted">
           · {agentReasonText(agent.reason) ?? t('team.freshAgentUnavailable')}
         </span>
       )}

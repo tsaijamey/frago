@@ -25,7 +25,7 @@
 ## 浏览器怎么起 —— 三层优先级
 
 1. **`frago browser <cmd>`（默认 extension 后端）** —— 标准路径，覆盖绝大多数场景，包括 `file://` 本地渲染与截图。
-2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级路线：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--app` 这类启动形态。
+2. **`frago browser -b cdp <cmd>`** —— 仅限 agent_os（舞台浏览器的真无头、录制机位的独立实例）。extension 没连上就 `frago browser start`，弹出窗口是预期行为，不是降到这里的理由。
 3. **自起浏览器进程** —— 禁止，没有例外。
 
 降级路线长这样（`-b` 是 `browser` 组级 flag，所有子命令通用）：

@@ -17,6 +17,18 @@ export default {
         tablet: { min: '641px', max: '1024px' },
         desktop: { min: '1025px' },
       },
+      // 字号标度与 globals.css 的 --font-size-* 同一套：日常 11 / 12 / 13，页标题 15。
+      // text-sm 默认 14px，组件里两百多处直接写它，改标度的取值让它们一起落到 13，
+      // 不逐处手改——逐处改的结果是下一次新写的又回到 14。全部乘 --font-scale，与 CSS 变量同步缩放。
+      // 写在 extend 下，与上面 screens 同一个理由：只覆盖这几档，不清掉 Tailwind 其余默认。
+      fontSize: {
+        xs: ['calc(12px * var(--font-scale))', { lineHeight: '1.5' }],
+        sm: ['calc(13px * var(--font-scale))', { lineHeight: '1.5' }],
+        base: ['calc(13px * var(--font-scale))', { lineHeight: '1.5' }],
+        lg: ['calc(15px * var(--font-scale))', { lineHeight: '1.5' }],
+        xl: ['calc(15px * var(--font-scale))', { lineHeight: '1.5' }],
+        '2xl': ['calc(15px * var(--font-scale))', { lineHeight: '1.5' }],
+      },
       colors: {
         // Use CSS variables to support theme switching
         // Based on Next.js-inspired design language from FRONTEND_STYLE_GUIDE.md

@@ -89,3 +89,40 @@ def test_写回去的是写死的那个(状态文件: Path):
 
     wrote = json.loads(状态文件.read_text(encoding="utf-8"))
     assert wrote["relay"]["url"] == team_state.RELAY_URL
+
+
+# ── 队友的请求怎么处理 ──────────────────────────────────────────────────
+
+
+def test_没设过时与结对手册从前写死的三档一致(状态文件: Path):
+    """只读的直接做、会改动的先问主人。老机器升级上来，行为一点不变。"""
+    rules = team_state.load_state().request_rules
+
+    assert (rules.read, rules.change) == ("do", "ask")
+
+
+def test_设置写回再读还是同一份(状态文件: Path):
+    state = team_state.load_state()
+    state.request_rules = team_state.RequestRules(read="ask", change="refuse")
+    team_state.save_state(state)
+
+    again = team_state.load_state().request_rules
+    assert (again.read, again.change) == ("ask", "refuse")
+
+
+def test_认不出的设置退回缺省_不让整份状态读不出来(状态文件: Path):
+    """手改文件改坏了这一项，结对照常用；坏掉的那一格回到缺省，而不是整页一行红字。"""
+    for wrote in ({"read": "yolo", "change": "always"}, "直接做", ["do"], None):
+        状态文件.write_text(
+            json.dumps({"member": "m1", "request_rules": wrote}), encoding="utf-8"
+        )
+
+        rules = team_state.load_state().request_rules
+        assert (rules.read, rules.change) == ("do", "ask")
+
+
+def test_第三档没有设置项(状态文件: Path):
+    """泄露秘密、不可恢复的删除是 frago 的规矩，永远不做——设置里根本没有它的位置。"""
+    fields = set(team_state.RequestRules.__dataclass_fields__)
+
+    assert fields == {"read", "change"}

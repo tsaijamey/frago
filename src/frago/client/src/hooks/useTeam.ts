@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import type { RequestRules } from '@/components/vibeTeaming/teamRequest';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -39,6 +40,8 @@ export interface TeamState {
   prefix: string;
   interval_seconds: number;
   teams: TeamBinding[];
+  /** 本机主人给自己的 agent 定的「队友的请求怎么处理」。旧版服务端没有这一项。 */
+  request_rules?: RequestRules;
 }
 
 /** 中继那边对这个连接码的说法。 */
@@ -48,6 +51,11 @@ export interface TeamStatus {
   peer_present: boolean;
   inbox: number;
   peer_inbox: number;
+  /**
+   * 对方主人给他的 agent 定的处理方式，对方每轮同步带给中继的。
+   * 没有（对方或中继还是旧版）时界面退回「frago's rules」，NEVER 拿缺省值冒充对方的设置。
+   */
+  peer_rules?: RequestRules;
 }
 
 /** 对方那一列每隔多久重取一次。与服务端同步循环的默认节奏对齐。 */
@@ -200,9 +208,34 @@ export async function leaveTeam(code: string): Promise<LeaveReach> {
   return got?.reach ?? 'done';
 }
 
-export async function sendToPeer(code: string, text: string): Promise<void> {
-  await readJson(`/api/team/${encodeURIComponent(code)}/send`, {
-    method: 'POST',
-    body: JSON.stringify({ text, note: '' }),
+/**
+ * 往对方会话投一句话。回来的是中继给它的编号（对方那条发言核实行上的那一个），
+ * 进度卡按它认「送到了没有」；旧中继不回编号时是空串。
+ */
+export async function sendToPeer(code: string, text: string): Promise<string> {
+  const got = await readJson<{ message_id?: string }>(
+    `/api/team/${encodeURIComponent(code)}/send`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ text, note: '' }),
+    },
+  );
+  return got?.message_id ?? '';
+}
+
+/** 改本机「队友的请求怎么处理」。不联网，下一轮同步对方就看得到。 */
+export async function saveRequestRules(rules: RequestRules): Promise<RequestRules> {
+  const got = await readJson<{ request_rules: RequestRules }>('/api/team/request-rules', {
+    method: 'PUT',
+    body: JSON.stringify(rules),
   });
+  return got.request_rules;
+}
+
+/** 核实本机会话里一条队友请求的来路。不联网，查的是本机投递账。 */
+export async function verifyRelayed(code: string, messageId: string): Promise<boolean> {
+  const got = await readJson<{ genuine?: boolean }>(
+    `/api/team/${encodeURIComponent(code)}/verify?message=${encodeURIComponent(messageId)}`,
+  );
+  return got?.genuine === true;
 }

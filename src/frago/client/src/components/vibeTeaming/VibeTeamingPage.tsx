@@ -3,8 +3,9 @@
  *
  * ## 这一页的骨架
  *
- * **连接码常驻顶部，随时可复制。** 它是队友进门的唯一凭证，也是这一页从头到尾都用得上
- * 的东西——一个人的时候要把它发出去，两个人之后要认出自己在哪个 team 里。
+ * **连接码常驻页头，随时可复制，但只露前 4 位。** 它是队友进门的唯一凭证，也是这一页
+ * 从头到尾都用得上的东西——一个人的时候要把它发出去，两个人之后要认出自己在哪个 team
+ * 里。前 4 位够认，完整的码按 Copy 拿；屏幕上的一切都可能随截图、录屏、同步带出去。
  *
  * **左边永远是我自己那一场，而且是一整张会话详情**：记录流加一个能说话的输入区，与
  * 会话页上那一场没有区别。队友在不在都不影响我在这一侧继续干活。
@@ -28,15 +29,31 @@
  * 所以只作发送前的一次预览，NEVER 常驻一行别人口气的话在我眼前。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Link2, LogOut, Plus, RefreshCw, Send, UserPlus, Users } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Eye,
+  HelpCircle,
+  Link2,
+  LogOut,
+  Plus,
+  RefreshCw,
+  Send,
+  UserPlus,
+  Users,
+} from 'lucide-react';
 
+import PageHeader from '@/components/layout/PageHeader';
 import RecordStream from '@/components/sessionWorkbench/RecordStream';
+import { RecordOverrideContext, RecordVoiceContext } from '@/components/sessionWorkbench/RecordCard';
 import Composer from '@/components/sessionWorkbench/Composer';
+import { DecisionCardContext } from '@/components/sessionWorkbench/DecisionCard';
+import { useDecisionCards } from '@/hooks/useDecisionCards';
 import StartTeamPanel from '@/components/vibeTeaming/StartTeamPanel';
-import { useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
-import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
+import { useWorkbenchRecords, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import { FAMILY_LABEL_KEY, useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import {
   TeamError,
   joinTeam,
@@ -47,6 +64,27 @@ import {
   type TeamBinding,
   type TeamTrouble,
 } from '@/hooks/useTeam';
+import IncomingRequest from './IncomingRequest';
+import MyRulesBar from './MyRulesBar';
+import PeerTiers, { Prediction, type RulesSource } from './PeerTiers';
+import RequestCard from './RequestCard';
+import TeamAvatar from './TeamAvatar';
+import TeamsGuide, { useTeamsGuide } from './TeamsGuide';
+import {
+  FRAGO_DEFAULT_RULES,
+  classifyTier,
+  maskCode,
+  maskCodes,
+  maskCodesIn,
+  parseRelayed,
+  stepsFor,
+  stepsForRelayed,
+  verdictOf,
+  type RequestProgress,
+  type RequestRules,
+  type RequestStep,
+  type SentRequest,
+} from './teamRequest';
 
 const ICON = { size: 16, strokeWidth: 1.5 } as const;
 
@@ -74,6 +112,10 @@ export default function VibeTeamingPage() {
   const { t } = useTranslation();
   const { state, error: stateError, loading, reload } = useTeamState();
   const [selected, setSelected] = useState<string | null>(null);
+  const [guideOpen, toggleGuide] = useTeamsGuide();
+  // 刚存下的设置先用上，等本机状态重读回来再以它为准——不然点完要等一轮才看得到变化。
+  const [justSaved, setJustSaved] = useState<RequestRules | null>(null);
+  const rules = justSaved ?? state?.request_rules ?? null;
 
   const active = useMemo(() => (state?.teams ?? []).filter((one) => one.active), [state]);
 
@@ -90,6 +132,9 @@ export default function VibeTeamingPage() {
   }, [active, selected]);
 
   const binding = active.find((one) => one.code === selected) ?? null;
+  // 本机知道的全部完整码。记录里出现哪一个都遮——几个 team 并排时，另一个的码也可能
+  // 被人贴进这一场里。
+  const codes = useMemo(() => (state?.teams ?? []).map((one) => one.code), [state]);
 
   if (loading) {
     return <div className="p-6 text-sm text-text-muted">{t('team.loading')}</div>;
@@ -107,8 +152,26 @@ export default function VibeTeamingPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <TeamBar teams={active} selected={selected} onSelect={setSelected} onChanged={reload} />
-      {binding && <Paired binding={binding} prefix={state?.prefix ?? ''} />}
+      <TeamBar
+        teams={active}
+        selected={selected}
+        onSelect={setSelected}
+        onChanged={reload}
+        guideOpen={guideOpen}
+        onToggleGuide={toggleGuide}
+      />
+      {guideOpen && <TeamsGuide onHide={toggleGuide} />}
+      {binding && (
+        <Paired
+          binding={binding}
+          codes={codes}
+          rules={rules}
+          onRulesSaved={(next) => {
+            setJustSaved(next);
+            void reload().then(() => setJustSaved(null));
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -438,17 +501,21 @@ function JoinTroubleCard({
   );
 }
 
-/** 顶上那条：连接码在左，动作在右。 */
+/** 顶上那条：统一页头。标题、连接码标签，右边「?」与三个中性动作。 */
 function TeamBar({
   teams,
   selected,
   onSelect,
   onChanged,
+  guideOpen,
+  onToggleGuide,
 }: {
   teams: TeamBinding[];
   selected: string | null;
   onSelect: (code: string) => void;
   onChanged: () => void;
+  guideOpen: boolean;
+  onToggleGuide: () => void;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -479,6 +546,7 @@ function TeamBar({
   };
 
   const open = panel !== null;
+  const btn = (pressed: boolean) => `page-header-btn ${pressed ? 'page-header-btn--pressed' : ''}`;
 
   return (
     // 展开发起／加入那块之后，这条带可能比它能占的地方还高——小屏上尤其明显，确认
@@ -490,53 +558,80 @@ function TeamBar({
     // 这一页嵌在外壳里，它拿到的高度比视口小，按视口算出来的上限永远够不着，于是
     // 这条规则形同虚设——而且只在小屏上现形。
     <div
-      className={`${
+      className={
         open ? 'flex min-h-0 basis-2/3 flex-col overflow-y-auto overscroll-contain' : 'shrink-0'
-      } border-b border-border-color`}
+      }
     >
-      <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
-        {teams.map((one) => (
-          <CodeBlock
-            key={one.code}
-            binding={one}
-            selected={one.code === selected}
-            onSelect={() => onSelect(one.code)}
-          />
-        ))}
-
-        <div className="ml-auto flex items-center gap-1">
-          <BarAction
-            icon={<Plus {...ICON} />}
-            label={t('team.open')}
-            title={t('team.openHint')}
-            active={panel === 'open'}
-            onClick={() => setPanel(panel === 'open' ? null : 'open')}
-          />
-          <BarAction
-            icon={<Link2 {...ICON} />}
-            label={t('team.joinWithCode')}
-            active={panel === 'join'}
-            onClick={() => setPanel(panel === 'join' ? null : 'join')}
-          />
-          {selected && (
-            <BarAction
-              icon={<LogOut {...ICON} />}
-              label={t('team.leave')}
-              title={t('team.leaveHint')}
-              onClick={() => void leave()}
-              disabled={busy}
-            />
-          )}
-        </div>
-      </div>
+      {/* 这一页没有实心绿的主动作：真正的动作是发送，那一枚绿留给左下的 Send。 */}
+      <PageHeader
+        title={t('sidebar.nav.teams')}
+        meta={
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            {teams.map((one) => (
+              <CodeChip
+                key={one.code}
+                binding={one}
+                selected={teams.length > 1 && one.code === selected}
+                onSelect={() => onSelect(one.code)}
+              />
+            ))}
+          </span>
+        }
+        secondary={
+          <>
+            <button
+              type="button"
+              onClick={onToggleGuide}
+              aria-pressed={guideOpen}
+              title={t('team.help')}
+              aria-label={t('team.help')}
+              data-testid="teams-help"
+              className={`${btn(guideOpen)} page-header-btn--icon page-header-btn--ghost`}
+            >
+              <HelpCircle size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanel(panel === 'open' ? null : 'open')}
+              aria-pressed={panel === 'open'}
+              title={t('team.openHint')}
+              className={`${btn(panel === 'open')} page-header-btn--ghost`}
+            >
+              <Plus size={14} />
+              {t('team.open')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanel(panel === 'join' ? null : 'join')}
+              aria-pressed={panel === 'join'}
+              className={`${btn(panel === 'join')} page-header-btn--ghost`}
+            >
+              <Link2 size={14} />
+              {t('team.joinWithCode')}
+            </button>
+            {selected && (
+              <button
+                type="button"
+                onClick={() => void leave()}
+                disabled={busy}
+                title={t('team.leaveHint')}
+                className={`${btn(false)} page-header-btn--ghost`}
+              >
+                <LogOut size={14} />
+                {t('team.leave')}
+              </button>
+            )}
+          </>
+        }
+      />
 
       {panel === 'open' && (
-        <div className="px-4 pb-3">
+        <div className="border-b border-border-color px-4 py-3">
           <StartTeamPanel onDone={done} onCancel={() => setPanel(null)} />
         </div>
       )}
       {panel === 'join' && (
-        <div className="px-4 pb-3">
+        <div className="border-b border-border-color px-4 py-3">
           <JoinFlow
             onDone={done}
             onCancel={() => setPanel(null)}
@@ -548,19 +643,22 @@ function TeamBar({
           />
         </div>
       )}
-      {error && <p className="px-4 pb-2 text-xs text-accent-error">{error}</p>}
-      {notice && <p className="px-4 pb-2 text-xs text-text-muted">{notice}</p>}
+      {error && <p className="px-4 py-2 text-xs text-accent-error">{error}</p>}
+      {notice && <p className="px-4 py-2 text-xs text-text-muted">{notice}</p>}
     </div>
   );
 }
 
 /**
- * 顶栏上的连接码：明文摆着，一按就复制。
+ * 页头上的连接码：一枚中性标签，只露前 4 位，Copy 复制完整码。
  *
- * 它是队友进门的唯一凭证，而这一页的人要做的第一件事就是把它发出去。藏起来、要点一下
- * 才露的做法，等于在最常用的那一步上加一道；这串码本来就要被念给人听、贴进聊天窗口。
+ * 码是队友进门的凭证。这一页左栏的内容每 15 秒同步给队友，截图、录屏、投屏也会把屏幕
+ * 上的东西一起带走——所以屏幕上NEVER 摆完整码。要把码给人，按 Copy 贴进聊天窗口；
+ * 这一步从前靠「码明着摆出来、照着念」，现在靠复制，最常用的那一步仍然只要一下。
+ *
+ * 几个 team 并排时，点标签切到那一个；选中态整枚换中性底加描边。
  */
-function CodeBlock({
+function CodeChip({
   binding,
   selected,
   onSelect,
@@ -586,8 +684,8 @@ function CodeBlock({
       await navigator.clipboard.writeText(binding.code);
       setCopied(true);
     } catch {
-      // 剪贴板不给用（没有安全上下文、被策略挡住）时码照样在屏幕上，人自己选中复制。
-      // 这里不报错：复制失败不该让这一块看起来坏了。
+      // 剪贴板不给用（没有安全上下文、被策略挡住）时不报错：复制失败不该让这一块
+      // 看起来坏了。人可以从左栏跑 frago team list 拿到完整码。
       setCopied(false);
     }
     if (timer.current) window.clearTimeout(timer.current);
@@ -595,60 +693,35 @@ function CodeBlock({
   };
 
   return (
-    <button
-      onClick={() => void copy()}
-      aria-label={`${t('team.codeLabel')} ${binding.code} — ${t('team.codeCopy')}`}
-      className={`rounded-lg border px-3 py-1.5 text-left transition-shadow ${
+    <span
+      data-testid="team-code-chip"
+      className={`inline-flex h-7 shrink-0 items-center gap-2 rounded-[7px] border pl-2.5 pr-0.5 text-[12px] text-text-muted ${
         selected
-          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
-          : 'border-border-color hover:bg-bg-hover'
+          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)]'
+          : 'border-border-color'
       }`}
     >
-      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-text-muted">
+      <button type="button" onClick={onSelect} className="inline-flex items-center gap-2">
         {t('team.codeLabel')}
-        <span className="normal-case tracking-normal">
-          · {binding.side === 'A' ? t('team.sideA') : t('team.sideB')}
-        </span>
-      </span>
-      <span className="mt-0.5 flex items-center gap-2">
-        <span className="font-mono text-base font-semibold tracking-[0.2em]">{binding.code}</span>
-        <span className="flex items-center gap-1 text-[11px] font-normal text-text-muted">
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? t('team.codeCopied') : t('team.codeCopy')}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-function BarAction({
-  icon,
-  label,
-  title,
-  active,
-  disabled,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  title?: string;
-  active?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-pressed={active}
-      className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-40 ${
-        active ? 'bg-bg-hover text-text-primary' : 'text-text-muted'
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
+        <b
+          data-testid="team-code"
+          className="font-mono text-[12px] font-medium tracking-[0.14em] text-text-primary"
+        >
+          {maskCode(binding.code)}
+        </b>
+        <span>· {binding.side === 'A' ? t('team.sideA') : t('team.sideB')}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={`${t('team.codeLabel')} — ${t('team.codeCopy')}`}
+        data-testid="team-code-copy"
+        className="inline-flex h-[22px] items-center gap-1 rounded-[5px] px-[7px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+        {copied ? t('team.codeCopied') : t('team.codeCopy')}
+      </button>
+    </span>
   );
 }
 
@@ -657,20 +730,37 @@ function BarAction({
  *
  * 队友没进来时右边不立列——一列空白顶着他的名字看起来像坏了。那块地方说「他还没进来」，
  * 并把注意力送回顶上那串码。
+ *
+ * **归属靠整块，不靠边线。** 左栏页面本色、实心中性头像、「You」；右栏整栏冷色底、冷色
+ * 头像、「Read-only」。身份头、头像、底色、说话人叫法四处同时说同一件事，NEVER 用单边
+ * 竖条或横条区分。
  */
-function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
+function Paired({
+  binding,
+  codes,
+  rules,
+  onRulesSaved,
+}: {
+  binding: TeamBinding;
+  codes: string[];
+  rules: RequestRules | null;
+  onRulesSaved: (rules: RequestRules) => void;
+}) {
   const peer = usePeerRecords(binding.code);
   const here = !!peer.status?.peer_present;
 
   return (
-    <div className="grid min-h-0 flex-1 auto-rows-fr gap-px overflow-hidden bg-border-color md:auto-rows-auto md:grid-cols-2">
+    <div className="grid min-h-0 flex-1 auto-rows-fr overflow-hidden md:auto-rows-auto md:grid-cols-2">
       <MySide
-        sessionId={binding.session_id}
+        binding={binding}
+        codes={codes}
+        rules={rules}
+        onRulesSaved={onRulesSaved}
         pushTrouble={binding.push_trouble ?? ''}
         pushTroubleTransient={!!binding.push_trouble_transient}
       />
       {here ? (
-        <PeerSide binding={binding} prefix={prefix} peer={peer} />
+        <PeerSide binding={binding} codes={codes} peer={peer} />
       ) : (
         <PeerAway onRefresh={() => void peer.reload()} />
       )}
@@ -685,29 +775,76 @@ function Paired({ binding, prefix }: { binding: TeamBinding; prefix: string }) {
  * 整页唯一能打字的地方在对方那一列底下，人只能在写着别人名字的那半边说话。
  *
  * **队友投来的消息也在这条流里。** 它们经中继落进我这场会话，成为一条带前缀的用户
- * 发言，跟我自己说的话排在一起。所以这一列必须能说话：队友让我的 agent 做了一件事，
- * 我要在同一个地方看见它、接着它往下说。
+ * 发言，跟我自己说的话排在一起——画成冷色底的队友请求块，一眼分得出不是我说的。所以
+ * 这一列必须能说话：队友让我的 agent 做了一件事，我要在同一个地方看见它、接着它往下说。
  */
 function MySide({
-  sessionId,
+  binding,
+  codes,
+  rules,
+  onRulesSaved,
   pushTrouble,
   pushTroubleTransient,
 }: {
-  sessionId: string;
+  binding: TeamBinding;
+  codes: string[];
+  rules: RequestRules | null;
+  onRulesSaved: (rules: RequestRules) => void;
   pushTrouble: string;
   pushTroubleTransient: boolean;
 }) {
   const { t } = useTranslation();
+  const sessionId = binding.session_id;
   const sessions = useWorkbenchSessions();
   const mine = useWorkbenchRecords(sessionId, { live: true });
   const quoteSeq = useRef(0);
   const [quote, setQuote] = useState<{ text: string; at: number } | null>(null);
 
   const session = sessions.sessions.find((s) => s.session_id === sessionId) ?? null;
+  const familyKey = session?.family ? FAMILY_LABEL_KEY[session.family] : undefined;
+  const family = familyKey ? t(familyKey) : '';
+  const records = useMemo(() => maskCodes(mine.records, codes), [mine.records, codes]);
+  const voice = useMemo(
+    () => ({ user: t('team.voice.mineUser'), agent: t('team.voice.mineAgent') }),
+    [t],
+  );
+
+  // 左栏里带核实行的用户发言画成队友请求块。核实拿本机参加的那个完整码去问，显示
+  // 用的是正文里拆出来的原文——前缀、设置行与核实行是给 agent 看的。
+  const override = useCallback(
+    (record: WorkbenchRecord) => {
+      const relayed = parseRelayed(record);
+      if (!relayed) return null;
+      return (
+        <IncomingRequest
+          body={relayed.body}
+          code={binding.code}
+          messageId={relayed.messageId}
+          ts={record.ts}
+          rules={rules}
+        />
+      );
+    },
+    [binding.code, rules],
+  );
+
+  // 决定卡片与会话页同一套：答过没有按记录判，点了交给左下输入区。右栏不提供，卡片只读。
+  // 左栏总绑着一场会话，输入区没有发不出去的时候，卡片也就没有「不能答」的原因。
+  const cards = useDecisionCards({
+    sessionId,
+    records,
+    blockedReason: null,
+    onSendStart: mine.markSent,
+    onSendFailed: mine.clearSent,
+  });
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
-      <ColumnHeader title={t('team.mine')} note={session?.title ?? undefined} />
+    <section data-testid="teams-mine" className="flex min-h-0 min-w-0 flex-col bg-bg-primary">
+      <IdentityHeader
+        who="me"
+        title={t('team.you')}
+        note={family ? t('team.youWho', { family }) : t('team.youWhoPlain')}
+      />
       {/* 推不上去时这一侧照常收消息、看起来一切正常，只有队友那边是空的——他看不到
           原因，所以原因只能摆在这里。服务端只在连续一阵推不上去之后才交出原因。
           没够着中继（网络、握手、限流）会自己好，一行灰字说在重试；中继不收才是要人
@@ -721,37 +858,61 @@ function MySide({
         <div role="alert" className="mx-3 mt-2 rounded-md bg-red-500/10 px-3 py-2 text-xs leading-relaxed text-accent-error">
           <span className="font-medium">{t('team.pushTroubleTitle')}</span>
           <span className="text-text-muted">{t('team.pushTroubleWhy')}</span>
-          <div className="mt-1 break-all font-mono">{pushTrouble}</div>
+          <div className="mt-1 break-all font-mono">{maskCodesIn(pushTrouble, codes)}</div>
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
-        <RecordStream
-          sessionId={sessionId}
-          records={mine.records}
-          loading={mine.loading}
-          loadingOlder={mine.loadingOlder}
-          hasOlder={mine.hasOlder}
-          error={mine.error}
-          onLoadOlder={() => void mine.loadOlder()}
-          awaitingAgent={mine.awaitingAgent}
-          onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
-        />
+        <RecordVoiceContext.Provider value={voice}>
+          <RecordOverrideContext.Provider value={override}>
+            <DecisionCardContext.Provider value={cards.host}>
+              <RecordStream
+                sessionId={sessionId}
+                records={records}
+                loading={mine.loading}
+                loadingOlder={mine.loadingOlder}
+                hasOlder={mine.hasOlder}
+                error={mine.error}
+                onLoadOlder={() => void mine.loadOlder()}
+                awaitingAgent={mine.awaitingAgent}
+                onQuote={(text) => setQuote({ text, at: (quoteSeq.current += 1) })}
+              />
+            </DecisionCardContext.Provider>
+          </RecordOverrideContext.Provider>
+        </RecordVoiceContext.Provider>
       </div>
-      <Composer
-        sessionId={sessionId}
-        family={session?.family ?? null}
-        running={session?.status === 'running' || mine.awaitingAgent}
-        onSendStart={mine.markSent}
-        onSendFailed={mine.clearSent}
-        deliveredAt={mine.deliveredAt}
-        outbound={mine.outbound}
-        quote={quote}
-        onSent={(outboundId) => {
-          void mine.reload();
-          void sessions.reload();
-          mine.settleSent(outboundId);
-        }}
-      />
+      {rules && <MyRulesBar rules={rules} onSaved={onRulesSaved} />}
+      <div className="shrink-0 border-t border-border-color">
+        <p className="flex min-w-0 items-center gap-[7px] whitespace-nowrap px-[14px] pt-2.5 text-[12px] font-semibold">
+          <TeamAvatar who="me" size="sm" />
+          {t('team.talkTitle')}
+          <span className="min-w-0 truncate text-[11px] font-normal text-text-muted">
+            {family ? t('team.talkWho', { family }) : t('team.talkWhoPlain')}
+          </span>
+        </p>
+        <Composer
+          sessionId={sessionId}
+          family={session?.family ?? null}
+          running={session?.status === 'running' || mine.awaitingAgent}
+          onSendStart={cards.onSendStart}
+          onSendFailed={cards.onSendFailed}
+          deliveredAt={mine.deliveredAt}
+          outbound={mine.outbound}
+          quote={quote}
+          answer={cards.answer}
+          onSent={(outboundId) => {
+            void mine.reload();
+            void sessions.reload();
+            mine.settleSent(outboundId);
+          }}
+        />
+        <p
+          data-testid="teams-leak-note"
+          className="flex items-start gap-1.5 px-[14px] pb-2.5 text-[11px] leading-[1.45] text-text-muted"
+        >
+          <Eye size={13} className="mt-px shrink-0 text-accent-warning" />
+          <span>{t('team.leakNote')}</span>
+        </p>
+      </div>
     </section>
   );
 }
@@ -760,9 +921,11 @@ function MySide({
 function PeerAway({ onRefresh }: { onRefresh: () => void }) {
   const { t } = useTranslation();
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
-      <ColumnHeader
+    <section className="flex min-h-0 min-w-0 flex-col border-l border-border-color bg-[var(--peer-bg)]">
+      <IdentityHeader
+        who="peer"
         title={t('team.peer')}
+        note={t('team.peerWho')}
         action={
           <button
             onClick={onRefresh}
@@ -782,24 +945,157 @@ function PeerAway({ onRefresh }: { onRefresh: () => void }) {
   );
 }
 
-/** 队友进来之后右边那一列：他那一场的记录，加一个给他的 agent 下事情的入口。 */
+/** 发出 10 分钟仍未见送达，卡片加一句「还没进对方的会话」。 */
+const STALE_AFTER_MS = 10 * 60_000;
+
+/** 我发出、还没在对方记录里找到的请求，挂在右栏流末尾时用的记录编号前缀。 */
+const PENDING_PREFIX = 'team-pending:';
+
+/**
+ * 队友进来之后右边那一列：他那一场的记录，加一个给他的 agent 下事情的入口。
+ *
+ * 他会话里那条带核实行的用户发言（我发过去的请求）画成「Your request」卡，步骤从两侧
+ * 已有的记录推。本页刚发出、对方记录还没带回来的那几条挂在流末尾，同一张卡、停在 Sent；
+ * 这份待核对清单只活在这一页的内存里，刷新就丢——丢了以后那条请求等对方记录带回来时
+ * 从 Delivered 起画，发出记录没有别处可存，而对方记录迟早会带回来。
+ */
 function PeerSide({
   binding,
-  prefix,
+  codes,
   peer,
 }: {
   binding: TeamBinding;
-  prefix: string;
+  codes: string[];
   peer: ReturnType<typeof usePeerRecords>;
 }) {
   const { t } = useTranslation();
   const silent = peer.records.length === 0;
+  const [sent, setSent] = useState<SentRequest[]>([]);
+  const sentSeq = useRef(0);
+  const [now, setNow] = useState(() => Date.now());
+  // 在对方记录里找到过的请求。右栏只拿对方最近 80 条，对方忙起来，送达的那条很快被
+  // 挤出这个范围——找不到不等于没送到。从前找不到就退回流末尾停在 Sent，10 分钟后
+  // 还挂上「还没进对方的会话」，而对方早已收到并做完了。找到过一次就不再回头。
+  const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set());
+
+  // 换 team 时清掉上一个 team 的待核对清单。
+  useEffect(() => {
+    setSent([]);
+    setSeen(new Set());
+  }, [binding.code]);
+
+  // 有还没送达的请求时每分钟看一眼钟，让「还没进对方的会话」那一句按时出现。
+  const waiting = sent.some((one) => !seen.has(one.key));
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [waiting]);
+
+  const peerRules = peer.status?.peer_rules ?? null;
+  const rules = peerRules ?? FRAGO_DEFAULT_RULES;
+  const source: RulesSource = peerRules ? 'teammate' : 'frago';
+
+  const records = useMemo(() => maskCodes(peer.records, codes), [peer.records, codes]);
+
+  // 每条本页发出的请求此刻走到哪；已经在对方记录里找到的，按那条记录的编号挂上去。
+  const progress = useMemo(() => {
+    const byRecord = new Map<string, { request: SentRequest; steps: RequestProgress['steps'] }>();
+    const pending: { request: SentRequest; steps: RequestProgress['steps'] }[] = [];
+    for (const request of sent) {
+      const got = stepsFor(request, records);
+      if (got.deliveredRecordId) byRecord.set(got.deliveredRecordId, { request, steps: got.steps });
+      // 送达过、只是被挤出了范围：跟别的旧记录一样不再显示。
+      else if (!seen.has(request.key)) pending.push({ request, steps: got.steps });
+    }
+    return { byRecord, pending };
+  }, [sent, records, seen]);
+
+  // 这一轮新找到的记下来。
+  useEffect(() => {
+    const found = [...progress.byRecord.values()]
+      .map(({ request }) => request.key)
+      .filter((key) => !seen.has(key));
+    if (found.length) setSeen((was) => new Set([...was, ...found]));
+  }, [progress, seen]);
+
+  // 还没送达的挂在流末尾。给它们一条假的用户发言占位，这样它们跟真实记录走同一条
+  // 渲染与跟到底的路，不必在记录流组件里另开一个口子。
+  const shown = useMemo(() => {
+    if (!progress.pending.length) return records;
+    const tail = progress.pending.map(({ request }, i): WorkbenchRecord => ({
+      id: `${PENDING_PREFIX}${request.key}`,
+      session_id: binding.code,
+      group_id: null,
+      seq: Number.MAX_SAFE_INTEGER - progress.pending.length + i,
+      ts: request.sentAt,
+      kind: 'user.say',
+      agent_path: [],
+      payload: { text: request.text },
+      raw_available: false,
+    }));
+    return [...records, ...tail];
+  }, [records, progress.pending, binding.code]);
+
+  const footFor = (text: string, step: RequestStep, sentAt: number | null): string | null => {
+    const guess = classifyTier(text);
+    const tier = guess.tier === 'idle' ? 'read' : guess.tier;
+    const verdict = verdictOf(tier, rules);
+    if (step === 'sent' && sentAt !== null && now - sentAt > STALE_AFTER_MS) {
+      return t('team.request.stale');
+    }
+    if (step === 'replied') return null;
+    if (step === 'waiting_owner') return t('team.request.footWaiting');
+    if (verdict === 'refuse') {
+      return tier === 'never' ? t('team.request.footNever') : t('team.request.footRefuse');
+    }
+    return step === 'on_it' ? t('team.request.footOnIt') : null;
+  };
+
+  const override = useCallback(
+    (record: WorkbenchRecord) => {
+      if (record.id.startsWith(PENDING_PREFIX)) {
+        const key = record.id.slice(PENDING_PREFIX.length);
+        const hit = progress.pending.find((one) => one.request.key === key);
+        if (!hit) return null;
+        return (
+          <RequestCard
+            text={hit.request.text}
+            steps={hit.steps}
+            foot={footFor(hit.request.text, 'sent', hit.request.sentAt)}
+          />
+        );
+      }
+      const relayed = parseRelayed(record);
+      if (!relayed) return null;
+      const mineHit = progress.byRecord.get(record.id);
+      const index = records.findIndex((one) => one.id === record.id);
+      const steps = mineHit?.steps ?? stepsForRelayed(records, index, null);
+      const current = steps[steps.length - 1].step;
+      return (
+        <RequestCard text={relayed.body} steps={steps} foot={footFor(relayed.body, current, null)} />
+      );
+    },
+    // footFor 只读 rules、now 与 t，已经列在下面
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [progress, records, rules, now, t],
+  );
+
+  const voice = useMemo(
+    () => ({ user: t('team.voice.peerUser'), agent: t('team.voice.peerAgent') }),
+    [t],
+  );
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-bg-card">
-      <ColumnHeader
+    <section
+      data-testid="teams-peer"
+      className="flex min-h-0 min-w-0 flex-col border-l border-border-color bg-[var(--peer-bg)]"
+    >
+      <IdentityHeader
+        who="peer"
         title={t('team.peer')}
-        note={silent ? t('team.peerSilent') : undefined}
+        tag={t('team.readOnly')}
+        note={silent ? t('team.peerSilent') : t('team.peerWho')}
         action={
           <button
             onClick={() => void peer.reload()}
@@ -811,36 +1107,74 @@ function PeerSide({
         }
       />
       <div className="min-h-0 flex-1 overflow-auto">
-        <RecordStream
-          sessionId={binding.code}
-          records={peer.records}
-          loading={peer.loading}
-          loadingOlder={false}
-          hasOlder={false}
-          error={peer.error}
-          onLoadOlder={() => {}}
-        />
+        <RecordVoiceContext.Provider value={voice}>
+          <RecordOverrideContext.Provider value={override}>
+            <RecordStream
+              sessionId={binding.code}
+              records={shown}
+              loading={peer.loading}
+              loadingOlder={false}
+              hasOlder={false}
+              error={peer.error}
+              onLoadOlder={() => {}}
+            />
+          </RecordOverrideContext.Provider>
+        </RecordVoiceContext.Provider>
       </div>
-      <Instruct code={binding.code} prefix={prefix} onSent={() => void peer.reload()} />
+      <Instruct
+        code={binding.code}
+        rules={rules}
+        source={source}
+        onSent={(text, messageId) => {
+          sentSeq.current += 1;
+          setSent((was) => [
+            ...was,
+            { key: String(sentSeq.current), text, sentAt: Date.now(), messageId: messageId || undefined },
+          ]);
+          void peer.reload();
+        }}
+      />
     </section>
   );
 }
 
-/** 两列的列头。两边同一个高度、同一套字号，左右才对得齐。 */
-function ColumnHeader({
+/**
+ * 两列的身份头。两边同一个高度、同一套字号，左右才对得齐。
+ *
+ * 左「You · Your agent · Claude Code · this machine」配实心中性头像；右「Teammate」配冷色
+ * 头像与「Read-only」标签、「Their agent's session · synced every 15 s」。
+ */
+function IdentityHeader({
+  who,
   title,
+  tag,
   note,
   action,
 }: {
+  who: 'me' | 'peer';
   title: string;
+  tag?: string;
   note?: string;
   action?: React.ReactNode;
 }) {
   return (
-    <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color px-3">
-      <span className="shrink-0 text-xs font-medium">{title}</span>
-      {note && <span className="min-w-0 truncate text-[11px] text-text-muted">· {note}</span>}
-      <span className="flex-1" />
+    <header
+      data-testid={`identity-${who}`}
+      className="flex h-[52px] shrink-0 items-center gap-[9px] border-b border-border-color px-[14px]"
+    >
+      <TeamAvatar who={who} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-[7px] text-[13px] font-semibold leading-[1.35]">
+          {title}
+          {tag ? (
+            <span className="inline-flex h-[18px] items-center gap-1 rounded-full bg-[var(--peer-chip)] px-[7px] text-[11px] font-medium text-[var(--peer-ink)]">
+              <Eye size={11} />
+              {tag}
+            </span>
+          ) : null}
+        </div>
+        {note ? <div className="truncate text-[11px] leading-[1.35] text-text-muted">{note}</div> : null}
+      </div>
       {action}
     </header>
   );
@@ -850,34 +1184,42 @@ function ColumnHeader({
  * 给队友的 agent 下一件事。
  *
  * **这不是聊天框。** 打出去的话落在队友的会话里，成为他那边的一条用户发言，前面带一句
- * 说明它来自我。所以它有自己的标题、写明这句话去哪儿，和左边那个「跟我自己的 agent
- * 说话」长得不一样——两个框长同一个样子，人分不出自己此刻在跟谁说话。
+ * 说明它来自我。所以它有自己的标题（带冷色小头像，写明「约 15 秒后落进去」），和左边
+ * 那个「跟我自己的 agent 说话」长得不一样——两个框长同一个样子，人分不出自己此刻在跟
+ * 谁说话。
  *
- * 那句前缀只在打了字之后作一次预览。它描述的是「我的话在队友屏幕上长什么样」，常驻在
- * 我眼前的话，读起来像有人在对我说话，而主语还是别人。
+ * **发之前就告诉人会发生什么。** 输入框上方三格是对方主人定的处理方式，按正在写的这句
+ * 点亮一格；发送键左边一句话说依据。从前这里是一行「他那边看到的是」前缀预览——三格与
+ * 那句预判已经交代了对方会怎么看待这句话，前缀预览再占一行，删了。
+ *
+ * 这一屏唯一的实心绿给左下的 Send，这里的 Send 是中性的。
  */
 function Instruct({
   code,
-  prefix,
+  rules,
+  source,
   onSent,
 }: {
   code: string;
-  prefix: string;
-  onSent: () => void;
+  rules: RequestRules;
+  source: RulesSource;
+  onSent: (text: string, messageId: string) => void;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const guess = useMemo(() => classifyTier(text), [text]);
 
   const submit = async () => {
-    if (!text.trim() || busy) return;
+    const body = text.trim();
+    if (!body || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await sendToPeer(code, text.trim());
+      const messageId = await sendToPeer(code, body);
       setText('');
-      onSent();
+      onSent(body, messageId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -886,14 +1228,16 @@ function Instruct({
   };
 
   return (
-    <div className="shrink-0 border-t border-border-color bg-bg-subtle p-3">
-      <p className="flex items-center gap-1.5 text-[11px] font-medium">
-        <Send size={12} strokeWidth={1.5} />
+    <div data-testid="teams-instruct" className="shrink-0 border-t border-border-color px-[14px] pb-3 pt-2.5">
+      <p className="flex min-w-0 items-center gap-[7px] whitespace-nowrap text-[12px] font-semibold">
+        <TeamAvatar who="peer" size="sm" />
         {t('team.instructTitle')}
+        <span className="min-w-0 truncate text-[11px] font-normal text-text-muted">
+          {t('team.instructWhen')}
+        </span>
       </p>
-      <p className="mt-0.5 text-[11px] leading-relaxed text-text-muted">{t('team.instructWhy')}</p>
-
-      <div className="mt-2 flex gap-2">
+      <PeerTiers rules={rules} source={source} guess={guess} />
+      <div className="mt-[7px] rounded-lg border border-border-color bg-bg-primary px-2.5 py-2">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -902,28 +1246,23 @@ function Instruct({
           }}
           rows={2}
           placeholder={t('team.instructPlaceholder')}
-          className="min-w-0 flex-1 resize-none rounded-md border border-border-color bg-bg-card px-2 py-1.5 text-sm"
+          className="block w-full resize-none border-0 bg-transparent text-[13px] leading-[1.5] text-text-primary outline-none placeholder:text-text-muted"
         />
-        <button
-          onClick={() => void submit()}
-          disabled={busy || !text.trim()}
-          className="self-end rounded-md bg-accent-primary px-3 py-1.5 text-xs text-[var(--text-on-accent)] disabled:opacity-40"
-        >
-          {t('team.instructSend')}
-        </button>
+        <div className="mt-1.5 flex items-center gap-2.5">
+          <Prediction guess={guess} rules={rules} />
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={busy || !text.trim()}
+            data-testid="teams-instruct-send"
+            className="page-header-btn shrink-0 self-end"
+          >
+            <Send size={13} />
+            {t('team.instructSend')}
+          </button>
+        </div>
       </div>
-
-      {/* 打了字才预览。空着的时候摆一行别人口气的话，读起来像有人在对我说话。 */}
-      {text.trim() && (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-text-muted">
-          {t('team.instructPreview')}：
-          <span className="italic">
-            {prefix.replace('{code}', code)}
-            {text.trim()}
-          </span>
-        </p>
-      )}
-      {error && <p className="mt-1.5 text-xs text-accent-error">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-accent-error">{maskCodesIn(error, [code])}</p>}
     </div>
   );
 }

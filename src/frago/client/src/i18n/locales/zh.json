@@ -32,7 +32,8 @@
     },
     "appearance": {
       "light": "浅色",
-      "dark": "深色"
+      "dark": "深色",
+      "label": "外观"
     },
     "usage": {
       "label": "订阅额度",
@@ -43,7 +44,17 @@
       "weekModelLong": "本周型号",
       "sessionLong": "当前五小时窗口",
       "tooltip": "{{name}} 已用 {{percent}}%",
-      "tooltipReset": "{{name}} 已用 {{percent}}% · {{reset}} 重置"
+      "tooltipReset": "{{name}} 已用 {{percent}}% · {{reset}} 重置",
+      "heading": "用量"
+    },
+    "nav": {
+      "sessions": "会话",
+      "teams": "结对",
+      "recipes": "配方",
+      "todos": "事务",
+      "schedules": "定时任务",
+      "data": "数据",
+      "settings": "设置"
     }
   },
   "tokenCalendar": {
@@ -181,7 +192,6 @@
   },
   "recipes": {
     "title": "配方",
-    "pageDesc": "浏览并运行可复用的自动化配方",
     "noRecipes": "暂无配方",
     "noRecipesDescription": "使用 frago recipe create 创建新配方",
     "forge": {
@@ -308,6 +318,7 @@
     "show": "显示",
     "hide": "隐藏",
     "folder": {
+      "sectionTitle": "文件夹",
       "create": "新建文件夹",
       "rename": "改名",
       "remove": "删除文件夹",
@@ -323,7 +334,8 @@
       "nameZhPlaceholder": "例如：行情研究",
       "nameEnPlaceholder": "留空就跟着中文名显示",
       "trouble": "文件夹表这次没读进来，先按没有文件夹显示：{{detail}}"
-    }
+    },
+    "headerMeta": "本地 {{local}} · 社区 {{community}}"
   },
   "skills": {
     "title": "技能",
@@ -333,7 +345,6 @@
   },
   "todos": {
     "title": "事务",
-    "pageDesc": "frago todo 里的事务。顺序与 frago todo list 一致：先按分类名次，同一分类里优先级高的在前，同级早建的在前。",
     "searchPlaceholder": "按标题、背景、标签或编号找",
     "empty": "这一档一件都没有",
     "emptyDesc": "换一档看看，或者用上面的「添一件」写一句话。",
@@ -358,7 +369,8 @@
     },
     "loadFailed": "事务清单取不到：{{message}}",
     "notFound": "地址里的这件事务不在清单里：{{id}}",
-    "stepCount": "{{n}} 步",
+    "stepCount_one": "{{count}} 步",
+    "stepCount_other": "{{count}} 步",
     "category": {
       "label": "分类",
       "all": "全部分类",
@@ -402,6 +414,11 @@
       "normal": "中",
       "high": "高"
     },
+    "section": {
+      "high": "高优先级",
+      "normal": "中优先级",
+      "low": "低优先级"
+    },
     "filter": {
       "active": "还没了结",
       "todo": "待办",
@@ -425,11 +442,11 @@
       "doneWhen": "做到什么算完",
       "links": "相关链接",
       "sessions": "谈过这件事的会话"
-    }
+    },
+    "headerMeta": "{{count}} 件未完成"
   },
   "schedules": {
     "title": "定时任务",
-    "pageDesc": "frago schedule 里的定时任务，由服务端的调度器到点执行。顺序与 frago schedule list 一致。",
     "searchPlaceholder": "按名字、执行内容、编号或通知落点找",
     "schedulerStopped": "调度器现在没在跑：下面每一条的「下次运行」都不会兑现。重启 frago 服务后恢复。",
     "empty": "这一档一条都没有",
@@ -473,14 +490,42 @@
     },
     "freq": {
       "cron": "cron {{expr}}",
-      "hours": "每 {{n}} 小时",
-      "minutes": "每 {{n}} 分钟",
-      "seconds": "每 {{n}} 秒"
+      "daily": "每天 {{at}}",
+      "weekly": "每{{day}} {{at}}",
+      "weekdays": "工作日 {{at}}",
+      "monthly": "每月 {{dom}} 日 {{at}}",
+      "listSep": "、",
+      "and": " 和 ",
+      "dow": {
+        "0": "周日",
+        "1": "周一",
+        "2": "周二",
+        "3": "周三",
+        "4": "周四",
+        "5": "周五",
+        "6": "周六"
+      },
+      "hours_other": "每 {{count}} 小时",
+      "minutes_other": "每 {{count}} 分钟",
+      "seconds": "每 {{count}} 秒"
     },
     "row": {
-      "next": "下次 {{time}}",
-      "runs": "已跑 {{n}} 次",
-      "failures": "连续失败 {{n}} 次"
+      "runs_other": "已跑 {{count}} 次"
+    },
+    "table": {
+      "schedule": "任务",
+      "when": "何时",
+      "lastRun": "上次运行",
+      "runs": "次数"
+    },
+    "lastRun": {
+      "today": "今天 {{time}}",
+      "yesterday": "昨天 {{time}}",
+      "date": "{{month}}月{{day}}日 {{time}}"
+    },
+    "allDisabled": {
+      "title_other": "{{count}} 个定时任务全部停用。",
+      "body": "启用其中一个之前，什么都不会自动跑。"
     },
     "notify": {
       "never": "不通知",
@@ -542,7 +587,9 @@
       "success": "成功",
       "failed": "失败",
       "unknown": "—"
-    }
+    },
+    "headerMeta_one": "{{count}} 个定时任务 · {{enabled}} 个启用",
+    "headerMeta_other": "{{count}} 个定时任务 · {{enabled}} 个启用"
   },
   "guide": {
     "title": "使用指南",
@@ -653,7 +700,7 @@
       "about": "关于"
     },
     "tabDesc": {
-      "capability": "静态规则与 LightAgent 此刻的状态",
+      "capability": "每次提交 prompt，frago 分两层加提示。下面是两层此刻在做什么。",
       "general": "认证与账号配置",
       "channels": "任务接入通道",
       "resources": "官方命令与技能同步",
@@ -662,20 +709,18 @@
       "about": "版本与许可"
     },
     "capability": {
-      "intro": "frago 在每次提交 prompt 时给 agent 注入提示，分两层：静态规则 (static rules) 常驻生效，LightAgent 需要一个模型 profile 才存在。下面是两层此刻的实际状态。",
       "loadFailed": "读取提示能力状态失败。",
       "saveFailed": "开关没有写入成功，配置保持原样。",
       "static": {
         "name": "静态规则 (static rules)",
-        "lede": "编译进 frago-core 二进制的路由规则，按事件匹配后直接注入，不经过模型。",
+        "lede": "规则按事件匹配后直接注入，不经过模型。",
         "badge": "已生效",
-        "count": "内置规则与用户规则合并后共 {{total}} 条参与匹配，判定在几十毫秒内完成。",
-        "countUnknown": "规则条数暂时读不出来，匹配本身照常进行。",
-        "noConfigNeeded": "这一层不需要任何配置，也不消耗模型额度。"
+        "count": "内置与用户规则共 {{total}} 条参与匹配。无需配置，不耗模型额度。",
+        "countUnknown": "条数暂时读不出，匹配照常。"
       },
       "ai": {
         "name": "LightAgent",
-        "lede": "每次提交 prompt 时，把最近几轮会话连同规则、book、经验域的索引交给一个便宜模型，换回一句该注入的提示。",
+        "lede": "把最近几轮连同规则、book、经验域索引交给便宜模型，换回一句提示。",
         "unknownModel": "未知模型",
         "unnamedProfile": "未命名 profile",
         "badge": {
@@ -685,23 +730,22 @@
           "no_key": "缺少 api key"
         },
         "body": {
-          "enabled": "当前使用模型 {{model}}，每次提交 prompt 会多一次该模型的调用。",
-          "disabled": "这一层被手动关闭了，不是出故障。重新打开下面的开关即可恢复。",
-          "not_configured": "没有找到可用的模型 profile，所以这一层从未被调用过。",
-          "no_key": "profile {{profile}} 的 api key 是空的，这一层调不动模型。"
+          "enabled": "使用 <b>{{model}}</b>，每次 prompt 多一次调用。",
+          "disabled": "手动关的，不是故障。打开开关即恢复。",
+          "not_configured": "没有可用的模型 profile，这一层从未运行。",
+          "no_key": "profile {{profile}} 没填 api key，调不动模型。"
         },
         "consequence": {
-          "not_configured": "后果：会话里不会出现按最近几轮内容生成的提示。静态规则不受影响，照常工作。",
-          "no_key": "后果：这一层完全不工作，而它本来只差一个 key。引擎发现 key 为空会直接跳过，不发请求。静态规则不受影响。"
+          "not_configured": "会话里不会出现按最近几轮生成的提示。静态规则照常。",
+          "no_key": "这一层完全不工作，只差一个 key。key 为空时不发请求。静态规则照常。"
         },
         "cta": {
           "not_configured": "去配置模型 profile",
           "no_key": "去填 api key"
         },
         "switch": "启用 LightAgent",
-        "switchDesc": "关掉后 frago 不再为提示调用模型，静态规则继续工作。",
-        "persistence": "开关写入 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>，引擎读的是同一个字段；这一段缺失时视为开启。",
-        "envOff": "环境变量 <c>FRAGO_REVIEW=off</c> 正在生效，它压过这里的开关：当前环境下 LightAgent 一律不运行，界面开关暂时不起作用。"
+        "switchDesc": "关掉后不再为提示调模型，静态规则照常。存于 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>。",
+        "envOff": "<c>FRAGO_REVIEW=off</c> 正在生效并压过这个开关，当前环境下 LightAgent 不运行。"
       }
     },
     "general": {
@@ -745,8 +789,8 @@
       "model": "模型",
       "dangerZone": "危险操作",
       "claudeSettingsFile": "Claude Code 配置文件",
-      "claudeSettingsFileDesc": "这是 Claude Code 自己的配置，不是 frago 的工作目录。",
-      "claudeSettingsFileWarning": "frago 的 hook 注册在这个文件里。改坏了，Claude Code 可能起不来，frago 的所有 hook 也会无声失效。除非清楚自己在改什么，否则不要动它。",
+      "claudeSettingsFileDesc": "Claude Code 自己的配置，不属于 frago。",
+      "claudeSettingsFileWarning": "frago 的 hook 注册在这里。改坏了，Claude Code 可能起不来，frago 的 hook 也会全部无声失效。",
       "openInVSCode": "用 VSCode 打开"
     },
     "profiles": {
@@ -765,7 +809,7 @@
       "confirmDelete": "确认删除此配置？",
       "confirmDeleteDesc": "这将移除已保存的配置。如果该配置正在使用中，当前的活跃配置不会受到影响。",
       "noProfiles": "没有已保存的配置",
-      "noProfilesDesc": "将 API 端点配置保存为配置文件，方便快速切换。",
+      "noProfilesDesc": "把端点存成配置，切换时一点即可。",
       "switchedTo": "已切换到",
       "savedProfile": "配置已保存",
       "deletedProfile": "配置已删除",
@@ -784,32 +828,32 @@
       "activeProfileTitle": "激活的 API 配置",
       "switchProfile": "切换配置",
       "confirmDeactivate": "停用自定义 API？",
-      "confirmDeactivateDesc": "这将切换回 Claude Code 官方 API。您的配置将被保存，可以稍后重新激活。",
+      "confirmDeactivateDesc": "切回 Claude Code 官方 API。配置保留，可随时再激活。",
       "customEndpoint": "自定义地址",
       "changeTargets": "改激活范围",
       "activeOn": "已激活到",
       "targetsTitle": "激活到哪些 agent CLI？",
-      "targetsUnavailable": "读不到本机的 agent CLI 名单，激活将只作用于 Claude Code。",
+      "targetsUnavailable": "读不到本机 agent CLI 名单，只激活到 Claude Code。",
       "targetNotInstalled": "本机未安装",
       "kindEndpoint": "API 端点",
       "kindVendorCli": "厂商 CLI（用它自己的账号）",
       "connectionKind": "连接类型",
       "agentCore": "内核",
       "modelCandidates": "该 CLI 提供的模型",
-      "vendorCliHint": "frago 手里没有它的密钥，它跑的是那个 CLI 自己的登录态。选内核和模型即可。",
+      "vendorCliHint": "跑那个 CLI 自己的登录，frago 不存密钥。选内核和模型即可。",
       "notInstalled": "本机未安装",
       "vendorOwnAccount": "跑它自己的账号",
       "kindWorkbuddy": "借用 WorkBuddy 登录",
-      "workbuddyHint": "frago-core 借用本机 WorkBuddy 客户端的登录，直接调它的模型网关，不存钥匙。只能绑给轻量 ai 或旁路 AI。",
-      "workbuddyNotLoggedIn": "本机没装 WorkBuddy 客户端，或者它从没登录过，这条连接现在调不通。",
-      "workbuddyProbeNotice": "为确认模型真能用，frago 会向网关发一次探测请求。每类模型只发一次，已探过的不再重复，单次花费约 0.2 credit。",
-      "workbuddyLoggedOut": "WorkBuddy 客户端已退出登录，先在客户端登录一次，这条连接才调得通。",
-      "workbuddyNotProbed": "还没探测过 WorkBuddy 上哪些模型能用。点下面的「现在探测」跑一轮。",
+      "workbuddyHint": "借用本机 WorkBuddy 客户端的登录调它的模型网关，不存钥匙。只能绑给轻量 ai 或旁路 AI。",
+      "workbuddyNotLoggedIn": "本机没装 WorkBuddy 客户端或从没登录过，这条连接调不通。",
+      "workbuddyProbeNotice": "每个模型发一次探测请求确认能用，只探一次，每次约 0.2 credit。",
+      "workbuddyLoggedOut": "WorkBuddy 客户端已退出登录，在客户端登录一次即可恢复。",
+      "workbuddyNotProbed": "WorkBuddy 上的模型还没探测过，点下面的探测按钮跑一轮。",
       "workbuddyModel": "模型（倍率低的在前）",
       "workbuddyProbedAt": "探测于 {{time}}。重新探测：frago-core models probe-workbuddy",
       "workbuddyProbedAtPlain": "清单探于 {{time}}",
       "workbuddyStale": "已超过 {{days}} 天没探",
-      "workbuddyUnprobed": "下拉里还有 {{count}} 个灰着的模型没探过，点下面的按钮就能变成可选。",
+      "workbuddyUnprobed": "下拉里有 {{count}} 个灰着的模型没探过，点下面的按钮即可选用。",
       "workbuddyGroupUsable": "已验证可用",
       "workbuddyGroupUnprobed": "未验证，需先探测（{{count}} 个）",
       "workbuddyNeedsProbe": "要先探测",
@@ -848,7 +892,7 @@
       "agentCliMissing": "未检测到，frago 需要它才能驱动会话",
       "node": "Node.js",
       "nodeFound": "已安装 {{version}}",
-      "nodeAbsent": "未安装。frago 不需要它——只有用 npm 安装 agent CLI 这条路才需要",
+      "nodeAbsent": "未安装。frago 不需要它，只有用 npm 装 agent CLI 才用得到",
       "resourcesInstalled": "资源包版本 {{version}}",
       "resourcesMissing": "未安装",
       "resourcesUpdate": "（frago 已到 {{version}}，可更新资源包）",
@@ -887,7 +931,7 @@
     },
     "channels": {
       "title": "任务通道",
-      "description": "通道去外部来源（邮件、Slack、飞书……）取消息，交给主 agent 处理。",
+      "description": "从邮件、Slack、飞书等处取消息，交给主 agent。",
       "refresh": "刷新",
       "loading": "正在读取任务通道…",
       "noData": "读不到任务通道配置",
@@ -909,7 +953,7 @@
       "colInterval": "轮询间隔",
       "editChannel": "编辑通道",
       "removeChannel": "删除通道",
-      "noRecipes": "本机还没有装配方。把配方放到 <c>~/.frago/recipes/</c> 下（每个通道需要取消息与发消息各一个），再来新增通道。",
+      "noRecipes": "还没有配方。每个通道需要 <c>~/.frago/recipes/</c> 下取消息、发消息的配方各一个。",
       "dialogAdd": "新增通道",
       "dialogEdit": "编辑通道：{{name}}",
       "namePlaceholder": "例如 feishu、email",
@@ -933,18 +977,19 @@
       "switching": "切换中…",
       "bindFailed": "这条连接没能切换",
       "lightagentRole": "轻量 ai",
-      "lightagentRoleHint": "hook 里的判读。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
+      "lightagentRoleHint": "hook 里的判读。只接自带密钥或借用 WorkBuddy 登录的连接。",
       "observerRole": "旁路 AI",
-      "observerRoleHint": "会话页右栏的旁路观察。由 frago-core 调用，只接自带密钥或借用 WorkBuddy 登录的连接。",
+      "observerRoleHint": "会话页右栏的旁路观察。只接自带密钥或借用 WorkBuddy 登录的连接。",
       "coreagentRole": "CoreAgent",
-      "coreagentRoleHint": "frago-core 自己的 agent：自然语言定时任务等由它执行。只接自带密钥或借用 WorkBuddy 登录的连接，用连接的默认模型。",
+      "coreagentRoleHint": "frago-core 自己的 agent，自然语言定时任务由它执行。只接自带密钥或借用 WorkBuddy 登录的连接，用连接的默认模型。",
       "followDefault": "跟随默认（当前启用的，没有就取第一条）",
       "followingDefault": "跟随默认：{{name}}",
       "observerOff": "不绑定（不跑）",
       "notForFragoCore": "frago-core 用不了它",
       "fragoCoreOnly": "只能给 CoreAgent、轻量 ai 或旁路 AI",
       "borrowedLogin": "借用 WorkBuddy 登录"
-    }
+    },
+    "headerMeta": "frago {{version}}"
   },
   "init": {
     "welcome": "欢迎使用 frago",
@@ -1215,19 +1260,22 @@
     "retry": "再试一次"
   },
   "dataRepo": {
-    "title": "数据仓库",
+    "title": "数据",
     "loading": "正在清点待备份的内容…",
     "refresh": "重新清点",
     "syncButton": "同步到仓库",
     "syncing": "同步中…",
     "pending": "待备份文件",
     "unpushed": "未推送的提交",
+    "behind": "落后 {{count}}",
     "branch": "分支",
     "lastCommit": "最近一次提交",
+    "lastCommitAt": "最近一次提交 · {{when}}",
     "allBackedUp": "全部备份完毕，工作区干净，本地和远端齐平。",
     "byArea": "按目录分布",
     "fileList": "文件清单",
-    "truncated": "只列出前 {{shown}} 条，共 {{total}} 条",
+    "filesGrouped": "{{total}} 个，按目录分组",
+    "moreInArea": "{{area}} 下还有 {{n}} 个",
     "status": {
       "modified": "已修改",
       "added": "新增",
@@ -1272,10 +1320,64 @@
     "unverified": "本机存着 GitHub 凭据，但这次没能连上 github.com 核验。备份仍可尝试，凭据若已失效会在推送时明确报出。"
   },
   "workbench": {
+    "decision": {
+      "head": {
+        "single-choice": "选一个",
+        "multi-choice": "可多选",
+        "text-answer": "打字作答",
+        "choice-and-text": "选一个、写几句，或都有",
+        "choice-and-text-multi": "可多选、写几句，或都有"
+      },
+      "cantUndoSuffix": " · 收不回",
+      "fromTeammate": "来自队友",
+      "recommended": "推荐",
+      "cantUndo": "收不回",
+      "selectAll": "全选",
+      "clearAll": "全不选",
+      "theirRequest": "队友原话（经中继转来）",
+      "wouldChange": "会改本机什么",
+      "typePlaceholder": "打字作答",
+      "writeOwn": "或者自己写",
+      "answer": "作答",
+      "answerPicked": "按选中的 {{count}} 项作答",
+      "pickAtLeastOne": "至少选一项",
+      "suggested": "建议答案——点一个填进输入框",
+      "draft": "草稿",
+      "asIs": "照原文",
+      "edit": "编辑",
+      "draftHint": "改了草稿的话，改过的文字会跟所选的项一起发出。",
+      "hint": "选、写或都有，再点作答。",
+      "confirm": "这件事收不回——确定要做？",
+      "cancel": "取消",
+      "yesDoIt": "确定，做",
+      "answeredAt": "你在 {{time}} 作答——已作为你的发言送进会话，见下方",
+      "repliedOwn": "你已在下面自己回复",
+      "brokenLead": "照原文显示——这个 answer-needed-by-human 区块读不了，没有画成卡片：{{reason}}。",
+      "broken": {
+        "yaml": "{{detail}}",
+        "notMapping": "不是「键: 值」形式的块",
+        "type": "type「{{type}}」不在 4 型之内（{{types}}）",
+        "question": "缺 question",
+        "optionsNotList": "options 不是列表",
+        "needsOptions": "{{type}} 必须给 options",
+        "textAnswerNoOptions": "text-answer 不带 options——建议答案写在 suggestions 下",
+        "optionFields": "每个选项都要有 key、label、effect",
+        "recommendedMany": "推荐的选项多于一个",
+        "fromValue": "from 写成了「{{from}}」——只能是 teammate",
+        "draftPlace": "draft 只能用在 text-answer 或 choice-and-text 上",
+        "suggestionsPlace": "suggestions 须是列表，且只用在 text-answer 上",
+        "multiPlace": "multi 只能用在 choice-and-text 上"
+      }
+    },
     "page": {
       "title": "会话",
       "subtitle": "两家的会话记录归一成同一种形状，逐条无损铺开",
-      "backToList": "回到会话清单"
+      "backToList": "回到会话清单",
+      "sending": "正在发送",
+      "agentOnIt": "Agent 在做 · {{duration}}",
+      "answeredAt": "{{time}} 答完",
+      "waiting": "等了 {{age}}",
+      "answeredAtStart": "{{time}} 答完"
     },
     "stopRun": {
       "action": "关闭 tmux 会话",
@@ -1290,7 +1392,8 @@
       "forceOk": "仍要关闭",
       "stopping": "关闭中…",
       "absent": "tmux 里已经没有这一场了，不用再关。",
-      "failed": "没关掉：{{error}}"
+      "failed": "没关掉：{{error}}",
+      "busyHint": "还在干活，关掉会打断这一轮（先确认）"
     },
     "delete": {
       "action": "删除会话",
@@ -1326,6 +1429,8 @@
       "pinnedHeader": "置顶",
       "restHeader": "其余",
       "orphanWorkersHeader": "不知道谁派的 worker",
+      "branchOf": "分支自 {{title}}",
+      "branchOfHint": "打开这条分支出自的会话",
       "pageProgress": "已显示 {{shown}} / {{total}}，继续往下滚",
       "workerCount": "派出去 {{n}} 个 worker",
       "expandWorkers": "展开这场派出去的 {{n}} 个 worker",
@@ -1368,7 +1473,27 @@
       "groupAiProgress": "AI 分组中：{{done}} / {{total}} 场",
       "groupAiDone": "AI 分组完成：分好 {{assigned}} 场，新建 {{tags}} 个标签",
       "groupAiNothing": "没有要分的会话，还没分组的主会话都没有可判的标题",
-      "groupAiFailed": "AI 分组没做完：{{error}}"
+      "groupAiFailed": "AI 分组没做完：{{error}}",
+      "pinHint": "置顶——一直摆在清单最上面",
+      "unpinHint": "取消置顶——放回原来的位置",
+      "alwaysOnTop": "一直在最上面",
+      "everythingElse": "其余",
+      "inPinnedAbove": "置顶里还有 {{n}} 场",
+      "currentBelow": "当前会话在下面",
+      "currentAbove": "当前会话在上面",
+      "emptyForYou": "没有在等你的会话",
+      "ageNow": "刚刚",
+      "ageMin": "{{n}} 分钟",
+      "ageHour": "{{n}} 小时",
+      "ageDay": "{{n}} 天",
+      "idleTerminals_one": "{{count}} 个闲置终端可以关掉",
+      "idleTerminals_other": "{{count}} 个闲置终端可以关掉",
+      "closeTerminals_one": "关掉 {{count}} 个终端",
+      "closeTerminals_other": "关掉 {{count}} 个终端",
+      "closedTerminals_one": "已关掉 {{count}} 个终端",
+      "closedTerminals_other": "已关掉 {{count}} 个终端",
+      "idleFor": "客户端已退出 · {{age}}前停下",
+      "clientExited": "客户端已退出"
     },
     "stream": {
       "lens": {
@@ -1388,7 +1513,16 @@
       "groupCount": "本组 {{n}} 条",
       "loading": "取记录中",
       "awaitingAgent": "已经投进去了，在等 agent 开口",
-      "quote": "引用"
+      "quote": "引用",
+      "stack": "暂存",
+      "stackNotePlaceholder": "对这段的想法（可不写），回车保存",
+      "stackNoteSave": "确定",
+      "branch": "分支",
+      "branchNotePlaceholder": "要在新会话里问什么，回车起分支",
+      "branchNoteStart": "起分支",
+      "branchNoteRequired": "先写一句话：新会话就从这句开始",
+      "minimap": "对话缩略，拖动或点击可滚动",
+      "lensHookFull": "旁路注入"
     },
     "record": {
       "kind": {
@@ -1551,7 +1685,19 @@
       "hookEcho": "原始形态",
       "stopHooksRan": "叫起 {{n}} 个",
       "hookDuration": "{{n}} ms",
-      "stopHookQuiet": "没加话也没拦"
+      "stopHookQuiet": "没加话也没拦",
+      "hookLine": "Hook {{event}}",
+      "youSaidWhileWorking": "你说 · 它干活时",
+      "toolRunning": "在跑…",
+      "toolNoResult": "没有结果",
+      "toolRunCount_one": "{{count}} 次工具调用",
+      "toolRunCount_other": "{{count}} 次工具调用",
+      "toolRunExtras_one": "另收进 {{count}} 条（hook、用量、思考）",
+      "toolRunExtras_other": "另收进 {{count}} 条（hook、用量、思考）",
+      "systemRunCount_one": "{{count}} 条系统记录",
+      "systemRunCount_other": "{{count}} 条系统记录",
+      "systemRunTurn": "这一轮 {{duration}}",
+      "systemRunContext": "上下文 {{n}}"
     },
     "report": {
       "tailNow": "此刻",
@@ -1576,6 +1722,46 @@
       "minutesAgo": "{{n}} 分钟前",
       "hoursAgo": "{{n}} 小时前"
     },
+    "stack": {
+      "title": "暂存",
+      "count": "{{n}} 条",
+      "empty": "在记录流里划选一段文字、点「暂存」，它就留在这里，等你一条一条处理。",
+      "fill": "填入",
+      "fillHint": "按引用格式填进输入框，想法接在后面",
+      "pending": "已填入，发出后标为用过",
+      "used": "用过了",
+      "locate": "跳回原处",
+      "searching": "正在往前找…",
+      "notFound": "没找到原处",
+      "addNote": "写想法",
+      "notePlaceholder": "对这段的想法（可不写）",
+      "noteSave": "确定",
+      "noteCancel": "取消",
+      "delete": "删除",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "more": "更多",
+      "drag": "拖动调整顺序",
+      "expand": "展开",
+      "collapse": "收起",
+      "resize": "拖动调整摘要与暂存的上下比例，双击恢复"
+    },
+    "branch": {
+      "starting": "正在起分支…",
+      "startingTitled": "正在起分支：{{title}}…",
+      "started": "已在新会话处理：{{title}}",
+      "open": "打开",
+      "dismiss": "关闭",
+      "failed": "分支没起来：{{reason}}",
+      "notRecorded": "分支已起，但没认到编号，关联没记上",
+      "markNotSaved": "（这场会话存不了标注，原文上不画线。）",
+      "bringBack": "带回主线",
+      "bringBackHint": "切回原会话，把这里最后一段回复按引用格式填进输入框，不自动发出",
+      "noReply": "这场分支还没有回复可带回",
+      "menuOpen": "打开分支",
+      "menuClose": "标记已收口",
+      "closeFailed": "没标记上收口：{{reason}}"
+    },
     "composer": {
       "blockedNoSession": "从左边挑一场会话，再在这里说话",
       "sendFailed": "没发出去：{{reason}}",
@@ -1599,7 +1785,15 @@
       "handoffLocked": "上下文到 {{limit}} 才需要换场（现在 {{now}}）",
       "handoffLockedUnknown": "还没读到这场的上下文用量，到 {{limit}} 才需要换场",
       "handoffLaunchText": "接手「{{title}}」",
-      "handoffFailed": "没交接出去：{{reason}}"
+      "handoffFailed": "没交接出去：{{reason}}",
+      "onItsWayHint": "已离开这个页面，还没进会话",
+      "queuedHint": "agent 还在处理你上一句，这句会并进那一轮，或排在下一轮",
+      "show": "看看",
+      "textIsBack": "原文已经退回下面的输入框，一个字没丢",
+      "heldForRetry": "你已经在打新的字，原文先收着——重试发的是原来那一份",
+      "movedUpBoth": "两句话都已经移进上面的对话",
+      "movedUpOne": "这句话已经移进上面的对话",
+      "movedUpMany": "{{n}} 句话已经移进上面的对话"
     },
     "newSession": {
       "title": "新建会话",
@@ -1644,6 +1838,8 @@
       "tagCreateFailedPlain": "标签没建成",
       "tagDeleteFailed": "标签没删掉（HTTP {{status}}）",
       "groupAiStartFailed": "AI 分组没起来（HTTP {{status}}）",
+      "marksSaveFailed": "暂存与标注没存下：{{reason}}",
+      "marksNotLoaded": "这场会话已存的标注没读到，不往上覆盖",
       "agentsFetchFailed": "取不到本机的客户端清单（HTTP {{status}}）",
       "agentsFetchFailedPlain": "取不到本机的客户端清单",
       "createFailed": "没建起来（HTTP {{status}}）",
@@ -1665,10 +1861,37 @@
       "hint": "会话起来之后这块就会让位给记录流，通常几秒到十几秒。",
       "failed": "没起来：{{reason}}",
       "dismiss": "收起",
+      "ceilingTimeout": "等了 {{seconds}} 秒还没在清单里出现，可能没起来——看看服务日志",
       "railTitle": "新会话",
       "railClaiming": "正在起 {{name}}，等它报出编号",
       "railWarming": "{{name}} 起来了，在等它写下第一笔",
       "railFailed": "没起来，去中栏看原因"
+    },
+    "progress": {
+      "onItsWay": "在路上",
+      "inTheSession": "进了会话",
+      "queued": "排队中",
+      "pickedUp": "已接手",
+      "foldedIn": "已并入",
+      "answered": "已答完",
+      "failed": "没发出去",
+      "answeredIn": "{{duration}} 答完",
+      "agentOnIt": "Agent 在做",
+      "doingNothingYet": "在想，还没写字",
+      "doingThinking": "在想",
+      "doingReplying": "在回复",
+      "doingToolResult": "在看 {{tool}} 的结果",
+      "doingSubagent": "在派子 agent",
+      "doingError": "碰上了报错"
+    },
+    "forYou": {
+      "label": "For you",
+      "sending": "发送中",
+      "whyAnswer": "它在问你",
+      "whyPickOne": "它要你选一个",
+      "whyStopped": "它出错停下了",
+      "whyDecisionCard": "它留了一张决定卡片",
+      "stoppedAt": "{{time}} 停下，一直在等你"
     }
   },
   "tmuxSessions": {
@@ -1836,7 +2059,7 @@
     "instructWhy": "这句话落到队友的会话里，是一条用户发言，前面带一句说明它来自你。",
     "instructPreview": "他那边看到的是",
     "instructSend": "发过去",
-    "instructPlaceholder": "要队友的 agent 做什么…（⌘/Ctrl + Enter 发出）",
+    "instructPlaceholder": "要对方的 agent 做什么？（⌘/Ctrl + Enter 发出）",
     "joinPickTitle": "拿哪一场会话进去？",
     "joinPickHint": "队友会看到你这一场。挑一场现成的，或者新开一场跟他从头做。",
     "joinConfirm": "用这一场加入",
@@ -1854,7 +2077,106 @@
     "joinRetry": "再试一次",
     "joinBackToCode": "改那串码",
     "joinStepCode": "拿这个码进去",
-    "leftLocalOnly": "已退出。没能通知中继，对方那边可能还显示你在，直到它自己超时。"
+    "leftLocalOnly": "已退出。没能通知中继，对方那边可能还显示你在，直到它自己超时。",
+    "you": "你",
+    "youWho": "你的 agent · {{family}} · 本机",
+    "youWhoPlain": "你的 agent · 本机",
+    "peerWho": "对方 agent 的会话 · 每 15 秒同步",
+    "readOnly": "只读",
+    "talkTitle": "跟你的 agent 说话",
+    "talkWho": "{{family}} · 本机 · 直接送达",
+    "talkWhoPlain": "本机 · 直接送达",
+    "instructWhen": "约 15 秒后落进去",
+    "leakNote": "这一侧的全部内容队友都看得到——每 15 秒同步给他一次。不要在这里贴密钥、口令或 token。",
+    "voice": {
+      "mineUser": "你说",
+      "mineAgent": "你的 agent 回复",
+      "peerUser": "队友说",
+      "peerAgent": "对方 agent 回复"
+    },
+    "help": "结对怎么用",
+    "guide": {
+      "title": "结对怎么用",
+      "s1Title": "左边：你的 agent，和你给队友定的规矩",
+      "s1Body": "本机你这一场会话——在这里跟你的 agent 说话。输入框上方设它怎么对待队友的请求，只有你能改。",
+      "s2Title": "右边：对方那一侧和他的规矩",
+      "s2Body": "对方的会话，只读，每 15 秒同步。他输入框上方的规矩是他定的，只有他能改。",
+      "s3Title": "两边都能请对方的 agent 做事",
+      "s3Body": "从右边的框请他的 agent；他的请求落在左边，标着「来自队友」。",
+      "hide": "收起——点 ? 再打开"
+    },
+    "tiers": {
+      "title": "对方 agent 怎么对待你的请求",
+      "byTeammate": "队友设的",
+      "byTeammateTip": "队友设的——只有他能改",
+      "byFrago": "frago 的规矩",
+      "byFragoTip": "frago 的缺省规矩。队友自己的设置还没传到这一侧——他的 frago 或中继可能是旧版。",
+      "read": "只读的请求",
+      "change": "会改动的",
+      "never": "秘密 · 删除",
+      "neverTip": "frago 的规矩：这类永远不做，谁也打不开"
+    },
+    "verdict": {
+      "do": "直接做",
+      "ask": "先问它的主人",
+      "refuse": "拒绝"
+    },
+    "predict": {
+      "idle": "写一句请求，这里会说对方 agent 大概怎么处理。",
+      "readDo": "<b>看着是只读的</b>——按他的规矩，对方 agent 会直接做。",
+      "readAsk": "<b>看着是只读的</b>——但按他的规矩，<b>对方 agent 会先问它的主人。</b>",
+      "changeAsk": "提到了 {{words}}——<b>对方 agent 会停下来先问它的主人。</b>",
+      "changeRefuse": "提到了 {{words}}——<b>对方 agent 会拒绝</b>：他的规矩不接改动类请求。",
+      "never": "提到了 {{words}}——<b>对方 agent 不会做</b>，谁来要都一样。"
+    },
+    "request": {
+      "title": "你的请求",
+      "via": "经 frago team",
+      "sent": "已发出",
+      "delivered": "已送达",
+      "onIt": "对方 agent 在处理",
+      "waitingOwner": "在等对方主人点头",
+      "replied": "对方 agent 已回复",
+      "footOnIt": "它的回复会出现在这一栏。",
+      "footWaiting": "对方 agent 停下来问它的主人了。他的答复会出现在这一栏。",
+      "footNever": "这件事对方 agent 不会做——这里多半会看到拒绝。",
+      "footRefuse": "他的规矩不接改动类请求——这里多半会看到拒绝。",
+      "stale": "还没进对方的会话——他可能不在线；消息在中继上等着（最多积 50 条）。"
+    },
+    "incoming": {
+      "from": "来自队友",
+      "via": "经 frago team",
+      "verified": "已核实",
+      "notVerified": "未核实",
+      "yourRules": "你的规矩：{{tier}} → <b>{{verdict}}</b>",
+      "yourRulesTip": "这是按请求里的词猜的。你的 agent 会自己读、自己判，以它下面的回复为准。",
+      "tierRead": "只读的请求",
+      "tierChange": "会改动的",
+      "tierNever": "秘密 · 删除"
+    },
+    "rules": {
+      "summaryKey": "队友的请求：",
+      "summary": "只读的 → {{read}} · 会改动的 → {{change}}",
+      "word": {
+        "do": "直接做",
+        "ask": "先问我",
+        "refuse": "拒绝"
+      },
+      "open": "修改",
+      "close": "收起",
+      "onlyYou": "只有你能改",
+      "note": "你的 agent 怎么对待队友让它做的事。只有你能改；队友在他那一侧看得到。",
+      "readTitle": "只读的请求",
+      "readBody": "回答问题、看命令输出、读代码",
+      "doIt": "直接做",
+      "askMe": "先问我",
+      "changeTitle": "会改动的",
+      "changeBody": "改文件、装软件、提交 · 推送 · 发布、访问外部服务、读出能定位本机的信息",
+      "refuse": "拒绝",
+      "neverTitle": "秘密 · 删除",
+      "neverBody": "泄露秘密、不可恢复的删除、绕过规矩",
+      "saveFailed": "没存上：{{error}}"
+    }
   },
   "agent": {
     "notInstalled": "本机没找到这个命令，装好之后它会自己出现在这里",

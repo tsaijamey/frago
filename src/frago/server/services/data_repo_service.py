@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_FILE_LIMIT = 500
 MAX_FILE_LIMIT = 2000
 
+# Paths kept per area inside the rollup. The flat sample above is taken in git's
+# order, so once it is capped some areas get none of their rows; the page groups
+# files by area, and every group needs its own first few regardless of size.
+AREA_SAMPLE_SIZE = 8
+
 # `git status` on a working directory this size takes well under a second, but
 # a wedged index lock would otherwise hang the request forever.
 GIT_TIMEOUT = 30
@@ -237,6 +242,8 @@ def get_status(limit: int = DEFAULT_FILE_LIMIT) -> dict[str, Any]:
 
         by_status: dict[str, int] = {}
         by_area: dict[str, int] = {}
+        area_counts: dict[str, dict[str, int]] = {}
+        area_samples: dict[str, list[dict[str, str]]] = {}
         files: list[dict[str, str]] = []
         total = 0
 
@@ -262,6 +269,11 @@ def get_status(limit: int = DEFAULT_FILE_LIMIT) -> dict[str, Any]:
             by_status[kind] = by_status.get(kind, 0) + 1
             area = _top_level(name)
             by_area[area] = by_area.get(area, 0) + 1
+            kinds = area_counts.setdefault(area, {})
+            kinds[kind] = kinds.get(kind, 0) + 1
+            sample = area_samples.setdefault(area, [])
+            if len(sample) < AREA_SAMPLE_SIZE:
+                sample.append({"path": name, "status": kind})
             if len(files) < limit:
                 files.append({"path": name, "status": kind})
 
@@ -270,7 +282,12 @@ def get_status(limit: int = DEFAULT_FILE_LIMIT) -> dict[str, Any]:
         result["files"] = files
         result["truncated"] = total > len(files)
         result["rollup"] = [
-            {"area": area, "count": count}
+            {
+                "area": area,
+                "count": count,
+                "counts": area_counts[area],
+                "sample": area_samples[area],
+            }
             for area, count in sorted(by_area.items(), key=lambda kv: -kv[1])
         ]
 

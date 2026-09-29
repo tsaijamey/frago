@@ -42,6 +42,10 @@ class AreaCount(BaseModel):
     """How much is pending under one top-level area of the repository."""
     area: str
     count: int
+    # The same breakdown as the top-level `counts`, for this area alone, and
+    # its first few paths. Unlike `files`, neither is cut short by `limit`.
+    counts: Dict[str, int] = {}
+    sample: List[PendingFile] = []
 
 
 class LastCommit(BaseModel):

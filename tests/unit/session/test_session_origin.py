@@ -141,9 +141,7 @@ class TestRetroactiveScan:
             json.dumps(
                 {
                     "type": "user",
-                    "message": {
-                        "content": f"[OK] tmux driver: agent=claude session={FRAGO_SID}"
-                    },
+                    "message": {"content": f"[OK] tmux driver: agent=claude session={FRAGO_SID}"},
                 },
                 ensure_ascii=False,
             )
@@ -217,9 +215,7 @@ class TestRetroactiveScan:
             encoding="utf-8",
         )
         # 新出现的一场主会话，刚刚派了活。
-        (proj / f"{HUMAN_SID}.jsonl").write_text(
-            "frago agent send w9 x\n", encoding="utf-8"
-        )
+        (proj / f"{HUMAN_SID}.jsonl").write_text("frago agent send w9 x\n", encoding="utf-8")
         index = _index(root)
         assert index.parent_of(claude_session_uuid("w9")) == HUMAN_SID  # 新的认到了
         assert index.parent_of("老 worker") == "老主会话"  # 老的没被冲掉
@@ -263,3 +259,203 @@ class TestRetroactiveScan:
             cwd="/tmp",
         )
         assert _index(root).parent_of(child) == other
+
+
+class TestRelationKinds:
+    """会话关系账：带种类记账、读老格式、出身按种类判（spec 20260928-webui-session-branch）。"""
+
+    def test_老格式记录缺种类当派活(self, ledger, empty_projects):
+        # 升级之前写下的记录没有 kind。每台机器上都躺着这种账，不做迁移也要读对。
+        session_origin.LAUNCH_LEDGER.write_text(
+            json.dumps(
+                [
+                    {
+                        "child": "old-child",
+                        "parent": HUMAN_SID,
+                        "agent_type": "claude",
+                        "cwd": "/tmp",
+                        "prompt_head": "",
+                        "at": 1,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        index = _index(empty_projects)
+        assert index.origin_of("old-child") == "worker"
+        assert index.parent_of("old-child") == HUMAN_SID
+        assert index.relation_of("old-child") == session_origin.SessionRelation("dispatch")
+
+    def test_派活显式写种类(self, ledger, empty_projects):
+        session_origin.record_launch(
+            child_session_id="child-d",
+            parent_session_id=HUMAN_SID,
+            agent_type="claude",
+            cwd="/tmp",
+        )
+        entries = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
+        assert entries[0]["kind"] == "dispatch"
+        assert "anchor" not in entries[0]
+
+    def test_分支算人开的但折到原会话下(self, ledger, empty_projects):
+        # 分支是人亲自在谈的一场：算 worker 的话它等你时就不挂 For you 了。
+        child = str(uuid.uuid4())
+        assert session_origin.record_relation(
+            kind="branch",
+            child_session_id=child,
+            parent_session_id=HUMAN_SID,
+            agent_type="claude",
+            cwd="/tmp",
+            anchor={"record_id": "r1", "text": "那个报错", "occurrence": 0, "mark_id": "mk_1"},
+            note="这个报错要不要查",
+        )
+        index = _index(empty_projects)
+        assert index.origin_of(child) == "human"
+        assert index.parent_of(child) == HUMAN_SID
+        assert index.relation_of(child) == session_origin.SessionRelation("branch", closed=False)
+        entry = session_origin.find_relation(child)
+        assert entry["anchor"]["text"] == "那个报错"
+        assert entry["note"] == "这个报错要不要查"
+        assert entry["closed_at"] is None
+
+    def test_交接认得但不折叠也不算worker(self, ledger, empty_projects):
+        # 交接本次只在读取侧认得。它不进父子表：交接的两场是并排的，不是谁挂谁。
+        child = str(uuid.uuid4())
+        session_origin.LAUNCH_LEDGER.write_text(
+            json.dumps([{"child": child, "parent": HUMAN_SID, "kind": "handoff"}]),
+            encoding="utf-8",
+        )
+        index = _index(empty_projects)
+        assert index.relation_of(child) == session_origin.SessionRelation("handoff")
+        assert index.parent_of(child) is None
+        assert index.origin_of(child) == "human"
+
+    def test_读不懂的单条跳过_其余照读(self, ledger, empty_projects):
+        session_origin.LAUNCH_LEDGER.write_text(
+            json.dumps(
+                [
+                    "不是对象",
+                    {"child": 42, "parent": HUMAN_SID},
+                    {"child": "weird", "parent": HUMAN_SID, "kind": "adopt"},
+                    {"child": "bad-parent", "parent": ["x"]},
+                    {"child": "good", "parent": HUMAN_SID},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        index = _index(empty_projects)
+        assert index.parents == {"good": HUMAN_SID}
+        assert index.workers == frozenset({"good"})
+        assert index.relation_of("weird") is None
+
+    def test_没有父亲的派活也有关系种类(self, ledger, empty_projects):
+        session_origin.record_launch(
+            child_session_id="lonely", parent_session_id=None, agent_type="claude", cwd="/tmp"
+        )
+        assert _index(empty_projects).relation_of("lonely") == session_origin.SessionRelation(
+            "dispatch"
+        )
+
+    def test_不认得的种类不记(self, ledger):
+        assert not session_origin.record_relation(
+            kind="adopt",  # type: ignore[arg-type]
+            child_session_id="x",
+            parent_session_id=None,
+            agent_type="claude",
+            cwd="/tmp",
+        )
+        assert not session_origin.LAUNCH_LEDGER.exists()
+
+    def test_记完立刻看得见_不等进程内那份过期(self, ledger, empty_projects):
+        session_origin.load_origin_index(projects_root=empty_projects)
+        child = str(uuid.uuid4())
+        session_origin.record_relation(
+            kind="branch",
+            child_session_id=child,
+            parent_session_id=HUMAN_SID,
+            agent_type="claude",
+            cwd="/tmp",
+        )
+        index = session_origin.load_origin_index(projects_root=empty_projects)
+        assert index.parent_of(child) == HUMAN_SID
+        session_origin.clear_cache()
+
+
+class TestCloseRelation:
+    """收口写入：改的只有那一条分支，别的记录一字不动。"""
+
+    def _branch(self, child, parent=HUMAN_SID):
+        session_origin.record_relation(
+            kind="branch",
+            child_session_id=child,
+            parent_session_id=parent,
+            agent_type="claude",
+            cwd="/tmp",
+            note="旁支",
+        )
+
+    def test_收口写入不丢别的记录(self, ledger, empty_projects):
+        # 老记录里带着这里不认得的字段，也要原样留着。
+        session_origin.LAUNCH_LEDGER.write_text(
+            json.dumps([{"child": "old", "parent": HUMAN_SID, "extra": "留着"}]),
+            encoding="utf-8",
+        )
+        self._branch("b1")
+        session_origin.record_launch(
+            child_session_id="w1", parent_session_id=HUMAN_SID, agent_type="claude", cwd="/tmp"
+        )
+        before = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
+
+        closed = session_origin.close_relation(
+            child_session_id="b1", parent_session_id=HUMAN_SID, closed_by="manual"
+        )
+        assert closed is not None and closed["closed_by"] == "manual"
+
+        after = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
+        assert len(after) == len(before) == 3
+        assert after[0] == before[0]
+        assert after[2] == before[2]
+        assert after[1]["closed_at"] is not None
+        assert after[1]["closed_by"] == "manual"
+        assert _index(empty_projects).relation_of("b1") == session_origin.SessionRelation(
+            "branch", closed=True
+        )
+
+    def test_第一次收口才算数(self, ledger):
+        self._branch("b2")
+        first = session_origin.close_relation(
+            child_session_id="b2", parent_session_id=HUMAN_SID, closed_by="bring-back"
+        )
+        again = session_origin.close_relation(
+            child_session_id="b2", parent_session_id=HUMAN_SID, closed_by="manual"
+        )
+        assert again["closed_by"] == "bring-back"
+        assert again["closed_at"] == first["closed_at"]
+
+    def test_不是这个父会话的分支不收(self, ledger):
+        self._branch("b3")
+        assert (
+            session_origin.close_relation(
+                child_session_id="b3", parent_session_id="别的会话", closed_by="manual"
+            )
+            is None
+        )
+
+    def test_派活不能收口(self, ledger):
+        session_origin.record_launch(
+            child_session_id="w2", parent_session_id=HUMAN_SID, agent_type="claude", cwd="/tmp"
+        )
+        assert (
+            session_origin.close_relation(
+                child_session_id="w2", parent_session_id=HUMAN_SID, closed_by="manual"
+            )
+            is None
+        )
+
+    def test_写不进去要抛(self, ledger, monkeypatch):
+        self._branch("b4")
+        monkeypatch.setattr(session_origin, "_write_json", lambda *a, **k: False)
+        with pytest.raises(OSError):
+            session_origin.close_relation(
+                child_session_id="b4", parent_session_id=HUMAN_SID, closed_by="manual"
+            )

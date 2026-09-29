@@ -79,6 +79,18 @@ export interface SendToSessionState {
   /** 有内容（或手上还压着一单没发成的）、不在发送中、且这场会话本来就能发。 */
   canSend: boolean;
   send: () => Promise<void>;
+  /**
+   * 把一句现成的话整句投出去，不经输入框：决定卡片的答复走这条。
+   *
+   * 输入框里人正在打的字一个不动。之后的信封、进度、失败退回与 20 秒核对都与 `send`
+   * 同一条路——失败时照 `giveBack`：输入框空就退回框里，不空就收着等重试。
+   */
+  sendText: (text: string) => Promise<void>;
+  /**
+   * 没发成的那一单被先收着了（人已经在输入框里打了新的字）。报错条据此换说法：
+   * 不是「原文回到了输入框」，而是「重试发的是原来那一份」。
+   */
+  held: boolean;
 }
 
 /** 一次投出去的全部内容。发送那一刻从输入框里整份取走，之后输入框与它再无关系。 */
@@ -347,6 +359,15 @@ export function useSendToSession(
     await dispatch(payload);
   }, [enabled, sessionId, sending, failed, text, images, documents, clear, dispatch]);
 
+  const sendText = useCallback(
+    async (value: string) => {
+      const body = value.trim();
+      if (!enabled || !sessionId || !body) return;
+      await dispatch({ text: body, images: [], documents: [] });
+    },
+    [enabled, sessionId, dispatch]
+  );
+
   return {
     text,
     setText,
@@ -359,5 +380,7 @@ export function useSendToSession(
     error,
     canSend,
     send,
+    sendText,
+    held: failed !== null,
   };
 }

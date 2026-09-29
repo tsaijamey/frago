@@ -26,11 +26,28 @@
  *    一半就把按钮摆出来，它会一路跟着鼠标跑，还会挡住正在选的字。松手才算数。
  * 3. **按钮贴着选区，跟着滚。** 位置按选区此刻的屏幕矩形算，滚动容器一滚就重算；
  *    选区滚出视野就把按钮收起来，高亮留着——人正是滚下去看别处那几个绿字的。
+ *
+ * **「暂存」与「引用」并排，都只留图标。** 代理一次列出好几个待决的点，人更愿意一条一条
+ * 答；暂存把圈中的那段先放进右栏下半的列表，过会儿再逐条填进输入框。圈选那一刻对这段话
+ * 的判断最清楚，所以点了暂存就在原地展开一个小框写想法——不强制，回车留空也存。点外面
+ * 算作不存。两个按钮只画图标，名字在悬停时给：两颗带字的按钮浮在正文上，挡住的字比
+ * 它们要引的那段还多。
+ *
+ * **「分支」是第三颗。** 圈的这段引出一个跟主线相关、却不该在主线里展开的问题：点了在原地
+ * 展开一个小框写「要在新会话里问什么」，回车就起一场分支会话，页面原地不动
+ * （spec 20260928-webui-session-branch）。与暂存不同，**这句话必填**：新会话就从这句开始，
+ * 空着起出去的会话不知道自己该干什么——空着回车只提示，不起会话；Esc 或点外面算作不起。
+ * 图标用分叉（`GitBranch`），NEVER 用合并那一个，那是反方向的事。
+ *
+ * **标注要能在刷新之后找回原处。** 暂存与引用都会记下「圈选起点在哪一条记录里、这段文字
+ * 在那一条里是第几次出现」（见 {@link markAnchor}）。找回时用同一套算法（见
+ * {@link findMarkRange}），记下与找回永远对得上。只认正文类记录（挂着 `data-record-body`
+ * 的那一层）：选区起点不在任何正文里时不给暂存，引用照旧。
  */
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Quote } from 'lucide-react';
+import { GitBranch, Layers, Quote } from 'lucide-react';
 
 /** 这套高亮在浏览器里的名字，与 `globals.css` 里 `::highlight()` 那条选择器同名。 */
 const ECHO_NAME = 'workbench-quote-echo';
@@ -53,6 +70,61 @@ interface HighlightBox {
 function highlightBox(): HighlightBox | null {
   const api = (CSS as unknown as { highlights?: HighlightBox }).highlights;
   return api ?? null;
+}
+
+/**
+ * 记录流里几套高亮谁压谁：同字标绿 > 没用过的暂存 > 没收口的分支 > 中性底（引用、用过的
+ * 暂存、收了口的分支）。
+ *
+ * 跳回原处时「闪一下」压在所有人上面：它只亮一瞬，那一瞬就是要人一眼找到落点。
+ */
+export const HIGHLIGHT_PRIORITY = {
+  flash: 5,
+  echo: 4,
+  stack: 3,
+  branch: 2,
+  quote: 1,
+} as const;
+
+/** 不报自己是谁的那些调用（同字标绿、测试）共用这一份。 */
+const SHARED_OWNER = {};
+
+/** 每个高亮名字底下，各块记录流此刻各自交了哪些范围。 */
+const painted = new Map<string, Map<object, Range[]>>();
+
+/**
+ * 按名字交一组范围给浏览器去涂；这一份交空了就撤掉这一份。浏览器不认这套就什么都不做。
+ *
+ * **高亮名字是整个网页共用的，交范围的却不止一块记录流。** 会话页、Teams 页各挂着记录流，
+ * 切走的页面只藏不卸，藏着的那几块照样随新记录重涂。从前谁涂都是整份替换：Teams 页那块
+ * 没有标注，一有新记录就交一份空的，把会话页刚涂好的引用底色整个撤掉——症状是「标注过
+ * 一会儿自己没了，切个页回来又有，过一会儿又没了」。所以按 `owner` 分份登记，浏览器上
+ * 涂的是各份的合集，谁都只能撤自己那一份。
+ */
+export function paintHighlight(
+  name: string,
+  ranges: Range[],
+  priority: number,
+  owner: object = SHARED_OWNER
+): void {
+  const shares = painted.get(name) ?? new Map<object, Range[]>();
+  if (ranges.length) shares.set(owner, ranges);
+  else shares.delete(owner);
+  if (shares.size) painted.set(name, shares);
+  else painted.delete(name);
+  const box = highlightBox();
+  if (!box) return;
+  const all = [...shares.values()].flat();
+  if (!all.length) {
+    box.delete(name);
+    return;
+  }
+  const Ctor = (window as unknown as { Highlight?: new (...r: Range[]) => { priority?: number } })
+    .Highlight;
+  if (!Ctor) return;
+  const highlight = new Ctor(...all);
+  highlight.priority = priority;
+  box.set(name, highlight);
 }
 
 /**
@@ -82,36 +154,202 @@ export function echoRanges(root: Node, needle: string): Range[] {
   return found;
 }
 
+// ── 标注的锚点：记下与找回 ────────────────────────────────────────────────
+
+/** 正文类记录外面那一层的记号。只在这一层里记锚点、着色、找原处。 */
+export const RECORD_BODY_ATTR = 'data-record-body';
+
+/** 一段标注在记录流里的位置：哪一条记录、这段文字、在那一条里第几次出现。 */
+export interface MarkAnchor {
+  record_id: string;
+  text: string;
+  occurrence: number;
+}
+
+/**
+ * 一条记录铺平之后的正文，**去掉全部空白**，外加每个字落在哪个文本节点的第几位。
+ *
+ * 去空白是因为两边拿到的字不是同一种写法：圈选时交出来的是浏览器按版面拼的选区文本，
+ * 段与段、列表项之间会多出换行；找回时读的是文本节点，那里没有这些换行。两边都去掉
+ * 空白再比，markdown 的分段、缩进、代码块的换行就都对得上了。代价是「a b」与「ab」算
+ * 同一段——标注只是定位，这点模糊可以接受。
+ */
+export interface FlatText {
+  text: string;
+  nodes: Text[];
+  /** 第 i 个字在 `nodes` 里的哪一个。 */
+  nodeAt: number[];
+  /** 第 i 个字在那个节点里的第几位。 */
+  offsetAt: number[];
+}
+
+const SPACE = /\s/;
+
+export function squeeze(text: string): string {
+  return text.replace(/\s+/g, '');
+}
+
+export function flatten(root: Node): FlatText {
+  const nodes: Text[] = [];
+  const nodeAt: number[] = [];
+  const offsetAt: number[] = [];
+  let text = '';
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const value = node.nodeValue ?? '';
+    const index = nodes.length;
+    nodes.push(node);
+    for (let i = 0; i < value.length; i += 1) {
+      if (SPACE.test(value[i])) continue;
+      text += value[i];
+      nodeAt.push(index);
+      offsetAt.push(i);
+    }
+    node = walker.nextNode() as Text | null;
+  }
+  return { text, nodes, nodeAt, offsetAt };
+}
+
+/** 去空白之后，`needle` 在 `hay` 里每一处出现的起点。 */
+function starts(hay: string, needle: string): number[] {
+  const found: number[] = [];
+  if (!needle) return found;
+  let from = hay.indexOf(needle);
+  while (from !== -1) {
+    found.push(from);
+    from = hay.indexOf(needle, from + 1);
+  }
+  return found;
+}
+
+export function rangeOf(flat: FlatText, from: number, to: number): Range {
+  const range = document.createRange();
+  range.setStart(flat.nodes[flat.nodeAt[from]], flat.offsetAt[from]);
+  range.setEnd(flat.nodes[flat.nodeAt[to - 1]], flat.offsetAt[to - 1] + 1);
+  return range;
+}
+
+/** 跨记录的选区只在起点那条里着色：起点那条的尾巴正好是这段文字的开头，至少这么多字才算。 */
+const TAIL_MIN_CHARS = 2;
+
+/**
+ * 在这条记录里找回一段标注，交回它的范围；找不到交回 null。
+ *
+ * 1. 第 `occurrence` 次出现就是它。出现的次数不够（记录被改写过），算找不到。
+ * 2. 整段一次都没出现：多半是跨记录圈的，这段文字只有开头落在这一条的末尾。那就找
+ *    「这段文字最长的开头，恰好是这一条的结尾」，着那一截。
+ */
+export function findMarkRange(root: Node, text: string, occurrence: number): Range | null {
+  const flat = flatten(root);
+  const span = markSpan(flat, text, occurrence);
+  return span ? rangeOf(flat, span[0], span[1]) : null;
+}
+
+/** 与 {@link findMarkRange} 同一个规矩，交回的是铺平之后的起止位置 `[from, to)`。 */
+export function markSpan(flat: FlatText, text: string, occurrence: number): [number, number] | null {
+  const needle = squeeze(text);
+  if (!needle) return null;
+  const hits = starts(flat.text, needle);
+  if (hits.length) {
+    const at = hits[occurrence];
+    return at === undefined ? null : [at, at + needle.length];
+  }
+  const hay = flat.text;
+  for (let p = Math.max(0, hay.length - needle.length + 1); p <= hay.length - TAIL_MIN_CHARS; p += 1) {
+    if (hay[p] !== needle[0]) continue;
+    if (needle.startsWith(hay.slice(p))) return [p, hay.length];
+  }
+  return null;
+}
+
+/**
+ * 这个选区的锚点：起点落在哪一条正文记录里，这段文字在那一条里是第几次出现。
+ *
+ * 起点不在记录流的任何正文里时交回 null——暂存按钮就不给。
+ */
+export function markAnchor(container: Node, range: Range, text: string): MarkAnchor | null {
+  const start =
+    range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.startContainer as Element)
+      : range.startContainer.parentElement;
+  const body = start?.closest(`[${RECORD_BODY_ATTR}]`);
+  const recordId = body?.getAttribute('data-record-id');
+  if (!body || !recordId || !container.contains(body)) return null;
+  // 起点之前那一截有多少个非空白字——与 findMarkRange 同一把尺子量。
+  const before = document.createRange();
+  before.setStart(body, 0);
+  before.setEnd(range.startContainer, range.startOffset);
+  const offset = squeeze(before.toString()).length;
+  const hits = starts(flatten(body).text, squeeze(text));
+  const occurrence = hits.filter((at) => at < offset).length;
+  return {
+    record_id: recordId,
+    text,
+    occurrence: hits.length ? Math.min(occurrence, hits.length - 1) : 0,
+  };
+}
+
 export interface SelectionQuoteProps {
   /** 记录流的滚动容器。只认圈在它里面的选区，别处（左栏、输入框）一概不管。 */
   containerRef: RefObject<HTMLElement>;
   /** 换会话时把按钮与高亮一起收掉——那段选区是在上一场里圈的。 */
   sessionId: string | null;
-  /** 按了「引用」。交出去的是去掉首尾空白的原文。 */
-  onQuote: (text: string) => void;
+  /**
+   * 按了「引用」。交出去的是去掉首尾空白的原文；选区起点落在正文记录里时，一并交出
+   * 锚点，好让页面把这次引用记成一条标注。
+   */
+  onQuote: (text: string, anchor?: MarkAnchor) => void;
+  /** 按了「暂存」并写完（或跳过）想法。不给就不画暂存按钮。 */
+  onStack?: (anchor: MarkAnchor, note: string) => void;
+  /** 按了「分支」并写好那句话（必填，交出去的已去掉首尾空白）。不给就不画分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string) => void;
 }
 
-export default function SelectionQuote({ containerRef, sessionId, onQuote }: SelectionQuoteProps) {
+/** 正在按钮原地写的那句话属于哪一颗：暂存的想法（可空）或分支的问题（必填）。 */
+type NoteMode = 'stack' | 'branch';
+
+export default function SelectionQuote({
+  containerRef,
+  sessionId,
+  onQuote,
+  onStack,
+  onBranch,
+}: SelectionQuoteProps) {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string>('');
+  const [anchor, setAnchor] = useState<MarkAnchor | null>(null);
   const [spot, setSpot] = useState<{ left: number; top: number } | null>(null);
+  /** 点了暂存或分支、正在原地写那句话。这时选区已经让给了输入框，不许再按选区收摊。 */
+  const [noting, setNoting] = useState<NoteMode | null>(null);
+  const notingRef = useRef(false);
+  const [note, setNote] = useState('');
+  /** 分支那句话空着就回车了：提示必填，不起会话。 */
+  const [required, setRequired] = useState(false);
   // 按住拖的过程中不弹按钮：选区每动一下都会来一次通知，那时候摆出来它只会挡住正在选的字。
   const dragging = useRef(false);
   // 按钮自己那一块。手按下去的那一刻要先问一句「按的是不是它」——见下面 onPointerDown。
   const menu = useRef<HTMLDivElement>(null);
 
   const dropEcho = useCallback(() => {
-    highlightBox()?.delete(ECHO_NAME);
+    paintHighlight(ECHO_NAME, [], HIGHLIGHT_PRIORITY.echo);
   }, []);
 
   const clear = useCallback(() => {
     setPicked('');
+    setAnchor(null);
     setSpot(null);
+    setNoting(null);
+    notingRef.current = false;
+    setNote('');
+    setRequired(false);
     dropEcho();
   }, [dropEcho]);
 
   /** 把选区读一遍：该不该给按钮、给在哪、要不要标绿。 */
   const sync = useCallback(() => {
+    // 正在写想法：焦点在输入框里，选区早就不在记录流里了，这时读选区只会把框收掉。
+    if (notingRef.current) return;
     const root = containerRef.current;
     const selection = document.getSelection();
     if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -134,6 +372,7 @@ export default function SelectionQuote({ containerRef, sessionId, onQuote }: Sel
     // 选区被滚出记录流的可视范围了：按钮收起来，绿字留着。
     const inView = rect.bottom > view.top && rect.top < view.bottom;
     setPicked(text);
+    setAnchor(markAnchor(root, range, text));
     setSpot(
       inView
         ? {
@@ -147,17 +386,11 @@ export default function SelectionQuote({ containerRef, sessionId, onQuote }: Sel
     if (!box) return;
     // 短选区才点亮同字。长选区在别处不会原样重现，标出来只有自己这一处。
     if ([...text].length >= ECHO_MAX_CHARS) {
-      box.delete(ECHO_NAME);
+      paintHighlight(ECHO_NAME, [], HIGHLIGHT_PRIORITY.echo);
       return;
     }
-    const ranges = echoRanges(root, text);
-    if (!ranges.length) {
-      box.delete(ECHO_NAME);
-      return;
-    }
-    const Ctor = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-    if (!Ctor) return;
-    box.set(ECHO_NAME, new Ctor(...ranges));
+    // 同字标绿压在引用、暂存的底色上面：人此刻圈它，就是想看它还出现在哪。
+    paintHighlight(ECHO_NAME, echoRanges(root, text), HIGHLIGHT_PRIORITY.echo);
   }, [clear, containerRef]);
 
   useEffect(() => {
@@ -204,6 +437,44 @@ export default function SelectionQuote({ containerRef, sessionId, onQuote }: Sel
 
   if (!picked || !spot) return null;
 
+  const done = () => {
+    document.getSelection()?.removeAllRanges();
+    clear();
+  };
+
+  /** 暂存落定：想法去掉首尾空白，留空就是不写。 */
+  const stack = () => {
+    if (anchor && onStack) onStack(anchor, note.trim());
+    done();
+  };
+
+  /** 分支落定：那句话必填，空着只提示、不起会话。 */
+  const branch = () => {
+    const said = note.trim();
+    if (!said) {
+      setRequired(true);
+      return;
+    }
+    if (anchor && onBranch) onBranch(anchor, said);
+    done();
+  };
+
+  const startNoting = (mode: NoteMode) => {
+    notingRef.current = true;
+    setNote('');
+    setRequired(false);
+    setNoting(mode);
+  };
+
+  /* 实心品牌绿，32px 见方，与 Send 同一种写法（字色走 --text-on-accent，两套主题各有
+     答案）。「每屏至多一个实心绿」不管这三颗：它们只在圈选松手后出现，那一刻人手要点的
+     就是它们，是这一瞬间的主动作（主人 09-28 定，例外写在原型 design-notes.md）。
+     从前是中性浮层底加细边，跟记录流底色太近，浮在正文上认不出按钮在哪。
+     悬停不许换成半透明底色（`--bg-hover` 压上去，底下的正文会透上来跟图标叠在一起），
+     只提一档亮度，底色自始至终不透明。 */
+  const iconBtn =
+    'flex h-8 w-8 items-center justify-center rounded-[8px] bg-accent-primary text-[var(--text-on-accent)] shadow-lg transition-[filter] hover:brightness-110';
+
   return (
     <div
       ref={menu}
@@ -211,26 +482,134 @@ export default function SelectionQuote({ containerRef, sessionId, onQuote }: Sel
       style={{ left: spot.left, top: spot.top }}
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
     >
-      <button
-        type="button"
-        data-testid="selection-quote-btn"
-        // 按下去之前不许让选区消失：pointerdown 一旦落到按钮上，浏览器会先把记录流里的
-        // 选区收掉，等到 click 时手上已经没有那段文字了。
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => {
-          onQuote(picked);
-          document.getSelection()?.removeAllRanges();
-          clear();
-        }}
-        /* 悬停不许换底色。`--bg-hover` 是一层半透明的白（深色主题）或黑（浅色主题），
-           压在实心底色上才成立；这颗按钮浮在记录流上方，底色一换成它，按钮底下的正文
-           就直接透上来跟按钮上的字叠在一起，两层字谁都读不清。悬停改由边框转成品牌色、
-           字也跟着转来表达，底色自始至终是不透明的。 */
-        className="flex items-center gap-1.5 rounded-[8px] border border-border-color bg-bg-card px-2.5 py-1 text-[12px] font-medium text-text-primary shadow-lg transition-colors hover:border-border-accent hover:bg-bg-elevated hover:text-accent-primary"
-      >
-        <Quote size={12} strokeWidth={1.8} />
-        {t('workbench.stream.quote')}
-      </button>
+      {noting === 'stack' ? (
+        <form
+          data-testid="selection-stack-note"
+          onSubmit={(e) => {
+            e.preventDefault();
+            stack();
+          }}
+          className="flex w-[280px] max-w-[80vw] items-center gap-1.5 rounded-[10px] border border-border-color bg-bg-card p-1.5 shadow-lg"
+        >
+          <Layers size={13} strokeWidth={1.8} className="ml-1 shrink-0 text-accent-warning" />
+          <input
+            autoFocus
+            data-testid="selection-stack-input"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              // Esc 也存：点了暂存就是要记下这一段，想法只是附带的；不想存的人点外面。
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                stack();
+              }
+            }}
+            placeholder={t('workbench.stream.stackNotePlaceholder')}
+            aria-label={t('workbench.stream.stackNotePlaceholder')}
+            className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+          />
+          <button
+            type="submit"
+            data-testid="selection-stack-save"
+            className="shrink-0 rounded-[6px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary transition-colors hover:border-border-accent hover:text-accent-primary"
+          >
+            {t('workbench.stream.stackNoteSave')}
+          </button>
+        </form>
+      ) : noting === 'branch' ? (
+        <form
+          data-testid="selection-branch-note"
+          onSubmit={(e) => {
+            e.preventDefault();
+            branch();
+          }}
+          className="flex w-[300px] max-w-[80vw] flex-col gap-1 rounded-[10px] border border-border-color bg-bg-card p-1.5 shadow-lg"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <GitBranch size={13} strokeWidth={1.8} className="ml-1 shrink-0 text-text-secondary" />
+            <input
+              autoFocus
+              data-testid="selection-branch-input"
+              value={note}
+              onChange={(e) => {
+                setNote(e.target.value);
+                if (e.target.value.trim()) setRequired(false);
+              }}
+              onKeyDown={(e) => {
+                // 与暂存相反，Esc 算作不起：分支要起一场会话，不能拿一个空问题去起。
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  done();
+                }
+              }}
+              placeholder={t('workbench.stream.branchNotePlaceholder')}
+              aria-label={t('workbench.stream.branchNotePlaceholder')}
+              aria-invalid={required || undefined}
+              className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+            />
+            <button
+              type="submit"
+              data-testid="selection-branch-save"
+              className="shrink-0 rounded-[6px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary transition-colors hover:border-border-accent hover:text-accent-primary"
+            >
+              {t('workbench.stream.branchNoteStart')}
+            </button>
+          </div>
+          {required ? (
+            <p data-testid="selection-branch-required" className="px-1 text-[11px] text-text-secondary">
+              {t('workbench.stream.branchNoteRequired')}
+            </p>
+          ) : null}
+        </form>
+      ) : (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="selection-quote-btn"
+            title={t('workbench.stream.quote')}
+            aria-label={t('workbench.stream.quote')}
+            // 按下去之前不许让选区消失：pointerdown 一旦落到按钮上，浏览器会先把记录流里的
+            // 选区收掉，等到 click 时手上已经没有那段文字了。
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (anchor) onQuote(picked, anchor);
+              else onQuote(picked);
+              done();
+            }}
+            className={iconBtn}
+          >
+            <Quote size={15} strokeWidth={1.9} />
+          </button>
+          {onStack && anchor ? (
+            <button
+              type="button"
+              data-testid="selection-stack-btn"
+              title={t('workbench.stream.stack')}
+              aria-label={t('workbench.stream.stack')}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => startNoting('stack')}
+              className={iconBtn}
+            >
+              <Layers size={15} strokeWidth={1.9} />
+            </button>
+          ) : null}
+          {/* 选区起点不在正文类记录里时不给：分支要记下从主线哪段原文分出去，锚点落不下就
+              记不成标注，事后也找不回原处。 */}
+          {onBranch && anchor ? (
+            <button
+              type="button"
+              data-testid="selection-branch-btn"
+              title={t('workbench.stream.branch')}
+              aria-label={t('workbench.stream.branch')}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => startNoting('branch')}
+              className={iconBtn}
+            >
+              <GitBranch size={15} strokeWidth={1.9} />
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

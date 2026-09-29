@@ -11,7 +11,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 
 import i18n from '@/i18n';
-import SessionRail from '../SessionRail';
+import { TestRail } from './railTestKit';
 import RecordStream from '../RecordStream';
 import RecordCard from '../RecordCard';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
@@ -60,29 +60,28 @@ function railState(rows: WorkbenchSession[]): WorkbenchSessionsState {
     visible: rows,
     loading: false,
     error: null,
-    status: 'all',
-    setStatus: NOOP,
+    filter: 'all',
+    setFilter: NOOP,
     days: 0,
     setDays: NOOP,
-    counts: { all: rows.length, running: rows.length, error: 0, done: 0, idle: 0 },
+    counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
   };
 }
 
 describe('换语言不用刷新页面', () => {
-  it('左栏的状态名当场跟着变', async () => {
+  it('左栏的档位名当场跟着变', async () => {
     render(
-      <SessionRail state={railState([session({ session_id: SID })])} selectedId={null} onSelect={NOOP} />
+      <TestRail state={railState([session({ session_id: SID })])} selectedId={null} onSelect={NOOP} />
     );
-    // 卡上一处、筛选行一处，两处说的是同一个词。
-    expect(screen.getAllByText('在跑').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('list-filter-all').textContent).toContain('全部');
 
     await switchTo('en');
-    expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
-    expect(screen.queryByText('在跑')).toBeNull();
+    expect(screen.getByTestId('list-filter-all').textContent).toContain('All');
+    expect(screen.queryByText('全部')).toBeNull();
 
     await switchTo('zh');
-    expect(screen.getAllByText('在跑').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('list-filter-all').textContent).toContain('全部');
   });
 
   it('中栏的镜头名当场跟着变', async () => {
@@ -113,7 +112,7 @@ describe('换语言不用刷新页面', () => {
     expect(screen.getByTestId('lens-hook').textContent).toContain('旁路注入');
 
     await switchTo('en');
-    expect(screen.getByTestId('lens-hook').textContent).toContain('Hook injections');
+    expect(screen.getByTestId('lens-hook').textContent).toContain('Hooks');
   });
 
   it('记录卡的形态名与已发生的量当场跟着变', async () => {

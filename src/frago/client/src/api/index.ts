@@ -1291,6 +1291,11 @@ export const setTmuxCleanupThreshold = withMode(
     }),
 );
 
+export const getTmuxWaiting = withMode(
+  () => httpApi.getTmuxWaiting(),
+  () => Promise.resolve({ sessions: [] }),
+);
+
 export const getTmuxSessionCount = withMode(
   () => httpApi.getTmuxSessionCount(),
   () => Promise.resolve({ total: 0, total_memory_mb: 0 }),
@@ -1322,4 +1327,49 @@ export const startEnvironmentUpgrade = withMode(
 export const getEnvironmentUpgradeStatus = withMode(
   () => httpApi.getEnvironmentUpgradeStatus(),
   () => Promise.resolve(IDLE_UPGRADE),
+);
+
+// ============================================================
+// 会话页标注 — 引用与暂存
+// ============================================================
+
+export type { WorkbenchMark, WorkbenchMarkKind, SessionMarks } from './client';
+
+// 标注存在会话备份目录里，只有服务端读写得到。桌面壳那一路没有桥，把取不到说出来。
+const MARKS_UNAVAILABLE = 'Session marks API not available in pywebview mode';
+
+export const getSessionMarks = withMode(
+  (sessionId: string): Promise<httpApi.SessionMarks> => httpApi.getSessionMarks(sessionId),
+  (_sessionId: string): Promise<httpApi.SessionMarks> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);
+
+export const putSessionMarks = withMode(
+  (sessionId: string, marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
+    httpApi.putSessionMarks(sessionId, marks),
+  (_sessionId: string, _marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);
+
+// ============================================================
+// 会话分支
+// ============================================================
+
+export type { BranchRequest, BranchLaunch, BranchCloseBy, BranchCloseResult } from './client';
+
+// 起会话、记关系账都在服务端，桌面壳那一路没有桥，把做不到说出来。
+const BRANCH_UNAVAILABLE = 'Session branch API not available in pywebview mode';
+
+export const startBranch = withMode(
+  (sessionId: string, body: httpApi.BranchRequest): Promise<httpApi.BranchLaunch> =>
+    httpApi.startBranch(sessionId, body),
+  (_sessionId: string, _body: httpApi.BranchRequest): Promise<httpApi.BranchLaunch> =>
+    Promise.reject(new Error(BRANCH_UNAVAILABLE)),
+);
+
+export const closeBranch = withMode(
+  (parentId: string, childId: string, by: httpApi.BranchCloseBy): Promise<httpApi.BranchCloseResult> =>
+    httpApi.closeBranch(parentId, childId, by),
+  (_parentId: string, _childId: string, _by: httpApi.BranchCloseBy): Promise<httpApi.BranchCloseResult> =>
+    Promise.reject(new Error(BRANCH_UNAVAILABLE)),
 );

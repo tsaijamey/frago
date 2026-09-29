@@ -36,7 +36,7 @@ Every request the server receives is sorted into one of four zones by
 
 | Zone | What it covers | What it requires |
 |---|---|---|
-| **trusted local** | a process on this machine — the CLI, a recipe calling back in — and, by default, other devices on the private network | nothing; behaviour is unchanged from a personal install |
+| **trusted local** | a process on this machine — the CLI, a recipe calling back in — and, only with `FRAGO_TRUST_LAN=1`, other devices on the private network | nothing; behaviour is unchanged from a personal install |
 | **public** | `GET /app/<recipe>/…` for a recipe published in `public` mode | nothing, but it is read-only and the page's config is filtered |
 | **identity** | the same pages for a recipe published in `identity` mode, plus five `/api/auth/…` endpoints (login, logout, password, me, pages) | a login cookie; still read-only, still filtered, and the visitor reads *their own* slot |
 | **private** | everything else: all of `/api`, `/ws`, `/viewer`, `/browser`, the SPA | `Authorization: Bearer <token>` |
@@ -76,21 +76,21 @@ you write `proxy_set_header` / `option forwardfor` yourself. Caddy, Traefik,
 Apache and Cloudflare happen to set them by default — but "safe because of
 someone else's default" is not a property to build on.
 
-"Home" is loopback plus, by default, the private network. That default is not a
-shrug: frago binds `0.0.0.0` out of the box, `frago server status` prints the
-LAN URLs it can be reached at, and reading the workbench from your phone is a
-feature the tool advertises. Turning it off by default would break every
-personal install to protect a deployment that step 1 below already protects
-better. On a server, turn it off.
+"Home" is loopback only, unless `FRAGO_TRUST_LAN=1` adds the private network.
+frago binds `0.0.0.0` out of the box and `frago server status` prints the LAN
+URLs it can be reached at, but a caller on those URLs needs the token like any
+other remote caller. Until 2026-09-24 the private network counted as home by
+default, which on an office or café subnet handed every neighbour the owner's
+seat. Opt in only on a network you actually trust — never on a server.
 
 ## Server setup
 
-**1. Tell frago it is on a server.** The defaults are right for a home machine
-and wrong here. Three lines:
+**1. Tell frago it is on a server.** The defaults are right for a personal
+machine and wrong here. Three lines:
 
 ```bash
 export FRAGO_SERVER_HOST=127.0.0.1   # only the proxy can open a socket
-export FRAGO_TRUST_LAN=0             # a neighbour in the VPC is not the owner
+export FRAGO_TRUST_LAN=0             # already the default; pinned so an inherited =1 cannot undo it
 export FRAGO_BEHIND_PROXY=1          # never infer trust from the peer address
 frago server restart
 ```

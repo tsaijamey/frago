@@ -31,8 +31,10 @@ import contextlib
 import json
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from frago.session import claude_sessions as claude_svc
 from frago.session import codex_store, opencode_store, record_reader
@@ -268,3 +270,36 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
     thread.start()
     logger.info("webui queued send → session=%s family=%s", session_id, target.family)
     return thread.name
+
+
+def send_when_idle(
+    session_id: str, prompt: str, *, landed: Callable[[], bool]
+) -> Literal["landed", "handed", "not_now"]:
+    """替别人往这场会话里投一段话：**会话空闲才送，送完看记录确认进去了**。
+
+    给结对队友的消息用，不给主人自己打的字用。两者差在出错之后谁看得见：主人在页面上
+    打的话没进去，他当场就知道；队友的消息没进去，两边都以为送到了。2026-09-29 那次，
+    :func:`send_queued` 在对方 agent 干活时把一条队友消息打进输入框，回车被吞，文字在
+    输入框里停了四十分钟，最后跟主人自己打的一句拼成一条发言交了出去——
+    对方 agent 分不清哪句是谁说的。
+
+    - 会话在忙、或者输入框里已经有字 → ``not_now``，一个字都不打。
+    - 空闲 → 打字、回车，然后拿 ``landed`` 等这条发言出现在会话记录里。等到了是
+      ``landed``；没等到就把自己打进去的字清掉，回 ``not_now``，留给下一轮。
+    - CoreAgent 没有输入框，话交给它自己的排队 → ``handed``，之后只等它出现。
+    """
+    from frago.server.services.ui_session_runner import get_runner
+
+    target = resolve_target(session_id)
+    if target.family == "coreagent":
+        from frago.server.services import coreagent_runner
+
+        coreagent_runner.send_queued(session_id, prompt, cwd=target.cwd or str(Path.home()))
+        return "handed"
+    return get_runner().submit_when_idle(
+        session_id,
+        prompt,
+        landed=landed,
+        agent_type=target.agent_type,
+        cwd=target.cwd,
+    )

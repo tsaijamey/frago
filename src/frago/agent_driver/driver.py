@@ -114,6 +114,13 @@ class AgentDriver:
     # 一堆 Node 版本管理器的目录，codebuddy 要退回 WorkBuddy.app 里那份内嵌 CLI，
     # 都不是"PATH 里 which 一下"能覆盖的。不填时上层只能报"判不出装没装"。
     locate: Callable[[], str | None] | None = None
+    # ready_signal 想吃**带颜色**的 pane（``capture-pane -e``）时置 True。
+    # ``open()`` 等就绪的那一路据此带 ``-e`` 抓屏再喂给 ready_signal；缺省 False 照旧
+    # 喂去掉颜色的纯文本，其它 driver 的就绪行为 MUST 不变。claude 用它：空输入框里的
+    # 灰色输入提示 / 答完后的灰色建议都是 SGR 2 暗色字，不带颜色读屏它们看起来就是人
+    # 打进去的字，``_READY_BOX`` 判「输入框非空」永远不就绪——拿到颜色才能先
+    # ``blank_dim_runs`` 抹空暗色字再判空（claude 2026-09-25 升 2.1.282 后首启就中招）。
+    ready_signal_ansi: bool = False
     # 起会话时能不能由调用方指定会话编号。
     #
     # True（claude / codebuddy）：launch 接受 ``--session-id`` 一类的开关，调用方可以

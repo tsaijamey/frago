@@ -292,6 +292,41 @@ def test_opencode_update_modal_handler_sends_escape() -> None:
 
 
 # ── open(): 就绪等待 + 一次性异常处理 ──────────────────────────────
+def test_claude_open_reaches_ready_with_only_dim_input_hint() -> None:
+    """claude 空输入框里只有灰色提示（暗色字）也判就绪，且按 -e 带颜色抓屏。
+
+    不带颜色读屏，灰色输入提示看起来就是框里有字，``_READY_BOX`` 永不命中、30 秒后
+    误判启动失败。driver 声明了 ``ready_signal_ansi``，open() 等就绪那一路用
+    ``capture-pane -e`` 抓带颜色的屏面，ready_signal 先把暗色字抹空再判空。
+    """
+    dim_hint = '❯\xa0\x1b[2mTry\x1b[0m \x1b[2m"fix typecheck errors"\x1b[0m'
+    fake = FakeTmux([dim_hint])
+    sess = TmuxAgentSession(
+        "c-ready", load_driver("claude"), cwd="/tmp", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    assert sess.status == "ready"
+    assert any(c[1:2] == ["capture-pane"] and "-e" in c for c in fake.commands)
+
+
+def test_claude_open_times_out_when_box_has_typed_text() -> None:
+    """输入框里是正常颜色的字 → 不就绪，等满超时抛 TmuxStartupError。"""
+    from frago.agent_driver.tmux_session import TmuxStartupError
+
+    fake = FakeTmux(["❯\xa0Try hello"])
+    clock = iter([0.0, 10.0, 10.0])
+    sess = TmuxAgentSession(
+        "c-stuck",
+        load_driver("claude"),
+        cwd="/tmp",
+        runner=fake,
+        sleep=_no_sleep,
+        clock=lambda: next(clock),
+    )
+    with pytest.raises(TmuxStartupError):
+        sess.open(ready_timeout_s=1)
+
+
 def test_open_waits_ready_and_dismisses_modal() -> None:
     # launch 后第一屏带 Update 模态且已就绪，应触发 Esc。
     panes = [

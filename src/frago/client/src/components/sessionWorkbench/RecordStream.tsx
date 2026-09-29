@@ -24,6 +24,7 @@
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -33,10 +34,37 @@ import {
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Inbox, Loader2 } from 'lucide-react';
-import RecordCard, { KIND_GROUP } from './RecordCard';
-import SelectionQuote from './SelectionQuote';
-import { queueOpOf, queueOutcomes, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import { CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import RecordCard, {
+  KIND_GROUP,
+  SystemRun,
+  ToolRun,
+  formatDuration,
+  previewArgs,
+  type ToolRow,
+} from './RecordCard';
+import SelectionQuote, {
+  HIGHLIGHT_PRIORITY,
+  RECORD_BODY_ATTR,
+  findMarkRange,
+  flatten,
+  markSpan,
+  paintHighlight,
+  rangeOf,
+  type MarkAnchor,
+} from './SelectionQuote';
+import type { LocateState } from './StackPanel';
+import type { WorkbenchMark } from '@/hooks/useSessionMarks';
+import SendProgress from './SendProgress';
+import StreamMinimap from './StreamMinimap';
+import {
+  AGENT_ACTIVITY,
+  queueOpOf,
+  queueOutcomes,
+  trailSettled,
+  type SendTrail,
+  type WorkbenchRecord,
+} from '@/hooks/useWorkbenchRecords';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -81,6 +109,19 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     return 'talk';
   }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
+
+/**
+ * 正文类记录：人发言、代理回复、思考、插话。
+ *
+ * 引用与暂存的标注只在这几种里记锚点、着色、找原处；工具调用、钩子、系统记录大多是折叠
+ * 的卡，文字时有时无，定位不稳（spec 20260928-webui-session-stack「不做什么」第 5 条）。
+ */
+export function isBodyRecord(record: WorkbenchRecord): boolean {
+  if (record.kind === 'user.say' || record.kind === 'agent.say' || record.kind === 'agent.think') {
+    return true;
+  }
+  return record.kind === 'context.inject' && record.payload.channel === 'queued_command';
 }
 
 /**
@@ -148,6 +189,202 @@ export function groupRecords(records: WorkbenchRecord[]): RecordGroup[] {
   return groups;
 }
 
+/**
+ * 记录流里的一段：一条原样的记录，或一串被并起来的同类记录。
+ *
+ * - `tools`：连续的工具调用与结果，按 `call_id` 配对成行。夹在中间的空正文 hook 注入、
+ *   用量刻度、空思考不打断这一段，收进 `extras`，框底写明并进了几条。
+ * - `system`：连续的系统记录（报错除外）压成一行。
+ */
+export type StreamSegment =
+  | { kind: 'record'; record: WorkbenchRecord }
+  | { kind: 'tools'; key: string; rows: ToolRow[]; extras: WorkbenchRecord[]; records: WorkbenchRecord[] }
+  | { kind: 'system'; key: string; records: WorkbenchRecord[] };
+
+function isToolRecord(r: WorkbenchRecord): boolean {
+  return r.kind === 'tool.call' || r.kind === 'tool.result';
+}
+
+/** 跑过但一个字没说的 hook 注入：正文、各段、报错全空。 */
+export function isSilentHook(r: WorkbenchRecord): boolean {
+  if (r.kind !== 'context.inject' || r.payload.source !== 'hook') return false;
+  const p = r.payload;
+  const blocks = Array.isArray(p.blocks) ? p.blocks.filter((b) => typeof b === 'string' && b) : [];
+  const body = typeof p.body === 'string' ? p.body : '';
+  const exit = typeof p.exit_code === 'number' ? p.exit_code : null;
+  return (
+    !blocks.length &&
+    !body &&
+    !(typeof p.stderr === 'string' && p.stderr) &&
+    p.prevented_continuation !== true &&
+    (exit === null || exit === 0)
+  );
+}
+
+/** 夹在工具调用之间也不算打断的那几种：空 hook、用量刻度、没落盘的空思考。 */
+function isTransparent(r: WorkbenchRecord): boolean {
+  if (r.kind === 'usage.tick') return true;
+  if (r.kind === 'agent.think') {
+    const text = typeof r.payload.thinking === 'string' ? r.payload.thinking : '';
+    return !text.trim();
+  }
+  return isSilentHook(r);
+}
+
+function isSystemRecord(r: WorkbenchRecord): boolean {
+  return r.kind !== 'error' && lensOf(r) === 'system';
+}
+
+/**
+ * 相邻且同属一类的记录并成一段；三类以外的原样独立成段。只并相邻的，不改顺序。
+ *
+ * `tools` / `system` 两个开关由镜头决定：「系统」那一档本来就是要逐条看系统记录的，
+ * 在那里再压成一行等于什么都不给看。
+ */
+export function collapseRuns(
+  records: WorkbenchRecord[],
+  opts: { tools: boolean; system: boolean }
+): StreamSegment[] {
+  const out: StreamSegment[] = [];
+  let i = 0;
+  while (i < records.length) {
+    const r = records[i];
+    if (opts.tools && isToolRecord(r)) {
+      const rows: ToolRow[] = [];
+      const byCall = new Map<string, ToolRow>();
+      const extras: WorkbenchRecord[] = [];
+      const members: WorkbenchRecord[] = [];
+      let pending: WorkbenchRecord[] = [];
+      let j = i;
+      while (j < records.length) {
+        const x = records[j];
+        if (isToolRecord(x)) {
+          extras.push(...pending);
+          members.push(...pending, x);
+          pending = [];
+          const cid = typeof x.payload.call_id === 'string' ? x.payload.call_id : '';
+          if (x.kind === 'tool.call') {
+            const row: ToolRow = { call: x, result: null };
+            rows.push(row);
+            if (cid) byCall.set(cid, row);
+          } else {
+            const row = cid ? byCall.get(cid) : undefined;
+            if (row && !row.result) row.result = x;
+            else rows.push({ call: null, result: x });
+          }
+          j += 1;
+        } else if (isTransparent(x)) {
+          pending.push(x);
+          j += 1;
+        } else {
+          break;
+        }
+      }
+      out.push({ kind: 'tools', key: `tools:${r.id}`, rows, extras, records: members });
+      // 框尾那几条透明记录没被框收下，退回去照常分段
+      i = j - pending.length;
+      continue;
+    }
+    if (opts.system && isSystemRecord(r)) {
+      let j = i;
+      while (j < records.length && isSystemRecord(records[j])) j += 1;
+      out.push({ kind: 'system', key: `system:${r.id}`, records: records.slice(i, j) });
+      i = j;
+      continue;
+    }
+    out.push({ kind: 'record', record: r });
+    i += 1;
+  }
+  return out;
+}
+
+/** 一段连续的、属于同一次模型回复的分段。 */
+export interface SegmentGroup {
+  groupId: string | null;
+  segments: StreamSegment[];
+  /** 这一组底下一共几条原始记录。 */
+  size: number;
+}
+
+function segmentRecords(seg: StreamSegment): WorkbenchRecord[] {
+  return seg.kind === 'record' ? [seg.record] : seg.records;
+}
+
+/** 一段属于哪一次回复：组内记录同属一次回复才算，跨了回复的并段不归组。 */
+function segmentGroupId(seg: StreamSegment): string | null {
+  const recs = segmentRecords(seg).filter((r) => r.group_id);
+  if (!recs.length) return null;
+  const id = recs[0].group_id;
+  return recs.every((r) => r.group_id === id) && recs.length === segmentRecords(seg).length
+    ? id
+    : null;
+}
+
+/** 与 `groupRecords` 同一个规矩（只并相邻），单位从记录换成分段。 */
+export function groupSegments(segments: StreamSegment[]): SegmentGroup[] {
+  const groups: SegmentGroup[] = [];
+  for (const seg of segments) {
+    const id = segmentGroupId(seg);
+    const size = segmentRecords(seg).length;
+    const last = groups[groups.length - 1];
+    if (id && last && last.groupId === id) {
+      last.segments.push(seg);
+      last.size += size;
+      continue;
+    }
+    groups.push({ groupId: id, segments: [seg], size });
+  }
+  return groups;
+}
+
+/**
+ * 「Agent on it — 在做什么」里的「在做什么」：那句话之后最后一条 agent 动静的短描述。
+ * 取记录流本身（确定、即时），不取观察者栏那句意译。
+ */
+export function describeActivity(
+  records: WorkbenchRecord[],
+  since: number,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  let last: WorkbenchRecord | null = null;
+  for (const r of records) {
+    if (r.ts >= since - 1_000 && AGENT_ACTIVITY.has(r.kind)) last = r;
+  }
+  if (!last) return t('workbench.progress.doingNothingYet');
+  const p = last.payload;
+  const tool = typeof p.tool_name === 'string' ? p.tool_name : '';
+  switch (last.kind) {
+    case 'agent.think':
+      return t('workbench.progress.doingThinking');
+    case 'agent.say':
+      return t('workbench.progress.doingReplying');
+    case 'tool.call': {
+      const title = typeof p.title === 'string' && p.title ? p.title : previewArgs((p.args ?? {}) as Record<string, unknown>);
+      return `${tool} ${title}`.trim().slice(0, 120);
+    }
+    case 'tool.result':
+      return t('workbench.progress.doingToolResult', { tool });
+    case 'subagent.dispatch':
+      return t('workbench.progress.doingSubagent');
+    case 'error':
+      return t('workbench.progress.doingError');
+    default:
+      return t('workbench.progress.doingNothingYet');
+  }
+}
+
+/** 每秒一跳的钟。只在 `on` 时走，停下不占定时器。 */
+function useTicking(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [on]);
+  return now;
+}
+
 /** 这一组里模型叫什么。取组内第一条报了模型的记录，报不出就不显示。 */
 function modelOf(records: WorkbenchRecord[]): string {
   for (const record of records) {
@@ -155,6 +392,109 @@ function modelOf(records: WorkbenchRecord[]): string {
     if (typeof model === 'string' && model) return model;
   }
   return '';
+}
+
+/** 标注在浏览器里的高亮名字，与 `globals.css` 里 `::highlight()` 同名。 */
+const MARK_STACK = 'workbench-mark-stack';
+const MARK_BRANCH = 'workbench-mark-branch';
+const MARK_QUOTE = 'workbench-mark-quote';
+const MARK_FLASH = 'workbench-mark-flash';
+/** 跳回原处之后那段文字亮多久。 */
+const FLASH_MS = 1_400;
+
+/** 一段标注在记录流里找到的位置。缩略滚动条按它画刻度。 */
+export interface MarkTick {
+  id: string;
+  /**
+   * stack＝没用过的暂存（橙）；branch＝没收口的分支（正文色虚线）；quote＝其余的中性底：
+   * 引用、用过的暂存、收了口的分支。
+   */
+  tone: 'stack' | 'branch' | 'quote';
+  recordId: string;
+  range: Range;
+}
+
+/** 这条标注在记录流里画成哪一种。与 `MarkTick.tone` 同一套。 */
+export function markTone(mark: WorkbenchMark): MarkTick['tone'] {
+  if (mark.kind === 'stack' && !mark.used) return 'stack';
+  if (mark.kind === 'branch' && !mark.closed) return 'branch';
+  return 'quote';
+}
+
+/** 从 `[from, to)` 里挖掉 `cuts` 盖住的部分，剩下的几截。 */
+function subtractSpans(span: [number, number], cuts: [number, number][]): [number, number][] {
+  let pieces: [number, number][] = [span];
+  for (const [c0, c1] of cuts) {
+    pieces = pieces.flatMap(([a, b]): [number, number][] => {
+      if (c1 <= a || c0 >= b) return [[a, b]];
+      const out: [number, number][] = [];
+      if (a < c0) out.push([a, c0]);
+      if (c1 < b) out.push([c1, b]);
+      return out;
+    });
+  }
+  return pieces;
+}
+
+/**
+ * 在记录流里找出每一条标注，按画法分成三组交给浏览器去涂，顺手交回刻度。
+ *
+ * 重叠处按「没用过的暂存 > 没收口的分支 > 中性底」取样子：底色是半透明的，只靠上下叠会
+ * 混出第三种颜色；虚线下划线与底色又是两种属性，叠在一处两样都会画出来。所以低一档的
+ * 那一组先把被高一档盖住的部分挖掉，重叠处只剩优先的那一种。同一组里的范围相接或重叠，
+ * 浏览器自然画成一段，不会叠深。找不到的标注跳过，不报错。
+ */
+export function paintMarks(
+  root: ParentNode,
+  marks: WorkbenchMark[],
+  owner?: object
+): MarkTick[] {
+  const byRecord = new Map<string, WorkbenchMark[]>();
+  for (const mark of marks) {
+    const list = byRecord.get(mark.record_id);
+    if (list) list.push(mark);
+    else byRecord.set(mark.record_id, [mark]);
+  }
+  const stackRanges: Range[] = [];
+  const branchRanges: Range[] = [];
+  const quoteRanges: Range[] = [];
+  const ticks: MarkTick[] = [];
+  for (const [recordId, list] of byRecord) {
+    const el = root.querySelector(`[data-record-id="${CSS.escape(recordId)}"][${RECORD_BODY_ATTR}]`);
+    if (!el) continue;
+    const flat = flatten(el);
+    const hot: [number, number][] = [];
+    const open: [number, number][] = [];
+    const cold: [number, number][] = [];
+    for (const mark of list) {
+      const span = markSpan(flat, mark.text, mark.occurrence);
+      if (!span) continue;
+      const tone = markTone(mark);
+      (tone === 'stack' ? hot : tone === 'branch' ? open : cold).push(span);
+      ticks.push({ id: mark.id, tone, recordId, range: rangeOf(flat, span[0], span[1]) });
+    }
+    for (const [a, b] of hot) stackRanges.push(rangeOf(flat, a, b));
+    for (const span of open) {
+      for (const [a, b] of subtractSpans(span, hot)) branchRanges.push(rangeOf(flat, a, b));
+    }
+    for (const span of cold) {
+      for (const [a, b] of subtractSpans(span, [...hot, ...open])) {
+        quoteRanges.push(rangeOf(flat, a, b));
+      }
+    }
+  }
+  paintHighlight(MARK_STACK, stackRanges, HIGHLIGHT_PRIORITY.stack, owner);
+  paintHighlight(MARK_BRANCH, branchRanges, HIGHLIGHT_PRIORITY.branch, owner);
+  paintHighlight(MARK_QUOTE, quoteRanges, HIGHLIGHT_PRIORITY.quote, owner);
+  return ticks;
+}
+
+/** 这一点落没落在这段文字上。量不出位置（老浏览器、测试环境）一律算没落上。 */
+function rangeHit(range: Range, x: number, y: number): boolean {
+  if (typeof range.getClientRects !== 'function') return false;
+  return Array.from(range.getClientRects()).some(
+    (r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+  );
 }
 
 /** 离顶部多近算「在翻更早的」，触发前插。 */
@@ -198,14 +538,39 @@ export interface RecordStreamProps {
   hasOlder: boolean;
   error: string | null;
   onLoadOlder: () => void;
-  /** 刚投了一句话进去、还没见 agent 有任何动静。为真时流的末尾挂一条"在等"。 */
+  /** 刚投了一句话进去、还没见 agent 有任何动静。为真时跟到底，让那句话下面的「Agent on it」露出来。 */
   awaitingAgent?: boolean;
+  /** 本页本次发出的每一句话的进度。按 `recordId` 挂到对应气泡下面。 */
+  trails?: SendTrail[];
+  /** 滚到这条记录（输入区「Show」）。`at` 让同一条连点两次也各算一次。 */
+  scrollTarget?: { recordId: string; at: number } | null;
   /**
    * 人在流里圈了一段文字、按了「引用」。交出去的是去掉首尾空白的原文，
    * 接住它的是输入区——这一侧不碰输入框的内容。
    */
-  onQuote?: (text: string) => void;
+  onQuote?: (text: string, anchor?: MarkAnchor) => void;
+  /** 人圈了一段正文、按了「暂存」并写完想法。不给就不出暂存按钮。 */
+  onStack?: (anchor: MarkAnchor, note: string) => void;
+  /** 人圈了一段正文、按了「分支」并写好那句话。不给就不出分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /** 没收口的分支标注上点出来的小菜单：「打开分支」。不给就不弹菜单。 */
+  onOpenBranch?: (childSessionId: string) => void;
+  /** 同一个小菜单：「标记已收口」。 */
+  onCloseBranch?: (mark: WorkbenchMark) => void;
+  /** 这场会话的全部标注。按它给正文着色、给缩略滚动条画刻度。 */
+  marks?: WorkbenchMark[];
+  /** 暂存列表「点原文」：滚回那段文字并闪一下。`at` 让同一条连点两次也各算一次。 */
+  locateTarget?: { mark: WorkbenchMark; at: number } | null;
+  /** 跳回原处的下场：找到了、正在往前翻页找、翻到开头也没找到。 */
+  onLocateResult?: (id: string, result: LocateState | 'found') => void;
+  /**
+   * 挂不挂缩略滚动条。会话页挂；Teams 页也用这条记录流，但那一页守着「一屏只有一处实心
+   * 绿」，人发言的绿条放过去就破了它，所以默认不挂。
+   */
+  minimap?: boolean;
 }
+
+const NO_MARKS: WorkbenchMark[] = [];
 
 export default function RecordStream({
   sessionId,
@@ -216,7 +581,17 @@ export default function RecordStream({
   error,
   onLoadOlder,
   awaitingAgent = false,
+  trails = [],
+  scrollTarget = null,
   onQuote,
+  onStack,
+  onBranch,
+  onOpenBranch,
+  onCloseBranch,
+  marks = NO_MARKS,
+  locateTarget = null,
+  onLocateResult,
+  minimap = false,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
@@ -248,7 +623,109 @@ export default function RecordStream({
     [resolved, lens]
   );
 
-  const groups = useMemo(() => groupRecords(visible), [visible]);
+  // 连续同类合并：「对话」档不并（那里本来只摆对话），「系统」档不压系统记录。
+  const segments = useMemo(
+    () =>
+      lens === 'talk'
+        ? visible.map((record) => ({ kind: 'record' as const, record }))
+        : collapseRuns(visible, { tools: lens === 'all' || lens === 'tool', system: lens === 'all' }),
+    [visible, lens]
+  );
+  const groups = useMemo(() => groupSegments(segments), [segments]);
+  const lastSegment = segments[segments.length - 1];
+
+  /** 记录编号 → 挂在它下面的那份进度。 */
+  const trailOf = useMemo(() => {
+    const map = new Map<string, SendTrail>();
+    for (const tr of trails) if (tr.recordId && !tr.expired) map.set(tr.recordId, tr);
+    return map;
+  }, [trails]);
+  /** 眼下这一轮在跑的那一句：最后一份已落地、还没答完的进度。「Agent on it」只挂它下面。 */
+  const activeTrail = useMemo(() => {
+    for (let i = trails.length - 1; i >= 0; i -= 1) {
+      const tr = trails[i];
+      if (tr.expired || trailSettled(tr)) continue;
+      if (tr.recordId) return tr;
+    }
+    return null;
+  }, [trails]);
+  const now = useTicking(activeTrail !== null);
+  const activeShown = activeTrail?.recordId
+    ? visible.some((r) => r.id === activeTrail.recordId)
+    : false;
+
+  const agentOnIt = activeTrail ? (
+    <p
+      data-testid="agent-on-it"
+      className="flex min-w-0 items-center gap-1.5 px-3 text-[11px] text-text-muted"
+    >
+      <span aria-hidden className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary" />
+      <span className="shrink-0 text-accent-primary">{t('workbench.progress.agentOnIt')}</span>
+      <span className="min-w-0 truncate">
+        — {describeActivity(records, activeTrail.steps.in_the_session ?? activeTrail.steps.queued ?? 0, t)}
+      </span>
+      <span className="shrink-0 font-mono text-text-dim">
+        · {formatDuration(Math.max(0, now - (activeTrail.steps.on_its_way ?? now)))}
+      </span>
+    </p>
+  ) : null;
+
+  /** 一条记录连同挂在它下面的进度。只有对得上某份进度的记录才多包一层。 */
+  const renderRecord = (record: WorkbenchRecord, hideModel?: boolean) => {
+    const trail = trailOf.get(record.id);
+    const bare = (
+      <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} hideModel={hideModel} />
+    );
+    // 正文类记录外面多一层只装这张卡的壳：标注的锚点、着色、跳回原处都认这一层，
+    // 缩略滚动条也按它量高度、分颜色。挂着进度的那几条外层另有一个 data-record-id
+    // （输入区「Show」认它），这一层套在里面，只包卡、不包进度。
+    const card = isBodyRecord(record) ? (
+      <div
+        key={record.id}
+        data-record-id={record.id}
+        data-record-kind={record.kind}
+        {...{ [RECORD_BODY_ATTR]: '' }}
+        className="min-w-0"
+      >
+        {bare}
+      </div>
+    ) : (
+      bare
+    );
+    if (!trail) return card;
+    // 刚落地、agent 还没接手：气泡外多一圈淡描边，说「这是你刚发的那句」
+    const fresh =
+      !trail.midTurn && trail.steps.picked_up === undefined && !trailSettled(trail);
+    return (
+      <div key={record.id} data-record-id={record.id} className="flex min-w-0 flex-col gap-1">
+        <div
+          data-testid="trail-bubble"
+          data-fresh={fresh ? 'true' : undefined}
+          className={fresh ? 'rounded-[9px] outline outline-1 outline-offset-2 outline-[var(--sel-border)]' : ''}
+        >
+          {card}
+        </div>
+        <SendProgress trail={trail} className="px-3" />
+        {activeTrail?.id === trail.id ? agentOnIt : null}
+      </div>
+    );
+  };
+
+  const renderSegment = (seg: StreamSegment, hideModel?: boolean) => {
+    if (seg.kind === 'record') return renderRecord(seg.record, hideModel);
+    if (seg.kind === 'tools') {
+      return (
+        <ToolRun
+          key={seg.key}
+          rows={seg.rows}
+          extras={seg.extras}
+          sessionId={sessionId ?? ''}
+          live={seg === lastSegment}
+        />
+      );
+    }
+    return <SystemRun key={seg.key} records={seg.records} sessionId={sessionId ?? ''} />;
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 自动滚动是否武装。开一场新会话时武装，人手动离开底部解除。 */
@@ -361,11 +838,195 @@ export default function RecordStream({
     if (awaitingAgent && followArmed.current) scrollToBottom('smooth');
   }, [awaitingAgent, scrollToBottom]);
 
+  // 输入区「Show」：滚到那句话。它可能在当前镜头里看不见，那就先回到「对话」档。
+  const scrollAt = scrollTarget?.at ?? 0;
+  const scrollId = scrollTarget?.recordId ?? '';
+  useEffect(() => {
+    if (!scrollAt || !scrollId) return;
+    if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
+      setLens('talk');
+      return;
+    }
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-record-id="${CSS.escape(scrollId)}"]`
+    );
+    if (!el) return;
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
+    followArmed.current = false;
+    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollAt, scrollId, lens]);
+
+  /**
+   * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
+   * 那些文本节点就换了一批，上一轮交给浏览器的范围全都指着已经不在的节点。
+   */
+  const [ticks, setTicks] = useState<MarkTick[]>([]);
+  // 这一块记录流在高亮登记里的身份。会话页、Teams 页各挂着记录流，高亮名字却是全网页
+  // 共用的；每块只交、只撤自己那一份，藏着的那块重涂时不会把别处的底色撤掉。
+  const painter = useRef({}).current;
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !marks.length) {
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack, painter);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch, painter);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote, painter);
+      setTicks([]);
+      return;
+    }
+    setTicks(paintMarks(root, marks, painter));
+  }, [marks, groups, sessionId, painter]);
+  // 这块走了，底色一起走：高亮挂在浏览器上，不随 React 的树消失。
+  useEffect(
+    () => () => {
+      paintHighlight(MARK_STACK, [], HIGHLIGHT_PRIORITY.stack, painter);
+      paintHighlight(MARK_BRANCH, [], HIGHLIGHT_PRIORITY.branch, painter);
+      paintHighlight(MARK_QUOTE, [], HIGHLIGHT_PRIORITY.quote, painter);
+      paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash, painter);
+    },
+    [painter]
+  );
+
+  /**
+   * 点在没收口的分支那道虚线上，就地弹一个小菜单：「打开分支」「标记已收口」。
+   *
+   * 虚线是浏览器按文本范围画的，DOM 里没有一个元素可挂点击，所以这里拿点下去的那一点
+   * 去比每一道虚线的屏幕矩形。人正在圈字（选区不空）时不弹：那一下是在选，不是在点。
+   */
+  const [branchMenu, setBranchMenu] = useState<{ mark: WorkbenchMark; x: number; y: number } | null>(
+    null
+  );
+  useEffect(() => setBranchMenu(null), [sessionId]);
+  const handleStreamClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (!onOpenBranch && !onCloseBranch) return;
+      const picked = document.getSelection();
+      if (picked && !picked.isCollapsed) return;
+      const hit = ticks.find(
+        (tick) => tick.tone === 'branch' && rangeHit(tick.range, e.clientX, e.clientY)
+      );
+      const mark = hit ? marks.find((m) => m.id === hit.id) : undefined;
+      setBranchMenu(mark ? { mark, x: e.clientX, y: e.clientY } : null);
+    },
+    [ticks, marks, onOpenBranch, onCloseBranch]
+  );
+  // 菜单开着时，点别处、按 Esc、记录流一滚都收起——它贴着那道虚线，线一动它就指错了地方。
+  const branchMenuEl = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!branchMenu) return undefined;
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && branchMenuEl.current?.contains(e.target)) return;
+      setBranchMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBranchMenu(null);
+    };
+    const onScroll = () => setBranchMenu(null);
+    const box = scrollRef.current;
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    box?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+      box?.removeEventListener('scroll', onScroll);
+    };
+  }, [branchMenu]);
+
+  /**
+   * 暂存列表「点原文」：滚回那段文字，居中，闪一下。
+   *
+   * 原处那条记录还没加载，就往前翻一页再看，直到找到或翻到会话开头；那条在当前镜头里
+   * 看不见，先切回「对话」（与输入区「Show」同一个做法）。翻完也找不到、或者那条在但
+   * 文字对不上，就报「没找到原处」，NEVER 跳去别的地方。
+   */
+  const locateDone = useRef(0);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+  }, []);
+  const locateAt = locateTarget?.at ?? 0;
+  /** 这一次找原处最近一回往前翻页时，最早那条是谁。翻完它没变，就是这一页没取回来。 */
+  const locatePaged = useRef<{ at: number; first: string | undefined } | null>(null);
+  /**
+   * 跳回原处那次平滑滚动的有效期。原处常在已加载内容的顶上，一路滑过去会碰到「到顶取更早
+   * 那一页」的线；那一页前插时视口被钉回半路，动画就此断掉，落点离原处差出一截。这段时间里
+   * 不自动取更早的页，人一伸手就作废。
+   */
+  const locateScrollUntil = useRef(0);
+  useEffect(() => {
+    if (!locateTarget || locateDone.current === locateAt) return;
+    const { mark } = locateTarget;
+    const finish = (result: LocateState | 'found') => {
+      locateDone.current = locateAt;
+      locatePaged.current = null;
+      onLocateResult?.(mark.id, result);
+    };
+    if (!records.some((r) => r.id === mark.record_id)) {
+      if (hasOlder) {
+        if (loadingOlder) {
+          onLocateResult?.(mark.id, 'searching');
+          return;
+        }
+        // 上一页翻完了、最早那条却没变：这一页没取回来（接口失败之类）。不原地连着重翻，
+        // 报「没找到原处」，人再点一次原文就从头再找。
+        const paged = locatePaged.current;
+        if (paged && paged.at === locateAt && paged.first === records[0]?.id) {
+          finish('notFound');
+          return;
+        }
+        locatePaged.current = { at: locateAt, first: records[0]?.id };
+        onLocateResult?.(mark.id, 'searching');
+        onLoadOlder();
+        return;
+      }
+      if (!loadingOlder) finish('notFound');
+      return;
+    }
+    if (!visible.some((r) => r.id === mark.record_id)) {
+      if (lens !== 'talk') setLens('talk');
+      else finish('notFound');
+      return;
+    }
+    const box = scrollRef.current;
+    const el = box?.querySelector<HTMLElement>(
+      `[data-record-id="${CSS.escape(mark.record_id)}"][${RECORD_BODY_ATTR}]`
+    );
+    const range = el ? findMarkRange(el, mark.text, mark.occurrence) : null;
+    if (!box || !el || !range) {
+      finish('notFound');
+      return;
+    }
+    // 居中落位。Range 量不出位置（老浏览器、测试环境）就退到那条记录本身。
+    const rect =
+      typeof range.getBoundingClientRect === 'function'
+        ? range.getBoundingClientRect()
+        : el.getBoundingClientRect();
+    const view = box.getBoundingClientRect();
+    const top = box.scrollTop + rect.top - view.top - (box.clientHeight - rect.height) / 2;
+    programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
+    locateScrollUntil.current = programmaticUntil.current;
+    followArmed.current = false;
+    if (typeof box.scrollTo === 'function') box.scrollTo({ top, behavior: 'smooth' });
+    else box.scrollTop = top;
+    paintHighlight(MARK_FLASH, [range], HIGHLIGHT_PRIORITY.flash, painter);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(
+      () => paintHighlight(MARK_FLASH, [], HIGHLIGHT_PRIORITY.flash, painter),
+      FLASH_MS
+    );
+    finish('found');
+    // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens]);
+
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
     manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
     // 人一伸手，程序那次滚动就作废——接下来的每一个事件都是人的，不许再被当成动画余波。
     programmaticUntil.current = 0;
+    locateScrollUntil.current = 0;
   }, []);
 
   const handleKeyDown = useCallback(
@@ -404,7 +1065,8 @@ export default function RecordStream({
 
       // 翻到顶附近：钉住当前几何，取更早的一页前插。
       if (el.scrollTop < NEAR_TOP_PX) {
-        if (olderArmed.current && hasOlder && !loadingOlder) {
+        // 跳回原处正滑着：不取（见 locateScrollUntil）。
+        if (now > locateScrollUntil.current && olderArmed.current && hasOlder && !loadingOlder) {
           olderArmed.current = false;
           anchor.current = { height: el.scrollHeight, top: el.scrollTop };
           onLoadOlder();
@@ -415,6 +1077,9 @@ export default function RecordStream({
     },
     [hasOlder, loadingOlder, onLoadOlder]
   );
+
+  // 缩略滚动条只在「全部」「对话」两档出现（spec 20260928-webui-session-stack 已定）。
+  const showMinimap = minimap && (lens === 'all' || lens === 'talk') && visible.length > 0;
 
   if (!sessionId) {
     return (
@@ -439,6 +1104,8 @@ export default function RecordStream({
               onClick={() => setLens(id)}
               aria-pressed={lens === id}
               data-testid={`lens-${id}`}
+              /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+              title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
               disabled={counts[id] === 0}
               /* 镜头是操作面，不是数据：选中态走中性填充加一档字重。
                  与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。 */
@@ -455,16 +1122,22 @@ export default function RecordStream({
         </div>
       ) : null}
 
+      {/* 缩略滚动条压在滚动区右侧那条空白里，所以两者包在同一个定位框里；它只在「全部」
+          「对话」两档出现，其余几档本来就没有人发言和代理回复可画。 */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
+        id="record-stream-scroll"
         onScroll={handleScroll}
         onWheel={noteManualIntent}
         onTouchMove={noteManualIntent}
         onKeyDown={handleKeyDown}
         onMouseDown={handleMouseDown}
+        onClick={handleStreamClick}
         /* 滚动容器的内距契约：上 16 下 40。底下比上面厚，是因为滚到底那一刻最后一条
-           不该被硬切在容器边框上，而输入框就压在下面。 */
-        className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-4"
+           不该被硬切在容器边框上，而输入框就压在下面。挂着缩略滚动条时右边多让出它那
+           一条，窄窗下正文不会钻到它底下。 */
+        className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-5 pt-4 ${showMinimap ? 'record-stream-no-bar pr-9' : 'pr-5'}`}
         data-testid="record-stream-scroll"
       >
         {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
@@ -506,12 +1179,10 @@ export default function RecordStream({
           ) : null}
 
           {groups.map((group, index) => {
-            if (!group.groupId || group.records.length === 1) {
-              return group.records.map((record) => (
-                <RecordCard key={record.id} record={record} sessionId={sessionId} />
-              ));
+            if (!group.groupId || group.size === 1) {
+              return group.segments.map((seg) => renderSegment(seg));
             }
-            const model = modelOf(group.records);
+            const model = modelOf(group.segments.flatMap(segmentRecords));
             return (
               /* **归组不再是一个盒子。**
                  从前这里是一圈边加一层纸色，里面每张卡自己又是一圈边加一层纸色，
@@ -530,17 +1201,10 @@ export default function RecordStream({
                   <span className="shrink-0">{t('workbench.stream.sameReply')}</span>
                   {model ? <span className="truncate font-mono">{model}</span> : null}
                   <span className="shrink-0 font-mono">
-                    {t('workbench.stream.groupCount', { n: group.records.length })}
+                    {t('workbench.stream.groupCount', { n: group.size })}
                   </span>
                 </header>
-                {group.records.map((record) => (
-                  <RecordCard
-                    key={record.id}
-                    record={record}
-                    sessionId={sessionId}
-                    hideModel={Boolean(model)}
-                  />
-                ))}
+                {group.segments.map((seg) => renderSegment(seg, Boolean(model)))}
               </section>
             );
           })}
@@ -552,24 +1216,74 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {/* 从按下发送到第一条新记录落盘，中间隔着一次投喂加一轮冷启动。那段空窗里
-              界面上一个字都不变，人只能猜「是没发出去还是它在想」。这一条就是答它。 */}
-          {awaitingAgent ? (
-            <p
-              data-testid="awaiting-agent"
-              className="flex items-center justify-center gap-2 py-3 text-[12px] text-text-muted"
-            >
-              <Loader2 size={13} className="animate-spin" />
-              {t('workbench.stream.awaitingAgent')}
-            </p>
-          ) : null}
+          {/* 「Agent on it」紧贴在那句话下面。那句话在当前镜头里看不见时（切到了工具档），
+              退到流的末尾，安静期照样有东西撑着。 */}
+          {activeTrail && !activeShown ? agentOnIt : null}
         </div>
+      </div>
+      {showMinimap ? (
+        <StreamMinimap
+          scrollRef={scrollRef}
+          ticks={ticks}
+          version={groups}
+          onUserScroll={noteManualIntent}
+        />
+      ) : null}
       </div>
 
       {/* 圈中一段文字之后冒出来的「引用」按钮，以及短选区的同字标绿。
           它挂在滚动容器外面：摆在里面会被 `overflow-y-auto` 裁掉一半。 */}
       {onQuote ? (
-        <SelectionQuote containerRef={scrollRef} sessionId={sessionId} onQuote={onQuote} />
+        <SelectionQuote
+          containerRef={scrollRef}
+          sessionId={sessionId}
+          onQuote={onQuote}
+          onStack={onStack}
+          onBranch={onBranch}
+        />
+      ) : null}
+
+      {branchMenu ? (
+        <div
+          ref={branchMenuEl}
+          role="menu"
+          data-testid="branch-mark-menu"
+          style={{ left: branchMenu.x, top: branchMenu.y + 6 }}
+          className="fixed z-30 flex min-w-[132px] flex-col rounded-[8px] border border-border-color bg-bg-card py-1 shadow-lg"
+        >
+          {onOpenBranch && branchMenu.mark.child_session_id ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="branch-mark-open"
+              onClick={() => {
+                const child = branchMenu.mark.child_session_id as string;
+                setBranchMenu(null);
+                onOpenBranch(child);
+              }}
+              className="flex items-center gap-2 px-3 py-1 text-left text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            >
+              <ExternalLink size={12} />
+              {t('workbench.branch.menuOpen')}
+            </button>
+          ) : null}
+          {onCloseBranch ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="branch-mark-close"
+              onClick={() => {
+                const mark = branchMenu.mark;
+                setBranchMenu(null);
+                onCloseBranch(mark);
+              }}
+              className="flex items-center gap-2 px-3 py-1 text-left text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            >
+              <CheckCheck size={12} />
+              {t('workbench.branch.menuClose')}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

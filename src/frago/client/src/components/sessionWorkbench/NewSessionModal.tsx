@@ -473,7 +473,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   )}
                   <span className="truncate font-mono text-xs">{c.path}</span>
                   {c.hint && (
-                    <span className="ml-auto shrink-0 text-[10px] text-[var(--text-muted)]">
+                    <span className="ml-auto shrink-0 text-[11px] text-[var(--text-muted)]">
                       {c.hint}
                     </span>
                   )}

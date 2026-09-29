@@ -95,6 +95,64 @@ export function countStatuses(todos: { status: TodoStatus }[]): Record<string, n
   return counts;
 }
 
+// ── 分组与分段 ──────────────────────────────────────────────────────────
+
+/** 分类组里的一段：优先级相同、连续的那几件。 */
+export interface PrioritySection<T> {
+  priority: TodoPriority;
+  todos: T[];
+}
+
+export interface CategoryGroup<T> {
+  /** 分类 id；未分类与引用了已删分类的都是 `none`。 */
+  id: string;
+  name: string;
+  /** 等于各段件数之和。 */
+  count: number;
+  sections: PrioritySection<T>[];
+}
+
+/**
+ * 连续同分类的事务收成一组，组内再在优先级变化处切段。
+ *
+ * 只切、不排：服务端的顺序是「分类名次 → 高中低 → 早建的在前」，同组同优先级本就挨在
+ * 一起，切出来自然是 高 → 中 → 低。在这里重排一次，页面第一条就可能和 `frago todo list`
+ * 的第一条对不上。筛掉的事务不进来，所以空段、空组都不会出现。
+ */
+export function groupTodos<T extends { category: string | null; priority: TodoPriority }>(
+  visible: T[],
+  categories: { id: string; name: string }[],
+  noneName: string
+): CategoryGroup<T>[] {
+  const out: CategoryGroup<T>[] = [];
+  for (const todo of visible) {
+    const id = effectiveCategory(todo.category, categories) ?? UNCATEGORIZED;
+    let group = out[out.length - 1];
+    if (!group || group.id !== id) {
+      const name = categories.find((c) => c.id === id)?.name ?? noneName;
+      group = { id, name, count: 0, sections: [] };
+      out.push(group);
+    }
+    const section = group.sections[group.sections.length - 1];
+    if (section && section.priority === todo.priority) {
+      section.todos.push(todo);
+    } else {
+      group.sections.push({ priority: todo.priority, todos: [todo] });
+    }
+    group.count += 1;
+  }
+  return out;
+}
+
+/**
+ * 清单行上的日期：同年只写 `MM-DD`，跨年写全。
+ *
+ * 事务一压就是好几个月，去年的 08-31 和今年的 08-31 缩成同一个样子，人会以为是新近的。
+ */
+export function formatRowDate(created: string, today: Date = new Date()): string {
+  return created.startsWith(`${today.getFullYear()}-`) ? created.slice(5, 10) : created;
+}
+
 /** 编辑分类清单时的一行。`isNew` 的那行 id 还能改，已有的 id 锁死——事务引用的就是它。 */
 export interface CategoryDraft {
   /** 只给 React 认行用。新加的行 id 还没填，挪动时不能拿 id 或下标当 key。 */
