@@ -4,8 +4,6 @@ Tests CRUD operations, activation/deactivation, and edge cases.
 """
 
 import json
-from datetime import datetime
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,8 +11,8 @@ import pytest
 from frago.init.profile_manager import (
     APIProfile,
     ProfileStore,
-    add_profile,
     activate_profile,
+    add_profile,
     create_profile_from_current,
     deactivate_profile,
     delete_profile,
@@ -606,3 +604,179 @@ class TestCreateFromCurrentWithBearerAuth:
         assert profile is not None
         assert profile.api_key == "sk-bearer-token"
         assert profile.endpoint_type == "tencent_maas"
+
+
+class TestProfileChannels:
+    """A profile opens one vendor through several protocol doors on the same key."""
+
+    def test_legacy_custom_profile_reads_as_anthropic_only(self):
+        from frago.init.profile_manager import profile_channels
+
+        profile = APIProfile(
+            name="Old custom",
+            endpoint_type="custom",
+            api_key="k",
+            url="https://ark.cn-beijing.volces.com/api/plan",
+            default_model="m1",
+            sonnet_model="m1",
+            haiku_model="m2",
+        )
+        channels = profile_channels(profile)
+        assert [c.protocol for c in channels] == ["anthropic"]
+        assert channels[0].url == "https://ark.cn-beijing.volces.com/api/plan"
+        assert channels[0].models == ["m1", "m2"]
+
+    def test_preset_fills_both_doors_without_anything_stored(self):
+        from frago.init.profile_manager import profile_channel, profile_channels
+
+        profile = APIProfile(name="Ark", endpoint_type="volcengine_plan", api_key="k")
+        assert [c.protocol for c in profile_channels(profile)] == ["anthropic", "responses"]
+        assert profile_channel(profile, "anthropic").url == "https://ark.cn-beijing.volces.com/api/plan"
+        responses = profile_channel(profile, "responses")
+        assert responses.url == "https://ark.cn-beijing.volces.com/api/plan/v3"
+        assert responses.models == []
+
+    def test_deepseek_responses_door_only_serves_flash(self):
+        from frago.init.profile_manager import profile_channel
+
+        profile = APIProfile(name="DS", endpoint_type="deepseek", api_key="k")
+        assert profile_channel(profile, "responses").models == ["deepseek-v4-flash"]
+
+    def test_preset_without_known_responses_door_has_none(self):
+        from frago.init.profile_manager import profile_channel
+
+        profile = APIProfile(name="Kimi", endpoint_type="kimi", api_key="k")
+        assert profile_channel(profile, "responses") is None
+
+    def test_non_endpoint_kinds_have_no_channels(self):
+        from frago.init.profile_manager import official_connection, profile_channels
+
+        assert profile_channels(official_connection()) == []
+
+    def test_stored_channel_overrides_preset_and_keeps_preset_url_when_blank(self):
+        from frago.init.profile_manager import ProfileChannel, profile_channel
+
+        profile = APIProfile(
+            name="Ark",
+            endpoint_type="volcengine_plan",
+            api_key="k",
+            channels=[ProfileChannel(protocol="responses", models=["kimi-k2.7-code"])],
+        )
+        responses = profile_channel(profile, "responses")
+        assert responses.url == "https://ark.cn-beijing.volces.com/api/plan/v3"
+        assert responses.models == ["kimi-k2.7-code"]
+
+    def test_round_trip_through_disk(self, tmp_profiles_path):
+        from frago.init.profile_manager import ProfileChannel, profile_channel
+
+        add_profile(
+            APIProfile(
+                id="ark00001",
+                name="Custom Ark",
+                endpoint_type="custom",
+                api_key="k",
+                url="https://ark.cn-beijing.volces.com/api/plan",
+                default_model="ark-code-latest",
+                channels=[
+                    ProfileChannel(
+                        protocol="responses",
+                        url="https://ark.cn-beijing.volces.com/api/plan/v3",
+                    )
+                ],
+            )
+        )
+        raw = json.loads(tmp_profiles_path.read_text(encoding="utf-8"))
+        assert raw["profiles"][0]["channels"] == [
+            {
+                "protocol": "responses",
+                "url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+                "models": [],
+            }
+        ]
+        # The Anthropic door stays at the top level, where frago-core reads it.
+        assert raw["profiles"][0]["url"] == "https://ark.cn-beijing.volces.com/api/plan"
+
+        loaded = get_profile("ark00001")
+        assert profile_channel(loaded, "responses").url.endswith("/api/plan/v3")
+
+    def test_profile_saved_before_channels_loads(self, tmp_profiles_path):
+        tmp_profiles_path.write_text(
+            json.dumps(
+                {"profiles": [{"id": "old1", "name": "Old", "endpoint_type": "deepseek", "api_key": "k"}]}
+            ),
+            encoding="utf-8",
+        )
+        assert get_profile("old1").channels == []
+
+    def test_update_accepts_channels_as_plain_dicts(self, tmp_profiles_path):
+        add_profile(
+            APIProfile(
+                id="c1",
+                name="Custom",
+                endpoint_type="custom",
+                api_key="k",
+                url="https://example.com/anthropic",
+            )
+        )
+        update_profile(
+            "c1", {"channels": [{"protocol": "responses", "url": "https://example.com/v1"}]}
+        )
+        assert get_profile("c1").channels[0].url == "https://example.com/v1"
+        # Leaving channels out of an update leaves them alone.
+        update_profile("c1", {"name": "Renamed"})
+        assert get_profile("c1").channels[0].protocol == "responses"
+
+    @pytest.mark.parametrize(
+        "channels, message",
+        [
+            ([{"protocol": "anthropic", "url": "https://x.example.com"}], "not listed again"),
+            ([{"protocol": "grpc", "url": "https://x.example.com"}], "Unknown channel protocol"),
+            (
+                [
+                    {"protocol": "responses", "url": "https://a.example.com"},
+                    {"protocol": "responses", "url": "https://b.example.com"},
+                ],
+                "listed twice",
+            ),
+            ([{"protocol": "responses"}], "needs an API URL"),
+            ([{"protocol": "responses", "url": "ftp://x"}], "needs an API URL"),
+            ([{"protocol": "responses", "url": "https://x.example.com", "models": [" "]}], "blank model"),
+        ],
+    )
+    def test_rejects_doors_that_do_not_open(self, tmp_profiles_path, channels, message):
+        add_profile(
+            APIProfile(
+                id="c1",
+                name="Custom",
+                endpoint_type="custom",
+                api_key="k",
+                url="https://example.com/anthropic",
+            )
+        )
+        with pytest.raises(ValueError, match=message):
+            update_profile("c1", {"channels": channels})
+
+    def test_preset_responses_channel_may_omit_url(self, tmp_profiles_path):
+        from frago.init.profile_manager import ProfileChannel
+
+        add_profile(
+            APIProfile(
+                name="Ark",
+                endpoint_type="volcengine_plan",
+                api_key="k",
+                channels=[ProfileChannel(protocol="responses", models=["ark-code-latest"])],
+            )
+        )
+
+    def test_only_endpoint_profiles_carry_channels(self):
+        from frago.init.profile_manager import ProfileChannel, _validate_profile
+
+        with pytest.raises(ValueError, match="Only an endpoint connection"):
+            _validate_profile(
+                "WB",
+                "workbuddy",
+                None,
+                kind="workbuddy",
+                models=("m",),
+                channels=[ProfileChannel(protocol="responses", url="https://x.example.com")],
+            )

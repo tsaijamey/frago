@@ -76,6 +76,43 @@ PRESET_ENDPOINTS = {
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
+    # 火山方舟 Agent Plan：专属地址 + 专属密钥，官方给 Claude Code 的写法走授权头
+    # （ANTHROPIC_AUTH_TOKEN）。模型名随套餐不同，ark-code-latest 是官方文档给的通用名。
+    "volcengine_plan": {
+        "display_name": "Volcengine Ark Agent Plan",
+        "auth": "auth_token",
+        "ANTHROPIC_BASE_URL": "https://ark.cn-beijing.volces.com/api/plan",
+        "ANTHROPIC_MODEL": "ark-code-latest",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "ark-code-latest",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "ark-code-latest",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
+}
+
+# 线协议。一条 profile 可以同时带几条协议通道：同一家厂商、同一把密钥，
+# Anthropic 兼容的门给 Claude Code / opencode，OpenAI Responses 的门给 codex。
+# 两扇门的地址不同，能用的模型也可能不同，所以通道各记各的。
+PROTOCOL_ANTHROPIC = "anthropic"
+PROTOCOL_RESPONSES = "responses"
+CHANNEL_PROTOCOLS = (PROTOCOL_ANTHROPIC, PROTOCOL_RESPONSES)
+
+# 各预设厂商 Responses 通道的默认值。只收厂商文档明写、或本机实测过的；没有把握的
+# 厂商不列——列错了等于在 codex 那格上许诺一条走不通的路。
+#   models 为空表示「与 Anthropic 通道同一套模型名」；非空表示这条通道只认这几个。
+PRESET_RESPONSES_CHANNELS: dict[str, dict] = {
+    # 截至 2026-08 DeepSeek 的 Responses 只接 flash，pro 走不了；地址是根地址，
+    # 不是 Anthropic 那条 /anthropic。
+    "deepseek": {
+        "url": "https://api.deepseek.com",
+        "models": ["deepseek-v4-flash"],
+    },
+    # 火山官方 Codex 接入文档：/api/plan/v3 + wire_api=responses，模型名与
+    # Claude Code 那边同一套，密钥同一把。
+    "volcengine_plan": {
+        "url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "models": [],
+    },
 }
 
 # Claude Code configuration file paths
@@ -90,6 +127,7 @@ ENDPOINT_URL_PATTERNS = {
     "minimax": "api.minimaxi.com",
     "tencent_maas": "tokenhub.tencentmaas.com",
     "tencent_tokenplan": "api.lkeap.cloud.tencent.com",
+    "volcengine_plan": "ark.cn-beijing.volces.com/api/plan",
 }
 
 # ~/.claude.json minimal configuration (to skip official login flow)

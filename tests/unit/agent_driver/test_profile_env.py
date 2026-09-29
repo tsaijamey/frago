@@ -99,7 +99,7 @@ def test_auth_style_unknown_custom_endpoint_stays_api_key() -> None:
 
 
 def test_auth_style_presets_unchanged_even_with_inference_inputs() -> None:
-    """六个预设端点逐一断言：推断依据在场也绝不改变既有判定。"""
+    """七个预设端点逐一断言：推断依据在场也绝不改变既有判定。"""
     expected = {
         "deepseek": AUTH_STYLE_API_KEY,
         "aliyun": AUTH_STYLE_API_KEY,
@@ -107,6 +107,7 @@ def test_auth_style_presets_unchanged_even_with_inference_inputs() -> None:
         "minimax": AUTH_STYLE_API_KEY,
         "tencent_maas": AUTH_STYLE_AUTH_TOKEN,
         "tencent_tokenplan": AUTH_STYLE_AUTH_TOKEN,
+        "volcengine_plan": AUTH_STYLE_AUTH_TOKEN,
     }
     assert set(expected) == set(PRESET_ENDPOINTS), "预设端点集合变了，断言表需同步"
     for endpoint_type, style in expected.items():

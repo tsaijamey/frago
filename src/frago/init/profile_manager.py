@@ -5,7 +5,9 @@ Provides CRUD operations for ~/.frago/profiles.json.
 A profile is one usable connection. There are three shapes of connection and
 they are not variations of one another:
 
-- ``endpoint`` — an Anthropic-protocol endpoint plus a key. This is what a
+- ``endpoint`` — a vendor reached with a key frago holds. Its own ``url`` and
+  model fields are the Anthropic-protocol door; ``channels`` adds the vendor's
+  other doors (OpenAI Responses, for codex) on the same key. This is what a
   profile used to be, and every profile saved before kinds existed is one.
 - ``official`` — the agent CLI's own subscription login. It has no endpoint and
   no key: it is what a CLI runs on when frago has written nothing into it. It
@@ -96,6 +98,23 @@ ROLES = CLI_ROLES + FRAGO_CORE_ROLES
 _FRAGO_CORE_KINDS = (KIND_ENDPOINT, KIND_WORKBUDDY)
 
 
+class ProfileChannel(BaseModel):
+    """One protocol door onto the same vendor, reached with the profile's own key.
+
+    Only protocols other than Anthropic are stored this way. The Anthropic door
+    is the profile's own ``url`` and model fields: frago-core and every writer
+    that predates channels read those, so repeating them here would be a second
+    copy to drift out of step. :func:`profile_channels` puts the two together.
+    """
+
+    protocol: str
+    # None on a preset profile means "the preset's address for this protocol".
+    url: str | None = None
+    # Empty means the same model names as the Anthropic door. Non-empty means this
+    # door only serves these — DeepSeek's Responses door takes flash and not pro.
+    models: list[str] = Field(default_factory=list)
+
+
 class APIProfile(BaseModel):
     """One usable connection."""
 
@@ -114,6 +133,10 @@ class APIProfile(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # endpoint only: the doors besides the Anthropic one. Absent from every
+    # profile saved before channels existed, which reads as "Anthropic only"
+    # plus whatever the preset table knows about the vendor.
+    channels: list[ProfileChannel] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -300,6 +323,127 @@ def find_connection(profile_id: str | None) -> APIProfile | None:
     return get_profile(profile_id)
 
 
+def profile_channels(profile: APIProfile) -> list[ProfileChannel]:
+    """Every protocol door this profile opens, Anthropic first. Empty for non-endpoint kinds.
+
+    The Anthropic door is built from the profile's own fields. A stored channel
+    wins over the preset's default for the same protocol; a preset profile with
+    nothing stored still gets the preset's other doors, the same way its
+    Anthropic address has always come from the preset rather than the record.
+    """
+    from frago.init.configurator import (
+        PRESET_ENDPOINTS,
+        PRESET_RESPONSES_CHANNELS,
+        PROTOCOL_ANTHROPIC,
+        PROTOCOL_RESPONSES,
+    )
+
+    if profile.kind != KIND_ENDPOINT:
+        return []
+
+    preset = PRESET_ENDPOINTS.get(profile.endpoint_type, {})
+    anthropic_models = list(
+        dict.fromkeys(
+            m
+            for m in (profile.default_model, profile.sonnet_model, profile.haiku_model)
+            if m
+        )
+    ) or list(
+        dict.fromkeys(
+            preset[key]
+            for key in (
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            )
+            if preset.get(key)
+        )
+    )
+    channels = [
+        ProfileChannel(
+            protocol=PROTOCOL_ANTHROPIC,
+            url=profile.url or preset.get("ANTHROPIC_BASE_URL"),
+            models=anthropic_models,
+        )
+    ]
+
+    stored = {c.protocol: c for c in profile.channels}
+    defaults: dict[str, ProfileChannel] = {}
+    if spec := PRESET_RESPONSES_CHANNELS.get(profile.endpoint_type):
+        defaults[PROTOCOL_RESPONSES] = ProfileChannel(protocol=PROTOCOL_RESPONSES, **spec)
+    for protocol in dict.fromkeys([*stored, *defaults]):
+        channel = stored.get(protocol) or defaults[protocol]
+        default = defaults.get(protocol)
+        if not channel.url and default:
+            channel = channel.model_copy(update={"url": default.url})
+        channels.append(channel)
+    return channels
+
+
+def profile_channel(profile: APIProfile, protocol: str) -> ProfileChannel | None:
+    """The door for one protocol, or None when this profile has no such door."""
+    return next((c for c in profile_channels(profile) if c.protocol == protocol), None)
+
+
+def _coerce_channels(channels: Sequence[ProfileChannel | dict] | None) -> list[ProfileChannel]:
+    """Channels as they arrive from a caller — models or plain dicts from JSON."""
+    return [
+        c if isinstance(c, ProfileChannel) else ProfileChannel.model_validate(c)
+        for c in channels or ()
+    ]
+
+
+def _validate_channels(
+    endpoint_type: str, kind: str, channels: Sequence[ProfileChannel]
+) -> None:
+    """Reject channel lists that would put a door on the page that does not open.
+
+    Raises:
+        ValueError: With a message meant to be shown to the user as-is.
+    """
+    from frago.init.configurator import (
+        CHANNEL_PROTOCOLS,
+        PRESET_RESPONSES_CHANNELS,
+        PROTOCOL_ANTHROPIC,
+        PROTOCOL_RESPONSES,
+        validate_endpoint_url,
+    )
+
+    if not channels:
+        return
+    if kind != KIND_ENDPOINT:
+        raise ValueError("Only an endpoint connection carries protocol channels")
+
+    seen: set[str] = set()
+    for channel in channels:
+        if channel.protocol not in CHANNEL_PROTOCOLS:
+            raise ValueError(
+                f"Unknown channel protocol '{channel.protocol}' "
+                f"(expected one of: {', '.join(CHANNEL_PROTOCOLS)})"
+            )
+        if channel.protocol == PROTOCOL_ANTHROPIC:
+            raise ValueError(
+                "The Anthropic channel is the profile's own URL and models; "
+                "it is not listed again under channels"
+            )
+        if channel.protocol in seen:
+            raise ValueError(f"Channel '{channel.protocol}' is listed twice")
+        seen.add(channel.protocol)
+
+        has_default = (
+            channel.protocol == PROTOCOL_RESPONSES
+            and endpoint_type in PRESET_RESPONSES_CHANNELS
+        )
+        # A preset profile may leave the address blank and take the preset's;
+        # anything else has to name a door that exists.
+        if (channel.url or not has_default) and not validate_endpoint_url(channel.url or ""):
+            raise ValueError(
+                f"The {channel.protocol} channel needs an API URL starting with http:// or https://"
+            )
+        if any(not (m or "").strip() for m in channel.models):
+            raise ValueError(f"The {channel.protocol} channel has a blank model name")
+
+
 def _validate_profile(
     name: str,
     endpoint_type: str,
@@ -307,6 +451,7 @@ def _validate_profile(
     kind: str = KIND_ENDPOINT,
     agent_type: str | None = None,
     models: Sequence[str | None] = (),
+    channels: Sequence[ProfileChannel] = (),
 ) -> None:
     """Reject the profile shapes that break something later and quietly.
 
@@ -334,6 +479,8 @@ def _validate_profile(
 
     if kind not in PROFILE_KINDS:
         raise ValueError(f"Unknown profile kind '{kind}' (expected one of: {', '.join(PROFILE_KINDS)})")
+
+    _validate_channels(endpoint_type, kind, channels)
 
     if kind == KIND_OFFICIAL:
         # There is exactly one subscription connection and frago builds it. A
@@ -395,6 +542,7 @@ def add_profile(profile: APIProfile) -> ProfileStore:
         profile.kind,
         profile.agent_type,
         (profile.default_model, profile.sonnet_model, profile.haiku_model),
+        profile.channels,
     )
     store = load_profiles()
     store.profiles.append(profile)
@@ -423,6 +571,9 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
     """
     store = load_profiles()
 
+    if "channels" in updates:
+        updates = {**updates, "channels": _coerce_channels(updates["channels"])}
+
     for profile in store.profiles:
         if profile.id == profile_id:
             _validate_profile(
@@ -435,6 +586,7 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                     updates.get(key, getattr(profile, key))
                     for key in ("default_model", "sonnet_model", "haiku_model")
                 ),
+                updates.get("channels", profile.channels),
             )
             for key, value in updates.items():
                 if key == "api_key" and not value:
