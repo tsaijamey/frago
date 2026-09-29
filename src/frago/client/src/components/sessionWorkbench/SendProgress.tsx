@@ -10,6 +10,9 @@
  *    全域禁令。
  * 2. **时刻只标在最后一步上**，保证一行放得下；前几步的时刻悬停可见。答完之后整串收成
  *    一句「✓ Answered in 52 s」（插话是「✓ Folded in › ✓ Answered」）。
+ *
+ * 挂在待发气泡下面时，气泡标题已经写着当前这一档（On its way / Queued），调用方把它传进
+ * `headline`，步骤链就不再重复那一步，只留之前走过的；一步都不剩就整行不画。
  */
 
 import { Fragment } from 'react';
@@ -42,9 +45,12 @@ export function stepsTaken(trail: SendTrail): SendStep[] {
 
 export default function SendProgress({
   trail,
+  headline,
   className = '',
 }: {
   trail: SendTrail;
+  /** 旁边标题已经说出的那一档。它恰好是最后一步时，步骤链不再重复它。 */
+  headline?: SendStep;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -66,6 +72,8 @@ export default function SendProgress({
       answeredIn = formatDuration(answeredAt - (trail.steps.on_its_way ?? answeredAt));
     }
   }
+  if (headline && shown[shown.length - 1] === headline) shown = shown.slice(0, -1);
+  if (!shown.length) return null;
   const last = shown[shown.length - 1];
 
   return (

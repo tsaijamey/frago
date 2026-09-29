@@ -489,7 +489,7 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
     ...over,
   });
 
-  it('在路上：虚线气泡，说清它离开了页面还没进会话，下面挂步骤链', () => {
+  it('在路上：虚线气泡，说清它离开了页面还没进会话；标题已说了这一档，步骤链不重复', () => {
     render(
       <Composer
         sessionId={SID}
@@ -506,7 +506,8 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
     expect(bubble.textContent).toContain('在路上');
     expect(bubble.textContent).toContain('已离开这个页面，还没进会话');
     expect(bubble.textContent).toContain('把 recipes 目录清一遍');
-    expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('on_its_way');
+    expect(bubble.textContent?.split('在路上').length).toBe(2);
+    expect(screen.queryByTestId('send-progress')).toBeNull();
   });
 
   it('排队中：实线中性框加时钟，不用绿', () => {
@@ -516,11 +517,15 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
         family="claude-code"
         onSent={NOOP}
         outbound={[{ ...WAITING, state: 'queued' }]}
+        trails={[trail({ midTurn: true, steps: { on_its_way: 1, queued: 2 } })]}
       />
     );
 
     const bubble = screen.getByTestId('composer-outbound');
     expect(bubble.getAttribute('data-state')).toBe('queued');
+    // 标题写着排队中，步骤链只留之前那一步
+    expect(bubble.textContent?.split('排队中').length).toBe(2);
+    expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('on_its_way');
     expect(bubble.textContent).toContain('排队中');
     expect(bubble.textContent).toContain('agent 还在处理你上一句');
     expect(bubble.className).not.toContain('border-dashed');

@@ -525,7 +525,8 @@ export default function Composer({
             同一种画法，下面挂同一串步骤名。两档的分野是**它进没进这场会话**：
             On its way＝请求出了门、会话里还找不到它（虚线框、转圈）；Queued＝进来了但
             agent 正忙，排在队列上（中性实线框加时钟）。都不用绿——排队不是成功，也不是
-            动作，这一屏的实心绿只给 Send。 */}
+            动作，这一屏的实心绿只给 Send。标题已经说了当前这一档，步骤链只留之前走过的，
+            刚发出时整行不画。 */}
         {outbound.length ? (
           <div className="flex flex-col gap-1.5">
             {outbound.map((msg) => {
@@ -561,7 +562,9 @@ export default function Composer({
                   <p className="text-[11px] text-text-muted">
                     {t(queued ? 'workbench.composer.queuedHint' : 'workbench.composer.onItsWayHint')}
                   </p>
-                  {trail ? <SendProgress trail={trail} /> : null}
+                  {trail ? (
+                    <SendProgress trail={trail} headline={queued ? 'queued' : 'on_its_way'} />
+                  ) : null}
                 </div>
               );
             })}
