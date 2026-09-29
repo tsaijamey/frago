@@ -163,6 +163,39 @@ def branch(**fields):
     return mark(**{"kind": "branch", "child_session_id": "child-1", "closed": False, **fields})
 
 
+class TestCoreAgentMarks:
+    """CoreAgent 那一家的标注要能用。
+
+    它的记录另有根目录，但标注是 frago 服务端自己产的旁挂文件，与另外三家同级落在
+    ``~/.frago/sessions/coreagent/<编号>/``。从前落点表里没有这一家，``marks_dir`` 抛
+    ``KeyError``，页面上暂存与引用一律存不下（2026-09-29 实测）。
+    """
+
+    CORE_SID = "core_e2edemo0001"
+
+    def test_标注落在自己那一家的目录下(self, monkeypatch, tmp_path):
+        from frago.session import record_reader
+
+        monkeypatch.setattr(record_reader, "detect_family", lambda sid: "coreagent")
+        assert wm.marks_dir(self.CORE_SID) == tmp_path / "coreagent" / self.CORE_SID
+
+    def test_写下去读得回来(self, monkeypatch):
+        from frago.session import record_reader
+
+        monkeypatch.setattr(record_reader, "detect_family", lambda sid: "coreagent")
+        saved = wm.save_marks(self.CORE_SID, {"version": 1, "marks": [mark(note="先看这条")]})
+        assert saved["marks"][0]["note"] == "先看这条"
+        assert wm.load_marks(self.CORE_SID) == saved
+
+    def test_接口不再回500(self, client, monkeypatch):
+        from frago.session import record_reader
+
+        monkeypatch.setattr(record_reader, "detect_family", lambda sid: "coreagent")
+        res = client.get(f"/api/workbench/sessions/{self.CORE_SID}/marks")
+        assert res.status_code == 200
+        assert res.json() == {"version": 1, "marks": []}
+
+
 class TestBranchMarks:
     """分支标注（spec 20260928-webui-session-branch）：由服务端追加、收口由服务端改。"""
 

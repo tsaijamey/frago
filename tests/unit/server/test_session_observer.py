@@ -756,6 +756,70 @@ class TestTheExtraWakePoints:
         assert bridge._on_new_records(SID, []) is None and seen == [(SID, records)]
 
 
+class TestTheCoreAgentFamily:
+    """CoreAgent 那一家：记录另有根目录，右栏与标注照旧要能用。
+
+    这两处从前各漏一格接线（2026-09-29 实测）：槽位落点表只登记了三家，``session_dir``
+    遇到 CoreAgent 的编号当场抛 ``KeyError``，接口回 500；实时监听只在 Claude Code 的目录
+    里找记录文件，于是那一家的会话**一次都没被监听过**，右栏连被叫醒的机会都没有。
+    """
+
+    CORE_SID = "core_e2edemo0001"
+
+    def test_its_slots_live_beside_the_other_three(self, tmp_path, monkeypatch):
+        """槽位与标注落 ``~/.frago/sessions/coreagent/<编号>/``，与另外三家同级。"""
+        from frago.session import record_reader, storage
+
+        monkeypatch.setattr(record_reader, "detect_family", lambda sid: "coreagent")
+        monkeypatch.setattr(storage, "get_session_base_dir", lambda: tmp_path)
+
+        assert so.session_dir(self.CORE_SID, "coreagent") == tmp_path / "coreagent" / self.CORE_SID
+        # 读与写整条路都要通：从前这里是 KeyError，页面拿到的是 500。
+        assert so.load_public_state(self.CORE_SID)["status"] in ("empty", "unbound")
+
+    def test_records_are_looked_up_in_the_root_of_their_own_family(self, tmp_path, monkeypatch):
+        """实时监听按会话编号找对家的记录文件，不是只在 Claude Code 的目录里找。"""
+        from frago.server.services import workbench_stream_bridge as wsb
+        from frago.session import coreagent_store, record_reader
+
+        core_file = tmp_path / "coreagent" / "-tmp-work" / f"{self.CORE_SID}.jsonl"
+        core_file.parent.mkdir(parents=True)
+        core_file.write_text("{}\n", encoding="utf-8")
+        cc_file = tmp_path / "claude" / "some-project" / f"{SID}.jsonl"
+        cc_file.parent.mkdir(parents=True)
+        cc_file.write_text("{}\n", encoding="utf-8")
+
+        def core_file_of(sid):
+            return core_file if sid == self.CORE_SID else None
+
+        def cc_file_of(sid):
+            return cc_file if sid == SID else None
+
+        def family_of(sid):
+            return "coreagent" if sid.startswith("core_") else "claude-code"
+
+        monkeypatch.setattr(coreagent_store, "find_session_file", core_file_of)
+        monkeypatch.setattr(wsb, "find_session_file", cc_file_of)
+        monkeypatch.setattr(record_reader, "detect_family", family_of)
+
+        assert wsb.locate_stream_file(self.CORE_SID) == core_file
+        assert wsb.locate_stream_file(SID) == cc_file
+
+    def test_a_family_whose_records_are_not_claude_shaped_is_not_fed_this_stream(self, monkeypatch):
+        """opencode 的记录在库里、codex 是另一种形状，各有各的路，不喂这条流。"""
+        from frago.server.services import workbench_stream_bridge as wsb
+        from frago.session import record_reader
+
+        monkeypatch.setattr(record_reader, "detect_family", lambda sid: "opencode")
+        assert wsb.locate_stream_file("ses_058288655ffe") is None
+
+        def unknown(sid):
+            raise record_reader.UnknownSessionFamily(sid)
+
+        monkeypatch.setattr(record_reader, "detect_family", unknown)
+        assert wsb.locate_stream_file("not-a-session") is None
+
+
 class TestOldBinaryGuard:
     def test_a_binary_without_ask_is_never_handed_a_question(self, tmp_path):
         """An old frago-core runs its full agent loop on an unknown first argument."""

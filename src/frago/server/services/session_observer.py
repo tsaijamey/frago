@@ -93,8 +93,17 @@ ASK_MAX_TOKENS = 1_500
 #: 等 frago-core 的墙钟上限，比它自己的期限多留几秒给进程起落。
 PROCESS_TIMEOUT_S = ASK_TIMEOUT_MS / 1000 + 10
 
-#: 家族 → 备份目录名，与三家同步程序写 ``raw.jsonl`` 的落点一致。
-_FAMILY_DIR = {"claude-code": "claude", "opencode": "opencode", "codex": "codex"}
+#: 家族 → 备份目录名，与各家同步程序写 ``raw.jsonl`` 的落点一致。
+#:
+#: **CoreAgent 也要在这里。** 它的会话记录另有根（``~/.frago/coreagent/sessions/``），但槽位
+#: 与标注是 frago 服务端自己产的旁挂文件，与另外三家同级存放——少这一格，``session_dir``
+#: 当场抛 ``KeyError``，那一家的右栏和标注一律打不开（2026-09-29 实测：接口回 500）。
+_FAMILY_DIR = {
+    "claude-code": "claude",
+    "opencode": "opencode",
+    "codex": "codex",
+    "coreagent": "coreagent",
+}
 
 # ── 问话里的占位字 ────────────────────────────────────────────────────────
 #

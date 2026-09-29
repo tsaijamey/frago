@@ -67,8 +67,8 @@ def empty_marks() -> dict[str, Any]:
 def marks_dir(session_id: str) -> Path:
     """这场会话的备份目录，与 ``observer-slots.json`` 同一个。
 
-    家族照旁路 AI 那一套判：认不出的编号抛 ``UnknownSessionFamily``；认得出、却没有备份
-    目录的那一家（CoreAgent）抛 ``KeyError``。两种路由都回 404。
+    家族照旁路 AI 那一套判：认不出的编号抛 ``UnknownSessionFamily``；四家都有备份目录
+    （CoreAgent 也在 ``~/.frago/sessions/`` 下，只是记录文件另有根）。路由两种都回 404。
     """
     from frago.server.services.session_observer import session_dir
     from frago.session.record_reader import detect_family
@@ -212,8 +212,7 @@ def save_marks(session_id: str, payload: Any) -> dict[str, Any]:
 def append_branch_mark(session_id: str, mark: dict[str, Any]) -> dict[str, Any]:
     """起分支时往主线的标注文件末尾追加一条分支标注，返回落盘的那一条。
 
-    认不出的会话抛 ``UnknownSessionFamily``；没有备份目录的那一家（CoreAgent）抛
-    ``KeyError``——调用方据此告诉人标注没存下，分支本身照起。
+    认不出的会话抛 ``UnknownSessionFamily``——调用方据此告诉人标注没存下，分支本身照起。
     """
     directory = marks_dir(session_id)
     entry = normalize_mark({**mark, "kind": "branch"})

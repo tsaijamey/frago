@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from pathlib import Path
 
 from frago.server.websocket import create_message, manager
 from frago.session.adapters.claude_code_records import find_session_file
@@ -32,6 +33,31 @@ WS_SESSION_TURN_DONE = "session_turn_done"
 
 #: 这几类记录落盘，说明 agent 正在干活，右栏的「此刻」该跟一跟。
 _AGENT_AT_WORK = frozenset({"agent.say", "tool.call", "subagent.dispatch"})
+
+
+def locate_stream_file(session_id: str) -> Path | None:
+    """这场会话的记录文件在哪，找不到返回 None。
+
+    **按家找，不是只在 Claude Code 的目录里找。** CoreAgent 的记录形状与 Claude Code
+    一样、读法共用，只是躺在 ``~/.frago/coreagent/sessions/`` 下。从前这里写死走 Claude
+    Code 那一份查找，CoreAgent 的会话于是每次都找不到文件，实时推送**一次都没启动过**，
+    右栏连被叫醒的机会都没有（2026-09-29 实测）。
+
+    只有记录形状是 Claude Code 形状的那两家走这条路：opencode 的记录在 SQLite 里（由
+    :class:`OpencodeStream` 单独盯），codex 是另一种 rollout 形状，各有各的路——NEVER
+    拿它们的文件来喂这条按 Claude Code 记录解析的流。
+    """
+    from frago.session import coreagent_store, record_reader
+
+    try:
+        family = record_reader.detect_family(session_id)
+    except record_reader.UnknownSessionFamily:
+        return None
+    if family == "coreagent":
+        return coreagent_store.find_session_file(session_id)
+    if family == "claude-code":
+        return find_session_file(session_id)
+    return None
 
 
 class WorkbenchStreamBridge:
@@ -81,6 +107,7 @@ class WorkbenchStreamBridge:
         """Start watching the project for *session_id* if not already.
 
         Claude Code sessions (UUID-shaped) → ``SessionStream`` per project.
+        CoreAgent sessions (``core_`` prefix) → 同样一条流，只是记录文件另有根目录。
         Opencode sessions (``ses_`` prefix) → shared ``OpencodeStream``.
 
         Safe to call multiple times — duplicate calls are no-ops.
@@ -103,8 +130,9 @@ class WorkbenchStreamBridge:
             self._observe(session_id, "open")
             return
 
-        # Claude Code session → SessionStream per project
-        file_path = find_session_file(session_id)
+        # Claude Code / CoreAgent session → SessionStream per project. 两家记录形状一样，
+        # 只是根目录不同，由 :func:`locate_stream_file` 按家找到那个文件。
+        file_path = locate_stream_file(session_id)
         if file_path is None:
             logger.warning("WorkbenchStreamBridge: session file not found for %s", session_id)
             return
