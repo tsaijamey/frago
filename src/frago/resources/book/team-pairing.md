@@ -30,7 +30,7 @@ frago team list         # 本机参加过的全部 team（不联网）
 | `frago team open [--session <编号>]` | 发起一个 team，拿到十位连接码。缺省拿当前这场会话参加 |
 | `frago team join --team-code <码> [--session <编号>]` | 用对方给的码加入。同一台机器断线后再 join 是接回原来那一侧 |
 | `frago team leave --team-code <码>` | 退出。本机一定退得掉；两侧都退出码才作废 |
-| `frago team send --team-code <码> "内容" [--note "给人看的说明"]` | 往对方会话投一条消息。对方下一轮同步（≤15 秒）时落进去 |
+| `frago team send --team-code <码> "内容" [--note "给人看的说明"]` | 往对方会话投一条消息。对方会话空闲时才落进去：对方 agent 正在干活，就等这一轮做完再送，前一条没进去后面的排在它后面 |
 | `frago team read --team-code <码> [--limit 80] [--after-seq N] [--json]` | 读对方会话最近的记录。`--after-seq` 只取增量 |
 | `frago team status [--team-code <码>]` | 两侧在不在、各自信箱积了几条 |
 | `frago team list` | 本机参加过哪些 team、各绑哪场会话、推到了哪条。不联网 |
@@ -127,6 +127,6 @@ NEVER 拿 `frago channel list`、`frago remote list` 去核实连接码——那
 | 现象 | 看哪里 |
 |---|---|
 | 对方界面上这一侧是空的 | 本机界面左栏上方的提示；`frago team status`；本机推不上去的原因会写在那里 |
-| 发出去的消息对方没收到 | `frago team status` 看对方信箱积了几条；对方不在线就积在中继上，最多 50 条 |
+| 发出去的消息对方没收到 | `frago team status` 看对方信箱积了几条；对方不在线就积在中继上，最多 50 条。信箱是空的、对方会话里也没有，多半是对方 agent 还在干活：消息已取到对方本机，等它这一轮做完才送进去 |
 | 「这个连接码在中继上不可用」 | 码打错、已作废（两侧都退出过），或两个位置已被别的机器占着。中继不区分这几种 |
 | 「中继拒绝了 …（HTTP 502）」 | 中继那边处理失败，后面跟着原因，照原因处理 |
