@@ -2,11 +2,11 @@
 
 使用浏览器的优先级只有三层，从上往下降级：
 
-1. **`frago browser <cmd>`** —— extension 后端（默认，无需任何 flag）。标准路径，绝大多数场景直接跑，不需要做后端选择。
-2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--profile-dir` 这类启动形态（agent_os 的舞台浏览器与录制机位都走这条）。
+1. **`frago browser <cmd>`** —— extension 后端（默认，无需任何 flag）。无条件优先，不需要做后端选择。
+2. **`frago browser -b cdp <cmd>`** —— 仅限 agent_os：舞台浏览器（真无头）与录制机位（独立实例）走这条。agent_os 之外的常规任务不降到这里。
 3. **自起浏览器进程**（`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP）—— 禁止，没有例外。
 
-先默认，做不到再 `-b cdp`；两条都在 `frago browser` 之内，任何绕过 frago 直连浏览器的做法都不在选项里。
+**extension 没连上（`extension not connected` / `socket-not-found` / `bridge-unreachable`），唯一动作是 `frago browser start`。** start 会弹出浏览器窗口，这是预期行为；怕弹窗、怕抢焦点、怕打扰人，都不是降到 `-b cdp --headless` 的理由。两条都在 `frago browser` 之内，任何绕过 frago 直连浏览器的做法都不在选项里。
 
 ## 工作方式
 
@@ -27,24 +27,25 @@ frago browser stop         # 对称拆除
 
 `frago browser start` 一条命令：选浏览器 → 拉起 native messaging daemon → 写 manifest（`<profile>/NativeMessagingHosts/`）→ 带 `--load-extension` 启动浏览器 → 等待桥握手。无需任何手工准备。
 
-桥未连时执行任何命令，CLI 返回 `{"ok": false, "code": ..., "hint": "run: frago browser start"}` 结构化错误（非零退出码），按 hint 先 start 即可。
+桥未连时执行任何命令，CLI 返回 `{"ok": false, "code": ..., "hint": "run: frago browser start"}` 结构化错误（非零退出码），按 hint 先 start 即可，不要改走 `-b cdp`。
 
 ## 默认后端下不要做的事
 
 以下都是针对 **extension 后端的常规 browser 操作**：
 
-- 不要为了"更保险"顺手加 `-b cdp`——默认后端够用时就用默认，降级要有具体理由（见下节）。
+- 不要为了"更保险"、"不弹窗"、"不打扰人"加 `-b cdp`——`-b cdp` 只属于 agent_os（见下节）。
 - 不要给 start 加 `--browser`：默认后端下它**不换浏览器**，只把 profile 目录换成该品牌的目录，启动的仍是自动挑中的那个浏览器。结果是拿 A 浏览器去开 B 浏览器的数据目录。让它自动挑。
 - 不要用 `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，默认后端下被静默丢弃，写了也不生效。要用它们就显式降到 `-b cdp`。`--app --app-url` 例外，默认后端也认。
 - 不要手动管理 profile 目录：profile 就是浏览器自己的，frago 不拷贝、不清理。
 
 ## 第二层：`-b cdp` 怎么用
 
-什么时候降级——满足任一条即可：
+**只有 agent_os 用这条。** 它的两处用法：
 
-- 要**真无头**（不弹窗口、不占屏幕）。extension 后端只给**前台**标签产帧，要连续拿画面就得让那个标签一直占着人的屏幕——agent_os 的舞台浏览器正是因为这一条从 extension 换回了 `-b cdp`。
-- 要一个**独立实例**，不能占用/干扰 agent 那个常驻浏览器（如 agent_os 的录制机位）
-- 要 `--void`（移出屏幕）/ `--profile-dir`（指定 profile）这类只有 CDP 后端提供的启动形态
+- **舞台浏览器要真无头**。extension 后端只给**前台**标签产帧，要连续拿画面就得让那个标签一直占着人的屏幕——舞台浏览器正是因为这一条从 extension 换回了 `-b cdp`。这是 agent_os 连续采集画面的需要，不是"不想弹窗"的通用理由。
+- **录制机位要独立实例**，不能占用/干扰 agent 那个常驻浏览器。
+
+agent_os 之外的任务——测页面、量尺寸、截图、抓数据、搜索——一律走默认后端；extension 没连上就 `frago browser start`。下面的命令是 agent_os 与排查它时用的：
 
 ```bash
 frago browser -b cdp start --headless          # 独立无头实例，端口默认 9222
@@ -80,4 +81,4 @@ group 的规则两个后端完全一致：一组最多 5 个标签、navigate �
 
 ## 第三层：禁止
 
-`chrome --headless`、`chrome --screenshot`、`chrome --remote-debugging-port=<x>`、自己拿 websocket 连原生 CDP——一律禁止。想无头、想独立实例、想指定 profile，第二层全都提供；绕过 frago 意味着没有 group 隔离、没有 tab 台账、没有反爬环境，且留下没人回收的进程与 profile。
+`chrome --headless`、`chrome --screenshot`、`chrome --remote-debugging-port=<x>`、自己拿 websocket 连原生 CDP——一律禁止。agent_os 要的无头、独立实例、指定 profile，第二层全都提供；绕过 frago 意味着没有 group 隔离、没有 tab 台账、没有反爬环境，且留下没人回收的进程与 profile。

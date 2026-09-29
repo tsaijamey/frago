@@ -119,10 +119,12 @@ def detect_browsers(group):
     default=None,
     help="Browser backend. Defaults to env FRAGO_BROWSER_BACKEND or "
          "'extension' (browser extension + native messaging, drives the "
-         "browser's own profile) — the standard path. Fall back to 'cdp' "
-         "explicitly when the default cannot do the job: true headless, a "
-         "separate instance, or --app/--profile-dir. Never launch a "
-         "browser process yourself.",
+         "browser's own profile) — the standard path, used unconditionally. "
+         "'cdp' is reserved for agent_os (its headless stage browser and "
+         "recorder instance). If the extension isn't connected, run "
+         "`frago browser start`; a browser window appearing is expected and "
+         "is no reason to switch to 'cdp'. Never launch a browser process "
+         "yourself.",
 )
 @click.pass_context
 def browser_group(ctx, backend):
@@ -130,10 +132,12 @@ def browser_group(ctx, backend):
     Browser automation
 
     Control the browser through the frago extension bridge (default
-    backend), using the browser's own real profile. When the default
-    backend cannot do the job (true headless, a separate instance,
-    --app), fall back to an explicit -b cdp. Launching a browser
-    process yourself is never an option.
+    backend), using the browser's own real profile. This is the path
+    to use, unconditionally. -b cdp (headless, separate instance) is
+    reserved for agent_os. If the extension isn't connected, run
+    `frago browser start` — a browser window appearing is expected,
+    not a reason to fall back to -b cdp. Launching a browser process
+    yourself is never an option.
 
     \b
     Subcommand categories:
@@ -390,6 +394,13 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
                           indent=2, default=str, ensure_ascii=False))
 
 
+# Seen when nothing answered on the bridge. The second sentence is there
+# because agents have read "start would pop up a window" as grounds to
+# fall back to -b cdp --headless; headless is reserved for agent_os.
+_START_HINT = ("run: frago browser start — do not fall back to -b cdp; "
+               "a browser window appearing is expected")
+
+
 def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
     """Dispatch to the extension backend, converting transport-layer
     failures (bridge down, socket missing) into structured JSON errors
@@ -421,15 +432,15 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
             # answer and refused on purpose — telling an agent to restart
             # the browser because a tab was in the wrong group would tear
             # down every other group's pages to fix nothing.
-            err["hint"] = "run: frago browser start"
+            err["hint"] = _START_HINT
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",
-               "hint": "run: frago browser start"}
+               "hint": _START_HINT}
     except (ConnectionRefusedError, ConnectionResetError, TimeoutError) as e:
         err = {"ok": False, "code": "bridge-unreachable",
                "error": f"{type(e).__name__}: {e}",
-               "hint": "run: frago browser start"}
+               "hint": _START_HINT}
     click.echo(json.dumps(err, indent=2, ensure_ascii=False))
     raise click.exceptions.Exit(1)
 

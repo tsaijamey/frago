@@ -183,4 +183,4 @@ CDP 后端（`-b cdp`）的隔离规则完全一样，只有一处做不到：CD
 - 后端工作方式、profile 机制 → `frago book browser-backend-choice`
 - 遇到 anti-bot / Cloudflare / captcha / 验证码 → `frago book browser-anti-bot`
 - 启动浏览器、start 撞锁、以及为什么不要碰 `--browser` / `--port` / `--headless` → `frago book browser-startup`
-- 需要真无头 / 独立实例（默认后端做不到的场景）→ `frago browser -b cdp`，判据见 `frago book browser-backend-choice`；NEVER 自起 chrome 进程
+- `frago browser -b cdp`（真无头 / 独立实例）仅限 agent_os；其余任务一律默认后端，extension 没连上就 `frago browser start`，判据见 `frago book browser-backend-choice`；NEVER 自起 chrome 进程
