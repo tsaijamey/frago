@@ -13,12 +13,14 @@
  * 标签带颜色。
  */
 
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
 import { formatClock } from './RecordCard';
 import { activityTs, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { keepTail, type ForYouInfo } from '@/hooks/useForYou';
+import { LiveBorder } from '@/components/ui/LiveEdge';
 import SessionMenu from './SessionMenu';
 import type { DeleteSessionResult } from './DeleteSessionButton';
 
@@ -161,6 +163,10 @@ export function previewOf(
   return keepTail(text.replace(/^\s*#{1,6}\s+/, ''));
 }
 
+function MaybeLiveCard({ live, children }: { live: boolean; children: ReactNode }) {
+  return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
+}
+
 export default function SessionItem({
   session,
   selected,
@@ -177,6 +183,7 @@ export default function SessionItem({
   branchOf = null,
   workerCount = 0,
   workersExpanded = false,
+  live = false,
   onSelect,
   onCopy,
   onTogglePin,
@@ -220,6 +227,8 @@ export default function SessionItem({
   /** 这场派出去过几个 worker。0 就不长子会话数。 */
   workerCount?: number;
   workersExpanded?: boolean;
+  /** 开在 tmux 里：最上面这张卡外面一圈流光。 */
+  live?: boolean;
   onSelect: (id: string) => void;
   onCopy: (session: WorkbenchSession) => void;
   /** 置顶开关。不给就没有「…」菜单里那一项——骨架屏与只读场景用得上。 */
@@ -269,6 +278,9 @@ export default function SessionItem({
           className="pointer-events-none absolute inset-0 rounded-[8px] border border-border-color bg-bg-secondary"
         />
       ) : null}
+      {/* 开在 tmux 里的那道流光只围最上面这张卡。套在外层的话，身后那一叠纸也被圈进去，
+          光就沿着整叠的外框跑到最底下那张纸的下缘去了（主人 09-29 指出）。 */}
+      <MaybeLiveCard live={live}>
       <div
         role="button"
         tabIndex={0}
@@ -417,6 +429,7 @@ export default function SessionItem({
           />
         </div>
       </div>
+      </MaybeLiveCard>
     </div>
   );
 }

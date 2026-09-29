@@ -11,7 +11,7 @@
  *   看起来是在沿着边走。
  */
 
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import NoiseField from './NoiseField';
 
 export interface LiveBorderProps {
@@ -21,13 +21,27 @@ export interface LiveBorderProps {
   children?: ReactNode;
 }
 
+/**
+ * 每一道光转一圈要多久、从哪儿起跑，挂上时各抽一次，之后不再变。几张卡同时亮着的时候，
+ * 转速一样、起点一样的话会齐步走，一眼就是一排跑马灯（主人 09-29：再慢一些、随机一些）。
+ * 8–12 秒一圈；起点用负的延迟随机拨到圈上某处。
+ */
+function randomOrbit(): CSSProperties {
+  const seconds = 8 + Math.random() * 4;
+  return {
+    '--live-border-dur': `${seconds.toFixed(2)}s`,
+    '--live-border-delay': `${(-Math.random() * seconds).toFixed(2)}s`,
+  } as CSSProperties;
+}
+
 /** 围住一块内容的那道流动的光。 */
 export function LiveBorder({ fill, className = '', children }: LiveBorderProps) {
+  const [orbit] = useState(randomOrbit);
   return (
     <div
       className={`live-border ${className}`}
       data-live-edge="border"
-      style={fill ? ({ '--live-border-fill': fill } as CSSProperties) : undefined}
+      style={{ ...orbit, ...(fill ? ({ '--live-border-fill': fill } as CSSProperties) : null) }}
     >
       <div className="live-border-inner">{children}</div>
     </div>

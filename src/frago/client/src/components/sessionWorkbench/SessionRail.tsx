@@ -30,7 +30,7 @@
  * 是列表里的普通一行，不是 group header——后者要等量完每一行的高度才摆得出来。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
@@ -54,7 +54,6 @@ import NewSessionModal from './NewSessionModal';
 import { useSessionPins, type SessionPinsState } from '@/hooks/useSessionPins';
 import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
-import { LiveBorder } from '@/components/ui/LiveEdge';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
@@ -169,10 +168,6 @@ export function placeHeld(sections: RailSections, held: HeldSlot | null): RailSe
   return out;
 }
 
-/** 此刻开在 tmux 里的那几场，卡片外面长一圈流光；其余原样摆着，不多包一层节点。 */
-function MaybeLive({ live, children }: { live: boolean; children: ReactNode }) {
-  return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
-}
 
 export interface SessionRailProps {
   state: WorkbenchSessionsState;
@@ -984,9 +979,10 @@ export default function SessionRail({
                 <div className={row.nested && !pos ? 'pl-6 pr-1' : row.inPinned ? 'px-[3px]' : 'px-1'}>
                   <div className={box} data-group={pos}>
                     <div className={row.nested && pos ? 'pl-4' : ''}>
-                      {/* 开在 tmux 里的那几场外面一圈流光（主人 09-24 定：保留）。 */}
-                      <MaybeLive live={views.isInTmux(session)}>
+                      {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
+                          只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
                         <SessionItem
+                          live={views.isInTmux(session)}
                           session={session}
                           selected={session.session_id === selectedId}
                           copied={copiedId === session.session_id}
@@ -1016,7 +1012,6 @@ export default function SessionRail({
                           onStopped={handleStopped}
                           onDeleted={handleDeleted}
                         />
-                      </MaybeLive>
                     </div>
                   </div>
                   {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
