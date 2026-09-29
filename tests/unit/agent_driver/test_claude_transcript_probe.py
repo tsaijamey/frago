@@ -237,7 +237,6 @@ def _project_key(cwd: str) -> str:
 
 def _read_trust(config_dir, cwd) -> object:
     import json
-    import os
 
     data = json.loads((config_dir / ".claude.json").read_text(encoding="utf-8"))
     return data["projects"][_project_key(cwd)]["hasTrustDialogAccepted"]
@@ -337,15 +336,82 @@ def test_ensure_trusted_keys_by_forward_slash_on_windows(tmp_path, monkeypatch):
     claude（2.1.263 起）在 Windows 上以 ``C:/Users/...`` 形态登记 projects 键，
     反斜杠键永远对不上、预写等于没写，新目录照样卡信任菜单。Linux/macOS 的
     abspath 天然正斜杠，不受影响。
+
+    要断言的是 Windows 的路径语义，所以把被测模块看到的 ``os`` 换成 Windows 那一套
+    （``sep`` 是反斜杠、``path`` 是 ntpath）。原来这个用例在非 Windows 上走另一条
+    分支算 expected，算出来的还带着反斜杠，紧接着又断言"不许有反斜杠"，自己跟自己
+    打架——只能在真 Windows 上过，任何 Linux CI 上必红。
     """
     import json
+    import ntpath
     import os
+    import types
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setattr(
+        claude_driver,
+        "os",
+        types.SimpleNamespace(
+            sep="\\",
+            path=ntpath,
+            environ=os.environ,
+            getpid=os.getpid,
+            replace=os.replace,
+        ),
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    claude_driver._ensure_workspace_trusted(r"C:\work\project")
+    data = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    assert data["projects"]["C:/work/project"]["hasTrustDialogAccepted"] is True
+    assert not any("\\" in key for key in data["projects"])
+
+
+def test_ensure_dangerous_mode_prompt_skipped_adds_only_that_key(tmp_path, monkeypatch):
+    """预写「别问危险模式」只补那一个键，用户已有的设置一个字节都不动。
+
+    frago 起 claude 一律带 --dangerously-skip-permissions，而没确认过危险模式的机器
+    会先弹一屏要人按键的警告菜单，就绪信号永不出现、会话干等到超时（2026-09-29 原生
+    Windows 实测）。这道确认由设置里的 skipDangerousModePermissionPrompt 决定。
+    """
+    import json
 
     from frago.agent_driver.drivers import claude as claude_driver
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-    claude_driver._ensure_workspace_trusted(r"C:\work\project")
-    data = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
-    expected = "C:/work/project" if os.sep == "\\" else os.path.abspath("C:\work\project")
-    assert data["projects"][expected]["hasTrustDialogAccepted"] is True
-    assert "\\" not in expected
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps({"model": "opus", "hooks": {"Stop": ["keep me"]}}), encoding="utf-8"
+    )
+    claude_driver._ensure_dangerous_mode_prompt_skipped()
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["skipDangerousModePermissionPrompt"] is True
+    assert data["model"] == "opus"
+    assert data["hooks"] == {"Stop": ["keep me"]}
+
+
+def test_ensure_dangerous_mode_prompt_skipped_creates_the_file_when_absent(
+    tmp_path, monkeypatch
+):
+    """设置文件还不存在（全新机器）时建一份，里面只有这一个键。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "fresh"))
+    claude_driver._ensure_dangerous_mode_prompt_skipped()
+    data = json.loads((tmp_path / "fresh" / "settings.json").read_text(encoding="utf-8"))
+    assert data == {"skipDangerousModePermissionPrompt": True}
+
+
+def test_ensure_dangerous_mode_prompt_skipped_never_replaces_unreadable_settings(
+    tmp_path, monkeypatch
+):
+    """设置文件读不动时宁可让菜单照弹，NEVER 拿一份空表顶替用户的 hooks 与模型。"""
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    settings = tmp_path / "settings.json"
+    settings.write_text("{ this is not json", encoding="utf-8")
+    claude_driver._ensure_dangerous_mode_prompt_skipped()
+    assert settings.read_text(encoding="utf-8") == "{ this is not json"

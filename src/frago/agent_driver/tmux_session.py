@@ -16,6 +16,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -42,6 +43,19 @@ _WINDOWS = platform.system() == "Windows"
 # ``C:\Program Files\Git\usr\bin\bash.exe``）。凡长得像路径的值都认不出本体，见
 # :func:`TmuxAgentSession.has_live_agent`。
 _PATH_LIKE_COMMAND = re.compile(r"[\\/]|^[A-Za-z]:")
+
+# 出网代理设置：起会话时按会话注入（见 open()），不依赖 tmux server 的继承环境。
+# 大小写两套都带：requests/httpx 认小写，Node 与多数 CLI 认大写，agent 那边两种都有。
+_PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+)
 
 
 def _ansi_codepage() -> int | None:
@@ -269,6 +283,11 @@ class TmuxAgentSession:
         # （claude --session-id 仍用原始 session_id 派生）。
         self.tmux_name = tmux_target if tmux_target else tmux_name_for(session_id)
         self._run = runner or _default_runner
+        # 是否真在驱动本机那个 tmux 客户端二进制。只有这种时候才需要迁就客户端自己的
+        # 毛病（如 win32 移植版按 ANSI 代码页收窄 argv）；调用方塞了 fake runner 的
+        # 场合（单测）根本没有客户端，那些迁就一律不做——否则同一套单测在 Windows 上
+        # 会走另一条分支，结果随跑在谁的机器上而变。
+        self._native_client = runner is None
         self._poll_interval_s = poll_interval_s
         self._sleep = sleep
         self._clock = clock
@@ -357,27 +376,82 @@ class TmuxAgentSession:
           `--- 待处理消息（N 条）---` 前缀）会被 send-keys 当成非法 flag 而退非零。
         - 超长文本按块切分多次发送：claude TUI 字面模式下不带 Enter，分块投喂
           会原样拼接成同一行输入，提交（Enter）由 submit 单独负责。
-        - 原生 Windows 上非 ASCII 文本先过编码闸：移植版客户端会把这类文本按系统
-          ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），与其把乱码
-          喂给 agent，不如当场报错并给出把系统切到 UTF-8 的修复指引。
+        - 原生 Windows 上非 ASCII 文本不直接进 argv：移植版客户端会把这类文本按系统
+          ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），改由文件载体
+          送到 agent 手里（见 :meth:`_nonascii_prompt_via_file`），argv 上只留 ASCII。
         """
         if not text:
             self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", "")
             return
-        if _WINDOWS and not text.isascii() and _ansi_codepage() not in (None, 65001):
-            cp = _ansi_codepage()
-            raise TmuxTextEncodingError(
-                f"win32 tmux 移植版无法无损投喂非 ASCII 文本（本机系统 ANSI 代码页为 "
-                f"{cp}）：文本会在 tmux 客户端内被按该代码页收窄、进 pane 即乱码，且"
-                "send-keys/set-buffer 走 argv 全部如此、load-buffer 在移植版上挂死，"
-                "代码层无绕法。请开启 Windows 系统级 UTF-8 后重启系统再试："
-                "设置 → 时间和语言 → 语言和区域 → 管理语言设置 → 更改系统区域设置 → "
-                "勾选「Beta 版: 使用 Unicode UTF-8 提供全球语言支持」。纯 ASCII 内容"
-                "不受影响。"
-            )
+        if (
+            self._native_client
+            and _WINDOWS
+            and not text.isascii()
+            and _ansi_codepage() not in (None, 65001)
+        ):
+            text = self._nonascii_prompt_via_file(text)
         for i in range(0, len(text), self._SEND_TEXT_CHUNK):
             chunk = text[i : i + self._SEND_TEXT_CHUNK]
             self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", chunk)
+
+    # 非 ASCII 投喂改走文件载体时，文件落在系统临时目录下这个子目录里。
+    _PROMPT_SPOOL_DIR = "frago-prompts"
+    # 超过这个岁数的载体文件顺手清掉（秒）。投喂完 agent 立刻就读，留一天足够排查。
+    _PROMPT_SPOOL_TTL_S = 24 * 3600
+
+    def _nonascii_prompt_via_file(self, text: str) -> str:
+        """把非 ASCII 文本落成 UTF-8 文件，返回一句纯 ASCII 的替代投喂内容。
+
+        win32 tmux 移植版把命令行参数按系统 ANSI 代码页收窄，所以任何非 ASCII
+        **字面量**都不能进 argv（见 :class:`TmuxTextEncodingError`）。但"去读这个
+        文件"这句话本身是纯 ASCII 的：文本经文件到达 agent，argv 上没有一个字节需要
+        收窄。2026-09-29 原生 Windows（代码页 936、系统 UTF-8 未开）实测：中文提示词
+        落文件 + 投喂 ASCII 指令，agent 读到并按要求原样回答；回路方向的中文由
+        capture-pane 的显式 UTF-8 解码正常带回，坏的从来只有投喂这一个方向。
+
+        载体路径本身 MUST 是纯 ASCII——它也要经 argv。临时目录路径含非 ASCII（用户名
+        是中文之类）或落盘失败时抛 :class:`TmuxTextEncodingError`，把"开系统级 UTF-8"
+        那条指引留给用户，NEVER 把乱码喂给 agent。
+        """
+        spool = os.path.join(tempfile.gettempdir(), self._PROMPT_SPOOL_DIR)
+        target = os.path.join(spool, f"prompt-{self.tmux_name}-{int(time.time() * 1000)}.txt")
+        if not target.isascii():
+            self._fail_text_encoding(f"载体路径本身含非 ASCII 字符：{target}")
+        try:
+            os.makedirs(spool, exist_ok=True)
+            with open(target, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+        except OSError as exc:
+            self._fail_text_encoding(f"载体文件写不下去：{exc}")
+        self._prune_prompt_spool(spool)
+        return (
+            "This turn's instruction is stored as UTF-8 text in the file "
+            f'"{target}". Read that file now and act on its contents exactly as if '
+            "I had typed them here. Do not mention the file in your answer."
+        )
+
+    def _prune_prompt_spool(self, spool: str) -> None:
+        """清掉过期的载体文件。清不动就算了，投喂本身不该因为清理失败而失败。"""
+        cutoff = time.time() - self._PROMPT_SPOOL_TTL_S
+        with contextlib.suppress(OSError):
+            for name in os.listdir(spool):
+                stale = os.path.join(spool, name)
+                with contextlib.suppress(OSError):
+                    if os.path.getmtime(stale) < cutoff:
+                        os.remove(stale)
+
+    def _fail_text_encoding(self, why: str) -> NoReturn:
+        """非 ASCII 既进不了 argv、也落不成文件时的终点：报清楚并给出治本那条路。"""
+        cp = _ansi_codepage()
+        raise TmuxTextEncodingError(
+            f"win32 tmux 移植版无法无损投喂非 ASCII 文本（本机系统 ANSI 代码页为 "
+            f"{cp}）：文本会在 tmux 客户端内被按该代码页收窄、进 pane 即乱码，且"
+            "send-keys/set-buffer 走 argv 全部如此、load-buffer 在移植版上挂死。"
+            f"改走文件载体也没成功（{why}）。请开启 Windows 系统级 UTF-8 后重启系统"
+            "再试：设置 → 时间和语言 → 语言和区域 → 管理语言设置 → 更改系统区域设置 → "
+            "勾选「Beta 版: 使用 Unicode UTF-8 提供全球语言支持」。纯 ASCII 内容"
+            "不受影响。"
+        )
 
     # ── 生命周期 ───────────────────────────────────────────────────
     def open(self, *, ready_timeout_s: float = 30.0) -> None:
@@ -402,6 +476,17 @@ class TmuxAgentSession:
             with contextlib.suppress(Exception):
                 merged_env.update(self.driver.session_env(ctx))
         merged_env.update(self.env)
+        # 代理设置随会话走，不靠 tmux server 的继承环境。tmux server 是独立守护进程，
+        # 它的环境在**第一次被谁拉起**时就定死；之后新建的 pane 继承的是那一份，而不是
+        # 本进程当下的环境。于是在必须走代理才能出网的机器上，服务带着代理重启也没用
+        # ——pane 里的 agent 照旧直连，而报出来的是鉴权失败，看着像登录问题（2026-09-29
+        # 原生 Windows 实测：claude 报 403 Request not allowed；杀掉 tmux server、让它
+        # 由带代理的服务重新拉起才通）。按会话注入把这条隐式依赖去掉。调用方显式给的
+        # env 优先，这里只补缺。
+        for _proxy_name in _PROXY_ENV_NAMES:
+            _proxy_val = os.environ.get(_proxy_name)
+            if _proxy_val:
+                merged_env.setdefault(_proxy_name, _proxy_val)
         if self.conv_key:
             merged_env.setdefault("FRAGO_CONV_KEY", self.conv_key)
 

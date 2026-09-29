@@ -44,6 +44,19 @@ def _no_sleep(_: float) -> None:
     return None
 
 
+def _without_proxy_env(monkeypatch) -> None:
+    """把本机的代理设置从这次断言里摘出去。
+
+    open() 会把本进程的代理变量按会话注入（见 tmux_session.open），所以在一台设了
+    http_proxy 的开发机上，"这条命令该有几个 -e" 这类断言会随机器而变。这些用例要
+    证的是 driver 的 session_env 行为，与代理无关，故先清干净。
+    """
+    from frago.agent_driver import tmux_session
+
+    for name in tmux_session._PROXY_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+
 # ── _compute_delta ─────────────────────────────────────────────────
 def test_delta_takes_text_after_snapshot_anchor() -> None:
     # 末行 "> " 投喂后变 "> hi"，锚点回退到稳定行 "line B"。
@@ -367,8 +380,9 @@ def test_open_caller_env_overrides_driver_session_env() -> None:
     assert "ONLY_BASE=1" in new_sess
 
 
-def test_open_without_session_env_unchanged() -> None:
+def test_open_without_session_env_unchanged(monkeypatch) -> None:
     """未声明 session_env 的 driver 行为完全不变：只有调用方给的 env。"""
+    _without_proxy_env(monkeypatch)
     fake = FakeTmux(["READY"])
     sess = TmuxAgentSession(
         "e3",
@@ -444,7 +458,8 @@ class _HostTmux:
         return [c[1] for c in self.commands if len(c) > 1]
 
 
-def test_attach_mode_enters_existing_session_without_new_session() -> None:
+def test_attach_mode_enters_existing_session_without_new_session(monkeypatch) -> None:
+    _without_proxy_env(monkeypatch)
     host = _HostTmux(panes=["READY"], foreground=["zsh"])
     sess = TmuxAgentSession(
         "s", _echo_driver(), cwd="/home/me", runner=host, sleep=_no_sleep,
@@ -746,14 +761,14 @@ def test_open_on_windows_omits_dash_c_and_cds_in_shell(monkeypatch) -> None:
     monkeypatch.setattr(tmux_session, "_WINDOWS", True)
     fake = FakeTmux(["READY"])
     sess = TmuxAgentSession(
-        "w1", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+        "w1", _echo_driver(), cwd=r"E:\Lenovo", runner=fake, sleep=_no_sleep
     )
     sess.open(ready_timeout_s=5)
     new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
     assert "-c" not in new_sess
     # 启动文本是第一条 -l 字面投喂，形如 cd 'E:\Lenovo' && echo-agent。
     literal = [c for c in fake.sent_keys() if "-l" in c]
-    assert literal and literal[0][-1] == "cd 'E:\Lenovo' && echo-agent"
+    assert literal and literal[0][-1] == r"cd 'E:\Lenovo' && echo-agent"
 
 
 def test_open_on_windows_pins_default_shell_before_new_session(monkeypatch) -> None:
@@ -771,7 +786,7 @@ def test_open_on_windows_pins_default_shell_before_new_session(monkeypatch) -> N
     )
     fake = FakeTmux(["READY"])
     sess = TmuxAgentSession(
-        "w3", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+        "w3", _echo_driver(), cwd=r"E:\Lenovo", runner=fake, sleep=_no_sleep
     )
     sess.open(ready_timeout_s=5)
     opts = [c for c in fake.commands if c[1:2] == ["set-option"]]
@@ -789,7 +804,7 @@ def test_open_on_windows_without_bash_skips_set_option(monkeypatch) -> None:
     monkeypatch.setattr(tmux_session, "_windows_posix_shell", lambda: None)
     fake = FakeTmux(["READY"])
     sess = TmuxAgentSession(
-        "w4", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+        "w4", _echo_driver(), cwd=r"E:\Lenovo", runner=fake, sleep=_no_sleep
     )
     sess.open(ready_timeout_s=5)
     assert not [c for c in fake.commands if c[1:2] == ["set-option"]]
@@ -809,7 +824,17 @@ def test_open_off_windows_never_sets_default_shell(monkeypatch) -> None:
 
 
 def test_windows_posix_shell_skips_wsl_bash_and_uses_git_sibling(monkeypatch) -> None:
-    """which 命中 System32 的 WSL bash 时必须跳过，改用 git.exe 同仓的 Git Bash。"""
+    """which 命中 System32 的 WSL bash 时必须跳过，改用 git.exe 同仓的 Git Bash。
+
+    这个用例断言的是 Windows 的路径语义（反斜杠分隔、拼出 ``Git\\bin\\bash.exe``），
+    所以连路径模块一起换成 ``ntpath``——只 monkeypatch ``_WINDOWS`` 是不够的：Linux
+    上 ``os.path`` 是 posixpath，它在 ``C:\\Program Files\\Git\\cmd\\git.exe`` 里看不到
+    任何分隔符，两次 dirname 都得到空串，于是用例只能在真 Windows 上过、在任何
+    Linux CI 上必红。
+    """
+    import ntpath
+    import types
+
     from frago.agent_driver import tmux_session
 
     monkeypatch.setattr(tmux_session, "shutil", type("S", (), {"which": staticmethod(
@@ -818,7 +843,10 @@ def test_windows_posix_shell_skips_wsl_bash_and_uses_git_sibling(monkeypatch) ->
             "bash.exe": r"C:\Windows\System32\bash.exe",
         }[name]
     )})())
-    monkeypatch.setattr(tmux_session.os.path, "isfile", lambda p: True)
+    win_path = types.SimpleNamespace(
+        join=ntpath.join, dirname=ntpath.dirname, isfile=lambda p: True
+    )
+    monkeypatch.setattr(tmux_session, "os", types.SimpleNamespace(path=win_path))
     assert (
         tmux_session._windows_posix_shell() == r"C:\Program Files\Git\bin\bash.exe"
     )
@@ -869,7 +897,7 @@ def test_open_on_windows_cold_server_bootstraps_then_pins_shell(monkeypatch) -> 
     )
     fake = ColdServerTmux(["READY"])
     sess = TmuxAgentSession(
-        "w6", _echo_driver(), cwd="E:\Lenovo", runner=fake, sleep=_no_sleep
+        "w6", _echo_driver(), cwd=r"E:\Lenovo", runner=fake, sleep=_no_sleep
     )
     sess.open(ready_timeout_s=5)
     # 引导会话建起 → set-option 成功 → 真会话 → 引导会话被拆。
@@ -904,12 +932,12 @@ def test_open_off_windows_keeps_dash_c(monkeypatch) -> None:
 
 
 def test_a_truncated_windows_path_reports_none_not_true() -> None:
-    """win32 移植版把前台进程名报成被空格截断的路径（bash 报 ``C:\Program``）。
+    r"""win32 移植版把前台进程名报成被空格截断的路径（bash 报 ``C:\Program``）。
 
     认不出本体时按"问不出来"降级：过 shell 名单必然判 True（路径不含纯 shell 名），
     把"只剩 shell 壳"误判成"agent 还活着"。斜杠与盘符两种形态都要拦。
     """
-    assert _session_with_pane_command("C:\Program").has_live_agent() is None
+    assert _session_with_pane_command(r"C:\Program").has_live_agent() is None
     assert _session_with_pane_command("C:/Users/x/AppData").has_live_agent() is None
     assert _session_with_pane_command("/usr/bin/bash").has_live_agent() is None
 
@@ -937,25 +965,71 @@ def test_default_runner_decodes_utf8_explicitly(monkeypatch) -> None:
     assert captured["errors"] == "replace"
 
 
-def test_send_text_non_ascii_on_ansi_windows_raises_instead_of_mojibake(
-    monkeypatch,
+def test_send_text_non_ascii_on_ansi_windows_goes_through_a_file(
+    monkeypatch, tmp_path
 ) -> None:
-    """win32 移植版按系统 ANSI 代码页收窄 argv，非 ASCII 必坏且不可逆（实测中文→
-    U+FFFD、emoji→``?``）。与其把乱码喂给 agent，不如当场报错并给出切系统 UTF-8
-    的修复指引；纯 ASCII 不受影响照常发送。
+    """win32 移植版按系统 ANSI 代码页收窄 argv，非 ASCII 字面量必坏且不可逆（实测
+    中文→U+FFFD、emoji→``?``）。所以那段文本不进 argv：落成 UTF-8 文件，argv 上只
+    投一句纯 ASCII 的「去读这个文件」。进 pane 的每个字节都是 ASCII，收窄无从下手。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda: 936)
+    monkeypatch.setattr(tmux_session.tempfile, "gettempdir", lambda: str(tmp_path))
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w3", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess._native_client = True  # 真客户端才迁就它的毛病，见 __init__
+    sess.send_text("你好 world")
+    sent = [cmd[-1] for cmd in fake.sent_keys()]
+    # argv 上不留任何非 ASCII。
+    assert all(chunk.isascii() for chunk in sent), sent
+    spooled = list((tmp_path / "frago-prompts").glob("prompt-*.txt"))
+    assert len(spooled) == 1
+    # 原文一字不改地在文件里，且文件名被投喂出去了。
+    assert spooled[0].read_text(encoding="utf-8") == "你好 world"
+    assert any(spooled[0].name in chunk for chunk in sent)
+    # 同样的代码页下，纯 ASCII 文本原样直投，不绕文件。
+    sess.send_text("plain ascii only")
+    assert "plain ascii only" in [cmd[-1] for cmd in fake.sent_keys()]
+    assert len(list((tmp_path / "frago-prompts").glob("prompt-*.txt"))) == 1
+
+
+def test_send_text_raises_when_even_the_file_route_cannot_be_ascii(
+    monkeypatch, tmp_path
+) -> None:
+    """载体路径本身含非 ASCII（中文用户名之类）时它也进不了 argv：这时才报错，
+    并把"开系统级 UTF-8"那条治本指引给出去——NEVER 退化成把乱码喂给 agent。
     """
     from frago.agent_driver import tmux_session
     from frago.agent_driver.tmux_session import TmuxTextEncodingError
 
     monkeypatch.setattr(tmux_session, "_WINDOWS", True)
     monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda: 936)
+    monkeypatch.setattr(tmux_session.tempfile, "gettempdir", lambda: str(tmp_path / "用户"))
     fake = FakeTmux(["READY"])
-    sess = TmuxAgentSession("w3", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess = TmuxAgentSession("w6", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess._native_client = True
     with pytest.raises(TmuxTextEncodingError, match="UTF-8"):
         sess.send_text("你好 world")
-    # 同样的代码页下，纯 ASCII 文本不受影响。
-    sess.send_text("plain ascii only")
-    assert fake.sent_keys()
+
+
+def test_send_text_with_a_fake_runner_never_takes_the_windows_route(monkeypatch) -> None:
+    """没有真客户端就没有那个毛病：塞了 fake runner 的会话一律直投。
+
+    这一条护的是整套单测的平台无关性。闸门若只看 ``_WINDOWS`` 与代码页，那么在一台
+    代码页 936 的 Windows 上跑全量单测，所有拿中文当 prompt 的用例（opencode 那批）
+    都会走进 Windows 分支而集体失败——同一套测试的结果不该随它跑在谁的机器上而变。
+    """
+    from frago.agent_driver import tmux_session
+
+    monkeypatch.setattr(tmux_session, "_WINDOWS", True)
+    monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda: 936)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("w7", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    assert sess._native_client is False
+    sess.send_text("中文 prompt")
+    assert "中文 prompt" in [cmd[-1] for cmd in fake.sent_keys()]
 
 
 def test_send_text_non_ascii_passes_when_system_ansi_is_utf8(monkeypatch) -> None:
@@ -968,10 +1042,46 @@ def test_send_text_non_ascii_passes_when_system_ansi_is_utf8(monkeypatch) -> Non
     monkeypatch.setattr(tmux_session, "_WINDOWS", True)
     fake = FakeTmux(["READY"])
     sess = TmuxAgentSession("w4", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess._native_client = True  # 真客户端下才有闸门可言，见 __init__
     for cp in (65001, None):
         monkeypatch.setattr(tmux_session, "_ansi_codepage", lambda cp=cp: cp)
         sess.send_text("中文 mixed")
     assert any("中文 mixed" in c for c in fake.sent_keys())
+
+
+def test_open_injects_proxy_env_into_the_session(monkeypatch) -> None:
+    """本进程有代理设置，这场会话就带着同一份走 ``new-session -e``。
+
+    tmux server 是独立守护进程，它的环境在第一次被谁拉起时就定死，之后新建的 pane
+    继承的是那一份。靠继承就意味着"服务重启也不生效"，而症状是 agent 直连出不了网、
+    报鉴权失败（2026-09-29 原生 Windows 实测 403）。按会话注入把这条依赖去掉。
+    """
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("p1", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess.open()
+    new_session = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    pairs = [new_session[i + 1] for i, a in enumerate(new_session) if a == "-e"]
+    assert "HTTPS_PROXY=http://127.0.0.1:7890" in pairs
+    assert "NO_PROXY=localhost" in pairs
+    assert not any(one.startswith("ALL_PROXY=") for one in pairs)
+
+
+def test_open_lets_the_caller_env_win_over_inherited_proxy(monkeypatch) -> None:
+    """调用方显式给的同名变量优先，注入只补缺。"""
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "p2", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep,
+        env={"HTTPS_PROXY": "http://10.0.0.1:3128"},
+    )
+    sess.open()
+    new_session = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    pairs = [new_session[i + 1] for i, a in enumerate(new_session) if a == "-e"]
+    assert "HTTPS_PROXY=http://10.0.0.1:3128" in pairs
+    assert "HTTPS_PROXY=http://127.0.0.1:7890" not in pairs
 
 
 def test_send_text_off_windows_never_gates(monkeypatch) -> None:

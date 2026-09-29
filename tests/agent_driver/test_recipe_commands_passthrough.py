@@ -17,6 +17,18 @@ from frago.agent_driver import load_driver
 from frago.cli import recipe_commands
 
 
+def _isolate_home(monkeypatch, tmp_path) -> None:
+    """把家目录重定向到 tmp_path，Windows 与 POSIX 都算。
+
+    只设 ``HOME`` 在 Windows 上不生效：那边 ``Path.home()`` / ``expanduser`` 认的是
+    ``USERPROFILE``，于是用例会落到真人的 ``~/.frago`` 上，读到真机上已有的配方与配置、
+    断言随机器而变（本机实测：这两条在 Windows 上因此必红）。两个变量一起设，用例才
+    与跑在谁的机器上无关。
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+
 class _Result:
     returncode = 0
 
@@ -95,7 +107,7 @@ def test_one_step_create_reaches_the_code_worker(tmp_path, monkeypatch) -> None:
     """
     from click.testing import CliRunner
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _isolate_home(monkeypatch, tmp_path)
     prompts: list[str] = []
 
     def fake_plan(name, prompt_text, spec_path, **_kw):
@@ -135,7 +147,7 @@ def test_plan_forwards_its_cap_to_the_worker(tmp_path, monkeypatch) -> None:
     """CLI 的 --timeout 一路传到 _run_frago_agent，缺省则是 0（不设上限）。"""
     from click.testing import CliRunner
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _isolate_home(monkeypatch, tmp_path)
     seen: dict[str, int] = {}
 
     def fake_agent(_prompt, *, agent_type="claude", timeout=0, tmux_target=None):

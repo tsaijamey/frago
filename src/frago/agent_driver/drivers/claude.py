@@ -65,10 +65,25 @@ def session_id_for(session_id: str, *, native: bool) -> str:
 # 命中本式，故仅用于"完成"判定（叠加非忙碌条件兜底），NEVER 单独用于就绪判定。
 _PROMPT_BOX = PaneMatcher(name="claude-prompt", pattern=r"(?m)^\s*│?\s*[>❯]\s")
 
-# 就绪信号：claude 输入框**空载**（``❯ `` 后整行无内容）。区别于 shell 回显的
-# ``❯ claude --dangerously-skip-permissions``（``❯`` 后有命令文本），避免在 TUI
-# 尚未可交互时就误判就绪、过早投喂导致 Enter 被吞、prompt 永不提交。
-_READY_BOX = PaneMatcher(name="claude-ready", pattern=r"(?m)^\s*│?\s*[>❯]\s*$")
+# 空输入框里那行灰色提示。claude 2.1.284 起，输入框空着时不再是一片空白，而是渲染
+# 一句占位提示——``❯ Try "edit <filepath> to..."``（2026-09-29 原生 Windows 抓屏实测，
+# ``❯`` 与提示之间是 nbsp）。这句话的形状是写死在 claude 里的：八句候选各自不同，但
+# 外层永远是 ``Try "…"``，且只在缓冲区为空时才渲染（键入任何字符即消失）。所以"框里
+# 只有这句提示"与"框是空的"是同一件事，判就绪、判提交、判空闲都该认它。
+#
+# 不认它的代价是整条链断在起跑线：就绪判据认的是「``❯`` 后整行为空」，提示一占位就
+# 永不命中，会话干等到 ``open()`` 超时、以 ``TmuxStartupError`` 收场，而 pane 上明明
+# 是一个活着的、可交互的 TUI（2026-09-29 实测：claude 自动升到 2.1.284 当天，原本跑通
+# 的 WebUI 会话全部起不来，报的却是"never reached ready signal"）。
+_INPUT_HINT = r'Try\s+"[^"\n]*"'
+
+# 就绪信号：claude 输入框**空载**——``❯`` 后整行无内容，或只剩上面那句占位提示。
+# 区别于 shell 回显的 ``❯ claude --dangerously-skip-permissions``（``❯`` 后有命令
+# 文本），避免在 TUI 尚未可交互时就误判就绪、过早投喂导致 Enter 被吞、prompt 永不提交。
+_READY_BOX = PaneMatcher(
+    name="claude-ready",
+    pattern=rf"(?m)^\s*│?\s*[>❯](?:\s*$|\s*{_INPUT_HINT}\s*$)",
+)
 
 # 启动期的致命失败：claude 报完这一句就退出，pane 落回 shell。
 #
@@ -220,6 +235,58 @@ def _claude_config_path() -> Path:
     return base / ".claude.json"
 
 
+def _claude_settings_path() -> Path:
+    """claude 存用户级设置的文件（``~/.claude/settings.json``）。
+
+    与 :func:`_claude_config_path` 是两份不同的东西：那个是 ``~/.claude.json``（存
+    per-project 状态），这个是设置。``CLAUDE_CONFIG_DIR`` 若设置，两者都挪到那个目录下。
+    """
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(override).expanduser() if override else Path.home() / ".claude"
+    return base / "settings.json"
+
+
+def _ensure_dangerous_mode_prompt_skipped() -> None:
+    """起 TUI 前让 claude 别弹那张"Bypass Permissions mode"一次性确认屏。
+
+    哪个环节出事、当事人看到什么：frago 起 claude 一律带
+    ``--dangerously-skip-permissions``。这个 flag 在一台还没确认过危险模式的机器上
+    会让 TUI 先拦一屏警告菜单（``❯ No, exit`` / ``Yes, I accept``），要人按一次键。
+    就绪信号（空输入框）永不匹配这一屏，会话干等到 ``open()`` 超时、以
+    ``TmuxStartupError`` 收场，页面上只剩一句"never reached ready signal"——看不出
+    是在等人按键（2026-09-29 原生 Windows 实测；任何全新机器都会中招，与平台无关）。
+
+    这道确认与工作区信任是两件独立的事：信任记在 ``~/.claude.json`` 的 projects 里
+    （见 :func:`_ensure_workspace_trusted`），而这一屏由设置里的
+    ``skipDangerousModePermissionPrompt`` 决定问不问。用户装 frago 并用它派活，本身
+    就是在选择让 agent 免确认地跑，所以这里把那个键幂等补上。
+
+    只补缺、不覆盖任何已有设置；已经是 True 就一个字节都不写。写失败绝不阻断启动
+    ——最坏回到现状（菜单照弹），而不是让一次设置写错把启动整个打死。
+    """
+    try:
+        path = _claude_settings_path()
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, json.JSONDecodeError):
+                # 读不动就不写：这份文件里有用户的 hooks / model / 主题，宁可让菜单
+                # 照弹，也 NEVER 拿一份空表去顶替它。
+                return
+        if data.get("skipDangerousModePermissionPrompt") is True:
+            return
+        data["skipDangerousModePermissionPrompt"] = True
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except Exception:  # 设置预写尽力而为，NEVER 让它把 launch 打死
+        logger.warning("could not pre-accept claude dangerous mode prompt", exc_info=True)
+
+
 def _ensure_workspace_trusted(cwd: str) -> None:
     """起 TUI 前把 ``cwd`` 标记为已信任，好让 claude 不弹一次性"信任此文件夹"菜单。
 
@@ -281,6 +348,9 @@ def _launch(ctx: LaunchCtx) -> str:
     # 起会话前先把 cwd 标记为已信任，否则交互式 TUI 会卡在一次性 workspace-trust
     # 菜单、就绪信号永不出现、干等到超时（见 _ensure_workspace_trusted）。
     _ensure_workspace_trusted(ctx.cwd)
+    # 同理，带 --dangerously-skip-permissions 起 TUI 会在没确认过危险模式的机器上
+    # 卡一屏警告菜单，症状与上面一模一样（见 _ensure_dangerous_mode_prompt_skipped）。
+    _ensure_dangerous_mode_prompt_skipped()
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。
