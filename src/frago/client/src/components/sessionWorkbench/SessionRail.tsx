@@ -908,7 +908,7 @@ export default function SessionRail({
                       onClick={() => pins.setCollapsed(!pins.collapsed)}
                       aria-expanded={!pins.collapsed}
                       data-testid="pinned-header"
-                      className={`flex w-full items-center gap-1.5 border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-hover ${
+                      className={`flex w-full items-center gap-1.5 border border-border-color bg-[var(--rail-pinned-fill)] px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-active ${
                         pins.collapsed ? 'rounded-[8px]' : 'rounded-t-[8px] border-b-0'
                       }`}
                     >
@@ -927,7 +927,7 @@ export default function SessionRail({
                   <div className="h-2" />
                 ) : (
                   <div className="px-1 pb-2">
-                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-bg-subtle" />
+                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-[var(--rail-pinned-fill)]" />
                   </div>
                 );
               }
@@ -1018,10 +1018,12 @@ export default function SessionRail({
                   {pos === 'head' || pos === 'mid' ? null : <div className="h-0.5" />}
                 </div>
               );
-              /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。 */
+              /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。底色照原型用悬停色那一层浅底，写成不透明的 --rail-pinned-fill
+                 （.pingrp 的 --bg-hover）：原先写的 bg-subtle 在深色下与清单底同为 #1a1a1a，
+                 整块看不出来，清单与左侧导航栏也就连成一片（主人 09-29 指出）。 */
               return row.inPinned ? (
                 <div className="px-1">
-                  <div className="border-x border-border-color bg-bg-subtle pt-0.5">{item}</div>
+                  <div className="border-x border-border-color bg-[var(--rail-pinned-fill)] pt-0.5">{item}</div>
                 </div>
               ) : (
                 item

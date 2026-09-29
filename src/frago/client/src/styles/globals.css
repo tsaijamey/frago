@@ -38,6 +38,9 @@
   /* hover 用半透明白而不是实色：同一条规则盖在任何一级表面上都成立。 */
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
+  /* 会话清单置顶组那块浅底：清单底 --bg-secondary 叠一层 --bg-hover 的结果，写成不透明实色，
+     因为组里带流光、带叠纸的卡内层要填同一个色，半透明填不住身后的东西。 */
+  --rail-pinned-fill: #272727;
   --bg-elevated: #2a2a2a;
   --bg-overlay: rgba(0, 0, 0, 0.6);
 
@@ -205,6 +208,7 @@
   --bg-subtle: #F5F5F5;
   --bg-hover: rgba(0, 0, 0, 0.05);
   --bg-active: rgba(0, 0, 0, 0.08);
+  --rail-pinned-fill: #ebebeb;
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);
 

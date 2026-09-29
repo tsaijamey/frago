@@ -163,8 +163,8 @@ export function previewOf(
   return keepTail(text.replace(/^\s*#{1,6}\s+/, ''));
 }
 
-function MaybeLiveCard({ live, children }: { live: boolean; children: ReactNode }) {
-  return live ? <LiveBorder>{children}</LiveBorder> : <>{children}</>;
+function MaybeLiveCard({ live, fill, children }: { live: boolean; fill?: string; children: ReactNode }) {
+  return live ? <LiveBorder fill={fill}>{children}</LiveBorder> : <>{children}</>;
 }
 
 export default function SessionItem({
@@ -246,6 +246,8 @@ export default function SessionItem({
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
   const stacked = hasWorkers && !workersExpanded;
   const preview = previewOf(session, forYou, card);
+  /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组里是组的浅底，别处是清单底。 */
+  const paperBg = inPinnedGroup ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
   /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
   const progress = sending ? 'sending' : agentOnIt ? 'agent' : null;
   return (
@@ -260,11 +262,11 @@ export default function SessionItem({
               两道杠。边用的是清单里到处在用的那个分隔线色，不新增颜色。 */}
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-4 top-4 -bottom-[10px] rounded-[8px] border border-border-color bg-bg-secondary"
+            className={`pointer-events-none absolute inset-x-4 top-4 -bottom-[10px] rounded-[8px] border border-border-color ${paperBg}`}
           />
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-2 top-3 -bottom-[5px] rounded-[8px] border border-border-color bg-bg-secondary"
+            className={`pointer-events-none absolute inset-x-2 top-3 -bottom-[5px] rounded-[8px] border border-border-color ${paperBg}`}
           />
         </>
       ) : null}
@@ -275,12 +277,12 @@ export default function SessionItem({
       {stacked ? (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-[8px] border border-border-color bg-bg-secondary"
+          className={`pointer-events-none absolute inset-0 rounded-[8px] border border-border-color ${paperBg}`}
         />
       ) : null}
       {/* 开在 tmux 里的那道流光只围最上面这张卡。套在外层的话，身后那一叠纸也被圈进去，
           光就沿着整叠的外框跑到最底下那张纸的下缘去了（主人 09-29 指出）。 */}
-      <MaybeLiveCard live={live}>
+      <MaybeLiveCard live={live} fill={inPinnedGroup ? 'var(--rail-pinned-fill)' : undefined}>
       <div
         role="button"
         tabIndex={0}
@@ -303,7 +305,8 @@ export default function SessionItem({
            也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
            才立得住。内边距上下 10、左右 12（第五轮二改）。 */
         className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${
-          selected ? SELECTED : 'hover:bg-bg-hover'
+          /* 置顶组那块底已经是悬停色，组里的卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
+          selected ? SELECTED : inPinnedGroup ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
         }`}
       >
         {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
