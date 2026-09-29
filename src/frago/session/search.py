@@ -1,4 +1,4 @@
-"""跨 claude / opencode 两套会话备份的语义检索。
+"""跨 claude / opencode / codex 三套会话备份的语义检索。
 
 ## 解决什么问题
 
@@ -21,7 +21,8 @@
 备份里有两代格式，都搜：
 
   ``<核>/<会话 id>/raw.jsonl``     原文逐字节副本，claude 侧是原转录、
-                                  opencode 侧是一行一个原始片段
+                                  opencode 侧是一行一个原始片段、
+                                  codex 侧是 rollout 原文
   ``<核>/<会话 id>/steps.jsonl``   早期的加工副本，工具返回值等内容已被摘掉
 
 老会话往往只剩 steps.jsonl，而它们的原文已随 Claude 的滚动删除永久消失。这类
@@ -30,8 +31,8 @@
 ## 时间从记录里取，不看文件时间
 
 备份文件的 mtime 是"什么时候备的"，批量回填过的文件全是同一个时刻，跟会话什么
-时候发生的毫无关系。所以 ``--days`` 读的是记录自己带的时间：claude 记录是
-``timestamp``，opencode 片段是 ``time.start/end``。从文件尾往回扫，遇到第一条
+时候发生的毫无关系。所以 ``--days`` 读的是记录自己带的时间：claude 与 codex
+记录是 ``timestamp``，opencode 片段是 ``time.start/end``。从文件尾往回扫，遇到第一条
 带时间的就停——实测中位数退 2 条记录、p99 退 5 条。
 
 极少数会话（只有 ``mode`` / ``permission-mode`` 这类元数据记录的空壳）文件里
@@ -99,7 +100,15 @@ STEPS_FILENAME = "steps.jsonl"
 
 # 备份根下的一级目录 → 会话所属的核。``claude-misc`` 是早期归档出来的一批
 # claude 会话，同源同格式，归到 claude 下。
-_CORE_DIRS = {"claude": "claude", "claude-misc": "claude", "opencode": "opencode"}
+#
+# 这张表 MUST 与会话备份的写入侧对齐：备份多了一个核而这里没登记，那个核的会话
+# 既不计入语料规模，命中了也会在归属那一步被丢掉，结果只显示"没有命中"。
+_CORE_DIRS = {
+    "claude": "claude",
+    "claude-misc": "claude",
+    "opencode": "opencode",
+    "codex": "codex",
+}
 
 _ASCII_ONLY = re.compile(r"^[\x00-\x7f]+$")
 
@@ -143,7 +152,7 @@ class SessionHit:
     """一个命中的会话。"""
 
     source: str
-    """``claude`` 或 ``opencode``。"""
+    """``claude``、``opencode`` 或 ``codex``。"""
 
     session_id: str
     title: str | None
@@ -153,7 +162,7 @@ class SessionHit:
 
     matched_terms: list[str]
     hit_lines: int
-    """命中的不同记录数（claude 是行，opencode 是片段）。"""
+    """命中的不同记录数（claude / codex 是行，opencode 是片段）。"""
 
     location: str
     resume_command: str
@@ -292,7 +301,7 @@ def expand_query(
 def _record_epoch(record: dict[str, Any]) -> float | None:
     """一条记录自己带的时刻（epoch 秒）。取不到返回 None。
 
-    claude 转录用 ``timestamp``（ISO-8601，带 Z 或不带时区）；opencode 片段用
+    claude 转录与 codex rollout 用 ``timestamp``（ISO-8601，带 Z 或不带时区）；opencode 片段用
     ``time``，是 ``{"start": 毫秒, "end": 毫秒}``。早期加工副本沿用 ``timestamp``，
     写的是不带时区的本地时间，按本地时区解释正是它的原意。
     """
@@ -357,7 +366,7 @@ def last_activity_of(path: Path) -> float | None:
 
 # ── 记录里的可读文本 ────────────────────────────────────────────────
 def _record_text(record: dict[str, Any]) -> str:
-    """把一条记录里的可读文本摊平成一串，三种格式都认。"""
+    """把一条记录里的可读文本摊平成一串，各核的格式都认。"""
     parts: list[str] = []
 
     # claude 转录：正文挂在 message.content 或 content 下。
@@ -390,6 +399,23 @@ def _record_text(record: dict[str, Any]) -> str:
                 parts.append(value)
             elif isinstance(value, dict):
                 parts.append(json.dumps(value, ensure_ascii=False))
+
+    # codex rollout：正文都在 payload 下——对话在 message / content，工具调用在
+    # arguments / input，工具返回在 output，推理摘要在 summary。
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        for key in ("message", "arguments", "input", "output", "last_agent_message"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+        for key in ("content", "summary"):
+            blocks = payload.get(key)
+            if isinstance(blocks, str):
+                parts.append(blocks)
+            elif isinstance(blocks, list):
+                for block in blocks:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        parts.append(block["text"])
 
     # 早期加工副本用 content_summary；其余是各格式的零散文本字段。
     for key in ("content_summary", "summary", "text", "output", "error", "lastPrompt", "customTitle"):
@@ -590,8 +616,82 @@ def _opencode_titles(session_ids: list[str]) -> dict[str, tuple[str | None, str 
     }
 
 
+def _codex_meta(path: Path) -> tuple[str | None, str | None]:
+    """命中的 codex 会话叫什么、在哪个目录跑的。
+
+    codex 不给会话存标题，会话清单上显示的是用户开口的第一句，这里取同一句，取法与
+    会话清单同一套：优先 ``user_message`` 事件；整场没有这种事件（新版 codex）时退到
+    ``response_item`` 里第一条不是环境说明的用户消息。工作目录在首行 ``session_meta``
+    里。事件那句与目录都拿到就停；读不出来就留空，NEVER 因此让检索失败。
+    """
+    from frago.session.adapters.codex_records import is_injected_user_text
+    from frago.session.session_index import _one_line
+
+    title: str | None = None
+    item_title: str | None = None
+    cwd: str | None = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if cwd is None and record.get("type") in ("session_meta", "turn_context"):
+                    value = payload.get("cwd")
+                    cwd = value if isinstance(value, str) and value else None
+                if (
+                    title is None
+                    and record.get("type") == "event_msg"
+                    and payload.get("type") == "user_message"
+                ):
+                    title = _one_line(payload.get("message"))
+                if (
+                    item_title is None
+                    and record.get("type") == "response_item"
+                    and payload.get("type") == "message"
+                    and payload.get("role") == "user"
+                ):
+                    text = _record_text({"payload": {"content": payload.get("content")}})
+                    if text.strip() and not is_injected_user_text(text):
+                        item_title = _one_line(text)
+                if title is not None and cwd is not None:
+                    break
+    except OSError as exc:
+        logger.debug("codex metadata read failed for %s: %s", path, exc)
+    return title or item_title, cwd
+
+
+def _backup_metadata(session_dir: Path) -> tuple[str | None, str | None]:
+    """早期加工副本旁边的 ``metadata.json`` 里记的会话名与工作目录。
+
+    只剩加工副本的会话没有原文可翻，但备份当初写下的这份元信息还在（``name`` 是会话
+    名，``project_path`` 是工作目录）。``-`` 这类占位名不当标题。读不出来就留空。
+    """
+    try:
+        data = json.loads((session_dir / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    name = data.get("name")
+    project = data.get("project_path")
+    title = name.strip() if isinstance(name, str) and name.strip() not in ("", "-") else None
+    cwd = project if isinstance(project, str) and project else None
+    return title, cwd
+
+
 def _resume_command(core: str, session_id: str) -> str:
-    return f"opencode -s {session_id}" if core == "opencode" else f"claude --resume {session_id}"
+    if core == "opencode":
+        return f"opencode -s {session_id}"
+    if core == "codex":
+        return f"codex resume {session_id}"
+    return f"claude --resume {session_id}"
 
 
 # ── 搜索 ────────────────────────────────────────────────────────────
@@ -644,14 +744,18 @@ def search_backup(
     为了一个可能根本没人给的 ``--days`` 付全量代价。
     """
     warnings: list[str] = []
-    if shutil.which("rg") is None:
-        return [], 0, ["ripgrep (rg) 不在 PATH 上，检索没跑"]
-
     corpus = root or backup_root()
     if not corpus.is_dir():
         return [], 0, [f"会话备份目录不在：{corpus}"]
 
+    # 语料规模不靠 ripgrep 数，先数出来——缺 ripgrep 时照样报真数，NEVER 报成 0 场。
     scanned = count_sessions(corpus)
+    if shutil.which("rg") is None:
+        return [], scanned, [
+            "ripgrep (rg) 不在 PATH 上，检索没跑。shell 里 which rg 有输出不等于真装了 "
+            "ripgrep——那可能是 shell 函数或别名，frago 起的子进程看不到"
+        ]
+
     per_file, ok = _run_rg(terms, corpus)
     if not ok:
         return [], scanned, ["ripgrep 跑失败了，这一趟没有结果"]
@@ -714,7 +818,11 @@ def search_backup(
         cwd: str | None = None
         if candidate.core == "opencode":
             title, cwd = opencode_meta.get(candidate.session_id, (None, None))
-        elif not degraded:
+        elif degraded:
+            title, cwd = _backup_metadata(primary.parent)
+        elif candidate.core == "codex":
+            title, cwd = _codex_meta(primary)
+        else:
             # 原文副本与 Claude 的转录逐字节相同，标题和工作目录就在记录里。
             data = _scan_file(primary) or {}
             title = data.get("custom_title") or data.get("ai_title") or data.get("slug")

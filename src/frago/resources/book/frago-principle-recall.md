@@ -28,7 +28,7 @@
 
 过程层是唯一记着"为什么"的地方。结论层只有结论，产物层只有成品——当时的取舍、走过的弯路、用户拍板时说的那句话，只在会话记录里。所以凡是问"为什么是这样""上次怎么办的"，过程层 MUST 查。
 
-`frago session search` 会让模型把一句话摊成十来个字面量关键词，再 ripgrep 扫 `~/.frago/sessions`（claude 和 opencode 两个库、含 Claude 已滚删的老会话）。一句自然语言就够，不用自己想关键词。心里已经有确切字眼时用 `--terms` 直接给，省掉模型那一轮。
+`frago session search` 会让模型把一句话摊成十来个字面量关键词，再 ripgrep 扫 `~/.frago/sessions`（claude、opencode、codex 三个库，含 Claude 已滚删的老会话）。一句自然语言就够，不用自己想关键词。心里已经有确切字眼时用 `--terms` 直接给，省掉模型那一轮。
 
 ## 什么时候 MUST 召回
 

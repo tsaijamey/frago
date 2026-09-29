@@ -217,7 +217,7 @@ def search_cmd(
     expand_timeout: int | None,
     json_output: bool,
 ):
-    """Search raw session transcripts by meaning, across claude AND opencode.
+    """Search raw session transcripts by meaning, across claude, opencode AND codex.
 
     A model first expands your sentence into literal search terms (synonyms,
     Chinese/English variants, likely command names and error strings), then

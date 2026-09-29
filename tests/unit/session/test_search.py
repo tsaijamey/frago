@@ -65,6 +65,32 @@ def write_opencode_raw(root, sid, texts, *, start_ms=1_780_000_000_000):
     return path
 
 
+def write_codex_raw(root, sid, user_texts, *, cwd="/work/codex", stamp="2026-07-28T10:00:00Z"):
+    """造一份 codex 原文副本：形状与 rollout 一致，首行 session_meta，正文在 payload 下。"""
+    path = root / "codex" / sid / "raw.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [{"timestamp": stamp, "type": "session_meta", "payload": {"id": sid, "cwd": cwd}}]
+    for text in user_texts:
+        records.append(
+            {"timestamp": stamp, "type": "event_msg", "payload": {"type": "user_message", "message": text}}
+        )
+        records.append(
+            {
+                "timestamp": stamp,
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": f"工具返回：{text}",
+                },
+            }
+        )
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n", encoding="utf-8"
+    )
+    return path
+
+
 def write_steps(root, sid, summaries, *, core="claude", stamp="2026-06-23T21:53:49.387000"):
     """造一份早期加工副本：只有 content_summary，时间不带时区。"""
     path = root / core / sid / "steps.jsonl"
@@ -310,6 +336,18 @@ class TestSearchBackup:
         assert [h.session_id for h in hits] == ["sid"]
 
 
+def test_missing_ripgrep_still_reports_the_real_corpus_size(tmp_path, monkeypatch):
+    """缺 ripgrep 时检索没跑，但语料有几场照样如实报，NEVER 报成 0 场。"""
+    write_raw(tmp_path, "sid-a", [("user", "opencode")])
+    write_raw(tmp_path, "sid-b", [("user", "opencode")])
+    monkeypatch.setattr(search_mod.shutil, "which", lambda name: None)
+    hits, scanned, warnings = search_backup(["opencode"], root=tmp_path)
+    assert hits == []
+    assert scanned == 2
+    assert len(warnings) == 1
+    assert "不在 PATH 上" in warnings[0] and "which rg" in warnings[0]
+
+
 @needs_rg
 class TestBothBackupGenerations:
     def test_searches_the_early_summary_copy_too(self, tmp_path):
@@ -370,6 +408,35 @@ class TestOpencodeSide:
         write_opencode_raw(tmp_path, "ses_a", ["先跑一遍 backtest 再看结果"])
         hit = search_backup(["backtest"], root=tmp_path)[0][0]
         assert "backtest" in hit.snippets[0].text
+
+
+@needs_rg
+class TestCodexSide:
+    def test_codex_sessions_are_counted_and_found(self, tmp_path):
+        """备份里有 codex 目录，检索 MUST 把它算进语料、命中了也要留下。"""
+        write_codex_raw(tmp_path, "019e-a", ["调通 backtest 那回"])
+        write_raw(tmp_path, "sid", [("user", "无关")])
+        hits, scanned, _ = search_backup(["backtest"], root=tmp_path)
+        assert scanned == 2
+        assert [(h.source, h.session_id) for h in hits] == [("codex", "019e-a")]
+
+    def test_resume_command_is_codex_resume(self, tmp_path):
+        write_codex_raw(tmp_path, "019e-a", ["backtest"])
+        hit = search_backup(["backtest"], root=tmp_path)[0][0]
+        assert hit.resume_command == "codex resume 019e-a"
+
+    def test_title_is_first_user_line_and_cwd_from_session_meta(self, tmp_path):
+        write_codex_raw(tmp_path, "019e-a", ["跑一遍 backtest\n第二行", "再看 backtest"], cwd="/work/etf")
+        hit = search_backup(["backtest"], root=tmp_path)[0][0]
+        assert hit.title == "跑一遍 backtest"
+        assert hit.cwd == "/work/etf"
+
+    def test_snippet_is_readable_text_and_time_is_from_record(self, tmp_path):
+        write_codex_raw(tmp_path, "019e-a", ["先跑一遍 backtest 再看结果"])
+        hit = search_backup(["backtest"], root=tmp_path)[0][0]
+        assert "先跑一遍 backtest 再看结果" in hit.snippets[0].text
+        assert '"payload"' not in hit.snippets[0].text
+        assert hit.last_activity == pytest.approx(1785232800.0)
 
 
 @needs_rg
