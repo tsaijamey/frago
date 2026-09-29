@@ -33,6 +33,25 @@
 
 编号形状这一条只对 Claude Code 成立。codex 与 opencode 的会话编号是它们自己分配、frago
 事后认领的，形状上与人开的会话没有区别，所以那两家只认第 1、2 条记下的账。
+
+## 关系种类
+
+第 1 条那本账起初只记「谁派了谁」，后来升级成一本通用的**会话关系账**：每条多记一项
+``kind``，说明子会话是怎么从父会话里出来的（spec 20260928-webui-session-branch）。
+
+- ``dispatch`` **派活**：``frago agent`` 派出去的 worker。子会话算 worker。
+- ``branch`` **分支**：人在会话页圈一段原文、起一场新会话去处理旁支问题。那一场是人亲自
+  在谈的，子会话**算人开的**——它等你时照样该挂进「等你」，只是在左栏折到原会话下面。
+  分支另记从主线哪段原文分出去（``anchor``）、人写的那句话（``note``）与收口状态
+  （``closed_at`` / ``closed_by``）。
+- ``handoff`` **交接**：留位，只在读取侧认得，眼下没有写入方。
+
+**老账照读。** 升级之前写下的记录没有 ``kind``，一律当 ``dispatch``——那时账上只有派活
+这一种。读不懂的单条（种类不认得、编号不是字符串）跳过，NEVER 让整份清单取不出来。
+第 2 条扫描出来的关系一律算派活，判据不变。
+
+左栏折叠要的父会话由 ``dispatch`` 与 ``branch`` 两种一起给出；出身只有 ``dispatch``
+的子会话算 worker。
 """
 
 from __future__ import annotations
@@ -44,11 +63,12 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 
@@ -58,17 +78,30 @@ __all__ = [
     "LAUNCH_LEDGER",
     "PARENT_SCAN_CACHE",
     "OriginIndex",
+    "RelationKind",
     "SessionOrigin",
+    "SessionRelation",
     "clear_cache",
+    "close_relation",
+    "find_relation",
     "is_worker_shape",
     "load_origin_index",
     "record_launch",
+    "record_relation",
 ]
 
 # 出身两档，没有第三档。"说不准"那一档看着诚实，实际上界面拿它没办法——一行卡片要么
 # 折进 worker 堆里，要么留在主干上，中间态最后还是要落到这两个里的一个。判不出来就是
 # ``human``，理由见模块开头。
 SessionOrigin = Literal["human", "worker"]
+
+# 子会话是怎么从父会话里出来的。见模块开头「关系种类」。
+RelationKind = Literal["dispatch", "branch", "handoff"]
+RELATION_KINDS: tuple[str, ...] = ("dispatch", "branch", "handoff")
+
+# 收口的两种来路：分支会话里「带回主线」，或主线那段原文上手动标记。
+CloseBy = Literal["bring-back", "manual"]
+CLOSE_BY: tuple[str, ...] = ("bring-back", "manual")
 
 # 与会话索引同一个落点：它们服务的是同一张页面，清缓存时人找一个地方就够了。
 CACHE_DIR = Path.home() / ".frago" / "workbench"
@@ -120,7 +153,9 @@ _WORKER_UUID_VERSION = 5
 #
 # 名字要求首字符是字母或数字：``--help`` / ``--json`` 这类选项因此不会被当成会话名。
 _LAUNCH_ECHO = re.compile(r"tmux driver: agent=([a-zA-Z0-9_-]+) session=([0-9a-fA-F-]{36})")
-_RESIDENT_START = re.compile(r"frago agent start\s+[a-z]+\s+--name\s+([A-Za-z0-9][A-Za-z0-9_-]{0,39})")
+_RESIDENT_START = re.compile(
+    r"frago agent start\s+[a-z]+\s+--name\s+([A-Za-z0-9][A-Za-z0-9_-]{0,39})"
+)
 _RESIDENT_DRIVE = re.compile(r"frago agent (?:send|peek|stop)\s+([A-Za-z0-9][A-Za-z0-9_-]{0,39})")
 
 # 一趟 ripgrep 同时找这三种痕迹，命中的整段再在 Python 侧分别解析。
@@ -142,8 +177,9 @@ def _read_json(path: Path) -> object | None:
         return None
 
 
-def _write_json(path: Path, payload: object) -> None:
-    """原子写。写不进去不抛——记账失败最多让一场会话认不出出身，NEVER 让它把派活打死。"""
+def _write_json(path: Path, payload: object) -> bool:
+    """原子写，返回写上没有。写不进去不抛——记账失败最多让一场会话认不出出身，NEVER
+    让它把派活打死。"""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
@@ -151,6 +187,8 @@ def _write_json(path: Path, payload: object) -> None:
         tmp.replace(path)
     except OSError:
         logger.debug("could not write %s", path, exc_info=True)
+        return False
+    return True
 
 
 # ── 判据三：编号形状 ────────────────────────────────────────────────────────
@@ -171,6 +209,64 @@ def is_worker_shape(session_id: str) -> bool:
 # ── 判据一：起 worker 那一刻记下的账 ────────────────────────────────────────
 
 
+# 账本是「读—改—原子替换」。派活与起分支可能在同一个服务进程里同时发生，两边各读一份、
+# 各写回去，先写的那条就丢了。进程内这把锁挡住这种情况；跨进程（命令行派活与页面起分支
+# 撞在同一刻）仍可能丢一条，那只影响左栏的挂靠显示，不影响会话本身已经起好。
+_ledger_lock = threading.Lock()
+
+
+def _ledger_entries() -> list[Any]:
+    raw = _read_json(LAUNCH_LEDGER)
+    return raw if isinstance(raw, list) else []
+
+
+def record_relation(
+    *,
+    kind: RelationKind,
+    child_session_id: str,
+    parent_session_id: str | None,
+    agent_type: str,
+    cwd: str,
+    prompt_head: str = "",
+    anchor: dict[str, Any] | None = None,
+    note: str | None = None,
+) -> bool:
+    """往关系账里记一条，返回记上没有。
+
+    ``anchor`` / ``note`` 只有分支才带，收口的两项记账时一律为空（分支刚起，还开着）。
+    ``parent_session_id`` 取不到就留空，**NEVER 为了让父子关系好看而编一个出来**：编错的
+    父亲会把一场会话折到一场跟它毫无关系的会话下面。
+
+    整个函数吞掉一切异常：记账是给界面用的，派活、起分支本身不该因为它失败。
+    """
+    global _memo
+    if kind not in RELATION_KINDS:
+        return False
+    entry: dict[str, Any] = {
+        "child": child_session_id,
+        "parent": parent_session_id or None,
+        "kind": kind,
+        "agent_type": agent_type,
+        "cwd": cwd,
+        # 第一句话开头留一句，排查时能认出这条账对应的是哪一次。
+        "prompt_head": (prompt_head or "").strip()[:120],
+        "at": int(_now()),
+    }
+    if kind == "branch":
+        entry.update({"anchor": anchor, "note": note or "", "closed_at": None, "closed_by": None})
+    try:
+        with _ledger_lock:
+            entries = _ledger_entries()
+            entries.append(entry)
+            written = _write_json(LAUNCH_LEDGER, entries[-LEDGER_LIMIT:])
+    except Exception:  # noqa: BLE001 — 记账失败最多让左栏认不出这层关系
+        logger.debug("could not record relation for %s", child_session_id, exc_info=True)
+        return False
+    # 刚记的这条要让下一次取清单就看得见，NEVER 让它在进程内那份索引里再躺半分钟。
+    _memo = None
+    return written
+
+
 def record_launch(
     *,
     child_session_id: str,
@@ -179,51 +275,128 @@ def record_launch(
     cwd: str,
     prompt_head: str = "",
 ) -> None:
-    """记一笔"这场会话是谁派出去的"。
+    """记一笔"这场会话是谁派出去的"（种类为派活）。
 
     ``parent_session_id`` 为空就只记这场是 worker，不记谁派的——服务端的常驻会话、
-    定时任务派出去的活都属于这种，它们本来就没有一个"上级会话"可指。**NEVER 为了让
-    父子关系好看而编一个出来**：编错的父亲会把一场会话折到一场跟它毫无关系的会话下面。
-
-    整个函数吞掉一切异常：记账是给界面用的，派活本身不该因为它失败。
+    定时任务派出去的活都属于这种，它们本来就没有一个"上级会话"可指。
     """
-    with contextlib.suppress(Exception):
-        raw = _read_json(LAUNCH_LEDGER)
-        entries = raw if isinstance(raw, list) else []
-        entries.append(
-            {
-                "child": child_session_id,
-                "parent": parent_session_id or None,
-                "agent_type": agent_type,
-                "cwd": cwd,
-                # 任务书开头留一句，排查时能认出这条账对应的是哪次派活。
-                "prompt_head": (prompt_head or "").strip()[:120],
-                "at": int(_now()),
-            }
-        )
-        _write_json(LAUNCH_LEDGER, entries[-LEDGER_LIMIT:])
+    record_relation(
+        kind="dispatch",
+        child_session_id=child_session_id,
+        parent_session_id=parent_session_id,
+        agent_type=agent_type,
+        cwd=cwd,
+        prompt_head=prompt_head,
+    )
 
 
-def _ledger_pairs() -> tuple[dict[str, str], set[str]]:
-    """账本里的 (子会话 → 派活的会话) 与"确定是 worker"的那批编号。"""
-    raw = _read_json(LAUNCH_LEDGER)
-    if not isinstance(raw, list):
-        return {}, set()
+def _parse_entry(item: Any) -> dict[str, Any] | None:
+    """一条账读成统一的样子；读不懂返回 None，由调用方跳过。
+
+    缺 ``kind`` 的是升级之前的老记录，一律当派活。
+    """
+    if not isinstance(item, dict):
+        return None
+    child = item.get("child")
+    if not isinstance(child, str) or not child.strip():
+        return None
+    kind = item.get("kind", "dispatch")
+    if kind is None:
+        kind = "dispatch"
+    if kind not in RELATION_KINDS:
+        return None
+    parent = item.get("parent")
+    if parent is not None and not isinstance(parent, str):
+        return None
+    closed_at = item.get("closed_at")
+    return {
+        **item,
+        "child": child.strip(),
+        "parent": (parent or "").strip() or None,
+        "kind": kind,
+        "closed_at": closed_at if isinstance(closed_at, int) else None,
+    }
+
+
+@dataclass(frozen=True)
+class SessionRelation:
+    """一场会话作为子会话的那层关系：种类与收口没有。会话清单原样带给页面。"""
+
+    kind: RelationKind
+    closed: bool = False
+
+
+def _ledger_pairs() -> tuple[dict[str, str], set[str], dict[str, SessionRelation]]:
+    """账本里的 (子会话 → 父会话)、"确定是 worker"的那批编号、以及每场子会话的关系。
+
+    同一场子会话记过好几条时，以后记的为准。
+    """
     parents: dict[str, str] = {}
     workers: set[str] = set()
-    for item in raw:
-        if not isinstance(item, dict):
+    relations: dict[str, SessionRelation] = {}
+    for item in _ledger_entries():
+        entry = _parse_entry(item)
+        if entry is None:
             continue
-        child = str(item.get("child") or "").strip()
-        if not child:
+        child = entry["child"]
+        kind = entry["kind"]
+        relations[child] = SessionRelation(kind=kind, closed=entry["closed_at"] is not None)
+        if kind == "dispatch":
+            workers.add(child)
+        if kind not in ("dispatch", "branch"):
             continue
-        workers.add(child)
-        parent = str(item.get("parent") or "").strip()
+        parent = entry["parent"]
         # 自己不能是自己的父亲：真出现了就是记账时把编号取错了，认下来会让那一行
         # 在清单里既是主干又是它自己的子项。
         if parent and parent != child:
             parents[child] = parent
-    return parents, workers
+    return parents, workers, relations
+
+
+def find_relation(child_session_id: str) -> dict[str, Any] | None:
+    """关系账里这场子会话最后记的那一条（读成统一的样子）。没有就是 None。"""
+    found: dict[str, Any] | None = None
+    for item in _ledger_entries():
+        entry = _parse_entry(item)
+        if entry is not None and entry["child"] == child_session_id:
+            found = entry
+    return found
+
+
+def close_relation(
+    *, child_session_id: str, parent_session_id: str, closed_by: CloseBy
+) -> dict[str, Any] | None:
+    """把一条分支记为已收口，返回改完的那一条；账上没有这条分支返回 None。
+
+    已经收口过的不再改写时刻与来路：第一次收口才是事实，后来的重复点击不该把它冲掉。
+    写入走整份原子替换，别的记录原样留着——老记录里多出来、这里不认得的字段也一并保留。
+
+    与记账不同，这里写不进去要抛 ``OSError``：收口是人点出来的动作，没记上必须告诉他，
+    NEVER 让页面以为收了口、刷新之后虚线又回来。
+    """
+    global _memo
+    with _ledger_lock:
+        entries = _ledger_entries()
+        hit: int | None = None
+        for i, item in enumerate(entries):
+            entry = _parse_entry(item)
+            if (
+                entry is not None
+                and entry["kind"] == "branch"
+                and entry["child"] == child_session_id
+                and entry["parent"] == parent_session_id
+            ):
+                hit = i
+        if hit is None:
+            return None
+        item = entries[hit]
+        if item.get("closed_at") is None:
+            item["closed_at"] = int(_now())
+            item["closed_by"] = closed_by
+            if not _write_json(LAUNCH_LEDGER, entries):
+                raise OSError(f"关系账写不进去：{LAUNCH_LEDGER}")
+    _memo = None
+    return _parse_entry(item)
 
 
 # ── 判据二：从旧会话记录里捞父子关系 ────────────────────────────────────────
@@ -270,9 +443,7 @@ def _derive_claude_session_id(frago_session_id: str) -> str | None:
         return None
 
 
-def _scan_launch_echoes(
-    projects_root: Path, *, only: list[Path] | None = None
-) -> dict[str, str]:
+def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) -> dict[str, str]:
     """扫会话库，把派活留下的父子关系捞出来：{子会话编号: 派活的会话编号}。
 
     痕迹里拿到的是 frago 那一侧的编号或会话名，要再派生一次才是 claude 那边的真实编号——
@@ -409,14 +580,30 @@ class OriginIndex:
     """子会话编号 → 派活的那场会话的编号。只收认得出父亲的那些。"""
 
     workers: frozenset[str]
-    """账本里明确记过的 worker。编号形状认不出的那两家（codex/opencode）全靠它。"""
+    """账本里明确记过的 worker（种类为派活）。编号形状认不出的那两家（codex/opencode）全靠它。"""
+
+    relations: dict[str, SessionRelation] = field(default_factory=dict)
+    """子会话编号 → 它作为子会话的种类与收口状态。账本里的按各自种类，扫描认出的一律算派活。"""
 
     def parent_of(self, session_id: str) -> str | None:
         return self.parents.get(session_id)
 
+    def relation_of(self, session_id: str) -> SessionRelation | None:
+        return self.relations.get(session_id)
+
     def origin_of(self, session_id: str) -> SessionOrigin:
-        """这场会话是谁开的。三条判据任一命中就是 worker，都不命中就是人开的。"""
-        if session_id in self.workers or session_id in self.parents:
+        """这场会话是谁开的。
+
+        账上记为派活的是 worker；记为分支的是人开的——它是人亲自在谈的一场，只是从别的
+        会话里分出来。其余再看扫描有没有认出它被派过、编号形状像不像派生的，都不命中就是
+        人开的。
+        """
+        if session_id in self.workers:
+            return "worker"
+        relation = self.relations.get(session_id)
+        if relation is not None and relation.kind == "branch":
+            return "human"
+        if session_id in self.parents:
             return "worker"
         return "worker" if is_worker_shape(session_id) else "human"
 
@@ -436,11 +623,15 @@ def load_origin_index(
     if use_memo and _memo is not None and clock - _memo[0] < MEMO_TTL_S:
         return _memo[1]
 
-    parents, workers = _ledger_pairs()
+    parents, workers, relations = _ledger_pairs()
     # 账本记的是当场看见的事实，扫描是事后从记录里捞的；两边都说了话时以账本为准。
-    merged = dict(_scanned_pairs(projects_root or CLAUDE_PROJECTS_DIR, now=clock))
+    scanned = _scanned_pairs(projects_root or CLAUDE_PROJECTS_DIR, now=clock)
+    merged = dict(scanned)
     merged.update(parents)
-    index = OriginIndex(parents=merged, workers=frozenset(workers))
+    # 扫描认出的关系一律算派活（判据只认派活留下的痕迹）。
+    merged_relations = {child: SessionRelation(kind="dispatch") for child in scanned}
+    merged_relations.update(relations)
+    index = OriginIndex(parents=merged, workers=frozenset(workers), relations=merged_relations)
     if use_memo:
         _memo = (clock, index)
     return index

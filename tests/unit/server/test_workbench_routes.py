@@ -118,6 +118,8 @@ class TestSessionList:
             # 两层，缺了就只能靠编号形状在界面上再猜一遍。
             "origin",
             "parent_session_id",
+            # 作为子会话的种类（派活 / 分支 / 交接）与收口没有。分支算人开的，却也折在原会话下。
+            "relation",
             # 此刻开在 tmux 里没有，左栏据此挂流光。
             "in_tmux",
             # 开着时那个 tmux 会话的名字，「关闭 tmux 会话」弹窗原样摆出来。
@@ -304,14 +306,14 @@ class TestSessionSearch:
     def _result(self, **overrides):
         from frago.session.search import KeywordPlan, SearchResult
 
-        fields = dict(
-            query="飞书",
-            plan=KeywordPlan(["飞书", "lark"], "中英两种叫法", "agent"),
-            hits=[],
-            corpus_root="/tmp/sessions",
-            scanned_sessions=7,
-            duration_ms=12,
-        )
+        fields = {
+            "query": "飞书",
+            "plan": KeywordPlan(["飞书", "lark"], "中英两种叫法", "agent"),
+            "hits": [],
+            "corpus_root": "/tmp/sessions",
+            "scanned_sessions": 7,
+            "duration_ms": 12,
+        }
         fields.update(overrides)
         return SearchResult(**fields)
 

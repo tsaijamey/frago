@@ -155,7 +155,75 @@ class TestRoutes:
 
     def test_未知会话回404(self, client):
         assert client.get(f"/api/workbench/sessions/{UNKNOWN_SID}/marks").status_code == 404
-        res = client.put(
-            f"/api/workbench/sessions/{UNKNOWN_SID}/marks", json={"marks": [mark()]}
-        )
+        res = client.put(f"/api/workbench/sessions/{UNKNOWN_SID}/marks", json={"marks": [mark()]})
         assert res.status_code == 404
+
+
+def branch(**fields):
+    return mark(**{"kind": "branch", "child_session_id": "child-1", "closed": False, **fields})
+
+
+class TestBranchMarks:
+    """分支标注（spec 20260928-webui-session-branch）：由服务端追加、收口由服务端改。"""
+
+    def test_服务端追加的分支标注读得回来(self):
+        entry = wm.append_branch_mark(CC_SID, branch(id="mk_b"))
+        assert entry["kind"] == "branch"
+        assert (entry["child_session_id"], entry["closed"]) == ("child-1", False)
+        assert wm.load_marks(CC_SID)["marks"] == [entry]
+
+    def test_分支标注缺了分出去的会话不收(self):
+        with pytest.raises(wm.MarksError):
+            wm.normalize_mark(mark(kind="branch"))
+        with pytest.raises(wm.MarksError):
+            wm.normalize_mark(mark(kind="branch", child_session_id=""))
+
+    def test_引用与暂存不多出分支那两项(self):
+        saved = wm.save_marks(CC_SID, {"marks": [mark(child_session_id="x", closed=True)]})
+        assert "child_session_id" not in saved["marks"][0]
+        assert "closed" not in saved["marks"][0]
+
+    def test_追加不动已有的标注(self):
+        wm.save_marks(CC_SID, {"marks": [mark(id="a")]})
+        wm.append_branch_mark(CC_SID, branch(id="b"))
+        assert [m["id"] for m in wm.load_marks(CC_SID)["marks"]] == ["a", "b"]
+
+    def test_收口只改指向那场会话的分支(self):
+        wm.append_branch_mark(CC_SID, branch(id="b1"))
+        wm.append_branch_mark(CC_SID, branch(id="b2", child_session_id="child-2"))
+        assert wm.set_branch_closed(CC_SID, "child-1") is True
+        closed = {m["id"]: m["closed"] for m in wm.load_marks(CC_SID)["marks"]}
+        assert closed == {"b1": True, "b2": False}
+
+    def test_没有这条分支时收口返回假(self):
+        assert wm.set_branch_closed(CC_SID, "nobody") is False
+
+    def test_页面编不出分支标注(self):
+        saved = wm.save_marks(CC_SID, {"marks": [mark(id="a"), branch(id="forged")]})
+        assert [m["id"] for m in saved["marks"]] == ["a"]
+
+    def test_页面交回的那份里收口状态以盘上为准(self):
+        wm.append_branch_mark(CC_SID, branch(id="b"))
+        wm.set_branch_closed(CC_SID, "child-1")
+        saved = wm.save_marks(CC_SID, {"marks": [branch(id="b", closed=False)]})
+        assert saved["marks"][0]["closed"] is True
+
+    def test_页面手里那份旧了_没带上的分支标注照样留着(self):
+        wm.append_branch_mark(CC_SID, branch(id="b"))
+        saved = wm.save_marks(CC_SID, {"marks": [mark(id="new-stack")]})
+        assert [m["id"] for m in saved["marks"]] == ["new-stack", "b"]
+
+    def test_存不了标注的那一家追加时抛KeyError(self, monkeypatch):
+        from frago.server.services import session_observer
+
+        def no_dir(sid, family):
+            raise KeyError(family)
+
+        monkeypatch.setattr(session_observer, "session_dir", no_dir)
+        with pytest.raises(KeyError):
+            wm.append_branch_mark(CC_SID, branch())
+
+    def test_接口读得到分支标注(self, client):
+        wm.append_branch_mark(CC_SID, branch(id="b"))
+        res = client.get(f"/api/workbench/sessions/{CC_SID}/marks")
+        assert res.json()["marks"][0]["child_session_id"] == "child-1"

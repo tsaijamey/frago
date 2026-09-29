@@ -84,7 +84,7 @@ _FAMILY_LABEL = {
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path")
 #: codex 的 apply_patch 没有路径参数，路径写在补丁正文里。
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
-#: Claude Code 输入框里「第 N 张粘贴的图」的写法。见 :func:`render` 末尾。
+#: Claude Code 输入框里「第 N 张粘贴的图」的写法。见 :func:`strip_image_refs`。
 _IMAGE_REF = re.compile(r"\[Image #\d+\]")
 
 
@@ -319,14 +319,25 @@ def render(
     if files:
         parts.append("## 动过的文件\n" + "\n".join(f"- {f}" for f in files))
 
-    parts.append(
-        "## 之后需要细节时回原话\n"
+    parts.append("## 之后需要细节时回原话\n" + lookup_hint(session_id) + "——换场就是为了躲开它。")
+    return strip_image_refs("\n\n".join(parts))
+
+
+def lookup_hint(session_id: str) -> str:
+    """告诉新会话怎么回原会话翻记录。交接与分支（``workbench_branch``）共用这一句，
+    NEVER 各写一份——翻法改了，两处得一起跟着改。"""
+    return (
         f"`frago session show {session_id} --steps`（查不到就先 `frago session sync`），"
         '或 `frago session search "<一句话>"`。原话里附过的图也在那里。只按需翻，'
-        "不要整场读进来——换场就是为了躲开它。"
+        "不要整场读进来"
     )
 
-    # 这段话是当成人的输入投进新会话的。Claude Code 会把输入里的 ``[Image #N]`` 认成
-    # 「附上第 N 张粘贴的图」，真的挂上图（2026-09-24 实测，挂上的是新会话那边编号对得上
-    # 的图，不是原话里那张）。图不随交接带过去：新会话要看，自己回原会话翻。
-    return _IMAGE_REF.sub("（这里附了图）", "\n\n".join(parts))
+
+def strip_image_refs(text: str) -> str:
+    """把 ``[Image #N]`` 换成一句说明。
+
+    投进新会话的第一句话是当成人的输入送过去的。Claude Code 会把输入里的 ``[Image #N]``
+    认成「附上第 N 张粘贴的图」，真的挂上图（2026-09-24 实测，挂上的是新会话那边编号对得上
+    的图，不是原话里那张）。图不随交接、分支带过去：新会话要看，自己回原会话翻。
+    """
+    return _IMAGE_REF.sub("（这里附了图）", text)

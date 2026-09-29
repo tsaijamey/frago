@@ -29,7 +29,7 @@ from frago.session import (
 )
 from frago.session.adapters import claude_code_records
 from frago.session.session_index import SessionStatus, TailSignals, derive_status
-from frago.session.session_origin import OriginIndex, SessionOrigin
+from frago.session.session_origin import OriginIndex, SessionOrigin, SessionRelation
 from frago.session.unified_record import RecordFamily, UnifiedRecord
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,14 @@ class SessionCard:
     """派活的那场会话。只有认得出来的 worker 才有值；人开的会话恒为空。
 
     左栏据此把 worker 折到派活的那一场下面。认不出父亲的 worker 仍是 worker，
-    只是没地方可挂——界面另有一处收它们，NEVER 在这里编一个父亲出来。"""
+    只是没地方可挂——界面另有一处收它们，NEVER 在这里编一个父亲出来。
+
+    分支会话（人从原会话圈一段原文分出来的那种）也有值：它算人开的，但同样折到原会话
+    下面。"""
+
+    relation: SessionRelation | None = None
+    """这场会话作为子会话的那层关系：种类（派活 / 分支 / 交接）与收口没有。不是任何会话的
+    子会话时为空。判据见 :mod:`frago.session.session_origin`「关系种类」。"""
 
 
 def detect_family(session_id: str) -> RecordFamily:
@@ -221,6 +228,7 @@ def _claude_cards(origins: OriginIndex) -> list[SessionCard]:
                 digest_stuck=digest_stuck,
                 origin=origins.origin_of(sid),
                 parent_session_id=origins.parent_of(sid),
+                relation=origins.relation_of(sid),
             )
         )
     return cards
@@ -265,6 +273,7 @@ def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
                 digest_stuck=digest_stuck,
                 origin=origins.origin_of(sid),
                 parent_session_id=origins.parent_of(sid),
+                relation=origins.relation_of(sid),
             )
         )
     return cards
@@ -301,6 +310,7 @@ def _opencode_cards(origins: OriginIndex) -> list[SessionCard]:
                 digest_stuck=digest_stuck,
                 origin=origins.origin_of(row.session_id),
                 parent_session_id=origins.parent_of(row.session_id),
+                relation=origins.relation_of(row.session_id),
             )
         )
     return cards
@@ -345,6 +355,7 @@ def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
                 digest_stuck=digest_stuck,
                 origin=origins.origin_of(meta.session_id),
                 parent_session_id=origins.parent_of(meta.session_id),
+                relation=origins.relation_of(meta.session_id),
             )
         )
     return cards

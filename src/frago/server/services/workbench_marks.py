@@ -1,4 +1,4 @@
-"""会话页的标注：记录流里被「引用」或「暂存」过的那些文字。
+"""会话页的标注：记录流里被「引用」「暂存」过、或从那里「分支」出去的那些文字。
 
 方案见 ``.claude/docs/spec-driven-plan/20260928-webui-session-stack/spec.md``。
 
@@ -13,6 +13,18 @@
 页面每改一次（新增、改想法、删、排序、标用过）就把整份交回来，这里整份写下去。不做
 逐条合并：两个标签页同时改，以后写入的为准（spec「不做什么」第 3 条）。写入走临时文件
 加原子替换，写到一半断电不会留下半份文件。
+
+## 分支标注归服务端管
+
+``kind: "branch"`` 那一种是起分支时由服务端追加的（spec 20260928-webui-session-branch），
+多记两项：分出去的那场会话（``child_session_id``）与收口没有（``closed``）。收口状态与会话
+关系账里那一条由同一个服务端动作一起改，**NEVER 让页面各改各的**——否则左栏说收了口、
+正文还画着虚线。所以页面整份交回来的时候：
+
+- 盘上有、交上来的没有的分支标注，原样留着（页面没有删分支的入口，没带上只能是它手里
+  那份旧了——起分支的标注是在页面读过之后才追加的）；
+- 交上来的分支标注，分出去的会话与收口状态一律以盘上的为准；
+- 盘上没有、交上来却有的分支标注，丢掉：分支只能由服务端当场记，页面编不出来。
 
 ## 坏文件不连累界面
 
@@ -33,7 +45,7 @@ logger = logging.getLogger(__name__)
 MARKS_FILENAME = "workbench-marks.json"
 MARKS_VERSION = 1
 
-KINDS = ("quote", "stack")
+KINDS = ("quote", "stack", "branch")
 
 # 上限。原文取自人在记录流里圈的那一段，两万字已经是好几屏；想法是人自己打的一两句。
 MAX_TEXT = 20_000
@@ -41,6 +53,7 @@ MAX_NOTE = 4_000
 MAX_MARKS = 500
 MAX_ID = 64
 MAX_RECORD_ID = 256
+MAX_SESSION_ID = 256
 
 
 class MarksError(ValueError):
@@ -95,7 +108,7 @@ def normalize_mark(raw: Any) -> dict[str, Any]:
     if occurrence < 0:
         raise MarksError("occurrence 不能是负数")
     used_at = raw.get("used_at")
-    return {
+    out = {
         "id": mark_id,
         "kind": kind,
         "record_id": record_id,
@@ -106,6 +119,13 @@ def normalize_mark(raw: Any) -> dict[str, Any]:
         "created_at": _int(raw.get("created_at", 0), "created_at"),
         "used_at": None if used_at is None else _int(used_at, "used_at"),
     }
+    if kind == "branch":
+        child = _str(raw.get("child_session_id"), "child_session_id", MAX_SESSION_ID)
+        if not child:
+            raise MarksError("分支标注的 child_session_id 不能为空")
+        out["child_session_id"] = child
+        out["closed"] = raw.get("closed") is True
+    return out
 
 
 def normalize_marks(payload: Any) -> dict[str, Any]:
@@ -154,9 +174,67 @@ def load_marks(session_id: str) -> dict[str, Any]:
     return read_marks(marks_dir(session_id))
 
 
+def _keep_server_branches(
+    incoming: list[dict[str, Any]], on_disk: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """把页面交上来的那份与盘上的分支标注对齐。规矩见模块头「分支标注归服务端管」。"""
+    disk_branches = {m["id"]: m for m in on_disk if m["kind"] == "branch"}
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for mark in incoming:
+        if mark["kind"] != "branch":
+            merged.append(mark)
+            continue
+        disk = disk_branches.get(mark["id"])
+        if disk is None:
+            continue
+        merged.append(
+            {**mark, "child_session_id": disk["child_session_id"], "closed": disk["closed"]}
+        )
+        seen.add(mark["id"])
+    merged.extend(m for mid, m in disk_branches.items() if mid not in seen)
+    return merged
+
+
 def save_marks(session_id: str, payload: Any) -> dict[str, Any]:
-    """整份覆盖。先认会话、再校验，校验过了才落盘；交回落盘后的那一份。"""
+    """整份覆盖。先认会话、再校验，校验过了才落盘；交回落盘后的那一份。
+
+    分支标注例外，见模块头「分支标注归服务端管」。
+    """
     directory = marks_dir(session_id)
     marks = normalize_marks(payload)
+    marks["marks"] = _keep_server_branches(marks["marks"], read_marks(directory)["marks"])
+    marks = normalize_marks(marks)
     write_marks(directory, marks)
     return marks
+
+
+def append_branch_mark(session_id: str, mark: dict[str, Any]) -> dict[str, Any]:
+    """起分支时往主线的标注文件末尾追加一条分支标注，返回落盘的那一条。
+
+    认不出的会话抛 ``UnknownSessionFamily``；没有备份目录的那一家（CoreAgent）抛
+    ``KeyError``——调用方据此告诉人标注没存下，分支本身照起。
+    """
+    directory = marks_dir(session_id)
+    entry = normalize_mark({**mark, "kind": "branch"})
+    current = read_marks(directory)
+    current["marks"].append(entry)
+    write_marks(directory, normalize_marks(current))
+    return entry
+
+
+def set_branch_closed(session_id: str, child_session_id: str) -> bool:
+    """把主线里指向这场分支会话的标注都记为已收口。一条都没有返回 False。
+
+    同一段原文分过两次是两条独立的分支，各指各的会话，这里按会话编号只改对得上的那些。
+    """
+    directory = marks_dir(session_id)
+    current = read_marks(directory)
+    hit = False
+    for mark in current["marks"]:
+        if mark["kind"] == "branch" and mark.get("child_session_id") == child_session_id:
+            mark["closed"] = True
+            hit = True
+    if hit:
+        write_marks(directory, current)
+    return hit

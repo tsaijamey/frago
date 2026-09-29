@@ -213,9 +213,11 @@ def _record_worker_launch(
         return
     with contextlib.suppress(Exception):
         from frago.agent_driver.drivers.claude import session_id_for
-        from frago.session.session_origin import record_launch
+        from frago.session.session_origin import record_relation
 
-        record_launch(
+        # 会话关系账里种类写明是「派活」：同一本账还记着人起的分支，那一种子会话算人开的。
+        record_relation(
+            kind="dispatch",
             child_session_id=session_id_for(sid, native=native_session_id),
             parent_session_id=_parent_session_id(),
             agent_type=agent_type,

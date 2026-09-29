@@ -27,6 +27,7 @@ from frago.server.services import (
     coreagent_runner,
     session_send,
     workbench_agents,
+    workbench_branch,
     workbench_groups,
     workbench_handoff,
     workbench_new_session,
@@ -225,6 +226,104 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
         "old_title": old_title,
         "new_title": new_title,
     }
+
+
+class BranchRequest(BaseModel):
+    """``POST /workbench/sessions/{sid}/branch`` 的请求体：从主线哪段原文分出去、人写的那句话。
+
+    ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）。
+    """
+
+    record_id: str
+    text: str
+    occurrence: int = 0
+    note: str = ""
+
+
+@router.post("/workbench/sessions/{sid}/branch", status_code=201)
+async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str, Any]:
+    """从这场会话圈的一段原文起一场分支会话：同一家、同一目录，第一句话由服务端拼好。
+
+    拼法与记账见 :mod:`~frago.server.services.workbench_branch`。起会话走的是与新建会话、
+    交接完全相同的一条路，回的形状也相同，外加几项：
+
+    - ``title``：原地提示里这场分支叫什么（新会话还没有常规标题，先用人写的那句话开头）；
+    - ``recorded``：关系账记上没有。编号要等认领的那两家起的时候还不知道，为 null；
+    - ``mark_saved``：主线的分支标注存下没有（CoreAgent 那一家存不了，为假）。
+
+    **原会话不改名，页面也不跳**——这是与交接的分别。拒绝的几档与交接同义：编号不认 404；
+    记录没了、问不出目录、接不上话、还没有任何记录 409；没写那句话、那一家此刻挑不了 400。
+    """
+    try:
+        anchor, note = workbench_branch.validate(
+            request.record_id, request.text, request.occurrence, request.note
+        )
+    except workbench_branch.BranchRequestInvalid as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        branch = await asyncio.to_thread(workbench_branch.compose, sid, anchor, note)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (
+        session_send.SessionGone,
+        session_send.SessionDirectoryUnknown,
+        session_send.SessionNotResumable,
+        workbench_branch.BranchUnavailable,
+    ) as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    try:
+        launch = await asyncio.to_thread(
+            workbench_new_session.start_with_id,
+            branch.agent_type,
+            branch.cwd,
+            branch.text,
+            session_id=str(uuid.uuid4()),
+        )
+    except workbench_agents.AgentUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    recorded: bool | None = None
+    mark_saved: bool | None = None
+    mark_id: str | None = None
+    if launch.session_id:
+        result = await asyncio.to_thread(workbench_branch.record, branch, launch.session_id)
+        recorded, mark_saved, mark_id = result.relation, result.mark_saved, result.mark_id
+    else:
+        workbench_branch.record_when_claimed(branch, launch.handle)
+
+    return {
+        **_launch_payload(launch),
+        "text": branch.text,
+        "title": workbench_branch.title_for(note),
+        "recorded": recorded,
+        "mark_saved": mark_saved,
+        "mark_id": mark_id,
+    }
+
+
+class CloseBranchRequest(BaseModel):
+    """``by``：``bring-back``（分支里带回主线后发出）或 ``manual``（主线上手动标记）。"""
+
+    by: str
+
+
+@router.post("/workbench/sessions/{sid}/branches/{child}/close")
+async def close_workbench_branch(sid: str, child: str, request: CloseBranchRequest) -> dict:
+    """把 ``sid`` 分到 ``child`` 的那条分支记为已收口。关系账与主线标注在这一次请求里一起改。
+
+    关系账上没有这条分支 404；来路不认得 400；关系账写不进去 500。标注改没改上看
+    ``mark_updated``——那一家存不了标注时为假，不算失败。
+    """
+    try:
+        return await asyncio.to_thread(workbench_branch.close, sid, child, request.by)
+    except workbench_branch.BranchRequestInvalid as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except workbench_branch.BranchNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"没记上收口：{e}") from e
 
 
 @router.get("/workbench/sessions/pending/{handle}")
