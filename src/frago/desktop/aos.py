@@ -886,9 +886,12 @@ def cmd_up(flags: dict) -> dict:
 def cmd_down(rec: dict) -> dict:
     """停运行态，保留身份。
 
-    只发 SIGTERM 再把注册表标 stopped——身份层一个字段都不碰。载体（桌面页标签、
-    viewer 目录、clips、tmux 会话）全都还在，删掉身份等于把"存在但没跑"错报成
-    "不存在"。
+    发 SIGTERM、收走演员浏览器，再把注册表标 stopped——身份层一个字段都不碰。
+    载体（桌面页标签、viewer 目录、clips、tmux 会话）全都还在，删掉身份等于把
+    "存在但没跑"错报成"不存在"。
+
+    演员浏览器跟着舞台走：舞台停了它没人用，留着只是一台看不见的浏览器占着
+    内存和 9222。登录态在 profile 目录里，停进程不动它，下次 up 原样带回来。
     """
     # 还在说的话先说完再停，最多等两分钟。问不到（broker 没在应答）就不等——
     # down 的全部意义是停得掉，不能被一句旁白挡住。
@@ -908,6 +911,11 @@ def cmd_down(rec: dict) -> dict:
         # 改完的代码永远上不了台。能应答的那一位自己报得出 pid，问它。
         with suppress(Exception):
             pid = get_status(rec).get("pid")
+    # 演员端口要趁 broker 还活着问：注册表存的是 broker 的 HTTP 端口，CDP 端口
+    # 只有 broker 手里有。问不到就用默认的 9222（白名单里演员只有这一个数）。
+    stage_port = 9222
+    with suppress(Exception):
+        stage_port = int(get_status(rec)["cdp_ports"]["stage"] or 9222)
     signalled = False
     if pid:
         try:
@@ -922,6 +930,8 @@ def cmd_down(rec: dict) -> dict:
         if not registry._port_alive(rec.get("port")):
             break
         time.sleep(0.3)
+    # broker 先停、演员后收：反过来的话 broker 的自愈会把刚关掉的演员拉回来。
+    actor = _stop_actor_browser(stage_port)
     registry.mark_stopped(rec["id"])
     after = registry.read_instance(rec["id"]) or {}
     waited = ((speech_waited or {}).get("results") or [{}])[0]
@@ -930,8 +940,42 @@ def cmd_down(rec: dict) -> dict:
                if waited.get("waited_sec") else {}),
             "status": after.get("status"),
             "desired": after.get(registry.DESIRED_FIELD),
+            "actor_browser": actor,
             "note": "已记下人不想让它跑，守护不会把它拉起来；要重新用就 `frago desktop up`。",
             "identity_kept": {k: after.get(k) for k in registry.IDENTITY_FIELDS}}
+
+
+def _cdp_answering(port: int) -> bool:
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version",
+                               timeout=1).read()
+        return True
+    except Exception:
+        return False
+
+
+def _stop_actor_browser(port: int) -> dict:
+    """收走演员端口上的浏览器，先核对再报。
+
+    端口本来就没人应答，报 stopped: false 与原因，不把"没东西可关"说成关掉了；
+    stop 之后端口还在应答，同样如实报出来，不拦 down。
+    """
+    if not _cdp_answering(port):
+        return {"port": port, "stopped": False, "reason": "端口上本来就没有浏览器"}
+    from .broker import _frago_bin  # 只认系统级 frago，与 broker 起演员同一个入口
+
+    proc = subprocess.run(
+        [_frago_bin(), "browser", "-b", "cdp", "stop", "--port", str(port)],
+        capture_output=True, text=True, timeout=60,
+    )
+    deadline = time.time() + 30
+    while time.time() < deadline and _cdp_answering(port):
+        time.sleep(0.3)
+    if _cdp_answering(port):
+        return {"port": port, "stopped": False,
+                "reason": "stop 之后端口仍在应答",
+                "detail": (proc.stderr or proc.stdout)[-400:].strip()}
+    return {"port": port, "stopped": True}
 
 
 def cmd_voice_synth(text: str, flags: dict) -> dict:
