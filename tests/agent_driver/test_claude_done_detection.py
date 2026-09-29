@@ -131,3 +131,31 @@ def test_read_answer_handles_nbsp_in_prompt_echo() -> None:
 
 def test_recipe_wires_read_answer() -> None:
     assert load_driver("claude").read_answer is _read_answer
+
+
+def test_ready_box_accepts_the_empty_input_placeholder_hint() -> None:
+    """claude 2.1.284 起空输入框里渲染一句占位提示，那仍然是"框是空的"。
+
+    提示的外层形状写死在 claude 里（``Try "…"``，八句候选），只在缓冲区为空时渲染。
+    不认它，就绪判据就永不命中：会话干等到超时，而屏上明明是个活着的 TUI——2026-09-29
+    claude 自动升级当天实测到的就是这个（报错写着 never reached ready signal）。
+    """
+    from frago.agent_driver.drivers.claude import _READY_BOX
+
+    # 原生 Windows 抓屏原样（``❯`` 与提示之间是 nbsp）。
+    assert _READY_BOX.matches("────────\n❯\xa0Try \"edit <filepath> to...\"\n────────")
+    assert _READY_BOX.matches('❯ Try "fix lint errors"')
+    assert _READY_BOX.matches('│ ❯ Try "create a util logging.py that..."')
+    # 老版本的纯空框照旧算就绪。
+    assert _READY_BOX.matches("❯ ")
+    assert _READY_BOX.matches("❯\xa0")
+
+
+def test_ready_box_still_rejects_text_typed_into_the_box() -> None:
+    """框里真有人打的字时不算空：提示一旦被键入的字符顶掉，就不该再判就绪/已提交。"""
+    from frago.agent_driver.drivers.claude import _READY_BOX
+
+    assert not _READY_BOX.matches("❯\xa0hello there")
+    assert not _READY_BOX.matches("❯ claude --dangerously-skip-permissions --session-id x")
+    # 形似提示但不是它（没有引号 / 引号里跨行）也不算空。
+    assert not _READY_BOX.matches("❯ Try this instead")
