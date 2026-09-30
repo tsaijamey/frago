@@ -1627,6 +1627,9 @@
         "bashCommand": "直接跑的命令"
       },
       "attachedImages": "随附图片 {{n}} 张",
+      "imageGone": "图片已不在",
+      "openImage": "查看原图：{{name}}",
+      "openImageNewTab": "在新标签页打开原图",
       "thinkEmpty": "思考了一轮，正文没落盘",
       "charCount": "{{n}} 字",
       "hookInject": "旁路注入",

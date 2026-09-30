@@ -56,6 +56,8 @@ import {
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import { splitTrailingBlock } from '@/utils/decisionBlock';
+import { splitAttachedImages } from '@/utils/attachedImages';
+import AttachedImages from './AttachedImages';
 import { DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
@@ -682,7 +684,8 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const mode = str(p, 'input_mode');
   const command = str(p, 'command');
   const reminders = list(p, 'reminders').filter((r): r is string => typeof r === 'string' && !!r);
-  const text = str(p, 'text');
+  // 会话页发的图是以路径拼在正文尾巴上的，摘出来摆成缩略图，正文只留人写的话。
+  const { text, images: attached } = splitAttachedImages(str(p, 'text'));
 
   // 敲在输入框里是常态，说出来等于没说。只有"当时不是直接打字"才值得标一句：插话是
   // 趁 agent 在忙时打进去的，接口发起的那几条根本不是人坐在这儿敲的。
@@ -721,6 +724,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
           {t('workbench.record.attachedImages', { n: images.length })}
         </p>
       ) : null}
+      <AttachedImages images={attached} />
       {reminders.length ? <Reminders items={reminders} /> : null}
     </TextShell>
   );
@@ -1119,6 +1123,7 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
+  const { text, images } = splitAttachedImages(str(p, 'body'));
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
   return (
     <TextShell
@@ -1131,7 +1136,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
-      <Prose text={str(p, 'body')} />
+      <Prose text={text} />
+      <AttachedImages images={images} />
     </TextShell>
   );
 }

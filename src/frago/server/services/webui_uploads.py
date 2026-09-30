@@ -158,6 +158,27 @@ def save_uploaded_documents(documents: list[dict], sid: str) -> list[Path]:
     return saved
 
 
+# 读回时只放行图片——同一个目录里还躺着人传上来的文档，那些不该经这条路被浏览器直接取走。
+_IMAGE_SUFFIXES = {f".{ext}" for ext in _MIME_EXT.values()}
+
+
+def resolve_uploaded_image(folder: str, name: str) -> Path | None:
+    """把会话页上一张附图的 ``<目录名>/<文件名>`` 翻回盘上的绝对路径，不在或不合法回 None。
+
+    会话页从 prompt 文本里认出这些路径后要把图摆出来，浏览器只能经服务端取。目录名与
+    文件名都必须是落盘时本模块自己起的那种形状（不含 ``/``、不以点开头），解析后仍须
+    落在 ``UPLOAD_ROOT`` 之内——任何一条不满足都当不存在，NEVER 拿它去读别处的文件。
+    """
+    if _sanitize_sid(folder) != folder or _safe_filename(name) != name:
+        return None
+    path = (UPLOAD_ROOT / folder / name).resolve()
+    if path.suffix.lower() not in _IMAGE_SUFFIXES:
+        return None
+    if not path.is_relative_to(UPLOAD_ROOT.resolve()) or not path.is_file():
+        return None
+    return path
+
+
 def build_prompt_with_attachments(
     text: str, image_paths: list[Path], doc_paths: list[Path] | None = None
 ) -> str:

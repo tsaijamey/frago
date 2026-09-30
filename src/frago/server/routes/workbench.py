@@ -21,6 +21,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from frago.server.services import (
@@ -38,6 +39,7 @@ from frago.server.services import (
 from frago.server.services.webui_uploads import (
     ImageUploadError,
     build_prompt_with_attachments,
+    resolve_uploaded_image,
     save_uploaded_documents,
     save_uploaded_images,
 )
@@ -632,6 +634,19 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         "status": activation.status,
         "text": activation.text,
     }
+
+
+@router.get("/workbench/uploads/{folder}/{name}")
+async def read_uploaded_image(folder: str, name: str) -> FileResponse:
+    """取回人随某句话发过的一张图，会话页据此把「附带图片」那几行路径摆成缩略图。
+
+    只认 ``~/.frago/webui_uploads/`` 里的图片；文档、目录外的路径、形状不对的名字一律 404，
+    与「文件已经不在了」同一个答复——页面照样只需知道「这张取不到」。
+    """
+    path = resolve_uploaded_image(folder, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="这张图已经不在了")
+    return FileResponse(path)
 
 
 class StopRunRequest(BaseModel):

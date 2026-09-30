@@ -1631,6 +1631,9 @@
         "bashCommand": "Ran directly"
       },
       "attachedImages": "{{n}} images attached",
+      "imageGone": "Image gone",
+      "openImage": "View original: {{name}}",
+      "openImageNewTab": "Open original in a new tab",
       "thinkEmpty": "Thought a round; the text was never written down",
       "charCount": "{{n}} chars",
       "hookInject": "Hook injection",
