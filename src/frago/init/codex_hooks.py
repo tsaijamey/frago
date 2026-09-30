@@ -35,6 +35,16 @@ Closing that last gap means teaching the routing engine to read
 Until then the gap is real and stated rather than papered over — a rule that
 silently stops firing on one harness is worse than one known not to.
 
+One thing about codex is handled in frago-core rather than here, and this
+module only switches it on: how a reminder reaches the model around a tool
+call. A reminder returned as ``additionalContext`` at ``PreToolUse`` or
+``PostToolUse`` lands in the conversation as a separate message between the
+tool call and its result, and strict gateways (Volcengine Agent Plan, the
+official DeepSeek API) reject the whole turn over it. Every command frago
+registers here carries ``HARNESS_FLAG``; with it, frago-core holds those
+reminders back and hands them over inside the tool result instead. That flag
+is the only codex-specific input the engine gets.
+
 Two things about codex are not like Claude Code and are handled here:
 
 - The registration file is ``$CODEX_HOME/hooks.json`` (``~/.codex/hooks.json``),
@@ -76,6 +86,11 @@ ADDITIONAL_CONTEXT_LIMIT = 8000
 
 # Shown in the codex UI while the hook runs.
 STATUS_MESSAGE = "frago"
+
+# Appended to every command frago registers in codex. Tells frago-core the
+# event came from codex, so reminders around a tool call are merged into the
+# tool result instead of being inserted between the call and its result.
+HARNESS_FLAG = "--harness codex"
 
 TRUST_HINT = (
     "codex 不会直接运行新装的钩子：它要求你先过目并信任钩子的确切定义。"
@@ -160,18 +175,18 @@ def _strip_frago_from_event(groups: Any) -> tuple[list, bool]:
 def build_hook_entry(hook_path: str, event: str) -> dict[str, Any]:
     """Build the handler frago registers for one codex event.
 
-    ``additionalContextLimit`` is only set on the events that can actually
-    return context to the model. codex reports a configuration warning for the
-    events that cannot, and a warning frago prints on every startup is a
-    warning people learn to ignore.
+    ``additionalContextLimit`` is only set on the events where frago returns
+    context to the model. Under ``HARNESS_FLAG`` the tool-call events never do
+    — their reminders travel inside the tool result — so only the two
+    conversation-level events need the larger budget.
     """
     entry: dict[str, Any] = {
         "type": "command",
-        "command": hook_path,
+        "command": f"{hook_path} {HARNESS_FLAG}",
         "timeout": HOOK_TIMEOUT_SECONDS,
         "statusMessage": STATUS_MESSAGE,
     }
-    if event in ("SessionStart", "UserPromptSubmit", "PreToolUse"):
+    if event in ("SessionStart", "UserPromptSubmit"):
         entry["additionalContextLimit"] = ADDITIONAL_CONTEXT_LIMIT
     return entry
 

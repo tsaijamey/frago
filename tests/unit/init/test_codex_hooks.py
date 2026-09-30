@@ -12,6 +12,8 @@ import pytest
 from frago.init import codex_hooks
 
 HOOK_CMD = "/Users/x/.frago/bin/frago-core --engine"
+# 登记进 codex 的命令多带一个标记，内核据此把提示并进调用结果里交。
+CODEX_CMD = f"{HOOK_CMD} --harness codex"
 SUPPORTED = [
     {"event": "SessionStart", "matcher": ""},
     {"event": "UserPromptSubmit", "matcher": ""},
@@ -44,10 +46,12 @@ def test_registers_every_event_frago_core_reports(codex_home):
     assert set(hooks) == {"SessionStart", "UserPromptSubmit", "PreToolUse"}
     entry = hooks["SessionStart"][0]["hooks"][0]
     assert entry["type"] == "command"
-    assert entry["command"] == HOOK_CMD
+    assert entry["command"] == CODEX_CMD
     # codex 自己的默认超时是 600 秒，挂住的钩子会把一轮拖住十分钟。
     assert entry["timeout"] == codex_hooks.HOOK_TIMEOUT_SECONDS
     assert entry["additionalContextLimit"] == codex_hooks.ADDITIONAL_CONTEXT_LIMIT
+    # 工具调用前不再回附加上下文（提示并进调用结果），不需要这份额度。
+    assert "additionalContextLimit" not in hooks["PreToolUse"][0]["hooks"][0]
 
 
 def test_is_idempotent(codex_home):
@@ -83,7 +87,7 @@ def test_leaves_other_peoples_hooks_alone(codex_home):
         for h in group["hooks"]
     ]
     assert "python3 team.py" in commands
-    assert HOOK_CMD in commands
+    assert CODEX_CMD in commands
 
 
 def test_replaces_a_stale_frago_entry_rather_than_adding_a_second(codex_home):
@@ -111,7 +115,7 @@ def test_replaces_a_stale_frago_entry_rather_than_adding_a_second(codex_home):
         for group in _read(codex_home)["hooks"]["SessionStart"]
         for h in group["hooks"]
     ]
-    assert commands == [HOOK_CMD]
+    assert commands == [CODEX_CMD]
 
 
 def test_drops_frago_from_events_it_no_longer_supports(codex_home, monkeypatch):
