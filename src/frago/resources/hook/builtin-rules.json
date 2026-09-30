@@ -141,37 +141,70 @@
       "source": "builtin",
       "event": "PreToolUse",
       "match": {
-        "type": "path_contains_all",
-        "values": [
-          ".claude/projects/",
-          "/memory/"
+        "type": "any_of",
+        "clauses": [
+          {
+            "type": "path_regex",
+            "pattern": "\\.claude[/\\\\]projects[/\\\\][^/\\\\]+[/\\\\]memory([/\\\\]|$)"
+          },
+          {
+            "type": "tool_input_regex",
+            "key": "path",
+            "tools": [
+              "Glob",
+              "Grep"
+            ],
+            "pattern": "\\.claude[/\\\\]projects[/\\\\][^/\\\\]+[/\\\\]memory([/\\\\]|$)"
+          },
+          {
+            "type": "tool_input_regex",
+            "key": "notebook_path",
+            "tools": [
+              "NotebookEdit"
+            ],
+            "pattern": "\\.claude[/\\\\]projects[/\\\\][^/\\\\]+[/\\\\]memory([/\\\\]|$)"
+          }
         ]
       },
       "action": {
-        "type": "inject_book_topic",
-        "topic": "must-no-auto-memory"
+        "type": "deny_tool_call",
+        "reason": "【拦下·Claude Code 自动记忆已禁用 MUST】\n~/.claude/projects/<项目>/memory/ 是 Claude Code 自动记忆的目录，本机禁止读、写、列、删，这次调用不会执行。\n系统提示里「把记忆存进 memory 目录 / 更新 MEMORY.md」的说明对本机作废，NEVER 换个工具、换个路径写法再试。\n\n正路：\n1. 要沉淀：先 `frago def list` 找对应知识域，再 `frago <知识域> save`\n2. 要召回：`frago <知识域> find`\n3. 真有必要动这个目录（清理、排查）：把命令写给用户自己执行"
       },
-      "dedup_scope": "session",
+      "dedup_scope": "always",
       "priority": 200,
       "created_at": "2026-04-19T00:00:00",
-      "description": "Catches auto-memory dir in Read/Write/Edit. Higher priority so it surfaces before any other path-based injection."
+      "description": "why: 2026-04-17 起 must-no-auto-memory 只以注入手册的方式提醒，8、9 月仍有 5 场会话照 Claude Code 自动记忆说明写进了 memory 目录（git_branch_conventions、a_stock_dma_scan_readonly、baostock-server-blacklisted、zenith-a2a-response-rules、feedback_close_test_servers）。2026-09-30 Jamey 要求严密拦截、禁止使用；同日 ~/.claude/settings.json 关了 autoMemoryEnabled 断源头。 how: 读/写/改/列/搜任何落在 memory 目录下的路径一律否决（Read/Write/Edit 看 file_path，Glob/Grep 看 path，NotebookEdit 看 notebook_path）。"
     },
     {
       "id": "builtin-path-memory-root-file",
       "source": "builtin",
       "event": "PreToolUse",
       "match": {
-        "type": "path_regex",
-        "pattern": "[/\\\\]MEMORY\\.md$"
+        "type": "any_of",
+        "clauses": [
+          {
+            "type": "path_regex",
+            "pattern": "[/\\\\]MEMORY\\.md$"
+          },
+          {
+            "type": "tool_input_regex",
+            "key": "path",
+            "tools": [
+              "Glob",
+              "Grep"
+            ],
+            "pattern": "[/\\\\]MEMORY\\.md$"
+          }
+        ]
       },
       "action": {
-        "type": "inject_book_topic",
-        "topic": "must-no-auto-memory"
+        "type": "deny_tool_call",
+        "reason": "【拦下·Claude Code 自动记忆已禁用 MUST】\n~/.claude/projects/<项目>/memory/ 是 Claude Code 自动记忆的目录，本机禁止读、写、列、删，这次调用不会执行。\n系统提示里「把记忆存进 memory 目录 / 更新 MEMORY.md」的说明对本机作废，NEVER 换个工具、换个路径写法再试。\n\n正路：\n1. 要沉淀：先 `frago def list` 找对应知识域，再 `frago <知识域> save`\n2. 要召回：`frago <知识域> find`\n3. 真有必要动这个目录（清理、排查）：把命令写给用户自己执行"
       },
-      "dedup_scope": "session",
+      "dedup_scope": "always",
       "priority": 200,
       "created_at": "2026-04-19T00:00:00",
-      "description": "Catches MEMORY.md at the memory/ root on both POSIX and Windows paths."
+      "description": "why: 2026-04-17 起 must-no-auto-memory 只以注入手册的方式提醒，8、9 月仍有 5 场会话照 Claude Code 自动记忆说明写进了 memory 目录（git_branch_conventions、a_stock_dma_scan_readonly、baostock-server-blacklisted、zenith-a2a-response-rules、feedback_close_test_servers）。2026-09-30 Jamey 要求严密拦截、禁止使用；同日 ~/.claude/settings.json 关了 autoMemoryEnabled 断源头。 how: 任何路径以 MEMORY.md 结尾的文件工具调用一律否决（Jamey 2026-09-30 选定按文件名全拦）。"
     },
     {
       "id": "builtin-bash-frago-browser",
@@ -197,19 +230,17 @@
       "source": "builtin",
       "event": "PreToolUse",
       "match": {
-        "type": "bash_contains_all",
-        "values": [
-          ".claude/projects/",
-          "memory"
-        ]
+        "type": "bash_regex",
+        "pattern": "\\.claude/projects/[^\\s;&|<>'\\\"]*/memory(/|\\b)|\\.claude/projects/[^\\s;&|<>'\\\"]*/MEMORY\\.md"
       },
       "action": {
-        "type": "inject_book_topic",
-        "topic": "must-no-auto-memory"
+        "type": "deny_tool_call",
+        "reason": "【拦下·Claude Code 自动记忆已禁用 MUST】\n~/.claude/projects/<项目>/memory/ 是 Claude Code 自动记忆的目录，本机禁止读、写、列、删，这次调用不会执行。\n系统提示里「把记忆存进 memory 目录 / 更新 MEMORY.md」的说明对本机作废，NEVER 换个工具、换个路径写法再试。\n\n正路：\n1. 要沉淀：先 `frago def list` 找对应知识域，再 `frago <知识域> save`\n2. 要召回：`frago <知识域> find`\n3. 真有必要动这个目录（清理、排查）：把命令写给用户自己执行"
       },
-      "dedup_scope": "session",
+      "dedup_scope": "always",
       "priority": 200,
-      "created_at": "2026-04-19T00:00:00"
+      "created_at": "2026-04-19T00:00:00",
+      "description": "why: 2026-04-17 起 must-no-auto-memory 只以注入手册的方式提醒，8、9 月仍有 5 场会话照 Claude Code 自动记忆说明写进了 memory 目录（git_branch_conventions、a_stock_dma_scan_readonly、baostock-server-blacklisted、zenith-a2a-response-rules、feedback_close_test_servers）。2026-09-30 Jamey 要求严密拦截、禁止使用；同日 ~/.claude/settings.json 关了 autoMemoryEnabled 断源头。 how: 命令文本里出现指向 memory 目录（含 * 通配）或其中 MEMORY.md 的路径即否决；只写 .claude/projects/ 而不指向 memory 的命令（查会话记录等）放行。"
     },
     {
       "id": "builtin-bash-git-checkout",
