@@ -582,6 +582,39 @@ describe('信封：已发送 → 已入队列 → 成为一轮', () => {
     await waitFor(() => expect(result.current.outbound).toHaveLength(0), { timeout: 4000 });
   });
 
+  it('点名了 skill 的那句话，档案里开头是整篇 skill，信封照样认得出', async () => {
+    // 服务端把 skill 全文嵌在人打的话前面。只比"开头是不是那一句"的话，这一单永远对不上，
+    // 信封会一直挂着说"已发送"——正是 codex 那次卡在 sending 的样子。
+    let landed = false;
+    vi.stubGlobal(
+      'fetch',
+      stubGrowing(() =>
+        landed
+          ? {
+              ...record(3),
+              ts: Date.now(),
+              kind: 'user.say',
+              payload: {
+                text:
+                  '<must-use-skill name="git-push" path="/p/SKILL.md">\n说明\n---\n正文\n</must-use-skill>\n\n' +
+                  '只提交前端那几个文件',
+              },
+            }
+          : null
+      )
+    );
+    const { result } = renderHook(() => useWorkbenchRecords(SID, { live: true }));
+    await waitFor(() => expect(result.current.records).toHaveLength(3));
+
+    act(() => {
+      result.current.markSent('只提交前端那几个文件', 0, ['git-push']);
+    });
+    expect(result.current.outbound[0].skills).toEqual(['git-push']);
+
+    landed = true;
+    await waitFor(() => expect(result.current.outbound).toHaveLength(0), { timeout: 4000 });
+  });
+
   it('斜杠命令落进档案时穿了一层壳，照样要认出来是自己那一句', async () => {
     // 人打的是 `/goal 把日历挪到底部`，档案里写的是 <command-name>/goal</command-name>
     // 加 <command-args>把日历挪到底部</command-args>。两份字面上毫无关系，认不出这层壳

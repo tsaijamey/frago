@@ -57,6 +57,8 @@ import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import { parseCardAnswer, splitTrailingBlock } from '@/utils/decisionBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
 import { CardAnswerBody, CardAnswerTag, DecisionReply } from './DecisionCard';
 import {
@@ -684,8 +686,10 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const mode = str(p, 'input_mode');
   const command = str(p, 'command');
   const reminders = list(p, 'reminders').filter((r): r is string => typeof r === 'string' && !!r);
-  // 会话页发的图是以路径拼在正文尾巴上的，摘出来摆成缩略图，正文只留人写的话。
-  const { text, images: attached } = splitAttachedImages(str(p, 'text'));
+  // 会话页点名的 skill 整篇嵌在正文前面，只摆名字；发的图以路径拼在正文尾巴上，摘出来
+  // 摆成缩略图。正文只留人写的话。
+  const { text: said, skills } = splitSkillBlocks(str(p, 'text'));
+  const { text, images: attached } = splitAttachedImages(said);
 
   // 敲在输入框里是常态，说出来等于没说。只有"当时不是直接打字"才值得标一句：插话是
   // 趁 agent 在忙时打进去的，接口发起的那几条根本不是人坐在这儿敲的。
@@ -702,6 +706,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       tone={YOU_TONE}
       meta={cardAnswer ? <CardAnswerTag /> : modeKey ? t(modeKey) : undefined}
     >
+      <SkillQuotes names={skills} />
       {/* 命令摆成一枚等宽徽标。参数跟不跟它连排，看参数是**一个取值**还是**一段话**：
           `/model Opus` 人打的就是连着的一句，拆成两行两种字号会读成"命令是 /model，
           然后我说了一句 Opus"；`/goal` 后面那一整段任务书（本机最长 2601 字、82 条带
@@ -715,7 +720,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
           {inline ? `${command} ${text}` : command}
         </p>
       ) : null}
-      {!inline && (text || !command) ? (
+      {!inline && (text || (!command && !skills.length)) ? (
         <div className={command ? 'mt-1.5' : undefined}>
           {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
         </div>
@@ -1124,7 +1129,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
-  const { text, images } = splitAttachedImages(str(p, 'body'));
+  const { text: said, skills } = splitSkillBlocks(str(p, 'body'));
+  const { text, images } = splitAttachedImages(said);
   const cardAnswer = parseCardAnswer(text);
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
   return (
@@ -1138,7 +1144,12 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
-      {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
+      <SkillQuotes names={skills} />
+      {cardAnswer ? (
+        <CardAnswerBody answer={cardAnswer} />
+      ) : text || !skills.length ? (
+        <Prose text={text} />
+      ) : null}
       <AttachedImages images={images} />
     </TextShell>
   );
@@ -1680,7 +1691,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
   // 正文里带着服务端拼的图片路径段。与插话卡、人发言走同一条拆图：排队这段时间人该
   // 看见自己刚发的那张图，而不是一串十六进制路径。
-  const { text, images } = splitAttachedImages(content);
+  const { text: said, skills } = splitSkillBlocks(content);
+  const { text, images } = splitAttachedImages(said);
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
   );
@@ -1694,7 +1706,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         tone={YOU_TONE}
         meta={chip}
       >
-        <Prose text={text} />
+        <SkillQuotes names={skills} />
+        {text || !skills.length ? <Prose text={text} /> : null}
         <AttachedImages images={images} />
       </TextShell>
     );
@@ -1711,7 +1724,9 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
       meta={
         <span className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[11px]">{chip}</span>
-          <span className="truncate text-text-secondary">{text}</span>
+          <span className="truncate text-text-secondary">
+            {[...skills.map((n) => `/${n}`), text].filter(Boolean).join(' ')}
+          </span>
         </span>
       }
     />

@@ -173,6 +173,10 @@ export interface SkillItem {
   name: string;
   description: string | null;
   file_path: string | null;
+  /** 原件在哪一家 agent 的目录里（frago 集中副本是从这里扫进来的）。 */
+  source_path?: string | null;
+  /** 哪几家 agent 原生看得见它。 */
+  agents?: string[];
 }
 
 export interface GhRateLimit {

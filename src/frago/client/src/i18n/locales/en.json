@@ -1779,14 +1779,19 @@
       "menuClose": "Mark as closed",
       "closeFailed": "Didn't mark the branch closed: {{reason}}"
     },
+    "skills": {
+      "menuTitle": "Skills managed by frago · ↑↓ to move, Enter or Tab to pick, Esc to close",
+      "noMatch": "No skill matches what you typed",
+      "remove": "Remove {{name}}"
+    },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",
       "sendFailed": "Didn't go out: {{reason}}",
       "retry": "Retry",
       "removeImage": "Remove {{name}}",
       "addImage": "Add an image",
-      "placeholder": "Say something. Images and documents can be pasted or dropped straight in",
-      "placeholderWithFamily": "Say something to {{family}}. Images and documents can be pasted or dropped straight in",
+      "placeholder": "Say something. Type / to pick a skill; images and documents can be pasted or dropped straight in",
+      "placeholderWithFamily": "Say something to {{family}}. Type / to pick a skill; images and documents can be pasted or dropped straight in",
       "send": "Send",
       "sending": "Sending",
       "addAttachment": "Add an image or a document",

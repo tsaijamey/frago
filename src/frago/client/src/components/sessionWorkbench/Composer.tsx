@@ -33,12 +33,17 @@
  * 4. **图片走粘贴、拖入、选文件三条路**，发送前显示缩略图，逐个可移除。
  * 5. **正在跟哪一家说话要看得见。** 三家的会话摆在同一份清单里，输入框的占位话直接
  *    写出这一场是哪一家——发之前就知道这句话要交给谁。
+ * 6. **敲 `/` 挑 skill。** 行首或空白后敲 `/` 弹出 frago 集中管理的 skill 清单（名字加一截
+ *    说明），接着打的字用来筛；挑中后 `/…` 那几个字从框里抹掉，换成框里上方的一枚引用
+ *    （名字加更短的一截说明），可逐个去掉。发出去只带名字，服务端把全文嵌进这句话——不走
+ *    任何一家的原生写法，codex 那种把 `/名字` 当自己命令拦下的事就不会发生。
  */
 
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -60,6 +65,10 @@ import {
 } from 'lucide-react';
 import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
+import { useDataStore } from '@/stores/dataStore';
+import type { SkillItem } from '@/types/api';
+import SkillMenu, { filterSkills } from './SkillMenu';
+import { SkillQuote } from './SkillQuote';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
 import SendProgress from './SendProgress';
@@ -177,6 +186,19 @@ function formatK(n: number): string {
 export function blockReason(sessionId: string | null): string | null {
   if (!sessionId) return 'workbench.composer.blockedNoSession';
   return null;
+}
+
+/**
+ * 光标前面那一截是不是正在点名 skill：行首或空白后的一个 `/`，后面跟着还没打空格的几个字。
+ *
+ * 要求 `/` 前面是行首或空白，是为了不把 `src/frago` 这种路径里的斜杠当成要挑 skill。
+ * 对上了回 `/` 所在的位置与后面那几个字，对不上回 null。
+ */
+export function slashQuery(text: string, caret: number): { start: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const m = /(^|\s)\/([^\s/]*)$/.exec(before);
+  if (!m) return null;
+  return { start: before.length - m[2].length - 1, query: m[2] };
 }
 
 /** 走多快，每秒多少像素。慢到眼角能忽略它，快到人偶尔看一眼会发现它换了地方。 */
@@ -302,6 +324,9 @@ export default function Composer({
     addFiles,
     removeImage,
     removeDocument,
+    skills: picked,
+    addSkill,
+    removeSkill,
     sending,
     error,
     canSend,
@@ -333,6 +358,45 @@ export default function Composer({
   const [focused, setFocused] = useState(false);
   const filePicker = useRef<HTMLInputElement>(null);
   const attachCount = images.length + documents.length;
+
+  // ── 敲 `/` 挑 skill ──
+  const allSkills = useDataStore((s) => s.skills);
+  const loadSkills = useDataStore((s) => s.loadSkills);
+  const [caret, setCaret] = useState(0);
+  const [menuActive, setMenuActive] = useState(0);
+  // Esc 关掉的是"这一个 `/`"：记下它的位置，光标还停在它后面就不再弹；换一个 `/` 照弹。
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  const slash = focused && !blocked ? slashQuery(text, caret) : null;
+  const menuOpen = slash !== null && slash.start !== dismissedAt;
+  const menuQuery = slash?.query ?? '';
+  const menuItems = useMemo(
+    () => (menuOpen ? filterSkills(allSkills, menuQuery) : []),
+    [menuOpen, allSkills, menuQuery]
+  );
+  useEffect(() => setMenuActive(0), [menuQuery]);
+  // 光标离开了那个 `/`（删掉了、打了空格），Esc 的那一记就作废：同一个位置再敲 `/` 照弹。
+  const slashGone = slash === null;
+  useEffect(() => {
+    if (slashGone) setDismissedAt(null);
+  }, [slashGone]);
+  // 清单平时由数据同步推过来；这一页是直接打开的、还没拿到过时，第一次敲 `/` 再去取。
+  const menuWanted = menuOpen && allSkills.length === 0;
+  useEffect(() => {
+    if (menuWanted) void loadSkills();
+  }, [menuWanted, loadSkills]);
+
+  const pickSkill = useCallback(
+    (skill: SkillItem) => {
+      if (!slash) return;
+      // `/` 连同后面筛用的那几个字一起抹掉，光标回到 `/` 原来的位置。
+      const next = text.slice(0, slash.start) + text.slice(caret);
+      addSkill(skill);
+      caretTo.current = slash.start;
+      setCaret(slash.start);
+      setText(next);
+    },
+    [slash, text, caret, addSkill, setText]
+  );
   const trailOf = new Map(trails.map((tr) => [tr.id, tr]));
   /**
    * 气泡全部落进记录流之后，输入框上方留一行交代它们去了哪。
@@ -452,13 +516,35 @@ export default function Composer({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // skill 清单开着时，上下、回车、Tab、Esc 归清单。输入法还在拼字时的回车是确认候选，
+      // 不能拿去挑 skill。
+      if (menuOpen && !e.nativeEvent.isComposing) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setDismissedAt(slash?.start ?? null);
+          return;
+        }
+        if (menuItems.length) {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const step = e.key === 'ArrowDown' ? 1 : -1;
+            setMenuActive((i) => (i + step + menuItems.length) % menuItems.length);
+            return;
+          }
+          if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === 'Tab') {
+            e.preventDefault();
+            pickSkill(menuItems[Math.min(menuActive, menuItems.length - 1)]);
+            return;
+          }
+        }
+      }
       // 回车换行，Cmd/Ctrl+回车才发。中栏里打的多是整段交代，回车即发会把话腰斩。
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         if (canSend) void send();
       }
     },
-    [canSend, send]
+    [canSend, send, menuOpen, menuItems, menuActive, slash, pickSkill]
   );
 
   return (
@@ -550,8 +636,17 @@ export default function Composer({
                     <span className="shrink-0 text-[11px] font-medium text-text-secondary">
                       {t(queued ? 'workbench.progress.queued' : 'workbench.progress.onItsWay')}
                     </span>
+                    {msg.skills?.map((name) => (
+                      <span
+                        key={name}
+                        data-testid="composer-outbound-skill"
+                        className="shrink-0 font-mono text-[11px] text-text-secondary"
+                      >
+                        /{name}
+                      </span>
+                    ))}
                     <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
-                      {msg.text || t('workbench.composer.attachmentsOnly')}
+                      {msg.text || (msg.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
                     </span>
                     {msg.attachments ? (
                       <span className="shrink-0 text-[11px] text-text-muted">
@@ -645,6 +740,14 @@ export default function Composer({
             focused || sending ? 'border-text-muted' : 'border-border-strong'
           }`}
         >
+          {menuOpen ? (
+            <SkillMenu
+              items={menuItems}
+              active={Math.min(menuActive, Math.max(menuItems.length - 1, 0))}
+              onPick={pickSkill}
+              onHover={setMenuActive}
+            />
+          ) : null}
 
           {/* 文本在上、控件在下一行。从前是一整行左右排：文本框有两行高，而 `+` 与发送
               贴着底边，于是占位话在最上面、`+` 在最下面，两者差了一行的距离，看着像是
@@ -661,11 +764,27 @@ export default function Composer({
               e.target.value = '';
             }}
           />
+          {picked.length ? (
+            <div data-testid="composer-skills" className="mb-1.5 flex flex-wrap gap-1.5">
+              {picked.map((skill) => (
+                <SkillQuote
+                  key={skill.name}
+                  name={skill.name}
+                  description={skill.description}
+                  onRemove={() => removeSkill(skill.name)}
+                />
+              ))}
+            </div>
+          ) : null}
           <textarea
             ref={box}
             data-testid="composer-input"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setCaret(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
             onFocus={() => setFocused(true)}

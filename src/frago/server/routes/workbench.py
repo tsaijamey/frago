@@ -47,6 +47,7 @@ from frago.session import record_reader
 from frago.session import search as session_search
 from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
+from frago.skills.skill_prompt import UnknownSkill, embed_skills, load_skills
 
 router = APIRouter()
 
@@ -135,6 +136,24 @@ class CreateSessionRequest(BaseModel):
     text: str = ""
     images: list[str] = []
     documents: list[Document] = []
+    skills: list[str] = []
+
+
+def _with_skills(prompt: str, skills: list[str], user_text: str) -> str:
+    """人在输入框里挑了 skill：把每个 skill 的文档路径与全文嵌到这句话前面。
+
+    不走任何一家 agent 的原生点名写法：那些写法四家各不相同，codex 还会把 ``/名字``
+    当成它自己的斜杠命令拦下，那句话根本进不了会话。嵌正文四家都认。
+    挑中的 skill 在集中副本里找不到就回 400，NEVER 悄悄丢掉它照发——人以为 agent
+    在照那个 skill 做，其实它根本没见过。
+    """
+    if not skills:
+        return prompt
+    try:
+        loaded = load_skills(skills)
+    except UnknownSkill as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return embed_skills(prompt, loaded, user_text=user_text)
 
 
 @router.post("/workbench/sessions", status_code=201)
@@ -153,7 +172,12 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
     挑不了的那一家回 400（带上为什么），NEVER 起了再说：人要等上一分钟才看得出这一场
     根本不会出现在左栏。
     """
-    if not request.text.strip() and not request.images and not request.documents:
+    if (
+        not request.text.strip()
+        and not request.images
+        and not request.documents
+        and not request.skills
+    ):
         raise HTTPException(status_code=400, detail="第一句话和附件不能都是空的")
     if not request.cwd.strip():
         raise HTTPException(status_code=400, detail="起始目录不能是空的")
@@ -168,7 +192,11 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
-    prompt = build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths)
+    prompt = _with_skills(
+        build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths),
+        request.skills,
+        request.text,
+    )
 
     try:
         launch = await asyncio.to_thread(
@@ -560,6 +588,9 @@ class SendRequest(BaseModel):
     拖拽也拿不到），所以只能走这条"内容上传、路径下发"的路——agent 拿到的是一条它
     真的打得开的服务端路径。允许 text 为空但带附件。
 
+    ``skills`` 是人在输入框里敲 ``/`` 挑中的 skill 名（``/api/skills`` 里的 ``name``），
+    服务端把它们的文档全文嵌进这句话前面（见 ``_with_skills``）。只挑 skill、不写字也能发。
+
     ``cwd`` 只在页面**新建**一场会话时给：那个编号是页面自己 mint 的，还没有任何
     记录，所以读不出目录。已经有记录的会话一律以档案里记着的目录为准。
 
@@ -571,6 +602,7 @@ class SendRequest(BaseModel):
     text: str = ""
     images: list[str] = []
     documents: list[Document] = []
+    skills: list[str] = []
     cwd: str | None = None
     wait: bool = True
 
@@ -593,7 +625,12 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     - 内核不在或者 CoreAgent 没配连接 → 503，这一轮连记录都没留下，理由只能从这里带出去；
     - 一个字没有也没有附件 → 400，空轮次投进去只会白占一次冷启动。
     """
-    if not request.text.strip() and not request.images and not request.documents:
+    if (
+        not request.text.strip()
+        and not request.images
+        and not request.documents
+        and not request.skills
+    ):
         raise HTTPException(status_code=400, detail="要发的话和附件不能都是空的")
 
     try:
@@ -601,7 +638,11 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], sid)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
-    prompt = build_prompt_with_attachments(request.text, image_paths, doc_paths)
+    prompt = _with_skills(
+        build_prompt_with_attachments(request.text, image_paths, doc_paths),
+        request.skills,
+        request.text,
+    )
 
     try:
         if not request.wait:

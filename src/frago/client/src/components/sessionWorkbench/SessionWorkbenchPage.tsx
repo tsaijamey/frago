@@ -282,12 +282,12 @@ export default function SessionWorkbenchPage() {
    * 换成 Sending → Agent on it，切走才归位。
    */
   const onSendStart = useCallback(
-    (text: string, attachments: number) => {
+    (text: string, attachments: number, skills?: string[]) => {
       if (selectedId) {
         forYou.suppress(selectedId);
         setHoldId(selectedId);
       }
-      const id = markSent(text, attachments);
+      const id = markSent(text, attachments, skills);
       const aboard = marksAboard(text, pendingUseRef.current, marksRef.current);
       if (id && selectedId && aboard.length) {
         riding.current.set(id, { sid: selectedId, ids: aboard });

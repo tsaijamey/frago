@@ -7,6 +7,9 @@
  * 把绝对路径拼进投给 agent 的提示词。**允许纯发图**（文本空、图片非空）；两者都空时
  * 服务端回 400，所以这一侧直接把发送按钮闸死，不让请求出门。
  *
+ * 人敲 `/` 挑中的 skill 只带名字出门（`skills`），服务端把它们的文档全文嵌到这句话前面。
+ * 只挑了 skill、一个字没写也能发——那就是"照这个 skill 的流程做一遍"。
+ *
  * 三条纪律：
  *
  * 1. **点了发送，输入框当场交还给人。** 那一刻起这句话已经撤不回了，把它继续留在输入框
@@ -30,6 +33,7 @@ import {
   type AttachedDoc,
   type AttachedImage,
 } from '@/hooks/useAttachments';
+import type { SkillItem } from '@/types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -73,6 +77,13 @@ export interface SendToSessionState {
   addFiles: (files: FileList | File[]) => Promise<void>;
   removeImage: (id: string) => void;
   removeDocument: (id: string) => void;
+  /**
+   * 人敲 `/` 挑中的 skill，按挑的先后排。发出去时只带名字，服务端把全文嵌进这句话。
+   */
+  skills: SkillItem[];
+  /** 挑一个 skill。已经挑过的不重复加。 */
+  addSkill: (skill: SkillItem) => void;
+  removeSkill: (name: string) => void;
   sending: boolean;
   /** 失败原因，照抄服务端的说法。成功或重新发送时清掉。 */
   error: string | null;
@@ -98,6 +109,7 @@ interface OutboundPayload {
   text: string;
   images: AttachedImage[];
   documents: AttachedDoc[];
+  skills: SkillItem[];
 }
 
 /** 把服务端的说法取出来。FastAPI 的报错落在 `detail` 里，取不到就退回状态码。 */
@@ -115,7 +127,8 @@ export async function sendToSession(
   sessionId: string,
   text: string,
   images: string[],
-  documents: { name: string; data: string }[] = []
+  documents: { name: string; data: string }[] = [],
+  skills: string[] = []
 ): Promise<SendResult> {
   let res: Response;
   try {
@@ -124,7 +137,7 @@ export async function sendToSession(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, images, documents }),
+        body: JSON.stringify({ text, images, documents, skills }),
       }
     );
   } catch (e) {
@@ -149,7 +162,7 @@ export interface UseSendToSessionOptions {
    * 带上这次投出去的原文与附件数：记录流靠原文认出"这句话已经落进流里了"，也靠这一次
    * 调用给它开一个信封。交回的是那个信封的编号，发失败时要用它精确撤掉这一单。
    */
-  onSendStart?: (text: string, attachments: number) => string | void;
+  onSendStart?: (text: string, attachments: number, skills?: string[]) => string | void;
   /**
    * 发送成功后调它重拉记录，并带上这一单的信封编号。
    *
@@ -181,6 +194,7 @@ export function useSendToSession(
   }: UseSendToSessionOptions = {}
 ): SendToSessionState {
   const [text, setText] = useState('');
+  const [skills, setSkills] = useState<SkillItem[]>([]);
   const { images, documents, addFiles, removeImage, removeDocument, clear, restore } =
     useAttachments();
   const [sending, setSending] = useState(false);
@@ -191,7 +205,8 @@ export function useSendToSession(
   // 输入框此刻空不空。发送失败是在 await 之后才知道的，那时候只能问 ref——闭包里的
   // text/images 停在点发送那一刻，拿它判"人有没有打新的字"必然判错。
   const boxEmpty = useRef(true);
-  boxEmpty.current = !text && images.length === 0 && documents.length === 0;
+  boxEmpty.current =
+    !text && images.length === 0 && documents.length === 0 && skills.length === 0;
   // 在飞的那一单的编号，以及"哪一单已经被送达信号清过了"。两者一比就知道接口回来时
   // 还该不该清——不比的话，人在放行后新打的字会被上一单的返回抹掉。
   const ticket = useRef(0);
@@ -227,11 +242,19 @@ export function useSendToSession(
       unconfirmed.current = null;
     }
     setText('');
+    setSkills([]);
     clear();
     setSending(false);
     setError(null);
     setFailed(null);
   }, [sessionId, clear]);
+
+  const addSkill = useCallback((skill: SkillItem) => {
+    setSkills((prev) => (prev.some((s) => s.name === skill.name) ? prev : [...prev, skill]));
+  }, []);
+  const removeSkill = useCallback((name: string) => {
+    setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
 
   /**
    * 送达信号一到就把按钮放回去。
@@ -257,7 +280,11 @@ export function useSendToSession(
   const canSend =
     Boolean(enabled && sessionId) &&
     !sending &&
-    (!!body || images.length > 0 || documents.length > 0 || failed !== null);
+    (!!body ||
+      images.length > 0 ||
+      documents.length > 0 ||
+      skills.length > 0 ||
+      failed !== null);
 
   /**
    * 确认没发出去：亮出原因，内容得有个去处。输入框还空着就原样退回去，人接着改就是；
@@ -268,6 +295,7 @@ export function useSendToSession(
       setError(reason);
       if (boxEmpty.current) {
         setText(payload.text);
+        setSkills(payload.skills);
         restore(payload.images, payload.documents);
         setFailed(null);
       } else {
@@ -288,17 +316,20 @@ export function useSendToSession(
       setError(null);
       // 请求还没出门就先喊一声，顺手换回这一单的信封编号。这条接口要等整整一轮才回来，
       // 等它回来再喊就晚了整轮。
+      // 没挑 skill 时照旧只喊两个参数：页面那一侧不必为了一个空数组多认一种调用。
+      const attachments = payload.images.length + payload.documents.length;
+      const skillNames = payload.skills.map((s) => s.name);
       const outboundId =
-        onSendStartRef.current?.(
-          payload.text,
-          payload.images.length + payload.documents.length
-        ) || undefined;
+        (skillNames.length
+          ? onSendStartRef.current?.(payload.text, attachments, skillNames)
+          : onSendStartRef.current?.(payload.text, attachments)) || undefined;
       try {
         await sendToSession(
           sessionId,
           payload.text,
           payload.images.map((im) => im.dataUrl),
-          payload.documents.map((d) => ({ name: d.name, data: d.dataUrl }))
+          payload.documents.map((d) => ({ name: d.name, data: d.dataUrl })),
+          payload.skills.map((s) => s.name)
         );
         if (!mounted.current) return;
         setFailed(null);
@@ -351,19 +382,26 @@ export function useSendToSession(
       await dispatch(retry);
       return;
     }
-    const payload: OutboundPayload = { text: text.trim(), images, documents };
-    if (!payload.text && !payload.images.length && !payload.documents.length) return;
+    const payload: OutboundPayload = { text: text.trim(), images, documents, skills };
+    if (
+      !payload.text &&
+      !payload.images.length &&
+      !payload.documents.length &&
+      !payload.skills.length
+    )
+      return;
     // 点了发送就撤不回了，输入框当场交还给人。那句话改由上方的信封替它站着。
     setText('');
+    setSkills([]);
     clear();
     await dispatch(payload);
-  }, [enabled, sessionId, sending, failed, text, images, documents, clear, dispatch]);
+  }, [enabled, sessionId, sending, failed, text, images, documents, skills, clear, dispatch]);
 
   const sendText = useCallback(
     async (value: string) => {
       const body = value.trim();
       if (!enabled || !sessionId || !body) return;
-      await dispatch({ text: body, images: [], documents: [] });
+      await dispatch({ text: body, images: [], documents: [], skills: [] });
     },
     [enabled, sessionId, dispatch]
   );
@@ -376,6 +414,9 @@ export function useSendToSession(
     addFiles,
     removeImage,
     removeDocument,
+    skills,
+    addSkill,
+    removeSkill,
     sending,
     error,
     canSend,

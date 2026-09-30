@@ -119,7 +119,7 @@ describe('Composer 输入区', () => {
 
     await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${SID}/send`);
-    expect(sentBody(fetchMock)).toEqual({ text: '开工', images: [], documents: [] });
+    expect(sentBody(fetchMock)).toEqual({ text: '开工', images: [], documents: [], skills: [] });
     // 成功才清空。
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
   });
@@ -740,7 +740,7 @@ describe('决定卡片的答复', () => {
     );
 
     await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
-    expect(sentBody(fetchMock)).toEqual({ text: answer.text, images: [], documents: [] });
+    expect(sentBody(fetchMock)).toEqual({ text: answer.text, images: [], documents: [], skills: [] });
     // 同一条出门路：信封照开
     expect(onSendStart).toHaveBeenCalledWith(answer.text, 0);
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('还没写完的一句');

@@ -227,6 +227,55 @@ describe('插话队列里还在排的那一行', () => {
   });
 });
 
+describe('点名了 skill 的那句话', () => {
+  // 与服务端 `frago.skills.skill_prompt.skill_block` 拼出来的形状一致。
+  const BLOCK =
+    '<must-use-skill name="git-push" path="/Users/x/.frago/skills/git-push/SKILL.md">\n' +
+    '先完整读完下面的 skill 正文\nskill 文档：/Users/x/.frago/skills/git-push/SKILL.md\n---\n' +
+    '# Git 智能提交推送\n按功能分组提交\n</must-use-skill>';
+
+  it('人发言卡只把 skill 画成引用，正文一个字不摆', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: `${BLOCK}\n\n帮我提交` } })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByTestId('skill-quote').textContent).toContain('/git-push');
+    expect(screen.getByText('帮我提交')).not.toBeNull();
+    expect(container.textContent).not.toContain('按功能分组提交');
+    expect(container.textContent).not.toContain('must-use-skill');
+  });
+
+  it('只点名不写字：只有那枚引用', () => {
+    const { container } = render(
+      <RecordCard record={makeRecord('user.say', { payload: { text: BLOCK } })} sessionId={SID} />
+    );
+    expect(screen.getAllByTestId('skill-quote')).toHaveLength(1);
+    expect(container.textContent).not.toContain('SKILL.md');
+  });
+
+  it('插话卡与排队行同样只摆引用', () => {
+    const inject = makeRecord('context.inject', {
+      payload: { channel: 'queued_command', body: `${BLOCK}\n\n顺便推送`, queue_state: 'absorbed' },
+    });
+    const queued = makeRecord('session.state', {
+      payload: {
+        field: 'queue-operation',
+        operation: 'enqueue',
+        content: `${BLOCK}\n\n顺便推送`,
+        queue_state: 'pending',
+      },
+    });
+    for (const record of [inject, queued]) {
+      const { container, unmount } = render(<RecordCard record={record} sessionId={SID} />);
+      expect(screen.getByTestId('skill-quote').getAttribute('data-skill')).toBe('git-push');
+      expect(container.textContent).not.toContain('按功能分组提交');
+      unmount();
+    }
+  });
+});
+
 describe('旁路注入卡', () => {
   function hookRecord(payload: Record<string, unknown> = {}): WorkbenchRecord {
     return makeRecord('context.inject', {

@@ -292,6 +292,60 @@ class TestSendRoute:
         assert body["sid"] == OC_SID
         assert body["status"] == "activating"
 
+    @pytest.fixture
+    def skill_store(self, tmp_path, monkeypatch):
+        """集中副本换到临时目录，里面放一个 git-push。"""
+        from frago.skills import agent_skills
+
+        root = tmp_path / "skill-store"
+        pkg = root / "git-push"
+        pkg.mkdir(parents=True)
+        (pkg / "SKILL.md").write_text("---\nname: git-push\n---\n按功能分组提交", encoding="utf-8")
+        (root / ".index.json").write_text(
+            json.dumps(
+                {
+                    "skills": {
+                        "git-push": {
+                            "name": "git-push",
+                            "description": "提交",
+                            "dir_name": "git-push",
+                            "source_dir": "/src/git-push",
+                            "agents": ["claude-code"],
+                            "signature": "s",
+                            "synced_at": 0.0,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_skills, "default_store_root", lambda: root)
+        return root
+
+    def test_挑中的skill正文嵌在那句话前面_codex收到的不以斜杠开头(
+        self, client, runner, three_families, skill_store
+    ):
+        """codex 把 /名字 当自己的斜杠命令拦下，那句话进不了会话；嵌正文就没有这回事。"""
+        res = self._send(client, CODEX_SID, skills=["git-push"])
+        assert res.status_code == 200
+        prompt = runner.calls[0]["text"]
+        assert prompt.startswith('<must-use-skill name="git-push"')
+        assert "按功能分组提交" in prompt
+        assert prompt.endswith("接着干")
+
+    def test_只挑skill不写字也发得出去(self, client, runner, three_families, skill_store):
+        res = self._send(client, CC_SID, text="", skills=["git-push"])
+        assert res.status_code == 200
+        assert runner.calls[0]["text"].endswith("</must-use-skill>")
+
+    def test_挑了不存在的skill回400而不是悄悄照发(
+        self, client, runner, three_families, skill_store
+    ):
+        res = self._send(client, CC_SID, skills=["nope"])
+        assert res.status_code == 400
+        assert "nope" in res.json()["detail"]
+        assert runner.calls == []
+
     def test_images_reach_the_prompt_as_paths(self, client, runner, three_families):
         """tmux 注入端粘不了剪贴板图像，图片以落盘路径进提示词。"""
         one_px = (

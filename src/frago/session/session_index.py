@@ -65,6 +65,7 @@ from frago.session.claude_sessions import (
 )
 from frago.session.opencode_store import OpencodeSessionRow
 from frago.session.unified_record import UnifiedRecord
+from frago.skills.skill_prompt import split_skill_blocks
 
 __all__ = [
     "CACHE_FILE",
@@ -486,6 +487,11 @@ def _first_user_text(txt: str) -> str | None:
     这边管左栏那一行叫什么名字。光杆命令与命令输出的处置两边完全一致。
     """
     body = txt.strip()
+    # 会话页点名的 skill 整篇嵌在这句话前面。标题只要名字加人写的话，与斜杠命令同一个
+    # 读法：``/git-push 帮我提交``。整篇 skill 进标题，左栏那一行只剩一串标签。
+    skills, said = split_skill_blocks(body)
+    if skills:
+        return " ".join([*(f"/{n}" for n in skills), said]).strip()
     name = _COMMAND_NAME_RE.search(body)
     if name:
         args = _COMMAND_ARGS_RE.search(body)

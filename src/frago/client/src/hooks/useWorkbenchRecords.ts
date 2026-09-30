@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWebSocketClient, MessageType, type WebSocketMessage } from '../api/websocket';
 import i18n from '@/i18n';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -83,6 +84,8 @@ export interface OutboundMessage {
   text: string;
   /** 随它一起发的图片加文档共几个。 */
   attachments: number;
+  /** 随它一起点名的 skill（名字）。气泡上画成引用。 */
+  skills?: string[];
   /** 点发送那一刻。用来跟记录的时刻比对，也用来判它是不是等太久了。 */
   at: number;
   state: OutboundState;
@@ -210,9 +213,14 @@ export function advanceTrails(trails: SendTrail[], records: WorkbenchRecord[]): 
  */
 type Landing = 'say' | 'queued' | 'drained';
 
-/** 比对前把空白抹平：档案里那份带着换行与缩进，人打的那份没有。 */
+/**
+ * 比对前把空白抹平：档案里那份带着换行与缩进，人打的那份没有。
+ *
+ * 点名了 skill 的那句话，档案里开头是服务端嵌进去的整篇 skill（`<must-use-skill>` 那几段），
+ * 人打的那一句接在后面。先把那几段摘掉，比的才是人打的话。
+ */
 function flatten(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+  return splitSkillBlocks(text).text.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -439,7 +447,7 @@ export interface WorkbenchRecordsState {
    *
    * 返回那个信封的编号。发失败时把编号交回 `clearSent`，撤掉的就只是这一单。
    */
-  markSent: (text: string, attachments?: number) => string;
+  markSent: (text: string, attachments?: number, skills?: string[]) => string;
   /**
    * 那句话**确实落进这场会话**的时刻（毫秒，没送达时为 null）。
    *
@@ -693,14 +701,24 @@ export function useWorkbenchRecords(
     await loadTail(sessionId);
   }, [sessionId, loadTail]);
 
-  const markSent = useCallback((text: string, attachments = 0) => {
+  const markSent = useCallback((text: string, attachments = 0, skills: string[] = []) => {
     const now = Date.now();
     hotUntil.current = now + HOT_WINDOW_MS;
     fastUntil.current = now + FAST_POLL_WINDOW_MS;
     setAwaitingSince(now);
     setDeliveredAt(null);
     const id = `out-${now}-${outboundSeq.current++}`;
-    setOutbound((prev) => [...prev, { id, text: text.trim(), attachments, at: now, state: 'sent' }]);
+    setOutbound((prev) => [
+      ...prev,
+      {
+        id,
+        text: text.trim(),
+        attachments,
+        ...(skills.length ? { skills } : {}),
+        at: now,
+        state: 'sent',
+      },
+    ]);
     setTrails((prev) => [
       ...prev,
       {
