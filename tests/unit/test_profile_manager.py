@@ -285,20 +285,20 @@ class TestActivationTargets:
     def drivers():
         """把三个 driver 换成 mock，并当作本机全都装了。
 
-        codex 保持"没有 profile_apply"，因为不支持这件事是它的真实属性，测试里假装它
-        支持就等于测了一个不存在的世界。
+        codex 照真实属性只吃 Responses 通道；另挂一个 "noprofile" 模拟接不了 profile
+        的那一家，守住「不支持就在写任何东西之前拒绝」。
         """
         fakes = {}
-        for agent_type in ("claude", "opencode"):
+        for agent_type, protocol in (
+            ("claude", "anthropic"),
+            ("opencode", "anthropic"),
+            ("codex", "responses"),
+        ):
             fake = MagicMock()
             fake.profile_apply = MagicMock()
             fake.profile_revert = MagicMock()
+            fake.profile_protocol = protocol
             fakes[agent_type] = fake
-        codex = MagicMock()
-        codex.profile_apply = None
-        codex.profile_revert = None
-        codex.profile_unsupported_reason = "wire protocol mismatch"
-        fakes["codex"] = codex
 
         with (
             patch("frago.init.profile_targets._driver", side_effect=fakes.__getitem__),
@@ -365,11 +365,41 @@ class TestActivationTargets:
     ):
         """半个激活比一次拒绝糟：界面上没有任何地方会说哪半个成了。"""
         add_profile(sample_profile)
+        drivers["codex"].profile_apply = None
+        drivers["codex"].profile_unsupported_reason = "wire protocol mismatch"
 
         with pytest.raises(ValueError, match="cannot use frago profiles"):
             activate_profile("test1234", ["claude", "codex"])
 
         drivers["claude"].profile_apply.assert_not_called()
+
+    def test_profile_without_the_channel_a_target_needs_is_refused_first(
+        self, tmp_profiles_path, drivers
+    ):
+        """只有 Anthropic 地址的 profile 勾 codex：一个字都不写，说清缺哪条通道。"""
+        add_profile(
+            APIProfile(
+                id="anth0001",
+                name="Anthropic only",
+                endpoint_type="custom",
+                api_key="k",
+                url="https://x.example.com",
+            )
+        )
+
+        with pytest.raises(ValueError, match="OpenAI Responses"):
+            activate_profile("anth0001", ["claude", "codex"])
+
+        drivers["claude"].profile_apply.assert_not_called()
+        drivers["codex"].profile_apply.assert_not_called()
+
+    def test_profile_with_a_responses_channel_reaches_codex(
+        self, tmp_profiles_path, drivers
+    ):
+        add_profile(APIProfile(id="ark00001", name="Ark", endpoint_type="volcengine_plan", api_key="k"))
+
+        assert activate_profile("ark00001", ["claude", "codex"]) == ["claude", "codex"]
+        drivers["codex"].profile_apply.assert_called_once()
 
     def test_auth_method_follows_claude_only(
         self, tmp_profiles_path, sample_profile, drivers

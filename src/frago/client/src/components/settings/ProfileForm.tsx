@@ -29,6 +29,10 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     setFormSonnetModel,
     formHaikuModel,
     setFormHaikuModel,
+    formResponsesUrl,
+    setFormResponsesUrl,
+    formResponsesModel,
+    setFormResponsesModel,
     showFormApiKey,
     setShowFormApiKey,
     formSubmitting,
@@ -427,6 +431,55 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             value={formHaikuModel}
             onChange={(e) => setFormHaikuModel(e.target.value)}
             placeholder={preset ? preset.haiku_model : t('settings.general.optionalOverride')}
+            className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+          />
+        </div>
+      </div>
+
+      {/* Codex speaks OpenAI Responses only, not the Anthropic protocol the
+          fields above describe. Same vendor, same key, a different address —
+          and sometimes a narrower model list. Without this door the profile
+          simply cannot be activated on Codex, and the picker says so. */}
+      <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2">
+        <div>
+          <p className="text-xs font-medium text-[var(--text-secondary)]">
+            {t('settings.profiles.responsesTitle')}
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            {preset?.responses_url
+              ? t('settings.profiles.responsesPresetHint')
+              : t('settings.profiles.responsesHint')}
+          </p>
+        </div>
+        <div>
+          <label htmlFor="profile-responses-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            {t('settings.profiles.responsesUrl')}
+          </label>
+          <input
+            id="profile-responses-url"
+            type="text"
+            value={formResponsesUrl}
+            onChange={(e) => setFormResponsesUrl(e.target.value)}
+            placeholder={preset?.responses_url || 'https://api.example.com/v1'}
+            className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+          />
+        </div>
+        <div>
+          <label htmlFor="profile-responses-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            {t('settings.profiles.responsesModel')}
+            <span className="ml-1 text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>
+          </label>
+          <input
+            id="profile-responses-model"
+            type="text"
+            value={formResponsesModel}
+            onChange={(e) => setFormResponsesModel(e.target.value)}
+            placeholder={
+              preset?.responses_models?.[0] ||
+              formDefaultModel ||
+              preset?.default_model ||
+              t('settings.profiles.responsesModelSameAsDefault')
+            }
             className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
           />
         </div>

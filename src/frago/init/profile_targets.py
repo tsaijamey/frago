@@ -8,13 +8,16 @@ running whatever they were running before. Activation now names its targets.
 A target is offerable when both halves hold:
 
 - **supported** — its driver knows how to write a frago profile into that CLI's
-  own config. codex is the one that never will: frago profiles are Anthropic
-  protocol endpoints and codex's custom providers speak OpenAI's responses
-  protocol, so there is no honest translation. The driver carries the reason and
-  it is shown rather than hidden, because a checkbox that is simply missing
-  reads as an oversight.
+  own config. A driver that cannot carries the reason, and it is shown rather
+  than hidden, because a checkbox that is simply missing reads as an oversight.
 - **installed** — the executable is actually on this machine. Writing a config
   file for a CLI nobody has does nothing except leave a file behind.
+
+A third condition belongs to the profile, not the machine: the CLI's driver
+names the protocol it speaks (``profile_protocol``), and the profile has to have
+a channel on that protocol. codex speaks OpenAI Responses only, so a profile with
+nothing but an Anthropic address cannot go there — :func:`missing_channel_reason`
+says so in words the page shows next to the checkbox.
 
 The apply/revert knowledge itself lives in each driver, next to that CLI's other
 quirks; this module only decides who gets asked and in what order.
@@ -22,8 +25,9 @@ quirks; this module only decides who gets asked and in what order.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from frago.init.profile_manager import APIProfile
@@ -52,8 +56,10 @@ class TargetStatus:
     display_name: str
     supported: bool
     installed: bool
-    path: Optional[str]
-    unsupported_reason: Optional[str]
+    path: str | None
+    unsupported_reason: str | None
+    # Which protocol channel of a profile this CLI consumes.
+    protocol: str = "anthropic"
 
     @property
     def selectable(self) -> bool:
@@ -66,7 +72,7 @@ def _driver(agent_type: str):
     return load_driver(agent_type)
 
 
-def _installed_path(agent_type: str) -> Optional[str]:
+def _installed_path(agent_type: str) -> str | None:
     from frago.compat import find_agent_cli
 
     return find_agent_cli(agent_type)
@@ -85,6 +91,25 @@ def target_status(agent_type: str) -> TargetStatus:
         unsupported_reason=(
             None if driver.profile_apply is not None else driver.profile_unsupported_reason
         ),
+        protocol=driver.profile_protocol,
+    )
+
+
+_PROTOCOL_NAMES = {"anthropic": "Anthropic", "responses": "OpenAI Responses"}
+
+
+def missing_channel_reason(profile: APIProfile, agent_type: str) -> str | None:
+    """Why this profile cannot go to this CLI, or None when it has the channel it needs."""
+    from frago.init.profile_manager import profile_channel
+
+    protocol = _driver(agent_type).profile_protocol
+    channel = profile_channel(profile, protocol)
+    if channel is not None and channel.url:
+        return None
+    name = DISPLAY_NAMES.get(agent_type, agent_type)
+    return (
+        f"'{profile.name}' has no {_PROTOCOL_NAMES.get(protocol, protocol)} address, "
+        f"which is the only protocol {name} speaks — add one to this profile first"
     )
 
 
@@ -98,7 +123,7 @@ def selectable_targets() -> list[str]:
     return [status.agent_type for status in list_targets() if status.selectable]
 
 
-def resolve_targets(requested: Optional[Sequence[str]]) -> list[str]:
+def resolve_targets(requested: Sequence[str] | None) -> list[str]:
     """Validate a requested target list, or fall back to the historical default.
 
     ``None`` means the caller has no opinion, and gets what activation has
@@ -144,7 +169,7 @@ def resolve_targets(requested: Optional[Sequence[str]]) -> list[str]:
     return [t for t in AGENT_TARGETS if t in asked]
 
 
-def apply_profile(profile: "APIProfile", targets: Sequence[str]) -> None:
+def apply_profile(profile: APIProfile, targets: Sequence[str]) -> None:
     """Write this profile into each target's own config.
 
     A target whose driver cannot apply is skipped rather than raising: the
@@ -165,7 +190,7 @@ def revert_targets(targets: Sequence[str]) -> None:
     not leave the others stuck in a half-activated state, so a failure is
     carried and re-raised only after every target has had its turn.
     """
-    first_error: Optional[Exception] = None
+    first_error: Exception | None = None
     for agent_type in targets:
         try:
             revert = _driver(agent_type).profile_revert

@@ -146,10 +146,10 @@ class TestActivationTargets:
 
         by_type = {t.agent_type: t for t in response.targets}
         assert set(by_type) == {"claude", "opencode", "codex"}
-        # 接不了的那个也要出现，并带着能读懂的原因。
-        assert by_type["codex"].supported is False
-        assert by_type["codex"].selectable is False
-        assert by_type["codex"].unsupported_reason
+        # codex 接得了，但只吃 profile 的 Responses 通道——页面据此逐条 profile 判能不能勾。
+        assert by_type["codex"].supported is True
+        assert by_type["codex"].protocol == "responses"
+        assert by_type["claude"].protocol == "anthropic"
         assert response.default_targets == ["claude"]
 
     @pytest.mark.asyncio
@@ -186,6 +186,7 @@ class TestActivationTargets:
             patch("frago.server.routes.settings.StateManager") as mock_state,
         ):
             mock_driver.return_value.profile_apply = applied
+            mock_driver.return_value.profile_protocol = "anthropic"
             mock_state.get_instance.return_value.refresh_config = _async_noop()
             result = await activate_profile_endpoint(
                 saved_profile, ActivateProfileRequest(targets=["opencode"])
@@ -196,14 +197,27 @@ class TestActivationTargets:
         assert load_profiles().active_targets == ["opencode"]
 
     @pytest.mark.asyncio
-    async def test_a_refused_target_is_an_error_not_a_404(self, saved_profile):
-        """目标不可用是"这台机器上不行"，不是"资源不存在"——404 会让 UI 报错报成
-        profile 丢了。"""
-        result = await activate_profile_endpoint(
-            saved_profile, ActivateProfileRequest(targets=["codex"])
+    async def test_a_refused_target_is_an_error_not_a_404(self, tmp_profiles_path):
+        """目标不可用是"这条 profile / 这台机器上不行"，不是"资源不存在"——404 会让
+        UI 报错报成 profile 丢了。"""
+        add_profile(
+            APIProfile(
+                id="anth0001",
+                name="Anthropic only",
+                endpoint_type="custom",
+                api_key="k",
+                url="https://x.example.com",
+            )
         )
+        with patch(
+            "frago.init.profile_targets._installed_path",
+            side_effect=lambda agent: f"/bin/{agent}",
+        ):
+            result = await activate_profile_endpoint(
+                "anth0001", ActivateProfileRequest(targets=["codex"])
+            )
         assert result.status == "error"
-        assert "codex" in result.error.lower() or "Codex" in result.error
+        assert "Codex" in result.error and "Responses" in result.error
 
     @pytest.mark.asyncio
     async def test_the_list_says_where_the_active_profile_is_active(

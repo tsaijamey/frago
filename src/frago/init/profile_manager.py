@@ -701,6 +701,15 @@ def activate_profile(
     if profile.kind == KIND_WORKBUDDY:
         raise ValueError(_frago_core_only(profile.name))
 
+    # Each CLI speaks one protocol; a profile without a channel on it would be
+    # written in as a provider with no address. Refused before anything is written.
+    from frago.init.profile_targets import missing_channel_reason
+
+    for target in resolved:
+        reason = missing_channel_reason(profile, target)
+        if reason:
+            raise ValueError(reason)
+
     previous = list(store.active_targets)
     apply_profile(profile, resolved)
 

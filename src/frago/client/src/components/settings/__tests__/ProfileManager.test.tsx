@@ -286,3 +286,96 @@ describe('保存一次编辑', () => {
     await waitFor(() => expect(onProfilesChanged).toHaveBeenCalled());
   });
 });
+
+describe('Codex 要的是 Responses 地址', () => {
+  const CODEX = {
+    agent_type: 'codex',
+    display_name: 'Codex CLI',
+    supported: true,
+    installed: true,
+    selectable: true,
+    path: '/opt/homebrew/bin/codex',
+    unsupported_reason: null,
+    protocol: 'responses',
+  };
+
+  beforeEach(() => {
+    getActivationTargets.mockResolvedValue({
+      targets: [...TARGETS.slice(0, 2), CODEX],
+      default_targets: ['claude'],
+    });
+  });
+
+  it('只有 Anthropic 地址的 profile：Codex 那格禁用，并说清缺的是哪个地址', async () => {
+    getProfiles.mockResolvedValue({
+      profiles: [
+        {
+          ...CUSTOM_PROFILE,
+          channels: [{ protocol: 'anthropic', url: CUSTOM_PROFILE.url, models: [], source: 'profile' }],
+        },
+      ],
+      active_profile_id: null,
+      active_targets: [],
+    });
+    open();
+    await openTargetPicker();
+
+    expect(targetBox('Codex CLI').disabled).toBe(true);
+    expect(screen.getByText('settings.profiles.targetMissingResponses')).toBeTruthy();
+
+    // 默认全选里也不能带上它：发出去只会被后端拒绝。
+    fireEvent.click(screen.getAllByText('settings.profiles.activate').slice(-1)[0]);
+    await waitFor(() => expect(activateProfile).toHaveBeenCalled());
+    expect(activateProfile.mock.calls[0][1]).toEqual(['claude', 'opencode']);
+  });
+
+  it('带 Responses 地址的 profile：Codex 可勾，默认就在选中之列', async () => {
+    getProfiles.mockResolvedValue({
+      profiles: [
+        {
+          ...CUSTOM_PROFILE,
+          channels: [
+            { protocol: 'anthropic', url: CUSTOM_PROFILE.url, models: [], source: 'profile' },
+            { protocol: 'responses', url: 'https://openrouter.ai/api/v1', models: [], source: 'profile' },
+          ],
+        },
+      ],
+      active_profile_id: null,
+      active_targets: [],
+    });
+    open();
+    await openTargetPicker();
+
+    expect(targetBox('Codex CLI').disabled).toBe(false);
+    expect(targetBox('Codex CLI').checked).toBe(true);
+    expect(screen.getByText('settings.profiles.codexReady')).toBeTruthy();
+  });
+
+  it('表单里填的 Responses 地址随保存一起发出，编辑时回填已存的那条', async () => {
+    getProfiles.mockResolvedValue({
+      profiles: [
+        {
+          ...CUSTOM_PROFILE,
+          channels: [
+            { protocol: 'anthropic', url: CUSTOM_PROFILE.url, models: [], source: 'profile' },
+            { protocol: 'responses', url: 'https://openrouter.ai/api/v1', models: ['m-r'], source: 'profile' },
+          ],
+        },
+      ],
+      active_profile_id: null,
+      active_targets: [],
+    });
+    open();
+    await openEditForm();
+
+    const url = screen.getByLabelText('settings.profiles.responsesUrl') as HTMLInputElement;
+    expect(url.value).toBe('https://openrouter.ai/api/v1');
+    fireEvent.change(url, { target: { value: 'https://openrouter.ai/api/v2' } });
+    fireEvent.click(screen.getByText('settings.profiles.save'));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalled());
+    expect(updateProfile.mock.calls[0][1].channels).toEqual([
+      { protocol: 'responses', url: 'https://openrouter.ai/api/v2', models: ['m-r'] },
+    ]);
+  });
+});

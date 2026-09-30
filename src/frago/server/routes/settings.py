@@ -822,6 +822,10 @@ class EndpointPresetResponse(BaseModel):
     default_model: str
     sonnet_model: str
     haiku_model: str
+    # The vendor's OpenAI Responses door (for codex), when frago knows one.
+    responses_url: str | None = None
+    # Empty means the same model names as the Anthropic door.
+    responses_models: list[str] = []
 
 
 class EndpointPresetListResponse(BaseModel):
@@ -842,6 +846,24 @@ async def get_endpoint_presets() -> EndpointPresetListResponse:
     )
 
 
+class ChannelResponse(BaseModel):
+    """One protocol door of a connection, as it will actually be used."""
+    protocol: str
+    url: str | None = None
+    models: list[str] = []
+    # "profile" — saved on this connection; "preset" — filled in from the vendor
+    # table because nothing is saved. The form shows a preset one as a default,
+    # not as something the person typed.
+    source: str = "profile"
+
+
+class ChannelRequest(BaseModel):
+    """A door other than Anthropic, as the form sends it."""
+    protocol: str
+    url: str | None = None
+    models: list[str] = []
+
+
 class ProfileResponse(BaseModel):
     """Single connection (API key is always masked)"""
     id: str
@@ -858,6 +880,9 @@ class ProfileResponse(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # Every door this connection opens, Anthropic first. Empty for the kinds
+    # that carry no endpoint.
+    channels: list[ChannelResponse] = []
     is_active: bool = False
     created_at: str
     updated_at: str
@@ -885,6 +910,9 @@ class ActivationTargetResponse(BaseModel):
     # Why this CLI can never take a frago profile. Shown next to the disabled
     # checkbox: a missing option reads as a bug, an explained one does not.
     unsupported_reason: str | None = None
+    # Which of a profile's channels this CLI uses ("anthropic" / "responses").
+    # A profile without that channel cannot be activated here.
+    protocol: str = "anthropic"
 
 
 class ActivationTargetListResponse(BaseModel):
@@ -917,6 +945,7 @@ class CreateProfileRequest(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    channels: list[ChannelRequest] = []
 
 
 class UpdateProfileRequest(BaseModel):
@@ -930,6 +959,20 @@ class UpdateProfileRequest(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # Omitted = keep the saved channels; [] = drop them all.
+    channels: list[ChannelRequest] | None = None
+
+
+def _channels_from_request(channels: list[ChannelRequest]) -> list[dict]:
+    """Blank addresses to None and blank model names out, the way the other fields are."""
+    return [
+        {
+            "protocol": c.protocol,
+            "url": _blank_to_none(c.url),
+            "models": [m.strip() for m in c.models if m and m.strip()],
+        }
+        for c in channels
+    ]
 
 
 class SaveCurrentAsProfileRequest(BaseModel):
@@ -955,7 +998,18 @@ def _profile_to_response(
 ) -> ProfileResponse:
     """Convert APIProfile to ProfileResponse with masked API key."""
     from frago.init.configurator import _mask_api_key
+    from frago.init.profile_manager import profile_channels
 
+    saved = {c.protocol for c in profile.channels}
+    channels = [
+        ChannelResponse(
+            protocol=c.protocol,
+            url=c.url,
+            models=list(c.models),
+            source="profile" if c.protocol == "anthropic" or c.protocol in saved else "preset",
+        )
+        for c in profile_channels(profile)
+    ]
     return ProfileResponse(
         id=profile.id,
         name=profile.name,
@@ -967,6 +1021,7 @@ def _profile_to_response(
         default_model=profile.default_model,
         sonnet_model=profile.sonnet_model,
         haiku_model=profile.haiku_model,
+        channels=channels,
         is_active=profile.id == active_id,
         created_at=profile.created_at.isoformat() if hasattr(profile.created_at, 'isoformat') else str(profile.created_at),
         updated_at=profile.updated_at.isoformat() if hasattr(profile.updated_at, 'isoformat') else str(profile.updated_at),
@@ -1008,6 +1063,7 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
             default_model=_blank_to_none(request.default_model),
             sonnet_model=_blank_to_none(request.sonnet_model),
             haiku_model=_blank_to_none(request.haiku_model),
+            channels=_channels_from_request(request.channels),
         )
         add_profile(profile)
         return ApiResponse(status="ok", message=f"Profile '{request.name}' created")
@@ -1030,10 +1086,13 @@ async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest
 
     try:
         sent = request.model_dump(exclude_unset=True)
+        channels = sent.pop("channels", None)
         updates = {
             key: value if key == "api_key" else _blank_to_none(value)
             for key, value in sent.items()
         }
+        if channels is not None:
+            updates["channels"] = _channels_from_request(request.channels or [])
         update_profile(profile_id, updates)
         return ApiResponse(status="ok", message="Profile updated")
     except ValueError as e:
@@ -1075,6 +1134,7 @@ async def get_activation_targets() -> ActivationTargetListResponse:
                 selectable=status.selectable,
                 path=status.path,
                 unsupported_reason=status.unsupported_reason,
+                protocol=status.protocol,
             )
             for status in list_targets()
         ],

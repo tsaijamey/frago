@@ -40,6 +40,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
+import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -305,12 +307,213 @@ def _launch(ctx: LaunchCtx) -> str:
         if codex_store.session_exists(ctx.session_id):
             return f"codex {_BASE_FLAGS} resume {ctx.session_id}"
         return f"codex {_BASE_FLAGS}"
+    flags = f"{_BASE_FLAGS}{_provider_flags(ctx)}"
+    if ctx.native_session_id:
+        if codex_store.session_exists(ctx.session_id):
+            return f"codex {flags} resume {ctx.session_id}"
+        return f"codex {flags}"
     bound = codex_store.get_binding(ctx.session_id)
     if bound:
         if codex_store.session_exists(bound):
-            return f"codex {_BASE_FLAGS} resume {bound}"
+            return f"codex {flags} resume {bound}"
         codex_store.drop_binding(ctx.session_id)
-    return f"codex {_BASE_FLAGS}"
+    return f"codex {flags}"
+
+
+# ── profile ─────────────────────────────────────────────────────────
+# codex 的自定义 provider 只认 OpenAI Responses 协议，所以 frago 交给它的是 profile 的
+# Responses 通道，没有这条通道的 profile 在 codex 上没有诚实的去处（见 profile_manager）。
+#
+# 两个作用域，同一份事实：
+# - frago 起的会话（worker、``--use-profile``）：地址与模型走 ``-c`` 覆盖，密钥只进会话
+#   环境。~/.codex/config.toml 一字不改，人自己开的 codex 不受影响。2026-09-30 在
+#   0.155.1 上实测：``-c`` 声明的 provider 生效，经 ``new-session -e`` 注入的变量被
+#   ``env_key`` 读到，不给变量则报 Missing environment variable。
+# - 激活（设置页「应用到 codex」）：写进 config.toml，手开的终端 codex、ChatGPT 桌面版的
+#   Codex 模式、VS Code 扩展共用这一份。后两者从 launchd 启动、读不到 shell 里的变量，
+#   故密钥只能明文写进配置（``experimental_bearer_token``），codex 没有第三条鉴权路。
+PROFILE_PROVIDER_ID = "frago-profile"
+_ENV_KEY = "FRAGO_CODEX_KEY"
+_ENV_BASE_URL = "FRAGO_CODEX_BASE_URL"
+_ENV_MODEL = "FRAGO_CODEX_MODEL"
+
+
+def _responses_target(profile: Any) -> tuple[str, str]:
+    """(地址, 模型)。这条 profile 没有 Responses 通道、或推不出模型时抛 ValueError。"""
+    from frago.init.configurator import PROTOCOL_RESPONSES
+    from frago.init.profile_manager import profile_channel
+
+    channel = profile_channel(profile, PROTOCOL_RESPONSES)
+    if channel is None or not channel.url:
+        raise ValueError(
+            f"'{profile.name}' 没有 Responses 通道：codex 只认 OpenAI Responses 协议。"
+            "在设置里给这条 profile 填上 Responses 地址后再用。"
+        )
+    model = (channel.models[0] if channel.models else None) or profile.default_model
+    if not model:
+        raise ValueError(f"'{profile.name}' 的 Responses 通道没有可用的模型名")
+    return channel.url, model
+
+
+def _profile_env(profile: Any) -> dict[str, str]:
+    url, model = _responses_target(profile)
+    return {_ENV_KEY: profile.api_key, _ENV_BASE_URL: url, _ENV_MODEL: model}
+
+
+def _provider_flags(ctx: LaunchCtx) -> str:
+    """会话环境里带着 profile 时，把地址与模型翻成 ``-c`` 覆盖；密钥不上命令行。"""
+    url = ctx.env.get(_ENV_BASE_URL)
+    # 通道里的模型优先：worker 路径会把连接的 default_model 放进 ctx.model，那是
+    # Anthropic 那扇门的模型名，Responses 这扇门未必认（DeepSeek 只接 flash）。
+    model = ctx.env.get(_ENV_MODEL) or ctx.model
+    if not url or not model:
+        return ""
+    table = (
+        f'{{name="{PROFILE_PROVIDER_ID}",base_url="{_toml_escape(url)}",'
+        f'env_key="{_ENV_KEY}",wire_api="responses"}}'
+    )
+    overrides = (
+        f'model_provider="{PROFILE_PROVIDER_ID}"',
+        f'model="{_toml_escape(model)}"',
+        f"model_providers.{PROFILE_PROVIDER_ID}={table}",
+    )
+    return "".join(f" -c {shlex.quote(o)}" for o in overrides)
+
+
+# 激活时 frago 会改写的两个顶层键。原值记进 profile-target-backup.json 以便撤销时还原。
+_TAKEOVER_KEYS = ("model", "model_provider")
+_PROVIDER_HEADER = f"[model_providers.{PROFILE_PROVIDER_ID}]"
+
+
+def _full_backup_path() -> Path:
+    return _config_path().with_name("config.toml.frago-backup")
+
+
+def _is_header(line: str) -> bool:
+    return line.lstrip().startswith("[")
+
+
+def _top_level_end(lines: list[str]) -> int:
+    return next((i for i, ln in enumerate(lines) if _is_header(ln)), len(lines))
+
+
+def _key_of(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    return stripped.split("=", 1)[0].strip()
+
+
+def _set_top_level(lines: list[str], values: dict[str, str | None]) -> list[str]:
+    """改写顶层键：值为 None 的删掉，其余就地替换，没有的插到顶层末尾。"""
+    end = _top_level_end(lines)
+    head, rest = lines[:end], lines[end:]
+    pending = dict(values)
+    out: list[str] = []
+    for line in head:
+        key = _key_of(line)
+        if key in pending:
+            value = pending.pop(key)
+            if value is not None:
+                out.append(f'{key} = "{_toml_escape(value)}"')
+            continue
+        out.append(line)
+    added = [f'{k} = "{_toml_escape(v)}"' for k, v in pending.items() if v is not None]
+    if added:
+        # 插在顶层最后一个非空行之后，保住顶层与第一个表头之间原有的空行。
+        at = len(out)
+        while at > 0 and not out[at - 1].strip():
+            at -= 1
+        out[at:at] = added
+    return out + rest
+
+
+def _without_provider_table(lines: list[str]) -> list[str]:
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == _PROVIDER_HEADER)
+    except StopIteration:
+        return lines
+    end = next((i for i in range(start + 1, len(lines)) if _is_header(lines[i])), len(lines))
+    while start > 0 and not lines[start - 1].strip():
+        start -= 1
+    return lines[:start] + lines[end:]
+
+
+def _write_config(lines: list[str]) -> None:
+    """校验成合法 TOML 再原子替换；写坏了 codex 三端一起起不来，所以宁可不写。"""
+    import tomllib
+
+    text = "\n".join(lines).rstrip("\n") + "\n"
+    tomllib.loads(text)  # 不合法直接抛，原文件不动
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    # 里面有明文密钥：只给本人读写。
+    os.chmod(tmp, 0o600)
+    os.replace(str(tmp), str(path))
+
+
+def _read_config_lines() -> list[str]:
+    path = _config_path()
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def _profile_apply(profile: Any) -> None:
+    """把 profile 的 Responses 通道写进 ~/.codex/config.toml。
+
+    逐行合并，不解析回写：这份文件里有 MCP、项目信任、钩子信任哈希和用户的注释，
+    frago 只动顶层 ``model`` / ``model_provider`` 两个键和自己那张 provider 表。
+    第一次接管时把两个键的原值记进备份、并把整份原文件复制一份在旁边，撤销时还原。
+    """
+    import tomllib
+
+    from frago.init import profile_target_backup
+
+    url, model = _responses_target(profile)
+    if not profile.api_key:
+        raise ValueError(f"'{profile.name}' 没有密钥，codex 的自定义 provider 必须带密钥")
+
+    lines = _read_config_lines()
+    if not profile_target_backup.has("codex"):
+        current = tomllib.loads("\n".join(lines)) if lines else {}
+        profile_target_backup.remember(
+            "codex", {k: current.get(k) for k in _TAKEOVER_KEYS}
+        )
+        path = _config_path()
+        if path.exists():
+            backup = _full_backup_path()
+            shutil.copy2(path, backup)
+            os.chmod(backup, 0o600)
+
+    lines = _set_top_level(
+        _without_provider_table(lines),
+        {"model": model, "model_provider": PROFILE_PROVIDER_ID},
+    )
+    lines += [
+        "",
+        _PROVIDER_HEADER,
+        f'name = "{PROFILE_PROVIDER_ID}"',
+        f'base_url = "{_toml_escape(url)}"',
+        'wire_api = "responses"',
+        f'experimental_bearer_token = "{_toml_escape(profile.api_key)}"',
+    ]
+    _write_config(lines)
+
+
+def _profile_revert() -> None:
+    """撤掉 frago 的 provider 表（连同明文密钥），两个顶层键还原成接管前的值。"""
+    from frago.init import profile_target_backup
+
+    previous = profile_target_backup.take("codex")
+    if previous is None and not any(
+        ln.strip() == _PROVIDER_HEADER for ln in _read_config_lines()
+    ):
+        return
+    lines = _without_provider_table(_read_config_lines())
+    if previous is not None:
+        lines = _set_top_level(lines, {k: previous.get(k) for k in _TAKEOVER_KEYS})
+    _write_config(lines)
 
 
 # ── 认领 ────────────────────────────────────────────────────────────
@@ -565,15 +768,11 @@ register_driver(
         completion_probe=_completion_probe,
         transcript_source=_transcript_source,
         exception_handlers=[],
-        # profile_env / profile_apply 刻意都不提供：frago 的 profile 是 Anthropic 协议
-        # 端点，而 codex 0.147 的自定义 provider 走 OpenAI 的 responses 协议，两者不是
-        # 同一套线协议，没有诚实的翻译。`--use-profile` 因此对 codex 不生效，会话跑在
-        # codex 自己配置的模型上；激活时 codex 也不在可选目标里——这两处都由 UI/CLI
-        # 明说，NEVER 假装翻译过了。
-        profile_unsupported_reason=(
-            "frago 的 profile 存的是 Anthropic 协议端点，codex 的自定义 provider 只认 "
-            "OpenAI responses 协议，两者不是同一套线协议，没有诚实的翻译。"
-            "要让 codex 用同一个模型，得直接改 ~/.codex/config.toml。"
-        ),
+        # 三样都只吃 profile 的 Responses 通道；没有这条通道的 profile 由
+        # profile_targets 在勾选那一步就挡下并说明缺什么（见模块中段「profile」）。
+        profile_env=_profile_env,
+        profile_apply=_profile_apply,
+        profile_revert=_profile_revert,
+        profile_protocol="responses",
     )
 )

@@ -10,6 +10,7 @@ NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 Agent
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import os
 import platform
 import re
@@ -505,6 +506,8 @@ class TmuxAgentSession:
                 merged_env.setdefault(_proxy_name, _proxy_val)
         if self.conv_key:
             merged_env.setdefault("FRAGO_CONV_KEY", self.conv_key)
+        # launch 要看得见最终环境：codex 的 provider 开关由它推出（见 LaunchCtx.env）。
+        ctx = dataclasses.replace(ctx, env=dict(merged_env))
 
         if self.tmux_target:
             self._enter_target(ctx, merged_env)

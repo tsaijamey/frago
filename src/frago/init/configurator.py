@@ -162,6 +162,9 @@ def list_endpoint_presets() -> list[dict]:
             "default_model": preset["ANTHROPIC_MODEL"],
             "sonnet_model": preset["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "haiku_model": preset["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            # None when frago knows of no Responses door for this vendor.
+            "responses_url": PRESET_RESPONSES_CHANNELS.get(key, {}).get("url"),
+            "responses_models": list(PRESET_RESPONSES_CHANNELS.get(key, {}).get("models", [])),
         }
         for key, preset in PRESET_ENDPOINTS.items()
     ]

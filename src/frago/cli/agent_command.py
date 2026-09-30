@@ -82,10 +82,9 @@ def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
     ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。
 
     driver 没有实现 ``profile_env`` 时返回空字典——本轮照跑，NEVER 因此报错，**但会
-    在 stderr 上说明这一句话没生效**。codex 就是这一档：frago 的 profile 是 Anthropic
-    协议端点，而 codex 0.147 的自定义 provider 走 OpenAI 的 responses 协议，两者不是
-    同一套线协议，没有诚实的翻译。人明确要求跑在某个模型上、结果跑在另一个模型上，
-    这件事必须当场看得见——静默吞掉会让他拿着一份不知道出自哪个模型的结果。
+    在 stderr 上说明这一句话没生效**。人明确要求跑在某个模型上、结果跑在另一个模型上，
+    这件事必须当场看得见——静默吞掉会让他拿着一份不知道出自哪个模型的结果。profile
+    缺这一家要的协议通道时（codex 只认 Responses），driver 抛 ValueError，这里停下。
     """
     from frago.init.profile_manager import load_profiles
 
@@ -122,7 +121,13 @@ def _profile_env_via_driver(profile, agent_type: str, *, label: str) -> dict[str
             err=True,
         )
         return {}
-    return driver.profile_env(profile)
+    try:
+        return driver.profile_env(profile)
+    except ValueError as e:
+        # 这条 profile 没有这一家要的协议通道（codex 要 Responses）。人点名要跑在它上面，
+        # 退回 agent 自己的模型等于换了个模型答题，所以当场停下说清缺什么。
+        click.echo(f"Error: {label} 用不到 {agent_type} 上：{e}", err=True)
+        sys.exit(1)
 
 
 def _worker_bound_connection():

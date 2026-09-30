@@ -630,6 +630,10 @@ export interface EndpointPreset {
   default_model: string;
   sonnet_model: string;
   haiku_model: string;
+  /** The vendor's OpenAI Responses address (what Codex speaks), when frago knows one. */
+  responses_url?: string | null;
+  /** Empty means the same model names as the Anthropic address. */
+  responses_models?: string[];
 }
 
 export interface EndpointPresetListResponse {
@@ -639,7 +643,8 @@ export interface EndpointPresetListResponse {
 /**
  * What supplies a connection's credential.
  *
- * - `endpoint` — an Anthropic-protocol endpoint plus a key frago holds.
+ * - `endpoint` — a vendor reached with a key frago holds: an Anthropic-protocol
+ *   address, plus optional other protocol channels (OpenAI Responses, for Codex).
  * - `official` — the CLI's own subscription login. Built in, never saved,
  *   never deleted; it is what a role falls back to when nothing is bound.
  * - `vendor_cli` — a vendor's own CLI on its own account (CodeBuddy). frago
@@ -662,9 +667,27 @@ export interface ProfileItem {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  /** Every protocol door this connection opens, Anthropic first. */
+  channels?: ProfileChannel[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** One protocol door of a connection. Claude Code / opencode use `anthropic`, Codex uses `responses`. */
+export interface ProfileChannel {
+  protocol: string;
+  url?: string | null;
+  models: string[];
+  /** `profile` — saved on this connection; `preset` — filled in from the vendor table. */
+  source?: 'profile' | 'preset';
+}
+
+/** A door other than Anthropic, as the form saves it. */
+export interface ProfileChannelInput {
+  protocol: string;
+  url?: string | null;
+  models?: string[];
 }
 
 export interface ProfileListResponse {
@@ -798,6 +821,8 @@ export interface ActivationTarget {
   selectable: boolean;
   path?: string | null;
   unsupported_reason?: string | null;
+  /** Which of a profile's channels this CLI uses; a profile without it cannot go here. */
+  protocol?: string;
 }
 
 export interface ActivationTargetListResponse {
@@ -817,6 +842,7 @@ export interface CreateProfileRequest {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  channels?: ProfileChannelInput[];
 }
 
 /**
@@ -834,6 +860,8 @@ export interface UpdateProfileRequest {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  /** Omitted keeps the saved channels; `[]` drops them. */
+  channels?: ProfileChannelInput[];
 }
 
 export interface GuideCategory {

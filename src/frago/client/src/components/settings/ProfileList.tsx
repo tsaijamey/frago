@@ -14,7 +14,8 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
     activeProfileId,
     activeTargets,
     targets,
-    selectableTargets,
+    hasChannelFor,
+    selectableTargetsFor,
     pickingTargetsFor,
     pickedTargets,
     activatingId,
@@ -136,6 +137,8 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
             // the light agent or the session observer from the connections card.
             const isBorrowed = profile.kind === 'workbuddy';
             const ownLogin = isVendorCli || isBorrowed;
+            // Whether Codex can be pointed at this one — it needs the Responses door.
+            const codexReady = profile.channels?.some((c) => c.protocol === 'responses' && !!c.url);
             return (
             <div
               key={profile.id}
@@ -209,6 +212,12 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                     <span className="font-mono">{profile.api_key_masked}</span>
                   </>
                 )}
+                {!ownLogin && codexReady && (
+                  <>
+                    <span>·</span>
+                    <span>{t('settings.profiles.codexReady')}</span>
+                  </>
+                )}
                 {isVendorCli && (
                   <>
                     <span>·</span>
@@ -252,11 +261,14 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                     </p>
                   ) : (
                     <div className="space-y-1.5">
-                      {targets.map((target) => (
+                      {targets.map((target) => {
+                        const hasChannel = hasChannelFor(profile, target);
+                        const pickable = target.selectable && hasChannel;
+                        return (
                         <label
                           key={target.agent_type}
                           className={`flex items-start gap-2 text-xs ${
-                            target.selectable
+                            pickable
                               ? 'text-[var(--text-primary)] cursor-pointer'
                               : 'text-[var(--text-muted)] cursor-not-allowed'
                           }`}
@@ -264,8 +276,8 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                           <input
                             type="checkbox"
                             className="mt-0.5"
-                            checked={pickedTargets.includes(target.agent_type)}
-                            disabled={!target.selectable}
+                            checked={pickable && pickedTargets.includes(target.agent_type)}
+                            disabled={!pickable}
                             onChange={() => toggleTarget(target.agent_type)}
                           />
                           <span className="min-w-0">
@@ -283,9 +295,18 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                                 {t('settings.profiles.targetNotInstalled')}
                               </span>
                             )}
+                            {/* The CLI is fine; this profile just has no address in
+                                the protocol it speaks. Say which, and where to add it. */}
+                            {target.supported && target.installed && !hasChannel && (
+                              <span className="flex items-start gap-1 mt-0.5 text-[var(--text-muted)]">
+                                <Ban size={11} className="mt-0.5 shrink-0" />
+                                <span>{t('settings.profiles.targetMissingResponses')}</span>
+                              </span>
+                            )}
                           </span>
                         </label>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                   <div className="flex gap-2 pt-1">
@@ -294,7 +315,10 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                       onClick={() => handleActivate(profile.id)}
                       disabled={
                         activatingId === profile.id ||
-                        (selectableTargets.length > 0 && pickedTargets.length === 0)
+                        (selectableTargetsFor(profile.id).length > 0 &&
+                          !pickedTargets.some((agentType) =>
+                            selectableTargetsFor(profile.id).some((x) => x.agent_type === agentType),
+                          ))
                       }
                       className="btn btn-primary btn-sm text-xs disabled:opacity-50"
                     >

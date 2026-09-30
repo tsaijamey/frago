@@ -72,6 +72,10 @@ _PROTECTED_PATHS = (
     _REAL_HOME / ".claude",
     _REAL_HOME / ".claude.json",
     _REAL_HOME / ".local" / "share" / "opencode",
+    # codex 的配置三端共用（CLI / ChatGPT 桌面版 / VS Code 扩展）。20260930 事故：
+    # codex 驱动接上 profile 写入后，一条激活用例把测试密钥写进了真人的
+    # ~/.codex/config.toml——codex 家目录是运行期现算的，上面的常量重定向罩不住。
+    _REAL_HOME / ".codex",
 )
 
 
@@ -107,6 +111,18 @@ def _redirect_protected_paths(tmp_path, monkeypatch):
                 monkeypatch.setattr(
                     module, attr, fake_home / value.relative_to(_REAL_HOME), raising=False
                 )
+
+
+@pytest.fixture(autouse=True)
+def _redirect_codex_home(tmp_path, monkeypatch):
+    """codex 家目录按 CODEX_HOME 现算（codex 自己也这么解析），用例一律指到临时目录。
+
+    建好 ``sessions/``，照一台装了 codex 的机器的样子：有用例靠它判定「这场是 codex 的」，
+    以前那份判定读的是真人的 ~/.codex/sessions。
+    """
+    codex_home = tmp_path / "_fake_home" / ".codex"
+    (codex_home / "sessions").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +191,8 @@ def _guard_protected_writes(request, monkeypatch):
     )
     monkeypatch.setattr(os, "replace", wrap(os.replace, "改名顶替", second_arg("dst")))
     monkeypatch.setattr(shutil, "rmtree", wrap(shutil.rmtree, "递归删除", first_arg))
+    monkeypatch.setattr(shutil, "copy2", wrap(shutil.copy2, "复制顶替", second_arg("dst")))
+    monkeypatch.setattr(shutil, "copyfile", wrap(shutil.copyfile, "复制顶替", second_arg("dst")))
 
 
 # ============================================================

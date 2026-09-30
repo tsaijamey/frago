@@ -11,7 +11,7 @@ Phase 0 spike 阶段，driver 以裸字符串 agent key（"claude" / "opencode"�
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -40,6 +40,13 @@ class LaunchCtx:
     # 不认 ANTHROPIC_*，只认 ``--model``。没有这个字段时，一条指定了模型的连接绑给
     # worker，worker 仍会跑在该 CLI 的缺省模型上——而界面上写着别的名字。
     model: str | None = None
+    # 这场会话将带着的环境变量（driver 基线 + profile 翻译 + 调用方注入，合并后的最终值）。
+    #
+    # 给「profile 只能一半走环境、一半走启动开关」的那一类用：codex 的自定义 provider
+    # 地址与模型只认 ``-c`` 覆盖，密钥却 MUST 只走环境——启动命令是打进 pane 的 shell 里
+    # 执行的，写在命令行上会进 shell 历史、也会留在屏上。``profile_env`` 把三样都放进
+    # 环境，launch 从这里读出地址与模型拼开关，密钥原样留在环境里。
+    env: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -186,6 +193,10 @@ class AgentDriver:
     # 可选：撤销 ``profile_apply``——把该 agent 的常驻配置还原成 frago 接管前的样子。
     # 与 apply 成对出现：只实现一半，用户就只能激活不能取消，或取消后留下半份配置。
     profile_revert: Callable[[], None] | None = None
+    # profile 里哪条协议通道是给这一家的。claude / opencode 说 Anthropic 协议，codex 只认
+    # OpenAI Responses。一条 profile 能不能给这一家用，看它有没有这条通道——判据出自
+    # driver，NEVER 在上层写 ``if agent == "codex"``。
+    profile_protocol: str = "anthropic"
     # 可选：这一家自己下发的模型名单，给界面当候选。
     #
     # 只有"模型名单是这个 agent 自己的事"的那一类才填：codebuddy 的模型由 WorkBuddy

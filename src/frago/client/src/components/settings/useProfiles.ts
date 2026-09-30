@@ -94,6 +94,10 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   const [formDefaultModel, setFormDefaultModel] = useState('');
   const [formSonnetModel, setFormSonnetModel] = useState('');
   const [formHaikuModel, setFormHaikuModel] = useState('');
+  // The vendor's OpenAI Responses door — what Codex speaks. Blank on a preset
+  // that knows one means "use the preset's"; blank anywhere else means none.
+  const [formResponsesUrl, setFormResponsesUrl] = useState('');
+  const [formResponsesModel, setFormResponsesModel] = useState('');
   const [showFormApiKey, setShowFormApiKey] = useState(false);
   const [formSubmitting, setFormSubmitting] = useState(false);
 
@@ -250,6 +254,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormDefaultModel('');
     setFormSonnetModel('');
     setFormHaikuModel('');
+    setFormResponsesUrl('');
+    setFormResponsesModel('');
     setShowFormApiKey(false);
     setEditingProfileId(null);
   };
@@ -269,6 +275,12 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormDefaultModel(profile.default_model || '');
     setFormSonnetModel(profile.sonnet_model || '');
     setFormHaikuModel(profile.haiku_model || '');
+    // Only what was saved on this profile goes into the fields. A door filled in
+    // from the vendor table shows as the placeholder, so saving the form without
+    // touching it does not pin today's preset address onto the profile.
+    const saved = profile.channels?.find((c) => c.protocol === 'responses' && c.source === 'profile');
+    setFormResponsesUrl(saved?.url || '');
+    setFormResponsesModel(saved?.models[0] || '');
     setShowFormApiKey(false);
     setEditingProfileId(profile.id);
     setViewMode('edit');
@@ -313,6 +325,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
         haiku_model: null,
       };
     }
+    const responsesUrl = formResponsesUrl.trim();
+    const responsesModel = formResponsesModel.trim();
     return {
       name: formName.trim(),
       kind: 'endpoint' as ConnectionKind,
@@ -322,6 +336,18 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       default_model: formDefaultModel.trim() || null,
       sonnet_model: formSonnetModel.trim() || null,
       haiku_model: formHaikuModel.trim() || null,
+      // Always sent, so emptying both fields removes a saved door. A preset that
+      // knows a Responses door keeps offering it from the vendor table regardless.
+      channels:
+        responsesUrl || responsesModel
+          ? [
+              {
+                protocol: 'responses',
+                url: responsesUrl || null,
+                models: responsesModel ? [responsesModel] : [],
+              },
+            ]
+          : [],
     };
   };
 
@@ -379,6 +405,24 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   const selectableTargets = targets.filter((target) => target.selectable);
 
   /**
+   * Whether this profile has the channel a CLI speaks. Codex speaks OpenAI
+   * Responses only, so a profile with nothing but an Anthropic address has
+   * nothing to give it — the picker says that instead of greying the box out.
+   */
+  const hasChannelFor = (profile: ProfileItem | undefined, target: ActivationTarget) => {
+    const protocol = target.protocol ?? 'anthropic';
+    // A backend too old to send channels only ever had the Anthropic door.
+    if (!profile?.channels) return protocol === 'anthropic';
+    return profile.channels.some((c) => c.protocol === protocol && !!c.url);
+  };
+
+  /** The CLIs this particular profile can be activated on. */
+  const selectableTargetsFor = (profileId: string) => {
+    const profile = profiles.find((p) => p.id === profileId);
+    return selectableTargets.filter((target) => hasChannelFor(profile, target));
+  };
+
+  /**
    * Open the target picker for a profile.
    *
    * The boxes start on whatever is already in force, so re-activating the
@@ -389,7 +433,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     const alreadyActive = profileId === activeProfileId ? activeTargets : [];
     const preselected = alreadyActive.length
       ? alreadyActive
-      : selectableTargets.map((target) => target.agent_type);
+      : selectableTargetsFor(profileId).map((target) => target.agent_type);
     setPickedTargets(preselected);
     setPickingTargetsFor(profileId);
   };
@@ -414,9 +458,15 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   const handleActivate = async (profileId: string, chosen?: string[]) => {
     setActivatingId(profileId);
     try {
+      // A box this profile cannot fill (no Responses door for Codex) never goes
+      // out, even if it was ticked when a different profile held the picker.
+      const allowed = selectableTargetsFor(profileId).map((target) => target.agent_type);
       const result = await activateProfile(
         profileId,
-        chosen ?? (selectableTargets.length ? pickedTargets : undefined),
+        chosen ??
+          (selectableTargets.length
+            ? pickedTargets.filter((agentType) => allowed.includes(agentType))
+            : undefined),
       );
       if (result.status === 'ok') {
         const profile = profiles.find((p) => p.id === profileId);
@@ -496,6 +546,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     activeTargets,
     targets,
     selectableTargets,
+    hasChannelFor,
+    selectableTargetsFor,
     pickingTargetsFor,
     pickedTargets,
     presets,
@@ -524,6 +576,10 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormSonnetModel,
     formHaikuModel,
     setFormHaikuModel,
+    formResponsesUrl,
+    setFormResponsesUrl,
+    formResponsesModel,
+    setFormResponsesModel,
     showFormApiKey,
     setShowFormApiKey,
     formSubmitting,
