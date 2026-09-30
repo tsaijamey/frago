@@ -17,10 +17,12 @@ import contextlib
 import filecmp
 import json
 import logging
+import os
 import platform
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -138,11 +140,24 @@ def deploy_hook_binary(force: bool = False) -> Path:
     if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
         return dst
 
-    shutil.copy2(src, dst)
-
-    # Ensure executable permission (no-op on Windows)
+    # Write the new binary next to the old one, then swap it in with one rename.
+    # Copying over the live file rewrites a program that hooks may be executing
+    # at that very moment, and the first run right after (the supported-events
+    # query below) is exactly when that shows. A rename leaves running
+    # processes on the old file and every new one on the complete new file.
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+    shutil.copy2(src, tmp)
     if platform.system().lower() != "windows":
-        dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    try:
+        os.replace(tmp, dst)
+    except OSError:
+        # Windows refuses to replace an executable that is running. Copying in
+        # place is what deploy always did there, and it fails the same way if
+        # the file is locked — no worse than before.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        shutil.copy2(src, dst)
 
     return dst
 
@@ -210,30 +225,74 @@ def cleanup_legacy_hook_copy() -> None:
 # ---------------------------------------------------------------------------
 
 
-def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
-    """Call frago-core --supported-events and return event descriptors.
+QUERY_ATTEMPTS = 3
+QUERY_RETRY_DELAY_SECONDS = 0.5
 
-    Returns:
-        List of dicts like [{"event": "SessionStart", "matcher": ""}, ...]
-        Empty list on failure (graceful fallback).
-    """
+
+def _ask_supported_events(binary: str) -> tuple[list[dict[str, Any]], str]:
+    """One ``--supported-events`` call. Returns the events, or ``[]`` and why not."""
     try:
         result = subprocess.run(
-            [hook_path, "--supported-events"],
+            [binary, "--supported-events"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             timeout=5,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            events = json.loads(result.stdout.strip())
-            if isinstance(events, list) and all(
-                isinstance(e, dict) and "event" in e and "matcher" in e
-                for e in events
-            ):
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return [], f"{type(e).__name__}: {e}"
+    if result.returncode != 0 or not result.stdout.strip():
+        stderr = result.stderr.strip()[:300] or "(no stderr)"
+        return [], f"exit {result.returncode}, stderr: {stderr}"
+    try:
+        events = json.loads(result.stdout.strip())
+    except json.JSONDecodeError as e:
+        return [], f"unreadable output: {e}"
+    if isinstance(events, list) and all(
+        isinstance(e, dict) and "event" in e and "matcher" in e for e in events
+    ):
+        return events, ""
+    return [], "output is not an event list"
+
+
+def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
+    """Ask frago-core which hook events it handles.
+
+    Every hook registration (Claude Code, codex) is written from this answer,
+    and an empty answer makes the caller skip the write — the machine then
+    keeps its old registration with nothing to show for it but a log line.
+    That happened on a real upgrade: the freshly deployed binary answered
+    nothing on its first run and a whole release's registration changes never
+    landed. So a failure is retried, each one is logged with its reason, and
+    when the deployed copy keeps failing the binary bundled in the package —
+    the same version, the source the deployed copy was made from — is asked
+    instead.
+
+    Returns:
+        List of dicts like [{"event": "SessionStart", "matcher": ""}, ...].
+        Empty only when neither copy answers.
+    """
+    candidates = [hook_path]
+    with contextlib.suppress(FileNotFoundError, RuntimeError):
+        bundled = str(get_bundled_binary_path())
+        if bundled != hook_path:
+            candidates.append(bundled)
+
+    for binary in candidates:
+        for attempt in range(1, QUERY_ATTEMPTS + 1):
+            events, why = _ask_supported_events(binary)
+            if events:
+                if binary != hook_path or attempt > 1:
+                    logger.warning(
+                        "Supported events came from %s on attempt %d", binary, attempt
+                    )
                 return events
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to query supported events: %s", e)
+            logger.warning(
+                "frago-core --supported-events failed (%s, attempt %d/%d): %s",
+                binary, attempt, QUERY_ATTEMPTS, why,
+            )
+            if attempt < QUERY_ATTEMPTS:
+                time.sleep(QUERY_RETRY_DELAY_SECONDS)
     return []
 
 

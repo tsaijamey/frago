@@ -196,3 +196,80 @@ class TestDeployAnnouncesAppControl:
 
         assert caplog.text == ""
         assert deployed.read_bytes() == b"binary"
+
+
+class TestSupportedEventsQuery:
+    """Every hook registration is written from this answer.
+
+    An empty answer makes the sync skip the write, so the machine keeps its old
+    registration. On a real upgrade the freshly deployed binary answered nothing
+    on its first run and a whole release's registration changes never landed.
+    """
+
+    EVENTS = [{"event": "PreToolUse", "matcher": ""}]
+
+    def test_a_failed_first_answer_is_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        answers = [([], "exit -9, stderr: (no stderr)"), (self.EVENTS, "")]
+        monkeypatch.setattr(hook_binary, "_ask_supported_events", lambda _b: answers.pop(0))
+        monkeypatch.setattr(hook_binary, "QUERY_RETRY_DELAY_SECONDS", 0)
+        monkeypatch.setattr(hook_binary, "get_bundled_binary_path", lambda: Path("/pkg/frago-core"))
+        assert hook_binary.query_supported_events("/deployed/frago-core") == self.EVENTS
+
+    def test_the_bundled_copy_answers_when_the_deployed_one_keeps_failing(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        asked: list[str] = []
+
+        def ask(binary: str) -> tuple[list[dict[str, str]], str]:
+            asked.append(binary)
+            if binary == "/deployed/frago-core":
+                return [], "exit -9, stderr: (no stderr)"
+            return self.EVENTS, ""
+
+        monkeypatch.setattr(hook_binary, "_ask_supported_events", ask)
+        monkeypatch.setattr(hook_binary, "QUERY_RETRY_DELAY_SECONDS", 0)
+        monkeypatch.setattr(hook_binary, "get_bundled_binary_path", lambda: Path("/pkg/frago-core"))
+        with caplog.at_level(logging.WARNING, logger=hook_binary.logger.name):
+            got = hook_binary.query_supported_events("/deployed/frago-core")
+        assert got == self.EVENTS
+        assert asked == ["/deployed/frago-core"] * hook_binary.QUERY_ATTEMPTS + ["/pkg/frago-core"]
+        # The reason is in the log, not just "no events".
+        assert "exit -9" in caplog.text
+
+    def test_nothing_answers_means_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hook_binary, "_ask_supported_events", lambda _b: ([], "boom"))
+        monkeypatch.setattr(hook_binary, "QUERY_RETRY_DELAY_SECONDS", 0)
+        monkeypatch.setattr(hook_binary, "get_bundled_binary_path", lambda: Path("/pkg/frago-core"))
+        assert hook_binary.query_supported_events("/deployed/frago-core") == []
+
+    def test_a_real_process_failure_is_described(self, tmp_path: Path) -> None:
+        script = tmp_path / "broken"
+        script.write_text("#!/bin/sh\necho nope >&2\nexit 3\n")
+        script.chmod(0o755)
+        events, why = hook_binary._ask_supported_events(str(script))
+        assert events == []
+        assert why == "exit 3, stderr: nope"
+
+
+class TestDeploySwapsTheBinaryInWhole:
+    def test_the_new_binary_replaces_the_old_and_no_temp_file_is_left(
+        self, dirs: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        as_platform(monkeypatch, "Linux")
+        _, deploy = dirs
+        (deploy / "frago-core").write_bytes(b"old")
+        old_inode = (deploy / "frago-core").stat().st_ino
+        bundled = tmp_path / "frago-core"
+        bundled.write_bytes(b"new")
+        monkeypatch.setattr(hook_binary, "get_bundled_binary_path", lambda: bundled)
+        monkeypatch.setattr(hook_binary, "smart_app_control_warning", lambda: None)
+
+        deployed = hook_binary.deploy_hook_binary()
+
+        assert deployed.read_bytes() == b"new"
+        # A new file took the old one's name; the old file was not rewritten.
+        assert deployed.stat().st_ino != old_inode
+        assert deployed.stat().st_mode & 0o111
+        assert sorted(p.name for p in deploy.iterdir()) == ["frago-core"]
