@@ -1678,6 +1678,9 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const { t } = useTranslation();
   const raw = str(record.payload, 'queue_state');
   const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
+  // 正文里带着服务端拼的图片路径段。与插话卡、人发言走同一条拆图：排队这段时间人该
+  // 看见自己刚发的那张图，而不是一串十六进制路径。
+  const { text, images } = splitAttachedImages(content);
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
   );
@@ -1691,7 +1694,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         tone={YOU_TONE}
         meta={chip}
       >
-        <Prose text={content} />
+        <Prose text={text} />
+        <AttachedImages images={images} />
       </TextShell>
     );
   }
@@ -1707,7 +1711,7 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
       meta={
         <span className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[11px]">{chip}</span>
-          <span className="truncate text-text-secondary">{content}</span>
+          <span className="truncate text-text-secondary">{text}</span>
         </span>
       }
     />

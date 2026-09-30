@@ -182,6 +182,51 @@ describe('RecordCard 的十六种形态', () => {
   });
 });
 
+describe('插话队列里还在排的那一行', () => {
+  const IMAGE_MARKER = '[附带图片，请用读文件的工具逐一打开查看]:';
+  const UPLOADED = '/Users/frago/.frago/webui_uploads/abc-123/def-456.png';
+
+  function queuedInput(content: string, queue_state: string): WorkbenchRecord {
+    return makeRecord('session.state', {
+      payload: {
+        field: 'queue-operation',
+        pointer: true,
+        operation: 'enqueue',
+        content,
+        queue_state,
+      },
+    });
+  }
+
+  it('正文里的图片段拆成缩略图，不把路径摆给人看', () => {
+    const { container } = render(
+      <RecordCard
+        record={queuedInput(`看看这个\n\n${IMAGE_MARKER}\n${UPLOADED}`, 'pending')}
+        sessionId={SID}
+      />
+    );
+    expect(container.textContent).not.toContain(IMAGE_MARKER);
+    expect(container.textContent).not.toContain('def-456.png');
+    expect(screen.getByText('看看这个')).not.toBeNull();
+    const img = container.querySelector(
+      '[data-testid="attached-image"] img'
+    ) as HTMLImageElement | null;
+    expect(img?.getAttribute('src')).toBe('/api/workbench/uploads/abc-123/def-456.png');
+  });
+
+  it('已经并入或发出的那一行只是记账，正文里不再露图片路径', () => {
+    const { container } = render(
+      <RecordCard
+        record={queuedInput(`看看这个\n\n${IMAGE_MARKER}\n${UPLOADED}`, 'absorbed')}
+        sessionId={SID}
+      />
+    );
+    expect(container.textContent).not.toContain(IMAGE_MARKER);
+    expect(container.textContent).not.toContain('def-456.png');
+    expect(container.querySelector('[data-testid="attached-images"]')).toBeNull();
+  });
+});
+
 describe('旁路注入卡', () => {
   function hookRecord(payload: Record<string, unknown> = {}): WorkbenchRecord {
     return makeRecord('context.inject', {
