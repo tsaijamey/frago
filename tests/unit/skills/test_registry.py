@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from frago.skills.registry import InvalidSkill, Skill, SkillRegistry
+from frago.skills.registry import SkillRegistry
 
 
 class TestSkillRegistry:

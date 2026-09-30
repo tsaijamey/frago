@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -30,7 +29,7 @@ class SkillRegistry:
     parses YAML frontmatter of SKILL.md to get metadata.
     """
 
-    def __init__(self, skills_dir: Optional[Path] = None):
+    def __init__(self, skills_dir: Path | None = None):
         """Initialize SkillRegistry
 
         Args:
@@ -134,7 +133,7 @@ class SkillRegistry:
         try:
             data = yaml.safe_load(yaml_content)
         except yaml.YAMLError as e:
-            raise Exception(f"YAML parsing failed: {e}")
+            raise Exception(f"YAML parsing failed: {e}") from e
 
         if not isinstance(data, dict):
             raise Exception("YAML frontmatter must be in dictionary format")
