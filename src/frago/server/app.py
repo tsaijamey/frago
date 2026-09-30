@@ -257,6 +257,13 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     orphan_cleanup = OrphanRecipeCleanupService.get_instance()
     await orphan_cleanup.start()
 
+    # Mirror every agent's installed skills into ~/.frago/skills on a timer, so
+    # the session page's "/" menu lists what claude / codex / opencode have.
+    from frago.server.services.skill_service import SkillSyncService
+
+    skill_sync = SkillSyncService.get_instance()
+    await skill_sync.start()
+
     # Start the vibe teaming sync loop. Both sides' agents are only awake while
     # somebody is talking to them, so something that stays awake has to fetch
     # the peer's messages and feed them in. Idles without touching the network
@@ -380,6 +387,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await ui_session_lifecycle.stop()
     await virtual_os.stop()
     await orphan_cleanup.stop()
+    await skill_sync.stop()
     await claude_usage.stop()
     await primary_agent.stop()
     await scheduler.stop()

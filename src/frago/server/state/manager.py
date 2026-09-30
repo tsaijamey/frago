@@ -317,6 +317,8 @@ class StateManager:
                 "name": s.name,
                 "description": s.description,
                 "file_path": s.file_path,
+                "source_path": s.source_path,
+                "agents": list(s.agents),
             }
             for s in self._state.skills
         ]

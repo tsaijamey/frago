@@ -59,6 +59,8 @@ class StateLoader:
                         name=s.get("name", ""),
                         description=s.get("description"),
                         file_path=s.get("file_path"),
+                        source_path=s.get("source_path"),
+                        agents=list(s.get("agents") or []),
                     )
                 )
             return skills

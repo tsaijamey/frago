@@ -382,6 +382,8 @@ class SkillItemResponse(BaseModel):
     name: str
     description: str | None = None
     file_path: str | None = None
+    source_path: str | None = None
+    agents: list[str] = []
 
 
 # ============================================================

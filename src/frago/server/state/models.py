@@ -134,6 +134,8 @@ class Skill:
     name: str
     description: Optional[str] = None
     file_path: Optional[str] = None
+    source_path: Optional[str] = None
+    agents: List[str] = field(default_factory=list)
 
 
 # ============================================================
