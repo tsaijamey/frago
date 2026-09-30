@@ -289,6 +289,59 @@ export function pickedFromAnswer(answer: string, block: DecisionBlock): number[]
   return out;
 }
 
+export interface ParsedCardAnswer {
+  /** 选中的项，按答复里的次序。只写了字时为空。 */
+  picked: Pick<DecisionOption, 'key' | 'label' | 'effect'>[];
+  /** 人写的那段字，围栏去掉。没写就是空串。 */
+  written: string;
+}
+
+const OPTION_LINE_RE = /^(\S{1,8}) · (.+?) —— (.+)$/;
+
+function parseOptionLine(line: string): ParsedCardAnswer['picked'][number] | null {
+  const m = OPTION_LINE_RE.exec(line);
+  return m ? { key: m[1], label: m[2], effect: m[3] } : null;
+}
+
+/**
+ * 不看卡片、只凭答复原文把它拆回「选了哪几项 + 写了什么」，给「You said」气泡排版用。
+ *
+ * 记录流里那句答复跟它回的卡片不在同一张记录上，气泡拿不到区块，只能照 `composeAnswer`
+ * 的拼法反着读：开头换行的是多选清单，否则头一行形如「A · label —— effect」就是单选，
+ * 都不是就整段算人写的字。认不出的形状返回 null，气泡照原文显示——宁可朴素，不可读错。
+ *
+ * 只改显示，发出去的原文一字不动：agent 与随包规则认的正是那句带 effect 的原话。
+ */
+export function parseCardAnswer(answer: string): ParsedCardAnswer | null {
+  if (!isCardAnswer(answer)) return null;
+  const rest = answer.slice(ANSWER_PREFIX.length);
+  const gap = rest.indexOf('\n\n', rest.startsWith('\n') ? 1 : 0);
+  const head = gap < 0 ? rest : rest.slice(0, gap);
+  const tail = gap < 0 ? '' : rest.slice(gap + 2);
+
+  let picked: ParsedCardAnswer['picked'] = [];
+  let body = rest;
+  if (head.startsWith('\n')) {
+    const parsed = head
+      .slice(1)
+      .split('\n')
+      .map((l) => (l.startsWith('- ') ? parseOptionLine(l.slice(2)) : null));
+    if (!parsed.length || parsed.some((p) => !p)) return null;
+    picked = parsed as ParsedCardAnswer['picked'];
+    body = tail;
+  } else {
+    const one = head.includes('\n') ? null : parseOptionLine(head);
+    if (one) {
+      picked = [one];
+      body = tail;
+    }
+  }
+  const m = body.match(/^```\n([\s\S]*)\n```$/);
+  const written = (m ? m[1] : body).trim();
+  if (!picked.length && !written) return null;
+  return { picked, written };
+}
+
 /** 从一条卡片答复里取回人写的那段字（代码块围栏去掉）。没写就是空串。 */
 export function writtenFromAnswer(answer: string, block: DecisionBlock): string {
   if (!isCardAnswer(answer)) return '';

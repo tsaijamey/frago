@@ -44,6 +44,7 @@ import {
   type BrokenReason,
   type DecisionBlock,
   type DecisionOption,
+  type ParsedCardAnswer,
   type TrailingBlock,
   type Yaml,
 } from '@/utils/decisionBlock';
@@ -555,6 +556,60 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
       {confirmBar}
       {foot}
     </div>
+  );
+}
+
+// ── 人发出的那句卡片答复 ──────────────────────────────────────────────
+/**
+ * 「You said」气泡里的卡片答复。
+ *
+ * 原文是给 agent 读的一行（`【answer】A · label —— effect`），照字面摆出来前缀突兀、
+ * 选项和效果挤成一串。这里拆开重排：选中的每一项画成卡片上那一项被选中后的样子——
+ * 同一个字母方块、同一种选中底色——人在卡上点了什么，回到记录流里一眼对得上；写的字
+ * 另起一段。前缀本身不再显示，由气泡标题旁的「卡片答复」小标说出这句话是从卡片来的。
+ */
+export function CardAnswerBody({ answer }: { answer: ParsedCardAnswer }) {
+  return (
+    <div data-testid="card-answer" className="flex min-w-0 flex-col gap-1.5">
+      {answer.picked.map((o, i) => (
+        <div
+          key={i}
+          data-testid="card-answer-option"
+          className="flex min-w-0 items-start gap-2 rounded-[8px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-[9px] pb-2 pt-[7px]"
+        >
+          <span className="mt-px flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[5px] border border-text-primary bg-text-primary px-1 font-mono text-[11px] text-bg-primary">
+            {o.key}
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="break-words text-[13px] font-medium leading-[1.45] text-text-primary">
+              <Inline text={o.label} />
+            </span>
+            <span className="mt-px break-words text-[12px] leading-[1.5] text-text-secondary">
+              <Inline text={o.effect} />
+            </span>
+          </span>
+        </div>
+      ))}
+      {answer.written ? (
+        <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-text-primary">
+          {answer.written}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** 气泡标题旁那枚「卡片答复」小标，替掉正文开头的 `【answer】`。 */
+export function CardAnswerTag() {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-testid="card-answer-tag"
+      className="inline-flex items-center gap-1 rounded-full bg-bg-subtle px-2 py-[1px] text-[11px] text-text-secondary"
+    >
+      <Check size={11} className="shrink-0" />
+      {t('workbench.decision.cardAnswerTag')}
+    </span>
   );
 }
 

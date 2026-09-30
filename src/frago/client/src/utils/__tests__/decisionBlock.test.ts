@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   composeAnswer,
   loadYaml,
+  parseCardAnswer,
   parseDecisionBlock,
   pickedFromAnswer,
   splitTrailingBlock,
@@ -230,5 +231,45 @@ describe('从答复认回', () => {
     const b = ok(DEMOS['single-choice']);
     expect(pickedFromAnswer('A', b)).toEqual([]);
     expect(pickedFromAnswer('【answer】A · 别的', b)).toEqual([]);
+  });
+});
+
+describe('parseCardAnswer：不看卡片，只凭原文拆回来排版', () => {
+  const strip = (o: { key: string; label: string; effect: string }) => ({
+    key: o.key,
+    label: o.label,
+    effect: o.effect,
+  });
+
+  it('单选、多选、选加写、只写，都能从 composeAnswer 的原文拆回', () => {
+    const single = ok(DEMOS['single-choice-irreversible']);
+    expect(parseCardAnswer(composeAnswer(single, [single.options[0]], ''))).toEqual({
+      picked: [strip(single.options[0])],
+      written: '',
+    });
+
+    const multi = ok(DEMOS['multi-choice']);
+    expect(
+      parseCardAnswer(composeAnswer(multi, [multi.options[0], multi.options[2]], ''))
+    ).toEqual({ picked: [strip(multi.options[0]), strip(multi.options[2])], written: '' });
+
+    const cat = ok(DEMOS['choice-and-text-multi']);
+    expect(parseCardAnswer(composeAnswer(cat, [cat.options[1]], '另外把截图换成新的'))).toEqual({
+      picked: [strip(cat.options[1])],
+      written: '另外把截图换成新的',
+    });
+
+    const draft = ok(DEMOS['choice-and-text-draft']);
+    expect(parseCardAnswer(composeAnswer(draft, [draft.options[1]], '第一行\n第二行'))).toEqual({
+      picked: [strip(draft.options[1])],
+      written: '第一行\n第二行',
+    });
+    expect(parseCardAnswer('【answer】只写不选')).toEqual({ picked: [], written: '只写不选' });
+  });
+
+  it('不是卡片发的，或者什么都没有，返回 null', () => {
+    expect(parseCardAnswer('A · 发布 —— 打 tag')).toBeNull();
+    expect(parseCardAnswer('【answer】')).toBeNull();
+    expect(parseCardAnswer('【answer】\n- 不像选项的一行')).toBeNull();
   });
 });

@@ -1364,6 +1364,7 @@
       "yesDoIt": "Yes, do it",
       "answeredAt": "You answered at {{time}} — sent to the session as your message below",
       "repliedOwn": "You replied in your own words below",
+      "cardAnswerTag": "Answered on card",
       "brokenLead": "Shown as written — this answer-needed-by-human block couldn't be read, so there's no card: {{reason}}.",
       "broken": {
         "yaml": "{{detail}}",

@@ -1360,6 +1360,7 @@
       "yesDoIt": "确定，做",
       "answeredAt": "你在 {{time}} 作答——已作为你的发言送进会话，见下方",
       "repliedOwn": "你已在下面自己回复",
+      "cardAnswerTag": "卡片答复",
       "brokenLead": "照原文显示——这个 answer-needed-by-human 区块读不了，没有画成卡片：{{reason}}。",
       "broken": {
         "yaml": "{{detail}}",

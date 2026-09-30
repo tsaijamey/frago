@@ -55,10 +55,10 @@ import {
 } from 'lucide-react';
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
-import { splitTrailingBlock } from '@/utils/decisionBlock';
+import { parseCardAnswer, splitTrailingBlock } from '@/utils/decisionBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
 import AttachedImages from './AttachedImages';
-import { DecisionReply } from './DecisionCard';
+import { CardAnswerBody, CardAnswerTag, DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
   queueOpOf,
@@ -691,6 +691,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   // 趁 agent 在忙时打进去的，接口发起的那几条根本不是人坐在这儿敲的。
   const modeKey = INPUT_MODE_LABEL_KEY[mode];
   const inline = !!command && isInlineArg(text);
+  const cardAnswer = command ? null : parseCardAnswer(text);
 
   return (
     <TextShell
@@ -699,7 +700,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       label={voice?.user ?? t(KIND_LABEL_KEY['user.say'])}
       labelTone={YOU_LABEL}
       tone={YOU_TONE}
-      meta={modeKey ? t(modeKey) : undefined}
+      meta={cardAnswer ? <CardAnswerTag /> : modeKey ? t(modeKey) : undefined}
     >
       {/* 命令摆成一枚等宽徽标。参数跟不跟它连排，看参数是**一个取值**还是**一段话**：
           `/model Opus` 人打的就是连着的一句，拆成两行两种字号会读成"命令是 /model，
@@ -716,7 +717,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       ) : null}
       {!inline && (text || !command) ? (
         <div className={command ? 'mt-1.5' : undefined}>
-          <Prose text={text} />
+          {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
         </div>
       ) : null}
       {images.length ? (
@@ -1124,6 +1125,7 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
   const { text, images } = splitAttachedImages(str(p, 'body'));
+  const cardAnswer = parseCardAnswer(text);
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
   return (
     <TextShell
@@ -1136,7 +1138,7 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
-      <Prose text={text} />
+      {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
       <AttachedImages images={images} />
     </TextShell>
   );
