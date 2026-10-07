@@ -85,6 +85,10 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         if card.session_id in titles:
             row["title"] = titles[card.session_id]
         rows.append(row)
+    # 不开在 tmux 里的会话不再盯它的文件（主人 09-30 定）。清单本来就每 15 秒取一次、手上
+    # 正好有 tmux 此刻的样子，顺带收一道：关掉 tmux 的那场最迟一轮之后停盯。
+    in_tmux = {row["session_id"] for row in rows if row["in_tmux"]}
+    await asyncio.to_thread(_keep_watching_only, in_tmux)
     return rows
 
 
@@ -405,9 +409,9 @@ async def read_workbench_records(
     except UnknownSessionFamily as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    # Lazily start file watching for this session's project so that
-    # subsequent record deltas are pushed via WebSocket instead of polling.
-    _ensure_watching(sid)
+    # 开在 tmux 里的才登记监听，此后文件一动就经 WebSocket 推增量；不开在 tmux 里的只有
+    # 这一次取回的内容，不盯它的文件（主人 09-30 定）。
+    await asyncio.to_thread(_ensure_watching, sid)
 
     return [asdict(record) for record in records]
 
@@ -624,6 +628,10 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     - CoreAgent 那一场还在跑 → 409，等它答完就能发；
     - 内核不在或者 CoreAgent 没配连接 → 503，这一轮连记录都没留下，理由只能从这里带出去；
     - 一个字没有也没有附件 → 400，空轮次投进去只会白占一次冷启动。
+
+    ``status: "queued"`` 是两种情形共用的答复：人点名只排队（``wait`` 为假），或者
+    CoreAgent 那一场此刻正在干活——后者要等当前这一步结束才被读到，页面据此把这句话
+    标成排队中。
     """
     if (
         not request.text.strip()
@@ -647,6 +655,16 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     try:
         if not request.wait:
             # 只排队：判落点仍会读盘，照样进工作线程；投喂本身由它自己开的线程做。
+            await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
+            return {"sid": sid, "status": "queued", "text": ""}
+        # CoreAgent 那一场正在干活：这一句会写进它的 stdin，内核在这一轮的下一个回合边界
+        # 接上（见 coreagent_runner._feed_loop 与内核的「中途插话」），不必等整件事做完。
+        # 仍然当场回「排队中」：它确实要等到那个边界才被读到，这一刻还没进模型的历史。
+        # 这一趟不等它，页面据此把这句话标成排队，而不是一路显示「已发送」。
+        #
+        # 忙的时候不等，丢不掉失败信号：同步能出的错只剩「队列满」（send_queued 照样
+        # 当场抛），而「内核不在」「没配连接」那几种——它正跑着，不可能碰得上。
+        if record_reader.detect_family(sid) == "coreagent" and coreagent_runner.busy(sid):
             await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。
@@ -726,6 +744,26 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
     from frago.server.services import tmux_sessions_service as svc
 
     def _stop() -> dict[str, Any]:
+        # CoreAgent 不跑在 tmux 里：它那一场是 frago 服务自己的子进程，找 tmux 永远找不到。
+        # 从前不分家，按下这个按钮只回一句「这一场此刻没有在跑的会话」，而它其实还在跑，
+        # 跑多久也没人停得下来。
+        if record_reader.detect_family(sid) == "coreagent":
+            outcome = coreagent_runner.stop(sid, by="页面上的人")
+            return {
+                "sid": sid,
+                # `alive` 与另外三家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
+                # 它与 `stopped` 一起读——两个都真，说的是「本来在跑，这一按停掉了」。
+                "alive": bool(outcome["running"]),
+                "busy": bool(outcome["busy"]),
+                "stopped": bool(outcome["stopped"]),
+                # 排队里还没轮到、被这一按连带作废的条数。人刚发出去的话不见了，得有个数：
+                # 从前它悄没声地丢了，返回值里一个字都没有（这一场的记录里补了那一行）。
+                "dropped": int(outcome["dropped"]),
+                "name": None,
+                "via": "coreagent" if outcome["stopped"] else None,
+                "error": None,
+            }
+
         link = svc.find_for_session(sid)
         if link is None:
             return {
@@ -860,21 +898,45 @@ async def read_workbench_record_raw(
 
 
 def _ensure_watching(session_id: str) -> None:
-    """Trigger lazy file watching for the project of *session_id*.
+    """这场会话开在 tmux 里就登记监听，否则撤掉它可能留着的登记。
 
     Claude Code sessions (UUID-shaped) start a ``SessionStream`` per project;
     opencode sessions (``ses_`` prefix) start a shared ``OpencodeStream``.
+
+    判 tmux 与清单同一条判据：``tmux_name_for(编号)`` 在不在 tmux 此刻的会话名里。一条
+    ``list-sessions``，发话后一秒一趟的快节拍下也扛得住。不开在 tmux 里的照样补一次旁路
+    观察的「打开」——右栏要靠它把早就答完的会话读一遍。
     """
     try:
+        from frago.agent_driver.tmux_session import tmux_name_for
+        from frago.server.services import tmux_sessions_service as tsvc
         from frago.server.services.workbench_stream_bridge import (
             WorkbenchStreamBridge,
         )
 
         bridge = WorkbenchStreamBridge.get_instance()
-        bridge.ensure_watching(session_id)
+        if tmux_name_for(session_id) in tsvc.open_session_names():
+            bridge.ensure_watching(session_id)
+        else:
+            bridge.release(session_id)
+            bridge.note_opened(session_id)
     except Exception:
         import logging
 
         logging.getLogger(__name__).warning(
             "Failed to start workbench watching for %s", session_id, exc_info=True
         )
+
+
+def _keep_watching_only(session_ids: set[str]) -> None:
+    """只留这几场的监听，其余撤掉。撤不掉不打断取清单。"""
+    try:
+        from frago.server.services.workbench_stream_bridge import (
+            WorkbenchStreamBridge,
+        )
+
+        WorkbenchStreamBridge.get_instance().keep_only(session_ids)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to prune workbench watching", exc_info=True)

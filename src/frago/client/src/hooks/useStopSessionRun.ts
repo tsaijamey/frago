@@ -24,6 +24,13 @@ export interface StopRunResult {
   /** 屏上还在干活。为 true 且 `stopped` 为 false 时，服务端刻意没动它。 */
   busy: boolean;
   stopped: boolean;
+  /**
+   * 被这一按连带作废、还没轮到的句子数。
+   *
+   * CoreAgent 那一场才有：它跑在服务端自己的进程里，说话是写进那个进程的 stdin，停的时候
+   * 还没来得及读到的话一并没了。人刚发出去的话不见了，得有个数——从前它悄没声地丢。
+   */
+  dropped?: number;
   /** 那场 tmux 的名字。没找到时为 null。 */
   name: string | null;
   /** 走的是池的驱逐（`pool`）还是 tmux（`tmux`）。 */
