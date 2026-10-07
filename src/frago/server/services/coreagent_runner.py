@@ -82,6 +82,13 @@ _REAP_GRACE_S = 10.0
 #: 空闲回收是在没人等的时候慢慢等，叫停是人等不下去了才按的。
 _STOP_GRACE_S = 5.0
 
+#: 关 stdin 等不到、送了 SIGTERM 之后，再等这么久。还不动才补 SIGKILL。
+#:
+#: 这两级不是走过场：SIGKILL 之下内核没有任何收尾的机会，它正跑着的那条命令会被 init
+#: 收养、接着跑（本机实测：叫停两次，留下两对还在睡的进程），而人按下停止的意思正是
+#: 「别再动了」。先给一个能被捕到的信号，那一边就有机会把手上的活收掉。
+_TERM_GRACE_S = 3.0
+
 
 class CoreAgentBusy(RuntimeError):
     """这一场现在收不下这句话：队列排满了。
@@ -318,24 +325,53 @@ def _reclaim(sess: _Session) -> None:
     """收掉这一场的进程。调用方持有 ``sess.lock``。
 
     回收动作就是**关 stdin**：实测内核读到 EOF 自己收场退出（``next_stream_message``
-    返回 ``None`` → 循环结束），干净退出，不需要信号。等一小会儿退不掉才补一刀。
+    返回 ``None`` → 循环结束），干净退出，不需要信号。等一小会儿退不掉才动硬的。
     """
     proc = sess.proc
     sess.proc = None
     sess.state = "absent"
     if proc is None:
         return
+    _let_it_go(proc, _REAP_GRACE_S, "空闲回收")
+
+
+def _let_it_go(proc: subprocess.Popen, grace: float, what: str) -> None:
+    """关 stdin → 等 ``grace`` → SIGTERM → 等一小会儿 → SIGKILL。
+
+    关 stdin 这一下同时是「礼」和「实活」：内核读到 EOF 会先把手上的活收掉——正在跑的那条
+    命令连进程组一起终止（见 frago-core 的 ``tools::kill_live_groups``），然后这一轮结束、
+    进程干净退出。这条路走通了就一步也用不着信号。
+
+    走不通才动硬的，且**先 SIGTERM 后 SIGKILL**：SIGKILL 捕不住，内核来不及收它拉起的命令，
+    那些命令会被 init 收养、接着跑。收不干净只记一句日志，NEVER 把它带的这件事本身带崩。
+    """
     try:
         if proc.stdin and not proc.stdin.closed:
             proc.stdin.close()
-        try:
-            proc.wait(timeout=_REAP_GRACE_S)
-        except subprocess.TimeoutExpired:
-            logger.warning("coreagent 进程关掉 stdin 后没退，补一刀（pid=%s）", proc.pid)
-            proc.kill()
-            proc.wait(timeout=_REAP_GRACE_S)
-    except Exception:  # noqa: BLE001 — 收不干净只记一句，NEVER 让它把调用方带崩
-        logger.warning("收 coreagent 进程时出错（session=%s）", sess.session_id, exc_info=True)
+    except Exception:  # noqa: BLE001 — 关不成 stdin 也还有下面两级
+        logger.warning("%s：关 coreagent 的 stdin 时出错（pid=%s）", what, proc.pid, exc_info=True)
+    try:
+        proc.wait(timeout=grace)
+        return
+    except subprocess.TimeoutExpired:
+        logger.info("%s：关 stdin 后 %ss 没退，先送 SIGTERM（pid=%s）", what, grace, proc.pid)
+    except Exception:  # noqa: BLE001
+        logger.warning("%s：等 coreagent 退出时出错（pid=%s）", what, proc.pid, exc_info=True)
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=_TERM_GRACE_S)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning("%s：SIGTERM 之后 %ss 还没退，补一刀（pid=%s）", what, _TERM_GRACE_S, proc.pid)
+    except Exception:  # noqa: BLE001
+        logger.warning("%s：送 SIGTERM 时出错（pid=%s）", what, proc.pid, exc_info=True)
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=_REAP_GRACE_S)
+    except Exception:  # noqa: BLE001
+        logger.warning("%s：补刀之后还是收不干净（pid=%s）", what, proc.pid, exc_info=True)
 
 
 def _read_loop(sess: _Session) -> None:
@@ -546,18 +582,8 @@ def send_queued(
 
 
 def _terminate(proc: subprocess.Popen) -> None:
-    """关 stdin 让内核自己收场，等不到就补一刀。"""
-    try:
-        if proc.stdin and not proc.stdin.closed:
-            proc.stdin.close()
-        try:
-            proc.wait(timeout=_STOP_GRACE_S)
-        except subprocess.TimeoutExpired:
-            logger.info("coreagent 关 stdin 后 %ss 没退，补一刀（pid=%s）", _STOP_GRACE_S, proc.pid)
-            proc.kill()
-            proc.wait(timeout=_REAP_GRACE_S)
-    except Exception:  # noqa: BLE001 — 收不干净只记一句，别把叫停这件事本身带崩
-        logger.warning("停 coreagent 进程时出错（pid=%s）", getattr(proc, "pid", "?"), exc_info=True)
+    """关 stdin 让内核自己收场，等不到再一级一级动硬的（见 :func:`_let_it_go`）。"""
+    _let_it_go(proc, _STOP_GRACE_S, "叫停")
 
 
 def _drain_pending(sess: _Session) -> None:

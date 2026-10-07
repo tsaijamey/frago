@@ -317,6 +317,52 @@ class TestStop:
 
         assert not sess.feeder.is_alive(), "叫停后投喂线程要当场退出"
 
+    def test_关_stdin_不退时先送_sigterm_再补刀(self, fake_binary, no_real_popen, monkeypatch):
+        """SIGKILL 捕不住：内核来不及收它拉起的命令，那些命令会被 init 收养、接着跑
+        ——人按下停止的意思正是别再动了。所以关 stdin 等不到，先给一个能被捕到的信号。
+        """
+        cr.send_queued("core_ladder", "跑一下", cwd="/tmp")
+        time.sleep(0.2)
+        proc = cr._sessions["core_ladder"].proc
+        calls: list[str] = []
+        waits = {"n": 0}
+
+        def wait(timeout=None):
+            waits["n"] += 1
+            if waits["n"] == 1:
+                raise cr.subprocess.TimeoutExpired(cmd="frago-core", timeout=timeout)
+            return 0
+
+        monkeypatch.setattr(proc, "wait", wait)
+        monkeypatch.setattr(proc, "terminate", lambda: calls.append("term"), raising=False)
+        monkeypatch.setattr(proc, "kill", lambda: calls.append("kill"), raising=False)
+
+        cr.stop("core_ladder")
+
+        assert calls == ["term"], "关 stdin 等不到就先送 SIGTERM；它退了就不必再补刀"
+
+    def test_sigterm_之后还不退才补刀(self, fake_binary, no_real_popen, monkeypatch):
+        """三级阶梯的最后一级：能捕的信号给了、还不够，才动用捕不住的那一刀。"""
+        cr.send_queued("core_ladder2", "跑一下", cwd="/tmp")
+        time.sleep(0.2)
+        proc = cr._sessions["core_ladder2"].proc
+        calls: list[str] = []
+        waits = {"n": 0}
+
+        def wait(timeout=None):
+            waits["n"] += 1
+            if waits["n"] <= 2:
+                raise cr.subprocess.TimeoutExpired(cmd="frago-core", timeout=timeout)
+            return 0
+
+        monkeypatch.setattr(proc, "wait", wait)
+        monkeypatch.setattr(proc, "terminate", lambda: calls.append("term"), raising=False)
+        monkeypatch.setattr(proc, "kill", lambda: calls.append("kill"), raising=False)
+
+        cr.stop("core_ladder2")
+
+        assert calls == ["term", "kill"], "SIGTERM 也没用才补刀"
+
     def test_补记录失败不妨碍叫停本身(self, monkeypatch, fake_binary, no_real_popen):
         from frago.session import coreagent_store
 
