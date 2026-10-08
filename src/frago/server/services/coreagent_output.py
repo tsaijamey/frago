@@ -18,26 +18,42 @@ from typing import Any
 _DENIAL_MARKS = ("〔not allowed〕", "〔rules refused〕", "〔hook refused〕")
 
 
+def result_from_line(line: str) -> dict[str, Any] | None:
+    """**单行**里若是一轮的结论，按老形状（``type == "final"``）交出；不是就 ``None``。
+
+    给常驻进程用：一条 stdout 上会流过很多轮结论，逐行读、逐行判，不能像
+    :func:`final_from` 那样「扫整段找最后一条」——在常驻进程里「最后一条」不再等于
+    「本轮这一条」。老的三处一次性调用继续用 :func:`final_from`，行为不变。
+    """
+    line = line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("type") == "final":
+        return obj
+    if _is_cc_result(obj):
+        return _final_from_result(obj)
+    return None
+
+
 def final_from(stdout: str) -> dict[str, Any] | None:
     """内核结束时交的那一行结论，按老形状（``type == "final"``）交出。
 
     认两种：老的 ``final`` 行原样返回；新的 Claude Code ``result`` 行翻成老形状。
     标准输出里别的行不认。
+
+    扫整段、从后往前取第一条命中的——**给一次性进程用**（一轮一条 stdout）。常驻进程
+    请用 :func:`result_from_line` 逐行判。
     """
     for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            obj = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(obj, dict):
-            continue
-        if obj.get("type") == "final":
-            return obj
-        if _is_cc_result(obj):
-            return _final_from_result(obj)
+        found = result_from_line(line)
+        if found is not None:
+            return found
     return None
 
 

@@ -372,6 +372,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("WorkbenchStreamBridge initialized (loop=%s)", loop is not None)
 
     # 会话页右栏的旁路观察。不起任何常驻的东西：会话流投任务时才干活。
+    # CoreAgent 的常驻会话进程（见 coreagent_runner）也在这里准备好：停机时要把它们收掉，
+    # 别留孤儿。
+    from frago.server.services import coreagent_runner
     from frago.server.services.session_observer import get_observer, reset_observer
 
     get_observer(loop)
@@ -399,6 +402,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     WorkbenchStreamBridge.reset_instance()
     # 还在跑的 frago-core 一起收掉
     reset_observer()
+    # 常驻的 CoreAgent 会话进程也收掉（关 stdin 让内核自己退，见 coreagent_runner）
+    coreagent_runner.shutdown()
 
 
 async def _start_ingestion_scheduler(logger):

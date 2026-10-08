@@ -89,3 +89,52 @@ def test_a_refusal_from_tmux_is_passed_through_verbatim(client, monkeypatch):
 
     assert body["stopped"] is False
     assert body["error"] == "can't find session"
+
+
+# ── CoreAgent 那一场：它不跑在 tmux 里 ──────────────────────────────────────
+#
+# 从前的判据只有 tmux：对一场正在跑的 CoreAgent 会话，按下这个按钮服务端回一句「这一场
+# 此刻没有在跑的会话」，而它其实还在跑，跑多久也没人停得下来。下面几条盯的是按下去
+# 真的停到它，而且不用人按第二下。
+
+CORE_SID = "core_18dbe0cfd02cb8a00000865f0000"
+
+
+def _core_stop(monkeypatch, outcome):
+    from frago.server.services import coreagent_runner
+
+    monkeypatch.setattr(coreagent_runner, "stop", lambda sid, by="": outcome)
+
+
+def test_a_running_coreagent_session_is_stopped_without_asking_tmux(client, monkeypatch):
+    asked: list[str] = []
+    monkeypatch.setattr(svc, "find_for_session", lambda sid: asked.append(sid) or None)
+    _core_stop(monkeypatch, {"running": True, "stopped": True, "busy": True, "dropped": 0})
+
+    body = client.post(f"/api/workbench/sessions/{CORE_SID}/stop", json={}).json()
+
+    assert body["stopped"] is True
+    assert body["alive"] is True
+    assert body["busy"] is True
+    assert body["via"] == "coreagent"
+    assert asked == [], "CoreAgent 不跑在 tmux 里，不该去问 tmux"
+
+
+def test_a_coreagent_session_that_is_not_running_is_reported_as_such(client, monkeypatch):
+    _core_stop(monkeypatch, {"running": False, "stopped": False, "busy": False, "dropped": 0})
+
+    body = client.post(f"/api/workbench/sessions/{CORE_SID}/stop", json={}).json()
+
+    assert body["alive"] is False
+    assert body["stopped"] is False
+    assert body["via"] is None
+
+
+def test_a_coreagent_stop_does_not_need_a_second_press(client, monkeypatch):
+    """tmux 那条路要人按两次（屏上还在干活时先问一次）。CoreAgent 一次就停——人按这个
+    按钮正是因为等不下去了，再问一次只是让他多按一下，而那一轮还在跑。"""
+    _core_stop(monkeypatch, {"running": True, "stopped": True, "busy": True, "dropped": 3})
+
+    body = client.post(f"/api/workbench/sessions/{CORE_SID}/stop", json={"force": False}).json()
+
+    assert body["stopped"] is True
