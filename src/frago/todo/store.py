@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date
@@ -50,9 +51,16 @@ TODO_SCHEMA = {
             "`next` picks first active (todo/doing)",
     "fields": [
         {"name": "id", "type": "string", "auto": True,
-         "description": "filename without .json; reference handle (prefix-resolvable)"},
+         "description": "filename without .json; reference handle (prefix-resolvable). "
+                        "Derived from the title on add; change it afterwards with "
+                        "`frago todo edit <ref> --id <new-id>` (renames the file, keeps "
+                        "created/done_at/sessions)"},
         {"name": "title", "type": "string", "required": True,
-         "description": "one-line title; source of the slug"},
+         "description": "one-line title; source of the slug. `frago todo add` requires it "
+                        "to be pure ASCII (English kebab-case) because it becomes the id — "
+                        "a non-ASCII title is refused with the pinyin it would have "
+                        "produced. Wording in another language goes in --summary / "
+                        "--context, which never reach the id"},
         {"name": "summary", "type": "string|null", "description": "shorter summary"},
         {"name": "status", "type": "enum", "enum": list(STATUSES), "default": "todo",
          "description": "add/edit/log/done only set todo|doing|done; `dropped` is reachable "
@@ -134,6 +142,30 @@ def _path_for(todo_id: str) -> Path:
 
 SLUG_MAX_LENGTH = 32
 
+# 手写 id 的字符集。id 就是文件名主干，所以这里同时是路径安全边界：白名单之外的字符
+# 一律进不来，其中「/」与「..」是防走出目录，开头的「.」是防写出隐藏文件。
+ID_MAX_LENGTH = 120
+_ID_CHARS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _require_id(candidate: str) -> str:
+    """校验一个手写的 id（文件名主干），不合格就带着原因抛错。
+
+    报错必须说清哪一条不合格：这个值会被当成文件名原样落盘，调用方改错一次就是文件
+    系统层面的后患，含糊的消息会让人靠试错找到边界。
+    """
+    text = (candidate or "").strip()
+    if not text:
+        raise ValueError("id is required")
+    if len(text) > ID_MAX_LENGTH:
+        raise ValueError(f"id too long ({len(text)} > {ID_MAX_LENGTH} chars): {text!r}")
+    if not _ID_CHARS_RE.match(text) or ".." in text:
+        raise ValueError(
+            f"invalid id {text!r}: use letters, digits, dot, dash or underscore, "
+            "starting with a letter or digit (it becomes the file name)"
+        )
+    return text
+
 
 def _make_id(title: str) -> str:
     """Build a unique ``<YYYYMMDD>-<slug>`` id from the title.
@@ -149,6 +181,14 @@ def _make_id(title: str) -> str:
     pretty. The filename is only a handle — the real title lives in the JSON and
     is shown by ``list`` / ``show``. Empty slug (un-transliterable input)
     degrades to the bare date; uniqueness is preserved by the ``-N`` suffix.
+
+    This layer stays tolerant of any title on purpose: the JSON is where a
+    Chinese title belongs, and the web UI renders it as written. The ASCII rule
+    is enforced one level up, on ``frago todo add`` (the only production writer),
+    where a caller can be told to write an English title and put the Chinese in
+    ``--summary`` / ``--context`` — at this level there is nobody to tell, and a
+    halved todo is worse than an ugly handle. Titles that got through anyway can
+    be corrected with :func:`rename`.
     """
     stem = date.today().strftime("%Y%m%d")
     slug = slugify(title, max_length=SLUG_MAX_LENGTH, word_boundary=True, save_order=True)
@@ -365,8 +405,17 @@ def update(ref: str, **changes) -> Todo:
     Setting ``status`` to ``done`` stamps ``done_at`` if not already set.
     ``category=""`` clears the category (None already means "leave it alone").
     ``status="dropped"`` is refused here — see :func:`drop`.
+
+    ``id`` is handled like any other change but renames the file too (see
+    :func:`rename`): the filename *is* the id, so the two can never drift.
     """
     todo = get(ref)
+    old_path = _path_for(todo.id)
+    # 改名要连着文件一起动，所以先摘出来，等其它字段都归位再走。
+    new_id = changes.pop("id", None)
+    if new_id is not None:
+        new_id = _require_id(new_id)
+
     for key, value in changes.items():
         if value is None:
             continue
@@ -387,8 +436,28 @@ def update(ref: str, **changes) -> Todo:
     todo.updated = _today()
     if changes.get("status") is not None:
         _apply_status(todo, changes["status"])
-    _write(todo)
+
+    if new_id is not None and new_id != todo.id:
+        if _path_for(new_id).exists():
+            raise ValueError(f"id {new_id!r} is already taken by another todo ({new_id}.json)")
+        todo.id = new_id
+        # 先写新的再删旧的：中途出事最坏是留下两份，而不是两份都没有。
+        _write(todo)
+        old_path.unlink()
+    else:
+        _write(todo)
     return todo
+
+
+def rename(ref: str, new_id: str) -> Todo:
+    """改一件事务的 id——文件名跟着走，其余字段一个不动。
+
+    id 是标题 slug 化来的，而 slug 化对中文是有损的（中文标题会变成一串拼音）。标题
+    一旦取错，落在 id 上的代价就固定下来了，除非能改。这里就是那条改法：``created``
+    / ``done_at`` / ``sessions`` 这些是历史，改名不该动它们，所以走的是搬文件，不是
+    删了重建。
+    """
+    return update(ref, id=new_id)
 
 
 def log(

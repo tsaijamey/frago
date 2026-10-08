@@ -103,6 +103,38 @@ def _check_category(category_id, *, allow_none=False):
         raise click.ClickException(f"{e}{hint}") from None
 
 
+def _require_ascii_title(title: str):
+    """标题会被 slug 化成 id（= 文件名），非 ASCII 标题一律当场退回。
+
+    这件事的坏处是事后无感：中文标题照样落盘、照样打印 Created todo、退出码 0，除非
+    回头去读 id，谁也看不出它已经变成一串读不出的拼音。事后无感的错，事前提醒治不住
+    （字面上提醒了，照样能写下去），只有命令侧拦住才算数——所以这条校验在命令层，不
+    靠自觉。
+
+    错误里同时给出**这一条**会落成的 slug，让人看见损失是什么，而不是抽象地说「不许
+    非 ASCII」。中文原话有地方去：--summary 与 --context 不参与 id 生成。
+    """
+    if title.isascii():
+        return
+
+    from slugify import slugify
+
+    from frago.todo.store import SLUG_MAX_LENGTH
+
+    preview = slugify(title, max_length=SLUG_MAX_LENGTH, word_boundary=True, save_order=True)
+    # 按在标题里出现的顺序去重——排过序再显示就把原话打乱了，人得自己拼回去才知道
+    # 报错说的是哪一段。
+    bad = "".join(dict.fromkeys(ch for ch in title if not ch.isascii()))
+    shown = bad[:12] + ("…" if len(bad) > 12 else "")
+    raise click.ClickException(
+        f"标题里有非 ASCII 字符（{shown}），它会被音译成读不出的 id：这条会落成 "
+        f"{preview or '<空>'}。\n"
+        "  · 标题写英文 kebab，例：frago todo add fix-session-list-error\n"
+        "  · 中文原话放进 --summary / --context，这两个不参与 id 生成\n"
+        "  · 已经建好的事务改名：frago todo edit <ref> --id <新的英文 id>"
+    )
+
+
 def _print_list(status=None, priority=None, tag=None, category=None):
     from frago.todo import categories, store
 
@@ -146,6 +178,12 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, category, co
     """Create a new todo. Title can be positional (`todo add "..."`) or via --title.
 
     \b
+    The title must be ASCII (English kebab-case): it is slugified into the id,
+    which is also the file name, and a Chinese title would silently turn into
+    unreadable pinyin. The wording in your own language goes in --summary /
+    --context instead.
+
+    \b
     The current session id is recorded automatically — it is the way back to the
     conversation this todo came out of. `frago todo --how-to` explains what else
     a handover todo has to carry.
@@ -157,6 +195,7 @@ def todo_add(title_arg, title_opt, summary, priority, status, tags, category, co
         raise click.ClickException(
             'provide a title: `frago todo add "..."` or `frago todo add --title "..."`'
         )
+    _require_ascii_title(title)
     _check_category(category)
 
     session_list = list(sessions)
@@ -221,6 +260,8 @@ def todo_show(ref):
 
 @todo_group.command(name="edit", cls=AgentFriendlyCommand)
 @click.argument("ref")
+@click.option("--id", "new_id", default=None,
+              help="Rename the todo: new id (also the file name); keeps every other field")
 @click.option("--title", default=None)
 @click.option("--summary", default=None)
 @click.option("--priority", type=_PRIORITY_CHOICE, default=None)
@@ -232,17 +273,24 @@ def todo_show(ref):
 @click.option("--done-when", "done_when", multiple=True, help="Replace conditions (repeatable)")
 @click.option("--link", "links", multiple=True, help="Replace links (repeatable)")
 @click.option("--session", "sessions", multiple=True, help="Replace session ids (repeatable)")
-def todo_edit(ref, title, summary, priority, status, tags, category, context, steps, done_when,
-              links, sessions):
+def todo_edit(ref, new_id, title, summary, priority, status, tags, category, context, steps,
+              done_when, links, sessions):
     """Edit fields of a todo (only provided options change).
 
     \b
     Every list option REPLACES. To carry a long-running todo forward without
     losing what earlier sessions concluded, use `frago todo log` — it appends.
+
+    \b
+    --id renames the todo (the id is the file name). created / done_at / sessions
+    are history and are kept — this is how a todo whose id came out as pinyin
+    gets a readable one.
     """
     from frago.todo import store
 
     changes = {}
+    if new_id is not None:
+        changes["id"] = new_id
     if title is not None:
         changes["title"] = title
     if summary is not None:

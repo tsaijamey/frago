@@ -398,3 +398,51 @@ def test_list_still_filters_by_dropped():
 def test_schema_documents_the_drop_fields():
     names = {f["name"] for f in store.TODO_SCHEMA["fields"]}
     assert {"dropped_at", "drop_reason"} <= names
+
+
+# ── 改名 ────────────────────────────────────────────────────────────────
+# id 由标题 slug 化而来，对中文是有损的；写错一次，代价就固定在 id 上。这几条守着
+# 「改得动，且只改名字」。
+
+
+def test_rename_moves_the_file_and_keeps_every_other_field(tmp_path):
+    todo = store.add("fix the thing", tags=["dx"], category="work")
+    store.update(todo.id, status="doing")
+    before = store.get(todo.id)
+
+    renamed = store.rename(todo.id, "20260101-fix-the-thing")
+
+    assert renamed.id == "20260101-fix-the-thing"
+    assert not (tmp_path / f"{todo.id}.json").exists()
+    assert (tmp_path / "20260101-fix-the-thing.json").exists()
+    # 历史字段一个不动：改名不是删了重建，created / sessions / 标签都留着。
+    assert renamed.created == before.created
+    assert renamed.status == "doing"
+    assert renamed.tags == ["dx"]
+    assert renamed.category == "work"
+
+
+def test_rename_keeps_done_at_and_sessions(tmp_path):
+    todo = store.drop(store.add("dropped with history", priority="high").id, "不做了")
+    renamed = store.rename(todo.id, "20260102-dropped-with-history")
+
+    assert renamed.dropped_at == todo.dropped_at
+    assert renamed.drop_reason == "不做了"
+    assert renamed.priority == "high"
+
+
+def test_rename_refuses_a_taken_or_unsafe_id():
+    a = store.add("alpha")
+    b = store.add("beta")
+    with pytest.raises(ValueError, match="already taken"):
+        store.rename(a.id, b.id)
+    # 路径安全：id 就是文件名，斜杠与「..」不能进来。
+    for bad in ["../escape", "a/b", "..", "", "   "]:
+        with pytest.raises(ValueError):
+            store.rename(a.id, bad)
+    assert store.get(a.id).id == a.id  # 一条都没改成
+
+
+def test_rename_to_the_same_id_is_a_no_op():
+    todo = store.add("same name")
+    assert store.rename(todo.id, todo.id).id == todo.id
