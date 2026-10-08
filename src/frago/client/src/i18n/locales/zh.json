@@ -1125,6 +1125,8 @@
   "common": {
     "diagramFailed": "图没画出来：{{reason}}",
     "diagramRendering": "正在画图…",
+    "diagramViewerTitle": "图表",
+    "zoomDiagram": "放大查看",
     "loading": "加载中...",
     "loadingConfiguration": "加载配置中...",
     "save": "保存",
