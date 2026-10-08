@@ -39,6 +39,86 @@ def test_brief_lets_the_director_raise_the_stage_and_talk_first() -> None:
     assert "elements" in brief  # 推近之前先取可寻址的名字
 
 
+def test_brief_pins_the_four_showmanship_rules() -> None:
+    """2026-10-08 那一轮人报的四处观感，逐条钉住：容器、措辞、指针、进度板。"""
+    brief = recipe_forge.build_brief("x", page=True, name=None, session_id="s")
+    # 容器：桌上至少两扇窗；关窗整场只允许一处（「需要界面：否」那一处）
+    assert "至少两扇窗" in brief
+    assert "window close 整场只允许用在这一处" in brief
+    # 措辞：旁白主语是「我」，默认真开口
+    assert "旁白是「我」" in brief
+    assert "默认带 --speak" in brief
+    # 指针：每说一句配一次指针动作，等的时间不许只 term read
+    assert "mouse to --ref" in brief and "mouse drift" in brief
+    assert "NEVER 只发" in brief
+    # 进度板：三样数据、固定三步、停到终端右边
+    assert "进度板" in brief
+    assert "window move --target image" in brief
+    for item in ("规格", "模式", "验收"):
+        assert item in brief
+
+
+def test_brief_embeds_a_runnable_board_script() -> None:
+    """内嵌的板子脚本 MUST 是一段能编译的 python——占位符替换坏了，这里先红。"""
+    import re as _re
+
+    brief = recipe_forge.build_brief("x", page=True, name=None, session_id="s")
+    assert "__BOARD_SCRIPT__" not in brief, "占位符没被替换"
+    m = _re.search(r"```bash\n(.*?)\n```", brief, _re.S)
+    assert m, "任务书里没有板子脚本"
+    script = m.group(1)
+    compile(script, "<board>", "exec")  # 语法不成立就当场炸
+    for fn in ("read_spec_size", "read_modes", "read_checks", "main()"):
+        assert fn in script
+
+
+def test_the_board_script_actually_renders(tmp_path) -> None:
+    """把内嵌的板子脚本抠出来真跑：出得了图、画得上字、内容变长画布跟着长（不裁字）。"""
+    import re as _re
+    import subprocess
+    import sys as _sys
+
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    brief = recipe_forge.build_brief("x", page=True, name=None, session_id="s")
+    script = _re.search(r"```bash\n(.*?)\n```", brief, _re.S).group(1)
+    board = tmp_path / "board.py"
+    board.write_text(script, encoding="utf-8")
+
+    def render(name: str, spec: str):
+        rdir = tmp_path / name
+        rdir.mkdir()
+        (rdir / "spec.md").write_text(spec, encoding="utf-8")
+        png = tmp_path / f"{name}.png"
+        res = subprocess.run(
+            [_sys.executable, str(board), str(rdir), str(png)], capture_output=True, text=True
+        )
+        assert res.returncode == 0, res.stderr
+        im = Image.open(png).convert("RGB")
+        px = im.load()
+        w, h = im.size
+        rows = [y for y in range(h) if any(px[x, y] != (24, 26, 32) for x in range(30, w - 30, 2))]
+        return (w, h), len(rows), (h - 1 - max(rows) if rows else 0)
+
+    size, ink_rows, bottom_margin = render(
+        "plain", "```yaml\nmodes:\n  status: export\n```\nfrago recipe run a\n"
+    )
+    assert size[0] == 640
+    assert ink_rows > 40  # 画上了东西，不是一张纯底色
+    assert bottom_margin >= 10  # 底部留白在，字没被切在边界上
+
+    long_spec = (
+        "```yaml\nmodes:\n"
+        + "".join(f"  very_long_mode_name_number_{i}: export\n" for i in range(8))
+        + "```\n"
+    )
+    taller, ink_rows2, margin2 = render("long", long_spec)
+    assert taller[1] > size[1], "内容长了画布没跟着长，字会被裁掉"
+    assert ink_rows2 > ink_rows
+    assert margin2 >= 10
+
+
 def test_brief_without_page_asks_for_a_data_only_recipe() -> None:
     brief = recipe_forge.build_brief("x", page=False, name="etf_board", session_id="s")
     assert "page: false" in brief
