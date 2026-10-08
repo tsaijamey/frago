@@ -46,6 +46,18 @@ CREATE TABLE part (
 _FUTURE_MS = 4_000_000_000_000
 
 
+@pytest.fixture(autouse=True)
+def _no_standalone_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 ``--standalone`` 的探测钉成"认不出来"。
+
+    探测要起子进程问本机那份 opencode 认不认这个参数（见 driver 的
+    ``_standalone_flag``），结果随机器而变：不钉住的话，同一批启动命令断言在装了
+    2.0 的机器上会多出一个 ``--standalone``、在别的机器上又没有。本文件只关心命令
+    骨架；这个开关本身的行为归 test_opencode_session_state.py。
+    """
+    monkeypatch.setattr(opencode_driver, "_standalone_flag", lambda: "")
+
+
 @pytest.fixture
 def live_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     """一个可写的临时会话库（driver 侧仍然只读打开它）。"""

@@ -23,9 +23,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -181,20 +183,24 @@ def _launch(ctx: LaunchCtx) -> str:
     而绑定还在文件里——下次启动再走一遍同一条死路，该 frago 会话就此永久不可用。
     所以这里自愈：会话没了就清掉绑定、改为裸起（spec 的 Edge Cases 要求）。
     ``session_exists`` 在库不可读时返回 True，故读失败 NEVER 误清好绑定。
+
+    带上 ``--standalone``（本机这份认它时）：会话跑在自己的私有服务端上，注入的
+    profile 当场生效，也不会在机器上留常驻进程（理由见 ``_standalone_flag``）。
     """
     # native：调用方给的就是 opencode 原生会话 id，直接续接、跳过映射查询。
     # 原生 id 同样可能已被删除，故一并检查；但 native 情况 NEVER 写映射文件。
+    standalone = f" {_standalone_flag()}".rstrip()
     if ctx.native_session_id:
         if opencode_store.session_exists(ctx.session_id):
-            return f"opencode -s {ctx.session_id}"
-        return "opencode"
+            return f"opencode{standalone} -s {ctx.session_id}"
+        return f"opencode{standalone}"
     bound = opencode_store.get_binding(ctx.session_id)
     if bound:
         if opencode_store.session_exists(bound):
-            return f"opencode -s {bound}"
+            return f"opencode{standalone} -s {bound}"
         opencode_store.drop_binding(ctx.session_id)
     # 尚未认领过 / 绑定已失效：裸起。会话行会在首轮提交那一刻由 opencode 自己建。
-    return "opencode"
+    return f"opencode{standalone}"
 
 
 def _dismiss_update_modal(session: TmuxAgentSession) -> None:
@@ -647,6 +653,52 @@ def _session_env(_ctx: LaunchCtx) -> dict[str, str]:
     自己也带上权限放行，NEVER 依赖合并。
     """
     return {"OPENCODE_CONFIG_CONTENT": json.dumps(_base_config())}
+
+
+def _standalone_flag() -> str:
+    """本机这份 opencode 要不要加 ``--standalone``；不知道时返回空串。
+
+    2.0 起 opencode 把服务端从 TUI 里拆出来做成一个**常驻**进程（``opencode serve
+    --service``，客户端经全局状态目录里的描述符找到它），而它只在启动那一刻读一次
+    配置：之后连上来的会话哪怕带着自己的 profile，看到的仍是先来的那个会话的配置。
+    2026-10-09 实测——用 ``--use-profile 火山-GLM5.3`` 起的会话，页脚里显示的却是上一
+    场的 ``deepseek-flash``（屏幕、日志都没有任何提示）。它还不随 TUI 退出而退出，
+    也没有空闲自停，单进程实测占用三百多兆。
+
+    ``--standalone`` 让这场会话用自己的私有服务端（stdio 管道、随机端口，随 TUI 一起
+    生灭），注入的配置当场生效，也不再往机器上留常驻进程。与共享服务端一样，会话
+    记录照旧写进同一个库（``~/.local/share/opencode/opencode.db``），认领与完成探针
+    不受影响。
+
+    这是 2.0 才有的开关：1.x 没有这层服务，配置本来就逐会话生效，也认不得这个参数。
+    故先问一句这份二进制支不支持，认不出来就不加——NEVER 为了修 2.0 的毛病，把 1.x
+    用户拦在一个它没有的开关上。探测结果按可执行文件路径缓存：版本不会在一次进程的
+    生命周期里变，而每场会话都起个子进程问一遍纯属浪费。
+    """
+    executable = find_agent_cli("opencode")
+    if not executable:
+        return ""
+    if executable in _STANDALONE_SUPPORT:
+        return "--standalone" if _STANDALONE_SUPPORT[executable] else ""
+    supported = False
+    with contextlib.suppress(Exception):
+        probe = subprocess.run(
+            [executable, "--help"],
+            capture_output=True,
+            timeout=_STANDALONE_PROBE_TIMEOUT_S,
+            check=False,
+        )
+        supported = b"--standalone" in probe.stdout
+    _STANDALONE_SUPPORT[executable] = supported
+    return "--standalone" if supported else ""
+
+
+# ``--standalone`` 的探测结果，键是可执行文件路径。见 ``_standalone_flag``。
+_STANDALONE_SUPPORT: dict[str, bool] = {}
+
+# 探测 ``--help`` 的等待上限（秒）。它只打印一段用法，正常是毫秒级；给上限只为让
+# 一次卡住的探测不至于把开会话拖住——问不出来就当不支持，退回裸启动。
+_STANDALONE_PROBE_TIMEOUT_S = 10.0
 
 
 def _provider_definition(profile: APIProfile) -> dict[str, Any]:
