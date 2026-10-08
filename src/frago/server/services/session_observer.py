@@ -7,7 +7,13 @@
 旁路 AI 不常驻。会话流里四件事发生时——人发来一句话、agent 把话交还给人、人按了打断、
 这场会话在页面上第一次被打开——往这场会话自己的队列里投一个任务。任务读游标之后的新增
 记录，问一次 frago-core，把回答写进槽位文件，推给页面，结束。没有进程要看管，也就没有孤
-儿；会话不再动，就不再有人投任务；服务重启后游标还在槽位文件里，下次打开时一次补上。
+儿；服务重启后游标还在槽位文件里，下次打开时一次补上。
+
+前四件事全都要有人在看着（监听只跟着 tmux 里的会话走），于是长跑会话没人看的时候，右栏
+一直是空的：语料里 29 次观察运行全部由「打开页面」触发，122 场里 101 场从没人打开过。
+现在多一个来由——``CADENCE``（见 :mod:`frago.server.services.session_watchdog`）：会话还
+开着、屏上还在干活时按节拍自己投一次，不看有没有人开着页面。触发名只影响说明书里那一句
+「这一段截在干活途中」，与 ``WORKING`` 同一处境。
 
 人那句话一到就跑一次，是因为「这场在做什么」「此刻在做什么」说的都是眼下：只等一轮结束
 才更新，人刚下的指令要整整等一轮才出现在右栏，而那一刻正是他最想看右栏的时候。
@@ -71,6 +77,9 @@ TAIL_KINDS = (TAIL_NOW, TAIL_OUTPUT)
 #: agent 干活途中叫旁路 AI 的最短间隔（秒）。离上一次跑还不到这么久，这一批就不叫。
 WORKING_GAP_S = 60
 WORKING = "working"
+#: 没人看页面时按节拍叫一次的来由（见 ``session_watchdog``）。与 WORKING 同一处境——
+#: 截的都是 agent 干活途中，只是这一次不是新记录把它招来的。
+CADENCE = "cadence"
 
 #: 说明书的文件名，在 ``~/.frago/hook/`` 下，随包发、人可以改，改过的升级时不覆盖。
 INSTRUCTIONS_FILE = "observer.md"
@@ -452,7 +461,7 @@ def build_prompt(
     head = f"## 这一段新增的会话记录（{len(shown)} 条"
     head += f"；更早的 {dropped} 条太多，没给）" if dropped else "）"
     lines += ["", head]
-    if trigger == WORKING:
+    if trigger in (WORKING, CADENCE):
         lines.append("（这一段截在 agent 干活途中，它还没停下。）")
     lines += shown or [NOTHING_TO_READ]
     lines += ["", "## 这一段里人说过的话（换目标时 anchor_seq 只能填这里的编号）"]

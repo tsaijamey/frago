@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 # How often the scheduler checks for due recipes (seconds)
 TICK_INTERVAL = 5
 
+#: 服务刚起来到第一跳之间的等待（秒）。测试拨到很小，好让循环一跳就跑起来。
+INITIAL_DELAY_S = 5
+
+#: 长跑会话的看护隔多久走一趟（秒）。比调度那一跳慢得多：它盯的是「三十分钟没有新记录」
+#: 这种慢故障，而每一趟都要读会话清单、问 tmux。
+WATCHDOG_EVERY_S = 300
+
 # 执行记录里存多长的那句答复。整份记录跟着任务一起写在 schedules.json 里、最多留 50 条，
 # 答复不设上限的话，一个爱长篇大论的任务能把那个文件撑到读写都变慢。再长的属于「去看那
 # 场会话」——会话编号就在同一条记录上。
@@ -405,8 +412,9 @@ class SchedulerService:
             )
 
     async def _loop(self) -> None:
-        await asyncio.sleep(5)  # initial delay
+        await asyncio.sleep(INITIAL_DELAY_S)  # 服务刚起来那一下先让别的初始化跑完
         last_staleness_check = 0.0
+        last_watchdog_check = 0.0
         while not self._stop_event.is_set():
             # Reload schedules each tick (CLI may have added new ones)
             self._load()
@@ -417,6 +425,15 @@ class SchedulerService:
                 last_staleness_check = time.monotonic()
                 with contextlib.suppress(Exception):
                     await self._check_staleness()
+
+            # 长跑会话的看护：没人看页面时也按节拍投一次旁路观察，静默太久推一条通知。
+            # 判据那条路要读会话文件、问 tmux，丢进工作线程，别把调度循环卡住。
+            if time.monotonic() - last_watchdog_check > WATCHDOG_EVERY_S:
+                last_watchdog_check = time.monotonic()
+                with contextlib.suppress(Exception):
+                    from frago.server.services.session_watchdog import get_watchdog
+
+                    await asyncio.to_thread(get_watchdog().sweep)
             for schedule in self._schedules:
                 if not schedule.get("enabled", True):
                     continue
