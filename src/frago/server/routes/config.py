@@ -5,13 +5,13 @@ Provides endpoints for reading and updating user configuration.
 
 from fastapi import APIRouter, HTTPException
 
+from frago.config.config_service import ConfigService, ConfigValidationError
 from frago.init.config_manager import load_config
 from frago.server.models import (
     ConfigUpdateRequest,
     UserConfigResponse,
     WebuiSessionsResponse,
 )
-from frago.config.config_service import ConfigService, ConfigValidationError
 from frago.server.state import StateManager
 
 router = APIRouter()
@@ -38,6 +38,7 @@ async def get_config() -> UserConfigResponse:
     return UserConfigResponse(
         theme=config.get("theme", "dark"),
         language=config.get("language", "en"),
+        agent_language=config.get("agent_language", ""),
         font_size=config.get("font_size", 14),
         max_history_items=config.get("max_history_items", 100),
         shortcuts=config.get("shortcuts", {}),
@@ -65,6 +66,8 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         updates["theme"] = request.theme
     if request.language is not None:
         updates["language"] = request.language
+    if request.agent_language is not None:
+        updates["agent_language"] = request.agent_language
     if request.font_size is not None:
         updates["font_size"] = request.font_size
     if request.max_history_items is not None:
@@ -81,7 +84,7 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
     try:
         result = ConfigService.update_config(updates)
     except ConfigValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Refresh cache after update
     state_manager = StateManager.get_instance()
@@ -90,6 +93,7 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
     return UserConfigResponse(
         theme=result.get("theme", "dark"),
         language=result.get("language", "en"),
+        agent_language=result.get("agent_language", ""),
         font_size=result.get("font_size", 14),
         max_history_items=result.get("max_history_items", 100),
         shortcuts=result.get("shortcuts", {}),

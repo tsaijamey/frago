@@ -128,6 +128,7 @@ export interface TaskStepsResponse {
 export interface UserConfig {
   theme: string;
   language: string;
+  agent_language?: string;
   max_history_items: number;
   shortcuts: Record<string, string>;
 }

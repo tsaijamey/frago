@@ -28,6 +28,9 @@ export type Theme = 'dark' | 'light';
 
 export type Language = 'en' | 'zh';
 
+/** Language agents reply in; '' follows `language`. */
+export type AgentLanguage = '' | 'en' | 'zh-Hans' | 'zh-Hant' | 'de' | 'fr' | 'es' | 'ja';
+
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
 // ============================================================
@@ -218,6 +221,7 @@ export interface SkillItem {
 export interface UserConfig {
   theme: Theme;
   language: Language;
+  agent_language?: AgentLanguage;
   max_history_items: number;
   shortcuts: Record<string, string>;
 }

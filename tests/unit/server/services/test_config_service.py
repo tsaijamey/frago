@@ -268,3 +268,50 @@ class TestConfigServiceGetUserLanguage:
             result = ConfigService.get_user_language()
 
         assert result == "en"
+
+
+class TestConfigServiceGetAgentLanguage:
+    """Test ConfigService.get_agent_language(): the chosen one, else Appearance's."""
+
+    def _use(self, tmp_path, monkeypatch, data):
+        config_file = tmp_path / "gui_config.json"
+        config_file.write_text(json.dumps(data))
+        monkeypatch.setattr("frago.config.config_service.CONFIG_FILE", config_file)
+        monkeypatch.setattr("frago.config.config_service.CONFIG_DIR", tmp_path)
+
+    def test_follows_interface_language_when_unset(self, tmp_path, monkeypatch):
+        self._use(tmp_path, monkeypatch, {"language": "zh"})
+        assert ConfigService.get_agent_language() == "zh-Hans"
+        self._use(tmp_path, monkeypatch, {"language": "en"})
+        assert ConfigService.get_agent_language() == "en"
+
+    def test_chosen_language_wins(self, tmp_path, monkeypatch):
+        self._use(tmp_path, monkeypatch, {"language": "en"})
+        ConfigService.update_config({"agent_language": "ja"})
+        assert ConfigService.get_agent_language() == "ja"
+        ConfigService.update_config({"agent_language": ""})
+        assert ConfigService.get_agent_language() == "en"
+
+    def test_rejects_unknown_code(self, tmp_path, monkeypatch):
+        self._use(tmp_path, monkeypatch, {})
+        with pytest.raises(ConfigValidationError):
+            ConfigService.update_config({"agent_language": "xx"})
+
+
+class TestAgentLanguageHookCommand:
+    """`frago config agent-language --for-hook` is what the SessionStart rule injects."""
+
+    def test_prints_instruction_in_that_language(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from frago.cli.cloud_commands import config_group
+
+        config_file = tmp_path / "gui_config.json"
+        config_file.write_text(json.dumps({"language": "en", "agent_language": "de"}))
+        monkeypatch.setattr("frago.config.config_service.CONFIG_FILE", config_file)
+
+        result = CliRunner().invoke(config_group, ["agent-language", "--for-hook"])
+
+        assert result.exit_code == 0
+        assert "Deutsch" in result.output
+        assert "auf Deutsch" in result.output

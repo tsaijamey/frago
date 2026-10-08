@@ -881,7 +881,10 @@
       "language": "语言",
       "languageDesc": "选择您偏好的界面语言",
       "english": "English",
-      "chinese": "中文"
+      "chinese": "中文",
+      "agentLanguage": "agent 回答用语",
+      "agentLanguageDesc": "agent 必须用这种语言回答你，每次会话开始时提出要求。",
+      "agentLanguageFollow": "跟界面语言一致（{{name}}）"
     },
     "init": {
       "title": "初始化状态",

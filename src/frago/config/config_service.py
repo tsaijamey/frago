@@ -8,7 +8,9 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from frago.config.agent_language import AGENT_LANGUAGES, resolve_agent_language
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,10 @@ class UserConfig:
 
     theme: str = "dark"
     language: str = "en"  # 'en' or 'zh'
+    # Language agents reply in; "" follows `language` (see agent_language.py)
+    agent_language: str = ""
     max_history_items: int = 100
-    shortcuts: Dict[str, str] = field(
+    shortcuts: dict[str, str] = field(
         default_factory=lambda: {
             "send": "Ctrl+Enter",
             "clear": "Ctrl+L",
@@ -31,7 +35,7 @@ class UserConfig:
         }
     )
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate configuration values.
 
         Returns:
@@ -42,13 +46,18 @@ class UserConfig:
             errors.append(f"theme must be 'dark' or 'light', got '{self.theme}'")
         if self.language not in ("en", "zh"):
             errors.append(f"language must be 'en' or 'zh', got '{self.language}'")
+        if self.agent_language and self.agent_language not in AGENT_LANGUAGES:
+            errors.append(
+                f"agent_language must be empty or one of {sorted(AGENT_LANGUAGES)}, "
+                f"got '{self.agent_language}'"
+            )
         if not 10 <= self.max_history_items <= 1000:
             errors.append(
                 f"max_history_items must be between 10 and 1000, got {self.max_history_items}"
             )
         return errors
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return asdict(self)
 
@@ -56,7 +65,7 @@ class UserConfig:
 class ConfigValidationError(Exception):
     """Raised when configuration validation fails."""
 
-    def __init__(self, errors: List[str]):
+    def __init__(self, errors: list[str]):
         self.errors = errors
         super().__init__(f"Configuration validation failed: {', '.join(errors)}")
 
@@ -75,7 +84,7 @@ class ConfigService:
         return CONFIG_DIR
 
     @staticmethod
-    def get_config() -> Dict[str, Any]:
+    def get_config() -> dict[str, Any]:
         """Load user configuration from file.
 
         Returns:
@@ -89,6 +98,7 @@ class ConfigService:
             config = UserConfig(
                 theme=data.get("theme", "dark"),
                 language=data.get("language", "en"),
+                agent_language=data.get("agent_language", ""),
                 max_history_items=data.get("max_history_items", 100),
                 shortcuts=data.get(
                     "shortcuts",
@@ -105,7 +115,7 @@ class ConfigService:
             return UserConfig().to_dict()
 
     @staticmethod
-    def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update_config(updates: dict[str, Any]) -> dict[str, Any]:
         """Update configuration with partial values.
 
         Args:
@@ -143,7 +153,7 @@ class ConfigService:
         return data
 
     @staticmethod
-    def get_config_value(key: str, default: Optional[Any] = None) -> Any:
+    def get_config_value(key: str, default: Any | None = None) -> Any:
         """Get a single configuration value.
 
         Args:
@@ -167,3 +177,15 @@ class ConfigService:
             return ConfigService.get_config_value("language", "en")
         except Exception:
             return "en"
+
+    @staticmethod
+    def get_agent_language() -> str:
+        """Language code agents are asked to reply in, never empty.
+
+        The one chosen under Appearance, else the interface language's.
+        """
+        try:
+            config = ConfigService.get_config()
+        except Exception:
+            return resolve_agent_language(None, None)
+        return resolve_agent_language(config.get("agent_language"), config.get("language"))

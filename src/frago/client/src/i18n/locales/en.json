@@ -885,7 +885,10 @@
       "language": "Language",
       "languageDesc": "Select your preferred interface language",
       "english": "English",
-      "chinese": "Chinese"
+      "chinese": "Chinese",
+      "agentLanguage": "Agent speaks",
+      "agentLanguageDesc": "The language agents must reply in. Asked at the start of every session.",
+      "agentLanguageFollow": "Same as interface ({{name}})"
     },
     "init": {
       "title": "Initialization status",

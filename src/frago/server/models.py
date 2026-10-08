@@ -95,6 +95,10 @@ class ConfigUpdateRequest(BaseModel):
 
     theme: str | None = Field(default=None, pattern="^(dark|light)$")
     language: str | None = Field(default=None, pattern="^(en|zh)$")
+    # "" = follow `language`; codes listed in frago.config.agent_language
+    agent_language: str | None = Field(
+        default=None, pattern="^(|en|zh-Hans|zh-Hant|de|fr|es|ja)$"
+    )
     font_size: int | None = Field(default=None, ge=8, le=32)
     max_history_items: int | None = Field(default=None, ge=10, le=1000)
     shortcuts: dict[str, str] | None = None
@@ -300,6 +304,7 @@ class UserConfigResponse(BaseModel):
 
     theme: str = "dark"
     language: str = "en"
+    agent_language: str = ""
     font_size: int = 14
     max_history_items: int = 100
     shortcuts: dict[str, str] = Field(default_factory=dict)

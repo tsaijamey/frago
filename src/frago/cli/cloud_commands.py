@@ -99,7 +99,7 @@ def config_group():
     """
     配置管理
 
-    管理 frago Cloud 相关配置。
+    管理 frago Cloud 相关配置；agent-language 查看 agent 回答用的语言。
     """
     pass
 
@@ -131,6 +131,27 @@ def config_set_cmd(key: str, value: str):
     """
     config_set(key, value)
     click.echo(f'已设置 {key} = {value}')
+
+
+@config_group.command('agent-language', cls=AgentFriendlyCommand)
+@click.option('--for-hook', is_flag=True, help='给 hook 注入用：只输出要求 agent 用哪种语言回答的那段话')
+def config_agent_language_cmd(for_hook: bool):
+    """
+    agent 回答用的语言
+
+    在 WebUI 设置 → 外观里选；没选就跟界面语言走。会话一开始由 hook 注入，
+    要求 agent 主要用这种语言回答。
+    """
+    from frago.config.agent_language import AGENT_LANGUAGES, hook_text
+    from frago.config.config_service import ConfigService
+
+    code = ConfigService.get_agent_language()
+    if for_hook:
+        click.echo(hook_text(code))
+        return
+    chosen = ConfigService.get_config().get('agent_language') or ''
+    source = '设置 → 外观里选定' if chosen else '没选，跟界面语言走'
+    click.echo(f'{code}（{AGENT_LANGUAGES[code][0]}）：{source}')
 
 
 @config_group.command('list', cls=AgentFriendlyCommand)
