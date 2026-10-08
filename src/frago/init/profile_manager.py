@@ -195,8 +195,32 @@ def load_profiles() -> ProfileStore:
         return ProfileStore()
 
 
+def _materialize_anthropic_url(profile: APIProfile) -> None:
+    """Preset connections carry their Anthropic door's address on the record.
+
+    frago-core reads profiles.json directly and has never known the preset
+    table, so a preset profile whose ``url`` is blank is unreachable for it:
+    the kernel kept its own hard-coded type map, and a type it does not know
+    failed at the first turn — volcengine_plan was the first preset shaped
+    like that. Writing the preset's address onto the record at save time makes
+    the record self-describing, and the next vendor preset needs no kernel
+    change. Custom profiles already carry their own ``url`` and are left alone.
+    """
+    from frago.init.configurator import PRESET_ENDPOINTS
+
+    if profile.kind != KIND_ENDPOINT:
+        return
+    if profile.url or profile.endpoint_type == "custom":
+        return
+    url = (PRESET_ENDPOINTS.get(profile.endpoint_type) or {}).get("ANTHROPIC_BASE_URL")
+    if url:
+        profile.url = url
+
+
 def save_profiles(store: ProfileStore) -> None:
     """Save profiles to ~/.frago/profiles.json with 0o600 permissions on Unix."""
+    for profile in store.profiles:
+        _materialize_anthropic_url(profile)
     PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     content = json.dumps(store.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"

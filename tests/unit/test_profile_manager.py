@@ -521,6 +521,38 @@ class TestProfileValidation:
     """A profile that cannot work should be refused while the user is still
     looking at the form, not at the first request days later."""
 
+    def test_save_fills_preset_anthropic_url(self, tmp_profiles_path):
+        """Preset connections carry their Anthropic door's address on the record.
+
+        frago-core reads profiles.json without knowing the preset table, so a
+        blank url on a preset type used to leave the kernel nowhere to send —
+        volcengine_plan failed at its first turn exactly like that."""
+        from frago.init.configurator import PRESET_ENDPOINTS
+
+        add_profile(
+            APIProfile(
+                id="volc1",
+                name="Volcengine Plan",
+                endpoint_type="volcengine_plan",
+                api_key="sk-volc",
+            )
+        )
+        saved = get_profile("volc1")
+        assert saved.url == PRESET_ENDPOINTS["volcengine_plan"]["ANTHROPIC_BASE_URL"]
+
+    def test_save_keeps_custom_url_untouched(self, tmp_profiles_path):
+        """Custom profiles already carry their own url; save must not rewrite it."""
+        add_profile(
+            APIProfile(
+                id="cust1",
+                name="Custom",
+                endpoint_type="custom",
+                api_key="sk-c",
+                url="https://llm.example.com/base",
+            )
+        )
+        assert get_profile("cust1").url == "https://llm.example.com/base"
+
     def test_add_rejects_unknown_endpoint(self, tmp_profiles_path):
         """A typo'd endpoint type used to be saved and silently treated as custom."""
         with pytest.raises(ValueError, match="Unknown endpoint type"):
@@ -553,7 +585,26 @@ class TestProfileValidation:
     def test_update_rejects_switch_to_custom_without_url(
         self, tmp_profiles_path, sample_profile
     ):
-        add_profile(sample_profile)
+        # A record written by an older frago: preset type, url still blank —
+        # saves backfill it now, so only such a legacy record can be blank.
+        tmp_profiles_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "profiles": [
+                        {
+                            "id": "test1234",
+                            "name": "Test DeepSeek",
+                            "kind": "endpoint",
+                            "endpoint_type": "deepseek",
+                            "api_key": "sk-test-key-1234567890",
+                            "url": None,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         with pytest.raises(ValueError, match="custom endpoint needs an API URL"):
             update_profile("test1234", {"endpoint_type": "custom"})
 

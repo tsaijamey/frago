@@ -139,6 +139,59 @@ def test_unchecking_opencode_hands_it_back_immediately(home, saved) -> None:
     assert _read(home.claude_settings)["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-flash"
 
 
+def test_switching_from_bearer_profile_clears_the_stale_token(home) -> None:
+    """从授权头档切到密钥档，上一条的 ANTHROPIC_AUTH_TOKEN 必须被清掉。
+
+    env 是合并写（只增不减）。不先删 frago 掌管的键，火山这类授权头 profile 写下的
+    token 会滞留在 settings.json 里；Claude Code 两点并存时认 AUTH_TOKEN 优先，切回
+    密钥档后旧 token 仍被拿去当 Bearer 发给新端点，回 401。
+    """
+    add_profile(
+        APIProfile(
+            id="e2e00002",
+            name="火山-GLM5.3",
+            endpoint_type="volcengine_plan",
+            api_key="ark-bearer-key",
+            default_model="glm-5.3-flash",
+        )
+    )
+    add_profile(
+        APIProfile(
+            id="e2e00003",
+            name="DeepSeek",
+            endpoint_type="deepseek",
+            api_key="sk-key",
+            default_model="deepseek-v4-flash",
+        )
+    )
+
+    activate_profile("e2e00002", ["claude"])
+    env = _read(home.claude_settings)["env"]
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "ark-bearer-key"
+
+    activate_profile("e2e00003", ["claude"])
+    env = _read(home.claude_settings)["env"]
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env["ANTHROPIC_API_KEY"] == "sk-key"
+
+
+def test_save_keeps_user_added_env_keys(home) -> None:
+    """先删只删 frago 掌管的键，用户自己写进 env 的变量原样留下。"""
+    from frago.init.configurator import save_claude_settings
+
+    home.claude_settings.write_text(
+        json.dumps({"env": {"MY_OWN_VAR": "keep-me", "ANTHROPIC_AUTH_TOKEN": "stale"}}),
+        encoding="utf-8",
+    )
+
+    save_claude_settings({"env": {"ANTHROPIC_API_KEY": "sk-new"}})
+
+    env = _read(home.claude_settings)["env"]
+    assert env["MY_OWN_VAR"] == "keep-me"
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env["ANTHROPIC_API_KEY"] == "sk-new"
+
+
 def test_editing_the_active_profile_reaches_both(home, saved) -> None:
     from frago.init.profile_manager import update_profile
 

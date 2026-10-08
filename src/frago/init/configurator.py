@@ -119,6 +119,25 @@ PRESET_RESPONSES_CHANNELS: dict[str, dict] = {
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 CLAUDE_JSON_PATH = Path.home() / ".claude.json"
 
+# settings.json 的 env 区里归 frago 掌管的键。写之前先删这一组，再写新值。
+#
+# 为什么要有这份名单：env 是合并写（只增不减），换一条 profile 时新值盖上去，没提到的
+# 旧键原地留下。留下的若是另一类凭据（授权头 vs 密钥头），就会出事——Claude Code 两点
+# 并存时认 ANTHROPIC_AUTH_TOKEN 优先，于是从授权头档切到密钥档后，旧 token 仍被拿去当
+# Bearer 发给新端点，回 401。停用（``clear_api_env_from_settings``）走的是同一份名单。
+#
+# 用户自己加进 env 的键不在这份名单里，写盘时一个不动。
+CLAUDE_ENV_OWNED_KEYS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "API_TIMEOUT_MS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+)
+
 # URL patterns for inferring endpoint type
 ENDPOINT_URL_PATTERNS = {
     "deepseek": "api.deepseek.com",
@@ -298,6 +317,11 @@ def save_claude_settings(settings: dict) -> None:
     """
     Save Claude Code settings.json (merge write, don't overwrite existing fields)
 
+    合并的是**顶层**与 env 的**非掌管键**：frago 掌管的那几个 env 键
+    （``CLAUDE_ENV_OWNED_KEYS``）先删再写，因为 env 只增不减，不先删就会把上一条
+    profile 的另一类凭据留在文件里（切档后旧 token 盖掉新密钥，端点回 401）。用户
+    自己写进 env 的其它变量、以及 hooks 等顶层字段，仍然原样不动。
+
     Args:
         settings: Configuration dictionary to merge
     """
@@ -307,10 +331,12 @@ def save_claude_settings(settings: dict) -> None:
     # Load existing configuration
     existing = load_claude_settings()
 
-    # Merge env field (deep merge)
+    # Merge env field: frago 掌管的键先删，再写新值
     if "env" in settings:
         if "env" not in existing:
             existing["env"] = {}
+        for key in CLAUDE_ENV_OWNED_KEYS:
+            existing["env"].pop(key, None)
         existing["env"].update(settings["env"])
         del settings["env"]
 
@@ -360,20 +386,9 @@ def clear_api_env_from_settings() -> bool:
     if not env:
         return True
 
-    # Keys to remove
-    api_keys_to_remove = [
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "API_TIMEOUT_MS",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-    ]
-
+    # Keys to remove —— 与写入端（save_claude_settings）共用同一份名单，两边不得各存一份
     modified = False
-    for key in api_keys_to_remove:
+    for key in CLAUDE_ENV_OWNED_KEYS:
         if key in env:
             del env[key]
             modified = True
@@ -701,6 +716,9 @@ def build_claude_env_config(
         env["ANTHROPIC_API_KEY"] = ""
     else:
         env["ANTHROPIC_API_KEY"] = api_key
+        # 单凭据：这一档不吃授权头，把另一类凭据显式摘掉。留着一把不用的
+        # AUTH_TOKEN 会盖过刚写的密钥（claude 认 AUTH_TOKEN 优先）。
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
     return env
 
 
