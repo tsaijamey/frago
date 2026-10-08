@@ -173,6 +173,12 @@ export interface UseSendToSessionOptions {
   /** 没发出去。带上信封编号，页面据此撤掉这一单——挂着一个送不到的信封比不提示还糟。 */
   onSendFailed?: (outboundId?: string) => void;
   /**
+   * 这一单是**排队投进去的**：服务端此刻正忙，这句话要等当前这一步结束才被读到
+   * （CoreAgent 那一场就是这种形态，它每轮之间才读一次输入）。页面据此把信封标成
+   * 「排队中」，而不是一路显示「已发送」——后者会让人以为话已经被接住了。
+   */
+  onQueued?: (outboundId?: string) => void;
+  /**
    * 那句话**确实落进会话**的时刻（页面接的是记录流的 `deliveredAt`）。它一变就把发送
    * 按钮放回去，人可以接着说下一句。
    *
@@ -190,6 +196,7 @@ export function useSendToSession(
     onSendStart,
     onSent,
     onSendFailed,
+    onQueued,
     deliveredAt = null,
   }: UseSendToSessionOptions = {}
 ): SendToSessionState {
@@ -225,6 +232,8 @@ export function useSendToSession(
   onSendStartRef.current = onSendStart;
   const onSendFailedRef = useRef(onSendFailed);
   onSendFailedRef.current = onSendFailed;
+  const onQueuedRef = useRef(onQueued);
+  onQueuedRef.current = onQueued;
 
   useEffect(() => {
     mounted.current = true;
@@ -324,7 +333,7 @@ export function useSendToSession(
           ? onSendStartRef.current?.(payload.text, attachments, skillNames)
           : onSendStartRef.current?.(payload.text, attachments)) || undefined;
       try {
-        await sendToSession(
+        const result = await sendToSession(
           sessionId,
           payload.text,
           payload.images.map((im) => im.dataUrl),
@@ -332,6 +341,8 @@ export function useSendToSession(
           payload.skills.map((s) => s.name)
         );
         if (!mounted.current) return;
+        // 服务端说这一单是排队投进去的（那一场正忙），信封当场换成「排队中」。
+        if (result?.status === 'queued') onQueuedRef.current?.(outboundId);
         setFailed(null);
         await onSentRef.current?.(outboundId);
         if (timer.current !== null) clearTimeout(timer.current);

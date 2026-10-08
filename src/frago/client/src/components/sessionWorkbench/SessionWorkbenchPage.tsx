@@ -30,12 +30,16 @@ import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
 import { useSessionPins } from '@/hooks/useSessionPins';
-import { isSessionAlive, useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
+import {
+  isSessionAlive,
+  useWorkbenchLabels,
+  useWorkbenchSessions,
+} from '@/hooks/useWorkbenchSessions';
 import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
 import { formatClock, formatDuration } from './RecordCard';
-import { shortAge } from './SessionItem';
+import { ForYouChip, shortAge } from './SessionItem';
 import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
@@ -70,11 +74,21 @@ interface BringBack {
   text: string;
 }
 
+/**
+ * 目录写法照原型：家目录缩成 `~`。服务端给的是绝对路径，这里只做显示层的缩写——首段是
+ * `Users` 或 `home` 时把 `/<首段>/<用户名>` 换成 `~`（macOS 与 Linux 的两种家目录写法），
+ * 其余路径原样。悬停里仍给完整路径（见 `dirHint`）。
+ */
+export function withTilde(dir: string): string {
+  return dir.replace(/^\/(?:Users|home)\/[^/]+/, '~');
+}
+
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
   const selectedId = usePageStore((s) => s.workbenchSessionId);
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const { t } = useTranslation();
+  const { familyLabel } = useWorkbenchLabels();
   const showToast = useAppStore((s) => s.showToast);
   /**
    * 「For you」要会话清单才判得出，清单的「For you N」档又要那份判定——两头互相要。
@@ -110,10 +124,14 @@ export default function SessionWorkbenchPage() {
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
   const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
+  // 开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它（For you 那几场）。
+  const selectedInTmux =
+    selected !== null &&
+    (selected.in_tmux === true || forYou.rows.some((r) => r.session_id === selected.session_id));
   // 这一场还活着（比开在 tmux 里宽一格，含 CoreAgent 的常驻进程）→ 让中栏自己活起来：
   // 文件一动服务端就推增量，轮询只是断连时的兜底。**不活着的只在点开时取一次**（主人
-  // 09-30 定）。从前这里看的是会话状态里那个 running，而 CoreAgent 不跑在 tmux 里、被判成
-  // 死的，于是它这一场推送不建、轮询又自己关掉，页面永久停在发出那句话的那一刻。
+  // 09-30 定）。从前这里用的是 `selectedInTmux`，而 CoreAgent 不跑在 tmux 里、被判成死的，
+  // 于是它这一场推送不建、轮询又自己关掉，页面永久停在发出那句话的那一刻。
   const selectedAlive =
     selected !== null &&
     (isSessionAlive(selected) || forYou.rows.some((r) => r.session_id === selected.session_id));
@@ -131,6 +149,7 @@ export default function SessionWorkbenchPage() {
     deliveredAt,
     markSent,
     clearSent,
+    markQueued,
     settleSent,
     trails,
   } = useWorkbenchRecords(selectedId, { live: selectedAlive });
@@ -180,14 +199,17 @@ export default function SessionWorkbenchPage() {
   }, [inFlight]);
   const selectedForYou = selectedId ? forYou.infoOf(selectedId) : null;
   const headStatus = useMemo(() => {
-    const prefix = selectedForYou ? `${t('workbench.forYou.label')} · ` : '';
+    // 原型里这一串是「For you 标签 + 正文」：标签单独一枚（见下面渲染），正文只说 waiting / answered，
+    // 不再把「For you ·」写进文字里。
+    const forYou = Boolean(selectedForYou);
     if (latestTrail && inFlight) {
       const landed =
         latestTrail.steps.in_the_session !== undefined || latestTrail.steps.queued !== undefined;
-      if (!landed) return { live: false, text: t('workbench.page.sending') };
+      if (!landed) return { live: false, forYou: false, text: t('workbench.page.sending') };
       const since = latestTrail.steps.on_its_way ?? now;
       return {
         live: true,
+        forYou: false,
         text: t('workbench.page.agentOnIt', { duration: formatDuration(Math.max(0, now - since)) }),
       };
     }
@@ -195,15 +217,17 @@ export default function SessionWorkbenchPage() {
     if (answered !== undefined && !(selectedForYou && selectedForYou.waitingSince > answered + 5_000)) {
       return {
         live: false,
-        text: prefix
-          ? `${prefix}${t('workbench.page.answeredAt', { time: formatClock(answered) })}`
+        forYou,
+        text: forYou
+          ? t('workbench.page.answeredAt', { time: formatClock(answered) })
           : t('workbench.page.answeredAtStart', { time: formatClock(answered) }),
       };
     }
     if (selectedForYou) {
       return {
         live: false,
-        text: `${prefix}${t('workbench.page.waiting', { age: shortAge(selectedForYou.waitingSince, now) })}`,
+        forYou: true,
+        text: t('workbench.page.waiting', { age: shortAge(selectedForYou.waitingSince, now) }),
       };
     }
     return null;
@@ -701,7 +725,9 @@ export default function SessionWorkbenchPage() {
           selectedId || showLaunch ? '' : 'phone:hidden'
         }`}
       >
-        <header className="flex shrink-0 items-center gap-3 border-b border-border-color px-5 py-2.5">
+        {/* 页头两行：标题独占一行，状态 · 哪家 CLI · 目录另起一行（原型 20260924-page-polish）。
+            整条 52px 高、左右 16px，与原型一致。 */}
+        <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border-color px-4">
           {selectedId ? (
             <button
               type="button"
@@ -712,35 +738,59 @@ export default function SessionWorkbenchPage() {
               <ChevronLeft size={16} />
             </button>
           ) : null}
-          <h1 className="min-w-0 truncate text-[14px] font-semibold text-text-primary">
-            {selected
-              ? selected.title
-              : showLaunch
-                ? t('workbench.launch.railTitle')
-                : t('workbench.page.title')}
-          </h1>
-          {selected ? (
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-text-muted">
-              {headStatus ? (
+          <div className="flex min-w-0 flex-1 flex-col justify-center">
+            <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
+              {selected
+                ? selected.title
+                : showLaunch
+                  ? t('workbench.launch.railTitle')
+                  : t('workbench.page.title')}
+            </h1>
+            {selected ? (
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+                {headStatus ? (
+                  // 状态字放得下就全写，放不下自己截断——它原先是不收缩的，长了就把右边
+                  // 目录整段挤没；目录截断还看得出是哪一层，状态截断靠 title 补全。
+                  <span
+                    data-testid="head-status"
+                    title={headStatus.text}
+                    className={`flex min-w-0 items-center gap-1 ${
+                      headStatus.live ? 'text-accent-primary' : 'text-text-secondary'
+                    } ${headStatus.live ? 'shrink-0' : ''}`}
+                  >
+                    {headStatus.live ? (
+                      <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary" />
+                    ) : null}
+                    {/* 原型的 For you 是一枚标签，不是文字。 */}
+                    {headStatus.forYou ? <ForYouChip testid="head-for-you-chip" /> : null}
+                    <span className="min-w-0 truncate">{headStatus.text}</span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                ) : null}
+                {/* 哪家 CLI 在跑：这一场的固定属性，跟目录同属一段，跟在会变的状态之后。
+                    名字不缩、目录让位——名字只有「Claude Code」几个字，缩了就认不出是哪一家；
+                    目录本来就长，压到 56px 仍看得见开头是哪一层（原型 20260924-page-polish 五改）。 */}
+                {selected.family ? (
+                  <>
+                    <span
+                      data-testid="head-agent"
+                      className="shrink-0 whitespace-nowrap"
+                      title={t('workbench.page.srcHint', { name: familyLabel(selected.family) })}
+                    >
+                      {familyLabel(selected.family)}
+                    </span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </>
+                ) : null}
                 <span
-                  data-testid="head-status"
-                  className={`flex shrink-0 items-center gap-1 ${
-                    headStatus.live ? 'text-accent-primary' : 'text-text-secondary'
-                  }`}
+                  className="min-w-[56px] truncate font-mono"
+                  title={t('workbench.page.dirHint', { dir: selected.directory })}
                 >
-                  {headStatus.live ? (
-                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent-primary" />
-                  ) : null}
-                  {headStatus.text}
-                  <span aria-hidden className="text-text-dim">·</span>
+                  {withTilde(selected.directory)}
                 </span>
-              ) : null}
-              <span className="min-w-0 truncate font-mono">{selected.directory}</span>
-            </span>
-          ) : (
-            // 没选会话时标题后面留空：全局第 2 条删掉页头里开发者口吻的说明
-            <span className="min-w-0 flex-1" />
-          )}
+              </div>
+            ) : null}
+          </div>
           {/* 用量月历的入口搬去了左栏底部：那里是「我还剩多少」的位置，与额度条并排。
               它本来就不是会话页专属的东西，挂在这一页的标题栏上只是它当初落脚的地方。 */}
           {/* 这一行的最右是一个「…」，与左栏会话卡上的是同一份菜单：Pin / Unpin、Put in group ｜
@@ -755,9 +805,7 @@ export default function SessionWorkbenchPage() {
               onTogglePin={(s) => void pins.toggle(s.session_id).catch((e: unknown) =>
                 showToast(e instanceof Error ? e.message : t('workbench.errors.pinSaveFailedPlain'), 'error')
               )}
-              inTmux={
-                selected.in_tmux === true || forYou.rows.some((r) => r.session_id === selected.session_id)
-              }
+              inTmux={selectedInTmux}
               busyTurn={inFlight}
               onStopped={() => {
                 forYou.refresh();
@@ -779,7 +827,8 @@ export default function SessionWorkbenchPage() {
             <DecisionCardContext.Provider value={cards.host}>
             <RecordStream
               sessionId={selectedId}
-              records={records}
+              // 换会话那一拍手上还是上一场的记录，不摆出来：摆了人会以为新这一场就长这样。
+              records={recordsSessionId === selectedId ? records : []}
               loading={loading}
               loadingOlder={loadingOlder}
               hasOlder={hasOlder}
@@ -827,6 +876,7 @@ export default function SessionWorkbenchPage() {
           running={selected?.status === 'running' || awaitingAgent}
           onSendStart={cards.onSendStart}
           onSendFailed={cards.onSendFailed}
+          onQueued={markQueued}
           answer={cards.answer}
           deliveredAt={deliveredAt}
           outbound={outbound}

@@ -1211,7 +1211,19 @@ export default function RecordStream({
             );
           })}
 
-          {loading ? (
+          {/* 换到一场会话、首取还没落定：占住空态的位置说「正在加载」。大会话首取要好几秒，
+              这段时间里摆空白或空态，人会以为这场会话没有内容。 */}
+          {loading && !records.length && !error ? (
+            <div
+              data-testid="record-stream-loading"
+              className="flex flex-col items-center gap-3 py-16 text-text-muted"
+            >
+              <Loader2 size={28} className="animate-spin" />
+              <p className="text-[13px]">{t('workbench.stream.loading')}</p>
+            </div>
+          ) : null}
+
+          {loading && records.length ? (
             <p className="flex items-center justify-center gap-2 py-4 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
               {t('workbench.stream.loading')}

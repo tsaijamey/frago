@@ -1393,7 +1393,9 @@
       "agentOnIt": "Agent on it · {{duration}}",
       "answeredAt": "answered {{time}}",
       "waiting": "waiting {{age}}",
-      "answeredAtStart": "Answered {{time}}"
+      "answeredAtStart": "Answered {{time}}",
+      "dirHint": "Working directory: {{dir}}",
+      "srcHint": "This session runs on {{name}}"
     },
     "stopRun": {
       "action": "Close tmux session",

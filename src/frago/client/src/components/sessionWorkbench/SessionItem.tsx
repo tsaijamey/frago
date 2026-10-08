@@ -107,11 +107,11 @@ export function shortAge(ts: number, now: number = Date.now()): string {
  * 的决定（主人 09-29 定）。从前按问句 / 选项 / 出错 / 决策卡加重成告警橙、悬停说原因，
  * 第五轮一并删掉。
  */
-export function ForYouChip() {
+export function ForYouChip({ testid = 'for-you-chip' }: { testid?: string } = {}) {
   const { t } = useTranslation();
   return (
     <span
-      data-testid="for-you-chip"
+      data-testid={testid}
       className="inline-flex shrink-0 items-center rounded-[5px] bg-accent-primary-10 px-1.5 text-[11px] font-medium leading-[17px] text-accent-primary"
     >
       {t('workbench.forYou.label')}

@@ -147,7 +147,10 @@ describe('页面接上 For you', () => {
     expect(chip.className).toContain('text-accent-primary');
     expect(previewOfCard(SID)).toContain('A or B');
     expect(screen.getByTestId('list-filter-for-you').textContent).toContain('1');
-    expect(screen.getByTestId('head-status').textContent).toContain('For you · waiting 44 min');
+    // 原型里 For you 是页头里的一枚标签，正文只说「waiting 多久」。
+    const head = screen.getByTestId('head-status');
+    expect(head.querySelector('[data-testid=head-for-you-chip]')).toBeTruthy();
+    expect(head.textContent).toContain('waiting 44 min');
     done();
   });
 
@@ -170,6 +173,52 @@ describe('页面接上 For you', () => {
     const chip = screen.getAllByTestId('for-you-chip')[0];
     expect(chip.hasAttribute('data-emphasis')).toBe(false);
     expect(chip.getAttribute('title')).toBeNull();
+    done();
+  });
+});
+
+/**
+ * 详情页头第二行「状态 · 哪家 CLI · 目录」里的名字（原型 20260924-page-polish 五改）。
+ * 名字是这一场的固定属性，跟目录同档灰；取出的是会话清单的 `family`，与左栏共用同一份词表。
+ */
+describe('详情页头写明这场跑在哪家 CLI', () => {
+  it('名字排在状态与目录之间，悬停写明这场跑在哪家', async () => {
+    page.sessions = [session(SID)];
+    const done = await openPage();
+
+    const name = await screen.findByTestId('head-agent');
+    expect(name.textContent).toBe('Claude Code');
+    expect(name.getAttribute('title')).toBe('This session runs on Claude Code');
+    done();
+  });
+
+  it('换一家就写那一家的名字', async () => {
+    page.sessions = [session(SID, { family: 'codex' })];
+    const done = await openPage();
+
+    const name = await screen.findByTestId('head-agent');
+    expect(name.textContent).toBe('codex');
+    done();
+  });
+});
+
+/**
+ * 页头第三样：目录照原型写缩写（家目录换成 `~`），悬停里仍是完整路径。
+ */
+describe('页头目录写法照原型', () => {
+  it('家目录缩成 ~，其余路径原样', async () => {
+    const { withTilde } = await import('../SessionWorkbenchPage');
+    expect(withTilde('/Users/frago/Repos/frago')).toBe('~/Repos/frago');
+    expect(withTilde('/home/someone/.frago')).toBe('~/.frago');
+    expect(withTilde('/var/log')).toBe('/var/log');
+    expect(withTilde('~')).toBe('~');
+  });
+
+  it('页头里显示的就是缩写', async () => {
+    page.sessions = [session(SID)];
+    const done = await openPage();
+
+    await waitFor(() => expect(screen.getByText('~/Repos/frago')).toBeTruthy());
     done();
   });
 });

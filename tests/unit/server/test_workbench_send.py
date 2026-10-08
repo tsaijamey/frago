@@ -259,6 +259,65 @@ class TestSendRoute:
         assert core_runner.calls[0]["text"] == "接着干"
         assert runner.calls == [], "CoreAgent 的话 NEVER 落到 tmux 会话池上"
 
+    def test_那一场正忙时只排队不等_并把排队这个状态如实回给页面(
+        self, client, runner, three_families, coreagent_record, monkeypatch
+    ):
+        """话要等当前这一步结束才被读到，页面上就得如实说排队中。
+
+        这一趟不等它：等的话这条请求要挂整轮（核心场里见过几十分钟），人这期间看到的
+        是「已发送」，以为话已经被接住了。
+        """
+        from frago.server.services import coreagent_runner
+
+        queued: list[dict] = []
+        monkeypatch.setattr(coreagent_runner, "busy", lambda sid: sid == CORE_SID)
+        monkeypatch.setattr(
+            coreagent_runner,
+            "send_queued",
+            lambda sid, prompt, *, cwd, title=None: queued.append({"sid": sid, "text": prompt, "cwd": cwd}) or "thread",
+        )
+
+        def never(*_a, **_k):  # 不等的那条路不该走到这里
+            raise AssertionError("正忙时不该走等整轮那条路")
+
+        monkeypatch.setattr(coreagent_runner, "send", never)
+
+        res = self._send(client, CORE_SID)
+
+        assert res.status_code == 200
+        assert res.json()["status"] == "queued", "页面据此把这句话标成排队中"
+        assert queued and queued[0]["text"] == "接着干"
+        assert queued[0]["cwd"] == "/repos/core-repo", "落点判据不变"
+        assert runner.calls == [], "CoreAgent 的话 NEVER 落到 tmux 会话池上"
+
+    def test_闲着的时候照旧等它这一轮跑完(
+        self, client, runner, core_runner, three_families, coreagent_record, monkeypatch
+    ):
+        """没人占着的时候不等白不等：这一条回的是「在跑」，页面不必摆排队的字样。"""
+        from frago.server.services import coreagent_runner
+
+        monkeypatch.setattr(coreagent_runner, "busy", lambda sid: False)
+        body = self._send(client, CORE_SID).json()
+        assert body["status"] == "activating"
+
+    def test_队列满了仍然当场拒绝_不管忙不忙(
+        self, client, runner, three_families, coreagent_record, monkeypatch
+    ):
+        """排队那一路照样有下限：收不下就得当场说，NEVER 收下再在后台丢掉。"""
+        from frago.server.services import coreagent_runner
+
+        monkeypatch.setattr(coreagent_runner, "busy", lambda sid: True)
+
+        def full(*_a, **_k):
+            raise coreagent_runner.CoreAgentBusy("这一场排了 32 句，收不下了")
+
+        monkeypatch.setattr(coreagent_runner, "send_queued", full)
+
+        res = self._send(client, CORE_SID)
+
+        assert res.status_code == 409
+        assert "收不下" in res.json()["detail"]
+
     def test_那一场还在跑时回409而不是搅掉它的记录(
         self, client, runner, three_families, coreagent_record, monkeypatch
     ):

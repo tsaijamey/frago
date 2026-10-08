@@ -91,6 +91,11 @@ export interface ComposerProps {
   onSent: (outboundId?: string) => void | Promise<void>;
   /** 没发出去。页面据此撤掉这一单的信封与"在等 agent 开口"。 */
   onSendFailed?: (outboundId?: string) => void;
+  /**
+   * 服务端说这一单是**排队投进去的**：那一场此刻正忙，这句话要等当前这一步结束才被读到。
+   * 页面据此把信封标成「排队中」——一路显示「已发送」会让人以为话已经被接住了。
+   */
+  onQueued?: (outboundId?: string) => void;
   /** 那句话确实落进会话的时刻。它一变就把发送按钮放回去。 */
   deliveredAt?: number | null;
   /**
@@ -301,6 +306,7 @@ export default function Composer({
   onSendStart,
   onSent,
   onSendFailed,
+  onQueued,
   deliveredAt,
   outbound = [],
   trails = [],
@@ -338,6 +344,7 @@ export default function Composer({
       onSendStart,
       onSent,
       onSendFailed,
+      onQueued,
       deliveredAt,
     });
   const box = useRef<HTMLTextAreaElement>(null);

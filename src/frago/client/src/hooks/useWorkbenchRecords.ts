@@ -63,6 +63,15 @@ export const FAST_POLL_WINDOW_MS = 90_000;
 export const HOT_WINDOW_MS = 15 * 60_000;
 
 /**
+ * 点开时一条记录都没取到，之后还接着问多久。
+ *
+ * 刚建的那一场档案还没落地，第一取必定是空的，启动面板要等它的第一批记录才撤；而 tmux
+ * 清单认出它要再等一轮左栏刷新（15 秒），不开在 tmux 里的那一家（CoreAgent）根本等不到。
+ * 真正空的老会话问满这一阵就停，不一直轮询下去。
+ */
+export const EMPTY_WAIT_MS = 2 * 60_000;
+
+/**
  * 发完话之后，最多等多久还认为"在等 agent 开口"。
  *
  * 到点还没等到就把提示撤掉——挂着一句永远不消失的"在等"，比不提示还糟：人分不出是
@@ -422,7 +431,11 @@ export interface WorkbenchRecordsState {
    * 上一场的记录当成新这一场的：新建会话的启动卡就这样一挂上就被撤掉，人根本看不见它。
    */
   recordsSessionId: string | null;
-  /** 初次装载或整流重取中。 */
+  /**
+   * 初次装载或整流重取中。**换到一场会话起，一直举到这一场的首取落定为止**（取到了、取到
+   * 空的、报了错都算落定）——从前只看请求在不在飞，而上一场慢请求还没回来时新这一场的
+   * 首取会被闸挡掉，中栏就停在「这场会话没有内容」，人以为它是空的。
+   */
   loading: boolean;
   /** 顶部前插旧页中。与 loading 分开——往上翻不该把整栏打回装载态。 */
   loadingOlder: boolean;
@@ -471,11 +484,20 @@ export interface WorkbenchRecordsState {
    */
   clearSent: (id?: string) => void;
   /**
+   * 服务端说这一单是排队投进去的：信封换成「排队中」。
+   *
+   * 那一场正忙，这句话要等当前这一步结束才被读到。见 `useSendToSession` 的 `onQueued`。
+   */
+  markQueued: (id?: string) => void;
+  /**
    * 那一单的发送接口回来了，把它的信封收掉。
    *
    * 那条接口一直等到**这一轮说完**才返回，所以它一回来，那句话必定早就进了这场会话——
    * 认不认得出它在流里长什么样，都不该再替它站着。这是比对之外的第二道保险：记录的形状
    * 将来还会变（斜杠命令就变过一次），比对总有认不出的那天，而这一条不依赖任何形状。
+   *
+   * **排队投进去的那一单除外**：那条路当场就返回，话还在队里等着被读到。信封留给记录流
+   * 去收——那句话落进流里的那一刻它才退场。
    */
   settleSent: (id?: string) => void;
   /**
@@ -574,7 +596,9 @@ export function useWorkbenchRecords(
   const [error, setError] = useState<string | null>(null);
 
   // 同一方向的两次加载不许叠在一起：滚动与轮询触发得都很密，不闸住会重复插入。
-  const inflightNewer = useRef(false);
+  // 取新内容这道闸记的是**替哪一场在取**：上一场的慢请求还没回来时，新这一场照样要取，
+  // 只记真假的话，换过去的那一取会被上一场挡回去，中栏一片空白。
+  const inflightNewer = useRef<string | null>(null);
   const inflightOlder = useRef(false);
   // 换会话时把旧请求的返回丢掉，否则慢的那个后到，会把新会话的流覆盖掉。
   const activeSession = useRef<string | null>(sessionId);
@@ -599,10 +623,12 @@ export function useWorkbenchRecords(
   const outboundSeq = useRef(0);
   const [deliveredAt, setDeliveredAt] = useState<number | null>(null);
   const [trails, setTrails] = useState<SendTrail[]>([]);
+  // 哪一场的首取已经落定。与当前这一场对不上，就还在装载。
+  const [settledFor, setSettledFor] = useState<string | null>(null);
 
   const loadTail = useCallback(async (sid: string) => {
-    if (inflightNewer.current) return;
-    inflightNewer.current = true;
+    if (inflightNewer.current === sid) return;
+    inflightNewer.current = sid;
     setLoading(true);
     setError(null);
     try {
@@ -612,13 +638,17 @@ export function useWorkbenchRecords(
       setRecords(batch);
       setRecordsSessionId(batch.length ? sid : null);
       setHasOlder(batch.length > 0 && batch[0].seq > 0);
+      if (!batch.length) hotUntil.current = Math.max(hotUntil.current, Date.now() + EMPTY_WAIT_MS);
     } catch (e) {
       if (activeSession.current !== sid) return;
       setError(e instanceof Error ? e.message : String(e));
       setHasOlder(false);
     } finally {
-      inflightNewer.current = false;
-      if (activeSession.current === sid) setLoading(false);
+      if (inflightNewer.current === sid) inflightNewer.current = null;
+      if (activeSession.current === sid) {
+        setLoading(false);
+        setSettledFor(sid);
+      }
     }
   }, []);
 
@@ -637,8 +667,8 @@ export function useWorkbenchRecords(
    * 不碰装载态：这条路是轮询走的，每隔几秒把中栏打回"加载中"会让整栏一直闪。
    */
   const pickUpTail = useCallback(async (sid: string): Promise<number> => {
-    if (inflightNewer.current) return 0;
-    inflightNewer.current = true;
+    if (inflightNewer.current === sid) return 0;
+    inflightNewer.current = sid;
     try {
       const batch = await fetchWorkbenchRecords(sid, { tail: true, limit: PAGE_SIZE });
       if (activeSession.current !== sid || !batch.length) return 0;
@@ -652,7 +682,7 @@ export function useWorkbenchRecords(
       // 跟取增量一样：取不到不打断看记录的人，下一趟再试。
       return 0;
     } finally {
-      inflightNewer.current = false;
+      if (inflightNewer.current === sid) inflightNewer.current = null;
     }
   }, []);
 
@@ -669,13 +699,13 @@ export function useWorkbenchRecords(
    * 者那一格整个没了，说明这场重排过，手上这份的位置全部作废，只能整段重取。
    */
   const appendNewer = useCallback(async (sid: string): Promise<number> => {
-    if (inflightNewer.current) return 0;
+    if (inflightNewer.current === sid) return 0;
     const last = recordsRef.current[recordsRef.current.length - 1];
     if (!last) return pickUpTail(sid);
 
     let renumbered = false;
     let taken = 0;
-    inflightNewer.current = true;
+    inflightNewer.current = sid;
     try {
       const batch = await fetchWorkbenchRecords(sid, { after: last.seq, limit: PAGE_SIZE });
       if (activeSession.current !== sid) return 0;
@@ -696,7 +726,7 @@ export function useWorkbenchRecords(
       // 增量取不到不打断看记录的人——下一次轮询再试。错误只在整流重取时才摆出来。
       return 0;
     } finally {
-      inflightNewer.current = false;
+      if (inflightNewer.current === sid) inflightNewer.current = null;
     }
     // 重取放在闸门之外做：还占着 `inflightNewer` 的话，重取那一趟会被自己挡回去。
     return renumbered ? await pickUpTail(sid) : taken;
@@ -708,6 +738,9 @@ export function useWorkbenchRecords(
     hotUntil.current = Date.now() + HOT_WINDOW_MS;
     await loadTail(sessionId);
   }, [sessionId, loadTail]);
+
+  // 排队投进去的那几个信封的编号。见 `markQueued` 与 `settleSent`。
+  const queuedIds = useRef<Set<string>>(new Set());
 
   const markSent = useCallback((text: string, attachments = 0, skills: string[] = []) => {
     const now = Date.now();
@@ -742,6 +775,28 @@ export function useWorkbenchRecords(
     return id;
   }, []);
 
+  /**
+   * 服务端说这一单是排队投进去的：信封当场换成「排队中」。
+   *
+   * 那一场正忙，这句话要等当前这一步结束才被读到——界面如实说排队，而不是一路显示
+   * 「已发送」。换上这一档还有一处要紧：排队不设撤掉的上限（信封的「已发送」等太久会
+   * 自己撤，排队本来就可能排很久），所以它一直挂到那句话真的落进流里为止。
+   */
+  const markQueued = useCallback((id?: string) => {
+    if (!id) return;
+    queuedIds.current.add(id);
+    setOutbound((prev) =>
+      prev.map((m) => (m.id === id && m.state !== 'queued' ? { ...m, state: 'queued' as const } : m))
+    );
+    setTrails((prev) =>
+      prev.map((tr) =>
+        tr.id === id && tr.steps.queued === undefined && !trailSettled(tr)
+          ? { ...tr, midTurn: true, steps: { ...tr.steps, queued: Date.now() } }
+          : tr
+      )
+    );
+  }, []);
+
   const clearSent = useCallback((id?: string) => {
     fastUntil.current = 0;
     setOutbound((prev) => (id ? prev.filter((m) => m.id !== id) : []));
@@ -759,6 +814,9 @@ export function useWorkbenchRecords(
 
   const settleSent = useCallback((id?: string) => {
     if (!id) return;
+    // 排队的那一单不收：接口是当场返回的，话还在队里。它由记录流去收——那句话落进流
+    // 里的那一刻，信封才该退场。
+    if (queuedIds.current.has(id)) return;
     setOutbound((prev) => prev.filter((m) => m.id !== id));
     // 接口等整轮说完才回：它一回来，这一句就答完了
     const now = Date.now();
@@ -876,6 +934,9 @@ export function useWorkbenchRecords(
     setOutbound([]);
     setTrails([]);
     fastUntil.current = 0;
+    // 上一场的动静不带过来：不清的话，刚跟 A 说过话再切去一场不开在 tmux 里的 B，B 会被
+    // 当成活的接着轮询十五分钟。
+    hotUntil.current = 0;
     if (!sessionId) return;
     void loadTail(sessionId);
   }, [sessionId, loadTail]);
@@ -928,6 +989,8 @@ export function useWorkbenchRecords(
   // 轮询：会话活着（`live`：开在 tmux 里，或 CoreAgent 那一场常驻进程还在；又或者刚刚
   // 还有过动静）且页面看得见时取增量。不活着、也没有动静的会话，点开那一刻取过一次就
   // 不再问（主人 09-30 定）。
+  //
+  // 首取是空的那一场再问一阵（见 `EMPTY_WAIT_MS`）。
   //
   // 节拍是两档的：平时五秒，刚发完话那一分半钟一秒。定时器因此不能是 setInterval——
   // 节拍要能在两趟之间改，所以每跑完一趟自己排下一趟。
@@ -1019,7 +1082,7 @@ export function useWorkbenchRecords(
   return {
     records,
     recordsSessionId,
-    loading,
+    loading: loading || (sessionId !== null && settledFor !== sessionId),
     loadingOlder,
     hasOlder,
     error,
@@ -1030,6 +1093,7 @@ export function useWorkbenchRecords(
     deliveredAt,
     markSent,
     clearSent,
+    markQueued,
     settleSent,
     trails,
   };

@@ -1389,7 +1389,9 @@
       "agentOnIt": "Agent 在做 · {{duration}}",
       "answeredAt": "{{time}} 答完",
       "waiting": "等了 {{age}}",
-      "answeredAtStart": "{{time}} 答完"
+      "answeredAtStart": "{{time}} 答完",
+      "dirHint": "工作目录：{{dir}}",
+      "srcHint": "这场会话跑在 {{name}}"
     },
     "stopRun": {
       "action": "关闭 tmux 会话",

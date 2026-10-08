@@ -8,6 +8,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  EMPTY_WAIT_MS,
   PAGE_SIZE,
   POLL_INTERVAL_MS,
   advanceTrails,
@@ -173,6 +174,101 @@ describe('useWorkbenchRecords', () => {
   });
 });
 
+describe('只有开在 tmux 里的会话才一直轮询（主人 09-30 定）', () => {
+  it('不开在 tmux 里的会话，点开取一次，之后一个请求都不多', async () => {
+    vi.useFakeTimers();
+    try {
+      let total = 300;
+      const fetchMock = stubSession(() => total);
+      vi.stubGlobal('fetch', fetchMock);
+      const { result } = renderHook(() => useWorkbenchRecords(SID, { live: false }));
+      await act(async () => {});
+      expect(result.current.records).toHaveLength(PAGE_SIZE);
+      expect(fetchMock.mock.calls).toHaveLength(1);
+
+      total = 305;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 4);
+      });
+      expect(fetchMock.mock.calls).toHaveLength(1);
+      expect(result.current.records).toHaveLength(PAGE_SIZE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('刚跟上一场说过话，切去一场不开在 tmux 里的，那股热度不跟过去', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubSession(() => 300);
+      vi.stubGlobal('fetch', fetchMock);
+      const { result, rerender } = renderHook(
+        ({ sid }) => useWorkbenchRecords(sid, { live: false }),
+        { initialProps: { sid: SID } }
+      );
+      await act(async () => {});
+      act(() => {
+        result.current.markSent('在吗');
+      });
+      rerender({ sid: 'another-one' });
+      await act(async () => {});
+      const callsAfterSwitch = fetchMock.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
+      });
+      expect(fetchMock.mock.calls.length).toBe(callsAfterSwitch);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('换会话时一直摆着「正在加载」，直到这一场取回来', () => {
+  it('上一场的慢请求还没回来，新这一场照样取，取回来之前一直是装载态', async () => {
+    const releases: Array<() => void> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const sid = url.includes('another-one') ? 'another-one' : SID;
+      await new Promise<void>((resolve) => releases.push(resolve));
+      const rows = [record(0), record(1)].map((r) => ({ ...r, id: `${sid}-${r.id}`, session_id: sid }));
+      return { ok: true, json: async () => rows } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result, rerender } = renderHook(
+      ({ sid }) => useWorkbenchRecords(sid),
+      { initialProps: { sid: SID } }
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(result.current.loading).toBe(true);
+
+    // 第一场还没回来就切走：新这一场的首取不许被它挡住。
+    rerender({ sid: 'another-one' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1][0])).toContain('another-one');
+
+    // 上一场先回来：被丢掉，装载态不许因此落下。
+    await act(async () => {
+      releases[0]();
+    });
+    expect(result.current.loading).toBe(true);
+    expect(result.current.records).toHaveLength(0);
+
+    await act(async () => {
+      releases[1]();
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.records.map((r) => r.session_id)).toEqual(['another-one', 'another-one']);
+  });
+
+  it('取回来是空的也算落定：装载态落下，才轮到空态', async () => {
+    vi.stubGlobal('fetch', stubSession(() => 0));
+    const { result } = renderHook(() => useWorkbenchRecords(SID));
+    expect(result.current.loading).toBe(true);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.records).toHaveLength(0);
+  });
+});
+
 describe('打开的时候档案还是空的', () => {
   // 新建那一场必定经过这个状态：中栏在点完创建那一刻就切了过去，那时它一条记录都还没
   // 写下。取增量要拿手头末条当起点，空手就无从下手——这几条钉住"空手也要能自己接上"，
@@ -212,6 +308,46 @@ describe('打开的时候档案还是空的', () => {
     total = 3;
     rerender({ live: true });
     await waitFor(() => expect(result.current.records).toHaveLength(3));
+  });
+
+  it('不开在 tmux 里、首取为空的那一场，只再问一阵就停', async () => {
+    vi.useFakeTimers();
+    try {
+      let total = 0;
+      const fetchMock = stubSession(() => total);
+      vi.stubGlobal('fetch', fetchMock);
+      const { result } = renderHook(() => useWorkbenchRecords(SID, { live: false }));
+      await act(async () => {});
+
+      // 这一阵里档案写下第一笔：取得回来（CoreAgent 新建那一场就靠这个）。
+      total = 2;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+      });
+      expect(result.current.records).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('真正空的老会话，问满那一阵就不再问', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = stubSession(() => 0);
+      vi.stubGlobal('fetch', fetchMock);
+      renderHook(() => useWorkbenchRecords(SID, { live: false }));
+      await act(async () => {});
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(EMPTY_WAIT_MS + POLL_INTERVAL_MS);
+      });
+      const settled = fetchMock.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+      });
+      expect(fetchMock.mock.calls.length).toBe(settled);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
