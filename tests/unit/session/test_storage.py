@@ -2,7 +2,9 @@
 
 Tests session data persistence: directory management, metadata, steps, summary.
 """
-from datetime import UTC, datetime
+import os
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,10 +17,17 @@ from frago.session.models import (
     StepType,
 )
 from frago.session.storage import (
+    RAW_FILENAME,
+    STALE_RUNNING_SECONDS,
     append_step,
+    clean_old_sessions,
+    count_sessions,
     create_session_dir,
+    find_session_by_prefix,
     get_session_base_dir,
     get_session_dir,
+    is_managed_session,
+    list_sessions,
     read_metadata,
     read_steps,
     write_metadata,
@@ -245,3 +254,186 @@ class TestGenerateSummaryDuration:
 
         assert summary is not None
         assert summary.total_duration_ms == 5000
+
+
+class TestSessionsOnDiskAreListed:
+    """会话清单以「目录里有没有内容」为准，不以有没有 metadata.json 为准。
+
+    背景：``metadata.json`` 只有 frago 亲自监控过的会话才有，你自己在终端或网页跑的
+    会话经同步程序只落一份 ``raw.jsonl``。旧口径只认前者，于是盘上明明有几千场会话，
+    清单里一场都看不到，且每用一天多缺一批。
+    """
+
+    @staticmethod
+    def _mk_raw_only(base: Path, session_id: str, age_seconds: float = 0.0) -> Path:
+        """造一场「只有原文副本、没有 metadata」的会话。"""
+        session_dir = base / "claude" / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        raw = session_dir / RAW_FILENAME
+        raw.write_text('{"type":"user","message":{"content":"hi"}}\n', encoding="utf-8")
+        if age_seconds:
+            stamp = time.time() - age_seconds
+            os.utime(raw, (stamp, stamp))
+        return session_dir
+
+    def test_raw_only_session_appears_in_list(self, mock_home):
+        base = get_session_base_dir()
+        self._mk_raw_only(base, "raw-only-session")
+
+        ids = [s.session_id for s in list_sessions(limit=100)]
+
+        assert "raw-only-session" in ids
+
+    def test_raw_only_session_opens_by_id(self, mock_home):
+        base = get_session_base_dir()
+        self._mk_raw_only(base, "raw-only-session")
+
+        session = read_metadata("raw-only-session", AgentType.CLAUDE)
+
+        assert session is not None
+        assert session.session_id == "raw-only-session"
+
+    def test_raw_only_session_resolves_by_prefix(self, mock_home):
+        base = get_session_base_dir()
+        self._mk_raw_only(base, "abcdef01-2345-6789-abcd-ef0123456789")
+
+        session = find_session_by_prefix("abcdef01", AgentType.CLAUDE)
+
+        assert session is not None
+        assert session.session_id == "abcdef01-2345-6789-abcd-ef0123456789"
+
+    def test_empty_directory_is_not_a_session(self, mock_home):
+        base = get_session_base_dir()
+        (base / "claude" / "empty-dir").mkdir(parents=True)
+
+        assert "empty-dir" not in [s.session_id for s in list_sessions(limit=100)]
+
+    def test_empty_raw_file_is_not_a_session(self, mock_home):
+        base = get_session_base_dir()
+        session_dir = base / "claude" / "zero-byte"
+        session_dir.mkdir(parents=True)
+        (session_dir / RAW_FILENAME).write_text("", encoding="utf-8")
+
+        assert "zero-byte" not in [s.session_id for s in list_sessions(limit=100)]
+
+    def test_count_agrees_with_list(self, mock_home):
+        base = get_session_base_dir()
+        self._mk_raw_only(base, "raw-only-session")
+        write_metadata(
+            MonitoredSession(
+                session_id="managed-session",
+                agent_type=AgentType.CLAUDE,
+                project_path="/tmp/p",
+                source_file="/tmp/s.jsonl",
+                started_at=datetime.now(UTC),
+                last_activity=datetime.now(UTC),
+            )
+        )
+
+        assert count_sessions(agent_type=AgentType.CLAUDE) == len(
+            list_sessions(agent_type=AgentType.CLAUDE, limit=100)
+        )
+
+
+class TestStaleRunningIsNotRunning:
+    """烂在 ``running`` 上的状态按最后活动时刻归位。
+
+    监控进程没走到收尾就退出了（网页会话尤其多），metadata 里的 status 便永远停在
+    ``running``。写侧收不了尾，只能在读的时候判——否则清单一屏绿色 Running，实际
+    没有一场在跑。
+    """
+
+    @staticmethod
+    def _write(session_id: str, idle_seconds: float) -> None:
+        write_metadata(
+            MonitoredSession(
+                session_id=session_id,
+                agent_type=AgentType.CLAUDE,
+                status=SessionStatus.RUNNING,
+                project_path="/tmp/p",
+                source_file="/tmp/s.jsonl",
+                started_at=datetime.now(UTC) - timedelta(seconds=idle_seconds),
+                last_activity=datetime.now(UTC) - timedelta(seconds=idle_seconds),
+            )
+        )
+
+    def test_idle_past_the_window_reads_as_finished(self, mock_home):
+        self._write("wedged", STALE_RUNNING_SECONDS + 60)
+
+        session = find_session_by_prefix("wedged", AgentType.CLAUDE)
+
+        assert session is not None
+        assert session.status is SessionStatus.COMPLETED
+
+    def test_idle_past_the_window_drops_out_of_running_filter(self, mock_home):
+        self._write("wedged", STALE_RUNNING_SECONDS + 60)
+
+        running = list_sessions(status=SessionStatus.RUNNING, limit=100)
+
+        assert "wedged" not in [s.session_id for s in running]
+
+    def test_recent_activity_still_reads_as_running(self, mock_home):
+        # worker 一轮任务不设时间上限，几小时没动静仍可能真在跑，不能误判成已结束。
+        self._write("busy", 3600)
+
+        session = find_session_by_prefix("busy", AgentType.CLAUDE)
+
+        assert session is not None
+        assert session.status is SessionStatus.RUNNING
+        assert "busy" in [
+            s.session_id for s in list_sessions(status=SessionStatus.RUNNING, limit=100)
+        ]
+
+    def test_read_metadata_keeps_the_stored_status(self, mock_home):
+        """``read_metadata`` 按盘上原样返回，不归位。
+
+        它被写路径拿去判断「这场会话存不存在」——把一场久未活动、正被续接的会话读成
+        已结束，会被原样写回盘上。
+        """
+        self._write("wedged", STALE_RUNNING_SECONDS + 60)
+
+        assert read_metadata("wedged", AgentType.CLAUDE).status is SessionStatus.RUNNING
+
+
+class TestCleanOnlyTouchesManagedSessions:
+    """清理只对 frago 自己管过的会话（有 metadata）生效。
+
+    读取侧的放宽不能让 ``session clean`` 反过来去删同步进来的原文镜像——那些目录里
+    没有 metadata，删掉目录就只剩 CLI 自己那一份了。
+    """
+
+    def test_raw_only_session_is_not_managed(self, mock_home):
+        base = get_session_base_dir()
+        session_dir = base / "claude" / "raw-only"
+        session_dir.mkdir(parents=True)
+        (session_dir / RAW_FILENAME).write_text("{}\n", encoding="utf-8")
+
+        assert is_managed_session("raw-only", AgentType.CLAUDE) is False
+
+    def test_metadata_backed_session_is_managed(self, mock_home):
+        write_metadata(
+            MonitoredSession(
+                session_id="managed",
+                agent_type=AgentType.CLAUDE,
+                project_path="/tmp/p",
+                source_file="/tmp/s.jsonl",
+                started_at=datetime.now(UTC),
+                last_activity=datetime.now(UTC),
+            )
+        )
+
+        assert is_managed_session("managed", AgentType.CLAUDE) is True
+
+    def test_clean_leaves_raw_only_session_alone(self, mock_home):
+        base = get_session_base_dir()
+        session_dir = base / "claude" / "raw-only"
+        session_dir.mkdir(parents=True)
+        raw = session_dir / RAW_FILENAME
+        raw.write_text("{}\n", encoding="utf-8")
+        old = time.time() - 90 * 86400
+        os.utime(raw, (old, old))
+
+        clean_old_sessions(max_age_days=30, agent_type=AgentType.CLAUDE)
+
+        assert session_dir.exists()
+        assert raw.exists()

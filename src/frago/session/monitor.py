@@ -597,9 +597,14 @@ def watch_latest_session(
         agent_type: Agent type
         json_mode: Whether to use JSON format output
     """
-    from frago.session.storage import list_sessions
+    from frago.session.storage import is_managed_session, list_sessions
 
     sessions = list_sessions(agent_type=agent_type, status=SessionStatus.RUNNING)
+    # 清单现在也含同步进来的会话（目录里只有原文副本）。它们的 source_file 指向
+    # ~/.frago/sessions/... 那份镜像，而监控器盯的是 CLI 自己的目录，两边路径永远对
+    # 不上——挑中它，监控会一声不响地空转。只挑 frago 自己管过的（有 metadata）那批，
+    # 与放宽之前同一个池子。
+    sessions = [s for s in sessions if is_managed_session(s.session_id, s.agent_type)]
     if not sessions:
         logger.info("No active sessions")
         return

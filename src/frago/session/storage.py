@@ -20,6 +20,7 @@ from typing import Any
 from frago.session.models import (
     AgentType,
     MonitoredSession,
+    SessionSource,
     SessionStatus,
     SessionStep,
     SessionSummary,
@@ -34,6 +35,18 @@ logger = logging.getLogger(__name__)
 # Default storage directory (legacy path; Phase 1 introduces ~/.frago/projects/{domain}/...)
 DEFAULT_SESSION_DIR = Path.home() / ".frago" / "sessions"
 DEFAULT_PROJECTS_DIR = Path.home() / ".frago" / "projects"
+
+#: 会话目录里那份原文副本的文件名。同步程序（``session/sync.py``、
+#: ``opencode_sync.py``、``codex_sync.py``）把各家 CLI 自己的转录逐字节镜像到这里，
+#: 覆盖的是「你自己跑的会话」；而 ``metadata.json`` 只有 frago 亲自监控过的会话才有。
+#: 所以「这场会话存不存在」要以目录里有没有原文副本为准，不是以有没有 metadata 为准。
+RAW_FILENAME = "raw.jsonl"
+
+#: 一条 ``status=running`` 的元数据，多久没动静就不再当作还在跑。
+#: 取一天，而不是像网页侧 ``session_index.derive_status`` 那样取 90 秒：worker 一轮
+#: 任务不设时间上限，跑几小时是常态，判据收紧了会把真在跑的会话报成已结束——那个方向
+#: 的错比漏报更难发现。
+STALE_RUNNING_SECONDS = 24 * 60 * 60
 
 
 def get_session_base_dir() -> Path:
@@ -64,6 +77,133 @@ def get_projects_base_dir() -> Path:
 def _domain_session_dir(domain: str, session_id: str) -> Path:
     """Compute the new domain-scoped session directory."""
     return get_projects_base_dir() / domain / session_id
+
+
+# ============================================================
+# 目录级会话判定
+# ============================================================
+
+
+def _raw_jsonl_path(session_dir: Path) -> Path | None:
+    """目录里的原文副本。没有、或是空文件，都返回 None。"""
+    path = session_dir / RAW_FILENAME
+    try:
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+    except OSError:
+        return None
+    return None
+
+
+def _session_mtime(session_dir: Path) -> float | None:
+    """这场会话「最后动过」的时刻：metadata.json 与 raw.jsonl 里新的那个。"""
+    newest: float | None = None
+    for name in ("metadata.json", RAW_FILENAME):
+        try:
+            mtime = (session_dir / name).stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
+def _live_status(
+    status: SessionStatus, last_activity: datetime, now: datetime | None = None
+) -> SessionStatus:
+    """把烂在 ``running`` 上的状态按最后活动时刻归位。
+
+    监控进程没走到收尾就退出了（网页那几千条就是这么来的），metadata 里的 status 便
+    永远停在 ``running``。写侧已经收不了尾，只能在读的时候判：``last_activity`` 超过
+    :data:`STALE_RUNNING_SECONDS` 的，按已结束读。
+    """
+    if status != SessionStatus.RUNNING:
+        return status
+    current = now if now is not None else datetime.now()
+    activity = last_activity
+    # 两侧时区未必一致（老数据不带时区），对齐后再减，免得整体偏掉几个时区。
+    if activity.tzinfo is not None and current.tzinfo is None:
+        current = current.astimezone(activity.tzinfo)
+    elif activity.tzinfo is None and current.tzinfo is not None:
+        activity = activity.replace(tzinfo=current.tzinfo)
+
+    try:
+        idle = (current - activity).total_seconds()
+    except (OverflowError, OSError):
+        return SessionStatus.RUNNING
+
+    if idle <= STALE_RUNNING_SECONDS:
+        return SessionStatus.RUNNING
+    return SessionStatus.COMPLETED
+
+
+def _derive_session_from_raw(
+    session_dir: Path,
+    agent_type: AgentType,
+    raw_path: Path,
+    now: datetime | None = None,
+) -> MonitoredSession | None:
+    """目录里只有原文副本、没有 ``metadata.json`` 时，就地派生一份最小元数据。
+
+    这种目录是同步进来的「你自己跑的会话」——CLI 写了转录、镜像落在盘上，而 frago 的
+    监控没参与过，所以没有 metadata。它在磁盘上明明存在，清单里不该缺席。
+    """
+    try:
+        stamp = datetime.fromtimestamp(raw_path.stat().st_mtime)
+    except OSError:
+        return None
+    return MonitoredSession(
+        session_id=session_dir.name,
+        agent_type=agent_type,
+        # 原文副本里读不出工作目录，也不值得为它把整份转录解析一遍。
+        project_path="",
+        name=None,
+        source_file=str(raw_path),
+        started_at=stamp,
+        last_activity=stamp,
+        status=_live_status(SessionStatus.RUNNING, stamp, now),
+        step_count=0,
+        tool_call_count=0,
+        source=SessionSource.UNKNOWN,
+    )
+
+
+def _load_session_from_dir(
+    session_dir: Path, now: datetime | None = None
+) -> MonitoredSession | None:
+    """一个会话目录 → 一条 ``MonitoredSession``。metadata 优先，没有就从原文副本派生。
+
+    两个都没有（空目录）返回 None。
+    """
+    metadata_path = session_dir / "metadata.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return MonitoredSession.model_validate(data)
+        except Exception as e:
+            # metadata 坏了，但原文副本可能还在——那就退到派生，别因此把这场会话
+            # 从清单里抹掉。
+            logger.warning(f"Failed to read session {session_dir.name}: {e}")
+
+    raw_path = _raw_jsonl_path(session_dir)
+    if raw_path is None:
+        return None
+    try:
+        agent_type = AgentType(session_dir.parent.name)
+    except ValueError:
+        # 认不出是哪一家，派生的卡片连 agent_type 都填不出来，不猜。
+        return None
+    return _derive_session_from_raw(session_dir, agent_type, raw_path, now)
+
+
+def is_managed_session(session_id: str, agent_type: AgentType) -> bool:
+    """这场会话是不是 frago 自己管过（目录里有 metadata.json）。
+
+    清理只对这类生效。读取侧的放宽（只认原文副本也算一场会话）不能让
+    ``frago session clean`` 反过来去删同步进来的原文镜像。
+    """
+    return (get_session_dir(session_id, agent_type) / "metadata.json").exists()
 
 
 # ============================================================
@@ -155,7 +295,12 @@ def read_metadata(
     2. Otherwise scan ``~/.frago/projects/*/{session_id}/metadata.json``
        (Phase 1 new layout).
     3. Fall back to the legacy ``~/.frago/sessions/{agent_type}/{session_id}/``
-       path.
+       path; 那个目录里只有 ``raw.jsonl`` 时，就地派生一份最小元数据。
+
+    **状态按盘上原样返回，不做「还活着吗」的归位。**问那个问题的是清单那几条路
+    （:func:`list_sessions` / :func:`find_session_by_prefix`）；这里返回的对象会被写
+    路径拿去判断「这场会话存不存在」，把一场久未活动、正被续接的会话读成已结束，
+    会被原样写回盘上。
     """
     metadata_path: Path | None = None
 
@@ -170,11 +315,15 @@ def read_metadata(
             metadata_path = candidate / "metadata.json"
         else:
             # Fall back to legacy path.
-            legacy_path = (
-                get_session_base_dir() / agent_type.value / session_id / "metadata.json"
-            )
+            legacy_dir = get_session_base_dir() / agent_type.value / session_id
+            legacy_path = legacy_dir / "metadata.json"
             if legacy_path.exists():
                 metadata_path = legacy_path
+            else:
+                # 只有原文副本的会话（同步进来、frago 没监控过）也要能打开。
+                raw_path = _raw_jsonl_path(legacy_dir)
+                if raw_path is not None:
+                    return _derive_session_from_raw(legacy_dir, agent_type, raw_path)
 
     if metadata_path is None or not metadata_path.exists():
         return None
@@ -660,6 +809,7 @@ def count_sessions(
     else:
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
+    now = datetime.now()
     for agent_dir in agent_dirs:
         if not agent_dir.exists():
             continue
@@ -668,20 +818,23 @@ def count_sessions(
             if not session_dir.is_dir():
                 continue
 
-            metadata_path = session_dir / "metadata.json"
-            if not metadata_path.exists():
+            # 目录里有内容就算一场会话：metadata.json 或原文副本，二者有其一。
+            if not (session_dir / "metadata.json").exists() and (
+                _raw_jsonl_path(session_dir) is None
+            ):
                 continue
 
-            # If status filtering needed, read metadata
-            if status:
-                try:
-                    with open(metadata_path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    session_status = SessionStatus(data.get("status", "running"))
-                    if session_status != status:
-                        continue
-                except Exception:
-                    continue
+            if not status:
+                count += 1
+                continue
+
+            session = _load_session_from_dir(session_dir, now)
+            if session is None:
+                continue
+            # 状态判据必须与 list_sessions 同一套，否则同一个问题两个答案。
+            session_status = _live_status(session.status, session.last_activity, now)
+            if session_status != status:
+                continue
 
             count += 1
 
@@ -714,8 +867,9 @@ def list_sessions(
     else:
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
-    # Phase 1: Collect (session_dir, mtime) pairs using metadata file mtime.
-    # This avoids reading and parsing every metadata.json upfront.
+    # Phase 1: Collect (session_dir, mtime) pairs. 目录里有内容就算一场会话——原文副本
+    # （同步进来的、frago 没监控过的会话）或 metadata 二者有其一即可。mtime 取两份文件
+    # 里新的那个，粗筛时才不会漏掉刚写过原文的会话。
     candidates: list[tuple[float, Path]] = []
     for agent_dir in agent_dirs:
         if not agent_dir.exists():
@@ -725,37 +879,37 @@ def list_sessions(
             if not session_dir.is_dir():
                 continue
 
-            metadata_path = session_dir / "metadata.json"
-            if not metadata_path.exists():
+            if not (session_dir / "metadata.json").exists() and (
+                _raw_jsonl_path(session_dir) is None
+            ):
                 continue
 
-            try:
-                mtime = metadata_path.stat().st_mtime
-                candidates.append((mtime, session_dir))
-            except OSError:
+            mtime = _session_mtime(session_dir)
+            if mtime is None:
                 continue
+            candidates.append((mtime, session_dir))
 
-    # Phase 2: Sort by mtime descending and only parse the top N metadata files.
+    # Phase 2: Sort by mtime descending and only load the top N.
     # With 1000+ sessions, this avoids reading all metadata.json files.
     # Read more than `limit` to compensate for status filtering losses.
     candidates.sort(key=lambda x: x[0], reverse=True)
     read_budget = limit * 5  # read at most 5x limit to find enough matches
 
+    now = datetime.now()
     sessions = []
     for _mtime, session_dir in candidates[:read_budget]:
-        metadata_path = session_dir / "metadata.json"
-        try:
-            with open(metadata_path, encoding="utf-8") as f:
-                data = json.load(f)
-            session = MonitoredSession.model_validate(data)
+        session = _load_session_from_dir(session_dir, now)
+        if session is None:
+            continue
 
-            # Status filtering
-            if status and session.status != status:
-                continue
+        # 烂在 running 上的状态按最后活动时刻归位，再过滤。
+        session.status = _live_status(session.status, session.last_activity, now)
 
-            sessions.append(session)
-        except Exception as e:
-            logger.warning(f"Failed to read session {session_dir.name}: {e}")
+        # Status filtering
+        if status and session.status != status:
+            continue
+
+        sessions.append(session)
 
     # Sort by actual last_activity (more accurate than mtime)
     def get_sortable_time(s):
@@ -766,6 +920,40 @@ def list_sessions(
     sessions.sort(key=get_sortable_time, reverse=True)
 
     return sessions[:limit]
+
+
+def find_session_by_prefix(
+    prefix: str, agent_type: AgentType = AgentType.CLAUDE
+) -> MonitoredSession | None:
+    """按会话 id 前缀找一场会话。
+
+    先当完整 id 直接开；开不到就按目录名前缀扫那一家的目录。**不走
+    :func:`list_sessions` 再筛**——那条路只加载最近的一批，一场很久没动过的会话
+    明明在盘上，却会因为没有排进窗口而报「找不到」。
+    """
+    now = datetime.now()
+    session = read_metadata(prefix, agent_type)
+    if session is not None:
+        session.status = _live_status(session.status, session.last_activity, now)
+        return session
+
+    if not prefix:
+        return None
+
+    agent_dir = get_session_base_dir() / agent_type.value
+    if not agent_dir.is_dir():
+        return None
+
+    for session_dir in sorted(agent_dir.iterdir()):
+        if not session_dir.is_dir() or not session_dir.name.startswith(prefix):
+            continue
+        session = _load_session_from_dir(session_dir, now)
+        if session is None:
+            continue
+        session.status = _live_status(session.status, session.last_activity, now)
+        return session
+
+    return None
 
 
 def get_session_data(
@@ -839,6 +1027,11 @@ def clean_old_sessions(
 
     cleaned = 0
     for session in sessions:
+        # 只清 frago 自己管过的会话。读取侧的放宽（只有原文副本也算一场会话）不能反过来
+        # 让清理去删那些同步进来的镜像——它们目录里没有 metadata，删了就只剩 CLI 自己
+        # 那一份了。
+        if not is_managed_session(session.session_id, session.agent_type):
+            continue
         if session.last_activity < cutoff and delete_session(
             session.session_id, session.agent_type
         ):

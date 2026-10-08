@@ -23,9 +23,10 @@ from frago.session.formatter import (
 from frago.session.models import AgentType, SessionStatus
 from frago.session.storage import (
     delete_session,
+    find_session_by_prefix,
     get_session_data,
+    is_managed_session,
     list_sessions,
-    read_metadata,
     read_steps,
     read_summary,
 )
@@ -463,18 +464,7 @@ def show_cmd(
 
 def _find_session_by_prefix(prefix: str, agent_type: AgentType):
     """Find session by prefix"""
-    # Try exact match first
-    session = read_metadata(prefix, agent_type)
-    if session:
-        return session
-
-    # Try prefix matching
-    sessions = list_sessions(agent_type=agent_type, limit=100)
-    for s in sessions:
-        if s.session_id.startswith(prefix):
-            return s
-
-    return None
+    return find_session_by_prefix(prefix, agent_type)
 
 
 @session_group.command("watch", cls=AgentFriendlyCommand)
@@ -573,7 +563,13 @@ def clean_cmd(
     # Find expired sessions
     cutoff = datetime.now() - timedelta(days=days)
     sessions = list_sessions(agent_type=agent_filter, limit=1000)
-    old_sessions = [s for s in sessions if s.last_activity < cutoff]
+    # 只清 frago 自己管过的会话。清单现在也含同步进来的原文镜像，那些目录里没有
+    # metadata，是各家 CLI 转录的唯一副本，不归这条命令管。
+    old_sessions = [
+        s
+        for s in sessions
+        if s.last_activity < cutoff and is_managed_session(s.session_id, s.agent_type)
+    ]
 
     if not old_sessions:
         click.echo(f"No sessions found older than {days} days")
