@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -43,6 +44,47 @@ def _find_recipe_dir_by_name(name: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+#: 重写配方之前，原件备份到哪。落在 recipes/ 根下的隐藏目录：注册表只认
+#: atomic/chrome、atomic/system、workflows 三个子目录（registry.py 的扫描清单），
+#: 根下的隐藏目录扫不到，不会被当成一个配方。
+SNAPSHOT_ROOT = '.snapshots'
+
+
+def _snapshot_recipe_dir(recipe_dir: Path) -> Path | None:
+    """重写之前把现有配方原样留一份，返回副本落在哪；没东西可留时返回 None。
+
+    create / plan 是照规格把整份配方重新铺一遍：recipe.py、recipe.md、assets/
+    下的页面都在模板的覆盖范围内。规格里字段名改了一个（sentences→lines），
+    页面照旧按老名字读数，打开就是个空壳，213 句显示成 0，而命令全程不报警、
+    validate 也照样通过——2026-09-06 白膜与 video_pipeline_studio 两次栽在这上面，
+    VPS 那次是从会话记录里逐条重放 35 次 Edit 才把页面捞回来的。
+
+    只留副本，不改 --force 的语义：该覆盖还是覆盖，覆盖前多一份能还原的原件，
+    并打印副本落在哪。目录不存在、或是人刚建好的空壳，没什么可留的。
+    """
+    if not recipe_dir.is_dir() or not any(recipe_dir.iterdir()):
+        return None
+
+    dest_root = Path.home() / '.frago' / 'recipes' / SNAPSHOT_ROOT / recipe_dir.name
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    dest = dest_root / stamp
+    n = 2
+    while dest.exists():
+        dest = dest_root / f'{stamp}-{n}'
+        n += 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(recipe_dir, dest, symlinks=True)
+    return dest
+
+
+def _announce_snapshot(recipe_dir: Path) -> None:
+    """重写前留一份原件，留了就说清楚落在哪。"""
+    kept = _snapshot_recipe_dir(recipe_dir)
+    if kept:
+        click.echo(f"[Snapshot] 覆盖前先留了一份原件：{kept}")
+        click.echo(f"[Fix] 要还原就把里面的文件拷回 {recipe_dir}")
 
 
 def _run_frago_agent(
@@ -276,8 +318,11 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
         click.echo("[Fix] frago recipe plan <name> --prompt \"<requirement>\"", err=True)
         sys.exit(1)
 
-    # Resolve directory
-    recipe_dir = _resolve_recipe_dir(name, type_, runtime)
+    # Resolve directory. 先问现有配方在哪，再按 type/runtime 推：只按推的话，
+    # 对一个已存在、家在 workflows/ 下的配方跑 plan，会推成 atomic/system/<名字>，
+    # spec.md 落进一个新建的空壳目录里，人还得手工搬。create 一直是先查现有目录的
+    # （两步式那段的 _find_recipe_dir_by_name），两条命令说的是同一件事，判据也该是同一个。
+    recipe_dir = _find_recipe_dir_by_name(name) or _resolve_recipe_dir(name, type_, runtime)
     spec_path = recipe_dir / "spec.md"
 
     # Check conflict
@@ -285,6 +330,10 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
         click.echo(f"Error: spec.md already exists at {spec_path}", err=True)
         click.echo("[Fix] Use --force to overwrite, or review the existing spec", err=True)
         sys.exit(1)
+
+    # --force 这一路会把规格重写掉，配方目录里已有的页面和实现也是下一步 create
+    # 的覆盖对象，先留一份。
+    _announce_snapshot(recipe_dir)
 
     click.echo(f"[Plan] Generating spec for recipe '{name}'...")
     click.echo(f"  Directory: {recipe_dir}")
@@ -382,6 +431,11 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
         click.echo(f"Error: recipe.md already exists at {recipe_dir / 'recipe.md'}", err=True)
         click.echo("[Fix] Use --force to overwrite", err=True)
         sys.exit(1)
+
+    # 覆盖之前先留一份原件。--force 是把规格重新铺一遍，遇到成熟配方时，模板会
+    # 盖掉它的页面、实现和 recipe.md 里记下的对外字段名，而命令不报警。留了就说
+    # 清楚落在哪，别让人再靠会话记录去捞。
+    _announce_snapshot(recipe_dir)
 
     # Ensure directory exists
     recipe_dir.mkdir(parents=True, exist_ok=True)
