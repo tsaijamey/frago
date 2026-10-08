@@ -179,6 +179,21 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
     )
 
 
+def previous_block(sections: list[str]) -> str:
+    """把「上一趟留下的东西」套成一个壳，摆在这次的任务原文前面。
+
+    两种情形共用这一层壳：没跑完留下的续跑包（:mod:`schedule_resume`），和一张没人答的
+    拍板卡片（:mod:`schedule_pending`）。两处各套一层的话，两段「上一趟」会各自带着一个
+    结尾，读起来像两次收尾。
+    """
+    head = (
+        "【上一趟留了东西给你】下面这几段是上一条任务留下的。先看完再动手："
+        "人已经答过的照着办，断在半路的地方接着做，别把已经做过的事重做一遍。"
+    )
+    body = "\n\n".join(sections)
+    return f"{head}\n\n{body}\n\n—— 以上是上一趟 —— 下面是这一次的任务：\n"
+
+
 def execute_prompt(
     prompt: str,
     timeout: int,
@@ -187,6 +202,9 @@ def execute_prompt(
     disallowed_tools: list[str] | None = None,
     cwd: str | None = None,
     title: str | None = None,
+    *,
+    resume: str | None = None,
+    pending: str | None = None,
 ) -> RunOutcome:
     """把一句自然语言任务交给 CoreAgent（frago-core 自己的 agent 循环）去办。
 
@@ -209,8 +227,14 @@ def execute_prompt(
     ``title`` 是这一场在会话页上的名字，给的是这条定时任务自己的名字。不给名字的话，
     左栏摆的是开口第一句——同一条任务每天跑一次，二十行长得一模一样，人分不出哪行是
     哪天的哪条。这一场同时归到「本机管理」那一组：它不是人开的会话，不该堆在未分组区。
+
+    ``resume`` 是上一趟留下的续跑包（见 :mod:`frago.server.services.schedule_resume`），
+    ``pending`` 是一张没人答的拍板卡片（见 :mod:`frago.server.services.schedule_pending`）：
+    有一个就摆在任务原文前面，让它接着上次断的地方做、或者照着人的答复办。
     """
     started = time.monotonic()
+    if resume or pending:
+        prompt = previous_block([s for s in (pending, resume) if s]) + prompt
     from frago.server.services import coreagent_runner
 
     session_id = coreagent_runner.start_local_ops(title or "定时任务")
@@ -526,14 +550,27 @@ async def run_scheduled(schedule: dict[str, Any]) -> RunOutcome:
             execute_recipe, schedule.get("recipe") or "", schedule.get("params") or {}, timeout,
         )
     if kind == "prompt":
+        from frago.server.services import schedule_pending as sp
+        from frago.server.services import schedule_resume as sr
+
         name = str(schedule.get("name") or "").strip()
-        return await asyncio.to_thread(
+        sid = str(schedule.get("id") or "")
+        # 上一趟没跑完就留下了一份续跑包：这一次摆到任务原文前面，别从零重来。
+        # 上一趟挂着的拍板卡片同样摆到前面：人答了就照答复办，一直没人答就按推荐项降级，
+        # 不再问第二遍（见 schedule_pending）。
+        resume_text = sr.load(sid)
+        outcome = await asyncio.to_thread(
             execute_prompt, schedule.get("prompt") or "", timeout,
             schedule.get("instructions"),
             schedule.get("allowed_tools") or [], schedule.get("disallowed_tools") or [],
             schedule.get("cwd"),
             f"定时任务：{name}" if name else "定时任务",
+            resume=sr.section(resume_text) if resume_text else None,
+            pending=sp.note(sid),
         )
+        sr.record(schedule, outcome)
+        sp.collect(schedule, outcome)
+        return outcome
     raise ValueError(f"run_scheduled 不认识 kind={kind}")
 
 

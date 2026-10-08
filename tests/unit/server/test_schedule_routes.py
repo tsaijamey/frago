@@ -120,8 +120,16 @@ class TestRunNow:
         service._active_schedule_ids.add(s["id"])
         assert client.post(f"/api/schedules/{s['id']}/run").status_code == 409
 
-    def test_自然语言任务交给_CoreAgent_不看_PA_在不在(self, client, service, monkeypatch):
+    def test_自然语言任务交给_CoreAgent_不看_PA_在不在(
+        self, client, service, monkeypatch, tmp_path
+    ):
         """PA 没起来（这里压根没接）也照跑：执行者已经换成 CoreAgent 子进程。"""
+        from frago.server.services import schedule_pending as sp
+        from frago.server.services import schedule_resume as sr
+
+        # 续跑包与挂着的那张卡片都不该读到这一台机器自己的 ~/.frago 去。
+        monkeypatch.setattr(sr, "ROOT", tmp_path / "resume")
+        monkeypatch.setattr(sp, "ROOT", tmp_path / "pending")
         s = service.add_schedule(
             prompt="给事务分类", interval_seconds=60,
             instructions="todo-triage.md", allowed_tools=["Bash(frago todo:*)"],
@@ -129,10 +137,15 @@ class TestRunNow:
         )
         seen = {}
 
-        def fake_prompt(prompt, timeout, instructions, allowed, disallowed, cwd, title=None):
+        def fake_prompt(
+            prompt, timeout, instructions, allowed, disallowed, cwd, title=None,
+            *, resume=None, pending=None,
+        ):
             seen.update(
                 prompt=prompt, instructions=instructions, allowed=allowed, cwd=cwd, title=title
             )
+            assert resume is None, "这一趟没有上一趟留下的续跑包"
+            assert pending is None, "这一趟也没有挂着没人答的卡片"
             return ex.RunOutcome(ok=True, kind="prompt", stdout="分好了", digest="d")
 
         monkeypatch.setattr(ex, "execute_prompt", fake_prompt)
