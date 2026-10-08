@@ -248,9 +248,10 @@ def st(tmp_path, monkeypatch):
     # 注册表探活也走 urllib，一并换掉：真打到 8770 上就是在碰真 broker。
     monkeypatch.setattr(registry, "urllib", fake.net)
     monkeypatch.setattr(health, "subprocess", FakeHealthSubprocess())
-    # 自检会扫 ~/.frago/profiles/edge/ 找孤儿 profile。换到落点底下，
-    # 免得测试结果被这台机器上真实的 profile 目录左右。
-    monkeypatch.setattr(health, "BROWSER_PROFILES_DIR", data / "profiles" / "edge")
+    # 自检会扫 ~/.frago/profiles/ 底下的品牌目录找孤儿 profile。把那个根换到落点
+    # 底下，免得测试结果被这台机器上真实的 profile 目录左右。
+    monkeypatch.setattr(
+        "frago.browser.cdp.launcher.NEW_PROFILE_ROOT", data / "profiles")
 
     def _open(url):
         fake.opened.append(url)
@@ -618,6 +619,87 @@ def test_no_desktop_page_is_warned_but_not_fatal(st, caplog):
     assert out["health"]["warn_count"] >= 1
     assert out["health"].get("agent_must_respond")
     assert any("桌面页" in r.getMessage() for r in caplog.records)
+
+
+# ── 自检：白名单外端口留下的 profile ──────────────────────────────────────
+
+@pytest.fixture
+def profile_root(tmp_path, monkeypatch):
+    """profile 目录的根换到落点底下。
+
+    真去扫人这台机器上的 profiles/ 的话，测试结果就随本机装过哪些浏览器变，
+    而那正是这条检查要报告的东西，不是它该依赖的东西。
+    """
+    root = tmp_path / "profiles"
+    monkeypatch.setattr("frago.browser.cdp.launcher.NEW_PROFILE_ROOT", root)
+    return root
+
+
+def test_orphan_profiles_ignores_the_whitelisted_ports(profile_root):
+    """9222 是演员、9223 是机位，两台自己的目录都在白名单里。"""
+    for brand in ("cft", "edge"):
+        (profile_root / brand / "9222").mkdir(parents=True)
+        (profile_root / brand / "9223").mkdir(parents=True)
+    out = health.check_orphan_profiles()
+    assert out["level"] == "ok"
+    assert out["orphans"] == []
+
+
+def test_orphan_profiles_ignores_non_port_directories(profile_root, monkeypatch):
+    """<浏览器>/extension 是扩展后端的落点，不是端口。
+
+    按「白名单外一律算孤儿」来判，这个目录每次自检都会被报出来，而修法写着
+    「直接删除 <路径>」——照着做删掉的是扩展后端自己的 profile。
+    同一个根里另放一个真越界的端口：它在名单上，extension 不在，一次比出两件事。
+    """
+    monkeypatch.setattr(health, "_port_listening", lambda port: False)
+    (profile_root / "cft" / "extension").mkdir(parents=True)
+    (profile_root / "cft" / "9225").mkdir(parents=True)
+    out = health.check_orphan_profiles()
+    assert out["level"] == "warn"
+    assert out["orphans"] == ["cft/9225"], "extension 不是端口，不该进这个名单"
+
+
+def test_orphan_profiles_reports_a_stray_port_in_any_brand(profile_root,
+                                                           monkeypatch):
+    """品牌换过一次（Edge → cft）。
+
+    写死品牌的那版只看得见它自己那个品牌底下的东西，别的品牌里留着什么都报不
+    出来，而它照旧回一句「只有白名单内的端口」。
+    """
+    monkeypatch.setattr(health, "_port_listening", lambda port: False)
+    (profile_root / "cft" / "9222").mkdir(parents=True)      # 白名单内，跳过
+    (profile_root / "chromium" / "9300").mkdir(parents=True)
+    (profile_root / "edge" / "9225").mkdir(parents=True)
+    out = health.check_orphan_profiles()
+    assert out["level"] == "warn"
+    assert out["orphans"] == ["chromium/9300", "edge/9225"]
+    assert out["alive"] == []
+    assert str(profile_root / "edge" / "9225") in out["how_to_fix"]
+    assert str(profile_root / "chromium" / "9300") in out["how_to_fix"]
+
+
+def test_orphan_profiles_alive_stray_says_to_stop_it_first(profile_root,
+                                                           monkeypatch):
+    """端口还在听，说明那台残留还活着——修法必须先停进程再删目录。
+
+    顺序反了就是跟一个正写着自己 profile 的浏览器抢文件。
+    """
+    (profile_root / "cft" / "9225").mkdir(parents=True)
+    monkeypatch.setattr(health, "_port_listening", lambda port: port == 9225)
+    out = health.check_orphan_profiles()
+    assert out["alive"] == ["cft/9225"]
+    assert "9225" in out["how_to_fix"]
+    assert "先" in out["how_to_fix"]
+
+
+def test_orphan_profiles_without_a_root_is_ok(tmp_path, monkeypatch):
+    """还没起过浏览器。这不是异常状态，不该报。"""
+    monkeypatch.setattr("frago.browser.cdp.launcher.NEW_PROFILE_ROOT",
+                        tmp_path / "profiles")
+    out = health.check_orphan_profiles()
+    assert out["level"] == "ok"
+    assert out["orphans"] == []
 
 
 # ── status ────────────────────────────────────────────────────────────────

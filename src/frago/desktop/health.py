@@ -31,12 +31,15 @@ import subprocess
 from pathlib import Path
 
 FRAGO_HOME = Path.home() / ".frago"
-# 舞台两台都是 Edge，profile 落在 profiles/edge/<port>/。
-BROWSER_PROFILES_DIR = FRAGO_HOME / "profiles" / "edge"
 
-# CDP 端口白名单，两个，都是 Edge：
-#   9222 演员（常驻。`-b cdp` 的默认端口，profile edge/9222 由 frago 从人真实的
-#        Edge profile 播种，带着现成登录态）
+# profile 目录的根、它底下的品牌目录，以及 NEW_PROFILE_ROOT / <浏览器> / <端口> /
+# 这条算式，全归 browser/cdp/launcher.py 管——本模块用时现取（见 _profile_root），
+# 不在这里写死。舞台的浏览器换过一次（Edge → frago 自带的 Chrome for Testing，
+# 2026-09-15），写死的那版换完之后一直盯着 profiles/edge/ 报「只有白名单内的
+# 端口」，而那个目录已经没人写了。
+
+# CDP 端口白名单，两个：
+#   9222 演员（常驻。`-b cdp` 的默认端口）
 #   9223 机位（只在录制期间存在，不需要任何登录态）
 # 两者必须分开：停录时机位要 `-b cdp stop` 收走自己，共用端口那一下会把演员
 # 一起带走。
@@ -165,9 +168,9 @@ def check_cdp_ports(ports: dict | None) -> dict:
         f"越界端口 {offending}，白名单只有 {list(CDP_WHITELIST)}",
         means="配方正在用白名单之外的 CDP 端口。9222 是演员、9223 是机位，"
               "其余端口一律是自创的。",
-        if_ignored="每个自创端口会在 ~/.frago/profiles/edge/<port>/ 留一个"
-                   "永久 profile 目录；演员跑偏到别的端口还会丢掉 edge/9222 那份"
-                   "播种来的登录态，撞上登录墙而毫无提示。更糟的是指令打在一个"
+        if_ignored="每个自创端口会在 ~/.frago/profiles/<浏览器>/<端口>/ 留一个"
+                   "永久 profile 目录；演员跑偏到别的端口就是落在另一份 profile 上，"
+                   "登录态不在那儿，会撞上登录墙而毫无提示。更糟的是指令打在一个"
                    "没人看的浏览器上，回执一切正常而画面纹丝不动。",
         how_to_fix="把配方参数里的 stage_port 改回 9222、record_port 改回 9223，"
                    "重启 broker，再删掉越界端口留下的 profile 目录。",
@@ -184,30 +187,58 @@ def _port_listening(port: int) -> bool:
         s.close()
 
 
+def _profile_root() -> Path:
+    """profile 目录的根，问 launcher 要，不在自检里再抄一遍。
+
+    根底下是 <浏览器>/<端口>/（算式见 browser/cdp/launcher.py）。import 写在
+    函数里是故意的：launcher 会连带拉起 CDP 那一整条链（requests、websocket），
+    而自检要在什么都查不动的机器上也能起来，也只在真要扫的时候去碰它们。这句
+    import 万一失败，_guard 会把本项降级成 unavailable，不拦配方。
+    """
+    from ..browser.cdp.launcher import NEW_PROFILE_ROOT
+
+    return NEW_PROFILE_ROOT
+
+
 def check_orphan_profiles() -> dict:
-    """~/.frago/profiles/edge/ 下的越界目录，以及它们是否还活着。"""
+    """白名单外的 CDP 端口留下的 profile 目录，以及它们是否还活着。
+
+    目录形如 profiles/<浏览器>/<端口>/，端口永远明写在路径里（默认 9222 也写）。
+    这里扫根底下**所有**品牌目录，不指定某一个——品牌换过（Edge → frago 自带的
+    Chrome for Testing，2026-09-15），指定品牌的那版换完之后一直在报「只有白名单
+    内的端口」，查的是一个已经没人写的目录。
+    """
     item = "orphan_profiles"
-    if not BROWSER_PROFILES_DIR.exists():
-        return _ok(item, f"{BROWSER_PROFILES_DIR} 不存在（还没起过浏览器）",
+    root = _profile_root()
+    brands = (sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name)
+              if root.exists() else [])
+    if not brands:
+        return _ok(item, f"{root} 下还没有品牌目录（还没起过浏览器）",
                    orphans=[])
-    orphans = []
-    with os.scandir(BROWSER_PROFILES_DIR) as it:
-        for entry in it:
-            if not entry.is_dir(follow_symlinks=False):
-                continue
-            if entry.name.isdigit() and int(entry.name) in CDP_WHITELIST:
-                continue
-            orphans.append(entry.name)
+    orphans: list[str] = []
+    for brand in brands:
+        with os.scandir(brand) as it:
+            for entry in it:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                # 只认纯数字的目录名——那是端口。品牌目录底下还有别的东西
+                # （<浏览器>/extension 是扩展后端自己的落点），它们不是这条检查
+                # 的对象；报了会让人去删一个不该删的目录，而且说不清是谁的。
+                if not entry.name.isdigit() or int(entry.name) in CDP_WHITELIST:
+                    continue
+                orphans.append(f"{brand.name}/{entry.name}")
     if not orphans:
-        return _ok(item, f"{BROWSER_PROFILES_DIR} 下只有 "
-                         f"{[str(p) for p in CDP_WHITELIST]}", orphans=[])
+        return _ok(item, f"{root} 下 {len(brands)} 个品牌目录 "
+                         f"（{[b.name for b in brands]}）只留了白名单 "
+                         f"{list(CDP_WHITELIST)} 内的端口", orphans=[])
     # 只对越界目录探活——正常情况这个列表是空的，探活成本为零。
-    alive = [n for n in orphans if n.isdigit() and _port_listening(int(n))]
+    ports = {o: int(o.rsplit("/", 1)[-1]) for o in orphans}
+    alive = [o for o, port in ports.items() if _port_listening(port)]
     return _warn(
         item,
-        f"{BROWSER_PROFILES_DIR} 下有白名单外的目录: {sorted(orphans)}"
-        + (f"；其中 {sorted(alive)} 端口仍在监听，是活着的残留实例" if alive
-           else "；均未在监听，是孤儿目录"),
+        f"白名单外的端口目录: {sorted(orphans)}"
+        + (f"；其中 {sorted(alive)} 的端口仍在监听，是活着的残留实例" if alive
+           else "；端口均未在监听，是孤儿目录"),
         means="有人用过白名单外的 CDP 端口。目录是那次使用留下的 profile。"
               + ("其中一部分现在还有进程占着。" if alive else ""),
         if_ignored=("活着的残留实例会继续占内存，并且可能抢走本该发给 9222 / 9223 的"
@@ -215,10 +246,10 @@ def check_orphan_profiles() -> dict:
                     if alive else
                     "孤儿目录只占盘，不影响功能；但它是曾经跑偏过的证据，"
                     "留着会让下次自检继续报同一条。"),
-        how_to_fix=(f"先 `frago browser -b cdp stop` 或按端口停掉 {sorted(alive)} "
-                    f"的进程，再删除 " if alive else "直接删除 ")
-                   + "、".join(str(BROWSER_PROFILES_DIR / n)
-                               for n in sorted(orphans)),
+        how_to_fix=(f"先 `frago browser -b cdp stop` 或按端口停掉 "
+                    f"{sorted({ports[o] for o in alive})} 的进程，再删除 "
+                    if alive else "直接删除 ")
+                   + "、".join(str(root / o) for o in sorted(orphans)),
         orphans=sorted(orphans), alive=sorted(alive),
     )
 
