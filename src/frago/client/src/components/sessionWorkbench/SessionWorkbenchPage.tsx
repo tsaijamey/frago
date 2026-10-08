@@ -30,7 +30,7 @@ import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
 import { useSessionPins } from '@/hooks/useSessionPins';
-import { useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
+import { isSessionAlive, useWorkbenchSessions } from '@/hooks/useWorkbenchSessions';
 import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
@@ -110,7 +110,13 @@ export default function SessionWorkbenchPage() {
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
   const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
-  // 还在跑的会话让中栏自己活起来：文件一动服务端就推增量，轮询只是断连时的兜底。
+  // 这一场还活着（比开在 tmux 里宽一格，含 CoreAgent 的常驻进程）→ 让中栏自己活起来：
+  // 文件一动服务端就推增量，轮询只是断连时的兜底。**不活着的只在点开时取一次**（主人
+  // 09-30 定）。从前这里看的是会话状态里那个 running，而 CoreAgent 不跑在 tmux 里、被判成
+  // 死的，于是它这一场推送不建、轮询又自己关掉，页面永久停在发出那句话的那一刻。
+  const selectedAlive =
+    selected !== null &&
+    (isSessionAlive(selected) || forYou.rows.some((r) => r.session_id === selected.session_id));
   const {
     records,
     recordsSessionId,
@@ -127,7 +133,7 @@ export default function SessionWorkbenchPage() {
     clearSent,
     settleSent,
     trails,
-  } = useWorkbenchRecords(selectedId, { live: selected?.status === 'running' });
+  } = useWorkbenchRecords(selectedId, { live: selectedAlive });
 
   useEffect(() => {
     if (!selectedId || recordsSessionId !== selectedId || !yamlReady) {

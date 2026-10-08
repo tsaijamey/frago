@@ -65,6 +65,10 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     ``in_tmux``：这一场此刻开在某个 tmux 会话里，左栏据此给卡片挂流光。**不进核心数据层
     的缓存**——它是 tmux 此刻的样子，不是记录文件推出来的，缓存一轮就不准了。只按名字
     对（``frago-agent-<编号>``），名字是业务把手的飞书、语音会话开着也是 false。
+
+    ``alive``：这一场此刻还活着，判据见 :func:`_still_alive`。会话详情页照它决定要不要
+    盯住记录文件、要不要持续取增量。它比 ``in_tmux`` 宽一格，**不要用它替 ``in_tmux``**：
+    左栏的流光说的是"终端还开着"，CoreAgent 没有终端、流光不该亮。
     """
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
@@ -77,18 +81,26 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     # 命名规则不在前端再抄一份。没开着为 null。
     # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
     titles = await asyncio.to_thread(workbench_titles.load)
+    # 一次问清哪些 CoreAgent 场次还活着：看护一趟要过上百张卡片，逐场问就要逐场拿一次锁
+    # （见 ``coreagent_runner.live_states``）。
+    core_alive = await asyncio.to_thread(coreagent_runner.live_states)
     rows = []
     for card in cards:
         name = tmux_name_for(card.session_id)
         alive = name in open_names
-        row = {**asdict(card), "in_tmux": alive, "tmux_name": name if alive else None}
+        row = {
+            **asdict(card),
+            "in_tmux": alive,
+            "tmux_name": name if alive else None,
+            "alive": _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive),
+        }
         if card.session_id in titles:
             row["title"] = titles[card.session_id]
         rows.append(row)
-    # 不开在 tmux 里的会话不再盯它的文件（主人 09-30 定）。清单本来就每 15 秒取一次、手上
-    # 正好有 tmux 此刻的样子，顺带收一道：关掉 tmux 的那场最迟一轮之后停盯。
-    in_tmux = {row["session_id"] for row in rows if row["in_tmux"]}
-    await asyncio.to_thread(_keep_watching_only, in_tmux)
+    # 这一场还活着的才盯它的文件（主人 09-30 定的省法：不开着的、点开那一刻取一次最新内容
+    # 就够）。清单本来就每 15 秒取一次、手上正好有 tmux 此刻的样子，顺带收一道。
+    still_alive = {row["session_id"] for row in rows if row["alive"]}
+    await asyncio.to_thread(_keep_watching_only, still_alive)
     return rows
 
 
@@ -897,15 +909,54 @@ async def read_workbench_record_raw(
 # ── internal helpers ─────────────────────────────────────────────────
 
 
+def _still_alive(
+    session_id: str, *, in_tmux: bool, core_alive: dict[str, bool] | None = None
+) -> bool:
+    """这一场此刻还活着吗——两种活法，任一成立即算活着。
+
+    * **开在 tmux 里**：另外三家（claude / codex / opencode）由 WebUI 或 ``frago agent``
+      起在 tmux 里，终端开着就是活着。
+    * **它是 CoreAgent 那一场、常驻进程还在**：CoreAgent **NEVER 开在 tmux 里**，它是
+      frago 服务自己的子进程，拿 tmux 判它永远判成死的。
+
+    为什么这一条必须有：会话详情页的两条取数通道共用这个判据——服务端照它决定盯不盯记录
+    文件（实时推送），页面照它决定要不要持续取增量（兜底轮询）。CoreAgent 落在"死的"那一
+    侧时，实时推送一次都不会建立、轮询又会在静默 15 分钟后自己关掉，于是那一轮明明在跑、
+    结果也写进了记录，页面却永久停在发出那句话的那一刻，人只能刷新或切走再切回来才看得见
+    （2026-10-08 实测：当前这一轮服务里 CoreAgent 目录的监听启动记录 0 条，同日志里 claude
+    目录 21 条）。
+
+    判据取 ``coreagent_runner.live_states()`` 而不是 ``busy()``：**跑完等人打字的那些也还
+    开着**，人下一秒还要往里说话，此刻正是页面最该跟住的时候。空闲回收掉了、真正关了的
+    那一场 ``state == "absent"``，自然回落成不盯——省资源的本意不变。
+
+    ``core_alive`` 可以整批传进来（清单那一趟上百张卡片共用一次查询），不传就现问一场。
+    """
+    if in_tmux:
+        return True
+    if core_alive is not None:
+        return core_alive.get(session_id, False)
+    try:
+        return coreagent_runner.running(session_id)
+    except Exception:  # noqa: BLE001 — 判活着 NEVER 因为一次查询失败而炸，宁可不盯
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to check coreagent liveness for %s", session_id, exc_info=True
+        )
+        return False
+
+
 def _ensure_watching(session_id: str) -> None:
-    """这场会话开在 tmux 里就登记监听，否则撤掉它可能留着的登记。
+    """这一场还活着就登记它的记录文件监听，否则撤掉可能留着的登记。
 
     Claude Code sessions (UUID-shaped) start a ``SessionStream`` per project;
     opencode sessions (``ses_`` prefix) start a shared ``OpencodeStream``.
 
-    判 tmux 与清单同一条判据：``tmux_name_for(编号)`` 在不在 tmux 此刻的会话名里。一条
-    ``list-sessions``，发话后一秒一趟的快节拍下也扛得住。不开在 tmux 里的照样补一次旁路
-    观察的「打开」——右栏要靠它把早就答完的会话读一遍。
+    判据见 :func:`_still_alive`——**不止"开在 tmux 里"**，CoreAgent 那一场没有终端，要按它
+    自己的常驻进程判。一条 ``list-sessions`` 加一次 ``live_states``，发话后一秒一趟的快
+    节拍下也扛得住。不活着的照样补一次旁路观察的「打开」——右栏要靠它把早就答完的会话读
+    一遍。
     """
     try:
         from frago.agent_driver.tmux_session import tmux_name_for
@@ -915,7 +966,8 @@ def _ensure_watching(session_id: str) -> None:
         )
 
         bridge = WorkbenchStreamBridge.get_instance()
-        if tmux_name_for(session_id) in tsvc.open_session_names():
+        in_tmux = tmux_name_for(session_id) in tsvc.open_session_names()
+        if _still_alive(session_id, in_tmux=in_tmux):
             bridge.ensure_watching(session_id)
         else:
             bridge.release(session_id)

@@ -106,6 +106,31 @@ export interface WorkbenchSession {
    * 「关闭 tmux 会话」的弹窗要把它原样摆给人看。旧服务端不给，没给就不摆。
    */
   tmux_name?: string | null;
+  /**
+   * 这一场此刻还活着。比 `in_tmux` 宽一格：开在 tmux 里，或者它是 CoreAgent 那一场、
+   * 常驻进程还在。
+   *
+   * **这是会话详情页要不要持续跟住这场会话的判据**（取 `isSessionAlive`，别自己写）。
+   * 从前的判据只有「开在 tmux 里」，而 CoreAgent 不跑在 tmux 里，于是它这一场既不建
+   * 实时推送、兜底轮询又在静默 15 分钟后自己关掉，页面永久停在发出那句话的那一刻。
+   *
+   * 左栏那道流光**不看这个**：它说的是"终端还开着"，CoreAgent 没有终端。
+   */
+  alive?: boolean;
+}
+
+/**
+ * 这场会话此刻还活着吗——会话详情页要不要持续跟住它，看这一条。
+ *
+ * 服务端给的 `alive` 是权威。旧服务端不给这个字段，退回只认 `in_tmux`：那正是从前的口径，
+ * CoreAgent 会退化成"死的"，不会比没这一版更差。
+ *
+ * 判据为什么必须宽到 CoreAgent：详情页两条取数通道共用它——服务端照它决定盯不盯记录文件
+ * （实时推送），页面照它决定要不要持续取增量（兜底轮询）。CoreAgent 被误判成死的，两条
+ * 一起失效，页面就停在原地等人刷新。
+ */
+export function isSessionAlive(session: WorkbenchSession): boolean {
+  return session.alive ?? session.in_tmux === true;
 }
 
 /**

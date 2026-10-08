@@ -81,6 +81,9 @@ class WorkbenchStreamBridge:
         # 下就是一秒一次——不记住的话每一趟都要 glob 一遍 ~/.claude/projects 再开一次
         # 文件读 cwd，全是白做的。
         self._registered: set[str] = set()
+        # 这次服务运行里被打开过的会话。旁路观察的「打开」只投一次，与监听的登记分开记：
+        # 监听会随 tmux 开关撤了又登记，「打开」不该跟着重投。
+        self._opened: set[str] = set()
 
     # ---- singleton --------------------------------------------------------
 
@@ -127,7 +130,7 @@ class WorkbenchStreamBridge:
                     self._opencode_stream.start()
                 self._opencode_stream.watch_session(session_id)
                 self._registered.add(session_id)
-            self._observe(session_id, "open")
+            self.note_opened(session_id)
             return
 
         # Claude Code / CoreAgent session → SessionStream per project. 两家记录形状一样，
@@ -169,9 +172,57 @@ class WorkbenchStreamBridge:
                 stream.start()
                 self._streams[project_path] = stream
                 self._registered.add(session_id)
-        # 这场会话在这次服务运行里第一次被打开：让旁路 AI 从槽位文件记着的位置补读一次。
-        # 打开一场早就答完的会话不会有「一轮结束」，不在这里补，右栏就一直是旧的。
+        self.note_opened(session_id)
+
+    def note_opened(self, session_id: str) -> None:
+        """这场会话在这次服务运行里第一次被打开：让旁路 AI 从槽位文件记着的位置补读一次。
+
+        打开一场早就答完的会话不会有「一轮结束」，不在这里补，右栏就一直是旧的。不开在
+        tmux 里的会话不登记监听，但打开它时照样要补这一次。
+        """
+        with self._lock:
+            if session_id in self._opened:
+                return
+            self._opened.add(session_id)
         self._observe(session_id, "open")
+
+    def release(self, session_id: str) -> None:
+        """撤掉这一场的监听。所在项目的流一场都不盯了，整条流停掉。没登记过就什么都不做。"""
+        stopped: list[SessionStream] = []
+        with self._lock:
+            if session_id not in self._registered:
+                return
+            self._registered.discard(session_id)
+            if session_id.startswith("ses_"):
+                if self._opencode_stream is not None:
+                    self._opencode_stream.unwatch_session(session_id)
+                return
+            for path, stream in list(self._streams.items()):
+                stream.unwatch_session(session_id)
+                if not stream.watching_any():
+                    stopped.append(self._streams.pop(path))
+        # 停流要等它的工作线程收尾，放在锁外做，别让别的会话的登记跟着等。
+        for stream in stopped:
+            try:
+                stream.stop()
+            except Exception:
+                logger.exception("WorkbenchStreamBridge: error stopping idle stream")
+
+    def keep_only(self, keep: set[str]) -> None:
+        """只留 *keep* 里那几场的监听，其余登记过的一律撤掉。
+
+        会话清单每 15 秒取一次，取的时候顺带用它收一道：**不活着的**会话，就算点开过也
+        不再盯它的文件（主人 09-30 定），点开那一刻页面自己取一次最新内容。
+
+        "活着"这一条由调用方判（见 ``routes/workbench.py`` 的 ``_still_alive``）：开在
+        tmux 里，或者它是 CoreAgent 那一场、常驻进程还在。**从前这里只认 tmux**，而
+        CoreAgent NEVER 开在 tmux 里，于是它这一场每 15 秒被收一次、跑着的一轮一条推送都
+        没有（2026-10-08 修）。
+        """
+        with self._lock:
+            stale = [sid for sid in self._registered if sid not in keep]
+        for sid in stale:
+            self.release(sid)
 
     def stop_all(self) -> None:
         """Stop all active streams."""
@@ -195,8 +246,9 @@ class WorkbenchStreamBridge:
     def _observe(self, session_id: str, trigger: str) -> None:
         """把这场会话的旁路观察投进它自己的队列。投完就走，不在监听线上等模型。
 
-        **NEVER 在这里加「页面切走就撤监听」。** 右栏的旁路观察要求切换会话打断不了它：
-        监听一撤，这场会话再交还多少轮都没人投任务，切回来看到的是旧的。
+        监听只留给还活着的会话（见 :meth:`keep_only`），**撤不撤只看活不活，NEVER 看页面切
+        没切走**：右栏的旁路观察要求切换会话打断不了它，还活着的那场一撤，再交还多少轮都没
+        人投任务，切回来看到的是旧的。
         """
         try:
             from frago.server.services.session_observer import get_observer

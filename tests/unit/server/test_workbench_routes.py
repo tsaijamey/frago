@@ -14,9 +14,10 @@ from frago.session import adapters, record_reader
 from frago.session.record_reader import MAX_LIMIT, SessionCard
 from frago.session.unified_record import UnifiedRecord
 
-# 两家的会话编号形状——``detect_family()`` 只认这两种形状，用例照真实形状写。
+# 三家的会话编号形状——``detect_family()`` 只认这几种形状，用例照真实形状写。
 CC_SID = "00a02979-7eb4-5c70-94ae-867c8281e3f6"
 OC_SID = "ses_058288655ffeYMxYC1AZKCcv56"
+CORE_SID = "core_1b1a419957324f25a53914ede703c501"
 
 
 def _card(sid: str, family: str, last_active: int) -> SessionCard:
@@ -124,6 +125,9 @@ class TestSessionList:
             "in_tmux",
             # 开着时那个 tmux 会话的名字，「关闭 tmux 会话」弹窗原样摆出来。
             "tmux_name",
+            # 这一场此刻还活着（比 in_tmux 宽一格，含 CoreAgent 的常驻进程）。会话详情页
+            # 照它决定推不推、轮不轮询，缺了它页面就会停在发出那句话的那一刻。
+            "alive",
         }
 
     def test_开在tmux里的那一场才标上(self, client, monkeypatch):
@@ -152,6 +156,46 @@ class TestSessionList:
         response = client.get("/api/workbench/sessions")
         assert response.status_code == 200
         assert response.json()[0]["in_tmux"] is False
+
+    def test_coreagent那一场不在tmux里也算活着(self, client, monkeypatch):
+        """CoreAgent NEVER 开在 tmux 里，按 tmux 判它永远是死的。
+
+        详情页的两条取数通道共用这一条判据，判成死的就等于页面停在发出那句话的那一刻
+        （2026-10-08 修）。所以 ``alive`` 必须比 ``in_tmux`` 宽出这一格。
+        """
+        from frago.server.services import coreagent_runner, tmux_sessions_service as tsvc
+
+        monkeypatch.setattr(
+            record_reader,
+            "list_sessions",
+            lambda: [
+                _card(CORE_SID, "coreagent", 3000),
+                _card(CC_SID, "claude-code", 2000),
+            ],
+        )
+        # tmux 里一场都没有；CoreAgent 那一场常驻进程还在。
+        monkeypatch.setattr(tsvc, "open_session_names", lambda: set())
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {CORE_SID: True})
+
+        body = client.get("/api/workbench/sessions").json()
+
+        assert [row["in_tmux"] for row in body] == [False, False]
+        assert [row["alive"] for row in body] == [True, False], (
+            "CoreAgent 活着要认，「不在 tmux 里又没常驻进程」的不能跟着算活着"
+        )
+
+    def test_coreagent那一场收摊了就不算活着(self, client, monkeypatch):
+        """空闲回收掉、真正关掉的那一场回落成不盯——省资源的本意不变。"""
+        from frago.server.services import coreagent_runner, tmux_sessions_service as tsvc
+
+        monkeypatch.setattr(
+            record_reader, "list_sessions", lambda: [_card(CORE_SID, "coreagent", 3000)]
+        )
+        monkeypatch.setattr(tsvc, "open_session_names", lambda: set())
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+
+        row = client.get("/api/workbench/sessions").json()[0]
+        assert row["alive"] is False
 
     def test_每行都带状态与摘要(self, client, monkeypatch):
         """左栏最值钱的是"一眼看出每场什么情况"。这三样不出接口，左栏就只能按来源分组。"""

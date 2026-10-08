@@ -197,9 +197,24 @@ class SessionStream:
             self._watch_ids.add(session_id)
 
     def unwatch_session(self, session_id: str) -> None:
-        """撤掉一场会话的登记，连同它的水位一起忘掉。"""
+        """撤掉一场会话的登记，连同它的水位一起忘掉。
+
+        忘掉的文件记进「开始盯之前就在盘上」那一批：日后重新登记时，第一次处理只对水位、
+        不出货（纪律 1）。不这么做，一场在本流运行期间新建、撤过又回来的会话，会被当成
+        新文件把整场历史推一遍。
+        """
         with self._cv:
             self._watch_ids.discard(session_id)
+            if self._watch_dir is not None:
+                self._preexisting.add(str(self._watch_dir / f"{session_id}.jsonl"))
+            for state in (self._file_seqs, self._file_handed, self._file_done, self._pending):
+                for path in [p for p in state if Path(p).stem == session_id]:
+                    state.pop(path, None)
+
+    def watching_any(self) -> bool:
+        """还有没有登记着的会话。一场都没有时，这条流可以整个停掉。"""
+        with self._cv:
+            return bool(self._watch_ids)
 
     # ---- internal ---------------------------------------------------------
 
