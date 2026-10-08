@@ -145,9 +145,7 @@ class _SwallowingTmux(FakeTmux):
 class _ClockedTmux(FakeTmux):
     """按虚拟时钟切屏的 tmux 替身：到点之前给前一张，到点之后给后一张。"""
 
-    def __init__(
-        self, before: str, after: str, clock: _VirtualClock, switch_at: float
-    ) -> None:
+    def __init__(self, before: str, after: str, clock: _VirtualClock, switch_at: float) -> None:
         super().__init__([before])
         self._before = before
         self._after = after
@@ -156,9 +154,7 @@ class _ClockedTmux(FakeTmux):
         self.enters = 0
 
     def __call__(self, argv: list[str]) -> str:
-        self._panes = [
-            self._after if self._clock.now >= self._switch_at else self._before
-        ]
+        self._panes = [self._after if self._clock.now >= self._switch_at else self._before]
         if argv[1:2] == ["send-keys"] and argv[-1] == "Enter":
             self.enters += 1
         return super().__call__(argv)
@@ -227,9 +223,7 @@ def test_launch_native_deleted_session_falls_back_without_writing_binding(
     """native id 也可能已被删除；回落裸起，且 NEVER 写映射文件。"""
     _add_session(live_db, "ses_present", "/w", 1)
     driver = load_driver("opencode")
-    cmd = driver.launch_command(
-        LaunchCtx(cwd="/w", session_id="ses_gone", native_session_id=True)
-    )
+    cmd = driver.launch_command(LaunchCtx(cwd="/w", session_id="ses_gone", native_session_id=True))
     assert cmd == "opencode"
     assert opencode_store.get_binding("ses_gone") is None
     assert not opencode_store.BINDINGS_PATH.exists()
@@ -328,9 +322,7 @@ def _seed_bound_turn(conn: sqlite3.Connection, frago_id: str, sid: str) -> None:
     opencode_store.put_binding(frago_id, sid, "/w")
     _add_session(conn, sid, "/w", 1)
     _add_message(conn, "m_u1", sid, 10, {"role": "user", "parentID": None})
-    _add_message(
-        conn, "m_a1", sid, 20, {"role": "assistant", "parentID": "m_u1", "finish": "stop"}
-    )
+    _add_message(conn, "m_a1", sid, 20, {"role": "assistant", "parentID": "m_u1", "finish": "stop"})
 
 
 def test_submit_first_turn_lands_on_empty_input_box(live_db: sqlite3.Connection) -> None:
@@ -556,9 +548,7 @@ def test_gate_treats_unreadable_pane_as_not_stuck() -> None:
             return super().__call__(argv)
 
     sess = _session(_BlindTmux(["x"]), "blind")
-    assert not opencode_driver._still_in_input_box(
-        sess, opencode_driver._tail_marker(_PROMPT)
-    )
+    assert not opencode_driver._still_in_input_box(sess, opencode_driver._tail_marker(_PROMPT))
 
 
 @pytest.mark.usefixtures("live_db")
@@ -638,8 +628,12 @@ def test_probe_done_on_stop_with_aggregated_text(live_db: sqlite3.Connection) ->
         "m_s",
         "ses_q",
         30,
-        {"role": "assistant", "parentID": "m_u", "finish": "stop",
-         "time": {"created": 30, "completed": 35}},
+        {
+            "role": "assistant",
+            "parentID": "m_u",
+            "finish": "stop",
+            "time": {"created": 30, "completed": 35},
+        },
     )
     _add_part(live_db, "pt1", "m_t", "ses_q", 21, {"type": "text", "text": "looking"})
     _add_part(live_db, "pt2", "m_s", "ses_q", 31, {"type": "reasoning", "text": "hmm"})
@@ -712,6 +706,34 @@ def test_done_signal_matches_build_footer() -> None:
     assert not driver.done_signal.matches("still working…")
 
 
+@pytest.mark.parametrize(
+    "pane",
+    [
+        # 1.18：前缀带 ▣。
+        "     ▣  Build · DeepSeek V4 Flash · 1.7s",
+        # 2.0：▣ 没了，尾部多了吞吐（2026-10-09 实测原文）。
+        "     Build · deepseek-flash · 1.3s · 48.0 tok/s",
+    ],
+)
+def test_done_signal_accepts_both_version_footers(pane: str) -> None:
+    """两版的完成页脚都要认：只认 ▣ 会让 2.0 上这条退路彻底失配。"""
+    assert load_driver("opencode").done_signal.matches(pane)
+
+
+@pytest.mark.parametrize(
+    "pane",
+    [
+        # 常驻状态栏：有 Build、有模型名，但没有耗时。
+        "┃  Build · deepseek-flash frago-profile",
+        # 以毫秒计的页脚不是"答完"（错误/中断那类会打成 ms）。
+        "     Build · deepseek-flash · 220ms",
+        "still working…",
+    ],
+)
+def test_done_signal_does_not_misfire(pane: str) -> None:
+    assert not load_driver("opencode").done_signal.matches(pane)
+
+
 def test_update_modal_handler_sends_escape() -> None:
     driver = load_driver("opencode")
     handler = driver.exception_handlers[0]
@@ -719,6 +741,32 @@ def test_update_modal_handler_sends_escape() -> None:
     fake = FakeTmux(["pane"])
     handler.action(_session(fake, "modal"))
     assert any(k[-1] == "Escape" for k in fake.sent_keys())
+
+
+# ── 输入框区域 ──────────────────────────────────────────────────────
+def test_input_box_text_takes_only_the_last_box_run() -> None:
+    """2.0 起对话列也带 ``┃`` 边框，取最后一段连续的行才只圈到输入框。
+
+    整屏全取会把消息区里回显的提问算进来，"提示词还卡在框里"于是永远为真，
+    ``_submit`` 每轮都补发回车。
+    """
+    pane = (
+        "  ┃  之前问过的那句话\n"
+        "  ┃\n"
+        "     Build · deepseek-flash · 1.3s · 48.0 tok/s\n"
+        "\n"
+        "  ┃\n"
+        "  ┃  Build · deepseek-flash frago-profile\n"
+    )
+    text = opencode_driver._input_box_text(pane)
+    assert text == "Build·deepseek-flashfrago-profile"
+    assert "之前问过的那句话" not in text
+
+
+def test_input_box_text_reads_the_v1_layout_too() -> None:
+    """1.18 的输入框是唯一一段 ``┃`` 行，行为 MUST 不变。"""
+    pane = "┃\n┃  hi there\n┃\n┃  Build · m p\n╹▀▀▀▀▀\n"
+    assert opencode_driver._input_box_text(pane) == "hithereBuild·mp"
 
 
 # ── needs_input 门 ──────────────────────────────────────────────────
@@ -787,6 +835,8 @@ def test_needs_input_hits_real_permission_prompt() -> None:
         "┃   Allow once   Allow always   Reject\n",
         # 菜单项被分行渲染时仍是同一组特征。
         "Allow once\nAllow always\nReject\n",
+        # 2.0 把第二项改叫 Always allow（2026-10-09 从 2.0.20 的界面常量核出）。
+        "┃   Allow once   Always allow   Reject\n",
     ],
 )
 def test_needs_input_hits_permission_title_and_menu_independently(pane: str) -> None:

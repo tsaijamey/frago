@@ -58,8 +58,14 @@ _READY = PaneMatcher(
     name="opencode-ready",
     pattern=r"(?m)^\s*┃\s*Build\s*·|Ask anything",
 )
-# 完成（屏幕退路）：底部 "▣ Build · <model> · 3.7s" 页脚带耗时。
-_DONE = PaneMatcher(name="opencode-done", pattern=r"▣\s*Build\b.*·\s*[\d.]+s")
+# 完成（屏幕退路）：底部那条带耗时的页脚。两版都要认：
+#   1.18：``▣  Build · <model> · 1.7s``
+#   2.0 ：``     Build · <model> · 1.3s · 48.0 tok/s``——**前缀的 ``▣`` 没有了**，
+#        尾部多了吞吐。只认 ``▣`` 会让 2.0 上这条路彻底失配（2026-10-09 实测）。
+# 判据落在"有 Build、且带一个 ``<数字>s`` 的耗时"上：底下那行常驻的
+# ``Build · <model> <provider>`` 状态栏没有耗时，不会误命中（而 ``220ms`` 这类以
+# ``ms`` 结尾的也不会——``[\d.]+s`` 要求 s 紧跟数字，``220m`` 不满足）。
+_DONE = PaneMatcher(name="opencode-done", pattern=r"Build\b.*·\s*[\d.]+s\b")
 # 忙碌：页脚的中断提示 ``esc interrupt``（伴随进度块）。当前 driver 契约没有忙碌
 # 槽位——完成判定走会话库探针，不需要靠"忙碌消失"反推——故只记录不接线。
 # 启动期 Update 模态。
@@ -72,8 +78,9 @@ _UPDATE_MODAL = PaneMatcher(name="opencode-update", pattern=r"(?i)\bUpdate\b.*av
 # 故只认骨架、NEVER 认某一句自然语言措辞：
 #   ① 标题行 ``△ Permission required``——图标与其后的说明都会变，``Permission
 #      required`` 这个词组是稳定的；
-#   ② 选项行三个动作同屏出现：``Allow once`` / ``Allow always`` / ``Reject``——
-#      三选一菜单的结构特征，散文里不会三个一起冒出来。
+#   ② 选项行三个动作同屏出现——三选一菜单的结构特征，散文里不会三个一起冒出来。
+#      第二个动作的文案在 2.0 改了名：1.18 是 ``Allow always``，2.0 是
+#      ``Always allow``（2026-10-09 从 2.0.20 的界面常量里核出），故两个都认。
 # 任一命中即判 needs_input。20260726 现场：一个跨目录授权框没被认出来，本轮空等
 # 满 600 秒超时才返回，且超时文本读不出发生了什么——十分钟静默黑洞。
 #
@@ -81,7 +88,11 @@ _UPDATE_MODAL = PaneMatcher(name="opencode-update", pattern=r"(?i)\bUpdate\b.*av
 # 不会再弹这个框；覆盖不到的类型（opencode 将来新增的权限档、用户配置显式 deny
 # 的路径）仍会弹，届时 MUST 秒级返回而不是空等。
 _PERMISSION_TITLE = r"Permission\s+required"
-_PERMISSION_MENU = r"(?=[\s\S]*Allow\s+once)(?=[\s\S]*Allow\s+always)(?=[\s\S]*Reject)"
+_PERMISSION_MENU = (
+    r"(?=[\s\S]*Allow\s+once)"
+    r"(?=[\s\S]*Allow\s+always|[\s\S]*Always\s+allow)"
+    r"(?=[\s\S]*Reject)"
+)
 
 # 阻断门 needs_input：撞上即判本轮为 needs_input，把"需要你介入"投递回调用方，
 # 不静默挂到超时。只认带明确失败语义的组合——NEVER 放裸 ``login`` / ``sign in``
@@ -190,9 +201,7 @@ def _dismiss_update_modal(session: TmuxAgentSession) -> None:
     session.send_keys("Escape")
 
 
-def _poll_until(
-    session: TmuxAgentSession, probe: Callable[[], bool], window_s: float
-) -> bool:
+def _poll_until(session: TmuxAgentSession, probe: Callable[[], bool], window_s: float) -> bool:
     """在时间窗内反复问 ``probe``，成立即刻返回 True；窗满仍不成立返回 False。
 
     按截止时间轮询而不是数拍数：拍数隐含"每拍耗时固定"的假设，抓一次屏的耗时并不
@@ -245,9 +254,7 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         logger.debug("opencode claim attempt raised", exc_info=True)
         return None
     _CLAIM_ANCHORS.pop(session, None)
-    logger.debug(
-        "opencode claimed session %s for %s", claimed, session.session_id
-    )
+    logger.debug("opencode claimed session %s for %s", claimed, session.session_id)
     return claimed
 
 
@@ -261,10 +268,33 @@ def _tail_marker(prompt: str) -> str:
 
 
 def _input_box_text(pane: str) -> str:
-    """把 pane 里输入框那几行拼成一条去空白的字符串（消息区的回显不算）。"""
-    parts = [
-        m.group(1) for line in pane.splitlines() if (m := _INPUT_BOX_LINE.match(line))
-    ]
+    """把 pane 里输入框那几行拼成一条去空白的字符串（消息区的回显不算）。
+
+    输入框是 pane 里**最靠下的那一段连续 ``┃`` 行**，其下只剩状态栏与底边。
+
+    1.18 只用 ``┃`` 画输入框，消息区不带它，整屏全取等于只取输入框；2.0 起对话列
+    也带上 ``┃`` 边框了（2026-10-09 实测），全取会把消息区里回显的提问一起算进来，
+    于是"提示词还卡在框里"永远为真：``_submit`` 每轮都补发回车，多出来的那些落进
+    下一轮，把下一条提示词顶乱。取最后一段连续的行，两版都对。
+    """
+    lines = pane.splitlines()
+    run_start: int | None = None
+    last_run_start: int | None = None
+    for index, line in enumerate(lines):
+        if _INPUT_BOX_LINE.match(line):
+            if run_start is None:
+                run_start = index
+            last_run_start = run_start
+        else:
+            run_start = None
+    if last_run_start is None:
+        return ""
+    parts: list[str] = []
+    for line in lines[last_run_start:]:
+        match = _INPUT_BOX_LINE.match(line)
+        if not match:
+            break
+        parts.append(match.group(1))
     return "".join("".join(part.split()) for part in parts)
 
 
@@ -320,8 +350,7 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
             landed = True
             break
         logger.debug(
-            "opencode prompt still in input box after enter #%d; resending "
-            "(session=%s)",
+            "opencode prompt still in input box after enter #%d; resending (session=%s)",
             attempt + 1,
             session.session_id,
         )
@@ -482,7 +511,7 @@ class OpencodeTranscriptSource:
 
 
 class _PartLedger:
-    """"这个片段已经发过什么"的账本。游标改按更新时间取增量后的重复抑制器。
+    """ "这个片段已经发过什么"的账本。游标改按更新时间取增量后的重复抑制器。
 
     只活在来源实例的生命周期里，不落盘——重启后重新锚基线，本来就不该续用旧账。
     """
@@ -646,9 +675,7 @@ def _provider_definition(profile: APIProfile) -> dict[str, Any]:
         options["baseURL"] = _with_version_segment(base_url)
     # 密钥与端点 URL 一并交给公共出口：自定义端点没有预设声明可查，认证方式靠
     # 密钥前缀 / 主机名这两类结构化依据推断（OpenRouter 只认授权头，漏判就是零产出）。
-    auth_style = resolve_auth_style(
-        profile.endpoint_type, api_key=profile.api_key, url=base_url
-    )
+    auth_style = resolve_auth_style(profile.endpoint_type, api_key=profile.api_key, url=base_url)
     if auth_style == AUTH_STYLE_AUTH_TOKEN:
         options["headers"] = {"Authorization": f"Bearer {profile.api_key}"}
 
@@ -725,9 +752,7 @@ def _read_config() -> dict[str, Any]:
 def _write_config(config: dict[str, Any]) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _user_owned(value: Any) -> Any:

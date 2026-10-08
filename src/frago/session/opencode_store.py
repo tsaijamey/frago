@@ -7,6 +7,20 @@ opencode 把会话搬进了 SQLite（``~/.local/share/opencode/opencode.db``）�
 用户消息的 ``parentID``；每段写完那一刻都会补上 ``time.completed``。轮次边界与
 完成时刻因此都是结构化可判的，NEVER 需要从屏幕上刮。
 
+**这个库有两套表，本模块两套都认**（2026-10-09 补）：
+
+- 1.18 及以前：会话在 ``session``，消息在 ``message``（``parentID`` 圈定轮次），
+  片段在独立的 ``part`` 表，靠 ``part.message_id`` 挂回消息。
+- 2.0 起：会话在 ``session_v2``，消息在 ``session_message``（``seq`` 定序，
+  轮次边界改为「最后一条 user 之后的那批 assistant」），**片段不再单独成表**，
+  而是嵌在消息 ``data.content`` 数组里；工具片段的字段也跟着改了名
+  （``tool``→``name``、``state.output``→``state.content``）。
+
+判断用哪一套只看**这场会话住在哪张表**，不看 opencode 版本号：升级当天库里两套
+并存，旧会话仍在旧表里，混着读才是对的。缺哪张表就当哪套不存在。
+
+两套表都读不出来时一律返回 None / 空——不许因为新版本多了一张表就让旧机器报错。
+
 放在 ``session/`` 是分层要求（spec 20260725 Phase 1）：驱动层与会话子系统都
 要读这个库，而 ``session/`` 禁止依赖 ``agent_driver/``，所以只能落在下层由
 ``agent_driver`` 正向依赖。
@@ -110,6 +124,211 @@ def _loads(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+# ── 两套表的探测与 v2 读取原语 ──────────────────────────────────────
+# 1.18 的表名 / 2.0 的表名。两套并存于升级当天的库里，故按"这场会话住在哪张表"
+# 分流，而不是按版本号一刀切。
+_LEGACY_SESSION_TABLE = "session"
+_LEGACY_MESSAGE_TABLE = "message"
+_LEGACY_PART_TABLE = "part"
+_V2_SESSION_TABLE = "session_v2"
+_V2_MESSAGE_TABLE = "session_message"
+
+# 会话分流结果。``None`` 表示两张表里都没有这场会话。
+KIND_V2 = "v2"
+KIND_LEGACY = "legacy"
+
+
+def _table_names(conn: sqlite3.Connection) -> frozenset[str] | None:
+    """库里现存的表名；读不动（打不开 / 文件损坏）时返回 None。
+
+    返回 ``None`` 与返回空集合是两回事，调用方 MUST 分开处理：空集合是"读到了，
+    这个库里一张表都没有"，``None`` 是"根本没读成"。存在性问句在后者上必须保守
+    答"在"——一次读失败不等于会话被删了，混成同一个值就会把好绑定清掉。
+    """
+    try:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    except sqlite3.Error as exc:
+        logger.debug("opencode table listing failed: %s", exc)
+        return None
+    return frozenset(str(row[0]) for row in rows if row and row[0])
+
+
+def _session_kind(conn: sqlite3.Connection, session_id: str) -> str | None:
+    """这场会话住在哪套表里；两套都没有返回 None。
+
+    先问 v2：新会话一律进 v2，先问它能把常见情形压到一次查询。库读不动时同样
+    返回 None，由调用方按各自的语义兜底（存在性问句保守答"在"，内容问句答"没有"）。
+    """
+    names = _table_names(conn)
+    if names is None:
+        return None
+    for table, kind in (
+        (_V2_SESSION_TABLE, KIND_V2),
+        (_LEGACY_SESSION_TABLE, KIND_LEGACY),
+    ):
+        if table not in names:
+            continue
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE id = ? LIMIT 1",  # noqa: S608 - 表名是常量
+                (session_id,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            logger.debug("opencode session kind probe failed: %s", exc)
+            return None
+        if row:
+            return kind
+    return None
+
+
+def _v2_rows(conn: sqlite3.Connection, session_id: str) -> list[tuple[str, str, dict]]:
+    """该会话的 v2 消息，按 ``seq`` 升序：``(message_id, type, data)``。
+
+    ``type`` 取 ``user`` / ``assistant`` / ``idle`` / ``synthetic`` / ``system``。
+    2.0 的消息不带 ``parentID``，轮次边界由次序决定（见 :func:`_v2_latest_turn`）。
+    """
+    rows = conn.execute(
+        "SELECT id, type, data FROM session_message WHERE session_id = ? "
+        "ORDER BY seq ASC, time_created ASC, id ASC",
+        (session_id,),
+    ).fetchall()
+    return [(str(mid), str(mtype or ""), _loads(raw)) for mid, mtype, raw in rows]
+
+
+def _v2_is_synthetic(mtype: str, data: dict[str, Any]) -> bool:
+    """这条消息是不是 opencode 自己注入的编辑器上下文（不是人打的字）。
+
+    1.18 把这件事标在片段上（``part.synthetic``），2.0 提到消息层（``type``）。
+    两处都要认，否则注入回显会被当成真人提问混进归档。
+    """
+    return mtype == "synthetic" or bool(data.get("synthetic"))
+
+
+def _v2_content(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """消息里嵌的片段数组。空 / 形状不对当空数组。"""
+    content = data.get("content")
+    if not isinstance(content, list):
+        return []
+    return [part for part in content if isinstance(part, dict)]
+
+
+_V2_TOOL_TEXT_JOIN = "\n"
+
+
+def _v2_normalize_part(part: dict[str, Any], mtype: str) -> dict[str, Any]:
+    """把 v2 的片段字段名翻成 1.18 的那一套，下游规则因此只需一份。
+
+    两处改名：工具名在 v2 叫 ``name``（1.18 叫 ``tool``）；工具产出在 v2 是
+    ``state.content`` 的富文本数组（1.18 是 ``state.output`` 的字符串）。外加
+    ``synthetic`` 的落点从片段搬到消息类型上，这里补回去——``part_payloads``
+    只认片段上那个字段。
+    """
+    out = dict(part)
+    if mtype == "synthetic":
+        out["synthetic"] = True
+    if out.get("type") == "tool":
+        if "tool" not in out and isinstance(out.get("name"), str):
+            out["tool"] = out["name"]
+        if "callID" not in out and isinstance(out.get("id"), str):
+            out["callID"] = out["id"]
+        state = out.get("state")
+        if isinstance(state, dict) and "output" not in state:
+            state = dict(state)
+            content = state.get("content")
+            if isinstance(content, list):
+                state["output"] = _V2_TOOL_TEXT_JOIN.join(
+                    str(entry.get("text", ""))
+                    for entry in content
+                    if isinstance(entry, dict) and entry.get("type") == "text"
+                )
+            out["state"] = state
+    return out
+
+
+def _v2_user_text_part(mtype: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+    """用户消息的正文片段：2.0 把它挂在消息的 ``text`` 上，不在 ``content`` 里。
+
+    只有 ``user`` 才有这一层；``system`` / ``idle`` 之类没有正文，返回空。注入的
+    编辑器上下文同样从这里来，故 ``synthetic`` 要标上——下游据此整条丢弃。
+    """
+    if mtype != "user":
+        return []
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return []
+    part: dict[str, Any] = {"type": _TEXT_PART_TYPE, "text": text}
+    if _v2_is_synthetic(mtype, data):
+        part["synthetic"] = True
+    return [part]
+
+
+def _v2_part_items(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    order: str = "seq",
+    since_updated: int | None = None,
+) -> tuple[list[dict[str, Any]], PartCursor | None]:
+    """把 v2 的嵌在消息里的片段摊成与 1.18 同形状的条目。
+
+    ``order``：``"seq"`` 按会话次序（实时流要的），``"created"`` 按消息创建时刻
+    （归档时间轴要的）。
+
+    合成的片段 id 是 ``<消息 id>:<序号>``，序号补零到四位——归档侧按 ``(time_created,
+    id)`` 排序，不补零会让第 10 段排到第 9 段前面。
+
+    第二个返回值是**消息行**层面的最末位置（游标锚在消息上，不锚在片段上）：即使
+    某条消息的片段数组是空的、一条条目都没产出，游标也照常推进，下一拍不会把同一批
+    再扫一遍。
+    """
+    sort = (
+        "time_created ASC, seq ASC, id ASC"
+        if order == "created"
+        else "time_updated ASC, seq ASC, id ASC"
+    )
+    sql = (
+        "SELECT id, type, time_created, time_updated, data FROM session_message "
+        "WHERE session_id = ? "
+    )
+    params: list[Any] = [session_id]
+    if since_updated is not None:
+        sql += "AND time_updated >= ? "
+        params.append(since_updated)
+    sql += f"ORDER BY {sort}"
+
+    items: list[dict[str, Any]] = []
+    trailing: PartCursor | None = None
+    for mid, mtype, created, updated, raw in conn.execute(sql, tuple(params)).fetchall():
+        data = _loads(raw)
+        created_int = created if isinstance(created, int) else 0
+        updated_int = updated if isinstance(updated, int) else created_int
+        trailing = PartCursor(time_updated=updated_int, part_id=str(mid))
+        role = "user" if mtype == "user" else "assistant"
+        content = _v2_content(data)
+        if not content:
+            # 2.0 的**用户消息不装片段**，正文直接挂在消息的 ``text`` 上（助手消息才用
+            # ``content`` 数组）。不把它补成一条 text 片段，用户说过的话在归档与搜索
+            # 里一个字都不剩——会话详情页会只剩助手那半边。
+            content = _v2_user_text_part(mtype, data)
+        for index, part in enumerate(content):
+            part_stamp = part.get("time")
+            if isinstance(part_stamp, dict) and isinstance(part_stamp.get("created"), int):
+                created_int_part = part_stamp["created"]
+            else:
+                created_int_part = created_int
+            items.append(
+                {
+                    "part": _v2_normalize_part(part, str(mtype or "")),
+                    "role": role,
+                    "message_id": str(mid),
+                    "time_created": created_int_part,
+                    "time_updated": updated_int,
+                    "part_id": f"{mid}:{index:04d}",
+                }
+            )
+    return items, trailing
+
+
 # ── 会话认领 ────────────────────────────────────────────────────────
 def normalize_directory(directory: str) -> str:
     """把工作目录归一化到解析过软链接的真实路径。
@@ -133,6 +352,10 @@ def claim_session(directory: str, since_ms: int) -> str | None:
 
     目录先按真实路径查，未命中再按调用方给的原值查一次——库里理论上存的是真实
     路径，但两侧都试过才不会因为某个版本的行为差异又变成静默落空。
+
+    两套表都问：升级当天新会话进 ``session_v2``、库里同时躺着 1.18 的旧会话，
+    只问一套就会在另一套上静默落空（认不到 → 没有绑定 → 完成探针全程弃权 →
+    本轮答案退回读屏）。两边各取最新一条，再比创建时刻取赢家。
     找不到返回 None（NEVER 抛）。
     """
     conn = _connect()
@@ -141,44 +364,63 @@ def claim_session(directory: str, since_ms: int) -> str | None:
     candidates = [normalize_directory(directory)]
     if directory not in candidates:
         candidates.append(directory)
+    names = _table_names(conn) or frozenset()
+    best: tuple[int, str] | None = None
     try:
-        for candidate in candidates:
-            row = conn.execute(
-                "SELECT id FROM session "
-                "WHERE directory = ? AND time_created >= ? "
-                "ORDER BY time_created DESC, id DESC LIMIT 1",
-                (candidate, since_ms),
-            ).fetchone()
-            if row:
-                return str(row[0])
+        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+            if table not in names:
+                continue
+            for candidate in candidates:
+                row = conn.execute(
+                    f"SELECT id, time_created FROM {table} "  # noqa: S608 - 表名是常量
+                    "WHERE directory = ? AND time_created >= ? "
+                    "ORDER BY time_created DESC, id DESC LIMIT 1",
+                    (candidate, since_ms),
+                ).fetchone()
+                if not row:
+                    continue
+                created = row[1] if isinstance(row[1], int) else 0
+                if best is None or created > best[0]:
+                    best = (created, str(row[0]))
     except sqlite3.Error as exc:
         logger.debug("opencode claim_session failed: %s", exc)
         return None
     finally:
         conn.close()
-    return None
+    return best[1] if best else None
 
 
 def session_exists(opencode_session_id: str) -> bool:
     """该会话在库里是否还在。
 
     库不可读时返回 True——不可读不等于不存在，NEVER 因为一次读失败就把一条好
-    绑定清掉。
+    绑定清掉。两套表都问，任一处有就算在。
     """
     conn = _connect()
     if conn is None:
         return True
+    names = _table_names(conn)
+    if names is None or not names:
+        # 读不动，或这个库里一张表都没有（不是一个 opencode 会话库）。两种情况都
+        # 说不上"会话已被删"，保守答"在"。
+        conn.close()
+        return True
     try:
-        row = conn.execute(
-            "SELECT 1 FROM session WHERE id = ? LIMIT 1",
-            (opencode_session_id,),
-        ).fetchone()
+        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+            if table not in names:
+                continue
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE id = ? LIMIT 1",  # noqa: S608 - 表名是常量
+                (opencode_session_id,),
+            ).fetchone()
+            if row:
+                return True
     except sqlite3.Error as exc:
         logger.debug("opencode session_exists failed: %s", exc)
         return True
     finally:
         conn.close()
-    return row is not None
+    return False
 
 
 def delete_session(opencode_session_id: str) -> str:
@@ -211,11 +453,18 @@ def session_directory(opencode_session_id: str) -> str | None:
     conn = _connect()
     if conn is None:
         return None
+    names = _table_names(conn) or frozenset()
+    row = None
     try:
-        row = conn.execute(
-            "SELECT directory FROM session WHERE id = ? LIMIT 1",
-            (opencode_session_id,),
-        ).fetchone()
+        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+            if table not in names:
+                continue
+            row = conn.execute(
+                f"SELECT directory FROM {table} WHERE id = ? LIMIT 1",  # noqa: S608
+                (opencode_session_id,),
+            ).fetchone()
+            if row:
+                break
     except sqlite3.Error as exc:
         logger.debug("opencode session_directory failed: %s", exc)
         return None
@@ -227,6 +476,66 @@ def session_directory(opencode_session_id: str) -> str | None:
 
 
 # ── 本轮完成判定 ────────────────────────────────────────────────────
+def _v2_turn_text(turn: list[tuple[str, dict[str, Any]]]) -> str:
+    """聚合这批 v2 助手消息里嵌的 text 片段，按消息次序拼接。
+
+    规则与 1.18 那条路一致：``reasoning``（思考）与工具片段一律丢弃；
+    ``synthetic`` 是 opencode 自己注入的编辑器上下文，也不是答案。
+    """
+    chunks: list[str] = []
+    for _mid, data in turn:
+        for part in _v2_content(data):
+            if part.get("type") != _TEXT_PART_TYPE:
+                continue
+            if part.get("synthetic"):
+                continue
+            piece = part.get("text")
+            if isinstance(piece, str) and piece.strip():
+                chunks.append(piece.strip())
+    return "\n".join(chunks).strip()
+
+
+def _v2_latest_turn(conn: sqlite3.Connection, session_id: str) -> OpencodeTurn | None:
+    """2.0 会话的本轮判定。
+
+    轮次边界从 ``parentID`` 改由**次序**推出：最后一条真人打的 ``user`` 消息是锚点，
+    它之后（下一个 ``user`` 之前）的 ``assistant`` 消息属于本轮。``synthetic`` 的
+    user 消息是 opencode 自己注入的编辑器上下文，不当锚点——它一旦落在真人提问之后，
+    拿它当锚点会让本轮一条助手消息都圈不到，本轮就永远判不出答完。
+    """
+    rows = _v2_rows(conn, session_id)
+    anchor: int | None = None
+    for index, (_mid, mtype, data) in enumerate(rows):
+        if mtype == "user" and not _v2_is_synthetic(mtype, data):
+            anchor = index
+    if anchor is None:
+        return None
+
+    parent_id = rows[anchor][0]
+    turn = [(mid, data) for mid, mtype, data in rows[anchor + 1 :] if mtype == "assistant"]
+
+    final_message_id: str | None = None
+    completed_at: int | None = None
+    for mid, data in turn:
+        stamp = (data.get("time") or {}).get("completed")
+        if not isinstance(stamp, int):
+            # 还在写：正在流式生成的那条消息没有完成时刻。
+            continue
+        if data.get("finish") == FINISH_CONTINUES:
+            # 工具调用段：这一段确实写完了，但后面还有下一段。
+            continue
+        final_message_id = mid
+        completed_at = stamp
+
+    return OpencodeTurn(
+        parent_id=parent_id,
+        final_message_id=final_message_id,
+        done=final_message_id is not None,
+        text=_v2_turn_text(turn),
+        completed_at=completed_at,
+    )
+
+
 def latest_turn(opencode_session_id: str) -> OpencodeTurn | None:
     """读该会话最新一轮。轮次范围以 ``parentID`` 圈定，NEVER 靠时间猜。
 
@@ -235,14 +544,21 @@ def latest_turn(opencode_session_id: str) -> OpencodeTurn | None:
     ``tool-calls``** 的助手消息：完成时刻是"这一段写完了"的结构化证据，
     ``tool-calls`` 是唯一表示"后面还有下一段"的取值（理由见 ``FINISH_CONTINUES``）。
     库不存在 / 会话不存在 / 读失败一律返回 None。
+
+    2.0 的会话在 :func:`_v2_latest_turn` 里单独走一遍：那套表没有 ``parentID``，
+    轮次边界改由 ``seq`` 次序推出，片段也嵌在消息里。
     """
     conn = _connect()
     if conn is None:
         return None
     try:
+        kind = _session_kind(conn, opencode_session_id)
+        if kind == KIND_V2:
+            return _v2_latest_turn(conn, opencode_session_id)
+        if kind is None or _LEGACY_MESSAGE_TABLE not in (_table_names(conn) or frozenset()):
+            return None
         rows = conn.execute(
-            "SELECT id, data FROM message WHERE session_id = ? "
-            "ORDER BY time_created ASC, id ASC",
+            "SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC",
             (opencode_session_id,),
         ).fetchall()
     except sqlite3.Error as exc:
@@ -341,16 +657,28 @@ class PartCursor:
 
 
 def latest_cursor(opencode_session_id: str) -> PartCursor | None:
-    """该会话当前最末一次片段更新的位置（用来锚基线）。没有片段 / 读失败返回 None。"""
+    """该会话当前最末一次更新的位置（用来锚基线）。没有 / 读失败返回 None。
+
+    2.0 的片段不再单独成表，锚点落在**消息行**上（``session_message.time_updated``）：
+    正文是随消息一起被改写进去的，消息行的更新时刻就是"这一轮又写了什么"的时刻。
+    """
     conn = _connect()
     if conn is None:
         return None
     try:
-        row = conn.execute(
-            "SELECT time_updated, id FROM part WHERE session_id = ? "
-            "ORDER BY time_updated DESC, id DESC LIMIT 1",
-            (opencode_session_id,),
-        ).fetchone()
+        kind = _session_kind(conn, opencode_session_id)
+        if kind == KIND_V2:
+            row = conn.execute(
+                "SELECT time_updated, id FROM session_message WHERE session_id = ? "
+                "ORDER BY time_updated DESC, id DESC LIMIT 1",
+                (opencode_session_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT time_updated, id FROM part WHERE session_id = ? "
+                "ORDER BY time_updated DESC, id DESC LIMIT 1",
+                (opencode_session_id,),
+            ).fetchone()
     except sqlite3.Error as exc:
         logger.debug("opencode latest_cursor failed: %s", exc)
         return None
@@ -379,6 +707,27 @@ def parts_since(
     conn = _connect()
     if conn is None:
         return [], cursor
+    try:
+        kind = _session_kind(conn, opencode_session_id)
+    except sqlite3.Error as exc:
+        logger.debug("opencode parts_since kind probe failed: %s", exc)
+        conn.close()
+        return [], cursor
+    if kind == KIND_V2:
+        try:
+            items, trailing = _v2_part_items(
+                conn,
+                opencode_session_id,
+                order="seq",
+                since_updated=cursor.time_updated if cursor is not None else None,
+            )
+        except sqlite3.Error as exc:
+            logger.debug("opencode v2 parts_since failed: %s", exc)
+            return [], cursor
+        finally:
+            conn.close()
+        return items, trailing or cursor
+
     sql = (
         "SELECT p.id, p.message_id, p.time_created, p.time_updated, p.data, m.data "
         "FROM part p JOIN message m ON m.id = p.message_id "
@@ -466,9 +815,7 @@ def _hook_injection_pattern() -> re.Pattern[str] | None:
         return None
     if not pairs:
         return None
-    alternatives = "|".join(
-        f"{re.escape(begin)}.*?{re.escape(end)}" for begin, end in pairs
-    )
+    alternatives = "|".join(f"{re.escape(begin)}.*?{re.escape(end)}" for begin, end in pairs)
     return re.compile(alternatives, re.DOTALL)
 
 
@@ -563,9 +910,7 @@ def _tool_part_payloads(
                     {
                         "id": call_id,
                         "name": part.get("tool") or "",
-                        "input": state.get("input")
-                        if isinstance(state.get("input"), dict)
-                        else {},
+                        "input": state.get("input") if isinstance(state.get("input"), dict) else {},
                     }
                 ],
             },
@@ -613,15 +958,25 @@ class OpencodeSessionRow:
 
 
 def list_sessions() -> list[OpencodeSessionRow]:
-    """列出库里全部会话，按最后活动时间降序。库不存在 / 读失败返回空列表。"""
+    """列出库里全部会话，按最后活动时间降序。库不存在 / 读失败返回空列表。
+
+    两套表并起来：升级当天的库里，1.18 的旧会话还在 ``session``，2.0 之后新建的
+    全在 ``session_v2``。只看其中一张，另一些会话在归档与搜索里就凭空消失。
+    """
     conn = _connect()
     if conn is None:
         return []
+    names = _table_names(conn) or frozenset()
+    rows: list[Any] = []
     try:
-        rows = conn.execute(
-            "SELECT id, title, directory, time_created, time_updated FROM session "
-            "ORDER BY time_updated DESC, id DESC"
-        ).fetchall()
+        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+            if table not in names:
+                continue
+            rows.extend(
+                conn.execute(
+                    f"SELECT id, title, directory, time_created, time_updated FROM {table}"  # noqa: S608 - 表名是常量
+                ).fetchall()
+            )
     except sqlite3.Error as exc:
         logger.debug("opencode list_sessions failed: %s", exc)
         return []
@@ -640,6 +995,7 @@ def list_sessions() -> list[OpencodeSessionRow]:
                 time_updated=updated if isinstance(updated, int) else created_int,
             )
         )
+    sessions.sort(key=lambda row: (row.time_updated, row.session_id), reverse=True)
     return sessions
 
 
@@ -660,17 +1016,23 @@ def sessions_containing(terms: list[str]) -> set[str] | None:
         return None
     where = " AND ".join(["data LIKE ? ESCAPE '\\'"] * len(terms))
     params = [f"%{_like_escape(term)}%" for term in terms]
+    names = _table_names(conn) or frozenset()
+    hits: set[str] = set()
     try:
-        rows = conn.execute(
-            f"SELECT DISTINCT session_id FROM part WHERE {where}",  # noqa: S608 - 占位符只由词数决定
-            params,
-        ).fetchall()
+        for table in (_LEGACY_PART_TABLE, _V2_MESSAGE_TABLE):
+            if table not in names:
+                continue
+            rows = conn.execute(
+                f"SELECT DISTINCT session_id FROM {table} WHERE {where}",  # noqa: S608 - 表名是常量，占位符只由词数决定
+                params,
+            ).fetchall()
+            hits.update(str(row[0]) for row in rows if row and row[0])
     except sqlite3.Error as exc:
         logger.debug("opencode sessions_containing failed: %s", exc)
         return None
     finally:
         conn.close()
-    return {str(row[0]) for row in rows if row and row[0]}
+    return hits
 
 
 def _like_escape(term: str) -> str:
@@ -687,6 +1049,21 @@ def session_parts(opencode_session_id: str) -> list[dict[str, Any]]:
     conn = _connect()
     if conn is None:
         return []
+    try:
+        kind = _session_kind(conn, opencode_session_id)
+    except sqlite3.Error as exc:
+        logger.debug("opencode session_parts kind probe failed: %s", exc)
+        conn.close()
+        return []
+    if kind == KIND_V2:
+        try:
+            items, _trailing = _v2_part_items(conn, opencode_session_id, order="created")
+        except sqlite3.Error as exc:
+            logger.debug("opencode v2 session_parts failed: %s", exc)
+            return []
+        finally:
+            conn.close()
+        return items
     try:
         rows = conn.execute(
             "SELECT p.id, p.message_id, p.time_created, p.time_updated, p.data, m.data "
@@ -727,21 +1104,30 @@ def last_assistant_finish(opencode_session_id: str) -> str | None:
     if conn is None:
         return None
     try:
-        rows = conn.execute(
-            "SELECT data FROM message WHERE session_id = ? "
-            "ORDER BY time_created ASC, id ASC",
-            (opencode_session_id,),
-        ).fetchall()
+        kind = _session_kind(conn, opencode_session_id)
+        if kind == KIND_V2:
+            # v2 的助手消息靠行上的 ``type`` 认，角色不在 data 里（见 _v2_rows）。
+            rows = [
+                (data,)
+                for _mid, mtype, data in _v2_rows(conn, opencode_session_id)
+                if mtype == "assistant"
+            ]
+        else:
+            rows = conn.execute(
+                "SELECT data FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC",
+                (opencode_session_id,),
+            ).fetchall()
     except sqlite3.Error as exc:
         logger.debug("opencode last_assistant_finish failed: %s", exc)
         return None
     finally:
         conn.close()
     for (raw,) in reversed(rows):
-        data = _loads(raw)
-        if data.get("role") == "assistant":
-            finish = data.get("finish")
-            return finish if isinstance(finish, str) else None
+        data = raw if isinstance(raw, dict) else _loads(raw)
+        if kind != KIND_V2 and data.get("role") != "assistant":
+            continue
+        finish = data.get("finish")
+        return finish if isinstance(finish, str) else None
     return None
 
 
@@ -786,9 +1172,7 @@ def get_binding(frago_session_id: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def put_binding(
-    frago_session_id: str, opencode_session_id: str, directory: str
-) -> None:
+def put_binding(frago_session_id: str, opencode_session_id: str, directory: str) -> None:
     """写入映射。一旦建立就不再重认（重认会让两个会话记录互串）。
 
     directory 存归一化后的真实路径，与库里的取值保持同一坐标系。
