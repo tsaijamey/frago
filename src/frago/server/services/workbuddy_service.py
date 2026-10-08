@@ -344,11 +344,18 @@ def probed_ids() -> set[str]:
 def start_probe() -> tuple[bool, str | None]:
     """起一次探测，立刻返回。``(起成功了吗, 起不来的原因)``
 
+    只探菜单上有、清单里还没探过的那几个，探完并进已有的清单——按钮上写的就是这件事：
+    点它是为了让灰着的新模型变成可选，不是把已经知道答案的四十多个重问一遍。重问一遍要
+    跑二十来分钟，积分也照样花，而答案一个字都不会变。
+
+    交给 frago-core 的是 `--only`：它才是「只探点名的这几个」。`--also` 读着像「再捎上
+    这几个」，其实是「照全量那一轮跑，顺便加上这几个」——用它就是点一次按钮重探全场。
+
     一轮要跑几分钟，不能让请求在那儿等着。已经在跑就不再起第二个——两个进程抢着写同一份
     清单，写回时互相覆盖，结果是哪一轮的都不算。
 
-    探测命令自己只按网关下发的名单探，而新模型不在那份名单里。所以这里把菜单上有、清单里
-    还没探过的一并交给它——不交的话，点完探测 GLM-5.3 这些照样进不了可选项。
+    名单先算、running 后立：算名单这一步要去问网关，问不到时会抛。先把 running 立起来
+    再抛出去，那个标记就永远立着，页面上的「探测中」再也转不完。
     """
     from frago.init.profile_manager import workbuddy_login_state
 
@@ -362,15 +369,16 @@ def start_probe() -> tuple[bool, str | None]:
             if state == "no_client"
             else "WorkBuddy 客户端已退出登录，先在客户端登录一次"
         )
+
+    extra = sorted(set(chat_models()) - probed_ids())
     with _probe_lock:
         if _probe["running"]:
             return False, "已经在探测了"
         _probe.update(running=True, started_at=time.time(), ok=None, error=None)
 
-    extra = sorted(set(chat_models()) - probed_ids())
     argv = [str(binary), "models", "probe-workbuddy"]
     if extra:
-        argv += ["--also", ",".join(extra)]
+        argv += ["--only", ",".join(extra)]
     threading.Thread(target=_run_probe, args=(argv,), daemon=True, name="workbuddy-probe").start()
     return True, None
 

@@ -241,7 +241,11 @@ def _fake_login(tmp_path):
 
 
 def test_a_probe_carries_the_models_the_gateway_roster_would_miss(tmp_path):
-    """探测命令只按网关那份名单探，新模型不在里面——不捎上它们，点完探测照样选不到。"""
+    """探测命令只按网关那份名单探，新模型不在里面——不捎上它们，点完探测照样选不到。
+
+    捎的方式是「只探这几个」，不是「全量那一轮顺便加上这几个」：后者要点一次按钮重探全场，
+    按钮上写着「只探没探过的」却转二十来分钟，正是这个差别造成的。
+    """
     from frago.server.services import workbuddy_service
 
     binary = tmp_path / "frago-core"
@@ -270,8 +274,25 @@ def test_a_probe_carries_the_models_the_gateway_roster_would_miss(tmp_path):
     assert started_with, "探测没被起起来"
     argv = started_with[0]
     assert argv[1:3] == ["models", "probe-workbuddy"]
-    assert argv[3] == "--also"
+    assert argv[3] == "--only"
     assert sorted(argv[4].split(",")) == ["dear", "fast"]
+
+
+def test_a_roster_that_fails_to_load_does_not_leave_the_button_spinning(tmp_path):
+    """名单那一侧抛出来时不能把「探测中」留在原地——没有进程在跑，它自己永远不会熄。"""
+    from frago.server.services import workbuddy_service
+
+    binary = tmp_path / "frago-core"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    with (
+        patch.object(workbuddy_service, "core_binary", return_value=binary),
+        patch.object(workbuddy_service, "chat_models", side_effect=RuntimeError("网关没答")),
+        patch("frago.init.profile_manager.workbuddy_login_path", return_value=_fake_login(tmp_path)),
+        patch.object(workbuddy_service, "_run_probe"),
+    ):
+        with pytest.raises(RuntimeError):
+            workbuddy_service.start_probe()
+        assert workbuddy_service.probe_state()["running"] is False
 
 
 def test_a_second_probe_is_refused_while_one_is_running(tmp_path):
