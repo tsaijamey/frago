@@ -20,6 +20,10 @@ _PROMPT = "⏺ DRIVE_OK\n  ❯ \n"
 _WORKING = "  working... esc to interrupt\n"
 _FULL = "DRIVE_OK\n  ❯ \n"
 
+#: profile 翻译结果注入会话时用的变量名前缀（claude 侧一律 ANTHROPIC_*，见 agent_command
+#: 的 --use-profile 分支）。用来判「这次有没有 profile 派生的变量混进会话环境」。
+_PROFILE_DERIVED_PREFIXES = ("ANTHROPIC_",)
+
 
 class FakeTmux:
     """脚本化 tmux 替身：可控 alive 集合与 pane 就绪窗口。"""
@@ -199,7 +203,15 @@ def test_start_use_profile_by_id_also_works(fake):
 def test_start_without_profile_keeps_role_only(fake):
     res = CliRunner().invoke(agent, ["start", "claude", "--name", "plain"])
     assert res.exit_code == 0, res.output
-    assert _new_session_env(fake) == {"FRAGO_AGENT_ROLE": "worker"}
+    env = _new_session_env(fake)
+    # 角色变量在：子会话必须自知是 worker，阻断角色递归。
+    assert env["FRAGO_AGENT_ROLE"] == "worker"
+    # 没给 profile → 一条 profile 派生的变量都不该进来。断言只收这个范围，不写成
+    # 「环境里只有 FRAGO_AGENT_ROLE」：代理变量另有来路（tmux 层把当下的 HTTP(S)_PROXY
+    # 按会话注入，见 tmux_session 的 _PROXY_ENV_NAMES），把它们算进来只会让这条用例
+    # 在带代理的机器上红，而它要说的不是这件事。
+    derived = sorted(k for k in env if k.startswith(_PROFILE_DERIVED_PREFIXES))
+    assert derived == []
 
 
 @pytest.mark.usefixtures("profiles")
