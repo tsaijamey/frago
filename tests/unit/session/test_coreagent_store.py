@@ -9,6 +9,8 @@
 """
 
 import json
+import subprocess
+import sys
 
 from frago.session import coreagent_store, record_reader, session_index
 
@@ -188,3 +190,28 @@ def test_删掉之后清单里就没有它了(tmp_path):
     assert not coreagent_store.session_exists(_SID, tmp_path)
     # 本机已经没有它了 ≠ 删不动：前者回 None 由调用方各说各话，NEVER 抛。
     assert coreagent_store.delete_session_files(_SID, tmp_path) is None
+
+
+def test_冷启动第一个导入就是它也不炸():
+    """先 import 这一家、后认注册表，这条路要能走通。
+
+    这一家的翻译层是 Claude Code 那一份换个根目录，所以本模块的模块级 import 里要取那个
+    类；注册表那一侧又要反过来取本模块的类去登记。两边都写在模块级，就成了一条回边：先
+    import 注册表那一侧没事（那时本模块还没开始跑），先 import 本模块就报"模块只初始化了
+    一半"。同一个 ImportError 在 09-22 和 10-06 各撞过一次，两次都是从这种冷启动脚本里
+    冒出来的——在跑着的服务里遇不到，因为那边早就导入过注册表了。
+
+    注册表改成第一次取用才导之后回边没了。这条用例盯着它别再长回来。
+
+    **必须开一个新解释器**：跑测试的这个进程里 frago.session 早导完了，在同一个进程里
+    import 多少遍都复现不出来。
+    """
+    script = (
+        "import frago.session.coreagent_store\n"
+        "from frago.session.adapters import list_adapters\n"
+        "assert sorted(list_adapters()) == ['claude-code', 'codex', 'coreagent', 'opencode'], list_adapters()\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
+    assert done.returncode == 0, f"冷启动先导入这一家失败了：\n{done.stderr}"
