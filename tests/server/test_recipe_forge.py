@@ -1,8 +1,9 @@
 """在图形界面里创建配方：导演会话的起法与任务书的硬约束。
 
 任务书是导演唯一知道的东西，所以这里钉的是它**必须写着**的那几句：worker 借住桌面
-终端（--tmux-target frago-stage）、桌面不许停、人追加的话怎么转达、没界面时 page 为假。
-起会话之前的两道闸（桌面在不在跑、名字合不合法）也在这里。
+终端（--tmux-target frago-stage）、舞台自己起起来之后就不许停、开口排在准备之前、
+人追加的话怎么转达、没界面时 page 为假。起会话之前只剩一道闸（名字合不合法），
+舞台在不在跑不再是拒绝的理由——它自己 up（2026-10-08 放开旧 409 预检）。
 """
 
 from __future__ import annotations
@@ -25,6 +26,19 @@ def test_brief_pins_the_control_chain() -> None:
     assert "browser open http://127.0.0.1:8093/app/<名字>/" in brief
 
 
+def test_brief_lets_the_director_raise_the_stage_and_talk_first() -> None:
+    """放开铁律 1 的上半条：自己 up；下半条（停了它）与首帧要求一个字都没松。"""
+    brief = recipe_forge.build_brief("x", page=True, name=None, session_id="s")
+    assert "frago desktop up" in brief
+    assert "不要自己拉" not in brief  # 旧版那句「桌面上没有就汇报、不要自己拉」已撤
+    assert "frago desktop down" in brief
+    assert "frago server restart" in brief
+    assert "首帧" in brief
+    assert "voice synth" in brief  # 台词先合成
+    assert "5–10 秒" in brief  # 看 worker 的节奏
+    assert "elements" in brief  # 推近之前先取可寻址的名字
+
+
 def test_brief_without_page_asks_for_a_data_only_recipe() -> None:
     brief = recipe_forge.build_brief("x", page=False, name="etf_board", session_id="s")
     assert "page: false" in brief
@@ -32,27 +46,34 @@ def test_brief_without_page_asks_for_a_data_only_recipe() -> None:
     assert "配方名：etf_board" in brief
 
 
-def test_start_refuses_when_desktop_is_not_running(monkeypatch) -> None:
-    from frago.desktop import registry
+def test_start_goes_ahead_when_the_stage_is_not_running(monkeypatch) -> None:
+    """舞台没在跑不再是拒绝的理由：会话照起，起来之后由导演自己 frago desktop up。"""
+    from frago.server.services import workbench_agents, workbench_new_session
 
-    monkeypatch.setattr(registry, "read_instance", lambda *_a, **_k: {"status": "stopped"})
-    with pytest.raises(recipe_forge.DesktopNotRunning):
-        recipe_forge.start("x")
+    class _Agent:
+        agent_type = "claude"
+        id_origin = "caller"
+
+    monkeypatch.setattr(workbench_agents, "require_selectable", lambda _t: _Agent())
+
+    def fake_start_with_id(agent_type, cwd, prompt, *, session_id):
+        return workbench_new_session.PendingLaunch(
+            handle=session_id, agent_type=agent_type, display_name="Claude Code",
+            cwd=cwd, session_id=session_id,
+        )
+
+    monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start_with_id)
+    launch = recipe_forge.start("做一个看板")
+    assert launch.session_id
 
 
 def test_start_refuses_a_bad_name(monkeypatch) -> None:
-    from frago.desktop import registry
-
-    monkeypatch.setattr(registry, "read_instance", lambda *_a, **_k: {"status": "running"})
     with pytest.raises(recipe_forge.BadRecipeName):
         recipe_forge.start("x", name="Not Snake")
 
 
 def test_start_refuses_an_existing_name(monkeypatch) -> None:
-    from frago.desktop import registry
     from frago.recipes import registry as recipe_registry
-
-    monkeypatch.setattr(registry, "read_instance", lambda *_a, **_k: {"status": "running"})
 
     class _Reg:
         def find(self, name):
@@ -64,10 +85,7 @@ def test_start_refuses_an_existing_name(monkeypatch) -> None:
 
 
 def test_start_hands_the_brief_to_a_claude_session_with_a_known_id(monkeypatch) -> None:
-    from frago.desktop import registry
     from frago.server.services import workbench_agents, workbench_new_session
-
-    monkeypatch.setattr(registry, "read_instance", lambda *_a, **_k: {"status": "running"})
 
     class _Agent:
         agent_type = "claude"

@@ -370,8 +370,8 @@ async def forge_recipe(request: RecipeForgeRequest) -> dict:
     地址下会露出人类输入行，人打的字排进导演的队列（``/workbench/sessions/{sid}/send``
     带 ``wait: false``）。
 
-    三类拒绝各有各的意思：桌面没在跑 → 409（导演不会替人拉起它）；配方名不合法或已
-    存在 → 400；这台机器挑不了 claude → 400。
+    两类拒绝各有各的意思：配方名不合法或已存在 → 400；这台机器挑不了 claude → 400。
+    舞台没在跑不再是拒绝的理由——导演自己 ``frago desktop up``（2026-10-08 起）。
     """
     import asyncio
 
@@ -384,8 +384,6 @@ async def forge_recipe(request: RecipeForgeRequest) -> dict:
             page=request.page,
             name=request.name,
         )
-    except recipe_forge.DesktopNotRunning as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
     except (recipe_forge.BadRecipeName, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except workbench_agents.AgentUnavailable as e:
