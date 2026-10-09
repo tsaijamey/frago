@@ -66,6 +66,17 @@ frago agent stop mywork                   # 杀会话并清理 sidecar
 
 agent_type 支持 claude / codex / opencode，各自有 driver 处理 ready 信号、完成检测、答案提取。
 
+## 停掉 worker：按名字，不是杀外壳
+
+一次性与常驻两条拉起路径都会在 `~/.frago/drive/` 名册里登记一份，所以 `frago agent ls`
+看得见在跑的一次性 worker，`frago agent stop <会话编号>` 收得走它。
+
+**kill 掉 `frago agent` 那个外壳进程 ≠ 停掉 worker。** worker 跑在一个独立的 tmux 会话里
+（`frago-agent-<会话编号>`），外壳只是等在旁边收答案；外壳被 SIGKILL / 前台超时杀掉时，
+tmux 里的 agent 会继续跑，而且被摘出前台进程树，没人会收到它退出的通知。停它走
+`frago agent ls` 找出还在跑的那条，再 `frago agent stop <名字>`——NEVER 把 `kill` 掉外壳
+当作 worker 已经停住。
+
 ## 角色标识
 
 `frago agent` 的全部拉起路径都会给 worker 注入 `FRAGO_AGENT_ROLE=worker`。worker 读到该变量即知自己是执行者，在会话内直接完成任务，NEVER 再拉起新的 agent 会话（否则角色无限递归）。

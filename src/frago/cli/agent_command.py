@@ -270,6 +270,17 @@ def _run_tmux_driver(
         click.echo("[Dry Run] Skip actual execution", err=json_out)
         return
 
+    # 自有新会话（非借住别人的 tmux）才登记名册：一次性 worker 也该被 `frago agent ls`
+    # 看见、按名字停掉。外壳进程被外部杀掉时 finally 不执行，名册里那条会留下——那正是
+    # 我们要的：跑飞的孤儿仍可按名字收走（见 frago book agent-worker-driving）。
+    own_session = tmux_target is None
+    if own_session:
+        from .drive_command import register_transient_worker
+
+        register_transient_worker(
+            name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd
+        )
+
     launcher = SessionLauncher()
     try:
         result = launcher.run(
@@ -307,6 +318,14 @@ def _run_tmux_driver(
             human_note=f"Error: agent driver failed: {exc}",
         )
         return
+    finally:
+        # launcher.run 无论正常返回还是抛错，会话都已在它的 finally 里关掉；此刻把名册里
+        # 临时登记的那条抹掉，别让 `ls` 留下死条目。Shell 被 SIGKILL 时这一步不会执行，
+        # 名册条目得以保留——孤儿因此仍可被 `stop` 收走。
+        if own_session:
+            from .drive_command import deregister_transient_worker
+
+            deregister_transient_worker(sid)
 
     # 这一场确实起来了（哪怕这一轮超时或要人介入，会话本身是在的），记一笔它是谁
     # 派出去的。放在 run 之后：起都没起来的会话记进账本，只会让清单上多一行点不开的卡片。

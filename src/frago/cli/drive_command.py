@@ -98,6 +98,34 @@ def _read_entry(name: str) -> DriveEntry | None:
         return None
 
 
+def register_transient_worker(
+    *, name: str, agent_type: str, tmux_name: str, cwd: str
+) -> None:
+    """把一次性 worker 也登记进 sidecar 名册，让 ``ls`` 看得见、``stop`` 收得走。
+
+    一次性那条路（``frago agent --prompt-file``）起完会话投一轮、跑完即关，本来不需要
+    名册；但外壳进程被外部杀掉（SIGKILL / harness 前台超时）时，它的 tmux 会话会留下来
+    继续跑，而名册里没登记就既列不出、也停不掉——只能去 ``tmux ls`` 里翻会话名。记一笔的
+    代价极小，漏记的代价是一次跑飞的 worker。记账失败不影响会话本身，故吞掉异常。
+    """
+    with contextlib.suppress(Exception):
+        _write_entry(
+            DriveEntry(
+                name=name,
+                agent_type=agent_type,
+                tmux_name=tmux_name,
+                pid=os.getpid(),
+                cwd=cwd,
+            )
+        )
+
+
+def deregister_transient_worker(name: str) -> None:
+    """一轮跑完（会话已关）时抹掉临时登记的那条，别在 ``ls`` 里留下死条目。"""
+    with contextlib.suppress(Exception):
+        _sidecar_path(name).unlink(missing_ok=True)
+
+
 def _all_entries() -> list[DriveEntry]:
     out: list[DriveEntry] = []
     for path in sorted(_drive_dir().glob("*.json")):
