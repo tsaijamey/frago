@@ -203,12 +203,12 @@ describe('RecordStream 中栏', () => {
     Object.defineProperty(scroller, 'clientHeight', { value: client, configurable: true });
   }
 
-  it('同一次回复包进一个容器，容器头写模型名与本组条数，编号不露', () => {
+  it('同一次回复收进一个容器，容器里没有头，分组编号不露', () => {
     const { container } = render(<RecordStream {...streamProps()} />);
+    // 归组只剩间距：同一次回复的几条包在一个容器里，头上不再写模型名与条数，编号一个字不露。
     expect(screen.getAllByTestId('record-group')).toHaveLength(1);
-    expect(screen.getByText('本组 2 条')).toBeTruthy();
-    // 模型名在容器头与那条回复上各出现一次，这里只确认它露了脸。
-    expect(screen.getAllByText('claude-opus-5').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/本组 2 条/)).toBeNull();
+    expect(screen.queryByText(/同一次回复/)).toBeNull();
     expect(container.textContent ?? '').not.toContain(GROUP);
   });
 

@@ -10,7 +10,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
@@ -593,46 +593,29 @@ describe('顶着「你说」出现的那几种机器记事', () => {
 });
 
 describe('用量刻度', () => {
-  it('头一行只报上下文与累计，两个数都带千分位', () => {
+  it('它就是一条分隔线，只报上下文水位，数带千分位', () => {
     const { container } = render(
       <RecordCard record={makeRecord('usage.tick')} sessionId={SID} />
     );
+    expect(screen.getByTestId('usage-tick-line')).toBeTruthy();
+    expect(container.textContent ?? '').toContain('上下文 179,064');
+    // 累计是整场一个数，常驻在输入框右下那边；这一行不再重写一遍，也不摆本轮与四项明细，
+    // 更没有可展开的折叠入口。
     const text = container.textContent ?? '';
-    expect(text).toContain('上下文 179,064');
-    expect(text).toContain('累计 2,193,569');
-    // 本轮那个数几乎总是贴着上下文走，两个并排摆会让人以为自己看重了：它收在折叠里。
+    expect(text).not.toContain('累计');
+    expect(text).not.toContain('2,193,569');
     expect(text).not.toContain('181,841');
+    expect(container.querySelector('button[aria-expanded]')).toBeNull();
   });
 
-  it('展开之后才是本轮与它的四项明细，零的那一项不摆', () => {
+  it('没读到水位时给一个占位，不出空壳', () => {
     const { container } = render(
       <RecordCard
-        record={makeRecord('usage.tick', {
-          payload: {
-            context_tokens: 51004,
-            context_window: null,
-            turn_tokens: 51604,
-            total_tokens: 51604,
-            breakdown: { input: 4, output: 600, cache_creation: 0, cache_read: 51000 },
-            model: 'claude-opus-5',
-          },
-        })}
+        record={makeRecord('usage.tick', { payload: { context_tokens: null } })}
         sessionId={SID}
       />
     );
-    fireEvent.click(container.querySelector('button[aria-expanded]') as HTMLElement);
-    // 一项一行：名目与数各占一格，数字右对齐。挤成一行要从左读到右才找得到某一项。
-    const rows = [...container.querySelectorAll('dl > div')].map((row) => [
-      row.querySelector('dt')?.textContent,
-      row.querySelector('dd')?.textContent,
-    ]);
-    expect(rows).toEqual([
-      ['本轮', '51,604'],
-      ['入', '4'],
-      ['出', '600'],
-      ['缓存读', '51,000'],
-    ]);
-    expect(container.textContent ?? '').not.toContain('缓存写');
+    expect(container.textContent ?? '').toContain('上下文 —');
   });
 });
 

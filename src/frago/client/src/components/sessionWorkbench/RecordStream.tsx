@@ -385,15 +385,6 @@ function useTicking(on: boolean): number {
   return now;
 }
 
-/** 这一组里模型叫什么。取组内第一条报了模型的记录，报不出就不显示。 */
-function modelOf(records: WorkbenchRecord[]): string {
-  for (const record of records) {
-    const model = record.payload.model;
-    if (typeof model === 'string' && model) return model;
-  }
-  return '';
-}
-
 /** 标注在浏览器里的高亮名字，与 `globals.css` 里 `::highlight()` 同名。 */
 const MARK_STACK = 'workbench-mark-stack';
 const MARK_BRANCH = 'workbench-mark-branch';
@@ -671,11 +662,9 @@ export default function RecordStream({
   ) : null;
 
   /** 一条记录连同挂在它下面的进度。只有对得上某份进度的记录才多包一层。 */
-  const renderRecord = (record: WorkbenchRecord, hideModel?: boolean) => {
+  const renderRecord = (record: WorkbenchRecord) => {
     const trail = trailOf.get(record.id);
-    const bare = (
-      <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} hideModel={hideModel} />
-    );
+    const bare = <RecordCard key={record.id} record={record} sessionId={sessionId ?? ''} />;
     // 正文类记录外面多一层只装这张卡的壳：标注的锚点、着色、跳回原处都认这一层，
     // 缩略滚动条也按它量高度、分颜色。挂着进度的那几条外层另有一个 data-record-id
     // （输入区「Show」认它），这一层套在里面，只包卡、不包进度。
@@ -711,8 +700,8 @@ export default function RecordStream({
     );
   };
 
-  const renderSegment = (seg: StreamSegment, hideModel?: boolean) => {
-    if (seg.kind === 'record') return renderRecord(seg.record, hideModel);
+  const renderSegment = (seg: StreamSegment) => {
+    if (seg.kind === 'record') return renderRecord(seg.record);
     if (seg.kind === 'tools') {
       return (
         <ToolRun
@@ -1181,32 +1170,20 @@ export default function RecordStream({
           ) : null}
 
           {groups.map((group, index) => {
-            if (!group.groupId || group.size === 1) {
-              return group.segments.map((seg) => renderSegment(seg));
-            }
-            const model = modelOf(group.segments.flatMap(segmentRecords));
+            /* **归组只剩间距，头上不再有字。**
+               同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
+               哪几条是一伙的。从前这里还有一行「同一次回复 · 模型名 · 本组 N 条」：它要
+               说的只是下面几条同属一轮，而这件事间距已经说完了；模型名每一轮都要重写一遍，
+               一场会话几百轮就是几百遍同一个牌子。模型名现在常驻在输入框右下那边，一次
+               性说清"现在是谁在答"。 */
+            if (group.segments.length === 1) return renderSegment(group.segments[0]);
             return (
-              /* **归组不再是一个盒子。**
-                 从前这里是一圈边加一层纸色，里面每张卡自己又是一圈边加一层纸色，
-                 外面还有滚动容器的内距——一条工具输出要穿过四层内距才见得到字。
-                 归组要表达的只是"下面这几条属于同一次回复"，一行小字标题加上紧一档的
-                 行距就说清了；盒子不但没多说什么，还把每条记录的可用宽度削掉两回。 */
               <section
-                key={`${group.groupId}-${index}`}
+                key={`${group.groupId ?? 'loose'}-${index}`}
                 data-testid="record-group"
                 className="flex min-w-0 flex-col gap-1"
               >
-                {/* 容器头只写模型名与本组条数。分组编号一个字都不露。
-                    字从 px-3 那条线起，跟组里每一条记录的行首对齐——它是这一组的第一行，
-                    不是浮在组上方的另一种东西。 */}
-                <header className="flex min-w-0 items-center gap-1.5 px-3 text-[11px] text-text-dim">
-                  <span className="shrink-0">{t('workbench.stream.sameReply')}</span>
-                  {model ? <span className="truncate font-mono">{model}</span> : null}
-                  <span className="shrink-0 font-mono">
-                    {t('workbench.stream.groupCount', { n: group.size })}
-                  </span>
-                </header>
-                {group.segments.map((seg) => renderSegment(seg, Boolean(model)))}
+                {group.segments.map((seg) => renderSegment(seg))}
               </section>
             );
           })}

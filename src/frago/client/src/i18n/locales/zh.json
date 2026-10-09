@@ -1505,8 +1505,6 @@
       "lensEmpty": "这一档在当前这一页里一条都没有",
       "emptySession": "这场会话只有元信息，一条记录都没留下",
       "emptySessionHint": "它不是坏了，是当时什么都没发生",
-      "sameReply": "同一次回复",
-      "groupCount": "本组 {{n}} 条",
       "loading": "取记录中",
       "awaitingAgent": "已经投进去了，在等 agent 开口",
       "quote": "引用",
@@ -1618,7 +1616,6 @@
       "openImage": "查看原图：{{name}}",
       "openImageNewTab": "在新标签页打开原图",
       "thinkEmpty": "思考了一轮，正文没落盘",
-      "charCount": "{{n}} 字",
       "hookInject": "旁路注入",
       "segments": "{{n}} 段",
       "blockedStop": "拦住了收尾",
@@ -1672,12 +1669,7 @@
       "localCommandOutput": "命令输出",
       "usage": {
         "context": "上下文",
-        "total": "累计",
-        "turn": "本轮",
-        "input": "入",
-        "output": "出",
-        "cacheCreation": "缓存写",
-        "cacheRead": "缓存读"
+        "total": "累计"
       },
       "stateRepeat": "原值重写",
       "hookSilent": "没说话",
@@ -1797,7 +1789,8 @@
       "heldForRetry": "你已经在打新的字，原文先收着——重试发的是原来那一份",
       "movedUpBoth": "两句话都已经移进上面的对话",
       "movedUpOne": "这句话已经移进上面的对话",
-      "movedUpMany": "{{n}} 句话已经移进上面的对话"
+      "movedUpMany": "{{n}} 句话已经移进上面的对话",
+      "usageHint": "现在哪匹模型在答、上下文吃了多大、这一场一共烧了多少"
     },
     "newSession": {
       "title": "新建会话",

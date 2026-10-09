@@ -1510,8 +1510,6 @@
       "lensEmpty": "Nothing of this kind on the page you're looking at",
       "emptySession": "This session has metadata only — not a single record",
       "emptySessionHint": "It isn't broken; nothing happened at the time",
-      "sameReply": "Same reply",
-      "groupCount": "{{n}} in this group",
       "loading": "Loading records",
       "awaitingAgent": "Sent — waiting for the agent to speak",
       "quote": "Quote",
@@ -1623,7 +1621,6 @@
       "openImage": "View original: {{name}}",
       "openImageNewTab": "Open original in a new tab",
       "thinkEmpty": "Thought a round; the text was never written down",
-      "charCount": "{{n}} chars",
       "hookInject": "Hook injection",
       "segments": "{{n}} segments",
       "blockedStop": "Blocked the wrap-up",
@@ -1677,12 +1674,7 @@
       "localCommandOutput": "Command output",
       "usage": {
         "context": "Context",
-        "total": "Session total",
-        "turn": "This call",
-        "input": "in",
-        "output": "out",
-        "cacheCreation": "cache write",
-        "cacheRead": "cache read"
+        "total": "Session total"
       },
       "stateRepeat": "rewritten, unchanged",
       "hookSilent": "said nothing",
@@ -1802,7 +1794,8 @@
       "heldForRetry": "You've started typing, so the original is kept aside — Retry sends that one",
       "movedUpBoth": "Both messages moved up into the conversation",
       "movedUpOne": "Your message moved up into the conversation",
-      "movedUpMany": "{{n}} messages moved up into the conversation"
+      "movedUpMany": "{{n}} messages moved up into the conversation",
+      "usageHint": "Which model is answering right now, how much context it is holding, and how much this session has burned in total"
     },
     "newSession": {
       "title": "New session",

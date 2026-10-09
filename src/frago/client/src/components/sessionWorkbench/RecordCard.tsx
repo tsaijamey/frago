@@ -37,7 +37,6 @@ import {
   Clock,
   Download,
   FileText,
-  Gauge,
   Globe,
   Layers,
   ListChecks,
@@ -811,7 +810,7 @@ function Reminders({ items }: { items: string[] }) {
  * 只认主会话的回复：子 agent 问的是主控，主控看的是 tmux 会话、看不到页面上的卡片，
  * 画成可点的卡只会让人替主控作答。子 agent 那一块照普通代码块显示。
  */
-function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: boolean }) {
+function AgentSay({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
@@ -822,15 +821,13 @@ function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: 
       record={record}
       icon={<Bot size={12} />}
       label={voice?.agent ?? t(KIND_LABEL_KEY['agent.say'])}
-      /* 署名不该跟它署的那段话一样黑。正文就在下一行、14px、最深的墨色；头上再压一行
+      /* 署名不该跟它署的那段话一样黑。正文就在下一行、13px、最深的墨色；头上再压一行
          同色的粗字，两个都想当主角，读到的人先看到的是"回复"两个字而不是回复本身。
-         降到次级墨色加中等字重——认得出是发言（实心字），但不跟正文抢。 */
+         降到次级墨色加中等字重——认得出是发言（实心字），但不跟正文抢。
+         模型名不在这里写：每一轮都重写一遍同一个牌子，一场会话几百轮就是几百遍；
+         名字常驻在输入框右下那边，一次性说清"现在是谁在答"。 */
       labelTone="text-[11px] font-medium text-text-secondary"
       tone="bg-transparent"
-      /* 归组头已经把模型名写在上一行了，隔着四像素再写一遍不是两件事。归组头在的时候
-         这里就让开，归组头不在（这条记录自己独立成段）时照写——模型名一条记录上必须
-         有，只是不必有两遍。 */
-      meta={hideModel ? undefined : str(p, 'model')}
     >
       {trailing ? (
         <DecisionReply
@@ -846,16 +843,20 @@ function AgentSay({ record, hideModel }: { record: WorkbenchRecord; hideModel?: 
   );
 }
 
+/**
+ * agent 想了一轮。**它就是一行，点开才摊成一段文字。**
+ *
+ * 原型在这个位置画的就是一行：一个折角标记 + 「思考」，后面跟着截断的正文。一场会话里
+ * 思考的条数常是回复的两三倍，每条都给一张卡（哪怕默认折着），一屏下来就是同一副灰盒子
+ * 反复排开，读到的是盒子的节奏。它的字号也不跟正文争：它记的是过程，不是说给人听的话。
+ *
+ * 正文没落盘的思考照旧只值一行——模型这一轮的推理是加密的，落盘时只剩一个空壳。那种
+ * 情形本来就没有可以摊开的内容，所以不给展开入口，只写一句"想过，但没留下字"。
+ */
 function AgentThink({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const text = str(record.payload, 'text');
-  // 正文没落盘的思考（模型这一轮的推理是加密的，落盘时只剩一个空壳）照常出卡的话，
-  // 一屏能排下八九个「思考 0 字」的空盒子，把真正有内容的对话挤没了。它确实发生过，
-  // 所以 NEVER 丢掉——但它只值一行，不值一张卡。
-  //
-  // 这一行从前拿一条虚线横贯整栏、把时刻推到右边缘。它想说的只是"这一轮想过，但没留下
-  // 字"——一句话的事；那条线却是整屏最长的图形，读起来像一道分节线，而那里什么都没被
-  // 分开。现在它就是一行字：标记、一句话、时刻，说完即止。
+  const [open, setOpen] = useState(false);
   if (!text) {
     return (
       <div
@@ -866,26 +867,37 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
       >
         <Circle size={7} className="shrink-0" />
         <span className="min-w-0 truncate">{t('workbench.record.thinkEmpty')}</span>
-        <span className="shrink-0 font-mono">{formatClock(record.ts)}</span>
       </div>
     );
   }
   return (
-    <TextShell
-      record={record}
-      icon={<Circle size={10} />}
-      label={t(KIND_LABEL_KEY['agent.think'])}
-      labelTone="text-[11px] text-text-muted"
-      tone="border border-dashed border-border-color"
-      toneOpenOnly
-      meta={t('workbench.record.charCount', { n: text.length })}
-      collapsible
-      defaultOpen={false}
+    <div
+      data-kind={record.kind}
+      data-group="text"
+      data-testid="think-line"
+      className="min-w-0 px-3 py-0.5"
     >
-      <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.72] text-text-secondary">
-        {text}
-      </p>
-    </TextShell>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={t('workbench.record.toggle')}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-text-muted transition-colors hover:text-text-secondary"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="shrink-0">{t(KIND_LABEL_KEY['agent.think'])}</span>
+        {/* 折着时后面跟一段截断的正文，人扫一眼就知道这一轮在想什么；要读全的点开。 */}
+        <span className="min-w-0 flex-1 truncate text-text-dim">{text}</span>
+      </button>
+      {open ? (
+        <p className="mt-1 whitespace-pre-wrap break-words pl-[18px] text-[12px] leading-[1.72] text-text-secondary">
+          {text}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -1855,77 +1867,30 @@ function formatTokens(n: number): string {
 }
 
 /**
- * 一次调用返回后的用量刻度。
+ * 一次调用返回后的用量刻度。**它就是一条分隔线，中间写上下文水位。**
  *
- * **头一行只报两个数，因为人问的只有这两件事**：这场此刻占了多大上下文，一路下来一共
- * 烧了多少。两个数意思不一样——上下文是**水位**，会随一次压缩掉下去；累计是**流水**，
- * 只增不减。摆在一起才看得出"涨的是哪一个"。
- *
- * 本轮那个数和它的四项明细收在折叠里。它是累计的构成，不是人一眼要找的东西；而且缓存
- * 读取每一轮都要把整段上下文再读一遍，本轮那个数因此几乎总是贴着上下文的数走，两个数
- * 并排摆着只会让人以为自己看重了。
+ * 原型在这个位置画的就是一行横线。这个数原先还带着"累计"和本轮四项明细，摆成一张可
+ * 展开的卡；可累计是整场一个数，常驻在输入框右下那边就够，不必每一轮重写一遍，而本轮
+ * 明细几乎总贴着水位走。留下的这一个数是这一刻真正在动的那一个：这场此刻占的上下文。
  *
  * 一个百分比都不出现：本文件第 3 条纪律，界面不呈现任何进度，只报已发生的绝对数。
  */
 function UsageTick({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
-  const p = record.payload;
-  const context = num(p, 'context_tokens');
-  const total = num(p, 'total_tokens');
-  const turn = num(p, 'turn_tokens');
-  const breakdown = dict(p.breakdown);
-  /** 展开后的每一行：左边一个名目，右边一个数。 */
-  const rows: { key: string; label: string; value: string }[] = [];
-  if (turn !== null) {
-    rows.push({
-      key: 'turn',
-      label: t('workbench.record.usage.turn'),
-      value: formatTokens(turn),
-    });
-  }
-  for (const [key, labelKey] of [
-    ['input', 'workbench.record.usage.input'],
-    ['output', 'workbench.record.usage.output'],
-    ['cache_creation', 'workbench.record.usage.cacheCreation'],
-    ['cache_read', 'workbench.record.usage.cacheRead'],
-  ] as const) {
-    const value = breakdown[key];
-    // 零的那一项不摆。四项里常有两项是零，全摆出来会把真正在动的那两项淹掉。
-    if (typeof value === 'number' && value > 0) {
-      rows.push({ key, label: t(labelKey), value: formatTokens(value) });
-    }
-  }
-  const headline: string[] = [];
-  if (context !== null) {
-    headline.push(`${t('workbench.record.usage.context')} ${formatTokens(context)}`);
-  }
-  if (total !== null) {
-    headline.push(`${t('workbench.record.usage.total')} ${formatTokens(total)}`);
-  }
+  const context = num(record.payload, 'context_tokens');
   return (
-    <SystemShell
-      record={record}
-      icon={<Gauge size={12} className="text-text-muted" />}
-      /* 刻度是记账，不是发言。它在「对话」那一档里夹在两句话中间，字色跟发言同级的话，
-         一屏看下来是"说一句、记一笔、说一句、记一笔"，两种东西轮流抢同一份注意力。
-         退到最淡那一档：要查的时候它在原位，不查的时候它是背景。 */
-      label={<span className="text-text-muted">{t(KIND_LABEL_KEY['usage.tick'])}</span>}
-      meta={<span className="font-mono">{headline.join(' · ')}</span>}
-      collapsible
+    <div
+      data-kind={record.kind}
+      data-group="system"
+      data-testid="usage-tick-line"
+      className="flex min-w-0 items-center gap-2 px-3 py-0.5 text-[11px] text-text-dim"
     >
-      {/* 一项一行，数字右对齐。挤成一行时"入 2 · 出 463 · 缓存写 850 · 缓存读 205,461"
-          要从左读到右才找得到某一项，而且四个数的位数差着三个量级，对不齐就比不出大小。 */}
-      <dl className="space-y-0.5 text-[11px]">
-        {rows.map((row) => (
-          <div key={row.key} className="flex gap-2">
-            <dt className="w-20 shrink-0 text-text-muted">{row.label}</dt>
-            <dd className="w-24 shrink-0 text-right font-mono tabular-nums text-text-secondary">
-              {row.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </SystemShell>
+      <span aria-hidden className="h-px flex-1 bg-border-color" />
+      <span className="shrink-0 whitespace-nowrap">
+        {t('workbench.record.usage.context')} {context === null ? '—' : formatTokens(context)}
+      </span>
+      <span aria-hidden className="h-px flex-1 bg-border-color" />
+    </div>
   );
 }
 
@@ -2162,8 +2127,6 @@ export interface RecordCardProps {
   record: WorkbenchRecord;
   /** 取原文要带会话编号——记录编号自己定位不到档案。 */
   sessionId: string;
-  /** 外面的归组头已经写了模型名，这张卡就别再写一遍。 */
-  hideModel?: boolean;
 }
 
 /**
@@ -2171,7 +2134,7 @@ export interface RecordCardProps {
  * 重渲染一次整栏；不记忆化的话那两百张全部重跑一遍分发与格式化，追加越密越卡，正是
  * "会话在跑的时候滚动很慢"的那一半原因。记录对象翻出来就不再改动，按引用比就够。
  */
-function RecordCardInner({ record, sessionId, hideModel }: RecordCardProps) {
+function RecordCardInner({ record, sessionId }: RecordCardProps) {
   const override = useContext(RecordOverrideContext);
   const special = override ? override(record) : null;
   if (special) return <>{special}</>;
@@ -2180,7 +2143,7 @@ function RecordCardInner({ record, sessionId, hideModel }: RecordCardProps) {
     case 'user.say':
       return <UserSay record={record} />;
     case 'agent.say':
-      return <AgentSay record={record} hideModel={hideModel} />;
+      return <AgentSay record={record} />;
     case 'agent.think':
       return <AgentThink record={record} />;
     case 'context.inject':

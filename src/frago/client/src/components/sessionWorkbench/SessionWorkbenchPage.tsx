@@ -23,7 +23,7 @@ import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
-import Composer, { blockReason, type ComposerNotice } from './Composer';
+import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
 import { squeeze, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
@@ -440,21 +440,40 @@ export default function SessionWorkbenchPage() {
   const showLaunch = Boolean(launch) && (selectedId === null || selectedId === launch?.sessionId);
 
   /**
-   * 这场此刻的上下文水位：主会话最后一道用量刻度报的提示词大小。
+   * 这场此刻的读数：现在哪一匹模型、上下文吃到多大、一路累计烧了多少。喂给输入框右下角
+   * 那行常驻显示。
    *
-   * 只认主会话的刻度——子 agent 各有各的上下文，它们的水位说的不是这一场。手上这批记录
-   * 是别的会话的（切换那一拍）就当还没读到。
+   * 水位与累计只认主会话最后一道用量刻度——子 agent 各有各的上下文，它们的刻度报的不是
+   * 这一场。模型名另外从后往前找第一条带模型名的记录：用量刻度不一定带模型名，而"现在是
+   * 谁在答"取最后一条开过口的记录，才对得上中途换过模型这件事。
+   * 手上这批记录是别的会话的（切换那一拍）就当还没读到。
    */
-  const contextTokens = useMemo(() => {
+  const usageReadout = useMemo<ComposerUsage | null>(() => {
     if (recordsSessionId !== selectedId) return null;
+    let context: number | null = null;
+    let total: number | null = null;
     for (let i = records.length - 1; i >= 0; i -= 1) {
       const r = records[i];
       if (r.kind !== 'usage.tick' || r.agent_path.length) continue;
-      const v = r.payload.context_tokens;
-      return typeof v === 'number' ? v : null;
+      const ctx = r.payload.context_tokens;
+      const tot = r.payload.total_tokens;
+      context = typeof ctx === 'number' ? ctx : null;
+      total = typeof tot === 'number' ? tot : null;
+      break;
     }
-    return null;
+    let model = '';
+    for (let i = records.length - 1; i >= 0; i -= 1) {
+      const r = records[i];
+      if (r.agent_path.length) continue;
+      const m = r.payload.model;
+      if (typeof m === 'string' && m) {
+        model = m;
+        break;
+      }
+    }
+    return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
+  const contextTokens = usageReadout?.context ?? null;
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -884,6 +903,7 @@ export default function SessionWorkbenchPage() {
           onShowInStream={(recordId) => setScrollTarget({ recordId, at: Date.now() })}
           quote={quote}
           contextTokens={contextTokens}
+          usage={usageReadout}
           onHandoff={() => void handoff()}
           handingOff={handingOff}
           notice={composerNotice}

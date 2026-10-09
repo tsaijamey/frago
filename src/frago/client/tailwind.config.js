@@ -44,6 +44,10 @@ export default {
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-muted': 'var(--text-muted)',
+        // 最淡那一档。`--text-dim` 两套主题里都定义着，令牌却一直没接进来——于是
+        // `text-text-dim` 这个类从来没生成过，写着它的地方全都落空成了继承色（比
+        // `--text-muted` 还深一档，正好反过来）。
+        'text-dim': 'var(--text-dim)',
         'text-link': 'var(--text-link)',
         'border-color': 'var(--border-color)',
         'border-strong': 'var(--border-strong)',
