@@ -93,10 +93,10 @@ def _write(root, session_id=_SID, rows=None):
 
 
 def test_编号前缀就能判出这一家(monkeypatch, tmp_path):
-    """判这场属于谁只看前缀，不落盘——编号是 frago 自己发的。
+    """带前缀的编号只看形状，不落盘——前缀是 frago 发号时写的。
 
-    与 codex 那一家的区别正在这里：codex 的编号是 UUID 形状，与 Claude Code 撞车，只能
-    去它的目录里看一眼；CoreAgent 不用。
+    不带前缀的裸 UUID 要落盘认，见下一条：前缀是发号那一侧的约定，拦不住编号由调用方
+    原样递进内核的用法。
     """
     assert record_reader.detect_family("core_e2edemo0001") == "coreagent"
     assert record_reader.detect_family("ses_058288655ffe") == "opencode"
@@ -107,6 +107,24 @@ def test_编号前缀就能判出这一家(monkeypatch, tmp_path):
         pass
     else:  # pragma: no cover - 判定放宽了才会走到
         raise AssertionError("认不出的编号必须抛，不能猜一家试试")
+
+
+def test_裸_UUID_的编号也去_CoreAgent_目录认一眼(monkeypatch, tmp_path):
+    """编号没带前缀时，去 CoreAgent 的记录目录看一眼再定这一家。
+
+    没有这一眼的话，这场会话被认成 Claude Code：删除去 ``~/.claude/projects`` 找、记录
+    也从那儿读，两边都落空——界面表现为「删不掉，刷新还在」，点开还是空的。
+    """
+    from frago.session import codex_store
+
+    monkeypatch.setattr(coreagent_store, "sessions_root", lambda: tmp_path)
+    monkeypatch.setattr(codex_store, "sessions_root", lambda: tmp_path / "没有这一家")
+    sid = "3f6fe550-06d1-4fb7-8a79-d860590e7fbd"
+    _write(tmp_path, session_id=sid)
+
+    assert record_reader.detect_family(sid) == "coreagent"
+    # 同形状但两边都没有的编号照旧当 Claude Code——历史默认，行为与从前一样。
+    assert record_reader.detect_family("11111111-2222-4333-8444-555555555555") == "claude-code"
 
 
 def test_整趟过程读得全含被拦下的那次(tmp_path):

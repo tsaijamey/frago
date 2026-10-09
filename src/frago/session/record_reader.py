@@ -122,18 +122,20 @@ class SessionCard:
 def detect_family(session_id: str) -> RecordFamily:
     """判出这个会话编号属于哪一家。
 
-    opencode 与 CoreAgent 靠形状就能分出来：它们的编号一律带前缀（``ses_`` / ``core_``），
-    而 UUID 的字符集不含下划线，几套编号规则天生撞不上。CoreAgent 的记录形状虽然与
-    Claude Code 一模一样，编号却是 frago 自己发的，所以这一眼不用落盘。
+    opencode 靠形状就能分出来：它的编号一律带 ``ses_`` 前缀，而 UUID 的字符集不含下划线，
+    两套编号规则天生撞不上。
 
-    **Claude Code 与 codex 分不开。** codex 的会话编号也是 UUID 形状
+    **Claude Code、codex、CoreAgent 三家分不开。** codex 的会话编号也是 UUID 形状
     （``01a01a98-82e9-7013-b24e-e5e91b03995a`` 是 UUIDv7），与 Claude Code 的编号空间
-    重叠。所以从第三家起，判定不再是纯形状匹配：形状像 UUID 时先去 codex 的 rollout
-    目录看一眼有没有这场会话，有就是 codex，没有才当 Claude Code。
+    重叠。CoreAgent 的编号本来自带 ``core_`` 前缀，但那是**发号那一侧**的约定，拦不住
+    编号由调用方原样递进内核的用法：内核照着给的编号落盘，前缀就没了。本机实测有三场
+    这样的会话，记录躺在 CoreAgent 的目录下，编号却是裸 UUID。所以形状像 UUID 时不能只看
+    形状：先去 codex 的 rollout 目录、再去 CoreAgent 的记录目录各看一眼有没有这场会话，
+    两边都没有才当 Claude Code。
 
-    次序是"先查 codex、查不到才退回 Claude Code"，不是反过来：Claude Code 是历史默认，
-    把它放在退路上，codex 没装 / 没有这场会话时行为与从前一模一样。这一眼的代价是
-    一次目录 glob，而且 codex 的 ``sessions/`` 不存在时立刻返回，装了 codex 才有开销。
+    次序是"先查 codex、再查 CoreAgent、都查不到才退回 Claude Code"，不是反过来：
+    Claude Code 是历史默认，把它放在退路上，另外两家没装 / 没有这场会话时行为与从前
+    一模一样。这一眼的代价是两次目录 glob，两家的根目录不存在时各自立刻返回。
 
     形状都不像时抛 :class:`UnknownSessionFamily`，NEVER 默认当成 Claude Code——
     默认一家会让别家的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
@@ -146,6 +148,8 @@ def detect_family(session_id: str) -> RecordFamily:
     if _UUID_SHAPE.match(sid):
         if _is_codex_session(sid):
             return "codex"
+        if _is_coreagent_session(sid):
+            return "coreagent"
         return "claude-code"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
 
@@ -156,6 +160,20 @@ def _is_codex_session(session_id: str) -> bool:
         if not codex_store.sessions_root().is_dir():
             return False
         return codex_store.find_rollout(session_id) is not None
+    except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
+        return False
+
+
+def _is_coreagent_session(session_id: str) -> bool:
+    """CoreAgent 那边有没有这场会话。查不动一律当"没有"，NEVER 因此让判定失败。
+
+    只对**不带前缀**的编号有意义：带 ``core_`` 的在形状那一步就归了家。这一眼存在的理由
+    是编号前缀拦不住直接起内核的用法，见 :func:`detect_family`。
+    """
+    try:
+        if not coreagent_store.sessions_root().is_dir():
+            return False
+        return coreagent_store.session_exists(session_id)
     except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
         return False
 
