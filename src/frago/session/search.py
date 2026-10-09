@@ -108,6 +108,7 @@ _CORE_DIRS = {
     "claude-misc": "claude",
     "opencode": "opencode",
     "codex": "codex",
+    "coreagent": "coreagent",
 }
 
 _ASCII_ONLY = re.compile(r"^[\x00-\x7f]+$")
@@ -152,7 +153,7 @@ class SessionHit:
     """一个命中的会话。"""
 
     source: str
-    """``claude``、``opencode`` 或 ``codex``。"""
+    """``claude``、``opencode``、``codex`` 或 ``coreagent``。"""
 
     session_id: str
     title: str | None
@@ -691,6 +692,9 @@ def _resume_command(core: str, session_id: str) -> str:
         return f"opencode -s {session_id}"
     if core == "codex":
         return f"codex resume {session_id}"
+    if core == "coreagent":
+        # 内核自己认这个编号，把先前的回合重放进上下文再接着跑。
+        return f"frago-core --resume {session_id}"
     return f"claude --resume {session_id}"
 
 

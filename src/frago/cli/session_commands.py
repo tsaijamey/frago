@@ -91,7 +91,7 @@ def self_cmd(json_output: bool):
 @session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -372,7 +372,7 @@ def _render_search(result) -> str:
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -476,7 +476,7 @@ def _find_session_by_prefix(prefix: str, agent_type: AgentType):
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -523,7 +523,7 @@ def watch_cmd(
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -602,7 +602,7 @@ def clean_cmd(
 @click.argument("session_id")
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -684,6 +684,7 @@ def sync_cmd(
     """
     import os
 
+    from frago.session.coreagent_sync import sync_coreagent_sessions
     from frago.session.opencode_sync import sync_opencode_sessions
     from frago.session.sync import sync_all_projects, sync_project_sessions
 
@@ -705,6 +706,17 @@ def sync_cmd(
         result.errors.extend(opencode_result.errors)
     except Exception as e:  # noqa: BLE001
         result.errors.append(f"opencode: {e}")
+
+    # coreagent: its records are not project-scoped either, so every run archives
+    # all of them. Same rule as opencode — a failure lands in the errors list.
+    try:
+        coreagent_result = sync_coreagent_sessions()
+        result.synced += coreagent_result.synced
+        result.updated += coreagent_result.updated
+        result.skipped += coreagent_result.skipped
+        result.errors.extend(coreagent_result.errors)
+    except Exception as e:  # noqa: BLE001
+        result.errors.append(f"coreagent: {e}")
 
     if json_output:
         import json as json_module

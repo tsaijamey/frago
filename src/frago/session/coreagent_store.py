@@ -14,8 +14,11 @@ Claude Code（``<工作目录编码>/<会话编号>.jsonl``），所以读法换
 分得开——往 ``~/.claude/projects/`` 里塞别人的会话，Claude Code 下次列会话时会把它当成
 自己的。
 
-**会话编号带 ``core_`` 前缀**，与 opencode 的 ``ses_`` 是同一个办法：判这场属于哪一家只看
-前缀，不用去三家的档案里挨个试。
+**会话编号带 ``core_`` 前缀**，与 opencode 的 ``ses_`` 是同一个办法：判这场属于哪一家先看
+前缀，不用去三家的档案里挨个试。但前缀只是**发号那一侧**的约定：编号由调用方原样递进内核
+时（直接起 ``frago-core``），落盘的编号就不带它。所以 ``core_`` 只够一眼认出**是**这一家，
+认不出**不是**——编号不带前缀时还要去本模块的目录里认一眼，见
+:func:`~frago.session.record_reader.detect_family`。
 
 分层：核心数据层，NEVER import ``server/`` 或 ``cli/``。
 """
@@ -40,6 +43,7 @@ __all__ = [
     "CoreAgentRecordAdapter",
     "delete_session_files",
     "find_session_file",
+    "iter_session_files",
     "session_exists",
     "sessions_root",
 ]
@@ -47,10 +51,33 @@ __all__ = [
 #: 会话编号的前缀。frago-core 那边生成编号时写的也是它（``kernel/transcript_log.rs``）。
 SESSION_ID_PREFIX = "core_"
 
+#: 一份会话记录就是一个 JSONL，文件名是会话编号。同一级目录下还有观察者槽位
+#: （``observer-*.json``）这类附属文件，认扩展名就不会把它们当成会话。
+_RECORD_GLOB = "*.jsonl"
+
 
 def sessions_root() -> Path:
     """CoreAgent 会话记录的根目录。"""
     return Path.home() / ".frago" / "coreagent" / "sessions"
+
+
+def iter_session_files(root: Path | None = None) -> list[Path]:
+    """本机全部 CoreAgent 会话记录，最新在前。
+
+    落点是 ``<根>/<工作目录编码>/<会话编号>.jsonl``，所以按一级目录下的 ``*.jsonl``
+    扫一遍就是全部。读不动的文件跳过，NEVER 因为一个坏文件让整批消失。
+    """
+    base = root if root is not None else sessions_root()
+    if not base.is_dir():
+        return []
+    stamped: list[tuple[float, Path]] = []
+    for path in base.glob(f"*/{_RECORD_GLOB}"):
+        try:
+            stamped.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    stamped.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in stamped]
 
 
 def find_session_file(session_id: str, root: Path | None = None) -> Path | None:
@@ -63,9 +90,7 @@ def session_exists(session_id: str, root: Path | None = None) -> bool:
     return find_session_file(session_id, root) is not None
 
 
-def delete_session_files(
-    session_id: str, root: Path | None = None
-) -> DeletedSessionFiles | None:
+def delete_session_files(session_id: str, root: Path | None = None) -> DeletedSessionFiles | None:
     """删掉这场会话的记录。找不到返回 None，NEVER 抛。
 
     删法与 Claude Code 那侧是同一份：记录就是一个 JSONL，位置稳定、格式一样。

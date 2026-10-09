@@ -23,6 +23,7 @@ class AgentType(str, Enum):
     CLAUDE = "claude"  # Claude Code
     OPENCODE = "opencode"  # opencode (tmux-driven)
     CODEX = "codex"  # OpenAI Codex CLI (tmux-driven)
+    COREAGENT = "coreagent"  # frago 自己的 CoreAgent
     CURSOR = "cursor"  # Cursor (reserved)
     CLINE = "cline"  # Cline (reserved)
 

@@ -40,6 +40,10 @@ class SyncService:
         # here, exactly as it is for Claude Code.
         self._codex_mtimes: dict[str, float] = {}
 
+        # coreagent counterpart: session_id -> last-seen record mtime (float).
+        # Same clock as claude / codex: CoreAgent appends to one JSONL per session.
+        self._coreagent_mtimes: dict[str, float] = {}
+
     @classmethod
     def get_instance(cls) -> "SyncService":
         """Get singleton instance.
@@ -128,6 +132,7 @@ class SyncService:
             ("claude", lambda: sync_all_projects(mtime_cache=self._session_mtimes)),
             ("opencode", self._sync_opencode),
             ("codex", self._sync_codex),
+            ("coreagent", self._sync_coreagent),
         ):
             try:
                 result = run()
@@ -154,6 +159,12 @@ class SyncService:
 
         return sync_codex_sessions(since_mtime_cache=self._codex_mtimes)
 
+    def _sync_coreagent(self) -> Any:
+        """Archive CoreAgent sessions from their own record root."""
+        from frago.session.coreagent_sync import sync_coreagent_sessions
+
+        return sync_coreagent_sessions(since_mtime_cache=self._coreagent_mtimes)
+
     def get_last_result(self) -> dict[str, Any] | None:
         """Get the last sync result.
 
@@ -170,6 +181,7 @@ class SyncService:
             Sync result dictionary
         """
         from frago.session.codex_sync import sync_codex_sessions
+        from frago.session.coreagent_sync import sync_coreagent_sessions
         from frago.session.opencode_sync import sync_opencode_sessions
         from frago.session.sync import sync_all_projects
 
@@ -187,6 +199,7 @@ class SyncService:
             ("claude", sync_all_projects),
             ("opencode", sync_opencode_sessions),
             ("codex", sync_codex_sessions),
+            ("coreagent", sync_coreagent_sessions),
         ):
             try:
                 result = run()
