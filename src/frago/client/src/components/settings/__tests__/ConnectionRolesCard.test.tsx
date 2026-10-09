@@ -212,14 +212,21 @@ describe('ConnectionRolesCard · frago-core 替它们问模型的两行', () => 
     expect(opt?.textContent).toContain('settings.connections.notForFragoCore');
   });
 
-  it('借用 WorkBuddy 登录只在这两行可选', () => {
+  it('已下线的 WorkBuddy 借登录，任何角色都列出来但不可选', () => {
     renderFour();
-    for (const row of ['settings.connections.mainRole', 'settings.connections.workerRole']) {
+    // Every row, not just the two frago-core ones: the connection cannot be
+    // reached at all since the client encrypted its login file, and the reason
+    // is on each option rather than the option simply disappearing.
+    for (const row of [
+      'settings.connections.mainRole',
+      'settings.connections.workerRole',
+      'settings.connections.lightagentRole',
+      'settings.connections.observerRole',
+    ]) {
       const opt = optionIn(row, 'wb000001');
       expect(opt?.disabled).toBe(true);
-      expect(opt?.textContent).toContain('settings.connections.fragoCoreOnly');
+      expect(opt?.textContent).toContain('settings.connections.workbuddyRetired');
     }
-    expect(optionIn('settings.connections.observerRole', 'wb000001')?.disabled).toBe(false);
   });
 
   it('选回第一项就是解除绑定', async () => {

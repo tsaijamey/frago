@@ -1,9 +1,8 @@
-"""Tests for the two roles frago-core serves — the light agent and the session observer.
+"""Tests for the three roles frago-core serves — CoreAgent, the light agent, the observer.
 
-frago-core can call a connection that carries its own key, or one that borrows the
-WorkBuddy client's login, and nothing else. These tests pin which connection can go
-to which role, what "unbound" means for each, and that the fields land where
-frago-core reads them.
+frago-core can call a connection that carries its own key, and nothing else. These
+tests pin which connection can go to which role, what "unbound" means for each, and
+that the fields land where frago-core reads them.
 """
 
 import json
@@ -42,27 +41,6 @@ def tmp_profiles_path(tmp_path):
 
 
 @pytest.fixture
-def probed(tmp_path):
-    """A probe result: deepseek-v4-flash answered, hy3 thought itself out of budget."""
-    path = tmp_path / "workbuddy-models.json"
-    path.write_text(
-        json.dumps(
-            {
-                "probed_at": "2026-09-11T12:00:00.000000",
-                "gateway": "https://copilot.tencent.com",
-                "models": [
-                    {"id": "deepseek-v4-flash", "ok": True, "wire": "openai", "first_ms": 793},
-                    {"id": "hy3", "ok": False, "thinks": True, "error": "思考把预算吃光了"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    with patch("frago.init.profile_manager.WORKBUDDY_MODELS_PATH", path):
-        yield path
-
-
-@pytest.fixture
 def endpoint_profile():
     return APIProfile(
         id="ep000001",
@@ -74,13 +52,14 @@ def endpoint_profile():
 
 
 @pytest.fixture
-def workbuddy_profile():
+def second_endpoint_profile():
     return APIProfile(
-        id="wb000001",
-        name="WorkBuddy flash",
-        kind=KIND_WORKBUDDY,
-        endpoint_type=KIND_WORKBUDDY,
-        default_model="deepseek-v4-flash",
+        id="ep000002",
+        name="Volcengine plan",
+        endpoint_type="custom",
+        url="https://ark.cn-beijing.volces.com/api/plan",
+        api_key="ark-test-key-1234567890",
+        default_model="deepseek-v4.1-flash",
     )
 
 
@@ -96,54 +75,60 @@ def vendor_profile():
     )
 
 
-class TestWorkBuddyConnection:
-    """No key is stored, and the model can only be one the last probe found usable."""
+def _retired_workbuddy_row(profile_id: str) -> APIProfile:
+    """A row of the shape saved before 2026-10-09, when borrowing the WorkBuddy
+    login still worked. Written straight into the store, since adding one is
+    refused now."""
+    return APIProfile(
+        id=profile_id,
+        name="WorkBuddy legacy",
+        kind=KIND_WORKBUDDY,
+        endpoint_type=KIND_WORKBUDDY,
+        default_model="deepseek-v4-flash",
+    )
 
-    def test_saved_without_a_key(self, tmp_profiles_path, probed, workbuddy_profile):
-        add_profile(workbuddy_profile)
-        saved = load_profiles().profiles[0]
-        assert saved.kind == KIND_WORKBUDDY
-        assert saved.api_key == ""
 
-    def test_refused_before_any_probe(self, tmp_profiles_path, tmp_path, workbuddy_profile):
-        with (
-            patch("frago.init.profile_manager.WORKBUDDY_MODELS_PATH", tmp_path / "none.json"),
-            pytest.raises(ValueError, match="probe-workbuddy"),
-        ):
-            add_profile(workbuddy_profile)
+class TestWorkBuddyConnectionIsRetired:
+    """借 WorkBuddy 登录这条连接 2026-10-09 下线：客户端把登录文件加密了，
+    钥匙留在客户端自己手里，frago 读不到凭据。老记录还读得出来，只为让页面标出它，
+    不再有任何角色能绑上去。"""
 
-    def test_a_model_that_failed_the_probe_is_refused(
-        self, tmp_profiles_path, probed, workbuddy_profile
-    ):
-        workbuddy_profile.default_model = "hy3"
-        with pytest.raises(ValueError, match="hy3"):
-            add_profile(workbuddy_profile)
+    def test_a_new_one_is_refused(self, tmp_profiles_path):
+        with pytest.raises(ValueError, match="已下线"):
+            add_profile(_retired_workbuddy_row("wb000001"))
 
-    def test_the_cheap_tier_is_held_to_the_probe_too(
-        self, tmp_profiles_path, probed, workbuddy_profile
-    ):
-        add_profile(workbuddy_profile)
-        with pytest.raises(ValueError, match="hy3"):
-            update_profile(workbuddy_profile.id, {"haiku_model": "hy3"})
+    def test_a_saved_one_can_no_longer_be_bound(self, tmp_profiles_path):
+        store = load_profiles()
+        store.profiles.append(_retired_workbuddy_row("wb000002"))
+        save_profiles(store)
 
-    def test_endpoint_type_must_say_workbuddy(self, tmp_profiles_path, probed, workbuddy_profile):
-        workbuddy_profile.endpoint_type = "custom"
-        with pytest.raises(ValueError, match="endpoint type"):
-            add_profile(workbuddy_profile)
+        for role in ROLES_UNDER_TEST:
+            with pytest.raises(ValueError, match="已下线"):
+                bind_role(role, "wb000002")
+
+    def test_it_cannot_be_written_into_a_cli(self, tmp_profiles_path):
+        store = load_profiles()
+        store.profiles.append(_retired_workbuddy_row("wb000003"))
+        save_profiles(store)
+
+        with pytest.raises(ValueError, match="已下线"):
+            activate_profile("wb000003", ["claude"])
+        assert load_profiles().active_profile_id is None
+
+
+ROLES_UNDER_TEST = (MAIN_ROLE, WORKER_ROLE, LIGHTAGENT_ROLE, OBSERVER_ROLE, COREAGENT_ROLE)
 
 
 class TestWhichConnectionGoesWhere:
-    def test_frago_core_roles_take_a_key_or_the_workbuddy_login(
-        self, tmp_profiles_path, probed, endpoint_profile, workbuddy_profile
-    ):
+    def test_frago_core_roles_take_a_key(self, tmp_profiles_path, endpoint_profile, second_endpoint_profile):
         add_profile(endpoint_profile)
-        add_profile(workbuddy_profile)
+        add_profile(second_endpoint_profile)
         bind_role(LIGHTAGENT_ROLE, endpoint_profile.id)
-        bind_role(OBSERVER_ROLE, workbuddy_profile.id)
+        bind_role(OBSERVER_ROLE, second_endpoint_profile.id)
 
         store = load_profiles()
         assert store.lightagent_profile_id == endpoint_profile.id
-        assert store.observer_profile_id == workbuddy_profile.id
+        assert store.observer_profile_id == second_endpoint_profile.id
 
     def test_frago_core_roles_refuse_a_vendor_cli(self, tmp_profiles_path, vendor_profile):
         add_profile(vendor_profile)
@@ -151,25 +136,18 @@ class TestWhichConnectionGoesWhere:
             with pytest.raises(ValueError, match="frago-core cannot call"):
                 bind_role(role, vendor_profile.id)
 
-    def test_cli_roles_refuse_the_workbuddy_login(
-        self, tmp_profiles_path, probed, workbuddy_profile
-    ):
-        """There is no agent CLI configuration it could be written into."""
-        add_profile(workbuddy_profile)
-        for role in (MAIN_ROLE, WORKER_ROLE):
-            with pytest.raises(ValueError, match="CoreAgent, the light agent or the session observer"):
-                bind_role(role, workbuddy_profile.id)
-        with pytest.raises(ValueError, match="CoreAgent, the light agent or the session observer"):
-            activate_profile(workbuddy_profile.id, ["claude"])
-        assert load_profiles().active_profile_id is None
+    def test_cli_roles_refuse_a_vendor_cli(self, tmp_profiles_path, vendor_profile):
+        add_profile(vendor_profile)
+        with pytest.raises(ValueError, match="own account"):
+            bind_role(MAIN_ROLE, vendor_profile.id)
 
     def test_the_two_roles_move_independently(
-        self, tmp_profiles_path, probed, endpoint_profile, workbuddy_profile
+        self, tmp_profiles_path, endpoint_profile, second_endpoint_profile
     ):
         add_profile(endpoint_profile)
-        add_profile(workbuddy_profile)
+        add_profile(second_endpoint_profile)
         with patch("frago.init.profile_manager.activate_profile") as activate:
-            bind_role(OBSERVER_ROLE, workbuddy_profile.id)
+            bind_role(OBSERVER_ROLE, second_endpoint_profile.id)
         activate.assert_not_called()
         assert role_binding_id(LIGHTAGENT_ROLE) is None
         assert role_binding_id(MAIN_ROLE) is None
@@ -202,12 +180,12 @@ class TestUnbound:
             role_connection(OBSERVER_ROLE)
 
     def test_deleting_the_bound_row_unbinds_both(
-        self, tmp_profiles_path, probed, workbuddy_profile
+        self, tmp_profiles_path, second_endpoint_profile
     ):
-        add_profile(workbuddy_profile)
-        bind_role(LIGHTAGENT_ROLE, workbuddy_profile.id)
-        bind_role(OBSERVER_ROLE, workbuddy_profile.id)
-        delete_profile(workbuddy_profile.id)
+        add_profile(second_endpoint_profile)
+        bind_role(LIGHTAGENT_ROLE, second_endpoint_profile.id)
+        bind_role(OBSERVER_ROLE, second_endpoint_profile.id)
+        delete_profile(second_endpoint_profile.id)
 
         store = load_profiles()
         assert store.lightagent_profile_id is None
@@ -223,39 +201,36 @@ class TestUnbound:
 
 class TestWhereFragoCoreReadsIt:
     def test_both_fields_survive_a_save_under_the_names_frago_core_reads(
-        self, tmp_profiles_path, probed, endpoint_profile, workbuddy_profile
+        self, tmp_profiles_path, endpoint_profile, second_endpoint_profile
     ):
         """An undeclared key would be dropped by the next save the settings page makes."""
         add_profile(endpoint_profile)
-        add_profile(workbuddy_profile)
+        add_profile(second_endpoint_profile)
         bind_role(LIGHTAGENT_ROLE, endpoint_profile.id)
-        bind_role(OBSERVER_ROLE, workbuddy_profile.id)
+        bind_role(OBSERVER_ROLE, second_endpoint_profile.id)
         update_profile(endpoint_profile.id, {"name": "DeepSeek renamed"})
 
         raw = json.loads(tmp_profiles_path.read_text(encoding="utf-8"))
         assert raw["lightagent_profile_id"] == endpoint_profile.id
-        assert raw["observer_profile_id"] == workbuddy_profile.id
-        row = next(p for p in raw["profiles"] if p["id"] == workbuddy_profile.id)
-        assert row["endpoint_type"] == "workbuddy"
-        assert row["api_key"] == ""
+        assert raw["observer_profile_id"] == second_endpoint_profile.id
 
 
 class TestCoreAgent:
     """CoreAgent 是后加的第三个 frago-core 角色。加它不能让前两个角色的绑定有任何变化。"""
 
     def test_binding_it_leaves_the_other_two_where_they_were(
-        self, tmp_profiles_path, probed, endpoint_profile, workbuddy_profile
+        self, tmp_profiles_path, endpoint_profile, second_endpoint_profile
     ):
         add_profile(endpoint_profile)
-        add_profile(workbuddy_profile)
+        add_profile(second_endpoint_profile)
         bind_role(LIGHTAGENT_ROLE, endpoint_profile.id)
-        bind_role(OBSERVER_ROLE, workbuddy_profile.id)
-        bind_role(COREAGENT_ROLE, workbuddy_profile.id)
+        bind_role(OBSERVER_ROLE, second_endpoint_profile.id)
+        bind_role(COREAGENT_ROLE, second_endpoint_profile.id)
 
         raw = json.loads(tmp_profiles_path.read_text(encoding="utf-8"))
-        assert raw["coreagent_profile_id"] == workbuddy_profile.id
+        assert raw["coreagent_profile_id"] == second_endpoint_profile.id
         assert raw["lightagent_profile_id"] == endpoint_profile.id
-        assert raw["observer_profile_id"] == workbuddy_profile.id
+        assert raw["observer_profile_id"] == second_endpoint_profile.id
 
     def test_unbound_it_falls_back_like_the_light_agent(self, tmp_profiles_path, endpoint_profile):
         add_profile(endpoint_profile)
@@ -267,10 +242,10 @@ class TestCoreAgent:
         with pytest.raises(ValueError, match="frago-core cannot call"):
             bind_role(COREAGENT_ROLE, vendor_profile.id)
 
-    def test_deleting_the_bound_row_unbinds_it(self, tmp_profiles_path, probed, workbuddy_profile):
-        add_profile(workbuddy_profile)
-        bind_role(COREAGENT_ROLE, workbuddy_profile.id)
-        delete_profile(workbuddy_profile.id)
+    def test_deleting_the_bound_row_unbinds_it(self, tmp_profiles_path, second_endpoint_profile):
+        add_profile(second_endpoint_profile)
+        bind_role(COREAGENT_ROLE, second_endpoint_profile.id)
+        delete_profile(second_endpoint_profile.id)
         assert load_profiles().coreagent_profile_id is None
 
     def test_a_store_written_before_it_existed_still_loads(self, tmp_profiles_path):

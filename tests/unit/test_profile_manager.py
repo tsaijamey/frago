@@ -854,10 +854,11 @@ class TestProfileChannels:
 
         with pytest.raises(ValueError, match="Only an endpoint connection"):
             _validate_profile(
-                "WB",
-                "workbuddy",
+                "VC",
+                "vendor_cli",
                 None,
-                kind="workbuddy",
+                kind="vendor_cli",
+                agent_type="codebuddy",
                 models=("m",),
                 channels=[ProfileChannel(protocol="responses", url="https://x.example.com")],
             )

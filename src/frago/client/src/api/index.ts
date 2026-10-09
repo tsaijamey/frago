@@ -1164,10 +1164,6 @@ export type {
   ProfileListResponse,
   ConnectionKind,
   ConnectionRole,
-  WorkBuddyBalance,
-  WorkBuddyCatalogModel,
-  WorkBuddyModel,
-  WorkBuddyModelsResponse,
   ConnectionsResponse,
   RoleBinding,
   VendorCore,
@@ -1198,28 +1194,6 @@ export const getConnections = withMode(
     bindings: [],
     vendor_cores: [],
   }),
-);
-
-/* 桌面壳里没有这条服务：当作没登录、没探测过，表单就照实说「先登录 WorkBuddy」。 */
-export const getWorkbuddyModels = withMode(
-  (): Promise<httpApi.WorkBuddyModelsResponse> => httpApi.getWorkbuddyModels(),
-  (): Promise<httpApi.WorkBuddyModelsResponse> =>
-    Promise.resolve({
-      logged_in: false,
-      login_state: 'no_client',
-      probed_at: null,
-      stale: false,
-      stale_after_days: 0,
-      probing: false,
-      models: [],
-      catalog_new: [],
-    }),
-);
-
-export const probeWorkbuddyModels = withMode(
-  (): Promise<ApiResponse> => httpApi.probeWorkbuddyModels(),
-  (): Promise<ApiResponse> =>
-    Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
 );
 
 export const bindRole = withMode(

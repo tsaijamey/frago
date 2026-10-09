@@ -17,12 +17,6 @@ they are not variations of one another:
   WorkBuddy). Its credential is that CLI's login, not a key frago holds, so
   there is nothing to write into anyone else's config; what a profile of this
   kind carries is which core to run and which model to ask it for.
-- ``workbuddy`` — frago-core calling the WorkBuddy model gateway directly on the
-  WorkBuddy client's own login. No key is stored: the client rotates its token,
-  so a copy would go stale within days, and refreshing it from here would fight
-  the client over the same file. frago-core reads the login each call. What the
-  profile carries is the model, picked from what the last probe found usable.
-
 Two roles consume connections, and they consume them differently:
 
 - **main** — the agent the person talks to. Binding here means writing the
@@ -35,7 +29,7 @@ Two roles consume connections, and they consume them differently:
   ``worker_profile_id``.
 
 Two more roles are served by frago-core rather than by an agent CLI, and frago-core
-can only call a connection that carries its own key or borrows the WorkBuddy login:
+can only call a connection that carries its own key:
 
 - **lightagent** — the hook's review passes. Unbound, it keeps what it always
   used: the active profile, else the first saved one. ``lightagent_profile_id``.
@@ -66,13 +60,12 @@ PROFILES_PATH = Path.home() / ".frago" / "profiles.json"
 KIND_ENDPOINT = "endpoint"
 KIND_OFFICIAL = "official"
 KIND_VENDOR_CLI = "vendor_cli"
+# Retired 2026-10-09: the WorkBuddy client began writing its login file encrypted,
+# and the key never leaves the client's own native store, so frago can no longer
+# read the credential. The kind is kept only to recognise records and settings
+# written before that — nothing accepts it for new work.
 KIND_WORKBUDDY = "workbuddy"
 PROFILE_KINDS = (KIND_ENDPOINT, KIND_OFFICIAL, KIND_VENDOR_CLI, KIND_WORKBUDDY)
-
-# Written by `frago-core models probe-workbuddy`: which WorkBuddy models answer, and
-# on which wire. The catalog WorkBuddy hands out cannot stand in for it — measured,
-# 15 of its entries do not answer and 4 models that do are not on it.
-WORKBUDDY_MODELS_PATH = Path.home() / ".frago" / "workbuddy-models.json"
 
 # The plain subscription is a fixed id rather than a saved row: nothing about
 # it is editable, and a row could be deleted out from under a binding.
@@ -86,7 +79,7 @@ COREAGENT_ROLE = "coreagent"
 #: The roles whose connection an agent CLI runs on.
 CLI_ROLES = (MAIN_ROLE, WORKER_ROLE)
 #: The roles frago-core asks the model for. It can call a connection with its own
-#: key or one that borrows the WorkBuddy login, and nothing else.
+#: key, and nothing else.
 FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE, COREAGENT_ROLE)
 #: frago-core role → the profiles.json field frago-core reads it from.
 _FRAGO_CORE_FIELDS = {
@@ -95,7 +88,7 @@ _FRAGO_CORE_FIELDS = {
     COREAGENT_ROLE: "coreagent_profile_id",
 }
 ROLES = CLI_ROLES + FRAGO_CORE_ROLES
-_FRAGO_CORE_KINDS = (KIND_ENDPOINT, KIND_WORKBUDDY)
+_FRAGO_CORE_KINDS = (KIND_ENDPOINT,)
 
 
 class ProfileChannel(BaseModel):
@@ -229,87 +222,6 @@ def save_profiles(store: ProfileStore) -> None:
     # Set file permissions on Unix
     if platform.system() != "Windows":
         os.chmod(PROFILES_PATH, 0o600)
-
-
-def workbuddy_usable_models() -> list[str] | None:
-    """The WorkBuddy models that answered on the last probe; None if never probed."""
-    try:
-        data = json.loads(WORKBUDDY_MODELS_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    models = data.get("models") if isinstance(data, dict) else None
-    return [
-        m["id"]
-        for m in models or []
-        if isinstance(m, dict) and m.get("ok") and isinstance(m.get("id"), str)
-    ]
-
-
-#: 探过多久就该提醒重探。探一轮是四十多个模型的实调，天数定得比「常看常新」宽。
-WORKBUDDY_STALE_DAYS = 14
-
-
-def workbuddy_login() -> dict[str, str] | None:
-    """调 WorkBuddy 网关要用的那几项身份，读不到或不全就是 None。
-
-    每次现读，不缓存——令牌随时被客户端换掉。
-    """
-    try:
-        data = json.loads(workbuddy_login_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-
-    def field(section: str, key: str) -> str:
-        block = data.get(section)
-        value = block.get(key) if isinstance(block, dict) else None
-        return value.strip() if isinstance(value, str) else ""
-
-    uid, token = field("account", "uid"), field("auth", "accessToken")
-    if not uid or not token:
-        return None
-    login = {"uid": uid, "access_token": token}
-    for section, key, name in (
-        ("account", "enterpriseId", "enterprise_id"),
-        ("auth", "domain", "domain"),
-    ):
-        if value := field(section, key):
-            login[name] = value
-    return login
-
-
-def workbuddy_login_state() -> str:
-    """本机的 WorkBuddy 客户端此刻能不能鉴权过去。
-
-    ``ok`` / ``logged_out`` / ``no_client``。只看登录文件在不在是不够的：客户端退出
-    登录时文件留在原处，里面的令牌字段变空，界面照样显示「已登录」，等第一次真调用才
-    失败。frago-core 读这个文件时本来就分得清这两种，这里跟它对齐。
-    """
-    if not workbuddy_login_path().is_file():
-        return "no_client"
-    return "ok" if workbuddy_login() else "logged_out"
-
-
-def workbuddy_login_path() -> Path:
-    """Where the WorkBuddy client keeps its login. Mirrors frago-core's lookup."""
-    rel = ("CodeBuddyExtension", "Data", "Public", "auth", "workbuddy-desktop.info")
-    system = platform.system()
-    if system == "Darwin":
-        base = Path.home() / "Library" / "Application Support"
-    elif system == "Windows":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path.home() / ".local" / "share"
-    return base.joinpath(*rel)
-
-
-def _frago_core_only(name: str) -> str:
-    return (
-        f"'{name}' borrows the WorkBuddy client's login and is called by frago-core "
-        "directly, so there is no agent CLI configuration it could go into. Bind it "
-        "to CoreAgent, the light agent or the session observer."
-    )
 
 
 def official_connection() -> APIProfile:
@@ -525,25 +437,10 @@ def _validate_profile(
         return
 
     if kind == KIND_WORKBUDDY:
-        # The model can only come from what the last probe found usable. Half the
-        # names WorkBuddy hands out do not answer; typing one that was never probed
-        # puts off finding that out until the first time the connection is used.
-        if endpoint_type != KIND_WORKBUDDY:
-            raise ValueError("A WorkBuddy connection's endpoint type must be 'workbuddy'")
-        usable = workbuddy_usable_models()
-        if usable is None:
-            raise ValueError(
-                "No WorkBuddy models have been probed yet — run `frago-core models probe-workbuddy` first"
-            )
-        chosen = [m for m in models if m]
-        if not chosen:
-            raise ValueError("A WorkBuddy connection needs a model")
-        unusable = [m for m in chosen if m not in usable]
-        if unusable:
-            raise ValueError(
-                f"Not among the WorkBuddy models that answered on the last probe: {', '.join(unusable)}"
-            )
-        return
+        raise ValueError(
+            "WorkBuddy 借登录这条连接已下线：客户端升级后把登录文件加密了，钥匙留在客户端自己手里，"
+            "frago 读不到凭据。请改用带自己 API key 的连接。"
+        )
 
     if endpoint_type != "custom" and endpoint_type not in PRESET_ENDPOINTS:
         known_types = ", ".join([*PRESET_ENDPOINTS, "custom"])
@@ -723,7 +620,9 @@ def activate_profile(
             "worker role, or started directly as your own agent."
         )
     if profile.kind == KIND_WORKBUDDY:
-        raise ValueError(_frago_core_only(profile.name))
+        raise ValueError(
+            "WorkBuddy 借登录这条连接已下线，不能写进任何 CLI 的配置。"
+        )
 
     # Each CLI speaks one protocol; a profile without a channel on it would be
     # written in as a provider with no address. Refused before anything is written.
@@ -903,7 +802,9 @@ def bind_role(
     if connection is None:
         raise ValueError(f"Profile not found: {profile_id}")
     if connection.kind == KIND_WORKBUDDY:
-        raise ValueError(_frago_core_only(connection.name))
+        raise ValueError(
+            "WorkBuddy 借登录这条连接已下线：客户端升级后把登录文件加密了，frago 读不到凭据。"
+        )
 
     if role == MAIN_ROLE:
         if connection.kind == KIND_VENDOR_CLI:
@@ -934,11 +835,14 @@ def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
     connection = get_profile(profile_id)
     if connection is None:
         raise ValueError(f"Profile not found: {profile_id}")
+    if connection.kind == KIND_WORKBUDDY:
+        raise ValueError(
+            "WorkBuddy 借登录这条连接已下线，frago-core 读不到它的凭据。"
+        )
     if connection.kind not in _FRAGO_CORE_KINDS:
         raise ValueError(
             f"'{connection.name}' runs on its own CLI's login, which frago-core cannot call. "
-            "The light agent, the session observer and CoreAgent take a connection with its own key, "
-            "or one that borrows the WorkBuddy login."
+            "The light agent, the session observer and CoreAgent take a connection with its own key."
         )
     setattr(store, field, connection.id)
     save_profiles(store)

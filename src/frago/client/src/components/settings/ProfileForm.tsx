@@ -1,4 +1,4 @@
-import { Coins, Eye, EyeOff, Loader2, Radar } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { agentReasonText } from '@/hooks/useAgentClients';
 import type { ProfilesController } from './useProfiles';
 
@@ -7,9 +7,6 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     t,
     presets,
     vendorCores,
-    workbuddy,
-    probingWorkbuddy,
-    startWorkbuddyProbe,
     viewMode,
     formName,
     setFormName,
@@ -52,19 +49,11 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   const isVendorCli = formKind === 'vendor_cli';
   const core = vendorCores.find((c) => c.agent_type === formAgentType);
 
-  // Borrowing the WorkBuddy login: no endpoint and no key again, but here it is
-  // frago-core that calls the gateway, so the model can only be one the last
-  // probe found answering. Half the names WorkBuddy hands out do not answer.
+  // Borrowing the WorkBuddy login was retired 2026-10-09: the client began
+  // encrypting its login file and kept the key to itself, so frago has nothing
+  // to read. Rows written before then still open here, and the form says why
+  // they can no longer be used rather than offering a model to pick.
   const isWorkbuddy = formKind === 'workbuddy';
-  // The backend hands these back cheapest-first, so the order here is the order
-  // to show. What a call costs is the thing to pick on; how fast the first token
-  // arrives is still measured, it just no longer leads.
-  const usableModels = (workbuddy?.models ?? []).filter((m) => m.ok);
-  // On the client's menu but never probed. Whether they answer through the
-  // gateway is unknown until a round runs, which is why they are named rather
-  // than offered.
-  const unprobedModels = workbuddy?.catalog_new ?? [];
-  const balance = workbuddy?.balance;
 
   return (
     <div className="space-y-3">
@@ -102,11 +91,6 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             if (kind === 'vendor_cli' && !formAgentType && vendorCores.length > 0) {
               setFormAgentType(vendorCores[0].agent_type);
             }
-            // Same for a WorkBuddy model: anything the probe did not find
-            // answering is refused on save.
-            if (kind === 'workbuddy' && !usableModels.some((m) => m.id === formDefaultModel)) {
-              setFormDefaultModel(usableModels[0]?.id ?? '');
-            }
           }}
           className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
         >
@@ -114,7 +98,11 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
           {vendorCores.length > 0 && (
             <option value="vendor_cli">{t('settings.profiles.kindVendorCli')}</option>
           )}
-          <option value="workbuddy">{t('settings.profiles.kindWorkbuddy')}</option>
+          {/* 借 WorkBuddy 登录这条路 2026-10-09 下线。条目留着而不是摘掉，是让老记录
+              还有一处读得出它为什么不能用了。 */}
+          <option value="workbuddy" disabled>
+            {t('settings.profiles.kindWorkbuddyRetired')}
+          </option>
         </select>
         {isVendorCli && (
           <p className="text-xs text-[var(--text-muted)] mt-1">
@@ -122,148 +110,17 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
           </p>
         )}
         {isWorkbuddy && (
-          <>
-            <p className="text-xs text-[var(--text-muted)] mt-1">
-              {t('settings.profiles.workbuddyHint')}
-            </p>
-            {/* 选了这种连接就会花到积分。花在哪、花多少，不该等点下按钮才知道，更不该
-                跟普通说明混成同一级灰字——那等于没说。 */}
-            <div className="flex gap-2 mt-2 px-3 py-2 rounded-md bg-[var(--accent-warning-10)] border border-[var(--accent-warning)]">
-              <Coins size={16} className="shrink-0 mt-0.5 text-[var(--accent-warning)]" />
-              <p className="text-xs leading-relaxed text-[var(--text-primary)]">
-                {t('settings.profiles.workbuddyProbeNotice')}
-              </p>
-            </div>
-          </>
+          <p className="text-xs text-[var(--accent-error)] mt-1">
+            {t('settings.profiles.workbuddyRetired')}
+          </p>
         )}
       </div>
 
-      {isWorkbuddy ? (
-        <>
-          {/* A client that quit its session leaves its login file behind, so
-              "logged out" has to read differently from "never installed" —
-              they are different things for the person to go and do. */}
-          {workbuddy && workbuddy.login_state !== 'ok' && (
-            <p className="text-xs text-[var(--accent-error)]">
-              {workbuddy.login_state === 'logged_out'
-                ? t('settings.profiles.workbuddyLoggedOut')
-                : t('settings.profiles.workbuddyNotLoggedIn')}
-            </p>
-          )}
-          {usableModels.length === 0 && unprobedModels.length === 0 ? (
-            <p className="text-xs text-[var(--text-muted)]">
-              {t('settings.profiles.workbuddyNotProbed')}
-            </p>
-          ) : (
-            <div>
-              <label htmlFor="profile-workbuddy-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                {t('settings.profiles.workbuddyModel')}
-              </label>
-              {/* 客户端菜单上的模型全部列在这里，分两组。还没探过的也进下拉，置灰不可
-                  选、名字后面写明「要先探测」——把它们留在下拉外面的一行说明里，人在
-                  下拉里找不到那个名字，也看不出下一步该点什么。 */}
-              <select
-                id="profile-workbuddy-model"
-                value={formDefaultModel}
-                onChange={(e) => setFormDefaultModel(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
-              >
-                {usableModels.length > 0 && (
-                  <optgroup label={t('settings.profiles.workbuddyGroupUsable')}>
-                    {usableModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.id}
-                        {m.credits ? ` · ${m.credits}` : ''}
-                        {m.thinks ? ` · ${t('settings.profiles.thinks')}` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {unprobedModels.length > 0 && (
-                  <optgroup
-                    label={t('settings.profiles.workbuddyGroupUnprobed', {
-                      count: unprobedModels.length,
-                    })}
-                  >
-                    {unprobedModels.map((m) => (
-                      <option key={m.id} value={m.id} disabled>
-                        {m.id}
-                        {m.credits ? ` · ${m.credits}` : ''}
-                        {` — ${t('settings.profiles.workbuddyNeedsProbe')}`}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-          )}
-
-          {/* What is left to spend. A total on its own would mislead: the lots
-              are burnt earliest-expiry-first, so the nearest date matters as
-              much as the number. */}
-          {balance && (
-            <p className="text-xs text-[var(--text-secondary)]">
-              {t('settings.profiles.workbuddyBalance', { credits: balance.remaining })}
-              {balance.expires_at && (
-                <span className="ml-2 text-[var(--text-muted)]">
-                  {t('settings.profiles.workbuddyBalanceExpiring', {
-                    credits: balance.expiring,
-                    date: balance.expires_at,
-                  })}
-                </span>
-              )}
-            </p>
-          )}
-
-          {/* Nothing refreshes the list on its own, so the page has to say how
-              old it is and what the client has added since. */}
-          <div className="rounded-md bg-[var(--bg-subtle)] px-3 py-2 space-y-1.5">
-            {workbuddy?.probed_at && (
-              <p className="text-xs text-[var(--text-muted)]">
-                {t('settings.profiles.workbuddyProbedAtPlain', {
-                  time: workbuddy.probed_at.slice(0, 16).replace('T', ' '),
-                })}
-                {workbuddy.stale && (
-                  <span className="ml-2 text-[var(--accent-warning)]">
-                    {t('settings.profiles.workbuddyStale', { days: workbuddy.stale_after_days })}
-                  </span>
-                )}
-              </p>
-            )}
-            {/* 名字已经在下拉里置灰列着了，这里不再重复念一遍，只说清还差几个、
-                以及点下面那个按钮就能把它们变成可选。 */}
-            {unprobedModels.length > 0 && (
-              <p className="text-xs text-[var(--text-muted)]">
-                {t('settings.profiles.workbuddyUnprobed', { count: unprobedModels.length })}
-              </p>
-            )}
-            {/* 这个按钮一按就花积分，跟「保存」「取消」不是一类动作，长得也不该一样：
-                带上警示色的描边和一枚图标，把代价写在按钮自己身上，而不是旁边一行灰字。 */}
-            <div className="flex items-center gap-2 pt-0.5">
-              <button
-                type="button"
-                onClick={startWorkbuddyProbe}
-                disabled={probingWorkbuddy || workbuddy?.login_state !== 'ok'}
-                className="btn btn-sm inline-flex items-center gap-1.5 border border-[var(--accent-warning)] bg-[var(--accent-warning-10)] text-[var(--text-primary)] hover:bg-[var(--accent-warning)] hover:text-[var(--bg-base)] disabled:opacity-50"
-              >
-                {probingWorkbuddy ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Radar size={14} />
-                )}
-                {probingWorkbuddy
-                  ? t('settings.profiles.workbuddyProbing')
-                  : t('settings.profiles.workbuddyProbeNow', {
-                      count: unprobedModels.length,
-                    })}
-              </button>
-              <span className="text-xs text-[var(--text-muted)]">
-                {t('settings.profiles.workbuddyProbeCost')}
-              </span>
-            </div>
-          </div>
-        </>
-      ) : isVendorCli ? (
+      {/* A record saved before 2026-10-09 that borrowed the WorkBuddy login has
+          nothing left to fill in — the notice under the kind picker says why.
+          Showing the endpoint fields would invite someone to fill them in and
+          hand the save button a connection that reaches nowhere. */}
+      {isWorkbuddy ? null : isVendorCli ? (
         <>
           {/* Which core, and which of the models its own service offers. */}
           <div>
@@ -492,7 +349,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         <button
           type="button"
           onClick={handleFormSubmit}
-          disabled={formSubmitting || !formName.trim()}
+          disabled={formSubmitting || !formName.trim() || isWorkbuddy}
           className="btn btn-primary btn-sm disabled:opacity-50"
         >
           {formSubmitting

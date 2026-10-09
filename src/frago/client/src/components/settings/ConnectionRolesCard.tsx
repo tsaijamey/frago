@@ -6,11 +6,10 @@
  * each agent CLI's own configuration, while binding the worker is read at
  * launch and written nowhere. The light agent (the hook's review passes) and
  * the session observer (the session page's side panel) are served by
- * frago-core, which can only call a connection that carries its own key or
- * borrows the WorkBuddy login. Showing them side by side is what makes "my
- * agent stays on my subscription, my workers run somewhere else, the observer
- * runs on WorkBuddy" a thing you can see rather than a thing you have to
- * remember.
+ * frago-core, which can only call a connection that carries its own key.
+ * Showing them side by side is what makes "my agent stays on my subscription,
+ * my workers run somewhere else, the observer runs somewhere else again" a
+ * thing you can see rather than a thing you have to remember.
  *
  * The subscription is the first option on the two agent-CLI rows and is never
  * absent there — it is the state everything starts in and falls back to. The
@@ -116,13 +115,14 @@ export default function ConnectionRolesCard({
    * disabled with the reason — an option that is simply gone reads as a bug.
    */
   const blockedReason = (role: ConnectionRole, connection: ProfileItem): string | null => {
+    // Retired 2026-10-09: the WorkBuddy client encrypted its login file and kept
+    // the key, so no role can be pointed at this connection any more.
+    if (connection.kind === 'workbuddy') return t('settings.connections.workbuddyRetired');
     if (FRAGO_CORE_ROLES.has(role)) {
-      // frago-core can call a key or the borrowed WorkBuddy login, and nothing
-      // else; a vendor CLI's credential is that CLI's own login.
+      // frago-core can call a connection with its own key, and nothing else;
+      // a vendor CLI's credential is that CLI's own login.
       return connection.kind === 'vendor_cli' ? t('settings.connections.notForFragoCore') : null;
     }
-    // A borrowed WorkBuddy login has no agent CLI configuration to go into.
-    if (connection.kind === 'workbuddy') return t('settings.connections.fragoCoreOnly');
     // A vendor CLI cannot serve the main role: frago holds no key to write into
     // another CLI's config for it.
     if (role === 'main' && connection.kind === 'vendor_cli') {
@@ -146,7 +146,7 @@ export default function ConnectionRolesCard({
         binding.role === 'coreagent'
           ? connection.default_model || null
           : connection.haiku_model || connection.default_model || null;
-      const how = connection.kind === 'workbuddy' ? t('settings.connections.borrowedLogin') : null;
+      const how = connection.kind === 'workbuddy' ? t('settings.connections.workbuddyRetired') : null;
       const tail = [model, how].filter(Boolean).join(' · ');
       if (binding.profile_id === null) {
         const head = t('settings.connections.followingDefault', { name: connection.name });

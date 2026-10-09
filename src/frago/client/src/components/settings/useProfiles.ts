@@ -5,8 +5,6 @@ import {
   getEndpointPresets,
   getActivationTargets,
   getConnections,
-  getWorkbuddyModels,
-  probeWorkbuddyModels,
   createProfile,
   updateProfile,
   deleteProfile,
@@ -20,7 +18,6 @@ import type {
   EndpointPreset,
   ProfileItem,
   VendorCore,
-  WorkBuddyModelsResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
 } from '@/api';
@@ -69,15 +66,6 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   // asks for a core and a model instead of an endpoint and a key.
   const [vendorCores, setVendorCores] = useState<VendorCore[]>([]);
 
-  // What a WorkBuddy connection can be pointed at: the models the last probe
-  // found answering, and whether the WorkBuddy client is logged in here.
-  const [workbuddy, setWorkbuddy] = useState<WorkBuddyModelsResponse | null>(null);
-
-  // A probe asks every model on the gateway a real question and takes minutes,
-  // so starting one returns immediately and this watches the server's own view
-  // of it. A round started elsewhere is picked up the same way.
-  const [probingWorkbuddy, setProbingWorkbuddy] = useState(false);
-
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
@@ -116,7 +104,6 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       loadPresets();
       loadTargets();
       loadVendorCores();
-      loadWorkbuddyModels();
       setViewMode('list');
       setPickingTargetsFor(null);
     }
@@ -178,54 +165,6 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       setVendorCores([]);
     }
   };
-
-  const loadWorkbuddyModels = async (): Promise<WorkBuddyModelsResponse | null> => {
-    try {
-      const data = await getWorkbuddyModels();
-      setWorkbuddy(data);
-      if (data.probing) setProbingWorkbuddy(true);
-      return data;
-    } catch {
-      // Without the list the form says nothing has been probed, which is true
-      // as far as it can tell.
-      setWorkbuddy(null);
-      return null;
-    }
-  };
-
-  /** Start a probe now. The button is the only thing that spends model budget here. */
-  const startWorkbuddyProbe = async () => {
-    try {
-      const result = await probeWorkbuddyModels();
-      if (result.status !== 'ok') {
-        showToast(result.error || t('settings.profiles.workbuddyProbeFailed'), 'error');
-        return;
-      }
-      setProbingWorkbuddy(true);
-      showToast(t('settings.profiles.workbuddyProbeStarted'), 'success');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : t('settings.profiles.workbuddyProbeFailed'), 'error');
-    }
-  };
-
-  // While a round is running, keep asking. It writes the list only when it ends,
-  // so there is nothing to show in between — what this buys is that the dropdown
-  // fills itself the moment the round is over, without anyone reopening the page.
-  useEffect(() => {
-    if (!probingWorkbuddy) return;
-    const timer = setInterval(async () => {
-      const data = await loadWorkbuddyModels();
-      if (!data || data.probing) return;
-      setProbingWorkbuddy(false);
-      if (data.probe_error) {
-        showToast(data.probe_error, 'error');
-      } else {
-        showToast(t('settings.profiles.workbuddyProbeDone'), 'success');
-      }
-    }, 5000);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [probingWorkbuddy]);
 
   const loadPresets = async () => {
     try {
@@ -297,8 +236,11 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
    */
   const formFields = () => {
     if (formKind === 'workbuddy') {
-      // No endpoint and no key — the login is the WorkBuddy client's own — and a
-      // single model, which frago-core asks for whichever role it is bound to.
+      // Retired 2026-10-09. The kind cannot be picked in the form any more, so
+      // this branch is only reached by an old record opened for editing — it
+      // still describes that record faithfully, and the backend refuses the
+      // save with the reason. Turning it into an endpoint shape here would save
+      // a connection that reaches somewhere nobody asked for.
       return {
         name: formName.trim(),
         kind: 'workbuddy' as ConnectionKind,
@@ -552,9 +494,6 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     pickedTargets,
     presets,
     vendorCores,
-    workbuddy,
-    probingWorkbuddy,
-    startWorkbuddyProbe,
     loading,
     viewMode,
     setViewMode,

@@ -656,8 +656,9 @@ export interface EndpointPresetListResponse {
  *   has no key to hand it, so what the connection carries is which core to
  *   run and which model to ask it for.
  */
-// workbuddy: frago-core calling the WorkBuddy gateway on the WorkBuddy client's own
-// login. No key is stored; it can serve the light agent and the observer only.
+// workbuddy: retired 2026-10-09 — the client encrypted its login file and kept the
+// key to itself, so frago can no longer read the credential. Kept in the union so
+// rows saved before then still typecheck, and can be shown as unusable.
 export type ConnectionKind = 'endpoint' | 'official' | 'vendor_cli' | 'workbuddy';
 
 export interface ProfileItem {
@@ -708,8 +709,7 @@ export interface ProfileListResponse {
  * The roles that consume a connection. `main` and `worker` run on an agent CLI;
  * `lightagent` (the hook's review passes) and `observer` (the session page's side
  * panel) are served by frago-core, which can only call a connection that carries
- * its own key or borrows the WorkBuddy login. So is `coreagent`, frago-core's own
- * agent loop.
+ * its own key. So is `coreagent`, frago-core's own agent loop.
  */
 export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer' | 'coreagent';
 
@@ -748,67 +748,6 @@ export interface ConnectionsResponse {
   connections: ProfileItem[];
   bindings: RoleBinding[];
   vendor_cores: VendorCore[];
-}
-
-/** One WorkBuddy model as the last probe found it. */
-export interface WorkBuddyModel {
-  id: string;
-  name: string;
-  /** What a call costs, as the client writes it: "x0.79". */
-  credits?: string | null;
-  ok: boolean;
-  /** Which of the gateway's two doors this model answers at. */
-  wire?: 'openai' | 'anthropic' | null;
-  /**
-   * Still measured and recorded — it decides whether a model is usable at all
-   * and which door it answers at. No longer what the page leads with.
-   */
-  first_ms?: number | null;
-  /** Thinks before it answers: slower, and it spends the budget doing so. */
-  thinks: boolean;
-  error?: string | null;
-}
-
-/** A model on the client's menu that the last probe never tried. */
-export interface WorkBuddyCatalogModel {
-  id: string;
-  name: string;
-  credits?: string | null;
-}
-
-/**
- * Credits left this cycle, and the first lot to expire. A total on its own would
- * mislead: lots are burnt earliest-expiry-first, so credits saved past their
- * month are written off whole.
- */
-export interface WorkBuddyBalance {
-  remaining: number;
-  expires_at?: string | null;
-  expiring?: number | null;
-}
-
-/** What a WorkBuddy connection can be pointed at. */
-export interface WorkBuddyModelsResponse {
-  /** Whether the WorkBuddy client can authenticate right now. */
-  logged_in: boolean;
-  /**
-   * A client that quit its session leaves the login file behind with an empty
-   * token, so "logged out" and "never installed" are different things to do
-   * something about.
-   */
-  login_state: 'ok' | 'logged_out' | 'no_client';
-  probed_at: string | null;
-  /** Not re-probed in `stale_after_days`. Nothing refreshes it on its own. */
-  stale: boolean;
-  stale_after_days: number;
-  /** A probe is running right now. */
-  probing: boolean;
-  probe_error?: string | null;
-  /** Cheapest first. Only models the client itself offers for chat. */
-  models: WorkBuddyModel[];
-  /** On the client's menu but never probed — added since the last round. */
-  catalog_new: WorkBuddyCatalogModel[];
-  balance?: WorkBuddyBalance | null;
 }
 
 /**

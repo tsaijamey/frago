@@ -227,7 +227,9 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                 {isBorrowed && (
                   <>
                     <span>·</span>
-                    <span>{t('settings.profiles.workbuddyLogin')}</span>
+                    <span className="text-[var(--accent-error)]">
+                      {t('settings.profiles.workbuddyRetiredTag')}
+                    </span>
                   </>
                 )}
               </div>
