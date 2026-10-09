@@ -210,6 +210,23 @@ class AgentDriver:
     profile_unsupported_reason: str | None = None
 
 
+def runs_on_kernel(agent_type: str) -> bool:
+    """这一家跑在 frago 自己的内核里吗（而不是挂在 tmux 里）。
+
+    **注册表里那几家都是"挂在 tmux 里的交互程序"**（:data:`_REGISTRY` 那份契约从
+    ``launch_command`` 到 ``read_answer`` 全是 pane 语义）。CoreAgent 是"交一件事、跑完
+    就退"的进程，没有可挂的 TUI，因此**不进注册表**；它在 ``frago agent`` 里走一条并列
+    的后端（见 :mod:`frago.agent_driver.kernel_backend`）。
+
+    判据只有这一处——主路径 NEVER 写 ``if agent == "coreagent"``。名字取自
+    :class:`frago.session.models.AgentType`（``agent_core`` 合法取值的那一份），
+    NEVER 在这里另拼一个字符串。
+    """
+    from frago.session.models import AgentType
+
+    return agent_type == AgentType.COREAGENT.value
+
+
 _REGISTRY: dict[str, AgentDriver] = {}
 
 

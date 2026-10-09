@@ -19,7 +19,9 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import signal
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +34,9 @@ from frago.agent_driver.tmux_session import (
     TmuxRunner,
     _default_runner,
 )
+
+#: 收内核 worker 时，SIGTERM 之后等它自己收场的时间（见 :func:`_stop_kernel_worker`）。
+_STOP_TERM_GRACE_S = 5.0
 
 # ── 注入点：测试以 fake runner / tmp drive dir 替换真实 tmux 调用 ──────────────
 
@@ -56,7 +61,10 @@ def _drive_dir() -> Path:
 class DriveEntry:
     name: str
     agent_type: str
-    tmux_name: str
+    #: 这一场挂在哪个 tmux 会话里。**None = 不是 tmux 会话**——内核（CoreAgent）是"交一件
+    #: 事、跑完就退"的进程，没有可挂的 TUI，它的"会话"就是 :attr:`pid` 那个进程。判活的
+    #: 两条路见 :func:`_is_alive`。
+    tmux_name: str | None
     pid: int
     cwd: str
 
@@ -90,7 +98,7 @@ def _read_entry(name: str) -> DriveEntry | None:
         return DriveEntry(
             name=data["name"],
             agent_type=data["agent_type"],
-            tmux_name=data["tmux_name"],
+            tmux_name=data.get("tmux_name"),
             pid=int(data["pid"]),
             cwd=data["cwd"],
         )
@@ -99,14 +107,24 @@ def _read_entry(name: str) -> DriveEntry | None:
 
 
 def register_transient_worker(
-    *, name: str, agent_type: str, tmux_name: str, cwd: str
+    *,
+    name: str,
+    agent_type: str,
+    tmux_name: str | None,
+    cwd: str,
+    pid: int | None = None,
 ) -> None:
     """把一次性 worker 也登记进 sidecar 名册，让 ``ls`` 看得见、``stop`` 收得走。
 
     一次性那条路（``frago agent --prompt-file``）起完会话投一轮、跑完即关，本来不需要
-    名册；但外壳进程被外部杀掉（SIGKILL / harness 前台超时）时，它的 tmux 会话会留下来
-    继续跑，而名册里没登记就既列不出、也停不掉——只能去 ``tmux ls`` 里翻会话名。记一笔的
-    代价极小，漏记的代价是一次跑飞的 worker。记账失败不影响会话本身，故吞掉异常。
+    名册；但外壳进程被外部杀掉（SIGKILL / harness 前台超时）时，它起的会话会留下来继续
+    跑，而名册里没登记就既列不出、也停不掉——tmux 那种只能去 ``tmux ls`` 里翻会话名。
+
+    ``tmux_name=None`` 是内核 worker（见 :class:`DriveEntry`）：它没有 tmux 会话，能收的
+    就是进程号，所以调用方 MUST 把 ``pid`` 传成**内核那个进程**的号（不是外壳自己的）。
+    留空则退回落外壳进程号——tmux 那条路一直这么记，因为 tmux 会话本就活得比外壳久。
+
+    记账失败不影响会话本身，故吞掉异常。
     """
     with contextlib.suppress(Exception):
         _write_entry(
@@ -114,7 +132,7 @@ def register_transient_worker(
                 name=name,
                 agent_type=agent_type,
                 tmux_name=tmux_name,
-                pid=os.getpid(),
+                pid=os.getpid() if pid is None else pid,
                 cwd=cwd,
             )
         )
@@ -138,10 +156,35 @@ def _all_entries() -> list[DriveEntry]:
 # ── tmux 辅助 ──────────────────────────────────────────────────────────────
 
 
-def _is_alive(tmux_name: str, runner: TmuxRunner | None) -> bool:
-    run = runner or _default_runner
+def _pid_alive(pid: int) -> bool:
+    """这个进程号还活着吗。
+
+    ``os.kill(pid, 0)`` 不发信号，只做存在性与权限检查：进程在就返回，不在抛
+    ``ProcessLookupError``。进程号被复用时可能误判为活——概率极低，且这个号是我们自己
+    刚记下的，够用。
+    """
+    if pid <= 0:
+        return False
     try:
-        run(["tmux", "has-session", "-t", tmux_name])
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # 存在但不属于我们（不该发生），当作还活着
+    return True
+
+
+def _is_alive(entry: DriveEntry, runner: TmuxRunner | None) -> bool:
+    """这场还活着吗。**tmux 型问 tmux，内核型问进程号。**
+
+    判据必须分两种形状：内核 worker 没有 tmux 会话名可问（``tmux has-session -t None``
+    会当成一个叫 "None" 的会话，答"不在"，于是一场正在跑的内核 worker 被报成 dead）。
+    """
+    run = runner or _default_runner
+    if entry.tmux_name is None:
+        return _pid_alive(entry.pid)
+    try:
+        run(["tmux", "has-session", "-t", entry.tmux_name])
         return True
     except Exception:
         return False
@@ -170,7 +213,7 @@ def _echo_active_sessions() -> None:
         return
     click.echo("  Active drive sessions:", err=True)
     for entry in entries:
-        alive = "alive" if _is_alive(entry.tmux_name, runner) else "dead"
+        alive = "alive" if _is_alive(entry, runner) else "dead"
         click.echo(
             f"    {entry.name}\t{entry.agent_type}\tpid={entry.pid}\t{alive}",
             err=True,
@@ -185,6 +228,40 @@ def _resolve_or_die(name: str) -> DriveEntry:
         _echo_active_sessions()
         sys.exit(1)
     return entry
+
+
+def _refuse_no_tmux(verb: str, entry: DriveEntry) -> None:
+    """内核 worker 没有 tmux 会话：``send`` / ``peek`` 对它无从下手，说清而不是抛 KeyError。
+
+    内核 worker 是"交一件事、跑完就退"的进程（见 :mod:`frago.agent_driver.kernel_backend`）
+    ——没有输入框可 send-keys、没有屏可 capture，会话本身也续不上（跑完那一轮它就没了）。
+    照原样再起一轮才是"接着说"的写法。收走它走 :func:`drive_stop`（那里按进程号收）。
+    """
+    click.echo(
+        f"Error: {entry.name!r} 是内核 worker（CoreAgent），没有 tmux 会话——`{verb}` 对它"
+        f"无从下手。它会跑完那一轮自己退出；要收走它用 `frago agent stop {entry.name}`。",
+        err=True,
+    )
+    sys.exit(1)
+
+
+def _stop_kernel_worker(entry: DriveEntry) -> None:
+    """收掉一个内核 worker：它没有 tmux 会话可 kill，能收的就是那个进程号。
+
+    先 SIGTERM 后 SIGKILL，与内核后端收自己那一步同一条理由（SIGKILL 之下内核来不及把
+    它拉起的命令连进程组一起收掉，那些命令会被 init 收养、接着跑）。
+    """
+    if not _pid_alive(entry.pid):
+        return
+    with contextlib.suppress(Exception):
+        os.kill(entry.pid, signal.SIGTERM)
+    deadline = time.monotonic() + _STOP_TERM_GRACE_S
+    while time.monotonic() < deadline:
+        if not _pid_alive(entry.pid):
+            return
+        time.sleep(0.2)
+    with contextlib.suppress(Exception):
+        os.kill(entry.pid, signal.SIGKILL)
 
 
 # ── 子命令（挂到 frago agent 下，见 agent_command.AGENT_SUBCOMMANDS）─────────
@@ -321,7 +398,10 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
     entry = _resolve_or_die(name)
     runner = make_runner()
 
-    if not _is_alive(entry.tmux_name, runner):
+    if entry.tmux_name is None:
+        _refuse_no_tmux("send", entry)
+
+    if not _is_alive(entry, runner):
         click.echo(f"Error: drive session {name!r} is no longer alive.", err=True)
         _echo_active_sessions()
         sys.exit(1)
@@ -366,6 +446,8 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
 def drive_peek(name: str) -> None:
     """Capture and print the session's current pane."""
     entry = _resolve_or_die(name)
+    if entry.tmux_name is None:
+        _refuse_no_tmux("peek", entry)
     runner = make_runner()
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)
@@ -382,7 +464,7 @@ def drive_ls() -> None:
         return
     click.echo("NAME\tAGENT_TYPE\tPID\tALIVE")
     for entry in entries:
-        alive = "alive" if _is_alive(entry.tmux_name, runner) else "dead"
+        alive = "alive" if _is_alive(entry, runner) else "dead"
         click.echo(f"{entry.name}\t{entry.agent_type}\t{entry.pid}\t{alive}")
 
 
@@ -391,6 +473,12 @@ def drive_ls() -> None:
 def drive_stop(name: str) -> None:
     """Kill a session and remove its sidecar entry."""
     entry = _resolve_or_die(name)
+    if entry.tmux_name is None:
+        # 内核 worker：没有 tmux 会话可 kill，按进程号收（见 _stop_kernel_worker）。
+        _stop_kernel_worker(entry)
+        _sidecar_path(name).unlink(missing_ok=True)
+        click.echo(f"Stopped {name!r}.")
+        return
     runner = make_runner()
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)

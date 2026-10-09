@@ -75,16 +75,11 @@ def find_claude_cli() -> str | None:
     return find_agent_cli("claude")
 
 
-def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
-    """把一个 profile 名（或 id）交给目标 agent 的 driver 翻成会话环境变量。
+def _find_profile(profile_name: str):
+    """按名字或 id 找一条 profile；找不到打可读错误并非零退出。
 
-    翻译规则住在 driver 里（claude 产出 ``ANTHROPIC_*``，opencode 产出
-    ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。
-
-    driver 没有实现 ``profile_env`` 时返回空字典——本轮照跑，NEVER 因此报错，**但会
-    在 stderr 上说明这一句话没生效**。人明确要求跑在某个模型上、结果跑在另一个模型上，
-    这件事必须当场看得见——静默吞掉会让他拿着一份不知道出自哪个模型的结果。profile
-    缺这一家要的协议通道时（codex 只认 Responses），driver 抛 ValueError，这里停下。
+    ``--use-profile`` 两者都收（名精确、id 也精确），这里只做这一件事——翻译到各家
+    由 driver 负责，翻译到内核由 :func:`_resolve_profile_id` 负责。
     """
     from frago.init.profile_manager import load_profiles
 
@@ -100,7 +95,31 @@ def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
             err=True,
         )
         sys.exit(1)
+    return profile
 
+
+def _resolve_profile_id(profile_name: str) -> str:
+    """把一个 profile 名（或 id）翻成内核要的连接 id。
+
+    内核按 **id** 取连接（``frago-core --as-profile <id>``），与 ``--use-profile``
+    收的名字不是一回事：配方里写的是 ``火山-GLM5.3`` 这样的现名，内核只认 ``profiles.json``
+    里的 ``id``。名字到 id 的翻译只有这一处。
+    """
+    return _find_profile(profile_name).id
+
+
+def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
+    """把一个 profile 名（或 id）交给目标 agent 的 driver 翻成会话环境变量。
+
+    翻译规则住在 driver 里（claude 产出 ``ANTHROPIC_*``，opencode 产出
+    ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。
+
+    driver 没有实现 ``profile_env`` 时返回空字典——本轮照跑，NEVER 因此报错，**但会
+    在 stderr 上说明这一句话没生效**。人明确要求跑在某个模型上、结果跑在另一个模型上，
+    这件事必须当场看得见——静默吞掉会让他拿着一份不知道出自哪个模型的结果。profile
+    缺这一家要的协议通道时（codex 只认 Responses），driver 抛 ValueError，这里停下。
+    """
+    profile = _find_profile(profile_name)
     return _profile_env_via_driver(profile, agent_type, label=f"--use-profile {profile_name!r}")
 
 
@@ -113,8 +132,14 @@ def _profile_env_via_driver(profile, agent_type: str, *, label: str) -> dict[str
     """
     from frago.agent_driver.driver import load_driver
 
-    driver = load_driver(agent_type)
-    if driver.profile_env is None:
+    try:
+        driver = load_driver(agent_type)
+    except KeyError:
+        # 这个 agent_type 没有 driver（内核就是这一类：它不挂 tmux，注册表里没有它）。
+        # 与"driver 没实现 profile_env"同一条下坡路——说清这一句没生效，别抛 KeyError
+        # 顶穿成一个契约外的 traceback。
+        driver = None
+    if driver is None or driver.profile_env is None:
         click.echo(
             f"[!] {agent_type} 不支持 frago profile：{label} 这一轮不生效，"
             f"会话跑在 {agent_type} 自己配置的模型上。",
@@ -154,7 +179,7 @@ def _emit_and_exit(
     status: str,
     text: str,
     session_id: str,
-    tmux_name: str,
+    tmux_name: str | None,
     duration_ms: int,
     human_note: str | None,
     json_out: bool,
@@ -163,6 +188,9 @@ def _emit_and_exit(
 
     ``--json`` 时 stdout 只有那一个 JSON 对象，人类文案（含答案之外的一切提示）
     一律走 stderr，调用方直接 ``json.loads(stdout)`` 即可，无需解析人类文案。
+
+    ``tmux_name`` 为 None 表示这一轮不在 tmux 里（内核后端没有 tmux 会话），payload 里
+    照实写 ``null``——NEVER 编一个会话名出来。
     """
     exit_code = _EXIT_CODES[status]
     if json_out:
@@ -356,6 +384,98 @@ def _run_tmux_driver(
         tmux_name=tmux_name,
         duration_ms=result.duration_ms,
         human_note=notes.get(result.status),
+        json_out=json_out,
+    )
+
+
+def _run_kernel(
+    prompt_text: str,
+    *,
+    agent_type: str,
+    session_id: str | None,
+    cwd: str,
+    timeout: int,
+    quiet: bool,
+    dry_run: bool,
+    json_out: bool,
+    profile_id: str | None,
+    model: str | None,
+    env: dict[str, str] | None,
+) -> None:
+    """把一轮交给 frago 自己的内核跑（不挂 tmux）。
+
+    与 :func:`_run_tmux_driver` 共用同一份停机契约（``_EXIT_CODES`` 四态），区别只在后端：
+    内核是"交一件事、跑完就退"的进程（见 :mod:`frago.agent_driver.kernel_backend`），
+    没有 pane 可读、也没有可续的常驻会话，所以：
+
+    - **不落 ``write_turn``。** 内核自己把这一轮写进 ``~/.frago/coreagent/sessions/``，
+      会话清单与记录流读的就是那份（见 ``session.record_reader``）。会话子系统里也没有
+      CoreAgent 这家的 adapter（``session.monitor._adapters`` 只有三家），再写一遍会落成
+      一份对不上任何记录的影子。
+    - **不复用 ``_record_worker_launch``。** 那一本账记的是"子会话在目标 agent 那边的真实
+      编号"，内核这一场编号就是 frago 现发的（``core_``），与 claude 那条派生路不同。
+    """
+    from frago.agent_driver import kernel_backend
+
+    sid = session_id or kernel_backend.new_session_id()
+    if not quiet:
+        click.echo(f"[OK] kernel driver: session={sid}", err=json_out)
+    if dry_run:
+        # 与 tmux 那条同一条规矩：没真跑过一轮就 NEVER 伪造一份停机摘要。
+        click.echo("[Dry Run] Skip actual execution", err=json_out)
+        return
+
+    if model:
+        # 内核没有 --model 开关：模型跟着连接走（--as-profile 那条 profile 自己的主模型）。
+        # 人显式点名了一个模型而实际没生效，这件事必须当场看得见。
+        click.echo(
+            f"[!] 内核不吃 --model：模型由连接决定，这一轮跑在内核为这条件所选的连接上"
+            f"（{profile_id or '内核默认连接'}）。",
+            err=True,
+        )
+
+    # 名册：内核 worker 没有 tmux 会话，登记的是**内核那个进程号**——`frago agent ls`
+    # 据此判活、`stop` 据此收走（见 drive_command._is_alive）。外壳进程被外部杀掉时
+    # finally 不执行，名册那条会留下——那正是我们要的：跑飞的孤儿仍可按名字收走。
+    from .drive_command import deregister_transient_worker, register_transient_worker
+
+    registered = False
+
+    def _on_spawn(pid: int) -> None:
+        nonlocal registered
+        register_transient_worker(
+            name=sid, agent_type=agent_type, tmux_name=None, cwd=cwd, pid=pid
+        )
+        registered = True
+
+    try:
+        turn = kernel_backend.run_turn(
+            prompt_text,
+            session_id=sid,
+            cwd=cwd,
+            profile_id=profile_id,
+            timeout_s=float(timeout) if timeout > 0 else None,
+            env=env,
+            on_spawn=_on_spawn,
+        )
+    finally:
+        # run_turn 无论正常返回还是抛错，内核进程都已收场；此刻把名册里临时登记的那条
+        # 抹掉，别让 `ls` 留下死条目。
+        if registered:
+            deregister_transient_worker(sid)
+
+    notes = {
+        "needs_input": f"[!] CoreAgent 要人介入（认证墙 / 连接没配好）：{turn.text[:300]}",
+        "timeout": f"[!] Turn timed out after {timeout}s",
+        "error": f"[!] CoreAgent 那一轮没跑成：{turn.text[:300]}",
+    }
+    _emit_and_exit(
+        status=turn.status,
+        text=turn.text,
+        session_id=sid,
+        tmux_name=None,
+        duration_ms=turn.duration_ms,
+        human_note=notes.get(turn.status),
         json_out=json_out,
     )
 
@@ -704,9 +824,24 @@ def agent_run(
         if not quiet:
             click.echo(f"[OK] Using CCR: http://{host}:{port}", err=json_out)
 
-    # --use-profile 解析出的变量盖过 CCR，但让位于下面的显式 CLI 覆盖。翻译由目标
-    # agent 的 driver 负责，故要把 agent_type 一起递进去。
-    if use_profile:
+    # profile → "这一轮跑哪条连接"，两条后端各收各的形状：
+    #   三家 CLI（tmux 后端）→ driver 翻译出来的会话环境变量（ANTHROPIC_* 等），
+    #   内核（kernel 后端）→ ``--as-profile <id>``，它读 profiles.json、不认 ANTHROPIC_*。
+    # 判据在后端（runs_on_kernel），两条路二选一，NEVER 两边都塞——塞了内核也读不到，
+    # 结果是"点名要某个模型"静默失效。
+    from frago.agent_driver.driver import runs_on_kernel
+
+    on_kernel = runs_on_kernel(agent_type)
+    kernel_profile_id: str | None = None
+    if on_kernel:
+        if use_profile:
+            kernel_profile_id = _resolve_profile_id(use_profile)
+        elif worker_connection is not None and worker_connection.api_key:
+            # 端点型连接才有内核能用的东西。厂商 CLI 型走的是它自己的账号，内核没法拿它
+            # 当一条 Anthropic 线，故不给 id、让它退回自己那条默认连接。
+            kernel_profile_id = worker_connection.id
+        profile_env: dict[str, str] = {}
+    elif use_profile:
         profile_env = _resolve_profile_env(use_profile, agent_type)
     elif worker_connection is not None and worker_connection.api_key:
         # 端点型连接才有可注入的东西。厂商 CLI 型走的是它自己的账号，没有 frago
@@ -717,6 +852,19 @@ def agent_run(
     else:
         profile_env = {}
     tmux_env.update(profile_env)
+
+    if on_kernel and use_ccr_mode:
+        # CCR 是把 ANTHROPIC_BASE_URL 指到本地代理；内核不读 ANTHROPIC_*，起不了作用。
+        click.echo(
+            "[!] 内核不走 CCR：--use-ccr 这一轮不生效，跑在内核自己挑的那条连接上。",
+            err=True,
+        )
+    if on_kernel and (endpoint or api_key):
+        # 同上：--endpoint/--api-key 落的是 ANTHROPIC_*，内核一个字都不读。
+        click.echo(
+            "[!] 内核不读 --endpoint/--api-key：要换连接请用 --use-profile（它按 id 交给内核）。",
+            err=True,
+        )
 
     # 只认启动开关、不认 ANTHROPIC_MODEL 的内核（codebuddy）从这里拿模型；认环境变量
     # 的内核忽略它，模型仍从下面的 ANTHROPIC_MODEL 走，两条路不会打架。
@@ -740,6 +888,33 @@ def agent_run(
         tmux_env["ANTHROPIC_MODEL"] = model
     # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
     tmux_env["FRAGO_AGENT_ROLE"] = "worker"
+
+    # 后端分派：内核（不挂 tmux）与三家 CLI（挂 tmux）各走各的执行路径，共用同一份
+    # 停机契约（_EXIT_CODES）。判据只有 runs_on_kernel 一处。
+    if on_kernel:
+        if tmux_target:
+            # 内核没有 TUI 可借住：--tmux-target 是"在别人的 tmux 会话里看着它干活"，
+            # 内核根本没这个外观。说清而不是静默略过。
+            click.echo(
+                f"[!] 内核不借住 tmux 会话：--tmux-target {tmux_target} 这一轮不生效。",
+                err=True,
+            )
+        if no_monitor:
+            click.echo("[!] --no-monitor 对内核无意义：它自己写记录，这条忽略。", err=True)
+        _run_kernel(
+            prompt_text,
+            agent_type=agent_type,
+            session_id=resume_session_id or session_id,
+            cwd=os.getcwd(),
+            timeout=timeout,
+            quiet=quiet,
+            dry_run=dry_run,
+            json_out=json_out,
+            profile_id=kernel_profile_id,
+            model=model,
+            env=tmux_env or None,
+        )
+        return
 
     # --resume <uuid> 的语义 = 用真实 id 续接既有会话，即 driver 侧的
     # session_id=<uuid> + native_session_id=True（claude driver 据此走
