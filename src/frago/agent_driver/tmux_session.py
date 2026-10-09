@@ -639,6 +639,34 @@ class TmuxAgentSession:
         self._tmux("kill-session", "-t", self.tmux_name)
         self.status = "dead"
 
+    def rename_tmux(self, session_id: str) -> bool:
+        """把这个窗口改成 ``session_id`` 派生的名字。改不动返回 False，NEVER 抛。
+
+        **为什么非改不可。** 页面新建一场 codex / opencode 会话时，真编号要等会话起来
+        之后才认领得到，在那之前这个窗口只能先挂在 frago 自己 mint 的把手底下
+        （``frago-agent-webui-<uuid>``）。名字一旦和真编号分家，常驻池重启后就按真编号
+        找不到这个窗口——于是另起一个窗口去 ``codex resume`` 同一场对话，撞上单写者
+        锁；而原来那个窗口还攥着锁留在原地，谁也收不走（20261009 现场）。本进程内那张
+        别名表只在内存里，重启就没，所以名字本身必须是稳定的那一个。
+
+        **对象自己的 ``session_id`` 一个字都不改。** driver 侧的认领映射（codex /
+        opencode 的 binding）正是拿它当键，改了等于让 driver 重认一遍，两场会话的记录
+        就此互串。
+
+        借住别人的会话（``tmux_target``）一律不动：那个窗口是主人的，改名等于替他改。
+        """
+        if self.tmux_target:
+            return False
+        target = tmux_name_for(session_id)
+        if target == self.tmux_name:
+            return True
+        try:
+            self._tmux("rename-session", "-t", self.tmux_name, target)
+        except Exception:  # noqa: BLE001 — 改不动只是名字留在原处，NEVER 因此中断这一轮
+            return False
+        self.tmux_name = target
+        return True
+
     def _quit_agent_in_target(self) -> None:
         """把借住会话里的 agent 请出去，壳留给主人。
 

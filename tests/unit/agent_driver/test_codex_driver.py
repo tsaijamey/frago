@@ -49,6 +49,18 @@ RESUME_WRITER_LOCK_PANE = (
     " /private/tm/cl/-Users-frago-Repos-f/53/scratchpad/smoke ······· 17s  11:32:33 ─╮\n"
     "❯                                                                             ─╯\n"
 )
+# 20261009 本机实测：同一场会话被两个入口同时打开时，codex 现在报的是人话，不再是
+# 0.149 那句 ``already has an active writer``。原样抄自 pane，一个字都没改。
+RESUME_OPEN_IN_ANOTHER_APP_PANE = (
+    "  Worked for 1m 59s · done 2:05 PM\n"
+    "\n"
+    "\n"
+    "  🔒  This conversation is open in another app"
+    "                                        R to Retry\n"
+    "      Close it there and press R to continue here.\n"
+    "\n"
+    "   r retry   esc/ctrl+c/q exit   ctrl+t transcript\n"
+)
 
 
 # ── 就绪 / 完成 / 阻断 ──────────────────────────────────────────────
@@ -234,6 +246,78 @@ def test_needs_input_still_ignores_benign_text():
     """守另一边：把判据放宽之后，普通答案正文 MUST 仍然不命中。"""
     assert codex_driver._NEEDS_INPUT.matches(BANNER_PANE) is False
     assert codex_driver._NEEDS_INPUT.matches("我把这一版的会话恢复功能写完了") is False
+
+
+def test_ready_never_matches_the_new_wording_of_the_writer_lock():
+    """回归：codex 换掉了单写者锁的措辞，判据只认老措辞的话这一屏会被当成就绪。
+
+    20261009 本机实测：锁屏报的是人话 ``This conversation is open in another app``
+    （同一屏上还有 ``Close it there and press R to continue here``），屏上的横幅与页脚
+    照旧在。认不出来就等于把用户那句话打进那个模态，本轮一路空等到超时——页面上只有
+    「发不出去」，没有一个字的原因。
+    """
+    pane = BANNER_PANE + RESUME_OPEN_IN_ANOTHER_APP_PANE
+    assert codex_driver._READY.matches(pane) is False
+    assert codex_driver._NEEDS_INPUT.matches(pane) is True
+
+
+def test_ready_still_matches_a_live_tui_that_merely_quotes_the_lock_line():
+    """守另一边：正常会话的横幅 MUST 仍然算就绪。
+
+    只钉住"锁屏不算就绪"很容易把判据收得连正常会话都起不来——那比原来的毛病影响面
+    还大（每一场 codex 会话都以启动超时收场）。
+    """
+    assert codex_driver._READY.matches(BANNER_PANE) is True
+    assert codex_driver._READY.matches(FOOTER_PANE) is True
+
+
+# ── 认领之后窗口改名：池子重启后按真编号还找得到这个窗口 ────────────────────
+_CLAIMED_SID = "01a11f42-0548-79f0-9723-9f1d69e33771"
+_HANDLE_SID = "webui-7363edfb-ae6f-4183-9512-2bad3aa615a7"
+
+
+def _claim_session_stub(*, rename_ok: bool = True):
+    renamed: list[str] = []
+
+    class _Session:
+        session_id = _HANDLE_SID
+        cwd = "/repo"
+        native_session_id = False
+        tmux_name = f"frago-agent-{_HANDLE_SID}"
+
+        def rename_tmux(self, session_id: str) -> bool:
+            renamed.append(session_id)
+            return rename_ok
+
+    return _Session(), renamed
+
+
+def _stub_claim(monkeypatch) -> None:
+    monkeypatch.setattr(codex_driver.codex_store, "get_binding", lambda _s: None)
+    monkeypatch.setattr(codex_driver.codex_store, "claim_session", lambda *_a: _CLAIMED_SID)
+    monkeypatch.setattr(codex_driver.codex_store, "put_binding", lambda *_a: None)
+    monkeypatch.setattr(codex_driver, "_LAUNCH_ANCHORS", {_HANDLE_SID: 1})
+
+
+def test_claim_renames_the_window_to_the_session_it_claimed(monkeypatch):
+    """认到真编号 MUST 把窗口改认它。
+
+    名字不改，常驻池一重启就按真编号找不到这个还活着的窗口，于是另起一个窗口去
+    ``codex resume`` 同一场对话——撞上单写者锁，用户那句话被挡在门外（20261009）。
+    """
+    _stub_claim(monkeypatch)
+    session, renamed = _claim_session_stub()
+
+    assert codex_driver._claim_once(session) == _CLAIMED_SID
+    assert renamed == [_CLAIMED_SID]
+
+
+def test_claim_survives_a_window_that_cannot_be_renamed(monkeypatch):
+    """改不动只是名字留在原处，NEVER 因此把认领本身也丢掉。"""
+    _stub_claim(monkeypatch)
+    session, _ = _claim_session_stub(rename_ok=False)
+
+    assert codex_driver._claim_once(session) == _CLAIMED_SID
 
 
 class _FakePane:

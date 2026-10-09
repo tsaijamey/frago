@@ -259,6 +259,16 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
     except Exception:
         logger.debug("opencode claim attempt raised", exc_info=True)
         return None
+    # 认到真编号就把这个窗口改认它，与 codex 那一侧同一个理由：名字和真编号一致之后，
+    # 常驻池重启时按名字能找到这个还活着的窗口并接管，不会另起一个去续接同一场会话。
+    # 改不动只是名字留在原处，不阻断认领本身。
+    if not session.rename_tmux(claimed):
+        logger.debug(
+            "opencode claimed %s for %s but could not rename %s",
+            claimed,
+            session.session_id,
+            session.tmux_name,
+        )
     _CLAIM_ANCHORS.pop(session, None)
     logger.debug("opencode claimed session %s for %s", claimed, session.session_id)
     return claimed

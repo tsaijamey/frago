@@ -509,6 +509,36 @@ def test_claim_anchor_stays_at_first_submit(live_db: sqlite3.Connection) -> None
     assert sess not in opencode_driver._CLAIM_ANCHORS
 
 
+def test_claim_renames_the_window_to_the_claimed_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """认到真编号 MUST 把窗口改认它——与 codex 那一侧同一个理由。
+
+    名字不改，常驻池重启后就按真编号找不到这个还活着的窗口，会另起一个去续接同一场
+    会话，而原来那个还攥着写者锁留在原地。
+    """
+    renamed: list[str] = []
+
+    class _Session:
+        session_id = "webui-1a2b3c"
+        cwd = "/w"
+        native_session_id = False
+        tmux_name = "frago-agent-webui-1a2b3c"
+
+        def rename_tmux(self, session_id: str) -> bool:
+            renamed.append(session_id)
+            return True
+
+    session = _Session()
+    monkeypatch.setattr(opencode_store, "get_binding", lambda _s: None)
+    monkeypatch.setattr(opencode_store, "claim_session", lambda *_a: "ses_new")
+    monkeypatch.setattr(opencode_store, "put_binding", lambda *_a: None)
+    monkeypatch.setattr(opencode_driver, "_CLAIM_ANCHORS", {session: 1})
+
+    assert opencode_driver._claim_once(session) == "ses_new"
+    assert renamed == ["ses_new"]
+
+
 # ── 空输入框闸门：补发 Enter 之前 MUST 有正面证据 ────────────────────
 # 上一版直接采信会话库的否定判据，认领超窗就补发两次 Enter；那时输入框其实已空，
 # 两次回车变成两个空提交落进下一轮，下一次 send 什么都不返回。

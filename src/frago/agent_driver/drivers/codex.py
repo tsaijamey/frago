@@ -107,11 +107,19 @@ _READY_SIGNAL = PaneMatcher(name="codex-ready-signal", pattern=rf"{_BANNER_PAT}|
 # 还占着写者、页面同时从两处续接同一场。共同点是**这一屏永远不该被当成就绪**。
 #
 # 判据只认带明确失败语义的组合，NEVER 只匹配裸 ``Error``——正常答案正文里就会出现这个词。
-_FATAL_STARTUP = re.compile(
-    r"(?i)failed\s+to\s+resume\s+session"
+#
+# 单写者锁在屏上的措辞有两代，两代都要认。0.149 报的是 ``already has an active writer``；
+# 新版把它换成了人话 ``This conversation is open in another app``（20261009 实测，同一屏
+# 上还写着 ``Close it there and press R to continue here``）。只认老措辞的话，撞上新版的
+# 这一场会被当成就绪——页脚在、横幅在、错误行认不出来——提示词被打进那个模态，本轮一路
+# 空等到超时；用户看到的是"发不出去"且没有任何原因。
+_LOCK_SCREEN = (
+    r"failed\s+to\s+resume\s+session"
     r"|already\s+has\s+an\s+active\s+writer"
     r"|resume\s+failed\s+during\s+TUI\s+bootstrap"
+    r"|this\s+conversation\s+is\s+open\s+in\s+another\s+app"
 )
+_FATAL_STARTUP = re.compile(rf"(?i){_LOCK_SCREEN}")
 
 
 class _CodexReady:
@@ -169,8 +177,7 @@ _NEEDS_INPUT = PaneMatcher(
         r"|not\s+logged\s+in|unauthorized|authentication\s+failed"
         r"|insufficient\s+(?:credit|balance|quota)|quota\s+exceeded"
         r"|please\s+(?:run\s*/?login|log\s*in|sign\s+in\s+to\s+continue)"
-        r"|failed\s+to\s+resume\s+session|already\s+has\s+an\s+active\s+writer"
-        r"|resume\s+failed\s+during\s+TUI\s+bootstrap)"
+        rf"|{_LOCK_SCREEN})"
     ),
 )
 
@@ -540,6 +547,17 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         if not claimed:
             return None
         codex_store.put_binding(session.session_id, claimed, session.cwd)
+        # 认到真编号就把这个窗口改认它。名字与真编号一致之后，常驻池重启时按名字就能
+        # 找到这个还活着的窗口并接管，不必另起一个去 resume 同一场对话——那正是撞单写
+        # 者锁、把用户那句话挡在门外的那条路（20261009 现场）。改不动只是名字留在原处，
+        # 不阻断认领本身。
+        if not session.rename_tmux(claimed):
+            logger.debug(
+                "codex claimed %s for %s but could not rename %s",
+                claimed,
+                session.session_id,
+                session.tmux_name,
+            )
     except Exception:
         logger.debug("codex claim attempt raised", exc_info=True)
         return None
