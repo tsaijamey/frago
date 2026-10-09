@@ -5,6 +5,8 @@
 """
 
 import json
+import os
+from datetime import UTC, datetime
 
 import pytest
 
@@ -22,17 +24,21 @@ def _write_rollout(root, day_parts, name, records):
     return path
 
 
-def _meta(session_id, cwd):
+def _meta(session_id, cwd, ts="2026-08-19T15:07:11.570Z"):
     return {
-        "timestamp": "2026-08-19T15:07:11.570Z",
+        "timestamp": ts,
         "type": "session_meta",
         "payload": {
             "session_id": session_id,
             "id": session_id,
-            "timestamp": "2026-08-19T15:07:11.570Z",
+            "timestamp": ts,
             "cwd": cwd,
         },
     }
+
+
+def _epoch_ms(iso_utc: str) -> int:
+    return int(datetime.fromisoformat(iso_utc).replace(tzinfo=UTC).timestamp() * 1000)
 
 
 def _event(kind, payload, ts="2026-08-19T15:07:20.000Z"):
@@ -122,6 +128,97 @@ def test_claim_ignores_other_directories(codex_home, tmp_path):
         [_meta(sid, "/somewhere/else")],
     )
     assert codex_store.claim_session(str(tmp_path), 0) is None
+
+
+def test_claim_picks_by_session_start_not_by_file_mtime(codex_home, tmp_path):
+    """回归：认领 MUST 看这场会话什么时候**开始**，不看它的文件最后被动过是什么时候。
+
+    20261009 现场：两场 codex 会话在同一个目录里隔了 45 秒先后起来，先起的那场还在
+    干活、文件一直被写，mtime 比后起的那场新。按 mtime 挑就把先起的那场认成了后起
+    这一场——两个 frago 句柄绑到同一个编号，后起那场的对话在页面上认不出来（完成
+    探针去读别人的 rollout，永远等不到自己这一轮结束），它真正的那场会话也没人管，
+    写锁一直攥在手里，下一次发消息就撞上 codex 的单写者锁。
+    """
+    first, second = "sid-started-first", "sid-started-second"
+    started_first = _write_rollout(
+        codex_home / "sessions",
+        ("2026", "10", "09"),
+        f"rollout-2026-10-09T14-02-15-{first}.jsonl",
+        [_meta(first, str(tmp_path), ts="2026-10-09T06:02:15.000Z")],
+    )
+    started_second = _write_rollout(
+        codex_home / "sessions",
+        ("2026", "10", "09"),
+        f"rollout-2026-10-09T14-03-02-{second}.jsonl",
+        [_meta(second, str(tmp_path), ts="2026-10-09T06:03:02.000Z")],
+    )
+    # 先起的那场还在写：它的文件比后起的那个新。锚点取第二次新建发起的那一刻。
+    now = datetime.now(UTC).timestamp()
+    os.utime(started_first, (now, now))
+    os.utime(started_second, (now - 120, now - 120))
+
+    anchor = _epoch_ms("2026-10-09T06:03:00.000+00:00")
+    assert codex_store.claim_session(str(tmp_path), anchor) == second
+
+
+def test_claim_takes_the_earliest_session_after_the_anchor(codex_home, tmp_path):
+    """锚点之后不止一场时取**最早**的那个：刚起的那一场排在别人后面，取最晚会取错。"""
+    for sid, ts in (("sid-a", "2026-10-09T06:03:01.000Z"), ("sid-b", "2026-10-09T06:03:09.000Z")):
+        _write_rollout(
+            codex_home / "sessions",
+            ("2026", "10", "09"),
+            f"rollout-2026-10-09T14-03-00-{sid}.jsonl",
+            [_meta(sid, str(tmp_path), ts=ts)],
+        )
+    anchor = _epoch_ms("2026-10-09T06:03:00.000+00:00")
+    assert codex_store.claim_session(str(tmp_path), anchor) == "sid-a"
+
+
+def test_claim_skips_a_session_already_bound_to_another_frago_session(codex_home, tmp_path):
+    """已经认给别人的编号不再认一次：一个编号只属于一个 frago 会话。
+
+    重复认领会把两场对话的记录接到一起，页面上谁也认不出自己那一场。
+    """
+    sid = "sid-taken"
+    _write_rollout(
+        codex_home / "sessions",
+        ("2026", "10", "09"),
+        f"rollout-2026-10-09T14-03-02-{sid}.jsonl",
+        [_meta(sid, str(tmp_path), ts="2026-10-09T06:03:02.000Z")],
+    )
+    codex_store.put_binding("webui-someone-else", sid, str(tmp_path))
+
+    assert codex_store.claim_session(str(tmp_path), 0) is None
+
+
+def test_claim_refuses_a_rollout_that_does_not_say_when_it_started(codex_home, tmp_path):
+    """首行没写起始时刻就**不认**，不退回文件时间——退回正是要治的那个错。"""
+    sid = "sid-no-timestamp"
+    record = _meta(sid, str(tmp_path))
+    del record["timestamp"]
+    del record["payload"]["timestamp"]
+    _write_rollout(
+        codex_home / "sessions",
+        ("2026", "10", "09"),
+        f"rollout-2026-10-09T14-03-02-{sid}.jsonl",
+        [record],
+    )
+    assert codex_store.claim_session(str(tmp_path), 0) is None
+
+
+def test_claim_falls_back_to_the_record_timestamp(codex_home, tmp_path):
+    """payload 里没有起始时刻时退回整条记录的时间戳——少一处可比就永远认不回来。"""
+    sid = "sid-top-level-ts"
+    record = _meta(sid, str(tmp_path))
+    del record["payload"]["timestamp"]
+    _write_rollout(
+        codex_home / "sessions",
+        ("2026", "10", "09"),
+        f"rollout-2026-10-09T14-03-02-{sid}.jsonl",
+        [record],
+    )
+    anchor = _epoch_ms("2026-08-19T15:07:00.000+00:00")
+    assert codex_store.claim_session(str(tmp_path), anchor) == sid
 
 
 # ── 轮次判定 ────────────────────────────────────────────────────────

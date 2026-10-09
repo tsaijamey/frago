@@ -151,7 +151,9 @@ def _read_meta(path: Path) -> RolloutMeta | None:
         session_id=session_id,
         path=path,
         cwd=str(payload.get("cwd") or ""),
-        started_at=_parse_timestamp(payload.get("timestamp")),
+        # 起始时刻认 payload 里那一份，它没有时退回整条记录的时间戳：认领拿它当判据
+        # （见 ``claim_session``），少一处可比的地方就等于那一场永远认不回来。
+        started_at=_parse_timestamp(payload.get("timestamp") or record.get("timestamp")),
         mtime=mtime,
     )
 
@@ -229,25 +231,71 @@ def delete_session(session_id: str) -> str:
     return run_engine_command("codex", ["delete", "--force", session_id]).output
 
 
-def claim_session(directory: str, since_ms: int) -> str | None:
-    """认领会话：取工作目录匹配、且文件在 ``since_ms`` 之后才出现的最新那个。
+def _started_at(meta: RolloutMeta) -> float | None:
+    """这场会话开始的时刻（epoch 秒）。首行没写时间戳时返回 None。
 
-    codex 的会话文件在 TUI 起来那一刻就建好（不像 opencode 要等首轮提交），所以
-    认领的起算点锚在**启动之前**即可。目录先按真实路径比，未命中再按调用方给的
-    原值比一次，两侧都试过才不会因为软链接差异静默落空。找不到返回 None，NEVER 抛。
+    判不出来就 NEVER 认它，而不是退回文件时间——退回 mtime 正是要治的那个错，见
+    :func:`claim_session`。
+    """
+    return meta.started_at.timestamp() if meta.started_at is not None else None
+
+
+def bound_session_ids() -> set[str]:
+    """映射表里已经认出去的 codex 会话编号。
+
+    认领时拿它排除：一个编号只属于一个 frago 会话。两场会话把同一个编号各认一遍，
+    等于把两场对话的记录接到一起，页面上谁也认不出自己那一场。
+    """
+    out: set[str] = set()
+    for entry in _load_bindings().values():
+        value = entry.get("codex_session_id")
+        if isinstance(value, str) and value:
+            out.add(value)
+    return out
+
+
+def claim_session(directory: str, since_ms: int) -> str | None:
+    """认领会话：取工作目录匹配、**起始时刻**在 ``since_ms`` 之后、且还没被认过的那个。
+
+    判据是这场会话**什么时候开始**，不是它那个 rollout 文件最后被动过是什么时候。
+    两者在真实现场会分家：同一个目录里几乎同时起了两场会话时，先起的那场只要还在
+    干活，它的文件就一直被写、mtime 一直最新；按 mtime 挑，后起的那场就会把**别人
+    正在写的那一场**认成自己。20261009 就是这么错的——两个 frago 句柄绑到了同一个
+    codex 编号，其中一个句柄的对话从此在页面上认不出来（完成探针去读别人的 rollout，
+    永远等不到自己这一轮结束），它真正的那场会话也没人管，写者锁一直攥在手里。
+    起始时刻取自首行的 ``session_meta.timestamp``：那是会话建出来的那一刻，后续写入
+    不会改动它。
+
+    锚点之后**最早**起的那个才是这一次新建出来的，所以比的是"最小"而不是"最新"。
+    同目录里同时还有别人刚起的会话时，按 mtime 挑或者按最晚挑都会挑错人。
+
+    已经认给别人的编号跳过（见 :func:`bound_session_ids`）。目录先按真实路径比，未
+    命中再按调用方给的原值比一次，两侧都试过才不会因为软链接差异静默落空。找不到
+    返回 None，NEVER 抛。
     """
     candidates = {normalize_directory(directory), directory}
     since_s = since_ms / 1000.0
+    taken = bound_session_ids()
+    best: tuple[float, str] | None = None
     for path in _iter_rollout_paths():
-        meta = _read_meta(path)
-        if meta is None:
+        try:
+            if path.stat().st_mtime < since_s:
+                # 列表按 mtime 降序，比锚点还旧的不会再变新，可以收工。这一刀只用来
+                # 剪枝——认不认它由下面的起始时刻说了算。
+                break
+        except OSError:
             continue
-        if meta.mtime < since_s:
-            # 列表按 mtime 降序，走到比锚点还旧的就没有更新的了。
-            break
-        if meta.cwd in candidates or normalize_directory(meta.cwd) in candidates:
-            return meta.session_id
-    return None
+        meta = _read_meta(path)
+        if meta is None or meta.session_id in taken:
+            continue
+        if meta.cwd not in candidates and normalize_directory(meta.cwd) not in candidates:
+            continue
+        started = _started_at(meta)
+        if started is None or started < since_s:
+            continue
+        if best is None or started < best[0]:
+            best = (started, meta.session_id)
+    return best[1] if best else None
 
 
 def list_sessions(limit: int | None = None) -> list[RolloutMeta]:
