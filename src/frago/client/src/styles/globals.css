@@ -43,6 +43,11 @@
   --rail-pinned-fill: #272727;
   --bg-elevated: #2a2a2a;
   --bg-overlay: rgba(0, 0, 0, 0.6);
+  /* 行内代码与代码块的底。原先两处都取 `--bg-subtle`，深色下那是 #1a1a1a，比页面底
+     #1f1f1f 还深五个台阶——一段等宽字摆在里面只像是换了字体，认不出是代码。
+     按「深色下浮起来=更浅」给一层半透明白：同一条规则盖在任何一级表面上都抬同样一档，
+     不必逐个表面配值。浅色侧同理压一层半透明黑。 */
+  --code-bg: rgba(255, 255, 255, 0.07);
 
   /* Sidebar specific colors (dark mode) */
   --page-bg: #141414;
@@ -211,6 +216,7 @@
   --rail-pinned-fill: #ebebeb;
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);
+  --code-bg: rgba(0, 0, 0, 0.05);
 
   /* Sidebar specific colors (light mode) */
   --page-bg: #F2F2F2;
@@ -2696,7 +2702,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 0.15em 0.4em;
-  background: var(--bg-subtle);
+  background: var(--code-bg);
   border-radius: 3px;
   color: var(--text-primary);
 }
@@ -2704,7 +2710,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .markdown-content .code-block {
   margin: 0.5em 0;
   padding: 0.75em 1em;
-  background: var(--bg-secondary);
+  background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   overflow-x: auto;
