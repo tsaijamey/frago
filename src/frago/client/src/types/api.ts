@@ -1253,3 +1253,69 @@ export interface BranchCloseResult {
   /** 主线标注改上没有。那一家存不了标注时为 false，不算失败。 */
   mark_updated: boolean;
 }
+
+// ============================================================
+// 会话里动过哪些文件
+// ============================================================
+
+/** 这一档的文件是这场会话新增的、改的，还是删掉的。 */
+export type SessionFileAction = 'created' | 'modified' | 'deleted';
+
+/**
+ * 这场会话写、改或删过的一个文件。
+ *
+ * 服务端从会话自己的记录里读出来的，页面只读。它是**下界**不是全集：经 shell 命令改的
+ * 文件哪一家都不留结构化字段；会话工具自己的临时区不算在内。
+ */
+export interface SessionFileRow {
+  /** 记录里写的那个路径，原样（可能是 `~` 开头；codex 补丁里那种相对的已按会话目录拼全）。 */
+  path: string;
+  /** 按这场会话**第一次**动它那一下定档：写就是新建，改就是改，补丁头写着删就是删。 */
+  action: SessionFileAction;
+  /** 这场会话对它动了几次。 */
+  count: number;
+  /** 第一次动它的那条记录的序号，清单按它排。 */
+  first_seq: number;
+}
+
+/**
+ * 取一份文件的内容。读不到内容时 `text` 为 null，原因写在 `reason` 里——
+ * 过大、读不成文本各是一种，界面照实写出来，NEVER 给半份当整份。
+ *
+ * 文件已经不在了不是这一档：那一条服务端直接回 404。
+ */
+export interface SessionFileContent {
+  path: string;
+  /** 磁盘上的字节数。 */
+  size: number;
+  /** 文件内容。读不到时为 null，看 `reason`。 */
+  text: string | null;
+  /** 没给内容的原因。给了内容时为 null。 */
+  reason: 'too-large' | 'not-text' | null;
+}
+
+/** 对照里的一格。`null` 表示这一侧这一行没有东西（整行删掉、或整份都是新增）。 */
+export interface FileDiffCell {
+  /** `" "` 没改、`"-"` 删掉、`"+"` 新增。 */
+  sign: ' ' | '-' | '+';
+  /** 行号。 */
+  no: number;
+  text: string;
+}
+
+/** 左边那一侧（改动之前）为什么没有。有左边时为 null。 */
+export type FileDiffBefore = 'new' | 'not-git' | 'too-large';
+
+/** 一份文件「改动之前」与「现在」两边的对照。 */
+export interface SessionFileDiff {
+  path: string;
+  size: number;
+  /** 现在这一份读不出来的缘由；正常时 null。 */
+  reason: 'too-large' | 'not-text' | 'too-many-lines' | null;
+  /** 左边那一侧为什么没有，见 {@link FileDiffBefore}。 */
+  before: FileDiffBefore | null;
+  /** 左边那一侧从哪儿来（例如 `git HEAD`）。没有左边时为 null。 */
+  source: string | null;
+  /** 对齐好的两列，每一行是一对格子；读不出来时为 null。 */
+  rows: [FileDiffCell | null, FileDiffCell | null][] | null;
+}

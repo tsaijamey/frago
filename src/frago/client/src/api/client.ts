@@ -130,6 +130,12 @@ import type {
   BranchLaunch,
   BranchCloseBy,
   BranchCloseResult,
+  SessionFileRow,
+  SessionFileContent,
+  SessionFileAction,
+  SessionFileDiff,
+  FileDiffCell,
+  FileDiffBefore,
 } from '@/types/api';
 
 export type {
@@ -247,6 +253,12 @@ export type {
   BranchLaunch,
   BranchCloseBy,
   BranchCloseResult,
+  SessionFileRow,
+  SessionFileAction,
+  SessionFileContent,
+  SessionFileDiff,
+  FileDiffCell,
+  FileDiffBefore,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -1566,5 +1578,59 @@ export async function closeBranch(
   return fetchApi<BranchCloseResult>(
     `/workbench/sessions/${encodeURIComponent(parentId)}/branches/${encodeURIComponent(childId)}/close`,
     { method: 'POST', body: JSON.stringify({ by }) }
+  );
+}
+
+// ============================================================
+// 会话里动过哪些文件
+// ============================================================
+
+/**
+ * 这场会话写或改过的文件：路径、新建还是改、动过几次。
+ *
+ * 服务端要现读整场记录才算得出来（本机量过：一场 0.1–0.5 秒），不是一次轻查询。会话页
+ * 切到哪一场就取哪一场——镜头排上那颗按钮的个数是这一场的读数，空着等于说「没动过文件」。
+ */
+export async function getSessionFiles(sessionId: string): Promise<SessionFileRow[]> {
+  return fetchApi<SessionFileRow[]>(`/workbench/sessions/${encodeURIComponent(sessionId)}/files`);
+}
+
+/** 取清单里某一份文件的内容，给浮窗预览用。清单外的路径服务端回 403。 */
+export async function getSessionFileContent(
+  sessionId: string,
+  path: string
+): Promise<SessionFileContent> {
+  return fetchApi<SessionFileContent>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(path)}`
+  );
+}
+
+/**
+ * 这份文件「改动之前」与「现在」两边的对照，给浮窗的 Changes 那一档用。
+ *
+ * 左边那一侧取自 git 的 HEAD——会话记录里没有文件的快照。对齐（哪一行对哪一行）由服务端
+ * 算好交过来：左边那一侧本来就只有服务端拿得到。
+ */
+export async function getSessionFileDiff(
+  sessionId: string,
+  path: string
+): Promise<SessionFileDiff> {
+  return fetchApi<SessionFileDiff>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file/diff?path=${encodeURIComponent(path)}`
+  );
+}
+
+/**
+ * 在**跑 frago 的那台机器**上打开这个文件所在的位置：是文件就选中它，是目录就打开它。
+ * 浏览器自己开不了本机目录，所以这一下要绕服务端；服务端只认这场会话自己的工作目录
+ * 与它改过的那些文件。
+ */
+export async function revealSessionPath(
+  sessionId: string,
+  path: string
+): Promise<{ status: string; opened: string }> {
+  return fetchApi<{ status: string; opened: string }>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/reveal`,
+    { method: 'POST', body: JSON.stringify({ path }) }
   );
 }

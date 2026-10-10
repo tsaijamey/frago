@@ -31,6 +31,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -559,6 +560,28 @@ export interface RecordStreamProps {
    * 绿」，人发言的绿条放过去就破了它，所以默认不挂。
    */
   minimap?: boolean;
+  /**
+   * 「文件」那一档：这一场改过哪些文件的那块界面整个交过来。
+   *
+   * 它**不是镜头**（`StreamLens`）里的一档：镜头筛的是记录，一条记录归哪档是算得出来的；
+   * 文件清单不是记录，条数也不是记录条数。所以它是那排里的**兄弟**——按下去记录流原地让位、
+   * 清单铺满同一块地方，再按一下回来。不给就不出这一档（Teams 页那份记录流不带它）。
+   */
+  filesView?: ReactNode;
+  /** 文件那一档此刻露着没有。 */
+  filesOpen?: boolean;
+  /**【Show】、点原文这些要去记录流里找一条的时候，先把文件那一档合上。 */
+  onFilesOpenChange?: (open: boolean) => void;
+  /**
+   * 文件那一档的数字。还没数出来是 `null`。
+   *
+   * **不摆数字、也不按灰**：按灰的是「一条都没有」，而「还不知道」不是那个意思。数字是切
+   * 到这一场就去数的（见页面那一侧），所以这里凡是 `null` 基本都是一眨眼；真取不回来时
+   * `filesPending` 为假，这一档就不写个数——那时该说的是故障，不是正在数。
+   */
+  filesCount?: number | null;
+  /** 个数还在路上：那一档后面写个省略号，别让它看着像「没有」。 */
+  filesPending?: boolean;
 }
 
 const NO_MARKS: WorkbenchMark[] = [];
@@ -583,6 +606,11 @@ export default function RecordStream({
   locateTarget = null,
   onLocateResult,
   minimap = false,
+  filesView,
+  filesOpen = false,
+  onFilesOpenChange,
+  filesCount = null,
+  filesPending = false,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
@@ -832,6 +860,11 @@ export default function RecordStream({
   const scrollId = scrollTarget?.recordId ?? '';
   useEffect(() => {
     if (!scrollAt || !scrollId) return;
+    // 人正开着文件那一档：先把记录流露出来，下一拍再滚（这条效应盯着 filesOpen）。
+    if (filesOpen) {
+      onFilesOpenChange?.(false);
+      return;
+    }
     if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
       setLens('talk');
       return;
@@ -845,7 +878,7 @@ export default function RecordStream({
     el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens]);
+  }, [scrollAt, scrollId, lens, filesOpen]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
@@ -952,6 +985,12 @@ export default function RecordStream({
       locatePaged.current = null;
       onLocateResult?.(mark.id, result);
     };
+    // 人正开着文件那一档就先把记录流露出来，下一拍接着找（这一条也盯着 filesOpen；
+    // `locateDone` 还没记，所以合上清单之后这一趟会重跑、照样找得到）。
+    if (filesOpen) {
+      onFilesOpenChange?.(false);
+      return;
+    }
     if (!records.some((r) => r.id === mark.record_id)) {
       if (hasOlder) {
         if (loadingOlder) {
@@ -1006,9 +1045,9 @@ export default function RecordStream({
       FLASH_MS
     );
     finish('found');
-    // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完
+    // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完、文件那一档合上
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateAt, records, hasOlder, loadingOlder, visible, lens]);
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen]);
 
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
@@ -1090,8 +1129,13 @@ export default function RecordStream({
             <button
               key={id}
               type="button"
-              onClick={() => setLens(id)}
-              aria-pressed={lens === id}
+              /* 点某一档镜头就是回记录流：人手上还开着文件清单时，他这一下是在说「我要看记录」。
+                 不跟着切回来，点了没反应，像坏了。 */
+              onClick={() => {
+                setLens(id);
+                onFilesOpenChange?.(false);
+              }}
+              aria-pressed={lens === id && !filesOpen}
               data-testid={`lens-${id}`}
               /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
               title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
@@ -1101,7 +1145,7 @@ export default function RecordStream({
                  左右内边距 5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下（第五轮三改）；
                  仍放不下照 flex-wrap 换行，档内不折字、不截字。 */
               className={`whitespace-nowrap rounded-[6px] px-[5px] py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
-                lens === id
+                lens === id && !filesOpen
                   ? 'bg-bg-active font-medium text-text-primary'
                   : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
               }`}
@@ -1110,6 +1154,33 @@ export default function RecordStream({
               <span className="ml-1 font-mono opacity-60">{counts[id]}</span>
             </button>
           ))}
+          {/* 文件那一档：与镜头同一排、同一套长相，但它不是镜头——见 `filesView` 那段说明。
+              它**不按条数变灰**：数字还不知道时按灰，人就以为这一场没改过文件。 */}
+          {filesView ? (
+            <button
+              type="button"
+              data-testid="lens-files"
+              onClick={() => onFilesOpenChange?.(!filesOpen)}
+              aria-pressed={filesOpen}
+              title={t('workbench.files.lensHint')}
+              className={`whitespace-nowrap rounded-[6px] px-[5px] py-[3px] text-[11px] transition-colors duration-200 ${
+                filesOpen
+                  ? 'bg-bg-active font-medium text-text-primary'
+                  : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+              }`}
+            >
+              {t('workbench.files.lens')}
+              {typeof filesCount === 'number' ? (
+                <span className="ml-1 font-mono opacity-60">{filesCount}</span>
+              ) : filesPending ? (
+                /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
+                   而那正是这颗按钮**不该**说的事。 */
+                <span data-testid="lens-files-pending" className="ml-1 font-mono opacity-60">
+                  …
+                </span>
+              ) : null}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1219,6 +1290,17 @@ export default function RecordStream({
           version={groups}
           onUserScroll={noteManualIntent}
         />
+      ) : null}
+
+      {/* 文件那一档铺在这块滚动区上面，**记录流不卸载**：它一卸，滚动位置、标注高亮、
+          翻过的页全都得重建，回来时人又落在别处。盖住而不是换掉，回来还是原来那一眼。 */}
+      {filesOpen && filesView ? (
+        <div
+          data-testid="files-panel"
+          className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg-primary"
+        >
+          {filesView}
+        </div>
       ) : null}
       </div>
 

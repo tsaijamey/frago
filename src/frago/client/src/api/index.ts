@@ -1349,3 +1349,46 @@ export const closeBranch = withMode(
   (_parentId: string, _childId: string, _by: httpApi.BranchCloseBy): Promise<httpApi.BranchCloseResult> =>
     Promise.reject(new Error(BRANCH_UNAVAILABLE)),
 );
+
+// ============================================================
+// 会话里动过哪些文件
+// ============================================================
+
+export type {
+  SessionFileRow,
+  SessionFileAction,
+  SessionFileContent,
+  SessionFileDiff,
+  FileDiffCell,
+  FileDiffBefore,
+} from './client';
+
+// 读记录、开本机目录都在服务端，桌面壳那一路没有桥，把做不到说出来。
+const SESSION_FILES_UNAVAILABLE = 'Session files API not available in pywebview mode';
+
+export const getSessionFiles = withMode(
+  (sessionId: string): Promise<httpApi.SessionFileRow[]> => httpApi.getSessionFiles(sessionId),
+  (_sessionId: string): Promise<httpApi.SessionFileRow[]> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
+export const getSessionFileContent = withMode(
+  (sessionId: string, path: string): Promise<httpApi.SessionFileContent> =>
+    httpApi.getSessionFileContent(sessionId, path),
+  (_sessionId: string, _path: string): Promise<httpApi.SessionFileContent> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
+export const getSessionFileDiff = withMode(
+  (sessionId: string, path: string): Promise<httpApi.SessionFileDiff> =>
+    httpApi.getSessionFileDiff(sessionId, path),
+  (_sessionId: string, _path: string): Promise<httpApi.SessionFileDiff> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
+export const revealSessionPath = withMode(
+  (sessionId: string, path: string): Promise<{ status: string; opened: string }> =>
+    httpApi.revealSessionPath(sessionId, path),
+  (_sessionId: string, _path: string): Promise<{ status: string; opened: string }> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);

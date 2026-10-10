@@ -16,8 +16,11 @@ claude-sessions 的地方，谁读都会以为发错了。判家族、查工作�
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,6 +29,7 @@ from pydantic import BaseModel
 
 from frago.server.services import (
     coreagent_runner,
+    file_history,
     session_send,
     workbench_agents,
     workbench_branch,
@@ -36,6 +40,7 @@ from frago.server.services import (
     workbench_titles,
     workbench_views,
 )
+from frago.server.services.system_service import SystemService, UnsupportedPlatformError
 from frago.server.services.webui_uploads import (
     ImageUploadError,
     build_prompt_with_attachments,
@@ -43,7 +48,7 @@ from frago.server.services.webui_uploads import (
     save_uploaded_documents,
     save_uploaded_images,
 )
-from frago.session import record_reader
+from frago.session import record_reader, session_files
 from frago.session import search as session_search
 from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
@@ -426,6 +431,178 @@ async def read_workbench_records(
     await asyncio.to_thread(_ensure_watching, sid)
 
     return [asdict(record) for record in records]
+
+
+class RevealPathRequest(BaseModel):
+    """要打开的路径。界面一律传绝对路径。"""
+
+    path: str
+
+
+def _session_directory(sid: str) -> str | None:
+    """这场会话自己的工作目录。认不出这场、或它没留下工作目录，都返回 None——
+    NEVER 退回当前进程的目录顶替，那等于给任意路径开了口子。"""
+    for card in record_reader.list_sessions():
+        if card.session_id == sid:
+            return card.directory or None
+    return None
+
+
+def _norm(path: str) -> str:
+    """把路径对齐成可比的样子：``~`` 展开、软链与 ``..`` 消掉。"""
+    return str(Path(os.path.expanduser(path)).resolve())
+
+
+async def _touched(sid: str) -> list[session_files.SessionFile]:
+    """这场会话改过的文件。认不出这场会话时翻成 404，别的异常照原样抛。"""
+    try:
+        return await asyncio.to_thread(session_files.session_files, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get("/workbench/sessions/{sid}/files")
+async def read_session_files(sid: str) -> list[dict[str, Any]]:
+    """这场会话写或改过的文件：路径、新建还是改、动过几次。
+
+    清单从这场会话自己的记录里读出来（见 :mod:`frago.session.session_files`）：经 shell
+    命令改的文件哪一家都不留结构化字段，所以它是**下界**不是全集；会话工具自己的临时区
+    不算，那些回答不了「它在我项目里改了什么」。
+    """
+    return [asdict(f) for f in await _touched(sid)]
+
+
+_PREVIEW_MAX_BYTES = 512 * 1024
+
+
+async def _read_text(sid: str, path: str) -> dict[str, Any]:
+    """取这份文件的正文。「看内容」与「做对照」两条路共用的一套门。
+
+    **只认清单里的路径**：请求的路径与这场会话改过的某一条指向同一份文件才给读，别的一律
+    403。这条比「在工作目录底下」更紧——目录名读不到东西，文件内容读得到，所以白名单按
+    文件一个个列，不按目录放。
+
+    过大的、读不成文本的都不返回内容，而是返回一个原因，界面照实写出来，NEVER 悄悄给半份。
+    """
+    allowed = {_norm(f.path) for f in await _touched(sid)}
+    if _norm(path) not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Refused: {path} is not a file this session changed",
+        )
+
+    target = Path(os.path.expanduser(path))
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"File is gone: {target}")
+
+    size = target.stat().st_size
+    if size > _PREVIEW_MAX_BYTES:
+        return {"path": path, "size": size, "text": None, "reason": "too-large"}
+    try:
+        text = target.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return {"path": path, "size": size, "text": None, "reason": "not-text"}
+    return {"path": path, "size": size, "text": text, "reason": None}
+
+
+@router.get("/workbench/sessions/{sid}/file")
+async def read_session_file(
+    sid: str,
+    path: str = Query(..., description="要取内容的那一份文件，必须是本会话改过的其中之一"),
+) -> dict[str, Any]:
+    """取清单里某一份文件的内容，给浮窗预览用。门的规矩见 :func:`_read_text`。"""
+    return await _read_text(sid, path)
+
+
+# 对照最多摆这么多行。两列并排，行数再往上没人会一行行看了；而算对齐要两边都在手上，
+# 这个数也顺带挡住了把一份几万行的文件塞进浏览器的那种请求。
+_DIFF_MAX_LINES = 3000
+
+
+@router.get("/workbench/sessions/{sid}/file/diff")
+async def read_session_file_diff(
+    sid: str,
+    path: str = Query(..., description="要看改动的那一份文件，必须是本会话改过的其中之一"),
+) -> dict[str, Any]:
+    """这份文件「改动之前」与「现在」对齐好的两列，给浮窗的 Changes 那一档用。
+
+    左边那一侧取自 **git 的 HEAD**（为什么是它、它不是什么，都写在
+    :mod:`frago.server.services.file_history` 的模块说明里）。取不到左边时 `before` 说出
+    缘由（`new` 是这一场新建的、`not-git` 是它不在仓库里），界面照实写，NEVER 把「不知道」
+    装成「新建的」。
+
+    对齐在服务端算：左边那一侧本来就只有这里有。`rows` 每一行是一对格子，左边空着表示那一行
+    这一侧没有东西（整行删掉、或整份都是新增）。
+    """
+    current = await _read_text(sid, path)
+    body: dict[str, Any] = {
+        "path": current["path"],
+        "size": current["size"],
+        "reason": current["reason"],
+        "before": None,
+        "source": None,
+        "rows": None,
+    }
+    if current["text"] is None:
+        # 现在这一份就读不出来（太大、不是文本）：没有可对照的东西，界面照 `/file` 那套说。
+        return body
+    after = current["text"]
+    if after.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+
+    before = await asyncio.to_thread(
+        file_history.before_at_head, path, max_bytes=_PREVIEW_MAX_BYTES
+    )
+    body["before"] = before.reason
+    body["source"] = before.source
+    if before.text is None:
+        # 没有左边：整份当新增摆，左边整列空着。为什么没有写在 `before` 那一格上。
+        body["rows"] = file_history.added_rows(after)
+        return body
+    if before.text.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+    body["rows"] = await asyncio.to_thread(file_history.diff_rows, before.text, after)
+    return body
+
+
+@router.post("/workbench/sessions/{sid}/reveal")
+async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str, Any]:
+    """在系统文件管理器里打开这个路径：是文件就选中它，是目录就打开它。
+
+    **只认两处**：这场会话自己的工作目录底下的东西，以及它改过的那些文件。路径由页面给过来，
+    服务端不校验就成了一个「随便开哪个目录」的口子；会话详情里这个按钮挨着本会话改过的文件，
+    够不着这场之外的地方。
+
+    跨平台怎么开在 :meth:`~frago.server.services.system_service.SystemService.reveal_or_open`
+    里，本模块不重复一遍平台判断。
+    """
+    target = _norm(request.path)
+    root = await asyncio.to_thread(_session_directory, sid)
+    inside_root = False
+    if root:
+        root_path = _norm(root)
+        inside_root = target == root_path or Path(target).is_relative_to(root_path)
+    if not inside_root and target not in {_norm(f.path) for f in await _touched(sid)}:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Refused: {target} is neither in this session's working directory nor a file it changed",
+        )
+    if not Path(target).exists():
+        raise HTTPException(status_code=404, detail=f"Path does not exist: {target}")
+
+    try:
+        if Path(target).is_dir():
+            await asyncio.to_thread(SystemService.open_directory, target)
+        else:
+            await asyncio.to_thread(SystemService.reveal_or_open, target, True)
+    except UnsupportedPlatformError as e:
+        raise HTTPException(status_code=501, detail=str(e)) from e
+    except (subprocess.CalledProcessError, OSError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open {target}: {e}") from e
+
+    return {"status": "ok", "opened": target}
 
 
 @router.get("/workbench/search")

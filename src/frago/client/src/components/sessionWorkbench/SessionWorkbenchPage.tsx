@@ -21,6 +21,9 @@ import { ChevronLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
+import SessionFiles from './SessionFiles';
+import FileViewer from './FileViewer';
+import { withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
@@ -47,7 +50,8 @@ import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
-import { closeBranch, startBranch } from '@/api';
+import { closeBranch, revealSessionPath, startBranch } from '@/api';
+import { useSessionFiles } from '@/hooks/useSessionFiles';
 
 /**
  * 起分支之后输入框上方那一行说到哪一步了。只属于起分支的那场会话（`parent`），切走就撤。
@@ -78,10 +82,11 @@ interface BringBack {
  * 目录写法照原型：家目录缩成 `~`。服务端给的是绝对路径，这里只做显示层的缩写——首段是
  * `Users` 或 `home` 时把 `/<首段>/<用户名>` 换成 `~`（macOS 与 Linux 的两种家目录写法），
  * 其余路径原样。悬停里仍给完整路径（见 `dirHint`）。
+ *
+ * 会话文件那几处要用同一套缩写，实现搬去了 `./filePaths`（同一个东西两个地方长得一样），
+ * 这里照样转出来，这一页自己的用法与外面的引用都不动。
  */
-export function withTilde(dir: string): string {
-  return dir.replace(/^\/(?:Users|home)\/[^/]+/, '~');
-}
+export { withTilde };
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
@@ -549,6 +554,80 @@ export default function SessionWorkbenchPage() {
     [setWorkbenchSessionId, sessions]
   );
 
+  /**
+   * 「这一场改过哪些文件」那一档，以及点开某一份文件的那个浮窗。
+   *
+   * 清单**打开那一档才去取**：服务端要现读这一场的全部记录才算得出来，不在每次切会话时
+   * 顺手取一份只为显示个数（见 `useSessionFiles`）。浮窗按整份清单的下标翻页，所以
+   * `viewerIndex` 指的那一份与清单永远是同一份，不会对错。
+   */
+  const [filesOpen, setFilesOpen] = useState(false);
+  const sessionFiles = useSessionFiles(selectedId);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // 换会话：清单与浮窗一起收掉。浮窗里那份是上一场的文件，留在屏幕上就是摆错了。
+  useEffect(() => {
+    setFilesOpen(false);
+    setViewerIndex(null);
+  }, [selectedId]);
+  /**
+   * **切到这一场就去取**，不等人点开「文件」那一档。
+   *
+   * 从前是按需取（点开才读整场记录算），省下每次切会话一遍记录的开销，代价是镜头排上那颗
+   * 按钮的**个数成了空的**——「Files」后面什么都没有，点一下才冒出来。旁边几档的数是这一场
+   * 的读数，空着看着就是说「没有」，而那是假的（主人 10-10 报的缺陷）。
+   *
+   * 开销量过：本机最近六场 0.10 / 0.12 / 0.22 / 0.23 / 0.27 / 0.33 秒，80 MB 那场 0.49 秒，
+   * 而且跑在服务端的线程里，不占事件循环。换来的是个数当场在、点开清单也不再等第二次。
+   *
+   * 打开那一档时再 `ensure` 一次是留着的兜底：上一次取失败了，点开就重试。
+   */
+  const { ensure: ensureFiles } = sessionFiles;
+  useEffect(() => {
+    // `ensure` 本身是稳的，它认哪一场靠的是会话编号——所以这条效应得盯着 `selectedId`
+    // 才会在换会话时再跑一趟。
+    ensureFiles();
+  }, [selectedId, ensureFiles]);
+  useEffect(() => {
+    if (filesOpen) ensureFiles();
+  }, [filesOpen, ensureFiles]);
+  // 清单还没到手上时点了也没得看：浮窗按那一份翻页，空的就是空的。
+  const files = sessionFiles.files ?? [];
+  const openViewer = useCallback(
+    (index: number) => {
+      if (files.length) setViewerIndex(index);
+    },
+    [files.length]
+  );
+  const stepViewer = useCallback(
+    (delta: number) => {
+      setViewerIndex((cur) => {
+        if (cur === null || !files.length) return cur;
+        return (cur + delta + files.length) % files.length;
+      });
+    },
+    [files.length]
+  );
+
+  /**
+   * 「打开所在目录」：这一下是服务端在**跑 frago 那台机器**上开文件管理器（浏览器自己开不了
+   * 本机目录）。开不了要说出来——没反应时人只会以为按钮坏了。服务端只认这一场自己的工作目录
+   * 与它改过的文件，别处一律拒。
+   */
+  const onReveal = useCallback(
+    (path: string) => {
+      if (!selectedId) return;
+      revealSessionPath(selectedId, path).catch((e: unknown) => {
+        showToast(
+          t('workbench.files.revealFailed', {
+            reason: e instanceof Error ? e.message : String(e),
+          }),
+          'error'
+        );
+      });
+    },
+    [selectedId, showToast, t]
+  );
+
   const composerNotice = useMemo<ComposerNotice | null>(() => {
     if (!branchNotice || branchNotice.parent !== selectedId) return null;
     const dismiss = () => setBranchNotice(null);
@@ -873,6 +952,23 @@ export default function SessionWorkbenchPage() {
               minimap
               locateTarget={locateTarget}
               onLocateResult={onLocateResult}
+              /* 「文件」那一档：与镜头同一排的兄弟按钮，清单由这一页备好交过来——它要调
+                 这一页的浮窗、要在换会话时跟着收掉，状态留在这一页才不用两头同步。 */
+              filesView={
+                <SessionFiles
+                  files={sessionFiles.files}
+                  loading={sessionFiles.loading}
+                  error={sessionFiles.error}
+                  onOpen={openViewer}
+                  onReload={sessionFiles.reload}
+                />
+              }
+              filesOpen={filesOpen}
+              onFilesOpenChange={setFilesOpen}
+              filesCount={sessionFiles.files?.length ?? null}
+              /* 还没数出来、而且没出错 → 那一档后面写个省略号。出错就不写：个数出不来是
+                 因为有故障，那时该说的是故障，不是「正在数」。 */
+              filesPending={sessionFiles.files === null && sessionFiles.error === null}
             />
             </DecisionCardContext.Provider>
           )}
@@ -947,6 +1043,19 @@ export default function SessionWorkbenchPage() {
           }
         />
       </div>
+
+      {/* 浮窗挂在整页这一层，不挂在记录流里面：它要盖住整屏（连同左栏与右栏），摆在中栏里
+          会被那一栏的滚动区裁掉一半。 */}
+      {selectedId && viewerIndex !== null && files[viewerIndex] ? (
+        <FileViewer
+          sessionId={selectedId}
+          files={files}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onStep={stepViewer}
+          onReveal={onReveal}
+        />
+      ) : null}
     </div>
   );
 }

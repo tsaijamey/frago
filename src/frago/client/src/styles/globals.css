@@ -199,6 +199,29 @@
   /* Sidebar layout dimensions */
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 56px;
+
+  /* === 代码着色（会话详情的文件浮窗）===
+     一套**认得出是主题**的配色，取自 GitHub 那套（深色是 GitHub Dark 的取值），因为它就是
+     人看代码时最认得的那个样子——原型里用的也是它。
+
+     为什么另立一组令牌、而不接 `--text-blue` / `--accent-warning` 那几个：那几个是**界面**
+     的色，界面上一条规矩是「只有一处强调色、别处一律中性」。代码块里不是界面的规矩——那里
+     的颜色是**内容**的一部分，跟图表的线色一样，认不出结构就等于没染。所以这一组自成一格、
+     深浅各一套，界面用色的规矩一个字不动。
+
+     **品牌绿一条都不进来。** 这里没有哪一档用绿，省得代码里的绿与「在跑／动作」撞脸。 */
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-comment: #8b949e;
+  --code-function: #d2a8ff;
+  --code-number: #79c0ff;
+  --code-variable: #ffa657;
+  --code-tag: #7ee787;
+
+  /* 改动前后两列：增行整行一层绿底、删行一层红底，都是很淡的一层——字还得压在上面读。
+     与界面的告警色同源，浓度按「淡到只当底色」定。 */
+  --diff-add: rgba(21, 179, 77, 0.16);
+  --diff-del: rgba(240, 89, 107, 0.14);
 }
 
 /* === Light Theme ===
@@ -278,6 +301,18 @@
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.12);
   --focus-ring: 0 0 0 3px rgba(10, 143, 51, 0.22);
+
+  /* 代码着色：与深色同一组名字，取值换成浅底上读得清的那一套（GitHub Light）。 */
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-comment: #6e7781;
+  --code-function: #8250df;
+  --code-number: #0550ae;
+  --code-variable: #953800;
+  --code-tag: #116329;
+
+  --diff-add: rgba(10, 143, 51, 0.13);
+  --diff-del: rgba(196, 43, 69, 0.1);
 }
 
 /* Light theme task input overrides */
@@ -8375,4 +8410,118 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    人一眼就找得到落点。不用新的颜色——它不表达状态，只是「在这儿」。 */
 ::highlight(workbench-mark-flash) {
   background-color: var(--sel-border);
+}
+
+/* === 会话文件浮窗里的代码着色 ================================================
+   接的是 highlight.js 的词法类名（`.hljs-*`）。它只给类名、不给颜色，颜色这一侧归我们。
+
+   **不引 highlight.js 自带的主题 CSS**：那些主题满篇硬编码色值，等于在界面里另立一套配色，
+   换主题时它跟不上，也不走本文件的令牌。这里把它那套**取值**搬进令牌（`--code-*`，深浅各
+   一套，见上面两段），类名照旧接它的——认得出来、也换得了主题。
+
+   一度只有四个色相，看着像没染（主人 10-10 说的）：关键词与数字同一个蓝、函数名与普通标识
+   符都是正文色，一屏下来只剩字符串是黄的。现在按上面那组令牌分档，函数名、变量、标签各是
+   各的色。 */
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-literal,
+.hljs-type,
+.hljs-built_in,
+.hljs-selector-tag,
+.hljs-doctag {
+  color: var(--code-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--code-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-meta,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--code-number);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-link {
+  color: var(--code-variable);
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: var(--code-function);
+}
+
+.hljs-tag,
+.hljs-name {
+  color: var(--code-tag);
+}
+
+/* 参数名不加色：函数名的色已经够抢眼，参数再上一档，一整条签名就花了。 */
+.hljs-params {
+  color: var(--text-secondary);
+}
+
+.hljs-deletion {
+  color: var(--accent-error);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+/* === 会话文件浮窗里的改动对照 ================================================
+   左右两列同一格栅行，删的整行一层红底、增的整行一层绿底，没改的不上底色，配不上的那侧留
+   一格更淡的空位（那格底下什么都没有，画成实底会像是「这里有个空行」）。
+   行号单占一列、右对齐、不参与选中：复制走的是代码，不是行号。 */
+
+.diff-cell {
+  display: flex;
+  gap: 9px;
+  min-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-cell.add {
+  background: var(--diff-add);
+}
+
+.diff-cell.del {
+  background: var(--diff-del);
+}
+
+.diff-cell.void {
+  background: var(--bg-subtle);
+}
+
+.diff-line-no {
+  width: 30px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
 }
