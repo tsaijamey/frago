@@ -235,6 +235,118 @@ def test_tool_call_and_result_carry_the_shared_payload_shape(rollout):
     assert call.id != result.id
 
 
+# ── 新版 codex 的写法（custom_tool_call） ───────────────────────────
+_PATCH = """*** Begin Patch
+*** Update File: src/a.py
+@@
+-old
++new
+*** Delete File: src/gone.py
+*** End Patch
+"""
+
+
+def test_custom_tool_call_carries_the_patch_verbatim(rollout):
+    """新版 codex 把改文件记成 custom_tool_call：名字在 name 上，补丁在 input 上。
+
+    认不出它，每一次文件改动在流里都会退化成一条空的「未识别注入」——中间那一栏看不见它
+    改了什么，右边「文件」那一档也是空的。
+    """
+    sid, write = rollout
+    write(
+        [
+            _meta(sid),
+            _item(
+                "custom_tool_call",
+                {"id": "ctc1", "call_id": "call_01", "name": "apply_patch", "input": _PATCH},
+            ),
+        ]
+    )
+
+    records = translate_session(sid)
+    call = next(r for r in records if r.kind == "tool.call")
+    assert call.payload["tool_name"] == "apply_patch"
+    assert call.payload["tool_family"] == "file-write"
+    assert call.payload["call_id"] == "call_01"
+    # 补丁原样留着，一个字符不改：读它的那一层照 `*** … File:` 那几行取路径。
+    assert call.payload["args"] == {"input": _PATCH}
+    # 没退化成「认不出的记录」。
+    assert [r for r in records if r.payload.get("unrecognized")] == []
+
+
+def test_custom_tool_call_without_text_is_still_the_call_that_it_is(rollout):
+    """这一类没带正文时也别把它当认不出：这一下确实发生过，参数空着就空着。"""
+    sid, write = rollout
+    write(
+        [
+            _meta(sid),
+            _item("custom_tool_call", {"id": "ctc2", "call_id": "call_02", "name": "apply_patch"}),
+        ]
+    )
+
+    call = next(r for r in translate_session(sid) if r.kind == "tool.call")
+    assert call.payload["args"] == {}
+
+
+def test_custom_call_and_its_output_pair_up_on_the_call_id(rollout):
+    sid, write = rollout
+    write(
+        [
+            _meta(sid),
+            _item(
+                "custom_tool_call",
+                {"id": "ctc3", "call_id": "call_03", "name": "apply_patch", "input": _PATCH},
+            ),
+            _item(
+                "custom_tool_call_output",
+                {"id": "cto3", "call_id": "call_03", "output": "Exit code: 0\nSuccess. Updated!"},
+            ),
+        ]
+    )
+
+    records = translate_session(sid)
+    call = next(r for r in records if r.kind == "tool.call")
+    result = next(r for r in records if r.kind == "tool.result")
+    assert result.payload["call_id"] == call.payload["call_id"] == "call_03"
+    assert result.payload["body"] == "Exit code: 0\nSuccess. Updated!"
+    # 同一轮里两条记录的编号必须不同，否则按编号去重会吃掉一条。
+    assert call.id != result.id
+
+
+@pytest.mark.parametrize(
+    ("output", "status"),
+    [
+        ("Exit code: 0\nSuccess. Updated!", "ok"),
+        # 第一行不是那个成功标记就按失败算——把没打上的补丁摆成成功，人会以为文件已经改了。
+        ("apply_patch verification failed: Failed to find expected lines in src/a.py", "error"),
+        ("aborted by user", "error"),
+        ("Exit code: 1\nsomething went wrong", "error"),
+        ("", "error"),
+    ],
+)
+def test_custom_output_status_comes_from_the_first_line(output, status):
+    from frago.session.adapters.codex_records import _custom_output_status
+
+    assert _custom_output_status(output) == status
+
+
+def test_custom_output_status_reaches_the_record(rollout):
+    """成败必须落在记录上：中间那一栏靠它给这一枚回执上色。"""
+    sid, write = rollout
+    write(
+        [
+            _meta(sid),
+            _item(
+                "custom_tool_call_output",
+                {"id": "cto4", "call_id": "call_04", "output": "aborted by user"},
+            ),
+        ]
+    )
+
+    result = next(r for r in translate_session(sid) if r.kind == "tool.result")
+    assert result.payload["status"] == "error"
+
+
 @pytest.mark.parametrize(
     ("name", "family"),
     [

@@ -395,6 +395,50 @@ def _drafts_for(
             turn,
         )
 
+    if inner == "custom_tool_call":
+        # 新版 codex 把「改文件」记成这一类：工具名在 `name` 上，正文（那一份补丁）在
+        # `input` 上。它与下面的 function_call 是同一件事的两种记法，只是带的字段不同。
+        #
+        # **认不出它，codex 的每一次文件改动在流里都会退化成一条空的「未识别注入」**
+        # （2026-10-10 修）：中间那一栏看不见它改了什么，右边「文件」那一档也是空的。
+        name = str(payload.get("name") or "")
+        call_id = _str_or_none(payload.get("call_id")) or rid
+        patch = payload.get("input")
+        return (
+            draft(
+                "tool.call",
+                {
+                    "call_id": call_id,
+                    "tool_name": name,
+                    "tool_family": tool_family_of(name),
+                    # 补丁是一整段文本，不是一个字段一个值的参数字典。原样装在 `input`
+                    # 上（与引擎自己的字段同名），读它的那一层照 `*** … File:` 那几行取路径。
+                    "args": {"input": patch} if isinstance(patch, str) else {},
+                    "title": None,
+                },
+            ),
+            turn,
+        )
+
+    if inner == "custom_tool_call_output":
+        call_id = _str_or_none(payload.get("call_id")) or rid
+        output = payload.get("output") if isinstance(payload.get("output"), str) else ""
+        return (
+            draft(
+                "tool.result",
+                {
+                    "call_id": call_id,
+                    "tool_name": None,
+                    "tool_family": "other",
+                    "status": _custom_output_status(output),
+                    "body": output,
+                    "truncation": "none",
+                    "truncation_ref": None,
+                },
+            ),
+            turn,
+        )
+
     if inner == "function_call_output":
         call_id = _str_or_none(payload.get("call_id")) or rid
         output = payload.get("output")
@@ -415,6 +459,18 @@ def _drafts_for(
         )
 
     return _unrecognized(record, payload, line, ts, turn), turn
+
+
+def _custom_output_status(output: str) -> str:
+    """这一类回执的成败。
+
+    它不像 ``function_call_output`` 那样带一个 ``success`` 字段，只有一段人话文本；本机实测
+    成功的那一份第一行是 ``Exit code: 0``，失败的是 ``apply_patch verification failed: …``
+    或 ``aborted by user``。**第一行不是那个成功标记就按失败算**：把一次没打上的补丁摆成成功，
+    比把一次成功摆成失败坏得多——前者会让人以为文件已经改了。
+    """
+    first = output.strip().split("\n", 1)[0].strip()
+    return "ok" if first.startswith("Exit code: 0") else "error"
 
 
 def _usage_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
