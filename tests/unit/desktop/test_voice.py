@@ -325,8 +325,69 @@ def test_interrupt_cuts_the_current_and_the_queued(sealed, fake_synth):
          "interrupt": True}]})
     cut = out["results"][3]
     assert cut["status"] == "ok"
-    assert cut["interrupted"] == {"stopped": "1", "dropped": ["2"]}
+    assert cut["interrupted"] == {"stopped": "1", "dropped": ["2"], "kept": []}
     assert cut["speech"]["state"] == "done"
+
+
+def test_interject_cuts_the_current_but_keeps_the_queued(sealed, fake_synth):
+    """插播：掐掉正在说的那一句，这一句立刻说，排着的留着接着放。
+
+    与 --interrupt 的差别就在 dropped 与 kept 上：那条整队丢掉，这条一个不丢。
+    少了这条，想说一句当下的事就只能排到队尾，而队尾可能压着一两分钟的闲话。
+    """
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "一句很长的话", "speak": True, "out": "none",
+         "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 50},
+        {"op": "say", "text": "插播一句", "speak": True, "out": "none",
+         "interject": True}]})
+    cut = out["results"][3]
+    assert cut["status"] == "ok"
+    # 正在说的那句被掐掉；排着的那句原样留着（kept 里只是它，不含插播的自己）
+    assert cut["interrupted"] == {"stopped": "1", "dropped": [], "kept": ["2"]}
+    assert cut["speech"]["state"] == "done", "插播这一句是立刻说的，回执里它已讲完"
+    assert cut["interrupted"]["dropped"] == [], "一个排着的都不许丢"
+
+
+def test_the_kept_queue_carries_on_after_the_interjection(sealed, fake_synth):
+    """插播说完之后，原来排着的那句接着放——留在队列里不等于留着不动。"""
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "一句很长的话", "speak": True, "out": "none",
+         "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 50},
+        {"op": "say", "text": "插播一句", "speak": True, "out": "none",
+         "interject": True},
+        {"op": "speech.wait", "target": "all"}]})
+    assert out["results"][3]["interrupted"]["kept"] == ["2"]
+    assert out["results"][4]["status"] == "ok", "队列没接着放，等 all 会等不到"
+
+
+def test_voice_stop_keep_queue_leaves_the_queue_alone(sealed, fake_synth):
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "一句很长的话", "speak": True, "out": "none",
+         "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 50},
+        {"op": "speech.stop", "keep_queue": True},
+        {"op": "speech.wait", "target": "all"}]})
+    stop = out["results"][3]
+    assert stop["status"] == "ok"
+    assert stop["stopped"] == "1" and stop["dropped"] == [] and stop["kept"] == ["2"]
+    assert out["results"][4]["status"] == "ok", "排着的被掐掉了，等 all 会等不到"
+
+
+def test_voice_stop_without_the_flag_still_drops_the_queue(sealed, fake_synth):
+    """老规矩一个字不改：不带 --keep-queue 就正在说的与排着的一起丢。"""
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "一句很长的话", "speak": True, "out": "none",
+         "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 50},
+        {"op": "speech.stop"}]})
+    stop = out["results"][3]
+    assert stop["stopped"] == "1" and stop["dropped"] == ["2"] and stop["kept"] == []
 
 
 def test_voice_stop_on_silence_is_a_noop(sealed, fake_synth):
@@ -481,6 +542,26 @@ def test_speak_switches_become_one_step():
     assert kind == "steps"
     assert steps == [{"op": "say", "text": "旁白", "speak": True, "out": "both",
                       "rate": "+10%", "async": True, "interrupt": True}]
+
+
+def test_interject_is_a_switch_on_say():
+    kind, steps = aos.parse(["say", "插播一句", "--speak", "--async", "--interject"])
+    assert kind == "steps"
+    assert steps == [{"op": "say", "text": "插播一句", "speak": True,
+                      "out": "page", "async": True, "interject": True}]
+
+
+def test_interrupt_and_interject_are_mutually_exclusive():
+    """两条路各是一种语义，同时给就是没说清要哪种——当场拒，别猜。"""
+    with pytest.raises(aos.Fail) as exc:
+        aos.parse(["say", "一句", "--speak", "--interrupt", "--interject"])
+    assert "只能挑一个" in exc.value.payload["error"]
+
+
+def test_voice_stop_takes_keep_queue():
+    assert aos.parse(["voice", "stop"]) == ("steps", [{"op": "speech.stop"}])
+    assert aos.parse(["voice", "stop", "--keep-queue"]) == (
+        "steps", [{"op": "speech.stop", "keep_queue": True}])
 
 
 def test_wait_speech_rides_in_the_same_batch():

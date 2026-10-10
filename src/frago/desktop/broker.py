@@ -5198,7 +5198,7 @@ def build_app(cfg: dict) -> FastAPI:
                 item["done_evt"].set()
         speech_forget_old()
 
-    def speech_enqueue(syn: dict, text: str, out: str) -> dict:
+    def speech_enqueue(syn: dict, text: str, out: str, *, front: bool = False) -> dict:
         speech["seq"] += 1
         sid = str(speech["seq"])
         item = {
@@ -5211,20 +5211,38 @@ def build_app(cfg: dict) -> FastAPI:
             "done_evt": asyncio.Event(),
         }
         speech["items"][sid] = item
-        speech["queue"].append(sid)
+        # front 是插播用的：这一句要立刻说，所以插到队首。配合
+        # speech_interrupt(keep_queue=True) 掐掉正在说的那句，worker 掐完接着
+        # 取队首，取到的就是它。
+        if front:
+            speech["queue"].insert(0, sid)
+        else:
+            speech["queue"].append(sid)
         worker = speech["worker"]
         if worker is None or worker.done():
             speech["worker"] = asyncio.create_task(speech_worker())
         return item
 
-    async def speech_interrupt(reason: str) -> dict:
+    async def speech_interrupt(reason: str, *, keep_queue: bool = False) -> dict:
+        """掐掉正在说的那一句。keep_queue 为假时把排着的也一起丢掉。
+
+        两种语义各有各的用处，别把其中一个当默认：整队丢掉给「重来一遍」用
+        （说了半句不想说了，后面排的也不要了）；保住队列给**插播**用——掐掉
+        正在说的这句，把新的一句顶上，后面排着的照原样接着放。少了后面这条，
+        插播就只能排到队尾，而队尾可能压着一两分钟的闲聊，插播就失去了意义。
+        """
         dropped = []
-        for sid in speech["queue"]:
-            it = speech["items"][sid]
-            it["state"], it["end_reason"] = "dropped", reason
-            it["done_evt"].set()
-            dropped.append(sid)
-        speech["queue"].clear()
+        if not keep_queue:
+            for sid in speech["queue"]:
+                it = speech["items"][sid]
+                it["state"], it["end_reason"] = "dropped", reason
+                it["done_evt"].set()
+                dropped.append(sid)
+            speech["queue"].clear()
+        # kept MUST 在掐当前那句**之前**取。掐完 worker 立刻从队首拿下一句开讲，
+        # 那一句当场从 queue 挪进 current——照那时取，回执会把它漏掉（实测：
+        # voice stop --keep-queue 时 kept 报成空数组，而队列其实好好的）。
+        kept = list(speech["queue"])
         stopped = None
         cur = speech["items"].get(speech["current"] or "")
         task = cur.get("task") if cur else None
@@ -5234,7 +5252,7 @@ def build_app(cfg: dict) -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await cur["done_evt"].wait()
             stopped = cur["id"]
-        return {"stopped": stopped, "dropped": dropped}
+        return {"stopped": stopped, "dropped": dropped, "kept": kept}
 
     def speech_pending() -> list[dict]:
         ids = ([speech["current"]] if speech["current"] else []) + speech["queue"]
@@ -5328,17 +5346,32 @@ def build_app(cfg: dict) -> FastAPI:
             return {"said": text, "spoken": False, "error": str(exc),
                     "note": "这句没出声：合成没做成，只显示了字幕（按 "
                             f"{ms} 毫秒计时）。录制音轨里也没有这一句。"}
-        interrupted = (await speech_interrupt("被新的一句打断")
-                       if step.get("interrupt") else None)
-        behind = speech_pending()
-        item = speech_enqueue(syn, text, out)
+        if step.get("interject"):
+            # **插播**：掐掉正在说的那一句，这一句立刻说，排着的留着接着说。
+            # 顺序要紧：先把这一句插到队首，再掐当前那句。反过来的话，掐完
+            # worker 立刻端起原来队首那句开讲，这一句反而排到它后面——那就成了
+            # 「排队」而不是「插播」。两行之间没有 await，worker 插不进来。
+            item = speech_enqueue(syn, text, out, front=True)
+            behind = [it for it in speech_pending() if it["id"] != item["id"]]
+            interrupted = await speech_interrupt("被一句插播打断", keep_queue=True)
+            # kept 报的是「原来排着、这次没被丢掉的」——把正在插播的这一句自己
+            # 摘掉，否则回执里会分成「kept 里有它、behind 里没它」两句矛盾的话。
+            interrupted["kept"] = [sid for sid in interrupted["kept"]
+                                   if sid != item["id"]]
+            starts_in_ms = 0
+        else:
+            interrupted = (await speech_interrupt("被新的一句打断")
+                           if step.get("interrupt") else None)
+            behind = speech_pending()
+            item = speech_enqueue(syn, text, out)
+            starts_in_ms = round(
+                sum(speech_remaining_sec(it) for it in behind) * 1000)
         result: dict = {"said": text, "spoken": True}
         if interrupted is not None:
             result["interrupted"] = interrupted
         if step.get("async"):
             result["queued_behind"] = [it["id"] for it in behind]
-            result["starts_in_ms"] = round(
-                sum(speech_remaining_sec(it) for it in behind) * 1000)
+            result["starts_in_ms"] = starts_in_ms
             result["speech"] = speech_view(item)
             result["hint"] = (f"要等它讲完再往下走：frago desktop wait --speech "
                               f"{item['id']}")
@@ -5353,8 +5386,11 @@ def build_app(cfg: dict) -> FastAPI:
         timeout = step.get("timeout")
         return await speech_wait(target, float(timeout) if timeout else None)
 
-    async def op_speech_stop(_step: dict) -> Any:
-        out = await speech_interrupt("被 voice stop 掐掉")
+    async def op_speech_stop(step: dict) -> Any:
+        keep = bool(step.get("keep_queue"))
+        out = await speech_interrupt(
+            "被 voice stop 掐掉（排着的留着）" if keep else "被 voice stop 掐掉",
+            keep_queue=keep)
         out["noop"] = not (out["stopped"] or out["dropped"])
         return out
 

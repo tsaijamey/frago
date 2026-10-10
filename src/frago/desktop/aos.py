@@ -688,13 +688,19 @@ def parse(tokens: list[str]) -> tuple[str, object]:
 
     if res == "say":
         text, rest = one_positional(rest, "字幕文字")
-        # 三个无值 flag，与 rec start 的 --force 同一个摘法：进 take_flags 之前
+        # 四个无值 flag，与 rec start 的 --force 同一个摘法：进 take_flags 之前
         # 先摘掉，不给解析器开通用的无值分支。
         #   --speak      开口（不带就是纯字幕，与从前一模一样）
         #   --async      不等讲完就返回，后面的指令与语音同时进行
         #   --interrupt  掐掉正在说的和排着的，再说这一句
-        switches = {s for s in ("--speak", "--async", "--interrupt") if s in rest}
+        #   --interject  掐掉正在说的，这一句立刻说，排着的留着接着放（插播）
+        switches = {s for s in ("--speak", "--async", "--interrupt", "--interject")
+                    if s in rest}
         rest = [t for t in rest if t not in switches]
+        if {"--interrupt", "--interject"} <= switches:
+            raise die("--interrupt 与 --interject 只能挑一个",
+                      hint="--interrupt 连排着的一起丢（重来一遍用）；"
+                           "--interject 只掐正在说的、排着的留着（插播用）")
         voice_flags = {"out", "voice", "rate", "volume", "pitch"}
         f = take_flags(rest, {"ms"} | voice_flags)
         if "--speak" not in switches:
@@ -717,6 +723,8 @@ def parse(tokens: list[str]) -> tuple[str, object]:
             step["async"] = True
         if "--interrupt" in switches:
             step["interrupt"] = True
+        if "--interject" in switches:
+            step["interject"] = True
         return "steps", [step]
 
     if res == "voice":
@@ -728,8 +736,15 @@ def parse(tokens: list[str]) -> tuple[str, object]:
             f = take_flags(rest, {"voice", "rate", "volume", "pitch"})
             return "free", lambda _rec: cmd_voice_synth(text, f)
         if verb == "stop":
+            # --keep-queue：只掐正在说的那一句，排着的留着接着放。
+            # 不带它仍是老规矩：正在说的掐掉、排着的也一起丢（「不说了」）。
+            keep = "--keep-queue" in rest
+            rest = [t for t in rest if t != "--keep-queue"]
             take_flags(rest, set())
-            return "steps", [{"op": "speech.stop"}]
+            step = {"op": "speech.stop"}
+            if keep:
+                step["keep_queue"] = True
+            return "steps", [step]
         if verb == "cache":
             take_flags(rest, set())
             return "free", lambda _rec: cmd_voice_cache()
@@ -791,9 +806,11 @@ RESOURCE_HELP = {
     "rec": "录制：start --name <n> / stop（回执带冻帧指标与 2×3 宫格；"
            "录制期间开口的话封成音轨）",
     "say": "旁白字幕，一句句流过去，各自计时。加 --speak 开口（Edge 语音，"
-           "默认等讲完；--async 边说边做；--out page|local|both|none）",
-    "voice": "语音：synth <文字> 只合成不出声（不要求舞台在跑）/ stop 掐掉 / "
-             "cache 看缓存 / clear 清缓存",
+           "默认等讲完；--async 边说边做；--out page|local|both|none；"
+           "--interrupt 掐掉正在说的与排着的；--interject 掐掉正在说的、"
+           "这一句立刻说、排着的留着接着放）",
+    "voice": "语音：synth <文字> 只合成不出声（不要求舞台在跑）/ stop 掐掉"
+             "（--keep-queue 只掐正在说的、排着的留着）/ cache 看缓存 / clear 清缓存",
 }
 
 
