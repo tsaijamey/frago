@@ -70,7 +70,7 @@ class FakeEdge:
                 if isinstance(turn, Exception):
                     raise turn
                 yield {"type": "audio", "data": turn.get("audio", b"\xff" * 6000)}
-                for mark in turn.get("marks", [(100, 900, "第一句。")]):
+                for mark in turn.get("marks", [(100, 900, "First line.")]):
                     start, dur, text = mark
                     yield {"type": "SentenceBoundary", "offset": start * 10_000,
                            "duration": dur * 10_000, "text": text}
@@ -111,14 +111,14 @@ def test_fingerprint_covers_every_input_but_not_outer_whitespace():
 
 def test_same_line_is_synthesized_once(cache, edge):
     fake = edge()
-    first = voice.synthesize_sync("第一句。")
-    again = voice.synthesize_sync("第一句。")
+    first = voice.synthesize_sync("First line.")
+    again = voice.synthesize_sync("First line.")
     assert len(fake.calls) == 1, "第二次应当命中缓存，不再联网"
     assert first["cached"] is False and again["cached"] is True
     # 48kbps 恒定码率：6000 字节 = 1000 毫秒。
     assert first["duration_ms"] == 1000
     assert first["sentences"] == [{"start_ms": 100, "end_ms": 1000,
-                                   "text": "第一句。"}]
+                                   "text": "First line."}]
     assert fake.calls[0]["boundary"] == "SentenceBoundary"
     assert os.path.isfile(first["audio"]) and os.path.isfile(first["meta"])
 
@@ -127,13 +127,13 @@ def test_no_sentence_times_is_a_failure_and_is_not_cached(cache, edge):
     """拿不到句子时间，字幕和对齐都无从谈起——这不算合成成功。"""
     edge([{"marks": []}] * 3)
     with pytest.raises(voice.VoiceFailed):
-        voice.synthesize_sync("第一句。")
+        voice.synthesize_sync("First line.")
     assert voice.stats()["lines"] == 0
 
 
 def test_network_errors_are_retried(cache, edge):
     fake = edge([ConnectionError("503"), {}])
-    out = voice.synthesize_sync("第一句。")
+    out = voice.synthesize_sync("First line.")
     assert len(fake.calls) == 2
     assert "503" in out["retried"][0]
 
@@ -141,8 +141,37 @@ def test_network_errors_are_retried(cache, edge):
 def test_bad_params_fail_before_the_network(cache, edge):
     fake = edge()
     with pytest.raises(ValueError, match="语速"):
-        voice.synthesize_sync("第一句。", rate="fast")
+        voice.synthesize_sync("First line.", rate="fast")
     assert fake.calls == []
+
+
+def test_english_only_rejects_cjk_lines_before_the_network(cache, edge):
+    """这一层只说英文：中文台词当场拒，一个字节都不联网。
+
+    拒（ValueError）不是「没合成成」（VoiceFailed）——后者退回只显示字幕照常往下走，
+    会把「台词写了中文」这件事藏起来，而那正是要让人看见的。
+    """
+    fake = edge()
+    with pytest.raises(ValueError, match="只说英文"):
+        voice.synthesize_sync("这一句是中文。")
+    assert fake.calls == []
+
+
+def test_english_only_rejects_a_non_english_voice(cache, edge):
+    """只锁正文锁不住语言：中文嗓子念英文台词，出来的还是一口中文腔。"""
+    fake = edge()
+    with pytest.raises(ValueError, match="只说英文"):
+        voice.synthesize_sync("First line.", voice="zh-CN-XiaoxiaoNeural")
+    assert fake.calls == []
+
+
+def test_english_only_relaxes_by_the_switches(cache, edge, monkeypatch):
+    """两处开关是常量，不是埋在逻辑里的硬编：关掉就回到从前。"""
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_TEXT", False)
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_VOICE", False)
+    fake = edge()
+    out = voice.synthesize_sync("这一句是中文。", voice="zh-CN-XiaoxiaoNeural")
+    assert out["voice"] == "zh-CN-XiaoxiaoNeural" and len(fake.calls) == 1
 
 
 def test_missing_edge_tts_says_frago_is_incomplete(cache, monkeypatch):
@@ -150,7 +179,7 @@ def test_missing_edge_tts_says_frago_is_incomplete(cache, monkeypatch):
     NEVER 叫人去单独补装一个包：用户不该知道 frago 底下还有这么一个包。"""
     monkeypatch.setitem(sys.modules, "edge_tts", None)   # import 时抛 ImportError
     with pytest.raises(voice.VoiceUnavailable) as exc:
-        voice.synthesize_sync("第一句。")
+        voice.synthesize_sync("First line.")
     assert "重新安装 frago" in str(exc.value)
     assert "pip install" not in str(exc.value)
 
@@ -169,11 +198,11 @@ def test_edge_tts_is_a_required_dependency():
 def test_eviction_drops_least_recently_used_first(cache, edge):
     edge([{"audio": b"\xff" * 400_000}] * 3)
     (cache / "config.json").write_text(json.dumps({"tts": {"cache_max_mb": 1}}))
-    old = voice.synthesize_sync("旧的一句。")
-    mid = voice.synthesize_sync("中间一句。")
+    old = voice.synthesize_sync("An old line.")
+    mid = voice.synthesize_sync("A middle line.")
     past = time.time() - 3600
     os.utime(old["meta"], (past, past))       # 旧的那句一小时没人用
-    new = voice.synthesize_sync("新的一句。")
+    new = voice.synthesize_sync("A new line.")
     assert new["evicted"]["files"] == 1
     assert not os.path.exists(old["meta"]) and not os.path.exists(old["audio"])
     assert os.path.exists(mid["meta"]) and os.path.exists(new["meta"])
@@ -181,7 +210,7 @@ def test_eviction_drops_least_recently_used_first(cache, edge):
 
 def test_audio_path_only_accepts_fingerprints(cache, edge):
     edge()
-    out = voice.synthesize_sync("第一句。")
+    out = voice.synthesize_sync("First line.")
     assert str(voice.audio_path(out["key"])) == out["audio"]
     for bad in ("../../etc/passwd", "", "abc", out["key"][:-1] + "/"):
         assert voice.audio_path(bad) is None
@@ -189,7 +218,7 @@ def test_audio_path_only_accepts_fingerprints(cache, edge):
 
 def test_clear_leaves_nothing(cache, edge):
     edge()
-    voice.synthesize_sync("第一句。")
+    voice.synthesize_sync("First line.")
     out = voice.clear()
     assert out["removed_lines"] == 1
     assert voice.stats()["lines"] == 0
@@ -325,7 +354,7 @@ def test_unknown_output_is_refused(sealed, fake_synth):
 
 def test_voice_route_only_serves_fingerprints(sealed, cache, edge):
     edge()
-    syn = voice.synthesize_sync("第一句。")
+    syn = voice.synthesize_sync("First line.")
     app = broker.build_app(dict(sealed))
     route = next(r for r in app.routes if getattr(r, "path", None) == "/voice/{name}")
     assert asyncio.run(route.endpoint(name=f"{syn['key']}.mp3")).status_code == 200

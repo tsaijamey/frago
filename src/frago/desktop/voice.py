@@ -8,6 +8,14 @@ broker 的 `say --speak` 也调它。出声、排队、录进片子是 broker �
 所以这里做两件事兜底：失败带间隔重试；重试完仍失败就抛 VoiceFailed，由调用方
 决定降级（broker 退回只显示字幕，并在回执里写明这句没出声）。
 
+语言
+----
+这一层只说英文（2026-10-09 定）：嗓子限 ``en-*``，正文里不许出现中日文字符。
+演示是给外面看的，两样都得是英文。只锁嗓子锁不住语言——Multilingual 那一代给什么
+文字就念什么语言，英文嗓子念中文，出来的仍是中文；只锁正文也锁不住——中文嗓子念
+英文台词，出来的是一口中文腔。所以两样分开卡，开关是 ``ENFORCE_ENGLISH_VOICE``
+与 ``ENFORCE_ENGLISH_TEXT``，要放宽就改这两个常量，别在调用处绕。
+
 缓存
 ----
 落点 ``~/.frago/cache/tts/<引擎>/<指纹前两位>/<指纹>.{mp3,json}``。
@@ -36,8 +44,14 @@ from contextlib import suppress
 from pathlib import Path
 
 ENGINE = "edge"
-DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"
 MIN_EDGE_TTS = "7.2.8"
+
+#: 这一层只说英文。两处开关：嗓子必须 en- 开头；正文里不许出现中日文字符。
+#: 两个都得开着才锁得住语言，理由见文件头「语言」一节。
+LANGUAGE = "en"
+ENFORCE_ENGLISH_VOICE = True
+ENFORCE_ENGLISH_TEXT = True
 
 CACHE_ROOT = Path.home() / ".frago" / "cache" / "tts"
 CONFIG_PATH = Path.home() / ".frago" / "config.json"
@@ -57,6 +71,9 @@ RETRY_DELAYS = (1.0, 2.0)
 _RATE_RE = re.compile(r"^[+-]\d{1,3}%$")
 _PITCH_RE = re.compile(r"^[+-]\d{1,4}Hz$")
 _KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+#: 中日韩文字与中日文标点。正文里出现任何一个，就说明这不是英文台词。
+_CJK_RE = re.compile(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf"
+                     r"\u4e00-\u9fff\uf900-\ufaff]")
 
 
 class VoiceUnavailable(RuntimeError):
@@ -107,6 +124,25 @@ def check_params(rate: str, volume: str, pitch: str) -> None:
         raise ValueError(f"音高写成 +5Hz / -10Hz 这种形状，得到: {pitch!r}")
 
 
+def check_language(text: str, voice_name: str) -> None:
+    """这一层只说英文：不达标就停在这儿，并说清怎么改。
+
+    抛 ValueError 是刻意的——它跟 VoiceFailed 不是一类：VoiceFailed 是「这次没合成
+    成」，调用方退回只显示字幕照常往下走；这个是「这个要求这一层不做」，必须当场可见。
+    闷声把中文台词念成英文腔，或退回字幕让人以为只是没声音，两种都比报错更坏。
+    """
+    if ENFORCE_ENGLISH_VOICE and not voice_name.startswith(f"{LANGUAGE}-"):
+        raise ValueError(
+            f"语音层只说英文：嗓子要 en- 开头的英文嗓子，得到 {voice_name!r}。"
+            f"念英文就用 {DEFAULT_VOICE}；真要放宽，把 frago.desktop.voice 里的 "
+            "ENFORCE_ENGLISH_VOICE 改成 False。")
+    if ENFORCE_ENGLISH_TEXT and _CJK_RE.search(text):
+        raise ValueError(
+            "语音层只说英文：这句里有中日文字符，这一层不合成。"
+            "台词写成英文再来；真要放宽，把 frago.desktop.voice 里的 "
+            "ENFORCE_ENGLISH_TEXT 改成 False。")
+
+
 def _import_edge_tts():
     try:
         import edge_tts  # noqa: PLC0415 —— 只在真要合成时才付这笔 import
@@ -149,6 +185,7 @@ async def synthesize(text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
     if not text:
         raise ValueError("没有要合成的文字")
     check_params(rate, volume, pitch)
+    check_language(text, voice)
     key = cache_key(text, voice, rate, volume, pitch)
     audio, meta = _paths(key)
 
