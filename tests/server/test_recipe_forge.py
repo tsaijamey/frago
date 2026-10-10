@@ -126,6 +126,40 @@ def test_brief_without_page_asks_for_a_data_only_recipe() -> None:
     assert "配方名：etf_board" in brief
 
 
+def test_brief_makes_the_director_queue_its_speech_ahead() -> None:
+    """2026-10-09 那一轮人报的「话不够多、经常有声音 gap」，钉住改后的工序。
+
+    要害是说话**不再挂在模型的回合上**：先写话、切短句、逐句合成拿时长、排队放。
+    上一版那句「读一次终端说一句」把说话的时机交给了 poll，而 poll 之间是思考，
+    思考在桌面上就是静音。
+    """
+    brief = recipe_forge.build_brief("x", page=True, name=None, session_id="s")
+    # 工序四步都在：写话落到文件、切成短句、逐句合成、排队
+    assert "script.md" in brief
+    assert "切短句" in brief
+    assert "--async" in brief and "wait --speech" in brief
+    assert "duration_ms" in brief
+    # 队列不许空，且要边放边续
+    assert "NEVER 让它空" in brief
+    # 两类话分开：并行层与插播层
+    assert "并行层" in brief and "插播" in brief
+    # 插播用 --interject（掐当前、保住队列）；--interrupt 与 voice stop 禁用
+    # ——那两条把排着的整队丢掉，正是要防的那种 gap
+    assert "--interject" in brief
+    assert "整队丢掉" in brief
+    assert "NEVER 用 `--interrupt`" in brief
+    # 幕脚本从加分项提成主线
+    assert "它是这场演出的主线，不是空档里的加分项" in brief
+    # 一次排一长串：一批写进文件、一条命令整批发（一个回合排十几句）
+    assert "一次排一长串" in brief
+    assert "整批执行" in brief
+    assert "10–20 句" in brief
+    # 批长有上限的理由：插播不用等队列了，但队列压得越久、掉头越慢
+    assert "转向变慢" in brief
+    # 人类输入行写进任务书：导演知道可以问人，也知道去哪问
+    assert "输入行" in brief and "人会跟你说话" in brief
+
+
 def test_start_goes_ahead_when_the_stage_is_not_running(monkeypatch) -> None:
     """舞台没在跑不再是拒绝的理由：会话照起，起来之后由导演自己 frago desktop up。"""
     from frago.server.services import workbench_agents, workbench_new_session
