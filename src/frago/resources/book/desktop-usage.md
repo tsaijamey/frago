@@ -79,7 +79,7 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **`say` 默认只是字幕，加 `--speak` 才开口。** 开口用的是 Edge 语音合成（默认声音 en-US-AndrewMultilingualNeural，见 `frago video-narration` 域的 `edge-tts-voice-picks`），同一句话同样的参数只合成一次，缓存在 `~/.frago/cache/tts/`，超过 500MB（`~/.frago/config.json` 的 `tts.cache_max_mb`）从最久没用的删起。开口时字幕跟着声音走，留多久由这句实际多长决定，所以不接受 `--ms`。
 
-**这一层只说英文。** 嗓子限 `en-*`，正文里不许出现中日文字符，两样各由一个常量卡着（`frago.desktop.voice` 里的 `ENFORCE_ENGLISH_VOICE` 与 `ENFORCE_ENGLISH_TEXT`）。不达标当场拒绝合成，回执写 `say 失败 — ValueError: 语音层只说英文…`——不闷声换嗓子，也不退回字幕假装只是没声音。只锁嗓子锁不住语言：Multilingual 那一代给什么文字就念什么语言，英文嗓子念中文，出来的仍是中文。要放宽就改那两个常量。
+**这一层只说英文。** 嗓子限 `en-*`，正文里不许出现中日文字符，两样各由一个常量卡着（`frago.desktop.voice` 里的 `ENFORCE_ENGLISH_VOICE` 与 `ENFORCE_ENGLISH_TEXT`）。不达标当场拒绝合成，回执写 `say 失败 — ValueError: 语音层只说英文…`——不闷声换嗓子，也不退回字幕假装只是没声音。只锁嗓子锁不住语言：Multilingual 那一代给什么文字就念什么语言，英文嗓子念中文，出来的仍是中文。要放宽就改那两个常量。**这一条被拒会把整批带停**：它是步骤失败，同一条命令里余下的步骤一条都不执行（回执里 `not_reached`，HTTP 500）——与下面「合成失败不停整批」那条不是一回事。所以别把开口的话和别的动作排在一条命令里：台词先用 `voice synth` 过一遍（同一道语言关，先跑在联网之前），验过了再整批发。
 
 - **等不等讲完。** 不带 `--async` 就等这句讲完才返回——「先讲清楚再动手」。带 `--async` 立刻返回、后面的指令与语音同时进行——「边说边做」；动作做完了话还没讲完、需要停下来等的地方，显式写一条 `wait --speech <编号>`（编号在回执里）或 `wait --speech all`。舞台不替你猜一组动作什么时候算做完：对它来说每条指令都是单独到的，分不清「这组做完了」和「你还在想下一步」。
 - **排队。** 新的一句排在上一句后面，两句不叠。`rec stop` 与 `down` 会先等话说完再停。

@@ -148,6 +148,18 @@ def test_brief_makes_the_director_queue_its_speech_ahead() -> None:
     assert "--interject" in brief
     assert "整队丢掉" in brief
     assert "NEVER 用 `--interrupt`" in brief
+    # 同一个名词全篇一个意思：幕脚本第 9 步里的「插播」也是 --interject。
+    # 一处说「掐当前立刻说」、另一处说「排到队尾」，导演按哪条做都有一半是错的。
+    # 任务书是折行排的，跨行的那条把空白压平再断言，免得改个折行就把测试弄红。
+    flat = " ".join(brief.split())
+    assert "排到队尾" not in flat
+    assert "变化来的话**插播**一句 （`--interject`" in flat
+    # 插播的例句必须是英文：它同时就是字幕，而语音层只认英文——中文那句会被当场拒，
+    # 并把同一条命令里余下的步骤一起带停
+    assert '"The recipe is ready' in brief
+    assert '"It failed: <one-line reason>"' in brief
+    # 英文这条规矩要写明不达标的代价，别让人以为跟「合成失败」一样只停这一句
+    assert "回执里 `not_reached`" in brief
     # 幕脚本从加分项提成主线
     assert "它是这场演出的主线，不是空档里的加分项" in brief
     # 一次排一长串：一批写进文件、一条命令整批发（一个回合排十几句）

@@ -5139,7 +5139,9 @@ def build_app(cfg: dict) -> FastAPI:
 
     async def speech_play(item: dict) -> None:
         item["state"] = "playing"
-        item["started_at"] = time.time()
+        # `started_at` 是 worker 建这个任务之前就记下的（见 speech_worker）——从
+        # worker 端起这一句那一刻起它就已占住播放位、随时可能被掐掉，而掐它的人
+        # 可能赶在这个任务跑第一步之前动手。这里再记一次等于把那段时间抹掉。
         item["screens_at_start"] = len(listening_screens())
         if recorder.recording:
             try:
@@ -5173,6 +5175,12 @@ def build_app(cfg: dict) -> FastAPI:
             sid = speech["queue"].pop(0)
             item = speech["items"][sid]
             speech["current"] = sid
+            # **开始时刻在建播放任务之前就记。** 端起这一句与它真的开口之间隔着
+            # 一次事件循环，插播的取消有可能正好落在这中间：那时播放任务已建、
+            # 一步都没跑，`speech_interrupt` 取消它，取消分支要按这个时刻算「实际
+            # 说了多久」——没记就是 KeyError，整个 worker 死掉，队列从此不动，
+            # 而回执照常写 ok。别把它挪回 speech_play 里。
+            item["started_at"] = time.time()
             task = asyncio.create_task(speech_play(item))
             item["task"] = task
             try:
@@ -5358,6 +5366,10 @@ def build_app(cfg: dict) -> FastAPI:
             # 摘掉，否则回执里会分成「kept 里有它、behind 里没它」两句矛盾的话。
             interrupted["kept"] = [sid for sid in interrupted["kept"]
                                    if sid != item["id"]]
+            # `queued_behind` 与 `kept` 同一个口径：被掐掉的那句已经没了，不算
+            # 「排在这一句后面」。取 behind 在掐之前（那时它还是 current），不剔
+            # 掉的话回执里会同时出现「掐掉了第 1 句」和「后面压着第 1 句」。
+            behind = [it for it in behind if it["id"] != interrupted["stopped"]]
             starts_in_ms = 0
         else:
             interrupted = (await speech_interrupt("被新的一句打断")

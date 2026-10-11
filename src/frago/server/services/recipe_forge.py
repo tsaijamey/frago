@@ -350,7 +350,10 @@ camera reset——NEVER 猜 ref。
 
 **台词一律用英文写。** 语音层只说英文（frago.desktop.voice 里两处开关锁着）：正文里出现中日文
 字符，合成当场被拒，回执就是 `say 失败 — ValueError: 语音层只说英文…`，那句一个字也念不出来。
-say 的正文同时就是字幕，所以写成英文，声音与字幕一起是英文。这场演示是给外面看的。
+**被拒会把同一条命令里排着的余下步骤一起带停**（回执里 `not_reached`）——幕脚本里混进一句中文，
+那一幕后面的话连同画面动作一条都不发。所以每句台词都要过「话从哪来」第 3 步的 voice synth：
+它先跑同一道语言关，验过了再写进幕。say 的正文同时就是字幕，所以写成英文，声音与字幕一起是
+英文。这场演示是给外面看的。
 
 ## 话从哪来：先写话，再排音频
 
@@ -461,10 +464,11 @@ top of the screen."`，然后**停下等他答**，别猜着往下做。他答�
    frago recipe create <名字> --prompt-file {forge_dir}/requirement.md --tmux-target {STAGE_TMUX_SESSION}
    worker 一起来就换字条 "2/5 写规格"，并**插播**一句它现在在干什么。讲稿与幕脚本写到
    {forge_dir}/slides/ 与 {forge_dir}/acts/——这是主线的一部分，接着第 7 步的话往下写。
-9. 看 worker：每 5–10 秒 frago desktop term read --lines 40；变化来的话**插播**一句（不带
-   --interrupt，排到队尾）、配一次指针动作、换字条；队列快空了就续下一批（「话从哪来」第 5
-   步），NEVER 让它空。进入写代码就换字条 "3/5 写代码" 并插播一句，此后阶段一变就换字条、
-   插播一句、重画一次进度板（「进度板」一节那三步）。该指的地方先 elements 再 camera focus。
+9. 看 worker：每 5–10 秒 frago desktop term read --lines 40；变化来的话**插播**一句
+   （`--interject`；NEVER 用 `--interrupt`——它把预排的整队丢掉）、配一次指针动作、换字条；
+   队列快空了就续下一批（「话从哪来」第 5 步），NEVER 让它空。进入写代码就换字条
+   "3/5 写代码" 并插播一句，此后阶段一变就换字条、插播一句、重画一次进度板（「进度板」
+   一节那三步）。该指的地方先 elements 再 camera focus。
 10. 需要界面时，另起一个后台 bash 循环（同样 run_in_background: true），内容是：
     每 5 秒查一次 ~/.frago/recipes 下 <名字>/assets/index.html 是否出现；出现后演幕三
     （browser open http://127.0.0.1:8093/app/<名字>/、say、pause 4000、focus term）；
@@ -473,10 +477,10 @@ top of the screen."`，然后**停下等他答**，别猜着往下做。他答�
 11. create 结束：
     - 退出码 0 → 换字条 "4/5 验证"、插播一句；frago recipe validate <配方目录>；再
       frago recipe run <名字>（有页面就会有状态）；重画一次进度板；然后演终幕（slide open
-      讲稿最后一页：做了什么、怎么用，pause 几秒，slide close）；插播 "配方完成，可以在配方页
-      启动"，字条换成 "5/5 完成"。
+      讲稿最后一页：做了什么、怎么用，pause 几秒，slide close）；插播 "The recipe is ready —
+      you can launch it from its page."，字条换成 "5/5 完成"。
     - 退出码 2 → 按铁律第 6 条。
-    - 其它 → 插播 "失败：<一句原因>"，字条写明失败，并在本会话里写明。
+    - 其它 → 插播 "It failed: <one-line reason>"，字条写明失败，并在本会话里写明。
 12. 最后在本会话里给一份 5 行以内的总结：配方名、目录、modes、下一步。之后继续留在本会话里
     等人追加需求或提问（铁律第 5 条、「人会跟你说话」一节）。
 """

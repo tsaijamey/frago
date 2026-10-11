@@ -350,6 +350,26 @@ def test_interject_cuts_the_current_but_keeps_the_queued(sealed, fake_synth):
     assert cut["interrupted"]["dropped"] == [], "一个排着的都不许丢"
 
 
+def test_interject_receipt_does_not_count_the_line_it_cut(sealed, fake_synth):
+    """插播回执里的 `queued_behind` 是「排在这一句后面的」，不含被它掐掉的那句。
+
+    同一份回执里 `kept` 已经剔掉了插播自己，`queued_behind` 要是还留着刚被掐掉的
+    那句，两个字段口径就不一致：导演按它数「后面还压着多少话」会多算一条。
+    """
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "一句很长的话", "speak": True, "out": "none",
+         "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 50},
+        {"op": "say", "text": "插播一句", "speak": True, "out": "none",
+         "interject": True, "async": True}]})
+    cut = out["results"][3]
+    assert cut["status"] == "ok"
+    assert cut["interrupted"]["stopped"] == "1"
+    assert cut["interrupted"]["kept"] == ["2"]
+    assert cut["queued_behind"] == ["2"], "被掐掉的那句不该算进「后面还压着」"
+
+
 def test_the_kept_queue_carries_on_after_the_interjection(sealed, fake_synth):
     """插播说完之后，原来排着的那句接着放——留在队列里不等于留着不动。"""
     _, out = post_control(sealed, {"steps": [
@@ -362,6 +382,31 @@ def test_the_kept_queue_carries_on_after_the_interjection(sealed, fake_synth):
         {"op": "speech.wait", "target": "all"}]})
     assert out["results"][3]["interrupted"]["kept"] == ["2"]
     assert out["results"][4]["status"] == "ok", "队列没接着放，等 all 会等不到"
+
+
+def test_interject_right_when_the_worker_takes_the_next_line(sealed, fake_synth):
+    """插播落在「worker 刚端起下一句、播放任务一步都还没跑」的那一瞬。
+
+    这是插播唯一一处会让整个语音队列停住的窗口。worker 端起一句把它设为「正在
+    说」，再建播放任务；两步之间不让出控制权，可插播这一侧是在**同一批事件**里
+    被唤醒的（`sleep 0` 让出的那一次），于是它取消的是那个一步都没跑的任务——
+    被掐的那句于是从没记下开始时刻。取消分支要是直接取 `item["started_at"]`，
+    这里就是 KeyError：worker 死掉，插播自己不出声、排着的也一起停，而回执照常
+    写 ok——台上只有声音没了，看不到报错。
+
+    判据取用户能看见的那两条：插播这一句真的说完了，排着的那句接着放。
+    """
+    _, out = post_control(sealed, {"steps": [
+        {"op": "say", "text": "第一句", "speak": True, "out": "none", "async": True},
+        {"op": "say", "text": "排着的", "speak": True, "out": "none", "async": True},
+        {"op": "sleep", "ms": 0},
+        {"op": "say", "text": "插播一句", "speak": True, "out": "none",
+         "interject": True},
+        {"op": "speech.wait", "target": "all"}]})
+    cut = out["results"][3]
+    assert cut["status"] == "ok"
+    assert cut["speech"]["state"] == "done", "插播这一句没说出来——worker 死在这儿了"
+    assert out["results"][4]["status"] == "ok", "队列停在插播之后，等 all 会等不到"
 
 
 def test_voice_stop_keep_queue_leaves_the_queue_alone(sealed, fake_synth):
