@@ -345,17 +345,26 @@ def normalize_directory(directory: str) -> str:
 
 
 def claim_session(directory: str, since_ms: int) -> str | None:
-    """认领会话：取 directory 匹配且 ``time_created >= since_ms`` 的最新一条。
+    """认领会话：取 directory 匹配、创建时刻在 ``since_ms`` 之后且**最早**的那一条。
 
     opencode 不接受"用我给的 id 建会话"，只接受"续接这个 id"，所以身份是认领
     来的而不是指定的。会话行在首轮提交那一刻才建，故时间窗从提交前一刻起算。
+
+    锚点之后**最早**创建的那条才是这一次新建出来的，所以比的是"最小"而不是"最新"
+    ——与 codex 那侧同一个方向（那一侧 20261009 就是这么改的）。按"最新"挑会在同
+    目录两场交错时挑错人：自己这一场先落库、别人那一场后落库，等自己下一拍再去认
+    时，"最新"已经是别人的了；被抢的那一场反而认不到自己，完成探针全程弃权，本轮
+    答案退回读屏。
 
     目录先按真实路径查，未命中再按调用方给的原值查一次——库里理论上存的是真实
     路径，但两侧都试过才不会因为某个版本的行为差异又变成静默落空。
 
     两套表都问：升级当天新会话进 ``session_v2``、库里同时躺着 1.18 的旧会话，
     只问一套就会在另一套上静默落空（认不到 → 没有绑定 → 完成探针全程弃权 →
-    本轮答案退回读屏）。两边各取最新一条，再比创建时刻取赢家。
+    本轮答案退回读屏）。两边各取最早一条，再比创建时刻取赢家。
+
+    创建时刻只是这两场会话的**次序**，不构成"这一条就是我"的因果连接：同目录里
+    另一场先落库、自己后落库时，最早那条仍是别人的。
     找不到返回 None（NEVER 抛）。
     """
     conn = _connect()
@@ -374,13 +383,13 @@ def claim_session(directory: str, since_ms: int) -> str | None:
                 row = conn.execute(
                     f"SELECT id, time_created FROM {table} "  # noqa: S608 - 表名是常量
                     "WHERE directory = ? AND time_created >= ? "
-                    "ORDER BY time_created DESC, id DESC LIMIT 1",
+                    "ORDER BY time_created ASC, id ASC LIMIT 1",
                     (candidate, since_ms),
                 ).fetchone()
                 if not row:
                     continue
                 created = row[1] if isinstance(row[1], int) else 0
-                if best is None or created > best[0]:
+                if best is None or created < best[0]:
                     best = (created, str(row[0]))
     except sqlite3.Error as exc:
         logger.debug("opencode claim_session failed: %s", exc)

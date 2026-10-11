@@ -286,14 +286,41 @@ def test_claim_session_finds_v2_row(db: Path) -> None:
     assert opencode_store.claim_session("/w", since_ms=600) is None
 
 
-def test_claim_session_prefers_the_newer_of_the_two_stores(db: Path) -> None:
-    """升级当天两套表都有新行时，取创建更晚的那条。"""
+def test_claim_session_prefers_the_earlier_of_the_two_stores(db: Path) -> None:
+    """升级当天两套表都有行时，取创建更早的那条（判据是"锚点之后最早"，跨表一样）。"""
     _build(
         db,
-        v2_sessions=[("ses_new", "/w", 900, 950)],
-        legacy_sessions=[("ses_old", "/w", 500)],
+        v2_sessions=[("ses_v2", "/w", 900, 950)],
+        legacy_sessions=[("ses_legacy", "/w", 500)],
     )
-    assert opencode_store.claim_session("/w", since_ms=100) == "ses_new"
+    assert opencode_store.claim_session("/w", since_ms=100) == "ses_legacy"
+
+
+def test_claim_session_keeps_its_own_row_when_the_other_landed_later(db: Path) -> None:
+    """同目录两场交错：自己那行先落库、别人那行后落库时，认领 MUST 认自己那条。
+
+    时序（实测 20261011）：A 提交那一刻库里还没有行，认领扑空；A 的行随后落库；B
+    提交、B 的行也落库；A 下一拍再去认。按"最新"挑时这一拍会认走 B 的行——A 的编号
+    变成 B 那一场，B 再认时自己那条已被认走、退回 None，完成探针全程弃权、答案退回
+    读屏。判据改成"锚点之后最早"之后，A 认回自己，B 也认得回自己。
+    """
+    _build(db, v2_sessions=[])
+    # A 提交那一拍：库里还没有任何行，认不到是对的。
+    assert opencode_store.claim_session("/w", since_ms=1000) is None
+    # 两场会话行先后落库：A 自己的 1300，同目录另一场 B 的 1800。
+    conn = sqlite3.connect(db)
+    for sid, created in (("ses_A", 1300), ("ses_B", 1800)):
+        conn.execute(
+            "INSERT INTO session_v2 (id, directory, title, time_created, time_updated) "
+            "VALUES (?, '/w', '', ?, ?)",
+            (sid, created, created),
+        )
+    conn.commit()
+    conn.close()
+
+    assert opencode_store.claim_session("/w", since_ms=1000) == "ses_A"
+    # B 按自己的锚点认，也拿回自己那条（A 那条在它的窗口之外）。
+    assert opencode_store.claim_session("/w", since_ms=1500) == "ses_B"
 
 
 def test_session_exists_and_directory_cover_both_stores(db: Path) -> None:

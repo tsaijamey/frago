@@ -233,16 +233,22 @@ def test_latest_turn_corrupt_message_json_is_skipped(db: Path) -> None:
 
 
 # ── claim_session ──────────────────────────────────────────────────
-def test_claim_session_picks_newest_in_directory_and_window(db: Path) -> None:
+def test_claim_session_picks_earliest_in_directory_and_window(db: Path) -> None:
+    """锚点之后有多条时取**最早**创建的那条——那才是这一次新建出来的。
+
+    取最新会在同目录两场交错时挑错人：自己这一场先落库、别人那一场后落库，等下一拍
+    再去认时"最新"已经是别人的了（见 ``test_opencode_store_v2`` 里那条交错用例）。
+    """
     _build_db(
         db,
         sessions=[
-            ("ses_old", "/w", 100),
-            ("ses_new", "/w", 300),
+            ("ses_old", "/w", 100),  # 锚点之前，窗外的老会话
+            ("ses_mine", "/w", 300),  # 自己这一场
+            ("ses_later", "/w", 500),  # 同目录里后起的另一场
             ("ses_other", "/elsewhere", 400),
         ],
     )
-    assert opencode_store.claim_session("/w", 200) == "ses_new"
+    assert opencode_store.claim_session("/w", 200) == "ses_mine"
 
 
 def test_claim_session_rejects_other_directory(db: Path) -> None:
