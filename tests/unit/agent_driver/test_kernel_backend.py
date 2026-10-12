@@ -7,7 +7,13 @@ json``）：成功、模型调用失败、连接没解析出来三种。内核�
 
 from __future__ import annotations
 
-from frago.agent_driver.kernel_backend import _classify, _parse_payload
+from frago.agent_driver.kernel_backend import (
+    _classify,
+    _classify_chat,
+    _parse_payload,
+    build_chat_command,
+    build_command,
+)
 
 # 真机样本：成功（--as-profile 指向一条能用的连接），exit 0。
 _OK = (
@@ -79,3 +85,70 @@ def test_parse_payload_skips_leading_noise():
 
 def test_parse_payload_rejects_non_result_objects():
     assert _parse_payload('{"type":"assistant","text":"hi"}') is None
+
+
+# ── chat 那一轮（问一句答一句，不留会话记录） ────────────────────────────────
+#
+# 样本同样抄自真机（2026-10-11，``frago-core --mode chat -p -``）：成功那句来自
+# ``--as-role observer``，失败那句来自 ``--as-profile deadbeef``（id 不在 profiles.json
+# 里 ⇒ 连接没解析出来）。两种形状与 agent 那条不同，认错了就会把成功读成失败。
+
+_CHAT_OK = (
+    '{"type":"final","ok":true,"text":"Hi! How\'s it going?","rounds":1,"mode":"chat",'
+    '"role":"observer","profile":"9e770df9","model":"deepseek-flash","wire":"anthropic",'
+    '"duration_ms":809,"error_kind":null,"error":null}'
+)
+
+_CHAT_CREDENTIAL = (
+    '{"type":"final","ok":false,"text":"","rounds":0,"mode":"chat","role":null,'
+    '"profile":"deadbeef","model":null,"wire":null,"duration_ms":0,'
+    '"error_kind":"credential","error":"profiles.json 里没有 id 为「deadbeef」的连接"}'
+)
+
+
+def test_chat_success_is_ok():
+    got = _classify_chat(_CHAT_OK, "", 0, 809)
+    assert got.status == "ok"
+    assert got.text == "Hi! How's it going?"
+
+
+def test_chat_credential_is_needs_input():
+    got = _classify_chat(_CHAT_CREDENTIAL, "", 2, 0)
+    assert got.status == "needs_input"
+
+
+def test_chat_failure_carries_the_reason_as_text():
+    """``text`` 空着、原因在 ``error`` 里：往上交原因，别交一个没有理由的空串。"""
+    got = _classify_chat(_CHAT_CREDENTIAL, "", 2, 0)
+    assert "deadbeef" in got.text
+
+
+def test_chat_self_reported_success_with_nonzero_exit_is_error():
+    """与 agent 那条同一条规矩：自报成功却非零退出，以退出码为准。"""
+    assert _classify_chat(_CHAT_OK, "", 1, 5).status == "error"
+
+
+def test_chat_without_a_final_object_is_error():
+    got = _classify_chat("", "frago-core: boom", 2, 3)
+    assert got.status == "error"
+    assert "boom" in got.text
+
+
+def test_each_shape_reader_ignores_the_other_shape():
+    """两种形状必须指名道姓地认：认错了会把字段全对不上的对象一路读成"输出不是 JSON"。"""
+    assert _parse_payload(_CHAT_OK) is None
+    assert _parse_payload(_OK, kind="final") is None
+
+
+def test_chat_command_asks_once_and_leaves_no_session_behind():
+    cmd = build_chat_command(cwd="/repos/x", profile_id=None)
+    assert cmd[cmd.index("--mode") + 1] == "chat"
+    assert "--session-id" not in cmd  # 落会话靠它，chat 不该有
+    assert cmd[-2:] == ["-p", "-"]  # 任务从 stdin 来
+
+
+def test_agent_command_still_names_its_session():
+    cmd = build_command(session_id="core_abc", cwd="/repos/x", profile_id="0ef6d728")
+    assert cmd[cmd.index("--mode") + 1] == "agent"
+    assert cmd[cmd.index("--session-id") + 1] == "core_abc"
+    assert cmd[cmd.index("--as-profile") + 1] == "0ef6d728"

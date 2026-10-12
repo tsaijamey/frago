@@ -187,6 +187,9 @@ class TestLiteralTerms:
 
 
 class TestExpansionFallback:
+    """这一组一律点名 ``agent_type="claude"``：测的是"tmux 那条路出了岔子怎么办"，
+    不点名的话走哪个后端要看这台机器选定的内核，用例结果就随机器而变。"""
+
     def test_driver_failure_falls_back_to_literal(self, monkeypatch):
         """扩展失败 NEVER 让整条命令失败——差的检索远好过没有检索。"""
 
@@ -195,7 +198,7 @@ class TestExpansionFallback:
                 raise RuntimeError("tmux missing")
 
         monkeypatch.setattr("frago.agent_driver.SessionLauncher", Boom)
-        plan = search_mod.expand_query("opencode 会话库")
+        plan = search_mod.expand_query("opencode 会话库", agent_type="claude")
         assert plan.source == "literal"
         assert plan.terms == ["opencode", "会话库"]
 
@@ -205,7 +208,7 @@ class TestExpansionFallback:
                 return type("R", (), {"status": "timeout", "text": ""})()
 
         monkeypatch.setattr("frago.agent_driver.SessionLauncher", Timeout)
-        plan = search_mod.expand_query("opencode 会话库")
+        plan = search_mod.expand_query("opencode 会话库", agent_type="claude")
         assert plan.source == "literal"
         assert "timeout" in plan.note
 
@@ -219,9 +222,93 @@ class TestExpansionFallback:
                 )()
 
         monkeypatch.setattr("frago.agent_driver.SessionLauncher", Good)
-        plan = search_mod.expand_query("q")
+        plan = search_mod.expand_query("q", agent_type="claude")
         assert plan.source == "agent"
         assert plan.terms == ["sqlite", "会话库"]
+
+
+def kernel_turn(status: str = "ok", text: str = "", duration_ms: int = 3):
+    """造一个内核一轮的结果（:class:`KernelTurn` 的字段形状）。"""
+    from frago.agent_driver.kernel_backend import KernelTurn
+
+    return KernelTurn(text=text, status=status, duration_ms=duration_ms)
+
+
+class TestWhichBackendGetsAsked:
+    """不点名内核时，扩展那一轮问谁——判据是"这一家跑在哪"（runs_on_kernel）。"""
+
+    def test_kernel_preference_never_reaches_the_tmux_launcher(self, monkeypatch):
+        """选定自带内核时走 chat 那条路。注册表里没有 coreagent，拿它去挂 tmux 必炸。"""
+        asked: list = []
+        monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "coreagent")
+        monkeypatch.setattr(
+            "frago.agent_driver.kernel_backend.run_chat_turn",
+            lambda prompt, **kw: asked.append(prompt)
+            or kernel_turn(text='{"terms": ["sqlite", "会话库"], "note": "n"}'),
+        )
+
+        class Boom:
+            def run(self, *a, **kw):
+                raise AssertionError("coreagent 不该落到 tmux 那条路")
+
+        monkeypatch.setattr("frago.agent_driver.SessionLauncher", Boom)
+        plan = search_mod.expand_query("q")
+        assert asked, "选定自带内核时应当问内核"
+        assert plan.source == "agent"
+        assert plan.terms == ["sqlite", "会话库"]
+
+    def test_preference_not_installed_falls_back_to_the_kernel(self, monkeypatch):
+        """选定的那家没装：退回自带内核继续问，而不是拿着跑不起来的名字去问后端。"""
+        asked: list = []
+        monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "codebuddy")
+        monkeypatch.setattr("frago.init.agent_core.core_installed", lambda _t: False)
+        monkeypatch.setattr(
+            "frago.agent_driver.kernel_backend.run_chat_turn",
+            lambda prompt, **kw: asked.append(prompt)
+            or kernel_turn(text='{"terms": ["sqlite"], "note": "n"}'),
+        )
+        plan = search_mod.expand_query("q")
+        assert asked, "退回自带内核后应当真的问过一轮"
+        assert plan.source == "agent"
+
+    def test_kernel_failure_falls_back_to_literal(self, monkeypatch):
+        monkeypatch.setattr(
+            "frago.agent_driver.kernel_backend.run_chat_turn",
+            lambda prompt, **kw: kernel_turn(status="needs_input", text="连接没配好"),
+        )
+        plan = search_mod.expand_query("opencode 会话库", agent_type="coreagent")
+        assert plan.source == "literal"
+        assert plan.terms == ["opencode", "会话库"]
+        assert "needs_input" in plan.note
+
+    def test_kernel_that_raises_still_yields_a_search(self, monkeypatch):
+        """内核那条路抛出（例如内核不在）也只降级检索，NEVER 让整条命令失败。"""
+
+        def _boom(prompt, **kw):
+            raise FileNotFoundError("frago-core 不在")
+
+        monkeypatch.setattr("frago.agent_driver.kernel_backend.run_chat_turn", _boom)
+        plan = search_mod.expand_query("opencode 会话库", agent_type="coreagent")
+        assert plan.source == "literal"
+        assert "没跑成" in plan.note
+
+    def test_driver_is_still_used_when_the_preference_is_a_cli(self, monkeypatch):
+        """选定一家 CLI（且它装着）时照旧走 tmux，内核那条路不该被叫到。"""
+        monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "opencode")
+        monkeypatch.setattr("frago.init.agent_core.core_installed", lambda _t: True)
+
+        class Good:
+            def run(self, *a, **kw):
+                return type("R", (), {"status": "ok", "text": '{"terms": ["sqlite"]}'})()
+
+        monkeypatch.setattr("frago.agent_driver.SessionLauncher", Good)
+        monkeypatch.setattr(
+            "frago.agent_driver.kernel_backend.run_chat_turn",
+            lambda *a, **kw: pytest.fail("选了 CLI 就不该问内核"),
+        )
+        plan = search_mod.expand_query("q")
+        assert plan.source == "agent"
+        assert plan.terms == ["sqlite"]
 
 
 # ── 记录里的时间 ────────────────────────────────────────────────────

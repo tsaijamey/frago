@@ -65,7 +65,10 @@ class TestAgentServiceStartTask:
         assert result["status"] == "ok"
         assert "id" in result
         assert result["title"] == "Test task prompt"
-        assert result["agent_type"] == "claude"
+        # 没存过偏好 → schema 缺省 = 自带内核（CoreAgent），不是某一家 CLI。
+        # 自带内核没装时解析也返回它（让内核后端报那句具体的"跑一次 frago init"），
+        # 所以这条断言不随机器变。
+        assert result["agent_type"] == "coreagent"
         mock_bg.assert_called_once()
 
     def test_long_prompts_used_as_title(self, tmp_path, monkeypatch):

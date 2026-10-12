@@ -253,17 +253,24 @@ def expand_query(
 ) -> KeywordPlan:
     """让模型把一句话摊成关键词组合。
 
-    任何一步不成（没配 agent、tmux 起不来、超时、输出不是 JSON）都退回
+    任何一步不成（没配 agent、后端起不来、超时、输出不是 JSON）都退回
     :func:`literal_terms`，并在 ``source`` 上写明这次是退回来的——NEVER 因为
     扩展失败就让整条命令失败。
-    """
-    from frago.agent_driver import SessionLauncher
 
+    不点名 ``agent_type`` 时用的是**设置里选定的那个内核**，而它可能指向 frago 自带的
+    CoreAgent——那一家不挂 tmux。所以先问一句"这一家跑在哪"，再决定怎么问它（见
+    :func:`_run_expansion`）。
+    """
     if agent_type is None:
         try:
+            from frago.init.agent_core import resolve_agent_core
             from frago.init.config_manager import get_agent_core
 
-            agent_type = get_agent_core()
+            # 选定的是一个**偏好**：它指向的内核本机没装时，退回自带内核，
+            # 而不是拿着一个跑不起来的名字去问后端（同 frago agent 那条路）。
+            agent_type, core_note = resolve_agent_core(get_agent_core())
+            if core_note:
+                logger.debug("keyword expansion fell back: %s", core_note)
         except Exception as exc:  # noqa: BLE001 - 配置读不出来不该拖垮检索
             logger.debug("agent core lookup failed: %s", exc)
             agent_type = "claude"
@@ -273,29 +280,70 @@ def expand_query(
         env["ANTHROPIC_MODEL"] = model
 
     try:
-        result = SessionLauncher().run(
+        status, text = _run_expansion(
             _EXPAND_PROMPT.format(query=query),
             agent_type=agent_type,
-            session_id=str(uuid.uuid4()),
-            cwd=os.getcwd(),
             env=env,
             timeout_s=timeout_s,
         )
-    except Exception as exc:  # noqa: BLE001 - driver/tmux 层任何失败都只是退路条件
-        logger.debug("keyword expansion driver failed: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - 后端层任何失败都只是退路条件
+        logger.debug("keyword expansion failed: %s", exc)
         return KeywordPlan(literal_terms(query), f"关键词扩展没跑成（{exc}），退回原句切词", "literal")
 
-    if result.status != "ok":
+    if status != "ok":
         return KeywordPlan(
             literal_terms(query),
-            f"关键词扩展返回 {result.status}，退回原句切词",
+            f"关键词扩展返回 {status}，退回原句切词",
             "literal",
         )
-    parsed = _parse_expansion(result.text or "")
+    parsed = _parse_expansion(text or "")
     if parsed is None:
         return KeywordPlan(literal_terms(query), "关键词扩展的输出不是 JSON，退回原句切词", "literal")
     terms, note = parsed
     return KeywordPlan(terms, note, "agent")
+
+
+def _run_expansion(
+    prompt: str,
+    *,
+    agent_type: str,
+    env: dict[str, str],
+    timeout_s: float,
+) -> tuple[str, str]:
+    """把扩展那一轮交给实际选定的后端，返回 ``(状态, 模型的文字)``。
+
+    两条后端各是各的形状，判据只有 ``runs_on_kernel`` 一处（与 ``frago agent`` 同源）：
+
+    - **三家 CLI**（claude / codex / opencode / codebuddy）是挂在 tmux 里的交互程序，
+      起一个会话、投喂一轮、按 pane 读答案；
+    - **自带内核**（CoreAgent）是"问一句答一句"的一次性进程，走 chat 模式——它没有 pane
+      可读，也不该为问一句就落一场会话：这里每检索一次就调它一次，落会话等于把检索的
+      语料越搜越脏。
+
+    后端层的失败（tmux 起不来、内核不在、超时）由这一层抛出，调用方统一折成"退回原句
+    切词"那句话；这里只把两家的成败翻成同一个 ``status``。
+    """
+    from frago.agent_driver.driver import runs_on_kernel
+
+    if runs_on_kernel(agent_type):
+        from frago.agent_driver import kernel_backend
+
+        turn = kernel_backend.run_chat_turn(
+            prompt, cwd=os.getcwd(), timeout_s=timeout_s, env=env
+        )
+        return turn.status, turn.text
+
+    from frago.agent_driver import SessionLauncher
+
+    result = SessionLauncher().run(
+        prompt,
+        agent_type=agent_type,
+        session_id=str(uuid.uuid4()),
+        cwd=os.getcwd(),
+        env=env,
+        timeout_s=timeout_s,
+    )
+    return result.status, result.text
 
 
 # ── 记录里的时间 ────────────────────────────────────────────────────

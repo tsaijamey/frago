@@ -18,6 +18,18 @@ CoreAgent 不是那样的东西：它是"交一件事、跑完就退"的进程�
 （Claude Code 的 ``result`` 形状）。任务从 stdin 喂：正文常常很长，拼进命令行会进 shell
 历史、留在屏上，也顶不住长度上限。
 
+## 两种形状：agent 干活，chat 出文本
+
+同一件事有两种问法，挑哪种看**调用方要的是活儿还是文字**：
+
+  ``--mode agent``  带工具、能改文件，一轮跑完在 ``~/.frago/coreagent/sessions/`` 下
+                    **留一场会话**——这是 ``frago agent`` 那条路，会话本来就该留下
+  ``--mode chat``   问一句答一句，没有工具、**一场会话都不留**，输出是 frago 自己的
+                    ``final`` 对象（:func:`run_chat_turn`）
+
+第二条是给"顺手问模型一句"的调用方准备的：`frago session search` 的关键词扩展就是这一类，
+它每次都调一次，若走 agent 模式，等于每检索一次就往被检索的语料里塞一场新会话。
+
 ## 连接只按 id 给，不给环境变量
 
 内核不认 ``ANTHROPIC_*``——它自己读 ``~/.frago/profiles.json``，``--as-profile <id>``
@@ -105,56 +117,66 @@ def new_session_id() -> str:
     return f"core_{uuid.uuid4().hex}"
 
 
-def build_command(
+def _base_command(
+    mode: str,
     *,
-    session_id: str,
     cwd: str,
     profile_id: str | None,
+    session_id: str | None = None,
 ) -> list[str]:
-    """拼一次性那一条命令。
+    """两种形状共用的那一截：定模式、定输出格式、定工作目录与连接，任务从 stdin 来。
 
     ``-p -`` 表示任务从 stdin 来（``--prompt-file`` 读出来的正文很长，拼进命令行会进
     shell 历史也顶不住长度）。**不传 ``--input-format stream-json``**：那是常驻进程、
     一行一条消息的写法，与一次一件事的 ``-p`` 语义冲突（内核自己那句 help：``-p -``
     就是 stdin，默认 text 形状）。
+
+    ``session_id`` 只影响"这一轮要不要续/落一场会话"：agent 模式必须给（内核按它写记录），
+    chat 模式不给（问一句就走，不留痕）。
     """
-    cmd = [
-        str(kernel_path()),
-        "--mode", "agent",
-        "--output-format", "json",
-        "--session-id", session_id,
-        "--cwd", cwd,
-    ]
+    cmd = [str(kernel_path()), "--mode", mode, "--output-format", "json"]
+    if session_id:
+        cmd += ["--session-id", session_id]
+    cmd += ["--cwd", cwd]
     if profile_id:
         cmd += ["--as-profile", profile_id]
     cmd += ["-p", "-"]
     return cmd
 
 
-def run_turn(
-    prompt_text: str,
+def build_command(
     *,
     session_id: str,
     cwd: str,
-    profile_id: str | None = None,
-    timeout_s: float | None = None,
-    env: Mapping[str, str] | None = None,
+    profile_id: str | None,
+) -> list[str]:
+    """拼 ``frago agent`` 那一条一次性命令（agent 模式，带工具，落会话记录）。"""
+    return _base_command(
+        "agent", cwd=cwd, profile_id=profile_id, session_id=session_id
+    )
+
+
+def build_chat_command(*, cwd: str, profile_id: str | None) -> list[str]:
+    """拼"问一句、答一句"那一条命令（chat 模式，无工具，不留会话记录）。"""
+    return _base_command("chat", cwd=cwd, profile_id=profile_id)
+
+
+def _run_process(
+    cmd: list[str],
+    prompt_text: str,
+    *,
+    cwd: str,
+    timeout_s: float | None,
+    env: Mapping[str, str] | None,
     on_spawn: Callable[[int], None] | None = None,
-) -> KernelTurn:
-    """把一件事交给内核跑一轮，返回归一化结果。
+) -> KernelTurn | tuple[str, str, int | None, int]:
+    """起进程 → 喂任务 → 收 ``(stdout, stderr, 退出码, 耗时)``。
 
-    ``timeout_s`` 为 None（``frago agent --timeout 0`` 的缺省）时**不设墙钟上限**：一轮该
-    跑多久由任务决定。给了正数才在到点时收场——先 SIGTERM 让内核把它拉起的命令一起收掉，
-    收不掉再 SIGKILL。
-
-    **上限由这里判，不借内核的 ``--timeout``。** 那个开关有它自己一套输出形状（它会把
-    「超时」写进 result 的不同字段），转译过来多一层反推、也多一处会与 frago 的四态脱节。
-    这边的墙钟就是 frago 契约里那个墙钟，一处判、一处报。
-
-    ``on_spawn`` 在进程起来之后、喂任务之前被叫一次，带上内核那个进程号——调用方拿它登记
-    名册（内核 worker 没有 tmux 会话，能按名字收走它靠的就是这个号）。
+    两种形状（agent / chat）在这一层走同一套起停：**"内核不在 / 超时 / 起不来"这三种
+    收不了场的失败就地归一成 :class:`KernelTurn` 返回**，调用方 isinstance 判一下——
+    拿到 KernelTurn 就原样往上交，拿到四元组才继续判成败。这样超时收场的时机、SIGTERM
+    与 SIGKILL 的先后，两种形状不可能各走各的。
     """
-    cmd = build_command(session_id=session_id, cwd=cwd, profile_id=profile_id)
     run_env = {**os.environ, **(env or {})}
     started = time.monotonic()
 
@@ -203,8 +225,69 @@ def run_turn(
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 
-    duration_ms = int((time.monotonic() - started) * 1000)
-    return _classify(out, err, proc.returncode, duration_ms)
+    return out, err, proc.returncode, int((time.monotonic() - started) * 1000)
+
+
+def run_turn(
+    prompt_text: str,
+    *,
+    session_id: str,
+    cwd: str,
+    profile_id: str | None = None,
+    timeout_s: float | None = None,
+    env: Mapping[str, str] | None = None,
+    on_spawn: Callable[[int], None] | None = None,
+) -> KernelTurn:
+    """把一件事交给内核跑一轮，返回归一化结果。
+
+    ``timeout_s`` 为 None（``frago agent --timeout 0`` 的缺省）时**不设墙钟上限**：一轮该
+    跑多久由任务决定。给了正数才在到点时收场——先 SIGTERM 让内核把它拉起的命令一起收掉，
+    收不掉再 SIGKILL。
+
+    **上限由这里判，不借内核的 ``--timeout``。** 那个开关有它自己一套输出形状（它会把
+    「超时」写进 result 的不同字段），转译过来多一层反推、也多一处会与 frago 的四态脱节。
+    这边的墙钟就是 frago 契约里那个墙钟，一处判、一处报。
+
+    ``on_spawn`` 在进程起来之后、喂任务之前被叫一次，带上内核那个进程号——调用方拿它登记
+    名册（内核 worker 没有 tmux 会话，能按名字收走它靠的就是这个号）。
+    """
+    cmd = build_command(session_id=session_id, cwd=cwd, profile_id=profile_id)
+    collected = _run_process(
+        cmd,
+        prompt_text,
+        cwd=cwd,
+        timeout_s=timeout_s,
+        env=env,
+        on_spawn=on_spawn,
+    )
+    if isinstance(collected, KernelTurn):
+        return collected
+    out, err, returncode, duration_ms = collected
+    return _classify(out, err, returncode, duration_ms)
+
+
+def run_chat_turn(
+    prompt_text: str,
+    *,
+    cwd: str,
+    profile_id: str | None = None,
+    timeout_s: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> KernelTurn:
+    """问内核一句话，拿回一句（``--mode chat``，无工具、不留会话记录）。
+
+    给"顺手问模型一句"的调用方用（`frago session search` 的关键词扩展就是这一类）。
+    与 :func:`run_turn` 的区别只在模式：这条路上内核不挂会话、不写
+    ``~/.frago/coreagent/sessions/``，因此不会把调用方自己的语料越搜越脏。
+
+    连接同上：``--as-profile`` 收 **id**；给 None 就用内核自己那条默认连接。
+    """
+    cmd = build_chat_command(cwd=cwd, profile_id=profile_id)
+    collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=env)
+    if isinstance(collected, KernelTurn):
+        return collected
+    out, err, returncode, duration_ms = collected
+    return _classify_chat(out, err, returncode, duration_ms)
 
 
 def _classify(stdout: str, stderr: str, returncode: int | None, duration_ms: int) -> KernelTurn:
@@ -232,18 +315,64 @@ def _classify(stdout: str, stderr: str, returncode: int | None, duration_ms: int
             return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
         return KernelTurn(text=text, status="ok", duration_ms=duration_ms)
 
+    return KernelTurn(
+        text=text, status=_failure_status(payload, text), duration_ms=duration_ms
+    )
+
+
+def _classify_chat(
+    stdout: str, stderr: str, returncode: int | None, duration_ms: int
+) -> KernelTurn:
+    """把 chat 那一轮的 ``final`` 对象翻成 frago 的四态。
+
+    形状与 agent 那条不同：正文在 ``text``、失败原因在 ``error``、成败看 ``ok``
+    （实测样本：连接没解析出来时 ``ok=false``、``error_kind=credential``，
+    ``text`` 是空的而 ``error`` 带着那句人话）。所以正文取 ``text or error``——
+    失败时把原因当正文往上交，"没跑成"才不会退化成一个没有理由的空串。
+
+    分类的尾部（凭据 / 认证墙 ⇒ 需人介入）与 agent 那条共用 :func:`_failure_status`：
+    那是"再试一次也没用"这件事本身的判据，与输出是哪个形状无关。
+    """
+    payload = _parse_payload(stdout, kind="final")
+    if payload is None:
+        # 连 final 对象都没有：多半是用法错（我们拼错了命令）或内核启动就崩了。
+        note = (stderr or stdout or "").strip()
+        return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
+
+    text = str(payload.get("text") or payload.get("error") or "")
+    if bool(payload.get("ok")):
+        if returncode:
+            # 与 agent 那条同一条规矩：自报成功却非零退出，以退出码为准。
+            note = (stderr or text or "").strip()
+            return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
+        return KernelTurn(text=text, status="ok", duration_ms=duration_ms)
+
+    return KernelTurn(
+        text=text, status=_failure_status(payload, text), duration_ms=duration_ms
+    )
+
+
+def _failure_status(payload: dict, text: str) -> str:
+    """失败那一轮归 error 还是 needs_input。
+
+    认证墙 / 连接没解析出来：再试一次还是同样的结果，须真人去换 key、续订阅或挑连接，
+    归 ``needs_input``；其余（网络抖动、上游 5xx）都归 ``error``，再试一次也许就好。
+    """
     kind = str(payload.get("error_kind") or "")
     if kind in _ERROR_KIND_NEEDS_HUMAN or _AUTH_WALL.search(text):
-        # 认证墙 / 连接没解析出来：再试一次还是同样的结果，须真人去换 key、续订阅或挑连接。
-        return KernelTurn(text=text, status="needs_input", duration_ms=duration_ms)
-    return KernelTurn(text=text, status="error", duration_ms=duration_ms)
+        return "needs_input"
+    return "error"
 
 
-def _parse_payload(stdout: str) -> dict | None:
-    """从 stdout 里取出内核那个 ``result`` 对象。
+def _parse_payload(stdout: str, *, kind: str = "result") -> dict | None:
+    """从 stdout 里取出内核打的那个对象。
 
     正常情况下 stdout 上就这一行 JSON。内核也可能在它前面打过别的行（进度/提示），所以
-    逐行倒着找第一个能解析出 ``type == "result"`` 的对象；找不到返回 None。
+    逐行倒着找第一个能解析出 ``type`` 等于 ``kind`` 的对象；找不到返回 None。
+
+    ``kind`` 就是两种形状的名字：agent 模式是 Claude Code 形状的 ``result``，chat 模式是
+    frago 自己的 ``final``。MUST 指名道姓——不看 ``type`` 就认，agent 那条会把 chat 的
+    ``final`` 读成一个字段全对不上的 ``result``，一路错到"输出不是 JSON"。
     """
     for line in reversed((stdout or "").splitlines()):
         line = line.strip()
@@ -253,7 +382,7 @@ def _parse_payload(stdout: str) -> dict | None:
             got = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(got, dict) and got.get("type") == "result":
+        if isinstance(got, dict) and got.get("type") == kind:
             return got
     return None
 

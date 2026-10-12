@@ -186,8 +186,15 @@ class Config(BaseModel):
 
     # 默认内核：不显式指定时用哪个 cli-agent 驱动会话。WebUI 向导写它，
     # `frago agent --agent-type` 的缺省值读它（spec 20260725-opencode-core-support
-    # Phase 5）。缺省 claude —— 老用户升级后行为不变。
-    agent_core: str = "claude"
+    # Phase 5）。
+    #
+    # **缺省是 CoreAgent（自带的那个内核），不是某一家 CLI。** 原先缺省 claude，理由是
+    # 「老用户升级后行为不变」——服务的是已经装了 claude 的老用户，却把「一条 CLI 都没装」
+    # 的新用户挡在门外：那种机器上每一次不点名内核的 `frago agent` 都在启动时失败。
+    # 而 frago 自带的内核（`~/.frago/bin/frago-core`，`frago init` 就装好）不需要任何
+    # 第三方 CLI，只差一条模型连接。缺省指向自带的那个，产品才不依赖用户另装什么
+    # （2026-10-09，按产品取向改）。
+    agent_core: str = "coreagent"
 
     # Optional features
     ccr_enabled: bool = False

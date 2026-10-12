@@ -787,13 +787,19 @@ def agent_run(
 
     # --agent-type 是"这一次破例用谁"；其次是 worker 那条连接自带的内核（厂商 CLI 型
     # 连接的内核就是它本身，换模型也只能在它自己身上换）；最后才是界面上选定的内核。
+    #
+    # 选定那个只是一份**偏好**：它指向的内核本机没装时退回自带内核，并把"换过了"说在
+    # stderr 上（判据见 frago.init.agent_core，与页面那条同源）。
     if not agent_type:
         if worker_connection is not None and worker_connection.agent_type:
             agent_type = worker_connection.agent_type
         else:
+            from frago.init.agent_core import resolve_agent_core
             from frago.init.config_manager import get_agent_core
 
-            agent_type = get_agent_core()
+            agent_type, core_note = resolve_agent_core(get_agent_core())
+            if core_note:
+                click.echo(f"[!] {core_note}", err=True)
 
     # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
     # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。

@@ -1479,11 +1479,16 @@ class AgentCoreUpdateRequest(BaseModel):
 def _agent_core_availability() -> dict[str, bool]:
     """本机装了哪些内核。探测复用既有出口，NEVER 新写一份。"""
     from frago.compat import find_agent_cli
+    from frago.init.agent_core import kernel_installed
     from frago.init.opencode_plugin import is_opencode_present
 
     return {
         "claude": find_agent_cli("claude") is not None,
         "opencode": is_opencode_present(),
+        # 自带内核（CoreAgent）：与 frago 同一个安装包，不需要用户另装什么。它从前不在这
+        # 张表里，于是设置页既显示不了、也存不下「默认走自带内核」——而那正是新装的缺省值
+        # （2026-10-09 改）。存得下这一条，缺省值才不是一个只有配置文件知道的事实。
+        "coreagent": kernel_installed(),
     }
 
 
