@@ -8,6 +8,30 @@ broker 的 `say --speak` 也调它。出声、排队、录进片子是 broker �
 所以这里做两件事兜底：失败带间隔重试；重试完仍失败就抛 VoiceFailed，由调用方
 决定降级（broker 退回只显示字幕，并在回执里写明这句没出声）。
 
+端点
+----
+朗读的合成端点换过一次家（2026-10-12 记）。旧主机 ``speech.platform.bing.com``
+从 2026-10 起对合成用的那条 WebSocket 一律回 403，分地区推进，轮到本机是 10-12；
+同一时刻、同一台机器上取声音列表的那条普通 HTTPS 接口仍回 200，被拒的不是整站，
+也不是这台机器的出口。重试兜不住换家——三次打的是同一扇关着的门。
+
+接手的是新主机 ``api.msedgeservices.com``，Edge 155 的朗读走这条：
+
+- 网址 ``wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1``
+- 凭证参数改叫 ``Ocp-Apim-Subscription-Key``。沿用旧名 ``TrustedClientToken``
+  在新主机上同样回 403——两处必须一起换（2026-10-12 实测，同一枚 token 只有换成
+  新名才握手成）
+- 版本标识 Edge 155 自己发的是 ``2-155.0.4283.45``；实测沿用旧的
+  ``1-143.0.3650.75`` 也被接受，这一项没动
+
+2026-10-12 实测：同一枚旧 ``Sec-MS-GEC``、同一套请求头，打旧主机回 403，
+打新主机回 ``101 Switching Protocols``。一拒一收，被拒的是旧那台主机，签名没问题。
+
+**切在调用前，不等上游。** edge-tts 7.2.8（PyPI 上的最新版）把网址写死在它自己的
+``constants.py`` 里，仍指着旧主机，上游的切换改动尚未发版。每次合成前由
+``_point_at_new_endpoint`` 把库里的网址覆盖成上面那条；库若把内部的名字挪了地方，
+那里当场报出库的版本，不退化成一句看不出原因的 403。
+
 语言
 ----
 这一层只说英文（2026-10-09 定）：嗓子限 ``en-*``，正文里不许出现中日文字符。
@@ -47,6 +71,12 @@ ENGINE = "edge"
 DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"
 MIN_EDGE_TTS = "7.2.8"
 
+#: 合成端点。edge-tts 把旧主机写死在它自己的 constants 里，调用前由
+#: ``_point_at_new_endpoint`` 换掉（旧主机自 2026-10 起一律 403，见文件头「端点」）。
+WSS_ENDPOINT = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+#: 新主机认的凭证参数名。旧主机叫 ``TrustedClientToken``，写成旧名同样 403。
+CREDENTIAL_PARAM = "Ocp-Apim-Subscription-Key"
+
 #: 这一层只说英文。两处开关：嗓子必须 en- 开头；正文里不许出现中日文字符。
 #: 两个都得开着才锁得住语言，理由见文件头「语言」一节。
 LANGUAGE = "en"
@@ -77,8 +107,11 @@ _CJK_RE = re.compile(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf"
 
 
 class VoiceUnavailable(RuntimeError):
-    """本机合成不了：edge-tts 导入不了。它是 frago 的必装依赖，导入不了就是 frago
-    没装完整，补救是重装 frago，不是让人去单独补一个包。"""
+    """这一层起不来：edge-tts 导入不了，或者它的内部结构与预期不符（换端点那段
+    找不到要改的名字）。两种都是这个包的问题，不是这一句台词的问题——当场报出来，
+    别退化成「这句没出声」，也别被当成网络错重试三次再降级。
+
+    导入不了就是 frago 没装完整，补救是重装 frago，不是让人去单独补一个包。"""
 
 
 class VoiceFailed(RuntimeError):
@@ -156,6 +189,26 @@ def _import_edge_tts():
 
 # ── 合成 ────────────────────────────────────────────────────────────────
 
+def _point_at_new_endpoint(edge_tts) -> None:
+    """把库里的合成网址换到新主机，不换就是每句 403。
+
+    ``edge_tts.communicate`` 导入时把常量绑进了自己的命名空间
+    （``from .constants import WSS_URL``），只改常量模块改不动它，两处都得写。
+    库若把这两个名字挪了地方，这里当场报出库的版本，别让它漏成一句看不出原因的 403。
+    """
+    try:
+        token = edge_tts.constants.TRUSTED_CLIENT_TOKEN
+        edge_tts.communicate.WSS_URL  # noqa: B018 —— 只为确认这个绑定还在
+    except AttributeError as exc:
+        version = getattr(edge_tts, "__version__", "版本读不出来")
+        raise VoiceUnavailable(
+            f"edge-tts {version} 的内部结构与预期不符，改不了合成端点。"
+            "核对这个包，再调整 frago.desktop.voice 里换端点那一段。") from exc
+    url = f"{WSS_ENDPOINT}?{CREDENTIAL_PARAM}={token}"
+    edge_tts.constants.WSS_URL = url
+    edge_tts.communicate.WSS_URL = url
+
+
 async def _stream_once(edge_tts, text: str, voice: str, rate: str, volume: str,
                        pitch: str) -> tuple[bytes, list[dict]]:
     talker = edge_tts.Communicate(text, voice, rate=rate, volume=volume,
@@ -196,6 +249,9 @@ async def synthesize(text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
         return {**hit, "audio": str(audio), "meta": str(meta), "cached": True}
 
     edge_tts = _import_edge_tts()
+    # 换端点放在重试之前：它失败说明这个包不能用，重试三次还是同一个包，
+    # 而且那属于 VoiceUnavailable，不该被当成可重试的网络错吞成 VoiceFailed。
+    _point_at_new_endpoint(edge_tts)
     errors: list[str] = []
     data, marks = b"", []
     for attempt in range(len(RETRY_DELAYS) + 1):

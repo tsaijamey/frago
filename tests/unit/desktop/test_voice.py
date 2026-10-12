@@ -8,6 +8,8 @@
 
   · 同样的输入只合成一次；一条句子时间都没有的结果不算成功，也不进缓存
   · 网络与服务端的错会重试，参数写错不重试
+  · 合成前把库里写死的旧主机换成新主机那条，两处绑定一起换
+  · 这个包整个不能用属「装坏了」，不当成「这句没出声」重试降级
   · 缓存按最久没用的删，刚写进来的那句不删
   · 纯字幕的 say 一个字节都没变；开口的 say 默认等讲完
   · page 出声时没人报"开始放了"，回执说没人听见，不把"发出去了"说成"说出来了"
@@ -75,7 +77,16 @@ class FakeEdge:
                     yield {"type": "SentenceBoundary", "offset": start * 10_000,
                            "duration": dur * 10_000, "text": text}
 
-        self.module = types.SimpleNamespace(Communicate=Communicate)
+        # 库的内部结构照实写。换端点那段要改的就是这两个 WSS_URL：communicate
+        # 导入时把常量绑进了自己的命名空间，所以它是一份单独的绑定，改漏了照样 403。
+        old = ("wss://speech.platform.bing.com/consumer/speech/synthesize/"
+               "readaloud/edge/v1?TrustedClientToken=fake-token")
+        self.constants = types.SimpleNamespace(
+            TRUSTED_CLIENT_TOKEN="fake-token", WSS_URL=old)
+        self.communicate = types.SimpleNamespace(WSS_URL=old)
+        self.module = types.SimpleNamespace(
+            __version__="7.2.8-fake", Communicate=Communicate,
+            constants=self.constants, communicate=self.communicate)
 
 
 @pytest.fixture
@@ -193,6 +204,36 @@ def test_edge_tts_is_a_required_dependency():
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     required = [d.replace(" ", "") for d in project["dependencies"]]
     assert f"edge-tts>={voice.MIN_EDGE_TTS}" in required
+
+
+def test_endpoint_is_switched_to_the_new_host(cache, edge):
+    """库把旧主机写死在自己的常量里，合成前要换成新主机那条。
+
+    旧主机自 2026-10 起对合成那条 WebSocket 一律 403。换端点的事没人看得见，
+    只有回头抓握手才发现，所以它得有自己的判据，不能只靠「真打一次通了」——
+    那个证明不了两处绑定都换了。
+    """
+    fake = edge()
+    voice.synthesize_sync("First line.")
+    url = fake.communicate.WSS_URL
+    assert url.startswith(voice.WSS_ENDPOINT + "?"), url
+    assert f"{voice.CREDENTIAL_PARAM}=fake-token" in url, url
+    # 新主机不认旧参数名：只换主机、留着 TrustedClientToken 一样回 403。
+    assert "TrustedClientToken" not in url, url
+    assert url == fake.constants.WSS_URL, "两处都要写，communicate 那份是单独绑的"
+
+
+def test_a_restructured_edge_tts_is_reported_not_retried(cache, monkeypatch):
+    """库换了内部结构：当场报出库的版本，不许重试三次再降级成字幕。
+
+    降级那条路是给「这一句没合成成」用的。这个包整个不能用是另一回事，混进去
+    会把「装坏了」藏成「这句没声音」。
+    """
+    monkeypatch.setitem(sys.modules, "edge_tts",
+                        types.SimpleNamespace(Communicate=object,
+                                              __version__="9.9.9"))
+    with pytest.raises(voice.VoiceUnavailable, match="9.9.9"):
+        voice.synthesize_sync("First line.")
 
 
 def test_eviction_drops_least_recently_used_first(cache, edge):
