@@ -598,8 +598,45 @@ def _tui_is_gone(session: TmuxAgentSession) -> bool:
         return False
 
 
+# 清残留探针：清行键按下去之后 TUI 是懒重绘的，屏上仍留着旧文本，读屏等"框空了"
+# 验证不了确已清空。故敲一个探针字符强制重绘：输入框只剩 ``› x`` 即证明缓冲区里
+# 只有探针，再退格删掉探针，缓冲区即空。显示层可能残留 ghost，无妨——后续投喂逐字
+# 输入会重绘，提交验证走 rollout 权威信号，不依赖读屏。
+#
+# codex 空框时那儿显示的是占位提示 ``Ask Codex to do anything``；式子只认 ``›`` 后
+# 紧跟探针字符这一种形状，占位提示自然不命中。
+_CLEAR_PROBE_CHAR = "x"
+_CLEAR_PROBE_ONLY = re.compile(rf"(?m)^\s*›[\s\xa0]*{_CLEAR_PROBE_CHAR}\s*$")
+_CLEAR_RETRIES = 3
+_CLEAR_PROBE_POLLS = 10
+
+
+def _clear_input(session: TmuxAgentSession) -> bool:
+    """清空输入框残留并结构化确认。返回 True = 缓冲区确已清空。
+
+    **投喂前清这一步是必要的，不是顺手做的。** 上一次投喂没提交成功的话，那段字就
+    躺在输入框里；下一次投喂打进去的字接在它后面，两句拼成一条发言交出去——落盘的
+    正文不再以新句开头，界面上那一单因此永远认不出自己的话已经进会话（2026-10-12
+    实测：13:36 冷启动那次的话滞留框内，15:12 再发时被一起带上，档案里成了四段）。
+
+    清不干净不阻断：最坏是这一轮带上残留，比起把一场健康会话杀掉重来仍然小得多；
+    情况照实记在日志里，NEVER 静默走掉。
+    """
+    for _ in range(_CLEAR_RETRIES):
+        session.send_keys("C-u")
+        session.send_text(_CLEAR_PROBE_CHAR)
+        for _ in range(_CLEAR_PROBE_POLLS):
+            if _CLEAR_PROBE_ONLY.search(session.capture_pane()):
+                session.send_keys("BSpace")
+                return True
+            session._sleep(session._poll_interval_s)
+        # 探针没有独占输入框（清行键未生效 / TUI 还没起来），退掉探针字符再试或放弃。
+        session.send_keys("BSpace")
+    return False
+
+
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
-    """投喂一轮：文本进框 → Enter → 确认落地（确认不了才补发）。
+    """投喂一轮：清残留 → 文本进框 → Enter → 确认落地（确认不了才补发）。
 
     落地判据是 **rollout 文件变长**。codex 一收到提交就把用户消息追加进记录，
     这是本地、即时、与提示词长度无关的证据。读屏判"输入框空了"在重绘中途会看见
@@ -608,6 +645,22 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
 
     确认不了也不抛不卡：留一条 debug 日志，交给完成轮询的超时兜底。那条日志是事后
     排查"整段提示词滞留输入框"的唯一线索，NEVER 静默走掉。
+
+    ## 投喂前先清框，且不再"读一次屏就补打"
+
+    从前这里打完文本会立刻读一次屏，读不到就再打一遍。那一步是错的：读屏发生在 TUI
+    重绘之前，几乎必然读不到，于是**每次投喂文本都翻倍**（2026-10-12 实测三条档案
+    正文长度 88/208/40，正好都是各自原文的两倍）。翻倍本身不破坏落地认领，但同一段
+    字打两遍是纯粹的噪音，也把"残留顶在前头"的后果放大。
+
+    「字上屏了没有」这件事，本地先例已定调：读屏帧有重绘竞态，不可靠，判提交生效一律
+    采信 rollout 是否变长（见 `agent-driver-send-deadlock`）。所以那次读屏补打删除，
+    文本只打一遍；上屏与否交给下面的 Enter 验证去管——真没上屏时 rollout 不会变长，
+    会一路走到完成轮询的超时兜底，用户看到的是"没发出去"，而不是悄悄多出一段重复。
+
+    与它配对的是投喂前那次清框（`_clear_input`）：上一次投喂没提交成功而留下的字，
+    不清掉就会顶在这一次前面，两句话拼成一条发言交出去，界面上那一单再也认不出自己
+    的话已经进会话。
 
     ## 按 Enter 之前先确认 TUI 还在——这一条是安全闸，不是优化
 
@@ -622,11 +675,24 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     就返回，并把 codex 自己报的原因带回给调用方）。
     """
     _claim_once(session)
+    # TUI 已经确定不在了就一个键都不发。清框的 C-u 与探针字符、连同那串文本，都会
+    # 落到 shell 的行缓冲里——不按回车不会执行，但"往一个没人接的 shell 打字"本就不该
+    # 发生，何况后面还有按回车的分支。
+    if _tui_is_gone(session):
+        logger.warning(
+            "codex TUI 在提交前就已经起不来了，整轮不投（session=%s）——"
+            "打进去的字连同随后的回车都会落到 shell 上",
+            session.session_id,
+        )
+        return
+    if not _clear_input(session):
+        logger.debug(
+            "codex input box not confirmed empty before feeding (session=%s); "
+            "this turn may carry leftover text",
+            session.session_id,
+        )
     baseline = _rollout_size(session)
     session.send_text(prompt)
-    # 文本上屏有渲染时序；没进框就再投一次，再发 Enter。
-    if prompt.strip() and prompt.strip() not in session.capture_pane():
-        session.send_text(prompt)
 
     landed = False
     for attempt in range(1 + _ENTER_RETRIES):
@@ -780,6 +846,9 @@ register_driver(
         accepts_session_id=False,
         ready_signal=_READY,
         submit=_submit,
+        # 接管孤儿会话与投喂前清残留都要它。codex 从前没有这个动作，池子接管一场
+        # 来路不明的会话时无处可清，只能把框里躺着的旧字连同新话一起送出去。
+        clear_input=_clear_input,
         done_signal=_DONE,
         extract=_extract,
         needs_input_signal=_NEEDS_INPUT,

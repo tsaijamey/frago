@@ -375,6 +375,38 @@ def test_submit_still_presses_enter_on_a_healthy_tui(monkeypatch):
     assert ("Enter",) in session.keys
 
 
+def test_submit_sends_the_prompt_exactly_once(monkeypatch):
+    """回归：同一段提示词只投一遍，不会因为"读完一次屏没看到"再补一遍。
+
+    从前这里打完立刻读屏，而读屏发生在 TUI 重绘之前，几乎必然读不到，于是每次投喂
+    都把同一段字打两遍——2026-10-12 实测档案里每条用户发言的正文长度都是原文的两倍
+    （88/208/40 对 44/104/20）。上屏与否该由 Enter 后的 rollout 变长去判，不看屏。
+    """
+    monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
+    sizes = iter([0, 1, 1, 1, 1])
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: next(sizes, 1))
+
+    # 这一屏上**没有**那句话——旧逻辑正是拿这一点当"没打进去"，于是补打第二遍。
+    session = _FakePane(BANNER_PANE)
+    codex_driver._submit(session, "干活")
+
+    assert session.texts.count("干活") == 1
+
+
+def test_clear_input_confirms_an_empty_box_with_a_probe():
+    """清残留：屏上只剩探针字符即认定缓冲区已空，再退格把探针删掉。"""
+    session = _FakePane("› x")
+    assert codex_driver._clear_input(session) is True
+    assert ("C-u",) in session.keys, "先发清行键"
+    assert ("BSpace",) in session.keys, "确认之后要把探针退掉"
+
+
+def test_clear_input_gives_up_when_the_probe_never_shows():
+    """探针没能独占输入框（清行键未生效 / TUI 没起来）时照实返回假，不假装清干净。"""
+    session = _FakePane("› 上一句没发出去的话")
+    assert codex_driver._clear_input(session) is False
+
+
 def test_tui_is_gone_treats_an_unreadable_pane_as_still_alive(monkeypatch):
     """读不到屏不是"它死了"——单向判据，避免一次瞬时读屏失败拦下健康的一轮。"""
 
