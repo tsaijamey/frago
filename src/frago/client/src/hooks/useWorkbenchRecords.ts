@@ -321,15 +321,18 @@ function landingOf(r: WorkbenchRecord, msg: OutboundMessage): Landing | null {
   if (r.kind === 'user.say') {
     if (!mine) return 'say';
     const text = typeof r.payload.text === 'string' ? r.payload.text : '';
-    // 附件的路径是服务端往后接的，所以比的是"开头是不是那一句"，不是整句相等。
-    if (flatten(text).startsWith(mine)) return 'say';
+    // 比的是"含不含"，不是"是不是开头"。两种不一致都在实际发生：附件路径由服务端往后
+    // 接；上一次投喂滞留在输入框时，服务端把新旧两段拼成一条发言，界面手上这句话就落在
+    // 正文中间而不是开头（2026-10-12 实测：落盘成了四段，后一句怎么等都认不出）。
+    // 时间窗在上面已经限死（只认发送前后一秒内的记录），放宽到"含"认不到更早的旧话。
+    if (flatten(text).includes(mine)) return 'say';
     const unwrapped = unwrapCommandEcho(r, text);
-    return unwrapped && unwrapped.startsWith(mine) ? 'say' : null;
+    return unwrapped && unwrapped.includes(mine) ? 'say' : null;
   }
   if (r.kind === 'context.inject' && r.payload.channel === 'queued_command') {
     const body = typeof r.payload.body === 'string' ? r.payload.body : '';
-    // 带附件的插话，卡上的原文同样被服务端接上了图片路径，所以也只比开头。
-    if (mine && !flatten(body).startsWith(mine)) return null;
+    // 带附件的插话，卡上的原文同样被服务端接上了图片路径，所以也按"含不含"比。
+    if (mine && !flatten(body).includes(mine)) return null;
     // 插话卡自己带着下场：还在队列里的才算"已入队列"，已并入或已发出的那一轮已经开始，
     // 信封该退场了。
     return r.payload.queue_state === 'pending' ? 'queued' : 'drained';
@@ -339,7 +342,7 @@ function landingOf(r: WorkbenchRecord, msg: OutboundMessage): Landing | null {
   // 那一行接着站（原文与下场都写在那儿），信封退场。
   const q = queueOpOf(r);
   if (q && q.op === 'enqueue') {
-    if (mine && !flatten(q.content).startsWith(mine)) return null;
+    if (mine && !flatten(q.content).includes(mine)) return null;
     return 'drained';
   }
   return null;
