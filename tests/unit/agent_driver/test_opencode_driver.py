@@ -98,6 +98,17 @@ def _add_part(
     conn.commit()
 
 
+def _add_user_text(
+    conn: sqlite3.Connection, mid: str, sid: str, created: int, text: str
+) -> None:
+    """一条用户消息 + 它的正文片段——认领的判据就落在这里。
+
+    1.18 的正文在 ``part`` 表里（不在 ``message.data`` 上），只造消息行等于没造正文。
+    """
+    _add_message(conn, mid, sid, created, {"role": "user", "parentID": None})
+    _add_part(conn, f"{mid}_p", mid, sid, created + 1, {"type": "text", "text": text})
+
+
 class _VirtualClock:
     """睡多久就把时钟推进多久的虚拟时钟。
 
@@ -263,8 +274,13 @@ def test_launch_native_session_id_used_verbatim() -> None:
 
 
 # ── 身份认领 ────────────────────────────────────────────────────────
+# 认领的判据是"这场会话收到的头一句用户消息，正文里含我这次提交的提示词尾段"。
+# 故造"自己的"会话时 MUST 连那条用户消息一起造出来（见 _add_user_text）。
+
+
 def test_submit_claims_session_and_persists_binding(live_db: sqlite3.Connection) -> None:
     _add_session(live_db, "ses_claimed", "/w", _FUTURE_MS)
+    _add_user_text(live_db, "m_u", "ses_claimed", _FUTURE_MS + 1, "hi")
     driver = load_driver("opencode")
     fake = FakeTmux(["hi"])
     sess = _session(fake, "claim-me")
@@ -272,8 +288,25 @@ def test_submit_claims_session_and_persists_binding(live_db: sqlite3.Connection)
     assert opencode_store.get_binding("claim-me") == "ses_claimed"
 
 
+def test_submit_does_not_claim_a_row_whose_first_message_is_someone_elses(
+    live_db: sqlite3.Connection,
+) -> None:
+    """同目录里别人的行躺在库里、正文与我们不同：MUST 认不到，NEVER 认成别人的。
+
+    会话行落库的时刻与"谁是我"没有因果连接（落库延迟随提示词长度浮动到几十秒），
+    所以哪怕库里只有这一条候选，也不能拿它顶。
+    """
+    _add_session(live_db, "ses_theirs", "/w", _FUTURE_MS)
+    _add_user_text(live_db, "m_u", "ses_theirs", _FUTURE_MS + 1, "别人提交的别的话")
+    driver = load_driver("opencode")
+    fake = FakeTmux(["hi"])
+    driver.submit(_session(fake, "not-theirs"), "hi")
+    assert opencode_store.get_binding("not-theirs") is None
+
+
 def test_submit_ignores_session_in_other_directory(live_db: sqlite3.Connection) -> None:
     _add_session(live_db, "ses_elsewhere", "/other", _FUTURE_MS)
+    _add_user_text(live_db, "m_u", "ses_elsewhere", _FUTURE_MS + 1, "hi")
     driver = load_driver("opencode")
     fake = FakeTmux(["hi"])
     sess = _session(fake, "no-claim")
@@ -340,6 +373,7 @@ def _seed_bound_turn(conn: sqlite3.Connection, frago_id: str, sid: str) -> None:
 def test_submit_first_turn_lands_on_empty_input_box(live_db: sqlite3.Connection) -> None:
     """首轮：输入框已空即判落地，只按一次 Enter；会话行已在库里就顺手认掉。"""
     _add_session(live_db, "ses_first", "/w", _FUTURE_MS)
+    _add_user_text(live_db, "m_u", "ses_first", _FUTURE_MS + 1, "hi")
     driver = load_driver("opencode")
     fake = FakeTmux(["hi"])
     driver.submit(_session(fake, "first-turn"), "hi")
@@ -411,10 +445,15 @@ def test_settle_window_absorbs_a_late_repaint() -> None:
 # 完成探针再试一次，会话行什么时候出现就什么时候认到。
 
 
-def _seed_answered_turn(conn: sqlite3.Connection, sid: str, text: str) -> None:
-    """一条已答完的会话：会话行 + 用户消息 + finish=stop 的助手消息 + 正文片段。"""
+def _seed_answered_turn(
+    conn: sqlite3.Connection, sid: str, text: str, prompt: str = _PROMPT
+) -> None:
+    """一条已答完的会话：会话行 + 用户消息（含本次提交的正文）+ 助手终答。
+
+    ``prompt`` 就是这一场提交的那份提示词：认领靠它对上号，故 MUST 一起造出来。
+    """
     _add_session(conn, sid, "/w", _FUTURE_MS)
-    _add_message(conn, "m_u", sid, 10, {"role": "user", "parentID": None})
+    _add_user_text(conn, "m_u", sid, 10, prompt)
     _add_message(
         conn,
         "m_a",
@@ -487,7 +526,7 @@ def test_probe_does_not_claim_when_already_bound(
         calls.append(args)
         return None
 
-    monkeypatch.setattr(opencode_store, "claim_session", _spy)
+    monkeypatch.setattr(opencode_store, "claim_and_bind", _spy)
     driver = load_driver("opencode")
     verdict = driver.completion_probe(_session(FakeTmux(["pane"]), "bound-probe"))
     assert verdict is not None
@@ -495,15 +534,20 @@ def test_probe_does_not_claim_when_already_bound(
 
 
 def test_claim_anchor_stays_at_first_submit(live_db: sqlite3.Connection) -> None:
-    """锚点只记首次提交那一刻：会话行是首轮建的，锚点往后挪就再也罩不住它。"""
+    """锚点只记首次提交那一刻：会话行是首轮建的，锚点往后挪就再也罩不住它。
+
+    与锚点一起记的尾段同理：判据对着的是**首轮**那条用户消息，第二轮换一份提示词再
+    去认就永远认不到（尾段与会话行 MUST 出自同一次提交）。
+    """
     driver = load_driver("opencode")
     sess = _session(FakeTmux([_submitted_pane("hi")]), "anchor")
     driver.submit(sess, "hi")  # 首轮：库里还没有会话行，认不到
     assert opencode_store.get_binding("anchor") is None
     first = opencode_driver._CLAIM_ANCHORS[sess]
 
-    # 会话行恰好落在首轮那个锚点上：第二轮提交之后仍认得到 = 锚点没被刷新过。
-    _add_session(live_db, "ses_anchor", "/w", first)
+    # 会话行恰好落在首轮那个锚点上：第二轮提交之后仍认得到 = 锚点与尾段都没被刷新过。
+    _add_session(live_db, "ses_anchor", "/w", first.since_ms)
+    _add_user_text(live_db, "m_u", "ses_anchor", first.since_ms + 1, "hi")
     driver.submit(sess, "again")
     assert opencode_store.get_binding("anchor") == "ses_anchor"
     assert sess not in opencode_driver._CLAIM_ANCHORS
@@ -531,9 +575,10 @@ def test_claim_renames_the_window_to_the_claimed_session(
 
     session = _Session()
     monkeypatch.setattr(opencode_store, "get_binding", lambda _s: None)
-    monkeypatch.setattr(opencode_store, "claim_session", lambda *_a: "ses_new")
-    monkeypatch.setattr(opencode_store, "put_binding", lambda *_a: None)
-    monkeypatch.setattr(opencode_driver, "_CLAIM_ANCHORS", {session: 1})
+    monkeypatch.setattr(opencode_store, "claim_and_bind", lambda *_a: "ses_new")
+    monkeypatch.setattr(
+        opencode_driver, "_CLAIM_ANCHORS", {session: opencode_driver._ClaimAnchor(1, "尾段")}
+    )
 
     assert opencode_driver._claim_once(session) == "ses_new"
     assert renamed == ["ses_new"]

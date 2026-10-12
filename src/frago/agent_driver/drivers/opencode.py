@@ -29,6 +29,7 @@ import logging
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
@@ -115,6 +116,18 @@ _CHROME_LINE = re.compile(
     r"^\s*(?:[╭╮╯╰│─┌┐└┘├┤┬┴┼]|▣\s*Build|>\s*$|Ask anything)",
 )
 
+@dataclass(frozen=True)
+class _ClaimAnchor:
+    """一次认领的全部依据：从哪一刻起算、拿哪段正文去对号。
+
+    两者 MUST 出自同一次提交（首轮那次）：会话行是那一刻建的，尾段是那一刻提交的
+    提示词的一部分。
+    """
+
+    since_ms: int
+    prompt_tail: str
+
+
 # 认领 NEVER 用固定窗口——这条是用真实 opencode 1.18.0 量出来的，不是推测。
 #
 # 实测「按下回车 → 会话行出现在会话库」的延迟：31 字 0.4 秒，2176 字 4.8 秒，
@@ -133,7 +146,12 @@ _CHROME_LINE = re.compile(
 # 认领的起算点：按会话记住"首次提交前一刻"的毫秒时间戳，供本轮后续各处复用。
 # MUST 保留最早那个而不是每轮刷新——会话行是首轮提交那一刻建的，锚点往后挪就
 # 再也罩不住它。认到之后立刻清掉；表随会话对象一起消亡（弱引用键），不留残留。
-_CLAIM_ANCHORS: MutableMapping[TmuxAgentSession, int] = WeakKeyDictionary()
+#
+# 尾段与起算点记在一起，同一个 setdefault：认领的判据是"这场会话收到的头一句
+# 用户消息的正文里含我这次提交的那句话"，而那条用户消息是**首轮**建出来的，所以
+# 判据 MUST 用首轮那份提示词的尾段——第二轮再提交时换一份提示词，拿新的尾段去认
+# 那条首轮消息，只会永远认不到（见 ``opencode_store.claim_session``）。
+_CLAIM_ANCHORS: MutableMapping[TmuxAgentSession, _ClaimAnchor] = WeakKeyDictionary()
 
 # Enter 发出后给 TUI 重绘留的结算时间（秒）与重发上限。
 #
@@ -222,14 +240,14 @@ def _poll_until(session: TmuxAgentSession, probe: Callable[[], bool], window_s: 
         session._sleep(session._poll_interval_s)
 
 
-def _remember_claim_anchor(session: TmuxAgentSession, since_ms: int) -> None:
-    """记下认领的起算点（首次提交前一刻）。已经记过就不动它。
+def _remember_claim_anchor(session: TmuxAgentSession, since_ms: int, prompt_tail: str) -> None:
+    """记下认领的依据：起算点（首次提交前一刻）与那次提交的提示词尾段。已记过就不动。
 
-    只保留最早那个：会话行是**首轮**提交那一刻建的，锚点往后挪就再也罩不住它。
-    首轮认领失败时，第二轮沿用同一个锚点仍认得到——这正是"认领贯穿整轮乃至后续
-    各轮"要的效果。
+    只保留最早那个：会话行是**首轮**提交那一刻建的，锚点与尾段往后挪就再也罩不住它
+    （尾段换成第二轮的，那条首轮用户消息里根本没有这几个字）。首轮认领失败时，第二轮
+    沿用同一份依据仍认得到——这正是"认领贯穿整轮乃至后续各轮"要的效果。
     """
-    _CLAIM_ANCHORS.setdefault(session, since_ms)
+    _CLAIM_ANCHORS.setdefault(session, _ClaimAnchor(since_ms, prompt_tail))
 
 
 def _claim_once(session: TmuxAgentSession) -> str | None:
@@ -242,20 +260,24 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
     已有身份（native / 已落盘绑定）时直接返回 None、一次库都不查：映射一旦建立就
     不再重认，重认会让两个会话的记录互串。整条路径全程吞异常——映射文件不可写、
     库被独占都只是"这次没认到"，NEVER 逸出去影响本轮。
+
+    挑号与落盘 MUST 走 ``opencode_store.claim_and_bind`` 这一个动作（它自己带互斥）。
+    分成"挑一次、再写一次"两次调用就是两场同时认领写成同一个编号的那条老路。
     """
     try:
         if session.native_session_id:
             return None
         if opencode_store.get_binding(session.session_id) is not None:
             return None
-        since_ms = _CLAIM_ANCHORS.get(session)
-        if since_ms is None:
+        anchor = _CLAIM_ANCHORS.get(session)
+        if anchor is None:
             # 还没提交过：会话行尚不存在，此刻去认只会认到别人的会话。
             return None
-        claimed = opencode_store.claim_session(session.cwd, since_ms)
+        claimed = opencode_store.claim_and_bind(
+            session.session_id, session.cwd, anchor.since_ms, anchor.prompt_tail
+        )
         if not claimed:
             return None
-        opencode_store.put_binding(session.session_id, claimed, session.cwd)
     except Exception:
         logger.debug("opencode claim attempt raised", exc_info=True)
         return None
@@ -348,8 +370,10 @@ def _prompt_stuck_in_box(session: TmuxAgentSession, tail: str) -> bool:
 
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
     # 认领的起算点 MUST 锚在提交动作之前：会话行是提交那一刻才建的，锚晚了会错过它。
-    # 存进 _CLAIM_ANCHORS 供本轮后续各处（完成探针）复用，认领因此不必在这里等。
-    _remember_claim_anchor(session, int(time.time() * 1000))
+    # 与起算点一起记下这份提示词的尾段——它是**唯一的认人依据**（会话行上没有任何
+    # 东西能把"这一条就是我"连起来，见 opencode_store.claim_session）。存进
+    # _CLAIM_ANCHORS 供本轮后续各处（完成探针）复用，认领因此不必在这里等。
+    _remember_claim_anchor(session, int(time.time() * 1000), _tail_marker(prompt))
     session.send_text(prompt)
     # 重抓确认文本进框（渲染时序），未进框再补发一次文本。
     if prompt.strip() and prompt.strip() not in session.capture_pane():

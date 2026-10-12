@@ -116,6 +116,11 @@ def _build(
 def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "opencode.db"
     monkeypatch.setenv("FRAGO_OPENCODE_DB", str(path))
+    # 认领会读身份映射（已认出去的编号要跳过）。不隔离就是读开发机上那一份真文件，
+    # 结果随本机跑过哪些会话而变。
+    monkeypatch.setattr(
+        opencode_store, "BINDINGS_PATH", tmp_path / "opencode-sessions.json"
+    )
     return path
 
 
@@ -279,48 +284,166 @@ def test_latest_turn_v2_synthetic_user_is_not_the_anchor(db: Path) -> None:
 
 
 # ── 会话存在性 / 目录 / 认领 ────────────────────────────────────────
+#
+# 认领的判据是"这场会话收到的**头一句**用户消息，正文里含我这次提交的提示词尾段"。
+# 故每场"自己的"会话都要连首条用户消息一起造出来。两套表的正文落点不同，正好各测
+# 一遍：2.0 在 ``session_message.data.text`` 上，1.18 在 ``part`` 表里。
+_SELF_TAIL = "判据就靠这段正文对上号"
+_SELF_PROMPT = f"把这个任务做完。\n\n{_SELF_TAIL}"
+_OTHER_PROMPT = "同目录里另一场会话。\n\n这段正文跟我们不一样"
+
+
 def test_claim_session_finds_v2_row(db: Path) -> None:
-    _build(db, v2_sessions=[("ses_v2", "/w", 500, 900)])
-    assert opencode_store.claim_session("/w", since_ms=100) == "ses_v2"
+    """2.0 的会话：正文挂在消息的 ``text`` 上，认领按它对上号。"""
+    _build(
+        db,
+        v2_sessions=[("ses_v2", "/w", 500, 900)],
+        rows=[("m1", "ses_v2", "user", 1, 510, 510, _user(_SELF_PROMPT))],
+    )
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) == "ses_v2"
     # 起算点之后的才算这一场：更早的老会话 MUST 认不到。
-    assert opencode_store.claim_session("/w", since_ms=600) is None
+    assert opencode_store.claim_session("/w", 600, _SELF_TAIL) is None
 
 
-def test_claim_session_prefers_the_earlier_of_the_two_stores(db: Path) -> None:
-    """升级当天两套表都有行时，取创建更早的那条（判据是"锚点之后最早"，跨表一样）。"""
+def test_claim_session_finds_legacy_row_through_its_parts(db: Path) -> None:
+    """1.18 的会话：正文在 ``part`` 表里（首条片段常是注入的编辑器上下文，正文在后
+    一条），故同一消息的全部 text 片段都要拼起来比。"""
+    _build(
+        db,
+        legacy_sessions=[("ses_legacy", "/w", 500)],
+        legacy_messages=[("m1", "ses_legacy", 510, {"role": "user", "parentID": None})],
+    )
+    conn = sqlite3.connect(db)
+    for pid, created, part in (
+        (
+            "p1",
+            511,
+            {"type": "text", "text": "编辑器上下文", "synthetic": True},
+        ),
+        ("p2", 512, {"type": "text", "text": _SELF_PROMPT}),
+    ):
+        conn.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, data) "
+            "VALUES (?,?,?,?,?)",
+            (pid, "m1", "ses_legacy", created, _dump(part)),
+        )
+    conn.commit()
+    conn.close()
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) == "ses_legacy"
+
+
+def test_claim_session_reads_the_first_user_message_not_a_later_turn(db: Path) -> None:
+    """判据只看**头一句**用户消息：第二轮的提示词换了，拿新尾段去认 MUST 认不到。
+
+    会话行是首轮提交那一刻建的，只有首轮那句话与它同源。认第二轮那句话，等于把判据
+    接到一个与会话行无关的时刻上。
+    """
+    _build(
+        db,
+        v2_sessions=[("ses_v2", "/w", 500, 900)],
+        rows=[
+            ("m1", "ses_v2", "user", 1, 510, 510, _user(_SELF_PROMPT)),
+            ("m2", "ses_v2", "user", 2, 700, 700, _user("第二轮的另一些话")),
+        ],
+    )
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) == "ses_v2"
+    assert opencode_store.claim_session("/w", 100, "第二轮的另一些话") is None
+
+
+def test_claim_session_picks_by_prompt_across_both_stores(db: Path) -> None:
+    """升级当天两套表都有行：认的是正文对上的那条，不是创建更早的那条。"""
     _build(
         db,
         v2_sessions=[("ses_v2", "/w", 900, 950)],
         legacy_sessions=[("ses_legacy", "/w", 500)],
+        rows=[("m1", "ses_v2", "user", 1, 910, 910, _user(_SELF_PROMPT))],
     )
-    assert opencode_store.claim_session("/w", since_ms=100) == "ses_legacy"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, data) VALUES (?,?,?,?)",
+        ("m2", "ses_legacy", 510, _dump({"role": "user", "parentID": None})),
+    )
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, data) "
+        "VALUES (?,?,?,?,?)",
+        ("p2", "m2", "ses_legacy", 511, _dump({"type": "text", "text": _OTHER_PROMPT})),
+    )
+    conn.commit()
+    conn.close()
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) == "ses_v2"
+
+
+def test_claim_session_skips_a_session_already_bound_to_another_session(db: Path) -> None:
+    """已经认给别人的编号不再认一次：一个编号只属于一个 frago 会话。
+
+    正文对得上也要跳过——身份已经发出去了（20261009 在 codex 上踩过：同目录里两场
+    几乎同时起来，后起的那场认走了前一场正在写的编号，两场对话的记录就此接到一起）。
+    """
+    _build(
+        db,
+        v2_sessions=[("ses_taken", "/w", 500, 900)],
+        rows=[("m1", "ses_taken", "user", 1, 510, 510, _user(_SELF_PROMPT))],
+    )
+    opencode_store.put_binding("webui-someone-else", "ses_taken", "/w")
+
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) is None
+
+
+def test_claim_session_steps_past_a_taken_row_to_a_free_one(db: Path) -> None:
+    """两场提交了同一份提示词：被认走的那条跳过，退取仍可认的那条。
+
+    这道取舍与 codex 那侧一致，理由是一个编号只属于一场 frago 会话——已被认走的那
+    条本来就不是我的。反过来的取舍（"认不到更好"）会把这一场直接推去读屏，两家的
+    兜底方向因此不能各走一边。
+    """
+    _build(
+        db,
+        v2_sessions=[("ses_free", "/w", 900, 950), ("ses_taken", "/w", 500, 600)],
+        rows=[
+            ("m1", "ses_taken", "user", 1, 510, 510, _user(_SELF_PROMPT)),
+            ("m2", "ses_free", "user", 1, 910, 910, _user(_SELF_PROMPT)),
+        ],
+    )
+    opencode_store.put_binding("webui-someone-else", "ses_taken", "/w")
+
+    assert opencode_store.claim_session("/w", 100, _SELF_TAIL) == "ses_free"
+    # 锚点比那条还晚时仍然认不到——起算点是硬闸，不被排除逻辑绕过去。
+    assert opencode_store.claim_session("/w", 920, _SELF_TAIL) is None
 
 
 def test_claim_session_keeps_its_own_row_when_the_other_landed_later(db: Path) -> None:
-    """同目录两场交错：自己那行先落库、别人那行后落库时，认领 MUST 认自己那条。
+    """同目录两场交错：自己的行先落库、别人后落库，两边各认各的。
 
     时序（实测 20261011）：A 提交那一刻库里还没有行，认领扑空；A 的行随后落库；B
-    提交、B 的行也落库；A 下一拍再去认。按"最新"挑时这一拍会认走 B 的行——A 的编号
-    变成 B 那一场，B 再认时自己那条已被认走、退回 None，完成探针全程弃权、答案退回
-    读屏。判据改成"锚点之后最早"之后，A 认回自己，B 也认得回自己。
+    提交、B 的行也落库；A 下一拍再去认。按创建时刻挑的那套判据在这一拍会挑错人，
+    按正文认则各回各家。
     """
     _build(db, v2_sessions=[])
     # A 提交那一拍：库里还没有任何行，认不到是对的。
-    assert opencode_store.claim_session("/w", since_ms=1000) is None
+    assert opencode_store.claim_session("/w", 1000, _SELF_TAIL) is None
     # 两场会话行先后落库：A 自己的 1300，同目录另一场 B 的 1800。
     conn = sqlite3.connect(db)
-    for sid, created in (("ses_A", 1300), ("ses_B", 1800)):
+    for sid, created, text in (
+        ("ses_A", 1300, _SELF_PROMPT),
+        ("ses_B", 1800, _OTHER_PROMPT),
+    ):
         conn.execute(
             "INSERT INTO session_v2 (id, directory, title, time_created, time_updated) "
             "VALUES (?, '/w', '', ?, ?)",
             (sid, created, created),
         )
+        conn.execute(
+            "INSERT INTO session_message "
+            "(id, session_id, type, seq, time_created, time_updated, data) "
+            "VALUES (?, ?, 'user', 1, ?, ?, ?)",
+            (f"m_{sid}", sid, created + 1, created + 1, _dump(_user(text))),
+        )
     conn.commit()
     conn.close()
 
-    assert opencode_store.claim_session("/w", since_ms=1000) == "ses_A"
-    # B 按自己的锚点认，也拿回自己那条（A 那条在它的窗口之外）。
-    assert opencode_store.claim_session("/w", since_ms=1500) == "ses_B"
+    assert opencode_store.claim_session("/w", 1000, _SELF_TAIL) == "ses_A"
+    # B 按自己的锚点认，也拿回自己那条。
+    assert opencode_store.claim_session("/w", 1500, "这段正文跟我们不一样") == "ses_B"
 
 
 def test_session_exists_and_directory_cover_both_stores(db: Path) -> None:

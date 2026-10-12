@@ -76,6 +76,11 @@ def _build_db(
 def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "opencode.db"
     monkeypatch.setenv("FRAGO_OPENCODE_DB", str(path))
+    # 认领会读身份映射（已认出去的编号要跳过）。不隔离就是读开发机上那一份真文件，
+    # 结果随本机跑过哪些会话而变。
+    monkeypatch.setattr(
+        opencode_store, "BINDINGS_PATH", tmp_path / "opencode-sessions.json"
+    )
     return path
 
 
@@ -210,7 +215,7 @@ def test_latest_turn_corrupt_db_returns_none(
     broken.write_text("not a sqlite file at all", encoding="utf-8")
     monkeypatch.setenv("FRAGO_OPENCODE_DB", str(broken))
     assert opencode_store.latest_turn("ses_a") is None
-    assert opencode_store.claim_session("/w", 0) is None
+    assert opencode_store.claim_session("/w", 0, "随便什么尾段") is None
 
 
 def test_latest_turn_corrupt_message_json_is_skipped(db: Path) -> None:
@@ -233,32 +238,98 @@ def test_latest_turn_corrupt_message_json_is_skipped(db: Path) -> None:
 
 
 # ── claim_session ──────────────────────────────────────────────────
-def test_claim_session_picks_earliest_in_directory_and_window(db: Path) -> None:
-    """锚点之后有多条时取**最早**创建的那条——那才是这一次新建出来的。
+#
+# 认领的判据是"这场会话收到的**头一句**用户消息，正文里含我这次提交的提示词尾段"。
+# 故下面每场"自己的"会话都要连首条用户消息与它的正文片段一起造出来——只造会话行
+# 是认不出任何一场的，那是这次修复的要点，不是用例的额外负担。
+#
+# 正文照库里的原样存（带换行、缩进）：调用方手里的尾段是去空白之后的，两边 MUST
+# 摆到同一条坐标系上才比得着。
+_SELF_PROMPT = """把这个任务做完。
 
-    取最新会在同目录两场交错时挑错人：自己这一场先落库、别人那一场后落库，等下一拍
-    再去认时"最新"已经是别人的了（见 ``test_opencode_store_v2`` 里那条交错用例）。
+判据就靠这段正文对上号"""
+_SELF_TAIL = "判据就靠这段正文对上号"
+_OTHER_PROMPT = """同目录里另一场会话。
+
+这段正文跟我们不一样"""
+
+
+def _seed_session(db: Path, sid: str, directory: str, created: int, prompt: str) -> None:
+    """在已有的库里补一场会话：会话行 + 首条用户消息 + 那条消息的正文片段。"""
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "INSERT INTO session (id, directory, title, time_created) VALUES (?,?,'',?)",
+            (sid, directory, created),
+        )
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?,?,?,?)",
+            (f"m_{sid}", sid, created, json.dumps({"role": "user", "parentID": None})),
+        )
+        conn.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, data) "
+            "VALUES (?,?,?,?,?)",
+            (
+                f"p_{sid}",
+                f"m_{sid}",
+                sid,
+                created + 1,
+                json.dumps({"type": "text", "text": prompt}),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_claim_session_picks_the_row_whose_first_message_is_ours(db: Path) -> None:
+    """同目录、窗口内有多条时，认的是首条用户消息含本次提示词尾段的那一条。
+
+    创建时刻只决定候选次序，不决定认哪一条：同目录里另一场（``ses_someone``）比
+    ``ses_mine`` 晚落库也一样认得对，比它早落库（见下一条用例）也一样。
     """
-    _build_db(
-        db,
-        sessions=[
-            ("ses_old", "/w", 100),  # 锚点之前，窗外的老会话
-            ("ses_mine", "/w", 300),  # 自己这一场
-            ("ses_later", "/w", 500),  # 同目录里后起的另一场
-            ("ses_other", "/elsewhere", 400),
-        ],
-    )
-    assert opencode_store.claim_session("/w", 200) == "ses_mine"
+    _build_db(db, sessions=[("ses_old", "/w", 100)])  # 锚点之前的老会话
+    _seed_session(db, "ses_mine", "/w", 300, _SELF_PROMPT)
+    _seed_session(db, "ses_someone", "/w", 500, _OTHER_PROMPT)
+    assert opencode_store.claim_session("/w", 200, _SELF_TAIL) == "ses_mine"
+
+
+def test_claim_session_never_picks_a_row_that_is_not_ours(db: Path) -> None:
+    """同目录里别人的行先落库、自己那行还在路上：MUST 认不到，NEVER 认成别人的。
+
+    上一轮那条故障时序的核心。会话行落库的时刻与"谁是我"没有因果连接——落库延迟随
+    提示词长度浮动到几十秒，此刻库里只看得见别人那一行。按"最早创建"挑，挑中的必然
+    是别人：两场各认一次，两条绑定互换。
+    """
+    _build_db(db)
+    _seed_session(db, "ses_theirs", "/w", 300, _OTHER_PROMPT)
+    assert opencode_store.claim_session("/w", 200, _SELF_TAIL) is None
+
+
+def test_claim_session_refuses_when_the_prompt_carries_no_information(db: Path) -> None:
+    """提示词是空的（或只有空白）：没有判别信息就不认了。
+
+    此时唯一还挑得出来的判据是"同目录、窗口内最早创建的那条"，而那正是会认错人的
+    判据。宁可不认（完成探针退回读屏，本轮照常跑完），也不拿它去猜。
+    """
+    _build_db(db)
+    _seed_session(db, "ses_mine", "/w", 300, _SELF_PROMPT)
+    assert opencode_store.claim_session("/w", 200, "") is None
+    assert opencode_store.claim_session("/w", 200, " \n\t ") is None
 
 
 def test_claim_session_rejects_other_directory(db: Path) -> None:
-    _build_db(db, sessions=[("ses_other", "/elsewhere", 400)])
-    assert opencode_store.claim_session("/w", 0) is None
+    """正文对得上、目录不对：不认。"""
+    _build_db(db)
+    _seed_session(db, "ses_elsewhere", "/elsewhere", 400, _SELF_PROMPT)
+    assert opencode_store.claim_session("/w", 0, _SELF_TAIL) is None
 
 
 def test_claim_session_rejects_rows_before_window(db: Path) -> None:
-    _build_db(db, sessions=[("ses_old", "/w", 100)])
-    assert opencode_store.claim_session("/w", 200) is None
+    """正文对得上、落在起算点之前：不认（那是上一场，不是这一次新建的）。"""
+    _build_db(db)
+    _seed_session(db, "ses_mine", "/w", 100, _SELF_PROMPT)
+    assert opencode_store.claim_session("/w", 200, _SELF_TAIL) is None
 
 
 def test_claim_session_matches_through_symlinked_directory(
@@ -272,9 +343,10 @@ def test_claim_session_matches_through_symlinked_directory(
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real)
-    _build_db(db, sessions=[("ses_real", str(real), 300)])
-    assert opencode_store.claim_session(str(link / "sub"), 200) is None
-    assert opencode_store.claim_session(str(link), 200) == "ses_real"
+    _build_db(db)
+    _seed_session(db, "ses_real", str(real), 300, _SELF_PROMPT)
+    assert opencode_store.claim_session(str(link / "sub"), 200, _SELF_TAIL) is None
+    assert opencode_store.claim_session(str(link), 200, _SELF_TAIL) == "ses_real"
 
 
 def test_claim_session_still_matches_unresolved_value_in_db(
@@ -285,8 +357,9 @@ def test_claim_session_still_matches_unresolved_value_in_db(
     real.mkdir()
     link = tmp_path / "link2"
     link.symlink_to(real)
-    _build_db(db, sessions=[("ses_raw", str(link), 300)])
-    assert opencode_store.claim_session(str(link), 200) == "ses_raw"
+    _build_db(db)
+    _seed_session(db, "ses_raw", str(link), 300, _SELF_PROMPT)
+    assert opencode_store.claim_session(str(link), 200, _SELF_TAIL) == "ses_raw"
 
 
 def test_put_binding_stores_resolved_directory(
@@ -333,7 +406,7 @@ def test_claim_session_missing_db_returns_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FRAGO_OPENCODE_DB", str(tmp_path / "nope.db"))
-    assert opencode_store.claim_session("/w", 0) is None
+    assert opencode_store.claim_session("/w", 0, "随便什么尾段") is None
 
 
 # ── part_payloads：synthetic 丢弃与 frago-hook 注入剥离 ─────────────

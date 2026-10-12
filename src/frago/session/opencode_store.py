@@ -33,6 +33,7 @@ opencode 把会话搬进了 SQLite（``~/.local/share/opencode/opencode.db``）�
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import logging
@@ -40,13 +41,20 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from frago.session.engine_cli import run_engine_command
+
+try:  # pragma: no cover - Windows 上没有这个模块
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +65,18 @@ DEFAULT_DB_PATH = Path.home() / ".local/share/opencode/opencode.db"
 # 设备本地运行时产物（对端机器上的 opencode 会话 id 无意义），已列进
 # ``frago-home-gitignore.template``，不跨设备同步。
 BINDINGS_PATH = Path.home() / ".frago" / "opencode-sessions.json"
+
+# 映射文件上那一段"读 → 改 → 写"的互斥。两层都要，缺一不可：
+#
+# - ``_BINDINGS_LOCK``（进程内）管线程。``flock`` 挂在**打开文件描述**上，本进程里
+#   两个线程各自 open 一次锁文件就各持一把锁、谁也不等谁，光靠它挡不住本机的多线程
+#   场景（同一条注释在 ``server/identity.py`` 已经写过一次）。
+# - ``flock``（跨进程）管多个 frago 进程。用 ``threading`` 锁挡不住另一个进程。
+#
+# 锁文件是**旁挂**的一个文件，不是映射文件本身：落盘走"临时文件 + ``os.replace``"，
+# 替换会把 inode 换掉，等在旧 inode 上的那个进程醒来时手里那把锁已经指不着映射文件
+# 了，会读到旧内容再覆盖赢家写进去的那份。
+_BINDINGS_LOCK = threading.Lock()
 
 # 唯一表示"后面还有下一段"的结束标记。一条助手消息带 ``time.completed`` 就说明这
 # 一段已经写完了，而这一段是不是**本轮的最后一段**，只看它是不是工具调用段。
@@ -344,59 +364,175 @@ def normalize_directory(directory: str) -> str:
         return directory
 
 
-def claim_session(directory: str, since_ms: int) -> str | None:
-    """认领会话：取 directory 匹配、创建时刻在 ``since_ms`` 之后且**最早**的那一条。
+def _squeeze(text: str) -> str:
+    """去掉全部空白。
 
-    opencode 不接受"用我给的 id 建会话"，只接受"续接这个 id"，所以身份是认领
-    来的而不是指定的。会话行在首轮提交那一刻才建，故时间窗从提交前一刻起算。
-
-    锚点之后**最早**创建的那条才是这一次新建出来的，所以比的是"最小"而不是"最新"
-    ——与 codex 那侧同一个方向（那一侧 20261009 就是这么改的）。按"最新"挑会在同
-    目录两场交错时挑错人：自己这一场先落库、别人那一场后落库，等自己下一拍再去认
-    时，"最新"已经是别人的了；被抢的那一场反而认不到自己，完成探针全程弃权，本轮
-    答案退回读屏。
-
-    目录先按真实路径查，未命中再按调用方给的原值查一次——库里理论上存的是真实
-    路径，但两侧都试过才不会因为某个版本的行为差异又变成静默落空。
-
-    两套表都问：升级当天新会话进 ``session_v2``、库里同时躺着 1.18 的旧会话，
-    只问一套就会在另一套上静默落空（认不到 → 没有绑定 → 完成探针全程弃权 →
-    本轮答案退回读屏）。两边各取最早一条，再比创建时刻取赢家。
-
-    创建时刻只是这两场会话的**次序**，不构成"这一条就是我"的因果连接：同目录里
-    另一场先落库、自己后落库时，最早那条仍是别人的。
-    找不到返回 None（NEVER 抛）。
+    库里存的是原样正文（带换行与缩进），调用方给的尾段是去空白之后的：TUI 输入框按
+    框宽折行，同一段字在屏幕与库里断行的地方不一样，两边必须先摆到同一条坐标系上。
     """
-    conn = _connect()
-    if conn is None:
-        return None
+    return "".join(text.split())
+
+
+def _first_user_text(conn: sqlite3.Connection, session_id: str) -> str:
+    """该会话**首条用户消息**的正文，去空白；读不出来返回空串，NEVER 抛。
+
+    这是"哪一场是我"唯一有因果连接的证据：frago 起会话时提交的那份提示词，就是
+    opencode 在这条会话下收到的第一条用户消息，正文原样、未被改写。
+
+    两套表各在一处取：
+
+    - 2.0 的正文挂在 ``session_message.data.text`` 上（用户消息不装 ``content``
+      数组），故按 ``seq`` 取第一条 ``type == 'user'``；
+    - 1.18 的正文在 ``part`` 表里，且一条消息可能被切成多个片段——实测首条片段常常
+      是 opencode 自己注入的编辑器上下文，正文在后面那条，所以这一条消息的全部 text
+      片段都要拼进来（注入片段带 ``synthetic`` 标记，按既有规矩丢掉）。
+
+    只有 ``user`` 才算首条：2.0 的注入单列成 ``type == 'synthetic'`` 的消息，拿它
+    当首条会把注入正文当成"人提交了什么"。
+    """
+    names = _table_names(conn) or frozenset()
+    kind = _session_kind(conn, session_id)
+    if kind == KIND_V2:
+        if _V2_MESSAGE_TABLE not in names:
+            return ""
+        row = conn.execute(
+            "SELECT data FROM session_message "
+            "WHERE session_id = ? AND type = 'user' "
+            "ORDER BY seq ASC, time_created ASC, id ASC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if not row:
+            return ""
+        text = _loads(row[0]).get("text")
+        return _squeeze(text) if isinstance(text, str) else ""
+    if kind != KIND_LEGACY:
+        return ""
+    if _LEGACY_MESSAGE_TABLE not in names or _LEGACY_PART_TABLE not in names:
+        return ""
+    rows = conn.execute(
+        "SELECT id, data FROM message WHERE session_id = ? "
+        "ORDER BY time_created ASC, id ASC",
+        (session_id,),
+    ).fetchall()
+    first_user = next(
+        (str(mid) for mid, raw in rows if _loads(raw).get("role") == "user"), None
+    )
+    if first_user is None:
+        return ""
+    chunks: list[str] = []
+    for (raw,) in conn.execute(
+        "SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC, id ASC",
+        (first_user,),
+    ).fetchall():
+        data = _loads(raw)
+        if data.get("type") != _TEXT_PART_TYPE or data.get("synthetic"):
+            continue
+        piece = data.get("text")
+        if isinstance(piece, str):
+            chunks.append(piece)
+    return _squeeze("".join(chunks))
+
+
+def _claim_candidate_rows(
+    conn: sqlite3.Connection,
+    directory: str,
+    since_ms: int,
+    names: frozenset[str],
+) -> list[tuple[int, str]]:
+    """同目录、创建时刻在锚点之后的会话行，按 ``(创建时刻, 编号)`` 升序。
+
+    两套表都问，同一个编号在两套表里都有时只留创建更早的那条（升级当天的库里两套
+    并存，实测同一个 id 会在 ``session`` 与 ``session_v2`` 里各有一行）。
+
+    早先这一步是在 SQL 里 ``ORDER BY time_created ASC LIMIT 1`` 取一条，**现在不能
+    这么取**：能定"哪一条是我"的东西（首条用户消息的正文）不在会话行上，SQL 挑出来
+    的那一条未必是本次这一场。SQL 只能筛出候选，认哪一条由
+    :func:`_first_user_text` 定；次序留着，只为在两场提示词一样时给出确定的结果。
+    """
     candidates = [normalize_directory(directory)]
     if directory not in candidates:
         candidates.append(directory)
-    names = _table_names(conn) or frozenset()
-    best: tuple[int, str] | None = None
+    found: dict[str, int] = {}
+    for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+        if table not in names:
+            continue
+        for candidate in candidates:
+            for sid, created in conn.execute(
+                f"SELECT id, time_created FROM {table} "  # noqa: S608 - 表名是常量
+                "WHERE directory = ? AND time_created >= ?",
+                (candidate, since_ms),
+            ).fetchall():
+                sid = str(sid)
+                created = created if isinstance(created, int) else 0
+                if sid not in found or created < found[sid]:
+                    found[sid] = created
+    return sorted((created, sid) for sid, created in found.items())
+
+
+def claim_session(directory: str, since_ms: int, prompt_tail: str) -> str | None:
+    """认领会话：同目录、创建时刻在 ``since_ms`` 之后、且**首条用户消息的正文里含
+    ``prompt_tail``** 的那一条。
+
+    opencode 不接受"用我给的 id 建会话"，只接受"续接这个 id"，所以身份是认领来的而
+    不是指定的。会话行要到首轮提交那一刻才建，故时间窗从提交前一刻起算。
+
+    判据 MUST 是"这场会话收到的第一句话，就是我这次提交的那句话"，不能是"锚点之后
+    最早创建的那一条"。理由是本机实测出的两条时序：会话行落库的时刻与"谁是我"没有
+    因果连接——落库延迟随提示词长度浮动到几十秒，同目录两场几乎同时提交时，**自己
+    那一行可能还在库里看不见、而别人的行已经躺在那儿**。那一刻按"最早创建"挑，挑中
+    的必然是别人：两场各认一次，两条绑定互换，页面上两场对话互串。反过来（自己的行
+    先落库、别人后落库）按"最新"挑也一样挑错人。方向来回翻治不了这个病，因为病因
+    不在方向。
+
+    ``prompt_tail`` 是本次提交那份提示词去掉全部空白之后的末尾若干字符（见驱动里的
+    ``_tail_marker``），与 :func:`_first_user_text` 同一套比法。
+
+    挑不出来就返回 None：**宁可不认，也不认错人**。认不到只是让完成探针退回读屏这
+    条既有的降级路，本轮照常跑完；认错人是两场对话的记录接到一起，人看不出来。
+
+    一个编号只属于一个 frago 会话：已经认给别人的编号一律跳过（``taken`` 由调用方
+    传进来，见 :func:`claim_and_bind`——已认名单 MUST 在互斥段里读，否则两场同时认领
+    会挑中同一个编号）。
+
+    **本函数不做互斥**（只读、不落盘）。要走完整条认领并落盘，用
+    :func:`claim_and_bind`；单独调它只适合查询与单测。
+
+    库不存在 / 表不存在 / 库只读或被独占，一律返回 None，NEVER 抛。
+    """
+    tail = _squeeze(prompt_tail)
+    if not tail:
+        # 提示词是空的（或只有空白）：这一次提交没有留下任何能区分"哪一场是我"的信息。
+        # 此时唯一还挑得出来的判据就是"同目录、窗口内最早创建的那条"，而那正是上面
+        # 说的会认错人的判据。宁可认不到（退回读屏），也不拿它去猜。
+        logger.debug("opencode claim skipped: empty prompt tail")
+        return None
+    conn = _connect()
+    if conn is None:
+        return None
     try:
-        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
-            if table not in names:
-                continue
-            for candidate in candidates:
-                row = conn.execute(
-                    f"SELECT id, time_created FROM {table} "  # noqa: S608 - 表名是常量
-                    "WHERE directory = ? AND time_created >= ? "
-                    "ORDER BY time_created ASC, id ASC LIMIT 1",
-                    (candidate, since_ms),
-                ).fetchone()
-                if not row:
-                    continue
-                created = row[1] if isinstance(row[1], int) else 0
-                if best is None or created < best[0]:
-                    best = (created, str(row[0]))
+        return _pick_claim(conn, directory, since_ms, tail, _bound_ids(_load_bindings()))
     except sqlite3.Error as exc:
         logger.debug("opencode claim_session failed: %s", exc)
         return None
     finally:
         conn.close()
-    return best[1] if best else None
+
+
+def _pick_claim(
+    conn: sqlite3.Connection,
+    directory: str,
+    since_ms: int,
+    tail: str,
+    taken: set[str],
+) -> str | None:
+    """在候选行里挑第一条"首条用户消息含 ``tail``"的，挑不出来返回 None。"""
+    names = _table_names(conn) or frozenset()
+    for _created, sid in _claim_candidate_rows(conn, directory, since_ms, names):
+        if sid in taken:
+            continue
+        if tail in _first_user_text(conn, sid):
+            return sid
+    return None
 
 
 def session_exists(opencode_session_id: str) -> bool:
@@ -1141,6 +1277,48 @@ def last_assistant_finish(opencode_session_id: str) -> str | None:
 
 
 # ── 身份映射 ────────────────────────────────────────────────────────
+@contextmanager
+def _bindings_locked() -> Iterator[bool]:
+    """把映射文件上那一段"读 → 改 → 写"圈起来。``yield`` 出锁是否取到。
+
+    取不到锁时 ``yield False`` 并把**为什么**记进 warning 日志，**不抛**：调用方
+    接口上的既有语义是"失败=这一轮没认到"，而不是让异常逸出去打断一轮对话（映射
+    文件不可写、库被独占，都只该是"这次没认到"）。
+
+    ``yield False`` 不是"放行"——调用方 MUST 据此放弃这次写/认，见
+    :func:`claim_and_bind` 与 :func:`put_binding` 各自的处理。静默跳过互斥会让两场
+    同时认领照旧撞号，那正是要修的东西。
+
+    锁文件在映射文件旁边（``opencode-sessions.json.lock``），测试把
+    ``BINDINGS_PATH`` 指到临时目录时它跟着一起进临时目录。
+    """
+    with _BINDINGS_LOCK:
+        fd = -1
+        try:
+            BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(_lock_path()), os.O_RDWR | os.O_CREAT, 0o600)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            logger.warning("opencode bindings lock unavailable: %s", exc)
+            if fd >= 0:
+                os.close(fd)
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            if fcntl is not None:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+def _lock_path() -> Path:
+    """互斥用的旁挂锁文件路径。每次现取：``BINDINGS_PATH`` 会被测试改指。"""
+    return BINDINGS_PATH.with_name(BINDINGS_PATH.name + ".lock")
+
+
 def _load_bindings() -> dict[str, dict[str, Any]]:
     """读映射文件。不存在 / 损坏一律当"没有绑定"，NEVER 让调用方崩。"""
     try:
@@ -1155,6 +1333,22 @@ def _load_bindings() -> dict[str, dict[str, Any]]:
     if not isinstance(parsed, dict):
         return {}
     return {k: v for k, v in parsed.items() if isinstance(v, dict)}
+
+
+def _bound_id(bindings: dict[str, dict[str, Any]], frago_session_id: str) -> str | None:
+    """这份映射里该 frago 会话已认领的 opencode 编号；没有则 None。"""
+    value = (bindings.get(frago_session_id) or {}).get("opencode_session_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _bound_ids(bindings: dict[str, dict[str, Any]]) -> set[str]:
+    """这份映射里已经认出去的全部 opencode 编号。"""
+    out: set[str] = set()
+    for entry in bindings.values():
+        value = entry.get("opencode_session_id")
+        if isinstance(value, str) and value:
+            out.add(value)
+    return out
 
 
 def _save_bindings(bindings: dict[str, dict[str, Any]]) -> None:
@@ -1172,36 +1366,117 @@ def _save_bindings(bindings: dict[str, dict[str, Any]]) -> None:
         raise
 
 
+def bound_session_ids() -> set[str]:
+    """映射表里已经认出去的 opencode 会话编号。
+
+    认领时拿它排除：一个编号只属于一个 frago 会话。两场会话把同一个编号各认一遍，
+    等于把两场对话的记录接到一起，页面上谁也认不出自己那一场。与 codex 那侧同一道
+    闸（20261009 在 codex 上踩过：同目录里两场几乎同时起来，后起的那场认走了前一场
+    正在写的那个编号）。
+
+    认领那条路上 MUST 在互斥段里读（见 :func:`claim_and_bind`）：本函数自己读一次，
+    两次认领各读一次就是两份不同的已认名单，那时这道闸等于不存在。
+    """
+    return _bound_ids(_load_bindings())
+
+
 def get_binding(frago_session_id: str) -> str | None:
     """取该 frago 会话已认领的 opencode 会话 id；没有则 None。"""
-    entry = _load_bindings().get(frago_session_id)
-    if not entry:
-        return None
-    value = entry.get("opencode_session_id")
-    return value if isinstance(value, str) and value else None
+    return _bound_id(_load_bindings(), frago_session_id)
 
 
-def put_binding(frago_session_id: str, opencode_session_id: str, directory: str) -> None:
-    """写入映射。一旦建立就不再重认（重认会让两个会话记录互串）。
-
-    directory 存归一化后的真实路径，与库里的取值保持同一坐标系。
-    """
-    bindings = _load_bindings()
-    bindings[frago_session_id] = {
+def _new_entry(
+    frago_session_id: str, opencode_session_id: str, directory: str
+) -> dict[str, Any]:
+    """一条映射条目。directory 存归一化后的真实路径，与库里的取值同一坐标系。"""
+    return {
         "frago_session_id": frago_session_id,
         "opencode_session_id": opencode_session_id,
         "directory": normalize_directory(directory),
         "claimed_at": int(time.time() * 1000),
     }
-    _save_bindings(bindings)
+
+
+def claim_and_bind(
+    frago_session_id: str, directory: str, since_ms: int, prompt_tail: str
+) -> str | None:
+    """认领并落盘，**整段一个动作**：读绑定 → 挑号 → 写绑定全程持锁。
+
+    这三步早先是三次独立调用，中间没有任何互斥。两场会话同时认领时，两边各自读到
+    同一份"还没有人认过"的映射、各自挑中同一个编号、各自写一份绑定进去，最终两条绑定
+    指着同一个 opencode 会话——两场对话的记录就此接到一起（本机实测复现过）。文件本身
+    不会被写坏（落盘是"临时文件 + ``os.replace``"），坏的是这一步的**读—改—写**没有
+    串起来。
+
+    互斥的两层见 ``_BINDINGS_LOCK``：``threading`` 锁挡本进程内的多线程，``flock``
+    挡多个 frago 进程；单靠任何一层都不够。
+
+    已有绑定、挑不出号、库读不动、锁取不到，一律返回 None。返回值是刚落盘的那个
+    opencode 编号，认不到就是 None——调用方拿它省一次读文件，NEVER 拿它当"本轮是否
+    落地"的判据。
+    """
+    with _bindings_locked() as locked:
+        if not locked:
+            # 取不到锁就不认。这里 MUST NOT 放行：没有互斥的认领正是"两场撞号"的成因，
+            # 拿不到锁的这一次宁可退回读屏，也不去赌这一把。
+            logger.warning(
+                "opencode claim skipped for %s: bindings lock unavailable",
+                frago_session_id,
+            )
+            return None
+        bindings = _load_bindings()
+        if _bound_id(bindings, frago_session_id) is not None:
+            # 互斥段内再看一眼：段外那次检查与这次之间可能已经有别人给这条会话认过了。
+            return None
+        conn = _connect()
+        if conn is None:
+            return None
+        try:
+            tail = _squeeze(prompt_tail)
+            if not tail:
+                logger.debug("opencode claim skipped for %s: empty prompt tail", frago_session_id)
+                return None
+            claimed = _pick_claim(conn, directory, since_ms, tail, _bound_ids(bindings))
+        except sqlite3.Error as exc:
+            logger.debug("opencode claim_and_bind failed: %s", exc)
+            return None
+        finally:
+            conn.close()
+        if claimed is None:
+            return None
+        bindings[frago_session_id] = _new_entry(frago_session_id, claimed, directory)
+        _save_bindings(bindings)
+        return claimed
+
+
+def put_binding(frago_session_id: str, opencode_session_id: str, directory: str) -> None:
+    """写入映射。一旦建立就不再重认（重认会让两个会话记录互串）。
+
+    与 :func:`drop_binding`、:func:`drop_bindings_pointing_at` 一样，都是对同一份文件
+    做"读 → 改 → 写"，故都在这道锁下做：并发时后写的那一方读到的是**改前**的快照，
+    会把先写的那一方刚写进去的条目整条抹掉（刚认到的绑定凭空消失）。
+    """
+    with _bindings_locked() as locked:
+        if not locked:
+            # 写映射这件事没有第二条路可走，也没有调用方接得住异常。照旧往下写，但把
+            # "这一次没有互斥"记进日志——绝不静默。
+            logger.warning("opencode binding written without the lock: %s", frago_session_id)
+        bindings = _load_bindings()
+        bindings[frago_session_id] = _new_entry(
+            frago_session_id, opencode_session_id, directory
+        )
+        _save_bindings(bindings)
 
 
 def drop_binding(frago_session_id: str) -> None:
     """清掉映射（如续接一个已被用户删除的 opencode 会话）。"""
-    bindings = _load_bindings()
-    if bindings.pop(frago_session_id, None) is None:
-        return
-    _save_bindings(bindings)
+    with _bindings_locked() as locked:
+        if not locked:
+            logger.warning("opencode binding dropped without the lock: %s", frago_session_id)
+        bindings = _load_bindings()
+        if bindings.pop(frago_session_id, None) is None:
+            return
+        _save_bindings(bindings)
 
 
 def drop_bindings_pointing_at(opencode_session_id: str) -> list[str]:
@@ -1215,15 +1490,20 @@ def drop_bindings_pointing_at(opencode_session_id: str) -> list[str]:
     方向是"按 opencode 编号找 frago 编号"：映射的键是 frago 侧的编号，而人删的是引擎
     侧那一场，两边不是同一个编号空间，NEVER 拿删掉的那个编号直接去 ``pop`` 键。
     """
-    bindings = _load_bindings()
-    dropped = [
-        key
-        for key, entry in bindings.items()
-        if entry.get("opencode_session_id") == opencode_session_id
-    ]
-    if not dropped:
-        return []
-    for key in dropped:
-        del bindings[key]
-    _save_bindings(bindings)
-    return dropped
+    with _bindings_locked() as locked:
+        if not locked:
+            logger.warning(
+                "opencode bindings dropped without the lock: %s", opencode_session_id
+            )
+        bindings = _load_bindings()
+        dropped = [
+            key
+            for key, entry in bindings.items()
+            if entry.get("opencode_session_id") == opencode_session_id
+        ]
+        if not dropped:
+            return []
+        for key in dropped:
+            del bindings[key]
+        _save_bindings(bindings)
+        return dropped
