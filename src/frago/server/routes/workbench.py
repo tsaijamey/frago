@@ -448,9 +448,38 @@ def _session_directory(sid: str) -> str | None:
     return None
 
 
-def _norm(path: str) -> str:
-    """把路径对齐成可比的样子：``~`` 展开、软链与 ``..`` 消掉。"""
-    return str(Path(os.path.expanduser(path)).resolve())
+def _session_root(sid: str) -> str | None:
+    """这场会话自己的工作目录，对齐成可比的样子（``~`` 展开、软链与 ``..`` 消掉）。
+
+    认不出这场、或它没留下工作目录，都返回 None——这正是 :func:`_session_directory` 记下
+    的那条规矩：相对路径少了一个基准时，NEVER 拿当前进程的目录顶替。"""
+    directory = _session_directory(sid)
+    if not directory:
+        return None
+    return str(Path(os.path.expanduser(directory)).resolve())
+
+
+def _norm(path: str, base: str | None) -> str | None:
+    """把路径对齐成可比的样子：``~`` 展开、软链与 ``..`` 消掉。对不上返回 None。
+
+    **相对路径的基准只有一个：这场会话自己的工作目录**（``base``，见 :func:`_session_root`）。
+    记录里写成相对路径的那一下，是站在那个目录里写的，所以只有按它拼才是同一份文件；缺了
+    这条工作目录，这个相对路径就没有解释，返回 None 由调用方拒掉，NEVER 退回当前进程的
+    目录——那会让请求与清单两边一起偏到另一个文件上，人点开看到的是别处的东西。
+
+    拼出来跑到工作目录外面的相对路径同样返回 None：相对路径说的是「工作目录底下的东西」，
+    爬出去的那种，记录里这一条已经没有可信的解释。**记录里写的绝对路径不受这条约束**，
+    照原样解析——产物本来就常写在会话工作目录之外（``~/.frago/data`` 下那种）。
+    """
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return str(Path(expanded).resolve())
+    if not base:
+        return None
+    inside = (Path(base) / expanded).resolve()
+    if not inside.is_relative_to(base):
+        return None
+    return str(inside)
 
 
 async def _touched(sid: str) -> list[session_files.SessionFile]:
@@ -475,23 +504,41 @@ async def read_session_files(sid: str) -> list[dict[str, Any]]:
 _PREVIEW_MAX_BYTES = 512 * 1024
 
 
-async def _read_text(sid: str, path: str) -> dict[str, Any]:
-    """取这份文件的正文。「看内容」与「做对照」两条路共用的一套门。
+async def _listed_target(sid: str, path: str) -> Path:
+    """这份文件在磁盘上的位置。「看内容」与「做对照」两条路共用的一套门。
 
     **只认清单里的路径**：请求的路径与这场会话改过的某一条指向同一份文件才给读，别的一律
     403。这条比「在工作目录底下」更紧——目录名读不到东西，文件内容读得到，所以白名单按
     文件一个个列，不按目录放。
 
-    过大的、读不成文本的都不返回内容，而是返回一个原因，界面照实写出来，NEVER 悄悄给半份。
+    清单里那些**相对**路径按这场会话自己的工作目录解释（见 :func:`_norm`）：两边同一个
+    基准，请求与清单才不会各偏各的。基准缺了、或相对路径爬出了工作目录，都当成「这一条
+    解释不了」拒掉，NEVER 退回当前进程的目录。
     """
-    allowed = {_norm(f.path) for f in await _touched(sid)}
-    if _norm(path) not in allowed:
+    base = await asyncio.to_thread(_session_root, sid)
+    allowed = {n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None}
+    resolved = _norm(path, base)
+    if resolved is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refused: {path} is relative and this session's own working directory "
+                "does not settle which file it means"
+            ),
+        )
+    if resolved not in allowed:
         raise HTTPException(
             status_code=403,
             detail=f"Refused: {path} is not a file this session changed",
         )
+    return Path(resolved)
 
-    target = Path(os.path.expanduser(path))
+
+def _read_body(target: Path, path: str) -> dict[str, Any]:
+    """把这一份读成给界面的那几格。
+
+    过大的、读不成文本的都不返回内容，而是返回一个原因，界面照实写出来，NEVER 悄悄给半份。
+    """
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"File is gone: {target}")
 
@@ -505,12 +552,17 @@ async def _read_text(sid: str, path: str) -> dict[str, Any]:
     return {"path": path, "size": size, "text": text, "reason": None}
 
 
+async def _read_text(sid: str, path: str) -> dict[str, Any]:
+    """取这份文件的正文。门的规矩见 :func:`_listed_target`。"""
+    return _read_body(await _listed_target(sid, path), path)
+
+
 @router.get("/workbench/sessions/{sid}/file")
 async def read_session_file(
     sid: str,
     path: str = Query(..., description="要取内容的那一份文件，必须是本会话改过的其中之一"),
 ) -> dict[str, Any]:
-    """取清单里某一份文件的内容，给浮窗预览用。门的规矩见 :func:`_read_text`。"""
+    """取清单里某一份文件的内容，给浮窗预览用。门的规矩见 :func:`_listed_target`。"""
     return await _read_text(sid, path)
 
 
@@ -533,8 +585,13 @@ async def read_session_file_diff(
 
     对齐在服务端算：左边那一侧本来就只有这里有。`rows` 每一行是一对格子，左边空着表示那一行
     这一侧没有东西（整行删掉、或整份都是新增）。
+
+    门与 `/file` 是同一套（:func:`_listed_target`）；拿到的是**解析好的绝对路径**，左边那一
+    侧也照它去 git 里取——拿请求里那个相对的原样去取，git 会按服务进程的目录算，摆出来的
+    又是另一个文件的历史。
     """
-    current = await _read_text(sid, path)
+    listed = await _listed_target(sid, path)
+    current = await asyncio.to_thread(_read_body, listed, path)
     body: dict[str, Any] = {
         "path": current["path"],
         "size": current["size"],
@@ -552,7 +609,7 @@ async def read_session_file_diff(
         return body
 
     before = await asyncio.to_thread(
-        file_history.before_at_head, path, max_bytes=_PREVIEW_MAX_BYTES
+        file_history.before_at_head, str(listed), max_bytes=_PREVIEW_MAX_BYTES
     )
     body["before"] = before.reason
     body["source"] = before.source
@@ -578,13 +635,20 @@ async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str,
     跨平台怎么开在 :meth:`~frago.server.services.system_service.SystemService.reveal_or_open`
     里，本模块不重复一遍平台判断。
     """
-    target = _norm(request.path)
-    root = await asyncio.to_thread(_session_directory, sid)
-    inside_root = False
-    if root:
-        root_path = _norm(root)
-        inside_root = target == root_path or Path(target).is_relative_to(root_path)
-    if not inside_root and target not in {_norm(f.path) for f in await _touched(sid)}:
+    base = await asyncio.to_thread(_session_root, sid)
+    target = _norm(request.path, base)
+    if target is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Refused: {request.path} is relative and this session's own working "
+                "directory does not settle which file it means"
+            ),
+        )
+    inside_root = base is not None and (target == base or Path(target).is_relative_to(base))
+    if not inside_root and target not in {
+        n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None
+    }:
         raise HTTPException(
             status_code=403,
             detail=f"Refused: {target} is neither in this session's working directory nor a file it changed",

@@ -28,6 +28,13 @@ def session_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def session_dirless(monkeypatch):
+    """一场没留下工作目录的会话（记录里那一格是空的）。"""
+    card = SimpleNamespace(session_id="sid-1", directory="")
+    monkeypatch.setattr(workbench_routes.record_reader, "list_sessions", lambda: [card])
+
+
+@pytest.fixture
 def touched(monkeypatch):
     """这场会话改过的文件。默认一个都没有；测试里按需塞。"""
 
@@ -74,11 +81,13 @@ def _file(path: str, action: str = "modified", count: int = 1, seq: int = 0) -> 
 
 @pytest.mark.asyncio
 async def test_the_list_carries_path_action_and_count(session_dir, touched):
-    touched([
-        _file("/w/new.py", "created", 1, 0),
-        _file("/w/old.py", "modified", 3, 4),
-        _file("/w/gone.py", "deleted", 1, 6),
-    ])
+    touched(
+        [
+            _file("/w/new.py", "created", 1, 0),
+            _file("/w/old.py", "modified", 3, 4),
+            _file("/w/gone.py", "deleted", 1, 6),
+        ]
+    )
 
     rows = await workbench_routes.read_session_files("sid-1")
 
@@ -142,7 +151,9 @@ async def test_a_listed_file_that_vanished_is_a_404(session_dir, touched):
 
 
 @pytest.mark.asyncio
-async def test_a_too_large_file_says_so_instead_of_dribbling_half(session_dir, touched, monkeypatch):
+async def test_a_too_large_file_says_so_instead_of_dribbling_half(
+    session_dir, touched, monkeypatch
+):
     big = session_dir / "big.py"
     big.write_text("x" * 64, encoding="utf-8")
     touched([_file(str(big))])
@@ -175,6 +186,53 @@ async def test_an_unknown_session_cannot_read_content(session_dir, unknown_sessi
     assert err.value.status_code == 404
 
 
+# ---------- 清单里的相对路径：基准是这场会话自己的工作目录 ----------
+#
+# 记录里写成相对路径的那一下，是站在会话工作目录里写的；按服务进程的目录解析就会偏到
+# 另一个文件上——人点开看到的是别处的东西。这两条钉的就是「偏不了」。
+
+
+@pytest.mark.asyncio
+async def test_a_relative_entry_is_read_from_the_sessions_own_directory(
+    session_dir, touched, tmp_path_factory, monkeypatch
+):
+    """相对路径按会话自己的工作目录拼，不按服务进程当前的目录拼。"""
+    mine = session_dir / "note.md"
+    mine.write_text("会话工作目录里这一份\n", encoding="utf-8")
+    elsewhere = tmp_path_factory.mktemp("server-cwd")
+    (elsewhere / "note.md").write_text("服务进程目录里的另一个\n", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    touched([_file("note.md")])
+
+    body = await workbench_routes.read_session_file("sid-1", "note.md")
+
+    assert body["text"] == "会话工作目录里这一份\n"
+
+
+@pytest.mark.asyncio
+async def test_a_relative_entry_climbing_out_of_the_directory_is_refused(session_dir, touched):
+    """爬出工作目录的相对路径解释不了，一个字都不给读——哪怕那个文件真在。"""
+    outside = session_dir.parent / "secret.txt"
+    outside.write_text("token = 'x'\n", encoding="utf-8")
+    touched([_file("../secret.txt")])
+
+    with pytest.raises(HTTPException) as err:
+        await workbench_routes.read_session_file("sid-1", "../secret.txt")
+
+    assert err.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_relative_entry_without_a_working_directory_is_refused(session_dirless, touched):
+    """这一场没留下工作目录：相对路径没有基准，NEVER 拿服务进程的目录顶替。"""
+    touched([_file("note.md")])
+
+    with pytest.raises(HTTPException) as err:
+        await workbench_routes.read_session_file("sid-1", "note.md")
+
+    assert err.value.status_code == 403
+
+
 # ---------- 改动前后两边的对照 ----------
 
 
@@ -194,6 +252,27 @@ def _with_before(text):
     from frago.server.services.file_history import GIT_SOURCE, Before
 
     return Before(text=text, reason=None, source=GIT_SOURCE)
+
+
+@pytest.mark.asyncio
+async def test_the_left_side_comes_from_the_resolved_file(session_dir, touched, monkeypatch):
+    """左边那一侧照解析好的绝对路径去取，不拿请求里那个相对的原样去取——原样去取，
+    git 会按服务进程的目录算，摆出来的是另一个文件的历史。"""
+    target = session_dir / "note.md"
+    target.write_text("x = 2\n", encoding="utf-8")
+    touched([_file("note.md")])
+    seen: list[str] = []
+
+    def before_at_head(path, max_bytes):
+        seen.append(str(path))
+        return _with_before("x = 1\n")
+
+    monkeypatch.setattr(workbench_routes.file_history, "before_at_head", before_at_head)
+
+    body = await workbench_routes.read_session_file_diff("sid-1", "note.md")
+
+    assert seen == [str(target.resolve())]
+    assert body["reason"] is None
 
 
 @pytest.mark.asyncio
@@ -356,6 +435,42 @@ async def test_the_session_directory_itself_opens(session_dir, touched, opened):
 
 
 @pytest.mark.asyncio
+async def test_a_relative_path_opens_against_the_sessions_own_directory(
+    session_dir, touched, opened, monkeypatch, tmp_path_factory
+):
+    """这边与取内容那条门同一个基准：相对路径按会话自己的工作目录拼。"""
+    target = session_dir / "note.md"
+    target.write_text("# hi\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path_factory.mktemp("server-cwd"))
+
+    await workbench_routes.reveal_session_path(
+        "sid-1", workbench_routes.RevealPathRequest(path="note.md")
+    )
+
+    assert opened == [("reveal", str(target.resolve()), True)]
+
+
+@pytest.mark.asyncio
+async def test_a_relative_path_climbing_out_is_refused(
+    session_dir, touched, opened, monkeypatch, tmp_path_factory
+):
+    """清单里这一条爬出了工作目录：解释不了，不开；哪怕别处真有一个同名文件等着被开。"""
+    (session_dir.parent / "secret.txt").write_text("token = 'x'\n", encoding="utf-8")
+    elsewhere = tmp_path_factory.mktemp("server-cwd")
+    (elsewhere.parent / "secret.txt").write_text("别处的同名文件\n", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    touched([_file("../secret.txt")])
+
+    with pytest.raises(HTTPException) as err:
+        await workbench_routes.reveal_session_path(
+            "sid-1", workbench_routes.RevealPathRequest(path="../secret.txt")
+        )
+
+    assert err.value.status_code == 403
+    assert opened == []
+
+
+@pytest.mark.asyncio
 async def test_a_path_outside_is_refused(session_dir, touched, opened):
     outside = session_dir.parent / "somewhere-else"
     outside.mkdir()
@@ -404,3 +519,72 @@ async def test_a_missing_path_inside_is_a_404(session_dir, touched, opened):
 
     assert err.value.status_code == 404
     assert opened == []
+
+
+# ---------- 整条链：会话记录 → 清单 → 接口 ----------
+#
+# 上面那些钉的是「门」本身，清单是直接塞进去的。这一条从头走一遍：会话记录里写了一个相对
+# 路径，清单照实列出来，页面拿着这一条去取内容。2026-10-11 在真界面上撞见的偏法就在这里：
+# 请求与清单两边用同一个按服务进程目录解析的算法，一起偏到另一个文件上。
+
+
+def test_the_whole_chain_keeps_a_relative_entry_on_the_session(tmp_path, monkeypatch):
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from frago.server.app import create_app
+    from frago.session import record_reader
+    from frago.session.unified_record import UnifiedRecord
+
+    sid = "ses_relchain0000000000000000"
+    session_dir = tmp_path / "client" / "proj"
+    session_dir.mkdir(parents=True)
+    (session_dir / "note.md").write_text("会话工作目录里的 note.md\n", encoding="utf-8")
+    server_cwd = tmp_path / "srv" / "a" / "b"
+    server_cwd.mkdir(parents=True)
+    (server_cwd / "note.md").write_text("服务进程目录里的另一个\n", encoding="utf-8")
+    # 从服务进程的目录一路爬出去，指向一个真实存在的、谁都不该在这里读到的东西。
+    escape = os.path.relpath("/etc/passwd", server_cwd)
+
+    def call(seq: int, file_path: str) -> UnifiedRecord:
+        return UnifiedRecord(
+            id=f"r{seq}",
+            session_id=sid,
+            group_id=None,
+            seq=seq,
+            ts=1_700_000_000_000 + seq,
+            kind="tool.call",
+            payload={
+                "call_id": f"c{seq}",
+                "tool_name": "Write",
+                "args": {"file_path": file_path, "content": "x"},
+            },
+        )
+
+    monkeypatch.setattr(
+        record_reader, "read_records", lambda *a, **k: [call(0, "note.md"), call(1, escape)]
+    )
+    monkeypatch.setattr(
+        record_reader,
+        "list_sessions",
+        lambda: [SimpleNamespace(session_id=sid, directory=str(session_dir))],
+    )
+    monkeypatch.chdir(server_cwd)
+
+    client = TestClient(create_app(), client=("127.0.0.1", 50000))
+
+    listed = client.get(f"/api/workbench/sessions/{sid}/files").json()
+    # 清单照实列出记录里写了什么，相对路径也是原样——这是它的承诺（下界，不美化）。
+    assert [(row["path"], row["action"]) for row in listed] == [
+        ("note.md", "created"),
+        (escape, "created"),
+    ]
+
+    # 这一条按会话自己的工作目录读——不是服务进程目录里那个同名的。
+    body = client.get(f"/api/workbench/sessions/{sid}/file", params={"path": "note.md"}).json()
+    assert body["text"] == "会话工作目录里的 note.md\n"
+
+    # 爬出工作目录的那一条：解释不了，拒掉。
+    refused = client.get(f"/api/workbench/sessions/{sid}/file", params={"path": escape})
+    assert refused.status_code == 403
