@@ -1000,6 +1000,38 @@ def test_default_runner_decodes_utf8_explicitly(monkeypatch) -> None:
     assert captured["errors"] == "replace"
 
 
+def test_send_text_chunks_small_enough_not_to_read_as_one_paste() -> None:
+    """长正文要拆成足够小、且块间停得住。
+
+    claude TUI 把「一口气到达的一长串按键」认成一次粘贴，超过约五行（本机 200 列下约
+    一千字）就折叠成 ``[Pasted text #1]``，展开时正文顺序会被打乱——2026-10-13 实测，
+    1011 字的正文提交后成了「原文[878:] + 原文[:878]」，接缝落在一条图片路径中间，
+    会话页照着正文路径摆的缩略图全成了「图片已不在」。这条用例把那两个数钉住：
+    块 MUST 远低于折叠门槛，块间 MUST 停下（只拆小不停，连打几块仍会被认成同一次粘贴）。
+    """
+    sleeps: list[float] = []
+    fake = FakeTmux([""])
+    sess = TmuxAgentSession("chunk", _echo_driver(), cwd="/tmp", runner=fake, sleep=sleeps.append)
+
+    sess.send_text("x" * 1001)
+
+    chunk = TmuxAgentSession._SEND_TEXT_CHUNK
+    assert chunk <= 500, "块太大：会落进 TUI 的粘贴折叠区间"
+    sent = fake.sent_keys()
+    assert [c[-1] for c in sent] == ["x" * chunk, "x" * chunk, "x" * (1001 - 2 * chunk)]
+    # 每块都走同一条字面投喂（`-l` + `--`），块间停一口气，第一块之前不停。
+    assert all(
+        c[:6] == ["tmux", "send-keys", "-t", sess.tmux_name, "-l", "--"] for c in sent
+    ), sent
+    assert sleeps == [TmuxAgentSession._SEND_TEXT_PAUSE_S] * (len(sent) - 1)
+    # 短正文不拆、也不停。
+    sleeps.clear()
+    fake.commands.clear()
+    sess.send_text("short")
+    assert [c[-1] for c in fake.sent_keys()] == ["short"]
+    assert sleeps == []
+
+
 def test_send_text_non_ascii_on_ansi_windows_goes_through_a_file(
     monkeypatch, tmp_path
 ) -> None:

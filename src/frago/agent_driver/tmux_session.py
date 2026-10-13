@@ -381,18 +381,32 @@ class TmuxAgentSession:
         """投喂按键/文本。键名（如 "Enter" / "Escape"）由调用方给。"""
         self._tmux("send-keys", "-t", self.tmux_name, *keys)
 
-    # tmux send-keys 单条命令行有长度上限（实测约 15KB 触发 "command too long"）。
+    # 块要小、块间要停一口气。两条各有各的缘由，别把其中一条当成另一条的余量。
+    #
+    # **小**：tmux send-keys 单条命令行有长度上限（实测约 15KB 触发 "command too long"）。
     # PA 的启动提示词（system prompt + bootstrap）可达 ~19KB，故按码点切块顺序发送。
-    # 1000 码点：中文按 3 字节算约 3KB/块，远低于上限；切点落在码点边界，不裂字。
-    _SEND_TEXT_CHUNK = 1000
+    # 400 码点：中文按 3 字节算约 1.2KB/块，远低于上限；切点落在码点边界，不裂字。
+    #
+    # **停**：与 tmux 的上限无关，是迁就 claude TUI 的粘贴判定——它把「一口气到达的一长串
+    # 按键」认成一次粘贴，超过约五行（本机 200 列下约一千字）就折叠成 ``[Pasted text #1]``，
+    # 再展开时**正文顺序会被打乱**：2026-10-13 实测，1011 字的正文提交后，记录里成了
+    # 「原文[878:] + 原文[:878]」，接缝落在一条图片路径中间，那条路径从此不再被当成图片，
+    # 会话页照着正文那几行路径摆的缩略图就全成了「图片已不在」。块压到 400 码点、块间停
+    # 一下，粘贴判定就不会起（同日实测：同样长度的正文逐字原样到达，接缝不再出现）。
+    _SEND_TEXT_CHUNK = 400
+    #: 块与块之间停多久（秒）。只用来断开粘贴判定的突发窗口，与上传/落盘无关。
+    _SEND_TEXT_PAUSE_S = 0.2
 
     def send_text(self, text: str) -> None:
         """以字面文本发送（-l），不解释键名。
 
         - `--` 终止 tmux 选项解析：否则以 `-` 开头的文本（如 PA 提示词的
           `--- 待处理消息（N 条）---` 前缀）会被 send-keys 当成非法 flag 而退非零。
-        - 超长文本按块切分多次发送：claude TUI 字面模式下不带 Enter，分块投喂
-          会原样拼接成同一行输入，提交（Enter）由 submit 单独负责。
+        - 超长文本按块切分多次发送，块与块之间留一口气：claude TUI 字面模式下不带
+          Enter，分块投喂会原样拼接成同一行输入，提交（Enter）由 submit 单独负责；
+          而块拆得够小、中间停得住，才不会被它当成一次粘贴折叠（见
+          :data:`_SEND_TEXT_CHUNK`）。三家 TUI（claude / codex / opencode）与
+          codebuddy 共用这一处，改这里四家一起改到。
         - 原生 Windows 上非 ASCII 文本不直接进 argv：移植版客户端会把这类文本按系统
           ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），改由文件载体
           送到 agent 手里（见 :meth:`_nonascii_prompt_via_file`），argv 上只留 ASCII。
@@ -408,6 +422,8 @@ class TmuxAgentSession:
         ):
             text = self._nonascii_prompt_via_file(text)
         for i in range(0, len(text), self._SEND_TEXT_CHUNK):
+            if i:
+                self._sleep(self._SEND_TEXT_PAUSE_S)
             chunk = text[i : i + self._SEND_TEXT_CHUNK]
             self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", chunk)
 
