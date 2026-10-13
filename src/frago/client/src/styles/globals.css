@@ -38,6 +38,9 @@
   /* hover 用半透明白而不是实色：同一条规则盖在任何一级表面上都成立。 */
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
+  /* 分段控件选中片浮起来的方式：一圈发丝描边。浅色主题白片压在浅灰底上，
+     只靠这圈线分不开层次，那边再补一层极轻的落影。 */
+  --seg-on-shadow: 0 0 0 1px var(--border-color);
   /* 会话清单置顶组那块浅底：清单底 --bg-secondary 叠一层 --bg-hover 的结果，写成不透明实色，
      因为组里带流光、带叠纸的卡内层要填同一个色，半透明填不住身后的东西。 */
   --rail-pinned-fill: #272727;
@@ -236,6 +239,7 @@
   --bg-subtle: #F5F5F5;
   --bg-hover: rgba(0, 0, 0, 0.05);
   --bg-active: rgba(0, 0, 0, 0.08);
+  --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border-color);
   --rail-pinned-fill: #ebebeb;
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);

@@ -51,6 +51,7 @@ import { modKey } from '@/hooks/usePlatform';
 import { closeTmuxSessions } from '@/api';
 import SessionItem, { AgentOnItChip, ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
+import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_ROOMY } from './seg';
 import { useSessionPins, type SessionPinsState } from '@/hooks/useSessionPins';
 import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
@@ -668,7 +669,8 @@ export default function SessionRail({
 
         {/* 时间范围这一行的右端顺带放刷新：对整张清单的动作，与筛选同属「这张清单怎么摆」。 */}
         <div className="flex items-center gap-1">
-          <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {/* 四个档位是一组单选，装在同一块浅底里，当前那一档浮起来。 */}
+          <div className={SEG_GROUP}>
             {DAY_FILTERS.map((d) => (
               <button
                 key={d}
@@ -676,14 +678,13 @@ export default function SessionRail({
                 onClick={() => setDays(d)}
                 aria-pressed={days === d}
                 data-testid={`day-filter-${d}`}
-                className={`rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
-                  days === d ? CHIP_ON : CHIP_OFF
-                }`}
+                className={`${SEG_ITEM} ${SEG_ROOMY} ${days === d ? SEG_ON : SEG_OFF}`}
               >
                 {d === 0 ? t('workbench.rail.dayAll') : t('workbench.rail.dayRange', { days: d })}
               </button>
             ))}
           </div>
+          <span className="flex-1" />
           <button
             type="button"
             onClick={() => {

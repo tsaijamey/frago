@@ -23,6 +23,7 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -59,6 +60,7 @@ import type { LocateState } from './StackPanel';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
+import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 import {
   AGENT_ACTIVITY,
   queueOpOf,
@@ -1133,64 +1135,60 @@ export default function RecordStream({
       {records.length ? (
         <div
           data-testid="stream-lens"
-          className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border-color px-5 py-2"
+          className="flex shrink-0 items-center border-b border-border-color px-5 py-2"
         >
-          {LENS_ORDER.map((id) => (
-            <button
-              key={id}
-              type="button"
-              /* 点某一档镜头就是回记录流：人手上还开着文件清单时，他这一下是在说「我要看记录」。
-                 不跟着切回来，点了没反应，像坏了。 */
-              onClick={() => {
-                setLens(id);
-                onFilesOpenChange?.(false);
-              }}
-              aria-pressed={lens === id && !filesOpen}
-              data-testid={`lens-${id}`}
-              /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
-              title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
-              disabled={counts[id] === 0}
-              /* 镜头是操作面，不是数据：选中态走中性填充加一档字重。
-                 与左栏那两行筛选同一套写法——同一种东西在两个地方长得一样。
-                 左右内边距 5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下（第五轮三改）；
-                 仍放不下照 flex-wrap 换行，档内不折字、不截字。 */
-              className={`whitespace-nowrap rounded-[6px] px-[5px] py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
-                lens === id && !filesOpen
-                  ? 'bg-bg-active font-medium text-text-primary'
-                  : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
-              }`}
-            >
-              {t(LENS_LABEL_KEY[id])}
-              <span className="ml-1 font-mono opacity-60">{counts[id]}</span>
-            </button>
-          ))}
-          {/* 文件那一档：与镜头同一排、同一套长相，但它不是镜头——见 `filesView` 那段说明。
-              它**不按条数变灰**：数字还不知道时按灰，人就以为这一场没改过文件。 */}
-          {filesView ? (
-            <button
-              type="button"
-              data-testid="lens-files"
-              onClick={() => onFilesOpenChange?.(!filesOpen)}
-              aria-pressed={filesOpen}
-              title={t('workbench.files.lensHint')}
-              className={`whitespace-nowrap rounded-[6px] px-[5px] py-[3px] text-[11px] transition-colors duration-200 ${
-                filesOpen
-                  ? 'bg-bg-active font-medium text-text-primary'
-                  : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
-              }`}
-            >
-              {t('workbench.files.lens')}
-              {typeof filesCount === 'number' ? (
-                <span className="ml-1 font-mono opacity-60">{filesCount}</span>
-              ) : filesPending ? (
-                /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
-                   而那正是这颗按钮**不该**说的事。 */
-                <span data-testid="lens-files-pending" className="ml-1 font-mono opacity-60">
-                  …
-                </span>
-              ) : null}
-            </button>
-          ) : null}
+          {/* 六档是一组单选：装在同一块浅底里，当前那一档浮起来。与左栏时间范围同一套长相
+              （见 `seg.ts`）。一排放不下时自己横向滚动，不换行、不折字。
+              内边距收成 5px、字号 11.5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下
+              （第五轮三改）。 */}
+          <div className={SEG_GROUP}>
+            {LENS_ORDER.map((id) => (
+              <Fragment key={id}>
+                {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
+                    但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
+                    按灰，人就以为这一场没改过文件。 */}
+                {id === 'system' && filesView ? (
+                  <button
+                    type="button"
+                    data-testid="lens-files"
+                    onClick={() => onFilesOpenChange?.(!filesOpen)}
+                    aria-pressed={filesOpen}
+                    title={t('workbench.files.lensHint')}
+                    className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
+                  >
+                    {t('workbench.files.lens')}
+                    {typeof filesCount === 'number' ? (
+                      <span className="font-mono opacity-60">{filesCount}</span>
+                    ) : filesPending ? (
+                      /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
+                         而那正是这颗按钮**不该**说的事。 */
+                      <span data-testid="lens-files-pending" className="font-mono opacity-60">
+                        …
+                      </span>
+                    ) : null}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  /* 点某一档镜头就是回记录流：人手上还开着文件清单时，他这一下是在说「我要看记录」。
+                     不跟着切回来，点了没反应，像坏了。 */
+                  onClick={() => {
+                    setLens(id);
+                    onFilesOpenChange?.(false);
+                  }}
+                  aria-pressed={lens === id && !filesOpen}
+                  data-testid={`lens-${id}`}
+                  /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+                  title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                  disabled={counts[id] === 0}
+                  className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen ? SEG_ON : SEG_OFF}`}
+                >
+                  {t(LENS_LABEL_KEY[id])}
+                  <span className="font-mono opacity-60">{counts[id]}</span>
+                </button>
+              </Fragment>
+            ))}
+          </div>
         </div>
       ) : null}
 
