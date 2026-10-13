@@ -1361,7 +1361,49 @@ export type {
   SessionFileDiff,
   FileDiffCell,
   FileDiffBefore,
+  FileListing,
+  FileEntry,
+  ViewerPrep,
+  PathProbe,
 } from './client';
+
+export { rawFileUrl, absoluteUrl } from './client';
+
+// ============================================================
+// 文件浏览器
+// ============================================================
+
+/**
+ * 列目录与把文件交给 viewer 都在服务端做，桌面壳那一路没有这两座桥，把做不到说出来。
+ *
+ * `rawFileUrl` 不走这里：它只拼一个地址，图片、视频那些标签自己会去取，两边都成立。
+ */
+const FILE_BROWSER_UNAVAILABLE = 'File browser API not available in pywebview mode';
+
+export const listDirectory = withMode(
+  (path?: string): Promise<httpApi.FileListing> => httpApi.listDirectory(path),
+  (_path?: string): Promise<httpApi.FileListing> =>
+    Promise.reject(new Error(FILE_BROWSER_UNAVAILABLE)),
+);
+
+export const prepareFileView = withMode(
+  (path: string): Promise<httpApi.ViewerPrep> => httpApi.prepareFileView(path),
+  (_path: string): Promise<httpApi.ViewerPrep> =>
+    Promise.reject(new Error(FILE_BROWSER_UNAVAILABLE)),
+);
+
+export const probeSessionPath = withMode(
+  (sessionId: string, path: string): Promise<httpApi.PathProbe> =>
+    httpApi.probeSessionPath(sessionId, path),
+  (_sessionId: string, _path: string): Promise<httpApi.PathProbe> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
+export const revealPath = withMode(
+  (path: string): Promise<{ status: string; opened: string }> => httpApi.revealPath(path),
+  (_path: string): Promise<{ status: string; opened: string }> =>
+    Promise.reject(new Error(FILE_BROWSER_UNAVAILABLE)),
+);
 
 // 读记录、开本机目录都在服务端，桌面壳那一路没有桥，把做不到说出来。
 const SESSION_FILES_UNAVAILABLE = 'Session files API not available in pywebview mode';

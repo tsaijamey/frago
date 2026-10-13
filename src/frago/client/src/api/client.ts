@@ -136,6 +136,10 @@ import type {
   SessionFileDiff,
   FileDiffCell,
   FileDiffBefore,
+  FileEntry,
+  FileListing,
+  ViewerPrep,
+  PathProbe,
 } from '@/types/api';
 
 export type {
@@ -259,6 +263,10 @@ export type {
   SessionFileDiff,
   FileDiffCell,
   FileDiffBefore,
+  FileEntry,
+  FileListing,
+  ViewerPrep,
+  PathProbe,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -1632,5 +1640,69 @@ export async function revealSessionPath(
   return fetchApi<{ status: string; opened: string }>(
     `/workbench/sessions/${encodeURIComponent(sessionId)}/reveal`,
     { method: 'POST', body: JSON.stringify({ path }) }
+  );
+}
+
+// ============================================================
+// 文件浏览器
+// ============================================================
+
+/** 列出这个目录里的东西。路径省略时服务端回主目录。 */
+export async function listDirectory(path?: string): Promise<FileListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : '';
+  return fetchApi<FileListing>(`/files${query}`);
+}
+
+/**
+ * 这份文件的**原始字节**地址，给 `<img>` / `<video>` / `<audio>` 这类标签直接指——
+ * 这些标签发不了自定义请求头，只能靠一个地址。
+ *
+ * `disposition=inline` 不能省：不带它服务端按历史行为发 `Content-Disposition: attachment`，
+ * 浏览器把响应当下载处理，图片和视频一律不肯在标签里渲染。
+ */
+export function rawFileUrl(path: string): string {
+  return `${API_BASE_URL}/api/file?disposition=inline&path=${encodeURIComponent(path)}`;
+}
+
+/**
+ * 把服务端回的路径拼成浏览器能直接去的地址。
+ *
+ * 服务端回的是相对它自己根的那些（`/viewer/content/<编号>/index.html`），而界面在某些
+ * 部署里跟服务端不在同一个源上，前面那一段由 `API_BASE_URL` 提供。
+ */
+export function absoluteUrl(path: string): string {
+  return /^https?:\/\//.test(path) ? path : `${API_BASE_URL}${path}`;
+}
+
+/**
+ * 把这份文件交给服务端的 viewer 渲染，回一个同源的页面地址。
+ *
+ * 渲染只有一份实现（`frago view` 用的那套），这里不重做一遍——markdown 认 mermaid、
+ * html 连同它旁边的资源一起摆、pdf 走 pdf.js。
+ */
+export async function prepareFileView(path: string): Promise<ViewerPrep> {
+  return fetchApi<ViewerPrep>(`/file/view?path=${encodeURIComponent(path)}`);
+}
+
+/**
+ * 圈中的那段文字是不是这场会话这边的一份真文件。
+ *
+ * 只问「在不在」，不读内容——界面上那几个字的粗筛能筛掉散文，筛不掉「`a/b` 恰好不是
+ * 路径」这一类，只有这台机器上的服务端答得准。相对路径也由它按这场会话自己的工作目录解。
+ */
+export async function probeSessionPath(sessionId: string, path: string): Promise<PathProbe> {
+  return fetchApi<PathProbe>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/path?path=${encodeURIComponent(path)}`
+  );
+}
+
+/**
+ * 在**跑 frago 的那台机器**上打开这个路径：是文件就选中它，是目录就打开它。
+ * 浏览器开不了本机目录，这一下绕服务端。
+ */
+export async function revealPath(path: string): Promise<{ status: string; opened: string }> {
+  return fetchApi<{ status: string; opened: string }>(
+    `/reveal?path=${encodeURIComponent(path)}`,
+    { method: 'POST' }
   );
 }

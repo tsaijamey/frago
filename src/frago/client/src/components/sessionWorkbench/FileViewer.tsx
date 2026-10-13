@@ -61,7 +61,7 @@ export function humanSize(bytes: number): string {
  *
  * 交回 null 表示**不染色**：内容还没到、太大、或引擎取不回来。那边照原样摆纯文本。
  */
-function useHighlightedHtml(text: string | null, lang: string): string | null {
+export function useHighlightedHtml(text: string | null, lang: string): string | null {
   const [html, setHtml] = useState<string | null>(null);
   useEffect(() => {
     if (text === null) {

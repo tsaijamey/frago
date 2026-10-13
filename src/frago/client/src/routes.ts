@@ -41,6 +41,7 @@ const PAGE_SEGMENT: Record<PageType, string> = {
   schedule_detail: 'schedules',
   skills: 'skills',
   guide: 'guide',
+  files: 'files',
   settings: 'settings',
   newTask: 'new',
   workspace: 'workspace',

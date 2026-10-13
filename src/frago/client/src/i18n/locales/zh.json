@@ -54,7 +54,40 @@
       "todos": "事务",
       "schedules": "定时任务",
       "data": "数据",
+      "files": "文件",
       "settings": "设置"
+    }
+  },
+  "files": {
+    "title": "文件",
+    "places": {
+      "label": "位置",
+      "home": "主目录",
+      "frago": "frago 数据",
+      "working": "工作目录"
+    },
+    "up": "上一级",
+    "refresh": "重新读一次这个目录",
+    "empty": "这个目录是空的",
+    "listing": "读这个目录…",
+    "listFailed": "读不了这个目录",
+    "denied": "没有权限进去",
+    "reveal": "在文件管理器里打开",
+    "openFolder": "打开所在目录",
+    "close": "关闭",
+    "copyPath": "复制路径",
+    "copied": "已复制",
+    "counting": "{{n}} 项",
+    "noSelection": "左边选一份文件，这里就会显示它",
+    "loadingContent": "正在打开…",
+    "previewFailed": "打不开这一份",
+    "tooLarge": "这份有 {{size}}，太大，不摆出来",
+    "notText": "这一份不是文本，没有能直接读的内容",
+    "binaryHint": "用左边那个按钮在文件管理器里打开它",
+    "columns": {
+      "name": "名称",
+      "size": "大小",
+      "modified": "修改时间"
     }
   },
   "tokenCalendar": {
@@ -1516,7 +1549,8 @@
       "branchNoteStart": "起分支",
       "branchNoteRequired": "先写一句话：新会话就从这句开始",
       "minimap": "对话缩略，拖动或点击可滚动",
-      "lensHookFull": "旁路注入"
+      "lensHookFull": "旁路注入",
+      "preview": "预览"
     },
     "files": {
       "lens": "文件",

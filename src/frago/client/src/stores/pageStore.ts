@@ -31,6 +31,7 @@ export type PageType =
   | 'schedule_detail'
   | 'skills'
   | 'guide'
+  | 'files'
   | 'settings'
   | 'newTask'
   | 'workspace'

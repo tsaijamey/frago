@@ -6,6 +6,7 @@ Content is stored in ~/.frago/viewer/ with automatic cleanup of old content.
 
 import filecmp
 import hashlib
+import json
 import shutil
 import time
 from pathlib import Path
@@ -150,6 +151,19 @@ class ViewerService:
         content_dir = CONTENT_DIR / content_id
         content_dir.mkdir(parents=True, exist_ok=True)
 
+        # 记下这份文档原来住在哪个目录。
+        #
+        # 渲染出来的页面放在内容编号这个目录里，而页面里的图片、样式地址是照文档原样写的
+        # 相对地址（`docs/images/logo.png` 这种）。文档旁边那几个**约定名字**的资源目录会
+        # 在下面一起搬过来，写在别处的搬不到——地址一个都解不出来，页面上就是一排破图。
+        # 找不着的时候按这份记录去解，才指得到同一份文件（兜底在
+        # `frago/server/routes/viewer.py`）。
+        if file_path:
+            (content_dir / "meta.json").write_text(
+                json.dumps({"source_dir": str(file_path.parent)}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
         # Handle media types
         if content_type in {"video", "image", "audio", "3d"}:
             html_content = ViewerService._render_media_html(
@@ -203,6 +217,15 @@ class ViewerService:
                     return "present"
                 return "doc"
         return "doc"
+
+    @staticmethod
+    def content_type_of(file_path: Path) -> str:
+        """这一份会被当成哪一类来渲染（markdown / html / json / pdf / video / …）。
+
+        给调用方判断用的公开名字：分法只有一份，谁要判断就调这里，别在别处再列一遍
+        扩展名。
+        """
+        return ViewerService._get_content_type(file_path)
 
     @staticmethod
     def _get_content_type(file_path: Path | None) -> str:

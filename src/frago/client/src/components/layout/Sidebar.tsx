@@ -33,6 +33,7 @@ import {
   MessageSquare,
   LayoutGrid,
   Database,
+  FolderTree,
   ListChecks,
   Settings,
   PanelLeft,
@@ -85,6 +86,8 @@ export const NAV_ITEMS: RailItem[] = [
   { id: 'schedules', labelKey: 'sidebar.nav.schedules', icon: <Clock {...ICON} /> },
   // 数据仓库：~/.frago 备份到用户自己的私有仓库。
   { id: 'data_repo', labelKey: 'sidebar.nav.data', icon: <Database {...ICON} /> },
+  // 文件：本机的目录树，左边列右边看。它跟数据仓库都是「这台机器上的东西」，挨着排。
+  { id: 'files', labelKey: 'sidebar.nav.files', icon: <FolderTree {...ICON} /> },
   { id: 'settings', labelKey: 'sidebar.nav.settings', icon: <Settings {...ICON} /> },
 ];
 
@@ -95,6 +98,7 @@ export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
   if (id === 'schedules') return currentPage === 'schedules' || currentPage === 'schedule_detail';
   if (id === 'data_repo') return currentPage === 'data_repo';
+  if (id === 'files') return currentPage === 'files';
   if (id === 'settings') return currentPage === 'settings';
   return false;
 }

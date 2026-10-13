@@ -37,6 +37,7 @@ import { WorkspacePage } from '@/components/workspace';
 import { TodoPage } from '@/components/todos';
 import { SchedulePage } from '@/components/schedules';
 import { GuidePage } from '@/components/guide';
+import FileBrowserPage from '@/components/fileBrowser/FileBrowserPage';
 
 /** 留状态的最小单位：同一个视图里的页面编号换来换去，还是这一份。 */
 type ViewKey =
@@ -49,6 +50,7 @@ type ViewKey =
   | 'schedules'
   | 'skills'
   | 'guide'
+  | 'files'
   | 'settings'
   | 'newTask'
   | 'workspace';
@@ -77,6 +79,7 @@ const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
   schedule_detail: 'schedules',
   skills: 'skills',
   guide: 'guide',
+  files: 'files',
   settings: 'settings',
   newTask: 'newTask',
   workspace: 'workspace',
@@ -93,6 +96,7 @@ const VIEWS: Record<ViewKey, () => ReactElement> = {
   schedules: () => <SchedulePage />,
   skills: () => <SkillList />,
   guide: () => <GuidePage />,
+  files: () => <FileBrowserPage />,
   settings: () => <SettingsPage />,
   newTask: () => <NewTaskPage />,
   workspace: () => <WorkspacePage />,

@@ -1319,3 +1319,57 @@ export interface SessionFileDiff {
   /** 对齐好的两列，每一行是一对格子；读不出来时为 null。 */
   rows: [FileDiffCell | null, FileDiffCell | null][] | null;
 }
+
+// ============================================================
+// 文件浏览器
+// ============================================================
+
+/**
+ * 目录里的一条。读不到属性的条目（断链的符号链接之类）服务端已经跳过。
+ *
+ * 与 `DirectoryEntry` 不是一回事：那一条是「挑一个工作目录」用的，只有名字和路径、
+ * 只报子目录；这一条是文件浏览器用的，文件也要、还要摆大小与时间。
+ */
+export interface FileEntry {
+  name: string;
+  is_dir: boolean;
+  /** 目录为 null——它的大小是它这个条目本身的，不是里面那些东西加起来的。 */
+  size: number | null;
+  /** 本地时间的 ISO 字符串，秒精度。 */
+  modified: string;
+}
+
+/** 一次目录列举。 */
+export interface FileListing {
+  /** 解析之后的绝对路径，页面照它摆面包屑。 */
+  path: string;
+  entries: FileEntry[];
+}
+
+/**
+ * 一份文件交给 viewer 之后的结果。
+ *
+ * `url` 与 WebUI 同源，页面直接嵌它就行——渲染是服务端做的，前端不重做一遍。
+ */
+export interface ViewerPrep {
+  content_id: string;
+  url: string;
+  title: string;
+}
+
+/**
+ * 圈中的那段文字是不是这场会话这边的一份真文件。
+ *
+ * 服务端只回答在不在，不读内容。`resolved` 是它按这场会话自己的工作目录解出来的绝对
+ * 路径——相对路径在界面这一侧解不出可信的答案，两边必须用同一个。
+ */
+export interface PathProbe {
+  /** 界面交上去的那一段原样。 */
+  path: string;
+  /** 解出来的绝对路径；解不出（基准缺了、爬出了工作目录）时为 null。 */
+  resolved: string | null;
+  exists: boolean;
+  is_file: boolean;
+  /** 是文件时的字节数；否则 null。浮层拿它挡住过大的文件。 */
+  size: number | null;
+}

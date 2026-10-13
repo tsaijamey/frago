@@ -54,7 +54,40 @@
       "todos": "Todos",
       "schedules": "Schedules",
       "data": "Data",
+      "files": "Files",
       "settings": "Settings"
+    }
+  },
+  "files": {
+    "title": "Files",
+    "places": {
+      "label": "Places",
+      "home": "Home",
+      "frago": "frago data",
+      "working": "Working directory"
+    },
+    "up": "Up one level",
+    "refresh": "Read this directory again",
+    "empty": "This directory is empty",
+    "listing": "Reading this directory…",
+    "listFailed": "Could not read this directory",
+    "denied": "No permission to enter",
+    "reveal": "Open in file manager",
+    "openFolder": "Open containing folder",
+    "close": "Close",
+    "copyPath": "Copy path",
+    "copied": "Copied",
+    "counting": "{{n}} items",
+    "noSelection": "Pick a file on the left and it shows up here",
+    "loadingContent": "Opening…",
+    "previewFailed": "Could not open this one",
+    "tooLarge": "This one is {{size}} — too large to put on screen",
+    "notText": "This one is not text; there is nothing to read directly",
+    "binaryHint": "Use the button on the left to open it in the file manager",
+    "columns": {
+      "name": "Name",
+      "size": "Size",
+      "modified": "Modified"
     }
   },
   "tokenCalendar": {
@@ -1521,7 +1554,8 @@
       "branchNoteStart": "Start",
       "branchNoteRequired": "Write one line first — the new session starts from it",
       "minimap": "Conversation overview — drag or click to scroll",
-      "lensHookFull": "Hook injections"
+      "lensHookFull": "Hook injections",
+      "preview": "Preview"
     },
     "files": {
       "lens": "Files",
