@@ -101,9 +101,10 @@ export default function SessionFiles({
   return (
     <div
       data-testid="session-files"
-      className="h-full min-h-0 overflow-y-auto pb-10 pl-5 pr-5 pt-4"
+      className="h-full min-h-0 overflow-y-auto pb-10 pl-4 pr-4 pt-4"
     >
-      <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-3">
+      {/* 文件清单跟它盖住的那条记录流同宽、同左边距：同一块地方，换档不该让左边线跳一下。 */}
+      <div className="flex w-full min-w-0 flex-col gap-3">
         {error ? (
           <div className="flex items-center gap-3 rounded-[8px] bg-bg-subtle px-3 py-2 text-[12px] text-text-secondary">
             <span className="min-w-0 flex-1">{error}</span>

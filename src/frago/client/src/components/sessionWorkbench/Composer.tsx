@@ -604,13 +604,15 @@ export default function Composer({
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`relative shrink-0 border-t border-border-color bg-bg-primary px-5 py-3 ${
+      className={`relative shrink-0 border-t border-border-color bg-bg-primary px-4 py-3 ${
         dragging ? 'bg-bg-hover' : ''
       }`}
     >
       <LineWalker walking={running || sending} />
 
-      <div className="mx-auto flex w-full min-w-0 max-w-[760px] flex-col gap-2">
+      {/* 输入框跟上面的记录流同宽、同左边距：两者左边界对齐，视线上下直着走。
+          收窄居中会让它看起来是另一样东西、缩在中间，跟正文错开一整块。 */}
+      <div className="flex w-full min-w-0 flex-col gap-2">
         {blocked ? (
           <p
             data-testid="composer-blocked"

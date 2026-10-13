@@ -1206,17 +1206,21 @@ export default function RecordStream({
         onKeyDown={handleKeyDown}
         onMouseDown={handleMouseDown}
         onClick={handleStreamClick}
-        /* 滚动容器的内距契约：上 16 下 40。底下比上面厚，是因为滚到底那一刻最后一条
-           不该被硬切在容器边框上，而输入框就压在下面。挂着缩略滚动条时右边多让出它那
-           一条，窄窗下正文不会钻到它底下。 */
-        className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-5 pt-4 ${showMinimap ? 'record-stream-no-bar pr-9' : 'pr-5'}`}
+        /* 滚动容器的内距契约：左右各 16（照原型），上 16 下 40。底下比上面厚，是因为滚到
+           底那一刻最后一条不该被硬切在容器边框上，而输入框就压在下面。挂着缩略滚动条时
+           右边多让出它那一条（那条 12px 宽的滚动条压在离右边 12px 处，占掉右边 24 以内的
+           地方），窄窗下正文不会钻到它底下。 */
+        className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-4 pt-4 ${showMinimap ? 'record-stream-no-bar pr-6' : 'pr-4'}`}
         data-testid="record-stream-scroll"
       >
+        {/* 正文铺满中栏，不封顶。中栏里跑的是工具调用、命令行、代码块、文件路径和表格，
+            这些宽度天生不定，收窄容器只会让它们折行、挤成一团；真正的长段落在这条流里
+            占比不大，而这里的用法是扫读、不是通读——找哪一轮做了什么、哪条报错在哪。 */}
         {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
             人不读一个字也看得出哪几条是一伙的——疏密的对比比任何标签都快。从前两边都是
             12px，密疏没有对比，所以只好另画一条横线来说"这里是一组"，而那条线是整屏最长
             的图形，喊得比它要标的内容还响。 */}
-        <div className="mx-auto flex w-full max-w-[760px] min-w-0 flex-col gap-4">
+        <div className="flex w-full min-w-0 flex-col gap-4">
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
