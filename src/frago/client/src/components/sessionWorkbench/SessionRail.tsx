@@ -704,22 +704,30 @@ export default function SessionRail({
           </button>
         </div>
 
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              aria-pressed={filter === id}
-              data-testid={`list-filter-${id}`}
-              className={`flex items-center gap-1.5 rounded-[6px] px-2 py-[3px] text-[11px] transition-colors duration-200 ${
-                filter === id ? CHIP_ON : CHIP_OFF
-              }`}
-            >
-              <span>{t(FILTER_LABEL_KEY[id])}</span>
-              <span className="font-mono opacity-60">{counts[id]}</span>
-            </button>
-          ))}
+        {/* 两档分踞两端：左端是「要我做事的」，右端是「所有会话」。并排挤在左端，看不出
+            这是一对互斥的档；中间那片空当正是「选一个」的意思。 */}
+        <div className="flex items-center justify-between">
+          {FILTERS.map((id) => {
+            /* For you 里有东西时，计数加重——这一列最要紧的一个数就是它。 */
+            const hot = id === 'for-you' && counts[id] > 0;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setFilter(id)}
+                aria-pressed={filter === id}
+                data-testid={`list-filter-${id}`}
+                className={`flex h-[22px] items-center gap-1 whitespace-nowrap rounded-[12px] px-[5px] text-[11px] transition-colors duration-200 ${
+                  filter === id ? CHIP_ON : CHIP_OFF
+                }`}
+              >
+                <span>{t(FILTER_LABEL_KEY[id])}</span>
+                <span className={`font-mono ${hot ? 'font-semibold text-text-primary' : 'opacity-60'}`}>
+                  {counts[id]}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* 可关的终端：客户端已经退出、只剩一个 shell 的那几个。在等你的、在忙的都不算。
