@@ -209,9 +209,19 @@ def render_document(
     if content_type == "pdf":
         return _render_pdf_page(title, theme, resources_base)
 
-    # Add viewer controls for code content (json/code) and markdown
+    # Add viewer controls for code content (json/code)
     show_wrap_toggle = content_type in ("json", "code")
-    show_wechat_copy = content_type == "markdown"
+    # 公众号导出：**只跟脚本走，不画按钮**。
+    #
+    # 右上角那颗「复制公众号格式」从前是给国内公众号排版用的。frago 现在是公开版本、且
+    # 中英双语在跑，一颗只为一家平台排版服务、文案还只有中文的按钮，不该长在通用阅读器上。
+    #
+    # 摘掉的只是这颗按钮**露在界面上的那一个位置**，底下那套能力原样留着：`wechatStyles`
+    # 那份样式表、`processForWeChat` 那段 DOM 转换，以及往外送它的 `copyForWeChat`，都还在
+    # 这一页里——换一个入口（快捷键、菜单、配方里的一个动作）接上 `copyForWeChat` 就能再长
+    # 出来，不必重写一遍。所以下面那个 `if` 管的是「这段脚本要不要随这一页发出去」，不再管
+    # 任何按钮。
+    with_wechat_export = content_type == "markdown"
 
     # Build viewer controls dynamically
     control_buttons = []
@@ -223,16 +233,6 @@ def render_document(
                 <polyline points="13 16 16 19 13 22"/>
             </svg>
             Wrap
-        </button>''')
-
-    if show_wechat_copy:
-        control_buttons.append('''
-        <button id="wechat-copy" type="button" title="复制公众号格式" aria-label="Copy for WeChat">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span class="btn-text">复制公众号格式</span>
         </button>''')
 
     viewer_controls = ""
@@ -255,7 +255,7 @@ def render_document(
         }'''
 
     wechat_copy_script = ""
-    if show_wechat_copy:
+    if with_wechat_export:
         wechat_copy_script = '''
         // WeChat copy functionality - optimized for light background
         function showToast(message, type) {
@@ -346,12 +346,22 @@ def render_document(
             return clone;
         }
 
+        /**
+         * 把这一页正文按公众号的排版规则导出、送进剪贴板。
+         *
+         * **按钮不是前提。** 这个函数从前是右上角那颗按钮点出来的，所以头一件事就是去抓
+         * 那颗按钮、抓不到就什么都不做。按钮撤掉之后它要能被别处调用（快捷键、菜单、配方里
+         * 的一个动作，或者在控制台里手敲一句），所以只认正文在不在；按钮在场就顺手给它挂一个
+         * 转圈的状态，不在也不影响导出。
+         *
+         * 底下那段接线留着：谁把 id 为 `wechat-copy` 的按钮放回页面，它就自动接上。
+         */
         async function copyForWeChat() {
             const btn = document.getElementById('wechat-copy');
             const article = document.querySelector('.markdown-body');
-            if (!btn || !article) return;
+            if (!article) return;
 
-            btn.classList.add('loading');
+            btn?.classList.add('loading');
 
             try {
                 const processed = processForWeChat(article);
@@ -379,7 +389,7 @@ def render_document(
                 console.error('Copy failed:', err);
                 showToast('复制失败: ' + err.message, 'error');
             } finally {
-                btn.classList.remove('loading');
+                btn?.classList.remove('loading');
             }
         }
 

@@ -14,7 +14,7 @@ something at the wrong address — so each gets a test that would have caught it
 import re
 from html import unescape
 
-from frago.viewer.modes.document import _render_pdf_page, render_markdown
+from frago.viewer.modes.document import _render_pdf_page, render_document, render_markdown
 
 
 class TestMarkdownInContainer:
@@ -80,3 +80,42 @@ class TestPdfPage:
         """`/source.pdf` is the WebUI itself; pdf.js gets HTML and chokes."""
         html = _render_pdf_page("Report", "github-dark", "/viewer/resources")
         assert "getDocument('/source.pdf')" not in html
+
+
+class TestWeChatExport:
+    """The WeChat export button is gone from the UI; the capability stayed.
+
+    The button was aimed at Chinese public-account publishing. A public,
+    bilingual frago shouldn't grow a control that serves one platform and
+    whose label exists in Chinese only. Withdrawing the affordance is not the
+    same as dropping the work behind it, so the styles and the DOM-to-inline
+    conversion are still shipped and still callable.
+    """
+
+    def _markdown_page(self) -> str:
+        return render_document("# 标题\n\n[链接](a.md)\n", "markdown", title="t")
+
+    def test_markdown_page_draws_no_button_at_all(self):
+        body = self._markdown_page().split("</head>", 1)[1]
+        assert "<button" not in body
+        assert 'id="wechat-copy"' not in body
+
+    def test_markdown_page_still_ships_the_export_capability(self):
+        page = self._markdown_page()
+        assert "wechatStyles" in page
+        assert "processForWeChat" in page
+        assert "copyForWeChat" in page
+
+    def test_export_does_not_need_the_button_to_run(self):
+        """`copyForWeChat` used to bail out unless it found the button."""
+        page = self._markdown_page()
+        assert "if (!article) return;" in page
+        assert "if (!btn || !article) return;" not in page
+
+    def test_code_page_keeps_its_wrap_button(self):
+        page = render_document("x = 1\n", "code", title="t", language="python")
+        assert 'id="wrap-toggle"' in page
+
+    def test_code_page_does_not_carry_the_export_script(self):
+        page = render_document("x = 1\n", "code", title="t", language="python")
+        assert "processForWeChat" not in page
