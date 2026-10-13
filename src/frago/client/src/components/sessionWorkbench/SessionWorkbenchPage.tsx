@@ -37,6 +37,7 @@ import {
   isSessionAlive,
   useWorkbenchLabels,
   useWorkbenchSessions,
+  type SessionStatus,
 } from '@/hooks/useWorkbenchSessions';
 import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionViews } from '@/hooks/useSessionViews';
@@ -581,7 +582,7 @@ export default function SessionWorkbenchPage() {
    *
    * 打开那一档时再 `ensure` 一次是留着的兜底：上一次取失败了，点开就重试。
    */
-  const { ensure: ensureFiles } = sessionFiles;
+  const { ensure: ensureFiles, reload: reloadFiles } = sessionFiles;
   useEffect(() => {
     // `ensure` 本身是稳的，它认哪一场靠的是会话编号——所以这条效应得盯着 `selectedId`
     // 才会在换会话时再跑一趟。
@@ -590,6 +591,25 @@ export default function SessionWorkbenchPage() {
   useEffect(() => {
     if (filesOpen) ensureFiles();
   }, [filesOpen, ensureFiles]);
+  /**
+   * 这一场跑完的那一刻，把文件清单重取一次。
+   *
+   * 清单只在切到这场会话时取过（见 `useSessionFiles`）：会话还在跑时取到的是一份只到当时的
+   * 快照，它之后再写文件，界面上那份不会自己变，个数就一直停在旧值上。这里只认「这一场从在跑
+   * 落下」这一下——换到别的会话不算，它之后再跑一轮、再落下，还会各刷一次。
+   *
+   * 状态来自左栏那份清单，十五秒一刷；而「跑完」在状态上要等**最后活动过去 90 秒**才
+   * 从「在跑」落下（见服务端的 `derive_status`），所以这一下实际是跑完约一分半之后才发生。
+   * 十五秒那档只决定它落下的那一刻，页面多久才知道。
+   */
+  const statusRef = useRef<{ sid: string; status: SessionStatus } | null>(null);
+  useEffect(() => {
+    const prev = statusRef.current;
+    const status = selected?.status ?? null;
+    statusRef.current = selectedId && status ? { sid: selectedId, status } : null;
+    if (!prev || !status || prev.sid !== selectedId) return;
+    if (prev.status === 'running' && status !== 'running') reloadFiles();
+  }, [selectedId, selected, reloadFiles]);
   // 清单还没到手上时点了也没得看：浮窗按那一份翻页，空的就是空的。
   const files = sessionFiles.files ?? [];
   const openViewer = useCallback(

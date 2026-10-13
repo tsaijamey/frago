@@ -84,5 +84,13 @@ export function useSessionFiles(sessionId: string | null): SessionFilesState {
     void reload();
   }, [reload]);
 
-  return { files, loading, error, ensure, reload: () => void reload() };
+  /**
+   * 返回的 `reload` 是一个**稳定引用**：调用方会把它放进副作用的依赖里，等某件事发生
+   * （比如这一场跑完）再重取。每次渲染都递一个新函数，那条副作用会跟着每次渲染重跑。
+   */
+  const reloadNow = useCallback(() => {
+    void reload();
+  }, [reload]);
+
+  return { files, loading, error, ensure, reload: reloadNow };
 }
