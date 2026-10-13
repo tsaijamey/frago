@@ -49,6 +49,63 @@ def get_language_from_extension(ext: str) -> str:
     return mapping.get(ext.lower(), "plaintext")
 
 
+# Container tags whose content is prose wrapped in a shell. Markdown inside
+# these gets parsed; everything else keeps Python-Markdown's default (raw).
+_CONTAINER_TAGS = frozenset({
+    'div', 'center', 'section', 'article', 'aside',
+    'header', 'footer', 'main', 'nav', 'figure', 'details',
+})
+
+
+def _container_markdown_ext():
+    """Parse markdown inside layout containers such as `<div align="center">`.
+
+    A README's title block is almost always prose inside a raw HTML shell:
+
+        <div align="center">
+
+        # frago
+        [Install](#install)
+
+        </div>
+
+    GitHub renders that as a heading and a link. Python-Markdown does not:
+    its HTML block runs from the opening tag to the matching closing one, so
+    the whole shell is passed through verbatim and the reader sees `# frago`
+    and `[Install](#install)` as literal text. The stock `md_in_html` extension
+    is the opt-in that fixes this, but it only fires for elements carrying an
+    explicit `markdown="1"` — which means editing the user's document.
+
+    So this narrows the opt-in to the containers people actually wrap prose in
+    and leaves the attribute alone otherwise. `<pre>`, `<script>`, `<table>`,
+    `<ul>` and friends stay raw on purpose: their content is markup, not prose,
+    and running a Markdown pass over it mangles it. Tags the document marked
+    explicitly keep whatever it asked for.
+    """
+    from markdown.extensions import md_in_html
+
+    class _ContainerExtractor(md_in_html.HTMLExtractorExtra):
+        def get_state(self, tag, attrs):
+            state = super().get_state(tag, attrs)
+            if state == 'off' and 'markdown' not in attrs and tag in _CONTAINER_TAGS:
+                return 'block'
+            return state
+
+    class _ContainerPreprocessor(md_in_html.HtmlBlockPreprocessor):
+        def run(self, lines: list[str]) -> list[str]:
+            parser = _ContainerExtractor(self.md)
+            parser.feed('\n'.join(lines))
+            parser.close()
+            return ''.join(parser.cleandoc).split('\n')
+
+    class _ContainerExtension(md_in_html.MarkdownInHtmlExtension):
+        def extendMarkdown(self, md):
+            super().extendMarkdown(md)
+            md.preprocessors.register(_ContainerPreprocessor(md), 'html_block', 20)
+
+    return _ContainerExtension()
+
+
 def render_markdown(content: str) -> str:
     """Render markdown to HTML with Mermaid support.
 
@@ -79,7 +136,7 @@ def render_markdown(content: str) -> str:
             'abbr',
             'footnotes',
             'attr_list',
-            'md_in_html',
+            _container_markdown_ext(),
         ])
         converted = md.convert(content)
 
@@ -636,7 +693,11 @@ def _render_pdf_page(title: str, theme: str, resources_base: str = "") -> str:  
 
         async function loadPDF() {{
             try {{
-                pdfDoc = await pdfjsLib.getDocument('/source.pdf').promise;
+                // 相对的 './source.pdf'：本页住在 /viewer/content/<编号>/index.html，
+                // 而 pdf 本体由准备阶段复制到同一个目录下。写死成 '/source.pdf' 是从站点
+                // 根上要文件——那里是 WebUI 的首页，回的是 HTML，pdf.js 只会报
+                // "Invalid PDF structure"。
+                pdfDoc = await pdfjsLib.getDocument('./source.pdf').promise;
                 pageInfo.textContent = `${{pdfDoc.numPages}} pages`;
                 renderAllPages();
             }} catch (error) {{
