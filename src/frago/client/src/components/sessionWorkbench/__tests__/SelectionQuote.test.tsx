@@ -14,6 +14,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
+
+const probeSessionPath = vi.fn();
+vi.mock('@/api', () => ({
+  probeSessionPath: (sid: string, path: string) => probeSessionPath(sid, path),
+}));
+
 import SelectionQuote, {
   ECHO_MAX_CHARS,
   HIGHLIGHT_PRIORITY,
@@ -28,8 +34,31 @@ beforeAll(async () => {
   await i18n.changeLanguage('zh');
 });
 
-/** 记录流里此刻摆着的字。同一个词故意在三处出现。 */
-const STREAM_TEXT = ['配方 A 跑完了', '配方 B 还没跑', '收尾闸门拦下了配方 C'];
+/**
+ * 探询那条命令每个用例都从零开始。
+ *
+ * 放在这一层而不是某一个 describe 里：按钮那几组用例分在好几个 describe 下，各自的
+ * beforeEach 只管自己那一组，漏掉的那一组会把上一组的调用数带进下一组。
+ *
+ * 默认答「这台机器上没这份文件」——不关心预览的用例不该被一趟网络惊到。
+ */
+beforeEach(() => {
+  probeSessionPath.mockReset();
+  probeSessionPath.mockResolvedValue({
+    path: '',
+    resolved: null,
+    exists: false,
+    is_file: false,
+    size: null,
+  });
+});
+
+/**
+ * 记录流里此刻摆着的字。同一个词故意在三处出现。
+ *
+ * 最后那一行是一条路径，给预览那颗按钮用：前三条是人话，圈它们不该冒出第四颗。
+ */
+const STREAM_TEXT = ['配方 A 跑完了', '配方 B 还没跑', '收尾闸门拦下了配方 C', 'docs/user-guide.md'];
 
 /** 浏览器那本高亮账。真浏览器里是 `CSS.highlights`，这里由替身记下都标了些什么。 */
 function fakeHighlights() {
@@ -87,7 +116,7 @@ function pick(container: HTMLElement, line: number, from: number, to: number) {
   });
 }
 
-function mount(onQuote = vi.fn()) {
+function mount(onQuote = vi.fn(), onPreview?: (path: string, size: number | null) => void) {
   const ref = createRef<HTMLDivElement>();
   const view = render(
     <div>
@@ -96,10 +125,22 @@ function mount(onQuote = vi.fn()) {
           <p key={line}>{line}</p>
         ))}
       </div>
-      <SelectionQuote containerRef={ref} sessionId="s-1" onQuote={onQuote} />
+      <SelectionQuote
+        containerRef={ref}
+        sessionId="s-1"
+        onQuote={onQuote}
+        onPreview={onPreview}
+      />
     </div>
   );
   return { view, onQuote, container: screen.getByTestId('stream') };
+}
+
+/** 松手之后那一趟探询是异步的，等它落地再断言。 */
+async function settle() {
+  await act(async () => {
+    vi.runOnlyPendingTimers();
+  });
 }
 
 describe('SelectionQuote', () => {
@@ -421,6 +462,55 @@ describe('分支按钮', () => {
     pick(container, 1, 0, 4);
     expect(screen.getByTestId('selection-quote-btn')).toBeTruthy();
     expect(screen.queryByTestId('selection-branch-btn')).toBeNull();
+  });
+
+  it('圈中一条真文件路径：多一颗预览，按下交出服务端解出来的绝对路径', async () => {
+    probeSessionPath.mockResolvedValue({
+      path: 'docs/user-guide.md',
+      resolved: '/Users/frago/Repos/frago/docs/user-guide.md',
+      exists: true,
+      is_file: true,
+      size: 4096,
+    });
+    const onPreview = vi.fn();
+    const { container } = mount(vi.fn(), onPreview);
+    pick(container, 3, 0, 'docs/user-guide.md'.length);
+    await settle();
+
+    // 相对路径在界面这一侧解不出可信的答案，问的是服务端，用的也是这场会话。
+    expect(probeSessionPath).toHaveBeenCalledWith('s-1', 'docs/user-guide.md');
+
+    const btn = screen.getByTestId('selection-preview-btn');
+    act(() => {
+      fireEvent.mouseDown(btn);
+      btn.click();
+    });
+    expect(onPreview).toHaveBeenCalledWith('/Users/frago/Repos/frago/docs/user-guide.md', 4096);
+    // 按完与其余三颗同一个规矩：按钮退场，选区收掉。
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('形状像路径但这台机器上没有这么一份：不给预览', async () => {
+    probeSessionPath.mockResolvedValue({
+      path: 'docs/user-guide.md',
+      resolved: '/Users/frago/Repos/frago/docs/user-guide.md',
+      exists: false,
+      is_file: false,
+      size: null,
+    });
+    const { container } = mount(vi.fn(), vi.fn());
+    pick(container, 3, 0, 'docs/user-guide.md'.length);
+    await settle();
+    expect(screen.getByTestId('selection-quote-btn')).toBeTruthy();
+    expect(screen.queryByTestId('selection-preview-btn')).toBeNull();
+  });
+
+  it('圈中一句人话：连问都不问服务端', async () => {
+    const { container } = mount(vi.fn(), vi.fn());
+    pick(container, 0, 0, 7); // 「配方 A 跑完了」
+    await settle();
+    expect(probeSessionPath).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('selection-preview-btn')).toBeNull();
   });
 });
 

@@ -39,6 +39,12 @@
  * 空着起出去的会话不知道自己该干什么——空着回车只提示，不起会话；Esc 或点外面算作不起。
  * 图标用分叉（`GitBranch`），NEVER 用合并那一个，那是反方向的事。
  *
+ * **「预览」是第四颗，也是唯一一颗看内容的。** 前面三颗都是「拿这段文字去干点什么」，这段
+ * 文字是什么无所谓；这一颗要求圈中的那段恰好是一条**真文件**的路径——记录流里常见的
+ * 「改的是 `src/x.py:42`」这种句子，圈住那条路径就能就地打开看。两道闸：形状（
+ * {@link pathCandidateOf}，纯文本规则，不碰网络）与存在（服务端答，相对路径按这场会话
+ * 自己的工作目录解）。两道都过才画，晃一下再收回去人会以为它坏了。
+ *
  * **标注要能在刷新之后找回原处。** 暂存与引用都会记下「圈选起点在哪一条记录里、这段文字
  * 在那一条里是第几次出现」（见 {@link markAnchor}）。找回时用同一套算法（见
  * {@link findMarkRange}），记下与找回永远对得上。只认正文类记录（挂着 `data-record-body`
@@ -47,7 +53,9 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GitBranch, Layers, Quote } from 'lucide-react';
+import { Eye, GitBranch, Layers, Quote } from 'lucide-react';
+import * as api from '@/api';
+import { pathCandidateOf } from './pathLike';
 
 /** 这套高亮在浏览器里的名字，与 `globals.css` 里 `::highlight()` 那条选择器同名。 */
 const ECHO_NAME = 'workbench-quote-echo';
@@ -304,6 +312,13 @@ export interface SelectionQuoteProps {
   onStack?: (anchor: MarkAnchor, note: string) => void;
   /** 按了「分支」并写好那句话（必填，交出去的已去掉首尾空白）。不给就不画分支按钮。 */
   onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /**
+   * 按了「预览」。交出去的是**服务端解出来的绝对路径**与它的字节数。
+   *
+   * 只有圈中的那段确实指向这场会话这边的一份真文件时才给这颗按钮——判据见
+   * {@link pathCandidateOf}（形状）与下面那次探询（存在）。不给就不画。
+   */
+  onPreview?: (path: string, size: number | null) => void;
 }
 
 /** 正在按钮原地写的那句话属于哪一颗：暂存的想法（可空）或分支的问题（必填）。 */
@@ -315,10 +330,15 @@ export default function SelectionQuote({
   onQuote,
   onStack,
   onBranch,
+  onPreview,
 }: SelectionQuoteProps) {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<string>('');
   const [anchor, setAnchor] = useState<MarkAnchor | null>(null);
+  /** 圈中的那段长得像路径的那一份（形状判定，不碰网络）。 */
+  const [candidate, setCandidate] = useState<string | null>(null);
+  /** 探询回来确实存在的那一份：`null` 就是不给预览按钮。 */
+  const [preview, setPreview] = useState<{ path: string; size: number | null } | null>(null);
   const [spot, setSpot] = useState<{ left: number; top: number } | null>(null);
   /** 点了暂存或分支、正在原地写那句话。这时选区已经让给了输入框，不许再按选区收摊。 */
   const [noting, setNoting] = useState<NoteMode | null>(null);
@@ -338,6 +358,8 @@ export default function SelectionQuote({
   const clear = useCallback(() => {
     setPicked('');
     setAnchor(null);
+    setCandidate(null);
+    setPreview(null);
     setSpot(null);
     setNoting(null);
     notingRef.current = false;
@@ -373,6 +395,9 @@ export default function SelectionQuote({
     const inView = rect.bottom > view.top && rect.top < view.bottom;
     setPicked(text);
     setAnchor(markAnchor(root, range, text));
+    // 形状判定是纯文本的，跟着这里一起做；「真有没有这么一份」是网络那一趟，在下面那个
+    // effect 里等它。
+    setCandidate(pathCandidateOf(text)?.path ?? null);
     setSpot(
       inView
         ? {
@@ -434,6 +459,33 @@ export default function SelectionQuote({
 
   // 换会话、或这块走了：绿字必须一起走。它挂在浏览器上，不随 React 的树消失。
   useEffect(() => clear, [clear, sessionId]);
+
+  /**
+   * 形状过了，再问服务端「真有这么一份吗」。
+   *
+   * 依赖是那一段文字本身：拖选时 `sync` 会被叫很多次，同一段文字只探一趟。这一趟回来
+   * 之前按钮就是没有——先给再收，人会看见它闪一下。
+   */
+  useEffect(() => {
+    if (!onPreview || !candidate || !sessionId) {
+      setPreview(null);
+      return;
+    }
+    let alive = true;
+    api
+      .probeSessionPath(sessionId, candidate)
+      .then((probe) => {
+        if (!alive) return;
+        setPreview(probe.is_file && probe.resolved ? { path: probe.resolved, size: probe.size } : null);
+      })
+      .catch(() => {
+        // 问不到（服务端不在、这场认不出来）就不给按钮：拿着一颗按不下去的按钮比没有更糟。
+        if (alive) setPreview(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [candidate, onPreview, sessionId]);
 
   if (!picked || !spot) return null;
 
@@ -606,6 +658,25 @@ export default function SelectionQuote({
               className={iconBtn}
             >
               <GitBranch size={15} strokeWidth={1.9} />
+            </button>
+          ) : null}
+          {/* 圈中的这段确实指向一份真文件时才给：形状在 pathLike 那一条纯文本规则里过一遍，
+              存在与否由服务端答（见上面那个 effect）。这是四颗里唯一与正文内容有关的——
+              其余三颗都是「拿这段去干点什么」，只有它要那段恰好是一条路径。 */}
+          {onPreview && preview ? (
+            <button
+              type="button"
+              data-testid="selection-preview-btn"
+              title={t('workbench.stream.preview')}
+              aria-label={t('workbench.stream.preview')}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onPreview(preview.path, preview.size);
+                done();
+              }}
+              className={iconBtn}
+            >
+              <Eye size={15} strokeWidth={1.9} />
             </button>
           ) : null}
         </div>

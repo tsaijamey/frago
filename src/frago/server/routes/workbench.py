@@ -490,6 +490,45 @@ async def _touched(sid: str) -> list[session_files.SessionFile]:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+@router.get("/workbench/sessions/{sid}/path")
+async def probe_session_path(
+    sid: str,
+    path: str = Query(..., description="选区里那一段，问它是不是一份真文件"),
+) -> dict[str, Any]:
+    """这条路径在这台机器上是不是一份真文件：只回答在不在，**不读内容**。
+
+    人在记录流里圈中一段文字，界面先粗筛一遍「这看着像不像一条路径」（纯文本规则，在
+    界面那一侧），再拿这里问一句「真有这么一份吗」。判定只有一条：存在且是文件。不看
+    内容、不猜扩展名能不能渲染——渲染不了的自然会在打开时按打不开说。
+
+    **相对路径按这场会话自己的工作目录解**（见 :func:`_norm`），与这场会话的文件清单同一
+    把尺子：同一个字符串在界面那一侧和清单那一侧永远指到同一份文件。基准缺了、或拼出来
+    爬出了工作目录，都算「没有这条路径」，NEVER 退回当前进程的目录顶替。
+    """
+    base = await asyncio.to_thread(_session_root, sid)
+    resolved = await asyncio.to_thread(_norm, path, base)
+    if resolved is None:
+        return {"path": path, "resolved": None, "exists": False, "is_file": False, "size": None}
+
+    target = Path(resolved)
+    size: int | None = None
+    try:
+        is_file = target.is_file()
+        # 字节数一并带上：界面那一侧拿它挡住过大的文件，省得为了一份读不完的东西
+        # 先把内容拉下来。
+        if is_file:
+            size = target.stat().st_size
+    except OSError:
+        is_file = False
+    return {
+        "path": path,
+        "resolved": resolved,
+        "exists": target.exists(),
+        "is_file": is_file,
+        "size": size,
+    }
+
+
 @router.get("/workbench/sessions/{sid}/files")
 async def read_session_files(sid: str) -> list[dict[str, Any]]:
     """这场会话写或改过的文件：路径、新建还是改、动过几次。

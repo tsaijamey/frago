@@ -54,6 +54,7 @@ import SelectionQuote, {
   rangeOf,
   type MarkAnchor,
 } from './SelectionQuote';
+import FilePeek from '@/components/fileBrowser/FilePeek';
 import type { LocateState } from './StackPanel';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
@@ -545,6 +546,12 @@ export interface RecordStreamProps {
   onStack?: (anchor: MarkAnchor, note: string) => void;
   /** 人圈了一段正文、按了「分支」并写好那句话。不给就不出分支按钮。 */
   onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /**
+   * 圈中的那段恰好是一条真文件的路径时，就地浮开看它（见 {@link SelectionQuote} 第四颗）。
+   * 默认开着：这一颗不往外发消息、不改任何东西，只是把那份文件摆出来；某个界面不想要，
+   * 传 `preview={false}` 关掉。
+   */
+  preview?: boolean;
   /** 没收口的分支标注上点出来的小菜单：「打开分支」。不给就不弹菜单。 */
   onOpenBranch?: (childSessionId: string) => void;
   /** 同一个小菜单：「标记已收口」。 */
@@ -600,6 +607,7 @@ export default function RecordStream({
   onQuote,
   onStack,
   onBranch,
+  preview = true,
   onOpenBranch,
   onCloseBranch,
   marks = NO_MARKS,
@@ -616,6 +624,8 @@ export default function RecordStream({
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
+  /** 圈中的那段是一条真文件时，就地浮开的那一份。 */
+  const [peek, setPeek] = useState<{ path: string; size: number | null } | null>(null);
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
   const resolved = useMemo(() => withQueueOutcomes(records), [records]);
@@ -1313,7 +1323,14 @@ export default function RecordStream({
           onQuote={onQuote}
           onStack={onStack}
           onBranch={onBranch}
+          onPreview={preview ? (path, size) => setPeek({ path, size }) : undefined}
         />
+      ) : null}
+
+      {/* 浮开的那一份。挂在这一层而不是页面上：圈选发生在哪块记录流里，它就从哪块冒出来，
+          两处记录流（会话页、Teams 页）各管各的，不互相顶掉。 */}
+      {peek ? (
+        <FilePeek path={peek.path} size={peek.size} onClose={() => setPeek(null)} />
       ) : null}
 
       {branchMenu ? (
