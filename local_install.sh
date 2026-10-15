@@ -111,6 +111,75 @@ get_version() {
     "$1" --version 2>/dev/null | head -n1 || echo "unknown"
 }
 
+# Run a build command quietly, but never silently. Output goes to a temp file;
+# if the command fails, the tail of that file is printed together with the exit
+# code. Without this a build that failed and a build that worked look exactly
+# the same on the terminal, and the install goes on with the old binary in place.
+#
+# A step marked --quiet-fail is one the caller expects to fail and retry another
+# way (the stale-lockfile fallback). It stays silent, but its log is kept and
+# remembered: if the retry fails too, that log holds the root cause, and the
+# retry's own output only shows the symptom.
+QUIET_ATTEMPT_LOG=""
+
+run_build_step() {
+    local quiet_fail=false
+    if [ "$1" = "--quiet-fail" ]; then
+        quiet_fail=true
+        shift
+    fi
+
+    local label="$1"
+    shift
+
+    local tmpdir="${TMPDIR:-/tmp}"
+    tmpdir="${tmpdir%/}"
+
+    local log
+    log=$(mktemp "$tmpdir/frago-build-XXXXXX") || {
+        # No temp file available - run it out loud instead.
+        "$@"
+        return $?
+    }
+
+    local status=0
+    "$@" >"$log" 2>&1 || status=$?
+
+    if [ "$status" -eq 0 ]; then
+        rm -f "$log"
+        # The retry worked, so the earlier attempt's log has served its purpose.
+        if [ -n "$QUIET_ATTEMPT_LOG" ]; then
+            rm -f "$QUIET_ATTEMPT_LOG"
+        fi
+        QUIET_ATTEMPT_LOG=""
+        return 0
+    fi
+
+    if [ "$quiet_fail" = true ]; then
+        # Silent, but the log stays: the retry may need to point back at it.
+        QUIET_ATTEMPT_LOG="$log"
+        return "$status"
+    fi
+
+    # Everything below goes to stderr: the log path matters most exactly when
+    # someone is redirecting the output to a file.
+    printf "\n" >&2
+    print_error "$label failed (exit $status). Last 30 lines:"
+    if [ -s "$log" ]; then
+        tail -n 30 "$log" >&2
+    else
+        printf "${DIM}   (this step produced no output)${RESET}\n" >&2
+    fi
+    printf "${DIM}   Full output kept at: %s${RESET}\n" "$log" >&2
+
+    if [ -n "$QUIET_ATTEMPT_LOG" ] && [ -f "$QUIET_ATTEMPT_LOG" ]; then
+        printf "${DIM}   The attempt before it kept its own log at: %s${RESET}\n" \
+            "$QUIET_ATTEMPT_LOG" >&2
+    fi
+
+    return "$status"
+}
+
 detect_platform() {
     OS="$(uname -s)"
     ARCH="$(uname -m)"
@@ -209,8 +278,12 @@ build_frontend() {
     print_step "Building frontend..."
 
     cd src/frago/client
-    pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1
-    pnpm build >/dev/null 2>&1
+    # --frozen-lockfile is the fast path; if the lockfile is stale that attempt
+    # fails by design, so keep its output out of the way and let the plain
+    # install report anything that actually goes wrong.
+    run_build_step --quiet-fail "pnpm install" pnpm install --frozen-lockfile ||
+        run_build_step "pnpm install" pnpm install
+    run_build_step "pnpm build" pnpm build
     cd - >/dev/null
 
     print_done "Frontend built"
@@ -225,7 +298,7 @@ install_frago_local() {
     rm -rf dist/ >/dev/null 2>&1 || true
 
     # Build wheel
-    uv build >/dev/null 2>&1
+    run_build_step "uv build" uv build
 
     # Find and install the wheel
     WHEEL=$(find dist -name "*.whl" | head -n1)
@@ -235,7 +308,7 @@ install_frago_local() {
     fi
 
     # Install with force to replace any existing version
-    uv tool install "$WHEEL" --force >/dev/null 2>&1
+    run_build_step "uv tool install" uv tool install "$WHEEL" --force
 
     if command_exists frago; then
         version=$(get_version frago)
