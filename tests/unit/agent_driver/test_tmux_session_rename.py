@@ -81,3 +81,60 @@ def test_rename_tmux_never_touches_a_borrowed_session():
     session = _session(runner, session_id="s1", tmux_target="someones-terminal")
     assert session.rename_tmux(_CLAIMED) is False
     assert runner.calls == []
+
+
+def test_caller_may_hand_over_the_window_name():
+    """改名之后名字与会话名分家，下一个进程只能靠记下的那个名字重新绑上它。
+
+    照会话名重推会绑到一个不存在的窗口上，此后每一轮都崩在 ``capture-pane``。
+    """
+    runner = _FakeTmux()
+    session = _session(runner, session_id=_HANDLE, tmux_name=f"frago-agent-{_CLAIMED}")
+
+    assert session.tmux_name == f"frago-agent-{_CLAIMED}"
+    # 与借住语义分开：这一个不改变"窗口归谁所有"，close() 照旧收得走。
+    assert session.tmux_target is None
+
+
+def test_handed_over_name_still_renames_and_closes_its_own_window():
+    runner = _FakeTmux()
+    session = _session(runner, session_id=_HANDLE, tmux_name=f"frago-agent-{_CLAIMED}")
+
+    session.close()
+
+    assert runner.calls[-1] == ["tmux", "kill-session", "-t", f"frago-agent-{_CLAIMED}"]
+
+
+def test_created_at_reads_the_session_creation_time():
+    """认领会话编号要拿它当锚点：进程内记的启动时刻活不过第一条命令，tmux 记的活得过。"""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> str:
+        calls.append(list(argv))
+        return "1791941895\n"
+
+    session = _session(runner)
+
+    assert session.created_at() == 1791941895.0
+    assert calls[-1] == [
+        "tmux",
+        "display-message",
+        "-p",
+        "-t",
+        f"frago-agent-{_HANDLE}",
+        "#{session_created}",
+    ]
+
+
+def test_created_at_gives_up_quietly():
+    """问不出来返回 None，NEVER 抛——认领是尽力而为，不该把这一轮打断。"""
+
+    def boom(argv: list[str]) -> str:
+        raise RuntimeError("tmux said no")
+
+    assert _session(boom).created_at() is None
+
+    def garbage(argv: list[str]) -> str:
+        return "不知道"
+
+    assert _session(garbage).created_at() is None

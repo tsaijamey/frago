@@ -260,6 +260,7 @@ class TmuxAgentSession:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         tmux_target: str | None = None,
+        tmux_name: str | None = None,
     ) -> None:
         self.session_id = session_id
         self.driver = driver
@@ -279,7 +280,7 @@ class TmuxAgentSession:
         # TUI 用指定 profile 的 endpoint/model/key 运行。值必须是字符串（tmux -e 要求）。
         self.env = env or {}
         # 这一场跑哪个模型。多数 agent 的模型走环境变量（claude 读 ANTHROPIC_MODEL），
-        # 只认启动开关的那一类（codebuddy 的 ``--model``）从这里进 driver。
+        # 只认启动开关的那一类（``--model``）从这里进 driver。
         self.model = model
         self.cwd = cwd
         self.width = width
@@ -287,7 +288,11 @@ class TmuxAgentSession:
         # conv_key 形如 ``feishu:oc_xxx`` 带冒号，原样当会话名会让 new-session 退非零、
         # 整条 channel 永远建不起会话。每个 session_id 仍稳定映射到唯一的名字
         # （claude --session-id 仍用原始 session_id 派生）。
-        self.tmux_name = tmux_target if tmux_target else tmux_name_for(session_id)
+        # tmux_name：调用方**已经知道**这个会话挂在哪个窗口里，直接照用，不再按 session_id
+        # 派生。认领到真编号之后窗口会被改名（见 rename_tmux），名字自此与 session_id 分家；
+        # 下一个进程要重新绑上它，只能靠先前记下的那个名字。与 borrow 语义的 tmux_target
+        # 分开：这一个不改变"会话归谁所有"，close() 照旧收得走。
+        self.tmux_name = tmux_name or (tmux_target or tmux_name_for(session_id))
         self._run = runner or _default_runner
         # 是否真在驱动本机那个 tmux 客户端二进制。只有这种时候才需要迁就客户端自己的
         # 毛病（如 win32 移植版按 ANSI 代码页收窄 argv）；调用方塞了 fake runner 的
@@ -405,8 +410,8 @@ class TmuxAgentSession:
         - 超长文本按块切分多次发送，块与块之间留一口气：claude TUI 字面模式下不带
           Enter，分块投喂会原样拼接成同一行输入，提交（Enter）由 submit 单独负责；
           而块拆得够小、中间停得住，才不会被它当成一次粘贴折叠（见
-          :data:`_SEND_TEXT_CHUNK`）。三家 TUI（claude / codex / opencode）与
-          codebuddy 共用这一处，改这里四家一起改到。
+          :data:`_SEND_TEXT_CHUNK`）。四家 TUI（claude / codex / opencode / agy）
+          共用这一处，改这里四家一起改到。
         - 原生 Windows 上非 ASCII 文本不直接进 argv：移植版客户端会把这类文本按系统
           ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），改由文件载体
           送到 agent 手里（见 :meth:`_nonascii_prompt_via_file`），argv 上只留 ASCII。
@@ -723,6 +728,28 @@ class TmuxAgentSession:
             ).strip()
         except Exception:
             return ""
+
+    def created_at(self) -> float | None:
+        """这个 tmux 会话是什么时候建起来的（epoch 秒）。问不出来返回 None，NEVER 抛。
+
+        **认领会话编号要用它当锚点。** ``frago agent start`` 与之后的每一次
+        ``frago agent send`` 是各自独立的进程，driver 进程内记下的"启动时刻"活不过
+        第一条命令；而有的 agent（agy）要等第一轮提交之后才会有会话编号，认领因此正好
+        发生在启动进程早已退出的那一刻。tmux 自己记着这个时刻，跨进程都问得到。
+
+        精度是秒。当锚点够用——要的只是"不比这一场更早"，而会话编号总是在这之后才
+        出现的。
+        """
+        try:
+            raw = self._tmux(
+                "display-message", "-p", "-t", self.tmux_name, "#{session_created}"
+            ).strip()
+        except Exception:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
 
     def has_live_agent(self) -> bool | None:
         """这个 tmux 会话里还有没有一个活着的 agent 进程。**三态，不是布尔。**

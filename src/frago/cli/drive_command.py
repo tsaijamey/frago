@@ -200,8 +200,39 @@ def _known_agent_types() -> list[str]:
 def _bind_session(
     entry: DriveEntry, driver: AgentDriver, runner: TmuxRunner | None
 ) -> TmuxAgentSession:
-    """绑定到一个已存活的 tmux 会话，复用 TmuxAgentSession 原语（不再 open）。"""
-    return TmuxAgentSession(session_id=entry.name, driver=driver, cwd=entry.cwd, runner=runner)
+    """绑定到一个已存活的 tmux 会话，复用 TmuxAgentSession 原语（不再 open）。
+
+    **窗口名照侧车里记的那个用，不按会话名重推。** 认领到真编号之后窗口会被改名
+    （见 ``TmuxAgentSession.rename_tmux``），名字与 ``entry.name`` 就此分家；照会话名
+    重推会绑到一个不存在的窗口上——第 2 轮起每一轮都崩在 ``capture-pane``（2026-10-14
+    实机撞到）。
+    """
+    return TmuxAgentSession(
+        session_id=entry.name,
+        driver=driver,
+        cwd=entry.cwd,
+        runner=runner,
+        tmux_name=entry.tmux_name,
+    )
+
+
+def _refresh_tmux_name(entry: DriveEntry, session: TmuxAgentSession) -> None:
+    """把会话对象当前的 tmux 名刷回侧车。名没变就一个字节不动。
+
+    **一轮跑下来驱动可能把窗口改名。** 页面新建 codex / opencode / agy 会话时，真编号
+    要等会话起来之后才认领得到，认到就把这个窗口改认真编号（见
+    ``TmuxAgentSession.rename_tmux``）。而侧车是**下一个进程**找这个窗口的唯一依据：名
+    一分家，此后每一条 ``send`` 都会答"这一场已经不在了"。
+
+    启动那一趟不受影响——它写侧车时读的就是改过名之后的 ``session.tmux_name``。出问题的
+    是**起完会话之后才改名**的那一类：agy 的会话编号要等第一轮提交之后才进摘要库，认领
+    因此发生在第一次 ``send`` 里（2026-10-14 实机撞到：五轮全答对，回文本全空；认领成功、
+    改了名之后，后续每一轮又被判成会话已死）。
+    """
+    if session.tmux_name == entry.tmux_name:
+        return
+    entry.tmux_name = session.tmux_name
+    _write_entry(entry)
 
 
 def _echo_active_sessions() -> None:
@@ -424,6 +455,9 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
         sys.exit(1)
 
     result = session.send(prompt, timeout_s=timeout if timeout > 0 else None)
+
+    # 这一轮里驱动可能刚把窗口改了名（认领到真编号）。侧车要跟上，否则下一轮找不到它。
+    _refresh_tmux_name(entry, session)
 
     # 等不到 done_signal 超时 → 报 timeout + 末屏 + 提示接管（负反馈）。
     if result.status == "timeout":
