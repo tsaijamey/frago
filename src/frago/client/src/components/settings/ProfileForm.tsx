@@ -175,7 +175,8 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         </>
       ) : (
         <>
-      {/* Endpoint type */}
+      {/* Which vendor this connection reaches. It decides the preset — the
+          addresses and model names offered below as placeholders. */}
       <div>
         <label htmlFor="profile-endpoint-type" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
           {t('settings.profiles.endpointType')}
@@ -195,31 +196,9 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         </select>
       </div>
 
-      {/* Where requests will actually go. A custom endpoint has to be told;
-          a preset already knows, and says so instead of staying silent. */}
-      {formEndpointType === 'custom' ? (
-        <div>
-          <label htmlFor="profile-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            {t('settings.profiles.apiUrl')}
-          </label>
-          <input
-            id="profile-url"
-            type="text"
-            value={formUrl}
-            onChange={(e) => setFormUrl(e.target.value)}
-            placeholder="https://api.example.com/anthropic"
-            className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
-          />
-        </div>
-      ) : (
-        preset && (
-          <p className="text-xs text-[var(--text-muted)] font-mono break-all">
-            {preset.base_url}
-          </p>
-        )
-      )}
-
-      {/* API Key */}
+      {/* The credential. One key opens every protocol door below; it used to
+          sit inside the Anthropic half, which read as if it belonged to that
+          protocol alone. */}
       <div>
         <label htmlFor="profile-api-key" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
           {t('settings.profiles.apiKey')}
@@ -245,58 +224,88 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             {showFormApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
+        <p className="text-xs text-[var(--text-muted)] mt-1">
+          {t('settings.profiles.apiKeySharedHint')}
+        </p>
       </div>
 
-      {/* Model overrides. Left empty, a preset uses the model in its
-          placeholder; a custom endpoint has nothing to fall back on. */}
-      <div>
-        <label htmlFor="profile-default-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-          {t('settings.profiles.defaultModel')}
-          {preset && <span className="ml-1 text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
-        </label>
-        <input
-          id="profile-default-model"
-          type="text"
-          value={formDefaultModel}
-          onChange={(e) => setFormDefaultModel(e.target.value)}
-          placeholder={preset ? preset.default_model : 'e.g., gpt-4'}
-          className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
+      {/* Two protocol doors, same shape, neither named after an agent. A
+          profile can carry one or both; which agent reads which is the
+          picker's business, not the form's. */}
+      <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2">
         <div>
-          <label htmlFor="profile-sonnet-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            {t('settings.profiles.sonnetModel')}
+          <p className="text-xs font-medium text-[var(--text-secondary)]">
+            {t('settings.profiles.anthropicTitle')}
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            {t('settings.profiles.anthropicHint')}
+          </p>
+        </div>
+        {formEndpointType === 'custom' ? (
+          <div>
+            <label htmlFor="profile-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+              {t('settings.profiles.apiUrl')}
+            </label>
+            <input
+              id="profile-url"
+              type="text"
+              value={formUrl}
+              onChange={(e) => setFormUrl(e.target.value)}
+              placeholder="https://api.example.com/anthropic"
+              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+            />
+          </div>
+        ) : (
+          preset && (
+            <p className="text-xs text-[var(--text-muted)] font-mono break-all">
+              {preset.base_url}
+            </p>
+          )
+        )}
+        <div>
+          <label htmlFor="profile-default-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+            {t('settings.profiles.defaultModel')}
+            {preset && <span className="ml-1 text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
           </label>
           <input
-            id="profile-sonnet-model"
+            id="profile-default-model"
             type="text"
-            value={formSonnetModel}
-            onChange={(e) => setFormSonnetModel(e.target.value)}
-            placeholder={preset ? preset.sonnet_model : t('settings.general.optionalOverride')}
+            value={formDefaultModel}
+            onChange={(e) => setFormDefaultModel(e.target.value)}
+            placeholder={preset ? preset.default_model : 'e.g., gpt-4'}
             className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
           />
         </div>
-        <div>
-          <label htmlFor="profile-haiku-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            {t('settings.profiles.haikuModel')}
-          </label>
-          <input
-            id="profile-haiku-model"
-            type="text"
-            value={formHaikuModel}
-            onChange={(e) => setFormHaikuModel(e.target.value)}
-            placeholder={preset ? preset.haiku_model : t('settings.general.optionalOverride')}
-            className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
-          />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="profile-sonnet-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+              {t('settings.profiles.sonnetModel')}
+            </label>
+            <input
+              id="profile-sonnet-model"
+              type="text"
+              value={formSonnetModel}
+              onChange={(e) => setFormSonnetModel(e.target.value)}
+              placeholder={preset ? preset.sonnet_model : t('settings.general.optionalOverride')}
+              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+            />
+          </div>
+          <div>
+            <label htmlFor="profile-haiku-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+              {t('settings.profiles.haikuModel')}
+            </label>
+            <input
+              id="profile-haiku-model"
+              type="text"
+              value={formHaikuModel}
+              onChange={(e) => setFormHaikuModel(e.target.value)}
+              placeholder={preset ? preset.haiku_model : t('settings.general.optionalOverride')}
+              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Codex speaks OpenAI Responses only, not the Anthropic protocol the
-          fields above describe. Same vendor, same key, a different address —
-          and sometimes a narrower model list. Without this door the profile
-          simply cannot be activated on Codex, and the picker says so. */}
       <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2">
         <div>
           <p className="text-xs font-medium text-[var(--text-secondary)]">
