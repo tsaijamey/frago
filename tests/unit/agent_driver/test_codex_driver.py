@@ -393,6 +393,61 @@ def test_submit_sends_the_prompt_exactly_once(monkeypatch):
     assert session.texts.count("干活") == 1
 
 
+class _FakeTimeline(_FakePane):
+    """在 ``_FakePane`` 上再记一笔先后顺序：文本、按键、停顿各自何时发生。"""
+
+    def __init__(self, pane: str) -> None:
+        super().__init__(pane)
+        self.events: list[tuple[str, object]] = []
+
+    def send_text(self, text: str) -> None:
+        self.events.append(("text", text))
+        super().send_text(text)
+
+    def send_keys(self, *keys: str) -> None:
+        self.events.append(("keys", keys))
+        super().send_keys(*keys)
+
+    def _sleep(self, seconds: float) -> None:
+        self.events.append(("sleep", seconds))
+
+
+def test_submit_settles_before_the_first_enter(monkeypatch):
+    """回归：文本进框后先停一口气再按 Enter，不紧跟粘贴突发。
+
+    codex 的输入框带粘贴判定，紧跟粘贴突发到达的 Enter 会被当成粘贴内容里的换行而
+    非提交，长消息整段滞留框内。claude 侧为此留了 2 秒静置，codex 侧一直没有
+    （2026-10-14 补上）。
+    """
+    monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: 0)
+
+    session = _FakeTimeline(BANNER_PANE + "\n› 干活\n")
+    codex_driver._submit(session, "干活")
+
+    first_enter = session.events.index(("keys", ("Enter",)))
+    assert session.events[first_enter - 1] == ("sleep", codex_driver._PASTE_SETTLE_S), (
+        "第一次 Enter 之前紧挨着的必须是那一段静置"
+    )
+
+
+def test_submit_keeps_retrying_enter_up_to_the_cap(monkeypatch):
+    """回归：一直核对不落地时，回车按到上限为止。
+
+    上限买到的是时间窗——够罩住"界面还在起"那一段。它不是"更对"，只是"更久"：
+    2026-10-14 那次"回车三次都没生效"为什么没生效仍未查实。
+    """
+    monkeypatch.setattr(codex_driver, "_claim_once", lambda s: None)
+    monkeypatch.setattr(codex_driver, "_rollout_size", lambda s: 0)
+
+    session = _FakePane(BANNER_PANE + "\n› 干活\n")
+    codex_driver._submit(session, "干活")
+
+    enters = sum(1 for key in session.keys if key == ("Enter",))
+    assert enters == 1 + codex_driver._ENTER_RETRIES
+    assert enters == 5, "上限 4 次重试 = 共 5 次回车（2026-10-14 定的）"
+
+
 def test_clear_input_confirms_an_empty_box_with_a_probe():
     """清残留：屏上只剩探针字符即认定缓冲区已空，再退格把探针删掉。"""
     session = _FakePane("› x")
@@ -405,6 +460,63 @@ def test_clear_input_gives_up_when_the_probe_never_shows():
     """探针没能独占输入框（清行键未生效 / TUI 没起来）时照实返回假，不假装清干净。"""
     session = _FakePane("› 上一句没发出去的话")
     assert codex_driver._clear_input(session) is False
+
+
+class _FakeComposer:
+    """会随按键变化的假输入框，按 codex 实测的按键语义记账。
+
+    2026-10-14 实测：清行键只清得掉光标所在那一行，光标停在空行上时再按是空转；
+    退格把空行并回上一行。上一句没提交成功留下的多段残留，正是卡在头一条语义上。
+    """
+
+    def __init__(self, text: str = "") -> None:
+        self.lines = text.split("\n") if text else []
+        self.keys: list[tuple[str, ...]] = []
+        self.texts: list[str] = []
+        self.session_id = "sid"
+        self.cwd = "/tmp"
+        self.native_session_id = True
+        self._poll_interval_s = 0
+
+    def capture_pane(self, **_kw) -> str:
+        if not any(self.lines):
+            return "› Ask Codex to do anything"
+        return "\n".join([f"› {self.lines[0]}", *self.lines[1:]])
+
+    def send_text(self, text: str) -> None:
+        self.texts.append(text)
+        if self.lines:
+            self.lines[-1] += text
+        else:
+            self.lines = [text]
+
+    def send_keys(self, *keys: str) -> None:
+        self.keys.append(keys)
+        for key in keys:
+            if key == "C-u":
+                if self.lines and self.lines[-1]:
+                    self.lines[-1] = ""
+            elif key == "BSpace" and self.lines:
+                if self.lines[-1]:
+                    self.lines[-1] = self.lines[-1][:-1]
+                else:
+                    self.lines.pop()
+
+    def _sleep(self, _s: float) -> None:
+        return None
+
+
+def test_clear_input_clears_a_multi_paragraph_leftover():
+    """回归：多段残留也要啃干净，不是只掉最后一段。
+
+    只按清行键的老写法在三段残留上只掉一段——它一次只清得掉最后一行，连按是空转，
+    剩下两段就顶着下一句话一起交了出去（2026-10-14 实测：记录里成了
+    ``第一段。\\n\\n第二段。`` 紧接下一句话）。
+    """
+    session = _FakeComposer("第一段。\n第二段。\n第三段。")
+    assert codex_driver._clear_input(session) is True
+    assert not any(session.lines), "三段残留要全清掉，不能只掉最后一段"
+    assert ("BSpace",) in session.keys, "清行键只够得着最后一行，得靠退格把它并回去"
 
 
 def test_tui_is_gone_treats_an_unreadable_pane_as_still_alive(monkeypatch):

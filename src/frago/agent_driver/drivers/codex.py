@@ -194,11 +194,22 @@ _CLAIM_ANCHORS: MutableMapping[TmuxAgentSession, int] = WeakKeyDictionary()
 # 对象还在构造中），故先落在这里，首次需要认领时再挪进 ``_CLAIM_ANCHORS``。
 _LAUNCH_ANCHORS: dict[str, int] = {}
 
+# 文本进框到按第一次 Enter 之间的静置秒数。codex 的输入框和 claude 一样带粘贴判定：
+# 紧跟粘贴突发到达的 Enter 会被当成粘贴内容里的换行而非提交，长消息会整段滞留框内。
+# claude 侧为此留了 2 秒（见 claude.py 的 ``_PASTE_SETTLE_S``），codex 侧一直没有——
+# 2026-10-14 补上，理由与秒数都照它。
+_PASTE_SETTLE_S = 2.0
+
 # Enter 之后确认"确已提交"的轮询次数与重发上限。判据是 rollout 文件变长——那是
 # 提交落地的结构化证据。读屏判"输入框空了"在真实 TUI 上有竞态（重绘中途抓屏会
 # 看见一瞬间的空框），claude 侧已经为此死锁过一次。
+#
+# 静置不根治粘贴判定吞 Enter（claude 侧的原话：偶发仍会把 Enter 当换行），所以重试
+# 是兜底。上限 2 → 4（共 5 次回车）是 2026-10-14 定的：重试买到的是**时间窗**，5 次
+# 回车加静置大致铺满投喂后 20 秒，够罩住"界面还在起"那一段；再往上每次多等 6 秒，
+# 而 2026-10-14 那次失败为什么一次都没生效仍未查实，多按买不到"更对"。
 _SUBMIT_VERIFY_POLLS = 20
-_ENTER_RETRIES = 2
+_ENTER_RETRIES = 4
 
 
 # ── 目录信任 ────────────────────────────────────────────────────────
@@ -547,6 +558,12 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         if not claimed:
             return None
         codex_store.put_binding(session.session_id, claimed, session.cwd)
+        # 认到真编号，顺手把「这场是 frago 派出去的」记进会话关系账——父会话编号从派活
+        # 那一刻的环境里认（见 ``record_dispatch``）。记账 MUST 在这里做：绑定表在会话
+        # 收场时就清了，跑完之后再想拿这个编号已经拿不到。
+        from frago.session.session_origin import record_dispatch
+
+        record_dispatch(claimed, agent_type="codex", cwd=session.cwd)
         # 认到真编号就把这个窗口改认它。名字与真编号一致之后，常驻池重启时按名字就能
         # 找到这个还活着的窗口并接管，不必另起一个去 resume 同一场对话——那正是撞单写
         # 者锁、把用户那句话挡在门外的那条路（20261009 现场）。改不动只是名字留在原处，
@@ -605,10 +622,20 @@ def _tui_is_gone(session: TmuxAgentSession) -> bool:
 #
 # codex 空框时那儿显示的是占位提示 ``Ask Codex to do anything``；式子只认 ``›`` 后
 # 紧跟探针字符这一种形状，占位提示自然不命中。
+#
+# **清行键一次只清得掉输入框里最后一行，连按第二、三次是空转**（2026-10-14 实测：
+# 框里放三段文本，按一次清行键掉最后一段，再按两次屏幕纹丝不动）。多段残留因此啃不
+# 干净——只按清行键的老写法，四段残留里三段会留在框里，下一条投喂照样被顶在前头。
+# 所以每轮在清行键后补一次退格，把上一行并回来，下一轮的清行键才够得着它。同日实测
+# 「清行键 + 退格」成对按：每对啃掉一行，三段残留五对之后框回占位提示，再按是空转、
+# 不留脏字符。
 _CLEAR_PROBE_CHAR = "x"
 _CLEAR_PROBE_ONLY = re.compile(rf"(?m)^\s*›[\s\xa0]*{_CLEAR_PROBE_CHAR}\s*$")
-_CLEAR_RETRIES = 3
-_CLEAR_PROBE_POLLS = 10
+#: 轮数上限。一轮啃掉残留里的一行，二十轮够啃十来段；啃不完照实返回假，不假装干净。
+_CLEAR_ROUNDS = 20
+#: 每轮等 TUI 重绘的轮询次数。探针字符本身就是强制重绘，短等即可；等漏了的代价只是
+#: 多啃一轮空框（无害），或照实报「没确认成空」，不会误伤。
+_CLEAR_PROBE_POLLS = 4
 
 
 def _clear_input(session: TmuxAgentSession) -> bool:
@@ -619,18 +646,24 @@ def _clear_input(session: TmuxAgentSession) -> bool:
     正文不再以新句开头，界面上那一单因此永远认不出自己的话已经进会话（2026-10-12
     实测：13:36 冷启动那次的话滞留框内，15:12 再发时被一起带上，档案里成了四段）。
 
+    多段残留啃不动这一条是 2026-10-14 补的：从前一轮只按清行键，而它一次只清最后
+    一行、连按是空转，实测三段残留只掉一段，第二段后面直接贴上下一句话交了出去。
+
     清不干净不阻断：最坏是这一轮带上残留，比起把一场健康会话杀掉重来仍然小得多；
     情况照实记在日志里，NEVER 静默走掉。
     """
-    for _ in range(_CLEAR_RETRIES):
+    for _ in range(_CLEAR_ROUNDS):
         session.send_keys("C-u")
+        # 清行键只够得着最后一行；这一下退格把它与上一行并回来，下一轮的清行键才
+        # 啃得动上一行。少了它，多段残留只掉最后一段。
+        session.send_keys("BSpace")
         session.send_text(_CLEAR_PROBE_CHAR)
         for _ in range(_CLEAR_PROBE_POLLS):
             if _CLEAR_PROBE_ONLY.search(session.capture_pane()):
                 session.send_keys("BSpace")
                 return True
             session._sleep(session._poll_interval_s)
-        # 探针没有独占输入框（清行键未生效 / TUI 还没起来），退掉探针字符再试或放弃。
+        # 探针没能独占输入框（框里还有残留 / TUI 还没起来），退掉探针字符再啃一行。
         session.send_keys("BSpace")
     return False
 
@@ -661,6 +694,16 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     与它配对的是投喂前那次清框（`_clear_input`）：上一次投喂没提交成功而留下的字，
     不清掉就会顶在这一次前面，两句话拼成一条发言交出去，界面上那一单再也认不出自己
     的话已经进会话。
+
+    ## 文本进框后先停一口气再按 Enter
+
+    codex 的输入框和 claude 一样带粘贴判定：紧跟粘贴突发到达的 Enter 会被当成粘贴
+    内容里的换行而非提交，长消息整段滞留框内。claude 侧为此卡死过、留了 2 秒静置
+    （见 claude.py 的 ``_PASTE_SETTLE_S``），codex 侧一直没有，2026-10-14 照它补上。
+
+    静置不根治（claude 侧的原话：偶发仍会把 Enter 当换行），所以下面那圈"按了核对、
+    核对不上再按"是兜底。它买到的是时间窗，不是命中率——2026-10-14 那次"回车三次都
+    没生效"为什么没生效仍未查实，上限从 2 提到 4 只是把窗口铺长，NEVER 当成已修。
 
     ## 按 Enter 之前先确认 TUI 还在——这一条是安全闸，不是优化
 
@@ -693,6 +736,10 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
         )
     baseline = _rollout_size(session)
     session.send_text(prompt)
+    # 文本进框后先停一口气再按 Enter。codex 的输入框带粘贴判定，紧跟粘贴突发到达的
+    # Enter 会被当成粘贴内容里的换行而非提交，长消息会整段滞留在框里——claude 侧为
+    # 此卡死过，那边留了 2 秒（见 ``_PASTE_SETTLE_S``）。单测注入 no-op sleep 不受影响。
+    session._sleep(_PASTE_SETTLE_S)
 
     landed = False
     for attempt in range(1 + _ENTER_RETRIES):
