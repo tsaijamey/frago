@@ -28,7 +28,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
  * 跟人自己开的会话混在一起就找不着了。这一家在中栏同样能接着说话，只是它没有挂在终端
  * 里的交互界面，所以清单上不给「复制续接命令」那颗按钮。
  */
-export type SessionFamily = 'claude-code' | 'opencode' | 'codex' | 'coreagent';
+export type SessionFamily = 'claude-code' | 'opencode' | 'codex' | 'coreagent' | 'agy';
 
 /**
  * 会话现在什么情况。四档，没有第五档。
@@ -155,6 +155,7 @@ export const FAMILY_LABEL_KEY: Record<SessionFamily, string> = {
   opencode: 'workbench.family.opencode',
   codex: 'workbench.family.codex',
   coreagent: 'workbench.family.coreagent',
+  agy: 'workbench.family.agy',
 };
 
 export const STATUS_LABEL_KEY: Record<SessionStatus, string> = {
@@ -205,6 +206,32 @@ export type ListCounts = Record<ListFilter, number>;
 export const DAY_OPTIONS = [1, 2, 7] as const;
 
 export type DayRange = 0 | (typeof DAY_OPTIONS)[number];
+
+/**
+ * 按时间范围收一道。比的是**清单排序用的那个时刻**（见 `activityTs`），不是创建时刻——
+ * 人问「最近七天」，问的是这七天里说过话的会话，一场半年前开、昨天还在跑的必须留下。
+ * 跟排序共用同一个时刻，否则会出现"排在第一条却被七天筛掉"这种怪事。
+ *
+ * **子会话跟着父会话走。** 父会话在范围内时，它派出去的子会话一律留下，不看子会话自己
+ * 多久没动过——展开一场主会话，看到的该是它那一整组，而不是被时间线拦腰截断的半组。
+ * 子会话本来就不单独出现在主干上（都折在父会话下面），放它们进来不会让主干变长。
+ */
+export function withinRange(
+  sessions: WorkbenchSession[],
+  days: DayRange,
+  now: number = Date.now()
+): WorkbenchSession[] {
+  if (!days) return sessions;
+  const floor = now - days * 24 * 60 * 60 * 1000;
+  const onTime = new Set(
+    sessions.filter((s) => activityTs(s) >= floor).map((s) => s.session_id)
+  );
+  return sessions.filter((s) => {
+    if (onTime.has(s.session_id)) return true;
+    const parent = s.parent_session_id;
+    return parent !== null && onTime.has(parent);
+  });
+}
 
 /**
  * 左栏隔多久自己去取一次清单。
@@ -332,16 +359,8 @@ export function useWorkbenchSessions(
     { intervalMs: SESSION_REFRESH_MS }
   );
 
-  /**
-   * 再按时间范围收一道。比的是**清单排序用的那个时刻**（见 `activityTs`），不是创建
-   * 时刻——人问「最近七天」，问的是这七天里说过话的会话，一场半年前开、昨天还在跑的
-   * 必须留下。跟排序共用同一个时刻，否则会出现"排在第一条却被七天筛掉"这种怪事。
-   */
-  const inRange = useMemo(() => {
-    if (!days) return sessions;
-    const floor = Date.now() - days * 24 * 60 * 60 * 1000;
-    return sessions.filter((s) => activityTs(s) >= floor);
-  }, [sessions, days]);
+  /** 时间范围那一道，判据全在 `withinRange` 里（见它的注释）。 */
+  const inRange = useMemo(() => withinRange(sessions, days), [sessions, days]);
 
   const counts = useMemo<ListCounts>(
     () => ({
