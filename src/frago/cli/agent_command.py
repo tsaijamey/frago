@@ -210,20 +210,26 @@ def _emit_and_exit(
     sys.exit(exit_code)
 
 
-def _parent_session_id() -> str | None:
-    """派这次活的是哪一场会话。认不出来返回 None。
+def _worker_child_id(sid: str, *, agent_type: str, native_session_id: bool) -> str | None:
+    """这场 worker 在**清单上那一行的编号**；认不出来返回 None。
 
-    主 agent 是在自己的会话里敲的这条命令，它自己的会话编号就在环境里
-    （``FRAGO_SESSION_ID`` / ``CLAUDE_CODE_SESSION_ID``）。**只认环境里明说的那个**：
-    ``resolve_self`` 还有一条按"当前目录最近写入的记录"推断的兜底，同一个目录下开着
-    两场会话时会挑错——把 worker 挂到一场毫无关系的会话下面，比不挂糟得多。
+    两种情形：三家 CLI 的编号由 frago 的编号派生而来，派生规则问各自的 driver 要
+    （NEVER 在这里抄一份）；内核这一场编号就是 frago 现发的（``core_`` 前缀），落盘的就是
+    它，原样用。
+
+    opencode / codex / agy 返回 None：它们的真实编号要等会话起来之后才认领得到，而认领
+    发生在各自的 driver 里，记账也在那一刻当场做（见
+    :func:`frago.session.session_origin.record_dispatch`）。这里跑在会话已经收场之后，
+    绑定表那时已经清了，查也查不到。
     """
-    with contextlib.suppress(Exception):
-        from frago.session.self_id import resolve_self
+    from frago.agent_driver.driver import runs_on_kernel
 
-        me = resolve_self()
-        if me is not None and me.certain:
-            return me.session_id
+    if runs_on_kernel(agent_type):
+        return sid
+    if agent_type == "claude":
+        from frago.agent_driver.drivers.claude import session_id_for
+
+        return session_id_for(sid, native=native_session_id)
     return None
 
 
@@ -237,26 +243,16 @@ def _record_worker_launch(
 ) -> None:
     """把这次派活记进账本，供左栏把 worker 折到派活的那一场下面。
 
-    记的是**子会话在目标 agent 那边的真实编号**，不是 frago 自己那个把手——清单上摆的
-    是前者。claude 那家的编号由 frago 的编号派生而来，派生规则问 driver 要（NEVER 在这里
-    抄一份）；其余几家的真实编号要等 agent 起来之后才认领得到，这里还不知道，故不记——
-    宁可少认几场，也不往账本里写一个对不上任何会话的编号。
+    记的是**子会话在清单上那一行的编号**（见 :func:`_worker_child_id`），不是 frago 自己
+    那个把手。这里认不出编号的那几家不记——它们由各自的 driver 在认领到编号的那一刻记。
     """
-    if agent_type != "claude":
-        return
     with contextlib.suppress(Exception):
-        from frago.agent_driver.drivers.claude import session_id_for
-        from frago.session.session_origin import record_relation
+        child = _worker_child_id(sid, agent_type=agent_type, native_session_id=native_session_id)
+        if child is None:
+            return
+        from frago.session.session_origin import record_dispatch
 
-        # 会话关系账里种类写明是「派活」：同一本账还记着人起的分支，那一种子会话算人开的。
-        record_relation(
-            kind="dispatch",
-            child_session_id=session_id_for(sid, native=native_session_id),
-            parent_session_id=_parent_session_id(),
-            agent_type=agent_type,
-            cwd=cwd,
-            prompt_head=prompt_text,
-        )
+        record_dispatch(child, agent_type=agent_type, cwd=cwd, prompt_head=prompt_text)
 
 
 def _run_tmux_driver(
@@ -412,8 +408,9 @@ def _run_kernel(
       会话清单与记录流读的就是那份（见 ``session.record_reader``）。会话子系统里也没有
       CoreAgent 这家的 adapter（``session.monitor._adapters`` 只有三家），再写一遍会落成
       一份对不上任何记录的影子。
-    - **不复用 ``_record_worker_launch``。** 那一本账记的是"子会话在目标 agent 那边的真实
-      编号"，内核这一场编号就是 frago 现发的（``core_``），与 claude 那条派生路不同。
+    - **记账的编号原样用。** 内核这一场编号就是 frago 现发的（``core_`` 前缀），落盘的就是
+      它，不需要像三家 CLI 那样再派生一次（见 :func:`_worker_child_id`）。不记的话，主会话
+      派出去的内核 worker 在左栏一个都挂不上——它们全散在主干上。
     """
     from frago.agent_driver import kernel_backend
 
@@ -463,6 +460,17 @@ def _run_kernel(
         # 抹掉，别让 `ls` 留下死条目。
         if registered:
             deregister_transient_worker(sid)
+
+    # 这一场确实起来了，记一笔它是谁派出去的——与 tmux 那条路共用同一本账，左栏据此把
+    # 内核 worker 折到派活的那一场下面。放在 run 之后，与 tmux 那条同一条规矩：起都没起来
+    # 的会话记进账本，只会让清单上多一行点不开的卡片。
+    _record_worker_launch(
+        sid=sid,
+        agent_type=agent_type,
+        cwd=cwd,
+        prompt_text=prompt_text,
+        native_session_id=False,
+    )
 
     notes = {
         "needs_input": f"[!] CoreAgent 要人介入（认证墙 / 连接没配好）：{turn.text[:300]}",
@@ -872,7 +880,7 @@ def agent_run(
             err=True,
         )
 
-    # 只认启动开关、不认 ANTHROPIC_MODEL 的内核（codebuddy）从这里拿模型；认环境变量
+    # 只认启动开关、不认 ANTHROPIC_MODEL 的内核从这里拿模型；认环境变量
     # 的内核忽略它，模型仍从下面的 ANTHROPIC_MODEL 走，两条路不会打架。
     launch_model = model or (worker_connection.default_model if worker_connection else None)
 
@@ -888,8 +896,11 @@ def agent_run(
         tmux_env["ANTHROPIC_BASE_URL"] = endpoint
     if api_key:
         tmux_env["ANTHROPIC_API_KEY"] = api_key
-        # CCR 模式塞的 AUTH_TOKEN 会盖掉 API_KEY，清掉它才能让显式 key 生效。
-        tmux_env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        # 授权头会盖掉密钥头（claude 认 AUTH_TOKEN 优先），置空它才能让显式 key 生效。
+        # 置空而不是删键：tmux ``-e`` 只覆盖给到的键，删掉就等于放行会话环境里继承来的
+        # 旧值——tmux 会话继承服务端那份全局环境，里面可能烤着上一条 profile 的凭据。
+        # CCR 模式塞的那把 "test" 也在这里一并被盖掉。
+        tmux_env["ANTHROPIC_AUTH_TOKEN"] = ""
     if model:
         tmux_env["ANTHROPIC_MODEL"] = model
     # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。

@@ -6,12 +6,20 @@
 
 三条来源，从确定到推断：
 
-1. ``FRAGO_SESSION_ID`` —— 调用方显式声明。frago 起 worker、或非 Claude 的命令行
-   agent 想让自己被认出来时，导出这个变量即可。
-2. ``CLAUDE_CODE_SESSION_ID`` —— Claude Code 自己注入的，日常最常命中的一条。
+1. ``CLAUDE_CODE_SESSION_ID`` —— Claude Code 给**它自己这个进程**注入的，关于「我是谁」
+   最硬的一条。日常最常命中。
+2. ``FRAGO_SESSION_ID`` —— 拉起这个进程的那一方声明它属于哪场会话。coreagent 内核每跑
+   一条命令都把它自己那一场的编号带进命令环境（见 frago-core ``src/kernel/tools.rs``），
+   非 Claude 的命令行 agent 也靠它被认出来。
 3. 当前工作目录对应的记录目录里、最近还在写的那份 ``<sid>.jsonl`` —— 前两条都没有
    时的兜底。它是**推断**：同一个目录下同时开着两场会话时会挑错。所以结果里带
    ``certain=False``，调用方要么提示人确认，要么干脆别用。
+
+**自己报的 id 压过继承来的声明，这个次序不能反。** 一场会话的子进程会把上家的
+``FRAGO_SESSION_ID`` 原样带下来；子进程若是 Claude Code，它同时又给自己注入了一个。
+两者同时存在且不同时，继承来的那个说的是上家，不是自己。反过来排的话，子进程会集体
+认成上家：2026-10-15 实测，我这场的 6 个 worker 全被记到了拉起我这场的 coreagent
+名下，那场当时早已不写了。
 
 拿不到就返回 ``None``，NEVER 编一个 id 出来——一个错的会话 id 比没有更糟，它会把
 下一个 agent 送去看一场不相干的对话。
@@ -19,6 +27,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from dataclasses import asdict, dataclass
@@ -28,8 +37,8 @@ from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 from frago.session.monitor import encode_project_path
 from frago.session.transcript_completion import locate_transcript
 
-# 调用方显式声明的优先，其次是 Claude Code 自己注入的。
-ENV_KEYS = ("FRAGO_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
+# 自己报的 id 优先，其次是环境里的声明。次序为什么是这个方向，见模块开头。
+ENV_KEYS = ("CLAUDE_CODE_SESSION_ID", "FRAGO_SESSION_ID")
 
 # 兜底时只认「最近还在写」的记录：当前这场会话每调一次工具就会追加一行，文件修改
 # 时间是秒级新鲜的。一小时以外的那些是别的会话留下的，认了就是认错人。
@@ -53,28 +62,49 @@ class SelfSession:
         return asdict(self)
 
 
-def _newest_transcript(cwd: str, projects_root: Path, max_age_s: float) -> tuple[Path | None, int]:
-    """当前目录的记录里，最近还在写的那一份；以及同样新鲜的一共有几份。
+def _fallback_roots(claude_root: Path) -> list[tuple[Path, str]]:
+    """兜底时按目录翻哪几处记录，以及每处属于哪一家。
 
-    第二个返回值是给「可能挑错」这句话找证据用的：同一目录下同时有两份在写，说明
-    此刻确实开着两场会话。
+    Claude Code 与 CoreAgent 两处的目录层级是同一套
+    （``<根>/<编码工作目录>/<编号>.jsonl``），所以一处代码能翻两处。主会话可能是任何
+    一家——人自己开的 Claude Code 会话，或者 CoreAgent 那场常驻会话——只看一处的话，
+    另一处当主 agent 时就认不出自己是谁。
     """
-    proj_dir = projects_root / encode_project_path(cwd)
-    if not proj_dir.is_dir():
-        return None, 0
+    roots: list[tuple[Path, str]] = [(claude_root, "claude")]
+    with contextlib.suppress(Exception):
+        from frago.session import coreagent_store
+
+        core = coreagent_store.sessions_root()
+        if core != claude_root:
+            roots.append((core, "coreagent"))
+    return roots
+
+
+def _newest_transcript(
+    cwd: str, roots: list[tuple[Path, str]], max_age_s: float
+) -> tuple[Path | None, str | None, int]:
+    """这几处记录里，当前目录下最近还在写的那一份；它属于哪一家；同样新鲜的一共有几份。
+
+    第三个数是给「可能挑错」这句话找证据用的：同一目录下同时有两份在写，说明此刻确实
+    开着两场会话。
+    """
     cutoff = time.time() - max_age_s
-    fresh = []
-    for path in proj_dir.glob("*.jsonl"):
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
+    fresh: list[tuple[float, Path, str]] = []
+    for root, family in roots:
+        proj_dir = root / encode_project_path(cwd)
+        if not proj_dir.is_dir():
             continue
-        if mtime >= cutoff:
-            fresh.append((mtime, path))
+        for path in proj_dir.glob("*.jsonl"):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime >= cutoff:
+                fresh.append((mtime, path, family))
     if not fresh:
-        return None, 0
-    fresh.sort(reverse=True)
-    return fresh[0][1], len(fresh)
+        return None, None, 0
+    fresh.sort(key=lambda item: item[0], reverse=True)
+    return fresh[0][1], fresh[0][2], len(fresh)
 
 
 def resolve_self(
@@ -105,7 +135,7 @@ def resolve_self(
             note=None if transcript else "没找到对应的原始记录文件，id 本身仍以环境变量为准",
         )
 
-    path, fresh_count = _newest_transcript(here, root, max_age_s)
+    path, family, fresh_count = _newest_transcript(here, _fallback_roots(root), max_age_s)
     if path is None:
         return None
 
@@ -117,9 +147,9 @@ def resolve_self(
         session_id=sid,
         source="transcript-mtime",
         certain=False,
-        agent="claude",
+        agent=family or "unknown",
         cwd=here,
         transcript=str(path),
-        resume_command=f"claude --resume {sid}",
+        resume_command=None,
         note=note,
     )

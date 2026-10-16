@@ -70,6 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from frago.session import coreagent_store
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,8 @@ __all__ = [
     "find_relation",
     "is_worker_shape",
     "load_origin_index",
+    "parent_from_env",
+    "record_dispatch",
     "record_launch",
     "record_relation",
 ]
@@ -141,29 +144,33 @@ MEMO_TTL_S = 30
 # claude 派生编号的版本位。UUID 的第 15 个十六进制位就是版本号。
 _WORKER_UUID_VERSION = 5
 
-# 派活在主会话记录里留下的三种痕迹。三条都只捕获**frago 那一侧的编号或名字**，
-# 换算成目标 agent 那边的真实编号是同一个动作（见 ``_derive_claude_session_id``）。
+# 派活在主会话记录里留下的两种痕迹。两条都只捕获**frago 那一侧的编号**，换算成目标
+# agent 那边的真实编号是同一个动作（见 ``_derive_claude_session_id``）。
 #
-#   ① 一次性派活的回显：``frago agent <任务>`` 起会话后往 stderr 打这一句。认回显而不是
-#      认命令行——命令行只说明有人打算派活，回显才证明那一场真的起来了。
-#   ② 常驻会话的起会话命令：``frago agent start claude --name w1``。
-#   ③ 常驻会话的驱动命令：``frago agent send|peek|stop w1``。它们证明这场主会话在驱动
-#      那个名字，与 ② 互为补充——起会话那条常写成 shell 循环（``--name $n``），名字在变量里
-#      根本捕获不到，而驱动命令里的名字是字面量。
+#   ① 一次性派活的回显：``frago agent <任务>`` 起会话后往 stderr 打这一句。
+#   ② 内核派活的回显：``frago agent`` 走内核后端时打的是这一句。它与 ① 的区别在编号：
+#      内核会话编号是 frago 现发的（``core_`` 前缀），**落盘的就是它**，认回来直接是清单上
+#      那一行的编号，不需要再换算。只认 ① 的话，主会话派出去的内核 worker 一个都挂不上——
+#      它们正是换了默认内核之后新增的那一大批。
 #
-# 名字要求首字符是字母或数字：``--help`` / ``--json`` 这类选项因此不会被当成会话名。
+# **只认回显行，不认命令行。** 从前还认两条命令行——``frago agent start … --name w1`` 与
+# ``frago agent send|peek|stop w1``，理由是常驻会话起会话那一步常写成 shell 循环
+# （``--name $n``），名字在变量里抓不到（2026-09-28 实测：某场会话一次性路径起的 7 个
+# worker 全失败，改用常驻路径起的 14 个全跑完，只认回显的话那 14 场一个都挂不上）。
+#
+# 代价是真的，但命令行**可以被人原样引用**：一场会话读别人的记录、翻书、把排查用的命令抄进
+# 回复，那些字面量就跟着落进它自己的记录，下一趟扫描把引用当成了"这场会话驱动过 w1"。
+# 2026-10-15 实测：我自己的记录里引用了一句 ``frago agent send w1``，常驻会话 w1（编号由
+# 名字派生而来）连同 w3 / w9 / mywork 一起被认成我的子会话。**宁可少认几场常驻会话，也不要
+# 凭空多出几对父子**——少认的那几场是安静地少，认错是界面上多出一组根本不存在的关系。
+#
+# 想把这 14 场那样的常驻会话认回来，正路是让 ``frago agent start`` 也打一句 ① 那样的回显
+# （它现在只把编号原样打在一行里，形状与任何一行普通输出没有区别），而不是回来认命令行。
 _LAUNCH_ECHO = re.compile(r"tmux driver: agent=([a-zA-Z0-9_-]+) session=([0-9a-fA-F-]{36})")
-_RESIDENT_START = re.compile(
-    r"frago agent start\s+[a-z]+\s+--name\s+([A-Za-z0-9][A-Za-z0-9_-]{0,39})"
-)
-_RESIDENT_DRIVE = re.compile(r"frago agent (?:send|peek|stop)\s+([A-Za-z0-9][A-Za-z0-9_-]{0,39})")
+_KERNEL_ECHO = re.compile(r"kernel driver: session=(core_[0-9a-fA-F]{32})")
 
-# 一趟 ripgrep 同时找这三种痕迹，命中的整段再在 Python 侧分别解析。
-_SCAN_PATTERNS = (
-    _LAUNCH_ECHO.pattern,
-    _RESIDENT_START.pattern,
-    _RESIDENT_DRIVE.pattern,
-)
+# 一趟 ripgrep 同时找这两种回显，命中的整段再在 Python 侧分别解析。
+_SCAN_PATTERNS = (_LAUNCH_ECHO.pattern, _KERNEL_ECHO.pattern)
 
 
 def _now() -> float:
@@ -275,15 +282,59 @@ def record_launch(
     cwd: str,
     prompt_head: str = "",
 ) -> None:
-    """记一笔"这场会话是谁派出去的"（种类为派活）。
+    """记一笔"这场会话是谁派出去的"（种类为派活），父会话编号由调用方给出。
 
     ``parent_session_id`` 为空就只记这场是 worker，不记谁派的——服务端的常驻会话、
     定时任务派出去的活都属于这种，它们本来就没有一个"上级会话"可指。
+
+    调用方拿不准父是谁时用 :func:`record_dispatch`，它自己去环境里认。
     """
     record_relation(
         kind="dispatch",
         child_session_id=child_session_id,
         parent_session_id=parent_session_id,
+        agent_type=agent_type,
+        cwd=cwd,
+        prompt_head=prompt_head,
+    )
+
+
+def parent_from_env() -> str | None:
+    """派这次活的是哪一场会话。认不出来返回 None。
+
+    派活命令是在主 agent 自己的会话里敲的，它自己的会话编号就在环境里
+    （``FRAGO_SESSION_ID`` / ``CLAUDE_CODE_SESSION_ID``）。**只认环境里明说的那个**：
+    兜底那条按「当前目录最近写入的记录」推断的路，同一个目录下开着两场会话时会挑错——
+    把 worker 挂到一场毫无关系的会话下面，比不挂糟得多。
+    """
+    with contextlib.suppress(Exception):
+        from frago.session.self_id import resolve_self
+
+        me = resolve_self()
+        if me is not None and me.certain:
+            return me.session_id
+    return None
+
+
+def record_dispatch(
+    child_session_id: str,
+    *,
+    agent_type: str,
+    cwd: str,
+    prompt_head: str = "",
+) -> bool:
+    """记一笔派活：这场会话是 frago 派出去的；谁派的从环境里认。
+
+    **认不出父亲也记。** 只记「这是 worker」、不记谁派的，它至少能进「认不出出处的
+    worker」那一区，不会混进人自己开的会话里。这与「认不出父子关系就别记」不是一回事：
+    后者说的是 NEVER 编一个父亲出来，不是说连「它是 worker」也一并丢掉。
+
+    吞掉一切异常：记账是给界面用的，起会话本身不该因为它失败。
+    """
+    return record_relation(
+        kind="dispatch",
+        child_session_id=child_session_id,
+        parent_session_id=parent_from_env(),
         agent_type=agent_type,
         cwd=cwd,
         prompt_head=prompt_head,
@@ -443,19 +494,45 @@ def _derive_claude_session_id(frago_session_id: str) -> str | None:
         return None
 
 
-def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) -> dict[str, str]:
+def _could_have_dispatched(
+    parent: str, child: str, mtimes: dict[str, float], births: dict[str, float]
+) -> bool:
+    """这场主会话有可能派过这场子会话吗。
+
+    **引用文本不算证据。** 回显本身也会被人引用：一场会话读别人的记录、把排查结果贴进回复，
+    那句回显就跟着落进引用者的记录里，下一趟扫描把引用者当成了派活的人。区分它们看时序——
+    主会话的记录文件在它开场那一刻就建好了，而它派出去的会话只能在那之后开始。引用者不一样：
+    引用者的记录**建得比那场子会话还晚**。子会话最后动过的时刻早于引用者记录建好的时刻，
+    这句回显就不可能是引用者写的，只能是从别人那儿抄来的。
+
+    判不了就放行：拿不到文件的创建时刻（不是每个文件系统都记）时不做这一道。少认几场是
+    安静地少，认错是界面上多出一组根本不存在的关系。
+    """
+    born = births.get(parent)
+    last_write = mtimes.get(child)
+    if not born or last_write is None:
+        return True
+    return last_write >= born
+
+
+def _scan_launch_echoes(roots: list[Path], *, only: list[Path] | None = None) -> dict[str, str]:
     """扫会话库，把派活留下的父子关系捞出来：{子会话编号: 派活的会话编号}。
 
-    痕迹里拿到的是 frago 那一侧的编号或会话名，要再派生一次才是 claude 那边的真实编号——
-    清单上摆的是后者。派生不出来的就不认，NEVER 拿 frago 那一侧的编号硬当会话编号用：
-    它在会话库里根本没有对应的文件，认下来等于凭空多出一行点不开的卡片。
+    ``roots`` 是**主会话可能落在的几个根**（Claude Code 与 CoreAgent 各一处），不是子会话
+    的落点：痕迹留在派活那场会话的记录里，那场是哪一家就落在哪一处。
 
-    **同名归时刻最贴近的那一场。** 常驻会话的名字是全局的，好几场主会话都用过 ``w1`` 很常见。
-    判据是「哪一场主会话的活动时刻离这个 worker 最近」，NEVER 取「最近活动的那一场」——
-    后者会把一个九月八号干完活的 worker 判给今天某场只是碰巧也用了 ``w1`` 这个名字的会话，
-    而那场会话根本没碰过它。
+    痕迹里拿到的是 frago 那一侧的编号（三家 CLI 的再派生一次，内核的现发编号原样就是它）。
+    派生不出来的就不认，NEVER 拿一个对不上任何会话的编号硬用：认下来等于凭空多出一行点不开
+    的卡片。
+
+    **回显被引用过时，归时刻最贴近的那一场。** 同一句回显常常不止一场会话的记录里有——真的
+    那场，加上读过别人记录、把它抄进回复的那几场。判据是「哪一场主会话的活动时刻离这场
+    worker 最近」，NEVER 取「最近活动的那一场」——后者会把一个九月八号干完活的 worker 判给
+    今天某场只是碰巧引用了同一句回显的会话。回显比子会话的最后活动还晚的那些，在解析那一
+    步就被时序判据剔掉了（见 :func:`_echo_is_not_after`）。
     """
-    if not projects_root.is_dir():
+    roots = [r for r in roots if r.is_dir()]
+    if not roots:
         return {}
     if only is not None and not only:
         return {}
@@ -465,7 +542,7 @@ def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) 
     for pattern in _SCAN_PATTERNS:
         args += ["-e", pattern]
     if only is None:
-        args += ["--glob", "*.jsonl", str(projects_root)]
+        args += ["--glob", "*.jsonl", *[str(r) for r in roots]]
     else:
         # 增量：只把这几个文件交给它。``--with-filename`` 不能省——只给一个文件时
         # ripgrep 默认不打文件名，而文件名正是"这条痕迹出自哪场主会话"。
@@ -473,6 +550,22 @@ def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) 
     out = _run_rg(args)
     if not out:
         return {}
+
+    # 会话最后活动的时刻，与记录文件建好的时刻。一次扫盘全取回来，免得每判一次冲突就去翻
+    # 一遍目录。**要在解析命中行之前拿到**：时序那道判据拿它们跟候选主会话比。
+    mtimes: dict[str, float] = {}
+    births: dict[str, float] = {}
+    for root in roots:
+        for path in root.glob("*/*.jsonl"):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            mtimes[path.stem] = stat.st_mtime
+            # 不是每个文件系统都记创建时刻，拿不到就留 0——那道判据会自己放行。
+            born = getattr(stat, "st_birthtime", 0.0)
+            if born:
+                births[path.stem] = born
 
     # 每场 worker 先把所有可能的主会话都收下来，等下再决胜。
     candidates: dict[str, set[str]] = {}
@@ -482,28 +575,19 @@ def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) 
             continue
         parent = head.rsplit("/", 1)[-1]
         echo = _LAUNCH_ECHO.search(rest)
-        start = _RESIDENT_START.search(rest)
-        drive = _RESIDENT_DRIVE.search(rest)
+        kernel = _KERNEL_ECHO.search(rest)
         if echo is not None:
-            key = echo.group(2)
-        elif start is not None:
-            key = start.group(1)
-        elif drive is not None:
-            key = drive.group(1)
+            child = _derive_claude_session_id(echo.group(2))
+        elif kernel is not None:
+            # 内核编号落盘的就是它本身，不需要像三家 CLI 那样再派生一次。
+            child = kernel.group(1)
         else:
             continue
-        child = _derive_claude_session_id(key)
         if child is None or child == parent:
             continue
-        candidates.setdefault(child, set()).add(parent)
-
-    # 会话最后活动的时刻。一次扫盘全取回来，免得每判一次冲突就去翻一遍目录。
-    mtimes: dict[str, float] = {}
-    for path in projects_root.glob("*/*.jsonl"):
-        try:
-            mtimes[path.stem] = path.stat().st_mtime
-        except OSError:
+        if not _could_have_dispatched(parent, child, mtimes, births):
             continue
+        candidates.setdefault(child, set()).add(parent)
 
     pairs: dict[str, str] = {}
     for child, parents in candidates.items():
@@ -519,17 +603,44 @@ def _scan_launch_echoes(projects_root: Path, *, only: list[Path] | None = None) 
     return pairs
 
 
-def _changed_since(projects_root: Path, since: float) -> list[Path] | None:
+def _coreagent_scan_root() -> Path | None:
+    """CoreAgent 会话记录的根；取不到返回 None。
+
+    取不到只是少扫一处，NEVER 让判出身失败把整份清单带下去。
+    """
+    try:
+        return coreagent_store.sessions_root()
+    except Exception:  # noqa: BLE001
+        logger.debug("could not resolve coreagent sessions root", exc_info=True)
+        return None
+
+
+def _scan_roots(claude_root: Path) -> list[Path]:
+    """一趟扫描要看哪几个根。
+
+    两处：Claude Code 那批会话，与 CoreAgent 自己那批。派活的痕迹留在**主会话**的记录里，
+    而主会话可能是任何一家——人自己开的 Claude Code 会话，或者 CoreAgent 那场常驻会话。
+    只看一处的话，另一处派出去的 worker 一个都挂不上。两处根相同时只留一个。
+    """
+    roots = [claude_root]
+    core = _coreagent_scan_root()
+    if core is not None and core != claude_root:
+        roots.append(core)
+    return roots
+
+
+def _changed_since(roots: list[Path], since: float) -> list[Path] | None:
     """``since`` 之后动过的会话文件。多到一定程度就返回 None，让调用方改走全扫。"""
     changed: list[Path] = []
-    for path in projects_root.glob("*/*.jsonl"):
-        try:
-            if path.stat().st_mtime >= since:
-                changed.append(path)
-        except OSError:
-            continue
-        if len(changed) > INCREMENTAL_FILE_CAP:
-            return None
+    for root in roots:
+        for path in root.glob("*/*.jsonl"):
+            try:
+                if path.stat().st_mtime >= since:
+                    changed.append(path)
+            except OSError:
+                continue
+            if len(changed) > INCREMENTAL_FILE_CAP:
+                return None
     return changed
 
 
@@ -542,7 +653,11 @@ def _scanned_pairs(projects_root: Path, *, now: float) -> dict[str, str]:
       用、会话一直在新建，关系不能落后太多；而这一趟通常只有个位数的文件，毫秒级。
     - 很旧（``SCAN_MAX_AGE_S`` 以外）或从来没扫过：整库全扫一趟。它管的是那些从没被扫到
       的老会话——那部分不会自己变，所以按天来就够。
+
+    ``projects_root`` 是 Claude Code 那一侧的根；CoreAgent 那一侧由 :func:`_scan_roots`
+    补上——主会话是哪一家，痕迹就落在哪一家的记录里。
     """
+    roots = _scan_roots(projects_root)
     raw = _read_json(PARENT_SCAN_CACHE)
     cached: dict[str, str] = {}
     at: float | None = None
@@ -557,14 +672,22 @@ def _scanned_pairs(projects_root: Path, *, now: float) -> dict[str, str]:
         return cached
 
     if at is not None and now - at < SCAN_MAX_AGE_S:
-        changed = _changed_since(projects_root, at - INCREMENTAL_OVERLAP_S)
+        changed = _changed_since(roots, at - INCREMENTAL_OVERLAP_S)
         if changed is not None:
-            fresh = _scan_launch_echoes(projects_root, only=changed) if changed else {}
-            merged = {**cached, **fresh}
+            fresh = _scan_launch_echoes(roots, only=changed) if changed else {}
+            # **增量只补，不推翻。** 这一趟只扫了动过的那几个文件，候选集是残缺的：同一句
+            # 回显在整库里可能有好几场会话都有（真的那场 + 引用它的那几场），只扫一个文件时
+            # 它就"只剩一个候选"，决胜那一步等于没跑。让残档盖住全扫的结果，等于每三分钟拿
+            # 最近在写的那场会话去覆盖一遍正确值。
+            #
+            # 2026-10-15 实测：我这场一直在写，于是每趟增量都把"我"这个残缺候选写进去，把
+            # 4 场我引用过其回显的旧会话（连同 4 场引用了名字的常驻会话）全挂到了我名下。
+            # 认错的靠下一趟全扫纠正——全扫那趟是整个替换，不合并。
+            merged = {**fresh, **cached}
             _write_json(PARENT_SCAN_CACHE, {"at": int(now), "pairs": merged})
             return merged
 
-    pairs = _scan_launch_echoes(projects_root)
+    pairs = _scan_launch_echoes(roots)
     _write_json(PARENT_SCAN_CACHE, {"at": int(now), "pairs": pairs})
     return pairs
 

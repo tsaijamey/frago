@@ -1,7 +1,7 @@
 """「我是谁」的解析规则（frago session self）。
 
-盯三件事：显式声明压过一切；没有声明时只肯给一个标着「推断」的结果；连推断的依据
-都没有时老老实实说不知道——NEVER 编一个会话 id 出来。
+盯三件事：自己报的 id 压过继承来的声明；没有声明时只肯给一个标着「推断」的结果；
+连推断的依据都没有时老老实实说不知道——NEVER 编一个会话 id 出来。
 """
 
 from __future__ import annotations
@@ -25,15 +25,21 @@ def _transcript(root: Path, cwd: str, sid: str, age_s: float = 0.0) -> Path:
     return path
 
 
-def test_explicit_declaration_wins(tmp_path):
+def test_own_id_beats_the_inherited_declaration(tmp_path):
+    """子进程会把上家的 `FRAGO_SESSION_ID` 原样带下来，那不是它自己。
+
+    2026-10-15 实测：一场 Claude Code 会话是从 coreagent 的命令里起来的，继承了那场的
+    编号，于是它派出去的 worker 全被记到了那场名下。Claude Code 给自己这个进程注入的
+    `CLAUDE_CODE_SESSION_ID` 才是它自己的编号。
+    """
     found = resolve_self(
         cwd="/work/repo",
         projects_root=tmp_path,
-        env={"FRAGO_SESSION_ID": "declared", "CLAUDE_CODE_SESSION_ID": "claude-one"},
+        env={"FRAGO_SESSION_ID": "inherited", "CLAUDE_CODE_SESSION_ID": "claude-one"},
     )
     assert found is not None
-    assert found.session_id == "declared"
-    assert found.source == "env:FRAGO_SESSION_ID"
+    assert found.session_id == "claude-one"
+    assert found.source == "env:CLAUDE_CODE_SESSION_ID"
     assert found.certain is True
 
 

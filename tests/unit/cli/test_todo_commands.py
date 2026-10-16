@@ -18,6 +18,12 @@ def runner(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "frago.session.self_id.CLAUDE_PROJECTS_DIR", tmp_path / "no-such-projects"
     )
+    # 兜底那条按目录翻记录，翻的是**两处**：Claude Code 与 CoreAgent。只掐一处，
+    # 另一处真机上还在写的记录会被当成「当前这场」认下来，用例就不隔离了。
+    monkeypatch.setattr(
+        "frago.session.coreagent_store.sessions_root",
+        lambda: tmp_path / "no-such-coreagent",
+    )
     return CliRunner()
 
 

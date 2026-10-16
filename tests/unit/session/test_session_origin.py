@@ -13,6 +13,7 @@ import os
 import shutil
 import time
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -27,9 +28,14 @@ FRAGO_SID = "d5813c9e-ee2f-48ae-9bb3-f3002134ff2b"
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
-    """把账本与扫描缓存挪到临时目录，用例之间互不干扰。"""
+    """把账本与扫描缓存挪到临时目录，用例之间互不干扰。
+
+    CoreAgent 那一侧的会话根也一并掐掉：单测不该去读本机真实的会话库，那里有多少条
+    父子关系全看这台机器用过什么。要测那一侧的扫描时，用例自己把它换掉。
+    """
     monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", tmp_path / "agent-launches.json")
     monkeypatch.setattr(session_origin, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json")
+    monkeypatch.setattr(session_origin, "_coreagent_scan_root", lambda: None)
     return tmp_path
 
 
@@ -153,54 +159,113 @@ class TestRetroactiveScan:
         assert index.parent_of(child) == HUMAN_SID
         assert index.origin_of(child) == "worker"
 
-    def test_常驻会话从起会话命令里认出来(self, ledger, tmp_path):
-        # 常驻那条路（frago agent start --name w1）不打编号回显，只回一个名字，
-        # 编号是从名字推出来的。只认回显的话，这一整批 worker 会一个都挂不上。
+    def test_内核派活的回显里认出父子(self, ledger, tmp_path):
+        # 内核后端（CoreAgent）派活打的是另一句回显，编号是 frago 现发的 core_ 前缀，
+        # 落盘的就是它，不派生。只认 tmux 那一句的话，换了默认内核之后新增的这批
+        # worker 一个都挂不上——它们全散在主干上。
         root = tmp_path / "projects"
         proj = root / "-p"
         proj.mkdir(parents=True)
+        core_sid = "core_0123456789abcdef0123456789abcdef"
         (proj / f"{HUMAN_SID}.jsonl").write_text(
-            "frago agent start claude --name w1\n", encoding="utf-8"
+            f"[OK] kernel driver: session={core_sid}\n", encoding="utf-8"
         )
-        assert _index(root).parent_of(claude_session_uuid("w1")) == HUMAN_SID
+        index = _index(root)
+        assert index.parent_of(core_sid) == HUMAN_SID
+        assert index.origin_of(core_sid) == "worker"
 
-    def test_常驻会话从驱动命令里认出来(self, ledger, tmp_path):
-        # 起会话那条常写成 shell 循环（--name $n），名字在变量里捕获不到；
-        # 而驱动命令里的名字是字面量，这一条因此不能少。
-        root = tmp_path / "projects"
-        proj = root / "-p"
-        proj.mkdir(parents=True)
-        (proj / f"{HUMAN_SID}.jsonl").write_text(
-            'frago agent send w3 "读取任务书"\n', encoding="utf-8"
+    def test_内核主会话派出的活也认(self, ledger, tmp_path, monkeypatch):
+        # 主会话自己就是 CoreAgent 那场常驻会话时，它的记录落在另一处根下。只看
+        # Claude Code 那一处的话，它派出去的 worker 会一个都挂不上。
+        core_root = tmp_path / "coreagent"
+        (core_root / "-p").mkdir(parents=True)
+        core_parent = "core_fedcba9876543210fedcba9876543210"
+        (core_root / "-p" / f"{core_parent}.jsonl").write_text(
+            f"[OK] tmux driver: agent=claude session={FRAGO_SID}\n", encoding="utf-8"
         )
-        assert _index(root).parent_of(claude_session_uuid("w3")) == HUMAN_SID
+        monkeypatch.setattr(session_origin, "_coreagent_scan_root", lambda: core_root)
+        empty = tmp_path / "projects"
+        empty.mkdir()
+        assert _index(empty).parent_of(claude_session_uuid(FRAGO_SID)) == core_parent
 
-    def test_选项不会被当成会话名(self, ledger, tmp_path):
+    def test_命令行不算证据(self, ledger, tmp_path):
+        # 从前认两条命令行（frago agent start … --name w1、frago agent send w1），理由是常驻
+        # 会话的名字常写在 shell 变量里。可命令行**可以被人原样引用**：一场会话读别人的记录、
+        # 把排查用的命令抄进回复，下一趟扫描就把引用者当成了驱动者。2026-10-15 实测：我这场
+        # 因为引用了 `frago agent send w1`，w1 / w3 / w9 / mywork 四场常驻会话全被挂到我名下。
+        # 宁可少认几场常驻会话，也不要凭空多出几对父子。
         root = tmp_path / "projects"
         proj = root / "-p"
         proj.mkdir(parents=True)
         (proj / f"{HUMAN_SID}.jsonl").write_text(
-            "frago agent send --help\nfrago agent start --help\n", encoding="utf-8"
+            "frago agent start claude --name w1\n"
+            'frago agent send w3 "读取任务书"\n'
+            "frago agent peek w9\n",
+            encoding="utf-8",
         )
         assert _index(root).parents == {}
 
-    def test_同名归时刻最贴近的那场(self, ledger, tmp_path):
-        # 会话名是全局的，谁都可以叫 w1。判据是「哪场主会话离这个 worker 的活动时刻最近」，
-        # 取「最近活动的那场」会把一个上周干完活的 worker 判给今天碰巧同名的会话。
+    def test_引用别人的回显不算证据(self, ledger, tmp_path):
+        # 回显本身也会被引用：一场会话读别人的记录、把回显抄进回复，那句回显就落进了引用者
+        # 的记录。区分它们看时序——被引用的那场 worker 早已收场，引用者还在写。
+        root = tmp_path / "projects"
+        proj = root / "-p"
+        proj.mkdir(parents=True)
+        child = claude_session_uuid(FRAGO_SID)
+        (proj / f"{child}.jsonl").write_text("{}\n", encoding="utf-8")
+        # 子会话九月八号收的场。
+        old = datetime(2026, 9, 8, 13, 0, tzinfo=UTC).timestamp()
+        os.utime(proj / f"{child}.jsonl", (old, old))
+        # 引用者十月十五号才把这句话抄进自己的记录。
+        (proj / f"{HUMAN_SID}.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "2026-10-15T10:04:04.099Z",
+                    "message": {"content": f"[OK] tmux driver: agent=claude session={FRAGO_SID}"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        assert _index(root).parent_of(child) is None
+
+    def test_回显落在子会话还活着的时候就算数(self, ledger, tmp_path):
+        # 时序判据的另一半：真的那一次，子会话是主会话开场之后才起来的，之后它还会写。
+        root = tmp_path / "projects"
+        proj = root / "-p"
+        proj.mkdir(parents=True)
+        child = claude_session_uuid(FRAGO_SID)
+        (proj / f"{child}.jsonl").write_text("{}\n", encoding="utf-8")
+        now = time.time()
+        os.utime(proj / f"{child}.jsonl", (now + 120, now + 120))
+        (proj / f"{HUMAN_SID}.jsonl").write_text(
+            f"[OK] tmux driver: agent=claude session={FRAGO_SID}\n", encoding="utf-8"
+        )
+        assert _index(root).parent_of(child) == HUMAN_SID
+
+    def test_同一句回显出现在好几场时归时刻最贴近的那场(self, ledger, tmp_path):
+        # 真的那场写过一次，读过它记录的几场也抄过。判据是「哪场主会话的活动时刻离这场
+        # worker 最近」，取「最近活动的那场」会把刚干完活的 worker 判给今天抄过同一句的会话。
+        #
+        # 时刻一律相对当下取：判据拿「子会话最后动过的时刻」跟「主会话记录建好的时刻」比，
+        # 而文件的创建时刻改不了——造一个远在过去的时间戳，会让子会话看着比主会话的记录
+        # 还早，被时序判据直接剔掉，这条用例就测不到决胜那一步了。
         root = tmp_path / "projects"
         proj = root / "-p"
         proj.mkdir(parents=True)
         old_parent = HUMAN_SID
         new_parent = "11111111-2222-4333-8444-555555555555"
-        child = claude_session_uuid("w1")
+        child = claude_session_uuid(FRAGO_SID)
+        echo = f"[OK] tmux driver: agent=claude session={FRAGO_SID}\n"
         for sid in (old_parent, new_parent):
-            (proj / f"{sid}.jsonl").write_text("frago agent send w1 x\n", encoding="utf-8")
+            (proj / f"{sid}.jsonl").write_text(echo, encoding="utf-8")
         (proj / f"{child}.jsonl").write_text("{}\n", encoding="utf-8")
-        # 时刻：worker 与旧主会话同一天，新主会话晚了一周。
-        base = 1_757_000_000
-        os.utime(proj / f"{child}.jsonl", (base, base))
-        os.utime(proj / f"{old_parent}.jsonl", (base + 600, base + 600))
-        os.utime(proj / f"{new_parent}.jsonl", (base + 7 * 86400, base + 7 * 86400))
+        now = time.time()
+        os.utime(proj / f"{child}.jsonl", (now, now))
+        os.utime(proj / f"{old_parent}.jsonl", (now - 600, now - 600))
+        os.utime(proj / f"{new_parent}.jsonl", (now + 7 * 86400, now + 7 * 86400))
         assert _index(root).parent_of(child) == old_parent
 
     def test_隔几分钟只补扫动过的那几个(self, ledger, tmp_path, monkeypatch):
@@ -215,10 +280,31 @@ class TestRetroactiveScan:
             encoding="utf-8",
         )
         # 新出现的一场主会话，刚刚派了活。
-        (proj / f"{HUMAN_SID}.jsonl").write_text("frago agent send w9 x\n", encoding="utf-8")
+        (proj / f"{HUMAN_SID}.jsonl").write_text(
+            f"[OK] tmux driver: agent=claude session={FRAGO_SID}\n", encoding="utf-8"
+        )
         index = _index(root)
-        assert index.parent_of(claude_session_uuid("w9")) == HUMAN_SID  # 新的认到了
+        assert index.parent_of(claude_session_uuid(FRAGO_SID)) == HUMAN_SID  # 新的认到了
         assert index.parent_of("老 worker") == "老主会话"  # 老的没被冲掉
+
+    def test_增量那一趟不推翻全扫认下的(self, ledger, tmp_path):
+        # **这一条是 2026-10-15 那次错挂的根因。** 增量只扫动过的那几个文件，候选集是残缺的：
+        # 同一句回显在整库里可能好几场都有（真的那场 + 引用它的那几场），只扫一个文件时它就
+        # "只剩一个候选"，决胜那一步等于没跑。让残档盖住全扫的结果，等于每三分钟拿最近在写的
+        # 那场会话覆盖一遍正确值——我这场一直在写，于是 8 场不相干的会话全挂到了我名下。
+        root = tmp_path / "projects"
+        proj = root / "-p"
+        proj.mkdir(parents=True)
+        child = claude_session_uuid(FRAGO_SID)
+        (proj / f"{child}.jsonl").write_text("{}\n", encoding="utf-8")
+        (proj / f"{HUMAN_SID}.jsonl").write_text(
+            f"[OK] tmux driver: agent=claude session={FRAGO_SID}\n", encoding="utf-8"
+        )
+        session_origin.PARENT_SCAN_CACHE.write_text(
+            json.dumps({"at": int(time.time()) - 600, "pairs": {child: "老主会话"}}),
+            encoding="utf-8",
+        )
+        assert _index(root).parent_of(child) == "老主会话"
 
     def test_缓存还新鲜时一个文件都不扫(self, ledger, tmp_path, monkeypatch):
         root = tmp_path / "projects"
