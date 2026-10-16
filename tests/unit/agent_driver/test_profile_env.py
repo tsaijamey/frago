@@ -191,6 +191,23 @@ def test_claude_auth_token_endpoint_uses_authorization_variable() -> None:
     assert env["ANTHROPIC_API_KEY"] == ""
 
 
+def test_claude_api_key_endpoint_blanks_the_authorization_variable() -> None:
+    """密钥头端点把凭据放 ANTHROPIC_API_KEY，并把 ANTHROPIC_AUTH_TOKEN 置空。
+
+    必须是「置空」而不是「不写」。写进 settings.json 那条路有 ``save_claude_settings``
+    先删 frago 掌管的键兜底，不给也干净；但经 tmux ``-e`` 注入会话那条路只覆盖给到的
+    键，不给就等于放行会话环境里继承来的旧值——tmux 会话继承服务端那份全局环境，里面
+    可能烤着上一条 profile 的凭据。claude 两点并存时认 AUTH_TOKEN 优先，旧 token 会被
+    拿去当 Bearer 发给新端点。2026-10-16 实测：DeepSeek profile 的会话因此回 401，
+    整轮拿不到回复。置空后 claude 回落到密钥头（同日实测空 AUTH_TOKEN 可用）。
+    """
+    driver = load_driver("claude")
+    assert driver.profile_env is not None
+    env = driver.profile_env(_profile(endpoint_type="deepseek"))
+    assert env["ANTHROPIC_API_KEY"] == "sk-test"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == ""
+
+
 def test_claude_has_no_session_env() -> None:
     """claude 不需要基线环境变量（权限确认靠启动开关）。"""
     assert load_driver("claude").session_env is None

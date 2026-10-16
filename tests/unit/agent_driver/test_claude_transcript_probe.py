@@ -415,3 +415,149 @@ def test_ensure_dangerous_mode_prompt_skipped_never_replaces_unreadable_settings
     settings.write_text("{ this is not json", encoding="utf-8")
     claude_driver._ensure_dangerous_mode_prompt_skipped()
     assert settings.read_text(encoding="utf-8") == "{ this is not json"
+
+
+def test_ensure_custom_api_key_approved_reads_key_from_settings(tmp_path, monkeypatch):
+    """主角色那条路把 key 写进 claude 的设置，会话环境里看不到——必须从这里认出来。
+
+    起会话前把 key 的末尾 20 位补进 ``customApiKeyResponses.approved``，claude 才不弹
+    那屏要人按键的「Detected a custom API key」确认框；无人会话没人能按，会话会干等到
+    超时（2026-10-14 WebUI 新建会话实测）。只补这一枝，用户已有的配置一个字节都不动。
+    """
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    key = "sk-ant-api03-abcdefghijklmnop-tail1234"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_API_KEY": key}}), encoding="utf-8"
+    )
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text(json.dumps({"userID": "keep-me"}), encoding="utf-8")
+
+    claude_driver._ensure_custom_api_key_approved({})
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["userID"] == "keep-me"  # 顶层其他键不丢
+    assert data["customApiKeyResponses"]["approved"] == [key[-20:]]
+
+
+def test_ensure_custom_api_key_approved_reads_key_from_session_env(tmp_path, monkeypatch):
+    """``--use-profile`` 那条路经 tmux -e 把 key 注进会话环境，从 env 里认。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    key = "sk-or-v1-0000000000000000000000beef"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_AUTH_TOKEN": key})
+
+    data = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    assert data["customApiKeyResponses"]["approved"] == [key[-20:]]
+
+
+def test_ensure_custom_api_key_approved_moves_key_out_of_rejected(tmp_path, monkeypatch):
+    """曾被随手按回车记成「拒绝」的 key 要挪出来，否则每次启动直接报未登录。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    key = "local-proxy-000000000000000000"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "customApiKeyResponses": {
+                    "approved": ["keep-this-one-00000"],
+                    "rejected": [key[-20:], "someone-elses-key-000"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_API_KEY": key})
+
+    responses = json.loads(cfg.read_text(encoding="utf-8"))["customApiKeyResponses"]
+    assert responses["approved"] == ["keep-this-one-00000", key[-20:]]
+    assert responses["rejected"] == ["someone-elses-key-000"]
+
+
+def test_ensure_custom_api_key_approved_noop_without_custom_key(tmp_path, monkeypatch):
+    """订阅登录走的是另一套，这只框根本不出现——没自定义密钥时一个字节都不写。"""
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "settings.json").write_text('{"env": {}}', encoding="utf-8")
+
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_API_KEY": ""})
+
+    assert not (tmp_path / ".claude.json").exists()
+
+
+def test_ensure_custom_api_key_approved_idempotent_skips_write(tmp_path, monkeypatch):
+    """已同意过的 key 不再重写文件——不与运行中的 claude 抢盘。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    key = "already-approved-key-0000000"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text(
+        json.dumps({"customApiKeyResponses": {"approved": [key[-20:]]}}), encoding="utf-8"
+    )
+    before = cfg.stat().st_mtime_ns
+
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_API_KEY": key})
+
+    assert cfg.stat().st_mtime_ns == before  # 没写
+
+
+def test_ensure_custom_api_key_approved_never_replaces_unreadable_config(tmp_path, monkeypatch):
+    """配置读不动时宁可让确认框照弹，NEVER 拿一份空表顶替用户的项目信任与引导状态。"""
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text("{ this is not json", encoding="utf-8")
+
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_API_KEY": "sk-x-0000000000000000000"})
+
+    assert cfg.read_text(encoding="utf-8") == "{ this is not json"
+
+
+def test_ensure_custom_api_key_approved_never_raises(tmp_path, monkeypatch):
+    """写不动配置时是尽力而为——只告警、不抛异常，NEVER 把 launch 打死。"""
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file, not a dir", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(blocker / "nested"))
+
+    # 不抛即通过。
+    claude_driver._ensure_custom_api_key_approved({"ANTHROPIC_API_KEY": "sk-y-0000000000000000000"})
+
+
+def test_launch_wires_the_custom_api_key_pre_write(tmp_path, monkeypatch):
+    """起会话这条路 MUST 真的调用预写器，且把这一场将带的环境原样交给它。
+
+    预写器自己写对了还不够：接线断了照样弹框，而症状与没写一模一样。
+    """
+    from frago.agent_driver.driver import LaunchCtx, load_driver
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        claude_driver, "_ensure_custom_api_key_approved", lambda env: seen.append(dict(env))
+    )
+
+    load_driver("claude").launch_command(
+        LaunchCtx(cwd=str(tmp_path), session_id="s1", env={"ANTHROPIC_API_KEY": "sk-x"})
+    )
+
+    assert seen == [{"ANTHROPIC_API_KEY": "sk-x"}]

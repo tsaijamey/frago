@@ -15,6 +15,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -354,6 +355,38 @@ def _claude_settings_path() -> Path:
     return base / "settings.json"
 
 
+#: claude 记「这把自定义密钥我同意过」时只存 key 的末尾这么多个字符——官方鉴权文档与
+#: ``~/.claude.json`` 的 ``customApiKeyResponses`` 都是这个判据。
+_API_KEY_APPROVAL_TAIL = 20
+
+#: 可能被 claude 当成「自定义密钥」而拦一屏确认的两个环境变量。两档对应两种认证头，
+#: 按 key 前缀 / 端点主机名二选一（见 configurator 的 ``build_claude_env_config``）：
+#: 密钥头那一档用前者，授权头那一档（腾讯 / OpenRouter）用后者。确认框实测只在密钥头
+#: 那一档复现过；授权头一档一并登记，依据是本机当前生效的那把 ``ANTHROPIC_AUTH_TOKEN``
+#: 末尾 20 位就躺在已同意名单里（2026-10-14 看到），说明它也是会被 claude 拿去登记的东西。
+#: 多登记一条无害——登的就是用户自己选的那把；漏登记才会卡会话。
+_CREDENTIAL_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _claude_settings_env() -> dict[str, str]:
+    """claude 自己设置文件里配着的那份 ``env``，读不到就是空表。
+
+    为什么要看这里：主角色绑一条连接时，key 是写进这份设置、由 claude 自己读的，
+    会话环境里看不到它（worker 那条路才经 tmux ``-e`` 注进会话环境）。只看会话环境
+    会漏掉前者——2026-10-14 那次会话卡在确认框，key 正是从这份设置里来的。
+    """
+    try:
+        data = json.loads(_claude_settings_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    env = data.get("env")
+    if not isinstance(env, dict):
+        return {}
+    return {k: v for k, v in env.items() if isinstance(v, str) and v}
+
+
 def _ensure_dangerous_mode_prompt_skipped() -> None:
     """起 TUI 前让 claude 别弹那张"Bypass Permissions mode"一次性确认屏。
 
@@ -452,6 +485,80 @@ def _ensure_workspace_trusted(cwd: str) -> None:
         logger.warning("could not pre-trust workspace %r for claude", cwd, exc_info=True)
 
 
+def _ensure_custom_api_key_approved(env: Mapping[str, str]) -> None:
+    """起 TUI 前让 claude 别弹那张"Detected a custom API key"一次性确认屏。
+
+    哪个环节出事、当事人看到什么：会话带着一把 claude 还没同意过的自定义密钥时，交互式
+    TUI 先拦一屏确认框（``Do you want to use this API key?``，默认停在 ``No``），等一个
+    按键。无人会话没人能按，就绪信号（空输入框）永不匹配这一屏，会话干等到 ``open()``
+    超时、以 ``TmuxStartupError`` 收场，页面上只剩一句"never reached ready signal"——
+    看不出是在等人按键（2026-10-14 WebUI 新建会话实测）。frago 起的会话一律带自定义
+    端点，故任何用户**新绑一条连接、或换一把 key 之后第一次**都会中招，与平台无关。
+
+    这道确认与前面两处（工作目录信任、危险模式确认）是同一类东西，处置也一样：把
+    claude 自己那份登记幂等补上，让它别问。判据是 key 的**末尾 20 位**，记在
+    ``~/.claude.json`` 的 ``customApiKeyResponses.approved``（用户手点 ``Yes`` 落的是
+    同一个字段）。
+
+    **还要把它从 ``rejected`` 里挪出来。** 谁在那只框上按了回车（默认停在 ``No``），
+    claude 就把这把 key 记成拒绝，此后每次启动直接失败、报「未登录，请先 /login」，
+    看不出跟密钥有关。用户绑这条连接、或指名用这条 profile 起会话，本身就是在选它。
+
+    凭据从两处取：这一场会话将带的环境（``--use-profile`` 那条路经 tmux ``-e`` 注入，
+    见 ``LaunchCtx.env``）与 claude 自己的设置文件（主角色那条路写在那里，会话环境里
+    看不到）。两处都没有自定义密钥时什么都不做——订阅登录走的是另一套，那只框不出现。
+
+    只补缺、不覆盖任何已有内容；已经是目标状态就一个字节都不写。写失败绝不阻断启动
+    ——最坏回到现状（确认框照弹），而不是让一次登记写错把启动整个打死。
+    """
+    tails: list[str] = []
+    for source in (env, _claude_settings_env()):
+        for name in _CREDENTIAL_ENV_NAMES:
+            value = source.get(name)
+            if isinstance(value, str) and value:
+                tail = value[-_API_KEY_APPROVAL_TAIL:]
+                if tail not in tails:
+                    tails.append(tail)
+    if not tails:
+        return
+    try:
+        path = _claude_config_path()
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, json.JSONDecodeError):
+                # 读不动就不写：这份文件里有用户的项目信任、引导状态，宁可让确认框
+                # 照弹，也 NEVER 拿一份空表去顶替它。
+                return
+        responses = data.get("customApiKeyResponses")
+        if not isinstance(responses, dict):
+            responses = {}
+        approved = [k for k in responses.get("approved", []) if isinstance(k, str)]
+        rejected = [k for k in responses.get("rejected", []) if isinstance(k, str)]
+        changed = False
+        for tail in tails:
+            if tail not in approved:
+                approved.append(tail)
+                changed = True
+            if tail in rejected:
+                rejected = [k for k in rejected if k != tail]
+                changed = True
+        if not changed:
+            return
+        responses["approved"] = approved
+        responses["rejected"] = rejected
+        data["customApiKeyResponses"] = responses
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except Exception:  # noqa: BLE001 — 登记预写尽力而为，NEVER 让它把 launch 打死
+        logger.warning("could not pre-approve claude custom api key", exc_info=True)
+
+
 def _launch(ctx: LaunchCtx) -> str:
     # 起会话前先把 cwd 标记为已信任，否则交互式 TUI 会卡在一次性 workspace-trust
     # 菜单、就绪信号永不出现、干等到超时（见 _ensure_workspace_trusted）。
@@ -459,6 +566,9 @@ def _launch(ctx: LaunchCtx) -> str:
     # 同理，带 --dangerously-skip-permissions 起 TUI 会在没确认过危险模式的机器上
     # 卡一屏警告菜单，症状与上面一模一样（见 _ensure_dangerous_mode_prompt_skipped）。
     _ensure_dangerous_mode_prompt_skipped()
+    # 同理，这一场带着一把 claude 还没同意过的自定义密钥时，TUI 会先拦一屏
+    # 「Detected a custom API key」确认框（见 _ensure_custom_api_key_approved）。
+    _ensure_custom_api_key_approved(ctx.env)
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。

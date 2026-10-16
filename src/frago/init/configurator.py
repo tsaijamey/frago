@@ -716,9 +716,18 @@ def build_claude_env_config(
         env["ANTHROPIC_API_KEY"] = ""
     else:
         env["ANTHROPIC_API_KEY"] = api_key
-        # 单凭据：这一档不吃授权头，把另一类凭据显式摘掉。留着一把不用的
+        # 单凭据：这一档不吃授权头，把另一类凭据**显式置空**。留着一把不用的
         # AUTH_TOKEN 会盖过刚写的密钥（claude 认 AUTH_TOKEN 优先）。
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        #
+        # 必须是「置空」而不是「不写」。两条落点行为不同：写进 settings.json 那条路
+        # 有 ``save_claude_settings`` 先删 frago 掌管的键兜底，不给也干净；但经 tmux
+        # ``-e`` 注入那条路只覆盖给到的键，不给就等于放行会话环境里已有的旧值。而
+        # tmux 会话会继承 tmux 服务端那份全局环境——里面常烤着上一条 profile 的凭据
+        # （谁在这台机器上起过 claude，claude 就把 settings.json 的 env 带进自己进程，
+        # tmux 服务端若是从那里起来的，这份快照就留下来了）。2026-10-16 实测：全局环境
+        # 里躺着 OpenRouter 的 ANTHROPIC_AUTH_TOKEN，起 DeepSeek profile 的会话时它没被
+        # 覆盖，claude 优先用了它，DeepSeek 端点回 401，整轮拿不到回复。
+        env["ANTHROPIC_AUTH_TOKEN"] = ""
     return env
 
 
