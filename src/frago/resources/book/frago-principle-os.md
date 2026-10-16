@@ -9,11 +9,11 @@ agent 不知道 frago 是什么品类的东西，会按「普通 CLI 工具」�
 
 frago = **agent OS**，AI agent 的操作系统。
 
-frago 不造 agent。agent 指 Claude Code / codex / opencode / codebuddy 等外部 agent，frago 为它们提供「可运行的环境」——agent 知道怎么做、在哪里动手、记得什么、把跑通的事冻成什么、怎么和这场会话之外的世界打交道。
+frago 不造 agent。agent 指 Claude Code / codex / opencode / agy 等外部 agent，frago 为它们提供「可运行的环境」——agent 知道怎么做、在哪里动手、记得什么、把跑通的事冻成什么、怎么和这场会话之外的世界打交道。
 
 ## 底座：内核可换
 
-frago 不绑定某一个 agent。Claude Code / codex / opencode / codebuddy 任一个装上就是内核，同一份 hook 引擎注册进各家，下面五根支柱对每一种内核都成立。
+frago 不绑定某一个 agent。Claude Code / codex / opencode / agy 任一个装上就是内核，同一份 hook 引擎注册进各家，下面五根支柱对每一种内核都成立。
 
 你怎么用它：你是哪种内核不影响你怎么用 frago。NEVER 因为自己是 Claude Code 就假设别的内核用不了这些命令，也 NEVER 把 frago 理解成某个内核的封装。
 

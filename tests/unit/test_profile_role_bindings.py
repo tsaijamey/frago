@@ -53,11 +53,11 @@ def endpoint_profile():
 def vendor_profile():
     return APIProfile(
         id="vc000001",
-        name="WorkBuddy hy4",
+        name="Antigravity own account",
         kind=KIND_VENDOR_CLI,
         endpoint_type=KIND_VENDOR_CLI,
-        agent_type="codebuddy",
-        default_model="hy4-preview",
+        agent_type="agy",
+        default_model="gemini-3.8-flash",
     )
 
 
@@ -105,8 +105,8 @@ class TestWorkerBinding:
         add_profile(vendor_profile)
         bound = bind_role(WORKER_ROLE, vendor_profile.id)
 
-        assert bound.agent_type == "codebuddy"
-        assert bound.default_model == "hy4-preview"
+        assert bound.agent_type == "agy"
+        assert bound.default_model == "gemini-3.8-flash"
         assert role_connection(WORKER_ROLE).id == vendor_profile.id
 
     def test_binding_official_clears_it(self, tmp_profiles_path, endpoint_profile):

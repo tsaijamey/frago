@@ -40,7 +40,7 @@ import type { ConnectionRole, ProfileItem, RoleBinding } from '@/api';
 interface ConnectionRolesCardProps {
   connections: ProfileItem[];
   bindings: RoleBinding[];
-  /** agent_type → display name, so the rows read "CodeBuddy Code", not "codebuddy". */
+  /** agent_type → display name, so the rows read "Antigravity CLI", not "agy". */
   coreNames: Record<string, string>;
   onManageProfiles: () => void;
   /** Reload after a binding lands: every row and the cards below read this data. */

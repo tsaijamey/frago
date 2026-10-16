@@ -2,7 +2,7 @@
 
 ## 为什么这一家不进 driver 注册表
 
-claude / codex / opencode / codebuddy 都是**挂在 tmux 里的交互程序**：起一次挂着，之后
+claude / codex / opencode / agy 都是**挂在 tmux 里的交互程序**：起一次挂着，之后
 每句话 send-keys 进它的输入框。:class:`~frago.agent_driver.driver.AgentDriver` 那份契约
 （``launch_command`` / ``ready_signal`` / ``submit`` / ``done_signal`` / ``read_answer``
 / ``clear_input``）从头到尾都是 pane 语义。
@@ -64,8 +64,8 @@ _ERROR_KIND_NEEDS_HUMAN = frozenset({"credential"})
 #: 哪些属于"再试一次也许就好了"。
 #:
 #: **各持一份，故意不与 claude driver 共用。** 那份认证墙词法（``claude._AUTH_WALL_PAT``）
-#: 是对着 claude 自己的失败话术写的，codebuddy 也另有一份（``codebuddy._AUTH_WALL``）——
-#: 失败文案是各家自己产的，matcher 就得对着它写。照抄别家的词法只会让这一家该认的认不出、
+#: 是对着 claude 自己的失败话术写的——失败文案是各家自己产的，matcher 就得对着它写。
+#: 照抄别家的词法只会让这一家该认的认不出、
 #: 不该认的乱认。这里认的是内核与上游 provider 实际打的字（2026-10-09 实测样本：
 #: ``HTTP 400 {"error":{"code":"InvalidSubscription"...``、``invalid api key``、
 #: ``unauthorized``、``credit balance``）。

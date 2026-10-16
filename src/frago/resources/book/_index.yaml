@@ -5,7 +5,7 @@
 # 第一性原理 — frago 的根本主张，决定一切设计取舍
 - name: frago-principle-os
   category: available
-  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/codebuddy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/apps/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
+  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/agy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/apps/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
 
 - name: frago-principle-supreme
   category: must

@@ -145,6 +145,10 @@ def test_switching_from_bearer_profile_clears_the_stale_token(home) -> None:
     env 是合并写（只增不减）。不先删 frago 掌管的键，火山这类授权头 profile 写下的
     token 会滞留在 settings.json 里；Claude Code 两点并存时认 AUTH_TOKEN 优先，切回
     密钥档后旧 token 仍被拿去当 Bearer 发给新端点，回 401。
+
+    断言的是「不得残留旧值」而不是「键必须消失」：置空同样安全，而且置空还兼管另一条
+    落点——经 tmux ``-e`` 注入会话那条路只覆盖给到的键，不写就等于放行会话环境里继承
+    来的旧值（见 ``build_claude_env_config`` 里那段注释）。
     """
     add_profile(
         APIProfile(
@@ -171,7 +175,7 @@ def test_switching_from_bearer_profile_clears_the_stale_token(home) -> None:
 
     activate_profile("e2e00003", ["claude"])
     env = _read(home.claude_settings)["env"]
-    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env.get("ANTHROPIC_AUTH_TOKEN", "") == ""
     assert env["ANTHROPIC_API_KEY"] == "sk-key"
 
 

@@ -51,14 +51,14 @@ const deepseek: ProfileItem = {
   updated_at: '',
 };
 
-const workbuddy: ProfileItem = {
+const vendorCli: ProfileItem = {
   id: 'vend0001',
-  name: 'WorkBuddy hy4',
+  name: 'Antigravity own account',
   kind: 'vendor_cli',
   endpoint_type: 'vendor_cli',
   api_key_masked: '',
-  agent_type: 'codebuddy',
-  default_model: 'hy4-preview',
+  agent_type: 'agy',
+  default_model: 'gemini-3.8-flash',
   is_active: false,
   created_at: '',
   updated_at: '',
@@ -73,9 +73,9 @@ function renderCard(overrides: Partial<Parameters<typeof ConnectionRolesCard>[0]
   const onBindingChanged = vi.fn();
   render(
     <ConnectionRolesCard
-      connections={[official, deepseek, workbuddy]}
+      connections={[official, deepseek, vendorCli]}
       bindings={bindings}
-      coreNames={{ codebuddy: 'CodeBuddy Code', claude: 'Claude Code' }}
+      coreNames={{ agy: 'Antigravity CLI', claude: 'Claude Code' }}
       onManageProfiles={() => {}}
       onBindingChanged={onBindingChanged}
       {...overrides}
@@ -152,12 +152,12 @@ describe('ConnectionRolesCard', () => {
     renderCard({
       bindings: [
         { role: 'main', profile_id: null, connection: official, targets: [] },
-        { role: 'worker', profile_id: 'vend0001', connection: workbuddy, targets: [] },
+        { role: 'worker', profile_id: 'vend0001', connection: vendorCli, targets: [] },
       ],
     });
 
     // 内核名在选项里也出现一次，这里只关心那一行说明确实带上了它。
-    expect(screen.getByText(/hy4-preview/).textContent).toContain('CodeBuddy Code');
+    expect(screen.getByText(/gemini-3.8-flash/).textContent).toContain('Antigravity CLI');
   });
 });
 
@@ -180,7 +180,7 @@ describe('ConnectionRolesCard · frago-core 替它们问模型的两行', () => 
     { role: 'observer', profile_id: null, connection: null, targets: [] },
   ];
   const renderFour = (overrides: Partial<Parameters<typeof ConnectionRolesCard>[0]> = {}) =>
-    renderCard({ connections: [official, deepseek, workbuddy, borrowed], bindings: four, ...overrides });
+    renderCard({ connections: [official, deepseek, vendorCli, borrowed], bindings: four, ...overrides });
   const optionIn = (row: string, value: string) =>
     Array.from(screen.getByLabelText(row).querySelectorAll('option')).find((o) => o.value === value);
 

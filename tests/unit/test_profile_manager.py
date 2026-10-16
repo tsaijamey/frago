@@ -858,7 +858,7 @@ class TestProfileChannels:
                 "vendor_cli",
                 None,
                 kind="vendor_cli",
-                agent_type="codebuddy",
+                agent_type="agy",
                 models=("m",),
                 channels=[ProfileChannel(protocol="responses", url="https://x.example.com")],
             )

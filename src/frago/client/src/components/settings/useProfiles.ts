@@ -61,7 +61,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   // backend. The form used to hard-code this list and it fell behind.
   const [presets, setPresets] = useState<EndpointPreset[]>([]);
 
-  // The cores that come with their own account (CodeBuddy). These are what a
+  // The cores that come with their own account (Antigravity). These are what a
   // vendor CLI connection names; frago holds no key for them, so the form
   // asks for a core and a model instead of an endpoint and a key.
   const [vendorCores, setVendorCores] = useState<VendorCore[]>([]);

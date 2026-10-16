@@ -13,8 +13,8 @@ they are not variations of one another:
   no key: it is what a CLI runs on when frago has written nothing into it. It
   is built on demand rather than stored, so that it cannot be deleted and the
   role pickers always have something to fall back to.
-- ``vendor_cli`` — a vendor's own CLI running on its own account (CodeBuddy /
-  WorkBuddy). Its credential is that CLI's login, not a key frago holds, so
+- ``vendor_cli`` — a vendor's own CLI running on its own account (Antigravity).
+  Its credential is that CLI's login, not a key frago holds, so
   there is nothing to write into anyone else's config; what a profile of this
   kind carries is which core to run and which model to ask it for.
 Two roles consume connections, and they consume them differently:
@@ -429,7 +429,7 @@ def _validate_profile(
 
         known = registered_drivers()
         if not agent_type:
-            raise ValueError("A vendor CLI profile needs an agent core (e.g. codebuddy)")
+            raise ValueError("A vendor CLI profile needs an agent core (e.g. agy)")
         if agent_type not in known:
             raise ValueError(
                 f"Unknown agent core '{agent_type}' (known: {', '.join(sorted(known))})"

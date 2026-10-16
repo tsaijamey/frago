@@ -67,11 +67,11 @@ def second_endpoint_profile():
 def vendor_profile():
     return APIProfile(
         id="vc000001",
-        name="WorkBuddy hy4",
+        name="Antigravity own account",
         kind=KIND_VENDOR_CLI,
         endpoint_type=KIND_VENDOR_CLI,
-        agent_type="codebuddy",
-        default_model="hy4-preview",
+        agent_type="agy",
+        default_model="gemini-3.8-flash",
     )
 
 

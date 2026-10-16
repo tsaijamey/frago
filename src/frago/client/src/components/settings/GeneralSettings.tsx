@@ -33,7 +33,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const [connections, setConnections] = useState<ProfileItem[]>([]);
   const [bindings, setBindings] = useState<RoleBinding[]>([]);
   // agent_type → display name, shared by the role rows and the "written into"
-  // line, so neither can print a bare key like "codebuddy".
+  // line, so neither can print a bare key like "agy".
   const [coreNames, setCoreNames] = useState<Record<string, string>>({});
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   // Which agent CLIs the active profile was written into, already resolved to

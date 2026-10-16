@@ -52,7 +52,6 @@ PURPOSE: dict[str, str] = {
     "claude": "agent 命令行。frago 的会话注入与派活都可以落在它上面。",
     "codex": "agent 命令行。frago 的会话注入与派活都可以落在它上面。",
     "opencode": "agent 命令行。frago 的会话注入与派活都可以落在它上面。",
-    "codebuddy": "agent 命令行（WorkBuddy 桌面应用自带）。",
 }
 
 # 任务书末尾要求的那一行。服务端只认这一行，其余都是给人看的过程。

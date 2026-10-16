@@ -280,16 +280,21 @@ class TestConnectionsAndBindings:
     async def test_vendor_cores_come_from_the_driver_registry(self, tmp_profiles_path):
         """A core that takes no frago profile is exactly a core running on its
         own account — that fact lives in the driver, not in a list here."""
+        from frago.agent_driver.driver import registered_drivers
         from frago.server.routes.settings import get_connections
 
         response = await get_connections()
-        codebuddy = next(
-            (c for c in response.vendor_cores if c.agent_type == "codebuddy"), None
-        )
+        own_account = {
+            agent_type
+            for agent_type, driver in registered_drivers().items()
+            if driver.profile_apply is None
+        }
+        assert {c.agent_type for c in response.vendor_cores} == own_account
 
-        assert codebuddy is not None
-        assert "hy4-preview" in codebuddy.known_models
-        assert codebuddy.reason
+        # 这一列里每一个都该带一句 reason，说清它为什么接不了 frago 的 profile——只列出来
+        # 而不说为什么，人只会看到一个禁用的复选框。agy 接入时漏挂 profile_apply，随后补上
+        # （见 frago-dev/agy-driver-profile-apply-gap），它因此不在这一列里。
+        assert all(c.reason for c in response.vendor_cores)
 
     @pytest.mark.asyncio
     async def test_binding_worker_writes_no_config(self, saved_profile):
@@ -315,11 +320,11 @@ class TestConnectionsAndBindings:
         add_profile(
             APIProfile(
                 id="vend0001",
-                name="WorkBuddy hy4",
+                name="Antigravity own account",
                 kind="vendor_cli",
                 endpoint_type="vendor_cli",
-                agent_type="codebuddy",
-                default_model="hy4-preview",
+                agent_type="agy",
+                default_model="gemini-3.8-flash",
             )
         )
         result = await bind_role_endpoint("main", BindRoleRequest(profile_id="vend0001"))
@@ -338,11 +343,11 @@ class TestConnectionsAndBindings:
         add_profile(
             APIProfile(
                 id="vend0001",
-                name="WorkBuddy hy4",
+                name="Antigravity own account",
                 kind="vendor_cli",
                 endpoint_type="vendor_cli",
-                agent_type="codebuddy",
-                default_model="hy4-preview",
+                agent_type="agy",
+                default_model="gemini-3.8-flash",
             )
         )
         result = await bind_role_endpoint("worker", BindRoleRequest(profile_id="vend0001"))
@@ -350,8 +355,8 @@ class TestConnectionsAndBindings:
         worker = next(b for b in response.bindings if b.role == "worker")
 
         assert result.status == "ok"
-        assert worker.connection.agent_type == "codebuddy"
-        assert worker.connection.default_model == "hy4-preview"
+        assert worker.connection.agent_type == "agy"
+        assert worker.connection.default_model == "gemini-3.8-flash"
 
     @pytest.mark.asyncio
     async def test_binding_the_subscription_back_to_worker_clears_it(self, saved_profile):

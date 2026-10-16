@@ -36,8 +36,8 @@ class LaunchCtx:
     # 这一场要跑哪个模型；调用方没指定时为 None。
     #
     # 模型对多数 agent 是**环境变量**的事（claude 读 ANTHROPIC_MODEL），那条路不经过
-    # 这里。走这里的是「只认启动开关」的那一类：codebuddy 的模型由它自己的服务端下发，
-    # 不认 ANTHROPIC_*，只认 ``--model``。没有这个字段时，一条指定了模型的连接绑给
+    # 这里。走这里的是「只认启动开关」的那一类：模型由它自己的服务端下发，不认
+    # ANTHROPIC_*，只认 ``--model``。没有这个字段时，一条指定了模型的连接绑给
     # worker，worker 仍会跑在该 CLI 的缺省模型上——而界面上写着别的名字。
     model: str | None = None
     # 这场会话将带着的环境变量（driver 基线 + profile 翻译 + 调用方注入，合并后的最终值）。
@@ -118,8 +118,8 @@ class AgentDriver:
     # 本机装没装这一家：返回可执行文件的绝对路径，找不到返回 None。
     #
     # 探测规则是**这一家自己的知识**，故落在 driver 里：claude 要翻 nvm/fnm/volta 那
-    # 一堆 Node 版本管理器的目录，codebuddy 要退回 WorkBuddy.app 里那份内嵌 CLI，
-    # 都不是"PATH 里 which 一下"能覆盖的。不填时上层只能报"判不出装没装"。
+    # 一堆 Node 版本管理器的目录，桌面应用自带的那家要退回应用包里去找，都不是
+    # "PATH 里 which 一下"能覆盖的。不填时上层只能报"判不出装没装"。
     locate: Callable[[], str | None] | None = None
     # ready_signal 想吃**带颜色**的 pane（``capture-pane -e``）时置 True。
     # ``open()`` 等就绪的那一路据此带 ``-e`` 抓屏再喂给 ready_signal；缺省 False 照旧
@@ -130,9 +130,9 @@ class AgentDriver:
     ready_signal_ansi: bool = False
     # 起会话时能不能由调用方指定会话编号。
     #
-    # True（claude / codebuddy）：launch 接受 ``--session-id`` 一类的开关，调用方可以
+    # True（claude）：launch 接受 ``--session-id`` 一类的开关，调用方可以
     # 先 mint 一个编号再新建，编号当场就有。
-    # False（codex / opencode）：编号由 agent 自己分配，frago 只能在会话起来之后去
+    # False（codex / opencode / agy）：编号由 agent 自己分配，frago 只能在会话起来之后去
     # **认领**（见各 driver 的 ``_claim_once``），所以新建的那一刻拿不到编号。
     # 这两条路在"页面新建一场会话"上是两种交互，判据 MUST 出自 driver 自己。
     accepts_session_id: bool = False
@@ -199,8 +199,8 @@ class AgentDriver:
     profile_protocol: str = "anthropic"
     # 可选：这一家自己下发的模型名单，给界面当候选。
     #
-    # 只有"模型名单是这个 agent 自己的事"的那一类才填：codebuddy 的模型由 WorkBuddy
-    # 服务端下发，frago 无从推断，不列出来的话人只能凭记忆手打型号。认 ANTHROPIC_MODEL
+    # 只有"模型名单是这个 agent 自己的事"的那一类才填：名单由它自己的服务端下发，
+    # frago 无从推断，不列出来的话人只能凭记忆手打型号。认 ANTHROPIC_MODEL
     # 的那几家不填——它们的模型跟着端点走，端点是谁的名单就是谁的。
     # 名单是候选不是白名单：界面照列，但手打一个不在名单里的照样递下去。
     known_models: tuple[str, ...] = ()

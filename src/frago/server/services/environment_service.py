@@ -95,7 +95,6 @@ def catalog() -> list[Item]:
         Item("claude", "Claude Code", GROUP_AGENT, False, "npm:@anthropic-ai/claude-code"),
         Item("codex", "codex", GROUP_AGENT, False, "npm:@openai/codex"),
         Item("opencode", "opencode", GROUP_AGENT, False, "npm:opencode-ai"),
-        Item("codebuddy", "WorkBuddy", GROUP_AGENT, False, None),
     ]
     return items
 
@@ -112,45 +111,11 @@ _VERSION_COMMANDS: dict[str, list[str]] = {
     "claude": ["claude", "--version"],
     "codex": ["codex", "--version"],
     "opencode": ["opencode", "--version"],
-    "codebuddy": ["codebuddy", "--version"],
 }
 
 # 版本号长什么样：一个数字、一个点，后面跟数字、点或字母（tmux 是 3.6b）。连字符之后
 # 的东西一律不要——发行版会往后面接一长串自己的打包号（n4.4.2-0ubuntu0.22.04.1）。
 _VERSION_PATTERN = re.compile(r"(\d+\.[0-9A-Za-z.]*[0-9A-Za-z])")
-
-# WorkBuddy 的命令行藏在桌面应用包里，PATH 上通常没有它。路径与装机探测脚本里的那几条
-# 保持一致。应用包内的相对位置三个平台同形（``resources/app.asar.unpacked/cli/bin``），
-# 差别只在应用装在哪。
-#
-# macOS 这条是本机实测的。Windows 与 Linux 那几条按桌面应用的常规落点写，没有实机验证过
-# ——探不到时页面报「没装」，跟补这几条之前的行为一样，不会更糟。
-def _codebuddy_bundled() -> list[Path]:
-    rel = Path("app.asar.unpacked") / "cli" / "bin"
-    system = platform.system()
-    if system == "Darwin":
-        base = Path("/Applications/WorkBuddy.app/Contents/Resources")
-        return [base / rel / "codebuddy"]
-    if system == "Windows":
-        roots = [
-            Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "Programs",
-            Path(os.environ.get("PROGRAMFILES") or "C:/Program Files"),
-        ]
-        return [
-            root / "WorkBuddy" / "resources" / rel / name
-            for root in roots
-            for name in ("codebuddy.cmd", "codebuddy.exe", "codebuddy")
-        ]
-    return [
-        root / "resources" / rel / "codebuddy"
-        for root in (
-            Path("/opt/WorkBuddy"),
-            Path("/usr/lib/workbuddy"),
-            Path("/usr/share/workbuddy"),
-            Path.home() / ".local" / "share" / "WorkBuddy",
-        )
-    ]
-
 
 def _search_path() -> str:
     """找命令用的 PATH：当前进程的，再补上几个用户级目录。
@@ -249,26 +214,12 @@ def _local_browser() -> str | None:
     return match.group(1) if match else None
 
 
-def _local_codebuddy() -> str | None:
-    """WorkBuddy：先按普通命令找，再看桌面应用包里那份。"""
-    version = _run_version(_VERSION_COMMANDS["codebuddy"])
-    if version:
-        return version
-    for bundled in _codebuddy_bundled():
-        if bundled.exists():
-            # 版本号读不出来但东西在的时候报「?」——「装了、版本未知」比「没装」诚实。
-            return _run_version([str(bundled), "--version"]) or "?"
-    return None
-
-
 def probe_local(item_id: str) -> str | None:
     """一样东西在本机装的是哪一版。None = 没装。"""
     if item_id == "frago":
         return _local_frago()
     if item_id == "browser":
         return _local_browser()
-    if item_id == "codebuddy":
-        return _local_codebuddy()
     argv = _VERSION_COMMANDS.get(item_id)
     return _run_version(argv) if argv else None
 
