@@ -444,6 +444,18 @@ def _run_kernel(
             name=sid, agent_type=agent_type, tmux_name=None, cwd=cwd, pid=pid
         )
         registered = True
+        # **记账在这一刻，不在跑完之后。** 内核 worker 可能跑上几分钟到几十分钟，账要等
+        # 这一轮结束才写的话，它在左栏整段时间里都是一张散在主干上的卡片——人看到的正是
+        # "父子关系不对"。这一刻这一场确实起来了：进程在，记录文件由内核自己写，左栏马上
+        # 就会摆出它那一行。进程都没起来（Popen 抛错）时这个回调不会被叫，也就不会留下
+        # 一张点不开的卡片——原先放在 run 之后想守的就是这一条，挪到这里同样守得住。
+        _record_worker_launch(
+            sid=sid,
+            agent_type=agent_type,
+            cwd=cwd,
+            prompt_text=prompt_text,
+            native_session_id=False,
+        )
 
     try:
         turn = kernel_backend.run_turn(
@@ -461,16 +473,8 @@ def _run_kernel(
         if registered:
             deregister_transient_worker(sid)
 
-    # 这一场确实起来了，记一笔它是谁派出去的——与 tmux 那条路共用同一本账，左栏据此把
-    # 内核 worker 折到派活的那一场下面。放在 run 之后，与 tmux 那条同一条规矩：起都没起来
-    # 的会话记进账本，只会让清单上多一行点不开的卡片。
-    _record_worker_launch(
-        sid=sid,
-        agent_type=agent_type,
-        cwd=cwd,
-        prompt_text=prompt_text,
-        native_session_id=False,
-    )
+    # 记账不在这里——已经挪到 `_on_spawn`，进程起来的那一刻就写（见那里的注释）。放在这
+    # 里的话，账要等整轮跑完才落，worker 在跑的这几分钟里在左栏是一张散在主干上的卡片。
 
     notes = {
         "needs_input": f"[!] CoreAgent 要人介入（认证墙 / 连接没配好）：{turn.text[:300]}",

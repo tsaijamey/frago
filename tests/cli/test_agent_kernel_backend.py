@@ -95,6 +95,52 @@ def test_runs_on_kernel_is_the_single_judgement():
         assert runs_on_kernel(other) is False
 
 
+def test_账在进程起来那一刻就记下_不等整轮跑完(monkeypatch, drive_dir):
+    """内核 worker 可能跑很久，账要等这一轮结束才写的话，它在左栏整段时间里都是一张散在
+    主干上的卡片——2026-10-16 实测：11:32 起的 worker，11:35:27 才落账，这三分多钟里
+    父子关系在界面上就是不成立的。"""
+    order: list[str] = []
+    import frago.session.session_origin as session_origin
+
+    monkeypatch.setattr(
+        session_origin,
+        "record_dispatch",
+        lambda child, **kwargs: order.append("记账") or True,
+    )
+
+    def _run_turn(prompt, **kwargs):
+        kwargs["on_spawn"](os.getpid())  # 进程起来了
+        order.append("喂任务、等它跑完")
+        return _turn()
+
+    monkeypatch.setattr(kernel_backend, "run_turn", _run_turn)
+    res = CliRunner().invoke(agent, ["--agent-type", "coreagent", "--quiet", "ping"])
+
+    assert res.exit_code == 0, res.stderr
+    assert order == ["记账", "喂任务、等它跑完"]
+
+
+def test_进程没起来就不记账(monkeypatch, drive_dir):
+    """Popen 抛错时 on_spawn 不会被叫，账本里也就不该留下点不开的一行。"""
+    recorded: list[str] = []
+    import frago.session.session_origin as session_origin
+
+    monkeypatch.setattr(
+        session_origin,
+        "record_dispatch",
+        lambda child, **kwargs: recorded.append(child) or True,
+    )
+
+    def _run_turn(prompt, **kwargs):
+        raise OSError("内核起不来")
+
+    monkeypatch.setattr(kernel_backend, "run_turn", _run_turn)
+    res = CliRunner().invoke(agent, ["--agent-type", "coreagent", "--quiet", "ping"])
+
+    assert res.exit_code != 0
+    assert recorded == []
+
+
 # ── 连接翻译：名字 → id ──────────────────────────────────────────────────────
 
 
