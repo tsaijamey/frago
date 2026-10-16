@@ -13,7 +13,7 @@ English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User G
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
 [![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.md)
 
-<img src="docs/images/hero-workbench.png" width="880" alt="The frago session workbench: a thousand sessions on the left, the agent's live receipts in the middle" />
+<img src="docs/images/hero-workbench.png" width="880" alt="frago Console: Manage 1,000+ agent sessions with real-time execution logs and action timelines." />
 
 </div>
 
@@ -21,56 +21,56 @@ English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User G
 
 ## Why frago
 
-CLI agents are genuinely good, up to a point — and not nearly as convenient as they look, especially for ordinary people.
+CLI agents offer immense potential for system automation, but in practical engineering they consistently run into three fundamental barriers:
 
-For an agent, a CLI may well be the best possible form: it makes driving the system easy. **For a human, it isn't.**
+- **Single-session silos**: Capabilities and states are trapped within an interactive conversation. Once the session ends or moves to another window, authentication, context, and execution chains break; they cannot be cleanly orchestrated or scheduled at 3 AM.
+- **Dumping entire contexts at startup**: To retain knowledge, standard setups dump hundreds of lines of rule files into the prompt upfront, burning token budgets while diluting attention; switch to a new repo or machine, and the agent reverts to square one.
+- **Trial-and-error never hardens into deterministic code**: Hard-won workflows discovered through multi-step reasoning are only saved as prose prompts. Next time, the model must reason through the entire sequence again, consuming tokens repeatedly with unpredictable behavioral drift.
 
-And almost no CLI agent can use the browser you've already signed into — Twitter, say — so even though they can drive *a* browser, they can't go read Twitter for you on their own.
-
-They also do nothing on their own account for several agents driving a browser at once, so two jobs end up stepping on each other's tabs.
-
-As it turns out, **what most people are short of today isn't options — it's** a prepared agent OS, something that lets them install any capable CLI and **get going as quickly as with ordinary software.**
-
-As it stands, once you've set up a CLI agent on your machine you still spend hours on more configuration, and when you switch computers it all starts over. That drag does nothing for making money or getting faster with AI.
+What developers and teams are short of isn't more model choices — it's **a prepared Agent OS**: a host environment that works with any CLI agent as an execution engine, keeping operations disciplined and freezing proven tasks into reusable, automated workflows.
 
 ## frago in one line
 
-Is frago another OpenClaw, another Hermes?
+**frago = an AI agent operating system (Agent OS) that works with any agent.**
 
-No.
+frago does not produce proprietary language models, nor does it maintain a closed conversational loop. It treats Claude Code, codex, opencode, agy as execution engines, providing them with real-world control, persistent memory, and reusable workflows.
 
-Say you and your agent, working together, are Tony Stark. frago is the Iron Man suit.
+frago provides the full host runtime above the engine — giving agents real browser and desktop automation, long-term persistent memory, and the workflow infrastructure to freeze working procedures into token-free tools.
 
-Stark on his own is just an extremely clever man. But to fly, to go a round with the Hulk, to save the world — clever isn't enough. He has to put the suit on first.
+## Core Philosophy: From Using AI to Harnessing AI (Harness Engineering)
 
-## What frago does for the agent
+AI software engineering is evolving across three distinct paradigms:
+1. **Prompt Engineering**: Learning how to face an LLM;
+2. **Context Engineering**: Learning how to use an LLM;
+3. **Harness Engineering**: Learning how to harness an agent.
 
-This half the agent uses itself. You never see most of it.
+frago implements this harness across three concrete layers:
+- **Hooks determine what the agent knows**: Precise static rules and context companions injected at lifecycle events, with zero persistent model overhead;
+- **Recipes determine what the agent doesn't need to repeat**: Procedures proven through reasoning are frozen into deterministic code running without model inference;
+- **Skills determine how the agent acts**: Providing standard domain practices and execution playbooks.
 
-| Subsystem / command | What it gives you |
+## Agent-facing: Core Capabilities
+
+The system-level runtime provided directly to agent engines:
+
+| Core Capability | Definition & Core Responsibility | Commands & Mechanisms |
+|---|---|---|
+| **1. Guardrails & Rules**<br>Action boundaries | Zero-model static rules injected at critical events, keeping agent behavior strictly aligned without persistent token overhead | `frago hook-rules`<br>`frago book`<br>`~/.frago/hook/*` |
+| **2. Computer Use & Automation**<br>Real environment actions | Drive real authenticated browsers and reproducible virtual desktops with full visibility | `frago browser`<br>`frago desktop`<br>`frago apps`<br>`frago view` |
+| **3. Long-Term Memory**<br>Targeted recall | Decouples memory into decisions, artifacts, run traces, and handoffs instead of naive context dumps | `frago def` (decisions)<br>`frago context` (artifacts)<br>`frago session search` (traces)<br>`frago todo` (handoff) |
+| **4. Recipes**<br>Reusable Workflows | Freeze agent-discovered tasks into standalone, deterministic workflows with zero token overhead on re-runs | `frago recipe`<br>`frago daemon`<br>`frago market` |
+| **5. Multi-Agent Coordination & Scheduling**<br>Delegation & background | Delegate subtasks, connect external webhooks, and trigger autonomous background jobs | `frago agent`<br>`frago channel` · `frago reply`<br>`frago remote`<br>`frago schedule` |
+
+## Human-facing: Unified Management Console
+
+A transparent management window that remains cleanly decoupled from agent execution:
+
+| Module / Command | What it gives you |
 |---|---|
-| **Recipes**<br>`frago recipe` | Lets the agent learn to *build tools for itself* instead of waiting for you to configure more tools. frago covers the standard and the dependencies: packages are declared at the top of the script and installed into an isolated environment at run time, secrets are injected by the framework, and recipes call each other over a fixed JSON contract — the agent just writes the script, and what it writes is a tool it can re-run |
-| **Banking experience as it goes**<br>`frago def <domain>` | It saves what it learned while working, instead of leaving it for "spare time" and another agent with half the context |
-| **Built-in ground rules**<br>`frago book` | Most setups expect you to write your own agent.md, which isn't friendly. frago ships with a body of pitfall-avoiding knowledge that's there the moment you install |
-| **Browser**<br>`frago browser` | There are plenty of projects that let an agent drive a browser, and they're all complicated — a pile of things to install. frago ships a lightweight extension instead: all you need is Edge (which you go on using yourself), and the agent handles everything browser-side through frago's infrastructure — in the browser you're already signed into, each agent in its own tab group, never stepping on each other |
-| **Session companion**<br>`frago hook-rules` | Learns you from the way you put things — what's allowed, what isn't — and does its best not to make the same mistake twice |
-| **Agent OS && frago desktop**<br>`frago desktop` | A desktop that looks exactly like macOS/Linux, built for the agent. It started as a way to have the agent drive an interface and record video by itself; then it turned out that an agent always having a window it *can show you* is a fine thing in its own right. There's more to find here |
-| **Delegating on your behalf**<br>`frago agent` | Orchestration is a hollow idea — ten agents aren't ten times smarter than one, just ten times messier. frago's position: one agent that talks with you in real time understands what you want, and then issues the work on your behalf. Trust that an agent writes a better, more precise prompt than a person does |
-| **Finding things**<br>`frago context` | Where output belongs, where last time's ended up — the agent looks it up instead of asking you |
-| **External intake**<br>`frago channel` · `frago reply` | Takes tasks in from outside channels and sends results back, so the agent isn't limited to working while you watch |
-
-## What frago does for you
-
-This half is the human's window.
-
-| Subsystem / command | What it gives you |
-|---|---|
-| **Server && WebUI**<br>`frago start` · `frago server` | Supports the mainstream CLI agents, and lets you manage sessions from a web page |
-| **Providers**<br>`frago profile` | Manages several providers for people who don't live in a CLI, while the agent knows from built-in knowledge how to use them |
-| **Session search**<br>`frago session search` | Searches past sessions by meaning across Claude Code and opencode, instead of relying on remembering a keyword |
-| **Scheduling & daemons**<br>`frago schedule` · `frago daemon` | Recipes run on a clock and long jobs sit in the background without you watching |
-| **Recipe market**<br>`frago market` · `frago recipe share` | Publish your recipes, install other people's |
-| **Install & upkeep**<br>`frago init` · `frago update` · `frago autostart` | One-step setup, self-update, start on boot — a new computer doesn't mean starting over |
+| **Unified Console**<br>`frago start` · `frago server` | Normalizes session records from heterogeneous agents into a unified Web UI with real-time action timelines |
+| **Model Provider Profiles**<br>`frago profile` | Centralizes multi-provider credentials and endpoints, supplied to agents on demand without CLI clutter |
+| **Recipe Market**<br>`frago market` | Publish your automated tools, or install community-verified solutions with one click |
+| **Environment & Maintenance**<br>`frago init` · `frago update` · `frago autostart` | Desktop client, self-updates, and boot daemons — switch machines without starting from scratch |
 
 ## What you can do with it
 

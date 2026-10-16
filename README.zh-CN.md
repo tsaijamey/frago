@@ -13,64 +13,64 @@
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
 [![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.zh-CN.md)
 
-<img src="docs/images/hero-workbench.png" width="880" alt="frago 会话工作台：左栏一千多场会话，中栏是 agent 正在干活的逐条回执" />
+<img src="docs/images/hero-workbench.png" width="880" alt="frago 控制台：统一管理千级会话，实时查看 Agent 执行日志与动作流" />
 
 </div>
 
 > frago 与 OpenClaw（龙虾）无关。frago 的启动时间早于 OpenClaw 约一个月。
 
-## Why frago
+## 为什么需要 frago
 
-CLI Agent 一定程度上很好用，但也并没有那么方便。尤其是对大部分普通人而言。
+命令行代理（CLI Agent）具备强大的系统操控潜力，但在日常真实工程落地中，普遍面临三道难以逾越的障碍：
 
-对于 Agent 来说，CLI 可能是最佳的形态，因为 CLI 使其操控系统更容易。**但是对于人类而言并不是。**
+- **单次会话孤岛**：能力与状态被锁死在单次长对话中。会话一旦关闭或换个窗口，登录态、上下文与调用链路全部断裂；无法直接被调度、难以挂上定时任务。
+- **开场全量倾倒上下文**：为了让代理记住事实，常见做法是开场将成百上千行的规则文件全量倒入提示词中，既大量消耗标记预算，又容易产生幻觉与规则稀释；换个仓库或机器，立刻退回零记忆。
+- **试错成果无法固化为确定性资产**：代理耗费大量推理试错跑通的自动化流程，往往只被存为一段自然语言描述；下次重跑依然依靠模型推演，不仅每次重复烧算力，还面临输出不稳定的漂移风险。
 
-且几乎所有的 CLI Agent 都无法直接使用你已经登录过某些站点的浏览器，比如 Twitter，于是它们即便能操纵浏览器，也无法自主地帮你翻阅 Twitter。
-
-而且 CLI Agent 并没有为多 Agent 同时操控浏览器做任何自身的优化，于是两个任务会互相踩对方的标签页。
-
-事实证明，当今世界，**绝大多数人缺少的不是选择，而是**一个准备好的 Agent OS，能让他们安装任何高效率的 CLI 后都能**像使用传统的软件一样快速上手。**
-
-现如今你配置好你电脑上的 CLI Agent，还需要花很多时间去折腾更多的配置，你换一台电脑，所有的东西都要重来。这种消耗，对你使用 AI 挣钱、提高效率，只有副作用。
+绝大多数开发者与团队缺少的不是更多的模型选择，而是**一个准备好的 Agent OS**——兼容主流 Agent 作为底层执行引擎，让外部代理如同系统进程一般规范运行，并将经验沉淀为可复用的自动化工作流。
 
 ## 一句话理解 frago
 
-frago 是另一个龙虾、另一个 Hermes 吗？
+**frago = 兼容主流 Agent 的 AI 操作系统（Agent OS）。**
 
-不是。
+frago 不制造大语言模型，也不自建独立的封闭对话循环。无论是 Claude Code、codex、opencode 还是 Google Antigravity，安装即可作为底层执行引擎接入。
 
-假设你与 Agent 合作，你们俩的组合是托尼·斯塔克，那么 frago 就是那套钢铁侠战袍。
+frago 负责向上提供完整的系统级运行环境——赋予代理浏览器与桌面自动化操控能力、长短期持久记忆，以及跑通一次即可冻结为零模型开销的可复用自动化工作流。
 
-斯塔克本人只是个极其聪明的人。但要飞起来、跟绿巨人打一架、拯救世界，光聪明不够——他得先穿上那套战袍。
+## 核心理念：从使用 AI 到驾驭 AI（Harness Engineering）
 
-## frago 帮 Agent 做什么
+AI 工程正在经历三次关键范式演进：
+1. **提示词工程（Prompt Engineering）**：学会面对大模型；
+2. **上下文工程（Context Engineering）**：学会使用大模型；
+3. **套件工程（Harness Engineering）**：学会驾驭代理。
 
-这一半 Agent 自己用，你平时看不见。
+frago 通过三层技术基础设施实现这一范式：
+- **规则（hook）决定代理知道什么**：事件触发时精准注入静态规范与情境提醒，零标记常驻开销；
+- **配方（recipe）决定代理不用重复做什么**：代理跑通的试错流程直接固化为确定性代码，脱离模型推理运行；
+- **技能（skills）决定代理具体怎么做**：向代理提供规范化的工程实践与场景标准。
 
-| 子系统 / 指令 | 它带来什么 |
+## agent 面：核心能力支撑
+
+这一层面向代理，提供标准的操作环境与系统级支撑：
+
+| 核心能力 | 定义与核心职责 | 对应指令与机制 |
+|---|---|---|
+| **1. 实时护栏与运行纪律**<br>规则把关 | 静态规则基于关键事件精准注入，零模型常驻开销；LightAgent 在提交前、收尾时精准把关，防止行为跑偏 | `frago hook-rules`<br>`frago book`<br>`~/.frago/hook/*` |
+| **2. 浏览器与桌面自动化操控**<br>真实环境操作 | 接管真实登录态的浏览器与可脚本驱动、可录制的虚拟桌面，操作步骤清晰可见可留存 | `frago browser`<br>`frago desktop`<br>`frago apps`<br>`frago view` |
+| **3. 长短期持久记忆**<br>结构化检索 | 将记忆分拆为决策层、产物层、过程层与任务交接层，按需精准检索，杜绝上下文盲目堆叠 | `frago def`（决策）<br>`frago context`（产物）<br>`frago session search`（过程）<br>`frago todo`（交接） |
+| **4. Recipes 配方**<br>可复用工作流 | 代理摸索跑通的流程直接固化为独立脚本工具；支持模块化调用、后台常驻守护与市场共享 | `frago recipe`<br>`frago daemon`<br>`frago market` |
+| **5. 多 Agent 协同与任务调度**<br>多任务派发与协同 | 驱动独立工作子会话、接收即时通信渠道进件并处理、支持远程任务下发与定时调度常驻 | `frago agent`<br>`frago channel` · `frago reply`<br>`frago remote`<br>`frago schedule` |
+
+## 人面一层：统一可视化控制台
+
+面向用户提供透明可视的运维与管理入口，与代理底层执行逻辑清晰解耦：
+
+| 模块 / 指令 | 它带来什么 |
 |---|---|
-| **Recipes**<br>`frago recipe` | 让 Agent 快速掌握「为自己开发工具」而不是等你配置更多的工具。规范和依赖 frago 都兜住了：依赖写在脚本头上、跑起来隔离现装，密钥由框架注入，配方之间靠固定的 JSON 约定互相调用——Agent 只管写脚本，写完就是一个能反复跑的工具 |
-| **实时积累经验**<br>`frago def <domain>` | 边干边把经验存下来，不用等空闲时间再拿另一个上下文不完整的 Agent 来补 |
-| **内置宪法知识**<br>`frago book` | 大多数人还得自己准备一份 agent.md，很不友好。frago 内置了一批避坑知识，装完就在 |
-| **浏览器**<br>`frago browser` | 市面上帮 Agent 操控浏览器的项目不少，但都很复杂，要装一堆东西。frago 自带一个轻量插件，你只需要准备好 Edge（你自己平时也照用），Agent 就能借这套基础设施把浏览器上的事全办了——用的是你已经登录好的那个浏览器，多个 Agent 各占一个标签组，互不干扰 |
-| **会话伴侣**<br>`frago hook-rules` | 通过你的表达理解你，理解什么允许、什么不允许，并且尽可能不再犯同样的错 |
-| **Agent OS && frago desktop**<br>`frago desktop` | 一个完全像 macOS/Linux、专门为 Agent 定制的桌面。最早我只是想让 Agent 自己操控界面、自动录制视频；后来觉得，Agent 始终有一个「可以展示给你看」的窗口，本身就是很酷的事。用法你可以继续挖 |
-| **代你下发需求**<br>`frago agent` | orchestrator 是一种虚无的用法——十个 Agent 不会比一个聪明十倍，只会更混乱。frago 主张的是：由一个与你实时互动的 Agent 理解你的需求，再由它代表你把需求下发出去。要相信 Agent 写提示词比人类写得更优雅、更准确 |
-| **落点检索**<br>`frago context` | 产出该放哪、上次那份放哪了——Agent 自己查，不用你指路 |
-| **外部入口**<br>`frago channel` · `frago reply` | 从外部渠道接任务进来、把结果回出去，Agent 不必只在你面前才干活 |
-
-## frago 帮你做什么
-
-这一半是给人的窗口。
-
-| 子系统 / 指令 | 它带来什么 |
-|---|---|
-| **Server && WebUI**<br>`frago start` · `frago server` | 支持主流 CLI Agent，让你在网页里管理会话 |
-| **Providers**<br>`frago profile` | 帮助不熟悉 CLI 的人管理他们的多个不同的 Providers，而 Agent 通过内置知识知道要如何使用这些信息 |
-| **会话检索**<br>`frago session search` | 跨 Claude Code / opencode 按意思搜历史会话，而不是靠记得关键词 |
-| **定时与常驻**<br>`frago schedule` · `frago daemon` | 配方按点自己跑、长任务常驻后台，不需要你守着 |
-| **配方市场**<br>`frago market` · `frago recipe share` | 把配方发出去，也把别人的装进来 |
-| **安装运维**<br>`frago init` · `frago update` · `frago autostart` | 一步配好环境、自更新、开机自启，换一台电脑不用从头折腾一遍 |
+| **统一控制台**<br>`frago start` · `frago server` | 归一主流命令行 Agent 的记录格式，在统一的 Web 界面中集中查看执行日志与动作时间线 |
+| **模型配置管理**<br>`frago profile` | 集中管理多家模型供应商的凭证与接入点，代理按需索取，免去命令行繁琐配置 |
+| **配方市场**<br>`frago market` | 浏览并一键安装社区验证的可复用工作流方案，将个人工具一键发布共享 |
+| **环境与维护**<br>`frago init` · `frago update` · `frago autostart` | 提供一键环境就绪、开机常驻守护与无缝版本升级机制 |
 
 ## 能拿它做什么
 
