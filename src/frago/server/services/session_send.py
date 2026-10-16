@@ -36,15 +36,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from frago.session import agy_store, codex_store, opencode_store, record_reader
 from frago.session import claude_sessions as claude_svc
-from frago.session import codex_store, opencode_store, record_reader
 from frago.session import transcript_completion as tc
 from frago.session.unified_record import RecordFamily
 
 logger = logging.getLogger(__name__)
 
 # 家族 → 驱动这一家的 agent driver key（``frago.agent_driver.drivers`` 里注册的名字）。
-# 三家齐全：少一家就等于那一家的会话在页面上发不出去，而不是发错地方。
+# 四家齐全：少一家就等于那一家的会话在页面上发不出去，而不是发错地方。
 #
 # **CoreAgent 不在这张表里。** 这张表说的是"哪一家 CLI 挂在 tmux 里等着被 send-keys"，
 # 而 CoreAgent 没有可以挂着的交互界面——它是 frago 自己的 agent 循环，一轮就是一个进程。
@@ -54,6 +54,7 @@ AGENT_TYPE_BY_FAMILY: dict[RecordFamily, str] = {
     "claude-code": "claude",
     "opencode": "opencode",
     "codex": "codex",
+    "agy": "agy",
 }
 
 #: CoreAgent 那一家在落点里的 agent 名。不是 driver key（没有这个 driver），只是让日志
@@ -186,6 +187,18 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
                 f"codex 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
             )
         return SendTarget(session_id, family, agent_type, meta.cwd, is_new=False)
+
+    if family == "agy":
+        # agy 的转录文件就是它这一场的记录；目录记在摘要库的 workspace_uris 里，续接要在
+        # 原来那个目录里起 ``--conversation`` 才接得回同一场。
+        if not agy_store.conversation_exists(session_id):
+            raise SessionGone(f"agy 那边找不到会话 {session_id} 的转录，续不上")
+        directory = agy_store.session_directory(session_id)
+        if not directory:
+            raise SessionDirectoryUnknown(
+                f"读不到 agy 会话 {session_id} 的工作目录，不能替它决定在哪儿续接"
+            )
+        return SendTarget(session_id, family, agent_type, directory, is_new=False)
 
     # opencode
     if not opencode_store.session_exists(session_id):

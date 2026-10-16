@@ -24,6 +24,7 @@ class AgentType(str, Enum):
     OPENCODE = "opencode"  # opencode (tmux-driven)
     CODEX = "codex"  # OpenAI Codex CLI (tmux-driven)
     COREAGENT = "coreagent"  # frago 自己的 CoreAgent
+    AGY = "agy"  # Antigravity CLI (tmux-driven)
     CURSOR = "cursor"  # Cursor (reserved)
     CLINE = "cline"  # Cline (reserved)
 

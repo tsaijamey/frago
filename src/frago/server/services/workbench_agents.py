@@ -10,20 +10,22 @@
 ## 一家能不能挑，要过两道门
 
 **装没装。** 探测走 driver 自己的 ``locate``：claude 多半在 nvm/fnm/volta 某个目录下，
-codebuddy 躺在 WorkBuddy.app 里，都不是 ``which`` 一句话能覆盖的，那份知识本就属于各家
+agy 藏在它自己的用户目录里，都不是 ``which`` 一句话能覆盖的，那份知识本就属于各家
 自己。没装的**照样列出来**，只是不可选、并明说"本机没装"——把它整个藏掉，人只会觉得
 "frago 不支持 codex"，而真相是装一下就能用。
 
 **记录读不读得回来。** 工作台的清单、记录流、发送三条路都以「会话属于哪一家」为轴，而
-那一层认得的只有 claude-code / opencode / codex 三家（``RecordFamily``）。codebuddy 有
-driver、跑得起来，但它的 jsonl 落在 ``~/.codebuddy/projects``，工作台一个字都读不到——
-让人从这里起一场 codebuddy 会话，结果是会话真的起来了、真的在干活，而页面上那一行永远
-不出现。这比不给这个选项坏得多，所以它列出来但不可选，理由照实说。
+那一层认得的只有登记过家族的那几家（``RecordFamily``，这张表见
+:data:`FAMILY_BY_AGENT_TYPE`）。一家 driver 注册了、跑得起来，但它的记录落在一个工作台
+读不到的地方，这时让人从这里起一场会话的结果是：会话真的起来了、真的在干活，而页面上
+那一行永远不出现。这比不给这个选项坏得多，所以这一家列出来但不可选，理由照实说。
+**今天这一格是空的**——注册表里每一家都登记了家族——但判据留着：接下一家时忘了登记
+家族，这道门就是最后一处拦得住的地方。
 
 ## CoreAgent 不从注册表来，它的两道门后面换了东西
 
 工作台里还有第四家：frago 自己的内核（CoreAgent）。它压根没有 driver，也不该有——另外
-三家都是挂在 tmux 里的交互式程序，起一次挂着、之后每句话敲进去；CoreAgent 是交一件事、
+几家都是挂在 tmux 里的交互式程序，起一次挂着、之后每句话敲进去；CoreAgent 是交一件事、
 跑完就退的进程，没有可挂的 TUI。所以它在这里单写一行，判据自己算。仍然是两道门，只是
 门后的东西换了：
 
@@ -37,7 +39,7 @@ driver、跑得起来，但它的 jsonl 落在 ``~/.codebuddy/projects``，工�
 ## 编号谁来 mint，是两种交互而不是一个开关
 
 claude 接受 ``--session-id``：页面先 mint 一个编号，会话编号当场就有，点完"创建"直接
-跳进那一场。codex 与 opencode 的编号由它们自己分配，frago 只能在会话起来之后去认领
+跳进那一场。codex、opencode 与 agy 的编号由它们自己分配，frago 只能在会话起来之后去认领
 （见各 driver 的 ``_claim_once``），所以点完"创建"还有一段"正在起、等它报编号"的空窗。
 判据出自 driver 的 ``accepts_session_id``，NEVER 在界面上按 agent 名字写死。
 
@@ -62,7 +64,7 @@ FAMILY_BY_AGENT_TYPE: dict[str, str] = {
 
 #: 清单次序。摆在前面的是更可能被挑的那几家；表里没有的新家按名字排在后面——次序不对
 #: 只是不好看，而漏掉一家是功能缺失，所以这里 NEVER 拿它当白名单用。
-_PREFERRED_ORDER = ("claude", "coreagent", "codex", "opencode")
+_PREFERRED_ORDER = ("claude", "coreagent", "codex", "opencode", "agy")
 
 #: CoreAgent 那一行的 ``agent_type``。取自 ``session_send`` 那份，NEVER 在这里另拼一个
 #: 字符串：两处各写一遍，页面上挑的名字与发送那条路认的名字就会各走各的。
@@ -131,7 +133,7 @@ class WorkbenchAgent:
     #: 不是成品文案：这一层不知道读它的人用哪种语言。没什么要说时为 None。
     reason: str | None
     #: 会话编号谁 mint："caller" = 页面先给（claude），"claimed" = 起来后认领
-    #: （codex / opencode），后者新建时有一段等编号的空窗。
+    #: （codex / opencode / agy），后者新建时有一段等编号的空窗。
     id_origin: str
 
 

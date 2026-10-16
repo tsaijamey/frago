@@ -1,12 +1,15 @@
 /**
  * 左栏那颗「复制续接命令」按钮的用例。
  *
- * 盯两件事：
+ * 盯三件事：
  *
- * 1. **三家各复制自己那一种写法。** 从前这里是 `switch` 的 default 分支兜住一切，于是
- *    CoreAgent 的会话也复制出 `claude --resume core_…`——那个编号在 claude 的档案里不
- *    存在，粘到终端里 claude 会拿它当新编号开一场空白会话，人以为自己接上了原来那场。
- * 2. **CoreAgent 那一家不长这颗按钮。** 它没有能挂在终端里的交互界面，没有这样一条命令。
+ * 1. **五家各复制自己那一种写法。** 从前这里是 `switch` 的 default 分支兜住一切，于是每接
+ *    一家新内核就复制出 claude 的命令一次：CoreAgent 那回是 `claude --resume core_…`，
+ *    antigravity 这回落进同一条分支。那个编号在 claude 的档案里根本不存在，粘到终端里
+ *    claude 会拿它当新编号开一场空白会话，人以为自己接上了原来那场。
+ * 2. **CoreAgent 那条必须带工作目录。** 它的会话记录按工作目录分开放，`--resume` 只在当初
+ *    那个目录下找得到；目录拿不到就不出这条命令，NEVER 退化成不带目录的那一种。
+ * 3. **按钮跟着命令走。** 拼得出命令的才有这一项，拼不出的没有。
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
@@ -43,7 +46,7 @@ function session(
 }
 
 describe('复制续接命令', () => {
-  it('三家各给自己那一种写法', () => {
+  it('五家各给自己那一种写法', () => {
     expect(resumeCommand(session({ session_id: 'abc-123' }))).toBe('claude --resume abc-123');
     expect(resumeCommand(session({ session_id: 'ses_09', family: 'opencode' }))).toBe(
       'opencode -s ses_09'
@@ -51,14 +54,47 @@ describe('复制续接命令', () => {
     expect(resumeCommand(session({ session_id: 'cx-09', family: 'codex' }))).toBe(
       'codex resume cx-09'
     );
+    expect(resumeCommand(session({ session_id: 'agy-09', family: 'agy' }))).toBe(
+      'agy --conversation agy-09'
+    );
+    expect(resumeCommand(session({ session_id: 'core_0a1b', family: 'coreagent' }))).toBe(
+      'frago-core --resume core_0a1b --cwd /Users/frago/Repos/frago'
+    );
   });
 
-  it('CoreAgent 没有这样一条命令，NEVER 退回 claude 那一种', () => {
+  it('antigravity NEVER 退回 claude 那一种', () => {
+    // 落进 claude 分支的那一版，复制出来的是 `claude --resume <agy 编号>`——
+    // 那个编号在 claude 的档案里不存在，粘到终端会开一场空白会话。
+    const cmd = resumeCommand(session({ session_id: 'agy-09', family: 'agy' }));
+    expect(cmd).not.toBe('claude --resume agy-09');
+    expect(cmd).toBe('agy --conversation agy-09');
+  });
+
+  it('CoreAgent 那条必须带工作目录，NEVER 退回不带目录的那一种', () => {
+    // 会话记录按工作目录分开放，`--resume` 只在当初那个目录下找得到：换个目录跑，frago-core
+    // 不报错，静默开一场空白会话，还在新目录下用同一个编号另写一份记录。
     const cmd = resumeCommand(session({ session_id: 'core_0a1b', family: 'coreagent' }));
+    expect(cmd).not.toBe('claude --resume core_0a1b');
+    expect(cmd).not.toBe('frago-core --resume core_0a1b');
+    expect(cmd).toBe('frago-core --resume core_0a1b --cwd /Users/frago/Repos/frago');
+  });
+
+  it('CoreAgent 拿不到工作目录就不出命令', () => {
+    const cmd = resumeCommand(
+      session({ session_id: 'core_0a1b', family: 'coreagent', directory: '' })
+    );
     expect(cmd).toBeNull();
   });
 
-  it('有命令的那几家「…」菜单里有复制这一项，CoreAgent 没有', () => {
+  it('工作目录带空格时裹单引号，粘进终端不会被拆成两个参数', () => {
+    expect(
+      resumeCommand(
+        session({ session_id: 'core_0a1b', family: 'coreagent', directory: '/Users/a b/项目' })
+      )
+    ).toBe("frago-core --resume core_0a1b --cwd '/Users/a b/项目'");
+  });
+
+  it('「…」菜单里这一项跟着命令走', () => {
     const { rerender } = render(
       <SessionItem
         session={session({ session_id: 'abc-123' })}
@@ -72,9 +108,24 @@ describe('复制续接命令', () => {
     expect(screen.getByTestId('copy-resume')).toBeTruthy();
     fireEvent.click(screen.getByTestId('session-menu-button'));
 
+    // CoreAgent 带得出目录，这一项就在——它从前是这页里唯一不长这一项的一家。
     rerender(
       <SessionItem
         session={session({ session_id: 'core_0a1b', family: 'coreagent' })}
+        selected={false}
+        copied={false}
+        onSelect={NOOP}
+        onCopy={NOOP}
+      />
+    );
+    fireEvent.click(screen.getByTestId('session-menu-button'));
+    expect(screen.getByTestId('copy-resume')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('session-menu-button'));
+
+    // 目录拿不到，命令拼不出来，这一项也不长。
+    rerender(
+      <SessionItem
+        session={session({ session_id: 'core_0a1b', family: 'coreagent', directory: '' })}
         selected={false}
         copied={false}
         onSelect={NOOP}

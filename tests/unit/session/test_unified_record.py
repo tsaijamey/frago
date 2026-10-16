@@ -199,8 +199,8 @@ class TestUnifiedRecord:
 
 # ── 各家的判定 ──────────────────────────────────────────────────────
 class TestDetectFamily:
-    def test_一共四家(self) -> None:
-        assert {"claude-code", "opencode", "codex", "coreagent"} == RECORD_FAMILIES
+    def test_一共五家(self) -> None:
+        assert {"claude-code", "opencode", "codex", "coreagent", "agy"} == RECORD_FAMILIES
 
     def test_coreagent靠编号前缀分出来(self) -> None:
         """CoreAgent 的编号是 frago 自己发的，判它不用落盘——与 codex 的区别正在这里。"""
@@ -288,7 +288,7 @@ class TestReaderSkeleton:
 
     def test_各家的翻译层都已登记(self) -> None:
         """入口不写 if/else，家族到翻译层的对应关系全在注册表里。"""
-        assert set(list_adapters()) == {"claude-code", "opencode", "codex", "coreagent"}
+        assert set(list_adapters()) == {"claude-code", "opencode", "codex", "coreagent", "agy"}
 
     def test_取不到不等于没接上(self) -> None:
         """接上翻译层之后，本机没有的那场会话取回空结果，NEVER 再抛未实现。
@@ -343,6 +343,7 @@ class TestReaderSkeleton:
         )
 
         monkeypatch.setattr(reader.codex_store, "list_sessions", list)
+        monkeypatch.setattr(reader.agy_store, "list_conversations", list)
 
         cards = reader.list_sessions()
         assert [card.family for card in cards] == ["opencode", "claude-code"]
@@ -381,6 +382,9 @@ class TestSessionCardStatus:
         )
         monkeypatch.setattr(reader.opencode_store, "list_sessions", list)
         monkeypatch.setattr(reader.codex_store, "list_sessions", list)
+        # agy 那一侧也要掐掉：它的门面直接读本机那个摘要库，不掐的话这台机器上真跑过的
+        # agy 会话会混进清单，用例就跟着本机状态飘（下一条的"合并后倒序"同理）。
+        monkeypatch.setattr(reader.agy_store, "list_conversations", list)
         (card,) = reader.list_sessions()
         return card
 
@@ -476,6 +480,7 @@ class TestSessionCardStatus:
             lambda _rows: {"ses_abc": TailSignals(last_kind="agent.say", digest_done="答完了")},
         )
         monkeypatch.setattr(reader.codex_store, "list_sessions", list)
+        monkeypatch.setattr(reader.agy_store, "list_conversations", list)
 
         (card,) = reader.list_sessions()
 

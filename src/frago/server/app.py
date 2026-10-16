@@ -293,6 +293,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
             logger.info("Retired superseded install artifacts: %s", ", ".join(retired))
         logger.info("Hook binary ready: %s", hook_path)
         sync_hook_events(str(hook_path))
+
+        # agy 读的是另一份文件、另一套方言（~/.gemini/config/hooks.json + agy-hook 垫片）。
+        # 单独一步：它失败不该把 claude 那份已经成功的登记也拖没。
+        from frago.init.hook_binary import sync_agy_hook_events
+
+        sync_agy_hook_events()
     except Exception as e:
         logger.warning("Failed to deploy hook binary: %s", e)
 

@@ -72,10 +72,10 @@ const AGENTS = [
     id_origin: 'claimed' as const,
   },
   {
-    agent_type: 'codebuddy',
-    display_name: 'CodeBuddy Code',
+    agent_type: 'ghost',
+    display_name: 'Ghost CLI',
     installed: true,
-    path: '/Applications/WorkBuddy.app/cli',
+    path: '/usr/local/bin/ghost',
     family: null,
     selectable: false,
     reason: '它的会话记录读不进工作台',
@@ -189,7 +189,7 @@ describe('NewSessionModal — 挑客户端', () => {
   it('用不了的那一家不摆在可挑的那一排里', async () => {
     open();
     await screen.findByTestId('agent-claude');
-    expect(screen.queryByTestId('agent-codebuddy')).toBeNull();
+    expect(screen.queryByTestId('agent-ghost')).toBeNull();
   });
 
   it('用不了的那几家折在一句话后面，点开说得出为什么', async () => {
@@ -218,7 +218,7 @@ describe('NewSessionModal — 挑客户端', () => {
   });
 
   it('上次挑的那一家现在挑不了时，不声张地退回默认', async () => {
-    localStorage.setItem('frago-workbench-last-agent', 'codebuddy');
+    localStorage.setItem('frago-workbench-last-agent', 'ghost');
     open();
     expect((await screen.findByTestId('agent-claude')).getAttribute('aria-checked')).toBe('true');
   });

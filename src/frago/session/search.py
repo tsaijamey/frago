@@ -109,6 +109,7 @@ _CORE_DIRS = {
     "opencode": "opencode",
     "codex": "codex",
     "coreagent": "coreagent",
+    "agy": "agy",
 }
 
 _ASCII_ONLY = re.compile(r"^[\x00-\x7f]+$")
@@ -153,7 +154,7 @@ class SessionHit:
     """一个命中的会话。"""
 
     source: str
-    """``claude``、``opencode``、``codex`` 或 ``coreagent``。"""
+    """``claude``、``opencode``、``codex``、``coreagent`` 或 ``agy``。"""
 
     session_id: str
     title: str | None
@@ -314,7 +315,7 @@ def _run_expansion(
 
     两条后端各是各的形状，判据只有 ``runs_on_kernel`` 一处（与 ``frago agent`` 同源）：
 
-    - **三家 CLI**（claude / codex / opencode / codebuddy）是挂在 tmux 里的交互程序，
+    - **几家 CLI**（claude / codex / opencode / agy）是挂在 tmux 里的交互程序，
       起一个会话、投喂一轮、按 pane 读答案；
     - **自带内核**（CoreAgent）是"问一句答一句"的一次性进程，走 chat 模式——它没有 pane
       可读，也不该为问一句就落一场会话：这里每检索一次就调它一次，落会话等于把检索的
@@ -351,8 +352,13 @@ def _record_epoch(record: dict[str, Any]) -> float | None:
     """一条记录自己带的时刻（epoch 秒）。取不到返回 None。
 
     claude 转录与 codex rollout 用 ``timestamp``（ISO-8601，带 Z 或不带时区）；opencode 片段用
-    ``time``，是 ``{"start": 毫秒, "end": 毫秒}``。早期加工副本沿用 ``timestamp``，
+    ``time``，是 ``{"start": 毫秒, "end": 毫秒}``；agy 转录用 ``created_at``（同样是
+    ISO-8601，秒级带 Z）。早期加工副本沿用 ``timestamp``，
     写的是不带时区的本地时间，按本地时区解释正是它的原意。
+
+    agy 那一格按 ``step_index`` 认：那个字段是它每一行都有的，别的核没有。认它才敢把
+    ``created_at`` 当 ISO 解释——别家若也有同名字段，格式未必是这一种，按错格式解会把
+    一场会话的时刻算到别处去。
     """
     stamp = record.get("timestamp")
     if isinstance(stamp, str) and stamp:
@@ -360,6 +366,13 @@ def _record_epoch(record: dict[str, Any]) -> float | None:
             return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
+    if "step_index" in record:
+        created = record.get("created_at")
+        if isinstance(created, str) and created:
+            try:
+                return datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
     moment = record.get("time")
     if isinstance(moment, dict):
         value = moment.get("end") or moment.get("start")
@@ -466,8 +479,19 @@ def _record_text(record: dict[str, Any]) -> str:
                     if isinstance(block, dict) and isinstance(block.get("text"), str):
                         parts.append(block["text"])
 
-    # 早期加工副本用 content_summary；其余是各格式的零散文本字段。
-    for key in ("content_summary", "summary", "text", "output", "error", "lastPrompt", "customTitle"):
+    # 早期加工副本用 content_summary；其余是各格式的零散文本字段。``thinking`` 是 agy
+    # 那一行里模型自己的推理（顶层字符串，不在 content 块里），与 claude 那边从块里取
+    # thinking 是同一件事——收了它，「模型当时想过什么」才搜得到。
+    for key in (
+        "content_summary",
+        "summary",
+        "text",
+        "output",
+        "error",
+        "lastPrompt",
+        "customTitle",
+        "thinking",
+    ):
         value = record.get(key)
         if isinstance(value, str):
             parts.append(value)
@@ -735,6 +759,33 @@ def _backup_metadata(session_dir: Path) -> tuple[str | None, str | None]:
     return title, cwd
 
 
+def _agy_titles(session_ids: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """命中的 agy 会话叫什么、在哪个目录跑的。
+
+    agy 的转录里两样都没有——正文只有对话本身，标题与工作目录写在它自己的摘要库里，
+    所以与 opencode 那一侧走同一条路：只为命中的那几场读一次库。查不到（库不在、或
+    这场已从摘要库里滚掉）就留空，NEVER 因此让检索失败。
+    """
+    if not session_ids:
+        return {}
+    from frago.session import agy_store
+
+    wanted = set(session_ids)
+    out: dict[str, tuple[str | None, str | None]] = {}
+    try:
+        for conv in agy_store.list_conversations():
+            if conv.conversation_id not in wanted:
+                continue
+            # 与会话清单同一个退让：模型起的名字优先，没有就用 agy 自己存的那句提要。
+            out[conv.conversation_id] = (
+                conv.title or conv.preview or None,
+                conv.workspace or None,
+            )
+    except Exception:  # noqa: BLE001 — 读不到库 NEVER 让检索失败
+        logger.debug("agy title lookup failed", exc_info=True)
+    return out
+
+
 def _resume_command(core: str, session_id: str) -> str:
     if core == "opencode":
         return f"opencode -s {session_id}"
@@ -743,6 +794,8 @@ def _resume_command(core: str, session_id: str) -> str:
     if core == "coreagent":
         # 内核自己认这个编号，把先前的回合重放进上下文再接着跑。
         return f"frago-core --resume {session_id}"
+    if core == "agy":
+        return f"agy --conversation {session_id}"
     return f"claude --resume {session_id}"
 
 
@@ -857,6 +910,7 @@ def search_backup(
     opencode_meta = _opencode_titles(
         [c.session_id for c, _ in chosen if c.core == "opencode"]
     )
+    agy_meta = _agy_titles([c.session_id for c, _ in chosen if c.core == "agy"])
 
     hits: list[SessionHit] = []
     degraded_count = 0
@@ -870,6 +924,8 @@ def search_backup(
         cwd: str | None = None
         if candidate.core == "opencode":
             title, cwd = opencode_meta.get(candidate.session_id, (None, None))
+        elif candidate.core == "agy":
+            title, cwd = agy_meta.get(candidate.session_id, (None, None))
         elif degraded:
             title, cwd = _backup_metadata(primary.parent)
         elif candidate.core == "codex":

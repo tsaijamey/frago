@@ -1,4 +1,4 @@
-"""两家会话记录翻译层的注册表（spec 20260729-session-workbench-webui Phase 1）。
+"""各家会话记录翻译层的注册表（spec 20260729-session-workbench-webui Phase 1）。
 
 ``record_reader`` 判出会话属于哪一家之后，到这里按家族取翻译层，不写死 if/else。
 新增一家（比如以后再接第三个 CLI）只要实现 :class:`RecordAdapter` 的两个方法再登记
@@ -59,7 +59,7 @@ class RecordAdapter(Protocol):
 
 _ADAPTERS: dict[RecordFamily, RecordAdapter] = {}
 
-#: 内置的四家导过了没有。取用之前一直是 False。
+#: 内置的五家导过了没有。取用之前一直是 False。
 _BUILTINS_LOADED = False
 
 
@@ -83,6 +83,7 @@ def _load_builtins() -> None:
     if _BUILTINS_LOADED:
         return
 
+    from frago.session.adapters.agy_records import AgyRecordAdapter
     from frago.session.adapters.claude_code_records import ClaudeCodeRecordAdapter
     from frago.session.adapters.codex_records import CodexRecordAdapter
     from frago.session.adapters.opencode_records import OpencodeRecordAdapter
@@ -95,6 +96,7 @@ def _load_builtins() -> None:
         # CoreAgent 的记录形状就是 Claude Code 的形状，只是落在别处，所以这一家的翻译层
         # 是上面那一份换了个根目录，不另写判据。
         "coreagent": CoreAgentRecordAdapter(),
+        "agy": AgyRecordAdapter(),
     }
     for family, adapter in builtin.items():
         if family not in _ADAPTERS:

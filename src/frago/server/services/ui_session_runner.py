@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from frago.agent_driver.pool import WarmSessionPool
-from frago.session import codex_store, opencode_store
+from frago.session import agy_store, codex_store, opencode_store
 from frago.session import transcript_completion as tc_mod
 
 if TYPE_CHECKING:
@@ -249,6 +249,7 @@ def _turn_finished(session: TmuxAgentSession) -> bool:
       还在跑；把还在跑的那种当空闲回收，等于连着后台 worker 一起杀。
     - codex：rollout 里最新一轮已 ``task_complete``。
     - opencode：会话库里最新一轮已终结。
+    - agy：转录里最新一轮已收尾（末条是带正文的 PLANNER_RESPONSE）。
 
     哪一家**问会话自己**（``session.driver.agent_type``），不按编号形状去猜：这个
     会话是拿哪个 driver 起来的，它就是哪一家，没有再判一次的余地。问不出来就 False
@@ -276,12 +277,19 @@ def _turn_finished(session: TmuxAgentSession) -> bool:
             return claude_driver.is_truly_idle(session)
 
         if family == "codex":
-            turn = codex_store.latest_turn(session.session_id)
-            return turn is not None and turn.done
+            codex_turn = codex_store.latest_turn(session.session_id)
+            return codex_turn is not None and codex_turn.done
 
         if family == "opencode":
-            turn = opencode_store.latest_turn(session.session_id)
-            return turn is not None and turn.done
+            opencode_turn = opencode_store.latest_turn(session.session_id)
+            return opencode_turn is not None and opencode_turn.done
+
+        if family == "agy":
+            # ``session.session_id`` 多半是 frago 自己给的把手（``webui-…`` 或命令行的
+            # ``--name``），真编号要等认领之后才写进映射。故先按映射换成真编号再问转录。
+            sid = agy_store.get_binding(session.session_id) or session.session_id
+            agy_turn = agy_store.latest_turn(sid)
+            return agy_turn is not None and agy_turn.done
     except Exception:  # noqa: BLE001 — 读盘/读库/读屏失败只是这一轮判不出空闲
         return False
     # 注册了新 driver 却没在这里给它一条判据：不回收，NEVER 拿别家的档案去断它。

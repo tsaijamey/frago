@@ -48,7 +48,7 @@ export interface SessionMenuProps {
   /** tmux 里这一场没了（关掉了，或本来就没了）。 */
   onStopped?: () => void;
   onDeleted?: (result: DeleteSessionResult) => void;
-  /** 复制续接命令。不给、或这一家没有续接命令（CoreAgent）就不长这一项。 */
+  /** 复制续接命令。不给、或这一家拼不出续接命令就不长这一项（见 `resumeCommand`）。 */
   onCopy?: (session: WorkbenchSession) => void;
   copied?: boolean;
   /**

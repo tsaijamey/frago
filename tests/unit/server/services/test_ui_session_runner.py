@@ -23,8 +23,8 @@ class FakePool:
     def __init__(self) -> None:
         self.live: set[str] = set()
         self.runs: list[tuple[str, str]] = []  # (session_id, prompt)
-        self.builds: list[str] = []            # 触发冷启动重建的 session_id
-        self.native_flags: list[bool] = []     # 每轮 run 收到的 native_session_id
+        self.builds: list[str] = []  # 触发冷启动重建的 session_id
+        self.native_flags: list[bool] = []  # 每轮 run 收到的 native_session_id
         # session_id → 会话替身。只需带一个 adopted 标志：runner 据此分辨"接管"与
         # "冷启动"，两者都是零等待与十几秒等待的差别。
         self.sessions: dict[str, SimpleNamespace] = {}
@@ -41,7 +41,17 @@ class FakePool:
         """
         return self.sessions.get(session_id)
 
-    def run(self, prompt, *, agent_type, session_id, cwd, native_session_id=False, timeout_s=120.0, resume_hook=None):  # noqa: ARG002
+    def run(
+        self,
+        prompt,
+        *,
+        agent_type,
+        session_id,
+        cwd,
+        native_session_id=False,
+        timeout_s=120.0,
+        resume_hook=None,
+    ):  # noqa: ARG002
         if session_id not in self.live:
             # 冷会话：pool 会 resume 重建。
             self.builds.append(session_id)
@@ -95,7 +105,7 @@ def test_cold_session_triggers_resume_rebuild():
 
     activation = runner.send("cold-X", "hello")
 
-    assert pool.builds == ["cold-X"]       # 冷会话经 pool resume 重建
+    assert pool.builds == ["cold-X"]  # 冷会话经 pool resume 重建
     assert activation.status == "activating"
 
 
@@ -119,9 +129,7 @@ def test_load_config_self_heals_missing_webui_sessions(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(config_manager, "CONFIG_PATH", cfg_path)
     # 屏蔽 api_endpoint 迁移副作用（标志文件路径）。
-    monkeypatch.setattr(
-        config_manager, "_MIGRATION_PERFORMED_FLAG", tmp_path / ".migrated"
-    )
+    monkeypatch.setattr(config_manager, "_MIGRATION_PERFORMED_FLAG", tmp_path / ".migrated")
 
     config = config_manager.load_config()
 
@@ -204,9 +212,7 @@ def test_空闲时送进去且记录里看到了才算到(monkeypatch):
     runner = _runner_for(monkeypatch, session, finished=True)
     seen = iter([False, False, True])
 
-    got = runner.submit_when_idle(
-        "s", "队友的话", landed=lambda: next(seen), sleep=lambda _s: None
-    )
+    got = runner.submit_when_idle("s", "队友的话", landed=lambda: next(seen), sleep=lambda _s: None)
 
     assert got == "landed"
     assert typed == ["队友的话"]
@@ -222,10 +228,37 @@ def test_等不到就把自己打的字清掉(monkeypatch):
         now[0] += seconds
 
     got = runner.submit_when_idle(
-        "s", "队友的话", landed=lambda: False, confirm_s=5, poll_s=1,
-        sleep=tick, clock=lambda: now[0],
+        "s",
+        "队友的话",
+        landed=lambda: False,
+        confirm_s=5,
+        poll_s=1,
+        sleep=tick,
+        clock=lambda: now[0],
     )
 
     assert got == "not_now"
     assert typed == ["队友的话"]
     assert cleared == [True], "留在输入框里，下一个按回车的人会把它连同自己的话一起交出去"
+
+
+def test_agy的会话收尾了才算空闲(monkeypatch):
+    """agy 那一档：先把手把换成真编号（认领映射），再问转录里最新一轮收没收尾。
+
+    手把（``webui-…`` / 命令行的 ``--name``）直接拿去问转录是问不到的——真编号要等
+    认领之后才写进映射。少了这一步，agy 会话永远判不出空闲、永远不回收。
+    """
+    from frago.server.services import ui_session_runner as usr
+
+    monkeypatch.setattr(
+        usr.agy_store, "get_binding", lambda sid: "conv-1" if sid == "webui-x" else None
+    )
+    monkeypatch.setattr(
+        usr.agy_store, "latest_turn", lambda cid: SimpleNamespace(done=(cid == "conv-1"))
+    )
+
+    claimed = SimpleNamespace(driver=SimpleNamespace(agent_type="agy"), session_id="webui-x")
+    assert usr._turn_finished(claimed) is True
+
+    unknown = SimpleNamespace(driver=SimpleNamespace(agent_type="agy"), session_id="webui-y")
+    assert usr._turn_finished(unknown) is False

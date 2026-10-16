@@ -558,6 +558,11 @@ COMMAND_EXAMPLES = {
     "hook-rules/validate": [
         "frago hook-rules validate",
     ],
+    # agy lifecycle hook shim — called by agy's hooks.json, not by hand
+    "agy-hook": [
+        'echo \'{"conversationId":"test","workspacePaths":["/tmp"]}\' | frago agy-hook --event SessionStart',
+        'echo \'{"toolCall":{"name":"run_command","args":{"CommandLine":"ls"}}}\' | frago agy-hook --event PreToolUse',
+    ],
     # Skill
     "skill": [
         "frago skill <command>",

@@ -21,13 +21,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from frago.server.services import session_send
+from frago.session import agy_store, codex_store, opencode_store
 from frago.session import claude_sessions as claude_svc
-from frago.session import codex_store, opencode_store
 from frago.session import transcript_completion as tc
 
 CC_SID = "00a02979-7eb4-5c70-94ae-867c8281e3f6"
 CODEX_SID = "01a01a98-82e9-7013-b24e-e5e91b03995a"
 OC_SID = "ses_058288655ffeYMxYC1AZKCcv56"
+AGY_SID = "f965e2f9-b392-45cd-af06-d2d389d79e82"
 CORE_SID = "core_0e85b8c598db4a7ebc35903990c61c35"
 
 
@@ -40,18 +41,14 @@ class StubRunner:
     def send(self, session_id, text, *, agent_type=None, cwd=None, timeout_s=180.0):
         from frago.server.services.ui_session_runner import SessionActivation
 
-        self.calls.append(
-            {"sid": session_id, "text": text, "agent_type": agent_type, "cwd": cwd}
-        )
+        self.calls.append({"sid": session_id, "text": text, "agent_type": agent_type, "cwd": cwd})
         return SessionActivation(session_id=session_id, status="activating", text="收到")
 
 
 @pytest.fixture
 def runner(monkeypatch):
     stub = StubRunner()
-    monkeypatch.setattr(
-        "frago.server.services.ui_session_runner.get_runner", lambda: stub
-    )
+    monkeypatch.setattr("frago.server.services.ui_session_runner.get_runner", lambda: stub)
     return stub
 
 
@@ -86,6 +83,18 @@ def three_families(monkeypatch, tmp_path):
         opencode_store,
         "session_directory",
         lambda sid: "/repos/opencode-repo" if sid == OC_SID else None,
+    )
+    # agy：转录在 brain 目录下（家族判定据此认它），目录记在摘要库里。
+    brain = tmp_path / "agy-brain"
+    (brain / AGY_SID).mkdir(parents=True)
+    (brain / AGY_SID / "transcript.jsonl").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(agy_store, "brain_root", lambda: brain)
+    monkeypatch.setattr(agy_store, "transcript_path", lambda sid: brain / sid / "transcript.jsonl")
+    monkeypatch.setattr(agy_store, "conversation_exists", lambda sid: sid == AGY_SID)
+    monkeypatch.setattr(
+        agy_store,
+        "session_directory",
+        lambda sid: "/repos/agy-repo" if sid == AGY_SID else None,
     )
     # claude：CC_SID 的 jsonl 在，首条记录里记着 cwd。
     transcript = tmp_path / f"{CC_SID}.jsonl"
@@ -171,6 +180,22 @@ class TestResolveTarget:
         assert (target.family, target.agent_type) == ("opencode", "opencode")
         assert target.cwd == "/repos/opencode-repo"
 
+    def test_agy_session_goes_to_the_agy_driver(self, three_families):
+        """agy 会话接下一句：交给 agy 的 driver、在它原来那个目录里续。"""
+        target = session_send.resolve_target(AGY_SID)
+        assert (target.family, target.agent_type) == ("agy", "agy")
+        assert target.cwd == "/repos/agy-repo"
+
+    def test_deleted_agy_session_is_refused(self, three_families, monkeypatch):
+        monkeypatch.setattr(agy_store, "conversation_exists", lambda _sid: False)
+        with pytest.raises(session_send.SessionGone):
+            session_send.resolve_target(AGY_SID)
+
+    def test_agy_directory_unknown_is_refused(self, three_families, monkeypatch):
+        monkeypatch.setattr(agy_store, "session_directory", lambda _sid: None)
+        with pytest.raises(session_send.SessionDirectoryUnknown):
+            session_send.resolve_target(AGY_SID)
+
     def test_brand_new_claude_id_takes_the_directory_the_page_picked(self, three_families):
         """页面新建会话时自己 mint 的编号：档案里还没有它，目录只能由页面给。"""
         fresh = "11111111-2222-4333-8444-555555555555"
@@ -213,6 +238,7 @@ class TestResolveTarget:
             "claude-code",
             "opencode",
             "codex",
+            "agy",
         }
 
     def test_coreagent会话落回它当初跑的那个目录(self, coreagent_record):
@@ -274,7 +300,10 @@ class TestSendRoute:
         monkeypatch.setattr(
             coreagent_runner,
             "send_queued",
-            lambda sid, prompt, *, cwd, title=None: queued.append({"sid": sid, "text": prompt, "cwd": cwd}) or "thread",
+            lambda sid, prompt, *, cwd, title=None: queued.append(
+                {"sid": sid, "text": prompt, "cwd": cwd}
+            )
+            or "thread",
         )
 
         def never(*_a, **_k):  # 不等的那条路不该走到这里

@@ -60,13 +60,16 @@ RECORD_KINDS: frozenset[str] = frozenset(get_args(RecordKind))
 """十六种形态的运行时集合。翻译层拿它做归类兜底的校验。"""
 
 
-# ── 两家 ────────────────────────────────────────────────────────────
-RecordFamily = Literal["claude-code", "opencode", "codex", "coreagent"]
+# ── 几家 ────────────────────────────────────────────────────────────
+RecordFamily = Literal["claude-code", "opencode", "codex", "coreagent", "agy"]
 """会话属于哪一家。判定见 ``record_reader.detect_family()``。
 
 前两家靠会话编号的形状就能分开（UUID vs ``ses_`` 前缀），codex 分不开——它的会话
 编号也是 UUID 形状，与 Claude Code 的编号空间天生重叠。所以从三家起，判定不再是
 纯形状匹配，得落盘看一眼记录在谁那儿。
+
+``agy``（Antigravity CLI）的编号也是裸 UUID，同样分不开，判定同样要落盘——去它的
+``brain/`` 目录下看有没有这场会话。
 
 ``coreagent`` 是 frago 自己那个 agent（跑定时任务里的自然语言任务）。它的记录形状与
 Claude Code 一模一样、只是落在别处，所以翻译层是同一份；单立一家是因为**来源要分得开**

@@ -116,6 +116,10 @@ def _resolve_claimed(agent_type: str, handle: str) -> str | None:
             from frago.session import opencode_store
 
             return opencode_store.get_binding(handle)
+        if agent_type == "agy":
+            from frago.session import agy_store
+
+            return agy_store.get_binding(handle)
     except Exception:  # noqa: BLE001 — 读不到只是这一拍还没认到
         logger.debug("查 %s 的认领映射时出错（handle=%s）", agent_type, handle, exc_info=True)
     return None

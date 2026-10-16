@@ -652,7 +652,7 @@ export interface EndpointPresetListResponse {
  *   address, plus optional other protocol channels (OpenAI Responses, for Codex).
  * - `official` — the CLI's own subscription login. Built in, never saved,
  *   never deleted; it is what a role falls back to when nothing is bound.
- * - `vendor_cli` — a vendor's own CLI on its own account (CodeBuddy). frago
+ * - `vendor_cli` — a vendor's own CLI on its own account (Antigravity). frago
  *   has no key to hand it, so what the connection carries is which core to
  *   run and which model to ask it for.
  */

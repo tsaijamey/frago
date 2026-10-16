@@ -21,6 +21,7 @@ from typing import Any
 
 from frago.session import (
     adapters,
+    agy_store,
     codex_store,
     coreagent_store,
     opencode_store,
@@ -28,6 +29,7 @@ from frago.session import (
     session_origin,
 )
 from frago.session.adapters import claude_code_records
+from frago.session.adapters.agy_records import translate_session as translate_agy_session
 from frago.session.session_index import SessionStatus, TailSignals, derive_status
 from frago.session.session_origin import OriginIndex, SessionOrigin, SessionRelation
 from frago.session.unified_record import RecordFamily, UnifiedRecord
@@ -125,17 +127,17 @@ def detect_family(session_id: str) -> RecordFamily:
     opencode 靠形状就能分出来：它的编号一律带 ``ses_`` 前缀，而 UUID 的字符集不含下划线，
     两套编号规则天生撞不上。
 
-    **Claude Code、codex、CoreAgent 三家分不开。** codex 的会话编号也是 UUID 形状
-    （``01a01a98-82e9-7013-b24e-e5e91b03995a`` 是 UUIDv7），与 Claude Code 的编号空间
-    重叠。CoreAgent 的编号本来自带 ``core_`` 前缀，但那是**发号那一侧**的约定，拦不住
-    编号由调用方原样递进内核的用法：内核照着给的编号落盘，前缀就没了。本机实测有三场
-    这样的会话，记录躺在 CoreAgent 的目录下，编号却是裸 UUID。所以形状像 UUID 时不能只看
-    形状：先去 codex 的 rollout 目录、再去 CoreAgent 的记录目录各看一眼有没有这场会话，
-    两边都没有才当 Claude Code。
+    **Claude Code、codex、CoreAgent、agy 四家分不开。** codex 的会话编号也是 UUID 形状
+    （``01a01a98-82e9-7013-b24e-e5e91b03995a`` 是 UUIDv7），agy 的会话编号同样是裸 UUID，
+    三家的编号空间与 Claude Code 的整个重叠。CoreAgent 的编号本来自带 ``core_`` 前缀，
+    但那是**发号那一侧**的约定，拦不住编号由调用方原样递进内核的用法：内核照着给的编号
+    落盘，前缀就没了。本机实测有三场这样的会话，记录躺在 CoreAgent 的目录下，编号却是裸
+    UUID。所以形状像 UUID 时不能只看形状：先去 codex 的 rollout 目录、再去 CoreAgent 的
+    记录目录、再去 agy 的 brain 目录各看一眼有没有这场会话，都没有才当 Claude Code。
 
-    次序是"先查 codex、再查 CoreAgent、都查不到才退回 Claude Code"，不是反过来：
-    Claude Code 是历史默认，把它放在退路上，另外两家没装 / 没有这场会话时行为与从前
-    一模一样。这一眼的代价是两次目录 glob，两家的根目录不存在时各自立刻返回。
+    次序是"先查 codex、再查 CoreAgent、再查 agy、都查不到才退回 Claude Code"，不是反过来：
+    Claude Code 是历史默认，把它放在退路上，另外三家没装 / 没有这场会话时行为与从前
+    一模一样。这一眼的代价是三次探盘，各家的根目录不存在时各自立刻返回。
 
     形状都不像时抛 :class:`UnknownSessionFamily`，NEVER 默认当成 Claude Code——
     默认一家会让别家的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
@@ -150,6 +152,8 @@ def detect_family(session_id: str) -> RecordFamily:
             return "codex"
         if _is_coreagent_session(sid):
             return "coreagent"
+        if _is_agy_session(sid):
+            return "agy"
         return "claude-code"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
 
@@ -174,6 +178,22 @@ def _is_coreagent_session(session_id: str) -> bool:
         if not coreagent_store.sessions_root().is_dir():
             return False
         return coreagent_store.session_exists(session_id)
+    except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
+        return False
+
+
+def _is_agy_session(session_id: str) -> bool:
+    """agy 那边有没有这场会话。查不动一律当"没有"，NEVER 因此让判定失败。
+
+    判据是 brain 目录下**这场会话的转录在不在**，而不是 :func:`agy_store.conversation_exists`
+    ——后者在 brain 目录整个读不到时返回 True（那是给认领用的：读不到不等于会话没了），
+    拿来判家族会把每一个认不出的裸 UUID 都归给 agy。这里要的恰好是反过来：**看不见就当
+    不是**，最坏结果是退回 Claude Code，与接 agy 之前的行为一模一样。
+    """
+    try:
+        if not agy_store.brain_root().is_dir():
+            return False
+        return agy_store.transcript_path(session_id).exists()
     except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
         return False
 
@@ -379,6 +399,79 @@ def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
     return cards
 
 
+def _agy_moment(conv: agy_store.AgyConversation) -> float | None:
+    """这场 agy 会话"最后动过"是哪一刻（epoch 秒）。三处都取不到时 None。
+
+    摘要库里那两个时刻在空会话上写的是零值（``0001-01-01``），解析出来是 ``0.0`` 而不是
+    ``None``，所以这里按**大于零**过滤：NEVER 把 0 当成一个真的时刻用下去，那会让这场
+    会话在按时间排的清单里永远沉底，等于宣布它不存在。
+    """
+    for candidate in (conv.last_modified, conv.last_user_input):
+        if candidate > 0:
+            return candidate
+    try:
+        return agy_store.transcript_path(conv.conversation_id).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
+    """agy 那一侧的会话卡片。
+
+    门面那几样（标题、工作目录、时刻）取自 agy 自己的摘要库，**不为了凑清单去翻转录**；
+    而状态与摘要要判「末条记录是谁」，这一步非翻转录不可，于是走
+    :func:`~frago.session.session_index.tail_signals_of` 那一条**四家共用**的判据，
+    NEVER 自己再定一套——各家各定一套，同一批会话在左栏与中栏就会各说各话。
+
+    整场转录翻一遍是毫秒量级（本机三场加起来不到 8 KB），所以既不做尾部读取也不做缓存；
+    哪天它长大了，照 codex 那一侧的写法补一份按时刻失效的索引。
+
+    标题按「模型起的 > 摘要库里那句提要 > 会话编号」退让。提要多半就是开口那句，两样都
+    没有时用会话编号，NEVER 留空串——左栏一行没有字，人点不动它。
+
+    时刻三处依次退让（见 :func:`_agy_moment`）；三者全为零、转录又不存在时这张卡不摆：
+    那是一条空壳会话（agy 连一次输入都没记下），摆出来就是一张时刻为 0 的卡。
+    """
+    now = time.time()
+    cards: list[SessionCard] = []
+    for conv in agy_store.list_conversations():
+        cid = conv.conversation_id
+        try:
+            records = translate_agy_session(cid)
+        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
+            records = []
+        moment = _agy_moment(conv)
+        if moment is None:
+            logger.debug("agy conversation %s has neither a timestamp nor a transcript", cid)
+            continue
+        tail = session_index.tail_signals_of(records)
+        status = session_index.derive_status(tail.last_kind, moment, now)
+        digest_done, digest_stuck = _digests(status, tail)
+        last_active = int(moment * 1000)
+        cards.append(
+            SessionCard(
+                session_id=cid,
+                family="agy",
+                title=conv.title or conv.preview or cid,
+                directory=conv.workspace,
+                # 摘要库不存建立时刻，退回最后活动时刻，与 codex 那一侧同一条退让
+                # （NEVER 留 0）。
+                created_at=last_active,
+                last_active_at=last_active,
+                last_reply_at=_ms(tail.last_reply_ts),
+                # 子 agent 轨迹要翻完整场会话才数得出来，清单这一层各家都不给。
+                agent_paths=[],
+                status=status,
+                digest_done=digest_done,
+                digest_stuck=digest_stuck,
+                origin=origins.origin_of(cid),
+                parent_session_id=origins.parent_of(cid),
+                relation=origins.relation_of(cid),
+            )
+        )
+    return cards
+
+
 def sort_key(card: SessionCard) -> int:
     """清单按哪个时刻排：**最后一句 agent 回复**，取不到才退回文件最后动过的时刻。
 
@@ -393,7 +486,7 @@ def sort_key(card: SessionCard) -> int:
 
 
 def list_sessions() -> list[SessionCard]:
-    """四家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
+    """五家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
 
     一家读不出来（库不存在、目录不存在）不影响其余几家——各家的读取层各自把失败收敛成
     空列表，这里不做二次兜底，也 NEVER 因为一家没数据就整份返回空。
@@ -407,6 +500,7 @@ def list_sessions() -> list[SessionCard]:
         + _opencode_cards(origins)
         + _codex_cards(origins)
         + _coreagent_cards(origins)
+        + _agy_cards(origins)
     )
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
     cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
@@ -460,9 +554,11 @@ def read_raw(session_id: str, record_id: str) -> dict[str, Any] | None:
 class SessionDeleteUnsupported(RuntimeError):
     """这一家的会话还没有删除入口。
 
-    眼下三家都有入口，这个异常在正常路径上抛不出来。它守的是**以后**：``detect_family``
-    多加一家、而 ``delete_session`` 还没跟上时，落进别家的删法里比报错危险得多——删的
-    东西不一样，出了事没人看得出是这里错的。
+    **眼下 agy 正走这条路**：它没有删除会话的命令行入口（见 :func:`delete_session`），
+    所以这一档不是预留位，是一个真的会出现在界面上的答复（服务层翻成 400）。
+
+    它同时守着**以后**：``detect_family`` 多加一家、而 ``delete_session`` 还没跟上时，
+    落进别家的删法里比报错危险得多——删的东西不一样，出了事没人看得出是这里错的。
     """
 
 
@@ -489,17 +585,19 @@ class DeletedSession:
 def delete_session(session_id: str) -> DeletedSession:
     """删掉一场会话，让它从会话清单里消失。
 
-    三种结局，调用方各说各话：
+    四种结局，调用方各说各话：
 
     - 编号不属于任何一家 → 抛 :class:`UnknownSessionFamily`；
     - 本机已经没有这场会话 → 抛 :class:`SessionFilesMissing`；
+    - 这一家没有删除入口 → 抛 :class:`SessionDeleteUnsupported`（眼下只有 agy）；
     - 引擎拒绝动手 → 抛 :class:`~frago.session.engine_cli.EngineCliFailed`。
 
-    **四家走两种路。** Claude Code 与 CoreAgent 的记录就是一个 JSONL（外加 Claude Code
-    那边的同名目录），位置稳定、格式公开，直接删干净。另两家借引擎自己的删除命令——不是
-    偷懒，是因为它们的会话
+    **五家走两种路。** Claude Code 与 CoreAgent 的记录就是一个 JSONL（外加 Claude Code
+    那边的同名目录），位置稳定、格式公开，直接删干净。codex 与 opencode 借引擎自己的
+    删除命令——不是偷懒，是因为它们的会话
     横跨多张表与多个库，对着别人的库手写 ``DELETE`` 只会留下看不见的残渣（详见
-    :mod:`frago.session.engine_cli` 开头）。
+    :mod:`frago.session.engine_cli` 开头）。agy 同样横跨多张表与多个目录，但它连那条
+    命令都没有，所以走第三种结局。
 
     **删掉引擎侧那一场之后，顺手摘掉 frago 这边指着它的映射。** 映射的键是 frago 侧
     的编号、值是引擎侧的编号，驱动碰见失效映射会自己清，但那是下一次起会话时的事；
@@ -542,7 +640,15 @@ def delete_session(session_id: str) -> DeletedSession:
         dropped = _drop_pointing_bindings(sid, codex_store.drop_bindings_pointing_at)
         return DeletedSession(sid, family, [output or "codex 里的会话记录"], dropped)
 
-    # 三家都在上面各归各的。走到这里说明 `detect_family` 认出了一个本函数还不认识的家
+    if family == "agy":
+        # agy 没有删会话的命令行入口（2026-10-13 实测 ``agy --help``，子命令只有 agent /
+        # changelog / install / mcp / models / plugin / remote-control / update），而它的
+        # 一场会话横跨 brain 目录、摘要库与 conversations/*.db 三处。对着别人的库手写
+        # DELETE 会留下看不见的残渣——与 codex / opencode 宁可借引擎自己的删除命令是
+        # 同一条理由，只是 agy 那边连那条命令都没有，于是只能明说不支持。
+        raise SessionDeleteUnsupported("agy 没有删除会话的命令行入口，这一场删不掉")
+
+    # 四家都在上面各归各的。走到这里说明 `detect_family` 认出了一个本函数还不认识的家
     # ——NEVER 让它落进上面任何一条分支：拿别家的删法去删这一家，删的东西不一样，出了事
     # 没人看得出是这里错的。
     raise SessionDeleteUnsupported(f"{family} 的会话还没有删除入口")

@@ -100,17 +100,29 @@ def selectable(monkeypatch):
 def bindings(monkeypatch):
     """codex 的认领映射：用例往里写一条，就等于"driver 刚认领到了"。"""
     table: dict[str, str] = {}
-    monkeypatch.setattr(
-        "frago.session.codex_store.get_binding", lambda handle: table.get(handle)
-    )
+    monkeypatch.setattr("frago.session.codex_store.get_binding", lambda handle: table.get(handle))
     return table
 
 
 @pytest.fixture(autouse=True)
 def _no_webui_registration(monkeypatch):
+    monkeypatch.setattr("frago.session.claude_sessions.register_webui_session", lambda sid: None)
+
+
+def test_agy的认领映射页面问得到(monkeypatch):
+    """网页起的 agy 会话：driver 认到编号后，页面这一侧要问得到才算认到。
+
+    这条查询从前只认 codex / opencode，问到 agy 一律回"还没认到"——页面等约 35 秒
+    就报"等太久了，还是没等到会话编号"，而那一场其实早就跑起来了（2026-10-14 现场）。
+    """
+    claimed = "f965e2f9-b392-45cd-af06-d2d389d79e82"
     monkeypatch.setattr(
-        "frago.session.claude_sessions.register_webui_session", lambda sid: None
+        "frago.session.agy_store.get_binding",
+        lambda handle: claimed if handle == "webui-x" else None,
     )
+
+    assert workbench_new_session._resolve_claimed("agy", "webui-x") == claimed
+    assert workbench_new_session._resolve_claimed("agy", "webui-y") is None
 
 
 def _finish(runner: FakeRunner) -> None:
@@ -142,16 +154,12 @@ class TestCoreAgent:
         calls = _KernelCalls()
 
         def fake_send(session_id, prompt, *, cwd, title=None, wait_s=None):
-            calls.append(
-                {"session_id": session_id, "prompt": prompt, "cwd": cwd, "title": title}
-            )
+            calls.append({"session_id": session_id, "prompt": prompt, "cwd": cwd, "title": title})
             if calls.fail_with:
                 raise calls.fail_with[0]
             return None
 
-        monkeypatch.setattr(
-            "frago.server.services.coreagent_runner.send", fake_send, raising=False
-        )
+        monkeypatch.setattr("frago.server.services.coreagent_runner.send", fake_send, raising=False)
         return calls
 
     @staticmethod
@@ -240,9 +248,7 @@ class TestClaimedId:
             record_reader.detect_family(launch.handle)
         _finish(runner)
 
-    def test_认领到编号后报出来并让池里那一场也认这个名字(
-        self, runner, selectable, bindings
-    ):
+    def test_认领到编号后报出来并让池里那一场也认这个名字(self, runner, selectable, bindings):
         launch = workbench_new_session.start("codex", "/tmp/repo", "干活")
         runner.started.wait(timeout=5)
 
@@ -287,7 +293,7 @@ class TestFailures:
 
     def test_挑不了的那一家在起会话之前就拦下(self, runner, selectable):
         with pytest.raises(workbench_agents.AgentUnavailable):
-            workbench_new_session.start("codebuddy", "/tmp/repo", "干活")
+            workbench_new_session.start("ghost", "/tmp/repo", "干活")
         assert runner.calls == [], "拦下了就一轮都不该发出去"
 
     def test_没有这个把手时报没有(self):

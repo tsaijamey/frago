@@ -299,7 +299,7 @@ def list_waiting() -> list[TmuxWaitingInfo]:
     """「For you」那三条判据要的全部：开在 tmux 里、客户端活着、停在待输入态。
 
     **awaiting_input 只对认得出记录的 Claude Code 会话判。** opencode、codex、
-    codebuddy 的会话在 ``~/.claude/projects`` 里没有记录，非 frago 起的 tmux 解不出
+    agy 的会话在 ``~/.claude/projects`` 里没有记录，非 frago 起的 tmux 解不出
     编号——这些一律给 None，前端一律不挂。判不出宁可漏挂，也不拿 claude 的判据去套
     别家的界面。
     """

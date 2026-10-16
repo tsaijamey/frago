@@ -30,6 +30,7 @@ from .cloud_commands import (
 from .commands import (
     init as init_dirs,  # Legacy directory init command, kept as init-dirs
 )
+from .agy_hook import agy_hook
 from .commands import (
     status,
 )
@@ -308,7 +309,7 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     Frago - agent OS: the environment your CLI agent runs in
 
     \b
-    Any core plugs in (Claude Code / codex / opencode / codebuddy). On top of it,
+    Any core plugs in (Claude Code / codex / opencode / agy). On top of it,
     five pillars for the agent:
       - Session companion  hook rules + LightAgent keep it on track (hook-rules, book)
       - Hands & eyes       act in the real environment (browser, desktop, apps, view)
@@ -415,6 +416,9 @@ cli.add_command(agent_status)
 
 # Session management command group
 cli.add_command(session_group)
+
+# agy lifecycle hook shim — invoked by agy's hooks.json, not by hand
+cli.add_command(agy_hook)
 
 # Context command - resolve a keyword into a stored context (data:<keyword>)
 cli.add_command(context_command)

@@ -27,30 +27,55 @@ import type { DeleteSessionResult } from './DeleteSessionButton';
 /** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
 const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
 
+/** 路径里有空格、引号这类字符时裹一层单引号，否则粘进终端会被拆成两个参数。 */
+function shellArg(value: string): string {
+  return /^[A-Za-z0-9_\-./~:@%+=,]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
  * 在终端里接着这一场说话的那条命令 —— 复制按钮给的就是它。
  *
  * 每一家只认自己那一种写法：claude 是 `--resume <编号>`，codex 是 `resume <编号>`，
- * opencode 是 `-s <编号>`。三条都与 frago 起这些会话时用的续接命令同一个写法（见各家
- * driver 的 `_launch`），只是不带自动化用的那几个免确认开关——人自己在终端里跑，该问
- * 的还是要问。
+ * opencode 是 `-s <编号>`，antigravity 是 `--conversation <编号>`。四条都与 frago 起这些
+ * 会话时用的续接命令同一个写法（见各家 driver 的 `_launch`），只是不带自动化用的那几个
+ * 免确认开关——人自己在终端里跑，该问的还是要问。
  *
- * **CoreAgent 没有这样一条命令，所以返回 null，按钮不长出来。** 它不是一个能挂在终端里
- * 的交互程序：一轮就是一个进程，接着说话要同时给出这一轮要说的话和它当初跑的目录。
- * 从前这一家落进 claude 那条默认分支，复制出来的是 `claude --resume core_…`——那个编号
- * 在 claude 的档案里根本不存在，粘到终端里 claude 会拿它当新编号开一场空白会话，人以为
- * 自己接上了原来那场。要接着说话就在页面上说，CoreAgent 那一家已经能在中栏直接回话。
+ * **每一家都显式列出，没有兜底分支。** 从前这里是 `switch` 的 default 兜住一切，于是每接
+ * 一家新内核就复制出 claude 的命令一次：CoreAgent 那回是 `claude --resume core_…`，
+ * antigravity 这回落进同一条分支。那个编号在 claude 的档案里根本不存在，粘到终端里 claude
+ * 会拿它当新编号开一场空白会话，人以为自己接上了原来那场。
+ *
+ * 现在列不全就不出按钮（返回 null），**NEVER 猜**。`family` 是联合类型，新增内核时
+ * TypeScript 会在这里报「并非所有代码路径都有返回值」，逼着人补一条——比事后发现复制错了强。
+ *
+ * **CoreAgent 那条必须带上当初的工作目录，不能照抄 claude 那一种。** 它的会话记录按工作
+ * 目录分开放（`~/.frago/coreagent/sessions/<目录名>/<编号>.jsonl`），`--resume` 只在当初那
+ * 个目录下找得到：换个目录跑，frago-core 不报错，静默开一场空白会话，还在新目录下用同一个
+ * 编号另写一份记录。编号拿得到、目录拿不到时返回 null 不出按钮——少了目录的续接命令正是上
+ * 面那种会骗人的。它与另外几家还有一处不同：claude 那些进的是交互界面，CoreAgent 一轮就是
+ * 一个进程，不给 `-p` 就从标准输入读这一轮要说的话（打完按 Ctrl-D）。
+ *
+ * 一家返回 null、按钮不长出来：
+ *
+ * - **antigravity 有命令，但复制出来只够一半用。** 续接必须在**原来那个工作目录**里跑才
+ *   接得回同一场（目录记在它的摘要库 `workspace_uris`，见 `server/services/session_send.py`
+ *   的 agy 分支）；终端里直接粘会落在当前目录，接不到原来那场。这里仍给出命令本身，用的人
+ *   需自己 `cd` 过去——与其余三家「在哪儿粘都行」不同，故这条注释留个记号。
  */
 export function resumeCommand(session: WorkbenchSession): string | null {
   switch (session.family) {
+    case 'claude-code':
+      return `claude --resume ${session.session_id}`;
     case 'opencode':
       return `opencode -s ${session.session_id}`;
     case 'codex':
       return `codex resume ${session.session_id}`;
+    case 'agy':
+      return `agy --conversation ${session.session_id}`;
     case 'coreagent':
-      return null;
-    default:
-      return `claude --resume ${session.session_id}`;
+      return session.directory
+        ? `frago-core --resume ${session.session_id} --cwd ${shellArg(session.directory)}`
+        : null;
   }
 }
 

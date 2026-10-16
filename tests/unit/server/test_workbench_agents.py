@@ -4,8 +4,8 @@
 
 1. **没装的那一家照样列出来**，只是不可挑并写明为什么。藏起来的话，人只会以为
    "frago 不支持 codex"，而真相往往只是没装。
-2. **驱动得动、记录却读不进工作台的那一家不可挑**（codebuddy 就是）。放它进去的结果
-   是会话真的起来了、真的在干活，而页面上那一行永远不出现——比不给这个选项坏得多。
+2. **驱动得动、记录却读不进工作台的那一家不可挑**（本用例里那一家叫 ghost）。放它进去
+   的结果是会话真的起来了、真的在干活，而页面上那一行永远不出现——比不给这个选项坏得多。
 3. **清单来自 driver 注册表**，不是一张手写名单。注册了新的一家，它自己就出现在这里；
    前端与后端各写一张，接新家的人改完 driver 会发现界面上它根本不出现。
 4. **CoreAgent 也在清单里，判据另算**。它没有 driver（没有可挂的 TUI），两道门换成了
@@ -52,7 +52,7 @@ def kernel(monkeypatch):
 
 @pytest.fixture
 def registry(monkeypatch, kernel):
-    """一张假注册表：装了的 claude、没装的 codex、记录读不回来的 codebuddy。"""
+    """一张假注册表：装了的 claude、没装的 codex、记录读不回来的 ghost。"""
     drivers = {
         "claude": _driver(
             "claude",
@@ -69,10 +69,10 @@ def registry(monkeypatch, kernel):
             locate=lambda: "/opt/homebrew/bin/opencode",
             accepts_session_id=False,
         ),
-        "codebuddy": _driver(
-            "codebuddy",
-            display_name="CodeBuddy Code",
-            locate=lambda: "/Applications/WorkBuddy.app/cli",
+        "ghost": _driver(
+            "ghost",
+            display_name="Ghost CLI",
+            locate=lambda: "/usr/local/bin/ghost",
             accepts_session_id=True,
         ),
     }
@@ -103,16 +103,16 @@ class TestList:
         assert "没找到" in workbench_agents.reason_text(agents["codex"].reason)
 
     def test_记录读不进工作台的那一家不可挑(self, registry):
-        """codebuddy 装着、也驱动得动，但它的记录落在工作台读不到的地方。
+        """ghost 装着、也驱动得动，但它的记录落在工作台读不到的地方。
 
         放它进去，人会起一场真的在干活、却永远不出现在左栏的会话。
         """
         agents = _by_type(workbench_agents.list_agents())
-        assert agents["codebuddy"].installed is True
-        assert agents["codebuddy"].selectable is False
-        assert agents["codebuddy"].family is None
-        assert agents["codebuddy"].reason == workbench_agents.REASON_NOT_READABLE
-        assert "读不进工作台" in workbench_agents.reason_text(agents["codebuddy"].reason)
+        assert agents["ghost"].installed is True
+        assert agents["ghost"].selectable is False
+        assert agents["ghost"].family is None
+        assert agents["ghost"].reason == workbench_agents.REASON_NOT_READABLE
+        assert "读不进工作台" in workbench_agents.reason_text(agents["ghost"].reason)
 
     def test_编号谁来定出自driver而不是名字(self, registry):
         """新建时等不等编号是两种交互，判据 MUST 来自 driver。"""
@@ -252,7 +252,7 @@ class TestRoutes:
     def test_清单接口把挑不了的也回给界面(self, client):
         body = client.get("/api/workbench/agents").json()
         types = {a["agent_type"] for a in body["agents"]}
-        assert types == {"claude", "coreagent", "codex", "opencode", "codebuddy"}
+        assert types == {"claude", "coreagent", "codex", "opencode", "ghost"}
         codex = next(a for a in body["agents"] if a["agent_type"] == "codex")
         assert codex["selectable"] is False and codex["reason"]
 
@@ -260,7 +260,7 @@ class TestRoutes:
         """起了再说的话，人要等上一分钟才看得出这一场根本不会出现在左栏。"""
         res = client.post(
             "/api/workbench/sessions",
-            json={"agent": "codebuddy", "cwd": "/tmp", "text": "干活"},
+            json={"agent": "ghost", "cwd": "/tmp", "text": "干活"},
         )
         assert res.status_code == 400
         assert "读不进工作台" in res.json()["detail"]

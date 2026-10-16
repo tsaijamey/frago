@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from frago.session.formatter import JsonFormatter, TerminalFormatter, create_formatter
 from frago.session.models import (
@@ -838,11 +839,65 @@ class CodexAdapter(TmuxDriverAdapter):
         return record
 
 
+class AgyAdapter(TmuxDriverAdapter):
+    """agy (Antigravity CLI) adapter（tmux 驱动，带 transcript.jsonl 记录流）。
+
+    与 codex 那一份同一个形状，两种输入都要认：
+
+    - 从 ``transcript.jsonl`` 逐行读来的**原始记录**，靠它自己的 ``step_index`` /
+      ``type`` 信封认出来，经 :func:`frago.session.adapters.agy_records.record_payloads`
+      归一；
+    - tmux driver 直接递过来的纯文本轮次，基类已经认得。
+
+    在**这里**认原始形状、而不是要求每个调用方先归一，正是 ``JsonlTranscriptSource``
+    能原样复用到 agy 上的原因：那个 source 只会逐行 tail 一个 JSONL 再调 ``parse_record``。
+
+    **一行只出一条记录**（``record_payloads`` 的约定）：agy 的一行可以同时带
+    ``thinking``、``tool_calls`` 与 ``content``，而这条路一次只收一条。一次收全的走
+    会话工作台的记录翻译层（:func:`frago.session.adapters.agy_records.translate_session`），
+    那才是读记录的正路。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(AgentType.AGY)
+
+    def parse_record(self, data: dict[str, Any]) -> "ParsedRecord | None":
+        if "step_index" in data and "type" in data:
+            return self._parse_transcript_record(data)
+        return self._parse_normalized(data)
+
+    def _parse_transcript_record(self, data: dict[str, Any]) -> "ParsedRecord | None":
+        from frago.session.adapters import agy_records
+
+        session_id = str(data.get("session_id") or "")
+        payloads = agy_records.record_payloads(data, session_id, include_user=True)
+        if not payloads:
+            return None
+        # 一行最多出一条（见类文档）；真出了两条也只取第一条，不留半条。
+        _, payload = payloads[0]
+        return self._parse_normalized(payload)
+
+    def _parse_normalized(self, data: dict[str, Any]) -> "ParsedRecord | None":
+        record = super().parse_record(data)
+        if record is None:
+            return None
+        tool_calls = data.get("tool_calls")
+        tool_results = data.get("tool_results")
+        if isinstance(tool_calls, list):
+            record.tool_calls = tool_calls
+        if isinstance(tool_results, list):
+            record.tool_results = tool_results
+        if tool_calls or tool_results:
+            record.raw_data = {**record.raw_data, "parts": data}
+        return record
+
+
 # Adapter registry
 _adapters: dict[AgentType, AgentAdapter] = {
     AgentType.CLAUDE: ClaudeCodeAdapter(),
     AgentType.OPENCODE: OpencodeAdapter(),
     AgentType.CODEX: CodexAdapter(),
+    AgentType.AGY: AgyAdapter(),
 }
 
 

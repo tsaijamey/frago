@@ -260,7 +260,7 @@ class TestWhichBackendGetsAsked:
     def test_preference_not_installed_falls_back_to_the_kernel(self, monkeypatch):
         """选定的那家没装：退回自带内核继续问，而不是拿着跑不起来的名字去问后端。"""
         asked: list = []
-        monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "codebuddy")
+        monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "ghost")
         monkeypatch.setattr("frago.init.agent_core.core_installed", lambda _t: False)
         monkeypatch.setattr(
             "frago.agent_driver.kernel_backend.run_chat_turn",

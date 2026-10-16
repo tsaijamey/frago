@@ -44,6 +44,11 @@ class SyncService:
         # Same clock as claude / codex: CoreAgent appends to one JSONL per session.
         self._coreagent_mtimes: dict[str, float] = {}
 
+        # agy counterpart: conversation_id -> last-seen last_modified_time (float, epoch
+        # seconds). agy keeps this clock in its own summaries database, so it plays the
+        # same role the file mtime plays for claude / codex / coreagent.
+        self._agy_mtimes: dict[str, float] = {}
+
     @classmethod
     def get_instance(cls) -> "SyncService":
         """Get singleton instance.
@@ -133,6 +138,7 @@ class SyncService:
             ("opencode", self._sync_opencode),
             ("codex", self._sync_codex),
             ("coreagent", self._sync_coreagent),
+            ("agy", self._sync_agy),
         ):
             try:
                 result = run()
@@ -165,6 +171,12 @@ class SyncService:
 
         return sync_coreagent_sessions(since_mtime_cache=self._coreagent_mtimes)
 
+    def _sync_agy(self) -> Any:
+        """Archive agy sessions from the transcripts under its brain directory."""
+        from frago.session.agy_sync import sync_agy_sessions
+
+        return sync_agy_sessions(since_mtime_cache=self._agy_mtimes)
+
     def get_last_result(self) -> dict[str, Any] | None:
         """Get the last sync result.
 
@@ -180,6 +192,7 @@ class SyncService:
         Returns:
             Sync result dictionary
         """
+        from frago.session.agy_sync import sync_agy_sessions
         from frago.session.codex_sync import sync_codex_sessions
         from frago.session.coreagent_sync import sync_coreagent_sessions
         from frago.session.opencode_sync import sync_opencode_sessions
@@ -200,6 +213,7 @@ class SyncService:
             ("opencode", sync_opencode_sessions),
             ("codex", sync_codex_sessions),
             ("coreagent", sync_coreagent_sessions),
+            ("agy", sync_agy_sessions),
         ):
             try:
                 result = run()

@@ -227,7 +227,7 @@ def test_冷启动第一个导入就是它也不炸():
     script = (
         "import frago.session.coreagent_store\n"
         "from frago.session.adapters import list_adapters\n"
-        "assert sorted(list_adapters()) == ['claude-code', 'codex', 'coreagent', 'opencode'], list_adapters()\n"
+        "assert sorted(list_adapters()) == ['agy', 'claude-code', 'codex', 'coreagent', 'opencode'], list_adapters()\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=120

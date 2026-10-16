@@ -136,7 +136,7 @@ def resolve_attached_agent_type(agent_type: str | None) -> str:
     """attached 那条路这一轮实际用哪个内核。
 
     偏好怎么解析与 detached 同源（:func:`resolve_agent_type`）。这里多答的是**这条后端
-    接不接得住**：注册表里那几家（claude / codebuddy / codex / opencode）是"挂在 tmux 里
+    接不接得住**：注册表里那几家（claude / codex / opencode / agy）是"挂在 tmux 里
     的交互程序"，走常驻会话池；跑在 frago 自己内核里的那一家（CoreAgent）没有可挂的 TUI
     （判据见 :func:`frago.agent_driver.driver.runs_on_kernel`），走它自己的内核后端
     （:class:`KernelAgentSession`）。两条都接得住，所以偏好里的每个合法取值在这条路上都

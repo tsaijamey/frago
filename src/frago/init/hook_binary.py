@@ -88,10 +88,7 @@ def get_bundled_binary_path() -> Path:
     binary = pkg_bin / platform_key / get_binary_name()
 
     if not binary.exists():
-        raise FileNotFoundError(
-            f"No precompiled binary for {platform_key}. "
-            f"Expected at: {binary}"
-        )
+        raise FileNotFoundError(f"No precompiled binary for {platform_key}. Expected at: {binary}")
     return binary
 
 
@@ -283,13 +280,14 @@ def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
             events, why = _ask_supported_events(binary)
             if events:
                 if binary != hook_path or attempt > 1:
-                    logger.warning(
-                        "Supported events came from %s on attempt %d", binary, attempt
-                    )
+                    logger.warning("Supported events came from %s on attempt %d", binary, attempt)
                 return events
             logger.warning(
                 "frago-core --supported-events failed (%s, attempt %d/%d): %s",
-                binary, attempt, QUERY_ATTEMPTS, why,
+                binary,
+                attempt,
+                QUERY_ATTEMPTS,
+                why,
             )
             if attempt < QUERY_ATTEMPTS:
                 time.sleep(QUERY_RETRY_DELAY_SECONDS)
@@ -374,8 +372,7 @@ def _is_frago_hook(entry: dict[str, Any]) -> bool:
     second copy of the event running.
     """
     return entry.get("type") == "command" and (
-        "frago-core" in entry.get("command", "")
-        or "frago-hook" in entry.get("command", "")
+        "frago-core" in entry.get("command", "") or "frago-hook" in entry.get("command", "")
     )
 
 
@@ -427,3 +424,114 @@ def _remove_frago_hook(hooks: dict[str, Any], event: str) -> bool:
         if not group["hooks"]:
             groups.remove(group)
     return removed
+
+
+# ---------------------------------------------------------------------------
+# agy —— 另一份 hooks.json，另一套方言
+# ---------------------------------------------------------------------------
+#
+# Claude Code 从 ``~/.claude/settings.json`` 的 ``hooks`` 段读注册，事件名当键；agy 另起
+# 一份 ``hooks.json``，顶层键是 **hook 名**（frago 只占名为 ``frago`` 的那一个），每个名字
+# 底下再挂事件。两者的形状也不同：SessionStart / Stop 是平铺的 handler 列表，
+# PreToolUse / PostToolUse 要拿 ``matcher`` 包一层（见 agy 自带的 agy-customizations 手册
+# ``hooks.md``）。所以这一路单独写，不复用 claude 那几个私有函数。
+#
+# 命令走 ``frago agy-hook --event …`` 而非引擎二进制：agy 的入参是 camelCase、出参分三种
+# 形状，引擎看不懂，中间那层垫片（``cli/agy_hook.py``）必须先过一道。
+
+#: agy 的全局自定义根目录。项目内是 ``.agents/``，全局是 ``~/.gemini/config/``
+#: （agy 手册 ``json_configs.md`` 写明）。
+AGY_HOOKS_FILENAME = "hooks.json"
+#: frago 在 agy 那份 hooks.json 里的条目名。顶层键就是 hook 名。
+AGY_HOOK_NAME = "frago"
+#: 平铺形状的事件（handler 直接是列表）。
+#:
+#: ``PreInvocation`` 是 agy 那一侧的 ``UserPromptSubmit``——轻量 ai 的每轮复核只挂在它上面。
+#: 2026-10-14 之前这里没有它，那一版把"名字对不上"当成了"没有对端"，agy 会话因此从来没跑过
+#: 轻量 ai，而表面上一切正常（开场注入与工具拦截都在）。
+_AGY_FLAT_EVENTS = ("SessionStart", "PreInvocation", "Stop")
+#: 要拿 matcher 包一层的事件。
+_AGY_MATCHED_EVENTS = ("PreToolUse", "PostToolUse")
+#: 与 claude 那份 settings.json 同一个值：规则答在毫秒级，20 秒是给意外留的余量。
+_AGY_HOOK_TIMEOUT = 20
+
+
+def get_agy_hooks_path() -> Path:
+    """agy 的 hook 配置落点（``~/.gemini/config/hooks.json``）。"""
+    return Path.home() / ".gemini" / "config" / AGY_HOOKS_FILENAME
+
+
+def _agy_hook_command(event: str) -> str:
+    """写进 agy hooks.json 的那条命令。
+
+    用 frago 的**绝对路径**（与 claude 那份 settings.json 同一个做法）：hook 跑在 agy 拉起的
+    shell 里，那份 PATH 未必有 frago，裸名字会静默失效。找不到就退回裸 ``frago``，至少留个
+    能被人工排查的线索。
+    """
+    cli = shutil.which("frago") or "frago"
+    return f"{cli} agy-hook --event {event}"
+
+
+def _agy_hook_entry() -> dict[str, Any]:
+    """frago 在 agy hooks.json 里那一整块（四个事件）。"""
+    entry: dict[str, Any] = {}
+    for event in _AGY_FLAT_EVENTS:
+        entry[event] = [
+            {"type": "command", "command": _agy_hook_command(event), "timeout": _AGY_HOOK_TIMEOUT}
+        ]
+    for event in _AGY_MATCHED_EVENTS:
+        entry[event] = [
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _agy_hook_command(event),
+                        "timeout": _AGY_HOOK_TIMEOUT,
+                    }
+                ],
+            }
+        ]
+    return entry
+
+
+def sync_agy_hook_events() -> None:
+    """把 frago 条目写进 agy 的 hooks.json，用户与别家插件的条目一个字节不动。
+
+    与 claude 那份最大的不同：agy 的顶层键是 hook 名，不是事件名。frago 只占名为 ``frago``
+    的那一个键，其余键原样保留。三处防御：agy 没装就不写（不凭空造 ``~/.gemini``）；文件
+    格式坏就跳过并告警（NEVER 拿一份空表顶掉用户既有内容）；写盘走临时文件加原子替换
+    （写到一半被杀不会留下半份 JSON）。
+    """
+    path = get_agy_hooks_path()
+    if not path.parent.parent.exists():
+        logger.debug("agy 没装（%s 不在），跳过 hook 登记", path.parent.parent)
+        return
+
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                logger.warning("agy hooks.json 不是对象，跳过（不动用户内容）")
+                return
+        else:
+            data = {}
+    except (OSError, json.JSONDecodeError):
+        logger.warning("agy hooks.json 读不动，跳过（不动用户内容）", exc_info=True)
+        return
+
+    entry = _agy_hook_entry()
+    if data.get(AGY_HOOK_NAME) == entry:
+        logger.debug("agy hooks.json 已是目标形状")
+        return
+
+    data[AGY_HOOK_NAME] = entry
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        logger.warning("agy hooks.json 写不动", exc_info=True)
+        return
+    logger.info("agy hook 已登记：%s", path)
