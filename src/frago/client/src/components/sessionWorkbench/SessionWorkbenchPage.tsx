@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Loader2, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
@@ -51,7 +51,13 @@ import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
-import { closeBranch, revealSessionPath, startBranch } from '@/api';
+import {
+  closeBranch,
+  generateSessionTitle,
+  revealSessionPath,
+  startBranch,
+  updateSessionTitle,
+} from '@/api';
 import { useSessionFiles } from '@/hooks/useSessionFiles';
 
 /**
@@ -806,6 +812,78 @@ export default function SessionWorkbenchPage() {
     }
   };
 
+  /**
+   * 页头标题：支持人类直接在原文上点击修改，或点星号按钮让 CoreAgent 单轮对话生成标题。
+   * 改动存进 `~/.frago/sessions/<家族>/<编号>/workbench-title.json`，WebUI 优先显示它。
+   */
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const titleDiscardedRef = useRef(false);
+  const [generatingTitleId, setGeneratingTitleId] = useState<string | null>(null);
+  const generatingTitle = Boolean(selected && generatingTitleId === selected.session_id);
+
+  useEffect(() => {
+    setEditingTitle(false);
+    setTitleDraft('');
+    titleDiscardedRef.current = false;
+  }, [selectedId]);
+
+  const startTitleEdit = () => {
+    if (!selected || generatingTitle) return;
+    titleDiscardedRef.current = false;
+    setTitleDraft(selected.title);
+    setEditingTitle(true);
+  };
+
+  const commitTitleEdit = async () => {
+    if (titleDiscardedRef.current) {
+      titleDiscardedRef.current = false;
+      return;
+    }
+    if (!editingTitle || !selected) return;
+    setEditingTitle(false);
+    const cleaned = titleDraft.replace(/\s+/g, ' ').trim();
+    if (!cleaned || cleaned === selected.title) {
+      setTitleDraft(selected.title);
+      return;
+    }
+    const sid = selected.session_id;
+    const prevTitle = selected.title;
+    sessions.setSessionTitle?.(sid, cleaned);
+    try {
+      const res = await updateSessionTitle(sid, cleaned);
+      sessions.setSessionTitle?.(sid, res.title);
+    } catch (e) {
+      sessions.setSessionTitle?.(sid, prevTitle);
+      showToast(
+        t('workbench.page.titleSaveFailed', {
+          reason: e instanceof Error ? e.message : String(e),
+        }),
+        'error'
+      );
+    }
+  };
+
+  const handleGenerateTitle = async () => {
+    if (!selected || generatingTitle) return;
+    const sid = selected.session_id;
+    setEditingTitle(false);
+    setGeneratingTitleId(sid);
+    try {
+      const res = await generateSessionTitle(sid);
+      sessions.setSessionTitle?.(sid, res.title);
+    } catch (e) {
+      showToast(
+        t('workbench.page.titleGenerateFailed', {
+          reason: e instanceof Error ? e.message : String(e),
+        }),
+        'error'
+      );
+    } finally {
+      setGeneratingTitleId((cur) => (cur === sid ? null : cur));
+    }
+  };
+
   return (
     /* 默认列宽照原型：清单 288 · 记录 · 观察者 228（清单 09-24 定 256，09-29 第五轮卡片改成三行、
        状态行要摆 For you · 时长 · 终端 · 子会话数 · 「…」，放不下，改 288）。人拖过的右栏宽度
@@ -857,13 +935,70 @@ export default function SessionWorkbenchPage() {
             </button>
           ) : null}
           <div className="flex min-w-0 flex-1 flex-col justify-center">
-            <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
-              {selected
-                ? selected.title
-                : showLaunch
-                  ? t('workbench.launch.railTitle')
-                  : t('workbench.page.title')}
-            </h1>
+            {selected ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                {editingTitle ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    data-testid="session-detail-title-input"
+                    value={titleDraft}
+                    maxLength={120}
+                    placeholder={t('workbench.page.titlePlaceholder')}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={() => void commitTitleEdit()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void commitTitleEdit();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        titleDiscardedRef.current = true;
+                        setTitleDraft(selected.title);
+                        setEditingTitle(false);
+                      }
+                    }}
+                    className="min-w-0 flex-1 rounded-[4px] border border-border-accent bg-bg-card px-1.5 py-0 text-[14px] font-semibold leading-[1.3] text-text-primary outline-none"
+                  />
+                ) : (
+                  <h1
+                    data-testid="session-detail-title"
+                    title={t('workbench.page.editTitleHint')}
+                    onClick={startTitleEdit}
+                    className="min-w-0 cursor-text truncate rounded-[4px] px-0.5 -mx-0.5 text-[14px] font-semibold leading-[1.3] text-text-primary transition-colors hover:bg-bg-hover"
+                  >
+                    {selected.title}
+                  </h1>
+                )}
+                <button
+                  type="button"
+                  data-testid="session-detail-title-generate"
+                  disabled={generatingTitle}
+                  onClick={() => void handleGenerateTitle()}
+                  title={
+                    generatingTitle
+                      ? t('workbench.page.generatingTitle')
+                      : t('workbench.page.generateTitle')
+                  }
+                  aria-label={
+                    generatingTitle
+                      ? t('workbench.page.generatingTitle')
+                      : t('workbench.page.generateTitle')
+                  }
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-text-muted transition-colors hover:bg-bg-hover hover:text-accent-primary disabled:cursor-wait disabled:opacity-60"
+                >
+                  {generatingTitle ? (
+                    <Loader2 size={13} className="animate-spin text-accent-primary" />
+                  ) : (
+                    <Star size={13} />
+                  )}
+                </button>
+              </div>
+            ) : (
+              <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
+                {showLaunch ? t('workbench.launch.railTitle') : t('workbench.page.title')}
+              </h1>
+            )}
             {selected ? (
               <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
                 {headStatus ? (

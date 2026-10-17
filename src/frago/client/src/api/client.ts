@@ -1706,3 +1706,35 @@ export async function revealPath(path: string): Promise<{ status: string; opened
     { method: 'POST' }
   );
 }
+
+// ============================================================
+// 会话标题（人类原地修改 & CoreAgent 单轮生成）
+// ============================================================
+
+export interface SessionTitleResult {
+  session_id: string;
+  title: string;
+}
+
+/** 把修改后的会话标题写进该会话在 `~/.frago/sessions` 下的同目录数据文件里。 */
+export async function updateSessionTitle(
+  sessionId: string,
+  title: string
+): Promise<SessionTitleResult> {
+  return fetchApi<SessionTitleResult>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/title`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ title }),
+    }
+  );
+}
+
+/** 调用 CoreAgent 单轮对话为该会话生成标题并落盘。 */
+export async function generateSessionTitle(sessionId: string): Promise<SessionTitleResult> {
+  return fetchApi<SessionTitleResult>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/title/generate`,
+    { method: 'POST' }
+  );
+}
+

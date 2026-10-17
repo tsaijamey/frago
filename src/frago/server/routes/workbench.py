@@ -279,6 +279,49 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     }
 
 
+class UpdateTitleRequest(BaseModel):
+    """``PUT /workbench/sessions/{sid}/title`` 的请求体：人改过的标题。"""
+
+    title: str
+
+
+@router.put("/workbench/sessions/{sid}/title")
+async def update_workbench_session_title(sid: str, request: UpdateTitleRequest) -> dict[str, Any]:
+    """把人改过的会话标题写进该会话在 ``~/.frago/sessions`` 下的同目录数据文件里。
+
+    编号不属于任何一家回 404；空标题回 400。
+    """
+    try:
+        family = await asyncio.to_thread(record_reader.detect_family, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        saved = await asyncio.to_thread(
+            workbench_titles.set_title, sid, request.title, family=family
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"session_id": sid, "title": saved}
+
+
+@router.post("/workbench/sessions/{sid}/title/generate")
+async def generate_workbench_session_title(sid: str) -> dict[str, Any]:
+    """点星号按钮：用 CoreAgent 单轮对话生成这场会话的标题，落盘到会话备份目录并返回。
+
+    编号不认回 404；这场会话还没有对话内容回 409；CoreAgent 调用失败回 503。
+    """
+    try:
+        saved = await asyncio.to_thread(workbench_titles.generate_title, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except workbench_titles.TitleGenerationUnavailable as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except workbench_titles.TitleGenerationFailed as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return {"session_id": sid, "title": saved}
+
+
+
 class BranchRequest(BaseModel):
     """``POST /workbench/sessions/{sid}/branch`` 的请求体：从主线哪段原文分出去、人写的那句话。
 

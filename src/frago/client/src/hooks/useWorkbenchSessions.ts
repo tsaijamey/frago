@@ -259,6 +259,8 @@ export interface WorkbenchSessionsState {
    */
   counts: ListCounts;
   reload: () => Promise<void>;
+  /** 原地更新单场会话的标题（人类编辑或 AI 生成后立刻刷新左栏与页头，不等下一趟轮询）。 */
+  setSessionTitle?: (sessionId: string, title: string) => void;
 }
 
 export async function fetchWorkbenchSessions(): Promise<WorkbenchSession[]> {
@@ -284,6 +286,13 @@ export function useWorkbenchSessions(
   const setSessions = useCallback((next: WorkbenchSession[]) => {
     lastSessions.set(next);
     setSessionsState(next);
+  }, []);
+  const setSessionTitle = useCallback((sessionId: string, title: string) => {
+    setSessionsState((prev) => {
+      const next = prev.map((s) => (s.session_id === sessionId ? { ...s, title } : s));
+      lastSessions.set(next);
+      return next;
+    });
   }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -386,5 +395,6 @@ export function useWorkbenchSessions(
     setDays,
     counts,
     reload,
+    setSessionTitle,
   };
 }

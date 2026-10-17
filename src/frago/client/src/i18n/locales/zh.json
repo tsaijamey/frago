@@ -1408,7 +1408,13 @@
       "waiting": "等了 {{age}}",
       "answeredAtStart": "{{time}} 答完",
       "dirHint": "工作目录：{{dir}}",
-      "srcHint": "这场会话跑在 {{name}}"
+      "srcHint": "这场会话跑在 {{name}}",
+      "editTitleHint": "点击直接修改标题",
+      "titlePlaceholder": "输入会话标题，回车保存",
+      "generateTitle": "用 CoreAgent 生成标题",
+      "generatingTitle": "正在生成标题…",
+      "titleSaveFailed": "标题没存下：{{reason}}",
+      "titleGenerateFailed": "标题没生成出来：{{reason}}"
     },
     "stopRun": {
       "action": "关闭 tmux 会话",

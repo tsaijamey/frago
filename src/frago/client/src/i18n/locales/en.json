@@ -1413,7 +1413,13 @@
       "waiting": "waiting {{age}}",
       "answeredAtStart": "Answered {{time}}",
       "dirHint": "Working directory: {{dir}}",
-      "srcHint": "This session runs on {{name}}"
+      "srcHint": "This session runs on {{name}}",
+      "editTitleHint": "Click to edit title",
+      "titlePlaceholder": "Session title — Enter to save",
+      "generateTitle": "Generate title with CoreAgent",
+      "generatingTitle": "Generating title…",
+      "titleSaveFailed": "Couldn't save title: {{reason}}",
+      "titleGenerateFailed": "Couldn't generate title: {{reason}}"
     },
     "stopRun": {
       "action": "Close tmux session",

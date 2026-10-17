@@ -1434,3 +1434,26 @@ export const revealSessionPath = withMode(
   (_sessionId: string, _path: string): Promise<{ status: string; opened: string }> =>
     Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
 );
+
+// ============================================================
+// 会话标题（人类原地修改 & CoreAgent 单轮生成）
+// ============================================================
+
+export type { SessionTitleResult } from './client';
+
+const SESSION_TITLE_UNAVAILABLE = 'Session title API not available in pywebview mode';
+
+export const updateSessionTitle = withMode(
+  (sessionId: string, title: string): Promise<httpApi.SessionTitleResult> =>
+    httpApi.updateSessionTitle(sessionId, title),
+  (_sessionId: string, _title: string): Promise<httpApi.SessionTitleResult> =>
+    Promise.reject(new Error(SESSION_TITLE_UNAVAILABLE)),
+);
+
+export const generateSessionTitle = withMode(
+  (sessionId: string): Promise<httpApi.SessionTitleResult> =>
+    httpApi.generateSessionTitle(sessionId),
+  (_sessionId: string): Promise<httpApi.SessionTitleResult> =>
+    Promise.reject(new Error(SESSION_TITLE_UNAVAILABLE)),
+);
+
