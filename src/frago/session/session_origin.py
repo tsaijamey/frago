@@ -88,6 +88,7 @@ __all__ = [
     "is_worker_shape",
     "load_origin_index",
     "parent_from_env",
+    "record_attributed_dispatch",
     "record_dispatch",
     "record_launch",
     "record_relation",
@@ -335,6 +336,43 @@ def record_dispatch(
         kind="dispatch",
         child_session_id=child_session_id,
         parent_session_id=parent_from_env(),
+        agent_type=agent_type,
+        cwd=cwd,
+        prompt_head=prompt_head,
+    )
+
+
+def record_attributed_dispatch(
+    child_session_id: str,
+    *,
+    agent_type: str,
+    cwd: str,
+    prompt_head: str = "",
+) -> bool:
+    """记一笔派活——**只在认得出派它的那场会话时**。认不出就当它没被谁派过。
+
+    与 :func:`record_dispatch` 的区别只有一处：认不出父亲时记不记。那一位是给**命令行**用
+    的——``frago agent <任务>`` 敲下去本身就是派活，父亲认不出来只说明"不知道是谁派的"，这
+    一场仍然是被人派出去的，该进「认不出出处的 worker」那一区。
+
+    这一位是给**三家 CLI 的驱动**用的。驱动在"认到真编号"那一刻并不知道这一步是谁发起的：
+    主会话派活走它，人在网页上新建会话也走它——两条路在驱动里长得一模一样。认不出父亲时，
+    前者只是没记住是谁派的，后者却是**根本没有派人**：人在网页上自己开的会话，不该被记成
+    worker，更不该落进"认不出出处的 worker"那一格里去。
+
+    判据因此收紧一格：认不出派活者，就当它是人开的。这与出身那一套的整体口径一致——
+    判不出来一律算人开的，理由见模块开头。
+
+    2026-10-16 实测：agy 那一家挂在"认不出出处的 worker"里的 4 条，全是人在网页上起的
+    （``~/.frago/server.log`` 里各有 ``webui 新建会话认到编号`` 那一行，不是谁派的）。
+    """
+    parent = parent_from_env()
+    if parent is None:
+        return False
+    return record_relation(
+        kind="dispatch",
+        child_session_id=child_session_id,
+        parent_session_id=parent,
         agent_type=agent_type,
         cwd=cwd,
         prompt_head=prompt_head,

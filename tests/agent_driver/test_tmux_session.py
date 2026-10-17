@@ -390,6 +390,55 @@ def test_open_injects_driver_session_env() -> None:
     assert "BASELINE=on" in new_sess
 
 
+def test_open_declares_which_session_this_is() -> None:
+    """已知清单真实编号（如续接已有会话 ``native_session_id=True``）时，往会话环境声明
+    「我是清单上的哪一场」，好让会话里起的子会话认得父亲。
+    """
+    import dataclasses
+
+    driver = dataclasses.replace(_echo_driver(), agent_type="agy")
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "a7", driver, cwd="/tmp", runner=fake, sleep=_no_sleep, native_session_id=True
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "FRAGO_SESSION_ID=a7" in new_sess
+
+
+def test_open_does_not_declare_an_id_we_do_not_know_yet() -> None:
+    """新建时编号由 CLI 自己分配、要等跑起来才认领得到的那几家（codex / opencode / agy）
+    什么都不声明。
+
+    这一刻它们的真实编号还没认领到；拿 frago 自己的临时把手（如 ``webui-<uuid>``）冒充，
+    ``agy`` 的 ``SessionStart`` hook 会把把手误认成派活的父会话，把新建的人工会话全记成
+    无调用方的 worker。
+    """
+    import dataclasses
+
+    for agent_type, handle in (("opencode", "o7"), ("codex", "x7"), ("agy", "webui-a7")):
+        driver = dataclasses.replace(_echo_driver(), agent_type=agent_type)
+        fake = FakeTmux(["READY"])
+        sess = TmuxAgentSession(handle, driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+        sess.open(ready_timeout_s=5)
+        new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+        assert not any("FRAGO_SESSION_ID" in tok for tok in new_sess), agent_type
+
+
+def test_claude_declares_the_id_it_is_listed_under() -> None:
+    """claude 声明的是它在清单上那一行的编号（派生编号），不是 frago 自己那个把手。"""
+    import dataclasses
+
+    from frago.agent_driver.drivers.claude import claude_session_uuid
+
+    driver = dataclasses.replace(_echo_driver(), agent_type="claude")
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("c1", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert f"FRAGO_SESSION_ID={claude_session_uuid('c1')}" in new_sess
+
+
 def test_open_caller_env_overrides_driver_session_env() -> None:
     """调用方传的 env 覆盖 driver 基线的同名键——profile 版配置盖掉裸基线。"""
     import dataclasses

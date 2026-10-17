@@ -227,6 +227,33 @@ def runs_on_kernel(agent_type: str) -> bool:
     return agent_type == AgentType.COREAGENT.value
 
 
+def listed_session_id(agent_type: str, session_id: str, *, native_session_id: bool) -> str | None:
+    """这场会话在清单上那一行的编号；**起会话那一刻还认不出的那几家返回 None**。
+
+    与 :func:`runs_on_kernel` 一样，判据只此一处——起会话时要往环境里声明"我是哪一场"
+    （见 :mod:`frago.agent_driver.tmux_session`），认清单上的编号要问的也是这里。
+
+    - 内核那一场：编号是 frago 现发的（``core_`` 前缀），落盘的就是它。
+    - claude：编号由 frago 的编号派生而来，规则问 claude 自己那一份（NEVER 在这里抄）。
+    - **codex / opencode / agy：新建时（``native_session_id=False``）给的是 frago 自己的临时把手，
+      它们的真实编号要等会话跑起来之后才由 CLI 自己分配并认领得到**（认领在各家 driver 里，
+      ``agy`` 在自身工具环境内也会自动注入 ``ANTIGRAVITY_CONVERSATION_ID``）。这一刻答不出一个
+      清单上真有的编号，所以返回 None——宁可什么都不声明，也不能声明一个清单里查不到的编号：
+      否则 ``agy`` 的 ``SessionStart`` hook 会把临时把手误认成派活的父会话，或者让子会话挂到
+      一个不存在的父亲名下。``agy`` 续接已有会话（``native_session_id=True``）时传入的已是
+      清单上的真实 ``conversationId``，直接返回。
+    """
+    if runs_on_kernel(agent_type):
+        return session_id
+    if agent_type == "claude":
+        from frago.agent_driver.drivers.claude import session_id_for
+
+        return session_id_for(session_id, native=native_session_id)
+    if agent_type == "agy":
+        return session_id if native_session_id else None
+    return None
+
+
 _REGISTRY: dict[str, AgentDriver] = {}
 
 

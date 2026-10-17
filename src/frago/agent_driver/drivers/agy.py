@@ -322,12 +322,16 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         if not claimed:
             return None
         agy_store.put_binding(session.session_id, claimed, session.cwd)
-        # 认到真编号，顺手把「这场是 frago 派出去的」记进会话关系账——父会话编号从派活
-        # 那一刻的环境里认（见 ``record_dispatch``）。记账 MUST 在这里做：绑定表在会话
-        # 收场时就清了，跑完之后再想拿这个编号已经拿不到。
-        from frago.session.session_origin import record_dispatch
+        # 认到真编号，顺手把「这场是 frago 派出去的」记进会话关系账——父会话编号从起会话
+        # 那一刻的环境里认。记账 MUST 在这里做：绑定表在会话收场时就清了，跑完之后再想拿
+        # 这个编号已经拿不到。
+        #
+        # **认不出派活者就不记**（见 ``record_attributed_dispatch``）：走到这一步的有两种
+        # 情形——主会话派活，和人在网页上自己新建会话。后者没有派它的那场会话，不该被记成
+        # worker。驱动里这两条路长得一模一样，只认得出父亲这一条判据。
+        from frago.session.session_origin import record_attributed_dispatch
 
-        record_dispatch(claimed, agent_type="agy", cwd=session.cwd)
+        record_attributed_dispatch(claimed, agent_type="agy", cwd=session.cwd)
         # 认到真编号就把这个窗口改认它。名字与真编号一致之后，常驻池重启时按名字就能
         # 找到这个还活着的窗口并接管，不必另起一个去续接同一场对话。改不动只是名字
         # 留在原处，不阻断认领本身。

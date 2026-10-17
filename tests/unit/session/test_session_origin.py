@@ -467,6 +467,44 @@ class TestRelationKinds:
         session_origin.clear_cache()
 
 
+class TestAttributedDispatch:
+    """给三家 CLI 的驱动用的那一版记账：认不出派活者就当这场没被谁派过。
+
+    驱动走到「认到真编号」那一步时，主会话派活与人在网页上自己开一场**长得一模一样**。
+    只认得出父亲这一条判据，所以认不出父亲就不能记——把网页起的那场记成 worker，它就会
+    落进「认不出出处的 worker」那一格，而那格里本该只有真被人派出去、只是没记住是谁派的活。
+    """
+
+    def test_认得出派活者就记(self, ledger, empty_projects, monkeypatch):
+        child = str(uuid.uuid4())
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", HUMAN_SID)
+        assert session_origin.record_attributed_dispatch(
+            child, agent_type="agy", cwd="/tmp"
+        )
+        index = _index(empty_projects)
+        assert index.parent_of(child) == HUMAN_SID
+        assert index.origin_of(child) == "worker"
+
+    def test_认不出派活者就不记(self, ledger, empty_projects, monkeypatch):
+        child = str(uuid.uuid4())
+        monkeypatch.setattr(session_origin, "parent_from_env", lambda: None)
+        assert not session_origin.record_attributed_dispatch(
+            child, agent_type="agy", cwd="/tmp"
+        )
+        assert session_origin.find_relation(child) is None
+        assert _index(empty_projects).origin_of(child) == "human"
+
+    def test_命令行那一版认不出父亲也记(self, ledger, empty_projects, monkeypatch):
+        # 两条路的分水岭就在这里：`frago agent <任务>` 敲下去本身就是派活，父亲认不出来
+        # 只是「不知道是谁派的」，这一场仍然是 worker，该进「认不出出处的 worker」。
+        child = str(uuid.uuid4())
+        monkeypatch.setattr(session_origin, "parent_from_env", lambda: None)
+        assert session_origin.record_dispatch(child, agent_type="claude", cwd="/tmp")
+        index = _index(empty_projects)
+        assert index.origin_of(child) == "worker"
+        assert index.parent_of(child) is None
+
+
 class TestCloseRelation:
     """收口写入：改的只有那一条分支，别的记录一字不动。"""
 

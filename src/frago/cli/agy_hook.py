@@ -55,6 +55,7 @@ agy 有 SessionStart / PreToolUse / PostToolUse / PreInvocation / PostInvocation
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import subprocess
@@ -280,6 +281,38 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _record_launch_relation(payload: dict[str, Any]) -> None:
+    """把「这场 agy 会话是从哪场会话里起来的」记进会话关系账。
+
+    **这是 agy 自建会话唯一能被认出来的时刻。** agy 自己新建的会话（``agy -p`` 那种）
+    不经过 frago 的任何一条起会话的路，事后也没有地方能查它属于谁：agy 的转录里没有
+    父会话字段，它的 conversations 库里 parent_references 表也是空的（2026-10-16 实测）。
+    唯一握得住的是**它起来的那一瞬**——它的进程继承着发起方的环境，发起方若是一场会话，
+    那个编号就在环境里（claude 自注入 ``CLAUDE_CODE_SESSION_ID``，内核每条命令带
+    ``FRAGO_SESSION_ID``，frago 起的会话由 tmux 那一侧注入 ``FRAGO_SESSION_ID``）。
+
+    认不出父亲、或者认出来的就是本场自己，都不记：前者是人在终端里直接敲的 agy，没有
+    派人；后者说明这一场是 frago 起的、身份由自己那一侧声明，父子关系由派活那一刻记。
+    """
+    child = payload.get("conversationId")
+    if not isinstance(child, str) or not child.strip():
+        return
+    child = child.strip()
+    from frago.session.session_origin import parent_from_env, record_relation
+
+    parent = parent_from_env()
+    if parent is None or parent == child:
+        return
+    workspace = payload.get("workspacePaths") or []
+    record_relation(
+        kind="dispatch",
+        child_session_id=child,
+        parent_session_id=parent,
+        agent_type="agy",
+        cwd=workspace[0] if workspace else "",
+    )
+
+
 def run(event: str) -> int:
     """读一条 agy 事件、翻过去、问引擎、翻回来、打在 stdout。永远返回 0。"""
     raw = sys.stdin.read()
@@ -290,6 +323,10 @@ def run(event: str) -> int:
             payload = parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             logger.warning("agy-hook: stdin 不是 JSON，本轮无规则", exc_info=True)
+
+    if payload is not None and event == "SessionStart":
+        with contextlib.suppress(Exception):  # 记账失败不该挡住 hook 的答复
+            _record_launch_relation(payload)
 
     # 读不出事件就按"没有意见"答复，且答复仍要**按事件分形状**——PreToolUse 缺 decision
     # 会被 agy 当拒绝（见 translate_output），所以这里也得走它，不能直接吐 {}。

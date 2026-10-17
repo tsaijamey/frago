@@ -492,6 +492,18 @@ class TmuxAgentSession:
         )
 
     # ── 生命周期 ───────────────────────────────────────────────────
+    def _own_listed_id(self) -> str | None:
+        """这场会话在清单上那一行的编号；起会话那一刻还认不出的那几家（codex / opencode）
+        为 None——它们不声明身份，子会话也就无从挂靠（判据见
+        :func:`frago.agent_driver.driver.listed_session_id`）。"""
+        from frago.agent_driver.driver import listed_session_id
+
+        return listed_session_id(
+            self.driver.agent_type,
+            self.session_id,
+            native_session_id=self.native_session_id,
+        )
+
     def open(self, *, ready_timeout_s: float = 30.0) -> None:
         """起 detached 会话、投喂启动命令、等就绪、跑一次性异常处理。
 
@@ -527,6 +539,18 @@ class TmuxAgentSession:
                 merged_env.setdefault(_proxy_name, _proxy_val)
         if self.conv_key:
             merged_env.setdefault("FRAGO_CONV_KEY", self.conv_key)
+        # 把"我是清单上的哪一场"写进会话环境。**会话里再起会话时，靠的就是这一条**：
+        # 子会话的进程继承它，从而说得出自己是谁派出去的（见
+        # ``session_origin.parent_from_env``），左栏据此把子会话折到这场下面。
+        #
+        # 注入的是**本场自己在清单上的编号**，不是拉起本场那一场的编号——本场里跑的任何
+        # 命令都属于本场，不是属于上一场。上一层的关系由派活那一刻记的账负责。
+        # claude / 内核那两家自己也会声明身份（claude 注入 CLAUDE_CODE_SESSION_ID，内核
+        # 每条命令都带 FRAGO_SESSION_ID）；这里对它们是同名覆盖成同一个编号，不冲突。
+        # 借住模式同样注入：借的是别人的窗口，跑的是本场的 agent，命令前缀只覆盖这一条
+        # 命令，不碰主人的环境。
+        if self._own_listed_id():
+            merged_env.setdefault("FRAGO_SESSION_ID", self._own_listed_id())
         # launch 要看得见最终环境：codex 的 provider 开关由它推出（见 LaunchCtx.env）。
         ctx = dataclasses.replace(ctx, env=dict(merged_env))
 

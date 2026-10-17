@@ -95,6 +95,27 @@ def test_runs_on_kernel_is_the_single_judgement():
         assert runs_on_kernel(other) is False
 
 
+def test_编号要在清单上真找得到才声明():
+    """起会话那一刻要往环境里声明「我是哪一场」时，问的是这一处判断。
+
+    codex / opencode / agy 新建时（``native_session_id=False``）答不出清单上真有的编号
+    （真实编号要等会话跑起来才认领得到），必须回 None——拿 frago 自己的把手（如
+    ``webui-<uuid>``）冒充，``agy`` 的 ``SessionStart`` hook 会把把手误认成派活的父会话；
+    续接已有会话（``native_session_id=True``）时传入的就是清单真编号，原样返回。
+    """
+    from frago.agent_driver.driver import listed_session_id
+    from frago.agent_driver.drivers.claude import claude_session_uuid
+
+    assert listed_session_id("coreagent", "core_abc", native_session_id=False) == "core_abc"
+    assert listed_session_id("agy", "webui-a-1", native_session_id=False) is None
+    assert listed_session_id("agy", "a-1", native_session_id=True) == "a-1"
+    derived = listed_session_id("claude", "f-1", native_session_id=False)
+    assert derived == claude_session_uuid("f-1")
+    assert listed_session_id("claude", "c-1", native_session_id=True) == "c-1"
+    assert listed_session_id("codex", "x-1", native_session_id=False) is None
+    assert listed_session_id("opencode", "o-1", native_session_id=False) is None
+
+
 def test_账在进程起来那一刻就记下_不等整轮跑完(monkeypatch, drive_dir):
     """内核 worker 可能跑很久，账要等这一轮结束才写的话，它在左栏整段时间里都是一张散在
     主干上的卡片——2026-10-16 实测：11:32 起的 worker，11:35:27 才落账，这三分多钟里

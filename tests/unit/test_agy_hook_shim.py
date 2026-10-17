@@ -459,3 +459,64 @@ def test_agy没装就不写(tmp_path, monkeypatch):
 
     assert not path.exists()
     assert not (tmp_path / ".gemini").exists()
+
+
+# ── SessionStart：把这场会话是从谁那儿起来的记进账 ────────────────────
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    """账本与扫描缓存挪到临时目录，用例之间互不干扰（CoreAgent 的会话根一并掐掉）。"""
+    from frago.session import session_origin
+
+    monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", tmp_path / "agent-launches.json")
+    monkeypatch.setattr(
+        session_origin, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json"
+    )
+    monkeypatch.setattr(session_origin, "_coreagent_scan_root", lambda: None)
+    root = tmp_path / "projects"
+    root.mkdir()
+    return root
+
+
+def _origin_index(projects_root):
+    from frago.session import session_origin
+
+    return session_origin.load_origin_index(projects_root=projects_root, use_memo=False)
+
+
+def test_会话里起的agy会话折到发起它那一场下面(ledger, monkeypatch):
+    """``agy -p`` 那种自建会话：父亲只能从它起来那一瞬的环境里认。"""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "parent-sid")
+    agy_hook._record_launch_relation(
+        {"conversationId": "child-conv", "workspacePaths": ["/tmp"]}
+    )
+    index = _origin_index(ledger)
+    assert index.parent_of("child-conv") == "parent-sid"
+    assert index.origin_of("child-conv") == "worker"
+
+
+def test_终端里直接起的agy会话不记(ledger, monkeypatch):
+    """认不出派活者就是人在终端里敲的 ``agy -p``，没有派人——按人开的算。"""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+    # 兜底那条「按当前目录最近写入的记录推断」不算数：它 certain=False，认父亲时一律不用。
+    monkeypatch.setattr("frago.session.self_id.resolve_self", lambda **_: None)
+    agy_hook._record_launch_relation(
+        {"conversationId": "human-conv", "workspacePaths": ["/tmp"]}
+    )
+    index = _origin_index(ledger)
+    assert index.origin_of("human-conv") == "human"
+    assert index.parent_of("human-conv") is None
+
+
+def test_环境里那个编号就是本场自己时不记(ledger, monkeypatch):
+    """frago 起的会话，环境里声明的是它自己的编号——那不是父亲，父子另由派活那一刻记。"""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setenv("FRAGO_SESSION_ID", "same-conv")
+    agy_hook._record_launch_relation({"conversationId": "same-conv"})
+    index = _origin_index(ledger)
+    assert index.origin_of("same-conv") == "human"
+def test_载荷里没有编号就不动账本(ledger):
+    agy_hook._record_launch_relation({"workspacePaths": ["/tmp"]})
+    from frago.session import session_origin
+
+    assert not session_origin.LAUNCH_LEDGER.exists()

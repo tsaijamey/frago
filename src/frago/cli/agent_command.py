@@ -213,24 +213,18 @@ def _emit_and_exit(
 def _worker_child_id(sid: str, *, agent_type: str, native_session_id: bool) -> str | None:
     """这场 worker 在**清单上那一行的编号**；认不出来返回 None。
 
-    两种情形：三家 CLI 的编号由 frago 的编号派生而来，派生规则问各自的 driver 要
-    （NEVER 在这里抄一份）；内核这一场编号就是 frago 现发的（``core_`` 前缀），落盘的就是
-    它，原样用。
+    编号怎么认只写在 :func:`frago.agent_driver.driver.listed_session_id` 那一处，这里不再
+    抄一份。
 
-    opencode / codex / agy 返回 None：它们的真实编号要等会话起来之后才认领得到，而认领
-    发生在各自的 driver 里，记账也在那一刻当场做（见
-    :func:`frago.session.session_origin.record_dispatch`）。这里跑在会话已经收场之后，
-    绑定表那时已经清了，查也查不到。
+    agy 不在这条路上记：它的编号由 agy driver 认领时当场记（那时绑定表还在、conversation
+    id 才拿得到，见 :func:`frago.session.session_origin.record_attributed_dispatch`）。
+    这里跑在会话已经收场之后，绑定表那时已经清了，查也查不到；再记一遍是同一条账写两次。
     """
-    from frago.agent_driver.driver import runs_on_kernel
+    if agent_type == "agy":
+        return None
+    from frago.agent_driver.driver import listed_session_id
 
-    if runs_on_kernel(agent_type):
-        return sid
-    if agent_type == "claude":
-        from frago.agent_driver.drivers.claude import session_id_for
-
-        return session_id_for(sid, native=native_session_id)
-    return None
+    return listed_session_id(agent_type, sid, native_session_id=native_session_id)
 
 
 def _record_worker_launch(
