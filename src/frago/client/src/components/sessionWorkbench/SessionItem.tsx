@@ -18,11 +18,20 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
 import { formatClock } from './RecordCard';
-import { activityTs, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
+import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { keepTail, type ForYouInfo } from '@/hooks/useForYou';
 import { LiveBorder } from '@/components/ui/LiveEdge';
 import SessionMenu from './SessionMenu';
 import type { DeleteSessionResult } from './DeleteSessionButton';
+
+/** 各会话内核对应的程序图标（CoreAgent 采用 frago 图标）。 */
+export const FAMILY_ICON: Record<SessionFamily, { src: string; label: string }> = {
+  'claude-code': { src: '/icons/claude-code.svg', label: 'Claude Code' },
+  codex: { src: '/icons/codex.svg', label: 'Codex' },
+  opencode: { src: '/icons/opencode.svg', label: 'OpenCode' },
+  agy: { src: '/icons/antigravity.png', label: 'Antigravity' },
+  coreagent: { src: '/icons/coreagent.png', label: 'CoreAgent' },
+};
 
 /** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
 const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
@@ -455,6 +464,16 @@ export default function SessionItem({
             onCopy={onCopy}
             copied={copied}
           />
+          {FAMILY_ICON[session.family] ? (
+            <img
+              src={FAMILY_ICON[session.family].src}
+              alt={FAMILY_ICON[session.family].label}
+              title={FAMILY_ICON[session.family].label}
+              data-testid="session-family-icon"
+              data-family={session.family}
+              className="pointer-events-none h-3.5 w-3.5 shrink-0 select-none rounded-[3px] object-contain opacity-85"
+            />
+          ) : null}
         </div>
       </div>
       </MaybeLiveCard>

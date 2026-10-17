@@ -135,4 +135,38 @@ describe('复制续接命令', () => {
     fireEvent.click(screen.getByTestId('session-menu-button'));
     expect(screen.queryByTestId('copy-resume')).toBeNull();
   });
+
+  it('五家会话在卡片右下角各自显示对应的程序图标，CoreAgent 采用 frago 图标', () => {
+    const cases: Array<{ family: WorkbenchSession['family']; src: string; alt: string }> = [
+      { family: 'claude-code', src: '/icons/claude-code.svg', alt: 'Claude Code' },
+      { family: 'codex', src: '/icons/codex.svg', alt: 'Codex' },
+      { family: 'opencode', src: '/icons/opencode.svg', alt: 'OpenCode' },
+      { family: 'agy', src: '/icons/antigravity.png', alt: 'Antigravity' },
+      { family: 'coreagent', src: '/icons/coreagent.png', alt: 'CoreAgent' },
+    ];
+    const { rerender } = render(
+      <SessionItem
+        session={session({ session_id: 's-0', family: cases[0].family })}
+        selected={false}
+        copied={false}
+        onSelect={NOOP}
+        onCopy={NOOP}
+      />
+    );
+    for (const c of cases) {
+      rerender(
+        <SessionItem
+          session={session({ session_id: `s-${c.family}`, family: c.family })}
+          selected={false}
+          copied={false}
+          onSelect={NOOP}
+          onCopy={NOOP}
+        />
+      );
+      const img = screen.getByTestId('session-family-icon') as HTMLImageElement;
+      expect(img.getAttribute('src')).toBe(c.src);
+      expect(img.getAttribute('alt')).toBe(c.alt);
+      expect(img.getAttribute('data-family')).toBe(c.family);
+    }
+  });
 });
