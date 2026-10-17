@@ -150,6 +150,57 @@ def conversation_db_path(conversation_id: str) -> Path:
     return get_app_data_dir() / "conversations" / f"{conversation_id}.db"
 
 
+def brain_dir(conversation_id: str) -> Path:
+    """某场会话在 brain/ 下的独立目录（不判断存在与否）。"""
+    return brain_root() / conversation_id
+
+
+def conversation_metadata_path() -> Path:
+    """会话元数据缓存 JSON 的位置。"""
+    return get_app_data_dir() / "cache" / "conversation_metadata.json"
+
+
+def annotation_path(conversation_id: str) -> Path:
+    """某场会话标题注解文件的位置（不判断存在与否）。"""
+    return get_app_data_dir() / "annotations" / f"{conversation_id}.pbtxt"
+
+
+def presence_lock_path(conversation_id: str) -> Path:
+    """某场会话在线锁文件的位置（不判断存在与否）。"""
+    return get_app_data_dir() / "presence" / f"{conversation_id}.lock"
+
+
+def has_conversation(conversation_id: str) -> bool:
+    """本机 agy 里还有没有这场会话的落盘痕迹（用于家族识别与删除前探测）。
+
+    与 :func:`conversation_exists` 分工相反：后者在目录读不到时保守回 True（防误清好绑定），
+    这里回答"这场到底在不在 agy 那边"——目录整个不在时回 False，免得把别家的裸 UUID
+    全认成 agy。只要转录文件、brain 子目录、独立会话库或摘要库行任一存在，就认作是它。
+    """
+    app_dir = get_app_data_dir()
+    if not app_dir.is_dir():
+        return False
+    if (
+        transcript_path(conversation_id).exists()
+        or brain_dir(conversation_id).is_dir()
+        or conversation_db_path(conversation_id).exists()
+    ):
+        return True
+    conn = _open_summaries()
+    if conn is None:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM conversation_summaries WHERE conversation_id = ? LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
 def normalize_directory(directory: str) -> str:
     """把工作目录归一化到解析过软链接的真实路径。
 
@@ -607,3 +658,237 @@ def drop_binding(frago_session_id: str) -> None:
     if bindings.pop(frago_session_id, None) is None:
         return
     _save_bindings(bindings)
+
+
+def drop_bindings_pointing_at(conversation_id: str) -> list[str]:
+    """清掉所有指向这场 agy 会话的映射，回被清掉的 frago 会话编号。
+
+    与 codex / opencode 同一条规矩：映射的键是 frago 侧的编号、值是 agy 侧的编号，
+    两边不是同一个编号空间，按值反查并摘除。
+    """
+    bindings = _load_bindings()
+    dropped = [
+        key
+        for key, entry in bindings.items()
+        if entry.get("agy_conversation_id") == conversation_id
+    ]
+    if not dropped:
+        return []
+    for key in dropped:
+        del bindings[key]
+    _save_bindings(bindings)
+    return dropped
+
+
+# ── 会话删除 ────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class DeletedAgySession:
+    """删掉一场 agy 会话在本机落盘后的交代。"""
+
+    conversation_id: str
+    removed: list[str]
+    problems: list[str]
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    """先写同目录临时文件再原子替换，避免半截 JSON 把 agy 自己的读取带崩。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, path)
+    except OSError:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
+def _prune_last_conversations(conversation_id: str) -> bool:
+    """从 ``cache/last_conversations.json`` 里摘掉指着这场会话的目录映射。"""
+    path = last_conversations_path()
+    if not path.exists():
+        return False
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    keys = [k for k, v in parsed.items() if v == conversation_id]
+    if not keys:
+        return False
+    for k in keys:
+        del parsed[k]
+    _write_json_atomic(path, parsed)
+    return True
+
+
+def _prune_conversation_metadata(conversation_id: str) -> bool:
+    """从 ``cache/conversation_metadata.json`` 里摘掉这场会话的缓存条目。"""
+    path = conversation_metadata_path()
+    if not path.exists():
+        return False
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    convs = parsed.get("conversations")
+    if not isinstance(convs, dict) or conversation_id not in convs:
+        return False
+    del convs[conversation_id]
+    _write_json_atomic(path, parsed)
+    return True
+
+
+def _is_presence_locked(lock_file: Path) -> bool:
+    """检测 ``presence/<id>.lock`` 是否正被活着的 agy 进程持有排他锁。
+
+    本机实测：活着的 agy 进程全程在 ``presence/<id>.lock`` 上持 ``flock`` 排他锁，进程退出后
+    0 字节锁文件仍留在盘上但不再持锁。删除前用非阻塞 ``LOCK_EX | LOCK_NB`` 试探一次：拿不到锁
+    说明这场会话此刻正有 agy 进程在跑（哪怕不是由 frago 的 tmux 起的），绝不能在它写库时硬删。
+    """
+    if not lock_file.exists():
+        return False
+    try:
+        import fcntl
+    except ImportError:
+        return False
+    try:
+        with lock_file.open("r") as fh:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            else:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                return False
+    except OSError:
+        return False
+
+
+def delete_session_files(conversation_id: str) -> DeletedAgySession | None:
+    """全量清理一场 agy 会话在 ``~/.gemini/antigravity-cli/`` 下的落盘数据。
+
+    agy 没有原生删除子命令，但它的落盘边界按会话编号天然隔离：
+
+    1. ``conversation_summaries.db`` 的单表 ``conversation_summaries``（无外键、无触发器）
+       ——WebUI 左栏与 ``agy`` 列表都读它，先删这一行；
+    2. ``brain/<id>/`` —— 转录 ``transcript.jsonl`` 与工件目录，家族判定与会话详情读它；
+    3. ``conversations/<id>.db``（含 ``-wal`` / ``-shm``）—— 单场独立的步骤 protobuf 库；
+    4. ``annotations/<id>.pbtxt`` 与 ``presence/<id>.lock`` —— 标题注解与锁文件；
+    5. ``cache/last_conversations.json`` 与 ``cache/conversation_metadata.json`` 里的对应键值。
+
+    动手前先探 ``presence/<id>.lock`` 上有没有活着的 agy 进程持锁：有就抛 ``OSError``，一个文件
+    都不动。**绝不碰 ``~/.frago/sessions/agy/`` 下的备份副本**，那份归 ``frago session search``
+    检索用。本机已经没有任何该会话落盘时返回 None，由调用方转成 404。
+    """
+    cid = conversation_id.strip()
+    if not cid:
+        return None
+
+    bdir = brain_dir(cid)
+    db_file = conversation_db_path(cid)
+    ann_file = annotation_path(cid)
+    lock_file = presence_lock_path(cid)
+    sum_db = summaries_db_path()
+
+    if _is_presence_locked(lock_file):
+        raise OSError(f"这场 agy 会话还在运行（{lock_file.name} 被占用），先结束运行再删")
+
+    in_summaries = False
+    if sum_db.exists():
+        try:
+            conn = sqlite3.connect(str(sum_db), timeout=5.0)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM conversation_summaries WHERE conversation_id = ? LIMIT 1",
+                    (cid,),
+                ).fetchone()
+                in_summaries = row is not None
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            raise OSError(f"摘要库打不开：{exc}") from exc
+
+    has_files = (
+        bdir.is_dir()
+        or db_file.exists()
+        or ann_file.exists()
+        or lock_file.exists()
+    )
+    if not in_summaries and not has_files:
+        return None
+
+    removed: list[str] = []
+    problems: list[str] = []
+
+    if in_summaries:
+        try:
+            conn = sqlite3.connect(str(sum_db), timeout=5.0)
+            try:
+                conn.execute(
+                    "DELETE FROM conversation_summaries WHERE conversation_id = ?",
+                    (cid,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            removed.append(f"摘要库记录 {sum_db}")
+        except sqlite3.Error as exc:
+            raise OSError(f"摘要库记录没删掉：{exc}") from exc
+
+    if bdir.is_dir() and bdir.name == cid:
+        try:
+            shutil.rmtree(bdir)
+            removed.append(f"会话目录 {bdir}")
+        except OSError as exc:
+            if not removed:
+                raise
+            problems.append(f"会话目录没删掉：{exc}")
+
+    if db_file.exists() or Path(f"{db_file}-wal").exists() or Path(f"{db_file}-shm").exists():
+        db_err: OSError | None = None
+        for target in (db_file, Path(f"{db_file}-wal"), Path(f"{db_file}-shm")):
+            if not target.exists():
+                continue
+            try:
+                target.unlink()
+            except OSError as exc:
+                db_err = exc
+        if db_err is not None:
+            if not removed:
+                raise db_err
+            problems.append(f"会话库没删掉：{db_err}")
+        else:
+            removed.append(f"会话库 {db_file}")
+
+    if ann_file.exists():
+        try:
+            ann_file.unlink()
+            removed.append(f"会话注解 {ann_file}")
+        except OSError as exc:
+            problems.append(f"会话注解没删掉：{exc}")
+
+    if lock_file.exists():
+        try:
+            lock_file.unlink()
+            removed.append(f"在线锁 {lock_file}")
+        except OSError as exc:
+            problems.append(f"在线锁没删掉：{exc}")
+
+    try:
+        if _prune_last_conversations(cid):
+            removed.append(f"目录最近会话映射 {last_conversations_path()}")
+    except OSError as exc:
+        problems.append(f"目录最近会话映射没摘掉：{exc}")
+
+    try:
+        if _prune_conversation_metadata(cid):
+            removed.append(f"元数据缓存 {conversation_metadata_path()}")
+    except OSError as exc:
+        problems.append(f"元数据缓存没摘掉：{exc}")
+
+    return DeletedAgySession(conversation_id=cid, removed=removed, problems=problems)
+

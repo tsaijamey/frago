@@ -777,6 +777,19 @@ class TestTheCoreAgentFamily:
         # 读与写整条路都要通：从前这里是 KeyError，页面拿到的是 500。
         assert so.load_public_state(self.CORE_SID)["status"] in ("empty", "unbound")
 
+    def test_every_registered_record_family_has_a_slot_directory(self, tmp_path, monkeypatch):
+        """登记进 RecordFamily 的每一家（含 agy）都能算出备份目录并读出右栏与标注。"""
+        from frago.server.services import workbench_marks as wm
+        from frago.session import record_reader, storage
+        from frago.session.unified_record import RECORD_FAMILIES
+
+        monkeypatch.setattr(storage, "get_session_base_dir", lambda: tmp_path)
+        for family in RECORD_FAMILIES:
+            monkeypatch.setattr(record_reader, "detect_family", lambda sid, f=family: f)
+            assert so.session_dir(SID, family) == tmp_path / so._FAMILY_DIR[family] / SID
+            assert so.load_public_state(SID)["status"] in ("empty", "unbound")
+            assert wm.load_marks(SID) == {"version": 1, "marks": []}
+
     def test_records_are_looked_up_in_the_root_of_their_own_family(self, tmp_path, monkeypatch):
         """实时监听按会话编号找对家的记录文件，不是只在 Claude Code 的目录里找。"""
         from frago.server.services import workbench_stream_bridge as wsb

@@ -78,6 +78,7 @@ _FAMILY_LABEL = {
     "codex": "codex",
     "opencode": "opencode",
     "coreagent": "CoreAgent",
+    "agy": "agy",
 }
 
 #: 写文件的工具把目标路径放在这几个参数里（三家各有各的写法）。

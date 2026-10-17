@@ -112,6 +112,7 @@ _FAMILY_DIR = {
     "opencode": "opencode",
     "codex": "codex",
     "coreagent": "coreagent",
+    "agy": "agy",
 }
 
 # ── 问话里的占位字 ────────────────────────────────────────────────────────

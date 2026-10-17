@@ -185,15 +185,14 @@ def _is_coreagent_session(session_id: str) -> bool:
 def _is_agy_session(session_id: str) -> bool:
     """agy 那边有没有这场会话。查不动一律当"没有"，NEVER 因此让判定失败。
 
-    判据是 brain 目录下**这场会话的转录在不在**，而不是 :func:`agy_store.conversation_exists`
+    判据走 :func:`agy_store.has_conversation`（目录整个不在时回 False，转录、brain 目录、
+    会话库或摘要库行任一在时回 True），而不是 :func:`agy_store.conversation_exists`
     ——后者在 brain 目录整个读不到时返回 True（那是给认领用的：读不到不等于会话没了），
     拿来判家族会把每一个认不出的裸 UUID 都归给 agy。这里要的恰好是反过来：**看不见就当
     不是**，最坏结果是退回 Claude Code，与接 agy 之前的行为一模一样。
     """
     try:
-        if not agy_store.brain_root().is_dir():
-            return False
-        return agy_store.transcript_path(session_id).exists()
+        return agy_store.has_conversation(session_id)
     except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
         return False
 
@@ -554,10 +553,7 @@ def read_raw(session_id: str, record_id: str) -> dict[str, Any] | None:
 class SessionDeleteUnsupported(RuntimeError):
     """这一家的会话还没有删除入口。
 
-    **眼下 agy 正走这条路**：它没有删除会话的命令行入口（见 :func:`delete_session`），
-    所以这一档不是预留位，是一个真的会出现在界面上的答复（服务层翻成 400）。
-
-    它同时守着**以后**：``detect_family`` 多加一家、而 ``delete_session`` 还没跟上时，
+    它守着**以后**：``detect_family`` 多加一家、而 ``delete_session`` 还没跟上时，
     落进别家的删法里比报错危险得多——删的东西不一样，出了事没人看得出是这里错的。
     """
 
@@ -589,15 +585,15 @@ def delete_session(session_id: str) -> DeletedSession:
 
     - 编号不属于任何一家 → 抛 :class:`UnknownSessionFamily`；
     - 本机已经没有这场会话 → 抛 :class:`SessionFilesMissing`；
-    - 这一家没有删除入口 → 抛 :class:`SessionDeleteUnsupported`（眼下只有 agy）；
+    - 这一家没有删除入口 → 抛 :class:`SessionDeleteUnsupported`；
     - 引擎拒绝动手 → 抛 :class:`~frago.session.engine_cli.EngineCliFailed`。
 
-    **五家走两种路。** Claude Code 与 CoreAgent 的记录就是一个 JSONL（外加 Claude Code
-    那边的同名目录），位置稳定、格式公开，直接删干净。codex 与 opencode 借引擎自己的
-    删除命令——不是偷懒，是因为它们的会话
-    横跨多张表与多个库，对着别人的库手写 ``DELETE`` 只会留下看不见的残渣（详见
-    :mod:`frago.session.engine_cli` 开头）。agy 同样横跨多张表与多个目录，但它连那条
-    命令都没有，所以走第三种结局。
+    **五家走两种路。** Claude Code、CoreAgent 与 agy 直接删本机落盘：前两家是一个 JSONL
+    （外加 Claude Code 那边的同名目录），agy 是摘要库单表那一行加按会话编号隔离的独立目录、
+    单会话库与缓存键值（详见 :func:`frago.session.agy_store.delete_session_files`）。
+    codex 与 opencode 借引擎自己的删除命令——不是偷懒，是因为它们的会话横跨多张无外键约束
+    的表与事件流水，对着别人的库手写 ``DELETE`` 只会留下看不见的残渣（详见
+    :mod:`frago.session.engine_cli` 开头）。
 
     **删掉引擎侧那一场之后，顺手摘掉 frago 这边指着它的映射。** 映射的键是 frago 侧
     的编号、值是引擎侧的编号，驱动碰见失效映射会自己清，但那是下一次起会话时的事；
@@ -641,14 +637,13 @@ def delete_session(session_id: str) -> DeletedSession:
         return DeletedSession(sid, family, [output or "codex 里的会话记录"], dropped)
 
     if family == "agy":
-        # agy 没有删会话的命令行入口（2026-10-13 实测 ``agy --help``，子命令只有 agent /
-        # changelog / install / mcp / models / plugin / remote-control / update），而它的
-        # 一场会话横跨 brain 目录、摘要库与 conversations/*.db 三处。对着别人的库手写
-        # DELETE 会留下看不见的残渣——与 codex / opencode 宁可借引擎自己的删除命令是
-        # 同一条理由，只是 agy 那边连那条命令都没有，于是只能明说不支持。
-        raise SessionDeleteUnsupported("agy 没有删除会话的命令行入口，这一场删不掉")
+        files = agy_store.delete_session_files(sid)
+        if files is None:
+            raise SessionFilesMissing(f"agy 那边已经没有这场会话了：{sid}")
+        dropped = _drop_pointing_bindings(sid, agy_store.drop_bindings_pointing_at)
+        return DeletedSession(sid, family, list(files.removed), [*files.problems, *dropped])
 
-    # 四家都在上面各归各的。走到这里说明 `detect_family` 认出了一个本函数还不认识的家
+    # 五家都在上面各归各的。走到这里说明 `detect_family` 认出了一个本函数还不认识的家
     # ——NEVER 让它落进上面任何一条分支：拿别家的删法去删这一家，删的东西不一样，出了事
     # 没人看得出是这里错的。
     raise SessionDeleteUnsupported(f"{family} 的会话还没有删除入口")

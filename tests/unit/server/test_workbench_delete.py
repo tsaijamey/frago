@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 import sys
 
 import pytest
@@ -28,12 +30,14 @@ from fastapi.testclient import TestClient
 from frago.server.services import tmux_sessions_service as tsvc
 from frago.server.services import workbench_groups as groups
 from frago.server.services import workbench_pins as pins
-from frago.session import codex_store, engine_cli, opencode_store, record_reader
+from frago.session import agy_store, agy_sync, codex_store, engine_cli, opencode_store, record_reader
 from frago.session.adapters import claude_code_records
 
 CC_SID = "00a02979-7eb4-5c70-94ae-867c8281e3f6"
 OC_SID = "ses_058288655ffeYMxYC1AZKCcv56"
 CX_SID = "01a01a98-82e9-7013-b24e-e5e91b03995a"
+AG_SID = "9c27b021-78c5-4c08-bcb3-c23dbfa4c778"
+AG_SID2 = "481b5141-cdf9-4a3a-aeea-535dfa1c0df0"
 CC_SID2 = "11b13080-8fc5-6d81-a5bf-978d9392f407"
 PROJECT = "-Users-frago-Repos-frago"
 
@@ -50,6 +54,8 @@ def frago_files(tmp_path, monkeypatch):
     monkeypatch.setattr(pins, "PINS_FILE", home / "workbench_pins.json")
     monkeypatch.setattr(codex_store, "BINDINGS_PATH", home / "codex-sessions.json")
     monkeypatch.setattr(opencode_store, "BINDINGS_PATH", home / "opencode-sessions.json")
+    monkeypatch.setattr(agy_store, "BINDINGS_PATH", home / "agy-sessions.json")
+    monkeypatch.setenv("FRAGO_AGY_APP_DIR", str(tmp_path / "agy-app"))
 
 
 @pytest.fixture
@@ -256,6 +262,109 @@ class TestDeleteSession:
         with pytest.raises(record_reader.SessionFilesMissing):
             record_reader.delete_session(CC_SID)
 
+    def test_agy_全量清理各处落盘_保留_frago_备份且不动邻座会话(self, tmp_path, monkeypatch):
+        sessions_base = tmp_path / ".frago" / "sessions"
+        monkeypatch.setattr(agy_sync, "get_session_base_dir", lambda: sessions_base)
+
+        def seed_agy(cid: str, workspace: str) -> None:
+            app_dir = agy_store.get_app_data_dir()
+            app_dir.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(agy_store.summaries_db_path()))
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS conversation_summaries ("
+                "conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT,"
+                " workspace_uris TEXT, last_modified_time TEXT,"
+                " last_user_input_time TEXT, step_count INTEGER)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    cid,
+                    f"title-{cid}",
+                    "preview",
+                    json.dumps([f"file://{workspace}"]),
+                    "2026-10-17 03:00:00+00:00",
+                    "2026-10-17 03:00:00+00:00",
+                    3,
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            tp = agy_store.transcript_path(cid)
+            tp.parent.mkdir(parents=True, exist_ok=True)
+            tp.write_text('{"step_index":0,"type":"USER_INPUT","content":"hi"}\n', encoding="utf-8")
+            agy_store.full_transcript_path(cid).write_text(
+                '{"step_index":0,"type":"USER_INPUT","content":"hi"}\n', encoding="utf-8"
+            )
+
+            dbp = agy_store.conversation_db_path(cid)
+            dbp.parent.mkdir(parents=True, exist_ok=True)
+            dbp.write_bytes(b"sqlite-proto")
+            (dbp.parent / f"{dbp.name}-wal").write_bytes(b"wal")
+            (dbp.parent / f"{dbp.name}-shm").write_bytes(b"shm")
+
+            ann = agy_store.annotation_path(cid)
+            ann.parent.mkdir(parents=True, exist_ok=True)
+            ann.write_text('title:"test"\n', encoding="utf-8")
+
+            lock = agy_store.presence_lock_path(cid)
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_bytes(b"")
+
+        seed_agy(AG_SID, "/tmp/ws-a")
+        seed_agy(AG_SID2, "/tmp/ws-b")
+
+        last_path = agy_store.last_conversations_path()
+        last_path.parent.mkdir(parents=True, exist_ok=True)
+        last_path.write_text(
+            json.dumps({"/tmp/ws-a": AG_SID, "/tmp/ws-b": AG_SID2}),
+            encoding="utf-8",
+        )
+        meta_path = agy_store.conversation_metadata_path()
+        meta_path.write_text(
+            json.dumps({"conversations": {AG_SID: {"id": AG_SID}, AG_SID2: {"id": AG_SID2}}}),
+            encoding="utf-8",
+        )
+        agy_store.put_binding("frago-agy-1", AG_SID, "/tmp/ws-a")
+        agy_store.put_binding("frago-agy-2", AG_SID2, "/tmp/ws-b")
+
+        backup = agy_sync.raw_backup_path(AG_SID)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text('{"step_index":0,"type":"USER_INPUT","content":"hi"}\n', encoding="utf-8")
+
+        removed = record_reader.delete_session(AG_SID)
+
+        assert removed.family == "agy"
+        assert removed.problems == []
+        assert not agy_store.brain_dir(AG_SID).exists()
+        assert not agy_store.conversation_db_path(AG_SID).exists()
+        assert not (agy_store.conversation_db_path(AG_SID).parent / f"{AG_SID}.db-wal").exists()
+        assert not (agy_store.conversation_db_path(AG_SID).parent / f"{AG_SID}.db-shm").exists()
+        assert not agy_store.annotation_path(AG_SID).exists()
+        assert not agy_store.presence_lock_path(AG_SID).exists()
+        assert [c.conversation_id for c in agy_store.list_conversations()] == [AG_SID2]
+        assert json.loads(last_path.read_text(encoding="utf-8")) == {"/tmp/ws-b": AG_SID2}
+        assert list(json.loads(meta_path.read_text(encoding="utf-8"))["conversations"]) == [AG_SID2]
+        assert agy_store.get_binding("frago-agy-1") is None
+        assert agy_store.get_binding("frago-agy-2") == AG_SID2
+        # ~/.frago/sessions/agy/ 下的备份副本绝不跟着删。
+        assert backup.exists()
+
+    def test_agy_presence_锁被占用时拒绝删除且不动文件(self, monkeypatch):
+        tp = agy_store.transcript_path(AG_SID)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tp.write_text('{"step_index":0,"type":"USER_INPUT","content":"hi"}\n', encoding="utf-8")
+        lock = agy_store.presence_lock_path(AG_SID)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"")
+        monkeypatch.setattr(agy_store, "_is_presence_locked", lambda _p: True)
+
+        with pytest.raises(OSError, match="还在运行"):
+            record_reader.delete_session(AG_SID)
+
+        assert tp.exists()
+
 
 class TestRoutes:
     @pytest.fixture(autouse=True)
@@ -322,6 +431,17 @@ class TestRoutes:
 
         assert response.status_code == 200
         assert response.json()["family"] == "codex"
+
+    def test_agy_的会话也删得掉(self, client):
+        tp = agy_store.transcript_path(AG_SID)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tp.write_text('{"step_index":0,"type":"USER_INPUT","content":"hi"}\n', encoding="utf-8")
+
+        response = client.delete(f"/api/workbench/sessions/{AG_SID}")
+
+        assert response.status_code == 200
+        assert response.json()["family"] == "agy"
+        assert not agy_store.brain_dir(AG_SID).exists()
 
     def test_引擎拒绝时回_500_并带上它的话(self, client, monkeypatch):
         monkeypatch.setattr(opencode_store, "session_exists", lambda _sid: True)

@@ -193,6 +193,11 @@ class TestCompose:
         assert "第 499 句" in text
         assert len(calls) == 2
 
+    def test_every_registered_record_family_has_a_handoff_label(self):
+        from frago.session.unified_record import RECORD_FAMILIES
+
+        assert RECORD_FAMILIES <= set(workbench_handoff._FAMILY_LABEL)
+
 
 class TestNumberedPair:
     def test_没带序号的从1开始(self):
