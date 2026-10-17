@@ -2090,7 +2090,7 @@
     "close": "关闭"
   },
   "team": {
-    "loading": "正在读本机的 team 状态…",
+    "loading": "正在读本机的结对状态…",
     "title": "结对",
     "pitch": "把两个人的 agent 会话并排摆在一起：你看得到对方那场在发生什么，也能让自己的 agent 往对方会话里投一句话。",
     "pitchCode": "连接码就是进门的凭证——没有账号、不用登录，谁拿到它谁就能接进来。",
@@ -2103,7 +2103,7 @@
     "sideA": "我发起的",
     "sideB": "我加入的",
     "open": "发起",
-    "openHint": "挑一场会话发起一个 team，拿到连接码",
+    "openHint": "挑一场会话发起结对，拿到连接码",
     "pickTitle": "拿哪一场会话发起？",
     "pickHint": "选中之后下面会写清交出去的是什么。",
     "pickNone": "这台机器上还没有会话。",
@@ -2161,7 +2161,7 @@
     "joinConfirm": "用这一场加入",
     "joinCodeTitle": "填队友给的连接码",
     "joinNext": "下一步",
-    "joinAlready": "你已经在这个 team 里了",
+    "joinAlready": "你已经在这个结对中了",
     "joinAlreadyWhy": "顶上那块就是它。要换一场会话带进去，先退出再重新加入。",
     "joinAlreadyGo": "去看它",
     "joinBadCode": "这个码用不了",

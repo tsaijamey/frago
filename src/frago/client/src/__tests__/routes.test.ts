@@ -54,8 +54,9 @@ describe('parsePath', () => {
     expect(parsePath('#/根本没有这一页')).toEqual({ page: HOME_PAGE, id: null });
   });
 
-  it('结对页叫 /teams；旧地址 /teaming 还认得，落到同一页', () => {
-    expect(pathForPage('vibe_teaming')).toBe('/teams');
+  it('结对页叫 /pairs；旧地址 /teams 与 /teaming 还认得，落到同一页', () => {
+    expect(pathForPage('vibe_teaming')).toBe('/pairs');
+    expect(parsePath('#/pairs')).toEqual({ page: 'vibe_teaming', id: null });
     expect(parsePath('#/teams')).toEqual({ page: 'vibe_teaming', id: null });
     expect(parsePath('#/teaming')).toEqual({ page: 'vibe_teaming', id: null });
   });

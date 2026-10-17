@@ -49,7 +49,7 @@
     },
     "nav": {
       "sessions": "Sessions",
-      "teams": "Teams",
+      "teams": "Pairs",
       "recipes": "Recipes",
       "todos": "Todos",
       "schedules": "Schedules",
@@ -2095,8 +2095,8 @@
     "close": "Close"
   },
   "team": {
-    "loading": "Reading this machine's team state…",
-    "title": "Teams",
+    "loading": "Reading this machine's pair state…",
+    "title": "Pairs",
     "pitch": "Two people's agent sessions side by side: you watch what is happening in theirs, and you can have your own agent drop a line into it.",
     "pitchCode": "The code is the credential — no account, no sign-in. Whoever holds it can come in.",
     "pathOpen": "I'll start one",
@@ -2108,7 +2108,7 @@
     "sideA": "I started this",
     "sideB": "I joined this",
     "open": "Start",
-    "openHint": "Pick a session to start a team with, and get a code",
+    "openHint": "Pick a session to start pairing with, and get a code",
     "pickTitle": "Which session do you want to start with?",
     "pickHint": "Pick one and it will spell out what you are handing over.",
     "pickNone": "No sessions on this machine yet.",
@@ -2166,7 +2166,7 @@
     "joinConfirm": "Join with this one",
     "joinCodeTitle": "Type the code your teammate gave you",
     "joinNext": "Next",
-    "joinAlready": "You're already in this team",
+    "joinAlready": "You're already in this pair",
     "joinAlreadyWhy": "It's the one up top. To bring a different session in, leave it first and join again.",
     "joinAlreadyGo": "Go to it",
     "joinBadCode": "That code won't work",
@@ -2195,9 +2195,9 @@
       "peerUser": "Your teammate said",
       "peerAgent": "Their agent replied"
     },
-    "help": "How Teams works",
+    "help": "How Pairs works",
     "guide": {
-      "title": "How Teams works",
+      "title": "How Pairs works",
       "s1Title": "Left: your agent, and your rules for your teammate",
       "s1Body": "Your session on this machine — type to your agent here. Above the box you set how it treats your teammate's requests; only you can change that.",
       "s2Title": "Right: their side and rules",

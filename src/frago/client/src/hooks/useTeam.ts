@@ -106,7 +106,7 @@ export function useTeamState() {
 
   const reload = useCallback(async () => {
     try {
-      setState(await readJson<TeamState>('/api/team'));
+      setState(await readJson<TeamState>('/api/pair'));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -146,8 +146,8 @@ export function usePeerRecords(code: string | null) {
     setLoading(true);
     try {
       const [gotRecords, gotStatus] = await Promise.all([
-        readJson<{ records: WorkbenchRecord[] }>(`/api/team/${encodeURIComponent(code)}/records`),
-        readJson<TeamStatus>(`/api/team/${encodeURIComponent(code)}/status`),
+        readJson<{ records: WorkbenchRecord[] }>(`/api/pair/${encodeURIComponent(code)}/records`),
+        readJson<TeamStatus>(`/api/pair/${encodeURIComponent(code)}/status`),
       ]);
       belongsTo.current = code;
       setRecords(gotRecords.records || []);
@@ -177,14 +177,14 @@ export function usePeerRecords(code: string | null) {
 }
 
 export async function openTeam(sessionId: string): Promise<{ code: string; side: string }> {
-  return readJson('/api/team/open', {
+  return readJson('/api/pair/open', {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId }),
   });
 }
 
 export async function joinTeam(code: string, sessionId: string): Promise<{ code: string; side: string }> {
-  return readJson('/api/team/join', {
+  return readJson('/api/pair/join', {
     method: 'POST',
     body: JSON.stringify({ code, session_id: sessionId }),
   });
@@ -202,7 +202,7 @@ export type LeaveReach = 'done' | 'local-only';
  */
 export async function leaveTeam(code: string): Promise<LeaveReach> {
   const got = await readJson<{ reach?: LeaveReach }>(
-    `/api/team/${encodeURIComponent(code)}/leave`,
+    `/api/pair/${encodeURIComponent(code)}/leave`,
     { method: 'POST' },
   );
   return got?.reach ?? 'done';
@@ -214,7 +214,7 @@ export async function leaveTeam(code: string): Promise<LeaveReach> {
  */
 export async function sendToPeer(code: string, text: string): Promise<string> {
   const got = await readJson<{ message_id?: string }>(
-    `/api/team/${encodeURIComponent(code)}/send`,
+    `/api/pair/${encodeURIComponent(code)}/send`,
     {
       method: 'POST',
       body: JSON.stringify({ text, note: '' }),
@@ -225,7 +225,7 @@ export async function sendToPeer(code: string, text: string): Promise<string> {
 
 /** 改本机「队友的请求怎么处理」。不联网，下一轮同步对方就看得到。 */
 export async function saveRequestRules(rules: RequestRules): Promise<RequestRules> {
-  const got = await readJson<{ request_rules: RequestRules }>('/api/team/request-rules', {
+  const got = await readJson<{ request_rules: RequestRules }>('/api/pair/request-rules', {
     method: 'PUT',
     body: JSON.stringify(rules),
   });
@@ -235,7 +235,7 @@ export async function saveRequestRules(rules: RequestRules): Promise<RequestRule
 /** 核实本机会话里一条队友请求的来路。不联网，查的是本机投递账。 */
 export async function verifyRelayed(code: string, messageId: string): Promise<boolean> {
   const got = await readJson<{ genuine?: boolean }>(
-    `/api/team/${encodeURIComponent(code)}/verify?message=${encodeURIComponent(messageId)}`,
+    `/api/pair/${encodeURIComponent(code)}/verify?message=${encodeURIComponent(messageId)}`,
   );
   return got?.genuine === true;
 }

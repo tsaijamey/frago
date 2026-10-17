@@ -70,7 +70,7 @@ function servingTeams(codes: string[]) {
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      if (path.includes('/api/team') && !path.includes('/join')) {
+      if ((path.includes('/api/pair') || path.includes('/api/team')) && !path.includes('/join')) {
         return {
           ok: true,
           json: async () => ({
@@ -143,13 +143,13 @@ describe('加入一个 team', () => {
     expect(screen.queryByText(/会话页/)).toBeNull();
   });
 
-  it('已经在这个 team 里就当场说清，一个请求都不发', async () => {
+  it('已经在这个结对中就当场说清，一个请求都不发', async () => {
     servingTeams(['AAAAAAAAAA']);
     const input = await openJoin();
 
     type(input, 'AAAAAAAAAA');
 
-    expect(screen.getByText('你已经在这个 team 里了')).toBeTruthy();
+    expect(screen.getByText('你已经在这个结对中了')).toBeTruthy();
     expect(nextButton().disabled).toBe(true);
     expect(joinTeam).not.toHaveBeenCalled();
   });

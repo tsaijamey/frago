@@ -106,9 +106,10 @@ def _refuse(err: Exception) -> HTTPException:
     )
 
 
+@router.get("/pair")
 @router.get("/team")
-async def read_team_state() -> dict[str, Any]:
-    """本机参加了哪些 team、中继配好了没有。不联网。
+async def read_pair_state() -> dict[str, Any]:
+    """本机参加了哪些 pair / team、中继配好了没有。不联网。
 
     界面第一屏就要它，所以它不能去敲中继——中继连不上时这一屏还得画得出来，
     不然人连「中继没配」这件事都看不见。
@@ -118,6 +119,23 @@ async def read_team_state() -> dict[str, Any]:
     from frago.team.state import PUSH_TROUBLE_AFTER_ROUNDS, ensure_member
 
     state = ensure_member()
+    pairs_list = [
+        {
+            "code": one.code,
+            "session_id": one.session_id,
+            "side": one.side,
+            "active": one.active,
+            "pushed_seq": one.pushed_seq,
+            # 断一两轮下一轮就补上了，界面不该为它亮提示；连续够了轮数才交出去。
+            "push_trouble": (
+                one.push_trouble
+                if one.push_fail_rounds >= PUSH_TROUBLE_AFTER_ROUNDS
+                else ""
+            ),
+            "push_trouble_transient": one.push_trouble_transient,
+        }
+        for one in state.teams.values()
+    ]
     return {
         "member": state.member,
         "configured": state.relay.configured(),
@@ -125,26 +143,12 @@ async def read_team_state() -> dict[str, Any]:
         "prefix": state.prefix,
         "interval_seconds": state.interval_seconds,
         "request_rules": asdict(state.request_rules),
-        "teams": [
-            {
-                "code": one.code,
-                "session_id": one.session_id,
-                "side": one.side,
-                "active": one.active,
-                "pushed_seq": one.pushed_seq,
-                # 断一两轮下一轮就补上了，界面不该为它亮提示；连续够了轮数才交出去。
-                "push_trouble": (
-                    one.push_trouble
-                    if one.push_fail_rounds >= PUSH_TROUBLE_AFTER_ROUNDS
-                    else ""
-                ),
-                "push_trouble_transient": one.push_trouble_transient,
-            }
-            for one in state.teams.values()
-        ],
+        "pairs": pairs_list,
+        "teams": pairs_list,
     }
 
 
+@router.put("/pair/request-rules")
 @router.put("/team/request-rules")
 async def save_request_rules(body: RequestRulesBody) -> dict[str, Any]:
     """改本机「队友的请求怎么处理」。不联网，下一轮同步随 push 带给中继。
@@ -177,9 +181,10 @@ async def save_request_rules(body: RequestRulesBody) -> dict[str, Any]:
     return {"request_rules": asdict(state.request_rules)}
 
 
+@router.post("/pair/open")
 @router.post("/team/open")
-async def open_team(request: OpenRequest) -> dict[str, Any]:
-    """发起一个 team，返回连接码。"""
+async def open_pair(request: OpenRequest) -> dict[str, Any]:
+    """发起一个结对 (pair)，返回连接码。"""
     from frago.team import sync as team_sync
     from frago.team.state import load_state
 
@@ -191,9 +196,10 @@ async def open_team(request: OpenRequest) -> dict[str, Any]:
     return {"code": binding.code, "side": binding.side}
 
 
+@router.post("/pair/join")
 @router.post("/team/join")
-async def join_team(request: JoinRequest) -> dict[str, Any]:
-    """用连接码加入。"""
+async def join_pair(request: JoinRequest) -> dict[str, Any]:
+    """用连接码加入结对。"""
     from frago.team import sync as team_sync
     from frago.team.state import load_state
 
@@ -207,9 +213,10 @@ async def join_team(request: JoinRequest) -> dict[str, Any]:
     return {"code": binding.code, "side": binding.side}
 
 
+@router.post("/pair/{code}/leave")
 @router.post("/team/{code}/leave")
-async def leave_team(code: str) -> dict[str, Any]:
-    """退出。**本机这一侧一定退得掉。**
+async def leave_pair(code: str) -> dict[str, Any]:
+    """退出结对。**本机这一侧一定退得掉。**
 
     ``reach`` 说的是中继那边知不知道这件事：``done`` 两边都知道了，``local-only``
     只有本机知道（中继连不上、或者它早把这个码扫掉了）。两种都算退出成功——界面据此
@@ -226,8 +233,9 @@ async def leave_team(code: str) -> dict[str, Any]:
     return {"left": code, "reach": reach}
 
 
+@router.get("/pair/{code}/status")
 @router.get("/team/{code}/status")
-async def team_status(code: str) -> dict[str, Any]:
+async def pair_status(code: str) -> dict[str, Any]:
     from frago.team import sync as team_sync
     from frago.team.state import load_state
 
@@ -249,6 +257,7 @@ async def team_status(code: str) -> dict[str, Any]:
     return got
 
 
+@router.get("/pair/{code}/records")
 @router.get("/team/{code}/records")
 async def peer_records(code: str, limit: int = 80, after_seq: int | None = None) -> dict[str, Any]:
     """右边那一列：对方会话的记录。
@@ -270,6 +279,7 @@ async def peer_records(code: str, limit: int = 80, after_seq: int | None = None)
     return {"records": records}
 
 
+@router.post("/pair/{code}/send")
 @router.post("/team/{code}/send")
 async def send_to_peer(code: str, request: SendRequest) -> dict[str, Any]:
     """往对方的会话投一条消息。"""
@@ -288,6 +298,7 @@ async def send_to_peer(code: str, request: SendRequest) -> dict[str, Any]:
     return {"sent": True, "message_id": message_id}
 
 
+@router.get("/pair/{code}/verify")
 @router.get("/team/{code}/verify")
 async def verify_message(code: str, message: str) -> dict[str, Any]:
     """核实本机会话里一条自称来自队友的发言。**不联网**，查的是本机自己的投递账。
@@ -300,3 +311,11 @@ async def verify_message(code: str, message: str) -> dict[str, Any]:
 
     verdict = team_sync.verify_message(load_state(), code, message)
     return {"genuine": verdict.genuine, "reason": verdict.reason}
+
+
+# 向下兼容别名，保持原函数名可用，避免破坏测试或外部引用
+read_team_state = read_pair_state
+open_team = open_pair
+join_team = join_pair
+leave_team = leave_pair
+team_status = pair_status

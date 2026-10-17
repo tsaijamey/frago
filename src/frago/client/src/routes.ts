@@ -25,7 +25,7 @@ export const HOME_PAGE: PageType = 'session_workbench';
 const PAGE_SEGMENT: Record<PageType, string> = {
   live: 'live',
   session_workbench: 'sessions',
-  vibe_teaming: 'teams',
+  vibe_teaming: 'pairs',
   dashboard: 'dashboard',
   tasks: 'tasks',
   task_detail: 'tasks',
@@ -67,8 +67,9 @@ const LIST_PAGE: Record<string, PageType> = (() => {
     if (DETAIL_PAGE[segment] === page) continue;
     table[segment] = page;
   }
-  // 改过名的段。侧栏这一项叫 Teams 之后地址跟着改成 `/teams`，但聊天记录、书签里
-  // 还躺着旧地址——认它，落到同一页，再由 `useHashRoute` 把地址栏改写成新名字。
+  // 改过名的段。侧栏这一项改叫 Pairs 之后地址跟着改成 `/pairs`，但聊天记录、书签里
+  // 还躺着旧地址 `/teams` 与 `/teaming`——认它们，落到同一页，再由 `useHashRoute` 把地址栏改写成新名字。
+  table.teams = 'vibe_teaming';
   table.teaming = 'vibe_teaming';
   return table;
 })();
