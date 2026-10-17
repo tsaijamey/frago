@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import time
 import uuid
 from collections.abc import Mapping
@@ -559,6 +560,56 @@ def _ensure_custom_api_key_approved(env: Mapping[str, str]) -> None:
         logger.warning("could not pre-approve claude custom api key", exc_info=True)
 
 
+#: 会话级连接要经 ``--settings`` 递给 claude 的键前缀。
+#:
+#: 为什么非绕这一道不可：claude 启动时先把 ``~/.claude/settings.json`` 的 env 段套进
+#: 它自己的进程环境，tmux ``new-session -e`` 注入的**同名键被盖回去**——2026-10-16
+#: 隔离实验判死（进程环境指本地代理、用户设置指一个死端口，claude 走的是死端口）。
+#: 改走 ``--settings`` 就压得过它（同一次实验换 ``--settings``，请求真的落到本地代理）。
+#: 会话身份那几项（FRAGO_SESSION_ID / FRAGO_CONV_KEY）与 settings.json 不同名，
+#: 照旧走会话环境，不必绕。
+_PROFILE_ENV_KEYS = ("ANTHROPIC_",)
+
+
+def _session_settings_path(session_id: str) -> Path:
+    """这一场会话的 claude 设置文件落点（``~/.frago/agent-settings/<会话>.json``）。
+
+    放家目录下的 frago 目录、不放系统临时目录：里面装的是这一场要用的连接密钥。
+    每场一份、同名覆盖；跑完不删，同一场会话被重新拉起时正好复用。
+    """
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(session_id))[:120] or "session"
+    return Path.home() / ".frago" / "agent-settings" / f"{safe}.json"
+
+
+def _session_settings_args(ctx: LaunchCtx) -> str:
+    """把这一场的连接写进会话级设置文件，按 ``--settings <路径>`` 拼进启动命令。
+
+    没有可覆盖的键（既没点名连接、也没绑 worker 连接）时返回空串，启动命令一字不变。
+    写文件失败也返回空串——退回旧行为（这一场跑在用户全局那条连接上），好过一个附属
+    文件把会话整个打死。
+
+    **值走文件，命令行上只有路径**：启动命令是打进 pane 的 shell 里执行的，密钥写在
+    命令行上会进 shell 历史、留在屏与记录里（同 ``LaunchCtx.env`` 那条注释的取舍）。
+    """
+    env = {
+        k: v
+        for k, v in dict(ctx.env or {}).items()
+        if isinstance(v, str) and k.startswith(_PROFILE_ENV_KEYS)
+    }
+    if not env:
+        return ""
+    path = _session_settings_path(ctx.session_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"env": env}, fh, ensure_ascii=False)
+    except OSError:
+        logger.warning("会话级 claude 设置写不进去，这一场退回用户全局那条连接", exc_info=True)
+        return ""
+    return f" --settings {shlex.quote(str(path))}"
+
+
 def _launch(ctx: LaunchCtx) -> str:
     # 起会话前先把 cwd 标记为已信任，否则交互式 TUI 会卡在一次性 workspace-trust
     # 菜单、就绪信号永不出现、干等到超时（见 _ensure_workspace_trusted）。
@@ -572,6 +623,10 @@ def _launch(ctx: LaunchCtx) -> str:
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。
+    #
+    # 这一场若换了连接，连接的值经 ``--settings`` 带上（见 _session_settings_args）——
+    # 只写进 tmux 会话环境的话，用户 settings.json 的 env 段会把它们盖回去。
+    head = "claude --dangerously-skip-permissions" + _session_settings_args(ctx)
     if ctx.native_session_id:
         # 真实 claude 会话 id 原样使用，按 transcript 是否已存在二分——与下方非 native
         # 分支同一套规则：
@@ -581,8 +636,8 @@ def _launch(ctx: LaunchCtx) -> str:
         #   不存在（WebUI「新建会话」先生成一个全新 uuid）→ ``--session-id`` 首次创建。
         #     反过来对不存在的 id 用 ``--resume`` 同样起不来，故这个二分是必须的。
         if tc_mod.locate_transcript(ctx.session_id, cwd=ctx.cwd) is not None:
-            return f"claude --dangerously-skip-permissions --resume {ctx.session_id}"
-        return f"claude --dangerously-skip-permissions --session-id {ctx.session_id}"
+            return f"{head} --resume {ctx.session_id}"
+        return f"{head} --session-id {ctx.session_id}"
     # 非 native：frago 自己的标识经 uuid5 确定性映射成合法 claude 会话 id。
     # 关键分流（spec 20260627 Phase 5）：``--session-id`` 是"用此 id **新建**会话"，
     # 撞上已存在的 ``<sid>.jsonl`` 直接 ``Error: Session ID ... is already in use``
@@ -593,8 +648,8 @@ def _launch(ctx: LaunchCtx) -> str:
     # 是合法正向依赖，故顶层 eager 导入（消环后还原，不再需要延迟）。
     sid = claude_session_uuid(ctx.session_id)
     if tc_mod.locate_transcript(sid, cwd=ctx.cwd) is not None:
-        return f"claude --dangerously-skip-permissions --resume {sid}"
-    return f"claude --dangerously-skip-permissions --session-id {sid}"
+        return f"{head} --resume {sid}"
+    return f"{head} --session-id {sid}"
 
 
 def transcript_path_for(session: TmuxAgentSession) -> Path | None:

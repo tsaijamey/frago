@@ -5,6 +5,9 @@ tmux 后端注入 prompt 时若卡在权限弹窗，就绪信号永不出现，�
 
 from __future__ import annotations
 
+import json
+import stat
+
 # 触发 driver 注册
 from pathlib import Path
 
@@ -105,3 +108,70 @@ def test_launch_creates_raw_id_when_native_and_no_transcript(monkeypatch) -> Non
     assert "--resume" not in cmd
     # 同样不套 uuid5：页面读的就是这个 id。
     assert claude_driver.claude_session_uuid(fresh_sid) not in cmd
+
+
+def test_launch_without_profile_env_has_no_settings_flag() -> None:
+    """没点名连接、也没绑 worker 连接时，启动命令与从前一字不差。
+
+    只有会话身份（FRAGO_*）那几项时不加 ``--settings``：它们与 settings.json 不同名，
+    照旧走会话环境。
+    """
+    driver = load_driver("claude")
+    cmd = driver.launch_command(
+        LaunchCtx(cwd="/tmp", session_id="s1", env={"FRAGO_CONV_KEY": "x"})
+    )
+    assert "--settings" not in cmd
+
+
+def test_launch_passes_profile_env_through_settings_file(monkeypatch, tmp_path) -> None:
+    """点名了连接：值经 ``--settings`` 递进去，它压得过用户 settings.json 的 env 段。
+
+    2026-10-16 隔离实验判死的那一层：claude 启动时把 ``~/.claude/settings.json`` 的
+    env 段套进自己的进程环境，光靠 tmux ``-e`` 注入的连接一次都生效不了——会话看着
+    正常，其实跑在用户全局那条连接上。``--settings`` 的优先级在用户设置之上。
+    """
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+    driver = load_driver("claude")
+    cmd = driver.launch_command(
+        LaunchCtx(
+            cwd="/tmp",
+            session_id="sess-1",
+            env={
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787/agy",
+                "ANTHROPIC_API_KEY": "local-proxy",
+                "FRAGO_SESSION_ID": "sess-1",
+            },
+        )
+    )
+
+    path = claude_driver._session_settings_path("sess-1")
+    assert str(path) in cmd
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8787/agy"
+    assert payload["env"]["ANTHROPIC_API_KEY"] == "local-proxy"
+    # 会话身份不绕这一道。
+    assert "FRAGO_SESSION_ID" not in payload["env"]
+    # 里面是连接密钥，文件权限收紧到只有主人可读。
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # 值走文件、命令行上只有路径：启动命令会原样留在 pane 与记录里。
+    assert "local-proxy" not in cmd
+
+
+def test_launch_settings_file_is_overwritten_per_session(monkeypatch, tmp_path) -> None:
+    """同一场会话重新拉起时，设置文件被这一轮的值覆盖，不留上一轮的残留。"""
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+    driver = load_driver("claude")
+    for key in ("first-key", "second-key"):
+        driver.launch_command(
+            LaunchCtx(
+                cwd="/tmp",
+                session_id="sess-2",
+                env={"ANTHROPIC_API_KEY": key},
+            )
+        )
+    payload = json.loads(
+        claude_driver._session_settings_path("sess-2").read_text(encoding="utf-8")
+    )
+    assert payload["env"]["ANTHROPIC_API_KEY"] == "second-key"
