@@ -112,6 +112,8 @@ class MessageType:
     SESSION_TURN_DONE = "session_turn_done"
     # 会话页右栏：旁路 AI 改完了一场会话的槽位
     SESSION_OBSERVER_UPDATE = "session_observer_update"
+    # 结对页右栏：中继那侧说对面动了，这一栏该重取一次（data.code 是哪个 team）
+    TEAM_PEER_ACTIVITY = "team_peer_activity"
 
     # Recipe events
     RECIPE_STARTED = "recipe_started"

@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MessageType, getWebSocketClient } from '@/api/websocket';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { RequestRules } from '@/components/vibeTeaming/teamRequest';
 
@@ -163,8 +164,26 @@ export function usePeerRecords(code: string | null) {
   useEffect(() => {
     void reload();
     if (!code) return;
+
     const timer = window.setInterval(() => void reload(), PEER_POLL_MS);
-    return () => window.clearInterval(timer);
+
+    // 中继在对面有动静时会当场喊一声，那声喊传到本机之后服务端在这里转告一句：
+    // 这个 team 对面动了。右栏于是当场重取，不用等满那十五秒。
+    //
+    // **轮询留着**，不是等它被这句替代：长连接没挂上（中继还是旧版、或者刚断线）
+    // 的时候，那十五秒是唯一的来源。
+    const unsub = getWebSocketClient().on(
+      MessageType.TEAM_PEER_ACTIVITY,
+      (message) => {
+        const data = message.data as { code?: string } | undefined;
+        if (data?.code === code) void reload();
+      },
+    );
+
+    return () => {
+      window.clearInterval(timer);
+      unsub();
+    };
   }, [code, reload]);
 
   return {

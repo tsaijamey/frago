@@ -141,6 +141,21 @@ _ANON_POST = frozenset({
     ("POST", "/api/teaming"),
 })
 
+# The one WebSocket an anonymous caller may open. A separate table because a
+# WebSocket is not an HTTP request: the (method, exact path) shape above cannot
+# match it, and `_anon_post_allowed` refuses anything that is not `http` before
+# it even looks at the path.
+#
+# vibe teaming's notification channel. The handshake carries nothing but the
+# same pairing code the POST door takes, for the reason written above that
+# entry. What this admits is "may attempt the handshake"; whether it succeeds is
+# the route's decision, taken from the code, and the limiter runs before that.
+# Listed one path at a time, never by prefix, for the same reason as above.
+#
+# Must stay byte-identical to `routes/teaming.py`'s ``LIVE_PATH``: two literals
+# that have to agree, and a test asserts they do.
+_ANON_WS = frozenset({"/api/teaming/ws"})
+
 # What a signed-in visitor may reach beyond published pages. A closed list: a
 # new endpoint lands in the token zone by default and gets in here only by
 # editing this line, with the spec changed to match.
@@ -757,6 +772,21 @@ def _anon_post_allowed(scope: dict) -> bool:
     return ((scope.get("method") or "").upper(), path) in _ANON_POST
 
 
+def _anon_ws_allowed(scope: dict) -> bool:
+    """Whether this is one of the WebSockets an anonymous caller may open.
+
+    The same shape as `_anon_post_allowed`, with the method replaced by "this
+    is a WebSocket": one path at a time, dot segments and dotfiles refused
+    through the same lock.
+    """
+    if scope.get("type") != "websocket":
+        return False
+    path = scope.get("path") or ""
+    if not _path_is_safe(path):
+        return False
+    return path in _ANON_WS
+
+
 def sign_in_redirect(scope: dict, headers: dict[bytes, bytes]) -> str | None:
     """Where to send a signed-out browser that asked for a page needing a sign-in.
 
@@ -982,6 +1012,11 @@ class AccessZoneMiddleware:
             # Not reachable as an identity — but a cookie must not *cost* the
             # caller anything either. Fall through to the token check: the
             # owner's browser may hold both.
+
+        if _anon_ws_allowed(scope):
+            self._admit(scope, "public", None, identity)
+            await self.app(scope, receive, send)
+            return
 
         if _anon_post_allowed(scope):
             self._admit(scope, "public", None, identity)
