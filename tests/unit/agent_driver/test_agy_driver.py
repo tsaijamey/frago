@@ -267,6 +267,76 @@ def test_missing_transcript_reads_as_unknown(app_dir):
     assert agy_store.latest_turn(CONVERSATION_ID) is None
 
 
+def test_turn_is_not_done_while_background_task_is_running(app_dir):
+    """回归（26c4680e）：run_command 超 5s 转后台后，agy 写的进度播报不带 tool_calls，
+    但后台任务仍在 RUNNING，此时绝不可判本轮已完成。
+    """
+    _write_transcript(
+        app_dir,
+        [
+            {"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>check disk</USER_REQUEST>"},
+            {"step_index": 1, "type": "PLANNER_RESPONSE", "tool_calls": [{"name": "run_command"}]},
+            {
+                "step_index": 2,
+                "source": "MODEL",
+                "type": "GENERIC",
+                "status": "RUNNING",
+                "content": (
+                    "Created At: 2026-10-18T11:19:12+08:00\n"
+                    f"Tool is running as a background task with task id: {CONVERSATION_ID}/task-4\n"
+                    "YOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS..."
+                ),
+            },
+            {
+                "step_index": 3,
+                "type": "PLANNER_RESPONSE",
+                "content": "正在统计本机磁盘占用，等待命令返回结果。",
+            },
+        ],
+    )
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None and turn.done is False
+    assert turn.turn_id == "0"
+
+
+def test_turn_is_done_only_after_background_task_finishes_and_model_replies(app_dir):
+    """后台任务回调到达后，旧的等待播报必须作废，等模型基于回调结果给出真正终答才算完。"""
+    records = [
+        {"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>check disk</USER_REQUEST>"},
+        {"step_index": 1, "type": "PLANNER_RESPONSE", "tool_calls": [{"name": "run_command"}]},
+        {
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "content": f"Tool is running as a background task with task id: {CONVERSATION_ID}/task-4\n",
+        },
+        {"step_index": 3, "type": "PLANNER_RESPONSE", "content": "正在等待后台命令完成…"},
+        {
+            "step_index": 4,
+            "source": "SYSTEM",
+            "type": "SYSTEM_MESSAGE",
+            "status": "DONE",
+            "content": (
+                "<SYSTEM_MESSAGE>\n"
+                f'[Message] sender={CONVERSATION_ID}/task-4 content=Task id "{CONVERSATION_ID}/task-4" '
+                "finished with result:\nThe command exited with code 0.\n</SYSTEM_MESSAGE>"
+            ),
+        },
+    ]
+    _write_transcript(app_dir, records)
+    # 回调刚写入、模型还没回答时，不应把 step 3 的过渡播报当成终答
+    mid_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert mid_turn is not None and mid_turn.done is False
+
+    # 模型拿到后台结果给出正式答复后，才算本轮完成
+    records.append({"step_index": 5, "type": "PLANNER_RESPONSE", "content": "磁盘检查完毕，剩余 9.6G。"})
+    _write_transcript(app_dir, records)
+    done_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert done_turn is not None and done_turn.done is True
+    assert done_turn.text == "磁盘检查完毕，剩余 9.6G。"
+
+
 # ── 会话编号认领 ────────────────────────────────────────────────────
 def test_claim_falls_back_to_the_summaries_table(app_dir):
     """没有 last_conversations 线索时，按工作目录与时刻从摘要库里挑。"""

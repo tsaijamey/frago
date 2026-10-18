@@ -323,13 +323,44 @@ class AgyTurn:
     """暂恒为 None。agy 把失败写在别处（如配额耗尽提示），本模块暂不解析。"""
 
 
+_BG_TASK_START_RE = re.compile(r"Tool is running as a background task with task id:\s*(\S+)")
+_BG_TASK_DONE_RE = re.compile(
+    r'Task id "([^"]+)" (?:finished with result:|was canceled with result:|failed with)'
+)
+_BG_TASK_CANCEL_RE = re.compile(r'Task "([^"]+)" cancelled\.')
+_BG_TASK_STOPPED_ALL = "All your subagents and background tasks have been stopped"
+
+
+def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> None:
+    """按单条记录推进本轮后台任务集合：转入后台入集，收到完成/取消/重启通知出集。"""
+    content = record.get("content")
+    if not isinstance(content, str) or not content:
+        return
+    if record.get("status") == "RUNNING":
+        match = _BG_TASK_START_RE.search(content)
+        if match:
+            pending.add(match.group(1))
+            return
+    if _BG_TASK_STOPPED_ALL in content:
+        pending.clear()
+        return
+    for match in _BG_TASK_DONE_RE.finditer(content):
+        pending.discard(match.group(1))
+    for match in _BG_TASK_CANCEL_RE.finditer(content):
+        pending.discard(match.group(1))
+
+
 def latest_turn(conversation_id: str) -> AgyTurn | None:
     """读该会话最新一轮的完成状态与终答。定位不到 / 读不出时返回 None。
 
-    判据是**用户输入之后有没有收尾的模型回复**，而不是「最后一行的类型是什么」：
-    模型说完话之后 agy 还会补记别的行，按最后一行判会永远判不出答完。窗口被某一轮
-    的长工具输出撑爆时，退化成「末尾那一轮没看到用户输入」，此时返回 None，主路径
-    当帧退回读屏信号，本轮照常跑完。
+    判据是**用户输入之后有没有收尾的模型回复，且本轮没有尚未完结的后台任务**：
+    1. 模型说完话之后 agy 还会补记别的行，按最后一行判会永远判不出答完。
+    2. 当命令超过 ``WaitMsBeforeAsync`` 转入后台（``status == "RUNNING"``）时，agy 强制
+       模型先输出一条不带 ``tool_calls`` 的过渡播报并结束当前小拍、挂起等待后台完成回调；
+       若本轮仍有未收到完成通知的后台任务，或者是后台任务刚回调、模型还没给出回调后的新回复，
+       本轮都尚未完结。
+    窗口被某一轮的长工具输出撑爆时，退化成「末尾那一轮没看到用户输入」，此时返回 None，
+    主路径当帧退回读屏信号，本轮照常跑完。
     """
     path = transcript_path(conversation_id)
     if not path.exists():
@@ -351,11 +382,20 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
     # 只在**最后一条**用户输入之后找收尾回复。上一轮那次收尾也在同一个窗口里，
     # 不划这条线的话，第二轮刚提交就会被判成"已经答完"，取回上一轮的答案。
     final_text: str | None = None
+    pending_bg_tasks: set[str] = set()
     for record in records[last_user_pos + 1 :]:
-        if _is_final_model_turn(record):
+        before_pending = set(pending_bg_tasks)
+        _update_pending_bg_tasks(record, pending_bg_tasks)
+        if before_pending != pending_bg_tasks and not pending_bg_tasks:
+            # 后台任务刚刚完结或被终止：此前为了等待它而留下的过渡播报作废，等后续真正的收尾回复。
+            final_text = None
+        if record.get("type") == RECORD_PLANNER and record.get("tool_calls"):
+            # 模型继续发起新一拍工具调用：早先的文字回复只是中间播报。
+            final_text = None
+        elif _is_final_model_turn(record):
             final_text = _model_text(record)
     marker = str(last_user_step) if last_user_step is not None else None
-    if final_text is None:
+    if final_text is None or pending_bg_tasks:
         return AgyTurn(turn_id=marker, done=False, text="", error=None)
     return AgyTurn(turn_id=marker, done=True, text=final_text, error=None)
 
