@@ -42,6 +42,10 @@ export default defineConfig({
     outDir: '../server/assets',
     emptyOutDir: true,
     sourcemap: false,
+    // 这个包要能在 file:// 下打开，所以 `inlineDynamicImports` 必须开着，主包无法再
+    // 按路由拆小。默认 500KB 的提示在这里永远是红的，调成实际主包的量级，让真正
+    // 新长出来的大块（比如又打进一整份图表库）仍能触发提示。
+    chunkSizeWarningLimit: 2000,
     // Disable module preload to avoid CORS issues under file:// protocol
     modulePreload: false,
     rollupOptions: {
