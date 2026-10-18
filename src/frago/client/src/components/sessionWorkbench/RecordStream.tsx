@@ -56,6 +56,7 @@ import SelectionQuote, {
   type MarkAnchor,
 } from './SelectionQuote';
 import FilePeek from '@/components/fileBrowser/FilePeek';
+import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
@@ -626,8 +627,16 @@ export default function RecordStream({
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
-  /** 圈中的那段是一条真文件时，就地浮开的那一份。 */
-  const [peek, setPeek] = useState<{ path: string; size: number | null } | null>(null);
+  /** 圈中的那段是一条真文件、或点中回复里的本地文件链接时，就地浮开的那一份。 */
+  const [peek, setPeek] = useState<{ path: string; size: number | null; line?: string } | null>(
+    null
+  );
+  const handleFileLink = useCallback(
+    (target: FileLinkTarget) => {
+      if (preview) setPeek({ path: target.path, size: null, line: target.line });
+    },
+    [preview]
+  );
 
   /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
   const resolved = useMemo(() => withQueueOutcomes(records), [records]);
@@ -1218,6 +1227,7 @@ export default function RecordStream({
             人不读一个字也看得出哪几条是一伙的——疏密的对比比任何标签都快。从前两边都是
             12px，密疏没有对比，所以只好另画一条横线来说"这里是一组"，而那条线是整屏最长
             的图形，喊得比它要标的内容还响。 */}
+        <FileLinkContext.Provider value={preview ? handleFileLink : null}>
         <div className="flex w-full min-w-0 flex-col gap-4">
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
@@ -1294,6 +1304,7 @@ export default function RecordStream({
               退到流的末尾，安静期照样有东西撑着。 */}
           {activeTrail && !activeShown ? agentOnIt : null}
         </div>
+        </FileLinkContext.Provider>
       </div>
       {showMinimap ? (
         <StreamMinimap
@@ -1332,7 +1343,7 @@ export default function RecordStream({
       {/* 浮开的那一份。挂在这一层而不是页面上：圈选发生在哪块记录流里，它就从哪块冒出来，
           两处记录流（会话页、Teams 页）各管各的，不互相顶掉。 */}
       {peek ? (
-        <FilePeek path={peek.path} size={peek.size} onClose={() => setPeek(null)} />
+        <FilePeek path={peek.path} size={peek.size} line={peek.line} onClose={() => setPeek(null)} />
       ) : null}
 
       {branchMenu ? (

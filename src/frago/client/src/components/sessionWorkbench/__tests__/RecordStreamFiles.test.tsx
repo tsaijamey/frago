@@ -135,3 +135,38 @@ describe('清单开着的时候', () => {
     expect(onFilesOpenChange).toHaveBeenLastCalledWith(false);
   });
 });
+
+describe('点击回复正文里的 file:// 本地文件链接', () => {
+  it('拦截跳转并就地打开 FilePeek 预览浮窗（含行号提示、复制路径、打开所在目录）', () => {
+    renderStream({
+      records: [
+        {
+          session_id: SID,
+          group_id: null,
+          id: 'r-link',
+          seq: 0,
+          ts: 1_753_800_000_000,
+          kind: 'agent.say',
+          agent_path: [],
+          payload: {
+            text: '请看 [routes.ts](file:///home/yammi/repos/frago/src/frago/client/src/routes.ts#L84)',
+          },
+          raw_available: true,
+        },
+      ],
+    });
+
+    const link = screen.getByRole('link', { name: 'routes.ts' });
+    fireEvent.click(link);
+
+    const peek = screen.getByTestId('file-peek');
+    expect(peek).toBeTruthy();
+    expect(screen.getByTestId('file-peek-line').textContent).toBe('#L84');
+    expect(screen.getByTestId('file-peek-copy')).toBeTruthy();
+    expect(screen.getByTestId('file-peek-reveal')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('file-peek-close'));
+    expect(screen.queryByTestId('file-peek')).toBeNull();
+  });
+});
+

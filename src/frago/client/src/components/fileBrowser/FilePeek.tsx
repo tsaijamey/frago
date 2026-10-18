@@ -21,10 +21,12 @@ export interface FilePeekProps {
   path: string;
   /** 探针报的字节数；不知道时为 null。 */
   size: number | null;
+  /** 链接带过来的行号锚点（如 `L84`、`L314-L368`）。 */
+  line?: string;
   onClose: () => void;
 }
 
-export default function FilePeek({ path, size, onClose }: FilePeekProps) {
+export default function FilePeek({ path, size, line, onClose }: FilePeekProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -65,6 +67,11 @@ export default function FilePeek({ path, size, onClose }: FilePeekProps) {
               {withTilde(dirOf(path))}
             </span>
             <b className="ml-1 font-medium text-text-primary">{baseOf(path)}</b>
+            {line ? (
+              <span data-testid="file-peek-line" className="ml-1 text-text-muted">
+                #{line}
+              </span>
+            ) : null}
           </span>
           <button
             type="button"

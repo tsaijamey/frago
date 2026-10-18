@@ -6,11 +6,11 @@
  * 怎么样由浏览器里的实测负责。
  */
 
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import '@/i18n';
-import MarkdownContent from '../MarkdownContent';
+import MarkdownContent, { FileLinkContext, parseFileUrl } from '../MarkdownContent';
 
 describe('MarkdownContent — mermaid 代码块', () => {
   it('语言标记写 mermaid 的代码块交给画图组件，不再显示成代码', () => {
@@ -33,3 +33,58 @@ describe('MarkdownContent — mermaid 代码块', () => {
     expect(container.querySelector('pre')).not.toBeNull();
   });
 });
+
+describe('MarkdownContent — file:// 本地文件链接', () => {
+  it('保留 file:// 地址而非清空为 href=""，解析解码后的路径与行号锚点', () => {
+    expect(
+      parseFileUrl('file:///home/yammi/%E4%B8%8B%E8%BD%BD/agy.py#L84-L102')
+    ).toEqual({
+      path: '/home/yammi/下载/agy.py',
+      line: 'L84-L102',
+    });
+
+    render(
+      <MarkdownContent
+        content={'见 [`agy.py`](file:///home/yammi/repos/frago/src/frago/agent_driver/drivers/agy.py#L84)'}
+      />
+    );
+    const link = screen.getByRole('link', { name: 'agy.py' });
+    expect(link.getAttribute('href')).toBe(
+      'file:///home/yammi/repos/frago/src/frago/agent_driver/drivers/agy.py#L84'
+    );
+    expect(link.getAttribute('data-file-path')).toBe(
+      '/home/yammi/repos/frago/src/frago/agent_driver/drivers/agy.py'
+    );
+    expect(link.getAttribute('data-file-line')).toBe('L84');
+    expect(link.getAttribute('target')).toBeNull();
+  });
+
+  it('点击 file:// 链接时拦截默认跳转并通知 FileLinkContext 打开页内预览', () => {
+    const onFileLink = vi.fn();
+    render(
+      <FileLinkContext.Provider value={onFileLink}>
+        <MarkdownContent
+          content={'[routes.ts](file:///home/yammi/repos/frago/src/frago/client/src/routes.ts#L12)'}
+        />
+      </FileLinkContext.Provider>
+    );
+    const link = screen.getByRole('link', { name: 'routes.ts' });
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+    const prevented = !link.dispatchEvent(clickEvent);
+    expect(prevented).toBe(true);
+    expect(onFileLink).toHaveBeenCalledWith({
+      path: '/home/yammi/repos/frago/src/frago/client/src/routes.ts',
+      line: 'L12',
+    });
+  });
+
+  it('普通 https 链接照旧在新标签页打开', () => {
+    render(<MarkdownContent content={'[文档](https://example.com/docs)'} />);
+    const link = screen.getByRole('link', { name: '文档' });
+    expect(link.getAttribute('href')).toBe('https://example.com/docs');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link, '点击 https 链接不走本地文件回调').toBeTruthy();
+    fireEvent.click(link);
+  });
+});
+
