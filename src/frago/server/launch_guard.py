@@ -118,6 +118,24 @@ def source_checkout_root() -> Path | None:
     return None
 
 
+def is_checkout_venv_path(path: Path | str) -> bool:
+    """True when ``path`` lies inside a frago source checkout's ``.venv``.
+
+    Walks lexical parents without resolving symlinks on ``path`` itself (a
+    venv's ``bin/python3`` is a symlink to the base interpreter outside the
+    venv) looking for a ``.venv`` directory whose parent is a frago source
+    checkout.
+    """
+    p = Path(os.path.abspath(str(path)))
+    for cand in (p, *p.parents):
+        if cand.name == ".venv":
+            repo = cand.parent
+            if (repo / "pyproject.toml").exists() and (repo / "src" / "frago").exists():
+                return True
+    return False
+
+
+
 def assert_system_install() -> None:
     """Gate 2: refuse to spawn the daemon from the repo venv.
 

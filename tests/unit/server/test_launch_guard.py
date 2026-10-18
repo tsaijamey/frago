@@ -71,3 +71,80 @@ class TestSanctionedSpawnEnv:
         """两个调用点（start_daemon / restarter）都从这里走，清的是同一份。"""
         env = launch_guard.sanctioned_spawn_env({"FRAGO_SESSION_ID": "x"})
         assert "FRAGO_SESSION_ID" not in env
+
+
+class TestCheckoutVenvAndSystemdReconcile:
+    def test_is_checkout_venv_path_recognises_repo_venv(self, tmp_path: Path) -> None:
+        repo = tmp_path / "frago"
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "pyproject.toml").write_text("")
+        venv_bin = repo / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+
+        assert launch_guard.is_checkout_venv_path(venv_bin)
+        assert launch_guard.is_checkout_venv_path(venv_bin / "python3")
+
+        other = tmp_path / "other" / ".venv" / "bin"
+        other.mkdir(parents=True)
+        assert not launch_guard.is_checkout_venv_path(other)
+
+    def test_reconcile_service_unit_heals_legacy_checkout_unit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from frago.autostart.linux import LinuxAutostartManager
+
+        repo = tmp_path / "frago"
+        (repo / "src" / "frago").mkdir(parents=True)
+        (repo / "pyproject.toml").write_text("")
+        repo_venv_bin = repo / ".venv" / "bin"
+        repo_venv_bin.mkdir(parents=True)
+
+        tool_bin = tmp_path / "uv_tools" / "frago-cli" / "bin"
+        tool_bin.mkdir(parents=True)
+        tool_python = tool_bin / "python3"
+        tool_python.write_text("#!/bin/sh\n")
+
+        unit_file = tmp_path / "frago-server.service"
+        unit_file.write_text(
+            "[Unit]\n"
+            "Description=Frago AI Automation Server\n\n"
+            "[Service]\n"
+            "Type=exec\n"
+            f"Environment=PATH=/bin:{repo_venv_bin}:/usr/bin\n"
+            "Environment=http_proxy=http://127.0.0.1:7890\n"
+            f"ExecStart={repo_venv_bin / 'python3'} -m frago.server.runner --daemon\n"
+            "Restart=always\n",
+            encoding="utf-8",
+        )
+
+        reloaded: list[list[str]] = []
+        monkeypatch.setattr(
+            "frago.autostart.linux.subprocess.run",
+            lambda cmd, **_k: reloaded.append(list(cmd)),
+        )
+        monkeypatch.setattr(
+            LinuxAutostartManager, "config_path", property(lambda _s: unit_file)
+        )
+        monkeypatch.setattr(
+            LinuxAutostartManager, "_get_python_path", lambda _s: str(tool_python)
+        )
+
+        mgr = LinuxAutostartManager()
+        assert mgr.reconcile_service_unit() is True
+        assert reloaded == [["systemctl", "--user", "daemon-reload"]]
+
+        healed = unit_file.read_text(encoding="utf-8")
+        assert str(repo_venv_bin) not in healed
+        assert "Environment=PATH=/bin:/usr/bin" in healed
+        assert "Environment=http_proxy=http://127.0.0.1:7890" in healed
+        assert (
+            f"Environment={launch_guard.SPAWN_TOKEN_ENV}={launch_guard.SPAWN_TOKEN_VALUE}"
+            in healed
+        )
+        assert f"ExecStart={tool_python} -m frago.server.runner --daemon" in healed
+
+        # Second pass on an already-reconciled unit is a no-op.
+        reloaded.clear()
+        assert mgr.reconcile_service_unit() is False
+        assert reloaded == []
+

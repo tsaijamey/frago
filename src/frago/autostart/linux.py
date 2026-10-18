@@ -29,9 +29,16 @@ class LinuxAutostartManager(AutostartManager):
         return Path.home() / ".config" / "systemd" / "user" / self.SERVICE_NAME
 
     def _get_frago_path(self) -> str:
-        """Get the full path to the frago executable."""
-        frago_path = shutil.which("frago")
-        if frago_path:
+        """Get the full path to the system-installed frago executable."""
+        from frago.server.launch_guard import is_checkout_venv_path
+
+        clean_entries = [
+            entry
+            for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and not is_checkout_venv_path(entry)
+        ]
+        frago_path = shutil.which("frago", path=os.pathsep.join(clean_entries))
+        if frago_path and not is_checkout_venv_path(frago_path):
             return frago_path
         # Fallback to common locations
         for path in [
@@ -43,24 +50,111 @@ class LinuxAutostartManager(AutostartManager):
         return "frago"  # Hope it's in PATH at login
 
     def _get_python_path(self) -> str:
-        """Get the Python interpreter path that can run frago.
+        """Get the Python interpreter path that can run the system-installed frago.
 
         Returns the Python from the same environment where frago is installed.
         """
+        from frago.server.launch_guard import is_checkout_venv_path
+
         frago_path = self._get_frago_path()
 
-        # If frago is in a venv, use that venv's Python
-        frago_bin_dir = Path(frago_path).parent
-        possible_pythons = [
-            frago_bin_dir / "python3",
-            frago_bin_dir / "python",
+        # Follow the launcher symlink (e.g. ~/.local/bin/frago ->
+        # ~/.local/share/uv/tools/frago-cli/bin/frago) so we look inside the
+        # uv tool venv's bin/ directory rather than ~/.local/bin, while keeping
+        # the venv's python3 symlink itself unresolved so pyvenv.cfg activates.
+        candidate_dirs = [
+            Path(frago_path).resolve(strict=False).parent,
+            Path(frago_path).parent,
         ]
-        for python_path in possible_pythons:
-            if python_path.exists():
-                return str(python_path)
+        for frago_bin_dir in candidate_dirs:
+            if is_checkout_venv_path(frago_bin_dir):
+                continue
+            for name in ("python3", "python"):
+                python_path = frago_bin_dir / name
+                if python_path.exists() and not is_checkout_venv_path(python_path):
+                    return str(python_path)
 
         # Fallback to current Python
         return sys.executable
+
+    def reconcile_service_unit(self) -> bool:
+        """Ensure an existing systemd unit file satisfies current launch guards
+        and points at the system-installed frago runtime.
+
+        Fixes three classes of drift in-place without clobbering user/deployment
+        customisations (such as ``EnvironmentFile=`` or proxy vars):
+        1. ``ExecStart=`` pointing at a source checkout ``.venv`` (blocked by
+           Gate 2), a missing interpreter, or an outdated interpreter path.
+        2. Missing or stale ``Environment=FRAGO_DAEMON_SPAWN_TOKEN=...`` (blocked
+           by Gate 1).
+        3. ``Environment=PATH=...`` carrying a source checkout ``.venv/bin``
+           entry (causes child recipes/hooks to hit the CLI checkout guard).
+
+        If the unit file is modified, writes it back and runs
+        ``systemctl --user daemon-reload``.
+
+        Returns:
+            True if the unit file was modified and reloaded, False otherwise.
+        """
+        from frago.server.launch_guard import is_checkout_venv_path
+
+        if not self.config_path.exists():
+            return False
+
+        try:
+            original = self.config_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+        expected_python = self._get_python_path()
+        expected_exec = f"ExecStart={expected_python} -m frago.server.runner --daemon"
+        expected_token = f"Environment={SPAWN_TOKEN_ENV}={SPAWN_TOKEN_VALUE}"
+
+        lines = original.splitlines()
+        new_lines: list[str] = []
+        has_spawn_token = False
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("Environment=PATH="):
+                raw_path = stripped[len("Environment=PATH=") :]
+                entries = [e for e in raw_path.split(":") if e]
+                kept = [e for e in entries if not is_checkout_venv_path(e)]
+                if len(kept) != len(entries):
+                    line = f"Environment=PATH={':'.join(kept)}"
+                new_lines.append(line)
+            elif stripped.startswith(f"Environment={SPAWN_TOKEN_ENV}="):
+                has_spawn_token = True
+                new_lines.append(expected_token)
+            elif stripped.startswith("ExecStart="):
+                if not has_spawn_token:
+                    new_lines.append(expected_token)
+                    has_spawn_token = True
+                new_lines.append(expected_exec)
+            else:
+                new_lines.append(line)
+
+        if not has_spawn_token:
+            for idx, line in enumerate(new_lines):
+                if line.strip() == "[Service]":
+                    new_lines.insert(idx + 1, expected_token)
+                    break
+
+        updated = "\n".join(new_lines) + "\n"
+        if updated == original:
+            return False
+
+        try:
+            self.config_path.write_text(updated, encoding="utf-8")
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except OSError:
+            return False
+        return True
 
     def _collect_proxy_environment(self) -> list[str]:
         """Collect proxy environment variables from current environment.

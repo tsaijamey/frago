@@ -96,11 +96,15 @@ class AutostartManager(ABC):
         paths: set[str] = set()
         system = platform.system()
 
+        from frago.server.launch_guard import is_checkout_venv_path
+
         # Get paths of critical commands from current environment
         for cmd in ["node", "claude", "frago"]:
             cmd_path = shutil.which(cmd)
             if cmd_path:
-                paths.add(str(Path(cmd_path).parent))
+                parent = Path(cmd_path).parent
+                if not is_checkout_venv_path(parent):
+                    paths.add(str(parent))
 
         # Platform-specific common paths
         if system == "Darwin":

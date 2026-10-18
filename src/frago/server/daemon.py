@@ -53,6 +53,26 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _prepare_systemd_service() -> None:
+    """Reconcile the user systemd unit and clear any start-limit-hit state.
+
+    A unit generated before launch_guard or from a repo venv lacks the Gate 1
+    spawn token or points ExecStart at ``.venv/bin/python3`` (rejected by
+    Gate 2). Reconciling before start/restart updates the unit in-place and
+    reloads systemd; ``reset-failed`` clears any burst-limit lock left by
+    prior crash loops so an explicit CLI start/restart is not turned away with
+    'Start request repeated too quickly'.
+    """
+    with contextlib.suppress(Exception):
+        from frago.autostart.linux import LinuxAutostartManager
+
+        if LinuxAutostartManager().reconcile_service_unit():
+            print("[systemd] Reconciled frago-server.service unit with system install")
+    with contextlib.suppress(Exception):
+        _systemctl("reset-failed")
+
+
+
 def _wait_for_healthy(
     timeout: int = 30, proc: "subprocess.Popen[bytes] | None" = None
 ) -> tuple[bool, str]:
@@ -484,6 +504,7 @@ def start_daemon() -> tuple[bool, str]:
     assert_system_install()
 
     if _is_systemd_managed():
+        _prepare_systemd_service()
         result = _systemctl("start")
         if result.returncode == 0:
             urls = ", ".join(get_accessible_urls())
@@ -726,6 +747,7 @@ def restart_daemon(force: bool = False) -> tuple[bool, str]:
         Tuple of (success, message)
     """
     if _is_systemd_managed():
+        _prepare_systemd_service()
         print("[restart] Sending restart to systemd...")
         result = _systemctl("restart")
         if result.returncode != 0:

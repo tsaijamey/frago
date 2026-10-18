@@ -101,6 +101,9 @@ def start_new_server() -> bool:
     """
     # Delegate to systemd if managed
     if _is_systemd_managed():
+        from frago.server.daemon import _prepare_systemd_service
+
+        _prepare_systemd_service()
         print("[restarter] systemd service detected, delegating to systemctl restart")
         result = subprocess.run(
             ["systemctl", "--user", "restart", "frago-server.service"],
