@@ -698,6 +698,78 @@ def extension_profile_dir(brand: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(paths[0])))
 
 
+def _apparmor_restricts_userns() -> bool:
+    """Return True when the Linux kernel restricts unprivileged userns via AppArmor."""
+    try:
+        val = Path(
+            "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+        ).read_text(encoding="utf-8").strip()
+        return val == "1"
+    except OSError:
+        return False
+
+
+def linux_needs_no_sandbox(binary: str | Path) -> bool:
+    """Return True if a Linux Chromium binary cannot initialize its sandbox.
+
+    On Ubuntu 23.10+ / 26.04 with ``kernel.apparmor_restrict_unprivileged_userns=1``,
+    user-space browser binaries (such as Chrome for Testing unpacked under
+    ``~/.frago/tools/chrome-for-testing``) have neither a root SUID
+    ``chrome-sandbox`` nor a system ``/etc/apparmor.d/`` profile granting
+    ``userns`` unless the administrator installed one. Probing ``about:blank``
+    detects ``No usable sandbox`` so frago only falls back to ``--no-sandbox``
+    when the kernel blocks the sandbox, keeping full sandboxing whenever an
+    AppArmor profile (e.g. ``/etc/apparmor.d/frago-cft``) is active.
+    """
+    import os
+    import stat
+    import tempfile
+
+    if _platform.system() != "Linux":
+        return False
+    if os.environ.get("FRAGO_NO_SANDBOX") or os.geteuid() == 0:
+        return True
+    if not _apparmor_restricts_userns():
+        return False
+
+    binary_path = Path(binary)
+    if not binary_path.exists():
+        return False
+
+    try:
+        resolved_dir = binary_path.resolve().parent
+        for sb_name in ("chrome-sandbox", "chrome_sandbox"):
+            sb = resolved_dir / sb_name
+            if sb.exists():
+                st = sb.stat()
+                if st.st_uid == 0 and bool(st.st_mode & stat.S_ISUID):
+                    return False
+    except OSError:
+        pass
+
+    with tempfile.TemporaryDirectory(prefix="frago-sandbox-probe-") as probe_dir:
+        try:
+            proc = subprocess.run(
+                [
+                    str(binary_path),
+                    f"--user-data-dir={probe_dir}",
+                    "--headless=new",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--dump-dom",
+                    "about:blank",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    err = (proc.stderr or "") + (proc.stdout or "")
+    return proc.returncode != 0 and "No usable sandbox" in err
+
+
 def launch_chrome_with_extension(bundle_dir: Path,
                                  user_data_dir: Path | None = None,
                                  chrome_binary: str | None = None,
@@ -762,6 +834,9 @@ def launch_chrome_with_extension(bundle_dir: Path,
         # browser data into the profile.
         "--disable-sync",
     ]
+
+    if linux_needs_no_sandbox(binary):
+        args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--test-type"])
 
     # Route through the user's proxy client when there is one. Without
     # this the browser silently hangs for 30s on anything that needs the

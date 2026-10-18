@@ -535,12 +535,15 @@ class ChromeLauncher:
         if not self.app_mode and not self.kiosk_mode:
             cmd.append("--disable-blink-features=AutomationControlled")
 
-        # Disable sandbox in Docker or when running as root (Linux only)
-        # Root user without sandbox causes Chrome to refuse to start
+        # Disable sandbox in Docker, when running as root, or when Linux
+        # AppArmor restricts unprivileged userns without a profile for this binary
+        from frago.browser.backends.extension import linux_needs_no_sandbox
+
         if os.environ.get("FRAGO_NO_SANDBOX") or (
-            self.system == "Linux" and os.geteuid() == 0
+            self.system == "Linux"
+            and (os.geteuid() == 0 or linux_needs_no_sandbox(self.chrome_path))
         ):
-            cmd.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+            cmd.extend(["--no-sandbox", "--disable-setuid-sandbox", "--test-type"])
 
         # Set User-Agent based on system
         if self.system == "Darwin":

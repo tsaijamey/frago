@@ -101,3 +101,57 @@ def test_core_flags_survive_the_additions(launched, monkeypatch):
     assert _flag(args, "--load-extension") is not None
     assert _flag(args, "--user-data-dir") is not None
     assert "--no-first-run" in args
+
+
+# ── Linux AppArmor userns sandbox fallback ──────────────────────────
+
+def test_no_sandbox_omitted_when_sandbox_is_usable(launched, monkeypatch):
+    monkeypatch.setattr(ext_mod, "linux_needs_no_sandbox", lambda _b: False)
+    args = launched()
+    assert "--no-sandbox" not in args
+    assert "--test-type" not in args
+
+
+def test_no_sandbox_added_when_linux_sandbox_blocked(launched, monkeypatch):
+    monkeypatch.setattr(ext_mod, "linux_needs_no_sandbox", lambda _b: True)
+    args = launched()
+    assert "--no-sandbox" in args
+    assert "--disable-setuid-sandbox" in args
+    assert "--test-type" in args
+    assert args[-1] == "about:blank"
+
+
+def test_linux_needs_no_sandbox_probes_binary(monkeypatch, tmp_path):
+    fake_bin = tmp_path / "chrome"
+    fake_bin.write_text("#!/bin/sh\nexit 0\n")
+    fake_bin.chmod(0o755)
+
+    monkeypatch.setattr(ext_mod._platform, "system", lambda: "Linux")
+    monkeypatch.delenv("FRAGO_NO_SANDBOX", raising=False)
+    monkeypatch.setattr(ext_mod, "_apparmor_restricts_userns", lambda: True)
+
+    class ProcResult:
+        def __init__(self, returncode: int, stderr: str) -> None:
+            self.returncode = returncode
+            self.stderr = stderr
+            self.stdout = ""
+
+    # Case 1: AppArmor profile allows userns -> probe exits 0 -> False
+    monkeypatch.setattr(
+        ext_mod.subprocess,
+        "run",
+        lambda *a, **k: ProcResult(0, ""),
+    )
+    assert ext_mod.linux_needs_no_sandbox(fake_bin) is False
+
+    # Case 2: AppArmor blocks userns -> probe exits 133 with No usable sandbox -> True
+    monkeypatch.setattr(
+        ext_mod.subprocess,
+        "run",
+        lambda *a, **k: ProcResult(
+            133,
+            "FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:130] No usable sandbox!",
+        ),
+    )
+    assert ext_mod.linux_needs_no_sandbox(fake_bin) is True
+
