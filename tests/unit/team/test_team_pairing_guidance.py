@@ -167,7 +167,8 @@ def test_结对中的会话拿到场景和规矩(monkeypatch):
     _paired("s-1")
     _as_session(monkeypatch, "s-1")
     out = CliRunner().invoke(team_group, ["scene", "--for-hook"]).output
-    assert CODE in out and "frago team verify" in out and "先问主人" in out
+    assert CODE in out and "frago team verify" in out
+    assert "只读的→直接做；会改动的→直接做" in out
     assert "NEVER 替主人授权" in out
 
 

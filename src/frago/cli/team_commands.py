@@ -67,8 +67,8 @@ def team_group() -> None:
 @click.option("--interval", type=int, default=None, help="两轮同步之间隔几秒")
 @click.option("--read-only", "read_only", type=click.Choice(["do", "ask"]), default=None,
               help="队友的只读请求：do 直接做，ask 先问主人")
-@click.option("--changes", type=click.Choice(["ask", "refuse"]), default=None,
-              help="队友会改动东西的请求：ask 先问主人，refuse 一律拒绝")
+@click.option("--changes", type=click.Choice(["do", "ask", "refuse"]), default=None,
+              help="队友会改动东西的请求：do 直接做（缺省），ask 先问主人，refuse 一律拒绝")
 def config_cmd(url, relay_default, prefix, interval, read_only, changes) -> None:
     """看这台机器的 team 设置。
 
@@ -82,8 +82,10 @@ def config_cmd(url, relay_default, prefix, interval, read_only, changes) -> None
     前缀和同步间隔仍然可以改——那两项是这台机器自己的偏好，跟中继在哪是两回事。
 
     ``--read-only`` / ``--changes`` 是本机主人给自己的 agent 定的「队友的请求怎么处理」，
-    与界面左栏那一行是同一份。第三档（泄露秘密、不可恢复的删除、绕过规则）没有开关，
-    永远不做。改了之后，下一条投进来的队友消息就带着新设置，下一轮同步对方也看得到。
+    与界面左栏那一行是同一份。改动档缺省 ``do``：对接之后远端默认照做，这是 Pairs 作为
+    远程协助的出厂姿态；界面会常驻红色警告。第三档（泄露秘密、不可恢复的删除、绕过规则）
+    没有开关，永远不做。改了之后，下一条投进来的队友消息就带着新设置，下一轮同步对方也
+    看得到。
     """
     from frago.team.state import RELAY_URL
 

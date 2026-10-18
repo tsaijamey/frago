@@ -7,6 +7,9 @@
  * 来源分两种，NEVER 混说：对方的设置经中继传过来了，标「Set by your teammate」；还没
  * 传过来（对方或中继是旧版），格子里是 frago 的缺省规矩，标「frago's rules」，悬停说清
  * 这不是对方设的——对方设不了、或者我们看不到的时候写「对方设的」，是假话。
+ *
+ * 缺省规矩从 2026-10-18 起是「改动也直接做」。这不是一句中性的说明：对方那一侧要承担
+ * 后果，所以三格下面常驻一行红字，把「会直接执行」说在前面，而不是等人发出去才发现。
  */
 
 import { Trans, useTranslation } from 'react-i18next';
@@ -83,6 +86,15 @@ export default function PeerTiers({
           );
         })}
       </div>
+      {rules.change === 'do' ? (
+        <p
+          data-testid="peer-full-access"
+          role="alert"
+          className="mt-1.5 text-[11px] leading-[1.45] text-accent-error"
+        >
+          {t('team.tiers.fullAccess')}
+        </p>
+      ) : null}
     </div>
   );
 }

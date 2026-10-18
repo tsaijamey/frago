@@ -56,7 +56,7 @@ vi.mock('@/hooks/useTeam', async (importOriginal) => {
         relay_url: 'https://www.frago.ai',
         prefix: '',
         interval_seconds: 15,
-        request_rules: { read: 'do', change: 'ask' },
+        request_rules: { read: 'do', change: 'do' },
         teams: [{ code: CODE, session_id: 'sess-1', side: 'A', active: true, pushed_seq: 3 }],
       },
       error: null,
@@ -208,7 +208,7 @@ describe('请求', () => {
     expect(screen.getByTestId('tier-read').getAttribute('data-on')).toBeNull();
     const said = screen.getByTestId('peer-prediction').textContent ?? '';
     expect(said).toContain('“push”, “fix”');
-    expect(said).toContain('ask its owner first');
+    expect(said).toContain('do it without asking');
   });
 
   it('发出之后右栏流末尾立刻有一张停在 Sent 的卡', async () => {
@@ -231,6 +231,9 @@ describe('三格的来源不说假话', () => {
     const source = screen.getByTestId('peer-tiers-source');
     expect(source.getAttribute('data-source')).toBe('frago');
     expect(source.textContent).toBe("frago's rules");
+    expect(screen.getByTestId('peer-full-access').textContent).toContain(
+      'without asking its owner'
+    );
   });
 
   it('传过来了就标对方设的，并按对方的设置预判', () => {
@@ -261,7 +264,14 @@ describe('首次说明与我的设置', () => {
   it('左栏输入框上方一行摘要写着本机的设置', () => {
     render(<VibeTeamingPage />);
     expect(screen.getByTestId('my-rules-summary').textContent).toBe(
-      'read-only → do it · changes → ask me'
+      'read-only → do it · changes → do it'
     );
+  });
+
+  it('改动默认直接做时，左栏常驻红色警告', () => {
+    render(<VibeTeamingPage />);
+    const warning = screen.getByTestId('my-rules-full-access-warning');
+    expect(warning.getAttribute('role')).toBe('alert');
+    expect(warning.textContent).toContain('Changes run without asking');
   });
 });

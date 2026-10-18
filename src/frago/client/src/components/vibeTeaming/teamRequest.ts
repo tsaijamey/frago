@@ -126,11 +126,16 @@ export type Tier = 'idle' | 'read' | 'change' | 'never';
 /** 那一侧主人给自己的 agent 定的「队友请求怎么处理」。第三档恒为拒绝，不可设。 */
 export interface RequestRules {
   read: 'do' | 'ask';
-  change: 'ask' | 'refuse';
+  change: 'do' | 'ask' | 'refuse';
 }
 
-/** 与现行结对手册的三档一致：只读的直接做，会改动的先问主人。 */
-export const FRAGO_DEFAULT_RULES: RequestRules = { read: 'do', change: 'ask' };
+/**
+ * 对接后的出厂规矩：只读的直接做，会改动的也直接做。
+ *
+ * Pairs 是 agent 时代的远程协助，被协助那一侧默认照做；第三档仍由 frago 的规矩挡住，
+ * 界面上另有一块红色警告。对方或中继还是旧版、设置没传过来时，这里显示的就是这一份。
+ */
+export const FRAGO_DEFAULT_RULES: RequestRules = { read: 'do', change: 'do' };
 
 export type Verdict = 'do' | 'ask' | 'refuse';
 
@@ -169,12 +174,20 @@ export function classifyTier(text: string): TierGuess {
 }
 
 /** 预判那句话属于哪一种说法。文字在界面词表里，这里只挑键。 */
-export type PredictionKey = 'idle' | 'readDo' | 'readAsk' | 'changeAsk' | 'changeRefuse' | 'never';
+export type PredictionKey =
+  | 'idle'
+  | 'readDo'
+  | 'readAsk'
+  | 'changeDo'
+  | 'changeAsk'
+  | 'changeRefuse'
+  | 'never';
 
 export function predictionKey(guess: TierGuess, rules: RequestRules): PredictionKey {
   if (guess.tier === 'idle') return 'idle';
   if (guess.tier === 'never') return 'never';
   if (guess.tier === 'read') return rules.read === 'do' ? 'readDo' : 'readAsk';
+  if (rules.change === 'do') return 'changeDo';
   return rules.change === 'refuse' ? 'changeRefuse' : 'changeAsk';
 }
 

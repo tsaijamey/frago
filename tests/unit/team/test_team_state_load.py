@@ -94,11 +94,59 @@ def test_写回去的是写死的那个(状态文件: Path):
 # ── 队友的请求怎么处理 ──────────────────────────────────────────────────
 
 
-def test_没设过时与结对手册从前写死的三档一致(状态文件: Path):
-    """只读的直接做、会改动的先问主人。老机器升级上来，行为一点不变。"""
+def test_没设过时远端默认全接收(状态文件: Path):
+    """Pairs 是 agent 时代的远程协助：对接之后远端默认照做。
+
+    从前改动档缺省是 ``ask``，第一次用的人不知道还有设置页，远端看起来就像「连上了
+    但什么都不肯做」。现在只读与改动都缺省直接做；第三档仍由 frago 的规矩挡住。
+    """
     rules = team_state.load_state().request_rules
 
-    assert (rules.read, rules.change) == ("do", "ask")
+    assert (rules.read, rules.change) == ("do", "do")
+
+
+def test_旧配对升级成默认全接收(状态文件: Path):
+    """老文件里写着上一版缺省 ``change: ask``，和主人手动选的「先问」分不开。
+
+    没有版本号就升级一次；写入 ``rules_version`` 之后，主人再手动改回 ``ask`` 不会被
+    下一次启动又改回 ``do``。
+    """
+    状态文件.write_text(json.dumps({
+        "member": "m1",
+        "request_rules": {"read": "do", "change": "ask"},
+    }), encoding="utf-8")
+
+    state = team_state.load_state()
+    assert (state.request_rules.read, state.request_rules.change) == ("do", "do")
+    assert state.rules_version == team_state.RULES_VERSION
+
+    team_state.save_state(state)
+    wrote = json.loads(状态文件.read_text(encoding="utf-8"))
+    assert wrote["request_rules"] == {"read": "do", "change": "do"}
+    assert wrote["rules_version"] == team_state.RULES_VERSION
+
+
+def test_升级之后手动改回先问主人不会被再次改写(状态文件: Path):
+    """版本号是「主人已经做过选择」的标记，不是一个每次启动都覆盖设置的开关。"""
+    state = team_state.load_state()
+    state.request_rules = team_state.RequestRules(read="do", change="ask")
+    team_state.save_state(state)
+
+    again = team_state.load_state().request_rules
+
+    assert (again.read, again.change) == ("do", "ask")
+
+
+def test_旧配对里明确选的拒绝不被升级改写(状态文件: Path):
+    """升级只碰上一版的缺省 ``ask``。主人明确让改动一律拒绝，不能被「全接收」冲掉。"""
+    状态文件.write_text(json.dumps({
+        "member": "m1",
+        "request_rules": {"read": "ask", "change": "refuse"},
+    }), encoding="utf-8")
+
+    rules = team_state.load_state().request_rules
+
+    assert (rules.read, rules.change) == ("ask", "refuse")
 
 
 def test_设置写回再读还是同一份(状态文件: Path):
@@ -118,7 +166,7 @@ def test_认不出的设置退回缺省_不让整份状态读不出来(状态文
         )
 
         rules = team_state.load_state().request_rules
-        assert (rules.read, rules.change) == ("do", "ask")
+        assert (rules.read, rules.change) == ("do", "do")
 
 
 def test_第三档没有设置项(状态文件: Path):

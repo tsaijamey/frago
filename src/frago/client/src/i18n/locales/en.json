@@ -2218,7 +2218,8 @@
       "read": "Read-only asks",
       "change": "Changes anything",
       "never": "Secrets · deletes",
-      "neverTip": "frago's rules say this is never done — no one can switch it on"
+      "neverTip": "frago's rules say this is never done — no one can switch it on",
+      "fullAccess": "Their rules let their agent carry out changes without asking its owner."
     },
     "verdict": {
       "do": "Does it",
@@ -2229,6 +2230,7 @@
       "idle": "Type a request to see how their agent will treat it.",
       "readDo": "<b>Looks read-only</b> — their rules say their agent just does it.",
       "readAsk": "<b>Looks read-only</b> — but their rules say <b>their agent asks its owner first.</b>",
+      "changeDo": "Mentions {{words}} — <b>their agent will do it without asking.</b>",
       "changeAsk": "Mentions {{words}} — <b>their agent will stop and ask its owner first.</b>",
       "changeRefuse": "Mentions {{words}} — <b>their agent will refuse</b>: their rules turn down changes.",
       "never": "Mentions {{words}} — <b>their agent won't do this</b>, whoever asks."
@@ -2270,6 +2272,8 @@
       "close": "Close",
       "onlyYou": "Only you can change this",
       "note": "How your agent treats what your teammate asks it to do. Only you can change this; your teammate sees it on their side.",
+      "fullAccessTitle": "Changes run without asking",
+      "fullAccessBody": "Your agent carries out your teammate's change requests directly. Secrets, unrecoverable deletes, and anything that bypasses the rules are still refused. Switch this off if you don't fully trust the other side.",
       "readTitle": "Read-only asks",
       "readBody": "Answer, look at a command, read code",
       "doIt": "Do it",

@@ -121,7 +121,7 @@ class TestRequestRules:
     def test_读本机状态时带着这份设置(self, state_file):
         got = asyncio.run(team_routes.read_team_state())
 
-        assert got["request_rules"] == {"read": "do", "change": "ask"}
+        assert got["request_rules"] == {"read": "do", "change": "do"}
 
     def test_改了落盘_下次读是新的(self, state_file):
         from frago.team.state import load_state
@@ -133,7 +133,20 @@ class TestRequestRules:
         rules = load_state().request_rules
         assert (rules.read, rules.change) == ("ask", "refuse")
 
-    @pytest.mark.parametrize("read, change", [("refuse", "ask"), ("do", "do"), ("", "")])
+    def test_改动档可以选直接做(self, state_file):
+        """远程协助的出厂姿态：改动也直接做。接口必须收得下这个值。"""
+        from frago.team.state import load_state
+
+        body = team_routes.RequestRulesBody(read="do", change="do")
+        got = asyncio.run(team_routes.save_request_rules(body))
+
+        assert got["request_rules"] == {"read": "do", "change": "do"}
+        rules = load_state().request_rules
+        assert (rules.read, rules.change) == ("do", "do")
+
+    @pytest.mark.parametrize(
+        "read, change", [("refuse", "ask"), ("do", "yolo"), ("", "")]
+    )
     def test_取值不在清单上回400_不悄悄换成缺省(self, state_file, read, change):
         """人以为自己改成了「拒绝」、实际落成了「先问」，比报错糟得多。"""
         from fastapi import HTTPException

@@ -139,7 +139,8 @@ describe('按那一侧主人的设置预判', () => {
 
   it('句式随设置变', () => {
     const push = classifyTier('push it');
-    expect(predictionKey(push, FRAGO_DEFAULT_RULES)).toBe('changeAsk');
+    expect(predictionKey(push, FRAGO_DEFAULT_RULES)).toBe('changeDo');
+    expect(predictionKey(push, { read: 'do', change: 'ask' })).toBe('changeAsk');
     expect(predictionKey(push, { read: 'do', change: 'refuse' })).toBe('changeRefuse');
     expect(predictionKey(classifyTier('看看版本'), { read: 'ask', change: 'ask' })).toBe('readAsk');
     expect(predictionKey(classifyTier(''), FRAGO_DEFAULT_RULES)).toBe('idle');

@@ -52,7 +52,11 @@ class SendRequest(BaseModel):
 
 
 class RequestRulesBody(BaseModel):
-    """本机主人给自己的 agent 定的「队友的请求怎么处理」。两项，各两种取值。"""
+    """本机主人给自己的 agent 定的「队友的请求怎么处理」。
+
+    只读档两种取值，改动档三种。改动档缺省 ``do``——远端对接后默认照做，界面另有红色
+    警告；主人随时可以改成 ``ask`` / ``refuse``。
+    """
 
     read: str
     change: str
@@ -153,9 +157,9 @@ async def read_pair_state() -> dict[str, Any]:
 async def save_request_rules(body: RequestRulesBody) -> dict[str, Any]:
     """改本机「队友的请求怎么处理」。不联网，下一轮同步随 push 带给中继。
 
-    只收两项、各两种取值；取值不在清单上回 400，NEVER 悄悄换成缺省——人以为自己改成了
-    「拒绝」，实际落成了「先问」，这比报错糟得多。第三档（秘密、不可恢复的删除）没有
-    设置项，永远不做。
+    只读档两种取值、改动档三种；取值不在清单上回 400，NEVER 悄悄换成缺省——人以为自己
+    改成了「拒绝」，实际落成了「直接做」，这比报错糟得多。第三档（秘密、不可恢复的
+    删除）没有设置项，永远不做。
     """
     from dataclasses import asdict
 

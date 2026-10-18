@@ -1,17 +1,20 @@
 /**
  * 左栏输入框上方：我的 agent 怎么对待队友让它做的事。**只有我能改。**
  *
- * 平时收成一行摘要（「Teammate requests: read-only → do it · changes → ask me」），点开
- * 三行：只读的、会改动的各两种选法；第三档（秘密、删除）锁死为拒绝，悬停说明这是
- * frago 的规矩、谁也打不开。改了当场存进本机，下一条投进来的队友消息就带着新设置，
- * 下一轮同步对方右下那三格也跟着变。
+ * 平时收成一行摘要（「Teammate requests: read-only → do it · changes → do it」），点开
+ * 三行：只读的两种选法、会改动的三种选法；第三档（秘密、删除）锁死为拒绝，悬停说明
+ * 这是 frago 的规矩、谁也打不开。改了当场存进本机，下一条投进来的队友消息就带着新
+ * 设置，下一轮同步对方右下那三格也跟着变。
+ *
+ * **改动档缺省是「直接做」。** 对接之后远端默认照做，这是远程协助的出厂姿态；只要这一
+ * 档还是「直接做」，摘要下方就常驻一块红色警告，不必点开才看得见。
  *
  * 选中态照全局规矩：中性实底，不用绿、不用单边条。
  */
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, Lock, Shield } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Lock, Shield } from 'lucide-react';
 import { saveRequestRules } from '@/hooks/useTeam';
 import type { RequestRules } from './teamRequest';
 
@@ -85,6 +88,7 @@ export default function MyRulesBar({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fullAccess = rules.change === 'do';
 
   const save = async (next: RequestRules) => {
     if (busy) return;
@@ -127,6 +131,21 @@ export default function MyRulesBar({
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
       </button>
+      {fullAccess ? (
+        <div
+          role="alert"
+          data-testid="my-rules-full-access-warning"
+          className="mx-[14px] mb-2 rounded-md border border-accent-error/40 bg-red-500/10 px-2.5 py-2"
+        >
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold text-accent-error">
+            <AlertTriangle size={12} className="shrink-0" />
+            {t('team.rules.fullAccessTitle')}
+          </p>
+          <p className="mt-1 text-[11px] leading-[1.45] text-text-muted">
+            {t('team.rules.fullAccessBody')}
+          </p>
+        </div>
+      ) : null}
       {open ? (
         <div className="px-[14px] pb-2.5">
           <p className="mb-1.5 text-[11px] leading-[1.45] text-text-muted">
@@ -148,6 +167,7 @@ export default function MyRulesBar({
               value={rules.change}
               disabled={busy}
               options={[
+                { value: 'do', label: t('team.rules.doIt') },
                 { value: 'ask', label: t('team.rules.askMe') },
                 { value: 'refuse', label: t('team.rules.refuse') },
               ]}

@@ -82,9 +82,19 @@ RULES_LINE = (
     "泄露秘密、不可恢复的删除、绕过规则的→不做，谁也改不了）"
 )
 
-#: 两档各有哪几种处理方式，第一项是缺省值。缺省与结对手册从前写死的三档一致。
+#: 两档各有哪几种处理方式，第一项是缺省值。
+#:
+#: **改动档从 2026-10-18 起缺省是「直接做」。** Pairs 是 agent 时代的远程协助：对接之后，
+#: 被协助那一侧默认把队友的请求当自己的事办，不再逐条拦下来问主人——否则第一次用的人
+#: 根本不知道还有一档设置，远端看起来就像「连上了但什么都不肯做」。第三档仍然写死拒绝，
+#: 不因为这一档放开而松动。
 READ_CHOICES = ("do", "ask")
-CHANGE_CHOICES = ("ask", "refuse")
+CHANGE_CHOICES = ("do", "ask", "refuse")
+
+#: 规则缺省的版本。旧状态文件里的 ``change: ask`` 是上一版的缺省，和主人手动选的
+#: 「先问」长得一模一样；没有版本号就分不开。读到没有这个标记的文件时升级一次，
+#: 升级后主人再手动改回 ``ask``，下次读到的就是明确的选择，不会被再次改写。
+RULES_VERSION = 2
 
 #: 设置在给 agent 看的那一行里怎么说。
 _RULE_WORDS = {"do": "直接做", "ask": "先问主人", "refuse": "拒绝"}
@@ -186,18 +196,23 @@ class TeamBinding:
 class RequestRules:
     """本机主人给自己的 agent 定的「队友的请求怎么处理」。
 
-    只有两档可设。第三档（泄露秘密、不可恢复的删除、绕过规则）不在这里：它是 frago 的
-    规矩，永远不做，谁也打不开——所以这份设置里根本没有它的位置，而不是存一个锁死的值。
+    只读档两值、改动档三值。第三档（泄露秘密、不可恢复的删除、绕过规则）不在这里：
+    它是 frago 的规矩，永远不做，谁也打不开——所以这份设置里根本没有它的位置，而不是
+    存一个锁死的值。
 
     **按机器一份，不按 team 分。** 一台机器同时结几个 team 时共用这一份：主人对「队友能
     让我的 agent 直接做什么」的底线是对人的，不是对某个连接码的。
+
+    **改动档缺省是 ``do``。** 这是 Pairs 作为远程协助的出厂姿态：对接之后远端默认照做，
+    不要求每个第一次用的人先去找到设置页。防线没有消失，只是从「逐条问」挪到了
+    「第三档照旧拒绝 + 界面常驻红色警告 + 随时可以改回 ask/refuse」。
     """
 
     read: str = READ_CHOICES[0]
     """只读的请求（回答问题、跑查看命令、读代码）：``do`` 直接做，``ask`` 先问主人。"""
 
     change: str = CHANGE_CHOICES[0]
-    """会改动东西的请求：``ask`` 先问主人，``refuse`` 一律拒绝。"""
+    """会改动东西的请求：``do`` 直接做，``ask`` 先问主人，``refuse`` 一律拒绝。"""
 
     @classmethod
     def from_raw(cls, raw: object) -> RequestRules:
@@ -277,6 +292,12 @@ class TeamState:
 
     request_rules: RequestRules = field(default_factory=RequestRules)
     """本机主人定的「队友的请求怎么处理」。每轮同步随 push 带给中继，对方界面读得到。"""
+
+    rules_version: int = RULES_VERSION
+    """这份设置是按哪一版缺省写的。
+
+    旧文件没有这一项，读的时候按 1 处理并升级一次。写回去时记下当前版本，主人之后
+    手动选 ``ask`` 不会被下一次启动又改回 ``do``。"""
 
     def active_teams(self) -> list[TeamBinding]:
         """还在里面的那些。同步循环只管这些。"""
@@ -388,6 +409,19 @@ def load_state() -> TeamState:
         )
 
     interval = int(raw.get("interval_seconds") or DEFAULT_INTERVAL_SECONDS)
+
+    # 旧状态文件里的 ``change: ask`` 是上一版的缺省，不是主人明确挑的（那一版根本没有
+    # ``do`` 可选）。没有版本号的旧文件升级一次；升级只碰 ``ask``，主人明确选的
+    # ``refuse`` 与只读档的 ``ask`` 原样保留。写回时落上 ``rules_version``，此后
+    # 主人再手动改回 ``ask`` 就是明确选择，不会被反复改写。
+    try:
+        wrote_version = int(raw.get("rules_version") or 1)
+    except (TypeError, ValueError):
+        wrote_version = 1
+    rules = RequestRules.from_raw(raw.get("request_rules"))
+    if wrote_version < RULES_VERSION and rules.change == "ask":
+        rules.change = "do"
+
     return TeamState(
         member=str(raw.get("member") or machine_fingerprint()),
         # 存着旧默认前缀的机器换成新默认：那一句把人说成 agent，而它从来就不是谁有意
@@ -400,7 +434,8 @@ def load_state() -> TeamState:
         interval_seconds=max(interval, 5),
         relay=relay,
         teams=teams,
-        request_rules=RequestRules.from_raw(raw.get("request_rules")),
+        request_rules=rules,
+        rules_version=RULES_VERSION,
     )
 
 
@@ -437,6 +472,7 @@ def save_state(state: TeamState) -> None:
         "relay": asdict(state.relay),
         "teams": {code: asdict(one) for code, one in state.teams.items()},
         "request_rules": asdict(state.request_rules),
+        "rules_version": state.rules_version,
     }
     handle, tmp = tempfile.mkstemp(dir=str(STATE_PATH.parent), suffix=".tmp")
     try:
