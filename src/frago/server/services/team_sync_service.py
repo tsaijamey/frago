@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 #: 所以它带来的最坏延迟只有这一下。
 NOTICE_DEBOUNCE_SECONDS = 0.15
 
+#: 本机会话尾部还有没推完的批次时，下一轮隔多久接着推。
+#: 一轮 sync_once 最多连推 MAX_PUSH_ROUNDS 批；还没推完就隔 0.2 秒紧接着补下一轮，
+#: 而不是干等 15 秒。
+CATCHUP_INTERVAL_SECONDS = 0.2
+
 
 class TeamSyncService:
     """替两侧的 agent 定时去中继取信、送信，并在对面有动静时立刻去取。"""
@@ -152,7 +157,8 @@ class TeamSyncService:
         self._inflight.add(code)
         try:
             await asyncio.sleep(NOTICE_DEBOUNCE_SECONDS)
-            await asyncio.to_thread(self._round_one, code)
+            while await asyncio.to_thread(self._round_one, code):
+                await asyncio.sleep(CATCHUP_INTERVAL_SECONDS)
         except Exception as err:  # noqa: BLE001 — 一次即时同步失败，兜底那轮会补上
             logger.debug("team %s：被喊醒的这一轮没跑成：%s", code, err)
         finally:
@@ -185,7 +191,7 @@ class TeamSyncService:
         from frago.team.state import DEFAULT_INTERVAL_SECONDS
 
         while not self._stop_event.is_set():
-            interval = DEFAULT_INTERVAL_SECONDS
+            interval: int | float = DEFAULT_INTERVAL_SECONDS
             try:
                 await self._refresh_links()
             except Exception as err:  # noqa: BLE001 — 长连接理不顺，轮询照跑
@@ -201,10 +207,11 @@ class TeamSyncService:
                 continue
 
     @classmethod
-    def _round(cls) -> int:
+    def _round(cls) -> int | float:
         """跑一轮，返回下一轮该隔多久（秒）。
 
         每个 team 各自成败，互不牵连：一个 team 的中继连不上，不该让另一个 team 停摆。
+        若仍有未推完的尾部批次，返回极短间隔当场续推，不干等 15 秒。
         """
         from frago.team.state import load_state
 
@@ -215,29 +222,31 @@ class TeamSyncService:
         if not active:
             return max(state.interval_seconds, 30)
 
+        has_more = False
         for binding in active:
             with cls._sync_lock:
-                _sync_one(state, binding)
-        return state.interval_seconds
+                if _sync_one(state, binding):
+                    has_more = True
+        return CATCHUP_INTERVAL_SECONDS if has_more else state.interval_seconds
 
     @classmethod
-    def _round_one(cls, code: str) -> None:
-        """只跑一个 team 的一轮。长连接喊醒时走这条。"""
+    def _round_one(cls, code: str) -> bool:
+        """只跑一个 team 的一轮。长连接喊醒时走这条；返回是否还有未推完的批次。"""
         from frago.team.state import load_state
 
         state = load_state()
         if not state.relay.configured():
-            return
+            return False
         binding = state.teams.get(code)
         # 走到这儿时它可能已经被退掉了——退出与通知会撞上，退出的那个说了算。
         if binding is None or not binding.active:
-            return
+            return False
         with cls._sync_lock:
-            _sync_one(state, binding)
+            return _sync_one(state, binding)
 
 
-def _sync_one(state: Any, binding: Any) -> None:
-    """一个 team 的一轮同步。成败自己扛，不往外抛。"""
+def _sync_one(state: Any, binding: Any) -> bool:
+    """一个 team 的一轮同步。成败自己扛，不往外抛；返回是否还有未推完的批次。"""
     from frago.team import sync as team_sync
     from frago.team.state import PUSH_TROUBLE_AFTER_ROUNDS
 
@@ -245,7 +254,7 @@ def _sync_one(state: Any, binding: Any) -> None:
         outcome = team_sync.sync_once(state, binding, deliver_to(binding.session_id))
     except Exception as err:  # noqa: BLE001
         logger.debug("team %s 这一轮没跑成：%s", binding.code, err)
-        return
+        return False
     if outcome.delivered or outcome.pushed or outcome.waiting:
         logger.info(
             "team %s：推了 %d 条记录，投了 %d 条消息%s%s",
@@ -263,6 +272,7 @@ def _sync_one(state: Any, binding: Any) -> None:
             or binding.push_fail_rounds >= PUSH_TROUBLE_AFTER_ROUNDS
         )
         (logger.warning if serious else logger.info)("team %s：%s", binding.code, outcome.note)
+    return bool(getattr(outcome, "has_more", False))
 
 
 def deliver_to(session_id: str):

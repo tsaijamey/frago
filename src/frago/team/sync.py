@@ -43,12 +43,26 @@ logger = logging.getLogger(__name__)
 #: 一批推送最多多少字节。旧中继的硬上限是 128KB（连同码、指纹、钥匙），留足余量。
 PUSH_BYTES = 96 * 1024
 
+#: 首次推送或游标落后超过这一窗时，直接跳到尾部最后多少条起推。
+#: 中继那边只留最近 500 条，从第 0 条一页页搬几千条旧历史既会被中继挤掉，又让对方在
+#: 前几十分钟里只能看见老古董。200 条与工作台首屏一页（PAGE_SIZE）对齐。
+TAIL_WINDOW = 200
+
+#: 一轮 sync_once 里连续追平最多推几批。200 条尾部窗口按 96KB 切批通常在 3~8 批内
+#: 推完；设上限免得单次调用被异常超大会话无限占住，没推完的由服务层紧接着下一轮补完。
+MAX_PUSH_ROUNDS = 8
+
+#: 记录哪些连接码在本批推送后还有未推完的尾部记录。
+_more_to_push: set[str] = set()
+
 __all__ = [
     "SyncOutcome",
     "TeamRefused",
     "HANDED",
     "LANDED",
+    "MAX_PUSH_ROUNDS",
     "NOT_NOW",
+    "TAIL_WINDOW",
     "join_team",
     "leave_team",
     "message_landed",
@@ -80,6 +94,8 @@ class SyncOutcome:
     skipped: int = 0
     waiting: int = 0
     """取下来了、还没在本机会话里看到的消息有几条（会话在忙，或送了没进去）。"""
+    has_more: bool = False
+    """本机会话尾部还有没推完的记录，服务层据此当场续推而不干等 15 秒。"""
     peer_present: bool = False
     note: str = ""
 
@@ -332,8 +348,15 @@ def sync_once(
     """
     outcome = SyncOutcome(code=binding.code)
 
+    _more_to_push.discard(binding.code)
     try:
-        outcome.pushed = _push_records(state, binding, batch)
+        pushed_total = 0
+        for _ in range(MAX_PUSH_ROUNDS):
+            pushed_total += _push_records(state, binding, batch)
+            if binding.code not in _more_to_push:
+                break
+        outcome.pushed = pushed_total
+        outcome.has_more = binding.code in _more_to_push
     except RelayError as err:
         # 推不上去不该让收消息那一半也停——对方可能正等着这边回话。但原因要记下来：
         # 收消息照常，这一侧看起来一切正常，只有对方看得到「空的」。连续几轮、哪一类，
@@ -437,6 +460,10 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
     游标是记录在会话里的序号，不是下标——会话被重新解析后序号会变，所以中继那边按
     序号覆盖同名的记录而不是追加。推一批就把游标落盘：中途断了，下一轮从断点接着推。
 
+    **首次同步或游标落后超过尾部窗口（200 条）时，直接从尾部最后 200 条起推。**
+    中继只留最近 500 条，从第 0 条搬上万条历史既会被中继挤掉，又让对方在前几十分钟里
+    只能看旧片段。
+
     **一条新记录都没有时也要敲一下。** 心跳就搭在这上面，不发的话中继二十四小时后
     会把这个 team 当成没人要的清掉。
 
@@ -446,11 +473,24 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
     frago 一起升级，而 push 本来每轮必跑，改了设置最迟一轮对方就看得到。旧中继不认识
     这个参数，照样收下记录、把它丢掉，推送本身不受影响。
     """
+    _more_to_push.discard(binding.code)
     rules = asdict(state.request_rules)
+    window = max(batch, TAIL_WINDOW)
     try:
-        records = record_reader.read_records(
-            binding.session_id, after=binding.pushed_seq + 1, limit=batch
-        )
+        if binding.pushed_seq < 0:
+            records = record_reader.read_records(
+                binding.session_id, after=0, limit=window, tail=True
+            )
+        else:
+            records = record_reader.read_records(
+                binding.session_id, after=binding.pushed_seq + 1, limit=batch
+            )
+            if len(records) >= batch:
+                tail = record_reader.read_records(
+                    binding.session_id, after=0, limit=window, tail=True
+                )
+                if tail and getattr(tail[0], "seq", -1) > getattr(records[0], "seq", -1):
+                    records = tail
     except Exception:
         # 会话被删了、编号形状不认得了——这一侧推不上去，但收消息那一半还能用，
         # 所以这个 team 不该因此被判死。心跳照发。
@@ -464,13 +504,15 @@ def _push_records(state: TeamState, binding: TeamBinding, batch: int) -> int:
         _call(state, binding, "push", records=[], rules=rules)
         return 0
 
-    # 按字节切批，不只按条数。中继那头把整批塞进一个命令行参数，Linux 对单个参数卡
+    # 按条数与字节切批。中继那头把整批塞进一个命令行参数，Linux 对单个参数卡
     # 128KB，超了连进程都起不来；而中继把这种失败说成「码不可用」，这边又把推送失败
     # 吞掉接着收——于是对话多的那一侧，在对方屏幕上永远是空的。新中继改走标准输入之后
     # 不再有这道坎，但还没升级的中继仍然有，所以这边自己先切小。
-    payload = [asdict(one) for one in records]
+    payload = [asdict(one) for one in records[:batch]]
     while len(payload) > 1 and len(json.dumps(payload).encode("utf-8")) > PUSH_BYTES:
         payload = payload[: len(payload) // 2]
+    if len(payload) < len(records) or len(records) >= batch:
+        _more_to_push.add(binding.code)
     _call(state, binding, "push", records=payload, rules=rules)
     binding.pushed_seq = max(one["seq"] for one in payload)
     save_state(state)

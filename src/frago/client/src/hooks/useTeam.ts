@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageType, getWebSocketClient } from '@/api/websocket';
-import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import { mergePushed, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { RequestRules } from '@/components/vibeTeaming/teamRequest';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -61,6 +61,9 @@ export interface TeamStatus {
 
 /** 对方那一列每隔多久重取一次。与服务端同步循环的默认节奏对齐。 */
 const PEER_POLL_MS = 15_000;
+
+/** 首屏拉取与单次增量追平的窗口大小。 */
+export const PEER_PAGE_SIZE = 200;
 
 /** 一次失败属于哪一类。与服务端那三个值一一对应。 */
 export type TeamTrouble = 'bad_code' | 'relay_down' | 'busy';
@@ -127,7 +130,12 @@ export function useTeamState() {
   return { state, error, loading, reload };
 }
 
-/** 对方那一列：中继上存着的、对方会话的记录。 */
+/**
+ * 对方那一列：中继上存着的、对方会话的记录。
+ *
+ * 首屏拉尾部最新 200 条；后续轮询或被 WebSocket 喊醒时按 `after_seq` 增量拉取并合并，
+ * 既避免全量覆盖挤掉已读上下文，也不会在后台刷新时闪回 loading。
+ */
 export function usePeerRecords(code: string | null) {
   const [records, setRecords] = useState<WorkbenchRecord[]>([]);
   const [status, setStatus] = useState<TeamStatus | null>(null);
@@ -136,28 +144,54 @@ export function usePeerRecords(code: string | null) {
   // 换 team 的那一拍，手上还是上一个 team 的记录。不记下这批是谁的，人会把上一个
   // team 的对话当成这一个的——工作台中栏踩过同一个坑。
   const belongsTo = useRef<string | null>(null);
+  const recordsRef = useRef<WorkbenchRecord[]>([]);
 
   const reload = useCallback(async () => {
     if (!code) {
+      recordsRef.current = [];
       setRecords([]);
       setStatus(null);
       belongsTo.current = null;
       return;
     }
-    setLoading(true);
+    const isInitial = belongsTo.current !== code || recordsRef.current.length === 0;
+    if (belongsTo.current !== code) {
+      recordsRef.current = [];
+    }
+    if (isInitial) {
+      setLoading(true);
+    }
     try {
+      const encoded = encodeURIComponent(code);
+      const current = recordsRef.current;
+      const lastSeq = current.length > 0 ? current[current.length - 1].seq : null;
+      const recordsUrl =
+        lastSeq !== null
+          ? `/api/pair/${encoded}/records?limit=${PEER_PAGE_SIZE}&after_seq=${Math.max(0, lastSeq - 1)}`
+          : `/api/pair/${encoded}/records?limit=${PEER_PAGE_SIZE}`;
+
       const [gotRecords, gotStatus] = await Promise.all([
-        readJson<{ records: WorkbenchRecord[] }>(`/api/pair/${encodeURIComponent(code)}/records`),
-        readJson<TeamStatus>(`/api/pair/${encodeURIComponent(code)}/status`),
+        readJson<{ records: WorkbenchRecord[] }>(recordsUrl),
+        readJson<TeamStatus>(`/api/pair/${encoded}/status`),
       ]);
+      const incoming = gotRecords.records || [];
+      const next =
+        lastSeq !== null
+          ? incoming.length > 0
+            ? mergePushed(current, incoming)
+            : current
+          : incoming;
       belongsTo.current = code;
-      setRecords(gotRecords.records || []);
+      recordsRef.current = next;
+      setRecords(next);
       setStatus(gotStatus);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   }, [code]);
 

@@ -973,9 +973,8 @@ function PeerSide({
   const [sent, setSent] = useState<SentRequest[]>([]);
   const sentSeq = useRef(0);
   const [now, setNow] = useState(() => Date.now());
-  // 在对方记录里找到过的请求。右栏只拿对方最近 80 条，对方忙起来，送达的那条很快被
-  // 挤出这个范围——找不到不等于没送到。从前找不到就退回流末尾停在 Sent，10 分钟后
-  // 还挂上「还没进对方的会话」，而对方早已收到并做完了。找到过一次就不再回头。
+  // 在对方记录里找到过的请求。右栏首屏拉尾部 200 条、后续按 after_seq 增量累积；
+  // 若有比首屏更早的已送达请求不在当前窗口里，找不到不等于没送到——找到过一次就不再退回 Sent。
   const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set());
 
   // 换 team 时清掉上一个 team 的待核对清单。
