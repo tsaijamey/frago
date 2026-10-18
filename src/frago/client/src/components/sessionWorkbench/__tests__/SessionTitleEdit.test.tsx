@@ -49,28 +49,33 @@ describe('SessionWorkbenchPage 标题内联编辑与星号按钮生成', () => {
     });
 
     vi.spyOn(workbenchRecordsHook, 'useWorkbenchRecords').mockReturnValue({
-      sessionId: SID,
       records: [],
+      recordsSessionId: SID,
       loading: false,
       loadingOlder: false,
       hasOlder: false,
       error: null,
-      loadOlder: () => {},
-      send: async () => null,
-      outbound: [],
-      trails: [],
+      loadOlder: async () => {},
+      reload: async () => {},
       awaitingAgent: false,
+      outbound: [],
+      markSent: () => 'out-1',
+      deliveredAt: null,
+      clearSent: () => {},
+      markQueued: () => {},
+      settleSent: () => {},
+      trails: [],
     });
 
     vi.spyOn(sessionMarksHook, 'useSessionMarks').mockReturnValue({
       marks: [],
-      supported: true,
       loaded: true,
-      recordQuotes: async () => {},
-      addStackItem: async () => null,
-      markUsed: async () => {},
-      removeMark: async () => {},
-      recordBranch: async () => true,
+      addMark: () => null,
+      addMarks: () => {},
+      setNote: () => {},
+      remove: () => {},
+      move: () => {},
+      markUsed: () => {},
       syncBranches: async () => {},
     });
 

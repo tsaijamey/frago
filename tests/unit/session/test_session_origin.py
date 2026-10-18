@@ -51,6 +51,11 @@ def _index(projects_root):
     return session_origin.load_origin_index(projects_root=projects_root, use_memo=False)
 
 
+# 时序判据靠文件系统的创建时刻。Linux 的 os.stat 不提供 st_birthtime，实现那边按设计
+# 「判不了就放行」，所以断言「引用被剔除」的用例在这类机器上测不到东西。
+_HAS_BIRTHTIME = hasattr(os.stat(__file__), "st_birthtime")
+
+
 class TestWorkerShape:
     """判据三：编号形状。"""
 
@@ -205,6 +210,9 @@ class TestRetroactiveScan:
         )
         assert _index(root).parents == {}
 
+    @pytest.mark.skipif(
+        not _HAS_BIRTHTIME, reason="文件系统不记创建时刻，时序判据按设计放行"
+    )
     def test_引用别人的回显不算证据(self, ledger, tmp_path):
         # 回显本身也会被引用：一场会话读别人的记录、把回显抄进回复，那句回显就落进了引用者
         # 的记录。区分它们看时序——被引用的那场 worker 早已收场，引用者还在写。
