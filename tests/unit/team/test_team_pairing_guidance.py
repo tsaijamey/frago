@@ -229,6 +229,17 @@ def test_手册与短版提醒都改成照本机主人的设置处理():
     rules = rules["rules"] if isinstance(rules, dict) else rules
     guard = next(r for r in rules if r["id"] == "builtin-prompt-team-message-guard")
     assert "本机主人的设置" in guard["action"]["text"]
+    assert "设置是直接做就做" in guard["action"]["text"]
+
+    # 宪法与 LightAgent 的预判提示也照设置行走。三处只要有一处还写死「改动先问」，
+    # agent 就会照着旧缺省停下，界面上的新缺省等于没设。
+    constitution = (RESOURCES / "constitution.md").read_text(encoding="utf-8")
+    assert "本机主人的设置" in constitution
+    assert "设置是直接做就做" in constitution
+
+    light_agent = (RESOURCES / "hook" / "prompt.md").read_text(encoding="utf-8")
+    assert "本机主人的设置" in light_agent
+    assert "设置是直接做就做" in light_agent
 
 
 def test_投递那一行与手册里的说法对得上():
