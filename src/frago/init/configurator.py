@@ -136,6 +136,11 @@ CLAUDE_ENV_OWNED_KEYS = (
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "API_TIMEOUT_MS",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    # The context window is part of the model configuration now. Owned like the
+    # rest: activating a profile without a window has to clear the one the
+    # previous profile wrote, or Claude Code keeps budgeting the old size.
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
 )
 
 # URL patterns for inferring endpoint type
@@ -649,6 +654,13 @@ def resolve_auth_style(
     return AUTH_STYLE_API_KEY
 
 
+# Claude Code only honours CLAUDE_CODE_AUTO_COMPACT_WINDOW inside this range.
+# Outside it the variable is ignored, so the window is declared alone rather
+# than paired with a number the CLI would silently discard.
+CLAUDE_AUTO_COMPACT_MIN = 100_000
+CLAUDE_AUTO_COMPACT_MAX = 1_000_000
+
+
 def build_claude_env_config(
     endpoint_type: str,
     api_key: str,
@@ -657,6 +669,7 @@ def build_claude_env_config(
     sonnet_model: str = None,
     haiku_model: str = None,
     auth: str = None,
+    context_window: int | None = None,
 ) -> dict:
     """
     Build env configuration for Claude Code settings.json
@@ -673,6 +686,10 @@ def build_claude_env_config(
             declaration; falls back to the preset's "auth" field, else "api_key".
             Tencent (MaaS/TokenPlan) and OpenRouter require "auth_token";
             DeepSeek and the other Anthropic-native presets use "api_key".
+        context_window: The model's context window in tokens, when the profile
+            carries one. Written as both the declared window and the
+            auto-compact threshold; see the comment at the write site for why
+            Claude Code needs the pair.
 
     Returns:
         env configuration dictionary
@@ -701,6 +718,17 @@ def build_claude_env_config(
         env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = sonnet_model
     if haiku_model:
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku_model
+
+    # A model ID Claude Code does not recognise is budgeted against its own
+    # default window. CLAUDE_CODE_MAX_CONTEXT_TOKENS declares the real size,
+    # and CLAUDE_CODE_AUTO_COMPACT_WINDOW moves the point where compacting
+    # starts; giving only the latter leaves it capped by the assumed window,
+    # so the two go together with the same number. Outside the range Claude
+    # Code accepts for the compact window, declare the window alone.
+    if context_window:
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = context_window
+        if CLAUDE_AUTO_COMPACT_MIN <= context_window <= CLAUDE_AUTO_COMPACT_MAX:
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = context_window
 
     # Credential goes into the header the endpoint expects. Bearer-style
     # endpoints (Tencent / OpenRouter) read ANTHROPIC_AUTH_TOKEN; x-api-key

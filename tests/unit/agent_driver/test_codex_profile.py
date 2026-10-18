@@ -139,6 +139,45 @@ def test_revert_with_nothing_taken_over_leaves_the_file_alone(config) -> None:
     assert config.read_text(encoding="utf-8") == _ORIGINAL
 
 
+def test_context_window_reaches_the_session_scope(tmp_path) -> None:
+    """frago 起的会话用 -c 覆盖，数字是 TOML 整数，不加引号。"""
+    env = codex._profile_env(_ark(context_window=1_000_000))
+    assert env["FRAGO_CODEX_CONTEXT_WINDOW"] == "1000000"
+    cmd = codex._launch(LaunchCtx(cwd=str(tmp_path), session_id="s1", env=env))
+    assert "model_context_window=1000000" in cmd
+    assert "model_auto_compact_token_limit=1000000" in cmd
+
+
+def test_context_window_is_written_and_reverted(config) -> None:
+    codex._profile_apply(_ark(context_window=1_000_000))
+
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    assert data["model_context_window"] == 1_000_000
+    assert data["model_auto_compact_token_limit"] == 1_000_000
+
+    codex._profile_revert()
+    assert config.read_text(encoding="utf-8") == _ORIGINAL
+
+
+def test_a_window_saved_before_activation_comes_back_on_revert(config) -> None:
+    """接管前用户自己写的窗口，撤销时按原值还原，不被当成 frago 的配置删掉。"""
+    config.write_text(
+        _ORIGINAL.replace(
+            'model_provider = "deepseek"\n',
+            'model_provider = "deepseek"\nmodel_context_window = 200000\n',
+        ),
+        encoding="utf-8",
+    )
+
+    codex._profile_apply(_ark(context_window=1_000_000))
+    assert tomllib.loads(config.read_text(encoding="utf-8"))["model_context_window"] == 1_000_000
+
+    codex._profile_revert()
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    assert data["model_context_window"] == 200_000
+    assert "model_auto_compact_token_limit" not in data
+
+
 def test_apply_on_a_machine_without_a_codex_config(tmp_path) -> None:
     path = codex_store.get_codex_home() / "config.toml"
     assert not path.exists()

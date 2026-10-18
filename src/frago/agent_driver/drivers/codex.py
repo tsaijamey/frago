@@ -354,6 +354,7 @@ PROFILE_PROVIDER_ID = "frago-profile"
 _ENV_KEY = "FRAGO_CODEX_KEY"
 _ENV_BASE_URL = "FRAGO_CODEX_BASE_URL"
 _ENV_MODEL = "FRAGO_CODEX_MODEL"
+_ENV_CONTEXT_WINDOW = "FRAGO_CODEX_CONTEXT_WINDOW"
 
 
 def _responses_target(profile: Any) -> tuple[str, str]:
@@ -375,7 +376,12 @@ def _responses_target(profile: Any) -> tuple[str, str]:
 
 def _profile_env(profile: Any) -> dict[str, str]:
     url, model = _responses_target(profile)
-    return {_ENV_KEY: profile.api_key, _ENV_BASE_URL: url, _ENV_MODEL: model}
+    env = {_ENV_KEY: profile.api_key, _ENV_BASE_URL: url, _ENV_MODEL: model}
+    # Absent means "let codex decide", which is what every profile saved before
+    # this field existed gets and what the launch command must keep doing.
+    if profile.context_window:
+        env[_ENV_CONTEXT_WINDOW] = str(profile.context_window)
+    return env
 
 
 def _provider_flags(ctx: LaunchCtx) -> str:
@@ -390,16 +396,31 @@ def _provider_flags(ctx: LaunchCtx) -> str:
         f'{{name="{PROFILE_PROVIDER_ID}",base_url="{_toml_escape(url)}",'
         f'env_key="{_ENV_KEY}",wire_api="responses"}}'
     )
-    overrides = (
+    overrides = [
         f'model_provider="{PROFILE_PROVIDER_ID}"',
         f'model="{_toml_escape(model)}"',
         f"model_providers.{PROFILE_PROVIDER_ID}={table}",
-    )
+    ]
+    # The session scope carries the window too. It is a plain TOML integer, not
+    # a string, so it is not quoted. The same number feeds both the declared
+    # window and the auto-compact threshold, matching the activation writer.
+    window = ctx.env.get(_ENV_CONTEXT_WINDOW)
+    if window:
+        overrides += [
+            f"model_context_window={window}",
+            f"model_auto_compact_token_limit={window}",
+        ]
     return "".join(f" -c {shlex.quote(o)}" for o in overrides)
 
 
-# 激活时 frago 会改写的两个顶层键。原值记进 profile-target-backup.json 以便撤销时还原。
-_TAKEOVER_KEYS = ("model", "model_provider")
+# 激活时 frago 会改写的顶层键。原值记进 profile-target-backup.json 以便撤销时还原。
+# 窗口两键只在 profile 带了窗口时写入；撤销时按备份还原，接管前没有就删掉。
+_TAKEOVER_KEYS = (
+    "model",
+    "model_provider",
+    "model_context_window",
+    "model_auto_compact_token_limit",
+)
 _PROVIDER_HEADER = f"[model_providers.{PROFILE_PROVIDER_ID}]"
 
 
@@ -422,7 +443,16 @@ def _key_of(line: str) -> str | None:
     return stripped.split("=", 1)[0].strip()
 
 
-def _set_top_level(lines: list[str], values: dict[str, str | None]) -> list[str]:
+def _toml_literal(value: str | int) -> str:
+    """TOML scalar for a top-level key: integers stay bare, strings get quoted."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return f'"{_toml_escape(value)}"'
+
+
+def _set_top_level(lines: list[str], values: dict[str, str | int | None]) -> list[str]:
     """改写顶层键：值为 None 的删掉，其余就地替换，没有的插到顶层末尾。"""
     end = _top_level_end(lines)
     head, rest = lines[:end], lines[end:]
@@ -433,10 +463,10 @@ def _set_top_level(lines: list[str], values: dict[str, str | None]) -> list[str]
         if key in pending:
             value = pending.pop(key)
             if value is not None:
-                out.append(f'{key} = "{_toml_escape(value)}"')
+                out.append(f"{key} = {_toml_literal(value)}")
             continue
         out.append(line)
-    added = [f'{k} = "{_toml_escape(v)}"' for k, v in pending.items() if v is not None]
+    added = [f"{k} = {_toml_literal(v)}" for k, v in pending.items() if v is not None]
     if added:
         # 插在顶层最后一个非空行之后，保住顶层与第一个表头之间原有的空行。
         at = len(out)
@@ -504,9 +534,17 @@ def _profile_apply(profile: Any) -> None:
             shutil.copy2(path, backup)
             os.chmod(backup, 0o600)
 
+    # A profile without a window passes None for both keys, which removes any
+    # window a previously activated profile left behind. The backup taken on
+    # first takeover still holds the person's own values for revert.
     lines = _set_top_level(
         _without_provider_table(lines),
-        {"model": model, "model_provider": PROFILE_PROVIDER_ID},
+        {
+            "model": model,
+            "model_provider": PROFILE_PROVIDER_ID,
+            "model_context_window": profile.context_window,
+            "model_auto_compact_token_limit": profile.context_window,
+        },
     )
     lines += [
         "",

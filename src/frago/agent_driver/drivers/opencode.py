@@ -778,11 +778,20 @@ def _provider_definition(profile: APIProfile) -> dict[str, Any]:
     # provider 里必须逐个声明会被引用的模型：只给 npm/options 而不给 models，
     # opencode 解析不出 `frago-profile/<模型名>`，会**静默回退**到用户自己配的
     # provider（模型名相同时页脚都看不出异常）。引用与声明 MUST 配套。
+    # opencode derives its auto-compact point from the model's declared context
+    # minus a reserve for the reply (20k by default). Declaring the real window
+    # is therefore enough: compaction starts as the session approaches it, and
+    # rewriting the reserve would only squeeze the output budget.
+    model_entry: dict[str, Any] = (
+        {"limit": {"context": profile.context_window}}
+        if profile.context_window
+        else {}
+    )
     models: dict[str, dict[str, Any]] = {}
     if profile.default_model:
-        models[profile.default_model] = {}
+        models[profile.default_model] = dict(model_entry)
     if profile.haiku_model:
-        models[profile.haiku_model] = {}
+        models[profile.haiku_model] = dict(model_entry)
 
     provider: dict[str, Any] = {
         "npm": "@ai-sdk/anthropic",

@@ -62,6 +62,12 @@ export default function ActiveProfileCard({ profile, activeTargets = [], onSwitc
               {profile.sonnet_model}
             </p>
           )}
+          {profile.context_window != null && (
+            <p>
+              <span className="font-medium">{t('settings.profiles.contextWindow')}:</span>{' '}
+              {profile.context_window.toLocaleString()}
+            </p>
+          )}
           {/* Which agent CLIs this is actually in force on. Without it, "active"
               is a claim with no subject — the other CLIs on the machine are
               still running whatever they were running before. */}

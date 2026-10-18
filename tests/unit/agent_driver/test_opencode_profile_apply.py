@@ -73,6 +73,30 @@ def test_apply_writes_provider_and_model_selection(opencode_config, driver) -> N
     }
 
 
+def test_apply_declares_the_context_window_on_every_model(
+    opencode_config, driver
+) -> None:
+    driver.profile_apply(_profile(context_window=1_000_000))
+
+    models = _read(opencode_config)["provider"]["frago-profile"]["models"]
+    assert models["deepseek-v4-flash"]["limit"]["context"] == 1_000_000
+    assert models["deepseek-v4-flash-lite"]["limit"]["context"] == 1_000_000
+
+
+def test_session_injection_carries_the_context_window(driver) -> None:
+    injected = json.loads(
+        driver.profile_env(_profile(context_window=1_000_000))["OPENCODE_CONFIG_CONTENT"]
+    )
+    models = injected["provider"]["frago-profile"]["models"]
+    assert models["deepseek-v4-flash"]["limit"]["context"] == 1_000_000
+
+
+def test_without_a_window_no_limit_is_declared(opencode_config, driver) -> None:
+    driver.profile_apply(_profile())
+    models = _read(opencode_config)["provider"]["frago-profile"]["models"]
+    assert models["deepseek-v4-flash"] == {}
+
+
 def test_apply_creates_the_file_when_there_is_none(opencode_config, driver) -> None:
     assert not opencode_config.exists()
     driver.profile_apply(_profile())

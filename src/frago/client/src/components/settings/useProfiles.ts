@@ -82,6 +82,9 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   const [formDefaultModel, setFormDefaultModel] = useState('');
   const [formSonnetModel, setFormSonnetModel] = useState('');
   const [formHaikuModel, setFormHaikuModel] = useState('');
+  // Kept as the raw input string: the field is optional, and an empty box has
+  // to mean "no window" rather than zero.
+  const [formContextWindow, setFormContextWindow] = useState('');
   // The vendor's OpenAI Responses door — what Codex speaks. Blank on a preset
   // that knows one means "use the preset's"; blank anywhere else means none.
   const [formResponsesUrl, setFormResponsesUrl] = useState('');
@@ -193,6 +196,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormDefaultModel('');
     setFormSonnetModel('');
     setFormHaikuModel('');
+    setFormContextWindow('');
     setFormResponsesUrl('');
     setFormResponsesModel('');
     setShowFormApiKey(false);
@@ -214,6 +218,9 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormDefaultModel(profile.default_model || '');
     setFormSonnetModel(profile.sonnet_model || '');
     setFormHaikuModel(profile.haiku_model || '');
+    setFormContextWindow(
+      profile.context_window != null ? String(profile.context_window) : '',
+    );
     // Only what was saved on this profile goes into the fields. A door filled in
     // from the vendor table shows as the placeholder, so saving the form without
     // touching it does not pin today's preset address onto the profile.
@@ -223,6 +230,14 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setShowFormApiKey(false);
     setEditingProfileId(profile.id);
     setViewMode('edit');
+  };
+
+  /** Empty box means "no window"; anything else is sent as whole tokens. */
+  const contextWindowValue = (): number | null => {
+    const raw = formContextWindow.trim();
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
   };
 
   /**
@@ -250,6 +265,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
         default_model: formDefaultModel.trim() || null,
         sonnet_model: null,
         haiku_model: null,
+        context_window: null,
       };
     }
     if (formKind === 'vendor_cli') {
@@ -265,6 +281,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
         default_model: formDefaultModel.trim() || null,
         sonnet_model: null,
         haiku_model: null,
+        // A vendor CLI runs on its own service; frago writes no window for it.
+        context_window: null,
       };
     }
     const responsesUrl = formResponsesUrl.trim();
@@ -278,6 +296,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       default_model: formDefaultModel.trim() || null,
       sonnet_model: formSonnetModel.trim() || null,
       haiku_model: formHaikuModel.trim() || null,
+      // Always sent, so emptying the box clears a saved window.
+      context_window: contextWindowValue(),
       // Always sent, so emptying both fields removes a saved door. A preset that
       // knows a Responses door keeps offering it from the vendor table regardless.
       channels:
@@ -515,6 +535,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     setFormSonnetModel,
     formHaikuModel,
     setFormHaikuModel,
+    formContextWindow,
+    setFormContextWindow,
     formResponsesUrl,
     setFormResponsesUrl,
     formResponsesModel,

@@ -90,6 +90,38 @@ class TestUpdatingAProfile:
         assert load_profiles().profiles[0].api_key == "sk-original-key"
 
     @pytest.mark.asyncio
+    async def test_context_window_round_trips_through_the_endpoints(self, saved_profile):
+        """写进来的窗口要能从列表端点读回去，WebUI 打开时才有值可载入。"""
+        result = await update_profile_endpoint(
+            saved_profile, UpdateProfileRequest(context_window=1_000_000)
+        )
+        assert result.status == "ok"
+        assert load_profiles().profiles[0].context_window == 1_000_000
+
+        response = await get_profiles()
+        assert response.profiles[0].context_window == 1_000_000
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_null_clears_the_context_window(self, saved_profile):
+        await update_profile_endpoint(
+            saved_profile, UpdateProfileRequest(context_window=1_000_000)
+        )
+        result = await update_profile_endpoint(
+            saved_profile, UpdateProfileRequest(context_window=None)
+        )
+        assert result.status == "ok"
+        assert load_profiles().profiles[0].context_window is None
+
+    @pytest.mark.asyncio
+    async def test_an_out_of_range_window_is_rejected_not_saved(self, saved_profile):
+        result = await update_profile_endpoint(
+            saved_profile, UpdateProfileRequest(context_window=999_999_999)
+        )
+        assert result.status == "error"
+        assert "Context window" in (result.error or "")
+        assert load_profiles().profiles[0].context_window is None
+
+    @pytest.mark.asyncio
     async def test_an_unusable_edit_is_reported_not_saved(self, saved_profile):
         result = await update_profile_endpoint(
             saved_profile, UpdateProfileRequest(endpoint_type="custom", url="")

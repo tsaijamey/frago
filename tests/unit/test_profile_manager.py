@@ -197,6 +197,7 @@ class TestActivateProfile:
                 default_model=None,
                 sonnet_model=None,
                 haiku_model=None,
+                context_window=None,
             )
             mock_ensure.assert_called_once()
             mock_save_settings.assert_called_once()
@@ -242,7 +243,36 @@ class TestActivateProfile:
                 default_model=None,
                 sonnet_model=None,
                 haiku_model=None,
+                context_window=None,
             )
+
+    def test_activate_passes_the_context_window_to_the_claude_config(
+        self, tmp_profiles_path
+    ):
+        """窗口值挂在 profile 上，激活这一步就是它进入 Claude Code 配置的唯一通道。"""
+        add_profile(
+            APIProfile(
+                id="window01",
+                name="Wide",
+                endpoint_type="deepseek",
+                api_key="sk-window",
+                context_window=1_000_000,
+            )
+        )
+
+        with (
+            patch("frago.init.configurator.build_claude_env_config") as mock_build,
+            patch("frago.init.configurator.save_claude_settings"),
+            patch("frago.init.configurator.ensure_claude_json_for_custom_auth"),
+            patch("frago.init.config_manager.load_config") as mock_load_config,
+            patch("frago.init.config_manager.save_config"),
+        ):
+            mock_load_config.return_value = MagicMock()
+            mock_build.return_value = {}
+
+            activate_profile("window01")
+
+            assert mock_build.call_args.kwargs["context_window"] == 1_000_000
 
 
 class TestDeactivateProfile:
@@ -859,6 +889,5 @@ class TestProfileChannels:
                 None,
                 kind="vendor_cli",
                 agent_type="agy",
-                models=("m",),
                 channels=[ProfileChannel(protocol="responses", url="https://x.example.com")],
             )

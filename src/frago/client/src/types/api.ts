@@ -673,6 +673,8 @@ export interface ProfileItem {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  /** The model's context window in tokens; null means "let each CLI decide". */
+  context_window?: number | null;
   /** Every protocol door this connection opens, Anthropic first. */
   channels?: ProfileChannel[];
   is_active: boolean;
@@ -786,6 +788,8 @@ export interface CreateProfileRequest {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  /** Model context window in tokens; null means "let each CLI decide". */
+  context_window?: number | null;
   channels?: ProfileChannelInput[];
 }
 
@@ -804,6 +808,8 @@ export interface UpdateProfileRequest {
   default_model?: string | null;
   sonnet_model?: string | null;
   haiku_model?: string | null;
+  /** Sent as null to clear the window; omitted keeps what is saved. */
+  context_window?: number | null;
   /** Omitted keeps the saved channels; `[]` drops them. */
   channels?: ProfileChannelInput[];
 }

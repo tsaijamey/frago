@@ -67,6 +67,12 @@ KIND_VENDOR_CLI = "vendor_cli"
 KIND_WORKBUDDY = "workbuddy"
 PROFILE_KINDS = (KIND_ENDPOINT, KIND_OFFICIAL, KIND_VENDOR_CLI, KIND_WORKBUDDY)
 
+# A context window is a token count. The floor is low enough for small local
+# models and the ceiling is above anything shipping today; both exist to catch
+# a typo (1000000000 for 1000000) before it is written into three CLIs.
+CONTEXT_WINDOW_MIN = 1_000
+CONTEXT_WINDOW_MAX = 10_000_000
+
 # The plain subscription is a fixed id rather than a saved row: nothing about
 # it is editable, and a row could be deleted out from under a binding.
 OFFICIAL_ID = "official"
@@ -126,6 +132,11 @@ class APIProfile(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # The model's context window, in tokens. None means "let the CLI decide",
+    # which is what every profile saved before this field existed gets. The
+    # number is written into each CLI's own config so that a model ID the CLI
+    # does not recognise is not silently budgeted at its default window.
+    context_window: int | None = None
     # endpoint only: the doors besides the Anthropic one. Absent from every
     # profile saved before channels existed, which reads as "Anthropic only"
     # plus whatever the preset table knows about the vendor.
@@ -386,8 +397,8 @@ def _validate_profile(
     url: str | None,
     kind: str = KIND_ENDPOINT,
     agent_type: str | None = None,
-    models: Sequence[str | None] = (),
     channels: Sequence[ProfileChannel] = (),
+    context_window: int | None = None,
 ) -> None:
     """Reject the profile shapes that break something later and quietly.
 
@@ -412,6 +423,15 @@ def _validate_profile(
 
     if not (name or "").strip():
         raise ValueError("Profile name cannot be empty")
+
+    if context_window is not None:
+        if not isinstance(context_window, int) or isinstance(context_window, bool):
+            raise ValueError("Context window must be a whole number of tokens")
+        if not CONTEXT_WINDOW_MIN <= context_window <= CONTEXT_WINDOW_MAX:
+            raise ValueError(
+                f"Context window must be between {CONTEXT_WINDOW_MIN:,} and "
+                f"{CONTEXT_WINDOW_MAX:,} tokens"
+            )
 
     if kind not in PROFILE_KINDS:
         raise ValueError(f"Unknown profile kind '{kind}' (expected one of: {', '.join(PROFILE_KINDS)})")
@@ -462,8 +482,8 @@ def add_profile(profile: APIProfile) -> ProfileStore:
         profile.url,
         profile.kind,
         profile.agent_type,
-        (profile.default_model, profile.sonnet_model, profile.haiku_model),
         profile.channels,
+        profile.context_window,
     )
     store = load_profiles()
     store.profiles.append(profile)
@@ -503,11 +523,8 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                 updates.get("url", profile.url),
                 updates.get("kind") or profile.kind,
                 updates.get("agent_type", profile.agent_type),
-                tuple(
-                    updates.get(key, getattr(profile, key))
-                    for key in ("default_model", "sonnet_model", "haiku_model")
-                ),
                 updates.get("channels", profile.channels),
+                updates.get("context_window", profile.context_window),
             )
             for key, value in updates.items():
                 if key == "api_key" and not value:
@@ -877,6 +894,21 @@ def create_profile_from_current(name: str) -> APIProfile | None:
     base_url = env.get("ANTHROPIC_BASE_URL", "")
     endpoint_type = _infer_endpoint_type_from_url(base_url)
 
+    # A window the person (or an earlier frago) already wrote into Claude Code
+    # belongs to this connection too. An unparseable or out-of-range value is
+    # dropped rather than carried into the other two CLIs' configs.
+    raw_window = env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS") or env.get(
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+    )
+    try:
+        context_window = int(raw_window) if raw_window else None
+    except (TypeError, ValueError):
+        context_window = None
+    if context_window is not None and not (
+        CONTEXT_WINDOW_MIN <= context_window <= CONTEXT_WINDOW_MAX
+    ):
+        context_window = None
+
     profile = APIProfile(
         name=name,
         endpoint_type=endpoint_type,
@@ -885,6 +917,7 @@ def create_profile_from_current(name: str) -> APIProfile | None:
         default_model=env.get("ANTHROPIC_MODEL"),
         sonnet_model=env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
         haiku_model=env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+        context_window=context_window,
     )
 
     store = load_profiles()

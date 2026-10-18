@@ -880,6 +880,8 @@ class ProfileResponse(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # The model's context window in tokens; None means "let each CLI decide".
+    context_window: int | None = None
     # Every door this connection opens, Anthropic first. Empty for the kinds
     # that carry no endpoint.
     channels: list[ChannelResponse] = []
@@ -945,6 +947,9 @@ class CreateProfileRequest(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # The model's context window in tokens; omitted or null means "let each
+    # CLI decide", which is what every profile saved before this field gets.
+    context_window: int | None = None
     channels: list[ChannelRequest] = []
 
 
@@ -959,6 +964,8 @@ class UpdateProfileRequest(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # Sent as null to clear the window; omitted keeps what is saved.
+    context_window: int | None = None
     # Omitted = keep the saved channels; [] = drop them all.
     channels: list[ChannelRequest] | None = None
 
@@ -1021,6 +1028,7 @@ def _profile_to_response(
         default_model=profile.default_model,
         sonnet_model=profile.sonnet_model,
         haiku_model=profile.haiku_model,
+        context_window=profile.context_window,
         channels=channels,
         is_active=profile.id == active_id,
         created_at=profile.created_at.isoformat() if hasattr(profile.created_at, 'isoformat') else str(profile.created_at),
@@ -1063,6 +1071,7 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
             default_model=_blank_to_none(request.default_model),
             sonnet_model=_blank_to_none(request.sonnet_model),
             haiku_model=_blank_to_none(request.haiku_model),
+            context_window=request.context_window,
             channels=_channels_from_request(request.channels),
         )
         add_profile(profile)
@@ -1088,7 +1097,12 @@ async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest
         sent = request.model_dump(exclude_unset=True)
         channels = sent.pop("channels", None)
         updates = {
-            key: value if key == "api_key" else _blank_to_none(value)
+            # api_key keeps "blank means unchanged"; context_window is an
+            # integer and needs no string trimming, and null is a real value
+            # here — it clears the window.
+            key: value
+            if key in ("api_key", "context_window")
+            else _blank_to_none(value)
             for key, value in sent.items()
         }
         if channels is not None:

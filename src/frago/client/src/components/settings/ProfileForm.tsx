@@ -26,6 +26,8 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     setFormSonnetModel,
     formHaikuModel,
     setFormHaikuModel,
+    formContextWindow,
+    setFormContextWindow,
     formResponsesUrl,
     setFormResponsesUrl,
     formResponsesModel,
@@ -351,6 +353,50 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         </div>
       </div>
         </>
+      )}
+
+      {/* One window for every CLI this profile is activated on. Each target
+          gets it in its own vocabulary when the profile is saved: Claude
+          Code's pair of environment variables, Codex's two top-level TOML
+          keys, opencode's per-model limit. */}
+      {!isWorkbuddy && !isVendorCli && (
+        <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2">
+          <div>
+            <p className="text-xs font-medium text-[var(--text-secondary)]">
+              {t('settings.profiles.contextWindow')}
+            </p>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              {t('settings.profiles.contextWindowHint')}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              id="profile-context-window"
+              type="number"
+              min={1000}
+              max={10000000}
+              step={1000}
+              value={formContextWindow}
+              onChange={(e) => setFormContextWindow(e.target.value)}
+              placeholder={t('settings.profiles.contextWindowPlaceholder')}
+              className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setFormContextWindow('200000')}
+              className="btn btn-ghost btn-sm"
+            >
+              200K
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormContextWindow('1000000')}
+              className="btn btn-ghost btn-sm"
+            >
+              1M
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Form actions */}

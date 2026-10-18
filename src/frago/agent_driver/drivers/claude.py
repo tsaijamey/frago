@@ -888,6 +888,7 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
         default_model=profile.default_model,
         sonnet_model=profile.sonnet_model,
         haiku_model=profile.haiku_model,
+        context_window=profile.context_window,
     )
     return {k: str(v) for k, v in env.items()}
 
@@ -915,6 +916,7 @@ def _profile_apply(profile: APIProfile) -> None:
         default_model=profile.default_model,
         sonnet_model=profile.sonnet_model,
         haiku_model=profile.haiku_model,
+        context_window=profile.context_window,
     )
     ensure_claude_json_for_custom_auth()
     save_claude_settings({"env": env_config})

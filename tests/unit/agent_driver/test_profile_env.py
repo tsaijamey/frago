@@ -208,6 +208,33 @@ def test_claude_api_key_endpoint_blanks_the_authorization_variable() -> None:
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
 
 
+# ── 上下文窗口 ─────────────────────────────────────────────────────
+def test_claude_context_window_sets_the_declared_window_and_compact_point() -> None:
+    """陌生模型 ID 的两把开关成对给：声明真实窗口，同时移动压缩点。"""
+    driver = load_driver("claude")
+    assert driver.profile_env is not None
+    env = driver.profile_env(_profile(context_window=1_000_000))
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1000000"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1000000"
+
+
+def test_claude_window_below_the_compact_range_is_declared_alone() -> None:
+    """CLAUDE_CODE_AUTO_COMPACT_WINDOW 只认十万到一百万，范围外不写这一把。"""
+    driver = load_driver("claude")
+    assert driver.profile_env is not None
+    env = driver.profile_env(_profile(context_window=64_000))
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "64000"
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in env
+
+
+def test_claude_without_a_window_writes_neither_variable() -> None:
+    driver = load_driver("claude")
+    assert driver.profile_env is not None
+    env = driver.profile_env(_profile())
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in env
+
+
 def test_claude_has_no_session_env() -> None:
     """claude 不需要基线环境变量（权限确认靠启动开关）。"""
     assert load_driver("claude").session_env is None
