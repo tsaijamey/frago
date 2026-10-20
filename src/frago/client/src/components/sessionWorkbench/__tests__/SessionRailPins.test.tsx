@@ -77,12 +77,11 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
+    todaySessions: rows,
     loading: false,
     error: null,
     filter: 'all',
     setFilter: NOOP,
-    days: 0,
-    setDays: NOOP,
     counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
     ...over,
@@ -212,16 +211,29 @@ describe('SessionRail 置顶区', () => {
     expect(screen.getByTestId('pinned-header').textContent).toContain('120');
   });
 
-  it('置顶区不跟状态与时间范围走', () => {
+  it('置顶区不跟状态筛选走', () => {
     // 人点了「在跑」，清单只剩一场；置顶的那场是「已完成」，它仍该留在置顶区。
     pins.pinned = [OC_SID];
     const state = railState(rows, {
       visible: [rows[0]],
       filter: 'for-you',
-      days: 7,
     });
     render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
     expect(titles().some((t) => t.includes(OC_SID))).toBe(true);
+  });
+
+  it('置顶不跟今天走：今天没动过的置顶会话照样摆出来', () => {
+    // 2026-10-19 主人定：置顶是「我点名要一直摆在上面」，不受今天过滤影响；
+    // 今天那一道只管 Pinned 下面的清单。
+    pins.pinned = [OC_SID];
+    const todayRows = rows.filter((s) => s.session_id !== OC_SID);
+    const state = railState(rows, {
+      visible: todayRows,
+      todaySessions: todayRows,
+    });
+    render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
+    expect(screen.getByTestId('pinned-header').textContent).toContain('1');
+    expect(titles().filter((t) => t.includes(OC_SID))).toHaveLength(1);
   });
 
   it('名单里有编号、清单里没那场时就是不显示，也不报错', () => {

@@ -198,39 +198,68 @@ export type ListFilter = 'for-you' | 'all';
 export type ListCounts = Record<ListFilter, number>;
 
 /**
- * 时间范围是**另一个维度**，与状态四档并存而不是二选一：状态答「现在什么情况」，
- * 时间答「哪一段时间的」。
+ * 左栏的口径：**逐场看今天有没有真正动过**。
  *
- * `0` 是不设上限。默认 1 天：左栏开局只摆最近一天的，更早的由人主动放宽。
- */
-export const DAY_OPTIONS = [1, 2, 7] as const;
-
-export type DayRange = 0 | (typeof DAY_OPTIONS)[number];
-
-/**
- * 按时间范围收一道。比的是**清单排序用的那个时刻**（见 `activityTs`），不是创建时刻——
- * 人问「最近七天」，问的是这七天里说过话的会话，一场半年前开、昨天还在跑的必须留下。
- * 跟排序共用同一个时刻，否则会出现"排在第一条却被七天筛掉"这种怪事。
+ * 「真正动过」只认四件事：
+ * - 它**自己**的最后一句真回复在今天（`last_reply_at`，服务端已跳过心跳与簿记）；
+ * - 今天刚建、还没说过话（`last_reply_at` 为空、`created_at` 在今天）；
+ * - 此刻在跑（`status === 'running'`，文件近 90 秒内还在动）；
+ * - 人今天从 timeline 捡回来的（`pickedToday`）。
  *
- * **子会话跟着父会话走。** 父会话在范围内时，它派出去的子会话一律留下，不看子会话自己
- * 多久没动过——展开一场主会话，看到的该是它那一整组，而不是被时间线拦腰截断的半组。
- * 子会话本来就不单独出现在主干上（都折在父会话下面），放它们进来不会让主干变长。
+ * **NEVER 用 `last_active_at` 判今天**：hook 每拦一次工具、模型每改一次标题都会推进文件
+ * 修改时刻，昨晚 23:59:59 说过话的会话今天可能被后台蹭了无数次。
+ *
+ * **三条不再放行的旧路**（2026-10-19 主人报缺陷后收紧）：
+ * - **置顶不再豁免**：置顶只决定今天这批里的次序，不再把旧会话拉进来；
+ * - **父子不连坐**：父会话今天说过话，不代表它几天前派出去的 worker 今天有数据；
+ *   子会话要和任何一场一样，自己满足上面四条之一；
+ * - **tmux 开着不算**：终端挂着不等于今天有回复，`alive` 不再是留下理由。
+ *
+ * 这四条都指「这一场自己的数据」。要在左栏看到旧会话，用 timeline 把它捡到今天。
  */
-export function withinRange(
+const EMPTY_PICKED: ReadonlySet<string> = new Set();
+
+/** 本地日历上今天零点（毫秒）。用本地时区而不是 UTC：人夜里说的话在他眼里就是今天说的。 */
+export function startOfToday(now: number = Date.now()): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+export function withinToday(
   sessions: WorkbenchSession[],
-  days: DayRange,
+  pickedToday: ReadonlySet<string> = EMPTY_PICKED,
   now: number = Date.now()
 ): WorkbenchSession[] {
-  if (!days) return sessions;
-  const floor = now - days * 24 * 60 * 60 * 1000;
-  const onTime = new Set(
-    sessions.filter((s) => activityTs(s) >= floor).map((s) => s.session_id)
-  );
+  const floor = startOfToday(now);
   return sessions.filter((s) => {
-    if (onTime.has(s.session_id)) return true;
-    const parent = s.parent_session_id;
-    return parent !== null && onTime.has(parent);
+    const repliedToday = s.last_reply_at !== null && s.last_reply_at >= floor;
+    const bornToday = s.last_reply_at === null && s.created_at >= floor;
+    return (
+      repliedToday ||
+      bornToday ||
+      s.status === 'running' ||
+      pickedToday.has(s.session_id)
+    );
   });
+}
+
+/**
+ * 按会话编号去重，保留第一次出现的那一行。
+ *
+ * opencode 的记录会在清单里同时出现两份（原始与加工副本），2026-10-19 实测 4060 行
+ * 里 110 行是重复的。同一场在左栏摆两张卡、在时间轴上算两条，都是假的；服务端没有
+ * 合并之前，界面这边先按编号收一道。
+ */
+export function dedupeSessions(sessions: WorkbenchSession[]): WorkbenchSession[] {
+  const seen = new Set<string>();
+  const out: WorkbenchSession[] = [];
+  for (const s of sessions) {
+    if (seen.has(s.session_id)) continue;
+    seen.add(s.session_id);
+    out.push(s);
+  }
+  return out;
 }
 
 /**
@@ -243,19 +272,24 @@ export const SESSION_REFRESH_MS = 15_000;
 
 export interface WorkbenchSessionsState {
   sessions: WorkbenchSession[];
+  /**
+   * 今天这一道之后、For you / 全部档位之前的清单。
+   *
+   * 置顶区要用它：置顶仍是一块自己说了算的区域，不跟档位走，但**必须跟今天走**——
+   * 从前的置顶区从整份清单里取，29 场置顶里有 22 场是几天前的，首屏看起来跟没筛一样
+   * （2026-10-19 主人报的缺陷）。
+   */
+  todaySessions: WorkbenchSession[];
   /** 过滤后的清单，左栏实际渲染的就是它。 */
   visible: WorkbenchSession[];
   loading: boolean;
   error: string | null;
   filter: ListFilter;
   setFilter: (value: ListFilter) => void;
-  /** 只看最近几天有过动静的。0 = 不限。 */
-  days: DayRange;
-  setDays: (value: DayRange) => void;
   /**
    * 两档各有几场。全是已经发生的绝对数，没有分母。
    *
-   * 计数按**时间范围之后、档位筛选之前**算：筛掉的那一档也要报出真实条数。
+   * 计数按**今天这一道之后、档位筛选之前**算：筛掉的那一档也要报出真实条数。
    */
   counts: ListCounts;
   reload: () => Promise<void>;
@@ -280,12 +314,17 @@ export async function fetchWorkbenchSessions(): Promise<WorkbenchSession[]> {
 const lastSessions = pageCache<WorkbenchSession[]>();
 
 export function useWorkbenchSessions(
-  isForYou: (sessionId: string) => boolean = () => false
+  isForYou: (sessionId: string) => boolean = () => false,
+  pickedToday: ReadonlySet<string> = EMPTY_PICKED
 ): WorkbenchSessionsState {
-  const [sessions, setSessionsState] = useState<WorkbenchSession[]>(() => lastSessions.get() ?? []);
+  const [sessions, setSessionsState] = useState<WorkbenchSession[]>(() =>
+    dedupeSessions(lastSessions.get() ?? [])
+  );
   const setSessions = useCallback((next: WorkbenchSession[]) => {
-    lastSessions.set(next);
-    setSessionsState(next);
+    // 服务端会把 opencode 的同一场回两行；按编号收一道，左栏与时间轴都只认一场。
+    const unique = dedupeSessions(next);
+    lastSessions.set(unique);
+    setSessionsState(unique);
   }, []);
   const setSessionTitle = useCallback((sessionId: string, title: string) => {
     setSessionsState((prev) => {
@@ -297,7 +336,6 @@ export function useWorkbenchSessions(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ListFilter>('all');
-  const [days, setDays] = useState<DayRange>(1);
 
   /**
    * HTML 加载阶段已经并行发过一次会话清单请求（见 `index.html` 的内联预取）。挂载时
@@ -368,31 +406,38 @@ export function useWorkbenchSessions(
     { intervalMs: SESSION_REFRESH_MS }
   );
 
-  /** 时间范围那一道，判据全在 `withinRange` 里（见它的注释）。 */
-  const inRange = useMemo(() => withinRange(sessions, days), [sessions, days]);
+  /**
+   * 今天这一道，判据全在 `withinToday` 里（见它的注释）。
+   *
+   * `Date.now()` 每趟渲染现取：会话清单每 15 秒自己重取一次，跨过本地零点之后下一趟
+   * 就会把昨天那批收走。捡回来的名单由页面那一层持有（见 `useSessionToday`）。
+   */
+  const inToday = useMemo(
+    () => withinToday(sessions, pickedToday, Date.now()),
+    [sessions, pickedToday]
+  );
 
   const counts = useMemo<ListCounts>(
     () => ({
-      all: inRange.length,
-      'for-you': inRange.filter((s) => isForYou(s.session_id)).length,
+      all: inToday.length,
+      'for-you': inToday.filter((s) => isForYou(s.session_id)).length,
     }),
-    [inRange, isForYou]
+    [inToday, isForYou]
   );
 
   const visible = useMemo(
-    () => (filter === 'all' ? inRange : inRange.filter((s) => isForYou(s.session_id))),
-    [inRange, filter, isForYou]
+    () => (filter === 'all' ? inToday : inToday.filter((s) => isForYou(s.session_id))),
+    [inToday, filter, isForYou]
   );
 
   return {
     sessions,
+    todaySessions: inToday,
     visible,
     loading,
     error,
     filter,
     setFilter,
-    days,
-    setDays,
     counts,
     reload,
     setSessionTitle,

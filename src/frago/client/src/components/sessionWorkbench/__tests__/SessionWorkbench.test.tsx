@@ -420,12 +420,11 @@ function railState(over: Partial<WorkbenchSessionsState> = {}): WorkbenchSession
   return {
     sessions,
     visible: sessions,
+    todaySessions: sessions,
     loading: false,
     error: null,
     filter: 'all',
     setFilter: NOOP,
-    days: 0,
-    setDays: NOOP,
     counts: { all: 2, 'for-you': 0 },
     reload: async () => {},
     ...over,
@@ -558,15 +557,22 @@ describe('SessionRail 左栏', () => {
     useUIStore.getState().setSessionSearchOpen(false);
   });
 
-  it('时间范围三档与不限并排，且与状态筛选各管各的', () => {
-    const setDays = vi.fn();
-    render(<TestRail state={railState({ setDays })} selectedId={null} onSelect={NOOP} />);
-    const ids = screen.getAllByTestId(/^day-filter-/).map((el) => el.getAttribute('data-testid'));
-    expect(ids).toEqual([1, 2, 7, 0].map((d) => `day-filter-${d}`));
-    expect(screen.getByTestId('day-filter-0').getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(screen.getByTestId('day-filter-7'));
-    expect(setDays).toHaveBeenCalledWith(7);
-    // 点时间范围不动档位那一维。
+  it('左栏摆 Timeline 入口与「只看今天」口径，不再有时间范围档位', () => {
+    const onOpenTimeline = vi.fn();
+    render(
+      <TestRail
+        state={railState()}
+        selectedId={null}
+        onSelect={NOOP}
+        onOpenTimeline={onOpenTimeline}
+      />
+    );
+    // 时间范围档位随这一轮退场：左栏只回答「今天」，全部会话去 Timeline 看。
+    expect(screen.queryAllByTestId(/^day-filter-/)).toHaveLength(0);
+    expect(screen.getByText('只看今天')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('open-timeline'));
+    expect(onOpenTimeline).toHaveBeenCalledTimes(1);
+    // 点 Timeline 不动档位那一维。
     expect(screen.getByTestId('list-filter-all').getAttribute('aria-pressed')).toBe('true');
   });
 

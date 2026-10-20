@@ -43,12 +43,11 @@ vi.mock('@/hooks/useWorkbenchSessions', async (importOriginal) => {
     useWorkbenchSessions: () => ({
       sessions: page.sessions,
       visible: page.sessions,
+      todaySessions: page.sessions,
       loading: false,
       error: null,
       filter: 'all',
       setFilter: () => {},
-      days: 0,
-      setDays: () => {},
       counts: { all: page.sessions.length, 'for-you': 0 },
       reload: async () => {},
     }),

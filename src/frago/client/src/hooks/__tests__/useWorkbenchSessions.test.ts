@@ -40,17 +40,18 @@ function session(over: Partial<WorkbenchSession> & Pick<WorkbenchSession, 'sessi
 function fixture(): WorkbenchSession[] {
   const now = Date.now();
   return [
-    session({ session_id: 'today', title: '今天动过', last_active_at: now - 2 * 60_000 }),
+    session({ session_id: 'today', title: '今天说过话', last_reply_at: now - 2 * 60_000 }),
     session({
       session_id: 'three-days',
-      title: '三天前动过',
-      last_active_at: now - 3 * DAY,
+      title: '三天前说过话',
+      last_reply_at: now - 3 * DAY,
       status: 'error',
     }),
     session({
       session_id: 'old',
       title: '半年前就没动了',
-      last_active_at: now - 200 * DAY,
+      created_at: now - 200 * DAY,
+      last_reply_at: null,
       status: 'idle',
       family: 'opencode',
     }),
@@ -75,37 +76,47 @@ async function loaded() {
 }
 
 describe('useWorkbenchSessions', () => {
-  it('默认只看最近 1 天、档位是全部', async () => {
+  it('默认只摆今天，档位是全部', async () => {
     const result = await loaded();
-    expect(result.current.days).toBe(1);
     expect(result.current.filter).toBe('all');
-    expect(result.current.visible).toHaveLength(1);
-    expect(result.current.counts.all).toBe(1);
-
-    act(() => result.current.setDays(0));
-    expect(result.current.visible).toHaveLength(3);
-  });
-
-  it('时间范围按最后活动时刻收窄，计数跟着一起收', async () => {
-    const result = await loaded();
-    act(() => result.current.setFilter('all'));
-
-    act(() => result.current.setDays(1));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['today']);
     expect(result.current.counts.all).toBe(1);
+  });
 
-    act(() => result.current.setDays(7));
-    expect(result.current.visible.map((s) => s.session_id)).toEqual(['today', 'three-days']);
-    expect(result.current.counts.all).toBe(2);
+  it('人从 timeline 捡回来的旧会话也进来，计数跟着一起算', async () => {
+    const picked = new Set(['old']);
+    const hook = renderHook(() => useWorkbenchSessions(() => false, picked));
+    await waitFor(() => expect(hook.result.current.sessions).toHaveLength(3));
+    expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['today', 'old']);
+    expect(hook.result.current.counts.all).toBe(2);
+  });
+
+  it('同一编号只留一行：opencode 的重复副本不摆两张卡', async () => {
+    const now = Date.now();
+    const dup = session({ session_id: 'dup', last_reply_at: now - 60_000 });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => [dup, { ...dup, title: '加工副本' }],
+      })) as unknown as typeof fetch
+    );
+    const hook = renderHook(() => useWorkbenchSessions());
+    await waitFor(() => expect(hook.result.current.sessions).toHaveLength(1));
+    expect(hook.result.current.sessions[0].title).toBe(dup.title);
+    expect(hook.result.current.visible).toHaveLength(1);
   });
 
   it('For you 档只留判定为 For you 的那几场，计数在档位之前算完', async () => {
-    // 判定由页面交进来（它来自终端，不在这份清单里）
-    const hook = renderHook(() => useWorkbenchSessions((id) => id === 'three-days'));
+    // 判定由页面交进来（它来自终端，不在这份清单里）。three-days 是旧会话，靠「捡回来」
+    // 留在今天，才轮得到档位去筛它。
+    const picked = new Set(['three-days']);
+    const hook = renderHook(
+      () => useWorkbenchSessions((id) => id === 'three-days', picked)
+    );
     await waitFor(() => expect(hook.result.current.sessions).toHaveLength(3));
     const result = hook.result;
 
-    act(() => result.current.setDays(7));
     act(() => result.current.setFilter('for-you'));
     expect(result.current.visible.map((s) => s.session_id)).toEqual(['three-days']);
     expect(result.current.counts.all).toBe(2);
@@ -164,7 +175,7 @@ describe('排序与筛选用的时刻', () => {
     expect(activityTs(session({ session_id: 'x', last_active_at: now }))).toBe(now);
   });
 
-  it('时间范围按同一个时刻收窄：只被 hook 蹭过的老会话不该留在最近七天里', async () => {
+  it('只被 hook 蹭过的老会话今天不留：判的是最后一句回复，不是文件时刻', async () => {
     const now = Date.now();
     vi.stubGlobal(
       'fetch',
@@ -185,7 +196,6 @@ describe('排序与筛选用的时刻', () => {
     await waitFor(() => expect(hook.result.current.sessions).toHaveLength(2));
 
     act(() => hook.result.current.setFilter('all'));
-    act(() => hook.result.current.setDays(7));
 
     expect(hook.result.current.visible.map((s) => s.session_id)).toEqual(['really-talked']);
   });

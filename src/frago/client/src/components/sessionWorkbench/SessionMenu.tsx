@@ -5,7 +5,7 @@
  *
  * | 段 | 项 |
  * |---|---|
- * | 1 | Pin / Unpin、Put in group（分组接回之前置灰）、复制续接命令 |
+ * | 1 | Remove from today（只在今天捡回来的那几场上出现）、Pin / Unpin、Put in group（分组接回之前置灰）、复制续接命令 |
  * | 2 | Close tmux session —— 只在这场开在 tmux 里时出现，整段连同分隔线都不画 |
  * | 3 | Delete session —— 报错红，先确认 |
  *
@@ -26,7 +26,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Folder, Loader2, MoreHorizontal, Pin, SquareTerminal, Trash2 } from 'lucide-react';
+import { CalendarMinus, Check, Copy, Folder, Loader2, MoreHorizontal, Pin, SquareTerminal, Trash2 } from 'lucide-react';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { menuOpensUp } from './StackPanel';
 import { resumeCommand } from './SessionItem';
@@ -41,6 +41,10 @@ export interface SessionMenuProps {
   variant?: 'card' | 'header';
   pinned: boolean;
   onTogglePin?: (session: WorkbenchSession) => void;
+  /** 这场是今天从 timeline 捡回来的：菜单顶上多一项「从今天移出」。 */
+  pickedToday?: boolean;
+  /** 移出今天。不给、或这场不是捡回来的，就不长这一项。 */
+  onRemoveToday?: (session: WorkbenchSession) => void;
   /** 这场此刻开在 tmux 里：第二段才画。 */
   inTmux: boolean;
   /** 本页刚发出的一句还没答完——点关先问。 */
@@ -65,6 +69,8 @@ export default function SessionMenu({
   variant = 'card',
   pinned,
   onTogglePin,
+  pickedToday = false,
+  onRemoveToday,
   inTmux,
   busyTurn = false,
   onStopped,
@@ -213,6 +219,23 @@ export default function SessionMenu({
           {view === 'menu' ? (
             <>
               <div data-testid="session-menu-section" data-section="organize">
+                {/* 只对今天从 timeline 捡回来的那几场画。移出只撤掉「捡回来」这一条：
+                    今天本来就没有真回复的会话随即从左栏收起；今天自己就有回复的照旧留下。 */}
+                {pickedToday && onRemoveToday ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="session-menu-remove-today"
+                    onClick={() => {
+                      onRemoveToday(session);
+                      closeMenu();
+                    }}
+                    className={ITEM}
+                  >
+                    <CalendarMinus size={12} className="shrink-0 text-text-muted" />
+                    {t('workbench.timeline.removeToday')}
+                  </button>
+                ) : null}
                 {onTogglePin ? (
                   <button
                     type="button"

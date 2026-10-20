@@ -52,6 +52,13 @@
      不必逐个表面配值。浅色侧同理压一层半透明黑。 */
   --code-bg: rgba(255, 255, 255, 0.07);
 
+  /* Timeline 条的颜色。与原型同一套：深色下是半透明白，浅色下是半透明黑。
+     Tailwind 的 `bg-text-primary/20` 在这套 token 上生成不出来（颜色是整段 var，
+     没法再注入 alpha），所以单独给三档。 */
+  --timeline-bar: rgba(255, 255, 255, 0.17);
+  --timeline-bar-strong: rgba(255, 255, 255, 0.3);
+  --timeline-bar-stronger: rgba(255, 255, 255, 0.4);
+
   /* Sidebar specific colors (dark mode) */
   --page-bg: #141414;
   /* 导航栏与页面底同色。内容区是一块浮在底上的卡，导航栏是窗口的框——框跟着底走，
@@ -244,6 +251,11 @@
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);
   --code-bg: rgba(0, 0, 0, 0.05);
+
+  /* Timeline 条：浅色下压一层半透明黑，与原型一致。 */
+  --timeline-bar: rgba(0, 0, 0, 0.1);
+  --timeline-bar-strong: rgba(0, 0, 0, 0.2);
+  --timeline-bar-stronger: rgba(0, 0, 0, 0.28);
 
   /* Sidebar specific colors (light mode) */
   --page-bg: #F2F2F2;

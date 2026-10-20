@@ -100,12 +100,11 @@ function railState(
   return {
     sessions: rows,
     visible: rows,
+    todaySessions: rows,
     loading: false,
     error: null,
     filter: 'all',
     setFilter: NOOP,
-    days: 0,
-    setDays: NOOP,
     counts: { all: rows.length, 'for-you': 0 },
     reload: async () => {},
     ...over,

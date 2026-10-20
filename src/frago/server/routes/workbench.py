@@ -38,6 +38,7 @@ from frago.server.services import (
     workbench_new_session,
     workbench_pins,
     workbench_titles,
+    workbench_today,
     workbench_views,
 )
 from frago.server.services.system_service import SystemService, UnsupportedPlatformError
@@ -843,6 +844,50 @@ async def mark_workbench_viewed(sid: str) -> dict[str, Any]:
         return await asyncio.to_thread(workbench_views.mark_viewed, sid)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/workbench/today")
+async def list_workbench_today() -> dict[str, object]:
+    """今天从 timeline 捡回来用的会话编号，外加今天是哪一天。
+
+    左栏的口径是「今天有过真正回复的会话」，这份名单是那之外的唯一例外：人今天还要接着
+    用的旧会话，从 timeline 里捡回来，当天留在左栏。
+
+    回 ``today`` 而不只是编号，是因为**过期判定以服务端为准**：页面那边的钟快一天慢一天
+    时，界面至少能从这一格看出服务端认为今天是哪天。
+
+    名单里的编号**不与清单核对**——与置顶同一个理由，一次滚删不该悄悄撤销人捡它的动作。
+    """
+    return await asyncio.to_thread(workbench_today.snapshot)
+
+
+@router.put("/workbench/today/{sid}")
+async def pick_workbench_today(sid: str) -> dict[str, object]:
+    """把这场旧会话捡到今天，回今天的完整名单。
+
+    编号三家的形状都不像时回 404：捡一场不存在的会话，名单里会躺一条谁都对不上的记录。
+    有效期只有今天——第二天它若没有真的动静，自然就不在名单里了。
+    """
+    try:
+        record_reader.detect_family(sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        await asyncio.to_thread(workbench_today.pick, sid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return await asyncio.to_thread(workbench_today.snapshot)
+
+
+@router.delete("/workbench/today/{sid}")
+async def unpick_workbench_today(sid: str) -> dict[str, object]:
+    """把这场会话从今天的名单里去掉，回剩下的。
+
+    本来就不在名单里也回 200：这条接口承诺的是"结束时它不在今天的名单里"。这里不校验
+    编号属于哪一家——不管什么形状，把它从名单里去掉都是对的。
+    """
+    await asyncio.to_thread(workbench_today.unpick, sid)
+    return await asyncio.to_thread(workbench_today.snapshot)
 
 
 def _groups_payload(state: dict[str, Any], job: dict[str, Any] | None = None) -> dict[str, Any]:

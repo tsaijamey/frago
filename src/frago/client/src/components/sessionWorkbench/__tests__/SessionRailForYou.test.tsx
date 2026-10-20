@@ -61,12 +61,11 @@ function railState(rows: WorkbenchSession[]): WorkbenchSessionsState {
   return {
     sessions: rows,
     visible: rows,
+    todaySessions: rows,
     loading: false,
     error: null,
     filter: 'all',
     setFilter: NOOP,
-    days: 0,
-    setDays: NOOP,
     counts: { all: rows.length, 'for-you': 1 },
     reload: async () => {},
   };

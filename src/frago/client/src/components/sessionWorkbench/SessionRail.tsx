@@ -1,5 +1,9 @@
 /**
- * SessionRail — 左栏：搜索与新建、时间范围、For you / 全部、会话清单、底部汇总。
+ * SessionRail — 左栏：搜索与新建、Timeline 入口、For you / 全部、会话清单、底部汇总。
+ *
+ * **左栏只摆今天。** 口径是「今天有过真正 agent 回复」（见 `withinToday`），昨天说过话、
+ * 今天没动静的会话默认不在。要看这台机器上的全部会话、找回旧会话，进 Timeline 浮窗；
+ * 从那儿可以把旧会话「捡到今天」（见 `useSessionToday`）。
  *
  * 三家（Claude Code / opencode / codex）的会话在核心数据层就合并排好了，这里不重排时间序。
  *
@@ -36,8 +40,10 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
   ArrowDown,
   ArrowUp,
+  CalendarMinus,
   ChevronDown,
   ChevronRight,
+  Clock,
   Loader2,
   Mail,
   Pin,
@@ -51,18 +57,16 @@ import { modKey } from '@/hooks/usePlatform';
 import { closeTmuxSessions } from '@/api';
 import SessionItem, { AgentOnItChip, ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
-import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_ROOMY } from './seg';
 import { useSessionPins, type SessionPinsState } from '@/hooks/useSessionPins';
+import type { SessionTodayState } from '@/hooks/useSessionToday';
 import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
-import {
-  DAY_OPTIONS,
-  type DayRange,
-  type ListFilter,
-  type WorkbenchSession,
-  type WorkbenchSessionsState,
+import type {
+  ListFilter,
+  WorkbenchSession,
+  WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
 
 /** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
@@ -85,9 +89,6 @@ const FILTER_LABEL_KEY: Record<ListFilter, string> = {
  */
 const PAGE_SIZE = 50;
 
-/** 时间范围：三档加不限。 */
-const DAY_FILTERS: DayRange[] = [...DAY_OPTIONS, 0];
-
 /**
  * 列表里的一行：分区标题，或一张会话卡。
  *
@@ -96,6 +97,7 @@ const DAY_FILTERS: DayRange[] = [...DAY_OPTIONS, 0];
  */
 type RailRow =
   | { kind: 'pinned-header' }
+  | { kind: 'picked-header'; count: number }
   | { kind: 'for-you-header'; count: number; pinnedAbove: number }
   | { kind: 'rest-header'; count: number }
   | { kind: 'workers-header' }
@@ -209,6 +211,13 @@ export interface SessionRailProps {
    * 不传（用例、单独摆左栏）就自己持有一份。
    */
   pins?: SessionPinsState;
+  /** 打开 timeline 浮窗。不传时那一颗按钮不可用（用例、单独摆左栏）。 */
+  onOpenTimeline?: () => void;
+  /**
+   * 今天从 timeline 捡回来的名单。卡片「…」菜单里的「从今天移出」与页头是同一份，
+   * 页面那一层持有时从这里传进来；不传（用例、单独摆左栏）就长不出那一项。
+   */
+  today?: SessionTodayState;
 }
 
 export default function SessionRail({
@@ -226,9 +235,10 @@ export default function SessionRail({
   decisionCardOf,
   onSessionDeleted,
   pins: pinsProp,
+  onOpenTimeline,
+  today,
 }: SessionRailProps) {
-  const { sessions, visible, counts, loading, error, filter, setFilter, days, setDays, reload } =
-    state;
+  const { sessions, visible, counts, loading, error, filter, setFilter, reload } = state;
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const openSearch = useUIStore((s) => s.setSessionSearchOpen);
@@ -260,9 +270,11 @@ export default function SessionRail({
   /**
    * 置顶区摆哪几场。
    *
-   * 次序照置顶的次序，不按最后活动时刻重排——那一区的意义正是"我说了算"，跟着活动时刻
-   * 重排等于把人刚摆好的次序打乱。名单里有编号、清单里却没有那场（档案被删或被滚删）时
-   * 就是不显示，NEVER 因此把编号从名单里踢掉：一次滚删不该悄悄清空人的置顶。
+   * **从整份清单里取，不跟今天走。** 置顶是「我点名要一直摆在上面」的意思，2026-10-19
+   * 主人明确要求它不受今天过滤影响：置顶的旧会话即使今天没动过，也照样在首屏。
+   *
+   * 次序照置顶的次序，不按最后活动时刻重排。名单里有编号、档案里却找不到那场（被删了）
+   * 时就是不显示，NEVER 因此把编号从名单里踢掉。
    */
   const pinnedRows = useMemo(() => {
     if (!pins.pinned.length) return [];
@@ -292,7 +304,7 @@ export default function SessionRail({
   /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
   const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
 
-  const { trunkRows, childrenOf, orphanRows } = useMemo(() => {
+  const { trunkRows, childrenOf, orphanRows, pickedRows } = useMemo(() => {
     // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
     // 只看下面那一片的话，它的 worker 会认不出父亲、掉进末尾那一区——而它的父亲就摆在
     // 屏幕最上面。
@@ -300,8 +312,22 @@ export default function SessionRail({
     const children = new Map<string, WorkbenchSession[]>();
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
+    const picked: WorkbenchSession[] = [];
     for (const session of visible) {
       const parent = session.parent_session_id;
+      // 置顶的那几场由置顶区去摆，这里只管下面那一片。置顶不跟今天走，也不跟捡回走：
+      // 同一场在 Pinned 里已经有一张，不再在「今天捡回」里重复一张。
+      if (pins.isPinned(session.session_id)) continue;
+      /**
+       * **今天从 timeline 捡回来的，一律摆成顶层卡，放在 Pinned 下面。**
+       *
+       * 不折进父会话、也不收进 worker 那一区：人捡它回来就是为了今天接着用，折起或收进
+       * 默认折起的区块等于没捡回来。2026-10-19 主人正是这样找不到自己刚加的那一场。
+       */
+      if (today?.isPicked(session.session_id)) {
+        picked.push(session);
+        continue;
+      }
       // **分支会话不折。** 它是人亲手起的、等的也是人：起完要一眼看见它在不在，停下来等你
       // 拍板时要出现在 For you 那一组里。折进原会话底下，这两件事全被藏住了——worker 能折，
       // 是因为它等的是派它的那个 agent，不是人。和原会话的关系只写在卡片上那一行出处里。
@@ -318,13 +344,11 @@ export default function SessionRail({
         else children.set(parent as string, [session]);
         continue;
       }
-      // 置顶的那几场由置顶区去摆，这里只管下面那一片。
-      if (pins.isPinned(session.session_id)) continue;
       if (session.origin === 'worker') orphans.push(session);
       else trunk.push(session);
     }
-    return { trunkRows: trunk, childrenOf: children, orphanRows: orphans };
-  }, [visible, pins]);
+    return { trunkRows: trunk, childrenOf: children, orphanRows: orphans, pickedRows: picked };
+  }, [visible, pins, today]);
 
   /**
    * 主干拆成两区：For you（等得最久的在上）与 Everything else（按时间，服务端排好的序）。
@@ -388,7 +412,7 @@ export default function SessionRail({
 
   useEffect(() => {
     setShown(PAGE_SIZE);
-  }, [filter, days]);
+  }, [filter]);
 
   /**
    * 摆进列表的每一行：分区标题与会话卡走同一条队。
@@ -427,6 +451,11 @@ export default function SessionRail({
       if (!pins.collapsed) out.push(...pinnedPlaced.flatMap((s) => trunkWithKids(s, true)));
       out.push({ kind: 'pinned-tail' });
     }
+    // 今天捡回来的紧跟 Pinned 之后（主人 2026-10-19 定的位置）：不折、不收，一眼看得见。
+    if (pickedRows.length) {
+      out.push({ kind: 'picked-header', count: pickedRows.length });
+      out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
+    }
     const sectioned = pins.pinned.length > 0 || forYouPlaced.length > 0;
     if (forYouPlaced.length) {
       out.push({ kind: 'for-you-header', count: forYouPlaced.length, pinnedAbove: pinnedForYou });
@@ -445,6 +474,7 @@ export default function SessionRail({
     pins.pinned.length,
     pins.collapsed,
     pinnedPlaced,
+    pickedRows,
     forYouPlaced,
     pinnedForYou,
     pagedRest,
@@ -552,6 +582,18 @@ export default function SessionRail({
     } catch (e) {
       showToast(
         e instanceof Error ? e.message : t('workbench.errors.pinSaveFailedPlain'),
+        'error'
+      );
+    }
+  };
+
+  /** 卡片「…」菜单里的「从今天移出」：撤掉捡回来的那一条，今天没再动过的会话随即收起。 */
+  const handleRemoveToday = async (session: WorkbenchSession) => {
+    try {
+      await today?.toggle(session.session_id);
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : t('workbench.errors.todaySaveFailedPlain'),
         'error'
       );
     }
@@ -667,23 +709,23 @@ export default function SessionRail({
           </button>
         </div>
 
-        {/* 时间范围这一行的右端顺带放刷新：对整张清单的动作，与筛选同属「这张清单怎么摆」。 */}
+        {/* Timeline 的入口与左栏口径说明。时间范围不再是左栏的题目——左栏只摆今天；
+            要看这台机器上的全部会话、按时间轴找旧会话，进 Timeline（见 `SessionTimeline`）。
+            右端照旧放刷新：对整张清单的动作，与这张清单怎么摆同属一行。 */}
         <div className="flex items-center gap-1">
-          {/* 四个档位是一组单选，装在同一块浅底里，当前那一档浮起来。 */}
-          <div className={SEG_GROUP}>
-            {DAY_FILTERS.map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setDays(d)}
-                aria-pressed={days === d}
-                data-testid={`day-filter-${d}`}
-                className={`${SEG_ITEM} ${SEG_ROOMY} ${days === d ? SEG_ON : SEG_OFF}`}
-              >
-                {d === 0 ? t('workbench.rail.dayAll') : t('workbench.rail.dayRange', { days: d })}
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={onOpenTimeline}
+            data-testid="open-timeline"
+            title={t('workbench.rail.timelineHint')}
+            className="flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[11.5px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
+          >
+            <Clock size={13} strokeWidth={1.5} className="shrink-0" />
+            <span>{t('workbench.rail.timeline')}</span>
+          </button>
+          <span className="text-[11px] text-text-muted" title={t('workbench.rail.todayOnlyHint')}>
+            {t('workbench.rail.todayOnly')}
+          </span>
           <span className="flex-1" />
           <button
             type="button"
@@ -940,6 +982,22 @@ export default function SessionRail({
                   </div>
                 );
               }
+              if (row.kind === 'picked-header') {
+                return (
+                  <div
+                    data-testid="picked-header"
+                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
+                  >
+                    <CalendarMinus size={11} className="shrink-0" />
+                    <span className="font-medium text-text-secondary">
+                      {t('workbench.rail.pickedHeader')}
+                    </span>
+                    <span className="font-mono opacity-70">{row.count}</span>
+                    <span className="flex-1" />
+                    <span>{t('workbench.rail.pickedHeaderHint')}</span>
+                  </div>
+                );
+              }
               if (row.kind === 'for-you-header' || row.kind === 'rest-header') {
                 const forYouHead = row.kind === 'for-you-header';
                 return (
@@ -1017,6 +1075,8 @@ export default function SessionRail({
                           onSelect={handleSelect}
                           onCopy={handleCopy}
                           onTogglePin={handleTogglePin}
+                          pickedToday={today?.isPicked(session.session_id) ?? false}
+                          onRemoveToday={today ? handleRemoveToday : undefined}
                           onToggleWorkers={toggleWorkers}
                           onStopped={handleStopped}
                           onDeleted={handleDeleted}

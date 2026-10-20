@@ -1,10 +1,13 @@
 /**
  * SessionWorkbenchPage — 会话页的页面壳，三栏布局。
  *
- * 它是 webUI 里**唯一**的会话入口。旧的单栏会话页已经下线，那一页上还值钱的五件事
- * （搜索、时间范围、新建会话、复制恢复命令、用量月历）整个搬了进来，其余的按来源筛、
+ * 它是 webUI 里**唯一**的会话入口。旧的单栏会话页已经下线，那一页上还值钱的东西
+ * （搜索、Timeline、新建会话、复制恢复命令、用量月历）整个搬了进来，其余的按来源筛、
  * 重新扫描、PA 列表、未读徽章、后台保活一并去掉。导航上这一项叫「会话」，
  * `workbench` 只是内部代号，界面上不出现。
+ *
+ * **左栏只摆今天，Timeline 摆全部。** 今天有过真正回复的会话留在左栏；旧会话要接着用，
+ * 进 Timeline 把它捡到今天（见 `useSessionToday`）。这一分工是 2026-10-19 那一轮定的。
  *
  * | 栏 | 本质 | 本次做到哪 |
  * |---|---|---|
@@ -32,18 +35,21 @@ import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
+import SessionTimeline from './SessionTimeline';
 import { useSessionPins } from '@/hooks/useSessionPins';
+import { useSessionToday } from '@/hooks/useSessionToday';
 import {
   isSessionAlive,
   useWorkbenchLabels,
   useWorkbenchSessions,
   type SessionStatus,
+  type WorkbenchSession,
 } from '@/hooks/useWorkbenchSessions';
 import { trailSettled, useWorkbenchRecords } from '@/hooks/useWorkbenchRecords';
 import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
 import { formatClock, formatDuration } from './RecordCard';
-import { ForYouChip, shortAge } from './SessionItem';
+import { ForYouChip, resumeCommand, shortAge } from './SessionItem';
 import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
@@ -107,9 +113,36 @@ export default function SessionWorkbenchPage() {
    * 判定先经一格状态交给清单（晚一拍，15 秒一轮的东西不在乎这一拍）。
    */
   const [isForYou, setIsForYou] = useState<(id: string) => boolean>(() => () => false);
-  const sessions = useWorkbenchSessions(isForYou);
+  /**
+   * 今天从 timeline 捡回来的会话。左栏的清单按它放行（见 `withinToday`），timeline 浮窗
+   * 里那几颗「+ Today」改的也是这一份——两处必须持有同一份状态，否则捡回来的一场要等
+   * 下一趟轮询才出现。
+   */
+  const today = useSessionToday();
+  const pickedToday = useMemo(() => new Set(today.picked), [today.picked]);
+  const sessions = useWorkbenchSessions(isForYou, pickedToday);
   const views = useSessionViews();
   const pins = useSessionPins();
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 刚复制了哪一场的续接命令：页头「…」菜单里那一项换成勾选，1.5 秒后复原。 */
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const handleCopy = useCallback(
+    async (session: WorkbenchSession) => {
+      const cmd = resumeCommand(session);
+      // 这一家没有续接命令（CoreAgent）。按钮本来就不长出来，这里再拦一道：
+      // 拦不住的话剪贴板里会落进一句 "null"。
+      if (!cmd) return;
+      try {
+        await navigator.clipboard.writeText(cmd);
+        setCopiedId(session.session_id);
+        showToast(t('workbench.rail.copied'), 'success');
+        setTimeout(() => setCopiedId((cur) => (cur === session.session_id ? null : cur)), 1500);
+      } catch {
+        showToast(t('workbench.rail.copyFailed'), 'error');
+      }
+    },
+    [showToast, t]
+  );
   /**
    * 选中那场最后一条 agent 回复末尾留了一张合法的「要人拍板」卡片：左栏那一条的预览换成
    * 卡片的问题（第五轮起不再加重）。解析与校验用 decision-cards 那边的同一个函数，这里不另写。
@@ -908,6 +941,8 @@ export default function SessionWorkbenchPage() {
           sendingId={sendingId}
           busyId={busyId}
           pins={pins}
+          onOpenTimeline={() => setTimelineOpen(true)}
+          today={today}
           holdId={holdId}
           decisionCardOf={decisionCardOf}
           onSessionDeleted={(sid) => {
@@ -1058,8 +1093,14 @@ export default function SessionWorkbenchPage() {
               onTogglePin={(s) => void pins.toggle(s.session_id).catch((e: unknown) =>
                 showToast(e instanceof Error ? e.message : t('workbench.errors.pinSaveFailedPlain'), 'error')
               )}
+              pickedToday={pickedToday.has(selected.session_id)}
+              onRemoveToday={(s) => void today.toggle(s.session_id).catch((e: unknown) =>
+                showToast(e instanceof Error ? e.message : t('workbench.errors.todaySaveFailedPlain'), 'error')
+              )}
               inTmux={selectedInTmux}
               busyTurn={inFlight}
+              onCopy={handleCopy}
+              copied={copiedId === selected.session_id}
               onStopped={() => {
                 forYou.refresh();
                 void sessions.reload();
@@ -1209,6 +1250,22 @@ export default function SessionWorkbenchPage() {
           onClose={() => setViewerIndex(null)}
           onStep={stepViewer}
           onReveal={onReveal}
+        />
+      ) : null}
+
+      {/* Timeline 挂在整页这一层：它要盖住三栏。里面能看到全部会话（`sessions.sessions`），
+          而左栏只摆今天——这个分工就是这一轮迭代的主轴。 */}
+      {timelineOpen ? (
+        <SessionTimeline
+          sessions={sessions.sessions}
+          selectedId={selectedId}
+          forYou={forYou}
+          today={today}
+          onSelect={(sid) => {
+            setTimelineOpen(false);
+            openSession(sid);
+          }}
+          onClose={() => setTimelineOpen(false)}
         />
       ) : null}
     </div>

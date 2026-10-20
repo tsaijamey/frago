@@ -221,6 +221,8 @@ export default function SessionItem({
   onSelect,
   onCopy,
   onTogglePin,
+  pickedToday = false,
+  onRemoveToday,
   onToggleWorkers,
   onStopped,
   onDeleted,
@@ -267,6 +269,9 @@ export default function SessionItem({
   onCopy: (session: WorkbenchSession) => void;
   /** 置顶开关。不给就没有「…」菜单里那一项——骨架屏与只读场景用得上。 */
   onTogglePin?: (session: WorkbenchSession) => void;
+  /** 这场是今天从 timeline 捡回来的：「…」菜单顶上多一项「从今天移出」。 */
+  pickedToday?: boolean;
+  onRemoveToday?: (session: WorkbenchSession) => void;
   /** 展开/折起这场派出去的 worker。不给就不长子会话数。 */
   onToggleWorkers?: (session: WorkbenchSession) => void;
   /** 从「…」菜单关掉了 tmux。 */
@@ -457,6 +462,8 @@ export default function SessionItem({
             session={session}
             pinned={pinned}
             onTogglePin={onTogglePin}
+            pickedToday={pickedToday}
+            onRemoveToday={onRemoveToday}
             inTmux={inTmux}
             busyTurn={busyTurn}
             onStopped={() => onStopped?.(session)}
