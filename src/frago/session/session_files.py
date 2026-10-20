@@ -4,7 +4,7 @@
 自己的记录里读出来，**不新埋点**：会话记录里每一次写文件、改文件都留着工具调用的原始
 参数，路径就在里面。
 
-四家留下的东西不一样，本模块一家一家地认：
+五家留下的东西不一样，本模块一家一家地认：
 
 - Claude Code / CoreAgent：``Write``（新建）、``Edit`` / ``MultiEdit`` / ``NotebookEdit``
   （改），路径在 ``args.file_path``。
@@ -13,6 +13,11 @@
 - codex：``apply_patch``（一次补丁改一批文件），路径在补丁头的
   ``*** Add File:`` / ``*** Update File:`` / ``*** Delete File:`` 那几行上。它带的正文就是
   补丁本身，不是一条顺手提到文件名的命令，所以照抄那几行是安全的（见 :func:`_patch_paths`）。
+- agy：``write_file`` / ``write_to_file`` / ``create_file``（新建）、``edit_file`` /
+  ``replace_file_content`` / ``multi_replace_file_content`` / ``edit_notebook``（改），
+  ``delete_file``（删）；路径在 ``args.Path`` / ``args.TargetFile`` / ``args.AbsolutePath``
+  / ``args.NotebookPath``（主账 ``transcript.jsonl`` 截断 ``tool_calls`` 时，会把字符串值
+  再包一层双引号，取的时候一并剥掉）。
 
 两条边界写在这里，别处不再解释第二遍：
 
@@ -41,17 +46,36 @@ from frago.session.record_reader import MAX_LIMIT
 
 __all__ = ["SessionFile", "is_scratch_path", "session_files"]
 
-# 工具名 → 这一下算「新建」还是「改」。键一律小写，比对时也把工具名转小写。
+# 工具名 → 这一下算「新建」「改」还是「删」。键一律小写，比对时也把工具名转小写。
 # 同一个文件先写后改，按第一次动它那一下定档（先 Write 就是新建，先 Edit 就是改）。
-_CREATE_TOOLS = frozenset({"write"})
-_WRITE_TOOLS = frozenset({"write", "edit", "multiedit", "notebookedit"})
+_CREATE_TOOLS = frozenset({"write", "write_file", "write_to_file", "create_file"})
+_DELETE_TOOLS = frozenset({"delete_file"})
+_WRITE_TOOLS = frozenset(
+    {
+        "write",
+        "edit",
+        "multiedit",
+        "notebookedit",
+        # agy 的两套写改工具（CLI 当前模型声明 write_file / edit_file，同核另一批模型
+        # 声明 write_to_file / replace_file_content / multi_replace_file_content 等）。
+        "write_file",
+        "write_to_file",
+        "create_file",
+        "edit_file",
+        "replace_file_content",
+        "multi_replace_file_content",
+        "edit_notebook",
+        "delete_file",
+    }
+)
 
 # codex 的写改工具：一次调用带着一整份补丁，路径在补丁头里（见 :func:`_patch_paths`）。
 # 它与上面几个不是一路——那几个一次只说一个文件，路径在一个字段里。
 _PATCH_TOOL = "apply_patch"
 
-# 路径在这几个键里，按顺序取第一个命中的。claude 用 file_path、opencode 用 filePath。
-_PATH_KEYS = ("file_path", "filePath")
+# 路径在这几个键里，按顺序取第一个命中的。claude 用 file_path、opencode 用 filePath、
+# agy 用 Path / TargetFile / AbsolutePath / NotebookPath。
+_PATH_KEYS = ("file_path", "filePath", "Path", "TargetFile", "AbsolutePath", "NotebookPath")
 
 # 会话工具自己的临时区。这些文件确实被这场会话创建过，判据上不算错，但它们回答不了
 # 「它在我项目里改了什么」——中间过程倒出来的东西混进清单，真正改过的文件就被淹了。
@@ -73,6 +97,12 @@ _FOLDERS_TMP = re.compile(r"^/(?:private/)?var/folders/[^/]+/[^/]+/T/")
 
 # opencode 把工具输出落在这里，那是它自己的工作区，不是人的项目。
 _OPENCODE_SCRATCH = (".local", "share", "opencode", "tool-output")
+
+# agy 把每场会话的临时脚本与工具日志落在 ~/.gemini/antigravity-cli/brain/<id>/scratch/
+# 与 .system_generated/ 下（系统提示词专门规定临时文件写进 scratch/）。
+_AGY_SCRATCH_RE = re.compile(
+    r"/(?:\.gemini/)?antigravity(?:-cli)?/brain/[^/]+/(?:scratch|\.system_generated)/"
+)
 
 # 一场会话最多读这么多条记录。超了就不再往下翻——大会话整个读一遍代价摆在那儿，
 # 而这个数字已经盖住本机绝大多数的会话。
@@ -111,13 +141,24 @@ class SessionFile:
 
 
 def _path_in(args: object) -> str | None:
-    """从工具参数里取出文件路径。取不到返回 None——宁可不认，也不猜。"""
+    """从工具参数里取出文件路径。取不到返回 None——宁可不认，也不猜。
+
+    agy 的主账 ``transcript.jsonl`` 在截断 ``tool_calls`` 时，会把每个参数值再序列化一层，
+    字符串参数于是变成 ``'"/path/to/file"'``（未截的 ``transcript_full.jsonl`` 里是正常字符串，
+    但缺那份时翻译层会退回主账）。成对裹在最外层的双引号一并剥掉，免得退回主账时读出一条带引号
+    的假路径。
+    """
     if not isinstance(args, dict):
         return None
     for key in _PATH_KEYS:
         value = args.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if len(cleaned) >= 2 and cleaned[0] == '"' and cleaned[-1] == '"':
+            cleaned = cleaned[1:-1].strip()
+        if cleaned:
+            return cleaned
     return None
 
 
@@ -162,7 +203,7 @@ def is_scratch_path(path: str) -> bool:
     p = str(path or "").strip()
     if not p:
         return False
-    if p.startswith(_TMP_PREFIXES) or _FOLDERS_TMP.match(p):
+    if p.startswith(_TMP_PREFIXES) or _FOLDERS_TMP.match(p) or _AGY_SCRATCH_RE.search(p):
         return True
     # 后面补一个斜杠，免得一个叫 tool-output-2 的邻居被当成临时区一起滤掉。
     return p.startswith(str(Path.home().joinpath(*_OPENCODE_SCRATCH)) + "/")
@@ -250,7 +291,13 @@ def session_files(session_id: str) -> list[SessionFile]:
         path = _path_in(payload.get("args"))
         if path is None:
             continue
-        note(path, "created" if tool in _CREATE_TOOLS else "modified", record.seq)
+        if tool in _DELETE_TOOLS:
+            action = "deleted"
+        elif tool in _CREATE_TOOLS:
+            action = "created"
+        else:
+            action = "modified"
+        note(path, action, record.seq)
 
     return [
         SessionFile(

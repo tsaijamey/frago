@@ -73,10 +73,15 @@ logger = logging.getLogger(__name__)
 #: 名字，只会让规则认错工具、拦错东西。
 TOOL_NAME_MAP: dict[str, str] = {
     "run_command": "Bash",
+    "read_file": "Read",
     "view_file": "Read",
     "multimodal_view_file": "Read",
     "write_file": "Write",
+    "write_to_file": "Write",
+    "create_file": "Write",
     "edit_file": "Edit",
+    "replace_file_content": "Edit",
+    "multi_replace_file_content": "Edit",
     "grep_search": "Grep",
     "code_search": "Grep",
     "list_dir": "LS",
@@ -92,9 +97,19 @@ TOOL_NAME_MAP: dict[str, str] = {
 #: 不是工具参数，留着只会污染引擎看到的输入。
 ARG_KEY_MAP: dict[str, dict[str, str]] = {
     "Bash": {"CommandLine": "command"},
-    "Read": {"AbsolutePath": "file_path"},
-    "Write": {"AbsolutePath": "file_path", "Content": "content"},
-    "Edit": {"AbsolutePath": "file_path"},
+    "Read": {"AbsolutePath": "file_path", "Path": "file_path"},
+    "Write": {
+        "AbsolutePath": "file_path",
+        "Path": "file_path",
+        "TargetFile": "file_path",
+        "Content": "content",
+        "CodeContent": "content",
+    },
+    "Edit": {
+        "AbsolutePath": "file_path",
+        "Path": "file_path",
+        "TargetFile": "file_path",
+    },
     "Grep": {"Query": "pattern"},
     "WebFetch": {"Url": "url"},
 }

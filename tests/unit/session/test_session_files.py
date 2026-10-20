@@ -79,6 +79,38 @@ def test_opencode_spells_the_path_differently(feed):
     ]
 
 
+def test_agy_file_tools_and_path_keys_are_recognized(feed):
+    """agy 的两套文件工具（write_file / edit_file 与 write_to_file / replace_file_content /
+    multi_replace_file_content / delete_file）各自用 Path 与 TargetFile 传路径。"""
+    feed([
+        _call(0, "write_file", {"Path": "/w/new.md", "Content": "hi", "Overwrite": True}),
+        _call(1, "edit_file", {"Path": "/w/edit.md", "Target": "a", "Replacement": "b"}),
+        _call(2, "write_to_file", {"TargetFile": "/w/code.py", "CodeContent": "x = 1"}),
+        _call(3, "replace_file_content", {"TargetFile": "/w/mod.py", "ReplacementContent": "y"}),
+        _call(4, "multi_replace_file_content", {"TargetFile": "/w/mod.py", "ReplacementChunks": []}),
+        _call(5, "delete_file", {"Path": "/w/gone.py"}),
+    ])
+
+    assert [(f.path, f.action, f.count) for f in session_files("sid-1")] == [
+        ("/w/new.md", "created", 1),
+        ("/w/edit.md", "modified", 1),
+        ("/w/code.py", "created", 1),
+        ("/w/mod.py", "modified", 2),
+        ("/w/gone.py", "deleted", 1),
+    ]
+
+
+def test_agy_truncated_main_transcript_double_quoted_path_is_unquoted(feed):
+    """agy 主账 transcript.jsonl 在截断 tool_calls 时会把参数字符串再裹一层双引号。"""
+    feed([
+        _call(0, "write_file", {"Path": '"/w/quoted.md"', "Content": '"..."'}),
+        _call(1, "replace_file_content", {"TargetFile": '"/w/quoted.md"'}),
+    ])
+
+    [only] = session_files("sid-1")
+    assert (only.path, only.action, only.count) == ("/w/quoted.md", "created", 2)
+
+
 def test_tool_names_are_matched_case_insensitively(feed):
     feed([_call(0, "MULTIEDIT", {"file_path": "/w/a.py"})])
 
@@ -157,6 +189,18 @@ def test_temp_roots_are_scratch(path):
 
 def test_opencode_tool_output_is_scratch():
     assert is_scratch_path(str(Path.home() / ".local/share/opencode/tool-output/tool_abc")) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/Users/frago/.gemini/antigravity-cli/brain/8e6eb4ee-85ea-4884-8abb-1492746b6181/scratch/probe.py",
+        "/Users/frago/.gemini/antigravity-cli/brain/8e6eb4ee-85ea-4884-8abb-1492746b6181/.system_generated/steps/5/output.txt",
+        "/Users/frago/.gemini/antigravity/brain/8e6eb4ee-85ea-4884-8abb-1492746b6181/scratch/test.json",
+    ],
+)
+def test_agy_brain_scratch_and_system_generated_are_scratch(path):
+    assert is_scratch_path(path) is True
 
 
 @pytest.mark.parametrize(

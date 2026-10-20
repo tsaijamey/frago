@@ -84,11 +84,18 @@ _TOOL_FAMILIES: dict[str, ToolFamily] = {
     "moma_search": "search",
     "search_marketplace": "search",
     # 读文件
+    "read_file": "file-read",
     "view_file": "file-read",
     "multimodal_view_file": "file-read",
     # 写文件
     "write_file": "file-write",
+    "write_to_file": "file-write",
+    "create_file": "file-write",
     "edit_file": "file-write",
+    "replace_file_content": "file-write",
+    "multi_replace_file_content": "file-write",
+    "edit_notebook": "file-write",
+    "delete_file": "file-write",
     # 跑命令
     "run_command": "shell",
 }
