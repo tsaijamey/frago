@@ -426,3 +426,133 @@ class TestAnAnswerWithoutAVerdict:
         with pytest.raises(command_grants.AuditFailed):
             command_grants.audit("demo", recipe, "du", [])
         assert calls == [1]
+
+    def test_audit_once_passes_session_id_and_records_dispatch(self, machine, recipe, monkeypatch):
+        """命令审计拉起的 CoreAgent 会话必须现发 core_ 编号并记进归属账本，否则会在左栏顶层散成独立会话。"""
+        from frago.init import hook_binary
+        from frago.session import session_origin
+
+        fake_bin = machine / "frago-core"
+        fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(hook_binary, "get_hook_deploy_dir", lambda: machine)
+        monkeypatch.setattr(hook_binary, "get_binary_name", lambda: "frago-core")
+        monkeypatch.setattr(command_grants, "_instructions_ready", lambda: True)
+
+        ledger_file = machine / ".frago" / "workbench" / "agent-launches.json"
+        monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", ledger_file)
+        monkeypatch.setenv("FRAGO_SESSION_ID", "b01bbaf8-01e8-45b0-a330-4b96cafdec2b")
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+        captured_cmd: list[str] = []
+        captured_env: dict[str, str] = {}
+
+        class _Done:
+            returncode = 0
+            stderr = ""
+            stdout = json.dumps({
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": json.dumps({
+                    "verdict": "allow",
+                    "executable": "/opt/homebrew/bin/gh",
+                    "paths": [],
+                    "reason": "只读",
+                }),
+                "role": "coreagent",
+                "profile": "default",
+                "model": "test-model",
+            })
+
+        def fake_run(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            captured_env.update(kwargs.get("env") or {})
+            return _Done()
+
+        monkeypatch.setattr(command_grants.subprocess, "run", fake_run)
+
+        entry = command_grants._audit_once("demo", recipe, "gh", [])
+        assert entry["verdict"] == "allow"
+        assert "--session-id" in captured_cmd
+        sid = captured_cmd[captured_cmd.index("--session-id") + 1]
+        assert sid.startswith("core_")
+        assert "--title" in captured_cmd
+        assert captured_cmd[captured_cmd.index("--title") + 1] == "命令审计：demo · gh"
+        assert captured_env.get("FRAGO_AGENT_ROLE") == "worker"
+        assert captured_env.get("FRAGO_REVIEW") == "off"
+        assert captured_env.get("FRAGO_STOP_CHECK") == "off"
+
+        idx = session_origin.load_origin_index(projects_root=machine / "empty", use_memo=False)
+        assert idx.origin_of(sid) == "worker"
+        assert idx.parent_of(sid) == "b01bbaf8-01e8-45b0-a330-4b96cafdec2b"
+
+    def test_transient_llm_failure_is_retried_once_while_auth_wall_is_not(
+        self, machine, recipe, monkeypatch
+    ):
+        """上游 TLS/网络断连属于可重试的瞬时故障；凭据错误则当场终止不重跑。"""
+        from frago.init import hook_binary
+
+        fake_bin = machine / "frago-core"
+        fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(hook_binary, "get_hook_deploy_dir", lambda: machine)
+        monkeypatch.setattr(hook_binary, "get_binary_name", lambda: "frago-core")
+        monkeypatch.setattr(command_grants, "_instructions_ready", lambda: True)
+
+        calls = []
+
+        class _TransientFail:
+            returncode = 1
+            stderr = ""
+            stdout = json.dumps({
+                "type": "result",
+                "subtype": "error",
+                "is_error": True,
+                "error_kind": "llm",
+                "result": "LLM call 8 failed: Connection Failed: tls connection init failed",
+            })
+
+        class _Ok:
+            returncode = 0
+            stderr = ""
+            stdout = json.dumps({
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": json.dumps({
+                    "verdict": "allow",
+                    "executable": "/opt/homebrew/bin/gh",
+                    "paths": [],
+                    "reason": "只读",
+                }),
+            })
+
+        def fake_run_retry(_cmd, **_kwargs):
+            calls.append(1)
+            return _TransientFail() if len(calls) == 1 else _Ok()
+
+        monkeypatch.setattr(command_grants.subprocess, "run", fake_run_retry)
+        assert command_grants.audit("demo", recipe, "gh", [])["verdict"] == "allow"
+        assert len(calls) == 2
+
+        auth_calls = []
+
+        class _AuthFail:
+            returncode = 1
+            stderr = ""
+            stdout = json.dumps({
+                "type": "result",
+                "subtype": "error",
+                "is_error": True,
+                "error_kind": "llm",
+                "result": "HTTP 401 invalid api key",
+            })
+
+        def fake_run_auth(_cmd, **_kwargs):
+            auth_calls.append(1)
+            return _AuthFail()
+
+        monkeypatch.setattr(command_grants.subprocess, "run", fake_run_auth)
+        with pytest.raises(command_grants.AuditFailed):
+            command_grants.audit("demo", recipe, "gh", [])
+        assert len(auth_calls) == 1
+

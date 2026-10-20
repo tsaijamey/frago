@@ -52,6 +52,7 @@ question is asked.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -59,6 +60,7 @@ import os
 import platform
 import re
 import subprocess
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -419,23 +421,46 @@ def _audit_once(recipe_name: str, recipe_dir: Path | None, command: str,
         raise AuditFailed(f"审计说明书 ~/.frago/coreagent/{INSTRUCTIONS} 不在，也没能铺设上")
 
     cwd = Path(recipe_dir) if recipe_dir and Path(recipe_dir).is_dir() else Path.home()
+    prompt = _prompt(recipe_name, command, lines, recipe_dir)
+    title = f"命令审计：{recipe_name} · {command}"
+    session_id = f"core_{uuid.uuid4().hex}"
+    with contextlib.suppress(Exception):
+        from frago.server.services import coreagent_runner
+
+        session_id = coreagent_runner.start_local_ops(title)
     cmd = [
         str(binary), "--mode", "agent", "--as-role", "coreagent",
         "--instructions", INSTRUCTIONS,
         "--output-format", "json",
+        "--session-id", session_id,
+        "--title", title,
         "--timeout", str(AUDIT_TIMEOUT), "--max-rounds", str(AUDIT_MAX_ROUNDS),
         "--cwd", str(cwd),
-        "--prompt", _prompt(recipe_name, command, lines, recipe_dir),
+        "--prompt", prompt,
     ]
     for rule in _allowed_tools(command, recipe_dir):
         cmd += ["--allowed-tools", rule]
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    # A machine asking a machine. The review passes are there for a person's
-    # conversation; here they would only add a model call to every step.
+    # A machine asking a machine. The review passes and main-session decision-card
+    # nudges are there for a person's conversation; here they would only add model
+    # calls or push the auditor to emit human interaction cards.
     env["FRAGO_REVIEW"] = "off"
     env["FRAGO_STOP_CHECK"] = "off"
+    env["FRAGO_AGENT_ROLE"] = "worker"
+
+    # 先把这次审计会话记进关系账：在某场父会话里跑 frago recipe run 触发时挂到那场父会话
+    # 下面；人在终端里直接跑时也记成 worker，不让这整段审计说明书混进顶层的人开会话里。
+    with contextlib.suppress(Exception):
+        from frago.session.session_origin import record_dispatch
+
+        record_dispatch(
+            session_id,
+            agent_type="coreagent",
+            cwd=str(cwd),
+            prompt_head=prompt,
+        )
 
     logger.info("命令 %s（配方 %s）在这台机器上还没审计过，请 CoreAgent 看一次", command, recipe_name)
     try:
@@ -459,7 +484,13 @@ def _audit_once(recipe_name: str, recipe_dir: Path | None, command: str,
                 if line.strip() and not line.startswith("hint:")]
         raise AuditFailed(tail[-1][:400] if tail else f"CoreAgent 没交结论，退出码 {done.returncode}")
     if not final.get("ok"):
-        raise AuditFailed(str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完"))
+        err_msg = str(final.get("error") or final.get("error_kind") or "CoreAgent 没办完")
+        if final.get("error_kind") == "llm":
+            from frago.agent_driver.kernel_backend import _failure_status
+
+            if _failure_status(final, err_msg) == "error":
+                raise _NoVerdict(err_msg)
+        raise AuditFailed(err_msg)
 
     text = str(final.get("text") or "")
     answer = _last_json(text)
