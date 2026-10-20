@@ -1414,7 +1414,7 @@
       "srcHint": "这场会话跑在 {{name}}",
       "editTitleHint": "点击直接修改标题",
       "titlePlaceholder": "输入会话标题，回车保存",
-      "generateTitle": "用 CoreAgent 生成标题",
+      "generateTitle": "用 LightAgent 生成标题",
       "generatingTitle": "正在生成标题…",
       "titleSaveFailed": "标题没存下：{{reason}}",
       "titleGenerateFailed": "标题没生成出来：{{reason}}"

@@ -267,8 +267,56 @@ def _ensure_instructions() -> Path:
     return target
 
 
+_HTTP_JSON_ERR = re.compile(r"HTTP\s+(\d{3})\s+(\{[\s\S]*\})")
+
+
+def _format_core_error(reply: dict[str, Any]) -> str:
+    """将 frago-core 返回的错误（含上游 HTTP 原始 JSON）整理为可读说明。"""
+    raw = str(reply.get("error") or "").strip()
+    model = str(reply.get("model") or "").strip()
+    if not raw:
+        return f"LightAgent（{model}）没答上来" if model else "LightAgent 没答上来"
+
+    matched = _HTTP_JSON_ERR.search(raw)
+    if matched:
+        status = matched.group(1)
+        body_text = matched.group(2)
+        upstream_msg = ""
+        try:
+            body = json.loads(body_text)
+            if isinstance(body, dict):
+                err_obj = body.get("error")
+                if isinstance(err_obj, dict):
+                    upstream_msg = str(
+                        err_obj.get("message") or err_obj.get("type") or ""
+                    ).strip()
+                elif isinstance(err_obj, str):
+                    upstream_msg = err_obj.strip()
+                if not upstream_msg:
+                    upstream_msg = str(
+                        body.get("message") or body.get("detail") or ""
+                    ).strip()
+        except ValueError:
+            upstream_msg = ""
+
+        status_hint = {
+            "400": "模型接口拒绝了请求参数（HTTP 400）",
+            "401": "模型连接密钥无效或已过期（HTTP 401）",
+            "403": "模型连接无权限访问该模型（HTTP 403）",
+            "404": "模型或接口地址不存在（HTTP 404）",
+            "429": "模型请求过于频繁或额度不足（HTTP 429）",
+        }.get(status, f"模型接口返回异常（HTTP {status}）")
+
+        prefix = f"{status_hint}，模型：{model}" if model else status_hint
+        return f"{prefix} —— {upstream_msg}" if upstream_msg else prefix
+
+    if model and model not in raw:
+        return f"{raw}（模型：{model}）"
+    return raw
+
+
 def _ask_coreagent(prompt: str) -> str:
-    """单轮调用 CoreAgent（``--mode chat --as-role coreagent``），拿回模型回答正文。"""
+    """单轮调用 LightAgent（``--mode chat --as-role lightagent``），拿回模型回答正文。"""
     from frago.init.hook_binary import get_hook_binary_path
     from frago.server.services.subprocess_utils import get_utf8_env
 
@@ -281,7 +329,7 @@ def _ask_coreagent(prompt: str) -> str:
         "--mode",
         "chat",
         "--as-role",
-        "coreagent",
+        "lightagent",
         "--output-format",
         "json",
         "--timeout",
@@ -304,7 +352,7 @@ def _ask_coreagent(prompt: str) -> str:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise TitleGenerationFailed("CoreAgent 生成标题超时没回来") from exc
+        raise TitleGenerationFailed("LightAgent 生成标题超时没回来") from exc
     except OSError as exc:
         raise TitleGenerationFailed(f"起不来 frago-core：{exc}") from exc
 
@@ -319,7 +367,7 @@ def _ask_coreagent(prompt: str) -> str:
     if not isinstance(reply, dict):
         raise TitleGenerationFailed("frago-core 的输出形状不对")
     if not reply.get("ok"):
-        raise TitleGenerationFailed(str(reply.get("error") or "CoreAgent 没答上来"))
+        raise TitleGenerationFailed(_format_core_error(reply))
     return str(reply.get("text") or "")
 
 
@@ -327,7 +375,7 @@ def _parse_generated_title(raw: str) -> str:
     """从模型回答里取出标题文字。兼容 ``{"title": "..."}`` JSON 与直接回一行文字两种情况。"""
     text = (raw or "").strip()
     if not text:
-        raise TitleGenerationFailed("CoreAgent 返回了空标题")
+        raise TitleGenerationFailed("LightAgent 返回了空标题")
 
     candidate = ""
     start = text.find("{")
@@ -351,7 +399,7 @@ def _parse_generated_title(raw: str) -> str:
 
     cleaned = _SURROUNDING_QUOTES.sub("", " ".join(candidate.split()))[:MAX_TITLE_LEN].strip()
     if not cleaned:
-        raise TitleGenerationFailed("CoreAgent 没有给出可用的标题")
+        raise TitleGenerationFailed("LightAgent 没有给出可用的标题")
     return cleaned
 
 

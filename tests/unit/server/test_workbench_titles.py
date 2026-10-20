@@ -185,7 +185,7 @@ class TestGenerateTitleWithCoreAgent:
             "--mode",
             "chat",
             "--as-role",
-            "coreagent",
+            "lightagent",
         ]
         assert "--instructions" in cmd
         idx = cmd.index("--instructions")
@@ -194,6 +194,45 @@ class TestGenerateTitleWithCoreAgent:
         assert "-p" in cmd and "-" in cmd
         assert called["input"] == "测试提示词"
         assert workbench_titles._parse_generated_title(out) == "单轮生成标题"
+
+    def test_上游HTTP400原始错误解析为可读提示(self, tmp_path, monkeypatch):
+        fake_bin = tmp_path / "frago-core"
+        fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout=json.dumps(
+                    {
+                        "type": "final",
+                        "ok": False,
+                        "text": "",
+                        "role": "lightagent",
+                        "model": "minimax/minimax-m3.1-flash:free",
+                        "error_kind": "llm",
+                        "error": (
+                            '没问到：HTTP 400 {"type":"error","error":{"type":'
+                            '"invalid_request_error","message":"Reasoning is mandatory '
+                            'for this endpoint and cannot be disabled."}}'
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr(hook_binary, "get_hook_binary_path", lambda: str(fake_bin))
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        with pytest.raises(workbench_titles.TitleGenerationFailed) as exc_info:
+            workbench_titles._ask_coreagent("测试提示词")
+
+        msg = str(exc_info.value)
+        assert "HTTP 400" in msg
+        assert "minimax/minimax-m3.1-flash:free" in msg
+        assert "Reasoning is mandatory for this endpoint and cannot be disabled." in msg
+        assert '{"type":"error"' not in msg
 
     def test_无对话记录返回409(self, client, monkeypatch):
         monkeypatch.setattr(

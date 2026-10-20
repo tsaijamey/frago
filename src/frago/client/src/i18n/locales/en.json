@@ -1419,7 +1419,7 @@
       "srcHint": "This session runs on {{name}}",
       "editTitleHint": "Click to edit title",
       "titlePlaceholder": "Session title — Enter to save",
-      "generateTitle": "Generate title with CoreAgent",
+      "generateTitle": "Generate title with LightAgent",
       "generatingTitle": "Generating title…",
       "titleSaveFailed": "Couldn't save title: {{reason}}",
       "titleGenerateFailed": "Couldn't generate title: {{reason}}"
