@@ -127,22 +127,24 @@ async def list_tmux_sessions(
         description="最后一段回答截多长——够不够认出这是哪一场会话由调用方定，不写死",
     ),
 ) -> TmuxSessionsResponse:
-    """清点本机全部 frago tmux 会话。
+    """清点本机全部 agent 会话进程。
 
-    每一行带最后一次说完话的时刻、当时说的是什么（截取）、这场会话占多少内存，以及
-    此刻在不在干活。闲置时长的口径见 ``tmux_sessions_service`` 的模块说明——一句话，
-    问的是会话自己的记录，不是 tmux 的活动时间。
+    **不只是 tmux。** 这个入口管的是所有 agent 会话进程：跑在 tmux 里的 CLI agent
+    和没有终端、只有常驻进程的 CoreAgent。每一行带最后一次说完话的时刻、当时说的是
+    什么（截取）、占多少内存，以及此刻在不在干活。闲置时长的口径见
+    ``tmux_sessions_service`` 的模块说明——一句话，问的是会话自己的记录，不是 tmux
+    的活动时间。
 
     读盘 + 跑 ps + 逐个 capture-pane 都是阻塞 IO，整趟挪到线程里跑。
     """
     from frago.init.config_manager import load_config
-    from frago.server.services import tmux_sessions_service as svc
+    from frago.server.services import agent_sessions_service as svc
 
     rows = await asyncio.to_thread(svc.list_sessions, excerpt_chars=excerpt_chars)
     return TmuxSessionsResponse(
-        sessions=svc.as_dicts(rows),
+        sessions=rows,
         total=len(rows),
-        total_memory_mb=sum(r.memory_mb for r in rows),
+        total_memory_mb=sum(r["memory_mb"] for r in rows),
         cleanup_idle_hours=load_config().webui_sessions.cleanup_idle_hours,
     )
 
@@ -172,7 +174,7 @@ async def set_cleanup_threshold(request: CleanupThresholdRequest) -> TmuxSession
     调这里不会让任何会话自己消失，只影响浮窗打开时默认把谁标出来。
     """
     from frago.init.config_manager import load_config, save_config
-    from frago.server.services import tmux_sessions_service as svc
+    from frago.server.services import agent_sessions_service as svc
 
     def _persist() -> float:
         config = load_config()
@@ -183,20 +185,21 @@ async def set_cleanup_threshold(request: CleanupThresholdRequest) -> TmuxSession
     hours = await asyncio.to_thread(_persist)
     rows = await asyncio.to_thread(svc.list_sessions)
     return TmuxSessionsResponse(
-        sessions=svc.as_dicts(rows),
+        sessions=rows,
         total=len(rows),
-        total_memory_mb=sum(r.memory_mb for r in rows),
+        total_memory_mb=sum(r["memory_mb"] for r in rows),
         cleanup_idle_hours=hours,
     )
 
 
 @router.get("/system/tmux-sessions/count", response_model=TmuxSessionsCountResponse)
 async def count_tmux_sessions() -> TmuxSessionsCountResponse:
-    """本机现在有几场 tmux 会话、一共占多少内存。
+    """本机现在有几场 agent 会话、一共占多少内存。
 
-    左下角常驻的那个数字问的是这条。它不读任何一份会话记录——那是点开浮窗才做的事。
+    左下角常驻的那个数字问的是这条。tmux 里的 CLI agent 与 CoreAgent 的常驻进程
+    都算。它不读任何一份会话记录——那是点开浮窗才做的事。
     """
-    from frago.server.services import tmux_sessions_service as svc
+    from frago.server.services import agent_sessions_service as svc
 
     return TmuxSessionsCountResponse(**await asyncio.to_thread(svc.count_sessions))
 

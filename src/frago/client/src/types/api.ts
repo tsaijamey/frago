@@ -1042,17 +1042,20 @@ export interface ClaudeUsage {
   error: string | null;
 }
 
+/** 一场 agent 会话由什么承载：tmux 里的 CLI agent，还是只有常驻进程的 CoreAgent。 */
+export type AgentSessionKind = 'tmux' | 'coreagent';
+
 /**
- * 本机一场 tmux agent 会话。
+ * 本机一场 agent 会话进程。
  *
  * `idle_secs` 说的是「自最后一次把话说完起过了多久」，不是 tmux 那边的活动时间——
  * 后者被 claude 界面自己的重绘推着走，实测同一批会话两个口径能差出四个多小时。
  * 判不出来（找不到记录、这一轮还没说完）为 null，界面显示「—」而不是编一个 0。
  */
 export interface TmuxSessionItem {
-  /** tmux 会话名，关闭时点的就是它 */
+  /** 清单里的唯一把手：tmux 行是会话名，CoreAgent 行是会话编号 */
   name: string;
-  /** 去掉 frago-agent- 前缀后那截，界面上显示的名字 */
+  /** 界面上显示的名字 */
   label: string;
   session_id: string | null;
   stop_reason: string | null;
@@ -1071,6 +1074,12 @@ export interface TmuxSessionItem {
   awaiting_input?: boolean | null;
   /** 收尾原话：保留句末，超长截开头。旧服务端不给 */
   closing_text?: string;
+  /** 承载方式。旧服务端不给时按 tmux 处理 */
+  kind?: AgentSessionKind;
+  /** CoreAgent 的运行状态（starting / idle / busy）；tmux 行恒为 null */
+  state?: string | null;
+  /** 工作目录，CoreAgent 行用来认出这是哪一场 */
+  directory?: string | null;
 }
 
 /**

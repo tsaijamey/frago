@@ -2001,7 +2001,7 @@
   "tmuxSessions": {
     "title": "Local sessions",
     "summary": "{{total}} running · {{memory}} MB",
-    "railTooltip": "{{n}} tmux sessions using {{memory}} MB. Open to review and close",
+    "railTooltip": "{{n}} agent sessions using {{memory}} MB. Open to review and close",
     "refresh": "Re-scan",
     "close": "Close",
     "empty": "No sessions running on this machine",
@@ -2013,14 +2013,25 @@
       "selectMatching": "Select these {{n}}"
     },
     "idle": {
+      "unknown": "no record",
       "justNow": "just now",
       "minutes": "{{n}}m ago",
       "hours": "{{n}}h ago",
       "days": "{{n}}d ago"
     },
     "badge": {
-      "busy": "working"
+      "busy": "working",
+      "current": "This session",
+      "coreAgent": "CoreAgent"
     },
+    "state": {
+      "starting": "starting",
+      "busy": "working",
+      "idle": "idle"
+    },
+    "open": "Open",
+    "openWith": "Open {{name}}",
+    "currentMissing": "The session you are in is not in this list: it has no live process right now, or its session id could not be resolved.",
     "selectedNote": "{{n}} selected · ~{{memory}} MB",
     "closeSelected": "Close selected",
     "confirm": "Close these {{n}} sessions? Frees ~{{memory}} MB; their context is gone.",

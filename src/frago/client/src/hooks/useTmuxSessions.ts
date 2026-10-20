@@ -15,6 +15,7 @@ import {
   getTmuxSessions,
   setTmuxCleanupThreshold,
 } from '@/api';
+import { fetchWorkbenchSessions } from './useWorkbenchSessions';
 import type { CloseTmuxSessionsResponse, TmuxSessionsResponse } from '@/types/api';
 
 /** 左下角那个数字的刷新节拍。会话是人自己开的，一分钟一次足够跟上。 */
@@ -48,6 +49,8 @@ export interface TmuxSessionsState {
   data: TmuxSessionsResponse | null;
   loading: boolean;
   error: string | null;
+  /** 会话编号 → 人在左栏认得的那句标题。tmux 会话名只是把手，uuid 不是给人看的。 */
+  titles: Record<string, string>;
   reload: () => void;
   close: (names: string[]) => Promise<CloseTmuxSessionsResponse>;
   saveThreshold: (hours: number) => Promise<void>;
@@ -59,6 +62,7 @@ export interface TmuxSessionsState {
  */
 export function useTmuxSessions(excerptChars: number): TmuxSessionsState {
   const [data, setData] = useState<TmuxSessionsResponse | null>(null);
+  const [titles, setTitles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
@@ -67,6 +71,28 @@ export function useTmuxSessions(excerptChars: number): TmuxSessionsState {
     alive.current = true;
     return () => {
       alive.current = false;
+    };
+  }, []);
+
+  // 标题来自会话清单那条既有接口。`tmux_sessions` 只认得出把手（uuid / 业务名），
+  // 清单里的主角该是人在左栏看见的那句话。拿不到标题时退回把手名，不弹错——
+  // 这是排版信息，不该拦住清点本身。
+  useEffect(() => {
+    let local = true;
+    fetchWorkbenchSessions()
+      .then((rows) => {
+        if (!local) return;
+        const map: Record<string, string> = {};
+        for (const row of rows) {
+          if (row.session_id && row.title) map[row.session_id] = row.title;
+        }
+        setTitles(map);
+      })
+      .catch(() => {
+        // 标题只是副信息，取不到就不取。
+      });
+    return () => {
+      local = false;
     };
   }, []);
 
@@ -103,5 +129,5 @@ export function useTmuxSessions(excerptChars: number): TmuxSessionsState {
     if (alive.current) setData(result);
   }, []);
 
-  return { data, loading, error, reload, close, saveThreshold };
+  return { data, loading, error, titles, reload, close, saveThreshold };
 }

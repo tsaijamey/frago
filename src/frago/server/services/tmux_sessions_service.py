@@ -409,6 +409,15 @@ def _memory_mb() -> dict[int, int]:
     return {pid: round(total(pid) / 1024) for pid in rss}
 
 
+def memory_by_pid() -> dict[int, int]:
+    """进程号 → 它自己及全部后代的常驻内存（MB）。
+
+    公开入口是给合并层用的：CoreAgent 不在 tmux 里，没有 pane 可以挂，只能拿着
+    进程号来问。口径与 tmux 那几行完全一致，浮窗上的数字才可比。
+    """
+    return _memory_mb()
+
+
 def _pane_pids() -> dict[str, list[int]]:
     out: dict[str, list[int]] = {}
     for line in _tmux("list-panes", "-a", "-F", "#{session_name} #{pane_pid}").splitlines():

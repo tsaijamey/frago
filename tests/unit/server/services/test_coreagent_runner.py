@@ -374,3 +374,33 @@ class TestStop:
         time.sleep(0.3)
 
         assert cr.stop("core_boom")["stopped"] is True
+
+
+class TestLiveSnapshot:
+    """浮窗清点要的那一份：谁还开着、是忙是闲、占着哪个进程。"""
+
+    def test_reports_live_sessions_and_skips_closed_ones(self):
+        sess = cr._session_for("core_live", "/tmp/live", "这一场的名字")
+        sess.state = "idle"
+        sess.proc = _FakeProc()
+        sess.touched_at = 123.0
+
+        gone = cr._session_for("core_gone", "/tmp/gone", None)
+        gone.state = "absent"
+
+        (row,) = cr.live_snapshot()
+        assert row.session_id == "core_live"
+        assert row.state == "idle"
+        assert row.pid == 4242
+        assert row.cwd == "/tmp/live"
+        assert row.title == "这一场的名字"
+        assert row.touched_at == 123.0
+
+    def test_a_session_without_a_process_reports_no_pid(self):
+        # 起进程之前的那一瞬：这一场还开着，但拿不到进程号。界面据此不报内存，
+        # 而不是编一个 0。
+        sess = cr._session_for("core_starting", "/tmp/s", None)
+        sess.state = "starting"
+
+        (row,) = cr.live_snapshot()
+        assert row.pid is None

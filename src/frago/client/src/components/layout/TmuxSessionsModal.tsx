@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { Loader2, RefreshCw, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { useTmuxSessions } from '@/hooks/useTmuxSessions';
+import { usePageStore } from '@/stores/appStore';
 import type { TmuxSessionItem } from '@/types/api';
 
 interface Props {
@@ -34,7 +35,9 @@ const EXCERPT_CHARS = 160;
 const PRESET_HOURS = [0.5, 1, 4, 24];
 
 function formatIdle(secs: number | null, t: TFunction): string {
-  if (secs === null) return '—';
+  // 判不出闲置时长时写明白，不摆一条看不懂的短横线：这一场可能还没把这一轮说完，
+  // 也可能认不出它对应哪份记录。
+  if (secs === null) return t('tmuxSessions.idle.unknown');
   if (secs < 60) return t('tmuxSessions.idle.justNow');
   if (secs < 3600) return t('tmuxSessions.idle.minutes', { n: Math.floor(secs / 60) });
   if (secs < 86400) return t('tmuxSessions.idle.hours', { n: (secs / 3600).toFixed(1) });
@@ -53,14 +56,39 @@ function formatStopAt(iso: string | null): string {
   });
 }
 
-/** 能不能关：正在干活的一律不许，剩下的都可以。 */
+/**
+ * 能不能关：正在干活的一律不许，剩下的都可以。
+ *
+ * CoreAgent 行不在关闭范围内：停掉它的一轮不等于销毁这场会话，跟「关掉 tmux 会话、
+ * 上下文不再保留」不是同一个动作，所以只给「打开」。
+ */
 function isSelectable(session: TmuxSessionItem): boolean {
-  return !session.busy;
+  return session.kind !== 'coreagent' && !session.busy;
+}
+
+/** CoreAgent 的三档状态；tmux 行没有这一格。 */
+function stateLabel(session: TmuxSessionItem, t: TFunction): string | null {
+  if (session.kind !== 'coreagent') return null;
+  switch (session.state) {
+    case 'starting':
+      return t('tmuxSessions.state.starting');
+    case 'busy':
+      return t('tmuxSessions.state.busy');
+    case 'idle':
+      return t('tmuxSessions.state.idle');
+    default:
+      return null;
+  }
 }
 
 export default function TmuxSessionsModal({ onClose }: Props) {
   const { t } = useTranslation();
-  const { data, loading, error, reload, close, saveThreshold } = useTmuxSessions(EXCERPT_CHARS);
+  const { data, loading, error, titles, reload, close, saveThreshold } =
+    useTmuxSessions(EXCERPT_CHARS);
+  // 当前正在对话的那一场。放在全局状态里，不随页面切换清掉；浮窗据此标出对应行。
+  const currentId = usePageStore((s) => s.workbenchSessionId);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+  const switchPage = usePageStore((s) => s.switchPage);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [hours, setHours] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -98,6 +126,22 @@ export default function TmuxSessionsModal({ onClose }: Props) {
 
   const selectedSessions = sessions.filter((s) => selected.has(s.name));
   const selectedMemory = selectedSessions.reduce((sum, s) => sum + s.memory_mb, 0);
+
+  // 当前会话在这份清单里对不上时要把原因说出来：它可能已经结束，也可能是一个
+  // 认不出所属会话的 tmux 行——两种情况人都得知道，而不是以为标记丢了。
+  const currentMissing =
+    currentId !== null && data !== null && !sessions.some((s) => s.session_id === currentId);
+
+  /** 这一行在清单里的名字：人在左栏认得的那句标题，取不到才退回把手名。 */
+  const titleOf = (session: TmuxSessionItem): string =>
+    (session.session_id && titles[session.session_id]) || session.label;
+
+  /** 从浮窗跳进那一场会话。跟着一起收窗：清单只是路过的门口。 */
+  const openSession = (sessionId: string) => {
+    setWorkbenchSessionId(sessionId);
+    switchPage('session_workbench');
+    onClose();
+  };
 
   const toggle = (name: string) => {
     setSelected((prev) => {
@@ -216,6 +260,9 @@ export default function TmuxSessionsModal({ onClose }: Props) {
           </button>
         </div>
 
+        {currentMissing ? (
+          <div className="tmux-note">{t('tmuxSessions.currentMissing')}</div>
+        ) : null}
         {error && <div className="tmux-error">{error}</div>}
         {report && <div className="tmux-report">{report}</div>}
 
@@ -227,37 +274,79 @@ export default function TmuxSessionsModal({ onClose }: Props) {
           {sessions.map((s) => {
             const selectable = isSelectable(s);
             const stale = s.idle_secs !== null && s.idle_secs >= threshold * 3600;
+            const core = s.kind === 'coreagent';
+            const current = currentId !== null && s.session_id === currentId;
+            const state = stateLabel(s, t);
             return (
               <label
                 key={s.name}
                 className={`tmux-row ${selected.has(s.name) ? 'tmux-row--on' : ''} ${
-                  selectable ? '' : 'tmux-row--locked'
-                }`}
+                  selectable ? '' : core ? 'tmux-row--core' : 'tmux-row--locked'
+                } ${current ? 'tmux-row--current' : ''}`}
               >
-                <input
-                  type="checkbox"
-                  className="tmux-check"
-                  checked={selected.has(s.name)}
-                  disabled={!selectable}
-                  onChange={() => toggle(s.name)}
-                />
+                {core ? null : (
+                  <input
+                    type="checkbox"
+                    className="tmux-check"
+                    checked={selected.has(s.name)}
+                    disabled={!selectable}
+                    onChange={() => toggle(s.name)}
+                  />
+                )}
                 <div className="tmux-row-body">
-                  <div className="tmux-row-head">
+                  <div className="tmux-row-main">
+                    <span
+                      className="tmux-title"
+                      title={s.directory ? `${titleOf(s)}\n${s.directory}` : titleOf(s)}
+                    >
+                      {titleOf(s)}
+                    </span>
+                    {current ? (
+                      <span className="tmux-badge tmux-badge--current">
+                        {t('tmuxSessions.badge.current')}
+                      </span>
+                    ) : null}
+                    {core ? (
+                      <span className="tmux-badge tmux-badge--core">
+                        {t('tmuxSessions.badge.coreAgent')}
+                      </span>
+                    ) : null}
+                    {s.busy && !core ? (
+                      <span className="tmux-badge tmux-badge--busy">
+                        {t('tmuxSessions.badge.busy')}
+                      </span>
+                    ) : null}
+                    {state ? <span className="tmux-badge tmux-badge--state">{state}</span> : null}
+                    {s.session_id ? (
+                      <button
+                        type="button"
+                        className="tmux-open-btn"
+                        // 这一行是个 label，不显式起名，按钮的可读名字会把整行文字吞进去。
+                        aria-label={t('tmuxSessions.openWith', { name: titleOf(s) })}
+                        // 同样是因为 label：不拦住点击会把复选框一起切了。
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openSession(s.session_id as string);
+                        }}
+                      >
+                        {t('tmuxSessions.open')}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="tmux-row-meta">
                     <span className={`tmux-idle ${stale ? 'tmux-idle--stale' : ''}`}>
                       {formatIdle(s.idle_secs, t)}
                     </span>
                     {s.last_stop_at ? (
                       <span className="tmux-stop-at">{formatStopAt(s.last_stop_at)}</span>
                     ) : null}
-                    {s.busy ? (
-                      <span className="tmux-badge tmux-badge--busy">
-                        {t('tmuxSessions.badge.busy')}
+                    <span className="tmux-mem">{s.memory_mb} MB</span>
+                    {s.session_id ? (
+                      <span className="tmux-sid" title={s.session_id}>
+                        {s.session_id}
                       </span>
                     ) : null}
-                    <span className="tmux-mem">{s.memory_mb} MB</span>
-                    <span className="tmux-name" title={s.name}>
-                      {s.label}
-                    </span>
                   </div>
                   <div className="tmux-excerpt">
                     {s.excerpt || t('tmuxSessions.noExcerpt')}

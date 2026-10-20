@@ -665,7 +665,11 @@ class RecipeFolderAssignRequest(BaseModel):
 
 
 class TmuxSessionItem(BaseModel):
-    """清点浮窗里的一行：一场本机 tmux agent 会话。
+    """清点浮窗里的一行：一场本机 agent 会话进程。
+
+    ``kind`` 说这一场由什么承载：``tmux`` 里跑着的 CLI agent，还是不走 tmux、
+    只有常驻进程的 CoreAgent。``name`` 对前者是 tmux 会话名、对后者是会话编号；
+    界面按 ``kind`` 决定能对它做什么，不会拿 CoreAgent 的编号去 kill tmux。
 
     ``last_stop_at`` / ``idle_secs`` 的口径是「最后一条终结记录的时刻」，NEVER 是
     tmux 自己的活动时间——后者被界面重绘推着走，同一批会话两个口径实测差过四小时。
@@ -685,6 +689,12 @@ class TmuxSessionItem(BaseModel):
     client_alive: bool | None = None
     awaiting_input: bool | None = None
     closing_text: str = ""
+    # 承载方式：tmux / coreagent。旧服务端不给时按 tmux 处理
+    kind: str = "tmux"
+    # CoreAgent 的运行状态（starting / idle / busy）；tmux 行恒为 None
+    state: str | None = None
+    # 工作目录，CoreAgent 行用来认出这是哪一场；tmux 行暂不填
+    directory: str | None = None
 
 
 class TmuxWaitingItem(BaseModel):

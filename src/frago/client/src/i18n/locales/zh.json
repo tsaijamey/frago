@@ -1996,7 +1996,7 @@
   "tmuxSessions": {
     "title": "本机会话",
     "summary": "{{total}} 场 · {{memory}} MB",
-    "railTooltip": "本机 {{n}} 场 tmux 会话，共占 {{memory}} MB。点开清点与关闭",
+    "railTooltip": "本机 {{n}} 场 agent 会话，共占 {{memory}} MB。点开清点与关闭",
     "refresh": "重新清点",
     "close": "关闭",
     "empty": "本机没有正在跑的会话",
@@ -2008,14 +2008,25 @@
       "selectMatching": "选中这 {{n}} 场"
     },
     "idle": {
+      "unknown": "未记录",
       "justNow": "刚刚",
       "minutes": "{{n}} 分钟前",
       "hours": "{{n}} 小时前",
       "days": "{{n}} 天前"
     },
     "badge": {
-      "busy": "在干活"
+      "busy": "在干活",
+      "current": "当前会话",
+      "coreAgent": "CoreAgent"
     },
+    "state": {
+      "starting": "启动中",
+      "busy": "在干活",
+      "idle": "空闲"
+    },
+    "open": "打开",
+    "openWith": "打开 {{name}}",
+    "currentMissing": "当前会话不在这份清单里：它此刻没有活着的进程，或者认不出所属会话。",
     "selectedNote": "已选 {{n}} 场 · 约 {{memory}} MB",
     "closeSelected": "关闭选中",
     "confirm": "确认关掉这 {{n}} 场？约释放 {{memory}} MB，会话上下文不再保留。",

@@ -192,6 +192,45 @@ def busy(session_id: str) -> bool:
     return live_states().get(session_id, False)
 
 
+@dataclass
+class LiveSessionSnapshot:
+    """一场还开着的 CoreAgent 会话，给浮窗清点用。
+
+    与 :func:`live_states` 的区别只在粒度：那条路只要「忙不忙」，一次问全是为看护
+    上百张卡片；这条路要进程号、工作目录、最近动静，只有人打开浮窗时才问。
+    """
+
+    session_id: str
+    state: str  # starting / idle / busy
+    pid: int | None
+    cwd: str
+    title: str | None
+    #: 最近一次有动静的时刻：发进一句话，或收到一轮 result。
+    touched_at: float
+
+
+def live_snapshot() -> list[LiveSessionSnapshot]:
+    """此刻还开着进程的每一场 CoreAgent 会话。
+
+    **只读内存登记处，不碰任何记录文件。** 浮窗每打开一次问一趟；读记录是另一条
+    缓存好的路（见 ``agent_sessions_service``）。进程号拿不到时给 None——界面据此
+    不报内存，而不是编一个 0。
+    """
+    with _sessions_lock:
+        return [
+            LiveSessionSnapshot(
+                session_id=sid,
+                state=sess.state,
+                pid=sess.proc.pid if sess.proc is not None else None,
+                cwd=sess.cwd,
+                title=sess.title,
+                touched_at=sess.touched_at,
+            )
+            for sid, sess in _sessions.items()
+            if sess.state != "absent"
+        ]
+
+
 def queued_count(session_id: str) -> int:
     """这一场还排着几句话说出去。"""
     with _sessions_lock:

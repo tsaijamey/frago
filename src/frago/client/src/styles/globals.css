@@ -6519,18 +6519,38 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: 3px;
 }
 
-.tmux-row-head {
+/* 标题是这一行的主角：整块清单靠它认人；时间、内存、编号退到副行。 */
+.tmux-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.tmux-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tmux-row-main .tmux-badge {
+  flex-shrink: 0;
+}
+
+.tmux-row-meta {
   display: flex;
   align-items: baseline;
   gap: var(--spacing-sm);
+  min-width: 0;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
-/* 闲置时长是这一行最先要读到的东西，给它加重。 */
 .tmux-idle {
-  font-weight: 600;
-  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -6543,15 +6563,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   white-space: nowrap;
 }
 
-.tmux-name {
+/* 会话编号只当把手：要核对时读得到，平时不跟标题抢眼睛。 */
+.tmux-sid {
   margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 40%;
   font-family: var(--font-mono, monospace);
-  font-size: var(--font-size-xs);
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 .tmux-badge {
@@ -6564,6 +6583,50 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 .tmux-badge--busy {
   background: var(--color-primary-soft, var(--bg-hover));
   color: var(--color-primary, var(--text-primary));
+}
+
+.tmux-badge--current {
+  background: var(--color-primary, var(--text-primary));
+  color: var(--bg-primary);
+}
+
+.tmux-badge--core,
+.tmux-badge--state {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* 当前会话那一行：整块换底加内描边，不用单边竖条——竖条只是装饰，读不出
+   「这一整条是你在跟的那一场」。 */
+.tmux-row--current {
+  background: var(--sidebar-item-selected-bg, var(--bg-secondary));
+  box-shadow: inset 0 0 0 1px var(--color-primary, var(--border-color));
+}
+
+.tmux-row--current:hover {
+  background: var(--sidebar-item-selected-bg, var(--bg-secondary));
+}
+
+/* CoreAgent 行没有复选框，不给「点了会选中」的手型。 */
+.tmux-row--core {
+  cursor: default;
+}
+
+.tmux-open-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tmux-open-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* 正文截取：一行里最宽的那一块，人靠它认出这是哪一场会话。压到两行，
@@ -6586,6 +6649,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   text-align: center;
+}
+
+/* 「当前会话不在这份清单里」——是一句解释，不是错误，左对齐靠近清单。 */
+.tmux-note {
+  padding: 4px 2px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .tmux-error {
