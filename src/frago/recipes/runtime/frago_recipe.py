@@ -305,6 +305,48 @@ class Bus:
                 "stdout": str(body.get("stdout") or ""),
                 "stderr": str(body.get("stderr") or "")}
 
+    def ai(self, prompt: str, *, system: str | None = None,
+           response_json: bool = False, timeout: int = 120) -> Any:
+        """Ask the platform's model to answer a prompt (pure chat, no tools).
+
+        Like ``ask``, the declaration check happens at the hub rather than
+        here: the request carries whether this recipe declared ``ai = True``,
+        and the hub refuses and records an undeclared reach in the same place.
+        """
+        declared = bool(getattr(self.recipe, "ai", False))
+        body = self._call(
+            "/api/bus/ai",
+            {
+                "prompt": str(prompt),
+                "system": system,
+                "timeout": timeout,
+                "caller_ai": declared,
+            },
+            timeout=timeout + 10,
+        )
+        if not body.get("ok"):
+            err = body.get("error") or {}
+            status = str(err.get("status") or body.get("status") or "error")
+            kind = "deterministic" if status == "needs_input" else "transient"
+            raise RecipeFailed(
+                err.get("message") or "模型没有给出结果",
+                kind=kind,
+                status=status,
+                **{k: v for k, v in err.items() if k not in ("message", "kind", "status")},
+            )
+        text = str(body.get("text") or "")
+        if not response_json:
+            return text
+        parsed = _extract_json(text)
+        if parsed is None:
+            raise RecipeFailed(
+                "模型返回的不是合法 JSON",
+                kind="deterministic",
+                status="invalid_json",
+                raw_text=text[:500],
+            )
+        return parsed
+
     def publish(self, state: dict, slot: str = "default") -> str:
         body = self._call("/api/bus/publish",
                           {"recipe": self.recipe.name, "slot": slot, "state": state})
@@ -433,6 +475,11 @@ class Recipe:
     #: has, until now, had no way of knowing anyone depended on it, which is
     #: why editing its own files broke pages it had never heard of.
     imports: dict[str, tuple[str, ...]] = {}
+
+    #: Whether this module asks the platform's model to answer a prompt.
+    #: Declared on the class so the hub can refuse an undeclared reach and
+    #: record who spends model turns in the same ledger as module imports.
+    ai: bool = False
 
     #: Other modules whose shared, read-only data this one may read.
     reads_common: tuple[str, ...] = ()
@@ -596,6 +643,41 @@ class Recipe:
         quotes, spaces or an apostrophe without anything needing to be escaped.
         """
         return self.bus.frago(argv, timeout=timeout)
+
+    def ask_ai(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        response_json: bool = False,
+        timeout: int = 120,
+    ) -> Any:
+        """Ask the platform's model to answer a prompt (pure chat, no tools).
+
+        Write ``ai = True`` on the recipe class, then hand over the prompt::
+
+            class MyRecipe(Recipe):
+                name = "my_recipe"
+                ai = True
+
+                def mode_run(self):
+                    out = self.ask_ai("只输出一个 JSON 对象：...", response_json=True)
+
+        **Why this exists alongside ask_frago.** ``frago agent`` starts a full
+        coding worker with tools, session files, and stop hooks — right for
+        writing a recipe, wrong when a recipe only needs a model to summarize,
+        classify, or extract JSON from text it already has in hand. Through
+        this door the hub runs a single toolless chat turn and hands back
+        either the text or, with ``response_json=True``, the parsed JSON
+        object/array (raising ``RecipeFailed`` with ``status="invalid_json"``
+        if the answer is not valid JSON).
+        """
+        return self.bus.ai(
+            prompt,
+            system=system,
+            response_json=response_json,
+            timeout=timeout,
+        )
 
     def publish(self, state: dict, slot: str = "default") -> str:
         """Publish what this module's page should render; returns its address.
@@ -885,3 +967,32 @@ def _refuse_paths(state: Any, _where: str = "") -> None:
             f"页面是前端、模块是后端，前端不碰后端的文件系统——"
             f"数据走接口（页面调本模块导出的只读 mode），不走路径。"
         )
+
+
+def _extract_json(text: str) -> Any:
+    """Pull a JSON object or array out of a model's answer, or return ``None``.
+
+    Models asked for "only JSON" still wrap it in a markdown fence often enough
+    that refusing a fenced block turns a good answer into a failure. Anything
+    less structured than a JSON object or array is not guessed at.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    candidates: list[str] = [stripped]
+    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", stripped):
+        block = match.group(1).strip()
+        if block:
+            candidates.append(block)
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        first, last = stripped.find(open_ch), stripped.rfind(close_ch)
+        if first >= 0 and last > first:
+            candidates.append(stripped[first:last + 1])
+    for raw in candidates:
+        try:
+            got = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(got, (dict, list)):
+            return got
+    return None

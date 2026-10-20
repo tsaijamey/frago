@@ -118,6 +118,17 @@ class FragoRequest(BaseModel):
     timeout: int = Field(default=120, ge=1, le=600)
 
 
+class AiRequest(BaseModel):
+    #: The prompt text handed to the model for a single toolless chat turn.
+    prompt: str = Field(..., min_length=1, description="交给模型的提示词")
+    system: str | None = Field(default=None, description="可选的系统提示词")
+    timeout: int = Field(default=120, ge=1, le=600)
+    #: Whether the calling recipe class declared ``ai = True``. Checked here
+    #: rather than in the caller so an undeclared reach is both refused and
+    #: recorded in ``bus-edges.jsonl``.
+    caller_ai: bool = Field(default=False, description="调用方是否在类上声明了 ai = True")
+
+
 class PublishRequest(BaseModel):
     recipe: str
     slot: str = "default"
@@ -492,6 +503,127 @@ async def bus_frago(req: FragoRequest, request: Request):
                  "" if done.returncode == 0 else f"exit {done.returncode}")
     return {"ok": True, "code": done.returncode,
             "stdout": done.stdout, "stderr": done.stderr}
+
+
+def _resolve_ai_profile_id() -> str | None:
+    """Pick the endpoint profile for a recipe's chat turn.
+
+    A recipe asking a model for a completion is background worker work, so if
+    the machine has a worker endpoint profile with an API key, prefer that;
+    otherwise return ``None`` and let ``frago-core`` fall back through its
+    normal resolution chain (coreagent -> active -> first saved profile).
+    """
+    try:
+        from frago.init.profile_manager import KIND_ENDPOINT, WORKER_ROLE, role_connection
+
+        conn = role_connection(WORKER_ROLE)
+        if conn is not None and conn.kind == KIND_ENDPOINT and conn.api_key:
+            return conn.id
+    except Exception:
+        logger.debug("bus: could not resolve worker profile, falling back to default", exc_info=True)
+    return None
+
+
+@router.post("/ai")
+async def bus_ai(req: AiRequest, request: Request):
+    """A recipe asking the platform's model to answer a prompt (pure chat, no tools).
+
+    **Why this is its own door rather than ``frago agent``.** ``frago agent``
+    starts a coding worker with tools, session files, and stop hooks. Recipes
+    that only needed a model to summarize text or emit JSON had to shell out to
+    ``ask_frago(["agent", ...])``, hard-coding profile names and agent types that
+    go stale the day the owner switches models, and paying for tool schemas and
+    stop-hook checks on a turn that must not touch the filesystem.
+
+    Here the caller hands over a prompt and nothing about *which* model or
+    *which* driver runs it; the hub routes it through ``kernel_backend.run_chat_turn``
+    (``frago-core --mode chat``) and records the edge in ``bus-edges.jsonl``
+    under ``callee="ai", mode="chat"``.
+    """
+    import os
+
+    from frago.agent_driver import kernel_backend
+
+    caller = request.headers.get("X-Frago-Recipe", "") or "(unknown)"
+
+    if not req.caller_ai:
+        _record_edge(caller, "ai", "chat", False, "caller-did-not-declare")
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{caller} 没有声明会调模型，不能走这条路。"
+                    f"在配方类上写 ai = True——"
+                    f"谁会花模型额度、谁纯本地算，得在类上一眼看出来。"),
+        )
+
+    if "\0" in req.prompt or (req.system and "\0" in req.system):
+        _record_edge(caller, "ai", "chat", False, "prompt-contains-nul")
+        raise HTTPException(status_code=400, detail="prompt 里不能有 NUL 字节")
+
+    prompt_body = req.prompt.strip()
+    if not prompt_body:
+        _record_edge(caller, "ai", "chat", False, "empty-prompt")
+        raise HTTPException(status_code=400, detail="prompt 不能为空")
+
+    full_prompt = (
+        f"{req.system.strip()}\n\n{prompt_body}"
+        if req.system and req.system.strip()
+        else prompt_body
+    )
+    env = {k: v for k, v in os.environ.items() if k not in _CALLER_ONLY_ENV}
+    profile_id = _resolve_ai_profile_id()
+
+    try:
+        turn = await asyncio.to_thread(
+            kernel_backend.run_chat_turn,
+            full_prompt,
+            cwd=str(Path.home()),
+            profile_id=profile_id,
+            timeout_s=req.timeout,
+            env=env,
+        )
+    except Exception as err:
+        logger.exception("bus: ai chat failed for %s", caller)
+        _record_edge(caller, "ai", "chat", True, f"failed: {err}")
+        return {
+            "ok": False,
+            "status": "error",
+            "text": "",
+            "duration_ms": 0,
+            "error": {"code": "ai-failed", "status": "error", "message": str(err)},
+        }
+
+    text = turn.text or ""
+    if turn.status != "ok":
+        _record_edge(caller, "ai", "chat", True, f"status: {turn.status}")
+        msg = {
+            "timeout": f"模型超过 {req.timeout}s 没有答完",
+            "needs_input": text.strip() or "模型停下来追问了，没给出结果",
+        }.get(turn.status, text.strip() or f"模型调用失败（{turn.status}）")
+        return {
+            "ok": False,
+            "status": turn.status,
+            "text": text,
+            "duration_ms": turn.duration_ms,
+            "error": {"code": f"ai-{turn.status}", "status": turn.status, "message": msg},
+        }
+
+    if not text.strip():
+        _record_edge(caller, "ai", "chat", True, "empty-response")
+        return {
+            "ok": False,
+            "status": "empty",
+            "text": "",
+            "duration_ms": turn.duration_ms,
+            "error": {"code": "ai-empty", "status": "empty", "message": "模型返回了空内容"},
+        }
+
+    _record_edge(caller, "ai", "chat", True)
+    return {
+        "ok": True,
+        "status": "ok",
+        "text": text,
+        "duration_ms": turn.duration_ms,
+    }
 
 
 @router.post("/publish")
