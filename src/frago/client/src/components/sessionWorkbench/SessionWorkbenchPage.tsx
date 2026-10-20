@@ -1165,6 +1165,7 @@ export default function SessionWorkbenchPage() {
               /* 还没数出来、而且没出错 → 那一档后面写个省略号。出错就不写：个数出不来是
                  因为有故障，那时该说的是故障，不是「正在数」。 */
               filesPending={sessionFiles.files === null && sessionFiles.error === null}
+              usage={usageReadout}
             />
             </DecisionCardContext.Provider>
           )}
@@ -1195,7 +1196,6 @@ export default function SessionWorkbenchPage() {
           onShowInStream={(recordId) => setScrollTarget({ recordId, at: Date.now() })}
           quote={quote}
           contextTokens={contextTokens}
-          usage={usageReadout}
           onHandoff={() => void handoff()}
           handingOff={handingOff}
           notice={composerNotice}

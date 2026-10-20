@@ -385,6 +385,37 @@ describe('RecordStream 中栏', () => {
       render(<RecordStream {...streamProps({ records: [] })} />);
       expect(screen.queryByTestId('stream-lens')).toBeNull();
     });
+
+    it('模型与用量读数常驻在档位条右侧，支持窄屏折行与超长省略', () => {
+      const { rerender } = render(
+        <RecordStream
+          {...streamProps({
+            records: mixed,
+            usage: { model: 'gemini-4-argon-medium', context: 15_200, total: 28_400 },
+          })}
+        />
+      );
+      const lensBar = screen.getByTestId('stream-lens');
+      expect(lensBar.className).toContain('flex-wrap');
+      expect(lensBar.className).toContain('justify-between');
+
+      const usage = screen.getByTestId('stream-lens-usage');
+      expect(lensBar.contains(usage)).toBe(true);
+      expect(usage.textContent).toBe('gemini-4-argon-medium · 上下文 15k · 累计 28k');
+      expect(usage.className).toContain('truncate');
+
+      rerender(
+        <RecordStream
+          {...streamProps({
+            records: mixed,
+            usage: { model: 'claude-opus-5', context: 166_518, total: 5_022_011 },
+          })}
+        />
+      );
+      expect(screen.getByTestId('stream-lens-usage').textContent).toBe(
+        'claude-opus-5 · 上下文 167k · 累计 5.0M'
+      );
+    });
   });
 });
 

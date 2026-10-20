@@ -58,6 +58,7 @@ import SelectionQuote, {
 import FilePeek from '@/components/fileBrowser/FilePeek';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
+import type { ComposerUsage } from './Composer';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
@@ -592,6 +593,27 @@ export interface RecordStreamProps {
   filesCount?: number | null;
   /** 个数还在路上：那一档后面写个省略号，别让它看着像「没有」。 */
   filesPending?: boolean;
+  /**
+   * 档位条右侧常驻的三个数：当前模型、上下文水位、这场累计。
+   *
+   * 宽屏时与左侧六档同处一行、靠右对齐；窄屏同排装不下时自动折到第二行并左对齐，
+   * 极窄时单行尾部省略，悬停保留完整说明。
+   */
+  usage?: ComposerUsage | null;
+}
+
+/** 悬停说明与水位读数里 k 为单位的写法：312k。 */
+function formatK(n: number): string {
+  return `${Math.round(n / 1000)}k`;
+}
+
+/**
+ * 本场累计到七位数，用 k 写成一串谁读不出量级，收一档到 M：30.1M。
+ * 百万以下还是 k，跟上下文用同一把尺子。
+ */
+function formatM(n: number): string {
+  if (n < 1_000_000) return formatK(n);
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 const NO_MARKS: WorkbenchMark[] = [];
@@ -622,8 +644,22 @@ export default function RecordStream({
   onFilesOpenChange,
   filesCount = null,
   filesPending = false,
+  usage = null,
 }: RecordStreamProps) {
   const { t } = useTranslation();
+  /** 档位条右侧那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
+  const usageReadout = useMemo(() => {
+    if (!usage) return '';
+    const parts: string[] = [];
+    if (usage.model) parts.push(usage.model);
+    if (usage.context !== null) {
+      parts.push(`${t('workbench.record.usage.context')} ${formatK(usage.context)}`);
+    }
+    if (usage.total !== null) {
+      parts.push(`${t('workbench.record.usage.total')} ${formatM(usage.total)}`);
+    }
+    return parts.join(' · ');
+  }, [usage, t]);
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
@@ -1144,7 +1180,7 @@ export default function RecordStream({
       {records.length ? (
         <div
           data-testid="stream-lens"
-          className="flex shrink-0 items-center border-b border-border-color px-5 py-2"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
         >
           {/* 六档是一组单选：装在同一块浅底里，当前那一档浮起来。与左栏时间范围同一套长相
               （见 `seg.ts`）。一排放不下时自己横向滚动，不换行、不折字。
@@ -1198,6 +1234,15 @@ export default function RecordStream({
               </Fragment>
             ))}
           </div>
+          {usageReadout ? (
+            <span
+              data-testid="stream-lens-usage"
+              title={t('workbench.composer.usageHint')}
+              className="min-w-0 max-w-full truncate whitespace-nowrap font-mono text-[11px] text-text-dim"
+            >
+              {usageReadout}
+            </span>
+          ) : null}
         </div>
       ) : null}
 

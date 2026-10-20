@@ -138,14 +138,6 @@ export interface ComposerProps {
    * 丢细节，换不来速度。
    */
   contextTokens?: number | null;
-  /**
-   * 输入框右下角常驻的三个数：当前模型、上下文水位、这场累计。
-   *
-   * 原型在这个位置只写上下文一个数。模型名与本场累计从记录流里撤下来之后收在这里——
-   * 它们本来在每一轮回复和每一条用量刻度上各写一遍，一场会话几百轮就是几百遍。
-   * 常驻一行报"现在是哪匹模型、吃到多大、一共烧了多少"，记录流那边只看得到内容。
-   */
-  usage?: ComposerUsage | null;
   /** 按下「交接到新会话」。不给就不画那个按钮。 */
   onHandoff?: () => void;
   /** 交接请求还在路上。 */
@@ -194,15 +186,6 @@ export const HANDOFF_MIN_CONTEXT = 300_000;
 /** 悬停说明里那种 k 为单位的写法：312k。 */
 function formatK(n: number): string {
   return `${Math.round(n / 1000)}k`;
-}
-
-/**
- * 本场累计到七位数，用 k 写成一串谁读不出量级，收一档到 M：30.1M。
- * 百万以下还是 k，跟上下文用同一把尺子。
- */
-function formatM(n: number): string {
-  if (n < 1_000_000) return formatK(n);
-  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 /**
@@ -341,7 +324,6 @@ export default function Composer({
   quote = null,
   answer = null,
   contextTokens = null,
-  usage = null,
   onHandoff,
   handingOff = false,
   notice = null,
@@ -350,19 +332,6 @@ export default function Composer({
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const blocked = blockReason(sessionId);
-  /** 右下角那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
-  const usageReadout = useMemo(() => {
-    if (!usage) return '';
-    const parts: string[] = [];
-    if (usage.model) parts.push(usage.model);
-    if (usage.context !== null) {
-      parts.push(`${t('workbench.record.usage.context')} ${formatK(usage.context)}`);
-    }
-    if (usage.total !== null) {
-      parts.push(`${t('workbench.record.usage.total')} ${formatM(usage.total)}`);
-    }
-    return parts.join(' · ');
-  }, [usage, t]);
   const {
     text,
     setText,
@@ -864,19 +833,6 @@ export default function Composer({
             >
               <Plus size={16} strokeWidth={1.5} />
             </button>
-            {/* 这行的常驻读数：现在是哪一匹模型、上下文吃到多大、这一场一共烧了多少。
-                原型只把上下文那个数摆在 Send 左边；模型名与本场累计从记录流里收下来后
-                一并留在这里，但**不夹在按钮中间**——右边那几颗按钮挨成一堆，读数靠左跟
-                附件同侧。取不到的那一项直接不占位，不写空壳。 */}
-            {usageReadout ? (
-              <span
-                data-testid="composer-usage"
-                title={t('workbench.composer.usageHint')}
-                className="min-w-0 shrink truncate whitespace-nowrap font-mono text-[11px] text-text-dim"
-              >
-                {usageReadout}
-              </span>
-            ) : null}
             <span className="flex-1" />
             {/* 「带回主线」只在分支会话里出现，挨着交接，同一档写法：描品牌色的边，不跟发送
                 抢眼。点了切回原会话，最后一段回复按引用格式落进输入框，不自动发出。 */}
