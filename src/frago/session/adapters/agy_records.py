@@ -707,14 +707,14 @@ def _review_line(record: dict[str, Any]) -> str | None:
     return None
 
 
-def context_for_review(
+def review_context(
     transcript_path: str | Path | None,
     conversation_id: str | None = None,
     *,
     max_lines: int = _REVIEW_MAX_LINES,
     line_chars: int = _REVIEW_LINE_CHARS,
-) -> tuple[str | None, str | None]:
-    """给引擎那一趟复核备料：本轮用户那句话，以及前面几轮的提要。
+) -> tuple[str | None, str | None, bool]:
+    """给引擎那一趟复核备料，并回答「这是本轮的第一次模型调用吗」。
 
     **为什么由垫片来备。** 引擎的 ``UserPromptSubmit`` 靠 ``prompt`` 判"用户到底要什么"、
     靠 ``recent_turns`` 判"前面说到哪儿了"。claude 那边这两样它自己从转录里读——那份格式
@@ -725,17 +725,27 @@ def context_for_review(
     本轮那句话**不重复进提要**：它自己有 ``prompt`` 那一栏，两边都给等于让复核把同一句
     读两遍。
 
-    返回 ``(prompt, recent_turns)``，各自可能是 None（转录读不到、或还没有内容）。
+    第三个返回值 ``is_first_call`` 是给「一轮一次」用的。agy 的 ``PreInvocation`` 是**每次
+    模型调用**都触发（实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude 那边一轮
+    只有一次。判据就落在转录上：**最后一条 ``USER_INPUT`` 之后出现过 ``PLANNER_RESPONSE``，
+    就说明这一轮已经跑过模型了**，这一次是后续步骤而不是用户刚提交。
+
+    这条判据是无状态的——只读转录，不记事。不依赖 ``invocationNum``：实测它每次模型调用
+    都 +1（0、1、2…），不是每轮一个值，拿它判「变化」等于每次都放行。
+
+    返回 ``(prompt, recent_turns, is_first_call)``。转录读不到时有话直说：
+    ``is_first_call`` 为 True，让引擎照旧干活——**复核少跑一次的代价，远小于它悄悄
+    再也不跑**（那正是这套东西上一次栽的地方）。
     """
     path: Path | None = Path(transcript_path) if transcript_path else None
     if path is None or not path.is_file():
         path = agy_store.display_transcript_path(conversation_id) if conversation_id else None
     if path is None or not path.is_file():
-        return None, None
+        return None, None, True
 
     records = agy_store.read_records(path)
     if not records:
-        return None, None
+        return None, None, True
 
     last_user: int | None = None
     for index, record in enumerate(records):
@@ -748,6 +758,13 @@ def context_for_review(
         text, _meta = _split_user_input(content if isinstance(content, str) else "")
         prompt = text or None
 
+    # ``PLANNER_RESPONSE`` 是模型每一拍的产出。最后一条 USER_INPUT 之后只要出现过一次，
+    # 这一轮就已经开了头，眼下这一次是后续步骤。
+    is_first_call = not any(
+        record.get("type") == agy_store.RECORD_PLANNER
+        for record in (records[last_user + 1 :] if last_user is not None else records)
+    )
+
     earlier = records[:last_user] if last_user is not None else records
     lines: list[str] = []
     for record in earlier:
@@ -756,7 +773,24 @@ def context_for_review(
             continue
         lines.append(line if len(line) <= line_chars else line[:line_chars] + "…")
 
-    return prompt, ("\n".join(lines[-max_lines:]) or None)
+    return prompt, ("\n".join(lines[-max_lines:]) or None), is_first_call
+
+
+def context_for_review(
+    transcript_path: str | Path | None,
+    conversation_id: str | None = None,
+    *,
+    max_lines: int = _REVIEW_MAX_LINES,
+    line_chars: int = _REVIEW_LINE_CHARS,
+) -> tuple[str | None, str | None]:
+    """只要备料、不问轮次的老签名。转发给 :func:`review_context`。"""
+    prompt, recent, _is_first_call = review_context(
+        transcript_path,
+        conversation_id,
+        max_lines=max_lines,
+        line_chars=line_chars,
+    )
+    return prompt, recent
 
 
 class AgyRecordAdapter:

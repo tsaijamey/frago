@@ -804,6 +804,55 @@ def test_转录读不到时两样都给None(app_dir):
     assert agy_records.context_for_review(None, None) == (None, None)
 
 
+# ── 一轮一次：哪一次才算是"用户刚提交" ────────────────────────────────
+def test_本轮第一次模型调用认得出(app_dir):
+    """最后一条 USER_INPUT 之后还没有 PLANNER_RESPONSE —— 这就是用户刚提交的那一下。"""
+    _write(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>上一轮</USER_REQUEST>"),
+            _planner(1, content="上一答"),
+            _user(2, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+        ],
+    )
+    prompt, _recent, is_first = agy_records.review_context(None, CONVERSATION_ID)
+    assert prompt == "本轮这句"
+    assert is_first is True
+
+
+def test_同一轮的后续步骤认得出不是第一次(app_dir):
+    """本轮已经跑过一拍模型了，眼下的 PreInvocation 是后续步骤，不该再跑复核。"""
+    _write(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+            _planner(1, content="第一拍"),
+        ],
+    )
+    _prompt, _recent, is_first = agy_records.review_context(None, CONVERSATION_ID)
+    assert is_first is False
+
+
+def test_后续步骤数个几拍都还是不是第一次(app_dir):
+    """一轮之内第 2、3、5 拍都一样：只要本轮的 PLANNER_RESPONSE 出现过就不算第一次。"""
+    for extra in (2, 3, 5):
+        _write(
+            app_dir,
+            [
+                _user(0, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+                *[_planner(i, content=f"第{i}拍") for i in range(1, extra + 1)],
+            ],
+        )
+        _prompt, _recent, is_first = agy_records.review_context(None, CONVERSATION_ID)
+        assert is_first is False, f"本轮已有 {extra} 拍，不该判成第一次"
+
+
+def test_转录读不到时当第一次处理(app_dir):
+    """判不出来就放行：复核少跑一次的代价远小于它悄悄再也不跑。"""
+    assert agy_records.review_context(None, "00000000-0000-0000-0000-000000000000")[2] is True
+    assert agy_records.review_context(None, None)[2] is True
+
+
 def test_优先用agy递过来的路径(app_dir, tmp_path):
     """hook 载荷里那份路径是 agy 自己给的，比按编号去猜准。"""
     elsewhere = tmp_path / "别处" / "transcript.jsonl"

@@ -272,13 +272,17 @@ def test_pre_invocation翻成user_prompt_submit():
 
 
 def test_pre_invocation把那句话与前面几轮一并递给引擎(monkeypatch):
-    """agy 的载荷里没有用户那句话，引擎判"用户到底要什么"正需要它——回读转录补上。"""
+    """agy 的载荷里没有用户那句话，引擎判"用户到底要什么"正需要它——回读转录补上。
+
+    只在**本轮第一次模型调用**时补：agy 的 PreInvocation 每次调模型都触发，若每次都补，
+    轻量 ai 的每轮复核就跟着每一步跑一遍。
+    """
     from frago.session.adapters import agy_records
 
     monkeypatch.setattr(
         agy_records,
-        "context_for_review",
-        lambda path, cid: ("本轮这句", "[用户] 上一句\n[助手] 上一答"),
+        "review_context",
+        lambda path, cid, **kw: ("本轮这句", "[用户] 上一句\n[助手] 上一答", True),
     )
 
     out = agy_hook.translate_input(
@@ -291,11 +295,35 @@ def test_pre_invocation把那句话与前面几轮一并递给引擎(monkeypatch
     assert out["recent_turns"] == "[用户] 上一句\n[助手] 上一答"
 
 
+def test_同一轮后续步骤不再递prompt(monkeypatch):
+    """一轮之内第二次及以后的模型调用：什么都不递。
+
+    引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型调用），确定性规则照旧由
+    dispatch 跑完返回。这就是「轻量 ai 不再每个步骤触发一次」的落点。
+    """
+    from frago.session.adapters import agy_records
+
+    monkeypatch.setattr(
+        agy_records,
+        "review_context",
+        lambda path, cid, **kw: ("本轮这句", "[用户] 上一句", False),
+    )
+
+    out = agy_hook.translate_input(
+        {"conversationId": "c-1", "transcriptPath": "/tmp/t.jsonl", "workspacePaths": ["/tmp"]},
+        "PreInvocation",
+    )
+
+    assert out["hook_event_name"] == "UserPromptSubmit"
+    assert "prompt" not in out
+    assert "recent_turns" not in out
+
+
 def test_读不出转录就什么都不补(monkeypatch):
     """瞎猜一句喂过去比不喂坏得多——复核会照着错的那句话给建议，人还看不出它判错了对象。"""
     from frago.session.adapters import agy_records
 
-    monkeypatch.setattr(agy_records, "context_for_review", lambda path, cid: (None, None))
+    monkeypatch.setattr(agy_records, "review_context", lambda path, cid, **kw: (None, None, True))
 
     out = agy_hook.translate_input({"conversationId": "c-1"}, "PreInvocation")
 
