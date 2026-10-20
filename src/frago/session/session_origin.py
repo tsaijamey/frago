@@ -66,9 +66,15 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 from frago.session import coreagent_store
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
@@ -217,10 +223,37 @@ def is_worker_shape(session_id: str) -> bool:
 # ── 判据一：起 worker 那一刻记下的账 ────────────────────────────────────────
 
 
-# 账本是「读—改—原子替换」。派活与起分支可能在同一个服务进程里同时发生，两边各读一份、
-# 各写回去，先写的那条就丢了。进程内这把锁挡住这种情况；跨进程（命令行派活与页面起分支
-# 撞在同一刻）仍可能丢一条，那只影响左栏的挂靠显示，不影响会话本身已经起好。
+# 账本是「读—改—原子替换」。两层锁缺一不可：
+# - ``_ledger_lock``（进程内）管同一个进程里的多线程（``flock`` 绑在各自打开的
+#   文件描述符上，同进程两个线程各 open 一次会各拿各的锁，谁也不等谁）。
+# - 旁挂 ``agent-launches.json.lock`` 上的 ``flock``（跨进程）管同时跑起来的多个
+#   ``frago agent`` 命令行进程与服务端进程。锁挂在旁挂文件而非账本本体上，因为
+#   ``_write_json`` 用 ``replace`` 换掉了账本的 inode，锁本体会让排队等旧 inode
+#   的进程醒来读到旧内容并把前一个进程刚写好的记录冲掉。
 _ledger_lock = threading.Lock()
+
+
+def _ledger_lock_path() -> Path:
+    """每次按当前 ``LAUNCH_LEDGER`` 现取旁挂锁路径，单测改指 ``LAUNCH_LEDGER`` 时跟着进临时目录。"""
+    return LAUNCH_LEDGER.with_name(LAUNCH_LEDGER.name + ".lock")
+
+
+@contextlib.contextmanager
+def _locked_ledger() -> Iterator[None]:
+    """跨线程 + 跨进程串行持有账本的读—改—写临界区。"""
+    with _ledger_lock:
+        lock_path = _ledger_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            if fcntl is not None:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
 
 def _ledger_entries() -> list[Any]:
@@ -263,7 +296,7 @@ def record_relation(
     if kind == "branch":
         entry.update({"anchor": anchor, "note": note or "", "closed_at": None, "closed_by": None})
     try:
-        with _ledger_lock:
+        with _locked_ledger():
             entries = _ledger_entries()
             entries.append(entry)
             written = _write_json(LAUNCH_LEDGER, entries[-LEDGER_LIMIT:])
@@ -464,7 +497,7 @@ def close_relation(
     NEVER 让页面以为收了口、刷新之后虚线又回来。
     """
     global _memo
-    with _ledger_lock:
+    with _locked_ledger():
         entries = _ledger_entries()
         hit: int | None = None
         for i, item in enumerate(entries):

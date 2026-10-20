@@ -126,6 +126,54 @@ class TestLedger:
         entries = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
         assert [e["child"] for e in entries] == ["child-2", "child-3", "child-4"]
 
+    def test_多进程同时派活不丢账(self, ledger, empty_projects):
+        # 主会话在一行命令里用 `&` 并行起多个 `frago agent` 时，多个子进程会在同一毫秒
+        # 各自跑「读账本 → 追加 → replace 写回」。只靠进程内 threading.Lock 会互相冲掉先写
+        # 的那条，导致其中一个 worker 在左栏掉出父会话、散成顶层独立会话。
+        import multiprocessing
+
+        ctx = multiprocessing.get_context("spawn")
+        ledger_path = str(session_origin.LAUNCH_LEDGER)
+        barrier = ctx.Barrier(6)
+
+        with ctx.Pool(
+            6,
+            initializer=_mp_init_worker,
+            initargs=(barrier, ledger_path),
+        ) as pool:
+            pool.map(_mp_record_one, [f"core_worker_{i}" for i in range(6)])
+
+        entries = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
+        assert {e["child"] for e in entries} == {f"core_worker_{i}" for i in range(6)}
+        index = _index(empty_projects)
+        for i in range(6):
+            assert index.parent_of(f"core_worker_{i}") == HUMAN_SID
+            assert index.origin_of(f"core_worker_{i}") == "worker"
+
+
+_MP_BARRIER = None
+_MP_LEDGER_PATH = None
+
+
+def _mp_init_worker(barrier, ledger_path: str) -> None:
+    global _MP_BARRIER, _MP_LEDGER_PATH
+    _MP_BARRIER = barrier
+    _MP_LEDGER_PATH = ledger_path
+
+
+def _mp_record_one(child_id: str) -> None:
+    from pathlib import Path
+
+    session_origin.LAUNCH_LEDGER = Path(_MP_LEDGER_PATH)
+    _MP_BARRIER.wait(timeout=10)
+    session_origin.record_launch(
+        child_session_id=child_id,
+        parent_session_id=HUMAN_SID,
+        agent_type="coreagent",
+        cwd="/tmp",
+        prompt_head=f"# Worker Task: {child_id}",
+    )
+
 
 class TestOriginFallback:
     """判不出来的时候站哪一边。"""
