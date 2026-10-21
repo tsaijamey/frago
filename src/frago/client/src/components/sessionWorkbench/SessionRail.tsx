@@ -107,12 +107,20 @@ type RailRow =
       kind: 'session';
       session: WorkbenchSession;
       nested?: boolean;
+      /** 组内缩进层级：0 顶层，1 父卡下的 worker / 分支卡，2 分支下的 worker / 分支的分支卡。 */
+      indent?: number;
+      /** 这是分支容器里的分支卡：整卡描边加底色，不是折角的 worker 行。 */
+      branchCard?: boolean;
+      /** 分支容器在这一行上的位置：头、中、尾。 */
+      branchPos?: GroupPos;
       workerCount?: number;
       workersExpanded?: boolean;
       groupPos?: GroupPos;
       /** 在置顶那一块里。 */
       inPinned?: boolean;
     };
+
+type SessionRow = Extract<RailRow, { kind: 'session' }>;
 
 /**
  * 展开之后，主会话与它的 worker 被一个框圈在一起。框跨了好几行，而每一行在窗口化列表
@@ -298,12 +306,14 @@ export default function SessionRail({
   /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
   const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
 
-  const { trunkRows, childrenOf, orphanRows, pickedRows } = useMemo(() => {
+  const { trunkRows, childrenOf, branchChildrenOf, orphanRows, pickedRows } = useMemo(() => {
     // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
     // 只看下面那一片的话，它的 worker 会认不出父亲、掉进末尾那一区——而它的父亲就摆在
     // 屏幕最上面。
     const present = new Set(visible.map((s) => s.session_id));
+    const byId = new Map(visible.map((s) => [s.session_id, s]));
     const children = new Map<string, WorkbenchSession[]>();
+    const branches = new Map<string, WorkbenchSession[]>();
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
     const picked: WorkbenchSession[] = [];
@@ -322,17 +332,36 @@ export default function SessionRail({
         picked.push(session);
         continue;
       }
-      // **分支会话不折。** 它是人亲手起的、等的也是人：起完要一眼看见它在不在，停下来等你
-      // 拍板时要出现在 For you 那一组里。折进原会话底下，这两件事全被藏住了——worker 能折，
-      // 是因为它等的是派它的那个 agent，不是人。和原会话的关系只写在卡片上那一行出处里。
-      const nestable =
-        session.relation?.kind !== 'branch' &&
+      const parentKnown =
         Boolean(parent) &&
         parent !== session.session_id &&
         present.has(parent as string) &&
         // 自己也被置顶的那几场留在置顶区，不再折进父亲下面：同一场摆两处，人会以为是两场。
         !pins.isPinned(session.session_id);
-      if (nestable) {
+
+      /**
+       * **分支会话和原会话装进同一个容器。** 分支是人亲手起的、等的也是人；把它摊在主干上，
+       * 人看不出它从哪里来。装进容器后，顺序是父卡 → 父的 worker → 分支卡 → 分支的 worker，
+       * 层级一眼能读。父会话被筛掉、或被单独捡回今天时，分支仍按顶层卡处理。
+       */
+      if (session.relation?.kind === 'branch') {
+        // 父会话若只是一条平铺的 worker 行（没有自己的分支容器），分支没地方挂，
+        // 宁可摆回主干，也不能让它从清单里消失。
+        const parentIsFlatWorker =
+          Boolean(parent) &&
+          byId.get(parent as string)?.origin === 'worker' &&
+          byId.get(parent as string)?.relation?.kind !== 'branch';
+        if (parentKnown && !parentIsFlatWorker) {
+          const bucket = branches.get(parent as string);
+          if (bucket) bucket.push(session);
+          else branches.set(parent as string, [session]);
+        } else {
+          trunk.push(session);
+        }
+        continue;
+      }
+
+      if (parentKnown) {
         const bucket = children.get(parent as string);
         if (bucket) bucket.push(session);
         else children.set(parent as string, [session]);
@@ -341,7 +370,13 @@ export default function SessionRail({
       if (session.origin === 'worker') orphans.push(session);
       else trunk.push(session);
     }
-    return { trunkRows: trunk, childrenOf: children, orphanRows: orphans, pickedRows: picked };
+    return {
+      trunkRows: trunk,
+      childrenOf: children,
+      branchChildrenOf: branches,
+      orphanRows: orphans,
+      pickedRows: picked,
+    };
   }, [visible, pins, today]);
 
   /**
@@ -393,28 +428,57 @@ export default function SessionRail({
    * 末尾那一区同理：没有认不出出处的 worker 就不长那行标题。
    */
   const rows = useMemo<RailRow[]>(() => {
-    const trunkWithKids = (session: WorkbenchSession, inPinned = false): RailRow[] => {
+    /**
+     * 一个会话连同它派出去的 worker、分出去的分支，摆成一段连续的清单。
+     *
+     * 顺序照原型：父卡 → 父的 worker（展开时）→ 分支卡 → 分支的 worker（展开时）。
+     * 分支可以再分分支，递归接在后面；所有行同属最外层那个分支容器。
+     * `depth` 只负责缩进，分支卡用 `branchCard` 画整卡描边，不套 worker 的折角样式。
+     */
+    const trunkWithKids = (
+      session: WorkbenchSession,
+      inPinned = false,
+      depth = 0,
+      branchCard = false
+    ): SessionRow[] => {
       const kids = childrenOf.get(session.session_id) ?? [];
+      const branches = branchChildrenOf.get(session.session_id) ?? [];
       const expanded = expandedWorkers.has(session.session_id);
-      const head: RailRow = {
+      const head: SessionRow = {
         kind: 'session',
         session,
         workerCount: kids.length,
         workersExpanded: expanded,
         inPinned,
+        indent: depth,
+        branchCard,
       };
-      if (!kids.length || !expanded) return [head];
-      // 展开之后这一组被一个框圈起来：主会话那行画上半框，子会话画两侧，末一行收底。
-      return [
-        { ...head, groupPos: 'head' as const },
-        ...kids.map((kid, i) => ({
-          kind: 'session' as const,
-          session: kid,
-          nested: true,
-          inPinned,
-          groupPos: (i === kids.length - 1 ? 'tail' : 'mid') as GroupPos,
-        })),
-      ];
+      const out: SessionRow[] = [head];
+      if (kids.length && expanded) {
+        // 展开之后这一组被一个框圈起来：主会话那行画上半框，子会话画两侧，末一行收底。
+        head.groupPos = 'head';
+        out.push(
+          ...kids.map((kid, i) => ({
+            kind: 'session' as const,
+            session: kid,
+            nested: true,
+            indent: depth + 1,
+            inPinned,
+            groupPos: (i === kids.length - 1 ? 'tail' : 'mid') as GroupPos,
+          }))
+        );
+      }
+      for (const branch of branches) {
+        out.push(...trunkWithKids(branch, inPinned, depth + 1, true));
+      }
+      // 只有最外层这段需要画容器；里层的分支继续用同一个框，不再各画一圈。
+      if (depth === 0 && branches.length) {
+        return out.map((row, i) => ({
+          ...row,
+          branchPos: i === 0 ? 'head' : i === out.length - 1 ? 'tail' : 'mid',
+        }));
+      }
+      return out;
     };
 
     const out: RailRow[] = [];
@@ -447,6 +511,7 @@ export default function SessionRail({
     pagedRest,
     restPlaced.length,
     childrenOf,
+    branchChildrenOf,
     orphanRows.length,
     pagedOrphans,
     expandedWorkers,
@@ -995,6 +1060,19 @@ export default function SessionRail({
               }
               const session = row.session;
               const pos = row.groupPos;
+              const branchPos = row.branchPos;
+              /* 缩进按层级走：父卡 0，父的 worker / 分支卡 1，分支的 worker 2，再往下递增。 */
+              const indent = row.indent ?? (row.nested ? 1 : 0);
+              const indentCls =
+                indent <= 0
+                  ? row.inPinned
+                    ? 'px-[3px]'
+                    : 'px-1'
+                  : indent === 1
+                    ? 'pl-4 pr-1'
+                    : indent === 2
+                      ? 'pl-8 pr-1'
+                      : 'pl-12 pr-1';
               /* worker 框的三段：1px、清单的分隔线色、8px 圆角。 */
               const box =
                 pos === 'head'
@@ -1004,12 +1082,25 @@ export default function SessionRail({
                     : pos === 'tail'
                       ? 'rounded-b-[8px] border border-t-0 border-border-color'
                       : '';
+              /* 分支容器：整段用同一层浅底和一圈 10px 圆角框，跨行拆成头、中、尾三段画。 */
+              const branchBox =
+                branchPos === 'head'
+                  ? 'rounded-t-[10px] border-x border-t border-border-color bg-[var(--bg-hover)]'
+                  : branchPos === 'mid'
+                    ? 'border-x border-border-color bg-[var(--bg-hover)]'
+                    : branchPos === 'tail'
+                      ? 'rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
+                      : '';
               const item = (
-                <div className={row.nested && !pos ? 'pl-6 pr-1' : row.inPinned ? 'px-[3px]' : 'px-1'}>
-                  <div className={box} data-group={pos}>
-                    <div className={row.nested && pos ? 'pl-4' : ''}>
-                      {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
-                          只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
+                <div
+                  className={`${indentCls} ${branchPos ? 'mx-1' : ''}`}
+                  data-branch-pos={branchPos}
+                >
+                  <div className={branchBox}>
+                    <div className={branchPos ? 'px-[3px]' : ''}>
+                      <div className={box} data-group={pos}>
+                        {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
+                            只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
                         <SessionItem
                           live={views.isInTmux(session)}
                           session={session}
@@ -1024,6 +1115,7 @@ export default function SessionRail({
                           inTmux={inTmuxOf(session)}
                           card={decisionCardOf?.(session.session_id) ?? null}
                           nested={row.nested}
+                          branchCard={row.branchCard}
                           branchOf={
                             session.relation?.kind === 'branch' && session.parent_session_id
                               ? {
@@ -1043,10 +1135,13 @@ export default function SessionRail({
                           onStopped={handleStopped}
                           onDeleted={handleDeleted}
                         />
+                      </div>
                     </div>
                   </div>
                   {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
-                  {pos === 'head' || pos === 'mid' ? null : <div className="h-0.5" />}
+                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : (
+                    <div className="h-0.5" />
+                  )}
                 </div>
               );
               /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。底色照原型用悬停色那一层浅底，写成不透明的 --rail-pinned-fill

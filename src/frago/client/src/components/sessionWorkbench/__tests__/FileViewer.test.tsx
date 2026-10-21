@@ -423,4 +423,67 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     expect(packed.text).toContain('>>> 把常量提取到配置模块');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('打开 .md 文件时默认进入「预览」模式渲染 Markdown，并可切回「内容」查看源码行', async () => {
+    const mdFiles: SessionFileRow[] = [
+      { path: '/w/docs/design.md', action: 'modified', count: 2, first_seq: 1 },
+    ];
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/docs/design.md',
+      size: 42,
+      text: '# 架构说明\n\n- 第一条约束\n- 第二条约束\n',
+      reason: null,
+    });
+
+    open({ files: mdFiles, index: 0 });
+
+    await waitFor(() => expect(screen.getByTestId('file-viewer-md-preview')).toBeTruthy());
+    expect(screen.getByTestId('file-viewer-mode-preview').getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(screen.getByTestId('file-viewer-md-preview').querySelector('h1')?.textContent).toBe(
+      '架构说明'
+    );
+    expect(screen.getByTestId('file-viewer-md-preview').querySelectorAll('li').length).toBe(2);
+
+    // 预览模式下仍可直接点击 + L1 添加批注
+    fireEvent.click(screen.getByTestId('file-viewer-quick-annotate'));
+    fireEvent.change(screen.getByTestId('file-viewer-inline-input'), {
+      target: { value: '补充架构图' },
+    });
+    fireEvent.click(screen.getByTestId('file-viewer-inline-save'));
+    expect(screen.getByTestId('file-viewer-annotation-item').textContent).toContain('补充架构图');
+
+    // 切到「内容」模式查看带行号的源码
+    fireEvent.click(screen.getByTestId('file-viewer-mode-file'));
+    expect(screen.getByTestId('file-viewer-mode-file').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByTestId('file-viewer-line').length).toBe(4);
+  });
+
+  it('打开 .html 文件时默认进入「预览」模式，通过沙箱 iframe 渲染 HTML 文档', async () => {
+    const htmlFiles: SessionFileRow[] = [
+      { path: '/w/proto/index.html', action: 'created', count: 1, first_seq: 1 },
+    ];
+    const htmlSource = '<!doctype html><html><body><h1>Prototype Demo</h1></body></html>';
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/proto/index.html',
+      size: htmlSource.length,
+      text: htmlSource,
+      reason: null,
+    });
+
+    open({ files: htmlFiles, index: 0 });
+
+    await waitFor(() => expect(screen.getByTestId('file-viewer-html-preview')).toBeTruthy());
+    expect(screen.getByTestId('file-viewer-mode-preview').getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    const iframe = screen.getByTestId('file-viewer-html-preview') as HTMLIFrameElement;
+    expect(iframe.getAttribute('srcdoc')).toBe(htmlSource);
+
+    // 切到「内容」可查看 HTML 源码行
+    fireEvent.click(screen.getByTestId('file-viewer-mode-file'));
+    expect(screen.getByTestId('file-viewer-mode-file').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByTestId('file-viewer-line').length).toBe(1);
+  });
 });

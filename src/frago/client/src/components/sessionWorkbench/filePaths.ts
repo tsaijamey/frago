@@ -113,3 +113,23 @@ export function langOf(path: string): string {
   if (cut <= 0 || cut === base.length - 1) return '';
   return BY_EXTENSION[base.slice(cut + 1).toLowerCase()] ?? '';
 }
+
+export type DocPreviewKind = 'markdown' | 'html';
+
+const MARKDOWN_EXTS = new Set(['md', 'markdown']);
+const HTML_EXTS = new Set(['html', 'htm']);
+
+/**
+ * 判断文件是否支持在 FileViewer 中直接进行文档渲染预览（目前针对 Markdown 与 HTML）。
+ * 其他代码文件返回 null，仅展示「内容 / 改动」两档。
+ */
+export function previewKindOf(path: string): DocPreviewKind | null {
+  const base = baseOf(path);
+  const cut = base.lastIndexOf('.');
+  if (cut <= 0 || cut === base.length - 1) return null;
+  const ext = base.slice(cut + 1).toLowerCase();
+  if (MARKDOWN_EXTS.has(ext)) return 'markdown';
+  if (HTML_EXTS.has(ext)) return 'html';
+  return null;
+}
+

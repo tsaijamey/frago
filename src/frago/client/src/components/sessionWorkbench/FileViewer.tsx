@@ -32,8 +32,9 @@ import {
   type FileAnnotationsState,
 } from '@/hooks/useFileAnnotations';
 import FileDiff from './FileDiff';
-import { baseOf, dirOf, langOf, withTilde } from './filePaths';
+import { baseOf, dirOf, langOf, previewKindOf, withTilde } from './filePaths';
 import { FILE_BADGE } from './fileBadge';
+import MarkdownContent from '@/components/ui/MarkdownContent';
 import {
   MAX_AUTODETECT_CHARS,
   MAX_HIGHLIGHT_CHARS,
@@ -133,7 +134,13 @@ export default function FileViewer({
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [mode, setMode] = useState<'file' | 'changes'>('file');
+  const path = file?.path ?? '';
+  const lang = useMemo(() => langOf(path), [path]);
+  const previewKind = useMemo(() => previewKindOf(path), [path]);
+
+  const [mode, setMode] = useState<'preview' | 'file' | 'changes'>(() =>
+    previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file'
+  );
   const [diff, setDiff] = useState<SessionFileDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -144,17 +151,14 @@ export default function FileViewer({
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const codeContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const path = file?.path ?? '';
-  const lang = useMemo(() => langOf(path), [path]);
-
-  // 现取文件内容；切换文件时收起未保存的行内批注草稿。
+  // 现取文件内容；切换文件时收起未保存的行内批注草稿，并根据是否支持文档渲染预览设置默认模式。
   useEffect(() => {
     if (!path) return;
     let alive = true;
     setContent(null);
     setError(null);
     setLoading(true);
-    setMode('file');
+    setMode(previewKindOf(path) ? 'preview' : 'file');
     setDiff(null);
     setDiffError(null);
     setDraftRange(null);
@@ -334,6 +338,32 @@ export default function FileViewer({
     sel.removeAllRanges();
   }, [openLineDraft]);
 
+  /** 在 Markdown 渲染预览中划选文本时，反查源码行号区间并打开批注框。 */
+  const handlePreviewMouseUp = useCallback(() => {
+    const sel = window.getSelection?.();
+    if (!sel || sel.isCollapsed || text === null) return;
+    const selectedText = sel.toString().trim();
+    if (!selectedText) return;
+    let lineStart = 1;
+    let lineEnd = 1;
+    const idx = text.indexOf(selectedText);
+    if (idx !== -1) {
+      lineStart = text.slice(0, idx).split('\n').length;
+      lineEnd = lineStart + selectedText.split('\n').length - 1;
+    } else {
+      const firstToken = selectedText.split('\n')[0]?.trim() ?? '';
+      if (firstToken) {
+        const foundLineIdx = lines.findIndex((line) => line.includes(firstToken));
+        if (foundLineIdx !== -1) {
+          lineStart = foundLineIdx + 1;
+          lineEnd = lineStart + Math.max(0, selectedText.split('\n').length - 1);
+        }
+      }
+    }
+    openLineDraft(lineStart, lineEnd, selectedText);
+    sel.removeAllRanges();
+  }, [text, lines, openLineDraft]);
+
   const handlePackToPrompt = useCallback(() => {
     if (!annotations.length) return;
     const effectiveTrace =
@@ -425,7 +455,10 @@ export default function FileViewer({
               data-testid="file-viewer-mode"
               className="ml-1 flex shrink-0 items-center rounded-[6px] bg-bg-hover p-[2px]"
             >
-              {(['file', 'changes'] as const).map((id) => (
+              {(previewKind
+                ? (['preview', 'file', 'changes'] as const)
+                : (['file', 'changes'] as const)
+              ).map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -438,13 +471,19 @@ export default function FileViewer({
                       : 'text-text-muted hover:text-text-secondary'
                   }`}
                 >
-                  {t(id === 'file' ? 'workbench.files.modeFile' : 'workbench.files.modeChanges')}
+                  {t(
+                    id === 'preview'
+                      ? 'workbench.files.modePreview'
+                      : id === 'file'
+                        ? 'workbench.files.modeFile'
+                        : 'workbench.files.modeChanges'
+                  )}
                 </button>
               ))}
             </span>
           ) : null}
 
-          {mode === 'file' ? (
+          {mode !== 'changes' ? (
             <button
               type="button"
               data-testid="file-viewer-annotate-toggle"
@@ -577,6 +616,114 @@ export default function FileViewer({
               </div>
             ) : text === null ? (
               noPreview()
+            ) : mode === 'preview' && previewKind ? (
+              <div data-testid="file-viewer-doc-preview" className="flex min-h-full flex-col">
+                <div
+                  data-testid="file-viewer-annotate-bar"
+                  className="sticky top-0 z-[2] flex items-center justify-between gap-2 border-b border-border-color bg-bg-secondary px-3.5 py-1.5 text-[11px] text-text-muted"
+                >
+                  <span>
+                    {t(
+                      previewKind === 'markdown'
+                        ? 'workbench.files.previewAnnotateHint'
+                        : 'workbench.files.htmlPreviewHint'
+                    )}
+                  </span>
+                  {lines.length > 0 ? (
+                    <button
+                      type="button"
+                      data-testid="file-viewer-quick-annotate"
+                      onClick={() => openLineDraft(1, 1)}
+                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[10.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    >
+                      + L1
+                    </button>
+                  ) : null}
+                </div>
+
+                {draftRange ? (
+                  <div
+                    data-testid="file-viewer-inline-editor"
+                    className="mx-4 my-2.5 rounded-[8px] border border-border-strong bg-bg-elevated p-2.5 font-sans shadow-lg"
+                  >
+                    <div className="mb-1.5 flex items-center justify-between text-[11px] text-text-muted">
+                      <span className="font-mono text-text-secondary">
+                        {t('workbench.files.annotateLineTitle', {
+                          file: baseOf(file.path),
+                          range:
+                            draftRange.lineStart === draftRange.lineEnd
+                              ? `L${draftRange.lineStart}`
+                              : `L${draftRange.lineStart}–L${draftRange.lineEnd}`,
+                        })}
+                      </span>
+                      <span>{t('workbench.files.annotateShortcutHint')}</span>
+                    </div>
+                    <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border-l-2 border-border-strong bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                      {draftRange.quote}
+                    </div>
+                    <textarea
+                      ref={draftInputRef}
+                      data-testid="file-viewer-inline-input"
+                      value={draftNote}
+                      onChange={(e) => setDraftNote(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                          e.preventDefault();
+                          saveDraft();
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDraftRange(null);
+                          setDraftNote('');
+                        }
+                      }}
+                      rows={2}
+                      placeholder={t('workbench.files.annotatePlaceholder')}
+                      className="w-full resize-y rounded-[6px] border border-border-strong bg-bg-card px-2.5 py-1.5 text-[12px] leading-[1.45] text-text-primary outline-none focus:border-text-muted"
+                    />
+                    <div className="mt-2 flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        data-testid="file-viewer-inline-cancel"
+                        onClick={() => {
+                          setDraftRange(null);
+                          setDraftNote('');
+                        }}
+                        className="rounded-[6px] border border-border-color px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        {t('workbench.files.annotateCancel')}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="file-viewer-inline-save"
+                        disabled={!draftNote.trim()}
+                        onClick={saveDraft}
+                        className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
+                      >
+                        {t('workbench.files.annotateSave')}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {previewKind === 'markdown' ? (
+                  <div
+                    data-testid="file-viewer-md-preview"
+                    onMouseUp={handlePreviewMouseUp}
+                    className="mx-auto w-full max-w-[820px] flex-1 px-6 py-5 text-[13.5px] leading-[1.7] text-text-primary"
+                  >
+                    <MarkdownContent content={text} />
+                  </div>
+                ) : (
+                  <iframe
+                    data-testid="file-viewer-html-preview"
+                    title={baseOf(file.path)}
+                    srcDoc={text}
+                    sandbox="allow-scripts allow-same-origin"
+                    className="min-h-[480px] w-full flex-1 border-0 bg-white"
+                  />
+                )}
+              </div>
             ) : (
               <div className="flex min-h-full flex-col">
                 <div
@@ -746,7 +893,7 @@ export default function FileViewer({
           </div>
 
           {/* 右栏：会话级批注清单、落盘溯源路径与打包填入 Composer */}
-          {mode === 'file' && annotationsOpen ? (
+          {mode !== 'changes' && annotationsOpen ? (
             <aside
               data-testid="file-viewer-annotations-rail"
               className="flex min-h-0 flex-col border-l border-border-color bg-bg-secondary tablet:hidden"

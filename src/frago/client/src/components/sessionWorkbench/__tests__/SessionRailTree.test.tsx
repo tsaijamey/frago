@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import { TestRail, fakeForYou } from './railTestKit';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
@@ -176,8 +176,11 @@ describe('SessionRail 两层清单', () => {
   });
 });
 
-describe('SessionRail 分支会话不折', () => {
+describe('SessionRail 分支与原会话同容器', () => {
   const BRANCH = '9a1d2c3e-4b5f-4a6b-8c7d-0e1f2a3b4c5d';
+  const BRANCH_WORKER = 'c3f7a2d1-8e4b-4f6a-9d2c-1b0e5a7f3c8d';
+  const branchPosOf = (el: HTMLElement) =>
+    el.closest('[data-branch-pos]')?.getAttribute('data-branch-pos') ?? null;
   const rows = [
     session({ session_id: BOSS, title: '主线：全局字号' }),
     session({ session_id: WORKER_A, origin: 'worker', parent_session_id: BOSS }),
@@ -189,15 +192,52 @@ describe('SessionRail 分支会话不折', () => {
     }),
   ];
 
-  it('分支和人开的会话一样摆在主干上，worker 照旧折在原会话下', () => {
+  it('父卡与分支卡装进同一个容器，分支卡仍是一张完整的卡', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const items = screen.getAllByTestId('session-item');
     expect(items).toHaveLength(2);
-    const branch = items.find((el) => el.textContent?.includes('全局字号倍率处理'));
-    expect(branch).toBeTruthy();
-    expect(branch?.getAttribute('data-nested')).toBeNull();
+    expect(items[0].textContent).toContain('主线：全局字号');
+    expect(branchPosOf(items[0])).toBe('head');
+    expect(items[1].textContent).toContain('全局字号倍率处理');
+    expect(branchPosOf(items[1])).toBe('tail');
+    expect(items[1].getAttribute('data-nested')).toBeNull();
     // 原会话那一叠只装 worker：条数是 1，不是 2
     expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('1');
+  });
+
+  it('展开父会话的 worker：父卡 → worker → 分支卡，仍在同一容器里', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    fireEvent.click(screen.getByTestId('toggle-workers'));
+    const items = screen.getAllByTestId('session-item');
+    expect(items).toHaveLength(3);
+    expect(items[0].textContent).toContain('主线：全局字号');
+    expect(items[1].textContent).toContain(`会话 ${WORKER_A}`);
+    expect(items[1].getAttribute('data-nested')).toBe('true');
+    expect(items[2].textContent).toContain('全局字号倍率处理');
+    expect(items.map(branchPosOf)).toEqual(['head', 'mid', 'tail']);
+  });
+
+  it('分支自己的 worker 折在分支卡下，不跑出容器', () => {
+    const withKid = [
+      ...rows,
+      session({
+        session_id: BRANCH_WORKER,
+        title: '分支派出的 worker',
+        origin: 'worker',
+        parent_session_id: BRANCH,
+      }),
+    ];
+    render(<TestRail state={railState(withKid)} selectedId={null} onSelect={NOOP} />);
+    const branch = screen
+      .getAllByTestId('session-item')
+      .find((el) => el.textContent?.includes('全局字号倍率处理'))!;
+    fireEvent.click(within(branch).getByTestId('toggle-workers'));
+    const items = screen.getAllByTestId('session-item');
+    expect(items).toHaveLength(3);
+    expect(items[2].textContent).toContain('分支派出的 worker');
+    expect(items[2].getAttribute('data-nested')).toBe('true');
+    expect(branchPosOf(items[2])).toBe('tail');
+    expect(items.map(branchPosOf)).toEqual(['head', 'mid', 'tail']);
   });
 
   it('卡片上写出处，点它切到原会话、不选中分支本身', () => {
@@ -210,7 +250,7 @@ describe('SessionRail 分支会话不折', () => {
     expect(onSelect).toHaveBeenCalledWith(BOSS);
   });
 
-  it('分支停下等你：挂 For you 标记，仍按创建顺序摆在主干里、不藏在原会话下', () => {
+  it('分支停下等你：挂 For you 标记，仍在原会话的容器里', () => {
     render(
       <TestRail
         state={railState(rows)}
@@ -227,12 +267,17 @@ describe('SessionRail 分支会话不折', () => {
       .find((el) => el.textContent?.includes('全局字号倍率处理'))!;
     expect(branch.getAttribute('data-for-you')).toBe('true');
     expect(branch.getAttribute('data-nested')).toBeNull();
+    expect(branchPosOf(branch)).toBe('tail');
   });
 
-  it('只有 worker 折；原会话被筛掉时分支照样在主干上', () => {
+  it('原会话被筛掉时分支摆回主干，不留在空容器里', () => {
     const state = railState(rows, { visible: rows.filter((s) => s.session_id !== BOSS) });
     render(<TestRail state={state} selectedId={null} onSelect={NOOP} />);
     expect(shownTitles().some((t) => t.includes('全局字号倍率处理'))).toBe(true);
+    const branch = screen
+      .getAllByTestId('session-item')
+      .find((el) => el.textContent?.includes('全局字号倍率处理'))!;
+    expect(branchPosOf(branch)).toBeNull();
   });
 });
 

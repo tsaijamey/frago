@@ -214,6 +214,7 @@ export default function SessionItem({
   card = null,
   busyTurn = false,
   nested = false,
+  branchCard = false,
   branchOf = null,
   workerCount = 0,
   workersExpanded = false,
@@ -256,8 +257,13 @@ export default function SessionItem({
    */
   nested?: boolean;
   /**
-   * 这一场是从哪场会话分出来的分支。分支会话和人自己开的会话一样摆在主干上（它等的是人），
-   * 出处只在这一行说：「分支自 <原会话>」，点它切到原会话。原会话标题认不出时写编号开头。
+   * 分支容器里的分支卡。和原会话装在同一块里，用整卡描边和底色跟容器区分开；
+   * 它不是折角的 worker 行，所以不传 `nested`。
+   */
+  branchCard?: boolean;
+  /**
+   * 这一场是从哪场会话分出来的分支。出处只在这一行说：「分支自 <原会话>」，
+   * 点它切到原会话。原会话标题认不出时写编号开头。
    */
   branchOf?: { id: string; title: string | null } | null;
   /** 这场派出去过几个 worker。0 就不长子会话数。 */
@@ -283,7 +289,13 @@ export default function SessionItem({
   const age = forYou ? forYou.waitingSince : activityTs(session);
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
-  const stacked = hasWorkers && !workersExpanded;
+  const stacked = hasWorkers && !workersExpanded && !branchCard;
+  /** 分支卡在容器里要有一张实在的纸；选中时让 SELECTED 接管底色，描边仍保留。 */
+  const branchLook = branchCard
+    ? selected
+      ? 'border border-border-color'
+      : 'border border-border-color bg-bg-primary'
+    : '';
   const preview = previewOf(session, forYou, card);
   /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组里是组的浅底，别处是清单底。 */
   const paperBg = inPinnedGroup ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
@@ -343,7 +355,7 @@ export default function SessionItem({
            一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，不靠任何单边色条，
            也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
            才立得住。内边距上下 10、左右 12（第五轮二改）。 */
-        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${
+        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${branchLook} ${
           /* 置顶组那块底已经是悬停色，组里的卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
           selected ? SELECTED : inPinnedGroup ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
         }`}
