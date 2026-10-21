@@ -1493,7 +1493,7 @@
       "pickedHeaderHint": "From the Timeline — here until the day ends",
       "restHeader": "Everything else",
       "orphanWorkersHeader": "Workers with no known caller",
-      "branchOf": "Branched from {{title}}",
+      "branched": "branched",
       "branchOfHint": "Open the session this branch came from",
       "pageProgress": "Showing {{shown}} of {{total}} — keep scrolling for more",
       "workerCount": "launched {{n}} workers",

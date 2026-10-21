@@ -1091,50 +1091,59 @@ export default function SessionRail({
                     : branchPos === 'tail'
                       ? 'rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
                       : '';
+              /* 容器内边距：左右各 8px，头尾各 6px，卡片不再贴着外框。 */
+              const branchPad =
+                branchPos === 'head'
+                  ? 'px-2 pt-1.5'
+                  : branchPos === 'tail'
+                    ? 'px-2 pb-1.5'
+                    : branchPos === 'mid'
+                      ? 'px-2'
+                      : '';
               const item = (
-                <div
-                  className={`${indentCls} ${branchPos ? 'mx-1' : ''}`}
-                  data-branch-pos={branchPos}
-                >
+                <div className={branchPos ? 'mx-1' : ''} data-branch-pos={branchPos}>
                   <div className={branchBox}>
-                    <div className={branchPos ? 'px-[3px]' : ''}>
-                      <div className={box} data-group={pos}>
-                        {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
-                            只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
-                        <SessionItem
-                          live={views.isInTmux(session)}
-                          session={session}
-                          selected={session.session_id === selectedId}
-                          copied={copiedId === session.session_id}
-                          pinned={pins.isPinned(session.session_id)}
-                          inPinnedGroup={row.inPinned}
-                          forYou={forYou.infoOf(session.session_id)}
-                          sending={sendingId === session.session_id}
-                          agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
-                          busyTurn={busyId === session.session_id}
-                          inTmux={inTmuxOf(session)}
-                          card={decisionCardOf?.(session.session_id) ?? null}
-                          nested={row.nested}
-                          branchCard={row.branchCard}
-                          branchOf={
-                            session.relation?.kind === 'branch' && session.parent_session_id
-                              ? {
-                                  id: session.parent_session_id,
-                                  title: titleOf.get(session.parent_session_id) ?? null,
-                                }
-                              : null
-                          }
-                          workerCount={row.workerCount}
-                          workersExpanded={row.workersExpanded}
-                          onSelect={handleSelect}
-                          onCopy={handleCopy}
-                          onTogglePin={handleTogglePin}
-                          pickedToday={today?.isPicked(session.session_id) ?? false}
-                          onRemoveToday={today ? handleRemoveToday : undefined}
-                          onToggleWorkers={toggleWorkers}
-                          onStopped={handleStopped}
-                          onDeleted={handleDeleted}
-                        />
+                    <div className={branchPad}>
+                      {/* 缩进放在容器内层：外框每一行都用同一条左边界，末行收底时才不会缺角。 */}
+                      <div className={indentCls}>
+                        <div className={box} data-group={pos}>
+                          {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
+                              只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
+                          <SessionItem
+                            live={views.isInTmux(session)}
+                            session={session}
+                            selected={session.session_id === selectedId}
+                            copied={copiedId === session.session_id}
+                            pinned={pins.isPinned(session.session_id)}
+                            inPinnedGroup={row.inPinned}
+                            forYou={forYou.infoOf(session.session_id)}
+                            sending={sendingId === session.session_id}
+                            agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
+                            busyTurn={busyId === session.session_id}
+                            inTmux={inTmuxOf(session)}
+                            card={decisionCardOf?.(session.session_id) ?? null}
+                            nested={row.nested}
+                            branchCard={row.branchCard}
+                            branchOf={
+                              session.relation?.kind === 'branch' && session.parent_session_id
+                                ? {
+                                    id: session.parent_session_id,
+                                    title: titleOf.get(session.parent_session_id) ?? null,
+                                  }
+                                : null
+                            }
+                            workerCount={row.workerCount}
+                            workersExpanded={row.workersExpanded}
+                            onSelect={handleSelect}
+                            onCopy={handleCopy}
+                            onTogglePin={handleTogglePin}
+                            pickedToday={today?.isPicked(session.session_id) ?? false}
+                            onRemoveToday={today ? handleRemoveToday : undefined}
+                            onToggleWorkers={toggleWorkers}
+                            onStopped={handleStopped}
+                            onDeleted={handleDeleted}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>

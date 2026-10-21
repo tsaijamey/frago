@@ -360,6 +360,23 @@ export default function SessionItem({
           selected ? SELECTED : inPinnedGroup ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
         }`}
       >
+        {/* 分支只留一枚 branched 小标签，出处全称放进悬停提示，不占正文。 */}
+        {branchOf ? (
+          <button
+            type="button"
+            data-testid="branch-of"
+            title={branchOf.title ?? branchOf.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(branchOf.id);
+            }}
+            className="mb-1 inline-flex w-fit max-w-full items-center gap-1 rounded-[4px] bg-bg-hover px-1.5 py-0.5 text-left text-[10.5px] leading-[1.4] text-[var(--card-meta)] hover:text-text-secondary"
+          >
+            <GitBranch size={11} className="shrink-0" aria-hidden="true" />
+            <span>{t('workbench.rail.branched')}</span>
+          </button>
+        ) : null}
+
         {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
         <div className="flex min-w-0 items-start gap-1.5">
           {nested ? (
@@ -385,25 +402,6 @@ export default function SessionItem({
         >
           {preview || t('workbench.rail.noReply')}
         </p>
-
-        {/* 分支的出处。中性灰小字，点它去原会话，不点就是普通的一行说明。 */}
-        {branchOf ? (
-          <button
-            type="button"
-            data-testid="branch-of"
-            title={t('workbench.rail.branchOfHint')}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect(branchOf.id);
-            }}
-            className="mt-1 flex max-w-full items-center gap-1 text-left text-[11px] leading-[1.5] text-[var(--card-meta)] hover:text-text-secondary"
-          >
-            <GitBranch size={12} className="shrink-0" aria-hidden="true" />
-            <span className="min-w-0 truncate">
-              {t('workbench.rail.branchOf', { title: branchOf.title ?? branchOf.id.slice(0, 8) })}
-            </span>
-          </button>
-        ) : null}
 
         {/* 第 3 行：状态行。左组可收缩，放不下时时长先截断；「…」固定最右、不收缩。 */}
         <div

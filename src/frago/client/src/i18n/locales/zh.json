@@ -1488,7 +1488,7 @@
       "pickedHeaderHint": "从时间轴捡回来，今天余下的时间留在这里",
       "restHeader": "其余",
       "orphanWorkersHeader": "不知道谁派的 worker",
-      "branchOf": "分支自 {{title}}",
+      "branched": "branched",
       "branchOfHint": "打开这条分支出自的会话",
       "pageProgress": "已显示 {{shown}} / {{total}}，继续往下滚",
       "workerCount": "派出去 {{n}} 个 worker",

@@ -205,6 +205,16 @@ describe('SessionRail 分支与原会话同容器', () => {
     expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('1');
   });
 
+  it('分支容器每一行共用同一条外边界，末行收底不缺角', () => {
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
+    const wrappers = screen
+      .getAllByTestId('session-item')
+      .map((el) => el.closest('[data-branch-pos]') as HTMLElement);
+    // 缩进只能放在容器内层；如果挂在容器外层，末行的左边界会往里缩，左下角就缺一块。
+    expect(wrappers.map((w) => w.className)).toEqual(['mx-1', 'mx-1']);
+    expect(wrappers[1].querySelector('.pl-4')).toBeTruthy();
+  });
+
   it('展开父会话的 worker：父卡 → worker → 分支卡，仍在同一容器里', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('toggle-workers'));
@@ -244,7 +254,8 @@ describe('SessionRail 分支与原会话同容器', () => {
     const onSelect = vi.fn();
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={onSelect} />);
     const line = screen.getByTestId('branch-of');
-    expect(line.textContent).toContain('分支自 主线：全局字号');
+    expect(line.textContent).toContain('branched');
+    expect(line.getAttribute('title')).toBe('主线：全局字号');
     fireEvent.click(line);
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(BOSS);
