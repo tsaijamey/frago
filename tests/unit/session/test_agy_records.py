@@ -853,6 +853,71 @@ def test_转录读不到时当第一次处理(app_dir):
     assert agy_records.review_context(None, None)[2] is True
 
 
+# ── 补窟窿：上一拍被拒时再跑一次 ──────────────────────────────────────
+def _denied(step, reason="tool call denied by pre-tool hook: 先取后动"):
+    """被 hook 挡下的那一拍。形状照抄 agy 1.3.5 的真实记录（2026-10-20 实测）：
+
+    ``status: ERROR`` + 一个 ``error`` 字段。**注意与"命令自己失败"不同**——后者是
+    ``status: DONE``、失败信息在 ``content`` 正文里。
+    """
+    return {
+        "step_index": step,
+        "source": "MODEL",
+        "type": "GENERIC",
+        "status": "ERROR",
+        "error": reason,
+        "created_at": "2026-10-20T02:52:00Z",
+    }
+
+
+def test_上一拍被拒要再跑一次(app_dir):
+    """工具刚被 hook 拒掉，模型马上要换做法重来——这正是最需要提醒的时刻。"""
+    _write(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+            _planner(1, tool_calls=[{"name": "run_command", "args": {"CommandLine": "ls"}}]),
+            _denied(2),
+        ],
+    )
+    _prompt, _recent, should_review = agy_records.review_context(None, CONVERSATION_ID)
+    assert should_review is True
+
+
+def test_上一拍成功且非首拍就不跑(app_dir):
+    """本轮的后续步骤，上一拍也好好地跑完了 —— 不递 prompt，省下这一趟模型调用。"""
+    _write(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+            _planner(1, tool_calls=[{"name": "run_command", "args": {"CommandLine": "ls"}}]),
+            _planner(2, content="查到了"),
+        ],
+    )
+    _prompt, _recent, should_review = agy_records.review_context(None, CONVERSATION_ID)
+    assert should_review is False
+
+
+def test_命令自己失败不算被拒不补跑(app_dir):
+    """命令跑了但 exit 1，记录是 DONE、失败信息在正文里。
+
+    那不是"被拒"，模型拿到输出后照常往下走，不该为它多跑一趟复核——否则每遇到一次
+    编译失败就多一趟，等于把要省的又还回去。
+    """
+    _write(
+        app_dir,
+        [
+            _user(0, "<USER_REQUEST>本轮这句</USER_REQUEST>"),
+            _planner(
+                1,
+                content="Completed At: …\nCommand exited with code 1.\n\nCommand output:\nError: …",
+            ),
+        ],
+    )
+    _prompt, _recent, should_review = agy_records.review_context(None, CONVERSATION_ID)
+    assert should_review is False
+
+
 def test_优先用agy递过来的路径(app_dir, tmp_path):
     """hook 载荷里那份路径是 agy 自己给的，比按编号去猜准。"""
     elsewhere = tmp_path / "别处" / "transcript.jsonl"

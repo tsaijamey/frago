@@ -732,16 +732,23 @@ def review_context(
     本轮那句话**不重复进提要**：它自己有 ``prompt`` 那一栏，两边都给等于让复核把同一句
     读两遍。
 
-    第三个返回值 ``is_first_call`` 是给「一轮一次」用的。agy 的 ``PreInvocation`` 是**每次
-    模型调用**都触发（实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude 那边一轮
-    只有一次。判据就落在转录上：**最后一条 ``USER_INPUT`` 之后出现过 ``PLANNER_RESPONSE``，
-    就说明这一轮已经跑过模型了**，这一次是后续步骤而不是用户刚提交。
+    第三个返回值 ``should_review`` 判的是「这一次该不该跑复核」。agy 的 ``PreInvocation``
+    是**每次模型调用**都触发（实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude
+    那边一轮只有一次。判据落在转录上，**两条任一成立就跑**：
+
+    1. 本轮的第一次模型调用 —— 最后一条 ``USER_INPUT`` 之后还没出现过 ``PLANNER_RESPONSE``。
+    2. 上一拍刚被拒 —— 这一轮最后一条记录是 ``status: ERROR``，工具调用在跑之前就被
+       hook 挡下了，模型马上要换做法重来。
+
+    第二条是补窟窿的：只跑首拍的话，首拍那趟复核要是超时或报错，整轮就再没人提醒了。
+    认 ``status == ERROR`` 而非看正文，是因为命令自己 ``exit 1`` 的记录是
+    ``status: DONE``——那不是被拒，模型照常往下走，不该为它多跑一趟。
 
     这条判据是无状态的——只读转录，不记事。不依赖 ``invocationNum``：实测它每次模型调用
     都 +1（0、1、2…），不是每轮一个值，拿它判「变化」等于每次都放行。
 
-    返回 ``(prompt, recent_turns, is_first_call)``。转录读不到时有话直说：
-    ``is_first_call`` 为 True，让引擎照旧干活——**复核少跑一次的代价，远小于它悄悄
+    返回 ``(prompt, recent_turns, should_review)``。转录读不到时有话直说：
+    ``should_review`` 为 True，让引擎照旧干活——**复核少跑一次的代价，远小于它悄悄
     再也不跑**（那正是这套东西上一次栽的地方）。
     """
     path: Path | None = Path(transcript_path) if transcript_path else None
@@ -765,12 +772,21 @@ def review_context(
         text, _meta = _split_user_input(content if isinstance(content, str) else "")
         prompt = text or None
 
-    # ``PLANNER_RESPONSE`` 是模型每一拍的产出。最后一条 USER_INPUT 之后只要出现过一次，
-    # 这一轮就已经开了头，眼下这一次是后续步骤。
+    # 这一轮从 ``last_user`` 之后开始算。两个判据任一成立就跑复核：
+    #
+    # 1. **本轮的第一次模型调用** —— 之后还没出现过 ``PLANNER_RESPONSE``。这是常态。
+    # 2. **上一拍刚被拒** —— 最后一条记录是 ``status: ERROR``。工具调用在跑之前就被
+    #    hook 挡下了，模型马上要换个做法重来；这一刻最需要提醒，也正好补上"首拍那趟
+    #    复核没成，整轮就没人提醒"的窟窿。
+    #
+    # 认 ``status == ERROR`` 而不是看正文里有没有 error：命令自己 exit 1 的记录是
+    # ``status: DONE``、失败信息在正文里，那不是"被拒"，模型照常往下走，不该为此多跑一趟。
+    in_this_turn = records[last_user + 1 :] if last_user is not None else records
     is_first_call = not any(
-        record.get("type") == agy_store.RECORD_PLANNER
-        for record in (records[last_user + 1 :] if last_user is not None else records)
+        record.get("type") == agy_store.RECORD_PLANNER for record in in_this_turn
     )
+    just_denied = bool(in_this_turn) and (in_this_turn[-1].get("status") == agy_store.STATUS_ERROR)
+    should_review = is_first_call or just_denied
 
     earlier = records[:last_user] if last_user is not None else records
     lines: list[str] = []
@@ -780,7 +796,7 @@ def review_context(
             continue
         lines.append(line if len(line) <= line_chars else line[:line_chars] + "…")
 
-    return prompt, ("\n".join(lines[-max_lines:]) or None), is_first_call
+    return prompt, ("\n".join(lines[-max_lines:]) or None), should_review
 
 
 def context_for_review(
@@ -791,7 +807,7 @@ def context_for_review(
     line_chars: int = _REVIEW_LINE_CHARS,
 ) -> tuple[str | None, str | None]:
     """只要备料、不问轮次的老签名。转发给 :func:`review_context`。"""
-    prompt, recent, _is_first_call = review_context(
+    prompt, recent, _should_review = review_context(
         transcript_path,
         conversation_id,
         max_lines=max_lines,

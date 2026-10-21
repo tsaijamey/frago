@@ -192,23 +192,26 @@ def translate_input(payload: dict[str, Any], event: str) -> dict[str, Any]:
         # 落盘。故这里回读一次转录，把那句话与前面几轮的提要一并递过去（见
         # ``agy_records.review_context``）。
         #
-        # **只有本轮的第一次模型调用才递。** agy 的 ``PreInvocation`` 每次调模型都触发
+        # **不是每次 PreInvocation 都递。** agy 的 ``PreInvocation`` 每次调模型都触发
         # （实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude 那边一轮只触发一次。
         # 从前这一路每次都把 prompt 递过去，于是轻量 ai 的每轮复核跟着每一步跑一遍——
         # 用户看到的就是「每个 agent 步骤都在调用轻量 ai」。
         #
-        # 后续步骤什么都不递：引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型
+        # 只在两种时刻递（见 ``agy_records.review_context`` 的 ``should_review``）：
+        # 本轮的第一次模型调用，或上一拍工具刚被 hook 拒掉——拒绝之后正是最需要提醒的时候，
+        # 也补上「首拍那趟复核没成、整轮就再没人提醒」的窟窿。
+        #
+        # 其余步骤什么都不递：引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型
         # 调用），而确定性规则照旧由 ``rules::dispatch_with`` 跑完返回，它不依赖这份载荷。
-        # prompt 类规则同样只在首步命中，与 claude 那边一轮一次的行为对齐。
         #
         # 读不出来就什么都不加：引擎会退化成"只有规则、没有复核"，而**瞎猜一句喂过去
         # 比不喂坏得多**——复核会照着错的那句话给建议，人还看不出它判错了对象。
         from frago.session.adapters.agy_records import review_context
 
-        prompt, recent, is_first_call = review_context(
+        prompt, recent, should_review = review_context(
             transcript_path, conversation_id if isinstance(conversation_id, str) else None
         )
-        if is_first_call:
+        if should_review:
             if prompt:
                 out["prompt"] = prompt
             if recent:

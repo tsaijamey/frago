@@ -296,7 +296,7 @@ def test_pre_invocation把那句话与前面几轮一并递给引擎(monkeypatch
 
 
 def test_同一轮后续步骤不再递prompt(monkeypatch):
-    """一轮之内第二次及以后的模型调用：什么都不递。
+    """一轮之内第二次及以后的模型调用、上一拍也没被拒：什么都不递。
 
     引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型调用），确定性规则照旧由
     dispatch 跑完返回。这就是「轻量 ai 不再每个步骤触发一次」的落点。
@@ -317,6 +317,28 @@ def test_同一轮后续步骤不再递prompt(monkeypatch):
     assert out["hook_event_name"] == "UserPromptSubmit"
     assert "prompt" not in out
     assert "recent_turns" not in out
+
+
+def test_上一拍被拒时照样递prompt(monkeypatch):
+    """上一拍工具刚被 hook 拒掉：复核照跑。
+
+    补的是「首拍那趟复核没成、整轮就再没人提醒」的窟窿——被拒之后正是最该提醒的时刻。
+    """
+    from frago.session.adapters import agy_records
+
+    monkeypatch.setattr(
+        agy_records,
+        "review_context",
+        lambda path, cid, **kw: ("本轮这句", "[用户] 上一句", True),
+    )
+
+    out = agy_hook.translate_input(
+        {"conversationId": "c-1", "transcriptPath": "/tmp/t.jsonl", "workspacePaths": ["/tmp"]},
+        "PreInvocation",
+    )
+
+    assert out["prompt"] == "本轮这句"
+    assert out["recent_turns"] == "[用户] 上一句"
 
 
 def test_读不出转录就什么都不补(monkeypatch):
@@ -496,9 +518,7 @@ def ledger(tmp_path, monkeypatch):
     from frago.session import session_origin
 
     monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", tmp_path / "agent-launches.json")
-    monkeypatch.setattr(
-        session_origin, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json"
-    )
+    monkeypatch.setattr(session_origin, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json")
     monkeypatch.setattr(session_origin, "_coreagent_scan_root", lambda: None)
     root = tmp_path / "projects"
     root.mkdir()
@@ -514,9 +534,7 @@ def _origin_index(projects_root):
 def test_会话里起的agy会话折到发起它那一场下面(ledger, monkeypatch):
     """``agy -p`` 那种自建会话：父亲只能从它起来那一瞬的环境里认。"""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "parent-sid")
-    agy_hook._record_launch_relation(
-        {"conversationId": "child-conv", "workspacePaths": ["/tmp"]}
-    )
+    agy_hook._record_launch_relation({"conversationId": "child-conv", "workspacePaths": ["/tmp"]})
     index = _origin_index(ledger)
     assert index.parent_of("child-conv") == "parent-sid"
     assert index.origin_of("child-conv") == "worker"
@@ -528,9 +546,7 @@ def test_终端里直接起的agy会话不记(ledger, monkeypatch):
     monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
     # 兜底那条「按当前目录最近写入的记录推断」不算数：它 certain=False，认父亲时一律不用。
     monkeypatch.setattr("frago.session.self_id.resolve_self", lambda **_: None)
-    agy_hook._record_launch_relation(
-        {"conversationId": "human-conv", "workspacePaths": ["/tmp"]}
-    )
+    agy_hook._record_launch_relation({"conversationId": "human-conv", "workspacePaths": ["/tmp"]})
     index = _origin_index(ledger)
     assert index.origin_of("human-conv") == "human"
     assert index.parent_of("human-conv") is None
@@ -543,6 +559,8 @@ def test_环境里那个编号就是本场自己时不记(ledger, monkeypatch):
     agy_hook._record_launch_relation({"conversationId": "same-conv"})
     index = _origin_index(ledger)
     assert index.origin_of("same-conv") == "human"
+
+
 def test_载荷里没有编号就不动账本(ledger):
     agy_hook._record_launch_relation({"workspacePaths": ["/tmp"]})
     from frago.session import session_origin

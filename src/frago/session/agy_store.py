@@ -51,6 +51,18 @@ RECORD_USER_INPUT = "USER_INPUT"
 """用户这一轮说的话。``content`` 里裹着 ``<USER_REQUEST>`` 与几段元数据。"""
 RECORD_PLANNER = "PLANNER_RESPONSE"
 """模型这一拍的产出。带 ``tool_calls`` 表示还要动手，带 ``content`` 表示给话。"""
+
+STATUS_ERROR = "ERROR"
+"""``status`` 取这个值表示这一拍没跑通。
+
+**它不等于"工具失败了"。** 实测（agy 1.3.5，2026-10-20）两种情形要分开看：
+
+- 命令自己跑了但退出码非零（``exit 1``）→ 记录是 ``status: DONE``，失败信息在
+  ``content`` 正文里。这不是"被拒"，模型拿到输出后照常往下走。
+- 工具调用**在跑之前就被 hook 挡下** → 记录是 ``status: ERROR``，并带一个 ``error``
+  字段，正文形如 ``tool call denied by pre-tool hook: …``。
+
+判断"上一拍是不是刚被拒"，认的是后一种：``status == ERROR``。"""
 RECORD_CONVERSATION_HISTORY = "CONVERSATION_HISTORY"
 """开场补记的一条历史回放标记：``source`` 为 SYSTEM、没有正文。翻时间线时跳过。"""
 RECORD_SYSTEM_MESSAGE = "SYSTEM_MESSAGE"
@@ -852,12 +864,7 @@ def delete_session_files(conversation_id: str) -> DeletedAgySession | None:
         except sqlite3.Error as exc:
             raise OSError(f"摘要库打不开：{exc}") from exc
 
-    has_files = (
-        bdir.is_dir()
-        or db_file.exists()
-        or ann_file.exists()
-        or lock_file.exists()
-    )
+    has_files = bdir.is_dir() or db_file.exists() or ann_file.exists() or lock_file.exists()
     if not in_summaries and not has_files:
         return None
 
@@ -931,4 +938,3 @@ def delete_session_files(conversation_id: str) -> DeletedAgySession | None:
         problems.append(f"元数据缓存没摘掉：{exc}")
 
     return DeletedAgySession(conversation_id=cid, removed=removed, problems=problems)
-
