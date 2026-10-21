@@ -1,0 +1,745 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "ontology_id": "frago-agent-os-ontology",
+  "ontology_version": "1.0.0",
+  "description": "frago Agent OS 操作型本体（Operational Ontology）元模型与全量业务映射：基于三轴正交超类、OntoClean 刚性公理、一等公民关系代数与三层同心圆动作契约。",
+  "orthogonal_axes": {
+    "mereotemporality": {
+      "axiom": "∀t(E(x,t) → WhollyPresent(x,t))",
+      "question": "实体在任意时间切片上是否完整存在，还是必须在时间流中展开？",
+      "poles": ["Continuant", "Occurrent"]
+    },
+    "existential_dependence": {
+      "axiom": "□(∀t(E(x,t) → ∃y(InheresIn(x,y,t))))",
+      "question": "实体能否脱离宿主独立存在，还是必须依附于某个承载主体（Bearer）与作用域（Context）？",
+      "poles": ["IndependentContinuant", "DependentContinuant"]
+    },
+    "direction_of_fit": {
+      "axiom": "Searle Intentionality Fit (Reality vs. World-to-Mind vs. Mind-to-World)",
+      "question": "它是运行时的客观实在，还是要求实在服从它的规范契约，还是表征实在的符号制品？",
+      "poles": ["RealizableEntity", "NormativeEntity", "InformationEntity"]
+    }
+  },
+  "upper_ontology": {
+    "Thing": {
+      "abstract": true,
+      "subclasses": [
+        "Continuant",
+        "Occurrent",
+        "NormativeEntity",
+        "InformationEntity"
+      ]
+    },
+    "Continuant": {
+      "parent": "Thing",
+      "axis_projection": {
+        "mereotemporality": "wholly_present_at_snapshot",
+        "direction_of_fit": "reality"
+      },
+      "subclasses": [
+        "IndependentContinuant",
+        "DependentContinuant"
+      ],
+      "IndependentContinuant": {
+        "parent": "Continuant",
+        "rigidity": "+R",
+        "existential_dependence": "independent",
+        "identity_criterion": "global_uid",
+        "temporality": "snapshot",
+        "mutability": "stateful_versioned",
+        "storage_primitive": "StateStore (CRUD with optimistic lock / file lock)",
+        "subclasses": ["Actor", "Resource"]
+      },
+      "DependentContinuant": {
+        "parent": "Continuant",
+        "rigidity": "~R",
+        "existential_dependence": "requires_bearer_and_context",
+        "identity_criterion": "composite(bearer_id, context_id, dependent_type)",
+        "temporality": "context_scoped",
+        "mutability": "lifecycle_bound",
+        "ontological_guardrail": "Anti-rigid (~R) classes MUST NEVER be superclasses of Rigid (+R) classes.",
+        "storage_primitive": "ContextBindingStore (ephemeral or session/scope-bound slots)",
+        "subclasses": ["Role", "Capability", "QualityState"]
+      }
+    },
+    "Occurrent": {
+      "parent": "Thing",
+      "axis_projection": {
+        "mereotemporality": "unfolds_in_time_with_temporal_parts",
+        "direction_of_fit": "reality"
+      },
+      "subclasses": ["Process", "Event"],
+      "Process": {
+        "parent": "Occurrent",
+        "rigidity": "+R",
+        "identity_criterion": "process_run_uid",
+        "temporality": "interval(started_at, ended_at)",
+        "mutability": "state_machine(pending -> running -> completed | error | cancelled)",
+        "storage_primitive": "LifecycleEngine / ActiveProcessRegistry",
+        "required_relations": ["initiated_by", "governed_by"]
+      },
+      "Event": {
+        "parent": "Occurrent",
+        "rigidity": "+R",
+        "identity_criterion": "causal_hash(occurred_at, causal_source_id, payload_hash)",
+        "temporality": "instant(occurred_at)",
+        "mutability": "append_only_immutable",
+        "storage_primitive": "AppendOnlyEventLog (JSONL trace / step stream)"
+      }
+    },
+    "NormativeEntity": {
+      "parent": "Thing",
+      "rigidity": "+R",
+      "axis_projection": {
+        "direction_of_fit": "world_to_mind_directive"
+      },
+      "identity_criterion": "composite(norm_id, semantic_version)",
+      "temporality": "effective_window(valid_from, valid_until)",
+      "mutability": "versioned_immutable",
+      "storage_primitive": "PolicyAndContractRegistry (AST / Rule & Guard Evaluator)",
+      "subclasses": ["RulePolicy", "Contract", "Specification"]
+    },
+    "InformationEntity": {
+      "parent": "Thing",
+      "rigidity": "+R",
+      "axis_projection": {
+        "direction_of_fit": "mind_to_world_representation"
+      },
+      "identity_criterion": "content_hash_or_uri",
+      "temporality": "versioned_snapshot",
+      "mutability": "content_addressed_or_append_only",
+      "storage_primitive": "CAS / MultiIndexRecallEngine (def / context / session search)",
+      "subclasses": ["KnowledgeArtifact", "TranscriptArtifact", "CoordinationArtifact"]
+    }
+  },
+  "relation_signatures": {
+    "plays_role": {
+      "domain": "IndependentContinuant",
+      "range": "Role",
+      "inverse": "borne_by",
+      "algebraic_properties": ["asymmetric", "irreflexive"],
+      "description": "刚性主体或资源在特定会话、请求或结对作用域中动态挂载反刚性角色。"
+    },
+    "has_capability": {
+      "domain": "IndependentContinuant",
+      "range": "Capability",
+      "inverse": "capability_of",
+      "algebraic_properties": ["asymmetric"],
+      "description": "主体或资源声明其可被外部或 Harness 调用的能力切面。"
+    },
+    "exhibits_state": {
+      "domain": "Continuant",
+      "range": "QualityState",
+      "inverse": "state_of",
+      "algebraic_properties": ["functional"],
+      "description": "延续体在当前时间切片呈现的状态或安全区属性。"
+    },
+    "hosted_on_harness": {
+      "domain": "Actor",
+      "range": "Resource",
+      "inverse": "hosts_actor",
+      "algebraic_properties": ["asymmetric"],
+      "description": "AI Agent 内核实例挂载于具体 Harness 载体（TmuxPane 或 SubprocessPipe）之上运行。"
+    },
+    "initiates": {
+      "domain": "Actor | Role",
+      "range": "Process",
+      "inverse": "initiated_by",
+      "algebraic_properties": ["asymmetric"],
+      "description": "主体或角色拉起一个持续过程。"
+    },
+    "governed_by": {
+      "domain": "Process | Role | ActionContract",
+      "range": "NormativeEntity",
+      "inverse": "governs",
+      "algebraic_properties": ["asymmetric"],
+      "description": "过程、角色或动作受规范体（Hook 规则、开放策略、结对安全规矩、模块边界契约）约束。"
+    },
+    "mutates": {
+      "domain": "Process | ActionContract",
+      "range": "IndependentContinuant",
+      "inverse": "mutated_by",
+      "algebraic_properties": ["asymmetric"],
+      "description": "过程或动作修改目标延续体的状态槽位。"
+    },
+    "emits": {
+      "domain": "Process",
+      "range": "Event",
+      "inverse": "emitted_by",
+      "algebraic_properties": ["asymmetric", "irreflexive"],
+      "description": "持续过程在时间点上发射不可变的瞬时事件。"
+    },
+    "produces": {
+      "domain": "Process",
+      "range": "InformationEntity",
+      "inverse": "produced_by",
+      "algebraic_properties": ["asymmetric"],
+      "description": "过程产出信息制品（轨迹记录、知识条目、待办交接卡、人类授权回执）。"
+    },
+    "depends_on_module": {
+      "domain": "Resource | NormativeEntity",
+      "range": "Resource | NormativeEntity",
+      "inverse": "depended_on_by",
+      "algebraic_properties": ["transitive", "irreflexive"],
+      "description": "模块或配方间的有向依赖（含 recipe imports/reads_common 与 Python 包分层依赖），具有传递性且严禁成环。"
+    }
+  },
+  "domain_classes": {
+    "Continuant.IndependentContinuant.Actor": [
+      {
+        "class_id": "AgentKernel",
+        "rigidity": "+R",
+        "identity": "agent_family_and_binary_id (claude | codex | opencode | agy | coreagent)",
+        "current_code_locations": [
+          "src/frago/session/models.py#AgentType",
+          "src/frago/agent_driver/driver.py",
+          "src/frago/agent_driver/kernel_backend.py"
+        ],
+        "description": "外部或内置 AI Agent 内核本体。仅表征智能体内核身份，不内嵌会话状态、不内嵌 Tmux 句柄。"
+      },
+      {
+        "class_id": "HumanPrincipal",
+        "rigidity": "+R",
+        "identity": "principal_uid (local_machine_owner | user_account_id | team_member_uuid | anonymous_peer)",
+        "current_code_locations": [
+          "src/frago/server/identity.py",
+          "src/frago/team/state.py"
+        ],
+        "description": "与 frago 交互的自然人主体：本机物理主人、WebUI 登录账号（users.json）、结对成员标识（member UUID）或匿名访问者。"
+      }
+    ],
+    "Continuant.IndependentContinuant.Resource": [
+      {
+        "class_id": "AgentHarness",
+        "rigidity": "+R",
+        "identity": "harness_id (tmux_pane_target | kernel_subprocess_slot)",
+        "current_code_locations": [
+          "src/frago/agent_driver/tmux_session.py",
+          "src/frago/agent_driver/driver.py#AgentDriver",
+          "src/frago/agent_driver/kernel_backend.py"
+        ],
+        "description": "承载 AgentKernel 运行的物理执行底座（Harness）：分 Tmux 交互式终端槽位（含输入注入、就绪/完成探针、异常模态处理）与无屏一次性子进程槽位两类。"
+      },
+      {
+        "class_id": "RecipeModule",
+        "rigidity": "+R",
+        "identity": "recipe_name",
+        "current_code_locations": [
+          "src/frago/recipes/registry.py",
+          "src/frago/recipes/metadata.py"
+        ],
+        "description": "跑通一次后固化成确定性代码的工具模块（atomic / workflow），拥有独立目录、脚本入口与可选前端资产。"
+      },
+      {
+        "class_id": "DataSlot",
+        "rigidity": "+R",
+        "identity": "canonical_slot_path",
+        "current_code_locations": [
+          "src/frago/recipes/app_state.py",
+          "src/frago/server/identity.py#USER_STATE_DIR",
+          "src/frago/context/"
+        ],
+        "description": "受平台隔离保护的数据存储槽位：含机器级共享槽位（app-state）、账号级私有槽位（users/<id>/）与事务产出目录（~/.frago/data/<subject>/<date>-<slug>/）。"
+      },
+      {
+        "class_id": "BrowserTabGroup",
+        "rigidity": "+R",
+        "identity": "group_name",
+        "current_code_locations": [
+          "src/frago/browser/",
+          "src/frago/chrome/"
+        ],
+        "description": "受控浏览器（Extension 桥或 CDP 后端）中的真实标签组资源，上限 5 个标签页，按组隔离生命周期。"
+      },
+      {
+        "class_id": "VirtualDesktopStage",
+        "rigidity": "+R",
+        "identity": "stage_display_id",
+        "current_code_locations": [
+          "src/frago/desktop/"
+        ],
+        "description": "可脚本驱动、可录屏的虚拟桌面舞台（agent_os）。"
+      },
+      {
+        "class_id": "ApiProfile",
+        "rigidity": "+R",
+        "identity": "profile_id",
+        "current_code_locations": [
+          "src/frago/init/profile_manager.py"
+        ],
+        "description": "模型供应商连接凭据与端点配置实体（~/.frago/profiles.json）。"
+      },
+      {
+        "class_id": "KnowledgeDomain",
+        "rigidity": "+R",
+        "identity": "domain_name",
+        "current_code_locations": [
+          "src/frago/def_/registry.py"
+        ],
+        "description": "frago def 注册的结构化知识域（~/.frago/books/<domain>/）。"
+      },
+      {
+        "class_id": "CommunicationChannel",
+        "rigidity": "+R",
+        "identity": "channel_id (feishu | slack | email | remote_frago_node | team_relay)",
+        "current_code_locations": [
+          "src/frago/team/relay.py",
+          "src/frago/server/routes/"
+        ],
+        "description": "跨边界通信管道：外部消息进件渠道、远程 frago 节点或结对中继服务器。"
+      }
+    ],
+    "Continuant.DependentContinuant.Role": [
+      {
+        "class_id": "PrimarySchedulerRole",
+        "rigidity": "~R",
+        "bearer_type": "AgentKernel",
+        "context_type": "AgentSessionProcess",
+        "current_code_locations": [
+          "src/frago/server/services/primary_agent_service.py"
+        ],
+        "description": "主控调度角色（PA）：在主控会话中拆解任务、调度子任务与配方，会话结束即卸载。"
+      },
+      {
+        "class_id": "SubtaskWorkerRole",
+        "rigidity": "~R",
+        "bearer_type": "AgentKernel",
+        "context_type": "AgentSessionProcess",
+        "current_code_locations": [
+          "src/frago/cli/agent_command.py",
+          "src/frago/agent_driver/pool.py"
+        ],
+        "description": "子任务执行角色（Worker）：由 frago agent 拉起，专注完成有界子任务并通过 attach 交回产物，禁止再拉起下级会话。"
+      },
+      {
+        "class_id": "CompanionJudgeRole",
+        "rigidity": "~R",
+        "bearer_type": "AgentKernel",
+        "context_type": "HookEvaluationProcess",
+        "current_code_locations": [
+          "src/frago/init/hook_binary.py"
+        ],
+        "description": "会话伴侣裁决角色（LightAgent）：在提交前（prompt）、收尾时（stop）、否决前（veto）三处执行轻量判读。"
+      },
+      {
+        "class_id": "CallerZoneRole",
+        "rigidity": "~R",
+        "bearer_type": "HumanPrincipal | AgentKernel",
+        "context_type": "HttpRequestProcess",
+        "subroles": ["OwnerCallerRole", "SignedInVisitorRole", "AnonymousVisitorRole"],
+        "current_code_locations": [
+          "src/frago/server/security.py",
+          "src/frago/server/identity.py"
+        ],
+        "description": "请求方在单次访问上下文中扮演的权限角色：主人角色由请求来源（local 回环或 server-token）动态赋予，而非绑定固定账号子类。"
+      },
+      {
+        "class_id": "TeamPeerRole",
+        "rigidity": "~R",
+        "bearer_type": "HumanPrincipal | AgentKernel",
+        "context_type": "TeamPairingScope",
+        "subroles": ["InitiatorSideARole", "JoinerSideBRole"],
+        "current_code_locations": [
+          "src/frago/team/state.py",
+          "src/frago/team/live.py"
+        ],
+        "description": "结对协作（vibe teaming）中的 A 侧/B 侧队友角色，随连接码绑定而生效、随解绑而消亡。"
+      }
+    ],
+    "Continuant.DependentContinuant.Capability": [
+      {
+        "class_id": "RecipeModeCapability",
+        "rigidity": "~R",
+        "bearer_type": "RecipeModule",
+        "levels": ["export_readonly", "action_triggerable", "owner_internal"],
+        "current_code_locations": [
+          "src/frago/recipes/contract.py#Surface"
+        ],
+        "description": "配方方法（mode_<name>）通过装饰器声明的访问能力切面：@export 只读总线/页面契约、@action 页面可触发动作、无标记仅主人可调。"
+      },
+      {
+        "class_id": "HarnessProbeCapability",
+        "rigidity": "~R",
+        "bearer_type": "AgentHarness",
+        "probes": ["ready_signal", "done_signal", "transcript_completion_probe", "exception_modal_handler"],
+        "current_code_locations": [
+          "src/frago/agent_driver/driver.py#PaneMatcher",
+          "src/frago/agent_driver/driver.py#CompletionVerdict",
+          "src/frago/session/transcript_completion.py"
+        ],
+        "description": "Harness 对被驱动 Agent 的感知与干预能力：正则屏面匹配、权威 JSONL 完成度探针与异常弹窗自动消解。"
+      }
+    ],
+    "Continuant.DependentContinuant.QualityState": [
+      {
+        "class_id": "SecurityZoneState",
+        "rigidity": "~R",
+        "allowed_values": ["local", "public", "identity", "token"],
+        "current_code_locations": [
+          "src/frago/server/security.py#ZONES"
+        ],
+        "description": "安全网关对每个请求判定的唯一互斥安全区状态。"
+      }
+    ],
+    "Occurrent.Process": [
+      {
+        "class_id": "AgentSessionProcess",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["running", "completed", "error", "cancelled"],
+        "current_code_locations": [
+          "src/frago/session/models.py#MonitoredSession",
+          "src/frago/session/storage.py"
+        ],
+        "description": "一场有起止时间的 Agent 会话过程。通过 initiated_by 关联主体，通过 runs_on 关联 AgentHarness，通过 produces 产出 SessionTranscriptArtifact。"
+      },
+      {
+        "class_id": "HarnessTurnProcess",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["submitting", "streaming", "verifying_completion", "ok", "needs_input", "timeout", "error"],
+        "current_code_locations": [
+          "src/frago/agent_driver/tmux_session.py",
+          "src/frago/agent_driver/kernel_backend.py#KernelTurn"
+        ],
+        "description": "Harness 驱动 Agent 执行单轮问答/干活的原子过程，受 StopGateSignal 与认证墙探针约束。"
+      },
+      {
+        "class_id": "RecipeExecutionProcess",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["queued", "isolating_view", "running", "succeeded", "failed"],
+        "current_code_locations": [
+          "src/frago/recipes/runner.py",
+          "src/frago/recipes/execution.py",
+          "src/frago/recipes/isolation.py"
+        ],
+        "description": "配方在受限文件视图中绑定特定用户身份与数据槽位的一次运行过程。"
+      },
+      {
+        "class_id": "TeamSyncProcess",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/team/sync.py",
+          "src/frago/team/live.py"
+        ],
+        "description": "结对会话向中继增量推送轨迹并拉取对侧请求的过程。"
+      }
+    ],
+    "Occurrent.Event": [
+      {
+        "class_id": "HookLifecycleEvent",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "event_types": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
+        "current_code_locations": [
+          ".claude/docs/hook-system-frago-core.md"
+        ],
+        "description": "Agent 生命周期中触发会话伴侣（frago-core）介入的瞬时事件。"
+      },
+      {
+        "class_id": "SessionStepEvent",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "event_types": ["user", "assistant", "tool_call", "tool_result", "system"],
+        "current_code_locations": [
+          "src/frago/session/models.py#SessionStep",
+          "src/frago/session/unified_record.py"
+        ],
+        "description": "会话过程中不可篡改的单步事实记录。"
+      },
+      {
+        "class_id": "CommandGrantAuditedEvent",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "current_code_locations": [
+          "src/frago/recipes/command_grants.py"
+        ],
+        "description": "配方首次调用 uses_commands 外部命令时，由 CoreAgent 审计通过并写入机器级 grants.json 的放行事件。"
+      }
+    ],
+    "NormativeEntity.RulePolicy": [
+      {
+        "class_id": "HookInjectionRule",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "~/.frago/hook/builtin-rules.json",
+          "~/.frago/hook-rules.json"
+        ],
+        "description": "按事件与条件匹配向 Agent 上下文精准注入 book 速记的静态规则。"
+      },
+      {
+        "class_id": "StopGatePolicy",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "~/.frago/hook/stop-signals.json",
+          "~/.frago/hook/stop.md",
+          "~/.frago/hook/prompt.md",
+          "~/.frago/hook/veto.md"
+        ],
+        "description": "收尾闸门信号表与 LightAgent 判读规范：决定何时拦截过早收尾、何时强制要求 answer-needed-by-human 卡片。"
+      },
+      {
+        "class_id": "RecipeExposurePolicy",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/recipes/publish.py",
+          "src/frago/server/routes/app_pages.py"
+        ],
+        "description": "配方页面开放策略：正交裁决三个独立问题——谁能打开（public/signed-in/allow）、从哪个数据根读（each-their-own/shared）、允许触发哪些 @action。"
+      },
+      {
+        "class_id": "TeamPairingSecurityPolicy",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/team/state.py#RULES_LINE"
+        ],
+        "description": "结对协作三档安全策略：只读请求（do/ask）、改动请求（do/ask/refuse）、红线请求（泄露秘密/不可逆删除/绕过宪法 → 绝对拒绝）。"
+      },
+      {
+        "class_id": "ModuleImportBoundaryRule",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          ".importlinter",
+          ".claude/docs/architecture-north-star.md"
+        ],
+        "description": "架构分层依赖契约：规范 cli / server / ontology / domains / adapters / core 之间的合法引用方向。"
+      }
+    ],
+    "NormativeEntity.Contract": [
+      {
+        "class_id": "RecipeModuleContract",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/recipes/contract.py",
+          "src/frago/recipes/metadata.py"
+        ],
+        "description": "配方的声明式模块契约：输入输出签名、@export/@action 能力面、跨配方共享声明（shares 与 reads_common 双向握手）、外部命令声明（uses_commands）。"
+      }
+    ],
+    "InformationEntity": [
+      {
+        "class_id": "BookTopicDocument",
+        "identity": "topic_slug",
+        "current_code_locations": [
+          "src/frago/cli/book_commands.py"
+        ],
+        "description": "frago book 中的行为准则与操作手册正文。"
+      },
+      {
+        "class_id": "DefKnowledgeEntry",
+        "identity": "composite(domain_name, doc_name)",
+        "current_code_locations": [
+          "src/frago/def_/query_engine.py",
+          "src/frago/def_/schema_validator.py"
+        ],
+        "description": "结论层召回入口（frago <domain> find/save）中的结构化知识条目。"
+      },
+      {
+        "class_id": "SessionTranscriptArtifact",
+        "identity": "session_id",
+        "current_code_locations": [
+          "src/frago/session/storage.py",
+          "src/frago/session/search.py"
+        ],
+        "description": "过程层召回入口（frago session search）背后的双库备份会话轨迹文件（raw.jsonl / steps.jsonl）。"
+      },
+      {
+        "class_id": "TodoHandoffArtifact",
+        "identity": "todo_id",
+        "current_code_locations": [
+          "src/frago/todo/store.py"
+        ],
+        "description": "跨会话交接单制品：记录是什么、到哪一步、下一步先动哪、怎么算完，并自动关联历经的 session_id 列表。"
+      },
+      {
+        "class_id": "HumanDecisionReceipt",
+        "identity": "decision_message_uuid",
+        "current_code_locations": [
+          "src/frago/client/"
+        ],
+        "description": "由 answer-needed-by-human 区块渲染并由人类点击产生的【answer】授权回执，其 effect 原文即本轮合法改变状态的唯一授权范围。"
+      }
+    ]
+  },
+  "defined_classes": [
+    {
+      "class_id": "TrustedOwnerRequest",
+      "equivalent_to": {
+        "intersection_of": [
+          "CallerZoneRole",
+          "exhibits_state(SecurityZoneState == 'local' OR SecurityZoneState == 'token')"
+        ]
+      },
+      "description": "公理驱动分类：无需硬编码 Owner 账号子类，凡是满足无代理转发头的本地回环请求或持有合法 server-token 的请求，自动归类为具有主人权限的调用方。"
+    },
+    {
+      "class_id": "PublicExposableRecipe",
+      "equivalent_to": {
+        "intersection_of": [
+          "RecipeModule",
+          "NOT has_capability(RecipeModeCapability == 'action_triggerable')",
+          "NOT calls_app_api_endpoint_from_public_page"
+        ]
+      },
+      "description": "公理驱动分类：满足无页面写动作且不调用需要鉴权的 api/<mode> 的配方，才被分类为可挂载 --public 匿名访问策略的模块。"
+    },
+    {
+      "class_id": "VerifiedTeammateInstruction",
+      "equivalent_to": {
+        "intersection_of": [
+          "SessionStepEvent(type == 'user')",
+          "carries_prefix('【frago team】')",
+          "passes_verification('frago team verify --team-code <code> --message <id>')"
+        ]
+      },
+      "description": "公理驱动分类：带结对前缀且通过中继消息签名核实的发言，自动归类为受 TeamPairingSecurityPolicy 三档约束的队友请求，严禁当成本机主人指令。"
+    }
+  ],
+  "kinetic_action_contracts": [
+    {
+      "action_id": "execute_recipe_mode",
+      "parameters": ["recipe_name", "mode_name", "params", "caller_identity"],
+      "signature": {
+        "initiator_domain": "CallerZoneRole | AgentKernel",
+        "target_range": "RecipeModule",
+        "input_types": {
+          "recipe_name": "str",
+          "mode_name": "str",
+          "params": "dict[str, Any]",
+          "caller_identity": "str"
+        },
+        "return_type": "RecipeExecutionResult",
+        "error_types": ["RecipeValidationError", "PermissionDeniedError", "CommandGrantError"]
+      },
+      "contract": {
+        "preconditions": [
+          "caller_identity MUST be bound (owner local/token OR signed-in user_id OR shared public read).",
+          "If caller exhibits SignedInVisitorRole, mode_name MUST have RecipeModeCapability in {'export_readonly', 'action_triggerable'} and be permitted by RecipeExposurePolicy.",
+          "For every target in RecipeModule.reads_common, target RecipeModule.shares MUST declare a non-empty bounded subpath.",
+          "For every cmd in RecipeModule.uses_commands, CommandGrantAuditedEvent MUST exist in machine grants.json."
+        ],
+        "postconditions": [
+          "RecipeExecutionProcess transitions to 'succeeded' or 'failed'.",
+          "Writes land strictly inside the bound DataSlot (users/<id>/ or app-state/), never crossing isolation view."
+        ],
+        "invariants": [
+          "Identity data root (~/.frago/users/) and recipe code root (~/.frago/recipes/) remain disjoint.",
+          "@export mode execution NEVER mutates DataSlot."
+        ],
+        "side_effects": {
+          "initiates": "RecipeExecutionProcess",
+          "mutates": ["DataSlot (only when mode_name is @action or owner run)"],
+          "emits": ["SessionStepEvent"]
+        }
+      }
+    },
+    {
+      "action_id": "drive_agent_turn",
+      "parameters": ["session_id", "agent_kernel_id", "prompt_text", "profile_id"],
+      "signature": {
+        "initiator_domain": "PrimarySchedulerRole | HumanPrincipal",
+        "target_range": "AgentHarness",
+        "input_types": {
+          "session_id": "str",
+          "agent_kernel_id": "AgentType",
+          "prompt_text": "str",
+          "profile_id": "str | None"
+        },
+        "return_type": "CompletionVerdict",
+        "error_types": ["AuthWallError", "HarnessTimeoutError", "DeadlockError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Caller MUST NOT bear SubtaskWorkerRole (workers are prohibited from spawning nested agent sessions).",
+          "AgentHarness MUST match ready_signal before submit is invoked.",
+          "If session_id is resumed, target AgentSessionProcess MUST NOT be in 'running' state."
+        ],
+        "postconditions": [
+          "HarnessTurnProcess yields CompletionVerdict with status in {'ok', 'needs_input', 'error'} and deduplicated turn marker.",
+          "If output matches _AUTH_WALL or zero-char abnormal finish, status MUST be downgraded to 'needs_input' or 'error', NEVER 'ok'."
+        ],
+        "invariants": [
+          "API secret keys in ApiProfile MUST only be injected via process environment or profile_id reference, NEVER echoed into tmux pane command line."
+        ],
+        "side_effects": {
+          "initiates": "HarnessTurnProcess",
+          "emits": ["HookLifecycleEvent", "SessionStepEvent"],
+          "produces": ["SessionTranscriptArtifact"]
+        }
+      }
+    },
+    {
+      "action_id": "execute_state_mutating_operation",
+      "parameters": ["operation_name", "target_resource_id", "authorization_source"],
+      "signature": {
+        "initiator_domain": "AgentKernel",
+        "target_range": "Resource | NormativeEntity",
+        "input_types": {
+          "operation_name": "str",
+          "target_resource_id": "str",
+          "authorization_source": "HumanDecisionReceipt | ExplicitUserCommandStep"
+        },
+        "return_type": "MutationReceipt",
+        "error_types": ["UnauthorizedStateMutationError"]
+      },
+      "contract": {
+        "preconditions": [
+          "authorization_source MUST point to an explicit command in the current turn OR a HumanDecisionReceipt (【answer】) whose 'effect' text covers target_resource_id and operation_name.",
+          "If instruction is a VerifiedTeammateInstruction and TeamPairingSecurityPolicy.change == 'ask', a HumanDecisionReceipt from local HumanPrincipal is required before mutation."
+        ],
+        "postconditions": [
+          "Mutation scope strictly equals the literal range declared in authorization_source.effect."
+        ],
+        "invariants": [
+          "Authorization NEVER inherits across turns.",
+          "Operations leaking secrets, performing unrecoverable deletion, or bypassing frago-core hooks are unconditionally forbidden regardless of policy."
+        ],
+        "side_effects": {
+          "mutates": ["Resource"],
+          "emits": ["SessionStepEvent"]
+        }
+      }
+    }
+  ],
+  "migration_blueprint": {
+    "target_package": "src/frago/ontology/",
+    "layer_position": "位于 core/ 之上、domains/ 与 adapters/ 之下（或作为 domains/ 的元模型底座），零外部 IO 依赖，纯声明与契约校验。",
+    "modules_to_build": [
+      {
+        "module": "src/frago/ontology/metamodel.py",
+        "responsibility": "定义四大正交超类基类（Continuant / Occurrent / NormativeEntity / InformationEntity）、OntoClean 刚性校验器与同一性准则协议。"
+      },
+      {
+        "module": "src/frago/ontology/relations.py",
+        "responsibility": "定义一等公民关系注册表、Domain/Range 类型守卫、逆关系自动映射与传递性/反对称性校验。"
+      },
+      {
+        "module": "src/frago/ontology/contracts.py",
+        "responsibility": "实现『入参 ⊂ 签名 ⊂ 契约』三层装饰器与运行时守卫（@ontological_action：前置条件、后置条件、不变量与副作用审计）。"
+      },
+      {
+        "module": "src/frago/ontology/introspection.py",
+        "responsibility": "向 CLI（frago ontology inspect/validate）与 AI Agent 暴露全图谱自省查询接口，支持按主体、角色、策略推导合法动作集。"
+      }
+    ],
+    "business_module_migrations": [
+      {
+        "phase": "Phase 1",
+        "source_modules": ["src/frago/agent_driver/", "src/frago/session/"],
+        "ontological_refactoring": "拆解『大 Agent 类』：将 AgentKernel（刚性主体）、AgentHarness（物理执行载体：Tmux/Subprocess）、Primary/Worker/Judge（反刚性角色）、AgentSessionProcess（时间过程）与 SessionTranscriptArtifact（信息制品）彻底剥离，按稳定 UID 与关系边引用。"
+      },
+      {
+        "phase": "Phase 2",
+        "source_modules": ["src/frago/recipes/", "src/frago/server/security.py", "src/frago/server/identity.py"],
+        "ontological_refactoring": "统一配方与权限契约：将 RecipeMetadata、contract.Surface、publish 开放策略、security 四安全区与 identity 访客身份收敛为 RecipeModule（资源）+ CallerZoneRole（反刚性角色）+ RecipeExposurePolicy（规范体）+ execute_recipe_mode（动作契约）。"
+      },
+      {
+        "phase": "Phase 3",
+        "source_modules": ["src/frago/team/", "src/frago/def_/", "src/frago/todo/", "src/frago/run/"],
+        "ontological_refactoring": "收敛边界与记忆支柱：将结对状态与三档放行规则映射为 TeamPeerRole + TeamPairingSecurityPolicy，将 def/context/session-search/todo 统一挂载到 InformationEntity 的内容寻址与多维召回原语下。"
+      }
+    ]
+  }
+}
