@@ -128,6 +128,8 @@ class TestSessionList:
             # 这一场此刻还活着（比 in_tmux 宽一格，含 CoreAgent 的常驻进程）。会话详情页
             # 照它决定推不推、轮不轮询，缺了它页面就会停在发出那句话的那一刻。
             "alive",
+            # 这一场是否归在「本机管理」（定时任务等），左栏日常清单据此默认不混入主干。
+            "local_ops",
         }
 
     def test_开在tmux里的那一场才标上(self, client, monkeypatch):

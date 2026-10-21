@@ -310,6 +310,23 @@ def file_under(
         return tag_id
 
 
+def local_ops_session_ids() -> set[str]:
+    """当前归在「本机管理」（:data:`LOCAL_OPS_KEY`）组下的全部会话编号。
+
+    左栏「今天」清单据此默认收起定时任务、待办拟稿、命令审计等机器自发会话，不把它们作为
+    无父级孤例混进人的日常主干；人在分组里把某一场搬去了别的组，它就自动脱离此集合。
+    """
+    with _LOCK:
+        state = _read()
+        tag_id = state["system_tags"].get(LOCAL_OPS_KEY)
+        if not tag_id:
+            tag = _find_tag_by_name(state, LOCAL_OPS_TAG)
+            tag_id = tag["id"] if tag else None
+        if not tag_id:
+            return set()
+        return set(state["sessions"].get(tag_id) or [])
+
+
 def remove_session(session_id: str) -> dict[str, Any]:
     """把这场会话的编号从所有标签里摘掉。标签本身一个都不动。
 

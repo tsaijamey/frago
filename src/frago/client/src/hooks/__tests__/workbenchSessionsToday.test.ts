@@ -137,4 +137,28 @@ describe('withinToday', () => {
       withinToday([parent, other, oldKid], new Set(), NOW).map((s) => s.session_id)
     ).toEqual(['p', 'o']);
   });
+
+  it('本机管理（定时任务等）会话及其子 worker 默认不混入今日列表，显式捡回今日时放行', () => {
+    const sched = card({
+      session_id: 'core_sched',
+      local_ops: true,
+      last_reply_at: NOW - 10 * 60_000,
+    });
+    const schedWorker = card({
+      session_id: 'core_sched_worker',
+      origin: 'worker',
+      parent_session_id: 'core_sched',
+      last_reply_at: NOW - 5 * 60_000,
+    });
+    const human = card({
+      session_id: 'human_today',
+      last_reply_at: NOW - 5 * 60_000,
+    });
+    expect(withinToday([sched, schedWorker, human], new Set(), NOW).map((s) => s.session_id)).toEqual([
+      'human_today',
+    ]);
+    expect(
+      withinToday([sched, schedWorker, human], new Set(['core_sched']), NOW).map((s) => s.session_id)
+    ).toEqual(['core_sched', 'human_today']);
+  });
 });

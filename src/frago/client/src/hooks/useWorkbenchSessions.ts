@@ -117,6 +117,11 @@ export interface WorkbenchSession {
    * 左栏那道流光**不看这个**：它说的是"终端还开着"，CoreAgent 没有终端。
    */
   alive?: boolean;
+  /**
+   * 这一场归在「本机管理」（定时任务、待办拟稿、命令审计）组下。
+   * 左栏日常清单默认不把这类机器自发孤例混入主干；从 Timeline 捡回今日时仍可显式放入。
+   */
+  local_ops?: boolean;
 }
 
 /**
@@ -232,15 +237,16 @@ export function withinToday(
   now: number = Date.now()
 ): WorkbenchSession[] {
   const floor = startOfToday(now);
+  const localOpsIds = new Set(
+    sessions.filter((s) => s.local_ops).map((s) => s.session_id)
+  );
   return sessions.filter((s) => {
+    if (pickedToday.has(s.session_id)) return true;
+    if (s.local_ops) return false;
+    if (s.parent_session_id && localOpsIds.has(s.parent_session_id)) return false;
     const repliedToday = s.last_reply_at !== null && s.last_reply_at >= floor;
     const bornToday = s.last_reply_at === null && s.created_at >= floor;
-    return (
-      repliedToday ||
-      bornToday ||
-      s.status === 'running' ||
-      pickedToday.has(s.session_id)
-    );
+    return repliedToday || bornToday || s.status === 'running';
   });
 }
 

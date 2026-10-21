@@ -90,6 +90,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     # 一次问清哪些 CoreAgent 场次还活着：看护一趟要过上百张卡片，逐场问就要逐场拿一次锁
     # （见 ``coreagent_runner.live_states``）。
     core_alive = await asyncio.to_thread(coreagent_runner.live_states)
+    local_ops_ids = await asyncio.to_thread(workbench_groups.local_ops_session_ids)
     rows = []
     for card in cards:
         name = tmux_name_for(card.session_id)
@@ -99,6 +100,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             "in_tmux": alive,
             "tmux_name": name if alive else None,
             "alive": _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive),
+            "local_ops": card.session_id in local_ops_ids,
         }
         if card.session_id in titles:
             row["title"] = titles[card.session_id]
