@@ -387,6 +387,8 @@ def test_alias_makes_claimed_id_reuse_the_same_session() -> None:
     assert pool.alias("ses_real", "webui-handle") is True
 
     assert pool.has("ses_real")
+    assert "ses_real" in pool.active_ids()
+    assert launched.tmux_name == "frago-agent-ses_real"
     assert pool.peek("ses_real") is launched
     assert pool.acquire("opencode", "ses_real", "/tmp") is launched
     # 只起过一场 tmux：别名没有把它变成两场。

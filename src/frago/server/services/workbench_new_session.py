@@ -42,10 +42,12 @@ frago 自己的内核，交一件事、跑完就退，没有可挂的 TUI，也�
 在 TUI bootstrap 阶段直接失败退出（20260902 实测），这一轮报废。这由
 ``WarmSessionPool.alias`` 登记。
 
-首轮跑完就把这一场从池里驱逐掉，别名跟着清。别名只是进程内的一张表，服务一重启就没
-了，而 tmux 是独立守护进程、一场都不会跟着死——那时页面拿原生编号来发话，池里查不到、
-tmux 里也没有同名会话，就会在另一个窗口里 resume 同一场，回到上面那个坏结果。让首轮
-结束即收摊，代价是下一句话付一次冷启动，换来的是"任何时刻至多一个 TUI 对着一场会话"。
+认到真编号时，池与 driver 会一并把 tmux 窗口从 ``frago-agent-webui-<uuid>`` 改名为
+``frago-agent-<真编号>``（见 ``TmuxAgentSession.rename_tmux`` 与 ``WarmSessionPool.alias``）。
+同进程内靠别名复用，跨服务重启则按改名后的窗口直接无损接管——因此一旦认到真编号，首轮
+结束时 MUST 像 claude 一样留在池里保活，绝不能强杀（否则后台子代理、定时任务或断流后
+的自动续写会被腰斩）。只有首轮跑完仍未认到真编号（多半是启动即失败）时，才把无主的把
+手窗口从池里驱逐掉。
 
 分层：服务层。可以 import ``agent_driver/`` 与 ``session/``，NEVER import ``cli/``。
 """
@@ -70,9 +72,10 @@ HANDLE_PREFIX = "webui-"
 #: 这件事在人回头看的时候还答得上来。
 _RETENTION_S = 30 * 60
 
-#: 首轮的墙钟上限。给得比普通一轮宽：新建会话这一轮既要付冷启动，又常是最长的一轮
-#: （人往往一上来就交代一整件事）。超了不代表会话没了，只代表这一轮不再等它。
-_FIRST_TURN_TIMEOUT_S = 600.0
+#: 首轮不设墙钟上限（0.0 = 交由 TmuxAgentSession.send 一直等到本轮真正答完 / 撞上
+#: needs_input 门 / 会话消失）。长任务首轮常超过十分钟，若按固定秒数提前截断，池会
+#: 在任务仍在跑时把会话标成 idle，更不能在收尾时把活会话当场杀掉。
+_FIRST_TURN_TIMEOUT_S = 0.0
 
 
 @dataclass
@@ -302,8 +305,11 @@ def _run_first_turn(launch: PendingLaunch, prompt: str, native: bool) -> None:
         launch.finished = True
         if not native:
             # 首轮结束前最后再问一次：轮次很短时看守线程可能还没轮到。
-            _adopt_claimed(launch)
-            _retire(launch)
+            if not _adopt_claimed(launch):
+                # 整轮结束仍未认到真编号（多半是启动即失败），才清掉无主的把手窗口。
+                # 已认到真编号的会话窗口已改名为 frago-agent-<真编号> 且登记了别名，
+                # 留在池里保活，避免强杀正在跑后台任务或自动续写的会话。
+                _retire(launch)
 
 
 def _watch_claim(launch: PendingLaunch) -> None:
@@ -342,11 +348,7 @@ def _adopt_claimed(launch: PendingLaunch) -> bool:
 
 
 def _retire(launch: PendingLaunch) -> None:
-    """首轮跑完就把以把手为键的那一场从池里收走（连同别名）。
-
-    见模块头："别名只是进程内的一张表"。收摊的代价是下一句话付一次冷启动，换来的是
-    任何时刻至多一个 TUI 对着一场会话。
-    """
+    """首轮结束仍未认到真编号时，把无主的把手窗口从池里收走。"""
     try:
         from frago.server.services.ui_session_runner import get_runner
 

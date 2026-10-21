@@ -267,3 +267,7 @@ class TestForYouSignals:
         assert row.awaiting_input is True
         assert row.last_stop_at == "2026-09-24T13:11:00+00:00"
         assert row.closing_text == "A or B?"
+
+    def test_agy_busy_pane_is_recognized_as_busy(self):
+        agy_pane = ">\n\n⣻  Generating...\n\nesc to cancel     Gemini 3.8 Flash · medium\n"
+        assert svc._is_busy(agy_pane) is True

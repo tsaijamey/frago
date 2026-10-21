@@ -440,11 +440,14 @@ def _is_busy(pane: str) -> bool:
     注释记在 ``ui_session_runner._idle_age`` 里。
     """
     try:
+        from frago.agent_driver.drivers import agy as agy_driver
         from frago.agent_driver.drivers import claude as claude_driver
 
         if claude_driver._SHELL_RUNNING.search(pane) is not None:
             return True
         if claude_driver._BUSY.search(pane) is not None:
+            return True
+        if agy_driver._BUSY.search(pane) is not None:
             return True
         return claude_driver._WORKING.matches(pane)
     except Exception:  # noqa: BLE001 — 判不出忙就当忙，宁可少关一个也不误杀

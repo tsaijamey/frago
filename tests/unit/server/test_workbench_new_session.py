@@ -42,6 +42,7 @@ class FakeRunner:
                 "text": text,
                 "agent_type": agent_type,
                 "cwd": cwd,
+                "timeout_s": timeout_s,
                 "native_session_id": native_session_id,
             }
         )
@@ -268,11 +269,13 @@ class TestClaimedId:
             "01a01a98-82e9-7013-b24e-e5e91b03995a",
             launch.handle,
         ) in runner.aliases
+        assert runner.calls[0]["timeout_s"] == 0.0
         _finish(runner)
+        # 认到真编号后窗口已改名并登记别名，首轮结束 MUST 留在池里保活，绝不能强杀。
+        assert runner.evicted == []
 
-    def test_首轮跑完就把以把手为键的那一场收走(self, runner, selectable, bindings):
-        """别名只是进程内的一张表，服务一重启就没了；留着 tmux 会让下一次 resume
-        撞上一个还活着的同一场会话。"""
+    def test_首轮跑完仍未认到编号时把无主的把手窗口收走(self, runner, selectable, bindings):
+        """整轮结束仍没认到真编号（多半是启动即失败），才把无主的把手窗口清掉。"""
         launch = workbench_new_session.start("codex", "/tmp/repo", "干活")
         runner.started.wait(timeout=5)
         _finish(runner)

@@ -86,9 +86,11 @@ class WarmSessionPool:
         （codex/opencode 的 binding）正是拿它当键，改了等于让 driver 重认一遍，
         两场会话的记录就此互串。
         """
-        if session_id not in self._sessions or alias_id == session_id:
+        session = self._sessions.get(session_id)
+        if session is None or alias_id == session_id:
             return False
         self._aliases[alias_id] = session_id
+        session.rename_tmux(alias_id)
         return True
 
     def has(self, session_id: str) -> bool:
@@ -99,7 +101,12 @@ class WarmSessionPool:
         return self._sessions.get(self._key(session_id))
 
     def active_ids(self) -> list[str]:
-        return list(self._sessions.keys())
+        aliases = [
+            alias_id
+            for alias_id, target in self._aliases.items()
+            if target in self._sessions
+        ]
+        return list(dict.fromkeys([*self._sessions.keys(), *aliases]))
 
     # ── 核心：取一个活会话（复用 / 重建 / 新建） ──────────────────────
     def acquire(
