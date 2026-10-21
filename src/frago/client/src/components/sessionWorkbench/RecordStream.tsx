@@ -55,7 +55,9 @@ import SelectionQuote, {
   rangeOf,
   type MarkAnchor,
 } from './SelectionQuote';
-import FilePeek from '@/components/fileBrowser/FilePeek';
+import FileViewer, { type PackedAnnotationsPayload } from './FileViewer';
+import { revealPath } from '@/api';
+import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
@@ -600,6 +602,12 @@ export interface RecordStreamProps {
    * 极窄时单行尾部省略，悬停保留完整说明。
    */
   usage?: ComposerUsage | null;
+  /** 当前会话的文件清单，供对话内点击文件链接打开统一 FileViewer 时共享左栏导航。 */
+  sessionFiles?: SessionFileRow[] | null;
+  /** 在宿主机器打开文件所在目录的回调。 */
+  onRevealFile?: (path: string) => void;
+  /** 在 FileViewer 中打包批注填入对话框的回调。 */
+  onPackPrompt?: (payload: PackedAnnotationsPayload) => void;
 }
 
 /** 悬停说明与水位读数里 k 为单位的写法：312k。 */
@@ -645,6 +653,9 @@ export default function RecordStream({
   filesCount = null,
   filesPending = false,
   usage = null,
+  sessionFiles = null,
+  onRevealFile,
+  onPackPrompt,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   /** 档位条右侧那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
@@ -1385,10 +1396,38 @@ export default function RecordStream({
         />
       ) : null}
 
-      {/* 浮开的那一份。挂在这一层而不是页面上：圈选发生在哪块记录流里，它就从哪块冒出来，
-          两处记录流（会话页、Teams 页）各管各的，不互相顶掉。 */}
+      {/* 浮开的那一份统一走 FileViewer（固定比例大视野、预览/内容/改动切换、行级批注与打包回填）。 */}
       {peek ? (
-        <FilePeek path={peek.path} size={peek.size} line={peek.line} onClose={() => setPeek(null)} />
+        (() => {
+          const baseList = sessionFiles ?? [];
+          const foundIdx = baseList.findIndex((f) => f.path === peek.path);
+          const viewerFiles: SessionFileRow[] =
+            foundIdx >= 0
+              ? baseList
+              : [{ path: peek.path, action: 'modified', count: 1, first_seq: 0 }, ...baseList];
+          const viewerIdx = foundIdx >= 0 ? foundIdx : 0;
+          return (
+            <FileViewer
+              sessionId={sessionId ?? ''}
+              files={viewerFiles}
+              index={viewerIdx}
+              line={peek.line}
+              onClose={() => setPeek(null)}
+              onStep={(delta) => {
+                const total = viewerFiles.length;
+                if (!total) return;
+                const nextIdx = (viewerIdx + delta + total) % total;
+                const nextFile = viewerFiles[nextIdx];
+                if (nextFile) setPeek({ path: nextFile.path, size: null });
+              }}
+              onReveal={(p) => {
+                if (onRevealFile) onRevealFile(p);
+                else void revealPath(p).catch(() => {});
+              }}
+              onPackPrompt={onPackPrompt}
+            />
+          );
+        })()
       ) : null}
 
       {branchMenu ? (

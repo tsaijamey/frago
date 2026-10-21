@@ -137,7 +137,7 @@ describe('清单开着的时候', () => {
 });
 
 describe('点击回复正文里的 file:// 本地文件链接', () => {
-  it('拦截跳转并就地打开 FilePeek 预览浮窗（含行号提示、复制路径、打开所在目录）', () => {
+  it('拦截跳转并就地打开统一 FileViewer 预览浮窗（含行号提示、复制路径、打开所在目录）', () => {
     renderStream({
       records: [
         {
@@ -159,14 +159,14 @@ describe('点击回复正文里的 file:// 本地文件链接', () => {
     const link = screen.getByRole('link', { name: 'routes.ts' });
     fireEvent.click(link);
 
-    const peek = screen.getByTestId('file-peek');
-    expect(peek).toBeTruthy();
-    expect(screen.getByTestId('file-peek-line').textContent).toBe('#L84');
-    expect(screen.getByTestId('file-peek-copy')).toBeTruthy();
-    expect(screen.getByTestId('file-peek-reveal')).toBeTruthy();
+    const viewer = screen.getByTestId('file-viewer');
+    expect(viewer).toBeTruthy();
+    expect(screen.getByTestId('file-viewer-line-anchor').textContent).toBe('#L84');
+    expect(screen.getByTestId('file-viewer-copy')).toBeTruthy();
+    expect(screen.getByTestId('file-viewer-reveal')).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId('file-peek-close'));
-    expect(screen.queryByTestId('file-peek')).toBeNull();
+    fireEvent.click(screen.getByTestId('file-viewer-close'));
+    expect(screen.queryByTestId('file-viewer')).toBeNull();
   });
 });
 

@@ -52,6 +52,8 @@ export interface FileViewerProps {
   /** 这场会话改过的全部文件，顺序与清单一致——‹ › 与「3 / 8」按它走。 */
   files: SessionFileRow[];
   index: number;
+  /** 从对话链接点进来时附带的行号锚点（如 `L84`、`L314-L368`）。 */
+  line?: string;
   onClose: () => void;
   /** ‹ › 翻上一个／下一个，绕圈。 */
   onStep: (delta: number) => void;
@@ -116,6 +118,7 @@ export default function FileViewer({
   sessionId,
   files,
   index,
+  line,
   onClose,
   onStep,
   onReveal,
@@ -164,6 +167,26 @@ export default function FileViewer({
     setDraftRange(null);
     setDraftNote('');
     getSessionFileContent(sessionId, path)
+      .catch(async (err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          path.startsWith('/') &&
+          typeof fetch === 'function' &&
+          (msg.includes('not a file this session changed') || msg.includes('403'))
+        ) {
+          const res = await fetch(`/api/file?disposition=inline&path=${encodeURIComponent(path)}`);
+          if (!res.ok) throw err;
+          const rawText = await res.text();
+          const isBinary = rawText.slice(0, 4096).includes('\u0000');
+          return {
+            path,
+            size: rawText.length,
+            text: isBinary ? null : rawText,
+            reason: isBinary ? ('not-text' as const) : null,
+          };
+        }
+        throw err;
+      })
       .then((body) => {
         if (alive) setContent(body);
       })
@@ -434,6 +457,11 @@ export default function FileViewer({
               {withTilde(dirOf(file.path))}
             </span>
             <b className="ml-1 font-medium text-text-primary">{baseOf(file.path)}</b>
+            {line ? (
+              <span data-testid="file-viewer-line-anchor" className="ml-1 text-text-muted">
+                #{line}
+              </span>
+            ) : null}
           </span>
 
           <span

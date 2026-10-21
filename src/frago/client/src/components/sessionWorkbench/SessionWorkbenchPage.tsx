@@ -1176,6 +1176,11 @@ export default function SessionWorkbenchPage() {
                  因为有故障，那时该说的是故障，不是「正在数」。 */
               filesPending={sessionFiles.files === null && sessionFiles.error === null}
               usage={usageReadout}
+              sessionFiles={sessionFiles.files}
+              onRevealFile={onReveal}
+              onPackPrompt={(payload) =>
+                setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
+              }
             />
             </DecisionCardContext.Provider>
           )}
