@@ -776,6 +776,23 @@ export const setHookReviewEnabled = withMode(
     Promise.resolve({ ...HOOK_REVIEW_UNAVAILABLE, enabled }),
 );
 
+export type {
+  CliAgentClientStatus,
+  CliAgentsStatus,
+  OpencodeServiceStatus,
+} from './client';
+
+export const getCliAgentsStatus = withMode(
+  (): Promise<httpApi.CliAgentsStatus> => httpApi.getCliAgentsStatus(),
+  (): Promise<httpApi.CliAgentsStatus> => Promise.resolve({ agents: [] }),
+);
+
+export const setOpencodeServiceDisabled = withMode(
+  (disabled: boolean): Promise<httpApi.CliAgentsStatus> =>
+    httpApi.setOpencodeServiceDisabled(disabled),
+  (_disabled: boolean): Promise<httpApi.CliAgentsStatus> => Promise.resolve({ agents: [] }),
+);
+
 // ============================================================
 // VSCode Integration API
 // ============================================================

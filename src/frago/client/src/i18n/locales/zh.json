@@ -735,11 +735,24 @@
     "tabDesc": {
       "capability": "每次提交 prompt，frago 分两层加提示。下面是两层此刻在做什么。",
       "general": "认证与账号配置",
+      "agents": "本机已检测到的 CLI Agent 客户端与专属设置",
       "channels": "任务接入通道",
       "resources": "官方命令与技能同步",
       "appearance": "语言与行为",
       "init": "初始化状态与向导",
       "about": "版本与许可"
+    },
+    "cliAgents": {
+      "loadFailed": "读取 CLI 客户端状态失败。",
+      "saveFailed": "设置没有写入成功，保持原样。",
+      "detectedBadge": "已检测到",
+      "notDetectedBadge": "未安装",
+      "notDetectedHint": "本机未找到该客户端可执行文件，安装后会自动点亮。",
+      "opencode": {
+        "serviceSwitch": "禁用后台常驻服务 (opencode service set disabled true)",
+        "serviceSwitchDesc": "开启后写入 <c>~/.config/opencode/service.json</c> 的 <c>\"disabled\": true</c> 并停掉已有常驻进程，任何不带 <c>--standalone</c> 的 opencode 命令都自动改为随会话生灭的私有服务端；关闭则执行 <c>opencode service unset disabled</c> 恢复默认。",
+        "serviceUnsupported": "当前安装的 OpenCode 为 1.x 版本，无后台常驻服务端机制。"
+      }
     },
     "capability": {
       "loadFailed": "读取提示能力状态失败。",

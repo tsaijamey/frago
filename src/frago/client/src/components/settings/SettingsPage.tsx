@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   KeyRound,
+  Terminal,
   Inbox,
   RefreshCw,
   Palette,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import GeneralSettings from './GeneralSettings';
+import CliAgentSettings from './CliAgentSettings';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
 import { InitSettings } from './InitSettings';
@@ -34,7 +36,7 @@ interface SettingsPageProps {
   onOpenInitWizard?: () => void;
 }
 
-type TabId = 'capability' | 'general' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
+type TabId = 'capability' | 'general' | 'agents' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
 
 /** What each panel gets to render with — page props plus the cross-panel wiring. */
 interface PanelContext extends SettingsPageProps {
@@ -66,6 +68,7 @@ const TABS: TabDef[] = [
     Icon: KeyRound,
     render: ({ profileSignal }) => <GeneralSettings openProfilesSignal={profileSignal} />,
   },
+  { id: 'agents', Icon: Terminal, render: () => <CliAgentSettings /> },
   { id: 'channels', Icon: Inbox, render: () => <TaskIngestionPanel /> },
   { id: 'resources', Icon: RefreshCw, render: () => <OfficialResourceSettings /> },
   { id: 'appearance', Icon: Palette, render: () => <AppearanceSettings /> },

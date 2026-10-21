@@ -40,6 +40,7 @@ import logging
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
@@ -568,6 +569,37 @@ def session_exists(opencode_session_id: str) -> bool:
     return False
 
 
+_STANDALONE_SUPPORT: dict[str, bool] = {}
+_STANDALONE_PROBE_TIMEOUT_S = 10.0
+
+
+def _standalone_flag() -> str:
+    """本机这份 opencode 认不认 ``--standalone``；不认或探测失败时返回空串。
+
+    2.0 起 ``opencode session delete`` 也走客户端-服务端连接：不带 ``--standalone``
+    时，若后台常驻服务端尚未启动，删一场会话就会顺手拉起一个永不自停的 ``opencode
+    serve --service``。1.x 没有这个参数，故按可执行文件路径缓存探测一次 ``--help``。
+    """
+    from frago.compat import find_agent_cli
+
+    executable = find_agent_cli("opencode")
+    if not executable:
+        return ""
+    if executable in _STANDALONE_SUPPORT:
+        return "--standalone" if _STANDALONE_SUPPORT[executable] else ""
+    supported = False
+    with contextlib.suppress(Exception):
+        probe = subprocess.run(
+            [executable, "--help"],
+            capture_output=True,
+            timeout=_STANDALONE_PROBE_TIMEOUT_S,
+            check=False,
+        )
+        supported = b"--standalone" in probe.stdout
+    _STANDALONE_SUPPORT[executable] = supported
+    return "--standalone" if supported else ""
+
+
 def delete_session(opencode_session_id: str) -> str:
     """叫 opencode 自己把这场会话删掉，回它吐出来的那句话。
 
@@ -579,10 +611,19 @@ def delete_session(opencode_session_id: str) -> str:
     外键，漏删的子表不报错，事件流水的序列号对不上时坏的是 opencode 自己的同步，
     而这些在界面上都表现为「删干净了」。
 
+    2.0 起带上 ``--standalone``，避免删会话时顺手在后台拉起常驻的 ``opencode serve
+    --service``（见 :func:`_standalone_flag`）。
+
     "本机已经没有了"这条**不在这里判**，判据在上游的 ``session_exists``；走到这儿
     还失败就是真失败，如实抛。
     """
-    return run_engine_command("opencode", ["session", "delete", opencode_session_id]).output
+    flag = _standalone_flag()
+    argv = (
+        ["session", "delete", flag, opencode_session_id]
+        if flag
+        else ["session", "delete", opencode_session_id]
+    )
+    return run_engine_command("opencode", argv).output
 
 
 def session_directory(opencode_session_id: str) -> str | None:

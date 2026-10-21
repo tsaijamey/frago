@@ -739,11 +739,24 @@
     "tabDesc": {
       "capability": "On every prompt, frago adds guidance in two layers. Here is what each is doing right now.",
       "general": "Authentication and account profiles",
+      "agents": "Detected CLI Agent clients on this machine and their client-specific settings",
       "channels": "Task ingestion channels",
       "resources": "Official commands & skills sync",
       "appearance": "Language and behavior",
       "init": "Setup status and wizard",
       "about": "Version and license"
+    },
+    "cliAgents": {
+      "loadFailed": "Failed to read CLI agent client status.",
+      "saveFailed": "The setting was not saved; configuration is unchanged.",
+      "detectedBadge": "Detected",
+      "notDetectedBadge": "Not installed",
+      "notDetectedHint": "Executable not found on this machine. It will light up automatically once installed.",
+      "opencode": {
+        "serviceSwitch": "Disable background daemon (opencode service set disabled true)",
+        "serviceSwitchDesc": "Writes <c>\"disabled\": true</c> into <c>~/.config/opencode/service.json</c> and stops any running daemon so every opencode command runs with a private per-session server; turning it off runs <c>opencode service unset disabled</c>.",
+        "serviceUnsupported": "This OpenCode build is 1.x and does not use a background daemon."
+      }
     },
     "capability": {
       "loadFailed": "Failed to read prompting capability status.",

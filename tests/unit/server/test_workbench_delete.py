@@ -235,6 +235,36 @@ class TestDeleteSession:
 
         assert seen == {"agent": "codex", "argv": ["delete", "--force", CX_SID]}
 
+    def test_opencode_2_0_删除命令带_standalone_免得拉起后台常驻服务(self, monkeypatch):
+        """2.0 的 session delete 默认连共享服务端，没起就顺手起一个常驻进程；带 --standalone 用完即退。"""
+        seen = {}
+
+        def fake_run(agent, argv, **_k):
+            seen["agent"], seen["argv"] = agent, argv
+            return engine_cli.EngineCommandResult(argv=argv, output="deleted")
+
+        monkeypatch.setattr(opencode_store, "_standalone_flag", lambda: "--standalone")
+        monkeypatch.setattr(opencode_store, "run_engine_command", fake_run)
+
+        opencode_store.delete_session(OC_SID)
+
+        assert seen == {"agent": "opencode", "argv": ["session", "delete", "--standalone", OC_SID]}
+
+    def test_opencode_1_x_删除命令不带_standalone(self, monkeypatch):
+        """1.x 不认 --standalone，探测返回空串时保持原样。"""
+        seen = {}
+
+        def fake_run(agent, argv, **_k):
+            seen["agent"], seen["argv"] = agent, argv
+            return engine_cli.EngineCommandResult(argv=argv, output="deleted")
+
+        monkeypatch.setattr(opencode_store, "_standalone_flag", lambda: "")
+        monkeypatch.setattr(opencode_store, "run_engine_command", fake_run)
+
+        opencode_store.delete_session(OC_SID)
+
+        assert seen == {"agent": "opencode", "argv": ["session", "delete", OC_SID]}
+
     def test_映射摘不干净不算整件事失败但要说出来(self, monkeypatch):
         """要的结果（清单里不再有它）已经达成，NEVER 把做成的事说成没做成。"""
         monkeypatch.setattr(opencode_store, "session_exists", lambda _sid: True)

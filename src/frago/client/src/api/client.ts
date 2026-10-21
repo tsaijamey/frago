@@ -973,6 +973,40 @@ export async function setHookReviewEnabled(enabled: boolean): Promise<HookReview
 }
 
 // ============================================================
+// CLI Agent Clients & OpenCode Background Service API
+// ============================================================
+
+export interface OpencodeServiceStatus {
+  supported: boolean;
+  disabled: boolean;
+  config_path: string;
+}
+
+export interface CliAgentClientStatus {
+  agent_type: string;
+  display_name: string;
+  family: string | null;
+  installed: boolean;
+  path: string | null;
+  opencode_service: OpencodeServiceStatus | null;
+}
+
+export interface CliAgentsStatus {
+  agents: CliAgentClientStatus[];
+}
+
+export async function getCliAgentsStatus(): Promise<CliAgentsStatus> {
+  return fetchApi<CliAgentsStatus>('/settings/cli-agents');
+}
+
+export async function setOpencodeServiceDisabled(disabled: boolean): Promise<CliAgentsStatus> {
+  return fetchApi<CliAgentsStatus>('/settings/cli-agents/opencode/service', {
+    method: 'PUT',
+    body: JSON.stringify({ disabled }),
+  });
+}
+
+// ============================================================
 // VSCode Integration API
 // ============================================================
 

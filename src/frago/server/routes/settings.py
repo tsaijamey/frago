@@ -1556,6 +1556,149 @@ async def put_agent_core_setting(payload: AgentCoreUpdateRequest) -> AgentCoreRe
     return AgentCoreResponse(agent_core=config.agent_core, available=available)
 
 
+# ============================================================
+# CLI Agent Clients & OpenCode Background Service
+# ============================================================
+
+_CLI_AGENT_ORDER: tuple[str, ...] = ("claude", "codex", "opencode", "agy")
+
+
+class OpencodeServiceStatus(BaseModel):
+    """OpenCode 2.0 后台常驻服务（opencode serve --service）的开关状态。"""
+
+    supported: bool
+    disabled: bool
+    config_path: str = "~/.config/opencode/service.json"
+
+
+class CliAgentClientStatus(BaseModel):
+    """本机单个 CLI Agent 客户端的探测结果与专属设置。"""
+
+    agent_type: str
+    display_name: str
+    family: str | None = None
+    installed: bool
+    path: str | None = None
+    opencode_service: OpencodeServiceStatus | None = None
+
+
+class CliAgentsStatusResponse(BaseModel):
+    """设置页「CLI 客户端」分区的完整状态。"""
+
+    agents: list[CliAgentClientStatus]
+
+
+class OpencodeServiceUpdateRequest(BaseModel):
+    disabled: bool
+
+
+def _opencode_service_config_path():
+    from pathlib import Path
+
+    from frago.init.opencode_plugin import get_opencode_config_dir
+
+    env_dir = os.environ.get("OPENCODE_CONFIG_DIR", "").strip()
+    base = Path(env_dir) if env_dir else get_opencode_config_dir()
+    return base / "service.json"
+
+
+def _read_opencode_service_disabled() -> bool:
+    """只读布尔开关 ``disabled``，NEVER 读取或透出文件里的 ``password`` 等字段。"""
+    import json
+
+    path = _opencode_service_config_path()
+    try:
+        if not path.is_file():
+            return False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return isinstance(data, dict) and data.get("disabled") is True
+    except Exception:  # noqa: BLE001 — 文件损坏或不可读时当作未禁用
+        return False
+
+
+def _opencode_supports_service_toggle() -> bool:
+    """本机这份 opencode 是否有 2.0 常驻服务端（与 ``--standalone`` 同源判据）。"""
+    from frago.session import opencode_store
+
+    return opencode_store._standalone_flag() == "--standalone"
+
+
+def _cli_agents_status() -> CliAgentsStatusResponse:
+    """从 driver 注册表汇总本机全部 CLI Agent 客户端状态（已检测到的排在前面）。"""
+    from frago.agent_driver.driver import registered_drivers
+    from frago.server.services.workbench_agents import FAMILY_BY_AGENT_TYPE
+
+    items: list[CliAgentClientStatus] = []
+    for agent_type, driver in registered_drivers().items():
+        path: str | None = None
+        if driver.locate is not None:
+            try:
+                path = driver.locate()
+            except Exception:  # noqa: BLE001 — 单个客户端探测出错不影响其余客户端展示
+                path = None
+        installed = path is not None
+        opencode_service: OpencodeServiceStatus | None = None
+        if agent_type == "opencode" and installed:
+            opencode_service = OpencodeServiceStatus(
+                supported=_opencode_supports_service_toggle(),
+                disabled=_read_opencode_service_disabled(),
+            )
+        items.append(
+            CliAgentClientStatus(
+                agent_type=agent_type,
+                display_name=driver.display_name or agent_type,
+                family=FAMILY_BY_AGENT_TYPE.get(agent_type),
+                installed=installed,
+                path=path,
+                opencode_service=opencode_service,
+            )
+        )
+
+    def _sort_key(item: CliAgentClientStatus) -> tuple[bool, int, str]:
+        idx = (
+            _CLI_AGENT_ORDER.index(item.agent_type)
+            if item.agent_type in _CLI_AGENT_ORDER
+            else len(_CLI_AGENT_ORDER)
+        )
+        return (not item.installed, idx, item.agent_type)
+
+    items.sort(key=_sort_key)
+    return CliAgentsStatusResponse(agents=items)
+
+
+@router.get("/settings/cli-agents", response_model=CliAgentsStatusResponse)
+async def get_cli_agents_status() -> CliAgentsStatusResponse:
+    """Return detected CLI agent clients and client-specific settings."""
+    import asyncio
+
+    return await asyncio.to_thread(_cli_agents_status)
+
+
+@router.put("/settings/cli-agents/opencode/service", response_model=CliAgentsStatusResponse)
+async def put_opencode_service_setting(
+    payload: OpencodeServiceUpdateRequest,
+) -> CliAgentsStatusResponse:
+    """Toggle OpenCode 2.0 background service via ``opencode service set/unset disabled``."""
+    import asyncio
+
+    from frago.session.engine_cli import EngineCliFailed, EngineCliMissing, run_engine_command
+
+    argv = (
+        ["service", "set", "disabled", "true"]
+        if payload.disabled
+        else ["service", "unset", "disabled"]
+    )
+
+    def _apply() -> CliAgentsStatusResponse:
+        run_engine_command("opencode", argv)
+        return _cli_agents_status()
+
+    try:
+        return await asyncio.to_thread(_apply)
+    except (EngineCliMissing, EngineCliFailed) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class RestartResponse(BaseModel):
     status: str
     message: str
