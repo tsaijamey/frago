@@ -1222,6 +1222,26 @@ export interface SessionMarks {
   marks: WorkbenchMark[];
 }
 
+/**
+ * 会话文件预览（FileViewer）里对某份文件代码行留下的批注。
+ * 关联存入 `~/.frago/sessions/<family>/<session_id>/file-annotations.json`。
+ */
+export interface FileAnnotation {
+  id: string;
+  file: string;
+  line_start: number;
+  line_end: number;
+  quote: string;
+  note: string;
+  created_at: number;
+}
+
+export interface SessionFileAnnotations {
+  version: number;
+  trace_path?: string;
+  annotations: FileAnnotation[];
+}
+
 // ============================================================
 // 会话分支 — 圈一段原文起一场新会话处理旁支问题
 // ============================================================

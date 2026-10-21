@@ -1326,7 +1326,13 @@ export const getEnvironmentUpgradeStatus = withMode(
 // 会话页标注 — 引用与暂存
 // ============================================================
 
-export type { WorkbenchMark, WorkbenchMarkKind, SessionMarks } from './client';
+export type {
+  WorkbenchMark,
+  WorkbenchMarkKind,
+  SessionMarks,
+  FileAnnotation,
+  SessionFileAnnotations,
+} from './client';
 
 // 标注存在会话备份目录里，只有服务端读写得到。桌面壳那一路没有桥，把取不到说出来。
 const MARKS_UNAVAILABLE = 'Session marks API not available in pywebview mode';
@@ -1341,6 +1347,26 @@ export const putSessionMarks = withMode(
   (sessionId: string, marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
     httpApi.putSessionMarks(sessionId, marks),
   (_sessionId: string, _marks: httpApi.SessionMarks): Promise<httpApi.SessionMarks> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);
+
+export const getSessionFileAnnotations = withMode(
+  (sessionId: string): Promise<httpApi.SessionFileAnnotations> =>
+    httpApi.getSessionFileAnnotations(sessionId),
+  (_sessionId: string): Promise<httpApi.SessionFileAnnotations> =>
+    Promise.reject(new Error(MARKS_UNAVAILABLE)),
+);
+
+export const putSessionFileAnnotations = withMode(
+  (
+    sessionId: string,
+    payload: httpApi.SessionFileAnnotations
+  ): Promise<httpApi.SessionFileAnnotations> =>
+    httpApi.putSessionFileAnnotations(sessionId, payload),
+  (
+    _sessionId: string,
+    _payload: httpApi.SessionFileAnnotations
+  ): Promise<httpApi.SessionFileAnnotations> =>
     Promise.reject(new Error(MARKS_UNAVAILABLE)),
 );
 

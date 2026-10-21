@@ -125,6 +125,11 @@ export interface ComposerProps {
    */
   quote?: { text: string; note?: string; at: number } | null;
   /**
+   * 从 FileViewer「打包批注填入对话框」送过来的整份新 prompt。
+   * 直接填入输入框并展示关联存档路径提示条，供人检视后按 Send 发送。
+   */
+  packedPrompt?: { text: string; count: number; tracePath: string; at: number } | null;
+  /**
    * 人在决定卡片上点出来的那一句答复，等着整句投出。
    *
    * 走的是跟「发送」同一条路（信封、进度、失败退回），只是不经输入框：框里人正在打的字
@@ -322,6 +327,7 @@ export default function Composer({
   trails = [],
   onShowInStream,
   quote = null,
+  packedPrompt = null,
   answer = null,
   contextTokens = null,
   onHandoff,
@@ -467,6 +473,27 @@ export default function Composer({
     caretTo.current = next.length;
     setText(next);
   }, [quoteAt, quoteText, quoteNote, setText]);
+
+  // 文档批注打包填入输入框：附带可溯源存档路径条，供人检视或补充后按 Send 发送。
+  const [packedBanner, setPackedBanner] = useState<{ count: number; tracePath: string } | null>(
+    null
+  );
+  useEffect(() => {
+    setPackedBanner(null);
+  }, [sessionId]);
+  useEffect(() => {
+    if (sending) setPackedBanner(null);
+  }, [sending]);
+  const packedAt = packedPrompt?.at ?? 0;
+  const packedText = packedPrompt?.text ?? '';
+  const packedCount = packedPrompt?.count ?? 0;
+  const packedTrace = packedPrompt?.tracePath ?? '';
+  useEffect(() => {
+    if (!packedText || !packedAt) return;
+    caretTo.current = packedText.length;
+    setText(packedText);
+    setPackedBanner({ count: packedCount, tracePath: packedTrace });
+  }, [packedAt, packedText, packedCount, packedTrace, setText]);
 
   // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片。
   const answerAt = answer?.at ?? 0;
@@ -793,6 +820,33 @@ export default function Composer({
                   onRemove={() => removeSkill(skill.name)}
                 />
               ))}
+            </div>
+          ) : null}
+          {packedBanner ? (
+            <div
+              data-testid="composer-packed-bar"
+              className="mb-2 flex items-center justify-between gap-2 rounded-[6px] border border-border-color bg-bg-secondary px-2.5 py-1 text-[11px] text-text-secondary"
+            >
+              <span className="min-w-0 truncate">
+                <strong className="font-semibold text-accent-warning">
+                  {t('workbench.composer.packedBanner', { n: packedBanner.count })}
+                </strong>
+                <span className="mx-1.5 text-text-dim">·</span>
+                <code className="font-mono text-[10.5px] text-text-muted">
+                  {packedBanner.tracePath}
+                </code>
+              </span>
+              <button
+                type="button"
+                data-testid="composer-packed-clear"
+                onClick={() => {
+                  setPackedBanner(null);
+                  setText('');
+                }}
+                className="shrink-0 rounded-[4px] px-1.5 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+              >
+                {t('workbench.composer.packedClear')}
+              </button>
             </div>
           ) : null}
           <textarea

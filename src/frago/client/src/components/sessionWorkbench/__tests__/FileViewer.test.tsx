@@ -11,9 +11,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const getSessionFileContent = vi.fn();
 const getSessionFileDiff = vi.fn();
+const getSessionFileAnnotations = vi.fn();
+const putSessionFileAnnotations = vi.fn();
 vi.mock('@/api', () => ({
   getSessionFileContent: (sid: string, path: string) => getSessionFileContent(sid, path),
   getSessionFileDiff: (sid: string, path: string) => getSessionFileDiff(sid, path),
+  getSessionFileAnnotations: (sid: string) => getSessionFileAnnotations(sid),
+  putSessionFileAnnotations: (sid: string, body: unknown) => putSessionFileAnnotations(sid, body),
 }));
 
 const loadHighlighter = vi.fn();
@@ -44,8 +48,19 @@ function neverHighlight() {
 beforeEach(() => {
   getSessionFileContent.mockReset();
   getSessionFileDiff.mockReset();
+  getSessionFileAnnotations.mockReset();
+  putSessionFileAnnotations.mockReset();
   loadHighlighter.mockReset();
   neverHighlight();
+  getSessionFileAnnotations.mockResolvedValue({
+    version: 1,
+    trace_path: '~/.frago/sessions/claude-code/sid-1/file-annotations.json',
+    annotations: [],
+  });
+  putSessionFileAnnotations.mockImplementation(async (_sid: string, body: unknown) => ({
+    ...(body as object),
+    trace_path: '~/.frago/sessions/claude-code/sid-1/file-annotations.json',
+  }));
   getSessionFileContent.mockResolvedValue({
     path: '/w/src/a.py',
     size: 12,
@@ -355,5 +370,57 @@ describe('换了文件就重取', () => {
       />
     );
     await waitFor(() => expect(getSessionFileContent).toHaveBeenCalledWith('sid-1', '/w/src/b.py'));
+  });
+});
+
+describe('固定比例大窗口、文档批注落盘与打包填入对话框', () => {
+  it('默认窗口与主视口呈固定比例 88vw × 86vh，切到改动模式扩展为 92vw × 86vh', async () => {
+    open();
+    await waitFor(() => expect(screen.getByText(/x = 1/)).toBeTruthy());
+
+    const win = screen.getByTestId('file-viewer-window');
+    expect(win.className).toContain('w-[88vw]');
+    expect(win.className).toContain('h-[86vh]');
+
+    fireEvent.click(screen.getByTestId('file-viewer-mode-changes'));
+    expect(win.className).toContain('w-[92vw]');
+  });
+
+  it('点击行号添加批注并关联落盘到当前会话目录，打包后填入对话框并关闭浮窗', async () => {
+    const onPackPrompt = vi.fn();
+    const { onClose } = open({ onPackPrompt });
+
+    await waitFor(() => expect(screen.getByText(/x = 1/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByTestId('file-viewer-trace-path').textContent).toContain(
+        '~/.frago/sessions/claude-code/sid-1/file-annotations.json'
+      )
+    );
+
+    // 点击第 1 行行号按钮打开行内批注框
+    fireEvent.click(screen.getByTestId('file-viewer-line-btn-1'));
+    const input = screen.getByTestId('file-viewer-inline-input');
+    fireEvent.change(input, { target: { value: '把常量提取到配置模块' } });
+    fireEvent.click(screen.getByTestId('file-viewer-inline-save'));
+
+    // 行内批注卡片与右侧批注栏同步出现，且向服务端发起 PUT 落盘
+    expect(screen.getByTestId('file-viewer-inline-card').textContent).toContain(
+      '把常量提取到配置模块'
+    );
+    expect(screen.getByTestId('file-viewer-annotation-item').textContent).toContain(
+      '把常量提取到配置模块'
+    );
+    await waitFor(() => expect(putSessionFileAnnotations).toHaveBeenCalledTimes(1));
+
+    // 点击打包按钮，组装完整新 prompt 交给 Composer 并关闭浮窗
+    fireEvent.click(screen.getByTestId('file-viewer-pack-btn'));
+    expect(onPackPrompt).toHaveBeenCalledTimes(1);
+    const packed = onPackPrompt.mock.calls[0][0];
+    expect(packed.count).toBe(1);
+    expect(packed.tracePath).toBe('~/.frago/sessions/claude-code/sid-1/file-annotations.json');
+    expect(packed.text).toContain('/w/src/a.py:L1');
+    expect(packed.text).toContain('x = 1');
+    expect(packed.text).toContain('>>> 把常量提取到配置模块');
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

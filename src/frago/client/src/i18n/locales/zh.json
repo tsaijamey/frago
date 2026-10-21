@@ -726,6 +726,7 @@
     "tabs": {
       "capability": "提示能力",
       "general": "通用",
+      "agents": "CLI 客户端",
       "channels": "任务通道",
       "resources": "官方资源",
       "appearance": "外观",
@@ -1627,7 +1628,22 @@
       "diffLoading": "在取改动之前那一版",
       "diffFailed": "没取到改动之前那一版",
       "diffTooManyLines": "两边行数太多，没做并排对照",
-      "diffNone": "没有可对照的东西"
+      "diffNone": "没有可对照的东西",
+      "annotateToggle": "批注 ({{n}})",
+      "annotateHint": "点击行号或划选代码添加批注 · 已关联当前会话存档可溯源",
+      "annotateLineTitle": "批注 {{file}} · {{range}}",
+      "annotatePlaceholder": "写下对这一段代码的修改意见或批注说明…",
+      "annotateShortcutHint": "⌘↵ 保存 · Esc 取消",
+      "annotateCancel": "取消",
+      "annotateSave": "保存批注",
+      "annotationsTitle": "批注列表",
+      "annotationsTraceHint": "已关联当前会话存档（可溯源）",
+      "annotationsEmpty": "点击左侧代码行号 + 或划选文本添加批注。",
+      "annotationRemove": "删除批注",
+      "packToPrompt": "打包 {{n}} 条批注填入对话框",
+      "packFootHint": "组装成完整 prompt 填入底部对话框 · 按 Send 发送",
+      "packedHeader": "【文档批注汇总】（已关联存档：{{path}}）",
+      "packedFooter": "请按以上批注逐项处理。"
     },
     "record": {
       "kind": {
@@ -1901,7 +1917,9 @@
       "movedUpBoth": "两句话都已经移进上面的对话",
       "movedUpOne": "这句话已经移进上面的对话",
       "movedUpMany": "{{n}} 句话已经移进上面的对话",
-      "usageHint": "现在哪匹模型在答、上下文吃了多大、这一场一共烧了多少"
+      "usageHint": "现在哪匹模型在答、上下文吃了多大、这一场一共烧了多少",
+      "packedBanner": "已打包 {{n}} 条文档批注",
+      "packedClear": "清空"
     },
     "newSession": {
       "title": "新建会话",

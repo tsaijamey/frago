@@ -437,6 +437,16 @@ export default function SessionWorkbenchPage() {
   // 换会话把没落地的引用收掉——那段话是从上一场的记录里圈的。
   useEffect(() => setQuote(null), [selectedId]);
 
+  /** FileViewer 里打包过来的文档批注 prompt，等着填入输入框。 */
+  const [packedPrompt, setPackedPrompt] = useState<{
+    text: string;
+    count: number;
+    tracePath: string;
+    at: number;
+  } | null>(null);
+  const packedSeq = useRef(0);
+  useEffect(() => setPackedPrompt(null), [selectedId]);
+
   /** 暂存列表「填入」：按引用格式落进输入框，想法接在后面；这一条进入待发出。 */
   const fillFromStack = useCallback((mark: WorkbenchMark) => {
     setQuote({ text: mark.text, note: mark.note, at: (quoteSeq.current += 1) });
@@ -1195,6 +1205,7 @@ export default function SessionWorkbenchPage() {
           trails={trails}
           onShowInStream={(recordId) => setScrollTarget({ recordId, at: Date.now() })}
           quote={quote}
+          packedPrompt={packedPrompt}
           contextTokens={contextTokens}
           onHandoff={() => void handoff()}
           handingOff={handingOff}
@@ -1250,6 +1261,9 @@ export default function SessionWorkbenchPage() {
           onClose={() => setViewerIndex(null)}
           onStep={stepViewer}
           onReveal={onReveal}
+          onPackPrompt={(payload) =>
+            setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
+          }
         />
       ) : null}
 

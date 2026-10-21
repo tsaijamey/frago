@@ -126,6 +126,8 @@ import type {
   WorkbenchMark,
   WorkbenchMarkKind,
   SessionMarks,
+  FileAnnotation,
+  SessionFileAnnotations,
   BranchRequest,
   BranchLaunch,
   BranchCloseBy,
@@ -253,6 +255,8 @@ export type {
   WorkbenchMark,
   WorkbenchMarkKind,
   SessionMarks,
+  FileAnnotation,
+  SessionFileAnnotations,
   BranchRequest,
   BranchLaunch,
   BranchCloseBy,
@@ -1594,6 +1598,29 @@ export async function putSessionMarks(
     method: 'PUT',
     body: JSON.stringify(marks),
   });
+}
+
+/** 这场会话在 FileViewer 里留下的全部文档批注。 */
+export async function getSessionFileAnnotations(
+  sessionId: string
+): Promise<SessionFileAnnotations> {
+  return fetchApi<SessionFileAnnotations>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file-annotations`
+  );
+}
+
+/** 整份覆盖该会话的文档批注，存入 `~/.frago/sessions/<family>/<sid>/file-annotations.json`。 */
+export async function putSessionFileAnnotations(
+  sessionId: string,
+  payload: SessionFileAnnotations
+): Promise<SessionFileAnnotations> {
+  return fetchApi<SessionFileAnnotations>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file-annotations`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }
+  );
 }
 
 // ============================================================

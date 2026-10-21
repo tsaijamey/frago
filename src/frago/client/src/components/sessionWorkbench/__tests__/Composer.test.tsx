@@ -768,3 +768,31 @@ describe('决定卡片的答复', () => {
     expect(screen.getByTestId('composer-kept').textContent).toBe(i18n.t('workbench.composer.heldForRetry'));
   });
 });
+
+describe('文档批注打包填入输入框', () => {
+  it('收到 packedPrompt 后直接填入输入框并显示关联存档条，点清空可一并清掉', () => {
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        packedPrompt={{
+          text: '【文档批注汇总】\n\n1. `a.py:L1`\n>>> 改这里',
+          count: 1,
+          tracePath: '~/.frago/sessions/claude-code/sid-1/file-annotations.json',
+          at: 1,
+        }}
+      />
+    );
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toContain(
+      '【文档批注汇总】'
+    );
+    const bar = screen.getByTestId('composer-packed-bar');
+    expect(bar.textContent).toContain('1');
+    expect(bar.textContent).toContain('~/.frago/sessions/claude-code/sid-1/file-annotations.json');
+
+    fireEvent.click(screen.getByTestId('composer-packed-clear'));
+    expect(screen.queryByTestId('composer-packed-bar')).toBeNull();
+    expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
+  });
+});

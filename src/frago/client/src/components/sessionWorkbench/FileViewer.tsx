@@ -1,16 +1,13 @@
 /**
- * FileViewer — 会话文件清单上点开一份文件的那个浮窗。
+ * FileViewer — 会话文件清单上点开一份文件的浮窗（支持行级/选区批注、会话溯源落盘与打包填入对话框）。
  *
- * 它是**只读的一眼**：人正在读会话记录，想看看这场会话到底把那个文件写成什么样，看完就关。
- * 所以里面没有编辑、没有保存，只有内容、翻上一个／下一个、复制路径、去文件夹里打开。
- *
- * 三件事写在这里：
- *
- * 1. **内容现取。** 打开哪一份就问哪一份（`GET /api/workbench/sessions/{sid}/file`），不
- *    预先取回来摆在内存里——会话改过的文件可能很多、可能很大，而人一次只看一份。
- * 2. **取不到内容照实说。** 过大、读不成文本、文件已经不在，各是各的话，NEVER 拿半份当
- *    整份摆出来。能摆的那一份一个字不少。
- * 3. **颜色只是补充。** 染色取不到（离线、语言认不出）就摆纯文本，内容照样完整可读。
+ * 1. **固定比例大视野窗口**：默认采用与主窗口成固定比例的 `88vw × 86vh`（改动对照模式 `92vw × 86vh`），
+ *    给代码阅读与逐行批注留出充裕视野。
+ * 2. **行级与选区批注**：点击行号 `+` 或在代码区划选多行文本，原地展开批注输入框；保存后实时落盘到
+ *    `~/.frago/sessions/<family>/<sid>/file-annotations.json`，跟当前会话建立可溯源关联。
+ * 3. **打包成完整新 prompt 填入对话框**：右侧批注栏底部提供「打包 N 条批注填入对话框」按钮（遵循全局单实心绿纪律，
+ *    采用中性选中态描边按钮），点击后将所有批注连同溯源路径组装为结构化 prompt 直接填入底部 Composer，
+ *    由用户确认或补充后按 Send 发送。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,10 +20,17 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  MessageSquarePlus,
+  Send,
   X,
 } from 'lucide-react';
 import { getSessionFileContent, getSessionFileDiff } from '@/api';
 import type { SessionFileContent, SessionFileDiff, SessionFileRow } from '@/types/api';
+import {
+  formatPackedAnnotationsPrompt,
+  useFileAnnotations,
+  type FileAnnotationsState,
+} from '@/hooks/useFileAnnotations';
 import FileDiff from './FileDiff';
 import { baseOf, dirOf, langOf, withTilde } from './filePaths';
 import { FILE_BADGE } from './fileBadge';
@@ -35,6 +39,12 @@ import {
   MAX_HIGHLIGHT_CHARS,
   loadHighlighter,
 } from '@/utils/codeHighlight';
+
+export interface PackedAnnotationsPayload {
+  text: string;
+  count: number;
+  tracePath: string;
+}
 
 export interface FileViewerProps {
   sessionId: string;
@@ -46,6 +56,10 @@ export interface FileViewerProps {
   onStep: (delta: number) => void;
   /** 「打开所在目录」。真正去开的是页面那一侧（要报错、要提示），这里只管喊一声。 */
   onReveal: (path: string) => void;
+  /** 外部传入的会话批注状态（不传则组件内部自己按 sessionId 挂载）。 */
+  fileAnnotations?: FileAnnotationsState;
+  /** 点击「打包 N 条批注填入对话框」时触发，把组装好的完整 prompt 填入 Composer。 */
+  onPackPrompt?: (payload: PackedAnnotationsPayload) => void;
 }
 
 /** 字节数说成人看得懂的样子。 */
@@ -77,7 +91,6 @@ export function useHighlightedHtml(text: string | null, lang: string): string | 
     loadHighlighter()
       .then((hljs) => {
         if (!alive) return;
-        // 认得出语言就按它染；认不出而且这一份不长，交给引擎自己猜。
         if (lang && hljs.getLanguage(lang)) setHtml(hljs.highlight(text, { language: lang }).value);
         else if (text.length <= MAX_AUTODETECT_CHARS) setHtml(hljs.highlightAuto(text).value);
         else setHtml(null);
@@ -92,6 +105,12 @@ export function useHighlightedHtml(text: string | null, lang: string): string | 
   return html;
 }
 
+interface DraftRange {
+  lineStart: number;
+  lineEnd: number;
+  quote: string;
+}
+
 export default function FileViewer({
   sessionId,
   files,
@@ -99,40 +118,47 @@ export default function FileViewer({
   onClose,
   onStep,
   onReveal,
+  fileAnnotations: externalAnnotations,
+  onPackPrompt,
 }: FileViewerProps) {
   const { t } = useTranslation();
+  const internalAnnotations = useFileAnnotations(externalAnnotations ? null : sessionId);
+  const annState = externalAnnotations ?? internalAnnotations;
+  const { annotations, tracePath, addAnnotation, removeAnnotation } = annState;
+
   const file = files[index];
   const [content, setContent] = useState<SessionFileContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /**
-   * 看内容，还是看改动。默认看内容——人点开一份文件，多数时候是想看它现在长什么样。
-   *
-   * 改动那一档是**点了才取**：它要慢一步（服务端还得去 git 里取上一版、再算对齐），而多数
-   * 人不会看；不像那一档的数字，那是摆在排上必须当场在的。
-   */
+
   const [mode, setMode] = useState<'file' | 'changes'>('file');
   const [diff, setDiff] = useState<SessionFileDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
 
+  const [annotationsOpen, setAnnotationsOpen] = useState(true);
+  const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
+  const [draftNote, setDraftNote] = useState('');
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const codeContainerRef = useRef<HTMLDivElement | null>(null);
+
   const path = file?.path ?? '';
   const lang = useMemo(() => langOf(path), [path]);
 
-  // 现取。换了文件就是另一次取，上一次回来的那份不算数。
+  // 现取文件内容；切换文件时收起未保存的行内批注草稿。
   useEffect(() => {
     if (!path) return;
     let alive = true;
     setContent(null);
     setError(null);
     setLoading(true);
-    // 换了文件就回到「看内容」那一档：人翻到下一份时想看的是它长什么样，不是它的改动；
-    // 停在改动那一档会让人以为「这份也有改动」。
     setMode('file');
     setDiff(null);
     setDiffError(null);
+    setDraftRange(null);
+    setDraftNote('');
     getSessionFileContent(sessionId, path)
       .then((body) => {
         if (alive) setContent(body);
@@ -155,7 +181,7 @@ export default function FileViewer({
     []
   );
 
-  // 改动那一档：切过去才取，同一个文件切回来不再取（已经拿到了）。
+  // 改动那一档：切过去才取。
   useEffect(() => {
     if (mode !== 'changes' || !path) return;
     let alive = true;
@@ -176,22 +202,34 @@ export default function FileViewer({
     };
   }, [mode, sessionId, path]);
 
-  // Esc 关，← → 翻。挂在 document 上：焦点多半在浮窗里的某个按钮上，挂在窗口元素上会漏掉
-  // 点过按钮之后的那几次按键。
+  // Esc 关（若行内批注框开着则先关批注框），← → 翻页（焦点在输入框内时不抢左右键）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const inInput =
+        e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
       if (e.key === 'Escape') {
         e.preventDefault();
+        if (draftRange !== null) {
+          setDraftRange(null);
+          setDraftNote('');
+          return;
+        }
         onClose();
-      } else if (e.key === 'ArrowLeft') {
+      } else if (!inInput && e.key === 'ArrowLeft') {
         onStep(-1);
-      } else if (e.key === 'ArrowRight') {
+      } else if (!inInput && e.key === 'ArrowRight') {
         onStep(1);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, onStep]);
+  }, [onClose, onStep, draftRange]);
+
+  useEffect(() => {
+    if (draftRange) {
+      draftInputRef.current?.focus();
+    }
+  }, [draftRange]);
 
   const copyPath = useCallback(() => {
     void navigator.clipboard
@@ -201,20 +239,119 @@ export default function FileViewer({
         if (copyTimer.current) clearTimeout(copyTimer.current);
         copyTimer.current = setTimeout(() => setCopied(false), 1_500);
       })
-      .catch(() => {
-        /* 剪贴板不给用（非安全上下文之类）就算了，不打断人 */
-      });
+      .catch(() => {});
   }, [path]);
 
   const text = content?.text ?? null;
   const html = useHighlightedHtml(text, lang);
+
+  const lines = useMemo(() => {
+    if (text === null) return [];
+    const raw = text.split('\n');
+    // 末尾换行不额外多出一行空行号（除非整份只有一个空串）
+    if (raw.length > 1 && raw[raw.length - 1] === '') {
+      return raw.slice(0, -1);
+    }
+    return raw;
+  }, [text]);
+
+  const htmlLines = useMemo(() => {
+    if (html === null) return null;
+    const raw = html.split('\n');
+    if (raw.length > 1 && raw[raw.length - 1] === '') {
+      return raw.slice(0, -1);
+    }
+    return raw;
+  }, [html]);
+
+  const currentFileAnnotations = useMemo(
+    () => annotations.filter((a) => a.file === path),
+    [annotations, path]
+  );
+
+  const countByFile = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const ann of annotations) {
+      map.set(ann.file, (map.get(ann.file) ?? 0) + 1);
+    }
+    return map;
+  }, [annotations]);
+
+  const openLineDraft = useCallback(
+    (lineStart: number, lineEnd: number, customQuote?: string) => {
+      if (!lines.length) return;
+      const start = Math.max(1, Math.min(lineStart, lineEnd));
+      const end = Math.min(lines.length, Math.max(lineStart, lineEnd));
+      const sliceQuote =
+        customQuote && customQuote.trim()
+          ? customQuote.trim()
+          : lines
+              .slice(start - 1, end)
+              .join('\n')
+              .trim();
+      setDraftRange({
+        lineStart: start,
+        lineEnd: end,
+        quote: sliceQuote || lines[start - 1] || '',
+      });
+      setDraftNote('');
+    },
+    [lines]
+  );
+
+  const saveDraft = useCallback(() => {
+    if (!draftRange || !path) return;
+    const trimmed = draftNote.trim();
+    if (!trimmed) return;
+    addAnnotation({
+      file: path,
+      line_start: draftRange.lineStart,
+      line_end: draftRange.lineEnd,
+      quote: draftRange.quote,
+      note: trimmed,
+    });
+    setDraftRange(null);
+    setDraftNote('');
+    setAnnotationsOpen(true);
+  }, [draftRange, draftNote, path, addAnnotation]);
+
+  const handleCodeMouseUp = useCallback(() => {
+    const sel = window.getSelection?.();
+    if (!sel || sel.isCollapsed) return;
+    const selectedText = sel.toString().trim();
+    if (!selectedText) return;
+    const anchorEl =
+      sel.anchorNode instanceof HTMLElement ? sel.anchorNode : sel.anchorNode?.parentElement;
+    const focusEl =
+      sel.focusNode instanceof HTMLElement ? sel.focusNode : sel.focusNode?.parentElement;
+    const startRow = anchorEl?.closest?.('[data-line]') as HTMLElement | null;
+    const endRow = focusEl?.closest?.('[data-line]') as HTMLElement | null;
+    if (!startRow || !endRow) return;
+    const l1 = Number(startRow.getAttribute('data-line'));
+    const l2 = Number(endRow.getAttribute('data-line'));
+    if (!Number.isFinite(l1) || !Number.isFinite(l2)) return;
+    openLineDraft(Math.min(l1, l2), Math.max(l1, l2), selectedText);
+    sel.removeAllRanges();
+  }, [openLineDraft]);
+
+  const handlePackToPrompt = useCallback(() => {
+    if (!annotations.length) return;
+    const effectiveTrace =
+      tracePath || `~/.frago/sessions/.../${sessionId}/file-annotations.json`;
+    const promptText = formatPackedAnnotationsPrompt(annotations, effectiveTrace);
+    onPackPrompt?.({
+      text: promptText,
+      count: annotations.length,
+      tracePath: effectiveTrace,
+    });
+    onClose();
+  }, [annotations, tracePath, sessionId, onPackPrompt, onClose]);
 
   if (!file) return null;
 
   const iconBtn =
     'inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] text-text-muted hover:bg-bg-hover hover:text-text-primary';
 
-  /** 摆不了内容时的那句话：过大、不是文本、取不回来各说各的。 */
   const noPreview = () => {
     const reason = content?.reason;
     const line =
@@ -242,29 +379,25 @@ export default function FileViewer({
   return (
     <div
       data-testid="file-viewer"
-      className="fixed inset-0 z-[80] flex items-center justify-center p-5"
+      className="fixed inset-0 z-[80] flex items-center justify-center p-3"
       role="dialog"
       aria-modal="true"
       aria-label={baseOf(file.path)}
     >
-      {/* 点窗外关掉。挡在后面那一层同时把底下挡住：浮窗开着时底下还能点，就成了两个界面
-          在抢同一只手。 */}
-      {/* 遮罩走 `--bg-overlay` 那条令牌。注意 `bg-bg-overlay` 这个类**不存在**
-          （tailwind.config 里没有那一档，写着它只会静静地落空成透明），所以写成
-          `bg-[var(--bg-overlay)]`——与搜索浮窗那一处同一个写法。 */}
       <div
         data-testid="file-viewer-backdrop"
         className="absolute inset-0 bg-[var(--bg-overlay)]"
         onClick={onClose}
       />
 
-      {/* 改动那一档要平分两列，窗口跟着放宽（照原型：900 → 1120）。 */}
+      {/* 固定比例大尺寸窗口：默认 88vw × 86vh，改动对照模式 92vw × 86vh，给阅读与批注留出开阔视野 */}
       <div
-        className={`relative flex h-[min(76vh,680px)] flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-2xl ${
-          mode === 'changes' ? 'w-[min(1120px,100%)]' : 'w-[min(900px,100%)]'
+        data-testid="file-viewer-window"
+        className={`relative flex h-[86vh] max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-2xl ${
+          mode === 'changes' ? 'w-[92vw]' : 'w-[88vw]'
         }`}
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color px-3">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color px-3.5">
           <FileText size={14} className="shrink-0 text-text-muted" />
           <span className="min-w-0 flex-1 truncate font-mono text-[12px]">
             <span className="text-text-dim" title={dirOf(file.path)}>
@@ -272,7 +405,7 @@ export default function FileViewer({
             </span>
             <b className="ml-1 font-medium text-text-primary">{baseOf(file.path)}</b>
           </span>
-          {/* 新建／改／删，与清单里那枚字母同一张表，这里写全称。 */}
+
           <span
             data-testid="file-viewer-badge"
             className={`shrink-0 rounded-[4px] px-1.5 py-[1px] text-[10.5px] ${
@@ -287,8 +420,6 @@ export default function FileViewer({
             </span>
           ) : null}
 
-          {/* 看内容 / 看改动。只在读得出内容时出现：读不出来的文件（太大、二进制）连内容都
-              没有，也就没有什么可对照的。 */}
           {text !== null ? (
             <span
               data-testid="file-viewer-mode"
@@ -311,6 +442,23 @@ export default function FileViewer({
                 </button>
               ))}
             </span>
+          ) : null}
+
+          {mode === 'file' ? (
+            <button
+              type="button"
+              data-testid="file-viewer-annotate-toggle"
+              aria-pressed={annotationsOpen}
+              onClick={() => setAnnotationsOpen((v) => !v)}
+              className={`ml-1 inline-flex h-[24px] shrink-0 items-center gap-1 rounded-[6px] border px-2 text-[11px] transition-colors ${
+                annotationsOpen
+                  ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
+                  : 'border-border-color text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+              }`}
+            >
+              <MessageSquarePlus size={12} />
+              <span>{t('workbench.files.annotateToggle', { n: annotations.length })}</span>
+            </button>
           ) : null}
 
           <span className="ml-1 flex shrink-0 items-center gap-0.5">
@@ -365,37 +513,55 @@ export default function FileViewer({
           </span>
         </div>
 
-        {/* 改动那一档让出左边那 186px：两列并排本来就比一列窄，再把文件列摆在这儿，两边
-            都读不成了。翻文件仍走顶上的 ‹ ›（与原型同一个做法）。 */}
         <div
           className={`grid min-h-0 flex-1 tablet:grid-cols-1 ${
-            mode === 'changes' ? 'grid-cols-1' : 'grid-cols-[186px_minmax(0,1fr)]'
+            mode === 'changes'
+              ? 'grid-cols-1'
+              : annotationsOpen
+                ? 'grid-cols-[196px_minmax(0,1fr)_308px]'
+                : 'grid-cols-[196px_minmax(0,1fr)]'
           }`}
         >
-          {/* 左边那一列是同一场会话改过的文件，翻起来不用退回清单再点。 */}
+          {/* 左栏：会话改动文件导航（带各文件批注计数标） */}
           <div
-            className={`min-h-0 overflow-auto border-r border-border-color bg-bg-secondary px-[5px] py-1.5 tablet:hidden ${
+            className={`min-h-0 overflow-auto border-r border-border-color bg-bg-secondary px-[6px] py-2 tablet:hidden ${
               mode === 'changes' ? 'hidden' : ''
             }`}
           >
-            {files.map((row, i) => (
-              <button
-                key={row.path}
-                type="button"
-                title={row.path}
-                onClick={() => onStep(i - index)}
-                className={`block w-full truncate rounded-[5px] px-2 py-1 text-left font-mono text-[11.5px] ${
-                  i === index
-                    ? 'bg-bg-active font-medium text-text-primary'
-                    : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
-                }`}
-              >
-                {baseOf(row.path)}
-              </button>
-            ))}
+            {files.map((row, i) => {
+              const fileAnnCount = countByFile.get(row.path) ?? 0;
+              return (
+                <button
+                  key={row.path}
+                  type="button"
+                  title={row.path}
+                  onClick={() => onStep(i - index)}
+                  className={`flex w-full items-center justify-between gap-1.5 rounded-[5px] px-2 py-1 text-left font-mono text-[11.5px] ${
+                    i === index
+                      ? 'bg-bg-active font-medium text-text-primary'
+                      : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate">{baseOf(row.path)}</span>
+                  {fileAnnCount > 0 ? (
+                    <span
+                      data-testid="file-viewer-nav-ann-count"
+                      className="shrink-0 rounded-full bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[10px] font-medium text-accent-warning"
+                    >
+                      {fileAnnCount}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="min-h-0 min-w-0 overflow-auto bg-bg-base">
+          {/* 中栏：代码与行内批注区 */}
+          <div
+            ref={codeContainerRef}
+            onMouseUp={mode === 'file' && text !== null ? handleCodeMouseUp : undefined}
+            className="min-h-0 min-w-0 overflow-auto bg-bg-base"
+          >
             {mode === 'changes' ? (
               <FileDiff diff={diff} loading={diffLoading} error={diffError} />
             ) : loading ? (
@@ -412,21 +578,283 @@ export default function FileViewer({
             ) : text === null ? (
               noPreview()
             ) : (
-              // 染色没回来（还在路上、太大、引擎取不到）就先摆纯文本：内容一个字不少，
-              // 颜色到了再换上去。
-              <pre className="p-4 font-mono text-[12px] leading-[1.6] text-text-secondary">
-                {html !== null ? (
-                  <code
-                    className="hljs"
-                    // 引擎的输出是转义过的 HTML，见 `useHighlightedHtml`。
-                    dangerouslySetInnerHTML={{ __html: html }}
-                  />
-                ) : (
-                  <code className="hljs">{text}</code>
-                )}
-              </pre>
+              <div className="flex min-h-full flex-col">
+                <div
+                  data-testid="file-viewer-annotate-bar"
+                  className="sticky top-0 z-[2] flex items-center justify-between gap-2 border-b border-border-color bg-bg-secondary px-3.5 py-1.5 text-[11px] text-text-muted"
+                >
+                  <span>{t('workbench.files.annotateHint')}</span>
+                  {lines.length > 0 ? (
+                    <button
+                      type="button"
+                      data-testid="file-viewer-quick-annotate"
+                      onClick={() => openLineDraft(1, 1)}
+                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[10.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    >
+                      + L1
+                    </button>
+                  ) : null}
+                </div>
+
+                <pre className="m-0 flex-1 py-2.5 font-mono text-[12px] leading-[1.65] text-text-secondary">
+                  <code className="hljs block">
+                    {lines.map((lineText, idx) => {
+                      const lineNo = idx + 1;
+                      const isAnnotated = currentFileAnnotations.some(
+                        (a) => lineNo >= a.line_start && lineNo <= a.line_end
+                      );
+                      const endingHere = currentFileAnnotations.filter(
+                        (a) => a.line_end === lineNo
+                      );
+                      const showDraftHere = draftRange !== null && draftRange.lineEnd === lineNo;
+                      const lineHtml = htmlLines ? (htmlLines[idx] ?? '') : null;
+
+                      return (
+                        <div key={lineNo}>
+                          <div
+                            data-testid="file-viewer-line"
+                            data-line={lineNo}
+                            className={`group grid grid-cols-[52px_minmax(0,1fr)] items-baseline px-2 ${
+                              isAnnotated ? 'bg-accent-warning-10' : 'hover:bg-bg-hover'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              data-testid={`file-viewer-line-btn-${lineNo}`}
+                              onClick={() => openLineDraft(lineNo, lineNo)}
+                              className="relative flex w-full select-none items-center justify-end pr-3 font-mono text-[11px] text-text-dim hover:text-text-primary"
+                              title={`L${lineNo}`}
+                            >
+                              <span className="absolute left-1.5 inline-flex h-[15px] w-[15px] items-center justify-center rounded-[3px] border border-border-strong bg-bg-elevated text-[11px] leading-none text-text-secondary opacity-0 transition-opacity group-hover:opacity-100">
+                                +
+                              </span>
+                              <span>{lineNo}</span>
+                            </button>
+                            {lineHtml !== null ? (
+                              <span
+                                className="whitespace-pre-wrap break-all pl-1"
+                                dangerouslySetInnerHTML={{ __html: lineHtml || ' ' }}
+                              />
+                            ) : (
+                              <span className="whitespace-pre-wrap break-all pl-1">
+                                {lineText || ' '}
+                              </span>
+                            )}
+                          </div>
+
+                          {endingHere.map((ann) => {
+                            const rangeLabel =
+                              ann.line_start === ann.line_end
+                                ? `L${ann.line_start}`
+                                : `L${ann.line_start}–L${ann.line_end}`;
+                            return (
+                              <div
+                                key={ann.id}
+                                data-testid="file-viewer-inline-card"
+                                className="my-1.5 ml-[52px] mr-4 flex items-start gap-2 rounded-[7px] border border-border-color border-l-[3px] border-l-accent-warning bg-bg-secondary px-2.5 py-1.5 font-sans text-[12px] text-text-primary"
+                              >
+                                <span className="shrink-0 rounded-[4px] bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[10.5px] font-semibold text-accent-warning">
+                                  {rangeLabel}
+                                </span>
+                                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-[1.45]">
+                                  {ann.note}
+                                </span>
+                                <button
+                                  type="button"
+                                  data-testid={`file-viewer-inline-remove-${ann.id}`}
+                                  title={t('workbench.files.annotationRemove')}
+                                  onClick={() => removeAnnotation(ann.id)}
+                                  className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            );
+                          })}
+
+                          {showDraftHere && draftRange ? (
+                            <div
+                              data-testid="file-viewer-inline-editor"
+                              className="my-2 ml-[52px] mr-4 rounded-[8px] border border-border-strong bg-bg-elevated p-2.5 font-sans shadow-lg"
+                            >
+                              <div className="mb-1.5 flex items-center justify-between text-[11px] text-text-muted">
+                                <span className="font-mono text-text-secondary">
+                                  {t('workbench.files.annotateLineTitle', {
+                                    file: baseOf(file.path),
+                                    range:
+                                      draftRange.lineStart === draftRange.lineEnd
+                                        ? `L${draftRange.lineStart}`
+                                        : `L${draftRange.lineStart}–L${draftRange.lineEnd}`,
+                                  })}
+                                </span>
+                                <span>{t('workbench.files.annotateShortcutHint')}</span>
+                              </div>
+                              <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border-l-2 border-border-strong bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                                {draftRange.quote}
+                              </div>
+                              <textarea
+                                ref={draftInputRef}
+                                data-testid="file-viewer-inline-input"
+                                value={draftNote}
+                                onChange={(e) => setDraftNote(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                                    e.preventDefault();
+                                    saveDraft();
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setDraftRange(null);
+                                    setDraftNote('');
+                                  }
+                                }}
+                                rows={2}
+                                placeholder={t('workbench.files.annotatePlaceholder')}
+                                className="w-full resize-y rounded-[6px] border border-border-strong bg-bg-card px-2.5 py-1.5 text-[12px] leading-[1.45] text-text-primary outline-none focus:border-text-muted"
+                              />
+                              <div className="mt-2 flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  data-testid="file-viewer-inline-cancel"
+                                  onClick={() => {
+                                    setDraftRange(null);
+                                    setDraftNote('');
+                                  }}
+                                  className="rounded-[6px] border border-border-color px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                                >
+                                  {t('workbench.files.annotateCancel')}
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid="file-viewer-inline-save"
+                                  disabled={!draftNote.trim()}
+                                  onClick={saveDraft}
+                                  className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
+                                >
+                                  {t('workbench.files.annotateSave')}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </code>
+                </pre>
+              </div>
             )}
           </div>
+
+          {/* 右栏：会话级批注清单、落盘溯源路径与打包填入 Composer */}
+          {mode === 'file' && annotationsOpen ? (
+            <aside
+              data-testid="file-viewer-annotations-rail"
+              className="flex min-h-0 flex-col border-l border-border-color bg-bg-secondary tablet:hidden"
+            >
+              <div className="flex flex-col gap-1 border-b border-border-color px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[12px] font-semibold text-text-primary">
+                    {t('workbench.files.annotationsTitle')}
+                  </span>
+                  <span
+                    data-testid="file-viewer-annotations-count"
+                    className="rounded-full bg-bg-active px-2 py-[1px] font-mono text-[10.5px] text-text-secondary"
+                  >
+                    {annotations.length}
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-text-muted">
+                  <div>{t('workbench.files.annotationsTraceHint')}</div>
+                  <code
+                    data-testid="file-viewer-trace-path"
+                    title={tracePath}
+                    className="mt-0.5 block truncate rounded-[4px] border border-border-color bg-bg-primary px-1.5 py-0.5 font-mono text-[10px] text-text-dim"
+                  >
+                    {tracePath || `~/.frago/sessions/.../${sessionId}/file-annotations.json`}
+                  </code>
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-2.5">
+                {annotations.length === 0 ? (
+                  <p
+                    data-testid="file-viewer-annotations-empty"
+                    className="px-2 py-6 text-center text-[11.5px] leading-relaxed text-text-muted"
+                  >
+                    {t('workbench.files.annotationsEmpty')}
+                  </p>
+                ) : (
+                  annotations.map((ann, idx) => {
+                    const rangeLabel =
+                      ann.line_start === ann.line_end
+                        ? `L${ann.line_start}`
+                        : `L${ann.line_start}–L${ann.line_end}`;
+                    const targetIdx = files.findIndex((f) => f.path === ann.file);
+                    return (
+                      <div
+                        key={ann.id}
+                        data-testid="file-viewer-annotation-item"
+                        onClick={() => {
+                          if (targetIdx >= 0 && targetIdx !== index) {
+                            onStep(targetIdx - index);
+                          }
+                        }}
+                        className="cursor-pointer rounded-[8px] border border-border-color bg-bg-primary p-2.5 transition-colors hover:border-border-strong"
+                      >
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px]">
+                          <span className="font-mono text-[10.5px] text-text-dim">#{idx + 1}</span>
+                          <span
+                            className="min-w-0 flex-1 truncate font-mono text-text-secondary"
+                            title={ann.file}
+                          >
+                            {baseOf(ann.file)}
+                          </span>
+                          <span className="shrink-0 rounded-[4px] bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[10px] font-semibold text-accent-warning">
+                            {rangeLabel}
+                          </span>
+                          <button
+                            type="button"
+                            data-testid={`file-viewer-annotation-delete-${ann.id}`}
+                            title={t('workbench.files.annotationRemove')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeAnnotation(ann.id);
+                            }}
+                            className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                        <div className="mb-1.5 truncate rounded-[4px] border-l-2 border-border-strong bg-bg-secondary px-1.5 py-1 font-mono text-[10.5px] text-text-muted">
+                          {ann.quote}
+                        </div>
+                        <div className="whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-text-primary">
+                          {ann.note}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5 border-t border-border-color p-2.5">
+                {/* 遵循全局单实心绿规则（Send 独占实心绿），打包按钮采用中性选中态描边按钮 */}
+                <button
+                  type="button"
+                  data-testid="file-viewer-pack-btn"
+                  disabled={annotations.length === 0}
+                  onClick={handlePackToPrompt}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-3 py-2 text-[12px] font-semibold text-text-primary transition-colors hover:bg-bg-active disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <Send size={13} />
+                  <span>{t('workbench.files.packToPrompt', { n: annotations.length })}</span>
+                </button>
+                <span className="text-center text-[10.5px] text-text-dim">
+                  {t('workbench.files.packFootHint')}
+                </span>
+              </div>
+            </aside>
+          ) : null}
         </div>
       </div>
     </div>

@@ -730,6 +730,7 @@
     "tabs": {
       "capability": "Prompting",
       "general": "General",
+      "agents": "CLI Agents",
       "channels": "Channels",
       "resources": "Resources",
       "appearance": "Appearance",
@@ -1632,7 +1633,22 @@
       "diffLoading": "Fetching the earlier version",
       "diffFailed": "Couldn't get the earlier version",
       "diffTooManyLines": "Too many lines on either side to lay them out",
-      "diffNone": "Nothing to compare against"
+      "diffNone": "Nothing to compare against",
+      "annotateToggle": "Annotate ({{n}})",
+      "annotateHint": "Click a line number or select text to annotate · Saved to session directory for traceability",
+      "annotateLineTitle": "Annotate {{file}} · {{range}}",
+      "annotatePlaceholder": "Write your feedback or change request for these lines…",
+      "annotateShortcutHint": "⌘↵ save · Esc cancel",
+      "annotateCancel": "Cancel",
+      "annotateSave": "Save annotation",
+      "annotationsTitle": "Annotations",
+      "annotationsTraceHint": "Traceable session storage",
+      "annotationsEmpty": "Click a line number + or select text on the left to add an annotation.",
+      "annotationRemove": "Remove annotation",
+      "packToPrompt": "Pack {{n}} annotations to prompt",
+      "packFootHint": "Fills assembled prompt into Composer · press Send to submit",
+      "packedHeader": "【Document Annotations】（Saved to session: {{path}}）",
+      "packedFooter": "Please address the annotations above item by item."
     },
     "record": {
       "kind": {
@@ -1906,7 +1922,9 @@
       "movedUpBoth": "Both messages moved up into the conversation",
       "movedUpOne": "Your message moved up into the conversation",
       "movedUpMany": "{{n}} messages moved up into the conversation",
-      "usageHint": "Which model is answering right now, how much context it is holding, and how much this session has burned in total"
+      "usageHint": "Which model is answering right now, how much context it is holding, and how much this session has burned in total",
+      "packedBanner": "Packed {{n}} annotations",
+      "packedClear": "Clear"
     },
     "newSession": {
       "title": "New session",
