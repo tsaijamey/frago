@@ -2,6 +2,7 @@
 
 Tests session data persistence: directory management, metadata, steps, summary.
 """
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -333,6 +334,103 @@ class TestSessionsOnDiskAreListed:
         assert count_sessions(agent_type=AgentType.CLAUDE) == len(
             list_sessions(agent_type=AgentType.CLAUDE, limit=100)
         )
+
+
+class TestSessionsKeepCreationOrder:
+    """清单按创建时刻排，且这个次序不随会话后来被更新而改变。
+
+    创建时刻取会话自己的账：有 metadata 的取 ``started_at``，只有原文副本的取开头
+    第一条带时刻的记录。NEVER 取文件修改时刻——它每写一条记录就往前走，拿它排序
+    会让一场正在说话的会话不停往清单顶上跳。
+    """
+
+    @staticmethod
+    def _mk_raw(
+        base: Path,
+        session_id: str,
+        created_iso: str,
+        modified_age_seconds: float = 0.0,
+    ) -> tuple[Path, Path]:
+        session_dir = base / "claude" / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        raw = session_dir / RAW_FILENAME
+        raw.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": created_iso,
+                    "message": {"content": "hi"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if modified_age_seconds:
+            stamp = time.time() - modified_age_seconds
+            os.utime(raw, (stamp, stamp))
+        return session_dir, raw
+
+    def test_list_orders_by_creation_not_last_update(self, mock_home):
+        base = get_session_base_dir()
+        # 老会话刚被更新过，新会话反而安静不动：顺序该按创建时刻，新的在前。
+        self._mk_raw(base, "older", "2026-01-01T00:00:00Z", modified_age_seconds=0)
+        self._mk_raw(base, "newer", "2026-02-01T00:00:00Z", modified_age_seconds=3600)
+
+        ids = [s.session_id for s in list_sessions(limit=10)]
+
+        assert ids[:2] == ["newer", "older"]
+
+    def test_touching_an_old_session_does_not_move_it(self, mock_home):
+        base = get_session_base_dir()
+        _, older_raw = self._mk_raw(
+            base, "older", "2026-01-01T00:00:00Z", modified_age_seconds=3600
+        )
+        self._mk_raw(base, "newer", "2026-02-01T00:00:00Z", modified_age_seconds=0)
+
+        before = [s.session_id for s in list_sessions(limit=10)]
+        now = time.time()
+        os.utime(older_raw, (now, now))
+        after = [s.session_id for s in list_sessions(limit=10)]
+
+        assert before == after == ["newer", "older"]
+
+    def test_raw_only_started_at_comes_from_first_record(self, mock_home):
+        base = get_session_base_dir()
+        self._mk_raw(base, "raw-only", "2026-01-01T00:00:00Z", modified_age_seconds=3600)
+
+        session = list_sessions(limit=10)[0]
+
+        assert session.session_id == "raw-only"
+        assert session.started_at.timestamp() == datetime(
+            2026, 1, 1, tzinfo=UTC
+        ).timestamp()
+        # 最后活动时刻仍是文件修改时刻，两者不再混用。
+        assert session.last_activity.timestamp() > session.started_at.timestamp()
+
+    def test_newest_creation_is_found_even_if_many_old_sessions_were_just_updated(
+        self, mock_home
+    ):
+        """窗口按修改时刻取，但结论必须按创建时刻定。
+
+        造 60 场「创建早、刚被更新」的会话把窗口占满，再放一场「创建最新、很久没动」
+        的会话。它不在修改时刻的前 50 名里，窗口必须自动翻倍才能找到它。
+        """
+        base = get_session_base_dir()
+        for i in range(60):
+            self._mk_raw(
+                base,
+                f"old-{i:02d}",
+                "2026-01-01T00:00:00Z",
+                modified_age_seconds=0,
+            )
+        self._mk_raw(
+            base,
+            "newest",
+            "2026-02-01T00:00:00Z",
+            modified_age_seconds=30 * 86400,
+        )
+
+        assert list_sessions(limit=1)[0].session_id == "newest"
 
 
 class TestStaleRunningIsNotRunning:

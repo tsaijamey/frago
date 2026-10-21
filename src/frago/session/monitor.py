@@ -610,7 +610,12 @@ def watch_latest_session(
         logger.info("No active sessions")
         return
 
-    latest = sessions[0]
+    # ``list_sessions`` 现在按创建时刻排，而这里要的是「最近还在动的那一场」，
+    # 所以显式按最后活动时刻挑，不拿清单第一行当答案。
+    latest = max(
+        sessions,
+        key=lambda s: s.last_activity.replace(tzinfo=None),
+    )
     logger.info(f"Monitoring session: {latest.session_id[:8]}...")
     watch_session(latest.session_id, agent_type, json_mode)
 

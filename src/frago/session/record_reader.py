@@ -86,10 +86,11 @@ class SessionCard:
     """毫秒时间戳。会话文件最后被动过的时刻，判"还在跑吗"用它。"""
 
     last_reply_at: int | None = None
-    """最后一句 agent 回复是什么时候说的（毫秒时间戳）。**清单按它倒序。**
+    """最后一句 agent 回复是什么时候说的（毫秒时间戳）。
 
     与上一格分开是因为两者会差很远：hook 每拦一次工具、模型每改一次标题都会推进"最后
-    动过"，但那些都不是任何人说了话。取不到时为 None，排序退回上一格。"""
+    动过"，但那些都不是任何人说了话。它只用来显示与判「今天动过没」，**不参与清单
+    排序**——排序按创建时刻，见 :func:`sort_key`。"""
 
     agent_paths: list[str] = field(default_factory=list)
     """这场会话下出现过的子 agent 轨迹。主会话一条也没有时是 ``[]``。"""
@@ -447,15 +448,16 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
         status = session_index.derive_status(tail.last_kind, moment, now)
         digest_done, digest_stuck = _digests(status, tail)
         last_active = int(moment * 1000)
+        # 摘要库不存建立时刻，转录里第一条记录带的就是它。整场已经翻在手上，直接取
+        # 第一个正时刻；翻不出时刻时才退回最后活动时刻（NEVER 留 0）。
+        created = next((record.ts for record in records if record.ts > 0), last_active)
         cards.append(
             SessionCard(
                 session_id=cid,
                 family="agy",
                 title=conv.title or conv.preview or cid,
                 directory=conv.workspace,
-                # 摘要库不存建立时刻，退回最后活动时刻，与 codex 那一侧同一条退让
-                # （NEVER 留 0）。
-                created_at=last_active,
+                created_at=created,
                 last_active_at=last_active,
                 last_reply_at=_ms(tail.last_reply_ts),
                 # 子 agent 轨迹要翻完整场会话才数得出来，清单这一层各家都不给。
@@ -472,20 +474,17 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
 
 
 def sort_key(card: SessionCard) -> int:
-    """清单按哪个时刻排：**最后一句 agent 回复**，取不到才退回文件最后动过的时刻。
+    """清单按哪个时刻排：**会话创建时刻**，写入后不再变。
 
-    人在左栏找的是"最近哪场真的答了话"。而文件被动过的原因太多——hook 每拦一次工具写
-    一条、模型每改一次标题写一条、模式切一次写一条，全都推进修改时刻却一句话都没说。
-    照修改时刻排，一场只是被 hook 蹭过的老会话会压在真正刚答完话的会话上面。
-
-    退回是明写的：取不到回复时刻的会话（整场没有 agent 回复、或末尾窗口里没翻到）用
-    文件修改时刻，NEVER 把它们一律沉底——那等于宣布这些会话不存在。
+    左栏的次序是「这场会话什么时候开的」，不是「最后谁说了话」。按回复时刻排，一场
+    正在说话的会话每答一句就往上跳一次，人刚看到的那一行转眼换了位置；For you 也不
+    是排序依据，它只是卡片上的一枚标记。
     """
-    return card.last_reply_at if card.last_reply_at is not None else card.last_active_at
+    return card.created_at
 
 
 def list_sessions() -> list[SessionCard]:
-    """五家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
+    """五家的会话合并成一份清单，按创建时刻倒序（见 :func:`sort_key`）。
 
     一家读不出来（库不存在、目录不存在）不影响其余几家——各家的读取层各自把失败收敛成
     空列表，这里不做二次兜底，也 NEVER 因为一家没数据就整份返回空。

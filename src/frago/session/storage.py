@@ -108,6 +108,102 @@ def _session_mtime(session_dir: Path) -> float | None:
     return newest
 
 
+#: 找「这场会话什么时候开始」时，最多读原文开头这么多字节。起始时刻总在前几行；
+#: 一条工具结果能到几万字符，读整份原文只为拿开头一点，等于把代价按文件大小放大。
+_CREATED_SCAN_BYTES = 256 * 1024
+
+
+def _epoch_from_iso(value: Any) -> float | None:
+    """ISO 时刻字符串 → epoch 秒。认不出返回 None。"""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError, OSError, OverflowError):
+        return None
+
+
+def _epoch_from_number(value: Any) -> float | None:
+    """数值时刻 → epoch 秒。大于 1e12 的按毫秒读（opencode 存的就是毫秒）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value) / 1000.0 if value > 1e12 else float(value)
+
+
+def _record_created_epoch(record: dict[str, Any]) -> float | None:
+    """一条原文记录里承载「这一刻」的字段。各家形状不同，按同一优先级读。
+
+    - claude / codex / coreagent：``timestamp``（ISO）
+    - agy：``created_at``（ISO）
+    - opencode：``time.created`` 或 ``created``（毫秒）
+    """
+    for key in ("timestamp", "created_at"):
+        epoch = _epoch_from_iso(record.get(key))
+        if epoch is not None:
+            return epoch
+    time_field = record.get("time")
+    if isinstance(time_field, dict):
+        epoch = _epoch_from_number(time_field.get("created"))
+        if epoch is not None:
+            return epoch
+    return _epoch_from_number(record.get("created"))
+
+
+def _raw_created_epoch(raw_path: Path) -> float | None:
+    """原文副本里第一条带时刻的记录。读不动、或开头一段没有时刻，返回 None。
+
+    只扫开头一段，不逐行读完整场会话。开头那几条即使全是簿记记录，带时刻的记录
+    也落在很近的位置；真没有就交给文件时刻兜底。
+    """
+    try:
+        with open(raw_path, "rb") as fh:
+            buf = fh.read(_CREATED_SCAN_BYTES)
+    except OSError:
+        return None
+    for line in buf.splitlines():
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        epoch = _record_created_epoch(record)
+        if epoch is not None:
+            return epoch
+    return None
+
+
+def _session_created_epoch(
+    session_dir: Path,
+    *,
+    raw_path: Path | None = None,
+) -> float | None:
+    """这场会话是什么时候开始的（epoch 秒）。
+
+    优先级：原文首条带时刻的记录 → 文件创建时刻 → 文件修改时刻。原文里的时刻是
+    会话自己的账；后两者只是兜底：不能因为开头一段读不出时刻就从清单里掉出去，也
+    不能拿会随更新变化的修改时刻当创建时刻。有 metadata 的会话由 ``started_at``
+    直接承载创建时刻，不走这里。
+    """
+    raw = raw_path if raw_path is not None else _raw_jsonl_path(session_dir)
+    if raw is not None:
+        epoch = _raw_created_epoch(raw)
+        if epoch is not None:
+            return epoch
+
+    for name in ("metadata.json", RAW_FILENAME):
+        path = session_dir / name
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        birth = getattr(stat, "st_birthtime", 0.0)
+        if birth:
+            return float(birth)
+        return float(stat.st_mtime)
+    return None
+
+
 def _live_status(
     status: SessionStatus, last_activity: datetime, now: datetime | None = None
 ) -> SessionStatus:
@@ -149,9 +245,17 @@ def _derive_session_from_raw(
     监控没参与过，所以没有 metadata。它在磁盘上明明存在，清单里不该缺席。
     """
     try:
-        stamp = datetime.fromtimestamp(raw_path.stat().st_mtime)
+        last_active = datetime.fromtimestamp(raw_path.stat().st_mtime)
     except OSError:
         return None
+    # 起始时刻取原文第一条带时刻的记录，不取文件修改时刻：修改时刻会随着会话继续
+    # 写盘而往前走，用它当创建时刻，这场会话每说一句话就会在清单里跳一次位。
+    created_epoch = _session_created_epoch(session_dir, raw_path=raw_path)
+    started_at = (
+        last_active
+        if created_epoch is None
+        else datetime.fromtimestamp(created_epoch)
+    )
     return MonitoredSession(
         session_id=session_dir.name,
         agent_type=agent_type,
@@ -159,9 +263,9 @@ def _derive_session_from_raw(
         project_path="",
         name=None,
         source_file=str(raw_path),
-        started_at=stamp,
-        last_activity=stamp,
-        status=_live_status(SessionStatus.RUNNING, stamp, now),
+        started_at=started_at,
+        last_activity=last_active,
+        status=_live_status(SessionStatus.RUNNING, last_active, now),
         step_count=0,
         tool_call_count=0,
         source=SessionSource.UNKNOWN,
@@ -854,7 +958,8 @@ def list_sessions(
         status: Filter by specific status
 
     Returns:
-        Session list, sorted by last activity time descending
+        Session list, sorted by session start time descending. The start time is
+        fixed when the session is created; later activity never changes it.
     """
     base_dir = get_session_base_dir()
 
@@ -889,35 +994,54 @@ def list_sessions(
                 continue
             candidates.append((mtime, session_dir))
 
-    # Phase 2: Sort by mtime descending and only load the top N.
-    # With 1000+ sessions, this avoids reading all metadata.json files.
-    # Read more than `limit` to compensate for status filtering losses.
+    # Phase 2: mtime 只是「创建时刻的上界」——文件只会在会话开始之后才存在、才被写。
+    # 先按 mtime 取一个窗口，窗口内读准创建时刻；窗口外每一场都满足
+    # creation <= mtime <= 窗口下界，所以当窗口内第 limit 名（按创建时刻）严格新于
+    # 窗口下界时，窗口外不可能翻盘。不成立就把窗口翻倍，直到结论不再变化。
+    # 常规情况只读几十份 metadata，而不是把一万多场会话全部读一遍。
     candidates.sort(key=lambda x: x[0], reverse=True)
-    read_budget = limit * 5  # read at most 5x limit to find enough matches
+
+    if limit <= 0:
+        return []
 
     now = datetime.now()
-    sessions = []
-    for _mtime, session_dir in candidates[:read_budget]:
-        session = _load_session_from_dir(session_dir, now)
-        if session is None:
+
+    def _created_epoch(session: MonitoredSession) -> float:
+        """排序用的创建时刻。naive 时刻按本地时区读回 epoch——它们本来就是本地写下的。"""
+        return session.started_at.timestamp()
+
+    def _collect(pool_size: int) -> list[MonitoredSession]:
+        loaded: list[MonitoredSession] = []
+        for _mtime, session_dir in candidates[:pool_size]:
+            session = _load_session_from_dir(session_dir, now)
+            if session is None:
+                continue
+
+            # 烂在 running 上的状态按最后活动时刻归位，再过滤。
+            session.status = _live_status(session.status, session.last_activity, now)
+            if status and session.status != status:
+                continue
+
+            loaded.append(session)
+
+        # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
+        loaded.sort(key=lambda s: (_created_epoch(s), s.session_id), reverse=True)
+        return loaded
+
+    pool_size = min(max(limit * 5, 50), len(candidates))
+    sessions = _collect(pool_size)
+    while True:
+        if len(sessions) < limit and pool_size < len(candidates):
+            pool_size = min(pool_size * 2, len(candidates))
+            sessions = _collect(pool_size)
             continue
-
-        # 烂在 running 上的状态按最后活动时刻归位，再过滤。
-        session.status = _live_status(session.status, session.last_activity, now)
-
-        # Status filtering
-        if status and session.status != status:
-            continue
-
-        sessions.append(session)
-
-    # Sort by actual last_activity (more accurate than mtime)
-    def get_sortable_time(s):
-        t = s.last_activity
-        if t.tzinfo is not None:
-            t = t.replace(tzinfo=None)
-        return t
-    sessions.sort(key=get_sortable_time, reverse=True)
+        if pool_size >= len(candidates):
+            break
+        cutoff = candidates[pool_size][0]
+        if _created_epoch(sessions[limit - 1]) > cutoff:
+            break
+        pool_size = min(pool_size * 2, len(candidates))
+        sessions = _collect(pool_size)
 
     return sessions[:limit]
 

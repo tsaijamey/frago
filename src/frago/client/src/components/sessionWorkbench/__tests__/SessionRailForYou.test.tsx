@@ -2,9 +2,10 @@
  * 左栏只留一个标记「For you」之后的用例。
  *
  * 盯的是摆放与字样：每张卡三行（标题、预览、状态行），For you 与其余同一结构；分区顺序
- * Pinned → For you → Everything else；所有 For you 标签同一画法（品牌绿）；档位只剩
- * For you / All；状态词一个都不出现；可关终端那一行；开在 tmux 里的流光照旧（主人 09-24
- * 定）；点开记一笔看过了、但不撤 For you；选中那张发出后原位不动、切走才归位（第五轮）。
+ * Pinned → Everything else，For you 只挂标记、不单独成区也不改位置；所有 For you 标签
+ * 同一画法（品牌绿）；档位只剩 For you / All；状态词一个都不出现；可关终端那一行；开在
+ * tmux 里的流光照旧（主人 09-24 定）；点开记一笔看过了、但不撤 For you；选中那张发出后
+ * 原位不动、切走才归位（第五轮）。
  * 挂不挂的判据由 `useForYou.test.ts` 把关，这里直接给定判定结果。
  */
 
@@ -103,18 +104,19 @@ describe('For you 在清单上', () => {
     expect(items.some((el) => el.textContent?.includes('Claude Code'))).toBe(false);
   });
 
-  it('分区顺序：Pinned → For you → Everything else', () => {
+  it('分区顺序：Pinned → Everything else，For you 不单独成区', () => {
     pins.pinned = ['c'];
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ b: info() })} />);
     const titles = screen.getAllByTestId('session-item').map((el) => el.textContent ?? '');
     expect(titles[0]).toContain('title c');
-    expect(titles[1]).toContain('title b');
-    expect(titles[2]).toContain('title a');
+    expect(titles[1]).toContain('title a');
+    expect(titles[2]).toContain('title b');
     expect(screen.getByTestId('pinned-header').textContent).toContain('Always on top');
     expect(screen.getByTestId('rest-header').textContent).toContain('Everything else');
+    expect(screen.queryByTestId('for-you-header')).toBeNull();
   });
 
-  it('置顶里也挂着 For you 的，For you 组标题右端注明', () => {
+  it('置顶区里的 For you 只挂标记，不改置顶次序', () => {
     pins.pinned = ['c'];
     render(
       <TestRail
@@ -124,10 +126,13 @@ describe('For you 在清单上', () => {
         forYou={fakeForYou({ b: info(), c: info() })}
       />
     );
-    expect(screen.getByTestId('for-you-header').textContent).toContain('+ 1 in Pinned above');
+    const items = screen.getAllByTestId('session-item');
+    expect(items[0].textContent).toContain('title c');
+    expect(items[0].getAttribute('data-for-you')).toBe('true');
+    expect(screen.queryByTestId('for-you-header')).toBeNull();
   });
 
-  it('For you 组里等得最久的在上', () => {
+  it('For you 不改变清单次序：仍按传入的创建顺序', () => {
     render(
       <TestRail
         state={railState(rows)}
@@ -140,8 +145,9 @@ describe('For you 在清单上', () => {
       />
     );
     const titles = screen.getAllByTestId('session-item').map((el) => el.textContent ?? '');
-    expect(titles[0]).toContain('title c');
-    expect(titles[1]).toContain('title a');
+    expect(titles[0]).toContain('title a');
+    expect(titles[1]).toContain('title b');
+    expect(titles[2]).toContain('title c');
   });
 
   it('所有 For you 标签同一画法：品牌绿，没有橙色，没有悬停原因', () => {
@@ -223,25 +229,25 @@ describe('For you 在清单上', () => {
 describe('不瞬移：选中那张发出后原位不动，切走才归位', () => {
   const titles = () => screen.getAllByTestId('session-item').map((el) => el.querySelector('[data-testid=session-title]')?.textContent);
 
-  it('发出之后留在 For you 那一格、状态行 Agent on it；切走后回到 Everything else', () => {
+  it('发出之后留在原位、状态行 Agent on it；For you 只撤标记', () => {
     const before = fakeForYou({ b: info() });
     const { rerender } = render(
       <TestRail state={railState(rows)} selectedId="b" onSelect={NOOP} forYou={before} />
     );
-    expect(titles()).toEqual(['title b', 'title a', 'title c']);
+    expect(titles()).toEqual(['title a', 'title b', 'title c']);
 
     // 发出那一刻：这一场离开 For you（suppress 之后判定里没有它了），页面交出 holdId
     const after = fakeForYou({});
     rerender(
       <TestRail state={railState(rows)} selectedId="b" onSelect={NOOP} forYou={after} holdId="b" busyId="b" />
     );
-    expect(titles()).toEqual(['title b', 'title a', 'title c']);
-    expect(screen.getByTestId('for-you-header')).toBeTruthy();
-    const b = screen.getAllByTestId('session-item')[0];
+    expect(titles()).toEqual(['title a', 'title b', 'title c']);
+    expect(screen.queryByTestId('for-you-header')).toBeNull();
+    const b = screen.getAllByTestId('session-item').find((el) => el.textContent?.includes('title b'))!;
     expect(b.querySelector('[data-testid=agent-on-it-chip]')).toBeTruthy();
     expect(b.querySelector('[data-testid=for-you-chip]')).toBeNull();
 
-    // 切到别的会话：放开，按时间回到 Everything else
+    // 切到别的会话：放开，位置不变
     rerender(<TestRail state={railState(rows)} selectedId="a" onSelect={NOOP} forYou={after} holdId={null} />);
     expect(titles()).toEqual(['title a', 'title b', 'title c']);
     expect(screen.queryByTestId('for-you-header')).toBeNull();
@@ -257,26 +263,25 @@ describe('不瞬移：选中那张发出后原位不动，切走才归位', () =
 
 describe('原位保留的纯函数', () => {
   const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => session(id));
-  const sections: RailSections = { pinned: [], 'for-you': [b, c], rest: [a, d] };
+  const sections: RailSections = { pinned: [], rest: [a, b, c, d] };
 
   it('slotOf 记下分区与序位；不在主干里返回 null', () => {
-    expect(slotOf(sections, 'c')).toMatchObject({ section: 'for-you', index: 1 });
-    expect(slotOf(sections, 'd')).toMatchObject({ section: 'rest', index: 1 });
+    expect(slotOf(sections, 'c')).toMatchObject({ section: 'rest', index: 2 });
+    expect(slotOf(sections, 'd')).toMatchObject({ section: 'rest', index: 3 });
     expect(slotOf(sections, 'zz')).toBeNull();
   });
 
   it('placeHeld 把它从新位置拿出来、摆回当时那一格，其余相对次序不变', () => {
     const held = slotOf(sections, 'c')!;
-    const moved: RailSections = { pinned: [], 'for-you': [b], rest: [c, a, d] };
+    const moved: RailSections = { pinned: [], rest: [c, a, b, d] };
     const out = placeHeld(moved, held);
-    expect(out['for-you'].map((s) => s.session_id)).toEqual(['b', 'c']);
-    expect(out.rest.map((s) => s.session_id)).toEqual(['a', 'd']);
+    expect(out.rest.map((s) => s.session_id)).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('一时找不到它（比如筛在 For you 档）照当时那一份摆回去', () => {
     const held = slotOf(sections, 'b')!;
-    const out = placeHeld({ pinned: [], 'for-you': [c], rest: [a, d] }, held);
-    expect(out['for-you'].map((s) => s.session_id)).toEqual(['b', 'c']);
+    const out = placeHeld({ pinned: [], rest: [a, c, d] }, held);
+    expect(out.rest.map((s) => s.session_id)).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('没有保留时原样返回', () => {

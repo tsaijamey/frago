@@ -3,7 +3,7 @@
 Frago Session Commands - Session Management Command Group
 
 Provides session data querying, viewing, and management functions:
-- session list: List recent sessions
+- session list: List sessions, newest created first
 - session show: View session details
 - session watch: Monitor sessions in real-time
 - session clean: Clean up expired sessions
@@ -119,7 +119,7 @@ def list_cmd(
     json_output: bool
 ):
     """
-    List recent sessions
+    List sessions, newest created first
 
     \b
     Examples:
@@ -155,8 +155,8 @@ def list_cmd(
         click.echo("No session records found")
         return
 
-    click.echo(f"{'Session ID':<12} {'Type':<8} {'Status':<10} {'Steps':<6} {'Tools':<6} {'Last Activity':<20}")
-    click.echo("-" * 70)
+    click.echo(f"{'Session ID':<12} {'Type':<8} {'Status':<10} {'Steps':<6} {'Tools':<6} {'Created':<20} {'Last Activity':<20}")
+    click.echo("-" * 91)
 
     for session in sessions:
         session_id_short = session.session_id[:8] + "..."
@@ -164,9 +164,10 @@ def list_cmd(
         status_str = _get_status_display(session.status)
         steps = str(session.step_count)
         tools = str(session.tool_call_count)
+        created = session.started_at.strftime("%Y-%m-%d %H:%M:%S")
         last_activity = session.last_activity.strftime("%Y-%m-%d %H:%M:%S")
 
-        click.echo(f"{session_id_short:<12} {agent:<8} {status_str:<10} {steps:<6} {tools:<6} {last_activity:<20}")
+        click.echo(f"{session_id_short:<12} {agent:<8} {status_str:<10} {steps:<6} {tools:<6} {created:<20} {last_activity:<20}")
 
 
 def _get_status_display(status: SessionStatus) -> str:

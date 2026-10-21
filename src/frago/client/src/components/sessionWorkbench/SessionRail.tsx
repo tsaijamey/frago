@@ -5,23 +5,24 @@
  * 今天没动静的会话默认不在。要看这台机器上的全部会话、找回旧会话，进 Timeline 浮窗；
  * 从那儿可以把旧会话「捡到今天」（见 `useSessionToday`）。
  *
- * 三家（Claude Code / opencode / codex）的会话在核心数据层就合并排好了，这里不重排时间序。
+ * 五家（Claude Code / opencode / codex / CoreAgent / agy）的会话在核心数据层就按创建
+ * 时刻合并排好了，这里不重排——更新一条会话不会让它换位置。
  *
  * **清单只回答一个问题：哪几场要我来读、来接着说。** 每一条要么挂「For you」（有 agent
  * 停在输入框前等你，判据见 `useForYou`），要么什么状态都不挂。Running / Done / Idle /
  * Error 这些状态词、来源字样、摘要预览都已退场——人来清单不是来看每场处在哪个状态的。
  *
- * **分区顺序**：Pinned（组内 For you 在前）→ For you（等得最久的在上）→ Everything else
- * （按时间）→ Workers with no parent session（默认折起）。worker 仍按派活的那场折在它下面。
- * **分支会话不折**：它是人亲手起的、等的也是人，和人开的会话一样摆在主干上（等你时进
- * For you），出处只在卡片上一行「分支自 <原会话>」里说（主人 09-28 定）。
- * 按标签分组（含 AI 分组）随第三轮原型退场：Everything else 里只按时间排。
+ * **分区顺序**：Pinned → 今天捡回 → 主干（按创建时刻）→ Workers with no parent session
+ * （默认折起）。worker 仍按派活的那场折在它下面；For you 只是卡片上的一枚标记，不再
+ * 单独成区、不改变任何位置。
+ * **分支会话不折**：它是人亲手起的、等的也是人，和人开的会话一样按创建时刻摆在主干上
+ * （等你时只挂标记），出处只在卡片上一行「分支自 <原会话>」里说（主人 09-28 定）。
  *
  * **搜索不筛这张清单。** 顶上那一行只是入口，点它或按 ⌘K 打开全站的搜会话浮窗。
  *
- * **For you 只有一个出口，而且不瞬移。** 人在选中的那张卡上发出一句话，这一场就离开 For you
- * （页面那一层 `forYou.suppress`）；但这张卡在清单里**原位不动**，状态行换成 Sending →
- * Agent on it，直到人切到别的会话才回到该在的位置（见 `HeldSlot`）。点开、看过都不算离开。
+ * **For you 只是一个标记。** 人在选中的那张卡上发出一句话，这一场就离开 For you
+ * （页面那一层 `forYou.suppress`），卡片位置不变；状态行换成 Sending → Agent on it。
+ * 点开、看过都不算离开。
  *
  * **置顶区是一片自己说了算的地方。** 名单存在服务端（见 `useSessionPins`），次序照置顶的
  * 次序，不跟时间范围与档位走。整组一块略浅的底加一圈发丝描边——窗口化列表里整组不是一个
@@ -98,7 +99,6 @@ const PAGE_SIZE = 50;
 type RailRow =
   | { kind: 'pinned-header' }
   | { kind: 'picked-header'; count: number }
-  | { kind: 'for-you-header'; count: number; pinnedAbove: number }
   | { kind: 'rest-header'; count: number }
   | { kind: 'workers-header' }
   /** 置顶组的收尾：组是一块整的底，末一行要把框收上。 */
@@ -124,17 +124,15 @@ type RailRow =
  */
 type GroupPos = 'head' | 'mid' | 'tail';
 
-/** 清单主干的三个分区。末尾那一区（认不出出处的 worker）不参与原位保留。 */
-export type RailSection = 'pinned' | 'for-you' | 'rest';
+/** 清单的两个分区。末尾那一区（认不出出处的 worker）不参与原位保留。 */
+export type RailSection = 'pinned' | 'rest';
 export type RailSections = Record<RailSection, WorkbenchSession[]>;
 
 /**
  * 「原位保留」：人在选中的那张卡上发出消息那一刻，它在哪个分区、排第几。
  *
- * 发出那一刻这一场离开 For you，按新集合重排的话，人刚发完话的那张卡会立刻从 For you 组
- * 跳进 Everything else，眼前那一格换成了别的会话。所以选中不变期间它按这一格摆；人切到
- * 别的会话那一刻放开，它回到该在的位置。原位期间这一轮答完又挂回 For you，位置本来就在
- * For you 组里，不跳。
+ * For you 不再决定位置之后，这个机制只在清单本身重排时兜底（比如置顶/取消置顶）：
+ * 选中不变期间那一场按当时那一格摆，人切到别的会话那一刻放开，它回到自然位置。
  */
 export interface HeldSlot {
   sessionId: string;
@@ -144,9 +142,9 @@ export interface HeldSlot {
   session: WorkbenchSession;
 }
 
-/** 这一场此刻在哪个分区、排第几；不在主干三区里（比如是折在别人下面的 worker）返回 null。 */
+/** 这一场此刻在哪个分区、排第几；不在主干两区里（比如是折在别人下面的 worker）返回 null。 */
 export function slotOf(sections: RailSections, sessionId: string): HeldSlot | null {
-  for (const section of ['pinned', 'for-you', 'rest'] as RailSection[]) {
+  for (const section of ['pinned', 'rest'] as RailSection[]) {
     const index = sections[section].findIndex((s) => s.session_id === sessionId);
     if (index >= 0) return { sessionId, section, index, session: sections[section][index] };
   }
@@ -158,7 +156,7 @@ export function placeHeld(sections: RailSections, held: HeldSlot | null): RailSe
   if (!held) return sections;
   let found: WorkbenchSession | null = null;
   const out = {} as RailSections;
-  for (const section of ['pinned', 'for-you', 'rest'] as RailSection[]) {
+  for (const section of ['pinned', 'rest'] as RailSection[]) {
     out[section] = sections[section].filter((s) => {
       if (s.session_id !== held.sessionId) return true;
       found = s;
@@ -279,15 +277,11 @@ export default function SessionRail({
   const pinnedRows = useMemo(() => {
     if (!pins.pinned.length) return [];
     const rank = new Map(pins.pinned.map((id, i) => [id, i]));
-    // 组内 For you 在前；同一档里保持置顶的次序
-    const waiting = (s: WorkbenchSession) => (forYou.infoOf(s.session_id) ? 0 : 1);
+    // 次序只照置顶名单；For you 只是一枚标记，不参与这里的排序。
     return sessions
       .filter((s) => rank.has(s.session_id))
-      .sort(
-        (a, b) =>
-          waiting(a) - waiting(b) || rank.get(a.session_id)! - rank.get(b.session_id)!
-      );
-  }, [sessions, pins.pinned, forYou]);
+      .sort((a, b) => rank.get(a.session_id)! - rank.get(b.session_id)!);
+  }, [sessions, pins.pinned]);
 
   /**
    * 把那一列会话摆成两层：主干是主会话，frago 派出去的 worker 折在派活的那一场下面。
@@ -351,29 +345,14 @@ export default function SessionRail({
   }, [visible, pins, today]);
 
   /**
-   * 主干拆成两区：For you（等得最久的在上）与 Everything else（按时间，服务端排好的序）。
-   */
-  const { forYouRows, restRows } = useMemo(() => {
-    const waiting: WorkbenchSession[] = [];
-    const rest: WorkbenchSession[] = [];
-    for (const s of trunkRows) {
-      if (forYou.infoOf(s.session_id)) waiting.push(s);
-      else rest.push(s);
-    }
-    waiting.sort(
-      (a, b) =>
-        (forYou.infoOf(a.session_id)?.waitingSince ?? 0) -
-        (forYou.infoOf(b.session_id)?.waitingSince ?? 0)
-    );
-    return { forYouRows: waiting, restRows: rest };
-  }, [trunkRows, forYou]);
-  /**
-   * 原位保留。记的是**上一次画出来的**分区：发出那一刻这一场已经被撤出 For you，按这一拍的
-   * 分区去找只会找到它的新位置。
+   * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
+   * 把它抽出来单独成区，等于重新打乱「创建时间固定」这件事。
+   *
+   * 原位保留记的是**上一次画出来的**分区；清单重排（置顶/取消置顶）时按这一格摆。
    */
   const natural = useMemo<RailSections>(
-    () => ({ pinned: pinnedRows, 'for-you': forYouRows, rest: restRows }),
-    [pinnedRows, forYouRows, restRows]
+    () => ({ pinned: pinnedRows, rest: trunkRows }),
+    [pinnedRows, trunkRows]
   );
   const lastNatural = useRef(natural);
   useEffect(() => {
@@ -388,17 +367,10 @@ export default function SessionRail({
   // 保留期间在菜单里置顶 / 取消置顶了：它该去置顶区或离开置顶区，不再按原位摆。
   const heldValid = held !== null && (held.section === 'pinned') === pins.isPinned(held.sessionId);
   const placed = useMemo(() => placeHeld(natural, heldValid ? held : null), [natural, held, heldValid]);
-  const { pinned: pinnedPlaced, 'for-you': forYouPlaced, rest: restPlaced } = placed;
-
-  /** 置顶里也挂着 For you 的有几场——For you 组标题右端注明「+ N in Pinned above」。 */
-  const pinnedForYou = useMemo(
-    () => pinnedRows.filter((s) => forYou.infoOf(s.session_id)).length,
-    [pinnedRows, forYou]
-  );
+  const { pinned: pinnedPlaced, rest: restPlaced } = placed;
 
   /**
-   * 这一批清单放到哪儿了。预算只喂 Everything else：For you 那几场本来就不多，而且是人
-   * 来这一页最要看的，不该被截在「下一批」里。末尾那一区默认折着，折着不占名额。
+   * 这一批清单放到哪儿了。预算只喂主干；末尾那一区默认折着，折着不占名额。
    */
   const orphansVisible = orphansOpen;
   const pagedRest = useMemo(() => restPlaced.slice(0, shown), [restPlaced, shown]);
@@ -417,8 +389,8 @@ export default function SessionRail({
   /**
    * 摆进列表的每一行：分区标题与会话卡走同一条队。
    *
-   * 一场都没置顶、也没有 For you 时不长任何分区标题，整片就是一个单列清单——空着的分区
-   * 标题只是噪音。末尾那一区同理：没有认不出出处的 worker 就不长那行标题。
+   * 一场都没置顶时不长任何分区标题，整片就是一个单列清单——空着的分区标题只是噪音。
+   * 末尾那一区同理：没有认不出出处的 worker 就不长那行标题。
    */
   const rows = useMemo<RailRow[]>(() => {
     const trunkWithKids = (session: WorkbenchSession, inPinned = false): RailRow[] => {
@@ -456,12 +428,9 @@ export default function SessionRail({
       out.push({ kind: 'picked-header', count: pickedRows.length });
       out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
     }
-    const sectioned = pins.pinned.length > 0 || forYouPlaced.length > 0;
-    if (forYouPlaced.length) {
-      out.push({ kind: 'for-you-header', count: forYouPlaced.length, pinnedAbove: pinnedForYou });
-      out.push(...forYouPlaced.flatMap((s) => trunkWithKids(s)));
+    if (pins.pinned.length > 0 && pagedRest.length) {
+      out.push({ kind: 'rest-header', count: restPlaced.length });
     }
-    if (sectioned && pagedRest.length) out.push({ kind: 'rest-header', count: restPlaced.length });
     out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
     if (orphanRows.length) {
       out.push({ kind: 'workers-header' });
@@ -475,8 +444,6 @@ export default function SessionRail({
     pins.collapsed,
     pinnedPlaced,
     pickedRows,
-    forYouPlaced,
-    pinnedForYou,
     pagedRest,
     restPlaced.length,
     childrenOf,
@@ -998,21 +965,16 @@ export default function SessionRail({
                   </div>
                 );
               }
-              if (row.kind === 'for-you-header' || row.kind === 'rest-header') {
-                const forYouHead = row.kind === 'for-you-header';
+              if (row.kind === 'rest-header') {
                 return (
                   <div
-                    data-testid={forYouHead ? 'for-you-header' : 'rest-header'}
+                    data-testid="rest-header"
                     className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
                   >
                     <span className="font-medium text-text-secondary">
-                      {forYouHead ? t('workbench.forYou.label') : t('workbench.rail.everythingElse')}
+                      {t('workbench.rail.everythingElse')}
                     </span>
                     <span className="font-mono opacity-70">{row.count}</span>
-                    <span className="flex-1" />
-                    {forYouHead && row.pinnedAbove ? (
-                      <span>{t('workbench.rail.inPinnedAbove', { n: row.pinnedAbove })}</span>
-                    ) : null}
                   </div>
                 );
               }

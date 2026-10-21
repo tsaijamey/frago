@@ -210,7 +210,7 @@ describe('SessionRail 分支会话不折', () => {
     expect(onSelect).toHaveBeenCalledWith(BOSS);
   });
 
-  it('分支停下等你：进 For you 那一组，不藏在原会话下', () => {
+  it('分支停下等你：挂 For you 标记，仍按创建顺序摆在主干里、不藏在原会话下', () => {
     render(
       <TestRail
         state={railState(rows)}
@@ -221,10 +221,12 @@ describe('SessionRail 分支会话不折', () => {
         })}
       />
     );
-    expect(screen.getByTestId('for-you-header').textContent).toContain('1');
-    const first = screen.getAllByTestId('session-item')[0];
-    expect(first.textContent).toContain('全局字号倍率处理');
-    expect(first.getAttribute('data-for-you')).toBe('true');
+    expect(screen.queryByTestId('for-you-header')).toBeNull();
+    const branch = screen
+      .getAllByTestId('session-item')
+      .find((el) => el.textContent?.includes('全局字号倍率处理'))!;
+    expect(branch.getAttribute('data-for-you')).toBe('true');
+    expect(branch.getAttribute('data-nested')).toBeNull();
   });
 
   it('只有 worker 折；原会话被筛掉时分支照样在主干上', () => {
