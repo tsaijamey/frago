@@ -172,6 +172,38 @@ def test_brief_makes_the_director_queue_its_speech_ahead() -> None:
     assert "输入行" in brief and "人会跟你说话" in brief
 
 
+def test_brief_splits_generic_agent_os_skill_from_recipe_specific_task() -> None:
+    """通用舞台能力抽进 how-frago-agent-runs-an-agent-os skill，场景任务书只留创建配方特异要求。
+
+    两层合起来等于完整导演任务书；而 skill 单独拿去别的场景用时，不带任何创建配方的词。
+    """
+    from frago.skills.skill_prompt import load_skills, split_skill_blocks
+
+    brief = recipe_forge.build_brief("做一个看板", page=True, name="my_board", session_id="sid-2")
+    names, task = split_skill_blocks(brief)
+    assert names == [recipe_forge.AGENT_OS_SKILL_NAME]
+    assert task == recipe_forge.build_recipe_task(
+        "做一个看板", page=True, name="my_board", session_id="sid-2"
+    )
+
+    skill_body = load_skills([recipe_forge.AGENT_OS_SKILL_NAME])[0].body
+    # 1. skill 覆盖边干活边讲解演示 + 同步录制视频
+    assert "How Frago Agent Runs an Agent OS" in skill_body
+    assert "边执行事务边为用户讲解演示" in skill_body
+    assert "同步录制视频" in skill_body
+    assert "rec start" in skill_body and "rec stop" in skill_body
+    assert "caffeinate -dimsu" in skill_body
+
+    # 2. skill 不带任何 create recipe 的特异信息
+    for leaked in ("配方", "recipe", "spec.md", "recipe.py", "board.py", "validate"):
+        assert leaked not in skill_body.lower(), f"skill 混入了创建配方特异词: {leaked}"
+
+    # 3. 场景任务书不再重复大段通用语音合成与舞台教程，但保留配方特定要求
+    assert "## 话从哪来：先写话，再排音频" not in task
+    assert "frago recipe create" in task
+    assert "1/5 定名" in task and "5/5 完成" in task
+
+
 def test_start_goes_ahead_when_the_stage_is_not_running(monkeypatch) -> None:
     """舞台没在跑不再是拒绝的理由：会话照起，起来之后由导演自己 frago desktop up。"""
     from frago.server.services import workbench_agents, workbench_new_session

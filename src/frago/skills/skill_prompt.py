@@ -34,9 +34,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from frago.skills.agent_skills import ManagedSkillStore
+from frago.skills.agent_skills import SKILL_FILE, ManagedSkillStore
 
 OPEN_TAG = "must-use-skill"
+
+#: 随 frago 包一起分发的内置 skill 目录。集中副本还没扫过、或跑在隔离的测试家目录里时，
+#: 点名内置 skill 仍能直接从包内取出，不会因为没跑过同步就报 UnknownSkill。
+BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "resources" / "skills"
 
 GUIDE_ONLY_SKILL = (
     "用户只点名了这个 skill，没有写别的要求：先完整读完下面的 skill 正文，"
@@ -99,9 +103,13 @@ def load_skills(names: list[str], store: ManagedSkillStore | None = None) -> lis
             continue
         seen.add(name)
         entry = index.get(name)
-        if entry is None:
-            raise UnknownSkill(f"没有叫 {name} 的 skill（frago 的集中副本里找不到）")
-        path = entry.skill_md(store.root)
+        if entry is not None:
+            path = entry.skill_md(store.root)
+        else:
+            builtin = BUILTIN_SKILLS_DIR / name / SKILL_FILE
+            if not builtin.is_file():
+                raise UnknownSkill(f"没有叫 {name} 的 skill（frago 的集中副本里找不到）")
+            path = builtin
         try:
             body = path.read_text(encoding="utf-8")
         except OSError as e:

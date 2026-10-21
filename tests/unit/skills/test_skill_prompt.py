@@ -67,6 +67,14 @@ def test_不存在的skill整单拒掉(store):
         load_skills(["git-push", "nope"], store)
 
 
+def test_集中副本为空时内置skill仍可直接从包内加载(tmp_path):
+    empty_store = ManagedSkillStore(tmp_path / "empty-store")
+    skills = load_skills(["how-frago-agent-runs-an-agent-os"], empty_store)
+    assert len(skills) == 1
+    assert skills[0].name == "how-frago-agent-runs-an-agent-os"
+    assert "How Frago Agent Runs an Agent OS" in skills[0].body
+
+
 def test_没挑skill时原样返回(store):
     assert embed_skills("原话", [], user_text="原话") == "原话"
 
