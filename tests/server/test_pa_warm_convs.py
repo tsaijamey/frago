@@ -154,3 +154,38 @@ def test_preheat_empty_is_noop(tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "_get_pa_tmux_runner", lambda: called.append(1))
     asyncio.run(svc._preheat_warm_convs())
     assert called == []
+
+
+def test_preheat_skips_when_task_ingestion_disabled(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    _write_config(cfg, {
+        "task_ingestion": {"enabled": False, "channels": [{"name": "feishu", "enabled": True}]},
+        "primary_agent": {"warm_convs": ["feishu:oc_1", "voice:local"]},
+    })
+    monkeypatch.setattr(pa_mod, "CONFIG_FILE", cfg)
+    svc = _svc()
+    called = []
+    monkeypatch.setattr(svc, "_get_pa_tmux_runner", lambda: called.append(1))
+    asyncio.run(svc._preheat_warm_convs())
+    assert called == []
+
+
+def test_preheat_filters_disabled_or_removed_channels(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    _write_config(cfg, {
+        "task_ingestion": {
+            "enabled": True,
+            "channels": [
+                {"name": "voice", "enabled": True},
+                {"name": "feishu", "enabled": False},
+            ],
+        },
+        "primary_agent": {"warm_convs": ["feishu:oc_1", "voice:local"]},
+    })
+    monkeypatch.setattr(pa_mod, "CONFIG_FILE", cfg)
+    svc = _svc()
+    runner = _FakeWarmRunner(alive=set())
+    monkeypatch.setattr(svc, "_get_pa_tmux_runner", lambda: runner)
+    asyncio.run(svc._preheat_warm_convs())
+    assert runner.calls == ["voice:local"]
+

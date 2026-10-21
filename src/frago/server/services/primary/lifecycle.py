@@ -44,12 +44,37 @@ def load_heartbeat_config(config_file: Path, defaults: dict[str, Any]) -> dict[s
 
 
 def load_warm_convs(config_file: Path) -> list[str]:
-    """读 config 里 primary_agent.warm_convs（最近在前的 conv_key 列表）。"""
+    """读 config 里 primary_agent.warm_convs（最近在前的 conv_key 列表）。
+
+    若 config.json 中明确配置了 ``task_ingestion``：
+    - ``task_ingestion.enabled`` 为假时，不预热任何通道会话；
+    - 给出了 ``task_ingestion.channels`` 时，只保留当前仍在启用名单里的通道前缀。
+    """
     try:
         if config_file.exists():
             raw = json.loads(config_file.read_text(encoding="utf-8"))
+            ti = raw.get("task_ingestion")
+            if isinstance(ti, dict) and not ti.get("enabled", False):
+                return []
+            enabled_channels: set[str] | None = None
+            if isinstance(ti, dict) and isinstance(ti.get("channels"), list):
+                enabled_channels = {
+                    str(ch.get("name"))
+                    for ch in ti["channels"]
+                    if isinstance(ch, dict) and ch.get("enabled", True) and ch.get("name")
+                }
             convs = (raw.get("primary_agent") or {}).get("warm_convs") or []
-            return [str(c) for c in convs if c]
+            result: list[str] = []
+            for c in convs:
+                if not c:
+                    continue
+                s = str(c)
+                if enabled_channels is not None and ":" in s:
+                    ch_name = s.split(":", 1)[0]
+                    if ch_name not in enabled_channels:
+                        continue
+                result.append(s)
+            return result
     except (json.JSONDecodeError, OSError):
         pass
     return []
