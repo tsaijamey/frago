@@ -337,6 +337,58 @@ def test_turn_is_done_only_after_background_task_finishes_and_model_replies(app_
     assert done_turn.text == "磁盘检查完毕，剩余 9.6G。"
 
 
+def test_turn_is_not_done_when_planner_response_is_interrupted_by_stream_error(app_dir):
+    """回归（36f51a51）：流式连接中途断开时，agy 先把半截 PLANNER_RESPONSE（无 tool_calls）
+    落盘，紧接着写一条 ERROR_MESSAGE 并准备自动续写。若把半截残片判成 done=True，调用方
+    会当场把还在自动续写的会话当已完成收尾。
+    """
+    records = [
+        {"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>检查未合并分支</USER_REQUEST>"},
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "content": "**我将先查阅配置并检索历史，随后检查所有分支的合并状态。** `gitlab_mr",
+        },
+        {
+            "step_index": 2,
+            "source": "SYSTEM",
+            "type": "ERROR_MESSAGE",
+            "status": "DONE",
+            "error": "The stream was interrupted. Please continue the task you were working on.",
+        },
+    ]
+    _write_transcript(app_dir, records)
+    interrupted = agy_store.latest_turn(CONVERSATION_ID)
+    assert interrupted is not None and interrupted.done is False
+
+    # agy 自动续写启动新一拍（PreInvocation 注入 EPHEMERAL_MESSAGE）期间仍未完成
+    records.append(
+        {
+            "step_index": 3,
+            "source": "SYSTEM_SDK",
+            "type": "EPHEMERAL_MESSAGE",
+            "status": "DONE",
+            "content": "[主控提醒] ...",
+        }
+    )
+    _write_transcript(app_dir, records)
+    resuming = agy_store.latest_turn(CONVERSATION_ID)
+    assert resuming is not None and resuming.done is False
+
+    # 自动续写最终给出完整收尾回复后，才算本轮完成
+    records.append(
+        {
+            "step_index": 4,
+            "type": "PLANNER_RESPONSE",
+            "content": "所有远端分支均已合并。",
+        }
+    )
+    _write_transcript(app_dir, records)
+    completed = agy_store.latest_turn(CONVERSATION_ID)
+    assert completed is not None and completed.done is True
+    assert completed.text == "所有远端分支均已合并。"
+
+
 # ── 会话编号认领 ────────────────────────────────────────────────────
 def test_claim_falls_back_to_the_summaries_table(app_dir):
     """没有 last_conversations 线索时，按工作目录与时刻从摘要库里挑。"""

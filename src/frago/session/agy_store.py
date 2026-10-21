@@ -78,6 +78,8 @@ RECORD_EPHEMERAL_MESSAGE = "EPHEMERAL_MESSAGE"
 一条 ``{"ephemeralMessage": "PROBE-EPHEMERAL-99887"}`` 原样落成了这个类型的一条记录）。
 **它带不来事件名**——正文里没有那句 ``injected by a … hook`` 标签，所以认它的路只有类型
 本身。"""
+RECORD_ERROR_MESSAGE = "ERROR_MESSAGE"
+"""流式连接中断或上游接口报错时 agy 落下的错误记录（如 ``The stream was interrupted``）。"""
 
 # 完成探针每次回读的字节数。transcript.jsonl 是整场会话的流水账，一轮里的
 # 用户输入与模型几个回复永远贴在末尾，整读没必要。
@@ -401,8 +403,16 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
         if before_pending != pending_bg_tasks and not pending_bg_tasks:
             # 后台任务刚刚完结或被终止：此前为了等待它而留下的过渡播报作废，等后续真正的收尾回复。
             final_text = None
-        if record.get("type") == RECORD_PLANNER and record.get("tool_calls"):
+        record_type = record.get("type")
+        if record_type == RECORD_PLANNER and record.get("tool_calls"):
             # 模型继续发起新一拍工具调用：早先的文字回复只是中间播报。
+            final_text = None
+        elif record_type in (RECORD_ERROR_MESSAGE, RECORD_EPHEMERAL_MESSAGE) or (
+            record.get("status") == STATUS_ERROR
+        ):
+            # 流式断连报错（ERROR_MESSAGE）或新一拍模型调用启动前的 PreInvocation 注入
+            # （EPHEMERAL_MESSAGE）出现在回复之后：说明方才那条无 tool_calls 的
+            # PLANNER_RESPONSE 只是断流残片或中间播报，本轮尚未真正收尾。
             final_text = None
         elif _is_final_model_turn(record):
             final_text = _model_text(record)
