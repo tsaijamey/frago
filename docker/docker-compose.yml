@@ -1,0 +1,37 @@
+name: frago-support
+
+services:
+  linux:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: frago-support-env:py313
+    platform: linux/amd64
+    container_name: frago-support-linux
+    environment:
+      - HOME=/root/frago-linux-home
+      - PYTHONPATH=/workspace/src
+      - FRAGO_TEST_TARGET=linux
+    volumes:
+      - ..:/workspace:ro
+    command: >
+      sh -c "mkdir -p $$HOME && python3 /workspace/docker/verify_env.py --expect linux"
+
+  wsl2:
+    image: frago-support-env:py313
+    platform: linux/amd64
+    container_name: frago-support-wsl2
+    environment:
+      - HOME=/root/frago-wsl2-home
+      - PYTHONPATH=/workspace/src
+      - FRAGO_TEST_TARGET=wsl2
+      - WSL_DISTRO_NAME=Ubuntu-24.04
+      - WSL_INTEROP=/run/WSL/1_interop
+      - WSLENV=USERPROFILE/p:APPDATA/p:LOCALAPPDATA/p
+      - HOST_USERPROFILE=/mnt/c/Users/frago
+    volumes:
+      - ..:/workspace:ro
+    command: >
+      sh -c "mkdir -p $$HOME /mnt/c/Users/frago /run/WSL &&
+             touch /run/WSL/1_interop &&
+             python3 /workspace/docker/verify_env.py --expect wsl2"
