@@ -123,6 +123,7 @@ def _base_command(
     cwd: str,
     profile_id: str | None,
     session_id: str | None = None,
+    model: str | None = None,
 ) -> list[str]:
     """两种形状共用的那一截：定模式、定输出格式、定工作目录与连接，任务从 stdin 来。
 
@@ -140,6 +141,8 @@ def _base_command(
     cmd += ["--cwd", cwd]
     if profile_id:
         cmd += ["--as-profile", profile_id]
+    if model and model.strip():
+        cmd += ["--model", model.strip()]
     cmd += ["-p", "-"]
     return cmd
 
@@ -149,16 +152,19 @@ def build_command(
     session_id: str,
     cwd: str,
     profile_id: str | None,
+    model: str | None = None,
 ) -> list[str]:
     """拼 ``frago agent`` 那一条一次性命令（agent 模式，带工具，落会话记录）。"""
     return _base_command(
-        "agent", cwd=cwd, profile_id=profile_id, session_id=session_id
+        "agent", cwd=cwd, profile_id=profile_id, session_id=session_id, model=model
     )
 
 
-def build_chat_command(*, cwd: str, profile_id: str | None) -> list[str]:
+def build_chat_command(
+    *, cwd: str, profile_id: str | None, model: str | None = None
+) -> list[str]:
     """拼"问一句、答一句"那一条命令（chat 模式，无工具，不留会话记录）。"""
-    return _base_command("chat", cwd=cwd, profile_id=profile_id)
+    return _base_command("chat", cwd=cwd, profile_id=profile_id, model=model)
 
 
 def _run_process(
@@ -234,6 +240,7 @@ def run_turn(
     session_id: str,
     cwd: str,
     profile_id: str | None = None,
+    model: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
     on_spawn: Callable[[int], None] | None = None,
@@ -251,7 +258,9 @@ def run_turn(
     ``on_spawn`` 在进程起来之后、喂任务之前被叫一次，带上内核那个进程号——调用方拿它登记
     名册（内核 worker 没有 tmux 会话，能按名字收走它靠的就是这个号）。
     """
-    cmd = build_command(session_id=session_id, cwd=cwd, profile_id=profile_id)
+    cmd = build_command(
+        session_id=session_id, cwd=cwd, profile_id=profile_id, model=model
+    )
     collected = _run_process(
         cmd,
         prompt_text,
@@ -271,6 +280,7 @@ def run_chat_turn(
     *,
     cwd: str,
     profile_id: str | None = None,
+    model: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
 ) -> KernelTurn:
@@ -282,7 +292,7 @@ def run_chat_turn(
 
     连接同上：``--as-profile`` 收 **id**；给 None 就用内核自己那条默认连接。
     """
-    cmd = build_chat_command(cwd=cwd, profile_id=profile_id)
+    cmd = build_chat_command(cwd=cwd, profile_id=profile_id, model=model)
     collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=env)
     if isinstance(collected, KernelTurn):
         return collected

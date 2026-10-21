@@ -152,3 +152,14 @@ def test_agent_command_still_names_its_session():
     assert cmd[cmd.index("--mode") + 1] == "agent"
     assert cmd[cmd.index("--session-id") + 1] == "core_abc"
     assert cmd[cmd.index("--as-profile") + 1] == "0ef6d728"
+    assert "--model" not in cmd
+
+
+def test_model_flag_is_forwarded_in_both_modes():
+    agent_cmd = build_command(
+        session_id="core_abc", cwd="/repos/x", profile_id="0ef6d728", model="haiku"
+    )
+    assert agent_cmd[agent_cmd.index("--model") + 1] == "haiku"
+
+    chat_cmd = build_chat_command(cwd="/repos/x", profile_id=None, model="deepseek-v4-flash")
+    assert chat_cmd[chat_cmd.index("--model") + 1] == "deepseek-v4-flash"

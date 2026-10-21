@@ -189,6 +189,16 @@ def test_no_profile_means_kernel_default_connection(fake_kernel):
     assert fake_kernel[0]["profile_id"] is None
 
 
+def test_model_is_passed_through_to_the_kernel(fake_kernel):
+    res = CliRunner().invoke(
+        agent,
+        ["--agent-type", "coreagent", "--model", "haiku", "--quiet", "ping"],
+    )
+    assert res.exit_code == 0, res.stderr
+    assert fake_kernel[0]["model"] == "haiku"
+    assert "内核不吃 --model" not in res.stderr
+
+
 def test_profile_env_translation_no_longer_raises_for_driverless_agents(fake_profiles):
     """给一个没有 driver 的 agent_type 翻 profile：说清"没生效"，NEVER 抛 KeyError。"""
     from frago.cli.agent_command import _profile_env_via_driver

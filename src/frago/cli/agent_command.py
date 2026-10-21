@@ -416,15 +416,6 @@ def _run_kernel(
         click.echo("[Dry Run] Skip actual execution", err=json_out)
         return
 
-    if model:
-        # 内核没有 --model 开关：模型跟着连接走（--as-profile 那条 profile 自己的主模型）。
-        # 人显式点名了一个模型而实际没生效，这件事必须当场看得见。
-        click.echo(
-            f"[!] 内核不吃 --model：模型由连接决定，这一轮跑在内核为这条件所选的连接上"
-            f"（{profile_id or '内核默认连接'}）。",
-            err=True,
-        )
-
     # 名册：内核 worker 没有 tmux 会话，登记的是**内核那个进程号**——`frago agent ls`
     # 据此判活、`stop` 据此收走（见 drive_command._is_alive）。外壳进程被外部杀掉时
     # finally 不执行，名册那条会留下——那正是我们要的：跑飞的孤儿仍可按名字收走。
@@ -457,6 +448,7 @@ def _run_kernel(
             session_id=sid,
             cwd=cwd,
             profile_id=profile_id,
+            model=model,
             timeout_s=float(timeout) if timeout > 0 else None,
             env=env,
             on_spawn=_on_spawn,
