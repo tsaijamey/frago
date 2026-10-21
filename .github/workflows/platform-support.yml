@@ -1,0 +1,59 @@
+name: Cross-Platform Support Matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/frago/**"
+      - "pyproject.toml"
+      - "docker/**"
+      - "scripts/install/**"
+      - ".github/workflows/platform-support.yml"
+
+jobs:
+  verify-matrix:
+    name: Verify (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux
+            os: ubuntu-latest
+            expect: linux
+          - label: wsl2
+            os: ubuntu-latest
+            expect: wsl2
+          - label: macos
+            os: macos-latest
+            expect: macos
+          - label: windows
+            os: windows-latest
+            expect: windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install frago-cli in editable mode
+        run: uv pip install --system -e .
+
+      - name: Verify Linux / macOS / Windows environment
+        if: matrix.expect != 'wsl2'
+        run: python docker/verify_env.py --expect ${{ matrix.expect }}
+
+      - name: Verify Windows WSL2 environment simulation
+        if: matrix.expect == 'wsl2'
+        env:
+          WSL_DISTRO_NAME: Ubuntu-24.04
+          WSL_INTEROP: /run/WSL/1_interop
+          WSLENV: USERPROFILE/p:APPDATA/p:LOCALAPPDATA/p
+        run: |
+          sudo mkdir -p /mnt/c/Users/runner /run/WSL
+          sudo touch /run/WSL/1_interop
+          python docker/verify_env.py --expect wsl2
