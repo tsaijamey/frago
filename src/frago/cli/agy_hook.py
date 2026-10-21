@@ -87,6 +87,7 @@ TOOL_NAME_MAP: dict[str, str] = {
     "list_dir": "LS",
     "search_web": "WebSearch",
     "read_url": "WebFetch",
+    "invoke_subagent": "Agent",
 }
 
 #: 引擎侧工具名 → {agy 参数键: 引擎参数键}。

@@ -82,6 +82,20 @@ def test_读文件工具名与参数键翻过去():
     assert out["tool_input"] == {"file_path": "/etc/hosts"}
 
 
+def test_原生子代理工具名翻成Agent命中内置拦截规则():
+    """agy 的 invoke_subagent 翻成 Agent，直接复用 builtin-tool-agent-deny 拦下。"""
+    out = agy_hook.translate_input(
+        {
+            "toolCall": {
+                "name": "invoke_subagent",
+                "args": {"TypeName": "research", "Role": "Evaluator", "Prompt": "x"},
+            }
+        },
+        "PreToolUse",
+    )
+    assert out["tool_name"] == "Agent"
+
+
 def test_agy自己的记账键不进引擎():
     """toolAction / toolSummary 是给人看的，不是工具参数，留着只会污染引擎的输入。"""
     out = agy_hook.translate_input(
