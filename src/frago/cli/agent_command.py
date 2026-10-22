@@ -561,8 +561,8 @@ def should_use_ccr(config: dict | None, force_ccr: bool = False) -> tuple[bool, 
 # CLI Commands
 # =============================================================================
 
-# 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）。
-_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop", "attach"})
+# 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）及身份自查子命令。
+_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop", "attach", "self", "whoami"})
 # 隐藏的默认命令名：承载原 `frago agent <prompt> [options]` 全部逻辑。
 _DEFAULT_RUN_CMD = "__run__"
 
@@ -597,7 +597,8 @@ def agent() -> None:
       frago agent "summarize this" --json      # machine-readable shutdown summary
 
     \b
-    Resident tmux-session subcommands:
+    Resident tmux-session & self-inspection subcommands:
+      frago agent self [--signature | --name | --json]
       frago agent start <agent_type> [--name NAME]
       frago agent send <name> "<prompt>"
       frago agent peek <name>
@@ -1069,6 +1070,70 @@ def agent_attach(files: str | None, dirs: str | None, conv_key: str | None) -> N
     click.echo(f"Attached {len(records)} artifact(s) to conv {key!r}.")
     for rec in records:
         click.echo(f"  {rec['kind']}\t{rec['path']}")
+
+
+# =============================================================================
+# frago agent self —— 自查当前所处的 CLI Agent 身份与提交签名
+# =============================================================================
+def _run_agent_self(*, signature: bool, display_name: bool, json_output: bool) -> None:
+    from frago.session.self_id import resolve_self_agent
+
+    found = resolve_self_agent()
+    if found is None:
+        from .agent_friendly import BusinessError
+
+        raise BusinessError(
+            "cannot resolve current CLI agent — no CLI agent process ancestor "
+            "or session environment variable found",
+            'export FRAGO_CLI_AGENT="claude"  # declare explicitly (claude/codex/opencode/agy/coreagent)',
+            "frago agent self --json",
+        )
+
+    if json_output:
+        click.echo(json.dumps(found.to_dict(), ensure_ascii=False, indent=2))
+        return
+    if signature:
+        click.echo(found.generated_with)
+        return
+    if display_name:
+        click.echo(found.display_name)
+        return
+    click.echo(found.agent_type)
+
+
+@agent.command("self", cls=AgentFriendlyCommand)
+@click.option(
+    "--signature",
+    is_flag=True,
+    help="Print the commit 'Generated with [...]' signature line for this CLI agent",
+)
+@click.option(
+    "--name",
+    "display_name",
+    is_flag=True,
+    help="Print the human-readable display name of this CLI agent (e.g. Claude Code, Codex CLI)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output full identity and signature in JSON format")
+def agent_self(signature: bool, display_name: bool, json_output: bool) -> None:
+    """Identify which CLI agent is executing the current command.
+
+    \b
+    Examples:
+      frago agent self              # e.g. claude / codex / opencode / agy / coreagent
+      frago agent self --name       # e.g. Claude Code / Codex CLI / opencode / Antigravity CLI
+      frago agent self --signature  # e.g. 🤖 Generated with [Claude Code](https://claude.com/claude-code)
+      frago agent self --json       # full JSON (agent_type, display_name, url, generated_with, source, session_id)
+    """
+    _run_agent_self(signature=signature, display_name=display_name, json_output=json_output)
+
+
+@agent.command("whoami", cls=AgentFriendlyCommand, hidden=True)
+@click.option("--signature", is_flag=True)
+@click.option("--name", "display_name", is_flag=True)
+@click.option("--json", "json_output", is_flag=True)
+def agent_whoami(signature: bool, display_name: bool, json_output: bool) -> None:
+    """Hidden alias for `frago agent self`."""
+    _run_agent_self(signature=signature, display_name=display_name, json_output=json_output)
 
 
 # =============================================================================

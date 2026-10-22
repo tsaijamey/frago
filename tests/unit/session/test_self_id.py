@@ -10,8 +10,12 @@ import os
 import time
 from pathlib import Path
 
+from click.testing import CliRunner
+
+from frago.cli.agent_command import agent
+from frago.cli.session_commands import session_group
 from frago.session.monitor import encode_project_path
-from frago.session.self_id import resolve_self
+from frago.session.self_id import resolve_self, resolve_self_agent
 
 
 def _transcript(root: Path, cwd: str, sid: str, age_s: float = 0.0) -> Path:
@@ -86,3 +90,111 @@ def test_stale_transcripts_are_not_this_session(tmp_path):
 
 def test_no_evidence_at_all_returns_none(tmp_path):
     assert resolve_self(cwd="/work/elsewhere", projects_root=tmp_path, env={}) is None
+
+
+def test_resolve_self_agent_by_env_for_each_cli_agent(tmp_path):
+    cases = [
+        (
+            {"CLAUDE_CODE_SESSION_ID": "claude-sid"},
+            "claude",
+            "Claude Code",
+            "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+            "claude-sid",
+        ),
+        (
+            {"CODEX_THREAD_ID": "codex-tid"},
+            "codex",
+            "Codex CLI",
+            "🤖 Generated with [Codex CLI](https://github.com/openai/codex)",
+            "codex-tid",
+        ),
+        (
+            {"OPENCODE_SESSION_ID": "ses_123"},
+            "opencode",
+            "opencode",
+            "🤖 Generated with [opencode](https://opencode.ai)",
+            "ses_123",
+        ),
+        (
+            {"ANTIGRAVITY_CONVERSATION_ID": "agy-cid"},
+            "agy",
+            "Antigravity CLI",
+            "🤖 Generated with [Antigravity CLI](https://antigravity.google)",
+            "agy-cid",
+        ),
+        (
+            {"FRAGO_SESSION_ID": "core_abc"},
+            "coreagent",
+            "CoreAgent",
+            "🤖 Generated with [CoreAgent](https://frago.ai)",
+            "core_abc",
+        ),
+    ]
+    for env, expected_type, expected_name, expected_sig, expected_sid in cases:
+        found = resolve_self_agent(cwd="/work/elsewhere", projects_root=tmp_path, env=env)
+        assert found is not None
+        assert found.agent_type == expected_type
+        assert found.display_name == expected_name
+        assert found.generated_with == expected_sig
+        assert found.session_id == expected_sid
+
+
+def test_resolve_self_agent_process_chain_beats_leaked_outer_env(tmp_path):
+    """子 tmux 窗格里跑着 codex，即使环境里残留了外层 agy 的变量，也按最近祖先进程认 codex。"""
+    found = resolve_self_agent(
+        cwd="/work/elsewhere",
+        projects_root=tmp_path,
+        env={"ANTIGRAVITY_CONVERSATION_ID": "outer-agy-session", "CODEX_THREAD_ID": "inner-codex"},
+        process_chain=[
+            ("/bin/zsh", "/bin/zsh -c frago agent self"),
+            ("/opt/homebrew/bin/codex", "codex --dangerously-bypass-approvals-and-sandbox"),
+            ("/opt/homebrew/bin/tmux", "tmux new-session -d"),
+            ("agy", "agy --dangerously-skip-permissions"),
+        ],
+    )
+    assert found is not None
+    assert found.agent_type == "codex"
+    assert found.source == "process:codex"
+    assert found.session_id == "inner-codex"
+    assert found.generated_with == "🤖 Generated with [Codex CLI](https://github.com/openai/codex)"
+
+
+def test_resolve_self_agent_stops_at_tmux_boundary(tmp_path):
+    """越过 tmux server 的上层进程不能当成当前窗格的 CLI Agent。"""
+    found = resolve_self_agent(
+        cwd="/work/elsewhere",
+        projects_root=tmp_path,
+        env={},
+        process_chain=[
+            ("/bin/zsh", "-zsh"),
+            ("/opt/homebrew/bin/tmux", "tmux"),
+            ("agy", "agy --dangerously-skip-permissions"),
+        ],
+    )
+    assert found is None
+
+
+def test_agent_self_cli_outputs_type_signature_and_json(monkeypatch):
+    monkeypatch.setenv("FRAGO_CLI_AGENT", "opencode")
+    monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_demo")
+    runner = CliRunner()
+
+    res_type = runner.invoke(agent, ["self"])
+    assert res_type.exit_code == 0
+    assert res_type.output.strip() == "opencode"
+
+    res_sig = runner.invoke(agent, ["self", "--signature"])
+    assert res_sig.exit_code == 0
+    assert res_sig.output.strip() == "🤖 Generated with [opencode](https://opencode.ai)"
+
+    res_name = runner.invoke(agent, ["self", "--name"])
+    assert res_name.exit_code == 0
+    assert res_name.output.strip() == "opencode"
+
+    res_json = runner.invoke(agent, ["self", "--json"])
+    assert res_json.exit_code == 0
+    assert '"agent_type": "opencode"' in res_json.output
+
+    res_sess = runner.invoke(session_group, ["self", "--signature"])
+    assert res_sess.exit_code == 0
+    assert res_sess.output.strip() == "🤖 Generated with [opencode](https://opencode.ai)"

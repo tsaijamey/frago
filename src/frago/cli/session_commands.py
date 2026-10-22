@@ -45,26 +45,46 @@ def session_group():
 
 
 @session_group.command("self", cls=AgentFriendlyCommand)
+@click.option("--agent", "agent_only", is_flag=True, help="Print THIS session's CLI agent type (e.g. claude/codex/opencode/agy/coreagent)")
+@click.option("--signature", "signature_only", is_flag=True, help="Print THIS CLI agent's commit 'Generated with [...]' signature line")
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
-def self_cmd(json_output: bool):
-    """Print THIS session's id — the handle a later session comes back by.
+def self_cmd(agent_only: bool, signature_only: bool, json_output: bool):
+    """Print THIS session's id (or CLI agent identity / signature).
 
-    An agent cannot see its own session id: it lives in the environment that
-    started it, not in the prompt. This resolves it, so a handover note can say
-    which conversation it came out of.
+    An agent cannot see its own session id or CLI agent runtime from the prompt
+    alone: it lives in the environment and process tree that started it.
 
     \b
     Prints the bare id on stdout (safe to capture), notes on stderr:
       frago session self
+      frago session self --agent      # claude / codex / opencode / agy / coreagent
+      frago session self --signature  # 🤖 Generated with [<CLI Agent>](<url>)
       frago todo add "..." --session "$(frago session self)"
-      frago session self --json      # id + where it came from + record path
-
-    \b
-    Sources, in order: $FRAGO_SESSION_ID, $CLAUDE_CODE_SESSION_ID, then the
-    freshest transcript of the current directory. That last one is a guess —
-    it is marked as such and never presented as fact.
+      frago session self --json       # id + where it came from + record path
     """
     import json as json_module
+
+    if agent_only or signature_only:
+        from frago.session.self_id import resolve_self_agent
+
+        found_agent = resolve_self_agent()
+        if found_agent is None:
+            from .agent_friendly import BusinessError
+
+            raise BusinessError(
+                "cannot resolve current CLI agent — no CLI agent process ancestor "
+                "or session environment variable found",
+                'export FRAGO_CLI_AGENT="claude"  # declare explicitly, then retry',
+                "frago agent self --json",
+            )
+        if json_output:
+            click.echo(json_module.dumps(found_agent.to_dict(), ensure_ascii=False, indent=2))
+            return
+        if signature_only:
+            click.echo(found_agent.generated_with)
+            return
+        click.echo(found_agent.agent_type)
+        return
 
     from frago.session.self_id import resolve_self
 
