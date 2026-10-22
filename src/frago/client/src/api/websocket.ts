@@ -29,6 +29,7 @@ export const MessageType = {
   // Workbench session streaming (replaces 5s record polling)
   SESSION_RECORDS_APPEND: 'session_records_append',
   SESSION_TURN_DONE: 'session_turn_done',
+  SESSION_QUEUE_UPDATE: 'session_queue_update',
   // The session page's side panel: the observer finished a pass over one session.
   SESSION_OBSERVER_UPDATE: 'session_observer_update',
   // 结对页右栏：中继那侧说对面动了，这一栏该重取一次（data.code 是哪个 team）

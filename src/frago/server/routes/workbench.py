@@ -37,6 +37,7 @@ from frago.server.services import (
     workbench_handoff,
     workbench_new_session,
     workbench_pins,
+    workbench_queue,
     workbench_titles,
     workbench_today,
     workbench_views,
@@ -1046,7 +1047,7 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         #
         # 忙的时候不等，丢不掉失败信号：同步能出的错只剩「队列满」（send_queued 照样
         # 当场抛），而「内核不在」「没配连接」那几种——它正跑着，不可能碰得上。
-        if record_reader.detect_family(sid) == "coreagent" and coreagent_runner.busy(sid):
+        if (record_reader.detect_family(sid) == "coreagent" or coreagent_runner.busy(sid)) and coreagent_runner.busy(sid):
             await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。
@@ -1074,6 +1075,119 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         "sid": activation.session_id,
         "status": activation.status,
         "text": activation.text,
+    }
+
+
+class QueueReorderRequest(BaseModel):
+    """``PUT /workbench/sessions/{sid}/queue`` 的请求体：按给定顺序重排队列项编号。"""
+
+    item_ids: list[str] = []
+
+
+@router.get("/workbench/sessions/{sid}/queue")
+async def get_workbench_session_queue(sid: str) -> dict[str, Any]:
+    """读取会话自有的消息队列与当前自动注入门控状态。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+        state = await asyncio.to_thread(workbench_queue.evaluate_queue_state, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {
+        "sid": sid,
+        "items": items,
+        **state,
+    }
+
+
+@router.post("/workbench/sessions/{sid}/queue")
+async def enqueue_workbench_session_message(sid: str, request: SendRequest) -> dict[str, Any]:
+    """把一条消息（支持文本、图片、文档、skills）加入会话自有的消息队列。
+
+    与直接发送不同，入队不会在 agent 执行过程中向其原生运行队列插话打断流程，而是持久化在
+    会话自有队列中；若入队时会话恰好已处于 stop 状态且末尾 ``[end, end-5]`` 轮无交互卡，
+    也会按规则自动触发队首注入。
+    """
+    if (
+        not request.text.strip()
+        and not request.images
+        and not request.documents
+        and not request.skills
+    ):
+        raise HTTPException(status_code=400, detail="要入队的话和附件不能都是空的")
+
+    try:
+        await asyncio.to_thread(record_reader.detect_family, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    try:
+        image_paths = save_uploaded_images(request.images, sid)
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], sid)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+
+    prompt = _with_skills(
+        build_prompt_with_attachments(request.text, image_paths, doc_paths),
+        request.skills,
+        request.text,
+    )
+
+    try:
+        item = await asyncio.to_thread(
+            workbench_queue.enqueue,
+            sid,
+            text=request.text,
+            prompt=prompt,
+            skills=request.skills,
+            image_paths=image_paths,
+            doc_paths=doc_paths,
+            cwd=request.cwd,
+        )
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+    except workbench_queue.QueueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        "sid": sid,
+        "item": item,
+        "items": items,
+    }
+
+
+@router.delete("/workbench/sessions/{sid}/queue/{item_id}")
+async def delete_workbench_session_queue_item(sid: str, item_id: str) -> dict[str, Any]:
+    """从会话自有消息队列中删除指定的一条消息。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.remove_item, sid, item_id)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"sid": sid, "items": items}
+
+
+@router.put("/workbench/sessions/{sid}/queue")
+async def reorder_workbench_session_queue(
+    sid: str, request: QueueReorderRequest
+) -> dict[str, Any]:
+    """重排或批量更新会话自有消息队列中的条目顺序。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.reorder_queue, sid, request.item_ids)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"sid": sid, "items": items}
+
+
+@router.post("/workbench/sessions/{sid}/queue/drain")
+async def drain_workbench_session_queue(sid: str) -> dict[str, Any]:
+    """检查会话是否满足「已 stop 且 [end, end-5] 轮无交互卡」，满足则自动弹出最早一条并注入。"""
+    try:
+        outcome = await asyncio.to_thread(workbench_queue.try_auto_inject, sid)
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {
+        "sid": sid,
+        "items": items,
+        **outcome,
     }
 
 

@@ -166,6 +166,15 @@ def running(session_id: str) -> bool:
     return got is not None and got.state != "absent"
 
 
+def live_cwd(session_id: str) -> str | None:
+    """此刻还开着的这一场跑在哪个目录；没有常驻条目或已收掉时返回 None。"""
+    with _sessions_lock:
+        got = _sessions.get(session_id)
+    if got is None or got.state == "absent":
+        return None
+    return got.cwd or None
+
+
 def live_states() -> dict[str, bool]:
     """此刻还开着的每一场 → 它是不是正在跑某一轮。
 
@@ -433,6 +442,16 @@ def _read_loop(sess: _Session) -> None:
                 if sess.state == "busy":
                     sess.state = "idle"
             sess.turn_done.set()
+            try:
+                from frago.server.services import workbench_queue
+
+                workbench_queue.schedule_auto_inject_after_settle(sess.session_id)
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "coreagent 轮次结束触发队列注入失败（session=%s）",
+                    sess.session_id,
+                    exc_info=True,
+                )
     except Exception:  # noqa: BLE001 — 读线程崩了不该静默
         logger.warning("读 coreagent stdout 时出错（session=%s）", sess.session_id, exc_info=True)
     finally:

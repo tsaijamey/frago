@@ -302,6 +302,16 @@ class WorkbenchStreamBridge:
         """Called by SessionStream when a turn flips to complete."""
         if done:
             self._observe(session_id, "turn")
+            try:
+                from frago.server.services import workbench_queue
+
+                workbench_queue.schedule_auto_inject_after_settle(session_id)
+            except Exception:
+                logger.debug(
+                    "WorkbenchStreamBridge: queue auto-inject schedule failed (session=%s)",
+                    session_id,
+                    exc_info=True,
+                )
         try:
             loop = self._loop or asyncio.get_event_loop()
         except RuntimeError:
