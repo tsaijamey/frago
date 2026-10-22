@@ -569,6 +569,7 @@ def test_终端里直接起的agy会话不记(ledger, monkeypatch):
 def test_环境里那个编号就是本场自己时不记(ledger, monkeypatch):
     """frago 起的会话，环境里声明的是它自己的编号——那不是父亲，父子另由派活那一刻记。"""
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("ANTIGRAVITY_CONVERSATION_ID", raising=False)
     monkeypatch.setenv("FRAGO_SESSION_ID", "same-conv")
     agy_hook._record_launch_relation({"conversationId": "same-conv"})
     index = _origin_index(ledger)

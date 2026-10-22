@@ -51,3 +51,28 @@ def test_ui_version_covers_every_asset():
         digest.update(p.read_bytes())
         digest.update(b"\0")
     assert stage.ui_version() == int(digest.hexdigest()[:12], 16)
+
+
+def test_human_input_is_a_bottom_right_support_widget():
+    """#human-input 常驻右下角：默认露出胶囊图标（#hi-trigger），面板（#hi-panel）按参数展开。"""
+    assets = files("frago.desktop").joinpath("assets")
+    index = assets.joinpath("index.html").read_text(encoding="utf-8")
+    css = assets.joinpath("style.css").read_text(encoding="utf-8")
+    js = assets.joinpath("app.js").read_text(encoding="utf-8")
+
+    # 1. DOM 结构：容器不带 hidden（无参数时仍露出右下角图标），面板默认带 hidden
+    assert 'id="human-input" class="hi-dock"' in index
+    assert 'id="hi-panel"' in index and 'id="hi-trigger"' in index
+    for required_id in ("hi-log", "hi-text", "hi-send", "hi-status", "hi-close"):
+        assert f'id="{required_id}"' in index, required_id
+
+    # 2. CSS 定位在右下角（right + bottom），不再挂在顶部中央
+    hi_block = css.split("#human-input {", 1)[1].split("}", 1)[0]
+    assert "right:" in hi_block and "bottom:" in hi_block
+    assert "top:" not in hi_block
+
+    # 3. JS 行为：普通荧幕恒显容器，带参数默认展开面板、无参数收起为图标，录制机位隐藏
+    assert 'if (ROLE === "camera")' in js
+    assert "setExpanded(false);" in js
+    assert "setExpanded(true);" in js
+    assert "/api/workbench/sessions/" in js

@@ -6,20 +6,20 @@
 
 三条来源，从确定到推断：
 
-1. ``CLAUDE_CODE_SESSION_ID`` —— Claude Code 给**它自己这个进程**注入的，关于「我是谁」
-   最硬的一条。日常最常命中。
+1. ``CLAUDE_CODE_SESSION_ID`` / ``ANTIGRAVITY_CONVERSATION_ID`` —— Claude Code 与
+   Antigravity CLI 给**它自己这个进程**注入的，关于「我是谁」最硬的一条。日常最常命中。
 2. ``FRAGO_SESSION_ID`` —— 拉起这个进程的那一方声明它属于哪场会话。coreagent 内核每跑
    一条命令都把它自己那一场的编号带进命令环境（见 frago-core ``src/kernel/tools.rs``），
-   非 Claude 的命令行 agent 也靠它被认出来。
+   非自报编号的命令行 agent 也靠它被认出来。
 3. 当前工作目录对应的记录目录里、最近还在写的那份 ``<sid>.jsonl`` —— 前两条都没有
    时的兜底。它是**推断**：同一个目录下同时开着两场会话时会挑错。所以结果里带
    ``certain=False``，调用方要么提示人确认，要么干脆别用。
 
 **自己报的 id 压过继承来的声明，这个次序不能反。** 一场会话的子进程会把上家的
-``FRAGO_SESSION_ID`` 原样带下来；子进程若是 Claude Code，它同时又给自己注入了一个。
-两者同时存在且不同时，继承来的那个说的是上家，不是自己。反过来排的话，子进程会集体
-认成上家：2026-10-15 实测，我这场的 6 个 worker 全被记到了拉起我这场的 coreagent
-名下，那场当时早已不写了。
+``FRAGO_SESSION_ID`` 原样带下来；子进程若是 Claude Code 或 Antigravity CLI，它同时又给
+自己注入了一个。两者同时存在且不同时，继承来的那个说的是上家，不是自己。反过来排的话，
+子进程会集体认成上家：2026-10-15 实测，我这场的 6 个 worker 全被记到了拉起我这场的
+coreagent 名下，那场当时早已不写了。
 
 拿不到就返回 ``None``，NEVER 编一个 id 出来——一个错的会话 id 比没有更糟，它会把
 下一个 agent 送去看一场不相干的对话。
@@ -38,7 +38,7 @@ from frago.session.monitor import encode_project_path
 from frago.session.transcript_completion import locate_transcript
 
 # 自己报的 id 优先，其次是环境里的声明。次序为什么是这个方向，见模块开头。
-ENV_KEYS = ("CLAUDE_CODE_SESSION_ID", "FRAGO_SESSION_ID")
+ENV_KEYS = ("CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID", "FRAGO_SESSION_ID")
 
 # 兜底时只认「最近还在写」的记录：当前这场会话每调一次工具就会追加一行，文件修改
 # 时间是秒级新鲜的。一小时以外的那些是别的会话留下的，认了就是认错人。

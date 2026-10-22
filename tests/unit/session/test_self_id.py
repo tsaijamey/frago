@@ -47,6 +47,21 @@ def test_own_id_beats_the_inherited_declaration(tmp_path):
     assert found.certain is True
 
 
+def test_agy_own_id_beats_the_inherited_declaration(tmp_path):
+    """WebUI 新建的 agy 会话不注入 `FRAGO_SESSION_ID`（或从上家继承了旧值），
+    靠 agy 自身往工具环境注入的 `ANTIGRAVITY_CONVERSATION_ID` 认出自己并压过继承值。
+    """
+    found = resolve_self(
+        cwd="/work/repo",
+        projects_root=tmp_path,
+        env={"FRAGO_SESSION_ID": "inherited", "ANTIGRAVITY_CONVERSATION_ID": "agy-one"},
+    )
+    assert found is not None
+    assert found.session_id == "agy-one"
+    assert found.source == "env:ANTIGRAVITY_CONVERSATION_ID"
+    assert found.certain is True
+
+
 def test_claude_env_is_matched_with_its_transcript(tmp_path):
     path = _transcript(tmp_path, "/work/repo", "claude-one")
     found = resolve_self(

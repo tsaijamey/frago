@@ -15,6 +15,7 @@ def runner(tmp_path, monkeypatch):
     # 猜——用例要什么会话，自己 setenv。
     monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("ANTIGRAVITY_CONVERSATION_ID", raising=False)
     monkeypatch.setattr(
         "frago.session.self_id.CLAUDE_PROJECTS_DIR", tmp_path / "no-such-projects"
     )

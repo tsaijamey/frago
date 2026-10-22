@@ -541,6 +541,18 @@ class TestAttributedDispatch:
         assert index.parent_of(child) == HUMAN_SID
         assert index.origin_of(child) == "worker"
 
+    def test_agy会话自报编号时认得出派活者(self, ledger, empty_projects, monkeypatch):
+        child = "core_1234567890abcdef1234567890abcdef"
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+        monkeypatch.setenv("ANTIGRAVITY_CONVERSATION_ID", HUMAN_SID)
+        assert session_origin.record_dispatch(
+            child, agent_type="coreagent", cwd="/tmp"
+        )
+        index = _index(empty_projects)
+        assert index.parent_of(child) == HUMAN_SID
+        assert index.origin_of(child) == "worker"
+
     def test_认不出派活者就不记(self, ledger, empty_projects, monkeypatch):
         child = str(uuid.uuid4())
         monkeypatch.setattr(session_origin, "parent_from_env", lambda: None)

@@ -10,7 +10,7 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 ## 适用场景
 
 1. **边执行事务边为用户讲解演示**：观众打开桌面页实时观看，你一边推进任务，一边用连续语音、字条、全屏讲稿和窗口焦点向观众讲解正在发生什么。
-2. **后台 worker + 人类输入行协同**：耗时任务交由后台 worker 借住在桌面终端（`--tmux-target frago-stage`）里执行，你在外围轮询终端与产物、解说进展，并随时把观众在桌面顶部输入行敲下的补充要求转达给 worker。
+2. **后台 worker + 人类输入行协同**：耗时任务交由后台 worker 借住在桌面终端（`--tmux-target frago-stage`）里执行，你在外围轮询终端与产物、解说进展，并随时把观众在桌面右下角对话面板（输入行）敲下的补充要求转达给 worker。
 3. **同步录制演示视频**：在完成上述事务或演示的同时，开启舞台机位（`rec start`）把画面与英文语音合成为可交付的 MP4 视频。
 
 ## 舞台铁律
@@ -88,9 +88,9 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 - **幕三「展示」**——页面或可视产物出现/变化时：`browser open`、`say`、`pause 4000`、`focus term`。
 - **终幕「成品」**——任务结束：有页面就停在浏览器上，`slide open` 讲最后一页，字条写完成或失败。
 
-## 人会跟你说话（桌面上的输入行）
+## 人会跟你说话（桌面右下角的对话面板 / 输入行）
 
-当桌面页地址带 `?userInput=true&session=<会话编号>` 时，桌面顶部露出一条人类输入行。人看着桌面，随时能打字给你：他打的字**不进桌面终端**，而是作为**新消息**排进你这个导演会话。
+桌面右下角常驻客服式对话入口（人类输入行）：当桌面页地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开；不带参数时收起为右下角胶囊图标（录制机位自动隐藏）。人看着桌面，随时能打字给你：他打的字**不进桌面终端**，而是作为**新消息**排进你这个导演会话。
 
 1. **收到人追加的消息后立刻响应**：
    - 先开口确认：`frago desktop say "Received, passing it on: <short summary>" --speak --async --interject --voice en-US-AndrewMultilingualNeural`（纯字幕可用中文 `frago desktop say "收到，已转达：<不超过 20 字的摘要>"`）。
@@ -103,7 +103,7 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 
    - 后台 worker 已经结束时，把原话追加进任务需求文件末尾，重新起一轮后台 worker。
 2. **有拿不准的地方就主动问他，别自己拍**：
-   需求含糊、两种做法代价差不多、或者你打算做的东西可能不是他想要的——直接说一句 `say "I need you to pick one — there's a box at the top of the screen." --speak --async --interject --voice en-US-AndrewMultilingualNeural`，然后**停下等他答**，别猜着往下做。
+   需求含糊、两种做法代价差不多、或者你打算做的东西可能不是他想要的——直接说一句 `say "I need you to pick one — use the chat box at the bottom-right corner of the screen." --speak --async --interject --voice en-US-AndrewMultilingualNeural`，然后**停下等他答**，别猜着往下做。
 3. **终端是主画面**：
    worker 在写的时候终端 MUST 在最前。浏览器窗口比终端宽、会盖住终端大半，而 `browser open` / `click` / `tab` 这类指向页面的动作都会自动把浏览器提到最前——每次看完页面 MUST 紧接着 `focus term`。只在有事发生时切换画面，NEVER 为了"看看"反复切换。
 

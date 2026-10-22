@@ -692,76 +692,268 @@ html, body {
 }
 #strap-layer[hidden] { display: none; }
 
-/* 人类输入行。只在地址带 ?userInput=true 时露出来（见 index.html 的注释）。
-   挂在菜单栏正下方居中：底部是字幕与 dock 的地盘，右下是浏览器窗口常驻的位置，
-   顶部中央是整块桌面上唯一长期空着的地方。z-index 压在贴纸栏(1300)之上、
-   虚拟鼠标(2000)之下：人要能点到它，鼠标又不该被它挡住。 */
+/* 右下角客服式对话面板（#human-input）。
+   始终位于虚拟桌面右下角（right: 24px; bottom: 24px）：
+   - 带 ?userInput=true&session=<编号> 时：默认展开对话面板（#hi-panel），
+     可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
+   - 不带参数时：右下角仍显示胶囊图标（#hi-trigger），但默认不展开面板。
+   z-index 压在贴纸栏(1300)之上、虚拟鼠标(2000)之下：人要能点到它，鼠标又不该被它挡住。 */
 #human-input {
   position: absolute;
-  top: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 760px;
+  right: 24px;
+  bottom: 24px;
   z-index: 1400;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(18, 22, 30, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(10px);
-  color: #e8ecf2;
-  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
   pointer-events: auto;
+  user-select: text;
 }
-#human-input[hidden] { display: none; }
-#human-input .hi-row { display: flex; align-items: center; gap: 8px; }
+#human-input[hidden],
+#human-input [hidden] { display: none !important; }
+
+#human-input .hi-panel {
+  width: 420px;
+  border-radius: 14px;
+  background: rgba(20, 22, 28, 0.95);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.56), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#human-input .hi-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  user-select: none;
+}
+#human-input .hi-head-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #15b34d;
+  flex-shrink: 0;
+}
+#human-input .hi-head-dot.idle { background: rgba(255, 255, 255, 0.32); }
+#human-input .hi-head-info { flex: 1; min-width: 0; }
+#human-input .hi-head-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.94);
+  line-height: 1.25;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 #human-input .hi-tag {
-  flex: none;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: #9fb3c8;
-  padding: 3px 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.94);
+}
+#human-input .hi-sid {
+  font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.45);
+  padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid rgba(159, 179, 200, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+#human-input .hi-head-sub {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.48);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+#human-input .hi-head-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#human-input .hi-head-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+#human-input .hi-log {
+  padding: 11px 13px;
+  max-height: 290px;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#human-input .hi-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 88%;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+#human-input .hi-msg.dir { align-self: flex-start; }
+#human-input .hi-msg.usr { align-self: flex-end; align-items: flex-end; }
+#human-input .hi-msg-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.38);
+  padding: 0 2px;
+  user-select: none;
+}
+#human-input .hi-bubble {
+  padding: 8px 11px;
+  border-radius: 10px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+#human-input .hi-msg.dir .hi-bubble {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.92);
+  border-top-left-radius: 4px;
+}
+#human-input .hi-msg.usr .hi-bubble {
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.96);
+  border-top-right-radius: 4px;
+}
+#human-input .hi-empty {
+  padding: 16px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.5;
+  text-align: center;
+}
+#human-input .hi-line {
+  font-size: 12.5px;
+  color: #c7d2de;
+}
+
+#human-input .hi-foot {
+  padding: 9px 11px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#human-input .hi-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
 }
 #human-input textarea {
   flex: 1;
   resize: none;
-  min-height: 34px;
-  max-height: 120px;
+  min-height: 36px;
+  max-height: 96px;
   padding: 7px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
-  font: inherit;
-  line-height: 1.4;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.94);
+  font: 13px/1.45 -apple-system, "Helvetica Neue", "PingFang SC", sans-serif;
   outline: none;
 }
-#human-input textarea:focus { border-color: rgba(120, 170, 255, 0.7); }
-#human-input button {
+#human-input textarea:focus {
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 3px rgba(21, 179, 77, 0.32);
+}
+#human-input textarea::placeholder { color: rgba(255, 255, 255, 0.42); }
+#human-input textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+#human-input .hi-send {
   flex: none;
-  padding: 7px 14px;
+  height: 36px;
+  padding: 0 14px;
   border-radius: 8px;
   border: 0;
-  background: #3b82f6;
-  color: #fff;
-  font: inherit;
+  background: #15b34d;
+  color: #06210f;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-#human-input button:disabled { opacity: 0.55; cursor: default; }
-#human-input .hi-status { margin-top: 6px; min-height: 16px; font-size: 12px; color: #9fb3c8; }
-#human-input .hi-status.bad { color: #ff8a8a; }
-#human-input .hi-log { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
-#human-input .hi-log:empty { display: none; }
-#human-input .hi-line {
-  font-size: 12px;
-  color: #c7d2de;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+#human-input .hi-send:hover:not(:disabled) { filter: brightness(1.08); }
+#human-input .hi-send:disabled { opacity: 0.45; cursor: default; }
+#human-input .hi-status {
+  min-height: 16px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.46);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
 }
-#human-input .hi-line::before { content: "↳ "; color: #6b7f94; }
+#human-input .hi-status.bad { color: #f0596b; }
+
+#human-input .hi-fab {
+  height: 42px;
+  min-width: 42px;
+  padding: 0 15px;
+  border-radius: 999px;
+  background: rgba(20, 22, 28, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+#human-input .hi-fab:hover {
+  background: rgba(32, 36, 46, 0.96);
+  border-color: rgba(255, 255, 255, 0.26);
+  transform: translateY(-1px);
+}
+#human-input .hi-fab .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #15b34d;
+  flex-shrink: 0;
+}
+#human-input .hi-fab .dot.idle { background: rgba(255, 255, 255, 0.34); }
+#human-input .hi-fab .cnt {
+  font: 11px "SF Mono", Menlo, Monaco, Consolas, monospace;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.78);
+}
 #strap-layer.at-bottom { bottom: 132px; }
 /* 顶部形态贴着菜单栏下沿走，不压住它——菜单栏是场景交代，盖掉它画面就
    不像一台电脑了。 */

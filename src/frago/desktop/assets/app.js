@@ -813,6 +813,7 @@
     // 字幕在第 8 秒就走会让后半句没字可看。
     if (!speech) life = Math.min(life, CAPTION_MAX_MS);
     line._timer = setTimeout(function () { dropCaption(line); }, life);
+    if (typeof els.onDirectorCaption === "function") els.onDirectorCaption(text);
   }
 
   function liveCaptions() {
@@ -1219,11 +1220,13 @@
     });
   }
 
-  /* ── 人类输入行 ──
-     只在地址带 ?userInput=true&session=<编号> 时出现。人打的字不进桌面终端
-     ——终端里跑着的是 worker，人的话要先到导演（那场隐藏的会话）那里，由它
-     决定怎么转达。所以这里发的是 frago 服务的会话发送接口，wait:false 表示
-     只排队不等答：导演那一轮可能还要跑几十分钟，输入行等不起。 */
+  /* ── 右下角客服式对话面板（#human-input） ──
+     始终位于虚拟桌面右下角（录制机位 ROLE==="camera" 除外）：
+     - 地址带 ?userInput=true&session=<编号> 时：默认展开对话面板（#hi-panel），
+       可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
+     - 不带参数时：右下角仍显示胶囊图标（#hi-trigger），但默认不展开面板。
+     人打的字不进桌面终端——终端里跑着的是 worker，人的话先发给 frago 服务的
+     会话发送接口（wait:false 只排队不等答），排进导演会话队列，由导演回应并转达。 */
   function humanInputTarget() {
     var q = location.search;
     var on = /[?&]userInput=(true|1)(&|$)/.test(q);
@@ -1236,26 +1239,138 @@
     var box = $("human-input");
     if (!box) return;
     els.humanInput = box;
-    var sid = humanInputTarget();
-    if (!sid) return;              // 默认不存在：录制时画面里不该有它
-    var text = $("hi-text"), send = $("hi-send"), status = $("hi-status"), log = $("hi-log");
+    if (ROLE === "camera") {
+      box.hidden = true;
+      return;
+    }
     box.hidden = false;
 
+    var panel = $("hi-panel"),
+        trigger = $("hi-trigger"),
+        closeBtn = $("hi-close"),
+        dot = $("hi-dot"),
+        fabDot = $("hi-fab-dot"),
+        fabLabel = $("hi-fab-label"),
+        badge = $("hi-badge"),
+        sidTag = $("hi-session-tag"),
+        text = $("hi-text"),
+        sendBtn = $("hi-send"),
+        status = $("hi-status"),
+        log = $("hi-log");
+    var sid = humanInputTarget();
+    var msgCount = 0;
+
+    function nowHm() {
+      var d = new Date();
+      return String(d.getHours()).padStart(2, "0") + ":" +
+             String(d.getMinutes()).padStart(2, "0");
+    }
     function note(msg, bad) {
+      if (!status) return;
       status.textContent = msg || "";
       status.classList.toggle("bad", !!bad);
     }
-    function remember(line) {
-      var item = document.createElement("div");
-      item.className = "hi-line";
-      item.textContent = line;
-      log.appendChild(item);
-      while (log.children.length > 4) log.removeChild(log.firstChild);
+    function syncBadge() {
+      if (!badge) return;
+      var show = !!sid && panel && panel.hidden && msgCount > 0;
+      badge.hidden = !show;
+      badge.textContent = String(msgCount);
     }
+    function setExpanded(open) {
+      if (!panel) return;
+      panel.hidden = !open;
+      box.dataset.mode = open ? "open" : (sid ? "collapsed" : "icon");
+      if (trigger) {
+        trigger.title = open ? "收起对话面板"
+          : (sid ? "展开导演对话面板" : "未带导演会话参数（默认仅显示图标，点击查看）");
+      }
+      syncBadge();
+      if (open && sid && text && !text.disabled) {
+        text.focus();
+      }
+    }
+    function appendBubble(role, line) {
+      if (!log) return;
+      var item = document.createElement("div");
+      item.className = "hi-msg " + role + (role === "usr" ? " hi-line" : "");
+      var meta = document.createElement("span");
+      meta.className = "hi-msg-meta";
+      meta.textContent = (role === "dir" ? "导演" : "你") + " · " + nowHm();
+      var bubble = document.createElement("div");
+      bubble.className = "hi-bubble";
+      bubble.textContent = line;
+      item.appendChild(meta);
+      item.appendChild(bubble);
+      log.appendChild(item);
+      while (log.children.length > 24) log.removeChild(log.firstChild);
+      log.scrollTop = log.scrollHeight;
+      msgCount = log.children.length;
+      syncBadge();
+    }
+
+    if (trigger) {
+      trigger.addEventListener("click", function () {
+        setExpanded(panel ? panel.hidden : true);
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        setExpanded(false);
+      });
+    }
+
+    if (!sid) {
+      if (dot) dot.classList.add("idle");
+      if (fabDot) fabDot.classList.add("idle");
+      if (fabLabel) fabLabel.textContent = "对话";
+      if (sidTag) sidTag.textContent = "只读";
+      if (text) {
+        text.disabled = true;
+        text.placeholder = "未连接导演会话";
+      }
+      if (sendBtn) sendBtn.disabled = true;
+      if (log) {
+        log.innerHTML = "";
+        var empty = document.createElement("div");
+        empty.className = "hi-empty";
+        empty.textContent = "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。";
+        log.appendChild(empty);
+      }
+      note("只读显示器模式", false);
+      setExpanded(false);
+      return;
+    }
+
+    if (dot) dot.classList.remove("idle");
+    if (fabDot) fabDot.classList.remove("idle");
+    if (fabLabel) fabLabel.textContent = "导演对话";
+    if (sidTag) sidTag.textContent = sid.slice(0, 8);
+    if (text) {
+      text.disabled = false;
+      text.placeholder = "一边看它干活，一边把想到的补充写在这里，回车发送";
+    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (log) log.innerHTML = "";
+    appendBubble(
+      "dir",
+      "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。"
+    );
+    note("回车发送 · Shift+回车换行", false);
+    setExpanded(true);
+
+    els.onDirectorCaption = function (captionText) {
+      if (!captionText) return;
+      if (/^(收到|Received\b|需要你处理|I need you to)/i.test(captionText)) {
+        appendBubble("dir", captionText);
+      }
+    };
+
     function submit() {
       var line = text.value.trim();
       if (!line) return;
-      send.disabled = true;
+      sendBtn.disabled = true;
+      sendBtn.textContent = "排队中…";
+      box.dataset.mode = "sending";
       note("正在排队…");
       fetch("/api/workbench/sessions/" + encodeURIComponent(sid) + "/send", {
         method: "POST",
@@ -1267,22 +1382,23 @@
           return body;
         });
       }).then(function () {
-        remember(line);
+        appendBubble("usr", line);
         text.value = "";
         note("已排给导演，它会转达给正在干活的 worker");
       }).catch(function (err) {
         note("没发出去：" + (err && err.message ? err.message : err), true);
       }).then(function () {
-        send.disabled = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = "发送";
+        box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
         text.focus();
       });
     }
-    send.addEventListener("click", submit);
+    sendBtn.addEventListener("click", submit);
     text.addEventListener("keydown", function (e) {
       // 回车发送，Shift+回车换行——与聊天框一致。
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
     });
-    text.focus();
   }
 
   /* ── 桌布：噪声网格渐变 ──────────────────────────────────

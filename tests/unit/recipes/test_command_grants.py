@@ -442,6 +442,7 @@ class TestAnAnswerWithoutAVerdict:
         monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", ledger_file)
         monkeypatch.setenv("FRAGO_SESSION_ID", "b01bbaf8-01e8-45b0-a330-4b96cafdec2b")
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.delenv("ANTIGRAVITY_CONVERSATION_ID", raising=False)
 
         captured_cmd: list[str] = []
         captured_env: dict[str, str] = {}
