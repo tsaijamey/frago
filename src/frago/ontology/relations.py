@@ -11,19 +11,25 @@ Layer: pure ontology metamodel (no I/O, no imports from cli/ or server/).
 
 from __future__ import annotations
 
+import json
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 from frago.ontology.metamodel import (
     Actor,
     Capability,
     Continuant,
+    DependentContinuant,
     Event,
     IndependentContinuant,
     InformationEntity,
     NormativeEntity,
+    Occurrent,
     OntologyEntity,
     OntologyError,
     Process,
@@ -77,94 +83,59 @@ class RelationFact:
     asserted_at: datetime = field(default_factory=datetime.now)
 
 
-STANDARD_RELATIONS: dict[str, RelationSignature] = {
-    "plays_role": RelationSignature(
-        predicate="plays_role",
-        domain_types=(IndependentContinuant,),
-        range_types=(Role,),
-        inverse="borne_by",
-        algebraic_properties=frozenset(
-            {AlgebraicProperty.ASYMMETRIC, AlgebraicProperty.IRREFLEXIVE}
-        ),
-        description="Rigid Actor or Resource dynamically mounts an anti-rigid Role in a context.",
-    ),
-    "has_capability": RelationSignature(
-        predicate="has_capability",
-        domain_types=(IndependentContinuant,),
-        range_types=(Capability,),
-        inverse="capability_of",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="Actor or Resource declares an exposed or probeable Capability.",
-    ),
-    "exhibits_state": RelationSignature(
-        predicate="exhibits_state",
-        domain_types=(Continuant,),
-        range_types=(QualityState,),
-        inverse="state_of",
-        algebraic_properties=frozenset({AlgebraicProperty.FUNCTIONAL}),
-        description="Continuant exhibits a single functional QualityState at the current snapshot.",
-    ),
-    "hosted_on_harness": RelationSignature(
-        predicate="hosted_on_harness",
-        domain_types=(Actor,),
-        range_types=(Resource,),
-        inverse="hosts_actor",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="AI AgentKernel is hosted on a physical AgentHarness substrate.",
-    ),
-    "initiates": RelationSignature(
-        predicate="initiates",
-        domain_types=(Actor, Role),
-        range_types=(Process,),
-        inverse="initiated_by",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="Actor or Role initiates a temporal Process.",
-    ),
-    "governed_by": RelationSignature(
-        predicate="governed_by",
-        domain_types=(Process, Role, NormativeEntity),
-        range_types=(NormativeEntity,),
-        inverse="governs",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="Process, Role, or Contract is governed by a NormativeEntity.",
-    ),
-    "mutates": RelationSignature(
-        predicate="mutates",
-        domain_types=(Process, NormativeEntity),
-        range_types=(IndependentContinuant,),
-        inverse="mutated_by",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="Process or ActionContract mutates a stateful IndependentContinuant.",
-    ),
-    "emits": RelationSignature(
-        predicate="emits",
-        domain_types=(Process,),
-        range_types=(Event,),
-        inverse="emitted_by",
-        algebraic_properties=frozenset(
-            {AlgebraicProperty.ASYMMETRIC, AlgebraicProperty.IRREFLEXIVE}
-        ),
-        description="Process emits an append-only immutable Event.",
-    ),
-    "produces": RelationSignature(
-        predicate="produces",
-        domain_types=(Process,),
-        range_types=(InformationEntity,),
-        inverse="produced_by",
-        algebraic_properties=frozenset({AlgebraicProperty.ASYMMETRIC}),
-        description="Process produces a content-addressed InformationEntity.",
-    ),
-    "depends_on_module": RelationSignature(
-        predicate="depends_on_module",
-        domain_types=(Resource, NormativeEntity),
-        range_types=(Resource, NormativeEntity),
-        inverse="depended_on_by",
-        algebraic_properties=frozenset(
-            {AlgebraicProperty.TRANSITIVE, AlgebraicProperty.IRREFLEXIVE}
-        ),
-        description="Transitive, acyclic dependency between modules or contracts.",
-    ),
+_UPPER_TYPE_MAP: dict[str, type[OntologyEntity]] = {
+    "OntologyEntity": OntologyEntity,
+    "Continuant": Continuant,
+    "IndependentContinuant": IndependentContinuant,
+    "DependentContinuant": DependentContinuant,
+    "Actor": Actor,
+    "Resource": Resource,
+    "Role": Role,
+    "Capability": Capability,
+    "QualityState": QualityState,
+    "Occurrent": Occurrent,
+    "Process": Process,
+    "Event": Event,
+    "NormativeEntity": NormativeEntity,
+    "InformationEntity": InformationEntity,
 }
+
+
+def _resolve_type_expr(expr: str) -> tuple[type[OntologyEntity], ...]:
+    tokens = [tok.strip() for tok in expr.split("|") if tok.strip()]
+    resolved: list[type[OntologyEntity]] = []
+    for tok in tokens:
+        if tok not in _UPPER_TYPE_MAP:
+            raise RelationError(f"Unknown upper ontology type '{tok}' in relation signature.")
+        resolved.append(_UPPER_TYPE_MAP[tok])
+    return tuple(resolved)
+
+
+def build_relations_from_schema(
+    schema: Mapping[str, Any] | None = None,
+) -> dict[str, RelationSignature]:
+    """Construct first-class `RelationSignature` objects directly from `frago.json`."""
+    if schema is None:
+        schema_path = Path(__file__).parent / "frago.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    raw_sigs: Mapping[str, Any] = schema.get("relation_signatures", {})
+    built: dict[str, RelationSignature] = {}
+    for predicate, spec in raw_sigs.items():
+        props = frozenset(
+            AlgebraicProperty(p) for p in spec.get("algebraic_properties", [])
+        )
+        built[predicate] = RelationSignature(
+            predicate=predicate,
+            domain_types=_resolve_type_expr(str(spec["domain"])),
+            range_types=_resolve_type_expr(str(spec["range"])),
+            inverse=str(spec["inverse"]),
+            algebraic_properties=props,
+            description=str(spec.get("description", "")),
+        )
+    return built
+
+
+STANDARD_RELATIONS: dict[str, RelationSignature] = build_relations_from_schema()
 
 
 class OntologyGraph:
@@ -207,6 +178,19 @@ class OntologyGraph:
     def facts(self) -> list[RelationFact]:
         return list(self._facts)
 
+    def to_jsonl(self) -> str:
+        """Serialize this `OntologyGraph` into deterministic JSONL snapshot lines."""
+        from frago.ontology.reasoning import serialize_graph_jsonl
+
+        return serialize_graph_jsonl(self)
+
+    @classmethod
+    def from_jsonl(cls, jsonl_text: str) -> OntologyGraph:
+        """Reconstruct an `OntologyGraph` from JSONL snapshot lines with full guardrail checks."""
+        from frago.ontology.reasoning import deserialize_graph_jsonl
+
+        return deserialize_graph_jsonl(jsonl_text)
+
     def link(
         self,
         source: OntologyEntity,
@@ -232,6 +216,22 @@ class OntologyGraph:
                 f"Relation '{predicate}' range violation: target '{type(target).__name__}' "
                 f"is not an instance of ({expected_range})."
             )
+
+        if predicate in {"plays_role", "has_capability", "exhibits_state"}:
+            bearer_types: tuple[str, ...] = getattr(target, "bearer_types", ())
+            if bearer_types:
+                source_tokens = {
+                    type(source).__name__,
+                    getattr(source, "domain_class_id", ""),
+                    getattr(source, "actor_kind", ""),
+                    getattr(source, "resource_kind", ""),
+                } - {""}
+                if not (source_tokens & set(bearer_types)):
+                    raise DomainRangeViolationError(
+                        f"Relation '{predicate}' bearer_type violation: target "
+                        f"'{type(target).__name__}' requires bearer in {list(bearer_types)}, "
+                        f"got '{ sorted(source_tokens) }'."
+                    )
 
         source_id = self.register_entity(source)
         target_id = self.register_entity(target)

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "ontology_id": "frago-agent-os-ontology",
-  "ontology_version": "1.0.0",
-  "description": "frago Agent OS 操作型本体（Operational Ontology）元模型与全量业务映射：基于三轴正交超类、OntoClean 刚性公理、一等公民关系代数与三层同心圆动作契约。",
+  "ontology_version": "1.1.0",
+  "description": "frago Agent OS 操作型本体（Operational Ontology）全量原始数据模型：覆盖五根支柱与全部 26 个子系统目录的业务概念，基于三轴正交超类、OntoClean 刚性公理、一等公民关系代数与三层同心圆动作契约。",
   "orthogonal_axes": {
     "mereotemporality": {
       "axiom": "∀t(E(x,t) → WhollyPresent(x,t))",
@@ -132,7 +132,7 @@
       "range": "QualityState",
       "inverse": "state_of",
       "algebraic_properties": ["functional"],
-      "description": "延续体在当前时间切片呈现的状态或安全区属性。"
+      "description": "延续体在当前时间切片呈现的状态、来源或安全区属性。"
     },
     "hosted_on_harness": {
       "domain": "Actor",
@@ -149,14 +149,14 @@
       "description": "主体或角色拉起一个持续过程。"
     },
     "governed_by": {
-      "domain": "Process | Role | ActionContract",
+      "domain": "Process | Role | NormativeEntity",
       "range": "NormativeEntity",
       "inverse": "governs",
       "algebraic_properties": ["asymmetric"],
-      "description": "过程、角色或动作受规范体（Hook 规则、开放策略、结对安全规矩、模块边界契约）约束。"
+      "description": "过程、角色或动作受规范体（Hook 规则、开放策略、结对安全规矩、定时规格、模块边界契约）约束。"
     },
     "mutates": {
-      "domain": "Process | ActionContract",
+      "domain": "Process | NormativeEntity",
       "range": "IndependentContinuant",
       "inverse": "mutated_by",
       "algebraic_properties": ["asymmetric"],
@@ -174,7 +174,7 @@
       "range": "InformationEntity",
       "inverse": "produced_by",
       "algebraic_properties": ["asymmetric"],
-      "description": "过程产出信息制品（轨迹记录、知识条目、待办交接卡、人类授权回执）。"
+      "description": "过程产出信息制品（轨迹记录、知识条目、待办交接卡、市场包、人类授权回执）。"
     },
     "depends_on_module": {
       "domain": "Resource | NormativeEntity",
@@ -188,22 +188,26 @@
     "Continuant.IndependentContinuant.Actor": [
       {
         "class_id": "AgentKernel",
+        "pillar": "底座与边界",
         "rigidity": "+R",
         "identity": "agent_family_and_binary_id (claude | codex | opencode | agy | coreagent)",
         "current_code_locations": [
           "src/frago/session/models.py#AgentType",
           "src/frago/agent_driver/driver.py",
-          "src/frago/agent_driver/kernel_backend.py"
+          "src/frago/agent_driver/kernel_backend.py",
+          "src/frago/bin/"
         ],
         "description": "外部或内置 AI Agent 内核本体。仅表征智能体内核身份，不内嵌会话状态、不内嵌 Tmux 句柄。"
       },
       {
         "class_id": "HumanPrincipal",
+        "pillar": "跨层底座",
         "rigidity": "+R",
         "identity": "principal_uid (local_machine_owner | user_account_id | team_member_uuid | anonymous_peer)",
         "current_code_locations": [
           "src/frago/server/identity.py",
-          "src/frago/team/state.py"
+          "src/frago/team/state.py",
+          "src/frago/cli/user_commands.py"
         ],
         "description": "与 frago 交互的自然人主体：本机物理主人、WebUI 登录账号（users.json）、结对成员标识（member UUID）或匿名访问者。"
       }
@@ -211,6 +215,7 @@
     "Continuant.IndependentContinuant.Resource": [
       {
         "class_id": "AgentHarness",
+        "pillar": "5. 边界",
         "rigidity": "+R",
         "identity": "harness_id (tmux_pane_target | kernel_subprocess_slot)",
         "current_code_locations": [
@@ -222,86 +227,158 @@
       },
       {
         "class_id": "RecipeModule",
+        "pillar": "4. 配方",
         "rigidity": "+R",
         "identity": "recipe_name",
         "current_code_locations": [
           "src/frago/recipes/registry.py",
-          "src/frago/recipes/metadata.py"
+          "src/frago/recipes/metadata.py",
+          "src/frago/cli/recipe_commands.py"
         ],
         "description": "跑通一次后固化成确定性代码的工具模块（atomic / workflow），拥有独立目录、脚本入口与可选前端资产。"
       },
       {
+        "class_id": "SkillPackageResource",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "identity": "skill_slug",
+        "current_code_locations": [
+          "src/frago/skills/",
+          "src/frago/resources/skills/",
+          "src/frago/cli/skill_commands.py"
+        ],
+        "description": "跨内核可挂载的技能包资源（SKILL.md 与配套脚本资产）。"
+      },
+      {
         "class_id": "DataSlot",
+        "pillar": "3. 记忆与召回",
         "rigidity": "+R",
         "identity": "canonical_slot_path",
         "current_code_locations": [
           "src/frago/recipes/app_state.py",
           "src/frago/server/identity.py#USER_STATE_DIR",
-          "src/frago/context/"
+          "src/frago/context/",
+          "src/frago/files/"
         ],
         "description": "受平台隔离保护的数据存储槽位：含机器级共享槽位（app-state）、账号级私有槽位（users/<id>/）与事务产出目录（~/.frago/data/<subject>/<date>-<slug>/）。"
       },
       {
         "class_id": "BrowserTabGroup",
+        "pillar": "2. 手和眼",
         "rigidity": "+R",
         "identity": "group_name",
         "current_code_locations": [
           "src/frago/browser/",
-          "src/frago/chrome/"
+          "src/frago/chrome/",
+          "src/frago/cdp/",
+          "src/frago/_resources/extension_bundle/",
+          "src/frago/cli/browser_commands.py"
         ],
         "description": "受控浏览器（Extension 桥或 CDP 后端）中的真实标签组资源，上限 5 个标签页，按组隔离生命周期。"
       },
       {
         "class_id": "VirtualDesktopStage",
+        "pillar": "2. 手和眼",
         "rigidity": "+R",
-        "identity": "stage_display_id",
+        "identity": "composite(instance_id, content_id) — 与动态端口及 pid 运行态彻底分离",
         "current_code_locations": [
-          "src/frago/desktop/"
+          "src/frago/desktop/",
+          "src/frago/cli/desktop_commands.py"
         ],
-        "description": "可脚本驱动、可录屏的虚拟桌面舞台（agent_os）。"
+        "description": "可脚本驱动、可录屏、可配音的虚拟桌面舞台独立资源（agent_os）：身份层跨启停恒定，运行态层由 DesktopInstanceRuntimeState 承载。"
+      },
+      {
+        "class_id": "BuiltinDeliveryApp",
+        "pillar": "2. 手和眼",
+        "rigidity": "+R",
+        "identity": "app_name",
+        "current_code_locations": [
+          "src/frago/cli/apps_commands.py"
+        ],
+        "description": "内置交付能力实体（frago apps list/use）：输入一段话直接产出一件成品的封装应用。"
+      },
+      {
+        "class_id": "ContentViewerSurface",
+        "pillar": "2. 手和眼",
+        "rigidity": "+R",
+        "identity": "viewer_content_id",
+        "current_code_locations": [
+          "src/frago/viewer/",
+          "src/frago/cli/view_command.py"
+        ],
+        "description": "内容查看器资源（frago view）：负责将 Markdown、PDF、代码与配方内容按双世界标识（本地文件 vs. 配方产物）渲染成可读视图。"
       },
       {
         "class_id": "ApiProfile",
+        "pillar": "人面与跨层底座",
         "rigidity": "+R",
         "identity": "profile_id",
         "current_code_locations": [
-          "src/frago/init/profile_manager.py"
+          "src/frago/init/profile_manager.py",
+          "src/frago/cli/profile_commands.py"
         ],
         "description": "模型供应商连接凭据与端点配置实体（~/.frago/profiles.json）。"
       },
       {
+        "class_id": "MachineRuntimeConfig",
+        "pillar": "人面与跨层底座",
+        "rigidity": "+R",
+        "identity": "machine_fingerprint",
+        "current_code_locations": [
+          "src/frago/config/",
+          "src/frago/init/"
+        ],
+        "description": "本机设备级运行配置实体（~/.frago/config.json，含端口、常驻守护表、语言等设备本地状态）。"
+      },
+      {
         "class_id": "KnowledgeDomain",
+        "pillar": "3. 记忆与召回",
         "rigidity": "+R",
         "identity": "domain_name",
         "current_code_locations": [
-          "src/frago/def_/registry.py"
+          "src/frago/def_/registry.py",
+          "src/frago/cli/def_commands.py"
         ],
         "description": "frago def 注册的结构化知识域（~/.frago/books/<domain>/）。"
       },
       {
         "class_id": "CommunicationChannel",
+        "pillar": "5. 边界",
         "rigidity": "+R",
-        "identity": "channel_id (feishu | slack | email | remote_frago_node | team_relay)",
+        "identity": "channel_id (feishu | slack | email | team_relay)",
         "current_code_locations": [
           "src/frago/team/relay.py",
-          "src/frago/server/routes/"
+          "src/frago/cli/channel_commands.py",
+          "src/frago/cli/reply_command.py"
         ],
-        "description": "跨边界通信管道：外部消息进件渠道、远程 frago 节点或结对中继服务器。"
+        "description": "跨边界通信管道：外部消息进件与回传渠道（飞书、邮件、Slack）或结对中继服务器。"
+      },
+      {
+        "class_id": "RemoteFragoNode",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "identity": "remote_node_name",
+        "current_code_locations": [
+          "src/frago/cli/remote_commands.py"
+        ],
+        "description": "远端服务器上的另一台 frago 实例节点（frago remote），通过其主控队列接收跨机任务书。"
       }
     ],
     "Continuant.DependentContinuant.Role": [
       {
         "class_id": "PrimarySchedulerRole",
+        "pillar": "5. 边界",
         "rigidity": "~R",
         "bearer_type": "AgentKernel",
         "context_type": "AgentSessionProcess",
         "current_code_locations": [
           "src/frago/server/services/primary_agent_service.py"
         ],
-        "description": "主控调度角色（PA）：在主控会话中拆解任务、调度子任务与配方，会话结束即卸载。"
+        "description": "主控调度角色（PA）：在主控会话中拆解任务、接管自然语言定时任务与外部进件、调度子任务与配方，会话结束即卸载。"
       },
       {
         "class_id": "SubtaskWorkerRole",
+        "pillar": "5. 边界",
         "rigidity": "~R",
         "bearer_type": "AgentKernel",
         "context_type": "AgentSessionProcess",
@@ -313,16 +390,19 @@
       },
       {
         "class_id": "CompanionJudgeRole",
+        "pillar": "1. 会话伴侣",
         "rigidity": "~R",
         "bearer_type": "AgentKernel",
         "context_type": "HookEvaluationProcess",
         "current_code_locations": [
-          "src/frago/init/hook_binary.py"
+          "src/frago/init/hook_binary.py",
+          "src/frago/resources/coreagent/"
         ],
-        "description": "会话伴侣裁决角色（LightAgent）：在提交前（prompt）、收尾时（stop）、否决前（veto）三处执行轻量判读。"
+        "description": "会话伴侣裁决角色（LightAgent）：在提交前（prompt）、收尾时（stop）、否决前（veto）与外部命令首次审计时执行轻量判读。"
       },
       {
         "class_id": "CallerZoneRole",
+        "pillar": "4. 配方与安全网关",
         "rigidity": "~R",
         "bearer_type": "HumanPrincipal | AgentKernel",
         "context_type": "HttpRequestProcess",
@@ -335,13 +415,15 @@
       },
       {
         "class_id": "TeamPeerRole",
+        "pillar": "5. 边界",
         "rigidity": "~R",
         "bearer_type": "HumanPrincipal | AgentKernel",
         "context_type": "TeamPairingScope",
         "subroles": ["InitiatorSideARole", "JoinerSideBRole"],
         "current_code_locations": [
           "src/frago/team/state.py",
-          "src/frago/team/live.py"
+          "src/frago/team/live.py",
+          "src/frago/cli/team_commands.py"
         ],
         "description": "结对协作（vibe teaming）中的 A 侧/B 侧队友角色，随连接码绑定而生效、随解绑而消亡。"
       }
@@ -349,6 +431,7 @@
     "Continuant.DependentContinuant.Capability": [
       {
         "class_id": "RecipeModeCapability",
+        "pillar": "4. 配方",
         "rigidity": "~R",
         "bearer_type": "RecipeModule",
         "levels": ["export_readonly", "action_triggerable", "owner_internal"],
@@ -359,6 +442,7 @@
       },
       {
         "class_id": "HarnessProbeCapability",
+        "pillar": "5. 边界",
         "rigidity": "~R",
         "bearer_type": "AgentHarness",
         "probes": ["ready_signal", "done_signal", "transcript_completion_probe", "exception_modal_handler"],
@@ -368,33 +452,82 @@
           "src/frago/session/transcript_completion.py"
         ],
         "description": "Harness 对被驱动 Agent 的感知与干预能力：正则屏面匹配、权威 JSONL 完成度探针与异常弹窗自动消解。"
+      },
+      {
+        "class_id": "ExternalCommandCapability",
+        "pillar": "4. 配方",
+        "rigidity": "~R",
+        "bearer_type": "RecipeModule",
+        "current_code_locations": [
+          "src/frago/recipes/metadata.py",
+          "src/frago/recipes/command_grants.py",
+          "src/frago/recipes/isolation.py"
+        ],
+        "description": "配方声明调用外部系统命令（uses_commands）或平台命令（uses_frago_cli）的受控越界能力切面。"
+      },
+      {
+        "class_id": "GlobalHotkeyCapability",
+        "pillar": "人面与跨层底座",
+        "rigidity": "~R",
+        "bearer_type": "MachineRuntimeConfig",
+        "current_code_locations": [
+          "src/frago/hotkey/"
+        ],
+        "description": "桌面端全局快捷键唤醒能力切面。"
       }
     ],
     "Continuant.DependentContinuant.QualityState": [
       {
         "class_id": "SecurityZoneState",
+        "pillar": "跨层底座",
         "rigidity": "~R",
         "allowed_values": ["local", "public", "identity", "token"],
         "current_code_locations": [
           "src/frago/server/security.py#ZONES"
         ],
         "description": "安全网关对每个请求判定的唯一互斥安全区状态。"
+      },
+      {
+        "class_id": "SessionOriginState",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "~R",
+        "allowed_values": ["terminal", "web", "worker", "unknown"],
+        "current_code_locations": [
+          "src/frago/session/session_origin.py",
+          "src/frago/session/models.py#SessionSource"
+        ],
+        "description": "会话实例的发起源状态（终端直起、Web 工作台新建、子任务派活或历史未知），决定工作台左栏过滤与回收归属。"
+      },
+      {
+        "class_id": "DesktopInstanceRuntimeState",
+        "pillar": "2. 手和眼",
+        "rigidity": "~R",
+        "bearer_type": "VirtualDesktopStage",
+        "allowed_values": ["running", "stopped", "stale"],
+        "current_code_locations": [
+          "src/frago/desktop/",
+          "src/frago/cli/desktop_commands.py"
+        ],
+        "description": "虚拟桌面实例（agent_os）的运行态属性层（含 pid、port、status、heartbeat_at），随每次启动覆写、随退出置为 stopped，绝不抹除宿主资源身份。"
       }
     ],
     "Occurrent.Process": [
       {
         "class_id": "AgentSessionProcess",
+        "pillar": "3. 记忆与召回 / 5. 边界",
         "rigidity": "+R",
         "temporality": "interval",
         "states": ["running", "completed", "error", "cancelled"],
         "current_code_locations": [
           "src/frago/session/models.py#MonitoredSession",
-          "src/frago/session/storage.py"
+          "src/frago/session/storage.py",
+          "src/frago/cli/session_commands.py"
         ],
-        "description": "一场有起止时间的 Agent 会话过程。通过 initiated_by 关联主体，通过 runs_on 关联 AgentHarness，通过 produces 产出 SessionTranscriptArtifact。"
+        "description": "一场有起止时间的 Agent 会话过程。通过 initiated_by 关联主体，通过 hosted_on_harness 关联底座，通过 produces 产出轨迹文件。"
       },
       {
         "class_id": "HarnessTurnProcess",
+        "pillar": "5. 边界",
         "rigidity": "+R",
         "temporality": "interval",
         "states": ["submitting", "streaming", "verifying_completion", "ok", "needs_input", "timeout", "error"],
@@ -402,10 +535,11 @@
           "src/frago/agent_driver/tmux_session.py",
           "src/frago/agent_driver/kernel_backend.py#KernelTurn"
         ],
-        "description": "Harness 驱动 Agent 执行单轮问答/干活的原子过程，受 StopGateSignal 与认证墙探针约束。"
+        "description": "Harness 驱动 Agent 执行单轮问答/干活的原子过程，受 StopGatePolicy 与认证墙探针约束。"
       },
       {
         "class_id": "RecipeExecutionProcess",
+        "pillar": "4. 配方",
         "rigidity": "+R",
         "temporality": "interval",
         "states": ["queued", "isolating_view", "running", "succeeded", "failed"],
@@ -417,7 +551,62 @@
         "description": "配方在受限文件视图中绑定特定用户身份与数据槽位的一次运行过程。"
       },
       {
+        "class_id": "SupervisedDaemonProcess",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["starting", "running", "restarting", "stopped", "failed"],
+        "current_code_locations": [
+          "src/frago/recipes/background.py",
+          "src/frago/cli/daemon_commands.py"
+        ],
+        "description": "声明了 daemon: true 的常驻守护配方过程（frago daemon），按 restart_policy 自动拉起与纳管。"
+      },
+      {
+        "class_id": "MarketInstallProcess",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/recipes/installer.py"
+        ],
+        "description": "从配方市场搜索、下载、校验并安装配方模块到本地的流转过程（frago market / recipe install）。"
+      },
+      {
+        "class_id": "RunTransactionProcess",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/run/manager.py",
+          "src/frago/run/models.py"
+        ],
+        "description": "围绕单次业务事务建立的运行实例过程（frago run），聚类领域与执行日志。"
+      },
+      {
+        "class_id": "ChannelIngestionProcess",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/cli/channel_commands.py",
+          "src/frago/cli/reply_command.py"
+        ],
+        "description": "从飞书、邮件、Slack 等外部渠道摄取任务、交由主控处理并通过 frago reply 原路回传结果的过程。"
+      },
+      {
+        "class_id": "RemoteTaskDispatchProcess",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/cli/remote_commands.py"
+        ],
+        "description": "向远端服务器上的 RemoteFragoNode 下发结果导向型任务书并轮询执行状态的过程。"
+      },
+      {
         "class_id": "TeamSyncProcess",
+        "pillar": "5. 边界",
         "rigidity": "+R",
         "temporality": "interval",
         "current_code_locations": [
@@ -425,21 +614,48 @@
           "src/frago/team/live.py"
         ],
         "description": "结对会话向中继增量推送轨迹并拉取对侧请求的过程。"
+      },
+      {
+        "class_id": "HomeSyncProcess",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/tools/sync_repo.py",
+          "src/frago/cloud/",
+          "src/frago/cli/cloud_commands.py"
+        ],
+        "description": "~/.frago 家目录跨设备 Git 同步与冲突自动消解过程。"
+      },
+      {
+        "class_id": "FileSystemWatchProcess",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "current_code_locations": [
+          "src/frago/watcher/"
+        ],
+        "description": "本地会话目录与配置文件变更监听过程。"
       }
     ],
     "Occurrent.Event": [
       {
         "class_id": "HookLifecycleEvent",
+        "pillar": "1. 会话伴侣",
+        "rigidity": "+R",
         "temporality": "instant",
         "mutability": "append_only_immutable",
         "event_types": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
         "current_code_locations": [
-          ".claude/docs/hook-system-frago-core.md"
+          ".claude/docs/hook-system-frago-core.md",
+          "src/frago/cli/agy_hook.py"
         ],
         "description": "Agent 生命周期中触发会话伴侣（frago-core）介入的瞬时事件。"
       },
       {
         "class_id": "SessionStepEvent",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
         "temporality": "instant",
         "mutability": "append_only_immutable",
         "event_types": ["user", "assistant", "tool_call", "tool_result", "system"],
@@ -451,26 +667,71 @@
       },
       {
         "class_id": "CommandGrantAuditedEvent",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
         "temporality": "instant",
         "mutability": "append_only_immutable",
         "current_code_locations": [
           "src/frago/recipes/command_grants.py"
         ],
         "description": "配方首次调用 uses_commands 外部命令时，由 CoreAgent 审计通过并写入机器级 grants.json 的放行事件。"
+      },
+      {
+        "class_id": "ScheduledTriggerEvent",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "event_types": ["cron_fired", "overdue_alert", "change_notification"],
+        "current_code_locations": [
+          "src/frago/recipes/schedule.py",
+          "src/frago/cli/schedule_commands.py"
+        ],
+        "description": "时钟按 cron 表达式触发定时任务、产出逾期未跑告警或按 --notify-on change 发送变更通知的瞬时事件。"
+      },
+      {
+        "class_id": "ChannelMessageEvent",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "event_types": ["inbound_task_received", "outbound_reply_delivered"],
+        "current_code_locations": [
+          "src/frago/cli/channel_commands.py",
+          "src/frago/cli/reply_command.py"
+        ],
+        "description": "外部渠道进件消息到达与 frago reply 原路回传完成的瞬时事件。"
+      },
+      {
+        "class_id": "TelemetryEvent",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "temporality": "instant",
+        "mutability": "append_only_immutable",
+        "current_code_locations": [
+          "src/frago/telemetry/"
+        ],
+        "description": "系统运行期采集的遥测与性能指标瞬时事件。"
       }
     ],
     "NormativeEntity.RulePolicy": [
       {
         "class_id": "HookInjectionRule",
+        "pillar": "1. 会话伴侣",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           "~/.frago/hook/builtin-rules.json",
-          "~/.frago/hook-rules.json"
+          "~/.frago/hook-rules.json",
+          "src/frago/resources/hook/",
+          "src/frago/cli/hook_rules_commands.py"
         ],
         "description": "按事件与条件匹配向 Agent 上下文精准注入 book 速记的静态规则。"
       },
       {
         "class_id": "StopGatePolicy",
+        "pillar": "1. 会话伴侣",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           "~/.frago/hook/stop-signals.json",
@@ -482,6 +743,8 @@
       },
       {
         "class_id": "RecipeExposurePolicy",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           "src/frago/recipes/publish.py",
@@ -491,6 +754,8 @@
       },
       {
         "class_id": "TeamPairingSecurityPolicy",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           "src/frago/team/state.py#RULES_LINE"
@@ -498,7 +763,20 @@
         "description": "结对协作三档安全策略：只读请求（do/ask）、改动请求（do/ask/refuse）、红线请求（泄露秘密/不可逆删除/绕过宪法 → 绝对拒绝）。"
       },
       {
+        "class_id": "SyncConflictPolicy",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/tools/sync_repo.py",
+          "src/frago/resources/frago-home-gitignore.template"
+        ],
+        "description": "家目录多设备同步规则：区分跨设备共享资产与本机运行时产物（gitignore 模板），以及同步冲突自动裁决策略。"
+      },
+      {
         "class_id": "ModuleImportBoundaryRule",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           ".importlinter",
@@ -510,25 +788,77 @@
     "NormativeEntity.Contract": [
       {
         "class_id": "RecipeModuleContract",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
           "src/frago/recipes/contract.py",
           "src/frago/recipes/metadata.py"
         ],
         "description": "配方的声明式模块契约：输入输出签名、@export/@action 能力面、跨配方共享声明（shares 与 reads_common 双向握手）、外部命令声明（uses_commands）。"
+      },
+      {
+        "class_id": "CliCommandActionContract",
+        "pillar": "跨层底座",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/cli/main.py",
+          "src/frago/cli/commands.py"
+        ],
+        "description": "frago CLI 系统调用契约：每一条 CLI 子命令在静态层面是声明了发起方定义域、目标资源值域与前置/后置条件的动作契约，在动态执行层面拉起对应 Process 查询或修改目标资源。"
+      }
+    ],
+    "NormativeEntity.Specification": [
+      {
+        "class_id": "ScheduleRuleSpec",
+        "pillar": "5. 边界",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/recipes/schedule.py",
+          "src/frago/cli/schedule_commands.py"
+        ],
+        "description": "定时任务规格定义（frago schedule）：规定 cron 表达式、执行形态（命令直跑 / 配方直跑 / 自然语言交主控）及通知收敛条件（--notify-on change）。"
+      },
+      {
+        "class_id": "RunDomainDictSpec",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/run/domain_dict.py"
+        ],
+        "description": "运行事务领域词典规格：定义任务描述到标准知识域（canonical domain）的聚类映射规则。"
+      },
+      {
+        "class_id": "AutostartServiceSpec",
+        "pillar": "人面与跨层底座",
+        "rigidity": "+R",
+        "mutability": "versioned_immutable",
+        "current_code_locations": [
+          "src/frago/autostart/",
+          "src/frago/cli/autostart_command.py"
+        ],
+        "description": "跨平台（systemd / launchd / Windows Task Scheduler）开机自启服务规格定义。"
       }
     ],
     "InformationEntity": [
       {
         "class_id": "BookTopicDocument",
+        "pillar": "1. 会话伴侣",
+        "rigidity": "+R",
         "identity": "topic_slug",
         "current_code_locations": [
+          "src/frago/resources/book/",
           "src/frago/cli/book_commands.py"
         ],
         "description": "frago book 中的行为准则与操作手册正文。"
       },
       {
         "class_id": "DefKnowledgeEntry",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
         "identity": "composite(domain_name, doc_name)",
         "current_code_locations": [
           "src/frago/def_/query_engine.py",
@@ -537,7 +867,20 @@
         "description": "结论层召回入口（frago <domain> find/save）中的结构化知识条目。"
       },
       {
+        "class_id": "ContextRecallIndex",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
+        "identity": "data_subject_slug_path",
+        "current_code_locations": [
+          "src/frago/context/",
+          "src/frago/cli/context_commands.py"
+        ],
+        "description": "产物层召回入口（frago context data:<关键词>）的位置索引制品，只报落点位置不吐大段正文。"
+      },
+      {
         "class_id": "SessionTranscriptArtifact",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
         "identity": "session_id",
         "current_code_locations": [
           "src/frago/session/storage.py",
@@ -546,15 +889,42 @@
         "description": "过程层召回入口（frago session search）背后的双库备份会话轨迹文件（raw.jsonl / steps.jsonl）。"
       },
       {
+        "class_id": "TokenUsageLedger",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
+        "identity": "composite(date, agent_family, model)",
+        "current_code_locations": [
+          "src/frago/session/token_calendar.py",
+          "src/frago/session/usage_tick.py"
+        ],
+        "description": "跨内核会话 Token 消耗日历与用量统计账本制品。"
+      },
+      {
         "class_id": "TodoHandoffArtifact",
+        "pillar": "3. 记忆与召回",
+        "rigidity": "+R",
         "identity": "todo_id",
         "current_code_locations": [
-          "src/frago/todo/store.py"
+          "src/frago/todo/store.py",
+          "src/frago/cli/todo_commands.py"
         ],
         "description": "跨会话交接单制品：记录是什么、到哪一步、下一步先动哪、怎么算完，并自动关联历经的 session_id 列表。"
       },
       {
+        "class_id": "MarketPackageArtifact",
+        "pillar": "4. 配方",
+        "rigidity": "+R",
+        "identity": "composite(recipe_name, version)",
+        "current_code_locations": [
+          "src/frago/recipes/installer.py",
+          "community-recipes/"
+        ],
+        "description": "配方市场（frago market）中可检索、分享与版本化分发的配方归档制品。"
+      },
+      {
         "class_id": "HumanDecisionReceipt",
+        "pillar": "1. 会话伴侣 / 跨层底座",
+        "rigidity": "+R",
         "identity": "decision_message_uuid",
         "current_code_locations": [
           "src/frago/client/"
@@ -595,6 +965,16 @@
         ]
       },
       "description": "公理驱动分类：带结对前缀且通过中继消息签名核实的发言，自动归类为受 TeamPairingSecurityPolicy 三档约束的队友请求，严禁当成本机主人指令。"
+    },
+    {
+      "class_id": "DirectExecutableSchedule",
+      "equivalent_to": {
+        "intersection_of": [
+          "ScheduleRuleSpec",
+          "target_kind in {'command', 'recipe'}"
+        ]
+      },
+      "description": "公理驱动分类：目标为确定性命令或配方的定时规格，由 frago 调度器零 Token 直接执行，不经过 PrimarySchedulerRole（PA）。"
     }
   ],
   "kinetic_action_contracts": [
@@ -701,45 +1081,67 @@
           "emits": ["SessionStepEvent"]
         }
       }
+    },
+    {
+      "action_id": "reply_to_inbound_channel",
+      "parameters": ["channel_id", "inbound_message_id", "reply_payload"],
+      "signature": {
+        "initiator_domain": "PrimarySchedulerRole | AgentKernel",
+        "target_range": "CommunicationChannel",
+        "input_types": {
+          "channel_id": "str",
+          "inbound_message_id": "str",
+          "reply_payload": "str"
+        },
+        "return_type": "ChannelMessageEvent",
+        "error_types": ["ChannelMismatchError", "ChannelDeliveryError"]
+      },
+      "contract": {
+        "preconditions": [
+          "channel_id MUST match the originating CommunicationChannel of inbound_message_id (external tasks must reply back to the exact channel they arrived from)."
+        ],
+        "postconditions": [
+          "Emits ChannelMessageEvent with event_type == 'outbound_reply_delivered'."
+        ],
+        "invariants": [
+          "Reply payload MUST NOT contain secrets, tokens, or .env contents."
+        ],
+        "side_effects": {
+          "initiates": "ChannelIngestionProcess",
+          "emits": ["ChannelMessageEvent"]
+        }
+      }
+    },
+    {
+      "action_id": "control_desktop_stage",
+      "parameters": ["instance_id", "command_verb", "stage_payload"],
+      "signature": {
+        "initiator_domain": "AgentKernel | HumanPrincipal | PrimarySchedulerRole",
+        "target_range": "VirtualDesktopStage",
+        "input_types": {
+          "instance_id": "str",
+          "command_verb": "str",
+          "stage_payload": "dict[str, Any]"
+        },
+        "return_type": "dict",
+        "error_types": ["ForeignScreenOwnershipError", "StageNotRunningError"]
+      },
+      "contract": {
+        "preconditions": [
+          "VirtualDesktopStage content_id MUST be derived solely from instance_id (independent of broker port).",
+          "Client layout or identify payloads whose content_id mismatches target VirtualDesktopStage MUST be rejected as foreign_clients."
+        ],
+        "postconditions": [
+          "Stopping the broker transitions DesktopInstanceRuntimeState to 'stopped' while preserving the instance registry file intact."
+        ],
+        "invariants": [
+          "VirtualDesktopStage identity fields (id, content_id, desktop_url, clips_dir, created_at) remain immutable across broker restarts."
+        ],
+        "side_effects": {
+          "mutates": ["VirtualDesktopStage"],
+          "emits": ["SessionStepEvent"]
+        }
+      }
     }
-  ],
-  "migration_blueprint": {
-    "target_package": "src/frago/ontology/",
-    "layer_position": "位于 core/ 之上、domains/ 与 adapters/ 之下（或作为 domains/ 的元模型底座），零外部 IO 依赖，纯声明与契约校验。",
-    "modules_to_build": [
-      {
-        "module": "src/frago/ontology/metamodel.py",
-        "responsibility": "定义四大正交超类基类（Continuant / Occurrent / NormativeEntity / InformationEntity）、OntoClean 刚性校验器与同一性准则协议。"
-      },
-      {
-        "module": "src/frago/ontology/relations.py",
-        "responsibility": "定义一等公民关系注册表、Domain/Range 类型守卫、逆关系自动映射与传递性/反对称性校验。"
-      },
-      {
-        "module": "src/frago/ontology/contracts.py",
-        "responsibility": "实现『入参 ⊂ 签名 ⊂ 契约』三层装饰器与运行时守卫（@ontological_action：前置条件、后置条件、不变量与副作用审计）。"
-      },
-      {
-        "module": "src/frago/ontology/introspection.py",
-        "responsibility": "向 CLI（frago ontology inspect/validate）与 AI Agent 暴露全图谱自省查询接口，支持按主体、角色、策略推导合法动作集。"
-      }
-    ],
-    "business_module_migrations": [
-      {
-        "phase": "Phase 1",
-        "source_modules": ["src/frago/agent_driver/", "src/frago/session/"],
-        "ontological_refactoring": "拆解『大 Agent 类』：将 AgentKernel（刚性主体）、AgentHarness（物理执行载体：Tmux/Subprocess）、Primary/Worker/Judge（反刚性角色）、AgentSessionProcess（时间过程）与 SessionTranscriptArtifact（信息制品）彻底剥离，按稳定 UID 与关系边引用。"
-      },
-      {
-        "phase": "Phase 2",
-        "source_modules": ["src/frago/recipes/", "src/frago/server/security.py", "src/frago/server/identity.py"],
-        "ontological_refactoring": "统一配方与权限契约：将 RecipeMetadata、contract.Surface、publish 开放策略、security 四安全区与 identity 访客身份收敛为 RecipeModule（资源）+ CallerZoneRole（反刚性角色）+ RecipeExposurePolicy（规范体）+ execute_recipe_mode（动作契约）。"
-      },
-      {
-        "phase": "Phase 3",
-        "source_modules": ["src/frago/team/", "src/frago/def_/", "src/frago/todo/", "src/frago/run/"],
-        "ontological_refactoring": "收敛边界与记忆支柱：将结对状态与三档放行规则映射为 TeamPeerRole + TeamPairingSecurityPolicy，将 def/context/session-search/todo 统一挂载到 InformationEntity 的内容寻址与多维召回原语下。"
-      }
-    ]
-  }
+  ]
 }

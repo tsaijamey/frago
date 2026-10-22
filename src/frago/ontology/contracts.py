@@ -30,6 +30,7 @@ from frago.ontology.metamodel import (
     QualityState,
     Resource,
     Role,
+    Specification,
 )
 from frago.ontology.relations import OntologyGraph
 
@@ -115,6 +116,16 @@ def _is_verified_teammate_instruction(
     return text.startswith("【frago team】") and verified
 
 
+def _is_direct_executable_schedule(
+    entity: OntologyEntity,
+    _graph: OntologyGraph,
+) -> bool:
+    if not isinstance(entity, Specification) or entity.spec_kind != "ScheduleRuleSpec":
+        return False
+    # Convention: ScheduleRuleSpec norm_id encodes target_kind prefix `command:` or `recipe:`
+    return entity.norm_id.startswith(("command:", "recipe:"))
+
+
 BUILTIN_DEFINED_CLASSES: dict[str, DefinedClass] = {
     "TrustedOwnerRequest": DefinedClass(
         class_id="TrustedOwnerRequest",
@@ -139,6 +150,15 @@ BUILTIN_DEFINED_CLASSES: dict[str, DefinedClass] = {
         predicate=_is_verified_teammate_instruction,
         description=(
             "User message carrying '【frago team】' prefix and passing relay verification."
+        ),
+    ),
+    "DirectExecutableSchedule": DefinedClass(
+        class_id="DirectExecutableSchedule",
+        base_type=Specification,
+        predicate=_is_direct_executable_schedule,
+        description=(
+            "ScheduleRuleSpec targeting a deterministic command or recipe, "
+            "executed directly with zero LLM tokens."
         ),
     ),
 }
