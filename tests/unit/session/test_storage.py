@@ -492,6 +492,67 @@ class TestStaleRunningIsNotRunning:
 
         assert read_metadata("wedged", AgentType.CLAUDE).status is SessionStatus.RUNNING
 
+    def test_running_filter_skips_stale_raw_without_opening_transcript(
+        self, mock_home, monkeypatch
+    ):
+        """只找 running 时，久未修改的历史原文目录不该被打开读 256 KB 算创建时刻。"""
+        import frago.session.storage as storage_mod
+
+        base = get_session_base_dir()
+        stale_dir = base / "claude" / "stale-raw"
+        stale_dir.mkdir(parents=True)
+        stale_raw = stale_dir / RAW_FILENAME
+        stale_raw.write_text('{"timestamp":"2026-01-01T00:00:00Z"}\n', encoding="utf-8")
+        old_mtime = time.time() - (STALE_RUNNING_SECONDS + 3600)
+        os.utime(stale_raw, (old_mtime, old_mtime))
+
+        opened: list[Path] = []
+        real_raw_created = storage_mod._raw_created_epoch
+
+        def _spy(raw_path: Path):
+            opened.append(raw_path)
+            return real_raw_created(raw_path)
+
+        monkeypatch.setattr(storage_mod, "_raw_created_epoch", _spy)
+
+        running = list_sessions(
+            agent_type=AgentType.CLAUDE, status=SessionStatus.RUNNING, limit=100
+        )
+
+        assert running == []
+        assert opened == []
+
+    def test_doubling_window_loads_each_candidate_once(self, mock_home, monkeypatch):
+        """窗口翻倍扩容时只加载新增的那一段，不把前面已经读过的目录从头重读。"""
+        import frago.session.storage as storage_mod
+
+        base = get_session_base_dir()
+        for i in range(60):
+            session_dir = base / "claude" / f"old-{i:02d}"
+            session_dir.mkdir(parents=True)
+            raw = session_dir / RAW_FILENAME
+            raw.write_text('{"timestamp":"2026-01-01T00:00:00Z"}\n', encoding="utf-8")
+        newest_dir = base / "claude" / "newest"
+        newest_dir.mkdir(parents=True)
+        newest_raw = newest_dir / RAW_FILENAME
+        newest_raw.write_text('{"timestamp":"2026-02-01T00:00:00Z"}\n', encoding="utf-8")
+        past = time.time() - 30 * 86400
+        os.utime(newest_raw, (past, past))
+
+        loaded_dirs: list[str] = []
+        real_load = storage_mod._load_session_from_dir
+
+        def _spy(session_dir: Path, now=None, *, status_filter=None):
+            loaded_dirs.append(session_dir.name)
+            return real_load(session_dir, now, status_filter=status_filter)
+
+        monkeypatch.setattr(storage_mod, "_load_session_from_dir", _spy)
+
+        result = list_sessions(agent_type=AgentType.CLAUDE, limit=1)
+
+        assert result[0].session_id == "newest"
+        assert len(loaded_dirs) == len(set(loaded_dirs)) == 61
+
 
 class TestCleanOnlyTouchesManagedSessions:
     """清理只对 frago 自己管过的会话（有 metadata）生效。

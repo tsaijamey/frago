@@ -95,16 +95,24 @@ def _raw_jsonl_path(session_dir: Path) -> Path | None:
     return None
 
 
-def _session_mtime(session_dir: Path) -> float | None:
-    """这场会话「最后动过」的时刻：metadata.json 与 raw.jsonl 里新的那个。"""
+def _session_mtime(session_dir: Path | str) -> float | None:
+    """这场会话「最后动过」的时刻：metadata.json 与非空 raw.jsonl 里新的那个。
+
+    两个文件都不存在（或只有 0 字节的 raw.jsonl）时返回 None，同时承担「目录里
+    有没有会话内容」的判据，省掉外层先 exists() 再 stat() 的重复系统调用。
+    """
+    base = str(session_dir)
     newest: float | None = None
-    for name in ("metadata.json", RAW_FILENAME):
-        try:
-            mtime = (session_dir / name).stat().st_mtime
-        except OSError:
-            continue
-        if newest is None or mtime > newest:
-            newest = mtime
+    try:
+        newest = os.stat(f"{base}/metadata.json").st_mtime
+    except OSError:
+        pass
+    try:
+        st = os.stat(f"{base}/{RAW_FILENAME}")
+        if st.st_size > 0 and (newest is None or st.st_mtime > newest):
+            newest = st.st_mtime
+    except OSError:
+        pass
     return newest
 
 
@@ -238,6 +246,8 @@ def _derive_session_from_raw(
     agent_type: AgentType,
     raw_path: Path,
     now: datetime | None = None,
+    *,
+    status_filter: SessionStatus | None = None,
 ) -> MonitoredSession | None:
     """目录里只有原文副本、没有 ``metadata.json`` 时，就地派生一份最小元数据。
 
@@ -247,6 +257,10 @@ def _derive_session_from_raw(
     try:
         last_active = datetime.fromtimestamp(raw_path.stat().st_mtime)
     except OSError:
+        return None
+    live_status = _live_status(SessionStatus.RUNNING, last_active, now)
+    if status_filter is not None and live_status != status_filter:
+        # 状态已经对不上时直接放行，不必为一场会被筛掉的会话去读 256 KB 原文算创建时刻。
         return None
     # 起始时刻取原文第一条带时刻的记录，不取文件修改时刻：修改时刻会随着会话继续
     # 写盘而往前走，用它当创建时刻，这场会话每说一句话就会在清单里跳一次位。
@@ -265,7 +279,7 @@ def _derive_session_from_raw(
         source_file=str(raw_path),
         started_at=started_at,
         last_activity=last_active,
-        status=_live_status(SessionStatus.RUNNING, last_active, now),
+        status=live_status,
         step_count=0,
         tool_call_count=0,
         source=SessionSource.UNKNOWN,
@@ -273,7 +287,10 @@ def _derive_session_from_raw(
 
 
 def _load_session_from_dir(
-    session_dir: Path, now: datetime | None = None
+    session_dir: Path,
+    now: datetime | None = None,
+    *,
+    status_filter: SessionStatus | None = None,
 ) -> MonitoredSession | None:
     """一个会话目录 → 一条 ``MonitoredSession``。metadata 优先，没有就从原文副本派生。
 
@@ -298,7 +315,9 @@ def _load_session_from_dir(
     except ValueError:
         # 认不出是哪一家，派生的卡片连 agent_type 都填不出来，不猜。
         return None
-    return _derive_session_from_raw(session_dir, agent_type, raw_path, now)
+    return _derive_session_from_raw(
+        session_dir, agent_type, raw_path, now, status_filter=status_filter
+    )
 
 
 def is_managed_session(session_id: str, agent_type: AgentType) -> bool:
@@ -914,33 +933,41 @@ def count_sessions(
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
     now = datetime.now()
+    running_cutoff = (
+        now.timestamp() - STALE_RUNNING_SECONDS
+        if status == SessionStatus.RUNNING
+        else None
+    )
     for agent_dir in agent_dirs:
-        if not agent_dir.exists():
+        if not agent_dir.is_dir():
             continue
 
-        for session_dir in agent_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
+        with os.scandir(agent_dir) as entries:
+            for entry in entries:
+                if not entry.is_dir():
+                    continue
+                mtime = _session_mtime(entry.path)
+                if mtime is None:
+                    continue
 
-            # 目录里有内容就算一场会话：metadata.json 或原文副本，二者有其一。
-            if not (session_dir / "metadata.json").exists() and (
-                _raw_jsonl_path(session_dir) is None
-            ):
-                continue
+                if not status:
+                    count += 1
+                    continue
 
-            if not status:
+                if running_cutoff is not None and mtime < running_cutoff:
+                    continue
+
+                session = _load_session_from_dir(
+                    Path(entry.path), now, status_filter=status
+                )
+                if session is None:
+                    continue
+                # 状态判据必须与 list_sessions 同一套，否则同一个问题两个答案。
+                session_status = _live_status(session.status, session.last_activity, now)
+                if session_status != status:
+                    continue
+
                 count += 1
-                continue
-
-            session = _load_session_from_dir(session_dir, now)
-            if session is None:
-                continue
-            # 状态判据必须与 list_sessions 同一套，否则同一个问题两个答案。
-            session_status = _live_status(session.status, session.last_activity, now)
-            if session_status != status:
-                continue
-
-            count += 1
 
     return count
 
@@ -966,33 +993,42 @@ def list_sessions(
     if not base_dir.exists():
         return []
 
+    if limit <= 0:
+        return []
+
     # Determine agent directories to search
     if agent_type:
         agent_dirs = [base_dir / agent_type.value]
     else:
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
+    now = datetime.now()
+    # 只找 running 时，最后文件修改时刻早于 STALE_RUNNING_SECONDS 的目录不可能是
+    # running——直接挡在候选集外，避免由于在跑会话少于 limit 而触发全量翻倍重扫。
+    running_cutoff = (
+        now.timestamp() - STALE_RUNNING_SECONDS
+        if status == SessionStatus.RUNNING
+        else None
+    )
+
     # Phase 1: Collect (session_dir, mtime) pairs. 目录里有内容就算一场会话——原文副本
     # （同步进来的、frago 没监控过的会话）或 metadata 二者有其一即可。mtime 取两份文件
     # 里新的那个，粗筛时才不会漏掉刚写过原文的会话。
     candidates: list[tuple[float, Path]] = []
     for agent_dir in agent_dirs:
-        if not agent_dir.exists():
+        if not agent_dir.is_dir():
             continue
 
-        for session_dir in agent_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
-
-            if not (session_dir / "metadata.json").exists() and (
-                _raw_jsonl_path(session_dir) is None
-            ):
-                continue
-
-            mtime = _session_mtime(session_dir)
-            if mtime is None:
-                continue
-            candidates.append((mtime, session_dir))
+        with os.scandir(agent_dir) as entries:
+            for entry in entries:
+                if not entry.is_dir():
+                    continue
+                mtime = _session_mtime(entry.path)
+                if mtime is None:
+                    continue
+                if running_cutoff is not None and mtime < running_cutoff:
+                    continue
+                candidates.append((mtime, Path(entry.path)))
 
     # Phase 2: mtime 只是「创建时刻的上界」——文件只会在会话开始之后才存在、才被写。
     # 先按 mtime 取一个窗口，窗口内读准创建时刻；窗口外每一场都满足
@@ -1001,19 +1037,19 @@ def list_sessions(
     # 常规情况只读几十份 metadata，而不是把一万多场会话全部读一遍。
     candidates.sort(key=lambda x: x[0], reverse=True)
 
-    if limit <= 0:
-        return []
-
-    now = datetime.now()
-
     def _created_epoch(session: MonitoredSession) -> float:
         """排序用的创建时刻。naive 时刻按本地时区读回 epoch——它们本来就是本地写下的。"""
         return session.started_at.timestamp()
 
-    def _collect(pool_size: int) -> list[MonitoredSession]:
-        loaded: list[MonitoredSession] = []
-        for _mtime, session_dir in candidates[:pool_size]:
-            session = _load_session_from_dir(session_dir, now)
+    sessions: list[MonitoredSession] = []
+    scanned = 0
+
+    def _extend_to(target: int) -> None:
+        nonlocal scanned
+        for _mtime, session_dir in candidates[scanned:target]:
+            session = _load_session_from_dir(
+                session_dir, now, status_filter=status
+            )
             if session is None:
                 continue
 
@@ -1022,18 +1058,18 @@ def list_sessions(
             if status and session.status != status:
                 continue
 
-            loaded.append(session)
+            sessions.append(session)
 
+        scanned = target
         # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
-        loaded.sort(key=lambda s: (_created_epoch(s), s.session_id), reverse=True)
-        return loaded
+        sessions.sort(key=lambda s: (_created_epoch(s), s.session_id), reverse=True)
 
     pool_size = min(max(limit * 5, 50), len(candidates))
-    sessions = _collect(pool_size)
+    _extend_to(pool_size)
     while True:
         if len(sessions) < limit and pool_size < len(candidates):
             pool_size = min(pool_size * 2, len(candidates))
-            sessions = _collect(pool_size)
+            _extend_to(pool_size)
             continue
         if pool_size >= len(candidates):
             break
@@ -1041,7 +1077,7 @@ def list_sessions(
         if _created_epoch(sessions[limit - 1]) > cutoff:
             break
         pool_size = min(pool_size * 2, len(candidates))
-        sessions = _collect(pool_size)
+        _extend_to(pool_size)
 
     return sessions[:limit]
 

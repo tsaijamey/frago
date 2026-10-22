@@ -36,7 +36,7 @@ async def get_status() -> SystemStatusResponse:
     Returns information about Chrome availability,
     running tasks, and monitored projects.
     """
-    status = SystemService.get_status()
+    status = await asyncio.to_thread(SystemService.get_status)
 
     return SystemStatusResponse(
         cpu_percent=status.get("cpu_percent", 0.0),
