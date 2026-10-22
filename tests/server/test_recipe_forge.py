@@ -168,8 +168,9 @@ def test_brief_makes_the_director_queue_its_speech_ahead() -> None:
     assert "10–20 句" in brief
     # 批长有上限的理由：插播不用等队列了，但队列压得越久、掉头越慢
     assert "转向变慢" in brief
-    # 人类输入行写进任务书：导演知道可以问人，也知道去哪问
+    # 人类输入行（右下角客服式对话面板）写进任务书：导演知道可以问人，也知道去哪问
     assert "输入行" in brief and "人会跟你说话" in brief
+    assert "右下角" in brief and "bottom-right corner" in brief
 
 
 def test_brief_splits_generic_agent_os_skill_from_recipe_specific_task() -> None:
@@ -209,20 +210,20 @@ def test_start_goes_ahead_when_the_stage_is_not_running(monkeypatch) -> None:
     from frago.server.services import workbench_agents, workbench_new_session
 
     class _Agent:
-        agent_type = "claude"
+        agent_type = "coreagent"
         id_origin = "caller"
 
     monkeypatch.setattr(workbench_agents, "require_selectable", lambda _t: _Agent())
 
     def fake_start_with_id(agent_type, cwd, prompt, *, session_id):
         return workbench_new_session.PendingLaunch(
-            handle=session_id, agent_type=agent_type, display_name="Claude Code",
+            handle=session_id, agent_type=agent_type, display_name="CoreAgent",
             cwd=cwd, session_id=session_id,
         )
 
     monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start_with_id)
     launch = recipe_forge.start("做一个看板")
-    assert launch.session_id
+    assert launch.session_id.startswith("core_")
 
 
 def test_start_refuses_a_bad_name(monkeypatch) -> None:
@@ -242,26 +243,34 @@ def test_start_refuses_an_existing_name(monkeypatch) -> None:
         recipe_forge.start("x", name="taken_name")
 
 
-def test_start_hands_the_brief_to_a_claude_session_with_a_known_id(monkeypatch) -> None:
+def test_start_hands_the_brief_to_a_coreagent_session_with_a_known_id(monkeypatch) -> None:
     from frago.server.services import workbench_agents, workbench_new_session
 
+    requested: list[str] = []
+
     class _Agent:
-        agent_type = "claude"
+        agent_type = "coreagent"
         id_origin = "caller"
 
-    monkeypatch.setattr(workbench_agents, "require_selectable", lambda _t: _Agent())
+    def fake_require_selectable(agent_type: str):
+        requested.append(agent_type)
+        return _Agent()
+
+    monkeypatch.setattr(workbench_agents, "require_selectable", fake_require_selectable)
     seen: dict = {}
 
     def fake_start_with_id(agent_type, cwd, prompt, *, session_id):
         seen.update(agent_type=agent_type, cwd=cwd, prompt=prompt, session_id=session_id)
         return workbench_new_session.PendingLaunch(
-            handle=session_id, agent_type=agent_type, display_name="Claude Code",
+            handle=session_id, agent_type=agent_type, display_name="CoreAgent",
             cwd=cwd, session_id=session_id,
         )
 
     monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start_with_id)
     launch = recipe_forge.start("做一个看板", page=True)
-    assert seen["agent_type"] == "claude"
+    assert requested == ["coreagent"]
+    assert seen["agent_type"] == "coreagent"
+    assert launch.session_id.startswith("core_")
     assert seen["session_id"] == launch.session_id
     # 任务书里写的目录用的正是这场会话的编号。
     assert f"~/.frago/forge/{launch.session_id}" in seen["prompt"]

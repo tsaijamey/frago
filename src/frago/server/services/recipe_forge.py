@@ -3,12 +3,12 @@
 ## 控制链（一共四段，展示层与控制层分开）
 
     配方管理页「创建配方」→ 需求 + 要不要界面
-        ↓  本模块：写一份导演任务书，起一场隐藏的 claude 会话，任务书是第一句话
-    导演（隐藏 tmux 里的 claude，人看不见它）
+        ↓  本模块：写一份导演任务书，起一场隐藏的 CoreAgent 会话，任务书是第一句话
+    导演（后台常驻的 CoreAgent，人看不见它）
         ↓  自己 ``frago desktop up`` 把舞台拉起来，再用 ``frago desktop`` 全程解说；
            用 ``frago recipe create --tmux-target frago-stage`` 让 worker 跑在桌面终端里
     虚拟桌面（人看的显示器）：终端窗口里 worker 在写配方，浏览器窗口里配方页面在长
-        ↑  桌面页带 ``?userInput=true&session=<导演会话>`` 时露出一条输入行，
+        ↑  桌面页右下角常驻对话面板（带 ``?userInput=true&session=<导演会话>`` 时默认展开，不带参数时仅显示右下角图标），
            人打的字**不进桌面终端**，而是排进导演的队列，由导演转达给 worker
 
 桌面只是显示器；导演是遥控器，人对着遥控器说话。本模块只负责把遥控器造出来并
@@ -252,7 +252,7 @@ def build_recipe_task(
 1. **派 worker 写配方**：只用
    `frago recipe create <名字> --prompt-file {forge_dir}/requirement.md --tmux-target {STAGE_TMUX_SESSION}`
    且 MUST 用 Bash 工具 `run_in_background: true` 起。NEVER 用不带 `--tmux-target` 的 `plan`/`create`；NEVER 自己在桌面终端里手敲 `claude`。
-2. **人中途追加需求时**：若后台 `create` 命令还在跑，按 skill 规定用 `frago desktop focus term` → `frago desktop type "<原话>"` → `sleep 2` → `frago desktop key Enter` 排进 worker 队列；若 worker 已经结束，把原话追加进 `{forge_dir}/requirement.md` 末尾，再用
+2. **人中途追加需求时**（通过桌面右下角对话面板发来新消息）：若后台 `create` 命令还在跑，按 skill 规定用 `frago desktop focus term` → `frago desktop type "<原话>"` → `sleep 2` → `frago desktop key Enter` 排进 worker 队列；若 worker 已经结束，把原话追加进 `{forge_dir}/requirement.md` 末尾，再用
    `frago recipe create <名字> --force --prompt-file {forge_dir}/requirement.md --tmux-target {STAGE_TMUX_SESSION}`
    重新起一轮。
 3. **五个阶段，字条就按它报数**：`1/5 定名`、`2/5 写规格`、`3/5 写代码`、`4/5 验证`、`5/5 完成`。每到一处（起台、定名、写需求文件、开始写规格、规格写好、开始写代码、页面第一次出来、validate 跑过、run 起来、完成 / 失败）都要有话说。
@@ -308,12 +308,12 @@ def start(requirement: str, *, page: bool = True, name: str | None = None) -> Fo
         raise ValueError("需求不能是空的")
     checked_name = _check_name(name)
 
-    agent = workbench_agents.require_selectable("claude")
+    agent = workbench_agents.require_selectable(workbench_agents.COREAGENT_AGENT_TYPE)
     # 任务书里要写导演自己的会话编号（需求文件落在以它命名的目录下），而第一句话是
     # 起会话那一刻投进去的——所以编号在这里先定好，会话与任务书用同一个。
     import uuid
 
-    session_id = str(uuid.uuid4())
+    session_id = f"core_{uuid.uuid4().hex}"
     brief = build_brief(requirement, page=page, name=checked_name, session_id=session_id)
     launch = workbench_new_session.start_with_id(
         agent.agent_type, str(_DIRECTOR_CWD), brief, session_id=session_id
