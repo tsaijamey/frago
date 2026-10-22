@@ -25,7 +25,6 @@ import GeneralSettings from './GeneralSettings';
 import CliAgentSettings from './CliAgentSettings';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
-import { InitSettings } from './InitSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
 import OfficialResourceSettings from './OfficialResourceSettings';
 import PromptCapabilitySettings from './PromptCapabilitySettings';
@@ -36,7 +35,7 @@ interface SettingsPageProps {
   onOpenInitWizard?: () => void;
 }
 
-type TabId = 'capability' | 'general' | 'agents' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
+type TabId = 'capability' | 'general' | 'agents' | 'channels' | 'resources' | 'appearance' | 'about';
 
 /** What each panel gets to render with — page props plus the cross-panel wiring. */
 interface PanelContext extends SettingsPageProps {
@@ -72,13 +71,6 @@ const TABS: TabDef[] = [
   { id: 'channels', Icon: Inbox, render: () => <TaskIngestionPanel /> },
   { id: 'resources', Icon: RefreshCw, render: () => <OfficialResourceSettings /> },
   { id: 'appearance', Icon: Palette, render: () => <AppearanceSettings /> },
-  {
-    id: 'init',
-    Icon: Rocket,
-    render: ({ onOpenInitWizard }) => (
-      <InitSettings onOpenWizard={onOpenInitWizard || (() => {})} />
-    ),
-  },
   { id: 'about', Icon: Info, render: () => <AboutSettings /> },
 ];
 
@@ -117,6 +109,20 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
       <PageHeader
         title={t('settings.title')}
         meta={version ? t('settings.headerMeta', { version }) : undefined}
+        secondary={
+          onOpenInitWizard ? (
+            <button
+              type="button"
+              onClick={onOpenInitWizard}
+              data-testid="settings-open-setup-flow"
+              title="Preview the edge-case onboarding flow when ~/.frago settings files are missing"
+              className="inline-flex items-center gap-1.5 rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            >
+              <Rocket size={13} strokeWidth={1.6} />
+              <span>Initial setup flow</span>
+            </button>
+          ) : undefined
+        }
       />
       {/* 页头以下两栏：二级菜单钉住不动，只有右侧正文自己滚。 */}
       <div className="settings-layout">

@@ -102,7 +102,11 @@ const VIEWS: Record<ViewKey, () => ReactElement> = {
   workspace: () => <WorkspacePage />,
 };
 
-export default function PageHost() {
+interface PageHostProps {
+  onOpenInitWizard?: () => void;
+}
+
+export default function PageHost({ onOpenInitWizard }: PageHostProps = {}) {
   const currentPage = usePageStore((s) => s.currentPage);
   // 表里没有的页面回会话工作台（与 routes 认不出地址时的兜底同一条）。`recipe_app`
   // 在表里是明写的 null，那不是"认不出来"，是"不归这里管"——两者 MUST 分开，
@@ -120,6 +124,13 @@ export default function PageHost() {
   return (
     <>
       {opened.map((key) => {
+        if (key === 'settings') {
+          return (
+            <div key={key} className="page-slot" hidden={key !== view}>
+              <SettingsPage onOpenInitWizard={onOpenInitWizard} />
+            </div>
+          );
+        }
         const Page = VIEWS[key];
         return (
           <div key={key} className="page-slot" hidden={key !== view}>
