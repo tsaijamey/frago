@@ -36,7 +36,7 @@ import {
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import { ArrowDown, CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
 import RecordCard, {
   KIND_GROUP,
   SystemRun,
@@ -500,6 +500,8 @@ function rangeHit(range: Range, x: number, y: number): boolean {
 const NEAR_TOP_PX = 240;
 /** 离底部多近算「人就在底部」，手动滚到这里立即重新武装自动滚动。 */
 const AT_BOTTOM_PX = 60;
+/** 离底部超过这个距离，「跳到最新」按钮才冒出来。一屏之内随手一滚就回去，不打扰。 */
+const JUMP_SHOW_PX = 240;
 /** 手动输入事件后多久之内的滚动算是人滚的。程序滚动不在这个窗口里。 */
 const MANUAL_INTENT_MS = 400;
 /** 解除后多久没再手动滚动，新条目进来时自动滚动复活。 */
@@ -855,6 +857,21 @@ export default function RecordStream({
     }
   }, []);
 
+  /** 「跳到最新」按钮亮着吗。距底超过 {@link JUMP_SHOW_PX} 才亮——人翻上去看历史了，
+   * 一键回去；就在底部附近时它没有可干的事，不占地方。 */
+  const [showJump, setShowJump] = useState(false);
+
+  // 人点了「跳到最新」：这算程序滚动（scrollToBottom 自己会留 programmaticUntil，余波
+  // 不会误伤跟随状态机），同时把手动滚动的痕迹清干净——上一秒人还在翻历史，这一秒起
+  // 视图重新交还给自动跟随，下一条新记录照常跟到底。
+  const jumpToLatest = useCallback(() => {
+    followArmed.current = true;
+    lastManualScrollAt.current = 0;
+    manualIntentUntil.current = 0;
+    scrollToBottom('smooth');
+    setShowJump(false);
+  }, [scrollToBottom]);
+
   // 换会话：一切归零，默认重新武装——新打开的会话就该落在最新内容上。
   // 必须是布局效应且声明在记录流效应之前：挂载时普通效应跑在布局效应之后，会把记录流
   // 效应刚记下的首尾编号抹掉，下一帧追加就被误判成初装，视口不由分说沉到底。
@@ -866,6 +883,7 @@ export default function RecordStream({
     anchor.current = null;
     prevEnds.current = { first: null, last: null };
     olderArmed.current = true;
+    setShowJump(false);
   }, [sessionId]);
 
   // 记录流变化的三种形态：前插钉住视口，追加按状态机走，整流替换与初装沉底。
@@ -1148,6 +1166,18 @@ export default function RecordStream({
       const el = e.currentTarget;
       const now = Date.now();
 
+      // 「跳到最新」按钮的显隐只看位置，不问是谁滚的。但有一个方向的例外：程序平滑
+      // 滚向底部的一路经过的中间位置都离底很远，若照实亮按钮，人看到的是它闪一下又
+      // 灭掉。所以**熄灭随时允许**（程序落底后事件还在余波里，按钮要能灭），**亮起**
+      // 要等程序滚动窗口过去——那些中间位置不许点灯。
+      const jumpGap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowJump((prev) => {
+        const next = jumpGap > JUMP_SHOW_PX;
+        if (next === prev) return prev;
+        if (next && now <= programmaticUntil.current) return prev;
+        return next;
+      });
+
       // 手动滚动：离开底部就解除自动滚动，回到底部立即重新武装。
       //
       // 程序自己滚出来的那一串**不参与这个判定**：平滑滚动一路经过的中间位置全都不在
@@ -1369,6 +1399,24 @@ export default function RecordStream({
           version={groups}
           onUserScroll={noteManualIntent}
         />
+      ) : null}
+
+      {/* 人翻上去看历史了：右下角亮一颗「跳到最新」，一键沉底。只看位置（距底超过
+          JUMP_SHOW_PX），不问是谁滚的；就在底部附近时不出现，不打扰。挂着缩略滚动条
+          时右边让出它那一条（那条压在离右 12px 处，占右侧 24px 以内）。 */}
+      {showJump ? (
+        <button
+          type="button"
+          data-testid="jump-to-latest"
+          onClick={jumpToLatest}
+          title={t('workbench.stream.jumpToLatest')}
+          aria-label={t('workbench.stream.jumpToLatest')}
+          className={`absolute bottom-12 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border-color bg-bg-primary/90 text-text-secondary shadow-md backdrop-blur-sm transition-colors hover:text-text-primary ${
+            showMinimap ? 'right-10' : 'right-4'
+          }`}
+        >
+          <ArrowDown size={15} strokeWidth={2} />
+        </button>
       ) : null}
 
       {/* 文件那一档铺在这块滚动区上面，**记录流不卸载**：它一卸，滚动位置、标注高亮、

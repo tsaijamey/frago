@@ -301,6 +301,38 @@ describe('RecordStream 中栏', () => {
     expect(scroller.scrollTop).toBe(2600);
   });
 
+  it('翻上去之后右下角亮「跳到最新」，点了沉底、按钮熄灭', () => {
+    render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 初装沉底：人就在底部，按钮没有可干的事，不出现。
+    expect(screen.queryByTestId('jump-to-latest')).toBeNull();
+
+    // 人翻到顶（离底 2000px）：按钮亮。
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    expect(screen.getByTestId('jump-to-latest')).toBeTruthy();
+
+    // 点它：沉底、按钮熄灭。
+    fireEvent.click(screen.getByTestId('jump-to-latest'));
+    expect(scroller.scrollTop).toBe(2000);
+    expect(screen.queryByTestId('jump-to-latest')).toBeNull();
+  });
+
+  it('离底不到一屏之远时「跳到最新」不出现——随手一滚就回去，不打扰', () => {
+    render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 离底 200px（< 240 的门槛）：不亮。
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 1000;
+    fireEvent.scroll(scroller);
+    expect(screen.queryByTestId('jump-to-latest')).toBeNull();
+  });
+
   it('解除后十秒没再手动滚动，新条目进来自动滚动复活', () => {
     vi.useFakeTimers();
     try {

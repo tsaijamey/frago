@@ -1571,6 +1571,7 @@
       "emptySessionHint": "它不是坏了，是当时什么都没发生",
       "loading": "取记录中",
       "awaitingAgent": "已经投进去了，在等 agent 开口",
+      "jumpToLatest": "跳到最新",
       "quote": "引用",
       "stack": "暂存",
       "stackNotePlaceholder": "对这段的想法（可不写），回车保存",

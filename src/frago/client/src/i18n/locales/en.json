@@ -1576,6 +1576,7 @@
       "emptySessionHint": "It isn't broken; nothing happened at the time",
       "loading": "Loading records",
       "awaitingAgent": "Sent — waiting for the agent to speak",
+      "jumpToLatest": "Jump to latest",
       "quote": "Quote",
       "stack": "Stack",
       "stackNotePlaceholder": "A thought on this (optional) — Enter to save",
