@@ -1927,7 +1927,21 @@
       "movedUpMany": "{{n}} messages moved up into the conversation",
       "usageHint": "Which model is answering right now, how much context it is holding, and how much this session has burned in total",
       "packedBanner": "Packed {{n}} annotations",
-      "packedClear": "Clear"
+      "packedClear": "Clear",
+      "enqueue": "Next Task",
+      "enqueueing": "Adding",
+      "enqueueHint": "Wait for the session to stop (with no interactive card in [end, end-5] turns) and then auto-inject in order"
+    },
+    "queue": {
+      "title": "Next Task",
+      "count": "{{n}} pending",
+      "waitingForStop": "Session running · earliest task will auto-inject after stop if [end, end-5] turns have no interactive card",
+      "blockedByCard": "Interactive card detected in [end, end-5] turns · auto-injection paused",
+      "readyToInject": "Session stopped with no interactive card in [end, end-5] · auto-injecting earliest task",
+      "nextBadge": "Next",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove"
     },
     "newSession": {
       "title": "New session",

@@ -1,32 +1,27 @@
 /**
- * SessionLaunchPanel — 中栏在「会话还没起来」这段时间里摆的那块东西。
+ * SessionLaunchPanel — 新建会话发出第一句话之后、档案落盘之前的原地对话流过渡视图。
  *
- * 人点完创建，对话框就关了。从那一刻到左栏长出新的一行，中间将近十秒界面上什么都没有——
- * 这块就是那十秒的去处：他刚打的那句话在这儿摆着，旁边写清楚此刻在等什么。
- *
- * 视觉上接着输入区那套信封的说法：**已经发出去、还没落进会话的东西，都装在信封里。**
- * 区别只在信封上写的是哪一句——输入区那两档说的是"这句话在哪"，这里说的是"这场会话
- * 起到哪一步了"。
- *
- * 两档各自的样子：
- *
- * | 档 | 在等什么 | 样子 |
- * |---|---|---|
- * | 正在认领编号 | 会话进程刚起，还没报出编号 | 第一步在转，第二步是灰的 |
- * | 正在启动 | 编号有了，还没写下第一笔 | 第一步打勾，第二步在转 |
- *
- * 没起来那一档不自己消失：原因和那句话都留在人眼前，由他自己收掉——一关了之，人连
- * 刚才打的字都找不回来。
+ * 点击「开始会话」后不再展示突兀的居中绿色信封卡片，而是直接进入与会话详情一致的
+ * 「档位条 + 对话流 + 底部输入框」布局：
+ * - 刚发出的第一句话置顶渲染为标准「你说」气泡（带新消息描边）；
+ * - 气泡下方紧接轻量步骤链（认领编号 › 写下第一笔）与单行实时状态条；
+ * - 若启动失败，第一句话仍保留在气泡中，下方内联展示错误原因并提供「返回修改」与「收起」。
  */
 
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Loader2, Mail, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Paperclip, Send } from 'lucide-react';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
+import { withTilde } from './filePaths';
+import { formatClock, formatDuration } from './RecordCard';
+import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 
 export interface SessionLaunchPanelProps {
   launch: SessionLaunch;
   /** 人把没起来的那张卡收掉。 */
   onDismiss: () => void;
+  /** 启动失败时回到内联新建会话起始页重新编辑。 */
+  onBackToEdit?: () => void;
 }
 
 /** 一步走到哪了：还没轮到、正在走、已经过去。 */
@@ -34,113 +29,224 @@ type StepState = 'waiting' | 'active' | 'done';
 
 function Step({ state, label }: { state: StepState; label: string }) {
   return (
-    <div
+    <span
       data-testid="launch-step"
       data-state={state}
-      className={`flex items-center gap-2 text-[12px] ${
-        state === 'waiting' ? 'text-text-muted' : 'text-text-secondary'
+      className={`inline-flex items-center gap-1 text-[11px] ${
+        state === 'waiting'
+          ? 'text-text-muted'
+          : state === 'active'
+            ? 'font-medium text-text-primary'
+            : 'text-text-secondary'
       }`}
     >
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
         {state === 'done' ? (
-          <Check size={13} className="text-accent-primary" />
+          <Check size={12} className="text-accent-primary" />
         ) : state === 'active' ? (
-          <Loader2 size={13} className="animate-spin text-accent-primary" />
+          <Loader2 size={11} className="animate-spin text-text-secondary" />
         ) : (
           <span className="h-1.5 w-1.5 rounded-full bg-text-muted" />
         )}
       </span>
       <span>{label}</span>
-    </div>
+    </span>
   );
 }
 
-export default function SessionLaunchPanel({ launch, onDismiss }: SessionLaunchPanelProps) {
+export default function SessionLaunchPanel({
+  launch,
+  onDismiss,
+  onBackToEdit,
+}: SessionLaunchPanelProps) {
   const { t } = useTranslation();
   const failed = launch.phase === 'failed';
   const claiming = launch.phase === 'claiming';
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (failed) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [failed, launch.at]);
+
+  const clock = formatClock(launch.at);
+  const elapsed = formatDuration(Math.max(1_000, now - launch.at));
+  const hasMessage = Boolean(launch.text);
 
   return (
-    <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-5 py-6">
-      <div
-        data-testid="session-launch"
-        data-phase={launch.phase}
-        className={`flex w-full max-w-[520px] flex-col gap-3.5 rounded-[14px] border px-5 py-5 ${
-          failed
-            ? 'border-accent-error bg-accent-error-10'
-            : 'border-border-accent bg-accent-primary-10'
-        }`}
-      >
-        <div className="flex items-center gap-2.5">
-          <span
-            className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[10px] ${
-              failed
-                ? 'bg-accent-error text-[var(--text-on-accent)]'
-                : 'bg-accent-primary text-[var(--text-on-accent)]'
-            }`}
-          >
-            <Mail size={17} strokeWidth={2} />
-          </span>
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span
-              className={`truncate text-[13px] font-semibold ${
-                failed ? 'text-accent-error' : 'text-text-primary'
-              }`}
-            >
-              {failed
-                ? t('workbench.launch.failedTitle')
-                : t('workbench.launch.title', { name: launch.agentName })}
-            </span>
-            <span className="truncate font-mono text-[11px] text-text-muted">{launch.cwd}</span>
-          </div>
+    <div
+      data-testid="session-launch"
+      data-phase={launch.phase}
+      className="flex h-full min-h-0 min-w-0 flex-col"
+    >
+      {/* 顶部镜头档位条：与真实会话详情保持同一位置与高度，首条记录落盘接管时零跳变 */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2">
+        <div className={SEG_GROUP}>
+          <button type="button" aria-pressed="true" className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_ON}`}>
+            {t('workbench.stream.lensAll')}
+            <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
+          </button>
+          <button type="button" aria-pressed="false" className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
+            {t('workbench.stream.lensTalk')}
+            <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
+          </button>
+          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
+            {t('workbench.stream.lensHook')}
+            <span className="font-mono opacity-60">0</span>
+          </button>
+          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
+            {t('workbench.stream.lensTool')}
+            <span className="font-mono opacity-60">0</span>
+          </button>
+          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
+            {t('workbench.files.lens')}
+            <span className="font-mono opacity-60">0</span>
+          </button>
+          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
+            {t('workbench.stream.lensSystem')}
+            <span className="font-mono opacity-60">0</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 对话流主区：刚发出的第一句话直接作为首条「你说」气泡落地 */}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-10 pl-4 pr-4 pt-4">
+        <div className="flex w-full min-w-0 flex-col gap-2.5">
+          {launch.text ? (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <div
+                data-testid="trail-bubble"
+                data-fresh="true"
+                className="rounded-[9px] outline outline-1 outline-offset-2 outline-[var(--sel-border)]"
+              >
+                <article
+                  data-kind="user.say"
+                  className="min-w-0 rounded-[8px] bg-bg-subtle px-3 py-2 ring-1 ring-border-color"
+                >
+                  <header className="flex items-center gap-2 text-[11px] text-text-muted">
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-text-muted">
+                      {t('workbench.record.userSay')}
+                    </span>
+                    {clock ? (
+                      <span className="shrink-0 font-mono text-[11px] text-text-muted">{clock}</span>
+                    ) : null}
+                    <span className="flex-1" />
+                  </header>
+                  <div className="mt-1.5 min-w-0">
+                    <p
+                      data-testid="launch-first-message"
+                      className="whitespace-pre-wrap break-words text-[13px] leading-[1.6] text-text-primary"
+                    >
+                      {launch.text}
+                    </p>
+                  </div>
+                </article>
+              </div>
+            </div>
+          ) : null}
+
           {failed ? (
+            <div className="flex flex-wrap items-center gap-2.5 rounded-[8px] border border-accent-error/40 bg-accent-error-10 px-3.5 py-2.5 text-[12px] text-accent-error">
+              <AlertTriangle size={14} className="shrink-0 text-accent-error" />
+              <p data-testid="launch-error" className="min-w-0 flex-1 leading-5 text-accent-error">
+                {t('workbench.launch.failed', { reason: launch.error ?? '' })}
+              </p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {onBackToEdit ? (
+                  <button
+                    type="button"
+                    data-testid="launch-back-to-edit"
+                    onClick={onBackToEdit}
+                    className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-hover"
+                  >
+                    {t('workbench.launch.backToEdit', { defaultValue: '返回修改' })}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  data-testid="launch-dismiss"
+                  onClick={onDismiss}
+                  aria-label={t('workbench.launch.dismiss')}
+                  className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                >
+                  {t('workbench.launch.dismiss')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-col gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-[11px]">
+                <Step
+                  state={claiming ? 'active' : 'done'}
+                  label={t('workbench.launch.stepClaim', { name: launch.agentName })}
+                />
+                <span aria-hidden className="text-text-dim">
+                  ›
+                </span>
+                <Step
+                  state={claiming ? 'waiting' : 'active'}
+                  label={t('workbench.launch.stepFirstRecord')}
+                />
+              </div>
+
+              <div
+                data-testid="launch-live-status"
+                className="flex min-w-0 max-w-[640px] items-center gap-2 self-start rounded-[8px] border border-border-color bg-bg-secondary px-3 py-1.5 text-[11.5px] text-text-muted"
+              >
+                {claiming ? (
+                  <>
+                    <Loader2 size={12} className="shrink-0 animate-spin text-text-secondary" />
+                    <span className="shrink-0 font-medium text-text-primary">
+                      {t('workbench.launch.railClaiming', { name: launch.agentName })}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
+                      {withTilde(launch.cwd)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
+                    />
+                    <span className="shrink-0 font-medium text-text-primary">
+                      {t('workbench.progress.agentOnIt')}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-text-muted">
+                      {t('workbench.launch.railWarming', { name: launch.agentName })} ·{' '}
+                      <span className="font-mono">{withTilde(launch.cwd)}</span>
+                    </span>
+                  </>
+                )}
+                <span className="shrink-0 font-mono text-[11px] text-text-dim">{elapsed}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 底部输入框占位：与真实会话详情输入框同位同高，避免首条记录落盘时底栏跳变 */}
+      <div className="shrink-0 border-t border-border-color bg-bg-primary px-4 py-3">
+        <div className="flex flex-col gap-2 rounded-[10px] border border-border-color bg-bg-secondary px-3 py-2.5 opacity-60">
+          <p className="select-none text-[13px] text-text-muted">
+            {t('workbench.composer.placeholderWithFamily', { family: launch.agentName })}
+          </p>
+          <div className="flex items-center justify-between pt-1">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-text-muted">
+              <Paperclip size={14} />
+            </span>
             <button
               type="button"
-              data-testid="launch-dismiss"
-              onClick={onDismiss}
-              aria-label={t('workbench.launch.dismiss')}
-              className="shrink-0 rounded-[6px] p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary"
+              disabled
+              className="inline-flex h-7 items-center gap-1.5 rounded-[8px] bg-accent-primary px-3 text-[12px] font-medium text-[var(--text-on-accent)] opacity-50"
             >
-              <X size={14} />
+              <Send size={12} />
+              {t('workbench.composer.send')}
             </button>
-          ) : null}
+          </div>
         </div>
-
-        {/* 他刚打的那句话。等待期间界面上只有这一样东西是他自己的，摆出来才知道等的是什么。 */}
-        {launch.text ? (
-          <div className="rounded-[10px] border border-border-color bg-bg-card px-3 py-2">
-            <p className="mb-1 text-[11px] text-text-muted">
-              {t('workbench.launch.firstMessage')}
-            </p>
-            <p
-              data-testid="launch-first-message"
-              className="max-h-[120px] overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-text-secondary"
-            >
-              {launch.text}
-            </p>
-          </div>
-        ) : null}
-
-        {failed ? (
-          <p data-testid="launch-error" className="text-[12px] leading-5 text-accent-error">
-            {t('workbench.launch.failed', { reason: launch.error ?? '' })}
-          </p>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            <Step
-              state={claiming ? 'active' : 'done'}
-              label={t('workbench.launch.stepClaim', { name: launch.agentName })}
-            />
-            <Step
-              state={claiming ? 'waiting' : 'active'}
-              label={t('workbench.launch.stepFirstRecord')}
-            />
-          </div>
-        )}
-
-        {!failed ? (
-          <p className="text-[11px] leading-5 text-text-muted">{t('workbench.launch.hint')}</p>
-        ) : null}
       </div>
     </div>
   );

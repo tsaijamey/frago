@@ -39,6 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   CalendarMinus,
@@ -46,11 +47,11 @@ import {
   ChevronRight,
   Clock,
   Loader2,
-  Mail,
   Pin,
   Plus,
   RefreshCw,
   Search,
+  SquareTerminal,
   X,
 } from 'lucide-react';
 import { useAppStore, useUIStore } from '@/stores/appStore';
@@ -224,6 +225,10 @@ export interface SessionRailProps {
    * 页面那一层持有时从这里传进来；不传（用例、单独摆左栏）就长不出那一项。
    */
   today?: SessionTodayState;
+  /** 中栏是否正在展示内联新建会话起始页。 */
+  creatingNew?: boolean;
+  /** 切换中栏内联新建会话起始页；不传时退回左栏自持状态（供单独挂载左栏的组件测试使用）。 */
+  onToggleNew?: () => void;
 }
 
 export default function SessionRail({
@@ -243,6 +248,8 @@ export default function SessionRail({
   pins: pinsProp,
   onOpenTimeline,
   today,
+  creatingNew = false,
+  onToggleNew,
 }: SessionRailProps) {
   const { sessions, visible, counts, loading, error, filter, setFilter, reload } = state;
   const { t } = useTranslation();
@@ -731,11 +738,16 @@ export default function SessionRail({
           </button>
           <button
             type="button"
-            onClick={() => setNewOpen(true)}
+            onClick={() => (onToggleNew ? onToggleNew() : setNewOpen((v) => !v))}
             data-testid="new-session"
             aria-label={t('workbench.rail.newSession')}
+            aria-pressed={creatingNew || newOpen}
             title={t('workbench.rail.newSession')}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border-color text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border transition-colors duration-200 ${
+              creatingNew || newOpen
+                ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                : 'border-border-color text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+            }`}
           >
             <Plus size={16} strokeWidth={1.5} />
           </button>
@@ -862,50 +874,86 @@ export default function SessionRail({
       </div>
 
       {/* 正在起的那一场先占一行。它摆在滚动区**外面**：这一行的意义是"你刚建的那场在
-          这儿"，滚下去看不见就等于没有。会话真进了清单它自己就消失，位置随即让给真那一行。 */}
+          这儿"，滚下去看不见就等于没有。直接采用与普通会话一致的三行卡片结构，会话真进了
+          清单它自己就消失，位置随即让给真那一行。 */}
       {launch ? (
-        <div className="shrink-0 px-2 pt-2">
+        <div className="shrink-0 px-1 pt-2">
           <div
             data-testid="rail-launch"
             data-phase={launch.phase}
-            className={`flex items-center gap-2 rounded-[8px] border px-2.5 py-2 ${
-              launch.phase === 'failed'
-                ? 'border-accent-error bg-accent-error-10'
-                : 'border-border-strong bg-bg-subtle'
+            onClick={() => {
+              if (launch.sessionId) onSelect(launch.sessionId);
+            }}
+            className={`group/session relative w-full rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${
+              !creatingNew && (selectedId === null || selectedId === launch.sessionId)
+                ? 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]'
+                : 'hover:bg-bg-hover'
             }`}
           >
-            <Mail
-              size={14}
-              strokeWidth={2}
-              className={`shrink-0 ${
-                launch.phase === 'failed' ? 'text-accent-error' : 'text-text-secondary'
-              }`}
-            />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[12px] font-medium text-text-primary">
+            {/* 第 1 行：标题（首条消息或「新会话」） */}
+            <div className="flex min-w-0 items-start gap-1.5">
+              <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
                 {launch.text || t('workbench.launch.railTitle')}
               </span>
-              <span className="truncate text-[11px] text-text-muted">
-                {launch.phase === 'failed'
-                  ? t('workbench.launch.railFailed')
-                  : launch.phase === 'claiming'
-                    ? t('workbench.launch.railClaiming', { name: launch.agentName })
-                    : t('workbench.launch.railWarming', { name: launch.agentName })}
-              </span>
             </div>
-            {launch.phase === 'failed' ? (
-              <button
-                type="button"
-                data-testid="rail-launch-dismiss"
-                onClick={() => onDismissLaunch?.()}
-                aria-label={t('workbench.launch.dismiss')}
-                className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:text-text-primary"
-              >
-                <X size={13} />
-              </button>
-            ) : (
-              <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
-            )}
+
+            {/* 第 2 行：预览状态说明 */}
+            <p
+              className={`mt-[3px] line-clamp-2 break-words text-[12px] leading-[1.5] ${
+                launch.phase === 'failed' ? 'text-[var(--card-pv)]' : 'text-[var(--card-meta)]'
+              }`}
+            >
+              {launch.phase === 'failed'
+                ? t('workbench.launch.railFailed')
+                : launch.phase === 'claiming'
+                  ? t('workbench.launch.railClaiming', { name: launch.agentName })
+                  : t('workbench.launch.railWarming', { name: launch.agentName })}
+            </p>
+
+            {/* 第 3 行：状态行（与 SessionItem 对齐） */}
+            <div className="mt-2 flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {launch.phase === 'failed' ? (
+                  <span className="inline-flex min-w-0 items-center gap-1 font-medium text-accent-error">
+                    <AlertTriangle size={11} className="shrink-0" />
+                    <span className="truncate">{t('workbench.launch.failedTitle')}</span>
+                  </span>
+                ) : launch.phase === 'claiming' ? (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                      <Loader2 size={10} className="shrink-0 animate-spin text-text-muted" />
+                      <span className="truncate">{t('workbench.forYou.sending')}</span>
+                    </span>
+                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                      <span
+                        aria-hidden
+                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
+                      />
+                      <span className="truncate">{t('workbench.forYou.agentOnIt')}</span>
+                    </span>
+                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                  </>
+                )}
+              </div>
+              {launch.phase === 'failed' ? (
+                <button
+                  type="button"
+                  data-testid="rail-launch-dismiss"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDismissLaunch?.();
+                  }}
+                  aria-label={t('workbench.launch.dismiss')}
+                  className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -1178,13 +1226,14 @@ export default function SessionRail({
         })}
       </div>
 
-      {/* 建完就交出去。等编号、反复重取清单、把中栏切过去，这些事由页面那边的启动状态
-          统一管（见 `useSessionLaunch`）。 */}
-      <NewSessionModal
-        isOpen={newOpen}
-        onClose={() => setNewOpen(false)}
-        onCreated={(pending, text) => onCreated?.(pending, text)}
-      />
+      {/* 页面传入 `onToggleNew` 时由中栏直接渲染内联新建会话起始页；仅在单独挂载左栏时兜底渲染。 */}
+      {!onToggleNew ? (
+        <NewSessionModal
+          isOpen={newOpen}
+          onClose={() => setNewOpen(false)}
+          onCreated={(pending, text) => onCreated?.(pending, text)}
+        />
+      ) : null}
     </aside>
   );
 }

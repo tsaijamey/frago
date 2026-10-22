@@ -633,16 +633,30 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByTestId('rail-launch')).toBeNull();
   });
 
-  it('新建会话的入口在左栏顶部，点开是弹窗不是跳页', async () => {
-    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
-    // 搜索框右边一颗中性图标按钮，不再是一整块实心绿
+  it('新建会话的入口在左栏顶部，交给页面中栏渲染内联起始页（单独摆左栏时仍可内联展开三项决定）', async () => {
+    const onToggleNew = vi.fn();
+    const { unmount } = render(
+      <TestRail
+        state={railState()}
+        selectedId={null}
+        onSelect={NOOP}
+        creatingNew={false}
+        onToggleNew={onToggleNew}
+      />
+    );
     const entry = screen.getByTestId('new-session');
     expect(entry.getAttribute('aria-label')).toBe('新建会话');
     expect(entry.className).not.toContain('accent-primary');
-    expect(screen.queryByText('让它在哪个项目里干活？')).toBeNull();
+    fireEvent.click(entry);
+    expect(onToggleNew).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('new-session-inline')).toBeNull();
+    unmount();
+
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('new-session'));
     });
+    expect(screen.getByTestId('new-session-inline')).toBeTruthy();
     // 三块的标题是三句并列的问话——人读一遍就知道自己在做哪三个决定。
     expect(screen.getByText('这场会话交给哪个 agent 跑？')).toBeTruthy();
     expect(screen.getByText('让它在哪个项目里干活？')).toBeTruthy();

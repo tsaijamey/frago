@@ -51,12 +51,14 @@ describe('新会话启动面板', () => {
     expect(steps[1].getAttribute('data-state')).toBe('active');
   });
 
-  it('没起来：原因照抄摆出来，由人自己收掉', () => {
+  it('没起来：原因照抄摆出来，由人自己收掉或返回修改', () => {
     const onDismiss = vi.fn();
+    const onBackToEdit = vi.fn();
     render(
       <SessionLaunchPanel
         launch={{ ...BASE, phase: 'failed', error: 'codex 起不来：命令没找到' }}
         onDismiss={onDismiss}
+        onBackToEdit={onBackToEdit}
       />
     );
 
@@ -64,6 +66,10 @@ describe('新会话启动面板', () => {
     // 没起来那一档不摆进度：两步都没走完，画个半截进度只会误导。
     expect(screen.queryAllByTestId('launch-step')).toHaveLength(0);
     expect(screen.getByTestId('launch-first-message').textContent).toBe('把 recipes 目录清一遍');
+    expect(screen.getByTestId('trail-bubble').getAttribute('data-fresh')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('launch-back-to-edit'));
+    expect(onBackToEdit).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByTestId('launch-dismiss'));
     expect(onDismiss).toHaveBeenCalledTimes(1);

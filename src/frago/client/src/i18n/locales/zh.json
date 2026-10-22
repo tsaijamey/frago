@@ -1922,7 +1922,21 @@
       "movedUpMany": "{{n}} 句话已经移进上面的对话",
       "usageHint": "现在哪匹模型在答、上下文吃了多大、这一场一共烧了多少",
       "packedBanner": "已打包 {{n}} 条文档批注",
-      "packedClear": "清空"
+      "packedClear": "清空",
+      "enqueue": "Next Task",
+      "enqueueing": "添加中",
+      "enqueueHint": "等当前会话停下来（且近 6 轮无交互卡）后再自动按序输入，不在运行中直接插话"
+    },
+    "queue": {
+      "title": "Next Task",
+      "count": "{{n}} 条待执行",
+      "waitingForStop": "等会话 stop 且近 6 轮无交互卡后自动输入最早一条",
+      "blockedByCard": "近 6 轮（[end, end-5]）存在待确认交互卡 · 暂停自动输入",
+      "readyToInject": "会话已 stop 且近 6 轮无交互卡 · 即将自动输入最早一条",
+      "nextBadge": "最早",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "remove": "移除"
     },
     "newSession": {
       "title": "新建会话",

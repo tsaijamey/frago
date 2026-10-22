@@ -796,3 +796,78 @@ describe('文档批注打包填入输入框', () => {
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
   });
 });
+
+describe('Next Task 列表与独立投递按钮', () => {
+  it('会话正在执行（running）时，Send 依然走直接发送（进会话原生队列），Next Task 按钮单独负责停后自动注入', async () => {
+    const onSent = vi.fn();
+    const onEnqueue = vi.fn(async () => ({}));
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running
+        onSent={onSent}
+        onEnqueue={onEnqueue}
+      />
+    );
+
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    // 1. 点 Next Task：进入会话 Next Task 队列，不触发直接 send
+    fireEvent.change(input, { target: { value: '等这轮停了再跑这句' } });
+    expect(screen.getByTestId('composer-send').textContent).toContain('发送');
+    expect(screen.getByTestId('composer-enqueue').textContent).toContain('Next Task');
+    fireEvent.click(screen.getByTestId('composer-enqueue'));
+
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalledTimes(1));
+    expect(onEnqueue).toHaveBeenCalledWith('等这轮停了再跑这句', [], [], []);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled();
+    expect(input.value).toBe('');
+
+    // 2. 点发送（Send）：即使 running 为 true 也照常直接发进当前会话，绝不被 Next Task 替代
+    fireEvent.change(input, { target: { value: '现在直接插话进去' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBody(fetchMock).text).toBe('现在直接插话进去');
+  });
+
+  it('展示 Next Task 列表、最早标记、交互卡阻断状态并支持删除与移动', () => {
+    const onRemove = vi.fn();
+    const onMove = vi.fn();
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running={false}
+        onSent={NOOP}
+        queueBlockedByCard
+        queueItems={[
+          { id: 'q-1', text: '第一条待注入', skills: ['git-push'], attachments: 1, created_at: 10 },
+          { id: 'q-2', text: '第二条待注入', skills: [], attachments: 0, created_at: 20 },
+        ]}
+        onRemoveQueueItem={onRemove}
+        onMoveQueueItem={onMove}
+      />
+    );
+
+    const queueBox = screen.getByTestId('session-message-queue');
+    expect(queueBox.getAttribute('data-blocked-by-card')).toBe('yes');
+    expect(screen.getByTestId('session-queue-count').textContent).toContain('2');
+    expect(screen.getByTestId('session-queue-status').textContent).toContain('[end, end-5]');
+
+    const items = screen.getAllByTestId('session-queue-item');
+    expect(items).toHaveLength(2);
+    expect(items[0].getAttribute('data-earliest')).toBe('yes');
+    expect(items[0].textContent).toContain('第一条待注入');
+    expect(items[0].textContent).toContain('/git-push');
+    expect(items[1].getAttribute('data-earliest')).toBe('no');
+
+    fireEvent.click(screen.getByTestId('session-queue-down-0'));
+    expect(onMove).toHaveBeenCalledWith('q-1', 'down');
+
+    const deleteButtons = screen.getAllByTestId('session-queue-delete');
+    fireEvent.click(deleteButtons[0]);
+    expect(onRemove).toHaveBeenCalledWith('q-1');
+  });
+});

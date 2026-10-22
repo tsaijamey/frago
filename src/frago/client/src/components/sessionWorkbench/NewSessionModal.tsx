@@ -68,24 +68,26 @@
  * 的启动面板接手——对话框继续挂在屏幕上会挡住新会话本身，而人此刻要看的正是它。
  */
 
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CornerLeftUp,
   Folder,
   FolderSearch,
   Home,
-  Loader2,
-  Plus,
+  Info,
 } from 'lucide-react';
-import Modal from '../ui/Modal';
 import { browseDirectories, getSystemDirectories } from '../../api/client';
 import { getRecentDirectories, addRecentDirectory } from '../../utils/recentDirectories';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
-import { MAX_ATTACHMENTS, useAttachments } from '@/hooks/useAttachments';
-import type { DirectoryListing } from '@/types/api';
+import { useAttachments } from '@/hooks/useAttachments';
+import { modKey } from '@/hooks/usePlatform';
+import { withTilde } from './filePaths';
+import PromptComposerBox from './PromptComposerBox';
+import type { DirectoryListing, SkillItem } from '@/types/api';
 import {
   createSession,
   pickDefaultAgent,
@@ -99,7 +101,7 @@ interface NewSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
   /**
-   * 建出去了。第二个参数是人刚打的那第一句话——对话框一关它就没别的地方存了，而接下来
+   * 建出去了。第二个参数是人刚打的那第一句话——面板交接后就没别的地方存了，而接下来
    * 那十几秒的等待要靠它告诉人"你在等的是哪一句"。
    */
   onCreated: (launch: PendingLaunch, text: string) => void;
@@ -110,23 +112,12 @@ interface DirChoice {
   hint?: string;
 }
 
-/** 一块的标题与灰字说明。三块长得一模一样，人才看得出它们是三个并列的问题。 */
-function SectionHeading({ id, title, hint }: { id: string; title: string; hint: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <h4 id={id} className="text-[13px] font-semibold text-[var(--text-primary)]">
-        {title}
-      </h4>
-      <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">{hint}</p>
-    </div>
-  );
-}
-
 export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessionModalProps) {
   const { t } = useTranslation();
   const [choices, setChoices] = useState<DirChoice[]>([]);
   const [dir, setDir] = useState('');
   const [text, setText] = useState('');
+  const [skills, setSkills] = useState<SkillItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [agent, setAgent] = useState<string | null>(null);
@@ -137,9 +128,15 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   const [filter, setFilter] = useState('');
   const { images, documents, addFiles, removeImage, removeDocument, clear, count } =
     useAttachments();
-  const filePicker = useRef<HTMLInputElement>(null);
   /** 连点几层，回来的顺序未必是点下去的顺序。只认最后一次点的那一层。 */
   const browseSeq = useRef(0);
+
+  const addSkill = useCallback((skill: SkillItem) => {
+    setSkills((prev) => (prev.some((s) => s.name === skill.name) ? prev : [...prev, skill]));
+  }, []);
+  const removeSkill = useCallback((name: string) => {
+    setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
 
   const clients = useAgentClients(isOpen);
   const selectable = useMemo(() => clients.agents.filter((a) => a.selectable), [clients.agents]);
@@ -152,6 +149,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   useEffect(() => {
     if (!isOpen) return;
     setText('');
+    setSkills([]);
     setError(null);
     setCreating(false);
     setShowUnavailable(false);
@@ -163,7 +161,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     let cancelled = false;
 
     const load = async () => {
-      const recent = getRecentDirectories().map((r) => ({ path: r.path }));
+      const recent = getRecentDirectories().map((r) => ({ path: r.path, hint: 'recent' }));
       let system: DirChoice[] = [];
 
       try {
@@ -234,18 +232,12 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     return needle ? entries.filter((e) => e.name.toLowerCase().includes(needle)) : entries;
   }, [listing, filter]);
 
-  // 只有图、一个字没打也算数：人截了张图想说"看这个"，逼他再补一句废话没有道理。
-  // 与中栏输入区同一条判据，服务端那边也认这一档。
+  // 只有图或只挑了 skill、一个字没打也算数：与会话详情输入区（Composer）同一条判据，服务端那边也认这一档。
   const canSubmit =
-    !creating && !!chosen && dir.trim().length > 0 && (text.trim().length > 0 || count > 0);
-
-  /** 截图粘贴进来的是文件而不是文字，拦下来当附件，别让它变成一串乱码落进文本框。 */
-  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = e.clipboardData?.files;
-    if (!files || files.length === 0) return;
-    e.preventDefault();
-    void addFiles(files);
-  };
+    !creating &&
+    !!chosen &&
+    dir.trim().length > 0 &&
+    (text.trim().length > 0 || count > 0 || skills.length > 0);
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     const files = e.dataTransfer?.files;
@@ -266,326 +258,354 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         text: first,
         images: images.map((im) => im.dataUrl),
         documents: documents.map((d) => ({ name: d.name, data: d.dataUrl })),
+        ...(skills.length ? { skills: skills.map((s) => s.name) } : {}),
       });
       rememberLastAgent(chosen.agent_type);
       addRecentDirectory(dir.trim());
       onCreated(launch, first);
       onClose();
     } catch (e) {
-      // 建不起来就**留在对话框里**并把话原样摆出来。关掉再弹一句提示，人打的那段话
+      // 建不起来就**留在起始页里**并把话原样摆出来。关掉再弹一句提示，人打的那段话
       // 就没了，还得从头再敲一遍。
       setError(e instanceof Error ? e.message : t('workbench.errors.createFailedPlain'));
       setCreating(false);
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('workbench.newSession.title')}>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <SectionHeading
-            id="new-session-client"
-            title={t('workbench.newSession.clientLabel')}
-            hint={t('workbench.newSession.clientHint')}
-          />
-
-          {clients.loading && !clients.agents.length ? (
-            <p className="text-[11px] text-[var(--text-muted)]">
-              {t('workbench.newSession.probing')}
-            </p>
-          ) : clients.error ? (
-            <p className="text-xs text-[var(--accent-error)] break-words">{clients.error}</p>
-          ) : !selectable.length ? (
-            <p className="text-xs text-[var(--accent-error)] break-words">
-              {t('workbench.newSession.noneAvailable')}
-            </p>
-          ) : (
-            <div
-              className="flex flex-wrap gap-1.5"
-              role="radiogroup"
-              aria-labelledby="new-session-client"
-            >
-              {selectable.map((c) => (
-                <button
-                  key={c.agent_type}
-                  type="button"
-                  role="radio"
-                  aria-checked={c.agent_type === agent}
-                  data-testid={`agent-${c.agent_type}`}
-                  onClick={() => setAgent(c.agent_type)}
-                  title={c.path ?? undefined}
-                  className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
-                    c.agent_type === agent
-                      ? 'bg-[var(--accent-primary-10)] text-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)]'
-                      : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {c.display_name}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* 编号要等认领的那两家，把这段空窗先说在前头——点完创建之后才发现要等，
-              人会以为卡住了。 */}
-          {chosen?.id_origin === 'claimed' ? (
-            <p className="text-[11px] text-[var(--text-muted)] -mt-0.5">
-              {t('workbench.newSession.claimedHint', { name: chosen.display_name })}
-            </p>
-          ) : null}
-
-          {/* 用不了的那几家不藏：藏起来人只会以为 frago 不支持它，而真相往往只是没装。 */}
-          {unavailable.length ? (
-            <div className="flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => setShowUnavailable((v) => !v)}
-                aria-expanded={showUnavailable}
-                data-testid="toggle-unavailable-agents"
-                className="flex items-center gap-1 self-start text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-              >
-                {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <span>
-                  {t('workbench.newSession.unavailableCount', { n: unavailable.length })}
+    <div
+      data-testid="new-session-inline"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg-primary"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
+      {/* 顶部栏：与会话详情页头同高（52px），实时反映当前挑中的 CLI Agent 与工作目录 */}
+      <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border-color px-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="hidden shrink-0 text-text-muted hover:text-text-primary phone:block"
+          aria-label={t('workbench.page.backToList')}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <div className="flex min-w-0 flex-1 flex-col justify-center">
+          <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
+            {t('workbench.newSession.title')}
+          </h1>
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+            {chosen ? (
+              <>
+                <span className="shrink-0 whitespace-nowrap text-text-secondary">
+                  {chosen.display_name}
                 </span>
-              </button>
-              {showUnavailable
-                ? unavailable.map((c) => (
-                    <p
-                      key={c.agent_type}
-                      className="pl-4 text-[11px] leading-relaxed text-[var(--text-muted)]"
-                    >
-                      <span className="text-[var(--text-secondary)]">{c.display_name}</span>
-                      {' — '}
-                      {agentReasonText(c.reason)}
-                    </p>
-                  ))
-                : null}
-            </div>
-          ) : null}
+                {dir.trim() ? <span aria-hidden className="shrink-0 text-text-dim">·</span> : null}
+              </>
+            ) : null}
+            {dir.trim() ? (
+              <span className="min-w-[56px] truncate font-mono" title={dir.trim()}>
+                {withTilde(dir.trim())}
+              </span>
+            ) : null}
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-7 shrink-0 rounded-[7px] px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+        >
+          {t('workbench.newSession.cancel')}
+        </button>
+      </header>
 
-        <div className="flex flex-col gap-2 border-t border-[var(--border-color)] pt-4">
-          <SectionHeading
-            id="new-session-cwd"
-            title={t('workbench.newSession.cwdLabel')}
-            hint={t('workbench.newSession.cwdHint')}
-          />
-
-          {/* 翻目录和最近用过的是同一块地方的两个面：两份清单一起摊开，第一句话那一块
-              会被挤出屏幕。 */}
-          <div className="flex items-center justify-between gap-2">
-            {/* 翻目录时这一行是人现在停在哪一层，**路径照原样印**——大写化会把
-                `/Users/frago` 印成 `/USERS/FRAGO`，那是一条这台机器上并不存在的路径。
-                只有"最近用过"那个小标题才走通栏小标题那套大写字样。 */}
-            {browsing ? (
-              <span
-                title={listing?.path ?? ''}
-                className="truncate font-mono text-[11px] text-[var(--text-secondary)]"
+      {/* 居中 New Chat 风格起始舞台 */}
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 pb-9 pt-[clamp(24px,6vh,64px)]">
+        <div className="flex w-full max-w-[680px] flex-col gap-3.5">
+          {/* 1. 标题与 CLI Agent 选择条 */}
+          <div className="flex flex-col gap-2.5 px-0.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h2
+                id="new-session-client"
+                className="text-[20px] font-semibold leading-[1.25] tracking-[-0.015em] text-text-primary"
               >
-                {listing?.path ?? ''}
+                {t('workbench.newSession.clientLabel')}
+              </h2>
+              <span className="text-[12px] text-text-muted">
+                {t('workbench.newSession.clientHint')}
               </span>
+            </div>
+
+            {clients.loading && !clients.agents.length ? (
+              <p className="text-[11.5px] text-text-muted">
+                {t('workbench.newSession.probing')}
+              </p>
+            ) : clients.error ? (
+              <p className="break-words text-xs text-accent-error">{clients.error}</p>
+            ) : !selectable.length ? (
+              <p className="break-words text-xs text-accent-error">
+                {t('workbench.newSession.noneAvailable')}
+              </p>
             ) : (
-              <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                {t('workbench.newSession.cwdRecent')}
-              </span>
+              <div
+                className="flex flex-wrap items-center gap-1.5"
+                role="radiogroup"
+                aria-labelledby="new-session-client"
+              >
+                {selectable.map((c) => {
+                  const selected = c.agent_type === agent;
+                  return (
+                    <button
+                      key={c.agent_type}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      data-testid={`agent-${c.agent_type}`}
+                      onClick={() => setAgent(c.agent_type)}
+                      title={c.path ?? undefined}
+                      className={`inline-flex h-7 items-center gap-1.5 rounded-[8px] border px-[11px] text-[12.5px] transition-colors ${
+                        selected
+                          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
+                          : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                      }`}
+                    >
+                      <span
+                        aria-hidden
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          selected ? 'bg-accent-primary' : 'bg-text-dim'
+                        }`}
+                      />
+                      {c.display_name}
+                    </button>
+                  );
+                })}
+
+                {/* 用不了的那几家不藏：折在一句话后面，点开看原因 */}
+                {unavailable.length ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowUnavailable((v) => !v)}
+                    aria-expanded={showUnavailable}
+                    data-testid="toggle-unavailable-agents"
+                    className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11.5px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
+                  >
+                    {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    <span>
+                      {t('workbench.newSession.unavailableCount', { n: unavailable.length })}
+                    </span>
+                  </button>
+                ) : null}
+              </div>
             )}
-            <button
-              type="button"
-              data-testid="toggle-browse-dirs"
-              onClick={toggleBrowsing}
-              aria-expanded={browsing}
-              className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-            >
-              <FolderSearch size={13} strokeWidth={1.5} />
-              {browsing
-                ? t('workbench.newSession.cwdBrowseClose')
-                : t('workbench.newSession.cwdBrowse')}
-            </button>
+
+            {/* 编号要等认领的那两家，把这段空窗先说在前头 */}
+            {chosen?.id_origin === 'claimed' ? (
+              <p className="flex items-center gap-1.5 pt-0.5 text-[11.5px] leading-[1.45] text-text-muted">
+                <Info size={13} className="shrink-0 text-text-dim" />
+                <span>{t('workbench.newSession.claimedHint', { name: chosen.display_name })}</span>
+              </p>
+            ) : null}
+
+            {showUnavailable && unavailable.length ? (
+              <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-2.5 py-2 text-[11.5px] text-text-muted">
+                {unavailable.map((c) => (
+                  <p key={c.agent_type} className="leading-relaxed">
+                    <span className="font-medium text-text-secondary">{c.display_name}</span>
+                    {' — '}
+                    {agentReasonText(c.reason)}
+                  </p>
+                ))}
+              </div>
+            ) : null}
           </div>
 
-          {browsing ? (
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  data-testid="browse-up"
-                  disabled={!listing?.parent || browseLoading}
-                  onClick={() => listing?.parent && void openFolder(listing.parent)}
-                  title={t('workbench.newSession.cwdUp')}
-                  aria-label={t('workbench.newSession.cwdUp')}
-                  className="shrink-0 rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40"
+          {/* 2. 核心首条消息输入框卡片（复用统一的 PromptComposerBox，支持 `/` 挑 skill、自动增高、粘贴/拖拽附件） */}
+          <PromptComposerBox
+            text={text}
+            onChangeText={setText}
+            skills={skills}
+            onAddSkill={addSkill}
+            onRemoveSkill={removeSkill}
+            onAddFiles={addFiles}
+            attachCount={count}
+            canSubmit={canSubmit}
+            submitting={creating}
+            onSubmit={handleCreate}
+            placeholder={t('workbench.newSession.firstMessagePlaceholder')}
+            idPrefix="new-session"
+            textareaId="new-session-input-box"
+            ariaLabelledBy="new-session-first"
+            minLines={4}
+            maxLines={9}
+            menuPlacement="below"
+            className="shadow-[0_6px_24px_rgba(0,0,0,0.14)]"
+            headerSlot={
+              <div className="flex items-baseline justify-between gap-2">
+                <label
+                  id="new-session-first"
+                  htmlFor="new-session-input-box"
+                  className="text-[12px] font-medium text-text-secondary"
                 >
-                  <CornerLeftUp size={14} strokeWidth={1.5} />
-                </button>
-                <input
-                  type="text"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  placeholder={t('workbench.newSession.cwdFilter')}
-                  data-testid="browse-filter"
-                  className="min-w-0 flex-1 rounded-md border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-                />
+                  {t('workbench.newSession.firstMessage')}
+                </label>
+                <span className="text-[11px] text-text-muted">
+                  {t('workbench.newSession.firstMessageOptional')}
+                </span>
               </div>
+            }
+            attachmentSlot={
+              <AttachmentStrip
+                images={images}
+                documents={documents}
+                onRemoveImage={removeImage}
+                onRemoveDocument={removeDocument}
+                idPrefix="new-session"
+              />
+            }
+            attachButtonLabel={t('workbench.newSession.attach')}
+            rightActionsSlot={
+              <span className="mr-1 font-mono text-[11px] text-text-dim">{modKey}↵</span>
+            }
+            submitLabel={t('workbench.newSession.create')}
+          />
 
-              <div className="flex max-h-36 flex-col gap-1 overflow-y-auto" data-testid="browse-list">
-                {browseLoading && !listing ? (
-                  <p className="px-3 py-2 text-[11px] text-[var(--text-muted)]">
-                    {t('workbench.newSession.cwdLoading')}
-                  </p>
-                ) : visibleEntries.length ? (
-                  visibleEntries.map((e) => (
-                    <button
-                      key={e.path}
-                      type="button"
-                      onClick={() => void openFolder(e.path)}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]"
-                    >
-                      <Folder size={14} className="shrink-0" />
-                      <span className="truncate font-mono text-xs">{e.name}</span>
-                      <ChevronRight size={12} className="ml-auto shrink-0 opacity-50" />
-                    </button>
-                  ))
-                ) : (
-                  <p className="px-3 py-2 text-[11px] text-[var(--text-muted)]">
-                    {t('workbench.newSession.cwdEmpty')}
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex max-h-36 flex-col gap-1 overflow-y-auto">
-              {choices.map((c) => (
-                <button
-                  key={c.path}
-                  type="button"
-                  onClick={() => setDir(c.path)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-md text-left transition-colors ${
-                    c.path === dir
-                      ? 'bg-[var(--accent-primary-10)] text-[var(--accent-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-                  }`}
-                >
-                  {c.hint === 'home' ? (
-                    <Home size={14} className="shrink-0" />
-                  ) : (
-                    <Folder size={14} className="shrink-0" />
-                  )}
-                  <span className="truncate font-mono text-xs">{c.path}</span>
-                  {c.hint && (
-                    <span className="ml-auto shrink-0 text-[11px] text-[var(--text-muted)]">
-                      {c.hint}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+          {error && (
+            <p className="break-words rounded-[8px] bg-accent-error-10 px-3 py-2 text-xs text-accent-error">
+              {t('workbench.newSession.createFailed', { reason: error })}
+            </p>
           )}
 
-          <label
-            htmlFor="new-session-cwd-path"
-            className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]"
-          >
-            {t('workbench.newSession.cwdPathLabel')}
-          </label>
-          <input
-            id="new-session-cwd-path"
-            type="text"
-            value={dir}
-            onChange={(e) => setDir(e.target.value)}
-            placeholder="/absolute/path"
-            className="bg-[var(--bg-subtle)] border border-[var(--border-color)] rounded-md px-3 py-2 text-xs font-mono text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-          />
-        </div>
+          {/* 3. 启动目录（Working folder）内联配置卡 */}
+          <div className="flex flex-col gap-2 rounded-[11px] border border-border-color bg-bg-secondary px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                id="new-session-cwd"
+                htmlFor="new-session-cwd-path"
+                className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-text-secondary"
+                title={t('workbench.newSession.cwdHint')}
+              >
+                <Folder size={14} className="text-text-muted" />
+                {t('workbench.newSession.cwdLabel')}
+              </label>
 
-        {/* 第一句话这一块收图片与文档，三条路（粘贴、拖入、选文件）与中栏输入区完全相同。
-            人开一场会话往往就是为了说"照着这张图改"，从前这里只收文字，那张图得等会话
-            起来之后再补发一次，而第一句话才是最需要它的那一句。 */}
-        <div
-          className="flex flex-col gap-2 border-t border-[var(--border-color)] pt-4"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-        >
-          <SectionHeading
-            id="new-session-first"
-            title={t('workbench.newSession.firstMessage')}
-            hint={t('workbench.newSession.firstMessageOptional')}
-          />
+              <input
+                id="new-session-cwd-path"
+                type="text"
+                value={dir}
+                onChange={(e) => setDir(e.target.value)}
+                placeholder="/absolute/path"
+                aria-label={t('workbench.newSession.cwdPathLabel')}
+                className="h-7 min-w-[160px] flex-1 rounded-[7px] border border-border-color bg-bg-primary px-2.5 font-mono text-[12px] text-text-primary outline-none focus:border-[var(--sel-border)]"
+              />
 
-          <AttachmentStrip
-            images={images}
-            documents={documents}
-            onRemoveImage={removeImage}
-            onRemoveDocument={removeDocument}
-            idPrefix="new-session"
-          />
+              <button
+                type="button"
+                data-testid="toggle-browse-dirs"
+                onClick={toggleBrowsing}
+                aria-expanded={browsing}
+                className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[11.5px] transition-colors ${
+                  browsing
+                    ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                    : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                }`}
+              >
+                <FolderSearch size={13} strokeWidth={1.5} />
+                {browsing
+                  ? t('workbench.newSession.cwdBrowseClose')
+                  : t('workbench.newSession.cwdBrowse')}
+              </button>
+            </div>
 
-          <textarea
-            value={text}
-            data-testid="new-session-input"
-            aria-labelledby="new-session-first"
-            onChange={(e) => setText(e.target.value)}
-            onPaste={handlePaste}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void handleCreate();
-              }
-            }}
-            rows={3}
-            placeholder={t('workbench.newSession.firstMessagePlaceholder')}
-            className="resize-none bg-[var(--bg-subtle)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
-          />
+            {browsing ? (
+              <div className="flex flex-col gap-2 border-t border-border-color pt-2.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid="browse-up"
+                    disabled={!listing?.parent || browseLoading}
+                    onClick={() => listing?.parent && void openFolder(listing.parent)}
+                    title={t('workbench.newSession.cwdUp')}
+                    aria-label={t('workbench.newSession.cwdUp')}
+                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border border-border-color bg-bg-primary px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+                  >
+                    <CornerLeftUp size={13} strokeWidth={1.5} />
+                    <span>{t('workbench.newSession.cwdUp')}</span>
+                  </button>
+                  <input
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder={t('workbench.newSession.cwdFilter')}
+                    data-testid="browse-filter"
+                    className="h-7 min-w-0 flex-1 rounded-[7px] border border-border-color bg-bg-primary px-2.5 text-[12px] text-text-primary outline-none focus:border-[var(--sel-border)]"
+                  />
+                </div>
 
-          <input
-            ref={filePicker}
-            type="file"
-            multiple
-            hidden
-            data-testid="new-session-file"
-            onChange={(e) => {
-              if (e.target.files) void addFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          {/* 从前这是一行灰字，看不出能点。描个边，它才像个按钮。 */}
-          <button
-            type="button"
-            data-testid="new-session-pick"
-            disabled={count >= MAX_ATTACHMENTS}
-            onClick={() => filePicker.current?.click()}
-            className="flex items-center gap-1.5 self-start rounded-md border border-[var(--border-color)] px-2.5 py-1.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-40"
-          >
-            <Plus size={13} strokeWidth={1.5} />
-            {t('workbench.newSession.attach')}
-          </button>
-        </div>
-
-        {error && (
-          <p className="text-xs text-[var(--accent-error)] break-words">
-            {t('workbench.newSession.createFailed', { reason: error })}
-          </p>
-        )}
-
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--border-color)] pt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-2 rounded-md text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-          >
-            {t('workbench.newSession.cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCreate()}
-            disabled={!canSubmit}
-            className="flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--accent-primary)] text-[var(--text-on-accent)] disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {creating ? <Loader2 size={13} className="animate-spin" /> : null}
-            {t('workbench.newSession.create')}
-          </button>
+                <div
+                  className="flex max-h-80 flex-col divide-y divide-border-color overflow-y-auto rounded-[8px] border border-border-color bg-bg-primary"
+                  data-testid="browse-list"
+                >
+                  {browseLoading && !listing ? (
+                    <p className="px-3 py-3 text-[12px] text-text-muted">
+                      {t('workbench.newSession.cwdLoading')}
+                    </p>
+                  ) : visibleEntries.length ? (
+                    visibleEntries.map((e) => (
+                      <button
+                        key={e.path}
+                        type="button"
+                        onClick={() => void openFolder(e.path)}
+                        title={e.path}
+                        className="flex h-8 w-full shrink-0 items-center gap-2.5 px-3 text-left font-mono text-[12.5px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        <Folder size={14} className="shrink-0 text-text-muted" />
+                        <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                        <ChevronRight size={13} className="shrink-0 text-text-dim" />
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-3 py-3 text-center text-[12px] text-text-muted">
+                      {t('workbench.newSession.cwdEmpty')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : choices.length ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {choices.map((c) => {
+                  const active = c.path === dir;
+                  return (
+                    <button
+                      key={c.path}
+                      type="button"
+                      onClick={() => setDir(c.path)}
+                      title={c.path}
+                      className={`inline-flex h-[25px] max-w-full items-center gap-1.5 rounded-[7px] border px-2.5 font-mono text-[11.5px] transition-colors ${
+                        active
+                          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                          : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                      }`}
+                    >
+                      {c.hint === 'home' ? (
+                        <Home size={12} className="shrink-0 text-text-muted" />
+                      ) : (
+                        <Folder size={12} className="shrink-0 text-text-muted" />
+                      )}
+                      <span className="truncate">{withTilde(c.path)}</span>
+                      {c.hint && (
+                        <span className="shrink-0 font-sans text-[10px] uppercase tracking-[0.03em] text-text-dim">
+                          {c.hint}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }

@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft, Loader2, Star } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Loader2, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
@@ -33,6 +33,7 @@ import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from '
 import { squeeze, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
+import NewSessionModal from './NewSessionModal';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
 import SessionTimeline from './SessionTimeline';
@@ -54,6 +55,7 @@ import { loadYaml, parseUiComponentOutput, trailingDecision, yamlNow } from '@/u
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
+import { useSessionQueue } from '@/hooks/useSessionQueue';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
@@ -124,6 +126,8 @@ export default function SessionWorkbenchPage() {
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
+  const [creatingNew, setCreatingNew] = useState(false);
   /** 刚复制了哪一场的续接命令：页头「…」菜单里那一项换成勾选，1.5 秒后复原。 */
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const handleCopy = useCallback(
@@ -252,6 +256,16 @@ export default function SessionWorkbenchPage() {
     return null;
   }, [trails]);
   const inFlight = latestTrail !== null && !trailSettled(latestTrail);
+  const sessionRunning = Boolean(selected?.status === 'running' || awaitingAgent || inFlight);
+  const sessionQueue = useSessionQueue(selectedId, {
+    records,
+    recordsSessionId,
+    running: sessionRunning,
+    onInjected: () => {
+      void reload();
+      void sessions.reload();
+    },
+  });
   const sendingId =
     selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
   const busyId = selectedId && inFlight ? selectedId : null;
@@ -618,6 +632,7 @@ export default function SessionWorkbenchPage() {
 
   const openSession = useCallback(
     (sid: string) => {
+      setCreatingNew(false);
       setWorkbenchSessionId(sid);
       void sessions.reload();
     },
@@ -794,6 +809,7 @@ export default function SessionWorkbenchPage() {
       return;
     }
     bringBackRef.current = { parent: branchParent, child: selectedId, text: reply };
+    setCreatingNew(false);
     setWorkbenchSessionId(branchParent);
   }, [selectedId, branchParent, records, recordsSessionId, setWorkbenchSessionId, showToast, t]);
 
@@ -858,6 +874,7 @@ export default function SessionWorkbenchPage() {
     setHandingOff(true);
     try {
       const pending = await handoffSession(selectedId);
+      setCreatingNew(false);
       setWorkbenchSessionId(null);
       begin(pending, t('workbench.composer.handoffLaunchText', { title: pending.old_title }));
       void sessions.reload();
@@ -954,15 +971,21 @@ export default function SessionWorkbenchPage() {
     <div data-session-menu-page className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
       style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
     >
-      {/* 手机上一次只放得下一栏：没选会话时给清单，选了就整屏让给记录流。 */}
-      <div className={`min-h-0 min-w-0 ${selectedId || showLaunch ? 'phone:hidden' : ''}`}>
+      {/* 手机上一次只放得下一栏：没选会话时给清单，选了或正在新建时整屏让给中栏。 */}
+      <div className={`min-h-0 min-w-0 ${selectedId || showLaunch || creatingNew ? 'phone:hidden' : ''}`}>
         <SessionRail
           state={sessions}
-          selectedId={selectedId}
-          onSelect={setWorkbenchSessionId}
+          selectedId={creatingNew ? null : selectedId}
+          onSelect={(sid) => {
+            setCreatingNew(false);
+            setWorkbenchSessionId(sid);
+          }}
+          creatingNew={creatingNew}
+          onToggleNew={() => setCreatingNew((v) => !v)}
           launch={launch}
           onDismissLaunch={dismiss}
           onCreated={(pending, text) => {
+            setCreatingNew(false);
             setWorkbenchSessionId(null);
             begin(pending, text);
           }}
@@ -983,9 +1006,21 @@ export default function SessionWorkbenchPage() {
 
       <div
         className={`flex min-h-0 min-w-0 flex-col bg-bg-primary ${
-          selectedId || showLaunch ? '' : 'phone:hidden'
+          selectedId || showLaunch || creatingNew ? '' : 'phone:hidden'
         }`}
       >
+        {creatingNew ? (
+          <NewSessionModal
+            isOpen={creatingNew}
+            onClose={() => setCreatingNew(false)}
+            onCreated={(pending, text) => {
+              setCreatingNew(false);
+              setWorkbenchSessionId(null);
+              begin(pending, text);
+            }}
+          />
+        ) : (
+          <>
         {/* 页头两行：标题独占一行，状态 · 哪家 CLI · 目录另起一行（原型 20260924-page-polish）。
             整条 52px 高、左右 16px，与原型一致。 */}
         <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border-color px-4">
@@ -1061,7 +1096,9 @@ export default function SessionWorkbenchPage() {
               </div>
             ) : (
               <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
-                {showLaunch ? t('workbench.launch.railTitle') : t('workbench.page.title')}
+                {showLaunch
+                  ? launch?.text || t('workbench.launch.railTitle')
+                  : t('workbench.page.title')}
               </h1>
             )}
             {selected ? (
@@ -1107,6 +1144,40 @@ export default function SessionWorkbenchPage() {
                   {withTilde(selected.directory)}
                 </span>
               </div>
+            ) : showLaunch && launch ? (
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+                {launch.phase === 'failed' ? (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-error">
+                    <AlertTriangle size={11} className="shrink-0" />
+                    <span className="truncate">{t('workbench.launch.failedTitle')}</span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                ) : launch.phase === 'claiming' ? (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-text-secondary">
+                    <Loader2 size={10} className="shrink-0 animate-spin" />
+                    <span className="truncate">
+                      {t('workbench.launch.railClaiming', { name: launch.agentName })}
+                    </span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                ) : (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-primary">
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary" />
+                    <span className="truncate">
+                      {t('workbench.launch.title', { name: launch.agentName })}
+                    </span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                )}
+                <span className="shrink-0 whitespace-nowrap">{launch.agentName}</span>
+                <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                <span
+                  className="min-w-[56px] truncate font-mono"
+                  title={t('workbench.page.dirHint', { dir: launch.cwd })}
+                >
+                  {withTilde(launch.cwd)}
+                </span>
+              </div>
             ) : null}
           </div>
           {/* 用量月历的入口搬去了左栏底部：那里是「我还剩多少」的位置，与额度条并排。
@@ -1146,7 +1217,14 @@ export default function SessionWorkbenchPage() {
 
         <div className="min-h-0 flex-1">
           {showLaunch && launch ? (
-            <SessionLaunchPanel launch={launch} onDismiss={dismiss} />
+            <SessionLaunchPanel
+              launch={launch}
+              onDismiss={dismiss}
+              onBackToEdit={() => {
+                dismiss();
+                setCreatingNew(true);
+              }}
+            />
           ) : (
             <DecisionCardContext.Provider value={cards.host}>
             <RecordStream
@@ -1220,7 +1298,7 @@ export default function SessionWorkbenchPage() {
           family={selected?.family ?? null}
           // 上沿那条线上的小人跟着这一场走：会话在跑、或者刚发出去还没等到 agent 开口，
           // 他就在线上踱步；两样都落下他才坐下。
-          running={selected?.status === 'running' || awaitingAgent}
+          running={sessionRunning}
           onSendStart={cards.onSendStart}
           onSendFailed={cards.onSendFailed}
           onQueued={markQueued}
@@ -1236,6 +1314,11 @@ export default function SessionWorkbenchPage() {
           handingOff={handingOff}
           notice={composerNotice}
           onBringBack={canBringBack ? bringBack : undefined}
+          queueItems={sessionQueue.items}
+          queueBlockedByCard={sessionQueue.blockedByCard}
+          onEnqueue={sessionQueue.enqueue}
+          onRemoveQueueItem={sessionQueue.remove}
+          onMoveQueueItem={sessionQueue.move}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
@@ -1246,6 +1329,8 @@ export default function SessionWorkbenchPage() {
             settleSent(outboundId);
           }}
         />
+        )}
+          </>
         )}
       </div>
 

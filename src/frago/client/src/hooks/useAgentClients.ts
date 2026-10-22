@@ -87,6 +87,7 @@ export async function createSession(input: {
   text: string;
   images?: string[];
   documents?: { name: string; data: string }[];
+  skills?: string[];
 }): Promise<PendingLaunch> {
   const res = await fetch(`${API_BASE_URL}/api/workbench/sessions`, {
     method: 'POST',

@@ -16,6 +16,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import NewSessionModal from '../NewSessionModal';
+import { useDataStore } from '@/stores/dataStore';
 import i18n from '@/i18n';
 
 /**
@@ -322,5 +323,44 @@ describe('NewSessionModal — 挑工作目录', () => {
     fireEvent.click(screen.getByText('创建'));
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0].cwd).toBe('/Users/frago/Repos/frago');
+  });
+});
+
+describe('NewSessionModal — 敲 / 挑 skill（与详情输入区统一组件能力）', () => {
+  it('输入框敲 / 弹出 skill 菜单，回车挑中变成顶部引用签并随创建请求送出', async () => {
+    useDataStore.setState({
+      skills: [
+        {
+          name: 'git-push',
+          description: '智能分析改动并分组提交推送',
+        },
+        {
+          name: 'frago-local-deploy',
+          description: '构建前端并装机重启服务',
+        },
+      ] as never,
+    });
+
+    open();
+    await screen.findByTestId('agent-claude');
+
+    const input = screen.getByTestId('new-session-input') as HTMLTextAreaElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '/git', selectionStart: 4 } });
+
+    const menu = await screen.findByTestId('skill-menu');
+    expect(menu.textContent).toContain('git-push');
+    expect(menu.textContent).not.toContain('frago-local-deploy');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.queryByTestId('skill-menu')).toBeNull();
+    expect(input.value).toBe('');
+    expect(screen.getByTestId('new-session-skills').textContent).toContain('/git-push');
+
+    // 只挑了 skill、一个字没打也能创建，并将 skills 一并提交给后端
+    fireEvent.click(screen.getByText('创建'));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0].skills).toEqual(['git-push']);
   });
 });

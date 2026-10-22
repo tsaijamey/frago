@@ -42,36 +42,34 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
-  useMemo,
   useRef,
   useState,
-  type ClipboardEvent,
   type DragEvent,
-  type KeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowDown,
   ArrowUp,
   Clock,
   CornerUpLeft,
   GitBranch,
   GitBranchPlus,
+  ListOrdered,
   Loader2,
-  Plus,
   RotateCcw,
-  SendHorizontal,
+  ShieldAlert,
+  Trash2,
   X,
 } from 'lucide-react';
-import { useSendToSession, MAX_ATTACHMENTS } from '@/hooks/useSendToSession';
+import { useSendToSession } from '@/hooks/useSendToSession';
+import type { QueuedMessageItem } from '@/hooks/useSessionQueue';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
-import { useDataStore } from '@/stores/dataStore';
-import type { SkillItem } from '@/types/api';
-import SkillMenu, { filterSkills } from './SkillMenu';
-import { SkillQuote } from './SkillQuote';
+import PromptComposerBox, { slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
 import SendProgress from './SendProgress';
+
+export { slashQuery };
 
 export interface ComposerProps {
   sessionId: string | null;
@@ -158,6 +156,27 @@ export interface ComposerProps {
    * 切回原会话、把最后一段回复按引用格式填进去都由页面做，这里只是一颗按钮。
    */
   onBringBack?: () => void;
+  /**
+   * 会话自有消息队列里的待发消息（按先进先出顺序排列，首项为最早一条）。
+   */
+  queueItems?: QueuedMessageItem[];
+  /**
+   * 检测到末尾 `[end, end-5]` 轮会话存在未作答的交互卡时为 true，暂停自动注入。
+   */
+  queueBlockedByCard?: boolean;
+  /**
+   * 把当前输入区的内容加入会话自有消息队列（不在 agent 执行过程中发进其原生运行队列）。
+   */
+  onEnqueue?: (
+    text: string,
+    images: string[],
+    documents: { name: string; data: string }[],
+    skills: string[]
+  ) => Promise<unknown>;
+  /** 从会话自有消息队列中删除指定消息。 */
+  onRemoveQueueItem?: (itemId: string) => void | Promise<void>;
+  /** 调整会话自有消息队列中的顺序。 */
+  onMoveQueueItem?: (itemId: string, direction: 'up' | 'down') => void | Promise<void>;
 }
 
 /** 输入框上方那一行原地提示。 */
@@ -208,32 +227,8 @@ export function blockReason(sessionId: string | null): string | null {
   return null;
 }
 
-/**
- * 光标前面那一截是不是正在点名 skill：行首或空白后的一个 `/`，后面跟着还没打空格的几个字。
- *
- * 要求 `/` 前面是行首或空白，是为了不把 `src/frago` 这种路径里的斜杠当成要挑 skill。
- * 对上了回 `/` 所在的位置与后面那几个字，对不上回 null。
- */
-export function slashQuery(text: string, caret: number): { start: number; query: string } | null {
-  const before = text.slice(0, caret);
-  const m = /(^|\s)\/([^\s/]*)$/.exec(before);
-  if (!m) return null;
-  return { start: before.length - m[2].length - 1, query: m[2] };
-}
-
 /** 走多快，每秒多少像素。慢到眼角能忽略它，快到人偶尔看一眼会发现它换了地方。 */
 const WALK_SPEED = 24;
-
-/**
- * 输入框的高度契约：一行 24 像素（与正文的 `leading-6` 同值），最少两行，最多九行。
- *
- * 从前它是死高两行：贴一段长交代进去，人只能在一个两行的窗口里上下推着看，改前面
- * 一句要先滚回去找。现在它随内容长高，到九行封顶——再往上长会把记录流挤没，而人正
- * 需要一边看着上面那几条一边写。到顶之后框内自己滚。
- */
-const LINE_PX = 24;
-const MIN_LINES = 2;
-const MAX_LINES = 9;
 
 /**
  * 输入区上沿那条线上站着的一个人。
@@ -334,10 +329,17 @@ export default function Composer({
   handingOff = false,
   notice = null,
   onBringBack,
+  queueItems = [],
+  queueBlockedByCard = false,
+  onEnqueue,
+  onRemoveQueueItem,
+  onMoveQueueItem,
 }: ComposerProps) {
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const blocked = blockReason(sessionId);
+  const [enqueueing, setEnqueueing] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const {
     text,
     setText,
@@ -363,7 +365,59 @@ export default function Composer({
       onQueued,
       deliveredAt,
     });
-  const box = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setQueueError(null);
+    setEnqueueing(false);
+  }, [sessionId]);
+
+  const hasDraft = Boolean(
+    text.trim() || images.length > 0 || documents.length > 0 || picked.length > 0
+  );
+  const canEnqueue = Boolean(!blocked && sessionId && onEnqueue && !enqueueing && !sending && hasDraft);
+
+  const handleEnqueue = useCallback(async () => {
+    if (!sessionId || !onEnqueue || enqueueing || !hasDraft) return;
+    const draftText = text.trim();
+    const draftImages = [...images];
+    const draftDocs = [...documents];
+    const draftSkills = [...picked];
+    setEnqueueing(true);
+    setQueueError(null);
+    setPackedBanner(null);
+    setText('');
+    for (const sk of draftSkills) removeSkill(sk.name);
+    for (const im of draftImages) removeImage(im.id);
+    for (const doc of draftDocs) removeDocument(doc.id);
+    try {
+      await onEnqueue(
+        draftText,
+        draftImages.map((im) => im.dataUrl),
+        draftDocs.map((d) => ({ name: d.name, data: d.dataUrl })),
+        draftSkills.map((s) => s.name)
+      );
+    } catch (e) {
+      setQueueError(e instanceof Error ? e.message : String(e));
+      setText(draftText);
+      for (const sk of draftSkills) addSkill(sk);
+    } finally {
+      setEnqueueing(false);
+    }
+  }, [
+    sessionId,
+    onEnqueue,
+    enqueueing,
+    hasDraft,
+    text,
+    images,
+    documents,
+    picked,
+    setText,
+    removeSkill,
+    removeImage,
+    removeDocument,
+    addSkill,
+  ]);
   /**
    * 引用刚落进来时光标该停在哪。
    *
@@ -376,50 +430,7 @@ export default function Composer({
   const textRef = useRef(text);
   textRef.current = text;
   const [dragging, setDragging] = useState(false);
-  // 边什么时候活过来：正在打字（框内有焦点）或者正在发。其余时候它冻在最后一帧上——
-  // 一直在动的边会让人打字时眼角始终有东西在晃。
-  const [focused, setFocused] = useState(false);
-  const filePicker = useRef<HTMLInputElement>(null);
   const attachCount = images.length + documents.length;
-
-  // ── 敲 `/` 挑 skill ──
-  const allSkills = useDataStore((s) => s.skills);
-  const loadSkills = useDataStore((s) => s.loadSkills);
-  const [caret, setCaret] = useState(0);
-  const [menuActive, setMenuActive] = useState(0);
-  // Esc 关掉的是"这一个 `/`"：记下它的位置，光标还停在它后面就不再弹；换一个 `/` 照弹。
-  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  const slash = focused && !blocked ? slashQuery(text, caret) : null;
-  const menuOpen = slash !== null && slash.start !== dismissedAt;
-  const menuQuery = slash?.query ?? '';
-  const menuItems = useMemo(
-    () => (menuOpen ? filterSkills(allSkills, menuQuery) : []),
-    [menuOpen, allSkills, menuQuery]
-  );
-  useEffect(() => setMenuActive(0), [menuQuery]);
-  // 光标离开了那个 `/`（删掉了、打了空格），Esc 的那一记就作废：同一个位置再敲 `/` 照弹。
-  const slashGone = slash === null;
-  useEffect(() => {
-    if (slashGone) setDismissedAt(null);
-  }, [slashGone]);
-  // 清单平时由数据同步推过来；这一页是直接打开的、还没拿到过时，第一次敲 `/` 再去取。
-  const menuWanted = menuOpen && allSkills.length === 0;
-  useEffect(() => {
-    if (menuWanted) void loadSkills();
-  }, [menuWanted, loadSkills]);
-
-  const pickSkill = useCallback(
-    (skill: SkillItem) => {
-      if (!slash) return;
-      // `/` 连同后面筛用的那几个字一起抹掉，光标回到 `/` 原来的位置。
-      const next = text.slice(0, slash.start) + text.slice(caret);
-      addSkill(skill);
-      caretTo.current = slash.start;
-      setCaret(slash.start);
-      setText(next);
-    },
-    [slash, text, caret, addSkill, setText]
-  );
   const trailOf = new Map(trails.map((tr) => [tr.id, tr]));
   /**
    * 气泡全部落进记录流之后，输入框上方留一行交代它们去了哪。
@@ -505,47 +516,12 @@ export default function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerAt, answerText]);
 
-  /**
-   * 高度跟着内容走，顺带把引用刚落进来的那一次光标安顿好。
-   *
-   * 量高度之前必须先把高度塌回 `auto`：框上还挂着上一帧的高度时，`scrollHeight` 报的
-   * 是那个高度，删字永远不会变矮。
-   */
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const content = el.scrollHeight;
-    const ceiling = MAX_LINES * LINE_PX;
-    el.style.height = `${Math.min(Math.max(content, MIN_LINES * LINE_PX), ceiling)}px`;
-    el.style.overflowY = content > ceiling ? 'auto' : 'hidden';
-    if (caretTo.current !== null) {
-      const at = caretTo.current;
-      caretTo.current = null;
-      el.focus();
-      el.setSelectionRange(at, at);
-      // 引到第十行以后，光标那一行得看得见：框内滚到底。
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [text]);
-
   const takeFiles = useCallback(
-    (files: FileList | null) => {
+    (files: FileList | File[] | null) => {
       if (!files || files.length === 0) return;
       void addFiles(files);
     },
     [addFiles]
-  );
-
-  const handlePaste = useCallback(
-    (e: ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = e.clipboardData?.files;
-      if (!files || files.length === 0) return;
-      // 截图粘贴进来的是文件而不是文字，拦下来当附件，别让它变成一串乱码落进文本框。
-      e.preventDefault();
-      takeFiles(files);
-    },
-    [takeFiles]
   );
 
   const handleDrop = useCallback(
@@ -556,39 +532,6 @@ export default function Composer({
       takeFiles(e.dataTransfer?.files ?? null);
     },
     [blocked, takeFiles]
-  );
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // skill 清单开着时，上下、回车、Tab、Esc 归清单。输入法还在拼字时的回车是确认候选，
-      // 不能拿去挑 skill。
-      if (menuOpen && !e.nativeEvent.isComposing) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setDismissedAt(slash?.start ?? null);
-          return;
-        }
-        if (menuItems.length) {
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault();
-            const step = e.key === 'ArrowDown' ? 1 : -1;
-            setMenuActive((i) => (i + step + menuItems.length) % menuItems.length);
-            return;
-          }
-          if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === 'Tab') {
-            e.preventDefault();
-            pickSkill(menuItems[Math.min(menuActive, menuItems.length - 1)]);
-            return;
-          }
-        }
-      }
-      // 回车换行，Cmd/Ctrl+回车才发。中栏里打的多是整段交代，回车即发会把话腰斩。
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        if (canSend) void send();
-      }
-    },
-    [canSend, send, menuOpen, menuItems, menuActive, slash, pickSkill]
   );
 
   return (
@@ -642,6 +585,146 @@ export default function Composer({
               <RotateCcw size={11} />
               {t('workbench.composer.retry')}
             </button>
+          </div>
+        ) : null}
+
+        {queueError ? (
+          <div
+            data-testid="composer-queue-error"
+            className="flex items-center justify-between gap-2 rounded-[8px] bg-bg-subtle px-3 py-2 text-[12px] text-accent-error"
+          >
+            <span className="min-w-0 flex-1 break-words">
+              {t('workbench.composer.sendFailed', { reason: queueError })}
+            </span>
+            <button
+              type="button"
+              onClick={() => setQueueError(null)}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:text-text-primary"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ) : null}
+
+        {/* 会话自有消息队列：不在 agent 执行时发进其原生运行队列，堆积在此，
+            当且仅当会话 stop 且 [end, end-5] 轮无交互卡时自动注入最早一条并从队列移除。 */}
+        {queueItems.length > 0 ? (
+          <div
+            data-testid="session-message-queue"
+            data-blocked-by-card={queueBlockedByCard ? 'yes' : 'no'}
+            className="flex min-w-0 flex-col gap-1.5 rounded-[10px] border border-border-color bg-bg-subtle px-3 py-2"
+          >
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <ListOrdered size={13} className="shrink-0 text-text-secondary" />
+                <span className="shrink-0 text-[12px] font-medium text-text-primary">
+                  {t('workbench.queue.title')}
+                </span>
+                <span
+                  data-testid="session-queue-count"
+                  className="shrink-0 rounded-full bg-bg-secondary px-2 py-[1px] text-[11px] font-medium text-text-secondary"
+                >
+                  {t('workbench.queue.count', { n: queueItems.length })}
+                </span>
+              </div>
+              <span
+                data-testid="session-queue-status"
+                className={`flex min-w-0 items-center gap-1 text-[11px] ${
+                  queueBlockedByCard ? 'text-accent-warning' : 'text-text-muted'
+                }`}
+              >
+                {queueBlockedByCard ? (
+                  <ShieldAlert size={12} className="shrink-0 text-accent-warning" />
+                ) : (
+                  <Clock size={12} className="shrink-0 text-text-muted" />
+                )}
+                <span className="truncate">
+                  {queueBlockedByCard
+                    ? t('workbench.queue.blockedByCard')
+                    : running
+                      ? t('workbench.queue.waitingForStop')
+                      : t('workbench.queue.readyToInject')}
+                </span>
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              {queueItems.map((item, idx) => (
+                <div
+                  key={item.id}
+                  data-testid="session-queue-item"
+                  data-earliest={idx === 0 ? 'yes' : 'no'}
+                  className="flex min-w-0 items-center gap-2 rounded-[7px] border border-border-color bg-bg-primary px-2.5 py-1.5"
+                >
+                  <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                    #{idx + 1}
+                  </span>
+                  {idx === 0 ? (
+                    <span
+                      data-testid="session-queue-earliest-badge"
+                      className="shrink-0 rounded-[4px] bg-bg-subtle px-1.5 py-[1px] text-[10px] font-medium text-text-secondary"
+                    >
+                      {t('workbench.queue.nextBadge')}
+                    </span>
+                  ) : null}
+                  {item.skills?.map((name) => (
+                    <span
+                      key={name}
+                      className="shrink-0 font-mono text-[11px] text-text-secondary"
+                    >
+                      /{name}
+                    </span>
+                  ))}
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
+                    {item.text ||
+                      (item.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
+                  </span>
+                  {item.attachments > 0 ? (
+                    <span className="shrink-0 text-[11px] text-text-muted">
+                      {t('workbench.composer.outboundAttachments', { n: item.attachments })}
+                    </span>
+                  ) : null}
+                  {onMoveQueueItem && queueItems.length > 1 ? (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        data-testid={`session-queue-up-${idx}`}
+                        disabled={idx === 0}
+                        title={t('workbench.queue.moveUp')}
+                        aria-label={t('workbench.queue.moveUp')}
+                        onClick={() => void onMoveQueueItem(item.id, 'up')}
+                        className="flex h-5 w-5 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:opacity-30"
+                      >
+                        <ArrowUp size={11} />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`session-queue-down-${idx}`}
+                        disabled={idx === queueItems.length - 1}
+                        title={t('workbench.queue.moveDown')}
+                        aria-label={t('workbench.queue.moveDown')}
+                        onClick={() => void onMoveQueueItem(item.id, 'down')}
+                        className="flex h-5 w-5 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:opacity-30"
+                      >
+                        <ArrowDown size={11} />
+                      </button>
+                    </div>
+                  ) : null}
+                  {onRemoveQueueItem ? (
+                    <button
+                      type="button"
+                      data-testid="session-queue-delete"
+                      title={t('workbench.queue.remove')}
+                      aria-label={t('workbench.queue.remove')}
+                      onClick={() => void onRemoveQueueItem(item.id)}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:bg-bg-hover hover:text-accent-error"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         ) : null}
 
@@ -779,185 +862,121 @@ export default function Composer({
           </p>
         ) : null}
 
-        {/* 外圈是一道中性描边，获得焦点时加深一档。这一屏的实心绿只给 Send，
-            输入框外圈不再铺绿色色场（主人 09-24 定的「绿色减量」）。 */}
-        <div
-          className={`relative rounded-[12px] border transition-colors ${
-            focused || sending ? 'border-text-muted' : 'border-border-strong'
-          }`}
-        >
-          {menuOpen ? (
-            <SkillMenu
-              items={menuItems}
-              active={Math.min(menuActive, Math.max(menuItems.length - 1, 0))}
-              onPick={pickSkill}
-              onHover={setMenuActive}
-            />
-          ) : null}
-
-          {/* 文本在上、控件在下一行。从前是一整行左右排：文本框有两行高，而 `+` 与发送
-              贴着底边，于是占位话在最上面、`+` 在最下面，两者差了一行的距离，看着像是
-              没对齐。分成两行之后，控件自己成一条基线。 */}
-          <div className="relative min-w-0 rounded-[12px] bg-bg-card px-3 py-2.5">
-          <input
-            ref={filePicker}
-            type="file"
-            multiple
-            hidden
-            data-testid="composer-file"
-            onChange={(e) => {
-              takeFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          {picked.length ? (
-            <div data-testid="composer-skills" className="mb-1.5 flex flex-wrap gap-1.5">
-              {picked.map((skill) => (
-                <SkillQuote
-                  key={skill.name}
-                  name={skill.name}
-                  description={skill.description}
-                  onRemove={() => removeSkill(skill.name)}
-                />
-              ))}
-            </div>
-          ) : null}
-          {packedBanner ? (
-            <div
-              data-testid="composer-packed-bar"
-              className="mb-2 flex items-center justify-between gap-2 rounded-[6px] border border-border-color bg-bg-secondary px-2.5 py-1 text-[11px] text-text-secondary"
-            >
-              <span className="min-w-0 truncate">
-                <strong className="font-semibold text-accent-warning">
-                  {t('workbench.composer.packedBanner', { n: packedBanner.count })}
-                </strong>
-                <span className="mx-1.5 text-text-dim">·</span>
-                <code className="font-mono text-[10.5px] text-text-muted">
-                  {packedBanner.tracePath}
-                </code>
-              </span>
-              <button
-                type="button"
-                data-testid="composer-packed-clear"
-                onClick={() => {
-                  setPackedBanner(null);
-                  setText('');
-                }}
-                className="shrink-0 rounded-[4px] px-1.5 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+        <PromptComposerBox
+          text={text}
+          onChangeText={setText}
+          skills={picked}
+          onAddSkill={addSkill}
+          onRemoveSkill={removeSkill}
+          onAddFiles={takeFiles}
+          attachCount={attachCount}
+          canSubmit={canSend}
+          submitting={sending}
+          onSubmit={send}
+          disabled={Boolean(blocked)}
+          placeholder={
+            blocked
+              ? ''
+              : family
+                ? t('workbench.composer.placeholderWithFamily', { family: familyLabel(family) })
+                : t('workbench.composer.placeholder')
+          }
+          idPrefix="composer"
+          menuPlacement="above"
+          caretToRef={caretTo}
+          bannerSlot={
+            packedBanner ? (
+              <div
+                data-testid="composer-packed-bar"
+                className="mb-2 flex items-center justify-between gap-2 rounded-[6px] border border-border-color bg-bg-secondary px-2.5 py-1 text-[11px] text-text-secondary"
               >
-                {t('workbench.composer.packedClear')}
-              </button>
-            </div>
-          ) : null}
-          <textarea
-            ref={box}
-            data-testid="composer-input"
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setCaret(e.target.selectionStart ?? e.target.value.length);
-            }}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-            onPaste={handlePaste}
-            onKeyDown={handleKeyDown}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            disabled={Boolean(blocked)}
-            rows={2}
-            placeholder={
-              blocked
-                ? ''
-                : family
-                  ? t('workbench.composer.placeholderWithFamily', { family: familyLabel(family) })
-                  : t('workbench.composer.placeholder')
-            }
-            /* 焦点由外面那圈色场表达，这里就不要再叠一个焦点环——同一件事两种说法，
-               而且那个环是绿的，正是要去掉的东西。 */
-            className="min-h-[48px] w-full resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
-          />
-          <div className="mt-1 flex items-center gap-2">
-            <button
-              type="button"
-              data-testid="composer-pick"
-              aria-label={t('workbench.composer.addAttachment')}
-              title={t('workbench.composer.addAttachment')}
-              disabled={Boolean(blocked) || attachCount >= MAX_ATTACHMENTS}
-              onClick={() => filePicker.current?.click()}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
-            >
-              <Plus size={16} strokeWidth={1.5} />
-            </button>
-            <span className="flex-1" />
-            {/* 「带回主线」只在分支会话里出现，挨着交接，同一档写法：描品牌色的边，不跟发送
-                抢眼。点了切回原会话，最后一段回复按引用格式落进输入框，不自动发出。 */}
-            {onBringBack && !blocked ? (
-              <button
-                type="button"
-                data-testid="composer-bring-back"
-                onClick={onBringBack}
-                title={t('workbench.branch.bringBackHint')}
-                className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10"
-              >
-                <CornerUpLeft size={13} />
-                {t('workbench.branch.bringBack')}
-              </button>
-            ) : null}
-            {/* 「交接到新会话」挨着发送，但比发送低一档：发送是实心品牌色，它只描品牌色
-                的边、字用品牌色，底是透明的——看得出是件正经事，又不跟发送抢眼。上下文
-                不到三十万时整颗置灰，悬停说明还差多少。 */}
-            {onHandoff && !blocked ? (
-              <button
-                type="button"
-                data-testid="composer-handoff"
-                disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
-                onClick={onHandoff}
-                title={
-                  contextTokens === null
-                    ? t('workbench.composer.handoffLockedUnknown', {
-                        limit: formatK(HANDOFF_MIN_CONTEXT),
-                      })
-                    : contextTokens < HANDOFF_MIN_CONTEXT
-                      ? t('workbench.composer.handoffLocked', {
+                <span className="min-w-0 truncate">
+                  <strong className="font-semibold text-accent-warning">
+                    {t('workbench.composer.packedBanner', { n: packedBanner.count })}
+                  </strong>
+                  <span className="mx-1.5 text-text-dim">·</span>
+                  <code className="font-mono text-[10.5px] text-text-muted">
+                    {packedBanner.tracePath}
+                  </code>
+                </span>
+                <button
+                  type="button"
+                  data-testid="composer-packed-clear"
+                  onClick={() => {
+                    setPackedBanner(null);
+                    setText('');
+                  }}
+                  className="shrink-0 rounded-[4px] px-1.5 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                >
+                  {t('workbench.composer.packedClear')}
+                </button>
+              </div>
+            ) : null
+          }
+          rightActionsSlot={
+            <>
+              {onEnqueue && !blocked ? (
+                <button
+                  type="button"
+                  data-testid="composer-enqueue"
+                  disabled={!canEnqueue}
+                  onClick={() => void handleEnqueue()}
+                  title={t('workbench.composer.enqueueHint')}
+                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-color px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+                >
+                  <ListOrdered size={13} />
+                  {enqueueing
+                    ? t('workbench.composer.enqueueing')
+                    : t('workbench.composer.enqueue')}
+                </button>
+              ) : null}
+              {onBringBack && !blocked ? (
+                <button
+                  type="button"
+                  data-testid="composer-bring-back"
+                  onClick={onBringBack}
+                  title={t('workbench.branch.bringBackHint')}
+                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10"
+                >
+                  <CornerUpLeft size={13} />
+                  {t('workbench.branch.bringBack')}
+                </button>
+              ) : null}
+              {onHandoff && !blocked ? (
+                <button
+                  type="button"
+                  data-testid="composer-handoff"
+                  disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
+                  onClick={onHandoff}
+                  title={
+                    contextTokens === null
+                      ? t('workbench.composer.handoffLockedUnknown', {
                           limit: formatK(HANDOFF_MIN_CONTEXT),
-                          now: formatK(contextTokens),
                         })
-                      : t('workbench.composer.handoffHint')
-                }
-                className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
-              >
-                {handingOff ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <GitBranchPlus size={13} />
-                )}
-                {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              data-testid="composer-send"
-              aria-label={t('workbench.composer.send')}
-              disabled={!canSend}
-              onClick={() => void send()}
-              /* 字色走 --text-on-accent 而不是写死白：深色主题的品牌绿被提亮过，白字压在
-                 上面对比度不够；那个变量在两套主题下各是各的答案。
-                 **发送中整颗变灰**：那一刻这一屏也就没有实心绿——话在路上，不是等人按的动作。 */
-              className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-medium disabled:opacity-40 ${
-                sending
-                  ? 'bg-bg-active text-text-secondary'
-                  : 'bg-accent-primary text-[var(--text-on-accent)]'
-              }`}
-            >
-              {sending ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <SendHorizontal size={13} />
-              )}
-              {sending ? t('workbench.composer.sending') : t('workbench.composer.send')}
-            </button>
-          </div>
-          </div>
-        </div>
+                      : contextTokens < HANDOFF_MIN_CONTEXT
+                        ? t('workbench.composer.handoffLocked', {
+                            limit: formatK(HANDOFF_MIN_CONTEXT),
+                            now: formatK(contextTokens),
+                          })
+                        : t('workbench.composer.handoffHint')
+                  }
+                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                >
+                  {handingOff ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <GitBranchPlus size={13} />
+                  )}
+                  {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
+                </button>
+              ) : null}
+            </>
+          }
+          submitLabel={t('workbench.composer.send')}
+          submittingLabel={t('workbench.composer.sending')}
+          submitAriaLabel={t('workbench.composer.send')}
+          submitTestId="composer-send"
+        />
       </div>
     </div>
   );
