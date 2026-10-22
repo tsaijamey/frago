@@ -817,7 +817,7 @@
       },
       "action": {
         "type": "inject_literal",
-        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），把可选的答案写进回复最末尾的 answer-needed-by-human 区块，写完就停；没写的收尾会被推回来补。写法：frago book answer-needed-by-human"
+        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），优先调用 `frago ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成前端交互卡片（或在回复最末尾写 answer-needed-by-human 区块），写完就停；没写的收尾会被推回来补。写法：frago ask --help 或 frago book answer-needed-by-human"
       },
       "dedup_scope": "always",
       "priority": 90,

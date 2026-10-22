@@ -38,7 +38,36 @@
 
 ## 写法
 
-块内是 YAML。`type`、`question` 必填；除 `text-answer` 外 `options` 必填；每个选项 `key`、`label`、`effect` 都必写。
+优先调用会话工具 `frago ask <type>` 生成前端 UI 交互组件数据（参数写错会立即报错并返回该组件类型的正确示例，不会发出坏卡片）；WebUI 根据输出数据直接渲染对应组件。
+
+```bash
+# 1. single-choice（单选）
+frago ask single-choice \
+  -q "1.4.111 要发到 PyPI 吗？" \
+  --why "版本比较的崩溃已修，测试全过" \
+  -o '{"key":"A","label":"发布","effect":"打 v1.4.111 tag 并上传 PyPI，发出去收不回","reversible":false,"recommended":true}' \
+  -o '{"key":"B","label":"先不发","effect":"改动留在 main，不打 tag"}'
+
+# 2. multi-choice（多选）
+frago ask multi-choice \
+  -q "本次要同步更新哪些环境？" \
+  -o "A|SIT 环境|写入 SIT Admin DB 并跑抽样验证" \
+  -o "B|本地单测|跑通全量 pytest"
+
+# 3. text-answer（文本作答）
+frago ask text-answer \
+  -q "请填写目标物理表名：" \
+  --suggestion "rtm_data" \
+  --suggestion "cust_engage_rtm_summary"
+
+# 4. choice-and-text（选并写）
+frago ask choice-and-text \
+  -q "确认改造范围（可补充额外说明）：" \
+  -o "A|全量改造 + SIT 验证|改代码、跑单测并同步更新 SIT|recommended" \
+  -o "B|仅本地改造|只修改本地代码与单测"
+```
+
+若手写 `answer-needed-by-human` 代码块，块内是 YAML。`type`、`question` 必填；除 `text-answer` 外 `options` 必填；每个选项 `key`、`label`、`effect` 都必写。
 
 ```answer-needed-by-human
 type: single-choice

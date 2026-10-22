@@ -50,7 +50,7 @@ import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
 import { formatClock, formatDuration } from './RecordCard';
 import { ForYouChip, resumeCommand, shortAge } from './SessionItem';
-import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
+import { loadYaml, parseUiComponentOutput, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
@@ -200,22 +200,42 @@ export default function SessionWorkbenchPage() {
   } = useWorkbenchRecords(selectedId, { live: selectedAlive });
 
   useEffect(() => {
-    if (!selectedId || recordsSessionId !== selectedId || !yamlReady) {
+    if (!selectedId || recordsSessionId !== selectedId) {
       setCardQuestion(null);
       return;
     }
-    let last: string | null = null;
+    let seenLastAgentSay = false;
+    let foundQuestion: string | null = null;
     for (let i = records.length - 1; i >= 0; i -= 1) {
       const r = records[i];
       if (r.agent_path.length) continue;
       if (r.kind === 'user.say') break;
-      if (r.kind === 'agent.say') {
-        last = typeof r.payload.text === 'string' ? r.payload.text : '';
-        break;
+      if (r.kind === 'agent.say' && !seenLastAgentSay) {
+        seenLastAgentSay = true;
+        const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+        if (yamlReady) {
+          const card = text ? trailingDecision(text) : null;
+          if (card && card.result.ok) {
+            foundQuestion = card.result.block.question;
+            break;
+          }
+        }
+        const uiCard = text ? parseUiComponentOutput(text) : null;
+        if (uiCard && uiCard.ok) {
+          foundQuestion = uiCard.block.question;
+          break;
+        }
+      }
+      if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+        const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+        const uiCard = body ? parseUiComponentOutput(body) : null;
+        if (uiCard && uiCard.ok) {
+          foundQuestion = uiCard.block.question;
+          break;
+        }
       }
     }
-    const card = last ? trailingDecision(last) : null;
-    setCardQuestion(card && card.result.ok ? { sid: selectedId, question: card.result.block.question } : null);
+    setCardQuestion(foundQuestion ? { sid: selectedId, question: foundQuestion } : null);
   }, [records, recordsSessionId, selectedId, yamlReady]);
 
   /** 输入区「Show」要把记录流滚到的那一条。 */

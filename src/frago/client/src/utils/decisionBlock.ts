@@ -24,6 +24,9 @@ export type Yaml = typeof JsYaml;
 /** 代码块的语言标记，也是 agent 写区块时用的名字。 */
 export const BLOCK_NAME = 'answer-needed-by-human';
 
+/** CLI 工具 `frago ask` 输出的结构化 UI 组件标识。 */
+export const UI_COMPONENT_MARKER = 'decision-card';
+
 /** 人点卡片发出的那句话以它开头。agent 与随包规则都靠它认出「这是卡片答复」。 */
 export const ANSWER_PREFIX = '【answer】';
 
@@ -161,19 +164,14 @@ const broken = (code: BrokenReason['code'], params?: Record<string, string>): Pa
 });
 
 /**
- * 解析区块原文并校验。以 JSON 规则集解析：默认规则集会把 `2026-09-24` 读成日期对象、
- * 把一些裸值改写类型，区块里的文字应当原样保留。
+ * 校验已解析的区块对象（或 `frago ask` 生成的 `data` 对象）并构造 `DecisionBlock`。
  */
-export function parseDecisionBlock(raw: string, yaml: Yaml): ParseResult {
-  let y: unknown;
-  try {
-    y = yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-  } catch (e) {
-    const err = e as { reason?: string; mark?: { line: number } };
-    const detail = `${err.reason || 'bad YAML'}${err.mark ? ` (line ${err.mark.line + 1})` : ''}`;
-    return broken('yaml', { detail });
-  }
-  if (!isObj(y)) return broken('notMapping');
+export function validateDecisionObject(rawObj: unknown): ParseResult {
+  if (!isObj(rawObj)) return broken('notMapping');
+  const y: Obj =
+    rawObj.frago_ui_component === UI_COMPONENT_MARKER && isObj(rawObj.data)
+      ? rawObj.data
+      : rawObj;
   if (!BLOCK_TYPES.includes(y.type as BlockType)) {
     return broken('type', { type: y.type == null ? '' : text(y.type), types: BLOCK_TYPES.join(', ') });
   }
@@ -206,7 +204,7 @@ export function parseDecisionBlock(raw: string, yaml: Yaml): ParseResult {
     if (y.multi != null && type !== 'choice-and-text') return broken('multiPlace');
   }
 
-  const fromTeammate = y.from === 'teammate';
+  const fromTeammate = y.from === 'teammate' || y.fromTeammate === true;
   return {
     ok: true,
     block: {
@@ -222,6 +220,81 @@ export function parseDecisionBlock(raw: string, yaml: Yaml): ParseResult {
       changes: fromTeammate && y.changes != null ? text(y.changes) : null,
     },
   };
+}
+
+/**
+ * 从字符串 `src` 的 `start` 位置（指向 `{`）起找到配对的 `}` 下标。找不到返回 -1。
+ */
+function findMatchingBrace(src: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < src.length; i += 1) {
+    const ch = src[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 解析 `frago ask` CLI 工具输出的结构化 UI 组件数据（`frago_ui_component: "decision-card"`）。
+ *
+ * 工具输出可能直接是 JSON，也可能前面包着终端执行日志（如 `Command output:\n{...}`）。
+ * 不含组件标记或不是合法 JSON 信封时返回 null；命中信封则校验 `data` 并返回 `ParseResult`。
+ */
+export function parseUiComponentOutput(raw: string): ParseResult | null {
+  if (!raw || !raw.includes('"frago_ui_component"')) return null;
+  const markerIdx = raw.lastIndexOf('"frago_ui_component"');
+  const start = raw.lastIndexOf('{', markerIdx);
+  if (start < 0) return null;
+  const end = findMatchingBrace(raw, start);
+  if (end < 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!isObj(parsed) || parsed.frago_ui_component !== UI_COMPONENT_MARKER) return null;
+  const target = isObj(parsed.data)
+    ? {
+        ...(typeof parsed.component_type === 'string' ? { type: parsed.component_type } : {}),
+        ...parsed.data,
+      }
+    : parsed.data;
+  return validateDecisionObject(target);
+}
+
+/**
+ * 解析区块原文并校验。以 JSON 规则集解析：默认规则集会把 `2026-09-24` 读成日期对象、
+ * 把一些裸值改写类型，区块里的文字应当原样保留。
+ */
+export function parseDecisionBlock(raw: string, yaml: Yaml): ParseResult {
+  let y: unknown;
+  try {
+    y = yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+  } catch (e) {
+    const err = e as { reason?: string; mark?: { line: number } };
+    const detail = `${err.reason || 'bad YAML'}${err.mark ? ` (line ${err.mark.line + 1})` : ''}`;
+    return broken('yaml', { detail });
+  }
+  return validateDecisionObject(y);
 }
 
 /**

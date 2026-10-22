@@ -15,6 +15,7 @@ from frago import __version__
 from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
 from .apps_commands import apps_group
+from .ask_commands import ask_group
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
@@ -63,20 +64,20 @@ from .workspace_commands import workspace_group
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
     ("Files", ["cp", "mv", "rm"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
+    ("Session & Intelligence", ["session", "ask", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session"]
+EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session", "ask"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
 # guesses `frago sessions search` should land on the command rather than on an
 # error page.
-COMMAND_ALIASES = {"sessions": "session"}
+COMMAND_ALIASES = {"sessions": "session", "card": "ask", "decision": "ask"}
 
 # Chrome subcommand groups
 BROWSER_SUBGROUPS = OrderedDict([
@@ -416,6 +417,9 @@ cli.add_command(agent_status)
 
 # Session management command group
 cli.add_command(session_group)
+
+# Session-callable interactive UI component command group
+cli.add_command(ask_group, name="ask")
 
 # agy lifecycle hook shim — invoked by agy's hooks.json, not by hand
 cli.add_command(agy_hook)

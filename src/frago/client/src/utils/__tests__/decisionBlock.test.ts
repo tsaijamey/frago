@@ -4,6 +4,7 @@ import {
   loadYaml,
   parseCardAnswer,
   parseDecisionBlock,
+  parseUiComponentOutput,
   pickedFromAnswer,
   splitTrailingBlock,
   trailingDecision,
@@ -271,5 +272,102 @@ describe('parseCardAnswer：不看卡片，只凭原文拆回来排版', () => {
     expect(parseCardAnswer('A · 发布 —— 打 tag')).toBeNull();
     expect(parseCardAnswer('【answer】')).toBeNull();
     expect(parseCardAnswer('【answer】\n- 不像选项的一行')).toBeNull();
+  });
+});
+
+describe('parseUiComponentOutput：解析 frago ask 生成的 UI 组件数据', () => {
+  it('直接解析 4 种类型的 frago_ui_component JSON 数据（不依赖 YAML 异步加载）', () => {
+    const singleJson = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '本次需要执行到哪一步？',
+        why: 'SIT 环境已有 98 家真实样本',
+        options: [
+          {
+            key: 'A',
+            label: '全量改造 + SIT 验证',
+            effect: '改代码、跑单测并同步更新 SIT',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '仅本地改造',
+            effect: '只修改本地仓库代码与单测',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const parsedSingle = parseUiComponentOutput(singleJson);
+    expect(parsedSingle).not.toBeNull();
+    expect(parsedSingle?.ok).toBe(true);
+    if (parsedSingle?.ok) {
+      expect(parsedSingle.block.type).toBe('single-choice');
+      expect(parsedSingle.block.question).toBe('本次需要执行到哪一步？');
+      expect(parsedSingle.block.options).toHaveLength(2);
+      expect(parsedSingle.block.options[0].recommended).toBe(true);
+    }
+
+    const textJson = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'text-answer',
+      data: {
+        type: 'text-answer',
+        question: '请确认物理表名：',
+        draft: 'rtm_data',
+        suggestions: ['rtm_data', 'cust_engage_rtm_summary'],
+      },
+    });
+    const parsedText = parseUiComponentOutput(textJson);
+    expect(parsedText?.ok).toBe(true);
+    if (parsedText?.ok) {
+      expect(parsedText.block.type).toBe('text-answer');
+      expect(parsedText.block.draft).toBe('rtm_data');
+      expect(parsedText.block.suggestions).toEqual(['rtm_data', 'cust_engage_rtm_summary']);
+    }
+  });
+
+  it('从包含终端命令输出前缀的 tool.result body 中提取出组件 JSON', () => {
+    const wrapped = [
+      'Command exited with code 0.',
+      'Command output:',
+      JSON.stringify(
+        {
+          frago_ui_component: 'decision-card',
+          component_type: 'choice-and-text',
+          data: {
+            type: 'choice-and-text',
+            question: '是否支持可选 bg 参数？',
+            multi: true,
+            options: [
+              {
+                key: 'A',
+                label: '支持可选 bg 参数',
+                effect: '按对应 BG 计算',
+                recommended: true,
+                reversible: true,
+              },
+            ],
+          },
+        },
+        null,
+        2
+      ),
+    ].join('\n');
+    const res = parseUiComponentOutput(wrapped);
+    expect(res?.ok).toBe(true);
+    if (res?.ok) {
+      expect(res.block.type).toBe('choice-and-text');
+      expect(res.block.multi).toBe(true);
+    }
+  });
+
+  it('无关文本或错误标记返回 null', () => {
+    expect(parseUiComponentOutput('普通命令输出')).toBeNull();
+    expect(parseUiComponentOutput('{"frago_ui_component": "other"}')).toBeNull();
   });
 });

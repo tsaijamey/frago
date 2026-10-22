@@ -54,12 +54,12 @@ import {
 } from 'lucide-react';
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
-import { parseCardAnswer, splitTrailingBlock } from '@/utils/decisionBlock';
+import { parseCardAnswer, parseUiComponentOutput, splitTrailingBlock } from '@/utils/decisionBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
-import { CardAnswerBody, CardAnswerTag, DecisionReply } from './DecisionCard';
+import { CardAnswerBody, CardAnswerTag, DecisionCard, DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
   queueOpOf,
@@ -816,6 +816,8 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const p = record.payload;
   const text = str(p, 'text');
   const trailing = record.agent_path.length ? null : splitTrailingBlock(text);
+  const uiComponent =
+    !trailing && !record.agent_path.length ? parseUiComponentOutput(text) : null;
   return (
     <TextShell
       record={record}
@@ -836,6 +838,11 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
           split={trailing}
           rich={(s) => <Rich text={s} />}
         />
+      ) : uiComponent && uiComponent.ok ? (
+        <>
+          <Rich text={text} />
+          <DecisionCard block={uiComponent.block} recordId={record.id} />
+        </>
       ) : (
         <Rich text={text} />
       )}
@@ -1368,49 +1375,57 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
 
   const duration = formatDuration(num(p, 'duration_ms'));
   const status = str(p, 'status');
+  const bodyText = str(p, 'body');
   // 失败的那一条自己摊开。其余收着——一次 Read 的输出两百行，一屏躺着七八次调用，
   // 全摊开的话人要滚过几千行才看得到 agent 下一句说了什么。
   const failed = status === 'error';
   // 内容被截断或被挪走的那几条也摊开：卡身里放着「取原文」，那是人拿回丢掉那段的
   // 唯一入口。收起来等于把补救办法藏在一次点击后面，而卡头上的徽章刚说完"没了"。
   const needsAction = failed || Boolean(truncation);
+  const uiComponent =
+    !failed && !record.agent_path.length ? parseUiComponentOutput(bodyText) : null;
   return (
-    <ToolShell
-      record={record}
-      icon={<Terminal size={14} />}
-      title={str(p, 'tool_name') || t(KIND_LABEL_KEY['tool.result'])}
-      subtitle={duration ? t('workbench.record.elapsed', { duration }) : undefined}
-      headTone={failed ? ERR_BG : undefined}
-      ringTone={failed ? ERR_RING : undefined}
-      collapsible
-      defaultOpen={needsAction}
-      chips={
-        <>
-          <TruncationChip state={truncation} ref_={str(p, 'truncation_ref')} />
-          <StatusChip status={status} />
-        </>
-      }
-    >
-      <Mono text={str(p, 'body')} />
-      {canFetchRaw ? (
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={takeRaw}
-            disabled={rawLoading}
-            className="rounded-[3px] border border-border-color px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-50"
-          >
-            {rawLoading ? t('workbench.record.fetchingRaw') : t('workbench.record.fetchRaw')}
-          </button>
-          {rawError ? <p className={`mt-1 text-[11px] ${ERR_TEXT}`}>{rawError}</p> : null}
-          {raw ? (
-            <div className="mt-2">
-              <Mono text={raw} />
-            </div>
-          ) : null}
-        </div>
+    <div className="min-w-0">
+      <ToolShell
+        record={record}
+        icon={<Terminal size={14} />}
+        title={str(p, 'tool_name') || t(KIND_LABEL_KEY['tool.result'])}
+        subtitle={duration ? t('workbench.record.elapsed', { duration }) : undefined}
+        headTone={failed ? ERR_BG : undefined}
+        ringTone={failed ? ERR_RING : undefined}
+        collapsible
+        defaultOpen={needsAction}
+        chips={
+          <>
+            <TruncationChip state={truncation} ref_={str(p, 'truncation_ref')} />
+            <StatusChip status={status} />
+          </>
+        }
+      >
+        <Mono text={bodyText} />
+        {canFetchRaw ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={takeRaw}
+              disabled={rawLoading}
+              className="rounded-[3px] border border-border-color px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-50"
+            >
+              {rawLoading ? t('workbench.record.fetchingRaw') : t('workbench.record.fetchRaw')}
+            </button>
+            {rawError ? <p className={`mt-1 text-[11px] ${ERR_TEXT}`}>{rawError}</p> : null}
+            {raw ? (
+              <div className="mt-2">
+                <Mono text={raw} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </ToolShell>
+      {uiComponent && uiComponent.ok ? (
+        <DecisionCard block={uiComponent.block} recordId={record.id} />
       ) : null}
-    </ToolShell>
+    </div>
   );
 }
 
@@ -1928,6 +1943,11 @@ function ToolRunLine({
     num(result, 'duration_ms') ??
     (row.call && row.result && row.result.ts >= row.call.ts ? row.result.ts - row.call.ts : null);
   const failed = status === 'error';
+  const resultBody = str(result, 'body');
+  const uiComponent =
+    !failed && row.result && !row.result.agent_path.length
+      ? parseUiComponentOutput(resultBody)
+      : null;
   return (
     <li className="min-w-0">
       <button
@@ -1959,6 +1979,11 @@ function ToolRunLine({
           </span>
         )}
       </button>
+      {!open && uiComponent && uiComponent.ok && row.result ? (
+        <div className="min-w-0 px-3 pb-2">
+          <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+        </div>
+      ) : null}
       {open ? (
         <div className="min-w-0 space-y-1 px-3 pb-2 pt-1">
           {row.call ? <RecordCardInner record={row.call} sessionId={sessionId} /> : null}

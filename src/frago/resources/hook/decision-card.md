@@ -15,7 +15,15 @@
 输出规则：是 → 只输出 YES；否 → 只输出 NO。除了这一个词，不要输出任何别的字。效率要求：直接判定，思考不超过两句话。
 
 >>>判定：
-<<<把等用户定的答案写成回复最末尾的 answer-needed-by-human 区块再停，选项原样保留，选择仍交给用户。区块内是 YAML，照这个骨架写：
+<<<把等用户定的答案用 `frago ask <type>` 工具生成交互组件（或在回复最末尾写 `answer-needed-by-human` 区块）再停，选项原样保留，选择仍交给用户。优先直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
+```bash
+frago ask single-choice \
+  -q "一句话问题，人不看上文也能懂" \
+  --why "推荐依据（可选）" \
+  -o '{"key":"A","label":"短名","effect":"点了会发生什么；收不回、要花钱、会改哪个文件写在这里","recommended":true}' \
+  -o '{"key":"B","label":"短名","effect":"点了会发生什么"}'
+```
+若写回复最末尾的 `answer-needed-by-human` 区块，块内是 YAML，照这个骨架写：
 ```answer-needed-by-human
 type: single-choice
 question: 一句话问题，人不看上文也能懂
@@ -28,4 +36,4 @@ options:
     label: 短名
     effect: 点了会发生什么
 ```
-type 只认 single-choice、multi-choice、text-answer、choice-and-text 四个。常见写坏：写成「问题 + A./B. 列表」的纯文字；用中文冒号写「问题：」当字段；值里带「: 」或以 [ { * # 开头却没加双引号；from 写了 teammate 以外的值。其余标记见 frago book answer-needed-by-human。
+type 只认 single-choice、multi-choice、text-answer、choice-and-text 四个。常见写坏：写成「问题 + A./B. 列表」的纯文字；把 key/label/effect 写成 id/description；用中文冒号写「问题：」当字段；值里带「: 」或以 [ { * # 开头却没加双引号；from 写了 teammate 以外的值。其余标记见 frago book answer-needed-by-human。

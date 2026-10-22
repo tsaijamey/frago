@@ -41,12 +41,23 @@ export function humanReplyText(r: WorkbenchRecord): string | null {
   return text;
 }
 
-/** 每条主会话 agent 回复之后人的第一句话。没有就不在表里。 */
+/** 这条记录是否可能承载一张主会话的交互卡（`agent.say` 或产出 UI 组件的 `tool.result`）。 */
+function canHostDecisionCard(r: WorkbenchRecord): boolean {
+  if (r.agent_path.length) return false;
+  if (r.kind === 'agent.say') return true;
+  if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+    const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+    return body.includes('"frago_ui_component"');
+  }
+  return false;
+}
+
+/** 每条主会话交互卡宿主记录（agent.say 或 UI 组件 tool.result）之后人的第一句话。没有就不在表里。 */
 export function repliesAfter(records: WorkbenchRecord[]): Map<string, WorkbenchRecord> {
   const out = new Map<string, WorkbenchRecord>();
   let waiting: string[] = [];
   for (const r of records) {
-    if (r.kind === 'agent.say' && !r.agent_path.length) {
+    if (canHostDecisionCard(r)) {
       waiting.push(r.id);
     } else if (waiting.length && humanReplyText(r) !== null) {
       for (const id of waiting) out.set(id, r);

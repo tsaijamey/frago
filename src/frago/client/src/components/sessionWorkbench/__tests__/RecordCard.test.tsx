@@ -663,4 +663,48 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     expect(screen.queryByTestId('decision-broken')).toBeNull();
     expect(container.querySelector('pre')?.textContent).toContain('type: single-choice');
   });
+
+  it('frago ask 工具输出（tool.result）直接渲染对应类型的交互卡片', () => {
+    const toolBody = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '本次需要执行到哪一步？',
+        why: 'SIT 环境已有 98 家真实样本',
+        options: [
+          {
+            key: 'A',
+            label: '全量改造 + SIT 验证',
+            effect: '改代码、跑单测并同步更新 SIT',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '仅本地改造',
+            effect: '只修改本地仓库代码与单测',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('tool.result', {
+          payload: {
+            tool_name: 'Bash',
+            status: 'ok',
+            duration_ms: 45,
+            body: toolBody,
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    expect(container.textContent).toContain('本次需要执行到哪一步？');
+    expect(container.textContent).toContain('全量改造 + SIT 验证');
+  });
 });

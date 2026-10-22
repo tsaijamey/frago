@@ -73,6 +73,7 @@ import {
   type SendTrail,
   type WorkbenchRecord,
 } from '@/hooks/useWorkbenchRecords';
+import { parseUiComponentOutput } from '@/utils/decisionBlock';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -148,8 +149,26 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
   });
 }
 
+function turnAgentSayHasCard(records: WorkbenchRecord[], fromIndex: number): boolean {
+  for (let j = fromIndex + 1; j < records.length; j += 1) {
+    const next = records[j];
+    if (next.agent_path.length) continue;
+    if (next.kind === 'user.say') break;
+    if (next.kind === 'agent.say') {
+      const text = typeof next.payload.text === 'string' ? next.payload.text : '';
+      if (
+        text.includes('```answer-needed-by-human') ||
+        (text.includes('"frago_ui_component"') && parseUiComponentOutput(text)?.ok)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
- * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度。
+ * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度与产出 UI 交互卡的工具结果。
  *
  * 刻度归「系统」档、条数也记在那边——这里只是**捎带显示**，不改归属，各档条数加起来
  * 照旧正好是全部。捎带的规矩是**两段对话之间只留最后一条**：agent 一口气调二三十次
@@ -159,10 +178,25 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
 export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
   const out: WorkbenchRecord[] = [];
   let tick: WorkbenchRecord | null = null;
-  for (const record of records) {
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
     if (record.kind === 'usage.tick') {
       tick = record;
       continue;
+    }
+    if (
+      record.kind === 'tool.result' &&
+      !record.agent_path.length &&
+      record.payload.status !== 'error'
+    ) {
+      const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      if (uiCard && uiCard.ok && !turnAgentSayHasCard(records, i)) {
+        if (tick) out.push(tick);
+        tick = null;
+        out.push(record);
+        continue;
+      }
     }
     if (lensOf(record) !== 'talk') continue;
     if (tick) out.push(tick);
