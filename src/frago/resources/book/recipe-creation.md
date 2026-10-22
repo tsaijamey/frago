@@ -146,12 +146,12 @@ validate 也报）：手写的那份跟方法一旦对不上，页面和总线�
 | 说话 | `self.progress()` / `self.warn()` / `self.log()` |
 | 出错 | `raise self.fail(...)`；`self.require("a", "b")` 一次报全缺了哪些参数 |
 | 问别的模块要数据 | `self.ask(模块, mode, 参数)` |
+| 问模型要一段字或 JSON | 类上写 `ai = True`，方法里调 `self.ask_ai(提示词, system=..., response_json=...)` |
 | 跑 frago 自己的命令 | `self.ask_frago(["user", "list", "--format", "json"])` |
 | 页面 | `self.publish(渲染状态)`、`self.open_page(地址)` |
 | 不让两轮叠在一起 | `with self.lock():` |
 
-还有两个类属性：`requires = {"save": ("id",), "*": (...)}` 声明哪个 mode 缺哪个
-参数就不许起跑（`"*"` 对每个 mode 都生效）；`reads_common` 点名要读谁的共读数据。
+还有三个类属性：`ai = True` 声明本模块要调大模型（不写就调 `self.ask_ai` 会被总线和 `validate` 当场拒绝）；`requires = {"save": ("id",), "*": (...)}` 声明哪个 mode 缺哪个参数就不许起跑（`"*"` 对每个 mode 都生效）；`reads_common` 点名要读谁的共读数据。
 
 NEVER 自己拼数据路径，NEVER 留「平台没给就用我自己的」那种兜底——
 那句话不报错，只让同一份数据悄悄散成好几份。平台没交代落点时 `self.data_dir`
@@ -219,7 +219,23 @@ NEVER 读对方的文件，NEVER import 对方的代码。
 
 `@action` 只开给这个配方自己的页面，**别的模块调不到**。
 
-### 4. 要跑 frago 自己的命令，走 self.ask_frago
+### 4. 问模型走 self.ask_ai，跑 frago 自己的命令走 self.ask_frago
+
+配方里要做摘要、分类、改写、翻译、结构化 JSON 抽取这类**不需要动用工具**的模型调用，在类上声明 `ai = True`，直接调 `self.ask_ai`：
+
+    class MyDigest(Recipe):
+        name = "my_digest"
+        ai = True
+
+        def mode_summarize(self) -> dict:
+            item = self.ask_ai("只输出一个 JSON 对象：...", response_json=True)
+            return {"summary": item}
+
+`response_json=False`（默认）返回干净文本字符串；`response_json=True` 自动剥掉代码块围栏并解析为 Python `dict` 或 `list`，解不动直接以 `self.fail(...)` 终止本轮。
+
+**NEVER 为了拿一段字或一个 JSON 去调 `frago agent`。** `frago agent` 起的是一整场带文件读写、命令执行、会话钩子与收尾闸门的智能体会话——既慢一个数量级，又容易把提示词里的材料当成任务去搜文件或触发反问。`self.ask_ai` 在服务端走无工具、无钩子的纯模型对话（`chat` 模式），一问一答即回。只有真要派一个 worker 去读代码仓库、改文件、跑测试时，才用 `self.ask_frago(["agent", ...])`。
+
+要跑 frago 自己的命令，走 `self.ask_frago`：
 
     out = self.ask_frago(["user", "list", "--format", "json"])
     if out["code"] == 0:
@@ -358,7 +374,7 @@ uses_commands: [gh]
 
 **访问级别声明本身**——一个 mode 标了两个级别；同一个 mode 定义了不止一次；
 把级别标在不是 mode 的方法上；类上还写着 `modes` / `exports` / `page_actions`；
-`default_mode` 指向一个不存在的 mode。
+`default_mode` 指向一个不存在的 mode；调了 `self.ask_ai` 却没在类上写 `ai = True`。
 
 **元信息**——recipe.md 里写了 `exports` 或 `page_actions`（已作废）；
 必填字段缺或不合格：`name` 只能是字母数字下划线连字符，`type` 是 atomic 或

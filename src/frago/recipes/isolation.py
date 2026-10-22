@@ -1014,7 +1014,8 @@ _CLI_FIX = (
     "隔离下 frago 命令看不见自己的工作目录，会当场失败。"
     "在 recipe.md 里写 uses_frago_cli: true —— 这一声明只交出 frago 自己的机器件，"
     "不含任何人的数据；或者改走总线：发布页面用 self.publish()，"
-    "要别的模块的数据用 self.ask()。"
+    "要别的模块的数据用 self.ask()，问模型要字或 JSON 用 self.ask_ai()（类上写 ai = True），"
+    "跑平台命令用 self.ask_frago()。"
 )
 
 
