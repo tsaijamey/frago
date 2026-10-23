@@ -55,17 +55,19 @@ class TestSanctionedSpawnEnv:
         assert env["PATH"] == "/bin"  # 其余照带，别把 VIRTUAL_ENV 这类丢了
 
     def test_session_identity_is_stripped(self) -> None:
-        """2026-10-15：服务端继承了重启它那场的编号，随后 8 条子会话被错挂到那场名下。"""
-        env = launch_guard.sanctioned_spawn_env(
-            {
-                "FRAGO_SESSION_ID": "core_6b8d623fe9bf436ba63064b6f4d9dfe8",
-                "CLAUDE_CODE_SESSION_ID": "1b75fa7d-4bff-4817-b536-755ddcd2700d",
-                "FRAGO_AGENT_ROLE": "worker",
-            }
-        )
-        assert "FRAGO_SESSION_ID" not in env
-        assert "CLAUDE_CODE_SESSION_ID" not in env
-        assert "FRAGO_AGENT_ROLE" not in env
+        """2026-10-15 / 2026-10-23：服务端继承了重启它那场的编号，随后子会话被错挂到那场名下。"""
+        from frago.session import self_id
+
+        assert launch_guard.SESSION_IDENTITY_ENV is self_id.SESSION_IDENTITY_ENV
+        for key in self_id.ENV_KEYS:
+            assert key in launch_guard.SESSION_IDENTITY_ENV
+
+        dirty = {key: f"val-{key}" for key in launch_guard.SESSION_IDENTITY_ENV}
+        dirty["PATH"] = "/bin"
+        env = launch_guard.sanctioned_spawn_env(dirty)
+        for key in launch_guard.SESSION_IDENTITY_ENV:
+            assert key not in env
+        assert env["PATH"] == "/bin"
 
     def test_an_explicit_base_is_honoured_too(self) -> None:
         """两个调用点（start_daemon / restarter）都从这里走，清的是同一份。"""

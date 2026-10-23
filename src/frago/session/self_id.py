@@ -40,6 +40,21 @@ from frago.session.transcript_completion import locate_transcript
 # 自己报的 id 优先，其次是环境里的声明。次序为什么是这个方向，见模块开头。
 ENV_KEYS = ("CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID", "FRAGO_SESSION_ID")
 
+# 各家 CLI Agent 注入给子进程、代表「当前处在哪场会话 / 哪个角色」的全部环境变量。
+# 守护进程（如 frago server）启动时直接引用本元组剥离会话身份，单一真源维护在此，
+# 防止 ENV_KEYS 新增变量时守护进程剥离名单漏改。
+SESSION_IDENTITY_ENV = (
+    *ENV_KEYS,
+    "CODEX_THREAD_ID",
+    "OPENCODE_SESSION_ID",
+    "FRAGO_AGENT_ROLE",
+    "FRAGO_CLI_AGENT",
+    "ANTIGRAVITY_AGENT",
+    "ANTIGRAVITY_CLI_ALIAS",
+    "ANTIGRAVITY_TRAJECTORY_ID",
+    "ANTIGRAVITY_SOURCE_METADATA",
+)
+
 # 兜底时只认「最近还在写」的记录：当前这场会话每调一次工具就会追加一行，文件修改
 # 时间是秒级新鲜的。一小时以外的那些是别的会话留下的，认了就是认错人。
 FALLBACK_MAX_AGE_S = 3600

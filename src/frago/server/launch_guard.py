@@ -39,6 +39,8 @@ import os
 import sys
 from pathlib import Path
 
+from frago.session.self_id import SESSION_IDENTITY_ENV
+
 logger = logging.getLogger(__name__)
 
 # Gate 1 — a fixed sentinel. Secrecy is intentionally not a goal (see module
@@ -47,18 +49,8 @@ logger = logging.getLogger(__name__)
 SPAWN_TOKEN_ENV = "FRAGO_DAEMON_SPAWN_TOKEN"
 SPAWN_TOKEN_VALUE = "frago-sanctioned-daemon-spawn-v1"
 
-# 会话身份变量——进程从哪场会话里被拉起来，就会带着这几个。daemon 是**不属于任何一场
-# 会话**的长命进程，它启动时若还带着这些，日后替人记派活账时就会把每一场都记到那个
-# 早该收场的会话名下。
-#
-# 2026-10-15 实测：我在一场会话里重启服务端，服务端继承了那场的 `FRAGO_SESSION_ID`，
-# 此后 8 条子会话（5 个 coreagent worker + 2 个 agy 会话）全被记成那场的孩子，而它们
-# 跟那场毫无关系。清掉之后服务端认不出自己是谁，记出来的就是「认不出父亲」——那才是
-# 实话（见 `session_origin.record_dispatch`）。
-#
-# `FRAGO_AGENT_ROLE` 一并清：那是「你是 worker、别再拉 worker」的角色标记，服务端不是
-# 谁派出去的 worker，带着它只会让从服务端拉起来的会话继承一个假的角色。
-SESSION_IDENTITY_ENV = ("FRAGO_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "FRAGO_AGENT_ROLE")
+# 会话身份变量直接从 frago.session.self_id.SESSION_IDENTITY_ENV 导入（由 *ENV_KEYS 展开），
+# 保持识别与剥离单一真源，避免新增会话身份环境变量时守护进程漏剥。
 
 
 def sanctioned_spawn_env(base: dict[str, str] | None = None) -> dict[str, str]:
