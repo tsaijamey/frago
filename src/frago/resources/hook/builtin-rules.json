@@ -46,7 +46,7 @@
       },
       "action": {
         "type": "inject_literal",
-        "text": "---\n【纲领】交付是你的核心任务 [MUST]\n\n一次响应不是只把话说完就结束——你说的文本，和你这一轮产出的文件制品（报告、图表、数据文件等），都送达到位，这一次响应才算真正完成。\n\n凡是产出了文件制品：\n  MUST 用 frago agent attach --files '[...]' --dirs '[...]' 把它挂上，随这一轮回复一起交付。\n  --files 收文件路径的 JSON 数组，--dirs 收目录路径的 JSON 数组。\n  conv_key 由命令从 env 自解析，正常情况下你无须手填。\n  NEVER 只在正文里贴一条裸路径（如「结果见 /path/to/report.md」）就当作已交付——那样用户拿到的只是一段文字，不是真制品。\n---"
+        "text": "---\n【纲领】交付是你的核心任务 [MUST]\n\n一次响应不是只把话说完就结束——你说的文本，和你这一轮产出的文件制品（报告、图表、数据文件等），都送达到位，这一次响应才算真正完成。\n\n凡是产出了文件制品：\n  MUST 用 frago agent attach --files '[...]' --dirs '[...]' 把它挂上，随这一轮回复一起交付。\n  --files 收文件路径的 JSON 数组，--dirs 收目录路径的 JSON 数组。\n  conv_key 由命令从 env 自解析，正常情况下你无须手填。\n  NEVER 只在正文里贴一条裸路径（如「结果见 /path/to/report.md」）就当作已交付——那样用户拿到的只是一段文字，不是真制品。\n凡是产出了图片（海报、图表截图、页面截图等）或需在会话内向用户展示本机/互联网图片：\n  MUST 调用 frago app image <路径或URL>...（或 -i \"地址|图注\" --title \"标题\"）渲染为自适应图片网格卡片挂载到本轮回复，NEVER 只手写 Markdown ![](...) 或只贴裸路径。\n---"
       },
       "dedup_scope": "session",
       "priority": 150,
@@ -811,18 +811,56 @@
       "source": "builtin",
       "event": "UserPromptSubmit",
       "match": {
-        "type": "env_ne",
-        "name": "FRAGO_AGENT_ROLE",
-        "value": "worker"
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_AGENT_ROLE",
+            "value": "worker"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_STOP_CHECK",
+            "value": "off"
+          }
+        ]
       },
       "action": {
         "type": "inject_literal",
-        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），优先调用 `frago ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成前端交互卡片（或在回复最末尾写 answer-needed-by-human 区块），写完就停；没写的收尾会被推回来补。写法：frago ask --help 或 frago book answer-needed-by-human"
+        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），优先调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成前端交互卡片（或在回复最末尾写 answer-needed-by-human 区块），写完就停；没写的收尾会被推回来补。写法：frago app ask --help 或 frago book answer-needed-by-human"
       },
       "dedup_scope": "always",
       "priority": 90,
       "created_at": "2026-09-28T00:00:00",
       "description": "Fires on every prompt in a main session (workers answer to a terminal, not the page). The decision card only appears if the agent writes the block, and a reminder given once at session start is too far from the moment the agent stops to ask; one line every turn keeps it next to that moment. The Stop-side decision-card pass pushes back any turn that waited on a pickable answer without the block."
+    },
+    {
+      "id": "builtin-prompt-image-grid",
+      "source": "builtin",
+      "event": "UserPromptSubmit",
+      "match": {
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "env_ne",
+            "name": "FRAGO_AGENT_ROLE",
+            "value": "worker"
+          },
+          {
+            "type": "env_ne",
+            "name": "FRAGO_STOP_CHECK",
+            "value": "off"
+          }
+        ]
+      },
+      "action": {
+        "type": "inject_literal",
+        "text": "【展示图片就出网格卡】这一轮若在回复中向用户展示本机图片或互联网图片（生成的海报、图表截图、页面截图等），调用 `frago app image <路径或URL>...`（或 `-i \"地址|图注\" --title \"标题\"`）生成会话内自适应图片网格卡片（支持点击放大预览），NEVER 只贴裸路径或手写 Markdown `![](...)`。写法：frago app image --help"
+      },
+      "dedup_scope": "always",
+      "priority": 89,
+      "created_at": "2026-10-23T00:00:00",
+      "description": "Fires on every prompt in a main session alongside builtin-prompt-decision-card. Keeps `frago app image` visible at the end of multi-step rendering/screenshot turns so the agent renders an adaptive image grid card instead of falling back to bare paths or raw Markdown image links."
     }
   ]
 }
