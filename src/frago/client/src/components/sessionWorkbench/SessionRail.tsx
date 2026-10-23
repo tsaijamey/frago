@@ -42,10 +42,10 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  CalendarDays,
   CalendarMinus,
   ChevronDown,
   ChevronRight,
-  Clock,
   Loader2,
   Pin,
   Plus,
@@ -476,7 +476,7 @@ export default function SessionRail({
         );
       }
       for (const branch of branches) {
-        out.push(...trunkWithKids(branch, inPinned, depth + 1, true));
+        out.push(...trunkWithKids(branch, inPinned, depth, true));
       }
       // 只有最外层这段需要画容器；里层的分支继续用同一个框，不再各画一圈。
       if (depth === 0 && branches.length) {
@@ -764,7 +764,7 @@ export default function SessionRail({
             title={t('workbench.rail.timelineHint')}
             className="flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[11.5px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
           >
-            <Clock size={13} strokeWidth={1.5} className="shrink-0" />
+            <CalendarDays size={13} strokeWidth={1.5} className="shrink-0" />
             <span>{t('workbench.rail.timeline')}</span>
           </button>
           <span className="text-[11px] text-text-muted" title={t('workbench.rail.todayOnlyHint')}>
@@ -1109,18 +1109,19 @@ export default function SessionRail({
               const session = row.session;
               const pos = row.groupPos;
               const branchPos = row.branchPos;
-              /* 缩进按层级走：父卡 0，父的 worker / 分支卡 1，分支的 worker 2，再往下递增。 */
+              /* 分支卡与主会话同宽（indent = 0）；只有挂在下面的 worker 才缩进。
+                 展开 worker 时外框 box 四边要上下对齐，缩进放在 box 内层。 */
               const indent = row.indent ?? (row.nested ? 1 : 0);
-              const indentCls =
-                indent <= 0
-                  ? row.inPinned
+              const outerIndentCls =
+                !pos && indent > 0
+                  ? indent === 1
+                    ? 'pl-6 pr-1'
+                    : 'pl-10 pr-1'
+                  : row.inPinned
                     ? 'px-[3px]'
-                    : 'px-1'
-                  : indent === 1
-                    ? 'pl-4 pr-1'
-                    : indent === 2
-                      ? 'pl-8 pr-1'
-                      : 'pl-12 pr-1';
+                    : 'px-1';
+              const innerIndentCls =
+                pos && indent > 0 ? (indent === 1 ? 'pl-4' : 'pl-8') : '';
               /* worker 框的三段：1px、清单的分隔线色、8px 圆角。 */
               const box =
                 pos === 'head'
@@ -1130,67 +1131,74 @@ export default function SessionRail({
                     : pos === 'tail'
                       ? 'rounded-b-[8px] border border-t-0 border-border-color'
                       : '';
-              /* 分支容器：整段用同一层浅底和一圈 10px 圆角框，跨行拆成头、中、尾三段画。 */
+              /* 分支容器：整段用同一层浅底和一圈 10px 圆角框，跨行拆成头、中、尾三段画。
+                 flow-root 封住内部卡片（如折叠 worker 的 mb-3）的外边距，防止穿透底边造成容器背景断裂。 */
               const branchBox =
                 branchPos === 'head'
-                  ? 'rounded-t-[10px] border-x border-t border-border-color bg-[var(--bg-hover)]'
+                  ? 'flow-root rounded-t-[10px] border-x border-t border-border-color bg-[var(--bg-hover)]'
                   : branchPos === 'mid'
-                    ? 'border-x border-border-color bg-[var(--bg-hover)]'
+                    ? 'flow-root border-x border-border-color bg-[var(--bg-hover)]'
                     : branchPos === 'tail'
-                      ? 'rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
+                      ? 'flow-root rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
                       : '';
-              /* 容器内边距：左右各 8px，头尾各 6px，卡片不再贴着外框。 */
+              /* 容器内边距：左右各 8px，头尾各 6px；组内卡片之间（非 worker 框内部）留 6px 间距。 */
+              const branchRowGap =
+                (branchPos === 'head' || branchPos === 'mid') && pos !== 'head' && pos !== 'mid'
+                  ? 'pb-1.5'
+                  : '';
               const branchPad =
                 branchPos === 'head'
-                  ? 'px-2 pt-1.5'
+                  ? `px-2 pt-1.5 ${branchRowGap}`.trim()
                   : branchPos === 'tail'
                     ? 'px-2 pb-1.5'
                     : branchPos === 'mid'
-                      ? 'px-2'
+                      ? `px-2 ${branchRowGap}`.trim()
                       : '';
               const item = (
                 <div className={branchPos ? 'mx-1' : ''} data-branch-pos={branchPos}>
                   <div className={branchBox}>
                     <div className={branchPad}>
-                      {/* 缩进放在容器内层：外框每一行都用同一条左边界，末行收底时才不会缺角。 */}
-                      <div className={indentCls}>
+                      <div className={outerIndentCls}>
                         <div className={box} data-group={pos}>
-                          {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
-                              只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
-                          <SessionItem
-                            live={views.isInTmux(session)}
-                            session={session}
-                            selected={session.session_id === selectedId}
-                            copied={copiedId === session.session_id}
-                            pinned={pins.isPinned(session.session_id)}
-                            inPinnedGroup={row.inPinned}
-                            forYou={forYou.infoOf(session.session_id)}
-                            sending={sendingId === session.session_id}
-                            agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
-                            busyTurn={busyId === session.session_id}
-                            inTmux={inTmuxOf(session)}
-                            card={decisionCardOf?.(session.session_id) ?? null}
-                            nested={row.nested}
-                            branchCard={row.branchCard}
-                            branchOf={
-                              session.relation?.kind === 'branch' && session.parent_session_id
-                                ? {
-                                    id: session.parent_session_id,
-                                    title: titleOf.get(session.parent_session_id) ?? null,
-                                  }
-                                : null
-                            }
-                            workerCount={row.workerCount}
-                            workersExpanded={row.workersExpanded}
-                            onSelect={handleSelect}
-                            onCopy={handleCopy}
-                            onTogglePin={handleTogglePin}
-                            pickedToday={today?.isPicked(session.session_id) ?? false}
-                            onRemoveToday={today ? handleRemoveToday : undefined}
-                            onToggleWorkers={toggleWorkers}
-                            onStopped={handleStopped}
-                            onDeleted={handleDeleted}
-                          />
+                          <div className={innerIndentCls}>
+                            {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
+                                只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
+                            <SessionItem
+                              live={views.isInTmux(session)}
+                              session={session}
+                              selected={session.session_id === selectedId}
+                              copied={copiedId === session.session_id}
+                              pinned={pins.isPinned(session.session_id)}
+                              inPinnedGroup={row.inPinned}
+                              inBranchGroup={Boolean(branchPos)}
+                              forYou={forYou.infoOf(session.session_id)}
+                              sending={sendingId === session.session_id}
+                              agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
+                              busyTurn={busyId === session.session_id}
+                              inTmux={inTmuxOf(session)}
+                              card={decisionCardOf?.(session.session_id) ?? null}
+                              nested={row.nested}
+                              branchCard={row.branchCard}
+                              branchOf={
+                                session.relation?.kind === 'branch' && session.parent_session_id
+                                  ? {
+                                      id: session.parent_session_id,
+                                      title: titleOf.get(session.parent_session_id) ?? null,
+                                    }
+                                  : null
+                              }
+                              workerCount={row.workerCount}
+                              workersExpanded={row.workersExpanded}
+                              onSelect={handleSelect}
+                              onCopy={handleCopy}
+                              onTogglePin={handleTogglePin}
+                              pickedToday={today?.isPicked(session.session_id) ?? false}
+                              onRemoveToday={today ? handleRemoveToday : undefined}
+                              onToggleWorkers={toggleWorkers}
+                              onStopped={handleStopped}
+                              onDeleted={handleDeleted}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>

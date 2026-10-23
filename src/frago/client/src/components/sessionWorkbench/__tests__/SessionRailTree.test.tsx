@@ -205,14 +205,16 @@ describe('SessionRail 分支与原会话同容器', () => {
     expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('1');
   });
 
-  it('分支容器每一行共用同一条外边界，末行收底不缺角', () => {
+  it('分支容器用 flow-root 封住内部外边距不断裂，且分支卡与主会话同宽', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const wrappers = screen
       .getAllByTestId('session-item')
       .map((el) => el.closest('[data-branch-pos]') as HTMLElement);
-    // 缩进只能放在容器内层；如果挂在容器外层，末行的左边界会往里缩，左下角就缺一块。
     expect(wrappers.map((w) => w.className)).toEqual(['mx-1', 'mx-1']);
-    expect(wrappers[1].querySelector('.pl-4')).toBeTruthy();
+    // 每一段容器都用 flow-root 阻止折叠 worker 的 mb-3 穿透造成背景断裂
+    expect(wrappers.every((w) => w.firstElementChild?.className.includes('flow-root'))).toBe(true);
+    // 分支卡仅挂在主会话下方，不缩窄（没有 pl-4）
+    expect(wrappers[1].querySelector('.pl-4')).toBeNull();
   });
 
   it('展开父会话的 worker：父卡 → worker → 分支卡，仍在同一容器里', () => {

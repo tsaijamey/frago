@@ -207,6 +207,7 @@ export default function SessionItem({
   copied,
   pinned = false,
   inPinnedGroup = false,
+  inBranchGroup = false,
   forYou = null,
   sending = false,
   agentOnIt = false,
@@ -238,6 +239,8 @@ export default function SessionItem({
    * 是重复，不画。组外（按筛选单独看到的置顶会话）照旧画。
    */
   inPinnedGroup?: boolean;
+  /** 这张卡摆在分支容器里：容器已经有浅底，叠纸和流光内层要跟容器底色对齐，不能透出侧栏深底。 */
+  inBranchGroup?: boolean;
   /** 这一场挂着 For you：有 agent 停在输入框前等你（判据见 `useForYou`）。 */
   forYou?: ForYouInfo | null;
   /** 这一场本地刚发出一句话、还在路上。 */
@@ -289,7 +292,7 @@ export default function SessionItem({
   const age = forYou ? forYou.waitingSince : activityTs(session);
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
-  const stacked = hasWorkers && !workersExpanded && !branchCard;
+  const stacked = hasWorkers && !workersExpanded;
   /** 分支卡在容器里要有一张实在的纸；选中时让 SELECTED 接管底色，描边仍保留。 */
   const branchLook = branchCard
     ? selected
@@ -297,8 +300,14 @@ export default function SessionItem({
       : 'border border-border-color bg-bg-primary'
     : '';
   const preview = previewOf(session, forYou, card);
-  /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组里是组的浅底，别处是清单底。 */
-  const paperBg = inPinnedGroup ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
+  const onGroupFill = inPinnedGroup || inBranchGroup;
+  /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组与分支容器里是组的浅底，别处是清单底。 */
+  const paperBg = onGroupFill ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
+  const liveFill = branchCard
+    ? 'var(--bg-primary)'
+    : onGroupFill
+      ? 'var(--rail-pinned-fill)'
+      : undefined;
   /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
   const progress = sending ? 'sending' : agentOnIt ? 'agent' : null;
   return (
@@ -333,7 +342,7 @@ export default function SessionItem({
       ) : null}
       {/* 开在 tmux 里的那道流光只围最上面这张卡。套在外层的话，身后那一叠纸也被圈进去，
           光就沿着整叠的外框跑到最底下那张纸的下缘去了（主人 09-29 指出）。 */}
-      <MaybeLiveCard live={live} fill={inPinnedGroup ? 'var(--rail-pinned-fill)' : undefined}>
+      <MaybeLiveCard live={live} fill={liveFill}>
       <div
         role="button"
         tabIndex={0}
@@ -356,8 +365,8 @@ export default function SessionItem({
            也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
            才立得住。内边距上下 10、左右 12（第五轮二改）。 */
         className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${branchLook} ${
-          /* 置顶组那块底已经是悬停色，组里的卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
-          selected ? SELECTED : inPinnedGroup ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
+          /* 置顶组和分支容器那块底已经是悬停色，组里的普通卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
+          selected ? SELECTED : onGroupFill && !branchCard ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
         }`}
       >
         {/* 分支只留一枚 branched 小标签，出处全称放进悬停提示，不占正文。 */}
