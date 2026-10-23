@@ -1616,6 +1616,8 @@
       "readFailed": "Couldn't get this one's content",
       "openFolder": "Open its folder",
       "openFolderHint": "Open the folder that holds it, on the machine running frago",
+      "fullscreen": "Fill the viewport",
+      "exitFullscreen": "Exit fill (Esc)",
       "copyPath": "Copy the full path",
       "prev": "Previous file (←)",
       "next": "Next file (→)",

@@ -2,7 +2,7 @@
  * FileViewer — 会话文件清单上点开一份文件的浮窗（支持行级/选区批注、会话溯源落盘与打包填入对话框）。
  *
  * 1. **固定比例大视野窗口**：默认采用与主窗口成固定比例的 `88vw × 86vh`（改动对照模式 `92vw × 86vh`），
- *    给代码阅读与逐行批注留出充裕视野。
+ *    给代码阅读与逐行批注留出充裕视野；一键铺满整个视口（Esc 逐层退：批注框 → 全屏 → 关窗）。
  * 2. **行级与选区批注**：点击行号 `+` 或在代码区划选多行文本，原地展开批注输入框；保存后实时落盘到
  *    `~/.frago/sessions/<family>/<sid>/file-annotations.json`，跟当前会话建立可溯源关联。
  * 3. **打包成完整新 prompt 填入对话框**：右侧批注栏底部提供「打包 N 条批注填入对话框」按钮（遵循全局单实心绿纪律，
@@ -20,7 +20,9 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  Maximize2,
   MessageSquarePlus,
+  Minimize2,
   Send,
   X,
 } from 'lucide-react';
@@ -150,6 +152,9 @@ export default function FileViewer({
 
   const [annotationsOpen, setAnnotationsOpen] = useState(true);
   const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
+  /** 全屏铺满视口。与浏览器原生 requestFullscreen 是两回事：这里只铺满网页视口，
+   * 藏掉浏览器外壳对「看一份文件」过重，也免去各浏览器全屏 API 的差异与权限提示。 */
+  const [maximized, setMaximized] = useState(false);
   const [draftNote, setDraftNote] = useState('');
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const codeContainerRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +246,12 @@ export default function FileViewer({
           setDraftNote('');
           return;
         }
+        // Esc 逐层退：批注框 → 全屏 → 关窗。桌面软件的惯例，人按 Esc 想撤的是
+        // 最近一步，而不是一口气把整个浮窗拍死。
+        if (maximized) {
+          setMaximized(false);
+          return;
+        }
         onClose();
       } else if (!inInput && e.key === 'ArrowLeft') {
         onStep(-1);
@@ -250,7 +261,7 @@ export default function FileViewer({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, onStep, draftRange]);
+  }, [onClose, onStep, draftRange, maximized]);
 
   useEffect(() => {
     if (draftRange) {
@@ -432,7 +443,9 @@ export default function FileViewer({
   return (
     <div
       data-testid="file-viewer"
-      className="fixed inset-0 z-[80] flex items-center justify-center p-3"
+      className={`fixed inset-0 z-[80] flex items-center justify-center ${
+        maximized ? 'p-0' : 'p-3'
+      }`}
       role="dialog"
       aria-modal="true"
       aria-label={baseOf(file.path)}
@@ -443,11 +456,16 @@ export default function FileViewer({
         onClick={onClose}
       />
 
-      {/* 固定比例大尺寸窗口：默认 88vw × 86vh，改动对照模式 92vw × 86vh，给阅读与批注留出开阔视野 */}
+      {/* 固定比例大尺寸窗口：默认 88vw × 86vh，改动对照模式 92vw × 86vh，给阅读与批注留出开阔视野。
+          全屏时铺满整个视口（去圆角去边距去比例上限），还原逐层退——见 Esc 那段。 */}
       <div
         data-testid="file-viewer-window"
-        className={`relative flex h-[86vh] max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-2xl ${
-          mode === 'changes' ? 'w-[92vw]' : 'w-[88vw]'
+        className={`relative flex flex-col overflow-hidden border border-border-strong bg-bg-primary shadow-2xl ${
+          maximized
+            ? 'h-full w-full rounded-none'
+            : `h-[86vh] max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] rounded-[12px] ${
+                mode === 'changes' ? 'w-[92vw]' : 'w-[88vw]'
+              }`
         }`}
       >
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color px-3.5">
@@ -567,6 +585,20 @@ export default function FileViewer({
               className={iconBtn}
             >
               <FolderOpen size={14} />
+            </button>
+            <button
+              type="button"
+              data-testid="file-viewer-maximize"
+              aria-pressed={maximized}
+              title={
+                maximized
+                  ? t('workbench.files.exitFullscreen')
+                  : t('workbench.files.fullscreen')
+              }
+              onClick={() => setMaximized((v) => !v)}
+              className={iconBtn}
+            >
+              {maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
             <button
               type="button"

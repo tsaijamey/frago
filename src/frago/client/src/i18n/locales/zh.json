@@ -1611,6 +1611,8 @@
       "readFailed": "没取到这一份的内容",
       "openFolder": "打开所在目录",
       "openFolderHint": "在跑 frago 那台机器上打开它所在的目录并选中它",
+      "fullscreen": "铺满视口",
+      "exitFullscreen": "退出铺满（Esc）",
       "copyPath": "复制完整路径",
       "prev": "上一个文件（←）",
       "next": "下一个文件（→）",
