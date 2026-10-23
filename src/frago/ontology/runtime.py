@@ -53,6 +53,7 @@ from frago.ontology.metamodel import (
     QualityState,
     Resource,
     Role,
+    Specification,
 )
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
 from frago.ontology.relations import OntologyGraph
@@ -515,6 +516,114 @@ STANDARD_CLI_COMMANDS: dict[str, CliCommandSpec] = {
         initiates_process_class=None,
         description="产物层落点位置索引只读检索，不改变任何独立资源状态。",
     ),
+    "frago.browser.open": CliCommandSpec(
+        command_path="frago.browser.open",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="BrowserTabGroup",
+        initiates_process_class=None,
+        description="在受控浏览器标签组内打开或操控页面（受单组 5 标签上限约束）。",
+    ),
+    "frago.view.open": CliCommandSpec(
+        command_path="frago.view.open",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="ContentViewerSurface",
+        initiates_process_class=None,
+        description="按本地文件或配方产物双世界标识打开内容查看器视图。",
+    ),
+    "frago.apps.use": CliCommandSpec(
+        command_path="frago.apps.use",
+        mutates_state=True,
+        underlying_action_id="execute_recipe_mode",
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="BuiltinDeliveryApp",
+        initiates_process_class="RecipeExecutionProcess",
+        description="调用内置交付应用直接产出成品工件。",
+    ),
+    "frago.daemon.manage": CliCommandSpec(
+        command_path="frago.daemon.manage",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="HumanPrincipal | PrimarySchedulerRole",
+        target_range="RecipeModule",
+        initiates_process_class="SupervisedDaemonProcess",
+        description="启停或巡检常驻守护配方进程。",
+    ),
+    "frago.market.install": CliCommandSpec(
+        command_path="frago.market.install",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="HumanPrincipal | PrimarySchedulerRole",
+        target_range="RecipeModule",
+        initiates_process_class="MarketInstallProcess",
+        description="从配方市场检索、校验并安装配方模块到本地环境。",
+    ),
+    "frago.schedule.trigger": CliCommandSpec(
+        command_path="frago.schedule.trigger",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="PrimarySchedulerRole | HumanPrincipal",
+        target_range="ScheduleRuleSpec",
+        initiates_process_class="RecipeExecutionProcess",
+        description="按定时规格触发命令直跑、配方直跑或主控自然语言调度。",
+    ),
+    "frago.remote.dispatch": CliCommandSpec(
+        command_path="frago.remote.dispatch",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="PrimarySchedulerRole | HumanPrincipal",
+        target_range="RemoteFragoNode",
+        initiates_process_class="RemoteTaskDispatchProcess",
+        description="向远端节点主控队列投递跨机任务书并追踪状态。",
+    ),
+    "frago.team.sync": CliCommandSpec(
+        command_path="frago.team.sync",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="TeamPeerRole | AgentKernel",
+        target_range="CommunicationChannel",
+        initiates_process_class="TeamSyncProcess",
+        description="通过结对中继通道增量推送会话轨迹并拉取队友指令。",
+    ),
+    "frago.cloud.sync": CliCommandSpec(
+        command_path="frago.cloud.sync",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="HumanPrincipal | AgentKernel",
+        target_range="MachineRuntimeConfig",
+        initiates_process_class="HomeSyncProcess",
+        description="执行家目录跨设备同步与冲突消解策略。",
+    ),
+    "frago.run.record": CliCommandSpec(
+        command_path="frago.run.record",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="DataSlot",
+        initiates_process_class="RunTransactionProcess",
+        description="围绕业务事务聚类领域并写入运行日志。",
+    ),
+    "frago.todo.update": CliCommandSpec(
+        command_path="frago.todo.update",
+        mutates_state=True,
+        underlying_action_id="execute_state_mutating_operation",
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="DataSlot",
+        initiates_process_class=None,
+        description="创建或更新跨会话待办交接单。",
+    ),
+    "frago.book.read": CliCommandSpec(
+        command_path="frago.book.read",
+        mutates_state=False,
+        underlying_action_id=None,
+        initiator_domain="AgentKernel | HumanPrincipal",
+        target_range="BookTopicDocument",
+        initiates_process_class=None,
+        description="只读查阅内置行为准则与操作手册正文。",
+    ),
 }
 
 
@@ -713,3 +822,103 @@ def build_execute_recipe_mode_contract(
             ),
         ),
     )
+
+
+# ============================================================================
+# Schedule Dispatch Runtime & Team Pairing Policy Runtime
+# ============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScheduleDispatchDecision:
+    """Routing decision for a `ScheduleRuleSpec` under `DirectExecutableSchedule` axioms."""
+
+    schedule_spec: Specification
+    zero_token_direct: bool
+    route: str
+    trigger_event: Event
+
+
+class ScheduleDispatchRuntime:
+    """Evaluates `ScheduleRuleSpec` via `DirectExecutableSchedule` to route zero-token vs. PA turns."""
+
+    def __init__(
+        self,
+        *,
+        registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+        graph: OntologyGraph | None = None,
+    ) -> None:
+        self._registry = registry
+        self._graph = graph if graph is not None else OntologyGraph()
+        self._direct_cls = BUILTIN_DEFINED_CLASSES["DirectExecutableSchedule"]
+
+    @property
+    def graph(self) -> OntologyGraph:
+        return self._graph
+
+    def dispatch(
+        self,
+        schedule_spec: Specification,
+        *,
+        trigger_type: str = "cron_fired",
+    ) -> ScheduleDispatchDecision:
+        """Classify `schedule_spec` and emit an immutable `ScheduledTriggerEvent`."""
+        self._graph.register_entity(schedule_spec)
+        is_direct = self._direct_cls.matches(schedule_spec, self._graph)
+        route = "direct_executor" if is_direct else "primary_scheduler"
+        evt = self._registry.create(
+            "ScheduledTriggerEvent",
+            event_type=trigger_type,
+            causal_source_id=schedule_spec.ontological_id(),
+            payload={
+                "route": route,
+                "zero_token_direct": is_direct,
+            },
+        )
+        assert isinstance(evt, Event)
+        self._graph.register_entity(evt)
+        return ScheduleDispatchDecision(
+            schedule_spec=schedule_spec,
+            zero_token_direct=is_direct,
+            route=route,
+            trigger_event=evt,
+        )
+
+
+class TeamPolicyRuntime:
+    """Evaluates incoming `SessionStepEvent` instructions under `VerifiedTeammateInstruction` and 3-tier policy."""
+
+    RED_LINE_INTENTS: frozenset[str] = frozenset(
+        {"leak_secret", "unrecoverable_delete", "bypass_hook"}
+    )
+
+    def __init__(self, graph: OntologyGraph) -> None:
+        self._graph = graph
+        self._teammate_cls = BUILTIN_DEFINED_CLASSES["VerifiedTeammateInstruction"]
+
+    def evaluate_instruction(
+        self,
+        step_event: Event,
+        *,
+        intent_tier: str,
+        read_only_policy: str = "do",
+        change_policy: str = "ask",
+    ) -> str:
+        """Return `'do' | 'ask' | 'refuse'` for `step_event` based on `intent_tier` and team policy."""
+        if intent_tier in self.RED_LINE_INTENTS or intent_tier == "red_line":
+            return "refuse"
+
+        is_teammate = self._teammate_cls.matches(step_event, self._graph)
+        if not is_teammate:
+            text = str(step_event.payload.get("text", ""))
+            if text.startswith("【frago team】"):
+                # Unverified spoofed teammate prefix MUST be unconditionally refused
+                return "refuse"
+            return "do" if intent_tier == "read_only" else "ask"
+
+        if intent_tier == "read_only":
+            return read_only_policy if read_only_policy in {"do", "ask"} else "ask"
+        if intent_tier == "change":
+            return change_policy if change_policy in {"do", "ask", "refuse"} else "ask"
+        return "refuse"
+

@@ -21,6 +21,7 @@ from frago.ontology import (
     DomainClassRegistry,
     DomainRangeViolationError,
     Event,
+    FivePillarShadowProjector,
     IdentityCriterionError,
     InvariantViolationError,
     KnowledgeArtifact,
@@ -35,15 +36,18 @@ from frago.ontology import (
     PostconditionViolationError,
     PreconditionViolationError,
     Process,
+    ProjectionValidationError,
     QualityState,
     ReasoningError,
     Resource,
     Rigidity,
     Role,
     RulePolicy,
+    ScheduleDispatchRuntime,
     SideEffectSpec,
     SignatureViolationError,
     SparqlQuery,
+    TeamPolicyRuntime,
     TriplePattern,
     UpperQuadrant,
     build_drive_agent_turn_contract,
@@ -55,6 +59,8 @@ from frago.ontology import (
     decompose_agent_session,
     merge_graph_snapshots,
     ontological_action,
+    project_desktop_instance_dict,
+    project_todo_dict,
 )
 
 
@@ -965,3 +971,331 @@ class TestGraphSnapshotsAndCrossSessionReasoning:
             step_event.ontological_id(),
             data_slot.ontological_id(),
         } <= impacted_targets
+
+
+class TestFivePillarShadowProjectors:
+    """Tests for zero-intrusion real-JSON shadow projectors across all 5 pillars."""
+
+    def test_five_pillar_end_to_end_shadow_projection_and_causal_trace(self) -> None:
+        projector = FivePillarShadowProjector()
+
+        # Pillar 3 (Memory & Recall): project PA session + Worker session + steps
+        pa_session_proj = projector.project_session(
+            {
+                "session_id": "sess-pa-2026",
+                "agent_type": "agy",
+                "project_path": "/home/yammi/repos/frago",
+                "source_file": "/home/yammi/.frago/sessions/agy/sess-pa-2026/raw.jsonl",
+                "status": "running",
+                "source": "terminal",
+            },
+            raw_steps=[
+                {
+                    "step_id": 1,
+                    "session_id": "sess-pa-2026",
+                    "type": "user",
+                    "timestamp": "2026-10-23T08:00:00",
+                    "raw_uuid": "u-1",
+                },
+                {
+                    "step_id": 2,
+                    "session_id": "sess-pa-2026",
+                    "type": "tool_call",
+                    "timestamp": "2026-10-23T08:00:02",
+                    "raw_uuid": "u-2",
+                    "tool_name": "Read",
+                },
+            ],
+            is_worker=False,
+            profile_id="prof-default",
+        )
+        assert len(pa_session_proj.step_events) == 2
+
+        worker_session_proj = projector.project_session(
+            {
+                "session_id": "core_worker_99",
+                "agent_type": "coreagent",
+                "project_path": "/home/yammi/repos/frago",
+                "source_file": "/home/yammi/.frago/sessions/coreagent/core_worker_99/raw.jsonl",
+                "status": "completed",
+                "source": "terminal",
+            },
+            is_worker=True,
+        )
+        assert worker_session_proj.decomposition.origin_state.value == "worker"
+
+        # Pillar 1 (Session Companion): project builtin-rules.json dict governing PA session
+        hook_proj = projector.project_hook_rules(
+            {
+                "version": 1,
+                "rules": [
+                    {
+                        "id": "builtin-session-start-brief-index",
+                        "source": "builtin",
+                        "event": "SessionStart",
+                        "match": {"type": "always"},
+                        "action": {
+                            "type": "run_command_and_inject_stdout",
+                            "command": ["book", "must-output-shape"],
+                        },
+                    }
+                ],
+            },
+            governed_session_ids=["sess-pa-2026"],
+        )
+        assert len(hook_proj.rules) == 1
+        assert len(hook_proj.referenced_books) == 1
+
+        # Pillar 2 (Hand & Eye): project agent_os instance registry JSON
+        default_cid = compute_desktop_content_id("default")
+        desktop_proj = projector.project_desktop_instance(
+            {
+                "id": "default",
+                "content_id": default_cid,
+                "desktop_url": f"http://127.0.0.1:8094/app/agent_os?c={default_cid}",
+                "clips_dir": "/home/yammi/.frago/users/default/recipe-data/agent_os/clips",
+                "tmux_session": "frago-stage",
+                "created_at": "2026-10-01T00:00:00",
+                "pid": 43210,
+                "port": 8770,
+                "status": "running",
+                "started_at": "2026-10-23T08:00:00",
+                "heartbeat_at": "2026-10-23T08:05:00",
+                "desired": "running",
+            }
+        )
+        assert desktop_proj.runtime_state.value == "running"
+
+        # Pillar 3 (Todo Handoff): project todo JSON linking both PA and Worker sessions
+        todo_artifact = projector.project_todo(
+            {
+                "id": "20261023-ontology-shadow-projectors",
+                "title": "ontology-shadow-projectors",
+                "status": "doing",
+                "priority": "high",
+                "updated": "2026-10-23",
+                "sessions": ["sess-pa-2026", "core_worker_99"],
+            }
+        )
+
+        # Pillar 4 (Recipes): project producer & consumer recipes and verify shares handshake
+        projector.project_recipe(
+            {
+                "name": "dma_producer",
+                "version": "1.2.0",
+                "shares": "signals/",
+                "modes": {"latest": "export_readonly"},
+            }
+        )
+        projector.project_recipe(
+            {
+                "name": "dma_dashboard",
+                "version": "1.0.0",
+                "reads_common": ["dma_producer"],
+                "uses_commands": ["gh"],
+                "uses_frago_cli": True,
+                "modes": {
+                    "view": "export_readonly",
+                    "refresh": "action_triggerable",
+                },
+            }
+        )
+        assert projector.validate_recipe_handshakes() == []
+
+        # PublicExposableRecipe classifies dma_producer (export-only) but NOT dma_dashboard (@action)
+        pub_cls = BUILTIN_DEFINED_CLASSES["PublicExposableRecipe"]
+        pub_recipes = [e.ontological_id() for e in pub_cls.classify_all(projector.graph)]
+        assert "recipe:dma_producer" in pub_recipes
+        assert "recipe:dma_dashboard" not in pub_recipes
+
+        # Cross-session multi-hop causal lineage from TodoHandoffArtifact back to both AgentKernels & HookRule
+        reasoner = OntologyReasoner(projector.graph)
+        lineage = reasoner.trace_causal_lineage(todo_artifact.ontological_id())
+        actor_ids = {a.ontological_id() for a in lineage.root_actors}
+        assert actor_ids == {"kernel:agy", "kernel:coreagent"}
+        norm_ids = {n.ontological_id() for n in lineage.governing_norms}
+        assert "hook:builtin-session-start-brief-index@1.0.0" in norm_ids
+
+    def test_projector_guardrails_reject_invalid_desktop_and_todo_dicts(self) -> None:
+        # Mismatched desktop content_id (e.g., port-hashed instead of id-hashed) is rejected
+        with pytest.raises(IdentityCriterionError, match="content_id mismatch"):
+            project_desktop_instance_dict(
+                {
+                    "id": "default",
+                    "content_id": "000000000000",
+                    "desktop_url": "http://127.0.0.1:8094/app/agent_os",
+                    "clips_dir": "/tmp/clips",
+                    "tmux_session": "frago-stage",
+                    "created_at": "2026-10-01T00:00:00",
+                    "pid": 1,
+                    "port": 8770,
+                    "status": "running",
+                    "started_at": "2026-10-23T08:00:00",
+                    "heartbeat_at": "2026-10-23T08:00:00",
+                }
+            )
+
+        # Dropped todo without drop_reason is rejected
+        with pytest.raises(MutabilityViolationError, match="drop_reason"):
+            project_todo_dict(
+                {
+                    "id": "20261023-abandoned-item",
+                    "title": "abandoned-item",
+                    "status": "dropped",
+                    "drop_reason": None,
+                }
+            )
+
+        # Broken recipe reads_common handshake is caught
+        projector = FivePillarShadowProjector()
+        projector.project_recipe(
+            {"name": "closed_producer", "version": "1.0.0", "shares": ""}
+        )
+        projector.project_recipe(
+            {
+                "name": "illegal_consumer",
+                "version": "1.0.0",
+                "reads_common": ["closed_producer"],
+            }
+        )
+        violations = projector.validate_recipe_handshakes()
+        assert len(violations) == 1
+        assert "empty shares" in violations[0]
+
+        with pytest.raises(ProjectionValidationError, match="rules"):
+            projector.project_hook_rules({"version": 1})
+
+    def test_extended_subsystem_projectors_schedule_and_team_runtime(self) -> None:
+        projector = FivePillarShadowProjector()
+
+        # BrowserTabGroup: up to 5 tabs allowed, >5 rejected
+        tab_group = projector.project_browser_tab_group(
+            {
+                "group_name": "research-group",
+                "tabs": ["https://a.test", "https://b.test", "https://c.test"],
+            }
+        )
+        assert tab_group.ontological_id() == "browser_group:research-group"
+        with pytest.raises(ProjectionValidationError, match="exceeding max limit 5"):
+            projector.project_browser_tab_group(
+                {
+                    "group_name": "overflow-group",
+                    "tabs": [f"https://{i}.test" for i in range(6)],
+                }
+            )
+
+        # ContentViewerSurface: dual-world file vs recipe content_id
+        view_file = projector.project_viewer_surface(
+            {"world": "file", "content_id": "docs/spec.md"}
+        )
+        view_recipe = projector.project_viewer_surface(
+            {"world": "recipe", "content_id": "dma_dashboard:latest"}
+        )
+        assert view_file.ontological_id() == "viewer:file:docs/spec.md"
+        assert view_recipe.ontological_id() == "viewer:recipe:dma_dashboard:latest"
+
+        # 3-layer Recall: DefKnowledgeEntry, DataSlot + ContextRecallIndex, RunTransactionProcess, TokenUsageLedger
+        def_proj = projector.project_def_knowledge(
+            {
+                "domain": "architecture",
+                "entries": [
+                    {
+                        "doc_name": "agent-ontology-granularity",
+                        "summary": "Agent 拆五体正交建模",
+                    }
+                ],
+            }
+        )
+        assert def_proj.domain.ontological_id() == "domain:architecture"
+        assert len(def_proj.entries) == 1
+
+        slot, recall_idx = projector.project_data_slot(
+            {
+                "canonical_slot_path": "~/.frago/data/ontology/2026-10-23-snapshot",
+                "subject_slug": "ontology/2026-10-23-snapshot",
+            }
+        )
+        assert slot.ontological_id() == "slot:~/.frago/data/ontology/2026-10-23-snapshot"
+        assert recall_idx is not None
+
+        run_proc = projector.project_run_transaction(
+            {
+                "run_id": "run-20261023-01",
+                "canonical_domain": "architecture",
+                "state": "completed",
+                "data_slot_path": "~/.frago/data/ontology/2026-10-23-snapshot",
+            }
+        )
+        assert run_proc.ontological_id() == "run:run-20261023-01"
+
+        ledger = projector.project_token_usage(
+            {
+                "date": "2026-10-23",
+                "agent_family": "agy",
+                "model": "claude-opus-4-6",
+                "tokens": 128000,
+            }
+        )
+        assert "2026-10-23" in ledger.artifact_uri
+
+        # RecipeExposurePolicy: public exposure succeeds for export-only recipe, fails for @action recipe
+        projector.project_recipe(
+            {
+                "name": "readonly_board",
+                "version": "1.0.0",
+                "modes": {"index": "export_readonly"},
+            }
+        )
+        projector.project_recipe(
+            {
+                "name": "mutating_board",
+                "version": "1.0.0",
+                "modes": {"mutate": "action_triggerable"},
+            }
+        )
+        pub_policy = projector.project_recipe_exposure(
+            {"recipe_name": "readonly_board", "access": "public"}
+        )
+        assert pub_policy.ontological_id() == "exposure:readonly_board:public@1.0.0"
+        with pytest.raises(ProjectionValidationError, match="PublicExposableRecipe"):
+            projector.project_recipe_exposure(
+                {"recipe_name": "mutating_board", "access": "public"}
+            )
+
+        # ScheduleRuleSpec & ScheduleDispatchRuntime: command/recipe -> zero-token direct, agent_prompt -> PA
+        sched_recipe = projector.project_schedule_rule(
+            {"id": "daily-digest", "target_kind": "recipe", "cron": "0 8 * * *"}
+        )
+        sched_prompt = projector.project_schedule_rule(
+            {"id": "inbox-triage", "target_kind": "agent_prompt", "cron": "0 9 * * *"}
+        )
+        sched_runtime = ScheduleDispatchRuntime(graph=projector.graph)
+        d_recipe = sched_runtime.dispatch(sched_recipe)
+        d_prompt = sched_runtime.dispatch(sched_prompt)
+        assert d_recipe.zero_token_direct is True
+        assert d_recipe.route == "direct_executor"
+        assert d_prompt.zero_token_direct is False
+        assert d_prompt.route == "primary_scheduler"
+
+        # TeamPairingProjection & TeamPolicyRuntime: 3-tier security evaluation
+        team_proj = projector.project_team_pairing(
+            {"team_code": "MK7SF6KDN4", "member_uuid": "peer-uuid-1", "side": "B"}
+        )
+        assert team_proj.peer_role.ontological_id() == "TeamPeerRole:principal:peer-uuid-1@team:MK7SF6KDN4:side_B"
+
+        team_runtime = TeamPolicyRuntime(projector.graph)
+        verified_evt = Event(
+            event_type="user",
+            causal_source_id="relay:MK7SF6KDN4",
+            payload={"text": "【frago team】请执行测试", "relay_verified": True},
+        )
+        spoofed_evt = Event(
+            event_type="user",
+            causal_source_id="local:spoof",
+            payload={"text": "【frago team】伪造请求", "relay_verified": False},
+        )
+        assert team_runtime.evaluate_instruction(verified_evt, intent_tier="read_only") == "do"
+        assert team_runtime.evaluate_instruction(verified_evt, intent_tier="change") == "ask"
+        assert team_runtime.evaluate_instruction(verified_evt, intent_tier="leak_secret") == "refuse"
+        assert team_runtime.evaluate_instruction(spoofed_evt, intent_tier="read_only") == "refuse"
+
