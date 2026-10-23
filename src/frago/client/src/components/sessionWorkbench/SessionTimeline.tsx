@@ -1,28 +1,11 @@
 /**
- * SessionTimeline — 这台机器上全部会话的时间轴浮窗。
+ * SessionTimeline — 用量日历与会话时间轴合一浮窗。
  *
- * 左栏只摆今天；这里摆**全部**。一行一场会话，横轴是时间：
- * - 左端 = 会话创建时刻；
- * - 右端 = agent 最后一句真正的文本回复（`last_reply_at`，服务端已跳过心跳与簿记）；
- * - 还没说过话的那场画成空心条，只有起点。
- *
- * 布局规则照原型 20260924-page-polish 的六轮迭代（主人 10-16、10-17 定）：
- * - **没有单独的标题列**，整条横向区域就是时间轴，标题写在条上；
- * - 标题完整装得进条里就写条里，装不下写条外，条外那一段套虚线框、与条拼成一个形状；
- *   条本身永远一种粗细（20px），缩到再远也至少 24px 宽，永远是横的；
- * - 父子会话聚成一组（规则照左栏 `SessionRail`：worker 折在派活的那场下面），组内相邻；
- * - 窗口档位**显式摆在顶上**：24 小时 / 3 天 / 7 天 / 30 天 / 全部，默认 7 天
- *   （2026-10-19 主人报「缺少 7 天窗口」后改；档位不再只藏在 −/+ 里）；
- * - ‹ › 整窗翻页；两头各放开一个窗口；
- * - shift + 滚轮、触控板横向滚动平移时间；**不拦 ctrl/cmd + 滚轮**（浏览器缩放）；
- * - 下方时间滚动条代表"最早那场到现在"，拖滑块或点空槽都能走时间。
- *
- * **行的渲染是虚拟化的。** 本机 3950 场会话，全部档位一次铺完实测二十秒以上才恢复响应；
- * 现在只渲染视口内那几十行，滚动时再接上下一批。每行自己量自己的宽度与标题，量完再写
- * 条与标题的位置（见 `LaneRow`）——不再一次性量全表。
- *
- * 从 timeline 捡旧会话：每一行悬停时右端出现「＋ Today」，点了就把这场放进今天的左栏
- * （见 `useSessionToday`）。第二天它没有新回复就自然消失——这份名单只认当天。
+ * 1. 首先展示月历网格（每天的词元用量 + 会话数，支持切换月份与刷新）；
+ * 2. 点击任意日期单元格后，切换为左右分栏：
+ *    - 左侧：按日期先后顺序竖排的日期单元格列表，随各类屏幕高度自适应展示 [n, n+3] 个（6~9 个）；
+ *    - 右侧：聚焦展示该日期（或所选时间窗口）下的会话时间轴；
+ * 3. 右上角提供多组 Tag 型关键词筛选框：按会话标题或用户自定义标题交叉筛选会话（AND 交集），允许跨日期。
  */
 
 import {
@@ -32,6 +15,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
@@ -39,20 +23,40 @@ import { useTranslation } from 'react-i18next';
 import { Virtuoso } from 'react-virtuoso';
 import {
   CalendarCheck,
+  CalendarDays,
   CalendarPlus,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   Minus,
   Plus,
+  RefreshCw,
+  Search,
   X,
 } from 'lucide-react';
 
+import { getTokenCalendar } from '@/api';
+import type { TokenCalendarResponse } from '@/api/client';
 import i18n from '@/i18n';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { SessionTodayState } from '@/hooks/useSessionToday';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { useAppStore } from '@/stores/appStore';
+import {
+  computeVisibleDayCount,
+  dayBounds,
+  formatTokens,
+  matchesSessionTitleTags,
+  MIN_VISIBLE_DATE_CELLS,
+  monthDaysList,
+  monthMatrix,
+  parseTagKeywords,
+  shiftMonth,
+  sliceVisibleDays,
+  toDateKey,
+} from './tokenCalendarUtils';
 
 /** 日期与刻度跟界面语言走；不跟浏览器/系统语言走。 */
 function locale(): string | undefined {
@@ -63,7 +67,7 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 /**
- * 显式档位。默认第 2 档（7 天）：时间轴负责全部会话，24 小时只够看今天，不够做管理。
+ * 显式档位。
  * 「全部」不在这一组里——它是一个独立的状态（`fitAll`），跨度等于这台机器的全部历史。
  */
 const SPAN_HOURS = [24, 72, 168, 720] as const;
@@ -91,13 +95,11 @@ const ROW_HEIGHT = 26;
 
 /**
  * 右端留出的未来空白：占窗口宽度的比例，最多两天。
- *
- * 不留这段空白时，「现在」正好压在时间轴最右边：今天结束的短条右端与悬停的
- * 「+ Today」按钮重叠，想点条会先点到按钮（2026-10-19 主人报）。留出这一段之后，
- * 今天结束的条右侧仍有一截空日期，按钮落在空白里，不挡条。
  */
 const FUTURE_FRACTION = 0.08;
 const FUTURE_MAX = 2 * DAY;
+
+const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 interface Lane {
   s: WorkbenchSession;
@@ -139,12 +141,14 @@ function stamp(ms: number): string {
   });
 }
 
+function weekdayKeyOfDate(dateKey: string): (typeof WEEKDAY_KEYS)[number] {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const idx = (new Date(y, m - 1, d).getDay() + 6) % 7;
+  return WEEKDAY_KEYS[idx];
+}
+
 /**
  * 会话铺成条：左端创建时刻，右端最后一句回复。没有回复时两端同点（画成空心条）。
- * `created_at` 偶有比 `last_reply_at` 还晚的脏数据，取两者较早的做起点。
- *
- * 同一编号只留第一行：opencode 会回原始与加工两份副本（2026-10-19 实测 4060 行里
- * 110 行重复）。服务端合并之前，时间轴先按编号收一道。
  */
 function toLanes(sessions: WorkbenchSession[]): Lane[] {
   const seen = new Set<string>();
@@ -186,7 +190,6 @@ function groupLanes(all: Lane[], inWin: Lane[]): { blocks: Block[]; lanes: Lane[
     else kids.set(p, [x]);
   }
 
-  // done = 已经画成一条的；claimed = 已经归到某个父会话底下的。两个集合不能合成一个。
   const done = new Set<string>();
   const claimed = new Set<string>();
   const blocks: Block[] = [];
@@ -233,7 +236,6 @@ function ticksFor(start: number, end: number, span: number): Tick[] {
               : span <= 130 * DAY
                 ? 30 * DAY
                 : 90 * DAY;
-  // 整日刻度落在本地零点：先按本地时区偏一下再取整。
   const tz = new Date().getTimezoneOffset() * 60_000;
   const first =
     step >= DAY ? Math.ceil((start - tz) / step) * step + tz : Math.ceil(start / step) * step;
@@ -275,6 +277,8 @@ export interface SessionTimelineProps {
   today: SessionTodayState;
   onSelect: (sessionId: string) => void;
   onClose: () => void;
+  /** 可选初始选中日期（YYYY-MM-DD）；默认 null 即首先展示月历网格。 */
+  initialDate?: string | null;
 }
 
 export default function SessionTimeline({
@@ -284,9 +288,71 @@ export default function SessionTimeline({
   today,
   onSelect,
   onClose,
+  initialDate = null,
 }: SessionTimelineProps) {
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
+
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const [month, setMonth] = useState(() => (initialDate ? initialDate.slice(0, 7) : todayKey.slice(0, 7)));
+  const [selectedDate, setSelectedDate] = useState<string | null>(initialDate);
+  const [crossDateMode, setCrossDateMode] = useState(false);
+
+  // Token calendar data
+  const [calData, setCalData] = useState<TokenCalendarResponse | null>(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [calError, setCalError] = useState<string | null>(null);
+
+  const fetchMonth = useCallback(async (m: string) => {
+    setCalLoading(true);
+    setCalError(null);
+    try {
+      const res = await getTokenCalendar(m);
+      setCalData(res);
+    } catch (e) {
+      setCalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCalLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchMonth(month);
+  }, [month, fetchMonth]);
+
+  // Tag filter state
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  const [filterDraft, setFilterDraft] = useState('');
+  const activeTags = useMemo(
+    () => parseTagKeywords(filterTags, filterDraft),
+    [filterTags, filterDraft]
+  );
+
+  // Left vertical date rail adaptive count (between n and n + 3)
+  const dateRailListRef = useRef<HTMLDivElement>(null);
+  const [visibleDayCount, setVisibleDayCount] = useState<number>(() =>
+    computeVisibleDayCount(typeof window !== 'undefined' ? window.innerHeight - 180 : 500, MIN_VISIBLE_DATE_CELLS)
+  );
+  const [manualDayOffset, setManualDayOffset] = useState<number | null>(null);
+
+  const splitView = selectedDate !== null || (activeTags.length > 0 && crossDateMode);
+
+  useEffect(() => {
+    if (!splitView) return;
+    const el = dateRailListRef.current;
+    const updateHeight = () => {
+      const h = el?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight - 180 : 500);
+      setVisibleDayCount(computeVisibleDayCount(h, MIN_VISIBLE_DATE_CELLS));
+    };
+    updateHeight();
+    if (typeof ResizeObserver !== 'undefined' && el) {
+      const observer = new ResizeObserver(updateHeight);
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, [splitView]);
 
   const [now, setNow] = useState(() => Date.now());
   const [spanIndex, setSpanIndex] = useState(DEFAULT_SPAN_INDEX);
@@ -297,12 +363,6 @@ export default function SessionTimeline({
   /** Virtuoso 真正用来滚动的那个元素。滚轮、拖动都挂在它上面。 */
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
 
-  /**
-   * 拖过之后那一下 click 不算选中（与原型同一条 4px 门槛）。
-   *
-   * `LaneRow` 是虚拟化列表里的一项，拖动的监听挂在滚动容器上；点一下没有移动时，
-   * 松手后的 click 照常选中。
-   */
   const draggedRef = useRef(false);
 
   useEffect(() => {
@@ -310,32 +370,171 @@ export default function SessionTimeline({
     return () => window.clearInterval(id);
   }, []);
 
-  const lanes = useMemo(() => toLanes(sessions), [sessions]);
+  /** 先按全部会话转成 Lane，再按多组 Tag 交叉筛选标题与用户自定义标题。 */
+  const allLanes = useMemo(() => toLanes(sessions), [sessions]);
+  const lanes = useMemo(
+    () => (activeTags.length ? allLanes.filter((x) => matchesSessionTitleTags(x.s, activeTags)) : allLanes),
+    [allLanes, activeTags]
+  );
+
   const oldest = useMemo(
-    () => lanes.reduce((m, x) => Math.min(m, x.start), now),
+    () => (lanes.length ? lanes.reduce((m, x) => Math.min(m, x.start), now) : now - DAY),
+    [lanes, now]
+  );
+  const newest = useMemo(
+    () => (lanes.length ? lanes.reduce((m, x) => Math.max(m, x.last), 0) : now),
     [lanes, now]
   );
   const extent = Math.max(1, now - oldest);
   /** 数据窗口本身的宽度（不含右侧未来空白）。 */
   const baseSpan = fitAll ? Math.max(6 * HOUR, extent) : SPAN_HOURS[spanIndex] * HOUR;
-  /** 右侧未来空白。按比例给，最多两天；「全部」档也留得出可点的位置。 */
-  const futurePad = Math.min(baseSpan * FUTURE_FRACTION, FUTURE_MAX);
-  /** 轴的实际宽度 = 数据窗口 + 未来空白。past 这一段与从前完全一致。 */
+  /** 右侧未来空白。选中非今天的历史单日且在 24h 档时不加未来空白，精准对齐当天 00:00~24:00。 */
+  const isHistoricalSingleDay =
+    selectedDate !== null && selectedDate !== todayKey && !fitAll && spanIndex === 0 && end !== null;
+  const futurePad = isHistoricalSingleDay ? 0 : Math.min(baseSpan * FUTURE_FRACTION, FUTURE_MAX);
   const span = baseSpan + futurePad;
   const winEnd = (end ?? now) + futurePad;
   const winStart = winEnd - span;
 
+  const [y, m] = month.split('-').map(Number);
+  const weeks = useMemo(() => monthMatrix(month), [month]);
+  const orderedMonthDays = useMemo(() => monthDaysList(month), [month]);
+
+  /** 按日期（YYYY-MM-DD）统计当前命中的会话数。 */
+  const sessionCountByDate = useMemo(() => {
+    const map = new Map<string, number>();
+    const allCells = weeks.flat();
+    for (const cell of allCells) {
+      const { start, end: dayEnd } = dayBounds(cell.date);
+      let count = 0;
+      for (const x of lanes) {
+        if (x.last >= start && x.start < dayEnd) {
+          count += 1;
+        }
+      }
+      map.set(cell.date, count);
+    }
+    return map;
+  }, [weeks, lanes]);
+
+  const daySlice = useMemo(
+    () =>
+      sliceVisibleDays(
+        orderedMonthDays,
+        selectedDate ?? (todayKey.startsWith(month) ? todayKey : orderedMonthDays[0]?.date ?? null),
+        visibleDayCount,
+        manualDayOffset
+      ),
+    [orderedMonthDays, selectedDate, todayKey, month, visibleDayCount, manualDayOffset]
+  );
+
+  /** 点击日期单元格：进入左竖排日期 + 右 Timeline 分栏，聚焦到所选日期；若已在左栏可见列表中则原地选中不跳动。 */
+  const handleSelectDateCell = useCallback(
+    (dateKey: string) => {
+      const targetMonth = dateKey.slice(0, 7);
+      if (targetMonth !== month) {
+        setMonth(targetMonth);
+        setManualDayOffset(null);
+      } else if (splitView && daySlice.items.some((c) => c.date === dateKey)) {
+        setManualDayOffset(daySlice.startIndex);
+      } else {
+        setManualDayOffset(null);
+      }
+      setSelectedDate(dateKey);
+      setCrossDateMode(false);
+      setFitAll(false);
+      // 聚焦到所选这一天（24h 窗口）
+      setSpanIndex(0);
+      if (dateKey === todayKey) {
+        setEnd(null);
+      } else {
+        const { end: dayEnd } = dayBounds(dateKey);
+        setEnd(dayEnd);
+      }
+    },
+    [daySlice.items, daySlice.startIndex, month, splitView, todayKey]
+  );
+
+  /** 开启跨日期全部命中模式。 */
+  const activateCrossDate = useCallback(() => {
+    setCrossDateMode(true);
+    setSelectedDate(null);
+    setFitAll(true);
+    setEnd(null);
+  }, []);
+
+  /** 返回完整月历网格。 */
+  const handleBackToCalendar = useCallback(() => {
+    setSelectedDate(null);
+    setCrossDateMode(false);
+  }, []);
+
+  /** Tag 输入框提交一个或多个词。 */
+  const commitDraftTags = useCallback(
+    (rawDraft: string) => {
+      const parts = rawDraft
+        .split(/[\s,，;；]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!parts.length) return;
+      setFilterTags((prev) => parseTagKeywords([...prev, ...parts], ''));
+      setFilterDraft('');
+      // 输入筛选词时若尚未选中日期，自动展开跨日期 Timeline
+      if (!selectedDate) {
+        setCrossDateMode(true);
+        setFitAll(true);
+        setEnd(null);
+      }
+    },
+    [selectedDate]
+  );
+
+  const handleFilterInputChange = (value: string) => {
+    // 若用户输入了逗号或分号结尾，立即固化成胶囊
+    if (/[,，;；]\s*$/.test(value)) {
+      commitDraftTags(value);
+      return;
+    }
+    setFilterDraft(value);
+    if (value.trim() && !selectedDate) {
+      setCrossDateMode(true);
+      setFitAll(true);
+      setEnd(null);
+    }
+  };
+
+  const handleFilterKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filterDraft.trim()) {
+        commitDraftTags(filterDraft);
+      }
+    } else if (e.key === 'Backspace' && !filterDraft && filterTags.length > 0) {
+      e.preventDefault();
+      setFilterTags((prev) => prev.slice(0, -1));
+    }
+  };
+
+  const removeFilterTag = (tagToRemove: string) => {
+    setFilterTags((prev) => prev.filter((tItem) => tItem !== tagToRemove));
+  };
+
+  const clearAllFilterTags = () => {
+    setFilterTags([]);
+    setFilterDraft('');
+    if (!selectedDate) {
+      setCrossDateMode(false);
+    }
+  };
+
   const clampEnd = useCallback(
     (value: number, size: number) => {
-      // 窗口本身就盖住整段历史时钉在「现在」：再滚也只见空。
       if (size >= extent) return now;
-      // 两头各放开一个窗口；再往外只有空，没有数据。
       return Math.max(oldest, Math.min(now + size, value));
     },
     [extent, now, oldest]
   );
 
-  /** 从「全部」回到一个真实档位：跨度不跳变，取不比眼下更宽的最大一档。 */
   const leaveAll = useCallback(
     (size: number) => {
       if (!fitAll) return;
@@ -347,7 +546,6 @@ export default function SessionTimeline({
 
   const pan = useCallback(
     (dir: number) => {
-      // 从「全部」挪动时先落到一个真实档位，窗口按落下去之后那个跨度算。
       const size = fitAll ? SPAN_HOURS[spanIndexAt(baseSpan)] * HOUR : baseSpan;
       if (fitAll) leaveAll(baseSpan);
       const base = end ?? now;
@@ -356,11 +554,10 @@ export default function SessionTimeline({
     [baseSpan, clampEnd, end, fitAll, leaveAll, now]
   );
 
-  /** d = 1 拉远（更多天），-1 拉近（更少天）。 */
   const zoom = useCallback(
     (d: number) => {
       if (fitAll) {
-        if (d > 0) return; // 全部已经是最远
+        if (d > 0) return;
         leaveAll(Math.max(1, extent - 1));
         return;
       }
@@ -381,10 +578,17 @@ export default function SessionTimeline({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inInput =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
-      } else if (e.key === '-' || e.key === '_') {
+        return;
+      }
+      if (inInput || !splitView) return;
+      if (e.key === '-' || e.key === '_') {
         e.preventDefault();
         zoom(1);
       } else if (e.key === '+' || e.key === '=') {
@@ -400,7 +604,7 @@ export default function SessionTimeline({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, pan, zoom]);
+  }, [onClose, pan, splitView, zoom]);
 
   /** 滚轮只拦 shift / 横向滚动；ctrl/cmd 留给浏览器缩放与触控板捏合。 */
   useEffect(() => {
@@ -445,7 +649,6 @@ export default function SessionTimeline({
         document.removeEventListener('mousemove', move);
         document.removeEventListener('mouseup', up);
         setDragging(false);
-        // 松手那一下的 click 先被吞掉，之后点轨道照常选中。
         window.setTimeout(() => {
           draggedRef.current = false;
         }, 0);
@@ -457,13 +660,16 @@ export default function SessionTimeline({
     return () => scroller.removeEventListener('mousedown', onDown);
   }, [baseSpan, clampEnd, end, fitAll, leaveAll, now, scroller]);
 
-  const inWin = useMemo(
-    () => lanes.filter((x) => x.last >= winStart && x.start <= winEnd),
-    [lanes, winEnd, winStart]
-  );
+  const inWin = useMemo(() => {
+    if (crossDateMode && activeTags.length > 0 && fitAll) {
+      return lanes;
+    }
+    return lanes.filter((x) => x.last >= winStart && x.start <= winEnd);
+  }, [activeTags.length, crossDateMode, fitAll, lanes, winEnd, winStart]);
+
   const { blocks, lanes: shownLanes } = useMemo(
-    () => groupLanes(lanes, inWin),
-    [inWin, lanes]
+    () => groupLanes(allLanes, inWin),
+    [allLanes, inWin]
   );
   const ticks = useMemo(() => ticksFor(winStart, winEnd, span), [span, winEnd, winStart]);
   const nowAt = (now - winStart) / span;
@@ -500,7 +706,6 @@ export default function SessionTimeline({
     document.addEventListener('mouseup', up);
   };
 
-  /** 点滑块两旁的空槽：往那边翻一整个窗口。 */
   const onTrackDown = (e: ReactMouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('[data-thumb]')) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -522,7 +727,6 @@ export default function SessionTimeline({
     }
   };
 
-  /** 拖过之后松手那一下的 click 不是"选中"——与原型同一条门槛。 */
   const selectLane = useCallback(
     (sid: string) => {
       if (draggedRef.current) return;
@@ -557,6 +761,19 @@ export default function SessionTimeline({
     ].join('\n');
   };
 
+  const shiftDayWindow = useCallback(
+    (delta: number) => {
+      setManualDayOffset((cur) => {
+        const base = cur ?? daySlice.startIndex;
+        const maxStart = Math.max(0, orderedMonthDays.length - visibleDayCount);
+        return Math.max(0, Math.min(maxStart, base + delta));
+      });
+    },
+    [daySlice.startIndex, orderedMonthDays.length, visibleDayCount]
+  );
+
+  void newest;
+
   return (
     <div
       role="dialog"
@@ -567,201 +784,596 @@ export default function SessionTimeline({
     >
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border-strong bg-bg-primary shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color px-3">
-          <Clock size={14} strokeWidth={1.5} className="shrink-0 text-text-muted" />
-          <span className="shrink-0 text-[13px] font-semibold text-text-primary">
-            {t('workbench.timeline.title')}
-          </span>
-          <span className="min-w-0 truncate whitespace-nowrap font-mono text-[11.5px] text-text-muted">
-            {/* 右端带一段未来空白，这里照实写窗口终点（会是今天之后的一刻）。 */}
-            {stamp(winStart)} → {stamp(winEnd)} · {spanLabel}
-          </span>
-
-          {/* 档位显式摆出来：24h / 3d / 7d / 30d / 全部。默认 7 天。 */}
-          <span className="ml-auto flex shrink-0 items-center gap-1">
-            <span className="flex max-w-[52vw] items-center gap-0.5 overflow-x-auto rounded-[6px] bg-bg-subtle p-0.5">
-              {SPAN_HOURS.map((h, i) => (
-                <button
-                  key={h}
-                  type="button"
-                  data-testid={`timeline-span-${h}`}
-                  aria-pressed={!fitAll && spanIndex === i}
-                  onClick={() => chooseSpan(i)}
-                  className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
-                    !fitAll && spanIndex === i
-                      ? 'bg-bg-active font-medium text-text-primary'
-                      : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
-                  }`}
-                >
-                  {t(SPAN_SHORT_KEYS[i])}
-                </button>
-              ))}
+        {/* 顶栏：左侧月份导航 + 当月总量 + 刷新；右上角多组 Tag 筛选框 + 关闭按钮 */}
+        <div className="flex min-h-[48px] shrink-0 flex-wrap items-center gap-2 border-b border-border-color px-3.5 py-1.5">
+          <div className="flex items-center gap-1.5">
+            {splitView ? (
               <button
                 type="button"
-                data-testid="timeline-span-all"
-                aria-pressed={fitAll}
-                onClick={fitEverything}
-                className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
-                  fitAll
-                    ? 'bg-bg-active font-medium text-text-primary'
-                    : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
-                }`}
+                data-testid="timeline-back-calendar"
+                onClick={handleBackToCalendar}
+                className="mr-1 inline-flex h-7 items-center gap-1 rounded-[6px] border border-border-color bg-bg-secondary px-2 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+                title={t('workbench.timeline.backToCalendar')}
               >
-                {t('workbench.timeline.all')}
+                <CalendarDays size={13} strokeWidth={1.5} />
+                <span>{t('workbench.timeline.backToCalendar')}</span>
               </button>
-            </span>
-            <HeaderButton
-              testId="timeline-earlier"
-              label={t('workbench.timeline.earlier')}
-              onClick={() => pan(-1)}
+            ) : (
+              <CalendarDays size={15} strokeWidth={1.5} className="shrink-0 text-text-muted" />
+            )}
+
+            <button
+              type="button"
+              data-testid="calendar-prev-month"
+              onClick={() => {
+                setMonth((cur) => shiftMonth(cur, -1));
+                setManualDayOffset(null);
+              }}
+              aria-label={t('tokenCalendar.prevMonth')}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-border-color text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             >
               <ChevronLeft size={15} />
-            </HeaderButton>
-            <HeaderButton
-              testId="timeline-later"
-              label={t('workbench.timeline.later')}
-              onClick={() => pan(1)}
+            </button>
+            <span
+              data-testid="calendar-month-label"
+              className="min-w-[6.5em] text-center text-[13.5px] font-semibold text-text-primary"
+            >
+              {t('tokenCalendar.monthLabel', {
+                year: y,
+                month: m,
+                month2: String(m).padStart(2, '0'),
+              })}
+            </span>
+            <button
+              type="button"
+              data-testid="calendar-next-month"
+              onClick={() => {
+                setMonth((cur) => shiftMonth(cur, 1));
+                setManualDayOffset(null);
+              }}
+              aria-label={t('tokenCalendar.nextMonth')}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-border-color text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             >
               <ChevronRight size={15} />
-            </HeaderButton>
-            <HeaderButton
-              testId="timeline-zoom-out"
-              label={t('workbench.timeline.zoomOut')}
-              onClick={() => zoom(1)}
+            </button>
+
+            <span className="ml-1.5 text-[12px] text-text-secondary" data-testid="calendar-month-total">
+              {t('tokenCalendar.monthTotal')}:{' '}
+              <strong className="font-mono text-[13px] text-text-primary">
+                {calData ? formatTokens(calData.month_total.total) : '—'}
+              </strong>
+              {calData && calData.month_total.total > 0 ? (
+                <span className="ml-2 font-mono text-[11px] text-text-muted">
+                  {t('tokenCalendar.inputShort')} {formatTokens(calData.month_total.input)} ·{' '}
+                  {t('tokenCalendar.outputShort')} {formatTokens(calData.month_total.output)}
+                </span>
+              ) : null}
+            </span>
+
+            <button
+              type="button"
+              data-testid="calendar-refresh"
+              onClick={() => void fetchMonth(month)}
+              disabled={calLoading}
+              title={t('tokenCalendar.refresh')}
+              aria-label={t('tokenCalendar.refresh')}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
             >
-              <Minus size={14} />
-            </HeaderButton>
-            <HeaderButton
-              testId="timeline-zoom-in"
-              label={t('workbench.timeline.zoomIn')}
-              onClick={() => zoom(-1)}
+              <RefreshCw size={13} className={calLoading ? 'cs-spin' : ''} />
+            </button>
+          </div>
+
+          {/* 右上角：多组 Tag 型关键词交叉筛选输入框 + 关闭按钮 */}
+          <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+            <div
+              data-testid="timeline-tag-filter"
+              className="flex min-h-[30px] w-full max-w-[460px] flex-wrap items-center gap-1 rounded-[8px] border border-border-color bg-bg-secondary px-2 py-0.5 text-[12px] focus-within:border-border-strong"
             >
-              <Plus size={14} />
-            </HeaderButton>
+              <Search size={13} strokeWidth={1.5} className="shrink-0 text-text-muted" />
+              {filterTags.map((tag) => (
+                <span
+                  key={tag}
+                  data-testid="timeline-filter-tag"
+                  className="inline-flex h-5 items-center gap-1 rounded-[4px] border border-border-color bg-bg-active px-1.5 text-[11px] font-medium text-text-primary"
+                >
+                  <span>{tag}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeFilterTag(tag)}
+                    aria-label={t('workbench.timeline.removeTag', { tag })}
+                    className="text-text-muted hover:text-text-primary"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                data-testid="timeline-filter-input"
+                value={filterDraft}
+                onChange={(e) => handleFilterInputChange(e.target.value)}
+                onKeyDown={handleFilterKeyDown}
+                onBlur={() => {
+                  if (filterDraft.trim()) commitDraftTags(filterDraft);
+                }}
+                placeholder={
+                  filterTags.length ? '' : t('workbench.timeline.filterPlaceholder')
+                }
+                className="min-w-[120px] flex-1 bg-transparent py-0.5 text-[12px] text-text-primary placeholder:text-text-muted focus:outline-none"
+              />
+              {activeTags.length > 0 ? (
+                <button
+                  type="button"
+                  data-testid="timeline-filter-clear"
+                  onClick={clearAllFilterTags}
+                  title={t('workbench.timeline.clearFilter')}
+                  aria-label={t('workbench.timeline.clearFilter')}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+
             <HeaderButton
               testId="timeline-close"
               label={t('workbench.timeline.close')}
               onClick={onClose}
             >
-              <X size={15} />
+              <X size={16} />
             </HeaderButton>
-          </span>
+          </div>
         </div>
 
-        {/* 轴与竖线固定在视口上；只有行的列表在虚拟化地滚。 */}
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <div className="absolute inset-x-0 top-0 z-[3] h-6 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[10.5px] text-text-dim">
-            {ticks.map((k, i) => (
-              <span
-                key={i}
-                className={`absolute top-[5px] whitespace-nowrap ${
-                  k.day ? 'text-text-secondary' : ''
-                }`}
-                style={
-                  k.at < 0.025
-                    ? { left: `${k.at * 100}%`, paddingLeft: 4 }
-                    : k.at > 0.975
-                      ? { left: `${k.at * 100}%`, transform: 'translateX(-100%)', paddingRight: 4 }
-                      : { left: `${k.at * 100}%`, transform: 'translateX(-50%)' }
-                }
-              >
-                {k.label}
-              </span>
-            ))}
+        {calLoading ? (
+          <div className="cs-cal-progress shrink-0">
+            <div className="cs-cal-progress-bar" />
           </div>
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 z-0">
-            {ticks.map((k, i) => (
-              <i
-                key={i}
-                className={`absolute bottom-0 top-0 w-px ${
-                  k.day ? 'bg-border-strong' : 'bg-border-color'
-                }`}
-                style={{ left: `${k.at * 100}%` }}
-              />
-            ))}
-            {nowAt >= 0 && nowAt <= 1.0001 ? (
-              <i
-                data-testid="timeline-now"
-                className="absolute bottom-0 top-0 w-px bg-text-dim opacity-80"
-                style={{ left: `calc(${nowAt * 100}% - 1px)` }}
-                title={t('workbench.timeline.now')}
-              />
-            ) : null}
+        ) : null}
+        {calError ? (
+          <div className="cs-cal-error shrink-0 px-3.5 py-1.5">
+            {t('tokenCalendar.error', { error: calError })}{' '}
+            <button type="button" className="cs-cal-retry" onClick={() => void fetchMonth(month)}>
+              {t('tokenCalendar.retry')}
+            </button>
           </div>
+        ) : null}
 
-          {!shownLanes.length ? (
-            <div className="relative z-[1] flex h-full flex-col items-center justify-center gap-1 px-6 text-[12px] text-text-muted">
-              <Clock size={22} strokeWidth={1.5} />
-              <span>{t('workbench.timeline.empty')}</span>
-              <span className="text-text-dim">{t('workbench.timeline.emptyHint')}</span>
-            </div>
-          ) : (
-            <Virtuoso
-              className={`absolute inset-x-0 bottom-0 top-6 ${
-                dragging ? 'cursor-grabbing select-none' : 'cursor-grab'
-              }`}
-              data={blocks}
-              defaultItemHeight={ROW_HEIGHT}
-              initialItemCount={Math.min(blocks.length, 20)}
-              scrollerRef={(ref) => setScroller(ref as HTMLElement | null)}
-              computeItemKey={(index, b) =>
-                b ? `b-${index}-${b.heads[0]?.s.session_id ?? ''}` : `b-${index}`
-              }
-              itemContent={(index, block) =>
-                block ? (
-                  <BlockRows
-                    block={block}
-                    first={index === 0}
-                    winStart={winStart}
-                    span={span}
-                    selectedId={selectedId}
-                    today={today}
-                    forYou={forYou}
-                    laneTitle={laneTitle}
-                    onSelect={selectLane}
-                    onToggleToday={toggleToday}
-                  />
-                ) : null
-              }
-            />
-          )}
-        </div>
-
-        {/* 下方时间滚动条：整条 = 最早那场到现在，滑块 = 眼下窗口这一段。 */}
-        <div
-          ref={trackRef}
-          onMouseDown={onTrackDown}
-          title={`${stamp(oldest)} → ${t('workbench.timeline.now')}`}
-          className="relative h-3.5 shrink-0 cursor-pointer border-t border-border-color bg-bg-secondary"
-        >
+        {/* 主体区：首先展示大日历网格；点击日期或输入筛选词后变为左竖排日期 + 右 Timeline */}
+        {!splitView ? (
           <div
-            data-thumb
-            onMouseDown={onThumbDown}
-            className={`absolute bottom-[3px] top-[3px] min-w-6 cursor-grab rounded-[4px] ${
-              dragging ? 'bg-text-dim' : 'bg-border-strong hover:bg-text-dim'
-            }`}
-            style={{ left: `${thumbAt.l * 100}%`, width: `${thumbAt.w * 100}%` }}
-          />
-        </div>
+            data-testid="timeline-calendar-grid"
+            className="flex min-h-0 flex-1 flex-col justify-between gap-2.5 overflow-auto p-4"
+          >
+            {/* 7 列月历网格：靠底色明暗（bg-card vs bg-secondary）、字号对比与留白区分层次，格内不画任何分割线或进度条 */}
+            <div
+              className="grid min-h-0 flex-1 grid-cols-7 gap-2"
+              style={{ gridTemplateRows: `24px repeat(${weeks.length}, minmax(88px, 1fr))` }}
+            >
+              {WEEKDAY_KEYS.map((k) => (
+                <div
+                  key={k}
+                  className="flex items-center px-3 text-[11.5px] font-medium text-text-muted"
+                >
+                  {t(`tokenCalendar.weekday.${k}`)}
+                </div>
+              ))}
+              {weeks.flat().map((cell) => {
+                const bucket = calData?.days[cell.date];
+                const hasTokens = Boolean(bucket && bucket.total > 0);
+                const daySessionCount = sessionCountByDate.get(cell.date) ?? 0;
+                const hasActivity = hasTokens || daySessionCount > 0;
+                const isToday = cell.date === todayKey;
 
-        <div className="flex shrink-0 items-center gap-3 border-t border-border-color bg-bg-secondary px-3 py-1.5 text-[11px] text-text-muted">
-          <span className="min-w-0 flex-1 truncate">{t('workbench.timeline.footnote')}</span>
-          {forYouCount ? (
-            <span className="flex shrink-0 items-center gap-1">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent-primary" />
-              {t('workbench.timeline.waitingOnYou', { count: forYouCount })}
-            </span>
-          ) : null}
-          {runningCount ? (
-            <span className="shrink-0">
-              {t('workbench.timeline.running', { count: runningCount })}
-            </span>
-          ) : null}
-          <span className="shrink-0">
-            {t('workbench.timeline.shown', { count: shownLanes.length })}
-          </span>
-        </div>
+                return (
+                  <button
+                    key={cell.date}
+                    type="button"
+                    data-testid={`calendar-cell-${cell.date}`}
+                    data-date={cell.date}
+                    data-active={hasActivity ? 'true' : 'false'}
+                    onClick={() => handleSelectDateCell(cell.date)}
+                    title={
+                      bucket
+                        ? t('tokenCalendar.cellTooltip', {
+                            input: formatTokens(bucket.input),
+                            output: formatTokens(bucket.output),
+                            cacheCreation: formatTokens(bucket.cache_creation),
+                            cacheRead: formatTokens(bucket.cache_read),
+                          })
+                        : undefined
+                    }
+                    className={`group flex min-h-0 flex-col justify-between rounded-[10px] border p-3.5 text-left transition-colors ${
+                      !cell.inMonth
+                        ? 'border-transparent bg-transparent opacity-30 hover:bg-bg-secondary hover:opacity-60'
+                        : isToday
+                          ? 'border-accent-primary bg-bg-card hover:bg-bg-hover'
+                          : hasActivity
+                            ? 'border-border-color bg-bg-card hover:border-border-strong hover:bg-bg-hover'
+                            : 'border-transparent bg-bg-secondary hover:border-border-color hover:bg-bg-hover'
+                    }`}
+                  >
+                    {/* 顶行：左上日期数字，右上纯文字会话数（不套胶囊框） */}
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`font-mono text-[13px] ${
+                            isToday
+                              ? 'font-semibold text-accent-primary'
+                              : hasActivity
+                                ? 'font-medium text-text-secondary'
+                                : 'text-text-dim'
+                          }`}
+                        >
+                          {cell.day}
+                        </span>
+                        {isToday ? (
+                          <span className="text-[11px] font-medium text-accent-primary">
+                            {t('workbench.timeline.todayShort')}
+                          </span>
+                        ) : null}
+                      </div>
+                      {daySessionCount > 0 ? (
+                        <span className="font-mono text-[11px] text-text-muted">
+                          {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* 底行：仅在有 token 用量时展示大字总量 + 淡字入/出，不画横条、不画分割线、不画破折号 */}
+                    {hasTokens && bucket ? (
+                      <div className="flex w-full flex-col gap-1">
+                        <span className="font-mono text-[20px] font-semibold leading-none tracking-tight text-text-primary">
+                          {formatTokens(bucket.total)}
+                        </span>
+                        <span className="truncate font-mono text-[11px] text-text-muted">
+                          {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
+                          {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
+                        </span>
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex shrink-0 items-center justify-between text-[11.5px] text-text-muted">
+              <span>{t('workbench.timeline.clickDayHint')}</span>
+              {activeTags.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={activateCrossDate}
+                  className="font-medium text-accent-primary hover:underline"
+                >
+                  {t('workbench.timeline.crossDateCount', { count: lanes.length })} →
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {/* 左侧栏：竖排顺序排列的日期，至少展示 n 个、最多展示 n+3 个 */}
+            <aside
+              data-testid="timeline-date-rail"
+              onWheel={(e) => {
+                if (Math.abs(e.deltaY) < 4) return;
+                e.preventDefault();
+                shiftDayWindow(e.deltaY > 0 ? 1 : -1);
+              }}
+              className="flex w-[216px] shrink-0 flex-col border-r border-border-color bg-bg-secondary p-2"
+            >
+              {activeTags.length > 0 ? (
+                <button
+                  type="button"
+                  data-testid="timeline-cross-date"
+                  aria-pressed={crossDateMode}
+                  onClick={activateCrossDate}
+                  className={`mb-1.5 flex shrink-0 items-center justify-between rounded-[8px] border px-2.5 py-1.5 text-[11.5px] transition-colors ${
+                    crossDateMode
+                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-semibold text-text-primary'
+                      : 'border-transparent bg-bg-primary text-text-secondary hover:bg-bg-hover'
+                  }`}
+                >
+                  <span>{t('workbench.timeline.crossDateAll')}</span>
+                  <span className="font-mono text-[11px]">{lanes.length}</span>
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                data-testid="timeline-days-prev"
+                disabled={!daySlice.canPrev}
+                onClick={() => shiftDayWindow(-1)}
+                aria-label={t('workbench.timeline.prevDays')}
+                className="mb-1 flex h-6 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-30"
+              >
+                <ChevronUp size={14} />
+              </button>
+
+              <div
+                ref={dateRailListRef}
+                data-testid="timeline-date-rail-list"
+                data-visible-count={daySlice.items.length}
+                className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden"
+              >
+                {daySlice.items.map((cell) => {
+                  const bucket = calData?.days[cell.date];
+                  const hasTokens = Boolean(bucket && bucket.total > 0);
+                  const isSelected = !crossDateMode && selectedDate === cell.date;
+                  const isToday = cell.date === todayKey;
+                  const wk = weekdayKeyOfDate(cell.date);
+                  const sessionCount = sessionCountByDate.get(cell.date) ?? 0;
+                  return (
+                    <button
+                      key={cell.date}
+                      type="button"
+                      data-testid="timeline-day-cell"
+                      data-date={cell.date}
+                      aria-pressed={isSelected}
+                      onClick={() => handleSelectDateCell(cell.date)}
+                      title={
+                        bucket
+                          ? t('tokenCalendar.cellTooltip', {
+                              input: formatTokens(bucket.input),
+                              output: formatTokens(bucket.output),
+                              cacheCreation: formatTokens(bucket.cache_creation),
+                              cacheRead: formatTokens(bucket.cache_read),
+                            })
+                          : undefined
+                      }
+                      className={`flex min-h-[48px] flex-1 flex-col justify-between rounded-[8px] border px-3 py-2 text-left transition-colors ${
+                        isSelected
+                          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                          : isToday
+                            ? 'border-accent-primary bg-bg-card text-text-primary hover:bg-bg-hover'
+                            : hasTokens || sessionCount > 0
+                              ? 'border-transparent bg-bg-card text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                              : 'border-transparent bg-bg-primary text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                      }`}
+                    >
+                      <div className="flex w-full items-center justify-between gap-1 text-[11.5px]">
+                        <span className="font-mono font-medium">
+                          {cell.date.slice(5)}{' '}
+                          <span className="font-sans text-text-muted">
+                            {t(`tokenCalendar.weekday.${wk}`)}
+                          </span>
+                        </span>
+                        {sessionCount > 0 ? (
+                          <span className="font-mono text-[10.5px] text-text-muted">
+                            {t('workbench.timeline.daySessionsCount', { count: sessionCount })}
+                          </span>
+                        ) : null}
+                      </div>
+                      {hasTokens && bucket ? (
+                        <div className="flex items-baseline justify-between gap-1">
+                          <span className="font-mono text-[14px] font-semibold text-text-primary">
+                            {formatTokens(bucket.total)}
+                          </span>
+                          <span className="truncate font-mono text-[10px] text-text-muted">
+                            {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
+                            {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
+                          </span>
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                data-testid="timeline-days-next"
+                disabled={!daySlice.canNext}
+                onClick={() => shiftDayWindow(1)}
+                aria-label={t('workbench.timeline.nextDays')}
+                className="mt-1 flex h-6 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-30"
+              >
+                <ChevronDown size={14} />
+              </button>
+            </aside>
+
+            {/* 右侧栏：Timeline */}
+            <div data-testid="timeline-pane" className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              {/* Timeline 工具条：时间跨度提示 + 档位切换 + 平移/缩放 */}
+              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color bg-bg-secondary px-3">
+                <Clock size={13} strokeWidth={1.5} className="shrink-0 text-text-muted" />
+                <span className="min-w-0 truncate whitespace-nowrap font-mono text-[11.5px] text-text-muted">
+                  {stamp(winStart)} → {stamp(winEnd)} · {spanLabel}
+                </span>
+                {activeTags.length > 0 ? (
+                  <span className="rounded bg-bg-active px-1.5 py-0.5 text-[11px] text-text-secondary">
+                    {t('workbench.timeline.crossDateCount', { count: lanes.length })}
+                  </span>
+                ) : null}
+
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <span className="flex items-center gap-0.5 rounded-[6px] bg-bg-subtle p-0.5">
+                    {SPAN_HOURS.map((h, i) => (
+                      <button
+                        key={h}
+                        type="button"
+                        data-testid={`timeline-span-${h}`}
+                        aria-pressed={!fitAll && spanIndex === i}
+                        onClick={() => chooseSpan(i)}
+                        className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
+                          !fitAll && spanIndex === i
+                            ? 'bg-bg-active font-medium text-text-primary'
+                            : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                        }`}
+                      >
+                        {t(SPAN_SHORT_KEYS[i])}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      data-testid="timeline-span-all"
+                      aria-pressed={fitAll}
+                      onClick={fitEverything}
+                      className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
+                        fitAll
+                          ? 'bg-bg-active font-medium text-text-primary'
+                          : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                      }`}
+                    >
+                      {t('workbench.timeline.all')}
+                    </button>
+                  </span>
+                  <HeaderButton
+                    testId="timeline-earlier"
+                    label={t('workbench.timeline.earlier')}
+                    onClick={() => pan(-1)}
+                  >
+                    <ChevronLeft size={15} />
+                  </HeaderButton>
+                  <HeaderButton
+                    testId="timeline-later"
+                    label={t('workbench.timeline.later')}
+                    onClick={() => pan(1)}
+                  >
+                    <ChevronRight size={15} />
+                  </HeaderButton>
+                  <HeaderButton
+                    testId="timeline-zoom-out"
+                    label={t('workbench.timeline.zoomOut')}
+                    onClick={() => zoom(1)}
+                  >
+                    <Minus size={14} />
+                  </HeaderButton>
+                  <HeaderButton
+                    testId="timeline-zoom-in"
+                    label={t('workbench.timeline.zoomIn')}
+                    onClick={() => zoom(-1)}
+                  >
+                    <Plus size={14} />
+                  </HeaderButton>
+                </span>
+              </div>
+
+              {/* 轴与竖线固定在视口上；只有行的列表在虚拟化地滚。 */}
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                <div className="absolute inset-x-0 top-0 z-[3] h-6 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[10.5px] text-text-dim">
+                  {ticks.map((k, i) => (
+                    <span
+                      key={i}
+                      className={`absolute top-[5px] whitespace-nowrap ${
+                        k.day ? 'text-text-secondary' : ''
+                      }`}
+                      style={
+                        k.at < 0.025
+                          ? { left: `${k.at * 100}%`, paddingLeft: 4 }
+                          : k.at > 0.975
+                            ? { left: `${k.at * 100}%`, transform: 'translateX(-100%)', paddingRight: 4 }
+                            : { left: `${k.at * 100}%`, transform: 'translateX(-50%)' }
+                      }
+                    >
+                      {k.label}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 z-0">
+                  {ticks.map((k, i) => (
+                    <i
+                      key={i}
+                      className={`absolute bottom-0 top-0 w-px ${
+                        k.day ? 'bg-border-strong' : 'bg-border-color'
+                      }`}
+                      style={{ left: `${k.at * 100}%` }}
+                    />
+                  ))}
+                  {nowAt >= 0 && nowAt <= 1.0001 ? (
+                    <i
+                      data-testid="timeline-now"
+                      className="absolute bottom-0 top-0 w-px bg-text-dim opacity-80"
+                      style={{ left: `calc(${nowAt * 100}% - 1px)` }}
+                      title={t('workbench.timeline.now')}
+                    />
+                  ) : null}
+                </div>
+
+                {!shownLanes.length ? (
+                  <div className="relative z-[1] flex h-full flex-col items-center justify-center gap-1 px-6 text-[12px] text-text-muted">
+                    <Clock size={22} strokeWidth={1.5} />
+                    <span>
+                      {activeTags.length
+                        ? t('workbench.timeline.emptyFiltered')
+                        : t('workbench.timeline.empty')}
+                    </span>
+                    <span className="text-text-dim">
+                      {activeTags.length
+                        ? t('workbench.timeline.emptyFilteredHint')
+                        : t('workbench.timeline.emptyHint')}
+                    </span>
+                  </div>
+                ) : (
+                  <Virtuoso
+                    className={`absolute inset-x-0 bottom-0 top-6 ${
+                      dragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+                    }`}
+                    data={blocks}
+                    defaultItemHeight={ROW_HEIGHT}
+                    initialItemCount={Math.min(blocks.length, 20)}
+                    scrollerRef={(ref) => setScroller(ref as HTMLElement | null)}
+                    computeItemKey={(index, b) =>
+                      b ? `b-${index}-${b.heads[0]?.s.session_id ?? ''}` : `b-${index}`
+                    }
+                    itemContent={(index, block) =>
+                      block ? (
+                        <BlockRows
+                          block={block}
+                          first={index === 0}
+                          winStart={winStart}
+                          span={span}
+                          selectedId={selectedId}
+                          today={today}
+                          forYou={forYou}
+                          laneTitle={laneTitle}
+                          onSelect={selectLane}
+                          onToggleToday={toggleToday}
+                        />
+                      ) : null
+                    }
+                  />
+                )}
+              </div>
+
+              {/* 下方时间滚动条：整条 = 最早那场到现在，滑块 = 眼下窗口这一段。 */}
+              <div
+                ref={trackRef}
+                onMouseDown={onTrackDown}
+                title={`${stamp(oldest)} → ${t('workbench.timeline.now')}`}
+                className="relative h-3.5 shrink-0 cursor-pointer border-t border-border-color bg-bg-secondary"
+              >
+                <div
+                  data-thumb
+                  onMouseDown={onThumbDown}
+                  className={`absolute bottom-[3px] top-[3px] min-w-6 cursor-grab rounded-[4px] ${
+                    dragging ? 'bg-text-dim' : 'bg-border-strong hover:bg-text-dim'
+                  }`}
+                  style={{ left: `${thumbAt.l * 100}%`, width: `${thumbAt.w * 100}%` }}
+                />
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3 border-t border-border-color bg-bg-secondary px-3 py-1.5 text-[11px] text-text-muted">
+                <span className="min-w-0 flex-1 truncate">{t('workbench.timeline.footnote')}</span>
+                {forYouCount ? (
+                  <span className="flex shrink-0 items-center gap-1">
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent-primary" />
+                    {t('workbench.timeline.waitingOnYou', { count: forYouCount })}
+                  </span>
+                ) : null}
+                {runningCount ? (
+                  <span className="shrink-0">
+                    {t('workbench.timeline.running', { count: runningCount })}
+                  </span>
+                ) : null}
+                <span className="shrink-0">
+                  {t('workbench.timeline.shown', { count: shownLanes.length })}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -769,9 +1381,6 @@ export default function SessionTimeline({
 
 /**
  * 一组（主会话 + 它派出的 worker）在虚拟化列表里是一项。
- *
- * 组的框跨好几行，这里是同一项里的连续行，所以一个 div 就能画整圈，不会像左栏那样
- * 拆成三段。
  */
 function BlockRows({
   block,
@@ -839,10 +1448,6 @@ function BlockRows({
 
 /**
  * 一行：条 + 标题 + 悬停动作。**自己量自己**。
- *
- * 虚拟化之后不可能一次量完整张表：没渲染的行不存在。每行渲染时量自己的宽度、标题的
- * 自然宽度，再把条与标题的位置写进去。标题落在哪的规则与原型一致：
- * 条里放得下就放条里；放不下贴右边；右边不够贴左边；三处都放不全就选最宽的那处截断。
  */
 function LaneRow({
   x,
@@ -881,13 +1486,11 @@ function LaneRow({
 
     const L = ((x.start - winStart) / span) * width;
     const R = ((x.last - winStart) / span) * width;
-    // 上一次写进去的 maxWidth 会挡住自然宽度，量之前先撤掉。
     lb.style.maxWidth = '';
     const need = Math.min(lb.scrollWidth + 2, MAX_LABEL_PX);
 
     let beg = Math.max(0, L);
     let endPx = Math.min(width, R);
-    // 露出不到 24px 就补足；贴着窗口右沿的往里挪，不被裁成一根竖线。
     const short = endPx - beg < MIN_BAR_PX;
     if (short) {
       endPx = Math.min(width, beg + MIN_BAR_PX);
@@ -1018,7 +1621,7 @@ function HeaderButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="flex h-6 w-6 items-center justify-center rounded-[6px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+      className="flex h-7 w-7 items-center justify-center rounded-[6px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
     >
       {children}
     </button>

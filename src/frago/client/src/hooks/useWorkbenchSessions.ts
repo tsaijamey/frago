@@ -62,6 +62,10 @@ export interface WorkbenchSession {
   session_id: string;
   family: SessionFamily;
   title: string;
+  /** 引擎侧原始会话标题（未被用户自定义标题覆盖前的标题）。 */
+  raw_title?: string | null;
+  /** 用户在工作台自定义的会话标题。 */
+  custom_title?: string | null;
   directory: string;
   /** 毫秒时间戳。 */
   created_at: number;
@@ -334,7 +338,11 @@ export function useWorkbenchSessions(
   }, []);
   const setSessionTitle = useCallback((sessionId: string, title: string) => {
     setSessionsState((prev) => {
-      const next = prev.map((s) => (s.session_id === sessionId ? { ...s, title } : s));
+      const next = prev.map((s) =>
+        s.session_id === sessionId
+          ? { ...s, raw_title: s.raw_title ?? s.title, custom_title: title, title }
+          : s
+      );
       lastSessions.set(next);
       return next;
     });

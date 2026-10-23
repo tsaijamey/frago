@@ -25,7 +25,7 @@
  * 「定时任务」；手机底栏复用同一份清单，跟着一起变。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -37,7 +37,6 @@ import {
   ListChecks,
   Settings,
   PanelLeft,
-  CalendarDays,
   Clock,
   Gauge,
   Loader2,
@@ -53,7 +52,6 @@ import { splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
 import { useClaudeUsage } from '@/hooks/useClaudeUsage';
 import { useTmuxSessionCount } from '@/hooks/useTmuxSessions';
 import { countAttention, useEnvironment, useEnvironmentUpgrade } from '@/hooks/useEnvironment';
-import TokenCalendarModal from '@/components/sessionWorkbench/TokenCalendarModal';
 import TmuxSessionsModal from './TmuxSessionsModal';
 import EnvironmentModal from './EnvironmentModal';
 import type { ClaudeUsageBucket } from '@/types/api';
@@ -335,20 +333,9 @@ function RailEnvironment() {
 function RailTools() {
   const { t } = useTranslation();
   const { config, setTheme } = useAppStore();
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const [tmuxOpen, setTmuxOpen] = useState(false);
   const { total: tmuxTotal, totalMemoryMb } = useTmuxSessionCount();
   const theme = config?.theme === 'light' ? 'light' : 'dark';
-
-  // Esc 关月历。它是个盖住半屏的浮层，不该只有一个关闭按钮能收。
-  useEffect(() => {
-    if (!calendarOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setCalendarOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [calendarOpen]);
 
   return (
     <div className="rail-tools">
@@ -365,16 +352,6 @@ function RailTools() {
       >
         <Terminal {...ICON} />
         <span className="rail-tool-count">{tmuxTotal}</span>
-      </button>
-
-      <button
-        type="button"
-        className="rail-tool"
-        onClick={() => setCalendarOpen(true)}
-        title={t('tokenCalendar.open')}
-        aria-label={t('tokenCalendar.open')}
-      >
-        <CalendarDays {...ICON} />
       </button>
 
       <div className="rail-theme" role="group" aria-label={t('sidebar.appearance.label')}>
@@ -399,15 +376,6 @@ function RailTools() {
           <Moon size={14} strokeWidth={1.5} />
         </button>
       </div>
-
-      {/* 月历挂到 body 上，不留在这根栏里面。左栏是 flex 子项且带 z-index，自己就是一层
-          堆叠上下文——浮层写多高的 z-index 都只在这一层里比，会被栏外的东西压住。 */}
-      {calendarOpen
-        ? createPortal(
-            <TokenCalendarModal t={t} onClose={() => setCalendarOpen(false)} />,
-            document.body
-          )
-        : null}
 
       {tmuxOpen
         ? createPortal(<TmuxSessionsModal onClose={() => setTmuxOpen(false)} />, document.body)

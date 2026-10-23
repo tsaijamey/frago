@@ -1,8 +1,9 @@
 /**
- * Timeline 浮窗：窗口、分组、捡回今天、选中与关闭。
- *
- * 尺寸量不出来（jsdom 没有布局）不影响这些用例：条的位置是像素，但**哪几场在窗口里、
- * 以什么次序摆、按钮改哪一份名单**都是纯数据判据，这里盯的就是这几条。
+ * 用量日历与 Timeline 合一浮窗测试：
+ * - 首先展示日历网格与每日 token 用量；
+ * - 点击日期单元格后切换为左侧竖排顺序日期（[n, n+3] 个）+ 右侧 Timeline；
+ * - 右上角多组 Tag 关键词输入框按会话标题或用户自定义标题交叉筛选（允许跨日期）；
+ * - 窗口档位、父子分组、捡回今天、选中与关闭。
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -10,11 +11,37 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import SessionTimeline from '../SessionTimeline';
+import {
+  MAX_VISIBLE_DATE_CELLS,
+  MIN_VISIBLE_DATE_CELLS,
+  toDateKey,
+} from '../tokenCalendarUtils';
+
+vi.mock('@/api', () => ({
+  getTokenCalendar: vi.fn(async (month: string) => ({
+    month,
+    days: {
+      [`${month}-15`]: {
+        input: 100_000,
+        output: 50_000,
+        cache_creation: 0,
+        cache_read: 0,
+        total: 150_000,
+      },
+    },
+    month_total: {
+      input: 1_000_000,
+      output: 500_000,
+      cache_creation: 0,
+      cache_read: 0,
+      total: 1_500_000,
+    },
+  })),
+}));
 
 /**
  * jsdom 没有布局，真正的 Virtuoso 量不出视口，档位切换后一行都不渲染。
- * 用例里换成「把 data 全部摆出来」的替身：虚拟化本身由真实界面的实测把关，
- * 这里只盯「哪些会话进了窗口、以什么次序摆」。
+ * 用例里换成「把 data 全部摆出来」的替身。
  */
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
@@ -33,6 +60,7 @@ vi.mock('react-virtuoso', () => ({
     </div>
   ),
 }));
+
 import type { SessionTodayState } from '@/hooks/useSessionToday';
 import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 
@@ -65,7 +93,7 @@ function todayState(over: Partial<SessionTodayState> = {}): SessionTodayState {
     picked: [],
     isPicked: () => false,
     toggle: vi.fn(async () => {}),
-    today: '2026-10-19',
+    today: toDateKey(new Date()),
     refresh: vi.fn(async () => {}),
     ...over,
   };
@@ -73,7 +101,7 @@ function todayState(over: Partial<SessionTodayState> = {}): SessionTodayState {
 
 function ids(): string[] {
   return screen
-    .getAllByTestId('timeline-lane')
+    .queryAllByTestId('timeline-lane')
     .map((el) => el.getAttribute('data-session-id') ?? '');
 }
 
@@ -83,6 +111,7 @@ function renderTimeline(
     today?: SessionTodayState;
     onSelect?: (id: string) => void;
     onClose?: () => void;
+    initialDate?: string | null;
   } = {}
 ) {
   return render(
@@ -92,13 +121,82 @@ function renderTimeline(
       today={opts.today ?? todayState()}
       onSelect={opts.onSelect ?? (() => {})}
       onClose={opts.onClose ?? (() => {})}
+      initialDate={opts.initialDate ?? null}
     />
   );
 }
 
-describe('SessionTimeline', () => {
-  it('刚打开是最近 7 天；档位显式摆出，切到 30 天能看到十天前的会话', async () => {
+describe('SessionTimeline (Merged Token Calendar & Timeline)', () => {
+  it('首先展示日历网格，点击日期单元格后左侧展示 [n, n+3] 个顺序日期、右侧展示 Timeline', async () => {
     const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
+    const sToday = session({
+      session_id: 'today-sess',
+      created_at: now - 2 * HOUR,
+      last_reply_at: now - HOUR,
+    });
+
+    renderTimeline([sToday]);
+
+    // 1. 初始展示月历网格，尚未展开右侧 Timeline
+    expect(screen.getByTestId('timeline-calendar-grid')).toBeTruthy();
+    expect(screen.queryByTestId('timeline-pane')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('calendar-month-total').textContent).toContain('1.5M');
+    });
+    const currentMonth = todayKey.slice(0, 7);
+    const activeTokenCell = screen.getByTestId(`calendar-cell-${currentMonth}-15`);
+    expect(activeTokenCell.textContent).toContain('150K');
+    expect(activeTokenCell.textContent).toContain('100K');
+    expect(activeTokenCell.textContent).toContain('50K');
+    const emptyDayKey = todayKey.endsWith('-02') ? `${currentMonth}-03` : `${currentMonth}-02`;
+    expect(screen.getByTestId(`calendar-cell-${emptyDayKey}`).textContent).not.toContain('—');
+
+    // 2. 点击今天的日期单元格，切换为左竖排日期 + 右 Timeline
+    fireEvent.click(screen.getByTestId(`calendar-cell-${todayKey}`));
+    expect(screen.queryByTestId('timeline-calendar-grid')).toBeNull();
+    expect(screen.getByTestId('timeline-date-rail')).toBeTruthy();
+    expect(screen.getByTestId('timeline-pane')).toBeTruthy();
+
+    // 左侧竖排日期个数严格在 [n, n+3] 之间，且按日期顺序排列
+    const dayCells = screen.getAllByTestId('timeline-day-cell');
+    expect(dayCells.length).toBeGreaterThanOrEqual(MIN_VISIBLE_DATE_CELLS);
+    expect(dayCells.length).toBeLessThanOrEqual(MAX_VISIBLE_DATE_CELLS);
+    const renderedDates = dayCells.map((el) => el.getAttribute('data-date') ?? '');
+    expect(renderedDates).toContain(todayKey);
+    const sortedDates = [...renderedDates].sort();
+    expect(renderedDates).toEqual(sortedDates);
+
+    // 点击左栏里另一个可见日期卡片，卡片原地高亮，左栏日期列表绝不跳动或自动居中
+    const anotherCell = dayCells.find((el) => el.getAttribute('data-date') !== todayKey) ?? dayCells[0];
+    const anotherDate = anotherCell.getAttribute('data-date') ?? '';
+    fireEvent.click(anotherCell);
+    const afterClickDates = screen
+      .getAllByTestId('timeline-day-cell')
+      .map((el) => el.getAttribute('data-date') ?? '');
+    expect(afterClickDates).toEqual(renderedDates);
+    expect(
+      screen
+        .getAllByTestId('timeline-day-cell')
+        .find((el) => el.getAttribute('data-date') === anotherDate)
+        ?.getAttribute('aria-pressed')
+    ).toBe('true');
+
+    // 切回今天，右侧 Timeline 展示了今天的会话
+    const todayRailCell = screen
+      .getAllByTestId('timeline-day-cell')
+      .find((el) => el.getAttribute('data-date') === todayKey);
+    if (todayRailCell) fireEvent.click(todayRailCell);
+    expect(ids()).toContain('today-sess');
+
+    // 3. 点「返回月历」回到全月网格
+    fireEvent.click(screen.getByTestId('timeline-back-calendar'));
+    expect(screen.getByTestId('timeline-calendar-grid')).toBeTruthy();
+  });
+
+  it('分栏模式下档位显式摆出，从 24h 切到 7d / 30d 能看到对应跨度的会话', async () => {
+    const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
     const fresh = session({
       session_id: 'fresh',
       created_at: now - HOUR,
@@ -114,22 +212,73 @@ describe('SessionTimeline', () => {
       created_at: now - 10 * DAY,
       last_reply_at: now - 10 * DAY + HOUR,
     });
-    renderTimeline([fresh, twoDays, tenDays]);
-    // 默认 7 天：两天前的在，十天前的不在。
+    renderTimeline([fresh, twoDays, tenDays], { initialDate: todayKey });
+
+    // 点选日期进来默认聚焦当天，切到 7d 档位能看到两天前的会话
+    fireEvent.click(screen.getByTestId('timeline-span-168'));
     expect(ids()).toContain('fresh');
     expect(ids()).toContain('two-days');
     expect(ids()).not.toContain('ten-days');
-    expect(screen.getByTestId('timeline-span-168').getAttribute('aria-pressed')).toBe('true');
 
-    // 档位是显式的：点 30 天，十天前的那场进来。
+    // 切到 30 天，十天前的那场进来
     fireEvent.click(screen.getByTestId('timeline-span-720'));
-    expect(screen.getByTestId('timeline-span-720').getAttribute('aria-pressed')).toBe('true');
     await waitFor(() => expect(ids()).toContain('ten-days'));
     expect(screen.getByTestId('timeline-span-all')).toBeTruthy();
   });
 
+  it('右上角多组 Tag 关键词输入框支持按会话标题与用户自定义标题跨日期交叉筛选', async () => {
+    const now = Date.now();
+    const s1 = session({
+      session_id: 's1',
+      title: '用户自定义：重构日历组件',
+      custom_title: '用户自定义：重构日历组件',
+      raw_title: 'Merge token calendar button with timeline',
+      created_at: now - HOUR,
+      last_reply_at: now - 10 * 60_000,
+    });
+    const s2 = session({
+      session_id: 's2',
+      title: '十天前的日历与 timeline 讨论',
+      created_at: now - 10 * DAY,
+      last_reply_at: now - 10 * DAY + HOUR,
+    });
+    const s3 = session({
+      session_id: 's3',
+      title: '只提到日历但没有另一个词',
+      created_at: now - 2 * HOUR,
+      last_reply_at: now - HOUR,
+    });
+
+    // 从初始日历态打开
+    renderTimeline([s1, s2, s3]);
+    expect(screen.getByTestId('timeline-calendar-grid')).toBeTruthy();
+
+    const input = screen.getByTestId('timeline-filter-input');
+    // 输入第一组 Tag "日历" 并回车
+    fireEvent.change(input, { target: { value: '日历' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // 自动切入跨日期分栏视图，s1、s2、s3 都含"日历"
+    await waitFor(() => {
+      expect(screen.getByTestId('timeline-pane')).toBeTruthy();
+    });
+    expect(ids()).toEqual(expect.arrayContaining(['s1', 's2', 's3']));
+
+    // 再输入第二组 Tag "timeline" 并回车，交叉出同时含"日历"与"timeline"的会话（s1 靠自定义标题+原会话标题命中，s2 跨日期命中，s3 被排除）
+    fireEvent.change(input, { target: { value: 'timeline' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(ids()).toContain('s1');
+      expect(ids()).toContain('s2');
+      expect(ids()).not.toContain('s3');
+    });
+    expect(screen.getAllByTestId('timeline-filter-tag')).toHaveLength(2);
+  });
+
   it('worker 紧跟在派活的那场下面，组内相邻', () => {
     const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
     const parent = session({
       session_id: 'p',
       created_at: now - 2 * HOUR,
@@ -147,12 +296,13 @@ describe('SessionTimeline', () => {
       origin: 'worker',
       parent_session_id: 'p',
     });
-    renderTimeline([parent, other, kid]);
+    renderTimeline([parent, other, kid], { initialDate: todayKey });
     expect(ids()).toEqual(['p', 'k', 'o']);
   });
 
   it('点「Today」把这场交给名单，不选中会话', () => {
     const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
     const s = session({
       session_id: 's1',
       created_at: now - 2 * HOUR,
@@ -160,7 +310,7 @@ describe('SessionTimeline', () => {
     });
     const toggle = vi.fn(async () => {});
     const onSelect = vi.fn();
-    renderTimeline([s], { today: todayState({ toggle }), onSelect });
+    renderTimeline([s], { today: todayState({ toggle }), onSelect, initialDate: todayKey });
 
     fireEvent.click(screen.getByTestId('timeline-today-s1'));
     expect(toggle).toHaveBeenCalledWith('s1');
@@ -169,15 +319,15 @@ describe('SessionTimeline', () => {
 
   it('右端留出未来空白：现在线不贴在最右边，按钮不压今天结束的短条', () => {
     const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
     const s = session({
       session_id: 'short',
       created_at: now - 10 * 60_000,
       last_reply_at: now - 60_000,
     });
-    renderTimeline([s]);
+    renderTimeline([s], { initialDate: todayKey });
     const left = screen.getByTestId('timeline-now').style.left;
     const pct = Number(left.match(/([\d.]+)%/)?.[1]);
-    // 7 天窗口留 8%（约 13.4 小时）的未来空白，「现在」落在 93% 左右。
     expect(pct).toBeGreaterThan(85);
     expect(pct).toBeLessThan(96);
   });
@@ -185,7 +335,7 @@ describe('SessionTimeline', () => {
   it('点一行打开那场会话', () => {
     const onSelect = vi.fn();
     const s = session({ session_id: 's1' });
-    renderTimeline([s], { onSelect });
+    renderTimeline([s], { onSelect, initialDate: toDateKey(new Date()) });
     fireEvent.click(screen.getByTestId('timeline-lane'));
     expect(onSelect).toHaveBeenCalledWith('s1');
   });

@@ -1,5 +1,5 @@
 /**
- * TokenCalendarModal — monthly calendar of per-day Claude token usage.
+ * TokenCalendarModal — monthly calendar of per-day token usage across all session engines.
  *
  * Opens over the sessions page; each request (open / month switch / refresh)
  * is a single synchronous GET — the backend computes incrementally against its

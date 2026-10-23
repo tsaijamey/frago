@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokens, monthMatrix, shiftMonth, toDateKey } from '../tokenCalendarUtils';
+import {
+  computeVisibleDayCount,
+  formatTokens,
+  matchesSessionTitleTags,
+  MAX_VISIBLE_DATE_CELLS,
+  MIN_VISIBLE_DATE_CELLS,
+  monthDaysList,
+  monthMatrix,
+  parseTagKeywords,
+  shiftMonth,
+  sliceVisibleDays,
+  toDateKey,
+} from '../tokenCalendarUtils';
 
 describe('formatTokens', () => {
   it('shows — for zero, negative and non-finite', () => {
@@ -71,3 +83,47 @@ describe('shiftMonth', () => {
     expect(shiftMonth('2026-01', -1)).toBe('2025-12');
   });
 });
+
+describe('computeVisibleDayCount & sliceVisibleDays', () => {
+  it('clamps visible day count strictly between n and n + 3 across screen heights', () => {
+    expect(computeVisibleDayCount(200)).toBe(MIN_VISIBLE_DATE_CELLS);
+    expect(computeVisibleDayCount(500)).toBeGreaterThanOrEqual(MIN_VISIBLE_DATE_CELLS);
+    expect(computeVisibleDayCount(500)).toBeLessThanOrEqual(MAX_VISIBLE_DATE_CELLS);
+    expect(computeVisibleDayCount(2000)).toBe(MAX_VISIBLE_DATE_CELLS);
+    expect(MAX_VISIBLE_DATE_CELLS - MIN_VISIBLE_DATE_CELLS).toBe(3);
+  });
+
+  it('slices ordered dates around the selected date', () => {
+    const days = monthDaysList('2026-10');
+    expect(days).toHaveLength(31);
+    const slice = sliceVisibleDays(days, '2026-10-15', 7);
+    expect(slice.items).toHaveLength(7);
+    expect(slice.items.map((d) => d.date)).toContain('2026-10-15');
+    // Strictly ordered ascending
+    for (let i = 1; i < slice.items.length; i++) {
+      expect(slice.items[i].day).toBe(slice.items[i - 1].day + 1);
+    }
+  });
+});
+
+describe('parseTagKeywords & matchesSessionTitleTags', () => {
+  it('parses and deduplicates tag keywords', () => {
+    expect(parseTagKeywords(['calendar'], 'timeline, calendar  token')).toEqual([
+      'calendar',
+      'timeline',
+      'token',
+    ]);
+  });
+
+  it('cross-filters session title and custom title with AND semantics', () => {
+    const s = {
+      title: '我的自定义标题：重构日历浮窗',
+      custom_title: '我的自定义标题：重构日历浮窗',
+      raw_title: 'Merge token calendar with session timeline modal',
+    };
+    expect(matchesSessionTitleTags(s, ['日历', 'timeline'])).toBe(true);
+    expect(matchesSessionTitleTags(s, ['token', '浮窗'])).toBe(true);
+    expect(matchesSessionTitleTags(s, ['日历', '不存在的词'])).toBe(false);
+  });
+});
+

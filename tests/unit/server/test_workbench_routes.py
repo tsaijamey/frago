@@ -107,6 +107,8 @@ class TestSessionList:
             "session_id",
             "family",
             "title",
+            "raw_title",
+            "custom_title",
             "directory",
             "created_at",
             "last_active_at",
