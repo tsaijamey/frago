@@ -10,8 +10,9 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
+import { talkView, withTurnDecisionCards } from '../RecordStream';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
 import { DEMOS, wrap } from '@/utils/__tests__/decisionDemos';
@@ -706,5 +707,145 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     expect(screen.getByTestId('decision-card')).toBeTruthy();
     expect(container.textContent).toContain('本次需要执行到哪一步？');
     expect(container.textContent).toContain('全量改造 + SIT 验证');
+  });
+
+  it('同轮存在收尾 agent.say（Stop 消息）时，frago ask 交互卡挂载在 Stop 消息正文下方，不出现在 Stop 消息之前', () => {
+    const toolBody = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '是否按此分组方案提交并推送？',
+        options: [
+          {
+            key: 'A',
+            label: '补齐 RELEASE_NOTES 后提交推送',
+            effect: '同步更新 RELEASE_NOTES.md 并推送到 origin/main',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '暂不提交',
+            effect: '保持当前工作区改动不变',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: 'git push' } }),
+      makeRecord('agent.say', {
+        id: 'a_pre',
+        seq: 2,
+        payload: { text: '**查看版本发布说明并生成交互确认卡片。**', model: 'claude-opus-5' },
+      }),
+      makeRecord('tool.result', {
+        id: 't_ask',
+        seq: 3,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 40, body: toolBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 4,
+        payload: {
+          text: '已完成工作区改动分析，请在下方卡片中选择确认方式。',
+          model: 'claude-opus-5',
+        },
+      }),
+    ];
+
+    const resolved = withTurnDecisionCards(turnRecords);
+    // tool.result 已移交卡片，不再原位渲染
+    expect(resolved[2].payload.ui_component_delegated).toBe(true);
+    // 收尾 Stop 消息拿到 ui_component，前置声明不拿
+    expect(resolved[1].payload.ui_component).toBeUndefined();
+    expect(resolved[3].payload.ui_component).toBe(toolBody);
+
+    // talkView 中不再把 tool.result 插到 Stop 消息之前
+    const talk = talkView(turnRecords);
+    expect(talk.map((r) => r.id)).toEqual(['u1', 'a_pre', 'a_stop']);
+
+    // 渲染收尾 Stop 消息时，正文在上、交互卡在下
+    const { container } = render(<RecordCard record={talk[2]} sessionId={SID} />);
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    const fullText = container.textContent ?? '';
+    const stopMsgIdx = fullText.indexOf('请在下方卡片中选择确认方式');
+    const cardIdx = fullText.indexOf('是否按此分组方案提交并推送？');
+    expect(stopMsgIdx).toBeGreaterThanOrEqual(0);
+    expect(cardIdx).toBeGreaterThan(stopMsgIdx);
+  });
+
+  it('frago image 工具输出渲染自适应图片网格，支持挂载到 Stop 消息并点击弹出放大浮窗切换', () => {
+    const gridBody = JSON.stringify({
+      frago_ui_component: 'image-grid',
+      component_type: 'image-grid',
+      data: {
+        type: 'image-grid',
+        title: '宣传配图定稿（2 张）',
+        images: [
+          {
+            src: '/api/file?disposition=inline&path=%2FUsers%2Ffrago%2Fpromo-1.png',
+            raw: '/Users/frago/promo-1.png',
+            name: 'promo-1.png',
+            caption: '图 1：本机主视觉海报',
+            source: 'local',
+          },
+          {
+            src: 'https://example.com/promo-2.png',
+            raw: 'https://example.com/promo-2.png',
+            name: 'promo-2.png',
+            caption: '图 2：互联网对比样张',
+            source: 'remote',
+          },
+        ],
+      },
+    });
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '展示刚才生成的配图' } }),
+      makeRecord('tool.result', {
+        id: 't_img',
+        seq: 2,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 30, body: gridBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 3,
+        payload: {
+          text: '两张宣传配图已整理在下方网格中，可点击放大查看。',
+          model: 'claude-opus-5',
+        },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    expect(talk.map((r) => r.id)).toEqual(['u1', 'a_stop']);
+
+    render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.getByTestId('image-grid-card')).toBeTruthy();
+    const layout = screen.getByTestId('image-grid-layout');
+    expect(layout.className).toContain('sm:grid-cols-2');
+
+    const items = screen.getAllByTestId('image-grid-item');
+    expect(items).toHaveLength(2);
+
+    // 点击第一张图弹出放大浮窗
+    fireEvent.click(items[0]);
+    expect(screen.getByTestId('image-grid-viewer')).toBeTruthy();
+    expect(
+      (screen.getByTestId('image-grid-viewer-img') as HTMLImageElement).getAttribute('src')
+    ).toContain('/api/file?disposition=inline&path=%2FUsers%2Ffrago%2Fpromo-1.png');
+
+    // 点击下一张切换到互联网图片
+    fireEvent.click(screen.getByTestId('image-grid-next'));
+    expect(
+      (screen.getByTestId('image-grid-viewer-img') as HTMLImageElement).getAttribute('src')
+    ).toBe('https://example.com/promo-2.png');
+
+    // 关闭浮窗
+    fireEvent.click(screen.getByTestId('image-grid-close'));
+    expect(screen.queryByTestId('image-grid-viewer')).toBeNull();
   });
 });

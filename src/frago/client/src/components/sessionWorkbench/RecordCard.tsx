@@ -55,10 +55,12 @@ import {
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import { parseCardAnswer, parseUiComponentOutput, splitTrailingBlock } from '@/utils/decisionBlock';
+import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
+import ImageGridCard from './ImageGridCard';
 import { CardAnswerBody, CardAnswerTag, DecisionCard, DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
@@ -815,9 +817,21 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
   const text = str(p, 'text');
+  const delegatedUi = str(p, 'ui_component');
+  const delegatedGridBodies = list(p, 'ui_image_grids').filter(
+    (v): v is string => typeof v === 'string' && !!v
+  );
   const trailing = record.agent_path.length ? null : splitTrailingBlock(text);
   const uiComponent =
-    !trailing && !record.agent_path.length ? parseUiComponentOutput(text) : null;
+    !trailing && !record.agent_path.length
+      ? parseUiComponentOutput(delegatedUi || text)
+      : null;
+  const imageGrids = !record.agent_path.length
+    ? [
+        ...delegatedGridBodies.flatMap((raw) => parseAllImageGridOutputs(raw)),
+        ...parseAllImageGridOutputs(text),
+      ]
+    : [];
   return (
     <TextShell
       record={record}
@@ -832,19 +846,27 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
       tone="bg-transparent"
     >
       {trailing ? (
-        <DecisionReply
-          recordId={record.id}
-          text={text}
-          split={trailing}
-          rich={(s) => <Rich text={s} />}
-        />
-      ) : uiComponent && uiComponent.ok ? (
         <>
-          <Rich text={text} />
-          <DecisionCard block={uiComponent.block} recordId={record.id} />
+          <DecisionReply
+            recordId={record.id}
+            text={text}
+            split={trailing}
+            rich={(s) => <Rich text={s} />}
+          />
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
         </>
       ) : (
-        <Rich text={text} />
+        <>
+          <Rich text={text} />
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
+          {uiComponent && uiComponent.ok ? (
+            <DecisionCard block={uiComponent.block} recordId={record.id} />
+          ) : null}
+        </>
       )}
     </TextShell>
   );
@@ -1383,7 +1405,13 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
   // 唯一入口。收起来等于把补救办法藏在一次点击后面，而卡头上的徽章刚说完"没了"。
   const needsAction = failed || Boolean(truncation);
   const uiComponent =
-    !failed && !record.agent_path.length ? parseUiComponentOutput(bodyText) : null;
+    !failed && !record.agent_path.length && p.ui_component_delegated !== true
+      ? parseUiComponentOutput(bodyText)
+      : null;
+  const imageGrids =
+    !failed && !record.agent_path.length && p.ui_component_delegated !== true
+      ? parseAllImageGridOutputs(bodyText)
+      : [];
   return (
     <div className="min-w-0">
       <ToolShell
@@ -1422,6 +1450,9 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
           </div>
         ) : null}
       </ToolShell>
+      {imageGrids.map((grid, idx) => (
+        <ImageGridCard key={`grid-${idx}`} block={grid} />
+      ))}
       {uiComponent && uiComponent.ok ? (
         <DecisionCard block={uiComponent.block} recordId={record.id} />
       ) : null}
@@ -1945,9 +1976,19 @@ function ToolRunLine({
   const failed = status === 'error';
   const resultBody = str(result, 'body');
   const uiComponent =
-    !failed && row.result && !row.result.agent_path.length
+    !failed &&
+    row.result &&
+    !row.result.agent_path.length &&
+    result.ui_component_delegated !== true
       ? parseUiComponentOutput(resultBody)
       : null;
+  const imageGrids =
+    !failed &&
+    row.result &&
+    !row.result.agent_path.length &&
+    result.ui_component_delegated !== true
+      ? parseAllImageGridOutputs(resultBody)
+      : [];
   return (
     <li className="min-w-0">
       <button
@@ -1979,6 +2020,13 @@ function ToolRunLine({
           </span>
         )}
       </button>
+      {!open && imageGrids.length > 0 ? (
+        <div className="min-w-0 px-3 pb-2">
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
+        </div>
+      ) : null}
       {!open && uiComponent && uiComponent.ok && row.result ? (
         <div className="min-w-0 px-3 pb-2">
           <DecisionCard block={uiComponent.block} recordId={row.result.id} />

@@ -53,6 +53,7 @@ import SelectionQuote, {
   markSpan,
   paintHighlight,
   rangeOf,
+  type BranchExtras,
   type MarkAnchor,
 } from './SelectionQuote';
 import FileViewer, { type PackedAnnotationsPayload } from './FileViewer';
@@ -74,6 +75,7 @@ import {
   type WorkbenchRecord,
 } from '@/hooks/useWorkbenchRecords';
 import { parseUiComponentOutput } from '@/utils/decisionBlock';
+import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -134,52 +136,137 @@ export function isBodyRecord(record: WorkbenchRecord): boolean {
 }
 
 /**
- * 给入队的那几行写上此刻的下场（见 `queueOutcomes`）。其余记录原样返回，一条不复制。
+ * 将每一轮（两次主会话用户发言之间）中 `frago ask` 工具结果产出的交互卡数据，
+ * 挂载到该轮最后一条主会话 `agent.say`（即收尾 Stop 消息）的末尾渲染。
+ *
+ * 工具调用在物理时序上必定发生在收尾回复之前；若把卡片直接原位画在 `tool.result` 上，
+ * 卡片就会出现在收尾消息上方，而收尾消息里写的却是「请在下方卡片中选择」。
+ * 挂载到当轮最后一条 `agent.say` 后，卡片永远紧贴在收尾消息正文的最下方；仅当该轮尚无
+ * 任何 `agent.say` 时，才保留在最后一条 `tool.result` 上兜底显示。
+ */
+export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const delegateToolIndices = new Set<number>();
+  const attachToAgentSay = new Map<number, string>();
+  const attachImagesToAgentSay = new Map<number, string[]>();
+
+  let turnToolIndices: number[] = [];
+  let turnToolBody = '';
+  let turnImageIndices: number[] = [];
+  let turnImageBodies: string[] = [];
+  let lastAgentSayIdx = -1;
+
+  const flushTurn = () => {
+    if (turnToolIndices.length) {
+      if (lastAgentSayIdx >= 0) {
+        for (const idx of turnToolIndices) delegateToolIndices.add(idx);
+        attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
+      } else if (turnToolIndices.length > 1) {
+        for (let k = 0; k < turnToolIndices.length - 1; k += 1) {
+          delegateToolIndices.add(turnToolIndices[k]);
+        }
+      }
+    }
+    if (turnImageIndices.length && lastAgentSayIdx >= 0) {
+      for (const idx of turnImageIndices) delegateToolIndices.add(idx);
+      attachImagesToAgentSay.set(lastAgentSayIdx, [...turnImageBodies]);
+    }
+    turnToolIndices = [];
+    turnToolBody = '';
+    turnImageIndices = [];
+    turnImageBodies = [];
+    lastAgentSayIdx = -1;
+  };
+
+  for (let i = 0; i < records.length; i += 1) {
+    const r = records[i];
+    if (!r.agent_path.length) {
+      const isHumanTurnBoundary =
+        r.kind === 'user.say' ||
+        (r.kind === 'context.inject' && r.payload.channel === 'queued_command');
+      if (isHumanTurnBoundary) {
+        flushTurn();
+        continue;
+      }
+      if (r.kind === 'agent.say') {
+        lastAgentSayIdx = i;
+        continue;
+      }
+      if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+        const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+        if (body) {
+          const uiCard = parseUiComponentOutput(body);
+          if (uiCard && uiCard.ok) {
+            turnToolIndices.push(i);
+            turnToolBody = body;
+          }
+          const imageGrids = parseAllImageGridOutputs(body);
+          if (imageGrids.length > 0) {
+            turnImageIndices.push(i);
+            turnImageBodies.push(body);
+          }
+        }
+      }
+    }
+  }
+  flushTurn();
+
+  if (!delegateToolIndices.size && !attachToAgentSay.size && !attachImagesToAgentSay.size) {
+    return records;
+  }
+
+  return records.map((r, idx) => {
+    if (delegateToolIndices.has(idx)) {
+      return r.payload.ui_component_delegated === true
+        ? r
+        : { ...r, payload: { ...r.payload, ui_component_delegated: true } };
+    }
+    const attached = attachToAgentSay.get(idx);
+    const attachedImages = attachImagesToAgentSay.get(idx);
+    if (attached !== undefined || attachedImages !== undefined) {
+      const nextPayload: Record<string, unknown> = { ...r.payload };
+      if (attached !== undefined) {
+        nextPayload.ui_component = attached;
+      }
+      if (attachedImages !== undefined) {
+        nextPayload.ui_image_grids = attachedImages;
+      }
+      return { ...r, payload: nextPayload };
+    }
+    return r;
+  });
+}
+
+/**
+ * 给入队的那几行写上此刻的下场（见 `queueOutcomes`），并将当轮 `frago ask` 交互卡挂载到收尾回复末尾。
+ * 其余记录原样返回，一条不复制。
  *
  * 镜头归属与卡上那枚下场标签都照这个值走，所以必须在分档之前做。
  */
 export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[] {
   const outcomes = queueOutcomes(records);
-  if (!outcomes.size) return records;
-  return records.map((r) => {
-    const state = outcomes.get(r.id);
-    return state && r.payload.queue_state !== state
-      ? { ...r, payload: { ...r.payload, queue_state: state } }
-      : r;
-  });
-}
-
-function turnAgentSayHasCard(records: WorkbenchRecord[], fromIndex: number): boolean {
-  for (let j = fromIndex + 1; j < records.length; j += 1) {
-    const next = records[j];
-    if (next.agent_path.length) continue;
-    if (next.kind === 'user.say') break;
-    if (next.kind === 'agent.say') {
-      const text = typeof next.payload.text === 'string' ? next.payload.text : '';
-      if (
-        text.includes('```answer-needed-by-human') ||
-        (text.includes('"frago_ui_component"') && parseUiComponentOutput(text)?.ok)
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
+  const queued = !outcomes.size
+    ? records
+    : records.map((r) => {
+        const state = outcomes.get(r.id);
+        return state && r.payload.queue_state !== state
+          ? { ...r, payload: { ...r.payload, queue_state: state } }
+          : r;
+      });
+  return withTurnDecisionCards(queued);
 }
 
 /**
- * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度与产出 UI 交互卡的工具结果。
+ * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度。
  *
- * 刻度归「系统」档、条数也记在那边——这里只是**捎带显示**，不改归属，各档条数加起来
- * 照旧正好是全部。捎带的规矩是**两段对话之间只留最后一条**：agent 一口气调二三十次
- * 工具就有二三十条刻度，而刻度报的是水位与累计，同一段里只有最后那条是"到这里为止"
- * 的数，前面的全被它覆盖了。摆在它原本的位置，也就是下一条对话之前。
+ * 当轮 `frago ask` 产出的交互卡已由 `withTurnDecisionCards` 挂载到当轮最后一条 `agent.say`
+ * （收尾消息）的正文下方；仅当某轮完全没有 `agent.say` 时，才捎带未移交的 `tool.result` 兜底显示。
  */
 export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const normalized = withTurnDecisionCards(records);
   const out: WorkbenchRecord[] = [];
   let tick: WorkbenchRecord | null = null;
-  for (let i = 0; i < records.length; i += 1) {
-    const record = records[i];
+  for (let i = 0; i < normalized.length; i += 1) {
+    const record = normalized[i];
     if (record.kind === 'usage.tick') {
       tick = record;
       continue;
@@ -187,11 +274,13 @@ export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
     if (
       record.kind === 'tool.result' &&
       !record.agent_path.length &&
-      record.payload.status !== 'error'
+      record.payload.status !== 'error' &&
+      record.payload.ui_component_delegated !== true
     ) {
       const body = typeof record.payload.body === 'string' ? record.payload.body : '';
       const uiCard = body ? parseUiComponentOutput(body) : null;
-      if (uiCard && uiCard.ok && !turnAgentSayHasCard(records, i)) {
+      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
         if (tick) out.push(tick);
         tick = null;
         out.push(record);
@@ -584,8 +673,8 @@ export interface RecordStreamProps {
   onQuote?: (text: string, anchor?: MarkAnchor) => void;
   /** 人圈了一段正文、按了「暂存」并写完想法。不给就不出暂存按钮。 */
   onStack?: (anchor: MarkAnchor, note: string) => void;
-  /** 人圈了一段正文、按了「分支」并写好那句话。不给就不出分支按钮。 */
-  onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /** 人圈了一段正文、按了「分支」并写好那句话（或挑好 skill / 附件）。不给就不出分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string, extras?: BranchExtras) => void;
   /**
    * 圈中的那段恰好是一条真文件的路径时，就地浮开看它（见 {@link SelectionQuote} 第四颗）。
    * 默认开着：这一颗不往外发消息、不改任何东西，只是把那份文件摆出来；某个界面不想要，
