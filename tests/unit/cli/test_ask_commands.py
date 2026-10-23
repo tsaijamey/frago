@@ -172,9 +172,9 @@ class TestAskFriendlyErrorFeedback:
         res = runner.invoke(ask_group, ["single-choice", "-q", "选哪个？"])
         assert res.exit_code != 0
         assert "single-choice 组件必须提供 --option" in res.output
-        assert "frago ask single-choice" in res.output
-        assert "frago ask text-answer" not in res.output
-        assert "frago ask multi-choice" not in res.output
+        assert "frago app ask single-choice" in res.output
+        assert "frago app ask text-answer" not in res.output
+        assert "frago app ask multi-choice" not in res.output
 
     def test_description_instead_of_effect_gives_targeted_hint(self):
         runner = CliRunner()
@@ -190,8 +190,8 @@ class TestAskFriendlyErrorFeedback:
         )
         assert res.exit_code != 0
         assert "缺少必填字段 'effect'（检测到传了 'description'" in res.output
-        assert "frago ask single-choice" in res.output
-        assert "frago ask text-answer" not in res.output
+        assert "frago app ask single-choice" in res.output
+        assert "frago app ask text-answer" not in res.output
 
     def test_unknown_flag_on_subcommand_returns_component_example(self):
         runner = CliRunner()
@@ -201,8 +201,8 @@ class TestAskFriendlyErrorFeedback:
         )
         assert res.exit_code != 0
         assert "--title" in res.output
-        assert "frago ask multi-choice" in res.output
-        assert "frago ask single-choice" not in res.output
+        assert "frago app ask multi-choice" in res.output
+        assert "frago app ask single-choice" not in res.output
 
     def test_cross_component_misplaced_flag_rejected(self):
         runner = CliRunner()
@@ -220,8 +220,8 @@ class TestAskFriendlyErrorFeedback:
         )
         assert res.exit_code != 0
         assert "--draft 仅支持 text-answer 与 choice-and-text 组件" in res.output
-        assert "frago ask single-choice" in res.output
-        assert "frago ask choice-and-text" not in res.output
+        assert "frago app ask single-choice" in res.output
+        assert "frago app ask choice-and-text" not in res.output
 
     def test_duplicate_recommended_rejected(self):
         runner = CliRunner()
@@ -239,7 +239,7 @@ class TestAskFriendlyErrorFeedback:
         )
         assert res.exit_code != 0
         assert "至多只能标记 1 个推荐项" in res.output
-        assert "frago ask single-choice" in res.output
+        assert "frago app ask single-choice" in res.output
 
     def test_unknown_component_type_returns_four_types_overview(self):
         runner = CliRunner()

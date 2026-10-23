@@ -1,17 +1,9 @@
-"""``frago apps`` —— 内置交付能力清单与调用入口。
+"""``frago app`` —— 内置交互与交付能力清单与调用入口。
 
-apps 是「输入 → 交付成品」的内置能力集合。与 recipe / skill / def 的
-区别：apps 只收随 frago 分发的静态内置能力，不做用户可插拔注册。
-引擎是每个 app 自己的实现细节，框架只定义契约：``apps use <app> "<输入>"``
-产出成品，默认 stdout，``--output`` 落盘。
-
-首个 app 是 mermaid：输入 mermaid 文本 → SVG。渲染走 ``frago browser``
-默认的扩展桥——在 agent 浏览器的后台标签里画，画完关组；引擎用包内已分发的
-mermaid.min.js（viewer 在用同一份），不引入任何新增体积。
-不走 ``-b cdp``：那条只属于 agent_os，9222 上住着舞台演员，
-自己起无头实例会跟它抢端口、或把渲染页开进演员的虚拟标签条。
-样式读包内 frago-theme.js，与 WebUI、``frago view`` 画出来的图是同一套；
-导出的 SVG 多半要贴进白底的文档和幻灯片，所以用浅色那一版。
+app 是随 frago 分发的静态内置能力集合（与 recipe / skill / def 的区别：
+不做用户可插拔注册）。包含两类内置能力：
+1. 会话原生 UI 组件：``frago app ask``（决策卡）、``frago app image``（自适应图片网格）；
+2. 内容交付渲染：``frago app mermaid``（输入 mermaid 文本 → 产出 SVG，亦可通过 ``frago app use mermaid`` 调用）。
 """
 
 from __future__ import annotations
@@ -31,6 +23,8 @@ from pathlib import Path
 import click
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
+from .ask_commands import ask_group
+from .image_commands import image_cmd
 
 # 渲染专属 tab group。独立于任何用户 group，用完即关。
 APPS_GROUP = "frago-apps"
@@ -218,21 +212,61 @@ def _extract_exec_result(result: object) -> str | None:
 _APPS: dict[str, App] = {
     "mermaid": App(
         name="mermaid",
-        description="把 mermaid 图表文本渲染成 SVG",
+        description="把 mermaid 图表文本渲染成 SVG（frago app mermaid \"<文本>\"）",
         input_kind="mermaid 文本",
         output_kind="SVG",
         render=_render_mermaid,
     ),
 }
 
+_UI_APPS: list[App] = [
+    App(
+        name="ask",
+        description="生成会话工作台可点击的决策交互卡（frago app ask <single-choice|multi-choice|text-answer|choice-and-text>）",
+        input_kind="问题与选项参数",
+        output_kind="frago_ui_component (decision-card)",
+        render=lambda _x: "",
+    ),
+    App(
+        name="image",
+        description="将本机图片路径或互联网图片 URL 渲染为会话内自适应网格卡片，支持点击放大浮窗查看（frago app image <路径或URL>...）",
+        input_kind="本机图片路径 / http(s) 图片 URL",
+        output_kind="frago_ui_component (image-grid)",
+        render=lambda _x: "",
+    ),
+]
+
 
 def _list_apps() -> list[App]:
-    return list(_APPS.values())
+    return [*_UI_APPS, *_APPS.values()]
 
 
-@click.group(name="apps", cls=AgentFriendlyGroup)
+def _run_text_app(name: str, input_text: str, output_path: str | None) -> None:
+    """执行文本渲染类内置 app 并输出到 stdout 或文件。"""
+    app = _APPS.get(name)
+    if app is None:
+        click.echo(
+            f"Error: unknown app '{name}'. "
+            f"Available: {', '.join(sorted(_APPS))}",
+            err=True,
+        )
+        sys.exit(2)
+
+    artifact = app.render(input_text)
+
+    if output_path:
+        Path(output_path).write_text(artifact, encoding="utf-8")
+        click.echo(f"Wrote {len(artifact)} bytes to {output_path}")
+    else:
+        click.echo(artifact)
+
+
+@click.group(name="app", cls=AgentFriendlyGroup)
 def apps_group() -> None:
-    """Built-in delivery capabilities: input → finished artifact."""
+    """Built-in session UI components and delivery capabilities (ask, image, mermaid)."""
+
+
+app_group = apps_group
 
 
 @apps_group.command(name="list", cls=AgentFriendlyCommand)
@@ -272,30 +306,34 @@ def apps_list(output_format: str) -> None:
         click.echo()
 
 
+@apps_group.command(name="mermaid", cls=AgentFriendlyCommand)
+@click.argument("input_text")
+@click.option(
+    "-o",
+    "--output",
+    "output_path",
+    type=click.Path(dir_okay=False),
+    help="Write the rendered SVG to a file instead of stdout",
+)
+def apps_mermaid(input_text: str, output_path: str | None) -> None:
+    """Render mermaid diagram text to SVG: ``frago app mermaid "<input>"``."""
+    _run_text_app("mermaid", input_text, output_path)
+
+
 @apps_group.command(name="use", cls=AgentFriendlyCommand)
 @click.argument("name")
 @click.argument("input_text")
 @click.option(
+    "-o",
     "--output",
     "output_path",
     type=click.Path(dir_okay=False),
     help="Write the artifact to a file instead of stdout",
 )
 def apps_use(name: str, input_text: str, output_path: str | None) -> None:
-    """Run a built-in app: ``frago apps use <app> "<input>"``."""
-    app = _APPS.get(name)
-    if app is None:
-        click.echo(
-            f"Error: unknown app '{name}'. "
-            f"Available: {', '.join(sorted(_APPS))}",
-            err=True,
-        )
-        sys.exit(2)
+    """Run a built-in delivery app: ``frago app use <app> "<input>"``."""
+    _run_text_app(name, input_text, output_path)
 
-    artifact = app.render(input_text)
 
-    if output_path:
-        Path(output_path).write_text(artifact, encoding="utf-8")
-        click.echo(f"Wrote {len(artifact)} bytes to {output_path}")
-    else:
-        click.echo(artifact)
+apps_group.add_command(ask_group, name="ask")
+apps_group.add_command(image_cmd, name="image")

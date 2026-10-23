@@ -15,9 +15,9 @@
 输出规则：是 → 只输出 YES；否 → 只输出 NO。除了这一个词，不要输出任何别的字。效率要求：直接判定，思考不超过两句话。
 
 >>>判定：
-<<<把等用户定的答案用 `frago ask <type>` 工具生成交互组件（或在回复最末尾写 `answer-needed-by-human` 区块）再停，选项原样保留，选择仍交给用户。优先直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
+<<<把等用户定的答案用 `frago app ask <type>` 工具生成交互组件（或在回复最末尾写 `answer-needed-by-human` 区块）再停，选项原样保留，选择仍交给用户。优先直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
 ```bash
-frago ask single-choice \
+frago app ask single-choice \
   -q "一句话问题，人不看上文也能懂" \
   --why "推荐依据（可选）" \
   -o '{"key":"A","label":"短名","effect":"点了会发生什么；收不回、要花钱、会改哪个文件写在这里","recommended":true}' \

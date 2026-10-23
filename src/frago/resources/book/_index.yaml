@@ -5,7 +5,7 @@
 # 第一性原理 — frago 的根本主张，决定一切设计取舍
 - name: frago-principle-os
   category: available
-  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/agy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/apps/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
+  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/agy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/app[ask决策卡|image图片网格|mermaid图表]/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
 
 - name: frago-principle-supreme
   category: must
@@ -102,7 +102,7 @@
 
 - name: must-output-shape
   category: must
-  brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"
+  brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了（展示图片用 frago app image 渲染网格卡片）、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"
 
 - name: must-diagram-reply
   category: must

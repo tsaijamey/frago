@@ -1,4 +1,4 @@
-"""会话可调用的前端交互组件生成工具（``frago ask``）。
+"""会话可调用的前端交互组件生成工具（``frago app ask``）。
 
 把原本由模型在回复末尾手写 ``answer-needed-by-human`` YAML 代码块的做法，收敛为确定性的
 CLI 工具调用：
@@ -42,7 +42,7 @@ COMPONENT_SUMMARY: dict[str, str] = {
 COMPONENT_EXAMPLES: dict[str, list[str]] = {
     "single-choice": [
         (
-            'frago ask single-choice '
+            'frago app ask single-choice '
             '--question "SQL 模板应当绑定哪个物理表名？" '
             '--why "rtm_data 在 SIT 环境已有 98 家客户数据，立即可用" '
             '--option "A|绑定 rtm_data|直接查询 commercial_sit.public.rtm_data" '
@@ -50,7 +50,7 @@ COMPONENT_EXAMPLES: dict[str, list[str]] = {
             '--recommended A'
         ),
         (
-            'frago ask single-choice '
+            'frago app ask single-choice '
             '--question "1.4.111 要发到 PyPI 吗？" '
             '--option "A|发布|打 v1.4.111 tag 并上传 PyPI，发出去收不回" '
             '--option "B|先不发|改动留在 main，不打 tag" '
@@ -59,7 +59,7 @@ COMPONENT_EXAMPLES: dict[str, list[str]] = {
     ],
     "multi-choice": [
         (
-            'frago ask multi-choice '
+            'frago app ask multi-choice '
             '--question "本次需要同步更新哪些环境配置？" '
             '--why "本地单测已通过，可按需选择同步范围" '
             '--option "A|写入 SIT Admin DB|更新 SIT 环境技能配置表" '
@@ -69,20 +69,20 @@ COMPONENT_EXAMPLES: dict[str, list[str]] = {
     ],
     "text-answer": [
         (
-            'frago ask text-answer '
+            'frago app ask text-answer '
             '--question "请提供本次归档导出文件的命名后缀" '
             '--suggestion "2026Q3_rtm_summary" '
             '--suggestion "sit_verified_v1"'
         ),
         (
-            'frago ask text-answer '
+            'frago app ask text-answer '
             '--question "请确认或修改下面这段将写入变更说明的文案" '
             '--draft "本次重构对齐 SIT rtm_data 表结构，新增可选 bg 过滤参数。"'
         ),
     ],
     "choice-and-text": [
         (
-            'frago ask choice-and-text '
+            'frago app ask choice-and-text '
             '--question "本次需要执行到哪一步？（可点选并在下方补充特殊要求）" '
             '--why "推荐一步到位完成 SIT 抽样验证" '
             '--option "A|改代码 + 跑单测 + SIT 抽样验证|重构本地逻辑并写入 SIT Admin DB 抽测" '
@@ -389,8 +389,8 @@ def validate_and_build_component(
         "component_type": component_type,
         "data": data,
         "next_action": (
-            "前端交互组件数据已生成并写入会话记录流，WebUI 将按 component_type 自动渲染卡片；"
-            "请直接结束本轮回复等待用户作答，无需再手写 answer-needed-by-human 代码块。"
+            "前端交互组件数据已生成，WebUI 会将该交互卡片自动挂载到本轮最终收尾回复（Stop 消息）的正文最下方渲染；"
+            "请在收尾回复中正常陈述结论并引导用户在下方卡片点选，无需再手写 answer-needed-by-human 代码块。"
         ),
     }
 

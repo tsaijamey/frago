@@ -178,20 +178,35 @@ COMMAND_EXAMPLES = {
     "reset": [
         "frago browser reset",
     ],
-    # Apps - built-in delivery capabilities
-    "apps": [
-        "frago apps list",
-        "frago apps use mermaid '<mermaid 文本>'",
-        "frago apps use mermaid --output out.svg '<mermaid 文本>'",
+    # App - built-in session UI components and delivery capabilities
+    "app": [
+        "frago app list",
+        "frago app ask single-choice -q \"问题\" -o \"A|短名|点了会发生什么\"",
+        "frago app image /path/to/a.png https://example.com/b.png",
+        "frago app mermaid '<mermaid 文本>'",
     ],
-    "apps/list": [
-        "frago apps list",
-        "frago apps list --format json",
+    "app/list": [
+        "frago app list",
+        "frago app list --format json",
     ],
-    "apps/use": [
-        "frago apps use <app> '<输入>'",
-        "frago apps use mermaid 'flowchart TD\\n  A --> B'",
-        "frago apps use mermaid --output out.svg 'flowchart TD\\n  A --> B'",
+    "app/ask": [
+        "frago app ask single-choice -q \"问题\" -o \"A|短名|点了会发生什么\"",
+        "frago app ask multi-choice -q \"问题\" -o \"A|短名|点了会发生什么\"",
+        "frago app ask text-answer -q \"问题\"",
+        "frago app ask choice-and-text -q \"问题\" -o \"A|短名|点了会发生什么\"",
+    ],
+    "app/image": [
+        "frago app image /path/to/1.png /path/to/2.png",
+        "frago app image --title \"方案对比\" -i \"/path/to/1.png|图 1\" -i \"https://example.com/2.png|图 2\"",
+    ],
+    "app/mermaid": [
+        "frago app mermaid 'flowchart TD\\n  A --> B'",
+        "frago app mermaid --output out.svg 'flowchart TD\\n  A --> B'",
+    ],
+    "app/use": [
+        "frago app use <app> '<输入>'",
+        "frago app use mermaid 'flowchart TD\\n  A --> B'",
+        "frago app use mermaid --output out.svg 'flowchart TD\\n  A --> B'",
     ],
     # Server
     "server": [

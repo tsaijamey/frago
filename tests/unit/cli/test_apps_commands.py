@@ -90,6 +90,28 @@ def test_apps_use_renders_to_stdout(runner, fake_mermaid_render):
     assert fake_mermaid_render == ["A --> B"]
 
 
+def test_apps_mermaid_direct_subcommand(runner, fake_mermaid_render):
+    res = runner.invoke(apps_group, ["mermaid", "X --> Y"])
+    assert res.exit_code == 0, res.output
+    assert "<svg>X --> Y</svg>" in res.output
+    assert fake_mermaid_render == ["X --> Y"]
+
+
+def test_apps_ask_and_image_mounted_under_app(runner, tmp_path):
+    res_ask = runner.invoke(
+        apps_group,
+        ["ask", "single-choice", "-q", "选哪个？", "-o", "A|选项A|效果A"],
+    )
+    assert res_ask.exit_code == 0, res_ask.output
+    assert '"frago_ui_component": "decision-card"' in res_ask.output
+
+    img = tmp_path / "demo.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    res_img = runner.invoke(apps_group, ["image", str(img)])
+    assert res_img.exit_code == 0, res_img.output
+    assert '"frago_ui_component": "image-grid"' in res_img.output
+
+
 def test_apps_use_writes_output_file(runner, tmp_path, fake_mermaid_render):  # noqa: ARG001
     out = tmp_path / "out.svg"
     res = runner.invoke(apps_group, ["use", "mermaid", "--output", str(out), "A --> B"])

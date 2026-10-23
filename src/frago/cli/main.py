@@ -14,8 +14,8 @@ from frago import __version__
 
 from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
+from .agy_hook import agy_hook
 from .apps_commands import apps_group
-from .ask_commands import ask_group
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
@@ -31,7 +31,6 @@ from .cloud_commands import (
 from .commands import (
     init as init_dirs,  # Legacy directory init command, kept as init-dirs
 )
-from .agy_hook import agy_hook
 from .commands import (
     status,
 )
@@ -46,7 +45,6 @@ from .init_command import init  # New environment init command
 from .profile_commands import profile_group
 from .recipe_commands import recipe_group
 from .remote_commands import remote_group
-from .team_commands import team_group
 from .reply_command import reply_cmd
 from .schedule_commands import schedule_group
 from .serve_command import serve
@@ -54,6 +52,7 @@ from .server_command import server_group
 from .session_commands import session_group
 from .skill_commands import skill_group
 from .start_command import start
+from .team_commands import team_group
 from .todo_commands import todo_group
 from .update_command import update
 from .user_commands import user_group
@@ -62,22 +61,24 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
+    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "app"]),
     ("Files", ["cp", "mv", "rm"]),
-    ("Session & Intelligence", ["session", "ask", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session", "ask"]
+EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session", "app"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
 # guesses `frago sessions search` should land on the command rather than on an
 # error page.
-COMMAND_ALIASES = {"sessions": "session", "card": "ask", "decision": "ask"}
+COMMAND_ALIASES = {
+    "sessions": "session",
+}
 
 # Chrome subcommand groups
 BROWSER_SUBGROUPS = OrderedDict([
@@ -408,8 +409,8 @@ cli.add_command(recipe_group)
 # Skill management command group
 cli.add_command(skill_group)
 
-# Apps command group - built-in delivery capabilities
-cli.add_command(apps_group)
+# App command group - built-in session UI components and delivery capabilities
+cli.add_command(apps_group, name="app")
 
 # Agent commands
 cli.add_command(agent)
@@ -417,9 +418,6 @@ cli.add_command(agent_status)
 
 # Session management command group
 cli.add_command(session_group)
-
-# Session-callable interactive UI component command group
-cli.add_command(ask_group, name="ask")
 
 # agy lifecycle hook shim — invoked by agy's hooks.json, not by hand
 cli.add_command(agy_hook)
