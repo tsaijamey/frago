@@ -37,7 +37,7 @@ from typing import Any
 
 from frago.session import opencode_store
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
-from frago.session.usage_tick import build_tick
+from frago.session.usage_tick import breakdown_from_opencode_tokens, build_tick
 
 logger = logging.getLogger(__name__)
 
@@ -740,25 +740,8 @@ def _step_counts(parts: list[dict[str, Any]]) -> tuple[int, int]:
 
 
 def _usage_breakdown(tokens: dict[str, Any]) -> dict[str, int] | None:
-    """opencode 的步骤用量 → 统一记录那四个分项。一个数都报不出时返回 None。
-
-    形状是 ``{"input":…, "output":…, "reasoning":…, "cache":{"read":…,"write":…}}``。
-    **推理那一段不另立一格**：它是输出的一部分，单摆出来会让四项之和对不上本轮那个数。
-    """
-
-    def n(source: dict[str, Any], key: str) -> int:
-        value = source.get(key)
-        return int(value) if isinstance(value, int | float) else 0
-
-    cache = tokens.get("cache")
-    cache = cache if isinstance(cache, dict) else {}
-    breakdown = {
-        "input": n(tokens, "input"),
-        "output": n(tokens, "output") + n(tokens, "reasoning"),
-        "cache_creation": n(cache, "write"),
-        "cache_read": n(cache, "read"),
-    }
-    return breakdown if any(breakdown.values()) else None
+    """opencode 的步骤用量 → 统一记录那四个分项。一个数都报不出时返回 None。"""
+    return breakdown_from_opencode_tokens(tokens)
 
 
 def _with_usage_ticks(drafts: list[_Draft]) -> list[_Draft]:

@@ -42,7 +42,7 @@ from typing import Any
 
 from frago.session import codex_store
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
-from frago.session.usage_tick import build_tick
+from frago.session.usage_tick import breakdown_from_codex_usage, build_tick
 
 logger = logging.getLogger(__name__)
 
@@ -496,16 +496,9 @@ def _usage_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         value = source.get(key)
         return int(value) if isinstance(value, int | float) else 0
 
-    # 分项摆的是**这一次**的明细，它要解释的是本轮那个数，不是累计。codex 的
-    # ``input_tokens`` 把缓存命中的那部分算在里面，所以"新输入"要把它减掉，否则同一批
-    # token 在两格里各数一遍。
-    cached = n(last, "cached_input_tokens")
-    breakdown = {
-        "input": max(n(last, "input_tokens") - cached, 0),
-        "output": n(last, "output_tokens"),
-        "cache_creation": n(last, "cache_write_input_tokens"),
-        "cache_read": cached,
-    }
+    # 分项摆的是**这一次**的明细，它要解释的是本轮那个数，不是累计。换算走
+    # :func:`frago.session.usage_tick.breakdown_from_codex_usage`，与用量月历同一套。
+    breakdown = breakdown_from_codex_usage(last)
     window = info.get("model_context_window")
     return build_tick(
         breakdown,

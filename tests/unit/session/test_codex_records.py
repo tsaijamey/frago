@@ -455,3 +455,44 @@ def test_store_and_adapter_read_the_same_file(rollout):
     assert codex_store.find_rollout(sid) == path
     assert codex_store.latest_turn(sid).text == "答"
     assert any(r.kind == "call.envelope" for r in translate_session(sid))
+
+
+def test_token_count_subtracts_both_cached_and_cache_write_from_input(rollout):
+    """codex 的 input_tokens 包着 cached_input_tokens 与 cache_write_input_tokens 两项。
+
+    两项都扣掉后，四个分项之和才精确等于本轮 total_tokens。
+    """
+    sid, write = rollout
+    write(
+        [
+            _meta(sid),
+            _event(
+                "token_count",
+                {
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": 18615,
+                            "cached_input_tokens": 14118,
+                            "cache_write_input_tokens": 4429,
+                            "output_tokens": 267,
+                            "reasoning_output_tokens": 94,
+                            "total_tokens": 18882,
+                        },
+                        "total_token_usage": {"total_tokens": 18882},
+                        "model_context_window": 258400,
+                    }
+                },
+            ),
+        ]
+    )
+    tick = next(r for r in translate_session(sid) if r.kind == "usage.tick")
+    bd = tick.payload["breakdown"]
+    assert bd == {
+        "input": 68,
+        "output": 267,
+        "cache_creation": 4429,
+        "cache_read": 14118,
+    }
+    assert sum(bd.values()) == tick.payload["turn_tokens"] == 18882
+    assert tick.payload["context_tokens"] == 18615
+
