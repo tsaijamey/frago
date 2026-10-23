@@ -1365,6 +1365,7 @@
       }
     };
 
+    var skillSent = false;
     function submit() {
       var line = text.value.trim();
       if (!line) return;
@@ -1372,16 +1373,21 @@
       sendBtn.textContent = "排队中…";
       box.dataset.mode = "sending";
       note("正在排队…");
+      var reqBody = { text: line, wait: false };
+      if (!skillSent) {
+        reqBody.skills = ["how-frago-agent-runs-an-agent-os"];
+      }
       fetch("/api/workbench/sessions/" + encodeURIComponent(sid) + "/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line, wait: false })
+        body: JSON.stringify(reqBody)
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (body) {
           if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
           return body;
         });
       }).then(function () {
+        skillSent = true;
         appendBubble("usr", line);
         text.value = "";
         note("已排给导演，它会转达给正在干活的 worker");

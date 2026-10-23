@@ -135,23 +135,39 @@ class _Session:
     in_flight: int = 0
     #: 这一场被叫停了（或服务要停了）。置上之后喂料线程不再往下走，自己退出去。
     closed: bool = False
+    #: 虚拟桌面导演等无人值守会话：人看的是桌面画面而不是工作台聊天页，关闭轻量审阅与拍板卡强拦。
+    unattended: bool = False
 
 
 _sessions: dict[str, _Session] = {}
 _sessions_lock = threading.Lock()
 
+_DIRECTOR_SKILL_MARKER = 'name="how-frago-agent-runs-an-agent-os"'
 
-def _session_for(session_id: str, cwd: str, title: str | None) -> _Session:
+
+def _is_director_prompt(prompt: str) -> bool:
+    return _DIRECTOR_SKILL_MARKER in prompt
+
+
+def _session_for(
+    session_id: str,
+    cwd: str,
+    title: str | None,
+    *,
+    unattended: bool = False,
+) -> _Session:
     """取这一场的常驻条目，没有就建一个（此时还没起进程）。"""
     with _sessions_lock:
         got = _sessions.get(session_id)
         if got is None:
-            got = _Session(session_id=session_id, cwd=cwd, title=title)
+            got = _Session(session_id=session_id, cwd=cwd, title=title, unattended=unattended)
             _sessions[session_id] = got
         else:
             got.cwd = cwd
             if title:
                 got.title = title
+            if unattended:
+                got.unattended = True
         return got
 
 
@@ -340,6 +356,10 @@ def _spawn(sess: _Session) -> None:
     from frago.server.services.subprocess_utils import get_utf8_env
 
     cmd = build_command(sess.session_id, cwd=sess.cwd, title=sess.title)
+    env = get_utf8_env()
+    if sess.unattended:
+        env["FRAGO_REVIEW"] = "off"
+        env["FRAGO_STOP_CHECK"] = "off"
     sess.proc = subprocess.Popen(  # noqa: S603 — 命令由本模块拼，无 shell
         cmd,
         stdin=subprocess.PIPE,
@@ -349,7 +369,7 @@ def _spawn(sess: _Session) -> None:
         encoding="utf-8",
         errors="replace",
         cwd=sess.cwd,
-        env=get_utf8_env(),
+        env=env,
         bufsize=1,  # 行缓冲：一轮的 result 立刻读得到，不等它攒满
     )
     sess.state = "starting"
@@ -608,7 +628,9 @@ def send(
     会话记录里留下任何一行，页面上除了这句抛出来的话没有别的线索。等不到就只记日志：那时
     记录里已经有行在写了，人看得见。
     """
-    sess = _session_for(session_id, cwd, title)
+    sess = _session_for(
+        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+    )
     _enqueue(sess, prompt)
     got = _wait_for_turn(sess, wait_s)
     if not got:
@@ -634,7 +656,9 @@ def send_queued(
     排满仍当场抛 :class:`CoreAgentBusy`——「收不下」必须当场回给页面，NEVER 收下再在后台
     静默地把它丢掉。返回喂料线程名，便于日志对号。
     """
-    sess = _session_for(session_id, cwd, title)
+    sess = _session_for(
+        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+    )
     _enqueue(sess, prompt)
     return sess.feeder.name if sess.feeder else f"coreagent-queue-{session_id[:16]}"
 

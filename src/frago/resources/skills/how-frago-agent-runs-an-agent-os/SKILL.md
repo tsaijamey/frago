@@ -9,9 +9,9 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 
 ## 适用场景
 
-1. **边执行事务边为用户讲解演示**：观众打开桌面页实时观看，你一边推进任务，一边用连续语音、字条、全屏讲稿和窗口焦点向观众讲解正在发生什么。
+1. **边执行事务边为用户讲解演示（默认）**：观众打开桌面页实时观看，你一边推进任务，一边用连续语音、字条、全屏讲稿和窗口焦点向观众讲解正在发生什么。只要用户原话没有明示要求「录视频 / 录屏 / 录成片」，一律按本场景直接现场开演，不开启录制。
 2. **后台 worker + 人类输入行协同**：耗时任务交由后台 worker 借住在桌面终端（`--tmux-target frago-stage`）里执行，你在外围轮询终端与产物、解说进展，并随时把观众在桌面右下角对话面板（输入行）敲下的补充要求转达给 worker。
-3. **同步录制演示视频**：在完成上述事务或演示的同时，开启舞台机位（`rec start`）把画面与英文语音合成为可交付的 MP4 视频。
+3. **同步录制演示视频（仅在用户明示要求录屏时开启）**：当用户明确要求把演示录成视频交付时，开启舞台机位（`rec start`）把画面与英文语音合成为可交付的 MP4 视频。
 
 ## 舞台铁律
 
@@ -19,7 +19,8 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 2. **后台 worker 必须跑在桌面终端里，人才看得见。** 派长耗时子任务时，用 `--tmux-target frago-stage` 让 worker 借住在虚拟桌面终端盯着的那个 tmux 会话里跑，且 MUST 用 Bash 工具 `run_in_background: true` 起；跑完 harness 会通知你。NEVER 从外面套 `timeout` 或 `kill`；NEVER 自己在桌面终端里手敲交互式 `claude`。
 3. **不停嘴。** 桌面上一直有你的话。话不是现憋的，是开场写出来、合成好、排队放的——做法见「话从哪来：先写话，再排音频」一节，那是这场活的主线之一，不是可选项。NEVER 向人解释底层代码或琐碎过程细节——说他画面上看得见的东西。
 4. **先开口，再准备。** 第一句不需要讲稿：说你现在在做什么、接下来打算怎么走、从终端里读到了什么。**稿子是随后的主线动作，不是加分项**——首帧那两句说完就写稿、合成、排队，让声音接上，再用等后台任务的时间边演边续。NEVER 让写稿挡在首帧前面；反过来，也 NEVER 把「先开口」当成「只开口一句」——队列一断，人听到的又是 gap。
-5. **需要人处理时当面喊话。** 遇到认证墙、澄清菜单或必须由人拍板的分叉（如 worker 退出码 2）时，`frago desktop say "需要你处理：<原因>"`，并在本会话里写清楚卡在哪。
+5. **需要人处理时只在桌面上当面喊话，严禁发工作台交互卡。** 观众守在虚拟桌面页（`/app/agent_os`）看画面，看不到你所在的主控会话页面；在主控会话里调 `frago app ask` 或写 `answer-needed-by-human` 交互卡，桌面页上一字不显，还会当场阻断你自己的运行。遇到认证墙或必须由人处理的硬阻塞（如 worker 退出码 2）时，一律用 `frago desktop say "需要你处理：<原因>"` 在桌面与右下角对话框里喊话。
+6. **开放式题目默认直接现场开演，严禁开演前停下反问。** 用户没提录屏就默认只做现场演示（不调 `rec start`），没指定时长或深度就由你直接定下合理的分幕与篇幅（3–5 分钟核心脉络）立刻上台开演——NEVER 在开场前停下来追问「要不要录成 MP4 成片」「按几分钟 / 什么深度讲」。
 
 ## 开口与解说
 
@@ -27,7 +28,7 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
 
 **两条通道别混。** 对人说，用 `say`（一句句流过的旁白，加 `--speak` 才开口）、`strap`（挂着的字条）、`slide`（整屏讲稿）、`camera`（推近）、`image`、`video`、`pause`；对终端里那个会话说话才用 `focus term` → `type` → `key`。
 
-**首帧。** 舞台一起来，先 `strap show "接活：<一句话>" --style chip` 挂着，紧接一句 `say` 说明你打算怎么干。这两条 MUST 是你在这个舞台上做的第一件事——`status` 回执里那些 WARN 的书面回应写在你自己的会话里，排在首帧之后，NEVER 让它挡在画面之前。
+**首帧。** 舞台一起来，先 `strap show "接活：<一句话>" --style chip` 挂着，紧接一句 `say` 说明你打算怎么干。这两条 MUST 是你在这个舞台上做的第一件事——`status` 回执里那些 WARN 的书面回应写在你自己的会话里，但**必须在写出书面回应的同一个回合里紧接着调用 Bash 发出首帧 `strap show` 与 `say`**，NEVER 只输出文字回应就结束回合（`end_turn`），一旦没带工具调用就结束回合，整场演出就会卡死在起跑线上。
 
 **连续。** 说话走的是队列，不是「读一次说一句」——做法见下面「话从哪来」一节。看后台终端的节奏照旧：每 5–10 秒 `frago desktop term read --lines 40` 看一次它到了哪，但**读到什么不再决定你有没有话说**；有变化时说的话是插进队列的一条，队列本身一直在放。阶段变了就换字条：`strap show "<n>/<总> <阶段> 已花 <分钟>" --style chip`——人关心的是「还要多久」，不是一个抽象的阶段名。
 
@@ -102,8 +103,8 @@ description: 指导 agent 作为导演驱动 frago desktop（agent_os 虚拟桌�
          frago desktop key Enter
 
    - 后台 worker 已经结束时，把原话追加进任务需求文件末尾，重新起一轮后台 worker。
-2. **有拿不准的地方就主动问他，别自己拍**：
-   需求含糊、两种做法代价差不多、或者你打算做的东西可能不是他想要的——直接说一句 `say "I need you to pick one — use the chat box at the bottom-right corner of the screen." --speak --async --interject --voice en-US-AndrewMultilingualNeural`，然后**停下等他答**，别猜着往下做。
+2. **宽泛题目自己拍板开演，只有撞上硬阻塞才在桌面上喊话**：
+   像「讲解太阳系」「演示某功能」这类开放式要求，由你直接定下分幕与形式立刻开演，别停下来让人做选择题。只有中途撞上没有人类输入就走不下去的硬阻塞（如登录验证码、缺失密钥、worker 退出码 2）时，才直接说一句 `say "I need your input — please reply in the chat box at the bottom-right corner of the screen." --speak --async --interject --voice en-US-AndrewMultilingualNeural`（或中文纯字幕 `frago desktop say "需要你处理：<原因>"`），且 NEVER 使用 `frago app ask` 或 `answer-needed-by-human` 卡片。
 3. **终端是主画面**：
    worker 在写的时候终端 MUST 在最前。浏览器窗口比终端宽、会盖住终端大半，而 `browser open` / `click` / `tab` 这类指向页面的动作都会自动把浏览器提到最前——每次看完页面 MUST 紧接着 `focus term`。只在有事发生时切换画面，NEVER 为了"看看"反复切换。
 

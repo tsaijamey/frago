@@ -404,3 +404,25 @@ class TestLiveSnapshot:
 
         (row,) = cr.live_snapshot()
         assert row.pid is None
+
+
+class TestDirectorUnattendedEnv:
+    """虚拟桌面导演会话（带 how-frago-agent-runs-an-agent-os）必须关闭轻量审阅与拍板卡拦截。"""
+
+    def test_director_prompt_disables_review_and_stop_check(self, monkeypatch, fake_binary):
+        captured_envs: list[dict[str, str]] = []
+
+        def make(*_a, **kw):
+            captured_envs.append(dict(kw.get("env") or {}))
+            return _FakeProc()
+
+        monkeypatch.setattr(cr.subprocess, "Popen", make)
+        cr.send_queued(
+            "1",
+            '<must-use-skill name="how-frago-agent-runs-an-agent-os" path="/tmp/SKILL.md">...</must-use-skill>\n\n绘声绘色的讲解太阳系。',
+            cwd="/Users/frago",
+        )
+        assert len(captured_envs) == 1
+        assert captured_envs[0].get("FRAGO_REVIEW") == "off"
+        assert captured_envs[0].get("FRAGO_STOP_CHECK") == "off"
+
