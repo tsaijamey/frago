@@ -8,12 +8,13 @@
  * - 若启动失败，第一句话仍保留在气泡中，下方内联展示错误原因并提供「返回修改」与「收起」。
  */
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, Loader2, Paperclip, Send } from 'lucide-react';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import { withTilde } from './filePaths';
-import { formatClock, formatDuration } from './RecordCard';
+import { KIND_LABEL_KEY, formatClock, formatDuration } from './RecordCard';
+import { LENS_LABEL_KEY, LENS_ORDER, type StreamLens } from './RecordStream';
 import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 
 export interface SessionLaunchPanelProps {
@@ -74,6 +75,14 @@ export default function SessionLaunchPanel({
   const clock = formatClock(launch.at);
   const elapsed = formatDuration(Math.max(1_000, now - launch.at));
   const hasMessage = Boolean(launch.text);
+  const [lens, setLens] = useState<StreamLens>('talk');
+  const counts: Record<StreamLens, number> = {
+    all: hasMessage ? 1 : 0,
+    talk: hasMessage ? 1 : 0,
+    hook: 0,
+    tool: 0,
+    system: 0,
+  };
 
   return (
     <div
@@ -81,33 +90,40 @@ export default function SessionLaunchPanel({
       data-phase={launch.phase}
       className="flex h-full min-h-0 min-w-0 flex-col"
     >
-      {/* 顶部镜头档位条：与真实会话详情保持同一位置与高度，首条记录落盘接管时零跳变 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2">
+      {/* 顶部镜头档位条：直接复用会话详情 RecordStream 的同一套词条、顺序与默认选中态，接管时零跳变 */}
+      <div
+        data-testid="stream-lens"
+        className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
+      >
         <div className={SEG_GROUP}>
-          <button type="button" aria-pressed="true" className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_ON}`}>
-            {t('workbench.stream.lensAll')}
-            <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
-          </button>
-          <button type="button" aria-pressed="false" className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
-            {t('workbench.stream.lensTalk')}
-            <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
-          </button>
-          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
-            {t('workbench.stream.lensHook')}
-            <span className="font-mono opacity-60">0</span>
-          </button>
-          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
-            {t('workbench.stream.lensTool')}
-            <span className="font-mono opacity-60">0</span>
-          </button>
-          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
-            {t('workbench.files.lens')}
-            <span className="font-mono opacity-60">0</span>
-          </button>
-          <button type="button" disabled className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}>
-            {t('workbench.stream.lensSystem')}
-            <span className="font-mono opacity-60">0</span>
-          </button>
+          {LENS_ORDER.map((id) => (
+            <Fragment key={id}>
+              {id === 'system' ? (
+                <button
+                  type="button"
+                  data-testid="lens-files"
+                  aria-pressed="false"
+                  title={t('workbench.files.lensHint')}
+                  className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}
+                >
+                  {t('workbench.files.lens')}
+                  <span className="font-mono opacity-60">0</span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setLens(id)}
+                aria-pressed={lens === id}
+                data-testid={`lens-${id}`}
+                title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                disabled={counts[id] === 0}
+                className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id ? SEG_ON : SEG_OFF}`}
+              >
+                {t(LENS_LABEL_KEY[id])}
+                <span className="font-mono opacity-60">{counts[id]}</span>
+              </button>
+            </Fragment>
+          ))}
         </div>
       </div>
 
@@ -127,7 +143,7 @@ export default function SessionLaunchPanel({
                 >
                   <header className="flex items-center gap-2 text-[11px] text-text-muted">
                     <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-text-muted">
-                      {t('workbench.record.userSay')}
+                      {t(KIND_LABEL_KEY['user.say'])}
                     </span>
                     {clock ? (
                       <span className="shrink-0 font-mono text-[11px] text-text-muted">{clock}</span>
@@ -161,7 +177,7 @@ export default function SessionLaunchPanel({
                     onClick={onBackToEdit}
                     className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-hover"
                   >
-                    {t('workbench.launch.backToEdit', { defaultValue: '返回修改' })}
+                    {t('workbench.launch.backToEdit')}
                   </button>
                 ) : null}
                 <button

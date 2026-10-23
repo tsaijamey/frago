@@ -36,6 +36,12 @@ describe('新会话启动面板', () => {
     expect(steps[1].getAttribute('data-state')).toBe('waiting');
     // 他刚打的那句话得在——等待期间界面上只有它是他自己的东西。
     expect(screen.getByTestId('launch-first-message').textContent).toBe('把 recipes 目录清一遍');
+    // 顶部镜头栏与会话详情保持完全一致：默认落在「对话」档，且词条已正常翻译（非原始键名）
+    expect(screen.getByTestId('lens-talk').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('lens-all').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('lens-talk').textContent).toContain('对话');
+    expect(screen.getByTestId('lens-all').textContent).toContain('全部');
+    expect(screen.getByTestId('trail-bubble').textContent).toContain('你说');
   });
 
   it('编号有了：第一步打勾，改等它写下第一笔', () => {
