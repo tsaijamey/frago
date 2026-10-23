@@ -261,9 +261,15 @@ class TmuxAgentSession:
         clock: Callable[[], float] = time.monotonic,
         tmux_target: str | None = None,
         tmux_name: str | None = None,
+        origin: Literal["human", "worker"] | None = None,
     ) -> None:
         self.session_id = session_id
         self.driver = driver
+        # 会话出身：WebUI 新建/续接时显式标为 "human"（或由 webui- 把手前缀认出），
+        # 驱动认领编号时据此跳过派活记账，不再靠服务端进程的环境变量猜发起方。
+        self.origin: Literal["human", "worker"] | None = (
+            "human" if origin is None and session_id.startswith("webui-") else origin
+        )
         # 借住模式：agent 跑在一个**别人的、已经存在的** tmux 会话里（典型是虚拟桌面的
         # 终端窗口 ``frago-stage``），而不是自己 new-session 一个。人看着桌面时看到的
         # 就是这个 worker 在干活。借住的会话不归本对象所有：open() 不建、close() 不杀，

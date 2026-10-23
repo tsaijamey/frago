@@ -290,7 +290,13 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
     # worker。驱动里这两条路长得一模一样，只认得出父亲这一条判据。
     from frago.session.session_origin import record_attributed_dispatch
 
-    record_attributed_dispatch(claimed, agent_type="opencode", cwd=session.cwd)
+    record_attributed_dispatch(
+        claimed,
+        agent_type="opencode",
+        cwd=session.cwd,
+        handle=session.session_id,
+        origin=getattr(session, "origin", None),
+    )
     # 认到真编号就把这个窗口改认它，与 codex 那一侧同一个理由：名字和真编号一致之后，
     # 常驻池重启时按名字能找到这个还活着的窗口并接管，不会另起一个去续接同一场会话。
     # 改不动只是名字留在原处，不阻断认领本身。

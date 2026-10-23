@@ -562,6 +562,31 @@ class TestAttributedDispatch:
         assert session_origin.find_relation(child) is None
         assert _index(empty_projects).origin_of(child) == "human"
 
+    def test_网页新建会话就算环境里残留了父会话编号也绝不记派活(
+        self, ledger, empty_projects, monkeypatch
+    ):
+        """2026-10-23：服务端环境残留 ANTIGRAVITY_CONVERSATION_ID 时，网页新建会话也不得记为 worker。"""
+        monkeypatch.setenv("ANTIGRAVITY_CONVERSATION_ID", HUMAN_SID)
+        child_by_origin = str(uuid.uuid4())
+        assert not session_origin.record_attributed_dispatch(
+            child_by_origin,
+            agent_type="agy",
+            cwd="/tmp",
+            origin="human",
+        )
+        assert session_origin.find_relation(child_by_origin) is None
+        assert _index(empty_projects).origin_of(child_by_origin) == "human"
+
+        child_by_handle = str(uuid.uuid4())
+        assert not session_origin.record_attributed_dispatch(
+            child_by_handle,
+            agent_type="agy",
+            cwd="/tmp",
+            handle=f"webui-{uuid.uuid4()}",
+        )
+        assert session_origin.find_relation(child_by_handle) is None
+        assert _index(empty_projects).origin_of(child_by_handle) == "human"
+
     def test_命令行那一版认不出父亲也记(self, ledger, empty_projects, monkeypatch):
         # 两条路的分水岭就在这里：`frago agent <任务>` 敲下去本身就是派活，父亲认不出来
         # 只是「不知道是谁派的」，这一场仍然是 worker，该进「认不出出处的 worker」。

@@ -25,6 +25,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Literal
 
 from frago.agent_driver.driver import load_driver
 from frago.agent_driver.tmux_session import (
@@ -119,6 +120,7 @@ class WarmSessionPool:
         conv_key: str | None = None,
         resume_hook: ResumeHook | None = None,
         env: dict[str, str] | None = None,
+        origin: Literal["human", "worker"] | None = None,
     ) -> TmuxAgentSession:
         # 别名先翻成真实键：认领来的原生编号与新建时那个把手指的是同一个 TUI，
         # 不翻的话这里会为同一场会话再起一个 tmux（见 ``alias``）。
@@ -133,6 +135,8 @@ class WarmSessionPool:
             # （tmux 这一拍不答）当成还活着——这是一场本进程自己起、一直在驱动的会话，
             # 为一次瞬时查询失败把它杀了重建，正是要消灭的那种浪费。
             if existing.is_alive() and existing.has_live_agent() is not False:
+                if origin is not None and existing.origin is None:
+                    existing.origin = origin
                 self._sessions.move_to_end(session_id)  # 标记最近使用
                 return existing
             # 探测到崩溃 → 丢弃，走重建（可 resume 恢复）。
@@ -147,6 +151,7 @@ class WarmSessionPool:
             conv_key=conv_key,
             runner=self._runner,
             env=env,
+            origin=origin,
         )
         # 内存池不认识这场会话，但同名 tmux 会话可能还在——服务重启就是这个状态：
         # 池随进程没了，而 tmux 是独立守护进程，一场都不会跟着死。
@@ -190,6 +195,7 @@ class WarmSessionPool:
         timeout_s: float | None = None,
         resume_hook: ResumeHook | None = None,
         env: dict[str, str] | None = None,
+        origin: Literal["human", "worker"] | None = None,
     ) -> TurnResult:
         """取活会话 → 投喂一轮；会话保活留待复用。
 
@@ -204,6 +210,7 @@ class WarmSessionPool:
             conv_key=conv_key,
             resume_hook=resume_hook,
             env=env,
+            origin=origin,
         )
         return session.send(prompt, timeout_s=timeout_s)
 
