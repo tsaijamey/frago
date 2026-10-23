@@ -151,15 +151,31 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
     :class:`SessionNotResumable`（这一家的会话只能回看）、:class:`SessionGone`（记录没了）、
     :class:`SessionDirectoryUnknown`（问不出目录）。
     """
-    family = record_reader.detect_family(session_id)
+    sid = session_id.strip()
+    if not sid:
+        raise record_reader.UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
+
+    try:
+        family = record_reader.detect_family(sid)
+    except record_reader.UnknownSessionFamily:
+        # 既不是 ses_ / core_ 前缀，也不是 36 位 UUID（例如人在地址栏随手写的 session=1），
+        # 且盘上还没有记录：交给唯一保底内置的 CoreAgent 以该编号新建会话。
+        live = _coreagent_cwd(sid)
+        if live:
+            return SendTarget(sid, "coreagent", COREAGENT_AGENT, live, is_new=False)
+        return SendTarget(sid, "coreagent", COREAGENT_AGENT, cwd_hint, is_new=True)
 
     if family == "coreagent":
-        # CoreAgent 每一轮都是一个新进程，靠把这一场的记录读回来接上前文。所以这里要的
-        # 只有一样：它当初跑在哪个目录。问不出来就不发——猜一个目录等于把它挪到另一个
-        # 仓库里接着干活。
-        recorded = _coreagent_cwd(session_id)
+        from frago.session import coreagent_store
+
+        has_file = coreagent_store.find_session_file(sid) is not None
+        recorded = _coreagent_cwd(sid)
         if recorded is None:
-            raise SessionGone(f"CoreAgent 那边找不到会话 {session_id} 的记录，续不上")
+            if has_file:
+                raise SessionDirectoryUnknown(
+                    f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
+                )
+            return SendTarget(sid, family, COREAGENT_AGENT, cwd_hint, is_new=True)
         if not recorded.strip():
             raise SessionDirectoryUnknown(
                 f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"

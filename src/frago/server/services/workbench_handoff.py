@@ -109,6 +109,7 @@ def compose(session_id: str) -> Handoff:
     ``session_send`` 那几种判不出落点的异常（记录没了、问不出目录、这一家接不上话），以及
     :class:`HandoffUnavailable`（这场会话还没有记录，没有东西可交接）。
     """
+    record_reader.detect_family(session_id)
     target = session_send.resolve_target(session_id)
     if target.is_new or not target.cwd:
         raise HandoffUnavailable(f"会话 {session_id} 还没有任何记录，没有东西可交接")

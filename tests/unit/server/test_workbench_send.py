@@ -196,10 +196,11 @@ class TestResolveTarget:
         with pytest.raises(session_send.SessionDirectoryUnknown):
             session_send.resolve_target(AGY_SID)
 
-    def test_brand_new_claude_id_takes_the_directory_the_page_picked(self, three_families):
-        """页面新建会话时自己 mint 的编号：档案里还没有它，目录只能由页面给。"""
+    def test_brand_new_uuid_falls_back_to_coreagent_and_takes_the_directory_hint(self, three_families):
+        """档案里还没有记录的裸 UUID：交给保底内置的 CoreAgent 新建，目录由调用方给。"""
         fresh = "11111111-2222-4333-8444-555555555555"
         target = session_send.resolve_target(fresh, cwd_hint="/repos/new-one")
+        assert (target.family, target.agent_type) == ("coreagent", "coreagent")
         assert target.is_new is True
         assert target.cwd == "/repos/new-one"
 
@@ -248,13 +249,20 @@ class TestResolveTarget:
         assert target.cwd == "/repos/core-repo"
         assert target.is_new is False
 
-    def test_记录不在的coreagent会话续不上(self, coreagent_record, monkeypatch):
-        """没有记录就没有前文可读，这一场接不上——明说，NEVER 悄悄开一场新的。"""
+    def test_记录不在的coreagent或短编号兜底新建coreagent会话(self, coreagent_record, monkeypatch):
+        """盘上还没有记录的 core_ 或短编号（如 session=1）交由 CoreAgent 新建接管。"""
         from frago.session import coreagent_store
 
         monkeypatch.setattr(coreagent_store, "find_session_file", lambda _sid: None)
-        with pytest.raises(session_send.SessionGone):
-            session_send.resolve_target(CORE_SID)
+        target = session_send.resolve_target(CORE_SID, cwd_hint="/repos/core-new")
+        assert (target.family, target.agent_type) == ("coreagent", "coreagent")
+        assert target.is_new is True
+        assert target.cwd == "/repos/core-new"
+
+        short = session_send.resolve_target("1", cwd_hint="/repos/short")
+        assert (short.family, short.agent_type) == ("coreagent", "coreagent")
+        assert short.is_new is True
+        assert short.cwd == "/repos/short"
 
 
 class TestSendRoute:
@@ -451,28 +459,36 @@ class TestSendRoute:
         assert Path(path).is_file()
         Path(path).unlink()
 
-    def test_a_new_claude_session_is_registered_as_started_from_the_page(
-        self, client, runner, three_families, monkeypatch
+    def test_a_new_unrecorded_uuid_is_handed_to_coreagent_not_claude(
+        self, client, runner, core_runner, three_families
     ):
-        """编号是页面 mint 的，claude 不给它派 slug，扫描那侧只能靠这次登记认出来。"""
-        registered: list[str] = []
-        monkeypatch.setattr(claude_svc, "register_webui_session", registered.append)
+        """查不到记录的裸 UUID 兜底走 CoreAgent，绝不强起可能未安装的 claude。"""
         fresh = "11111111-2222-4333-8444-555555555555"
         response = client.post(
             f"/api/workbench/sessions/{fresh}/send",
             json={"text": "开工", "cwd": "/repos/new-one"},
         )
         assert response.status_code == 200
-        assert registered == [fresh]
-        assert runner.calls[0]["cwd"] == "/repos/new-one"
+        assert core_runner.calls[0]["sid"] == fresh
+        assert core_runner.calls[0]["cwd"] == "/repos/new-one"
+        assert runner.calls == []
 
     def test_nothing_to_say_is_refused(self, client, runner, three_families):
         response = client.post(f"/api/workbench/sessions/{OC_SID}/send", json={"text": "  "})
         assert response.status_code == 400
         assert runner.calls == []
 
-    def test_unknown_id_shape_is_not_found(self, client, runner, three_families):
-        response = self._send(client, "不像任何一家")
+    def test_short_or_custom_session_id_is_handed_to_coreagent(
+        self, client, runner, core_runner, three_families
+    ):
+        """随手填的短编号（如 session=1）同样兜底交给内置 CoreAgent 新建，不再 404 拒单。"""
+        response = self._send(client, "1")
+        assert response.status_code == 200
+        assert core_runner.calls[0]["sid"] == "1"
+        assert runner.calls == []
+
+    def test_blank_id_is_not_found(self, client, runner, three_families):
+        response = self._send(client, "   ")
         assert response.status_code == 404
         assert runner.calls == []
 

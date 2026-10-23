@@ -144,6 +144,8 @@ def detect_family(session_id: str) -> RecordFamily:
     默认一家会让别家的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
     """
     sid = session_id.strip()
+    if not sid:
+        raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
     if sid.startswith(_OPENCODE_SESSION_PREFIX):
         return "opencode"
     if sid.startswith(coreagent_store.SESSION_ID_PREFIX):
@@ -156,6 +158,8 @@ def detect_family(session_id: str) -> RecordFamily:
         if _is_agy_session(sid):
             return "agy"
         return "claude-code"
+    if _is_coreagent_session(sid):
+        return "coreagent"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
 
 
