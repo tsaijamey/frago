@@ -19,7 +19,7 @@ import asyncio
 import os
 import subprocess
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +98,8 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
         alive = name in open_names
         row = {
             **asdict(card),
+            "raw_title": card.title,
+            "custom_title": titles.get(card.session_id),
             "in_tmux": alive,
             "tmux_name": name if alive else None,
             "alive": _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive),
@@ -329,13 +331,17 @@ async def generate_workbench_session_title(sid: str) -> dict[str, Any]:
 class BranchRequest(BaseModel):
     """``POST /workbench/sessions/{sid}/branch`` 的请求体：从主线哪段原文分出去、人写的那句话。
 
-    ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）。
+    ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）；
+    ``images`` / ``documents`` / ``skills`` 与新建会话及发送接口同一套。
     """
 
     record_id: str
     text: str
     occurrence: int = 0
     note: str = ""
+    images: list[str] = []
+    documents: list[Document] = []
+    skills: list[str] = []
 
 
 @router.post("/workbench/sessions/{sid}/branch", status_code=201)
@@ -354,7 +360,12 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
     """
     try:
         anchor, note = workbench_branch.validate(
-            request.record_id, request.text, request.occurrence, request.note
+            request.record_id,
+            request.text,
+            request.occurrence,
+            request.note,
+            skills=request.skills,
+            has_attachments=bool(request.images or request.documents),
         )
     except workbench_branch.BranchRequestInvalid as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -371,13 +382,27 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
     ) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
+    launch_id = str(uuid.uuid4())
+    try:
+        image_paths = save_uploaded_images(request.images, launch_id)
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+
+    base_note = request.note.strip() or note
+    prompt_note = build_prompt_with_attachments(base_note, image_paths, doc_paths)
+    rendered = workbench_branch.render(sid, anchor.text, prompt_note)
+    prompt = _with_skills(rendered, request.skills, request.note)
+    if prompt != branch.text:
+        branch = replace(branch, text=prompt)
+
     try:
         launch = await asyncio.to_thread(
             workbench_new_session.start_with_id,
             branch.agent_type,
             branch.cwd,
             branch.text,
-            session_id=str(uuid.uuid4()),
+            session_id=launch_id,
         )
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1047,7 +1072,7 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         #
         # 忙的时候不等，丢不掉失败信号：同步能出的错只剩「队列满」（send_queued 照样
         # 当场抛），而「内核不在」「没配连接」那几种——它正跑着，不可能碰得上。
-        if (record_reader.detect_family(sid) == "coreagent" or coreagent_runner.busy(sid)) and coreagent_runner.busy(sid):
+        if coreagent_runner.busy(sid):
             await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。

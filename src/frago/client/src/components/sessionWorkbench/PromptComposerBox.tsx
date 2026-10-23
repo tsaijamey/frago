@@ -55,6 +55,9 @@ export interface PromptComposerBoxProps {
   canSubmit: boolean;
   submitting?: boolean;
   onSubmit: () => void | Promise<void>;
+  /** 技能菜单未打开时按 Esc 的回调（如浮窗内取消或收起）。 */
+  onCancel?: () => void;
+  autoFocus?: boolean;
   disabled?: boolean;
   placeholder?: string;
   /** 测试与无障碍标识前缀：详情输入区传 `'composer'`，新建会话传 `'new-session'`。 */
@@ -95,6 +98,8 @@ export default function PromptComposerBox({
   canSubmit,
   submitting = false,
   onSubmit,
+  onCancel,
+  autoFocus = false,
   disabled = false,
   placeholder = '',
   idPrefix = 'composer',
@@ -120,7 +125,11 @@ export default function PromptComposerBox({
   const internalCaretTo = useRef<number | null>(null);
   const caretTo = caretToRef ?? internalCaretTo;
   const filePicker = useRef<HTMLInputElement>(null);
-  const [focused, setFocused] = useState(false);
+  const [focused, setFocused] = useState(autoFocus);
+
+  useEffect(() => {
+    if (autoFocus) box.current?.focus();
+  }, [autoFocus]);
 
   // ── 敲 `/` 挑 skill ──
   const allSkills = useDataStore((s) => s.skills);
@@ -218,12 +227,17 @@ export default function PromptComposerBox({
           }
         }
       }
+      if (e.key === 'Escape' && onCancel && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         if (canSubmit) void onSubmit();
       }
     },
-    [canSubmit, onSubmit, menuOpen, menuItems, menuActive, slash, pickSkill]
+    [canSubmit, onSubmit, onCancel, menuOpen, menuItems, menuActive, slash, pickSkill]
   );
 
   return (
@@ -277,6 +291,7 @@ export default function PromptComposerBox({
           id={textareaId}
           aria-labelledby={ariaLabelledBy}
           data-testid={`${idPrefix}-input`}
+          autoFocus={autoFocus}
           value={text}
           onChange={(e) => {
             onChangeText(e.target.value);

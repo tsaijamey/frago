@@ -51,10 +51,14 @@
  * 的那一层）：选区起点不在任何正文里时不给暂存，引用照旧。
  */
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, GitBranch, Layers, Quote } from 'lucide-react';
+import { Eye, GitBranch, Layers, Quote, X } from 'lucide-react';
 import * as api from '@/api';
+import { useAttachments } from '@/hooks/useAttachments';
+import type { SkillItem } from '@/types/api';
+import AttachmentStrip from '@/components/ui/AttachmentStrip';
+import PromptComposerBox from './PromptComposerBox';
 import { pathCandidateOf } from './pathLike';
 
 /** 这套高亮在浏览器里的名字，与 `globals.css` 里 `::highlight()` 那条选择器同名。 */
@@ -298,6 +302,13 @@ export function markAnchor(container: Node, range: Range, text: string): MarkAnc
   };
 }
 
+/** 分支浮窗额外挂带的附件与技能，与底部 Composer / 新建会话同一套数据结构。 */
+export interface BranchExtras {
+  images?: string[];
+  documents?: { name: string; data: string }[];
+  skills?: string[];
+}
+
 export interface SelectionQuoteProps {
   /** 记录流的滚动容器。只认圈在它里面的选区，别处（左栏、输入框）一概不管。 */
   containerRef: RefObject<HTMLElement>;
@@ -310,8 +321,8 @@ export interface SelectionQuoteProps {
   onQuote: (text: string, anchor?: MarkAnchor) => void;
   /** 按了「暂存」并写完（或跳过）想法。不给就不画暂存按钮。 */
   onStack?: (anchor: MarkAnchor, note: string) => void;
-  /** 按了「分支」并写好那句话（必填，交出去的已去掉首尾空白）。不给就不画分支按钮。 */
-  onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /** 按了「分支」并写好那句话（或挑好 skill / 附件）。不给就不画分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string, extras?: BranchExtras) => void;
   /**
    * 按了「预览」。交出去的是**服务端解出来的绝对路径**与它的字节数。
    *
@@ -340,16 +351,36 @@ export default function SelectionQuote({
   /** 探询回来确实存在的那一份：`null` 就是不给预览按钮。 */
   const [preview, setPreview] = useState<{ path: string; size: number | null } | null>(null);
   const [spot, setSpot] = useState<{ left: number; top: number } | null>(null);
-  /** 点了暂存或分支、正在原地写那句话。这时选区已经让给了输入框，不许再按选区收摊。 */
+  /** 点了暂存或分支、正在原地浮窗里写那句话。这时选区已经让给了输入框，不许再按选区收摊。 */
   const [noting, setNoting] = useState<NoteMode | null>(null);
   const notingRef = useRef(false);
   const [note, setNote] = useState('');
-  /** 分支那句话空着就回车了：提示必填，不起会话。 */
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const {
+    images,
+    documents,
+    addFiles,
+    removeImage,
+    removeDocument,
+    clear: clearAttachments,
+    count,
+  } = useAttachments();
+  const [draggingFile, setDraggingFile] = useState(false);
+  /** 分支那句话空着且没挑 skill / 附件就提交了：提示必填，不起会话。 */
   const [required, setRequired] = useState(false);
   // 按住拖的过程中不弹按钮：选区每动一下都会来一次通知，那时候摆出来它只会挡住正在选的字。
   const dragging = useRef(false);
   // 按钮自己那一块。手按下去的那一刻要先问一句「按的是不是它」——见下面 onPointerDown。
   const menu = useRef<HTMLDivElement>(null);
+
+  const addSkill = useCallback((skill: SkillItem) => {
+    setSkills((prev) => (prev.some((s) => s.name === skill.name) ? prev : [...prev, skill]));
+    setRequired(false);
+  }, []);
+
+  const removeSkill = useCallback((name: string) => {
+    setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
 
   const dropEcho = useCallback(() => {
     paintHighlight(ECHO_NAME, [], HIGHLIGHT_PRIORITY.echo);
@@ -364,9 +395,12 @@ export default function SelectionQuote({
     setNoting(null);
     notingRef.current = false;
     setNote('');
+    setSkills([]);
+    clearAttachments();
+    setDraggingFile(false);
     setRequired(false);
     dropEcho();
-  }, [dropEcho]);
+  }, [clearAttachments, dropEcho]);
 
   /** 把选区读一遍：该不该给按钮、给在哪、要不要标绿。 */
   const sync = useCallback(() => {
@@ -494,28 +528,65 @@ export default function SelectionQuote({
     clear();
   };
 
-  /** 暂存落定：想法去掉首尾空白，留空就是不写。 */
+  /** 暂存落定：想法去掉首尾空白，留空就是不写；若挑了 skill 一并记入想法前缀。 */
   const stack = () => {
-    if (anchor && onStack) onStack(anchor, note.trim());
+    const skillPrefix = skills.map((s) => `/${s.name}`).join(' ');
+    const combined = [skillPrefix, note.trim()].filter(Boolean).join(' ');
+    if (anchor && onStack) onStack(anchor, combined);
     done();
   };
 
-  /** 分支落定：那句话必填，空着只提示、不起会话。 */
+  /** 分支落定：那句话、挑中的 skill 或附件至少有一项，全空只提示、不起会话。 */
   const branch = () => {
     const said = note.trim();
-    if (!said) {
+    const hasExtras = images.length > 0 || documents.length > 0 || skills.length > 0;
+    if (!said && !hasExtras) {
       setRequired(true);
       return;
     }
-    if (anchor && onBranch) onBranch(anchor, said);
+    if (anchor && onBranch) {
+      if (hasExtras) {
+        onBranch(anchor, said, {
+          images: images.map((im) => im.dataUrl),
+          documents: documents.map((d) => ({ name: d.name, data: d.dataUrl })),
+          skills: skills.map((s) => s.name),
+        });
+      } else {
+        onBranch(anchor, said);
+      }
+    }
     done();
   };
 
   const startNoting = (mode: NoteMode) => {
     notingRef.current = true;
     setNote('');
+    setSkills([]);
+    clearAttachments();
+    setDraggingFile(false);
     setRequired(false);
     setNoting(mode);
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLFormElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    setDraggingFile(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLFormElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDraggingFile(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setDraggingFile(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      void addFiles(files);
+      setRequired(false);
+    }
   };
 
   /* 实心品牌绿，32px 见方，与 Send 同一种写法（字色走 --text-on-accent，两套主题各有
@@ -527,91 +598,125 @@ export default function SelectionQuote({
   const iconBtn =
     'flex h-8 w-8 items-center justify-center rounded-[8px] bg-accent-primary text-[var(--text-on-accent)] shadow-lg transition-[filter] hover:brightness-110';
 
+  const halfFloatingW = Math.min(230, Math.floor((window.innerWidth - 32) / 2));
+  const floatingLeft =
+    noting !== null
+      ? Math.min(
+          Math.max(spot.left, halfFloatingW + 16),
+          Math.max(halfFloatingW + 16, window.innerWidth - halfFloatingW - 16)
+        )
+      : spot.left;
+  const floatingTop =
+    noting !== null ? Math.max(220, Math.min(spot.top, window.innerHeight - 24)) : spot.top;
+  const idPrefix = noting === 'branch' ? 'selection-branch' : 'selection-stack';
+  const pickedOneLine = picked.replace(/\s+/g, ' ').trim();
+
   return (
     <div
       ref={menu}
       data-testid="selection-quote"
-      style={{ left: spot.left, top: spot.top }}
+      style={{ left: floatingLeft, top: floatingTop }}
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
     >
-      {noting === 'stack' ? (
+      {noting !== null ? (
         <form
-          data-testid="selection-stack-note"
+          data-testid={noting === 'branch' ? 'selection-branch-note' : 'selection-stack-note'}
           onSubmit={(e) => {
             e.preventDefault();
-            stack();
+            if (noting === 'branch') branch();
+            else stack();
           }}
-          className="flex w-[280px] max-w-[80vw] items-center gap-1.5 rounded-[10px] border border-border-color bg-bg-card p-1.5 shadow-lg"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`w-[460px] max-w-[calc(100vw-32px)] rounded-[14px] border bg-bg-elevated p-2 shadow-2xl transition-colors ${
+            draggingFile ? 'border-border-accent' : 'border-border-strong'
+          }`}
         >
-          <Layers size={13} strokeWidth={1.8} className="ml-1 shrink-0 text-accent-warning" />
-          <input
-            autoFocus
-            data-testid="selection-stack-input"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            onKeyDown={(e) => {
-              // Esc 也存：点了暂存就是要记下这一段，想法只是附带的；不想存的人点外面。
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                stack();
-              }
+          <PromptComposerBox
+            idPrefix={idPrefix}
+            submitTestId={noting === 'branch' ? 'selection-branch-save' : 'selection-stack-save'}
+            submitLabel={t(
+              noting === 'branch' ? 'workbench.stream.branchNoteStart' : 'workbench.stream.stackNoteSave'
+            )}
+            placeholder={t(
+              noting === 'branch'
+                ? 'workbench.stream.branchNotePlaceholder'
+                : 'workbench.stream.stackNotePlaceholder'
+            )}
+            text={note}
+            onChangeText={(val) => {
+              setNote(val);
+              if (val.trim()) setRequired(false);
             }}
-            placeholder={t('workbench.stream.stackNotePlaceholder')}
-            aria-label={t('workbench.stream.stackNotePlaceholder')}
-            className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+            skills={skills}
+            onAddSkill={addSkill}
+            onRemoveSkill={removeSkill}
+            onAddFiles={async (files) => {
+              await addFiles(files);
+              setRequired(false);
+            }}
+            attachCount={count}
+            canSubmit={
+              noting === 'stack'
+                ? true
+                : Boolean(note.trim().length > 0 || count > 0 || skills.length > 0)
+            }
+            onSubmit={noting === 'branch' ? branch : stack}
+            onCancel={noting === 'branch' ? done : stack}
+            autoFocus
+            minLines={2}
+            maxLines={6}
+            menuPlacement={floatingTop < 420 ? 'below' : 'above'}
+            headerSlot={
+              <div className="flex min-w-0 items-center justify-between gap-2 pb-1">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {noting === 'branch' ? (
+                    <GitBranch size={13} strokeWidth={1.9} className="shrink-0 text-accent-primary" />
+                  ) : (
+                    <Layers size={13} strokeWidth={1.9} className="shrink-0 text-accent-warning" />
+                  )}
+                  <span className="shrink-0 text-[11.5px] font-medium text-text-primary">
+                    {t(noting === 'branch' ? 'workbench.stream.branch' : 'workbench.stream.stack')}
+                  </span>
+                  <span
+                    title={pickedOneLine}
+                    className="min-w-0 truncate rounded-[6px] bg-bg-subtle px-2 py-0.5 font-mono text-[11px] text-text-muted"
+                  >
+                    {pickedOneLine}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`${idPrefix}-close`}
+                  onClick={done}
+                  aria-label={t('common.close', { defaultValue: 'Close' })}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            }
+            bannerSlot={
+              noting === 'branch' && required ? (
+                <p
+                  data-testid="selection-branch-required"
+                  className="mb-1.5 text-[11px] text-text-secondary"
+                >
+                  {t('workbench.stream.branchNoteRequired')}
+                </p>
+              ) : null
+            }
+            attachmentSlot={
+              <AttachmentStrip
+                images={images}
+                documents={documents}
+                onRemoveImage={removeImage}
+                onRemoveDocument={removeDocument}
+                idPrefix={idPrefix}
+              />
+            }
           />
-          <button
-            type="submit"
-            data-testid="selection-stack-save"
-            className="shrink-0 rounded-[6px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary transition-colors hover:border-border-accent hover:text-accent-primary"
-          >
-            {t('workbench.stream.stackNoteSave')}
-          </button>
-        </form>
-      ) : noting === 'branch' ? (
-        <form
-          data-testid="selection-branch-note"
-          onSubmit={(e) => {
-            e.preventDefault();
-            branch();
-          }}
-          className="flex w-[300px] max-w-[80vw] flex-col gap-1 rounded-[10px] border border-border-color bg-bg-card p-1.5 shadow-lg"
-        >
-          <div className="flex min-w-0 items-center gap-1.5">
-            <GitBranch size={13} strokeWidth={1.8} className="ml-1 shrink-0 text-text-secondary" />
-            <input
-              autoFocus
-              data-testid="selection-branch-input"
-              value={note}
-              onChange={(e) => {
-                setNote(e.target.value);
-                if (e.target.value.trim()) setRequired(false);
-              }}
-              onKeyDown={(e) => {
-                // 与暂存相反，Esc 算作不起：分支要起一场会话，不能拿一个空问题去起。
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  done();
-                }
-              }}
-              placeholder={t('workbench.stream.branchNotePlaceholder')}
-              aria-label={t('workbench.stream.branchNotePlaceholder')}
-              aria-invalid={required || undefined}
-              className="min-w-0 flex-1 bg-transparent px-1 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
-            />
-            <button
-              type="submit"
-              data-testid="selection-branch-save"
-              className="shrink-0 rounded-[6px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary transition-colors hover:border-border-accent hover:text-accent-primary"
-            >
-              {t('workbench.stream.branchNoteStart')}
-            </button>
-          </div>
-          {required ? (
-            <p data-testid="selection-branch-required" className="px-1 text-[11px] text-text-secondary">
-              {t('workbench.stream.branchNoteRequired')}
-            </p>
-          ) : null}
         </form>
       ) : (
         <div className="flex items-center gap-1">

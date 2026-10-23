@@ -233,6 +233,68 @@ class TestRoute:
         assert (body["recorded"], body["mark_saved"]) == (True, False)
         assert _ledger()[0]["parent"] == CORE_SID
 
+    def test_起分支带skill与附件_首句嵌skill全文并记账(self, client, started, tmp_path, monkeypatch):
+        from frago.server.routes import workbench as workbench_route
+        from frago.skills.skill_prompt import EmbeddedSkill
+
+        skill_md = tmp_path / "SKILL.md"
+        monkeypatch.setattr(
+            workbench_route,
+            "load_skills",
+            lambda names: [
+                EmbeddedSkill(name=n, path=skill_md, body="# 推文规范正文") for n in names
+            ],
+        )
+        monkeypatch.setattr(
+            workbench_route,
+            "save_uploaded_documents",
+            lambda docs, sid: [tmp_path / "note.md"] if docs else [],
+        )
+
+        res = client.post(
+            f"/api/workbench/sessions/{SID}/branch",
+            json={
+                **BODY,
+                "note": "把这段做成日常推文",
+                "skills": ["frago-twitter-update"],
+                "documents": [{"name": "note.md", "data": "data:text/markdown;base64,aGVsbG8="}],
+            },
+        )
+        assert res.status_code == 201
+        body = res.json()
+        _, _, prompt, _ = started[0]
+        assert '<must-use-skill name="frago-twitter-update"' in prompt
+        assert "# 推文规范正文" in prompt
+        assert ">>> 把这段做成日常推文" in prompt
+        assert str(tmp_path / "note.md") in prompt
+        assert body["title"] == "/frago-twitter-update 把这段做成日常推文"
+        assert _ledger()[0]["note"] == "/frago-twitter-update 把这段做成日常推文"
+
+    def test_起分支只挑skill不写字也放行(self, client, started, tmp_path, monkeypatch):
+        from frago.server.routes import workbench as workbench_route
+        from frago.skills.skill_prompt import EmbeddedSkill
+
+        skill_md = tmp_path / "SKILL.md"
+        monkeypatch.setattr(
+            workbench_route,
+            "load_skills",
+            lambda names: [EmbeddedSkill(name=n, path=skill_md, body="# 推文规范") for n in names],
+        )
+
+        res = client.post(
+            f"/api/workbench/sessions/{SID}/branch",
+            json={
+                **BODY,
+                "note": "   ",
+                "skills": ["frago-twitter-update"],
+            },
+        )
+        assert res.status_code == 201
+        body = res.json()
+        _, _, prompt, _ = started[0]
+        assert '<must-use-skill name="frago-twitter-update"' in prompt
+        assert body["title"] == "/frago-twitter-update"
+
 
 def _empty_projects():
     """一个空的会话库，免得出身索引去扫真人的会话记录。"""

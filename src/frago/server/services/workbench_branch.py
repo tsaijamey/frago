@@ -49,7 +49,7 @@ from frago.server.services import (
     workbench_marks,
     workbench_new_session,
 )
-from frago.session import session_origin
+from frago.session import record_reader, session_origin
 from frago.session.record_reader import UnknownSessionFamily
 
 logger = logging.getLogger(__name__)
@@ -91,42 +91,83 @@ class Branch:
     text: str
 
 
-def validate(record_id: str, text: str, occurrence: int, note: str) -> tuple[BranchAnchor, str]:
+def format_branch_note(
+    note: str,
+    *,
+    skills: list[str] | None = None,
+    has_attachments: bool = False,
+) -> str:
+    """整理分支的简短说明（用于关系账、主线标注与原地提示标题）。"""
+    cleaned = (note or "").strip()
+    skill_tags = [f"/{s.strip()}" for s in (skills or []) if s and s.strip()]
+    if skill_tags and cleaned:
+        return f"{' '.join(skill_tags)} {cleaned}"
+    if skill_tags:
+        return " ".join(skill_tags)
+    if cleaned:
+        return cleaned
+    if has_attachments:
+        return "[附件]"
+    return ""
+
+
+def validate(
+    record_id: str,
+    text: str,
+    occurrence: int,
+    note: str,
+    *,
+    skills: list[str] | None = None,
+    has_attachments: bool = False,
+) -> tuple[BranchAnchor, str]:
     """校验起分支的请求，交回整理好的原文锚点与那句话。上限与标注同一套。"""
-    note = (note or "").strip()
+    cleaned_note = (note or "").strip()
     text = (text or "").strip()
-    if not note:
+    if len(cleaned_note) > workbench_marks.MAX_NOTE:
+        raise BranchRequestInvalid(f"那句话超过 {workbench_marks.MAX_NOTE} 字")
+    display_note = format_branch_note(
+        cleaned_note, skills=skills, has_attachments=has_attachments
+    )
+    if not display_note:
         raise BranchRequestInvalid("起分支要写一句话：这个旁支问题要问什么")
+    if len(display_note) > workbench_marks.MAX_NOTE:
+        display_note = display_note[: workbench_marks.MAX_NOTE]
     if not text:
         raise BranchRequestInvalid("原文不能是空的")
     if not record_id or len(record_id) > workbench_marks.MAX_RECORD_ID:
         raise BranchRequestInvalid("record_id 不对")
     if len(text) > workbench_marks.MAX_TEXT:
         raise BranchRequestInvalid(f"原文超过 {workbench_marks.MAX_TEXT} 字")
-    if len(note) > workbench_marks.MAX_NOTE:
-        raise BranchRequestInvalid(f"那句话超过 {workbench_marks.MAX_NOTE} 字")
     if occurrence < 0:
         raise BranchRequestInvalid("occurrence 不能是负数")
-    return BranchAnchor(record_id=record_id, text=text, occurrence=occurrence), note
+    return BranchAnchor(record_id=record_id, text=text, occurrence=occurrence), display_note
 
 
-def compose(session_id: str, anchor: BranchAnchor, note: str) -> Branch:
+def compose(
+    session_id: str,
+    anchor: BranchAnchor,
+    note: str,
+    *,
+    prompt_note: str | None = None,
+) -> Branch:
     """判出分支会话起在哪、拼好第一句话。
 
     抛 :class:`~frago.session.record_reader.UnknownSessionFamily`（编号不属于任何一家）、
     ``session_send`` 那几种判不出落点的异常，以及 :class:`BranchUnavailable`（原会话还没有
     记录）。
     """
+    record_reader.detect_family(session_id)
     target = session_send.resolve_target(session_id)
     if target.is_new or not target.cwd:
         raise BranchUnavailable(f"会话 {session_id} 还没有任何记录，起不了分支")
+    actual_prompt_note = prompt_note if prompt_note is not None else note
     return Branch(
         parent_session_id=session_id,
         agent_type=target.agent_type,
         cwd=target.cwd,
         anchor=anchor,
         note=note,
-        text=render(session_id, anchor.text, note),
+        text=render(session_id, anchor.text, actual_prompt_note),
     )
 
 

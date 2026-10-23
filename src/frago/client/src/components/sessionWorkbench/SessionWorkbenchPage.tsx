@@ -30,7 +30,7 @@ import { withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
-import { squeeze, type MarkAnchor } from './SelectionQuote';
+import { squeeze, type BranchExtras, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
 import NewSessionModal from './NewSessionModal';
@@ -574,7 +574,7 @@ export default function SessionWorkbenchPage() {
   /** 每起一次分支加一：回来晚的那次不许盖掉后来那次的提示。 */
   const branchSeq = useRef(0);
   const onBranch = useCallback(
-    async (anchor: MarkAnchor, note: string) => {
+    async (anchor: MarkAnchor, note: string, extras?: BranchExtras) => {
       const parent = selectedId;
       if (!parent) return;
       const seq = (branchSeq.current += 1);
@@ -587,7 +587,13 @@ export default function SessionWorkbenchPage() {
       show({ state: 'starting' });
       let launch;
       try {
-        launch = await startBranch(parent, { ...anchor, note });
+        launch = await startBranch(parent, {
+          ...anchor,
+          note,
+          ...(extras?.images?.length ? { images: extras.images } : {}),
+          ...(extras?.documents?.length ? { documents: extras.documents } : {}),
+          ...(extras?.skills?.length ? { skills: extras.skills } : {}),
+        });
       } catch (e) {
         show({ state: 'failed', reason: e instanceof Error ? e.message : String(e) });
         return;
@@ -1245,7 +1251,7 @@ export default function SessionWorkbenchPage() {
                 if (anchor) setPendingQuotes((prev) => [...prev, anchor]);
               }}
               onStack={(anchor, note) => marks.addMark({ kind: 'stack', ...anchor, note })}
-              onBranch={(anchor, note) => void onBranch(anchor, note)}
+              onBranch={(anchor, note, extras) => void onBranch(anchor, note, extras)}
               onOpenBranch={openSession}
               onCloseBranch={(mark) => {
                 if (selectedId && mark.child_session_id) {

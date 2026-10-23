@@ -1246,12 +1246,15 @@ export interface SessionFileAnnotations {
 // 会话分支 — 圈一段原文起一场新会话处理旁支问题
 // ============================================================
 
-/** 起分支：从哪条记录、哪段原文分出去，人写的那句话（必填）。 */
+/** 起分支：从哪条记录、哪段原文分出去，人写的那句话与可选挂带的附件 / skill。 */
 export interface BranchRequest {
   record_id: string;
   text: string;
   occurrence: number;
   note: string;
+  images?: string[];
+  documents?: { name: string; data: string }[];
+  skills?: string[];
 }
 
 /**
