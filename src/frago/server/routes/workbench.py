@@ -668,6 +668,13 @@ async def _read_text(sid: str, path: str) -> dict[str, Any]:
     return _read_body(await _listed_target(sid, path), path)
 
 
+class WriteSessionFileRequest(BaseModel):
+    """``PUT /workbench/sessions/{sid}/file`` 的请求体：要改的那份文件路径与新正文。"""
+
+    path: str
+    text: str
+
+
 @router.get("/workbench/sessions/{sid}/file")
 async def read_session_file(
     sid: str,
@@ -680,6 +687,83 @@ async def read_session_file(
 # 对照最多摆这么多行。两列并排，行数再往上没人会一行行看了；而算对齐要两边都在手上，
 # 这个数也顺带挡住了把一份几万行的文件塞进浏览器的那种请求。
 _DIFF_MAX_LINES = 3000
+
+
+async def _compute_file_diff(
+    sid: str, listed: Path, path: str, current: dict[str, Any]
+) -> dict[str, Any]:
+    """根据当前文件内容与上一版（git HEAD 或会话内编辑前快照）计算对齐后的左右对照行。"""
+    body: dict[str, Any] = {
+        "path": current["path"],
+        "size": current["size"],
+        "reason": current["reason"],
+        "before": None,
+        "source": None,
+        "rows": None,
+    }
+    if current["text"] is None:
+        # 现在这一份就读不出来（太大、不是文本）：没有可对照的东西，界面照 `/file` 那套说。
+        return body
+    after = current["text"]
+    if after.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+
+    before = await asyncio.to_thread(
+        file_history.before_at_head, str(listed), max_bytes=_PREVIEW_MAX_BYTES
+    )
+    body["before"] = before.reason
+    body["source"] = before.source
+    if before.text is None:
+        # 若 git HEAD 没有上一版（如不在 git 仓库里或本会话新建未提交），但人类在本会话中
+        # 通过 Edit 保存过该文件，则拿首次编辑前的快照作为左边基线，展示最新修改对比。
+        edit_baseline = file_history.get_edit_baseline(sid, str(listed))
+        if edit_baseline is not None:
+            if edit_baseline.count("\n") + 1 > _DIFF_MAX_LINES:
+                body["reason"] = "too-many-lines"
+                return body
+            body["before"] = None
+            body["source"] = file_history.EDIT_BASELINE_SOURCE
+            body["rows"] = await asyncio.to_thread(file_history.diff_rows, edit_baseline, after)
+            return body
+        # 没有左边：整份当新增摆，左边整列空着。为什么没有写在 `before` 那一格上。
+        body["rows"] = file_history.added_rows(after)
+        return body
+    if before.text.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+    body["rows"] = await asyncio.to_thread(file_history.diff_rows, before.text, after)
+    return body
+
+
+@router.put("/workbench/sessions/{sid}/file")
+async def write_session_file(sid: str, request: WriteSessionFileRequest) -> dict[str, Any]:
+    """保存人类在 FileViewer Edit 模式中修改的文本文件，并返回最新内容与最新版本比较结果。"""
+    listed = await _listed_target(sid, request.path)
+    encoded = request.text.encode("utf-8")
+    if len(encoded) > _PREVIEW_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File content exceeds {_PREVIEW_MAX_BYTES} bytes",
+        )
+
+    def _save_and_read() -> dict[str, Any]:
+        if listed.is_file():
+            try:
+                old_text = listed.read_text(encoding="utf-8")
+                file_history.record_edit_baseline(sid, str(listed), old_text)
+            except (UnicodeDecodeError, OSError):
+                pass
+        listed.parent.mkdir(parents=True, exist_ok=True)
+        listed.write_text(request.text, encoding="utf-8")
+        return _read_body(listed, request.path)
+
+    current = await asyncio.to_thread(_save_and_read)
+    diff = await _compute_file_diff(sid, listed, request.path, current)
+    return {
+        **current,
+        "diff": diff,
+    }
 
 
 @router.get("/workbench/sessions/{sid}/file/diff")
@@ -703,36 +787,7 @@ async def read_session_file_diff(
     """
     listed = await _listed_target(sid, path)
     current = await asyncio.to_thread(_read_body, listed, path)
-    body: dict[str, Any] = {
-        "path": current["path"],
-        "size": current["size"],
-        "reason": current["reason"],
-        "before": None,
-        "source": None,
-        "rows": None,
-    }
-    if current["text"] is None:
-        # 现在这一份就读不出来（太大、不是文本）：没有可对照的东西，界面照 `/file` 那套说。
-        return body
-    after = current["text"]
-    if after.count("\n") + 1 > _DIFF_MAX_LINES:
-        body["reason"] = "too-many-lines"
-        return body
-
-    before = await asyncio.to_thread(
-        file_history.before_at_head, str(listed), max_bytes=_PREVIEW_MAX_BYTES
-    )
-    body["before"] = before.reason
-    body["source"] = before.source
-    if before.text is None:
-        # 没有左边：整份当新增摆，左边整列空着。为什么没有写在 `before` 那一格上。
-        body["rows"] = file_history.added_rows(after)
-        return body
-    if before.text.count("\n") + 1 > _DIFF_MAX_LINES:
-        body["reason"] = "too-many-lines"
-        return body
-    body["rows"] = await asyncio.to_thread(file_history.diff_rows, before.text, after)
-    return body
+    return await _compute_file_diff(sid, listed, path, current)
 
 
 @router.post("/workbench/sessions/{sid}/reveal")

@@ -135,6 +135,11 @@ export interface ComposerProps {
    */
   answer?: { text: string; at: number } | null;
   /**
+   * 从 FileViewer「发送修改到对话」直接投出的通知消息，走与卡片答复相同的整句发送管线，
+   * 不覆盖用户正在输入框里编写的草稿。
+   */
+  directSend?: { text: string; at: number } | null;
+  /**
    * 这场此刻的上下文水位（最后一道用量刻度报的提示词大小）。null = 还没读到刻度。
    *
    * 「交接到新会话」只在它到了 {@link HANDOFF_MIN_CONTEXT} 才放开：没那么长的会话换场只会
@@ -324,6 +329,7 @@ export default function Composer({
   quote = null,
   packedPrompt = null,
   answer = null,
+  directSend = null,
   contextTokens = null,
   onHandoff,
   handingOff = false,
@@ -515,6 +521,14 @@ export default function Composer({
     // 只盯「点了卡片」那一刻；sendText 换了引用不是又点了一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerAt, answerText]);
+
+  const directSendAt = directSend?.at ?? 0;
+  const directSendText = directSend?.text ?? '';
+  useEffect(() => {
+    if (!directSendText || !directSendAt) return;
+    void sendText(directSendText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directSendAt, directSendText]);
 
   const takeFiles = useCallback(
     (files: FileList | File[] | null) => {

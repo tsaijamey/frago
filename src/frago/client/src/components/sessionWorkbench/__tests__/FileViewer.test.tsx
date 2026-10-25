@@ -11,11 +11,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const getSessionFileContent = vi.fn();
 const getSessionFileDiff = vi.fn();
+const putSessionFileContent = vi.fn();
 const getSessionFileAnnotations = vi.fn();
 const putSessionFileAnnotations = vi.fn();
 vi.mock('@/api', () => ({
   getSessionFileContent: (sid: string, path: string) => getSessionFileContent(sid, path),
   getSessionFileDiff: (sid: string, path: string) => getSessionFileDiff(sid, path),
+  putSessionFileContent: (sid: string, path: string, text: string) =>
+    putSessionFileContent(sid, path, text),
   getSessionFileAnnotations: (sid: string) => getSessionFileAnnotations(sid),
   putSessionFileAnnotations: (sid: string, body: unknown) => putSessionFileAnnotations(sid, body),
 }));
@@ -27,7 +30,7 @@ vi.mock('@/utils/codeHighlight', () => ({
   MAX_AUTODETECT_CHARS: 40_000,
 }));
 
-import FileViewer from '../FileViewer';
+import FileViewer, { resolvePreviewSelectionLines } from '../FileViewer';
 import type { SessionFileRow } from '@/types/api';
 import i18n from '@/i18n';
 
@@ -48,6 +51,7 @@ function neverHighlight() {
 beforeEach(() => {
   getSessionFileContent.mockReset();
   getSessionFileDiff.mockReset();
+  putSessionFileContent.mockReset();
   getSessionFileAnnotations.mockReset();
   putSessionFileAnnotations.mockReset();
   loadHighlighter.mockReset();
@@ -485,5 +489,247 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     fireEvent.click(screen.getByTestId('file-viewer-mode-file'));
     expect(screen.getByTestId('file-viewer-mode-file').getAttribute('aria-pressed')).toBe('true');
     expect(screen.getAllByTestId('file-viewer-line').length).toBe(1);
+  });
+
+  it('在 HTML 渲染预览网页内划选跨标签或多行文本，先浮出「批注」选择按钮保留复制选区，点击后才打开输入框并完成批注落盘', async () => {
+    const htmlFiles: SessionFileRow[] = [
+      { path: '/w/proto/poster.html', action: 'created', count: 1, first_seq: 1 },
+    ];
+    const htmlSource = [
+      '<!doctype html>',
+      '<html>',
+      '<head>',
+      '<style>.em-gold { color: #fbbf24; }</style>',
+      '</head>',
+      '<body>',
+      '  <div class="section">',
+      '    <span class="section-index">01</span>',
+      '    <h2 class="section-title">为什么逆势抄底得不偿失</h2>',
+      '    <p class="story-p">',
+      '      哪怕每天只回撤两三个点，<span class="em-gold">一天损耗掉的钱也差不多是一台高配新手机的价钱</span>。',
+      '    </p>',
+      '  </div>',
+      '</body>',
+      '</html>',
+    ].join('\n');
+
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/proto/poster.html',
+      size: htmlSource.length,
+      text: htmlSource,
+      reason: null,
+    });
+
+    const onPackPrompt = vi.fn();
+    open({ files: htmlFiles, index: 0, onPackPrompt });
+
+    await waitFor(() => expect(screen.getByTestId('file-viewer-html-preview')).toBeTruthy());
+    const iframe = screen.getByTestId('file-viewer-html-preview') as HTMLIFrameElement;
+
+    // 模拟在 iframe 子文档中划选跨行、跨内联标签的网页文本
+    const selectedQuote =
+      '01\n为什么逆势抄底得不偿失\n哪怕每天只回撤两三个点，一天损耗掉的钱也差不多是一台高配新手机的价钱。';
+    const removeAllRanges = vi.fn();
+    const fakeSelection = {
+      isCollapsed: false,
+      toString: () => selectedQuote,
+      removeAllRanges,
+    } as unknown as Selection;
+
+    if (iframe.contentWindow) {
+      vi.spyOn(iframe.contentWindow, 'getSelection').mockReturnValue(fakeSelection);
+    }
+    fireEvent.load(iframe);
+    if (iframe.contentDocument) {
+      fireEvent.mouseUp(iframe.contentDocument);
+    } else {
+      fireEvent.mouseUp(iframe);
+    }
+
+    // 1. 划词松手后：不立即弹输入框、不清除选区（保留给用户直接 ⌘C 复制），只浮出「批注 L8–L11」选择按钮
+    expect(screen.queryByTestId('file-viewer-inline-editor')).toBeNull();
+    expect(removeAllRanges).not.toHaveBeenCalled();
+    const annotateBtn = await screen.findByTestId('file-viewer-selection-annotate');
+    expect(annotateBtn.textContent).toContain('L8–L11');
+
+    // 2. 用户点击「批注」按钮后，才展开批注输入框并清理选区
+    fireEvent.click(annotateBtn);
+    const editor = await screen.findByTestId('file-viewer-inline-editor');
+    expect(screen.queryByTestId('file-viewer-selection-annotate')).toBeNull();
+    expect(editor.textContent).toContain('poster.html');
+    expect(editor.textContent).toContain('L8–L11');
+    expect(editor.textContent).toContain('为什么逆势抄底得不偿失');
+    expect(removeAllRanges).toHaveBeenCalled();
+
+    fireEvent.change(screen.getByTestId('file-viewer-inline-input'), {
+      target: { value: '把手机比喻改成更平实的损耗金额陈述' },
+    });
+    fireEvent.click(screen.getByTestId('file-viewer-inline-save'));
+
+    expect(screen.getByTestId('file-viewer-annotation-item').textContent).toContain('L8–L11');
+    expect(screen.getByTestId('file-viewer-annotation-item').textContent).toContain(
+      '把手机比喻改成更平实的损耗金额陈述'
+    );
+    await waitFor(() => expect(putSessionFileAnnotations).toHaveBeenCalledTimes(1));
+
+    // 验证 resolvePreviewSelectionLines 对同行跨 <span> 标签也能精准命中第 11 行
+    const lines = htmlSource.split('\n');
+    expect(
+      resolvePreviewSelectionLines(
+        htmlSource,
+        lines,
+        '哪怕每天只回撤两三个点，一天损耗掉的钱也差不多是一台高配新手机的价钱。'
+      )
+    ).toEqual({ lineStart: 11, lineEnd: 11 });
+  });
+
+  it('当且仅当 md / txt 等文稿类型文件才在「改动」旁显示「编辑」，代码与 HTML 文件不显示', async () => {
+    // 1. 默认 a.py 代码文件：不显示 Edit 按钮
+    const { unmount } = render(
+      <FileViewer
+        sessionId="sid-1"
+        files={FILES}
+        index={0}
+        onClose={vi.fn()}
+        onStep={vi.fn()}
+        onReveal={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText(/x = 1/)).toBeTruthy());
+    expect(screen.queryByTestId('file-viewer-mode-edit')).toBeNull();
+    unmount();
+
+    // 2. HTML 文件：也不显示 Edit 按钮
+    const htmlFiles: SessionFileRow[] = [
+      { path: '/w/proto/index.html', action: 'created', count: 1, first_seq: 1 },
+    ];
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/proto/index.html',
+      size: 24,
+      text: '<h1>Hello</h1>',
+      reason: null,
+    });
+    const { unmount: unmountHtml } = render(
+      <FileViewer
+        sessionId="sid-1"
+        files={htmlFiles}
+        index={0}
+        onClose={vi.fn()}
+        onStep={vi.fn()}
+        onReveal={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByTestId('file-viewer-html-preview')).toBeTruthy());
+    expect(screen.queryByTestId('file-viewer-mode-edit')).toBeNull();
+    unmountHtml();
+
+    // 3. txt 文件：在「改动」旁显示「编辑」
+    const txtFiles: SessionFileRow[] = [
+      { path: '/w/notes/todo.txt', action: 'modified', count: 1, first_seq: 1 },
+    ];
+    getSessionFileContent.mockResolvedValue({
+      path: '/w/notes/todo.txt',
+      size: 12,
+      text: 'first line\n',
+      reason: null,
+    });
+    render(
+      <FileViewer
+        sessionId="sid-1"
+        files={txtFiles}
+        index={0}
+        onClose={vi.fn()}
+        onStep={vi.fn()}
+        onReveal={vi.fn()}
+      />
+    );
+    await waitFor(() => expect(screen.getByText(/first line/)).toBeTruthy());
+    expect(screen.getByTestId('file-viewer-mode-edit')).toBeTruthy();
+  });
+
+  it('在 Edit 模式修改 .md 文件并保存后，版本比较（改动）展示最新对比，且可直接 send 到对话区域告知 Agent 修改了文件名', async () => {
+    const mdPath =
+      '/Users/frago/.frago/data/etf/20261024-entrusted-trading-settlement-poster/poster.md';
+    const mdFiles: SessionFileRow[] = [
+      { path: mdPath, action: 'modified', count: 2, first_seq: 1 },
+    ];
+    const oldText = '# 合作方案\n交易方式探讨记录\n';
+    const newText = '# 关于当前交易情况与委托方案的建议\n';
+
+    getSessionFileContent.mockResolvedValue({
+      path: mdPath,
+      size: oldText.length,
+      text: oldText,
+      reason: null,
+    });
+    // 假设此前点开过一次改动
+    getSessionFileDiff.mockResolvedValue({
+      path: mdPath,
+      size: oldText.length,
+      reason: null,
+      before: 'not-git',
+      source: null,
+      rows: [
+        [null, { sign: '+', no: 1, text: '# 合作方案' }],
+        [null, { sign: '+', no: 2, text: '交易方式探讨记录' }],
+      ],
+    });
+    putSessionFileContent.mockResolvedValue({
+      path: mdPath,
+      size: newText.length,
+      text: newText,
+      reason: null,
+      diff: {
+        path: mdPath,
+        size: newText.length,
+        reason: null,
+        before: null,
+        source: '编辑前快照',
+        rows: [
+          [
+            { sign: '-', no: 1, text: '# 合作方案' },
+            { sign: '+', no: 1, text: '# 关于当前交易情况与委托方案的建议' },
+          ],
+          [{ sign: '-', no: 2, text: '交易方式探讨记录' }, null],
+        ],
+      },
+    });
+
+    const onSendFileEdit = vi.fn();
+    const { onClose } = open({ files: mdFiles, index: 0, onSendFileEdit });
+
+    await waitFor(() => expect(screen.getByTestId('file-viewer-md-preview')).toBeTruthy());
+
+    // 先点一次「改动」看旧对照
+    fireEvent.click(screen.getByTestId('file-viewer-mode-changes'));
+    const oldDiff = await screen.findByTestId('file-diff');
+    expect(oldDiff.textContent).toContain('# 合作方案');
+
+    // 切到「编辑」模式修改文本并保存
+    fireEvent.click(screen.getByTestId('file-viewer-mode-edit'));
+    const textarea = screen.getByTestId('file-viewer-edit-textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe(oldText);
+
+    fireEvent.change(textarea, { target: { value: newText } });
+    fireEvent.click(screen.getByTestId('file-viewer-edit-save'));
+
+    await waitFor(() =>
+      expect(putSessionFileContent).toHaveBeenCalledWith('sid-1', mdPath, newText)
+    );
+
+    // 切到「改动」模式：版本比较立即展示编辑后的最新结果
+    fireEvent.click(screen.getByTestId('file-viewer-mode-changes'));
+    const updatedDiff = await screen.findByTestId('file-diff');
+    expect(updatedDiff.textContent).toContain('编辑前快照');
+    expect(updatedDiff.textContent).toContain('# 关于当前交易情况与委托方案的建议');
+
+    // 点击「发送修改到对话」，直接通知 Agent 人类修改了该文件并关闭浮窗
+    fireEvent.click(screen.getByTestId('file-viewer-edit-send'));
+    await waitFor(() => expect(onSendFileEdit).toHaveBeenCalledTimes(1));
+    const payload = onSendFileEdit.mock.calls[0][0];
+    expect(payload.path).toBe(mdPath);
+    expect(payload.fileName).toBe('poster.md');
+    expect(payload.text).toContain('poster.md');
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

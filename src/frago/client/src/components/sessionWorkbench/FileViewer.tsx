@@ -21,10 +21,12 @@ import {
   FolderOpen,
   Loader2,
   MessageSquarePlus,
+  RotateCcw,
+  Save,
   Send,
   X,
 } from 'lucide-react';
-import { getSessionFileContent, getSessionFileDiff } from '@/api';
+import { getSessionFileContent, getSessionFileDiff, putSessionFileContent } from '@/api';
 import type { SessionFileContent, SessionFileDiff, SessionFileRow } from '@/types/api';
 import {
   formatPackedAnnotationsPrompt,
@@ -32,7 +34,14 @@ import {
   type FileAnnotationsState,
 } from '@/hooks/useFileAnnotations';
 import FileDiff from './FileDiff';
-import { baseOf, dirOf, langOf, previewKindOf, withTilde } from './filePaths';
+import {
+  baseOf,
+  dirOf,
+  isEditableTextFile,
+  langOf,
+  previewKindOf,
+  withTilde,
+} from './filePaths';
 import { FILE_BADGE } from './fileBadge';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import {
@@ -45,6 +54,12 @@ export interface PackedAnnotationsPayload {
   text: string;
   count: number;
   tracePath: string;
+}
+
+export interface FileEditSendPayload {
+  path: string;
+  fileName: string;
+  text: string;
 }
 
 export interface FileViewerProps {
@@ -63,6 +78,8 @@ export interface FileViewerProps {
   fileAnnotations?: FileAnnotationsState;
   /** 点击「打包 N 条批注填入对话框」时触发，把组装好的完整 prompt 填入 Composer。 */
   onPackPrompt?: (payload: PackedAnnotationsPayload) => void;
+  /** 点击「发送修改到对话」时触发，直接把人类修改了该文件的通知发往对话区。 */
+  onSendFileEdit?: (payload: FileEditSendPayload) => void | Promise<void>;
 }
 
 /** 字节数说成人看得懂的样子。 */
@@ -114,6 +131,199 @@ interface DraftRange {
   quote: string;
 }
 
+interface PendingSelection {
+  lineStart: number;
+  lineEnd: number;
+  quote: string;
+  left: number;
+  top: number;
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&mdash;': '—',
+  '&ndash;': '–',
+  '&hellip;': '…',
+  '&copy;': '©',
+};
+
+/**
+ * 将源码扫描为去除了 HTML 注释、style/script 块、HTML 标签与空白字符的紧凑字符流，
+ * 并记录每个可见字符在源码中对应的 1-based 行号。
+ */
+function buildCompactSourceLineMap(sourceText: string): {
+  compact: string;
+  lineMap: number[];
+} {
+  let compact = '';
+  const lineMap: number[] = [];
+  let lineNo = 1;
+  let i = 0;
+  const n = sourceText.length;
+
+  const advanceRange = (endIdx: number) => {
+    while (i < endIdx && i < n) {
+      if (sourceText[i] === '\n') lineNo += 1;
+      i += 1;
+    }
+  };
+
+  while (i < n) {
+    const ch = sourceText[i];
+    if (ch === '\n') {
+      lineNo += 1;
+      i += 1;
+      continue;
+    }
+
+    // 跳过 HTML 注释 <!-- ... -->
+    if (ch === '<' && sourceText.startsWith('<!--', i)) {
+      const closeIdx = sourceText.indexOf('-->', i + 4);
+      advanceRange(closeIdx === -1 ? n : closeIdx + 3);
+      continue;
+    }
+
+    // 跳过 <style...>...</style>、<script...>...</script> 与普通 HTML 标签
+    if (ch === '<') {
+      const rest = sourceText.slice(i, i + 10).toLowerCase();
+      if (rest.startsWith('<style') && /^<style[\s>/]/i.test(rest)) {
+        const closeMatch = /<\/style\s*>/i.exec(sourceText.slice(i + 6));
+        advanceRange(closeMatch ? i + 6 + closeMatch.index + closeMatch[0].length : n);
+        continue;
+      }
+      if (rest.startsWith('<script') && /^<script[\s>/]/i.test(rest)) {
+        const closeMatch = /<\/script\s*>/i.exec(sourceText.slice(i + 7));
+        advanceRange(closeMatch ? i + 7 + closeMatch.index + closeMatch[0].length : n);
+        continue;
+      }
+      if (i + 1 < n && /[a-zA-Z/!]/.test(sourceText[i + 1])) {
+        const closeTag = sourceText.indexOf('>', i + 1);
+        if (closeTag !== -1) {
+          advanceRange(closeTag + 1);
+          continue;
+        }
+      }
+    }
+
+    // 处理常见 HTML 字符实体
+    if (ch === '&') {
+      const semi = sourceText.indexOf(';', i + 1);
+      if (semi !== -1 && semi - i <= 10) {
+        const entity = sourceText.slice(i, semi + 1).toLowerCase();
+        if (entity in HTML_ENTITIES) {
+          const decoded = HTML_ENTITIES[entity];
+          if (decoded && !/\s/.test(decoded)) {
+            for (const c of decoded) {
+              compact += c;
+              lineMap.push(lineNo);
+            }
+          }
+          i = semi + 1;
+          continue;
+        }
+      }
+    }
+
+    if (!/\s/.test(ch)) {
+      compact += ch;
+      lineMap.push(lineNo);
+    }
+    i += 1;
+  }
+
+  return { compact, lineMap };
+}
+
+/**
+ * 从文档渲染预览（Markdown / HTML）中划选的可见文本反查源码行号区间。
+ * 支持跨 HTML 内联标签（如 `<span>`、`<strong>`、`<br/>`）、跨多行块级标签以及 Markdown 语法标记。
+ */
+export function resolvePreviewSelectionLines(
+  sourceText: string,
+  lines: string[],
+  selectedText: string
+): { lineStart: number; lineEnd: number } {
+  const totalLines = Math.max(1, lines.length);
+
+  // 1. 原样精确子串匹配
+  const exactIdx = sourceText.indexOf(selectedText);
+  if (exactIdx !== -1) {
+    const lineStart = sourceText.slice(0, exactIdx).split('\n').length;
+    const lineEnd = Math.min(totalLines, lineStart + selectedText.split('\n').length - 1);
+    return { lineStart, lineEnd };
+  }
+
+  // 2. 剥离 HTML 标签、注释、style/script 与空白后的紧凑字符流映射匹配
+  const compactSel = selectedText.replace(/\s+/g, '');
+  if (compactSel.length > 0) {
+    const { compact, lineMap } = buildCompactSourceLineMap(sourceText);
+    const cIdx = compact.indexOf(compactSel);
+    if (cIdx !== -1) {
+      return {
+        lineStart: lineMap[cIdx] ?? 1,
+        lineEnd: lineMap[cIdx + compactSel.length - 1] ?? lineMap[cIdx] ?? 1,
+      };
+    }
+
+    // 3. 剥离常见 Markdown 行内修饰符后再次匹配
+    const mdStripRe = /[*_~`#>\-[\]()]/g;
+    const mdSel = compactSel.replace(mdStripRe, '');
+    if (mdSel.length > 0) {
+      let mdCompact = '';
+      const mdLineMap: number[] = [];
+      for (let i = 0; i < compact.length; i += 1) {
+        if (!mdStripRe.test(compact[i])) {
+          mdCompact += compact[i];
+          mdLineMap.push(lineMap[i]);
+        }
+        mdStripRe.lastIndex = 0;
+      }
+      const mIdx = mdCompact.indexOf(mdSel);
+      if (mIdx !== -1) {
+        return {
+          lineStart: mdLineMap[mIdx] ?? 1,
+          lineEnd: mdLineMap[mIdx + mdSel.length - 1] ?? mdLineMap[mIdx] ?? 1,
+        };
+      }
+    }
+  }
+
+  // 4. 兜底：按非空首尾词段在去标签后的源码行中定位
+  const plainLines = lines.map((l) => l.replace(/<[^>]+>/g, '').replace(/\s+/g, ''));
+  const selLines = selectedText
+    .split('\n')
+    .map((s) => s.replace(/\s+/g, ''))
+    .filter(Boolean);
+  const firstToken = selLines[0] ?? '';
+  const lastToken = selLines[selLines.length - 1] ?? '';
+
+  if (firstToken) {
+    const startIdx = plainLines.findIndex((pl) => pl.includes(firstToken));
+    if (startIdx !== -1) {
+      let endIdx = startIdx;
+      if (lastToken && lastToken !== firstToken) {
+        for (let j = startIdx; j < plainLines.length; j += 1) {
+          if (plainLines[j].includes(lastToken)) {
+            endIdx = j;
+            break;
+          }
+        }
+      } else {
+        endIdx = Math.min(plainLines.length - 1, startIdx + Math.max(0, selLines.length - 1));
+      }
+      return { lineStart: startIdx + 1, lineEnd: endIdx + 1 };
+    }
+  }
+
+  return { lineStart: 1, lineEnd: 1 };
+}
+
 export default function FileViewer({
   sessionId,
   files,
@@ -124,6 +334,7 @@ export default function FileViewer({
   onReveal,
   fileAnnotations: externalAnnotations,
   onPackPrompt,
+  onSendFileEdit,
 }: FileViewerProps) {
   const { t } = useTranslation();
   const internalAnnotations = useFileAnnotations(externalAnnotations ? null : sessionId);
@@ -140,19 +351,37 @@ export default function FileViewer({
   const path = file?.path ?? '';
   const lang = useMemo(() => langOf(path), [path]);
   const previewKind = useMemo(() => previewKindOf(path), [path]);
+  const canEdit = useMemo(() => isEditableTextFile(path), [path]);
+  const modeTabs = useMemo(() => {
+    const tabs: Array<'preview' | 'file' | 'changes' | 'edit'> = [];
+    if (previewKind) tabs.push('preview');
+    tabs.push('file', 'changes');
+    if (canEdit) tabs.push('edit');
+    return tabs;
+  }, [previewKind, canEdit]);
 
-  const [mode, setMode] = useState<'preview' | 'file' | 'changes'>(() =>
+  const [mode, setMode] = useState<'preview' | 'file' | 'changes' | 'edit'>(() =>
     previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file'
   );
   const [diff, setDiff] = useState<SessionFileDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
 
+  const [editText, setEditText] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [sendingEdit, setSendingEdit] = useState(false);
+  const [editSaveError, setEditSaveError] = useState<string | null>(null);
+  const [hasSavedEditInSession, setHasSavedEditInSession] = useState(false);
+
   const [annotationsOpen, setAnnotationsOpen] = useState(true);
   const [draftRange, setDraftRange] = useState<DraftRange | null>(null);
   const [draftNote, setDraftNote] = useState('');
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const codeContainerRef = useRef<HTMLDivElement | null>(null);
+  const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [iframeLoadTick, setIframeLoadTick] = useState(0);
 
   // 现取文件内容；切换文件时收起未保存的行内批注草稿，并根据是否支持文档渲染预览设置默认模式。
   useEffect(() => {
@@ -164,8 +393,14 @@ export default function FileViewer({
     setMode(previewKindOf(path) ? 'preview' : 'file');
     setDiff(null);
     setDiffError(null);
+    setEditText('');
+    setSavingEdit(false);
+    setSendingEdit(false);
+    setEditSaveError(null);
+    setHasSavedEditInSession(false);
     setDraftRange(null);
     setDraftNote('');
+    setPendingSelection(null);
     getSessionFileContent(sessionId, path)
       .catch(async (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -188,7 +423,10 @@ export default function FileViewer({
         throw err;
       })
       .then((body) => {
-        if (alive) setContent(body);
+        if (alive) {
+          setContent(body);
+          setEditText(body.text ?? '');
+        }
       })
       .catch((e: unknown) => {
         if (alive) setError(e instanceof Error ? e.message : String(e));
@@ -208,9 +446,10 @@ export default function FileViewer({
     []
   );
 
-  // 改动那一档：切过去才取。
+  // 改动那一档：切过去才取（若刚刚在 Edit 模式保存过且服务端已随保存带回最新 diff，直接使用最新结果）。
   useEffect(() => {
     if (mode !== 'changes' || !path) return;
+    if (diff !== null) return;
     let alive = true;
     setDiffLoading(true);
     setDiffError(null);
@@ -227,15 +466,20 @@ export default function FileViewer({
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, sessionId, path]);
 
-  // Esc 关（若行内批注框开着则先关批注框），← → 翻页（焦点在输入框内时不抢左右键）。
+  // Esc 关（若悬浮划词按钮或行内批注框开着则依次先关它们），← → 翻页（焦点在输入框内时不抢左右键）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const inInput =
         e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
       if (e.key === 'Escape') {
         e.preventDefault();
+        if (pendingSelection !== null) {
+          setPendingSelection(null);
+          return;
+        }
         if (draftRange !== null) {
           setDraftRange(null);
           setDraftNote('');
@@ -248,9 +492,27 @@ export default function FileViewer({
         onStep(1);
       }
     };
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        e.target instanceof Node &&
+        selectionToolbarRef.current &&
+        selectionToolbarRef.current.contains(e.target)
+      ) {
+        return;
+      }
+      setPendingSelection(null);
+    };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, onStep, draftRange]);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [onClose, onStep, draftRange, pendingSelection]);
+
+  useEffect(() => {
+    setPendingSelection(null);
+  }, [mode]);
 
   useEffect(() => {
     if (draftRange) {
@@ -316,6 +578,7 @@ export default function FileViewer({
               .slice(start - 1, end)
               .join('\n')
               .trim();
+      setPendingSelection(null);
       setDraftRange({
         lineStart: start,
         lineEnd: end,
@@ -325,6 +588,52 @@ export default function FileViewer({
     },
     [lines]
   );
+
+  const computeSelectionSpot = useCallback(
+    (sel: Selection, inIframe: boolean): { left: number; top: number } => {
+      const vw = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : 1024;
+      const fallback = { left: Math.round(vw / 2), top: 112 };
+      try {
+        if (typeof sel.getRangeAt !== 'function' || (sel.rangeCount ?? 0) === 0) {
+          return fallback;
+        }
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0)) {
+          return fallback;
+        }
+        if (inIframe && htmlIframeRef.current) {
+          const frameRect = htmlIframeRef.current.getBoundingClientRect();
+          const left = Math.min(Math.max(frameRect.left + rect.left + rect.width / 2, 72), vw - 72);
+          const top = Math.max(frameRect.top + rect.top - 8, Math.max(56, frameRect.top + 36));
+          return { left, top };
+        }
+        const left = Math.min(Math.max(rect.left + rect.width / 2, 72), vw - 72);
+        const top = Math.max(rect.top - 8, 56);
+        return { left, top };
+      } catch {
+        return fallback;
+      }
+    },
+    []
+  );
+
+  const confirmPendingSelection = useCallback(() => {
+    if (!pendingSelection) return;
+    openLineDraft(pendingSelection.lineStart, pendingSelection.lineEnd, pendingSelection.quote);
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch {
+      // 忽略选区清理异常
+    }
+    try {
+      const iframe = htmlIframeRef.current;
+      const iframeSel =
+        iframe?.contentWindow?.getSelection?.() ?? iframe?.contentDocument?.getSelection?.();
+      iframeSel?.removeAllRanges?.();
+    } catch {
+      // 忽略受限选区清理异常
+    }
+  }, [pendingSelection, openLineDraft]);
 
   const saveDraft = useCallback(() => {
     if (!draftRange || !path) return;
@@ -344,48 +653,143 @@ export default function FileViewer({
 
   const handleCodeMouseUp = useCallback(() => {
     const sel = window.getSelection?.();
-    if (!sel || sel.isCollapsed) return;
+    if (!sel || sel.isCollapsed) {
+      setPendingSelection(null);
+      return;
+    }
     const selectedText = sel.toString().trim();
-    if (!selectedText) return;
+    if (!selectedText) {
+      setPendingSelection(null);
+      return;
+    }
     const anchorEl =
       sel.anchorNode instanceof HTMLElement ? sel.anchorNode : sel.anchorNode?.parentElement;
     const focusEl =
       sel.focusNode instanceof HTMLElement ? sel.focusNode : sel.focusNode?.parentElement;
     const startRow = anchorEl?.closest?.('[data-line]') as HTMLElement | null;
     const endRow = focusEl?.closest?.('[data-line]') as HTMLElement | null;
-    if (!startRow || !endRow) return;
+    if (!startRow || !endRow) {
+      setPendingSelection(null);
+      return;
+    }
     const l1 = Number(startRow.getAttribute('data-line'));
     const l2 = Number(endRow.getAttribute('data-line'));
-    if (!Number.isFinite(l1) || !Number.isFinite(l2)) return;
-    openLineDraft(Math.min(l1, l2), Math.max(l1, l2), selectedText);
-    sel.removeAllRanges();
-  }, [openLineDraft]);
-
-  /** 在 Markdown 渲染预览中划选文本时，反查源码行号区间并打开批注框。 */
-  const handlePreviewMouseUp = useCallback(() => {
-    const sel = window.getSelection?.();
-    if (!sel || sel.isCollapsed || text === null) return;
-    const selectedText = sel.toString().trim();
-    if (!selectedText) return;
-    let lineStart = 1;
-    let lineEnd = 1;
-    const idx = text.indexOf(selectedText);
-    if (idx !== -1) {
-      lineStart = text.slice(0, idx).split('\n').length;
-      lineEnd = lineStart + selectedText.split('\n').length - 1;
-    } else {
-      const firstToken = selectedText.split('\n')[0]?.trim() ?? '';
-      if (firstToken) {
-        const foundLineIdx = lines.findIndex((line) => line.includes(firstToken));
-        if (foundLineIdx !== -1) {
-          lineStart = foundLineIdx + 1;
-          lineEnd = lineStart + Math.max(0, selectedText.split('\n').length - 1);
-        }
-      }
+    if (!Number.isFinite(l1) || !Number.isFinite(l2)) {
+      setPendingSelection(null);
+      return;
     }
-    openLineDraft(lineStart, lineEnd, selectedText);
-    sel.removeAllRanges();
-  }, [text, lines, openLineDraft]);
+    const spot = computeSelectionSpot(sel, false);
+    setPendingSelection({
+      lineStart: Math.min(l1, l2),
+      lineEnd: Math.max(l1, l2),
+      quote: selectedText,
+      left: spot.left,
+      top: spot.top,
+    });
+  }, [computeSelectionSpot]);
+
+  /** 在文档渲染预览（Markdown / HTML）中划选文本时，反查源码行号区间并浮出「批注」选择按钮，保留原选区供用户直接复制。 */
+  const handlePreviewSelection = useCallback(
+    (sel: Selection | null | undefined, inIframe = false) => {
+      if (!sel || sel.isCollapsed || text === null) {
+        setPendingSelection(null);
+        return;
+      }
+      const selectedText = sel.toString().trim();
+      if (!selectedText) {
+        setPendingSelection(null);
+        return;
+      }
+      const { lineStart, lineEnd } = resolvePreviewSelectionLines(text, lines, selectedText);
+      const spot = computeSelectionSpot(sel, inIframe);
+      setPendingSelection({
+        lineStart,
+        lineEnd,
+        quote: selectedText,
+        left: spot.left,
+        top: spot.top,
+      });
+    },
+    [text, lines, computeSelectionSpot]
+  );
+
+  const handlePreviewMouseUp = useCallback(() => {
+    handlePreviewSelection(window.getSelection?.(), false);
+  }, [handlePreviewSelection]);
+
+  const handleHtmlPreviewMouseUp = useCallback(() => {
+    const iframe = htmlIframeRef.current;
+    const iframeSel =
+      iframe?.contentWindow?.getSelection?.() ?? iframe?.contentDocument?.getSelection?.();
+    if (iframeSel && !iframeSel.isCollapsed && iframeSel.toString().trim()) {
+      handlePreviewSelection(iframeSel, true);
+      return;
+    }
+    handlePreviewSelection(window.getSelection?.(), false);
+  }, [handlePreviewSelection]);
+
+  // 为 HTML 渲染预览 iframe 内部文档挂载鼠标圈选批注与快捷键监听，并确保文本可划选。
+  useEffect(() => {
+    if (mode !== 'preview' || previewKind !== 'html') return;
+    const doc = htmlIframeRef.current?.contentDocument;
+    if (!doc) return;
+    try {
+      if (doc.head && !doc.head.querySelector('style[data-frago-preview-annotatable]')) {
+        const styleEl = doc.createElement('style');
+        styleEl.setAttribute('data-frago-preview-annotatable', 'true');
+        styleEl.textContent =
+          '*, *::before, *::after { -webkit-user-select: text !important; user-select: text !important; }';
+        doc.head.appendChild(styleEl);
+      }
+    } catch {
+      // 忽略只读或异常文档
+    }
+    const onMouseDown = () => {
+      setPendingSelection(null);
+    };
+    const onMouseUp = () => {
+      handleHtmlPreviewMouseUp();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const inInput =
+        e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (pendingSelection !== null) {
+          setPendingSelection(null);
+          return;
+        }
+        if (draftRange !== null) {
+          setDraftRange(null);
+          setDraftNote('');
+          return;
+        }
+        onClose();
+      } else if (!inInput && e.key === 'ArrowLeft') {
+        onStep(-1);
+      } else if (!inInput && e.key === 'ArrowRight') {
+        onStep(1);
+      }
+    };
+    doc.addEventListener('mousedown', onMouseDown);
+    doc.addEventListener('mouseup', onMouseUp);
+    doc.addEventListener('keydown', onKeyDown);
+    return () => {
+      doc.removeEventListener('mousedown', onMouseDown);
+      doc.removeEventListener('mouseup', onMouseUp);
+      doc.removeEventListener('keydown', onKeyDown);
+    };
+  }, [
+    mode,
+    previewKind,
+    text,
+    iframeLoadTick,
+    handleHtmlPreviewMouseUp,
+    pendingSelection,
+    draftRange,
+    onClose,
+    onStep,
+  ]);
 
   const handlePackToPrompt = useCallback(() => {
     if (!annotations.length) return;
@@ -399,6 +803,74 @@ export default function FileViewer({
     });
     onClose();
   }, [annotations, tracePath, sessionId, onPackPrompt, onClose]);
+
+  const isEditDirty = text !== null && editText !== text;
+
+  const performSaveEdit = useCallback(async (): Promise<boolean> => {
+    if (!path || text === null) return false;
+    if (editText === text && hasSavedEditInSession) return true;
+    setSavingEdit(true);
+    setEditSaveError(null);
+    try {
+      const res = await putSessionFileContent(sessionId, path, editText);
+      const nextText = typeof res?.text === 'string' ? res.text : editText;
+      setContent({
+        path: res?.path ?? path,
+        size: typeof res?.size === 'number' ? res.size : new Blob([nextText]).size,
+        text: nextText,
+        reason: res?.reason ?? null,
+      });
+      setEditText(nextText);
+      if (res?.diff) {
+        setDiff(res.diff);
+      } else {
+        setDiff(null);
+      }
+      setDiffError(null);
+      setHasSavedEditInSession(true);
+      return true;
+    } catch (e: unknown) {
+      setEditSaveError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setSavingEdit(false);
+    }
+  }, [path, text, editText, hasSavedEditInSession, sessionId]);
+
+  const handleSendEditToChat = useCallback(async () => {
+    if (!path || text === null || sendingEdit || savingEdit) return;
+    setSendingEdit(true);
+    try {
+      if (editText !== text || !hasSavedEditInSession) {
+        const ok = await performSaveEdit();
+        if (!ok) return;
+      }
+      const fileName = baseOf(path);
+      const noticeText = t('workbench.files.editSentNotice', {
+        path: withTilde(path),
+        name: fileName,
+      });
+      await onSendFileEdit?.({
+        path,
+        fileName,
+        text: noticeText,
+      });
+      onClose();
+    } finally {
+      setSendingEdit(false);
+    }
+  }, [
+    path,
+    text,
+    sendingEdit,
+    savingEdit,
+    editText,
+    hasSavedEditInSession,
+    performSaveEdit,
+    t,
+    onSendFileEdit,
+    onClose,
+  ]);
 
   if (!file) return null;
 
@@ -483,10 +955,7 @@ export default function FileViewer({
               data-testid="file-viewer-mode"
               className="ml-1 flex shrink-0 items-center rounded-[6px] bg-bg-hover p-[2px]"
             >
-              {(previewKind
-                ? (['preview', 'file', 'changes'] as const)
-                : (['file', 'changes'] as const)
-              ).map((id) => (
+              {modeTabs.map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -504,14 +973,33 @@ export default function FileViewer({
                       ? 'workbench.files.modePreview'
                       : id === 'file'
                         ? 'workbench.files.modeFile'
-                        : 'workbench.files.modeChanges'
+                        : id === 'changes'
+                          ? 'workbench.files.modeChanges'
+                          : 'workbench.files.modeEdit'
                   )}
                 </button>
               ))}
             </span>
           ) : null}
 
-          {mode !== 'changes' ? (
+          {mode !== 'edit' && hasSavedEditInSession ? (
+            <button
+              type="button"
+              data-testid="file-viewer-edit-send"
+              disabled={savingEdit || sendingEdit}
+              onClick={() => void handleSendEditToChat()}
+              className="ml-1 inline-flex h-[24px] shrink-0 items-center gap-1 rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2 text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {sendingEdit ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+              <span>
+                {sendingEdit
+                  ? t('workbench.files.editSendingToChat')
+                  : t('workbench.files.editSendToChat')}
+              </span>
+            </button>
+          ) : null}
+
+          {mode !== 'changes' && mode !== 'edit' ? (
             <button
               type="button"
               data-testid="file-viewer-annotate-toggle"
@@ -584,9 +1072,9 @@ export default function FileViewer({
           className={`grid min-h-0 flex-1 tablet:grid-cols-1 ${
             mode === 'changes'
               ? 'grid-cols-1'
-              : annotationsOpen
-                ? 'grid-cols-[196px_minmax(0,1fr)_308px]'
-                : 'grid-cols-[196px_minmax(0,1fr)]'
+              : mode === 'edit' || !annotationsOpen
+                ? 'grid-cols-[196px_minmax(0,1fr)]'
+                : 'grid-cols-[196px_minmax(0,1fr)_308px]'
           }`}
         >
           {/* 左栏：会话改动文件导航（带各文件批注计数标） */}
@@ -644,6 +1132,107 @@ export default function FileViewer({
               </div>
             ) : text === null ? (
               noPreview()
+            ) : mode === 'edit' && canEdit ? (
+              <div data-testid="file-viewer-edit-panel" className="flex h-full min-h-0 flex-col">
+                <div
+                  data-testid="file-viewer-edit-bar"
+                  className="sticky top-0 z-[2] flex flex-wrap items-center justify-between gap-2 border-b border-border-color bg-bg-secondary px-3.5 py-1.5 text-[11px]"
+                >
+                  <div className="min-w-0 flex-1 truncate">
+                    {editSaveError ? (
+                      <span data-testid="file-viewer-edit-error" className="text-accent-error">
+                        {t('workbench.files.editSaveFailed', { reason: editSaveError })}
+                      </span>
+                    ) : isEditDirty ? (
+                      <span
+                        data-testid="file-viewer-edit-status"
+                        className="font-medium text-accent-warning"
+                      >
+                        {t('workbench.files.editUnsaved')}
+                      </span>
+                    ) : hasSavedEditInSession ? (
+                      <span
+                        data-testid="file-viewer-edit-status"
+                        className="font-medium text-accent-info"
+                      >
+                        {t('workbench.files.editSaved')}
+                      </span>
+                    ) : (
+                      <span className="text-text-muted">{t('workbench.files.editHint')}</span>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {isEditDirty ? (
+                      <button
+                        type="button"
+                        data-testid="file-viewer-edit-reset"
+                        disabled={savingEdit || sendingEdit}
+                        onClick={() => {
+                          setEditText(text ?? '');
+                          setEditSaveError(null);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-[5px] border border-border-color px-2 py-[2px] text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-45"
+                      >
+                        <RotateCcw size={11} />
+                        <span>{t('workbench.files.editReset')}</span>
+                      </button>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      data-testid="file-viewer-edit-save"
+                      disabled={!isEditDirty || savingEdit || sendingEdit}
+                      onClick={() => void performSaveEdit()}
+                      className="inline-flex items-center gap-1 rounded-[5px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-[2px] text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {savingEdit ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                      <span>
+                        {savingEdit ? t('workbench.files.editSaving') : t('workbench.files.editSave')}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="file-viewer-edit-send"
+                      disabled={(!isEditDirty && !hasSavedEditInSession) || savingEdit || sendingEdit}
+                      onClick={() => void handleSendEditToChat()}
+                      className="inline-flex items-center gap-1 rounded-[5px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-[2px] text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-active disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {sendingEdit ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                      <span>
+                        {sendingEdit
+                          ? t('workbench.files.editSendingToChat')
+                          : t('workbench.files.editSendToChat')}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  data-testid="file-viewer-edit-textarea"
+                  value={editText}
+                  onChange={(e) => {
+                    setEditText(e.target.value);
+                    if (editSaveError) setEditSaveError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+                      e.preventDefault();
+                      if (isEditDirty && !savingEdit && !sendingEdit) {
+                        void performSaveEdit();
+                      }
+                    } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      if ((isEditDirty || hasSavedEditInSession) && !savingEdit && !sendingEdit) {
+                        void handleSendEditToChat();
+                      }
+                    }
+                  }}
+                  spellCheck={false}
+                  className="min-h-0 w-full flex-1 resize-none border-0 bg-bg-base px-4 py-3 font-mono text-[12.5px] leading-[1.65] text-text-primary outline-none"
+                />
+              </div>
             ) : mode === 'preview' && previewKind ? (
               <div data-testid="file-viewer-doc-preview" className="flex min-h-full flex-col">
                 <div
@@ -672,7 +1261,7 @@ export default function FileViewer({
                 {draftRange ? (
                   <div
                     data-testid="file-viewer-inline-editor"
-                    className="mx-4 my-2.5 rounded-[8px] border border-border-strong bg-bg-elevated p-2.5 font-sans shadow-lg"
+                    className="sticky top-[34px] z-[3] mx-4 my-2.5 rounded-[8px] border border-border-strong bg-bg-elevated p-2.5 font-sans shadow-lg"
                   >
                     <div className="mb-1.5 flex items-center justify-between text-[11px] text-text-muted">
                       <span className="font-mono text-text-secondary">
@@ -686,7 +1275,7 @@ export default function FileViewer({
                       </span>
                       <span>{t('workbench.files.annotateShortcutHint')}</span>
                     </div>
-                    <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border-l-2 border-border-strong bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                    <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
                       {draftRange.quote}
                     </div>
                     <textarea
@@ -744,10 +1333,13 @@ export default function FileViewer({
                   </div>
                 ) : (
                   <iframe
+                    ref={htmlIframeRef}
                     data-testid="file-viewer-html-preview"
                     title={baseOf(file.path)}
                     srcDoc={text}
                     sandbox="allow-scripts allow-same-origin"
+                    onLoad={() => setIframeLoadTick((v) => v + 1)}
+                    onMouseUp={handleHtmlPreviewMouseUp}
                     className="min-h-[480px] w-full flex-1 border-0 bg-white"
                   />
                 )}
@@ -826,7 +1418,7 @@ export default function FileViewer({
                               <div
                                 key={ann.id}
                                 data-testid="file-viewer-inline-card"
-                                className="my-1.5 ml-[52px] mr-4 flex items-start gap-2 rounded-[7px] border border-border-color border-l-[3px] border-l-accent-warning bg-bg-secondary px-2.5 py-1.5 font-sans text-[12px] text-text-primary"
+                                className="my-1.5 ml-[52px] mr-4 flex items-start gap-2 rounded-[7px] border border-border-strong bg-bg-secondary px-2.5 py-1.5 font-sans text-[12px] text-text-primary"
                               >
                                 <span className="shrink-0 rounded-[4px] bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[10.5px] font-semibold text-accent-warning">
                                   {rangeLabel}
@@ -864,7 +1456,7 @@ export default function FileViewer({
                                 </span>
                                 <span>{t('workbench.files.annotateShortcutHint')}</span>
                               </div>
-                              <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border-l-2 border-border-strong bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
+                              <div className="mb-2 max-h-[54px] overflow-hidden truncate rounded-[5px] border border-border-color bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-muted">
                                 {draftRange.quote}
                               </div>
                               <textarea
@@ -921,7 +1513,7 @@ export default function FileViewer({
           </div>
 
           {/* 右栏：会话级批注清单、落盘溯源路径与打包填入 Composer */}
-          {mode !== 'changes' && annotationsOpen ? (
+          {mode !== 'changes' && mode !== 'edit' && annotationsOpen ? (
             <aside
               data-testid="file-viewer-annotations-rail"
               className="flex min-h-0 flex-col border-l border-border-color bg-bg-secondary tablet:hidden"
@@ -1000,7 +1592,7 @@ export default function FileViewer({
                             <X size={11} />
                           </button>
                         </div>
-                        <div className="mb-1.5 truncate rounded-[4px] border-l-2 border-border-strong bg-bg-secondary px-1.5 py-1 font-mono text-[10.5px] text-text-muted">
+                        <div className="mb-1.5 truncate rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-1 font-mono text-[10.5px] text-text-muted">
                           {ann.quote}
                         </div>
                         <div className="whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-text-primary">
@@ -1031,6 +1623,41 @@ export default function FileViewer({
             </aside>
           ) : null}
         </div>
+
+        {/* 划词后浮出的轻量选择按钮：不抢焦点、不清选区（方便直接 ⌘C 复制），点「批注」才展开输入框 */}
+        {pendingSelection ? (
+          <div
+            ref={selectionToolbarRef}
+            data-testid="file-viewer-selection-toolbar"
+            style={{ left: pendingSelection.left, top: pendingSelection.top }}
+            className="fixed z-[90] -translate-x-1/2 -translate-y-full"
+          >
+            <button
+              type="button"
+              data-testid="file-viewer-selection-annotate"
+              title={t('workbench.files.selectionAnnotateTitle')}
+              aria-label={t('workbench.files.selectionAnnotate', {
+                range:
+                  pendingSelection.lineStart === pendingSelection.lineEnd
+                    ? `L${pendingSelection.lineStart}`
+                    : `L${pendingSelection.lineStart}–L${pendingSelection.lineEnd}`,
+              })}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={confirmPendingSelection}
+              className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-accent-primary px-2.5 text-[12px] font-medium text-[var(--text-on-accent)] shadow-lg transition-[filter] hover:brightness-110"
+            >
+              <MessageSquarePlus size={14} strokeWidth={1.9} />
+              <span>
+                {t('workbench.files.selectionAnnotate', {
+                  range:
+                    pendingSelection.lineStart === pendingSelection.lineEnd
+                      ? `L${pendingSelection.lineStart}`
+                      : `L${pendingSelection.lineStart}–L${pendingSelection.lineEnd}`,
+                })}
+              </span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

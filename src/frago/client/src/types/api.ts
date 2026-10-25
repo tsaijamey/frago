@@ -1358,6 +1358,11 @@ export interface SessionFileDiff {
   rows: [FileDiffCell | null, FileDiffCell | null][] | null;
 }
 
+/** 在浮窗 Edit 模式保存文本文件后的返回结构，同时返回更新后的内容与最新对照。 */
+export interface SessionFileWriteResult extends SessionFileContent {
+  diff: SessionFileDiff;
+}
+
 // ============================================================
 // 文件浏览器
 // ============================================================

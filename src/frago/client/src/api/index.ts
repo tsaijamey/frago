@@ -1402,6 +1402,7 @@ export type {
   SessionFileAction,
   SessionFileContent,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileListing,
@@ -1468,6 +1469,13 @@ export const getSessionFileDiff = withMode(
   (sessionId: string, path: string): Promise<httpApi.SessionFileDiff> =>
     httpApi.getSessionFileDiff(sessionId, path),
   (_sessionId: string, _path: string): Promise<httpApi.SessionFileDiff> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
+export const putSessionFileContent = withMode(
+  (sessionId: string, path: string, text: string): Promise<httpApi.SessionFileWriteResult> =>
+    httpApi.putSessionFileContent(sessionId, path, text),
+  (_sessionId: string, _path: string, _text: string): Promise<httpApi.SessionFileWriteResult> =>
     Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
 );
 

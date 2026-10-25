@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { baseOf, dirOf, langOf, withTilde } from '../filePaths';
+import { baseOf, dirOf, isEditableTextFile, langOf, withTilde } from '../filePaths';
 
 describe('家目录缩成 ~', () => {
   it('macOS 与 Linux 两种家目录写法都缩，别处原样', () => {
@@ -65,3 +65,20 @@ describe('按扩展名认语言', () => {
     expect(langOf('/w/Makefile')).toBe('makefile');
   });
 });
+
+describe('判断文件是否支持直接进入 Edit 模式', () => {
+  it('当且仅当 md、txt 或类似文稿/纯文本类型文件返回 true，代码与 HTML/二进制文件返回 false', () => {
+    expect(isEditableTextFile('/w/poster.md')).toBe(true);
+    expect(isEditableTextFile('/w/README.MARKDOWN')).toBe(true);
+    expect(isEditableTextFile('/w/notes.txt')).toBe(true);
+    expect(isEditableTextFile('/w/config.yaml')).toBe(true);
+    expect(isEditableTextFile('/w/data.json')).toBe(true);
+
+    expect(isEditableTextFile('/w/src/a.py')).toBe(false);
+    expect(isEditableTextFile('/w/src/b.tsx')).toBe(false);
+    expect(isEditableTextFile('/w/proto/index.html')).toBe(false);
+    expect(isEditableTextFile('/w/logo.png')).toBe(false);
+    expect(isEditableTextFile('/w/Makefile')).toBe(false);
+  });
+});
+

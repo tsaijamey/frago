@@ -136,6 +136,7 @@ import type {
   SessionFileContent,
   SessionFileAction,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileEntry,
@@ -265,6 +266,7 @@ export type {
   SessionFileAction,
   SessionFileContent,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileEntry,
@@ -1686,6 +1688,23 @@ export async function getSessionFileDiff(
 ): Promise<SessionFileDiff> {
   return fetchApi<SessionFileDiff>(
     `/workbench/sessions/${encodeURIComponent(sessionId)}/file/diff?path=${encodeURIComponent(path)}`
+  );
+}
+
+/**
+ * 在浮窗 Edit 模式保存人类修改后的文稿内容，并立即返回最新内容与最新版本比较结果。
+ */
+export async function putSessionFileContent(
+  sessionId: string,
+  path: string,
+  text: string
+): Promise<SessionFileWriteResult> {
+  return fetchApi<SessionFileWriteResult>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ path, text }),
+    }
   );
 }
 

@@ -133,3 +133,38 @@ export function previewKindOf(path: string): DocPreviewKind | null {
   return null;
 }
 
+const EDITABLE_TEXT_EXTS = new Set([
+  'md',
+  'markdown',
+  'mdx',
+  'txt',
+  'text',
+  'rst',
+  'adoc',
+  'org',
+  'csv',
+  'tsv',
+  'log',
+  'json',
+  'jsonc',
+  'yaml',
+  'yml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+]);
+
+/**
+ * 判断文件是否支持在 FileViewer 中直接进入「编辑 (Edit)」模式。
+ * 当且仅当 md、txt 或类似文稿/纯文本类型文件时允许直接编辑；代码与二进制文件返回 false。
+ */
+export function isEditableTextFile(path: string): boolean {
+  const base = baseOf(path);
+  const cut = base.lastIndexOf('.');
+  if (cut <= 0 || cut === base.length - 1) return false;
+  const ext = base.slice(cut + 1).toLowerCase();
+  return EDITABLE_TEXT_EXTS.has(ext);
+}
+
+

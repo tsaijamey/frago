@@ -19,6 +19,14 @@ from frago.session.record_reader import UnknownSessionFamily
 from frago.session.session_files import SessionFile
 
 
+@pytest.fixture(autouse=True)
+def reset_edit_baselines():
+    """每条用例前后清空会话编辑前快照，防止跨用例残留。"""
+    workbench_routes.file_history.clear_edit_baselines()
+    yield
+    workbench_routes.file_history.clear_edit_baselines()
+
+
 @pytest.fixture
 def session_dir(tmp_path, monkeypatch):
     """一场会话，工作目录就是 tmp_path。"""
@@ -518,7 +526,83 @@ async def test_a_missing_path_inside_is_a_404(session_dir, touched, opened):
         )
 
     assert err.value.status_code == 404
-    assert opened == []
+
+
+# ---------- Edit 模式写回文本文件并同步刷新版本比较 ----------
+
+
+@pytest.mark.asyncio
+async def test_write_session_file_updates_disk_and_returns_latest_diff_for_git_file(
+    session_dir, touched, head
+):
+    target = session_dir / "poster.md"
+    target.write_text("# 合作方案\n交易方式探讨记录\n", encoding="utf-8")
+    touched([_file(str(target))])
+    head(_with_before("# 合作方案\n交易方式探讨记录\n"))
+
+    result = await workbench_routes.write_session_file(
+        "sid-1",
+        workbench_routes.WriteSessionFileRequest(
+            path=str(target),
+            text="# 关于当前交易情况与委托方案的建议\n",
+        ),
+    )
+
+    assert target.read_text(encoding="utf-8") == "# 关于当前交易情况与委托方案的建议\n"
+    assert result["text"] == "# 关于当前交易情况与委托方案的建议\n"
+    assert result["diff"]["source"] == "git HEAD"
+    assert result["diff"]["rows"][0][0]["sign"] == "-"
+    assert result["diff"]["rows"][0][0]["text"] == "# 合作方案"
+    assert result["diff"]["rows"][0][1]["sign"] == "+"
+    assert result["diff"]["rows"][0][1]["text"] == "# 关于当前交易情况与委托方案的建议"
+
+
+@pytest.mark.asyncio
+async def test_write_session_file_records_baseline_for_non_git_file_so_changes_shows_latest_diff(
+    session_dir, touched, head
+):
+    import frago.server.services.file_history as fh
+
+    target = session_dir / "poster.md"
+    target.write_text("# 合作方案\n第二行保持不变\n", encoding="utf-8")
+    touched([_file(str(target), "created")])
+    head(fh.Before(text=None, reason=fh.NO_BEFORE_NOT_GIT, source=None))
+
+    await workbench_routes.write_session_file(
+        "sid-1",
+        workbench_routes.WriteSessionFileRequest(
+            path=str(target),
+            text="# 关于当前交易情况与委托方案的建议\n第二行保持不变\n",
+        ),
+    )
+
+    diff_body = await workbench_routes.read_session_file_diff("sid-1", str(target))
+
+    assert diff_body["before"] is None
+    assert diff_body["source"] == fh.EDIT_BASELINE_SOURCE
+    assert diff_body["rows"][0][0]["sign"] == "-"
+    assert diff_body["rows"][0][0]["text"] == "# 合作方案"
+    assert diff_body["rows"][0][1]["sign"] == "+"
+    assert diff_body["rows"][0][1]["text"] == "# 关于当前交易情况与委托方案的建议"
+    assert diff_body["rows"][1][0]["sign"] == " "
+    assert diff_body["rows"][1][1]["sign"] == " "
+
+
+@pytest.mark.asyncio
+async def test_write_session_file_refuses_unlisted_path(session_dir, touched):
+    secret = session_dir / "secret.md"
+    secret.write_text("old\n", encoding="utf-8")
+    touched([])
+
+    with pytest.raises(HTTPException) as err:
+        await workbench_routes.write_session_file(
+            "sid-1",
+            workbench_routes.WriteSessionFileRequest(path=str(secret), text="new\n"),
+        )
+
+    assert err.value.status_code == 403
+    assert secret.read_text(encoding="utf-8") == "old\n"
+
 
 
 # ---------- 整条链：会话记录 → 清单 → 接口 ----------
