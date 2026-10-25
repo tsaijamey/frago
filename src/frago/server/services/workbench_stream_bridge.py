@@ -84,6 +84,11 @@ class WorkbenchStreamBridge:
         # 这次服务运行里被打开过的会话。旁路观察的「打开」只投一次，与监听的登记分开记：
         # 监听会随 tmux 开关撤了又登记，「打开」不该跟着重投。
         self._opened: set[str] = set()
+        # 游标后已发生、尚未触发成组总结的对话块计数（session_id → count）。
+        self._pending_blocks: dict[str, int] = {}
+        # 凑不够成组数量但会话已停下时的时间维度兜底定时器（session_id → Timer）。
+        self._settle_timers: dict[str, threading.Timer] = {}
+        self._settle_timeout_s: float = 10.0
 
     # ---- singleton --------------------------------------------------------
 
@@ -188,8 +193,10 @@ class WorkbenchStreamBridge:
 
     def release(self, session_id: str) -> None:
         """撤掉这一场的监听。所在项目的流一场都不盯了，整条流停掉。没登记过就什么都不做。"""
+        self._cancel_settle_timer(session_id)
         stopped: list[SessionStream] = []
         with self._lock:
+            self._pending_blocks.pop(session_id, None)
             if session_id not in self._registered:
                 return
             self._registered.discard(session_id)
@@ -227,6 +234,9 @@ class WorkbenchStreamBridge:
     def stop_all(self) -> None:
         """Stop all active streams."""
         with self._lock:
+            timers = list(self._settle_timers.values())
+            self._settle_timers.clear()
+            self._pending_blocks.clear()
             for path, stream in list(self._streams.items()):
                 try:
                     stream.stop()
@@ -240,6 +250,8 @@ class WorkbenchStreamBridge:
                 except Exception:
                     logger.exception("WorkbenchStreamBridge: error stopping opencode stream")
                 self._opencode_stream = None
+        for timer in timers:
+            timer.cancel()
 
     # ---- side observer ----------------------------------------------------
 
@@ -257,31 +269,90 @@ class WorkbenchStreamBridge:
         except Exception:
             logger.exception("WorkbenchStreamBridge: observer notify failed (session=%s)", session_id)
 
+    def _cancel_settle_timer(self, session_id: str) -> None:
+        with self._lock:
+            timer = self._settle_timers.pop(session_id, None)
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_settle(self, session_id: str) -> None:
+        """当已发生对话块还凑不够一组、但会话已停下或暂歇时，启动时间维度兜底定时器。"""
+        self._cancel_settle_timer(session_id)
+        if self._settle_timeout_s <= 0:
+            self._on_settle_timeout(session_id)
+            return
+        timer = threading.Timer(
+            self._settle_timeout_s,
+            self._on_settle_timeout,
+            args=(session_id,),
+        )
+        timer.daemon = True
+        with self._lock:
+            self._settle_timers[session_id] = timer
+        timer.start()
+
+    def _on_settle_timeout(self, session_id: str) -> None:
+        from frago.server.services.session_observer import SETTLE_TRIGGER
+
+        with self._lock:
+            self._settle_timers.pop(session_id, None)
+            self._pending_blocks.pop(session_id, None)
+        self._observe(session_id, SETTLE_TRIGGER)
+
     # ---- callbacks (called on watcher thread) -----------------------------
 
     def _trigger_the_observer(self, session_id: str, records: list[dict]) -> None:
         """这批新记录里有没有「该叫一次旁路观察」的事。
 
-        三个额外的触发点，都不是等 agent 把话交还才叫：
-
-        * 人按了打断——这一轮不算「交还」，不会有轮次结束的信号，不在这里投，右栏会停在
-          打断之前。
-        * 人发来一句话——「这场在做什么」「此刻在做什么」说的都是眼下，等这一轮跑完再更新
-          就整整慢一轮，而人刚把话说出口的那一刻，正是他最想看右栏的时候。
-        * agent 在干活（说话、调工具、派子 agent）——每批都投，旁路那边离上次跑不满一分钟
-          就丢掉。不投的话，一轮干十分钟，「此刻」就十分钟停在「agent 还没回话」。
+        只总结已经发生的会话，不预设槽位等待未发生的回复：
+        * 人刚发来一句话（``user.say``）时绝不抢跑触发观察，只记入已发生对话块计数并取消
+          上一轮遗留的停顿兜底定时器，等 agent 真正产出回复后再一起成组总结。
+        * 每当有 agent 回复落地且累计已发生对话块达到 ``BATCH_BLOCK_COUNT``（默认 3 个）时，
+          立即成组触发一次 ``batch`` 观察并清零计数；若未满 3 个则启动时间兜底定时器。
+        * 人按了打断——不会有正常轮次结束信号，立即取消定时器并触发 ``interrupt``。
         """
         try:
-            from frago.server.services.session_observer import WORKING, person_spoke
+            from frago.server.services.session_observer import (
+                BATCH_BLOCK_COUNT,
+                BATCH_TRIGGER,
+                agent_acted,
+                occurred_block_count,
+                person_spoke,
+            )
         except Exception:
             logger.exception("WorkbenchStreamBridge: observer import failed")
             return
         if any(isinstance(r, dict) and r.get("kind") == "interrupt" for r in records):
+            self._cancel_settle_timer(session_id)
+            with self._lock:
+                self._pending_blocks.pop(session_id, None)
             self._observe(session_id, "interrupt")
-        elif person_spoke(records):
-            self._observe(session_id, "prompt")
-        elif any(isinstance(r, dict) and r.get("kind") in _AGENT_AT_WORK for r in records):
-            self._observe(session_id, WORKING)
+            return
+
+        added_blocks = occurred_block_count(records)
+        has_person = person_spoke(records)
+        has_agent_action = agent_acted(records)
+
+        if added_blocks > 0:
+            self._cancel_settle_timer(session_id)
+            with self._lock:
+                total_blocks = self._pending_blocks.get(session_id, 0) + added_blocks
+                self._pending_blocks[session_id] = total_blocks
+        else:
+            with self._lock:
+                total_blocks = self._pending_blocks.get(session_id, 0)
+
+        # 只有人刚开口、尚无任何 agent 实质动作（thinking / tool use / response）时，绝不抢跑触发
+        if has_person and not has_agent_action:
+            return
+
+        if has_agent_action:
+            if total_blocks >= BATCH_BLOCK_COUNT:
+                with self._lock:
+                    self._pending_blocks[session_id] = 0
+                self._observe(session_id, BATCH_TRIGGER)
+            else:
+                self._schedule_settle(session_id)
 
     def _on_new_records(self, session_id: str, records: list[dict]) -> None:
         """Called by SessionStream when new records arrive."""
@@ -301,7 +372,18 @@ class WorkbenchStreamBridge:
                           stop_reason: str | None) -> None:
         """Called by SessionStream when a turn flips to complete."""
         if done:
-            self._observe(session_id, "turn")
+            from frago.server.services.session_observer import BATCH_BLOCK_COUNT
+
+            with self._lock:
+                pending = self._pending_blocks.get(session_id, 0)
+            if pending >= BATCH_BLOCK_COUNT:
+                self._cancel_settle_timer(session_id)
+                with self._lock:
+                    self._pending_blocks[session_id] = 0
+                self._observe(session_id, "turn")
+            elif pending > 0:
+                # 凑不齐 BATCH_BLOCK_COUNT 个已发生块，但会话已经停下了：启动时间维度兜底
+                self._schedule_settle(session_id)
             try:
                 from frago.server.services import workbench_queue
 

@@ -697,7 +697,7 @@ def _wait_idle(obs, timeout=5.0):
 
 
 class TestTheExtraWakePoints:
-    """监听线上新来一批记录时，除了「一轮结束」还有两处要当场叫一次。"""
+    """监听线上按「攒够 3 个已发生对话块成组触发 + 会话停下时间兜底」唤醒旁路观察。"""
 
     @pytest.fixture
     def woken(self, monkeypatch):
@@ -710,31 +710,80 @@ class TestTheExtraWakePoints:
                 seen.append(trigger)
 
         monkeypatch.setattr(so, "get_observer", lambda *a, **k: FakeObserver())
-        return WorkbenchStreamBridge(loop=None), seen
+        bridge = WorkbenchStreamBridge(loop=None)
+        yield bridge, seen
+        bridge.stop_all()
 
-    def test_a_person_speaking_wakes_it_before_the_turn_ends(self, woken):
+    def test_a_person_speaking_alone_does_not_wake_it_prematurely(self, woken):
+        """人刚发话、agent 还没回话时不抢跑建槽，避免产出「agent 还没回话」的预设槽位。"""
         bridge, seen = woken
         bridge._trigger_the_observer(SID, [raw(1, "user.say", text="把这件事改了")])
-        assert seen == ["prompt"]
+        assert seen == []
+        assert bridge._pending_blocks[SID] == 1
 
-    def test_the_agent_at_work_wakes_it_as_working(self, woken):
-        """一轮干十分钟，「此刻」不能十分钟停在「agent 还没回话」。节流在旁路那边。"""
+    def test_three_substantive_blocks_including_thinking_and_tool_use_wake_it_as_a_batch(
+        self, woken
+    ):
+        """All 视图里所有包含实质内容的类型（thinking、tool.call、agent.say、user.say 等）连续满 3 个即触发 batch。"""
         bridge, seen = woken
-        bridge._trigger_the_observer(SID, [raw(1, "agent.say", text="改好了")])
-        bridge._trigger_the_observer(SID, [raw(2, "tool.call", tool_name="Bash")])
-        assert seen == [so.WORKING, so.WORKING]
+        bridge._settle_timeout_s = 10.0
+        bridge._trigger_the_observer(SID, [raw(1, "agent.think", text="先梳理调用链")])
+        assert seen == []
+        bridge._trigger_the_observer(SID, [raw(2, "tool.call", tool_name="Read", args={"path": "a.py"})])
+        assert seen == []
+        bridge._trigger_the_observer(SID, [raw(3, "tool.call", tool_name="Edit", args={"path": "a.py"})])
+        assert seen == [so.BATCH_TRIGGER]
+        assert bridge._pending_blocks[SID] == 0
+
+    def test_three_occurred_dialogue_blocks_wake_it_as_a_batch(self, woken):
+        """攒够 3 个已发生对话块（如 1 条提问 + 2 条回复）时，立即成组触发 batch。"""
+        bridge, seen = woken
+        bridge._settle_timeout_s = 10.0
+        bridge._trigger_the_observer(SID, [raw(1, "user.say", text="浮动按钮L和数字是什么含义？")])
+        assert seen == []
+        bridge._trigger_the_observer(SID, [raw(2, "agent.say", text="L是行号的缩写。")])
+        assert seen == []
+        bridge._trigger_the_observer(SID, [raw(3, "agent.say", text="需要简化成只显示批注吗？")])
+        assert seen == [so.BATCH_TRIGGER]
+        assert bridge._pending_blocks[SID] == 0
+
+    def test_fewer_than_three_blocks_fall_back_to_settle_timer_when_turn_stops(self, woken):
+        """凑不齐 3 个对话块但会话已停下时，由时间维度兜底触发 settle。"""
+        import time as _time
+
+        bridge, seen = woken
+        bridge._settle_timeout_s = 0.03
+        bridge._trigger_the_observer(SID, [raw(1, "user.say", text="你好")])
+        bridge._trigger_the_observer(SID, [raw(2, "agent.say", text="在")])
+        bridge._on_turn_complete(SID, True, "end_turn")
+        assert seen == []
+        deadline = _time.perf_counter() + 1.0
+        while _time.perf_counter() < deadline and not seen:
+            _time.sleep(0.01)
+        assert seen == [so.SETTLE_TRIGGER]
+        assert bridge._pending_blocks.get(SID, 0) == 0
+
+    def test_new_human_message_cancels_pending_settle_timer_until_agent_replies(self, woken):
+        """停顿兜底计时期间人又开口提问，取消旧定时器，等新回复落地凑够 3 块再触发。"""
+        import time as _time
+
+        bridge, seen = woken
+        bridge._settle_timeout_s = 0.05
+        bridge._trigger_the_observer(SID, [raw(1, "user.say", text="第一问")])
+        bridge._trigger_the_observer(SID, [raw(2, "agent.say", text="第一答")])
+        bridge._on_turn_complete(SID, True, "end_turn")
+        # 人紧接着发出第二问：取消停顿兜底，此时共 3 块但最后一块是未回答提问，不抢跑
+        bridge._trigger_the_observer(SID, [raw(3, "user.say", text="第二问")])
+        _time.sleep(0.08)
+        assert seen == []
+        # 第二答落地：累计 4 块 >= 3 且含 agent 回复，立即成组触发
+        bridge._trigger_the_observer(SID, [raw(4, "agent.say", text="第二答")])
+        assert seen == [so.BATCH_TRIGGER]
 
     def test_records_that_show_no_work_do_not(self, woken):
         bridge, seen = woken
         bridge._trigger_the_observer(SID, [raw(1, "tool.result", body="ok"), raw(2, "usage.tick")])
         assert seen == []
-
-    def test_a_person_speaking_amid_work_is_named_as_a_prompt(self, woken):
-        bridge, seen = woken
-        bridge._trigger_the_observer(
-            SID, [raw(1, "tool.call", tool_name="Bash"), raw(2, "user.say", text="停一下")]
-        )
-        assert seen == ["prompt"]
 
     def test_an_interrupt_is_named_and_does_not_wake_it_twice(self, woken):
         bridge, seen = woken
@@ -847,3 +896,209 @@ class TestOldBinaryGuard:
             assert obs._supports_ask(str(fake)) is True, "a changed binary is looked at again"
         finally:
             obs.shutdown()
+
+
+class TestPeriodicWatcherRuns:
+    def test_each_run_records_cursor_window_and_summary_in_runs_list(self):
+        slots = so.empty_slots(SID, "claude-code")
+        so.apply_answer(
+            slots,
+            so.parse_answer(reply(now="正在扫描仓库目录", happened_add=["读取了配置文件"])),
+            {0: "开始重构"},
+            stamp_ms=1000,
+            cursor_from=0,
+            cursor_to=4,
+        )
+        so.apply_answer(
+            slots,
+            so.parse_answer(reply(output="完成了模块拆分", decision="是否继续发布？")),
+            {},
+            stamp_ms=2000,
+            cursor_from=4,
+            cursor_to=9,
+        )
+        view = so.public_state(slots, bound=True)
+        assert len(view["runs"]) == 2
+        assert view["runs"][0]["cursor_from"] == 0
+        assert view["runs"][0]["cursor_to"] == 4
+        assert "读取了配置文件" in view["runs"][0]["summary"]
+        assert "正在扫描仓库目录" in view["runs"][0]["summary"]
+        assert view["runs"][1]["cursor_from"] == 4
+        assert view["runs"][1]["cursor_to"] == 9
+        assert "完成了模块拆分" in view["runs"][1]["summary"]
+        assert "是否继续发布？" in view["runs"][1]["summary"]
+
+    def test_legacy_slots_without_runs_synthesize_fallback_run_in_public_state(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots.pop("runs", None)
+        slots.update(
+            cursor=6,
+            anchor="重构观察者面板",
+            happened=["梳理了游标切片"],
+            tail=OUT("测试全部通过"),
+            updated_at=3000,
+        )
+        view = so.public_state(slots, bound=True)
+        assert len(view["runs"]) == 1
+        assert view["runs"][0]["cursor_from"] == 0
+        assert view["runs"][0]["cursor_to"] == 6
+        assert "测试全部通过" in view["runs"][0]["summary"]
+
+    def test_run_once_trims_trailing_unanswered_human_prompt_after_completed_records(
+        self, tmp_path
+    ):
+        """前一段已完成记录后面如果紧跟着一句尚未回答的新提问，本次只总结已完成部分，不把未回答提问吞入本段。"""
+        session = FakeSession(
+            [
+                human(0, "第一轮问题"),
+                rec(1, "agent.say", text="第一轮回答"),
+                human(2, "刚发出的第二轮问题，agent还没答"),
+            ]
+        )
+        seen_prompts: list[str] = []
+
+        def ask(prompt):
+            seen_prompts.append(prompt)
+            return answer(output="答完了第一轮问题")
+
+        obs = observer(tmp_path, session, ask)
+        entry = obs.run_once(SID, so.BATCH_TRIGGER)
+        slots = slots_of(tmp_path)
+        assert entry["cursor_to"] == 2
+        assert slots["cursor"] == 2
+        assert "刚发出的第二轮问题" not in seen_prompts[0]
+        assert slots["runs"][0]["cursor_from"] == 0
+        assert slots["runs"][0]["cursor_to"] == 2
+
+    def test_phase_goal_evolves_across_stages_without_overwriting_session_anchor(self):
+        """阶段目标 phase_goal 可随阶段演进并记入每次 Watcher 通报，同时保留整场会话首句总目标 anchor。"""
+        slots = so.empty_slots(SID, "claude-code")
+        slots["anchor"] = {"seq": 0, "text": "重构会话工作台并支持旁路解读"}
+        so.apply_answer(
+            slots,
+            so.parse_answer(
+                reply(
+                    phase_goal="第一阶段：替换右栏浮窗并落地 Watcher 菜单",
+                    output="已完成 Watcher 档位与 Talk 折叠包裹",
+                )
+            ),
+            {},
+            stamp_ms=1000,
+            cursor_from=0,
+            cursor_to=3,
+        )
+        so.apply_answer(
+            slots,
+            so.parse_answer(
+                reply(
+                    phase_goal="第二阶段：实现定量成组触发与停顿时间兜底",
+                    output="已落成 3 块成组触发与 10 秒停顿兜底",
+                )
+            ),
+            {},
+            stamp_ms=2000,
+            cursor_from=3,
+            cursor_to=6,
+        )
+        view = so.public_state(slots, bound=True)
+        assert view["anchor"] == "重构会话工作台并支持旁路解读"
+        assert view["phase_goal"] == "第二阶段：实现定量成组触发与停顿时间兜底"
+        assert view["runs"][0]["phase_goal"] == "第一阶段：替换右栏浮窗并落地 Watcher 菜单"
+        assert view["runs"][1]["phase_goal"] == "第二阶段：实现定量成组触发与停顿时间兜底"
+        prompt = so.build_prompt(slots, [rec(6, "agent.say", text="继续")], 0, {})
+        assert "这场在做什么（人的原话）：重构会话工作台并支持旁路解读" in prompt
+        assert "当前阶段目标：第二阶段：实现定量成组触发与停顿时间兜底" in prompt
+
+    def test_decision_card_in_tool_result_is_fed_and_backfills_decision_when_unanswered(
+        self, tmp_path
+    ):
+        """tool.result 里的 frago ask 交互卡必须喂给旁路 AI，且未答复时兜底填入待拍板背景并产出三段式。"""
+        card_body = json.dumps(
+            {
+                "frago_ui_component": "decision-card",
+                "component_type": "single-choice",
+                "data": {
+                    "type": "single-choice",
+                    "question": "是否立即执行本机装机部署？",
+                    "why": "前端与旁路观察代码已通过单测，需装机验证真实会话效果",
+                    "options": [
+                        {"key": "A", "label": "立即装机", "effect": "构建前端并重启 8093"},
+                        {"key": "B", "label": "暂不装机", "effect": "仅保留代码改动"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+        session = FakeSession(
+            [
+                human(0, "重构旁路观察为当前目标加三段式"),
+                rec(1, "tool.call", tool_name="Bash", args={"command": "frago app ask ..."}),
+                rec(2, "tool.result", status="ok", body=f"Command output:\n{card_body}"),
+                rec(3, "agent.say", text="请在下方卡片中选择。"),
+            ]
+        )
+        seen_prompts: list[str] = []
+
+        def ask(prompt):
+            seen_prompts.append(prompt)
+            return answer(
+                phase_goal="完成三段式改造并确认装机部署",
+                output="已完成三段式结构与交互卡背景提取改造",
+                happened_add=["补齐了 tool.result 交互卡提取与 anchor 保护"],
+                decision="",
+            )
+
+        obs = observer(tmp_path, session, ask)
+        obs.run_once(SID, so.BATCH_TRIGGER)
+        slots = slots_of(tmp_path)
+        assert "[待拍板卡片] 问题：是否立即执行本机装机部署？" in seen_prompts[0]
+        assert "背景：前端与旁路观察代码已通过单测" in seen_prompts[0]
+        assert "是否立即执行本机装机部署？" in slots["decision"]
+        run0 = slots["runs"][0]
+        assert "当前在做什么：补齐了 tool.result 交互卡提取与 anchor 保护" in run0["summary"]
+        assert "关键发现或产出：已完成三段式结构与交互卡背景提取改造" in run0["summary"]
+        assert "待拍板背景：是否立即执行本机装机部署？" in run0["summary"]
+
+    def test_card_answer_receipt_clears_pending_decision_but_never_overwrites_anchor(self):
+        """人点击交互卡发出的【answer】回执用于清掉已答待决，但绝不进入 anchor_seq 候选或覆盖首句总目标。"""
+        slots = so.empty_slots(SID, "claude-code")
+        slots["anchor"] = {"seq": 0, "text": "重构会话工作台并支持旁路解读"}
+        slots["decision"] = "是否立即执行本机装机部署？"
+        candidates = {10: "【answer】A · 立即装机 —— 构建前端并重启 8093"}
+        prompt = so.build_prompt(slots, [human(10, candidates[10])], 0, candidates)
+        assert "【answer】" not in prompt.split("## 这一段里人说过的话")[1]
+
+        so.apply_answer(
+            slots,
+            so.parse_answer(
+                reply(
+                    phase_goal="执行本机装机部署并验证",
+                    now="正在构建前端静态产物并重启 8093",
+                    decision="",
+                    anchor_seq=10,
+                )
+            ),
+            candidates,
+            stamp_ms=3000,
+            cursor_from=8,
+            cursor_to=12,
+        )
+        assert slots["decision"] == "", "卡片回执代表人已拍板，清掉旧待决"
+        assert slots["anchor"] == {"seq": 0, "text": "重构会话工作台并支持旁路解读"}, "严禁被【answer】覆盖"
+
+    def test_multiple_items_ending_with_period_never_produce_double_punctuation(self):
+        """模型产出的每条记录自带句号结尾时，拼接多条不产生『。；』重标点。"""
+        summary = so._compose_run_summary(
+            NOW("正在给 observer 改造收尾。"),
+            [
+                "observer.md 提示词改成当前目标加三段式。",
+                "前端 WatcherSlice 新增三个字段。",
+                "服务端补齐了待拍板卡片提取单测。",
+            ],
+            "",
+        )
+        assert "。；" not in summary
+        assert "observer.md 提示词改成当前目标加三段式；前端 WatcherSlice 新增三个字段；服务端补齐了待拍板卡片提取单测" in summary
+
+
+

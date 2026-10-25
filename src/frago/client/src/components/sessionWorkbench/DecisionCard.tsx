@@ -227,11 +227,11 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
 
   const optionBody = (o: DecisionOption) => (
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-[3px] break-words text-[13px] font-medium leading-[1.45] text-text-primary">
+      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-[3px] break-words text-[16px] font-medium leading-[1.45] text-text-primary">
         <Inline text={o.label} />
         {tags(o)}
       </span>
-      <span className="mt-px break-words text-[12px] leading-[1.5] text-text-secondary">
+      <span className="mt-px break-words text-[14px] leading-[1.55] text-text-secondary">
         <Inline text={o.effect} />
       </span>
     </span>
@@ -242,7 +242,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     if (pending(i)) return 'border-accent-warning bg-accent-warning-10';
     if (on) return 'border-[var(--sel-border)] bg-[var(--sel-bg)]';
     const dim = done ? 'opacity-45' : '';
-    return `border-border-color bg-bg-primary ${live ? 'hover:border-border-strong hover:bg-bg-hover' : ''} ${dim}`;
+    return `border-transparent bg-bg-primary ${live ? 'hover:bg-bg-hover' : ''} ${dim}`;
   };
 
   const keyBox = (o: DecisionOption, i: number) => (
@@ -476,7 +476,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     foot = (
       <div
         data-testid="decision-answered"
-        className="flex items-center gap-1.5 border-t border-dashed border-border-color pt-[7px] text-[11px] text-text-secondary"
+        className="flex items-center gap-1.5 pt-[7px] text-[12px] text-text-secondary"
       >
         <Check size={12} className="shrink-0" />
         <span>
@@ -488,7 +488,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     );
   } else if (host && !host.canAnswer && host.blockedReason) {
     foot = (
-      <p data-testid="decision-blocked" className="text-[11px] text-text-muted">
+      <p data-testid="decision-blocked" className="text-[12px] text-text-muted">
         {t(host.blockedReason)}
       </p>
     );
@@ -499,8 +499,8 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
       data-testid="decision-card"
       data-type={T}
       data-state={done ? answered.kind : live ? 'open' : 'read-only'}
-      className={`mt-2 flex min-w-0 flex-col gap-2 rounded-[10px] border bg-bg-card px-3 pb-3 pt-2.5 text-[13px] leading-[1.5] ${
-        irr ? 'border-accent-warning' : 'border-border-strong'
+      className={`mt-2 flex min-w-0 flex-col gap-2.5 rounded-[10px] bg-bg-card px-3.5 pb-3.5 pt-3 text-[16px] leading-[1.6] ${
+        irr ? 'border border-accent-warning' : 'border-0'
       }`}
     >
       <div className="flex min-w-0 items-center gap-1.5">
@@ -511,7 +511,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
           </span>
         ) : null}
         <span
-          className={`min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.04em] ${
+          className={`min-w-0 truncate text-[12px] font-semibold uppercase tracking-[0.04em] ${
             irr ? 'text-accent-warning' : 'text-text-muted'
           }`}
         >
@@ -523,17 +523,17 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
             type="button"
             data-testid="decision-toggle-all"
             onClick={() => setPicks(allPicked ? [] : opts.map((_, i) => i))}
-            className="ml-auto shrink-0 text-[11px] text-text-secondary underline underline-offset-2 hover:text-text-primary"
+            className="ml-auto shrink-0 text-[12px] text-text-secondary underline underline-offset-2 hover:text-text-primary"
           >
             {t(allPicked ? 'workbench.decision.clearAll' : 'workbench.decision.selectAll')}
           </button>
         ) : null}
       </div>
-      <div className="break-words text-[13px] font-semibold leading-[1.5] text-text-primary">
+      <div className="break-words text-[17px] font-semibold leading-[1.45] text-text-primary">
         <Inline text={block.question} />
       </div>
       {block.why != null ? (
-        <div className="-mt-[5px] break-words text-[12px] text-text-secondary">
+        <div className="-mt-[4px] break-words text-[14px] leading-[1.6] text-text-secondary">
           <Inline text={block.why} />
         </div>
       ) : null}
@@ -581,17 +581,17 @@ export function CardAnswerBody({ answer }: { answer: ParsedCardAnswer }) {
             {o.key}
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="break-words text-[13px] font-medium leading-[1.45] text-text-primary">
+            <span className="break-words text-[16px] font-medium leading-[1.45] text-text-primary">
               <Inline text={o.label} />
             </span>
-            <span className="mt-px break-words text-[12px] leading-[1.5] text-text-secondary">
+            <span className="mt-px break-words text-[14px] leading-[1.55] text-text-secondary">
               <Inline text={o.effect} />
             </span>
           </span>
         </div>
       ))}
       {answer.written ? (
-        <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-text-primary">
+        <p className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary">
           {answer.written}
         </p>
       ) : null}

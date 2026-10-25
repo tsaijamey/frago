@@ -80,6 +80,12 @@ WORKING = "working"
 #: 没人看页面时按节拍叫一次的来由（见 ``session_watchdog``）。与 WORKING 同一处境——
 #: 截的都是 agent 干活途中，只是这一次不是新记录把它招来的。
 CADENCE = "cadence"
+#: 默认每攒够多少个已发生对话块（人发言或 agent 回复）就成组触发一次总结。
+BATCH_BLOCK_COUNT = 3
+#: 会话停下但游标后已发生对话块还凑不够 BATCH_BLOCK_COUNT 时的时间兜底（秒）。
+SETTLE_TIMEOUT_S = 10.0
+BATCH_TRIGGER = "batch"
+SETTLE_TRIGGER = "settle"
 
 #: 说明书的文件名，在 ``~/.frago/hook/`` 下，随包发、人可以改，改过的升级时不覆盖。
 INSTRUCTIONS_FILE = "observer.md"
@@ -96,6 +102,8 @@ ANCHOR_SCAN_PAGES = 20
 HAPPENED_KEEP = 300
 #: 每一段最多新添几条「已经发生的事」。
 HAPPENED_PER_RUN = 3
+#: Watcher 视图里最多保留多少段游标总结。
+RUNS_KEEP = 100
 
 ASK_TIMEOUT_MS = 30_000
 ASK_MAX_TOKENS = 1_500
@@ -125,10 +133,20 @@ NONE_MARK = "（无）"
 NOTHING_TO_READ = "（这一段没有要看的内容）"
 NOBODY_SPOKE = "（这一段里人没说话）"
 _PLACEHOLDERS = frozenset({EMPTY_MARK, NONE_MARK, NOTHING_TO_READ, NOBODY_SPOKE, "还没有", "无"})
+CARD_ANSWER_PREFIX = "【answer】"
 
 
 def _unplaceholder(text: str) -> str:
     return "" if text.strip() in _PLACEHOLDERS else text
+
+
+def is_card_answer_text(text: Any) -> bool:
+    """是不是人点击交互卡片发出的固定回执（以 ``【answer】`` 开头）。
+
+    它是对上一轮待拍板问题的答复，算人开了口（用于清掉已答的 ``decision``），但绝不是整场
+    会话的新总目标，不能进 ``anchor_seq`` 候选，也不能覆盖 ``anchor``。
+    """
+    return isinstance(text, str) and text.lstrip().startswith(CARD_ANSWER_PREFIX)
 
 
 # ── 禁令的检查 ────────────────────────────────────────────────────────────
@@ -164,6 +182,8 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         "cursor_id": None,
         # {"seq": 这句人话的记录序号, "text": 原话}，还没找到时为 None。
         "anchor": None,
+        # 当前所处阶段的目标（可随人新指令或 agent 阶段推进演进，不覆盖首句 anchor）。
+        "phase_goal": "",
         # 「已经发生的事」的最后一条，也就是眼下的状态：{"kind": "now" | "output", "text": …}。
         # agent 在做就是「此刻」，东西落地了就是「产出」；产出被下一个状态顶掉时退进
         # happened，此刻被顶掉就不留（做完的事由 happened 记）。
@@ -175,10 +195,13 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         # 时间线读的，人要分得出哪一格是刚刚变的、哪一格半小时前就停在那儿了。老的槽位
         # 文件里没有这几格，读出来是 None，那几格照常显示，只是暂时不带时间。
         "anchor_at": None,
+        "phase_goal_at": None,
         "tail_at": None,
         "decision_at": None,
         # 跟 happened 一一对齐，同样从旧到新。
         "happened_at": [],
+        # 按游标区间保存的每次定期 observer 总结（从旧到新），供中栏 Watcher 视图包裹对应 Talk 片段。
+        "runs": [],
         "updated_at": None,
         "model": None,
         # ok / failed / empty。未绑定不写文件，由读取时现判。
@@ -244,24 +267,132 @@ def append_run(directory: Path, entry: dict[str, Any]) -> None:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def _clean_tail_text(text: str) -> str:
+    s = re.sub(r"^\[(?:此刻|产出)\]\s*", "", text.strip())
+    s = re.sub(r"。\s*[；;]+", "。", s)
+    return s.strip("；; ")
+
+
+def _join_clauses(items: Sequence[str]) -> str:
+    cleaned = [_clean_tail_text(x) for x in items if _clean_tail_text(x)]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return "；".join(x.rstrip("。；;") for x in cleaned)
+
+
+def _safe_goal_text(text: Any) -> str | None:
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if not cleaned or is_card_answer_text(cleaned):
+        return None
+    return cleaned
+
+
+def _compose_run_summary(
+    tail: dict[str, Any] | None,
+    happened_add: Sequence[str],
+    decision: str,
+    anchor_text: str | None = None,
+) -> str:
+    """按「三段式（当前在做什么 + 关键发现或产出 + 待拍板背景）」拼出单段 Watcher 通报正文。"""
+    tail_kind = (tail or {}).get("kind")
+    tail_text = _clean_tail_text((tail or {}).get("text") or "")
+    items: list[str] = []
+    for item in happened_add:
+        cleaned = _clean_tail_text(item or "")
+        if cleaned and cleaned not in items:
+            items.append(cleaned)
+    decision_text = _clean_tail_text(decision or "")
+
+    doing = ""
+    findings: list[str] = []
+    if tail_kind == TAIL_NOW and tail_text:
+        doing = tail_text
+        findings = [x for x in items if x != tail_text]
+    elif tail_kind == TAIL_OUTPUT and tail_text:
+        without_tail = [x for x in items if x != tail_text]
+        if without_tail:
+            doing = _join_clauses(without_tail)
+        findings = [tail_text]
+    elif items:
+        doing = items[0]
+        findings = items[1:]
+
+    lines: list[str] = []
+    if doing:
+        lines.append(f"当前在做什么：{doing}")
+    if findings:
+        lines.append(f"关键发现或产出：{_join_clauses(findings)}")
+    if decision_text:
+        lines.append(f"待拍板背景：{decision_text}")
+    safe_anchor = _safe_goal_text(anchor_text)
+    if not lines and safe_anchor:
+        lines.append(f"当前在做什么：{safe_anchor}")
+    return "\n".join(lines)
+
+
+def _fallback_runs(slots: dict[str, Any]) -> list[dict[str, Any]]:
+    """老槽位文件还没有 runs 数组时，按已有 happened 与 tail 兜底拼出一段游标总结。"""
+    raw_anchor = slots.get("anchor")
+    anchor = _safe_goal_text(
+        raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+    )
+    phase_goal = _safe_goal_text(slots.get("phase_goal")) or anchor
+    happened = list(slots.get("happened") or [])
+    tail = slots.get("tail") or None
+    decision = slots.get("decision") or ""
+    if not (tail or happened or decision or anchor or phase_goal):
+        return []
+    summary = _compose_run_summary(tail, happened[-3:], decision, anchor)
+    if not summary:
+        return []
+    cursor_to = int(slots.get("cursor") or 0)
+    at = slots.get("updated_at") or slots.get("tail_at") or slots.get("anchor_at")
+    return [
+        {
+            "id": "run-fallback-1",
+            "at": at,
+            "cursor_from": 0,
+            "cursor_to": cursor_to,
+            "phase_goal": phase_goal,
+            "tail": tail,
+            "happened_add": happened[-3:],
+            "decision": decision,
+            "summary": summary,
+        }
+    ]
+
+
 def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
     """页面要的形状。「已经发生的事」给新的在前，页面按顺序露头三条。
 
     每一格带上它自己上次变样的时刻，右栏按时间线读要用。时刻跟着正文一起倒过来，免得
     第一条的时间落到最后一条头上。
     """
-    anchor = slots.get("anchor") or {}
+    raw_anchor = slots.get("anchor")
+    anchor_text = _safe_goal_text(
+        raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+    )
+    phase_goal = _safe_goal_text(slots.get("phase_goal")) or anchor_text
     happened = list(slots.get("happened") or [])
     times = list(slots.get("happened_at") or [])
     times = [None] * max(0, len(happened) - len(times)) + times[: len(happened)]
+    raw_runs = slots.get("runs")
+    runs = list(raw_runs) if isinstance(raw_runs, list) and raw_runs else _fallback_runs(slots)
     return {
         "bound": bound,
-        "anchor": anchor.get("text"),
+        "anchor": anchor_text,
+        "phase_goal": phase_goal,
         "tail": slots.get("tail") or None,
         "decision": slots.get("decision") or "",
         "happened": list(reversed(happened)),
         "happened_at": list(reversed(times)),
+        "runs": runs,
         "anchor_at": slots.get("anchor_at"),
+        "phase_goal_at": slots.get("phase_goal_at") or slots.get("anchor_at"),
         "tail_at": slots.get("tail_at"),
         "decision_at": slots.get("decision_at"),
         "updated_at": slots.get("updated_at"),
@@ -320,17 +451,75 @@ def spoken_text(payload: Any) -> str | None:
 
 
 def person_spoke(records: Sequence[Any]) -> bool:
-    """这批新记录里有没有人亲口说话。
-
-    监听线上判触发点用：人刚发来一句话就该叫一次旁路观察，等 agent 把话交还回来才叫，
-    「这场在做什么」「此刻在做什么」就整整慢一轮。
-    """
+    """这批新记录里有没有人亲口说话。"""
     return any(
         isinstance(record, dict)
         and record.get("kind") == "user.say"
         and spoken_text(record.get("payload")) is not None
         for record in records
     )
+
+
+def agent_spoke(records: Sequence[Any]) -> bool:
+    """这批记录里有没有 agent 已经产出的回复正文。"""
+    for record in records:
+        kind = record.get("kind") if isinstance(record, dict) else getattr(record, "kind", None)
+        payload = (
+            record.get("payload") if isinstance(record, dict) else getattr(record, "payload", None)
+        )
+        if kind == "agent.say" and isinstance(payload, dict):
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                return True
+    return False
+
+
+def is_substantive_block(record: Any) -> bool:
+    """这条记录算不算 All 视图里「包含实质内容」的一个已发生块。
+
+    涵盖：人的有效发言（``user.say``）、非空思考（``agent.think``）、工具调用（``tool.call``）、
+    派发子 agent（``subagent.dispatch``）、AI 回复正文（``agent.say``）、有效待办（``todo.snapshot``）、
+    报错（``error``）、权限结果（``permission.outcome``）、附件（``media.attach``）以及插话/任务通知。
+    配对的 ``tool.result``、用量刻度 ``usage.tick``、调用边界 ``call.envelope`` 等记账条目不重复计数。
+    """
+    kind = record.get("kind") if isinstance(record, dict) else getattr(record, "kind", None)
+    payload = (
+        record.get("payload") if isinstance(record, dict) else getattr(record, "payload", None)
+    )
+    if not isinstance(payload, dict):
+        payload = {}
+    if kind == "user.say":
+        return spoken_text(payload) is not None
+    if kind in ("agent.say", "agent.think"):
+        text = payload.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    if kind in ("tool.call", "subagent.dispatch", "error", "permission.outcome", "media.attach"):
+        return True
+    if kind == "todo.snapshot":
+        return (
+            payload.get("source") != "engine-reminder"
+            and _todo_line(payload.get("items")) is not None
+        )
+    if kind == "context.inject":
+        return (
+            payload.get("channel") == "queued_command"
+            or payload.get("source") == "task-notification"
+        )
+    return False
+
+
+def agent_acted(records: Sequence[Any]) -> bool:
+    """这批记录里有没有 agent 产出的实质块（thinking、tool use、AI response 等）。"""
+    for record in records:
+        kind = record.get("kind") if isinstance(record, dict) else getattr(record, "kind", None)
+        if kind != "user.say" and is_substantive_block(record):
+            return True
+    return False
+
+
+def occurred_block_count(records: Sequence[Any]) -> int:
+    """这批记录里包含实质内容的已发生块数量（涵盖 thinking、tool use、AI response、人发言等）。"""
+    return sum(1 for record in records if is_substantive_block(record))
 
 
 def is_heartbeat_batch(records: Sequence[UnifiedRecord]) -> bool:
@@ -388,10 +577,72 @@ def _todo_line(items: Any) -> str | None:
     return "[待办] " + "；".join(done) if done else None
 
 
+def _extract_decision_card(body: Any) -> dict[str, Any] | None:
+    """从 tool.result 的输出里解析出 frago ask 交互卡（decision-card）的数据字典。"""
+    if not isinstance(body, str) or '"frago_ui_component"' not in body:
+        return None
+    marker_idx = body.rfind('"frago_ui_component"')
+    start = body.rfind("{", 0, marker_idx)
+    if start < 0:
+        return None
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(body[start:])
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("frago_ui_component") != "decision-card":
+        return None
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        return None
+    question = _clip(data.get("question") or "", 240)
+    if not question:
+        return None
+    why = _clip(data.get("why") or "", 300)
+    opts_raw = data.get("options")
+    opts: list[str] = []
+    if isinstance(opts_raw, list):
+        for o in opts_raw:
+            if isinstance(o, dict) and o.get("key") and o.get("label"):
+                eff = f"（{o.get('effect')}）" if o.get("effect") else ""
+                opts.append(_clip(f"{o.get('key')}·{o.get('label')}{eff}", 120))
+    return {"question": question, "why": why, "options": opts}
+
+
+def _decision_card_line(body: Any) -> str | None:
+    """把 tool.result 里的 frago ask 交互卡格式化成一行给旁路 AI 读的文本。"""
+    card = _extract_decision_card(body)
+    if not card:
+        return None
+    parts = [f"问题：{card['question']}"]
+    if card["why"]:
+        parts.append(f"背景：{card['why']}")
+    if card["options"]:
+        parts.append(f"选项：{' / '.join(card['options'])}")
+    return "[待拍板卡片] " + "；".join(parts)
+
+
+def _trailing_unanswered_card_decision(records: Sequence[UnifiedRecord]) -> str:
+    """若本段记录里发出了交互卡且直到段尾人都还没开口答复，提取兜底的待拍板背景。"""
+    last_card: dict[str, Any] | None = None
+    for r in records:
+        if r.kind == "user.say" and human_text(r) is not None:
+            last_card = None
+            continue
+        if r.kind == "tool.result" and r.payload.get("status") != "error":
+            card = _extract_decision_card(r.payload.get("body"))
+            if card:
+                last_card = card
+    if not last_card:
+        return ""
+    if last_card["why"]:
+        return f"{last_card['question']}（{last_card['why']}）"
+    return last_card["question"]
+
+
 def record_line(record: UnifiedRecord) -> str | None:
     """一条记录喂给模型时的样子。不取的几类返回 None。
 
-    不取：agent 的思考（大量是空的，推理加密没落盘）、工具结果正文（体积最大、信息最少）、
+    不取：空思考（推理加密没落盘）、普通工具结果正文（体积最大、信息最少；仅取交互拍板卡）、
     引擎注入的内容、模型调用边界标记、会话状态变更、用量刻度（记账，不是这场在做什么）。
     """
     p = record.payload
@@ -399,11 +650,16 @@ def record_line(record: UnifiedRecord) -> str | None:
     if kind == "user.say":
         text = human_text(record)
         return f"[人·第{record.seq}条] {_clip(text, 800)}" if text else None
+    if kind == "agent.think":
+        text = p.get("text")
+        return f"[思考] {_clip(text, 400)}" if isinstance(text, str) and text.strip() else None
     if kind == "agent.say":
         text = p.get("text")
         return f"[agent] {_clip(text, 600)}" if isinstance(text, str) and text.strip() else None
     if kind == "tool.call":
         return f"[工具] {p.get('tool_name') or '?'} {_tool_target(p.get('args'))}".rstrip()
+    if kind == "tool.result":
+        return None if p.get("status") == "error" else _decision_card_line(p.get("body"))
     if kind == "subagent.dispatch":
         return f"[派子 agent] {_tool_target(p)}".rstrip()
     if kind == "todo.snapshot":
@@ -442,7 +698,11 @@ def build_prompt(
     candidates: dict[int, str],
     trigger: str | None = None,
 ) -> str:
-    anchor = (slots.get("anchor") or {}).get("text")
+    raw_anchor = slots.get("anchor")
+    anchor = _safe_goal_text(
+        raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+    )
+    phase_goal = _safe_goal_text(slots.get("phase_goal")) or anchor
     happened = list(slots.get("happened") or [])[-8:]
     tail = slots.get("tail") or {}
     tail_line = (
@@ -453,6 +713,7 @@ def build_prompt(
     lines = [
         "## 当前右栏",
         f"- 这场在做什么（人的原话）：{_clip(anchor, 300) if anchor else EMPTY_MARK}",
+        f"- 当前阶段目标：{_clip(phase_goal, 200) if phase_goal else EMPTY_MARK}",
         f"- 需要你决策：{slots.get('decision') or NONE_MARK}",
         "- 已经发生的事（最近几条，从旧到新）：",
     ]
@@ -462,11 +723,14 @@ def build_prompt(
     head = f"## 这一段新增的会话记录（{len(shown)} 条"
     head += f"；更早的 {dropped} 条太多，没给）" if dropped else "）"
     lines += ["", head]
-    if trigger in (WORKING, CADENCE):
+    if trigger in (WORKING, CADENCE, BATCH_TRIGGER):
         lines.append("（这一段截在 agent 干活途中，它还没停下。）")
     lines += shown or [NOTHING_TO_READ]
+    goal_candidates = {
+        seq: text for seq, text in candidates.items() if not is_card_answer_text(text)
+    }
     lines += ["", "## 这一段里人说过的话（换目标时 anchor_seq 只能填这里的编号）"]
-    lines += [f"- 第 {seq} 条：{_clip(text, 200)}" for seq, text in candidates.items()] or [
+    lines += [f"- 第 {seq} 条：{_clip(text, 200)}" for seq, text in goal_candidates.items()] or [
         f"- {NOBODY_SPOKE}"
     ]
     return "\n".join(lines)
@@ -476,7 +740,7 @@ def build_prompt(
 
 
 def parse_answer(text: str) -> dict[str, Any]:
-    """从回答里取出那个 JSON 对象，整理成固定的四个字段。
+    """从回答里取出那个 JSON 对象，整理成固定的字段。
 
     容忍代码块围栏和前后多出来的话；取不出对象就是没答对，抛 ValueError。
     """
@@ -506,6 +770,7 @@ def parse_answer(text: str) -> dict[str, Any]:
             tail = {"kind": raw_tail["kind"], "text": text}
     seq = obj.get("anchor_seq")
     return {
+        "phase_goal": field("phase_goal"),
         "tail": tail,
         "decision": field("decision"),
         "happened_add": happened[:HAPPENED_PER_RUN],
@@ -517,6 +782,8 @@ def violation(answer: dict[str, Any]) -> str | None:
     """回答里有没有犯禁令。有就说出犯在哪一格、犯了什么。"""
     tail = answer["tail"] or {}
     plain = [(f"末条（{_TAIL_LABEL.get(tail.get('kind'), '')}）", tail.get("text") or "")]
+    if answer.get("phase_goal"):
+        plain.append(("当前阶段目标", answer["phase_goal"]))
     plain += [("已经发生的事", h) for h in answer["happened_add"]]
     for name, text in plain + [("需要你决策", answer["decision"])]:
         for pattern, why in _ALWAYS_BANNED:
@@ -530,7 +797,7 @@ def violation(answer: dict[str, Any]) -> str | None:
 
 
 def _content(slots: dict[str, Any]) -> str:
-    keys = ("anchor", "tail", "decision", "happened")
+    keys = ("anchor", "phase_goal", "tail", "decision", "happened")
     return json.dumps({k: slots.get(k) for k in keys}, ensure_ascii=False, sort_keys=True)
 
 
@@ -539,6 +806,9 @@ def apply_answer(
     answer: dict[str, Any],
     candidates: dict[int, str],
     stamp_ms: int | None = None,
+    *,
+    cursor_from: int | None = None,
+    cursor_to: int | None = None,
 ) -> bool:
     """把回答合进槽位，返回槽位是否真的变了。
 
@@ -570,6 +840,8 @@ def apply_answer(
 
     if answer["decision"] or candidates:
         put("decision", answer["decision"])
+    if answer.get("phase_goal"):
+        put("phase_goal", answer["phase_goal"])
 
     happened = list(slots.get("happened") or [])
     # 老槽位文件只有正文没有时刻，左边补空对齐，别让新加的那条错位到老内容头上。
@@ -599,10 +871,46 @@ def apply_answer(
 
     seq = answer["anchor_seq"]
     current = (slots.get("anchor") or {}).get("seq")
-    if seq is not None and seq in candidates and seq != current:
+    if (
+        seq is not None
+        and seq in candidates
+        and seq != current
+        and not is_card_answer_text(candidates[seq])
+    ):
         slots["anchor"] = {"seq": seq, "text": candidates[seq]}
         slots["anchor_at"] = at
-    return _content(slots) != before
+    changed = _content(slots) != before
+    if changed:
+        runs = list(slots.get("runs") or [])
+        c_from = int(cursor_from) if cursor_from is not None else (runs[-1].get("cursor_to", 0) if runs else 0)
+        c_to = int(cursor_to) if cursor_to is not None else int(slots.get("cursor") or c_from)
+        raw_anchor = slots.get("anchor")
+        anchor_text = _safe_goal_text(
+            raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+        )
+        phase_goal_text = _safe_goal_text(slots.get("phase_goal")) or anchor_text
+        summary = _compose_run_summary(
+            slots.get("tail") or None,
+            answer["happened_add"],
+            slots.get("decision") or "",
+            anchor_text,
+        )
+        if summary:
+            runs.append(
+                {
+                    "id": f"run-{len(runs) + 1}-{at}",
+                    "at": at,
+                    "cursor_from": c_from,
+                    "cursor_to": c_to,
+                    "phase_goal": phase_goal_text,
+                    "tail": slots.get("tail") or None,
+                    "happened_add": list(answer["happened_add"]),
+                    "decision": slots.get("decision") or "",
+                    "summary": summary,
+                }
+            )
+            slots["runs"] = runs[-RUNS_KEEP:]
+    return changed
 
 
 # ── 服务 ──────────────────────────────────────────────────────────────────
@@ -654,13 +962,14 @@ class SessionObserver:
         self._procs: set[subprocess.Popen] = set()
         self._closed = False
         self._ask_support: dict[str, tuple[float, int, bool]] = {}
+        self._pending_push_states: dict[str, dict[str, Any]] = {}
 
     # ---- 投任务 ---------------------------------------------------------
 
     def notify(self, session_id: str, trigger: str) -> None:
         """投一个任务就走。从监听线上调，NEVER 在这里等模型。
 
-        干活途中的触发（``working``）每批新记录都会来一次，离上一次开跑不满
+        干活途中的触发（``working`` / ``batch``）每批新记录都会来一次，离上一次开跑不满
         ``WORKING_GAP_S`` 就直接丢掉；也不去顶掉已经欠着的别的触发——人发话、一轮结束
         这些原因要留在执行记录里。
         """
@@ -668,10 +977,13 @@ class SessionObserver:
             if self._closed:
                 return
             lane = self._lanes.setdefault(session_id, _Lane())
-            if trigger == WORKING and time.monotonic() - lane.last_started < WORKING_GAP_S:
+            if (
+                trigger in (WORKING, BATCH_TRIGGER)
+                and time.monotonic() - lane.last_started < WORKING_GAP_S
+            ):
                 return
             if lane.running:
-                if trigger != WORKING or lane.owed is None:
+                if trigger not in (WORKING, BATCH_TRIGGER) or lane.owed is None:
                     lane.owed = trigger
                 return
             lane.running = True
@@ -717,6 +1029,11 @@ class SessionObserver:
         }
 
         new, total = self._read_after(session_id, cursor, slots.get("cursor_id"))
+        if any(r.kind != "user.say" for r in new):
+            # 若前面已有完成的动作/回复，而末尾挂着人刚发出、agent 尚未回应的新提问，
+            # 先不把末尾这句未回应的提问吞进本段总结，留给下一段跟它的回复一起总结。
+            while new and new[-1].kind == "user.say" and human_text(new[-1]) is not None:
+                new.pop()
         if not new:
             entry.update(skipped="nothing-new", dur_ms=_ms(started))
             if trigger == "prompt" and directory.exists():
@@ -724,6 +1041,12 @@ class SessionObserver:
                 # 对不上了。这一笔留着：下次人对右栏没动静起疑时，能看出「叫过我，我什么
                 # 都没读到」。平时读空（定时补读、页面轮询）不记，免得把执行记录泡满。
                 append_run(directory, entry)
+            return entry
+        if trigger in (BATCH_TRIGGER, SETTLE_TRIGGER, WORKING, CADENCE) and all(
+            r.kind == "user.say" for r in new
+        ):
+            # 只有人的提问、agent 还没任何动作或回复时不抢跑建槽，等发生后再总结。
+            entry.update(skipped="awaiting-reply", dur_ms=_ms(started))
             return entry
         entry["records"] = total
         last_seq = new[-1].seq
@@ -786,8 +1109,19 @@ class SessionObserver:
             entry.update(rejected=why, changed=False)
             changed = False
         else:
-            changed = apply_answer(slots, answer, candidates)
+            if not answer["decision"]:
+                fallback_decision = _trailing_unanswered_card_decision(new)
+                if fallback_decision:
+                    answer["decision"] = fallback_decision
+            changed = apply_answer(
+                slots,
+                answer,
+                candidates,
+                cursor_from=cursor,
+                cursor_to=last_seq + 1,
+            )
             entry["changed"] = changed
+        prev_status = slots.get("status")
         slots["status"] = "ok"
         slots["status_detail"] = None
         slots["model"] = reply.get("model")
@@ -798,7 +1132,8 @@ class SessionObserver:
             return entry
         entry["dur_ms"] = _ms(started)
         append_run(directory, entry)
-        self._push(session_id, slots)
+        if changed or prev_status != "ok":
+            self._push(session_id, slots)
         return entry
 
     def _read_after(
@@ -857,7 +1192,7 @@ class SessionObserver:
             batch = self._read(session_id, after=after, limit=PAGE)
             for record in batch:
                 text = human_text(record)
-                if text:
+                if text and not is_card_answer_text(text):
                     return record.seq, text
             if len(batch) < PAGE:
                 return None
@@ -959,12 +1294,26 @@ class SessionObserver:
             return
         from frago.server.websocket import create_message, manager
 
-        message = create_message(
-            WS_OBSERVER_UPDATE,
-            {"session_id": session_id, "state": public_state(slots, True)},
-        )
+        state = public_state(slots, True)
+        with self._lock:
+            already_queued = session_id in self._pending_push_states
+            self._pending_push_states[session_id] = state
+        if already_queued:
+            return
+
+        async def _flush_push() -> None:
+            with self._lock:
+                latest = self._pending_push_states.pop(session_id, None)
+            if latest is None:
+                return
+            message = create_message(
+                WS_OBSERVER_UPDATE,
+                {"session_id": session_id, "state": latest},
+            )
+            await manager.broadcast(message)
+
         with contextlib.suppress(RuntimeError):
-            asyncio.run_coroutine_threadsafe(manager.broadcast(message), self._loop)
+            asyncio.run_coroutine_threadsafe(_flush_push(), self._loop)
 
     # ---- 停 -------------------------------------------------------------
 

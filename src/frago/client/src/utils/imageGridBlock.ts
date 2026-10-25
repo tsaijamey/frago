@@ -181,7 +181,7 @@ export function parseAllImageGridOutputs(raw: string): ImageGridBlock[] {
       continue;
     }
     const end = findMatchingBrace(raw, start);
-    if (end < 0) {
+    if (end <= markerIdx) {
       searchFrom = markerIdx + 20;
       continue;
     }
@@ -194,7 +194,7 @@ export function parseAllImageGridOutputs(raw: string): ImageGridBlock[] {
     } catch {
       // 忽略非 JSON 片段
     }
-    searchFrom = end + 1;
+    searchFrom = Math.max(end + 1, markerIdx + 20);
   }
   return results;
 }

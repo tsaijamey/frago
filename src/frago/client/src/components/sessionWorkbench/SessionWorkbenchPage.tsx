@@ -25,7 +25,7 @@ import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
-import FileViewer from './FileViewer';
+import FileViewer, { type FileEditSendPayload } from './FileViewer';
 import { withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
@@ -55,6 +55,7 @@ import { loadYaml, parseUiComponentOutput, trailingDecision, yamlNow } from '@/u
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
+import { useSessionObserver } from '@/hooks/useSessionObserver';
 import { useSessionQueue } from '@/hooks/useSessionQueue';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
@@ -317,6 +318,7 @@ export default function SessionWorkbenchPage() {
    * 着色，右栏下半按它列暂存。
    */
   const marks = useSessionMarks(selectedId);
+  const observer = useSessionObserver(selectedId);
   const marksRef = useRef<WorkbenchMark[]>(marks.marks);
   marksRef.current = marks.marks;
 
@@ -480,6 +482,11 @@ export default function SessionWorkbenchPage() {
   } | null>(null);
   const packedSeq = useRef(0);
   useEffect(() => setPackedPrompt(null), [selectedId]);
+
+  /** FileViewer Edit 模式直接发送到对话区的文件修改通知。 */
+  const [directSend, setDirectSend] = useState<{ text: string; at: number } | null>(null);
+  const directSendSeq = useRef(0);
+  useEffect(() => setDirectSend(null), [selectedId]);
 
   /** 暂存列表「填入」：按引用格式落进输入框，想法接在后面；这一条进入待发出。 */
   const fillFromStack = useCallback((mark: WorkbenchMark) => {
@@ -673,6 +680,13 @@ export default function SessionWorkbenchPage() {
    * 打开那一档时再 `ensure` 一次是留着的兜底：上一次取失败了，点开就重试。
    */
   const { ensure: ensureFiles, reload: reloadFiles } = sessionFiles;
+  const handleSendFileEdit = useCallback(
+    (payload: FileEditSendPayload) => {
+      setDirectSend({ text: payload.text, at: (directSendSeq.current += 1) });
+      reloadFiles();
+    },
+    [reloadFiles]
+  );
   useEffect(() => {
     // `ensure` 本身是稳的，它认哪一场靠的是会话编号——所以这条效应得盯着 `selectedId`
     // 才会在换会话时再跑一趟。
@@ -1285,6 +1299,8 @@ export default function SessionWorkbenchPage() {
               onPackPrompt={(payload) =>
                 setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
               }
+              onSendFileEdit={handleSendFileEdit}
+              observer={observer}
             />
             </DecisionCardContext.Provider>
           )}
@@ -1309,6 +1325,7 @@ export default function SessionWorkbenchPage() {
           onSendFailed={cards.onSendFailed}
           onQueued={markQueued}
           answer={cards.answer}
+          directSend={directSend}
           deliveredAt={deliveredAt}
           outbound={outbound}
           trails={trails}
@@ -1341,8 +1358,10 @@ export default function SessionWorkbenchPage() {
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
-        {/* 右栏下半是这场会话的暂存列表。没选会话时右栏只有一句说明，不分上下。 */}
+        {/* 右栏只保留这场会话的暂存列表；旁路 AI 定期解读已收进中栏 Watcher 档。 */}
         <ReportPanel
+          stackOnly
+          view={observer}
           sessionId={selectedId}
           width={report.width}
           onWidthChange={report.setWidth}
@@ -1380,6 +1399,7 @@ export default function SessionWorkbenchPage() {
           onPackPrompt={(payload) =>
             setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
           }
+          onSendFileEdit={handleSendFileEdit}
         />
       ) : null}
 

@@ -1,4 +1,4 @@
-你是 frago 的 LightAgent。下面是 agent 这一轮收尾时写给用户的原话，以及用户这一轮说的话。原话末尾没有 `answer-needed-by-human` 区块。
+你是 frago 的 LightAgent。下面是 agent 这一轮收尾时写给用户的原话，以及用户这一轮说的话。本轮尚未调用 `frago app ask` 生成交互卡片，原话末尾也没有 `answer-needed-by-human` 区块。
 
 你只回答一个问题：**agent 这一轮停下来等用户拍板，而用户的答复可以从几个答案里点选吗？**
 
@@ -15,7 +15,9 @@
 输出规则：是 → 只输出 YES；否 → 只输出 NO。除了这一个词，不要输出任何别的字。效率要求：直接判定，思考不超过两句话。
 
 >>>判定：
-<<<把等用户定的答案用 `frago app ask <type>` 工具生成交互组件（或在回复最末尾写 `answer-needed-by-human` 区块）再停，选项原样保留，选择仍交给用户。优先直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
+<<<把等用户定的答案用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 工具生成交互组件再停，选项原样保留，选择仍交给用户。
+- **禁止重抄前文**：你上一条回复的正文已经展示在页面对话流中，本轮只需直接调用一次 `frago app ask` 生成卡片并附一句简短点选引导（或直接结束本轮，前端会自动把卡片挂到上一条回复下方），NEVER 把上一条回复的正文再重发一遍，也 NEVER 同时手写 `answer-needed-by-human` 区块造出双卡。
+- 直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
 ```bash
 frago app ask single-choice \
   -q "一句话问题，人不看上文也能懂" \
@@ -23,17 +25,4 @@ frago app ask single-choice \
   -o '{"key":"A","label":"短名","effect":"点了会发生什么；收不回、要花钱、会改哪个文件写在这里","recommended":true}' \
   -o '{"key":"B","label":"短名","effect":"点了会发生什么"}'
 ```
-若写回复最末尾的 `answer-needed-by-human` 区块，块内是 YAML，照这个骨架写：
-```answer-needed-by-human
-type: single-choice
-question: 一句话问题，人不看上文也能懂
-options:
-  - key: A
-    label: 短名
-    effect: 点了会发生什么；收不回、要花钱、会改哪个文件写在这里
-    recommended: true
-  - key: B
-    label: 短名
-    effect: 点了会发生什么
-```
-type 只认 single-choice、multi-choice、text-answer、choice-and-text 四个。常见写坏：写成「问题 + A./B. 列表」的纯文字；把 key/label/effect 写成 id/description；用中文冒号写「问题：」当字段；值里带「: 」或以 [ { * # 开头却没加双引号；from 写了 teammate 以外的值。其余标记见 frago book answer-needed-by-human。
+type 只认 single-choice、multi-choice、text-answer、choice-and-text 四个。其余参数（如 `--multi`、`--draft`、`--suggestion`、`--from teammate`）见 `frago app ask --help` 或 `frago book answer-needed-by-human`。

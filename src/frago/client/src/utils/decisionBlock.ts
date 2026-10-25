@@ -260,25 +260,31 @@ function findMatchingBrace(src: string, start: number): number {
  */
 export function parseUiComponentOutput(raw: string): ParseResult | null {
   if (!raw || !raw.includes('"frago_ui_component"')) return null;
-  const markerIdx = raw.lastIndexOf('"frago_ui_component"');
-  const start = raw.lastIndexOf('{', markerIdx);
-  if (start < 0) return null;
-  const end = findMatchingBrace(raw, start);
-  if (end < 0) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch {
-    return null;
+  let searchEnd = raw.length;
+  while (searchEnd > 0) {
+    const markerIdx = raw.lastIndexOf('"frago_ui_component"', searchEnd - 1);
+    if (markerIdx < 0) break;
+    searchEnd = markerIdx;
+    const start = raw.lastIndexOf('{', markerIdx);
+    if (start < 0) continue;
+    const end = findMatchingBrace(raw, start);
+    if (end <= markerIdx) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.slice(start, end + 1));
+    } catch {
+      continue;
+    }
+    if (!isObj(parsed) || parsed.frago_ui_component !== UI_COMPONENT_MARKER) continue;
+    const target = isObj(parsed.data)
+      ? {
+          ...(typeof parsed.component_type === 'string' ? { type: parsed.component_type } : {}),
+          ...parsed.data,
+        }
+      : parsed.data;
+    return validateDecisionObject(target);
   }
-  if (!isObj(parsed) || parsed.frago_ui_component !== UI_COMPONENT_MARKER) return null;
-  const target = isObj(parsed.data)
-    ? {
-        ...(typeof parsed.component_type === 'string' ? { type: parsed.component_type } : {}),
-        ...parsed.data,
-      }
-    : parsed.data;
-  return validateDecisionObject(target);
+  return null;
 }
 
 /**

@@ -625,14 +625,14 @@ function SystemShell({
 }
 
 // ── 正文块 ────────────────────────────────────────────────────────────
-/** 记录正文：13px / 1.65，照原型。长会话一路读下来，长文行高比正文的 1.5 明显省力。 */
+/** 记录正文：基础阅读字号固定在 16px / 1.72，照原型。长会话一路读下来，长文行高明显省力。 */
 function Prose({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-text-primary">
+    <p className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary">
       {text}
     </p>
   );
@@ -645,12 +645,12 @@ function Prose({ text }: { text: string }) {
 function Rich({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
     <MarkdownContent
       content={text}
-      className="min-w-0 break-words text-[13px] leading-[1.65] text-text-primary"
+      className="min-w-0 break-words text-[16px] leading-[1.72] text-text-primary"
     />
   );
 }
@@ -818,13 +818,20 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const p = record.payload;
   const text = str(p, 'text');
   const delegatedUi = str(p, 'ui_component');
+  const suppressed = p.ui_component_delegated === true;
   const delegatedGridBodies = list(p, 'ui_image_grids').filter(
     (v): v is string => typeof v === 'string' && !!v
   );
-  const trailing = record.agent_path.length ? null : splitTrailingBlock(text);
+  const rawTrailing = record.agent_path.length ? null : splitTrailingBlock(text);
+  const uiFromDelegated =
+    !suppressed && !record.agent_path.length && delegatedUi
+      ? parseUiComponentOutput(delegatedUi)
+      : null;
+  const trailing = suppressed || (uiFromDelegated && uiFromDelegated.ok) ? null : rawTrailing;
+  const displayText = rawTrailing && !trailing ? rawTrailing.body : text;
   const uiComponent =
-    !trailing && !record.agent_path.length
-      ? parseUiComponentOutput(delegatedUi || text)
+    !trailing && !suppressed && !record.agent_path.length
+      ? uiFromDelegated ?? parseUiComponentOutput(text)
       : null;
   const imageGrids = !record.agent_path.length
     ? [
@@ -859,7 +866,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         </>
       ) : (
         <>
-          <Rich text={text} />
+          <Rich text={displayText} />
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
           ))}

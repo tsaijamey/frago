@@ -95,35 +95,55 @@ export default function SessionLaunchPanel({
         data-testid="stream-lens"
         className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
       >
-        <div className={SEG_GROUP}>
-          {LENS_ORDER.map((id) => (
-            <Fragment key={id}>
-              {id === 'system' ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+          <div className={SEG_GROUP}>
+            <button
+              type="button"
+              data-testid="lens-watcher"
+              aria-pressed="false"
+              disabled={!hasMessage}
+              className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}
+            >
+              {t('workbench.stream.watcher')}
+              <span className="font-mono opacity-60">{hasMessage ? 1 : 0}</span>
+            </button>
+          </div>
+          <span
+            data-testid="lens-executor-label"
+            className="shrink-0 select-none whitespace-nowrap px-0.5 text-[12px] font-medium text-text-muted"
+          >
+            {t('workbench.stream.executor')}
+          </span>
+          <div className={SEG_GROUP}>
+            {LENS_ORDER.map((id) => (
+              <Fragment key={id}>
+                {id === 'system' ? (
+                  <button
+                    type="button"
+                    data-testid="lens-files"
+                    aria-pressed="false"
+                    title={t('workbench.files.lensHint')}
+                    className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}
+                  >
+                    {t('workbench.files.lens')}
+                    <span className="font-mono opacity-60">0</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  data-testid="lens-files"
-                  aria-pressed="false"
-                  title={t('workbench.files.lensHint')}
-                  className={`${SEG_ITEM} ${SEG_TIGHT} ${SEG_OFF}`}
+                  onClick={() => setLens(id)}
+                  aria-pressed={lens === id}
+                  data-testid={`lens-${id}`}
+                  title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                  disabled={counts[id] === 0}
+                  className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id ? SEG_ON : SEG_OFF}`}
                 >
-                  {t('workbench.files.lens')}
-                  <span className="font-mono opacity-60">0</span>
+                  {t(LENS_LABEL_KEY[id])}
+                  <span className="font-mono opacity-60">{counts[id]}</span>
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setLens(id)}
-                aria-pressed={lens === id}
-                data-testid={`lens-${id}`}
-                title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
-                disabled={counts[id] === 0}
-                className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id ? SEG_ON : SEG_OFF}`}
-              >
-                {t(LENS_LABEL_KEY[id])}
-                <span className="font-mono opacity-60">{counts[id]}</span>
-              </button>
-            </Fragment>
-          ))}
+              </Fragment>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -153,7 +173,7 @@ export default function SessionLaunchPanel({
                   <div className="mt-1.5 min-w-0">
                     <p
                       data-testid="launch-first-message"
-                      className="whitespace-pre-wrap break-words text-[13px] leading-[1.6] text-text-primary"
+                      className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary"
                     >
                       {launch.text}
                     </p>

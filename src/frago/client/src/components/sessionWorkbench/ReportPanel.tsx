@@ -599,6 +599,7 @@ export function ReportBody({
   onWidthChange,
   lower,
   lowerEmpty = false,
+  stackOnly = false,
 }: {
   sessionId: string | null;
   view: SessionObserverView;
@@ -610,6 +611,8 @@ export function ReportBody({
   lower?: ReactNode;
   /** 下半空着：高度收到最小，分割线不给拖。 */
   lowerEmpty?: boolean;
+  /** 右栏只展示暂存列表（移除右栏 observer 摘要块，观察者解读移入中栏 Watcher）。 */
+  stackOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const layout = useSlotLayout();
@@ -667,6 +670,17 @@ export function ReportBody({
         <p className="px-3 py-3 text-[12px] leading-[1.6] text-text-muted">
           {t('workbench.report.noSession')}
         </p>
+      </aside>
+    );
+  }
+
+  if (stackOnly) {
+    return (
+      <aside ref={asideRef} className={aside}>
+        {widthHandle}
+        <div data-testid="report-lower" className="min-h-0 flex-1">
+          {lower}
+        </div>
       </aside>
     );
   }
@@ -763,6 +777,8 @@ export default function ReportPanel({
   onWidthChange,
   lower,
   lowerEmpty,
+  stackOnly,
+  view: providedView,
 }: {
   sessionId: string | null;
   width?: number | null;
@@ -770,8 +786,11 @@ export default function ReportPanel({
   /** 下半那一块（暂存列表）。 */
   lower?: ReactNode;
   lowerEmpty?: boolean;
+  stackOnly?: boolean;
+  view?: SessionObserverView;
 }) {
-  const view = useSessionObserver(sessionId);
+  const fetchedView = useSessionObserver(providedView ? null : sessionId);
+  const view = providedView ?? fetchedView;
   return (
     <ReportBody
       sessionId={sessionId}
@@ -780,6 +799,7 @@ export default function ReportPanel({
       onWidthChange={onWidthChange}
       lower={lower}
       lowerEmpty={lowerEmpty}
+      stackOnly={stackOnly}
     />
   );
 }

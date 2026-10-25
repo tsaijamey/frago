@@ -7,7 +7,14 @@
 
 import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import RecordStream, { groupRecords, lensOf, talkView } from '../RecordStream';
+import RecordStream, {
+  buildTalkSegments,
+  groupRecords,
+  lensOf,
+  talkView,
+  withTurnDecisionCards,
+} from '../RecordStream';
+import { DecisionCardContext } from '../DecisionCard';
 import { TestRail } from './railTestKit';
 import { relativeTime, shortAge } from '../SessionItem';
 import { ReportBody } from '../ReportPanel';
@@ -415,6 +422,200 @@ describe('RecordStream 中栏', () => {
       expect(screen.getByTestId('stream-lens-usage').textContent).toBe(
         'claude-opus-5 · 上下文 167k · 累计 5.0M'
       );
+    });
+
+    it('档位条左侧依次紧贴展示 Watcher 菜单、隔离纯文本 Executor 与现有 All | Talk 等菜单', () => {
+      render(<RecordStream {...streamProps({ records: mixed })} />);
+      const watcherBtn = screen.getByTestId('lens-watcher');
+      const executorLabel = screen.getByTestId('lens-executor-label');
+      const allBtn = screen.getByTestId('lens-all');
+      expect(watcherBtn.textContent).toContain('Watcher');
+      expect(executorLabel.textContent).toBe('Executor');
+      expect(allBtn.textContent).toContain('全部');
+    });
+
+    it('Talk 视图将每个回复前的多次工具调用与 thinking 叠加为单行自增计数，不刷多行', () => {
+      const turnWithMultiToolsAndThinks = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '排查问题' } }),
+        record({ id: 'th1', seq: 1, kind: 'agent.think', payload: { text: '第一轮思考' } }),
+        record({ id: 'tc1', seq: 2, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'tr1', seq: 3, kind: 'tool.result', payload: { tool_name: 'Read', status: 'ok', body: 'ok' } }),
+        record({ id: 'th2', seq: 4, kind: 'agent.think', payload: { text: '第二轮思考' } }),
+        record({ id: 'tc2', seq: 5, kind: 'tool.call', payload: { tool_name: 'Grep', args: {} } }),
+        record({ id: 'tc3', seq: 6, kind: 'tool.call', payload: { tool_name: 'Bash', args: {} } }),
+        record({ id: 'th3', seq: 7, kind: 'agent.think', payload: { text: '第三轮思考' } }),
+        record({ id: 'th4', seq: 8, kind: 'agent.think', payload: { text: '第四轮思考' } }),
+        record({ id: 'th5', seq: 9, kind: 'agent.think', payload: { text: '第五轮思考' } }),
+        record({ id: 'a1', seq: 10, kind: 'agent.say', payload: { text: '已定位根因。' } }),
+      ];
+
+      const segs = buildTalkSegments(turnWithMultiToolsAndThinks);
+      const aggSegs = segs.filter((s) => s.kind === 'talk-agg');
+      expect(aggSegs).toHaveLength(1);
+      if (aggSegs[0].kind === 'talk-agg') {
+        expect(aggSegs[0].toolCalls).toBe(3);
+        expect(aggSegs[0].thinkingSteps).toBe(5);
+      }
+
+      render(<RecordStream {...streamProps({ records: turnWithMultiToolsAndThinks })} />);
+      const aggRows = screen.getAllByTestId('talk-pre-response-agg');
+      expect(aggRows).toHaveLength(1);
+      expect(aggRows[0].textContent).toContain('3次工具调用');
+      expect(aggRows[0].textContent).toContain('5次thinking');
+    });
+
+    it('Watcher 视图对每个游标切片外部上方展示观察者总结，下方包裹默认折叠的 Talk 并原样展示可交互决策卡', () => {
+      const uiCardJson = JSON.stringify({
+        frago_ui_component: 'decision-card',
+        component_type: 'single-choice',
+        data: {
+          type: 'single-choice',
+          question: 'Observer 信息结构采用哪种组织方式？',
+          options: [
+            {
+              key: 'A',
+              label: '三段式（执行动作 + 背景上下文 + 决策选项）',
+              effect: '直接服务于用户拍板',
+              recommended: true,
+              reversible: true,
+            },
+            {
+              key: 'B',
+              label: '双段式（当前进展 + 待决问题）',
+              effect: '极简展示',
+              recommended: false,
+              reversible: true,
+            },
+          ],
+        },
+      });
+      const recordsWithCard = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '梳理信息结构' } }),
+        record({ id: 'tc1', seq: 1, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'tr1', seq: 2, kind: 'tool.result', payload: { tool_name: 'Bash', status: 'ok', body: uiCardJson } }),
+        record({ id: 'a1', seq: 3, kind: 'agent.say', payload: { text: '请选择信息结构方案。' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '梳理信息结构',
+          tail: { kind: 'output', text: '已完成代码改造，等待选择信息结构' },
+          decision: 'Observer 信息结构采用哪种组织方式？',
+          happened: ['完成了 Watcher 与 Talk 改造'],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 4,
+              tail: { kind: 'output', text: '已完成代码改造，等待选择信息结构' },
+              happened_add: ['完成了 Watcher 与 Talk 改造'],
+              decision: 'Observer 信息结构采用哪种组织方式？',
+              summary: '完成了 Watcher 与 Talk 改造\n已完成代码改造，等待选择信息结构',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+      const answer = vi.fn();
+
+      render(
+        <DecisionCardContext.Provider
+          value={{
+            canAnswer: true,
+            blockedReason: null,
+            answerOf: () => null,
+            answer,
+          }}
+        >
+          <RecordStream {...streamProps({ records: recordsWithCard, observer: observerView })} />
+        </DecisionCardContext.Provider>
+      );
+
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+      expect(screen.getByTestId('watcher-view')).toBeTruthy();
+      expect(screen.getByTestId('watcher-phase-goal').textContent).toContain('阶段目标：梳理信息结构');
+      expect(screen.getByTestId('watcher-summary').textContent).toContain('完成了 Watcher 与 Talk 改造');
+      expect(screen.getByTestId('watcher-summary').textContent).not.toContain('。；');
+      expect(screen.getByTestId('watcher-part-doing').textContent).toContain(
+        '当前在做什么：完成了 Watcher 与 Talk 改造'
+      );
+      expect(screen.getByTestId('watcher-part-findings').textContent).toContain(
+        '关键发现或产出：已完成代码改造，等待选择信息结构'
+      );
+      expect(screen.getByTestId('watcher-part-decision').textContent).toContain(
+        '待拍板背景：Observer 信息结构采用哪种组织方式？'
+      );
+
+      // Talk 默认折叠，但决策卡在 Watcher 下原样展示且可直接选择发送
+      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('watcher-talk-body-0')).toBeNull();
+      expect(screen.getByTestId('decision-card')).toBeTruthy();
+
+      fireEvent.click(screen.getAllByTestId('decision-option')[1]);
+      expect(answer).toHaveBeenCalledTimes(1);
+
+      // 点击展开包裹的 Talk，展示内部对话与响应前动作聚合
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByTestId('watcher-talk-body-0')).toBeTruthy();
+      expect(screen.getByText('请选择信息结构方案。')).toBeTruthy();
+    });
+
+    it('Watcher 每段总结严格锁定 [cursor_from, cursor_to) 闭区间，不会把游标之后新发生的回复塞进旧总结槽位', () => {
+      const recordsWithTrailing = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第一问' } }),
+        record({ id: 'a1', seq: 1, kind: 'agent.say', payload: { text: '第一答' } }),
+        record({ id: 'u2', seq: 2, kind: 'user.say', payload: { text: '浮动按钮上的L和数字是什么含义？' } }),
+        record({ id: 'a2', seq: 3, kind: 'agent.say', payload: { text: 'L是行号的缩写，代表起始行号到结束行号。' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '第一问',
+          tail: { kind: 'output', text: '完成了第一问答复' },
+          decision: '',
+          happened: ['完成了第一问答复'],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              tail: { kind: 'output', text: '完成了第一问答复' },
+              happened_add: ['完成了第一问答复'],
+              decision: '',
+              summary: '完成了第一问答复',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      render(<RecordStream {...streamProps({ records: recordsWithTrailing, observer: observerView })} />);
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // #1 总结严格只包裹 [0, 2) 内的 1 条提问 · 1 条回复，不会把 seq=2,3 的后续问答吞进去
+      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      expect(toggle.textContent).toContain('1条提问');
+      expect(toggle.textContent).toContain('1条回复');
+
+      // 游标 2 之后尚未总结的新对话独立呈现在尾部，不预设虚假的 #2 总结槽位
+      expect(screen.getAllByTestId('watcher-item')).toHaveLength(1);
+      const tail = screen.getByTestId('watcher-unsummarized-tail');
+      expect(tail.textContent).toContain('浮动按钮上的L和数字是什么含义？');
+      expect(tail.textContent).toContain('L是行号的缩写，代表起始行号到结束行号。');
     });
   });
 });
@@ -957,6 +1158,21 @@ describe('ReportPanel 右栏', () => {
       fireEvent.doubleClick(handle);
       expect(onWidthChange).toHaveBeenLastCalledWith(null);
     });
+
+    it('stackOnly 模式下右栏不再渲染观察者摘要槽位，仅保留暂存面板', () => {
+      render(
+        <ReportBody
+          stackOnly
+          sessionId="s1"
+          view={view({ decision: '待决问题' })}
+          lower={<div data-testid="only-stack">暂存区</div>}
+        />,
+      );
+      expect(screen.getByTestId('only-stack')).toBeTruthy();
+      expect(screen.queryByTestId('report-upper')).toBeNull();
+      expect(screen.queryByText('这场在做什么')).toBeNull();
+      expect(screen.queryByText('轮到你了')).toBeNull();
+    });
   });
 });
 
@@ -1088,5 +1304,79 @@ describe('RecordStream 自动跟随的滑法', () => {
     expect(bubble.getAttribute('data-fresh')).toBe('true');
     expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('in_the_session');
     expect(screen.getByTestId('agent-on-it').textContent).toContain('在想，还没写字');
+  });
+
+  it('同回合既有 frago app ask 工具结果又有多条回复或内联 YAML 区块时，去重只渲染一张决策卡', () => {
+    const cliCard = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '是否部署？',
+        options: [
+          { key: 'A', label: '立即部署', effect: '构建并重启服务', recommended: true },
+          { key: 'B', label: '暂不部署', effect: '仅保留代码改动' },
+        ],
+      },
+    });
+    const inlineYaml = [
+      '请在下方卡片点选：',
+      '```answer-needed-by-human',
+      'type: single-choice',
+      'question: 是否部署？',
+      'options:',
+      '  - key: A',
+      '    label: 立即部署',
+      '    effect: 构建并重启服务',
+      '    recommended: true',
+      '  - key: B',
+      '    label: 暂不部署',
+      '    effect: 仅保留代码改动',
+      '```',
+    ].join('\n');
+
+    const turnRecords: WorkbenchRecord[] = [
+      rec({ id: 'u1', seq: 1, kind: 'user.say', payload: { text: '帮我准备部署' } }),
+      rec({
+        id: 't1',
+        seq: 2,
+        kind: 'tool.result',
+        payload: { tool_name: 'Bash', status: 'ok', body: cliCard },
+      }),
+      rec({ id: 'a1', seq: 3, kind: 'agent.say', payload: { text: inlineYaml } }),
+      rec({ id: 'a2', seq: 4, kind: 'agent.say', payload: { text: inlineYaml } }),
+    ];
+
+    const processed = withTurnDecisionCards(turnRecords);
+    // t1 与前一条内联卡片回复 a1 均被标记为 delegated，仅最后一条回复 a2 承载当轮决策卡
+    expect(processed[1].payload.ui_component_delegated).toBe(true);
+    expect(processed[2].payload.ui_component_delegated).toBe(true);
+    expect(processed[3].payload.ui_component).toBe(cliCard);
+
+    render(<RecordStream {...props({ records: turnRecords })} />);
+    expect(screen.getAllByTestId('decision-card')).toHaveLength(1);
+  });
+
+  it('工具输出同时含前文闭合花括号、注释里的 frago_ui_component 与 image-grid 字样时不发生死循环', () => {
+    const diffLikeBody = [
+      'fn helper() {}',
+      '/// 与页面 `parseUiComponentOutput` 同构：找最后一个 `"frago_ui_component"`',
+      '/// 以及 `"image-grid"` 组件标记',
+    ].join('\n');
+    const turnRecords: WorkbenchRecord[] = [
+      rec({ id: 'u1', seq: 1, kind: 'user.say', payload: { text: '检查代码' } }),
+      rec({
+        id: 't1428',
+        seq: 1428,
+        kind: 'tool.result',
+        payload: { tool_name: 'Bash', status: 'ok', body: diffLikeBody },
+      }),
+      rec({ id: 'a1', seq: 1429, kind: 'agent.say', payload: { text: '检查完毕。' } }),
+    ];
+
+    const processed = withTurnDecisionCards(turnRecords);
+    expect(processed).toHaveLength(3);
+    render(<RecordStream {...props({ records: turnRecords })} />);
+    expect(screen.getByText('检查完毕。')).toBeTruthy();
   });
 });

@@ -36,11 +36,13 @@ import {
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import { CheckCheck, ChevronDown, ChevronRight, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import { DecisionCard } from './DecisionCard';
 import RecordCard, {
   KIND_GROUP,
   SystemRun,
   ToolRun,
+  formatClock,
   formatDuration,
   previewArgs,
   type ToolRow,
@@ -56,7 +58,10 @@ import SelectionQuote, {
   type BranchExtras,
   type MarkAnchor,
 } from './SelectionQuote';
-import FileViewer, { type PackedAnnotationsPayload } from './FileViewer';
+import FileViewer, {
+  type FileEditSendPayload,
+  type PackedAnnotationsPayload,
+} from './FileViewer';
 import { revealPath } from '@/api';
 import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
@@ -74,8 +79,14 @@ import {
   type SendTrail,
   type WorkbenchRecord,
 } from '@/hooks/useWorkbenchRecords';
-import { parseUiComponentOutput } from '@/utils/decisionBlock';
+import {
+  parseUiComponentOutput,
+  splitTrailingBlock,
+  trailingDecision,
+  type DecisionBlock,
+} from '@/utils/decisionBlock';
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
+import type { SessionObserverView } from '@/hooks/useSessionObserver';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -153,6 +164,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   let turnToolBody = '';
   let turnImageIndices: number[] = [];
   let turnImageBodies: string[] = [];
+  let turnInlineCardAgentIndices: number[] = [];
   let lastAgentSayIdx = -1;
 
   const flushTurn = () => {
@@ -160,10 +172,17 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       if (lastAgentSayIdx >= 0) {
         for (const idx of turnToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
+        for (const idx of turnInlineCardAgentIndices) {
+          if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
+        }
       } else if (turnToolIndices.length > 1) {
         for (let k = 0; k < turnToolIndices.length - 1; k += 1) {
           delegateToolIndices.add(turnToolIndices[k]);
         }
+      }
+    } else if (turnInlineCardAgentIndices.length > 1) {
+      for (let k = 0; k < turnInlineCardAgentIndices.length - 1; k += 1) {
+        delegateToolIndices.add(turnInlineCardAgentIndices[k]);
       }
     }
     if (turnImageIndices.length && lastAgentSayIdx >= 0) {
@@ -174,6 +193,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
     turnToolBody = '';
     turnImageIndices = [];
     turnImageBodies = [];
+    turnInlineCardAgentIndices = [];
     lastAgentSayIdx = -1;
   };
 
@@ -189,6 +209,10 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       }
       if (r.kind === 'agent.say') {
         lastAgentSayIdx = i;
+        const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+        if (text && (splitTrailingBlock(text) || parseUiComponentOutput(text)?.ok)) {
+          turnInlineCardAgentIndices.push(i);
+        }
         continue;
       }
       if (r.kind === 'tool.result' && r.payload.status !== 'error') {
@@ -329,8 +353,140 @@ export function groupRecords(records: WorkbenchRecord[]): RecordGroup[] {
  */
 export type StreamSegment =
   | { kind: 'record'; record: WorkbenchRecord }
+  | {
+      kind: 'talk-agg';
+      key: string;
+      toolCalls: number;
+      thinkingSteps: number;
+      records: WorkbenchRecord[];
+      groupId: string | null;
+    }
   | { kind: 'tools'; key: string; rows: ToolRow[]; extras: WorkbenchRecord[]; records: WorkbenchRecord[] }
   | { kind: 'system'; key: string; records: WorkbenchRecord[] };
+
+/**
+ * 将「All 里显示但 Talk 里原本不显示」的响应前动作（工具调用与思考步骤）
+ * 在每一条 `agent.say` 回复出现前自动叠加为单行 `{num}次工具调用 · {num}次thinking`，
+ * 数字原位自增，不出现刷新式多行递增。
+ */
+export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
+  const normalized = withTurnDecisionCards(records);
+  const out: StreamSegment[] = [];
+  let tick: WorkbenchRecord | null = null;
+  let pendingTools = 0;
+  let pendingThinking = 0;
+  let pendingRecords: WorkbenchRecord[] = [];
+
+  const flushTick = () => {
+    if (tick) {
+      out.push({ kind: 'record', record: tick });
+      tick = null;
+    }
+  };
+
+  const flushPreResponse = (followingGroupId: string | null = null) => {
+    if (pendingTools === 0 && pendingThinking === 0) return;
+    const firstId = pendingRecords[0]?.id ?? `idx-${out.length}`;
+    const sharedGroup =
+      followingGroupId &&
+      pendingRecords.length > 0 &&
+      pendingRecords.every((r) => r.group_id === followingGroupId)
+        ? followingGroupId
+        : pendingRecords.length > 0 &&
+            pendingRecords[0].group_id &&
+            pendingRecords.every((r) => r.group_id === pendingRecords[0].group_id)
+          ? pendingRecords[0].group_id
+          : null;
+    out.push({
+      kind: 'talk-agg',
+      key: `talk-agg:${firstId}`,
+      toolCalls: pendingTools,
+      thinkingSteps: pendingThinking,
+      records: pendingRecords,
+      groupId: sharedGroup,
+    });
+    pendingTools = 0;
+    pendingThinking = 0;
+    pendingRecords = [];
+  };
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const record = normalized[i];
+    if (record.kind === 'usage.tick') {
+      tick = record;
+      continue;
+    }
+    if (record.kind === 'tool.call') {
+      pendingTools += 1;
+      pendingRecords.push(record);
+      continue;
+    }
+    if (record.kind === 'agent.think') {
+      pendingThinking += 1;
+      pendingRecords.push(record);
+      continue;
+    }
+    if (
+      record.kind === 'tool.result' &&
+      !record.agent_path.length &&
+      record.payload.status !== 'error' &&
+      record.payload.ui_component_delegated !== true
+    ) {
+      const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
+        flushTick();
+        flushPreResponse(record.group_id);
+        out.push({ kind: 'record', record });
+        continue;
+      }
+    }
+    if (lensOf(record) !== 'talk') continue;
+    flushTick();
+    flushPreResponse(record.kind === 'agent.say' ? record.group_id : null);
+    out.push({ kind: 'record', record });
+  }
+  flushPreResponse(null);
+  flushTick();
+  return out;
+}
+
+/** 提取某段记录切片中挂载了有效决策卡的条目，供 Watcher 在 Talk 折叠时原封不动展示并直接交互。 */
+export function extractSliceDecisionCards(
+  records: WorkbenchRecord[]
+): { recordId: string; block: DecisionBlock }[] {
+  const normalized = withTurnDecisionCards(records);
+  const cards: { recordId: string; block: DecisionBlock }[] = [];
+  for (const r of normalized) {
+    if (r.agent_path.length > 0) continue;
+    if (r.kind === 'agent.say') {
+      const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+      const trailing = text ? trailingDecision(text) : null;
+      if (trailing && trailing.result.ok) {
+        cards.push({ recordId: r.id, block: trailing.result.block });
+        continue;
+      }
+      const delegatedUi =
+        typeof r.payload.ui_component === 'string' ? r.payload.ui_component : '';
+      const uiCard = parseUiComponentOutput(delegatedUi || text);
+      if (uiCard && uiCard.ok) {
+        cards.push({ recordId: r.id, block: uiCard.block });
+      }
+    } else if (
+      r.kind === 'tool.result' &&
+      r.payload.status !== 'error' &&
+      r.payload.ui_component_delegated !== true
+    ) {
+      const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      if (uiCard && uiCard.ok) {
+        cards.push({ recordId: r.id, block: uiCard.block });
+      }
+    }
+  }
+  return cards;
+}
 
 function isToolRecord(r: WorkbenchRecord): boolean {
   return r.kind === 'tool.call' || r.kind === 'tool.result';
@@ -443,6 +599,7 @@ function segmentRecords(seg: StreamSegment): WorkbenchRecord[] {
 
 /** 一段属于哪一次回复：组内记录同属一次回复才算，跨了回复的并段不归组。 */
 function segmentGroupId(seg: StreamSegment): string | null {
+  if (seg.kind === 'talk-agg') return seg.groupId;
   const recs = segmentRecords(seg).filter((r) => r.group_id);
   if (!recs.length) return null;
   const id = recs[0].group_id;
@@ -731,6 +888,78 @@ export interface RecordStreamProps {
   onRevealFile?: (path: string) => void;
   /** 在 FileViewer 中打包批注填入对话框的回调。 */
   onPackPrompt?: (payload: PackedAnnotationsPayload) => void;
+  /** 在 FileViewer 中保存文件修改后直接将修改通知发往对话区的回调。 */
+  onSendFileEdit?: (payload: FileEditSendPayload) => void | Promise<void>;
+  /** 旁路 AI 定期观察这场的解读结果（供 Watcher 档展示游标增量总结与包裹的 Talk）。 */
+  observer?: SessionObserverView | null;
+}
+
+interface WatcherSlice {
+  id: string;
+  at: number | null;
+  phaseGoal: string | null;
+  doing: string | null;
+  findings: string[];
+  decision: string | null;
+  summary: string;
+  records: WorkbenchRecord[];
+  decisionCards: { recordId: string; block: DecisionBlock }[];
+}
+
+function cleanGoalText(raw?: string | null): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith('【answer】')) return null;
+  return trimmed;
+}
+
+function cleanTailText(raw?: string | null): string {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .replace(/^\[(?:此刻|产出)\]\s*/, '')
+    .replace(/。\s*[；;]+/g, '。')
+    .replace(/^[；;\s]+|[；;\s]+$/g, '')
+    .trim();
+}
+
+function joinClauses(items: string[]): string {
+  const cleaned = items.map((x) => cleanTailText(x)).filter(Boolean);
+  if (cleaned.length === 0) return '';
+  if (cleaned.length === 1) return cleaned[0];
+  return cleaned.map((x) => x.replace(/[。；;]+$/, '')).join('；');
+}
+
+function deriveThreeParts(
+  tail: { kind: 'now' | 'output'; text: string } | null | undefined,
+  happenedList: string[] | undefined,
+  decisionRaw: string | null | undefined
+): { doing: string | null; findings: string[]; decision: string | null } {
+  const tailKind = tail?.kind;
+  const tailText = cleanTailText(tail?.text);
+  const items: string[] = [];
+  for (const raw of happenedList ?? []) {
+    const cleaned = cleanTailText(raw);
+    if (cleaned && !items.includes(cleaned)) items.push(cleaned);
+  }
+  const decisionCleaned = cleanTailText(decisionRaw);
+  const decision = decisionCleaned || null;
+
+  let doing: string | null = null;
+  let findings: string[] = [];
+  if (tailKind === 'now' && tailText) {
+    doing = tailText;
+    findings = items.filter((x) => x !== tailText);
+  } else if (tailKind === 'output' && tailText) {
+    const withoutTail = items.filter((x) => x !== tailText);
+    if (withoutTail.length > 0) {
+      doing = joinClauses(withoutTail);
+    }
+    findings = [tailText];
+  } else if (items.length > 0) {
+    doing = items[0];
+    findings = items.slice(1);
+  }
+  return { doing, findings, decision };
 }
 
 /** 悬停说明与水位读数里 k 为单位的写法：312k。 */
@@ -779,6 +1008,8 @@ export default function RecordStream({
   sessionFiles = null,
   onRevealFile,
   onPackPrompt,
+  onSendFileEdit,
+  observer = null,
 }: RecordStreamProps) {
   const { t } = useTranslation();
   /** 档位条右侧那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
@@ -797,6 +1028,11 @@ export default function RecordStream({
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
+  const [watcherOpen, setWatcherOpen] = useState(false);
+  const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setExpandedWatcherIds({});
+  }, [sessionId]);
   /** 圈中的那段是一条真文件、或点中回复里的本地文件链接时，就地浮开的那一份。 */
   const [peek, setPeek] = useState<{ path: string; size: number | null; line?: string } | null>(
     null
@@ -833,16 +1069,134 @@ export default function RecordStream({
     [resolved, lens]
   );
 
-  // 连续同类合并：「对话」档不并（那里本来只摆对话），「系统」档不压系统记录。
+  // 连续同类合并：「对话」档把响应前的工具调用与思考压成单行计数自增，其余对话原样摆；「系统」档不压系统记录。
   const segments = useMemo(
     () =>
       lens === 'talk'
-        ? visible.map((record) => ({ kind: 'record' as const, record }))
+        ? buildTalkSegments(resolved)
         : collapseRuns(visible, { tools: lens === 'all' || lens === 'tool', system: lens === 'all' }),
-    [visible, lens]
+    [resolved, visible, lens]
   );
   const groups = useMemo(() => groupSegments(segments), [segments]);
   const lastSegment = segments[segments.length - 1];
+
+  const watcherCount = useMemo(() => {
+    if (!resolved.length) return 0;
+    const state = observer?.state ?? null;
+    const runs = state?.runs ?? [];
+    if (runs.length > 0) return runs.length;
+    const hasFallback = Boolean(
+      cleanGoalText(state?.anchor) ||
+        state?.happened?.length ||
+        state?.tail?.text ||
+        state?.decision
+    );
+    return hasFallback ? 1 : 0;
+  }, [resolved.length, observer?.state]);
+
+  const { watcherSlices, unsummarizedTailRecords } = useMemo<{
+    watcherSlices: WatcherSlice[];
+    unsummarizedTailRecords: WorkbenchRecord[];
+  }>(() => {
+    if (!watcherOpen || !resolved.length) return { watcherSlices: [], unsummarizedTailRecords: [] };
+    const state = observer?.state ?? null;
+    const runs = state?.runs ?? [];
+    let firstHumanGoal: string | null = null;
+    for (const r of resolved) {
+      if (r.kind === 'user.say' && !r.payload.is_tool_result) {
+        const g = cleanGoalText(typeof r.payload.text === 'string' ? r.payload.text : null);
+        if (g) {
+          firstHumanGoal = g;
+          break;
+        }
+      }
+    }
+    if (runs.length > 0) {
+      let maxCursorTo = 0;
+      const slices = runs.map((run, idx) => {
+        const fromSeq = typeof run.cursor_from === 'number' ? run.cursor_from : 0;
+        const toSeq =
+          typeof run.cursor_to === 'number'
+            ? run.cursor_to
+            : resolved[resolved.length - 1].seq + 1;
+        if (toSeq > maxCursorTo) maxCursorTo = toSeq;
+        // 严格只包裹本次总结真实读过的已发生闭区间 [cursor_from, cursor_to)，
+        // 绝不把 cursor_to 之后才发生的记录塞进旧总结槽位里。
+        const sliceRecords = resolved.filter((r) => r.seq >= fromSeq && r.seq < toSeq);
+        const sliceCards = extractSliceDecisionCards(sliceRecords);
+        const lastSliceCard = sliceCards.length > 0 ? sliceCards[sliceCards.length - 1].block : null;
+        const cardFallbackDecision = lastSliceCard
+          ? lastSliceCard.why
+            ? `${lastSliceCard.question}（${lastSliceCard.why}）`
+            : lastSliceCard.question
+          : null;
+        const parts = deriveThreeParts(
+          run.tail,
+          run.happened_add,
+          (run.decision && run.decision.trim()) || cardFallbackDecision
+        );
+        const summaryParts: string[] = [];
+        if (run.summary && run.summary.trim()) {
+          summaryParts.push(run.summary.trim());
+        } else {
+          if (run.happened_add?.length) summaryParts.push(...run.happened_add);
+          if (run.tail?.text) summaryParts.push(run.tail.text);
+          if (parts.decision) summaryParts.push(parts.decision);
+        }
+        const phaseGoal =
+          cleanGoalText(run.phase_goal) ||
+          cleanGoalText(state?.phase_goal) ||
+          cleanGoalText(state?.anchor) ||
+          firstHumanGoal;
+        return {
+          id: run.id || `run-${idx + 1}`,
+          at: run.at ?? state?.updated_at ?? sliceRecords[sliceRecords.length - 1]?.ts ?? null,
+          phaseGoal,
+          doing: parts.doing,
+          findings: parts.findings,
+          decision: parts.decision,
+          summary: summaryParts.join('\n') || t('workbench.stream.watcherEmptySummary'),
+          records: sliceRecords,
+          decisionCards: sliceCards,
+        };
+      });
+      const tailRecords = resolved.filter((r) => r.seq >= maxCursorTo);
+      return { watcherSlices: slices, unsummarizedTailRecords: tailRecords };
+    }
+    const fallbackChronological = state?.happened?.length ? [...state.happened].reverse() : [];
+    const fallbackThree = deriveThreeParts(state?.tail, fallbackChronological, state?.decision);
+    const fallbackParts: string[] = [];
+    const safeAnchor = cleanGoalText(state?.anchor);
+    if (safeAnchor) fallbackParts.push(safeAnchor);
+    if (fallbackChronological.length) fallbackParts.push(...fallbackChronological);
+    if (state?.tail?.text) fallbackParts.push(state.tail.text);
+    if (state?.decision) fallbackParts.push(state.decision);
+    if (fallbackParts.length > 0) {
+      return {
+        watcherSlices: [
+          {
+            id: 'run-1',
+            at: state?.updated_at ?? resolved[resolved.length - 1]?.ts ?? null,
+            phaseGoal:
+              cleanGoalText(state?.phase_goal) ||
+              safeAnchor ||
+              firstHumanGoal,
+            doing: fallbackThree.doing,
+            findings: fallbackThree.findings,
+            decision: fallbackThree.decision,
+            summary: fallbackParts.join('\n'),
+            records: resolved,
+            decisionCards: extractSliceDecisionCards(resolved),
+          },
+        ],
+        unsummarizedTailRecords: [],
+      };
+    }
+    return {
+      watcherSlices: [],
+      unsummarizedTailRecords: resolved,
+    };
+  }, [watcherOpen, resolved, observer?.state, t]);
 
   /** 记录编号 → 挂在它下面的那份进度。 */
   const trailOf = useMemo(() => {
@@ -921,6 +1275,37 @@ export default function RecordStream({
 
   const renderSegment = (seg: StreamSegment) => {
     if (seg.kind === 'record') return renderRecord(seg.record);
+    if (seg.kind === 'talk-agg') {
+      const parts: ReactNode[] = [];
+      if (seg.toolCalls > 0) {
+        parts.push(
+          <span key="tools" data-testid="talk-agg-tools">
+            {t('workbench.stream.preResponseToolCalls', { count: seg.toolCalls })}
+          </span>
+        );
+      }
+      if (seg.thinkingSteps > 0) {
+        parts.push(
+          <span key="thinking" data-testid="talk-agg-thinking">
+            {t('workbench.stream.preResponseThinking', { count: seg.thinkingSteps })}
+          </span>
+        );
+      }
+      return (
+        <div
+          key={seg.key}
+          data-testid="talk-pre-response-agg"
+          className="flex min-w-0 flex-wrap items-center gap-2 px-3 py-1 font-mono text-[13px] text-text-muted"
+        >
+          {parts.map((part, idx) => (
+            <Fragment key={idx}>
+              {idx > 0 ? <span aria-hidden className="text-text-dim">·</span> : null}
+              {part}
+            </Fragment>
+          ))}
+        </div>
+      );
+    }
     if (seg.kind === 'tools') {
       return (
         <ToolRun
@@ -1038,7 +1423,7 @@ export default function RecordStream({
   useLayoutEffect(() => {
     scrollToBottom();
     followArmed.current = true;
-  }, [lens, scrollToBottom]);
+  }, [lens, watcherOpen, scrollToBottom]);
 
   // "在等 agent 开口"那一条也是内容，它一冒出来就要看得见——跟着的人正是为了看它。
   // 人自己滚上去看别的时不打扰。
@@ -1056,6 +1441,10 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (watcherOpen) {
+      setWatcherOpen(false);
+      return;
+    }
     if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
       setLens('talk');
       return;
@@ -1069,7 +1458,7 @@ export default function RecordStream({
     el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens, filesOpen]);
+  }, [scrollAt, scrollId, lens, filesOpen, watcherOpen]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
@@ -1182,6 +1571,10 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (watcherOpen) {
+      setWatcherOpen(false);
+      return;
+    }
     if (!records.some((r) => r.id === mark.record_id)) {
       if (hasOlder) {
         if (loadingOlder) {
@@ -1238,7 +1631,7 @@ export default function RecordStream({
     finish('found');
     // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完、文件那一档合上
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen]);
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen, watcherOpen]);
 
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
@@ -1298,7 +1691,8 @@ export default function RecordStream({
   );
 
   // 缩略滚动条只在「全部」「对话」两档出现（spec 20260928-webui-session-stack 已定）。
-  const showMinimap = minimap && (lens === 'all' || lens === 'talk') && visible.length > 0;
+  const showMinimap =
+    minimap && !watcherOpen && (lens === 'all' || lens === 'talk') && visible.length > 0;
 
   if (!sessionId) {
     return (
@@ -1316,57 +1710,81 @@ export default function RecordStream({
           data-testid="stream-lens"
           className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
         >
-          {/* 六档是一组单选：装在同一块浅底里，当前那一档浮起来。与左栏时间范围同一套长相
-              （见 `seg.ts`）。一排放不下时自己横向滚动，不换行、不折字。
-              内边距收成 5px、字号 11.5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下
-              （第五轮三改）。 */}
-          <div className={SEG_GROUP}>
-            {LENS_ORDER.map((id) => (
-              <Fragment key={id}>
-                {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
-                    但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
-                    按灰，人就以为这一场没改过文件。 */}
-                {id === 'system' && filesView ? (
+          {/* 整个左侧区域分为紧贴的 Watcher + 隔离纯文本 Executor + 现有的 All | Talk | ... 菜单 */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+            <div className={SEG_GROUP}>
+              <button
+                type="button"
+                data-testid="lens-watcher"
+                onClick={() => {
+                  setWatcherOpen(true);
+                  onFilesOpenChange?.(false);
+                }}
+                aria-pressed={watcherOpen && !filesOpen}
+                className={`${SEG_ITEM} ${SEG_TIGHT} ${watcherOpen && !filesOpen ? SEG_ON : SEG_OFF}`}
+              >
+                {t('workbench.stream.watcher')}
+                <span className="font-mono opacity-60">{watcherCount}</span>
+              </button>
+            </div>
+            <span
+              data-testid="lens-executor-label"
+              className="shrink-0 select-none whitespace-nowrap px-0.5 text-[12px] font-medium text-text-muted"
+            >
+              {t('workbench.stream.executor')}
+            </span>
+            <div className={SEG_GROUP}>
+              {LENS_ORDER.map((id) => (
+                <Fragment key={id}>
+                  {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
+                      但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
+                      按灰，人就以为这一场没改过文件。 */}
+                  {id === 'system' && filesView ? (
+                    <button
+                      type="button"
+                      data-testid="lens-files"
+                      onClick={() => {
+                        setWatcherOpen(false);
+                        onFilesOpenChange?.(!filesOpen);
+                      }}
+                      aria-pressed={filesOpen}
+                      title={t('workbench.files.lensHint')}
+                      className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
+                    >
+                      {t('workbench.files.lens')}
+                      {typeof filesCount === 'number' ? (
+                        <span className="font-mono opacity-60">{filesCount}</span>
+                      ) : filesPending ? (
+                        /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
+                           而那正是这颗按钮**不该**说的事。 */
+                        <span data-testid="lens-files-pending" className="font-mono opacity-60">
+                          …
+                        </span>
+                      ) : null}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    data-testid="lens-files"
-                    onClick={() => onFilesOpenChange?.(!filesOpen)}
-                    aria-pressed={filesOpen}
-                    title={t('workbench.files.lensHint')}
-                    className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
+                    /* 点某一档镜头就是回记录流：人手上还开着文件清单或 Watcher 时，他这一下是在说「我要看记录」。
+                       不跟着切回来，点了没反应，像坏了。 */
+                    onClick={() => {
+                      setWatcherOpen(false);
+                      setLens(id);
+                      onFilesOpenChange?.(false);
+                    }}
+                    aria-pressed={lens === id && !filesOpen && !watcherOpen}
+                    data-testid={`lens-${id}`}
+                    /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+                    title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                    disabled={counts[id] === 0}
+                    className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen && !watcherOpen ? SEG_ON : SEG_OFF}`}
                   >
-                    {t('workbench.files.lens')}
-                    {typeof filesCount === 'number' ? (
-                      <span className="font-mono opacity-60">{filesCount}</span>
-                    ) : filesPending ? (
-                      /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
-                         而那正是这颗按钮**不该**说的事。 */
-                      <span data-testid="lens-files-pending" className="font-mono opacity-60">
-                        …
-                      </span>
-                    ) : null}
+                    {t(LENS_LABEL_KEY[id])}
+                    <span className="font-mono opacity-60">{counts[id]}</span>
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  /* 点某一档镜头就是回记录流：人手上还开着文件清单时，他这一下是在说「我要看记录」。
-                     不跟着切回来，点了没反应，像坏了。 */
-                  onClick={() => {
-                    setLens(id);
-                    onFilesOpenChange?.(false);
-                  }}
-                  aria-pressed={lens === id && !filesOpen}
-                  data-testid={`lens-${id}`}
-                  /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
-                  title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
-                  disabled={counts[id] === 0}
-                  className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen ? SEG_ON : SEG_OFF}`}
-                >
-                  {t(LENS_LABEL_KEY[id])}
-                  <span className="font-mono opacity-60">{counts[id]}</span>
-                </button>
-              </Fragment>
-            ))}
+                </Fragment>
+              ))}
+            </div>
           </div>
           {usageReadout ? (
             <span
@@ -1399,13 +1817,6 @@ export default function RecordStream({
         className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-4 pt-4 ${showMinimap ? 'record-stream-no-bar pr-6' : 'pr-4'}`}
         data-testid="record-stream-scroll"
       >
-        {/* 正文铺满中栏，不封顶。中栏里跑的是工具调用、命令行、代码块、文件路径和表格，
-            这些宽度天生不定，收窄容器只会让它们折行、挤成一团；真正的长段落在这条流里
-            占比不大，而这里的用法是扫读、不是通读——找哪一轮做了什么、哪条报错在哪。 */}
-        {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
-            人不读一个字也看得出哪几条是一伙的——疏密的对比比任何标签都快。从前两边都是
-            12px，密疏没有对比，所以只好另画一条横线来说"这里是一组"，而那条线是整屏最长
-            的图形，喊得比它要标的内容还响。 */}
         <FileLinkContext.Provider value={preview ? handleFileLink : null}>
         <div className="flex w-full min-w-0 flex-col gap-4">
           {loadingOlder ? (
@@ -1415,7 +1826,7 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {!hasOlder && records.length ? (
+          {!hasOlder && records.length && !watcherOpen ? (
             <p className="py-2 text-center text-[11px] text-text-muted">
               {t('workbench.stream.streamStart', { n: records.length })}
             </p>
@@ -1427,7 +1838,7 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {records.length && !visible.length ? (
+          {!watcherOpen && records.length && !visible.length && !segments.length ? (
             <p className="py-10 text-center text-[12px] text-text-muted">
               {t('workbench.stream.lensEmpty')}
             </p>
@@ -1441,24 +1852,213 @@ export default function RecordStream({
             </div>
           ) : null}
 
-          {groups.map((group, index) => {
-            /* **归组只剩间距，头上不再有字。**
-               同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
-               哪几条是一伙的。从前这里还有一行「同一次回复 · 模型名 · 本组 N 条」：它要
-               说的只是下面几条同属一轮，而这件事间距已经说完了；模型名每一轮都要重写一遍，
-               一场会话几百轮就是几百遍同一个牌子。模型名现在常驻在输入框右下那边，一次
-               性说清"现在是谁在答"。 */
-            if (group.segments.length === 1) return renderSegment(group.segments[0]);
-            return (
-              <section
-                key={`${group.groupId ?? 'loose'}-${index}`}
-                data-testid="record-group"
-                className="flex min-w-0 flex-col gap-1"
-              >
-                {group.segments.map((seg) => renderSegment(seg))}
-              </section>
-            );
-          })}
+          {watcherOpen ? (
+            <div
+              data-testid="watcher-view"
+              className="flex min-w-0 flex-col divide-y divide-border-color"
+            >
+              {watcherSlices.map((slice, idx) => {
+                const isExpanded = Boolean(expandedWatcherIds[slice.id]);
+                const sliceGroups = isExpanded ? groupSegments(buildTalkSegments(slice.records)) : [];
+                const sliceDecisionCards = slice.decisionCards;
+                let promptCount = 0;
+                let toolCallsCount = 0;
+                let thinkingCount = 0;
+                let replyCount = 0;
+                for (const r of slice.records) {
+                  if (
+                    r.kind === 'user.say' ||
+                    (r.kind === 'context.inject' && r.payload.channel === 'queued_command')
+                  ) {
+                    promptCount += 1;
+                  } else if (r.kind === 'tool.call') {
+                    toolCallsCount += 1;
+                  } else if (r.kind === 'agent.think') {
+                    thinkingCount += 1;
+                  } else if (r.kind === 'agent.say') {
+                    replyCount += 1;
+                  }
+                }
+                const metaCounts: string[] = [];
+                if (promptCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.watcherTalkPromptCount', { count: promptCount })
+                  );
+                }
+                if (toolCallsCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.preResponseToolCalls', { count: toolCallsCount })
+                  );
+                }
+                if (thinkingCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.preResponseThinking', { count: thinkingCount })
+                  );
+                }
+                if (replyCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.watcherTalkReplyCount', { count: replyCount })
+                  );
+                }
+                const clock = slice.at ? formatClock(slice.at) : '';
+                return (
+                  <section
+                    key={slice.id}
+                    data-testid="watcher-item"
+                    className="flex min-w-0 flex-col gap-3 py-4 first:pt-1 last:pb-1"
+                  >
+                    <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-text-muted">
+                      <span>#{idx + 1}</span>
+                      {clock ? <span>{clock}</span> : null}
+                      {slice.phaseGoal ? (
+                        <span
+                          data-testid="watcher-phase-goal"
+                          className="font-sans text-[15px] font-semibold text-text-primary"
+                        >
+                          {t('workbench.stream.watcherPhaseGoal', { goal: slice.phaseGoal })}
+                        </span>
+                      ) : null}
+                    </header>
+                    <div
+                      data-testid="watcher-summary"
+                      className="flex min-w-0 flex-col gap-1.5 break-words text-[16px] leading-[1.72] text-text-primary"
+                    >
+                      {slice.doing || slice.findings.length > 0 || slice.decision ? (
+                        <>
+                          {slice.doing ? (
+                            <div data-testid="watcher-part-doing" className="min-w-0">
+                              <span className="font-semibold text-text-secondary">
+                                {t('workbench.stream.watcherPartDoing')}：
+                              </span>
+                              <span>{slice.doing}</span>
+                            </div>
+                          ) : null}
+                          {slice.findings.length > 0 ? (
+                            <div data-testid="watcher-part-findings" className="min-w-0">
+                              <span className="font-semibold text-text-secondary">
+                                {t('workbench.stream.watcherPartFindings')}：
+                              </span>
+                              <span>{joinClauses(slice.findings)}</span>
+                            </div>
+                          ) : null}
+                          {slice.decision ? (
+                            <div data-testid="watcher-part-decision" className="min-w-0">
+                              <span className="font-semibold text-accent-primary">
+                                {t('workbench.stream.watcherPartDecision')}：
+                              </span>
+                              <span>{slice.decision}</span>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="whitespace-pre-wrap">{slice.summary}</span>
+                      )}
+                    </div>
+                    <div className="min-w-0 rounded-[8px] bg-bg-subtle px-3 py-2">
+                      <button
+                        type="button"
+                        data-testid={`watcher-talk-toggle-${idx}`}
+                        aria-expanded={isExpanded}
+                        onClick={() =>
+                          setExpandedWatcherIds((prev) => ({
+                            ...prev,
+                            [slice.id]: !prev[slice.id],
+                          }))
+                        }
+                        className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left text-[13px] text-text-secondary hover:text-text-primary"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown size={14} className="shrink-0 text-text-muted" />
+                        ) : (
+                          <ChevronRight size={14} className="shrink-0 text-text-muted" />
+                        )}
+                        <span className="font-semibold text-text-primary">
+                          {t('workbench.stream.lens.talk')}
+                        </span>
+                        <span className="font-mono text-[12px] text-text-muted">
+                          {metaCounts.length
+                            ? metaCounts.join(' · ')
+                            : t('workbench.stream.watcherTalkEmpty')}
+                        </span>
+                      </button>
+                      {isExpanded ? (
+                        <div
+                          data-testid={`watcher-talk-body-${idx}`}
+                          className="mt-3 flex min-w-0 flex-col gap-3 pt-1"
+                        >
+                          {sliceGroups.map((group, gIdx) =>
+                            group.segments.length === 1 ? (
+                              renderSegment(group.segments[0])
+                            ) : (
+                              <section
+                                key={`${group.groupId ?? 'loose'}-${gIdx}`}
+                                data-testid="record-group"
+                                className="flex min-w-0 flex-col gap-1"
+                              >
+                                {group.segments.map((seg) => renderSegment(seg))}
+                              </section>
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                    {!isExpanded && sliceDecisionCards.length > 0 ? (
+                      <div data-testid="watcher-decision-cards" className="flex min-w-0 flex-col gap-2">
+                        {sliceDecisionCards.map((dc) => (
+                          <DecisionCard key={dc.recordId} block={dc.block} recordId={dc.recordId} />
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })}
+              {(() => {
+                if (!unsummarizedTailRecords.length) return null;
+                const tailSegments = buildTalkSegments(unsummarizedTailRecords);
+                const tailGroups = groupSegments(tailSegments);
+                if (!tailGroups.length) return null;
+                return (
+                  <section
+                    data-testid="watcher-unsummarized-tail"
+                    className="flex min-w-0 flex-col gap-3 py-4 first:pt-1 last:pb-1"
+                  >
+                    {tailGroups.map((group, gIdx) =>
+                      group.segments.length === 1 ? (
+                        renderSegment(group.segments[0])
+                      ) : (
+                        <section
+                          key={`${group.groupId ?? 'loose'}-tail-${gIdx}`}
+                          data-testid="record-group"
+                          className="flex min-w-0 flex-col gap-1"
+                        >
+                          {group.segments.map((seg) => renderSegment(seg))}
+                        </section>
+                      )
+                    )}
+                  </section>
+                );
+              })()}
+            </div>
+          ) : (
+            groups.map((group, index) => {
+              /* **归组只剩间距，头上不再有字。**
+                 同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
+                 哪几条是一伙的。从前这里还有一行「同一次回复 · 模型名 · 本组 N 条」：它要
+                 说的只是下面几条同属一轮，而这件事间距已经说完了；模型名每一轮都要重写一遍，
+                 一场会话几百轮就是几百遍同一个牌子。模型名现在常驻在输入框右下那边，一次
+                 性说清"现在是谁在答"。 */
+              if (group.segments.length === 1) return renderSegment(group.segments[0]);
+              return (
+                <section
+                  key={`${group.groupId ?? 'loose'}-${index}`}
+                  data-testid="record-group"
+                  className="flex min-w-0 flex-col gap-1"
+                >
+                  {group.segments.map((seg) => renderSegment(seg))}
+                </section>
+              );
+            })
+          )}
 
           {/* 换到一场会话、首取还没落定：占住空态的位置说「正在加载」。大会话首取要好几秒，
               这段时间里摆空白或空态，人会以为这场会话没有内容。 */}
@@ -1548,6 +2148,7 @@ export default function RecordStream({
                 else void revealPath(p).catch(() => {});
               }}
               onPackPrompt={onPackPrompt}
+              onSendFileEdit={onSendFileEdit}
             />
           );
         })()
