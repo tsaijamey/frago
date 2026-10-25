@@ -1647,3 +1647,124 @@ def test_human_cft_skipped_without_cft(monkeypatch, tmp_path):
     monkeypatch.setattr(ext_mod, "cft_binary", lambda: None)
     asyncio.run(broker._ensure_human_cft())
     assert started == []
+
+
+# ── 人类接管虚拟浏览器 + 弹出真窗过检（双档协同） ─────────────────────────
+
+
+def test_aos_browser_mode_parses_head_and_headless():
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["browser", "mode", "--to", "head"])
+    assert kind == "steps" and steps == [{"op": "browser.mode", "to": "head"}]
+
+    kind2, steps2 = aos.parse(["browser", "mode", "--to", "headless"])
+    assert kind2 == "steps" and steps2 == [{"op": "browser.mode", "to": "headless"}]
+
+    with pytest.raises(aos.Fail) as err:
+        aos.parse(["browser", "mode", "--to", "offscreen"])
+    assert err.value.payload["allowed"] == ["headless", "head"]
+
+
+def test_stage_browser_mouse_wheel_and_extended_keys():
+    sb = broker.StageBrowser(19222, 1280, 800, "https://example.com")
+    sent = []
+
+    async def fake_send(method, params=None, *, timeout=10.0):
+        sent.append((method, params))
+        return {}
+
+    sb.send = fake_send
+    asyncio.run(sb.mouse("mouseWheel", 120.0, 240.0, delta_x=0.0, delta_y=80.0))
+    assert sent[-1] == (
+        "Input.dispatchMouseEvent",
+        {"type": "mouseWheel", "x": 120.0, "y": 240.0, "deltaX": 0.0, "deltaY": 80.0},
+    )
+
+    asyncio.run(sb.key("Delete"))
+    assert sent[-2][0] == "Input.dispatchKeyEvent"
+    assert sent[-2][1]["key"] == "Delete" and sent[-2][1]["windowsVirtualKeyCode"] == 46
+
+    asyncio.run(sb.key(" "))
+    assert sent[-2][1]["text"] == " " and sent[-2][1]["windowsVirtualKeyCode"] == 32
+
+
+def test_stage_browser_switch_mode_and_auto_return_on_window_close(monkeypatch):
+    sb = broker.StageBrowser(19222, 1280, 800, "https://example.com/login", headless=True)
+    sb.alive = True
+    sb.target_id = "tab-1"
+    events = []
+    ensured = []
+
+    async def fake_on_mode(headless, switching, error):
+        events.append((headless, switching, error))
+
+    sb.on_mode_change = fake_on_mode
+
+    async def fake_eval(expr):
+        if expr == "location.href":
+            return "https://example.com/verify"
+        return {"w": 1280, "h": 800}
+
+    async def fake_ensure(port, role, *, headless=True):
+        ensured.append((port, role, headless))
+
+    async def fake_open_actor_tab():
+        return {"id": "tab-2", "webSocketDebuggerUrl": "ws://127.0.0.1:19222/devtools/page/tab-2"}
+
+    async def fake_attach(target):
+        sb.target_id = target["id"]
+        sb.alive = True
+
+    async def fake_nav(url, wait=True, timeout=20.0):
+        sb.current_url = url
+
+    async def fake_refresh(reason=""):
+        return {"w": 1280, "h": 800}
+
+    async def fake_stream(fps=30):
+        return None
+
+    async def fake_nudge():
+        return None
+
+    pages_state = [{"id": "tab-1", "url": "https://example.com/verify"}]
+
+    async def fake_list_pages(_port):
+        return list(pages_state)
+
+    monkeypatch.setattr(broker, "_ensure_cdp_instance", fake_ensure)
+    monkeypatch.setattr(broker, "_list_pages", fake_list_pages)
+    sb.evaluate = fake_eval
+    sb._open_actor_tab = fake_open_actor_tab
+    sb._attach = fake_attach
+    sb.navigate = fake_nav
+    sb.refresh_viewport = fake_refresh
+    sb.start_stream = fake_stream
+    sb.nudge_repaint = fake_nudge
+
+    out = asyncio.run(sb.switch_mode(False, reason="弹出真窗过检"))
+    assert out["headless"] is False and out["mode"] == "head"
+    assert out["url"] == "https://example.com/verify"
+    assert ensured[-1] == (19222, "演员", False)
+    assert events == [(False, True, None), (False, False, None)]
+
+    # 模拟人类在真实窗口完成 Cloudflare 验证后直接关闭了窗口（pages 变空），
+    # verify_actor 自动切回无头虚拟窗格并恢复最新地址。
+    pages_state.clear()
+    sb._last_verify_at = 0.0
+    asyncio.run(sb.verify_actor())
+    assert sb.headless is True
+    assert ensured[-1] == (19222, "演员", True)
+    assert sb.current_url == "https://example.com/verify"
+
+
+def test_desktop_ui_assets_contain_takeover_and_headful_controls():
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    html = (assets / "index.html").read_text(encoding="utf-8")
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    assert 'id="browser-takeover-btn"' in html
+    assert 'id="browser-headful-btn"' in html
+    assert 'id="browser-ime-input"' in html
+    assert "human.mouse" in js and "human.browser_mode" in js
+

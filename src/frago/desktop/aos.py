@@ -568,8 +568,17 @@ def parse(tokens: list[str]) -> tuple[str, object]:
                       "title:document.title,"
                       "text:document.body?document.body.innerText:''}))()")
             return "steps", [{"op": "exec", "js": js}]
+        if verb == "mode":
+            f = take_flags(rest, {"to"})
+            if "to" not in f:
+                raise die("browser mode 需要 --to head|headless")
+            to = f["to"]
+            if to not in ACTOR_MODES:
+                raise die(f"--to 只支持 {'|'.join(ACTOR_MODES)}，得到: {to!r}",
+                          allowed=list(ACTOR_MODES))
+            return "steps", [{"op": "browser.mode", "to": to}]
         raise die(f"未知 browser 动词: {verb}",
-                  allowed=["open", "click", "scroll", "read"])
+                  allowed=["open", "click", "scroll", "read", "mode"])
 
     if res == "tab":
         verb, rest = one_positional(rest, "tab 的动词（open / switch / close）")
@@ -796,7 +805,8 @@ RESOURCE_HELP = {
              "自己做的动画走这条，看真实网页走 browser",
     "strap": "贴纸栏（电视节目那条说明字条）：show <文字> --style news|bar|"
              "ghost|chip，hide 撤掉。挂着不走，与 say 的字幕分层",
-    "browser": "虚拟浏览器窗口：open <url> / click / scroll / read",
+    "browser": "虚拟浏览器窗口：open <url> / click / scroll / read / "
+               "mode --to head|headless（弹出真窗过检或切回虚拟窗格）",
     "tab": "浏览器标签：open / switch <n> / close <n>",
     "camera": "摄像机（不是窗口）：up / down / focus --ref / pan --to / reset",
     "viewport": "refresh：重读演员视口并按新比例重摆虚拟浏览器窗口",

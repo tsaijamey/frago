@@ -391,6 +391,53 @@ html, body {
 .spinner.on { display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* 虚拟浏览器工具栏右侧的人工接管与弹出真窗控制区（机位模式下隐藏） */
+.browser-human-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.browser-human-controls[hidden] { display: none; }
+.bh-btn {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(20, 26, 35, 0.85);
+  color: #c9d4e0;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.bh-btn:hover:not(:disabled) {
+  background: rgba(38, 48, 64, 0.95);
+  border-color: rgba(255, 255, 255, 0.26);
+  color: #ffffff;
+}
+.bh-btn.active {
+  background: #e8a33d;
+  border-color: #f3b85a;
+  color: #16100a;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(232, 163, 61, 0.42);
+}
+.bh-btn.bh-headful.active {
+  background: #2b7de9;
+  border-color: #5ca0f6;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(43, 125, 233, 0.45);
+}
+.bh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* 画面按自身比例居中铺放，不拉满盒子。
    拉满的写法默认了"帧和窗口永远同比"，而这两者同步天生有延迟：窗口尺寸是
    CSS 补间，立刻就变形；新尺寸的帧要等 UI 报几何、broker 改视口、重开帧流、
@@ -403,6 +450,49 @@ html, body {
   top: 50%;
   transform: translate(-50%, -50%);
 }
+#browser-canvas.takeover {
+  cursor: default;
+}
+#win-browser.takeover-active {
+  box-shadow:
+    0 26px 68px rgba(0, 0, 0, 0.68),
+    0 0 0 1.5px rgba(232, 163, 61, 0.65),
+    0 0 24px rgba(232, 163, 61, 0.22);
+}
+.browser-ime-input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.browser-takeover-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(16, 20, 28, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(232, 163, 61, 0.38);
+  color: #f4f6fa;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.browser-takeover-banner.headful-mode {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(92, 160, 246, 0.48);
+}
+.browser-takeover-banner[hidden] { display: none; }
 
 /* ── 空白起始页 ──
    演员标签不在时铺满窗体。做成浏览器刚打开的样子：四色圆点加一条搜索框，

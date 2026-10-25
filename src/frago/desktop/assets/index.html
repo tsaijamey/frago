@@ -91,10 +91,16 @@
             <span id="addr-spinner" class="spinner"></span>
             <span id="addr-url" class="addr-url"></span>
           </div>
+          <div class="browser-human-controls" id="browser-human-controls">
+            <button type="button" class="bh-btn" id="browser-takeover-btn" title="在虚拟窗格内直接点击、滚轮、打字与粘贴（Cmd/Ctrl+V）">人工接管</button>
+            <button type="button" class="bh-btn bh-headful" id="browser-headful-btn" title="弹出共用同一份登录态目录的真实浏览器窗口（用于过 Cloudflare 验证或扫码），关窗后自动带回登录态">弹出真窗过检</button>
+          </div>
         </div>
       </div>
       <div class="win-body browser-body">
         <canvas id="browser-canvas"></canvas>
+        <input id="browser-ime-input" class="browser-ime-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+        <div id="browser-takeover-banner" class="browser-takeover-banner" hidden></div>
         <!-- 演员标签没了就露出这一层。做成浏览器自己的空白起始页而不是错误提示：
              从虚拟桌面的视角，标签被关掉就等于浏览器没开着页面，这是它本来该有的
              样子。留着最后一帧假装画面还在，才是那个会骗人的选项。 -->

@@ -62,7 +62,12 @@
     // base 是"broker 已经从头部丢掉多少行"，lines 的下标加上它才是缓冲区行号，
     // 两边靠这个数对齐。stuck = 视口贴着底：贴底时新输出跟着走（真实终端就是
     // 这样），人一往回滚就松开，否则回看到一半会被新输出拽回底部。
-    term: { base: 0, lines: [], stuck: true, top: 0 }
+    term: { base: 0, lines: [], stuck: true, top: 0 },
+    // 浏览器人工接管与真实窗口过检状态
+    takeover: false,
+    actorHeadless: true,
+    actorSwitching: false,
+    actorModeError: null
   };
 
   function $(id) { return document.getElementById(id); }
@@ -1158,6 +1163,9 @@
       case "overlay.clear":
         clearOverlay(msg.id);
         break;
+      case "browser.mode":
+        applyBrowserMode(msg);
+        break;
     }
   }
 
@@ -1207,17 +1215,334 @@
      "wheel", "keydown", "keyup", "keypress", "selectstart", "dragstart"
     ].forEach(function (type) {
       window.addEventListener(type, function (e) {
-        // 唯一的例外是人类输入行：它是这块显示器上唯一允许人碰的东西。
-        // 事件落在它里面就放行，别的地方照旧免疫。
+        // 人类输入行：允许人在右下角对话面板输入。
         if (els.humanInput && !els.humanInput.hidden &&
             e.target && els.humanInput.contains(e.target)) return;
-        // 「启用声音」按钮同理：浏览器只认人真的点过一下才肯放声音，拦掉它
-        // 这块荧幕就永远出不了声。
+        // 「启用声音」按钮同理：浏览器只认人真的点过一下才肯放声音。
         if (els.soundUnlock && !els.soundUnlock.hidden &&
             e.target && els.soundUnlock.contains(e.target)) return;
+        // 浏览器工具栏上的「人工接管」与「弹出真窗过检」按钮：始终放行点击。
+        if (els.browserHumanControls && !els.browserHumanControls.hidden &&
+            e.target && els.browserHumanControls.contains(e.target)) return;
+        // 开启「人工接管」时，放行虚拟浏览器画布、标签条及桥接输入框上的键鼠事件。
+        if (state.takeover && ROLE !== "camera") {
+          if (e.target && (e.target === els.canvas || e.target === els.imeInput ||
+              (els.tabStrip && els.tabStrip.contains(e.target)))) {
+            return;
+          }
+          if (type === "keydown" || type === "keyup" || type === "keypress") {
+            return;
+          }
+        }
         e.preventDefault(); e.stopPropagation();
       }, { capture: true, passive: false });
     });
+  }
+
+  /* ── 浏览器双档人工操作：窗格直接透传 + 弹出真窗过检 ── */
+  function syncTakeoverUI() {
+    if (ROLE === "camera") return;
+    var tBtn = els.takeoverBtn,
+        hBtn = els.headfulBtn,
+        banner = els.takeoverBanner;
+    if (tBtn) {
+      tBtn.classList.toggle("active", !!state.takeover);
+      tBtn.textContent = state.takeover ? "退出接管" : "人工接管";
+    }
+    if (els.canvas) {
+      els.canvas.classList.toggle("takeover", !!state.takeover);
+    }
+    if (els.winBrowser) {
+      els.winBrowser.classList.toggle("takeover-active", !!state.takeover);
+    }
+    if (els.vcursor) {
+      els.vcursor.style.opacity = state.takeover ? "0" : "";
+    }
+    if (hBtn) {
+      hBtn.disabled = !!state.actorSwitching;
+      if (state.actorSwitching) {
+        hBtn.classList.remove("active");
+        hBtn.textContent = state.actorHeadless ? "正在切回窗格…" : "正在弹出真窗…";
+      } else if (!state.actorHeadless) {
+        hBtn.classList.add("active");
+        hBtn.textContent = "切回虚拟窗格";
+      } else {
+        hBtn.classList.remove("active");
+        hBtn.textContent = "弹出真窗过检";
+      }
+    }
+    if (banner) {
+      if (state.actorModeError) {
+        banner.hidden = false;
+        banner.classList.remove("headful-mode");
+        banner.textContent = "切换窗口模式失败：" + state.actorModeError;
+      } else if (state.actorSwitching) {
+        banner.hidden = false;
+        banner.classList.toggle("headful-mode", !state.actorHeadless);
+        banner.textContent = state.actorHeadless
+          ? "正在收回真实窗口并恢复虚拟窗格（登录态自动保留）…"
+          : "正在弹出同配置目录的真实浏览器窗口，请稍候…";
+      } else if (!state.actorHeadless) {
+        banner.hidden = false;
+        banner.classList.add("headful-mode");
+        banner.textContent = "已弹出真实浏览器窗口：请在真窗完成验证或登录，关窗或点右上角「切回虚拟窗格」自动带回登录态";
+      } else if (state.takeover) {
+        banner.hidden = false;
+        banner.classList.remove("headful-mode");
+        banner.textContent = "人工接管中：可直接点击网页、滚轮滚动、打字或粘贴（Cmd/Ctrl+V）";
+      } else {
+        banner.hidden = true;
+        banner.textContent = "";
+      }
+    }
+  }
+
+  function applyBrowserMode(msg) {
+    if (typeof msg.headless === "boolean") state.actorHeadless = msg.headless;
+    state.actorSwitching = !!msg.switching;
+    state.actorModeError = msg.error || null;
+    syncTakeoverUI();
+  }
+
+  function setupBrowserTakeover() {
+    var ctrls = $("browser-human-controls"),
+        tBtn = $("browser-takeover-btn"),
+        hBtn = $("browser-headful-btn"),
+        ime = $("browser-ime-input"),
+        banner = $("browser-takeover-banner");
+    els.browserHumanControls = ctrls;
+    els.takeoverBtn = tBtn;
+    els.headfulBtn = hBtn;
+    els.imeInput = ime;
+    els.takeoverBanner = banner;
+
+    if (ROLE === "camera") {
+      if (ctrls) ctrls.hidden = true;
+      if (banner) banner.hidden = true;
+      return;
+    }
+
+    function setTakeover(on) {
+      state.takeover = !!on;
+      syncTakeoverUI();
+      if (state.takeover) {
+        if (state.focus !== "browser") {
+          applyFocus("browser");
+          send({ t: "human.focus", win: "browser" });
+        }
+        if (ime) ime.focus({ preventScroll: true });
+      } else if (ime) {
+        ime.blur();
+      }
+    }
+
+    if (tBtn) {
+      tBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setTakeover(!state.takeover);
+      });
+    }
+
+    if (hBtn) {
+      hBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.actorSwitching) return;
+        var targetHeadless = !state.actorHeadless;
+        state.actorHeadless = targetHeadless;
+        state.actorSwitching = true;
+        state.actorModeError = null;
+        syncTakeoverUI();
+        send({ t: "human.browser_mode", headless: targetHeadless });
+      });
+    }
+
+    if (els.tabStrip) {
+      els.tabStrip.addEventListener("click", function (e) {
+        if (!state.takeover) return;
+        var tabEl = e.target && e.target.closest ? e.target.closest(".tab") : null;
+        if (!tabEl) return;
+        var tabs = els.tabStrip.querySelectorAll(".tab");
+        for (var i = 0; i < tabs.length; i++) {
+          if (tabs[i] === tabEl) {
+            send({ t: "human.tab", index: i });
+            break;
+          }
+        }
+      });
+    }
+
+    function canvasToPage(e) {
+      var r = els.canvas.getBoundingClientRect();
+      var fw = state.frameW || els.canvas.width || 1280;
+      var fh = state.frameH || els.canvas.height || 800;
+      if (!r.width || !r.height) return { x: 0, y: 0 };
+      var x = Math.round(Math.max(0, Math.min(fw, (e.clientX - r.left) / r.width * fw)));
+      var y = Math.round(Math.max(0, Math.min(fh, (e.clientY - r.top) / r.height * fh)));
+      return { x: x, y: y };
+    }
+
+    function mouseBtnName(b) {
+      return b === 2 ? "right" : b === 1 ? "middle" : "left";
+    }
+
+    var lastMoveAt = 0;
+    if (els.canvas) {
+      els.canvas.addEventListener("mousedown", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.focus !== "browser") {
+          applyFocus("browser");
+          send({ t: "human.focus", win: "browser" });
+        }
+        if (ime) ime.focus({ preventScroll: true });
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mousePressed",
+          x: pt.x,
+          y: pt.y,
+          button: mouseBtnName(e.button),
+          clickCount: e.detail || 1
+        });
+      });
+
+      els.canvas.addEventListener("mouseup", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (ime) ime.focus({ preventScroll: true });
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseReleased",
+          x: pt.x,
+          y: pt.y,
+          button: mouseBtnName(e.button),
+          clickCount: e.detail || 1
+        });
+      });
+
+      els.canvas.addEventListener("mousemove", function (e) {
+        if (!state.takeover) return;
+        var now = Date.now();
+        if (now - lastMoveAt < 35) return;
+        lastMoveAt = now;
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseMoved",
+          x: pt.x,
+          y: pt.y,
+          button: (e.buttons & 1) ? "left" : (e.buttons & 2) ? "right" : "none"
+        });
+      });
+
+      els.canvas.addEventListener("wheel", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseWheel",
+          x: pt.x,
+          y: pt.y,
+          deltaX: Math.round(e.deltaX || 0),
+          deltaY: Math.round(e.deltaY || 0)
+        });
+      }, { passive: false });
+
+      els.canvas.addEventListener("contextmenu", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+
+    var composing = false;
+    if (ime) {
+      ime.addEventListener("compositionstart", function () {
+        composing = true;
+      });
+      ime.addEventListener("compositionend", function (e) {
+        composing = false;
+        var text = (e && e.data) || ime.value;
+        ime.value = "";
+        if (state.takeover && text) {
+          send({ t: "human.text", text: text });
+        }
+      });
+      ime.addEventListener("input", function () {
+        if (composing) return;
+        var text = ime.value;
+        ime.value = "";
+        if (state.takeover && text) {
+          send({ t: "human.text", text: text });
+        }
+      });
+    }
+
+    window.addEventListener("paste", function (e) {
+      if (!state.takeover) return;
+      if (els.humanInput && els.humanInput.contains(document.activeElement)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var cd = e.clipboardData || window.clipboardData;
+      var text = cd ? cd.getData("text/plain") : "";
+      if (ime) ime.value = "";
+      if (text) {
+        send({ t: "human.text", text: text });
+      }
+    }, true);
+
+    var SPECIAL_KEYS = {
+      Enter: 1, Tab: 1, Escape: 1, Backspace: 1, Delete: 1,
+      ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
+      Home: 1, End: 1, PageUp: 1, PageDown: 1
+    };
+
+    window.addEventListener("keydown", function (e) {
+      if (!state.takeover) return;
+      if (els.humanInput && els.humanInput.contains(e.target)) return;
+      if (e.isComposing || composing) return;
+
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        var k = (e.key || "").toLowerCase();
+        if (k === "a") {
+          e.preventDefault();
+          e.stopPropagation();
+          send({ t: "human.edit", action: "selectAll" });
+          return;
+        }
+        if (k === "v") {
+          if (ime && document.activeElement !== ime) {
+            ime.focus({ preventScroll: true });
+          }
+          return;
+        }
+        return;
+      }
+
+      if (SPECIAL_KEYS[e.key]) {
+        e.preventDefault();
+        e.stopPropagation();
+        send({ t: "human.key", key: e.key });
+        return;
+      }
+
+      if (ime && document.activeElement !== ime && e.key && e.key.length === 1 &&
+          !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        send({ t: "human.text", text: e.key });
+        ime.focus({ preventScroll: true });
+      }
+    }, true);
+
+    syncTakeoverUI();
   }
 
   /* ── 右下角客服式对话面板（#human-input） ──
@@ -1667,6 +1992,7 @@
     window.addEventListener("resize", fitStage);
     setupHumanInput();
     els.soundUnlock = setupSoundUnlock();
+    setupBrowserTakeover();
     blockInput();
 
     startWallpaper();

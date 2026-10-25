@@ -512,6 +512,11 @@ class StageBrowser:
         # 标签量到的真实视口。构造入参只是首次读取之前的占位值。
         self.viewport_read_at: float = 0.0
         self.viewport_source: str | None = None
+        # 记录当前有效页面地址与有头/无头模式切换状态，供「弹出真窗过检」
+        # 与关窗后自动切回虚拟窗格共用。
+        self.current_url: str = start_url
+        self.switching_mode: bool = False
+        self.on_mode_change = None  # async callable(headless: bool, switching: bool, error: str | None)
 
     # ── 生命周期 ──
 
@@ -659,8 +664,12 @@ class StageBrowser:
                     # 帧画多大就是演员天然多大。
                     self.latest_frame = params["data"]
                     self.last_frame_at = time.time()
-                elif method == "Page.frameStartedNavigating" and self.on_nav:
-                    await self.on_nav(msg["params"].get("url", ""), True)
+                elif method == "Page.frameStartedNavigating":
+                    nav_url = msg["params"].get("url", "")
+                    if nav_url and not nav_url.startswith(("about:blank", "chrome-error://")):
+                        self.current_url = nav_url
+                    if self.on_nav:
+                        await self.on_nav(nav_url, True)
                 elif method == "Page.loadEventFired":
                     self._load_fired = True
                     if self.on_nav:
@@ -694,15 +703,27 @@ class StageBrowser:
 
         只在帧已经停了一段时间之后才问：页面在正常出帧就说明标签必然活着，
         那时候每隔几秒去问一次 /json/list 纯属白费。
+        例外是「弹出真窗过检」（not self.headless）：人随时可能在真窗口完成验证后
+        关掉窗口，所以有头模式下每 1.5 秒巡检一次；一旦检测到真窗被关，自动切回
+        无头虚拟窗格并恢复关窗前的最新地址与登录态。
         """
-        now = time.time()
-        if now - self._last_verify_at < self.VERIFY_INTERVAL:
+        if self.switching_mode:
             return
-        if not self.actor_gone and (now - self.last_frame_at) < self.VERIFY_QUIET_SEC:
+        now = time.time()
+        interval = 1.5 if not self.headless else self.VERIFY_INTERVAL
+        if now - self._last_verify_at < interval:
+            return
+        if (self.headless and not self.actor_gone
+                and (now - self.last_frame_at) < self.VERIFY_QUIET_SEC):
             return
         self._last_verify_at = now
         pages = await _list_pages(self.port)
         if not pages:
+            if not self.headless:
+                _log("检测到有头真窗已关闭，自动切回无头虚拟窗格并带回登录态")
+                with suppress(Exception):
+                    await self.switch_mode(True, reason="真实窗口已关闭，自动切回虚拟窗格")
+                return
             # 整个实例都不在了。这里不自动重拉：重拉要重走导航与帧流，
             # 期间画面是错的，而人此刻多半正在录。说出来交给人决定。
             await self._set_actor_gone(
@@ -719,6 +740,9 @@ class StageBrowser:
             await self.refresh_viewport("接管新的演员标签")
             await self.start_stream(30)
             return
+        hit_url = hit.get("url") or ""
+        if hit_url and not hit_url.startswith(("about:blank", "chrome-error://")):
+            self.current_url = hit_url
         if not self.alive:
             # 标签在，连接断了——重连即可。
             await self._attach(hit)
@@ -727,6 +751,62 @@ class StageBrowser:
             await self.nudge_repaint()
             return
         await self._set_actor_back(hit["id"])
+
+    async def switch_mode(self, headless: bool, reason: str = "") -> dict:
+        """在无头虚拟窗格与有头真实窗口之间切换演员浏览器（共用同一份 9222 profile）。
+
+        切换前记录当前最新地址，停掉旧实例释放 Singleton 锁后，用同一个端口与
+        profile 目录拉起目标模式，登录态与过检 Cookie（如 cf_clearance）原样继承。
+        """
+        if self.switching_mode:
+            raise RuntimeError("演员浏览器正在切换窗口模式，请稍候")
+        if self.alive:
+            with suppress(Exception):
+                href = await self.evaluate("location.href")
+                if (isinstance(href, str) and href
+                        and not href.startswith(("about:blank", "chrome-error://"))):
+                    self.current_url = href
+        pages = await _list_pages(self.port)
+        if pages:
+            hit = next((p for p in pages if p.get("id") == self.target_id), pages[0])
+            u = (hit or {}).get("url") or ""
+            if u and not u.startswith(("about:blank", "chrome-error://")):
+                self.current_url = u
+
+        target_headless = bool(headless)
+        self.switching_mode = True
+        if self.on_mode_change:
+            with suppress(Exception):
+                await self.on_mode_change(target_headless, True, None)
+        try:
+            await self.close()
+            self.headless = target_headless
+            self._order.clear()
+            target_url = self.current_url or self.start_url or "about:blank"
+            await _ensure_cdp_instance(self.port, "演员", headless=self.headless)
+            await self._attach(await self._open_actor_tab())
+            await self.navigate(target_url, wait=True, timeout=20.0)
+            await self.refresh_viewport(reason or "切换窗口模式")
+            await self.start_stream(30)
+            await self.nudge_repaint()
+            _log(f"演员浏览器已切为 {'无头虚拟窗格' if self.headless else '有头真实窗口'} "
+                 f"url={target_url} 视口={self.width}x{self.height}")
+        except Exception as exc:
+            self.switching_mode = False
+            if self.on_mode_change:
+                with suppress(Exception):
+                    await self.on_mode_change(self.headless, False, str(exc))
+            raise
+        self.switching_mode = False
+        if self.on_mode_change:
+            with suppress(Exception):
+                await self.on_mode_change(self.headless, False, None)
+        return {
+            "headless": self.headless,
+            "mode": "headless" if self.headless else "head",
+            "url": self.current_url,
+            "viewport": {"w": self.width, "h": self.height},
+        }
 
     async def _set_actor_gone(self, reason: str) -> None:
         """标记演员标签失联并通知上层。重复通知没有意义，只报状态变化那一次。"""
@@ -989,6 +1069,8 @@ class StageBrowser:
         是可观测信号，不是 sleep 猜时间——留着不亏。
         """
         self._load_fired = False
+        if url:
+            self.current_url = url
         # 基准帧必须在导航发出**之前**取。取在加载完之后的话，渲染快的页面
         # 早就画完并发了帧，之后再无新帧，于是永远等不到"下一帧"，空转到超时。
         before = self.latest_frame
@@ -1091,7 +1173,21 @@ class StageBrowser:
 
     # ── 输入 ──
 
-    async def mouse(self, kind: str, x: float, y: float, button: str = "left") -> None:
+    async def mouse(self, kind: str, x: float, y: float, button: str = "left",
+                    delta_x: float = 0.0, delta_y: float = 0.0,
+                    click_count: int = 1) -> None:
+        if kind == "mouseWheel":
+            await self.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseWheel",
+                    "x": x,
+                    "y": y,
+                    "deltaX": delta_x,
+                    "deltaY": delta_y,
+                },
+            )
+            return
         await self.send(
             "Input.dispatchMouseEvent",
             {
@@ -1099,7 +1195,7 @@ class StageBrowser:
                 "x": x,
                 "y": y,
                 "button": button if kind != "mouseMoved" else "none",
-                "clickCount": 1 if kind != "mouseMoved" else 0,
+                "clickCount": int(click_count) if kind != "mouseMoved" else 0,
             },
         )
 
@@ -1112,8 +1208,17 @@ class StageBrowser:
             "Tab": ("Tab", 9, None),
             "Escape": ("Escape", 27, None),
             "Backspace": ("Backspace", 8, None),
+            "Delete": ("Delete", 46, None),
             "ArrowDown": ("ArrowDown", 40, None),
             "ArrowUp": ("ArrowUp", 38, None),
+            "ArrowLeft": ("ArrowLeft", 37, None),
+            "ArrowRight": ("ArrowRight", 39, None),
+            "Home": ("Home", 36, None),
+            "End": ("End", 35, None),
+            "PageUp": ("PageUp", 33, None),
+            "PageDown": ("PageDown", 34, None),
+            "Space": (" ", 32, " "),
+            " ": (" ", 32, " "),
         }.get(key_name)
         if not spec:
             raise ValueError(f"不支持的按键: {key_name}")
@@ -1122,6 +1227,15 @@ class StageBrowser:
         await self.send("Input.dispatchKeyEvent", {"type": "keyDown", **base,
                                                    **({"text": text} if text else {})})
         await self.send("Input.dispatchKeyEvent", {"type": "keyUp", **base})
+
+    async def edit_action(self, action: str) -> None:
+        if action == "selectAll":
+            with suppress(Exception):
+                await self.evaluate(
+                    "(()=>{const e=document.activeElement;"
+                    "if(e&&typeof e.select==='function'){e.select();return 1;}"
+                    "document.execCommand('selectAll',false,null);return 1;})()"
+                )
 
 
 # ─────────────────────────── 舞台终端 ───────────────────────────
@@ -2824,9 +2938,22 @@ def build_app(cfg: dict) -> FastAPI:
         stage.last_actor = msg
         await broadcast(msg)
 
+    async def on_actor_mode(headless: bool, switching: bool,
+                            error: str | None) -> None:
+        """演员浏览器的有头/无头模式切换状态同步给所有桌面页。"""
+        msg = {
+            "t": "browser.mode",
+            "headless": headless,
+            "mode": "headless" if headless else "head",
+            "switching": switching,
+            "error": error,
+        }
+        await broadcast(msg)
+
     browser.on_frame = on_frame
     browser.on_nav = on_nav
     browser.on_actor_state = on_actor_state
+    browser.on_mode_change = on_actor_mode
     term.on_text = on_term
 
     # ── 虚拟浏览器窗口的几何：broker 是作者 ──
@@ -3335,6 +3462,13 @@ def build_app(cfg: dict) -> FastAPI:
         # 让新客户端立刻把它换成空标签页，而不是把旧帧当成实时画面。
         if stage.last_actor is not None:
             snapshot.append(stage.last_actor)
+        snapshot.append({
+            "t": "browser.mode",
+            "headless": browser.headless,
+            "mode": "headless" if browser.headless else "head",
+            "switching": browser.switching_mode,
+            "error": None,
+        })
         # 补发完毕的信号。荧幕**收到这条之前不许上报几何**——它刚加载时手上是
         # 出厂几何（终端 900x560），那份几何一旦被当真，broker 就照它 resize
         # tmux，然后补发的真几何到了再 resize 回去。一来一回两次 SIGWINCH，
@@ -3459,6 +3593,12 @@ def build_app(cfg: dict) -> FastAPI:
                     # 放音进展：开始放了 / 放完了 / 被浏览器拦了。不看主不主——
                     # 人可能开着两块荧幕，哪块放出声都算有人听见。
                     speech_event(meta, msg)
+                elif str(msg.get("t") or "").startswith("human."):
+                    # 人类在桌面页打开「人工接管」或点击「弹出真窗过检」时发来的交互事件。
+                    # 录制机位与外来荧幕不产生人工操作。
+                    if meta.get("role") == "camera" or meta.get("reason") == FOREIGN_REASON:
+                        continue
+                    await handle_human_event(msg)
         except WebSocketDisconnect:
             pass
         finally:
@@ -5048,6 +5188,76 @@ def build_app(cfg: dict) -> FastAPI:
         return {"action": action, "tabs": len(tabs),
                 "effect": _with_focus({"observed": True}, act)}
 
+    async def op_browser_mode(step: dict) -> Any:
+        """在无头虚拟窗格（headless）与有头真实窗口（head）之间切换演员浏览器。
+
+        共用同一个 9222 端口与 ~/.frago/profiles/cft/9222/ 配置目录：
+        - 切到 head：弹出真实窗口供人类完成 Cloudflare 真人验证或扫码登录；
+        - 切回 headless（或人类直接关掉真实窗口）：自动切回无头虚拟窗格并原样带回登录态。
+        """
+        if "headless" in step and step["headless"] is not None:
+            target_headless = bool(step["headless"])
+        else:
+            to = str(step.get("to") or "").strip().lower()
+            if to in ("head", "headful", "window"):
+                target_headless = False
+            elif to in ("headless", "virtual", "pane"):
+                target_headless = True
+            else:
+                raise ValueError("browser.mode 需要 --to head|headless")
+        act = await ensure_active("browser")
+        info = await browser.switch_mode(
+            target_headless,
+            reason=step.get("reason") or (
+                "切回无头虚拟窗格" if target_headless else "弹出真窗过检"
+            ),
+        )
+        geo = await push_browser_window(ms=200, reason="切换演员窗口模式")
+        await push_tabs()
+        return {
+            **info,
+            "geometry": geo,
+            "effect": _with_focus({"observed": True}, act),
+        }
+
+    async def handle_human_event(msg: dict) -> None:
+        """处理桌面页「人工接管」与「弹出真窗过检」发来的 WebSocket 事件。"""
+        kind = msg.get("t")
+        with suppress(Exception):
+            if kind in ("human.takeover", "human.focus"):
+                if msg.get("on", True):
+                    await ensure_active(str(msg.get("win") or "browser"))
+            elif kind == "human.mouse":
+                m_kind = str(msg.get("kind") or "mouseMoved")
+                px = float(msg.get("x") or 0)
+                py = float(msg.get("y") or 0)
+                btn = str(msg.get("button") or "left")
+                cnt = int(msg.get("clickCount") or msg.get("count") or 1)
+                dx = float(msg.get("deltaX") or 0)
+                dy = float(msg.get("deltaY") or 0)
+                await browser.mouse(
+                    m_kind, px, py, button=btn,
+                    delta_x=dx, delta_y=dy, click_count=cnt,
+                )
+            elif kind == "human.text":
+                text = str(msg.get("text") or "")
+                if text:
+                    await browser.insert_text(text)
+            elif kind == "human.key":
+                key_name = str(msg.get("key") or "")
+                if key_name:
+                    await browser.key(key_name)
+            elif kind == "human.edit":
+                action = str(msg.get("action") or "")
+                if action:
+                    await browser.edit_action(action)
+            elif kind in ("human.tab", "human.tab.switch"):
+                idx = int(msg.get("index") or 0)
+                await op_tab({"action": "switch", "index": idx})
+            elif kind in ("human.browser_mode", "human.browser.mode"):
+                target_headless = bool(msg.get("headless"))
+                asyncio.create_task(op_browser_mode({"headless": target_headless}))
+
     # ── 语音 ──
     #
     # say 默认只是字幕，带 speak 才开口。开口分三层：合成（voice.py，先查缓存）、
@@ -6134,6 +6344,7 @@ def build_app(cfg: dict) -> FastAPI:
         "term.scroll": op_term_scroll, "term.fontsize": op_term_fontsize,
         "navigate": op_navigate, "exec": op_exec, "win": op_win,
         "viewport": op_viewport, "tab": op_tab, "elements": op_elements,
+        "browser.mode": op_browser_mode,
         "say": op_say, "sleep": op_sleep,
         "speech.wait": op_speech_wait, "speech.stop": op_speech_stop,
         "camera.focus": op_camera_focus, "camera.pan": op_camera_pan,
@@ -6390,6 +6601,9 @@ def build_app(cfg: dict) -> FastAPI:
             # 补救动作完全不同：一个要重开标签，另一个只要逼一次重绘。
             "actor_alive": not browser.actor_gone,
             "actor_gone_reason": browser.actor_gone_reason,
+            "actor_headless": browser.headless,
+            "actor_mode": "headless" if browser.headless else "head",
+            "actor_switching": browser.switching_mode,
             "stale_clients": sorted(stage.stale_clients),
             "content_rects": {
                 w: stage.content_rect(w) for w in WINDOWS
