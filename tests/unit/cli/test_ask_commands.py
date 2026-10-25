@@ -35,6 +35,7 @@ class TestAskSingleChoice:
             ],
         )
         assert res.exit_code == 0, res.output
+        assert "\n" not in res.output.strip(), "output must be single-line JSON so | tail / | head never truncates it"
         payload = json.loads(res.output)
         assert payload["frago_ui_component"] == "decision-card"
         assert payload["component_type"] == "single-choice"
@@ -80,6 +81,7 @@ class TestAskSingleChoice:
             ],
         )
         assert res.exit_code == 0, res.output
+        assert "\n" not in res.output.strip(), "output must be single-line JSON so | tail / | head never truncates it"
         payload = json.loads(res.output)
         data = payload["data"]
         assert data["from"] == "teammate"
@@ -105,6 +107,7 @@ class TestAskMultiChoice:
             ],
         )
         assert res.exit_code == 0, res.output
+        assert "\n" not in res.output.strip(), "output must be single-line JSON so | tail / | head never truncates it"
         payload = json.loads(res.output)
         assert payload["component_type"] == "multi-choice"
         assert payload["data"]["type"] == "multi-choice"
@@ -129,6 +132,7 @@ class TestAskTextAnswer:
             ],
         )
         assert res.exit_code == 0, res.output
+        assert "\n" not in res.output.strip(), "output must be single-line JSON so | tail / | head never truncates it"
         payload = json.loads(res.output)
         assert payload["component_type"] == "text-answer"
         data = payload["data"]
@@ -157,6 +161,7 @@ class TestAskChoiceAndText:
             ],
         )
         assert res.exit_code == 0, res.output
+        assert "\n" not in res.output.strip(), "output must be single-line JSON so | tail / | head never truncates it"
         payload = json.loads(res.output)
         assert payload["component_type"] == "choice-and-text"
         data = payload["data"]

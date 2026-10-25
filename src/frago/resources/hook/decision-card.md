@@ -16,7 +16,7 @@
 
 >>>判定：
 <<<把等用户定的答案用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 工具生成交互组件再停，选项原样保留，选择仍交给用户。
-- **禁止重抄前文**：你上一条回复的正文已经展示在页面对话流中，本轮只需直接调用一次 `frago app ask` 生成卡片并附一句简短点选引导（或直接结束本轮，前端会自动把卡片挂到上一条回复下方），NEVER 把上一条回复的正文再重发一遍，也 NEVER 同时手写 `answer-needed-by-human` 区块造出双卡。
+- **禁止重抄前文**：你上一条回复的正文已经展示在页面对话流中，本轮只需直接调用一次 `frago app ask` 生成卡片并附一句简短点选引导（或直接结束本轮，前端会自动把卡片挂到上一条回复下方），NEVER 把上一条回复的正文再重发一遍，NEVER 同时手写 `answer-needed-by-human` 区块造出双卡，也 NEVER 在 `frago app ask` 后接 `| tail` / `| head` 截断输出。
 - 直接调用 CLI 工具（参数有误会当场报错并给出对应组件示例）：
 ```bash
 frago app ask single-choice \

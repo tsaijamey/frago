@@ -350,4 +350,5 @@ def image_cmd(
         title=title,
         columns=columns,
     )
-    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    # 单行紧凑输出，避免 agent 在命令后接 `| tail -N` / `| head -N` 按行截断时把多行 JSON 切碎。
+    click.echo(json.dumps(payload, ensure_ascii=False))

@@ -827,7 +827,7 @@
       },
       "action": {
         "type": "inject_literal",
-        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），在写收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成前端交互卡片（不必再手写 answer-needed-by-human 区块），写完收尾就停；若被收尾钩子退回补卡，只补调一次 `frago app ask`，NEVER 重抄上一条已发出的正文。写法：frago app ask --help 或 frago book answer-needed-by-human"
+        "text": "【要人拍板就出卡片】这一轮若停下来等用户拍板（几条路里挑一条，或对一个提议说行不行），在写收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成前端交互卡片（不必再手写 answer-needed-by-human 区块，NEVER 在命令后接 `| tail` / `| head` 截断输出），写完收尾就停；若被收尾钩子退回补卡，只补调一次 `frago app ask`，NEVER 重抄上一条已发出的正文。写法：frago app ask --help 或 frago book answer-needed-by-human"
       },
       "dedup_scope": "always",
       "priority": 90,
