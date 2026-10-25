@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -781,6 +782,84 @@ class Test状态跟着索引一起缓存:
 
         assert again.tail.last_kind == "agent.say"
         assert again.tail.digest_done == "答完了"
+
+    def test_只刷修改时刻不改内容时不推进最后活动时刻(self, tmp_path: Path) -> None:
+        """Claude Code 每小时调一次 utimes 保活。只改 mtime 未改任何字节时，
+        NEVER 推进 last_active_ts 把早已收尾的旧会话误判成 running。
+        """
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        path = _write_session(
+            root,
+            "proj",
+            "sid-utimes-keepalive",
+            [
+                *_basic_records(),
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "答完了"}]}},
+            ],
+        )
+        old_ts = 1_750_000_000.0
+        os.utime(path, (old_ts, old_ts))
+
+        (before,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert before.last_active_ts == old_ts
+
+        # 模拟一小时后 Claude Code 的 touchSessionTranscript 只刷新 mtime。
+        touch_ts = old_ts + 86_400.0
+        os.utime(path, (touch_ts, touch_ts))
+
+        (after,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert after.last_active_ts == old_ts
+        assert (
+            session_index.derive_status(after.tail.last_kind, after.last_active_ts, now=touch_ts)
+            == "done"
+        )
+
+    def test_已写下轮次耗时的旧会话即使冷启动遇到utimes也不判为运行中(
+        self, tmp_path: Path
+    ) -> None:
+        """末条已是带时刻的 turn_duration 收尾记账时，冷启动重算索引也按收尾时刻定锚，
+        不被事后的 utimes 保活时间戳带偏。
+        """
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        closed_iso = "2026-10-23T15:39:05.627Z"
+        closed_epoch = datetime.fromisoformat("2026-10-23T15:39:05.627+00:00").timestamp()
+        path = _write_session(
+            root,
+            "proj",
+            "sid-cold-utimes",
+            [
+                *_basic_records(),
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-10-23T15:39:05.002Z",
+                    "message": {"content": [{"type": "text", "text": "那两个问题修好了"}]},
+                },
+                {
+                    "type": "system",
+                    "subtype": "stop_hook_summary",
+                    "timestamp": closed_iso,
+                },
+                {
+                    "type": "system",
+                    "subtype": "turn_duration",
+                    "durationMs": 713880,
+                    "timestamp": closed_iso,
+                },
+            ],
+        )
+        touch_ts = closed_epoch + 150_000.0
+        os.utime(path, (touch_ts, touch_ts))
+
+        (summary,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert summary.last_active_ts == closed_epoch
+        assert (
+            session_index.derive_status(
+                summary.tail.last_kind, summary.last_active_ts, now=touch_ts
+            )
+            == "done"
+        )
 
 
 class Test与全量扫描逐字段一致:

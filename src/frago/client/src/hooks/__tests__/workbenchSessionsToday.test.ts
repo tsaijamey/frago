@@ -78,6 +78,29 @@ describe('withinToday', () => {
     expect(withinToday([running], new Set(), NOW).map((s) => s.session_id)).toEqual(['running']);
   });
 
+  it('终端停在输入提示符等人（For you）的隔日旧会话，哪怕被短暂标成 running 也不混入今日', () => {
+    const ghostOld = card({
+      session_id: 'ghost-old',
+      status: 'running',
+      last_active_at: NOW - 10_000,
+      last_reply_at: TODAY_START - 36 * HOUR,
+    });
+    const todayForYou = card({
+      session_id: 'today-for-you',
+      status: 'running',
+      last_active_at: NOW - 10_000,
+      last_reply_at: NOW - 30 * 60_000,
+    });
+    expect(
+      withinToday(
+        [ghostOld, todayForYou],
+        new Set(),
+        NOW,
+        (id) => id === 'ghost-old' || id === 'today-for-you'
+      ).map((s) => s.session_id)
+    ).toEqual(['today-for-you']);
+  });
+
   it('tmux 还开着但今天没回复：不留', () => {
     // 2026-10-19 主人报缺陷后收紧：终端挂着不等于今天有数据。
     const alive = card({

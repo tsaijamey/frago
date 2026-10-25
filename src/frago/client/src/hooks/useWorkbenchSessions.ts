@@ -238,7 +238,8 @@ export function startOfToday(now: number = Date.now()): number {
 export function withinToday(
   sessions: WorkbenchSession[],
   pickedToday: ReadonlySet<string> = EMPTY_PICKED,
-  now: number = Date.now()
+  now: number = Date.now(),
+  isForYou: (sessionId: string) => boolean = () => false
 ): WorkbenchSession[] {
   const floor = startOfToday(now);
   const localOpsIds = new Set(
@@ -250,7 +251,11 @@ export function withinToday(
     if (s.parent_session_id && localOpsIds.has(s.parent_session_id)) return false;
     const repliedToday = s.last_reply_at !== null && s.last_reply_at >= floor;
     const bornToday = s.last_reply_at === null && s.created_at >= floor;
-    return repliedToday || bornToday || s.status === 'running';
+    // 终端正停在输入提示符等人（isForYou 为真）时，这场会话不可能同时"正在跑新一轮"。
+    // 挡掉被后台保活或外部触碰短暂标成 running 的隔日旧会话，避免幽灵闪现 90 秒又消失。
+    const runningToday =
+      s.status === 'running' && s.last_active_at >= floor && !isForYou(s.session_id);
+    return repliedToday || bornToday || runningToday;
   });
 }
 
@@ -427,8 +432,8 @@ export function useWorkbenchSessions(
    * 就会把昨天那批收走。捡回来的名单由页面那一层持有（见 `useSessionToday`）。
    */
   const inToday = useMemo(
-    () => withinToday(sessions, pickedToday, Date.now()),
-    [sessions, pickedToday]
+    () => withinToday(sessions, pickedToday, Date.now(), isForYou),
+    [sessions, pickedToday, isForYou]
   );
 
   const counts = useMemo<ListCounts>(

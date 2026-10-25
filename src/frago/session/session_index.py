@@ -42,13 +42,14 @@ NEVER 用文件大小、行数比例之类的办法估算任何字段。这个�
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -114,7 +115,9 @@ COREAGENT_CACHE_FILE = CACHE_DIR / "coreagent-session-index.json"
 # **判据一改就得动这个数**，哪怕改的是同一条判据的第二版：条目里存的是判完的结果，
 # 失效判据只看文件有没有变，文件没变就永远拿老结果顶着。版本 4 那次少动了一次这个数，
 # 结果是判据改对了、界面上却还是错的，查了一轮才发现错在缓存。
-_CACHE_VERSION = 5
+# 版本 6 起记录文件内容摘要与回合收尾时刻：Claude Code 每小时 utimes 保活只改 mtime
+# 不改内容，不再推进 last_active_ts 把已收尾旧会话误判成 running。
+_CACHE_VERSION = 6
 
 # 标题类字段可能出现在文件任何位置，所以开头之后的每一行都要做这两个判定。
 #
@@ -216,6 +219,10 @@ class TailSignals:
 
     与上一格分开：一个是"看清了，是机器戳的"，一个是"没看清"。混成一个值的话，窗口
     开多大都会 settle 在最老的那条心跳上。同样不进缓存。"""
+
+    turn_end_ts: float | None = None
+    """末条实质记录是 agent 回复且尾部已有带时刻的轮次收尾记账（``turn_duration`` /
+    ``stop_hook_summary``）时，记录那一轮真正收尾的时刻（epoch 秒）。"""
 
 
 def derive_status(
@@ -372,6 +379,37 @@ def _iter_lines_backwards(buf: bytes) -> Iterator[bytes]:
             return
 
 
+def _completed_turn_ts(
+    newest_first: Sequence[dict[str, Any]],
+    last_kind: str | None,
+) -> float | None:
+    """末条实质记录是 agent 回复且尾部已有轮次收尾记账时，返回收尾记账时刻。
+
+    Claude Code 对挂在终端里的已完成会话每小时调一次 ``utimes`` 刷新 ``st_mtime``，
+    不改动任何字节。若直接拿 ``st_mtime`` 当最后活动时刻，冷启动重算索引时会把几天前
+    早已写下 ``turn_duration`` 的旧会话当成「90 秒内刚动过」判成 ``running``。
+    """
+    if last_kind != "agent.say":
+        return None
+    turn_closed = False
+    latest_ts: float | None = None
+    for record in newest_first:
+        ts = _iso_to_epoch(record.get("timestamp"))
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+        rtype = record.get("type")
+        if rtype == "system" and record.get("subtype") in (
+            "turn_duration",
+            "stop_hook_summary",
+        ):
+            if ts is not None:
+                turn_closed = True
+            continue
+        if rtype == "assistant":
+            break
+    return latest_ts if turn_closed else None
+
+
 def _tail_signals(buf: bytes, sid: str) -> TailSignals:
     """从文件尾往回读，凑够就停。
 
@@ -411,7 +449,10 @@ def _tail_signals(buf: bytes, sid: str) -> TailSignals:
             and not signals.reply_unsettled
         )
         if settled or exhausted:
-            return signals
+            break
+    turn_end_ts = _completed_turn_ts(newest_first, signals.last_kind)
+    if turn_end_ts is not None:
+        signals = replace(signals, turn_end_ts=turn_end_ts)
     return signals
 
 
@@ -434,6 +475,9 @@ class SessionSummary:
     tail: TailSignals = TailSignals()
     """末尾那几条记录读出来的状态与摘要信号。判到底哪一档由 :func:`derive_status` 做，
     那件事跟"现在几点"有关，不能连同索引一起缓存。"""
+
+    content_digest: str | None = None
+    """文件内容摘要（8 字节 blake2b 十六进制），用于识别只刷 mtime 未改字节的保活触碰。"""
 
 
 def _iso_to_epoch(raw: Any) -> float | None:
@@ -587,6 +631,11 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
         elif rtype == "ai-title" and record.get("aiTitle"):
             ai_title = record["aiTitle"]
 
+    # 整块字节已经在手上，末尾那几条不再碰一次磁盘。
+    tail = _tail_signals(buf, sid)
+    active_ts = tail.turn_end_ts if tail.turn_end_ts is not None else mtime
+    digest = hashlib.blake2b(buf, digest_size=8).hexdigest()
+
     return SessionSummary(
         sid=sid,
         slug=slug,
@@ -595,17 +644,18 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
         first_user=first_user,
         cwd=cwd,
         first_ts=first_ts,
-        last_active_ts=mtime,
-        # 整块字节已经在手上，末尾那几条不再碰一次磁盘。
-        tail=_tail_signals(buf, sid),
+        last_active_ts=active_ts,
+        tail=tail,
+        content_digest=digest,
     )
 
 
 def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, Any]:
-    """缓存条目 = 失效判据（大小 + 修改时刻）+ 字段本身。"""
+    """缓存条目 = 失效判据（大小 + 修改时刻 + 内容摘要）+ 字段本身。"""
     return {
         "size": size,
         "mtime_ns": mtime_ns,
+        "digest": summary.content_digest,
         "sid": summary.sid,
         "slug": summary.slug,
         "custom_title": summary.custom_title,
@@ -618,12 +668,17 @@ def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, An
         "error_message": summary.tail.error_message,
         "digest_done": summary.tail.digest_done,
         "last_reply_ts": summary.tail.last_reply_ts,
+        "turn_end_ts": summary.tail.turn_end_ts,
     }
 
 
 def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
     """缓存条目 → 字段。形状不对就当没缓存，重算那一份。"""
     try:
+        turn_end_raw = entry.get("turn_end_ts")
+        turn_end_ts = float(turn_end_raw) if isinstance(turn_end_raw, (int, float)) else None
+        digest_raw = entry.get("digest")
+        content_digest = str(digest_raw) if isinstance(digest_raw, str) else None
         return SessionSummary(
             sid=str(entry["sid"]),
             slug=entry["slug"],
@@ -638,7 +693,9 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
                 error_message=entry["error_message"],
                 digest_done=entry["digest_done"],
                 last_reply_ts=entry["last_reply_ts"],
+                turn_end_ts=turn_end_ts,
             ),
+            content_digest=content_digest,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -774,6 +831,15 @@ def list_session_summaries(
     for key, st, summary in _extract_many(stale):
         if summary is None:
             continue
+        prev = cached.get(key)
+        if (
+            isinstance(prev, dict)
+            and prev.get("size") == st.st_size
+            and prev.get("digest")
+            and prev.get("digest") == summary.content_digest
+            and isinstance(prev.get("last_active_ts"), (int, float))
+        ):
+            summary = replace(summary, last_active_ts=float(prev["last_active_ts"]))
         summaries.append(summary)
         fresh[key] = _as_entry(summary, st.st_size, st.st_mtime_ns)
 
