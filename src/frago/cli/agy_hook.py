@@ -58,6 +58,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from typing import Any
@@ -285,6 +286,14 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
         logger.warning("agy-hook: 找不到引擎二进制，本轮无规则", exc_info=True)
         return {}
 
+    env = dict(os.environ)
+    sid = engine_payload.get("session_id")
+    if isinstance(sid, str) and sid and not env.get("FRAGO_SESSION_ID"):
+        env["FRAGO_SESSION_ID"] = sid
+    prompt = engine_payload.get("prompt")
+    if isinstance(prompt, str) and prompt:
+        env["FRAGO_HOOK_PROMPT"] = prompt
+
     try:
         result = subprocess.run(
             argv,
@@ -293,6 +302,7 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
             text=True,
             encoding="utf-8",
             timeout=ENGINE_TIMEOUT_SECONDS,
+            env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
         logger.warning("agy-hook: 引擎没答上来，本轮无规则", exc_info=True)
