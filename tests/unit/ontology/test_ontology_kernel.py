@@ -446,7 +446,8 @@ class TestOntologyIntrospector:
         for classes in introspector.schema["domain_classes"].values():
             for cls_def in classes:
                 for loc in cls_def.get("current_code_locations", []):
-                    if loc.startswith("src/") and not (repo_root / loc).exists():
+                    rel_path = loc.split("#", 1)[0]
+                    if rel_path.startswith("src/") and not (repo_root / rel_path).exists():
                         missing_paths.append(f"{cls_def['class_id']}: {loc}")
         assert missing_paths == []
 
