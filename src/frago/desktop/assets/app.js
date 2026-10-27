@@ -94,6 +94,9 @@
     var dw = CONFIG.desktop.w, dh = CONFIG.desktop.h;
     els.stage.style.width = dw + "px";
     els.stage.style.height = dh + "px";
+    // 在 WebUI 切去其它页面（如 sessions）期间，iframe 视口宽高为 0；
+    // 保持上一次有效缩放比，别把 scale 算成 0。
+    if (!window.innerWidth || !window.innerHeight) return;
     var scale = Math.min(window.innerWidth / dw, window.innerHeight / dh);
     els.stage.style.transform =
       "translate(-50%, -50%) scale(" + scale + ")";
@@ -1289,7 +1292,7 @@
       } else if (state.takeover) {
         banner.hidden = false;
         banner.classList.remove("headful-mode");
-        banner.textContent = "人工接管中：可直接点击网页、滚轮滚动、打字或粘贴（Cmd/Ctrl+V）";
+        banner.textContent = "人工接管中：点击输入框打字，按回车或点网页按钮提交；操作完点右上角「退出接管」交回 Agent";
       } else {
         banner.hidden = true;
         banner.textContent = "";
@@ -1299,6 +1302,13 @@
 
   function applyBrowserMode(msg) {
     if (typeof msg.headless === "boolean") state.actorHeadless = msg.headless;
+    if (typeof msg.takeover === "boolean") {
+      state.takeover = msg.takeover;
+      if (els.imeInput && ROLE !== "camera") {
+        if (state.takeover) els.imeInput.focus({ preventScroll: true });
+        else els.imeInput.blur();
+      }
+    }
     state.actorSwitching = !!msg.switching;
     state.actorModeError = msg.error || null;
     syncTakeoverUI();
@@ -1325,10 +1335,10 @@
     function setTakeover(on) {
       state.takeover = !!on;
       syncTakeoverUI();
+      send({ t: "human.takeover", on: state.takeover, win: "browser" });
       if (state.takeover) {
         if (state.focus !== "browser") {
           applyFocus("browser");
-          send({ t: "human.focus", win: "browser" });
         }
         if (ime) ime.focus({ preventScroll: true });
       } else if (ime) {

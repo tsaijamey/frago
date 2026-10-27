@@ -395,7 +395,15 @@ export async function assignRecipeFolder(
 /** 配方页面的地址。开发模式下接口在另一个端口，页面也得跟着去那边取。 */
 export function recipeAppUrl(name: string, slot?: string | null): string {
   const base = `${API_BASE_URL}/app/${encodeURIComponent(name)}/`;
-  return slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
+  return slot && slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
+}
+
+/** 虚拟桌面（agent_os）的嵌入地址。若携带导演会话编号则一并开启右下角人类输入面板。 */
+export function desktopAppUrl(sessionId?: string | null): string {
+  const base = `${API_BASE_URL}/app/agent_os/`;
+  return sessionId
+    ? `${base}?userInput=true&session=${encodeURIComponent(sessionId)}`
+    : base;
 }
 
 /** 告诉服务端：它推过来的那个「打开配方页面」这边已经打开了。 */

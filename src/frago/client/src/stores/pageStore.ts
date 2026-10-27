@@ -17,6 +17,7 @@ import { pathForPage, readLocationRoute, writeLocationRoute } from '@/routes';
 export type PageType =
   | 'live'
   | 'session_workbench'
+  | 'desktop'
   | 'vibe_teaming'
   | 'dashboard'
   | 'tasks'
@@ -47,6 +48,11 @@ export interface PageSlice {
   /** 右侧正开着的配方页面：`<配方名>`，非默认槽位时是 `<配方名>/<槽位>`。 */
   currentRecipeAppId: string | null;
   /**
+   * 虚拟桌面绑定的导演会话编号（由「创建配方」传入，用于展开右下角导演对话面板）。
+   * 不随切页清空，切去会话页再切回桌面页时仍保持同一场导演连接。
+   */
+  desktopSessionId: string | null;
+  /**
    * 会话页上正选着哪一场。
    *
    * 放在这里而不在会话页自己身上：会话页一切走（去配方、去待办）就整个卸掉，记在页面
@@ -59,6 +65,7 @@ export interface PageSlice {
   /** 地址栏变了（前进/后退/手改地址）时用这个落状态，不再写回地址。 */
   applyRoute: (page: PageType, id?: string | null) => void;
   setWorkbenchSessionId: (id: string | null) => void;
+  setDesktopSessionId: (id: string | null) => void;
 }
 
 /** 编号该落进哪个字段，由目标页决定；其余字段一律清空。 */
@@ -80,11 +87,17 @@ export const usePageStore = create<PageSlice>((set) => ({
   // 被弹回首页，正是这一行在读地址之前的样子。
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
+  desktopSessionId: null,
   workbenchSessionId: null,
 
   switchPage: (page, id) => {
-    set({ currentPage: page, ...idFields(page, id) });
-    writeLocationRoute(pathForPage(page, id));
+    set((state) => ({
+      currentPage: page,
+      ...idFields(page, id),
+      desktopSessionId:
+        page === 'desktop' && id !== undefined ? id || null : state.desktopSessionId,
+    }));
+    writeLocationRoute(pathForPage(page, page === 'desktop' ? undefined : id));
   },
 
   applyRoute: (page, id) => {
@@ -92,4 +105,5 @@ export const usePageStore = create<PageSlice>((set) => ({
   },
 
   setWorkbenchSessionId: (id) => set({ workbenchSessionId: id }),
+  setDesktopSessionId: (id) => set({ desktopSessionId: id }),
 }));

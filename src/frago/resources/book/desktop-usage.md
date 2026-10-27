@@ -25,23 +25,32 @@ frago desktop browser open https://...     # 然后才是干活
 | 资源 | 动词 |
 |---|---|
 | 生命周期 | `status` / `up` / `down` |
-| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read` |
+| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read` / `browser mode --to takeover\|release\|head\|headless` |
 | 标签页 | `tab open <url>` / `tab switch <n>` / `tab close <n>` |
 | 终端窗口 | `term run "<命令>"` / `term read` / `term scroll --lines <n>\|--to "<文字>"\|--to-end` |
 | 图片浏览器 | `image open <本地图片路径>` |
 | 视频播放器 | `video open <本地视频>` / `video play` / `video pause` / `video seek --sec <秒>` |
 | 全屏 HTML | `slide open <本地 html>` / `slide close` |
 | 贴纸栏 | `strap show "<少量文字>" [--title <标签>] [--style news\|bar\|ghost\|chip] [--at bottom\|top] [--ms <毫秒>]` / `strap hide` |
-| 鼠标 | `mouse to --ref <ref>` / `mouse drift` / `mouse click` |
+| 鼠标 | `mouse to <ref>` / `mouse drift` / `mouse click` |
 | 开关程序 | `window open\|close --target term\|browser\|image\|video` |
 | 窗口 | `window min\|max\|restore\|move` / `focus term\|browser\|image\|video` |
 | 镜头 | `camera focus --ref <ref> --zoom <k>` / `camera pan` / `camera reset` / `camera up\|down` |
 | 录制 | `rec start --name <n>` / `rec stop` |
 | 讲解 | `say "<旁白>"`（纯字幕）/ `say "<旁白>" --speak [--async] [--interrupt] [--out page\|local\|both\|none] [--voice <声音>] [--rate +10%] [--volume +0%] [--pitch +0Hz]`（开口） |
 | 语音 | `voice synth "<文字>"`（只合成不出声，不要求舞台在跑）/ `voice stop` / `voice cache` / `voice clear` |
-| 等待与观察 | `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements` / `viewport refresh` |
+| 等待与观察 | `wait --release [--timeout <秒>]` / `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements` / `viewport refresh` |
 
 `ref` 是元素地址：页面里的写 `page:"按钮文字"` 或 `page:<css选择器>`，终端里的写 `term:...`，桌面级的写 `dock:browser` / `tab:0`。用 `elements` 先看有哪些可寻址的东西，别猜。
+
+`mouse to` 的目标是**位置参数**，不是 `--ref`；镜头那一族的 `camera focus --ref` 才带 `--ref`。两者写法不同不是笔误，照抄这两条即可：
+
+```
+frago desktop mouse to page:"确认提交"        # 鼠标移到某个元素上（位置参数）
+frago desktop camera focus --ref term:rows   # 镜头框住某块区域（--ref，可给多个）
+```
+
+写成 `mouse to --ref <ref>` 会当场报 `缺少 目标 ref`——它把 `--ref` 当成"没给目标"。
 
 ## 什么时候用
 
@@ -59,7 +68,7 @@ frago desktop browser open https://...     # 然后才是干活
 
 **停了就是停了。** `down` 之后有一个守护服务**不会**把它拉回来——注册表里记的是"人想不想让它跑"，`down` 把这个意图改成了"不想"。所以看到桌面页面空着、状态是 stopped，那不是故障，是上一次有人停过它。`up` 会把意图改回来。`down` 连演员那台无头浏览器（9222）一起关掉，回执里的 `actor_browser` 写着关没关成；登录态在 profile 目录里，停进程不动它，下次 `up` 原样带回来。
 
-**指向窗口的动作自动把那扇窗口提到最前。** `browser open`、`browser click`、`tab switch`、`mouse to --ref page:...`、`camera focus` 落在页面上——这些都会先激活浏览器窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里。反过来，纯观察（`wait`、`term read`）不动焦点。
+**指向窗口的动作自动把那扇窗口提到最前。** `browser open`、`browser click`、`tab switch`、`mouse to page:...`、`camera focus` 落在页面上——这些都会先激活浏览器窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里。反过来，纯观察（`wait`、`term read`）不动焦点。
 
 **关掉程序和收起窗口是两件事。** `window close --target term` 让终端离开桌面——窗口缩着淡出、dock 上那颗灯灭掉；`window min` 只是把窗口飞进 dock，程序还在跑、灯还亮着。两者在画面上刻意长得不一样，因为观众要分得出"退出了"和"收起来了"。四扇窗（term / browser / image / video）走的是同一条 `window open|close`，图片浏览器和播放器都没有自己的关法。
 
@@ -71,7 +80,7 @@ frago desktop browser open https://...     # 然后才是干活
 
 HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-content`、`screenshot`），调好了再交给 `slide open`。发出去的根目录是那份 HTML 所在的目录，所以同目录的图片、字体、css 这些相对引用都拿得到；目录之外的文件一律 403。
 
-**全屏层盖着桌面时，对着窗口比划的指令会被拒绝。** `mouse to --ref`、`click`、`camera focus` 三条一律报错并叫你先 `slide close`。不拦的话它们照常执行、回执里每个字段都正确，而画面上鼠标在一片动画上空划过、镜头推近了一块看不见的窗口——这种错只有回看成片才发现。字幕（`say`）和贴纸栏（`strap`）不受影响，它们本来就压在这一层上面。
+**全屏层盖着桌面时，对着窗口比划的指令会被拒绝。** `mouse to`、`click`、`camera focus` 三条一律报错并叫你先 `slide close`。不拦的话它们照常执行、回执里每个字段都正确，而画面上鼠标在一片动画上空划过、镜头推近了一块看不见的窗口——这种错只有回看成片才发现。字幕（`say`）和贴纸栏（`strap`）不受影响，它们本来就压在这一层上面。
 
 **先 `camera up` 再 `slide open`。** 机位是 `rec start` 现开的一页，它连上来时会收到补发的现状并从头加载那份 HTML——动画会在机位那边重新开始播。想让成片里的动画从头完整，就让机位先在场。
 
@@ -104,7 +113,7 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **起演员、机位之前，舞台先确认有头 CfT 在跑。** 人用来看 agent 操作的有头 CfT 与演员、机位是同一个应用，同样是谁先起谁接程序坞的点击。所以没有有头 CfT 时，舞台先用 extension 后端把它以 app 窗口打开到会话页（`/#/sessions`），再起无头的那两台。起不来只写 broker.log，不拦舞台。
 
-登录态跟着 `~/.frago/profiles/cft/9222/` 那份 profile 走。它不是从人日常浏览器播种来的，要登的站点得人自己去这份 profile 里登——演员是无头的，没有窗口给人当场接手；而且同一份 profile 只能有一个实例，人去登的时候舞台必须先停。
+登录态跟着 `~/.frago/profiles/cft/9222/` 那份 profile 走。遇到需要人类登录或真人验证的站点，无需停舞台：用 `frago desktop browser mode --to takeover` 开启窗格内人工接管（或 `browser mode --to head` 弹出同 profile 的真实窗口过检），随后紧跟 `frago desktop wait --release --timeout 300` 挂起等待；人类在画布完成操作并点击右上角「退出接管」（或关掉弹出的真实窗口）时，`wait --release` 即刻返回并带回最新页面地址与标题。登录态落盘在 profile 目录里，停进程不动它，下次 `up` 原样带回来。
 
 **⚠️ 舞台跑着的时候，不要执行 `frago browser -b cdp start`。** 演员就在默认的 9222 上，而 `-b cdp start` 默认会先杀掉该端口上已有的浏览器进程再起自己的。顶掉之后：新实例是一份空 profile，舞台的自愈机制会接管它的落地页，状态照报"演员活着"——命令、日志、状态三层没有一层报错，只有画面是错的，而这种错只有回看成片才发现。要独立无头实例，先 `frago desktop status` 确认舞台是 stopped。同理别在 9222 上开标签：那就是演员那台实例，你开的标签会出现在虚拟标签条里。
 

@@ -1661,9 +1661,15 @@ def test_aos_browser_mode_parses_head_and_headless():
     kind2, steps2 = aos.parse(["browser", "mode", "--to", "headless"])
     assert kind2 == "steps" and steps2 == [{"op": "browser.mode", "to": "headless"}]
 
+    kind3, steps3 = aos.parse(["browser", "mode", "--to", "takeover"])
+    assert kind3 == "steps" and steps3 == [{"op": "browser.mode", "to": "takeover"}]
+
+    kind4, steps4 = aos.parse(["browser", "mode", "--to", "release"])
+    assert kind4 == "steps" and steps4 == [{"op": "browser.mode", "to": "release"}]
+
     with pytest.raises(aos.Fail) as err:
         aos.parse(["browser", "mode", "--to", "offscreen"])
-    assert err.value.payload["allowed"] == ["headless", "head"]
+    assert err.value.payload["allowed"] == ["headless", "head", "takeover", "release"]
 
 
 def test_stage_browser_mouse_wheel_and_extended_keys():
@@ -1750,13 +1756,54 @@ def test_stage_browser_switch_mode_and_auto_return_on_window_close(monkeypatch):
     assert events == [(False, True, None), (False, False, None)]
 
     # 模拟人类在真实窗口完成 Cloudflare 验证后直接关闭了窗口（pages 变空），
-    # verify_actor 自动切回无头虚拟窗格并恢复最新地址。
+    # verify_actor 自动切回无头虚拟窗格并恢复最新地址，同时自动释放人工接管标志。
+    sb.takeover = True
     pages_state.clear()
     sb._last_verify_at = 0.0
     asyncio.run(sb.verify_actor())
     assert sb.headless is True
+    assert sb.takeover is False
     assert ensured[-1] == (19222, "演员", True)
     assert sb.current_url == "https://example.com/verify"
+
+
+def test_aos_wait_release_parses_and_polls_until_human_releases(monkeypatch):
+    from frago.desktop import aos
+
+    kind, fn = aos.parse(["wait", "--release"])
+    assert kind == "local" and callable(fn)
+
+    kind2, fn2 = aos.parse(["wait", "--release", "--timeout", "120"])
+    assert kind2 == "local" and callable(fn2)
+
+    with pytest.raises(aos.Fail) as err:
+        aos.parse(["wait", "--release", "--url", "https://mail.qq.com"])
+    assert "--release" in err.value.payload["error"]
+
+    clock = FakeClock()
+    monkeypatch.setattr(aos, "time", clock)
+
+    statuses = [
+        {"actor_takeover": True, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+        {"actor_takeover": True, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+        {"actor_takeover": False, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+    ]
+    monkeypatch.setattr(aos, "get_status", lambda _rec, timeout=5.0: statuses.pop(0) if len(statuses) > 1 else statuses[0])
+    monkeypatch.setattr(
+        aos,
+        "post",
+        lambda _rec, _steps, timeout=5.0: {
+            "results": [{"value": {"url": "https://wx.mail.qq.com/home/index", "title": "QQ邮箱 - 收件箱"}}]
+        },
+    )
+
+    out = fn({"id": "default", "port": 18770})
+    assert out["ok"] is True
+    assert out["mode"] == "release" and out["matched"] == "release"
+    assert out["takeover"] is False
+    assert out["attempts"] == 3
+    assert out["url"] == "https://wx.mail.qq.com/home/index"
+    assert out["title"] == "QQ邮箱 - 收件箱"
 
 
 def test_desktop_ui_assets_contain_takeover_and_headful_controls():

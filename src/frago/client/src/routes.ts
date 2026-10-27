@@ -25,6 +25,7 @@ export const HOME_PAGE: PageType = 'session_workbench';
 const PAGE_SEGMENT: Record<PageType, string> = {
   live: 'live',
   session_workbench: 'sessions',
+  desktop: 'desktop',
   vibe_teaming: 'pairs',
   dashboard: 'dashboard',
   tasks: 'tasks',
@@ -109,6 +110,10 @@ export function parsePath(raw: string): Route {
   const id = rest.join('/');
 
   if (id) {
+    // 虚拟桌面常驻在左侧菜单 desktop 项下，不作为 recipes 下面的临时子项。
+    if (segment === 'app' && (id === 'agent_os' || id.startsWith('agent_os/'))) {
+      return { page: 'desktop', id: null };
+    }
     const detail = DETAIL_PAGE[segment];
     if (detail) return { page: detail, id };
     // 这一段本来就没有详情页（`/settings/什么什么`）。当清单页处理，别把多出来的

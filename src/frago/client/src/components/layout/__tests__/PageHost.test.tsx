@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import PageHost from '../PageHost';
+import { NAV_ITEMS, isNavItemActive } from '../Sidebar';
 import { usePageStore, type PageType } from '@/stores/pageStore';
 
 vi.mock('@/components/sessionWorkbench/SessionWorkbenchPage', async () => {
@@ -123,5 +124,24 @@ describe('PageHost 切页保留', () => {
     const slots = document.querySelectorAll('.page-slot');
     expect(slots.length).toBeGreaterThan(0);
     expect(document.querySelectorAll('.page-slot:not([hidden])')).toHaveLength(0);
+  });
+
+  it('左侧菜单常驻 desktop 位于 sessions 正下方，切走后 iframe 留在文档里不卸载', () => {
+    expect(NAV_ITEMS[0]?.id).toBe('session_workbench');
+    expect(NAV_ITEMS[1]?.id).toBe('desktop');
+    expect(isNavItemActive('desktop', 'desktop')).toBe(true);
+    expect(isNavItemActive('desktop', 'session_workbench')).toBe(false);
+
+    render(<PageHost />);
+    goto('desktop');
+
+    const frame = document.querySelector('iframe.desktop-page-frame') as HTMLIFrameElement | null;
+    expect(frame).not.toBeNull();
+    expect(frame?.getAttribute('src')).toBe('/app/agent_os/');
+    expect(slotOf(frame!).hasAttribute('hidden')).toBe(false);
+
+    goto('session_workbench');
+    expect(document.body.contains(frame)).toBe(true);
+    expect(slotOf(frame!).hasAttribute('hidden')).toBe(true);
   });
 });

@@ -26,6 +26,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { usePageStore, type PageType } from '@/stores/pageStore';
 
 import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
+import DesktopPage from '@/components/desktop/DesktopPage';
 import VibeTeamingPage from '@/components/vibeTeaming/VibeTeamingPage';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
@@ -42,6 +43,7 @@ import FileBrowserPage from '@/components/fileBrowser/FileBrowserPage';
 /** 留状态的最小单位：同一个视图里的页面编号换来换去，还是这一份。 */
 type ViewKey =
   | 'workbench'
+  | 'desktop'
   | 'vibe_teaming'
   | 'recipes'
   | 'recipe_detail'
@@ -65,6 +67,7 @@ type ViewKey =
 const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
   live: 'workbench',
   session_workbench: 'workbench',
+  desktop: 'desktop',
   vibe_teaming: 'vibe_teaming',
   dashboard: 'workbench',
   tasks: 'workbench',
@@ -88,6 +91,7 @@ const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
 
 const VIEWS: Record<ViewKey, () => ReactElement> = {
   workbench: () => <SessionWorkbenchPage />,
+  desktop: () => <DesktopPage />,
   vibe_teaming: () => <VibeTeamingPage />,
   recipes: () => <RecipeList />,
   recipe_detail: () => <RecipeDetail />,

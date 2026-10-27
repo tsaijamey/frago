@@ -571,11 +571,11 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         if verb == "mode":
             f = take_flags(rest, {"to"})
             if "to" not in f:
-                raise die("browser mode 需要 --to head|headless")
+                raise die("browser mode 需要 --to head|headless|takeover|release")
             to = f["to"]
-            if to not in ACTOR_MODES:
-                raise die(f"--to 只支持 {'|'.join(ACTOR_MODES)}，得到: {to!r}",
-                          allowed=list(ACTOR_MODES))
+            if to not in BROWSER_MODES:
+                raise die(f"--to 只支持 {'|'.join(BROWSER_MODES)}，得到: {to!r}",
+                          allowed=list(BROWSER_MODES))
             return "steps", [{"op": "browser.mode", "to": to}]
         raise die(f"未知 browser 动词: {verb}",
                   allowed=["open", "click", "scroll", "read", "mode"])
@@ -651,7 +651,15 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         raise die(f"未知 viewport 动词: {verb}", allowed=["refresh"])
 
     if res == "wait":
+        release = "--release" in rest
+        rest = [t for t in rest if t != "--release"]
         f = take_flags(rest, {"for", "url", "text", "speech", "timeout"})
+        if release:
+            if {"for", "url", "text", "speech"} & set(f):
+                raise die("wait --release 不接受 --for / --url / --text / --speech",
+                          hint="等人类退出接管或收回真窗：frago desktop wait --release [--timeout 300]")
+            timeout = as_int(f, "timeout", 300)
+            return "local", lambda rec: cmd_wait(rec, "release", "release", timeout)
         which = need_exactly_one(f, ["for", "url", "text", "speech"], "wait")
         if which == "speech":
             # 等语音讲完不在这边轮询：讲没讲完只有 broker 知道（页面报回来的、
@@ -665,6 +673,9 @@ def parse(tokens: list[str]) -> tuple[str, object]:
             if "timeout" in f:
                 step["timeout"] = as_int(f, "timeout")
             return "steps", [step]
+        if which == "for" and f["for"] == "release":
+            timeout = as_int(f, "timeout", 300)
+            return "local", lambda rec: cmd_wait(rec, "release", "release", timeout)
         timeout = as_int(f, "timeout", 30)
         return "local", lambda rec: cmd_wait(rec, which, f[which], timeout)
 
@@ -806,12 +817,12 @@ RESOURCE_HELP = {
     "strap": "贴纸栏（电视节目那条说明字条）：show <文字> --style news|bar|"
              "ghost|chip，hide 撤掉。挂着不走，与 say 的字幕分层",
     "browser": "虚拟浏览器窗口：open <url> / click / scroll / read / "
-               "mode --to head|headless（弹出真窗过检或切回虚拟窗格）",
+               "mode --to takeover|release|head|headless（窗格人工接管或弹出真窗过检）",
     "tab": "浏览器标签：open / switch <n> / close <n>",
     "camera": "摄像机（不是窗口）：up / down / focus --ref / pan --to / reset",
     "viewport": "refresh：重读演员视口并按新比例重摆虚拟浏览器窗口",
-    "wait": "语义等待：--for <ref> | --url <模式> | --text <文字> | "
-            "--speech all|<编号>（等语音讲完）",
+    "wait": "语义等待：--release（等人类点「退出接管」或关掉真窗）| --for <ref> | "
+            "--url <模式> | --text <文字> | --speech all|<编号>（等语音讲完）",
     "pause": "纯演示节拍 --ms，与语义等待分开的动词",
     "rec": "录制：start --name <n> / stop（回执带冻帧指标与 2×3 宫格；"
            "录制期间开口的话封成音轨）",
@@ -857,6 +868,8 @@ def cmd_status(rec: dict) -> dict:
                 "layout_reported": st.get("layout_reported"),
                 "focus": st.get("focus"),
                 "hover": st.get("hover"),
+                "actor_mode": st.get("actor_mode"),
+                "actor_takeover": bool(st.get("actor_takeover", False)),
                 "recording": st.get("recorder", {}).get("recording"),
             },
         },
@@ -864,11 +877,13 @@ def cmd_status(rec: dict) -> dict:
         # agent 扫一眼 status 是看不见的，于是"先点一下 dock 保险"成了习惯动作——
         # 而终端本来就在前台，那一下白点，还录进了片子。
         "active": st.get("focus"),
+        "takeover": bool(st.get("actor_takeover", False)),
         "elements": sorted(st.get("elements", {}).keys()),
     }
 
 
 ACTOR_MODES = ("headless", "head")
+BROWSER_MODES = ("headless", "head", "takeover", "release")
 
 
 def cmd_up(flags: dict) -> dict:
@@ -1096,6 +1111,58 @@ def cmd_wait(rec: dict, mode: str, needle: str, timeout: int) -> dict:
     """
     t0 = time.time()
     deadline = t0 + timeout
+    if mode == "release":
+        attempts = 0
+        last_state: dict = {}
+        while True:
+            attempts += 1
+            try:
+                st = get_status(rec, timeout=5.0)
+                takeover = bool(st.get("actor_takeover", False))
+                headless = bool(st.get("actor_headless", True))
+                switching = bool(st.get("actor_switching", False))
+                last_state = {
+                    "actor_takeover": takeover,
+                    "actor_mode": st.get("actor_mode"),
+                    "actor_headless": headless,
+                    "actor_switching": switching,
+                }
+                if not takeover and headless and not switching:
+                    page_info: dict = {}
+                    with suppress(Exception):
+                        probe = post(rec, [{
+                            "op": "exec",
+                            "observe": True,
+                            "js": "(()=>({url:location.href,title:document.title}))()",
+                        }], timeout=5.0)
+                        val = (probe.get("results") or [{}])[0].get("value")
+                        if isinstance(val, dict):
+                            page_info = {
+                                "url": val.get("url"),
+                                "title": val.get("title"),
+                            }
+                    return {
+                        "ok": True,
+                        "waited_sec": round(time.time() - t0, 3),
+                        "attempts": attempts,
+                        "mode": "release",
+                        "matched": "release",
+                        "takeover": False,
+                        "actor_mode": st.get("actor_mode") or "headless",
+                        **page_info,
+                    }
+            except Fail:
+                pass
+            if time.time() >= deadline:
+                break
+            time.sleep(0.25)
+        raise die(
+            f"wait 超时（{timeout}s）人类尚未退出接管或收回真窗",
+            waited_sec=round(time.time() - t0, 3),
+            attempts=attempts,
+            last_seen=last_state,
+        )
+
     if mode == "for":
         # 用 elements 探，不用 cursor 探。cursor 会真的把鼠标挪过去——等待是
         # 观察，不该改变世界；拿移动当探针，等一个还没出现的元素时鼠标会在

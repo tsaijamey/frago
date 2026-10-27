@@ -81,6 +81,7 @@ describe('parsePath', () => {
 describe('写出去再读回来', () => {
   const cases: [PageType, string | null][] = [
     ['session_workbench', null],
+    ['desktop', null],
     ['recipes', null],
     ['recipe_detail', 'my-recipe'],
     ['todos', null],
@@ -113,6 +114,12 @@ describe('写出去再读回来', () => {
       page: 'recipe_app',
       id: 'demo_recipe/x',
     });
+  });
+
+  it('agent_os 常驻在左侧菜单 desktop 项下，#/app/agent_os 归流到 desktop 页', () => {
+    expect(parsePath('#/desktop')).toEqual({ page: 'desktop', id: null });
+    expect(parsePath('#/app/agent_os')).toEqual({ page: 'desktop', id: null });
+    expect(parsePath('#/app/agent_os/default')).toEqual({ page: 'desktop', id: null });
   });
 
   it('只有 /app 一段不是一个页面，回首页', () => {

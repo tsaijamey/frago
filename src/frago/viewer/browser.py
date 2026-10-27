@@ -119,9 +119,9 @@ class BrowserViewer:
             session.disconnect()
 
 
-#: Pages under /app/ that are not a recipe's and keep their own window: the
-#: virtual desktop is a stage of its own, not something to squeeze beside the menu.
-_NOT_EMBEDDED = frozenset({"agent_os"})
+#: Pages under /app/ that are not embedded inside the WebUI.
+#: (Previously held "agent_os" before desktop became a permanent item in the left rail.)
+_NOT_EMBEDDED: frozenset[str] = frozenset()
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -157,6 +157,8 @@ def webui_url_for(origin: str, name: str, slot: str | None) -> str:
     """The WebUI address that shows this recipe page on the right of the menu."""
     from urllib.parse import quote
 
+    if name == "agent_os":
+        return f"{origin}/#/desktop"
     tail = quote(name, safe="")
     if slot and slot != "default":
         tail += "/" + quote(slot, safe="")

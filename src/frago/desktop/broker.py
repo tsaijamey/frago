@@ -516,6 +516,7 @@ class StageBrowser:
         # 与关窗后自动切回虚拟窗格共用。
         self.current_url: str = start_url
         self.switching_mode: bool = False
+        self.takeover: bool = False
         self.on_mode_change = None  # async callable(headless: bool, switching: bool, error: str | None)
 
     # ── 生命周期 ──
@@ -797,6 +798,8 @@ class StageBrowser:
                 with suppress(Exception):
                     await self.on_mode_change(self.headless, False, str(exc))
             raise
+        if target_headless:
+            self.takeover = False
         self.switching_mode = False
         if self.on_mode_change:
             with suppress(Exception):
@@ -804,6 +807,7 @@ class StageBrowser:
         return {
             "headless": self.headless,
             "mode": "headless" if self.headless else "head",
+            "takeover": self.takeover,
             "url": self.current_url,
             "viewport": {"w": self.width, "h": self.height},
         }
@@ -2945,6 +2949,7 @@ def build_app(cfg: dict) -> FastAPI:
             "t": "browser.mode",
             "headless": headless,
             "mode": "headless" if headless else "head",
+            "takeover": browser.takeover,
             "switching": switching,
             "error": error,
         }
@@ -3466,6 +3471,7 @@ def build_app(cfg: dict) -> FastAPI:
             "t": "browser.mode",
             "headless": browser.headless,
             "mode": "headless" if browser.headless else "head",
+            "takeover": browser.takeover,
             "switching": browser.switching_mode,
             "error": None,
         })
@@ -5189,22 +5195,38 @@ def build_app(cfg: dict) -> FastAPI:
                 "effect": _with_focus({"observed": True}, act)}
 
     async def op_browser_mode(step: dict) -> Any:
-        """在无头虚拟窗格（headless）与有头真实窗口（head）之间切换演员浏览器。
+        """切换虚拟浏览器的交互模式：窗格人工接管（takeover/release）或有头真窗（head/headless）。
 
         共用同一个 9222 端口与 ~/.frago/profiles/cft/9222/ 配置目录：
+        - 切到 takeover / release：开关虚拟窗格内的键鼠透传与「人工接管」提示条；
         - 切到 head：弹出真实窗口供人类完成 Cloudflare 真人验证或扫码登录；
         - 切回 headless（或人类直接关掉真实窗口）：自动切回无头虚拟窗格并原样带回登录态。
         """
+        to = str(step.get("to") or "").strip().lower()
+        if "takeover" in step or to in ("takeover", "release"):
+            browser.takeover = (
+                bool(step["takeover"]) if "takeover" in step else (to == "takeover")
+            )
+            act = await ensure_active("browser") if browser.takeover else None
+            await on_actor_mode(browser.headless, browser.switching_mode, None)
+            out: dict = {
+                "headless": browser.headless,
+                "mode": "headless" if browser.headless else "head",
+                "takeover": browser.takeover,
+            }
+            if act is not None:
+                out["effect"] = _with_focus({"observed": True}, act)
+            return out
+
         if "headless" in step and step["headless"] is not None:
             target_headless = bool(step["headless"])
         else:
-            to = str(step.get("to") or "").strip().lower()
             if to in ("head", "headful", "window"):
                 target_headless = False
             elif to in ("headless", "virtual", "pane"):
                 target_headless = True
             else:
-                raise ValueError("browser.mode 需要 --to head|headless")
+                raise ValueError("browser.mode 需要 --to head|headless|takeover|release")
         act = await ensure_active("browser")
         info = await browser.switch_mode(
             target_headless,
@@ -5216,6 +5238,7 @@ def build_app(cfg: dict) -> FastAPI:
         await push_tabs()
         return {
             **info,
+            "takeover": browser.takeover,
             "geometry": geo,
             "effect": _with_focus({"observed": True}, act),
         }
@@ -5224,7 +5247,21 @@ def build_app(cfg: dict) -> FastAPI:
         """处理桌面页「人工接管」与「弹出真窗过检」发来的 WebSocket 事件。"""
         kind = msg.get("t")
         with suppress(Exception):
-            if kind in ("human.takeover", "human.focus"):
+            if kind == "human.takeover":
+                browser.takeover = bool(msg.get("on", True))
+                if browser.takeover:
+                    await ensure_active(str(msg.get("win") or "browser"))
+                else:
+                    with suppress(Exception):
+                        await browser.evaluate(
+                            "(()=>{const a=document.activeElement;"
+                            "if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)){"
+                            "a.dispatchEvent(new Event('change',{bubbles:true}));"
+                            "a.blur();}})()"
+                        )
+                await on_actor_mode(browser.headless, browser.switching_mode, None)
+                await browser.nudge_repaint()
+            elif kind == "human.focus":
                 if msg.get("on", True):
                     await ensure_active(str(msg.get("win") or "browser"))
             elif kind == "human.mouse":
@@ -5239,18 +5276,23 @@ def build_app(cfg: dict) -> FastAPI:
                     m_kind, px, py, button=btn,
                     delta_x=dx, delta_y=dy, click_count=cnt,
                 )
+                if m_kind in ("mouseReleased", "mouseWheel"):
+                    await browser.nudge_repaint()
             elif kind == "human.text":
                 text = str(msg.get("text") or "")
                 if text:
                     await browser.insert_text(text)
+                    await browser.nudge_repaint()
             elif kind == "human.key":
                 key_name = str(msg.get("key") or "")
                 if key_name:
                     await browser.key(key_name)
+                    await browser.nudge_repaint()
             elif kind == "human.edit":
                 action = str(msg.get("action") or "")
                 if action:
                     await browser.edit_action(action)
+                    await browser.nudge_repaint()
             elif kind in ("human.tab", "human.tab.switch"):
                 idx = int(msg.get("index") or 0)
                 await op_tab({"action": "switch", "index": idx})
@@ -6603,6 +6645,7 @@ def build_app(cfg: dict) -> FastAPI:
             "actor_gone_reason": browser.actor_gone_reason,
             "actor_headless": browser.headless,
             "actor_mode": "headless" if browser.headless else "head",
+            "actor_takeover": browser.takeover,
             "actor_switching": browser.switching_mode,
             "stale_clients": sorted(stage.stale_clients),
             "content_rects": {

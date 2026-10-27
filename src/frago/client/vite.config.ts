@@ -72,6 +72,7 @@ export default defineConfig({
     // `uv run frago server restart` 把仓库这份装成系统 frago。
     proxy: {
       '/api': { target: 'http://127.0.0.1:8093', changeOrigin: true },
+      '/app': { target: 'http://127.0.0.1:8093', changeOrigin: true },
       '/ws': { target: 'ws://127.0.0.1:8093', ws: true },
     },
   },
