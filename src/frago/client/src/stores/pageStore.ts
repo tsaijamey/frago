@@ -82,12 +82,19 @@ function idFields(page: PageType, id?: string | null) {
 
 const initial = readLocationRoute();
 
+function createDesktopSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `core_${crypto.randomUUID().replace(/-/g, '')}`;
+  }
+  return `core_${Math.random().toString(16).slice(2, 14)}${Date.now().toString(16)}`;
+}
+
 export const usePageStore = create<PageSlice>((set) => ({
   // 开局停在地址栏指着的那一页。地址栏是空的才回会话工作台这个首页——刷新之后
   // 被弹回首页，正是这一行在读地址之前的样子。
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
-  desktopSessionId: null,
+  desktopSessionId: createDesktopSessionId(),
   workbenchSessionId: null,
 
   switchPage: (page, id) => {

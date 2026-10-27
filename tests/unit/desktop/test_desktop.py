@@ -1649,6 +1649,154 @@ def test_human_cft_skipped_without_cft(monkeypatch, tmp_path):
     assert started == []
 
 
+# ── 注意力即置顶 & MRU 窗口层级栈 ─────────────────────────────────────────
+
+
+def test_mru_z_order_restores_previous_window_on_close_or_min(sealed_broker, clip_file):
+    """多扇窗按 MRU 顺序维护层级栈：关掉或收起当前前台窗口时，焦点还给上一扇看过的窗，
+    而不是写死退回 term。"""
+    app = broker.build_app(dict(sealed_broker))
+    ctrl = next(r for r in app.routes if getattr(r, "path", None) == "/control")
+    status = next(r for r in app.routes if getattr(r, "path", None) == "/status")
+
+    # 依次把焦点切到 browser -> video（video.open 自动置顶）
+    asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "focus", "win": "browser", "ms": 0},
+        {"op": "video.open", "path": str(clip_file)},
+    ]}))
+    st = asyncio.run(status.endpoint())
+    assert st["focus"] == "video"
+    assert st["z_order"][:3] == ["video", "browser", "term"]
+
+    # 关掉当前置顶的 video 窗口：焦点应退回刚刚看过的 browser，而不是写死的 term
+    res = asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "win", "win": "video", "action": "close", "ms": 0},
+    ]}))
+    closed = json.loads(res.body)["results"][0]
+    assert closed["focus"] == "browser"
+    assert closed["effect"]["focus"] == {"before": "video", "after": "browser"}
+
+    # 再把 browser 最小化收进 dock：焦点继续顺着 MRU 栈退回 term
+    res_min = asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "win", "win": "browser", "action": "min", "ms": 0},
+    ]}))
+    minimized = json.loads(res_min.body)["results"][0]
+    assert minimized["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert minimized["effect"]["focus_changed"] is True
+
+
+def test_window_at_respects_mru_z_order():
+    """坐标命中顺序必须与视觉上的 MRU 层级栈一致：第二层窗口压在第三层窗口上面。"""
+    s = broker.Stage(desktop={"w": 1920, "h": 1080})
+    s.open = {"term": True, "browser": True, "image": True, "video": False}
+    s.browser_rect = {"x": 100, "y": 100, "w": 800, "h": 600}
+    s.layout = {
+        "windows": {
+            "term": {"content": {"x": 100, "y": 100, "w": 800, "h": 600}},
+            "image": {"content": {"x": 500, "y": 100, "w": 400, "h": 400}},
+        }
+    }
+    # 先看 term，再看 image：此时在 (200, 200) 处（image 未覆盖，term 与 browser 重叠），
+    # term 作为刚看过的第二层窗口，应当压在 browser 上面。
+    s.focus = "image"
+    s.z_order = ["image", "term", "browser", "video"]
+    assert s.window_at(200, 200) == "term"
+
+    # 若顺序是 browser 在 term 之上，则 (200, 200) 命中 browser
+    s.z_order = ["image", "browser", "term", "video"]
+    assert s.window_at(200, 200) == "browser"
+
+
+def test_term_fontsize_and_window_ops_auto_focus_target_window(sealed_broker):
+    """改终端字号、移动或缩放窗口都属于对目标窗口的动作，必须自动把目标窗口提到最前。"""
+    _, out = post_control(sealed_broker, {"steps": [
+        {"op": "focus", "win": "browser", "ms": 0},
+        {"op": "term.fontsize", "px": 24},
+        {"op": "win", "win": "browser", "action": "max", "ms": 0},
+        {"op": "win", "win": "term", "x": 80, "y": 80, "w": 900, "h": 600, "ms": 0},
+    ]})
+    results = out["results"]
+    assert results[1]["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert results[1]["effect"]["focus_changed"] is True
+    assert results[2]["effect"]["focus"] == {"before": "term", "after": "browser"}
+    assert results[2]["effect"]["focus_changed"] is True
+    assert results[3]["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert results[3]["effect"]["focus_changed"] is True
+
+
+def test_cmd_term_read_focuses_terminal_window(monkeypatch):
+    """导演或 Agent 调 `frago desktop term read` 读终端时，顺手通知 broker 把终端置顶。"""
+    from frago.desktop import aos
+
+    posted = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append((rec["id"], steps, timeout))
+        return {"ok": True, "results": [{
+            "status": "ok",
+            "effect": {
+                "observed": True,
+                "focus": {"before": "browser", "after": "term"},
+                "focus_changed": True,
+            },
+        }]}
+
+    monkeypatch.setattr(aos, "post", fake_post)
+    monkeypatch.setattr(
+        aos.subprocess, "run",
+        lambda *a, **k: FakeCompleted(0, stdout="line-1\nline-2\n"),
+    )
+    out = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"}, lines=20)
+    assert out["ok"] is True and out["win"] == "term"
+    assert out["text"] == ["line-1", "line-2"]
+    assert posted == [("default", [{"op": "focus", "win": "term"}], 5.0)]
+    assert out["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert out["effect"]["focus_changed"] is True
+
+
+def test_stale_ui_version_only_triggers_reload_once_across_connections(sealed_broker):
+    """桌面页刷新重连是一条新 WebSocket 连接：若重连后上报的 uiVersion 仍与 broker 不符，
+    决不能对同一个 uiVersion 再发第二次 reload，否则页面会陷入每秒一次的无限刷新循环。"""
+    app = broker.build_app(dict(sealed_broker))
+    stream_route = next(r for r in app.routes if getattr(r, "path", None) == "/stream")
+
+    class FakeWS:
+        def __init__(self, incoming):
+            self.incoming = list(incoming)
+            self.sent = []
+
+        async def accept(self):
+            pass
+
+        async def send_text(self, text):
+            self.sent.append(json.loads(text))
+
+        async def receive_text(self):
+            if not self.incoming:
+                raise broker.WebSocketDisconnect()
+            return json.dumps(self.incoming.pop(0))
+
+    bad_layout = {
+        "t": "layout",
+        "contentId": "test-content",
+        "instanceId": "default",
+        "uiVersion": 999,
+        "elements": {},
+    }
+    ws1 = FakeWS([bad_layout])
+    asyncio.run(stream_route.endpoint(ws1))
+    reloads_1 = [m for m in ws1.sent if m.get("t") == "reload"]
+    assert len(reloads_1) == 1
+    assert reloads_1[0]["want"] == 1 and reloads_1[0]["got"] == 999
+
+    # 刷新后建立第二条连接，仍报同一个 uiVersion=999：不许再发 reload
+    ws2 = FakeWS([bad_layout])
+    asyncio.run(stream_route.endpoint(ws2))
+    reloads_2 = [m for m in ws2.sent if m.get("t") == "reload"]
+    assert reloads_2 == []
+
+
+
 # ── 人类接管虚拟浏览器 + 弹出真窗过检（双档协同） ─────────────────────────
 
 

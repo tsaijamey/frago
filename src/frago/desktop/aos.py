@@ -1050,12 +1050,11 @@ def cmd_voice_clear() -> dict:
 
 
 def cmd_term_read(rec: dict, lines: int) -> dict:
-    """直接读 tmux 会话，不经 broker。
+    """直接读 tmux 会话，并顺手把终端窗口提到最前。
 
-    broker 没有"读终端"的 op，而能用来凑出一个的只有 shell——那会往终端里真打
-    一条命令，读一眼就污染画面与后续 diff，代价比收益大。tmux 会话名是注册表里
-    的身份字段，capture-pane 读的就是 broker 自己在轮询的同一份真值，绕开的只是
-    一次转发，不是绕开权威。
+    capture-pane 读的是 broker 自己在轮询的同一份真值；同时向 broker 发一条
+    focus term（失败即忽略，保证单测或 broker 忙时读屏照常可用），避免导演
+    Agent 轮询终端里的 worker 时画面一直被浏览器窗口遮挡。
 
     读的范围含历史（`-S -<n>`），不是只有可见屏：pane 有多高是虚拟终端窗口
     说了算，输出一长前面就滚进历史了。只读可见屏的话，`--lines 200` 要来的
@@ -1064,6 +1063,12 @@ def cmd_term_read(rec: dict, lines: int) -> dict:
     session = rec.get("tmux_session")
     if not session:
         raise die("注册表里没有 tmux_session", instance=rec.get("id"))
+    focus_effect = None
+    with suppress(Exception):
+        res = post(rec, [{"op": "focus", "win": "term"}], timeout=5.0)
+        first = (res.get("results") or [{}])[0]
+        if isinstance(first.get("effect"), dict):
+            focus_effect = first["effect"]
     # --lines 0（及负数）历来的语义是"全给"，那就从历史最开头取（-S -）。
     # 写成 -S -0 的话 0 是可见屏第一行，"全给"会静默退化成"只给这一屏"。
     start = "-" if lines <= 0 else f"-{lines}"
@@ -1078,8 +1083,11 @@ def cmd_term_read(rec: dict, lines: int) -> dict:
     while rows and not rows[-1].strip():
         rows.pop()
     tail = rows[-lines:] if lines > 0 else rows
-    return {"ok": True, "win": "term", "session": session,
-            "lines": len(tail), "total_lines": len(rows), "text": tail}
+    out = {"ok": True, "win": "term", "session": session,
+           "lines": len(tail), "total_lines": len(rows), "text": tail}
+    if focus_effect is not None:
+        out["effect"] = focus_effect
+    return out
 
 
 def _ref_probe_step(ref: str) -> dict:

@@ -155,6 +155,8 @@ html, body {
     0 0 0 1px rgba(232, 163, 61, 0.28),
     0 0 24px rgba(232, 163, 61, 0.08);
 }
+/* 非焦点窗口的实际层级由 app.js 按 MRU 栈写入内联 z-index（189..187），
+   这里保留 100 作为脚本尚未接管时的初值兜底。 */
 .stage-window:not(.focused) { z-index: 100; }
 /* 最小化：飞向 dock（transform 由 JS 按图标位置计算），落点渐隐。
    窗口只是不画了——broker 照常推画面，恢复瞬间内容是最新的。 */

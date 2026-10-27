@@ -137,7 +137,7 @@ describe('PageHost 切页保留', () => {
 
     const frame = document.querySelector('iframe.desktop-page-frame') as HTMLIFrameElement | null;
     expect(frame).not.toBeNull();
-    expect(frame?.getAttribute('src')).toBe('/app/agent_os/');
+    expect(frame?.getAttribute('src')).toMatch(/^\/app\/agent_os\/\?userInput=true(&session=core_[a-z0-9]+)?$/);
     expect(slotOf(frame!).hasAttribute('hidden')).toBe(false);
 
     goto('session_workbench');

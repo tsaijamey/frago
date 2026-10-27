@@ -398,12 +398,12 @@ export function recipeAppUrl(name: string, slot?: string | null): string {
   return slot && slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
 }
 
-/** 虚拟桌面（agent_os）的嵌入地址。若携带导演会话编号则一并开启右下角人类输入面板。 */
+/** 虚拟桌面（agent_os）的嵌入地址。默认开启 userInput=true 并携带导演会话编号。 */
 export function desktopAppUrl(sessionId?: string | null): string {
   const base = `${API_BASE_URL}/app/agent_os/`;
   return sessionId
     ? `${base}?userInput=true&session=${encodeURIComponent(sessionId)}`
-    : base;
+    : `${base}?userInput=true`;
 }
 
 /** 告诉服务端：它推过来的那个「打开配方页面」这边已经打开了。 */

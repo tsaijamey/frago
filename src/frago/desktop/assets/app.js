@@ -30,6 +30,9 @@
     ws: null,
     wsOpen: false,
     focus: "term",
+    // 窗口 MRU 层级栈（越靠前 z-index 越高）。避免非焦点的三扇窗全部掉回同一个
+    // z-index: 100 后按 DOM 固定顺序叠放，导致刚看过不久的窗口瞬移到最底层。
+    zOrder: ["term", "browser", "image", "video"],
     // 桌面坐标系下的窗口几何（win 消息的目标值，layout 上报以此为准）
     geom: {
       term: { x: 120, y: 90, w: 900, h: 560 },
@@ -133,12 +136,25 @@
   // win 可以是 null：桌面上一个程序都没开着时就是这个状态，菜单栏退回 Finder，
   // 三扇窗口谁也不在前台。不接受 null 的话，关掉最后一个程序会让菜单栏一直
   // 挂着那个已经不存在的程序名。
-  function applyFocus(win) {
+  function applyFocus(win, order) {
     if (win && !state.open[win]) openWin(win, 0);  // 点名一个关掉的程序 = 启动它
     if (win && state.minimized[win]) restoreWin(win); // 点名一个收起的窗口 = 召回它
     state.focus = win;
+    if (Array.isArray(order) && order.length) {
+      var nextOrder = order.filter(function (w) { return WINS.indexOf(w) >= 0; });
+      WINS.forEach(function (w) {
+        if (nextOrder.indexOf(w) < 0) nextOrder.push(w);
+      });
+      state.zOrder = nextOrder;
+    } else if (win && WINS.indexOf(win) >= 0) {
+      state.zOrder = [win].concat(state.zOrder.filter(function (w) { return w !== win; }));
+    }
     WINS.forEach(function (w) {
-      winEl(w).classList.toggle("focused", win === w);
+      var el = winEl(w);
+      var idx = state.zOrder.indexOf(w);
+      var z = (win === w) ? 200 : (190 - (idx >= 0 ? idx : WINS.indexOf(w)));
+      el.classList.toggle("focused", win === w);
+      el.style.zIndex = String(z);
       dockEl(w).classList.toggle("active", win === w);
     });
     els.mbApp.textContent = win ? (state.appNames[win] || win) : "Finder";
@@ -1069,9 +1085,13 @@
         // 会补一条 synced，那时才报，报的才是真的。
         break;
       case "reload":
-        // broker 说这块荧幕的资产过旧了。这是纯显示器，刷新什么都不丢——
-        // 状态全部由 broker 补发。不刷的话它会一直连着、一直被丢弃，
-        // 而自检天天挂一条"有旧标签开着"，人还得自己认出是哪个标签。
+        // broker 说这块荧幕的资产版本与它不符。每个目标版本最多只自动刷新一次
+        // （记在 sessionStorage），避免 broker 未重启或缓存未更新时陷入无限刷新死循环。
+        var reloadKey = "frago_desktop_reloaded_" + String(msg.want || CONFIG.uiVersion || "");
+        try {
+          if (sessionStorage.getItem(reloadKey) === String(CONFIG.uiVersion)) break;
+          sessionStorage.setItem(reloadKey, String(CONFIG.uiVersion));
+        } catch (e) { /* 隐私模式禁 sessionStorage 时忽略 */ }
         location.reload();
         break;
       case "synced":
@@ -1104,7 +1124,7 @@
         clickEffect(msg.phase);
         break;
       case "focus":
-        applyFocus(msg.win);
+        applyFocus(msg.win, msg.order);
         break;
       case "win":
         if (!state.geom[msg.win]) break;
@@ -1305,8 +1325,11 @@
     if (typeof msg.takeover === "boolean") {
       state.takeover = msg.takeover;
       if (els.imeInput && ROLE !== "camera") {
-        if (state.takeover) els.imeInput.focus({ preventScroll: true });
-        else els.imeInput.blur();
+        if (state.takeover && !document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
+          els.imeInput.focus({ preventScroll: true });
+        } else {
+          els.imeInput.blur();
+        }
       }
     }
     state.actorSwitching = !!msg.switching;
@@ -1557,17 +1580,28 @@
 
   /* ── 右下角客服式对话面板（#human-input） ──
      始终位于虚拟桌面右下角（录制机位 ROLE==="camera" 除外）：
-     - 地址带 ?userInput=true&session=<编号> 时：默认展开对话面板（#hi-panel），
+     - 默认启用 userInput=true：默认展开对话面板（#hi-panel），未传 session 参数时自动生成
+       core_<随机后缀> 会话编号（首条消息自动携带导演技能交由内置 CoreAgent 驱动）；
        可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
-     - 不带参数时：右下角仍显示胶囊图标（#hi-trigger），但默认不展开面板。
+     - 显式传 ?userInput=false（或 0）时：退回只读显示器模式，仅显示右下角胶囊图标。
      人打的字不进桌面终端——终端里跑着的是 worker，人的话先发给 frago 服务的
      会话发送接口（wait:false 只排队不等答），排进导演会话队列，由导演回应并转达。 */
+  function defaultDirectorSessionId() {
+    var hex = "";
+    for (var i = 0; i < 16; i++) {
+      hex += Math.floor(Math.random() * 16).toString(16);
+    }
+    return "core_" + hex;
+  }
+
   function humanInputTarget() {
     var q = location.search;
-    var on = /[?&]userInput=(true|1)(&|$)/.test(q);
+    if (/[?&]userInput=(false|0)(&|$)/.test(q)) return null;
     var m = q.match(/[?&]session=([^&]+)/);
-    if (!on || !m) return null;
-    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+    if (m) {
+      try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+    }
+    return defaultDirectorSessionId();
   }
 
   function setupHumanInput() {
@@ -1595,8 +1629,9 @@
     var sid = humanInputTarget();
     var msgCount = 0;
 
-    function nowHm() {
-      var d = new Date();
+    function formatHm(ts) {
+      var d = (typeof ts === "number" && ts > 0) ? new Date(ts) : new Date();
+      if (isNaN(d.getTime())) d = new Date();
       return String(d.getHours()).padStart(2, "0") + ":" +
              String(d.getMinutes()).padStart(2, "0");
     }
@@ -1611,7 +1646,7 @@
       badge.hidden = !show;
       badge.textContent = String(msgCount);
     }
-    function setExpanded(open) {
+    function setExpanded(open, focusInput) {
       if (!panel) return;
       panel.hidden = !open;
       box.dataset.mode = open ? "open" : (sid ? "collapsed" : "icon");
@@ -1620,17 +1655,45 @@
           : (sid ? "展开导演对话面板" : "未带导演会话参数（默认仅显示图标，点击查看）");
       }
       syncBadge();
-      if (open && sid && text && !text.disabled) {
+      // 仅在用户主动点击展开、且桌面页当前可见时才聚焦输入框；
+      // 页面初次加载或隐藏在后台切页槽位（innerWidth===0）时绝不自动抢焦点，
+      // 否则会把外层会话工作台输入框正在打字的光标强行夺走。
+      if (focusInput && open && sid && text && !text.disabled &&
+          !document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
         text.focus();
       }
     }
-    function appendBubble(role, line) {
-      if (!log) return;
+    function appendBubble(role, line, opts) {
+      if (!log || !line) return;
+      opts = opts || {};
+      if (opts.seq && log.querySelector('[data-seq="' + opts.seq + '"]')) return;
+      // 收到真实会话记录后，移除初始占位欢迎语，保证面板内容与真实会话严格一致
+      if (!opts.placeholder) {
+        var ph = log.querySelector('[data-placeholder="1"]');
+        if (ph && ph.parentNode === log) log.removeChild(ph);
+      }
+      // 若用户在面板里刚发过同一句话（乐观渲染），用服务端返回的真实记录就地认领，避免重复显示两条
+      if (role === "usr" && opts.seq) {
+        var pendings = log.querySelectorAll('.hi-msg.usr[data-optimistic="1"]');
+        for (var i = 0; i < pendings.length; i++) {
+          var b = pendings[i].querySelector(".hi-bubble");
+          if (b && b.textContent === line) {
+            pendings[i].removeAttribute("data-optimistic");
+            pendings[i].setAttribute("data-seq", String(opts.seq));
+            var m = pendings[i].querySelector(".hi-msg-meta");
+            if (m) m.textContent = "你 · " + formatHm(opts.ts);
+            return;
+          }
+        }
+      }
       var item = document.createElement("div");
       item.className = "hi-msg " + role + (role === "usr" ? " hi-line" : "");
+      if (opts.seq) item.setAttribute("data-seq", String(opts.seq));
+      if (opts.optimistic) item.setAttribute("data-optimistic", "1");
+      if (opts.placeholder) item.setAttribute("data-placeholder", "1");
       var meta = document.createElement("span");
       meta.className = "hi-msg-meta";
-      meta.textContent = (role === "dir" ? "导演" : "你") + " · " + nowHm();
+      meta.textContent = (role === "dir" ? "导演" : "你") + " · " + formatHm(opts.ts);
       var bubble = document.createElement("div");
       bubble.className = "hi-bubble";
       bubble.textContent = line;
@@ -1639,18 +1702,48 @@
       log.appendChild(item);
       while (log.children.length > 24) log.removeChild(log.firstChild);
       log.scrollTop = log.scrollHeight;
-      msgCount = log.children.length;
+      msgCount = log.querySelectorAll('.hi-msg:not([data-placeholder="1"])').length;
       syncBadge();
+    }
+
+    function cleanSessionText(role, raw) {
+      if (typeof raw !== "string") return "";
+      var s = raw
+        .replace(/<must-use-skill[\s\S]*?<\/must-use-skill>\s*/g, "")
+        .replace(/<system-reminder[\s\S]*?<\/system-reminder>\s*/g, "")
+        .trim();
+      if (!s) return "";
+      if (role === "dir") {
+        if (/^【收场交接】/.test(s)) return "";
+        // 导演长回复取首段核心动作说明，裁掉附带的 WARN 书面长段或代码块，保持小窗紧凑可读
+        var paras = s.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
+        var picked = "";
+        for (var i = 0; i < paras.length; i++) {
+          if (/^(\*\*WARN\b|WARN\b|```|>)/.test(paras[i])) continue;
+          picked = paras[i];
+          break;
+        }
+        s = (picked || paras[0] || s)
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/`([^`]+)`/g, "$1")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (s.length > 160) s = s.slice(0, 159) + "…";
+      } else {
+        s = s.replace(/\s+/g, " ").trim();
+        if (s.length > 220) s = s.slice(0, 219) + "…";
+      }
+      return s;
     }
 
     if (trigger) {
       trigger.addEventListener("click", function () {
-        setExpanded(panel ? panel.hidden : true);
+        setExpanded(panel ? panel.hidden : true, true);
       });
     }
     if (closeBtn) {
       closeBtn.addEventListener("click", function () {
-        setExpanded(false);
+        setExpanded(false, false);
       });
     }
 
@@ -1672,7 +1765,7 @@
         log.appendChild(empty);
       }
       note("只读显示器模式", false);
-      setExpanded(false);
+      setExpanded(false, false);
       return;
     }
 
@@ -1688,10 +1781,11 @@
     if (log) log.innerHTML = "";
     appendBubble(
       "dir",
-      "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。"
+      "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。",
+      { placeholder: true }
     );
     note("回车发送 · Shift+回车换行", false);
-    setExpanded(true);
+    setExpanded(true, false);
 
     els.onDirectorCaption = function (captionText) {
       if (!captionText) return;
@@ -1701,6 +1795,42 @@
     };
 
     var skillSent = false;
+    var lastSeq = 0;
+    var syncingRecords = false;
+
+    function syncSessionRecords() {
+      if (!sid || syncingRecords) return;
+      syncingRecords = true;
+      var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
+                "/records?after=" + (lastSeq + 1) + "&limit=100";
+      fetch(url).then(function (r) {
+        if (!r.ok) return [];
+        return r.json().catch(function () { return []; });
+      }).then(function (records) {
+        if (!Array.isArray(records) || !records.length) return;
+        records.forEach(function (rec) {
+          var seq = typeof rec.seq === "number" ? rec.seq : 0;
+          if (seq > lastSeq) lastSeq = seq;
+          var payload = rec.payload || {};
+          if (rec.kind === "user.say" && !payload.is_tool_result) {
+            skillSent = true;
+            var uText = cleanSessionText("usr", payload.text || "");
+            if (uText) appendBubble("usr", uText, { seq: seq, ts: rec.ts });
+          } else if (rec.kind === "agent.say") {
+            var aText = cleanSessionText("dir", payload.text || "");
+            if (aText) appendBubble("dir", aText, { seq: seq, ts: rec.ts });
+          }
+        });
+      }).catch(function () {
+        // 会话尚未创建或网络瞬断时静默等待下一轮同步
+      }).then(function () {
+        syncingRecords = false;
+      });
+    }
+
+    syncSessionRecords();
+    setInterval(syncSessionRecords, 2500);
+
     function submit() {
       var line = text.value.trim();
       if (!line) return;
@@ -1723,16 +1853,19 @@
         });
       }).then(function () {
         skillSent = true;
-        appendBubble("usr", line);
+        appendBubble("usr", line, { optimistic: true });
         text.value = "";
         note("已排给导演，它会转达给正在干活的 worker");
+        syncSessionRecords();
       }).catch(function (err) {
         note("没发出去：" + (err && err.message ? err.message : err), true);
       }).then(function () {
         sendBtn.disabled = false;
         sendBtn.textContent = "发送";
         box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
-        text.focus();
+        if (!document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
+          text.focus();
+        }
       });
     }
     sendBtn.addEventListener("click", submit);

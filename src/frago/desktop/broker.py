@@ -2334,6 +2334,11 @@ class Stage:
     # 当前在最前面的程序。可以是 None——桌面上一个程序都没开着时就是这个状态，
     # 那时没有窗口能接收键盘输入，op_type / op_key 会明说而不是往空处送。
     focus: str | None = "term"
+    # 窗口 MRU 层级栈（越靠前越在上面）。只维护"谁是 focus"不够：一旦把第 3 扇窗
+    # 提到最前，前两扇窗的上下关系如果退回 DOM 固定顺序，刚看过不久的窗口就会瞬移
+    # 到最底下；关掉或最小化当前前台窗口时，也必须顺着这个栈把焦点还给"上一个看过
+    # 的窗口"，而不是写死还给 term。
+    z_order: list[str] = field(default_factory=lambda: ["term", "browser", "image", "video"])
     # 每个程序在不在桌面上。这是"关掉"这件事的唯一真值，与最小化无关：
     # 收起的程序还在跑（dock 亮着灯），关掉的程序不在了。图片浏览器与播放器
     # 开机不在桌面上——它们是被 image open / video open 叫起来的。
@@ -2478,6 +2483,7 @@ class Stage:
         """
         order = list(dict.fromkeys(
             ([self.focus] if self.focus else [])
+            + list(self.z_order)
             + ["browser", "image", "video", "term"]
         ))
         for win in order:
@@ -3406,7 +3412,7 @@ def build_app(cfg: dict) -> FastAPI:
             # SIGWINCH，zsh 每次重印提示符，缓冲区里就多堆一行。
             {"t": "term.fontsize", "px": stage.term_fs},
             *replay,
-            {"t": "focus", "win": stage.focus},
+            {"t": "focus", "win": stage.focus, "order": list(stage.z_order)},
             {"t": "cursor", "x": stage.cursor[0], "y": stage.cursor[1], "ms": 0},
         ]
         if stage.last_chrome:
@@ -3515,27 +3521,25 @@ def build_app(cfg: dict) -> FastAPI:
                     want = cfg.get("ui_version")
                     got = msg.get("uiVersion")
                     if want and got != want:
-                        _log(f"忽略 uiVersion={got} 的 layout（当前 {want}）"
-                             "——旧资产的桌面页，已叫它自己刷新")
-                        # 叫它刷新，别让人去关。
-                        #
-                        # 这块荧幕是纯显示器，刷新一次什么都不丢——所有状态
-                        # 重连后由 broker 补发。而它留在那儿的代价是真的：
-                        # 旧资产算几何的方式不一样，它一上报就跟新的轮流覆盖；
-                        # 自检为此长期挂一条 WARN，补救动作是"人去关掉那个标签"，
-                        # 而人往往根本不知道哪个标签是旧的（地址一模一样）。
-                        # 能自己好的事情不该写进文档让人记。
-                        #
-                        # 每条连接只叫一次：刷新会重连，重连若还是旧版本
-                        # （比如中间层缓存），第二次叫就成了死循环。叫过一次
-                        # 仍是旧的，就退回原来那条路——自检点名，人来处理。
-                        if not meta.get("reload_sent"):
+                        ver_key = got or 0
+                        # 跨连接按版本号去重，而不是只记在单条连接 meta 上：
+                        # location.reload() 会断开当前连接并建立一条全新的 WebSocket，
+                        # meta["reload_sent"] 在新连接上恒为 False。若主服务资产已更新而
+                        # broker 还是旧进程（或有中间层缓存），刷新重连上来的仍是同一个
+                        # uiVersion，只在 meta 上记标志就会变成每秒一次的无限刷新死循环。
+                        if ver_key not in stage.stale_clients and not meta.get("reload_sent"):
+                            _log(f"忽略 uiVersion={got} 的 layout（当前 {want}）"
+                                 "——资产版本不符，已叫桌面页刷新一次")
                             meta["reload_sent"] = True
                             with suppress(Exception):
-                                await ws.send_text(json.dumps({"t": "reload"}))
+                                await ws.send_text(json.dumps({
+                                    "t": "reload",
+                                    "want": want,
+                                    "got": got,
+                                }))
                         # 没有 uiVersion 字段的更旧资产记成 0，否则它被
                         # 当成"无版本"过滤掉，自检就永远不会点它的名。
-                        stage.stale_clients = stage.stale_clients | {got or 0}
+                        stage.stale_clients = stage.stale_clients | {ver_key}
                         meta["accepted"] = False
                         meta["stale"] = True
                         meta["reason"] = f"uiVersion={got} 与当前 {want} 不符"
@@ -4176,6 +4180,9 @@ def build_app(cfg: dict) -> FastAPI:
     FOCUS_ORDER = ("term", "browser", "image", "video")
 
     def next_focus(closing: str) -> str | None:
+        for w in stage.z_order:
+            if w != closing and stage.open.get(w):
+                return w
         for w in FOCUS_ORDER:
             if w != closing and stage.open.get(w):
                 return w
@@ -4184,11 +4191,15 @@ def build_app(cfg: dict) -> FastAPI:
     async def set_focus(win: str | None) -> dict:
         """只改层级，不管开关。开关是 power 的事，两者分开才不会互相递归。"""
         before = stage.focus
+        if win in WINDOWS:
+            stage.z_order = [win] + [w for w in stage.z_order if w != win]
         if before == win:
-            return {"before": before, "after": win, "focus_changed": False}
+            return {"before": before, "after": win, "focus_changed": False,
+                    "z_order": list(stage.z_order)}
         stage.focus = win
-        await broadcast({"t": "focus", "win": win})
-        return {"before": before, "after": win, "focus_changed": True}
+        await broadcast({"t": "focus", "win": win, "order": list(stage.z_order)})
+        return {"before": before, "after": win, "focus_changed": True,
+                "z_order": list(stage.z_order)}
 
     async def power(win: str, want_open: bool, ms: int = 260) -> dict:
         """开或关一个程序。程序在不在桌面上，只由这个函数改。"""
@@ -4392,6 +4403,7 @@ def build_app(cfg: dict) -> FastAPI:
             raise ValueError(
                 f"字号 {px} 不在 8-64 内。录制档实测 24-28px 在 1080p 上手机可读，"
                 f"13px 是人自己看这块荧幕的默认值")
+        act = await ensure_active("term")
         before = dict(stage.term_grid)
         stage.term_fs = px
         seq = stage.layout_seq
@@ -4405,7 +4417,7 @@ def build_app(cfg: dict) -> FastAPI:
             "layout_reported": reported,
             "grid": {k: after.get(k) for k in ("cols", "rows", "cellW", "cellH")},
             "before": {k: before.get(k) for k in ("cols", "rows", "cellW", "cellH")},
-            "effect": {"observed": reported, "changed": after != before},
+            "effect": _with_focus({"observed": reported, "changed": after != before}, act),
             "note": ("tmux 已按新网格 resize。列数变少是字变大的必然结果——"
                      "要放得下长命令就把终端窗口摆宽一点，别回头调字号"),
         }
@@ -4592,6 +4604,7 @@ def build_app(cfg: dict) -> FastAPI:
         # min 只是收进 dock，与几何无关，照旧转给 UI。终端不受此约束。
         if step["win"] == "browser" and step.get("action") in ("max", "restore",
                                                                None):
+            act = await ensure_active("browser")
             action = step.get("action")
             ms = int(step.get("ms", 400))
             dw = int(stage.desktop["w"])
@@ -4631,7 +4644,15 @@ def build_app(cfg: dict) -> FastAPI:
             effect = _diff_rect(before, stage.content_rect("browser"))
             effect["layout_reported"] = reported
             return {"win": "browser", "action": action, "geometry": geo,
-                    "effect": effect}
+                    "effect": _with_focus(effect, act)}
+        if step.get("action") == "min":
+            before_focus = stage.focus
+            if stage.focus == win:
+                await set_focus(next_focus(win))
+            act = {"before": before_focus, "after": stage.focus,
+                   "focus_changed": before_focus != stage.focus}
+        else:
+            act = await ensure_active(win)
         msg = {"t": "win", "win": step["win"], "ms": step.get("ms", 400)}
         # action: min / max / restore —— 几何由 UI 计算（菜单栏高度、
         # 浏览器等比约束都只有 UI 知道），broker 只传意图。
@@ -4650,7 +4671,7 @@ def build_app(cfg: dict) -> FastAPI:
         effect["layout_reported"] = reported
         if not reported:
             effect["note"] = "补间已结束，但 UI 未上报新几何（桌面页可能未连接）"
-        return {"win": step["win"], "effect": effect}
+        return {"win": step["win"], "effect": _with_focus(effect, act)}
 
     # split 已退场：它把终端和浏览器各摆一半宽，与"浏览器恒占桌面宽的
     # 75–85%"直接冲突，两者无法共存。半宽的浏览器窗口要么违反下界，
@@ -6618,6 +6639,7 @@ def build_app(cfg: dict) -> FastAPI:
                 for m in own_screens()[:-1]
             ],
             "focus": stage.focus,
+            "z_order": list(stage.z_order),
             # 三个程序各自开着没有。与 content_rects 分开报：那边答的是
             # "窗口摆在哪"，关掉的程序在那儿是个 null，看不出是关了还是
             # 收起来了，而两者的补救动作不同（window open vs window restore）。
