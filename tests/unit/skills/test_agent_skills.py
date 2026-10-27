@@ -36,20 +36,28 @@ def _home(tmp_path: Path, monkeypatch) -> Path:
 
 
 class TestInputMethods:
-    def test_四家都列出来_连不认skill的coreagent也在(self, tmp_path, monkeypatch):
-        rows = {a.family: a for a in agent_skill_inputs(_home(tmp_path, monkeypatch))}
+    def test_四家都列出来_coreagent原生扫描frago数据目录与各家目录(self, tmp_path, monkeypatch):
+        home = _home(tmp_path, monkeypatch)
+        rows = {a.family: a for a in agent_skill_inputs(home)}
         assert set(rows) == {"claude-code", "codex", "opencode", "coreagent"}
         assert rows["claude-code"].native_syntax.startswith("/")
         assert rows["codex"].native_syntax.startswith("$")
         assert rows["opencode"].native_syntax is None
-        assert rows["coreagent"].roots == ()
+        assert rows["coreagent"].native_syntax.startswith("/")
+        core_paths = [r.path for r in rows["coreagent"].roots]
+        assert core_paths[0] == home / ".frago" / "skills"
+        assert home / ".claude" / "skills" in core_paths
+        assert home / ".codex" / "skills" in core_paths
+        assert home / ".agents" / "skills" in core_paths
+        assert home / ".config" / "opencode" / "skills" in core_paths
         assert all(a.webui_delivery == "embed" for a in rows.values())
 
-    def test_codex_home_环境变量改得动codex的目录(self, tmp_path, monkeypatch):
+    def test_codex_home_环境变量改得动codex与coreagent的目录(self, tmp_path, monkeypatch):
         home = _home(tmp_path, monkeypatch)
         monkeypatch.setenv("CODEX_HOME", str(tmp_path / "cx"))
-        codex = next(a for a in agent_skill_inputs(home) if a.family == "codex")
-        assert codex.roots[0].path == tmp_path / "cx" / "skills"
+        rows = {a.family: a for a in agent_skill_inputs(home)}
+        assert rows["codex"].roots[0].path == tmp_path / "cx" / "skills"
+        assert tmp_path / "cx" / "skills" in [r.path for r in rows["coreagent"].roots]
 
 
 class TestDiscover:
@@ -76,12 +84,24 @@ class TestDiscover:
             "remotion",
         }
 
-    def test_两家共读的目录只算一份_两家都记上(self, tmp_path, monkeypatch):
+    def test_多家共读的目录只算一份_各家都记上(self, tmp_path, monkeypatch):
         home = _home(tmp_path, monkeypatch)
         _skill(home / ".claude/skills/git-push", "git-push")
         found = discover(agent_skill_inputs(home))
         assert len(found) == 1
-        assert found[0].agents == ["claude-code", "opencode"]
+        assert found[0].agents == ["claude-code", "opencode", "coreagent"]
+
+    def test_frago数据目录下的原生skill可被coreagent直接扫出(self, tmp_path, monkeypatch):
+        home = _home(tmp_path, monkeypatch)
+        _skill(home / ".frago/skills/native-only", "native-only")
+        found = discover(agent_skill_inputs(home))
+        assert len(found) == 1
+        assert found[0].name == "native-only"
+        assert found[0].agents == ["coreagent"]
+        store = ManagedSkillStore(home / ".frago/skills")
+        report = store.sync(found)
+        assert report.added == ["native-only"]
+        assert (home / ".frago/skills/native-only/SKILL.md").is_file()
 
     def test_同名的包只收第一份(self, tmp_path, monkeypatch):
         home = _home(tmp_path, monkeypatch)
@@ -110,7 +130,7 @@ class TestStore:
         assert report.added == ["git-push"]
         assert (store.root / "git-push/scripts/run.sh").is_file()
         assert not (store.root / "git-push/.git").exists()
-        assert store.get("git-push").agents == ["claude-code", "opencode"]
+        assert store.get("git-push").agents == ["claude-code", "opencode", "coreagent"]
 
     def test_原件没变就不动(self, tmp_path, monkeypatch):
         home = _home(tmp_path, monkeypatch)
@@ -155,3 +175,25 @@ class TestStore:
         assert not (store.root / "git-push").exists()
         assert (store.root / "hand-made").is_dir()
         assert store.list() == []
+
+    def test_默认集中目录与coreagent扫描目录重合时_外部卸载照删_原生包照留(self, tmp_path, monkeypatch):
+        home = _home(tmp_path, monkeypatch)
+        ext = _skill(home / ".claude/skills/git-push", "git-push")
+        _skill(home / ".frago/skills/native-only", "native-only")
+        store = ManagedSkillStore(home / ".frago/skills")
+
+        report1 = store.sync(discover(agent_skill_inputs(home)))
+        assert set(report1.added) == {"git-push", "native-only"}
+        assert (store.root / "git-push/SKILL.md").is_file()
+        assert (store.root / "native-only/SKILL.md").is_file()
+
+        for p in sorted(ext.rglob("*"), reverse=True):
+            p.unlink() if p.is_file() else p.rmdir()
+        ext.rmdir()
+
+        report2 = store.sync(discover(agent_skill_inputs(home)))
+        assert report2.removed == ["git-push"]
+        assert not (store.root / "git-push").exists()
+        assert (store.root / "native-only/SKILL.md").is_file()
+        assert [s.name for s in store.list()] == ["native-only"]
+

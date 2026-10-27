@@ -1,7 +1,8 @@
 """各家 CLI agent 的 skill：它们各自从哪儿读、人各自怎么点名，以及 frago 的集中副本。
 
 四家 agent 对 skill 的支持差别很大，同一个包在这家要打 ``/git-push``，在那家要写
-``$git-push``，到了 opencode 只能靠模型自己去调它的 skill 工具，CoreAgent 干脆不认 skill。
+``$git-push``，到了 opencode 只能靠模型自己去调它的 skill 工具，CoreAgent 则原生扫描
+``~/.frago/skills/`` 与各家主流 CLI agent 的 skill 目录。
 会话页要让人用同一个动作点名一个 skill，就不能照搬任何一家的写法——上一回在 codex
 会话里敲 ``/git-push``，codex 当它是自己的斜杠命令、报 Unrecognized command，那句话
 始终没进会话。所以 frago 这边的做法是：**不走任何一家的原生点名，把 skill 正文直接
@@ -126,6 +127,21 @@ def agent_skill_inputs(home: Path | None = None) -> list[AgentSkillInput]:
     """枚举四家 agent 的 skill 原生输入方式与默认安装路径。"""
     home = home or Path.home()
     codex_home = _codex_home(home)
+    claude_roots = (
+        SkillRoot(home / ".claude" / "skills"),
+        *_claude_plugin_roots(home),
+        *_claude_synced_roots(home),
+    )
+    codex_roots = (
+        SkillRoot(codex_home / "skills"),
+        SkillRoot(codex_home / "skills" / ".system"),
+        SkillRoot(home / ".agents" / "skills"),
+    )
+    opencode_roots = (
+        SkillRoot(home / ".config" / "opencode" / "skills"),
+        SkillRoot(home / ".config" / "opencode" / "skill"),
+        SkillRoot(home / ".claude" / "skills"),
+    )
     return [
         AgentSkillInput(
             family="claude-code",
@@ -135,11 +151,7 @@ def agent_skill_inputs(home: Path | None = None) -> list[AgentSkillInput]:
                 "输入框里敲斜杠加 skill 名当命令调用，后面可跟要求；插件带的写成 "
                 "/<插件>:<skill 名>。模型也会按 skill 说明自己调用 Skill 工具。"
             ),
-            roots=(
-                SkillRoot(home / ".claude" / "skills"),
-                *_claude_plugin_roots(home),
-                *_claude_synced_roots(home),
-            ),
+            roots=claude_roots,
         ),
         AgentSkillInput(
             family="codex",
@@ -149,11 +161,7 @@ def agent_skill_inputs(home: Path | None = None) -> list[AgentSkillInput]:
                 "在一句话里写 $<skill 名> 点名（也可在 /skills 菜单里挑）；codex 的斜杠只认它"
                 "自己的命令，/<skill 名> 会被当成未知命令拦下，那句话不会进会话。"
             ),
-            roots=(
-                SkillRoot(codex_home / "skills"),
-                SkillRoot(codex_home / "skills" / ".system"),
-                SkillRoot(home / ".agents" / "skills"),
-            ),
+            roots=codex_roots,
         ),
         AgentSkillInput(
             family="opencode",
@@ -163,18 +171,23 @@ def agent_skill_inputs(home: Path | None = None) -> list[AgentSkillInput]:
                 "没有点名写法：模型按 skill 说明自己调用内置的 skill 工具按名字加载，"
                 "人只能用大白话要求它用某个 skill。"
             ),
-            roots=(
-                SkillRoot(home / ".config" / "opencode" / "skills"),
-                SkillRoot(home / ".config" / "opencode" / "skill"),
-                SkillRoot(home / ".claude" / "skills"),
-            ),
+            roots=opencode_roots,
         ),
         AgentSkillInput(
             family="coreagent",
             label="CoreAgent",
-            native_syntax=None,
-            native_how="frago 自己的内核，不认 skill 包；只能把 skill 正文放进这一句话交给它。",
-            roots=(),
+            native_syntax="/<skill 名> [要求]",
+            native_how=(
+                "原生扫描 ~/.frago/skills 与各家主流 CLI agent 的 skill 目录；"
+                "可在一句话开头写 /<skill 名> 点名，模型也会按 skill 说明自己调用内置的 Skill 工具加载。"
+            ),
+            roots=(
+                SkillRoot(home / ".frago" / "skills"),
+                *claude_roots,
+                *codex_roots,
+                SkillRoot(home / ".config" / "opencode" / "skills"),
+                SkillRoot(home / ".config" / "opencode" / "skill"),
+            ),
         ),
     ]
 
@@ -241,6 +254,34 @@ def _packages_under(root: Path, depth: int = 0):
             yield from _packages_under(child, depth + 1)
 
 
+def _mirrored_copy_dirs(root: Path) -> set[Path]:
+    """集中副本目录里由外部 agent 目录同步进来的镜像子目录。
+
+    ``~/.frago/skills`` 既是集中副本目录，也是 CoreAgent 原生扫描的目录。原件在外部
+    （如 ``~/.claude/skills``）的包由外部目录负责发现与卸载判定；直接放在 ``~/.frago/skills``
+    下的原生包（未登记，或 ``source_dir`` 就是它自己）才算这里的原件。
+    """
+    index_file = root / INDEX_FILE
+    try:
+        raw = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    mirrors: set[Path] = set()
+    for entry in (raw.get("skills") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        dir_name = entry.get("dir_name")
+        source_dir = entry.get("source_dir")
+        if not dir_name or not source_dir:
+            continue
+        with contextlib.suppress(OSError):
+            dest_resolved = (root / str(dir_name)).resolve()
+            src_resolved = Path(str(source_dir)).resolve()
+            if dest_resolved != src_resolved:
+                mirrors.add(dest_resolved)
+    return mirrors
+
+
 def discover(inputs: list[AgentSkillInput] | None = None) -> list[FoundSkill]:
     """按各家默认路径扫出本机已安装的 skill 包。
 
@@ -254,8 +295,11 @@ def discover(inputs: list[AgentSkillInput] | None = None) -> list[FoundSkill]:
         for root in agent.roots:
             if not root.path.is_dir():
                 continue
+            mirrors = _mirrored_copy_dirs(root.path)
             for package in _packages_under(root.path):
                 source = package.resolve()
+                if source in mirrors:
+                    continue
                 seen = by_source.get(source)
                 if seen is not None:
                     if agent.family not in seen.agents:
@@ -370,6 +414,9 @@ class ManagedSkillStore:
             dir_name = store_dir_name(skill.name)
             dest = self.root / dir_name
             prev = index.get(skill.name)
+            in_place = False
+            with contextlib.suppress(OSError):
+                in_place = dest.resolve() == skill.source_dir.resolve()
             same = (
                 prev is not None
                 and prev.signature == skill.signature
@@ -378,13 +425,14 @@ class ManagedSkillStore:
                 and (dest / SKILL_FILE).is_file()
             )
             if not same:
-                try:
-                    self._replace_package(skill.source_dir, dest)
-                except OSError as e:
-                    logger.warning("failed to sync skill %s from %s: %s", skill.name, skill.source_dir, e)
-                    if prev is not None:
-                        next_index[skill.name] = prev
-                    continue
+                if not in_place:
+                    try:
+                        self._replace_package(skill.source_dir, dest)
+                    except OSError as e:
+                        logger.warning("failed to sync skill %s from %s: %s", skill.name, skill.source_dir, e)
+                        if prev is not None:
+                            next_index[skill.name] = prev
+                        continue
                 (report.updated if prev is not None else report.added).append(skill.name)
             else:
                 report.unchanged += 1
@@ -398,15 +446,17 @@ class ManagedSkillStore:
                 synced_at=now if not same else prev.synced_at,  # type: ignore[union-attr]
             )
 
-        # 原件已经卸掉的包：副本跟着删。只删自己登记过的目录，人手放进来的东西不碰。
+        # 原件已经卸掉的包：副本跟着删。只删自己登记过的外部镜像目录，人手放进来的或原件就在这里的目录不碰。
         kept_dirs = {s.dir_name for s in next_index.values()}
         for name, prev in index.items():
             if name in next_index:
                 continue
             report.removed.append(name)
             if prev.dir_name not in kept_dirs:
+                dest_dir = self.root / prev.dir_name
                 with contextlib.suppress(OSError):
-                    shutil.rmtree(self.root / prev.dir_name)
+                    if dest_dir.resolve() != Path(prev.source_dir).resolve():
+                        shutil.rmtree(dest_dir)
 
         self._write_index(next_index)
         return report

@@ -34,7 +34,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from frago.skills.agent_skills import SKILL_FILE, ManagedSkillStore
+from frago.skills.agent_skills import SKILL_FILE, ManagedSkillStore, discover, store_dir_name
 
 OPEN_TAG = "must-use-skill"
 
@@ -93,8 +93,10 @@ class EmbeddedSkill:
 
 def load_skills(names: list[str], store: ManagedSkillStore | None = None) -> list[EmbeddedSkill]:
     """按名字取出 skill 的文档路径与全文。重复点名只算一次；有一个取不到就整单拒掉。"""
+    use_default_store = store is None
     store = store or ManagedSkillStore()
     index = store.load_index()
+    discovered: dict[str, Path] | None = None
     out: list[EmbeddedSkill] = []
     seen: set[str] = set()
     for raw in names:
@@ -106,10 +108,19 @@ def load_skills(names: list[str], store: ManagedSkillStore | None = None) -> lis
         if entry is not None:
             path = entry.skill_md(store.root)
         else:
-            builtin = BUILTIN_SKILLS_DIR / name / SKILL_FILE
-            if not builtin.is_file():
-                raise UnknownSkill(f"没有叫 {name} 的 skill（frago 的集中副本里找不到）")
-            path = builtin
+            direct = store.root / store_dir_name(name) / SKILL_FILE
+            if direct.is_file():
+                path = direct
+            else:
+                if use_default_store and discovered is None:
+                    discovered = {f.name: f.source_dir / SKILL_FILE for f in discover()}
+                if discovered is not None and name in discovered and discovered[name].is_file():
+                    path = discovered[name]
+                else:
+                    builtin = BUILTIN_SKILLS_DIR / name / SKILL_FILE
+                    if not builtin.is_file():
+                        raise UnknownSkill(f"没有叫 {name} 的 skill（frago 的集中副本里找不到）")
+                    path = builtin
         try:
             body = path.read_text(encoding="utf-8")
         except OSError as e:
