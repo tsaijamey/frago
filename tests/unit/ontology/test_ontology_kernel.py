@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -412,6 +414,42 @@ class TestOntologyIntrospector:
             "InformationEntity",
         }
 
+    def test_ontology_package_zero_business_dependency_and_repo_paths(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        ontology_dir = repo_root / "src" / "frago" / "ontology"
+        py_files = sorted(ontology_dir.glob("*.py"))
+        assert len(py_files) >= 9
+
+        illegal_imports: list[str] = []
+        for py_file in py_files:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "frago" or (
+                            alias.name.startswith("frago.")
+                            and not alias.name.startswith("frago.ontology")
+                        ):
+                            illegal_imports.append(f"{py_file.name}: import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    mod = node.module or ""
+                    if node.level == 0 and (
+                        mod == "frago"
+                        or (mod.startswith("frago.") and not mod.startswith("frago.ontology"))
+                    ):
+                        illegal_imports.append(f"{py_file.name}: from {mod} import ...")
+
+        assert illegal_imports == []
+
+        introspector = OntologyIntrospector()
+        missing_paths: list[str] = []
+        for classes in introspector.schema["domain_classes"].values():
+            for cls_def in classes:
+                for loc in cls_def.get("current_code_locations", []):
+                    if loc.startswith("src/") and not (repo_root / loc).exists():
+                        missing_paths.append(f"{cls_def['class_id']}: {loc}")
+        assert missing_paths == []
+
     def test_introspector_queries_by_code_path_and_allowed_actions(self) -> None:
         introspector = OntologyIntrospector()
 
@@ -502,7 +540,9 @@ class TestDomainClassRegistryAndThreeMainlinesRuntime:
 
     def test_all_63_domain_classes_compile_and_enforce_bearer_types(self) -> None:
         reg = DomainClassRegistry()
-        assert len(reg.classes) == 63
+        assert len(reg.classes) == 65
+        assert "EmployeePostResource" in reg.classes
+        assert "DomainEmployeeRole" in reg.classes
 
         # PrimarySchedulerRole requires bearer_type == AgentKernel
         pa_role = reg.create(

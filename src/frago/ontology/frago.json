@@ -191,13 +191,14 @@
         "pillar": "底座与边界",
         "rigidity": "+R",
         "identity": "agent_family_and_binary_id (claude | codex | opencode | agy | coreagent)",
+        "allowed_values": ["claude", "codex", "opencode", "agy", "coreagent"],
         "current_code_locations": [
           "src/frago/session/models.py#AgentType",
           "src/frago/agent_driver/driver.py",
           "src/frago/agent_driver/kernel_backend.py",
           "src/frago/bin/"
         ],
-        "description": "外部或内置 AI Agent 内核本体。仅表征智能体内核身份，不内嵌会话状态、不内嵌 Tmux 句柄。"
+        "description": "外部或内置 AI Agent 内核本体（Agent Cli 集合）。仅表征智能体内核身份，不内嵌会话状态、不内嵌 Tmux 句柄。"
       },
       {
         "class_id": "HumanPrincipal",
@@ -269,8 +270,6 @@
         "identity": "group_name",
         "current_code_locations": [
           "src/frago/browser/",
-          "src/frago/chrome/",
-          "src/frago/cdp/",
           "src/frago/_resources/extension_bundle/",
           "src/frago/cli/browser_commands.py"
         ],
@@ -362,9 +361,32 @@
           "src/frago/cli/remote_commands.py"
         ],
         "description": "远端服务器上的另一台 frago 实例节点（frago remote），通过其主控队列接收跨机任务书。"
+      },
+      {
+        "class_id": "EmployeePostResource",
+        "pillar": "3. 记忆与召回 / 4. 配方 / 5. 边界",
+        "rigidity": "+R",
+        "identity": "member_post_id",
+        "current_code_locations": [
+          "src/frago/team/state.py",
+          "src/frago/server/services/schedule_executor.py"
+        ],
+        "description": "主动型固定员工的持久岗位编制与领地资源（#teams 工牌）：跨会话恒定保存员工画像、专属管理的 KnowledgeDomain 列表、专属管理的 RecipeModule 与 DataSlot 底账路径及允许调用的命令范围。"
       }
     ],
     "Continuant.DependentContinuant.Role": [
+      {
+        "class_id": "DomainEmployeeRole",
+        "pillar": "3. 记忆与召回 / 4. 配方 / 5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "AgentKernel",
+        "context_type": "EmployeePostResource",
+        "current_code_locations": [
+          "src/frago/team/state.py",
+          "src/frago/server/services/schedule_executor.py"
+        ],
+        "description": "拟人（主动型固定员工角色）：由任意 AgentKernel（claude/codex/agy 等）通过 plays_role 关系在持久岗位编制（EmployeePostResource）上扮演的领域自治角色，履行五大职责——管理知识 Domain、管理相关 Recipe、接收会话、可被调用、more（自调 schedule / 操控 Desktop / 发起 ask 拍板）。"
+      },
       {
         "class_id": "PrimarySchedulerRole",
         "pillar": "5. 边界",
@@ -621,7 +643,6 @@
         "rigidity": "+R",
         "temporality": "interval",
         "current_code_locations": [
-          "src/frago/tools/sync_repo.py",
           "src/frago/cloud/",
           "src/frago/cli/cloud_commands.py"
         ],
@@ -768,7 +789,7 @@
         "rigidity": "+R",
         "mutability": "versioned_immutable",
         "current_code_locations": [
-          "src/frago/tools/sync_repo.py",
+          "src/frago/cloud/",
           "src/frago/resources/frago-home-gitignore.template"
         ],
         "description": "家目录多设备同步规则：区分跨设备共享资产与本机运行时产物（gitignore 模板），以及同步冲突自动裁决策略。"
@@ -802,11 +823,32 @@
         "pillar": "跨层底座",
         "rigidity": "+R",
         "mutability": "versioned_immutable",
+        "command_groups": [
+          "frago.agent.run",
+          "frago.desktop.control",
+          "frago.recipe.run",
+          "frago.reply",
+          "frago.session.search",
+          "frago.def.find",
+          "frago.context.search",
+          "frago.browser.open",
+          "frago.view.open",
+          "frago.apps.use",
+          "frago.daemon.manage",
+          "frago.market.install",
+          "frago.schedule.trigger",
+          "frago.remote.dispatch",
+          "frago.team.sync",
+          "frago.cloud.sync",
+          "frago.run.record",
+          "frago.todo.update",
+          "frago.book.read"
+        ],
         "current_code_locations": [
           "src/frago/cli/main.py",
           "src/frago/cli/commands.py"
         ],
-        "description": "frago CLI 系统调用契约：每一条 CLI 子命令在静态层面是声明了发起方定义域、目标资源值域与前置/后置条件的动作契约，在动态执行层面拉起对应 Process 查询或修改目标资源。"
+        "description": "frago CLI 系统调用契约（命令组集合）：每一条 CLI 子命令在静态层面是声明了发起方定义域、目标资源值域与前置/后置条件的动作契约，在动态执行层面拉起对应 Process 查询或修改目标资源。"
       }
     ],
     "NormativeEntity.Specification": [
@@ -917,7 +959,7 @@
         "identity": "composite(recipe_name, version)",
         "current_code_locations": [
           "src/frago/recipes/installer.py",
-          "community-recipes/"
+          "src/frago/cli/recipe_commands.py"
         ],
         "description": "配方市场（frago market）中可检索、分享与版本化分发的配方归档制品。"
       },
@@ -1140,6 +1182,71 @@
         "side_effects": {
           "mutates": ["VirtualDesktopStage"],
           "emits": ["SessionStepEvent"]
+        }
+      }
+    },
+    {
+      "action_id": "invoke_domain_employee",
+      "parameters": ["member_post_id", "query_or_task", "caller_context_id"],
+      "signature": {
+        "initiator_domain": "HumanPrincipal | PrimarySchedulerRole | DomainEmployeeRole | RecipeModule",
+        "target_range": "EmployeePostResource | DomainEmployeeRole",
+        "input_types": {
+          "member_post_id": "str",
+          "query_or_task": "str",
+          "caller_context_id": "str"
+        },
+        "return_type": "dict",
+        "error_types": ["EmployeePostNotFoundError", "OutOfScopeRequestError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target EmployeePostResource MUST exist and bind an active AgentKernel via DomainEmployeeRole.",
+          "query_or_task MUST fall within the KnowledgeDomain or RecipeModule scope declared by EmployeePostResource."
+        ],
+        "postconditions": [
+          "Returns structured domain answer or execution receipt derived from the bound KnowledgeDomain and RecipeModule DataSlot without polluting the caller session context."
+        ],
+        "invariants": [
+          "DomainEmployeeRole NEVER impersonates HumanPrincipal to issue HumanDecisionReceipt."
+        ],
+        "side_effects": {
+          "initiates": "AgentSessionProcess",
+          "emits": ["SessionStepEvent"],
+          "produces": ["SessionTranscriptArtifact"]
+        }
+      }
+    },
+    {
+      "action_id": "govern_employee_domain_assets",
+      "parameters": ["member_post_id", "asset_kind", "target_asset_id", "governance_op"],
+      "signature": {
+        "initiator_domain": "DomainEmployeeRole",
+        "target_range": "KnowledgeDomain | RecipeModule | DataSlot | ScheduleRuleSpec",
+        "input_types": {
+          "member_post_id": "str",
+          "asset_kind": "str",
+          "target_asset_id": "str",
+          "governance_op": "str"
+        },
+        "return_type": "dict",
+        "error_types": ["UnauthorizedTerritoryMutationError"]
+      },
+      "contract": {
+        "preconditions": [
+          "target_asset_id MUST be registered inside the territory scope of EmployeePostResource(member_post_id).",
+          "If governance_op crosses outside the employee territory or performs irreversible deletion, a HumanDecisionReceipt from HumanPrincipal is required."
+        ],
+        "postconditions": [
+          "Target KnowledgeDomain, RecipeModule, DataSlot, or ScheduleRuleSpec is updated while preserving domain consistency."
+        ],
+        "invariants": [
+          "Autonomous territory maintenance (recipe-data refresh, def knowledge curation, schedule self-alarm) remains strictly bounded to the employee's assigned scope."
+        ],
+        "side_effects": {
+          "initiates": "RecipeExecutionProcess",
+          "mutates": ["KnowledgeDomain", "RecipeModule", "DataSlot"],
+          "produces": ["DefKnowledgeEntry"]
         }
       }
     }
