@@ -49,6 +49,7 @@
     },
     "nav": {
       "sessions": "Sessions",
+      "desktop": "Desktop",
       "teams": "Pairs",
       "recipes": "Recipes",
       "todos": "Todos",
@@ -84,6 +85,9 @@
     "tooLarge": "This one is {{size}} — too large to put on screen",
     "notText": "This one is not text; there is nothing to read directly",
     "binaryHint": "Use the button on the left to open it in the file manager",
+    "pinned": "Pinned files and directories",
+    "pin": "Pin to sidebar",
+    "unpin": "Unpin",
     "columns": {
       "name": "Name",
       "size": "Size",
@@ -971,7 +975,7 @@
       "checkUpdate": "Check for Updates",
       "tagline": "is multi-runtime infrastructure for AI agents.",
       "versionUnknown": "could not be read",
-      "license": "© 2026 frago · AGPL-3.0"
+      "license": "© 2026 frago · MIT"
     },
     "officialSync": {
       "title": "Official Resource Sync",
@@ -1601,13 +1605,14 @@
       "preview": "Preview",
       "watcher": "Watcher",
       "executor": "Executor",
-      "preResponseToolCalls": "{{count}}次工具调用",
-      "preResponseThinking": "{{count}}次thinking",
-      "watcherTalkPromptCount": "{{count}}条提问",
-      "watcherTalkReplyCount": "{{count}}条回复",
+      "preResponseToolCalls": "{{count}} tool calls",
+      "preResponseThinking": "{{count}} thinking",
+      "watcherTalkPromptCount": "{{count}} prompts",
+      "watcherTalkReplyCount": "{{count}} replies",
       "watcherTalkEmpty": "No conversation records",
       "watcherEmptySummary": "Observer is watching execution records after the cursor…",
       "watcherPhaseGoal": "Stage goal: {{goal}}",
+      "watcherPhaseGoalLabel": "Stage goal",
       "watcherPartDoing": "What's happening now",
       "watcherPartFindings": "Key findings or output",
       "watcherPartDecision": "Decision context"

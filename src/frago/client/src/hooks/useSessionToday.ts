@@ -17,6 +17,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import i18n from '@/i18n';
 import { pageCache } from './pageCache';
+import {
+  expandSessionGroupIds,
+  getSessionGroupIds,
+  type WorkbenchSession,
+} from './useWorkbenchSessions';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -84,10 +89,12 @@ function msUntilTomorrow(now: number = Date.now()): number {
   return Math.max(1_000, next.getTime() - now + 1_000);
 }
 
-export function useSessionToday(): SessionTodayState {
+export function useSessionToday(sessions: WorkbenchSession[] = []): SessionTodayState {
   const [snapshot, setSnapshot] = useState<SessionTodaySnapshot>(
     () => lastToday.get() ?? { today: '', picked: [] }
   );
+  const sessionsRef = useRef<WorkbenchSession[]>(sessions);
+  sessionsRef.current = sessions;
 
   useEffect(() => {
     lastToday.set(snapshot);
@@ -145,7 +152,18 @@ export function useSessionToday(): SessionTodayState {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [refresh]);
 
-  const pickedSet = useMemo(() => new Set(snapshot.picked), [snapshot.picked]);
+  const rawPickedSet = useMemo(() => new Set(snapshot.picked), [snapshot.picked]);
+  const pickedSet = useMemo(
+    () =>
+      sessions.length
+        ? expandSessionGroupIds(sessions, snapshot.picked)
+        : rawPickedSet,
+    [sessions, snapshot.picked, rawPickedSet]
+  );
+  const expandedPicked = useMemo(
+    () => (sessions.length ? Array.from(pickedSet) : snapshot.picked),
+    [sessions.length, pickedSet, snapshot.picked]
+  );
   const isPicked = useCallback(
     (sessionId: string) => pickedSet.has(sessionId),
     [pickedSet]
@@ -160,40 +178,65 @@ export function useSessionToday(): SessionTodayState {
 
   const toggle = useCallback(
     async (sessionId: string) => {
-      const wasPicked = pickedSet.has(sessionId);
+      const currentSessions = sessionsRef.current;
+      const groupIds = currentSessions.length
+        ? getSessionGroupIds(currentSessions, sessionId)
+        : [sessionId];
+      const groupSet = new Set(groupIds);
+      const wasPicked = groupIds.some((id) => rawPickedSet.has(id)) || pickedSet.has(sessionId);
+      const toRemove = wasPicked
+        ? groupIds.filter((id) => rawPickedSet.has(id))
+        : [];
+      const removeTargets = wasPicked
+        ? toRemove.length > 0
+          ? toRemove
+          : [sessionId]
+        : [];
       const ticket = ++seq.current;
-      latestIntent.current.set(sessionId, ticket);
+      for (const id of groupIds) {
+        latestIntent.current.set(id, ticket);
+      }
 
-      // 先改界面。
+      // 先改界面：主会话、branched 会话与 worker 会话作为一个整体一起捡回或放下。
       setSnapshot((prev) => ({
         ...prev,
         picked: wasPicked
-          ? prev.picked.filter((id) => id !== sessionId)
+          ? prev.picked.filter((id) => !groupSet.has(id))
           : [sessionId, ...prev.picked.filter((id) => id !== sessionId)],
       }));
 
       try {
-        const authoritative = wasPicked ? await deleteToday(sessionId) : await putToday(sessionId);
+        let authoritative: SessionTodaySnapshot | null = null;
+        if (wasPicked) {
+          for (const id of removeTargets) {
+            authoritative = await deleteToday(id);
+          }
+        } else {
+          authoritative = await putToday(sessionId);
+        }
         if (latestIntent.current.get(sessionId) !== ticket) return;
-        setSnapshot(authoritative);
+        if (authoritative) setSnapshot(authoritative);
       } catch (e) {
         if (latestIntent.current.get(sessionId) === ticket) {
           // 没存下就把界面改回去。停在一个盘上并不存在的状态，人下次打开会以为名单丢了。
           setSnapshot((prev) => ({
             ...prev,
             picked: wasPicked
-              ? [sessionId, ...prev.picked.filter((id) => id !== sessionId)]
-              : prev.picked.filter((id) => id !== sessionId),
+              ? [
+                  ...removeTargets,
+                  ...prev.picked.filter((id) => !removeTargets.includes(id)),
+                ]
+              : prev.picked.filter((id) => !groupSet.has(id)),
           }));
         }
         throw e;
       }
     },
-    [pickedSet]
+    [rawPickedSet, pickedSet]
   );
 
   return {
-    picked: snapshot.picked,
+    picked: expandedPicked,
     isPicked,
     toggle,
     today: snapshot.today || null,

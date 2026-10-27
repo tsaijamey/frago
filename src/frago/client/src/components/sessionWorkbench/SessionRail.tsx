@@ -65,10 +65,12 @@ import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
-import type {
-  ListFilter,
-  WorkbenchSession,
-  WorkbenchSessionsState,
+import {
+  expandSessionGroupIds,
+  getSessionGroupIds,
+  type ListFilter,
+  type WorkbenchSession,
+  type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
 
 /** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
@@ -313,10 +315,24 @@ export default function SessionRail({
   /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
   const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
 
+  /**
+   * 今天从 Timeline 捡回来的完整上下文组。
+   *
+   * 主会话、它的 branched 会话与各自的 worker 会话共同构建了上下文，是一个整体：
+   * 任何一方被添加到 Today，整棵树上的全部会话一起进入 Today，并在左栏显示为一整个 group。
+   */
+  const pickedGroupIds = useMemo(() => {
+    if (!today) return new Set<string>();
+    const seeds = new Set<string>(today.picked);
+    for (const s of sessions) {
+      if (today.isPicked(s.session_id)) seeds.add(s.session_id);
+    }
+    return expandSessionGroupIds(sessions, seeds);
+  }, [sessions, today]);
+
   const { trunkRows, childrenOf, branchChildrenOf, orphanRows, pickedRows } = useMemo(() => {
-    // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
-    // 只看下面那一片的话，它的 worker 会认不出父亲、掉进末尾那一区——而它的父亲就摆在
-    // 屏幕最上面。
+    // 认父亲要在**整份可见清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
+    // 或者在「今天捡回」里，它的 worker 与分支都要跟着它挂在同一棵树下。
     const present = new Set(visible.map((s) => s.session_id));
     const byId = new Map(visible.map((s) => [s.session_id, s]));
     const children = new Map<string, WorkbenchSession[]>();
@@ -324,56 +340,69 @@ export default function SessionRail({
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
     const picked: WorkbenchSession[] = [];
+
+    /**
+     * 找出一场子会话在当前可见列表里能够挂载的最近非平铺 worker 祖先（主会话或分支会话）。
+     * 若直接父会话是一条平铺 worker，则继续向上追溯到派它的主会话或分支会话，保证多级子会话
+     * 也能完整收进同一个 group 里而不丢失。
+     */
+    const resolveHostParent = (session: WorkbenchSession): string | null => {
+      let cur = session.parent_session_id;
+      const seen = new Set<string>([session.session_id]);
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        if (!present.has(cur)) return null;
+        const pSession = byId.get(cur);
+        const isFlatWorker =
+          pSession?.origin === 'worker' && pSession?.relation?.kind !== 'branch';
+        if (!isFlatWorker) return cur;
+        cur = pSession?.parent_session_id ?? null;
+      }
+      return null;
+    };
+
     for (const session of visible) {
-      const parent = session.parent_session_id;
       // 置顶的那几场由置顶区去摆，这里只管下面那一片。置顶不跟今天走，也不跟捡回走：
       // 同一场在 Pinned 里已经有一张，不再在「今天捡回」里重复一张。
       if (pins.isPinned(session.session_id)) continue;
-      /**
-       * **今天从 timeline 捡回来的，一律摆成顶层卡，放在 Pinned 下面。**
-       *
-       * 不折进父会话、也不收进 worker 那一区：人捡它回来就是为了今天接着用，折起或收进
-       * 默认折起的区块等于没捡回来。2026-10-19 主人正是这样找不到自己刚加的那一场。
-       */
-      if (today?.isPicked(session.session_id)) {
-        picked.push(session);
-        continue;
-      }
-      const parentKnown =
-        Boolean(parent) &&
-        parent !== session.session_id &&
-        present.has(parent as string) &&
-        // 自己也被置顶的那几场留在置顶区，不再折进父亲下面：同一场摆两处，人会以为是两场。
-        !pins.isPinned(session.session_id);
+
+      const hostParent = resolveHostParent(session);
 
       /**
        * **分支会话和原会话装进同一个容器。** 分支是人亲手起的、等的也是人；把它摊在主干上，
        * 人看不出它从哪里来。装进容器后，顺序是父卡 → 父的 worker → 分支卡 → 分支的 worker，
-       * 层级一眼能读。父会话被筛掉、或被单独捡回今天时，分支仍按顶层卡处理。
+       * 层级一眼能读。无论是日常在今天活跃的，还是通过 Today 整组捡回的，都与主会话合成一整组展示。
        */
       if (session.relation?.kind === 'branch') {
-        // 父会话若只是一条平铺的 worker 行（没有自己的分支容器），分支没地方挂，
-        // 宁可摆回主干，也不能让它从清单里消失。
-        const parentIsFlatWorker =
-          Boolean(parent) &&
-          byId.get(parent as string)?.origin === 'worker' &&
-          byId.get(parent as string)?.relation?.kind !== 'branch';
-        if (parentKnown && !parentIsFlatWorker) {
-          const bucket = branches.get(parent as string);
+        if (hostParent) {
+          const bucket = branches.get(hostParent);
           if (bucket) bucket.push(session);
-          else branches.set(parent as string, [session]);
+          else branches.set(hostParent, [session]);
+        } else if (pickedGroupIds.has(session.session_id)) {
+          picked.push(session);
         } else {
           trunk.push(session);
         }
         continue;
       }
 
-      if (parentKnown) {
-        const bucket = children.get(parent as string);
+      if (hostParent) {
+        const bucket = children.get(hostParent);
         if (bucket) bucket.push(session);
-        else children.set(parent as string, [session]);
+        else children.set(hostParent, [session]);
         continue;
       }
+
+      /**
+       * 今天从 timeline 捡回来的上下文组根会话（或认不出父会话的独立捡回会话），
+       * 摆在 Pinned 下面的「今天捡回」区；它的分支与 worker 已经挂在 `branches` 与 `children` 下，
+       * 渲染时经 `trunkWithKids` 作为一整个 group 一起摆出来。
+       */
+      if (pickedGroupIds.has(session.session_id)) {
+        picked.push(session);
+        continue;
+      }
+
       if (session.origin === 'worker') orphans.push(session);
       else trunk.push(session);
     }
@@ -384,7 +413,7 @@ export default function SessionRail({
       orphanRows: orphans,
       pickedRows: picked,
     };
-  }, [visible, pins, today]);
+  }, [visible, pins, pickedGroupIds]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -626,10 +655,21 @@ export default function SessionRail({
     }
   };
 
-  /** 卡片「…」菜单里的「从今天移出」：撤掉捡回来的那一条，今天没再动过的会话随即收起。 */
+  /** 卡片「…」菜单里的「从今天移出」：撤掉捡回来的那一组，今天没再动过的会话随即收起。 */
   const handleRemoveToday = async (session: WorkbenchSession) => {
+    if (!today) return;
     try {
-      await today?.toggle(session.session_id);
+      const groupIds = getSessionGroupIds(sessions, session.session_id);
+      const pickedInGroup = groupIds.filter(
+        (id) => today.isPicked(id) || today.picked.includes(id)
+      );
+      if (pickedInGroup.length > 0 && !pickedInGroup.includes(session.session_id)) {
+        for (const id of pickedInGroup) {
+          await today.toggle(id);
+        }
+      } else {
+        await today.toggle(session.session_id);
+      }
     } catch (e) {
       showToast(
         e instanceof Error ? e.message : t('workbench.errors.todaySaveFailedPlain'),
@@ -1192,7 +1232,7 @@ export default function SessionRail({
                               onSelect={handleSelect}
                               onCopy={handleCopy}
                               onTogglePin={handleTogglePin}
-                              pickedToday={today?.isPicked(session.session_id) ?? false}
+                              pickedToday={pickedGroupIds.has(session.session_id)}
                               onRemoveToday={today ? handleRemoveToday : undefined}
                               onToggleWorkers={toggleWorkers}
                               onStopped={handleStopped}

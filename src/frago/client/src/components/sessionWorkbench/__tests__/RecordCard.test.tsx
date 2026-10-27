@@ -848,4 +848,54 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     fireEvent.click(screen.getByTestId('image-grid-close'));
     expect(screen.queryByTestId('image-grid-viewer')).toBeNull();
   });
+
+  it('当工具已挂载 image-grid 且收尾消息正文又手抄一遍 frago-app 代码块时，只渲染一张卡片且正文不残留代码块', () => {
+    const gridBody = JSON.stringify({
+      frago_ui_component: 'image-grid',
+      component_type: 'image-grid',
+      data: {
+        type: 'image-grid',
+        title: 'Timeline 底部会话条遮挡修复前后对比',
+        columns: 2,
+        images: [
+          {
+            src: '/api/file?disposition=inline&path=%2Ftmp%2Fbefore.png',
+            raw: '/tmp/before.png',
+            name: 'before.png',
+            caption: '修复前',
+            source: 'local',
+          },
+          {
+            src: '/api/file?disposition=inline&path=%2Ftmp%2Fafter.png',
+            raw: '/tmp/after.png',
+            name: 'after.png',
+            caption: '修复后',
+            source: 'local',
+          },
+        ],
+      },
+    });
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '检查底部遮挡' } }),
+      makeRecord('tool.result', {
+        id: 't_img',
+        seq: 2,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 30, body: gridBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 3,
+        payload: {
+          text: `已修复时间轴底部遮挡。\n\n\`\`\`frago-app\n${gridBody}\n\`\`\``,
+          model: 'gemini-4-argon-medium',
+        },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    const { container } = render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.getAllByTestId('image-grid-card')).toHaveLength(1);
+    expect(container.textContent).not.toContain('frago_ui_component');
+  });
 });

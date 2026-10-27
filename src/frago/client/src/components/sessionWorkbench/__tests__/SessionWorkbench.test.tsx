@@ -539,17 +539,19 @@ describe('RecordStream 中栏', () => {
 
       fireEvent.click(screen.getByTestId('lens-watcher'));
       expect(screen.getByTestId('watcher-view')).toBeTruthy();
-      expect(screen.getByTestId('watcher-phase-goal').textContent).toContain('阶段目标：梳理信息结构');
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
+      expect(screen.getByTestId('watcher-phase-goal').textContent).toContain('梳理信息结构');
       expect(screen.getByTestId('watcher-summary').textContent).toContain('完成了 Watcher 与 Talk 改造');
       expect(screen.getByTestId('watcher-summary').textContent).not.toContain('。；');
-      expect(screen.getByTestId('watcher-part-doing').textContent).toContain(
-        '当前在做什么：完成了 Watcher 与 Talk 改造'
-      );
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
+      expect(screen.getByTestId('watcher-part-doing').textContent).toContain('完成了 Watcher 与 Talk 改造');
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
       expect(screen.getByTestId('watcher-part-findings').textContent).toContain(
-        '关键发现或产出：已完成代码改造，等待选择信息结构'
+        '已完成代码改造，等待选择信息结构'
       );
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
       expect(screen.getByTestId('watcher-part-decision').textContent).toContain(
-        '待拍板背景：Observer 信息结构采用哪种组织方式？'
+        'Observer 信息结构采用哪种组织方式？'
       );
 
       // Talk 默认折叠，但决策卡在 Watcher 下原样展示且可直接选择发送
@@ -616,6 +618,75 @@ describe('RecordStream 中栏', () => {
       const tail = screen.getByTestId('watcher-unsummarized-tail');
       expect(tail.textContent).toContain('浮动按钮上的L和数字是什么含义？');
       expect(tail.textContent).toContain('L是行号的缩写，代表起始行号到结束行号。');
+    });
+
+    it('Watcher 小标题独立成行、多条内容逐行分列，且随中英语言切换完整切换小标题与计数词条', async () => {
+      const recordsForI18n = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第一段目标。第二段目标？' } }),
+        record({ id: 'tc1', seq: 1, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'a1', seq: 2, kind: 'agent.say', payload: { text: '已完成检查' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '第一段目标。第二段目标？',
+          tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+          decision: '请选择排版方案',
+          happened: [
+            '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
+            'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
+          ],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 3,
+              tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+              happened_add: [
+                '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
+                'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
+              ],
+              decision: '请选择排版方案',
+              summary: '正在检查 RecordStream 排版',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const { rerender } = render(
+        <RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // 多条内容被拆分为独立的多行条目
+      expect(screen.getAllByTestId('watcher-phase-goal-line')).toHaveLength(2);
+      expect(screen.getAllByTestId('watcher-part-doing-line')).toHaveLength(2);
+      expect(screen.getAllByTestId('watcher-part-findings-line')).toHaveLength(3);
+
+      // 中文状态下：小标题与计数均为中文，且无硬编码冒号
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
+      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1条提问 · 1次工具调用 · 1条回复');
+
+      // 切换到英文状态：小标题与计数全部切换为纯英文
+      await i18n.changeLanguage('en');
+      rerender(<RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />);
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('Stage goal');
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe("What's happening now");
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('Key findings or output');
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('Decision context');
+      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1 prompts · 1 tool calls · 1 replies');
+
+      await i18n.changeLanguage('zh');
     });
   });
 });

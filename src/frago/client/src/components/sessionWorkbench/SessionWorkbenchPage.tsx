@@ -38,8 +38,10 @@ import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
 import SessionTimeline from './SessionTimeline';
 import { useSessionPins } from '@/hooks/useSessionPins';
-import { useSessionToday } from '@/hooks/useSessionToday';
+import { useSessionToday, type SessionTodayState } from '@/hooks/useSessionToday';
 import {
+  expandSessionGroupIds,
+  getSessionGroupIds,
   isSessionAlive,
   useWorkbenchLabels,
   useWorkbenchSessions,
@@ -121,9 +123,32 @@ export default function SessionWorkbenchPage() {
    * 里那几颗「+ Today」改的也是这一份——两处必须持有同一份状态，否则捡回来的一场要等
    * 下一趟轮询才出现。
    */
-  const today = useSessionToday();
-  const pickedToday = useMemo(() => new Set(today.picked), [today.picked]);
-  const sessions = useWorkbenchSessions(isForYou, pickedToday);
+  const rawToday = useSessionToday();
+  const rawPickedToday = useMemo(() => new Set(rawToday.picked), [rawToday.picked]);
+  const sessions = useWorkbenchSessions(isForYou, rawPickedToday);
+  const pickedToday = useMemo(
+    () => expandSessionGroupIds(sessions.sessions, rawToday.picked),
+    [sessions.sessions, rawToday.picked]
+  );
+  const today = useMemo<SessionTodayState>(
+    () => ({
+      ...rawToday,
+      picked: Array.from(pickedToday),
+      isPicked: (sid: string) => pickedToday.has(sid) || rawToday.isPicked(sid),
+      toggle: async (sid: string) => {
+        const groupIds = getSessionGroupIds(sessions.sessions, sid);
+        const pickedInGroup = groupIds.filter((id) => rawPickedToday.has(id));
+        if (pickedInGroup.length > 0) {
+          for (const id of pickedInGroup) {
+            await rawToday.toggle(id);
+          }
+        } else {
+          await rawToday.toggle(sid);
+        }
+      },
+    }),
+    [rawToday, pickedToday, rawPickedToday, sessions.sessions]
+  );
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);

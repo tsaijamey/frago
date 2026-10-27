@@ -276,7 +276,7 @@ describe('SessionTimeline (Merged Token Calendar & Timeline)', () => {
     expect(screen.getAllByTestId('timeline-filter-tag')).toHaveLength(2);
   });
 
-  it('worker 紧跟在派活的那场下面，组内相邻', () => {
+  it('worker 类的会话不在 timeline 中展开展示，主会话与分支会话正常展示', () => {
     const now = Date.now();
     const todayKey = toDateKey(new Date(now));
     const parent = session({
@@ -284,20 +284,79 @@ describe('SessionTimeline (Merged Token Calendar & Timeline)', () => {
       created_at: now - 2 * HOUR,
       last_reply_at: now - HOUR,
     });
-    const other = session({
-      session_id: 'o',
+    const branch = session({
+      session_id: 'b',
       created_at: now - 90 * 60_000,
       last_reply_at: now - 80 * 60_000,
+      parent_session_id: 'p',
+      relation: { kind: 'branch', closed: false },
     });
-    const kid = session({
+    const kidWorker = session({
       session_id: 'k',
       created_at: now - 50 * 60_000,
       last_reply_at: now - 40 * 60_000,
       origin: 'worker',
       parent_session_id: 'p',
     });
-    renderTimeline([parent, other, kid], { initialDate: todayKey });
-    expect(ids()).toEqual(['p', 'k', 'o']);
+    const loneWorker = session({
+      session_id: 'lone-w',
+      created_at: now - 30 * 60_000,
+      last_reply_at: now - 20 * 60_000,
+      origin: 'worker',
+      parent_session_id: null,
+    });
+    renderTimeline([parent, branch, kidWorker, loneWorker], { initialDate: todayKey });
+    expect(ids()).toEqual(['b', 'p']);
+    expect(ids()).not.toContain('k');
+    expect(ids()).not.toContain('lone-w');
+  });
+
+  it('timeline 的 bar 高度饱满且标签文本至少按 16px 显示', () => {
+    const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
+    const s = session({
+      session_id: 's-tall',
+      title: '重构日历与时间轴视图',
+      created_at: now - 2 * HOUR,
+      last_reply_at: now - HOUR,
+    });
+    renderTimeline([s], { initialDate: todayKey });
+    const lane = screen.getByTestId('timeline-lane');
+    expect(lane.className).toContain('h-[48px]');
+    const bar = lane.querySelector('[data-bar]') as HTMLElement;
+    expect(bar.className).toContain('h-[38px]');
+    const label = lane.querySelector('[data-label]') as HTMLElement;
+    expect(label.className).toContain('h-[38px]');
+    expect(label.className).toContain('text-[16px]');
+  });
+
+  it('branched 会话加入 Today 时，其主会话在 timeline 中也同步标为已加入 Today', () => {
+    const now = Date.now();
+    const todayKey = toDateKey(new Date(now));
+    const main = session({
+      session_id: 'main-s',
+      created_at: now - 3 * HOUR,
+      last_reply_at: now - 2 * HOUR,
+    });
+    const branch = session({
+      session_id: 'branch-s',
+      created_at: now - 2 * HOUR,
+      last_reply_at: now - HOUR,
+      parent_session_id: 'main-s',
+      relation: { kind: 'branch', closed: false },
+    });
+    const toggle = vi.fn(async () => {});
+    renderTimeline([main, branch], {
+      today: todayState({
+        picked: ['branch-s'],
+        isPicked: (id) => id === 'branch-s',
+        toggle,
+      }),
+      initialDate: todayKey,
+    });
+    // 主会话虽未被单独传入 picked，但与 branch-s 属同一上下文组，按钮应显示「从今天放下」且点主会话也能触发放下
+    fireEvent.click(screen.getByTestId('timeline-today-main-s'));
+    expect(toggle).toHaveBeenCalledWith('branch-s');
   });
 
   it('点「Today」把这场交给名单，不选中会话', () => {

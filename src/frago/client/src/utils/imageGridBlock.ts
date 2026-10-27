@@ -206,3 +206,83 @@ export function parseImageGridOutput(raw: string): ImageGridBlock | null {
   const all = parseAllImageGridOutputs(raw);
   return all.length ? all[all.length - 1] : null;
 }
+
+/**
+ * 按图片地址列表签名对 `ImageGridBlock` 列表保序去重。
+ */
+export function dedupeImageGrids(grids: ImageGridBlock[]): ImageGridBlock[] {
+  if (grids.length <= 1) return grids;
+  const seen = new Set<string>();
+  const out: ImageGridBlock[] = [];
+  for (const grid of grids) {
+    const sig = grid.images.map((img) => img.raw || img.src).join('\0');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(grid);
+  }
+  return out;
+}
+
+/**
+ * 剥离回复正文中内嵌的 `frago_ui_component: "image-grid"` 代码块（如 ```frago-app ... ```）或裸 JSON 块，
+ * 避免已渲染为 `ImageGridCard` 后正文里仍残留裸露的 JSON 源码。
+ */
+export function stripImageGridBlocks(raw: string): string {
+  if (!raw || !raw.includes('"frago_ui_component"') || !raw.includes(UI_IMAGE_GRID_MARKER)) {
+    return raw;
+  }
+  // 1. 先剥离 ```frago-app / ```json / ``` 围栏包裹的合法 image-grid 块
+  const fencedRe = /(?:^|\n)```(?:frago-app|json)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*(?=\r?\n|$)/g;
+  let cleaned = raw.replace(fencedRe, (fullMatch, inner: string) => {
+    const grids = parseAllImageGridOutputs(inner);
+    return grids.length > 0 ? '' : fullMatch;
+  });
+
+  // 2. 若仍有裸露的合法 image-grid JSON 片段，逐段剥离
+  if (cleaned.includes('"frago_ui_component"') && cleaned.includes(UI_IMAGE_GRID_MARKER)) {
+    let cursor = 0;
+    let rebuilt = '';
+    while (cursor < cleaned.length) {
+      const markerIdx = cleaned.indexOf('"frago_ui_component"', cursor);
+      if (markerIdx < 0) {
+        rebuilt += cleaned.slice(cursor);
+        break;
+      }
+      const start = cleaned.lastIndexOf('{', markerIdx);
+      if (start < cursor) {
+        rebuilt += cleaned.slice(cursor, markerIdx + 20);
+        cursor = markerIdx + 20;
+        continue;
+      }
+      const end = findMatchingBrace(cleaned, start);
+      if (end <= markerIdx) {
+        rebuilt += cleaned.slice(cursor, markerIdx + 20);
+        cursor = markerIdx + 20;
+        continue;
+      }
+      let isImageGrid = false;
+      try {
+        const parsed: unknown = JSON.parse(cleaned.slice(start, end + 1));
+        if (
+          isObj(parsed) &&
+          parsed.frago_ui_component === UI_IMAGE_GRID_MARKER &&
+          validateImageGridObject(parsed) !== null
+        ) {
+          isImageGrid = true;
+        }
+      } catch {
+        // 非合法 JSON 忽略
+      }
+      if (isImageGrid) {
+        rebuilt += cleaned.slice(cursor, start);
+        cursor = end + 1;
+      } else {
+        rebuilt += cleaned.slice(cursor, end + 1);
+        cursor = end + 1;
+      }
+    }
+    cleaned = rebuilt;
+  }
+
+  return cleaned.replace(/\n{3,}/g, '\n\n').trimEnd();
+}

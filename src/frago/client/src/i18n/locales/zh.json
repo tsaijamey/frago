@@ -49,6 +49,7 @@
     },
     "nav": {
       "sessions": "会话",
+      "desktop": "桌面",
       "teams": "结对",
       "recipes": "配方",
       "todos": "事务",
@@ -84,6 +85,9 @@
     "tooLarge": "这份有 {{size}}，太大，不摆出来",
     "notText": "这一份不是文本，没有能直接读的内容",
     "binaryHint": "用左边那个按钮在文件管理器里打开它",
+    "pinned": "已 pin 的目录与文件",
+    "pin": "Pin 到左侧菜单",
+    "unpin": "取消 pin",
     "columns": {
       "name": "名称",
       "size": "大小",
@@ -966,7 +970,7 @@
       "checkUpdate": "检查更新",
       "tagline": "是给 AI agent 用的多运行时基础设施。",
       "versionUnknown": "读取失败",
-      "license": "© 2026 frago · AGPL-3.0"
+      "license": "© 2026 frago · MIT"
     },
     "officialSync": {
       "title": "官方资源同步",
@@ -1603,6 +1607,7 @@
       "watcherTalkEmpty": "暂无对话记录",
       "watcherEmptySummary": "旁路 AI 正在监听游标后的执行内容…",
       "watcherPhaseGoal": "阶段目标：{{goal}}",
+      "watcherPhaseGoalLabel": "阶段目标",
       "watcherPartDoing": "当前在做什么",
       "watcherPartFindings": "关键发现或产出",
       "watcherPartDecision": "待拍板背景"
@@ -1986,7 +1991,7 @@
     "newSession": {
       "title": "新建会话",
       "clientLabel": "这场会话交给哪个 agent 跑？",
-      "clientHint": "挑一个编码 agent 替你干活。它们是各自独立的工具，脆气不一样。",
+      "clientHint": "挑一个编码 agent 替你干活。它们是各自独立的工具，脾气不一样。",
       "probing": "正在看本机装了哪几家…",
       "noneAvailable": "本机一家可用的 CLI 都没找到。装好 claude / codex / opencode 其中之一，它会自己出现在这里。",
       "claimedHint": "{{name}} 的会话编号由它自己分配，创建后要等它起来报出编号，通常几秒。",

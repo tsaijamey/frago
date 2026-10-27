@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dedupeImageGrids,
   normalizeImageSrc,
   parseAllImageGridOutputs,
   parseImageGridOutput,
+  stripImageGridBlocks,
 } from '../imageGridBlock';
 
 describe('imageGridBlock', () => {
@@ -88,5 +90,28 @@ describe('imageGridBlock', () => {
     const all = parseAllImageGridOutputs(`${g1}\n${decisionRaw}\n${g2}`);
     expect(all).toHaveLength(2);
     expect(all.map((x) => x.title)).toEqual(['第一组', '第二组']);
+  });
+
+  it('对相同图片集合的网格去重，并剥离正文中手抄的 frago-app 代码块', () => {
+    const payload = JSON.stringify({
+      frago_ui_component: 'image-grid',
+      component_type: 'image-grid',
+      data: {
+        type: 'image-grid',
+        title: 'Timeline 对比',
+        columns: 2,
+        images: [
+          { src: '/api/file?disposition=inline&path=%2Ftmp%2F1.png', raw: '/tmp/1.png', name: '1.png' },
+          { src: '/api/file?disposition=inline&path=%2Ftmp%2F2.png', raw: '/tmp/2.png', name: '2.png' },
+        ],
+      },
+    });
+    const parsed = parseAllImageGridOutputs(`${payload}\n${payload}`);
+    expect(parsed).toHaveLength(2);
+    const deduped = dedupeImageGrids(parsed);
+    expect(deduped).toHaveLength(1);
+
+    const prose = `已修复遮挡问题。\n\n\`\`\`frago-app\n${payload}\n\`\`\``;
+    expect(stripImageGridBlocks(prose)).toBe('已修复遮挡问题。');
   });
 });

@@ -55,7 +55,11 @@ import {
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
 import { parseCardAnswer, parseUiComponentOutput, splitTrailingBlock } from '@/utils/decisionBlock';
-import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
+import {
+  dedupeImageGrids,
+  parseAllImageGridOutputs,
+  stripImageGridBlocks,
+} from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
 import { SkillQuotes } from './SkillQuote';
@@ -822,23 +826,27 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const delegatedGridBodies = list(p, 'ui_image_grids').filter(
     (v): v is string => typeof v === 'string' && !!v
   );
-  const rawTrailing = record.agent_path.length ? null : splitTrailingBlock(text);
+  const delegatedGrids = !record.agent_path.length
+    ? delegatedGridBodies.flatMap((raw) => parseAllImageGridOutputs(raw))
+    : [];
+  const imageGrids = !record.agent_path.length
+    ? dedupeImageGrids(
+        delegatedGrids.length > 0 ? delegatedGrids : parseAllImageGridOutputs(text)
+      )
+    : [];
+  const bodyWithoutGrid =
+    !record.agent_path.length && imageGrids.length > 0 ? stripImageGridBlocks(text) : text;
+  const rawTrailing = record.agent_path.length ? null : splitTrailingBlock(bodyWithoutGrid);
   const uiFromDelegated =
     !suppressed && !record.agent_path.length && delegatedUi
       ? parseUiComponentOutput(delegatedUi)
       : null;
   const trailing = suppressed || (uiFromDelegated && uiFromDelegated.ok) ? null : rawTrailing;
-  const displayText = rawTrailing && !trailing ? rawTrailing.body : text;
+  const displayText = rawTrailing && !trailing ? rawTrailing.body : bodyWithoutGrid;
   const uiComponent =
     !trailing && !suppressed && !record.agent_path.length
-      ? uiFromDelegated ?? parseUiComponentOutput(text)
+      ? uiFromDelegated ?? parseUiComponentOutput(bodyWithoutGrid)
       : null;
-  const imageGrids = !record.agent_path.length
-    ? [
-        ...delegatedGridBodies.flatMap((raw) => parseAllImageGridOutputs(raw)),
-        ...parseAllImageGridOutputs(text),
-      ]
-    : [];
   return (
     <TextShell
       record={record}
@@ -856,7 +864,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
         <>
           <DecisionReply
             recordId={record.id}
-            text={text}
+            text={bodyWithoutGrid}
             split={trailing}
             rich={(s) => <Rich text={s} />}
           />

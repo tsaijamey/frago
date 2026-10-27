@@ -929,6 +929,27 @@ function joinClauses(items: string[]): string {
   return cleaned.map((x) => x.replace(/[。；;]+$/, '')).join('；');
 }
 
+export function splitWatcherLines(input: string | string[] | null | undefined): string[] {
+  if (!input) return [];
+  const rawItems = Array.isArray(input) ? input : [input];
+  const out: string[] = [];
+  for (const raw of rawItems) {
+    if (typeof raw !== 'string') continue;
+    const cleaned = cleanTailText(raw);
+    if (!cleaned) continue;
+    const pieces = cleaned
+      .split(/\r?\n|[；;]+|(?<=[。？！])\s*(?![”’）\]】」』])/g)
+      .map((part) => cleanTailText(part))
+      .filter(Boolean);
+    for (const piece of pieces) {
+      if (!out.includes(piece)) {
+        out.push(piece);
+      }
+    }
+  }
+  return out;
+}
+
 function deriveThreeParts(
   tail: { kind: 'now' | 'output'; text: string } | null | undefined,
   happenedList: string[] | undefined,
@@ -1901,52 +1922,144 @@ export default function RecordStream({
                   );
                 }
                 const clock = slice.at ? formatClock(slice.at) : '';
+                const goalLines = splitWatcherLines(slice.phaseGoal);
+                const doingLines = splitWatcherLines(slice.doing);
+                const findingLines = splitWatcherLines(slice.findings);
+                const decisionLines = splitWatcherLines(slice.decision);
                 return (
                   <section
                     key={slice.id}
                     data-testid="watcher-item"
-                    className="flex min-w-0 flex-col gap-3 py-4 first:pt-1 last:pb-1"
+                    className="flex min-w-0 flex-col gap-4 py-5 first:pt-1 last:pb-1"
                   >
                     <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-text-muted">
-                      <span>#{idx + 1}</span>
+                      <span className="font-semibold text-text-secondary">#{idx + 1}</span>
                       {clock ? <span>{clock}</span> : null}
-                      {slice.phaseGoal ? (
-                        <span
-                          data-testid="watcher-phase-goal"
-                          className="font-sans text-[15px] font-semibold text-text-primary"
-                        >
-                          {t('workbench.stream.watcherPhaseGoal', { goal: slice.phaseGoal })}
-                        </span>
-                      ) : null}
                     </header>
                     <div
                       data-testid="watcher-summary"
-                      className="flex min-w-0 flex-col gap-1.5 break-words text-[16px] leading-[1.72] text-text-primary"
+                      className="flex max-w-[78ch] min-w-0 flex-col gap-4 break-words text-[16px] leading-[1.72] text-text-primary"
                     >
-                      {slice.doing || slice.findings.length > 0 || slice.decision ? (
+                      {goalLines.length > 0 ? (
+                        <div
+                          data-testid="watcher-phase-goal"
+                          className="flex min-w-0 flex-col gap-1.5"
+                        >
+                          <div
+                            data-testid="watcher-phase-goal-label"
+                            className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                          >
+                            {t('workbench.stream.watcherPhaseGoalLabel')}
+                          </div>
+                          <div className="flex min-w-0 flex-col gap-1.5 font-medium text-text-primary">
+                            {goalLines.map((line, lIdx) => (
+                              <div
+                                key={lIdx}
+                                data-testid="watcher-phase-goal-line"
+                                className="flex min-w-0 items-start gap-2.5 leading-[1.68]"
+                              >
+                                {goalLines.length > 1 ? (
+                                  <span
+                                    aria-hidden
+                                    className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                  />
+                                ) : null}
+                                <span className="min-w-0 flex-1">{line}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {doingLines.length > 0 || findingLines.length > 0 || decisionLines.length > 0 ? (
                         <>
-                          {slice.doing ? (
-                            <div data-testid="watcher-part-doing" className="min-w-0">
-                              <span className="font-semibold text-text-secondary">
-                                {t('workbench.stream.watcherPartDoing')}：
-                              </span>
-                              <span>{slice.doing}</span>
+                          {doingLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-doing"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-doing-label"
+                                className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                              >
+                                {t('workbench.stream.watcherPartDoing')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {doingLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-doing-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {doingLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ) : null}
-                          {slice.findings.length > 0 ? (
-                            <div data-testid="watcher-part-findings" className="min-w-0">
-                              <span className="font-semibold text-text-secondary">
-                                {t('workbench.stream.watcherPartFindings')}：
-                              </span>
-                              <span>{joinClauses(slice.findings)}</span>
+                          {findingLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-findings"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-findings-label"
+                                className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                              >
+                                {t('workbench.stream.watcherPartFindings')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {findingLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-findings-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {findingLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ) : null}
-                          {slice.decision ? (
-                            <div data-testid="watcher-part-decision" className="min-w-0">
-                              <span className="font-semibold text-accent-primary">
-                                {t('workbench.stream.watcherPartDecision')}：
-                              </span>
-                              <span>{slice.decision}</span>
+                          {decisionLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-decision"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-decision-label"
+                                className="text-[13px] font-semibold tracking-wide text-accent-primary"
+                              >
+                                {t('workbench.stream.watcherPartDecision')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {decisionLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-decision-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {decisionLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary/70"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ) : null}
                         </>

@@ -42,7 +42,11 @@ import type { TokenCalendarResponse } from '@/api/client';
 import i18n from '@/i18n';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { SessionTodayState } from '@/hooks/useSessionToday';
-import type { WorkbenchSession } from '@/hooks/useWorkbenchSessions';
+import {
+  expandSessionGroupIds,
+  getSessionGroupIds,
+  type WorkbenchSession,
+} from '@/hooks/useWorkbenchSessions';
 import { useAppStore } from '@/stores/appStore';
 import {
   computeVisibleDayCount,
@@ -86,12 +90,12 @@ const SPAN_SHORT_KEYS = [
 ] as const;
 const DEFAULT_SPAN_INDEX = 2;
 
-/** 条最少 24px 宽：比条高（20px）宽，缩到再远也是横着的一笔。 */
-const MIN_BAR_PX = 24;
-/** 标题最宽 360px：有的会话标题就是开口那一整段话，不限宽会铺半屏。 */
-const MAX_LABEL_PX = 360;
+/** 条最少 44px 宽：比条高（38px）宽，缩到再远也是饱满的一块横条。 */
+const MIN_BAR_PX = 44;
+/** 标题最宽 520px：字号保证至少 16px 后留足宽度，同时防止超长首句铺满整屏。 */
+const MAX_LABEL_PX = 520;
 const PAD = 8;
-const ROW_HEIGHT = 26;
+const ROW_HEIGHT = 48;
 
 /**
  * 右端留出的未来空白：占窗口宽度的比例，最多两天。
@@ -148,7 +152,16 @@ function weekdayKeyOfDate(dateKey: string): (typeof WEEKDAY_KEYS)[number] {
 }
 
 /**
+ * Worker 类的会话无需展开在 Timeline 中：它们是后台派出去的辅助执行会话，铺在时间轴上会
+ * 严重干扰视觉并影响用户判断。人类主动分出的分支会话（`relation.kind === 'branch'`）照常展示。
+ */
+function isTimelineWorker(s: WorkbenchSession): boolean {
+  return s.origin === 'worker' && s.relation?.kind !== 'branch';
+}
+
+/**
  * 会话铺成条：左端创建时刻，右端最后一句回复。没有回复时两端同点（画成空心条）。
+ * 跳过 worker 类会话，避免后台派活淹没时间轴。
  */
 function toLanes(sessions: WorkbenchSession[]): Lane[] {
   const seen = new Set<string>();
@@ -156,6 +169,7 @@ function toLanes(sessions: WorkbenchSession[]): Lane[] {
   for (const s of sessions) {
     if (seen.has(s.session_id)) continue;
     seen.add(s.session_id);
+    if (isTimelineWorker(s)) continue;
     const last = s.last_reply_at ?? s.created_at;
     const start = Math.min(s.created_at, last);
     out.push({ s, start, last, noReply: s.last_reply_at === null });
@@ -164,61 +178,24 @@ function toLanes(sessions: WorkbenchSession[]): Lane[] {
 }
 
 /**
- * 父子聚成一块。规则照左栏（`SessionRail` 的 trunkRows / childrenOf / orphanRows）：
- * ① 认得出派它的那场、那场也在窗口里 → 折到那场下面；
- * ② 是 worker 但认不出父、或父不在窗口里 → 收进末尾「认不出父会话的 worker」那一组；
- * ③ 其余 → 主干。
+ * 将窗口内的主会话与分支会话按创建时刻倒序排成块（worker 已在 `toLanes` 中过滤，不再展开）。
  */
-function groupLanes(all: Lane[], inWin: Lane[]): { blocks: Block[]; lanes: Lane[] } {
-  const byId = new Map(all.map((x) => [x.s.session_id, x]));
-  const inIds = new Set(inWin.map((x) => x.s.session_id));
-  const kids = new Map<string, Lane[]>();
-  for (const x of all) {
-    const s = x.s;
-    const p = s.parent_session_id;
-    if (
-      !p ||
-      p === s.session_id ||
-      !byId.has(p) ||
-      s.origin !== 'worker' ||
-      s.relation?.kind === 'branch'
-    ) {
-      continue;
-    }
-    const bucket = kids.get(p);
-    if (bucket) bucket.push(x);
-    else kids.set(p, [x]);
-  }
-
+function groupLanes(_all: Lane[], inWin: Lane[]): { blocks: Block[]; lanes: Lane[] } {
   const done = new Set<string>();
-  const claimed = new Set<string>();
   const blocks: Block[] = [];
   for (const x of inWin) {
     const id = x.s.session_id;
-    if (done.has(id) || claimed.has(id)) continue;
-    const s = x.s;
-    const isKid =
-      s.origin === 'worker' &&
-      Boolean(s.parent_session_id) &&
-      s.parent_session_id !== s.session_id &&
-      byId.has(s.parent_session_id as string) &&
-      s.relation?.kind !== 'branch';
-    if (isKid) continue;
+    if (done.has(id)) continue;
     done.add(id);
-    const allKids = kids.get(id) ?? [];
-    const mine = allKids.filter((k) => inIds.has(k.s.session_id));
-    for (const k of mine) claimed.add(k.s.session_id);
     blocks.push({
       heads: [x],
-      kids: mine,
-      hidden: allKids.length - mine.length,
-      sortAt: Math.max(x.start, ...mine.map((k) => k.last)),
+      kids: null,
+      hidden: 0,
+      sortAt: x.start,
     });
   }
-  const lone = inWin.filter((x) => !done.has(x.s.session_id) && !claimed.has(x.s.session_id));
-  if (lone.length) blocks.push({ heads: lone, kids: null, hidden: 0, sortAt: 0 });
   blocks.sort((p, q) => q.sortAt - p.sortAt);
-  return { blocks, lanes: blocks.flatMap((b) => b.heads.concat(b.kids ?? [])) };
+  return { blocks, lanes: blocks.flatMap((b) => b.heads) };
 }
 
 function ticksFor(start: number, end: number, span: number): Tick[] {
@@ -716,9 +693,32 @@ export default function SessionTimeline({
     setEnd(clampEnd((end ?? now) + dir * size, size));
   };
 
+  const pickedGroupIds = useMemo(() => {
+    const seeds = new Set<string>(today.picked);
+    for (const s of sessions) {
+      if (today.isPicked(s.session_id)) seeds.add(s.session_id);
+    }
+    return expandSessionGroupIds(sessions, seeds);
+  }, [sessions, today]);
+
+  const isGroupPicked = useCallback(
+    (sid: string) => pickedGroupIds.has(sid) || today.isPicked(sid),
+    [pickedGroupIds, today]
+  );
+
   const toggleToday = async (sid: string) => {
     try {
-      await today.toggle(sid);
+      const groupIds = getSessionGroupIds(sessions, sid);
+      const pickedInGroup = groupIds.filter(
+        (id) => today.isPicked(id) || today.picked.includes(id)
+      );
+      if (pickedInGroup.length > 0 && !pickedInGroup.includes(sid)) {
+        for (const id of pickedInGroup) {
+          await today.toggle(id);
+        }
+      } else {
+        await today.toggle(sid);
+      }
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : t('workbench.errors.todaySaveFailedPlain'),
@@ -738,6 +738,13 @@ export default function SessionTimeline({
   const forYouCount = shownLanes.filter((x) => forYou?.infoOf(x.s.session_id)).length;
   const runningCount = shownLanes.filter((x) => x.s.status === 'running').length;
   const spanLabel = fitAll ? t('workbench.timeline.everything') : t(SPAN_KEYS[spanIndex]);
+  const timelineListComponents = useMemo(
+    () => ({
+      Header: () => <div className="h-1.5" />,
+      Footer: () => <div className="h-3" />,
+    }),
+    []
+  );
 
   const laneTitle = (x: Lane, hidden: number): string => {
     const s = x.s;
@@ -753,7 +760,7 @@ export default function SessionTimeline({
         s.family,
         s.in_tmux ? t('workbench.timeline.openInTmux') : '',
         s.origin === 'worker' ? t('workbench.timeline.workerOf') : '',
-        today.isPicked(s.session_id) ? t('workbench.timeline.addedToday') : '',
+        isGroupPicked(s.session_id) ? t('workbench.timeline.addedToday') : '',
         hidden ? t('workbench.timeline.hiddenWorkers', { count: hidden }) : '',
       ]
         .filter(Boolean)
@@ -1249,29 +1256,29 @@ export default function SessionTimeline({
                 </span>
               </div>
 
-              {/* 轴与竖线固定在视口上；只有行的列表在虚拟化地滚。 */}
-              <div className="relative min-h-0 flex-1 overflow-hidden">
-                <div className="absolute inset-x-0 top-0 z-[3] h-6 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[10.5px] text-text-dim">
-                  {ticks.map((k, i) => (
-                    <span
-                      key={i}
-                      className={`absolute top-[5px] whitespace-nowrap ${
-                        k.day ? 'text-text-secondary' : ''
-                      }`}
-                      style={
-                        k.at < 0.025
-                          ? { left: `${k.at * 100}%`, paddingLeft: 4 }
-                          : k.at > 0.975
-                            ? { left: `${k.at * 100}%`, transform: 'translateX(-100%)', paddingRight: 4 }
-                            : { left: `${k.at * 100}%`, transform: 'translateX(-50%)' }
-                      }
-                    >
-                      {k.label}
-                    </span>
-                  ))}
-                </div>
+              {/* 刻度栏独立占顶行，下方轨道视口 100% 归 Virtuoso，防止 Virtuoso 内联 position:relative + top-6 造成底部溢出 24px 被遮挡。 */}
+              <div className="relative h-6 shrink-0 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[10.5px] text-text-dim">
+                {ticks.map((k, i) => (
+                  <span
+                    key={i}
+                    className={`absolute top-[5px] whitespace-nowrap ${
+                      k.day ? 'text-text-secondary' : ''
+                    }`}
+                    style={
+                      k.at < 0.025
+                        ? { left: `${k.at * 100}%`, paddingLeft: 4 }
+                        : k.at > 0.975
+                          ? { left: `${k.at * 100}%`, transform: 'translateX(-100%)', paddingRight: 4 }
+                          : { left: `${k.at * 100}%`, transform: 'translateX(-50%)' }
+                    }
+                  >
+                    {k.label}
+                  </span>
+                ))}
+              </div>
 
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 top-6 z-0">
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                <div className="pointer-events-none absolute inset-0 z-0">
                   {ticks.map((k, i) => (
                     <i
                       key={i}
@@ -1307,25 +1314,25 @@ export default function SessionTimeline({
                   </div>
                 ) : (
                   <Virtuoso
-                    className={`absolute inset-x-0 bottom-0 top-6 ${
+                    className={`h-full w-full ${
                       dragging ? 'cursor-grabbing select-none' : 'cursor-grab'
                     }`}
                     data={blocks}
                     defaultItemHeight={ROW_HEIGHT}
                     initialItemCount={Math.min(blocks.length, 20)}
+                    components={timelineListComponents}
                     scrollerRef={(ref) => setScroller(ref as HTMLElement | null)}
                     computeItemKey={(index, b) =>
                       b ? `b-${index}-${b.heads[0]?.s.session_id ?? ''}` : `b-${index}`
                     }
-                    itemContent={(index, block) =>
+                    itemContent={(_index, block) =>
                       block ? (
                         <BlockRows
                           block={block}
-                          first={index === 0}
                           winStart={winStart}
                           span={span}
                           selectedId={selectedId}
-                          today={today}
+                          isPicked={isGroupPicked}
                           forYou={forYou}
                           laneTitle={laneTitle}
                           onSelect={selectLane}
@@ -1380,26 +1387,25 @@ export default function SessionTimeline({
 }
 
 /**
- * 一组（主会话 + 它派出的 worker）在虚拟化列表里是一项。
+ * 一项在虚拟化列表里对应一条主会话或分支会话（worker 会话不在 Timeline 中展开）。
+ * 不在虚拟列表项根节点设 margin，避免 Virtuoso 测量行高时漏算外边距。
  */
 function BlockRows({
   block,
-  first,
   winStart,
   span,
   selectedId,
-  today,
+  isPicked,
   forYou,
   laneTitle,
   onSelect,
   onToggleToday,
 }: {
   block: Block;
-  first: boolean;
   winStart: number;
   span: number;
   selectedId: string | null;
-  today: SessionTodayState;
+  isPicked: (id: string) => boolean;
   forYou?: ForYouState;
   laneTitle: (x: Lane, hidden: number) => string;
   onSelect: (id: string) => void;
@@ -1408,9 +1414,9 @@ function BlockRows({
   const hasKids = Boolean(block.kids && block.kids.length);
   return (
     <div
-      className={`${first ? '' : 'mt-2'} ${
-        hasKids ? 'rounded-[6px] shadow-[inset_0_0_0_1px_var(--border-color)]' : ''
-      }`}
+      className={
+        hasKids ? 'rounded-[8px] shadow-[inset_0_0_0_1px_var(--border-color)]' : ''
+      }
     >
       {block.heads.map((x) => (
         <LaneRow
@@ -1420,7 +1426,7 @@ function BlockRows({
           winStart={winStart}
           span={span}
           selected={x.s.session_id === selectedId}
-          picked={today.isPicked(x.s.session_id)}
+          picked={isPicked(x.s.session_id)}
           waiting={Boolean(forYou?.infoOf(x.s.session_id))}
           title={laneTitle(x, block.hidden)}
           onSelect={onSelect}
@@ -1435,7 +1441,7 @@ function BlockRows({
           winStart={winStart}
           span={span}
           selected={x.s.session_id === selectedId}
-          picked={today.isPicked(x.s.session_id)}
+          picked={isPicked(x.s.session_id)}
           waiting={Boolean(forYou?.infoOf(x.s.session_id))}
           title={laneTitle(x, 0)}
           onSelect={onSelect}
@@ -1448,6 +1454,7 @@ function BlockRows({
 
 /**
  * 一行：条 + 标题 + 悬停动作。**自己量自己**。
+ * 条高 38px（行高 48px），文本字号保证至少 16px，视觉饱满易辨认。
  */
 function LaneRow({
   x,
@@ -1523,19 +1530,19 @@ function LaneRow({
     bar.style.left = `${short ? beg : L}px`;
     bar.style.width = `${short ? MIN_BAR_PX : Math.max(1, R - L)}px`;
     bar.style.borderRadius =
-      spot === 'r' ? '5px 0 0 5px' : spot === 'l' ? '0 5px 5px 0' : '5px';
+      spot === 'r' ? '8px 0 0 8px' : spot === 'l' ? '0 8px 8px 0' : '8px';
 
     lb.style.left = `${at}px`;
     lb.style.maxWidth = `${Math.min(MAX_LABEL_PX, Math.max(0, max))}px`;
     if (spot === 'in') {
       lb.style.border = '1px solid transparent';
-      lb.style.borderRadius = '5px';
+      lb.style.borderRadius = '8px';
       lb.style.color = 'var(--text-primary)';
     } else {
       lb.style.border = '1px dashed var(--border-strong)';
       lb.style.borderLeftWidth = spot === 'l' ? '0' : '1px';
       lb.style.borderRightWidth = spot === 'r' ? '0' : '1px';
-      lb.style.borderRadius = spot === 'r' ? '0 5px 5px 0' : '5px 0 0 5px';
+      lb.style.borderRadius = spot === 'r' ? '0 8px 8px 0' : '8px 0 0 8px';
       lb.style.color = 'var(--text-secondary)';
     }
   }, [span, winStart, x.last, x.start]);
@@ -1551,13 +1558,13 @@ function LaneRow({
       data-kind={kind || undefined}
       onClick={() => onSelect(x.s.session_id)}
       title={title}
-      className={`group relative h-[26px] w-full cursor-pointer overflow-hidden ${
+      className={`group relative h-[48px] w-full cursor-pointer overflow-hidden ${
         selected ? 'bg-bg-active' : 'hover:bg-bg-hover'
       }`}
     >
       <div
         data-bar
-        className={`absolute top-[3px] h-5 ${
+        className={`absolute top-[5px] h-[38px] transition-colors ${
           kind === 'kid'
             ? 'bg-[var(--timeline-bar-strong)] group-hover:bg-[var(--timeline-bar-stronger)]'
             : x.noReply
@@ -1567,22 +1574,24 @@ function LaneRow({
       />
       <div
         data-label
-        className={`pointer-events-none absolute top-[3px] box-border flex h-5 items-center gap-[5px] overflow-hidden whitespace-nowrap px-[7px] text-[11.5px] leading-[18px] ${
-          kind === 'kid' ? 'pl-[14px]' : ''
+        className={`pointer-events-none absolute top-[5px] box-border flex h-[38px] items-center gap-2 overflow-hidden whitespace-nowrap px-3 text-[16px] leading-[22px] ${
+          kind === 'kid' ? 'pl-5' : ''
         }`}
       >
         {waiting ? (
           <span
             aria-hidden
             title={t('workbench.forYou.label')}
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary"
+            className="h-2 w-2 shrink-0 rounded-full bg-accent-primary"
           />
         ) : null}
-        {picked ? <CalendarCheck size={12} className="shrink-0 text-text-muted" /> : null}
-        <span className="min-w-0 overflow-hidden text-ellipsis">{x.s.title}</span>
-        <span className="shrink-0 font-mono text-[10.5px] text-text-muted">{duration}</span>
+        {picked ? <CalendarCheck size={16} className="shrink-0 text-text-muted" /> : null}
+        <span className="min-w-0 overflow-hidden text-ellipsis text-[16px] font-medium">
+          {x.s.title}
+        </span>
+        <span className="shrink-0 font-mono text-[16px] text-text-muted">{duration}</span>
       </div>
-      {/* 悬停才出现：把这场旧会话捡进今天（或放下）。 */}
+      {/* 悬停才出现：把这场旧会话（及其上下文组）捡进今天（或放下）。 */}
       <button
         type="button"
         data-lane-action
@@ -1592,11 +1601,11 @@ function LaneRow({
           e.stopPropagation();
           onToggleToday(x.s.session_id);
         }}
-        className={`absolute right-1 top-[3px] z-[2] hidden h-5 items-center gap-1 rounded border border-border-color bg-bg-primary px-1.5 text-[10.5px] text-text-secondary group-hover:flex hover:text-text-primary ${
+        className={`absolute right-2 top-[5px] z-[2] hidden h-[38px] items-center gap-1.5 rounded-[8px] border border-border-color bg-bg-primary px-3 text-[14px] font-medium text-text-secondary group-hover:flex hover:text-text-primary ${
           picked ? 'text-text-primary' : ''
         }`}
       >
-        {picked ? <CalendarCheck size={11} /> : <CalendarPlus size={11} />}
+        {picked ? <CalendarCheck size={15} /> : <CalendarPlus size={15} />}
         <span>{t('workbench.timeline.todayShort')}</span>
       </button>
     </div>

@@ -182,6 +182,76 @@ describe('withinToday', () => {
     ]);
     expect(
       withinToday([sched, schedWorker, human], new Set(['core_sched']), NOW).map((s) => s.session_id)
-    ).toEqual(['core_sched', 'human_today']);
+    ).toEqual(['core_sched', 'core_sched_worker', 'human_today']);
+  });
+
+  it('当主会话被添加到 Today 时，它的 branched 会话、worker 会话与分支的 worker 一起进入 Today', () => {
+    const main = card({ session_id: 'main', last_reply_at: NOW - 10 * 24 * HOUR });
+    const mainWorker = card({
+      session_id: 'main-w',
+      origin: 'worker',
+      parent_session_id: 'main',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+    const branch = card({
+      session_id: 'branch-1',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const branchWorker = card({
+      session_id: 'branch-1-w',
+      origin: 'worker',
+      parent_session_id: 'branch-1',
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const unrelated = card({
+      session_id: 'unrelated',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+
+    expect(
+      withinToday(
+        [main, mainWorker, branch, branchWorker, unrelated],
+        new Set(['main']),
+        NOW
+      ).map((s) => s.session_id)
+    ).toEqual(['main', 'main-w', 'branch-1', 'branch-1-w']);
+  });
+
+  it('当 branched 会话被添加到 Today 时，其主会话、主会话的 worker、兄弟分支及自身 worker 也全部一起进入 Today', () => {
+    const main = card({ session_id: 'main', last_reply_at: NOW - 10 * 24 * HOUR });
+    const mainWorker = card({
+      session_id: 'main-w',
+      origin: 'worker',
+      parent_session_id: 'main',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+    const branch1 = card({
+      session_id: 'branch-1',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const branch2 = card({
+      session_id: 'branch-2',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 8 * 24 * HOUR,
+    });
+    const branch1Worker = card({
+      session_id: 'branch-1-w',
+      origin: 'worker',
+      parent_session_id: 'branch-1',
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+
+    expect(
+      withinToday(
+        [main, mainWorker, branch1, branch2, branch1Worker],
+        new Set(['branch-1']),
+        NOW
+      ).map((s) => s.session_id)
+    ).toEqual(['main', 'main-w', 'branch-1', 'branch-2', 'branch-1-w']);
   });
 });
