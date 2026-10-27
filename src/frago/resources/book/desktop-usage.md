@@ -68,7 +68,7 @@ frago desktop camera focus --ref term:rows   # 镜头框住某块区域（--ref�
 
 **停了就是停了。** `down` 之后有一个守护服务**不会**把它拉回来——注册表里记的是"人想不想让它跑"，`down` 把这个意图改成了"不想"。所以看到桌面页面空着、状态是 stopped，那不是故障，是上一次有人停过它。`up` 会把意图改回来。`down` 连演员那台无头浏览器（9222）一起关掉，回执里的 `actor_browser` 写着关没关成；登录态在 profile 目录里，停进程不动它，下次 `up` 原样带回来。
 
-**指向窗口的动作自动把那扇窗口提到最前。** `browser open`、`browser click`、`tab switch`、`mouse to page:...`、`camera focus` 落在页面上——这些都会先激活浏览器窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里。反过来，纯观察（`wait`、`term read`）不动焦点。
+**指向窗口的动作自动把那扇窗口提到最前。** Agent 的注意力在哪个程序上，哪个程序就必定置顶：`browser open`、`browser click`、`tab switch`、`elements --in browser`、`mouse to page:...`、`camera focus` 落在页面上，或者 `term run`、`term read`、`term scroll`、`term fontsize`、`window move|max|restore` 落在对应窗口上——这些都会先激活目标窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里；多扇窗口之间按 MRU（最近使用顺序）维护层级栈，关掉或最小化当前前台窗口时焦点自动退回上一扇看过的窗口。唯一不动焦点的是 `wait` 轮询期间的后台探针（`observe=True`）。
 
 **关掉程序和收起窗口是两件事。** `window close --target term` 让终端离开桌面——窗口缩着淡出、dock 上那颗灯灭掉；`window min` 只是把窗口飞进 dock，程序还在跑、灯还亮着。两者在画面上刻意长得不一样，因为观众要分得出"退出了"和"收起来了"。四扇窗（term / browser / image / video）走的是同一条 `window open|close`，图片浏览器和播放器都没有自己的关法。
 

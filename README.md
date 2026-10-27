@@ -4,7 +4,9 @@
 
 # frago
 
-**Turn your computer into an operating system for AI agents**
+**The local control center and runtime for CLI agents**
+
+Turn **Claude Code**, **codex**, **opencode**, and **agy** into general-purpose hands for everything beyond coding — in one searchable 1,000+ session workbench with real Chrome control, zero-token recipes, and event-driven guardrails.
 
 English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
 
@@ -19,23 +21,25 @@ English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User G
 
 > frago is not affiliated with OpenClaw. frago predates OpenClaw by approximately one month.
 
-## Why frago
-
-CLI agents offer immense potential for system automation, but in practical engineering they consistently run into three fundamental barriers:
-
-- **Single-session silos**: Capabilities and states are trapped within an interactive conversation. Once the session ends or moves to another window, authentication, context, and execution chains break; they cannot be cleanly orchestrated or scheduled at 3 AM.
-- **Dumping entire contexts at startup**: To retain knowledge, standard setups dump hundreds of lines of rule files into the prompt upfront, burning token budgets while diluting attention; switch to a new repo or machine, and the agent reverts to square one.
-- **Trial-and-error never hardens into deterministic code**: Hard-won workflows discovered through multi-step reasoning are only saved as prose prompts. Next time, the model must reason through the entire sequence again, consuming tokens repeatedly with unpredictable behavioral drift.
-
-What developers and teams are short of isn't more model choices — it's **a prepared Agent OS**: a host environment that works with any CLI agent as an execution engine, keeping operations disciplined and freezing proven tasks into reusable, automated workflows.
-
 ## frago in one line
 
-**frago = an AI agent operating system (Agent OS) that works with any agent.**
+**frago = the self-hosted developer control center and Agent OS for CLI agents.**
 
-frago does not produce proprietary language models, nor does it maintain a closed conversational loop. It treats Claude Code, codex, opencode, agy as execution engines, providing them with real-world control, persistent memory, and reusable workflows.
+frago does not ship a proprietary language model or lock you into a closed cloud sandbox. It works alongside **Claude Code**, **codex**, **opencode**, and **agy** on your own machine — turning scattered terminal windows into a unified web control center while giving every agent real browser hands, persistent memory, and zero-token repeatable workflows:
 
-frago provides the full host runtime above the engine — giving agents real browser and desktop automation, long-term persistent memory, and the workflow infrastructure to freeze working procedures into token-free tools.
+- **1,000+ sessions in one web workbench** (`frago start`): Normalize and search every Claude Code, codex, opencode, and agy session at `http://127.0.0.1:8093`, inspect tool-call timelines card by card, and reply directly from the browser.
+- **Real Chrome browser & virtual desktop control** (`frago browser` · `frago desktop`): Drive your real Chrome profile with existing logins and native anti-bot pass-through (isolated in per-agent tab groups), or run and record repeatable takes on a headless virtual desktop stage.
+- **Explore once, freeze into zero-token recipes** (`frago recipe`): Turn multi-step browser or system procedures discovered by an agent into deterministic Python, shell, or `chrome-js` scripts that re-run in seconds with **0 token cost** and zero behavioral drift.
+
+## Why frago
+
+CLI agents offer immense potential for system automation, but in day-to-day engineering they consistently hit three walls:
+
+- **Single-session silos**: Capabilities and states are trapped inside individual terminal windows. Once a session closes or switches directories, authentication, context, and execution chains break — making it painful to search past work or schedule jobs at 3 AM.
+- **Dumping entire contexts at startup**: Standard setups dump hundreds of lines of static rules into every prompt upfront, burning token budgets and diluting attention; switch to a new repo or machine, and the agent reverts to square one.
+- **Trial-and-error never hardens into deterministic code**: Hard-won workflows discovered through multi-step reasoning stay as prose prompts. Every re-run forces the model to reason from scratch, paying the token tax again with unpredictable drift.
+
+What developers need isn't another closed cloud assistant — it's **a prepared local control center and Agent OS** that keeps any CLI agent disciplined and freezes proven tasks into deterministic code.
 
 ## Core Philosophy: From Using AI to Harnessing AI (Harness Engineering)
 
