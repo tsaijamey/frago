@@ -23,6 +23,9 @@ mkdir -p ~/.frago/data/youtube/20260813-subtitle-extraction/scripts
 ### 第 2 步：导航与探索
 
 ```bash
+# 先把浏览器和扩展桥拉起来（已经在跑就跳过）
+frago browser start
+
 # 打开 YouTube 视频
 frago browser navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ --group youtube-subtitle
 
@@ -89,15 +92,35 @@ frago browser-automation save \
 
 **目标**：把探索结果变成可复用的 Recipe。
 
-### 用 CLI 创建
+配方不手写文件。定规格、生成模板、填逻辑、查完再跑，四步各有一条命令。
+
+### 第 1 步：定规格
 
 ```bash
-# 探索完成后
-# 提取验证过的逻辑，创建 Recipe 文件
+# 这条要等 worker 写十几分钟：agent 用 Bash 前台跑会被 10 分钟上限砍掉，所以后台起
+frago recipe plan youtube_extract_video_transcript \
+  --type atomic --runtime chrome-js \
+  --prompt "从 YouTube 视频页提取完整字幕文本；输入 url，输出 transcript 与 segmentCount"
+```
 
-# 1. 创建 Recipe 脚本
-mkdir -p ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript
-cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.js <<'EOF'
+`--type` / `--runtime` 不写也行，worker 从需求里判断。命令自己建目录，把规格写成该目录下的
+`spec.md`，回执里打印 `Directory:` 那一行——后面三步都认这个路径。
+
+### 第 2 步：看一眼规格，再生成模板
+
+```bash
+frago recipe create youtube_extract_video_transcript
+```
+
+`create` 读不到规格里那段机器可读的 yaml 就直接退出，一个文件都不写，所以顺序不能反。
+想一步做完用 `--prompt "<需求>"`，它照样先生成规格、再按规格生成模板。
+
+### 第 3 步：在模板上填业务逻辑
+
+模板给的是骨架。第 1 步验证过的选择器照抄进脚本——`runtime: chrome-js` 时脚本文件名是
+`recipe.js`。
+
+```javascript
 (async () => {
   const button = document.querySelector('button[aria-label*="transcript"]');
   if (button) {
@@ -110,64 +133,23 @@ cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.js
 
   return { transcript, segmentCount: segments.length };
 })();
-EOF
-
-# 2. 创建 Recipe 元数据
-cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.md <<'EOF'
----
-name: youtube_extract_video_transcript
-type: atomic
-runtime: chrome-js
-version: "1.0.0"
-description: "从 YouTube 视频页面提取完整字幕内容"
-use_cases:
-  - "提取字幕用于翻译"
-  - "创建字幕文件"
-  - "分析视频内容"
-tags: ["youtube", "transcript", "web-scraping"]
-output_targets: [stdout, file]
-inputs:
-  url:
-    type: string
-    description: "YouTube 视频 URL"
-    required: true
-outputs:
-  transcript:
-    type: string
-    description: "完整字幕文本"
-  segmentCount:
-    type: integer
-    description: "字幕段数量"
----
-
-# 功能说明
-从 YouTube 视频页面提取完整字幕文本。
-
-## 用法
-\`\`\`bash
-frago recipe run youtube_extract_video_transcript \\
-  --params '{"url": "https://youtube.com/watch?v=..."}' \\
-  --output-file transcript.txt
-\`\`\`
-
-## 前置条件
-- 浏览器后端在运行——默认 extension 后端，或 `frago browser -b cdp start`
-- 已打开 YouTube 视频页面
-- 视频必须有字幕
-EOF
 ```
 
-### 用 Claude Code 创建
+### 第 4 步：查完再跑
 
-```
-/frago.recipe create "提取 YouTube 视频字幕" from ~/.frago/data/youtube/20260813-subtitle-extraction/
+```bash
+# 校验字段完整性与脚本齐备，收目录或 recipe.md 路径都行
+frago recipe validate <第 1 步回执里的 Directory>
+
+# 出现在清单里，才说明注册表认了这个配方
+frago recipe list
+
+# 试跑
+frago recipe run youtube_extract_video_transcript \
+  --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
 ```
 
-AI 会：
-1. 查看事务目录下的 scripts/ 与产出文件
-2. 提取验证过的选择器
-3. 生成 Recipe 文件（脚本 + 元数据）
-4. 测试 Recipe 执行
+**前置条件**：浏览器后端在运行（`frago browser start`），页面上确实有字幕面板，视频必须有字幕。
 
 ---
 
@@ -181,13 +163,17 @@ AI 会：
 # 发现可用 Recipe
 frago recipe list
 
+# 清单里没有？frago 包里不带任何配方，去社区仓库找
+frago recipe search 字幕
+frago recipe install community:<找到的配方名>
+
 # 查看 Recipe 详情
 frago recipe info youtube_extract_video_transcript
 
-# 执行 Recipe
+# 执行 Recipe。--output-file 收绝对路径，产出落进事务目录
 frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
-  --output-file transcript.txt
+  --output-file ~/.frago/data/youtube/20260813-subtitle-extraction/transcript.txt
 
 # 输出到剪贴板
 frago recipe run youtube_extract_video_transcript \
@@ -195,16 +181,18 @@ frago recipe run youtube_extract_video_transcript \
   --output-clipboard
 ```
 
-### Claude Code 方式
+### 让 agent 代跑
+
+直接说要做的事，不用记命令：
 
 ```
-/frago.run 提取 https://www.youtube.com/watch?v=dQw4w9WgXcQ 的字幕
+提取 https://www.youtube.com/watch?v=dQw4w9WgXcQ 的字幕
 ```
 
 AI 会自动：
-1. 发现 `youtube_extract_video_transcript` Recipe
-2. 带上 URL 参数执行
-3. 把结果保存到文件
+1. `frago recipe list` 看有没有现成配方
+2. 有就带上参数跑，没有就先 `frago recipe plan` / `create` 造一个
+3. 把产出落进 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/`
 
 ---
 
@@ -212,7 +200,15 @@ AI 会自动：
 
 **目标**：批量提取多个 YouTube 视频的字幕。
 
-### 创建 Workflow Recipe
+### 第 1 步：定规格并生成模板
+
+```bash
+frago recipe plan youtube_batch_extract --type workflow --runtime python \
+  --prompt "批量提取多个 YouTube 视频的字幕：输入 urls 数组，逐个调用字幕配方，输出汇总结果"
+frago recipe create youtube_batch_extract
+```
+
+下面是 create 生成的那份 `recipe.py` 里要填的编排逻辑：
 
 ```python
 # ~/.frago/recipes/workflows/youtube_batch_extract/recipe.py
@@ -254,11 +250,13 @@ if __name__ == '__main__':
     main()
 ```
 
-### 创建 Workflow 元数据
+### 元数据里多一段 flow
+
+workflow 类型必填 `flow`：写清每一步做什么、输入从哪来、产出叫什么名。
 
 ```yaml
 ---
-# ~/.frago/recipes/workflows/youtube_batch_extract/recipe.md
+# recipe.md 的 frontmatter
 name: youtube_batch_extract
 type: workflow
 runtime: python
@@ -280,10 +278,36 @@ outputs:
     description: "字幕结果数组"
 dependencies:
   - youtube_extract_video_transcript
+flow:
+  - step: 1
+    action: "read_urls"
+    description: "读入 URL 列表"
+    inputs:
+      - source: "params.urls"
+    outputs:
+      - name: "urls"
+        type: "list"
+  - step: 2
+    action: "extract_each"
+    description: "逐个调用字幕配方"
+    recipe: "youtube_extract_video_transcript"
+    inputs:
+      - source: "step.1.urls"
+    outputs:
+      - name: "per_video"
+        type: "object"
+  - step: 3
+    action: "aggregate"
+    description: "汇总成功数与结果数组"
+    inputs:
+      - source: "step.2.per_video"
+    outputs:
+      - name: "results"
+        type: "array"
 ---
 ```
 
-### 执行 Workflow
+### 第 2 步：跑起来
 
 ```bash
 # 建事务目录，写 URL 列表
@@ -328,15 +352,15 @@ frago recipe run youtube_batch_extract \
 
 ## 示例 5：跨平台复杂任务（愿景）
 
-> 该示例展示编排层完成后的预期工作流。目前需要用户在 `/frago.run`（探索）和
-> `frago recipe run`（回放）之间手动选择。
+> 该示例展示编排层完成后的预期工作流。目前需要用户在「让 agent 现场探索」和
+> `frago recipe run`（回放已有配方）之间手动选择。
 
 **目标**：监控 Amazon 和 eBay 上的 iPhone 15 价格，生成对比报告。
 
-### 用 Claude Code
+### 直接说要做的事
 
 ```
-/frago.run 监控 Amazon 和 eBay 上 iPhone 15 的价格，生成对比报告并保存为 Markdown
+监控 Amazon 和 eBay 上 iPhone 15 的价格，生成对比报告并保存为 Markdown
 ```
 
 AI 会：
@@ -379,13 +403,16 @@ Generated with frago | ~/.frago/data/iphone/20260813-price-monitor/
 
 ---
 
-## 示例 6：CDP 命令用法
+## 示例 6：浏览器日常用法
+
+下面走默认的 extension 后端：驱动 frago 自己那份 Chrome for Testing，用它的真实 profile，
+天然过得了反爬。`-b cdp` 是独立无头实例，只给 agent_os 的舞台与机位用，见文末排查一节。
 
 ### 基础导航与交互
 
 ```bash
-# 启动独立无头 CDP 实例（端口 9222）
-frago browser -b cdp start --headless
+# 拉起浏览器与扩展桥。零参数，自动挑浏览器；本机没有 CfT 会先去取一份
+frago browser start
 
 # 打开页面
 frago browser navigate https://news.ycombinator.com/ --group hn
@@ -399,15 +426,16 @@ frago browser click 'a.titlelink:first-child' --group hn
 # 获取页面标题
 frago browser exec-js 'document.title' --return-value --group hn
 
-# 用完拆除实例
-frago browser -b cdp stop
+# 用完收工：关浏览器、停扩展桥
+frago browser stop
 ```
 
 ### 截图与视觉效果
 
 ```bash
-# 整页截图
-frago browser screenshot hackernews_page.png --group hn --full-page
+# 整页截图。绝对路径落进事务目录，别用相对路径——下次找不回来
+frago browser screenshot ~/.frago/data/hn/20260813-hackernews/hackernews_page.png \
+  --group hn --full-page
 
 # 高亮元素
 frago browser highlight '.storylink' --color "#FF6B6B" --life-time 3 --group hn
@@ -459,7 +487,7 @@ frago context data:iphone --json
 ### 按意思翻从前干过的事
 
 ```bash
-# 一句话说清要找什么，模型扩成关键词后同时扫 claude 与 opencode 两个会话库
+# 一句话说清要找什么，模型扩成关键词后同时扫 claude、opencode、codex 三个会话库
 frago session search "上次研究 YouTube 字幕提取那回"
 
 # 已经知道该搜哪几个字面量时直接给词，省掉模型那一轮
@@ -497,8 +525,8 @@ frago browser-automation find -- --tags=youtube
 1. frago context data:<关键词> 找现成落点，没有就建事务目录
 2. 交互式探索页面（浏览器命令）
 3. 脚本存进事务目录的 scripts/，经验存进 frago <域名> save
-4. 从验证过的脚本创建 Recipe
-5. 对类似任务复用 Recipe
+4. 探索定了就固化成 Recipe：frago recipe plan → create → validate
+5. 对类似任务复跑这个 Recipe
 ```
 
 ### 模式 2：Workflow Recipe 组合
@@ -554,11 +582,15 @@ lsof -i :9222
 # 虚拟桌面舞台在跑时，演员占着 9222——别碰它
 frago desktop status
 
-# 启动 / 检查 / 停止 frago 管理的 CDP 实例
+# 启动 / 检查 / 停止 frago 管理的 CDP 实例。
+# -b cdp 是 agent_os 使用的独立无头实例，日常浏览不走这条
 frago browser -b cdp start --headless
 frago browser status
 frago browser -b cdp stop
 ```
+
+默认 extension 后端连不上扩展桥时，`frago browser start` 是唯一动作：会弹出一扇浏览器窗口，
+这是预期现象，不是降级到 `-b cdp` 的理由。
 
 ### 示例：Recipe 未找到
 

@@ -32,8 +32,11 @@ frago browser annotate <selector> "text" --position top
 `$FRAGO_CURRENT_RUN`。组是浏览器里真实的标签组——`navigate` 默认替换组内
 当前标签，`--new` 才是新开一页的唯一方式。
 
-有两个后端。默认 **extension** 后端驱动浏览器自己的真实 profile（不需要任何
-flag）。**CDP** 后端（`-b cdp`）用于真无头或独立实例，什么时候该用它见
+有两个后端。默认 **extension** 后端驱动浏览器自己的真实 profile，不需要任何
+flag——浏览器是 Chrome for Testing，frago 自己取，取不到才退回你装过的那个。
+扩展没连上时的正确动作是 `frago browser start`，不是换后端：这时候弹出一个浏览器
+窗口是预期行为。**CDP** 后端（`-b cdp`）只留给虚拟桌面舞台和它的录制机位——一个
+真无头的舞台浏览器、一个独立的录制实例——不是常规页面操作的备用方案，详见
 [浏览器支持](browser-support.zh-CN.md)。
 
 ### 代理配置
@@ -112,7 +115,7 @@ frago <域名> save --name=<文档名> \
   --data='{"tags":["..."]}' --content='[...]'
 
 # 想翻从前干过的事
-frago session search "<一句话>"      # 跨 Claude Code / opencode 按意思搜
+frago session search "<一句话>"      # 按意思搜，跨 Claude Code、codex、opencode
 ```
 
 ### 产出目录结构
@@ -131,22 +134,24 @@ frago session search "<一句话>"      # 跨 Claude Code / opencode 按意思�
 ```bash
 frago session list                   # 列出会话（全部 agent 类型）
 frago session list --status running  # 按状态过滤
-frago session list --agent-type opencode  # 按 agent 过滤（claude|opencode|cursor|cline）
+frago session list --agent-type opencode  # 按 agent 过滤（claude|opencode|coreagent|cursor|cline）
 frago session show <session_id>      # 显示详情
 frago session search "关键字"        # 搜索会话记录
 frago session watch                  # 监控最新会话
 frago session watch <session_id>     # 监控指定会话
-frago session sync --all             # 重新同步 Claude Code / opencode 会话
+frago session sync --all             # 同步全部项目的 Claude Code / opencode 会话
 frago session clean                  # 清理过期记录
 frago session delete <session_id>    # 删除一个会话
 ```
 
-来自多种 agent 运行时（Claude Code、opencode、Cursor、Cline）的会话会被统一
-规整到 `~/.frago/sessions/`。
+来自多种 agent 运行时（Claude Code、codex、opencode、Cursor、Cline）的会话会被
+统一规整到 `~/.frago/sessions/`；frago 自己跑起来的 agent 会话也落在那里，标为
+`coreagent`。
 
 ## Web 服务
 
 ```bash
+frago start             # 启动服务并在浏览器里打开界面
 frago server start      # 在端口 8093 启动
 frago server stop       # 停止服务
 frago server status     # 检查状态
@@ -157,13 +162,19 @@ frago server --debug    # 前台运行带日志
 
 ### 功能
 
-- **Workbench（工作台）**：agent 会话与其记录的实时时间线
-- **Tasks（任务）**：发起一个新 agent 任务并观看执行
-- **Recipes（配方）**：浏览本地与社区配方、查看参数、一键运行
-- **Skills（技能）**：管理已安装技能
-- **Workspace（工作空间）**：项目文件、日志、截图与输出
-- **Guide（指南）**：内置文档
-- **Settings（设置）**：提示能力（静态规则 + LightAgent）、模型 profile、任务通道、官方资源同步（命令与技能）、外观、初始化状态、关于
+- **会话**：agent 会话与其记录的实时时间线
+- **桌面**：agent 驱动录制与演示用的虚拟桌面舞台
+- **结对**：两个人的会话并排摆着
+- **配方**：浏览本地与社区配方、查看参数、一键运行
+- **事务**：本地待办清单，一条一个 JSON 文件
+- **定时任务**：由 frago 服务按排定时间运行配方、命令或一段自然语言
+- **数据**：把 `~/.frago` 备份到你自己的 git 远端
+- **文件**：浏览本机的目录树
+- **任务**：发起一个新 agent 任务并观看执行
+- **技能**：管理已安装技能（配方页上的「技能」标签）
+- **工作空间**：发现的项目，以及从项目里收集上来的 agent 资源
+- **指南**：内置文档
+- **设置**：提示能力（静态规则 + LightAgent）、模型 profile、CLI 客户端、任务通道、官方资源同步（命令与技能）、外观、关于
 
 ## 资源与同步
 
@@ -190,7 +201,7 @@ frago session sync --force   # 已存在的会话也重新同步
 
 ### 官方资源
 
-**设置 → 资源** 可开启官方命令与技能的定时同步。配方不在其中——配方来自社区
+**设置 → 官方资源** 可开启官方命令与技能的定时同步。配方不在其中——配方来自社区
 仓库，什么时候更新由你自己敲 `frago recipe update` 决定。密钥（Secrets）在任何
 路径下都不会被同步。
 
@@ -198,7 +209,8 @@ frago session sync --force   # 已存在的会话也重新同步
 
 ### CDP 连接
 
-CDP 后端是 frago 管理的浏览器实例——永远不要自己手起 Chrome：
+CDP 后端服务的是虚拟桌面舞台和它的录制机位：frago 管理的浏览器实例，永远不要
+自己手起 Chrome。常规页面操作留在默认的 extension 后端。
 
 ```bash
 frago browser -b cdp start --headless   # 独立无头实例（端口 9222）
@@ -208,7 +220,7 @@ frago browser -b cdp stop               # 拆除实例
 
 - 端口是白名单制：**9222**（默认）与 **9223**（agent_os 录制机位）。传别的值会被拒绝。
 - 虚拟桌面舞台在跑时，它的演员常驻在 **9222** 上——`-b cdp start` 会顶掉该端口已有实例，所以先 `frago desktop status` 确认舞台没在跑。
-- 永远不要用裸 `--remote-debugging-port` 手起浏览器；无头与独立实例的需求由 CDP 后端覆盖。
+- 永远不要用裸 `--remote-debugging-port` 手起浏览器；常规页面操作由 extension 后端覆盖，舞台要的无头与独立实例由 `-b cdp` 覆盖。
 
 ### 常见问题
 

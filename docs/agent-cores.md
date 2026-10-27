@@ -1,8 +1,11 @@
 # Agent Cores Compared: Claude Code / codex / opencode
 
 frago calls a cli-agent a **core**: the thing that holds the session, edits the code,
-and fires the hooks. Three are supported today. This page sets out what they share,
-where they genuinely differ, and how the same task is spelled in each.
+and fires the hooks. Four are supported today: the three this page compares, plus
+**agy** (Antigravity CLI), which has its own driver, record adapter and hook shim.
+This page sets out what the main three share, where they genuinely differ, and how the
+same task is spelled in each; agy appears only in the last section, where frago's own
+support differs per core.
 
 ## Versions this page is pinned to
 
@@ -17,6 +20,10 @@ machine**, not paraphrased from docs. Re-verify before trusting it on another ve
 each of these has changed the meaning of an existing switch at least once in the past
 six months (for instance codex 0.147 dropped `wire_api = "chat"`, so any third-party
 provider guide written in 2025 now fails to load the config at all).
+
+The pins are measurement points, not what is installed today: the same machine now runs
+Claude Code 2.1.286, codex 0.155.1, opencode 2.0.20 and agy 1.4.7. The comparison below
+has not been re-measured against those; the frago-side facts in the last section have.
 
 ---
 
@@ -278,36 +285,33 @@ structured.
 
 ## What frago supports for each
 
-| Capability | Claude Code | codex | opencode |
-|---|---|---|---|
-| Hook routing (knowledge injection + rules) | ✅ native command hooks | ✅ native command hooks, same binary | ✅ via a JS bridge plugin |
-| Driven by `frago agent` | ✅ | ✅ | ✅ |
-| Session workbench: list / records / search | ✅ | ✅ | ✅ |
-| Session archival | ✅ | ✅ | ✅ |
-| Sending from the workbench composer | ✅ | ❌ the channel is always claude | ❌ same |
-| `--use-profile` model selection (that one session only) | ✅ | ❌ see below | ✅ |
-| Activating a profile (written into the CLI's own config, so hand-started sessions follow it too) | ✅ | ❌ same reason | ✅ |
+| Capability | Claude Code | codex | opencode | agy |
+|---|---|---|---|---|
+| Hook routing (knowledge injection + rules) | ✅ native command hooks | ✅ native command hooks, same binary | ✅ via a JS bridge plugin | ✅ via `frago agy-hook`, a shim that translates `hooks.json`'s camelCase payload |
+| Driven by `frago agent` | ✅ | ✅ | ✅ | ✅ |
+| Session workbench: list / records / search | ✅ | ✅ | ✅ | ✅ |
+| Session archival | ✅ | ✅ | ✅ | ✅ |
+| Sending from the workbench composer | ✅ | ✅ | ✅ | ✅ |
+| `--use-profile` model selection (that one session only) | ✅ | ✅ `responses` channel only | ✅ | ✅ `gemini` channel only |
+| Activating a profile (written into the CLI's own config, so hand-started sessions follow it too) | ✅ | ✅ | ✅ | ❌ not offered as an activation target |
 
-Two known gaps, both recorded as todos:
-
-1. **The workbench can only send into Claude Code sessions**
-   (`20260820-webui-composer-send-to-all`). The send endpoint is hard-wired to the
-   claude channel; the other two cores' session ids do not exist in claude's records, so
-   a message would silently open a brand-new session instead. The composer is therefore
-   disabled for them, with the reason stated.
-2. **Endpoint and model selection does not cover all three cores**
-   (`20260820-per-harness-endpoint-and-model`). `frago agent`'s `--model`, `--endpoint`,
-   `--api-key` and `--use-ccr` write `ANTHROPIC_*` unconditionally, none of which codex
-   reads. `--use-profile` says out loud that it had no effect on codex; the other three
-   switches are still silently ignored.
+The activation targets are exactly `claude`, `opencode` and `codex` — `frago profile
+targets` prints those three plus their install paths. A profile that lacks the channel a
+core speaks is refused at the moment it is ticked, with the missing part named, rather
+than being written and failing later.
 
 One thing about activation itself is worth spelling out: **activation has a scope, and
 you pick it.** It used to write Claude Code and nothing else, without saying so, which
-left the other two cores running whatever they were configured with while the person
-believed they had switched models. Activating now asks which CLIs to write to; the ones
-that cannot take a frago profile (codex) are still listed, disabled, with the reason
-next to them. Unchecking a CLI hands it back to what it looked like before frago took it
-over — opencode's model selection is copied back rather than left blank.
+left the other cores running whatever they were configured with while the person
+believed they had switched models. Activating now asks which CLIs to write to. Unchecking
+a CLI hands it back to what it looked like before frago took it over — opencode's model
+selection is copied back rather than left blank, and codex's `config.toml` is restored
+from the copy taken on first takeover.
+
+Four switches still do not reach every core: `frago agent`'s `--model`, `--endpoint`,
+`--api-key` and `--use-ccr` write `ANTHROPIC_*` unconditionally, which codex and agy do
+not read. `--use-profile` is the way to pick a connection per core; those four are
+meaningful on Claude Code and opencode only.
 
 One further limit is a property of codex rather than a frago defect: **frago
 `PreToolUse` rules keyed on `Edit` / `Write` or on a file path do not fire under codex.**
@@ -324,10 +328,11 @@ Rules keyed on the shell command — the majority of the built-in set — work n
 - **Embedding an agent in your own program (headless server / ACP / web), or needing to
   rewrite prompts, parameters and tool behaviour deeply** → opencode.
 
-Inside frago the three can be mixed: the session workbench merges all three into one
+Inside frago the cores can be mixed: the session workbench merges them all into one
 list, and routing rules are written once and shared (each bridge absorbs its own
 vocabulary differences). The default core is `agent_core` in `~/.frago/config.json`;
-override it per run with `frago agent --agent-type <core>`.
+override it per run with `frago agent --agent-type <core>`. `frago agent self` reports
+which core is executing the current command.
 
 ---
 

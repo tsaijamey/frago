@@ -1,19 +1,23 @@
-# 三个 cli-agent 内核的详细区别：Claude Code / codex / opencode
+# cli-agent 内核的详细区别：Claude Code / codex / opencode / agy
 
 frago 把 cli-agent 称作**内核**（core）：会话由谁承载、代码由谁改、钩子由谁触发。
-目前支持三个，本文写清它们的等价能力、差异能力与用法差异。
+目前接了四个，本文写清它们的等价能力、差异能力与用法差异（agy 是后接的第四家，
+外部 CLI 的逐项对比仍只覆盖前三家，见下）。
 
 ## 这份文档钉在哪个版本上
 
 | 内核 | 版本 | 二进制来源 |
 |---|---|---|
-| Claude Code | 2.1.235 | 官方原生安装器，`~/.local/share/claude/versions/<版本>` |
-| codex (OpenAI Codex CLI) | 0.147.0 | Homebrew cask，`/opt/homebrew/Caskroom/codex/<版本>/bin/codex` |
-| opencode | 1.18.15 | 原生二进制 |
+| Claude Code | 2.1.286 | 官方原生安装器，`~/.local/share/claude/versions/<版本>` |
+| codex (OpenAI Codex CLI) | 0.155.1 | Homebrew cask，`/opt/homebrew/Caskroom/codex/<版本>/bin/codex` |
+| opencode | 2.0.20 | Homebrew，`/opt/homebrew/Cellar/opencode/<版本>/bin/opencode` |
+| agy (Antigravity CLI) | 1.4.7 | 它自己的安装器，`~/.local/bin/agy` |
 
-三家都在快速迭代，**下面每一条都是在上述版本上实地核对过的**，不是照文档转述。
-换版本前先自己验一遍：这三家过去半年里都发生过「同一个开关换了语义」的事
-（例：codex 0.147 移除了 `wire_api = "chat"`，照抄 2025 年的第三方接入教程必踩）。
+这几家都在快速迭代，**本文的命令面已按上表这几个版本核对过**；机制性描述（钩子载荷
+字段、溢出阈值一类）沿用当初实测那一版的结论。换版本前先自己验一遍：这几家过去半年里
+都发生过「同一个开关换了语义」的事（例：codex 0.147 移除了 `wire_api = "chat"`，
+照抄 2025 年的第三方接入教程必踩；opencode 2.0 把 `export` / `import` 收进了
+`session` 子命令，`web` / `attach` 两个子命令取消）。
 
 ---
 
@@ -21,16 +25,22 @@ frago 把 cli-agent 称作**内核**（core）：会话由谁承载、代码由�
 
 - **Claude Code** — Anthropic 官方 CLI。生态最厚（技能、插件、子 agent、SDK、云端评审），
   模型分三档（主/中/快），权限靠策略而非沙箱。
-- **codex** — OpenAI 官方 CLI。**唯一自带操作系统级沙箱**的一家；配置集中在一个
-  `config.toml`，CLI / 桌面版 / VS Code 扩展三端共用；钩子协议刻意做成 Claude Code 的形状。
+- **codex** — OpenAI 官方 CLI。**自带操作系统级沙箱**（agy 也给了 `--sandbox` 开关，
+  机制本文没核对）；配置集中在一个 `config.toml`，CLI / 桌面版 / VS Code 扩展三端共用；
+  钩子协议刻意做成 Claude Code 的形状。
 - **opencode** — 社区开源。**扩展模型完全不同**：插件是进程内 JS，能改的东西比另外两家深得多；
-  自带无头服务端、Web 界面与 ACP，是三家里最容易被别的程序当组件嵌进去的一个。
+  自带服务端、Web 界面与 ACP，是这几家里最容易被别的程序当组件嵌进去的一个。
+- **agy**（Antigravity CLI）— 后接的第四家。**钩子方言自成一派**：入参是 camelCase
+  （`conversationId` / `toolCall.name`），出参按事件分成 `injectSteps` / `decision` / `{}`
+  三种形状，还多一对 `PreInvocation` / `PostInvocation`；frago 为它单放一层翻译垫片
+  （`frago agy-hook`），规则本体仍走同一个引擎。自己带 `--sandbox`、`--remote-control`、
+  `--output-format stream-json`。
 
 ---
 
 ## 等价能力
 
-这些三家都有，差别只在名字和写法。
+这些前三家各有对应做法（agy 的逐项对照还没做），差别只在名字和写法。
 
 | 能力 | Claude Code | codex | opencode |
 |---|---|---|---|
@@ -38,17 +48,17 @@ frago 把 cli-agent 称作**内核**（core）：会话由谁承载、代码由�
 | 一次性非交互执行 | `claude -p "<提示词>"` | `codex exec "<提示词>"` | `opencode run "<提示词>"` |
 | 续接既有会话 | `claude --resume <uuid>` | `codex resume <uuid>` | `opencode -s <id>` |
 | 续上最近一场 | `claude --continue` | `codex resume --last` | `opencode -c` |
-| 分叉会话 | `--fork-session` | `codex fork` | `--fork` |
-| 指定模型 | `--model` | `-m` / `-c model=…` | `-m <provider>/<model>` |
+| 分叉会话 | `--fork-session` | `codex fork` | `opencode run --fork` |
+| 指定模型 | `--model` | `-m` / `-c model=…` | `-m <provider>/<model>#<variant>` |
 | MCP 客户端 | `claude mcp` | `codex mcp` | `opencode mcp` |
-| 自身作为 MCP server | 有 | `codex mcp-server` | 有 |
-| 子 agent | `--agents` / `claude agents` | `spawn_agent` 工具 + subagent 事件 | `opencode agent` |
+| 自身作为 MCP server | `claude mcp serve` | 无（0.155 起已无 `codex mcp-server` 子命令） | 无（`opencode mcp` 只管客户端） |
+| 子 agent | `--agents` / `claude agents` | `spawn_agent` 工具 + subagent 事件 | 配置里定义 agent，`--agent` 指定；`opencode debug agents` 列现有的 |
 | 自检 | `claude doctor` | `codex doctor` | `opencode debug` |
 | 从别家导入配置 | `claude import` | `codex` 的外部 agent 迁移流程 | — |
-| 自升级 | `claude update` | `codex update` | `opencode upgrade` |
+| 自升级 | `claude update` | `codex update` | `opencode upgrade` / `update` |
 | 项目级指令文件 | `CLAUDE.md` | `AGENTS.md` | `AGENTS.md`（从 cwd 逐级上溯到项目根，另可用配置里的 `instructions` 追加） |
 
-**钩子事件集三家里有两家完全一致。** Claude Code 2.1.235 与 codex 0.147 都实现了
+**钩子事件集三家里有两家完全一致。** Claude Code 2.1.286 与 codex 0.155 都实现了
 `PreToolUse` / `PostToolUse` / `UserPromptSubmit` / `SessionStart` / `SessionEnd` /
 `Stop` / `SubagentStart` / `SubagentStop` / `PreCompact` / `PostCompact` /
 `PermissionRequest`；`Notification` 只有 Claude Code 有。两家的 stdin 载荷字段
@@ -69,7 +79,7 @@ codex 的内部注释里甚至直接写着「Claude requires `reason` when `deci
 - **真正的操作系统级沙箱。** `codex sandbox <命令>` 在 macOS 上走 seatbelt、Linux 上走
   landlock/bwrap，把模型生成的命令关进去跑。沙箱档位是 `read-only` /
   `workspace-write` / `danger-full-access`，与审批策略（`untrusted` / `on-request` /
-  `never`）正交。另外两家的「权限」是**策略层拦截**，进程本身没有被关起来。
+  `never`）正交。claude 与 opencode 的「权限」是**策略层拦截**，进程本身没有被关起来。
 - **三端共用一份配置。** `~/.codex/config.toml` 同时服务 CLI、ChatGPT 桌面版和 VS Code
   扩展，配一次全生效。代价是：从 Dock/Finder 启动的那两端继承的是 launchd 环境、
   **读不到 `~/.zshrc` 里的环境变量**，所以密钥要么写进配置，要么用 `env_key` 指一个
@@ -79,7 +89,7 @@ codex 的内部注释里甚至直接写着「Claude requires `reason` when `deci
   纯靠 `-c` 就跑在了 DeepSeek 上）。
 - **钩子信任门。** 非托管的命令钩子在人过目并信任之前**不会运行**，信任记录按钩子内容的
   哈希存在 `config.toml` 的 `hooks.state`；钩子一改就要重新过目。自动化场景用
-  `--dangerously-bypass-hook-trust` 绕开。另外两家没有这道门——写进配置即生效。
+  `--dangerously-bypass-hook-trust` 绕开。claude 与 opencode 没有这道门——写进配置即生效。
 - **钩子输出溢出落盘。** 单次钩子回给模型的内容默认约 2500 token，超出部分写进
   `<临时目录>/hook_outputs/<会话>/<uuid>.txt`，只给模型一段头尾预览加文件路径。
   每个处理器可以用 `additionalContextLimit` 单独调阈值。
@@ -112,25 +122,25 @@ codex 的内部注释里甚至直接写着「Claude requires `reason` when `deci
   | `session.compacting` | 介入上下文压缩 |
   | `event` | 订阅通用事件流 |
 
-- **无头服务端与 Web 界面。** `opencode serve` 起一个无头 HTTP 服务，`opencode web`
-  连带开 Web 界面，`opencode attach <url>` 接上一个跑着的实例。
+- **服务端与 Web 界面。** `opencode serve` 起 v2 API 与 Web 服务，`opencode service`
+  管那台后台服务（start / status / stop），要接一个已经在跑的实例用 `--server <url>`。
+  1.18 时代的 `opencode web` 与 `opencode attach` 在 2.0 已取消。
 - **ACP（Agent Client Protocol）服务端**：`opencode acp`，供编辑器一类客户端接入。
-- **会话导入导出**：`opencode export <会话>` / `opencode import <文件或 URL>`，
+- **会话导入导出**：`opencode session export [<会话>]` / `opencode session import <文件或 URL>`，
   会话可以整场搬走。
 - **用量统计**：`opencode stats`。
-- **`--pure`**：完全不加载外部插件跑一次。
-- **GitHub agent** 与 `opencode pr <编号>`：拉下 PR 分支直接进会话。
 
 ### 只有 Claude Code 有
 
 - **模型分三档**：主模型 / 中档（sonnet）/ 快模型（haiku），三档各自可配。
   codex 只有 `model` 一个主槽位（外加 `codex review` 专用的 `review_model`），
   opencode 是两档（`model` + `small_model`）。
-- **`Notification` 钩子事件**（另两家没有）。
+- **`Notification` 钩子事件**（另几家都没有；agy 只有 SessionStart / PreToolUse /
+  PostToolUse / PreInvocation / PostInvocation / Stop 六个）。
 - **`--bare` 极简模式**：一次性跳过钩子、LSP、插件同步、自动记忆、`CLAUDE.md` 自动发现。
   排查「是不是某个扩展把事情搞坏了」时非常有用。
 - **后台 agent**：`--bg` 起一场后台会话立即返回，之后用 `claude agents` 管。
-- **`--output-format stream-json`**：把非交互执行变成一条结构化事件流，是三家里最适合
+- **`--output-format stream-json`**：把非交互执行变成一条结构化事件流，是这几家里最适合
   被程序逐事件消费的输出形态。
 - **企业网关**：`claude gateway`（鉴权与遥测）。
 - **云端多 agent 评审**：`claude ultrareview`。
@@ -154,7 +164,7 @@ opencode run "把测试跑一遍并报告失败项"
   驱动它时必须先把信任写进 `~/.claude.json` 的 `projects[<路径>].hasTrustDialogAccepted`。
 - codex 同理有目录信任门，记录在 `config.toml` 的 `[projects."<路径>"] trust_level`，
   且**只认落盘的配置**——实测用 `-c` 在命令行上覆盖这一项无效。
-- opencode 没有等价的启动开关，权限放行只能经会话级配置声明
+- opencode 用 `--auto` 自动放行未被显式拒绝的动作；要更精确的控制仍然写进会话级配置
   （`OPENCODE_CONFIG_CONTENT` 里的 `permission`），否则无人值守时第一次写文件就卡住。
 
 ### 2. 指定 endpoint 与 model
@@ -177,8 +187,8 @@ Claude Code 走 `https://api.deepseek.com/anthropic`，codex 走 `https://api.de
 
 | | Claude Code | codex | opencode |
 |---|---|---|---|
-| 模型 | 权限模式：`default` / `acceptEdits` / `plan` / `dontAsk` / `bypassPermissions` | 沙箱档位 × 审批策略，两个正交维度 | **三家里最细**：`{动作, 资源, 结果}` 规则表，动作有 `read` / `edit` / `bash` / `webfetch` / `websearch` / `grep` / `glob` / `external_directory` / `question` / `plan_enter` 等，资源是 glob，结果是 `allow` / `ask` / `deny`；可按 agent 分别配 |
-| 全放行开关 | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | 无开关，只能写配置 |
+| 模型 | 权限模式：`acceptEdits` / `auto` / `manual` / `plan` / `dontAsk` / `bypassPermissions` | 沙箱档位 × 审批策略，两个正交维度 | **三家里最细**：`{动作, 资源, 结果}` 规则表，动作有 `read` / `edit` / `bash` / `webfetch` / `websearch` / `grep` / `glob` / `external_directory` / `question` / `plan_enter` 等，资源是 glob，结果是 `allow` / `ask` / `deny`；可按 agent 分别配 |
+| 全放行开关 | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto`（只自动放行未被显式拒绝的，配置里写死的 `deny` 仍然生效） |
 | 细粒度 | `--allowedTools "Bash(git *) Edit"` | `matcher` 正则 + `PermissionRequest` 钩子 | `permission.ask` 插件钩子 |
 | 是否真沙箱 | 否 | **是**（seatbelt / landlock） | 否 |
 
@@ -230,11 +240,12 @@ export const MyPlugin = async ({ client, $ }) => ({
 |---|---|---|---|
 | Claude Code | `~/.claude/projects/<路径编码>/<uuid>.jsonl` | 一行一条，只追加 | 能（字节偏移增量读） |
 | codex | `~/.codex/sessions/<年>/<月>/<日>/rollout-<本地时刻>-<uuid>.jsonl` | 一行一条，只追加 | 能（同上） |
-| opencode | `~/.local/share/opencode/opencode.db`（SQLite） | 关系表 `session` / `message` / `part` | 能，但没有「文件 + 偏移」这回事，要按片段游标取 |
+| opencode | `~/.local/share/opencode/opencode.db`（SQLite） | 关系表 `session` / `session_message` / `message` / `part` | 能，但没有「文件 + 偏移」这回事，要按片段游标取 |
+| agy | `~/.gemini/antigravity-cli/brain/<会话编号>/.system_generated/logs/transcript.jsonl` | 一行一条，另有没被截断的 `transcript_full.jsonl` | 能（字节偏移增量读） |
 
-三家的会话编号形状：Claude Code 是 UUID，codex 是 **UUIDv7（同样是 UUID 形状）**，
-opencode 带 `ses_` 前缀。**前两家的编号空间天生重叠**——想从一个编号反推它属于哪家，
-光看形状不够，必须落盘查一眼。
+四家的会话编号形状：Claude Code 是 UUID，codex 是 **UUIDv7（同样是 UUID
+形状）**，opencode 带 `ses_` 前缀，agy 是它自己的会话编号。**前两家的编号空间天生重叠**——
+想从一个编号反推它属于哪家，光看形状不够，必须落盘查一眼。
 
 判「这一轮答完没有」的权威信号：
 
@@ -242,38 +253,43 @@ opencode 带 `ses_` 前缀。**前两家的编号空间天生重叠**——想�
 - codex：rollout 里的 `task_complete` 事件（带 `turn_id`、`last_agent_message`，
   失败时还带 `error`）
 - opencode：会话库里带完成时刻、且结束标记不是 `tool-calls` 的助手消息
+- agy：transcript 里最后一条用户输入之后出现了收尾回复，且本轮没有还没回调的后台任务
 
-三家都**不要靠读屏判完成**。读屏在多工具轮的空窗帧会误判，而这三个信号都是结构化的。
+四家都**不要靠读屏判完成**。读屏在多工具轮的空窗帧会误判，而这几个信号都是结构化的。
 
 ---
 
-## frago 对三家的支持现状
+## frago 对四家的支持现状
 
-| 能力 | Claude Code | codex | opencode |
-|---|---|---|---|
-| 钩子路由（知识注入 + 规则） | ✅ 原生命令钩子 | ✅ 原生命令钩子，同一个二进制 | ✅ 经 JS 桥接插件 |
-| `frago agent` 驱动 | ✅ | ✅ | ✅ |
-| 会话工作台列表 / 记录 / 搜索 | ✅ | ✅ | ✅ |
-| 会话归档备份 | ✅ | ✅ | ✅ |
-| 工作台中栏发消息 | ✅ | ❌ 通道背后恒是 claude | ❌ 同左 |
-| `--use-profile` 指定模型（只管这一次会话） | ✅ | ❌ 见下 | ✅ |
-| 激活 profile（写进它自己的常驻配置，人手起的会话也跟着走） | ✅ | ❌ 同一个原因 | ✅ |
+| 能力 | Claude Code | codex | opencode | agy |
+|---|---|---|---|---|
+| 钩子路由（知识注入 + 规则） | ✅ 原生命令钩子 | ✅ 原生命令钩子，同一个二进制 | ✅ 经 JS 桥接插件 | ✅ 经 `frago agy-hook` 方言垫片，规则仍是同一份 |
+| `frago agent` 驱动 | ✅ | ✅ | ✅ | ✅ |
+| 会话工作台列表 / 记录 / 搜索 | ✅ | ✅ | ✅ | ✅ |
+| 会话归档备份 | ✅ | ✅ | ✅ | ✅ |
+| 工作台中栏发消息 | ✅ | ✅ | ✅ | ✅ |
+| `--use-profile` 指定模型（只管这一次会话） | ✅ | ✅ 走 Responses 通道 | ✅ | ✅ |
+| 激活 profile（写进它自己的常驻配置，人手起的会话也跟着走） | ✅ | ✅ | ✅ | ❌ 还没列进激活目标 |
 
-两处已知缺口，都已记进待办：
+以前记过的两处缺口现在都收口了：
 
-1. **工作台只能给 Claude Code 会话发消息**（`20260820-webui-composer-send-to-all`）。
-   发送端点写死在 claude 那条通道上，另外两家的会话编号在 claude 的档案里不存在，
-   发过去会凭空开一场新会话，所以输入区对它们整个禁用。
-2. **模型与端点指定没有覆盖三家**（`20260820-per-harness-endpoint-and-model`）。
-   `frago agent` 的 `--model` / `--endpoint` / `--api-key` / `--use-ccr` 无条件写
-   `ANTHROPIC_*`，codex 一个都不读；`--use-profile` 在 codex 上会明确报「本轮不生效」，
-   另外三个开关目前仍是静默失效。
+1. **工作台发消息**（`20260820-webui-composer-send-to-all`）已通。发送端点从 claude
+   专属换成按家族路由的那一条，claude / codex / opencode / agy 各按自己的方式续接。
+2. **模型与端点指定**（`20260820-per-harness-endpoint-and-model`）已通到 `--use-profile`：
+   profile 里除了 Anthropic 通道，还存一条 Responses 通道，codex 的启动命令据此拼
+   `-c` 覆盖，密钥只进会话环境、不上命令行。
+
+还剩一条边界：`--model` / `--endpoint` / `--api-key` 这三个一次性开关仍然只写
+`ANTHROPIC_*`。claude 真读、codex 会把模型翻成启动参数，**opencode 与 agy 的启动命令里
+没有模型开关，这一项在它们身上不生效也不出声**；要走别的模型，用 `--use-profile`。
 
 关于「激活」这件事本身，有一点值得单说：**激活是有范围的，且范围由你选**。以前
-激活只写 Claude Code，界面上不说，于是另外两家继续跑着它们自己配置的模型，而人以为
-自己换了模型。现在按「激活」会先问一句写到哪几家，能写的都列出来，写不了的（codex）
+激活只写 Claude Code，界面上不说，于是另外几家继续跑着它们自己配置的模型，而人以为
+自己换了模型。现在按「激活」会先问一句写到哪几家，能写的都列出来，写不了的
 也列出来但禁用，并把原因摆在旁边。取消勾选某一家等于把那一家还原成 frago 接管前的
-样子——opencode 的模型选择会被抄回接管前的那个，而不是留下一个空配置。
+样子——opencode 的模型选择会被抄回接管前的那个，而不是留下一个空配置。agy 的驱动
+已经会写它自己的配置，但激活目标清单（`AGENT_TARGETS`）里还是 claude / opencode /
+codex 三家，界面上暂时点不到它。
 
 还有一处是能力本身的边界而非 frago 的缺陷：**frago 的 `PreToolUse` 规则里认
 `Edit` / `Write` 或文件路径的那批，在 codex 上不触发**。codex 改文件走 `apply_patch`，
@@ -285,11 +301,12 @@ opencode 带 `ses_` 前缀。**前两家的编号空间天生重叠**——想�
 
 - **要最厚的生态、最成熟的工具链、模型分三档** → Claude Code。
 - **要真沙箱、要一份配置管住 CLI 与两个 IDE 端、或者本来就在 ChatGPT 体系里** → codex。
-- **要把 agent 当组件嵌进自己的程序（无头服务端 / ACP / Web）、或者需要深度改写提示词、
+- **要把 agent 当组件嵌进自己的程序（服务端 / ACP / Web）、或者需要深度改写提示词、
   参数、工具行为** → opencode。
+- **本来就在 Google 的 Antigravity / Gemini 体系里** → agy。
 
-在 frago 里三家是可以混用的：会话工作台把三家的会话合并成一份清单，钩子规则写一份、
-三家共用（vocabulary 差异由各自的桥接层消化）。默认内核在
+在 frago 里四家是可以混用的：会话工作台把四家的会话合并成一份清单，钩子规则写一份、
+各家共用（vocabulary 差异由各自的桥接层消化）。默认内核在
 `~/.frago/config.json` 的 `agent_core`，单次覆盖用 `frago agent --agent-type <内核>`。
 
 ---

@@ -9,7 +9,7 @@ This guide demonstrates how **Claude Code AI Agent** uses the new Recipe system.
 **AI Core Capabilities**:
 1. Discover and select appropriate Recipes through metadata
 2. Choose output destinations based on task requirements (stdout/file/clipboard)
-3. Generate orchestrated Workflow Recipes via `/frago.recipe`
+3. Generate orchestrated Workflow Recipes via `frago recipe plan` / `frago recipe create`
 4. Understand structured errors and adopt response strategies
 
 ---
@@ -135,15 +135,24 @@ frago recipe run youtube_extract_video_transcript \
 
 **AI Execution Flow**:
 
-#### Step 1: AI Invokes `/frago.recipe` Command
+#### Step 1: AI Drafts the Spec, Then Creates the Recipe
 
+```bash
+# Both steps block on a worker and MUST be started in the background
+frago recipe plan arxiv_batch_search \
+  --prompt "Batch search arXiv for 10 topics and save as JSON" \
+  --type workflow --runtime python
+
+# Review spec.md (its per-mode access levels above all), then generate the template
+frago recipe create arxiv_batch_search
+
+# Fill the business logic into the generated template, then check it
+frago recipe validate ~/.frago/recipes/workflows/arxiv_batch_search
 ```
-/frago.recipe create workflow "Batch search arXiv for 10 topics and save as JSON"
-```
 
-#### Step 2: AI Automatically Generates Workflow Script
+#### Step 2: AI Fills the Generated Script
 
-AI-generated file: `~/.frago/recipes/workflows/arxiv_batch_search/recipe.py`
+Generated file: `~/.frago/recipes/workflows/arxiv_batch_search/recipe.py`
 
 ```python
 #!/usr/bin/env python3
@@ -179,7 +188,7 @@ if __name__ == '__main__':
     main()
 ```
 
-#### Step 3: AI Generates Metadata File
+#### Step 3: The Metadata the Template Carries
 
 `~/.frago/recipes/workflows/arxiv_batch_search/recipe.md`:
 
@@ -245,7 +254,7 @@ print(json.dumps(output, ensure_ascii=False))
 EOF
 
 # Add execution permission (not mandatory for Python scripts, but recommended)
-chmod +x ~/.frago/recipes/atomic/system/clipboard_read.py
+chmod +x ~/.frago/recipes/atomic/system/clipboard_read/recipe.py
 ```
 
 #### 2. Create Metadata File
@@ -502,30 +511,42 @@ The full command surface (details with `frago recipe <command> --help`):
 
 | Command | Purpose |
 |---------|---------|
-| `plan` | Draft a recipe from a spec or prompt (agent-assisted) |
-| `create` | Create a recipe from a spec or prompt |
-| `list` | List recipes (`--source user\|community\|official`, `--type atomic\|workflow`, `--format table\|json\|names`) |
-| `info` | Show metadata, parameters and env definitions |
+| `plan` | Generate a recipe spec via agent (`--prompt`, `--prompt-file`, `--type`, `--runtime`) |
+| `create` | Create a recipe from a spec or prompt (`--prompt`, `--prompt-file`, `--spec`) |
+| `list` | List recipes (`--source user\|community\|all`, `--type atomic\|workflow\|all`, `--format table\|json\|names`) |
+| `info` | Show metadata, parameters and env definitions (`--format text\|json\|yaml`) |
 | `run` | Execute (`--params`, `--params-file`, `--env`, `--output-file`, `--output-clipboard`, `--timeout`, `--async`) |
 | `schedule` | Run on an interval (`--interval 30s/10m/2h`, `--max-runs`, `--start-at/--stop-at`) |
 | `executions` / `execution` | List / inspect past executions |
 | `cancel` | Cancel a running execution |
-| `publish` | Show a published recipe slot |
-| `open` | Open a recipe by name or URL |
-| `validate` | Validate recipe metadata |
+| `publish` | Publish the state a recipe's page should show, then print the page URL |
+| `open` | Open a recipe's page by name or URL |
+| `validate` | Validate a recipe directory or its `recipe.md` (`--format text\|json`) |
 | `install` / `update` / `uninstall` | Manage community recipes |
-| `search` | Search recipes by keyword |
-| `share` | Share a recipe |
+| `search` | Search the community recipe repository (`--format table\|json`) |
+| `share` | Share a recipe to the community repository via GitHub PR |
+| `expose` / `unexpose` / `exposed` | Decide who may open a recipe's page, take it back, list what is reachable |
+| `reads` | Show which recipes read which other recipes' data |
+| `folder` | Arrange recipes into folders in the WebUI |
+| `data-migrate` | Move recipe data onto the current layout |
 
 ### Where Recipes Live
 
 ```
 ~/.frago/recipes/                  # user (highest priority)
 ├── atomic/system/<name>/          # Python / shell
-├── atomic/browser/<name>/         # Chrome-js
+├── atomic/chrome/<name>/          # Chrome-js
 └── workflows/<name>/              # workflows
 ~/.frago/community-recipes/        # installed community recipes
+   ├── atomic/system/<name>/
+   └── workflows/<name>/
 ```
+
+The registry scans those three subdirectories under both roots, so a recipe
+placed anywhere else is invisible to `frago recipe list` no matter what its
+`recipe.md` says. `atomic/chrome` is where JavaScript recipes go — the runtime
+is `chrome-js`, and only `atomic/chrome`, `atomic/system` and `workflows` are
+looked at.
 
 Each recipe is a directory holding `recipe.md` (YAML frontmatter metadata) and
 its execution script; a `spec.md` design document is optional. Community
@@ -536,6 +557,33 @@ recipes install into `~/.frago/community-recipes/` with
 The frago package itself ships no recipes. Everything you can run is either
 yours or installed — there is no third, invisible tier that a fresh machine
 silently has and another does not.
+
+### Sandbox Isolation
+
+Every run happens inside a file-level view: the run's own data directory and
+`~/.frago/recipe-data/<name>/` are writable, other recipes' declared `shares`
+are readable, the interpreters and the recipe's own source are read-only, and
+everything else does not exist — reaching outside fails right there. The
+isolation covers files only; microphone, camera, GPU, system services and
+screen windows are not intercepted, and the OS's own permission prompts still
+decide those.
+
+Two consequences worth knowing before writing a recipe:
+
+- **External commands must be declared.** A recipe calling `gh`, `ffmpeg`,
+  `yt-dlp` or similar MUST list them in `uses_commands: [gh]`. Undeclared, the
+  command usually still starts but cannot read its own config or login state in
+  your home directory, and fails on its first line with `operation not
+  permitted` or `No such file or directory`. Once declared, the first run on
+  each machine has a CoreAgent inspect where the command lives and which
+  directories it needs; the verdict is recorded in
+  `~/.frago/recipe-data/<name>/grants.json` and every later run follows it. A
+  resident server start performs no audit — run the recipe once by hand on a
+  new machine.
+- **The backend is the platform's, not the recipe's.** macOS uses the bundled
+  `sandbox-exec`; Linux uses `bwrap`, and refuses to start a recipe when
+  bubblewrap is missing (`apt install bubblewrap`). Turning isolation off MUST
+  be spelled out as `"recipe": {"isolation": "off"}` in `~/.frago/config.json`.
 
 ## Best Practices
 
@@ -879,8 +927,8 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 1. **Move script to new location**:
    ```bash
    # Metadata and script live in one directory:
-   #   ~/.frago/recipes/atomic/browser/<name>/recipe.md
-   #   ~/.frago/recipes/atomic/browser/<name>/recipe.js
+   #   ~/.frago/recipes/atomic/chrome/<name>/recipe.md
+   #   ~/.frago/recipes/atomic/chrome/<name>/recipe.js
    ```
 
 2. **Use new command**:
@@ -895,7 +943,7 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 |---------|----------------------|------------------------|
 | Parameter Passing | Command line arguments | JSON format (unified) |
 | Metadata | None | YAML frontmatter |
-| Search Path | Fixed path | Three-level lookup (user/community/official) |
+| Search Path | Fixed path | Two-level lookup (user, then community) |
 | Error Handling | Raw output | Structured JSON errors |
 | Dependency Management | None | Automatic dependency checking |
 | Orchestration Capability | None | Workflow support |
@@ -961,7 +1009,7 @@ frago recipe list
    ↓
 4. AI decision:
    - Use existing Recipe → Execute
-   - No suitable Recipe → Invoke /frago.recipe to generate new Recipe
+   - No suitable Recipe → `frago recipe plan` then `frago recipe create`
    ↓
 5. AI executes: frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
@@ -973,9 +1021,9 @@ frago recipe list
 ### Key Design Principles
 
 1. **Metadata-Driven**: AI understands Recipe capabilities through semantic fields without reading script code
-2. **Structured Output**: All CLI commands support `--format json` for AI parsing
+2. **Structured Output**: Metadata commands (`list`, `info`, `validate`, `executions`, `install`) take `--format json` for AI parsing; `run` has no format flag because its answer is already JSON
 3. **Output Format Declaration**: Recipe explicitly declares supported output destinations, AI can plan based on task
-4. **AI Generates Workflow**: `/frago.recipe` command enables AI to create orchestrated Recipes (manually triggered)
+4. **AI Generates Workflow**: `frago recipe plan` / `frago recipe create` enable AI to create orchestrated Recipes (agent-assisted)
 5. **Understandable Errors**: Structured errors allow AI to analyze failure reasons and automatically respond
 
 ### AI vs Human Usage Comparison
@@ -983,7 +1031,7 @@ frago recipe list
 | Feature | AI Usage | Human Usage |
 |---------|----------|-------------|
 | **Discover Recipe** | `recipe list --format json` + semantic analysis | `recipe list` (table) or `recipe info` |
-| **Create Recipe** | `/frago.recipe create` auto-generate | Manually write script and metadata |
+| **Create Recipe** | `recipe plan` + `recipe create` generate spec and template | Manually write script and metadata |
 | **Execute Recipe** | Bash tool invocation, auto-select output method | Manually type command, manually specify --output-file |
 | **Error Handling** | Parse JSON error, automatic response strategy | Read error message, manually troubleshoot |
 | **Task Orchestration** | Auto-generate Workflow Python script | Manually combine multiple Recipes |

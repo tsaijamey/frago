@@ -1,15 +1,20 @@
 // frago CLI 命令数据(双语)
-// 英文取自 `frago --help` 原文,中文为对照译文。version 1.2.101,核实日期 2026-08-12。
+// 英文取自 `frago --help` 及各顶层子命令 `--help` 原文,中文为对照译文。version 1.4.293,核实日期 2026-10-26。
 // 结构:每个命令 { name, zh, en, leaf?, note?, sub?[[name,zh,en]...], subgroups?[{zh,en,items}] }
 const DATA = [
   {
     id: "daily", zh: "日常使用", en: "Daily Use",
     cmds: [
       { name: "start", zh: "启动 frago 并在浏览器中打开 Web UI。", en: "Start frago and open the Web UI in your browser." },
-      { name: "browser", zh: "浏览器自动化（extension / CDP 双后端）。", en: "Browser automation (extension / CDP backends).", subgroups: [
+      { name: "browser", zh: "浏览器自动化（extension / CDP 双后端）。", en: "Browser automation.", subgroups: [
+        { zh: "后端与浏览器", en: "Backend & Browser", items: [
+          ["check", "检查本机有哪些可用浏览器、各自什么状态。", "Check which browsers are available and their status."],
+          ["detect", "探测可用浏览器，或探测某个页面有没有反爬拦截。", "Detect available browsers, or probe a page for anti-bot protection."],
+          ["install", "取回 frago 自带的浏览器 Chrome for Testing。", "Fetch frago's own browser, Chrome for Testing."],
+        ]},
         { zh: "生命周期", en: "Lifecycle", items: [
-          ["start", "启动带 CDP 调试支持的浏览器。", "Launch browser with CDP debugging support."],
-          ["stop", "停止 CDP 浏览器实例。", "Stop the CDP browser instance."],
+          ["start", "启动 agent 浏览器并拉起扩展桥接。", "Launch the agent browser and bring up the extension bridge."],
+          ["stop", "停止 agent 浏览器。", "Stop the agent browser."],
           ["status", "检查 CDP 连接状态。", "Check CDP connection status."],
         ]},
         { zh: "标签管理", en: "Tab Management", items: [
@@ -18,14 +23,14 @@ const DATA = [
           ["close-tab", "关掉本 group 自己的一个标签（组满时靠它腾位置）。", "Close one of the group's own tabs (this is how you make room)."],
         ]},
         { zh: "标签分组", en: "Tab Groups", items: [
-          ["groups", "列出所有标签分组及其标签数。", "List all tab groups and their tab counts."],
+          ["groups", "列出所有标签分组、各自多满、什么时候过期。", "List all tab groups, how full they are and when they expire."],
           ["group-info", "显示某个标签分组的详情。", "Show details of a tab group."],
           ["group-close", "关闭某个标签分组及其全部标签。", "Close a tab group and all its tabs."],
           ["group-cleanup", "清除标签已不存在的失效分组。", "Remove stale groups whose tabs no longer exist."],
           ["reset", "关闭除着陆页外的所有标签。", "Close all tabs except the landing page."],
         ]},
         { zh: "页面控制", en: "Page Control", items: [
-          ["navigate", "导航到 URL：默认替换本 group 的当前标签，--new 才新开一页。", "Navigate: replaces the group's current tab; --new opens another one."],
+          ["navigate", "导航到 URL：默认替换本 group 的当前标签，--new 才新开一页。", "Navigate to URL and get page features after loading."],
           ["scroll", "滚动页面并自动捕获页面特征。", "Scroll page and automatically capture page features."],
           ["scroll-to", "滚动到指定元素。", "Scroll to specified element."],
           ["zoom", "设置页面缩放级别并自动捕获页面特征。", "Set page zoom level and automatically capture page features."],
@@ -47,19 +52,28 @@ const DATA = [
           ["clear-effects", "清除所有视觉效果。", "Clear all visual effects."],
         ]},
       ]},
+      { name: "desktop", zh: "驱动虚拟桌面舞台（录制 / 演示）。", en: "Drive the virtual desktop stage (recording / demo).", leaf: true },
       { name: "recipe", zh: "Recipe 管理命令组。", en: "Recipe management command group.", sub: [
         ["cancel", "取消正在运行的执行。", "Cancel a running execution."],
         ["create", "通过 agent 从 spec 或 prompt 创建 recipe。", "Create a recipe via agent from spec or prompt."],
+        ["data-migrate", "把 recipe 数据搬到 frago book 里规定的新布局。", "Move recipe data onto the layout in `frago book`."],
         ["execution", "显示某次执行的详情。", "Show details of a specific execution."],
         ["executions", "列出最近的 recipe 执行记录。", "List recent recipe executions."],
+        ["expose", "决定谁能打开这个 recipe 的页面、看到谁的数据。", "Decide who may open this recipe's page, and whose data they see."],
+        ["exposed", "列出访客当前能打开的 recipe 页面。", "List the recipe pages visitors can currently reach."],
+        ["folder", "把 recipe 整理进本机的文件夹（顺序即排序）。", "Arrange recipes into folders on this machine (order = rank)."],
         ["info", "显示某个 recipe 的详细信息。", "Display detailed information about a specific recipe."],
         ["install", "从多种来源安装 recipe。", "Install a recipe from various sources."],
         ["list", "列出所有可用的 recipe。", "List all available recipes."],
+        ["open", "给人打开这个 recipe 的页面。", "Open a recipe's page for a human."],
         ["plan", "通过 agent 生成 recipe spec。", "Generate a recipe spec via agent."],
+        ["publish", "发布 recipe 页面应显示的状态，然后打印结果。", "Publish the state a recipe's page should show, then print."],
+        ["reads", "哪个模块读哪些模块的数据、读的是什么。", "Which modules read which other modules' data, and what."],
         ["run", "执行指定 recipe。", "Execute specified recipe."],
         ["schedule", "按固定间隔重复运行 recipe。", "Run a recipe repeatedly at fixed intervals."],
-        ["search", "在社区仓库中搜索 recipe。", "Search for recipes in community repository."],
+        ["search", "在社区 recipe 仓库中搜索。", "Search the community recipe repository."],
         ["share", "通过 GitHub PR 将 recipe 分享到社区仓库。", "Share a recipe to the community repository via GitHub PR."],
+        ["unexpose", "把这个 recipe 的页面从公网收回来。", "Take this recipe's page back off the public internet."],
         ["uninstall", "卸载 recipe(用户或社区)。", "Uninstall a recipe (User or Community)."],
         ["update", "通过从原始来源重新拉取来更新已安装的 recipe。", "Update installed recipes by re-fetching from original source."],
         ["validate", "校验 recipe 元数据的字段完整性与正确性。", "Validate field completeness and correctness of recipe metadata."],
@@ -67,32 +81,52 @@ const DATA = [
       { name: "skill", zh: "Skill 管理命令组。", en: "Skill management command group.", sub: [
         ["list", "列出所有可用的 Skill。", "List all available Skills."],
       ]},
-      { name: "run", zh: "Run 命令系统 —— 管理 AI 驱动的任务执行。", en: "Run command system — manage AI-driven task execution.", sub: [
-        ["archive", "归档一个 run 实例。", "Archive a run instance."],
-        ["find", "按关键词搜索 run 实例。", "Search run instances by keyword."],
-        ["info", "显示 run 实例 / 领域的详情。", "Show run instance / domain details."],
-        ["init", "初始化 / 确保一个领域(支持词典聚类)。", "Initialize / ensure a domain (dictionary-aware)."],
-        ["insights", "领域级洞察 —— 统一的增删改查入口。", "Domain-level insights — unified CRUD entry point."],
-        ["list", "列出所有 run 实例 / 领域。", "List all run instances / domains."],
-        ["log", "记录结构化日志条目。", "Record structured log entry."],
-        ["release", "释放当前 run 上下文(互斥锁)。", "Release the current run context (mutual exclusion lock)."],
-        ["screenshot", "保存截图(自动编号)。", "Save screenshot (auto-numbered)."],
-        ["set-context", "设置当前工作的 run。", "Set the current working run."],
-      ]},
       { name: "book", zh: "frago 内置知识手册。", en: "frago built-in knowledge book.", note: "用法 frago book [TOPIC] · --brief 每条一行摘要 · book scenes 查看场景索引" },
       { name: "def", zh: "管理结构化知识领域。", en: "Manage structured knowledge domains.", sub: [
         ["add", "注册一个新的知识领域。", "Register a new knowledge domain."],
         ["list", "列出所有已注册的领域。", "List all registered domains."],
         ["remove", "注销一个领域(文件保留)。", "Unregister a domain (files are kept)."],
       ]},
-      { name: "view", zh: "内容查看器:Markdown / PDF / 代码高亮。", en: "Content viewer: Markdown / PDF / Code highlighting.", leaf: true },
+      { name: "todo", zh: "管理本地待办（~/.frago/todo/，一条一个 JSON 文件）。", en: "Manage local todos (~/.frago/todo/, one JSON per todo).", sub: [
+        ["add", "新建一条待办。", "Create a new todo."],
+        ["categorize", "批量给多条待办指定分类，全成或全不成。", "Assign categories to many todos at once, all-or-nothing."],
+        ["category", "管理有序的分类列表（位置即排序）。", "Manage the ordered category list (position = sort rank)."],
+        ["done", "把待办标记为完成（REF 写 id 或唯一前缀，幂等）。", "Mark a todo done (REF = id or unique prefix; idempotent)."],
+        ["drop", "放弃一条待办——它不会再被完成，--reason 说明原因。", "Drop a todo — it will not be done, and --reason says why."],
+        ["edit", "修改待办字段（只改传入的项）。", "Edit fields of a todo (only provided options change)."],
+        ["how-to", "打印交接手册（等同 frago todo --how-to）。", "Print the handover playbook (same as `frago todo --how-to`)."],
+        ["list", "列出待办（先按分类顺序，再按优先级）。", "List todos (sorted by category position, then priority)."],
+        ["log", "把本次会话做的事追加到某条待办，带日期和会话标记。", "Append what THIS session did to a todo, stamped with date + session."],
+        ["next", "显示最紧急的一条活跃待办。", "Show the most urgent active todo."],
+        ["rm", "删除一条待办（REF 写 id 或唯一前缀）。", "Delete a todo (REF = id or unique prefix)."],
+        ["schema", "打印待办的 JSON schema（字段定义）。", "Print the todo JSON schema (field definitions)."],
+        ["show", "以完整 JSON 显示单条待办（REF 写 id 或唯一前缀）。", "Show a single todo as full JSON (REF = id or unique prefix)."],
+      ]},
+      { name: "context", zh: "查一个关键词住在哪儿：frago context data:<关键词>。", en: "Find where a keyword lives: ``frago context data:<keyword>``.", leaf: true },
+      { name: "view", zh: "内容查看器：Markdown / PDF / 代码高亮。", en: "Content viewer: Markdown / PDF / Code highlighting.", leaf: true },
       { name: "server", zh: "管理 frago Web 服务。", en: "Manage the Frago web service.", sub: [
         ["restart", "重启 frago Web 服务。", "Restart the Frago web service."],
         ["start", "启动 frago Web 服务。", "Start the Frago web service."],
         ["status", "检查 frago Web 服务是否在运行。", "Check if the Frago web service is running."],
         ["stop", "停止正在运行的 frago Web 服务。", "Stop the running Frago web service."],
+        ["token", "打印允许非本机调用者访问本服务的令牌。", "Print the token that admits non-local callers to this server."],
       ]},
       { name: "serve", zh: "启动 frago Web 服务 GUI。", en: "Start the Frago web service GUI.", leaf: true },
+      { name: "app", zh: "内置会话 UI 组件与投递能力（ask / image / mermaid / use）。", en: "Built-in session UI components and delivery capabilities (ask, image, mermaid, use).", sub: [
+        ["ask", "生成校验过的 WebUI 决策卡组件数据。", "Generate validated WebUI decision card component data."],
+        ["image", "把本地或网络图片渲染成自适应宫格卡片投进会话。", "Render local or web images as an adaptive grid card in the session."],
+        ["list", "列出所有内置 app。", "List all built-in apps."],
+        ["mermaid", "把 mermaid 图文本渲染成 SVG。", "Render mermaid diagram text to SVG."],
+        ["use", "运行一个内置投递 app。", "Run a built-in delivery app."],
+      ]},
+    ]
+  },
+  {
+    id: "files", zh: "文件", en: "Files",
+    cmds: [
+      { name: "cp", zh: "复制文件与目录。", en: "Copy files and directories.", leaf: true },
+      { name: "mv", zh: "移动或重命名文件与目录。", en: "Move or rename files and directories.", leaf: true },
+      { name: "rm", zh: "删除到系统废纸篓，而不是直接销毁文件。", en: "Delete into the system trash instead of destroying the file.", leaf: true },
     ]
   },
   {
@@ -101,22 +135,39 @@ const DATA = [
       { name: "session", zh: "会话管理命令组。", en: "Session Management Command Group.", sub: [
         ["clean", "清理过期会话。", "Clean up expired sessions."],
         ["delete", "删除指定会话。", "Delete specified session."],
-        ["list", "列出最近的会话。", "List recent sessions."],
+        ["list", "列出会话，最新创建的在前。", "List sessions, newest created first."],
+        ["search", "按语义跨 claude / codex / opencode 等会话原始记录检索。", "Search raw session transcripts by meaning, across claude, codex, opencode."],
+        ["self", "打印本会话的 id（或 CLI agent 身份 / 签名）。", "Print THIS session's id (or CLI agent identity / signature)."],
         ["show", "查看会话详情。", "View session details."],
-        ["sync", "从 Claude 会话文件同步数据。", "Sync data from Claude session files."],
+        ["sync", "从 agent 会话记录同步数据。", "Sync data from agent session records."],
         ["watch", "实时监控会话。", "Monitor sessions in real-time."],
       ]},
-      { name: "agent", zh: "智能 Agent:通过 Claude Code 会话执行任务。", en: "Intelligent Agent: Execute tasks via Claude Code session.", leaf: true },
+      { name: "agent", zh: "智能 Agent：通过 cli-agent 会话执行任务。", en: "Intelligent Agent: Execute tasks via a cli-agent session.", leaf: true },
       { name: "agent-status", zh: "检查 Claude CLI 认证状态。", en: "Check Claude CLI authentication status.", leaf: true },
       { name: "reply", zh: "通过某个 ingestion 渠道的 notify recipe 发送回复。", en: "Send a reply through an ingestion channel's notify recipe.", leaf: true },
-      { name: "channel", zh: "管理任务 ingestion 渠道(外部任务来源)。", en: "Manage task ingestion channels (external task sources).", sub: [
+      { name: "channel", zh: "管理任务 ingestion 渠道（外部任务来源）。", en: "Manage task ingestion channels (external task sources).", sub: [
         ["add", "添加一个新的 ingestion 渠道。", "Add a new ingestion channel."],
-        ["disable", "全局禁用任务 ingestion(渠道配置保留)。", "Disable task ingestion globally (channels remain configured)."],
+        ["disable", "全局禁用任务 ingestion（渠道配置保留）。", "Disable task ingestion globally (channels remain configured)."],
         ["edit", "编辑已有渠道。", "Edit an existing channel."],
         ["enable", "全局启用任务 ingestion。", "Enable task ingestion globally."],
         ["list", "列出已配置的 ingestion 渠道及全局启用状态。", "List configured ingestion channels and global enabled state."],
-        ["recipes", "列出已安装的 recipe 名(可作 --poll / --notify 候选)。", "List installed recipe names (candidates for --poll / --notify)."],
+        ["recipes", "列出已安装的 recipe 名（可作 --poll / --notify 候选）。", "List installed recipe names (candidates for --poll / --notify)."],
         ["rm", "移除一个 ingestion 渠道。", "Remove an ingestion channel."],
+      ]},
+      { name: "daemon", zh: "管理受监管的 recipe 守护进程（长期在后台运行的 recipe）。", en: "Manage supervised recipe daemons (long-lived background recipes).", sub: [
+        ["disable", "把某个 recipe 从守护声明里去掉。", "Remove RECIPE from the daemon declarations."],
+        ["enable", "把一个 recipe 声明为常驻守护（该 recipe 必须声明 daemon:true）。", "Declare RECIPE as an active daemon (must declare daemon:true)."],
+        ["ls", "列出已声明的 recipe 守护及其激活状态。", "List declared recipe daemons and their activation state."],
+        ["restart", "重启一个已声明的守护（靠重启 server 生效）。", "Restart a declared daemon (applied by restarting the server)."],
+        ["status", "显示受监管守护的运行状态。", "Show runtime state of supervised daemons."],
+      ]},
+      { name: "remote", zh: "驱动另一个 frago——通常是部署在服务器上的那一台。", en: "Drive another frago — usually one deployed on a server.", sub: [
+        ["add", "记住一个可以派活的远端 frago。", "Remember a frago you can send work to."],
+        ["chat", "跟远端 frago 的 PA 开一场交互对话。", "Open an interactive conversation with a remote frago's PA."],
+        ["list", "列出已配置的远端。", "List configured remotes."],
+        ["remove", "忘掉一个远端。", "Forget a remote."],
+        ["send", "把一份任务书发给远端 frago 的 PA 并等它回话。", "Send one brief to a remote frago's PA and wait for its reply."],
+        ["status", "确认远端活着、且我们这枚令牌被接受。", "Check that a remote is up and that our token is accepted."],
       ]},
     ]
   },
@@ -127,6 +178,7 @@ const DATA = [
       { name: "logout", zh: "退出登录。", en: "Log out.", leaf: true },
       { name: "whoami", zh: "显示当前登录用户信息。", en: "Show the current logged-in user.", leaf: true },
       { name: "config", zh: "配置管理。", en: "Configuration management.", sub: [
+        ["agent-language", "查看 agent 回答用的语言。", "Show the language the agent answers in."],
         ["get", "获取配置项。", "Get a config item."],
         ["list", "列出所有配置项。", "List all config items."],
         ["set", "设置配置项。", "Set a config item."],
@@ -147,7 +199,7 @@ const DATA = [
       { name: "init", zh: "初始化 frago 开发环境。", en: "Initialize Frago development environment.", leaf: true },
       { name: "status", zh: "检查 CDP 连接状态。", en: "Check CDP connection status.", leaf: true },
       { name: "workspace", zh: "管理 workspace 资源。", en: "Manage workspace resources.", sub: [
-        ["collect", "仅收集 workspace 资源,不执行同步。", "Collect workspace resources without syncing."],
+        ["collect", "把 workspace 资源收进 ~/.frago/workspaces/，不执行同步。", "Collect workspace resources into ~/.frago/workspaces/."],
         ["list", "列出已发现的项目与 workspace 状态。", "List discovered projects and workspace status."],
         ["pending", "查看上次同步遗留的待部署动作。", "View pending deployment actions from last sync."],
         ["set-scan-roots", "设置用于扫描项目的目录。", "Set directories to scan for projects."],
@@ -169,6 +221,7 @@ const DATA = [
   {
     id: "other", zh: "其他", en: "Other",
     cmds: [
+      { name: "agy-hook", zh: "agy 生命周期 hook 的垫片——由 agy 的 hooks.json 调用，不由人直接敲。", en: "Shim for agy lifecycle hooks — invoked by agy's hooks.json, not typed by hand.", leaf: true },
       { name: "extension", zh: "浏览器扩展桥接管理。", en: "Browser extension bridge management.", sub: [
         ["click", "通过扩展后端点击元素。", "Click element via the extension backend."],
         ["daemon", "运行 native messaging 守护进程(单例)。", "Run the native messaging daemon (singleton)."],
@@ -180,7 +233,7 @@ const DATA = [
         ["screenshot", "通过扩展后端截图。", "Capture screenshot via the extension backend."],
         ["status", "探测守护进程 + 桥接连通性。", "Ping the daemon + bridge."],
       ]},
-      { name: "hook-rules", zh: "管理 frago-hook 引擎的数据化路由规则。", en: "Manage data-driven routing rules for the frago-hook engine.", sub: [
+      { name: "hook-rules", zh: "管理 frago-core 引擎的数据化路由规则。", en: "Manage data-driven routing rules for the frago-core engine.", sub: [
         ["add", "向用户规则文件追加一条新规则。", "Append a new rule to the user rules file."],
         ["disable", "标记规则为禁用而不删除。", "Mark a rule as disabled without deleting it."],
         ["enable", "重新启用先前禁用的规则。", "Re-enable a previously disabled rule."],
@@ -191,6 +244,11 @@ const DATA = [
         ["stats", "显示每条规则的命中次数与最近命中时间。", "Show hit counts and last-hit timestamps per rule."],
         ["validate", "对 ~/.frago/hook-rules.json 做结构校验。", "Structural validation of ~/.frago/hook-rules.json."],
       ]},
+      { name: "profile", zh: "连接查看与角色绑定。增删改走 WebUI 设置。", en: "Inspect connections and bind roles. Add, edit and remove in the WebUI settings.", sub: [
+        ["bind", "把一个角色指向一条连接（CONNECTION 填 profile 名、id，或 official）。", "Point a role at one connection (CONNECTION = profile name, id, or official)."],
+        ["list", "列出已保存的 API profile（api_key 脱敏）。", "List saved API profiles (api_key masked)."],
+        ["targets", "列出激活 profile 时可选的 cli-agent，及不可选的原因。", "List the cli-agents a profile can activate, and why some cannot."],
+      ]},
       { name: "schedule", zh: "管理定时任务。", en: "Manage scheduled tasks.", sub: [
         ["add", "添加一个定时任务。", "Add a scheduled task."],
         ["history", "显示某个定时任务的执行历史。", "Show execution history for a schedule."],
@@ -199,24 +257,25 @@ const DATA = [
         ["run", "手动触发一次定时任务(不影响常规节奏)。", "Manually trigger a schedule once (does not affect regular cadence)."],
         ["toggle", "启用或禁用一个定时任务。", "Enable or disable a schedule."],
       ]},
-      { name: "task", zh: "任务状态管理(发出 timeline task_state 条目)。", en: "Task state management (emits timeline task_state entry).", sub: [
-        ["active", "列出状态为 {queued, executing} 的任务。", "List Tasks in status in {queued, executing}."],
-        ["awaiting", "列出状态为 awaiting_decision 的消息(PA 尚未决策)。", "List Msgs in status=awaiting_decision (PA has not decided yet)."],
-        ["history", "显示某任务跨 resume / restart 的完整时间线。", "Show the full timeline of a task across resume / restart."],
-        ["list", "列出当前看板快照 —— threads、msgs、tasks。", "List the current board snapshot — threads, msgs, tasks."],
-        ["mark", "覆盖任务状态并发出一条 task_state 时间线条目。", "Override a task's status and emit a task_state timeline entry."],
-        ["stats", "看板的长期健康统计。", "Long-running health stats for the board."],
-        ["vacuum", "frago timeline vacuum 的别名:归档已退役的 thread。", "Alias for `frago timeline vacuum`: archive retired threads."],
+      { name: "team", zh: "vibe teaming：跟另一个 frago 用户的会话结成一个 team。", en: "Vibe teaming: pair your session with another frago user's session.", sub: [
+        ["config", "看这台机器的 team 设置。", "Show this machine's team settings."],
+        ["join", "用连接码加入别人发起的 team。", "Join a team someone else opened, with the code they sent."],
+        ["leave", "退出这个 team。", "Leave this team."],
+        ["list", "本机参加过哪些 team（不联网）。", "Which teams this machine has joined (offline)."],
+        ["open", "发起一个 team，拿到连接码。", "Open a team and get the code to hand over."],
+        ["read", "读对方会话的上下文（隔着中继的一次远程 read）。", "Read the other side's session context (one remote read through the relay)."],
+        ["scene", "本机正在结对的会话，以及身处其中意味着什么。", "The sessions paired on this machine, and what being in one means."],
+        ["send", "往对方的会话投一条消息，它在对方那边是一条带前缀的用户发言。", "Drop a message into the other session; there it arrives as a prefixed user turn."],
+        ["status", "这个 team 现在什么状态：两侧在不在、各自最后上报时间、信箱积了几条。", "Team state now: both sides up or not, last report each, messages queued."],
+        ["sync", "手动跑一轮同步。", "Run one round of sync by hand."],
+        ["verify", "核实一条带 team 前缀的消息是不是真的经中继投来的（不联网）。", "Verify that a team-prefixed message really came through the relay (offline)."],
       ]},
-      { name: "timeline", zh: "查询统一时间线并向其追加。", en: "Query and append to the unified timeline.", sub: [
-        ["append", "向时间线追加一条条目(agent 发起)。", "Append an entry to the timeline (agent-initiated)."],
-        ["fold", "将 thread 内冗余条目折叠为单条摘要。", "Fold redundant entries inside a thread into a single summary."],
-        ["search", "按结构化过滤条件搜索时间线条目。", "Search timeline entries by structured filters."],
-        ["tail", "显示最近的时间线条目(最新在前)。", "Show the most recent timeline entries (newest first)."],
-        ["task-status", "显示某任务的当前状态(从条目重建)。", "Show the current status of a task (reconstructed from entries)."],
-        ["trace", "从给定条目沿 parent_id 链上溯到 thread 根。", "Walk parent_id chain from the given entry up to its thread root."],
-        ["vacuum", "运行有界推进的 vacuum:将退役 thread 归档到冷存储。", "Run bounded-progress vacuum: archive retired threads into cold storage."],
-        ["view", "给定时间窗口的高层时间线视图。", "High-level timeline view for the given window."],
+      { name: "user", zh: "登录过本服务已发布页面的账号。", en: "People who signed in to this server's published pages.", sub: [
+        ["disable", "停用一个账号。", "Suspend an account."],
+        ["enable", "恢复一个被停用的账号。", "Reinstate a suspended account."],
+        ["list", "列出全部账号：id ↔ 邮箱、是否停用。", "Show every account: id ↔ email, whether it is suspended."],
+        ["passwd", "重设某个人的密码。", "Set someone's password."],
+        ["session", "本服务上的在线登录。", "Live logins on this server."],
       ]},
     ]
   },

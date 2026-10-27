@@ -32,10 +32,10 @@ uv sync --all-extras --dev
 
 - [User Guide](user-guide.md) — daily commands after install
 - [Installation](installation.md) — CLI install and platform prerequisites
-- [Concepts](concepts.md) — How Recipes, Runs, and Skills work together
+- [Concepts](concepts.md) — How Skills, Recipes, knowledge domains, prompting and Sessions fit together
 - [Recipe System](recipes.md) — Recipe system deep dive
 - [Examples](examples.md) — Practical automation examples
-- [Browser Support](browser-support.md) — Supported browsers and CDP commands
+- [Browser Support](browser-support.md) — Backends, tab groups, page operations, the virtual desktop stage
 
 > **Built-in reference**: `frago book` reads the knowledge base shipped with
 > the install (browser backends, anti-bot, recipe authoring, desktop stage,
