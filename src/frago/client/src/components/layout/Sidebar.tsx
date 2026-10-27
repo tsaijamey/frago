@@ -31,8 +31,11 @@ import { useTranslation } from 'react-i18next';
 import {
   AppWindow,
   MessageSquare,
+  Monitor,
   LayoutGrid,
   Database,
+  File as FileIcon,
+  Folder,
   FolderTree,
   ListChecks,
   Settings,
@@ -49,6 +52,7 @@ import {
 import { useAppStore, type PageType } from '@/stores/appStore';
 import { usePageStore } from '@/stores/pageStore';
 import { splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
+import { filePinLabel, useFilePins } from '@/stores/filePins';
 import { useClaudeUsage } from '@/hooks/useClaudeUsage';
 import { useTmuxSessionCount } from '@/hooks/useTmuxSessions';
 import { countAttention, useEnvironment, useEnvironmentUpgrade } from '@/hooks/useEnvironment';
@@ -75,7 +79,9 @@ const ICON = { size: 16, strokeWidth: 1.5 } as const;
 export const NAV_ITEMS: RailItem[] = [
   // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 Sessions。
   { id: 'session_workbench', labelKey: 'sidebar.nav.sessions', icon: <MessageSquare {...ICON} /> },
-  // 结对会话：两个人的会话并排摆着。紧跟 Sessions，因为它就是会话的另一种看法。
+  // 虚拟桌面：agent_os 的常驻舞台，紧跟 Sessions 下方。
+  { id: 'desktop', labelKey: 'sidebar.nav.desktop', icon: <Monitor {...ICON} /> },
+  // 结对会话：两个人的会话并排摆着。
   { id: 'vibe_teaming', labelKey: 'sidebar.nav.teams', icon: <Users {...ICON} /> },
   { id: 'recipes', labelKey: 'sidebar.nav.recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
@@ -91,6 +97,7 @@ export const NAV_ITEMS: RailItem[] = [
 
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
+  if (id === 'desktop') return currentPage === 'desktop';
   if (id === 'vibe_teaming') return currentPage === 'vibe_teaming';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
@@ -150,6 +157,63 @@ function RecipeAppPinItems({ expanded }: { expanded: boolean }) {
                 }}
                 title={t('recipes.app.unpin')}
                 aria-label={`${t('recipes.app.unpin')} ${label}`}
+              >
+                <X size={12} strokeWidth={1.5} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * files 下面 pin 着的目录或文件，一个一行。
+ *
+ * 与 `RecipeAppPinItems` 同一个排法：展开时显示文件夹或文件图标加短名，悬停出 × 摘掉；
+ * 收起时只留图标，完整路径放在 tooltip 里。点一下切到文件页并直接跳进那个目录或打开那份文件。
+ */
+function FilePinItems({ expanded }: { expanded: boolean }) {
+  const { t } = useTranslation();
+  const pins = useFilePins((s) => s.pins);
+  const unpin = useFilePins((s) => s.unpin);
+  const openPin = useFilePins((s) => s.openPin);
+  const activePath = useFilePins((s) => s.activePath);
+  const currentPage = usePageStore((s) => s.currentPage);
+  const switchPage = usePageStore((s) => s.switchPage);
+
+  if (pins.length === 0) return null;
+
+  return (
+    <div className="rail-subnav" role="group" aria-label={t('files.pinned')}>
+      {pins.map((item) => {
+        const label = filePinLabel(item.path);
+        const active = currentPage === 'files' && activePath === item.path;
+        return (
+          <div key={item.path} className={`rail-subitem ${active ? 'rail-subitem--active' : ''}`}>
+            <button
+              type="button"
+              className="rail-subitem-open"
+              onClick={() => {
+                openPin(item);
+                switchPage('files');
+              }}
+              title={item.path}
+              aria-current={active ? 'page' : undefined}
+            >
+              <span className="rail-item-icon">
+                {item.is_dir ? <Folder {...ICON} /> : <FileIcon {...ICON} />}
+              </span>
+              {expanded ? <span className="rail-item-label">{label}</span> : null}
+            </button>
+            {expanded ? (
+              <button
+                type="button"
+                className="rail-subitem-unpin"
+                onClick={() => unpin(item.path)}
+                title={t('files.unpin')}
+                aria-label={`${t('files.unpin')} ${label}`}
               >
                 <X size={12} strokeWidth={1.5} />
               </button>
@@ -440,6 +504,11 @@ export default function Sidebar() {
             <div key={item.id} className="rail-group">
               {renderItem(item)}
               <RecipeAppPinItems expanded={expanded} />
+            </div>
+          ) : item.id === 'files' ? (
+            <div key={item.id} className="rail-group">
+              {renderItem(item)}
+              <FilePinItems expanded={expanded} />
             </div>
           ) : (
             renderItem(item)

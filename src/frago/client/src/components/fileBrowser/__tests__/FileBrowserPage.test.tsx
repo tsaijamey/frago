@@ -32,6 +32,7 @@ vi.mock('@/api/client', async (importOriginal) => ({
 }));
 
 import FileBrowserPage from '../FileBrowserPage';
+import { useFilePins } from '@/stores/filePins';
 import i18n from '@/i18n';
 
 beforeAll(async () => {
@@ -48,10 +49,14 @@ const HOME: FileListing = {
 
 const REPOS: FileListing = {
   path: '/Users/frago/Repos',
-  entries: [{ name: 'frago', is_dir: true, size: null, modified: '2026-10-13T09:05:00' }],
+  entries: [
+    { name: 'frago', is_dir: true, size: null, modified: '2026-10-13T09:05:00' },
+    { name: 'README.md', is_dir: false, size: 512, modified: '2026-10-13T09:06:00' },
+  ],
 };
 
 beforeEach(() => {
+  useFilePins.setState({ pins: [], activePath: null, pendingTarget: null });
   listDirectory.mockReset();
   revealPath.mockReset();
   prepareFileView.mockReset();
@@ -127,5 +132,66 @@ describe('文件页', () => {
 
     expect(await screen.findByText('读不了这个目录')).toBeTruthy();
     expect(screen.getByText('HTTP 403')).toBeTruthy();
+  });
+
+  it('树形结构支持原地展开与收起子目录，点子目录里的文件直接预览完整路径', async () => {
+    render(<FileBrowserPage />);
+
+    fireEvent.click(await screen.findByText('Repos'));
+    expect(await screen.findByText('README.md')).toBeTruthy();
+    // 树形展开时主目录同级的条目依然在树上
+    expect(screen.getByText('notes.md')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('README.md'));
+    await waitFor(() =>
+      expect(screen.getByText('/Users/frago/Repos/README.md')).toBeTruthy()
+    );
+
+    // 再点一次目录将其收起
+    fireEvent.click(screen.getByText('Repos'));
+    await waitFor(() => expect(screen.queryByText('README.md')).toBeNull());
+  });
+
+  it('支持将目录或文件 pin 到左侧菜单，并从 pin 目标直接切入', async () => {
+    render(<FileBrowserPage />);
+
+    const pinReposBtn = await screen.findByLabelText('Pin 到左侧菜单 Repos');
+    fireEvent.click(pinReposBtn);
+
+    expect(useFilePins.getState().pins).toEqual([
+      { path: '/Users/frago/Repos', is_dir: true },
+    ]);
+
+    // 从侧栏点击已 pin 的文件，直接切进父目录并选中该文件
+    useFilePins.getState().openPin({
+      path: '/Users/frago/Repos/README.md',
+      is_dir: false,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText('/Users/frago/Repos/README.md')).toBeTruthy()
+    );
+  });
+
+  it('树形导航每行右侧支持复制完整绝对路径，并在 1.5 秒后恢复按钮状态', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<FileBrowserPage />);
+
+    const copyDirBtn = await screen.findByLabelText('复制路径 Repos');
+    fireEvent.click(copyDirBtn);
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('/Users/frago/Repos')
+    );
+    await waitFor(() =>
+      expect(copyDirBtn.getAttribute('title')).toBe('已复制')
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    await waitFor(() =>
+      expect(copyDirBtn.getAttribute('title')).toBe('复制路径')
+    );
   });
 });
