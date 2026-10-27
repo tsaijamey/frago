@@ -4,7 +4,7 @@ version = "1.4.297"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
-license = {text = "AGPL-3.0-or-later"}
+license = {text = "MIT"}
 authors = [
     {name = "Jamey Tsai", email = "caijia@frago.ai"}
 ]
@@ -12,7 +12,7 @@ keywords = ["agent-os", "ai-agent", "automation", "cdp", "browser", "recipe"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",

@@ -9,7 +9,7 @@
 简体中文 · [English](README.md) · [**安装**](#安装) · [使用指南](docs/user-guide.zh-CN.md) · [配方系统](docs/recipes.zh-CN.md) · [讨论区](https://github.com/tsaijamey/frago/discussions)
 
 [![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-12a150?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
 [![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.zh-CN.md)
 
@@ -255,7 +255,7 @@ frago server start          # 启动网页界面，打开 http://127.0.0.1:8093
 
 ## 许可证
 
-AGPL-3.0 — 详见 [LICENSE](LICENSE)
+MIT — 详见 [LICENSE](LICENSE)
 
 ## 贡献
 

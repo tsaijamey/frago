@@ -9,7 +9,7 @@
 English · [简体中文](README.zh-CN.md) · [**Install**](#install) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Discussions](https://github.com/tsaijamey/frago/discussions)
 
 [![PyPI](https://img.shields.io/pypi/v/frago-cli?style=flat-square&color=12a150)](https://pypi.org/project/frago-cli/)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-12a150?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-12a150?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/tsaijamey/frago?style=flat-square&color=12a150)](https://github.com/tsaijamey/frago/stargazers)
 [![Platform](https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-12a150?style=flat-square)](docs/installation.md)
 
@@ -262,7 +262,7 @@ Inside the product, `frago book` reads the shipped knowledge base — the canoni
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE)
 
 ## Contributing
 
