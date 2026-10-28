@@ -1,18 +1,47 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+:root {
+  /* ── 顶级科技黑曜石色阶（Obsidian & Nebula Slate System） ──
+     参照 Linear / Raycast / Vercel / Cursor 的现代暗色设计标准：
+     以纯粹、克制的碳晶灰黑四级明度构建空间层次，主强调色采用星云电紫（#8b7cff）
+     与铂金冷白高光（#f4f6fb），彻底摒弃杂乱的高饱和色块。 */
+  --bg-void: #07080c;
+  --surface-0: #0a0c12;
+  --surface-1: #0e1118;
+  --surface-2: #131722;
+  --surface-3: #191e2c;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --accent: #8b7cff;
+  --accent-bright: #a599ff;
+  --accent-soft: rgba(139, 124, 255, 0.14);
+  --accent-ring: rgba(139, 124, 255, 0.38);
+  --accent-glow: rgba(139, 124, 255, 0.10);
+
+  --status-online: #10b981;
+  --status-danger: #f43f5e;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
   background: #000;
-  font-family: -apple-system, "Helvetica Neue", "PingFang SC", sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   user-select: none;
 }
-/* 真鼠标保持可见。曾经这里写 cursor:none，怕真假两个光标同时入镜穿帮——
-   这个担心不成立：录制走 9223 那个独立的无头机位，它画的是自己那一份桌面页，
-   看不到本机光标，CDP screencast 也不采集系统光标。
-   代价却是实打实的：人在自己屏幕上没了指针，连关个标签都得摸。
-   桌面页对真实输入本来就完全免疫（见 app.js blockInput），指针露出来不改变这一点。 */
 
 #stage {
   position: absolute;
@@ -26,241 +55,279 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* 桌布画布不透明，这层底色只在两种时候露出来：画布还没画第一帧，
-     以及画布被放大后四边模糊过渡的那一两像素。所以它取的就是色场的
-     base 色，露出来也看不出接缝。 */
-  background: #101a33;   /* = indigo 配色的 base；换配色时 JS 会在运行时改写这里 */
+  background: var(--bg-void);
 }
 
-/* ── 桌布 ──────────────────────────────────────────────
-   铺满桌面、压在所有窗口(100/200)之下，只当背景看。
-   pointer-events 关掉：页面本来就屏蔽真实输入，这里再断一道，
-   免得将来有人给桌面加拖拽时被这张画布截胡。
-   blur 是给 96px 宽放大 20 倍后残留的插值网格用的，抹掉它就干净了。 */
+/* 精密光学点阵与顶部星云环境微光：赋予 Agent OS 科技实验室级的空间纵深感 */
+#desktop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 85% 75% at 50% 45%, #000 20%, transparent 90%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 50% 45%, #000 20%, transparent 90%);
+}
+#desktop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    radial-gradient(90% 55% at 50% 0%, rgba(139, 124, 255, 0.09) 0%, transparent 65%),
+    radial-gradient(100% 100% at 50% 50%, transparent 45%, rgba(4, 5, 8, 0.62) 100%);
+}
+
+/* ── 桌布 (#wp-mesh) ── */
 #wp-mesh {
   position: absolute;
   top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 1;
   pointer-events: none;
-  filter: blur(10px);
-  transform: scale(1.03);   /* blur 会让四边透出底色，放大一点点盖住 */
+  filter: blur(16px) saturate(105%);
+  transform: scale(1.04);
 }
 
-/* ── menubar ── */
+/* ── 顶部系统状态栏 (#menubar) ── */
 #menubar {
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 26px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
-  /* 半透明 + 背景模糊，桌布从菜单栏底下透出来，跟 macOS 一样。
-     底色不是纯黑而是压深的暗色：桌布局部可能很亮，没有这层压深，
-     白字在亮色团上会糊掉。模糊半径给大，透出来的是色调不是形状——
-     能看清桌布的形状就会跟菜单文字抢注意力。 */
-  background: rgba(10, 14, 24, 0.36);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.10);
-  color: #fff;
-  font-size: 13px;
+  padding: 0 16px;
+  background: rgba(9, 11, 16, 0.72);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.065),
+    0 4px 20px rgba(0, 0, 0, 0.35);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
   z-index: 500;
 }
-.mb-left, .mb-right { display: flex; align-items: center; gap: 18px; }
+.mb-left { display: flex; align-items: center; gap: 14px; }
+.mb-right { display: flex; align-items: center; gap: 14px; }
 
-/* 自定义标记：缺口方环（右上角开口，缺口内一粒琥珀点）。
-   缺口曾经是拿一块与菜单栏同色的实心补丁盖出来的。菜单栏改成半透明之后
-   那块补丁就穿帮了——它会变成一个跟着桌布颜色对不上的深色方块。
-   现在改成真镂空：环画在 ::before 上，用 mask 把右上角挖掉。
-   mask 只加在 ::before，缺口里那粒点在 ::after 上，不受影响。 */
+/* 品牌幾何徽标：铂金缺口方环 + 星云紫核心点 */
 #apple-logo {
   position: relative;
-  width: 15px; height: 15px;
+  width: 14px; height: 14px;
+  filter: drop-shadow(0 0 8px rgba(139, 124, 255, 0.45));
 }
 #apple-logo::before {
   content: "";
   position: absolute;
   inset: 0;
-  border: 2.5px solid #e8a33d;
-  border-radius: 5px;
-  -webkit-mask-image: radial-gradient(circle 6px at 100% 0, transparent 0 6px, #000 6.5px);
-  mask-image: radial-gradient(circle 6px at 100% 0, transparent 0 6px, #000 6.5px);
+  border: 2px solid #e2e8f0;
+  border-radius: 4.5px;
+  -webkit-mask-image: radial-gradient(circle 5.5px at 100% 0, transparent 0 5.5px, #000 6px);
+  mask-image: radial-gradient(circle 5.5px at 100% 0, transparent 0 5.5px, #000 6px);
 }
 #apple-logo::after {
   content: "";
   position: absolute;
-  top: -2px; right: -2px;
-  width: 3px; height: 3px;
+  top: -1.5px; right: -1.5px;
+  width: 3.5px; height: 3.5px;
   border-radius: 50%;
-  background: #e8a33d;
+  background: var(--accent-bright);
+  box-shadow: 0 0 6px var(--accent);
 }
 
-/* 菜单文字一律白色，照 macOS 的样子：当前应用名加粗，其余菜单项同色略降
-   不透明度。原先当前应用名是琥珀色，那是把品牌强调色用在了系统级构件上——
-   真实 macOS 的菜单栏里没有彩色文字。琥珀继续留在窗口高亮、标签页、
-   标记那些地方。 */
-.mb-app { font-weight: 700; color: #fff; }
-.mb-item { color: rgba(255, 255, 255, 0.88); }
-#mb-clock { font-variant-numeric: tabular-nums; color: #fff; }
+.mb-app {
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.065);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.mb-item {
+  color: rgba(241, 245, 249, 0.50);
+  font-weight: 400;
+  font-size: 12px;
+}
+#mb-clock {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: rgba(241, 245, 249, 0.88);
+  padding: 1.5px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
 
 #mb-battery {
   position: relative;
-  width: 22px; height: 11px;
-  border: 1px solid rgba(255, 255, 255, 0.75);
+  width: 20px; height: 10px;
+  border: 1px solid rgba(241, 245, 249, 0.45);
   border-radius: 3px;
 }
 #mb-battery::after {
   content: "";
   position: absolute;
-  right: -4px; top: 2.5px;
-  width: 2px; height: 4px;
-  background: rgba(255, 255, 255, 0.75);
+  right: -3px; top: 2.5px;
+  width: 1.5px; height: 3px;
+  background: rgba(241, 245, 249, 0.45);
   border-radius: 0 1px 1px 0;
 }
 #mb-battery i {
   position: absolute;
-  left: 1px; top: 1px; bottom: 1px;
-  width: 75%;
-  background: rgba(255, 255, 255, 0.92);
+  left: 1.5px; top: 1.5px; bottom: 1.5px;
+  width: 76%;
+  background: rgba(241, 245, 249, 0.85);
   border-radius: 1px;
 }
-/* 同心扇形从一点向上张开，这才是真实的 Wi-Fi 图形。
-   之前用三个只染上边框的圆叠出来，圆被容器裁掉一半，弧长和弧心都不对，
-   放大看是畸形的。 */
 #mb-wifi {
   display: flex;
   align-items: center;
+  opacity: 0.78;
 }
 
-/* ── windows ── */
+/* ── 舞台窗口 (.stage-window) ──
+   采用四面闭合圆角光环区分层级：焦点窗呈现深邃悬浮阴影与星云电紫+铂金微光环，
+   非焦点窗安静退后，无任何单边亮条。 */
 .stage-window {
   position: absolute;
   display: flex;
   flex-direction: column;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
-  background: #161d27;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: var(--surface-1);
+  box-shadow:
+    0 20px 50px -10px rgba(0, 0, 0, 0.68),
+    0 0 0 1px rgba(255, 255, 255, 0.075),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025);
   transition: left 0.3s cubic-bezier(.4,0,.2,1), top 0.3s cubic-bezier(.4,0,.2,1),
               width 0.3s cubic-bezier(.4,0,.2,1), height 0.3s cubic-bezier(.4,0,.2,1),
               transform 0.38s cubic-bezier(.5,0,.8,.4), opacity 0.38s ease,
-              box-shadow 0.3s ease;
+              box-shadow 0.28s ease;
 }
 .stage-window.focused {
   z-index: 200;
   box-shadow:
-    0 26px 70px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(232, 163, 61, 0.28),
-    0 0 24px rgba(232, 163, 61, 0.08);
+    0 32px 84px -12px rgba(0, 0, 0, 0.82),
+    0 0 0 1px rgba(139, 124, 255, 0.36),
+    0 0 40px rgba(139, 124, 255, 0.09),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
-/* 非焦点窗口的实际层级由 app.js 按 MRU 栈写入内联 z-index（189..187），
-   这里保留 100 作为脚本尚未接管时的初值兜底。 */
 .stage-window:not(.focused) { z-index: 100; }
-/* 最小化：飞向 dock（transform 由 JS 按图标位置计算），落点渐隐。
-   窗口只是不画了——broker 照常推画面，恢复瞬间内容是最新的。 */
 .stage-window.minimized { opacity: 0; pointer-events: none; }
-/* 关闭：原地缩一点淡出，刻意不飞向 dock——飞进 dock 是"我收起来了，还在跑"，
-   而关闭是"这个程序不在桌面上了"。两者在画面上必须一眼分得开，否则观众
-   看到窗口消失只会理解成最小化。dock 上那颗灯灭掉是第二个信号。 */
 .stage-window.closing { opacity: 0; pointer-events: none; }
-/* 关掉的窗口要真的从渲染树里拿掉。
-   **这一条不能省。** 浏览器内置的 [hidden]{display:none} 属于 UA 样式表，
-   而上面 .stage-window 的 display:flex 是作者样式——作者样式恒压过 UA 样式，
-   与选择器权重无关。所以不写这条规则，hidden 属性形同虚设：JS 把 hidden 设上了、
-   dock 的灯也灭了，窗口却照样画在桌面上，看起来像"程序关了但窗口还在"。
-   图片浏览器一直是这个毛病（它开机就带 hidden，于是桌面上常年挂着一扇空的
-   Preview），只是没人把它和这条规则联系起来。 */
 .stage-window[hidden] { display: none; }
 
 .titlebar {
   position: relative;
-  height: 30px;
+  height: 32px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #232d3b;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, #161a24 0%, #11141d 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .stage-window:not(.focused) .titlebar {
-  background: #1a222e;
-  box-shadow: none;
+  background: #0d1017;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 .win-title {
-  color: #e6edf3;
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   max-width: 60%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.stage-window:not(.focused) .win-title { color: #8b98a5; }
+#win-term .win-title::before {
+  content: ">_";
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-bright);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(139, 124, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(139, 124, 255, 0.25);
+}
+#win-browser .win-title::before {
+  content: "◎";
+  font-size: 10px;
+  color: #7dd3fc;
+  opacity: 0.85;
+}
+.stage-window:not(.focused) .win-title { color: var(--text-muted); }
+.stage-window:not(.focused)#win-term .win-title::before { opacity: 0.45; }
 
 .traffic {
   position: absolute;
-  left: 12px; top: 0; bottom: 0;
+  left: 13px; top: 0; bottom: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 .tl {
-  width: 11px; height: 11px;
+  width: 10px; height: 10px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
-.stage-window.focused .tl:first-child {
-  background: #e8a33d;
-  box-shadow: 0 0 6px rgba(232, 163, 61, 0.55);
+.stage-window.focused .tl.red {
+  background: rgba(244, 63, 94, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+.stage-window.focused .tl.yellow {
+  background: rgba(245, 158, 11, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+.stage-window.focused .tl.green {
+  background: rgba(16, 185, 129, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 
 .win-body { flex: 1; min-height: 0; position: relative; }
 
-/* terminal */
+/* ── 终端窗口 (Terminal) ── */
 .term-body {
-  background: #10151d;
-  padding: 8px 10px;
+  background: #080a0f;
+  padding: 12px 14px;
   overflow: hidden;
 }
-/* 缓冲区的视口。高度由 app.js 钉成整行数 × 行高——留半行的话，
-   画面上会挂着一条被切掉一半的字，而 broker 换算行号时那半行既算
-   看得见又算看不见，取景就会差一行。
-
-   overflow:hidden 而不是 auto：滚动条会占掉宽度，字符列数跟着抖，
-   tmux 就被反复 resize；而且这是块荧幕，没有人会用手去滚它。
-   overflow:hidden 照样滚得动——scrollTop 是程序设的。 */
 .term-scroll {
   overflow: hidden;
   scrollbar-width: none;
 }
 .term-scroll::-webkit-scrollbar { display: none; }
 #term-screen {
-  font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
-  /* 字号是录制构图的第一变量，不是外观偏好：13px 在 1080p 的成片里就是
-     13 像素高，压到手机上根本读不出，而想让字变大靠改窗口几何或手动
-     tmux resize 都没用——列数行数是"窗口尺寸 ÷ 字符格子"算出来的，格子
-     大小只由这里定。录制档走 broker 的 term.fontsize 指令改这个变量，
-     默认仍是 13px（人自己看那块荧幕的习惯尺寸）。 */
+  font-family: var(--font-mono);
   font-size: var(--term-fs, 13px);
   line-height: 1.35;
-  color: #d8dee9;
-  /* 回看的动画走这条：滚动位置一步到位写进 scrollTop，视觉上的移动靠内容
-     平移补间。时长由指令给（app.js 里现设），这里只声明补间什么、怎么走。 */
+  color: #e2e8f0;
   transition-property: transform;
   transition-timing-function: cubic-bezier(.4, 0, .2, 1);
   will-change: transform;
 }
 .term-line { white-space: pre; }
-/* 空行也得占满一行高。没有这一条，一屏里的空行高度是 0，下面的内容
-   整体上移——画面看着像少了几行，而行号换算出来的位置全是错的。 */
 .term-line::after { content: "\200b"; }
 
-/* image viewer */
+/* ── 预览窗口 (Preview) ── */
 .image-body {
-  background: #10151d;
+  background: #080a0f;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -272,26 +339,19 @@ html, body {
   object-fit: contain;
 }
 
-/* ── video player ──
-   简洁边框：没有标题栏、没有红黄绿、没有播放控件。理由是这扇窗口演的不是
-   一个 macOS 应用，是"一块正在放片子的屏"——标题栏和红绿灯会把观众的注意力
-   引到窗口装饰上，而这一镜要看的是片子本身。装饰高度因此是 0，
-   contentRect 就是整扇窗口（app.js 的 winHeaderH 对 video 返回 0）。
-
-   描边比别的窗口细一档、圆角小一档：边框存在的唯一目的是把片子从桌布上
-   划出来，粗了就变成一个相框。控件也一并不画——播放、暂停、跳转全部由指令
-   驱动，画一排点不动的按钮只会让观众以为那是可以点的。 */
+/* ── 视频播放器 (Player) ── */
 .win-video {
-  border-radius: 6px;
+  border-radius: 10px;
   background: #000;
   box-shadow:
-    0 18px 48px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.14);
+    0 20px 54px rgba(0, 0, 0, 0.68),
+    0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 .win-video.focused {
   box-shadow:
-    0 26px 66px rgba(0, 0, 0, 0.66),
-    0 0 0 1px rgba(232, 163, 61, 0.34);
+    0 28px 72px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(139, 124, 255, 0.42),
+    0 0 32px rgba(139, 124, 255, 0.10);
 }
 .video-body {
   background: #000;
@@ -303,48 +363,57 @@ html, body {
 #video-view {
   width: 100%;
   height: 100%;
-  /* contain 而不是 cover：窗口几何本来就是按片子的宽高比算的，两者同比，
-     contain 不会留边；万一探不到真实尺寸而退回 16:9，contain 留一点黑边，
-     cover 则会把画面裁掉一截——留边看得出来，裁掉看不出来。 */
   object-fit: contain;
   display: block;
   background: #000;
 }
 
-/* fake browser chrome */
+/* ── 虚拟浏览器外壳 (.browser-chrome) ──
+   对标 Arc / Linear 的一体化暗晶顶栏与悬浮标签卡 */
 .browser-chrome {
   flex: none;
-  background: #1a222e;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+  background: #0d1017;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .tab-strip {
   display: flex;
-  align-items: flex-end;
-  height: 28px;
-  padding: 0 10px;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 2px 10px 0;
+  background: #0a0c12;
 }
 .tab {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 28px;
-  min-width: 130px;
+  height: 24px;
+  min-width: 128px;
   max-width: 220px;
-  padding: 0 12px;
-  border-radius: 8px 8px 0 0;
-  background: #222c3a;
-  color: #8b98a5;
-  font-size: 12px;
+  padding: 0 11px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 .tab.active {
-  background: rgba(232, 163, 61, 0.14);
-  color: #e6edf3;
+  background: #151924;
+  color: var(--text-primary);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.085),
+    0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .tab-favicon {
-  width: 10px; height: 10px;
+  width: 7px; height: 7px;
   border-radius: 50%;
-  border: 2px solid #e8a33d;
+  background: rgba(148, 163, 184, 0.38);
   flex: none;
+}
+.tab.active .tab-favicon {
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px rgba(139, 124, 255, 0.65);
 }
 .tab-title {
   white-space: nowrap;
@@ -355,45 +424,65 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: 36px;
   padding: 0 12px;
-  background: #222c3a;
+  background: #10141d;
 }
 .nav-btn {
-  color: #8b98a5;
-  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 17px;
   line-height: 1;
-  padding: 0 4px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
-.nav-btn.dim { opacity: 0.35; }
+.nav-btn.dim { opacity: 0.32; background: transparent; box-shadow: none; }
 .addressbar {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   height: 26px;
-  padding: 0 12px;
-  border-radius: 13px;
-  background: #141a23;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  color: #e6edf3;
-  font-size: 12px;
+  padding: 0 11px;
+  border-radius: 7px;
+  background: #07090e;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: rgba(241, 245, 249, 0.86);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   overflow: hidden;
+}
+.addressbar::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-online);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.45);
+  flex: none;
+  opacity: 0.75;
 }
 .addr-url { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .spinner {
   flex: none;
   width: 11px; height: 11px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.16);
-  border-top-color: #e8a33d;
+  border: 1.8px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent-bright);
   display: none;
   animation: spin 0.8s linear infinite;
 }
 .spinner.on { display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* 虚拟浏览器工具栏右侧的人工接管与弹出真窗控制区（机位模式下隐藏） */
+/* 虚拟浏览器工具栏右侧的人工接管与弹出真窗控制区 */
 .browser-human-controls {
   display: inline-flex;
   align-items: center;
@@ -404,48 +493,69 @@ html, body {
 .bh-btn {
   height: 24px;
   padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(20, 26, 35, 0.85);
-  color: #c9d4e0;
-  font-size: 11.5px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
   font-weight: 500;
   line-height: 1;
+  letter-spacing: 0.01em;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.bh-btn::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.45);
 }
 .bh-btn:hover:not(:disabled) {
-  background: rgba(38, 48, 64, 0.95);
-  border-color: rgba(255, 255, 255, 0.26);
-  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text-primary);
 }
 .bh-btn.active {
-  background: #e8a33d;
-  border-color: #f3b85a;
-  color: #16100a;
+  background: rgba(139, 124, 255, 0.16);
+  border-color: rgba(139, 124, 255, 0.48);
+  color: #e0e7ff;
   font-weight: 600;
-  box-shadow: 0 0 12px rgba(232, 163, 61, 0.42);
+  box-shadow: 0 0 14px rgba(139, 124, 255, 0.22), inset 0 0 0 1px rgba(139, 124, 255, 0.12);
+}
+.bh-btn.active::before {
+  background: var(--accent-bright);
+  box-shadow: 0 0 6px var(--accent);
 }
 .bh-btn.bh-headful.active {
-  background: #2b7de9;
-  border-color: #5ca0f6;
-  color: #ffffff;
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.48);
+  color: #bae6fd;
   font-weight: 600;
-  box-shadow: 0 0 12px rgba(43, 125, 233, 0.45);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.22), inset 0 0 0 1px rgba(56, 189, 248, 0.12);
+}
+.bh-btn.bh-headful.active::before {
+  background: #38bdf8;
+  box-shadow: 0 0 6px #38bdf8;
 }
 .bh-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
-/* 画面按自身比例居中铺放，不拉满盒子。
-   拉满的写法默认了"帧和窗口永远同比"，而这两者同步天生有延迟：窗口尺寸是
-   CSS 补间，立刻就变形；新尺寸的帧要等 UI 报几何、broker 改视口、重开帧流、
-   页面重绘一整圈才回来。中间那一秒画面就是横向拉伸的。
-   按比例铺放之后，同步延迟最多表现为两侧一点空边，变形则从机制上没有了。 */
-.browser-body { background: #0e0f12; overflow: hidden; }
+.browser-body {
+  background:
+    radial-gradient(70% 60% at 50% 40%, rgba(139, 124, 255, 0.04) 0%, transparent 70%),
+    #080a0f;
+  overflow: hidden;
+}
 #browser-canvas {
   position: absolute;
   left: 50%;
@@ -457,9 +567,9 @@ html, body {
 }
 #win-browser.takeover-active {
   box-shadow:
-    0 26px 68px rgba(0, 0, 0, 0.68),
-    0 0 0 1.5px rgba(232, 163, 61, 0.65),
-    0 0 24px rgba(232, 163, 61, 0.22);
+    0 32px 84px -12px rgba(0, 0, 0, 0.82),
+    0 0 0 1.5px rgba(139, 124, 255, 0.62),
+    0 0 36px rgba(139, 124, 255, 0.18);
 }
 .browser-ime-input {
   position: absolute;
@@ -475,89 +585,120 @@ html, body {
 }
 .browser-takeover-banner {
   position: absolute;
-  top: 10px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
-  padding: 5px 14px;
+  padding: 6px 14px;
   border-radius: 999px;
-  background: rgba(16, 20, 28, 0.86);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(232, 163, 61, 0.38);
-  color: #f4f6fa;
-  font-size: 12px;
+  background: rgba(10, 12, 18, 0.88);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(139, 124, 255, 0.40);
+  color: var(--text-primary);
+  font-size: 11.5px;
   font-weight: 500;
   white-space: nowrap;
   pointer-events: none;
 }
 .browser-takeover-banner.headful-mode {
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(92, 160, 246, 0.48);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(56, 189, 248, 0.45);
 }
 .browser-takeover-banner[hidden] { display: none; }
 
-/* ── 空白起始页 ──
-   演员标签不在时铺满窗体。做成浏览器刚打开的样子：四色圆点加一条搜索框，
-   认得出是个浏览器、又明摆着没开任何页面。不写文案是有意的——录制画面里
-   一行英文提示会立刻暴露这不是真的浏览器。 */
+/* ── 空白起始页 (#browser-newtab) ── */
 .browser-newtab {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* 起始页的重心偏上，跟真浏览器一样：正中会显得整扇窗口是空的，
-     偏上才读得出"这是个等着你输入的浏览器"。 */
   justify-content: center;
-  padding-bottom: 12%;
-  gap: 26px;
-  background: #1c1d20;
+  padding-bottom: 8%;
+  gap: 22px;
+  background:
+    radial-gradient(48% 44% at 50% 42%, rgba(139, 124, 255, 0.08) 0%, transparent 72%),
+    radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    #080a0f;
+  background-size: 100% 100%, 20px 20px, 100% 100%;
+}
+.browser-newtab::before {
+  content: "";
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  border: 1px solid rgba(139, 124, 255, 0.09);
+  box-shadow:
+    0 0 0 48px rgba(255, 255, 255, 0.012),
+    0 0 0 96px rgba(255, 255, 255, 0.006);
+  pointer-events: none;
 }
 .browser-newtab[hidden] { display: none; }
-/* 尺寸用 min() 钳住：这扇窗口的宽度跟着演员标签的宽高比走，纯百分比在宽窗口上
-   会把标记撑成一个巨大的色块。 */
 .nt-mark {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 5px;
-  width: min(5%, 46px);
-  aspect-ratio: 1;
+  gap: 7px;
+  width: 48px;
+  height: 48px;
+  padding: 11px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(25, 30, 44, 0.9) 0%, rgba(14, 17, 26, 0.9) 100%);
+  box-shadow:
+    0 0 0 1px rgba(139, 124, 255, 0.25),
+    0 12px 28px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(139, 124, 255, 0.14);
 }
 .nt-dot { border-radius: 50%; aspect-ratio: 1; }
-.nt-b { background: #4285f4; }
-.nt-r { background: #ea4335; }
-.nt-y { background: #fbbc05; }
-.nt-g { background: #34a853; }
+.nt-b { background: var(--accent-bright); box-shadow: 0 0 8px rgba(139, 124, 255, 0.65); }
+.nt-r { background: rgba(241, 245, 249, 0.80); }
+.nt-y { background: rgba(148, 163, 184, 0.50); }
+.nt-g { background: rgba(56, 189, 248, 0.65); }
 .nt-search {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(42%, 460px);
-  height: 40px;
-  padding: 0 18px;
-  border-radius: 999px;
-  background: #2a2b2f;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  width: min(44%, 440px);
+  height: 38px;
+  padding: 0 15px;
+  border-radius: 10px;
+  background: rgba(12, 15, 23, 0.85);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.085),
+    inset 0 1px 2px rgba(0, 0, 0, 0.5),
+    0 12px 32px rgba(0, 0, 0, 0.45);
 }
-.nt-search-icon { color: #8a8d93; font-size: 15px; line-height: 1; }
+.nt-search-icon { color: var(--accent-bright); font-size: 12px; line-height: 1; opacity: 0.85; }
+.nt-search::after {
+  content: "agent://stage · standby viewport";
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: rgba(148, 163, 184, 0.45);
+  letter-spacing: 0.01em;
+}
 
-/* ── dock ── */
-/* 尺寸按"够认得出、不抢戏"取：录制画面里 dock 是场景交代，不是主体。
-   改动时 app.js 的 DOCK_MARGIN 要跟着 bottom 走——桌面可用区靠它扣留白。 */
+/* ── 程序坞 (#dock) ──
+   统一深空碳晶微拟物底座 + 铂金/星云紫微光图形，彻底告别高饱和杂色方块 */
 #dock {
   position: absolute;
   left: 50%;
   bottom: 10px;
   transform: translateX(-50%);
   display: flex;
-  gap: 10px;
-  padding: 7px;
-  border-radius: 14px;
-  background: #1a222e;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 16px;
+  background: rgba(11, 13, 19, 0.76);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 14px 34px rgba(0, 0, 0, 0.5);
+    0 0 0 1px rgba(255, 255, 255, 0.09),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    0 18px 42px rgba(0, 0, 0, 0.72);
   z-index: 500;
 }
 .dock-item {
@@ -566,64 +707,81 @@ html, body {
 }
 .dock-icon {
   width: 38px; height: 38px;
-  border-radius: 9px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
+  background: linear-gradient(180deg, #1b1f2c 0%, #10131b 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.085),
+    0 4px 10px rgba(0, 0, 0, 0.45);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.dock-item.active .dock-icon {
+  background:
+    radial-gradient(85% 85% at 50% 15%, rgba(139, 124, 255, 0.22) 0%, transparent 70%),
+    linear-gradient(180deg, #222738 0%, #141824 100%);
+  box-shadow:
+    0 0 0 1px rgba(139, 124, 255, 0.42),
+    0 0 18px rgba(139, 124, 255, 0.16),
+    0 6px 14px rgba(0, 0, 0, 0.55);
 }
 .icon-terminal {
-  background: #2a313c;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(80% 80% at 50% 20%, rgba(139, 124, 255, 0.16) 0%, transparent 70%),
+    linear-gradient(180deg, #1b1f2c 0%, #10131b 100%);
 }
 .icon-terminal span {
-  color: #fff;
-  font-family: Menlo, monospace;
-  font-size: 13px;
+  color: #e0e7ff;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   font-weight: 700;
+  letter-spacing: -0.5px;
+  text-shadow: 0 0 10px rgba(139, 124, 255, 0.45);
 }
-/* 地球仪：经纬线是"浏览器"最通用也最真实的符号，且不撞任何品牌。
-   底色从琥珀换成深蓝——琥珀要留给系统状态（焦点、运行中）才不会被稀释，
-   而 Dock 里图标各有各的色，本来就更接近真实桌面。 */
 .icon-chrome {
-  background: linear-gradient(160deg, #3d7fc4 0%, #2560a0 55%, #1b4a80 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  background:
+    radial-gradient(80% 80% at 50% 20%, rgba(125, 211, 252, 0.14) 0%, transparent 70%),
+    linear-gradient(180deg, #1b1f2c 0%, #10131b 100%);
 }
+.icon-chrome svg g { stroke: #bae6fd; }
 .icon-image {
-  background: linear-gradient(160deg, #4a7d52 0%, #2f5f3a 55%, #22492e 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  background:
+    radial-gradient(80% 80% at 50% 20%, rgba(167, 243, 208, 0.12) 0%, transparent 70%),
+    linear-gradient(180deg, #1b1f2c 0%, #10131b 100%);
 }
+.icon-image svg rect[stroke],
+.icon-image svg path { stroke: #cbd5e1; }
+.icon-image svg circle { fill: var(--accent-bright); }
 .icon-video {
-  background: linear-gradient(160deg, #6b4a8f 0%, #4b3070 55%, #382458 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  background:
+    radial-gradient(80% 80% at 50% 20%, rgba(196, 181, 253, 0.14) 0%, transparent 70%),
+    linear-gradient(180deg, #1b1f2c 0%, #10131b 100%);
 }
+.icon-video svg rect[stroke] { stroke: #cbd5e1; }
+.icon-video svg path { fill: var(--accent-bright); }
+
 .dock-dot {
   position: absolute;
   left: 50%;
-  bottom: -5px;
+  bottom: -4px;
   transform: translateX(-50%);
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: #e8a33d;
-  box-shadow: 0 0 5px rgba(232, 163, 61, 0.7);
+  width: 4px; height: 4px;
+  border-radius: 999px;
+  background: rgba(241, 245, 249, 0.48);
   opacity: 0;
+  transition: width 0.2s ease, opacity 0.2s ease, background 0.2s ease;
 }
-/* 圆点答的是"这个程序在不在跑"，不是"是不是前台"——这是画面上唯一能区分
-   close（灯灭）与 min（灯还亮着、只是窗口飞进了 dock）的地方。
-   前台那个再亮一档，两种状态各有各的形态，不必去数窗口。 */
-.dock-item.running .dock-dot { opacity: 0.42; }
-.dock-item.active .dock-dot { opacity: 1; }
+.dock-item.running .dock-dot { opacity: 0.55; }
+.dock-item.active .dock-dot {
+  width: 10px;
+  opacity: 1;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px rgba(139, 124, 255, 0.85);
+}
 
-/* ── 全屏 HTML 展示层 ──────────────────────────────────────
-   铺满整块桌面。z-index 600 压在窗口(100/200)、菜单栏与 dock(500) 之上，
-   在字幕(800)、扫描灯(900)、浮层(1200)、贴纸栏(1300)、鼠标(2000) 之下。
-
-   这个层次不是随手排的：全屏展示要盖掉的是**桌面**（窗口、程序坞、菜单栏），
-   而字幕和贴纸栏是讲解，讲解本来就该压在画面上——一段满屏动画配一条说明字条
-   正是这套东西存在的理由。扫描灯留在上面同理：它是取景保障（canvas 逐帧重画
-   把帧率钉住），被盖住就等于录制时帧率掉回三四帧。
-
-   背景铺黑：HTML 自己不一定有背景色，透出下面的桌面窗口就穿帮了。 */
+/* ── 全屏 HTML 展示层 (#slide-layer) ── */
 #slide-layer {
   position: absolute;
   inset: 0;
@@ -635,8 +793,6 @@ html, body {
   transition: opacity 0.28s ease;
 }
 #slide-layer.in { opacity: 1; }
-/* 与 .stage-window[hidden] 同一条理由：作者样式恒压过 UA 样式表里那条
-   [hidden]{display:none}，不写这句，hidden 属性形同虚设。 */
 #slide-layer[hidden] { display: none; }
 #slide-frame {
   width: 100%;
@@ -646,12 +802,7 @@ html, body {
   background: #000;
 }
 
-/* ── caption ── */
-/* 字幕贴着 dock 上沿走，和所有影片一样。原先吊在画面 30% 高处，
-   正好压在内容区中间——观众看窗口里发生什么时，字幕挡在视线正中。 */
-/* 容器只管排队：底对齐，新行从下方进来把旧行顶上去。
-   气泡长在每一行上，不在容器上——多行共用一个气泡的话，行数一变
-   整块背景跟着跳，看着像画面在抖。 */
+/* ── 字幕层 (#caption) ── */
 #caption {
   position: absolute;
   left: 50%;
@@ -666,11 +817,15 @@ html, body {
   z-index: 800;
 }
 .caption-line {
-  padding: 10px 20px;
+  padding: 10px 22px;
   border-radius: 12px;
-  background: rgba(10, 13, 19, 0.82);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
-  color: #f2f4f8;
+  background: rgba(9, 11, 17, 0.86);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.085),
+    0 12px 32px rgba(0, 0, 0, 0.55);
+  color: var(--text-primary);
   font-size: 22px;
   line-height: 1.4;
   text-align: center;
@@ -679,15 +834,9 @@ html, body {
   transition: opacity 0.35s ease, transform 0.35s cubic-bezier(.4,0,.2,1);
 }
 .caption-line.in { opacity: 1; transform: none; }
-/* 上面的旧行退到次要位置：当前这句该是最亮的那句 */
-/* 必须带 .in：正在淡出的行没有 .in，让它落回 opacity:0，
-   否则这条会把它按住在 0.62 上，永远淡不掉 */
-.caption-line.in:not(:last-child) { opacity: 0.62; font-size: 19px; }
+.caption-line.in:not(:last-child) { opacity: 0.58; font-size: 19px; }
 
-/* ── 浮层标注 ──
-   夹在窗口(100/200)、菜单栏与 dock(500)、字幕(800) 之上，涟漪(1900) 与
-   虚拟鼠标(2000) 之下。鼠标必须压在最上面——观众全靠它判断操作发生在哪，
-   被一张图示盖住的话，画面就只剩"有东西在动"而不知道是谁在动。 */
+/* ── 浮层标注 (#overlay-layer) ── */
 #overlay-layer {
   position: absolute;
   inset: 0;
@@ -701,8 +850,6 @@ html, body {
   transition: opacity 0.3s ease, transform 0.3s cubic-bezier(.4,0,.2,1);
 }
 .overlay-item.in { opacity: 1; }
-/* 未给 at 的浮层铺满整层，靠 flex 把 body 摆到正中。
-   用 inset+flex 而不是 left:50%+translate，是为了把 transform 整个让给进场动画。 */
 .overlay-centered {
   inset: 0;
   display: flex;
@@ -711,20 +858,20 @@ html, body {
 }
 .overlay-body { max-width: 100%; max-height: 100%; }
 
-/* card：承载结构图、对比表这类 HTML 片段 */
 .overlay-card .overlay-body {
   padding: 26px 34px;
   border-radius: 18px;
-  background: rgba(14, 18, 26, 0.92);
+  background: rgba(11, 13, 20, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   box-shadow:
-    0 0 0 1px rgba(232, 163, 61, 0.22),
-    0 24px 60px rgba(0, 0, 0, 0.6);
-  color: #eef2f7;
+    0 0 0 1px rgba(139, 124, 255, 0.28),
+    0 24px 60px rgba(0, 0, 0, 0.68);
+  color: var(--text-primary);
   font-size: 26px;
   line-height: 1.5;
 }
 
-/* title：海报字。这个尺寸是给"断章"用的，小了就只是个标题，砸不下来 */
 .overlay-title .overlay-body {
   font-size: 132px;
   font-weight: 800;
@@ -734,14 +881,12 @@ html, body {
   text-shadow: 0 6px 30px rgba(0, 0, 0, 0.75);
 }
 
-/* highlight：亮框 + 反向遮罩。超大扩散的 box-shadow 把画面其余部分压暗，
-   框内保持原样，等于在不裁剪 DOM 的前提下抠了个洞。 */
 .overlay-hole {
   border-radius: 10px;
   box-shadow:
-    0 0 0 3px rgba(232, 163, 61, 0.95),
-    0 0 26px rgba(232, 163, 61, 0.5),
-    0 0 0 9999px rgba(6, 9, 14, 0.55);
+    0 0 0 3px rgba(139, 124, 255, 0.95),
+    0 0 26px rgba(139, 124, 255, 0.5),
+    0 0 0 9999px rgba(6, 8, 13, 0.58);
 }
 
 .overlay-image .overlay-body img {
@@ -752,10 +897,8 @@ html, body {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
 
-/* 三种进场。终态一律是 none，进场差异全在起手式上 */
 .overlay-enter-fade { transform: none; }
 .overlay-enter-slam { transform: scale(2.6); }
-/* 过冲曲线让它落地时轻轻弹一下，才有"砸"的重量感 */
 .overlay-enter-slam.in {
   transform: scale(1);
   transition: opacity 0.16s ease, transform 0.34s cubic-bezier(.2,1.6,.35,1);
@@ -763,16 +906,7 @@ html, body {
 .overlay-enter-slide { transform: translateX(-60%); }
 .overlay-enter-slide.in { transform: translateX(0); }
 
-/* ── 贴纸栏（下三分之一字条） ─────────────────────────────
-   电视新闻画面下方那条说明条。z-index 1300：压在浮层(1200) 之上、涟漪与
-   鼠标之下——它是**挂着的说明**，讲这一段的全程都在，所以不该被任何一次
-   一闪而过的图示盖住；而鼠标必须在最上面，观众全靠它判断操作发生在哪。
-
-   位置在字幕(#caption, bottom:72px) 之上而不是同一处：广播画面里也是字条
-   在上、字幕在下，两者同时在场是常态。默认下沿距底 132px，正好让出字幕那条。
-
-   四种样式是预定义的，不开放自由 CSS：这条东西的用途是"少量说明文字"，
-   开放样式等于把排版决定推给调用方，而每次现调的结果就是每一镜长得不一样。 */
+/* ── 贴纸栏 (#strap-layer) ── */
 #strap-layer {
   position: absolute;
   left: 0;
@@ -784,22 +918,23 @@ html, body {
 }
 #strap-layer[hidden] { display: none; }
 
-/* 右下角客服式对话面板（#human-input）。
-   始终位于虚拟桌面右下角（right: 24px; bottom: 24px）：
-   - 带 ?userInput=true&session=<编号> 时：默认展开对话面板（#hi-panel），
-     可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
-   - 不带参数时：右下角仍显示胶囊图标（#hi-trigger），但默认不展开面板。
-   z-index 压在贴纸栏(1300)之上、虚拟鼠标(2000)之下：人要能点到它，鼠标又不该被它挡住。 */
+/* ── 右下角导演指挥舱面板 (#human-input) ──────────────────────────
+   采用 Cursor Composer / Linear Copilot / Raycast AI 范式重构：
+   1. 壳体：深空黑曜石毛玻璃 + 顶部星云电紫环境微光 + 1px 镜面内环；
+   2. 消息流：导演消息为高通透碳晶叙事卡（配 ✦ 星芒标），用户指令为电紫微光胶囊卡；
+   3. 底部输入区：将 .hi-foot 打造为一体式悬浮 Composer 命令舱（文本域在上、状态提示与
+      发送键在下），自适应多行顺滑长高，聚焦时整舱泛起四周均匀星云柔光。 */
 #human-input {
   position: absolute;
-  right: 24px;
-  bottom: 24px;
+  right: 22px;
+  bottom: 22px;
   z-index: 1400;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
   font-size: 13px;
   pointer-events: auto;
   user-select: text;
@@ -808,247 +943,355 @@ html, body {
 #human-input [hidden] { display: none !important; }
 
 #human-input .hi-panel {
-  width: 420px;
-  border-radius: 14px;
-  background: rgba(20, 22, 28, 0.95);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.56), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  width: 404px;
+  border-radius: 18px;
+  background:
+    radial-gradient(110% 65% at 50% 0%, rgba(139, 124, 255, 0.085) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(15, 18, 26, 0.92) 0%, rgba(9, 11, 16, 0.96) 100%);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 32px 80px -12px rgba(0, 0, 0, 0.82),
+    0 0 0 1px rgba(0, 0, 0, 0.65);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+#human-input[data-mode="open"] .hi-fab,
+#human-input[data-mode="sending"] .hi-fab {
+  display: none !important;
+}
+
 #human-input .hi-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 13px;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  gap: 10px;
+  padding: 13px 15px 11px;
+  background: rgba(255, 255, 255, 0.015);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.055);
   user-select: none;
 }
 #human-input .hi-head-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #15b34d;
+  background: var(--status-online);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16), 0 0 8px rgba(16, 185, 129, 0.5);
   flex-shrink: 0;
 }
-#human-input .hi-head-dot.idle { background: rgba(255, 255, 255, 0.32); }
+#human-input .hi-head-dot.idle {
+  background: rgba(148, 163, 184, 0.35);
+  box-shadow: none;
+}
 #human-input .hi-head-info { flex: 1; min-width: 0; }
 #human-input .hi-head-title {
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.94);
+  color: var(--text-primary);
   line-height: 1.25;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 #human-input .hi-tag {
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.94);
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
 }
 #human-input .hi-sid {
-  font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.45);
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #c7d2fe;
+  padding: 1.5px 7px;
+  border-radius: 5px;
+  background: rgba(139, 124, 255, 0.12);
+  border: 1px solid rgba(139, 124, 255, 0.24);
 }
 #human-input .hi-head-sub {
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.48);
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.65);
   line-height: 1.35;
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #human-input .hi-head-close {
   width: 26px;
   height: 26px;
   padding: 0;
   border-radius: 7px;
-  border: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 #human-input .hi-head-close:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.94);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-primary);
 }
 
 #human-input .hi-log {
-  padding: 11px 13px;
-  max-height: 290px;
-  min-height: 120px;
+  padding: 13px 15px 8px;
+  max-height: min(460px, 52vh);
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 11px;
 }
+#human-input .hi-log::-webkit-scrollbar,
+#human-input textarea::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+#human-input .hi-log::-webkit-scrollbar-track,
+#human-input textarea::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px 0;
+}
+#human-input .hi-log::-webkit-scrollbar-thumb,
+#human-input textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+#human-input .hi-log:hover::-webkit-scrollbar-thumb,
+#human-input textarea:hover::-webkit-scrollbar-thumb {
+  background: rgba(139, 124, 255, 0.45);
+}
+
 #human-input .hi-msg {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-width: 88%;
+  gap: 4px;
+  max-width: 92%;
   font-size: 12.5px;
-  line-height: 1.45;
+  line-height: 1.54;
 }
 #human-input .hi-msg.dir { align-self: flex-start; }
 #human-input .hi-msg.usr { align-self: flex-end; align-items: flex-end; }
 #human-input .hi-msg-meta {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.38);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: rgba(148, 163, 184, 0.55);
   padding: 0 2px;
   user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+#human-input .hi-msg.dir .hi-msg-meta::before {
+  content: "✦";
+  color: var(--accent-bright);
+  font-size: 9px;
+  line-height: 1;
 }
 #human-input .hi-bubble {
-  padding: 8px 11px;
-  border-radius: 10px;
+  padding: 9.5px 13px;
+  border-radius: 11px;
   word-break: break-word;
   white-space: pre-wrap;
 }
 #human-input .hi-msg.dir .hi-bubble {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  color: rgba(255, 255, 255, 0.92);
-  border-top-left-radius: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+  color: rgba(241, 245, 249, 0.93);
 }
 #human-input .hi-msg.usr .hi-bubble {
-  background: rgba(255, 255, 255, 0.11);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.96);
-  border-top-right-radius: 4px;
+  background: linear-gradient(135deg, rgba(139, 124, 255, 0.18) 0%, rgba(99, 102, 241, 0.09) 100%);
+  border: 1px solid rgba(139, 124, 255, 0.30);
+  box-shadow:
+    inset 0 0 0 1px rgba(139, 124, 255, 0.08),
+    0 4px 14px rgba(0, 0, 0, 0.24);
+  color: #f8fafc;
 }
 #human-input .hi-empty {
-  padding: 16px 12px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed rgba(255, 255, 255, 0.12);
+  padding: 14px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-secondary);
   line-height: 1.5;
   text-align: center;
 }
 #human-input .hi-line {
   font-size: 12.5px;
-  color: #c7d2de;
+  color: var(--text-primary);
 }
 
+/* 一体式悬浮 Composer 命令舱（.hi-foot 采用 Cursor / Linear 双层 Grid 架构：
+   上方全宽自适应多行文本域，下方左状态提示、右发送动作胶囊） */
 #human-input .hi-foot {
-  padding: 9px 11px 11px;
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(0, 0, 0, 0.18);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  margin: 4px 12px 12px;
+  padding: 10px 11px 8px 13px;
+  border-radius: 13px;
+  background: rgba(6, 8, 13, 0.80);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.22);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 7px;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+#human-input .hi-foot:focus-within,
+#human-input.has-text .hi-foot {
+  background: rgba(7, 9, 15, 0.92);
+  border-color: rgba(139, 124, 255, 0.44);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(139, 124, 255, 0.12);
 }
 #human-input .hi-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 7px;
+  display: contents;
 }
 #human-input textarea {
-  flex: 1;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  width: 100%;
   resize: none;
-  min-height: 36px;
-  max-height: 96px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.94);
-  font: 13px/1.45 -apple-system, "Helvetica Neue", "PingFang SC", sans-serif;
+  height: 22px;
+  min-height: 22px;
+  max-height: 112px;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: 12.5px/1.5 var(--font-sans);
   outline: none;
+  overflow-y: hidden;
+  transition: height 0.08s ease;
 }
-#human-input textarea:focus {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 0 0 3px rgba(21, 179, 77, 0.32);
+#human-input textarea:placeholder-shown {
+  overflow-y: hidden;
 }
-#human-input textarea::placeholder { color: rgba(255, 255, 255, 0.42); }
+#human-input textarea::placeholder { color: rgba(148, 163, 184, 0.46); }
 #human-input textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 #human-input .hi-send {
-  flex: none;
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 8px;
-  border: 0;
-  background: #15b34d;
-  color: #06210f;
-  font-size: 13px;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  height: 25px;
+  padding: 0 11px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.055);
+  color: #cbd5e1;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
 }
-#human-input .hi-send:hover:not(:disabled) { filter: brightness(1.08); }
-#human-input .hi-send:disabled { opacity: 0.45; cursor: default; }
+#human-input .hi-send::after {
+  content: "↵";
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+#human-input.has-text .hi-send,
+#human-input .hi-foot:focus-within .hi-send,
+#human-input .hi-send:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8b7cff 0%, #6d5ce8 100%);
+  border-color: rgba(186, 179, 255, 0.45);
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(139, 124, 255, 0.35);
+}
+#human-input .hi-send:hover:not(:disabled) {
+  transform: translateY(-0.5px);
+}
+#human-input .hi-send:disabled { opacity: 0.38; cursor: default; }
 #human-input .hi-status {
+  grid-column: 1;
+  grid-row: 2;
   min-height: 16px;
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.46);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: rgba(148, 163, 184, 0.46);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 2px;
+  padding: 0;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-#human-input .hi-status.bad { color: #f0596b; }
+#human-input .hi-status.bad { color: var(--status-danger); }
 
 #human-input .hi-fab {
-  height: 42px;
-  min-width: 42px;
-  padding: 0 15px;
+  height: 38px;
+  min-width: 38px;
+  padding: 0 14px;
   border-radius: 999px;
-  background: rgba(20, 22, 28, 0.94);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
-  color: rgba(255, 255, 255, 0.92);
+  background: rgba(12, 15, 22, 0.88);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 12px 32px rgba(0, 0, 0, 0.62);
+  color: var(--text-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 #human-input .hi-fab:hover {
-  background: rgba(32, 36, 46, 0.96);
-  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(18, 22, 32, 0.94);
+  border-color: rgba(139, 124, 255, 0.40);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.68), 0 0 18px rgba(139, 124, 255, 0.16);
   transform: translateY(-1px);
 }
 #human-input .hi-fab .dot {
-  width: 7px;
-  height: 7px;
+  width: 6.5px;
+  height: 6.5px;
   border-radius: 50%;
-  background: #15b34d;
+  background: var(--status-online);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.55);
   flex-shrink: 0;
 }
-#human-input .hi-fab .dot.idle { background: rgba(255, 255, 255, 0.34); }
+#human-input .hi-fab .dot.idle {
+  background: rgba(148, 163, 184, 0.35);
+  box-shadow: none;
+}
 #human-input .hi-fab .cnt {
-  font: 11px "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font: 10.5px var(--font-mono);
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.78);
+  background: rgba(139, 124, 255, 0.16);
+  border: 1px solid rgba(139, 124, 255, 0.32);
+  color: #e0e7ff;
 }
+
 #strap-layer.at-bottom { bottom: 132px; }
-/* 顶部形态贴着菜单栏下沿走，不压住它——菜单栏是场景交代，盖掉它画面就
-   不像一台电脑了。 */
 #strap-layer.at-top { top: 44px; }
 
 .strap {
@@ -1056,7 +1299,7 @@ html, body {
   align-items: stretch;
   max-width: 82%;
   min-height: 62px;
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
   opacity: 0;
   transform: translateX(-30px);
@@ -1082,54 +1325,47 @@ html, body {
   line-height: 1.28;
 }
 
-/* news：标签格 + 正文条。图里那种，标签是一整格实色，不是一条描边。
-   两格等高并排，中间没有缝——缝会让它看起来像两个不相干的东西。 */
 .strap-news .strap-title { background: #c8102e; color: #fff; }
 .strap-news .strap-text {
-  background: rgba(12, 16, 24, 0.92);
-  color: #f2f4f8;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  background: rgba(10, 12, 18, 0.92);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
-.strap-news { box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45); }
+.strap-news { box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5); }
 
-/* bar：一整条实色，标签作为前缀长在同一块里。要的是"一句话横在画面上"，
-   没有分栏。 */
 .strap-bar {
-  background: rgba(12, 16, 24, 0.94);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45),
+  background: rgba(10, 12, 18, 0.94);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5),
               inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
-.strap-bar .strap-title { color: #e8a33d; padding-right: 0; }
-.strap-bar .strap-text { color: #f2f4f8; }
+.strap-bar .strap-title { color: var(--accent-bright); padding-right: 0; }
+.strap-bar .strap-text { color: var(--text-primary); }
 
-/* ghost：毛玻璃，画面从底下透出来。给"不想抢戏的注解"用——底下正放着
-   要看的东西时，实色条会把画面切成两半。 */
 .strap-ghost {
-  background: rgba(16, 20, 30, 0.42);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  background: rgba(12, 15, 22, 0.48);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
   border-radius: 14px;
 }
-.strap-ghost .strap-title { color: #e8a33d; padding-right: 0; }
+.strap-ghost .strap-title { color: var(--accent-bright); padding-right: 0; }
 .strap-ghost .strap-text { color: #fff; }
 
-/* chip：短胶囊，只放一句短语。字比别的档小一号——它本来就不是主角。 */
 .strap-chip {
   min-height: 46px;
   border-radius: 999px;
-  background: rgba(232, 163, 61, 0.95);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  background: rgba(139, 124, 255, 0.95);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
 }
-.strap-chip .strap-title { color: #2a1a06; padding-right: 0; font-size: 19px; }
+.strap-chip .strap-title { color: #1e1b4b; padding-right: 0; font-size: 19px; }
 .strap-chip .strap-text {
-  color: #16100a;
+  color: #ffffff;
   font-size: 23px;
   font-weight: 700;
   padding: 8px 24px;
 }
 
-/* ── virtual cursor ── */
+/* ── 虚拟鼠标 (#vcursor) ── */
 #vcursor {
   position: fixed;
   left: 0; top: 0;
@@ -1137,10 +1373,8 @@ html, body {
   pointer-events: none;
   transition: transform 0.2s cubic-bezier(.4,0,.2,1);
   will-change: transform;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
 }
-/* 按下时以箭头尖端为锚点缩一下——换成别的锚点，指针会在点击瞬间
-   整体挪开，看着像点歪了 */
 #vcursor.pressed svg { transform: scale(0.85); transform-origin: 0.9px 0.9px; }
 #vcursor svg { transition: transform 0.1s ease; display: block; }
 
@@ -1156,7 +1390,7 @@ html, body {
   width: 44px; height: 44px;
   margin: -22px 0 0 -22px;
   border-radius: 50%;
-  background: rgba(232, 163, 61, 0.35);
+  background: rgba(139, 124, 255, 0.34);
   animation: ripple-pop 0.38s ease-out forwards;
 }
 @keyframes ripple-pop {
@@ -1164,10 +1398,7 @@ html, body {
   to   { transform: scale(1.4); opacity: 0; }
 }
 
-/* ── 扫描灯 ─────────────────────────────────────────────────
-   贴桌面底边。z-index 压在窗口(100/200)、菜单栏与 dock(500)、字幕(800)
-   之上但低于浮层(1200)——它是系统级的状态指示，不该被应用窗口盖住，
-   但也不能挡住讲解用的浮层。pointer-events 关掉，纯装饰不吃点击。 */
+/* ── 底部光纤扫描线 (#scanline) ── */
 #scanline {
   position: absolute;
   left: 0;
@@ -1175,24 +1406,25 @@ html, body {
   width: 100%;
   height: 18px;
   z-index: 900;
-  opacity: 0.55;
+  opacity: 0.36;
   pointer-events: none;
 }
 
-/* 「启用声音」按钮。挂在 body 上而不是 #stage 里：#stage 整块按比例缩放，按钮
-   跟着缩就可能小到点不中。只在浏览器拦下语音播放时露出来，机位那一页永远没有它。 */
+/* 「启用声音」按钮 */
 #sound-unlock {
   position: fixed;
   top: 14px;
   right: 14px;
   z-index: 5000;
-  padding: 8px 14px;
+  padding: 7px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(18, 22, 30, 0.9);
-  color: #e8ecf2;
-  font-size: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(12, 15, 22, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-primary);
+  font-size: 13px;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 #sound-unlock[hidden] { display: none; }

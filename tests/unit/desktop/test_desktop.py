@@ -1963,3 +1963,44 @@ def test_desktop_ui_assets_contain_takeover_and_headful_controls():
     assert 'id="browser-ime-input"' in html
     assert "human.mouse" in js and "human.browser_mode" in js
 
+
+def test_desktop_director_chat_supports_zh_and_en_i18n():
+    """右下角导演对话区域（#human-input）的所有文案必须同时提供 zh / en 双语字典，
+    并随 WebUI 的 localStorage('language') 与 storage 事件实时切换。"""
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    assert "HI_I18N" in js and "resolveUiLang" in js and "applyHumanInputLang" in js
+    assert 'localStorage.getItem("language")' in js
+    assert 'window.addEventListener("storage"' in js
+    for required_en in (
+        "Director Chat · Follow-ups",
+        "Queued to the director and relayed to the worker in terminal",
+        "Type follow-ups here, press Enter to send",
+        "Enter to send · Shift+Enter for newline",
+        "Director Chat",
+        "Send",
+    ):
+        assert required_en in js
+
+
+def test_desktop_director_chat_auto_grow_scrollbar_and_fab_collapse():
+    """右下角导演对话面板必须支持：
+    1. 输入框随打字行数自增长（autoGrowInput + input 事件）且发送后回缩；
+    2. 消息区无死留白（min-height: 0）并可随对话增长至半屏（min(460px, 52vh)）；
+    3. 定制 4px 半透明圆角细滚动条（::-webkit-scrollbar）；
+    4. 展开面板时隐藏右下角重复的胶囊触发器（#hi-trigger）。
+    """
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    css = (assets / "style.css").read_text(encoding="utf-8")
+    assert "function autoGrowInput()" in js
+    assert 'text.addEventListener("input", autoGrowInput)' in js
+    assert "if (trigger) trigger.hidden = !!open;" in js
+    assert "min-height: 0;" in css
+    assert "max-height: min(460px, 52vh);" in css
+    assert "#human-input .hi-log::-webkit-scrollbar" in css
+    assert "width: 4px;" in css
+    assert '#human-input[data-mode="open"] .hi-fab' in css
+
+
+

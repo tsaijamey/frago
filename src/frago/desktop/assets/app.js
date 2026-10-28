@@ -1604,6 +1604,83 @@
     return defaultDirectorSessionId();
   }
 
+  var HI_I18N = {
+    zh: {
+      panelAria: "导演对话面板",
+      tag: "导演对话 · 追加需求",
+      sub: "发往导演队列，由导演转达给终端里的 worker",
+      closeTitle: "收起为右下角图标",
+      closeAria: "收起对话面板",
+      readonlyTag: "只读",
+      readonlyFab: "对话",
+      directorFab: "导演对话",
+      triggerCollapse: "收起对话面板",
+      triggerExpand: "展开导演对话面板",
+      triggerNoSession: "未带导演会话参数（默认仅显示图标，点击查看）",
+      roleDirector: "导演",
+      roleUser: "你",
+      placeholderActive: "随时写下补充或修改意见，回车发送",
+      placeholderReadonly: "未连接导演会话",
+      emptyReadonly: "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。",
+      welcome: "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。",
+      sendIdle: "发送",
+      sendQueueing: "排队中…",
+      statusHint: "回车发送 · Shift+回车换行",
+      statusReadonly: "只读显示器模式",
+      statusQueueing: "正在排队…",
+      statusQueued: "已排给导演，它会转达给正在干活的 worker",
+      statusFailedPrefix: "没发出去："
+    },
+    en: {
+      panelAria: "Director chat panel",
+      tag: "Director Chat · Follow-ups",
+      sub: "Queued to the director and relayed to the worker in terminal",
+      closeTitle: "Minimize to corner icon",
+      closeAria: "Collapse director chat panel",
+      readonlyTag: "Read-only",
+      readonlyFab: "Chat",
+      directorFab: "Director Chat",
+      triggerCollapse: "Collapse director chat panel",
+      triggerExpand: "Expand director chat panel",
+      triggerNoSession: "No director session bound (icon only by default, click to view)",
+      roleDirector: "Director",
+      roleUser: "You",
+      placeholderActive: "Type follow-ups here, press Enter to send",
+      placeholderReadonly: "No director session connected",
+      emptyReadonly: "No director session bound (?userInput=true&session=…). The panel stays collapsed as a corner icon by default.",
+      welcome: "Working on your task on the virtual desktop. Type any changes or follow-up notes here, and I will relay them to the worker in the terminal.",
+      sendIdle: "Send",
+      sendQueueing: "Queueing…",
+      statusHint: "Enter to send · Shift+Enter for newline",
+      statusReadonly: "Read-only display mode",
+      statusQueueing: "Queueing…",
+      statusQueued: "Queued to director, will be relayed to the active worker",
+      statusFailedPrefix: "Failed to send: "
+    }
+  };
+
+  function resolveUiLang() {
+    var m = location.search.match(/[?&]lang=([^&]+)/);
+    if (m) {
+      var qLang = decodeURIComponent(m[1]).toLowerCase();
+      if (qLang.indexOf("zh") === 0) return "zh";
+      if (qLang.indexOf("en") === 0) return "en";
+    }
+    try {
+      var stored = localStorage.getItem("language");
+      if (stored && stored.toLowerCase().indexOf("zh") === 0) return "zh";
+      if (stored && stored.toLowerCase().indexOf("en") === 0) return "en";
+    } catch (e) {}
+    try {
+      if (window.parent && window.parent !== window) {
+        var pStored = window.parent.localStorage.getItem("language");
+        if (pStored && pStored.toLowerCase().indexOf("zh") === 0) return "zh";
+        if (pStored && pStored.toLowerCase().indexOf("en") === 0) return "en";
+      }
+    } catch (e) {}
+    return "en";
+  }
+
   function setupHumanInput() {
     var box = $("human-input");
     if (!box) return;
@@ -1622,12 +1699,21 @@
         fabLabel = $("hi-fab-label"),
         badge = $("hi-badge"),
         sidTag = $("hi-session-tag"),
+        subEl = $("hi-sub"),
+        tagEl = box.querySelector(".hi-tag"),
         text = $("hi-text"),
         sendBtn = $("hi-send"),
         status = $("hi-status"),
         log = $("hi-log");
     var sid = humanInputTarget();
     var msgCount = 0;
+    var currentLang = resolveUiLang();
+    var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
+
+    function tr(key) {
+      var pack = HI_I18N[currentLang] || HI_I18N.en;
+      return pack[key] || HI_I18N.en[key] || "";
+    }
 
     function formatHm(ts) {
       var d = (typeof ts === "number" && ts > 0) ? new Date(ts) : new Date();
@@ -1635,10 +1721,17 @@
       return String(d.getHours()).padStart(2, "0") + ":" +
              String(d.getMinutes()).padStart(2, "0");
     }
-    function note(msg, bad) {
+    function renderNote() {
       if (!status) return;
+      var msg = statusState.key === "statusFailedPrefix"
+        ? (tr("statusFailedPrefix") + statusState.extra)
+        : tr(statusState.key);
       status.textContent = msg || "";
-      status.classList.toggle("bad", !!bad);
+      status.classList.toggle("bad", !!statusState.bad);
+    }
+    function noteKey(key, bad, extra) {
+      statusState = { key: key, extra: extra || "", bad: !!bad };
+      renderNote();
     }
     function syncBadge() {
       if (!badge) return;
@@ -1646,15 +1739,75 @@
       badge.hidden = !show;
       badge.textContent = String(msgCount);
     }
+    function syncTriggerTitle() {
+      if (!trigger || !panel) return;
+      var open = !panel.hidden;
+      trigger.title = open ? tr("triggerCollapse")
+        : (sid ? tr("triggerExpand") : tr("triggerNoSession"));
+    }
+    function applyHumanInputLang() {
+      currentLang = resolveUiLang();
+      document.documentElement.lang = currentLang;
+      if (panel) panel.setAttribute("aria-label", tr("panelAria"));
+      if (tagEl) tagEl.textContent = tr("tag");
+      if (subEl) subEl.textContent = tr("sub");
+      if (closeBtn) {
+        closeBtn.title = tr("closeTitle");
+        closeBtn.setAttribute("aria-label", tr("closeAria"));
+      }
+      if (!sid) {
+        if (fabLabel) fabLabel.textContent = tr("readonlyFab");
+        if (sidTag) sidTag.textContent = tr("readonlyTag");
+        if (text) text.placeholder = tr("placeholderReadonly");
+        var emptyEl = log && log.querySelector(".hi-empty");
+        if (emptyEl) emptyEl.textContent = tr("emptyReadonly");
+      } else {
+        if (fabLabel) fabLabel.textContent = tr("directorFab");
+        if (sidTag) sidTag.textContent = sid.slice(0, 8);
+        if (text) text.placeholder = tr("placeholderActive");
+      }
+      if (sendBtn) {
+        sendBtn.textContent = box.dataset.mode === "sending" ? tr("sendQueueing") : tr("sendIdle");
+      }
+      if (log) {
+        var phBubble = log.querySelector('[data-placeholder="1"] .hi-bubble');
+        if (phBubble) phBubble.textContent = tr("welcome");
+        var items = log.querySelectorAll(".hi-msg");
+        for (var i = 0; i < items.length; i++) {
+          var r = items[i].getAttribute("data-role") || (items[i].classList.contains("dir") ? "dir" : "usr");
+          var hm = items[i].getAttribute("data-hm") || "";
+          var metaEl = items[i].querySelector(".hi-msg-meta");
+          if (metaEl && hm) {
+            metaEl.textContent = (r === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
+          }
+        }
+      }
+      syncTriggerTitle();
+      renderNote();
+    }
+    var MAX_TA_HEIGHT = 112;
+    function autoGrowInput() {
+      if (!text) return;
+      box.classList.toggle("has-text", !!(text.value && text.value.trim()));
+      if (!text.value) {
+        text.style.height = "22px";
+        text.style.overflowY = "hidden";
+        return;
+      }
+      text.style.height = "auto";
+      var sh = text.scrollHeight || 0;
+      var nextH = Math.max(22, Math.min(sh, MAX_TA_HEIGHT));
+      text.style.height = nextH + "px";
+      text.style.overflowY = sh > MAX_TA_HEIGHT ? "auto" : "hidden";
+    }
     function setExpanded(open, focusInput) {
       if (!panel) return;
       panel.hidden = !open;
+      if (trigger) trigger.hidden = !!open;
       box.dataset.mode = open ? "open" : (sid ? "collapsed" : "icon");
-      if (trigger) {
-        trigger.title = open ? "收起对话面板"
-          : (sid ? "展开导演对话面板" : "未带导演会话参数（默认仅显示图标，点击查看）");
-      }
+      syncTriggerTitle();
       syncBadge();
+      if (open) autoGrowInput();
       // 仅在用户主动点击展开、且桌面页当前可见时才聚焦输入框；
       // 页面初次加载或隐藏在后台切页槽位（innerWidth===0）时绝不自动抢焦点，
       // 否则会把外层会话工作台输入框正在打字的光标强行夺走。
@@ -1672,6 +1825,7 @@
         var ph = log.querySelector('[data-placeholder="1"]');
         if (ph && ph.parentNode === log) log.removeChild(ph);
       }
+      var hm = formatHm(opts.ts);
       // 若用户在面板里刚发过同一句话（乐观渲染），用服务端返回的真实记录就地认领，避免重复显示两条
       if (role === "usr" && opts.seq) {
         var pendings = log.querySelectorAll('.hi-msg.usr[data-optimistic="1"]');
@@ -1680,20 +1834,23 @@
           if (b && b.textContent === line) {
             pendings[i].removeAttribute("data-optimistic");
             pendings[i].setAttribute("data-seq", String(opts.seq));
+            pendings[i].setAttribute("data-hm", hm);
             var m = pendings[i].querySelector(".hi-msg-meta");
-            if (m) m.textContent = "你 · " + formatHm(opts.ts);
+            if (m) m.textContent = tr("roleUser") + " · " + hm;
             return;
           }
         }
       }
       var item = document.createElement("div");
       item.className = "hi-msg " + role + (role === "usr" ? " hi-line" : "");
+      item.setAttribute("data-role", role);
+      item.setAttribute("data-hm", hm);
       if (opts.seq) item.setAttribute("data-seq", String(opts.seq));
       if (opts.optimistic) item.setAttribute("data-optimistic", "1");
       if (opts.placeholder) item.setAttribute("data-placeholder", "1");
       var meta = document.createElement("span");
       meta.className = "hi-msg-meta";
-      meta.textContent = (role === "dir" ? "导演" : "你") + " · " + formatHm(opts.ts);
+      meta.textContent = (role === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
       var bubble = document.createElement("div");
       bubble.className = "hi-bubble";
       bubble.textContent = line;
@@ -1715,23 +1872,27 @@
       if (!s) return "";
       if (role === "dir") {
         if (/^【收场交接】/.test(s)) return "";
-        // 导演长回复取首段核心动作说明，裁掉附带的 WARN 书面长段或代码块，保持小窗紧凑可读
+        // 导演长回复提取前两段有效业务说明，裁掉附带的 WARN 书面应答段或代码块
         var paras = s.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
-        var picked = "";
+        var picked = [];
         for (var i = 0; i < paras.length; i++) {
-          if (/^(\*\*WARN\b|WARN\b|```|>)/.test(paras[i])) continue;
-          picked = paras[i];
-          break;
+          if (/^(\*\*WARN\b|WARN\b|-\s*`(clips|ui_ready|screen_|orphan_)|```|>)/.test(paras[i])) continue;
+          picked.push(
+            paras[i]
+              .replace(/\*\*([^*]+)\*\*/g, "$1")
+              .replace(/`([^`]+)`/g, "$1")
+              .trim()
+          );
+          if (picked.length >= 2) break;
         }
-        s = (picked || paras[0] || s)
+        s = (picked.length ? picked.join("\n\n") : (paras[0] || s))
           .replace(/\*\*([^*]+)\*\*/g, "$1")
           .replace(/`([^`]+)`/g, "$1")
-          .replace(/\s+/g, " ")
           .trim();
-        if (s.length > 160) s = s.slice(0, 159) + "…";
+        if (s.length > 360) s = s.slice(0, 359) + "…";
       } else {
-        s = s.replace(/\s+/g, " ").trim();
-        if (s.length > 220) s = s.slice(0, 219) + "…";
+        s = s.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+        if (s.length > 360) s = s.slice(0, 359) + "…";
       }
       return s;
     }
@@ -1747,44 +1908,38 @@
       });
     }
 
+    window.addEventListener("storage", function (e) {
+      if (!e || !e.key || e.key === "language") {
+        applyHumanInputLang();
+      }
+    });
+
     if (!sid) {
       if (dot) dot.classList.add("idle");
       if (fabDot) fabDot.classList.add("idle");
-      if (fabLabel) fabLabel.textContent = "对话";
-      if (sidTag) sidTag.textContent = "只读";
-      if (text) {
-        text.disabled = true;
-        text.placeholder = "未连接导演会话";
-      }
+      if (text) text.disabled = true;
       if (sendBtn) sendBtn.disabled = true;
       if (log) {
         log.innerHTML = "";
         var empty = document.createElement("div");
         empty.className = "hi-empty";
-        empty.textContent = "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。";
+        empty.textContent = tr("emptyReadonly");
         log.appendChild(empty);
       }
-      note("只读显示器模式", false);
+      noteKey("statusReadonly", false);
+      applyHumanInputLang();
       setExpanded(false, false);
       return;
     }
 
     if (dot) dot.classList.remove("idle");
     if (fabDot) fabDot.classList.remove("idle");
-    if (fabLabel) fabLabel.textContent = "导演对话";
-    if (sidTag) sidTag.textContent = sid.slice(0, 8);
-    if (text) {
-      text.disabled = false;
-      text.placeholder = "一边看它干活，一边把想到的补充写在这里，回车发送";
-    }
+    if (text) text.disabled = false;
     if (sendBtn) sendBtn.disabled = false;
     if (log) log.innerHTML = "";
-    appendBubble(
-      "dir",
-      "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。",
-      { placeholder: true }
-    );
-    note("回车发送 · Shift+回车换行", false);
+    appendBubble("dir", tr("welcome"), { placeholder: true });
+    noteKey("statusHint", false);
+    applyHumanInputLang();
     setExpanded(true, false);
 
     els.onDirectorCaption = function (captionText) {
@@ -1799,6 +1954,9 @@
     var syncingRecords = false;
 
     function syncSessionRecords() {
+      if (resolveUiLang() !== currentLang) {
+        applyHumanInputLang();
+      }
       if (!sid || syncingRecords) return;
       syncingRecords = true;
       var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
@@ -1835,9 +1993,9 @@
       var line = text.value.trim();
       if (!line) return;
       sendBtn.disabled = true;
-      sendBtn.textContent = "排队中…";
+      sendBtn.textContent = tr("sendQueueing");
       box.dataset.mode = "sending";
-      note("正在排队…");
+      noteKey("statusQueueing", false);
       var reqBody = { text: line, wait: false };
       if (!skillSent) {
         reqBody.skills = ["how-frago-agent-runs-an-agent-os"];
@@ -1855,13 +2013,14 @@
         skillSent = true;
         appendBubble("usr", line, { optimistic: true });
         text.value = "";
-        note("已排给导演，它会转达给正在干活的 worker");
+        autoGrowInput();
+        noteKey("statusQueued", false);
         syncSessionRecords();
       }).catch(function (err) {
-        note("没发出去：" + (err && err.message ? err.message : err), true);
+        noteKey("statusFailedPrefix", true, err && err.message ? err.message : String(err));
       }).then(function () {
         sendBtn.disabled = false;
-        sendBtn.textContent = "发送";
+        sendBtn.textContent = tr("sendIdle");
         box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
         if (!document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
           text.focus();
@@ -1869,6 +2028,7 @@
       });
     }
     sendBtn.addEventListener("click", submit);
+    text.addEventListener("input", autoGrowInput);
     text.addEventListener("keydown", function (e) {
       // 回车发送，Shift+回车换行——与聊天框一致。
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
@@ -1964,7 +2124,7 @@
     var PALETTES = {
       plum:   ["140f26", "4a2a7a", "8f2f5e", "2f5a9e"],  // 深紫 → 洋红 → 蓝（Stripe 原配色降明度）
       indigo: ["101a33", "23306b", "3a3a86", "553f8f"],  // 靛蓝 → 紫罗兰（Linear / Big Sur 深色一路）
-      mono:   ["0d1b2e", "14263f", "1b3355", "22406b"],  // 近乎单色的深蓝，只有明度起伏
+      mono:   ["07080c", "0c0f18", "121624", "181d30"],  // 深空碳晶黑曜石微澜，克制内敛不抢前景
       forest: ["0a1a18", "123330", "164a44", "1a5e63"]   // 墨绿 → 青，和终端窗口同语系
     };
     function hex2rgb(h) {
@@ -2082,8 +2242,8 @@
         a = a * a;                      // 衰减取平方，主光点更突出、拖尾更收敛
         if (a < 0.01) continue;
         x.globalAlpha = a;
-        x.fillStyle = "#ff2b2b";
-        x.fillRect(i * W + 1, 3, W - 2, 12);
+        x.fillStyle = "#8b7cff";
+        x.fillRect(i * W + 1, 14, W - 2, 2);
       }
       x.globalAlpha = 1;
       requestAnimationFrame(loop);
