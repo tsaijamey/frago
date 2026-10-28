@@ -53,48 +53,44 @@ export default function AppearanceSettings() {
 
   const followed = FOLLOW_INTERFACE[config.language || 'en'];
   const followedName = AGENT_LANGUAGES.find((l) => l.value === followed)?.name ?? 'English';
-  const selectClass =
-    'px-3 py-1.5 rounded-md bg-[var(--bg-subtle)] border border-[var(--border-color)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]';
+  const pinnedLang = config.agent_language || '';
+  const pinnedName = AGENT_LANGUAGES.find((l) => l.value === pinnedLang)?.name ?? pinnedLang;
 
   return (
-    <div className="space-y-4">
-      {/* Language settings */}
-      <div className="card">
-        <h2 className="font-medium mb-4 text-[var(--accent-primary)]">
-          {t('settings.appearance.language')}
-        </h2>
-
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <div className="text-[var(--text-primary)]">{t('settings.appearance.language')}</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              {t('settings.appearance.languageDesc')}
-            </div>
+    <div className="s-card">
+      <div className="ssec">
+        <div className="srow" style={{ paddingTop: 2 }}>
+          <div className="l">
+            <div className="t">{t('settings.appearance.language')}</div>
+            <div className="d">{t('settings.appearance.languageDesc')}</div>
           </div>
           <select
             id="language-select"
             value={config.language || 'en'}
             onChange={handleLanguageChange}
-            className={selectClass}
+            className="sselect"
             aria-label={t('settings.appearance.language')}
           >
-            <option value="en">{t('settings.appearance.english')}</option>
             <option value="zh">{t('settings.appearance.chinese')}</option>
+            <option value="en">{t('settings.appearance.english')}</option>
           </select>
         </div>
 
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <div className="text-[var(--text-primary)]">{t('settings.appearance.agentLanguage')}</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              {t('settings.appearance.agentLanguageDesc')}
+        <div className="srow" style={{ paddingBottom: 2 }}>
+          <div className="l">
+            <div className="t">{t('settings.appearance.agentLanguage')}</div>
+            <div className="d">{t('settings.appearance.agentLanguageDesc')}</div>
+            <div className="m">
+              {pinnedLang
+                ? t('settings.appearance.pinnedLanguageMeta', { name: pinnedName })
+                : t('settings.appearance.followingInterfaceMeta', { name: followedName })}
             </div>
           </div>
           <select
             id="agent-language-select"
-            value={config.agent_language || ''}
+            value={pinnedLang}
             onChange={handleAgentLanguageChange}
-            className={selectClass}
+            className="sselect"
             aria-label={t('settings.appearance.agentLanguage')}
           >
             <option value="">
@@ -108,7 +104,6 @@ export default function AppearanceSettings() {
           </select>
         </div>
       </div>
-
     </div>
   );
 }

@@ -142,33 +142,45 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
             return (
             <div
               key={profile.id}
-              className={`border rounded-lg p-3 transition-colors ${
-                profile.is_active
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
-                  : 'border-[var(--border-color)] hover:border-[var(--text-muted)]'
-              }`}
+              className={`pitem ${profile.is_active ? 'on' : ''} ${isBorrowed ? 'ret' : ''}`}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-medium text-sm text-[var(--text-primary)] truncate">
-                    {profile.name}
-                  </span>
+              <div className="pitem-h">
+                <div className="nm">
+                  <span className="truncate">{profile.name}</span>
                   {profile.is_active && (
-                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
+                    <span
+                      className="s-pill"
+                      style={{ height: 19, padding: '0 7px', fontSize: 11, marginLeft: 0 }}
+                    >
                       <Check size={12} />
                       {t('settings.profiles.active')}
                     </span>
                   )}
+                  {!ownLogin && codexReady && (
+                    <span className="s-kind">{t('settings.profiles.codexReady')}</span>
+                  )}
+                  {isVendorCli && (
+                    <span className="s-kind">{t('settings.profiles.vendorOwnAccount')}</span>
+                  )}
+                  {isBorrowed && (
+                    <span
+                      className="s-pill warn"
+                      style={{ height: 19, padding: '0 7px', fontSize: 10.5, marginLeft: 0 }}
+                    >
+                      {t('settings.profiles.workbuddyRetiredTag')}
+                    </span>
+                  )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="acts">
                   {!ownLogin && (
                     <button
                       type="button"
                       onClick={() => handleActivateClick(profile.id)}
                       disabled={activatingId === profile.id}
-                      className="btn btn-ghost btn-sm text-xs flex items-center gap-1 text-[var(--accent-primary)] disabled:opacity-50"
+                      className="btn btn-sm text-xs flex items-center gap-1 disabled:opacity-50"
+                      style={{ height: 24, fontSize: 11.5 }}
                     >
-                      <Zap size={14} />
+                      <Zap size={12} />
                       {activatingId === profile.id
                         ? t('settings.profiles.activating')
                         : profile.is_active
@@ -195,7 +207,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                   </button>
                 </div>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-[var(--text-muted)] flex-wrap">
+              <div className="pitem-m">
                 {/* A vendor CLI has no endpoint and no key of frago's; printing
                     blank ones made it look like a half-filled profile. What it
                     does have is a core and a model. */}
@@ -203,33 +215,19 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                 {model && (
                   <>
                     <span>·</span>
-                    <span className="font-mono">{model}</span>
+                    <span className="mono">{model}</span>
                   </>
                 )}
                 {!ownLogin && (
                   <>
                     <span>·</span>
-                    <span className="font-mono">{profile.api_key_masked}</span>
+                    <span className="mono">{profile.api_key_masked}</span>
                   </>
                 )}
-                {!ownLogin && codexReady && (
+                {profile.context_window != null && (
                   <>
                     <span>·</span>
-                    <span>{t('settings.profiles.codexReady')}</span>
-                  </>
-                )}
-                {isVendorCli && (
-                  <>
-                    <span>·</span>
-                    <span>{t('settings.profiles.vendorOwnAccount')}</span>
-                  </>
-                )}
-                {isBorrowed && (
-                  <>
-                    <span>·</span>
-                    <span className="text-[var(--accent-error)]">
-                      {t('settings.profiles.workbuddyRetiredTag')}
-                    </span>
+                    <span>{(profile.context_window / 1000).toFixed(0)}k ctx</span>
                   </>
                 )}
               </div>
@@ -237,14 +235,14 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
               {/* Where this profile is actually in force. "Active" on its own
                   never said who it affected, which was the whole problem. */}
               {profile.is_active && activeTargets.length > 0 && (
-                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                   <span className="text-xs text-[var(--text-muted)]">
                     {t('settings.profiles.activeOn')}
                   </span>
                   {activeTargets.map((agentType) => (
                     <span
                       key={agentType}
-                      className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]"
+                      className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-[var(--bg-hover)] text-[var(--text-secondary)]"
                     >
                       {targetName(agentType)}
                     </span>
@@ -253,10 +251,10 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
               )}
 
               {pickingTargetsFor === profile.id && (
-                <div className="mt-3 pt-3 border-t border-[var(--border-color)] space-y-2">
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                <div className="ptargets">
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)' }}>
                     {t('settings.profiles.targetsTitle')}
-                  </p>
+                  </div>
                   {targets.length === 0 ? (
                     <p className="text-xs text-[var(--text-muted)]">
                       {t('settings.profiles.targetsUnavailable')}
@@ -266,14 +264,12 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                       {targets.map((target) => {
                         const hasChannel = hasChannelFor(profile, target);
                         const pickable = target.selectable && hasChannel;
+                        const protoLabel =
+                          target.protocol === 'responses' ? 'OpenAI Responses' : 'Anthropic';
                         return (
                         <label
                           key={target.agent_type}
-                          className={`flex items-start gap-2 text-xs ${
-                            pickable
-                              ? 'text-[var(--text-primary)] cursor-pointer'
-                              : 'text-[var(--text-muted)] cursor-not-allowed'
-                          }`}
+                          className={`ptarget ${pickable ? 'cursor-pointer' : 'off cursor-not-allowed'}`}
                         >
                           <input
                             type="checkbox"
@@ -282,8 +278,18 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                             disabled={!pickable}
                             onChange={() => toggleTarget(target.agent_type)}
                           />
-                          <span className="min-w-0">
-                            <span className="font-medium">{target.display_name}</span>
+                          <div className="min-w-0">
+                            <div>
+                              <span className="font-semibold">{target.display_name}</span>{' '}
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                ({protoLabel})
+                              </span>
+                            </div>
+                            {target.installed && target.path && (
+                              <div className="font-mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {target.path}
+                              </div>
+                            )}
                             {/* An option that is merely greyed out reads as a
                                 bug; the reason is what makes it a decision. */}
                             {!target.supported && (
@@ -293,7 +299,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                               </span>
                             )}
                             {target.supported && !target.installed && (
-                              <span className="block mt-0.5 text-[var(--text-muted)]">
+                              <span className="block mt-0.5 text-[var(--text-muted)]" style={{ fontSize: 11 }}>
                                 {t('settings.profiles.targetNotInstalled')}
                               </span>
                             )}
@@ -305,13 +311,21 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                                 <span>{t('settings.profiles.targetMissingResponses')}</span>
                               </span>
                             )}
-                          </span>
+                          </div>
                         </label>
                         );
                       })}
                     </div>
                   )}
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex justify-end gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCancelTargetPick}
+                      className="btn btn-sm text-xs"
+                      style={{ height: 24, fontSize: 11.5 }}
+                    >
+                      {t('settings.profiles.cancel')}
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleActivate(profile.id)}
@@ -323,17 +337,11 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                           ))
                       }
                       className="btn btn-primary btn-sm text-xs disabled:opacity-50"
+                      style={{ height: 24, fontSize: 11.5 }}
                     >
                       {activatingId === profile.id
                         ? t('settings.profiles.activating')
                         : t('settings.profiles.activate')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelTargetPick}
-                      className="btn btn-ghost btn-sm text-xs"
-                    >
-                      {t('settings.profiles.cancel')}
                     </button>
                   </div>
                 </div>

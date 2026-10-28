@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { getMainConfig, getProfiles, getConnections, getActivationTargets, deactivateProfile, checkVSCode, openConfigInVSCode } from '@/api';
 import type { ProfileItem, RoleBinding } from '@/api';
 import type { MainConfig } from '@/types/pywebview';
-import { Code, AlertTriangle } from 'lucide-react';
+import { Code, AlertTriangle, Shield, Check, RefreshCw } from 'lucide-react';
 import ProfileManager from '@/components/settings/ProfileManager';
 import ConnectionRolesCard from '@/components/settings/ConnectionRolesCard';
 import ActiveProfileCard from '@/components/settings/ActiveProfileCard';
@@ -43,6 +43,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const [error, setError] = useState<string | null>(null);
   const [vscodeInstalled, setVscodeInstalled] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
+  const [initialPickTargetId, setInitialPickTargetId] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   useEffect(() => {
@@ -148,10 +149,11 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const activeProfile = activeProfileId ? profiles.find(p => p.id === activeProfileId) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {error && (
-        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+        <div className="salert err">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
         </div>
       )}
 
@@ -160,19 +162,63 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
         connections={connections}
         bindings={bindings}
         coreNames={coreNames}
-        onManageProfiles={() => setShowProfileManager(true)}
+        profileCount={profiles.length}
+        onManageProfiles={() => {
+          setInitialPickTargetId(null);
+          setShowProfileManager(true);
+        }}
         onBindingChanged={() => loadData()}
       />
 
-      {/* Active Profile Card */}
-      {activeProfile && (
+      {/* Active Profile Card or Official API Card */}
+      {activeProfile ? (
         <ActiveProfileCard
           profile={activeProfile}
           activeTargets={activeTargetNames}
-          onSwitch={() => setShowProfileManager(true)}
+          onChangeTargets={() => {
+            setInitialPickTargetId(activeProfile.id);
+            setShowProfileManager(true);
+          }}
+          onSwitch={() => {
+            setInitialPickTargetId(null);
+            setShowProfileManager(true);
+          }}
           onDeactivate={handleDeactivate}
         />
+      ) : (
+        <div className="s-card">
+          <div className="hd">
+            <span className="ico">
+              <Shield size={15} />
+            </span>
+            <div>
+              <div className="nm">{t('settings.general.officialApi')}</div>
+              <div className="ds">{t('settings.general.officialApiDesc')}</div>
+            </div>
+            <span className="s-pill">
+              <Check size={12} />
+              {t('settings.profiles.active')}
+            </span>
+          </div>
+          <div className="row full">
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {t('settings.general.savedProfilesReady', { total: profiles.length })}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setInitialPickTargetId(null);
+                setShowProfileManager(true);
+              }}
+              className="btn btn-sm ml-auto"
+            >
+              <RefreshCw size={13} />
+              {t('settings.profiles.switchProfile')}
+            </button>
+          </div>
+        </div>
       )}
+
 
       {/* Claude Code settings file — set apart as a danger zone rather than
           shown as one more ordinary card. frago registers its hook events into
@@ -243,9 +289,13 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
           dialog a custom endpoint was in use, so it never appeared. */}
       <ProfileManager
         isOpen={showProfileManager}
-        onClose={() => setShowProfileManager(false)}
+        onClose={() => {
+          setShowProfileManager(false);
+          setInitialPickTargetId(null);
+        }}
         onProfilesChanged={() => loadData()}
         hasCustomConfig={config.auth_method === 'custom'}
+        initialPickTargetId={initialPickTargetId}
       />
     </div>
   );

@@ -32,6 +32,8 @@ interface UseProfilesArgs {
    *  deactivated — the surrounding page shows profile data too, and used to
    *  keep showing the old version until it was navigated away from. */
   onProfilesChanged?: () => void;
+  /** Optional profile ID whose target picker should open immediately. */
+  initialPickTargetId?: string | null;
 }
 
 /**
@@ -39,7 +41,7 @@ interface UseProfilesArgs {
  * list loading, the add/edit form, activate/deactivate/delete actions,
  * and the "save current config" inline flow. The modal just renders.
  */
-export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesArgs) {
+export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTargetId }: UseProfilesArgs) {
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
 
@@ -108,10 +110,21 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       loadTargets();
       loadVendorCores();
       setViewMode('list');
-      setPickingTargetsFor(null);
+      setPickingTargetsFor(initialPickTargetId ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, initialPickTargetId]);
+
+  useEffect(() => {
+    if (isOpen && initialPickTargetId && profiles.length > 0 && pickingTargetsFor === initialPickTargetId) {
+      const alreadyActive = initialPickTargetId === activeProfileId ? activeTargets : [];
+      const preselected = alreadyActive.length
+        ? alreadyActive
+        : selectableTargetsFor(initialPickTargetId).map((target) => target.agent_type);
+      setPickedTargets(preselected);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialPickTargetId, profiles, targets, activeProfileId]);
 
   // Escape key handler
   useEffect(() => {

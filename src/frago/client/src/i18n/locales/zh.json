@@ -750,14 +750,14 @@
       "about": "关于"
     },
     "tabDesc": {
-      "capability": "每次提交 prompt，frago 分两层加提示。下面是两层此刻在做什么。",
-      "general": "认证与账号配置",
+      "capability": "每轮对话前，LightAgent 审阅近期上下文并返回一行引导提示。",
+      "general": "各角色运行的连接配置、已存 API 配置与 Claude Code 配置文件。",
       "agents": "本机已检测到的 CLI Agent 客户端与专属设置",
-      "channels": "任务接入通道",
+      "channels": "轮询外部消息源并将新消息转为任务的后台配方通道。",
       "resources": "官方命令与技能同步",
-      "appearance": "语言与行为",
+      "appearance": "界面语言与 agent 回答必须使用的语言。",
       "init": "初始化状态与向导",
-      "about": "版本与许可"
+      "about": "当前运行版本、资源包与开源许可。"
     },
     "cliAgents": {
       "loadFailed": "读取 CLI 客户端状态失败。",
@@ -793,21 +793,21 @@
           "no_key": "缺少 api key"
         },
         "body": {
-          "enabled": "使用 <b>{{model}}</b>，每次 prompt 多一次调用。",
+          "enabled": "使用配置 <b>{{profile}}</b> 上的 <b>{{model}}</b>，每次 prompt 多一次调用。",
           "disabled": "手动关的，不是故障。打开开关即恢复。",
-          "not_configured": "没有可用的模型 profile，这一层从未运行。",
-          "no_key": "profile {{profile}} 没填 api key，调不动模型。"
+          "not_configured": "没有可用的模型 profile，LightAgent 从未运行。",
+          "no_key": "配置 <b>{{profile}}</b> 没填 api key，LightAgent 调不动模型。"
         },
         "consequence": {
-          "not_configured": "会话里不会出现按最近几轮生成的提示。静态规则照常。",
-          "no_key": "这一层完全不工作，只差一个 key。key 为空时不发请求。静态规则照常。"
+          "not_configured": "配好模型 profile 之前，会话里不会出现按最近几轮生成的提示。",
+          "no_key": "LightAgent 已暂停——只差一个 key。key 为空时不发请求。"
         },
         "cta": {
           "not_configured": "去配置模型 profile",
           "no_key": "去填 api key"
         },
         "switch": "启用 LightAgent",
-        "switchDesc": "关掉后不再为提示调模型，静态规则照常。存于 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>。",
+        "switchDesc": "关掉后不再为提示调模型。存于 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>。",
         "envOff": "<c>FRAGO_REVIEW=off</c> 正在生效并压过这个开关，当前环境下 LightAgent 不运行。"
       }
     },
@@ -815,6 +815,8 @@
       "title": "通用配置",
       "apiEndpoint": "API 端点",
       "officialApi": "官方 Claude API",
+      "officialApiDesc": "Claude Code 正在使用官方登录。已保存的自定义端点仍保留在「管理配置」中。",
+      "savedProfilesReady": "{{total}} 个已保存配置可随时切换",
       "customEndpoint": "自定义 API 端点",
       "endpointType": "端点类型",
       "apiUrl": "API 地址",
@@ -892,6 +894,11 @@
       "activating": "激活中...",
       "savingCurrent": "保存中...",
       "activeProfileTitle": "激活的 API 配置",
+      "activeProfileDesc": "当前写入各 agent CLI 配置文件的 API 配置。",
+      "defaultAndHaiku": "默认 / Haiku",
+      "contextWindowLabel": "上下文窗口",
+      "tokensUnit": "{{value}} tokens",
+      "applyTargets": "应用到所选 CLI",
       "switchProfile": "切换配置",
       "confirmDeactivate": "停用自定义 API？",
       "confirmDeactivateDesc": "切回 Claude Code 官方 API。配置保留，可随时再激活。",
@@ -926,13 +933,15 @@
     },
     "appearance": {
       "title": "外观",
-      "language": "语言",
-      "languageDesc": "选择您偏好的界面语言",
+      "language": "界面语言",
+      "languageDesc": "用于 WebUI 菜单、页头与状态标签的显示语言。",
       "english": "English",
-      "chinese": "中文",
+      "chinese": "简体中文 (Chinese)",
       "agentLanguage": "agent 回答用语",
-      "agentLanguageDesc": "agent 必须用这种语言回答你，每次会话开始时提出要求。",
-      "agentLanguageFollow": "跟界面语言一致（{{name}}）"
+      "agentLanguageDesc": "agent 回答时必须使用的语言。在每次会话开始时注入；代码、命令和文件路径保持原样。",
+      "agentLanguageFollow": "跟界面语言一致（{{name}}）",
+      "followingInterfaceMeta": "跟随界面语言 → {{name}}",
+      "pinnedLanguageMeta": "已固定为 {{name}}，不随界面语言改变"
     },
     "init": {
       "title": "初始化状态",
@@ -969,6 +978,13 @@
       "version": "当前版本",
       "checkUpdate": "检查更新",
       "tagline": "是给 AI agent 用的多运行时基础设施。",
+      "description": "面向 AI 编码 agent 的多运行时基础设施与操作系统。",
+      "runningVersion": "运行版本",
+      "resourcePack": "资源包",
+      "dataDirectory": "数据目录",
+      "licenseLabel": "开源许可",
+      "licenseValue": "MIT 许可证",
+      "pillVersionUnknown": "版本未知",
       "versionUnknown": "读取失败",
       "license": "© 2026 frago · MIT"
     },
@@ -996,35 +1012,38 @@
       "noData": "读不到任务通道配置",
       "stateEnabled": "任务接入：已启用",
       "stateDisabled": "任务接入：已停用",
+      "restartRequiredBadge": "重启后生效",
       "enable": "启用",
       "disable": "停用",
       "restartServer": "重启服务",
       "restartHint": "重启服务，让调度器读到改动",
       "restartManualHint": "服务不在守护模式下，需要你手动重启",
-      "count": "通道（{{total}} 个）",
+      "count": "已配置 {{total}} 个通道",
+      "countOne": "已配置 1 个通道",
       "add": "新增通道",
       "addHint": "新增一个通道",
       "addBlockedHint": "至少装一个配方才能新增通道",
-      "empty": "还没有配置任何通道。",
+      "empty": "还没有配置任何通道。新增通道以轮询外部邮箱或消息流并转为任务。",
       "colName": "名称",
       "colPoll": "取消息配方",
       "colNotify": "发消息配方",
       "colInterval": "轮询间隔",
       "editChannel": "编辑通道",
       "removeChannel": "删除通道",
-      "noRecipes": "还没有配方。每个通道需要 <c>~/.frago/recipes/</c> 下取消息、发消息的配方各一个。",
+      "noRecipes": "还没有打上 <c>channel</c> 标签的配方。新增通道前请先安装或标记配方。",
       "dialogAdd": "新增通道",
       "dialogEdit": "编辑通道：{{name}}",
       "namePlaceholder": "例如 feishu、email",
-      "nameTaken": "已经有一个叫「{{name}}」的通道了。",
+      "nameTaken": "已经有一个叫「{{name}}」的通道了，请换一个唯一名称。",
+      "nameImmutableHint": "通道标识创建后不可改名。",
       "intervalSeconds": "轮询间隔（秒）",
-      "timeoutSeconds": "单次超时（秒）",
+      "timeoutSeconds": "轮询超时（秒）",
       "cancel": "取消",
       "save": "保存",
       "addShort": "新增"
     },
     "connections": {
-      "title": "连接",
+      "title": "按角色分配连接",
       "mainRole": "主 agent",
       "workerRole": "worker",
       "mainRoleHint": "写进各 cli-agent 自己的配置，手动起的会话也用这一条。",

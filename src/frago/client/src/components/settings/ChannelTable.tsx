@@ -3,7 +3,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  Power,
   RotateCcw,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -33,25 +32,29 @@ export default function ChannelTable({
   removeChannel,
 }: ChannelTableProps) {
   const { t } = useTranslation();
+  const countHeading =
+    state.channels.length === 1
+      ? t('settings.channels.countOne')
+      : t('settings.channels.count', { total: state.channels.length });
+
   return (
     <>
       {/* Enable / restart strip */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-[var(--bg-subtle)] rounded-lg">
-        <div className="flex items-center gap-3">
-          <Power
-            className={
-              state.enabled
-                ? 'w-5 h-5 text-green-600 dark:text-green-400'
-                : 'w-5 h-5 text-[var(--text-muted)]'
-            }
-          />
-          <span className="text-sm font-medium">
+      <div className={`sstrip ${restartPending ? 'warn' : ''}`}>
+        <div className="l">
+          <i className={`s-dot ${state.enabled ? 'd-run' : 'd-idle'}`} />
+          <span>
             {state.enabled
               ? t('settings.channels.stateEnabled')
               : t('settings.channels.stateDisabled')}
           </span>
+          {restartPending && (
+            <span className="s-pill warn" style={{ marginLeft: 4 }}>
+              {t('settings.channels.restartRequiredBadge')}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="r">
           <button
             type="button"
             onClick={toggleEnabled}
@@ -67,7 +70,7 @@ export default function ChannelTable({
               type="button"
               onClick={handleRestart}
               disabled={restarting || !state.restart_supported}
-              className="btn btn-primary btn-sm flex items-center gap-2"
+              className="btn btn-primary btn-sm flex items-center gap-1.5"
               title={
                 state.restart_supported
                   ? t('settings.channels.restartHint')
@@ -75,9 +78,9 @@ export default function ChannelTable({
               }
             >
               {restarting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <RotateCcw className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5" />
               )}
               {t('settings.channels.restartServer')}
             </button>
@@ -85,88 +88,94 @@ export default function ChannelTable({
         </div>
       </div>
 
-      {/* Channels table */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">
-            {t('settings.channels.count', { total: state.channels.length })}
-          </span>
-          <button
-            type="button"
-            onClick={openAddDialog}
-            disabled={state.available_recipes.length === 0}
-            className="btn btn-primary btn-sm flex items-center gap-2"
-            title={
-              state.available_recipes.length === 0
-                ? t('settings.channels.addBlockedHint')
-                : t('settings.channels.addHint')
-            }
-          >
-            <Plus className="w-4 h-4" />
-            {t('settings.channels.add')}
-          </button>
-        </div>
-
-        {state.channels.length === 0 ? (
-          <div className="text-sm text-[var(--text-muted)] p-4 text-center border border-dashed border-[var(--border-color)] rounded-lg">
-            {t('settings.channels.empty')}
+      {/* Channels card */}
+      <div className="s-card">
+        <div className="ssec">
+          <div className="ssec-h">
+            <h3>{countHeading}</h3>
+            <button
+              type="button"
+              onClick={openAddDialog}
+              disabled={state.available_recipes.length === 0}
+              className={`btn btn-sm flex items-center gap-1 ${
+                state.available_recipes.length === 0 ? 'opacity-50' : 'btn-primary'
+              }`}
+              title={
+                state.available_recipes.length === 0
+                  ? t('settings.channels.addBlockedHint')
+                  : t('settings.channels.addHint')
+              }
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {t('settings.channels.add')}
+            </button>
           </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[var(--text-muted)]">
-                <th className="py-2">{t('settings.channels.colName')}</th>
-                <th className="py-2">{t('settings.channels.colPoll')}</th>
-                <th className="py-2">{t('settings.channels.colNotify')}</th>
-                <th className="py-2">{t('settings.channels.colInterval')}</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {state.channels.map((ch) => (
-                <tr
-                  key={ch.name}
-                  className="border-t border-[var(--border-color)]"
-                >
-                  <td className="py-2 font-medium">{ch.name}</td>
-                  <td className="py-2 text-[var(--text-secondary)]">
-                    {ch.poll_recipe}
-                  </td>
-                  <td className="py-2 text-[var(--text-secondary)]">
-                    {ch.notify_recipe}
-                  </td>
-                  <td className="py-2 text-[var(--text-secondary)]">
-                    {ch.poll_interval_seconds}s
-                  </td>
-                  <td className="py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openEditDialog(ch)}
-                      className="p-1 text-[var(--text-muted)] hover:text-[var(--accent-primary)]"
-                      aria-label={t('settings.channels.editChannel')}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void removeChannel(ch.name)}
-                      className="p-1 text-[var(--text-muted)] hover:text-red-500"
-                      aria-label={t('settings.channels.removeChannel')}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
 
-        {state.available_recipes.length === 0 && (
-          <p className="text-xs text-[var(--text-muted)]">
-            <Trans i18nKey="settings.channels.noRecipes" components={{ c: <code /> }} />
-          </p>
-        )}
+          {state.channels.length === 0 ? (
+            <div
+              style={{
+                padding: '22px 14px',
+                textAlign: 'center',
+                border: '1px dashed var(--border-color)',
+                borderRadius: 8,
+                color: 'var(--text-muted)',
+                fontSize: 12.5,
+              }}
+            >
+              {t('settings.channels.empty')}
+            </div>
+          ) : (
+            <div className="stbl-wrap">
+              <table className="stbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: '16%' }}>{t('settings.channels.colName')}</th>
+                    <th style={{ width: '29%' }}>{t('settings.channels.colPoll')}</th>
+                    <th style={{ width: '29%' }}>{t('settings.channels.colNotify')}</th>
+                    <th style={{ width: '12%' }}>{t('settings.channels.colInterval')}</th>
+                    <th style={{ width: '14%' }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.channels.map((ch) => (
+                    <tr key={ch.name}>
+                      <td className="nm truncate">{ch.name}</td>
+                      <td className="mono truncate">{ch.poll_recipe}</td>
+                      <td className="mono truncate">{ch.notify_recipe}</td>
+                      <td className="mono">{ch.poll_interval_seconds}s</td>
+                      <td className="acts">
+                        <button
+                          type="button"
+                          onClick={() => openEditDialog(ch)}
+                          className="btn-icon-sm"
+                          title={t('settings.channels.editChannel')}
+                          aria-label={t('settings.channels.editChannel')}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeChannel(ch.name)}
+                          className="btn-icon-sm"
+                          title={t('settings.channels.removeChannel')}
+                          aria-label={t('settings.channels.removeChannel')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {state.available_recipes.length === 0 && (
+            <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--text-muted)' }}>
+              <Trans i18nKey="settings.channels.noRecipes" components={{ c: <code /> }} />
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

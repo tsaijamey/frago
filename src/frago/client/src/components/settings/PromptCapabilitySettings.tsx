@@ -13,7 +13,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import {
-  ShieldCheck,
   Sparkles,
   Check,
   TriangleAlert,
@@ -93,38 +92,12 @@ export default function PromptCapabilitySettings({
 
   const ai = status.lightagent;
   const { tone, Icon } = TONE[ai.status];
-  const count = status.static_rules.count;
 
   return (
     <div className="settings-cap">
       {error && <div className="settings-cap-error">{error}</div>}
 
-      {/* ── 第一层：静态规则 ───────────────────────────────────── */}
-      <section className="settings-cap-card is-ok">
-        <header className="settings-cap-head">
-          <span className="settings-cap-mark">
-            <ShieldCheck size={18} />
-          </span>
-          <div className="settings-cap-heading">
-            <h3 className="settings-cap-name">{t('settings.capability.static.name')}</h3>
-            <p className="settings-cap-lede">{t('settings.capability.static.lede')}</p>
-          </div>
-          <span className="settings-cap-badge is-ok">
-            <Check size={12} />
-            {t('settings.capability.static.badge')}
-          </span>
-        </header>
-
-        {/* `total`, not `count` — i18next reserves `count` for plural selection,
-            and this string has no plural forms to select between. */}
-        <p className="settings-cap-body">
-          {count === null
-            ? t('settings.capability.static.countUnknown')
-            : t('settings.capability.static.count', { total: count })}
-        </p>
-      </section>
-
-      {/* ── 第二层：LightAgent ────────────────────────────────────── */}
+      {/* ── LightAgent ────────────────────────────────────── */}
       <section className={`settings-cap-card is-${tone}`}>
         <header className="settings-cap-head">
           <span className="settings-cap-mark">

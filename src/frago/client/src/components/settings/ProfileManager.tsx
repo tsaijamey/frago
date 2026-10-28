@@ -18,6 +18,7 @@ interface ProfileManagerProps {
   /** Called after any change here, so the page behind the dialog reloads too. */
   onProfilesChanged?: () => void;
   hasCustomConfig?: boolean; // Whether a custom API config is currently active
+  initialPickTargetId?: string | null;
 }
 
 export default function ProfileManager({
@@ -25,8 +26,9 @@ export default function ProfileManager({
   onClose,
   onProfilesChanged,
   hasCustomConfig,
+  initialPickTargetId,
 }: ProfileManagerProps) {
-  const pm = useProfiles({ isOpen, onClose, onProfilesChanged });
+  const pm = useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTargetId });
   const { t, loading, viewMode } = pm;
 
   if (!isOpen) return null;

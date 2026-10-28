@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ChannelDraft } from './useTaskIngestion';
 
@@ -39,33 +39,47 @@ export default function ChannelDialog({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[var(--bg-primary)] rounded-lg p-6 max-w-md w-full space-y-4">
-        <h3 className="text-lg font-semibold">{title}</h3>
+      <div className="bg-[var(--bg-primary)] border border-[var(--border-strong)] rounded-xl max-w-md w-full overflow-hidden shadow-xl">
+        <div className="flex items-center justify-between px-4 h-11 border-b border-[var(--border-color)]">
+          <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">{title}</h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            aria-label={t('settings.channels.cancel')}
+          >
+            <X size={16} />
+          </button>
+        </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm mb-1">{t('settings.channels.colName')}</label>
+        <div className="p-3.5 space-y-2.5">
+          <div className="fgrp">
+            <label>{t('settings.channels.colName')}</label>
             <input
               type="text"
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               placeholder={t('settings.channels.namePlaceholder')}
-              className="input w-full"
+              className="sinput mono w-full"
               disabled={isEdit}
             />
+            {isEdit && (
+              <div className="hint">{t('settings.channels.nameImmutableHint')}</div>
+            )}
             {nameCollides && (
-              <p className="text-xs text-[var(--text-error)] mt-1">
+              <div className="err">
                 {t('settings.channels.nameTaken', { name: draft.name.trim() })}
-              </p>
+              </div>
             )}
           </div>
 
-          <div>
-            <label className="block text-sm mb-1">{t('settings.channels.colPoll')}</label>
+          <div className="fgrp">
+            <label>{t('settings.channels.colPoll')}</label>
             <select
               value={draft.poll_recipe}
               onChange={(e) => setDraft({ ...draft, poll_recipe: e.target.value })}
-              className="input w-full"
+              className="sselect w-full"
+              style={{ maxWidth: '100%' }}
             >
               {availableRecipes.map((r) => (
                 <option key={r} value={r}>
@@ -75,14 +89,15 @@ export default function ChannelDialog({
             </select>
           </div>
 
-          <div>
-            <label className="block text-sm mb-1">{t('settings.channels.colNotify')}</label>
+          <div className="fgrp">
+            <label>{t('settings.channels.colNotify')}</label>
             <select
               value={draft.notify_recipe}
               onChange={(e) =>
                 setDraft({ ...draft, notify_recipe: e.target.value })
               }
-              className="input w-full"
+              className="sselect w-full"
+              style={{ maxWidth: '100%' }}
             >
               {availableRecipes.map((r) => (
                 <option key={r} value={r}>
@@ -92,9 +107,9 @@ export default function ChannelDialog({
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm mb-1">{t('settings.channels.intervalSeconds')}</label>
+          <div className="fgrid2">
+            <div className="fgrp">
+              <label>{t('settings.channels.intervalSeconds')}</label>
               <input
                 type="number"
                 min={1}
@@ -105,11 +120,11 @@ export default function ChannelDialog({
                     poll_interval_seconds: Number(e.target.value),
                   })
                 }
-                className="input w-full"
+                className="sinput mono w-full"
               />
             </div>
-            <div>
-              <label className="block text-sm mb-1">{t('settings.channels.timeoutSeconds')}</label>
+            <div className="fgrp">
+              <label>{t('settings.channels.timeoutSeconds')}</label>
               <input
                 type="number"
                 min={1}
@@ -120,13 +135,13 @@ export default function ChannelDialog({
                     poll_timeout_seconds: Number(e.target.value),
                   })
                 }
-                className="input w-full"
+                className="sinput mono w-full"
               />
             </div>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border-color)]">
+        <div className="flex justify-end gap-1.5 px-3.5 py-2.5 border-t border-[var(--border-color)] bg-[var(--bg-secondary)]">
           <button type="button" onClick={onCancel} className="btn btn-sm">
             {t('settings.channels.cancel')}
           </button>
@@ -134,9 +149,9 @@ export default function ChannelDialog({
             type="button"
             onClick={onSubmit}
             disabled={!canSubmit || saving}
-            className="btn btn-primary btn-sm flex items-center gap-2"
+            className="btn btn-primary btn-sm flex items-center gap-1.5 disabled:opacity-50"
           >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             {isEdit ? t('settings.channels.save') : t('settings.channels.addShort')}
           </button>
         </div>
