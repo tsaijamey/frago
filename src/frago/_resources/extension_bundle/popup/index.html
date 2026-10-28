@@ -4,9 +4,24 @@
 <style>
   body { font: 13px system-ui, sans-serif; width: 220px; padding: 12px; }
   h1 { font-size: 14px; margin: 0 0 8px; }
-  code { background: #f2f2f2; padding: 2px 4px; border-radius: 3px; }
+  p { margin: 6px 0; }
+  code { background: #f2f2f2; padding: 2px 4px; border-radius: 3px; word-break: break-all; }
+  button {
+    margin-top: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    font: 12px system-ui, sans-serif;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    background: #f6f8fa;
+    cursor: pointer;
+  }
+  button:hover { background: #eaeef2; }
 </style>
 <h1>frago bridge</h1>
 <p>Extension ID: <code id="eid">...</code></p>
 <p>Native host: <code id="status">checking…</code></p>
+<p>Proxy: <code id="proxy-status">checking…</code></p>
+<button id="open-options" type="button">代理与直连域名设置</button>
 <script src="popup.js"></script>
+

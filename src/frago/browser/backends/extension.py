@@ -838,16 +838,12 @@ def launch_chrome_with_extension(bundle_dir: Path,
     if linux_needs_no_sandbox(binary):
         args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--test-type"])
 
-    # Route through the user's proxy client when there is one. Without
-    # this the browser silently hangs for 30s on anything that needs the
-    # proxy, which reaches the caller as an unexplained timeout. Which
-    # sites actually take the proxy is the proxy client's decision, not
-    # ours — see frago.browser.proxy_detect.
-    from ..proxy_detect import detect_local_proxy, proxy_bypass_list
-    proxy = detect_local_proxy()
-    if proxy:
-        args.append(f"--proxy-server={proxy}")
-        args.append(f"--proxy-bypass-list={proxy_bypass_list()}")
+    # Proxy configuration is owned by the extension's Options page
+    # (options/options.html -> chrome.proxy.settings). Do NOT pass
+    # --proxy-server or --proxy-bypass-list on the command line: in
+    # Chromium, command-line proxy flags sit above extension prefs and
+    # lock chrome.proxy.settings to not_controllable, which prevents the
+    # Options page from turning off the proxy or updating the bypass list.
 
     # A headful browser needs a window, and a window needs a tab: without
     # a URL here Chrome opens its New Tab page instead. about:blank does
