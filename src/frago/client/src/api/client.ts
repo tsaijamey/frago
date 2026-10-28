@@ -987,6 +987,52 @@ export async function setHookReviewEnabled(enabled: boolean): Promise<HookReview
 }
 
 // ============================================================
+// Decision Model Configuration API
+// ============================================================
+
+export type DecisionWireMode = 'ollama' | 'decisions';
+
+export interface DecisionModelSettings {
+  configured: boolean;
+  enabled: boolean;
+  wire: DecisionWireMode;
+  url: string | null;
+  model: string;
+  has_api_key: boolean;
+  api_key_masked: string;
+  temperature: number | null;
+}
+
+export interface DecisionModelUpdatePayload {
+  enabled: boolean;
+  wire: DecisionWireMode;
+  url?: string | null;
+  model: string;
+  api_key?: string | null;
+  clear_api_key?: boolean;
+  temperature?: number | null;
+}
+
+export async function getDecisionModelSettings(): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model');
+}
+
+export async function updateDecisionModelSettings(
+  payload: DecisionModelUpdatePayload
+): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetDecisionModelSettings(): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model', {
+    method: 'DELETE',
+  });
+}
+
+// ============================================================
 // CLI Agent Clients & OpenCode Background Service API
 // ============================================================
 

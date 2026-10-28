@@ -1067,6 +1067,60 @@
       "fragoCoreOnly": "只能给 CoreAgent、轻量 ai 或旁路 AI",
       "workbuddyRetired": "WorkBuddy 升级后官方不再支持调用鉴权，没有角色能绑它了"
     },
+    "decisionModel": {
+      "title": "决策模型",
+      "desc": "自定义决策模型端点配置（填写端点地址、模型名称与可选密钥）。",
+      "statusActive": "已启用",
+      "statusDisabled": "已停用",
+      "statusUnconfigured": "未配置",
+      "configure": "配置决策模型",
+      "edit": "编辑",
+      "reset": "清除配置",
+      "save": "保存配置",
+      "saving": "保存中…",
+      "cancel": "取消",
+      "enabledLabel": "启用决策模型",
+      "enabledHint": "存于 ~/.frago/config.json 的 decision_model 段。",
+      "wireLabel": "请求方式",
+      "wireHint": {
+        "ollama": "向 Ollama 的 /api/generate 发送原生模板请求并读取选项字母 A/B/C 的 logprobs 分布。",
+        "decisions": "向自定义决策端点发送 POST JSON {model, state, questions, images?, temperature?} 并解析 {answers}。"
+      },
+      "wires": {
+        "ollama": "Ollama (/api/generate + logprobs)",
+        "decisions": "自定义 HTTP 决策端点 (Decisions API)"
+      },
+      "wireBadge": {
+        "ollama": "Ollama",
+        "decisions": "HTTP Decisions"
+      },
+      "urlLabel": "端点地址",
+      "urlPlaceholder": {
+        "ollama": "例如 http://127.0.0.1:11434",
+        "decisions": "例如 https://openrouter.ai/api/alpha/decisions"
+      },
+      "urlHint": {
+        "ollama": "填写 Ollama 服务地址，请求发往该地址下的 /api/generate。",
+        "decisions": "填写完整的自定义决策接口 URL。"
+      },
+      "modelLabel": "模型名称",
+      "modelPlaceholder": {
+        "ollama": "填写本机已安装的模型名",
+        "decisions": "填写目标端点接收的模型标识"
+      },
+      "apiKeyLabel": "API 密钥",
+      "apiKeyPlaceholder": "可选，外部端点 Bearer 密钥（本地无鉴权可留空）",
+      "apiKeyConfiguredPlaceholder": "已配置（{{masked}}），留空保持现有密钥",
+      "apiKeyHint": "填写后以 Authorization: Bearer <key> 发送；无需鉴权可留空。",
+      "clearApiKey": "清除已存密钥",
+      "clearApiKeyPending": "保存后将清除已存密钥",
+      "temperatureLabel": "温度系数 (Temperature)",
+      "temperaturePlaceholder": "可选，留空则由调用方或端点自行决定",
+      "temperatureHint": "可选的校准温度参数；不填则不覆盖。",
+      "unconfiguredHint": "尚未配置决策模型。可自定义填写本地或外部决策端点。",
+      "loadFailed": "读取决策模型配置失败",
+      "saveFailed": "保存决策模型配置失败"
+    },
     "headerMeta": "frago {{version}}"
   },
   "init": {

@@ -742,6 +742,86 @@ async def set_hook_review_enabled(
 
 
 # ============================================================
+# Decision Model Configuration Endpoints
+# ============================================================
+
+
+class DecisionModelSettingsResponse(BaseModel):
+    """Persisted decision model settings with masked API key."""
+    configured: bool
+    enabled: bool
+    wire: str
+    url: str | None = None
+    model: str
+    has_api_key: bool = False
+    api_key_masked: str = ""
+    temperature: float | None = None
+
+
+class DecisionModelUpdateRequest(BaseModel):
+    """Update decision model configuration."""
+    enabled: bool = True
+    wire: str = "decisions"
+    url: str | None = None
+    model: str = ""
+    api_key: str | None = None
+    clear_api_key: bool = False
+    temperature: float | None = None
+
+
+@router.get("/settings/decision-model", response_model=DecisionModelSettingsResponse)
+async def get_decision_model_settings() -> DecisionModelSettingsResponse:
+    """Get decision model settings and quick presets."""
+    from frago.server.services.decision_model_service import DecisionModelService
+
+    return DecisionModelSettingsResponse(**DecisionModelService.get_settings())
+
+
+@router.put("/settings/decision-model", response_model=DecisionModelSettingsResponse)
+async def update_decision_model_settings(
+    request: DecisionModelUpdateRequest,
+) -> DecisionModelSettingsResponse:
+    """Update decision model settings in ~/.frago/config.json."""
+    from frago.server.services.decision_model_service import DecisionModelService
+
+    try:
+        data = DecisionModelService.update_settings(
+            enabled=request.enabled,
+            wire=request.wire,
+            url=request.url,
+            model=request.model,
+            api_key=request.api_key,
+            clear_api_key=request.clear_api_key,
+            temperature=request.temperature,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
+
+    return DecisionModelSettingsResponse(**data)
+
+
+@router.delete("/settings/decision-model", response_model=DecisionModelSettingsResponse)
+async def reset_decision_model_settings() -> DecisionModelSettingsResponse:
+    """Clear decision model configuration."""
+    from frago.server.services.decision_model_service import DecisionModelService
+
+    try:
+        data = DecisionModelService.reset_settings()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
+
+    return DecisionModelSettingsResponse(**data)
+
+
+# ============================================================
 # Version Check Endpoints
 # ============================================================
 

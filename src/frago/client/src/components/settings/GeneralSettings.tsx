@@ -12,6 +12,7 @@ import { Code, AlertTriangle, Shield, Check, RefreshCw } from 'lucide-react';
 import ProfileManager from '@/components/settings/ProfileManager';
 import ConnectionRolesCard from '@/components/settings/ConnectionRolesCard';
 import ActiveProfileCard from '@/components/settings/ActiveProfileCard';
+import DecisionModelCard from '@/components/settings/DecisionModelCard';
 import Modal from '@/components/ui/Modal';
 
 interface GeneralSettingsProps {
@@ -219,6 +220,8 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
         </div>
       )}
 
+      {/* Decision Model Configuration */}
+      <DecisionModelCard />
 
       {/* Claude Code settings file — set apart as a danger zone rather than
           shown as one more ordinary card. frago registers its hook events into

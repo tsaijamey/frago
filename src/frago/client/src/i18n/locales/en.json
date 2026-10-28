@@ -1072,6 +1072,60 @@
       "fragoCoreOnly": "CoreAgent, light agent or session observer only",
       "workbuddyRetired": "WorkBuddy no longer supports calling its auth, so no role can be bound to it"
     },
+    "decisionModel": {
+      "title": "Decision model",
+      "desc": "Configure a custom decision model endpoint (endpoint URL, model name, and optional API key).",
+      "statusActive": "Enabled",
+      "statusDisabled": "Disabled",
+      "statusUnconfigured": "Not configured",
+      "configure": "Configure decision model",
+      "edit": "Edit",
+      "reset": "Clear",
+      "save": "Save configuration",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "enabledLabel": "Enable decision model",
+      "enabledHint": "Stored under decision_model in ~/.frago/config.json.",
+      "wireLabel": "Request mode",
+      "wireHint": {
+        "ollama": "Sends raw template prompts to Ollama /api/generate and reads option letter A/B/C logprobs.",
+        "decisions": "Sends POST JSON {model, state, questions, images?, temperature?} to the custom endpoint URL and parses {answers}."
+      },
+      "wires": {
+        "ollama": "Ollama (/api/generate + logprobs)",
+        "decisions": "Custom HTTP Decision Endpoint (Decisions API)"
+      },
+      "wireBadge": {
+        "ollama": "Ollama",
+        "decisions": "HTTP Decisions"
+      },
+      "urlLabel": "Endpoint URL",
+      "urlPlaceholder": {
+        "ollama": "e.g. http://127.0.0.1:11434",
+        "decisions": "e.g. https://openrouter.ai/api/alpha/decisions"
+      },
+      "urlHint": {
+        "ollama": "Enter the Ollama base URL; requests are sent to /api/generate.",
+        "decisions": "Enter the full custom decision endpoint URL."
+      },
+      "modelLabel": "Model name",
+      "modelPlaceholder": {
+        "ollama": "Enter an installed local model name",
+        "decisions": "Enter the model identifier expected by the endpoint"
+      },
+      "apiKeyLabel": "API key",
+      "apiKeyPlaceholder": "Optional Bearer API key (leave empty if unauthenticated)",
+      "apiKeyConfiguredPlaceholder": "Configured ({{masked}}) — leave empty to keep existing key",
+      "apiKeyHint": "Sent as Authorization: Bearer <key>; leave empty for unauthenticated endpoints.",
+      "clearApiKey": "Clear saved key",
+      "clearApiKeyPending": "Saved key will be cleared on save",
+      "temperatureLabel": "Temperature",
+      "temperaturePlaceholder": "Optional — leave empty to use endpoint default",
+      "temperatureHint": "Optional temperature parameter; leave blank if not needed.",
+      "unconfiguredHint": "No decision model configured yet. Customize your local or external decision endpoint.",
+      "loadFailed": "Failed to load decision model settings",
+      "saveFailed": "Failed to save decision model settings"
+    },
     "headerMeta": "frago {{version}}"
   },
   "init": {

@@ -776,6 +776,52 @@ export const setHookReviewEnabled = withMode(
     Promise.resolve({ ...HOOK_REVIEW_UNAVAILABLE, enabled }),
 );
 
+// ============================================================
+// Decision Model Configuration API
+// ============================================================
+
+export type {
+  DecisionWireMode,
+  DecisionModelSettings,
+  DecisionModelUpdatePayload,
+} from './client';
+
+const DECISION_MODEL_UNAVAILABLE: httpApi.DecisionModelSettings = {
+  configured: false,
+  enabled: false,
+  wire: 'decisions',
+  url: null,
+  model: '',
+  has_api_key: false,
+  api_key_masked: '',
+  temperature: null,
+};
+
+export const getDecisionModelSettings = withMode(
+  (): Promise<httpApi.DecisionModelSettings> => httpApi.getDecisionModelSettings(),
+  (): Promise<httpApi.DecisionModelSettings> => Promise.resolve(DECISION_MODEL_UNAVAILABLE),
+);
+
+export const updateDecisionModelSettings = withMode(
+  (payload: httpApi.DecisionModelUpdatePayload): Promise<httpApi.DecisionModelSettings> =>
+    httpApi.updateDecisionModelSettings(payload),
+  (payload: httpApi.DecisionModelUpdatePayload): Promise<httpApi.DecisionModelSettings> =>
+    Promise.resolve({
+      ...DECISION_MODEL_UNAVAILABLE,
+      configured: true,
+      enabled: payload.enabled,
+      wire: payload.wire,
+      url: payload.url ?? null,
+      model: payload.model,
+      temperature: payload.temperature ?? null,
+    }),
+);
+
+export const resetDecisionModelSettings = withMode(
+  (): Promise<httpApi.DecisionModelSettings> => httpApi.resetDecisionModelSettings(),
+  (): Promise<httpApi.DecisionModelSettings> => Promise.resolve(DECISION_MODEL_UNAVAILABLE),
+);
+
 export type {
   CliAgentClientStatus,
   CliAgentsStatus,
