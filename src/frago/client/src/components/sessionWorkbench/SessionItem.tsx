@@ -1,15 +1,14 @@
 /**
  * SessionItem — 左栏清单里的一张会话卡，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
  *
- * **三行，每行独占整宽**（09-29 第五轮）。任何图标、按钮、标签都不和标题或预览挤在同一行：
+ * **两行，每行独占整宽**（去掉会话内容预览以节省垂直空间）。任何图标、按钮、标签都不和标题挤在同一行：
  *
  * | 行 | 内容 |
  * |---|---|
  * | 标题 | 最多两行，放不下截断，悬停看全文 |
- * | 预览 | agent 最近一次回复，截开头留结尾，灰字最多两行；所有会话都有这一行 |
  * | 状态行 | For you（发出后是 Sending / Agent on it）· 时长 · 终端 · 子会话数 · 图钉；最右「…」 |
  *
- * For you 与其余会话同一结构；三档字：标题 13/600、预览 12/400、状态行 11，只有 For you
+ * For you 与其余会话同一结构；两档字：标题 13/600、状态行 11，只有 For you
  * 标签带颜色。
  */
 
@@ -33,8 +32,8 @@ export const FAMILY_ICON: Record<SessionFamily, { src: string; label: string }> 
   coreagent: { src: '/icons/coreagent.png', label: 'CoreAgent' },
 };
 
-/** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
-const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
+/** 选中：整张卡用品牌绿淡底加品牌绿整圈细描边与微阴影，与中性灰下沉组容器拉开清晰层级，不用单边条。 */
+const SELECTED = 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]';
 
 /** 路径里有空格、引号这类字符时裹一层单引号，否则粘进终端会被拆成两个参数。 */
 function shellArg(value: string): string {
@@ -212,7 +211,7 @@ export default function SessionItem({
   sending = false,
   agentOnIt = false,
   inTmux = false,
-  card = null,
+  card: _card = null,
   busyTurn = false,
   nested = false,
   branchCard = false,
@@ -293,13 +292,10 @@ export default function SessionItem({
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
   const stacked = hasWorkers && !workersExpanded;
-  /** 分支卡在容器里要有一张实在的纸；选中时让 SELECTED 接管底色，描边仍保留。 */
-  const branchLook = branchCard
-    ? selected
-      ? 'border border-border-color'
-      : 'border border-border-color bg-bg-primary'
+  /** 分支卡在容器里用微弱亮底与淡描边同下沉组托盘区分；选中时交由 SELECTED 接管品牌绿底色与整圈细描边。 */
+  const branchLook = branchCard && !selected
+    ? 'bg-[var(--branch-card-bg)] [box-shadow:inset_0_0_0_1px_var(--branch-card-border)]'
     : '';
-  const preview = previewOf(session, forYou, card);
   const onGroupFill = inPinnedGroup || inBranchGroup;
   /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组与分支容器里是组的浅底，别处是清单底。 */
   const paperBg = onGroupFill ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
@@ -363,8 +359,8 @@ export default function SessionItem({
         /* **平时不是一张卡。** 清单要的是一列可扫读的行：平时没有任何容器，鼠标经过才浮出
            一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，不靠任何单边色条，
            也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
-           才立得住。内边距上下 10、左右 12（第五轮二改）。 */
-        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${branchLook} ${
+           才立得住。内边距照原型 .si：上 8、左右 12、下 7。 */
+        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 pb-[7px] pt-2 text-left transition-colors duration-200 ${branchLook} ${
           /* 置顶组和分支容器那块底已经是悬停色，组里的普通卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
           selected ? SELECTED : onGroupFill && !branchCard ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
         }`}
@@ -402,20 +398,10 @@ export default function SessionItem({
           </span>
         </div>
 
-        {/* 第 2 行：预览。所有会话都有这一行。 */}
-        <p
-          data-testid="session-preview"
-          className={`mt-[3px] line-clamp-2 break-words leading-[1.5] ${nested ? 'text-[11px]' : 'text-[12px]'} ${
-            preview ? 'text-[var(--card-pv)]' : 'text-[var(--card-meta)]'
-          }`}
-        >
-          {preview || t('workbench.rail.noReply')}
-        </p>
-
-        {/* 第 3 行：状态行。左组可收缩，放不下时时长先截断；「…」固定最右、不收缩。 */}
+        {/* 第 2 行：状态行（去掉会话内容预览以节省垂直空间，照原型 .si .sr 顶距 5px）。左组可收缩，放不下时时长先截断；「…」固定最右、不收缩。 */}
         <div
           data-testid="session-status"
-          className="mt-2 flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]"
+          className="mt-[5px] flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]"
         >
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             {progress === 'sending' ? (

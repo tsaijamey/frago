@@ -41,9 +41,13 @@
   /* 分段控件选中片浮起来的方式：一圈发丝描边。浅色主题白片压在浅灰底上，
      只靠这圈线分不开层次，那边再补一层极轻的落影。 */
   --seg-on-shadow: 0 0 0 1px var(--border-color);
-  /* 会话清单置顶组那块浅底：清单底 --bg-secondary 叠一层 --bg-hover 的结果，写成不透明实色，
-     因为组里带流光、带叠纸的卡内层要填同一个色，半透明填不住身后的东西。 */
-  --rail-pinned-fill: #272727;
+  /* 会话清单组容器那块下沉托盘底：清单底 --bg-secondary 压一层 --grp-bg 的不透明实色等价物，
+     因为组里带流光、带叠纸的卡内层要填同一个实色，半透明填不住身后的东西。 */
+  --rail-pinned-fill: #141414;
+  --grp-bg: rgba(0, 0, 0, 0.22);
+  --grp-border: rgba(255, 255, 255, 0.08);
+  --branch-card-bg: rgba(255, 255, 255, 0.025);
+  --branch-card-border: rgba(255, 255, 255, 0.07);
   --bg-elevated: #2a2a2a;
   --bg-overlay: rgba(0, 0, 0, 0.6);
   /* 行内代码与代码块的底。原先两处都取 `--bg-subtle`，深色下那是 #1a1a1a，比页面底
@@ -102,9 +106,10 @@
   /* 额度条改用一个中性灰，达到 80% 转告警橙：它说的是「还剩多少」，不是动作也不是在跑。 */
   --usage-fill: rgba(255, 255, 255, 0.5);
 
-  /* 选中态＝「你在看哪一条」，不是动作：整张卡换中性底，再加一圈完整描边。不用绿，不用单边条。 */
-  --sel-bg: rgba(255, 255, 255, 0.08);
-  --sel-border: rgba(255, 255, 255, 0.2);
+  /* 选中态＝「你在看哪一条」：整张卡用品牌绿淡底加品牌绿整圈细描边与微阴影，与中性灰下沉组容器拉开清晰层级。不用单边条。 */
+  --sel-bg: rgba(21, 179, 77, 0.14);
+  --sel-border: rgba(21, 179, 77, 0.58);
+  --sel-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
 
   /* 队友那一侧：Teams 页右栏整栏底色、队友头像与「Read-only」标签、左栏队友请求块、
      决定卡上「From your teammate」标签共用这一组冷色。只有这三个名字，别处 NEVER 另定一份。 */
@@ -247,7 +252,11 @@
   --bg-hover: rgba(0, 0, 0, 0.05);
   --bg-active: rgba(0, 0, 0, 0.08);
   --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border-color);
-  --rail-pinned-fill: #ebebeb;
+  --rail-pinned-fill: #eeeeee;
+  --grp-bg: rgba(0, 0, 0, 0.035);
+  --grp-border: rgba(0, 0, 0, 0.08);
+  --branch-card-bg: rgba(255, 255, 255, 0.72);
+  --branch-card-border: rgba(0, 0, 0, 0.07);
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);
   --code-bg: rgba(0, 0, 0, 0.05);
@@ -285,8 +294,9 @@
 
   --usage-track: rgba(0, 0, 0, 0.08);
   --usage-fill: rgba(0, 0, 0, 0.45);
-  --sel-bg: rgba(0, 0, 0, 0.05);
-  --sel-border: rgba(0, 0, 0, 0.2);
+  --sel-bg: rgba(10, 143, 51, 0.1);
+  --sel-border: rgba(10, 143, 51, 0.5);
+  --sel-shadow: 0 2px 6px rgba(10, 143, 51, 0.08);
   --peer-bg: #f3f5fb;
   --peer-ink: #3f4f9e;
   --peer-chip: rgba(63, 79, 158, 0.1);

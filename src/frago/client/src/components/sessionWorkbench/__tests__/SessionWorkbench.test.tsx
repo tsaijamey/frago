@@ -1,4 +1,5 @@
-/** * 三栏的组件测试：左栏清单、中栏记录流、右栏示意面。
+/**
+ * 三栏的组件测试：左栏清单、中栏记录流、右栏示意面。
  *
  * 重点在四处：视觉归组但不露编号、空会话渲染成引导页而不是报错、左栏底部汇总只有绝对
  * 数、全域禁令在三栏都成立。
@@ -765,14 +766,67 @@ describe('SessionRail 左栏', () => {
     const [first] = screen.getAllByTestId('session-item');
     expect(first.getAttribute('aria-current')).toBe('true');
     const className = first.className;
-    // 整行换底加整圈描边。这一条从前钉的是绿淡底——那是当时的实现，不是这条规矩本身。
-    // 选中不是动作，现在换成中性底（--sel-bg）加一圈 --sel-border，规矩没变：状态由整行承担。
+    // 整行换底加整圈描边与微阴影（--sel-bg / --sel-border / --sel-shadow），状态由整行承担。
     expect(className).toContain('bg-[var(--sel-bg)]');
     expect(className).toContain('var(--sel-border)');
+    expect(className).toContain('var(--sel-shadow)');
     expect(className).not.toContain('accent-primary');
     // 真正的禁令：任何单边色条都不许出现。
     expect(className).not.toMatch(/border-[lrtb]-\d/);
     expect(className).not.toMatch(/\bborder-[lrtb]\b/);
+  });
+
+  it('组容器下沉为暗托盘、组间距拉开到 14px，未选中分支卡与选中项样式层级分明', () => {
+    const rows = [
+      session({ session_id: 'solo-0', title: '独立会话 0' }),
+      session({ session_id: 'parent-1', title: '主会话 1' }),
+      session({
+        session_id: 'branch-1',
+        title: '分支会话 1',
+        parent_session_id: 'parent-1',
+        relation: { kind: 'branch', closed: false },
+      }),
+      session({ session_id: 'parent-2', title: '主会话 2' }),
+      session({
+        session_id: 'branch-2',
+        title: '分支会话 2',
+        parent_session_id: 'parent-2',
+        relation: { kind: 'branch', closed: false },
+      }),
+    ];
+    const { container } = render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId="branch-1"
+        onSelect={NOOP}
+      />
+    );
+    const heads = container.querySelectorAll('[data-branch-pos="head"]');
+    const tails = container.querySelectorAll('[data-branch-pos="tail"]');
+    expect(heads).toHaveLength(2);
+    expect(tails).toHaveLength(2);
+    // 第一个组头跟在普通独立卡片后面，补 pt-3（12px + 上一行 2px = 14px）；第二个组头紧跟上一组尾（已有 h-3.5 = 14px），不再重复叠加
+    expect(heads[0].className).toContain('pt-3');
+    expect(heads[1].className).not.toContain('pt-3');
+    // 组容器采用下沉暗托盘 --grp-bg 与淡描边 --grp-border，组内卡片间距为 pb-[5px]
+    expect(heads[0].firstElementChild?.className).toContain('bg-[var(--grp-bg)]');
+    expect(heads[0].firstElementChild?.className).toContain('border-[var(--grp-border)]');
+    expect(heads[0].firstElementChild?.firstElementChild?.className).toContain('pb-[5px]');
+    // 每个分支组尾部留 14px（h-3.5）组间距
+    const gaps = screen.getAllByTestId('group-gap');
+    expect(gaps).toHaveLength(2);
+    for (const g of gaps) {
+      expect(g.className).toContain('h-3.5');
+    }
+    // 选中的分支卡用 --sel-bg / --sel-border / --sel-shadow，未选中的分支卡用 --branch-card-bg / --branch-card-border
+    const items = screen.getAllByTestId('session-item');
+    const selectedBranch = items.find((el) => el.textContent?.includes('分支会话 1'))!;
+    const unselectedBranch = items.find((el) => el.textContent?.includes('分支会话 2'))!;
+    expect(selectedBranch.className).toContain('bg-[var(--sel-bg)]');
+    expect(selectedBranch.className).toContain('var(--sel-border)');
+    expect(selectedBranch.className).toContain('var(--sel-shadow)');
+    expect(unselectedBranch.className).toContain('bg-[var(--branch-card-bg)]');
+    expect(unselectedBranch.className).toContain('var(--branch-card-border)');
   });
 
   it('一场都没匹配上时说清楚，不当成坏了', () => {
@@ -817,7 +871,7 @@ describe('SessionRail 左栏', () => {
     expect(setFilter).toHaveBeenCalledWith('for-you');
   });
 
-  it('会话卡不再摆状态与来源；预览行取回复摘要，卡住摘要不上卡', () => {
+  it('会话卡不再摆状态、来源与内容预览；仅保留标题与状态行', () => {
     const one = session({
       session_id: SID,
       status: 'error',
@@ -835,10 +889,10 @@ describe('SessionRail 左栏', () => {
     expect(item.getAttribute('data-status')).toBeNull();
     expect(screen.queryByTestId('digest-done')).toBeNull();
     expect(screen.queryByTestId('digest-stuck')).toBeNull();
+    expect(item.querySelector('[data-testid=session-preview]')).toBeNull();
     expect(item.textContent).not.toContain('Claude Code');
     expect(item.textContent).not.toContain('API Error');
-    // 第五轮：所有会话都有预览行，服务端出「回复结尾」之前取最近一条回复的摘要
-    expect(item.querySelector('[data-testid=session-preview]')?.textContent).toContain('verdict.jsonl');
+    expect(item.textContent).not.toContain('verdict.jsonl');
   });
 
   it('没有等你决策那一档', () => {
@@ -897,7 +951,8 @@ describe('SessionRail 左栏', () => {
     const card = screen.getByTestId('rail-launch');
     expect(card.getAttribute('data-phase')).toBe('claiming');
     expect(card.textContent).toContain('起一场新的');
-    expect(card.textContent).toContain('codex');
+    expect(card.textContent).toContain('发送中');
+    expect(card.querySelector('p')).toBeNull();
   });
 
   it('没有正在起的会话时，清单上方不多出任何东西', () => {

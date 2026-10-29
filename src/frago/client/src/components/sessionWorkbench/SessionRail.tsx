@@ -914,7 +914,7 @@ export default function SessionRail({
       </div>
 
       {/* 正在起的那一场先占一行。它摆在滚动区**外面**：这一行的意义是"你刚建的那场在
-          这儿"，滚下去看不见就等于没有。直接采用与普通会话一致的三行卡片结构，会话真进了
+          这儿"，滚下去看不见就等于没有。直接采用与普通会话一致的两行卡片结构（标题 + 状态行），会话真进了
           清单它自己就消失，位置随即让给真那一行。 */}
       {launch ? (
         <div className="shrink-0 px-1 pt-2">
@@ -924,9 +924,9 @@ export default function SessionRail({
             onClick={() => {
               if (launch.sessionId) onSelect(launch.sessionId);
             }}
-            className={`group/session relative w-full rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${
+            className={`group/session relative w-full rounded-[8px] px-3 pb-[7px] pt-2 text-left transition-colors duration-200 ${
               !creatingNew && (selectedId === null || selectedId === launch.sessionId)
-                ? 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]'
+                ? 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]'
                 : 'hover:bg-bg-hover'
             }`}
           >
@@ -937,21 +937,8 @@ export default function SessionRail({
               </span>
             </div>
 
-            {/* 第 2 行：预览状态说明 */}
-            <p
-              className={`mt-[3px] line-clamp-2 break-words text-[12px] leading-[1.5] ${
-                launch.phase === 'failed' ? 'text-[var(--card-pv)]' : 'text-[var(--card-meta)]'
-              }`}
-            >
-              {launch.phase === 'failed'
-                ? t('workbench.launch.railFailed')
-                : launch.phase === 'claiming'
-                  ? t('workbench.launch.railClaiming', { name: launch.agentName })
-                  : t('workbench.launch.railWarming', { name: launch.agentName })}
-            </p>
-
-            {/* 第 3 行：状态行（与 SessionItem 对齐） */}
-            <div className="mt-2 flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
+            {/* 第 2 行：状态行（与 SessionItem 对齐） */}
+            <div className="mt-[5px] flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 {launch.phase === 'failed' ? (
                   <span className="inline-flex min-w-0 items-center gap-1 font-medium text-accent-error">
@@ -1037,9 +1024,8 @@ export default function SessionRail({
         {loading && !visible.length ? (
           <div className="animate-pulse px-1 pt-2">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="mb-0.5 w-full rounded-[8px] px-3 py-2.5">
-                <div className="mb-2 h-3.5 w-2/3 rounded bg-bg-hover" />
-                <div className="mb-2 h-2.5 w-5/6 rounded bg-bg-hover" />
+              <div key={i} className="mb-0.5 w-full rounded-[8px] px-3 pb-[7px] pt-2">
+                <div className="mb-[5px] h-3.5 w-2/3 rounded bg-bg-hover" />
                 <div className="h-2.5 w-1/3 rounded bg-bg-hover" />
               </div>
             ))}
@@ -1054,8 +1040,8 @@ export default function SessionRail({
             ref={virtuoso}
             data={rows}
             initialItemCount={Math.min(rows.length, 30)}
-            /* 条目高度基线：标题一行、预览两行约 102px（第五轮三行卡）。 */
-            defaultItemHeight={102}
+            /* 条目高度基线：标题与状态行两行结构约 52px。 */
+            defaultItemHeight={52}
             components={listComponents}
             rangeChanged={setRange}
             /* 滚到底就续上下一批。人已经滚到底了，那一下就是"还要看"本身。 */
@@ -1066,11 +1052,11 @@ export default function SessionRail({
             computeItemKey={(index, row) =>
               !row ? `row-${index}` : row.kind === 'session' ? row.session.session_id : row.kind
             }
-            itemContent={(_, row) => {
+            itemContent={(index, row) => {
               // 同上：位置对不上时给一个空位，NEVER 伸手去读一个不在的行。
               if (!row) return null;
               if (row.kind === 'pinned-header') {
-                /* 置顶整组一块略浅的底加一圈发丝描边，这是它的上半框。标题正常字重、正文色，
+                /* 置顶整组用下沉暗托盘底加一圈淡描边，这是它的上半框。标题正常字重、正文色，
                    右端写「Always on top」——不用绿，不用大写。 */
                 return (
                   <div className="px-1 pt-2">
@@ -1079,7 +1065,7 @@ export default function SessionRail({
                       onClick={() => pins.setCollapsed(!pins.collapsed)}
                       aria-expanded={!pins.collapsed}
                       data-testid="pinned-header"
-                      className={`flex w-full items-center gap-1.5 border border-border-color bg-[var(--rail-pinned-fill)] px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-active ${
+                      className={`flex w-full items-center gap-1.5 border border-[var(--grp-border)] bg-[var(--grp-bg)] px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-active ${
                         pins.collapsed ? 'rounded-[8px]' : 'rounded-t-[8px] border-b-0'
                       }`}
                     >
@@ -1095,10 +1081,10 @@ export default function SessionRail({
               }
               if (row.kind === 'pinned-tail') {
                 return pins.collapsed ? (
-                  <div className="h-2" />
+                  <div className="h-3.5" data-testid="pinned-tail-gap" />
                 ) : (
-                  <div className="px-1 pb-2">
-                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-[var(--rail-pinned-fill)]" />
+                  <div className="px-1 pb-3.5" data-testid="pinned-tail-gap">
+                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-[var(--grp-border)] bg-[var(--grp-bg)]" />
                   </div>
                 );
               }
@@ -1162,29 +1148,29 @@ export default function SessionRail({
                     : 'px-1';
               const innerIndentCls =
                 pos && indent > 0 ? (indent === 1 ? 'pl-4' : 'pl-8') : '';
-              /* worker 框的三段：1px、清单的分隔线色、8px 圆角。 */
+              /* worker 框的三段：1px、组容器淡描边、8px 圆角。 */
               const box =
                 pos === 'head'
-                  ? 'rounded-t-[8px] border border-b-0 border-border-color'
+                  ? 'rounded-t-[8px] border border-b-0 border-[var(--grp-border)]'
                   : pos === 'mid'
-                    ? 'border-x border-border-color'
+                    ? 'border-x border-[var(--grp-border)]'
                     : pos === 'tail'
-                      ? 'rounded-b-[8px] border border-t-0 border-border-color'
+                      ? 'rounded-b-[8px] border border-t-0 border-[var(--grp-border)]'
                       : '';
-              /* 分支容器：整段用同一层浅底和一圈 10px 圆角框，跨行拆成头、中、尾三段画。
+              /* 分支容器：整段用下沉暗托盘底 --grp-bg 和一圈 10px 圆角淡描边 --grp-border，跨行拆成头、中、尾三段画。
                  flow-root 封住内部卡片（如折叠 worker 的 mb-3）的外边距，防止穿透底边造成容器背景断裂。 */
               const branchBox =
                 branchPos === 'head'
-                  ? 'flow-root rounded-t-[10px] border-x border-t border-border-color bg-[var(--bg-hover)]'
+                  ? 'flow-root rounded-t-[10px] border-x border-t border-[var(--grp-border)] bg-[var(--grp-bg)]'
                   : branchPos === 'mid'
-                    ? 'flow-root border-x border-border-color bg-[var(--bg-hover)]'
+                    ? 'flow-root border-x border-[var(--grp-border)] bg-[var(--grp-bg)]'
                     : branchPos === 'tail'
-                      ? 'flow-root rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
+                      ? 'flow-root rounded-b-[10px] border-x border-b border-[var(--grp-border)] bg-[var(--grp-bg)]'
                       : '';
-              /* 容器内边距：左右各 8px，头尾各 6px；组内卡片之间（非 worker 框内部）留 6px 间距。 */
+              /* 容器内边距：左右各 8px，头尾各 6px；组内卡片之间（非 worker 框内部）留 5px 间距。 */
               const branchRowGap =
                 (branchPos === 'head' || branchPos === 'mid') && pos !== 'head' && pos !== 'mid'
-                  ? 'pb-1.5'
+                  ? 'pb-[5px]'
                   : '';
               const branchPad =
                 branchPos === 'head'
@@ -1194,8 +1180,19 @@ export default function SessionRail({
                     : branchPos === 'mid'
                       ? `px-2 ${branchRowGap}`.trim()
                       : '';
+              /* 组与组（或组与普通独立卡片）之间拉开到 14px（接近组内 5px 间距的 3 倍）：
+                 - 组尾（branchPos === 'tail' 或顶层 worker 组 pos === 'tail'）统一留 h-3.5（14px）；
+                 - 组头（branchPos === 'head' 或顶层 worker 组 pos === 'head'）若前一行是只带 2px 缝的普通独立卡片，补 pt-3（12px），合起来同样是 14px。 */
+              const isGroupHead = branchPos === 'head' || (!branchPos && pos === 'head');
+              const isGroupTail = branchPos === 'tail' || (!branchPos && pos === 'tail');
+              const prevRow = index > 0 ? rows[index - 1] : null;
+              const prevIsStandaloneSession =
+                prevRow?.kind === 'session' &&
+                prevRow.branchPos !== 'tail' &&
+                !(!prevRow.branchPos && prevRow.groupPos === 'tail');
+              const groupTopGap = !row.inPinned && isGroupHead && prevIsStandaloneSession ? 'pt-3' : '';
               const item = (
-                <div className={branchPos ? 'mx-1' : ''} data-branch-pos={branchPos}>
+                <div className={`${branchPos ? 'mx-1' : ''} ${groupTopGap}`.trim()} data-branch-pos={branchPos}>
                   <div className={branchBox}>
                     <div className={branchPad}>
                       <div className={outerIndentCls}>
@@ -1243,18 +1240,18 @@ export default function SessionRail({
                       </div>
                     </div>
                   </div>
-                  {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
-                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : (
+                  {/* 行与行之间的间隔：同一组之内不留外缝；组尾留 14px（h-3.5）与下一组或下一张卡彻底断开；普通独立卡片之间留 2px（h-0.5）。 */}
+                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : isGroupTail && !row.inPinned ? (
+                    <div className="h-3.5" data-testid="group-gap" />
+                  ) : (
                     <div className="h-0.5" />
                   )}
                 </div>
               );
-              /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。底色照原型用悬停色那一层浅底，写成不透明的 --rail-pinned-fill
-                 （.pingrp 的 --bg-hover）：原先写的 bg-subtle 在深色下与清单底同为 #1a1a1a，
-                 整块看不出来，清单与左侧导航栏也就连成一片（主人 09-29 指出）。 */
+              /* 置顶那一块的中段：两侧淡描边，底色与标题同一块下沉暗托盘 --grp-bg。 */
               return row.inPinned ? (
                 <div className="px-1">
-                  <div className="border-x border-border-color bg-[var(--rail-pinned-fill)] pt-0.5">{item}</div>
+                  <div className="border-x border-[var(--grp-border)] bg-[var(--grp-bg)] pt-0.5">{item}</div>
                 </div>
               ) : (
                 item
