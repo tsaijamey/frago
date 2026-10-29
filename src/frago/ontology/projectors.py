@@ -761,6 +761,219 @@ class TeamPairingProjection:
     graph: OntologyGraph
 
 
+@dataclass(frozen=True, kw_only=True)
+class EmployeePostProjection:
+    """Projected `EmployeePostResource`, `DomainEmployeeRole`, `AgentKernel`, and governed domain/recipe/schedule assets."""
+
+    post: Resource
+    employee_role: Role
+    kernel: Actor
+    domains: tuple[Resource, ...]
+    recipes: tuple[Resource, ...]
+    data_slots: tuple[Resource, ...]
+    schedules: tuple[Specification, ...]
+    active_sessions: tuple[Process, ...]
+    graph: OntologyGraph
+
+
+def project_employee_post_dict(
+    raw_post: Mapping[str, Any],
+    *,
+    registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+    graph: OntologyGraph | None = None,
+) -> EmployeePostProjection:
+    """Project a proactive fixed employee post dictionary into `EmployeePostResource`, `DomainEmployeeRole`, and its 5-branch edges.
+
+    Models the 5 branches of a proactive domain employee:
+    1. Manage KnowledgeDomain (`depends_on_module` from `EmployeePostResource` to `KnowledgeDomain`).
+    2. Manage RecipeModule & DataSlot (`depends_on_module` from `EmployeePostResource` to `RecipeModule` and `DataSlot`).
+    3. Receive sessions (`initiates` from `DomainEmployeeRole` to `AgentSessionProcess`).
+    4. Invokable by contract (`governed_by` linking `DomainEmployeeRole` to `ScheduleRuleSpec` or normative specs).
+    5. Bound to an interchangeable `AgentKernel` via `plays_role`.
+    """
+    g = graph if graph is not None else OntologyGraph()
+    post_id = str(raw_post.get("member_post_id", "")).strip()
+    agent_kernel_name = str(raw_post.get("agent_kernel", "")).strip()
+    if not post_id:
+        raise ProjectionValidationError(
+            "EmployeePost JSON requires a non-empty 'member_post_id'."
+        )
+
+    kernel_spec = registry.get_spec("AgentKernel")
+    allowed_kernels = set(kernel_spec.get("allowed_values") or ())
+    if not agent_kernel_name or (
+        allowed_kernels and agent_kernel_name not in allowed_kernels
+    ):
+        raise ProjectionValidationError(
+            f"EmployeePost JSON requires 'agent_kernel' in {sorted(allowed_kernels)}, got '{agent_kernel_name}'."
+        )
+
+    post_uid = post_id if post_id.startswith("post:") else f"post:{post_id}"
+    post_res = registry.create("EmployeePostResource", uid=post_uid)
+    assert isinstance(post_res, Resource)
+    g.register_entity(post_res)
+
+    kernel_uid = f"kernel:{agent_kernel_name}"
+    existing_kernel = g.get_entity(kernel_uid)
+    if isinstance(existing_kernel, Actor):
+        kernel = existing_kernel
+    else:
+        created_kernel = registry.create("AgentKernel", uid=kernel_uid)
+        assert isinstance(created_kernel, Actor)
+        kernel = created_kernel
+
+    emp_role = registry.create(
+        "DomainEmployeeRole",
+        bearer_id=kernel.ontological_id(),
+        context_id=post_res.ontological_id(),
+    )
+    assert isinstance(emp_role, Role)
+    g.link(kernel, "plays_role", emp_role)
+
+    # Branch 1: Manage KnowledgeDomain
+    raw_domains = raw_post.get("knowledge_domains", [])
+    if not isinstance(raw_domains, Sequence) or isinstance(raw_domains, (str, bytes)):
+        raise ProjectionValidationError(
+            "EmployeePost 'knowledge_domains' must be a list of domain names."
+        )
+    domains: list[Resource] = []
+    for d_name in raw_domains:
+        clean_domain = str(d_name).strip()
+        if not clean_domain:
+            continue
+        dom_uid = (
+            clean_domain
+            if clean_domain.startswith("domain:")
+            else f"domain:{clean_domain}"
+        )
+        existing_dom = g.get_entity(dom_uid)
+        if isinstance(existing_dom, Resource):
+            dom_res = existing_dom
+        else:
+            created_dom = registry.create("KnowledgeDomain", uid=dom_uid)
+            assert isinstance(created_dom, Resource)
+            dom_res = created_dom
+        g.link(post_res, "depends_on_module", dom_res)
+        domains.append(dom_res)
+
+    # Branch 2: Manage related RecipeModule & DataSlot
+    raw_recipes = raw_post.get("recipes", [])
+    if not isinstance(raw_recipes, Sequence) or isinstance(raw_recipes, (str, bytes)):
+        raise ProjectionValidationError(
+            "EmployeePost 'recipes' must be a list of recipe names."
+        )
+    recipes: list[Resource] = []
+    for r_name in raw_recipes:
+        clean_recipe = str(r_name).strip()
+        if not clean_recipe:
+            continue
+        rec_uid = (
+            clean_recipe
+            if clean_recipe.startswith("recipe:")
+            else f"recipe:{clean_recipe}"
+        )
+        existing_rec = g.get_entity(rec_uid)
+        if isinstance(existing_rec, Resource):
+            rec_res = existing_rec
+        else:
+            created_rec = registry.create("RecipeModule", uid=rec_uid)
+            assert isinstance(created_rec, Resource)
+            rec_res = created_rec
+        g.link(post_res, "depends_on_module", rec_res)
+        recipes.append(rec_res)
+
+    raw_slots = raw_post.get("data_slots", [])
+    if not isinstance(raw_slots, Sequence) or isinstance(raw_slots, (str, bytes)):
+        raise ProjectionValidationError(
+            "EmployeePost 'data_slots' must be a list of canonical slot paths."
+        )
+    data_slots: list[Resource] = []
+    for s_path in raw_slots:
+        clean_slot = str(s_path).strip()
+        if not clean_slot:
+            continue
+        slot_uid = (
+            clean_slot if clean_slot.startswith("slot:") else f"slot:{clean_slot}"
+        )
+        existing_slot = g.get_entity(slot_uid)
+        if isinstance(existing_slot, Resource):
+            slot_res = existing_slot
+        else:
+            created_slot = registry.create("DataSlot", uid=slot_uid)
+            assert isinstance(created_slot, Resource)
+            slot_res = created_slot
+        g.link(post_res, "depends_on_module", slot_res)
+        data_slots.append(slot_res)
+
+    # Branch 3: Receive sessions
+    raw_sessions = raw_post.get("active_session_ids", [])
+    if not isinstance(raw_sessions, Sequence) or isinstance(raw_sessions, (str, bytes)):
+        raise ProjectionValidationError(
+            "EmployeePost 'active_session_ids' must be a list of session IDs."
+        )
+    active_sessions: list[Process] = []
+    for s_id in raw_sessions:
+        clean_sess = str(s_id).strip()
+        if not clean_sess:
+            continue
+        sess_uid = (
+            clean_sess
+            if clean_sess.startswith("session:")
+            else f"session:{clean_sess}"
+        )
+        existing_sess = g.get_entity(sess_uid)
+        if isinstance(existing_sess, Process):
+            sess_proc = existing_sess
+        else:
+            created_sess = registry.create(
+                "AgentSessionProcess",
+                process_uid=sess_uid,
+                state="running",
+            )
+            assert isinstance(created_sess, Process)
+            sess_proc = created_sess
+        g.link(emp_role, "initiates", sess_proc)
+        active_sessions.append(sess_proc)
+
+    # Branch 5 (more): Governed by / invokes ScheduleRuleSpec
+    raw_schedules = raw_post.get("schedule_ids", [])
+    if not isinstance(raw_schedules, Sequence) or isinstance(raw_schedules, (str, bytes)):
+        raise ProjectionValidationError(
+            "EmployeePost 'schedule_ids' must be a list of schedule rule IDs."
+        )
+    schedules: list[Specification] = []
+    for sched_id in raw_schedules:
+        clean_sched = str(sched_id).strip()
+        if not clean_sched:
+            continue
+        norm_id = (
+            clean_sched
+            if ":" in clean_sched
+            else f"agent_prompt:{clean_sched}"
+        )
+        existing_sched = g.get_entity(f"{norm_id}@1.0.0")
+        if isinstance(existing_sched, Specification):
+            sched_spec = existing_sched
+        else:
+            created_sched = registry.create("ScheduleRuleSpec", norm_id=norm_id)
+            assert isinstance(created_sched, Specification)
+            sched_spec = created_sched
+        g.link(emp_role, "governed_by", sched_spec)
+        schedules.append(sched_spec)
+
+    return EmployeePostProjection(
+        post=post_res,
+        employee_role=emp_role,
+        kernel=kernel,
+        domains=tuple(domains),
+        recipes=tuple(recipes),
+        data_slots=tuple(data_slots),
+        schedules=tuple(schedules),
+        active_sessions=tuple(active_sessions),
+        graph=g,
+    )
+
+
 def project_team_pairing_dict(
     raw_team: Mapping[str, Any],
     *,
@@ -971,6 +1184,16 @@ class FivePillarShadowProjector:
     ) -> TeamPairingProjection:
         return project_team_pairing_dict(
             raw_team,
+            registry=self._registry,
+            graph=self._graph,
+        )
+
+    def project_employee_post(
+        self,
+        raw_post: Mapping[str, Any],
+    ) -> EmployeePostProjection:
+        return project_employee_post_dict(
+            raw_post,
             registry=self._registry,
             graph=self._graph,
         )

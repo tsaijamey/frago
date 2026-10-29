@@ -65,6 +65,7 @@ from frago.ontology import (
     merge_user_ontology_overlay,
     ontological_action,
     project_desktop_instance_dict,
+    project_employee_post_dict,
     project_todo_dict,
 )
 
@@ -1472,3 +1473,53 @@ class TestFivePillarShadowProjectors:
         assert team_runtime.evaluate_instruction(verified_evt, intent_tier="change") == "ask"
         assert team_runtime.evaluate_instruction(verified_evt, intent_tier="leak_secret") == "refuse"
         assert team_runtime.evaluate_instruction(spoofed_evt, intent_tier="read_only") == "refuse"
+
+        # Proactive Fixed Employee (EmployeePostResource + DomainEmployeeRole + 5 branches)
+        emp_proj = projector.project_employee_post(
+            {
+                "member_post_id": "jira-guardian",
+                "agent_kernel": "claude",
+                "knowledge_domains": ["architecture", "jira-board"],
+                "recipes": ["readonly_board"],
+                "data_slots": ["~/.frago/users/default/recipe-data/readonly_board"],
+                "active_session_ids": ["sess-emp-jira-01"],
+                "schedule_ids": ["inbox-triage"],
+            }
+        )
+        assert emp_proj.post.ontological_id() == "post:jira-guardian"
+        assert emp_proj.kernel.ontological_id() == "kernel:claude"
+        assert (
+            emp_proj.employee_role.ontological_id()
+            == "DomainEmployeeRole:kernel:claude@post:jira-guardian"
+        )
+        assert len(emp_proj.domains) == 2
+        assert len(emp_proj.recipes) == 1
+        assert len(emp_proj.data_slots) == 1
+        assert len(emp_proj.active_sessions) == 1
+        assert len(emp_proj.schedules) == 1
+
+        reasoner = OntologyReasoner(projector.graph)
+        # AgentKernel -> plays_role -> DomainEmployeeRole -> initiates -> AgentSessionProcess
+        emp_sessions = reasoner.evaluate_path("kernel:claude", "plays_role/initiates")
+        assert any(s.ontological_id() == "session:sess-emp-jira-01" for s in emp_sessions)
+
+        # EmployeePostResource -> depends_on_module -> KnowledgeDomain / RecipeModule / DataSlot
+        governed_assets = {
+            e.ontological_id()
+            for e in reasoner.evaluate_path("post:jira-guardian", "depends_on_module")
+        }
+        assert {
+            "domain:architecture",
+            "domain:jira-board",
+            "recipe:readonly_board",
+            "slot:~/.frago/users/default/recipe-data/readonly_board",
+        } <= governed_assets
+
+        with pytest.raises(ProjectionValidationError, match="member_post_id"):
+            project_employee_post_dict({"agent_kernel": "claude"})
+
+        with pytest.raises(ProjectionValidationError, match="agent_kernel"):
+            project_employee_post_dict(
+                {"member_post_id": "bad-kernel-emp", "agent_kernel": "unknown_cli"}
+            )
+
