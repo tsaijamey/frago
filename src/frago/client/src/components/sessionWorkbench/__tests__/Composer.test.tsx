@@ -832,6 +832,46 @@ describe('Next Task 列表与独立投递按钮', () => {
     expect(sentBody(fetchMock).text).toBe('现在直接插话进去');
   });
 
+  it('输入区有待发送消息（直接发送请求尚未返回）时，Next Task 按钮不被阻塞，仍可继续追加消息', async () => {
+    let resolveSend: (value: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveSend = resolve;
+        })
+    );
+    const onEnqueue = vi.fn(async () => ({}));
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running
+        onSent={NOOP}
+        onEnqueue={onEnqueue}
+        outbound={[{ id: 'out-pending', text: '正在发往 Agent 的消息', attachments: 0, at: 1, state: 'sent' }]}
+      />
+    );
+
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    // 先点 Send 触发一条尚在路上的待发送消息（sending === true）
+    fireEvent.change(input, { target: { value: '正在发往 Agent 的消息' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    expect((screen.getByTestId('composer-send') as HTMLButtonElement).disabled).toBe(true);
+
+    // 此时输入区有待发送消息，继续在输入框打字并点击 Next Task 追加到 frago 队列
+    fireEvent.change(input, { target: { value: '追加到 Next Task 队列的新消息' } });
+    const enqueueBtn = screen.getByTestId('composer-enqueue') as HTMLButtonElement;
+    expect(enqueueBtn.disabled).toBe(false);
+    fireEvent.click(enqueueBtn);
+
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalledTimes(1));
+    expect(onEnqueue).toHaveBeenCalledWith('追加到 Next Task 队列的新消息', [], [], []);
+    expect(input.value).toBe('');
+
+    // 收尾释放挂起的发送请求
+    resolveSend(okResponse());
+  });
+
   it('展示 Next Task 列表、最早标记、交互卡阻断状态并支持删除与移动', () => {
     const onRemove = vi.fn();
     const onMove = vi.fn();

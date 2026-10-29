@@ -380,7 +380,7 @@ export default function Composer({
   const hasDraft = Boolean(
     text.trim() || images.length > 0 || documents.length > 0 || picked.length > 0
   );
-  const canEnqueue = Boolean(!blocked && sessionId && onEnqueue && !enqueueing && !sending && hasDraft);
+  const canEnqueue = Boolean(!blocked && sessionId && onEnqueue && !enqueueing && hasDraft);
 
   const handleEnqueue = useCallback(async () => {
     if (!sessionId || !onEnqueue || enqueueing || !hasDraft) return;
