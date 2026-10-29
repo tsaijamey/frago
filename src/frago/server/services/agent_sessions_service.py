@@ -32,11 +32,15 @@ def list_sessions(*, excerpt_chars: int = tsvc.DEFAULT_EXCERPT_CHARS) -> list[di
     ——停掉 CoreAgent 是「结束这一轮」而不是「销毁这场会话」，与浮窗的关闭不是同一
     个动作，不放在同一颗按钮下。
     """
+    core_rows = _coreagent_rows(excerpt_chars)
+    core_sids = {r["session_id"] for r in core_rows if r.get("session_id")}
+    core_tmux_names = {r.get("tmux_name") for r in core_rows if r.get("tmux_name")}
     tmux_rows = [
         {**asdict(row), "kind": "tmux", "state": None, "directory": None}
         for row in tsvc.list_sessions(excerpt_chars=excerpt_chars)
+        if row.session_id not in core_sids and row.name not in core_tmux_names
     ]
-    rows = tmux_rows + _coreagent_rows(excerpt_chars)
+    rows = tmux_rows + core_rows
     rows.sort(key=lambda r: (r["idle_secs"] is None, -float(r["idle_secs"] or 0.0)))
     return rows
 
@@ -44,18 +48,24 @@ def list_sessions(*, excerpt_chars: int = tsvc.DEFAULT_EXCERPT_CHARS) -> list[di
 def count_sessions() -> dict:
     """只要个数和内存，不读任何记录——左下角那个数字每分钟问一次。
 
-    CoreAgent 的常驻进程也算进来。它们没有 tmux 会话名，但同样占着内存，人照着
-    这个数字决定要不要清理时，漏掉它们等于把最大的一块藏起来。
+    CoreAgent 的常驻进程也算进来。若某场 CoreAgent 已跑在 tmux 窗格里，``tsvc.count_sessions()``
+    已经把它算进去了，这里只补算没挂在 tmux 里的那几场，避免重复计数。
     """
     tmux = tsvc.count_sessions()
     live = coreagent_runner.live_snapshot()
     if not live:
         return tmux
+    open_names = tsvc.open_session_names()
+    uncounted = [
+        s for s in live if not getattr(s, "tmux_name", None) or s.tmux_name not in open_names
+    ]
+    if not uncounted:
+        return tmux
     mem = tsvc.memory_by_pid()
     return {
-        "total": tmux["total"] + len(live),
+        "total": tmux["total"] + len(uncounted),
         "total_memory_mb": tmux["total_memory_mb"]
-        + sum(mem.get(s.pid, 0) for s in live if s.pid is not None),
+        + sum(mem.get(s.pid, 0) for s in uncounted if s.pid is not None),
     }
 
 
@@ -109,6 +119,7 @@ def _coreagent_rows(excerpt_chars: int) -> list[dict[str, Any]]:
                 "kind": "coreagent",
                 "state": snap.state,
                 "directory": (card.directory if card is not None else "") or snap.cwd,
+                "tmux_name": getattr(snap, "tmux_name", None),
             }
         )
     return rows

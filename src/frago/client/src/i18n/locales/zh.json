@@ -1763,6 +1763,24 @@
       "packedHeader": "【文档批注汇总】（已关联存档：{{path}}）",
       "packedFooter": "请按以上批注逐项处理。"
     },
+    "terminal": {
+      "lens": "终端",
+      "lensHint": "查看这场会话在 tmux 窗格中的实时运行画面或留底终端输出",
+      "liveBadge": "tmux 运行中",
+      "savedBadge": "历史终端留底",
+      "offlineBadge": "未挂载 tmux",
+      "copyAttach": "复制接管命令",
+      "copiedAttach": "已复制",
+      "autoScroll": "自动贴底",
+      "autoScrollHint": "新输出进来时自动滚动到终端底部",
+      "refresh": "刷新",
+      "stop": "关闭终端",
+      "stopHint": "关闭这场会话对应的 tmux 窗格（会话记录保留）",
+      "loading": "正在抓取终端屏幕…",
+      "retry": "重试",
+      "emptyTitle": "这场会话当前没有活跃的 tmux 终端",
+      "emptyBody": "当会话在 tmux 中启动或继续对话时（含 Claude Code / codex / opencode / CoreAgent），这里会实时展示窗格里的运行画面。"
+    },
     "record": {
       "kind": {
         "userSay": "你说",

@@ -25,6 +25,7 @@ pane 上任何一个字变了它就往前跳，而 claude 的状态栏一直在�
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import logging
 import os
@@ -137,6 +138,8 @@ def _resolve_session_id(label: str, pane: str) -> str | None:
     按业务把手派生的 uuid5（driver 起会话时用的那套规则）。挨个去记录目录里找，
     找到文件的那个才算数——派生值算得出来不等于那份记录存在。
     """
+    if label.startswith("core_"):
+        return label
     candidates: list[str] = []
     if _UUID.match(label):
         candidates.append(label)
@@ -574,7 +577,24 @@ def close_sessions(names: list[str]) -> list[dict]:
         via = "tmux"
         error: str | None = None
         try:
-            if runner.evict(label):
+            if label.startswith("core_"):
+                from frago.server.services import coreagent_runner
+
+                stopped = coreagent_runner.stop(label, by="页面上的人")
+                if stopped.get("stopped"):
+                    ok, via = True, "coreagent"
+                # 兜底确保同名 tmux 窗口（或 CLI 单轮 worker 的窗口）也被清掉
+                proc = subprocess.run(
+                    ["tmux", "kill-session", "-t", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if proc.returncode == 0:
+                    ok = True
+                elif not ok:
+                    error = (proc.stderr or "").strip() or f"exit {proc.returncode}"
+            elif runner.evict(label):
                 ok, via = True, "pool"
             else:
                 proc = subprocess.run(
@@ -670,6 +690,84 @@ def open_session_names() -> set[str]:
     return set(_session_names())
 
 
+def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
+    """抓取指定会话此刻的 tmux 终端屏幕（含 ANSI 转义与 scrollback）。
+
+    - 若该会话此刻有活着的 tmux 窗格，实时调 ``tmux capture-pane -p -e -S -<lines>`` 返回；
+    - 若 tmux 已退出（例如 CoreAgent 单轮 worker 已跑完收场），但留有 ``panes/<sid>.log``，
+      则返回留底终端日志并标 ``alive=False, source="saved_pane"``；
+    - 两者皆无时返回 ``alive=False, source="none", content=""``。
+    """
+    sid = (session_id or "").strip()
+    clamped_lines = max(50, min(int(lines or 500), 5000))
+    if not sid:
+        return {
+            "session_id": "",
+            "alive": False,
+            "tmux_name": None,
+            "pane_command": "",
+            "client_alive": False,
+            "busy": False,
+            "memory_mb": 0,
+            "source": "none",
+            "content": "",
+        }
+
+    link = find_for_session(sid)
+    if link is not None:
+        raw = _tmux("capture-pane", "-p", "-e", "-S", f"-{clamped_lines}", "-t", link.name)
+        pane_cmd = _pane_commands().get(link.name) or ""
+        client_alive = _client_alive(pane_cmd)
+        busy = link.busy
+        if sid.startswith("core_"):
+            with contextlib.suppress(Exception):
+                from frago.server.services import coreagent_runner
+
+                busy = busy or coreagent_runner.busy(sid)
+        content = "\n".join((raw or "").splitlines()).rstrip()
+        return {
+            "session_id": sid,
+            "alive": True,
+            "tmux_name": link.name,
+            "pane_command": pane_cmd,
+            "client_alive": client_alive,
+            "busy": busy,
+            "memory_mb": link.memory_mb,
+            "source": "tmux",
+            "content": content,
+        }
+
+    if sid.startswith("core_"):
+        from frago.agent_driver.coreagent_pane_host import read_saved_pane_log
+        from frago.agent_driver.tmux_session import tmux_name_for
+
+        saved = read_saved_pane_log(sid, max_lines=clamped_lines).rstrip()
+        if saved:
+            return {
+                "session_id": sid,
+                "alive": False,
+                "tmux_name": tmux_name_for(sid),
+                "pane_command": "",
+                "client_alive": False,
+                "busy": False,
+                "memory_mb": 0,
+                "source": "saved_pane",
+                "content": saved,
+            }
+
+    return {
+        "session_id": sid,
+        "alive": False,
+        "tmux_name": None,
+        "pane_command": "",
+        "client_alive": False,
+        "busy": False,
+        "memory_mb": 0,
+        "source": "none",
+        "content": "",
+    }
+
+
 def as_dicts(rows: list[TmuxSessionInfo] | list[TmuxWaitingInfo]) -> list[dict]:
     return [asdict(r) for r in rows]
 
@@ -681,6 +779,7 @@ __all__ = [
     "TmuxSessionLink",
     "TmuxWaitingInfo",
     "as_dicts",
+    "capture_session_terminal",
     "close_sessions",
     "find_for_session",
     "list_sessions",

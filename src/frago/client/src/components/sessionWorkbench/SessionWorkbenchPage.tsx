@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
+import { SessionTerminal } from './SessionTerminal';
 import FileViewer, { type FileEditSendPayload } from './FileViewer';
 import { withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
@@ -685,11 +686,15 @@ export default function SessionWorkbenchPage() {
    * `viewerIndex` 指的那一份与清单永远是同一份，不会对错。
    */
   const [filesOpen, setFilesOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalAliveOverride, setTerminalAliveOverride] = useState<boolean | null>(null);
   const sessionFiles = useSessionFiles(selectedId);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  // 换会话：清单与浮窗一起收掉。浮窗里那份是上一场的文件，留在屏幕上就是摆错了。
+  // 换会话：清单、终端与浮窗一起收掉。浮窗里那份是上一场的文件，留在屏幕上就是摆错了。
   useEffect(() => {
     setFilesOpen(false);
+    setTerminalOpen(false);
+    setTerminalAliveOverride(null);
     setViewerIndex(null);
   }, [selectedId]);
   /**
@@ -1318,6 +1323,20 @@ export default function SessionWorkbenchPage() {
               /* 还没数出来、而且没出错 → 那一档后面写个省略号。出错就不写：个数出不来是
                  因为有故障，那时该说的是故障，不是「正在数」。 */
               filesPending={sessionFiles.files === null && sessionFiles.error === null}
+              terminalView={
+                <SessionTerminal
+                  sessionId={selectedId}
+                  open={terminalOpen}
+                  onAliveChange={setTerminalAliveOverride}
+                  onStopped={() => {
+                    forYou.refresh();
+                    void sessions.reload();
+                  }}
+                />
+              }
+              terminalOpen={terminalOpen}
+              onTerminalOpenChange={setTerminalOpen}
+              terminalAlive={terminalAliveOverride ?? selectedInTmux}
               usage={usageReadout}
               sessionFiles={sessionFiles.files}
               onRevealFile={onReveal}

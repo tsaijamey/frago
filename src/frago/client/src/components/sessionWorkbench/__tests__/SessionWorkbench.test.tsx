@@ -1,5 +1,4 @@
-/**
- * 三栏的组件测试：左栏清单、中栏记录流、右栏示意面。
+/** * 三栏的组件测试：左栏清单、中栏记录流、右栏示意面。
  *
  * 重点在四处：视觉归组但不露编号、空会话渲染成引导页而不是报错、左栏底部汇总只有绝对
  * 数、全域禁令在三栏都成立。
@@ -18,6 +17,7 @@ import { DecisionCardContext } from '../DecisionCard';
 import { TestRail } from './railTestKit';
 import { relativeTime, shortAge } from '../SessionItem';
 import { ReportBody } from '../ReportPanel';
+import { parseAnsiSegments } from '../SessionTerminal';
 import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObserver';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
@@ -1450,4 +1450,53 @@ describe('RecordStream 自动跟随的滑法', () => {
     render(<RecordStream {...props({ records: turnRecords })} />);
     expect(screen.getByText('检查完毕。')).toBeTruthy();
   });
+
+  it('Executor 栏支持终端档位切换，展开终端视图时不卸载底层记录流，并支持 ANSI 色彩解析', () => {
+    const onTerminalOpenChange = vi.fn();
+    const onFilesOpenChange = vi.fn();
+    const { rerender } = render(
+      <RecordStream
+        {...props({
+          terminalView: <div data-testid="mock-terminal-body">tmux pane output</div>,
+          terminalOpen: false,
+          onTerminalOpenChange,
+          onFilesOpenChange,
+          terminalAlive: true,
+        })}
+      />
+    );
+
+    const termBtn = screen.getByTestId('lens-terminal');
+    expect(termBtn.textContent).toContain('终端');
+    expect(screen.getByTestId('lens-terminal-alive')).toBeTruthy();
+    expect(screen.queryByTestId('terminal-panel')).toBeNull();
+
+    fireEvent.click(termBtn);
+    expect(onFilesOpenChange).toHaveBeenCalledWith(false);
+    expect(onTerminalOpenChange).toHaveBeenCalledWith(true);
+
+    rerender(
+      <RecordStream
+        {...props({
+          terminalView: <div data-testid="mock-terminal-body">tmux pane output</div>,
+          terminalOpen: true,
+          onTerminalOpenChange,
+          onFilesOpenChange,
+          terminalAlive: true,
+        })}
+      />
+    );
+    expect(screen.getByTestId('terminal-panel')).toBeTruthy();
+    expect(screen.getByTestId('mock-terminal-body').textContent).toBe('tmux pane output');
+    // 底层滚动容器依旧存在，不因切到终端档位而卸载
+    expect(screen.getByTestId('record-stream-scroll')).toBeTruthy();
+
+    // ANSI 色彩与清屏控制序列解析验证
+    const spans = parseAnsiSegments('\x1b[2J\x1b[H\x1b[1;32m✔ Turn complete\x1b[0m plain');
+    expect(spans).toEqual([
+      { text: '✔ Turn complete', fg: '#3fb950', bold: true, dim: undefined },
+      { text: ' plain', fg: undefined, bold: undefined, dim: undefined },
+    ]);
+  });
 });
+

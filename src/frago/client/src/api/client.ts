@@ -1872,3 +1872,21 @@ export async function generateSessionTitle(sessionId: string): Promise<SessionTi
   );
 }
 
+// ============================================================
+// 会话终端视图（Terminal View）
+// ============================================================
+
+export type { SessionTerminalSnapshot } from '@/types/api';
+import type { SessionTerminalSnapshot } from '@/types/api';
+
+/** 抓取该会话在 tmux 窗格中的实时屏幕或留底终端日志。 */
+export async function getSessionTerminal(
+  sessionId: string,
+  lines = 500
+): Promise<SessionTerminalSnapshot> {
+  return fetchApi<SessionTerminalSnapshot>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/terminal?lines=${lines}`
+  );
+}
+
+

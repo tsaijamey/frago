@@ -1768,6 +1768,24 @@
       "packedHeader": "【Document Annotations】（Saved to session: {{path}}）",
       "packedFooter": "Please address the annotations above item by item."
     },
+    "terminal": {
+      "lens": "Terminal",
+      "lensHint": "View this session's live tmux pane or archived terminal output",
+      "liveBadge": "Live in tmux",
+      "savedBadge": "Archived pane",
+      "offlineBadge": "Not in tmux",
+      "copyAttach": "Copy attach cmd",
+      "copiedAttach": "Copied",
+      "autoScroll": "Follow bottom",
+      "autoScrollHint": "Automatically scroll to the bottom when terminal output updates",
+      "refresh": "Refresh",
+      "stop": "Close tmux",
+      "stopHint": "Close this session's tmux pane (session transcript is preserved)",
+      "loading": "Capturing terminal pane…",
+      "retry": "Retry",
+      "emptyTitle": "No active tmux terminal for this session",
+      "emptyBody": "When this session starts or continues in tmux (including Claude Code, codex, opencode, and CoreAgent), its live pane output appears here."
+    },
     "record": {
       "kind": {
         "userSay": "You said",

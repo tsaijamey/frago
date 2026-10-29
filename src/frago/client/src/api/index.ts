@@ -1554,3 +1554,27 @@ export const generateSessionTitle = withMode(
     Promise.reject(new Error(SESSION_TITLE_UNAVAILABLE)),
 );
 
+// ============================================================
+// 会话终端视图（Terminal View）
+// ============================================================
+
+export type { SessionTerminalSnapshot } from './client';
+
+export const getSessionTerminal = withMode(
+  (sessionId: string, lines?: number): Promise<httpApi.SessionTerminalSnapshot> =>
+    httpApi.getSessionTerminal(sessionId, lines),
+  (sessionId: string, _lines?: number): Promise<httpApi.SessionTerminalSnapshot> =>
+    Promise.resolve({
+      session_id: sessionId,
+      alive: false,
+      tmux_name: null,
+      pane_command: null,
+      client_alive: null,
+      busy: false,
+      memory_mb: 0,
+      source: 'none',
+      content: '',
+    }),
+);
+
+

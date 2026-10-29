@@ -1376,6 +1376,17 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
     return await asyncio.to_thread(_stop)
 
 
+@router.get("/workbench/sessions/{sid}/terminal")
+async def get_workbench_session_terminal(
+    sid: str,
+    lines: int = Query(500, ge=50, le=5000, description="抓取的最大行数"),
+) -> dict[str, Any]:
+    """抓取指定会话此刻的 tmux 终端屏幕（或已结束 CoreAgent 会话的留底终端输出）。"""
+    from frago.server.services import tmux_sessions_service as svc
+
+    return await asyncio.to_thread(svc.capture_session_terminal, sid, lines=lines)
+
+
 @router.delete("/workbench/sessions/{sid}")
 async def delete_workbench_session(sid: str) -> dict[str, Any]:
     """把一场会话从本机删掉，让它不再出现在会话清单里。

@@ -423,10 +423,10 @@ def _run_kernel(
 
     registered = False
 
-    def _on_spawn(pid: int) -> None:
+    def _on_spawn(pid: int, tmux_name: str | None = None) -> None:
         nonlocal registered
         register_transient_worker(
-            name=sid, agent_type=agent_type, tmux_name=None, cwd=cwd, pid=pid
+            name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd, pid=pid
         )
         registered = True
         # **记账在这一刻，不在跑完之后。** 内核 worker 可能跑上几分钟到几十分钟，账要等
@@ -471,7 +471,7 @@ def _run_kernel(
         status=turn.status,
         text=turn.text,
         session_id=sid,
-        tmux_name=None,
+        tmux_name=getattr(turn, "tmux_name", None),
         duration_ms=turn.duration_ms,
         human_note=notes.get(turn.status),
         json_out=json_out,

@@ -429,7 +429,7 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
     entry = _resolve_or_die(name)
     runner = make_runner()
 
-    if entry.tmux_name is None:
+    if entry.tmux_name is None or entry.agent_type == "coreagent":
         _refuse_no_tmux("send", entry)
 
     if not _is_alive(entry, runner):
@@ -483,6 +483,10 @@ def drive_peek(name: str) -> None:
     if entry.tmux_name is None:
         _refuse_no_tmux("peek", entry)
     runner = make_runner()
+    if entry.agent_type == "coreagent":
+        run = runner or _default_runner
+        click.echo(run(["tmux", "capture-pane", "-p", "-t", entry.tmux_name]))
+        return
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)
     click.echo(session.capture_pane())
@@ -507,9 +511,13 @@ def drive_ls() -> None:
 def drive_stop(name: str) -> None:
     """Kill a session and remove its sidecar entry."""
     entry = _resolve_or_die(name)
-    if entry.tmux_name is None:
-        # 内核 worker：没有 tmux 会话可 kill，按进程号收（见 _stop_kernel_worker）。
+    if entry.tmux_name is None or entry.agent_type == "coreagent":
+        # 内核 worker：先按进程号送 SIGTERM 让它收掉子进程组，再清理它的 tmux 会话。
         _stop_kernel_worker(entry)
+        if entry.tmux_name is not None:
+            run = make_runner() or _default_runner
+            with contextlib.suppress(Exception):
+                run(["tmux", "kill-session", "-t", entry.tmux_name])
         _sidecar_path(name).unlink(missing_ok=True)
         click.echo(f"Stopped {name!r}.")
         return

@@ -1416,3 +1416,24 @@ export interface PathProbe {
   /** 是文件时的字节数；否则 null。浮层拿它挡住过大的文件。 */
   size: number | null;
 }
+
+/**
+ * 会话终端视图（Terminal View）抓屏快照。
+ *
+ * `source`:
+ * - `"tmux"`：实时从存活的 `frago-agent-<sid>` tmux 窗格抓出的带 ANSI 屏幕文本
+ * - `"saved_pane"`：tmux 会话已退出（如单轮 CoreAgent Worker 跑完），从留底终端日志读取
+ * - `"none"`：既无活着的 tmux 会话，也没有留底终端日志
+ */
+export interface SessionTerminalSnapshot {
+  session_id: string;
+  alive: boolean;
+  tmux_name: string | null;
+  pane_command: string | null;
+  client_alive: boolean | null;
+  busy: boolean;
+  memory_mb: number;
+  source: 'tmux' | 'saved_pane' | 'none';
+  content: string;
+}
+

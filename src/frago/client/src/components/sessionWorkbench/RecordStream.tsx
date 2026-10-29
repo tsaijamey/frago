@@ -876,6 +876,17 @@ export interface RecordStreamProps {
   /** 个数还在路上：那一档后面写个省略号，别让它看着像「没有」。 */
   filesPending?: boolean;
   /**
+   * 「终端」那一档：查看这场会话在 tmux 窗格里的实时屏幕或留底终端日志。
+   * 与 `filesView` 一样作为 Executor 栏的兄弟档位，点开时覆盖在滚动区上方，不卸载记录流。
+   */
+  terminalView?: ReactNode;
+  /** 终端那一档此刻露着没有。 */
+  terminalOpen?: boolean;
+  /** 切回普通镜头或跳回原文时把终端那一档合上。 */
+  onTerminalOpenChange?: (open: boolean) => void;
+  /** 这场会话此刻是否活在 tmux 窗格里（为真时在 Terminal 按钮旁点一颗绿点）。 */
+  terminalAlive?: boolean;
+  /**
    * 档位条右侧常驻的三个数：当前模型、上下文水位、这场累计。
    *
    * 宽屏时与左侧六档同处一行、靠右对齐；窄屏同排装不下时自动折到第二行并左对齐，
@@ -1025,6 +1036,10 @@ export default function RecordStream({
   onFilesOpenChange,
   filesCount = null,
   filesPending = false,
+  terminalView,
+  terminalOpen = false,
+  onTerminalOpenChange,
+  terminalAlive = false,
   usage = null,
   sessionFiles = null,
   onRevealFile,
@@ -1462,6 +1477,10 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (terminalOpen) {
+      onTerminalOpenChange?.(false);
+      return;
+    }
     if (watcherOpen) {
       setWatcherOpen(false);
       return;
@@ -1479,7 +1498,7 @@ export default function RecordStream({
     el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens, filesOpen, watcherOpen]);
+  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
@@ -1592,6 +1611,10 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (terminalOpen) {
+      onTerminalOpenChange?.(false);
+      return;
+    }
     if (watcherOpen) {
       setWatcherOpen(false);
       return;
@@ -1652,7 +1675,7 @@ export default function RecordStream({
     finish('found');
     // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完、文件那一档合上
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen, watcherOpen]);
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen, terminalOpen, watcherOpen]);
 
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
@@ -1740,9 +1763,10 @@ export default function RecordStream({
                 onClick={() => {
                   setWatcherOpen(true);
                   onFilesOpenChange?.(false);
+                  onTerminalOpenChange?.(false);
                 }}
-                aria-pressed={watcherOpen && !filesOpen}
-                className={`${SEG_ITEM} ${SEG_TIGHT} ${watcherOpen && !filesOpen ? SEG_ON : SEG_OFF}`}
+                aria-pressed={watcherOpen && !filesOpen && !terminalOpen}
+                className={`${SEG_ITEM} ${SEG_TIGHT} ${watcherOpen && !filesOpen && !terminalOpen ? SEG_ON : SEG_OFF}`}
               >
                 {t('workbench.stream.watcher')}
                 <span className="font-mono opacity-60">{watcherCount}</span>
@@ -1766,6 +1790,7 @@ export default function RecordStream({
                       data-testid="lens-files"
                       onClick={() => {
                         setWatcherOpen(false);
+                        onTerminalOpenChange?.(false);
                         onFilesOpenChange?.(!filesOpen);
                       }}
                       aria-pressed={filesOpen}
@@ -1792,19 +1817,42 @@ export default function RecordStream({
                       setWatcherOpen(false);
                       setLens(id);
                       onFilesOpenChange?.(false);
+                      onTerminalOpenChange?.(false);
                     }}
-                    aria-pressed={lens === id && !filesOpen && !watcherOpen}
+                    aria-pressed={lens === id && !filesOpen && !terminalOpen && !watcherOpen}
                     data-testid={`lens-${id}`}
                     /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
                     title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
                     disabled={counts[id] === 0}
-                    className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen && !watcherOpen ? SEG_ON : SEG_OFF}`}
+                    className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen && !terminalOpen && !watcherOpen ? SEG_ON : SEG_OFF}`}
                   >
                     {t(LENS_LABEL_KEY[id])}
                     <span className="font-mono opacity-60">{counts[id]}</span>
                   </button>
                 </Fragment>
               ))}
+              {terminalView ? (
+                <button
+                  type="button"
+                  data-testid="lens-terminal"
+                  onClick={() => {
+                    setWatcherOpen(false);
+                    onFilesOpenChange?.(false);
+                    onTerminalOpenChange?.(!terminalOpen);
+                  }}
+                  aria-pressed={terminalOpen}
+                  title={t('workbench.terminal.lensHint')}
+                  className={`${SEG_ITEM} ${SEG_TIGHT} ${terminalOpen ? SEG_ON : SEG_OFF}`}
+                >
+                  {t('workbench.terminal.lens')}
+                  {terminalAlive ? (
+                    <span
+                      data-testid="lens-terminal-alive"
+                      className="h-1.5 w-1.5 rounded-full bg-emerald-400"
+                    />
+                  ) : null}
+                </button>
+              ) : null}
             </div>
           </div>
           {usageReadout ? (
@@ -2215,6 +2263,16 @@ export default function RecordStream({
           className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg-primary"
         >
           {filesView}
+        </div>
+      ) : null}
+
+      {/* 终端那一档同样铺在这块滚动区上面，不卸载记录流。 */}
+      {terminalOpen && terminalView ? (
+        <div
+          data-testid="terminal-panel"
+          className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg-primary"
+        >
+          {terminalView}
         </div>
       ) : null}
       </div>
