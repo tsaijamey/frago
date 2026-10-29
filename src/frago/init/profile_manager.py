@@ -136,6 +136,8 @@ class APIProfile(BaseModel):
     decision_url: str | None = None
     decision_model: str | None = None
     decision_api_key: str | None = None
+    # Optional default wire protocol read by frago-core (anthropic or openai).
+    wire: str | None = None
     # The model's context window, in tokens. None means "let the CLI decide",
     # which is what every profile saved before this field existed gets. The
     # number is written into each CLI's own config so that a model ID the CLI

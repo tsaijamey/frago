@@ -163,3 +163,29 @@ def test_model_flag_is_forwarded_in_both_modes():
 
     chat_cmd = build_chat_command(cwd="/repos/x", profile_id=None, model="deepseek-v4-flash")
     assert chat_cmd[chat_cmd.index("--model") + 1] == "deepseek-v4-flash"
+
+
+def test_wire_flag_is_forwarded_in_both_modes():
+    agent_cmd = build_command(
+        session_id="core_abc", cwd="/repos/x", profile_id="fd708df2", wire="openai"
+    )
+    assert agent_cmd[agent_cmd.index("--wire") + 1] == "openai"
+
+    chat_cmd = build_chat_command(cwd="/repos/x", profile_id="fd708df2", wire="OpenAI")
+    assert chat_cmd[chat_cmd.index("--wire") + 1] == "openai"
+
+
+def test_api_profile_preserves_wire_field():
+    from frago.init.profile_manager import APIProfile
+
+    p = APIProfile(
+        id="fd708df2",
+        name="Colab-Clover-35B",
+        endpoint_type="custom",
+        api_key="sk-test",
+        url="https://absent-dozens-thinks-habits.trycloudflare.com",
+        default_model="Diffuspace/Clover-35B-A3B-Preview",
+        wire="openai",
+    )
+    dumped = p.model_dump(mode="json")
+    assert dumped["wire"] == "openai"

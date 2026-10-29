@@ -390,6 +390,7 @@ def _run_kernel(
     json_out: bool,
     profile_id: str | None,
     model: str | None,
+    wire: str | None = None,
     env: dict[str, str] | None,
 ) -> None:
     """把一轮交给 frago 自己的内核跑（不挂 tmux）。
@@ -449,6 +450,7 @@ def _run_kernel(
             cwd=cwd,
             profile_id=profile_id,
             model=model,
+            wire=wire,
             timeout_s=float(timeout) if timeout > 0 else None,
             env=env,
             on_spawn=_on_spawn,
@@ -701,6 +703,15 @@ def agent() -> None:
          "Injected into the session env; --endpoint/--api-key still override it."
 )
 @click.option(
+    "--wire",
+    "--protocol",
+    "wire",
+    type=click.Choice(["anthropic", "openai"], case_sensitive=False),
+    default=None,
+    help="Select the API wire protocol for CoreAgent (anthropic -> /v1/messages, "
+         "openai -> /v1/chat/completions)."
+)
+@click.option(
     "--agent-type",
     type=str,
     default=None,
@@ -733,6 +744,7 @@ def agent_run(
     endpoint: str | None,
     api_key: str | None,
     use_profile: str | None,
+    wire: str | None,
     agent_type: str | None,
     tmux_target: str | None,
 ):
@@ -920,6 +932,7 @@ def agent_run(
             json_out=json_out,
             profile_id=kernel_profile_id,
             model=model,
+            wire=wire,
             env=tmux_env or None,
         )
         return
