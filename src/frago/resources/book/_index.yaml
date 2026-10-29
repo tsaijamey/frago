@@ -30,11 +30,11 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch；三层优先级 默认 > -b cdp（无头/独立实例）> 自起进程（禁止）"
+  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch；三层优先级 默认 > -b cdp（仅限 agent_os：舞台真无头/机位独立实例）> 自起进程（禁止）"
 
 - name: must-browser-fetch
   category: must
-  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch；要无头走 frago browser -b cdp，NEVER 自起 chrome --headless"
+  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch；无条件走默认 frago browser（-b cdp 仅限 agent_os），NEVER 自起 chrome --headless"
 
 - name: must-tool-priority
   category: must
