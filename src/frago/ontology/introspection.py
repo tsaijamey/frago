@@ -13,8 +13,9 @@ Layer: pure ontology metamodel (reads only the package-internal `frago.json`).
 
 from __future__ import annotations
 
+import copy
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,18 +45,196 @@ from frago.ontology.metamodel import (
 )
 
 ONTOLOGY_SCHEMA_PATH = Path(__file__).parent / "frago.json"
+USER_ONTOLOGY_DIR = Path.home() / ".frago" / "ontology"
 
 
 class SchemaIntegrityError(OntologyError):
-    """Raised when `frago.json` violates structural or OntoClean rules."""
+    """Raised when `frago.json` or a user overlay violates structural or OntoClean rules."""
 
 
-def load_ontology_schema(schema_path: Path | None = None) -> dict[str, Any]:
-    """Load the JSON ontology definition from disk."""
+def _collect_user_overlay_files(user_dir: Path | None) -> list[Path]:
+    """Discover user ontology overlay JSON files under `~/.frago/ontology/`.
+
+    Loads `user-ontology.json` first (if present) and then `domains/*.json` in
+    sorted order. Ignores any legacy backup named `frago.json` so an old repo
+    snapshot does not shadow the package-shipped builtin schema.
+    """
+    if user_dir is None or not user_dir.exists() or not user_dir.is_dir():
+        return []
+
+    files: list[Path] = []
+    main_overlay = user_dir / "user-ontology.json"
+    if main_overlay.is_file():
+        files.append(main_overlay)
+
+    domains_dir = user_dir / "domains"
+    if domains_dir.is_dir():
+        files.extend(sorted(p for p in domains_dir.glob("*.json") if p.is_file()))
+
+    for extra in sorted(user_dir.glob("*.json")):
+        if extra.name not in {"frago.json", "user-ontology.json"} and extra.is_file():
+            files.append(extra)
+
+    return files
+
+
+def merge_user_ontology_overlay(
+    base_schema: Mapping[str, Any],
+    overlay: Mapping[str, Any],
+    *,
+    source_label: str = "userdir",
+) -> dict[str, Any]:
+    """Overlay user-defined ontology classes, relations, and action contracts onto the builtin base.
+
+    Conflict & protection rules (modeled after `hook-rules` builtin + userdir merge):
+    1. Immutable upper axioms (`orthogonal_axes`, `upper_ontology`) are locked by builtin;
+       any attempt to alter or override them in a user overlay raises `SchemaIntegrityError`.
+    2. Builtin `domain_classes` have locked `hierarchy_path` and `rigidity`: a user overlay
+       may add new domain classes (tagged with `source=source_label`) or extend metadata on an
+       existing class within the same `hierarchy_path` and `rigidity`, but cannot move a
+       builtin class to another quadrant/superclass or flip its `+R`/`~R` rigidity.
+    3. `relation_signatures`, `defined_classes`, and `kinetic_action_contracts` merge by key
+       (`predicate`, `class_id`, `action_id`), where user entries append or override by ID
+       and are validated by `OntologyIntrospector.validate_schema_integrity()`.
+    """
+    for locked_key in ("orthogonal_axes", "upper_ontology"):
+        if locked_key in overlay and overlay[locked_key] != base_schema.get(locked_key):
+            raise SchemaIntegrityError(
+                f"User ontology overlay ({source_label}) cannot modify locked upper-ontology "
+                f"key '{locked_key}'."
+            )
+
+    merged: dict[str, Any] = copy.deepcopy(dict(base_schema))
+
+    # Tag builtin classes if not already tagged
+    builtin_index: dict[str, tuple[str, dict[str, Any]]] = {}
+    for group_path, class_list in merged.get("domain_classes", {}).items():
+        for cls_def in class_list:
+            cls_def.setdefault("source", "builtin")
+            cid = str(cls_def.get("class_id", ""))
+            if cid:
+                builtin_index[cid] = (group_path, cls_def)
+
+    overlay_domains = overlay.get("domain_classes", {})
+    if not isinstance(overlay_domains, Mapping):
+        raise SchemaIntegrityError(
+            f"User ontology overlay ({source_label}) 'domain_classes' must be a JSON object."
+        )
+
+    for group_path, user_classes in overlay_domains.items():
+        if not isinstance(user_classes, Sequence):
+            raise SchemaIntegrityError(
+                f"User ontology overlay ({source_label}) group '{group_path}' must be a list."
+            )
+        target_list = merged.setdefault("domain_classes", {}).setdefault(group_path, [])
+        for raw_cls in user_classes:
+            if not isinstance(raw_cls, Mapping):
+                raise SchemaIntegrityError(
+                    f"Each entry in '{group_path}' ({source_label}) must be a JSON object."
+                )
+            cid = str(raw_cls.get("class_id", "")).strip()
+            if not cid:
+                raise SchemaIntegrityError(
+                    f"Unnamed class in '{group_path}' from overlay ({source_label})."
+                )
+            user_cls = dict(raw_cls)
+            user_cls.setdefault("source", source_label)
+
+            if cid in builtin_index:
+                orig_group, orig_def = builtin_index[cid]
+                if orig_group != group_path:
+                    raise SchemaIntegrityError(
+                        f"User overlay ({source_label}) cannot move class '{cid}' from "
+                        f"'{orig_group}' to '{group_path}'."
+                    )
+                if (
+                    "rigidity" in user_cls
+                    and user_cls["rigidity"] != orig_def.get("rigidity")
+                ):
+                    raise SchemaIntegrityError(
+                        f"User overlay ({source_label}) cannot change rigidity of class "
+                        f"'{cid}' ('{orig_def.get('rigidity')}' -> '{user_cls['rigidity']}')."
+                    )
+                merged_cls = {**orig_def, **user_cls, "source": user_cls["source"]}
+                for idx, existing in enumerate(target_list):
+                    if existing.get("class_id") == cid:
+                        target_list[idx] = merged_cls
+                        break
+                builtin_index[cid] = (group_path, merged_cls)
+            else:
+                target_list.append(user_cls)
+                builtin_index[cid] = (group_path, user_cls)
+
+    overlay_rels = overlay.get("relation_signatures", {})
+    if isinstance(overlay_rels, Mapping):
+        merged_rels = merged.setdefault("relation_signatures", {})
+        for pred, rel_spec in overlay_rels.items():
+            if isinstance(rel_spec, Mapping):
+                merged_rels[str(pred)] = {**rel_spec, "source": source_label}
+
+    overlay_defined = overlay.get("defined_classes", {})
+    if isinstance(overlay_defined, Mapping):
+        merged_def = merged.setdefault("defined_classes", {})
+        for def_id, def_spec in overlay_defined.items():
+            if isinstance(def_spec, Mapping):
+                merged_def[str(def_id)] = {**def_spec, "source": source_label}
+
+    overlay_contracts = overlay.get("kinetic_action_contracts", [])
+    if isinstance(overlay_contracts, Sequence):
+        contract_list: list[dict[str, Any]] = merged.setdefault(
+            "kinetic_action_contracts", []
+        )
+        index_by_action = {
+            str(item.get("action_id", "")): i for i, item in enumerate(contract_list)
+        }
+        for raw_action in overlay_contracts:
+            if not isinstance(raw_action, Mapping):
+                raise SchemaIntegrityError(
+                    f"Action contract in overlay ({source_label}) must be a JSON object."
+                )
+            act_dict = {**raw_action, "source": raw_action.get("source", source_label)}
+            aid = str(act_dict.get("action_id", "")).strip()
+            if aid in index_by_action:
+                contract_list[index_by_action[aid]] = act_dict
+            else:
+                index_by_action[aid] = len(contract_list)
+                contract_list.append(act_dict)
+
+    return merged
+
+
+def load_ontology_schema(
+    schema_path: Path | None = None,
+    *,
+    user_ontology_dir: Path | None = USER_ONTOLOGY_DIR,
+    include_user_overlay: bool = True,
+) -> dict[str, Any]:
+    """Load the builtin JSON ontology definition and overlay `~/.frago/ontology/*.json`."""
     target = schema_path if schema_path is not None else ONTOLOGY_SCHEMA_PATH
-    data = json.loads(target.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
+    raw_data = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_data, dict):
         raise SchemaIntegrityError("Root of frago.json must be a JSON object.")
+    data: dict[str, Any] = raw_data
+
+    for class_list in data.get("domain_classes", {}).values():
+        if isinstance(class_list, list):
+            for cls_def in class_list:
+                if isinstance(cls_def, dict):
+                    cls_def.setdefault("source", "builtin")
+
+    if include_user_overlay and schema_path is None:
+        for overlay_file in _collect_user_overlay_files(user_ontology_dir):
+            raw_overlay = json.loads(overlay_file.read_text(encoding="utf-8"))
+            if not isinstance(raw_overlay, dict):
+                raise SchemaIntegrityError(
+                    f"User ontology overlay '{overlay_file}' must be a JSON object."
+                )
+            data = merge_user_ontology_overlay(
+                data,
+                raw_overlay,
+                source_label=f"userdir:{overlay_file.name}",
+            )
+
     return data
 
 

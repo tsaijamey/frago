@@ -46,6 +46,7 @@ from frago.ontology import (
     Role,
     RulePolicy,
     ScheduleDispatchRuntime,
+    SchemaIntegrityError,
     SideEffectSpec,
     SignatureViolationError,
     SparqlQuery,
@@ -59,7 +60,9 @@ from frago.ontology import (
     compute_content_hash,
     compute_desktop_content_id,
     decompose_agent_session,
+    load_ontology_schema,
     merge_graph_snapshots,
+    merge_user_ontology_overlay,
     ontological_action,
     project_desktop_instance_dict,
     project_todo_dict,
@@ -450,6 +453,136 @@ class TestOntologyIntrospector:
                     if rel_path.startswith("src/") and not (repo_root / rel_path).exists():
                         missing_paths.append(f"{cls_def['class_id']}: {loc}")
         assert missing_paths == []
+
+    def test_user_ontology_overlay_dynamic_compilation_and_axiom_guardrails(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        # Missing user dir does not fail and returns the 65 builtin domain classes
+        absent_dir = tmp_path / "nonexistent_ontology_dir"
+        base_reg = DomainClassRegistry(user_ontology_dir=absent_dir)
+        assert len(base_reg.classes) == 65
+        assert getattr(base_reg.get_class("AgentKernel"), "source", None) == "builtin"
+
+        # User overlay in ~/.frago/ontology/user-ontology.json + domains/*.json
+        user_dir = tmp_path / "user_ontology"
+        domains_dir = user_dir / "domains"
+        domains_dir.mkdir(parents=True)
+
+        (user_dir / "user-ontology.json").write_text(
+            json.dumps(
+                {
+                    "domain_classes": {
+                        "Continuant.IndependentContinuant.Resource": [
+                            {
+                                "class_id": "SupplierContractResource",
+                                "pillar": "UserBusiness",
+                                "identity": "contract_uid",
+                                "rigidity": "+R",
+                                "mutability": "stateful_versioned",
+                                "description": "用户自定义供应商合同资源",
+                            }
+                        ],
+                        "Continuant.DependentContinuant.Role": [
+                            {
+                                "class_id": "LegalReviewerRole",
+                                "pillar": "UserBusiness",
+                                "identity": "composite(bearer_id, contract_uid)",
+                                "rigidity": "~R",
+                                "bearer_type": "AgentKernel",
+                                "context_type": "SupplierContractResource",
+                                "mutability": "lifecycle_bound",
+                                "description": "用户自定义法务审阅固定员工角色",
+                            }
+                        ],
+                    },
+                    "kinetic_action_contracts": [
+                        {
+                            "action_id": "approve_supplier_contract",
+                            "parameters": ["contract_uid", "verdict"],
+                            "signature": {
+                                "initiator_domain": "LegalReviewerRole | HumanPrincipal",
+                                "target_range": "SupplierContractResource",
+                                "return_type": "Event",
+                                "raises": ["PreconditionViolationError"],
+                            },
+                            "contract": {
+                                "preconditions": ["合同处于待审阅状态"],
+                                "postconditions": ["产出审阅事件"],
+                                "invariants": ["未经 HumanDecisionReceipt 严禁签署付款条款"],
+                                "side_effects": {
+                                    "initiates": "RunTransactionProcess",
+                                    "mutates": ["SupplierContractResource"],
+                                    "emits": ["SessionStepEvent"],
+                                    "produces": ["DefKnowledgeEntry"],
+                                },
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        merged_schema = load_ontology_schema(user_ontology_dir=user_dir)
+        introspector = OntologyIntrospector(merged_schema)
+        assert introspector.validate_schema_integrity() == []
+
+        user_reg = DomainClassRegistry(merged_schema)
+        assert len(user_reg.classes) == 67
+        contract_res = user_reg.create("SupplierContractResource", uid="contract:2026-001")
+        assert isinstance(contract_res, Resource)
+        assert getattr(type(contract_res), "source", "").startswith("userdir:")
+
+        reviewer_role = user_reg.create(
+            "LegalReviewerRole",
+            bearer_id="kernel:claude",
+            context_id="contract:2026-001",
+        )
+        assert isinstance(reviewer_role, Role)
+
+        built_contract = introspector.build_action_contract("approve_supplier_contract")
+        assert built_contract.norm_id == "approve_supplier_contract"
+
+        # Guardrail 1: User overlay cannot alter upper_ontology quadrants
+        with pytest.raises(SchemaIntegrityError, match="upper_ontology"):
+            merge_user_ontology_overlay(
+                merged_schema,
+                {"upper_ontology": {"Thing": {"subclasses": ["CustomQuadrant"]}}},
+            )
+
+        # Guardrail 2: User overlay cannot move a builtin class across quadrants/superclasses
+        with pytest.raises(SchemaIntegrityError, match="cannot move class 'AgentKernel'"):
+            merge_user_ontology_overlay(
+                merged_schema,
+                {
+                    "domain_classes": {
+                        "Continuant.DependentContinuant.Role": [
+                            {"class_id": "AgentKernel", "rigidity": "~R"}
+                        ]
+                    }
+                },
+            )
+
+        # Guardrail 3: User overlay with illegal rigidity (+R under DependentContinuant) is caught by Gate 1
+        bad_schema = merge_user_ontology_overlay(
+            merged_schema,
+            {
+                "domain_classes": {
+                    "Continuant.DependentContinuant.Role": [
+                        {
+                            "class_id": "IllegalRigidUserRole",
+                            "rigidity": "+R",
+                        }
+                    ]
+                }
+            },
+        )
+        violations = OntologyIntrospector(bad_schema).validate_schema_integrity()
+        assert any("IllegalRigidUserRole" in v for v in violations)
 
     def test_introspector_queries_by_code_path_and_allowed_actions(self) -> None:
         introspector = OntologyIntrospector()
@@ -1339,4 +1472,3 @@ class TestFivePillarShadowProjectors:
         assert team_runtime.evaluate_instruction(verified_evt, intent_tier="change") == "ask"
         assert team_runtime.evaluate_instruction(verified_evt, intent_tier="leak_secret") == "refuse"
         assert team_runtime.evaluate_instruction(spoofed_evt, intent_tier="read_only") == "refuse"
-

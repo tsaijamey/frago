@@ -19,6 +19,7 @@ Layer: pure ontology metamodel (reads only `frago.json`; zero imports from busin
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from frago.ontology.introspection import SchemaIntegrityError, load_ontology_schema
@@ -71,10 +72,18 @@ def _build_state_transitions(states: list[str]) -> Mapping[str, frozenset[str]]:
 class DomainClassRegistry:
     """Compiles and caches Python `OntologyEntity` subclasses for every class in `frago.json`."""
 
-    def __init__(self, schema: Mapping[str, Any] | None = None) -> None:
-        self._schema: Mapping[str, Any] = (
-            schema if schema is not None else load_ontology_schema()
-        )
+    def __init__(
+        self,
+        schema: Mapping[str, Any] | None = None,
+        *,
+        user_ontology_dir: Path | None = None,
+    ) -> None:
+        if schema is not None:
+            self._schema: Mapping[str, Any] = schema
+        elif user_ontology_dir is not None:
+            self._schema = load_ontology_schema(user_ontology_dir=user_ontology_dir)
+        else:
+            self._schema = load_ontology_schema()
         self._classes: dict[str, type[OntologyEntity]] = {}
         self._specs: dict[str, dict[str, Any]] = {}
         self._compile_all()
@@ -243,6 +252,7 @@ class DomainClassRegistry:
             "__doc__": str(spec.get("description", "")),
             "rigidity": rigidity_enum,
             "domain_class_id": class_id,
+            "source": str(spec.get("source", "builtin")),
             "pillar": str(spec.get("pillar", "")),
             "hierarchy_path": str(spec["hierarchy_path"]),
             "current_code_locations": tuple(spec.get("current_code_locations", [])),

@@ -24,9 +24,11 @@ from frago.ontology.contracts import (
 )
 from frago.ontology.introspection import (
     ONTOLOGY_SCHEMA_PATH,
+    USER_ONTOLOGY_DIR,
     OntologyIntrospector,
     SchemaIntegrityError,
     load_ontology_schema,
+    merge_user_ontology_overlay,
 )
 from frago.ontology.metamodel import (
     Actor,
@@ -146,6 +148,7 @@ __all__ = [
     "STANDARD_CLI_COMMANDS",
     "STANDARD_RELATIONS",
     "TODO_VALID_STATUSES",
+    "USER_ONTOLOGY_DIR",
     "ActionSignature",
     "Actor",
     "AgentFivePartDecomposition",
@@ -230,6 +233,7 @@ __all__ = [
     "deserialize_graph_jsonl",
     "load_ontology_schema",
     "merge_graph_snapshots",
+    "merge_user_ontology_overlay",
     "ontological_action",
     "project_browser_tab_group_dict",
     "project_data_slot_dict",
