@@ -2788,13 +2788,48 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-primary);
 }
 
+.markdown-content .code-block-wrap {
+  position: relative;
+  margin: 0.5em 0;
+}
+
 .markdown-content .code-block {
   margin: 0.5em 0;
-  padding: 0.75em 1em;
+  padding: 0.75em 2.5em 0.75em 1em;
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   overflow-x: auto;
+}
+
+.markdown-content .code-block-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-card) 85%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.markdown-content .code-block-copy:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.markdown-content .code-block-copy.is-copied {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 
 .markdown-content .code-block code {

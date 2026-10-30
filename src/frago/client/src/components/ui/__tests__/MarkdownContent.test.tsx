@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 
 import '@/i18n';
 import MarkdownContent, { FileLinkContext, parseFileUrl } from '../MarkdownContent';
@@ -31,6 +31,26 @@ describe('MarkdownContent — mermaid 代码块', () => {
     const { container } = render(<MarkdownContent content={'```\nflowchart LR\n```'} />);
     expect(screen.queryByTestId('mermaid-diagram')).toBeNull();
     expect(container.querySelector('pre')).not.toBeNull();
+  });
+
+  it('代码块右上角带复制按钮，点击写入剪贴板并在两秒后恢复', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<MarkdownContent content={'```text\n【问题描述】\n长文本不换行\n```'} />);
+    const btn = screen.getByTestId('code-block-copy');
+    expect(btn.classList.contains('is-copied')).toBe(false);
+
+    fireEvent.click(btn);
+    expect(writeText).toHaveBeenCalledWith('【问题描述】\n长文本不换行');
+    expect(btn.classList.contains('is-copied')).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(btn.classList.contains('is-copied')).toBe(false);
+    vi.useRealTimers();
   });
 });
 

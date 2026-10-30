@@ -1,4 +1,12 @@
-import { createContext, useContext, type ComponentPropsWithoutRef } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from 'react';
+import { Check, Copy } from 'lucide-react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
@@ -124,16 +132,72 @@ function mermaidSource(node: unknown): string | null {
   return (code.children ?? []).map((c) => (typeof c.value === 'string' ? c.value : '')).join('');
 }
 
-const components: Components = {
-  pre({ children, node, ...props }) {
-    const diagram = mermaidSource(node);
-    if (diagram !== null) return <MermaidDiagram source={diagram.trimEnd()} />;
-    return (
-      <pre className="code-block" {...props}>
+function extractNodeText(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const n = node as { value?: unknown; children?: unknown[] };
+  if (typeof n.value === 'string') return n.value;
+  if (Array.isArray(n.children)) {
+    return n.children.map(extractNodeText).join('');
+  }
+  return '';
+}
+
+function CodeBlockPre({
+  children,
+  node,
+  ...props
+}: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const diagram = mermaidSource(node);
+  if (diagram !== null) return <MermaidDiagram source={diagram.trimEnd()} />;
+
+  const handleCopy = () => {
+    const raw = extractNodeText(node) || preRef.current?.textContent || '';
+    const text = raw.replace(/\r?\n$/, '');
+    if (!navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
+      setCopied(false);
+      timerRef.current = null;
+    }, 2000);
+  };
+
+  return (
+    <div className="code-block-wrap">
+      <button
+        type="button"
+        className={`code-block-copy${copied ? ' is-copied' : ''}`}
+        onClick={handleCopy}
+        aria-label={copied ? 'Copied' : 'Copy'}
+        title={copied ? 'Copied' : 'Copy'}
+        data-testid="code-block-copy"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+      <pre ref={preRef} className="code-block" {...props}>
         {children}
       </pre>
-    );
-  },
+    </div>
+  );
+}
+
+const components: Components = {
+  pre: CodeBlockPre,
   code({ children, ...props }) {
     const isInline = !props.className;
     if (isInline) {
