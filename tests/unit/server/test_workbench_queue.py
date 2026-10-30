@@ -307,3 +307,67 @@ class TestQueueAutoInjectionAndRoutes:
         assert drain_ok["injected"] is True
         assert drain_ok["item"]["text"] == "消息丙"
         assert [it["text"] for it in drain_ok["items"]] == ["消息甲"]
+
+    def test_schedule_auto_inject_retries_across_stop_hook_window(self, monkeypatch):
+        """复现并回归：_on_turn_complete 触发时 Stop hook 尚在运行（not_stopped），
+        后台退避重试应在 Stop hook 结束后自动完成注入，无需用户切回会话。
+        """
+        import time
+
+        injected: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_sender_override",
+            lambda sid, prompt, _cwd: injected.append((sid, prompt)),
+        )
+        # 前两次检查模拟 Stop hook 仍在忙碌，第三次检查起变为空闲
+        checks = {"count": 0}
+
+        def fake_busy(_sid: str) -> bool:
+            checks["count"] += 1
+            return checks["count"] <= 2
+
+        monkeypatch.setattr(workbench_queue, "is_session_busy", fake_busy)
+        monkeypatch.setattr(
+            record_reader, "read_records", lambda *_a, **_k: _normal_turn(1, 10)
+        )
+
+        workbench_queue.enqueue(CC_SID, text="后台自动触发的下一项任务", prompt="后台自动触发的下一项任务")
+        workbench_queue.schedule_auto_inject_after_settle(
+            CC_SID, delay_s=0.01, retry_delay_s=0.02, max_retries=5
+        )
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not injected:
+            time.sleep(0.01)
+
+        assert checks["count"] >= 3
+        assert injected == [(CC_SID, "后台自动触发的下一项任务")]
+        assert workbench_queue.list_queue(CC_SID) == []
+
+    def test_patrol_active_queues_discovers_and_injects_background_session(
+        self, monkeypatch
+    ):
+        """未打开详情页或服务重启前已入队的后台会话，patrol_active_queues 应自动发现并注入。"""
+        injected: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_sender_override",
+            lambda sid, prompt, _cwd: injected.append((sid, prompt)),
+        )
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+        monkeypatch.setattr(
+            record_reader, "read_records", lambda *_a, **_k: _normal_turn(1, 10)
+        )
+
+        workbench_queue.enqueue(CC_SID, text="后台巡检任务", prompt="后台巡检任务")
+        # 模拟服务刚重启、内存态尚未登记但落盘文件存在
+        with workbench_queue._locks_guard:
+            workbench_queue._queued_sessions.clear()
+            workbench_queue._seeded_from_disk = False
+
+        injected_sids = workbench_queue.patrol_active_queues(sync=True)
+        assert injected_sids == [CC_SID]
+        assert injected == [(CC_SID, "后台巡检任务")]
+        assert workbench_queue.list_queue(CC_SID) == []
+

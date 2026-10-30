@@ -55,6 +55,27 @@ _injecting_sessions: set[str] = set()
 #: 记录每场会话上一次触发自动注入时的末尾 stop 轮次记录 ID，防止同一轮 stop 连续弹出多条消息。
 _last_injected_turn: dict[str, str] = {}
 
+#: 当前队列非空的会话编号集合（由内存态直接维护，避免每次巡检全盘扫描）。
+_queued_sessions: set[str] = set()
+_seeded_from_disk: bool = False
+
+#: 每场会话的后台静置重试定时器（session_id → Timer），用于跨过 Stop hook 忙碌窗口。
+_settle_timers: dict[str, threading.Timer] = {}
+
+#: Stop hook 或驱动层收尾通常持续 1～15 秒；首次 0.8s 探针遇到 not_stopped 时按退避序列继续重试。
+SETTLE_RETRY_DELAYS: tuple[float, ...] = (
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    4.0,
+    4.0,
+    5.0,
+    5.0,
+    5.0,
+)
+
 #: 测试或自定义注入器可替换此回调；默认使用 ``session_send.send``。
 _sender_override: Callable[[str, str, str | None], Any] | None = None
 
@@ -72,12 +93,26 @@ def _lock_for(session_id: str) -> threading.RLock:
         return lock
 
 
+def _cancel_settle_timer(session_id: str) -> None:
+    with _locks_guard:
+        timer = _settle_timers.pop(session_id, None)
+    if timer is not None:
+        timer.cancel()
+
+
 def reset_runtime_state() -> None:
     """清理内存态锁与注入游标（供单元测试隔离使用）。"""
+    global _seeded_from_disk
     with _locks_guard:
+        timers = list(_settle_timers.values())
+        _settle_timers.clear()
         _session_locks.clear()
         _injecting_sessions.clear()
         _last_injected_turn.clear()
+        _queued_sessions.clear()
+        _seeded_from_disk = False
+    for timer in timers:
+        timer.cancel()
 
 
 def queue_dir(session_id: str) -> Path:
@@ -249,7 +284,11 @@ def enqueue(
         data["items"].append(item)
         write_queue(directory, data)
         items = list(data["items"])
+    with _locks_guard:
+        _queued_sessions.add(session_id)
     _broadcast_queue_update(session_id, items)
+    if _sender_override is None:
+        schedule_auto_inject_after_settle(session_id, delay_s=0.3)
     return _public_item(item)
 
 
@@ -263,6 +302,10 @@ def remove_item(session_id: str, item_id: str) -> list[dict[str, Any]]:
         if len(data["items"]) != before:
             write_queue(directory, data)
         items = list(data["items"])
+    if not items:
+        with _locks_guard:
+            _queued_sessions.discard(session_id)
+        _cancel_settle_timer(session_id)
     _broadcast_queue_update(session_id, items)
     return [_public_item(it) for it in items]
 
@@ -282,6 +325,10 @@ def reorder_queue(session_id: str, item_ids: list[str]) -> list[dict[str, Any]]:
         data["items"] = next_items
         write_queue(directory, data)
         items = list(data["items"])
+    if not items:
+        with _locks_guard:
+            _queued_sessions.discard(session_id)
+        _cancel_settle_timer(session_id)
     _broadcast_queue_update(session_id, items)
     return [_public_item(it) for it in items]
 
@@ -292,10 +339,15 @@ def pop_earliest(session_id: str) -> dict[str, Any] | None:
         directory = queue_dir(session_id)
         data = read_queue(directory)
         if not data["items"]:
+            with _locks_guard:
+                _queued_sessions.discard(session_id)
             return None
         earliest = data["items"].pop(0)
         write_queue(directory, data)
         items = list(data["items"])
+    if not items:
+        with _locks_guard:
+            _queued_sessions.discard(session_id)
     _broadcast_queue_update(session_id, items)
     return earliest
 
@@ -309,6 +361,8 @@ def prepend_item(session_id: str, item: dict[str, Any]) -> None:
             data["items"].insert(0, _normalize_item(item))
             write_queue(directory, data)
         items = list(data["items"])
+    with _locks_guard:
+        _queued_sessions.add(session_id)
     _broadcast_queue_update(session_id, items)
 
 
@@ -731,25 +785,144 @@ def try_auto_inject(
     }
 
 
-def schedule_auto_inject_after_settle(session_id: str, *, delay_s: float = 0.8) -> None:
-    """在轮次完成信号到达后稍作静置再检查自动注入，给 Stop hook 留出启动窗口。"""
+def schedule_auto_inject_after_settle(
+    session_id: str,
+    *,
+    delay_s: float = 0.8,
+    max_retries: int | None = None,
+    retry_delay_s: float | None = None,
+) -> None:
+    """在轮次完成信号到达后静置并检查自动注入；若 Stop hook 仍在运行（``not_stopped``），
+    按退避节拍持续重试直到会话真正停稳后自动注入，无需等待前端切回该会话。
+    """
     try:
         raw_items = list_raw_queue(session_id)
     except Exception:  # noqa: BLE001
         return
     if not raw_items:
+        with _locks_guard:
+            _queued_sessions.discard(session_id)
+        _cancel_settle_timer(session_id)
         return
 
-    def _delayed() -> None:
-        if delay_s > 0:
-            time.sleep(delay_s)
+    with _locks_guard:
+        _queued_sessions.add(session_id)
+    _cancel_settle_timer(session_id)
+    limit = len(SETTLE_RETRY_DELAYS) if max_retries is None else max(0, int(max_retries))
+
+    def _schedule_step(wait_s: float, attempt: int) -> None:
+        timer = threading.Timer(max(0.0, float(wait_s)), _run_step, args=(attempt,))
+        timer.daemon = True
+        with _locks_guard:
+            old = _settle_timers.get(session_id)
+            if old is not None and old is not timer:
+                old.cancel()
+            _settle_timers[session_id] = timer
+        timer.start()
+
+    def _run_step(attempt: int) -> None:
+        with _locks_guard:
+            _settle_timers.pop(session_id, None)
         try:
-            try_auto_inject(session_id)
+            remaining = list_raw_queue(session_id)
+            if not remaining:
+                with _locks_guard:
+                    _queued_sessions.discard(session_id)
+                return
+            outcome = try_auto_inject(session_id)
+            if outcome.get("injected"):
+                return
+            if outcome.get("reason") == "not_stopped" and attempt < limit:
+                next_wait = (
+                    float(retry_delay_s)
+                    if retry_delay_s is not None
+                    else SETTLE_RETRY_DELAYS[min(attempt, len(SETTLE_RETRY_DELAYS) - 1)]
+                )
+                _schedule_step(next_wait, attempt + 1)
         except Exception:  # noqa: BLE001
             logger.debug("延迟检查自动注入失败（session=%s）", session_id, exc_info=True)
 
-    threading.Thread(
-        target=_delayed,
-        name=f"queue-settle-{session_id[:16]}",
-        daemon=True,
-    ).start()
+    _schedule_step(delay_s, 0)
+
+
+def _seed_queued_sessions_once() -> None:
+    """进程首次巡检时扫描一次 ``~/.frago/sessions/*/*/workbench-queue.json``，
+    把服务重启前已存在的非空队列纳入内存巡检集合。
+    """
+    global _seeded_from_disk
+    with _locks_guard:
+        if _seeded_from_disk:
+            return
+        _seeded_from_disk = True
+
+    try:
+        from frago.server.services import session_observer
+
+        root = session_observer.session_dir("__probe__", "claude-code").parent.parent
+        if not root.is_dir():
+            return
+        found: list[str] = []
+        for qfile in root.glob(f"*/*/{QUEUE_FILENAME}"):
+            sid = qfile.parent.name
+            if not sid:
+                continue
+            data = read_queue(qfile.parent)
+            if data.get("items"):
+                found.append(sid)
+        if found:
+            with _locks_guard:
+                _queued_sessions.update(found)
+    except Exception:  # noqa: BLE001
+        logger.debug("扫描持久化非空队列失败", exc_info=True)
+
+
+def patrol_active_queues(*, sync: bool = False) -> list[str]:
+    """巡检所有当前存在待发消息的会话，一旦某场会话已处于 stop 且无未作答交互卡，自动触发队首注入。
+
+    这一步兜住三类不走 ``SessionStream._on_turn_complete`` 的后台场景：
+    1. 会话自始至终未在前端点开过 ``/records``（或服务重启后尚未点开）；
+    2. ``codex`` / ``agy`` 等不经由 ``SessionStream`` 监听的家族；
+    3. Stop hook 耗时极长、超出单次退避窗口后才结束的会话。
+    """
+    _seed_queued_sessions_once()
+    with _locks_guard:
+        candidates = list(_queued_sessions)
+    injected_sids: list[str] = []
+    for sid in candidates:
+        try:
+            raw_items = list_raw_queue(sid)
+            if not raw_items:
+                with _locks_guard:
+                    _queued_sessions.discard(sid)
+                continue
+            outcome = try_auto_inject(sid, sync=sync)
+            if outcome.get("injected"):
+                injected_sids.append(sid)
+        except Exception:  # noqa: BLE001
+            logger.debug("后台巡检队列自动注入失败（session=%s）", sid, exc_info=True)
+    return injected_sids
+
+
+_patrolling = False
+
+
+def patrol_active_queues_async() -> None:
+    """在独立守护线程中触发一次队列巡检，避免阻塞 ``GET /api/workbench/sessions`` 列表响应。"""
+    global _patrolling
+    _seed_queued_sessions_once()
+    with _locks_guard:
+        if not _queued_sessions or _patrolling:
+            return
+        _patrolling = True
+
+    def _worker() -> None:
+        global _patrolling
+        try:
+            patrol_active_queues(sync=False)
+        finally:
+            with _locks_guard:
+                _patrolling = False
+
+    threading.Thread(target=_worker, name="workbench-queue-patrol", daemon=True).start()
+
+

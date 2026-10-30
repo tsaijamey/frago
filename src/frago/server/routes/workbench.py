@@ -1558,13 +1558,22 @@ def _ensure_watching(session_id: str) -> None:
 
 
 def _keep_watching_only(session_ids: set[str]) -> None:
-    """只留这几场的监听，其余撤掉。撤不掉不打断取清单。"""
+    """只留这几场的监听，其余撤掉，并顺带巡检存在待发队列的后台会话。撤不掉不打断取清单。"""
     try:
         from frago.server.services.workbench_stream_bridge import (
             WorkbenchStreamBridge,
         )
 
-        WorkbenchStreamBridge.get_instance().keep_only(session_ids)
+        bridge = WorkbenchStreamBridge.get_instance()
+        bridge.keep_only(session_ids)
+        workbench_queue._seed_queued_sessions_once()
+        with workbench_queue._locks_guard:
+            queued_alive = [
+                sid for sid in workbench_queue._queued_sessions if sid in session_ids
+            ]
+        for sid in queued_alive:
+            bridge.ensure_watching(sid)
+        workbench_queue.patrol_active_queues_async()
     except Exception:
         import logging
 
