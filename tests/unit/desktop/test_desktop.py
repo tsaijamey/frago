@@ -2097,4 +2097,171 @@ def test_desktop_director_chat_auto_grow_scrollbar_and_fab_collapse():
     assert '#human-input[data-mode="open"] .hi-fab' in css
 
 
+def test_recorder_pump_error_cleans_frames_dir_and_closes_camera(tmp_path, monkeypatch):
+    """录制抓帧循环若因写盘报错（如 Errno 28）或连接中断异常退出，
+    必须自动复位 recording、清理临时帧目录与语音副本目录，并调用 close() 收走 9223 机位。"""
+    import base64
+
+    closed_ports: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed_ports.append(self.port)
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+    monkeypatch.setattr(
+        broker,
+        "_write_frame",
+        lambda *_a, **_kw: (_ for _ in ()).throw(OSError(28, "No space left on device")),
+    )
+
+    class FakeWS:
+        def __init__(self, messages):
+            self._messages = list(messages)
+            self.sent: list[str] = []
+
+        async def send(self, payload: str):
+            self.sent.append(payload)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._messages:
+                raise StopAsyncIteration
+            return self._messages.pop(0)
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+    )
+    frame_msg = json.dumps({
+        "method": "Page.screencastFrame",
+        "params": {
+            "sessionId": 1,
+            "data": base64.b64encode(b"fake-jpeg").decode(),
+        },
+    })
+    rec.ws = FakeWS([frame_msg])
+    rec.alive = True
+
+    asyncio.run(rec.start("disk-full-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None and frames_dir.exists()
+    voice_dir = rec.out_dir / "disk-full-take-voice"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    (voice_dir / "001.mp3").write_bytes(b"mp3")
+
+    asyncio.run(rec._pump())
+
+    assert rec.recording is False
+    assert rec.alive is False
+    assert rec.frames_dir is None
+    assert not frames_dir.exists(), "异常退出后临时帧目录必须被自动删除"
+    assert not voice_dir.exists(), "异常退出后未成片的语音副本目录必须被清理"
+    assert closed_ports == [19223], "异常退出后必须关闭 9223 机位"
+    assert rec.last_abort_reason and "No space left on device" in rec.last_abort_reason
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(rec.stop())
+    assert "上次录制已异常中止" in str(exc_info.value)
+
+
+def test_recorder_duration_and_disk_limits_abort_and_cleanup(tmp_path, monkeypatch):
+    """单次录制超过时长上限或临时盘剩余空间低于阈值时，自动中止录制并回收临时目录与机位。"""
+    closed: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed.append(self.port)
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+
+    class DummyWS:
+        async def send(self, _payload: str):
+            return None
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+        max_duration_sec=60.0,
+        min_free_bytes=1024,
+    )
+    rec.ws = DummyWS()
+    rec.alive = True
+    asyncio.run(rec.start("overtime-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None and frames_dir.exists()
+
+    # 模拟已录制超过 60s 上限，且画面静止由心跳 watchdog 触发巡检
+    rec._t0 -= 65.0
+    aborted = asyncio.run(rec.check_watchdog())
+    assert aborted is True
+    assert rec.recording is False
+    assert not frames_dir.exists()
+    assert closed == [19223]
+    assert rec.last_abort_reason and "超过时长上限" in rec.last_abort_reason
+
+
+def test_recorder_stop_encode_failure_still_cleans_frames_and_closes_camera(tmp_path, monkeypatch):
+    """stop() 期间即便 ffmpeg 编码失败，也必须在 finally 中删除临时帧目录、清理半截 mp4 并收走机位。"""
+    closed: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed.append(self.port)
+
+    async def fast_sleep(_sec):
+        return None
+
+    def failing_encode(_frames_dir, _stamps, out: Path, _fps: int):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"partial-corrupt-mp4")
+        raise RuntimeError("ffmpeg 失败: signal 15")
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+    monkeypatch.setattr(broker.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(broker, "_encode", failing_encode)
+
+    class DummyWS:
+        async def send(self, _payload: str):
+            return None
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+    )
+    rec.ws = DummyWS()
+    rec.alive = True
+    asyncio.run(rec.start("encode-fail-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None
+    (frames_dir / "f000000.jpg").write_bytes(b"jpg")
+    rec.stamps.append(0.03)
+
+    with pytest.raises(RuntimeError, match="ffmpeg 失败"):
+        asyncio.run(rec.stop())
+
+    assert rec.recording is False
+    assert not frames_dir.exists(), "编码失败后临时帧目录仍须清理"
+    assert not (rec.out_dir / "encode-fail-take.mp4").exists(), "半截损坏的 mp4 必须清理"
+    assert closed == [19223], "编码失败后仍须收走 9223 机位"
+
+
+
 

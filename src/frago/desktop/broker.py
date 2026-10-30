@@ -1741,6 +1741,14 @@ def _write_frame(path: Path, raw: bytes,
 
 # ─────────────────────────── 录制机位 ───────────────────────────
 
+# 单次录制的保护上限：最大录制时长（秒）、临时盘最低剩余空间（字节）、磁盘余量抽检间隔（帧）。
+# 调用方在录制中途异常中断或把「停一下」当成只停动作脚本不调 rec stop 时，
+# 9223 机位会持续往临时盘写 JPEG 帧直至耗尽磁盘（2026-10-29 实测 2 小时写出
+# 146809 张帧、21GB 撑满磁盘触发 Errno 28）。触及任一阈值即自动中止录制并回收。
+RECORD_MAX_DURATION_SEC = 1800.0
+RECORD_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+RECORD_DISK_CHECK_EVERY_FRAMES = 30
+
 
 class StageRecorder:
     """一台常驻的摄像机，对着桌面页，随时可以开录停录。
@@ -1752,13 +1760,17 @@ class StageRecorder:
     """
 
     def __init__(self, url: str, width: int, height: int, port: int,
-                 fps: int, out_dir: Path):
+                 fps: int, out_dir: Path,
+                 max_duration_sec: float = RECORD_MAX_DURATION_SEC,
+                 min_free_bytes: int = RECORD_MIN_FREE_BYTES):
         self.url = url
         self.width = width
         self.height = height
         self.port = port
         self.fps = fps
         self.out_dir = out_dir
+        self.max_duration_sec = max_duration_sec
+        self.min_free_bytes = min_free_bytes
         # 取景框。机位按 1920×1080 拍整个桌面页，camera 决定这一帧最终**留下**
         # 哪一块——裁剪发生在落盘之前，所以成片里就是取好景的画面，
         # 不需要（也不该）在后期再去 crop 一次。
@@ -1773,6 +1785,7 @@ class StageRecorder:
         self.stamps: list[float] = []
         self._idx = 0
         self._t0 = 0.0
+        self.last_abort_reason: str | None = None
         # 动作日志。帧时间戳只够还原节奏，对不上"当时在做什么"；
         # 后期要剪掉无效片段，需要的是一张以开录时刻为零点的动作索引。
         self.journal: list[dict] = []
@@ -1838,7 +1851,68 @@ class StageRecorder:
         })
         _log(f"录制机位就绪 {self.width}x{self.height}")
 
+    def _check_limits(self) -> None:
+        """核对单次录制的时长上限与临时盘剩余空间下限，超限即抛异常触发中止清理。"""
+        if not self.recording:
+            return
+        elapsed = time.time() - self._t0
+        if self.max_duration_sec > 0 and elapsed > self.max_duration_sec:
+            raise RuntimeError(
+                f"单次录制超过时长上限 {self.max_duration_sec:.0f}s"
+                f"（已录 {elapsed:.1f}s，clip={self.name}）"
+            )
+        if (
+            self.min_free_bytes > 0
+            and self.frames_dir is not None
+            and self._idx % RECORD_DISK_CHECK_EVERY_FRAMES == 0
+        ):
+            try:
+                free = shutil.disk_usage(self.frames_dir).free
+            except OSError:
+                return
+            if free < self.min_free_bytes:
+                raise RuntimeError(
+                    f"临时盘剩余空间不足 {self.min_free_bytes // (1024 * 1024)}MB"
+                    f"（仅剩 {free // (1024 * 1024)}MB，clip={self.name}）"
+                )
+
+    async def _abort_recording(self, reason: str) -> None:
+        """抓帧异常退出或触及保护上限时，复位录制状态、清理临时目录并关停 9223 机位。"""
+        if not self.recording and self.frames_dir is None:
+            return
+        clip_name = self.name
+        frames_dir = self.frames_dir
+        frames_count = len(self.stamps)
+        self.recording = False
+        self.last_abort_reason = reason
+        self.frames_dir, self.stamps, self.name = None, [], None
+        self.journal, self.voice_lines = [], []
+        if frames_dir is not None:
+            await asyncio.to_thread(shutil.rmtree, frames_dir, True)
+        if clip_name:
+            voice_dir = self.out_dir / f"{clip_name}-voice"
+            if voice_dir.exists():
+                await asyncio.to_thread(shutil.rmtree, voice_dir, True)
+        _log(f"录制异常中止（clip={clip_name}，已收 {frames_count} 帧，"
+             f"原因：{reason}），已清理临时帧目录并收走机位")
+        await self.close()
+
+    async def check_watchdog(self) -> bool:
+        """供周期心跳调用的录制巡检：即便画面静止不产帧，超时或机位失联也照样中止回收。"""
+        if not self.recording:
+            return False
+        if not self.alive:
+            await self._abort_recording("录制机位连接已断开")
+            return True
+        try:
+            self._check_limits()
+        except Exception as exc:  # noqa: BLE001
+            await self._abort_recording(f"{type(exc).__name__}: {exc}")
+            return True
+        return False
+
     async def _pump(self) -> None:
+        abort_reason: str | None = None
         try:
             async for raw in self.ws:
                 msg = json.loads(raw)
@@ -1849,6 +1923,7 @@ class StageRecorder:
                                  {"sessionId": params["sessionId"]})
                 if not self.recording or self.frames_dir is None:
                     continue
+                self._check_limits()
                 path = self.frames_dir / f"f{self._idx:06d}.jpg"
                 # 取景框在这里生效：box_now() 取的是**这一帧到达时刻**的取景
                 # 状态，所以摇镜/推拉是逐帧插值出来的，而不是整段一个固定裁切。
@@ -1860,9 +1935,14 @@ class StageRecorder:
                 self.stamps.append(time.time() - self._t0)
                 self._idx += 1
         except Exception as exc:
-            _log(f"录制机位连接结束: {type(exc).__name__}: {exc}")
+            abort_reason = f"{type(exc).__name__}: {exc}"
+            _log(f"录制机位连接结束: {abort_reason}")
         finally:
             self.alive = False
+            if self.recording:
+                await self._abort_recording(
+                    abort_reason or "录制机位 WebSocket 连接在停录前关闭"
+                )
 
     async def prepare(self) -> dict:
         """把机位准备到"随时可以开录"，不开录。
@@ -1886,6 +1966,7 @@ class StageRecorder:
         if self.recording:
             raise RuntimeError(f"已经在录 {self.name}，先 stop")
         self.name = name
+        self.last_abort_reason = None
         self.frames_dir = Path(tempfile.mkdtemp(prefix="frago-clip-"))
         self.stamps = []
         self.journal = []
@@ -1893,11 +1974,15 @@ class StageRecorder:
         self._idx = 0
         self._t0 = time.time()
         self.recording = True
-        await self._send("Page.startScreencast", {
-            "format": "jpeg", "quality": 92,
-            "maxWidth": self.width, "maxHeight": self.height,
-            "everyNthFrame": 1,
-        })
+        try:
+            await self._send("Page.startScreencast", {
+                "format": "jpeg", "quality": 92,
+                "maxWidth": self.width, "maxHeight": self.height,
+                "everyNthFrame": 1,
+            })
+        except Exception as exc:
+            await self._abort_recording(f"{type(exc).__name__}: {exc}")
+            raise
         _log(f"开录 {name}")
         # 零点要交给 agent：录制日志里每个动作记的都是"距开录多少秒"，
         # agent 手上没有这个绝对时刻就对不上自己的时间线。机位现拉的那几十秒
@@ -1974,10 +2059,18 @@ class StageRecorder:
 
     async def stop(self) -> dict:
         if not self.recording:
+            if self.last_abort_reason:
+                reason = self.last_abort_reason
+                self.last_abort_reason = None
+                raise RuntimeError(f"当前没有在录（上次录制已异常中止：{reason}）")
             raise RuntimeError("当前没有在录")
         # 多收一小段收尾：指令跑完后画面往往还在动（补间、字幕淡出），
         # 立刻停会把结尾切掉。
         await asyncio.sleep(0.8)
+        if not self.recording:
+            reason = self.last_abort_reason or "录制在收尾等待期间中断"
+            self.last_abort_reason = None
+            raise RuntimeError(f"当前没有在录（上次录制已异常中止：{reason}）")
         self.recording = False
         with suppress(Exception):
             await self._send("Page.stopScreencast")
@@ -1985,30 +2078,36 @@ class StageRecorder:
         journal, voice_lines = self.journal, self.voice_lines
         self.frames_dir, self.stamps, self.name = None, [], None
         self.journal, self.voice_lines = [], []
-        if not stamps:
-            shutil.rmtree(frames_dir, ignore_errors=True)
-            raise RuntimeError("没有收到任何帧——画面全程静止？")
         out = self.out_dir / f"{name}.mp4"
-        await asyncio.to_thread(_encode, frames_dir, stamps, out, self.fps)
-        shutil.rmtree(frames_dir, ignore_errors=True)
-        voice_out = None
-        if voice_lines:
-            voice_out = await asyncio.to_thread(
-                _mux_voice, out, voice_lines, self.out_dir / f"{name}-voice.json")
-        log_path = self.out_dir / f"{name}.jsonl"
-        log_path.write_text(
-            "\n".join(json.dumps(e, ensure_ascii=False) for e in journal) + "\n"
-        )
-        _log(f"停录 {name} → {out}（动作 {len(journal)} 条）")
-        # 抽帧与冻帧指标恒在这里做，不设开关：靠自觉去抽帧的纪律实测不可靠，
-        # 而这两样东西的成本是每段片子几秒钟的 ffmpeg。
-        inspect = await asyncio.to_thread(
-            _inspect_clip, out, self.out_dir / f"{name}-contact.png", journal)
-        _log(f"成片自检 {name}: "
-             + json.dumps(inspect, ensure_ascii=False))
-        # 摄像机只在录制时存在：停录即收走整个机位实例，
-        # 桌面平时只剩舞台一个浏览器。
-        await self.close()
+        try:
+            if not stamps:
+                raise RuntimeError("没有收到任何帧——画面全程静止？")
+            try:
+                await asyncio.to_thread(_encode, frames_dir, stamps, out, self.fps)
+            except Exception:
+                out.unlink(missing_ok=True)
+                raise
+            voice_out = None
+            if voice_lines:
+                voice_out = await asyncio.to_thread(
+                    _mux_voice, out, voice_lines, self.out_dir / f"{name}-voice.json")
+            log_path = self.out_dir / f"{name}.jsonl"
+            log_path.write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in journal) + "\n"
+            )
+            _log(f"停录 {name} → {out}（动作 {len(journal)} 条）")
+            # 抽帧与冻帧指标恒在这里做，不设开关：靠自觉去抽帧的纪律实测不可靠，
+            # 而这两样东西的成本是每段片子几秒钟的 ffmpeg。
+            inspect = await asyncio.to_thread(
+                _inspect_clip, out, self.out_dir / f"{name}-contact.png", journal)
+            _log(f"成片自检 {name}: "
+                 + json.dumps(inspect, ensure_ascii=False))
+        finally:
+            if frames_dir is not None:
+                shutil.rmtree(frames_dir, ignore_errors=True)
+            # 摄像机只在录制时存在：停录无论成败都收走整个机位实例，
+            # 桌面平时只剩舞台一个浏览器。
+            await self.close()
         return {
             "clip": name,
             "output": str(out),
@@ -3208,6 +3307,10 @@ def build_app(cfg: dict) -> FastAPI:
         # 落点由 main() 校验过必然在，这里直接取。NEVER 在这儿留一个默认路径：
         # 录屏片段会安静地落进另一个目录，而回执照常报成功。
         out_dir=Path(cfg["clips_dir"]).expanduser(),
+        max_duration_sec=float(cfg.get("record_max_duration_sec",
+                                       RECORD_MAX_DURATION_SEC)),
+        min_free_bytes=int(cfg.get("record_min_free_bytes",
+                                   RECORD_MIN_FREE_BYTES)),
     )
 
     instance_id = cfg.get("id") or registry.DEFAULT_ID
@@ -3222,6 +3325,8 @@ def build_app(cfg: dict) -> FastAPI:
         # 演员标签的核对搭这趟车。它自己按 VERIFY_INTERVAL 节流，
         # 放在心跳的 10 秒闸门之前，免得核对被心跳的节奏拖慢。
         await browser.verify_actor()
+        if recorder.recording:
+            await recorder.check_watchdog()
         nonlocal last_beat
         now = time.time()
         if now - last_beat < 10:
@@ -6729,6 +6834,8 @@ def build_app(cfg: dict) -> FastAPI:
                 "clip": recorder.name,
                 "frames": len(recorder.stamps),
                 "clips_dir": str(recorder.out_dir),
+                **({"aborted": recorder.last_abort_reason}
+                   if recorder.last_abort_reason else {}),
             },
         }
 
