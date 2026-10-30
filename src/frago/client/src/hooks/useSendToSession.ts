@@ -91,6 +91,12 @@ export interface SendToSessionState {
   canSend: boolean;
   send: () => Promise<void>;
   /**
+   * 报错条上的「重试」动作：手上若压着一单因输入框非空而暂存的 `failed`，优先重发那一单；
+   * 否则重发已退回输入框的内容。与输入框自身的 `send` 解耦，避免用户按 Send / Cmd+Enter
+   * 发送新草稿时误把后台暂存的失败单顶出去。
+   */
+  retry: () => Promise<void>;
+  /**
    * 把一句现成的话整句投出去，不经输入框：决定卡片的答复走这条。
    *
    * 输入框里人正在打的字一个不动。之后的信封、进度、失败退回与 20 秒核对都与 `send`
@@ -206,8 +212,17 @@ export function useSendToSession(
     useAttachments();
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 发出去了却没发成、又退不回输入框（人已经在里面打了别的）的那一单。重试重发它。
-  const [failed, setFailed] = useState<OutboundPayload | null>(null);
+  // 发出去了却没发成、又退不回输入框（人已经在里面打了别的）的那一单，严格绑定发起时的 sessionId。
+  const [failedState, setFailedState] = useState<{
+    sessionId: string;
+    payload: OutboundPayload;
+  } | null>(null);
+  const failed =
+    failedState && failedState.sessionId === sessionId ? failedState.payload : null;
+
+  // 当前所处会话编号的实时镜像：异步请求或延迟定时器醒来时用它核对「现在还是不是发起那一单的会话」。
+  const currentSessionId = useRef<string | null>(sessionId);
+  currentSessionId.current = sessionId;
 
   // 输入框此刻空不空。发送失败是在 await 之后才知道的，那时候只能问 ref——闭包里的
   // text/images 停在点发送那一刻，拿它判"人有没有打新的字"必然判错。
@@ -223,6 +238,7 @@ export function useSendToSession(
   // 连接断了、正等记录流核对的那一单。送达信号先到就作罢，等满了才按失败处理。
   const unconfirmed = useRef<{
     ticket: number;
+    sessionId: string;
     timer: ReturnType<typeof setTimeout>;
   } | null>(null);
   // 这三个回调每渲染都是新的，放进 ref 让 send 保持稳定，同时永远调到最新那个。
@@ -244,8 +260,15 @@ export function useSendToSession(
     };
   }, []);
 
-  // 换会话时把上一场没发出去的内容与错误一起收走：那段话是对上一场说的。
+  // 换会话时把上一场没发出去的内容、错误与在飞请求全部收走：那段话是对上一场说的。
   useEffect(() => {
+    currentSessionId.current = sessionId;
+    ticket.current += 1;
+    clearedTicket.current = ticket.current;
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
     if (unconfirmed.current) {
       clearTimeout(unconfirmed.current.timer);
       unconfirmed.current = null;
@@ -255,7 +278,7 @@ export function useSendToSession(
     clear();
     setSending(false);
     setError(null);
-    setFailed(null);
+    setFailedState(null);
   }, [sessionId, clear]);
 
   const addSkill = useCallback((skill: SkillItem) => {
@@ -298,17 +321,24 @@ export function useSendToSession(
   /**
    * 确认没发出去：亮出原因，内容得有个去处。输入框还空着就原样退回去，人接着改就是；
    * 人已经在里面打了新的字就先收着，重试重发的仍是这一份。两条路都一个字不丢。
+   * 必须核对当前会话仍是发起那一单的会话，严禁把上一场的失败内容退回或暂存到新会话里。
    */
   const giveBack = useCallback(
-    (payload: OutboundPayload, reason: string, outboundId?: string) => {
+    (
+      targetSessionId: string,
+      payload: OutboundPayload,
+      reason: string,
+      outboundId?: string
+    ) => {
+      if (!mounted.current || currentSessionId.current !== targetSessionId) return;
       setError(reason);
       if (boxEmpty.current) {
         setText(payload.text);
         setSkills(payload.skills);
         restore(payload.images, payload.documents);
-        setFailed(null);
+        setFailedState(null);
       } else {
-        setFailed(payload);
+        setFailedState({ sessionId: targetSessionId, payload });
       }
       onSendFailedRef.current?.(outboundId);
     },
@@ -319,6 +349,7 @@ export function useSendToSession(
   const dispatch = useCallback(
     async (payload: OutboundPayload) => {
       if (!sessionId) return;
+      const targetSessionId = sessionId;
       const mine = ++ticket.current;
       let pending = false;
       setSending(true);
@@ -334,28 +365,31 @@ export function useSendToSession(
           : onSendStartRef.current?.(payload.text, attachments)) || undefined;
       try {
         const result = await sendToSession(
-          sessionId,
+          targetSessionId,
           payload.text,
           payload.images.map((im) => im.dataUrl),
           payload.documents.map((d) => ({ name: d.name, data: d.dataUrl })),
           payload.skills.map((s) => s.name)
         );
-        if (!mounted.current) return;
+        if (!mounted.current || currentSessionId.current !== targetSessionId) return;
         // 服务端说这一单是排队投进去的（那一场正忙），信封当场换成「排队中」。
         if (result?.status === 'queued') onQueuedRef.current?.(outboundId);
-        setFailed(null);
+        setFailedState(null);
         await onSentRef.current?.(outboundId);
+        if (!mounted.current || currentSessionId.current !== targetSessionId) return;
         if (timer.current !== null) clearTimeout(timer.current);
         timer.current = setTimeout(() => {
-          if (mounted.current) void onSentRef.current?.(outboundId);
+          if (mounted.current && currentSessionId.current === targetSessionId) {
+            void onSentRef.current?.(outboundId);
+          }
         }, RELOAD_AGAIN_MS);
       } catch (e) {
-        if (!mounted.current) return;
+        if (!mounted.current || currentSessionId.current !== targetSessionId) return;
         // 送达信号早就到过：话已经在会话里了，断的只是那条等整轮的请求。当它发成了，
         // 不亮红条、不退回。也不去重拉记录——服务器这会儿多半还没起来，重拉只会在
         // 记录流上再添一条报错；它回来后轮询自己会接上。
         if (clearedTicket.current >= mine) {
-          setFailed(null);
+          setFailedState(null);
           return;
         }
         const reason = e instanceof Error ? e.message : String(e);
@@ -364,21 +398,36 @@ export function useSendToSession(
           if (unconfirmed.current) clearTimeout(unconfirmed.current.timer);
           unconfirmed.current = {
             ticket: mine,
+            sessionId: targetSessionId,
             timer: setTimeout(() => {
-              if (!mounted.current || unconfirmed.current?.ticket !== mine) return;
+              if (
+                !mounted.current ||
+                currentSessionId.current !== targetSessionId ||
+                unconfirmed.current?.ticket !== mine ||
+                unconfirmed.current?.sessionId !== targetSessionId
+              ) {
+                return;
+              }
               unconfirmed.current = null;
-              giveBack(payload, reason, outboundId);
+              giveBack(targetSessionId, payload, reason, outboundId);
               if (ticket.current === mine) setSending(false);
             }, CONFIRM_WINDOW_MS),
           };
           pending = true;
           return;
         }
-        giveBack(payload, reason, outboundId);
+        giveBack(targetSessionId, payload, reason, outboundId);
       } finally {
         // 只有还是自己那一单时才落下"发送中"：放行之后人已经发了下一句的话，
         // 这里再动一次会把后一单的状态抹掉。还在核对的那一单由核对的结果去落。
-        if (mounted.current && ticket.current === mine && !pending) setSending(false);
+        if (
+          mounted.current &&
+          currentSessionId.current === targetSessionId &&
+          ticket.current === mine &&
+          !pending
+        ) {
+          setSending(false);
+        }
       }
     },
     [sessionId, giveBack]
@@ -386,27 +435,37 @@ export function useSendToSession(
 
   const send = useCallback(async () => {
     if (!enabled || !sessionId || sending) return;
-    // 手上压着一单没发成、而输入框已被人占用：重试重发的是那一单，不是框里的新内容。
-    if (failed) {
-      const retry = failed;
-      setFailed(null);
-      await dispatch(retry);
+    const payload: OutboundPayload = { text: text.trim(), images, documents, skills };
+    const hasDraft =
+      Boolean(payload.text) ||
+      payload.images.length > 0 ||
+      payload.documents.length > 0 ||
+      payload.skills.length > 0;
+    if (!hasDraft) {
+      if (failed) {
+        const retryPayload = failed;
+        setFailedState(null);
+        await dispatch(retryPayload);
+      }
       return;
     }
-    const payload: OutboundPayload = { text: text.trim(), images, documents, skills };
-    if (
-      !payload.text &&
-      !payload.images.length &&
-      !payload.documents.length &&
-      !payload.skills.length
-    )
-      return;
     // 点了发送就撤不回了，输入框当场交还给人。那句话改由上方的信封替它站着。
     setText('');
     setSkills([]);
     clear();
     await dispatch(payload);
   }, [enabled, sessionId, sending, failed, text, images, documents, skills, clear, dispatch]);
+
+  const retry = useCallback(async () => {
+    if (!enabled || !sessionId || sending) return;
+    if (failed) {
+      const retryPayload = failed;
+      setFailedState(null);
+      await dispatch(retryPayload);
+      return;
+    }
+    await send();
+  }, [enabled, sessionId, sending, failed, dispatch, send]);
 
   const sendText = useCallback(
     async (value: string) => {
@@ -432,6 +491,7 @@ export function useSendToSession(
     error,
     canSend,
     send,
+    retry,
     sendText,
     held: failed !== null,
   };

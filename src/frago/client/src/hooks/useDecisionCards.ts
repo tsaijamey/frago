@@ -98,13 +98,17 @@ export function useDecisionCards({
   onSendFailed,
 }: UseDecisionCardsOptions): DecisionCardsState {
   const [pending, setPending] = useState<Record<string, Pending>>({});
-  const [answer, setAnswer] = useState<{ text: string; at: number } | null>(null);
+  const [answerState, setAnswerState] = useState<{
+    sessionId: string | null;
+    text: string;
+    at: number;
+  } | null>(null);
   // 编号用自增次数：同一句答复连发两次是两件事
   const seq = useRef(0);
 
   useEffect(() => {
     setPending({});
-    setAnswer(null);
+    setAnswerState(null);
   }, [sessionId]);
 
   const replies = useMemo(() => repliesAfter(records), [records]);
@@ -122,11 +126,14 @@ export function useDecisionCards({
     [replies, pending]
   );
 
-  const answerCard = useCallback((recordId: string, text: string) => {
-    setPending((cur) => ({ ...cur, [recordId]: { text, at: Date.now() } }));
-    seq.current += 1;
-    setAnswer({ text, at: seq.current });
-  }, []);
+  const answerCard = useCallback(
+    (recordId: string, text: string) => {
+      setPending((cur) => ({ ...cur, [recordId]: { text, at: Date.now() } }));
+      seq.current += 1;
+      setAnswerState({ sessionId, text, at: seq.current });
+    },
+    [sessionId]
+  );
 
   // 出门那一刻把信封编号记到对应那一笔「在答」上：失败时凭它撤。
   const startRef = useRef(onSendStart);
@@ -160,6 +167,11 @@ export function useDecisionCards({
     () => ({ canAnswer: !blockedReason, blockedReason, answerOf, answer: answerCard }),
     [blockedReason, answerOf, answerCard]
   );
+
+  const answer =
+    answerState && answerState.sessionId === sessionId
+      ? { text: answerState.text, at: answerState.at }
+      : null;
 
   return { host, answer, onSendStart: wrappedStart, onSendFailed: wrappedFailed };
 }

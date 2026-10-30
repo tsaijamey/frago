@@ -361,6 +361,7 @@ export default function Composer({
     error,
     canSend,
     send,
+    retry,
     sendText,
     held,
   } = useSendToSession(sessionId, {
@@ -512,20 +513,24 @@ export default function Composer({
     setPackedBanner({ count: packedCount, tracePath: packedTrace });
   }, [packedAt, packedText, packedCount, packedTrace, setText]);
 
-  // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片。
+  // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片；记下已消费的序号，防止重挂载或同帧重渲染重复投出。
+  const lastAnswerAt = useRef(0);
   const answerAt = answer?.at ?? 0;
   const answerText = answer?.text ?? '';
   useEffect(() => {
-    if (!answerText || !answerAt) return;
+    if (!answerText || !answerAt || lastAnswerAt.current === answerAt) return;
+    lastAnswerAt.current = answerAt;
     void sendText(answerText);
     // 只盯「点了卡片」那一刻；sendText 换了引用不是又点了一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerAt, answerText]);
 
+  const lastDirectSendAt = useRef(0);
   const directSendAt = directSend?.at ?? 0;
   const directSendText = directSend?.text ?? '';
   useEffect(() => {
-    if (!directSendText || !directSendAt) return;
+    if (!directSendText || !directSendAt || lastDirectSendAt.current === directSendAt) return;
+    lastDirectSendAt.current = directSendAt;
     void sendText(directSendText);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [directSendAt, directSendText]);
@@ -592,7 +597,7 @@ export default function Composer({
             <button
               type="button"
               data-testid="composer-retry"
-              onClick={() => void send()}
+              onClick={() => void retry()}
               disabled={!canSend}
               className="flex shrink-0 items-center gap-1 rounded-[6px] border border-border-color px-2 py-[2px] text-text-secondary hover:bg-bg-hover disabled:opacity-40"
             >
