@@ -463,7 +463,7 @@ def _ledger_pairs() -> tuple[dict[str, str], set[str], dict[str, SessionRelation
         relations[child] = SessionRelation(kind=kind, closed=entry["closed_at"] is not None)
         if kind == "dispatch":
             workers.add(child)
-        if kind not in ("dispatch", "branch"):
+        if kind not in ("dispatch", "branch", "handoff"):
             continue
         parent = entry["parent"]
         # 自己不能是自己的父亲：真出现了就是记账时把编号取错了，认下来会让那一行
@@ -793,7 +793,7 @@ class OriginIndex:
         if session_id in self.workers:
             return "worker"
         relation = self.relations.get(session_id)
-        if relation is not None and relation.kind == "branch":
+        if relation is not None and relation.kind in ("branch", "handoff"):
             return "human"
         if session_id in self.parents:
             return "worker"

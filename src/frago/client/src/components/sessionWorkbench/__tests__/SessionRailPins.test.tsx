@@ -236,6 +236,101 @@ describe('SessionRail 置顶区', () => {
     expect(titles().filter((t) => t.includes(OC_SID))).toHaveLength(1);
   });
 
+  it('原会话在置顶区（即便自身最后回复在昨天、不在 visible 中）时，从它分出的新分支仍与原会话组合在置顶区，不掉进其余会话', () => {
+    const pinnedParent = session({
+      session_id: '7f928ea5-5b31-4f73-8e3a-9a13beec2e61',
+      title: 'Data Agent - Use Case',
+      last_reply_at: 1_753_700_000_000,
+    });
+    const branchChild = session({
+      session_id: '7e717b27-e367-4907-9a7a-721f37210ae8',
+      title: 'Clarification与Semantic同步',
+      parent_session_id: pinnedParent.session_id,
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: 1_753_860_000_000,
+    });
+    const otherToday = session({
+      session_id: SID,
+      title: '独立今日会话',
+      last_reply_at: 1_753_870_000_000,
+    });
+    pins.pinned = [pinnedParent.session_id];
+    const allRows = [branchChild, otherToday, pinnedParent];
+    // 原会话是昨天的，不在 visible / todaySessions 里；分支会话与独立今日会话在今天可见列表中。
+    const todayRows = [branchChild, otherToday];
+    const state = railState(allRows, {
+      visible: todayRows,
+      todaySessions: todayRows,
+    });
+    const { container } = render(<TestRail state={state} selectedId={branchChild.session_id} onSelect={NOOP} />);
+
+    const shown = titles();
+    // 顺序应当是：置顶区里「原会话 → 分支会话」，随后才是其余会话里的「独立今日会话」
+    expect(shown[0]).toContain('Data Agent - Use Case');
+    expect(shown[1]).toContain('Clarification与Semantic同步');
+    expect(shown[2]).toContain('独立今日会话');
+
+    // 其余会话（Everything else）计数只算那 1 条独立今日会话，不包含已经挂进置顶组的分支会话
+    expect(screen.getByTestId('rest-header').textContent).toContain('1');
+
+    // 原会话与分支会话在置顶区里构成完整的 branchPos head -> tail 容器
+    const branchWrappers = container.querySelectorAll('[data-branch-pos]');
+    expect(branchWrappers).toHaveLength(2);
+    expect(branchWrappers[0]?.getAttribute('data-branch-pos')).toBe('head');
+    expect(branchWrappers[1]?.getAttribute('data-branch-pos')).toBe('tail');
+  });
+
+  it('Hand to new session 产生的交接会话与原会话归入同一 group，并在组内按最新序号向上排列（#3 → #2 → #1）', () => {
+    const s1 = session({
+      session_id: '11111111-1111-4111-8111-111111111111',
+      title: '重构会话工作台 #1',
+      created_at: 1_753_700_000_000,
+      last_reply_at: 1_753_710_000_000,
+    });
+    const s2 = session({
+      session_id: '22222222-2222-4222-8222-222222222222',
+      title: '重构会话工作台 #2',
+      parent_session_id: s1.session_id,
+      relation: { kind: 'handoff', closed: false },
+      created_at: 1_753_800_000_000,
+      last_reply_at: 1_753_810_000_000,
+    });
+    const s3 = session({
+      session_id: '33333333-3333-4333-8333-333333333333',
+      title: '重构会话工作台 #3',
+      parent_session_id: s2.session_id,
+      relation: { kind: 'handoff', closed: false },
+      created_at: 1_753_900_000_000,
+      last_reply_at: 1_753_910_000_000,
+    });
+    const other = session({
+      session_id: SID,
+      title: '另一场普通会话',
+      created_at: 1_753_850_000_000,
+      last_reply_at: 1_753_850_000_000,
+    });
+    // 按服务端最新回复倒序传入：s3 最新，其次是 other，再是 s2、s1
+    const allRows = [s3, other, s2, s1];
+    const { container } = render(
+      <TestRail state={railState(allRows)} selectedId={s3.session_id} onSelect={NOOP} />
+    );
+
+    const shown = titles();
+    // 整组排在最新交接会话 s3 所在的首位，组内自上而下依次为 #3 → #2 → #1，随后是独立会话
+    expect(shown[0]).toContain('重构会话工作台 #3');
+    expect(shown[1]).toContain('重构会话工作台 #2');
+    expect(shown[2]).toContain('重构会话工作台 #1');
+    expect(shown[3]).toContain('另一场普通会话');
+
+    // 三场交接链会话装在同一个 branchPos 容器（head -> mid -> tail）中，且不渲染分支专属的 branched 标签
+    const groupWrappers = container.querySelectorAll('[data-branch-pos]');
+    expect(groupWrappers).toHaveLength(3);
+    expect(groupWrappers[0]?.getAttribute('data-branch-pos')).toBe('head');
+    expect(groupWrappers[1]?.getAttribute('data-branch-pos')).toBe('mid');
+    expect(groupWrappers[2]?.getAttribute('data-branch-pos')).toBe('tail');
+    expect(screen.queryByTestId('branch-of')).toBeNull();
+  });
+
   it('名单里有编号、清单里没那场时就是不显示，也不报错', () => {
     // 会话档案被滚删了。NEVER 因此把编号从名单里踢掉——一次滚删不该清空人的置顶。
     pins.pinned = ['ses_已经被滚删的那场'];

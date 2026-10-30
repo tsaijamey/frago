@@ -217,9 +217,15 @@ class TestNumberedPair:
 
 @pytest.fixture
 def titles_file(tmp_path, monkeypatch):
+    from frago.session import session_origin
+
     path = tmp_path / "workbench_titles.json"
+    ledger = tmp_path / "agent-launches.json"
     monkeypatch.setattr(workbench_titles, "TITLES_FILE", path)
-    return path
+    monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", ledger)
+    session_origin.clear_cache()
+    yield path
+    session_origin.clear_cache()
 
 
 class TestRoute:
@@ -261,10 +267,36 @@ class TestRoute:
         body = client.post(f"/api/workbench/sessions/{SID}/handoff").json()
         assert (body["old_title"], body["new_title"]) == ("修登录页 #1", "修登录页 #2")
         assert workbench_titles.load() == {SID: "修登录页 #1", body["session_id"]: "修登录页 #2"}
+        from frago.session import session_origin
+
+        rel = session_origin.find_relation(body["session_id"])
+        assert rel is not None
+        assert rel["kind"] == "handoff"
+        assert rel["parent"] == SID
         rows = client.get("/api/workbench/sessions").json()
         assert rows[0]["title"] == "修登录页 #1"
 
+        # 再从 #2 交接一次，原 #2 保持「修登录页 #2」，新会话顺延为「修登录页 #3」
+        second_sid = body["session_id"]
+        old_2, new_3 = workbench_handoff.name_pair(
+            second_sid,
+            workbench_new_session.PendingLaunch(
+                handle="third-sid",
+                agent_type="claude",
+                display_name="Claude Code",
+                cwd=CWD,
+                session_id="99999999-8888-4777-8666-555555555555",
+            ),
+        )
+        assert (old_2, new_3) == ("修登录页 #2", "修登录页 #3")
+        rel_3 = session_origin.find_relation("99999999-8888-4777-8666-555555555555")
+        assert rel_3 is not None
+        assert rel_3["kind"] == "handoff"
+        assert rel_3["parent"] == second_sid
+
     def test_要等认领编号的那两家_认到了再起名(self, titles_file, monkeypatch):
+        from frago.session import session_origin
+
         launch = workbench_new_session.PendingLaunch(
             handle="webui-x", agent_type="codex", display_name="codex", cwd=CWD
         )
@@ -279,8 +311,12 @@ class TestRoute:
 
         monkeypatch.setattr(workbench_new_session, "status", status)
         monkeypatch.setattr(workbench_handoff, "CLAIM_POLL_S", 0.0)
-        workbench_handoff._name_when_claimed("webui-x", "修登录页 #2")
+        workbench_handoff._name_when_claimed("webui-x", "修登录页 #2", SID, "codex", CWD)
         assert workbench_titles.load() == {launch.session_id: "修登录页 #2"}
+        rel = session_origin.find_relation(launch.session_id)
+        assert rel is not None
+        assert rel["kind"] == "handoff"
+        assert rel["parent"] == SID
 
     def test_起一场同家同目录的新会话_第一句是交接内容(self, client, monkeypatch, patched):
         started: list[tuple] = []

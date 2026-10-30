@@ -460,8 +460,8 @@ class TestRelationKinds:
         assert entry["note"] == "这个报错要不要查"
         assert entry["closed_at"] is None
 
-    def test_交接认得但不折叠也不算worker(self, ledger, empty_projects):
-        # 交接本次只在读取侧认得。它不进父子表：交接的两场是并排的，不是谁挂谁。
+    def test_交接算人开的且认得原会话父亲(self, ledger, empty_projects):
+        # 交接是人换一场继续谈，算 human，同时记下原会话 parent_session_id 供左栏同组向上排列。
         child = str(uuid.uuid4())
         session_origin.LAUNCH_LEDGER.write_text(
             json.dumps([{"child": child, "parent": HUMAN_SID, "kind": "handoff"}]),
@@ -469,7 +469,7 @@ class TestRelationKinds:
         )
         index = _index(empty_projects)
         assert index.relation_of(child) == session_origin.SessionRelation("handoff")
-        assert index.parent_of(child) is None
+        assert index.parent_of(child) == HUMAN_SID
         assert index.origin_of(child) == "human"
 
     def test_读不懂的单条跳过_其余照读(self, ledger, empty_projects):

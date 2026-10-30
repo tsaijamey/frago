@@ -276,7 +276,9 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    old_title, new_title = await asyncio.to_thread(workbench_handoff.name_pair, sid, launch)
+    old_title, new_title = await asyncio.to_thread(
+        workbench_handoff.name_pair, sid, launch, handoff=handoff
+    )
     return {
         **_launch_payload(launch),
         "text": handoff.text,

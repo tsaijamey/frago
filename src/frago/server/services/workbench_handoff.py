@@ -52,7 +52,7 @@ from frago.server.services import (
     workbench_new_session,
     workbench_titles,
 )
-from frago.session import record_reader
+from frago.session import record_reader, session_origin
 from frago.session.unified_record import UnifiedRecord
 
 logger = logging.getLogger(__name__)
@@ -144,12 +144,46 @@ def current_title(session_id: str) -> str:
     return session_id[:8]
 
 
-def name_pair(session_id: str, launch: workbench_new_session.PendingLaunch) -> tuple[str, str]:
-    """给交接的两场各起一个带序号的名字，回 ``(原会话的名字, 新会话的名字)``。
+def record_handoff_relation(
+    parent_session_id: str,
+    child_session_id: str,
+    *,
+    agent_type: str = "",
+    cwd: str = "",
+    prompt_head: str = "",
+) -> bool:
+    """往会话关系账里记一条交接关系（``kind="handoff"``）。"""
+    return session_origin.record_relation(
+        kind="handoff",
+        child_session_id=child_session_id,
+        parent_session_id=parent_session_id,
+        agent_type=agent_type,
+        cwd=cwd,
+        prompt_head=prompt_head,
+    )
+
+
+def name_pair(
+    session_id: str,
+    launch: workbench_new_session.PendingLaunch,
+    *,
+    handoff: Handoff | None = None,
+) -> tuple[str, str]:
+    """给交接的两场各起一个带序号的名字，并记下交接关系，回 ``(原会话的名字, 新会话的名字)``。
 
     起名失败不拦交接：新会话已经起来了，名字只是让人分得清，写不进去就照旧叫原来的名字。
     """
     old_title, new_title = workbench_titles.numbered_pair(current_title(session_id))
+    agent_type = handoff.agent_type if handoff else launch.agent_type
+    cwd = handoff.cwd if handoff else launch.cwd
+    if launch.session_id:
+        record_handoff_relation(
+            session_id,
+            launch.session_id,
+            agent_type=agent_type,
+            cwd=cwd,
+            prompt_head=new_title,
+        )
     try:
         workbench_titles.set_title(session_id, old_title)
         if launch.session_id:
@@ -157,7 +191,7 @@ def name_pair(session_id: str, launch: workbench_new_session.PendingLaunch) -> t
         else:
             threading.Thread(
                 target=_name_when_claimed,
-                args=(launch.handle, new_title),
+                args=(launch.handle, new_title, session_id, agent_type, cwd),
                 name=f"webui-handoff-name-{launch.handle[:12]}",
                 daemon=True,
             ).start()
@@ -166,14 +200,28 @@ def name_pair(session_id: str, launch: workbench_new_session.PendingLaunch) -> t
     return old_title, new_title
 
 
-def _name_when_claimed(handle: str, title: str) -> None:
-    """等认领到新会话的编号再起名。首轮跑完还没认到就算了——那一场多半没起来。"""
+def _name_when_claimed(
+    handle: str,
+    title: str,
+    parent_session_id: str | None = None,
+    agent_type: str = "",
+    cwd: str = "",
+) -> None:
+    """等认领到新会话的编号再起名并补记交接关系。首轮跑完还没认到就算了——那一场多半没起来。"""
     deadline = time.monotonic() + CLAIM_WAIT_S
     while time.monotonic() < deadline:
         launch = workbench_new_session.status(handle)
         if launch is None:
             return
         if launch.session_id:
+            if parent_session_id:
+                record_handoff_relation(
+                    parent_session_id,
+                    launch.session_id,
+                    agent_type=agent_type or launch.agent_type,
+                    cwd=cwd or launch.cwd,
+                    prompt_head=title,
+                )
             try:
                 workbench_titles.set_title(launch.session_id, title)
             except (OSError, ValueError):

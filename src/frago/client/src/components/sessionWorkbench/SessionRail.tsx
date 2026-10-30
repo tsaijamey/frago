@@ -66,6 +66,7 @@ import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import {
+  activityTs,
   expandSessionGroupIds,
   getSessionGroupIds,
   type ListFilter,
@@ -330,20 +331,65 @@ export default function SessionRail({
     return expandSessionGroupIds(sessions, seeds);
   }, [sessions, today]);
 
-  const { trunkRows, childrenOf, branchChildrenOf, orphanRows, pickedRows } = useMemo(() => {
-    // 认父亲要在**整份可见清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
-    // 或者在「今天捡回」里，它的 worker 与分支都要跟着它挂在同一棵树下。
-    const present = new Set(visible.map((s) => s.session_id));
-    const byId = new Map(visible.map((s) => [s.session_id, s]));
+  const { trunkRows, childrenOf, branchChildrenOf, handoffChildrenOf, orphanRows, pickedRows } = useMemo(() => {
+    // 认父亲要在**整份可见清单 + 置顶区**里认，不是只在下面那一片里认：派活、分出分支或交接的
+    // 原会话可能被置顶了（即便原会话自己是昨天的、不在 visible 里），或者在「今天捡回」里，
+    // 它的 worker、分支与交接都要跟着它挂在同一棵树下，绝不能脱离原会话掉进 Everything else。
+    const allById = new Map(sessions.map((s) => [s.session_id, s]));
+    const pinnedSeedIds = new Set(pinnedRows.map((s) => s.session_id));
+    const isUnderPinned = (session: WorkbenchSession): boolean => {
+      let cur = session.parent_session_id;
+      const seen = new Set<string>([session.session_id]);
+      while (cur && !seen.has(cur)) {
+        if (pinnedSeedIds.has(cur)) return true;
+        seen.add(cur);
+        cur = allById.get(cur)?.parent_session_id ?? null;
+      }
+      return false;
+    };
+
+    const byId = new Map<string, WorkbenchSession>();
+    for (const s of pinnedRows) {
+      byId.set(s.session_id, s);
+    }
+    for (const s of visible) {
+      byId.set(s.session_id, s);
+    }
+    if (pinnedSeedIds.size > 0) {
+      for (const s of sessions) {
+        if (!byId.has(s.session_id) && isUnderPinned(s)) {
+          byId.set(s.session_id, s);
+        }
+      }
+    }
+    // 全部档位下，若某条交接会话今天在可见列表中，把它的交接祖先链也一并认进 byId，保证跨零点交接不断组。
+    if (filter === 'all') {
+      for (const s of Array.from(byId.values())) {
+        if (s.relation?.kind !== 'handoff') continue;
+        let cur = s.parent_session_id;
+        const seen = new Set<string>([s.session_id]);
+        while (cur && !seen.has(cur)) {
+          seen.add(cur);
+          const parentSession = allById.get(cur);
+          if (!parentSession) break;
+          if (!byId.has(cur)) byId.set(cur, parentSession);
+          if (parentSession.relation?.kind !== 'handoff') break;
+          cur = parentSession.parent_session_id;
+        }
+      }
+    }
+    const present = new Set(byId.keys());
     const children = new Map<string, WorkbenchSession[]>();
     const branches = new Map<string, WorkbenchSession[]>();
+    const handoffs = new Map<string, WorkbenchSession[]>();
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
     const picked: WorkbenchSession[] = [];
+    const placedRoots = new Set<string>();
 
     /**
-     * 找出一场子会话在当前可见列表里能够挂载的最近非平铺 worker 祖先（主会话或分支会话）。
-     * 若直接父会话是一条平铺 worker，则继续向上追溯到派它的主会话或分支会话，保证多级子会话
+     * 找出一场子会话在当前可见列表里能够挂载的最近非平铺 worker 祖先（主会话、分支会话或交接会话）。
+     * 若直接父会话是一条平铺 worker，则继续向上追溯到派它的主会话或分支/交接会话，保证多级子会话
      * 也能完整收进同一个 group 里而不丢失。
      */
     const resolveHostParent = (session: WorkbenchSession): string | null => {
@@ -354,19 +400,70 @@ export default function SessionRail({
         if (!present.has(cur)) return null;
         const pSession = byId.get(cur);
         const isFlatWorker =
-          pSession?.origin === 'worker' && pSession?.relation?.kind !== 'branch';
+          pSession?.origin === 'worker' &&
+          pSession?.relation?.kind !== 'branch' &&
+          pSession?.relation?.kind !== 'handoff';
         if (!isFlatWorker) return cur;
         cur = pSession?.parent_session_id ?? null;
       }
       return null;
     };
 
-    for (const session of visible) {
+    /** 沿交接链向上找根会话，使整组在主干里排在最新那场交接会话所在的位置。 */
+    const resolveHandoffRoot = (session: WorkbenchSession): WorkbenchSession => {
+      let cur = session;
+      const seen = new Set<string>([session.session_id]);
+      while (cur.relation?.kind === 'handoff') {
+        const parentId = resolveHostParent(cur);
+        if (!parentId || seen.has(parentId)) break;
+        const parentSession = byId.get(parentId);
+        if (!parentSession) break;
+        seen.add(parentId);
+        cur = parentSession;
+      }
+      return cur;
+    };
+
+    const placeTrunkOrPicked = (root: WorkbenchSession) => {
+      if (placedRoots.has(root.session_id) || pins.isPinned(root.session_id)) return;
+      if (resolveHostParent(root) !== null) return;
+      if (root.relation?.kind === 'branch' || root.relation?.kind === 'handoff') return;
+      if (root.origin === 'worker') return;
+      placedRoots.add(root.session_id);
+      if (pickedGroupIds.has(root.session_id)) {
+        picked.push(root);
+      } else {
+        trunk.push(root);
+      }
+    };
+
+    for (const session of byId.values()) {
       // 置顶的那几场由置顶区去摆，这里只管下面那一片。置顶不跟今天走，也不跟捡回走：
       // 同一场在 Pinned 里已经有一张，不再在「今天捡回」里重复一张。
       if (pins.isPinned(session.session_id)) continue;
 
       const hostParent = resolveHostParent(session);
+
+      /**
+       * **交接会话与原会话装进同一个容器，并在组内向上排列（如 #3 → #2 → #1）。**
+       * 当交接产生的新会话排在可见列表更靠前的位置时，顺手把整组的根会话提前到该位置，
+       * 避免新交接出的会话被旧会话拽回列表底部。
+       */
+      if (session.relation?.kind === 'handoff') {
+        if (hostParent) {
+          const bucket = handoffs.get(hostParent);
+          if (bucket) bucket.push(session);
+          else handoffs.set(hostParent, [session]);
+          placeTrunkOrPicked(resolveHandoffRoot(session));
+        } else if (pickedGroupIds.has(session.session_id)) {
+          placedRoots.add(session.session_id);
+          picked.push(session);
+        } else {
+          placedRoots.add(session.session_id);
+          trunk.push(session);
+        }
+        continue;
+      }
 
       /**
        * **分支会话和原会话装进同一个容器。** 分支是人亲手起的、等的也是人；把它摊在主干上，
@@ -379,8 +476,10 @@ export default function SessionRail({
           if (bucket) bucket.push(session);
           else branches.set(hostParent, [session]);
         } else if (pickedGroupIds.has(session.session_id)) {
+          placedRoots.add(session.session_id);
           picked.push(session);
         } else {
+          placedRoots.add(session.session_id);
           trunk.push(session);
         }
         continue;
@@ -393,27 +492,49 @@ export default function SessionRail({
         continue;
       }
 
+      if (placedRoots.has(session.session_id)) continue;
+
       /**
        * 今天从 timeline 捡回来的上下文组根会话（或认不出父会话的独立捡回会话），
        * 摆在 Pinned 下面的「今天捡回」区；它的分支与 worker 已经挂在 `branches` 与 `children` 下，
        * 渲染时经 `trunkWithKids` 作为一整个 group 一起摆出来。
        */
       if (pickedGroupIds.has(session.session_id)) {
+        placedRoots.add(session.session_id);
         picked.push(session);
         continue;
       }
 
       if (session.origin === 'worker') orphans.push(session);
-      else trunk.push(session);
+      else {
+        placedRoots.add(session.session_id);
+        trunk.push(session);
+      }
     }
+
+    // 同一父会话下若有多条交接，按标题尾号 #N（或创建时间 / 最近活动时间）倒序，确保最新序号排在最上面。
+    const handoffNumber = (s: WorkbenchSession): number => {
+      const m = /#(\d+)\s*$/.exec(s.title);
+      return m ? Number(m[1]) : 0;
+    };
+    for (const bucket of handoffs.values()) {
+      bucket.sort((a, b) => {
+        const numDiff = handoffNumber(b) - handoffNumber(a);
+        if (numDiff !== 0) return numDiff;
+        if (b.created_at !== a.created_at) return b.created_at - a.created_at;
+        return activityTs(b) - activityTs(a);
+      });
+    }
+
     return {
       trunkRows: trunk,
       childrenOf: children,
       branchChildrenOf: branches,
+      handoffChildrenOf: handoffs,
       orphanRows: orphans,
       pickedRows: picked,
     };
-  }, [visible, pins, pickedGroupIds]);
+  }, [sessions, pinnedRows, visible, pins, pickedGroupIds, filter]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -475,10 +596,13 @@ export default function SessionRail({
       session: WorkbenchSession,
       inPinned = false,
       depth = 0,
-      branchCard = false
+      branchCard = false,
+      inGroupContainer = false
     ): SessionRow[] => {
       const kids = childrenOf.get(session.session_id) ?? [];
       const branches = branchChildrenOf.get(session.session_id) ?? [];
+      const handoffs = handoffChildrenOf.get(session.session_id) ?? [];
+      const hasGroupPeers = inGroupContainer || branches.length > 0 || handoffs.length > 0;
       const expanded = expandedWorkers.has(session.session_id);
       const head: SessionRow = {
         kind: 'session',
@@ -489,11 +613,11 @@ export default function SessionRail({
         indent: depth,
         branchCard,
       };
-      const out: SessionRow[] = [head];
+      const selfOut: SessionRow[] = [head];
       if (kids.length && expanded) {
         // 展开之后这一组被一个框圈起来：主会话那行画上半框，子会话画两侧，末一行收底。
         head.groupPos = 'head';
-        out.push(
+        selfOut.push(
           ...kids.map((kid, i) => ({
             kind: 'session' as const,
             session: kid,
@@ -505,10 +629,16 @@ export default function SessionRail({
         );
       }
       for (const branch of branches) {
-        out.push(...trunkWithKids(branch, inPinned, depth, true));
+        selfOut.push(...trunkWithKids(branch, inPinned, depth, true, true));
       }
-      // 只有最外层这段需要画容器；里层的分支继续用同一个框，不再各画一圈。
-      if (depth === 0 && branches.length) {
+      // 交接会话在组内向上排列（如 #3 排在 #2 上面，#2 排在 #1 上面）。
+      const handoffOut: SessionRow[] = [];
+      for (const handoff of handoffs) {
+        handoffOut.push(...trunkWithKids(handoff, inPinned, depth, true, true));
+      }
+      const out: SessionRow[] = [...handoffOut, ...selfOut];
+      // 只有最外层这段需要画容器；里层的分支与交接继续用同一个框，不再各画一圈。
+      if (depth === 0 && !inGroupContainer && hasGroupPeers) {
         return out.map((row, i) => ({
           ...row,
           branchPos: i === 0 ? 'head' : i === out.length - 1 ? 'tail' : 'mid',
@@ -548,6 +678,7 @@ export default function SessionRail({
     restPlaced.length,
     childrenOf,
     branchChildrenOf,
+    handoffChildrenOf,
     orphanRows.length,
     pagedOrphans,
     expandedWorkers,
@@ -1248,10 +1379,19 @@ export default function SessionRail({
                   )}
                 </div>
               );
-              /* 置顶那一块的中段：两侧淡描边，底色与标题同一块下沉暗托盘 --grp-bg。 */
+              /* 置顶那一块的中段：两侧淡描边，底色与标题同一块下沉暗托盘 --grp-bg；
+                 组内续接行（mid / tail）不加 pt-0.5，保持分支框或 worker 框的竖边连续不断裂。 */
+              const isGroupContinuation =
+                pos === 'mid' || pos === 'tail' || branchPos === 'mid' || branchPos === 'tail';
               return row.inPinned ? (
                 <div className="px-1">
-                  <div className="border-x border-[var(--grp-border)] bg-[var(--grp-bg)] pt-0.5">{item}</div>
+                  <div
+                    className={`border-x border-[var(--grp-border)] bg-[var(--grp-bg)] ${
+                      isGroupContinuation ? '' : 'pt-0.5'
+                    }`.trim()}
+                  >
+                    {item}
+                  </div>
                 </div>
               ) : (
                 item
