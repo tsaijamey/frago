@@ -73,6 +73,9 @@ import StreamMinimap from './StreamMinimap';
 import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 import {
   AGENT_ACTIVITY,
+  MAX_BACKFILL_PAGES,
+  MIN_TALK_RECORDS,
+  PAGE_SIZE,
   queueOpOf,
   queueOutcomes,
   trailSettled,
@@ -131,6 +134,30 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
     return 'talk';
   }
   return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
+
+/**
+ * 判断一条（已经过 `withQueueOutcomes` 归一化的）记录在「对话（Talk）」镜头下是否画成
+ * 独立可见的对话气泡。
+ *
+ * `agent.think` 在 Talk 镜头下由 `buildTalkSegments` 与 `tool.call` 一起折叠进响应前的
+ * `{num}次工具调用 · {num}次thinking` 聚合行，不作为独立气泡渲染；而当轮尚无 `agent.say`
+ * 接管时，未移交的 UI 交互卡 / 图片网格 `tool.result` 会在 Talk 里兜底画成气泡。
+ */
+export function isTalkBubbleRecord(record: WorkbenchRecord): boolean {
+  if (record.kind === 'agent.think') return false;
+  if (
+    record.kind === 'tool.result' &&
+    !record.agent_path.length &&
+    record.payload.status !== 'error' &&
+    record.payload.ui_component_delegated !== true
+  ) {
+    const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+    const uiCard = body ? parseUiComponentOutput(body) : null;
+    const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+    if ((uiCard && uiCard.ok) || imageGrids.length > 0) return true;
+  }
+  return lensOf(record) === 'talk';
 }
 
 /**
@@ -1091,7 +1118,15 @@ export default function RecordStream({
       tool: 0,
       system: 0,
     };
-    for (const record of resolved) tally[lensOf(record)] += 1;
+    for (const record of resolved) {
+      const bucket = lensOf(record);
+      if (bucket !== 'talk') {
+        tally[bucket] += 1;
+      }
+      if (isTalkBubbleRecord(record)) {
+        tally.talk += 1;
+      }
+    }
     return tally;
   }, [resolved]);
 
@@ -1372,6 +1407,8 @@ export default function RecordStream({
   });
   // 滚动事件触发得很密，到顶一次就够了；再触发由 hook 那一侧的闸挡住。
   const olderArmed = useRef(true);
+  // Talk / Watcher 视图在可见对话不足或视口未填满时自动向前补取旧页的本轮计数，防极端空会话死循环。
+  const autoBackfillCount = useRef(0);
   /**
    * 程序自己滚的有效期。
    *
@@ -1410,6 +1447,7 @@ export default function RecordStream({
     anchor.current = null;
     prevEnds.current = { first: null, last: null };
     olderArmed.current = true;
+    autoBackfillCount.current = 0;
   }, [sessionId]);
 
   // 记录流变化的三种形态：前插钉住视口，追加按状态机走，整流替换与初装沉底。
@@ -1457,9 +1495,44 @@ export default function RecordStream({
   // 换镜头后落在这一档的最新一条上。不这么做，视口会停在按旧内容算出来的高度上，
   // 换完看到的是半空的一屏。
   useLayoutEffect(() => {
+    autoBackfillCount.current = 0;
     scrollToBottom();
     followArmed.current = true;
   }, [lens, watcherOpen, scrollToBottom]);
+
+  // Talk / Watcher 视图下，若当前已取窗口筛完后可见对话不足最小条数（满页却不足 MIN_TALK_RECORDS）
+  // 或内容高度不足以撑出滚动条（导致无法通过上滚触发 NEAR_TOP_PX），且服务端还有更早记录，
+  // 自动向前补取旧页，保证最新一页始终饱满可滚。
+  useEffect(() => {
+    if (!hasOlder || loading || loadingOlder) return;
+    if (filesOpen || terminalOpen) return;
+    if (lens !== 'talk' && !watcherOpen) return;
+    if (autoBackfillCount.current >= MAX_BACKFILL_PAGES) return;
+
+    const el = scrollRef.current;
+    const underMinBubbles = counts.talk < MIN_TALK_RECORDS && records.length >= PAGE_SIZE;
+    const underViewport =
+      el !== null && el.clientHeight > 0 && el.scrollHeight <= el.clientHeight + NEAR_TOP_PX;
+
+    if (!underMinBubbles && !underViewport) return;
+
+    autoBackfillCount.current += 1;
+    if (el && el.scrollHeight > 0) {
+      anchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    }
+    onLoadOlder();
+  }, [
+    hasOlder,
+    loading,
+    loadingOlder,
+    filesOpen,
+    terminalOpen,
+    lens,
+    watcherOpen,
+    counts.talk,
+    records.length,
+    onLoadOlder,
+  ]);
 
   // "在等 agent 开口"那一条也是内容，它一冒出来就要看得见——跟着的人正是为了看它。
   // 人自己滚上去看别的时不打扰。
@@ -1887,7 +1960,10 @@ export default function RecordStream({
         data-testid="record-stream-scroll"
       >
         <FileLinkContext.Provider value={preview ? handleFileLink : null}>
-        <div className="flex w-full min-w-0 flex-col gap-4">
+        <div
+          data-testid="record-stream-content"
+          className="flex min-h-full w-full min-w-0 flex-col justify-end gap-4"
+        >
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
@@ -1908,13 +1984,13 @@ export default function RecordStream({
           ) : null}
 
           {!watcherOpen && records.length && !visible.length && !segments.length ? (
-            <p className="py-10 text-center text-[12px] text-text-muted">
+            <p className="my-auto py-10 text-center text-[12px] text-text-muted">
               {t('workbench.stream.lensEmpty')}
             </p>
           ) : null}
 
           {!records.length && !loading && !error ? (
-            <div className="flex flex-col items-center gap-3 py-16 text-text-muted">
+            <div className="my-auto flex flex-col items-center gap-3 py-16 text-text-muted">
               <Inbox size={44} strokeWidth={1.4} />
               <p className="text-[13px]">{t('workbench.stream.emptySession')}</p>
               <p className="text-[12px]">{t('workbench.stream.emptySessionHint')}</p>

@@ -44,6 +44,16 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 /** 一页拉多少条。服务端上限 500，这里取默认的 200。 */
 export const PAGE_SIZE = 200;
 
+/**
+ * 首屏自动向前补页的目标最小可见对话条数与最大自动补取页数。
+ *
+ * 当尾部一页（200 条）绝大多数是工具调用、钩子注入或思考记录时，筛入 Talk 后可能只剩几条
+ * 对话气泡，既撑不满视口也无法触发向上滚动加载。首取时若 `hasOlder=true` 且可见对话不足
+ * `MIN_TALK_RECORDS`，自动向前补取旧页，最多连补 `MAX_BACKFILL_PAGES` 页。
+ */
+export const MIN_TALK_RECORDS = 40;
+export const MAX_BACKFILL_PAGES = 10;
+
 /** 活会话多久取一次增量。 */
 export const POLL_INTERVAL_MS = 5_000;
 
@@ -369,6 +379,48 @@ export const AGENT_ACTIVITY: ReadonlySet<RecordKind> = new Set<RecordKind>([
   'error',
 ]);
 
+/**
+ * 判断一条记录在「对话（Talk）」镜头下是否作为独立可见的对话气泡渲染。
+ *
+ * `agent.think` 在 Talk 镜头下会被折叠进响应前的 `{num}次工具调用 · {num}次thinking`
+ * 聚合行，不单独画成对话气泡，因此不计入可见对话气泡数。
+ */
+export function isTalkRecord(record: WorkbenchRecord): boolean {
+  if (record.kind === 'user.say' || record.kind === 'agent.say') {
+    return true;
+  }
+  if (record.kind === 'context.inject') {
+    return (
+      record.payload.channel === 'queued_command' ||
+      record.payload.source === 'task-notification'
+    );
+  }
+  const q = queueOpOf(record);
+  if (
+    q?.op === 'enqueue' &&
+    record.payload.queue_state === 'pending' &&
+    !q.content.startsWith('<task-notification>')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** 统计一批记录在解析入队状态后包含多少条独立可见的 Talk 对话记录。 */
+export function countTalkRecords(records: WorkbenchRecord[]): number {
+  const outcomes = queueOutcomes(records);
+  let count = 0;
+  for (const r of records) {
+    const state = outcomes.get(r.id);
+    const effective =
+      state && r.payload.queue_state !== state
+        ? { ...r, payload: { ...r.payload, queue_state: state } }
+        : r;
+    if (isTalkRecord(effective)) count += 1;
+  }
+  return count;
+}
+
 /** 十六种形态。身份由形态直接表达，统一记录不设发言人字段。 */
 export type RecordKind =
   | 'user.say'
@@ -635,13 +687,31 @@ export function useWorkbenchRecords(
     setLoading(true);
     setError(null);
     try {
-      const batch = await fetchWorkbenchRecords(sid, { tail: true, limit: PAGE_SIZE });
+      let combined = await fetchWorkbenchRecords(sid, { tail: true, limit: PAGE_SIZE });
       if (activeSession.current !== sid) return;
-      recordsRef.current = batch;
-      setRecords(batch);
-      setRecordsSessionId(batch.length ? sid : null);
-      setHasOlder(batch.length > 0 && batch[0].seq > 0);
-      if (!batch.length) hotUntil.current = Math.max(hotUntil.current, Date.now() + EMPTY_WAIT_MS);
+      let backfillPages = 0;
+      while (
+        combined.length > 0 &&
+        combined[0].seq > 0 &&
+        countTalkRecords(combined) < MIN_TALK_RECORDS &&
+        backfillPages < MAX_BACKFILL_PAGES
+      ) {
+        const firstSeq = combined[0].seq;
+        const start = Math.max(0, firstSeq - PAGE_SIZE);
+        const count = firstSeq - start;
+        if (count <= 0) break;
+        const olderBatch = await fetchWorkbenchRecords(sid, { after: start, limit: count });
+        if (activeSession.current !== sid) return;
+        const older = olderBatch.filter((r) => r.seq < firstSeq);
+        if (!older.length) break;
+        combined = [...older, ...combined];
+        backfillPages += 1;
+      }
+      recordsRef.current = combined;
+      setRecords(combined);
+      setRecordsSessionId(combined.length ? sid : null);
+      setHasOlder(combined.length > 0 && combined[0].seq > 0);
+      if (!combined.length) hotUntil.current = Math.max(hotUntil.current, Date.now() + EMPTY_WAIT_MS);
     } catch (e) {
       if (activeSession.current !== sid) return;
       setError(e instanceof Error ? e.message : String(e));

@@ -463,6 +463,34 @@ describe('RecordStream 中栏', () => {
       expect(aggRows).toHaveLength(1);
       expect(aggRows[0].textContent).toContain('3次工具调用');
       expect(aggRows[0].textContent).toContain('5次thinking');
+      // Talk 计数只计真实可见的对话气泡（u1 与 a1 共 2 条），不把折叠进聚合行的 5 条 thinking 算进去
+      expect(screen.getByTestId('lens-talk').textContent).toContain('2');
+    });
+
+    it('Talk 视图下当首屏满 200 条但筛入 Talk 不足 40 条气泡或视口未填满且 hasOlder=true 时，自动调用 onLoadOlder 补页，且内容容器贴底向上排列', () => {
+      const onLoadOlder = vi.fn();
+      const sparsePage = Array.from({ length: 200 }, (_, i) =>
+        record({
+          id: `sp-${i}`,
+          seq: 158 + i,
+          kind: i < 25 ? 'agent.say' : 'tool.call',
+          payload: i < 25 ? { text: `回复 ${i}` } : { tool_name: 'Bash', args: {} },
+        })
+      );
+      render(
+        <RecordStream
+          {...streamProps({
+            records: sparsePage,
+            hasOlder: true,
+            onLoadOlder,
+          })}
+        />
+      );
+      expect(screen.getByTestId('lens-talk').textContent).toContain('25');
+      expect(onLoadOlder).toHaveBeenCalledTimes(1);
+      const contentBox = screen.getByTestId('record-stream-content');
+      expect(contentBox.className).toContain('min-h-full');
+      expect(contentBox.className).toContain('justify-end');
     });
 
     it('Watcher 视图对每个游标切片外部上方展示观察者总结，下方包裹默认折叠的 Talk 并原样展示可交互决策卡', () => {
