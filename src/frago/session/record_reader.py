@@ -424,11 +424,9 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
 
     门面那几样（标题、工作目录、时刻）取自 agy 自己的摘要库，**不为了凑清单去翻转录**；
     而状态与摘要要判「末条记录是谁」，这一步非翻转录不可，于是走
-    :func:`~frago.session.session_index.tail_signals_of` 那一条**四家共用**的判据，
+    :func:`~frago.session.session_index.agy_tail_signals`（内部按摘要库时刻与转录文件
+    大小、修改时刻缓存 :func:`~frago.session.session_index.tail_signals_of` 的结果），
     NEVER 自己再定一套——各家各定一套，同一批会话在左栏与中栏就会各说各话。
-
-    整场转录翻一遍是毫秒量级（本机三场加起来不到 8 KB），所以既不做尾部读取也不做缓存；
-    哪天它长大了，照 codex 那一侧的写法补一份按时刻失效的索引。
 
     标题按「模型起的 > 摘要库里那句提要 > 会话编号」退让。提要多半就是开口那句，两样都
     没有时用会话编号，NEVER 留空串——左栏一行没有字，人点不动它。
@@ -436,25 +434,26 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
     时刻三处依次退让（见 :func:`_agy_moment`）；三者全为零、转录又不存在时这张卡不摆：
     那是一条空壳会话（agy 连一次输入都没记下），摆出来就是一张时刻为 0 的卡。
     """
+    convs = agy_store.list_conversations()
+    entries = session_index.agy_tail_signals(convs, translate_fn=translate_agy_session)
     now = time.time()
     cards: list[SessionCard] = []
-    for conv in agy_store.list_conversations():
+    for conv in convs:
         cid = conv.conversation_id
-        try:
-            records = translate_agy_session(cid)
-        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
-            records = []
         moment = _agy_moment(conv)
         if moment is None:
             logger.debug("agy conversation %s has neither a timestamp nor a transcript", cid)
             continue
-        tail = session_index.tail_signals_of(records)
+        entry = entries.get(cid)
+        tail = entry.tail if entry is not None else TailSignals()
         status = session_index.derive_status(tail.last_kind, moment, now)
         digest_done, digest_stuck = _digests(status, tail)
         last_active = int(moment * 1000)
-        # 摘要库不存建立时刻，转录里第一条记录带的就是它。整场已经翻在手上，直接取
-        # 第一个正时刻；翻不出时刻时才退回最后活动时刻（NEVER 留 0）。
-        created = next((record.ts for record in records if record.ts > 0), last_active)
+        created = (
+            entry.created_at
+            if entry is not None and entry.created_at is not None and entry.created_at > 0
+            else last_active
+        )
         cards.append(
             SessionCard(
                 session_id=cid,

@@ -47,13 +47,16 @@ import json
 import os
 import re
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from frago.session.adapters.agy_records import (
+    translate_session as translate_agy_session,
+)
 from frago.session.adapters.claude_code_records import translate_records
 from frago.session.adapters.codex_records import (
     translate_session as translate_codex_session,
@@ -69,16 +72,19 @@ from frago.session.unified_record import UnifiedRecord
 from frago.skills.skill_prompt import split_skill_blocks
 
 __all__ = [
+    "AGY_CACHE_FILE",
     "CACHE_FILE",
     "CODEX_CACHE_FILE",
     "COREAGENT_CACHE_FILE",
     "FRAGO_WAKE_MARKERS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
+    "AgyIndexEntry",
     "CodexIndexEntry",
     "SessionStatus",
     "SessionSummary",
     "TailSignals",
+    "agy_tail_signals",
     "clear_cache",
     "codex_tail_signals",
     "derive_status",
@@ -106,6 +112,11 @@ CODEX_CACHE_FILE = CACHE_DIR / "codex-session-index.json"
 # 的条目会被对方的整份覆盖清掉（见 ``list_session_summaries`` 末尾那句"整份覆盖"），
 # 下一次列会话就得把另一侧全部重算一遍。
 COREAGENT_CACHE_FILE = CACHE_DIR / "coreagent-session-index.json"
+
+# agy 的会话原文落在 ``~/.gemini/antigravity-cli/brain/<cid>/.system_generated/logs/``，
+# 本机会话长到上百场后逐场整翻一次要 1 秒以上；按摘要库时刻与转录文件（大小 + 修改时刻）
+# 联合失效，没动过的会话直接复用索引。
+AGY_CACHE_FILE = CACHE_DIR / "agy-session-index.json"
 
 # 提取规则改了就得让旧条目全部失效，否则会拿着按老规则算出来的字段一直用下去。
 # 版本 2 起条目里多了状态与摘要三个字段；版本 3 起多了"最后那句回复是什么时候说的"；
@@ -650,6 +661,123 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
     )
 
 
+_DEFAULT_EXTRACT = _extract
+_INCREMENTAL_MIN_BYTES = 64 * 1024
+_INCREMENTAL_TAIL_BYTES = 512 * 1024
+
+
+def _extract_incremental(
+    path: Path,
+    sid: str,
+    mtime: float,
+    prev: dict[str, Any],
+) -> SessionSummary | None:
+    """对正在运行、仅在文件末尾追加新行的会话做增量提取。
+
+    当旧索引条目已具备 ``cwd`` / ``first_ts`` / ``first_user`` 且文件体积大于阈值、
+    ``st_size > prev_size`` 时，不必每次轮询都从头重读并哈希数兆乃至数十兆的前缀字节：
+    - 仅扫描 ``[prev_size:]`` 新增字节段中可能出现的标题标记（``slug`` / ``custom-title`` / ``ai-title``）；
+    - 仅回读文件尾部窗口计算 ``_tail_signals``（若遇到心跳未决或长轮次未决则退回全量 ``_extract``）。
+    """
+    prev_size = prev.get("size")
+    if not isinstance(prev_size, int) or prev_size < _INCREMENTAL_MIN_BYTES:
+        return _extract(path, sid, mtime)
+    if (
+        prev.get("cwd") is None
+        or prev.get("first_ts") is None
+        or prev.get("first_user") is None
+    ):
+        return _extract(path, sid, mtime)
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            total_size = fh.tell()
+            if total_size <= prev_size:
+                return _extract(path, sid, mtime)
+
+            # 1. 读取新增段（往回多取一行边界，防止切在行中间）
+            delta_start = max(0, prev_size - 4096)
+            fh.seek(delta_start)
+            delta_buf = fh.read(total_size - delta_start)
+
+            # 2. 读取尾部窗口供 _tail_signals 判状态与摘要
+            tail_start = max(0, total_size - _INCREMENTAL_TAIL_BYTES)
+            if tail_start == delta_start:
+                tail_buf = delta_buf
+            else:
+                fh.seek(tail_start)
+                tail_buf = fh.read(total_size - tail_start)
+    except OSError:
+        return None
+
+    if delta_start > 0:
+        first_nl = delta_buf.find(b"\n")
+        if first_nl != -1 and delta_start + first_nl < prev_size:
+            delta_buf = delta_buf[first_nl + 1 :]
+    if tail_start > 0:
+        tail_nl = tail_buf.find(b"\n")
+        if tail_nl != -1:
+            tail_buf = tail_buf[tail_nl + 1 :]
+
+    slug: str | None = prev.get("slug")
+    custom_title: str | None = prev.get("custom_title")
+    ai_title: str | None = prev.get("ai_title")
+
+    starts: set[int] = set()
+    for marker in _TITLE_MARKERS:
+        at = delta_buf.find(marker, 0)
+        while at != -1:
+            line_start = delta_buf.rfind(b"\n", 0, at) + 1
+            starts.add(line_start)
+            line_end = delta_buf.find(b"\n", at)
+            if line_end == -1:
+                break
+            at = delta_buf.find(marker, line_end + 1)
+
+    for start in sorted(starts):
+        end = delta_buf.find(b"\n", start)
+        record = _loads(delta_buf[start:end] if end != -1 else delta_buf[start:])
+        if not isinstance(record, dict):
+            continue
+        if slug is None and record.get("slug"):
+            slug = record["slug"]
+        rtype = record.get("type")
+        if rtype == "custom-title" and record.get("customTitle"):
+            custom_title = record["customTitle"]
+        elif rtype == "ai-title" and record.get("aiTitle"):
+            ai_title = record["aiTitle"]
+
+    tail = _tail_signals(tail_buf, sid)
+    if (tail.heartbeat_only or tail.reply_unsettled) and tail_start > 0:
+        return _extract(path, sid, mtime)
+
+    # 若尾部窗口内还没有新的 agent 回复，保留此前已确认的摘要与最后回复时刻
+    if tail.digest_done is None and prev.get("digest_done") is not None:
+        tail = replace(
+            tail,
+            digest_done=prev.get("digest_done"),
+            last_reply_ts=prev.get("last_reply_ts"),
+        )
+
+    active_ts = tail.turn_end_ts if tail.turn_end_ts is not None else mtime
+    prev_digest = str(prev.get("digest") or "").encode("ascii", errors="ignore")[:64]
+    digest = hashlib.blake2b(delta_buf, key=prev_digest, digest_size=8).hexdigest()
+
+    return SessionSummary(
+        sid=sid,
+        slug=slug,
+        custom_title=custom_title,
+        ai_title=ai_title,
+        first_user=prev.get("first_user"),
+        cwd=prev.get("cwd"),
+        first_ts=prev.get("first_ts"),
+        last_active_ts=active_ts,
+        tail=tail,
+        content_digest=digest,
+    )
+
+
 def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, Any]:
     """缓存条目 = 失效判据（大小 + 修改时刻 + 内容摘要）+ 字段本身。"""
     return {
@@ -701,23 +829,43 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
         return None
 
 
+#: 内存态索引缓存：cache_file 路径 → (mtime_ns, size, entries)，省掉每轮重复读盘反序列化。
+_MEM_INDEX_CACHE: dict[str, tuple[int, int, dict[str, dict[str, Any]]]] = {}
+
+#: 内存态 SessionSummary 对象缓存：jsonl 路径 → (size, mtime_ns, SessionSummary)。
+_SUMMARY_OBJ_CACHE: dict[str, tuple[int, int, SessionSummary]] = {}
+
+
 def _load_cache(cache_file: Path) -> dict[str, dict[str, Any]]:
-    """读索引。读不出来、版本对不上，都当成空——最坏结果是这次全量重算。"""
+    """读索引。盘上索引未变时直接命中内存态；读不出来、版本对不上，都当成空。"""
+    cache_key = str(cache_file)
+    try:
+        st = cache_file.stat()
+    except OSError:
+        _MEM_INDEX_CACHE.pop(cache_key, None)
+        return {}
+    mem_hit = _MEM_INDEX_CACHE.get(cache_key)
+    if mem_hit is not None and mem_hit[0] == st.st_mtime_ns and mem_hit[1] == st.st_size:
+        return mem_hit[2]
     try:
         raw = json.loads(cache_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
+        _MEM_INDEX_CACHE.pop(cache_key, None)
         return {}
     if not isinstance(raw, dict) or raw.get("version") != _CACHE_VERSION:
+        _MEM_INDEX_CACHE.pop(cache_key, None)
         return {}
     entries = raw.get("entries")
-    return entries if isinstance(entries, dict) else {}
+    if not isinstance(entries, dict):
+        _MEM_INDEX_CACHE.pop(cache_key, None)
+        return {}
+    _MEM_INDEX_CACHE[cache_key] = (st.st_mtime_ns, st.st_size, entries)
+    return entries
 
 
 def _save_cache(cache_file: Path, entries: dict[str, dict[str, Any]]) -> None:
-    """落索引。先写临时文件再改名，让并发的读者要么读到旧的要么读到新的，NEVER 读到半份。
-
-    写不进去只是下次列会话慢一点，不该让列会话本身失败。
-    """
+    """落索引并同步更新内存态缓存。先写临时文件再改名，NEVER 让读者读到半份。"""
+    cache_key = str(cache_file)
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.tmp")
@@ -729,21 +877,28 @@ def _save_cache(cache_file: Path, entries: dict[str, dict[str, Any]]) -> None:
             encoding="utf-8",
         )
         tmp.replace(cache_file)
+        st = cache_file.stat()
+        _MEM_INDEX_CACHE[cache_key] = (st.st_mtime_ns, st.st_size, entries)
     except OSError:
         with contextlib.suppress(OSError):
             tmp.unlink()
 
 
 def clear_cache(cache_file: Path | None = None) -> None:
-    """删掉索引。下一次列会话会全量重算。
-
-    不指定路径时各家的索引一起删——只删一部分会让下一次列会话半新半旧，比全删更难解释。
-    """
-    targets = (
-        [cache_file]
-        if cache_file is not None
-        else [CACHE_FILE, OPENCODE_CACHE_FILE, CODEX_CACHE_FILE, COREAGENT_CACHE_FILE]
-    )
+    """删掉索引并清空内存态缓存。下一次列会话会全量重算。"""
+    if cache_file is not None:
+        _MEM_INDEX_CACHE.pop(str(cache_file), None)
+        targets = [cache_file]
+    else:
+        _MEM_INDEX_CACHE.clear()
+        _SUMMARY_OBJ_CACHE.clear()
+        targets = [
+            CACHE_FILE,
+            OPENCODE_CACHE_FILE,
+            CODEX_CACHE_FILE,
+            COREAGENT_CACHE_FILE,
+            AGY_CACHE_FILE,
+        ]
     for target in targets:
         with contextlib.suppress(OSError):
             target.unlink()
@@ -751,6 +906,7 @@ def clear_cache(cache_file: Path | None = None) -> None:
 
 def _extract_many(
     stale: list[tuple[str, Path, str, os.stat_result]],
+    cached: dict[str, dict[str, Any]] | None = None,
 ) -> list[tuple[str, os.stat_result, SessionSummary | None]]:
     """把要重算的文件分头算完。
 
@@ -758,11 +914,12 @@ def _extract_many(
     的纯计算，多个线程只会互相排队——实测 8 线程 5.23 秒，比单线程的 4.80 秒还慢；换成
     8 个进程是 1.33 秒。
 
-    只变了几份时不起池子：池子本身的启动成本比重算几份还贵。
+    只变了几份时不起池子：池子本身的启动成本比重算几份还贵。且在单进程增量路径下，对已
+    有前值、仅在尾部追加的大文件走 :func:`_extract_incremental`，避免重读整份历史前缀。
     """
     if not stale:
         return []
-    if len(stale) >= _POOL_THRESHOLD:
+    if len(stale) >= _POOL_THRESHOLD and _extract is _DEFAULT_EXTRACT:
         try:
             workers = min(8, os.cpu_count() or 4, len(stale))
             with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -780,18 +937,25 @@ def _extract_many(
                 for item, summary in zip(stale, computed, strict=True)
             ]
         except Exception:  # noqa: BLE001 - 见下
-            # 进程池在受限环境里可能压根起不来（已经身处 daemon 进程、被沙箱掐掉 fork
-            # 等等），失败形态五花八门。列会话不该因为提速手段用不了就整个失败，退回
-            # 单进程算完——慢，但结果一模一样。
             pass
-    return [(item[0], item[3], _extract(item[1], item[2], item[3].st_mtime)) for item in stale]
+    results: list[tuple[str, os.stat_result, SessionSummary | None]] = []
+    for key, path, sid, st in stale:
+        prev = cached.get(key) if cached is not None else None
+        if isinstance(prev, dict) and st.st_size > (prev.get("size") or 0):
+            summary = _extract_incremental(path, sid, st.st_mtime, prev)
+            if summary is None:
+                summary = _extract(path, sid, st.st_mtime)
+        else:
+            summary = _extract(path, sid, st.st_mtime)
+        results.append((key, st, summary))
+    return results
 
 
 def list_session_summaries(
     projects_root: Path | None = None,
     cache_file: Path | None = None,
 ) -> list[SessionSummary]:
-    """本机全部 Claude Code 会话的清单字段，读过的文件走缓存。
+    """本机全部 Claude Code 会话的清单字段，读过的文件走内存态 + 磁盘双层缓存。
 
     缓存按「文件大小 + 修改时刻（纳秒）」判定失效。会话文件只会被追加，追加必然同时改变
     这两个数，所以对得上就一定没变过，对不上就重算那一份。
@@ -805,30 +969,55 @@ def list_session_summaries(
     fresh: dict[str, dict[str, Any]] = {}
     summaries: list[SessionSummary] = []
     stale: list[tuple[str, Path, str, os.stat_result]] = []
+    dirty = False
 
-    for proj_dir in sorted(root.iterdir()):
-        if not proj_dir.is_dir():
+    try:
+        proj_entries = sorted(
+            (e for e in os.scandir(root) if e.is_dir()),
+            key=lambda e: e.name,
+        )
+    except OSError:
+        return []
+
+    for proj_entry in proj_entries:
+        try:
+            file_entries = list(os.scandir(proj_entry.path))
+        except OSError:
             continue
-        for jsonl in proj_dir.glob("*.jsonl"):
+        for fentry in file_entries:
+            name = fentry.name
+            if not name.endswith(".jsonl"):
+                continue
             try:
-                st = jsonl.stat()
+                st = fentry.stat()
             except OSError:
                 continue
-            key = str(jsonl)
+            key = fentry.path
             entry = cached.get(key)
             if (
                 isinstance(entry, dict)
                 and entry.get("size") == st.st_size
                 and entry.get("mtime_ns") == st.st_mtime_ns
             ):
+                obj_hit = _SUMMARY_OBJ_CACHE.get(key)
+                if (
+                    obj_hit is not None
+                    and obj_hit[0] == st.st_size
+                    and obj_hit[1] == st.st_mtime_ns
+                ):
+                    summaries.append(obj_hit[2])
+                    fresh[key] = entry
+                    continue
                 hit = _from_entry(entry)
                 if hit is not None:
+                    _SUMMARY_OBJ_CACHE[key] = (st.st_size, st.st_mtime_ns, hit)
                     summaries.append(hit)
                     fresh[key] = entry
                     continue
-            stale.append((key, jsonl, jsonl.stem, st))
+            dirty = True
+            stale.append((key, Path(key), name[:-6], st))
 
-    for key, st, summary in _extract_many(stale):
+    for key, st, summary in _extract_many(stale, cached):
         if summary is None:
             continue
         prev = cached.get(key)
@@ -840,11 +1029,12 @@ def list_session_summaries(
             and isinstance(prev.get("last_active_ts"), (int, float))
         ):
             summary = replace(summary, last_active_ts=float(prev["last_active_ts"]))
+        _SUMMARY_OBJ_CACHE[key] = (st.st_size, st.st_mtime_ns, summary)
         summaries.append(summary)
         fresh[key] = _as_entry(summary, st.st_size, st.st_mtime_ns)
 
     # 删掉的会话文件不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return summaries
 
@@ -866,6 +1056,7 @@ def opencode_tail_signals(
     cached = _load_cache(target_cache)
     fresh: dict[str, dict[str, Any]] = {}
     signals: dict[str, TailSignals] = {}
+    dirty = False
 
     for row in rows:
         sid = row.session_id
@@ -879,6 +1070,7 @@ def opencode_tail_signals(
             )
             fresh[sid] = entry
             continue
+        dirty = True
         tail = tail_signals_of(translate_session(sid))
         signals[sid] = tail
         fresh[sid] = {
@@ -890,7 +1082,7 @@ def opencode_tail_signals(
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return signals
 
@@ -934,6 +1126,7 @@ def codex_tail_signals(
     cached = _load_cache(target_cache)
     fresh: dict[str, dict[str, Any]] = {}
     entries: dict[str, CodexIndexEntry] = {}
+    dirty = False
 
     for meta in metas:
         sid = meta.session_id
@@ -950,6 +1143,7 @@ def codex_tail_signals(
             )
             fresh[sid] = entry
             continue
+        dirty = True
         try:
             records = translate_codex_session(sid)
         except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
@@ -968,6 +1162,101 @@ def codex_tail_signals(
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return entries
+
+
+# ── agy 那一侧 ──────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class AgyIndexEntry:
+    """agy 一场会话在索引里的一条。
+
+    除状态与摘要信号外，连带缓存转录里第一条正时刻（``created_at``，毫秒整数）：
+    摘要库不存创建时刻，与状态信号同一趟翻译出来后一并缓存，避免每轮列会话把上百场
+    agy 转录从头重翻一遍。
+    """
+
+    tail: TailSignals
+    created_at: int | None
+
+
+def agy_tail_signals(
+    convs: Iterable[Any],
+    cache_file: Path | None = None,
+    *,
+    translate_fn: Callable[[str], Sequence[UnifiedRecord]] | None = None,
+) -> dict[str, AgyIndexEntry]:
+    """agy 那一侧每场会话的状态、摘要与创建时刻，读过的会话走内存态 + 磁盘双层缓存。
+
+    失效判据由摘要库时刻（``last_modified`` / ``last_user_input``）与转录文件
+    （``st_size`` + ``st_mtime_ns``）共同组成：任意一处推进都会触发该场重算。
+    """
+    from frago.session import agy_store
+
+    target_cache = cache_file or AGY_CACHE_FILE
+    cached = _load_cache(target_cache)
+    fresh: dict[str, dict[str, Any]] = {}
+    entries: dict[str, AgyIndexEntry] = {}
+    translator = translate_fn or translate_agy_session
+    dirty = False
+
+    for conv in convs:
+        cid = conv.conversation_id
+        last_mod = getattr(conv, "last_modified", 0.0)
+        last_input = getattr(conv, "last_user_input", 0.0)
+        t_size = 0
+        t_mtime_ns = 0
+        try:
+            t_path = getattr(conv, "transcript_path", None) or agy_store.transcript_path(cid)
+            st = t_path.stat()
+            t_size = st.st_size
+            t_mtime_ns = st.st_mtime_ns
+        except OSError:
+            pass
+
+        entry = cached.get(cid)
+        if (
+            isinstance(entry, dict)
+            and entry.get("last_modified") == last_mod
+            and entry.get("last_user_input") == last_input
+            and entry.get("t_size") == t_size
+            and entry.get("t_mtime_ns") == t_mtime_ns
+        ):
+            created_raw = entry.get("created_at")
+            entries[cid] = AgyIndexEntry(
+                tail=TailSignals(
+                    last_kind=entry.get("last_kind"),
+                    error_message=entry.get("error_message"),
+                    digest_done=entry.get("digest_done"),
+                    last_reply_ts=entry.get("last_reply_ts"),
+                ),
+                created_at=int(created_raw) if isinstance(created_raw, int) else None,
+            )
+            fresh[cid] = entry
+            continue
+
+        dirty = True
+        try:
+            records = translator(cid)
+        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
+            records = []
+        tail = tail_signals_of(records)
+        created_at = next((r.ts for r in records if r.ts > 0), None)
+        entries[cid] = AgyIndexEntry(tail=tail, created_at=created_at)
+        fresh[cid] = {
+            "last_modified": last_mod,
+            "last_user_input": last_input,
+            "t_size": t_size,
+            "t_mtime_ns": t_mtime_ns,
+            "last_kind": tail.last_kind,
+            "error_message": tail.error_message,
+            "digest_done": tail.digest_done,
+            "last_reply_ts": tail.last_reply_ts,
+            "created_at": created_at,
+        }
+
+    if dirty or len(fresh) != len(cached):
+        _save_cache(target_cache, fresh)
+    return entries
+

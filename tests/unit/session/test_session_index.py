@@ -884,3 +884,109 @@ class Test与全量扫描逐字段一致:
         assert fast.custom_title == full["custom_title"]
         assert fast.cwd == full["cwd"]
         assert fast.first_user == full["first_user"]
+
+
+class Test内存增量缓存与Agy缓存:
+    def test_追加写入走增量读取而非整份重读(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        path = _write_session(
+            root,
+            "proj",
+            "sid-inc-1",
+            [
+                *_basic_records(),
+                {"type": "assistant", "slug": "init-slug", "message": {"content": "x" * 70_000}},
+            ],
+        )
+        (first,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert first.first_user == "帮我把列会话提速"
+        assert first.slug == "init-slug"
+
+        def forbid_full_extract(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("已有完整头部字段并追加写入时，应走 _extract_incremental 而非全量 _extract")
+
+        monkeypatch.setattr(session_index, "_extract", forbid_full_extract)
+
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-07-29T12:00:00.000Z",
+                        "message": {"content": [{"type": "text", "text": "增量追加的新回复"}]},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            fh.write(
+                json.dumps({"type": "custom-title", "customTitle": "增量改名"}, ensure_ascii=False)
+                + "\n"
+            )
+
+        (second,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert second.first_user == "帮我把列会话提速"
+        assert second.custom_title == "增量改名"
+        assert second.tail.digest_done == "增量追加的新回复"
+
+    def test_agy_tail_signals_命中缓存时不重复翻译(self, tmp_path: Path) -> None:
+        from dataclasses import dataclass
+        from frago.session.unified_record import UnifiedRecord
+
+        @dataclass
+        class _FakeAgyConv:
+            conversation_id: str
+            last_modified_s: float
+            created_s: float
+            transcript_path: Path | None
+
+        tpath = tmp_path / "conv-1.jsonl"
+        tpath.write_text('{"x": 1}\n', encoding="utf-8")
+        conv = _FakeAgyConv(
+            conversation_id="conv-1",
+            last_modified_s=1_750_000_010.0,
+            created_s=1_750_000_000.0,
+            transcript_path=tpath,
+        )
+        cache_file = tmp_path / "agy_index.json"
+        calls: list[str] = []
+
+        def fake_translate(cid: str) -> list[UnifiedRecord]:
+            calls.append(cid)
+            return [
+                UnifiedRecord(
+                    id="r1",
+                    session_id=cid,
+                    group_id=None,
+                    seq=1,
+                    ts=1_750_000_005_000,
+                    kind="agent.say",
+                    agent_path=[],
+                    payload={"text": "agy 已完成"},
+                )
+            ]
+
+        res1 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1"]
+        assert res1["conv-1"].tail.digest_done == "agy 已完成"
+        assert res1["conv-1"].created_at == 1_750_000_005_000
+
+        # 第二次文件与时刻均未变化：直接命中缓存，不再调用 translate_fn
+        res2 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1"]
+        assert res2["conv-1"].tail.digest_done == "agy 已完成"
+
+        # 当转录文件追加内容后：自动失效重算
+        with open(tpath, "a", encoding="utf-8") as fh:
+            fh.write('{"x": 2}\n')
+        res3 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1", "conv-1"]
+        assert res3["conv-1"].tail.digest_done == "agy 已完成"
+

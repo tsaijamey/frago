@@ -25,6 +25,7 @@ pane 上任何一个字变了它就往前跳，而 claude 的状态栏一直在�
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import glob
 import logging
@@ -159,14 +160,26 @@ def _resolve_session_id(label: str, pane: str) -> str | None:
     return candidates[0] if candidates else None
 
 
+_PATH_CACHE: dict[tuple[str, str], Path] = {}
+
+
 def _transcript_path(session_id: str) -> Path | None:
     """按编号在 claude 的记录目录里找那份 jsonl。
 
     跨全部工程目录扫，不假设会话的工作目录——飞书、语音那些会话的 cwd 与页面
     会话不在一处，钉死一个目录会把它们全判成「找不到记录」。
     """
-    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session_id}.jsonl"))
-    return Path(hits[0]) if hits else None
+    projects_root = os.path.expanduser("~/.claude/projects")
+    cache_key = (projects_root, session_id)
+    cached = _PATH_CACHE.get(cache_key)
+    if cached is not None and cached.is_file():
+        return cached
+    hits = glob.glob(f"{projects_root}/*/{session_id}.jsonl")
+    if not hits:
+        return None
+    resolved = Path(hits[0])
+    _PATH_CACHE[cache_key] = resolved
+    return resolved
 
 
 def _excerpt(text: str, limit: int) -> str:
@@ -308,13 +321,28 @@ def list_waiting() -> list[TmuxWaitingInfo]:
     """
     names = _session_names()
     commands = _pane_commands()
+    frago_names = [n for n in names if n.startswith(_PREFIX)]
+    pane_by_name: dict[str, str] = {}
+    if len(frago_names) == 1:
+        n = frago_names[0]
+        pane_by_name[n] = _tmux("capture-pane", "-p", "-e", "-t", n)
+    elif len(frago_names) > 1:
+        with ThreadPoolExecutor(max_workers=min(8, len(frago_names))) as pool:
+            captured = list(
+                pool.map(
+                    lambda n: _tmux("capture-pane", "-p", "-e", "-t", n),
+                    frago_names,
+                )
+            )
+        pane_by_name = dict(zip(frago_names, captured, strict=False))
+
     rows: list[TmuxWaitingInfo] = []
     for name in names:
         if not name.startswith(_PREFIX):
             alive = _client_alive(commands.get(name))
             rows.append(TmuxWaitingInfo(name, None, alive, None, None, None, ""))
             continue
-        pane_ansi = _tmux("capture-pane", "-p", "-e", "-t", name)
+        pane_ansi = pane_by_name.get(name, "")
         session_id = _resolve_session_id(name[len(_PREFIX) :], _plain(pane_ansi))
         path = _transcript_path(session_id) if session_id else None
         alive = _client_alive(commands.get(name))
@@ -336,20 +364,9 @@ def list_waiting() -> list[TmuxWaitingInfo]:
     return rows
 
 
-def _last_assistant_text(path: Path) -> str:
-    """往回翻，找最近一段有正文的回答。
-
-    只在探针给不出正文时用。**正在干活的那一轮往往没有一个字**：最后一条记录是
-    一次工具调用，探针照实返回空正文。可浮窗上那一行要是空的，人就认不出这是哪一场
-    会话——而认出来正是他打开这个浮窗的目的。往回找到的那段文字仍然是这场会话自己
-    说过的话，够用来认人。
-    """
+def _extract_last_assistant_from_lines(lines: list[str]) -> str:
     import json
 
-    try:
-        lines = path.read_text(errors="ignore").splitlines()
-    except OSError:
-        return ""
     for raw in reversed(lines):
         try:
             record = json.loads(raw)
@@ -368,6 +385,47 @@ def _last_assistant_text(path: Path) -> str:
         if text:
             return text
     return ""
+
+
+def _last_assistant_text(path: Path) -> str:
+    """往回翻，找最近一段有正文的回答。
+
+    只在探针给不出正文时用。**正在干活的那一轮往往没有一个字**：最后一条记录是
+    一次工具调用，探针照实返回空正文。可浮窗上那一行要是空的，人就认不出这是哪一场
+    会话——而认出来正是他打开这个浮窗的目的。往回找到的那段文字仍然是这场会话自己
+    说过的话，够用来认人。
+
+    先按尾部窗口（256 KB → 2 MB）逆向找，避免对数十 MB 的长会话整份读入内存；
+    尾部窗口都没命中时再退回整份兜底。
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    if size <= 0:
+        return ""
+
+    for window in (256 * 1024, 2 * 1024 * 1024):
+        if size <= window:
+            break
+        try:
+            with path.open("rb") as f:
+                f.seek(size - window)
+                chunk = f.read(window).decode("utf-8", errors="ignore")
+        except OSError:
+            return ""
+        lines = chunk.splitlines()
+        if len(lines) > 1:
+            lines = lines[1:]
+        found = _extract_last_assistant_from_lines(lines)
+        if found:
+            return found
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return ""
+    return _extract_last_assistant_from_lines(lines)
 
 
 def _memory_mb() -> dict[int, int]:
