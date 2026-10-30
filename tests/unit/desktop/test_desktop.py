@@ -1754,6 +1754,100 @@ def test_cmd_term_read_focuses_terminal_window(monkeypatch):
     assert out["effect"]["focus_changed"] is True
 
 
+def test_term_read_observe_is_silent(monkeypatch):
+    """`term read --observe` 是静默读屏：只取缓冲区内容，绝不向 broker 发 focus，
+    桌面焦点一个字节都不动——留给「主持人」这类驻场角色轮询终端用，避免把主操作员
+    正在展示的窗口盖住。不带 --observe 时保持原行为（发 focus 置顶）。"""
+    from frago.desktop import aos
+
+    posted = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append((rec["id"], steps, timeout))
+        return {"ok": True, "results": [{
+            "effect": {"observed": True,
+                       "focus": {"before": "browser", "after": "term"},
+                       "focus_changed": True},
+        }]}
+
+    monkeypatch.setattr(aos, "post", fake_post)
+    monkeypatch.setattr(
+        aos.subprocess, "run",
+        lambda *a, **k: FakeCompleted(0, stdout="line-1\nline-2\n"),
+    )
+
+    # parse 必须把 --observe 摘成无值开关，并把 observe 传进 cmd_term_read。
+    kind, fn = aos.parse(["term", "read", "--lines", "30", "--observe"])
+    assert kind == "local"
+    out = fn({"id": "default", "tmux_session": "frago-stage"})
+    assert out["ok"] is True
+    assert out["text"] == ["line-1", "line-2"]
+    assert out["observed"] is True
+    # 静默：一条 focus 都没发。
+    assert posted == []
+    assert "effect" not in out
+
+    # 直接调 cmd_term_read(observe=True) 同样不发 focus。
+    posted.clear()
+    out2 = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"},
+                             lines=20, observe=True)
+    assert out2["observed"] is True
+    assert posted == []
+
+    # observe=False（默认）照旧发 focus 并带上 effect。
+    posted.clear()
+    out3 = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"},
+                             lines=20)
+    assert "observed" not in out3
+    assert posted == [("default", [{"op": "focus", "win": "term"}], 5.0)]
+    assert out3["effect"]["focus_changed"] is True
+
+
+def test_browser_read_observe_sets_the_flag():
+    """`browser read --observe` 产出的 exec step 必须带 observe:True，
+    broker 的 op_exec 据此不调用 ensure_active("browser")，不把浏览器窗口顶到最前。
+    不带 --observe 时保持老形状（无 observe 键，broker 会顶窗）。"""
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["browser", "read", "--observe"])
+    assert kind == "steps"
+    assert len(steps) == 1
+    assert steps[0]["op"] == "exec"
+    assert steps[0]["observe"] is True
+
+    # 带 selector 的形态同样支持。
+    kind2, steps2 = aos.parse(["browser", "read", "--selector", "h1", "--observe"])
+    assert kind2 == "steps"
+    assert steps2[0]["op"] == "exec"
+    assert steps2[0]["observe"] is True
+    assert "h1" in steps2[0]["js"]
+
+    # 不带 --observe：step 上没有 observe 键。
+    kind3, steps3 = aos.parse(["browser", "read"])
+    assert kind3 == "steps"
+    assert "observe" not in steps3[0]
+
+
+def test_elements_observe_sets_the_flag():
+    """`elements --in browser --observe` 产出的 step 必须带 observe:True，
+    broker 的 op_elements 据此不调用 ensure_active("browser")，不顶窗。"""
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["elements", "--in", "browser", "--text", "Submit",
+                             "--observe"])
+    assert kind == "steps"
+    assert len(steps) == 1
+    assert steps[0]["op"] == "elements"
+    assert steps[0]["in"] == "browser"
+    assert steps[0]["text"] == "Submit"
+    assert steps[0]["observe"] is True
+
+    # 不带 --observe：step 上没有 observe 键。
+    kind2, steps2 = aos.parse(["elements", "--in", "browser", "--text", "Submit"])
+    assert kind2 == "steps"
+    assert "observe" not in steps2[0]
+
+
 def test_stale_ui_version_only_triggers_reload_once_across_connections(sealed_broker):
     """桌面页刷新重连是一条新 WebSocket 连接：若重连后上报的 uiVersion 仍与 broker 不符，
     决不能对同一个 uiVersion 再发第二次 reload，否则页面会陷入每秒一次的无限刷新循环。"""
@@ -1974,7 +2068,7 @@ def test_desktop_director_chat_supports_zh_and_en_i18n():
     assert 'window.addEventListener("storage"' in js
     for required_en in (
         "Director Chat · Follow-ups",
-        "Queued to the director and relayed to the worker in terminal",
+        "Queued to main session · Presenter responds live, operator & advisor execute",
         "Type follow-ups here, press Enter to send",
         "Enter to send · Shift+Enter for newline",
         "Director Chat",

@@ -1584,8 +1584,9 @@
        core_<随机后缀> 会话编号（首条消息自动携带导演技能交由内置 CoreAgent 驱动）；
        可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
      - 显式传 ?userInput=false（或 0）时：退回只读显示器模式，仅显示右下角胶囊图标。
-     人打的字不进桌面终端——终端里跑着的是 worker，人的话先发给 frago 服务的
-     会话发送接口（wait:false 只排队不等答），排进导演会话队列，由导演回应并转达。 */
+     人打的字不进桌面终端——桌面终端只是被操作的外设，不是代理角色。人的话先发给
+     frago 服务的会话发送接口（wait:false 只排队不等答），排进主控会话队列；
+     由驻场「主持人」秒级口头确认，再交给「主操作员」与后台「参谋」协商执行。 */
   function defaultDirectorSessionId() {
     var hex = "";
     for (var i = 0; i < 16; i++) {
@@ -1608,7 +1609,7 @@
     zh: {
       panelAria: "导演对话面板",
       tag: "导演对话 · 追加需求",
-      sub: "发往导演队列，由导演转达给终端里的 worker",
+      sub: "直达主控队列 · 主持人实时应答，主操作员与参谋协同执行",
       closeTitle: "收起为右下角图标",
       closeAria: "收起对话面板",
       readonlyTag: "只读",
@@ -1622,19 +1623,19 @@
       placeholderActive: "随时写下补充或修改意见，回车发送",
       placeholderReadonly: "未连接导演会话",
       emptyReadonly: "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。",
-      welcome: "正在虚拟桌面上推进任务。看到哪里想改或有补充，随时在这里发给我，我会转达给终端里的 worker。",
+      welcome: "正在虚拟桌面上推进任务。随时在这里写下补充或修改意见，主持人会即时响应，主操作员与参谋将协商并在桌面上执行。",
       sendIdle: "发送",
       sendQueueing: "排队中…",
       statusHint: "回车发送 · Shift+回车换行",
       statusReadonly: "只读显示器模式",
       statusQueueing: "正在排队…",
-      statusQueued: "已排给导演，它会转达给正在干活的 worker",
+      statusQueued: "已排入主控队列，主持人与操作组正在跟进",
       statusFailedPrefix: "没发出去："
     },
     en: {
       panelAria: "Director chat panel",
       tag: "Director Chat · Follow-ups",
-      sub: "Queued to the director and relayed to the worker in terminal",
+      sub: "Queued to main session · Presenter responds live, operator & advisor execute",
       closeTitle: "Minimize to corner icon",
       closeAria: "Collapse director chat panel",
       readonlyTag: "Read-only",
@@ -1648,13 +1649,13 @@
       placeholderActive: "Type follow-ups here, press Enter to send",
       placeholderReadonly: "No director session connected",
       emptyReadonly: "No director session bound (?userInput=true&session=…). The panel stays collapsed as a corner icon by default.",
-      welcome: "Working on your task on the virtual desktop. Type any changes or follow-up notes here, and I will relay them to the worker in the terminal.",
+      welcome: "Working on your task on the virtual desktop. Type any follow-ups here — the presenter will acknowledge live while the operator and advisor coordinate execution.",
       sendIdle: "Send",
       sendQueueing: "Queueing…",
       statusHint: "Enter to send · Shift+Enter for newline",
       statusReadonly: "Read-only display mode",
       statusQueueing: "Queueing…",
-      statusQueued: "Queued to director, will be relayed to the active worker",
+      statusQueued: "Queued to main session for presenter & operator team",
       statusFailedPrefix: "Failed to send: "
     }
   };
@@ -1706,6 +1707,8 @@
         status = $("hi-status"),
         log = $("hi-log");
     var sid = humanInputTarget();
+    // 把当前绑定的主线会话编号挂在面板上，方便排查与核验「这个面板接的是哪条会话」。
+    box.dataset.sessionId = sid || "";
     var msgCount = 0;
     var currentLang = resolveUiLang();
     var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
@@ -1928,7 +1931,7 @@
       }
       noteKey("statusReadonly", false);
       applyHumanInputLang();
-      setExpanded(false, false);
+      setExpanded(false);
       return;
     }
 
@@ -1940,11 +1943,14 @@
     appendBubble("dir", tr("welcome"), { placeholder: true });
     noteKey("statusHint", false);
     applyHumanInputLang();
-    setExpanded(true, false);
+    setExpanded(true);
 
     els.onDirectorCaption = function (captionText) {
       if (!captionText) return;
-      if (/^(收到|Received\b|需要你处理|I need you to)/i.test(captionText)) {
+      // 主持人在面板上发出的秒级插播确认（收到 / 已收到 / Received / Got it /
+      // Noted / Passing it on …）要稳定同步到右下角对话面板，让人一眼看到
+      // 「话已经被接住了」。匹配放宽到这几类确认口气，避免真实确认被漏掉。
+      if (/^(收到|已收到|Received\b|Got it\b|Noted\b|Passing it on\b|需要你处理|I need your input|I need you to)/i.test(captionText)) {
         appendBubble("dir", captionText);
       }
     };

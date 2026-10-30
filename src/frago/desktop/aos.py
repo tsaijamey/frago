@@ -323,8 +323,15 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         return "any", cmd_down
 
     if res == "elements":
+        # --observe：静默查询。带 --in browser 时，不带 observe 的查询会被 broker
+        # 当成"指向浏览器的动作"先 ensure_active("browser") 顶窗（broker.py
+        # op_elements）；带上就只看不做，焦点不动。
+        observe = "--observe" in rest
+        rest = [t for t in rest if t != "--observe"]
         f = take_flags(rest, {"in", "text", "selector"})
         step: dict = {"op": "elements"}
+        if observe:
+            step["observe"] = True
         if "in" in f:
             if f["in"] != "browser":
                 raise die(f"--in 只支持 browser，得到: {f['in']}")
@@ -403,9 +410,14 @@ def parse(tokens: list[str]) -> tuple[str, object]:
             take_flags(rest, set())
             return "steps", [{"op": "shell", "cmd": cmd}]
         if verb == "read":
+            # --observe 是无值 flag，与 term scroll 的 --to-end 同一个摘法：
+            # 进 take_flags 之前先摘掉。静默读屏——只取缓冲区内容，
+            # 不向 broker 发 focus，桌面焦点一个字节都不动。
+            observe = "--observe" in rest
+            rest = [t for t in rest if t != "--observe"]
             f = take_flags(rest, {"lines"})
             n = as_int(f, "lines", 20)
-            return "local", lambda rec: cmd_term_read(rec, n)
+            return "local", lambda rec, obs=observe: cmd_term_read(rec, n, observe=obs)
         if verb == "scroll":
             # 回看。滚的是终端窗口的视口，不是 tmux——会话照常跑，当前屏一个
             # 字节都不动。三种给法各自对应一种真实意图，形状与 browser scroll
@@ -557,6 +569,11 @@ def parse(tokens: list[str]) -> tuple[str, object]:
                 )
             return "steps", [{"op": "exec", "js": js}]
         if verb == "read":
+            # --observe：静默读页面。不带时 broker 的 op_exec 会先
+            # ensure_active("browser") 把浏览器窗口顶到最前；带上则只取值、
+            # 不动焦点（broker 协议原生支持，见 broker.py op_exec）。
+            observe = "--observe" in rest
+            rest = [t for t in rest if t != "--observe"]
             f = take_flags(rest, {"selector"})
             if "selector" in f:
                 js = ("(()=>{const e=document.querySelector("
@@ -567,7 +584,10 @@ def parse(tokens: list[str]) -> tuple[str, object]:
                 js = ("(()=>({found:true,url:location.href,"
                       "title:document.title,"
                       "text:document.body?document.body.innerText:''}))()")
-            return "steps", [{"op": "exec", "js": js}]
+            step: dict = {"op": "exec", "js": js}
+            if observe:
+                step["observe"] = True
+            return "steps", [step]
         if verb == "mode":
             f = take_flags(rest, {"to"})
             if "to" not in f:
@@ -804,11 +824,12 @@ RESOURCE_HELP = {
     "up": "拉起虚拟桌面（身份已存在则复用，桌面页自行重连）",
     "down": "停掉它。意图会被记住，守护不会把它拉回来",
     "status": "舞台在不在跑、画面活不活、几块荧幕连着——任何指令之前先问这句",
-    "elements": "现在能寻址的东西有哪些（桌面级全量 / 页面内按需）",
+    "elements": "现在能寻址的东西有哪些（桌面级全量 / 页面内按需；--observe 只查不顶窗）",
     "mouse": "虚拟鼠标：to <ref> 移到某元素、drift 闲晃、click 点当前位置",
     "window": "开关程序与摆窗口：open|close / min|max|restore / move",
     "focus": "把某个程序置前台（关着就顺手打开）",
-    "term": "虚拟终端：run 执行、read 读缓冲区、scroll 回看、fontsize 改字号",
+    "term": "虚拟终端：run 执行、read 读缓冲区（--observe 静默读不置顶）、"
+            "scroll 回看、fontsize 改字号",
     "image": "图片浏览器：open <本地图片>，关它走 window close --target image",
     "video": "视频播放器（简洁边框，无标题栏）：open <片子> / play / pause / "
              "seek --sec",
@@ -816,8 +837,9 @@ RESOURCE_HELP = {
              "自己做的动画走这条，看真实网页走 browser",
     "strap": "贴纸栏（电视节目那条说明字条）：show <文字> --style news|bar|"
              "ghost|chip，hide 撤掉。挂着不走，与 say 的字幕分层",
-    "browser": "虚拟浏览器窗口：open <url> / click / scroll / read / "
-               "mode --to takeover|release|head|headless（窗格人工接管或弹出真窗过检）",
+    "browser": "虚拟浏览器窗口：open <url> / click / scroll / read（--observe "
+               "静默读不顶窗）/ mode --to takeover|release|head|headless"
+               "（窗格人工接管或弹出真窗过检）",
     "tab": "浏览器标签：open / switch <n> / close <n>",
     "camera": "摄像机（不是窗口）：up / down / focus --ref / pan --to / reset",
     "viewport": "refresh：重读演员视口并按新比例重摆虚拟浏览器窗口",
@@ -1049,12 +1071,16 @@ def cmd_voice_clear() -> dict:
             "note": "已经封进片子的音轨、复制进录制目录的音频都不受影响"}
 
 
-def cmd_term_read(rec: dict, lines: int) -> dict:
+def cmd_term_read(rec: dict, lines: int, *, observe: bool = False) -> dict:
     """直接读 tmux 会话，并顺手把终端窗口提到最前。
 
     capture-pane 读的是 broker 自己在轮询的同一份真值；同时向 broker 发一条
-    focus term（失败即忽略，保证单测或 broker 忙时读屏照常可用），避免导演
-    Agent 轮询终端里的 worker 时画面一直被浏览器窗口遮挡。
+    focus term（失败即忽略，保证单测或 broker 忙时读屏照常可用），避免驻场角色
+    轮询终端时画面一直被浏览器窗口遮挡。
+
+    observe=True 是静默读屏：只取缓冲区内容，**不发 focus**，桌面焦点一个字节
+    都不动。留给"主持人"这类驻场解说角色——它要一边盯终端一边盯面板，轮询读屏
+    若顺手把终端置顶，就会盖住"主操作员"正在展示的窗口，焦点乱跳。
 
     读的范围含历史（`-S -<n>`），不是只有可见屏：pane 有多高是虚拟终端窗口
     说了算，输出一长前面就滚进历史了。只读可见屏的话，`--lines 200` 要来的
@@ -1064,11 +1090,12 @@ def cmd_term_read(rec: dict, lines: int) -> dict:
     if not session:
         raise die("注册表里没有 tmux_session", instance=rec.get("id"))
     focus_effect = None
-    with suppress(Exception):
-        res = post(rec, [{"op": "focus", "win": "term"}], timeout=5.0)
-        first = (res.get("results") or [{}])[0]
-        if isinstance(first.get("effect"), dict):
-            focus_effect = first["effect"]
+    if not observe:
+        with suppress(Exception):
+            res = post(rec, [{"op": "focus", "win": "term"}], timeout=5.0)
+            first = (res.get("results") or [{}])[0]
+            if isinstance(first.get("effect"), dict):
+                focus_effect = first["effect"]
     # --lines 0（及负数）历来的语义是"全给"，那就从历史最开头取（-S -）。
     # 写成 -S -0 的话 0 是可见屏第一行，"全给"会静默退化成"只给这一屏"。
     start = "-" if lines <= 0 else f"-{lines}"
@@ -1085,6 +1112,8 @@ def cmd_term_read(rec: dict, lines: int) -> dict:
     tail = rows[-lines:] if lines > 0 else rows
     out = {"ok": True, "win": "term", "session": session,
            "lines": len(tail), "total_lines": len(rows), "text": tail}
+    if observe:
+        out["observed"] = True
     if focus_effect is not None:
         out["effect"] = focus_effect
     return out

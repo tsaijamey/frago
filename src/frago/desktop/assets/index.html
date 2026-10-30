@@ -201,8 +201,9 @@
          - 地址带 ?userInput=true&session=<会话编号> 时：默认展开对话面板（#hi-panel），
            可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
          - 不带参数时：右下角仍显示图标按钮（#hi-trigger），但默认不展开交互面板。
-         人打的字**不进桌面终端**——终端里跑着的是 worker，人的话先发给 frago 服务的
-         会话发送接口，排进那场隐藏会话（导演）的队列，由导演回应并转达给 worker。 -->
+         人打的字**不进桌面终端**——桌面终端只是被操作的外设，不是代理角色。人的话先发给
+         frago 服务的会话发送接口，排进主控会话队列；由驻场「主持人」秒级口头确认，
+         再交给「主操作员」与后台「参谋」协商执行。 -->
     <div id="human-input" class="hi-dock" data-mode="icon">
       <div class="hi-panel" id="hi-panel" role="dialog" aria-label="导演对话面板" hidden>
         <div class="hi-head">
@@ -212,7 +213,7 @@
               <span class="hi-tag">导演对话 · 追加需求</span>
               <span class="hi-sid" id="hi-session-tag">只读</span>
             </div>
-            <div class="hi-head-sub" id="hi-sub">发往导演队列，由导演转达给终端里的 worker</div>
+            <div class="hi-head-sub" id="hi-sub">直达主控队列 · 主持人实时应答，主操作员与参谋协同执行</div>
           </div>
           <button type="button" class="hi-head-close" id="hi-close" title="收起为右下角图标" aria-label="收起对话面板">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">

@@ -25,9 +25,9 @@ frago desktop browser open https://...     # 然后才是干活
 | 资源 | 动词 |
 |---|---|
 | 生命周期 | `status` / `up` / `down` |
-| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read` / `browser mode --to takeover\|release\|head\|headless` |
+| 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read [--observe]` / `browser mode --to takeover\|release\|head\|headless` |
 | 标签页 | `tab open <url>` / `tab switch <n>` / `tab close <n>` |
-| 终端窗口 | `term run "<命令>"` / `term read` / `term scroll --lines <n>\|--to "<文字>"\|--to-end` |
+| 终端窗口 | `term run "<命令>"` / `term read [--observe]` / `term scroll --lines <n>\|--to "<文字>"\|--to-end` |
 | 图片浏览器 | `image open <本地图片路径>` |
 | 视频播放器 | `video open <本地视频>` / `video play` / `video pause` / `video seek --sec <秒>` |
 | 全屏 HTML | `slide open <本地 html>` / `slide close` |
@@ -39,7 +39,7 @@ frago desktop browser open https://...     # 然后才是干活
 | 录制 | `rec start --name <n>` / `rec stop` |
 | 讲解 | `say "<旁白>"`（纯字幕）/ `say "<旁白>" --speak [--async] [--interrupt] [--out page\|local\|both\|none] [--voice <声音>] [--rate +10%] [--volume +0%] [--pitch +0Hz]`（开口） |
 | 语音 | `voice synth "<文字>"`（只合成不出声，不要求舞台在跑）/ `voice stop` / `voice cache` / `voice clear` |
-| 等待与观察 | `wait --release [--timeout <秒>]` / `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements` / `viewport refresh` |
+| 等待与观察 | `wait --release [--timeout <秒>]` / `wait --for\|--url\|--text\|--speech all\|<编号>` / `elements [--observe]` / `viewport refresh` |
 
 `ref` 是元素地址：页面里的写 `page:"按钮文字"` 或 `page:<css选择器>`，终端里的写 `term:...`，桌面级的写 `dock:browser` / `tab:0`。用 `elements` 先看有哪些可寻址的东西，别猜。
 
@@ -68,7 +68,9 @@ frago desktop camera focus --ref term:rows   # 镜头框住某块区域（--ref�
 
 **停了就是停了。** `down` 之后有一个守护服务**不会**把它拉回来——注册表里记的是"人想不想让它跑"，`down` 把这个意图改成了"不想"。所以看到桌面页面空着、状态是 stopped，那不是故障，是上一次有人停过它。`up` 会把意图改回来。`down` 连演员那台无头浏览器（9222）一起关掉，回执里的 `actor_browser` 写着关没关成；登录态在 profile 目录里，停进程不动它，下次 `up` 原样带回来。
 
-**指向窗口的动作自动把那扇窗口提到最前。** Agent 的注意力在哪个程序上，哪个程序就必定置顶：`browser open`、`browser click`、`tab switch`、`elements --in browser`、`mouse to page:...`、`camera focus` 落在页面上，或者 `term run`、`term read`、`term scroll`、`term fontsize`、`window move|max|restore` 落在对应窗口上——这些都会先激活目标窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里；多扇窗口之间按 MRU（最近使用顺序）维护层级栈，关掉或最小化当前前台窗口时焦点自动退回上一扇看过的窗口。唯一不动焦点的是 `wait` 轮询期间的后台探针（`observe=True`）。
+**指向窗口的动作自动把那扇窗口提到最前。** Agent 的注意力在哪个程序上，哪个程序就必定置顶：`browser open`、`browser click`、`tab switch`、`elements --in browser`、`mouse to page:...`、`camera focus` 落在页面上，或者 `term run`、`term read`、`term scroll`、`term fontsize`、`window move|max|restore` 落在对应窗口上——这些都会先激活目标窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里；多扇窗口之间按 MRU（最近使用顺序）维护层级栈，关掉或最小化当前前台窗口时焦点自动退回上一扇看过的窗口。
+
+**要只读、不动焦点，就带 `--observe`。** 除 `wait` 轮询期间的后台探针（`observe=True`）外，`term read --observe`、`browser read --observe`、`elements --observe` 同样保持静默、不抢焦点——它们只取值，不激活任何窗口。这条路专为多代理协同里的「主持人」旁观读屏设计：主持人在主操作员操作期间反复轮询终端与页面，不带 `--observe` 的话，每读一次就把那扇窗顶到最前，主操作员正在展示的窗口被盖掉、焦点乱跳，而命令、日志、状态三层没有一层报错，只有画面是错的。`term read --observe` 的回执里带 `observed: true`，可以据此确认这条确实走的静默路径。
 
 **关掉程序和收起窗口是两件事。** `window close --target term` 让终端离开桌面——窗口缩着淡出、dock 上那颗灯灭掉；`window min` 只是把窗口飞进 dock，程序还在跑、灯还亮着。两者在画面上刻意长得不一样，因为观众要分得出"退出了"和"收起来了"。四扇窗（term / browser / image / video）走的是同一条 `window open|close`，图片浏览器和播放器都没有自己的关法。
 
@@ -121,7 +123,11 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **桌面页面是只读显示器。** 它自己不产生任何操作，画面变化全部来自指令。页面断线会自行重连，重连后补发最近状态，所以录制中抖一下不会永久黑屏。标题栏上那三颗红黄绿是纯装饰，**点不了**——它们不在可寻址元素名单里，关窗口一律走 `window close`。
 
-**右下角对话面板（人类输入行）是唯一的例外。** 虚拟桌面右下角常驻客服式对话入口：地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开（可收起为右下角胶囊图标）；不带参数时仍显示右下角图标但不展开面板（录制机位自动隐藏，录制画面里不会出现它）。人在里面打的字**不进桌面终端**——终端里跑着的是 worker，人的话要先到「导演」那里：输入行发的是 frago 服务的会话发送接口（`POST /api/workbench/sessions/<编号>/send`，`wait: false` 只排队不等答），排进地址里那场隐藏会话的队列，由它决定怎么转达（通常是 `focus term` → `type "<原话>"` → `key Enter`，把话排进 worker 的 TUI）。这条链是「WebUI 创建配方」的展示面：桌面是显示器，隐藏会话是遥控器，人对着遥控器说话。worker 怎么进桌面终端见 `frago book recipe-creation` 的 `--tmux-target`。
+**右下角对话面板（人类输入行）是唯一的例外。** 虚拟桌面右下角常驻客服式对话入口：地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开（可收起为右下角胶囊图标）；不带参数时仍显示右下角图标但不展开面板（录制机位自动隐藏，录制画面里不会出现它）。人在里面打的字**不进桌面终端**——终端里跑着的是 worker，人的话要先到主控会话那里：输入行发的是 frago 服务的会话发送接口（`POST /api/workbench/sessions/<编号>/send`，`wait: false` 只排队不等答），排进地址里那场会话的队列。
+
+**面板绑的是主控会话，不是终端。** 地址里那个 `session=<编号>` 就是主控会话的编号。三角色协同下，这一条链上的三个角色各有分工：主控会话是「主操作员」，他与后台「参谋」协商并在桌面终端/浏览器上把事情落地；驻场「主持人」同步监听这场会话的新消息（轮询 `GET /api/workbench/sessions/<编号>/records?after=<序号>`，或 `frago session show <编号>`），发现观众新发言就**秒级**用 `frago desktop say ... --speak --async --interject` 口头确认（同时触发面板气泡回显），并把需求记进共享协商账本。单人模式（1–2 分钟纯脚本回放）下，这声确认由主操作员自己发。
+
+主操作员怎么把人的话转达给终端里的 worker：通常是 `focus term` → `type "<原话>"` → `key Enter`，把话排进 worker 的 TUI。这条链是「WebUI 创建配方」的展示面：桌面是显示器，主控会话是遥控器，人对着遥控器说话。worker 怎么进桌面终端见 `frago book recipe-creation` 的 `--tmux-target`。
 
 ## 不要做
 
