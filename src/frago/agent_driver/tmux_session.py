@@ -418,6 +418,11 @@ class TmuxAgentSession:
           而块拆得够小、中间停得住，才不会被它当成一次粘贴折叠（见
           :data:`_SEND_TEXT_CHUNK`）。四家 TUI（claude / codex / opencode / agy）
           共用这一处，改这里四家一起改到。
+        - 切块前先把 ``\t`` 展平为 4 个空格：claude TUI 收到整块含 ``\t`` 的输入时，
+          会把 ``\t`` 在缓冲区里展开成 4 个空格，但光标只按原始码点数推进（每含 1 个
+          ``\t`` 光标落后 3 位，块尾 ``3×N`` 个字留在光标右侧，被下一块插队顶到句末）；
+          agy 则把 ``\t`` 当焦点切换键吞掉。切块前统一换成 4 个空格，分块长度与光标推进
+          严格 1:1 对齐。
         - 原生 Windows 上非 ASCII 文本不直接进 argv：移植版客户端会把这类文本按系统
           ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），改由文件载体
           送到 agent 手里（见 :meth:`_nonascii_prompt_via_file`），argv 上只留 ASCII。
@@ -432,6 +437,7 @@ class TmuxAgentSession:
             and _ansi_codepage() not in (None, 65001)
         ):
             text = self._nonascii_prompt_via_file(text)
+        text = text.replace("\t", "    ")
         for i in range(0, len(text), self._SEND_TEXT_CHUNK):
             if i:
                 self._sleep(self._SEND_TEXT_PAUSE_S)
