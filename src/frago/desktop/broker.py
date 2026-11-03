@@ -5425,6 +5425,10 @@ def build_app(cfg: dict) -> FastAPI:
             elif kind in ("human.browser_mode", "human.browser.mode"):
                 target_headless = bool(msg.get("headless"))
                 asyncio.create_task(op_browser_mode({"headless": target_headless}))
+            elif kind == "human.reset":
+                asyncio.create_task(
+                    op_stage_reset({"session_id": str(msg.get("sessionId") or "")})
+                )
 
     # ── 语音 ──
     #
@@ -6506,6 +6510,79 @@ def build_app(cfg: dict) -> FastAPI:
                {"note": f"{port} 上本来就没有机位，这一次什么都没杀"}),
         }
 
+    def _stop_server_stage_sessions(sid: str | None) -> None:
+        """向 8093 frago server 发请求，一并销毁驻场主持人线程与旧主操作员会话进程。"""
+        with suppress(Exception):
+            from ..server.daemon import get_scheme, get_server_port
+
+            target = urllib.parse.quote(sid or "__stage_reset__", safe="")
+            url = f"{get_scheme()}://127.0.0.1:{get_server_port()}/api/workbench/sessions/{target}/stop"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"force": True, "stage_reset": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=3.0).read()
+
+    async def op_stage_reset(step: dict) -> dict:
+        """全局重置虚拟桌面舞台：销毁后台主持人与旧主操作员会话、恢复窗口/幻灯/贴纸/浮层/语音、重建终端会话、重置浏览器起始页。"""
+        sid = str(step.get("session_id") or "").strip() or None
+        asyncio.create_task(asyncio.to_thread(_stop_server_stage_sessions, sid))
+        with suppress(Exception):
+            await speech_interrupt("stage.reset", keep_queue=False)
+        stage.last_slide = None
+        stage.last_strap = None
+        stage.last_image = None
+        stage.last_video = None
+        await broadcast({"t": "slide", "url": None, "ms": 0})
+        await broadcast({"t": "strap.hide"})
+        await broadcast({"t": "overlay.clear"})
+
+        await power("image", False, 0)
+        await power("video", False, 0)
+        await power("term", True, 0)
+        await power("browser", True, 0)
+        stage.geom["term"] = {"x": 120.0, "y": 90.0, "w": 900.0, "h": 560.0}
+        await broadcast({"t": "win.geom", "win": "term", "ms": 260, **stage.geom["term"]})
+        await set_focus("term")
+
+        await broadcast({"t": "stage.reset", "ts": time.time()})
+
+        with suppress(Exception):
+            await term.launch()
+            await asyncio.sleep(0.35)
+            term._resync = True
+
+        browser.takeover = False
+        await on_actor_mode(browser.headless, browser.switching_mode, None)
+        if not browser.headless and not browser.switching_mode:
+            asyncio.create_task(op_browser_mode({"headless": True}))
+        elif browser.ready:
+            with suppress(Exception):
+                start_url = str(cfg.get("start_url") or "about:blank")
+                tabs = await browser.list_tabs()
+                if len(tabs) > 1:
+                    await browser.switch_tab(0)
+                    for _ in range(len(tabs) - 1):
+                        cur_tabs = await browser.list_tabs()
+                        if len(cur_tabs) <= 1:
+                            break
+                        await browser.close_tab(len(cur_tabs) - 1)
+                await browser.goto(start_url)
+                if start_url in ("", "about:blank"):
+                    browser.blanked = True
+                    stage.browser_active = False
+                    await broadcast({"t": "browser.actor", "active": False})
+                await browser.nudge_repaint()
+
+        return {
+            "reset": True,
+            "focus": stage.focus,
+            "open_windows": [w for w, on in stage.open_wins.items() if on],
+            "effect": {"observed": True, "changed": True},
+        }
+
     OPS = {
         "cursor": op_cursor, "click": op_click, "focus": op_focus,
         "type": op_type, "key": op_key, "shell": op_shell,
@@ -6513,6 +6590,7 @@ def build_app(cfg: dict) -> FastAPI:
         "navigate": op_navigate, "exec": op_exec, "win": op_win,
         "viewport": op_viewport, "tab": op_tab, "elements": op_elements,
         "browser.mode": op_browser_mode,
+        "stage.reset": op_stage_reset,
         "say": op_say, "sleep": op_sleep,
         "speech.wait": op_speech_wait, "speech.stop": op_speech_stop,
         "camera.focus": op_camera_focus, "camera.pan": op_camera_pan,

@@ -1189,6 +1189,9 @@
       case "browser.mode":
         applyBrowserMode(msg);
         break;
+      case "stage.reset":
+        if (els.onStageReset) els.onStageReset(msg);
+        break;
     }
   }
 
@@ -1610,6 +1613,12 @@
       panelAria: "导演对话面板",
       tag: "导演对话 · 追加需求",
       sub: "直达主控队列 · 主持人实时应答，主操作员与参谋协同执行",
+      resetLabel: "重置",
+      resetConfirm: "确认重置？",
+      resetDoing: "重置中…",
+      resetTitle: "重置虚拟桌面舞台（恢复窗口/幻灯/字幕、重置终端与浏览器起始页并开启新对话）",
+      resetConfirmTitle: "再次点击立即重置舞台（3 秒后自动取消）",
+      resetAria: "重置舞台",
       closeTitle: "收起为右下角图标",
       closeAria: "收起对话面板",
       readonlyTag: "只读",
@@ -1630,12 +1639,19 @@
       statusReadonly: "只读显示器模式",
       statusQueueing: "正在排队…",
       statusQueued: "已排入主控队列，主持人与操作组正在跟进",
+      statusResetDone: "舞台已重置，已切换至新导演会话",
       statusFailedPrefix: "没发出去："
     },
     en: {
       panelAria: "Director chat panel",
       tag: "Director Chat · Follow-ups",
       sub: "Queued to main session · Presenter responds live, operator & advisor execute",
+      resetLabel: "Reset",
+      resetConfirm: "Confirm?",
+      resetDoing: "Resetting…",
+      resetTitle: "Reset virtual desktop stage (restore windows/slides/captions, reset terminal & browser, start new session)",
+      resetConfirmTitle: "Click again within 3s to confirm stage reset",
+      resetAria: "Reset stage",
       closeTitle: "Minimize to corner icon",
       closeAria: "Collapse director chat panel",
       readonlyTag: "Read-only",
@@ -1656,6 +1672,7 @@
       statusReadonly: "Read-only display mode",
       statusQueueing: "Queueing…",
       statusQueued: "Queued to main session for presenter & operator team",
+      statusResetDone: "Stage reset complete · new director session ready",
       statusFailedPrefix: "Failed to send: "
     }
   };
@@ -1694,6 +1711,8 @@
 
     var panel = $("hi-panel"),
         trigger = $("hi-trigger"),
+        resetBtn = $("hi-reset"),
+        resetLabel = $("hi-reset-label"),
         closeBtn = $("hi-close"),
         dot = $("hi-dot"),
         fabDot = $("hi-fab-dot"),
@@ -1712,10 +1731,66 @@
     var msgCount = 0;
     var currentLang = resolveUiLang();
     var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
+    var resetConfirming = false;
+    var resetDoing = false;
+    var resetTimer = null;
 
     function tr(key) {
       var pack = HI_I18N[currentLang] || HI_I18N.en;
       return pack[key] || HI_I18N.en[key] || "";
+    }
+
+    function syncResetBtnUI() {
+      if (!resetBtn) return;
+      resetBtn.classList.toggle("confirming", !!resetConfirming);
+      resetBtn.classList.toggle("resetting", !!resetDoing);
+      resetBtn.disabled = !!resetDoing;
+      resetBtn.setAttribute("aria-label", tr("resetAria"));
+      if (resetDoing) {
+        if (resetLabel) resetLabel.textContent = tr("resetDoing");
+        resetBtn.title = tr("resetDoing");
+      } else if (resetConfirming) {
+        if (resetLabel) resetLabel.textContent = tr("resetConfirm");
+        resetBtn.title = tr("resetConfirmTitle");
+      } else {
+        if (resetLabel) resetLabel.textContent = tr("resetLabel");
+        resetBtn.title = tr("resetTitle");
+      }
+    }
+
+    function clearResetConfirm() {
+      if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+      }
+      if (resetConfirming) {
+        resetConfirming = false;
+        syncResetBtnUI();
+      }
+    }
+
+    function resetStageLocal() {
+      // 1. 撤下全屏幻灯、贴纸栏、浮层标注、字幕与正在播放的语音
+      applySlide({ url: null, ms: 0 });
+      hideStrap();
+      clearOverlay();
+      stopSpeech();
+      liveCaptions().forEach(dropCaption);
+      // 2. 退出人工接管并复位浏览器为空白起始页状态
+      state.takeover = false;
+      state.actorSwitching = false;
+      state.actorModeError = null;
+      syncTakeoverUI();
+      applyActorState(false);
+      // 3. 恢复四扇窗口出厂开关、默认几何与焦点（终端缓冲由 broker 重建 tmux 后全量覆盖）
+      closeWin("image", 0);
+      closeWin("video", 0);
+      openWin("term", 0);
+      openWin("browser", 0);
+      state.geom.term = { x: 120, y: 90, w: 900, h: 560 };
+      applyGeom("term", state.geom.term, 260);
+      applyFocus("term", ["term", "browser", "image", "video"]);
+      sendLayout();
     }
 
     function formatHm(ts) {
@@ -1786,6 +1861,7 @@
         }
       }
       syncTriggerTitle();
+      syncResetBtnUI();
       renderNote();
     }
     var MAX_TA_HEIGHT = 112;
@@ -1900,6 +1976,90 @@
       return s;
     }
 
+    var skillSent = false;
+    var lastSeq = 0;
+    var syncingRecords = false;
+
+    function performStageReset() {
+      clearResetConfirm();
+      resetDoing = true;
+      syncResetBtnUI();
+      var oldSid = sid;
+      resetStageLocal();
+      send({ t: "human.reset", sessionId: oldSid || "" });
+
+      // 通知 8093 服务端一并销毁后台旧导演会话（CoreAgent / tmux 主操作员进程）与驻场主持人守护线程
+      var stopTarget = encodeURIComponent(oldSid || "__stage_reset__");
+      fetch("/api/workbench/sessions/" + stopTarget + "/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true, stage_reset: true })
+      }).catch(function () {});
+
+      if (sid) {
+        sid = defaultDirectorSessionId();
+        box.dataset.sessionId = sid;
+        if (/[?&]session=/.test(location.search) && window.history && window.history.replaceState) {
+          var nextSearch = location.search.replace(/([?&]session=)[^&]+/, "$1" + encodeURIComponent(sid));
+          window.history.replaceState(null, "", location.pathname + nextSearch + location.hash);
+        }
+        skillSent = false;
+        lastSeq = 0;
+        msgCount = 0;
+        if (sidTag) sidTag.textContent = sid.slice(0, 8);
+        if (log) log.innerHTML = "";
+        appendBubble("dir", tr("welcome"), { placeholder: true });
+        if (text) {
+          text.value = "";
+          text.disabled = false;
+          autoGrowInput();
+        }
+        if (sendBtn) {
+          sendBtn.disabled = false;
+          sendBtn.textContent = tr("sendIdle");
+        }
+        syncBadge();
+      }
+      noteKey("statusResetDone", false);
+
+      setTimeout(function () {
+        resetDoing = false;
+        syncResetBtnUI();
+      }, 420);
+      setTimeout(function () {
+        if (statusState && statusState.key === "statusResetDone") {
+          noteKey(sid ? "statusHint" : "statusReadonly", false);
+        }
+      }, 3200);
+    }
+
+    els.onStageReset = function () {
+      resetStageLocal();
+      if (resetDoing) {
+        resetDoing = false;
+        syncResetBtnUI();
+      }
+    };
+
+    if (resetBtn) {
+      resetBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (resetDoing) return;
+        if (!resetConfirming) {
+          resetConfirming = true;
+          syncResetBtnUI();
+          if (resetTimer) clearTimeout(resetTimer);
+          resetTimer = setTimeout(function () {
+            resetConfirming = false;
+            resetTimer = null;
+            syncResetBtnUI();
+          }, 3000);
+          return;
+        }
+        performStageReset();
+      });
+    }
+
     if (trigger) {
       trigger.addEventListener("click", function () {
         setExpanded(panel ? panel.hidden : true, true);
@@ -1907,6 +2067,7 @@
     }
     if (closeBtn) {
       closeBtn.addEventListener("click", function () {
+        clearResetConfirm();
         setExpanded(false, false);
       });
     }
@@ -1954,10 +2115,6 @@
         appendBubble("dir", captionText);
       }
     };
-
-    var skillSent = false;
-    var lastSeq = 0;
-    var syncingRecords = false;
 
     function syncSessionRecords() {
       if (resolveUiLang() !== currentLang) {

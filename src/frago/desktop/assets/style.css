@@ -1021,6 +1021,52 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+#human-input .hi-head-reset {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#human-input .hi-head-reset:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-primary);
+}
+#human-input .hi-head-reset.confirming {
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(244, 63, 94, 0.48);
+  color: #fda4af;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.18), inset 0 0 0 1px rgba(244, 63, 94, 0.10);
+}
+#human-input .hi-head-reset.confirming:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.64);
+  color: #ffe4e6;
+}
+#human-input .hi-head-reset.resetting svg {
+  animation: spin 0.8s linear infinite;
+}
+#human-input .hi-head-reset:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 #human-input .hi-head-close {
   width: 26px;
   height: 26px;

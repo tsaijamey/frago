@@ -256,6 +256,11 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
         from frago.server.services import coreagent_runner
 
         return coreagent_runner.send(session_id, prompt, cwd=target.cwd or str(Path.home()))
+    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
+        with contextlib.suppress(Exception):
+            from frago.server.services import stage_orchestrator
+
+            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
     return get_runner().send(
         session_id,
         prompt,
@@ -287,6 +292,11 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
         return coreagent_runner.send_queued(
             session_id, prompt, cwd=target.cwd or str(Path.home())
         )
+    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
+        with contextlib.suppress(Exception):
+            from frago.server.services import stage_orchestrator
+
+            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
 
     def _feed() -> None:
         try:
