@@ -73,12 +73,17 @@ function xterm256ToHex(n: number): string | undefined {
  */
 export function parseAnsiSegments(raw: string): AnsiSpan[] {
   if (!raw) return [];
-  // 先剥除非 SGR（非 m 结尾）的 CSI 序列（例如 [2J, [H, [?25h 等）与 OSC 序列
+  // 先剥除非 SGR（非 m 结尾）的 CSI 序列（例如 [2J, [H, [?25h 等）与 OSC 序列。
+  // 这几条正则要匹配的就是 ANSI 的控制字符本身（ESC、BEL），`no-control-regex` 那条
+  // 拦的正是这个——它防的是手滑写进控制字符，这里是有意为之，逐条豁免。
   const cleaned = raw
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\[[0-9;?]*[A-LN-Za-ln-z]/g, '');
 
   const spans: AnsiSpan[] = [];
+  // eslint-disable-next-line no-control-regex
   const sgrRegex = /\x1b\[([0-9;]*)m/g;
   let lastIndex = 0;
   let fg: string | undefined;

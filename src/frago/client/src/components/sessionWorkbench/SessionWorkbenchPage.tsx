@@ -27,7 +27,7 @@ import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
 import { SessionTerminal } from './SessionTerminal';
 import FileViewer, { type FileEditSendPayload } from './FileViewer';
-import { withTilde } from './filePaths';
+import { formatTokensK, formatTokensM, shortenPathMiddle, withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
@@ -105,7 +105,7 @@ interface BringBack {
  * 会话文件那几处要用同一套缩写，实现搬去了 `./filePaths`（同一个东西两个地方长得一样），
  * 这里照样转出来，这一页自己的用法与外面的引用都不动。
  */
-export { withTilde };
+export { shortenPathMiddle, withTilde };
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
@@ -596,6 +596,20 @@ export default function SessionWorkbenchPage() {
     return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
   const contextTokens = usageReadout?.context ?? null;
+
+  /** 页头副标题栏展示的用量读数（模型名 · 上下文 · 累计） */
+  const usageText = useMemo(() => {
+    if (!usageReadout) return '';
+    const parts: string[] = [];
+    if (usageReadout.model) parts.push(usageReadout.model);
+    if (usageReadout.context !== null) {
+      parts.push(`${t('workbench.record.usage.context')} ${formatTokensK(usageReadout.context)}`);
+    }
+    if (usageReadout.total !== null) {
+      parts.push(`${t('workbench.record.usage.total')} ${formatTokensM(usageReadout.total)}`);
+    }
+    return parts.join(' · ');
+  }, [usageReadout, t]);
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -1188,11 +1202,24 @@ export default function SessionWorkbenchPage() {
                   </>
                 ) : null}
                 <span
+                  data-testid="head-directory"
                   className="min-w-[56px] truncate font-mono"
                   title={t('workbench.page.dirHint', { dir: selected.directory })}
                 >
-                  {withTilde(selected.directory)}
+                  {shortenPathMiddle(withTilde(selected.directory))}
                 </span>
+                {usageText ? (
+                  <>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span
+                      data-testid="head-usage"
+                      title={t('workbench.composer.usageHint')}
+                      className="min-w-0 truncate font-mono text-text-dim"
+                    >
+                      {usageText}
+                    </span>
+                  </>
+                ) : null}
               </div>
             ) : showLaunch && launch ? (
               <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
@@ -1225,7 +1252,7 @@ export default function SessionWorkbenchPage() {
                   className="min-w-[56px] truncate font-mono"
                   title={t('workbench.page.dirHint', { dir: launch.cwd })}
                 >
-                  {withTilde(launch.cwd)}
+                  {shortenPathMiddle(withTilde(launch.cwd))}
                 </span>
               </div>
             ) : null}

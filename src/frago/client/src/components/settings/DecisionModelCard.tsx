@@ -47,6 +47,9 @@ export default function DecisionModelCard() {
 
   useEffect(() => {
     void loadSettings();
+    // 只在挂载时读一次设置。`loadSettings` 每次渲染都是新函数，挂进依赖里会变成
+    // 「每次渲染都重新拉一遍」，那不是这里要的（同 GeneralSettings / useProfiles 的写法）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const populateForm = (data: DecisionModelSettings) => {

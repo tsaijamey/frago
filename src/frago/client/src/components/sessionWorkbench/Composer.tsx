@@ -208,9 +208,9 @@ export interface ComposerUsage {
 /**
  * 上下文到多大才放开「交接到新会话」。
  *
- * 取的是人自己的体感：到三十万上下，模型明显变慢、变笨，换一场接着做才划算。
+ * 到十八万 token 上下放开交接入口，让人可以在上下文明显变重前换一场接着做。
  */
-export const HANDOFF_MIN_CONTEXT = 300_000;
+export const HANDOFF_MIN_CONTEXT = 180_000;
 
 /** 悬停说明里那种 k 为单位的写法：312k。 */
 function formatK(n: number): string {

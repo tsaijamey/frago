@@ -167,4 +167,84 @@ export function isEditableTextFile(path: string): boolean {
   return EDITABLE_TEXT_EXTS.has(ext);
 }
 
+/**
+ * 路径过长时节省中间部分：保留开头与结尾，中间用省略号「…」连起。
+ * 例如：`~/Repos/very-long-project-name/sub/folder` → `~/Repos/…/sub/folder`
+ * 悬停提示（title）保留完整路径，此处只为在标题行容纳用量与模型信息。
+ */
+export function shortenPathMiddle(path: string, maxLength = 32): string {
+  if (!path || path.length <= maxLength) return path;
+
+  // 统一用当前路径中占主导的分隔符
+  const sep = path.includes('\\') && !path.includes('/') ? '\\' : '/';
+  const segments = path.split(sep);
+
+  if (segments.length <= 2) {
+    const headLen = Math.max(4, Math.floor((maxLength - 1) / 2));
+    const tailLen = maxLength - 1 - headLen;
+    return `${path.slice(0, headLen)}…${path.slice(-tailLen)}`;
+  }
+
+  const first = segments[0] || (path.startsWith(sep) ? sep : '');
+  const last = segments[segments.length - 1];
+
+  // 如果首段 + 尾段拼起来已经超长，按纯字符切首尾
+  if (`${first}${sep}…${sep}${last}`.length > maxLength) {
+    const tailLen = Math.min(last.length, Math.floor(maxLength * 0.6));
+    const headLen = Math.max(3, maxLength - 1 - tailLen);
+    return `${path.slice(0, headLen)}…${path.slice(-tailLen)}`;
+  }
+
+  let headIdx = 0;
+  let tailIdx = segments.length - 1;
+  let headParts = [segments[0]];
+  let tailParts = [segments[tailIdx]];
+
+  while (headIdx < tailIdx - 1) {
+    // 优先尝试保留末尾上一级父目录
+    const prevTailIdx = tailIdx - 1;
+    if (prevTailIdx > headIdx) {
+      const nextTail = segments[prevTailIdx];
+      const candidateTail = [nextTail, ...tailParts];
+      const candidateLen = [...headParts, '…', ...candidateTail].join(sep).length;
+      if (candidateLen <= maxLength) {
+        tailParts = candidateTail;
+        tailIdx = prevTailIdx;
+        continue;
+      }
+    }
+
+    // 其次尝试保留开头的下一级目录
+    const nextHeadIdx = headIdx + 1;
+    if (nextHeadIdx < tailIdx) {
+      const nextHead = segments[nextHeadIdx];
+      const candidateHead = [...headParts, nextHead];
+      const candidateLen = [...candidateHead, '…', ...tailParts].join(sep).length;
+      if (candidateLen <= maxLength) {
+        headParts = candidateHead;
+        headIdx = nextHeadIdx;
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return [...headParts, '…', ...tailParts].join(sep);
+}
+
+/** 悬停说明与水位读数里 k 为单位的写法：312k。 */
+export function formatTokensK(n: number): string {
+  return `${Math.round(n / 1000)}k`;
+}
+
+/**
+ * 本场累计到七位数，用 k 写成一串谁读不出量级，收一档到 M：30.1M。
+ * 百万以下还是 k，跟上下文用同一把尺子。
+ */
+export function formatTokensM(n: number): string {
+  if (n < 1_000_000) return formatTokensK(n);
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
 

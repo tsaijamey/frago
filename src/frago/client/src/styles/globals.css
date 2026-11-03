@@ -41,13 +41,20 @@
   /* 分段控件选中片浮起来的方式：一圈发丝描边。浅色主题白片压在浅灰底上，
      只靠这圈线分不开层次，那边再补一层极轻的落影。 */
   --seg-on-shadow: 0 0 0 1px var(--border-color);
-  /* 会话清单组容器那块下沉托盘底：清单底 --bg-secondary 压一层 --grp-bg 的不透明实色等价物，
-     因为组里带流光、带叠纸的卡内层要填同一个实色，半透明填不住身后的东西。 */
-  --rail-pinned-fill: #141414;
-  --grp-bg: rgba(0, 0, 0, 0.22);
-  --grp-border: rgba(255, 255, 255, 0.08);
-  --branch-card-bg: rgba(255, 255, 255, 0.025);
-  --branch-card-border: rgba(255, 255, 255, 0.07);
+  /* 会话清单的三层不透明实色阶梯（11-02 定）。三层都是实色，因为组里带流光、带叠纸的卡
+     内层要填同一个实色，半透明填不住身后的东西。
+
+     第 1 层（最深、最静默）--grp-bg：只给真正的会话分支组/交接组容器用，不再给 Pinned 整个分区用。
+     第 2 层（基准面）--surface-fill：左栏清单默认就落在这个底上，等于 --bg-secondary。
+     第 3 层（浮起主卡面）--grp-card-bg：分支组里的源头父卡，比暗槽亮一档，稳住主卡重心。 */
+  --surface-fill: #1a1a1a;
+  --rail-pinned-fill: #131316;
+  --grp-bg: #131316;
+  --grp-border: rgba(255, 255, 255, 0.07);
+  --grp-card-bg: #222226;
+  --grp-card-border: rgba(255, 255, 255, 0.09);
+  --branch-card-bg: transparent;
+  --branch-card-border: rgba(255, 255, 255, 0.18);
   --bg-elevated: #2a2a2a;
   --bg-overlay: rgba(0, 0, 0, 0.6);
   /* 行内代码与代码块的底。原先两处都取 `--bg-subtle`，深色下那是 #1a1a1a，比页面底
@@ -106,8 +113,10 @@
   /* 额度条改用一个中性灰，达到 80% 转告警橙：它说的是「还剩多少」，不是动作也不是在跑。 */
   --usage-fill: rgba(255, 255, 255, 0.5);
 
-  /* 选中态＝「你在看哪一条」：整张卡用品牌绿淡底加品牌绿整圈细描边与微阴影，与中性灰下沉组容器拉开清晰层级。不用单边条。 */
-  --sel-bg: rgba(21, 179, 77, 0.14);
+  /* 选中态＝「你在看哪一条」：整张卡用品牌绿淡底加品牌绿整圈细描边与微阴影，与中性灰下沉组容器拉开清晰层级。不用单边条。
+     淡底按当前承载底面 --surface-fill 合成，于是落在栏底、组暗槽、父卡面上都是干净的不透明底色，
+     不会因为半透明绿底透出身后不同深浅的底而出现色块补丁。 */
+  --sel-bg: color-mix(in srgb, var(--accent-primary) 14%, var(--surface-fill));
   --sel-border: rgba(21, 179, 77, 0.58);
   --sel-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
 
@@ -252,11 +261,16 @@
   --bg-hover: rgba(0, 0, 0, 0.05);
   --bg-active: rgba(0, 0, 0, 0.08);
   --seg-on-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border-color);
-  --rail-pinned-fill: #eeeeee;
-  --grp-bg: rgba(0, 0, 0, 0.035);
-  --grp-border: rgba(0, 0, 0, 0.08);
-  --branch-card-bg: rgba(255, 255, 255, 0.72);
-  --branch-card-border: rgba(0, 0, 0, 0.07);
+  /* 会话清单三层表面（浅色侧与深色同一条规则，方向反过来）：第 2 层是栏底，第 1 层是组暗槽，
+     第 3 层是组内浮起的源头父卡。 */
+  --surface-fill: #F7F7F7;
+  --rail-pinned-fill: #ededf0;
+  --grp-bg: #ededf0;
+  --grp-border: rgba(0, 0, 0, 0.075);
+  --grp-card-bg: #FFFFFF;
+  --grp-card-border: rgba(0, 0, 0, 0.085);
+  --branch-card-bg: transparent;
+  --branch-card-border: rgba(0, 0, 0, 0.18);
   --bg-elevated: #FFFFFF;
   --bg-overlay: rgba(0, 0, 0, 0.35);
   --code-bg: rgba(0, 0, 0, 0.05);
@@ -294,7 +308,8 @@
 
   --usage-track: rgba(0, 0, 0, 0.08);
   --usage-fill: rgba(0, 0, 0, 0.45);
-  --sel-bg: rgba(10, 143, 51, 0.1);
+  /* 浅色选中态：同样按承载底面合成，白底上那一点绿才不至于被冲淡或发灰。 */
+  --sel-bg: color-mix(in srgb, var(--accent-primary) 10%, var(--surface-fill));
   --sel-border: rgba(10, 143, 51, 0.5);
   --sel-shadow: 0 2px 6px rgba(10, 143, 51, 0.08);
   --peer-bg: #f3f5fb;
@@ -8982,6 +8997,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-muted);
 }
 
+/* ── 分支组里的源头父卡 ─────────────────────────────────────────────────
+   组里第一张卡是这一组的主卡：浮起实色底 --grp-card-bg 加整圈细描边 --grp-card-border，
+   比组暗槽亮一档，把重心压住；派生的分支子卡退到暗槽底。浅色下白片压在浅灰暗槽上，
+   深色那层落影显得脏，换一层更轻的。 */
+[data-theme='light'] [data-testid='session-item'][data-branch-root='true']:not([aria-current='true']) {
+  box-shadow: inset 0 0 0 1px var(--grp-card-border), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
 /* ── 会话卡与分区标题上那道光 ────────────────────────────────────────────
    一个圆头光点沿着边框顺时针匀速慢跑，身后拖一条渐隐的尾巴，像流星。
 
@@ -8996,11 +9019,32 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
    转一圈 8–12 秒，每张卡随机（原先 5 秒，09-29 改慢）。再快就成了跑马灯，在一条清单上不停抢眼睛。头部那点模糊是让它成为一个
    圆头而不是一刀切断的扇形。 */
 .live-border {
+  /* 整圈极淡的连续底环：那一段流光之外的部分也留一条看得见的边。
+     从前那些弧段全透明，静态看或光走得慢时，人看到的是半截断框甚至一条单边绿线。 */
+  --live-base-border: color-mix(in srgb, var(--accent-primary) 22%, var(--grp-border));
   position: relative;
-  border-radius: 10px;
-  padding: 1.5px;
+  z-index: 1;
+  border-radius: 9px;
+  padding: 1px;
   overflow: hidden;
   isolation: isolate;
+}
+
+/* 围的是分支组里那张源头父卡：底环跟着父卡的描边走，外圈补上父卡那一层微阴影。 */
+.live-border.is-branch-root {
+  --surface-fill: var(--grp-card-bg);
+  --live-base-border: color-mix(in srgb, var(--accent-primary) 24%, var(--grp-card-border));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+[data-theme='light'] .live-border.is-branch-root:not(.is-sel) {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* 叠加选中态：外圈接管选中态那一圈绿描边与阴影，内层换选中底色，两者合成唯一一圈干净边框。 */
+.live-border.is-sel {
+  --live-base-border: var(--sel-border);
+  box-shadow: var(--sel-shadow);
 }
 
 .live-border::before {
@@ -9011,16 +9055,14 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   width: 240%;
   aspect-ratio: 1;
   translate: -50% -50%;
-  filter: blur(0.6px);
+  filter: blur(0.4px);
   background: conic-gradient(
     from 0deg,
-    transparent 0deg 296deg,
-    color-mix(in srgb, var(--accent-primary) 14%, transparent) 316deg,
-    color-mix(in srgb, var(--accent-primary) 45%, transparent) 340deg,
-    color-mix(in srgb, var(--accent-primary) 90%, transparent) 353deg,
-    color-mix(in srgb, var(--accent-primary) 92%, white) 357.5deg,
-    color-mix(in srgb, var(--accent-primary) 55%, white) 359.2deg,
-    transparent 360deg
+    var(--live-base-border) 0deg 284deg,
+    color-mix(in srgb, var(--accent-primary) 42%, var(--live-base-border)) 312deg,
+    color-mix(in srgb, var(--accent-primary) 78%, transparent) 340deg,
+    color-mix(in srgb, var(--accent-primary) 92%, white) 355deg,
+    var(--live-base-border) 360deg
   );
   animation: live-border-orbit var(--live-border-dur, 10s) linear var(--live-border-delay, 0s) infinite;
 }
@@ -9048,12 +9090,23 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   }
 }
 
-/* 内层必须不透明，否则那块色盘会从正文底下透上来。默认取左栏的底色，
-   摆在别的底色上时由调用方改 --live-border-fill。 */
+/* 内层必须不透明，否则那块色盘会从正文底下透上来。默认跟着所在底面的 --surface-fill 走：
+   左栏上是 --bg-secondary，分支组里是 --grp-bg，父卡上是 --grp-card-bg，选中时是 --sel-bg。
+   调用方仍可用 --live-border-fill 覆盖，但一般不必——写死一个填充色就会和它所在那块底错开。 */
 .live-border-inner {
   position: relative;
-  border-radius: 8.5px;
-  background: var(--live-border-fill, var(--bg-secondary));
+  border-radius: 8px;
+  background: var(--live-border-fill, var(--surface-fill, var(--bg-secondary)));
+}
+
+.live-border.is-sel > .live-border-inner {
+  background: var(--sel-bg);
+}
+
+/* 外层已经承担了唯一那一圈描边与阴影，内层卡片不再重复画第二圈——否则叠起来是双框。 */
+.live-border > .live-border-inner > [data-testid='session-item'] {
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 /* 系统里关掉动效就停在一处：那道光还在，只是不再跑。这不是可选的礼貌，是无障碍要求。 */

@@ -354,13 +354,22 @@ describe('SessionRail 置顶区', () => {
     expect(screen.getByTestId('session-menu-pin').textContent).toBe('置顶');
   });
 
-  it('置顶标题正常字重、正文色，右端写「一直在最上面」，不用绿', () => {
+  it('四个分区标题同一套长相：11px 大写小字、中性灰、右端写「一直在最上面」、不用绿，分区之间有分割线', () => {
     pins.pinned = [OC_SID];
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const header = screen.getByTestId('pinned-header');
+    const rest = screen.getByTestId('rest-header');
+    for (const h of [header, rest]) {
+      expect(h.className).toContain('text-[11px]');
+      expect(h.className).toContain('font-semibold');
+      expect(h.className).toContain('uppercase');
+      expect(h.className).toContain('text-text-muted');
+    }
     expect(header.textContent).toContain('一直在最上面');
     expect(header.outerHTML).not.toContain('text-accent-primary');
-    expect(header.className).not.toContain('uppercase');
+    // 分区标题行前面的那道水平分割线：第一个标题行不带，后面的标题行带
+    expect(header.parentElement?.className ?? '').not.toContain('border-t');
+    expect(rest.parentElement?.className ?? '').toContain('border-t');
   });
 
   it('选中那条在折起的置顶组里：出现「当前会话在下面」，点一下先把置顶组摊开', () => {

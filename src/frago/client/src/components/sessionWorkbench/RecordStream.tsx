@@ -186,6 +186,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   const delegateToolIndices = new Set<number>();
   const attachToAgentSay = new Map<number, string>();
   const attachImagesToAgentSay = new Map<number, string[]>();
+  const attachContextToAgentSay = new Map<number, number>();
 
   let turnToolIndices: number[] = [];
   let turnToolBody = '';
@@ -193,6 +194,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   let turnImageBodies: string[] = [];
   let turnInlineCardAgentIndices: number[] = [];
   let lastAgentSayIdx = -1;
+  let turnContextTokens: number | null = null;
 
   const flushTurn = () => {
     if (turnToolIndices.length) {
@@ -216,12 +218,16 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       for (const idx of turnImageIndices) delegateToolIndices.add(idx);
       attachImagesToAgentSay.set(lastAgentSayIdx, [...turnImageBodies]);
     }
+    if (lastAgentSayIdx >= 0 && turnContextTokens !== null) {
+      attachContextToAgentSay.set(lastAgentSayIdx, turnContextTokens);
+    }
     turnToolIndices = [];
     turnToolBody = '';
     turnImageIndices = [];
     turnImageBodies = [];
     turnInlineCardAgentIndices = [];
     lastAgentSayIdx = -1;
+    turnContextTokens = null;
   };
 
   for (let i = 0; i < records.length; i += 1) {
@@ -234,8 +240,21 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         flushTurn();
         continue;
       }
+      if (r.kind === 'usage.tick') {
+        const ctx = typeof r.payload.context_tokens === 'number' ? r.payload.context_tokens : null;
+        if (ctx !== null) {
+          turnContextTokens = ctx;
+          if (lastAgentSayIdx >= 0) {
+            attachContextToAgentSay.set(lastAgentSayIdx, ctx);
+          }
+        }
+        continue;
+      }
       if (r.kind === 'agent.say') {
         lastAgentSayIdx = i;
+        if (turnContextTokens !== null) {
+          attachContextToAgentSay.set(i, turnContextTokens);
+        }
         const text = typeof r.payload.text === 'string' ? r.payload.text : '';
         if (text && (splitTrailingBlock(text) || parseUiComponentOutput(text)?.ok)) {
           turnInlineCardAgentIndices.push(i);
@@ -261,7 +280,12 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
   }
   flushTurn();
 
-  if (!delegateToolIndices.size && !attachToAgentSay.size && !attachImagesToAgentSay.size) {
+  if (
+    !delegateToolIndices.size &&
+    !attachToAgentSay.size &&
+    !attachImagesToAgentSay.size &&
+    !attachContextToAgentSay.size
+  ) {
     return records;
   }
 
@@ -273,13 +297,17 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
     }
     const attached = attachToAgentSay.get(idx);
     const attachedImages = attachImagesToAgentSay.get(idx);
-    if (attached !== undefined || attachedImages !== undefined) {
+    const attachedContext = attachContextToAgentSay.get(idx);
+    if (attached !== undefined || attachedImages !== undefined || attachedContext !== undefined) {
       const nextPayload: Record<string, unknown> = { ...r.payload };
       if (attached !== undefined) {
         nextPayload.ui_component = attached;
       }
       if (attachedImages !== undefined) {
         nextPayload.ui_image_grids = attachedImages;
+      }
+      if (attachedContext !== undefined) {
+        nextPayload.context_tokens = attachedContext;
       }
       return { ...r, payload: nextPayload };
     }
@@ -307,7 +335,7 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
 }
 
 /**
- * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度。
+ * 「对话」那一档实际摆出来的记录：仅保留真实可见对话与兜底卡片，用量读数已内联挂载至回复头。
  *
  * 当轮 `frago ask` 产出的交互卡已由 `withTurnDecisionCards` 挂载到当轮最后一条 `agent.say`
  * （收尾消息）的正文下方；仅当某轮完全没有 `agent.say` 时，才捎带未移交的 `tool.result` 兜底显示。
@@ -315,11 +343,9 @@ export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[]
 export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
   const normalized = withTurnDecisionCards(records);
   const out: WorkbenchRecord[] = [];
-  let tick: WorkbenchRecord | null = null;
   for (let i = 0; i < normalized.length; i += 1) {
     const record = normalized[i];
     if (record.kind === 'usage.tick') {
-      tick = record;
       continue;
     }
     if (
@@ -332,18 +358,13 @@ export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
       const uiCard = body ? parseUiComponentOutput(body) : null;
       const imageGrids = body ? parseAllImageGridOutputs(body) : [];
       if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
-        if (tick) out.push(tick);
-        tick = null;
         out.push(record);
         continue;
       }
     }
     if (lensOf(record) !== 'talk') continue;
-    if (tick) out.push(tick);
-    tick = null;
     out.push(record);
   }
-  if (tick) out.push(tick);
   return out;
 }
 
@@ -399,17 +420,9 @@ export type StreamSegment =
 export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
   const normalized = withTurnDecisionCards(records);
   const out: StreamSegment[] = [];
-  let tick: WorkbenchRecord | null = null;
   let pendingTools = 0;
   let pendingThinking = 0;
   let pendingRecords: WorkbenchRecord[] = [];
-
-  const flushTick = () => {
-    if (tick) {
-      out.push({ kind: 'record', record: tick });
-      tick = null;
-    }
-  };
 
   const flushPreResponse = (followingGroupId: string | null = null) => {
     if (pendingTools === 0 && pendingThinking === 0) return;
@@ -440,7 +453,6 @@ export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
   for (let i = 0; i < normalized.length; i += 1) {
     const record = normalized[i];
     if (record.kind === 'usage.tick') {
-      tick = record;
       continue;
     }
     if (record.kind === 'tool.call') {
@@ -463,19 +475,16 @@ export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
       const uiCard = body ? parseUiComponentOutput(body) : null;
       const imageGrids = body ? parseAllImageGridOutputs(body) : [];
       if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
-        flushTick();
         flushPreResponse(record.group_id);
         out.push({ kind: 'record', record });
         continue;
       }
     }
     if (lensOf(record) !== 'talk') continue;
-    flushTick();
     flushPreResponse(record.kind === 'agent.say' ? record.group_id : null);
     out.push({ kind: 'record', record });
   }
   flushPreResponse(null);
-  flushTick();
   return out;
 }
 
@@ -1021,20 +1030,6 @@ function deriveThreeParts(
   return { doing, findings, decision };
 }
 
-/** 悬停说明与水位读数里 k 为单位的写法：312k。 */
-function formatK(n: number): string {
-  return `${Math.round(n / 1000)}k`;
-}
-
-/**
- * 本场累计到七位数，用 k 写成一串谁读不出量级，收一档到 M：30.1M。
- * 百万以下还是 k，跟上下文用同一把尺子。
- */
-function formatM(n: number): string {
-  if (n < 1_000_000) return formatK(n);
-  return `${(n / 1_000_000).toFixed(1)}M`;
-}
-
 const NO_MARKS: WorkbenchMark[] = [];
 
 export default function RecordStream({
@@ -1067,7 +1062,7 @@ export default function RecordStream({
   terminalOpen = false,
   onTerminalOpenChange,
   terminalAlive = false,
-  usage = null,
+  usage: _usage = null,
   sessionFiles = null,
   onRevealFile,
   onPackPrompt,
@@ -1075,19 +1070,6 @@ export default function RecordStream({
   observer = null,
 }: RecordStreamProps) {
   const { t } = useTranslation();
-  /** 档位条右侧那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
-  const usageReadout = useMemo(() => {
-    if (!usage) return '';
-    const parts: string[] = [];
-    if (usage.model) parts.push(usage.model);
-    if (usage.context !== null) {
-      parts.push(`${t('workbench.record.usage.context')} ${formatK(usage.context)}`);
-    }
-    if (usage.total !== null) {
-      parts.push(`${t('workbench.record.usage.total')} ${formatM(usage.total)}`);
-    }
-    return parts.join(' · ');
-  }, [usage, t]);
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
@@ -1928,15 +1910,6 @@ export default function RecordStream({
               ) : null}
             </div>
           </div>
-          {usageReadout ? (
-            <span
-              data-testid="stream-lens-usage"
-              title={t('workbench.composer.usageHint')}
-              className="min-w-0 max-w-full truncate whitespace-nowrap font-mono text-[11px] text-text-dim"
-            >
-              {usageReadout}
-            </span>
-          ) : null}
         </div>
       ) : null}
 

@@ -761,11 +761,11 @@ describe('Composer 小人的走法', () => {
 });
 
 describe('交接到新会话', () => {
-  it('上下文不到三十万时置灰，悬停说明还差多少', () => {
+  it('上下文不到十八万时置灰，悬停说明还差多少', () => {
     render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={120_000} onHandoff={NOOP} />);
     const btn = screen.getByTestId('composer-handoff');
     expect((btn as HTMLButtonElement).disabled).toBe(true);
-    expect(btn.getAttribute('title')).toBe('上下文到 300k 才需要换场（现在 120k）');
+    expect(btn.getAttribute('title')).toBe('上下文到 180k 才需要换场（现在 120k）');
   });
 
   it('还没读到用量刻度时也置灰', () => {
@@ -773,9 +773,9 @@ describe('交接到新会话', () => {
     expect((screen.getByTestId('composer-handoff') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('到了三十万放开，按下去交给页面', () => {
+  it('到了十八万放开，按下去交给页面', () => {
     const onHandoff = vi.fn();
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={300_000} onHandoff={onHandoff} />);
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={180_000} onHandoff={onHandoff} />);
     const btn = screen.getByTestId('composer-handoff');
     expect((btn as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(btn);

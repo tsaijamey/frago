@@ -11,7 +11,12 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
+import RecordCard, {
+  KIND_GROUP,
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+} from '../RecordCard';
 import { talkView, withTurnDecisionCards } from '../RecordStream';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
@@ -617,6 +622,33 @@ describe('用量刻度', () => {
       />
     );
     expect(container.textContent ?? '').toContain('上下文 —');
+  });
+});
+
+describe('时间戳与卡头分割线', () => {
+  it('formatDateTime 同时输出年月日与时分秒', () => {
+    const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
+    expect(formatDateTime(fixedTs)).toBe('2026-10-31 14:50:18');
+  });
+
+  it('卡头时间右侧渲染分割线，并在带有 context_tokens 时显示上下文读数', () => {
+    const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('agent.say', {
+          ts: fixedTs,
+          payload: { text: '你好', model: 'claude-opus-5', context_tokens: 449_320 },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(container.textContent).toContain('2026-10-31 14:50:18');
+    const head = container.querySelector('header');
+    expect(head).toBeTruthy();
+    const divider = head?.querySelector('span.h-px.flex-1.bg-border-color');
+    expect(divider).toBeTruthy();
+    const ctx = screen.getByTestId('card-head-context');
+    expect(ctx.textContent).toBe('上下文 449,320');
   });
 });
 

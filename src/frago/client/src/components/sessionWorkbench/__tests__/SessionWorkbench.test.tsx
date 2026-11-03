@@ -160,8 +160,8 @@ describe('插话队列的入队行', () => {
   });
 });
 
-describe('talkView 对话档捎带用量', () => {
-  it('两段对话之间只留最后一条用量，工具不进来', () => {
+describe('talkView 对话档用量内联至回复卡头', () => {
+  it('talkView 不再在对话之间独立插入用量行，用量上下文内联挂载到回复中', () => {
     const tick = (id: string, seq: number) =>
       record({ id, seq, kind: 'usage.tick', payload: { context_tokens: seq, total_tokens: seq } });
     const view = talkView([
@@ -172,7 +172,8 @@ describe('talkView 对话档捎带用量', () => {
       record({ id: 'a', seq: 4, kind: 'agent.say', payload: { text: '好了' } }),
       tick('t3', 5),
     ]);
-    expect(view.map((r) => r.id)).toEqual(['u', 't2', 'a', 't3']);
+    expect(view.map((r) => r.id)).toEqual(['u', 'a']);
+    expect(view[1].payload.context_tokens).toBe(5);
   });
 
   it('用量仍归系统档，条数不重复计', () => {
@@ -394,8 +395,8 @@ describe('RecordStream 中栏', () => {
       expect(screen.queryByTestId('stream-lens')).toBeNull();
     });
 
-    it('模型与用量读数常驻在档位条右侧，支持窄屏折行与超长省略', () => {
-      const { rerender } = render(
+    it('档位条保持纯净，不再冗余放置用量读数', () => {
+      render(
         <RecordStream
           {...streamProps({
             records: mixed,
@@ -403,26 +404,7 @@ describe('RecordStream 中栏', () => {
           })}
         />
       );
-      const lensBar = screen.getByTestId('stream-lens');
-      expect(lensBar.className).toContain('flex-wrap');
-      expect(lensBar.className).toContain('justify-between');
-
-      const usage = screen.getByTestId('stream-lens-usage');
-      expect(lensBar.contains(usage)).toBe(true);
-      expect(usage.textContent).toBe('gemini-4-argon-medium · 上下文 15k · 累计 28k');
-      expect(usage.className).toContain('truncate');
-
-      rerender(
-        <RecordStream
-          {...streamProps({
-            records: mixed,
-            usage: { model: 'claude-opus-5', context: 166_518, total: 5_022_011 },
-          })}
-        />
-      );
-      expect(screen.getByTestId('stream-lens-usage').textContent).toBe(
-        'claude-opus-5 · 上下文 167k · 累计 5.0M'
-      );
+      expect(screen.queryByTestId('stream-lens-usage')).toBeNull();
     });
 
     it('档位条左侧依次紧贴展示 Watcher 菜单、隔离纯文本 Executor 与现有 All | Talk 等菜单', () => {
@@ -590,6 +572,8 @@ describe('RecordStream 中栏', () => {
       expect(screen.getByTestId('decision-card')).toBeTruthy();
 
       fireEvent.click(screen.getAllByTestId('decision-option')[1]);
+      expect(answer).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('decision-answer'));
       expect(answer).toHaveBeenCalledTimes(1);
 
       // 点击展开包裹的 Talk，展示内部对话与响应前动作聚合
@@ -846,15 +830,28 @@ describe('SessionRail 左栏', () => {
     for (const g of gaps) {
       expect(g.className).toContain('h-3.5');
     }
-    // 选中的分支卡用 --sel-bg / --sel-border / --sel-shadow，未选中的分支卡用 --branch-card-bg / --branch-card-border
     const items = screen.getAllByTestId('session-item');
+    // 组内主次：源头父卡浮起在暗槽之上（实色底 + 整圈细描边），派生分支子卡退到暗槽底
+    const root1 = items.find((el) => el.textContent?.includes('主会话 1'))!;
+    const root2 = items.find((el) => el.textContent?.includes('主会话 2'))!;
+    for (const root of [root1, root2]) {
+      expect(root.getAttribute('data-branch-root')).toBe('true');
+      expect(root.className).toContain('bg-[var(--grp-card-bg)]');
+      expect(root.className).toContain('var(--grp-card-border)');
+    }
+    // 选中的分支卡整卡换品牌绿底与整圈描边；未选中的分支卡落在暗槽底、不画凸起盒、左缩进 14px、标题降半档字重
     const selectedBranch = items.find((el) => el.textContent?.includes('分支会话 1'))!;
     const unselectedBranch = items.find((el) => el.textContent?.includes('分支会话 2'))!;
+    expect(selectedBranch.getAttribute('data-branch-card')).toBe('true');
     expect(selectedBranch.className).toContain('bg-[var(--sel-bg)]');
     expect(selectedBranch.className).toContain('var(--sel-border)');
     expect(selectedBranch.className).toContain('var(--sel-shadow)');
+    expect(unselectedBranch.getAttribute('data-branch-card')).toBe('true');
     expect(unselectedBranch.className).toContain('bg-[var(--branch-card-bg)]');
-    expect(unselectedBranch.className).toContain('var(--branch-card-border)');
+    expect(unselectedBranch.className).not.toContain('inset_0_0_0_1px_var(--branch-card-border)');
+    expect(unselectedBranch.className).toContain('pl-[14px]');
+    const unselectedTitle = unselectedBranch.querySelector('[data-testid=session-title]')!;
+    expect(unselectedTitle.className).toContain('font-medium');
   });
 
   it('一场都没匹配上时说清楚，不当成坏了', () => {
@@ -879,6 +876,39 @@ describe('SessionRail 左栏', () => {
     expect(ids).toEqual(['list-filter-for-you', 'list-filter-all']);
     expect(screen.queryByTestId(/^status-filter-/)).toBeNull();
   });
+
+  it('员工入口创建的会话在状态行展示非文字图标标识，普通会话不展示', () => {
+    const rows = [
+      session({
+        session_id: 'emp-session-1',
+        title: '获取腾讯接口的所有标准板块并分析波动率',
+        employee_id: 'stock',
+      }),
+      session({
+        session_id: 'normal-session-1',
+        title: '普通会话',
+        employee_id: null,
+      }),
+    ];
+    render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+    const items = screen.getAllByTestId('session-item');
+    expect(items[0].getAttribute('data-employee')).toBe('stock');
+    expect(items[1].getAttribute('data-employee')).toBeNull();
+
+    const badges = screen.getAllByTestId('session-employee');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].getAttribute('data-employee-id')).toBe('stock');
+    // 仅图标、非文字
+    expect(badges[0].textContent).toBe('');
+    expect(badges[0].querySelector('svg')).not.toBeNull();
+  });
+
 
   it('每一档带真实条数，不是摆设', () => {
     render(

@@ -35,7 +35,7 @@
  * 是列表里的普通一行，不是 group header——后者要等量完每一行的高度才摆得出来。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
@@ -43,11 +43,9 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarDays,
-  CalendarMinus,
   ChevronDown,
   ChevronRight,
   Loader2,
-  Pin,
   Plus,
   RefreshCw,
   Search,
@@ -105,22 +103,22 @@ type RailRow =
   | { kind: 'picked-header'; count: number }
   | { kind: 'rest-header'; count: number }
   | { kind: 'workers-header' }
-  /** 置顶组的收尾：组是一块整的底，末一行要把框收上。 */
-  | { kind: 'pinned-tail' }
   | {
       kind: 'session';
       session: WorkbenchSession;
       nested?: boolean;
       /** 组内缩进层级：0 顶层，1 父卡下的 worker / 分支卡，2 分支下的 worker / 分支的分支卡。 */
       indent?: number;
-      /** 这是分支容器里的分支卡：整卡描边加底色，不是折角的 worker 行。 */
+      /** 这是分支组里的源头父卡：浮起实色底加整圈细描边，是这一组的主卡。 */
+      branchRoot?: boolean;
+      /** 这是分支组里派生的分支子卡：退到暗槽底，收左缩进，降半档字重。 */
       branchCard?: boolean;
-      /** 分支容器在这一行上的位置：头、中、尾。 */
+      /** 分支组在这一行上的位置：头、中、尾。 */
       branchPos?: GroupPos;
       workerCount?: number;
       workersExpanded?: boolean;
       groupPos?: GroupPos;
-      /** 在置顶那一块里。 */
+      /** 在置顶那一区里。只用来省掉每张卡上重复的图钉——分区标题已经说了这是置顶区。 */
       inPinned?: boolean;
     };
 
@@ -266,6 +264,10 @@ export default function SessionRail({
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   /** 认不出谁派的那堆 worker 那一区是不是展开着。默认折起来。 */
   const [orphansOpen, setOrphansOpen] = useState(false);
+  /** 「今天捡回」那一区是不是折起来了。默认摊开——捡回来的就是要一眼看见。 */
+  const [pickedCollapsed, setPickedCollapsed] = useState(false);
+  /** 「其余会话」那一区是不是折起来了。默认摊开。 */
+  const [restCollapsed, setRestCollapsed] = useState(false);
   /** 眼下这条清单已经放进来多少场。滚到底加一批（见 `PAGE_SIZE`）。 */
   const [shown, setShown] = useState(PAGE_SIZE);
 
@@ -639,9 +641,13 @@ export default function SessionRail({
       const out: SessionRow[] = [...handoffOut, ...selfOut];
       // 只有最外层这段需要画容器；里层的分支与交接继续用同一个框，不再各画一圈。
       if (depth === 0 && !inGroupContainer && hasGroupPeers) {
+        /* 组内主次：第一张非 worker 的卡是这一组的源头主卡，浮起在暗槽之上；其余派生卡退到暗槽底。
+           展开的 worker 行两样都不是，它靠缩进和折角说自己是从属的。 */
         return out.map((row, i) => ({
           ...row,
           branchPos: i === 0 ? 'head' : i === out.length - 1 ? 'tail' : 'mid',
+          branchRoot: !row.nested && i === 0,
+          branchCard: !row.nested && i > 0,
         }));
       }
       return out;
@@ -651,17 +657,19 @@ export default function SessionRail({
     if (pins.pinned.length) {
       out.push({ kind: 'pinned-header' });
       if (!pins.collapsed) out.push(...pinnedPlaced.flatMap((s) => trunkWithKids(s, true)));
-      out.push({ kind: 'pinned-tail' });
     }
-    // 今天捡回来的紧跟 Pinned 之后（主人 2026-10-19 定的位置）：不折、不收，一眼看得见。
+    /* 今天捡回来的紧跟 Pinned 之后（主人 2026-10-19 定的位置）。这一区与其余分区同一套标题样式，
+       点标题可以折起来，折起来时只留标题和条数。 */
     if (pickedRows.length) {
       out.push({ kind: 'picked-header', count: pickedRows.length });
-      out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
+      if (!pickedCollapsed) out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
     }
-    if (pins.pinned.length > 0 && pagedRest.length) {
+    /* 今天捡回与其余会话之间也要一道水平分割线加分区标题，所以只要主干还有内容就推这一行，
+       不再要求「有置顶」才推——那条旧条件会让没有置顶时两个区黏在一起分不出来。 */
+    if ((pins.pinned.length > 0 || pickedRows.length > 0) && pagedRest.length) {
       out.push({ kind: 'rest-header', count: restPlaced.length });
     }
-    out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
+    if (!restCollapsed) out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
     if (orphanRows.length) {
       out.push({ kind: 'workers-header' });
       out.push(
@@ -672,6 +680,8 @@ export default function SessionRail({
   }, [
     pins.pinned.length,
     pins.collapsed,
+    pickedCollapsed,
+    restCollapsed,
     pinnedPlaced,
     pickedRows,
     pagedRest,
@@ -1186,134 +1196,163 @@ export default function SessionRail({
             itemContent={(index, row) => {
               // 同上：位置对不上时给一个空位，NEVER 伸手去读一个不在的行。
               if (!row) return null;
+              /**
+               * 分区标题的外壳：第一个标题行贴着清单顶，其余标题行前面带一道 1px 水平分割线
+               * 与 8px 上间距，把两个区清楚地切开。四个分区共用这一个壳，字号与左边缘才对齐得上。
+               */
+              const headerShell = (inner: ReactNode, key: string) => (
+                <div
+                  key={key}
+                  className={index > 0 ? 'mt-2 border-t border-border-color px-1 pt-1' : 'px-1 pt-0.5'}
+                >
+                  {inner}
+                </div>
+              );
               if (row.kind === 'pinned-header') {
-                /* 置顶整组用下沉暗托盘底加一圈淡描边，这是它的上半框。标题正常字重、正文色，
-                   右端写「Always on top」——不用绿，不用大写。 */
-                return (
-                  <div className="px-1 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => pins.setCollapsed(!pins.collapsed)}
-                      aria-expanded={!pins.collapsed}
-                      data-testid="pinned-header"
-                      className={`flex w-full items-center gap-1.5 border border-[var(--grp-border)] bg-[var(--grp-bg)] px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-active ${
-                        pins.collapsed ? 'rounded-[8px]' : 'rounded-t-[8px] border-b-0'
-                      }`}
-                    >
-                      {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                      <Pin size={11} fill="currentColor" className="text-text-primary" />
-                      <span>{t('workbench.rail.pinnedHeader')}</span>
-                      <span className="font-mono text-[11px] text-text-muted">{pinnedRows.length}</span>
-                      <span className="flex-1" />
-                      <span className="text-[11px] text-text-muted">{t('workbench.rail.alwaysOnTop')}</span>
-                    </button>
-                  </div>
-                );
-              }
-              if (row.kind === 'pinned-tail') {
-                return pins.collapsed ? (
-                  <div className="h-3.5" data-testid="pinned-tail-gap" />
-                ) : (
-                  <div className="px-1 pb-3.5" data-testid="pinned-tail-gap">
-                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-[var(--grp-border)] bg-[var(--grp-bg)]" />
-                  </div>
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => pins.setCollapsed(!pins.collapsed)}
+                    aria-expanded={!pins.collapsed}
+                    data-testid="pinned-header"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
+                  >
+                    {pins.collapsed ? (
+                      <ChevronRight size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronDown size={12} className="shrink-0" />
+                    )}
+                    <span>{t('workbench.rail.pinnedHeader')}</span>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {pinnedRows.length}
+                    </span>
+                    <span className="ml-auto text-[11px] font-normal normal-case tracking-normal text-text-muted">
+                      {t('workbench.rail.alwaysOnTop')}
+                    </span>
+                  </button>,
+                  'pinned-header'
                 );
               }
               if (row.kind === 'picked-header') {
-                return (
-                  <div
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => setPickedCollapsed((v) => !v)}
+                    aria-expanded={!pickedCollapsed}
                     data-testid="picked-header"
-                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
+                    className="flex w-full flex-col items-start gap-0.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    <CalendarMinus size={11} className="shrink-0" />
-                    <span className="font-medium text-text-secondary">
-                      {t('workbench.rail.pickedHeader')}
+                    <span className="flex w-full items-center gap-1.5">
+                      {pickedCollapsed ? (
+                        <ChevronRight size={12} className="shrink-0" />
+                      ) : (
+                        <ChevronDown size={12} className="shrink-0" />
+                      )}
+                      <span>{t('workbench.rail.pickedHeader')}</span>
+                      <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                        {row.count}
+                      </span>
                     </span>
-                    <span className="font-mono opacity-70">{row.count}</span>
-                    <span className="flex-1" />
-                    <span>{t('workbench.rail.pickedHeaderHint')}</span>
-                  </div>
+                    <span className="pl-[18px] text-[11px] font-normal normal-case leading-[1.35] tracking-normal text-text-muted">
+                      {t('workbench.rail.pickedHeaderHint')}
+                    </span>
+                  </button>,
+                  'picked-header'
                 );
               }
               if (row.kind === 'rest-header') {
-                return (
-                  <div
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => setRestCollapsed((v) => !v)}
+                    aria-expanded={!restCollapsed}
                     data-testid="rest-header"
-                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    <span className="font-medium text-text-secondary">
-                      {t('workbench.rail.everythingElse')}
+                    {restCollapsed ? (
+                      <ChevronRight size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronDown size={12} className="shrink-0" />
+                    )}
+                    <span>{t('workbench.rail.everythingElse')}</span>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {row.count}
                     </span>
-                    <span className="font-mono opacity-70">{row.count}</span>
-                  </div>
+                  </button>,
+                  'rest-header'
                 );
               }
               if (row.kind === 'workers-header') {
-                return (
+                return headerShell(
                   <button
                     type="button"
                     onClick={toggleOrphans}
                     aria-expanded={orphansVisible}
                     data-testid="workers-header"
-                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    {orphansVisible ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {orphansVisible ? (
+                      <ChevronDown size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronRight size={12} className="shrink-0" />
+                    )}
                     <span>{t('workbench.rail.orphanWorkersHeader')}</span>
-                    <span className="font-mono opacity-70">{orphanRows.length}</span>
-                  </button>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {orphanRows.length}
+                    </span>
+                  </button>,
+                  'workers-header'
                 );
               }
               const session = row.session;
               const pos = row.groupPos;
               const branchPos = row.branchPos;
-              /* 分支卡与主会话同宽（indent = 0）；只有挂在下面的 worker 才缩进。
-                 展开 worker 时外框 box 四边要上下对齐，缩进放在 box 内层。 */
+              /* 分支组内的横向内边距由容器自己给（`branchPad`），组里的行不再各加一份，
+                 否则卡片会被往里挤两次。组外的 worker 才需要按层级缩进。 */
               const indent = row.indent ?? (row.nested ? 1 : 0);
-              const outerIndentCls =
-                !pos && indent > 0
+              const outerIndentCls = branchPos
+                ? indent > 0
                   ? indent === 1
-                    ? 'pl-6 pr-1'
-                    : 'pl-10 pr-1'
-                  : row.inPinned
-                    ? 'px-[3px]'
-                    : 'px-1';
-              const innerIndentCls =
-                pos && indent > 0 ? (indent === 1 ? 'pl-4' : 'pl-8') : '';
-              /* worker 框的三段：1px、组容器淡描边、8px 圆角。 */
-              const box =
-                pos === 'head'
-                  ? 'rounded-t-[8px] border border-b-0 border-[var(--grp-border)]'
-                  : pos === 'mid'
-                    ? 'border-x border-[var(--grp-border)]'
-                    : pos === 'tail'
-                      ? 'rounded-b-[8px] border border-t-0 border-[var(--grp-border)]'
-                      : '';
-              /* 分支容器：整段用下沉暗托盘底 --grp-bg 和一圈 10px 圆角淡描边 --grp-border，跨行拆成头、中、尾三段画。
-                 flow-root 封住内部卡片（如折叠 worker 的 mb-3）的外边距，防止穿透底边造成容器背景断裂。 */
+                    ? 'pl-3'
+                    : 'pl-6'
+                  : ''
+                : indent > 0
+                  ? indent === 1
+                    ? 'pl-4 pr-1'
+                    : 'pl-7 pr-1'
+                  : 'px-1';
+              const innerIndentCls = '';
+              /* 展开的 worker 不再另套一圈框：它靠缩进、行首折角与次级字色说自己从属，
+                 再画一个类似分支组的描边盒子就成了第二个框。 */
+              const box = '';
+              /* 分支组容器：整段用下沉暗槽底 --grp-bg 与一圈 10px 圆角淡描边 --grp-border，跨行拆成头、中、尾三段画。
+                 组里所有卡都落在这个底上，卡自己不再画背景（见 SessionItem 的 --surface-fill 继承）。
+                 flow-root 封住内部卡片（如折叠 worker 的外边距）的外边距，防止穿透底边造成容器背景断裂。 */
               const branchBox =
                 branchPos === 'head'
-                  ? 'flow-root rounded-t-[10px] border-x border-t border-[var(--grp-border)] bg-[var(--grp-bg)]'
+                  ? 'flow-root rounded-t-[10px] border-x border-t border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                   : branchPos === 'mid'
-                    ? 'flow-root border-x border-[var(--grp-border)] bg-[var(--grp-bg)]'
+                    ? 'flow-root border-x border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                     : branchPos === 'tail'
-                      ? 'flow-root rounded-b-[10px] border-x border-b border-[var(--grp-border)] bg-[var(--grp-bg)]'
+                      ? 'flow-root rounded-b-[10px] border-x border-b border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                       : '';
-              /* 容器内边距：左右各 8px，头尾各 6px；组内卡片之间（非 worker 框内部）留 5px 间距。 */
+              /* 容器内边距：左右各 6px，头尾各 6px；组内卡片之间留 5px 间距。 */
               const branchRowGap =
                 (branchPos === 'head' || branchPos === 'mid') && pos !== 'head' && pos !== 'mid'
                   ? 'pb-[5px]'
                   : '';
               const branchPad =
                 branchPos === 'head'
-                  ? `px-2 pt-1.5 ${branchRowGap}`.trim()
+                  ? `px-1.5 pt-1.5 ${branchRowGap}`.trim()
                   : branchPos === 'tail'
-                    ? 'px-2 pb-1.5'
+                    ? 'px-1.5 pb-1.5'
                     : branchPos === 'mid'
-                      ? `px-2 ${branchRowGap}`.trim()
+                      ? `px-1.5 ${branchRowGap}`.trim()
                       : '';
               /* 组与组（或组与普通独立卡片）之间拉开到 14px（接近组内 5px 间距的 3 倍）：
                  - 组尾（branchPos === 'tail' 或顶层 worker 组 pos === 'tail'）统一留 h-3.5（14px）；
-                 - 组头（branchPos === 'head' 或顶层 worker 组 pos === 'head'）若前一行是只带 2px 缝的普通独立卡片，补 pt-3（12px），合起来同样是 14px。 */
+                 - 组头（branchPos === 'head' 或顶层 worker 组 pos === 'head'）若前一行是只带 2px 缝的普通独立卡片，补 pt-3（12px），合起来同样是 14px。
+                 Pinned 区里的组与其余区同一个待遇，不再因为所在分区不同而换一套间距。 */
               const isGroupHead = branchPos === 'head' || (!branchPos && pos === 'head');
               const isGroupTail = branchPos === 'tail' || (!branchPos && pos === 'tail');
               const prevRow = index > 0 ? rows[index - 1] : null;
@@ -1321,7 +1360,7 @@ export default function SessionRail({
                 prevRow?.kind === 'session' &&
                 prevRow.branchPos !== 'tail' &&
                 !(!prevRow.branchPos && prevRow.groupPos === 'tail');
-              const groupTopGap = !row.inPinned && isGroupHead && prevIsStandaloneSession ? 'pt-3' : '';
+              const groupTopGap = isGroupHead && prevIsStandaloneSession ? 'pt-3' : '';
               const item = (
                 <div className={`${branchPos ? 'mx-1' : ''} ${groupTopGap}`.trim()} data-branch-pos={branchPos}>
                   <div className={branchBox}>
@@ -1346,6 +1385,7 @@ export default function SessionRail({
                               inTmux={inTmuxOf(session)}
                               card={decisionCardOf?.(session.session_id) ?? null}
                               nested={row.nested}
+                              branchRoot={row.branchRoot}
                               branchCard={row.branchCard}
                               branchOf={
                                 session.relation?.kind === 'branch' && session.parent_session_id
@@ -1372,30 +1412,15 @@ export default function SessionRail({
                     </div>
                   </div>
                   {/* 行与行之间的间隔：同一组之内不留外缝；组尾留 14px（h-3.5）与下一组或下一张卡彻底断开；普通独立卡片之间留 2px（h-0.5）。 */}
-                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : isGroupTail && !row.inPinned ? (
+                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : isGroupTail ? (
                     <div className="h-3.5" data-testid="group-gap" />
                   ) : (
                     <div className="h-0.5" />
                   )}
                 </div>
               );
-              /* 置顶那一块的中段：两侧淡描边，底色与标题同一块下沉暗托盘 --grp-bg；
-                 组内续接行（mid / tail）不加 pt-0.5，保持分支框或 worker 框的竖边连续不断裂。 */
-              const isGroupContinuation =
-                pos === 'mid' || pos === 'tail' || branchPos === 'mid' || branchPos === 'tail';
-              return row.inPinned ? (
-                <div className="px-1">
-                  <div
-                    className={`border-x border-[var(--grp-border)] bg-[var(--grp-bg)] ${
-                      isGroupContinuation ? '' : 'pt-0.5'
-                    }`.trim()}
-                  >
-                    {item}
-                  </div>
-                </div>
-              ) : (
-                item
-              );
+              /* Pinned 区不再有专属背景层与外框：区里的卡片与其余分区同一套外层边距，直接落左栏基准面上。 */
+              return item;
             }}
           />
         )}

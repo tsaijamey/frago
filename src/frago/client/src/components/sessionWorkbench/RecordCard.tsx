@@ -206,6 +206,16 @@ export function formatBytes(bytes: number | null): string {
   return i18n.t('workbench.record.bytes.mb', { n: (bytes / 1024 / 1024).toFixed(1) });
 }
 
+/** 毫秒时间戳 → 本地日期与时刻：2026-10-31 14:50:18。naive local time，不拼 Z 后缀。 */
+export function formatDateTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 毫秒时间戳 → 本地时刻。naive local time，不拼 Z 后缀。 */
 export function formatClock(ts: number): string {
   if (!ts) return '';
@@ -329,9 +339,9 @@ interface ShellProps {
 }
 
 function Timestamp({ ts }: { ts: number }) {
-  const clock = formatClock(ts);
-  if (!clock) return null;
-  return <span className="shrink-0 font-mono text-[11px] text-text-muted">{clock}</span>;
+  const dt = formatDateTime(ts);
+  if (!dt) return null;
+  return <span className="shrink-0 font-mono text-[11px] text-text-muted">{dt}</span>;
 }
 
 function AgentPath({ path }: { path: string[] }) {
@@ -383,6 +393,8 @@ function CardHead({
   open?: boolean;
   onToggle?: () => void;
 }) {
+  const { t } = useTranslation();
+  const context = num(record.payload, 'context_tokens');
   const name = (
     <span className={`inline-flex shrink-0 items-center gap-1 ${labelTone}`}>
       {icon}
@@ -410,8 +422,17 @@ function CardHead({
       )}
       {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
       <Timestamp ts={record.ts} />
-      {/* 撑开的空档摆在时刻**之后**：左边那几样紧挨着连成一句，右边缘只接结局。 */}
-      <span className="flex-1" />
+      {/* 分割线显示在时间的右侧，撑开空档并连起右侧上下文读数与结局 */}
+      <span aria-hidden className="h-px flex-1 bg-border-color" />
+      {context !== null ? (
+        <span
+          className="shrink-0 font-mono text-[11px] text-text-dim"
+          data-testid="card-head-context"
+          title={`Context: ${context.toLocaleString()}`}
+        >
+          {t('workbench.record.usage.context')} {formatTokens(context)}
+        </span>
+      ) : null}
       {trailing}
       <AgentPath path={record.agent_path} />
     </header>
@@ -620,7 +641,7 @@ function SystemShell({
         <span className="shrink-0">{label}</span>
         {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         <AgentPath path={record.agent_path} />
       </div>
       {hasBody && open ? <div className="mt-1.5 min-w-0">{children}</div> : null}
@@ -1022,7 +1043,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </button>
           {target ? <span className="min-w-0 truncate font-mono">{target}</span> : null}
           <Timestamp ts={record.ts} />
-          <span className="flex-1" />
+          <span aria-hidden className="h-px flex-1 bg-border-color" />
           <AgentPath path={record.agent_path} />
         </header>
         {open ? (
@@ -1099,7 +1120,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         {segments.length > 1 ? (
           <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
             {t('workbench.record.segments', { n: segments.length })}
@@ -1666,7 +1687,7 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
           {t(KIND_LABEL_KEY.error)}
         </span>
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         <AgentPath path={record.agent_path} />
       </header>
       <dl className="space-y-1 text-[12px]">
