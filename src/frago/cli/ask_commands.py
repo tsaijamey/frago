@@ -33,9 +33,9 @@ COMPONENT_TYPES = (
 )
 
 COMPONENT_SUMMARY: dict[str, str] = {
-    "single-choice": "单选交互卡：用户从多个选项里点一个即作答（可标推荐项与不可撤回项）",
-    "multi-choice": "多选交互卡：用户勾选一个或多个选项后确认作答",
-    "text-answer": "文本输入卡：用户打字作答（可附预填草稿 --draft 或可点建议 --suggestion）",
+    "single-choice": "单选交互卡：用户从多个选项里选一项（可附补充说明）后点作答键发送（可标推荐项与不可撤回项）",
+    "multi-choice": "多选交互卡：用户勾选一个或多个选项（可附补充说明）后点作答键发送",
+    "text-answer": "文本输入卡：用户打字后点作答键发送（可附预填草稿 --draft 或可点建议 --suggestion）",
     "choice-and-text": "选加写组合卡：用户可点选选项、打字补充，或两者同时提交（可配 --multi 多选）",
 }
 

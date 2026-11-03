@@ -6,14 +6,14 @@
  * 记录流里以「You said」出现。只有走人的输入口才算人的授权——07-30 查明 hook 注进去的
  * 不算——所以卡片 NEVER 自己开一条通道去调发送接口。
  *
- * 按人怎么作答分 4 型：
+ * 按人怎么作答分 4 型，统一为「选 / 写 + 点 Answer 按钮才发送」（不再点选项即发）：
  *
  * | type | 怎么点 |
  * |---|---|
- * | single-choice | 点即答；收不回的先出确认条 |
- * | multi-choice | 勾选，再按「Answer with N picked」 |
+ * | single-choice | 选一项 + 可选输入，再按「Answer」；收不回的先出确认条 |
+ * | multi-choice | 勾选 + 可选输入，再按「Answer with N picked」 |
  * | text-answer | 打字作答；建议答案点了只填不发 |
- * | choice-and-text | 选（`multi: true` 时可多选）、写，或都有 |
+ * | choice-and-text | 选（`multi: true` 时可多选）、写，或都有，再按「Answer」 |
  *
  * 视觉守全局规矩：卡上没有实心绿（这一屏的实心绿只给 Send）；收不回的一律告警橙；选中态
  * 整卡换 `--sel-bg` 底加一圈 `--sel-border`，不用单边条；字号只用 11 / 12 / 13。
@@ -136,40 +136,29 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   const irr = opts.some((o) => !o.reversible);
 
   const [picks, setPicks] = useState<number[]>([]);
-  const [confirm, setConfirm] = useState<number | 'multi' | null>(null);
+  const [confirm, setConfirm] = useState(false);
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(block.draft ?? '');
 
   const doneKeys = done && answered.kind !== 'own-words' ? pickedFromAnswer(answered.text, block) : [];
-  const isOn = (i: number) => (done ? doneKeys.includes(i) : T !== 'single-choice' && picks.includes(i));
+  const isOn = (i: number) => (done ? doneKeys.includes(i) : picks.includes(i));
 
   /** 此刻写了什么。有草稿时：照原文、或改了但一字没动，都算没写（text-answer 的草稿本身就是答案）。 */
   const writtenNow = (): string => {
-    if (T === 'multi-choice' || T === 'single-choice') return '';
     if (block.draft == null) return input;
     if (T === 'text-answer') return editing ? draftText : block.draft;
     return editing && draftText.trim() !== block.draft.trim() ? draftText : '';
   };
 
   const send = (text: string) => {
-    setConfirm(null);
+    setConfirm(false);
     host?.answer(recordId, text);
-  };
-
-  const pickOne = (i: number, sure = false) => {
-    if (!live) return;
-    const o = opts[i];
-    if (!o.reversible && !sure) {
-      setConfirm(i);
-      return;
-    }
-    send(composeAnswer(block, [o], ''));
   };
 
   const toggle = (i: number) => {
     if (!live) return;
-    setConfirm(null);
+    setConfirm(false);
     setPicks((cur) =>
       many ? (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i].sort((a, b) => a - b)) : cur.includes(i) ? [] : [i]
     );
@@ -181,7 +170,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   const submit = (sure = false) => {
     if (!live || !canSubmit) return;
     if (picked.some((o) => !o.reversible) && !sure) {
-      setConfirm('multi');
+      setConfirm(true);
       return;
     }
     send(composeAnswer(block, picked, writtenNow()));
@@ -206,7 +195,13 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
 
   const allPicked = opts.length > 0 && opts.every((_, i) => picks.includes(i));
   const pending = (i: number) =>
-    !done && (confirm === i || (confirm === 'multi' && picks.includes(i) && !opts[i].reversible));
+    !done && confirm && picks.includes(i) && !opts[i].reversible;
+
+  const answerBtnClass = `inline-flex h-[32px] shrink-0 items-center justify-center rounded-[8px] border border-accent-primary px-4 text-[13px] font-medium transition-all ${
+    canSubmit
+      ? 'bg-accent-primary text-[var(--text-on-accent)] shadow-sm hover:opacity-90 cursor-pointer'
+      : 'bg-transparent text-accent-primary opacity-60 cursor-not-allowed'
+  }`;
 
   const head = t(`workbench.decision.head.${T === 'choice-and-text' && block.multi ? 'choice-and-text-multi' : T}`);
 
@@ -292,7 +287,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
             data-testid="decision-option"
             data-on={isOn(i) ? 'true' : undefined}
             disabled={!live}
-            onClick={() => (T === 'single-choice' ? pickOne(i) : toggle(i))}
+            onClick={() => toggle(i)}
             className={`${OPTION} ${live ? '' : 'cursor-default'} ${optionTone(i)}`}
           >
             {keyBox(o, i)}
@@ -304,11 +299,10 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     </div>
   ) : null;
 
-  const takesText = T === 'text-answer' || T === 'choice-and-text';
   const doneWritten = done && answered.kind !== 'own-words' ? writtenFromAnswer(answered.text, block) : '';
 
   let textArea: ReactNode = null;
-  if (takesText && block.draft != null) {
+  if (block.draft != null) {
     if (done) {
       textArea = (
         <Field label={t('workbench.decision.draft')}>
@@ -361,7 +355,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
         </div>
       );
     }
-  } else if (takesText && !done) {
+  } else if (!done) {
     textArea = (
       <div className="flex items-center gap-1.5">
         <input
@@ -371,10 +365,10 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onEnter}
           placeholder={t(T === 'text-answer' ? 'workbench.decision.typePlaceholder' : 'workbench.decision.writeOwn')}
-          className="h-7 min-w-0 flex-1 rounded-[7px] border border-border-color bg-bg-primary px-[9px] text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-border-strong disabled:cursor-default"
+          className="h-8 min-w-0 flex-1 rounded-[8px] border border-border-color bg-bg-primary px-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-border-strong disabled:cursor-default"
         />
         {T === 'text-answer' ? (
-          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={BTN}>
+          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={answerBtnClass}>
             {t('workbench.decision.answer')}
           </button>
         ) : null}
@@ -409,30 +403,30 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     ) : null;
 
   let actions: ReactNode = null;
-  if (!done && confirm !== 'multi') {
-    if (T === 'multi-choice' || T === 'choice-and-text') {
+  if (!done) {
+    if (T !== 'text-answer') {
       const label =
         T === 'multi-choice'
           ? picked.length
             ? t('workbench.decision.answerPicked', { count: picked.length })
-            : t('workbench.decision.pickAtLeastOne')
+            : canSubmit
+              ? t('workbench.decision.answer')
+              : t('workbench.decision.pickAtLeastOne')
           : t('workbench.decision.answer');
       actions = (
         <div className="flex items-center justify-end gap-1.5">
-          {T === 'choice-and-text' ? (
-            <span className="mr-auto text-[11px] text-text-muted">
-              {t(block.draft != null ? 'workbench.decision.draftHint' : 'workbench.decision.hint')}
-            </span>
-          ) : null}
-          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={BTN}>
+          <span className="mr-auto text-[11px] text-text-muted">
+            {t(block.draft != null ? 'workbench.decision.draftHint' : 'workbench.decision.hint')}
+          </span>
+          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={answerBtnClass}>
             {label}
           </button>
         </div>
       );
-    } else if (T === 'text-answer' && block.draft != null) {
+    } else if (block.draft != null) {
       actions = (
         <div className="flex justify-end">
-          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={BTN}>
+          <button type="button" data-testid="decision-answer" disabled={!live || !canSubmit} onClick={() => submit()} className={answerBtnClass}>
             {t('workbench.decision.answer')}
           </button>
         </div>
@@ -441,7 +435,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   }
 
   const confirmBar =
-    confirm !== null && !done ? (
+    confirm && !done ? (
       <div
         data-testid="decision-confirm"
         className="flex flex-wrap items-center gap-2 rounded-[8px] border border-accent-warning bg-accent-warning-10 px-[9px] py-[7px] text-[12px] text-accent-warning"
@@ -449,20 +443,22 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
         <AlertTriangle size={14} className="shrink-0" />
         <span className="min-w-[140px] flex-1 font-medium">
           {t('workbench.decision.confirm')}
-          {(confirm === 'multi' ? picked.filter((o) => !o.reversible) : [opts[confirm]]).map((o, i) => (
-            <span key={i} className="block break-words text-[11px] font-normal text-text-secondary">
-              {o.key} · {o.label} — {o.effect}
-            </span>
-          ))}
+          {picked
+            .filter((o) => !o.reversible)
+            .map((o, i) => (
+              <span key={i} className="block break-words text-[11px] font-normal text-text-secondary">
+                {o.key} · {o.label} — {o.effect}
+              </span>
+            ))}
         </span>
         <span className="ml-auto flex gap-1.5">
-          <button type="button" onClick={() => setConfirm(null)} className={`${BTN} border-border-strong bg-bg-primary text-text-primary`}>
+          <button type="button" onClick={() => setConfirm(false)} className={`${BTN} border-border-strong bg-bg-primary text-text-primary`}>
             {t('workbench.decision.cancel')}
           </button>
           <button
             type="button"
             data-testid="decision-confirm-yes"
-            onClick={() => (confirm === 'multi' ? submit(true) : pickOne(confirm, true))}
+            onClick={() => submit(true)}
             className={`${BTN} border-accent-warning bg-bg-primary font-medium text-accent-warning hover:bg-accent-warning-10 hover:text-accent-warning`}
           >
             {t('workbench.decision.yesDoIt')}

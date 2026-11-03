@@ -18,16 +18,16 @@
 
 | type | 人怎么作答 | 卡片 |
 |---|---|---|
-| `single-choice` | 从几个选项里点一个 | 选项按钮，点即作答 |
-| `multi-choice` | 勾一个或几个，再确认 | 勾选框 + 全选 + 确认键 |
-| `text-answer` | 打一段字 | 输入框 + 作答键；可带可点的建议答案 |
-| `choice-and-text` | 选并写一段字；可以只选、只写、或都有 | 选项 + 「Or write your own」输入框 |
+| `single-choice` | 从几个选项里选一个（可附补充说明），再点作答键发送 | 选项按钮 + 可选输入框 + 固定 Answer 主色边框按钮 |
+| `multi-choice` | 勾一个或几个（可附补充说明），再点作答键发送 | 勾选框 + 全选 + 可选输入框 + 固定 Answer 主色边框按钮 |
+| `text-answer` | 打一段字，再点作答键发送 | 输入框 + 固定 Answer 主色边框按钮；可带可点的建议答案 |
+| `choice-and-text` | 选并写一段字；可以只选、只写、或都有，再点作答键发送 | 选项 + 可选输入框 + 固定 Answer 主色边框按钮 |
 
 13 类旧名（`approve-irreversible`、`relay-approval` 之类）不再认，写了页面就照原文显示。原来那些差别落成下面几个标记：
 
 | 标记 | 写在哪 | 卡片怎么变 |
 |---|---|---|
-| `reversible: false` | 单个选项上（缺省视为可撤回） | 标「Can't be undone」、告警橙；点下去先二次确认；整张卡告警橙框 |
+| `reversible: false` | 单个选项上（缺省视为可撤回） | 标「Can't be undone」、告警橙；选中后点 Answer 按钮先出黄色二次确认条；整张卡告警橙框 |
 | `recommended: true` | 单个选项上，**至多一个** | 标「Recommended」；推荐理由写进 `why` |
 | `from: teammate` | 区块顶层 | 顶部标「From your teammate」，并显示 `request`（队友原话）与 `changes`（会改本机什么） |
 | `draft:` | 区块顶层，只用在 `text-answer` / `choice-and-text` | 先以只读文字显示，人可点「Edit」改 |
