@@ -56,7 +56,8 @@
       "schedules": "定时任务",
       "data": "数据",
       "files": "文件",
-      "settings": "设置"
+      "settings": "设置",
+      "employees": "员工"
     }
   },
   "files": {
@@ -1579,6 +1580,7 @@
       "orphanWorkersHeader": "不知道谁派的 worker",
       "branched": "branched",
       "branchOfHint": "打开这条分支出自的会话",
+      "employeeSession": "员工会话 · {{id}}",
       "pageProgress": "已显示 {{shown}} / {{total}}，继续往下滚",
       "workerCount": "派出去 {{n}} 个 worker",
       "expandWorkers": "展开这场派出去的 {{n}} 个 worker",
@@ -2551,5 +2553,94 @@
     "unknownInstall": "这一家没提供探测方式，判不出装没装",
     "noKernel": "frago 的内核还没装好（~/.frago/bin 下找不到），跑一次 frago init 补上",
     "noConnection": "还没给 CoreAgent 配连接，去设置页的连接里给它挑一个，它才调得动模型"
+  },
+  "employees": {
+    "page": {
+      "title": "员工",
+      "count": "{{n}} 个岗位",
+      "new": "新建员工",
+      "empty": "还没有员工",
+      "emptyDesc": "员工是这台机器上的岗位编制：他管着哪几块数据目录、用哪家内核起会话、新会话自动带着什么语境。",
+      "loadFailed": "员工清单取不到：{{reason}}"
+    },
+    "card": {
+      "startWith": "与 {{name}} 开始一场新对话",
+      "edit": "员工详情"
+    },
+    "launch": {
+      "title": "与 {{name}} 开始新对话",
+      "start": "开始对话",
+      "cancelWait": "不等了",
+      "contextTitle": "自动带入业务语境",
+      "contextSummary": "职责 {{folders}} 个数据目录 · {{entries}} 项产出 · {{domains}} 个知识域 · {{recipes}} 个配方",
+      "contextPreview": "看原文",
+      "contextHide": "收起",
+      "contextLoading": "正在取这一场的语境…",
+      "contextFailed": "语境取不到，起会话时仍会由服务端带上",
+      "kernelLabel": "交给哪个内核跑",
+      "kernelProbing": "正在看本机装了哪几家…",
+      "kernelNone": "本机一家都挑不了，先装一个 CLI agent。",
+      "kernelSwitched": "这个岗位配的是 {{wanted}}，本机现在用不了（{{reason}}），这一场改用 {{using}}。",
+      "cwdLabel": "在哪个目录里干活",
+      "cwdPlaceholder": "留空就到这个员工的领地里去",
+      "cwdUsesEmployee": "留空，用这个岗位的目录 {{dir}}",
+      "cwdNeeded": "这个岗位没配目录，这一栏必须填。",
+      "firstMessage": "想让他做什么",
+      "firstMessagePlaceholder": "问 {{name}}…",
+      "waitingId": "{{name}} 正在报出这一场的编号，等一下…",
+      "waitCancelled": "不等了。那场会话本身已经起来了，它自己会出现在会话清单里。",
+      "createFailed": "这一场没起来：{{reason}}",
+      "createFailedPlain": "这一场没起来。"
+    },
+    "detail": {
+      "title": "{{name}}",
+      "newTitle": "新建员工",
+      "save": "保存",
+      "create": "建立岗位",
+      "saved": "已保存。",
+      "created": "岗位已建立。接着把它的领地与配方配齐。",
+      "saveFailed": "没存下：{{reason}}",
+      "idLabel": "编号",
+      "idHint": "英文小写字母、数字、下划线或短横，建立后不能改。",
+      "idLocked": "编号是这一份编制的文件名，也是起会话时对得上的那个 key，不能改。",
+      "titleLabel": "岗位名称",
+      "kernelLabel": "默认内核",
+      "descLabel": "一句话职责",
+      "descPlaceholder": "专门负责……",
+      "descHint": "卡片上那一行摘要取的就是这一栏的第一句，写清这一句卡片才好认。",
+      "scopeLabel": "工作范畴",
+      "scopePlaceholder": "这个岗位负责哪几类工作、按什么方法推进、产物往哪里归档……",
+      "scopeHint": "这一段会原文带进这个员工的每一场新会话。写清方法，人不必每次重述。",
+      "cwdLabel": "默认工作目录",
+      "cwdHint": "起会话时人没另填目录就用这一栏。留空则每次都要人自己填。",
+      "slotsLabel": "纳管的数据目录",
+      "slotsHint": "一行一个，必须落在 ~/.frago/data 下。新会话会自动扫这几块，把目录摘要带进去。",
+      "domainsLabel": "知识域",
+      "recipesLabel": "配方",
+      "territoryTitle": "领地底账",
+      "territoryLoading": "正在清点…",
+      "territoryFailed": "取不到",
+      "territoryEmpty": "还没纳管任何数据目录。",
+      "slotCount": "{{n}} 项",
+      "slotMissing": "目录不存在",
+      "registerTitle": "在领地里登记一个归档目录",
+      "registerName": "目录名",
+      "registerSlot": "放到哪个槽位",
+      "registerSummary": "这一份是什么（可留空）",
+      "register": "登记",
+      "registerHint": "目录名写成 YYYYMMDD-语义-slug 的样子，与服务端归档的写法一致。",
+      "dataRegistered": "已登记 {{name}}。",
+      "dataFailed": "没登记下：{{reason}}"
+    },
+    "errors": {
+      "listFailed": "取员工清单失败（HTTP {{status}}）",
+      "listFailedPlain": "取员工清单失败",
+      "detailFailed": "取员工详情失败（HTTP {{status}}）",
+      "detailFailedPlain": "取员工详情失败",
+      "saveFailed": "存员工失败（HTTP {{status}}）",
+      "saveFailedPlain": "存员工失败",
+      "dataFailed": "登记目录失败（HTTP {{status}}）",
+      "dataFailedPlain": "登记目录失败"
+    }
   }
 }

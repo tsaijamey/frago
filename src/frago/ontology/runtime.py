@@ -624,6 +624,33 @@ STANDARD_CLI_COMMANDS: dict[str, CliCommandSpec] = {
         initiates_process_class=None,
         description="只读查阅内置行为准则与操作手册正文。",
     ),
+    "frago.employee.invoke": CliCommandSpec(
+        command_path="frago.employee.invoke",
+        mutates_state=True,
+        underlying_action_id="invoke_domain_employee",
+        initiator_domain="HumanPrincipal | PrimarySchedulerRole | DomainEmployeeRole | RecipeModule",
+        target_range="EmployeePostResource | DomainEmployeeRole",
+        initiates_process_class="AgentSessionProcess",
+        description="按岗位工牌调用领域固定员工回答或执行领地内任务（系统调用契约 invoke_domain_employee）。",
+    ),
+    "frago.employee.govern": CliCommandSpec(
+        command_path="frago.employee.govern",
+        mutates_state=True,
+        underlying_action_id="govern_employee_domain_assets",
+        initiator_domain="DomainEmployeeRole",
+        target_range="KnowledgeDomain | RecipeModule | DataSlot | ScheduleRuleSpec",
+        initiates_process_class="RecipeExecutionProcess",
+        description="由领域固定员工维护所属领地内的知识域、配方、数据槽位与定时任务（系统调用契约 govern_employee_domain_assets）。",
+    ),
+    "frago.employee.discover": CliCommandSpec(
+        command_path="frago.employee.discover",
+        mutates_state=False,
+        underlying_action_id=None,
+        initiator_domain="HumanPrincipal | PrimarySchedulerRole | DomainEmployeeRole | RecipeModule | AgentKernel",
+        target_range="EmployeePostResource",
+        initiates_process_class=None,
+        description="通过图谱反查哪位固定员工负责指定知识域、配方或数据槽位，只读不改变状态。",
+    ),
 }
 
 
@@ -921,4 +948,407 @@ class TeamPolicyRuntime:
         if intent_tier == "change":
             return change_policy if change_policy in {"do", "ask", "refuse"} else "ask"
         return "refuse"
+
+
+# ============================================================================
+# Mainline 4: Domain Employee Ontology Runtime (`invoke` & `govern` contracts)
+# ============================================================================
+
+
+def _find_active_employee_role_in_graph(
+    graph: OntologyGraph,
+    member_post_id: str,
+) -> Role | None:
+    """Return the active `DomainEmployeeRole` bound to `post:<member_post_id>` if linked to an `AgentKernel`."""
+    post_uid = f"post:{member_post_id}"
+    if graph.get_entity(post_uid) is None:
+        return None
+    for entity in graph.entities():
+        if (
+            isinstance(entity, Role)
+            and entity.dependent_type == "DomainEmployeeRole"
+            and entity.context_id == post_uid
+        ):
+            kernels = graph.query_sources(entity.ontological_id(), "plays_role")
+            if any(isinstance(k, Actor) for k in kernels):
+                return entity
+    return None
+
+
+def _is_asset_in_employee_territory(
+    graph: OntologyGraph,
+    member_post_id: str,
+    asset_id: str,
+) -> bool:
+    """Return True if `asset_id` is governed by `post:<member_post_id>` or its `DomainEmployeeRole`."""
+    post_uid = f"post:{member_post_id}"
+    governed_ids = {
+        e.ontological_id() for e in graph.query_targets(post_uid, "depends_on_module")
+    }
+    role = _find_active_employee_role_in_graph(graph, member_post_id)
+    if role is not None:
+        governed_ids.update(
+            e.ontological_id()
+            for e in graph.query_targets(role.ontological_id(), "governed_by")
+        )
+    if asset_id in governed_ids:
+        return True
+    # Also accept bare name if it resolves to domain:<id>, recipe:<id>, slot:<id>, or schedule:*:<id>@1.0.0
+    for candidate in (
+        f"domain:{asset_id}",
+        f"recipe:{asset_id}",
+        f"slot:{asset_id}",
+        f"{asset_id}@1.0.0",
+        f"schedule:{asset_id}@1.0.0",
+        f"agent_prompt:{asset_id}@1.0.0",
+        f"command:{asset_id}@1.0.0",
+    ):
+        if candidate in governed_ids:
+            return True
+    return False
+
+
+def _is_valid_human_receipt(entity: object) -> bool:
+    return (
+        isinstance(entity, InformationEntity)
+        and entity.artifact_kind == "HumanDecisionReceipt"
+    )
+
+
+def build_invoke_domain_employee_contract(
+    graph: OntologyGraph,
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `invoke_domain_employee` kinetic contract with Ring 3 territory & role checks."""
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        "invoke_domain_employee",
+        preconditions=(
+            ConditionCheck(
+                description="Target EmployeePostResource MUST exist and bind an active AgentKernel via DomainEmployeeRole.",
+                predicate=lambda args: (
+                    _find_active_employee_role_in_graph(
+                        graph, str(args.get("member_post_id", ""))
+                    )
+                    is not None
+                ),
+            ),
+            ConditionCheck(
+                description="query_or_task MUST be non-empty and fall within the KnowledgeDomain or RecipeModule scope declared by EmployeePostResource.",
+                predicate=lambda args: (
+                    bool(str(args.get("query_or_task", "")).strip())
+                    and (
+                        args.get("requested_asset_id") is None
+                        or _is_asset_in_employee_territory(
+                            graph,
+                            str(args.get("member_post_id", "")),
+                            str(args.get("requested_asset_id", "")),
+                        )
+                    )
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="DomainEmployeeRole NEVER impersonates HumanPrincipal to issue HumanDecisionReceipt.",
+                predicate=lambda args: (
+                    not str(args.get("query_or_task", "")).strip().startswith("【answer】")
+                    and not bool(args.get("forged_human_receipt", False))
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Returns structured domain answer or execution receipt without polluting caller session context.",
+                predicate=lambda ctx: (
+                    isinstance(ctx.get("result"), Mapping)
+                    and ctx["result"].get("status") in {"ok", "needs_input", "delegated"}
+                    and bool(ctx["result"].get("session_id"))
+                    and ctx["result"].get("caller_context_id")
+                    == ctx.get("caller_context_id")
+                    and not bool(ctx["result"].get("issued_human_decision_receipt", False))
+                ),
+            ),
+        ),
+    )
+
+
+def build_govern_employee_domain_assets_contract(
+    graph: OntologyGraph,
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `govern_employee_domain_assets` kinetic contract with territory boundary checks."""
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    allowed_ops = frozenset(
+        {
+            "refresh_data",
+            "curate_knowledge",
+            "update_recipe",
+            "self_alarm",
+            "irreversible_delete",
+        }
+    )
+    return insp.build_action_contract(
+        "govern_employee_domain_assets",
+        preconditions=(
+            ConditionCheck(
+                description="Initiator MUST be the active DomainEmployeeRole bound to EmployeePostResource(member_post_id).",
+                predicate=lambda args: (
+                    isinstance(args.get("initiator"), Role)
+                    and args["initiator"].dependent_type == "DomainEmployeeRole"
+                    and args["initiator"].context_id
+                    == f"post:{args.get('member_post_id', '')}"
+                ),
+            ),
+            ConditionCheck(
+                description="target_asset_id MUST be registered inside the territory scope of EmployeePostResource(member_post_id), or authorized by a HumanDecisionReceipt.",
+                predicate=lambda args: (
+                    _is_asset_in_employee_territory(
+                        graph,
+                        str(args.get("member_post_id", "")),
+                        str(args.get("target_asset_id", "")),
+                    )
+                    or _is_valid_human_receipt(args.get("authorization_source"))
+                ),
+            ),
+            ConditionCheck(
+                description="If governance_op performs irreversible_delete, a HumanDecisionReceipt from HumanPrincipal is required.",
+                predicate=lambda args: (
+                    str(args.get("governance_op", "")) != "irreversible_delete"
+                    or _is_valid_human_receipt(args.get("authorization_source"))
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="Autonomous territory maintenance op MUST be recognized and never inline secret keys.",
+                predicate=lambda args: (
+                    str(args.get("governance_op", "")) in allowed_ops
+                    and not bool(
+                        _SECRET_LEAK_PATTERN.search(str(args.get("target_asset_id", "")))
+                    )
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Target KnowledgeDomain, RecipeModule, DataSlot, or ScheduleRuleSpec is updated with status=='governed'.",
+                predicate=lambda ctx: (
+                    isinstance(ctx.get("result"), Mapping)
+                    and ctx["result"].get("status") == "governed"
+                    and ctx["result"].get("member_post_id") == ctx.get("member_post_id")
+                    and ctx["result"].get("target_asset_id") == ctx.get("target_asset_id")
+                ),
+            ),
+        ),
+    )
+
+
+class DomainEmployeeRuntime:
+    """Ontology runtime for discovering, invoking, and governing `EmployeePostResource` & `DomainEmployeeRole`."""
+
+    def __init__(
+        self,
+        *,
+        graph: OntologyGraph | None = None,
+        registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+        introspector: OntologyIntrospector | None = None,
+    ) -> None:
+        self._graph = graph if graph is not None else OntologyGraph()
+        self._registry = registry
+        self._introspector = (
+            introspector if introspector is not None else OntologyIntrospector()
+        )
+        self._invoke_contract = build_invoke_domain_employee_contract(
+            self._graph, self._introspector
+        )
+        self._govern_contract = build_govern_employee_domain_assets_contract(
+            self._graph, self._introspector
+        )
+
+    @property
+    def graph(self) -> OntologyGraph:
+        return self._graph
+
+    @property
+    def invoke_contract(self) -> OntologicalActionContract:
+        return self._invoke_contract
+
+    @property
+    def govern_contract(self) -> OntologicalActionContract:
+        return self._govern_contract
+
+    def find_employee_role(self, member_post_id: str) -> Role | None:
+        """Return the active `DomainEmployeeRole` bound to `post:<member_post_id>`."""
+        return _find_active_employee_role_in_graph(self._graph, member_post_id)
+
+    def discover_posts_for_asset(self, asset_id: str) -> list[Resource]:
+        """Discover all `EmployeePostResource` nodes in the graph whose territory includes `asset_id`."""
+        matched: list[Resource] = []
+        for entity in self._graph.entities():
+            if (
+                isinstance(entity, Resource)
+                and entity.resource_kind == "EmployeePostResource"
+            ):
+                uid = entity.ontological_id()
+                post_id = uid.split("post:", 1)[1] if uid.startswith("post:") else uid
+                if _is_asset_in_employee_territory(self._graph, post_id, asset_id):
+                    matched.append(entity)
+        return matched
+
+    def invoke_employee(
+        self,
+        initiator: OntologyEntity,
+        *,
+        member_post_id: str,
+        query_or_task: str,
+        caller_context_id: str,
+        requested_asset_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke a domain employee under the `invoke_domain_employee` kinetic contract."""
+        post_uid = f"post:{member_post_id}"
+        existing_entity = self._graph.get_entity(post_uid)
+        if existing_entity is not None and isinstance(existing_entity, Resource):
+            target_entity: Resource = existing_entity
+        else:
+            # Unregistered placeholder so Ring 2 passes and Ring 3 precondition reports missing post
+            created_entity = self._registry.create("EmployeePostResource", uid=post_uid)
+            assert isinstance(created_entity, Resource)
+            target_entity = created_entity
+
+        @ontological_action(self._invoke_contract)
+        def _run_invoke(
+            initiator: OntologyEntity,
+            target: Resource,
+            *,
+            member_post_id: str,
+            query_or_task: str,
+            caller_context_id: str,
+            requested_asset_id: str | None = None,
+        ) -> dict[str, Any]:
+            role = _find_active_employee_role_in_graph(self._graph, member_post_id)
+            assert role is not None
+            resolved_session_id = session_id or f"emp-{member_post_id}-{hashlib.sha256(f'{caller_context_id}:{query_or_task}'.encode()).hexdigest()[:8]}"
+            sess_proc = self._registry.create(
+                "AgentSessionProcess",
+                process_uid=f"session:{resolved_session_id}",
+                state="running",
+            )
+            assert isinstance(sess_proc, Process)
+            transcript = self._registry.create(
+                "SessionTranscriptArtifact",
+                artifact_uri=f"~/.frago/sessions/employee/{resolved_session_id}/raw.jsonl",
+                content=f"{member_post_id}:{caller_context_id}:{query_or_task}",
+            )
+            assert isinstance(transcript, InformationEntity)
+            step_evt = self._registry.create(
+                "SessionStepEvent",
+                event_type="employee_invocation",
+                causal_source_id=sess_proc.ontological_id(),
+                payload={
+                    "member_post_id": member_post_id,
+                    "caller_context_id": caller_context_id,
+                    "query_or_task": query_or_task,
+                },
+            )
+            assert isinstance(step_evt, Event)
+            self._graph.link(role, "initiates", sess_proc)
+            self._graph.link(sess_proc, "produces", transcript)
+            self._graph.link(sess_proc, "emits", step_evt)
+
+            governed_targets = [
+                e.ontological_id()
+                for e in self._graph.query_targets(target.ontological_id(), "depends_on_module")
+            ]
+            return {
+                "status": "ok",
+                "initiator_id": initiator.ontological_id(),
+                "member_post_id": member_post_id,
+                "post_id": target.ontological_id(),
+                "role_id": role.ontological_id(),
+                "kernel_id": role.bearer_id,
+                "session_id": resolved_session_id,
+                "caller_context_id": caller_context_id,
+                "requested_asset_id": requested_asset_id,
+                "governed_assets": governed_targets,
+                "answer_summary": f"[{member_post_id}] processed task under {role.bearer_id}: {query_or_task}",
+            }
+
+        return _run_invoke(
+            initiator,
+            target_entity,
+            member_post_id=member_post_id,
+            query_or_task=query_or_task,
+            caller_context_id=caller_context_id,
+            requested_asset_id=requested_asset_id,
+        )
+
+    def govern_asset(
+        self,
+        initiator: OntologyEntity,
+        target: OntologyEntity,
+        *,
+        member_post_id: str,
+        asset_kind: str,
+        target_asset_id: str,
+        governance_op: str,
+        authorization_source: OntologyEntity | None = None,
+    ) -> dict[str, Any]:
+        """Execute territory asset maintenance under the `govern_employee_domain_assets` kinetic contract."""
+
+        @ontological_action(self._govern_contract)
+        def _run_govern(
+            initiator: OntologyEntity,
+            target: OntologyEntity,
+            *,
+            member_post_id: str,
+            asset_kind: str,
+            target_asset_id: str,
+            governance_op: str,
+            authorization_source: OntologyEntity | None = None,
+        ) -> dict[str, Any]:
+            proc_uid = f"gov:{member_post_id}:{governance_op}:{hashlib.sha256(target_asset_id.encode()).hexdigest()[:8]}"
+            gov_proc = self._registry.create(
+                "RecipeExecutionProcess",
+                process_uid=proc_uid,
+                state="succeeded",
+            )
+            assert isinstance(gov_proc, Process)
+            if isinstance(initiator, Role):
+                self._graph.link(initiator, "initiates", gov_proc)
+            if isinstance(target, Resource):
+                self._graph.link(gov_proc, "mutates", target)
+            if asset_kind == "knowledge_domain":
+                entry = self._registry.create(
+                    "DefKnowledgeEntry",
+                    artifact_uri=f"def://{target_asset_id}/{governance_op}",
+                    content=f"{member_post_id}:{governance_op}:{target_asset_id}",
+                )
+                assert isinstance(entry, InformationEntity)
+                self._graph.link(gov_proc, "produces", entry)
+            return {
+                "status": "governed",
+                "member_post_id": member_post_id,
+                "asset_kind": asset_kind,
+                "target_asset_id": target_asset_id,
+                "governance_op": governance_op,
+                "process_id": gov_proc.ontological_id(),
+                "authorized_by": (
+                    authorization_source.ontological_id()
+                    if authorization_source is not None
+                    else None
+                ),
+            }
+
+        return _run_govern(
+            initiator,
+            target,
+            member_post_id=member_post_id,
+            asset_kind=asset_kind,
+            target_asset_id=target_asset_id,
+            governance_op=governance_op,
+            authorization_source=authorization_source,
+        )
+
 

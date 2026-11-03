@@ -56,7 +56,8 @@
       "schedules": "Schedules",
       "data": "Data",
       "files": "Files",
-      "settings": "Settings"
+      "settings": "Settings",
+      "employees": "Employees"
     }
   },
   "files": {
@@ -1584,6 +1585,7 @@
       "orphanWorkersHeader": "Workers with no known caller",
       "branched": "branched",
       "branchOfHint": "Open the session this branch came from",
+      "employeeSession": "Employee session · {{id}}",
       "pageProgress": "Showing {{shown}} of {{total}} — keep scrolling for more",
       "workerCount": "launched {{n}} workers",
       "expandWorkers": "Show the {{n}} workers this session launched",
@@ -2557,5 +2559,94 @@
     "unknownInstall": "This one offers no way to probe for it, so whether it's installed can't be told",
     "noKernel": "frago's kernel isn't installed yet (nothing under ~/.frago/bin) — run frago init once",
     "noConnection": "CoreAgent has no connection yet — pick one for it under connections in settings, or it can't reach a model"
+  },
+  "employees": {
+    "page": {
+      "title": "Employees",
+      "count": "{{n}} posts",
+      "new": "New employee",
+      "empty": "No employees yet",
+      "emptyDesc": "An employee is a post on this machine: which data folders it owns, which kernel starts its sessions, and what context a new session carries.",
+      "loadFailed": "Could not load employees: {{reason}}"
+    },
+    "card": {
+      "startWith": "Start a new session with {{name}}",
+      "edit": "Employee details"
+    },
+    "launch": {
+      "title": "New session with {{name}}",
+      "start": "Start session",
+      "cancelWait": "Stop waiting",
+      "contextTitle": "Auto-injected business context",
+      "contextSummary": "{{folders}} data folders · {{entries}} entries · {{domains}} knowledge domains · {{recipes}} recipes",
+      "contextPreview": "Preview",
+      "contextHide": "Hide",
+      "contextLoading": "Loading this session's context…",
+      "contextFailed": "Context unavailable; the server will still attach it when the session starts",
+      "kernelLabel": "Which kernel runs it",
+      "kernelProbing": "Checking which CLIs are installed…",
+      "kernelNone": "None usable on this machine — install a CLI agent first.",
+      "kernelSwitched": "This post is set to {{wanted}}, which is unusable here ({{reason}}), so this session uses {{using}}.",
+      "cwdLabel": "Working folder",
+      "cwdPlaceholder": "Leave empty to work in this employee's territory",
+      "cwdUsesEmployee": "Empty — uses this post's folder {{dir}}",
+      "cwdNeeded": "This post has no folder configured; this field is required.",
+      "firstMessage": "What should it do",
+      "firstMessagePlaceholder": "Ask {{name}}…",
+      "waitingId": "{{name}} is reporting this session's id, one moment…",
+      "waitCancelled": "Stopped waiting. The session itself did start and will show up in the session list.",
+      "createFailed": "This session did not start: {{reason}}",
+      "createFailedPlain": "This session did not start."
+    },
+    "detail": {
+      "title": "{{name}}",
+      "newTitle": "New employee",
+      "save": "Save",
+      "create": "Create post",
+      "saved": "Saved.",
+      "created": "Post created. Now fill in its territory and recipes.",
+      "saveFailed": "Not saved: {{reason}}",
+      "idLabel": "Id",
+      "idHint": "Lowercase letters, digits, underscore or hyphen. Cannot be changed after creation.",
+      "idLocked": "The id is this post's file name and the key sessions match on; it cannot be changed.",
+      "titleLabel": "Post name",
+      "kernelLabel": "Default kernel",
+      "descLabel": "One-line duty",
+      "descPlaceholder": "Owns …",
+      "descHint": "The card shows the first sentence of this field — write it so the card reads well.",
+      "scopeLabel": "Work scope",
+      "scopePlaceholder": "Which kinds of work this post covers, how it proceeds, where deliverables are archived…",
+      "scopeHint": "This text is carried verbatim into every new session for this employee. Spell out the method so nobody has to repeat it.",
+      "cwdLabel": "Default working folder",
+      "cwdHint": "Used when a new session leaves the folder empty. Leave blank to require it every time.",
+      "slotsLabel": "Managed data folders",
+      "slotsHint": "One per line, each under ~/.frago/data. New sessions scan these and fold a directory summary into the context.",
+      "domainsLabel": "Knowledge domains",
+      "recipesLabel": "Recipes",
+      "territoryTitle": "Territory ledger",
+      "territoryLoading": "Counting…",
+      "territoryFailed": "Unavailable",
+      "territoryEmpty": "No data folders managed yet.",
+      "slotCount": "{{n}} entries",
+      "slotMissing": "Folder missing",
+      "registerTitle": "Register an archive folder in the territory",
+      "registerName": "Folder name",
+      "registerSlot": "Which slot",
+      "registerSummary": "What this one is (optional)",
+      "register": "Register",
+      "registerHint": "Name it YYYYMMDD-semantic-slug, matching how the server archives.",
+      "dataRegistered": "Registered {{name}}.",
+      "dataFailed": "Not registered: {{reason}}"
+    },
+    "errors": {
+      "listFailed": "Failed to load employees (HTTP {{status}})",
+      "listFailedPlain": "Failed to load employees",
+      "detailFailed": "Failed to load employee details (HTTP {{status}})",
+      "detailFailedPlain": "Failed to load employee details",
+      "saveFailed": "Failed to save employee (HTTP {{status}})",
+      "saveFailedPlain": "Failed to save employee",
+      "dataFailed": "Failed to register folder (HTTP {{status}})",
+      "dataFailedPlain": "Failed to register folder"
+    }
   }
 }

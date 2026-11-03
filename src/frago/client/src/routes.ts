@@ -27,6 +27,9 @@ const PAGE_SEGMENT: Record<PageType, string> = {
   session_workbench: 'sessions',
   desktop: 'desktop',
   vibe_teaming: 'pairs',
+  // 员工页自成一段，与结对（`/pairs`）分开：结对是两个人的会话并排，员工是这台机器上的
+  // 岗位编制与领地。`/teams` 那一段早被结对占着当旧名字用，两边 NEVER 混用。
+  employees: 'employees',
   dashboard: 'dashboard',
   tasks: 'tasks',
   task_detail: 'tasks',

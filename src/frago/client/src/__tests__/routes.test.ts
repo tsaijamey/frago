@@ -61,6 +61,14 @@ describe('parsePath', () => {
     expect(parsePath('#/teaming')).toEqual({ page: 'vibe_teaming', id: null });
   });
 
+  it('员工页有自己的 /employees；结对那几段旧名字仍然只落结对页', () => {
+    // 员工与结对是两件事，地址 NEVER 混用：`/teams` 那一段是结对的旧名字，
+    // 员工页另起一段，刷新与分享才各归各位。
+    expect(pathForPage('employees')).toBe('/employees');
+    expect(parsePath('#/employees')).toEqual({ page: 'employees', id: null });
+    expect(parsePath('#/teams')).toEqual({ page: 'vibe_teaming', id: null });
+  });
+
   it('没有详情页的那一段，多出来的一截不当编号', () => {
     expect(parsePath('#/settings/oauth')).toEqual({ page: 'settings', id: null });
   });
@@ -82,6 +90,7 @@ describe('写出去再读回来', () => {
   const cases: [PageType, string | null][] = [
     ['session_workbench', null],
     ['desktop', null],
+    ['employees', null],
     ['recipes', null],
     ['recipe_detail', 'my-recipe'],
     ['todos', null],

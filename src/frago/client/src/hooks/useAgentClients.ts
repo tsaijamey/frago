@@ -80,6 +80,13 @@ async function readError(res: Response, fallback: string): Promise<string> {
  * 附件与「对着一场已有的会话说话」走的是同一条路：内容以 base64 交上去，服务端落盘，
  * 把它那一侧的绝对路径拼进第一句话。第一句最需要这个——人往往一上来就要说"照着这张图
  * 改"，从前这里只收文字，那张图只能等会话起来之后再补发一次。
+ *
+ * `employee` 是点哪张员工卡片起的这一场。给了编号，服务端把该员工的业务语境块拼在第一句话
+ * 最前面（`<frago-employee …>` 那一块：岗位、工作范畴、纳管的目录索引、知识域与配方名）。
+ * 编号对不上任何员工时服务端回 400 而不是当成没写——人以为这一场带着员工画像起来的，
+ * 实际什么都没带，等 agent 答偏了才发现，那时已经查不回原因。
+ *
+ * 员工自己配了起始目录、而这一场又没另指定时，`cwd` 可以留空，由服务端取员工那一栏。
  */
 export async function createSession(input: {
   agent: string;
@@ -88,6 +95,7 @@ export async function createSession(input: {
   images?: string[];
   documents?: { name: string; data: string }[];
   skills?: string[];
+  employee?: string;
 }): Promise<PendingLaunch> {
   const res = await fetch(`${API_BASE_URL}/api/workbench/sessions`, {
     method: 'POST',

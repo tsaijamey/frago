@@ -144,4 +144,16 @@ describe('PageHost 切页保留', () => {
     expect(document.body.contains(frame)).toBe(true);
     expect(slotOf(frame!).hasAttribute('hidden')).toBe(true);
   });
+
+  it('员工是一级菜单项，与结对各占一项，选中态不互相点亮', () => {
+    const employees = NAV_ITEMS.find((i) => i.id === 'employees');
+    expect(employees).toBeDefined();
+    expect(employees?.labelKey).toBe('sidebar.nav.employees');
+    // 图标与结对的 Users 不是同一颗：两项挨着排，撞车的话收起时只剩图标就分不出谁是谁。
+    expect(employees?.icon).not.toEqual(NAV_ITEMS.find((i) => i.id === 'vibe_teaming')?.icon);
+
+    expect(isNavItemActive('employees', 'employees')).toBe(true);
+    expect(isNavItemActive('employees', 'vibe_teaming')).toBe(false);
+    expect(isNavItemActive('vibe_teaming', 'employees')).toBe(false);
+  });
 });

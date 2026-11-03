@@ -361,6 +361,21 @@ class OntologyGraph:
             f"Unknown predicate or inverse relation: '{predicate_or_inverse}'."
         )
 
+    def query_sources(
+        self,
+        target_id: str,
+        predicate: str,
+    ) -> list[OntologyEntity]:
+        """Query source entities that link to `target_id` via `predicate`."""
+        if predicate not in self._signatures:
+            raise RelationError(f"Unknown predicate: '{predicate}'.")
+        source_ids = [
+            f.source_id
+            for f in self._facts
+            if f.target_id == target_id and f.predicate == predicate
+        ]
+        return [self._entities[sid] for sid in source_ids if sid in self._entities]
+
     def _has_direct_edge(self, source_id: str, predicate: str, target_id: str) -> bool:
         return any(
             f.source_id == source_id

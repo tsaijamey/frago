@@ -38,6 +38,7 @@ from .context_commands import context_command
 from .daemon_commands import daemon_group
 from .def_commands import def_group
 from .desktop_commands import desktop_group
+from .employee_commands import employee_group
 from .extension_commands import extension_group
 from .file_commands import cp_command, mv_command, rm_command
 from .hook_rules_commands import hook_rules_group
@@ -63,7 +64,7 @@ from .workspace_commands import workspace_group
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "app"]),
     ("Files", ["cp", "mv", "rm"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "employee", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
@@ -469,6 +470,9 @@ cli.add_command(def_group)
 
 # Todo command group - standardized CRUD over ~/.frago/todo/ (one JSON per todo)
 cli.add_command(todo_group, name="todo")
+
+# Employee ontology command group - manage EmployeePostResource (+R) & DomainEmployeeRole (~R)
+cli.add_command(employee_group, name="employee")
 
 # Hook-rules command group - manage frago-core's data-driven routing rules
 cli.add_command(hook_rules_group)

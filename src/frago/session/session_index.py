@@ -77,6 +77,7 @@ __all__ = [
     "CODEX_CACHE_FILE",
     "COREAGENT_CACHE_FILE",
     "FRAGO_WAKE_MARKERS",
+    "IN_PROGRESS_KINDS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
     "AgyIndexEntry",
@@ -90,6 +91,7 @@ __all__ = [
     "derive_status",
     "list_session_summaries",
     "opencode_tail_signals",
+    "split_employee_block",
     "tail_signals_of",
 ]
 
@@ -128,7 +130,9 @@ AGY_CACHE_FILE = CACHE_DIR / "agy-session-index.json"
 # 结果是判据改对了、界面上却还是错的，查了一轮才发现错在缓存。
 # 版本 6 起记录文件内容摘要与回合收尾时刻：Claude Code 每小时 utimes 保活只改 mtime
 # 不改内容，不再推进 last_active_ts 把已收尾旧会话误判成 running。
-_CACHE_VERSION = 6
+# 版本 7 起识别并剥离首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块，写出
+# ``employee_id`` 并还原用户的真实首句标题。
+_CACHE_VERSION = 7
 
 # 标题类字段可能出现在文件任何位置，所以开头之后的每一行都要做这两个判定。
 #
@@ -163,6 +167,13 @@ RUNNING_WINDOW_SECONDS = 90.0
 _BOOKKEEPING_KINDS = frozenset(
     {"call.envelope", "session.state", "context.inject", "todo.snapshot", "usage.tick"}
 )
+
+# 轮次未完工形态：工具调用中、工具结果返回待处理、子代理派发、人刚发言、思考中。
+# 当会话进程存活时，停在这些形态说明正在干活，不应被 90 秒超时降级为空闲。
+_IN_PROGRESS_KINDS = frozenset(
+    {"tool.call", "tool.result", "subagent.dispatch", "user.say", "agent.think"}
+)
+IN_PROGRESS_KINDS = _IN_PROGRESS_KINDS
 
 # ── frago 自己戳的那一下 ────────────────────────────────────────────
 # 常驻主控会话（PA）由 frago 的调度器按节拍唤醒：每隔几分钟把同一段角色定义当成
@@ -235,22 +246,28 @@ class TailSignals:
     """末条实质记录是 agent 回复且尾部已有带时刻的轮次收尾记账（``turn_duration`` /
     ``stop_hook_summary``）时，记录那一轮真正收尾的时刻（epoch 秒）。"""
 
+    employee_id: str | None = None
+    """从首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块提取的员工岗位编号。"""
+
 
 def derive_status(
     last_kind: str | None,
     last_active_ts: float,
     now: float | None = None,
+    *,
+    alive: bool | None = None,
 ) -> SessionStatus:
     """四档状态。**判定顺序不能换**，顺序即语义。
 
-    ========  ============================  ========
-    序        条件                          判为
-    ========  ============================  ========
-    1         末条记录是报错                ``error``
-    2         最后活动距今 90 秒内          ``running``
-    3         末条记录是 agent 回复         ``done``
-    4         其余                          ``idle``
-    ========  ============================  ========
+    ========  ======================================  ========
+    序        条件                                    判为
+    ========  ======================================  ========
+    1         末条记录是报错                          ``error``
+    2         进程存活且末条处于未完工形态（长脚本等）``running``
+    3         进程未死亡且最后活动距今 90 秒内        ``running``
+    4         末条记录是 agent 回复                   ``done``
+    5         其余                                    ``idle``
+    ========  ======================================  ========
 
     **「等你决策」这一档不做。** 会话停在等人输入时，末条记录就是 agent 的那句回复，与
     「已经答完了」在数据上一模一样。要分开必须读正文判断 agent 是不是在提问，那是语义
@@ -258,9 +275,18 @@ def derive_status(
     绝大多数是正常答完的，那样一凑，左栏会变成一片假的"在等你"，比没有这一档糟得多。
 
     ``now`` 取 epoch 秒（:func:`time.time`）。这里只做减法，不落 ``datetime``。
+    ``alive`` 传自外界的存活性探测（tmux 前台命令不是 shell 或 CoreAgent 常驻进程还在）。
     """
     if last_kind == "error":
         return "error"
+    # 当会话明确存活且末条处于未闭环工作状态（如执行长脚本）时，恒为 running，不被 90 秒超时降级
+    if alive is True and last_kind in _IN_PROGRESS_KINDS:
+        return "running"
+    # 若已知进程已明确退出（alive is False），不再以 90 秒内有活动判 running
+    if alive is False:
+        if last_kind == "agent.say":
+            return "done"
+        return "idle"
     current = time.time() if now is None else now
     if current - last_active_ts <= RUNNING_WINDOW_SECONDS:
         return "running"
@@ -374,6 +400,7 @@ def tail_signals_of(records: Sequence[UnifiedRecord]) -> TailSignals:
         last_reply_ts=last_reply_ts,
         heartbeat_only=heartbeat_only,
         reply_unsettled=reply_unsettled,
+        employee_id=_first_employee_id(records),
     )
 
 
@@ -490,6 +517,9 @@ class SessionSummary:
     content_digest: str | None = None
     """文件内容摘要（8 字节 blake2b 十六进制），用于识别只刷 mtime 未改字节的保活触碰。"""
 
+    employee_id: str | None = None
+    """从首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块提取的员工岗位编号。"""
+
 
 def _iso_to_epoch(raw: Any) -> float | None:
     """记录里的 ISO 时刻 → epoch 秒。解不动就当没有，NEVER 编一个出来。
@@ -520,6 +550,55 @@ def _loads(line: bytes) -> Any:
 _COMMAND_NAME_RE = re.compile(r"<command-name>([\s\S]*?)</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>([\s\S]*?)</command-args>")
 
+#: 点员工卡片起会话时拼在第一句话最前面的业务语境块（见 ``EmployeeOntologyService.build_business_context_block``）。
+#: 只匹配排在消息开头（或紧跟在 ``<must-use-skill>`` 之后）的整段块，避免普通任务书提及标签名时误判。
+_EMPLOYEE_BLOCK_RE = re.compile(
+    r'^\s*<frago-employee\s+id="([^"]+)"[^>]*>[\s\S]*?</frago-employee>\s*'
+)
+
+
+def split_employee_block(text: str) -> tuple[str | None, str]:
+    """剥掉排在首条用户消息最前面的 ``<frago-employee id="…">…</frago-employee>`` 语境块。
+
+    返回 ``(employee_id, 剩余正文)``；不带该语境块时 ``employee_id`` 为 ``None``、正文原样返回。
+    """
+    m = _EMPLOYEE_BLOCK_RE.match(text)
+    if not m:
+        return None, text
+    emp_id = m.group(1).strip() or None
+    return emp_id, text[m.end() :].strip()
+
+
+def _first_user_text_and_employee(txt: str) -> tuple[str | None, str | None]:
+    """同时拆出用户真实开口第一句与员工岗位编号（``(first_user, employee_id)``）。"""
+    body = txt.strip()
+    emp_id, body = split_employee_block(body)
+    skills, said = split_skill_blocks(body)
+    if emp_id is None:
+        emp_id, said = split_employee_block(said)
+    if skills:
+        return " ".join([*(f"/{n}" for n in skills), said]).strip() or None, emp_id
+    body = said
+    name = _COMMAND_NAME_RE.search(body)
+    if name:
+        args = _COMMAND_ARGS_RE.search(body)
+        written = (args.group(1) if args else "").strip()
+        if not written:
+            return None, emp_id
+        return f"{name.group(1).strip()} {written}".strip(), emp_id
+    if _COMMAND_ECHO.match(body):
+        return None, emp_id
+    return (body or None), emp_id
+
+
+def _first_employee_id(records: Sequence[UnifiedRecord]) -> str | None:
+    """从统一记录流的首条 ``user.say`` 里取出员工岗位编号（若该场会话由员工入口发起）。"""
+    for record in records:
+        if record.kind == "user.say":
+            _, emp_id = _first_user_text_and_employee(str(record.payload.get("text") or ""))
+            return emp_id
+    return None
+
 
 def _first_user_text(txt: str) -> str | None:
     """这条用户记录里，人**自己打的那句话**是什么；不是人打的返回 None。
@@ -541,22 +620,8 @@ def _first_user_text(txt: str) -> str | None:
     的还是 agent 开的——动它就动了那页的会话分类。所以两边只在这一条上分开：那边管分类，
     这边管左栏那一行叫什么名字。光杆命令与命令输出的处置两边完全一致。
     """
-    body = txt.strip()
-    # 会话页点名的 skill 整篇嵌在这句话前面。标题只要名字加人写的话，与斜杠命令同一个
-    # 读法：``/git-push 帮我提交``。整篇 skill 进标题，左栏那一行只剩一串标签。
-    skills, said = split_skill_blocks(body)
-    if skills:
-        return " ".join([*(f"/{n}" for n in skills), said]).strip()
-    name = _COMMAND_NAME_RE.search(body)
-    if name:
-        args = _COMMAND_ARGS_RE.search(body)
-        written = (args.group(1) if args else "").strip()
-        if not written:
-            return None
-        return f"{name.group(1).strip()} {written}".strip()
-    if _COMMAND_ECHO.match(body):
-        return None
-    return body
+    first_user, _ = _first_user_text_and_employee(txt)
+    return first_user
 
 
 def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
@@ -570,6 +635,7 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
     custom_title: str | None = None
     ai_title: str | None = None
     first_user: str | None = None
+    employee_id: str | None = None
     cwd: str | None = None
     first_ts: float | None = None
 
@@ -608,7 +674,9 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
             msg = record.get("message") or {}
             txt = _extract_text(msg.get("content", ""))
             if txt and txt.strip():
-                first_user = _first_user_text(txt)
+                first_user, emp_id = _first_user_text_and_employee(txt)
+                if employee_id is None and emp_id is not None:
+                    employee_id = emp_id
         if cwd is not None and first_ts is not None and first_user is not None:
             break
 
@@ -658,6 +726,7 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
         last_active_ts=active_ts,
         tail=tail,
         content_digest=digest,
+        employee_id=employee_id or tail.employee_id,
     )
 
 
@@ -775,6 +844,7 @@ def _extract_incremental(
         last_active_ts=active_ts,
         tail=tail,
         content_digest=digest,
+        employee_id=prev.get("employee_id"),
     )
 
 
@@ -797,6 +867,7 @@ def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, An
         "digest_done": summary.tail.digest_done,
         "last_reply_ts": summary.tail.last_reply_ts,
         "turn_end_ts": summary.tail.turn_end_ts,
+        "employee_id": summary.employee_id,
     }
 
 
@@ -807,6 +878,8 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
         turn_end_ts = float(turn_end_raw) if isinstance(turn_end_raw, (int, float)) else None
         digest_raw = entry.get("digest")
         content_digest = str(digest_raw) if isinstance(digest_raw, str) else None
+        employee_raw = entry.get("employee_id")
+        employee_id = str(employee_raw) if isinstance(employee_raw, str) and employee_raw else None
         return SessionSummary(
             sid=str(entry["sid"]),
             slug=entry["slug"],
@@ -822,8 +895,10 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
                 digest_done=entry["digest_done"],
                 last_reply_ts=entry["last_reply_ts"],
                 turn_end_ts=turn_end_ts,
+                employee_id=employee_id,
             ),
             content_digest=content_digest,
+            employee_id=employee_id,
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -1067,6 +1142,7 @@ def opencode_tail_signals(
                 error_message=entry.get("error_message"),
                 digest_done=entry.get("digest_done"),
                 last_reply_ts=entry.get("last_reply_ts"),
+                employee_id=entry.get("employee_id"),
             )
             fresh[sid] = entry
             continue
@@ -1079,6 +1155,7 @@ def opencode_tail_signals(
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
             "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
@@ -1105,7 +1182,8 @@ def _codex_first_user_line(records: Sequence[UnifiedRecord]) -> str | None:
     """整场会话里用户开口的第一句，截成卡片上那一行。一句都没有时 None。"""
     for record in records:
         if record.kind == "user.say":
-            return _one_line(record.payload.get("text"))
+            cleaned, _ = _first_user_text_and_employee(str(record.payload.get("text") or ""))
+            return _one_line(cleaned)
     return None
 
 
@@ -1138,6 +1216,7 @@ def codex_tail_signals(
                     error_message=entry.get("error_message"),
                     digest_done=entry.get("digest_done"),
                     last_reply_ts=entry.get("last_reply_ts"),
+                    employee_id=entry.get("employee_id"),
                 ),
                 title=entry.get("title"),
             )
@@ -1158,6 +1237,7 @@ def codex_tail_signals(
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
             "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
             "title": title,
         }
 
@@ -1230,6 +1310,7 @@ def agy_tail_signals(
                     error_message=entry.get("error_message"),
                     digest_done=entry.get("digest_done"),
                     last_reply_ts=entry.get("last_reply_ts"),
+                    employee_id=entry.get("employee_id"),
                 ),
                 created_at=int(created_raw) if isinstance(created_raw, int) else None,
             )
@@ -1253,6 +1334,7 @@ def agy_tail_signals(
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
             "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
             "created_at": created_at,
         }
 

@@ -19,6 +19,7 @@ export type PageType =
   | 'session_workbench'
   | 'desktop'
   | 'vibe_teaming'
+  | 'employees'
   | 'dashboard'
   | 'tasks'
   | 'task_detail'

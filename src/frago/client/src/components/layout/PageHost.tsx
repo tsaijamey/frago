@@ -28,6 +28,7 @@ import { usePageStore, type PageType } from '@/stores/pageStore';
 import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
 import DesktopPage from '@/components/desktop/DesktopPage';
 import VibeTeamingPage from '@/components/vibeTeaming/VibeTeamingPage';
+import EmployeesPage from '@/components/employees/EmployeesPage';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import DataRepoPage from '@/components/dataRepo/DataRepoPage';
@@ -45,6 +46,7 @@ type ViewKey =
   | 'workbench'
   | 'desktop'
   | 'vibe_teaming'
+  | 'employees'
   | 'recipes'
   | 'recipe_detail'
   | 'data_repo'
@@ -69,6 +71,7 @@ const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
   session_workbench: 'workbench',
   desktop: 'desktop',
   vibe_teaming: 'vibe_teaming',
+  employees: 'employees',
   dashboard: 'workbench',
   tasks: 'workbench',
   task_detail: 'workbench',
@@ -93,6 +96,7 @@ const VIEWS: Record<ViewKey, () => ReactElement> = {
   workbench: () => <SessionWorkbenchPage />,
   desktop: () => <DesktopPage />,
   vibe_teaming: () => <VibeTeamingPage />,
+  employees: () => <EmployeesPage />,
   recipes: () => <RecipeList />,
   recipe_detail: () => <RecipeDetail />,
   data_repo: () => <DataRepoPage />,

@@ -30,6 +30,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AppWindow,
+  Briefcase,
   MessageSquare,
   Monitor,
   LayoutGrid,
@@ -83,6 +84,9 @@ export const NAV_ITEMS: RailItem[] = [
   { id: 'desktop', labelKey: 'sidebar.nav.desktop', icon: <Monitor {...ICON} /> },
   // 结对会话：两个人的会话并排摆着。
   { id: 'vibe_teaming', labelKey: 'sidebar.nav.teams', icon: <Users {...ICON} /> },
+  // 员工：这台机器上的岗位编制，点卡片起一场带着业务语境的新会话。
+  // 图标用 Briefcase，与结对的 Users 分开——两项挨着排，撞车的话收起时只剩图标就分不出谁是谁。
+  { id: 'employees', labelKey: 'sidebar.nav.employees', icon: <Briefcase {...ICON} /> },
   { id: 'recipes', labelKey: 'sidebar.nav.recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
   { id: 'todos', labelKey: 'sidebar.nav.todos', icon: <ListChecks {...ICON} /> },
@@ -99,6 +103,7 @@ export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
   if (id === 'desktop') return currentPage === 'desktop';
   if (id === 'vibe_teaming') return currentPage === 'vibe_teaming';
+  if (id === 'employees') return currentPage === 'employees';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
   if (id === 'schedules') return currentPage === 'schedules' || currentPage === 'schedule_detail';

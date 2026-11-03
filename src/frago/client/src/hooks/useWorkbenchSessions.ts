@@ -126,6 +126,11 @@ export interface WorkbenchSession {
    * 左栏日常清单默认不把这类机器自发孤例混入主干；从 Timeline 捡回今日时仍可显式放入。
    */
   local_ops?: boolean;
+  /**
+   * 由「员工（Employees）」入口发起时对应的岗位编号（如 `stock`）。
+   * 左栏会话卡据此展示非文字员工标识图标，普通会话为 null 或缺省。
+   */
+  employee_id?: string | null;
 }
 
 /**

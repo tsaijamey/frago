@@ -285,6 +285,34 @@ class Test四档状态:
         now = 1_753_800_000.0
         assert session_index.derive_status("agent.say", now - 86_400, now) == "done"
 
+    def test_进程存活且末条处于未完工形态时无视九十秒超时恒判正在跑(self) -> None:
+        """长脚本或未结束动作：只要进程活着，超过 90 秒也必须判定为 running。"""
+        now = 1_753_800_000.0
+        for kind in ("tool.call", "tool.result", "user.say", "agent.think", "subagent.dispatch"):
+            assert (
+                session_index.derive_status(kind, now - 600, now, alive=True)
+                == "running"
+            )
+
+    def test_进程明确退出时即便活动在九十秒内也不判正在跑(self) -> None:
+        """进程已死（退出或崩溃），不能拿最近有写入冒充运行中。"""
+        now = 1_753_800_000.0
+        assert (
+            session_index.derive_status("tool.call", now - 5, now, alive=False)
+            == "idle"
+        )
+        assert (
+            session_index.derive_status("agent.say", now - 5, now, alive=False)
+            == "done"
+        )
+
+    def test_进程存活但末条为报错时报错排第一(self) -> None:
+        now = 1_753_800_000.0
+        assert (
+            session_index.derive_status("error", now - 600, now, alive=True)
+            == "error"
+        )
+
 
 class Test末条记录与摘要:
     def test_末尾的引擎记账不算末条记录(self, tmp_path: Path) -> None:
@@ -989,4 +1017,74 @@ class Test内存增量缓存与Agy缓存:
         )
         assert calls == ["conv-1", "conv-1"]
         assert res3["conv-1"].tail.digest_done == "agy 已完成"
+
+    def test_员工入口会话剥离语境块并提取岗位编号且普通提及不误判(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        emp_prompt = (
+            '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n'
+            "【员工身份与工作范畴】\n"
+            "岗位：Stock 投研与策略专员（id: stock）\n"
+            "</frago-employee>\n\n"
+            "获取腾讯接口的所有标准板块并分析波动率"
+        )
+        _write_session(
+            root,
+            "proj",
+            "sid-emp-1",
+            [
+                {
+                    "type": "user",
+                    "cwd": "/tmp/stock",
+                    "timestamp": "2026-10-30T10:00:00.000Z",
+                    "message": {"content": emp_prompt},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-10-30T10:01:00.000Z",
+                    "message": {"content": [{"type": "text", "text": "已完成板块波动率分析"}]},
+                },
+            ],
+        )
+        _write_session(
+            root,
+            "proj",
+            "sid-normal-mention",
+            [
+                {
+                    "type": "user",
+                    "cwd": "/tmp/repo",
+                    "timestamp": "2026-10-30T11:00:00.000Z",
+                    "message": {
+                        "content": '# 任务书：排查 `<frago-employee id="stock">` 标签解析逻辑'
+                    },
+                },
+            ],
+        )
+
+        summaries = {
+            s.sid: s
+            for s in session_index.list_session_summaries(
+                projects_root=root, cache_file=cache
+            )
+        }
+        assert summaries["sid-emp-1"].employee_id == "stock"
+        assert summaries["sid-emp-1"].first_user == "获取腾讯接口的所有标准板块并分析波动率"
+        assert summaries["sid-normal-mention"].employee_id is None
+
+        # 命中磁盘缓存还原时 employee_id 同样保留
+        session_index._MEM_INDEX_CACHE.clear()
+        session_index._SUMMARY_OBJ_CACHE.clear()
+        cached_summaries = {
+            s.sid: s
+            for s in session_index.list_session_summaries(
+                projects_root=root, cache_file=cache
+            )
+        }
+        assert cached_summaries["sid-emp-1"].employee_id == "stock"
+        assert cached_summaries["sid-emp-1"].first_user == "获取腾讯接口的所有标准板块并分析波动率"
+        assert cached_summaries["sid-normal-mention"].employee_id is None
+
 

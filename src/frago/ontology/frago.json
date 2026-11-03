@@ -368,8 +368,9 @@
         "rigidity": "+R",
         "identity": "member_post_id",
         "current_code_locations": [
-          "src/frago/team/state.py",
-          "src/frago/server/services/schedule_executor.py"
+          "src/frago/employee/store.py",
+          "src/frago/employee/service.py",
+          "src/frago/cli/employee_commands.py"
         ],
         "description": "主动型固定员工的持久岗位编制与领地资源（#teams 工牌）：跨会话恒定保存员工画像、专属管理的 KnowledgeDomain 列表、专属管理的 RecipeModule 与 DataSlot 底账路径及允许调用的命令范围。"
       }
@@ -382,8 +383,9 @@
         "bearer_type": "AgentKernel",
         "context_type": "EmployeePostResource",
         "current_code_locations": [
-          "src/frago/team/state.py",
-          "src/frago/server/services/schedule_executor.py"
+          "src/frago/employee/store.py",
+          "src/frago/employee/service.py",
+          "src/frago/cli/employee_commands.py"
         ],
         "description": "拟人（主动型固定员工角色）：由任意 AgentKernel（claude/codex/agy 等）通过 plays_role 关系在持久岗位编制（EmployeePostResource）上扮演的领域自治角色，履行五大职责——管理知识 Domain、管理相关 Recipe、接收会话、可被调用、more（自调 schedule / 操控 Desktop / 发起 ask 拍板）。"
       },
@@ -842,7 +844,10 @@
           "frago.cloud.sync",
           "frago.run.record",
           "frago.todo.update",
-          "frago.book.read"
+          "frago.book.read",
+          "frago.employee.invoke",
+          "frago.employee.govern",
+          "frago.employee.discover"
         ],
         "current_code_locations": [
           "src/frago/cli/main.py",
