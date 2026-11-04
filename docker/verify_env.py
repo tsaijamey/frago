@@ -57,7 +57,8 @@ def detect_runtime_kind() -> str:
 def run_cli(args: list[str]) -> tuple[int, str, str]:
     """Run frago CLI via python -m frago.cli.main and return (code, stdout, stderr)."""
     cmd = [sys.executable, "-m", "frago.cli.main", *args]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    env = {**os.environ, "FRAGO_ALLOW_CHECKOUT_CLI": "1"}
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 

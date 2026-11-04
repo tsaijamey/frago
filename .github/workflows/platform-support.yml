@@ -45,11 +45,14 @@ jobs:
 
       - name: Verify Linux / macOS / Windows environment
         if: matrix.expect != 'wsl2'
+        env:
+          FRAGO_ALLOW_CHECKOUT_CLI: "1"
         run: python docker/verify_env.py --expect ${{ matrix.expect }}
 
       - name: Verify Windows WSL2 environment simulation
         if: matrix.expect == 'wsl2'
         env:
+          FRAGO_ALLOW_CHECKOUT_CLI: "1"
           WSL_DISTRO_NAME: Ubuntu-24.04
           WSL_INTEROP: /run/WSL/1_interop
           WSLENV: USERPROFILE/p:APPDATA/p:LOCALAPPDATA/p
