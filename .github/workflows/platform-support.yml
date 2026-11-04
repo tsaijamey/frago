@@ -41,7 +41,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install frago-cli in editable mode
-        run: uv pip install --system -e .
+        run: uv pip install -e .
 
       - name: Verify Linux / macOS / Windows environment
         if: matrix.expect != 'wsl2'

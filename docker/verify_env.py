@@ -21,6 +21,7 @@ def check_cft_preinstalled() -> dict[str, object]:
         p
         for p in [
             Path.home() / ".frago" / "browsers",
+            Path.home() / ".frago" / "tools" / "chrome-for-testing",
             Path.home() / ".cache" / "frago" / "chrome-for-testing",
             Path.home() / ".local" / "share" / "frago" / "browsers",
         ]
@@ -88,8 +89,13 @@ def main() -> int:
     recipe_code, recipe_out, recipe_err = run_cli(["recipe", "list"])
     cft_state = check_cft_preinstalled()
 
-    # In clean Docker test containers (linux / wsl2), Chrome for Testing must NOT be pre-installed
-    cft_clean_ok = not cft_state["preinstalled"] if detected in ("linux", "wsl2") else True
+    # In clean Docker test containers (linux / wsl2), neither system browsers nor CFT dirs may exist;
+    # on GitHub Actions hosted runners (which pre-install google-chrome/edge), only CFT dirs must be absent.
+    in_gha_vm = os.environ.get("GITHUB_ACTIONS") == "true" and not Path("/.dockerenv").exists()
+    if detected in ("linux", "wsl2"):
+        cft_clean_ok = not cft_state["found_cft_dirs"] if in_gha_vm else not cft_state["preinstalled"]
+    else:
+        cft_clean_ok = True
     ok = ver_code == 0 and book_code == 0 and recipe_code == 0 and cft_clean_ok
     report = {
         "ok": ok,
