@@ -151,6 +151,7 @@ def _base_command(
     *,
     cwd: str,
     profile_id: str | None,
+    role: str | None = None,
     session_id: str | None = None,
     model: str | None = None,
     wire: str | None = None,
@@ -171,6 +172,8 @@ def _base_command(
     cmd += ["--cwd", cwd]
     if profile_id:
         cmd += ["--as-profile", profile_id]
+    elif role and role.strip():
+        cmd += ["--as-role", role.strip()]
     if model and model.strip():
         cmd += ["--model", model.strip()]
     if wire and wire.strip():
@@ -202,12 +205,18 @@ def build_chat_command(
     *,
     cwd: str,
     profile_id: str | None,
+    role: str | None = None,
     model: str | None = None,
     wire: str | None = None,
 ) -> list[str]:
     """拼"问一句、答一句"那一条命令（chat 模式，无工具，不留会话记录）。"""
     return _base_command(
-        "chat", cwd=cwd, profile_id=profile_id, model=model, wire=wire
+        "chat",
+        cwd=cwd,
+        profile_id=profile_id,
+        role=role,
+        model=model,
+        wire=wire,
     )
 
 
@@ -408,6 +417,7 @@ def run_chat_turn(
     *,
     cwd: str,
     profile_id: str | None = None,
+    role: str | None = None,
     model: str | None = None,
     wire: str | None = None,
     timeout_s: float | None = None,
@@ -419,10 +429,11 @@ def run_chat_turn(
     与 :func:`run_turn` 的区别只在模式：这条路上内核不挂会话、不写
     ``~/.frago/coreagent/sessions/``，因此不会把调用方自己的语料越搜越脏。
 
-    连接同上：``--as-profile`` 收 **id**；给 None 就用内核自己那条默认连接。
+    连接同上：``--as-profile`` 收 **id**；未传时可按 ``role``（如 ``lightagent``）
+    走 ``--as-role``，都不给就用内核自己那条默认连接。
     """
     cmd = build_chat_command(
-        cwd=cwd, profile_id=profile_id, model=model, wire=wire
+        cwd=cwd, profile_id=profile_id, role=role, model=model, wire=wire
     )
     collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=env)
     if isinstance(collected, KernelTurn):

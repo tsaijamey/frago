@@ -72,10 +72,6 @@
   category: available
   brief: "browser start：零参数拉起浏览器+扩展桥，Chrome for Testing 是 frago 的默认浏览器（frago 自己下载到 ~/.frago/tools/chrome-for-testing，profile 在 ~/.frago/profiles/cft/extension），没有它才依次退到用户装的 Edge/Chromium 等并用那些浏览器自己的真实 profile；NEVER 传 --browser（换不了浏览器，只会让 profile 目录错位）"
 
-- name: must-no-auto-memory
-  category: must
-  brief: "禁用 Claude Code auto memory，结构化沉淀走 frago <domain> save，忽略 MEMORY.md"
-
 - name: agent-worker-driving
   category: must
   brief: "子任务用 frago agent 驱动 worker：--yes 一轮 / start-send-peek-stop 常驻；禁止手搓 tmux+claude（权限确认卡死+代批被平台拦截）"
@@ -144,7 +140,7 @@
 
 - name: session-search
   category: available
-  brief: "【召回三入口·过程层】当时怎么做的、怎么定的、用户怎么说的：frago session search \"<一句话>\"，模型扩关键词 + ripgrep 扫 ~/.frago/sessions 双库备份（含 Claude 已滚删的老会话）；NEVER 回答「我不记得了」，NEVER 手工 grep 原始会话库（见宪法条目「召回优先」）"
+  brief: "【召回三入口·过程层】当时怎么做的、怎么定的、用户怎么说的：先 frago session search \"<一句话>\" 找会话 id，再 frago session ask <会话id> \"<要提取的问题>\" 让轻量模型单轮提取内容；NEVER 回答「我不记得了」，NEVER 手工 grep、直接 Read 或写 python 读会话 .jsonl（见宪法条目「召回优先」）"
 
 - name: recipe-execution
   category: available

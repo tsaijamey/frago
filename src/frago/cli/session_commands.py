@@ -373,10 +373,129 @@ def _render_search(result) -> str:
         if hit.cwd:
             lines.append(f"    工作目录：{hit.cwd}")
         lines.append(f"    原始记录：{hit.location}")
+        lines.append(f'    单轮提取：frago session ask {hit.session_id[:8]} "<要提取的具体问题>"')
         for snippet in hit.snippets:
             lines.append(f"    · ({snippet.term}) {snippet.text}")
 
+    lines.append("")
+    lines.append(
+        '提示：提取某场会话的具体结论或片段请用 frago session ask <会话id> "<问句>"'
+        "（轻量模型单轮秒回，勿直接 Read 或用 python 读 raw.jsonl）。"
+    )
     return "\n".join(lines)
+
+
+@session_group.command("ask", cls=AgentFriendlyCommand)
+@click.argument("session_id")
+@click.argument("question")
+@click.option(
+    "--grep", "-g",
+    default=None,
+    help="Comma-separated literal terms to filter records (+2 neighbor context)",
+)
+@click.option(
+    "--tail", "-n",
+    type=int,
+    default=None,
+    help="Focus on the last N non-empty records of the session",
+)
+@click.option(
+    "--range", "-r", "range_spec",
+    default=None,
+    help="1-based record range start:end (e.g. 450:520)",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Override model for the single-turn extraction",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=None,
+    help="Seconds allowed for the single-turn extraction (default 60)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
+def ask_cmd(
+    session_id: str,
+    question: str,
+    grep: str | None,
+    tail: int | None,
+    range_spec: str | None,
+    model: str | None,
+    timeout: int | None,
+    json_output: bool,
+):
+    """Extract specific answers or conclusions from a session in a single turn.
+
+    Cleans and redacts the session transcript (supporting full session_id or
+    unique prefix across claude, opencode, codex, coreagent, and agy), windows
+    onto the relevant records, and queries ``frago-core --mode chat --as-role
+    lightagent`` in a single stateless turn (no tools, no tmux, no new session
+    file). Use this instead of reading ``raw.jsonl`` directly with Read or
+    Python scripts.
+
+    \b
+    Examples:
+      frago session ask 32c0bb7a "提取最后一条结论记录并脱敏连接串" --tail 20
+      frago session ask a1d5f9f8 "第 450 至 520 条记录中引用的 32c0bb7a 结论是什么" --range 450:520
+      frago session ask 32c0bb7a "报错原因和最终修复命令是什么" --grep "32c0bb7a,error"
+    """
+    from frago.session.ask import (
+        ASK_TIMEOUT_S,
+        SessionAskError,
+        ask_session,
+    )
+
+    from .agent_friendly import BusinessError
+
+    try:
+        result = ask_session(
+            session_id,
+            question,
+            grep=grep,
+            tail=tail,
+            range_spec=range_spec,
+            model=model,
+            timeout_s=float(timeout or ASK_TIMEOUT_S),
+        )
+    except ValueError as exc:
+        raise BusinessError(
+            str(exc),
+            'frago session ask <session_id> "<question>" --range 450:520',
+        ) from exc
+    except SessionAskError as exc:
+        raise BusinessError(
+            str(exc),
+            'frago session search "<keywords>"  # locate the session id first',
+        ) from exc
+
+    if json_output:
+        payload = {
+            "session_id": result.session_id,
+            "source": result.source,
+            "question": result.question,
+            "answer": result.answer,
+            "answer_source": result.answer_source,
+            "total_records": result.total_records,
+            "selected_records": len(result.selected_seqs),
+            "selected_seqs": result.selected_seqs,
+            "location": result.location,
+            "duration_ms": result.duration_ms,
+            "note": result.note,
+        }
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    header = (
+        f"会话：{result.session_id}（{result.source}，共 {result.total_records} 条记录，"
+        f"选取 {len(result.selected_seqs)} 条，耗时 {result.duration_ms / 1000:.1f}s）"
+    )
+    click.echo(header)
+    if result.note:
+        click.echo(f"[!] {result.note}")
+    click.echo("-" * 72)
+    click.echo(result.answer)
 
 
 @session_group.command("show", cls=AgentFriendlyCommand)
@@ -481,6 +600,10 @@ def show_cmd(
                 label = get_step_label(step.type)
                 ts = step.timestamp.strftime("%H:%M:%S")
                 click.echo(f"  [{ts}] {icon} {label}: {step.content_summary}")
+
+    click.echo(
+        f'\n💡 单轮提取本场具体内容：frago session ask {session.session_id[:8]} "<要提取的问题>"'
+    )
 
 
 def _find_session_by_prefix(prefix: str, agent_type: AgentType):

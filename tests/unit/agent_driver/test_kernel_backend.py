@@ -147,6 +147,12 @@ def test_chat_command_asks_once_and_leaves_no_session_behind():
     assert cmd[-2:] == ["-p", "-"]  # 任务从 stdin 来
 
 
+def test_chat_command_forwards_role_when_profile_id_not_given():
+    cmd = build_chat_command(cwd="/repos/x", profile_id=None, role="lightagent")
+    assert cmd[cmd.index("--as-role") + 1] == "lightagent"
+    assert "--as-profile" not in cmd
+
+
 def test_agent_command_still_names_its_session():
     cmd = build_command(session_id="core_abc", cwd="/repos/x", profile_id="0ef6d728")
     assert cmd[cmd.index("--mode") + 1] == "agent"
