@@ -10,6 +10,7 @@
  * 帧流不断连。
  */
 
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { desktopAppUrl } from '@/api/client';
 import { usePageStore } from '@/stores/pageStore';
@@ -17,14 +18,41 @@ import { usePageStore } from '@/stores/pageStore';
 export default function DesktopPage() {
   const { t } = useTranslation();
   const sessionId = usePageStore((s) => s.desktopSessionId);
+  const currentPage = usePageStore((s) => s.currentPage);
+  const isActive = currentPage === 'desktop';
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const src = desktopAppUrl(sessionId);
+
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ type: 'frago:desktop-visibility', visible: isActive }, '*');
+    } catch {
+      // ignore transient errors before iframe document is ready
+    }
+  }, [isActive]);
 
   return (
     <div className="desktop-page">
       <iframe
+        ref={iframeRef}
         className="desktop-page-frame"
         src={src}
         title={t('sidebar.nav.desktop')}
+        onLoad={() => {
+          try {
+            iframeRef.current?.contentWindow?.postMessage(
+              {
+                type: 'frago:desktop-visibility',
+                visible: usePageStore.getState().currentPage === 'desktop',
+              },
+              '*'
+            );
+          } catch {
+            // ignore
+          }
+        }}
       />
     </div>
   );

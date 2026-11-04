@@ -76,3 +76,18 @@ def test_human_input_is_a_bottom_right_support_widget():
     assert "setExpanded(false);" in js
     assert "setExpanded(true);" in js
     assert "/api/workbench/sessions/" in js
+
+
+def test_desktop_stage_suspends_loops_and_polling_when_hidden_or_disconnected():
+    """桌面页在切去其它页面（innerWidth===0 / document.hidden / hostVisible=false）
+    或虚拟桌面未连接（!state.wsOpen）时，必须暂停动态桌布与扫描灯的 requestAnimationFrame
+    循环、暂停会话记录轮询，并对断线重连采取退避；录制机位（ROLE==="camera"）恒视为可见。"""
+    assets = files("frago.desktop").joinpath("assets")
+    js = assets.joinpath("app.js").read_text(encoding="utf-8")
+
+    assert "function isStageVisible()" in js
+    assert "function shouldAnimateStage()" in js
+    assert "function wakeStageLoops()" in js
+    assert "function scheduleReconnect()" in js
+    assert 'd.type === "frago:desktop-visibility"' in js
+    assert "if (firstDrawn && !shouldAnimateStage())" in js

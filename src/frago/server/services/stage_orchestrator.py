@@ -229,9 +229,21 @@ def translate_ledger_item_to_english(section: str, line: str) -> str:
     )
 
 
+def _is_test_isolated() -> bool:
+    """单测环境下默认隔离真实 8770 舞台进程与语音推送（除非显式声明 FRAGO_TEST_REAL_STAGE）。"""
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) and not bool(
+        os.environ.get("FRAGO_TEST_REAL_STAGE")
+    )
+
+
+def _is_real_fn(fn: Any, expected_module: str) -> bool:
+    """判断函数是否仍为未被 monkeypatch 替换的真实实现。"""
+    return getattr(fn, "__module__", None) == expected_module
+
+
 def ensure_stage_up() -> dict[str, Any]:
     """确保虚拟桌面舞台在线（8770 broker 运行态）。"""
-    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("FRAGO_TEST_REAL_STAGE"):
+    if _is_test_isolated():
         return {"ok": True, "status": "running", "mock": True}
 
     from frago.desktop import registry, stage
@@ -345,6 +357,12 @@ class PresenterDaemon:
         self.baseline_acts: dict[str, int] = self._snapshot_acts()
 
     def start(self) -> None:
+        if _is_test_isolated():
+            logger.debug(
+                "stage_orchestrator: skip starting presenter thread in test for session=%s",
+                self.session_id,
+            )
+            return
         if self.thread and self.thread.is_alive():
             return
         self.thread = threading.Thread(
@@ -477,6 +495,9 @@ class PresenterDaemon:
         with contextlib.suppress(Exception):
             from frago.desktop import registry, stage
 
+            if _is_test_isolated() and _is_real_fn(stage._fetch_status, "frago.desktop.stage"):
+                return self.operator_ready, speech_busy, live_focus
+
             rec = registry.read_instance(registry.DEFAULT_ID)
             port = (rec or {}).get("port") if rec and rec.get("status") == "running" else None
             if port:
@@ -560,6 +581,8 @@ class PresenterDaemon:
 
         strap_text = (zh_Fallback_or_strap or zh_fallback or phrase_en[:50])[:55]
         self.presenter_straps.add(strap_text)
+        if _is_test_isolated() and _is_real_fn(aos.post, "frago.desktop.aos"):
+            return
         rec = registry.read_instance(registry.DEFAULT_ID)
         if not rec or rec.get("status") != "running":
             return
@@ -596,6 +619,8 @@ class PresenterDaemon:
         """将英文解说词按序排入桌面语音队列（不带 interject，避免打断正在说的台词）。"""
         from frago.desktop import aos, registry
 
+        if _is_test_isolated() and _is_real_fn(aos.post, "frago.desktop.aos"):
+            return
         rec = registry.read_instance(registry.DEFAULT_ID)
         if not rec or rec.get("status") != "running":
             return

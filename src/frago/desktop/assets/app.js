@@ -70,10 +70,38 @@
     takeover: false,
     actorHeadless: true,
     actorSwitching: false,
-    actorModeError: null
+    actorModeError: null,
+    // 宿主容器显隐与断线重连退避状态
+    hostVisible: true,
+    reconnectAttempts: 0,
+    reconnectTimer: null
   };
 
   function $(id) { return document.getElementById(id); }
+
+  /* ── 舞台可见性与重绘休眠控制 ──
+     录制机位（ROLE === "camera"）跑在无头浏览器里，恒视为可见，绝不停帧；
+     普通荧幕在标签页最小化（document.hidden）、WebUI 切去其它页面（外层槽位
+     hidden 导致 innerWidth/innerHeight 为 0，或父页发来显隐通知）时视为不可见。
+     动态桌布与底部扫描灯只在「舞台已连上 broker 且页面当前可见」时逐帧重绘；
+     一旦 desktop down（!state.wsOpen）或切离页面，立即停下 requestAnimationFrame
+     循环，避免后台全速空转计算三维噪声与触发全屏高斯模糊合成。 */
+  function isStageVisible() {
+    if (ROLE === "camera") return true;
+    if (!state.hostVisible) return false;
+    if (typeof document !== "undefined" && document.hidden) return false;
+    if (!window.innerWidth || !window.innerHeight) return false;
+    return true;
+  }
+
+  function shouldAnimateStage() {
+    return !!(state.wsOpen && isStageVisible());
+  }
+
+  function wakeStageLoops() {
+    if (els.wakeWallpaper) els.wakeWallpaper();
+    if (els.wakeScanline) els.wakeScanline();
+  }
 
   // 窗口元素按名字取。三扇窗共用同一套定位/焦点/收展逻辑，写死 term/browser
   // 三元会让第三扇窗进来时每个函数都要改一遍，且漏一处就在画面上静静失效。
@@ -107,6 +135,7 @@
 
   /* ── 时钟 ── */
   function tickClock() {
+    if (!isStageVisible() && els.clock && els.clock.textContent !== "--:--") return;
     var d = new Date();
     var days = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     var hh = String(d.getHours()).padStart(2, "0");
@@ -1195,18 +1224,40 @@
     }
   }
 
-  /* ── 连接管理：断了每秒重连，画面保持最后状态不动 ── */
+  /* ── 连接管理：断了按可见性退避重连，切回桌面或连上时立即唤醒 ── */
+  function scheduleReconnect() {
+    if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+    state.reconnectAttempts = (state.reconnectAttempts || 0) + 1;
+    // 前 3 次保持 1s 快连；之后若桌面可见退避至 3s，若藏在后台槽位退避至 5s
+    var delay = state.reconnectAttempts <= 3
+      ? 1000
+      : (isStageVisible() ? 3000 : 5000);
+    state.reconnectTimer = setTimeout(function () {
+      state.reconnectTimer = null;
+      connect();
+    }, delay);
+  }
+
   function connect() {
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    if (state.ws && (state.ws.readyState === WebSocket.OPEN ||
+        state.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
     var ws;
     try {
       ws = new WebSocket(CONFIG.brokerWs);
     } catch (e) {
-      setTimeout(connect, 1000);
+      scheduleReconnect();
       return;
     }
     state.ws = ws;
     ws.onopen = function () {
       state.wsOpen = true;
+      state.reconnectAttempts = 0;
       // 每次连上都重新等一遍补发。断线重连时几何其实还是对的，但"对不对"
       // 不该靠这种巧合——统一等 synced，只有一条路，也就只有一种时序。
       state.syncing = true;
@@ -1215,6 +1266,8 @@
       // 只在首次加载时发过一次 ready，broker 重启后就永远等不到——ui_ready
       // 一直是 false，而画面其实好好的。假警报比不报警更糟：报久了就没人看了。
       state.firstFrameSent = false;
+      wakeStageLoops();
+      if (els.syncSessionRecords) els.syncSessionRecords();
       // 第一条消息就自报家门。放在 layout 之前，broker 才能在收到任何几何
       // 之前就知道对面是谁——否则它只能等第一份 layout 到了再判断该不该收，
       // 而 /status 在这段空窗期里说不出连着的是哪块荧幕。
@@ -1230,7 +1283,7 @@
     ws.onmessage = onMessage;
     ws.onclose = function () {
       state.wsOpen = false;
-      setTimeout(connect, 1000);
+      scheduleReconnect();
     };
     ws.onerror = function () { ws.close(); };
   }
@@ -2116,11 +2169,16 @@
       }
     };
 
+    var hasExplicitSession = /[?&]session=([^&]+)/.test(location.search);
+
     function syncSessionRecords() {
+      if (!isStageVisible()) return;
       if (resolveUiLang() !== currentLang) {
         applyHumanInputLang();
       }
       if (!sid || syncingRecords) return;
+      // 舞台未连接且当前面板尚未发起或收到过任何对话时，跳过对默认随机 core_ 会话的空轮询
+      if (!state.wsOpen && !skillSent && lastSeq === 0 && !hasExplicitSession) return;
       syncingRecords = true;
       var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
                 "/records?after=" + (lastSeq + 1) + "&limit=100";
@@ -2149,6 +2207,7 @@
       });
     }
 
+    els.syncSessionRecords = syncSessionRecords;
     syncSessionRecords();
     setInterval(syncSessionRecords, 2500);
 
@@ -2334,8 +2393,16 @@
     }
 
     var t0 = null, last = 0, ms = 0;
+    var rafId = null;
+    var firstDrawn = false;
     function loop(ts) {
+      rafId = null;
+      if (firstDrawn && !shouldAnimateStage()) {
+        last = 0;
+        return;
+      }
       if (t0 === null) { t0 = ts; last = ts; }
+      else if (last === 0) { last = ts; }
       // 帧间隔钳在 1/15 秒：切后台或掉帧回来时，时间不会一次跳一大段，
       // 画面不会"闪一下"。stripe 原实现同样这么钳。
       ms += Math.min(ts - last, 1000 / 15);
@@ -2374,9 +2441,20 @@
         }
       }
       cx.putImageData(img, 0, 0);
-      requestAnimationFrame(loop);
+      firstDrawn = true;
+      if (shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      } else {
+        last = 0;
+      }
     }
-    requestAnimationFrame(loop);
+    els.wakeWallpaper = function () {
+      if (rafId !== null) return;
+      if (!firstDrawn || shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    els.wakeWallpaper();
   }
 
   /* ── 扫描灯 ──────────────────────────────────────────────
@@ -2395,7 +2473,11 @@
     var x = c.getContext("2d");
     var N = 48, W = 1920 / N, GLOW = 6, SPEED = 0.10;
     var t = 0;
-    (function loop() {
+    var rafId = null;
+    var firstDrawn = false;
+    function loop() {
+      rafId = null;
+      if (firstDrawn && !shouldAnimateStage()) return;
       t += SPEED;
       // 往复用三角波：0 → N-1 → 0，端点自然减速，不需要额外缓动
       var p = (N - 1) * Math.abs(((t / (N - 1)) % 2) - 1);
@@ -2409,8 +2491,31 @@
         x.fillRect(i * W + 1, 14, W - 2, 2);
       }
       x.globalAlpha = 1;
-      requestAnimationFrame(loop);
-    })();
+      firstDrawn = true;
+      if (shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    }
+    els.wakeScanline = function () {
+      if (rafId !== null) return;
+      if (!firstDrawn || shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    els.wakeScanline();
+  }
+
+  function handleStageVisibilityChange() {
+    if (!isStageVisible()) return;
+    fitStage();
+    tickClock();
+    if (state.wsOpen) {
+      wakeStageLoops();
+      sendLayout();
+    } else {
+      connect();
+    }
+    if (els.syncSessionRecords) els.syncSessionRecords();
   }
 
   function boot() {
@@ -2455,7 +2560,18 @@
     measureHeaders();
     tickClock();
     setInterval(tickClock, 1000);
-    window.addEventListener("resize", fitStage);
+    window.addEventListener("resize", function () {
+      fitStage();
+      handleStageVisibilityChange();
+    });
+    document.addEventListener("visibilitychange", handleStageVisibilityChange);
+    window.addEventListener("message", function (e) {
+      var d = e && e.data;
+      if (d && d.type === "frago:desktop-visibility") {
+        state.hostVisible = !!d.visible;
+        handleStageVisibilityChange();
+      }
+    });
     setupHumanInput();
     els.soundUnlock = setupSoundUnlock();
     setupBrowserTakeover();
