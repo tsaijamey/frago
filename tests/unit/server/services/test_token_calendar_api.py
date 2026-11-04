@@ -106,3 +106,59 @@ class TestTokenCalendarApi:
             "/api/claude-sessions/token-calendar", params={"month": month}
         )
         assert resp.status_code == 400
+
+    def test_includes_agy_and_coreagent_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        claude_dir = tmp_path / "claude" / "proj"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / "s.jsonl").write_text(
+            json.dumps(_assistant(TS, "m1", 10)) + "\n", encoding="utf-8"
+        )
+
+        ca_dir = tmp_path / "coreagent" / "proj"
+        ca_dir.mkdir(parents=True)
+        (ca_dir / "core_1.jsonl").write_text(
+            json.dumps(_assistant(TS, "ca1", 20)) + "\n", encoding="utf-8"
+        )
+
+        agy_logs = tmp_path / "agy" / "conv1" / ".system_generated" / "logs"
+        agy_logs.mkdir(parents=True)
+        (agy_logs / "transcript.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "PLANNER_RESPONSE",
+                    "step_index": 3,
+                    "created_at": TS,
+                    "input_tokens": 30,
+                    "output_tokens": 40,
+                    "cache_read_tokens": 50,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(tcal, "CLAUDE_PROJECTS_DIR", tmp_path / "claude")
+        monkeypatch.setattr(tcal, "COREAGENT_SESSIONS_DIR", tmp_path / "coreagent")
+        monkeypatch.setattr(tcal, "AGY_BRAIN_DIR", tmp_path / "agy")
+        monkeypatch.setattr(tcal, "DEFAULT_CACHE_PATH", tmp_path / "cache.json")
+
+        app = FastAPI()
+        app.include_router(routes.router, prefix="/api")
+        tc = TestClient(app)
+
+        d1 = _local_day(TS)
+        month = d1[:7]
+        resp = tc.get(f"/api/claude-sessions/token-calendar?month={month}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["days"][d1] == {
+            "input": 60,
+            "output": 70,
+            "cache_creation": 30,
+            "cache_read": 80,
+            "total": 240,
+        }
+        assert data["month_total"]["total"] == 240
+

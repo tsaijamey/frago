@@ -14,6 +14,7 @@ from frago import __version__
 
 from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
+from .agy_hook import agy_hook
 from .apps_commands import apps_group
 from .autostart_command import autostart_group
 from .book_commands import book_command
@@ -30,7 +31,6 @@ from .cloud_commands import (
 from .commands import (
     init as init_dirs,  # Legacy directory init command, kept as init-dirs
 )
-from .agy_hook import agy_hook
 from .commands import (
     status,
 )
@@ -38,6 +38,7 @@ from .context_commands import context_command
 from .daemon_commands import daemon_group
 from .def_commands import def_group
 from .desktop_commands import desktop_group
+from .employee_commands import employee_group
 from .extension_commands import extension_group
 from .file_commands import cp_command, mv_command, rm_command
 from .hook_rules_commands import hook_rules_group
@@ -45,7 +46,6 @@ from .init_command import init  # New environment init command
 from .profile_commands import profile_group
 from .recipe_commands import recipe_group
 from .remote_commands import remote_group
-from .team_commands import team_group
 from .reply_command import reply_cmd
 from .schedule_commands import schedule_group
 from .serve_command import serve
@@ -53,6 +53,7 @@ from .server_command import server_group
 from .session_commands import session_group
 from .skill_commands import skill_group
 from .start_command import start
+from .team_commands import team_group
 from .todo_commands import todo_group
 from .update_command import update
 from .user_commands import user_group
@@ -61,22 +62,24 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
+    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "app"]),
     ("Files", ["cp", "mv", "rm"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "employee", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session"]
+EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session", "app"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
 # guesses `frago sessions search` should land on the command rather than on an
 # error page.
-COMMAND_ALIASES = {"sessions": "session"}
+COMMAND_ALIASES = {
+    "sessions": "session",
+}
 
 # Chrome subcommand groups
 BROWSER_SUBGROUPS = OrderedDict([
@@ -407,8 +410,8 @@ cli.add_command(recipe_group)
 # Skill management command group
 cli.add_command(skill_group)
 
-# Apps command group - built-in delivery capabilities
-cli.add_command(apps_group)
+# App command group - built-in session UI components and delivery capabilities
+cli.add_command(apps_group, name="app")
 
 # Agent commands
 cli.add_command(agent)
@@ -467,6 +470,9 @@ cli.add_command(def_group)
 
 # Todo command group - standardized CRUD over ~/.frago/todo/ (one JSON per todo)
 cli.add_command(todo_group, name="todo")
+
+# Employee ontology command group - manage EmployeePostResource (+R) & DomainEmployeeRole (~R)
+cli.add_command(employee_group, name="employee")
 
 # Hook-rules command group - manage frago-core's data-driven routing rules
 cli.add_command(hook_rules_group)

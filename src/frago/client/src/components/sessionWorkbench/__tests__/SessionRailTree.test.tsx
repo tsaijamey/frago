@@ -154,6 +154,30 @@ describe('SessionRail 两层清单', () => {
     expect(items[1].getAttribute('data-origin')).toBe('worker');
   });
 
+  it('展开的 worker 行：标题降到 12px 半档字重，状态行左缩进 17px 与标题文字对齐，不套外框', () => {
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    fireEvent.click(screen.getByTestId('toggle-workers'));
+    const worker = screen.getAllByTestId('session-item')[1];
+    const title = worker.querySelector('[data-testid=session-title]')!;
+    expect(title.className).toContain('text-[12px]');
+    expect(title.className).toContain('font-medium');
+    const status = worker.querySelector('[data-testid=session-status]')!;
+    expect(status.className).toContain('pl-[17px]');
+    expect(status.className).toContain('mt-[3px]');
+    // 从属关系靠缩进、折角与字色说，不再另套一圈描边盒子
+    expect(worker.closest('[data-group]')?.className ?? '').not.toContain('border');
+  });
+
+  it('状态行最右的内核图标平时去饱和退后，不跟 For you 抢视线', () => {
+    render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={NOOP} />);
+    const icon = screen.getByTestId('session-family-icon');
+    expect(icon.className).toContain('h-[13px]');
+    expect(icon.className).toContain('w-[13px]');
+    expect(icon.className).toContain('opacity-[0.36]');
+    expect(icon.className).toContain('grayscale(0.88)');
+    expect(icon.className).toContain('group-hover/session:opacity-[0.82]');
+  });
+
   it('点展开钮不会顺手把这场会话选中', () => {
     const onSelect = vi.fn();
     render(<TestRail state={railState(FAMILY)} selectedId={null} onSelect={onSelect} />);
@@ -205,14 +229,16 @@ describe('SessionRail 分支与原会话同容器', () => {
     expect(screen.getByTestId('toggle-workers').getAttribute('title')).toContain('1');
   });
 
-  it('分支容器每一行共用同一条外边界，末行收底不缺角', () => {
+  it('分支容器用 flow-root 封住内部外边距不断裂，且分支卡与主会话同宽', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     const wrappers = screen
       .getAllByTestId('session-item')
       .map((el) => el.closest('[data-branch-pos]') as HTMLElement);
-    // 缩进只能放在容器内层；如果挂在容器外层，末行的左边界会往里缩，左下角就缺一块。
     expect(wrappers.map((w) => w.className)).toEqual(['mx-1', 'mx-1']);
-    expect(wrappers[1].querySelector('.pl-4')).toBeTruthy();
+    // 每一段容器都用 flow-root 阻止折叠 worker 的 mb-3 穿透造成背景断裂
+    expect(wrappers.every((w) => w.firstElementChild?.className.includes('flow-root'))).toBe(true);
+    // 分支卡仅挂在主会话下方，不缩窄（没有 pl-4）
+    expect(wrappers[1].querySelector('.pl-4')).toBeNull();
   });
 
   it('展开父会话的 worker：父卡 → worker → 分支卡，仍在同一容器里', () => {
@@ -256,6 +282,10 @@ describe('SessionRail 分支与原会话同容器', () => {
     const line = screen.getByTestId('branch-of');
     expect(line.textContent).toContain('branched');
     expect(line.getAttribute('title')).toBe('主线：全局字号');
+    // 无底无框的行内微标：不带灰底胶囊，否则和下面的 For you 胶囊叠成双重盒感
+    expect(line.className).toContain('bg-transparent');
+    expect(line.className).not.toContain('bg-bg-hover');
+    expect(line.className).not.toContain('rounded-[4px]');
     fireEvent.click(line);
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(BOSS);

@@ -1,21 +1,20 @@
 /**
  * SessionItem — 左栏清单里的一张会话卡，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
  *
- * **三行，每行独占整宽**（09-29 第五轮）。任何图标、按钮、标签都不和标题或预览挤在同一行：
+ * **两行，每行独占整宽**（去掉会话内容预览以节省垂直空间）。任何图标、按钮、标签都不和标题挤在同一行：
  *
  * | 行 | 内容 |
  * |---|---|
  * | 标题 | 最多两行，放不下截断，悬停看全文 |
- * | 预览 | agent 最近一次回复，截开头留结尾，灰字最多两行；所有会话都有这一行 |
  * | 状态行 | For you（发出后是 Sending / Agent on it）· 时长 · 终端 · 子会话数 · 图钉；最右「…」 |
  *
- * For you 与其余会话同一结构；三档字：标题 13/600、预览 12/400、状态行 11，只有 For you
+ * For you 与其余会话同一结构；两档字：标题 13/600、状态行 11，只有 For you
  * 标签带颜色。
  */
 
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
+import { Briefcase, ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
 import { formatClock } from './RecordCard';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
@@ -33,8 +32,8 @@ export const FAMILY_ICON: Record<SessionFamily, { src: string; label: string }> 
   coreagent: { src: '/icons/coreagent.png', label: 'CoreAgent' },
 };
 
-/** 选中：整张卡换中性底加一圈完整描边。选中是「你在看哪一条」，不是动作，不用绿，也不用单边条。 */
-const SELECTED = 'bg-[var(--sel-bg)] shadow-[inset_0_0_0_1px_var(--sel-border)]';
+/** 选中：整张卡用品牌绿淡底加品牌绿整圈细描边与微阴影，与中性灰下沉组容器拉开清晰层级，不用单边条。 */
+const SELECTED = 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]';
 
 /** 路径里有空格、引号这类字符时裹一层单引号，否则粘进终端会被拆成两个参数。 */
 function shellArg(value: string): string {
@@ -197,8 +196,26 @@ export function previewOf(
   return keepTail(text.replace(/^\s*#{1,6}\s+/, ''));
 }
 
-function MaybeLiveCard({ live, fill, children }: { live: boolean; fill?: string; children: ReactNode }) {
-  return live ? <LiveBorder fill={fill}>{children}</LiveBorder> : <>{children}</>;
+function MaybeLiveCard({
+  live,
+  fill,
+  selected,
+  branchRoot,
+  children,
+}: {
+  live: boolean;
+  fill?: string;
+  selected?: boolean;
+  branchRoot?: boolean;
+  children: ReactNode;
+}) {
+  return live ? (
+    <LiveBorder fill={fill} selected={selected} branchRoot={branchRoot}>
+      {children}
+    </LiveBorder>
+  ) : (
+    <>{children}</>
+  );
 }
 
 export default function SessionItem({
@@ -207,13 +224,15 @@ export default function SessionItem({
   copied,
   pinned = false,
   inPinnedGroup = false,
+  inBranchGroup = false,
   forYou = null,
   sending = false,
   agentOnIt = false,
   inTmux = false,
-  card = null,
+  card: _card = null,
   busyTurn = false,
   nested = false,
+  branchRoot = false,
   branchCard = false,
   branchOf = null,
   workerCount = 0,
@@ -234,10 +253,12 @@ export default function SessionItem({
   /** 这场会话在不在置顶名单里。 */
   pinned?: boolean;
   /**
-   * 这张卡摆在 Pinned 那一块里：整组已经有底色、描边和「Always on top」，每张再画一个图钉
-   * 是重复，不画。组外（按筛选单独看到的置顶会话）照旧画。
+   * 这张卡摆在 Pinned 那一区里：分区标题已经说了这是置顶区，每张再画一个图钉是重复，不画。
+   * 组外（按筛选单独看到的置顶会话）照旧画。
    */
   inPinnedGroup?: boolean;
+  /** 这张卡摆在分支组里：容器已经有暗槽底，卡自己的底与叠纸都跟着容器走，不能透出栏底色。 */
+  inBranchGroup?: boolean;
   /** 这一场挂着 For you：有 agent 停在输入框前等你（判据见 `useForYou`）。 */
   forYou?: ForYouInfo | null;
   /** 这一场本地刚发出一句话、还在路上。 */
@@ -261,6 +282,11 @@ export default function SessionItem({
    * 它不是折角的 worker 行，所以不传 `nested`。
    */
   branchCard?: boolean;
+  /**
+   * 分支组里那张源头父卡（组内第一张非 worker 的卡）。它是这一组的主卡：浮起实色底
+   * `--grp-card-bg` 加整圈细描边 `--grp-card-border`，与退到暗槽底的派生分支子卡拉开主次。
+   */
+  branchRoot?: boolean;
   /**
    * 这一场是从哪场会话分出来的分支。出处只在这一行说：「分支自 <原会话>」，
    * 点它切到原会话。原会话标题认不出时写编号开头。
@@ -289,51 +315,86 @@ export default function SessionItem({
   const age = forYou ? forYou.waitingSince : activityTs(session);
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
-  const stacked = hasWorkers && !workersExpanded && !branchCard;
-  /** 分支卡在容器里要有一张实在的纸；选中时让 SELECTED 接管底色，描边仍保留。 */
-  const branchLook = branchCard
-    ? selected
-      ? 'border border-border-color'
-      : 'border border-border-color bg-bg-primary'
-    : '';
-  const preview = previewOf(session, forYou, card);
-  /** 纸片、垫底、流光内层都得是不透明实色，取卡片所在那块底：置顶组里是组的浅底，别处是清单底。 */
-  const paperBg = inPinnedGroup ? 'bg-[var(--rail-pinned-fill)]' : 'bg-bg-secondary';
+  const stacked = hasWorkers && !workersExpanded;
+  /**
+   * 分支组里的三种卡各有一层底，主次由此分开：
+   * - 源头父卡（`branchRoot`）：浮起实色底 `--grp-card-bg` 加整圈细描边，稳住主卡重心；
+   * - 派生分支子卡（`branchCard`）：直接落在暗槽底上，不画任何凸起边框，只靠左内边距与半档字重退后；
+   * - 展开的 worker 行（`nested`）：缩进加折角，同样不带盒。
+   * 选中态一律交由 SELECTED 接管，三条分支都不再各自画边。
+   */
+  const branchRootLook =
+    branchRoot && !selected
+      ? 'bg-[var(--grp-card-bg)] [box-shadow:inset_0_0_0_1px_var(--grp-card-border),0_1px_2px_rgba(0,0,0,0.14)] hover:bg-[color-mix(in_srgb,var(--text-primary)_5%,var(--grp-card-bg))]'
+      : '';
+  const branchCardLook =
+    branchCard && !selected ? 'bg-[var(--branch-card-bg)] hover:bg-bg-hover' : '';
+  /**
+   * 折着 worker 的那张主卡自己也要有一层不透明实色底，把身后那两张纸片挡住；
+   * 边只留极淡一圈组描边，看起来仍是一张纸，不是第二个框。
+   */
+  const stackedLook =
+    stacked && !selected && !live
+      ? 'bg-[var(--surface-fill)] [box-shadow:inset_0_0_0_1px_var(--grp-border)] hover:bg-[color-mix(in_srgb,var(--text-primary)_5%,var(--surface-fill))]'
+      : '';
+  /** 叠纸那两层纸片与流光内层要填的底：有 worker 的主卡自身有实色底，纸片就跟它同色。 */
+  const onGroupFill = inBranchGroup;
+  const paperFill = 'bg-[var(--surface-fill)]';
+  const liveFill = undefined;
+  /** 分支父卡的底面要一路传下去（叠纸、流光内层都读它），否则内层会填回栏底而露出浅灰补丁。 */
+  const surfaceScope = branchRoot ? '[--surface-fill:var(--grp-card-bg)]' : '';
+  /** 组内三种卡的横向内边距：分支子卡微收左缩进，worker 行紧凑，其余是默认那一档。 */
+  const padding = nested
+    ? 'py-[5px] pl-2 pr-2.5'
+    : branchCard
+      ? 'pl-[14px] pr-[11px] py-[7px]'
+      : 'px-3 pt-2 pb-[7px]';
   /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
   const progress = sending ? 'sending' : agentOnIt ? 'agent' : null;
+  /**
+   * 平时不是一张卡，鼠标经过才浮出一层底；选中的那一场整卡换底加整圈描边。
+   * 分支组里的三种卡、以及折着 worker 的那张主卡，各自已经带了自己的底与悬停色，
+   * 这里不再叠一层，免得两个悬停色打架。
+   */
+  const hasOwnLook = branchRootLook !== '' || stackedLook !== '' || branchCardLook !== '';
+  const stateCls = selected
+    ? SELECTED
+    : `${branchRootLook || stackedLook || branchCardLook}${
+        hasOwnLook ? '' : onGroupFill ? ' hover:bg-bg-active' : ' hover:bg-bg-hover'
+      }`;
+  /** 标题的字重与字色：分支子卡降半档，worker 行再降一档并改用次级字色，选中时都回到最重那一档。 */
+  const titleCls = nested
+    ? selected
+      ? 'font-semibold text-text-primary'
+      : 'font-medium text-text-secondary'
+    : branchCard
+      ? selected
+        ? 'font-semibold text-text-primary'
+        : 'font-medium text-[color-mix(in_srgb,var(--text-primary)_86%,transparent)]'
+      : 'font-semibold text-text-primary';
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
        列出来的那几行回答，让纸片去数数只会让一叠纸在 2 个和 9 个之间抖动。
        折着时底下多留一点空，否则最下面那张纸会贴到下一行头上。 */
-    <div className={`relative ${stacked ? 'mb-3' : ''}`}>
+    <div className={`relative ${surfaceScope} ${stacked ? (inBranchGroup ? 'mb-1.5' : 'mb-2') : ''}`.trim()}>
       {stacked ? (
         <>
-          {/* 每张纸都要有自己的一道边，否则两张纸的下缘挨在一起，看起来是文字底下浮了
-              两道杠。边用的是清单里到处在用的那个分隔线色，不新增颜色。 */}
+          {/* 两张纸片只露出一线，边用组容器那道淡描边，底跟所在底面同色，于是看起来是同一叠纸
+              往后错开的几层，而不是两张独立的框。 */}
           <span
             aria-hidden="true"
-            className={`pointer-events-none absolute inset-x-4 top-4 -bottom-[10px] rounded-[8px] border border-border-color ${paperBg}`}
+            className={`pointer-events-none absolute inset-x-[10px] top-[8px] -bottom-[6px] z-0 rounded-[8px] border border-[var(--grp-border)] ${paperFill} opacity-[0.38]`}
           />
           <span
             aria-hidden="true"
-            className={`pointer-events-none absolute inset-x-2 top-3 -bottom-[5px] rounded-[8px] border border-border-color ${paperBg}`}
+            className={`pointer-events-none absolute inset-x-[5px] top-[4px] -bottom-[3px] z-0 rounded-[8px] border border-[var(--grp-border)] ${paperFill} opacity-[0.68]`}
           />
         </>
       ) : null}
-      {/* 卡片背后垫一层不透明的底，否则身后那两张纸会透过卡片自己的半透明底色显出来。
-          填的是侧栏自己的底色：看起来仍是一张干净的纸，只是把身后那两张挡住了。
-          垫在这里而不是画在卡片上，是为了让卡片那一层继续只管自己的状态——选中换底、
-          鼠标经过浮底，两样都还长在同一个地方。 */}
-      {stacked ? (
-        <span
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-0 rounded-[8px] border border-border-color ${paperBg}`}
-        />
-      ) : null}
       {/* 开在 tmux 里的那道流光只围最上面这张卡。套在外层的话，身后那一叠纸也被圈进去，
           光就沿着整叠的外框跑到最底下那张纸的下缘去了（主人 09-29 指出）。 */}
-      <MaybeLiveCard live={live} fill={inPinnedGroup ? 'var(--rail-pinned-fill)' : undefined}>
+      <MaybeLiveCard live={live} fill={liveFill} selected={selected} branchRoot={branchRoot}>
       <div
         role="button"
         tabIndex={0}
@@ -349,18 +410,20 @@ export default function SessionItem({
         data-for-you={forYou ? 'true' : undefined}
         data-pinned={pinned ? 'true' : undefined}
         data-origin={session.origin}
+        data-employee={session.employee_id ?? undefined}
         data-nested={nested ? 'true' : undefined}
         data-stacked={stacked ? 'true' : undefined}
+        data-branch-root={branchRoot ? 'true' : undefined}
+        data-branch-card={branchCard ? 'true' : undefined}
         /* **平时不是一张卡。** 清单要的是一列可扫读的行：平时没有任何容器，鼠标经过才浮出
            一层底，选中的那一场换中性底再加一圈完整描边——整张卡换样子，不靠任何单边色条，
-           也不用绿。**底下压着 worker 的那几场是例外**：它们要有一张实在的纸，身后那一叠
-           才立得住。内边距上下 10、左右 12（第五轮二改）。 */
-        className={`group/session relative w-full cursor-pointer rounded-[8px] px-3 py-2.5 text-left transition-colors duration-200 ${branchLook} ${
-          /* 置顶组那块底已经是悬停色，组里的卡悬停再叠一层才看得出（原型 .pingrp .si:hover）。 */
-          selected ? SELECTED : inPinnedGroup ? 'hover:bg-bg-active' : 'hover:bg-bg-hover'
-        }`}
+           也不用绿。**底下压着 worker 的那几场、以及分支组里的卡是例外**：它们要有一张实在
+           的纸，身后那一叠才立得住。内边距照原型 .si：上 8、左右 12、下 7；分支子卡与 worker
+           行各收一档，见上面的 `padding`。 */
+        className={`group/session relative z-[1] w-full cursor-pointer rounded-[8px] text-left transition-colors duration-200 ${padding} ${stateCls}`}
       >
-        {/* 分支只留一枚 branched 小标签，出处全称放进悬停提示，不占正文。 */}
+        {/* 分支只留一枚 branched 微标：无底无框的行内小字，出处全称放进悬停提示，不占正文。
+            从前它是一枚灰底胶囊，和下面 For you 的胶囊叠在一起成了双重盒感。 */}
         {branchOf ? (
           <button
             type="button"
@@ -370,43 +433,37 @@ export default function SessionItem({
               e.stopPropagation();
               onSelect(branchOf.id);
             }}
-            className="mb-1 inline-flex w-fit max-w-full items-center gap-1 rounded-[4px] bg-bg-hover px-1.5 py-0.5 text-left text-[10.5px] leading-[1.4] text-[var(--card-meta)] hover:text-text-secondary"
+            className="mb-[2px] inline-flex w-fit max-w-full items-center gap-[3.5px] bg-transparent p-0 text-left text-[10.5px] font-medium leading-[1.25] text-[var(--card-meta)] hover:text-text-secondary"
           >
-            <GitBranch size={11} className="shrink-0" aria-hidden="true" />
+            <GitBranch size={10.5} className="shrink-0" aria-hidden="true" />
             <span>{t('workbench.rail.branched')}</span>
           </button>
         ) : null}
 
         {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
-        <div className="flex min-w-0 items-start gap-1.5">
+        <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>
           {nested ? (
-            <CornerDownRight size={11} className="mt-[3px] shrink-0 text-text-dim" aria-hidden="true" />
+            <CornerDownRight size={12} className="mt-[2px] shrink-0 text-text-dim" aria-hidden="true" />
           ) : null}
           <span
             data-testid="session-title"
             title={session.title}
-            className={`line-clamp-2 min-w-0 flex-1 break-words font-semibold leading-[1.35] ${
+            className={`line-clamp-2 min-w-0 flex-1 break-words leading-[1.35] ${
               nested ? 'text-[12px]' : 'text-[13px]'
-            } ${nested && !selected ? 'text-text-secondary' : 'text-text-primary'}`}
+            } ${titleCls}`}
           >
             {session.title}
           </span>
         </div>
 
-        {/* 第 2 行：预览。所有会话都有这一行。 */}
-        <p
-          data-testid="session-preview"
-          className={`mt-[3px] line-clamp-2 break-words leading-[1.5] ${nested ? 'text-[11px]' : 'text-[12px]'} ${
-            preview ? 'text-[var(--card-pv)]' : 'text-[var(--card-meta)]'
-          }`}
-        >
-          {preview || t('workbench.rail.noReply')}
-        </p>
-
-        {/* 第 3 行：状态行。左组可收缩，放不下时时长先截断；「…」固定最右、不收缩。 */}
+        {/* 第 2 行：状态行（去掉会话内容预览以节省垂直空间，照原型 .si .sr 顶距 5px）。
+            worker 行再压一档顶距并把左内边距缩到 17px，越过 12px 折角图标加 5px 间距，
+            于是状态行与上方的 worker 标题文字左对齐。 */}
         <div
           data-testid="session-status"
-          className="mt-2 flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]"
+          className={`flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)] ${
+            nested ? 'mt-[3px] pl-[17px]' : 'mt-[5px]'
+          }`}
         >
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             {progress === 'sending' ? (
@@ -431,6 +488,17 @@ export default function SessionItem({
                 {shortAge(age)}
               </span>
             )}
+            {session.employee_id ? (
+              <span
+                data-testid="session-employee"
+                data-employee-id={session.employee_id}
+                title={t('workbench.rail.employeeSession', { id: session.employee_id })}
+                aria-label={t('workbench.rail.employeeSession', { id: session.employee_id })}
+                className="inline-flex shrink-0 items-center"
+              >
+                <Briefcase size={12} aria-hidden="true" />
+              </span>
+            ) : null}
             {inTmux ? (
               <SquareTerminal
                 size={12}
@@ -481,6 +549,9 @@ export default function SessionItem({
             onCopy={onCopy}
             copied={copied}
           />
+          {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
+              OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、
+              压低对比退到后面，鼠标经过这张卡或它被选中时才恢复辨识度。 */}
           {FAMILY_ICON[session.family] ? (
             <img
               src={FAMILY_ICON[session.family].src}
@@ -488,7 +559,11 @@ export default function SessionItem({
               title={FAMILY_ICON[session.family].label}
               data-testid="session-family-icon"
               data-family={session.family}
-              className="pointer-events-none h-3.5 w-3.5 shrink-0 select-none rounded-[3px] object-contain opacity-85"
+              className={`pointer-events-none h-[13px] w-[13px] shrink-0 select-none rounded-[3px] object-contain transition-[filter,opacity] duration-150 ${
+                selected
+                  ? 'opacity-[0.82] [filter:grayscale(0.15)]'
+                  : 'opacity-[0.36] [filter:grayscale(0.88)] group-hover/session:opacity-[0.82] group-hover/session:[filter:grayscale(0.15)]'
+              }`}
             />
           ) : null}
         </div>

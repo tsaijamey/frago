@@ -138,6 +138,41 @@ class HookReviewConfig(BaseModel):
     enabled: bool = True
 
 
+DecisionWireMode = Literal["ollama", "decisions"]
+
+
+class DecisionModelConfig(BaseModel):
+    """决策模型配置（config.json -> decision_model）。
+
+    不内置固定服务商或模型预设清单，由用户自定义填写：
+    - ``ollama``：Ollama `/api/generate` 请求方式（`raw: true` + `logprobs: true`）。
+    - ``decisions``：HTTP 结构化决策端点请求方式（`POST` JSON `{model, state, questions, images?, temperature?}` -> `{answers}`）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    wire: DecisionWireMode = "decisions"
+    url: str | None = None
+    model: str = ""
+    api_key: str = ""
+    temperature: float | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _strip_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
+
+    @field_validator("model")
+    @classmethod
+    def _strip_model(cls, v: str) -> str:
+        return v.strip()
+
+
+
 class DaemonItem(BaseModel):
     """One declared recipe daemon（config.json -> daemons.items[]）。
 
@@ -236,6 +271,9 @@ class Config(BaseModel):
     # HookReviewConfig 的注释）。NEVER 改成 default_factory —— 那会让每次
     # save_config 都给没碰过开关的用户凭空写一段。
     hook_review: HookReviewConfig | None = None
+
+    # 决策模型配置（config.json -> decision_model）。缺省 None = 未配置。
+    decision_model: DecisionModelConfig | None = None
 
     # Supervised recipe daemons。声明由 `frago daemon enable`（raw JSON 直写）
     # 维护；此处建模使 save_config round-trip 类型化保留该段。缺省 None = 段

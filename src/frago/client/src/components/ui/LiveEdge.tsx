@@ -19,6 +19,10 @@ export interface LiveBorderProps {
   fill?: string;
   className?: string;
   children?: ReactNode;
+  /** 内层这张卡此刻是选中态：外圈接管选中态那圈绿描边与阴影，内层换选中底色，合一为单圈。 */
+  selected?: boolean;
+  /** 内层这张卡是分支组里的源头父卡：外圈底环跟着父卡的描边走，内层底取父卡面。 */
+  branchRoot?: boolean;
 }
 
 /**
@@ -35,11 +39,17 @@ function randomOrbit(): CSSProperties {
 }
 
 /** 围住一块内容的那道流动的光。 */
-export function LiveBorder({ fill, className = '', children }: LiveBorderProps) {
+export function LiveBorder({
+  fill,
+  className = '',
+  selected = false,
+  branchRoot = false,
+  children,
+}: LiveBorderProps) {
   const [orbit] = useState(randomOrbit);
   return (
     <div
-      className={`live-border ${className}`}
+      className={`live-border ${selected ? 'is-sel' : ''} ${branchRoot ? 'is-branch-root' : ''} ${className}`.trim()}
       data-live-edge="border"
       style={{ ...orbit, ...(fill ? ({ '--live-border-fill': fill } as CSSProperties) : null) }}
     >

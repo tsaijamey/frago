@@ -92,6 +92,8 @@ class PendingLaunch:
     error: str | None = None
     #: 首轮跑完了没有。用来判"认领的机会窗口已经关了"——跑完还没认到就是真认不到了。
     finished: bool = False
+    #: 这一场属于哪个员工岗位。认领型内核在首轮跑起来后才拿到真编号，靠这一栏在认到那一刻补写回员工编制。
+    employee_id: str = ""
     created_at: float = field(default_factory=time.time)
 
 
@@ -324,6 +326,38 @@ def _watch_claim(launch: PendingLaunch) -> None:
         time.sleep(0.5)
 
 
+def _record_employee_session(employee_id: str, session_id: str | None) -> None:
+    """把这场已定下真编号的会话归入对应员工编制的活跃会话清单。"""
+    emp_id = (employee_id or "").strip()
+    sid = (session_id or "").strip()
+    if not emp_id or not sid:
+        return
+    try:
+        from frago.employee import get_post, save_post
+
+        record = get_post(emp_id)
+        if record is not None and sid not in record.active_session_ids:
+            record.active_session_ids.append(sid)
+            save_post(record)
+    except Exception:  # noqa: BLE001 — 登记员工会话归属失败不阻断会话本身
+        logger.debug("登记员工 %s 的活跃会话 %s 失败", emp_id, sid, exc_info=True)
+
+
+def bind_employee(handle: str, employee_id: str) -> None:
+    """把一次新建会话（含待认领把手）绑定到对应员工编号；认到真编号后自动写回员工编制。"""
+    emp_id = (employee_id or "").strip()
+    if not handle or not emp_id:
+        return
+    claimed_sid: str | None = None
+    with _lock:
+        launch = _launches.get(handle)
+        if launch is not None:
+            launch.employee_id = emp_id
+            claimed_sid = launch.session_id
+    if claimed_sid:
+        _record_employee_session(emp_id, claimed_sid)
+
+
 def _adopt_claimed(launch: PendingLaunch) -> bool:
     """认到编号就记下来，并让池里那一场也认这个名字。认到返回 True。"""
     if launch.session_id is not None:
@@ -338,6 +372,8 @@ def _adopt_claimed(launch: PendingLaunch) -> bool:
     except Exception:  # noqa: BLE001 — 别名登记失败只影响下一句话要不要冷启动
         logger.debug("登记别名 %s → %s 失败", claimed, launch.handle, exc_info=True)
     launch.session_id = claimed
+    if launch.employee_id:
+        _record_employee_session(launch.employee_id, claimed)
     logger.info(
         "webui 新建会话认到编号：handle=%s agent=%s session=%s",
         launch.handle,

@@ -96,8 +96,8 @@ Next time the same problem comes up: `frago context data:youtube` finds this dir
 # Extract validated logic and create Recipe files
 
 # 1. Create Recipe script
-mkdir -p ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript
-cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.js <<'EOF'
+mkdir -p ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript
+cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript/recipe.js <<'EOF'
 (async () => {
   const button = document.querySelector('button[aria-label*="transcript"]');
   if (button) {
@@ -113,7 +113,7 @@ cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.js
 EOF
 
 # 2. Create Recipe metadata
-cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.md <<'EOF'
+cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript/recipe.md <<'EOF'
 ---
 name: youtube_extract_video_transcript
 type: atomic
@@ -151,7 +151,7 @@ frago recipe run youtube_extract_video_transcript \\
 \`\`\`
 
 ## Prerequisites
-- A browser backend is running — the default extension backend, or `frago browser -b cdp start`
+- A browser backend is running — `frago browser start` brings up the default extension backend. `-b cdp` (headless, separate instance) is reserved for agent_os, not a fallback for this flow
 - Navigated to YouTube video page
 - Video must have subtitles available
 EOF
@@ -160,8 +160,11 @@ EOF
 ### Using Claude Code
 
 ```
-/frago.recipe create "Extract YouTube video subtitles" from ~/.frago/data/youtube/20260813-subtitle-extraction/
+Turn the validated logic in ~/.frago/data/youtube/20260813-subtitle-extraction/ into a Recipe
 ```
+
+There is no `/frago.recipe` slash command any more: drafting and checking a Recipe runs on
+`frago recipe plan`, `frago recipe create` and `frago recipe validate`.
 
 AI will:
 1. Review the scripts/ directory and artifacts in the task directory
@@ -198,8 +201,11 @@ frago recipe run youtube_extract_video_transcript \
 ### Claude Code Method
 
 ```
-/frago.run Extract subtitles from https://www.youtube.com/watch?v=dQw4w9WgXcQ
+Extract subtitles from https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
+
+`frago run` and its `/frago.run` command are gone: exploration happens with `frago browser`
+inside an ordinary session, and anything worth repeating is replayed with `frago recipe run`.
 
 AI automatically:
 1. Discovers `youtube_extract_video_transcript` Recipe
@@ -328,14 +334,14 @@ frago recipe run youtube_batch_extract \
 
 ## Example 5: Complex Multi-Platform Task (Vision)
 
-> This example illustrates the intended workflow when the orchestration layer is complete. Currently, users need to manually choose between `/frago.run` (exploration) and `frago recipe run` (replay).
+> This example illustrates the intended workflow when the orchestration layer is complete. Today exploration and replay are two separate motions: the agent explores with `frago browser` in a session, and anything worth keeping is frozen into a Recipe and replayed with `frago recipe run`.
 
 **Goal**: Monitor iPhone 15 prices on Amazon and eBay, generate comparison report.
 
 ### Using Claude Code
 
 ```
-/frago.run Monitor iPhone 15 prices on Amazon and eBay, generate comparison report and save as Markdown
+Monitor iPhone 15 prices on Amazon and eBay, generate a comparison report and save it as Markdown
 ```
 
 AI will:
@@ -379,13 +385,13 @@ Generated with frago | ~/.frago/data/iphone/20260813-price-monitor/
 
 ---
 
-## Example 6: CDP Command Usage Patterns
+## Example 6: Browser Command Usage Patterns
 
 ### Basic Navigation and Interaction
 
 ```bash
-# Start a dedicated headless CDP instance (port 9222)
-frago browser -b cdp start --headless
+# Bring up the agent browser — extension backend, drives the browser's real profile
+frago browser start
 
 # Navigate to page
 frago browser navigate https://news.ycombinator.com/ --group hn
@@ -399,8 +405,8 @@ frago browser click 'a.titlelink:first-child' --group hn
 # Get page title
 frago browser exec-js 'document.title' --return-value --group hn
 
-# Tear the instance down when done
-frago browser -b cdp stop
+# Tear it down when done
+frago browser stop
 ```
 
 ### Screenshots and Visual Effects
@@ -557,10 +563,11 @@ lsof -i :9222
 # If the virtual desktop stage is up, its actor owns 9222 — leave it alone
 frago desktop status
 
-# Start / check / stop the frago-managed CDP instance
-frago browser -b cdp start --headless
+# Start / check / stop the agent browser. `-b cdp` (headless, separate instance) is
+# reserved for agent_os, not the fallback when the extension bridge is down
+frago browser start
 frago browser status
-frago browser -b cdp stop
+frago browser stop
 ```
 
 ### Example: Recipe Not Found

@@ -43,13 +43,48 @@ def path_for(schedule_id: str) -> Path:
     return ROOT / f"{schedule_id}.json"
 
 
+def _extract_ui_component_dict(text: str) -> dict[str, Any] | None:
+    """从文本中提取 ``frago ask`` 输出的 ``frago_ui_component == "decision-card"`` 数据字典。"""
+    if not text or '"frago_ui_component"' not in text:
+        return None
+    idx = text.rfind('"frago_ui_component"')
+    start = text.rfind("{", 0, idx)
+    if start < 0:
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    if isinstance(obj, dict) and obj.get("frago_ui_component") == "decision-card":
+        data = obj.get("data")
+        if isinstance(data, dict):
+            return data
+    return None
+
+
 def card_in(answer: str) -> dict[str, Any] | None:
     """答复里有没有挂卡片。取最后一个区块；没有交回 None。
 
+    同时认 ``frago ask`` 产出的 UI 组件 JSON 与 ``answer-needed-by-human`` 围栏块。
     YAML 写坏了也照样算一张卡片——它确实在等人，把它当没问过才是真丢东西。语料里那种
     手写的老式卡片（`Q1: …… / A: ……（推荐）` 几行）全落在这一档：这种只留下原文，问句
     退而取原文首行，选项与推荐项都空着。
     """
+    ui_data = _extract_ui_component_dict(answer or "")
+    if ui_data is not None:
+        raw_json = json.dumps(ui_data, ensure_ascii=False, indent=2)
+        options = [o for o in (ui_data.get("options") or []) if isinstance(o, dict)]
+        question = str(ui_data.get("question") or "").strip() or _first_line(raw_json)
+        return {
+            "raw": raw_json,
+            "question": question,
+            "options": [str(o.get("label") or "").strip() for o in options],
+            "recommended": next(
+                (str(o.get("label") or "").strip() for o in options if o.get("recommended")),
+                None,
+            ),
+        }
     found = FENCE.findall(answer or "")
     if not found:
         return None

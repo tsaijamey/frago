@@ -370,7 +370,7 @@ async def forge_recipe(request: RecipeForgeRequest) -> dict:
     地址下会露出人类输入行，人打的字排进导演的队列（``/workbench/sessions/{sid}/send``
     带 ``wait: false``）。
 
-    两类拒绝各有各的意思：配方名不合法或已存在 → 400；这台机器挑不了 claude → 400。
+    两类拒绝各有各的意思：配方名不合法或已存在 → 400；这台机器挑不了 CoreAgent → 400。
     舞台没在跑不再是拒绝的理由——导演自己 ``frago desktop up``（2026-10-08 起）。
     """
     import asyncio

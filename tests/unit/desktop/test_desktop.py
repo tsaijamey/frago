@@ -1647,3 +1647,621 @@ def test_human_cft_skipped_without_cft(monkeypatch, tmp_path):
     monkeypatch.setattr(ext_mod, "cft_binary", lambda: None)
     asyncio.run(broker._ensure_human_cft())
     assert started == []
+
+
+# ── 注意力即置顶 & MRU 窗口层级栈 ─────────────────────────────────────────
+
+
+def test_mru_z_order_restores_previous_window_on_close_or_min(sealed_broker, clip_file):
+    """多扇窗按 MRU 顺序维护层级栈：关掉或收起当前前台窗口时，焦点还给上一扇看过的窗，
+    而不是写死退回 term。"""
+    app = broker.build_app(dict(sealed_broker))
+    ctrl = next(r for r in app.routes if getattr(r, "path", None) == "/control")
+    status = next(r for r in app.routes if getattr(r, "path", None) == "/status")
+
+    # 依次把焦点切到 browser -> video（video.open 自动置顶）
+    asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "focus", "win": "browser", "ms": 0},
+        {"op": "video.open", "path": str(clip_file)},
+    ]}))
+    st = asyncio.run(status.endpoint())
+    assert st["focus"] == "video"
+    assert st["z_order"][:3] == ["video", "browser", "term"]
+
+    # 关掉当前置顶的 video 窗口：焦点应退回刚刚看过的 browser，而不是写死的 term
+    res = asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "win", "win": "video", "action": "close", "ms": 0},
+    ]}))
+    closed = json.loads(res.body)["results"][0]
+    assert closed["focus"] == "browser"
+    assert closed["effect"]["focus"] == {"before": "video", "after": "browser"}
+
+    # 再把 browser 最小化收进 dock：焦点继续顺着 MRU 栈退回 term
+    res_min = asyncio.run(ctrl.endpoint({"steps": [
+        {"op": "win", "win": "browser", "action": "min", "ms": 0},
+    ]}))
+    minimized = json.loads(res_min.body)["results"][0]
+    assert minimized["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert minimized["effect"]["focus_changed"] is True
+
+
+def test_window_at_respects_mru_z_order():
+    """坐标命中顺序必须与视觉上的 MRU 层级栈一致：第二层窗口压在第三层窗口上面。"""
+    s = broker.Stage(desktop={"w": 1920, "h": 1080})
+    s.open = {"term": True, "browser": True, "image": True, "video": False}
+    s.browser_rect = {"x": 100, "y": 100, "w": 800, "h": 600}
+    s.layout = {
+        "windows": {
+            "term": {"content": {"x": 100, "y": 100, "w": 800, "h": 600}},
+            "image": {"content": {"x": 500, "y": 100, "w": 400, "h": 400}},
+        }
+    }
+    # 先看 term，再看 image：此时在 (200, 200) 处（image 未覆盖，term 与 browser 重叠），
+    # term 作为刚看过的第二层窗口，应当压在 browser 上面。
+    s.focus = "image"
+    s.z_order = ["image", "term", "browser", "video"]
+    assert s.window_at(200, 200) == "term"
+
+    # 若顺序是 browser 在 term 之上，则 (200, 200) 命中 browser
+    s.z_order = ["image", "browser", "term", "video"]
+    assert s.window_at(200, 200) == "browser"
+
+
+def test_term_fontsize_and_window_ops_auto_focus_target_window(sealed_broker):
+    """改终端字号、移动或缩放窗口都属于对目标窗口的动作，必须自动把目标窗口提到最前。"""
+    _, out = post_control(sealed_broker, {"steps": [
+        {"op": "focus", "win": "browser", "ms": 0},
+        {"op": "term.fontsize", "px": 24},
+        {"op": "win", "win": "browser", "action": "max", "ms": 0},
+        {"op": "win", "win": "term", "x": 80, "y": 80, "w": 900, "h": 600, "ms": 0},
+    ]})
+    results = out["results"]
+    assert results[1]["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert results[1]["effect"]["focus_changed"] is True
+    assert results[2]["effect"]["focus"] == {"before": "term", "after": "browser"}
+    assert results[2]["effect"]["focus_changed"] is True
+    assert results[3]["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert results[3]["effect"]["focus_changed"] is True
+
+
+def test_cmd_term_read_focuses_terminal_window(monkeypatch):
+    """导演或 Agent 调 `frago desktop term read` 读终端时，顺手通知 broker 把终端置顶。"""
+    from frago.desktop import aos
+
+    posted = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append((rec["id"], steps, timeout))
+        return {"ok": True, "results": [{
+            "status": "ok",
+            "effect": {
+                "observed": True,
+                "focus": {"before": "browser", "after": "term"},
+                "focus_changed": True,
+            },
+        }]}
+
+    monkeypatch.setattr(aos, "post", fake_post)
+    monkeypatch.setattr(
+        aos.subprocess, "run",
+        lambda *a, **k: FakeCompleted(0, stdout="line-1\nline-2\n"),
+    )
+    out = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"}, lines=20)
+    assert out["ok"] is True and out["win"] == "term"
+    assert out["text"] == ["line-1", "line-2"]
+    assert posted == [("default", [{"op": "focus", "win": "term"}], 5.0)]
+    assert out["effect"]["focus"] == {"before": "browser", "after": "term"}
+    assert out["effect"]["focus_changed"] is True
+
+
+def test_term_read_observe_is_silent(monkeypatch):
+    """`term read --observe` 是静默读屏：只取缓冲区内容，绝不向 broker 发 focus，
+    桌面焦点一个字节都不动——留给「主持人」这类驻场角色轮询终端用，避免把主操作员
+    正在展示的窗口盖住。不带 --observe 时保持原行为（发 focus 置顶）。"""
+    from frago.desktop import aos
+
+    posted = []
+
+    def fake_post(rec, steps, timeout=None):
+        posted.append((rec["id"], steps, timeout))
+        return {"ok": True, "results": [{
+            "effect": {"observed": True,
+                       "focus": {"before": "browser", "after": "term"},
+                       "focus_changed": True},
+        }]}
+
+    monkeypatch.setattr(aos, "post", fake_post)
+    monkeypatch.setattr(
+        aos.subprocess, "run",
+        lambda *a, **k: FakeCompleted(0, stdout="line-1\nline-2\n"),
+    )
+
+    # parse 必须把 --observe 摘成无值开关，并把 observe 传进 cmd_term_read。
+    kind, fn = aos.parse(["term", "read", "--lines", "30", "--observe"])
+    assert kind == "local"
+    out = fn({"id": "default", "tmux_session": "frago-stage"})
+    assert out["ok"] is True
+    assert out["text"] == ["line-1", "line-2"]
+    assert out["observed"] is True
+    # 静默：一条 focus 都没发。
+    assert posted == []
+    assert "effect" not in out
+
+    # 直接调 cmd_term_read(observe=True) 同样不发 focus。
+    posted.clear()
+    out2 = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"},
+                             lines=20, observe=True)
+    assert out2["observed"] is True
+    assert posted == []
+
+    # observe=False（默认）照旧发 focus 并带上 effect。
+    posted.clear()
+    out3 = aos.cmd_term_read({"id": "default", "tmux_session": "frago-stage"},
+                             lines=20)
+    assert "observed" not in out3
+    assert posted == [("default", [{"op": "focus", "win": "term"}], 5.0)]
+    assert out3["effect"]["focus_changed"] is True
+
+
+def test_browser_read_observe_sets_the_flag():
+    """`browser read --observe` 产出的 exec step 必须带 observe:True，
+    broker 的 op_exec 据此不调用 ensure_active("browser")，不把浏览器窗口顶到最前。
+    不带 --observe 时保持老形状（无 observe 键，broker 会顶窗）。"""
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["browser", "read", "--observe"])
+    assert kind == "steps"
+    assert len(steps) == 1
+    assert steps[0]["op"] == "exec"
+    assert steps[0]["observe"] is True
+
+    # 带 selector 的形态同样支持。
+    kind2, steps2 = aos.parse(["browser", "read", "--selector", "h1", "--observe"])
+    assert kind2 == "steps"
+    assert steps2[0]["op"] == "exec"
+    assert steps2[0]["observe"] is True
+    assert "h1" in steps2[0]["js"]
+
+    # 不带 --observe：step 上没有 observe 键。
+    kind3, steps3 = aos.parse(["browser", "read"])
+    assert kind3 == "steps"
+    assert "observe" not in steps3[0]
+
+
+def test_elements_observe_sets_the_flag():
+    """`elements --in browser --observe` 产出的 step 必须带 observe:True，
+    broker 的 op_elements 据此不调用 ensure_active("browser")，不顶窗。"""
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["elements", "--in", "browser", "--text", "Submit",
+                             "--observe"])
+    assert kind == "steps"
+    assert len(steps) == 1
+    assert steps[0]["op"] == "elements"
+    assert steps[0]["in"] == "browser"
+    assert steps[0]["text"] == "Submit"
+    assert steps[0]["observe"] is True
+
+    # 不带 --observe：step 上没有 observe 键。
+    kind2, steps2 = aos.parse(["elements", "--in", "browser", "--text", "Submit"])
+    assert kind2 == "steps"
+    assert "observe" not in steps2[0]
+
+
+def test_stale_ui_version_only_triggers_reload_once_across_connections(sealed_broker):
+    """桌面页刷新重连是一条新 WebSocket 连接：若重连后上报的 uiVersion 仍与 broker 不符，
+    决不能对同一个 uiVersion 再发第二次 reload，否则页面会陷入每秒一次的无限刷新循环。"""
+    app = broker.build_app(dict(sealed_broker))
+    stream_route = next(r for r in app.routes if getattr(r, "path", None) == "/stream")
+
+    class FakeWS:
+        def __init__(self, incoming):
+            self.incoming = list(incoming)
+            self.sent = []
+
+        async def accept(self):
+            pass
+
+        async def send_text(self, text):
+            self.sent.append(json.loads(text))
+
+        async def receive_text(self):
+            if not self.incoming:
+                raise broker.WebSocketDisconnect()
+            return json.dumps(self.incoming.pop(0))
+
+    bad_layout = {
+        "t": "layout",
+        "contentId": "test-content",
+        "instanceId": "default",
+        "uiVersion": 999,
+        "elements": {},
+    }
+    ws1 = FakeWS([bad_layout])
+    asyncio.run(stream_route.endpoint(ws1))
+    reloads_1 = [m for m in ws1.sent if m.get("t") == "reload"]
+    assert len(reloads_1) == 1
+    assert reloads_1[0]["want"] == 1 and reloads_1[0]["got"] == 999
+
+    # 刷新后建立第二条连接，仍报同一个 uiVersion=999：不许再发 reload
+    ws2 = FakeWS([bad_layout])
+    asyncio.run(stream_route.endpoint(ws2))
+    reloads_2 = [m for m in ws2.sent if m.get("t") == "reload"]
+    assert reloads_2 == []
+
+
+
+# ── 人类接管虚拟浏览器 + 弹出真窗过检（双档协同） ─────────────────────────
+
+
+def test_aos_browser_mode_parses_head_and_headless():
+    from frago.desktop import aos
+
+    kind, steps = aos.parse(["browser", "mode", "--to", "head"])
+    assert kind == "steps" and steps == [{"op": "browser.mode", "to": "head"}]
+
+    kind2, steps2 = aos.parse(["browser", "mode", "--to", "headless"])
+    assert kind2 == "steps" and steps2 == [{"op": "browser.mode", "to": "headless"}]
+
+    kind3, steps3 = aos.parse(["browser", "mode", "--to", "takeover"])
+    assert kind3 == "steps" and steps3 == [{"op": "browser.mode", "to": "takeover"}]
+
+    kind4, steps4 = aos.parse(["browser", "mode", "--to", "release"])
+    assert kind4 == "steps" and steps4 == [{"op": "browser.mode", "to": "release"}]
+
+    with pytest.raises(aos.Fail) as err:
+        aos.parse(["browser", "mode", "--to", "offscreen"])
+    assert err.value.payload["allowed"] == ["headless", "head", "takeover", "release"]
+
+
+def test_stage_browser_mouse_wheel_and_extended_keys():
+    sb = broker.StageBrowser(19222, 1280, 800, "https://example.com")
+    sent = []
+
+    async def fake_send(method, params=None, *, timeout=10.0):
+        sent.append((method, params))
+        return {}
+
+    sb.send = fake_send
+    asyncio.run(sb.mouse("mouseWheel", 120.0, 240.0, delta_x=0.0, delta_y=80.0))
+    assert sent[-1] == (
+        "Input.dispatchMouseEvent",
+        {"type": "mouseWheel", "x": 120.0, "y": 240.0, "deltaX": 0.0, "deltaY": 80.0},
+    )
+
+    asyncio.run(sb.key("Delete"))
+    assert sent[-2][0] == "Input.dispatchKeyEvent"
+    assert sent[-2][1]["key"] == "Delete" and sent[-2][1]["windowsVirtualKeyCode"] == 46
+
+    asyncio.run(sb.key(" "))
+    assert sent[-2][1]["text"] == " " and sent[-2][1]["windowsVirtualKeyCode"] == 32
+
+
+def test_stage_browser_switch_mode_and_auto_return_on_window_close(monkeypatch):
+    sb = broker.StageBrowser(19222, 1280, 800, "https://example.com/login", headless=True)
+    sb.alive = True
+    sb.target_id = "tab-1"
+    events = []
+    ensured = []
+
+    async def fake_on_mode(headless, switching, error):
+        events.append((headless, switching, error))
+
+    sb.on_mode_change = fake_on_mode
+
+    async def fake_eval(expr):
+        if expr == "location.href":
+            return "https://example.com/verify"
+        return {"w": 1280, "h": 800}
+
+    async def fake_ensure(port, role, *, headless=True):
+        ensured.append((port, role, headless))
+
+    async def fake_open_actor_tab():
+        return {"id": "tab-2", "webSocketDebuggerUrl": "ws://127.0.0.1:19222/devtools/page/tab-2"}
+
+    async def fake_attach(target):
+        sb.target_id = target["id"]
+        sb.alive = True
+
+    async def fake_nav(url, wait=True, timeout=20.0):
+        sb.current_url = url
+
+    async def fake_refresh(reason=""):
+        return {"w": 1280, "h": 800}
+
+    async def fake_stream(fps=30):
+        return None
+
+    async def fake_nudge():
+        return None
+
+    pages_state = [{"id": "tab-1", "url": "https://example.com/verify"}]
+
+    async def fake_list_pages(_port):
+        return list(pages_state)
+
+    monkeypatch.setattr(broker, "_ensure_cdp_instance", fake_ensure)
+    monkeypatch.setattr(broker, "_list_pages", fake_list_pages)
+    sb.evaluate = fake_eval
+    sb._open_actor_tab = fake_open_actor_tab
+    sb._attach = fake_attach
+    sb.navigate = fake_nav
+    sb.refresh_viewport = fake_refresh
+    sb.start_stream = fake_stream
+    sb.nudge_repaint = fake_nudge
+
+    out = asyncio.run(sb.switch_mode(False, reason="弹出真窗过检"))
+    assert out["headless"] is False and out["mode"] == "head"
+    assert out["url"] == "https://example.com/verify"
+    assert ensured[-1] == (19222, "演员", False)
+    assert events == [(False, True, None), (False, False, None)]
+
+    # 模拟人类在真实窗口完成 Cloudflare 验证后直接关闭了窗口（pages 变空），
+    # verify_actor 自动切回无头虚拟窗格并恢复最新地址，同时自动释放人工接管标志。
+    sb.takeover = True
+    pages_state.clear()
+    sb._last_verify_at = 0.0
+    asyncio.run(sb.verify_actor())
+    assert sb.headless is True
+    assert sb.takeover is False
+    assert ensured[-1] == (19222, "演员", True)
+    assert sb.current_url == "https://example.com/verify"
+
+
+def test_aos_wait_release_parses_and_polls_until_human_releases(monkeypatch):
+    from frago.desktop import aos
+
+    kind, fn = aos.parse(["wait", "--release"])
+    assert kind == "local" and callable(fn)
+
+    kind2, fn2 = aos.parse(["wait", "--release", "--timeout", "120"])
+    assert kind2 == "local" and callable(fn2)
+
+    with pytest.raises(aos.Fail) as err:
+        aos.parse(["wait", "--release", "--url", "https://mail.qq.com"])
+    assert "--release" in err.value.payload["error"]
+
+    clock = FakeClock()
+    monkeypatch.setattr(aos, "time", clock)
+
+    statuses = [
+        {"actor_takeover": True, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+        {"actor_takeover": True, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+        {"actor_takeover": False, "actor_mode": "headless", "actor_headless": True, "actor_switching": False},
+    ]
+    monkeypatch.setattr(aos, "get_status", lambda _rec, timeout=5.0: statuses.pop(0) if len(statuses) > 1 else statuses[0])
+    monkeypatch.setattr(
+        aos,
+        "post",
+        lambda _rec, _steps, timeout=5.0: {
+            "results": [{"value": {"url": "https://wx.mail.qq.com/home/index", "title": "QQ邮箱 - 收件箱"}}]
+        },
+    )
+
+    out = fn({"id": "default", "port": 18770})
+    assert out["ok"] is True
+    assert out["mode"] == "release" and out["matched"] == "release"
+    assert out["takeover"] is False
+    assert out["attempts"] == 3
+    assert out["url"] == "https://wx.mail.qq.com/home/index"
+    assert out["title"] == "QQ邮箱 - 收件箱"
+
+
+def test_desktop_ui_assets_contain_takeover_and_headful_controls():
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    html = (assets / "index.html").read_text(encoding="utf-8")
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    assert 'id="browser-takeover-btn"' in html
+    assert 'id="browser-headful-btn"' in html
+    assert 'id="browser-ime-input"' in html
+    assert "human.mouse" in js and "human.browser_mode" in js
+
+
+def test_desktop_director_chat_supports_zh_and_en_i18n():
+    """右下角导演对话区域（#human-input）的所有文案必须同时提供 zh / en 双语字典，
+    并随 WebUI 的 localStorage('language') 与 storage 事件实时切换。"""
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    assert "HI_I18N" in js and "resolveUiLang" in js and "applyHumanInputLang" in js
+    assert 'localStorage.getItem("language")' in js
+    assert 'window.addEventListener("storage"' in js
+    for required_en in (
+        "Director Chat · Follow-ups",
+        "Queued to main session · Presenter responds live, operator & advisor execute",
+        "Type follow-ups here, press Enter to send",
+        "Enter to send · Shift+Enter for newline",
+        "Director Chat",
+        "Send",
+    ):
+        assert required_en in js
+
+
+def test_desktop_director_chat_auto_grow_scrollbar_and_fab_collapse():
+    """右下角导演对话面板必须支持：
+    1. 输入框随打字行数自增长（autoGrowInput + input 事件）且发送后回缩；
+    2. 消息区无死留白（min-height: 0）并可随对话增长至半屏（min(460px, 52vh)）；
+    3. 定制 4px 半透明圆角细滚动条（::-webkit-scrollbar）；
+    4. 展开面板时隐藏右下角重复的胶囊触发器（#hi-trigger）。
+    """
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    css = (assets / "style.css").read_text(encoding="utf-8")
+    assert "function autoGrowInput()" in js
+    assert 'text.addEventListener("input", autoGrowInput)' in js
+    assert "if (trigger) trigger.hidden = !!open;" in js
+    assert "min-height: 0;" in css
+    assert "max-height: min(460px, 52vh);" in css
+    assert "#human-input .hi-log::-webkit-scrollbar" in css
+    assert "width: 4px;" in css
+    assert '#human-input[data-mode="open"] .hi-fab' in css
+
+
+def test_recorder_pump_error_cleans_frames_dir_and_closes_camera(tmp_path, monkeypatch):
+    """录制抓帧循环若因写盘报错（如 Errno 28）或连接中断异常退出，
+    必须自动复位 recording、清理临时帧目录与语音副本目录，并调用 close() 收走 9223 机位。"""
+    import base64
+
+    closed_ports: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed_ports.append(self.port)
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+    monkeypatch.setattr(
+        broker,
+        "_write_frame",
+        lambda *_a, **_kw: (_ for _ in ()).throw(OSError(28, "No space left on device")),
+    )
+
+    class FakeWS:
+        def __init__(self, messages):
+            self._messages = list(messages)
+            self.sent: list[str] = []
+
+        async def send(self, payload: str):
+            self.sent.append(payload)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._messages:
+                raise StopAsyncIteration
+            return self._messages.pop(0)
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+    )
+    frame_msg = json.dumps({
+        "method": "Page.screencastFrame",
+        "params": {
+            "sessionId": 1,
+            "data": base64.b64encode(b"fake-jpeg").decode(),
+        },
+    })
+    rec.ws = FakeWS([frame_msg])
+    rec.alive = True
+
+    asyncio.run(rec.start("disk-full-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None and frames_dir.exists()
+    voice_dir = rec.out_dir / "disk-full-take-voice"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    (voice_dir / "001.mp3").write_bytes(b"mp3")
+
+    asyncio.run(rec._pump())
+
+    assert rec.recording is False
+    assert rec.alive is False
+    assert rec.frames_dir is None
+    assert not frames_dir.exists(), "异常退出后临时帧目录必须被自动删除"
+    assert not voice_dir.exists(), "异常退出后未成片的语音副本目录必须被清理"
+    assert closed_ports == [19223], "异常退出后必须关闭 9223 机位"
+    assert rec.last_abort_reason and "No space left on device" in rec.last_abort_reason
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(rec.stop())
+    assert "上次录制已异常中止" in str(exc_info.value)
+
+
+def test_recorder_duration_and_disk_limits_abort_and_cleanup(tmp_path, monkeypatch):
+    """单次录制超过时长上限或临时盘剩余空间低于阈值时，自动中止录制并回收临时目录与机位。"""
+    closed: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed.append(self.port)
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+
+    class DummyWS:
+        async def send(self, _payload: str):
+            return None
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+        max_duration_sec=60.0,
+        min_free_bytes=1024,
+    )
+    rec.ws = DummyWS()
+    rec.alive = True
+    asyncio.run(rec.start("overtime-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None and frames_dir.exists()
+
+    # 模拟已录制超过 60s 上限，且画面静止由心跳 watchdog 触发巡检
+    rec._t0 -= 65.0
+    aborted = asyncio.run(rec.check_watchdog())
+    assert aborted is True
+    assert rec.recording is False
+    assert not frames_dir.exists()
+    assert closed == [19223]
+    assert rec.last_abort_reason and "超过时长上限" in rec.last_abort_reason
+
+
+def test_recorder_stop_encode_failure_still_cleans_frames_and_closes_camera(tmp_path, monkeypatch):
+    """stop() 期间即便 ffmpeg 编码失败，也必须在 finally 中删除临时帧目录、清理半截 mp4 并收走机位。"""
+    closed: list[int] = []
+
+    async def fake_close(self):
+        self.alive = False
+        self.ws = None
+        closed.append(self.port)
+
+    async def fast_sleep(_sec):
+        return None
+
+    def failing_encode(_frames_dir, _stamps, out: Path, _fps: int):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"partial-corrupt-mp4")
+        raise RuntimeError("ffmpeg 失败: signal 15")
+
+    monkeypatch.setattr(broker.StageRecorder, "close", fake_close)
+    monkeypatch.setattr(broker.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(broker, "_encode", failing_encode)
+
+    class DummyWS:
+        async def send(self, _payload: str):
+            return None
+
+    rec = broker.StageRecorder(
+        url="http://127.0.0.1:8093/app/agent_os",
+        width=1920,
+        height=1080,
+        port=19223,
+        fps=30,
+        out_dir=tmp_path / "clips",
+    )
+    rec.ws = DummyWS()
+    rec.alive = True
+    asyncio.run(rec.start("encode-fail-take"))
+    frames_dir = rec.frames_dir
+    assert frames_dir is not None
+    (frames_dir / "f000000.jpg").write_bytes(b"jpg")
+    rec.stamps.append(0.03)
+
+    with pytest.raises(RuntimeError, match="ffmpeg 失败"):
+        asyncio.run(rec.stop())
+
+    assert rec.recording is False
+    assert not frames_dir.exists(), "编码失败后临时帧目录仍须清理"
+    assert not (rec.out_dir / "encode-fail-take.mp4").exists(), "半截损坏的 mp4 必须清理"
+    assert closed == [19223], "编码失败后仍须收走 9223 机位"
+
+
+
+

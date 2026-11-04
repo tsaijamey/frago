@@ -12,12 +12,14 @@ import platform
 from typing import Any
 
 from frago import __version__
+from frago.config.config_service import CONFIG_FILE as GUI_CONFIG_PATH
 from frago.init.checker import (
     DEFAULT_CLAUDE_CODE_MIN_VERSION,
     DEFAULT_NODE_MIN_VERSION,
     parallel_dependency_check,
 )
-from frago.init.config_manager import load_config, update_config
+from frago.init.config_manager import CONFIG_PATH, load_config, update_config
+from frago.init.profile_manager import PROFILES_PATH
 from frago.init.installer import (
     get_platform_node_install_guide,
     install_claude_code,
@@ -87,6 +89,15 @@ class InitService:
         """
         # Load current config
         config = load_config()
+
+        # Auto-heal init_completed when config.json has never been written yet
+        # but user settings files (profiles.json or gui_config.json) already exist
+        # on disk (e.g., created by how-to-install-frago skill or manual profile setup).
+        if not CONFIG_PATH.exists() and (PROFILES_PATH.exists() or GUI_CONFIG_PATH.exists()):
+            config = update_config({
+                "init_completed": True,
+                "auth_method": config.auth_method or "official",
+            })
 
         # Check dependencies
         dep_results = parallel_dependency_check()
@@ -348,7 +359,11 @@ class InitService:
             - message: Success or error message
         """
         try:
-            config = update_config({"init_completed": True})
+            current = load_config()
+            updates: dict[str, Any] = {"init_completed": True}
+            if not current.auth_method:
+                updates["auth_method"] = "official"
+            config = update_config(updates)
             return {
                 "status": "ok",
                 "message": "Initialization marked as complete",

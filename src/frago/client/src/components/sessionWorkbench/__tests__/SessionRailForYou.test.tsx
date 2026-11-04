@@ -1,7 +1,7 @@
 /**
  * 左栏只留一个标记「For you」之后的用例。
  *
- * 盯的是摆放与字样：每张卡三行（标题、预览、状态行），For you 与其余同一结构；分区顺序
+ * 盯的是摆放与字样：每张卡两行（标题、状态行，不展示内容预览），For you 与其余同一结构；分区顺序
  * Pinned → Everything else，For you 只挂标记、不单独成区也不改位置；所有 For you 标签
  * 同一画法（品牌绿）；档位只剩 For you / All；状态词一个都不出现；可关终端那一行；开在
  * tmux 里的流光照旧（主人 09-24 定）；点开记一笔看过了、但不撤 For you；选中那张发出后
@@ -84,22 +84,25 @@ beforeEach(() => {
 });
 
 describe('For you 在清单上', () => {
-  it('每张卡三行：标题、预览（人人都有）、状态行；For you 与其余同一结构', () => {
+  it('每张卡两行：标题与状态行，去掉内容预览行；For you 与其余同一结构', () => {
     render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ b: info() })} />);
     const items = screen.getAllByTestId('session-item');
     for (const el of items) {
       expect(el.querySelector('[data-testid=session-title]')).toBeTruthy();
-      expect(el.querySelector('[data-testid=session-preview]')).toBeTruthy();
+      expect(el.querySelector('[data-testid=session-preview]')).toBeNull();
       expect(el.querySelector('[data-testid=session-status] [data-testid=session-menu-button]')).toBeTruthy();
+      expect(el.className).toContain('px-3');
+      expect(el.className).toContain('pt-2');
+      expect(el.className).toContain('pb-[7px]');
+      expect(el.querySelector('[data-testid=session-status]')?.className).toContain('mt-[5px]');
     }
     const waiting = items.find((el) => el.getAttribute('data-for-you') === 'true')!;
     expect(waiting.querySelector('[data-testid=session-status]')?.textContent).toContain('For you');
-    expect(waiting.querySelector('[data-testid=session-preview]')?.textContent).toBe('Want me to log it?');
-    // 不在 For you 的也有预览：会话清单的回复摘要
+    expect(waiting.textContent).not.toContain('Want me to log it?');
     const other = items.find((el) => !el.getAttribute('data-for-you'))!;
-    expect(other.querySelector('[data-testid=session-preview]')?.textContent).toBe('did a thing');
+    expect(other.textContent).not.toContain('did a thing');
     expect(screen.getAllByTestId('for-you-chip')).toHaveLength(1);
-    // 摘要、来源、状态词都退场了
+    // 摘要、预览、来源、状态词都退场了
     expect(screen.queryByTestId('digest-done')).toBeNull();
     expect(items.some((el) => el.textContent?.includes('Claude Code'))).toBe(false);
   });

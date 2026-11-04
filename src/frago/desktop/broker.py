@@ -512,6 +512,12 @@ class StageBrowser:
         # 标签量到的真实视口。构造入参只是首次读取之前的占位值。
         self.viewport_read_at: float = 0.0
         self.viewport_source: str | None = None
+        # 记录当前有效页面地址与有头/无头模式切换状态，供「弹出真窗过检」
+        # 与关窗后自动切回虚拟窗格共用。
+        self.current_url: str = start_url
+        self.switching_mode: bool = False
+        self.takeover: bool = False
+        self.on_mode_change = None  # async callable(headless: bool, switching: bool, error: str | None)
 
     # ── 生命周期 ──
 
@@ -659,8 +665,12 @@ class StageBrowser:
                     # 帧画多大就是演员天然多大。
                     self.latest_frame = params["data"]
                     self.last_frame_at = time.time()
-                elif method == "Page.frameStartedNavigating" and self.on_nav:
-                    await self.on_nav(msg["params"].get("url", ""), True)
+                elif method == "Page.frameStartedNavigating":
+                    nav_url = msg["params"].get("url", "")
+                    if nav_url and not nav_url.startswith(("about:blank", "chrome-error://")):
+                        self.current_url = nav_url
+                    if self.on_nav:
+                        await self.on_nav(nav_url, True)
                 elif method == "Page.loadEventFired":
                     self._load_fired = True
                     if self.on_nav:
@@ -694,15 +704,27 @@ class StageBrowser:
 
         只在帧已经停了一段时间之后才问：页面在正常出帧就说明标签必然活着，
         那时候每隔几秒去问一次 /json/list 纯属白费。
+        例外是「弹出真窗过检」（not self.headless）：人随时可能在真窗口完成验证后
+        关掉窗口，所以有头模式下每 1.5 秒巡检一次；一旦检测到真窗被关，自动切回
+        无头虚拟窗格并恢复关窗前的最新地址与登录态。
         """
-        now = time.time()
-        if now - self._last_verify_at < self.VERIFY_INTERVAL:
+        if self.switching_mode:
             return
-        if not self.actor_gone and (now - self.last_frame_at) < self.VERIFY_QUIET_SEC:
+        now = time.time()
+        interval = 1.5 if not self.headless else self.VERIFY_INTERVAL
+        if now - self._last_verify_at < interval:
+            return
+        if (self.headless and not self.actor_gone
+                and (now - self.last_frame_at) < self.VERIFY_QUIET_SEC):
             return
         self._last_verify_at = now
         pages = await _list_pages(self.port)
         if not pages:
+            if not self.headless:
+                _log("检测到有头真窗已关闭，自动切回无头虚拟窗格并带回登录态")
+                with suppress(Exception):
+                    await self.switch_mode(True, reason="真实窗口已关闭，自动切回虚拟窗格")
+                return
             # 整个实例都不在了。这里不自动重拉：重拉要重走导航与帧流，
             # 期间画面是错的，而人此刻多半正在录。说出来交给人决定。
             await self._set_actor_gone(
@@ -719,6 +741,9 @@ class StageBrowser:
             await self.refresh_viewport("接管新的演员标签")
             await self.start_stream(30)
             return
+        hit_url = hit.get("url") or ""
+        if hit_url and not hit_url.startswith(("about:blank", "chrome-error://")):
+            self.current_url = hit_url
         if not self.alive:
             # 标签在，连接断了——重连即可。
             await self._attach(hit)
@@ -727,6 +752,65 @@ class StageBrowser:
             await self.nudge_repaint()
             return
         await self._set_actor_back(hit["id"])
+
+    async def switch_mode(self, headless: bool, reason: str = "") -> dict:
+        """在无头虚拟窗格与有头真实窗口之间切换演员浏览器（共用同一份 9222 profile）。
+
+        切换前记录当前最新地址，停掉旧实例释放 Singleton 锁后，用同一个端口与
+        profile 目录拉起目标模式，登录态与过检 Cookie（如 cf_clearance）原样继承。
+        """
+        if self.switching_mode:
+            raise RuntimeError("演员浏览器正在切换窗口模式，请稍候")
+        if self.alive:
+            with suppress(Exception):
+                href = await self.evaluate("location.href")
+                if (isinstance(href, str) and href
+                        and not href.startswith(("about:blank", "chrome-error://"))):
+                    self.current_url = href
+        pages = await _list_pages(self.port)
+        if pages:
+            hit = next((p for p in pages if p.get("id") == self.target_id), pages[0])
+            u = (hit or {}).get("url") or ""
+            if u and not u.startswith(("about:blank", "chrome-error://")):
+                self.current_url = u
+
+        target_headless = bool(headless)
+        self.switching_mode = True
+        if self.on_mode_change:
+            with suppress(Exception):
+                await self.on_mode_change(target_headless, True, None)
+        try:
+            await self.close()
+            self.headless = target_headless
+            self._order.clear()
+            target_url = self.current_url or self.start_url or "about:blank"
+            await _ensure_cdp_instance(self.port, "演员", headless=self.headless)
+            await self._attach(await self._open_actor_tab())
+            await self.navigate(target_url, wait=True, timeout=20.0)
+            await self.refresh_viewport(reason or "切换窗口模式")
+            await self.start_stream(30)
+            await self.nudge_repaint()
+            _log(f"演员浏览器已切为 {'无头虚拟窗格' if self.headless else '有头真实窗口'} "
+                 f"url={target_url} 视口={self.width}x{self.height}")
+        except Exception as exc:
+            self.switching_mode = False
+            if self.on_mode_change:
+                with suppress(Exception):
+                    await self.on_mode_change(self.headless, False, str(exc))
+            raise
+        if target_headless:
+            self.takeover = False
+        self.switching_mode = False
+        if self.on_mode_change:
+            with suppress(Exception):
+                await self.on_mode_change(self.headless, False, None)
+        return {
+            "headless": self.headless,
+            "mode": "headless" if self.headless else "head",
+            "takeover": self.takeover,
+            "url": self.current_url,
+            "viewport": {"w": self.width, "h": self.height},
+        }
 
     async def _set_actor_gone(self, reason: str) -> None:
         """标记演员标签失联并通知上层。重复通知没有意义，只报状态变化那一次。"""
@@ -989,6 +1073,8 @@ class StageBrowser:
         是可观测信号，不是 sleep 猜时间——留着不亏。
         """
         self._load_fired = False
+        if url:
+            self.current_url = url
         # 基准帧必须在导航发出**之前**取。取在加载完之后的话，渲染快的页面
         # 早就画完并发了帧，之后再无新帧，于是永远等不到"下一帧"，空转到超时。
         before = self.latest_frame
@@ -1091,7 +1177,21 @@ class StageBrowser:
 
     # ── 输入 ──
 
-    async def mouse(self, kind: str, x: float, y: float, button: str = "left") -> None:
+    async def mouse(self, kind: str, x: float, y: float, button: str = "left",
+                    delta_x: float = 0.0, delta_y: float = 0.0,
+                    click_count: int = 1) -> None:
+        if kind == "mouseWheel":
+            await self.send(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseWheel",
+                    "x": x,
+                    "y": y,
+                    "deltaX": delta_x,
+                    "deltaY": delta_y,
+                },
+            )
+            return
         await self.send(
             "Input.dispatchMouseEvent",
             {
@@ -1099,7 +1199,7 @@ class StageBrowser:
                 "x": x,
                 "y": y,
                 "button": button if kind != "mouseMoved" else "none",
-                "clickCount": 1 if kind != "mouseMoved" else 0,
+                "clickCount": int(click_count) if kind != "mouseMoved" else 0,
             },
         )
 
@@ -1112,8 +1212,17 @@ class StageBrowser:
             "Tab": ("Tab", 9, None),
             "Escape": ("Escape", 27, None),
             "Backspace": ("Backspace", 8, None),
+            "Delete": ("Delete", 46, None),
             "ArrowDown": ("ArrowDown", 40, None),
             "ArrowUp": ("ArrowUp", 38, None),
+            "ArrowLeft": ("ArrowLeft", 37, None),
+            "ArrowRight": ("ArrowRight", 39, None),
+            "Home": ("Home", 36, None),
+            "End": ("End", 35, None),
+            "PageUp": ("PageUp", 33, None),
+            "PageDown": ("PageDown", 34, None),
+            "Space": (" ", 32, " "),
+            " ": (" ", 32, " "),
         }.get(key_name)
         if not spec:
             raise ValueError(f"不支持的按键: {key_name}")
@@ -1122,6 +1231,15 @@ class StageBrowser:
         await self.send("Input.dispatchKeyEvent", {"type": "keyDown", **base,
                                                    **({"text": text} if text else {})})
         await self.send("Input.dispatchKeyEvent", {"type": "keyUp", **base})
+
+    async def edit_action(self, action: str) -> None:
+        if action == "selectAll":
+            with suppress(Exception):
+                await self.evaluate(
+                    "(()=>{const e=document.activeElement;"
+                    "if(e&&typeof e.select==='function'){e.select();return 1;}"
+                    "document.execCommand('selectAll',false,null);return 1;})()"
+                )
 
 
 # ─────────────────────────── 舞台终端 ───────────────────────────
@@ -1623,6 +1741,14 @@ def _write_frame(path: Path, raw: bytes,
 
 # ─────────────────────────── 录制机位 ───────────────────────────
 
+# 单次录制的保护上限：最大录制时长（秒）、临时盘最低剩余空间（字节）、磁盘余量抽检间隔（帧）。
+# 调用方在录制中途异常中断或把「停一下」当成只停动作脚本不调 rec stop 时，
+# 9223 机位会持续往临时盘写 JPEG 帧直至耗尽磁盘（2026-10-29 实测 2 小时写出
+# 146809 张帧、21GB 撑满磁盘触发 Errno 28）。触及任一阈值即自动中止录制并回收。
+RECORD_MAX_DURATION_SEC = 1800.0
+RECORD_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+RECORD_DISK_CHECK_EVERY_FRAMES = 30
+
 
 class StageRecorder:
     """一台常驻的摄像机，对着桌面页，随时可以开录停录。
@@ -1634,13 +1760,17 @@ class StageRecorder:
     """
 
     def __init__(self, url: str, width: int, height: int, port: int,
-                 fps: int, out_dir: Path):
+                 fps: int, out_dir: Path,
+                 max_duration_sec: float = RECORD_MAX_DURATION_SEC,
+                 min_free_bytes: int = RECORD_MIN_FREE_BYTES):
         self.url = url
         self.width = width
         self.height = height
         self.port = port
         self.fps = fps
         self.out_dir = out_dir
+        self.max_duration_sec = max_duration_sec
+        self.min_free_bytes = min_free_bytes
         # 取景框。机位按 1920×1080 拍整个桌面页，camera 决定这一帧最终**留下**
         # 哪一块——裁剪发生在落盘之前，所以成片里就是取好景的画面，
         # 不需要（也不该）在后期再去 crop 一次。
@@ -1655,6 +1785,7 @@ class StageRecorder:
         self.stamps: list[float] = []
         self._idx = 0
         self._t0 = 0.0
+        self.last_abort_reason: str | None = None
         # 动作日志。帧时间戳只够还原节奏，对不上"当时在做什么"；
         # 后期要剪掉无效片段，需要的是一张以开录时刻为零点的动作索引。
         self.journal: list[dict] = []
@@ -1720,7 +1851,68 @@ class StageRecorder:
         })
         _log(f"录制机位就绪 {self.width}x{self.height}")
 
+    def _check_limits(self) -> None:
+        """核对单次录制的时长上限与临时盘剩余空间下限，超限即抛异常触发中止清理。"""
+        if not self.recording:
+            return
+        elapsed = time.time() - self._t0
+        if self.max_duration_sec > 0 and elapsed > self.max_duration_sec:
+            raise RuntimeError(
+                f"单次录制超过时长上限 {self.max_duration_sec:.0f}s"
+                f"（已录 {elapsed:.1f}s，clip={self.name}）"
+            )
+        if (
+            self.min_free_bytes > 0
+            and self.frames_dir is not None
+            and self._idx % RECORD_DISK_CHECK_EVERY_FRAMES == 0
+        ):
+            try:
+                free = shutil.disk_usage(self.frames_dir).free
+            except OSError:
+                return
+            if free < self.min_free_bytes:
+                raise RuntimeError(
+                    f"临时盘剩余空间不足 {self.min_free_bytes // (1024 * 1024)}MB"
+                    f"（仅剩 {free // (1024 * 1024)}MB，clip={self.name}）"
+                )
+
+    async def _abort_recording(self, reason: str) -> None:
+        """抓帧异常退出或触及保护上限时，复位录制状态、清理临时目录并关停 9223 机位。"""
+        if not self.recording and self.frames_dir is None:
+            return
+        clip_name = self.name
+        frames_dir = self.frames_dir
+        frames_count = len(self.stamps)
+        self.recording = False
+        self.last_abort_reason = reason
+        self.frames_dir, self.stamps, self.name = None, [], None
+        self.journal, self.voice_lines = [], []
+        if frames_dir is not None:
+            await asyncio.to_thread(shutil.rmtree, frames_dir, True)
+        if clip_name:
+            voice_dir = self.out_dir / f"{clip_name}-voice"
+            if voice_dir.exists():
+                await asyncio.to_thread(shutil.rmtree, voice_dir, True)
+        _log(f"录制异常中止（clip={clip_name}，已收 {frames_count} 帧，"
+             f"原因：{reason}），已清理临时帧目录并收走机位")
+        await self.close()
+
+    async def check_watchdog(self) -> bool:
+        """供周期心跳调用的录制巡检：即便画面静止不产帧，超时或机位失联也照样中止回收。"""
+        if not self.recording:
+            return False
+        if not self.alive:
+            await self._abort_recording("录制机位连接已断开")
+            return True
+        try:
+            self._check_limits()
+        except Exception as exc:  # noqa: BLE001
+            await self._abort_recording(f"{type(exc).__name__}: {exc}")
+            return True
+        return False
+
     async def _pump(self) -> None:
+        abort_reason: str | None = None
         try:
             async for raw in self.ws:
                 msg = json.loads(raw)
@@ -1731,6 +1923,7 @@ class StageRecorder:
                                  {"sessionId": params["sessionId"]})
                 if not self.recording or self.frames_dir is None:
                     continue
+                self._check_limits()
                 path = self.frames_dir / f"f{self._idx:06d}.jpg"
                 # 取景框在这里生效：box_now() 取的是**这一帧到达时刻**的取景
                 # 状态，所以摇镜/推拉是逐帧插值出来的，而不是整段一个固定裁切。
@@ -1742,9 +1935,14 @@ class StageRecorder:
                 self.stamps.append(time.time() - self._t0)
                 self._idx += 1
         except Exception as exc:
-            _log(f"录制机位连接结束: {type(exc).__name__}: {exc}")
+            abort_reason = f"{type(exc).__name__}: {exc}"
+            _log(f"录制机位连接结束: {abort_reason}")
         finally:
             self.alive = False
+            if self.recording:
+                await self._abort_recording(
+                    abort_reason or "录制机位 WebSocket 连接在停录前关闭"
+                )
 
     async def prepare(self) -> dict:
         """把机位准备到"随时可以开录"，不开录。
@@ -1768,6 +1966,7 @@ class StageRecorder:
         if self.recording:
             raise RuntimeError(f"已经在录 {self.name}，先 stop")
         self.name = name
+        self.last_abort_reason = None
         self.frames_dir = Path(tempfile.mkdtemp(prefix="frago-clip-"))
         self.stamps = []
         self.journal = []
@@ -1775,11 +1974,15 @@ class StageRecorder:
         self._idx = 0
         self._t0 = time.time()
         self.recording = True
-        await self._send("Page.startScreencast", {
-            "format": "jpeg", "quality": 92,
-            "maxWidth": self.width, "maxHeight": self.height,
-            "everyNthFrame": 1,
-        })
+        try:
+            await self._send("Page.startScreencast", {
+                "format": "jpeg", "quality": 92,
+                "maxWidth": self.width, "maxHeight": self.height,
+                "everyNthFrame": 1,
+            })
+        except Exception as exc:
+            await self._abort_recording(f"{type(exc).__name__}: {exc}")
+            raise
         _log(f"开录 {name}")
         # 零点要交给 agent：录制日志里每个动作记的都是"距开录多少秒"，
         # agent 手上没有这个绝对时刻就对不上自己的时间线。机位现拉的那几十秒
@@ -1856,10 +2059,18 @@ class StageRecorder:
 
     async def stop(self) -> dict:
         if not self.recording:
+            if self.last_abort_reason:
+                reason = self.last_abort_reason
+                self.last_abort_reason = None
+                raise RuntimeError(f"当前没有在录（上次录制已异常中止：{reason}）")
             raise RuntimeError("当前没有在录")
         # 多收一小段收尾：指令跑完后画面往往还在动（补间、字幕淡出），
         # 立刻停会把结尾切掉。
         await asyncio.sleep(0.8)
+        if not self.recording:
+            reason = self.last_abort_reason or "录制在收尾等待期间中断"
+            self.last_abort_reason = None
+            raise RuntimeError(f"当前没有在录（上次录制已异常中止：{reason}）")
         self.recording = False
         with suppress(Exception):
             await self._send("Page.stopScreencast")
@@ -1867,30 +2078,36 @@ class StageRecorder:
         journal, voice_lines = self.journal, self.voice_lines
         self.frames_dir, self.stamps, self.name = None, [], None
         self.journal, self.voice_lines = [], []
-        if not stamps:
-            shutil.rmtree(frames_dir, ignore_errors=True)
-            raise RuntimeError("没有收到任何帧——画面全程静止？")
         out = self.out_dir / f"{name}.mp4"
-        await asyncio.to_thread(_encode, frames_dir, stamps, out, self.fps)
-        shutil.rmtree(frames_dir, ignore_errors=True)
-        voice_out = None
-        if voice_lines:
-            voice_out = await asyncio.to_thread(
-                _mux_voice, out, voice_lines, self.out_dir / f"{name}-voice.json")
-        log_path = self.out_dir / f"{name}.jsonl"
-        log_path.write_text(
-            "\n".join(json.dumps(e, ensure_ascii=False) for e in journal) + "\n"
-        )
-        _log(f"停录 {name} → {out}（动作 {len(journal)} 条）")
-        # 抽帧与冻帧指标恒在这里做，不设开关：靠自觉去抽帧的纪律实测不可靠，
-        # 而这两样东西的成本是每段片子几秒钟的 ffmpeg。
-        inspect = await asyncio.to_thread(
-            _inspect_clip, out, self.out_dir / f"{name}-contact.png", journal)
-        _log(f"成片自检 {name}: "
-             + json.dumps(inspect, ensure_ascii=False))
-        # 摄像机只在录制时存在：停录即收走整个机位实例，
-        # 桌面平时只剩舞台一个浏览器。
-        await self.close()
+        try:
+            if not stamps:
+                raise RuntimeError("没有收到任何帧——画面全程静止？")
+            try:
+                await asyncio.to_thread(_encode, frames_dir, stamps, out, self.fps)
+            except Exception:
+                out.unlink(missing_ok=True)
+                raise
+            voice_out = None
+            if voice_lines:
+                voice_out = await asyncio.to_thread(
+                    _mux_voice, out, voice_lines, self.out_dir / f"{name}-voice.json")
+            log_path = self.out_dir / f"{name}.jsonl"
+            log_path.write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in journal) + "\n"
+            )
+            _log(f"停录 {name} → {out}（动作 {len(journal)} 条）")
+            # 抽帧与冻帧指标恒在这里做，不设开关：靠自觉去抽帧的纪律实测不可靠，
+            # 而这两样东西的成本是每段片子几秒钟的 ffmpeg。
+            inspect = await asyncio.to_thread(
+                _inspect_clip, out, self.out_dir / f"{name}-contact.png", journal)
+            _log(f"成片自检 {name}: "
+                 + json.dumps(inspect, ensure_ascii=False))
+        finally:
+            if frames_dir is not None:
+                shutil.rmtree(frames_dir, ignore_errors=True)
+            # 摄像机只在录制时存在：停录无论成败都收走整个机位实例，
+            # 桌面平时只剩舞台一个浏览器。
+            await self.close()
         return {
             "clip": name,
             "output": str(out),
@@ -2216,6 +2433,11 @@ class Stage:
     # 当前在最前面的程序。可以是 None——桌面上一个程序都没开着时就是这个状态，
     # 那时没有窗口能接收键盘输入，op_type / op_key 会明说而不是往空处送。
     focus: str | None = "term"
+    # 窗口 MRU 层级栈（越靠前越在上面）。只维护"谁是 focus"不够：一旦把第 3 扇窗
+    # 提到最前，前两扇窗的上下关系如果退回 DOM 固定顺序，刚看过不久的窗口就会瞬移
+    # 到最底下；关掉或最小化当前前台窗口时，也必须顺着这个栈把焦点还给"上一个看过
+    # 的窗口"，而不是写死还给 term。
+    z_order: list[str] = field(default_factory=lambda: ["term", "browser", "image", "video"])
     # 每个程序在不在桌面上。这是"关掉"这件事的唯一真值，与最小化无关：
     # 收起的程序还在跑（dock 亮着灯），关掉的程序不在了。图片浏览器与播放器
     # 开机不在桌面上——它们是被 image open / video open 叫起来的。
@@ -2360,6 +2582,7 @@ class Stage:
         """
         order = list(dict.fromkeys(
             ([self.focus] if self.focus else [])
+            + list(self.z_order)
             + ["browser", "image", "video", "term"]
         ))
         for win in order:
@@ -2824,9 +3047,23 @@ def build_app(cfg: dict) -> FastAPI:
         stage.last_actor = msg
         await broadcast(msg)
 
+    async def on_actor_mode(headless: bool, switching: bool,
+                            error: str | None) -> None:
+        """演员浏览器的有头/无头模式切换状态同步给所有桌面页。"""
+        msg = {
+            "t": "browser.mode",
+            "headless": headless,
+            "mode": "headless" if headless else "head",
+            "takeover": browser.takeover,
+            "switching": switching,
+            "error": error,
+        }
+        await broadcast(msg)
+
     browser.on_frame = on_frame
     browser.on_nav = on_nav
     browser.on_actor_state = on_actor_state
+    browser.on_mode_change = on_actor_mode
     term.on_text = on_term
 
     # ── 虚拟浏览器窗口的几何：broker 是作者 ──
@@ -3070,6 +3307,10 @@ def build_app(cfg: dict) -> FastAPI:
         # 落点由 main() 校验过必然在，这里直接取。NEVER 在这儿留一个默认路径：
         # 录屏片段会安静地落进另一个目录，而回执照常报成功。
         out_dir=Path(cfg["clips_dir"]).expanduser(),
+        max_duration_sec=float(cfg.get("record_max_duration_sec",
+                                       RECORD_MAX_DURATION_SEC)),
+        min_free_bytes=int(cfg.get("record_min_free_bytes",
+                                   RECORD_MIN_FREE_BYTES)),
     )
 
     instance_id = cfg.get("id") or registry.DEFAULT_ID
@@ -3084,6 +3325,8 @@ def build_app(cfg: dict) -> FastAPI:
         # 演员标签的核对搭这趟车。它自己按 VERIFY_INTERVAL 节流，
         # 放在心跳的 10 秒闸门之前，免得核对被心跳的节奏拖慢。
         await browser.verify_actor()
+        if recorder.recording:
+            await recorder.check_watchdog()
         nonlocal last_beat
         now = time.time()
         if now - last_beat < 10:
@@ -3274,7 +3517,7 @@ def build_app(cfg: dict) -> FastAPI:
             # SIGWINCH，zsh 每次重印提示符，缓冲区里就多堆一行。
             {"t": "term.fontsize", "px": stage.term_fs},
             *replay,
-            {"t": "focus", "win": stage.focus},
+            {"t": "focus", "win": stage.focus, "order": list(stage.z_order)},
             {"t": "cursor", "x": stage.cursor[0], "y": stage.cursor[1], "ms": 0},
         ]
         if stage.last_chrome:
@@ -3335,6 +3578,14 @@ def build_app(cfg: dict) -> FastAPI:
         # 让新客户端立刻把它换成空标签页，而不是把旧帧当成实时画面。
         if stage.last_actor is not None:
             snapshot.append(stage.last_actor)
+        snapshot.append({
+            "t": "browser.mode",
+            "headless": browser.headless,
+            "mode": "headless" if browser.headless else "head",
+            "takeover": browser.takeover,
+            "switching": browser.switching_mode,
+            "error": None,
+        })
         # 补发完毕的信号。荧幕**收到这条之前不许上报几何**——它刚加载时手上是
         # 出厂几何（终端 900x560），那份几何一旦被当真，broker 就照它 resize
         # tmux，然后补发的真几何到了再 resize 回去。一来一回两次 SIGWINCH，
@@ -3375,27 +3626,25 @@ def build_app(cfg: dict) -> FastAPI:
                     want = cfg.get("ui_version")
                     got = msg.get("uiVersion")
                     if want and got != want:
-                        _log(f"忽略 uiVersion={got} 的 layout（当前 {want}）"
-                             "——旧资产的桌面页，已叫它自己刷新")
-                        # 叫它刷新，别让人去关。
-                        #
-                        # 这块荧幕是纯显示器，刷新一次什么都不丢——所有状态
-                        # 重连后由 broker 补发。而它留在那儿的代价是真的：
-                        # 旧资产算几何的方式不一样，它一上报就跟新的轮流覆盖；
-                        # 自检为此长期挂一条 WARN，补救动作是"人去关掉那个标签"，
-                        # 而人往往根本不知道哪个标签是旧的（地址一模一样）。
-                        # 能自己好的事情不该写进文档让人记。
-                        #
-                        # 每条连接只叫一次：刷新会重连，重连若还是旧版本
-                        # （比如中间层缓存），第二次叫就成了死循环。叫过一次
-                        # 仍是旧的，就退回原来那条路——自检点名，人来处理。
-                        if not meta.get("reload_sent"):
+                        ver_key = got or 0
+                        # 跨连接按版本号去重，而不是只记在单条连接 meta 上：
+                        # location.reload() 会断开当前连接并建立一条全新的 WebSocket，
+                        # meta["reload_sent"] 在新连接上恒为 False。若主服务资产已更新而
+                        # broker 还是旧进程（或有中间层缓存），刷新重连上来的仍是同一个
+                        # uiVersion，只在 meta 上记标志就会变成每秒一次的无限刷新死循环。
+                        if ver_key not in stage.stale_clients and not meta.get("reload_sent"):
+                            _log(f"忽略 uiVersion={got} 的 layout（当前 {want}）"
+                                 "——资产版本不符，已叫桌面页刷新一次")
                             meta["reload_sent"] = True
                             with suppress(Exception):
-                                await ws.send_text(json.dumps({"t": "reload"}))
+                                await ws.send_text(json.dumps({
+                                    "t": "reload",
+                                    "want": want,
+                                    "got": got,
+                                }))
                         # 没有 uiVersion 字段的更旧资产记成 0，否则它被
                         # 当成"无版本"过滤掉，自检就永远不会点它的名。
-                        stage.stale_clients = stage.stale_clients | {got or 0}
+                        stage.stale_clients = stage.stale_clients | {ver_key}
                         meta["accepted"] = False
                         meta["stale"] = True
                         meta["reason"] = f"uiVersion={got} 与当前 {want} 不符"
@@ -3459,6 +3708,12 @@ def build_app(cfg: dict) -> FastAPI:
                     # 放音进展：开始放了 / 放完了 / 被浏览器拦了。不看主不主——
                     # 人可能开着两块荧幕，哪块放出声都算有人听见。
                     speech_event(meta, msg)
+                elif str(msg.get("t") or "").startswith("human."):
+                    # 人类在桌面页打开「人工接管」或点击「弹出真窗过检」时发来的交互事件。
+                    # 录制机位与外来荧幕不产生人工操作。
+                    if meta.get("role") == "camera" or meta.get("reason") == FOREIGN_REASON:
+                        continue
+                    await handle_human_event(msg)
         except WebSocketDisconnect:
             pass
         finally:
@@ -4030,6 +4285,9 @@ def build_app(cfg: dict) -> FastAPI:
     FOCUS_ORDER = ("term", "browser", "image", "video")
 
     def next_focus(closing: str) -> str | None:
+        for w in stage.z_order:
+            if w != closing and stage.open.get(w):
+                return w
         for w in FOCUS_ORDER:
             if w != closing and stage.open.get(w):
                 return w
@@ -4038,11 +4296,15 @@ def build_app(cfg: dict) -> FastAPI:
     async def set_focus(win: str | None) -> dict:
         """只改层级，不管开关。开关是 power 的事，两者分开才不会互相递归。"""
         before = stage.focus
+        if win in WINDOWS:
+            stage.z_order = [win] + [w for w in stage.z_order if w != win]
         if before == win:
-            return {"before": before, "after": win, "focus_changed": False}
+            return {"before": before, "after": win, "focus_changed": False,
+                    "z_order": list(stage.z_order)}
         stage.focus = win
-        await broadcast({"t": "focus", "win": win})
-        return {"before": before, "after": win, "focus_changed": True}
+        await broadcast({"t": "focus", "win": win, "order": list(stage.z_order)})
+        return {"before": before, "after": win, "focus_changed": True,
+                "z_order": list(stage.z_order)}
 
     async def power(win: str, want_open: bool, ms: int = 260) -> dict:
         """开或关一个程序。程序在不在桌面上，只由这个函数改。"""
@@ -4246,6 +4508,7 @@ def build_app(cfg: dict) -> FastAPI:
             raise ValueError(
                 f"字号 {px} 不在 8-64 内。录制档实测 24-28px 在 1080p 上手机可读，"
                 f"13px 是人自己看这块荧幕的默认值")
+        act = await ensure_active("term")
         before = dict(stage.term_grid)
         stage.term_fs = px
         seq = stage.layout_seq
@@ -4259,7 +4522,7 @@ def build_app(cfg: dict) -> FastAPI:
             "layout_reported": reported,
             "grid": {k: after.get(k) for k in ("cols", "rows", "cellW", "cellH")},
             "before": {k: before.get(k) for k in ("cols", "rows", "cellW", "cellH")},
-            "effect": {"observed": reported, "changed": after != before},
+            "effect": _with_focus({"observed": reported, "changed": after != before}, act),
             "note": ("tmux 已按新网格 resize。列数变少是字变大的必然结果——"
                      "要放得下长命令就把终端窗口摆宽一点，别回头调字号"),
         }
@@ -4446,6 +4709,7 @@ def build_app(cfg: dict) -> FastAPI:
         # min 只是收进 dock，与几何无关，照旧转给 UI。终端不受此约束。
         if step["win"] == "browser" and step.get("action") in ("max", "restore",
                                                                None):
+            act = await ensure_active("browser")
             action = step.get("action")
             ms = int(step.get("ms", 400))
             dw = int(stage.desktop["w"])
@@ -4485,7 +4749,15 @@ def build_app(cfg: dict) -> FastAPI:
             effect = _diff_rect(before, stage.content_rect("browser"))
             effect["layout_reported"] = reported
             return {"win": "browser", "action": action, "geometry": geo,
-                    "effect": effect}
+                    "effect": _with_focus(effect, act)}
+        if step.get("action") == "min":
+            before_focus = stage.focus
+            if stage.focus == win:
+                await set_focus(next_focus(win))
+            act = {"before": before_focus, "after": stage.focus,
+                   "focus_changed": before_focus != stage.focus}
+        else:
+            act = await ensure_active(win)
         msg = {"t": "win", "win": step["win"], "ms": step.get("ms", 400)}
         # action: min / max / restore —— 几何由 UI 计算（菜单栏高度、
         # 浏览器等比约束都只有 UI 知道），broker 只传意图。
@@ -4504,7 +4776,7 @@ def build_app(cfg: dict) -> FastAPI:
         effect["layout_reported"] = reported
         if not reported:
             effect["note"] = "补间已结束，但 UI 未上报新几何（桌面页可能未连接）"
-        return {"win": step["win"], "effect": effect}
+        return {"win": step["win"], "effect": _with_focus(effect, act)}
 
     # split 已退场：它把终端和浏览器各摆一半宽，与"浏览器恒占桌面宽的
     # 75–85%"直接冲突，两者无法共存。半宽的浏览器窗口要么违反下界，
@@ -5047,6 +5319,116 @@ def build_app(cfg: dict) -> FastAPI:
                           title=active.get("title", ""), loading=False)
         return {"action": action, "tabs": len(tabs),
                 "effect": _with_focus({"observed": True}, act)}
+
+    async def op_browser_mode(step: dict) -> Any:
+        """切换虚拟浏览器的交互模式：窗格人工接管（takeover/release）或有头真窗（head/headless）。
+
+        共用同一个 9222 端口与 ~/.frago/profiles/cft/9222/ 配置目录：
+        - 切到 takeover / release：开关虚拟窗格内的键鼠透传与「人工接管」提示条；
+        - 切到 head：弹出真实窗口供人类完成 Cloudflare 真人验证或扫码登录；
+        - 切回 headless（或人类直接关掉真实窗口）：自动切回无头虚拟窗格并原样带回登录态。
+        """
+        to = str(step.get("to") or "").strip().lower()
+        if "takeover" in step or to in ("takeover", "release"):
+            browser.takeover = (
+                bool(step["takeover"]) if "takeover" in step else (to == "takeover")
+            )
+            act = await ensure_active("browser") if browser.takeover else None
+            await on_actor_mode(browser.headless, browser.switching_mode, None)
+            out: dict = {
+                "headless": browser.headless,
+                "mode": "headless" if browser.headless else "head",
+                "takeover": browser.takeover,
+            }
+            if act is not None:
+                out["effect"] = _with_focus({"observed": True}, act)
+            return out
+
+        if "headless" in step and step["headless"] is not None:
+            target_headless = bool(step["headless"])
+        else:
+            if to in ("head", "headful", "window"):
+                target_headless = False
+            elif to in ("headless", "virtual", "pane"):
+                target_headless = True
+            else:
+                raise ValueError("browser.mode 需要 --to head|headless|takeover|release")
+        act = await ensure_active("browser")
+        info = await browser.switch_mode(
+            target_headless,
+            reason=step.get("reason") or (
+                "切回无头虚拟窗格" if target_headless else "弹出真窗过检"
+            ),
+        )
+        geo = await push_browser_window(ms=200, reason="切换演员窗口模式")
+        await push_tabs()
+        return {
+            **info,
+            "takeover": browser.takeover,
+            "geometry": geo,
+            "effect": _with_focus({"observed": True}, act),
+        }
+
+    async def handle_human_event(msg: dict) -> None:
+        """处理桌面页「人工接管」与「弹出真窗过检」发来的 WebSocket 事件。"""
+        kind = msg.get("t")
+        with suppress(Exception):
+            if kind == "human.takeover":
+                browser.takeover = bool(msg.get("on", True))
+                if browser.takeover:
+                    await ensure_active(str(msg.get("win") or "browser"))
+                else:
+                    with suppress(Exception):
+                        await browser.evaluate(
+                            "(()=>{const a=document.activeElement;"
+                            "if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)){"
+                            "a.dispatchEvent(new Event('change',{bubbles:true}));"
+                            "a.blur();}})()"
+                        )
+                await on_actor_mode(browser.headless, browser.switching_mode, None)
+                await browser.nudge_repaint()
+            elif kind == "human.focus":
+                if msg.get("on", True):
+                    await ensure_active(str(msg.get("win") or "browser"))
+            elif kind == "human.mouse":
+                m_kind = str(msg.get("kind") or "mouseMoved")
+                px = float(msg.get("x") or 0)
+                py = float(msg.get("y") or 0)
+                btn = str(msg.get("button") or "left")
+                cnt = int(msg.get("clickCount") or msg.get("count") or 1)
+                dx = float(msg.get("deltaX") or 0)
+                dy = float(msg.get("deltaY") or 0)
+                await browser.mouse(
+                    m_kind, px, py, button=btn,
+                    delta_x=dx, delta_y=dy, click_count=cnt,
+                )
+                if m_kind in ("mouseReleased", "mouseWheel"):
+                    await browser.nudge_repaint()
+            elif kind == "human.text":
+                text = str(msg.get("text") or "")
+                if text:
+                    await browser.insert_text(text)
+                    await browser.nudge_repaint()
+            elif kind == "human.key":
+                key_name = str(msg.get("key") or "")
+                if key_name:
+                    await browser.key(key_name)
+                    await browser.nudge_repaint()
+            elif kind == "human.edit":
+                action = str(msg.get("action") or "")
+                if action:
+                    await browser.edit_action(action)
+                    await browser.nudge_repaint()
+            elif kind in ("human.tab", "human.tab.switch"):
+                idx = int(msg.get("index") or 0)
+                await op_tab({"action": "switch", "index": idx})
+            elif kind in ("human.browser_mode", "human.browser.mode"):
+                target_headless = bool(msg.get("headless"))
+                asyncio.create_task(op_browser_mode({"headless": target_headless}))
+            elif kind == "human.reset":
+                asyncio.create_task(
+                    op_stage_reset({"session_id": str(msg.get("sessionId") or "")})
+                )
 
     # ── 语音 ──
     #
@@ -6128,12 +6510,87 @@ def build_app(cfg: dict) -> FastAPI:
                {"note": f"{port} 上本来就没有机位，这一次什么都没杀"}),
         }
 
+    def _stop_server_stage_sessions(sid: str | None) -> None:
+        """向 8093 frago server 发请求，一并销毁驻场主持人线程与旧主操作员会话进程。"""
+        with suppress(Exception):
+            from ..server.daemon import get_scheme, get_server_port
+
+            target = urllib.parse.quote(sid or "__stage_reset__", safe="")
+            url = f"{get_scheme()}://127.0.0.1:{get_server_port()}/api/workbench/sessions/{target}/stop"
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"force": True, "stage_reset": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=3.0).read()
+
+    async def op_stage_reset(step: dict) -> dict:
+        """全局重置虚拟桌面舞台：销毁后台主持人与旧主操作员会话、恢复窗口/幻灯/贴纸/浮层/语音、重建终端会话、重置浏览器起始页。"""
+        sid = str(step.get("session_id") or "").strip() or None
+        asyncio.create_task(asyncio.to_thread(_stop_server_stage_sessions, sid))
+        with suppress(Exception):
+            await speech_interrupt("stage.reset", keep_queue=False)
+        stage.last_slide = None
+        stage.last_strap = None
+        stage.last_image = None
+        stage.last_video = None
+        await broadcast({"t": "slide", "url": None, "ms": 0})
+        await broadcast({"t": "strap.hide"})
+        await broadcast({"t": "overlay.clear"})
+
+        await power("image", False, 0)
+        await power("video", False, 0)
+        await power("term", True, 0)
+        await power("browser", True, 0)
+        stage.geom["term"] = {"x": 120.0, "y": 90.0, "w": 900.0, "h": 560.0}
+        await broadcast({"t": "win.geom", "win": "term", "ms": 260, **stage.geom["term"]})
+        await set_focus("term")
+
+        await broadcast({"t": "stage.reset", "ts": time.time()})
+
+        with suppress(Exception):
+            await term.launch()
+            await asyncio.sleep(0.35)
+            term._resync = True
+
+        browser.takeover = False
+        await on_actor_mode(browser.headless, browser.switching_mode, None)
+        if not browser.headless and not browser.switching_mode:
+            asyncio.create_task(op_browser_mode({"headless": True}))
+        elif browser.ready:
+            with suppress(Exception):
+                start_url = str(cfg.get("start_url") or "about:blank")
+                tabs = await browser.list_tabs()
+                if len(tabs) > 1:
+                    await browser.switch_tab(0)
+                    for _ in range(len(tabs) - 1):
+                        cur_tabs = await browser.list_tabs()
+                        if len(cur_tabs) <= 1:
+                            break
+                        await browser.close_tab(len(cur_tabs) - 1)
+                await browser.goto(start_url)
+                if start_url in ("", "about:blank"):
+                    browser.blanked = True
+                    stage.browser_active = False
+                    await broadcast({"t": "browser.actor", "active": False})
+                await browser.nudge_repaint()
+
+        return {
+            "reset": True,
+            "focus": stage.focus,
+            "open_windows": [w for w, on in stage.open_wins.items() if on],
+            "effect": {"observed": True, "changed": True},
+        }
+
     OPS = {
         "cursor": op_cursor, "click": op_click, "focus": op_focus,
         "type": op_type, "key": op_key, "shell": op_shell,
         "term.scroll": op_term_scroll, "term.fontsize": op_term_fontsize,
         "navigate": op_navigate, "exec": op_exec, "win": op_win,
         "viewport": op_viewport, "tab": op_tab, "elements": op_elements,
+        "browser.mode": op_browser_mode,
+        "stage.reset": op_stage_reset,
         "say": op_say, "sleep": op_sleep,
         "speech.wait": op_speech_wait, "speech.stop": op_speech_stop,
         "camera.focus": op_camera_focus, "camera.pan": op_camera_pan,
@@ -6365,6 +6822,7 @@ def build_app(cfg: dict) -> FastAPI:
                 for m in own_screens()[:-1]
             ],
             "focus": stage.focus,
+            "z_order": list(stage.z_order),
             # 三个程序各自开着没有。与 content_rects 分开报：那边答的是
             # "窗口摆在哪"，关掉的程序在那儿是个 null，看不出是关了还是
             # 收起来了，而两者的补救动作不同（window open vs window restore）。
@@ -6390,6 +6848,10 @@ def build_app(cfg: dict) -> FastAPI:
             # 补救动作完全不同：一个要重开标签，另一个只要逼一次重绘。
             "actor_alive": not browser.actor_gone,
             "actor_gone_reason": browser.actor_gone_reason,
+            "actor_headless": browser.headless,
+            "actor_mode": "headless" if browser.headless else "head",
+            "actor_takeover": browser.takeover,
+            "actor_switching": browser.switching_mode,
             "stale_clients": sorted(stage.stale_clients),
             "content_rects": {
                 w: stage.content_rect(w) for w in WINDOWS
@@ -6450,6 +6912,8 @@ def build_app(cfg: dict) -> FastAPI:
                 "clip": recorder.name,
                 "frames": len(recorder.stamps),
                 "clips_dir": str(recorder.out_dir),
+                **({"aborted": recorder.last_abort_reason}
+                   if recorder.last_abort_reason else {}),
             },
         }
 

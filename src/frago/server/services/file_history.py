@@ -27,7 +27,16 @@ from pathlib import Path
 
 from frago.server.services.subprocess_utils import get_utf8_env
 
-__all__ = ["Before", "added_rows", "before_at_head", "diff_rows"]
+__all__ = [
+    "Before",
+    "EDIT_BASELINE_SOURCE",
+    "added_rows",
+    "before_at_head",
+    "clear_edit_baselines",
+    "diff_rows",
+    "get_edit_baseline",
+    "record_edit_baseline",
+]
 
 # `git show` 在一个仓库上很快；卡住的仓库（索引锁之类）不该把一条请求挂死。
 GIT_TIMEOUT = 20
@@ -44,6 +53,29 @@ NO_BEFORE_TOO_LARGE = "too-large"
 
 GIT_SOURCE = "git HEAD"
 """正文来自哪儿。界面上那行小字照它写。"""
+
+EDIT_BASELINE_SOURCE = "编辑前快照"
+"""非 git 或未提交新建文件在会话内首次被人类 Edit 保存前留下的基线。"""
+
+_session_edit_baselines: dict[tuple[str, str], str] = {}
+
+
+def record_edit_baseline(sid: str, resolved_path: str, before_text: str) -> None:
+    """记录某场会话中某份文件首次被人类编辑保存前的原文，供后续版本比较对照。"""
+    key = (sid, resolved_path)
+    if key not in _session_edit_baselines:
+        _session_edit_baselines[key] = before_text
+
+
+def get_edit_baseline(sid: str, resolved_path: str) -> str | None:
+    """读取该会话中该文件首次编辑前的原文快照；未编辑过返回 None。"""
+    return _session_edit_baselines.get((sid, resolved_path))
+
+
+def clear_edit_baselines() -> None:
+    """清空内存中的编辑前快照（供单测隔离使用）。"""
+    _session_edit_baselines.clear()
+
 
 
 @dataclass(frozen=True)

@@ -513,3 +513,247 @@ def test_driver_is_registered():
     driver = load_driver("agy")
     assert driver.display_name == "Antigravity CLI"
     assert driver.accepts_session_id is False
+    assert "Gemini 4 Argon (High)" in driver.known_models
+
+
+# ── 上下文窗口三档（256K / 512K / 900K）与 Argon 白名单 ────────────
+def test_supports_agy_context_window_strips_parenthesized_suffix():
+    """agy 1.4.12 先剥离模型名末尾括号后缀再比对 Gemini 4 Argon 白名单。"""
+    for allowed in (
+        "Gemini 4 Argon",
+        "Gemini 4 Argon (High)",
+        "Gemini 4 Argon (Medium)",
+        "Gemini 4 Argon (Max)",
+        "gemini-4-argon-high",
+    ):
+        assert agy_driver.supports_agy_context_window(allowed) is True, allowed
+
+    for disallowed in (
+        "",
+        None,
+        "Gemini 3.8 Flash (Medium)",
+        "gemini-3.8-flash-high",
+        "claude-opus-5-5-high",
+        "gpt-oss-120b-medium",
+    ):
+        assert agy_driver.supports_agy_context_window(disallowed) is False, disallowed
+
+
+def test_normalize_agy_context_window_accepts_only_three_fixed_tiers():
+    assert agy_driver.normalize_agy_context_window("256K") == "256K"
+    assert agy_driver.normalize_agy_context_window("512k") == "512K"
+    assert agy_driver.normalize_agy_context_window("900K") == "900K"
+    assert agy_driver.normalize_agy_context_window(256_000) == "256K"
+    assert agy_driver.normalize_agy_context_window(512_000) == "512K"
+    assert agy_driver.normalize_agy_context_window(900_000) == "900K"
+    for invalid in (None, "", "300K", "80%", "1M", 200_000, 500_000, 1_000_000, True):
+        assert agy_driver.normalize_agy_context_window(invalid) is None, invalid
+
+
+def test_apply_agy_context_window_updates_and_clears_settings_json(app_dir):
+    settings = app_dir / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "model": "Gemini 4 Argon (High)",
+                "vimMode": True,
+                "trustedWorkspaces": ["/tmp/proj"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert agy_driver.apply_agy_context_window("512K") == "512K"
+    saved = json.loads(settings.read_text(encoding="utf-8"))
+    assert saved["contextWindow"] == "512K"
+    assert saved["model"] == "Gemini 4 Argon (High)"
+    assert saved["vimMode"] is True
+    assert saved["trustedWorkspaces"] == ["/tmp/proj"]
+
+    assert agy_driver.apply_agy_context_window("900K") == "900K"
+    assert json.loads(settings.read_text(encoding="utf-8"))["contextWindow"] == "900K"
+
+    assert agy_driver.apply_agy_context_window(None) is None
+    cleared = json.loads(settings.read_text(encoding="utf-8"))
+    assert "contextWindow" not in cleared
+    assert cleared["model"] == "Gemini 4 Argon (High)"
+
+
+def test_profile_apply_and_revert_manage_context_window(app_dir, monkeypatch):
+    from frago.init import profile_target_backup
+    from frago.init.profile_manager import APIProfile
+
+    monkeypatch.setattr(
+        profile_target_backup, "BACKUP_PATH", app_dir / "profile-target-backup.json"
+    )
+    settings = app_dir / "settings.json"
+    settings.write_text(
+        json.dumps({"model": "Gemini 4 Argon (High)", "colorScheme": "dark"}),
+        encoding="utf-8",
+    )
+
+    profile = APIProfile(
+        name="Argon 512K",
+        endpoint_type="custom",
+        url="https://example.com",
+        default_model="Gemini 4 Argon (High)",
+        agy_context_window="512K",
+    )
+    agy_driver._profile_apply(profile)
+    applied = json.loads(settings.read_text(encoding="utf-8"))
+    assert applied["contextWindow"] == "512K"
+    assert applied["colorScheme"] == "dark"
+
+    agy_driver._profile_revert()
+    reverted = json.loads(settings.read_text(encoding="utf-8"))
+    assert "contextWindow" not in reverted
+    assert reverted["model"] == "Gemini 4 Argon (High)"
+    assert reverted["colorScheme"] == "dark"
+
+
+def test_submit_first_turn_does_not_resend_enter_once_transcript_appears(monkeypatch):
+    """回归：新会话首轮提交前 baseline 为 None；Enter #1 后一旦 transcript 出现且非空，
+    应立即视为 landed=True，绝不能 break 后重发第二次 Enter。
+    """
+    keys_sent: list[str] = []
+    texts_sent: list[str] = []
+
+    class _SubmitSession:
+        session_id = "webui-test"
+        cwd = "/tmp/proj"
+        native_session_id = False
+        _poll_interval_s = 0.0
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            keys_sent.append(key)
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    sizes = iter([None, 128])
+    monkeypatch.setattr(agy_driver, "_claim_once", lambda _s: None)
+    monkeypatch.setattr(agy_driver, "_transcript_size", lambda _s: next(sizes, 128))
+
+    agy_driver._submit(_SubmitSession(), "hello employee")
+
+    assert texts_sent == ["hello employee"]
+    assert keys_sent == ["Enter"]
+
+
+def test_submit_spools_long_employee_and_skill_blocks_while_preserving_contracts(
+    app_dir, monkeypatch
+):
+    """长 <frago-employee> 与 <must-use-skill> 语境块在投喂给 agy 前落盘为临时文件，
+    TUI 输入框只敲单行读取指令（避免 15000 字逐行重绘卡死），且下游的员工/技能拆解
+    契约（split_employee_block / split_skill_blocks）与用户提问原文完全保持不变。
+    """
+    from frago.session.session_index import _first_user_text_and_employee, split_employee_block
+    from frago.skills.skill_prompt import split_skill_blocks
+
+    texts_sent: list[str] = []
+
+    class _SubmitSession:
+        session_id = "webui-emp"
+        cwd = "/tmp/proj"
+        native_session_id = False
+        _poll_interval_s = 0.0
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            pass
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    sizes = iter([None, 256])
+    monkeypatch.setattr(agy_driver, "_claim_once", lambda _s: None)
+    monkeypatch.setattr(agy_driver, "_transcript_size", lambda _s: next(sizes, 256))
+
+    huge_employee_body = "\n".join([f"第 {i} 行岗位职责与数据底账说明：" + "股票投研" * 20 for i in range(180)])
+    huge_skill_body = "\n".join([f"步骤 {i}：" + "执行规范" * 20 for i in range(40)])
+    question = "查一下 腾讯的stock接口有没有日内成交明细数据？"
+    raw_prompt = (
+        f'<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n'
+        f"{huge_employee_body}\n"
+        f"</frago-employee>\n\n"
+        f'<must-use-skill name="stock-research" path="/tmp/SKILL.md">\n'
+        f"{huge_skill_body}\n"
+        f"</must-use-skill>\n\n"
+        f"{question}"
+    )
+
+    agy_driver._submit(_SubmitSession(), raw_prompt)
+
+    assert len(texts_sent) == 1
+    sent = texts_sent[0]
+    # 原本近两万字、220 多行的提示词被压到数百字以内（含 pytest 临时目录长路径），行数 <= 6
+    assert len(sent) < 800
+    assert len(sent) < len(raw_prompt) // 20
+    assert sent.count("\n") <= 6
+    assert '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">' in sent
+    assert '<must-use-skill name="stock-research" path="/tmp/SKILL.md">' in sent
+
+    # 下游索引与前端同款拆分规则依然准确识别 employee_id、skill 与用户问题
+    emp_id, after_emp = split_employee_block(sent)
+    assert emp_id == "stock"
+    skills, clean_said = split_skill_blocks(after_emp)
+    assert skills == ["stock-research"]
+    assert clean_said == question
+
+    first_user, detected_emp = _first_user_text_and_employee(sent)
+    assert detected_emp == "stock"
+    assert first_user == f"/stock-research {question}"
+
+    # 落盘的载体文件包含完整原文
+    spool_files = sorted((app_dir / "frago-prompts").glob("*.md"))
+    assert len(spool_files) == 2
+    contents = [f.read_text(encoding="utf-8") for f in spool_files]
+    assert any(huge_employee_body in c for c in contents)
+    assert any(huge_skill_body in c for c in contents)
+
+
+def test_submit_spools_long_user_message_and_agy_records_restores_it(app_dir, monkeypatch):
+    """用户自身发送超长多行文本时，投喂端包入 <frago-prompt-file>，翻译端从载体文件无损还原。"""
+    from frago.session.adapters import agy_records
+
+    texts_sent: list[str] = []
+
+    class _SubmitSession:
+        session_id = "webui-long"
+        cwd = "/tmp/proj"
+        native_session_id = False
+        _poll_interval_s = 0.0
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            pass
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    sizes = iter([None, 256])
+    monkeypatch.setattr(agy_driver, "_claim_once", lambda _s: None)
+    monkeypatch.setattr(agy_driver, "_transcript_size", lambda _s: next(sizes, 256))
+
+    long_user_text = "\n".join([f"日志行 {i}: " + "错误堆栈详情" * 15 for i in range(30)])
+    agy_driver._submit(_SubmitSession(), long_user_text)
+
+    sent = texts_sent[0]
+    assert "<frago-prompt-file " in sent
+    assert len(sent) < 600
+    assert sent.count("\n") <= 2
+
+    restored, extra = agy_records._split_user_input(
+        f"<USER_REQUEST>\n{sent}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>"
+    )
+    assert restored == long_user_text
+    assert extra == "<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>"
+
+

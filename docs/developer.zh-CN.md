@@ -32,10 +32,10 @@ uv sync --all-extras --dev
 
 - [使用指南](user-guide.zh-CN.md) — 安装后的日常命令
 - [安装指南](installation.zh-CN.md) — CLI 安装和各平台前置条件
-- [关键概念](concepts.zh-CN.md) — Recipe、Run、Skill 如何协作
+- [关键概念](concepts.zh-CN.md) — Skill、Recipe、知识域、提示注入与会话如何协作
 - [Recipe 系统](recipes.zh-CN.md) — Recipe 系统详解
 - [示例参考](examples.zh-CN.md) — 实际自动化示例
-- [浏览器支持](browser-support.zh-CN.md) — 支持的浏览器和 CDP 命令
+- [浏览器支持](browser-support.zh-CN.md) — 浏览器后端、Tab 组、页面操作与虚拟桌面舞台
 
 > **内置参考**：`frago book` 读取随安装包分发的知识库（浏览器后端、反爬、
 > Recipe 编写、桌面舞台、数据目录规则等）。它是与代码同步的操作手册——

@@ -404,3 +404,52 @@ class TestLiveSnapshot:
 
         (row,) = cr.live_snapshot()
         assert row.pid is None
+
+
+class TestDirectorUnattendedEnv:
+    """虚拟桌面导演会话（带 how-frago-agent-runs-an-agent-os）必须关闭轻量审阅与拍板卡拦截，且单测不触达 8770。"""
+
+    def test_director_prompt_disables_review_and_stop_check(
+        self, tmp_path, monkeypatch, fake_binary
+    ):
+        from frago.desktop import aos
+        from frago.server.services import stage_orchestrator as so
+
+        monkeypatch.setattr(so, "STAGE_DATA_ROOT", tmp_path / "agent_os")
+        captured_envs: list[dict[str, str]] = []
+        stage_urls: list[str] = []
+
+        orig_urlopen = aos.urllib.request.urlopen
+
+        def guarded_urlopen(req, *a, **kw):
+            url = getattr(req, "full_url", str(req))
+            stage_urls.append(url)
+            raise AssertionError(f"单测不应向真实虚拟桌面发起请求: {url}")
+
+        monkeypatch.setattr(aos.urllib.request, "urlopen", guarded_urlopen)
+
+        def make(*_a, **kw):
+            captured_envs.append(dict(kw.get("env") or {}))
+            return _FakeProc()
+
+        monkeypatch.setattr(cr.subprocess, "Popen", make)
+        try:
+            cr.send_queued(
+                "1",
+                '<must-use-skill name="how-frago-agent-runs-an-agent-os" path="/tmp/SKILL.md">...</must-use-skill>\n\n绘声绘色的讲解太阳系。',
+                cwd="/Users/frago",
+            )
+            assert len(captured_envs) == 1
+            assert captured_envs[0].get("FRAGO_REVIEW") == "off"
+            assert captured_envs[0].get("FRAGO_STOP_CHECK") == "off"
+            presenter = so._presenters.get("1")
+            assert presenter is not None
+            assert presenter.thread is None
+            # 即使直接调用未打桩的语音推送入口，单测隔离下也绝不向 8770 发请求
+            presenter._say_interject("Welcome to the live stage.")
+            presenter._say_queue("Moving forward on stage.")
+            assert stage_urls == []
+        finally:
+            so.cleanup_all_presenters()
+            monkeypatch.setattr(aos.urllib.request, "urlopen", orig_urlopen)
+

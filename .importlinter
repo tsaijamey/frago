@@ -129,6 +129,15 @@ forbidden_modules =
     frago.server
     frago.cli
 
+[importlinter:contract:employee]
+name = employee/ NEVER imports server/, cli/ (domain ontology store & service layer)
+type = forbidden
+source_modules =
+    frago.employee
+forbidden_modules =
+    frago.server
+    frago.cli
+
 # --- big-picture direction: only what FRAGO.md actually states ---------------
 # FRAGO.md 明确规定的方向只有 cli > server（cli 可 import server，反向禁止）。
 # 下层（recipes/session/init）彼此的相对顺序 FRAGO.md 未定义，故 NEVER 在此

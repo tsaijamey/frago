@@ -155,16 +155,21 @@ def _profile_env_via_driver(profile, agent_type: str, *, label: str) -> dict[str
         sys.exit(1)
 
 
-def _worker_bound_connection():
+def _worker_bound_connection(agent_type: str | None = None):
     """设置里绑给 worker 角色的那条连接，没绑（或绑的是官方订阅）时返回 None.
 
     绑定只在这里被读一次，且只作用于本次要开的这一场会话——它 NEVER 写进任何 agent
     的常驻配置，所以人自己敲 claude 起的会话不受影响。这正是 worker 与主 agent 的
     区别：主 agent 那条是写进配置的，worker 这条是每次开会话时现读的。
     """
-    from frago.init.profile_manager import KIND_OFFICIAL, WORKER_ROLE, role_connection
+    from frago.init.profile_manager import (
+        KIND_OFFICIAL,
+        WORKER_ROLE,
+        resolve_worker_profile,
+        role_connection,
+    )
 
-    connection = role_connection(WORKER_ROLE)
+    connection = resolve_worker_profile(agent_type) if agent_type else role_connection(WORKER_ROLE)
     return None if connection.kind == KIND_OFFICIAL else connection
 
 
@@ -390,6 +395,7 @@ def _run_kernel(
     json_out: bool,
     profile_id: str | None,
     model: str | None,
+    wire: str | None = None,
     env: dict[str, str] | None,
 ) -> None:
     """把一轮交给 frago 自己的内核跑（不挂 tmux）。
@@ -423,10 +429,10 @@ def _run_kernel(
 
     registered = False
 
-    def _on_spawn(pid: int) -> None:
+    def _on_spawn(pid: int, tmux_name: str | None = None) -> None:
         nonlocal registered
         register_transient_worker(
-            name=sid, agent_type=agent_type, tmux_name=None, cwd=cwd, pid=pid
+            name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd, pid=pid
         )
         registered = True
         # **记账在这一刻，不在跑完之后。** 内核 worker 可能跑上几分钟到几十分钟，账要等
@@ -449,6 +455,7 @@ def _run_kernel(
             cwd=cwd,
             profile_id=profile_id,
             model=model,
+            wire=wire,
             timeout_s=float(timeout) if timeout > 0 else None,
             env=env,
             on_spawn=_on_spawn,
@@ -471,7 +478,7 @@ def _run_kernel(
         status=turn.status,
         text=turn.text,
         session_id=sid,
-        tmux_name=None,
+        tmux_name=getattr(turn, "tmux_name", None),
         duration_ms=turn.duration_ms,
         human_note=notes.get(turn.status),
         json_out=json_out,
@@ -561,8 +568,8 @@ def should_use_ccr(config: dict | None, force_ccr: bool = False) -> tuple[bool, 
 # CLI Commands
 # =============================================================================
 
-# 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）。
-_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop", "attach"})
+# 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）及身份自查子命令。
+_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop", "attach", "self", "whoami"})
 # 隐藏的默认命令名：承载原 `frago agent <prompt> [options]` 全部逻辑。
 _DEFAULT_RUN_CMD = "__run__"
 
@@ -597,7 +604,8 @@ def agent() -> None:
       frago agent "summarize this" --json      # machine-readable shutdown summary
 
     \b
-    Resident tmux-session subcommands:
+    Resident tmux-session & self-inspection subcommands:
+      frago agent self [--signature | --name | --json]
       frago agent start <agent_type> [--name NAME]
       frago agent send <name> "<prompt>"
       frago agent peek <name>
@@ -700,6 +708,15 @@ def agent() -> None:
          "Injected into the session env; --endpoint/--api-key still override it."
 )
 @click.option(
+    "--wire",
+    "--protocol",
+    "wire",
+    type=click.Choice(["anthropic", "openai"], case_sensitive=False),
+    default=None,
+    help="Select the API wire protocol for CoreAgent (anthropic -> /v1/messages, "
+         "openai -> /v1/chat/completions)."
+)
+@click.option(
     "--agent-type",
     type=str,
     default=None,
@@ -732,6 +749,7 @@ def agent_run(
     endpoint: str | None,
     api_key: str | None,
     use_profile: str | None,
+    wire: str | None,
     agent_type: str | None,
     tmux_target: str | None,
 ):
@@ -781,7 +799,7 @@ def agent_run(
 
     # 显式 --use-profile 是"这一轮跑哪条连接"，没给就看设置里绑给 worker 的那一条。
     # 绑定只在这一层生效：它决定这一场会话的内核、模型与端点，写不到任何常驻配置里。
-    worker_connection = None if use_profile else _worker_bound_connection()
+    worker_connection = None if use_profile else _worker_bound_connection(agent_type)
 
     # --agent-type 是"这一次破例用谁"；其次是 worker 那条连接自带的内核（厂商 CLI 型
     # 连接的内核就是它本身，换模型也只能在它自己身上换）；最后才是界面上选定的内核。
@@ -798,6 +816,10 @@ def agent_run(
             agent_type, core_note = resolve_agent_core(get_agent_core())
             if core_note:
                 click.echo(f"[!] {core_note}", err=True)
+        if not use_profile and agent_type:
+            specific_conn = _worker_bound_connection(agent_type)
+            if specific_conn is not None:
+                worker_connection = specific_conn
 
     # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
     # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。
@@ -919,6 +941,7 @@ def agent_run(
             json_out=json_out,
             profile_id=kernel_profile_id,
             model=model,
+            wire=wire,
             env=tmux_env or None,
         )
         return
@@ -1069,6 +1092,70 @@ def agent_attach(files: str | None, dirs: str | None, conv_key: str | None) -> N
     click.echo(f"Attached {len(records)} artifact(s) to conv {key!r}.")
     for rec in records:
         click.echo(f"  {rec['kind']}\t{rec['path']}")
+
+
+# =============================================================================
+# frago agent self —— 自查当前所处的 CLI Agent 身份与提交签名
+# =============================================================================
+def _run_agent_self(*, signature: bool, display_name: bool, json_output: bool) -> None:
+    from frago.session.self_id import resolve_self_agent
+
+    found = resolve_self_agent()
+    if found is None:
+        from .agent_friendly import BusinessError
+
+        raise BusinessError(
+            "cannot resolve current CLI agent — no CLI agent process ancestor "
+            "or session environment variable found",
+            'export FRAGO_CLI_AGENT="claude"  # declare explicitly (claude/codex/opencode/agy/coreagent)',
+            "frago agent self --json",
+        )
+
+    if json_output:
+        click.echo(json.dumps(found.to_dict(), ensure_ascii=False, indent=2))
+        return
+    if signature:
+        click.echo(found.generated_with)
+        return
+    if display_name:
+        click.echo(found.display_name)
+        return
+    click.echo(found.agent_type)
+
+
+@agent.command("self", cls=AgentFriendlyCommand)
+@click.option(
+    "--signature",
+    is_flag=True,
+    help="Print the commit 'Generated with [...]' signature line for this CLI agent",
+)
+@click.option(
+    "--name",
+    "display_name",
+    is_flag=True,
+    help="Print the human-readable display name of this CLI agent (e.g. Claude Code, Codex CLI)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output full identity and signature in JSON format")
+def agent_self(signature: bool, display_name: bool, json_output: bool) -> None:
+    """Identify which CLI agent is executing the current command.
+
+    \b
+    Examples:
+      frago agent self              # e.g. claude / codex / opencode / agy / coreagent
+      frago agent self --name       # e.g. Claude Code / Codex CLI / opencode / Antigravity CLI
+      frago agent self --signature  # e.g. 🤖 Generated with [Claude Code](https://claude.com/claude-code)
+      frago agent self --json       # full JSON (agent_type, display_name, url, generated_with, source, session_id)
+    """
+    _run_agent_self(signature=signature, display_name=display_name, json_output=json_output)
+
+
+@agent.command("whoami", cls=AgentFriendlyCommand, hidden=True)
+@click.option("--signature", is_flag=True)
+@click.option("--name", "display_name", is_flag=True)
+@click.option("--json", "json_output", is_flag=True)
+def agent_whoami(signature: bool, display_name: bool, json_output: bool) -> None:
+    """Hidden alias for `frago agent self`."""
+    _run_agent_self(signature=signature, display_name=display_name, json_output=json_output)
 
 
 # =============================================================================

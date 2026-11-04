@@ -50,7 +50,7 @@ from typing import Any
 
 from frago.session import agy_store
 from frago.session.unified_record import RecordKind, ToolFamily, UnifiedRecord
-from frago.session.usage_tick import build_tick
+from frago.session.usage_tick import breakdown_from_agy_record, build_tick
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,33 @@ def _ms(raw: Any) -> int:
     return int(parsed.timestamp() * 1000)
 
 
+_PROMPT_FILE_BLOCK_RE = re.compile(
+    r'<frago-prompt-file\s+path="([^"]+)"[^>]*>[\s\S]*?</frago-prompt-file>(?:\r?\n([^\n]*))?'
+)
+
+
+def _restore_prompt_file_blocks(text: str) -> str:
+    """若用户消息包含 agy 驱动压缩生成的 ``<frago-prompt-file path="…">`` 块，从载体文件还原原文。"""
+    if "<frago-prompt-file" not in text:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_path = match.group(1).strip()
+        preview = (match.group(2) or "").strip()
+        if raw_path:
+            try:
+                p = Path(raw_path)
+                if p.is_file():
+                    loaded = p.read_text(encoding="utf-8", errors="replace").strip()
+                    if loaded:
+                        return loaded
+            except OSError:
+                pass
+        return preview
+
+    return _PROMPT_FILE_BLOCK_RE.sub(_replace, text).strip()
+
+
 def _split_user_input(content: str) -> tuple[str, str]:
     """``USER_INPUT`` 的正文拆成（人那句话, agy 自己拼的元数据）。
 
@@ -147,8 +174,8 @@ def _split_user_input(content: str) -> tuple[str, str]:
     """
     match = _USER_REQUEST_RE.search(content)
     if match is None:
-        return content.strip(), ""
-    request = match.group(1).strip()
+        return _restore_prompt_file_blocks(content.strip()), ""
+    request = _restore_prompt_file_blocks(match.group(1).strip())
     rest = (content[: match.start()] + content[match.end() :]).strip()
     return request, rest
 
@@ -335,28 +362,12 @@ class _Usage:
 def _usage_tick(record: dict[str, Any], usage: _Usage, model: str | None) -> dict[str, Any] | None:
     """一条模型回复的用量刻度。这一条没带用量就返回 None。
 
-    agy 把三个数分开记：``input_tokens`` 是这次真正新送进提示词的、``cache_read_tokens``
-    是命中缓存的那部分、``output_tokens`` 是它写出来的。前两个相加才是**上下文水位**——
-    与 claude 那边的口径一致，缓存读取算在里面（那些 token 确实被模型读了一遍）。
-
-    ``cache_creation`` 恒为 0：agy 的转录里没有这一项。**键留着、值给 0**，不是省掉——
-    四个分项在界面上按固定顺序摆，少一个键那一格看起来像"没读到"。
+    分项换算走 :func:`frago.session.usage_tick.breakdown_from_agy_record`，与用量月历共用
+    同一份判据。
     """
-    if not isinstance(record.get("input_tokens"), int | float) and not isinstance(
-        record.get("output_tokens"), int | float
-    ):
+    breakdown = breakdown_from_agy_record(record)
+    if breakdown is None:
         return None
-
-    def n(key: str) -> int:
-        value = record.get(key)
-        return int(value) if isinstance(value, int | float) else 0
-
-    breakdown = {
-        "input": n("input_tokens"),
-        "output": n("output_tokens"),
-        "cache_creation": 0,
-        "cache_read": n("cache_read_tokens"),
-    }
     payload = build_tick(breakdown, total_before=usage.total, model=model)
     usage.total = int(payload["total_tokens"])
     return payload

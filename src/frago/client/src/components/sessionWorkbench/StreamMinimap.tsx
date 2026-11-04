@@ -237,7 +237,7 @@ export default function StreamMinimap({ scrollRef, ticks, version, onUserScroll 
             drag.current = null;
           }}
           /* 半透明的中性色：盖在条纹上还看得见底下的绿灰和刻度。 */
-          className="absolute inset-x-0 cursor-grab rounded-[3px] border border-[var(--sel-border)] bg-[var(--sel-bg)] active:cursor-grabbing"
+          className="absolute inset-x-0 cursor-grab rounded-[3px] border border-[var(--border-strong)] bg-[var(--bg-active)] active:cursor-grabbing"
         />
       ) : null}
     </div>

@@ -1081,6 +1081,31 @@ def test_send_text_chunks_small_enough_not_to_read_as_one_paste() -> None:
     assert sleeps == []
 
 
+def test_send_text_expands_tabs_before_chunking() -> None:
+    """切块前必须先把 ``\\t`` 展平为 4 个空格，防止分块投喂时 TUI 光标落后导致句尾乱序。
+
+    2026-10-29 实测（会话 f8516928-2612-48ad-980f-ad65292e9c12）：圈选带表格（含 6 个
+    ``\\t``）的原文起分支时，815 字首句按 400 字切三块；第 2 块的 6 个 ``\\t`` 被
+    claude 输入框展开成 24 个空格（缓冲区 +418 字），但光标只按原始码点数推进 400 位，
+    块尾 18 个字（``>> 业务在data agent l``）留在光标右侧，第 3 块（``ite 仓库，解决这2个bug``）
+    从光标处插进去，落盘变成 ``>ite 仓库，解决这2个bug>> 业务在data agent l``。
+    切块前先把 ``\\t`` 换成 4 个空格，进 ``send-keys -l`` 的每块都不含 ``\\t`` 且每块不超上限。
+    """
+    sleeps: list[float] = []
+    fake = FakeTmux([""])
+    sess = TmuxAgentSession("tabs", _echo_driver(), cwd="/tmp", runner=fake, sleep=sleeps.append)
+
+    raw = "A" * 390 + "\t" * 6 + ">>> 业务在data agent lite 仓库，解决这2个bug"
+    sess.send_text(raw)
+
+    chunk = TmuxAgentSession._SEND_TEXT_CHUNK
+    sent = [c[-1] for c in fake.sent_keys()]
+    assert all("\t" not in piece for piece in sent), sent
+    assert all(len(piece) <= chunk for piece in sent), [len(p) for p in sent]
+    assert "".join(sent) == raw.replace("\t", "    ")
+
+
+
 def test_send_text_non_ascii_on_ansi_windows_goes_through_a_file(
     monkeypatch, tmp_path
 ) -> None:

@@ -61,6 +61,14 @@ describe('parsePath', () => {
     expect(parsePath('#/teaming')).toEqual({ page: 'vibe_teaming', id: null });
   });
 
+  it('员工页有自己的 /employees；结对那几段旧名字仍然只落结对页', () => {
+    // 员工与结对是两件事，地址 NEVER 混用：`/teams` 那一段是结对的旧名字，
+    // 员工页另起一段，刷新与分享才各归各位。
+    expect(pathForPage('employees')).toBe('/employees');
+    expect(parsePath('#/employees')).toEqual({ page: 'employees', id: null });
+    expect(parsePath('#/teams')).toEqual({ page: 'vibe_teaming', id: null });
+  });
+
   it('没有详情页的那一段，多出来的一截不当编号', () => {
     expect(parsePath('#/settings/oauth')).toEqual({ page: 'settings', id: null });
   });
@@ -81,6 +89,8 @@ describe('parsePath', () => {
 describe('写出去再读回来', () => {
   const cases: [PageType, string | null][] = [
     ['session_workbench', null],
+    ['desktop', null],
+    ['employees', null],
     ['recipes', null],
     ['recipe_detail', 'my-recipe'],
     ['todos', null],
@@ -113,6 +123,12 @@ describe('写出去再读回来', () => {
       page: 'recipe_app',
       id: 'demo_recipe/x',
     });
+  });
+
+  it('agent_os 常驻在左侧菜单 desktop 项下，#/app/agent_os 归流到 desktop 页', () => {
+    expect(parsePath('#/desktop')).toEqual({ page: 'desktop', id: null });
+    expect(parsePath('#/app/agent_os')).toEqual({ page: 'desktop', id: null });
+    expect(parsePath('#/app/agent_os/default')).toEqual({ page: 'desktop', id: null });
   });
 
   it('只有 /app 一段不是一个页面，回首页', () => {

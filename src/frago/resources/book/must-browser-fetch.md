@@ -41,4 +41,4 @@ CDP 后端你用的端口永远是 9222（默认值，不用传 `--port`），pr
 - 不要使用 WebFetch 工具
 - 不要使用 curl 获取网页内容
 - 不要假设页面是静态 HTML，始终通过浏览器渲染后获取
-- 不要自己起浏览器进程（`chrome --headless`、`--screenshot`、`--remote-debugging-port` 等一律禁止）——需要无头或独立实例是**用 `-b cdp`** 的理由，不是自起进程的理由
+- 不要自己起浏览器进程（`chrome --headless`、`--screenshot`、`--remote-debugging-port` 等一律禁止）——仅限 agent_os（舞台真无头/录制独立实例）才用 `-b cdp`，常规任务一律默认后端，任何时候禁止自起进程

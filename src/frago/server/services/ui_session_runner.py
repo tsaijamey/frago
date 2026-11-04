@@ -112,6 +112,7 @@ class UiSessionRunner:
             cwd=cwd or self._cwd,
             native_session_id=native_session_id,
             timeout_s=timeout_s,
+            origin="human",
         )
         # 「接管」也是零冷启动：tmux 里那场本来就活着，池只是重新拿到了它的把手。
         # 报成 activating 等于凭空宣称付了十几秒重建的代价，而实际上一秒都没付。
@@ -155,6 +156,7 @@ class UiSessionRunner:
             session_id,
             cwd or self._cwd,
             native_session_id=native_session_id,
+            origin="human",
         )
         if getattr(session, "status", None) == "busy" or not _turn_finished(session):
             return "not_now"

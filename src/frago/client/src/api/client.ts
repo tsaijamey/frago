@@ -82,6 +82,7 @@ import type {
   StarResult,
   EndpointPreset,
   EndpointPresetListResponse,
+  AgyContextWindowTier,
   ProfileItem,
   ProfileListResponse,
   ConnectionsResponse,
@@ -89,6 +90,7 @@ import type {
   ConnectionRole,
   RoleBinding,
   VendorCore,
+  HarnessBinding,
   ActivationTarget,
   ActivationTargetListResponse,
   CreateProfileRequest,
@@ -136,6 +138,7 @@ import type {
   SessionFileContent,
   SessionFileAction,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileEntry,
@@ -217,6 +220,7 @@ export type {
   StarResult,
   EndpointPreset,
   EndpointPresetListResponse,
+  AgyContextWindowTier,
   ProfileItem,
   ProfileListResponse,
   ConnectionsResponse,
@@ -224,6 +228,7 @@ export type {
   ConnectionRole,
   RoleBinding,
   VendorCore,
+  HarnessBinding,
   ActivationTarget,
   ActivationTargetListResponse,
   CreateProfileRequest,
@@ -265,6 +270,7 @@ export type {
   SessionFileAction,
   SessionFileContent,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileEntry,
@@ -393,7 +399,15 @@ export async function assignRecipeFolder(
 /** 配方页面的地址。开发模式下接口在另一个端口，页面也得跟着去那边取。 */
 export function recipeAppUrl(name: string, slot?: string | null): string {
   const base = `${API_BASE_URL}/app/${encodeURIComponent(name)}/`;
-  return slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
+  return slot && slot && slot !== 'default' ? `${base}?key=${encodeURIComponent(slot)}` : base;
+}
+
+/** 虚拟桌面（agent_os）的嵌入地址。默认开启 userInput=true 并携带导演会话编号。 */
+export function desktopAppUrl(sessionId?: string | null): string {
+  const base = `${API_BASE_URL}/app/agent_os/`;
+  return sessionId
+    ? `${base}?userInput=true&session=${encodeURIComponent(sessionId)}`
+    : `${base}?userInput=true`;
 }
 
 /** 告诉服务端：它推过来的那个「打开配方页面」这边已经打开了。 */
@@ -977,6 +991,52 @@ export async function setHookReviewEnabled(enabled: boolean): Promise<HookReview
 }
 
 // ============================================================
+// Decision Model Configuration API
+// ============================================================
+
+export type DecisionWireMode = 'ollama' | 'decisions';
+
+export interface DecisionModelSettings {
+  configured: boolean;
+  enabled: boolean;
+  wire: DecisionWireMode;
+  url: string | null;
+  model: string;
+  has_api_key: boolean;
+  api_key_masked: string;
+  temperature: number | null;
+}
+
+export interface DecisionModelUpdatePayload {
+  enabled: boolean;
+  wire: DecisionWireMode;
+  url?: string | null;
+  model: string;
+  api_key?: string | null;
+  clear_api_key?: boolean;
+  temperature?: number | null;
+}
+
+export async function getDecisionModelSettings(): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model');
+}
+
+export async function updateDecisionModelSettings(
+  payload: DecisionModelUpdatePayload
+): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetDecisionModelSettings(): Promise<DecisionModelSettings> {
+  return fetchApi<DecisionModelSettings>('/settings/decision-model', {
+    method: 'DELETE',
+  });
+}
+
+// ============================================================
 // CLI Agent Clients & OpenCode Background Service API
 // ============================================================
 
@@ -1018,8 +1078,11 @@ export async function checkVSCode(): Promise<VSCodeStatus> {
   return fetchApi<VSCodeStatus>('/settings/vscode-status');
 }
 
-export async function openConfigInVSCode(): Promise<ApiResponse> {
-  return fetchApi<ApiResponse>('/settings/open-in-vscode', { method: 'POST' });
+export async function openConfigInVSCode(agentType: string = 'claude'): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/open-in-vscode', {
+    method: 'POST',
+    body: JSON.stringify({ agent_type: agentType }),
+  });
 }
 
 // ============================================================
@@ -1404,6 +1467,17 @@ export async function bindRole(
   });
 }
 
+export async function bindHarness(
+  agentType: string,
+  role: 'main' | 'worker',
+  profileId: string,
+): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/connections/harnesses/${encodeURIComponent(agentType)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ role, profile_id: profileId }),
+  });
+}
+
 export async function saveCurrentAsProfile(name: string): Promise<ApiResponse> {
   return fetchApi<ApiResponse>('/settings/profiles/from-current', {
     method: 'POST',
@@ -1690,6 +1764,23 @@ export async function getSessionFileDiff(
 }
 
 /**
+ * 在浮窗 Edit 模式保存人类修改后的文稿内容，并立即返回最新内容与最新版本比较结果。
+ */
+export async function putSessionFileContent(
+  sessionId: string,
+  path: string,
+  text: string
+): Promise<SessionFileWriteResult> {
+  return fetchApi<SessionFileWriteResult>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/file`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ path, text }),
+    }
+  );
+}
+
+/**
  * 在**跑 frago 的那台机器**上打开这个文件所在的位置：是文件就选中它，是目录就打开它。
  * 浏览器自己开不了本机目录，所以这一下要绕服务端；服务端只认这场会话自己的工作目录
  * 与它改过的那些文件。
@@ -1798,4 +1889,22 @@ export async function generateSessionTitle(sessionId: string): Promise<SessionTi
     { method: 'POST' }
   );
 }
+
+// ============================================================
+// 会话终端视图（Terminal View）
+// ============================================================
+
+export type { SessionTerminalSnapshot } from '@/types/api';
+import type { SessionTerminalSnapshot } from '@/types/api';
+
+/** 抓取该会话在 tmux 窗格中的实时屏幕或留底终端日志。 */
+export async function getSessionTerminal(
+  sessionId: string,
+  lines = 500
+): Promise<SessionTerminalSnapshot> {
+  return fetchApi<SessionTerminalSnapshot>(
+    `/workbench/sessions/${encodeURIComponent(sessionId)}/terminal?lines=${lines}`
+  );
+}
+
 

@@ -15,9 +15,10 @@ frago talks to it.
 Three capabilities come out of it:
 
 - **your local frago can hand work to the server's frago** (`frago remote`)
-- **the server can show a recipe's page to the public** (`frago recipe expose`)
-- **visitors can sign in, and each gets their own copy of a page's data**
-  (`frago recipe expose --require-identity`, `frago user`)
+- **the server can show a recipe's page to people who are not you**
+  (`frago recipe expose --public`, `--signed-in`, `--allow`)
+- **signed-in visitors read their own copy of a page's data, or one shared
+  reading of it** (`--each-their-own`, `--shared`, `frago user`)
 
 Nothing else is exposed.
 
@@ -34,21 +35,31 @@ public endpoint.
 Every request the server receives is sorted into one of four zones by
 `frago.server.security.AccessZoneMiddleware`, before any route sees it.
 
+The zones are named `local`, `public`, `identity` and `token` in the code, and a
+value outside that set is refused rather than read as the most permissive one.
+
 | Zone | What it covers | What it requires |
 |---|---|---|
-| **trusted local** | a process on this machine — the CLI, a recipe calling back in — and, only with `FRAGO_TRUST_LAN=1`, other devices on the private network | nothing; behaviour is unchanged from a personal install |
-| **public** | `GET /app/<recipe>/…` for a recipe published in `public` mode | nothing, but it is read-only and the page's config is filtered |
-| **identity** | the same pages for a recipe published in `identity` mode, plus five `/api/auth/…` endpoints (login, logout, password, me, pages) | a login cookie; still read-only, still filtered, and the visitor reads *their own* slot |
-| **private** | everything else: all of `/api`, `/ws`, `/viewer`, `/browser`, the SPA | `Authorization: Bearer <token>` |
+| **local** | a process on this machine — the CLI, a recipe calling back in — and, only with `FRAGO_TRUST_LAN=1`, other devices on the private network | nothing; behaviour is unchanged from a personal install |
+| **public** | `GET`/`HEAD` on `/app/<recipe>/…` for a recipe published in `public` mode | nothing, but it is read-only and the page's config is filtered |
+| **identity** | the same pages for a recipe published in `identity` mode, plus five `/api/auth/…` endpoints (login, logout, password, me, pages) | a login cookie; filtered, and the visitor reads the slot the gate decides for them |
+| **token** | everything else: all of `/api`, `/ws`, `/viewer`, `/browser`, the SPA | `Authorization: Bearer <token>` |
 
 A signed-in visitor is **not** a reduced-privilege owner. They reach published
 pages and nothing else: `/api/file`, `/api/agent` and `/api/recipes/<name>/run`
 are each equivalent to running code on the box, and only the token opens them.
-The only anonymous entry point the identity zone adds to the public surface is
-`POST /api/auth/login`; logging out, changing a password and `GET /api/auth/me`
-all require a session that already exists.
+The identity zone's only write entrances are `POST /app/<name>/run` and
+`POST /app/<name>/api/<mode>`, and only for a page they are allowed on.
 
-"Trusted local" means two things at once: the peer address is one frago counts
+Two entries are anonymous and neither is an auth call: `POST /api/auth/login`,
+and `POST /api/teaming` with its WebSocket `/api/teaming/ws` — vibe teaming's
+pairing door, where the pairing code itself is the credential and the route,
+not the gate, decides whether the code is good. Both are registered as exact
+method-and-path pairs rather than prefixes, so no future endpoint joins the
+anonymous surface by accident. Logging out, changing a password, `GET
+/api/auth/me` and `GET /api/auth/pages` all require a session that exists.
+
+The local zone means two things at once: the peer address is one frago counts
 as home, **and** the request carries no proxy forwarding headers
 (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`, …). That
 second half is what makes the zone survivable on a deployed box — a reverse
@@ -77,11 +88,12 @@ Apache and Cloudflare happen to set them by default — but "safe because of
 someone else's default" is not a property to build on.
 
 "Home" is loopback only, unless `FRAGO_TRUST_LAN=1` adds the private network.
-frago binds `0.0.0.0` out of the box and `frago server status` prints the LAN
-URLs it can be reached at, but a caller on those URLs needs the token like any
-other remote caller. Until 2026-09-24 the private network counted as home by
-default, which on an office or café subnet handed every neighbour the owner's
-seat. Opt in only on a network you actually trust — never on a server.
+frago binds `0.0.0.0` out of the box and `frago server status` shows the bind
+address it is serving on — a caller on the same subnet can reach that, but needs
+the token like any other remote caller. Until 2026-09-24 the private network
+counted as home by default, which on an office or café subnet handed every
+neighbour the owner's seat. Opt in only on a network you actually trust — never
+on a server.
 
 ## Server setup
 
@@ -114,28 +126,54 @@ remote holding the old one.
 **3. Publish only what should be public.**
 
 ```bash
-frago recipe expose weekly_report
-frago recipe exposed          # what strangers can currently read
+frago recipe expose weekly_report --public
+frago recipe exposed          # who can open each page, whose data it reads, what it accepts
 ```
 
+The first exposure **must say who may open the page** — `--public`, `--signed-in`
+or `--allow <account>`. There is no default: a bare `frago recipe expose <name>`
+is refused and lists the three, because the person who typed the bare command is
+exactly the one who has not decided yet, and the answer they used to get was the
+widest one.
+
 `expose` prints what the exposure actually amounts to before it does anything:
-whether the slot declares a `public` block, and how many files sit under the
-`dataDir` that becomes readable.
+whether the slot declares a `public` block, and how many files sit in the landing
+spot that becomes readable.
 
 ## Letting visitors sign in
 
 A page exposed the way above shows every visitor the same bytes, because the
-public zone has no notion of a person. If you want two visitors to see two
-different sets of data — a trainer that remembers where each person got to, a
-form each person fills in for themselves — expose it in identity mode instead:
+public zone has no notion of a person. Wanting two visitors to see two different
+sets of data — a trainer that remembers where each person got to, a form each
+person fills in for themselves — is a separate decision from who may open the
+page. Exposure answers two independent questions, and mixing them up was this
+system's biggest old flaw:
 
 ```bash
-frago recipe expose kline_trainer --require-identity
+frago recipe expose kline_trainer --signed-in                     # who may open it
+frago recipe expose kline_trainer --signed-in --each-their-own    # whose data they see (the default)
+frago recipe expose dma_plan --allow a@x.com --allow b@x.com --shared   # these two read one reading
 ```
 
-Anonymous requests to that page now get a 401. Someone who signs in gets the
-same page, filtered exactly as hard as the public one, reading the slot named
-after their own account.
+`--require-identity` is still accepted as the old spelling of `--signed-in`.
+
+Anonymous requests to a signed-in page get a 401. Someone who signs in gets the
+same page, filtered exactly as hard as the public one, reading the slot the gate
+worked out from their session.
+
+The two answers on the data side are physically different files, and neither is
+reachable from the other:
+
+| `reads` | Where it lands | Who has a copy |
+|---|---|---|
+| `own` (default) | `~/.frago/users/<account id>/state/<recipe>.json` | one per signed-in account |
+| `recipe` (`--shared`) | `~/.frago/app-state/<recipe>/<slot>.json` | the recipe's own slot — no account anywhere in the path |
+
+`--shared` is read-only by construction: nobody on such a page has a directory of
+their own, so `/run` answers 404 and the page's `actions` are empty however many
+`@action` modes the recipe marked. It is not the same thing as machine-level
+shared data (`shares` / `reads_common`), which is about several *recipes*
+reading one another's data.
 
 ### The front door
 
@@ -144,17 +182,25 @@ nor should have. So a person arriving in a browser is moved to the sign-in page
 instead: `302` to `/app/<portal>/?next=<recipe>`, and the portal hands them back
 to the page they wanted once they are in.
 
-Which page is the door is named, never inferred — `FRAGO_LOGIN_PORTAL`,
-defaulting to `frago_login_portal`. Set it to the empty string to switch the
-redirect off and restore the plain 401.
+Which page is the door comes from three sources, in this order:
 
 ```bash
-export FRAGO_LOGIN_PORTAL=frago_login_portal   # the default; name your own if it differs
+frago recipe expose frago_login_portal --public --portal   # register it in published.json
+export FRAGO_LOGIN_PORTAL=frago_login_portal               # or override, empty string = off
 ```
+
+An operator override wins, including an empty value, which switches the redirect
+off and restores the plain 401. Otherwise the page registered with `--portal`,
+which `frago recipe exposed` shows. Otherwise the historical default name
+`frago_login_portal`, so a deployment that never registered one keeps the
+behaviour it had.
 
 The portal is a recipe you write, not something frago ships, and it has to be
 exposed in `public` mode itself — a door nobody can open is not a destination,
-just a second 401. Four conditions gate the redirect, and each closes a way it
+just a second 401. Only one page may be registered as the door; a second attempt
+names the current one and is refused.
+
+Four conditions gate the redirect, and each closes a way it
 could mislead: only a top-level HTML navigation (`Accept: text/html`, GET or
 HEAD), so a page's own `fetch` still gets JSON rather than a login form; only
 identity-mode published pages, so a refusal for some other reason is not
@@ -213,11 +259,19 @@ transcripts on this machine).
 frago user list                    # id ↔ email, every line marked unverified
 frago user list --recent           # ordered by who was here last
 frago user passwd <id|email>       # hidden prompt; also logs that person out everywhere
+frago user passwd <id|email> --temporary   # issue a stand-in, print it once, they must replace it
 frago user disable <id|email>      # takes effect on their next request, not at expiry
 frago user enable  <id|email>
 frago user session list            # who is signed in right now
-frago user session revoke <id>     # cut one login short
+frago user session revoke <session id>   # cut one login short
 ```
+
+`--temporary` is the reset-for-somebody-else path: this machine invents the
+password and prints it once, and until the holder replaces it that account can
+reach exactly two things — who it is, and the form that replaces it. No page, not
+even the list of pages. You cannot type a stand-in yourself: that path is called
+from a web console, where the argument lands in argv and `ps -ww` shows it to
+every other account on the box.
 
 Four things worth knowing before you need them:
 
@@ -364,15 +418,24 @@ not as an API key — which is the other reason the tunnel is the better answer.
 ## What a published page can and cannot do
 
 A published page gets its `assets/`, the `public` block of its slot state, and
-the files under that slot's `dataDir`. Its `config.json` arrives with
-`apiBase: null` and `readOnly: true`.
+the files in the landing spot the platform gives this recipe. Its `config.json`
+arrives with `apiBase: null` and `readOnly: true`, plus `actions` — the modes
+this page may trigger. The anonymous side does not even get that key.
+
+**Where that landing spot is, the server works out from who is asking**, never
+from anything the recipe published. A signed-in reader of a per-person page gets
+their own directory; the owner, an anonymous reader of a public page and everyone
+on a shared reading all get the machine's own, because all three are looking at
+what this machine's runs produced. The page asks for a file by name and the
+answer is resolved inside the right root; the path itself never reaches the
+client, so a visitor cannot learn the layout of the disk.
 
 Recipe front ends written for a personal machine commonly call
 `${apiBase}/recipes/<name>/run` and `${apiBase}/file?path=…`. Those calls run a
 script on the server and read arbitrary paths off its disk, so they are closed
 to visitors and will fail. A recipe meant for the public computes its results
-into `dataDir` and renders them; the front end checks `readOnly` and hides
-whatever would have posted.
+into its own landing spot and renders them; the front end checks `readOnly` and
+hides whatever would have posted.
 
 Slot state itself is not published wholesale, because it routinely holds
 absolute paths and sometimes holds credentials. Declare what a visitor may see:
@@ -381,10 +444,14 @@ absolute paths and sometimes holds credentials. Declare what a visitor may see:
 from frago.recipes.app_state import publish
 
 publish("weekly_report", {
-    "dataDir": str(out_dir),                  # private: how files are found
+    "dataDir": str(out_dir),                  # stays private; nothing reads it to locate files
     "public": {"title": "Q3 numbers"},        # public: what the page is told
 })
 ```
+
+The contract is inverted rather than filtered: a recipe declares what is public
+and nothing else leaves the box. Guessing which keys are safe by their names is
+the kind of filter that works until it doesn't.
 
 Publishing one slot publishes only that slot. A recipe holding a public
 dashboard in `default` and a client's working set in `acme` stays safe.
@@ -401,10 +468,9 @@ render rather than crash on.
 
 ## Opening a page to named people, and letting them run it
 
-`--allow` narrows an identity page from "anyone who signs in" to a list of
-accounts. Anyone not on it — signed in or not — gets the same 401 as if the page
-had never been published, so the refusal is not a way to discover that the page
-exists.
+`--allow` narrows a page from "anyone who signs in" to a list of accounts.
+Anyone not on it — signed in or not — gets the same 401 as if the page had never
+been published, so the refusal is not a way to discover that the page exists.
 
 ```bash
 frago user list                                  # ids ↔ emails
@@ -416,25 +482,51 @@ and only if somebody has already signed in with it: nothing here verifies an
 address, so writing an unclaimed one would not authorise a colleague, it would
 hang a first-come ticket on the public internet.
 
-Every run of `expose` states the page's exposure in full, so a flag left off is
-a flag turned off. That is right for every flag but this one: adding
-`--runnable` to a page that has an allow list, without repeating `--allow`,
-would reopen it to everyone who can sign in — and the command that does it
-looks exactly like the command that only meant to change something else. That
-one widening is refused, with the accounts it would drop named in the error.
-Say `--force` if opening the page up is what you meant. It is deliberately not
-folded into `--yes`: `--yes` is the automation path documented on this page, so
-a script that habitually carries it would sail straight through. Narrowing a
-list, naming the same people again, a first publish, and public-mode pages are
-all untouched.
+**Re-running `expose` changes only what you name.** Leaving off `--allow` does
+not clear the list, and changing `--slot` does not quietly reopen the page.
+Widening has to be said out loud, and each widened switch is its own word:
 
 ```bash
-frago recipe expose venture_ledger --allow <id-a> --allow <id-b> --runnable --yes   # keep the list
-frago recipe expose venture_ledger --require-identity --force --yes                 # drop it, on purpose
+frago recipe expose venture_ledger --allow <id-b>      # add Bob, keep everyone
+frago recipe expose venture_ledger --deny  <id-a>      # take Alice off
+frago recipe expose venture_ledger --only  <id-a> --only <id-b>   # exactly these two
+frago recipe expose venture_ledger --signed-in         # drop the list, open to every account
 ```
 
-`--runnable` goes further and lets those visitors trigger a run. Three things to
-weigh before using it:
+`--force` is gone, and so is `--runnable`. `--force` existed only to cancel the
+side effect of each `expose` rewriting the whole record; with incremental
+changes there is nothing left to cancel. Passing either prints what replaced it
+and exits non-zero rather than being silently ignored.
+
+### What a page may trigger is the recipe's call, not yours
+
+Whether a page has buttons used to be an exposure flag: `--runnable` meant *who
+can see it can press it*, and pressing ran on this machine with your credentials.
+One recipe could be runnable on one page and not on another while its own source
+said nothing about it. That answer now lives on the recipe, on the methods
+themselves:
+
+```python
+@export                       # other modules may call it; pages may read it — read-only
+def mode_status(self): ...
+
+@action                       # the page may trigger it; it is allowed to do work
+def mode_save(self): ...
+
+def mode_backfill(self): ...  # unmarked: owner only
+```
+
+One mode, one level. "Both exported and page-triggerable" is not a state: an
+exported mode is read-only by contract, so a page reads it with
+`POST /app/<name>/api/<mode>` and needs no button. `page_actions` in
+`recipe.md` is the retired spelling; `frago recipe validate` names it and says to
+move the marks onto the methods.
+
+Exposure still decides who is looking; the recipe decides what may be asked of
+it. Both can only be narrowed by the other side's answer, never widened.
+
+Three things to weigh before marking a mode `@action` on a page other people can
+reach:
 
 **The recipe must take the directory it is handed.** One line, no import:
 
@@ -443,24 +535,24 @@ data_dir = os.environ.get("FRAGO_RECIPE_DATA_DIR") or <its own old default>
 ```
 
 Without it every visitor's run writes the owner's directory and they all share
-one pile. `expose --runnable` refuses a recipe whose source never mentions that
-variable, and `frago recipe validate` re-checks it afterwards, for the case where
-someone edits the line back out while the page keeps its permission.
+one pile. `frago recipe validate` refuses an `@action` mode in a recipe whose
+source never mentions that variable, and re-checks afterwards, for the case
+where someone edits the line back out while the page keeps its permission.
 
 **The run uses your machine and your credentials.** `FRAGO_SECRETS` is keyed by
 recipe; there is no "whose" dimension. A visitor-triggered run holds whatever you
 configured for that recipe. So the question is not whether the recipe has bugs —
 it is whether its source is something you would hand a stranger a button for.
-Never make a recipe runnable if it spends money or acts as you: placing orders,
+Never mark one `@action` if it spends money or acts as you: placing orders,
 posting, mailing, calling a metered API.
 
 **It is not a sandbox.** The recipe runs as the server's user with the server's
 permissions. The isolation here covers where output lands, nothing more.
 
-What the page sees: `POST /app/<name>/run` with `{"params": {…}}` answers 202
-`{"accepted": true}` and nothing else — never the recipe's return value, which
-routinely carries absolute paths. Progress and outcome are read back from the
-visitor's own directory, where the platform maintains `data/run.json`
+What the page sees: `POST /app/<name>/run` with `{"params": {"mode": "save", …}}`
+answers 202 `{"accepted": true}` and nothing else — never the recipe's return
+value, which routinely carries absolute paths. Progress and outcome are read back
+from the visitor's own directory, where the platform maintains `data/run.json`
 (`running` / `done` / `failed`; the name is reserved, recipes must not write it).
 Parameters are checked strictly for visitors: undeclared keys are refused, and
 `enum` / `max_length` / `pattern` / `min` / `max` are enforced. One run at a time
@@ -468,10 +560,13 @@ per person per page; a second gets 409. Visitor runs also have their own, smalle
 concurrency limit, so a few visitors cannot take every worker and leave the
 owner's machine unresponsive.
 
-Rate-limit `/app/` at the proxy when using `--runnable`. The platform limits
-concurrency, not frequency, and a request under that prefix now starts a process
-rather than reading a file.
+A recipe with no `@action` mode answers 404 — the same answer as a page that was
+never published. A requested mode that is not among them answers 403 and lists
+the ones that are. A `--shared` page answers 404 to every run.
+
+Rate-limit `/app/` at the proxy. The platform limits concurrency, not frequency,
+and a request under that prefix starts a process rather than reading a file.
 
 A signed-in visitor can ask `GET /api/auth/pages` which pages are theirs to open.
-It answers with names, titles and whether each is runnable — never with the allow
-list, which is not the visitor's business.
+It answers with names, titles and the actions each page accepts — never with the
+allow list, which is not the visitor's business.

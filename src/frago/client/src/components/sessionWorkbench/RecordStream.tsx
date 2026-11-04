@@ -36,11 +36,21 @@ import {
   type UIEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, CheckCheck, ExternalLink, Inbox, Loader2 } from 'lucide-react';
+import {
+  ArrowDown,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Inbox,
+  Loader2,
+} from 'lucide-react';
+import { DecisionCard } from './DecisionCard';
 import RecordCard, {
   KIND_GROUP,
   SystemRun,
   ToolRun,
+  formatClock,
   formatDuration,
   previewArgs,
   type ToolRow,
@@ -53,26 +63,43 @@ import SelectionQuote, {
   markSpan,
   paintHighlight,
   rangeOf,
+  type BranchExtras,
   type MarkAnchor,
 } from './SelectionQuote';
-import FileViewer, { type PackedAnnotationsPayload } from './FileViewer';
+import FileViewer, {
+  type FileEditSendPayload,
+  type PackedAnnotationsPayload,
+} from './FileViewer';
 import { revealPath } from '@/api';
 import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
 import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 import {
   AGENT_ACTIVITY,
+  MAX_BACKFILL_PAGES,
+  MIN_TALK_RECORDS,
+  PAGE_SIZE,
   queueOpOf,
   queueOutcomes,
   trailSettled,
   type SendTrail,
   type WorkbenchRecord,
 } from '@/hooks/useWorkbenchRecords';
+import {
+  parseUiComponentOutput,
+  splitTrailingBlock,
+  trailingDecision,
+  type DecisionBlock,
+} from '@/utils/decisionBlock';
+import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
+import type { SessionObserverView } from '@/hooks/useSessionObserver';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
 export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
@@ -120,6 +147,30 @@ export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
 }
 
 /**
+ * 判断一条（已经过 `withQueueOutcomes` 归一化的）记录在「对话（Talk）」镜头下是否画成
+ * 独立可见的对话气泡。
+ *
+ * `agent.think` 在 Talk 镜头下由 `buildTalkSegments` 与 `tool.call` 一起折叠进响应前的
+ * `{num}次工具调用 · {num}次thinking` 聚合行，不作为独立气泡渲染；而当轮尚无 `agent.say`
+ * 接管时，未移交的 UI 交互卡 / 图片网格 `tool.result` 会在 Talk 里兜底画成气泡。
+ */
+export function isTalkBubbleRecord(record: WorkbenchRecord): boolean {
+  if (record.kind === 'agent.think') return false;
+  if (
+    record.kind === 'tool.result' &&
+    !record.agent_path.length &&
+    record.payload.status !== 'error' &&
+    record.payload.ui_component_delegated !== true
+  ) {
+    const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+    const uiCard = body ? parseUiComponentOutput(body) : null;
+    const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+    if ((uiCard && uiCard.ok) || imageGrids.length > 0) return true;
+  }
+  return lensOf(record) === 'talk';
+}
+
+/**
  * 正文类记录：人发言、代理回复、思考、插话。
  *
  * 引用与暂存的标注只在这几种里记锚点、着色、找原处；工具调用、钩子、系统记录大多是折叠
@@ -133,43 +184,197 @@ export function isBodyRecord(record: WorkbenchRecord): boolean {
 }
 
 /**
- * 给入队的那几行写上此刻的下场（见 `queueOutcomes`）。其余记录原样返回，一条不复制。
+ * 将每一轮（两次主会话用户发言之间）中 `frago ask` 工具结果产出的交互卡数据，
+ * 挂载到该轮最后一条主会话 `agent.say`（即收尾 Stop 消息）的末尾渲染。
+ *
+ * 工具调用在物理时序上必定发生在收尾回复之前；若把卡片直接原位画在 `tool.result` 上，
+ * 卡片就会出现在收尾消息上方，而收尾消息里写的却是「请在下方卡片中选择」。
+ * 挂载到当轮最后一条 `agent.say` 后，卡片永远紧贴在收尾消息正文的最下方；仅当该轮尚无
+ * 任何 `agent.say` 时，才保留在最后一条 `tool.result` 上兜底显示。
+ */
+export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const delegateToolIndices = new Set<number>();
+  const attachToAgentSay = new Map<number, string>();
+  const attachImagesToAgentSay = new Map<number, string[]>();
+  const attachContextToAgentSay = new Map<number, number>();
+
+  let turnToolIndices: number[] = [];
+  let turnToolBody = '';
+  let turnImageIndices: number[] = [];
+  let turnImageBodies: string[] = [];
+  let turnInlineCardAgentIndices: number[] = [];
+  let lastAgentSayIdx = -1;
+  let turnContextTokens: number | null = null;
+
+  const flushTurn = () => {
+    if (turnToolIndices.length) {
+      if (lastAgentSayIdx >= 0) {
+        for (const idx of turnToolIndices) delegateToolIndices.add(idx);
+        attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
+        for (const idx of turnInlineCardAgentIndices) {
+          if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
+        }
+      } else if (turnToolIndices.length > 1) {
+        for (let k = 0; k < turnToolIndices.length - 1; k += 1) {
+          delegateToolIndices.add(turnToolIndices[k]);
+        }
+      }
+    } else if (turnInlineCardAgentIndices.length > 1) {
+      for (let k = 0; k < turnInlineCardAgentIndices.length - 1; k += 1) {
+        delegateToolIndices.add(turnInlineCardAgentIndices[k]);
+      }
+    }
+    if (turnImageIndices.length && lastAgentSayIdx >= 0) {
+      for (const idx of turnImageIndices) delegateToolIndices.add(idx);
+      attachImagesToAgentSay.set(lastAgentSayIdx, [...turnImageBodies]);
+    }
+    if (lastAgentSayIdx >= 0 && turnContextTokens !== null) {
+      attachContextToAgentSay.set(lastAgentSayIdx, turnContextTokens);
+    }
+    turnToolIndices = [];
+    turnToolBody = '';
+    turnImageIndices = [];
+    turnImageBodies = [];
+    turnInlineCardAgentIndices = [];
+    lastAgentSayIdx = -1;
+    turnContextTokens = null;
+  };
+
+  for (let i = 0; i < records.length; i += 1) {
+    const r = records[i];
+    if (!r.agent_path.length) {
+      const isHumanTurnBoundary =
+        r.kind === 'user.say' ||
+        (r.kind === 'context.inject' && r.payload.channel === 'queued_command');
+      if (isHumanTurnBoundary) {
+        flushTurn();
+        continue;
+      }
+      if (r.kind === 'usage.tick') {
+        const ctx = typeof r.payload.context_tokens === 'number' ? r.payload.context_tokens : null;
+        if (ctx !== null) {
+          turnContextTokens = ctx;
+          if (lastAgentSayIdx >= 0) {
+            attachContextToAgentSay.set(lastAgentSayIdx, ctx);
+          }
+        }
+        continue;
+      }
+      if (r.kind === 'agent.say') {
+        lastAgentSayIdx = i;
+        if (turnContextTokens !== null) {
+          attachContextToAgentSay.set(i, turnContextTokens);
+        }
+        const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+        if (text && (splitTrailingBlock(text) || parseUiComponentOutput(text)?.ok)) {
+          turnInlineCardAgentIndices.push(i);
+        }
+        continue;
+      }
+      if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+        const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+        if (body) {
+          const uiCard = parseUiComponentOutput(body);
+          if (uiCard && uiCard.ok) {
+            turnToolIndices.push(i);
+            turnToolBody = body;
+          }
+          const imageGrids = parseAllImageGridOutputs(body);
+          if (imageGrids.length > 0) {
+            turnImageIndices.push(i);
+            turnImageBodies.push(body);
+          }
+        }
+      }
+    }
+  }
+  flushTurn();
+
+  if (
+    !delegateToolIndices.size &&
+    !attachToAgentSay.size &&
+    !attachImagesToAgentSay.size &&
+    !attachContextToAgentSay.size
+  ) {
+    return records;
+  }
+
+  return records.map((r, idx) => {
+    if (delegateToolIndices.has(idx)) {
+      return r.payload.ui_component_delegated === true
+        ? r
+        : { ...r, payload: { ...r.payload, ui_component_delegated: true } };
+    }
+    const attached = attachToAgentSay.get(idx);
+    const attachedImages = attachImagesToAgentSay.get(idx);
+    const attachedContext = attachContextToAgentSay.get(idx);
+    if (attached !== undefined || attachedImages !== undefined || attachedContext !== undefined) {
+      const nextPayload: Record<string, unknown> = { ...r.payload };
+      if (attached !== undefined) {
+        nextPayload.ui_component = attached;
+      }
+      if (attachedImages !== undefined) {
+        nextPayload.ui_image_grids = attachedImages;
+      }
+      if (attachedContext !== undefined) {
+        nextPayload.context_tokens = attachedContext;
+      }
+      return { ...r, payload: nextPayload };
+    }
+    return r;
+  });
+}
+
+/**
+ * 给入队的那几行写上此刻的下场（见 `queueOutcomes`），并将当轮 `frago ask` 交互卡挂载到收尾回复末尾。
+ * 其余记录原样返回，一条不复制。
  *
  * 镜头归属与卡上那枚下场标签都照这个值走，所以必须在分档之前做。
  */
 export function withQueueOutcomes(records: WorkbenchRecord[]): WorkbenchRecord[] {
   const outcomes = queueOutcomes(records);
-  if (!outcomes.size) return records;
-  return records.map((r) => {
-    const state = outcomes.get(r.id);
-    return state && r.payload.queue_state !== state
-      ? { ...r, payload: { ...r.payload, queue_state: state } }
-      : r;
-  });
+  const queued = !outcomes.size
+    ? records
+    : records.map((r) => {
+        const state = outcomes.get(r.id);
+        return state && r.payload.queue_state !== state
+          ? { ...r, payload: { ...r.payload, queue_state: state } }
+          : r;
+      });
+  return withTurnDecisionCards(queued);
 }
 
 /**
- * 「对话」那一档实际摆出来的记录：对话本身，外加捎带的用量刻度。
+ * 「对话」那一档实际摆出来的记录：仅保留真实可见对话与兜底卡片，用量读数已内联挂载至回复头。
  *
- * 刻度归「系统」档、条数也记在那边——这里只是**捎带显示**，不改归属，各档条数加起来
- * 照旧正好是全部。捎带的规矩是**两段对话之间只留最后一条**：agent 一口气调二三十次
- * 工具就有二三十条刻度，而刻度报的是水位与累计，同一段里只有最后那条是"到这里为止"
- * 的数，前面的全被它覆盖了。摆在它原本的位置，也就是下一条对话之前。
+ * 当轮 `frago ask` 产出的交互卡已由 `withTurnDecisionCards` 挂载到当轮最后一条 `agent.say`
+ * （收尾消息）的正文下方；仅当某轮完全没有 `agent.say` 时，才捎带未移交的 `tool.result` 兜底显示。
  */
 export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
+  const normalized = withTurnDecisionCards(records);
   const out: WorkbenchRecord[] = [];
-  let tick: WorkbenchRecord | null = null;
-  for (const record of records) {
+  for (let i = 0; i < normalized.length; i += 1) {
+    const record = normalized[i];
     if (record.kind === 'usage.tick') {
-      tick = record;
       continue;
     }
+    if (
+      record.kind === 'tool.result' &&
+      !record.agent_path.length &&
+      record.payload.status !== 'error' &&
+      record.payload.ui_component_delegated !== true
+    ) {
+      const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
+        out.push(record);
+        continue;
+      }
+    }
     if (lensOf(record) !== 'talk') continue;
-    if (tick) out.push(tick);
-    tick = null;
     out.push(record);
   }
-  if (tick) out.push(tick);
   return out;
 }
 
@@ -206,8 +411,128 @@ export function groupRecords(records: WorkbenchRecord[]): RecordGroup[] {
  */
 export type StreamSegment =
   | { kind: 'record'; record: WorkbenchRecord }
+  | {
+      kind: 'talk-agg';
+      key: string;
+      toolCalls: number;
+      thinkingSteps: number;
+      records: WorkbenchRecord[];
+      groupId: string | null;
+    }
   | { kind: 'tools'; key: string; rows: ToolRow[]; extras: WorkbenchRecord[]; records: WorkbenchRecord[] }
   | { kind: 'system'; key: string; records: WorkbenchRecord[] };
+
+/**
+ * 将「All 里显示但 Talk 里原本不显示」的响应前动作（工具调用与思考步骤）
+ * 在每一条 `agent.say` 回复出现前自动叠加为单行 `{num}次工具调用 · {num}次thinking`，
+ * 数字原位自增，不出现刷新式多行递增。
+ */
+export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
+  const normalized = withTurnDecisionCards(records);
+  const out: StreamSegment[] = [];
+  let pendingTools = 0;
+  let pendingThinking = 0;
+  let pendingRecords: WorkbenchRecord[] = [];
+
+  const flushPreResponse = (followingGroupId: string | null = null) => {
+    if (pendingTools === 0 && pendingThinking === 0) return;
+    const firstId = pendingRecords[0]?.id ?? `idx-${out.length}`;
+    const sharedGroup =
+      followingGroupId &&
+      pendingRecords.length > 0 &&
+      pendingRecords.every((r) => r.group_id === followingGroupId)
+        ? followingGroupId
+        : pendingRecords.length > 0 &&
+            pendingRecords[0].group_id &&
+            pendingRecords.every((r) => r.group_id === pendingRecords[0].group_id)
+          ? pendingRecords[0].group_id
+          : null;
+    out.push({
+      kind: 'talk-agg',
+      key: `talk-agg:${firstId}`,
+      toolCalls: pendingTools,
+      thinkingSteps: pendingThinking,
+      records: pendingRecords,
+      groupId: sharedGroup,
+    });
+    pendingTools = 0;
+    pendingThinking = 0;
+    pendingRecords = [];
+  };
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const record = normalized[i];
+    if (record.kind === 'usage.tick') {
+      continue;
+    }
+    if (record.kind === 'tool.call') {
+      pendingTools += 1;
+      pendingRecords.push(record);
+      continue;
+    }
+    if (record.kind === 'agent.think') {
+      pendingThinking += 1;
+      pendingRecords.push(record);
+      continue;
+    }
+    if (
+      record.kind === 'tool.result' &&
+      !record.agent_path.length &&
+      record.payload.status !== 'error' &&
+      record.payload.ui_component_delegated !== true
+    ) {
+      const body = typeof record.payload.body === 'string' ? record.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
+      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
+        flushPreResponse(record.group_id);
+        out.push({ kind: 'record', record });
+        continue;
+      }
+    }
+    if (lensOf(record) !== 'talk') continue;
+    flushPreResponse(record.kind === 'agent.say' ? record.group_id : null);
+    out.push({ kind: 'record', record });
+  }
+  flushPreResponse(null);
+  return out;
+}
+
+/** 提取某段记录切片中挂载了有效决策卡的条目，供 Watcher 在 Talk 折叠时原封不动展示并直接交互。 */
+export function extractSliceDecisionCards(
+  records: WorkbenchRecord[]
+): { recordId: string; block: DecisionBlock }[] {
+  const normalized = withTurnDecisionCards(records);
+  const cards: { recordId: string; block: DecisionBlock }[] = [];
+  for (const r of normalized) {
+    if (r.agent_path.length > 0) continue;
+    if (r.kind === 'agent.say') {
+      const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+      const trailing = text ? trailingDecision(text) : null;
+      if (trailing && trailing.result.ok) {
+        cards.push({ recordId: r.id, block: trailing.result.block });
+        continue;
+      }
+      const delegatedUi =
+        typeof r.payload.ui_component === 'string' ? r.payload.ui_component : '';
+      const uiCard = parseUiComponentOutput(delegatedUi || text);
+      if (uiCard && uiCard.ok) {
+        cards.push({ recordId: r.id, block: uiCard.block });
+      }
+    } else if (
+      r.kind === 'tool.result' &&
+      r.payload.status !== 'error' &&
+      r.payload.ui_component_delegated !== true
+    ) {
+      const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+      const uiCard = body ? parseUiComponentOutput(body) : null;
+      if (uiCard && uiCard.ok) {
+        cards.push({ recordId: r.id, block: uiCard.block });
+      }
+    }
+  }
+  return cards;
+}
 
 function isToolRecord(r: WorkbenchRecord): boolean {
   return r.kind === 'tool.call' || r.kind === 'tool.result';
@@ -320,6 +645,7 @@ function segmentRecords(seg: StreamSegment): WorkbenchRecord[] {
 
 /** 一段属于哪一次回复：组内记录同属一次回复才算，跨了回复的并段不归组。 */
 function segmentGroupId(seg: StreamSegment): string | null {
+  if (seg.kind === 'talk-agg') return seg.groupId;
   const recs = segmentRecords(seg).filter((r) => r.group_id);
   if (!recs.length) return null;
   const id = recs[0].group_id;
@@ -552,8 +878,8 @@ export interface RecordStreamProps {
   onQuote?: (text: string, anchor?: MarkAnchor) => void;
   /** 人圈了一段正文、按了「暂存」并写完想法。不给就不出暂存按钮。 */
   onStack?: (anchor: MarkAnchor, note: string) => void;
-  /** 人圈了一段正文、按了「分支」并写好那句话。不给就不出分支按钮。 */
-  onBranch?: (anchor: MarkAnchor, note: string) => void;
+  /** 人圈了一段正文、按了「分支」并写好那句话（或挑好 skill / 附件）。不给就不出分支按钮。 */
+  onBranch?: (anchor: MarkAnchor, note: string, extras?: BranchExtras) => void;
   /**
    * 圈中的那段恰好是一条真文件的路径时，就地浮开看它（见 {@link SelectionQuote} 第四颗）。
    * 默认开着：这一颗不往外发消息、不改任何东西，只是把那份文件摆出来；某个界面不想要，
@@ -598,6 +924,17 @@ export interface RecordStreamProps {
   /** 个数还在路上：那一档后面写个省略号，别让它看着像「没有」。 */
   filesPending?: boolean;
   /**
+   * 「终端」那一档：查看这场会话在 tmux 窗格里的实时屏幕或留底终端日志。
+   * 与 `filesView` 一样作为 Executor 栏的兄弟档位，点开时覆盖在滚动区上方，不卸载记录流。
+   */
+  terminalView?: ReactNode;
+  /** 终端那一档此刻露着没有。 */
+  terminalOpen?: boolean;
+  /** 切回普通镜头或跳回原文时把终端那一档合上。 */
+  onTerminalOpenChange?: (open: boolean) => void;
+  /** 这场会话此刻是否活在 tmux 窗格里（为真时在 Terminal 按钮旁点一颗绿点）。 */
+  terminalAlive?: boolean;
+  /**
    * 档位条右侧常驻的三个数：当前模型、上下文水位、这场累计。
    *
    * 宽屏时与左侧六档同处一行、靠右对齐；窄屏同排装不下时自动折到第二行并左对齐，
@@ -610,20 +947,101 @@ export interface RecordStreamProps {
   onRevealFile?: (path: string) => void;
   /** 在 FileViewer 中打包批注填入对话框的回调。 */
   onPackPrompt?: (payload: PackedAnnotationsPayload) => void;
+  /** 在 FileViewer 中保存文件修改后直接将修改通知发往对话区的回调。 */
+  onSendFileEdit?: (payload: FileEditSendPayload) => void | Promise<void>;
+  /** 旁路 AI 定期观察这场的解读结果（供 Watcher 档展示游标增量总结与包裹的 Talk）。 */
+  observer?: SessionObserverView | null;
 }
 
-/** 悬停说明与水位读数里 k 为单位的写法：312k。 */
-function formatK(n: number): string {
-  return `${Math.round(n / 1000)}k`;
+interface WatcherSlice {
+  id: string;
+  at: number | null;
+  phaseGoal: string | null;
+  doing: string | null;
+  findings: string[];
+  decision: string | null;
+  summary: string;
+  records: WorkbenchRecord[];
+  decisionCards: { recordId: string; block: DecisionBlock }[];
 }
 
-/**
- * 本场累计到七位数，用 k 写成一串谁读不出量级，收一档到 M：30.1M。
- * 百万以下还是 k，跟上下文用同一把尺子。
- */
-function formatM(n: number): string {
-  if (n < 1_000_000) return formatK(n);
-  return `${(n / 1_000_000).toFixed(1)}M`;
+function cleanGoalText(raw?: string | null): string | null {
+  if (typeof raw !== 'string') return null;
+  const withoutEmp = splitEmployeeBlocks(raw).text;
+  const withoutSkill = splitSkillBlocks(withoutEmp).text;
+  const trimmed = withoutSkill.trim();
+  if (!trimmed || trimmed.startsWith('【answer】')) return null;
+  return trimmed;
+}
+
+function cleanTailText(raw?: string | null): string {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .replace(/^\[(?:此刻|产出)\]\s*/, '')
+    .replace(/。\s*[；;]+/g, '。')
+    .replace(/^[；;\s]+|[；;\s]+$/g, '')
+    .trim();
+}
+
+function joinClauses(items: string[]): string {
+  const cleaned = items.map((x) => cleanTailText(x)).filter(Boolean);
+  if (cleaned.length === 0) return '';
+  if (cleaned.length === 1) return cleaned[0];
+  return cleaned.map((x) => x.replace(/[。；;]+$/, '')).join('；');
+}
+
+export function splitWatcherLines(input: string | string[] | null | undefined): string[] {
+  if (!input) return [];
+  const rawItems = Array.isArray(input) ? input : [input];
+  const out: string[] = [];
+  for (const raw of rawItems) {
+    if (typeof raw !== 'string') continue;
+    const cleaned = cleanTailText(raw);
+    if (!cleaned) continue;
+    const pieces = cleaned
+      .split(/\r?\n|[；;]+|(?<=[。？！])\s*(?![”’）\]】」』])/g)
+      .map((part) => cleanTailText(part))
+      .filter(Boolean);
+    for (const piece of pieces) {
+      if (!out.includes(piece)) {
+        out.push(piece);
+      }
+    }
+  }
+  return out;
+}
+
+function deriveThreeParts(
+  tail: { kind: 'now' | 'output'; text: string } | null | undefined,
+  happenedList: string[] | undefined,
+  decisionRaw: string | null | undefined
+): { doing: string | null; findings: string[]; decision: string | null } {
+  const tailKind = tail?.kind;
+  const tailText = cleanTailText(tail?.text);
+  const items: string[] = [];
+  for (const raw of happenedList ?? []) {
+    const cleaned = cleanTailText(raw);
+    if (cleaned && !items.includes(cleaned)) items.push(cleaned);
+  }
+  const decisionCleaned = cleanTailText(decisionRaw);
+  const decision = decisionCleaned || null;
+
+  let doing: string | null = null;
+  let findings: string[] = [];
+  if (tailKind === 'now' && tailText) {
+    doing = tailText;
+    findings = items.filter((x) => x !== tailText);
+  } else if (tailKind === 'output' && tailText) {
+    const withoutTail = items.filter((x) => x !== tailText);
+    if (withoutTail.length > 0) {
+      doing = joinClauses(withoutTail);
+    }
+    findings = [tailText];
+  } else if (items.length > 0) {
+    doing = items[0];
+    findings = items.slice(1);
+  }
+  return { doing, findings, decision };
 }
 
 const NO_MARKS: WorkbenchMark[] = [];
@@ -654,28 +1072,26 @@ export default function RecordStream({
   onFilesOpenChange,
   filesCount = null,
   filesPending = false,
-  usage = null,
+  terminalView,
+  terminalOpen = false,
+  onTerminalOpenChange,
+  terminalAlive = false,
+  usage: _usage = null,
   sessionFiles = null,
   onRevealFile,
   onPackPrompt,
+  onSendFileEdit,
+  observer = null,
 }: RecordStreamProps) {
   const { t } = useTranslation();
-  /** 档位条右侧那几个数拼成一行。取不到的不进串，中间不留孤零零的分隔点。 */
-  const usageReadout = useMemo(() => {
-    if (!usage) return '';
-    const parts: string[] = [];
-    if (usage.model) parts.push(usage.model);
-    if (usage.context !== null) {
-      parts.push(`${t('workbench.record.usage.context')} ${formatK(usage.context)}`);
-    }
-    if (usage.total !== null) {
-      parts.push(`${t('workbench.record.usage.total')} ${formatM(usage.total)}`);
-    }
-    return parts.join(' · ');
-  }, [usage, t]);
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
   const [lens, setLens] = useState<StreamLens>('talk');
+  const [watcherOpen, setWatcherOpen] = useState(false);
+  const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setExpandedWatcherIds({});
+  }, [sessionId]);
   /** 圈中的那段是一条真文件、或点中回复里的本地文件链接时，就地浮开的那一份。 */
   const [peek, setPeek] = useState<{ path: string; size: number | null; line?: string } | null>(
     null
@@ -698,7 +1114,15 @@ export default function RecordStream({
       tool: 0,
       system: 0,
     };
-    for (const record of resolved) tally[lensOf(record)] += 1;
+    for (const record of resolved) {
+      const bucket = lensOf(record);
+      if (bucket !== 'talk') {
+        tally[bucket] += 1;
+      }
+      if (isTalkBubbleRecord(record)) {
+        tally.talk += 1;
+      }
+    }
     return tally;
   }, [resolved]);
 
@@ -712,16 +1136,134 @@ export default function RecordStream({
     [resolved, lens]
   );
 
-  // 连续同类合并：「对话」档不并（那里本来只摆对话），「系统」档不压系统记录。
+  // 连续同类合并：「对话」档把响应前的工具调用与思考压成单行计数自增，其余对话原样摆；「系统」档不压系统记录。
   const segments = useMemo(
     () =>
       lens === 'talk'
-        ? visible.map((record) => ({ kind: 'record' as const, record }))
+        ? buildTalkSegments(resolved)
         : collapseRuns(visible, { tools: lens === 'all' || lens === 'tool', system: lens === 'all' }),
-    [visible, lens]
+    [resolved, visible, lens]
   );
   const groups = useMemo(() => groupSegments(segments), [segments]);
   const lastSegment = segments[segments.length - 1];
+
+  const watcherCount = useMemo(() => {
+    if (!resolved.length) return 0;
+    const state = observer?.state ?? null;
+    const runs = state?.runs ?? [];
+    if (runs.length > 0) return runs.length;
+    const hasFallback = Boolean(
+      cleanGoalText(state?.anchor) ||
+        state?.happened?.length ||
+        state?.tail?.text ||
+        state?.decision
+    );
+    return hasFallback ? 1 : 0;
+  }, [resolved.length, observer?.state]);
+
+  const { watcherSlices, unsummarizedTailRecords } = useMemo<{
+    watcherSlices: WatcherSlice[];
+    unsummarizedTailRecords: WorkbenchRecord[];
+  }>(() => {
+    if (!watcherOpen || !resolved.length) return { watcherSlices: [], unsummarizedTailRecords: [] };
+    const state = observer?.state ?? null;
+    const runs = state?.runs ?? [];
+    let firstHumanGoal: string | null = null;
+    for (const r of resolved) {
+      if (r.kind === 'user.say' && !r.payload.is_tool_result) {
+        const g = cleanGoalText(typeof r.payload.text === 'string' ? r.payload.text : null);
+        if (g) {
+          firstHumanGoal = g;
+          break;
+        }
+      }
+    }
+    if (runs.length > 0) {
+      let maxCursorTo = 0;
+      const slices = runs.map((run, idx) => {
+        const fromSeq = typeof run.cursor_from === 'number' ? run.cursor_from : 0;
+        const toSeq =
+          typeof run.cursor_to === 'number'
+            ? run.cursor_to
+            : resolved[resolved.length - 1].seq + 1;
+        if (toSeq > maxCursorTo) maxCursorTo = toSeq;
+        // 严格只包裹本次总结真实读过的已发生闭区间 [cursor_from, cursor_to)，
+        // 绝不把 cursor_to 之后才发生的记录塞进旧总结槽位里。
+        const sliceRecords = resolved.filter((r) => r.seq >= fromSeq && r.seq < toSeq);
+        const sliceCards = extractSliceDecisionCards(sliceRecords);
+        const lastSliceCard = sliceCards.length > 0 ? sliceCards[sliceCards.length - 1].block : null;
+        const cardFallbackDecision = lastSliceCard
+          ? lastSliceCard.why
+            ? `${lastSliceCard.question}（${lastSliceCard.why}）`
+            : lastSliceCard.question
+          : null;
+        const parts = deriveThreeParts(
+          run.tail,
+          run.happened_add,
+          (run.decision && run.decision.trim()) || cardFallbackDecision
+        );
+        const summaryParts: string[] = [];
+        if (run.summary && run.summary.trim()) {
+          summaryParts.push(run.summary.trim());
+        } else {
+          if (run.happened_add?.length) summaryParts.push(...run.happened_add);
+          if (run.tail?.text) summaryParts.push(run.tail.text);
+          if (parts.decision) summaryParts.push(parts.decision);
+        }
+        const phaseGoal =
+          cleanGoalText(run.phase_goal) ||
+          cleanGoalText(state?.phase_goal) ||
+          cleanGoalText(state?.anchor) ||
+          firstHumanGoal;
+        return {
+          id: run.id || `run-${idx + 1}`,
+          at: run.at ?? state?.updated_at ?? sliceRecords[sliceRecords.length - 1]?.ts ?? null,
+          phaseGoal,
+          doing: parts.doing,
+          findings: parts.findings,
+          decision: parts.decision,
+          summary: summaryParts.join('\n') || t('workbench.stream.watcherEmptySummary'),
+          records: sliceRecords,
+          decisionCards: sliceCards,
+        };
+      });
+      const tailRecords = resolved.filter((r) => r.seq >= maxCursorTo);
+      return { watcherSlices: slices, unsummarizedTailRecords: tailRecords };
+    }
+    const fallbackChronological = state?.happened?.length ? [...state.happened].reverse() : [];
+    const fallbackThree = deriveThreeParts(state?.tail, fallbackChronological, state?.decision);
+    const fallbackParts: string[] = [];
+    const safeAnchor = cleanGoalText(state?.anchor);
+    if (safeAnchor) fallbackParts.push(safeAnchor);
+    if (fallbackChronological.length) fallbackParts.push(...fallbackChronological);
+    if (state?.tail?.text) fallbackParts.push(state.tail.text);
+    if (state?.decision) fallbackParts.push(state.decision);
+    if (fallbackParts.length > 0) {
+      return {
+        watcherSlices: [
+          {
+            id: 'run-1',
+            at: state?.updated_at ?? resolved[resolved.length - 1]?.ts ?? null,
+            phaseGoal:
+              cleanGoalText(state?.phase_goal) ||
+              safeAnchor ||
+              firstHumanGoal,
+            doing: fallbackThree.doing,
+            findings: fallbackThree.findings,
+            decision: fallbackThree.decision,
+            summary: fallbackParts.join('\n'),
+            records: resolved,
+            decisionCards: extractSliceDecisionCards(resolved),
+          },
+        ],
+        unsummarizedTailRecords: [],
+      };
+    }
+    return {
+      watcherSlices: [],
+      unsummarizedTailRecords: resolved,
+    };
+  }, [watcherOpen, resolved, observer?.state, t]);
 
   /** 记录编号 → 挂在它下面的那份进度。 */
   const trailOf = useMemo(() => {
@@ -800,6 +1342,37 @@ export default function RecordStream({
 
   const renderSegment = (seg: StreamSegment) => {
     if (seg.kind === 'record') return renderRecord(seg.record);
+    if (seg.kind === 'talk-agg') {
+      const parts: ReactNode[] = [];
+      if (seg.toolCalls > 0) {
+        parts.push(
+          <span key="tools" data-testid="talk-agg-tools">
+            {t('workbench.stream.preResponseToolCalls', { count: seg.toolCalls })}
+          </span>
+        );
+      }
+      if (seg.thinkingSteps > 0) {
+        parts.push(
+          <span key="thinking" data-testid="talk-agg-thinking">
+            {t('workbench.stream.preResponseThinking', { count: seg.thinkingSteps })}
+          </span>
+        );
+      }
+      return (
+        <div
+          key={seg.key}
+          data-testid="talk-pre-response-agg"
+          className="flex min-w-0 flex-wrap items-center gap-2 px-3 py-1 font-mono text-[13px] text-text-muted"
+        >
+          {parts.map((part, idx) => (
+            <Fragment key={idx}>
+              {idx > 0 ? <span aria-hidden className="text-text-dim">·</span> : null}
+              {part}
+            </Fragment>
+          ))}
+        </div>
+      );
+    }
     if (seg.kind === 'tools') {
       return (
         <ToolRun
@@ -830,6 +1403,8 @@ export default function RecordStream({
   });
   // 滚动事件触发得很密，到顶一次就够了；再触发由 hook 那一侧的闸挡住。
   const olderArmed = useRef(true);
+  // Talk / Watcher 视图在可见对话不足或视口未填满时自动向前补取旧页的本轮计数，防极端空会话死循环。
+  const autoBackfillCount = useRef(0);
   /**
    * 程序自己滚的有效期。
    *
@@ -883,6 +1458,7 @@ export default function RecordStream({
     anchor.current = null;
     prevEnds.current = { first: null, last: null };
     olderArmed.current = true;
+    autoBackfillCount.current = 0;
     setShowJump(false);
   }, [sessionId]);
 
@@ -931,9 +1507,45 @@ export default function RecordStream({
   // 换镜头后落在这一档的最新一条上。不这么做，视口会停在按旧内容算出来的高度上，
   // 换完看到的是半空的一屏。
   useLayoutEffect(() => {
+    autoBackfillCount.current = 0;
     scrollToBottom();
     followArmed.current = true;
-  }, [lens, scrollToBottom]);
+    setShowJump(false);
+  }, [lens, watcherOpen, scrollToBottom]);
+
+  // Talk / Watcher 视图下，若当前已取窗口筛完后可见对话不足最小条数（满页却不足 MIN_TALK_RECORDS）
+  // 或内容高度不足以撑出滚动条（导致无法通过上滚触发 NEAR_TOP_PX），且服务端还有更早记录，
+  // 自动向前补取旧页，保证最新一页始终饱满可滚。
+  useEffect(() => {
+    if (!hasOlder || loading || loadingOlder) return;
+    if (filesOpen || terminalOpen) return;
+    if (lens !== 'talk' && !watcherOpen) return;
+    if (autoBackfillCount.current >= MAX_BACKFILL_PAGES) return;
+
+    const el = scrollRef.current;
+    const underMinBubbles = counts.talk < MIN_TALK_RECORDS && records.length >= PAGE_SIZE;
+    const underViewport =
+      el !== null && el.clientHeight > 0 && el.scrollHeight <= el.clientHeight + NEAR_TOP_PX;
+
+    if (!underMinBubbles && !underViewport) return;
+
+    autoBackfillCount.current += 1;
+    if (el && el.scrollHeight > 0) {
+      anchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    }
+    onLoadOlder();
+  }, [
+    hasOlder,
+    loading,
+    loadingOlder,
+    filesOpen,
+    terminalOpen,
+    lens,
+    watcherOpen,
+    counts.talk,
+    records.length,
+    onLoadOlder,
+  ]);
 
   // "在等 agent 开口"那一条也是内容，它一冒出来就要看得见——跟着的人正是为了看它。
   // 人自己滚上去看别的时不打扰。
@@ -951,6 +1563,14 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (terminalOpen) {
+      onTerminalOpenChange?.(false);
+      return;
+    }
+    if (watcherOpen) {
+      setWatcherOpen(false);
+      return;
+    }
     if (!visible.some((r) => r.id === scrollId) && lens !== 'talk') {
       setLens('talk');
       return;
@@ -964,7 +1584,7 @@ export default function RecordStream({
     el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollAt, scrollId, lens, filesOpen]);
+  }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen]);
 
   /**
    * 标注着色。记录、镜头、标注任何一样变了都重涂一遍：记录流是 React 画的，一换镜头
@@ -1077,6 +1697,14 @@ export default function RecordStream({
       onFilesOpenChange?.(false);
       return;
     }
+    if (terminalOpen) {
+      onTerminalOpenChange?.(false);
+      return;
+    }
+    if (watcherOpen) {
+      setWatcherOpen(false);
+      return;
+    }
     if (!records.some((r) => r.id === mark.record_id)) {
       if (hasOlder) {
         if (loadingOlder) {
@@ -1133,7 +1761,7 @@ export default function RecordStream({
     finish('found');
     // 只盯「点下去」这一刻与它等着的那几样：翻页回来、镜头换完、文件那一档合上
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen]);
+  }, [locateAt, records, hasOlder, loadingOlder, visible, lens, filesOpen, terminalOpen, watcherOpen]);
 
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
@@ -1205,7 +1833,8 @@ export default function RecordStream({
   );
 
   // 缩略滚动条只在「全部」「对话」两档出现（spec 20260928-webui-session-stack 已定）。
-  const showMinimap = minimap && (lens === 'all' || lens === 'talk') && visible.length > 0;
+  const showMinimap =
+    minimap && !watcherOpen && (lens === 'all' || lens === 'talk') && visible.length > 0;
 
   if (!sessionId) {
     return (
@@ -1223,67 +1852,107 @@ export default function RecordStream({
           data-testid="stream-lens"
           className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
         >
-          {/* 六档是一组单选：装在同一块浅底里，当前那一档浮起来。与左栏时间范围同一套长相
-              （见 `seg.ts`）。一排放不下时自己横向滚动，不换行、不折字。
-              内边距收成 5px、字号 11.5px：左栏 288 之后中栏窄了 32px，五档要争取一排放下
-              （第五轮三改）。 */}
-          <div className={SEG_GROUP}>
-            {LENS_ORDER.map((id) => (
-              <Fragment key={id}>
-                {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
-                    但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
-                    按灰，人就以为这一场没改过文件。 */}
-                {id === 'system' && filesView ? (
+          {/* 整个左侧区域分为紧贴的 Watcher + 隔离纯文本 Executor + 现有的 All | Talk | ... 菜单 */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+            <div className={SEG_GROUP}>
+              <button
+                type="button"
+                data-testid="lens-watcher"
+                onClick={() => {
+                  setWatcherOpen(true);
+                  onFilesOpenChange?.(false);
+                  onTerminalOpenChange?.(false);
+                }}
+                aria-pressed={watcherOpen && !filesOpen && !terminalOpen}
+                className={`${SEG_ITEM} ${SEG_TIGHT} ${watcherOpen && !filesOpen && !terminalOpen ? SEG_ON : SEG_OFF}`}
+              >
+                {t('workbench.stream.watcher')}
+                <span className="font-mono opacity-60">{watcherCount}</span>
+              </button>
+            </div>
+            <span
+              data-testid="lens-executor-label"
+              className="shrink-0 select-none whitespace-nowrap px-0.5 text-[12px] font-medium text-text-muted"
+            >
+              {t('workbench.stream.executor')}
+            </span>
+            <div className={SEG_GROUP}>
+              {LENS_ORDER.map((id) => (
+                <Fragment key={id}>
+                  {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
+                      但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
+                      按灰，人就以为这一场没改过文件。 */}
+                  {id === 'system' && filesView ? (
+                    <button
+                      type="button"
+                      data-testid="lens-files"
+                      onClick={() => {
+                        setWatcherOpen(false);
+                        onTerminalOpenChange?.(false);
+                        onFilesOpenChange?.(!filesOpen);
+                      }}
+                      aria-pressed={filesOpen}
+                      title={t('workbench.files.lensHint')}
+                      className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
+                    >
+                      {t('workbench.files.lens')}
+                      {typeof filesCount === 'number' ? (
+                        <span className="font-mono opacity-60">{filesCount}</span>
+                      ) : filesPending ? (
+                        /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
+                           而那正是这颗按钮**不该**说的事。 */
+                        <span data-testid="lens-files-pending" className="font-mono opacity-60">
+                          …
+                        </span>
+                      ) : null}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    data-testid="lens-files"
-                    onClick={() => onFilesOpenChange?.(!filesOpen)}
-                    aria-pressed={filesOpen}
-                    title={t('workbench.files.lensHint')}
-                    className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
+                    /* 点某一档镜头就是回记录流：人手上还开着文件清单或 Watcher 时，他这一下是在说「我要看记录」。
+                       不跟着切回来，点了没反应，像坏了。 */
+                    onClick={() => {
+                      setWatcherOpen(false);
+                      setLens(id);
+                      onFilesOpenChange?.(false);
+                      onTerminalOpenChange?.(false);
+                    }}
+                    aria-pressed={lens === id && !filesOpen && !terminalOpen && !watcherOpen}
+                    data-testid={`lens-${id}`}
+                    /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+                    title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                    disabled={counts[id] === 0}
+                    className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen && !terminalOpen && !watcherOpen ? SEG_ON : SEG_OFF}`}
                   >
-                    {t('workbench.files.lens')}
-                    {typeof filesCount === 'number' ? (
-                      <span className="font-mono opacity-60">{filesCount}</span>
-                    ) : filesPending ? (
-                      /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
-                         而那正是这颗按钮**不该**说的事。 */
-                      <span data-testid="lens-files-pending" className="font-mono opacity-60">
-                        …
-                      </span>
-                    ) : null}
+                    {t(LENS_LABEL_KEY[id])}
+                    <span className="font-mono opacity-60">{counts[id]}</span>
                   </button>
-                ) : null}
+                </Fragment>
+              ))}
+              {terminalView ? (
                 <button
                   type="button"
-                  /* 点某一档镜头就是回记录流：人手上还开着文件清单时，他这一下是在说「我要看记录」。
-                     不跟着切回来，点了没反应，像坏了。 */
+                  data-testid="lens-terminal"
                   onClick={() => {
-                    setLens(id);
+                    setWatcherOpen(false);
                     onFilesOpenChange?.(false);
+                    onTerminalOpenChange?.(!terminalOpen);
                   }}
-                  aria-pressed={lens === id && !filesOpen}
-                  data-testid={`lens-${id}`}
-                  /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
-                  title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
-                  disabled={counts[id] === 0}
-                  className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen ? SEG_ON : SEG_OFF}`}
+                  aria-pressed={terminalOpen}
+                  title={t('workbench.terminal.lensHint')}
+                  className={`${SEG_ITEM} ${SEG_TIGHT} ${terminalOpen ? SEG_ON : SEG_OFF}`}
                 >
-                  {t(LENS_LABEL_KEY[id])}
-                  <span className="font-mono opacity-60">{counts[id]}</span>
+                  {t('workbench.terminal.lens')}
+                  {terminalAlive ? (
+                    <span
+                      data-testid="lens-terminal-alive"
+                      className="h-1.5 w-1.5 rounded-full bg-emerald-400"
+                    />
+                  ) : null}
                 </button>
-              </Fragment>
-            ))}
+              ) : null}
+            </div>
           </div>
-          {usageReadout ? (
-            <span
-              data-testid="stream-lens-usage"
-              title={t('workbench.composer.usageHint')}
-              className="min-w-0 max-w-full truncate whitespace-nowrap font-mono text-[11px] text-text-dim"
-            >
-              {usageReadout}
-            </span>
-          ) : null}
         </div>
       ) : null}
 
@@ -1306,15 +1975,11 @@ export default function RecordStream({
         className={`min-h-0 flex-1 overflow-y-auto pb-10 pl-4 pt-4 ${showMinimap ? 'record-stream-no-bar pr-6' : 'pr-4'}`}
         data-testid="record-stream-scroll"
       >
-        {/* 正文铺满中栏，不封顶。中栏里跑的是工具调用、命令行、代码块、文件路径和表格，
-            这些宽度天生不定，收窄容器只会让它们折行、挤成一团；真正的长段落在这条流里
-            占比不大，而这里的用法是扫读、不是通读——找哪一轮做了什么、哪条报错在哪。 */}
-        {/* 列间距就是**归组本身**：同一次回复的几条收在 4px 里，两次回复之间隔 16px。
-            人不读一个字也看得出哪几条是一伙的——疏密的对比比任何标签都快。从前两边都是
-            12px，密疏没有对比，所以只好另画一条横线来说"这里是一组"，而那条线是整屏最长
-            的图形，喊得比它要标的内容还响。 */}
         <FileLinkContext.Provider value={preview ? handleFileLink : null}>
-        <div className="flex w-full min-w-0 flex-col gap-4">
+        <div
+          data-testid="record-stream-content"
+          className="flex min-h-full w-full min-w-0 flex-col justify-end gap-4"
+        >
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
@@ -1322,7 +1987,7 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {!hasOlder && records.length ? (
+          {!hasOlder && records.length && !watcherOpen ? (
             <p className="py-2 text-center text-[11px] text-text-muted">
               {t('workbench.stream.streamStart', { n: records.length })}
             </p>
@@ -1334,38 +1999,319 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {records.length && !visible.length ? (
-            <p className="py-10 text-center text-[12px] text-text-muted">
+          {!watcherOpen && records.length && !visible.length && !segments.length ? (
+            <p className="my-auto py-10 text-center text-[12px] text-text-muted">
               {t('workbench.stream.lensEmpty')}
             </p>
           ) : null}
 
           {!records.length && !loading && !error ? (
-            <div className="flex flex-col items-center gap-3 py-16 text-text-muted">
+            <div className="my-auto flex flex-col items-center gap-3 py-16 text-text-muted">
               <Inbox size={44} strokeWidth={1.4} />
               <p className="text-[13px]">{t('workbench.stream.emptySession')}</p>
               <p className="text-[12px]">{t('workbench.stream.emptySessionHint')}</p>
             </div>
           ) : null}
 
-          {groups.map((group, index) => {
-            /* **归组只剩间距，头上不再有字。**
-               同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
-               哪几条是一伙的。从前这里还有一行「同一次回复 · 模型名 · 本组 N 条」：它要
-               说的只是下面几条同属一轮，而这件事间距已经说完了；模型名每一轮都要重写一遍，
-               一场会话几百轮就是几百遍同一个牌子。模型名现在常驻在输入框右下那边，一次
-               性说清"现在是谁在答"。 */
-            if (group.segments.length === 1) return renderSegment(group.segments[0]);
-            return (
-              <section
-                key={`${group.groupId ?? 'loose'}-${index}`}
-                data-testid="record-group"
-                className="flex min-w-0 flex-col gap-1"
-              >
-                {group.segments.map((seg) => renderSegment(seg))}
-              </section>
-            );
-          })}
+          {watcherOpen ? (
+            <div
+              data-testid="watcher-view"
+              className="flex min-w-0 flex-col divide-y divide-border-color"
+            >
+              {watcherSlices.map((slice, idx) => {
+                const isExpanded = Boolean(expandedWatcherIds[slice.id]);
+                const sliceGroups = isExpanded ? groupSegments(buildTalkSegments(slice.records)) : [];
+                const sliceDecisionCards = slice.decisionCards;
+                let promptCount = 0;
+                let toolCallsCount = 0;
+                let thinkingCount = 0;
+                let replyCount = 0;
+                for (const r of slice.records) {
+                  if (
+                    r.kind === 'user.say' ||
+                    (r.kind === 'context.inject' && r.payload.channel === 'queued_command')
+                  ) {
+                    promptCount += 1;
+                  } else if (r.kind === 'tool.call') {
+                    toolCallsCount += 1;
+                  } else if (r.kind === 'agent.think') {
+                    thinkingCount += 1;
+                  } else if (r.kind === 'agent.say') {
+                    replyCount += 1;
+                  }
+                }
+                const metaCounts: string[] = [];
+                if (promptCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.watcherTalkPromptCount', { count: promptCount })
+                  );
+                }
+                if (toolCallsCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.preResponseToolCalls', { count: toolCallsCount })
+                  );
+                }
+                if (thinkingCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.preResponseThinking', { count: thinkingCount })
+                  );
+                }
+                if (replyCount > 0) {
+                  metaCounts.push(
+                    t('workbench.stream.watcherTalkReplyCount', { count: replyCount })
+                  );
+                }
+                const clock = slice.at ? formatClock(slice.at) : '';
+                const goalLines = splitWatcherLines(slice.phaseGoal);
+                const doingLines = splitWatcherLines(slice.doing);
+                const findingLines = splitWatcherLines(slice.findings);
+                const decisionLines = splitWatcherLines(slice.decision);
+                return (
+                  <section
+                    key={slice.id}
+                    data-testid="watcher-item"
+                    className="flex min-w-0 flex-col gap-4 py-5 first:pt-1 last:pb-1"
+                  >
+                    <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-text-muted">
+                      <span className="font-semibold text-text-secondary">#{idx + 1}</span>
+                      {clock ? <span>{clock}</span> : null}
+                    </header>
+                    <div
+                      data-testid="watcher-summary"
+                      className="flex max-w-[78ch] min-w-0 flex-col gap-4 break-words text-[16px] leading-[1.72] text-text-primary"
+                    >
+                      {goalLines.length > 0 ? (
+                        <div
+                          data-testid="watcher-phase-goal"
+                          className="flex min-w-0 flex-col gap-1.5"
+                        >
+                          <div
+                            data-testid="watcher-phase-goal-label"
+                            className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                          >
+                            {t('workbench.stream.watcherPhaseGoalLabel')}
+                          </div>
+                          <div className="flex min-w-0 flex-col gap-1.5 font-medium text-text-primary">
+                            {goalLines.map((line, lIdx) => (
+                              <div
+                                key={lIdx}
+                                data-testid="watcher-phase-goal-line"
+                                className="flex min-w-0 items-start gap-2.5 leading-[1.68]"
+                              >
+                                {goalLines.length > 1 ? (
+                                  <span
+                                    aria-hidden
+                                    className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                  />
+                                ) : null}
+                                <span className="min-w-0 flex-1">{line}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {doingLines.length > 0 || findingLines.length > 0 || decisionLines.length > 0 ? (
+                        <>
+                          {doingLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-doing"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-doing-label"
+                                className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                              >
+                                {t('workbench.stream.watcherPartDoing')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {doingLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-doing-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {doingLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {findingLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-findings"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-findings-label"
+                                className="text-[13px] font-semibold tracking-wide text-text-secondary"
+                              >
+                                {t('workbench.stream.watcherPartFindings')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {findingLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-findings-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {findingLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {decisionLines.length > 0 ? (
+                            <div
+                              data-testid="watcher-part-decision"
+                              className="flex min-w-0 flex-col gap-1.5"
+                            >
+                              <div
+                                data-testid="watcher-part-decision-label"
+                                className="text-[13px] font-semibold tracking-wide text-accent-primary"
+                              >
+                                {t('workbench.stream.watcherPartDecision')}
+                              </div>
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                {decisionLines.map((line, lIdx) => (
+                                  <div
+                                    key={lIdx}
+                                    data-testid="watcher-part-decision-line"
+                                    className="flex min-w-0 items-start gap-2.5 leading-[1.72]"
+                                  >
+                                    {decisionLines.length > 1 ? (
+                                      <span
+                                        aria-hidden
+                                        className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary/70"
+                                      />
+                                    ) : null}
+                                    <span className="min-w-0 flex-1">{line}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="whitespace-pre-wrap">{slice.summary}</span>
+                      )}
+                    </div>
+                    <div className="min-w-0 rounded-[8px] bg-bg-subtle px-3 py-2">
+                      <button
+                        type="button"
+                        data-testid={`watcher-talk-toggle-${idx}`}
+                        aria-expanded={isExpanded}
+                        onClick={() =>
+                          setExpandedWatcherIds((prev) => ({
+                            ...prev,
+                            [slice.id]: !prev[slice.id],
+                          }))
+                        }
+                        className="flex w-full min-w-0 flex-wrap items-center gap-2 text-left text-[13px] text-text-secondary hover:text-text-primary"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown size={14} className="shrink-0 text-text-muted" />
+                        ) : (
+                          <ChevronRight size={14} className="shrink-0 text-text-muted" />
+                        )}
+                        <span className="font-semibold text-text-primary">
+                          {t('workbench.stream.lens.talk')}
+                        </span>
+                        <span className="font-mono text-[12px] text-text-muted">
+                          {metaCounts.length
+                            ? metaCounts.join(' · ')
+                            : t('workbench.stream.watcherTalkEmpty')}
+                        </span>
+                      </button>
+                      {isExpanded ? (
+                        <div
+                          data-testid={`watcher-talk-body-${idx}`}
+                          className="mt-3 flex min-w-0 flex-col gap-3 pt-1"
+                        >
+                          {sliceGroups.map((group, gIdx) =>
+                            group.segments.length === 1 ? (
+                              renderSegment(group.segments[0])
+                            ) : (
+                              <section
+                                key={`${group.groupId ?? 'loose'}-${gIdx}`}
+                                data-testid="record-group"
+                                className="flex min-w-0 flex-col gap-1"
+                              >
+                                {group.segments.map((seg) => renderSegment(seg))}
+                              </section>
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                    {!isExpanded && sliceDecisionCards.length > 0 ? (
+                      <div data-testid="watcher-decision-cards" className="flex min-w-0 flex-col gap-2">
+                        {sliceDecisionCards.map((dc) => (
+                          <DecisionCard key={dc.recordId} block={dc.block} recordId={dc.recordId} />
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })}
+              {(() => {
+                if (!unsummarizedTailRecords.length) return null;
+                const tailSegments = buildTalkSegments(unsummarizedTailRecords);
+                const tailGroups = groupSegments(tailSegments);
+                if (!tailGroups.length) return null;
+                return (
+                  <section
+                    data-testid="watcher-unsummarized-tail"
+                    className="flex min-w-0 flex-col gap-3 py-4 first:pt-1 last:pb-1"
+                  >
+                    {tailGroups.map((group, gIdx) =>
+                      group.segments.length === 1 ? (
+                        renderSegment(group.segments[0])
+                      ) : (
+                        <section
+                          key={`${group.groupId ?? 'loose'}-tail-${gIdx}`}
+                          data-testid="record-group"
+                          className="flex min-w-0 flex-col gap-1"
+                        >
+                          {group.segments.map((seg) => renderSegment(seg))}
+                        </section>
+                      )
+                    )}
+                  </section>
+                );
+              })()}
+            </div>
+          ) : (
+            groups.map((group, index) => {
+              /* **归组只剩间距，头上不再有字。**
+                 同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
+                 哪几条是一伙的。从前这里还有一行「同一次回复 · 模型名 · 本组 N 条」：它要
+                 说的只是下面几条同属一轮，而这件事间距已经说完了；模型名每一轮都要重写一遍，
+                 一场会话几百轮就是几百遍同一个牌子。模型名现在常驻在输入框右下那边，一次
+                 性说清"现在是谁在答"。 */
+              if (group.segments.length === 1) return renderSegment(group.segments[0]);
+              return (
+                <section
+                  key={`${group.groupId ?? 'loose'}-${index}`}
+                  data-testid="record-group"
+                  className="flex min-w-0 flex-col gap-1"
+                >
+                  {group.segments.map((seg) => renderSegment(seg))}
+                </section>
+              );
+            })
+          )}
 
           {/* 换到一场会话、首取还没落定：占住空态的位置说「正在加载」。大会话首取要好几秒，
               这段时间里摆空白或空态，人会以为这场会话没有内容。 */}
@@ -1429,6 +2375,16 @@ export default function RecordStream({
           {filesView}
         </div>
       ) : null}
+
+      {/* 终端那一档同样铺在这块滚动区上面，不卸载记录流。 */}
+      {terminalOpen && terminalView ? (
+        <div
+          data-testid="terminal-panel"
+          className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg-primary"
+        >
+          {terminalView}
+        </div>
+      ) : null}
       </div>
 
       {/* 圈中一段文字之后冒出来的「引用」按钮，以及短选区的同字标绿。
@@ -1473,6 +2429,7 @@ export default function RecordStream({
                 else void revealPath(p).catch(() => {});
               }}
               onPackPrompt={onPackPrompt}
+              onSendFileEdit={onSendFileEdit}
             />
           );
         })()

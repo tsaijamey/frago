@@ -80,16 +80,9 @@ class ClaudeUsageService:
         return cls._instance
 
     async def start(self) -> None:
-        """起后台探测循环。机器上没装 claude 也照起——装上之后不必重启服务。"""
-        if self._task is not None and not self._task.done():
-            logger.warning("Claude usage service already running")
-            return
-
-        self._stop_event.clear()
-        self._task = asyncio.create_task(self._check_loop())
-        logger.info(
-            "Claude usage service started (interval: %ss)", USAGE_CHECK_INTERVAL_SECONDS
-        )
+        """已停用后台 10 分钟定时探测：避免每 10 分钟无头执行 `claude --safe-mode --no-session-persistence -p /usage` 触发遥测降分。"""
+        logger.info("Claude usage background polling is disabled")
+        return
 
     async def stop(self) -> None:
         if self._task is None or self._task.done():
@@ -129,30 +122,8 @@ class ClaudeUsageService:
             await self._broadcast()
 
     def _probe(self) -> dict[str, Any]:
-        """在线程池里跑 claude，把它说的话解析成三档百分比。"""
-        binary = shutil.which("claude")
-        if not binary:
-            return _empty_usage("claude-not-installed")
-
-        try:
-            result = subprocess.run(
-                [binary, *PROBE_ARGV],
-                capture_output=True,
-                text=True,
-                timeout=USAGE_PROBE_TIMEOUT_SECONDS,
-                # 探测跟仓库无关，放在家目录跑：省掉进入某个项目时的信任提示与目录扫描。
-                cwd=os.path.expanduser("~"),
-            )
-        except subprocess.TimeoutExpired:
-            return _empty_usage("probe-timeout")
-        except OSError as e:
-            return _empty_usage(f"probe-failed: {e}")
-
-        if result.returncode != 0:
-            detail = (result.stderr or "").strip().splitlines()
-            return _empty_usage(f"probe-exit-{result.returncode}: {detail[0] if detail else ''}")
-
-        return self._parse(result.stdout or "")
+        """已停用无头探测：直接返回空状态，不再拉起 claude 子进程。"""
+        return _empty_usage("usage-probe-disabled")
 
     @staticmethod
     def _parse(output: str) -> dict[str, Any]:

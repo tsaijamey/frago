@@ -26,7 +26,9 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { usePageStore, type PageType } from '@/stores/pageStore';
 
 import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
+import DesktopPage from '@/components/desktop/DesktopPage';
 import VibeTeamingPage from '@/components/vibeTeaming/VibeTeamingPage';
+import EmployeesPage from '@/components/employees/EmployeesPage';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import DataRepoPage from '@/components/dataRepo/DataRepoPage';
@@ -42,7 +44,9 @@ import FileBrowserPage from '@/components/fileBrowser/FileBrowserPage';
 /** 留状态的最小单位：同一个视图里的页面编号换来换去，还是这一份。 */
 type ViewKey =
   | 'workbench'
+  | 'desktop'
   | 'vibe_teaming'
+  | 'employees'
   | 'recipes'
   | 'recipe_detail'
   | 'data_repo'
@@ -65,7 +69,9 @@ type ViewKey =
 const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
   live: 'workbench',
   session_workbench: 'workbench',
+  desktop: 'desktop',
   vibe_teaming: 'vibe_teaming',
+  employees: 'employees',
   dashboard: 'workbench',
   tasks: 'workbench',
   task_detail: 'workbench',
@@ -88,7 +94,9 @@ const VIEW_OF_PAGE: Record<PageType, ViewKey | null> = {
 
 const VIEWS: Record<ViewKey, () => ReactElement> = {
   workbench: () => <SessionWorkbenchPage />,
+  desktop: () => <DesktopPage />,
   vibe_teaming: () => <VibeTeamingPage />,
+  employees: () => <EmployeesPage />,
   recipes: () => <RecipeList />,
   recipe_detail: () => <RecipeDetail />,
   data_repo: () => <DataRepoPage />,
@@ -102,7 +110,11 @@ const VIEWS: Record<ViewKey, () => ReactElement> = {
   workspace: () => <WorkspacePage />,
 };
 
-export default function PageHost() {
+interface PageHostProps {
+  onOpenInitWizard?: () => void;
+}
+
+export default function PageHost({ onOpenInitWizard }: PageHostProps = {}) {
   const currentPage = usePageStore((s) => s.currentPage);
   // 表里没有的页面回会话工作台（与 routes 认不出地址时的兜底同一条）。`recipe_app`
   // 在表里是明写的 null，那不是"认不出来"，是"不归这里管"——两者 MUST 分开，
@@ -120,6 +132,13 @@ export default function PageHost() {
   return (
     <>
       {opened.map((key) => {
+        if (key === 'settings') {
+          return (
+            <div key={key} className="page-slot" hidden={key !== view}>
+              <SettingsPage onOpenInitWizard={onOpenInitWizard} />
+            </div>
+          );
+        }
         const Page = VIEWS[key];
         return (
           <div key={key} className="page-slot" hidden={key !== view}>

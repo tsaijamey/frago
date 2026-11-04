@@ -434,8 +434,11 @@ class SchedulerService:
                     from frago.server.services.session_watchdog import get_watchdog
 
                     await asyncio.to_thread(get_watchdog().sweep)
-            for schedule in self._schedules:
-                if not schedule.get("enabled", True):
+            for schedule_id in [s["id"] for s in self._schedules]:
+                schedule = next(
+                    (s for s in self._schedules if s["id"] == schedule_id), None
+                )
+                if schedule is None or not schedule.get("enabled", True):
                     continue
                 start = _parse_dt(schedule.get("start_at"))
                 end = _parse_dt(schedule.get("end_at"))
@@ -470,6 +473,14 @@ class SchedulerService:
                 schedule_id,
             )
             return
+
+        # Ensure we mutate the current dict in self._schedules even if _load() replaced the list
+        for s in self._schedules:
+            if s["id"] == schedule_id:
+                if s is not schedule:
+                    s.update(schedule)
+                    schedule = s
+                break
 
         # Immediately update last_run_at to prevent re-triggering on next tick
         schedule["last_run_at"] = _now_utc().isoformat()
@@ -518,6 +529,11 @@ class SchedulerService:
         for s in self._schedules:
             if s["id"] != schedule_id:
                 continue
+            if triggered_at is None and schedule.get("last_run_at"):
+                s["last_run_at"] = schedule["last_run_at"]
+                s["run_count"] = max(
+                    int(s.get("run_count", 0)), int(schedule.get("run_count", 0))
+                )
             s["last_status"] = "success" if outcome.ok else "failed"
             if outcome.ok:
                 s["last_success_at"] = _now_utc().isoformat()

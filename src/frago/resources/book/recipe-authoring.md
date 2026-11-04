@@ -123,9 +123,14 @@ API_KEY=$(echo "$FRAGO_SECRETS" | jq -r '.api_key // empty')
 
 chrome-js runtime 不注入 FRAGO_SECRETS（浏览器环境无法访问）。如果 chrome-js recipe 需要凭证，改用 workflow + system recipe 组合。
 
-## Recipe 内调 frago CLI（subprocess）
+## Recipe 内调模型与调 frago CLI
 
-**先决条件：要 shell 出去调 frago，MUST 在 recipe.md 里写 `uses_frago_cli: true`。**
+**基于 `Recipe` 基类的 Python 配方，优先走基类总线，不要自己起 `frago` 子进程：**
+
+- **问模型要一段字或一个 JSON（摘要、分类、扩写、结构化抽取）**：在类上写 `ai = True`，方法里调 `self.ask_ai(prompt, *, system=None, response_json=False, timeout=120)`。**NEVER 为纯文本或 JSON 生成去起 `frago agent` 子进程**——`frago agent` 会拉起带工具和钩子的完整智能体会话，慢且容易把素材当成待办任务或触发反问；`self.ask_ai` 走无工具无钩子的 `chat` 模式。
+- **跑 frago 自己的命令（如 `user list`、或派一个真要动用工具读写代码仓库的 `agent` worker）**：调 `self.ask_frago(["user", "list", "--format", "json"])`，在服务端进程里跑并拿回 `code` / `stdout` / `stderr`。
+
+**确需在配方子进程里直接 `subprocess` 调 frago（如驱动浏览器、桌面，或未上基类的脚本）时，MUST 在 recipe.md 里写 `uses_frago_cli: true`。**
 配方跑在一个只看得见指定目录的视图里，frago 命令自己的工作目录默认不在视野内；
 这一声明才把它交出来。不写有两个后果：`frago recipe validate` **直接拒绝**（它会指到
 起 frago 命令的那一行），隔离下真跑起来那条命令也必然失败。

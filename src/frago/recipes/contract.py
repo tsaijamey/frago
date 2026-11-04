@@ -139,6 +139,12 @@ def read_source(source: str) -> Surface | None:
                 f"删掉它，改在方法上标 @export / @action。"
             )
 
+    if _calls_ask_ai(tree) and not _declares_ai(node):
+        problems.append(
+            "代码里调了 self.ask_ai(...)，但类上没有写 ai = True。"
+            "总线只给显式声明了 ai = True 的配方调模型——在 Recipe 子类上加一行 ai = True。"
+        )
+
     return Surface(
         modes=tuple(modes),
         exports=tuple(exports),
@@ -276,3 +282,29 @@ def _default_mode(node: ast.ClassDef) -> str:
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             return value.value
     return ""
+
+
+def _declares_ai(node: ast.ClassDef) -> bool:
+    """Whether the class body sets ``ai = True``."""
+    for stmt in node.body:
+        targets = (
+            [stmt.target] if isinstance(stmt, ast.AnnAssign)
+            else getattr(stmt, "targets", [])
+        )
+        if not any(isinstance(t, ast.Name) and t.id == "ai" for t in targets):
+            continue
+        value = getattr(stmt, "value", None)
+        if isinstance(value, ast.Constant):
+            return bool(value.value)
+        return value is not None
+    return False
+
+
+def _calls_ask_ai(tree: ast.AST) -> bool:
+    """Whether anything in this module calls ``.ask_ai(...)``."""
+    return any(
+        isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "ask_ai"
+        for sub in ast.walk(tree)
+    )

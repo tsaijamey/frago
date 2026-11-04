@@ -26,6 +26,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -132,11 +133,22 @@ def _read_legacy_file() -> dict[str, str]:
     return {k: v for k, v in titles.items() if isinstance(k, str) and isinstance(v, str) and v}
 
 
-def _read_session_title_file(path: Path) -> str | None:
+def _read_session_title_file(path: Path, *, mtime_ns: int | None = None) -> str | None:
     """读单个会话目录下的 ``workbench-title.json``。坏文件当没改过。"""
+    key = str(path)
+    if mtime_ns is not None:
+        cached = _TITLE_FILE_CACHE.get(key)
+        if cached is not None and cached[0] == mtime_ns:
+            return cached[1]
     try:
+        if mtime_ns is None:
+            mtime_ns = path.stat().st_mtime_ns
+            cached = _TITLE_FILE_CACHE.get(key)
+            if cached is not None and cached[0] == mtime_ns:
+                return cached[1]
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
+        _TITLE_FILE_CACHE.pop(key, None)
         return None
     except (OSError, json.JSONDecodeError) as e:
         logger.warning("会话标题文件读不动，当作没改过：%s（%s）", path, e)
@@ -144,9 +156,10 @@ def _read_session_title_file(path: Path) -> str | None:
     if not isinstance(data, dict):
         return None
     title = data.get("title")
-    if isinstance(title, str) and title.strip():
-        return " ".join(title.split())[:MAX_TITLE_LEN]
-    return None
+    res = " ".join(title.split())[:MAX_TITLE_LEN] if isinstance(title, str) and title.strip() else None
+    if mtime_ns is not None:
+        _TITLE_FILE_CACHE[key] = (mtime_ns, res)
+    return res
 
 
 def _write_session_title_file(path: Path, title: str) -> None:
@@ -163,31 +176,64 @@ def _write_session_title_file(path: Path, title: str) -> None:
         raise
 
 
+#: 单文件解析缓存：``path -> (st_mtime_ns, title)``，免去每次全表轮询重复打开几百个小 JSON。
+_TITLE_FILE_CACHE: dict[str, tuple[int, str | None]] = {}
+#: 全量标题表内存快照：``(signature, monotonic_ts, titles_dict)``。
+_MEM_TITLES_CACHE: tuple[tuple[str, int, tuple[int, ...]], float, dict[str, str]] | None = None
+_MEM_TITLES_TTL_S = 5.0
+
+
+def _titles_signature(base: Path) -> tuple[str, int, tuple[int, ...]]:
+    try:
+        legacy_mtime = TITLES_FILE.stat().st_mtime_ns
+    except OSError:
+        legacy_mtime = 0
+    dir_mtimes: list[int] = []
+    for folder in _FAMILY_DIRS:
+        try:
+            dir_mtimes.append((base / folder).stat().st_mtime_ns)
+        except OSError:
+            dir_mtimes.append(0)
+    return (str(base), legacy_mtime, tuple(dir_mtimes))
+
+
 def load() -> dict[str, str]:
     """全部改过的名字，``编号 → 名字``。
 
     会话备份目录 ``~/.frago/sessions/<家族>/<编号>/workbench-title.json`` 优先；
     早期写在 ``~/.frago/workbench_titles.json`` 里的做兜底。
     """
-    titles = _read_legacy_file()
+    global _MEM_TITLES_CACHE
     base = _sessions_base_dir()
+    sig = _titles_signature(base)
+    now = time.monotonic()
+    if (
+        TITLES_FILE == _DEFAULT_TITLES_FILE
+        and _MEM_TITLES_CACHE is not None
+        and _MEM_TITLES_CACHE[0] == sig
+        and (now - _MEM_TITLES_CACHE[1]) < _MEM_TITLES_TTL_S
+    ):
+        return dict(_MEM_TITLES_CACHE[2])
+
+    titles = _read_legacy_file()
     if not base.is_dir():
         return titles
     for folder in _FAMILY_DIRS:
         family_dir = base / folder
-        if not family_dir.is_dir():
-            continue
         try:
-            entries = list(family_dir.iterdir())
+            with os.scandir(family_dir) as it:
+                for entry in it:
+                    title_path = Path(entry.path) / TITLE_FILENAME
+                    try:
+                        st = title_path.stat()
+                    except OSError:
+                        continue
+                    name = _read_session_title_file(title_path, mtime_ns=st.st_mtime_ns)
+                    if name:
+                        titles[entry.name] = name
         except OSError:
             continue
-        for entry in entries:
-            title_path = entry / TITLE_FILENAME
-            if not title_path.is_file():
-                continue
-            name = _read_session_title_file(title_path)
-            if name:
-                titles[entry.name] = name
+    _MEM_TITLES_CACHE = (_titles_signature(base), now, dict(titles))
     return titles
 
 
@@ -212,6 +258,7 @@ def get_title(session_id: str, *, family: str | None = None) -> str | None:
 
 def set_title(session_id: str, title: str, *, family: str | None = None) -> str:
     """把修改后的标题存进该会话在 ``~/.frago/sessions`` 下的同目录数据文件里。"""
+    global _MEM_TITLES_CACHE
     sid = session_id.strip()
     name = " ".join(title.split())[:MAX_TITLE_LEN]
     if not sid or not name:
@@ -219,6 +266,16 @@ def set_title(session_id: str, title: str, *, family: str | None = None) -> str:
     target = title_file_for(sid, family)
     with _lock:
         _write_session_title_file(target, name)
+        try:
+            st = target.stat()
+            _TITLE_FILE_CACHE[str(target)] = (st.st_mtime_ns, name)
+        except OSError:
+            _TITLE_FILE_CACHE.pop(str(target), None)
+        if _MEM_TITLES_CACHE is not None:
+            updated = dict(_MEM_TITLES_CACHE[2])
+            updated[sid] = name
+            base = _sessions_base_dir()
+            _MEM_TITLES_CACHE = (_titles_signature(base), time.monotonic(), updated)
     return name
 
 

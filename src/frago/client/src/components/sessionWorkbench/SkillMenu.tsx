@@ -43,9 +43,17 @@ export interface SkillMenuProps {
   active: number;
   onPick: (skill: SkillItem) => void;
   onHover: (index: number) => void;
+  /** 弹出方向：底部输入栏向上弹（above），新建会话中部输入框向下弹（below）。 */
+  placement?: 'above' | 'below';
 }
 
-export default function SkillMenu({ items, active, onPick, onHover }: SkillMenuProps) {
+export default function SkillMenu({
+  items,
+  active,
+  onPick,
+  onHover,
+  placement = 'above',
+}: SkillMenuProps) {
   const { t } = useTranslation();
   const list = useRef<HTMLUListElement>(null);
 
@@ -58,7 +66,9 @@ export default function SkillMenu({ items, active, onPick, onHover }: SkillMenuP
   return (
     <div
       data-testid="skill-menu"
-      className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-[10px] border border-border-strong bg-bg-card shadow-lg"
+      className={`absolute left-0 right-0 z-20 overflow-hidden rounded-[10px] border border-border-strong bg-bg-card shadow-lg ${
+        placement === 'below' ? 'top-full mt-2' : 'bottom-full mb-2'
+      }`}
     >
       <p className="border-b border-border-color px-3 py-1.5 text-[11px] text-text-muted">
         {t('workbench.skills.menuTitle')}

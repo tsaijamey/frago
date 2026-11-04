@@ -10,8 +10,14 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import RecordCard, { KIND_GROUP, formatBytes, formatDuration } from '../RecordCard';
+import { fireEvent, render, screen } from '@testing-library/react';
+import RecordCard, {
+  KIND_GROUP,
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+} from '../RecordCard';
+import { talkView, withTurnDecisionCards } from '../RecordStream';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
 import { DEMOS, wrap } from '@/utils/__tests__/decisionDemos';
@@ -271,6 +277,57 @@ describe('点名了 skill 的那句话', () => {
       const { container, unmount } = render(<RecordCard record={record} sessionId={SID} />);
       expect(screen.getByTestId('skill-quote').getAttribute('data-skill')).toBe('git-push');
       expect(container.textContent).not.toContain('按功能分组提交');
+      unmount();
+    }
+  });
+});
+
+describe('挂载了 <frago-employee> 语境块的那句话', () => {
+  const EMP_BLOCK =
+    '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n' +
+    '【员工身份与工作范畴】\n' +
+    '岗位：Stock 投研与策略专员（id: stock）\n' +
+    '职责：专门负责股票与 ETF 全场景投研工作\n' +
+    '</frago-employee>';
+
+  it('人发言卡把 <frago-employee> 渲染成消息上方的员工卡片，内部正文一个字不摆', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', {
+          payload: { text: `${EMP_BLOCK}\n\n评估 159518 明天可能的走势` },
+        })}
+        sessionId={SID}
+      />
+    );
+    const quote = screen.getByTestId('employee-quote');
+    expect(quote.getAttribute('data-employee')).toBe('stock');
+    expect(quote.textContent).toContain('@stock');
+    expect(quote.textContent).toContain('Stock 投研与策略专员');
+    expect(screen.getByText('评估 159518 明天可能的走势')).not.toBeNull();
+    expect(container.textContent).not.toContain('【员工身份与工作范畴】');
+    expect(container.textContent).not.toContain('frago-employee');
+  });
+
+  it('插话卡与排队行同样把 <frago-employee> 渲染成员工卡片', () => {
+    const inject = makeRecord('context.inject', {
+      payload: {
+        channel: 'queued_command',
+        body: `${EMP_BLOCK}\n\n补充看看 603198`,
+        queue_state: 'absorbed',
+      },
+    });
+    const queued = makeRecord('session.state', {
+      payload: {
+        field: 'queue-operation',
+        operation: 'enqueue',
+        content: `${EMP_BLOCK}\n\n补充看看 603198`,
+        queue_state: 'pending',
+      },
+    });
+    for (const record of [inject, queued]) {
+      const { container, unmount } = render(<RecordCard record={record} sessionId={SID} />);
+      expect(screen.getByTestId('employee-quote').getAttribute('data-employee')).toBe('stock');
+      expect(container.textContent).not.toContain('【员工身份与工作范畴】');
       unmount();
     }
   });
@@ -619,6 +676,33 @@ describe('用量刻度', () => {
   });
 });
 
+describe('时间戳与卡头分割线', () => {
+  it('formatDateTime 同时输出年月日与时分秒', () => {
+    const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
+    expect(formatDateTime(fixedTs)).toBe('2026-10-31 14:50:18');
+  });
+
+  it('卡头时间右侧渲染分割线，并在带有 context_tokens 时显示上下文读数', () => {
+    const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('agent.say', {
+          ts: fixedTs,
+          payload: { text: '你好', model: 'claude-opus-5', context_tokens: 449_320 },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(container.textContent).toContain('2026-10-31 14:50:18');
+    const head = container.querySelector('header');
+    expect(head).toBeTruthy();
+    const divider = head?.querySelector('span.h-px.flex-1.bg-border-color');
+    expect(divider).toBeTruthy();
+    const ctx = screen.getByTestId('card-head-context');
+    expect(ctx.textContent).toBe('上下文 449,320');
+  });
+});
+
 describe('agent 回复末尾的「要人拍板」区块', () => {
   const say = (text: string, overrides: Partial<WorkbenchRecord> = {}) =>
     makeRecord('agent.say', { payload: { text, model: 'claude-opus-5' }, ...overrides });
@@ -662,5 +746,239 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     expect(screen.queryByTestId('decision-card')).toBeNull();
     expect(screen.queryByTestId('decision-broken')).toBeNull();
     expect(container.querySelector('pre')?.textContent).toContain('type: single-choice');
+  });
+
+  it('frago ask 工具输出（tool.result）直接渲染对应类型的交互卡片', () => {
+    const toolBody = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '本次需要执行到哪一步？',
+        why: 'SIT 环境已有 98 家真实样本',
+        options: [
+          {
+            key: 'A',
+            label: '全量改造 + SIT 验证',
+            effect: '改代码、跑单测并同步更新 SIT',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '仅本地改造',
+            effect: '只修改本地仓库代码与单测',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('tool.result', {
+          payload: {
+            tool_name: 'Bash',
+            status: 'ok',
+            duration_ms: 45,
+            body: toolBody,
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    expect(container.textContent).toContain('本次需要执行到哪一步？');
+    expect(container.textContent).toContain('全量改造 + SIT 验证');
+  });
+
+  it('同轮存在收尾 agent.say（Stop 消息）时，frago ask 交互卡挂载在 Stop 消息正文下方，不出现在 Stop 消息之前', () => {
+    const toolBody = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '是否按此分组方案提交并推送？',
+        options: [
+          {
+            key: 'A',
+            label: '补齐 RELEASE_NOTES 后提交推送',
+            effect: '同步更新 RELEASE_NOTES.md 并推送到 origin/main',
+            recommended: true,
+            reversible: true,
+          },
+          {
+            key: 'B',
+            label: '暂不提交',
+            effect: '保持当前工作区改动不变',
+            recommended: false,
+            reversible: true,
+          },
+        ],
+      },
+    });
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: 'git push' } }),
+      makeRecord('agent.say', {
+        id: 'a_pre',
+        seq: 2,
+        payload: { text: '**查看版本发布说明并生成交互确认卡片。**', model: 'claude-opus-5' },
+      }),
+      makeRecord('tool.result', {
+        id: 't_ask',
+        seq: 3,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 40, body: toolBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 4,
+        payload: {
+          text: '已完成工作区改动分析，请在下方卡片中选择确认方式。',
+          model: 'claude-opus-5',
+        },
+      }),
+    ];
+
+    const resolved = withTurnDecisionCards(turnRecords);
+    // tool.result 已移交卡片，不再原位渲染
+    expect(resolved[2].payload.ui_component_delegated).toBe(true);
+    // 收尾 Stop 消息拿到 ui_component，前置声明不拿
+    expect(resolved[1].payload.ui_component).toBeUndefined();
+    expect(resolved[3].payload.ui_component).toBe(toolBody);
+
+    // talkView 中不再把 tool.result 插到 Stop 消息之前
+    const talk = talkView(turnRecords);
+    expect(talk.map((r) => r.id)).toEqual(['u1', 'a_pre', 'a_stop']);
+
+    // 渲染收尾 Stop 消息时，正文在上、交互卡在下
+    const { container } = render(<RecordCard record={talk[2]} sessionId={SID} />);
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    const fullText = container.textContent ?? '';
+    const stopMsgIdx = fullText.indexOf('请在下方卡片中选择确认方式');
+    const cardIdx = fullText.indexOf('是否按此分组方案提交并推送？');
+    expect(stopMsgIdx).toBeGreaterThanOrEqual(0);
+    expect(cardIdx).toBeGreaterThan(stopMsgIdx);
+  });
+
+  it('frago image 工具输出渲染自适应图片网格，支持挂载到 Stop 消息并点击弹出放大浮窗切换', () => {
+    const gridBody = JSON.stringify({
+      frago_ui_component: 'image-grid',
+      component_type: 'image-grid',
+      data: {
+        type: 'image-grid',
+        title: '宣传配图定稿（2 张）',
+        images: [
+          {
+            src: '/api/file?disposition=inline&path=%2FUsers%2Ffrago%2Fpromo-1.png',
+            raw: '/Users/frago/promo-1.png',
+            name: 'promo-1.png',
+            caption: '图 1：本机主视觉海报',
+            source: 'local',
+          },
+          {
+            src: 'https://example.com/promo-2.png',
+            raw: 'https://example.com/promo-2.png',
+            name: 'promo-2.png',
+            caption: '图 2：互联网对比样张',
+            source: 'remote',
+          },
+        ],
+      },
+    });
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '展示刚才生成的配图' } }),
+      makeRecord('tool.result', {
+        id: 't_img',
+        seq: 2,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 30, body: gridBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 3,
+        payload: {
+          text: '两张宣传配图已整理在下方网格中，可点击放大查看。',
+          model: 'claude-opus-5',
+        },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    expect(talk.map((r) => r.id)).toEqual(['u1', 'a_stop']);
+
+    render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.getByTestId('image-grid-card')).toBeTruthy();
+    const layout = screen.getByTestId('image-grid-layout');
+    expect(layout.className).toContain('sm:grid-cols-2');
+
+    const items = screen.getAllByTestId('image-grid-item');
+    expect(items).toHaveLength(2);
+
+    // 点击第一张图弹出放大浮窗
+    fireEvent.click(items[0]);
+    expect(screen.getByTestId('image-grid-viewer')).toBeTruthy();
+    expect(
+      (screen.getByTestId('image-grid-viewer-img') as HTMLImageElement).getAttribute('src')
+    ).toContain('/api/file?disposition=inline&path=%2FUsers%2Ffrago%2Fpromo-1.png');
+
+    // 点击下一张切换到互联网图片
+    fireEvent.click(screen.getByTestId('image-grid-next'));
+    expect(
+      (screen.getByTestId('image-grid-viewer-img') as HTMLImageElement).getAttribute('src')
+    ).toBe('https://example.com/promo-2.png');
+
+    // 关闭浮窗
+    fireEvent.click(screen.getByTestId('image-grid-close'));
+    expect(screen.queryByTestId('image-grid-viewer')).toBeNull();
+  });
+
+  it('当工具已挂载 image-grid 且收尾消息正文又手抄一遍 frago-app 代码块时，只渲染一张卡片且正文不残留代码块', () => {
+    const gridBody = JSON.stringify({
+      frago_ui_component: 'image-grid',
+      component_type: 'image-grid',
+      data: {
+        type: 'image-grid',
+        title: 'Timeline 底部会话条遮挡修复前后对比',
+        columns: 2,
+        images: [
+          {
+            src: '/api/file?disposition=inline&path=%2Ftmp%2Fbefore.png',
+            raw: '/tmp/before.png',
+            name: 'before.png',
+            caption: '修复前',
+            source: 'local',
+          },
+          {
+            src: '/api/file?disposition=inline&path=%2Ftmp%2Fafter.png',
+            raw: '/tmp/after.png',
+            name: 'after.png',
+            caption: '修复后',
+            source: 'local',
+          },
+        ],
+      },
+    });
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '检查底部遮挡' } }),
+      makeRecord('tool.result', {
+        id: 't_img',
+        seq: 2,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 30, body: gridBody },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 3,
+        payload: {
+          text: `已修复时间轴底部遮挡。\n\n\`\`\`frago-app\n${gridBody}\n\`\`\``,
+          model: 'gemini-4-argon-medium',
+        },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    const { container } = render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.getAllByTestId('image-grid-card')).toHaveLength(1);
+    expect(container.textContent).not.toContain('frago_ui_component');
   });
 });

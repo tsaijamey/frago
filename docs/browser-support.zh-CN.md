@@ -5,7 +5,7 @@
 frago 通过两个后端驱动基于 Chromium 的浏览器：
 
 - **extension（默认）** — 浏览器扩展 + native messaging 桥，驱动浏览器**自己的真实 profile**。无需任何 flag，是所有页面操作的标准路径。
-- **cdp** — Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。默认后端做不到时的降级路线：真无头、需要与常驻浏览器互不干扰的独立实例、`--void` / `--app` / `--profile-dir` 这类启动形态。CDP 端口是白名单制：**9222**（默认）与 **9223**（agent_os 录制机位）。
+- **cdp** — Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。默认后端做不到时的降级路线：真无头、需要与常驻浏览器互不干扰的独立实例、`--headless` / `--app` / `--profile-dir` 这类启动形态。CDP 端口是白名单制：**9222**（默认）与 **9223**（agent_os 录制机位）。
 
 优先级固定为 **默认 extension > `-b cdp` > 自起浏览器进程（禁止）**。`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP 一律不在选项里——无头与独立实例的需求由 `-b cdp` 覆盖。
 
@@ -15,26 +15,30 @@ frago 通过两个后端驱动基于 Chromium 的浏览器：
 
 | 浏览器 | 支持状态 | 说明 |
 |--------|----------|------|
-| **Edge** | ✅ 默认 | 装有即优先选择（Stable > Beta > Dev） |
+| **Chrome for Testing** | ✅ 默认 | frago 自己下载到 `~/.frago/tools/chrome-for-testing/`，缺了就现取 |
+| **Edge** | ✅ | Stable > Beta > Dev；frago 自己没有 CfT 时才轮到它 |
 | **Chromium** | ✅ | 开源基础版 |
 | **Chrome** | ✅（非 Stable） | Beta/Dev/Canary；Stable 被排除（v137+ 静默忽略 `--load-extension`） |
 | **Brave / Vivaldi** | ✅ | 同样可自动探测 |
 | **Firefox** | ❌ 不支持 | Firefox 141 (2025) 已移除 CDP |
 | **Safari** | ❌ 不支持 | 无 CDP 支持 |
 
-选择器按固定顺序取第一个已安装：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi。
+选择器按固定顺序取第一个已安装：Chrome for Testing → Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi。CfT 之后都是用户自己装的浏览器，只在 frago 没有自己那份 CfT 时才轮到——这种情况下 `start` 会先去取 CfT，取不到才退回这串。`-b cdp` 另有一套更短的顺序：Edge → Chromium → Chrome，那边 CfT 只能按名字点到（`--browser cft`）。
 
-**`--browser` 在不同后端下含义不同。** extension 后端下它不换浏览器——只改 profile 目录指向；`-b cdp` 下它是真的换浏览器，profile 路径跟着走（`--browser chrome` → `~/.frago/profiles/chrome/9222/`）。frago 自己只有在 agent_os 舞台拉起演员与机位时才显式钉 `--browser edge`；其余场合都让选择器自动挑。
+**`--browser` 属于 CDP 后端。** 默认 extension 后端下它被直接拒绝：它换不了启动的是哪个可执行文件（选择器说了算），能做的只是把 profile 目录指到另一个品牌、拿一个浏览器去开另一个浏览器的 profile——`--browser chrome` 最糟，那是人日常在用的那个 Chrome。`-b cdp` 下它是真的换浏览器，认 `chrome` / `edge` / `chromium` / `cft`，profile 路径跟着走（`--browser chrome` → `~/.frago/profiles/chrome/9222/`）。frago 自己只在一处钉它：agent_os 舞台拉起演员与机位时传 `cft`。其余场合都让选择器自动挑。
 
 ## 浏览器探测
 
 ```bash
-# 列出已装浏览器及 frago 会选谁
+# 已装浏览器及其路径。它的 "default" 那一行走的是 CDP 顺序
+#（Edge → Chromium → Chrome），不是 start 会挑的那个
 frago browser detect
 
-# 各浏览器能力 + 运行状态
+# 各浏览器支持哪个后端、是否正在运行，以及 start 实际会挑谁（含 CfT）
 frago browser check
 ```
+
+`detect` 还有第二重含义：带 `--group` 时改为探测该 group 当前页是否反爬挑战（仅扩展后端），见「反爬」。
 
 ## 浏览器生命周期
 
@@ -47,22 +51,32 @@ frago browser status
 
 # 关闭浏览器 + daemon + socket
 frago browser stop
+
+# 提前取 frago 自己的浏览器 CfT，或加 --force 升级
+frago browser install
 ```
 
-`start` 一条命令完成全链路：选浏览器 → 拉起 native messaging daemon → 写 manifest → 带扩展启动浏览器 → 等待桥握手。无需任何手工准备。
+`start` 一条命令完成全链路：没有 CfT 就先取一份 → 选浏览器 → 拉起 native messaging daemon → 写 manifest → 带扩展启动浏览器 → 等待桥握手。无需任何手工准备。
 
-浏览器运行在**自己的默认 profile** 上（agent 可见其中登录态、密码、cookie，反之亦然）。同一 profile 同时只能有一个实例——start 撞锁会报错并提示先 stop。
+浏览器运行在**自己的默认 profile** 上（agent 可见其中登录态、密码、cookie，反之亦然）。CfT 没有厂商给的 profile 可用，frago 就给它一个：`~/.frago/profiles/cft/extension/`——仍然是同一个真实 profile，不拷贝、不分叉。同一 profile 同时只能有一个实例——start 撞锁会报错并提示先 stop。
 
 ### CDP 后端的启动选项
 
-`--headless`、`--void`、`--app/--app-url`、`--width`、`--height`、`--port`、`--profile-dir`、`--no-kill`、`--keep-alive`、`--reseed-profile` 都是 **CDP 后端选项**。默认 extension 后端下会被静默丢弃。要用它们必须显式选 CDP：
+`--headless`、`--width`、`--height`、`--window-x`、`--window-y`、`--port`、`--profile-dir`、`--no-kill`、`--keep-alive` 都是 **CDP 后端选项**。默认 extension 后端下会被静默丢弃。要用它们必须显式选 CDP：
 
 ```bash
 frago browser -b cdp start --headless          # 无头 CDP 实例（9222 端口）
-frago browser -b cdp start --void --keep-alive # 移出屏幕、保持运行
+frago browser -b cdp start --keep-alive        # 起完不退出，保持运行
 ```
 
-CDP 端口白名单只有 **9222**（默认）与 **9223**（agent_os 录制机位），传别的值会被拒绝，禁止自创端口。**9222 是公用的**：虚拟桌面舞台在跑时，它的演员就住在这台实例上，为的是复用播种来的登录 profile——而 `-b cdp start` 默认会顶掉端口上已有的实例（除非加 `--no-kill`）。起之前先 `frago desktop status` 看舞台在不在跑（见 `frago book browser-backend-choice`）。
+这组选项有两条附带说明：
+
+- **`--void` 已经移除**（2026-08-23）。它做的事只是把窗口挪到 -32000,-32000：macOS 只对进程开的第一个窗口认这个位置，之后的都不认，窗口还是回到屏幕上——这个 flag 承诺的是「看不见的浏览器」，实际没做到，而且从来没有过另一条渲染路径。现在传它会直接报错并说明原因；要无窗口用 `--headless`（无窗口、没有 WebGL），要真实 GPU/WebGL 就不加 flag 开普通窗口。
+- **`--reseed-profile` 已废弃并被忽略**：默认后端驱动的就是浏览器自己的 profile，没有东西可重新播种。
+
+`--app` / `--app-url` 是例外——**两个后端都认**，浏览器会把那个页面开成无边框应用窗口，而不是一个空白标签。
+
+CDP 端口白名单只有 **9222**（默认）与 **9223**（agent_os 录制机位），传别的值会被拒绝，禁止自创端口。**9222 是公用的**：虚拟桌面舞台在跑时，它的演员就住在这台实例上，用的是同一份 `~/.frago/profiles/cft/9222/` profile——而 `-b cdp start` 默认会顶掉端口上已有的实例（除非加 `--no-kill`）。起之前先 `frago desktop status` 看舞台在不在跑（见 `frago book browser-backend-choice`）。
 
 ## Tab 组
 
@@ -108,6 +122,8 @@ frago browser navigate https://example.com --group research --wait-for '.content
 frago browser wait --group research 2
 ```
 
+`--wait-for` 只有 CDP 后端认。默认后端在标签报出加载完成时就返回，选择器等待被丢掉——页面需要先有那个元素，就自己用 `exec-js ... --return-value` 轮询。
+
 ### 元素交互
 
 ```bash
@@ -140,6 +156,8 @@ frago browser screenshot --group research output.png
 # 整页截图
 frago browser screenshot --group research page.png --full-page --quality 90
 ```
+
+`--full-page` 与 `--quality` 同样只有 CDP 后端认：默认后端一律抓当前视口、存成 PNG，两个参数都被忽略。
 
 ### 滚动
 
@@ -198,8 +216,8 @@ frago browser clear-effects --group research
 
 ## Profile 管理
 
-- **extension 后端** — 用浏览器自己的默认 profile。frago 不拷贝、不隔离、不清理。
-- **cdp 后端** — 每个浏览器每个端口一个独立 profile：`~/.frago/profiles/<浏览器>/<端口>/`（如 `~/.frago/profiles/edge/9222`），从系统浏览器 profile 初始化。路径里端口始终显式。
+- **extension 后端** — 用浏览器自己的默认 profile。frago 不拷贝、不隔离、不清理。CfT 是唯一没有厂商 profile 的浏览器：frago 把它那份放在 `~/.frago/profiles/cft/extension/`。
+- **cdp 后端** — 每个浏览器每个端口一个独立 profile：`~/.frago/profiles/<浏览器>/<端口>/`（如 `~/.frago/profiles/edge/9222`），首次启动从该浏览器的系统 profile 整棵拷贝播种，之后不再动。路径里端口始终显式。CfT 没有系统 profile 可播种，`~/.frago/profiles/cft/<端口>/` 从空开始，登录态进去一次就留在那儿。
 
 ```bash
 # CDP 实例用自定义 profile（端口仍是 9222）
@@ -212,11 +230,17 @@ frago browser -b cdp start --profile-dir /path/to/custom/profile
 浏览器标签页、一张本地图片），供 `agent_os` 配方录制回放。舞台在跑时，
 两个 CDP 端口都归它：
 
-- **9222** — 舞台**演员**：一台无头 Edge，profile 从你真实的 Edge 登录态
-  播种而来。它和独立 `frago browser -b cdp start` 会瞄准的是同一台实例，
-  所以舞台在跑时不要起、也不要停 CDP 实例。
-- **9223** — **机位**：`camera up`（或 `rec start` 自动架机位）时创建，
-  `rec stop` / `camera down` 时整台收走。
+- **9222** — 舞台**演员**：一台无头 Chrome for Testing，用的是
+  `~/.frago/profiles/cft/9222/` 这份 profile——frago 自己的，不从任何人的
+  Edge 或 Chrome 播种。它和独立 `frago browser -b cdp start` 瞄准的是同一台
+  实例，所以舞台在跑时不要起、也不要停 CDP 实例。
+- **9223** — **机位**：同样是 Chrome for Testing，`camera up`（或 `rec start`
+  自动架机位）时创建，`rec stop` / `camera down` 时整台收走。
+
+两台都只用 Chrome for Testing，别的都不碰。本机没有 CfT 时舞台当场去取一份；
+取不到舞台就起不来，而不是退回去占人日常用的 Edge 或 Chrome。起这对无头实例
+之前，舞台还会先开一个有头 CfT 窗口（走扩展后端的应用窗口）：macOS 把图标点
+击交给同一个应用里最先登记的那个实例，先起无头的话，人点图标什么都不出现。
 
 动手前先 `frago desktop status`。完整用法见 `frago book desktop-usage`。
 
@@ -234,17 +258,22 @@ frago browser detect --group research
 
 ### Linux
 
-- Wayland 会话下 void 模式自动走 XWayland。
-- root 用户自动禁用 sandbox（`--no-sandbox`）。
+- root 用户下自动禁用 sandbox（`--no-sandbox`）；Ubuntu 23.10+ 上 AppArmor 拦下
+  没有 AppArmor profile 的二进制做非特权 user namespace 时也一样——`~/.frago/tools/`
+  下解压的 CfT 就是这种情况。`FRAGO_NO_SANDBOX=1` 可以强制。
+- CfT 可能缺系统库（如 `libnss3`、`libatk-1.0-0`），桌面版装过浏览器的一般都有。
+  缺了的时候取 CfT 会报出缺哪个库、补装命令是什么；补装要 sudo，frago 不替人做。
 
 ### Windows
 
 - 浏览器探测含注册表查询，可发现非常规安装路径。
-- Windows 10/11 预装 Edge。
+- Windows 10/11 预装 Edge，CfT 取不到时它是第一个退路。
 
 ### macOS
 
 - 浏览器在 `/Applications/` 中探测。
+- CfT 不在 `/Applications/` 里——它在 `~/.frago/tools/chrome-for-testing/` 下，
+  也不注册成系统浏览器。
 - Edge 可能需要手动安装。
 
 ## 故障排查
@@ -252,9 +281,12 @@ frago browser detect --group research
 ### 找不到浏览器
 
 ```bash
-# 查看可用浏览器与 frago 会选谁
-frago browser detect
+# start 会挑谁，还装了别的什么
 frago browser check
+frago browser detect
+
+# 本机还没有 CfT——把 frago 自己那份取回来
+frago browser install
 
 # 确认浏览器可执行文件在 PATH 中
 which microsoft-edge
@@ -288,7 +320,8 @@ frago browser -b cdp start
 
 ### 权限被拒（Linux）
 
-root 运行需禁用 sandbox——frago 会自动处理，也可显式设置：
+root 运行，或在内核/AppArmor 拦下没有 profile 的二进制做非特权 user namespace
+的机器上运行，都需要禁用 sandbox——frago 两种情况都自动处理，也可以强制：
 
 ```bash
 export FRAGO_NO_SANDBOX=1

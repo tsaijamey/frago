@@ -28,6 +28,7 @@ import SelectionQuote, {
   findMarkRange,
   markAnchor,
 } from '../SelectionQuote';
+import { useDataStore } from '@/stores/dataStore';
 import i18n from '@/i18n';
 
 beforeAll(async () => {
@@ -454,6 +455,65 @@ describe('分支按钮', () => {
       fireEvent.keyDown(screen.getByTestId('selection-branch-input'), { key: 'Escape' });
     });
     expect(onBranch).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('浮窗内敲 / 弹出技能菜单：挑中 skill 后随分支一并交出，单挑 skill 不写字也能起分支', () => {
+    useDataStore.setState({
+      skills: [
+        {
+          name: 'frago-twitter-update',
+          description: '撰写并制作 frago 日常更新推文',
+          icon: null,
+          file_path: '/p/frago-twitter-update/SKILL.md',
+        },
+      ],
+    });
+    const { container, onBranch } = mountBodies();
+    pick(container, 0, 0, 7);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    const input = screen.getByTestId('selection-branch-input') as HTMLTextAreaElement;
+    // 浮窗复用 PromptComposerBox：敲 /frago 弹出 SkillMenu
+    act(() => {
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: '/frago', selectionStart: 6 } });
+    });
+    expect(screen.getByTestId('skill-menu')).toBeTruthy();
+
+    // 菜单开着时按 Esc 只关菜单，不关浮窗
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+    });
+    expect(screen.queryByTestId('skill-menu')).toBeNull();
+    expect(screen.getByTestId('selection-branch-note')).toBeTruthy();
+
+    // 重新敲 /frago 并按 Enter 挑中 skill，转为顶部 SkillQuote 签
+    act(() => {
+      fireEvent.change(input, { target: { value: '/frago ', selectionStart: 7 } });
+      fireEvent.change(input, { target: { value: '/frago', selectionStart: 6 } });
+    });
+    expect(screen.getByTestId('skill-menu')).toBeTruthy();
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+    expect(screen.getByTestId('selection-branch-skills')).toBeTruthy();
+    expect(input.value).toBe('');
+
+    // 不写额外文字、只靠挑中的 skill 也能直接 Cmd+Enter 提交分支
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
+    });
+    expect(onBranch).toHaveBeenCalledWith(
+      { record_id: 'r1', text: '配方 A 跑完', occurrence: 0 },
+      '',
+      {
+        images: [],
+        documents: [],
+        skills: ['frago-twitter-update'],
+      }
+    );
     expect(screen.queryByTestId('selection-quote')).toBeNull();
   });
 

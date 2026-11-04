@@ -8,14 +8,49 @@ services:
     image: frago-support-env:py313
     platform: linux/amd64
     container_name: frago-support-linux
+    ports:
+      - "127.0.0.1:8094:8094"
     environment:
       - HOME=/root/frago-linux-home
       - PYTHONPATH=/workspace/src
       - FRAGO_TEST_TARGET=linux
     volumes:
       - ..:/workspace:ro
-    command: >
-      sh -c "mkdir -p $$HOME && python3 /workspace/docker/verify_env.py --expect linux"
+    command:
+      - python3
+      - -c
+      - |
+        import asyncio, os, threading
+        from pathlib import Path
+        from frago.server.runner import run_server
+
+        Path(os.environ["HOME"]).mkdir(parents=True, exist_ok=True)
+
+        async def pipe(r, w):
+            try:
+                while data := await r.read(65536):
+                    w.write(data)
+                    await w.drain()
+            except Exception:
+                pass
+            finally:
+                w.close()
+
+        async def handle(cr, cw):
+            try:
+                sr, sw = await asyncio.open_connection("127.0.0.1", 8093)
+            except Exception:
+                cw.close()
+                return
+            await asyncio.gather(pipe(cr, sw), pipe(sr, cw))
+
+        async def forwarder():
+            srv = await asyncio.start_server(handle, "0.0.0.0", 8094)
+            async with srv:
+                await srv.serve_forever()
+
+        threading.Thread(target=lambda: asyncio.run(forwarder()), daemon=True).start()
+        run_server(host="127.0.0.1", port=8093, auto_open=False, auto_port=False, reload=False)
 
   wsl2:
     image: frago-support-env:py313

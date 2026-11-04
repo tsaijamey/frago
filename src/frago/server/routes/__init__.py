@@ -15,6 +15,8 @@ This package contains FastAPI routers for different API domains:
 - viewer: Content preview file serving
 - app_pages: Recipe UIs at /app/<recipe-name>, served from the recipe's own assets/
 - guide: Tutorial and FAQ content
+- employees: Employee posts (~/.frago/employees/) and the business context a new
+  conversation starts with
 """
 
 from frago.server.routes.agent import router as agent_router
@@ -23,6 +25,7 @@ from frago.server.routes.browser_dashboard import router as browser_dashboard_ro
 from frago.server.routes.claude_sessions import router as claude_sessions_router
 from frago.server.routes.config import router as config_router
 from frago.server.routes.data_repo import router as data_repo_router
+from frago.server.routes.employees import router as employees_router
 from frago.server.routes.files import router as files_router
 from frago.server.routes.github_star import router as github_star_router
 from frago.server.routes.guide import router as guide_router
@@ -42,6 +45,7 @@ __all__ = [
     "agent_router",
     "config_router",
     "data_repo_router",
+    "employees_router",
     "skills_router",
     "settings_router",
     "github_star_router",

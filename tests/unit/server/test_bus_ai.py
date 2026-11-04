@@ -182,3 +182,35 @@ def test_recipe_ask_ai_parses_json_and_classifies_failures(monkeypatch: pytest.M
         r.ask_ai("give json", response_json=True)
     assert exc_info2.value.detail["kind"] == "transient"
     assert exc_info2.value.detail["status"] == "timeout"
+
+
+def test_contract_read_source_flags_ask_ai_without_declaration():
+    """``read_source`` reports a problem when ``self.ask_ai(...)`` is called without ``ai = True``."""
+    from frago.recipes.contract import read_source
+
+    missing_decl = """
+from frago_recipe import Recipe
+
+class UndeclaredAi(Recipe):
+    name = "undeclared_ai"
+
+    def mode_run(self):
+        return {"text": self.ask_ai("你好")}
+"""
+    surface_missing = read_source(missing_decl)
+    assert surface_missing is not None
+    assert any("ai = True" in p for p in surface_missing.problems)
+
+    declared = """
+from frago_recipe import Recipe
+
+class DeclaredAi(Recipe):
+    name = "declared_ai"
+    ai = True
+
+    def mode_run(self):
+        return {"text": self.ask_ai("你好")}
+"""
+    surface_declared = read_source(declared)
+    assert surface_declared is not None
+    assert surface_declared.problems == ()

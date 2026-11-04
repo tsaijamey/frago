@@ -50,19 +50,20 @@ beforeAll(async () => {
 });
 
 describe('PromptCapabilitySettings', () => {
-  it('no longer renders the standalone intro paragraph', async () => {
+  it('renders only the LightAgent card without the standalone intro or Static rules card', async () => {
     const { container } = await renderWith('enabled');
     expect(container.querySelector('.settings-cap-intro')).toBeNull();
-    expect(screen.getByText(/42 rules matching/)).toBeTruthy();
+    expect(screen.queryByText('Static rules')).toBeNull();
+    expect(container.querySelectorAll('.settings-cap-card')).toHaveLength(1);
   });
 
-  it('shows a dot instead of a check icon on the Running badge, and sets the model in bold', async () => {
+  it('shows a dot instead of a check icon on the Running badge, and sets model and profile in bold', async () => {
     const { container } = await renderWith('enabled');
     const badge = screen.getByText('Running').closest('.settings-cap-badge');
     expect(badge?.querySelector('.settings-cap-dot')).not.toBeNull();
     expect(badge?.querySelector('svg')).toBeNull();
-    const bold = container.querySelector('.settings-cap-body b');
-    expect(bold?.textContent).toBe('deepseek-v4-flash');
+    const bolds = [...container.querySelectorAll('.settings-cap-body b')].map((b) => b.textContent);
+    expect(bolds).toEqual(['deepseek-v4-flash', 'DeepSeek']);
   });
 
   it('names the stored field as inline code in the switch description', async () => {

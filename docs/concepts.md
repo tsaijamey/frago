@@ -62,7 +62,7 @@ The frago package ships no recipes of its own.
 atomic/system/<name>/      # Python / shell recipes
 ├── recipe.md              # Metadata (YAML frontmatter)
 └── recipe.py              # Execution script
-atomic/browser/<name>/     # Chrome-js recipes (browser automation)
+atomic/chrome/<name>/      # Chrome-js recipes (browser automation)
 └── recipe.js
 workflows/<name>/          # Orchestrated workflows
 └── recipe.py
@@ -74,10 +74,13 @@ workflows/<name>/          # Orchestrated workflows
 name: youtube_extract_video_transcript
 type: atomic
 runtime: chrome-js
+version: 1.0
 description: "Extract complete transcript text from YouTube videos"
 use_cases:
   - "Batch extract video subtitle content"
   - "Create indexes or summaries for videos"
+output_targets:
+  - stdout
 ---
 ```
 
@@ -122,25 +125,30 @@ frago <domain> save --name=<doc> --data='{"tags":["..."]}' --content='[...]'
 
 ### Prompting (Hint Injection)
 
-frago injects guidance into the agent on every prompt submission, in two
-layers:
+frago injects guidance into the agent as events happen, in two layers:
 
-- **Static rules** — routing rules compiled into the `frago-core` binary,
-  combined with user rules in `~/.frago/hook-rules.json`. They match events
-  in milliseconds, need no configuration, and are always in effect. Manage
-  them with `frago hook-rules`.
-- **LightAgent** — the last few turns of the conversation, together with
-  the rule/book/domain indexes, are sent to a cheap model; its one-line
-  verdict is injected back. This layer only exists once a model profile is
-  configured. The switch lives in `~/.frago/config.json` →
-  `hook_review.enabled` (missing section = on), with `FRAGO_REVIEW=off` as a
-  session-scoped override. The settings page shows both layers' live state.
+- **Static rules** — routing rules that ship as data in
+  `~/.frago/hook/builtin-rules.json`, layered with the user rules in
+  `~/.frago/hook-rules.json`. Nothing is compiled into the binary, so editing
+  either file takes effect on the next event. They match events in
+  milliseconds, need no configuration, and are always in effect. Manage them
+  with `frago hook-rules`.
+- **LightAgent** — judges three moments: before a prompt is submitted (which
+  guidance to inject), at the end of a turn (whether the work is really
+  finished), and before a veto (double-checking it). The last few turns of the
+  conversation plus the rule/book/domain indexes go to a cheap model, and its
+  one-line verdict comes back. Its instructions live in
+  `~/.frago/hook/prompt.md`, `stop.md` and `veto.md`. This layer only exists
+  once a model profile is configured. The switch lives in
+  `~/.frago/config.json` → `hook_review.enabled` (missing section = on), with
+  `FRAGO_REVIEW=off` as a session-scoped override. The settings page shows
+  both layers' live state.
 
 ---
 
 ## frago's Contribution
 
-frago is an agent OS — an operating system for AI agents. It provides the runtime, resource management, and interface layer that lets agents operate a computer on behalf of users. The concepts above (Recipe, Run, Session) are the core resources that frago manages, just as files, processes, and sockets are resources managed by a traditional OS.
+frago is an agent OS — an operating system for AI agents. It provides the runtime, resource management, and interface layer that lets agents operate a computer on behalf of users. The concepts above (Recipe, knowledge domain, Session) are the core resources that frago manages, just as files, processes, and sockets are resources managed by a traditional OS.
 
 ### Linking Skill and Recipe
 
@@ -216,14 +224,15 @@ frago recipe validate + run           check it while the context is still fresh
 **Structure**:
 ```
 ~/.frago/sessions/claude/abc123/
-├── metadata.json    # Session metadata (project, time, status)
-├── steps.jsonl      # Execution steps (messages, tool calls)
+├── raw.jsonl        # Verbatim transcript, mirrored from the agent's own record
+├── metadata.json    # Session metadata (project, time, status); monitored sessions only
+├── steps.jsonl      # Processed step copy with tool results trimmed (older sessions)
 └── summary.json     # Session summary (statistics)
 ```
 
 **Characteristics**:
 - Real-time monitoring via file system watching
-- Monitors multiple agent types — Claude Code, opencode, Cursor, Cline —
+- Monitors multiple agent types — Claude Code, codex, opencode, agy —
   normalized into one record format
 - Enables post-hoc analysis of agent behavior
 
@@ -232,7 +241,7 @@ frago recipe validate + run           check it while the context is still fresh
 ## Summary
 
 - **Skill** (Claude Code): Methodology, tells AI how to do things
-- **Recipe** (frago): Recipe, specific execution steps
-- **Run** (frago): Task instance, records exploration process
+- **Recipe** (frago): Executable automation with metadata, runs without the model
+- **Knowledge domain** (frago): Where what was learned is saved and searched
 - **Session** (frago): Agent session, real-time execution monitoring
 - **frago** (agent OS): Provides runtime, resource management, environment sync, and GUI — the operating system layer that makes all the above concepts work together

@@ -50,8 +50,8 @@ function failResponse(detail: string) {
 }
 
 /** 出门那一份请求的 body。 */
-function sentBody(fetchMock: ReturnType<typeof vi.fn>) {
-  return JSON.parse(String(fetchMock.mock.calls[0][1].body)) as {
+function sentBody(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0) {
+  return JSON.parse(String(fetchMock.mock.calls[callIndex][1].body)) as {
     text: string;
     images: string[];
     documents: { name: string; data: string }[];
@@ -230,12 +230,12 @@ describe('Composer 输入区', () => {
     expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${CODEX_SID}/send`);
   });
 
-  it('输入框的占位话写明这一场是哪一家', () => {
+  it('输入框的占位话写明这一场是哪一家，且文本字号为 16px 与内容区一致', () => {
     render(<Composer sessionId={CODEX_SID} family="codex" onSent={NOOP} />);
 
-    expect(
-      (screen.getByTestId('composer-input') as HTMLTextAreaElement).placeholder
-    ).toContain('codex');
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    expect(input.placeholder).toContain('codex');
+    expect(input.className).toContain('text-[16px]');
   });
 
   it('一场会话都没选时同样闸死，理由是让人先挑一场', () => {
@@ -469,6 +469,84 @@ describe('服务器重启，等整轮的那条请求断在半路', () => {
       vi.useRealTimers();
     }
   });
+
+  it('会话 A 发起重启后切到会话 B 撰写 prompt，服务重启断开 A 的连接并过完 20 秒核对窗：绝不污染 B，在 B 点发送只发 B 自己的草稿', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let dropSessionA: (() => void) | null = null;
+      const calls: Array<{ url: string; body: { text: string } }> = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          const body = JSON.parse(String(init?.body ?? '{}')) as { text: string };
+          calls.push({ url, body });
+          if (url.includes('/sessions/session-a/send')) {
+            return new Promise<Response>((_, reject) => {
+              dropSessionA = () => reject(new TypeError('Failed to fetch'));
+            });
+          }
+          return Promise.resolve(okResponse());
+        })
+      );
+
+      const onSendFailed = vi.fn();
+      const { rerender } = render(
+        <Composer
+          sessionId="session-a"
+          family="claude-code"
+          onSent={NOOP}
+          onSendFailed={onSendFailed}
+          deliveredAt={null}
+          answer={{
+            text: '【answer】A · 立即重启 8093 服务生效 —— 执行 uv run frago server restart',
+            at: 1,
+          }}
+        />
+      );
+      await waitFor(() => expect(calls).toHaveLength(1));
+      expect(calls[0].url).toContain('/sessions/session-a/send');
+
+      // 用户切到会话 B 并开始撰写新 prompt（此时会话 A 的请求仍在飞）
+      rerender(
+        <Composer
+          sessionId="session-b"
+          family="claude-code"
+          onSent={NOOP}
+          onSendFailed={onSendFailed}
+          deliveredAt={null}
+          answer={null}
+        />
+      );
+      const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: '我在会话 B 里撰写的 prompt' } });
+
+      // 会话 A 触发了 8093 重启，导致刚才挂着的 session-a 请求断连
+      await act(async () => {
+        dropSessionA?.();
+        await Promise.resolve();
+      });
+
+      // 跑满 20 秒核对窗
+      await act(async () => {
+        vi.advanceTimersByTime(CONFIRM_WINDOW_MS + 1000);
+      });
+
+      // 会话 B 不得出现报错条、不得暂存 A 的失败单，输入框里的草稿完好无损
+      expect(screen.queryByTestId('composer-error')).toBeNull();
+      expect(screen.queryByTestId('composer-kept')).toBeNull();
+      expect(input.value).toBe('我在会话 B 里撰写的 prompt');
+      expect(onSendFailed).not.toHaveBeenCalled();
+
+      // 用户在会话 B 点发送，发出去的必须是会话 B 自己的草稿，绝不是会话 A 的【answer】
+      fireEvent.click(screen.getByTestId('composer-send'));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].url).toContain('/sessions/session-b/send');
+      expect(calls[1].body.text).toBe('我在会话 B 里撰写的 prompt');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('待发的气泡：与记录流里的「你说」同一种画法', () => {
@@ -683,11 +761,11 @@ describe('Composer 小人的走法', () => {
 });
 
 describe('交接到新会话', () => {
-  it('上下文不到三十万时置灰，悬停说明还差多少', () => {
+  it('上下文不到十八万时置灰，悬停说明还差多少', () => {
     render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={120_000} onHandoff={NOOP} />);
     const btn = screen.getByTestId('composer-handoff');
     expect((btn as HTMLButtonElement).disabled).toBe(true);
-    expect(btn.getAttribute('title')).toBe('上下文到 300k 才需要换场（现在 120k）');
+    expect(btn.getAttribute('title')).toBe('上下文到 180k 才需要换场（现在 120k）');
   });
 
   it('还没读到用量刻度时也置灰', () => {
@@ -695,9 +773,9 @@ describe('交接到新会话', () => {
     expect((screen.getByTestId('composer-handoff') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('到了三十万放开，按下去交给页面', () => {
+  it('到了十八万放开，按下去交给页面', () => {
     const onHandoff = vi.fn();
-    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={300_000} onHandoff={onHandoff} />);
+    render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={180_000} onHandoff={onHandoff} />);
     const btn = screen.getByTestId('composer-handoff');
     expect((btn as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(btn);
@@ -767,6 +845,40 @@ describe('决定卡片的答复', () => {
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('框里的字');
     expect(screen.getByTestId('composer-kept').textContent).toBe(i18n.t('workbench.composer.heldForRetry'));
   });
+
+  it('卡片答复失败被暂存（held）且输入框有草稿时：点报错条「重试」重发卡片答复，点输入框「发送」则发框里草稿', async () => {
+    fetchMock.mockImplementationOnce(async () => failResponse('send failed: 暂时失联'));
+    const onSent = vi.fn();
+    const { rerender } = render(
+      <Composer sessionId={SID} family="claude-code" onSent={onSent} onSendStart={() => 'out-9'} />
+    );
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '框里正在写的草稿' } });
+    rerender(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={onSent}
+        onSendStart={() => 'out-9'}
+        answer={{ text: '【answer】B · 先不发 —— 改动留在 main，不打 tag', at: 1 }}
+      />
+    );
+    await waitFor(() => expect(screen.getByTestId('composer-kept')).toBeTruthy());
+
+    // 1. 点报错条「重试」：重发的是暂存的卡片答复，框里草稿不动
+    fetchMock.mockImplementationOnce(async () => failResponse('send failed: 再次失联'));
+    fireEvent.click(screen.getByTestId('composer-retry'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(sentBody(fetchMock, 1).text).toBe('【answer】B · 先不发 —— 改动留在 main，不打 tag');
+    expect(input.value).toBe('框里正在写的草稿');
+
+    // 2. 此时暂存单仍在，用户点右下角绿色「发送」按钮，应当把输入框里的草稿发出去
+    await waitFor(() => expect(screen.getByTestId('composer-kept')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(sentBody(fetchMock, 2).text).toBe('框里正在写的草稿');
+    expect(input.value).toBe('');
+  });
 });
 
 describe('文档批注打包填入输入框', () => {
@@ -794,5 +906,120 @@ describe('文档批注打包填入输入框', () => {
     fireEvent.click(screen.getByTestId('composer-packed-clear'));
     expect(screen.queryByTestId('composer-packed-bar')).toBeNull();
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+describe('Next Task 列表与独立投递按钮', () => {
+  it('会话正在执行（running）时，Send 依然走直接发送（进会话原生队列），Next Task 按钮单独负责停后自动注入', async () => {
+    const onSent = vi.fn();
+    const onEnqueue = vi.fn(async () => ({}));
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running
+        onSent={onSent}
+        onEnqueue={onEnqueue}
+      />
+    );
+
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    // 1. 点 Next Task：进入会话 Next Task 队列，不触发直接 send
+    fireEvent.change(input, { target: { value: '等这轮停了再跑这句' } });
+    expect(screen.getByTestId('composer-send').textContent).toContain('发送');
+    expect(screen.getByTestId('composer-enqueue').textContent).toContain('Next Task');
+    fireEvent.click(screen.getByTestId('composer-enqueue'));
+
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalledTimes(1));
+    expect(onEnqueue).toHaveBeenCalledWith('等这轮停了再跑这句', [], [], []);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onSent).not.toHaveBeenCalled();
+    expect(input.value).toBe('');
+
+    // 2. 点发送（Send）：即使 running 为 true 也照常直接发进当前会话，绝不被 Next Task 替代
+    fireEvent.change(input, { target: { value: '现在直接插话进去' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBody(fetchMock).text).toBe('现在直接插话进去');
+  });
+
+  it('输入区有待发送消息（直接发送请求尚未返回）时，Next Task 按钮不被阻塞，仍可继续追加消息', async () => {
+    let resolveSend: (value: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveSend = resolve;
+        })
+    );
+    const onEnqueue = vi.fn(async () => ({}));
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running
+        onSent={NOOP}
+        onEnqueue={onEnqueue}
+        outbound={[{ id: 'out-pending', text: '正在发往 Agent 的消息', attachments: 0, at: 1, state: 'sent' }]}
+      />
+    );
+
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    // 先点 Send 触发一条尚在路上的待发送消息（sending === true）
+    fireEvent.change(input, { target: { value: '正在发往 Agent 的消息' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+    expect((screen.getByTestId('composer-send') as HTMLButtonElement).disabled).toBe(true);
+
+    // 此时输入区有待发送消息，继续在输入框打字并点击 Next Task 追加到 frago 队列
+    fireEvent.change(input, { target: { value: '追加到 Next Task 队列的新消息' } });
+    const enqueueBtn = screen.getByTestId('composer-enqueue') as HTMLButtonElement;
+    expect(enqueueBtn.disabled).toBe(false);
+    fireEvent.click(enqueueBtn);
+
+    await waitFor(() => expect(onEnqueue).toHaveBeenCalledTimes(1));
+    expect(onEnqueue).toHaveBeenCalledWith('追加到 Next Task 队列的新消息', [], [], []);
+    expect(input.value).toBe('');
+
+    // 收尾释放挂起的发送请求
+    resolveSend(okResponse());
+  });
+
+  it('展示 Next Task 列表、最早标记、交互卡阻断状态并支持删除与移动', () => {
+    const onRemove = vi.fn();
+    const onMove = vi.fn();
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running={false}
+        onSent={NOOP}
+        queueBlockedByCard
+        queueItems={[
+          { id: 'q-1', text: '第一条待注入', skills: ['git-push'], attachments: 1, created_at: 10 },
+          { id: 'q-2', text: '第二条待注入', skills: [], attachments: 0, created_at: 20 },
+        ]}
+        onRemoveQueueItem={onRemove}
+        onMoveQueueItem={onMove}
+      />
+    );
+
+    const queueBox = screen.getByTestId('session-message-queue');
+    expect(queueBox.getAttribute('data-blocked-by-card')).toBe('yes');
+    expect(screen.getByTestId('session-queue-count').textContent).toContain('2');
+    expect(screen.getByTestId('session-queue-status').textContent).toContain('[end, end-5]');
+
+    const items = screen.getAllByTestId('session-queue-item');
+    expect(items).toHaveLength(2);
+    expect(items[0].getAttribute('data-earliest')).toBe('yes');
+    expect(items[0].textContent).toContain('第一条待注入');
+    expect(items[0].textContent).toContain('/git-push');
+    expect(items[1].getAttribute('data-earliest')).toBe('no');
+
+    fireEvent.click(screen.getByTestId('session-queue-down-0'));
+    expect(onMove).toHaveBeenCalledWith('q-1', 'down');
+
+    const deleteButtons = screen.getAllByTestId('session-queue-delete');
+    fireEvent.click(deleteButtons[0]);
+    expect(onRemove).toHaveBeenCalledWith('q-1');
   });
 });

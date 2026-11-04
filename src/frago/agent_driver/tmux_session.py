@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, NoReturn
 
 from frago.agent_driver.driver import (
@@ -261,9 +262,15 @@ class TmuxAgentSession:
         clock: Callable[[], float] = time.monotonic,
         tmux_target: str | None = None,
         tmux_name: str | None = None,
+        origin: Literal["human", "worker"] | None = None,
     ) -> None:
         self.session_id = session_id
         self.driver = driver
+        # 会话出身：WebUI 新建/续接时显式标为 "human"（或由 webui- 把手前缀认出），
+        # 驱动认领编号时据此跳过派活记账，不再靠服务端进程的环境变量猜发起方。
+        self.origin: Literal["human", "worker"] | None = (
+            "human" if origin is None and session_id.startswith("webui-") else origin
+        )
         # 借住模式：agent 跑在一个**别人的、已经存在的** tmux 会话里（典型是虚拟桌面的
         # 终端窗口 ``frago-stage``），而不是自己 new-session 一个。人看着桌面时看到的
         # 就是这个 worker 在干活。借住的会话不归本对象所有：open() 不建、close() 不杀，
@@ -412,6 +419,11 @@ class TmuxAgentSession:
           而块拆得够小、中间停得住，才不会被它当成一次粘贴折叠（见
           :data:`_SEND_TEXT_CHUNK`）。四家 TUI（claude / codex / opencode / agy）
           共用这一处，改这里四家一起改到。
+        - 切块前先把 ``\t`` 展平为 4 个空格：claude TUI 收到整块含 ``\t`` 的输入时，
+          会把 ``\t`` 在缓冲区里展开成 4 个空格，但光标只按原始码点数推进（每含 1 个
+          ``\t`` 光标落后 3 位，块尾 ``3×N`` 个字留在光标右侧，被下一块插队顶到句末）；
+          agy 则把 ``\t`` 当焦点切换键吞掉。切块前统一换成 4 个空格，分块长度与光标推进
+          严格 1:1 对齐。
         - 原生 Windows 上非 ASCII 文本不直接进 argv：移植版客户端会把这类文本按系统
           ANSI 代码页**有损**收窄（见 :class:`TmuxTextEncodingError`），改由文件载体
           送到 agent 手里（见 :meth:`_nonascii_prompt_via_file`），argv 上只留 ASCII。
@@ -426,6 +438,7 @@ class TmuxAgentSession:
             and _ansi_codepage() not in (None, 65001)
         ):
             text = self._nonascii_prompt_via_file(text)
+        text = text.replace("\t", "    ")
         for i in range(0, len(text), self._SEND_TEXT_CHUNK):
             if i:
                 self._sleep(self._SEND_TEXT_PAUSE_S)
@@ -553,6 +566,23 @@ class TmuxAgentSession:
             merged_env.setdefault("FRAGO_SESSION_ID", self._own_listed_id())
         # launch 要看得见最终环境：codex 的 provider 开关由它推出（见 LaunchCtx.env）。
         ctx = dataclasses.replace(ctx, env=dict(merged_env))
+
+        # 兜底：``tmux new-session -c <目录>`` 碰到不存在的目录不报错，静默退回 ``$HOME``
+        # 起会话。对认领型内核来说，会话把工作区记成了 ``$HOME``，认领器却按原目录去比对，
+        # 两边永远对不上，最终只报一句「会话没起来」。上层（工作台新建会话那条接口）已经
+        # 会把这类目录拦下来或建出来，这里再兜一道：持久池预热、命令行直接拉起等不经那条
+        # 接口的路径同样会走到这儿。只建 ``~/.frago`` 下的——那是 frago 自己的地盘；家目录
+        # 外的路径不在这儿凭空造，那种目录该由调用方负责，宁可让它建会话失败得明白。
+        # 只在真驱动本机 tmux 时做：单测塞的 fake runner 没有客户端，也不该有建目录的副作用。
+        if self._native_client and not self.tmux_target:
+            _cwd_path = Path(self.cwd)
+            _frago_root = (Path.home() / ".frago").resolve()
+            _resolved = _cwd_path.resolve()
+            if (
+                _resolved == _frago_root or _frago_root in _resolved.parents
+            ) and not _cwd_path.exists():
+                with contextlib.suppress(OSError):
+                    _cwd_path.mkdir(parents=True, exist_ok=True)
 
         if self.tmux_target:
             self._enter_target(ctx, merged_env)

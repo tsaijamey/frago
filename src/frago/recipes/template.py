@@ -216,6 +216,7 @@ _METHOD = '''{mark}    def mode_{safe}(self) -> dict:
 
         自己的数据走 self.store（落点由平台交代，NEVER 自己拼路径）。
         要别的模块的数据走 self.ask(模块名, mode)，先在 imports 里声明。
+        要问模型拿一段字或 JSON 走 self.ask_ai(提示词, response_json=...)，先在类上写 ai = True。
         跑得久就 self.progress("...")，出了不致命的问题就 self.warn("...")。
         """
         raise self.fail("mode_{safe} 还没写")

@@ -91,10 +91,16 @@
             <span id="addr-spinner" class="spinner"></span>
             <span id="addr-url" class="addr-url"></span>
           </div>
+          <div class="browser-human-controls" id="browser-human-controls">
+            <button type="button" class="bh-btn" id="browser-takeover-btn" title="在虚拟窗格内直接点击、滚轮、打字与粘贴（Cmd/Ctrl+V）">人工接管</button>
+            <button type="button" class="bh-btn bh-headful" id="browser-headful-btn" title="弹出共用同一份登录态目录的真实浏览器窗口（用于过 Cloudflare 验证或扫码），关窗后自动带回登录态">弹出真窗过检</button>
+          </div>
         </div>
       </div>
       <div class="win-body browser-body">
         <canvas id="browser-canvas"></canvas>
+        <input id="browser-ime-input" class="browser-ime-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+        <div id="browser-takeover-banner" class="browser-takeover-banner" hidden></div>
         <!-- 演员标签没了就露出这一层。做成浏览器自己的空白起始页而不是错误提示：
              从虚拟桌面的视角，标签被关掉就等于浏览器没开着页面，这是它本来该有的
              样子。留着最后一帧假装画面还在，才是那个会骗人的选项。 -->
@@ -190,19 +196,54 @@
 
     <div id="caption"></div>
 
-    <!-- 人类输入行。默认不存在：这块荧幕是只读显示器，录制时画面里不该有它。
-         地址带 ?userInput=true&session=<会话编号> 时才露出来。人打的字**不进
-         桌面终端**——那毫无意义，终端里跑着的是 worker，人的话该先到导演那里。
-         它发给的是 frago 服务的会话发送接口，排进那场隐藏会话（导演）的队列，
-         由导演决定怎么转达给终端里的 worker。 -->
-    <div id="human-input" hidden>
-      <div class="hi-log" id="hi-log"></div>
-      <div class="hi-row">
-        <span class="hi-tag">追加需求</span>
-        <textarea id="hi-text" rows="1" placeholder="一边看它干活，一边把想到的补充写在这里，回车发送"></textarea>
-        <button type="button" id="hi-send">发送</button>
+    <!-- 右下角客服式对话面板（#human-input）。
+         始终位于虚拟桌面右下角（录制机位 ROLE==="camera" 除外）：
+         - 地址带 ?userInput=true&session=<会话编号> 时：默认展开对话面板（#hi-panel），
+           可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
+         - 不带参数时：右下角仍显示图标按钮（#hi-trigger），但默认不展开交互面板。
+         人打的字**不进桌面终端**——桌面终端只是被操作的外设，不是代理角色。人的话先发给
+         frago 服务的会话发送接口，排进主控会话队列；由驻场「主持人」秒级口头确认，
+         再交给「主操作员」与后台「参谋」协商执行。 -->
+    <div id="human-input" class="hi-dock" data-mode="icon">
+      <div class="hi-panel" id="hi-panel" role="dialog" aria-label="导演对话面板" hidden>
+        <div class="hi-head">
+          <span class="hi-head-dot idle" id="hi-dot"></span>
+          <div class="hi-head-info">
+            <div class="hi-head-title">
+              <span class="hi-tag">导演对话 · 追加需求</span>
+              <span class="hi-sid" id="hi-session-tag">只读</span>
+            </div>
+            <div class="hi-head-sub" id="hi-sub">直达主控队列 · 主持人实时应答，主操作员与参谋协同执行</div>
+          </div>
+          <button type="button" class="hi-head-reset" id="hi-reset" title="重置虚拟桌面舞台与当前对话" aria-label="重置舞台">
+            <svg viewBox="0 0 16 16" width="12.5" height="12.5" aria-hidden="true">
+              <path d="M2.5 8a5.5 5.5 0 1 1 1.3 3.55M2.5 4.2v3.6h3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="hi-reset-label">重置</span>
+          </button>
+          <button type="button" class="hi-head-close" id="hi-close" title="收起为右下角图标" aria-label="收起对话面板">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="hi-log hi-msgs" id="hi-log"></div>
+        <div class="hi-foot">
+          <div class="hi-row hi-input-row">
+            <textarea id="hi-text" class="hi-ta" rows="1" placeholder="随时写下补充或修改意见，回车发送"></textarea>
+            <button type="button" id="hi-send" class="hi-send">发送</button>
+          </div>
+          <div class="hi-status" id="hi-status"></div>
+        </div>
       </div>
-      <div class="hi-status" id="hi-status"></div>
+      <button type="button" class="hi-fab" id="hi-trigger" title="导演对话面板">
+        <span class="dot idle" id="hi-fab-dot"></span>
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H6l-3.5 2.5V4.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span id="hi-fab-label">对话</span>
+        <span class="cnt" id="hi-badge" hidden>0</span>
+      </button>
     </div>
 
     <!-- 贴纸栏：电视节目下三分之一那条说明字条。

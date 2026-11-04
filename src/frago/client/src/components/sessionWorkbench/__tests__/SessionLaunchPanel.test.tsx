@@ -34,8 +34,16 @@ describe('新会话启动面板', () => {
     const steps = screen.getAllByTestId('launch-step');
     expect(steps[0].getAttribute('data-state')).toBe('active');
     expect(steps[1].getAttribute('data-state')).toBe('waiting');
+    expect(screen.getByTestId('launch-elapsed').textContent).toBeTruthy();
+    expect(screen.queryByTestId('launch-live-status')).toBeNull();
     // 他刚打的那句话得在——等待期间界面上只有它是他自己的东西。
     expect(screen.getByTestId('launch-first-message').textContent).toBe('把 recipes 目录清一遍');
+    // 顶部镜头栏与会话详情保持完全一致：默认落在「对话」档，且词条已正常翻译（非原始键名）
+    expect(screen.getByTestId('lens-talk').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('lens-all').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('lens-talk').textContent).toContain('对话');
+    expect(screen.getByTestId('lens-all').textContent).toContain('全部');
+    expect(screen.getByTestId('trail-bubble').textContent).toContain('你说');
   });
 
   it('编号有了：第一步打勾，改等它写下第一笔', () => {
@@ -51,12 +59,14 @@ describe('新会话启动面板', () => {
     expect(steps[1].getAttribute('data-state')).toBe('active');
   });
 
-  it('没起来：原因照抄摆出来，由人自己收掉', () => {
+  it('没起来：原因照抄摆出来，由人自己收掉或返回修改', () => {
     const onDismiss = vi.fn();
+    const onBackToEdit = vi.fn();
     render(
       <SessionLaunchPanel
         launch={{ ...BASE, phase: 'failed', error: 'codex 起不来：命令没找到' }}
         onDismiss={onDismiss}
+        onBackToEdit={onBackToEdit}
       />
     );
 
@@ -64,6 +74,10 @@ describe('新会话启动面板', () => {
     // 没起来那一档不摆进度：两步都没走完，画个半截进度只会误导。
     expect(screen.queryAllByTestId('launch-step')).toHaveLength(0);
     expect(screen.getByTestId('launch-first-message').textContent).toBe('把 recipes 目录清一遍');
+    expect(screen.getByTestId('trail-bubble').getAttribute('data-fresh')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('launch-back-to-edit'));
+    expect(onBackToEdit).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByTestId('launch-dismiss'));
     expect(onDismiss).toHaveBeenCalledTimes(1);

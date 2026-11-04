@@ -20,10 +20,15 @@ export function useRecipeAppOpen(): void {
     const data = message.data as { name?: string; slot?: string | null; request_id?: string } | undefined;
     if (!data?.name) return;
 
-    // 这个配方已经开着，就回到已开的那一张，不换地址、不重新载入——那上面可能有人
-    // 还没保存的输入。没开着才按推过来的地址 pin 上。
-    const id = useRecipeAppPins.getState().pin(recipeAppId(data.name, data.slot));
-    usePageStore.getState().switchPage('recipe_app', id);
+    if (data.name === 'agent_os') {
+      // 虚拟桌面常驻在左侧菜单 desktop 项下，直接切过去，不挂到 recipes 的子项里。
+      usePageStore.getState().switchPage('desktop');
+    } else {
+      // 这个配方已经开着，就回到已开的那一张，不换地址、不重新载入——那上面可能有人
+      // 还没保存的输入。没开着才按推过来的地址 pin 上。
+      const id = useRecipeAppPins.getState().pin(recipeAppId(data.name, data.slot));
+      usePageStore.getState().switchPage('recipe_app', id);
+    }
 
     if (data.request_id) {
       ackRecipeAppShow(data.request_id).catch(() => {

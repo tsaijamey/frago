@@ -24,7 +24,7 @@ frago 不绑定某一个 agent。Claude Code / codex / opencode / agy 任一个�
 | 支柱 | 定义 | 对应命令 |
 |---|---|---|
 | 1. 会话伴侣：知道怎么做 | 两层。静态规则按事件精准注入，不用模型；LightAgent 在提交前、收尾时、否决前三处各判一次。book 是被注入的内容 | frago-core、`frago hook-rules`、`frago book`、`~/.frago/hook/*` |
-| 2. 手和眼：在真实环境里操作 | 你登录着的浏览器、一块可录制的桌面、内置交付能力、内容查看 | `frago browser`、`frago desktop`、`frago apps`、`frago view` |
+| 2. 手和眼：在真实环境里操作 | 你登录着的浏览器、一块可录制的桌面、内置交互与交付能力、内容查看 | `frago browser`、`frago desktop`、`frago app`、`frago view` |
 | 3. 记忆与召回：三入口加交接 | 结论层、产物层、过程层各一个入口，外加待办把没做完的事交给下一场 | `frago def` / `frago <域名>`、`frago context`、`frago session search`、`frago todo` |
 | 4. 配方：跑通一次冻成代码 | agent 自己造的工具，确定性、零 token；模块化、可互调、可挂页面、可开放给指定的人、可调度、可守护、可上市场 | `frago recipe`、`frago daemon`、`frago market` |
 | 5. 边界：派活、进件、远程、定时 | agent 与其他 agent、与外界、与另一台机器、与时钟之间的接口 | `frago agent`、`frago channel` / `frago reply`、`frago remote`、`frago schedule` |
@@ -41,9 +41,9 @@ frago 不绑定某一个 agent。Claude Code / codex / opencode / agy 任一个�
 
 定义：agent 动手的地方不是沙盒，是这台机器上真实的浏览器、桌面和文件。浏览器是你已经登录着的那个；桌面是一块可脚本驱动、可录成视频的舞台，窗口里是真 tmux、真标签页；内置交付能力是「输入一段话，产出一件成品」；内容查看负责把 Markdown / PDF / 代码读成你能用的形状。
 
-命令：`frago browser`、`frago desktop`、`frago apps list/use`、`frago view`。
+命令：`frago browser`、`frago desktop`、`frago app list/ask/image/mermaid`、`frago view`。
 
-你怎么用它：与网页有关的一切走 `frago browser`，NEVER 用 WebFetch / WebSearch，NEVER 自起浏览器进程（`frago book must-browser-search`、`browser-usage`）。要演示、录屏走 `frago desktop`，标准路径 status → up → 驱动（`frago book desktop-usage`）。要一件成品先看 `frago apps list` 有没有现成的。
+你怎么用它：与网页有关的一切走 `frago browser`，NEVER 用 WebFetch / WebSearch，NEVER 自起浏览器进程（`frago book must-browser-search`、`browser-usage`）。要演示、录屏走 `frago desktop`，标准路径 status → up → 驱动（`frago book desktop-usage`）。要会话内交互卡片（`ask`）、图片网格展示（`image`）或图表渲染（`mermaid`），走 `frago app`（先看 `frago app list`）。
 
 ### 3. 记忆与召回：三入口加交接
 

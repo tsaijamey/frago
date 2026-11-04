@@ -30,6 +30,9 @@
     ws: null,
     wsOpen: false,
     focus: "term",
+    // 窗口 MRU 层级栈（越靠前 z-index 越高）。避免非焦点的三扇窗全部掉回同一个
+    // z-index: 100 后按 DOM 固定顺序叠放，导致刚看过不久的窗口瞬移到最底层。
+    zOrder: ["term", "browser", "image", "video"],
     // 桌面坐标系下的窗口几何（win 消息的目标值，layout 上报以此为准）
     geom: {
       term: { x: 120, y: 90, w: 900, h: 560 },
@@ -62,10 +65,43 @@
     // base 是"broker 已经从头部丢掉多少行"，lines 的下标加上它才是缓冲区行号，
     // 两边靠这个数对齐。stuck = 视口贴着底：贴底时新输出跟着走（真实终端就是
     // 这样），人一往回滚就松开，否则回看到一半会被新输出拽回底部。
-    term: { base: 0, lines: [], stuck: true, top: 0 }
+    term: { base: 0, lines: [], stuck: true, top: 0 },
+    // 浏览器人工接管与真实窗口过检状态
+    takeover: false,
+    actorHeadless: true,
+    actorSwitching: false,
+    actorModeError: null,
+    // 宿主容器显隐与断线重连退避状态
+    hostVisible: true,
+    reconnectAttempts: 0,
+    reconnectTimer: null
   };
 
   function $(id) { return document.getElementById(id); }
+
+  /* ── 舞台可见性与重绘休眠控制 ──
+     录制机位（ROLE === "camera"）跑在无头浏览器里，恒视为可见，绝不停帧；
+     普通荧幕在标签页最小化（document.hidden）、WebUI 切去其它页面（外层槽位
+     hidden 导致 innerWidth/innerHeight 为 0，或父页发来显隐通知）时视为不可见。
+     动态桌布与底部扫描灯只在「舞台已连上 broker 且页面当前可见」时逐帧重绘；
+     一旦 desktop down（!state.wsOpen）或切离页面，立即停下 requestAnimationFrame
+     循环，避免后台全速空转计算三维噪声与触发全屏高斯模糊合成。 */
+  function isStageVisible() {
+    if (ROLE === "camera") return true;
+    if (!state.hostVisible) return false;
+    if (typeof document !== "undefined" && document.hidden) return false;
+    if (!window.innerWidth || !window.innerHeight) return false;
+    return true;
+  }
+
+  function shouldAnimateStage() {
+    return !!(state.wsOpen && isStageVisible());
+  }
+
+  function wakeStageLoops() {
+    if (els.wakeWallpaper) els.wakeWallpaper();
+    if (els.wakeScanline) els.wakeScanline();
+  }
 
   // 窗口元素按名字取。三扇窗共用同一套定位/焦点/收展逻辑，写死 term/browser
   // 三元会让第三扇窗进来时每个函数都要改一遍，且漏一处就在画面上静静失效。
@@ -89,6 +125,9 @@
     var dw = CONFIG.desktop.w, dh = CONFIG.desktop.h;
     els.stage.style.width = dw + "px";
     els.stage.style.height = dh + "px";
+    // 在 WebUI 切去其它页面（如 sessions）期间，iframe 视口宽高为 0；
+    // 保持上一次有效缩放比，别把 scale 算成 0。
+    if (!window.innerWidth || !window.innerHeight) return;
     var scale = Math.min(window.innerWidth / dw, window.innerHeight / dh);
     els.stage.style.transform =
       "translate(-50%, -50%) scale(" + scale + ")";
@@ -96,6 +135,7 @@
 
   /* ── 时钟 ── */
   function tickClock() {
+    if (!isStageVisible() && els.clock && els.clock.textContent !== "--:--") return;
     var d = new Date();
     var days = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     var hh = String(d.getHours()).padStart(2, "0");
@@ -125,12 +165,25 @@
   // win 可以是 null：桌面上一个程序都没开着时就是这个状态，菜单栏退回 Finder，
   // 三扇窗口谁也不在前台。不接受 null 的话，关掉最后一个程序会让菜单栏一直
   // 挂着那个已经不存在的程序名。
-  function applyFocus(win) {
+  function applyFocus(win, order) {
     if (win && !state.open[win]) openWin(win, 0);  // 点名一个关掉的程序 = 启动它
     if (win && state.minimized[win]) restoreWin(win); // 点名一个收起的窗口 = 召回它
     state.focus = win;
+    if (Array.isArray(order) && order.length) {
+      var nextOrder = order.filter(function (w) { return WINS.indexOf(w) >= 0; });
+      WINS.forEach(function (w) {
+        if (nextOrder.indexOf(w) < 0) nextOrder.push(w);
+      });
+      state.zOrder = nextOrder;
+    } else if (win && WINS.indexOf(win) >= 0) {
+      state.zOrder = [win].concat(state.zOrder.filter(function (w) { return w !== win; }));
+    }
     WINS.forEach(function (w) {
-      winEl(w).classList.toggle("focused", win === w);
+      var el = winEl(w);
+      var idx = state.zOrder.indexOf(w);
+      var z = (win === w) ? 200 : (190 - (idx >= 0 ? idx : WINS.indexOf(w)));
+      el.classList.toggle("focused", win === w);
+      el.style.zIndex = String(z);
       dockEl(w).classList.toggle("active", win === w);
     });
     els.mbApp.textContent = win ? (state.appNames[win] || win) : "Finder";
@@ -813,6 +866,7 @@
     // 字幕在第 8 秒就走会让后半句没字可看。
     if (!speech) life = Math.min(life, CAPTION_MAX_MS);
     line._timer = setTimeout(function () { dropCaption(line); }, life);
+    if (typeof els.onDirectorCaption === "function") els.onDirectorCaption(text);
   }
 
   function liveCaptions() {
@@ -1060,9 +1114,13 @@
         // 会补一条 synced，那时才报，报的才是真的。
         break;
       case "reload":
-        // broker 说这块荧幕的资产过旧了。这是纯显示器，刷新什么都不丢——
-        // 状态全部由 broker 补发。不刷的话它会一直连着、一直被丢弃，
-        // 而自检天天挂一条"有旧标签开着"，人还得自己认出是哪个标签。
+        // broker 说这块荧幕的资产版本与它不符。每个目标版本最多只自动刷新一次
+        // （记在 sessionStorage），避免 broker 未重启或缓存未更新时陷入无限刷新死循环。
+        var reloadKey = "frago_desktop_reloaded_" + String(msg.want || CONFIG.uiVersion || "");
+        try {
+          if (sessionStorage.getItem(reloadKey) === String(CONFIG.uiVersion)) break;
+          sessionStorage.setItem(reloadKey, String(CONFIG.uiVersion));
+        } catch (e) { /* 隐私模式禁 sessionStorage 时忽略 */ }
         location.reload();
         break;
       case "synced":
@@ -1095,7 +1153,7 @@
         clickEffect(msg.phase);
         break;
       case "focus":
-        applyFocus(msg.win);
+        applyFocus(msg.win, msg.order);
         break;
       case "win":
         if (!state.geom[msg.win]) break;
@@ -1157,21 +1215,49 @@
       case "overlay.clear":
         clearOverlay(msg.id);
         break;
+      case "browser.mode":
+        applyBrowserMode(msg);
+        break;
+      case "stage.reset":
+        if (els.onStageReset) els.onStageReset(msg);
+        break;
     }
   }
 
-  /* ── 连接管理：断了每秒重连，画面保持最后状态不动 ── */
+  /* ── 连接管理：断了按可见性退避重连，切回桌面或连上时立即唤醒 ── */
+  function scheduleReconnect() {
+    if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+    state.reconnectAttempts = (state.reconnectAttempts || 0) + 1;
+    // 前 3 次保持 1s 快连；之后若桌面可见退避至 3s，若藏在后台槽位退避至 5s
+    var delay = state.reconnectAttempts <= 3
+      ? 1000
+      : (isStageVisible() ? 3000 : 5000);
+    state.reconnectTimer = setTimeout(function () {
+      state.reconnectTimer = null;
+      connect();
+    }, delay);
+  }
+
   function connect() {
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    if (state.ws && (state.ws.readyState === WebSocket.OPEN ||
+        state.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
     var ws;
     try {
       ws = new WebSocket(CONFIG.brokerWs);
     } catch (e) {
-      setTimeout(connect, 1000);
+      scheduleReconnect();
       return;
     }
     state.ws = ws;
     ws.onopen = function () {
       state.wsOpen = true;
+      state.reconnectAttempts = 0;
       // 每次连上都重新等一遍补发。断线重连时几何其实还是对的，但"对不对"
       // 不该靠这种巧合——统一等 synced，只有一条路，也就只有一种时序。
       state.syncing = true;
@@ -1180,6 +1266,8 @@
       // 只在首次加载时发过一次 ready，broker 重启后就永远等不到——ui_ready
       // 一直是 false，而画面其实好好的。假警报比不报警更糟：报久了就没人看了。
       state.firstFrameSent = false;
+      wakeStageLoops();
+      if (els.syncSessionRecords) els.syncSessionRecords();
       // 第一条消息就自报家门。放在 layout 之前，broker 才能在收到任何几何
       // 之前就知道对面是谁——否则它只能等第一份 layout 到了再判断该不该收，
       // 而 /status 在这段空窗期里说不出连着的是哪块荧幕。
@@ -1195,7 +1283,7 @@
     ws.onmessage = onMessage;
     ws.onclose = function () {
       state.wsOpen = false;
-      setTimeout(connect, 1000);
+      scheduleReconnect();
     };
     ws.onerror = function () { ws.close(); };
   }
@@ -1206,83 +1294,967 @@
      "wheel", "keydown", "keyup", "keypress", "selectstart", "dragstart"
     ].forEach(function (type) {
       window.addEventListener(type, function (e) {
-        // 唯一的例外是人类输入行：它是这块显示器上唯一允许人碰的东西。
-        // 事件落在它里面就放行，别的地方照旧免疫。
+        // 人类输入行：允许人在右下角对话面板输入。
         if (els.humanInput && !els.humanInput.hidden &&
             e.target && els.humanInput.contains(e.target)) return;
-        // 「启用声音」按钮同理：浏览器只认人真的点过一下才肯放声音，拦掉它
-        // 这块荧幕就永远出不了声。
+        // 「启用声音」按钮同理：浏览器只认人真的点过一下才肯放声音。
         if (els.soundUnlock && !els.soundUnlock.hidden &&
             e.target && els.soundUnlock.contains(e.target)) return;
+        // 浏览器工具栏上的「人工接管」与「弹出真窗过检」按钮：始终放行点击。
+        if (els.browserHumanControls && !els.browserHumanControls.hidden &&
+            e.target && els.browserHumanControls.contains(e.target)) return;
+        // 开启「人工接管」时，放行虚拟浏览器画布、标签条及桥接输入框上的键鼠事件。
+        if (state.takeover && ROLE !== "camera") {
+          if (e.target && (e.target === els.canvas || e.target === els.imeInput ||
+              (els.tabStrip && els.tabStrip.contains(e.target)))) {
+            return;
+          }
+          if (type === "keydown" || type === "keyup" || type === "keypress") {
+            return;
+          }
+        }
         e.preventDefault(); e.stopPropagation();
       }, { capture: true, passive: false });
     });
   }
 
-  /* ── 人类输入行 ──
-     只在地址带 ?userInput=true&session=<编号> 时出现。人打的字不进桌面终端
-     ——终端里跑着的是 worker，人的话要先到导演（那场隐藏的会话）那里，由它
-     决定怎么转达。所以这里发的是 frago 服务的会话发送接口，wait:false 表示
-     只排队不等答：导演那一轮可能还要跑几十分钟，输入行等不起。 */
+  /* ── 浏览器双档人工操作：窗格直接透传 + 弹出真窗过检 ── */
+  function syncTakeoverUI() {
+    if (ROLE === "camera") return;
+    var tBtn = els.takeoverBtn,
+        hBtn = els.headfulBtn,
+        banner = els.takeoverBanner;
+    if (tBtn) {
+      tBtn.classList.toggle("active", !!state.takeover);
+      tBtn.textContent = state.takeover ? "退出接管" : "人工接管";
+    }
+    if (els.canvas) {
+      els.canvas.classList.toggle("takeover", !!state.takeover);
+    }
+    if (els.winBrowser) {
+      els.winBrowser.classList.toggle("takeover-active", !!state.takeover);
+    }
+    if (els.vcursor) {
+      els.vcursor.style.opacity = state.takeover ? "0" : "";
+    }
+    if (hBtn) {
+      hBtn.disabled = !!state.actorSwitching;
+      if (state.actorSwitching) {
+        hBtn.classList.remove("active");
+        hBtn.textContent = state.actorHeadless ? "正在切回窗格…" : "正在弹出真窗…";
+      } else if (!state.actorHeadless) {
+        hBtn.classList.add("active");
+        hBtn.textContent = "切回虚拟窗格";
+      } else {
+        hBtn.classList.remove("active");
+        hBtn.textContent = "弹出真窗过检";
+      }
+    }
+    if (banner) {
+      if (state.actorModeError) {
+        banner.hidden = false;
+        banner.classList.remove("headful-mode");
+        banner.textContent = "切换窗口模式失败：" + state.actorModeError;
+      } else if (state.actorSwitching) {
+        banner.hidden = false;
+        banner.classList.toggle("headful-mode", !state.actorHeadless);
+        banner.textContent = state.actorHeadless
+          ? "正在收回真实窗口并恢复虚拟窗格（登录态自动保留）…"
+          : "正在弹出同配置目录的真实浏览器窗口，请稍候…";
+      } else if (!state.actorHeadless) {
+        banner.hidden = false;
+        banner.classList.add("headful-mode");
+        banner.textContent = "已弹出真实浏览器窗口：请在真窗完成验证或登录，关窗或点右上角「切回虚拟窗格」自动带回登录态";
+      } else if (state.takeover) {
+        banner.hidden = false;
+        banner.classList.remove("headful-mode");
+        banner.textContent = "人工接管中：点击输入框打字，按回车或点网页按钮提交；操作完点右上角「退出接管」交回 Agent";
+      } else {
+        banner.hidden = true;
+        banner.textContent = "";
+      }
+    }
+  }
+
+  function applyBrowserMode(msg) {
+    if (typeof msg.headless === "boolean") state.actorHeadless = msg.headless;
+    if (typeof msg.takeover === "boolean") {
+      state.takeover = msg.takeover;
+      if (els.imeInput && ROLE !== "camera") {
+        if (state.takeover && !document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
+          els.imeInput.focus({ preventScroll: true });
+        } else {
+          els.imeInput.blur();
+        }
+      }
+    }
+    state.actorSwitching = !!msg.switching;
+    state.actorModeError = msg.error || null;
+    syncTakeoverUI();
+  }
+
+  function setupBrowserTakeover() {
+    var ctrls = $("browser-human-controls"),
+        tBtn = $("browser-takeover-btn"),
+        hBtn = $("browser-headful-btn"),
+        ime = $("browser-ime-input"),
+        banner = $("browser-takeover-banner");
+    els.browserHumanControls = ctrls;
+    els.takeoverBtn = tBtn;
+    els.headfulBtn = hBtn;
+    els.imeInput = ime;
+    els.takeoverBanner = banner;
+
+    if (ROLE === "camera") {
+      if (ctrls) ctrls.hidden = true;
+      if (banner) banner.hidden = true;
+      return;
+    }
+
+    function setTakeover(on) {
+      state.takeover = !!on;
+      syncTakeoverUI();
+      send({ t: "human.takeover", on: state.takeover, win: "browser" });
+      if (state.takeover) {
+        if (state.focus !== "browser") {
+          applyFocus("browser");
+        }
+        if (ime) ime.focus({ preventScroll: true });
+      } else if (ime) {
+        ime.blur();
+      }
+    }
+
+    if (tBtn) {
+      tBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setTakeover(!state.takeover);
+      });
+    }
+
+    if (hBtn) {
+      hBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.actorSwitching) return;
+        var targetHeadless = !state.actorHeadless;
+        state.actorHeadless = targetHeadless;
+        state.actorSwitching = true;
+        state.actorModeError = null;
+        syncTakeoverUI();
+        send({ t: "human.browser_mode", headless: targetHeadless });
+      });
+    }
+
+    if (els.tabStrip) {
+      els.tabStrip.addEventListener("click", function (e) {
+        if (!state.takeover) return;
+        var tabEl = e.target && e.target.closest ? e.target.closest(".tab") : null;
+        if (!tabEl) return;
+        var tabs = els.tabStrip.querySelectorAll(".tab");
+        for (var i = 0; i < tabs.length; i++) {
+          if (tabs[i] === tabEl) {
+            send({ t: "human.tab", index: i });
+            break;
+          }
+        }
+      });
+    }
+
+    function canvasToPage(e) {
+      var r = els.canvas.getBoundingClientRect();
+      var fw = state.frameW || els.canvas.width || 1280;
+      var fh = state.frameH || els.canvas.height || 800;
+      if (!r.width || !r.height) return { x: 0, y: 0 };
+      var x = Math.round(Math.max(0, Math.min(fw, (e.clientX - r.left) / r.width * fw)));
+      var y = Math.round(Math.max(0, Math.min(fh, (e.clientY - r.top) / r.height * fh)));
+      return { x: x, y: y };
+    }
+
+    function mouseBtnName(b) {
+      return b === 2 ? "right" : b === 1 ? "middle" : "left";
+    }
+
+    var lastMoveAt = 0;
+    if (els.canvas) {
+      els.canvas.addEventListener("mousedown", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.focus !== "browser") {
+          applyFocus("browser");
+          send({ t: "human.focus", win: "browser" });
+        }
+        if (ime) ime.focus({ preventScroll: true });
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mousePressed",
+          x: pt.x,
+          y: pt.y,
+          button: mouseBtnName(e.button),
+          clickCount: e.detail || 1
+        });
+      });
+
+      els.canvas.addEventListener("mouseup", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (ime) ime.focus({ preventScroll: true });
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseReleased",
+          x: pt.x,
+          y: pt.y,
+          button: mouseBtnName(e.button),
+          clickCount: e.detail || 1
+        });
+      });
+
+      els.canvas.addEventListener("mousemove", function (e) {
+        if (!state.takeover) return;
+        var now = Date.now();
+        if (now - lastMoveAt < 35) return;
+        lastMoveAt = now;
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseMoved",
+          x: pt.x,
+          y: pt.y,
+          button: (e.buttons & 1) ? "left" : (e.buttons & 2) ? "right" : "none"
+        });
+      });
+
+      els.canvas.addEventListener("wheel", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var pt = canvasToPage(e);
+        send({
+          t: "human.mouse",
+          kind: "mouseWheel",
+          x: pt.x,
+          y: pt.y,
+          deltaX: Math.round(e.deltaX || 0),
+          deltaY: Math.round(e.deltaY || 0)
+        });
+      }, { passive: false });
+
+      els.canvas.addEventListener("contextmenu", function (e) {
+        if (!state.takeover) return;
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+
+    var composing = false;
+    if (ime) {
+      ime.addEventListener("compositionstart", function () {
+        composing = true;
+      });
+      ime.addEventListener("compositionend", function (e) {
+        composing = false;
+        var text = (e && e.data) || ime.value;
+        ime.value = "";
+        if (state.takeover && text) {
+          send({ t: "human.text", text: text });
+        }
+      });
+      ime.addEventListener("input", function () {
+        if (composing) return;
+        var text = ime.value;
+        ime.value = "";
+        if (state.takeover && text) {
+          send({ t: "human.text", text: text });
+        }
+      });
+    }
+
+    window.addEventListener("paste", function (e) {
+      if (!state.takeover) return;
+      if (els.humanInput && els.humanInput.contains(document.activeElement)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var cd = e.clipboardData || window.clipboardData;
+      var text = cd ? cd.getData("text/plain") : "";
+      if (ime) ime.value = "";
+      if (text) {
+        send({ t: "human.text", text: text });
+      }
+    }, true);
+
+    var SPECIAL_KEYS = {
+      Enter: 1, Tab: 1, Escape: 1, Backspace: 1, Delete: 1,
+      ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
+      Home: 1, End: 1, PageUp: 1, PageDown: 1
+    };
+
+    window.addEventListener("keydown", function (e) {
+      if (!state.takeover) return;
+      if (els.humanInput && els.humanInput.contains(e.target)) return;
+      if (e.isComposing || composing) return;
+
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        var k = (e.key || "").toLowerCase();
+        if (k === "a") {
+          e.preventDefault();
+          e.stopPropagation();
+          send({ t: "human.edit", action: "selectAll" });
+          return;
+        }
+        if (k === "v") {
+          if (ime && document.activeElement !== ime) {
+            ime.focus({ preventScroll: true });
+          }
+          return;
+        }
+        return;
+      }
+
+      if (SPECIAL_KEYS[e.key]) {
+        e.preventDefault();
+        e.stopPropagation();
+        send({ t: "human.key", key: e.key });
+        return;
+      }
+
+      if (ime && document.activeElement !== ime && e.key && e.key.length === 1 &&
+          !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        send({ t: "human.text", text: e.key });
+        ime.focus({ preventScroll: true });
+      }
+    }, true);
+
+    syncTakeoverUI();
+  }
+
+  /* ── 右下角客服式对话面板（#human-input） ──
+     始终位于虚拟桌面右下角（录制机位 ROLE==="camera" 除外）：
+     - 默认启用 userInput=true：默认展开对话面板（#hi-panel），未传 session 参数时自动生成
+       core_<随机后缀> 会话编号（首条消息自动携带导演技能交由内置 CoreAgent 驱动）；
+       可点面板右上角收起为右下角胶囊图标（#hi-trigger），点图标再展开。
+     - 显式传 ?userInput=false（或 0）时：退回只读显示器模式，仅显示右下角胶囊图标。
+     人打的字不进桌面终端——桌面终端只是被操作的外设，不是代理角色。人的话先发给
+     frago 服务的会话发送接口（wait:false 只排队不等答），排进主控会话队列；
+     由驻场「主持人」秒级口头确认，再交给「主操作员」与后台「参谋」协商执行。 */
+  function defaultDirectorSessionId() {
+    var hex = "";
+    for (var i = 0; i < 16; i++) {
+      hex += Math.floor(Math.random() * 16).toString(16);
+    }
+    return "core_" + hex;
+  }
+
   function humanInputTarget() {
     var q = location.search;
-    var on = /[?&]userInput=(true|1)(&|$)/.test(q);
+    if (/[?&]userInput=(false|0)(&|$)/.test(q)) return null;
     var m = q.match(/[?&]session=([^&]+)/);
-    if (!on || !m) return null;
-    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+    if (m) {
+      try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+    }
+    return defaultDirectorSessionId();
+  }
+
+  var HI_I18N = {
+    zh: {
+      panelAria: "导演对话面板",
+      tag: "导演对话 · 追加需求",
+      sub: "直达主控队列 · 主持人实时应答，主操作员与参谋协同执行",
+      resetLabel: "重置",
+      resetConfirm: "确认重置？",
+      resetDoing: "重置中…",
+      resetTitle: "重置虚拟桌面舞台（恢复窗口/幻灯/字幕、重置终端与浏览器起始页并开启新对话）",
+      resetConfirmTitle: "再次点击立即重置舞台（3 秒后自动取消）",
+      resetAria: "重置舞台",
+      closeTitle: "收起为右下角图标",
+      closeAria: "收起对话面板",
+      readonlyTag: "只读",
+      readonlyFab: "对话",
+      directorFab: "导演对话",
+      triggerCollapse: "收起对话面板",
+      triggerExpand: "展开导演对话面板",
+      triggerNoSession: "未带导演会话参数（默认仅显示图标，点击查看）",
+      roleDirector: "导演",
+      roleUser: "你",
+      placeholderActive: "随时写下补充或修改意见，回车发送",
+      placeholderReadonly: "未连接导演会话",
+      emptyReadonly: "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。",
+      welcome: "正在虚拟桌面上推进任务。随时在这里写下补充或修改意见，主持人会即时响应，主操作员与参谋将协商并在桌面上执行。",
+      sendIdle: "发送",
+      sendQueueing: "排队中…",
+      statusHint: "回车发送 · Shift+回车换行",
+      statusReadonly: "只读显示器模式",
+      statusQueueing: "正在排队…",
+      statusQueued: "已排入主控队列，主持人与操作组正在跟进",
+      statusResetDone: "舞台已重置，已切换至新导演会话",
+      statusFailedPrefix: "没发出去："
+    },
+    en: {
+      panelAria: "Director chat panel",
+      tag: "Director Chat · Follow-ups",
+      sub: "Queued to main session · Presenter responds live, operator & advisor execute",
+      resetLabel: "Reset",
+      resetConfirm: "Confirm?",
+      resetDoing: "Resetting…",
+      resetTitle: "Reset virtual desktop stage (restore windows/slides/captions, reset terminal & browser, start new session)",
+      resetConfirmTitle: "Click again within 3s to confirm stage reset",
+      resetAria: "Reset stage",
+      closeTitle: "Minimize to corner icon",
+      closeAria: "Collapse director chat panel",
+      readonlyTag: "Read-only",
+      readonlyFab: "Chat",
+      directorFab: "Director Chat",
+      triggerCollapse: "Collapse director chat panel",
+      triggerExpand: "Expand director chat panel",
+      triggerNoSession: "No director session bound (icon only by default, click to view)",
+      roleDirector: "Director",
+      roleUser: "You",
+      placeholderActive: "Type follow-ups here, press Enter to send",
+      placeholderReadonly: "No director session connected",
+      emptyReadonly: "No director session bound (?userInput=true&session=…). The panel stays collapsed as a corner icon by default.",
+      welcome: "Working on your task on the virtual desktop. Type any follow-ups here — the presenter will acknowledge live while the operator and advisor coordinate execution.",
+      sendIdle: "Send",
+      sendQueueing: "Queueing…",
+      statusHint: "Enter to send · Shift+Enter for newline",
+      statusReadonly: "Read-only display mode",
+      statusQueueing: "Queueing…",
+      statusQueued: "Queued to main session for presenter & operator team",
+      statusResetDone: "Stage reset complete · new director session ready",
+      statusFailedPrefix: "Failed to send: "
+    }
+  };
+
+  function resolveUiLang() {
+    var m = location.search.match(/[?&]lang=([^&]+)/);
+    if (m) {
+      var qLang = decodeURIComponent(m[1]).toLowerCase();
+      if (qLang.indexOf("zh") === 0) return "zh";
+      if (qLang.indexOf("en") === 0) return "en";
+    }
+    try {
+      var stored = localStorage.getItem("language");
+      if (stored && stored.toLowerCase().indexOf("zh") === 0) return "zh";
+      if (stored && stored.toLowerCase().indexOf("en") === 0) return "en";
+    } catch (e) {}
+    try {
+      if (window.parent && window.parent !== window) {
+        var pStored = window.parent.localStorage.getItem("language");
+        if (pStored && pStored.toLowerCase().indexOf("zh") === 0) return "zh";
+        if (pStored && pStored.toLowerCase().indexOf("en") === 0) return "en";
+      }
+    } catch (e) {}
+    return "en";
   }
 
   function setupHumanInput() {
     var box = $("human-input");
     if (!box) return;
     els.humanInput = box;
-    var sid = humanInputTarget();
-    if (!sid) return;              // 默认不存在：录制时画面里不该有它
-    var text = $("hi-text"), send = $("hi-send"), status = $("hi-status"), log = $("hi-log");
+    if (ROLE === "camera") {
+      box.hidden = true;
+      return;
+    }
     box.hidden = false;
 
-    function note(msg, bad) {
+    var panel = $("hi-panel"),
+        trigger = $("hi-trigger"),
+        resetBtn = $("hi-reset"),
+        resetLabel = $("hi-reset-label"),
+        closeBtn = $("hi-close"),
+        dot = $("hi-dot"),
+        fabDot = $("hi-fab-dot"),
+        fabLabel = $("hi-fab-label"),
+        badge = $("hi-badge"),
+        sidTag = $("hi-session-tag"),
+        subEl = $("hi-sub"),
+        tagEl = box.querySelector(".hi-tag"),
+        text = $("hi-text"),
+        sendBtn = $("hi-send"),
+        status = $("hi-status"),
+        log = $("hi-log");
+    var sid = humanInputTarget();
+    // 把当前绑定的主线会话编号挂在面板上，方便排查与核验「这个面板接的是哪条会话」。
+    box.dataset.sessionId = sid || "";
+    var msgCount = 0;
+    var currentLang = resolveUiLang();
+    var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
+    var resetConfirming = false;
+    var resetDoing = false;
+    var resetTimer = null;
+
+    function tr(key) {
+      var pack = HI_I18N[currentLang] || HI_I18N.en;
+      return pack[key] || HI_I18N.en[key] || "";
+    }
+
+    function syncResetBtnUI() {
+      if (!resetBtn) return;
+      resetBtn.classList.toggle("confirming", !!resetConfirming);
+      resetBtn.classList.toggle("resetting", !!resetDoing);
+      resetBtn.disabled = !!resetDoing;
+      resetBtn.setAttribute("aria-label", tr("resetAria"));
+      if (resetDoing) {
+        if (resetLabel) resetLabel.textContent = tr("resetDoing");
+        resetBtn.title = tr("resetDoing");
+      } else if (resetConfirming) {
+        if (resetLabel) resetLabel.textContent = tr("resetConfirm");
+        resetBtn.title = tr("resetConfirmTitle");
+      } else {
+        if (resetLabel) resetLabel.textContent = tr("resetLabel");
+        resetBtn.title = tr("resetTitle");
+      }
+    }
+
+    function clearResetConfirm() {
+      if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+      }
+      if (resetConfirming) {
+        resetConfirming = false;
+        syncResetBtnUI();
+      }
+    }
+
+    function resetStageLocal() {
+      // 1. 撤下全屏幻灯、贴纸栏、浮层标注、字幕与正在播放的语音
+      applySlide({ url: null, ms: 0 });
+      hideStrap();
+      clearOverlay();
+      stopSpeech();
+      liveCaptions().forEach(dropCaption);
+      // 2. 退出人工接管并复位浏览器为空白起始页状态
+      state.takeover = false;
+      state.actorSwitching = false;
+      state.actorModeError = null;
+      syncTakeoverUI();
+      applyActorState(false);
+      // 3. 恢复四扇窗口出厂开关、默认几何与焦点（终端缓冲由 broker 重建 tmux 后全量覆盖）
+      closeWin("image", 0);
+      closeWin("video", 0);
+      openWin("term", 0);
+      openWin("browser", 0);
+      state.geom.term = { x: 120, y: 90, w: 900, h: 560 };
+      applyGeom("term", state.geom.term, 260);
+      applyFocus("term", ["term", "browser", "image", "video"]);
+      sendLayout();
+    }
+
+    function formatHm(ts) {
+      var d = (typeof ts === "number" && ts > 0) ? new Date(ts) : new Date();
+      if (isNaN(d.getTime())) d = new Date();
+      return String(d.getHours()).padStart(2, "0") + ":" +
+             String(d.getMinutes()).padStart(2, "0");
+    }
+    function renderNote() {
+      if (!status) return;
+      var msg = statusState.key === "statusFailedPrefix"
+        ? (tr("statusFailedPrefix") + statusState.extra)
+        : tr(statusState.key);
       status.textContent = msg || "";
-      status.classList.toggle("bad", !!bad);
+      status.classList.toggle("bad", !!statusState.bad);
     }
-    function remember(line) {
+    function noteKey(key, bad, extra) {
+      statusState = { key: key, extra: extra || "", bad: !!bad };
+      renderNote();
+    }
+    function syncBadge() {
+      if (!badge) return;
+      var show = !!sid && panel && panel.hidden && msgCount > 0;
+      badge.hidden = !show;
+      badge.textContent = String(msgCount);
+    }
+    function syncTriggerTitle() {
+      if (!trigger || !panel) return;
+      var open = !panel.hidden;
+      trigger.title = open ? tr("triggerCollapse")
+        : (sid ? tr("triggerExpand") : tr("triggerNoSession"));
+    }
+    function applyHumanInputLang() {
+      currentLang = resolveUiLang();
+      document.documentElement.lang = currentLang;
+      if (panel) panel.setAttribute("aria-label", tr("panelAria"));
+      if (tagEl) tagEl.textContent = tr("tag");
+      if (subEl) subEl.textContent = tr("sub");
+      if (closeBtn) {
+        closeBtn.title = tr("closeTitle");
+        closeBtn.setAttribute("aria-label", tr("closeAria"));
+      }
+      if (!sid) {
+        if (fabLabel) fabLabel.textContent = tr("readonlyFab");
+        if (sidTag) sidTag.textContent = tr("readonlyTag");
+        if (text) text.placeholder = tr("placeholderReadonly");
+        var emptyEl = log && log.querySelector(".hi-empty");
+        if (emptyEl) emptyEl.textContent = tr("emptyReadonly");
+      } else {
+        if (fabLabel) fabLabel.textContent = tr("directorFab");
+        if (sidTag) sidTag.textContent = sid.slice(0, 8);
+        if (text) text.placeholder = tr("placeholderActive");
+      }
+      if (sendBtn) {
+        sendBtn.textContent = box.dataset.mode === "sending" ? tr("sendQueueing") : tr("sendIdle");
+      }
+      if (log) {
+        var phBubble = log.querySelector('[data-placeholder="1"] .hi-bubble');
+        if (phBubble) phBubble.textContent = tr("welcome");
+        var items = log.querySelectorAll(".hi-msg");
+        for (var i = 0; i < items.length; i++) {
+          var r = items[i].getAttribute("data-role") || (items[i].classList.contains("dir") ? "dir" : "usr");
+          var hm = items[i].getAttribute("data-hm") || "";
+          var metaEl = items[i].querySelector(".hi-msg-meta");
+          if (metaEl && hm) {
+            metaEl.textContent = (r === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
+          }
+        }
+      }
+      syncTriggerTitle();
+      syncResetBtnUI();
+      renderNote();
+    }
+    var MAX_TA_HEIGHT = 112;
+    function autoGrowInput() {
+      if (!text) return;
+      box.classList.toggle("has-text", !!(text.value && text.value.trim()));
+      if (!text.value) {
+        text.style.height = "22px";
+        text.style.overflowY = "hidden";
+        return;
+      }
+      text.style.height = "auto";
+      var sh = text.scrollHeight || 0;
+      var nextH = Math.max(22, Math.min(sh, MAX_TA_HEIGHT));
+      text.style.height = nextH + "px";
+      text.style.overflowY = sh > MAX_TA_HEIGHT ? "auto" : "hidden";
+    }
+    function setExpanded(open, focusInput) {
+      if (!panel) return;
+      panel.hidden = !open;
+      if (trigger) trigger.hidden = !!open;
+      box.dataset.mode = open ? "open" : (sid ? "collapsed" : "icon");
+      syncTriggerTitle();
+      syncBadge();
+      if (open) autoGrowInput();
+      // 仅在用户主动点击展开、且桌面页当前可见时才聚焦输入框；
+      // 页面初次加载或隐藏在后台切页槽位（innerWidth===0）时绝不自动抢焦点，
+      // 否则会把外层会话工作台输入框正在打字的光标强行夺走。
+      if (focusInput && open && sid && text && !text.disabled &&
+          !document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
+        text.focus();
+      }
+    }
+    function appendBubble(role, line, opts) {
+      if (!log || !line) return;
+      opts = opts || {};
+      if (opts.seq && log.querySelector('[data-seq="' + opts.seq + '"]')) return;
+      // 收到真实会话记录后，移除初始占位欢迎语，保证面板内容与真实会话严格一致
+      if (!opts.placeholder) {
+        var ph = log.querySelector('[data-placeholder="1"]');
+        if (ph && ph.parentNode === log) log.removeChild(ph);
+      }
+      var hm = formatHm(opts.ts);
+      // 若用户在面板里刚发过同一句话（乐观渲染），用服务端返回的真实记录就地认领，避免重复显示两条
+      if (role === "usr" && opts.seq) {
+        var pendings = log.querySelectorAll('.hi-msg.usr[data-optimistic="1"]');
+        for (var i = 0; i < pendings.length; i++) {
+          var b = pendings[i].querySelector(".hi-bubble");
+          if (b && b.textContent === line) {
+            pendings[i].removeAttribute("data-optimistic");
+            pendings[i].setAttribute("data-seq", String(opts.seq));
+            pendings[i].setAttribute("data-hm", hm);
+            var m = pendings[i].querySelector(".hi-msg-meta");
+            if (m) m.textContent = tr("roleUser") + " · " + hm;
+            return;
+          }
+        }
+      }
       var item = document.createElement("div");
-      item.className = "hi-line";
-      item.textContent = line;
+      item.className = "hi-msg " + role + (role === "usr" ? " hi-line" : "");
+      item.setAttribute("data-role", role);
+      item.setAttribute("data-hm", hm);
+      if (opts.seq) item.setAttribute("data-seq", String(opts.seq));
+      if (opts.optimistic) item.setAttribute("data-optimistic", "1");
+      if (opts.placeholder) item.setAttribute("data-placeholder", "1");
+      var meta = document.createElement("span");
+      meta.className = "hi-msg-meta";
+      meta.textContent = (role === "dir" ? tr("roleDirector") : tr("roleUser")) + " · " + hm;
+      var bubble = document.createElement("div");
+      bubble.className = "hi-bubble";
+      bubble.textContent = line;
+      item.appendChild(meta);
+      item.appendChild(bubble);
       log.appendChild(item);
-      while (log.children.length > 4) log.removeChild(log.firstChild);
+      while (log.children.length > 24) log.removeChild(log.firstChild);
+      log.scrollTop = log.scrollHeight;
+      msgCount = log.querySelectorAll('.hi-msg:not([data-placeholder="1"])').length;
+      syncBadge();
     }
+
+    function cleanSessionText(role, raw) {
+      if (typeof raw !== "string") return "";
+      var s = raw
+        .replace(/<must-use-skill[\s\S]*?<\/must-use-skill>\s*/g, "")
+        .replace(/<system-reminder[\s\S]*?<\/system-reminder>\s*/g, "")
+        .trim();
+      if (!s) return "";
+      if (role === "dir") {
+        if (/^【收场交接】/.test(s)) return "";
+        // 导演长回复提取前两段有效业务说明，裁掉附带的 WARN 书面应答段或代码块
+        var paras = s.split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
+        var picked = [];
+        for (var i = 0; i < paras.length; i++) {
+          if (/^(\*\*WARN\b|WARN\b|-\s*`(clips|ui_ready|screen_|orphan_)|```|>)/.test(paras[i])) continue;
+          picked.push(
+            paras[i]
+              .replace(/\*\*([^*]+)\*\*/g, "$1")
+              .replace(/`([^`]+)`/g, "$1")
+              .trim()
+          );
+          if (picked.length >= 2) break;
+        }
+        s = (picked.length ? picked.join("\n\n") : (paras[0] || s))
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/`([^`]+)`/g, "$1")
+          .trim();
+        if (s.length > 360) s = s.slice(0, 359) + "…";
+      } else {
+        s = s.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+        if (s.length > 360) s = s.slice(0, 359) + "…";
+      }
+      return s;
+    }
+
+    var skillSent = false;
+    var lastSeq = 0;
+    var syncingRecords = false;
+
+    function performStageReset() {
+      clearResetConfirm();
+      resetDoing = true;
+      syncResetBtnUI();
+      var oldSid = sid;
+      resetStageLocal();
+      send({ t: "human.reset", sessionId: oldSid || "" });
+
+      // 通知 8093 服务端一并销毁后台旧导演会话（CoreAgent / tmux 主操作员进程）与驻场主持人守护线程
+      var stopTarget = encodeURIComponent(oldSid || "__stage_reset__");
+      fetch("/api/workbench/sessions/" + stopTarget + "/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true, stage_reset: true })
+      }).catch(function () {});
+
+      if (sid) {
+        sid = defaultDirectorSessionId();
+        box.dataset.sessionId = sid;
+        if (/[?&]session=/.test(location.search) && window.history && window.history.replaceState) {
+          var nextSearch = location.search.replace(/([?&]session=)[^&]+/, "$1" + encodeURIComponent(sid));
+          window.history.replaceState(null, "", location.pathname + nextSearch + location.hash);
+        }
+        skillSent = false;
+        lastSeq = 0;
+        msgCount = 0;
+        if (sidTag) sidTag.textContent = sid.slice(0, 8);
+        if (log) log.innerHTML = "";
+        appendBubble("dir", tr("welcome"), { placeholder: true });
+        if (text) {
+          text.value = "";
+          text.disabled = false;
+          autoGrowInput();
+        }
+        if (sendBtn) {
+          sendBtn.disabled = false;
+          sendBtn.textContent = tr("sendIdle");
+        }
+        syncBadge();
+      }
+      noteKey("statusResetDone", false);
+
+      setTimeout(function () {
+        resetDoing = false;
+        syncResetBtnUI();
+      }, 420);
+      setTimeout(function () {
+        if (statusState && statusState.key === "statusResetDone") {
+          noteKey(sid ? "statusHint" : "statusReadonly", false);
+        }
+      }, 3200);
+    }
+
+    els.onStageReset = function () {
+      resetStageLocal();
+      if (resetDoing) {
+        resetDoing = false;
+        syncResetBtnUI();
+      }
+    };
+
+    if (resetBtn) {
+      resetBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (resetDoing) return;
+        if (!resetConfirming) {
+          resetConfirming = true;
+          syncResetBtnUI();
+          if (resetTimer) clearTimeout(resetTimer);
+          resetTimer = setTimeout(function () {
+            resetConfirming = false;
+            resetTimer = null;
+            syncResetBtnUI();
+          }, 3000);
+          return;
+        }
+        performStageReset();
+      });
+    }
+
+    if (trigger) {
+      trigger.addEventListener("click", function () {
+        setExpanded(panel ? panel.hidden : true, true);
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        clearResetConfirm();
+        setExpanded(false, false);
+      });
+    }
+
+    window.addEventListener("storage", function (e) {
+      if (!e || !e.key || e.key === "language") {
+        applyHumanInputLang();
+      }
+    });
+
+    if (!sid) {
+      if (dot) dot.classList.add("idle");
+      if (fabDot) fabDot.classList.add("idle");
+      if (text) text.disabled = true;
+      if (sendBtn) sendBtn.disabled = true;
+      if (log) {
+        log.innerHTML = "";
+        var empty = document.createElement("div");
+        empty.className = "hi-empty";
+        empty.textContent = tr("emptyReadonly");
+        log.appendChild(empty);
+      }
+      noteKey("statusReadonly", false);
+      applyHumanInputLang();
+      setExpanded(false);
+      return;
+    }
+
+    if (dot) dot.classList.remove("idle");
+    if (fabDot) fabDot.classList.remove("idle");
+    if (text) text.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    if (log) log.innerHTML = "";
+    appendBubble("dir", tr("welcome"), { placeholder: true });
+    noteKey("statusHint", false);
+    applyHumanInputLang();
+    setExpanded(true);
+
+    els.onDirectorCaption = function (captionText) {
+      if (!captionText) return;
+      // 主持人在面板上发出的秒级插播确认（收到 / 已收到 / Received / Got it /
+      // Noted / Passing it on …）要稳定同步到右下角对话面板，让人一眼看到
+      // 「话已经被接住了」。匹配放宽到这几类确认口气，避免真实确认被漏掉。
+      if (/^(收到|已收到|Received\b|Got it\b|Noted\b|Passing it on\b|需要你处理|I need your input|I need you to)/i.test(captionText)) {
+        appendBubble("dir", captionText);
+      }
+    };
+
+    var hasExplicitSession = /[?&]session=([^&]+)/.test(location.search);
+
+    function syncSessionRecords() {
+      if (!isStageVisible()) return;
+      if (resolveUiLang() !== currentLang) {
+        applyHumanInputLang();
+      }
+      if (!sid || syncingRecords) return;
+      // 舞台未连接且当前面板尚未发起或收到过任何对话时，跳过对默认随机 core_ 会话的空轮询
+      if (!state.wsOpen && !skillSent && lastSeq === 0 && !hasExplicitSession) return;
+      syncingRecords = true;
+      var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
+                "/records?after=" + (lastSeq + 1) + "&limit=100";
+      fetch(url).then(function (r) {
+        if (!r.ok) return [];
+        return r.json().catch(function () { return []; });
+      }).then(function (records) {
+        if (!Array.isArray(records) || !records.length) return;
+        records.forEach(function (rec) {
+          var seq = typeof rec.seq === "number" ? rec.seq : 0;
+          if (seq > lastSeq) lastSeq = seq;
+          var payload = rec.payload || {};
+          if (rec.kind === "user.say" && !payload.is_tool_result) {
+            skillSent = true;
+            var uText = cleanSessionText("usr", payload.text || "");
+            if (uText) appendBubble("usr", uText, { seq: seq, ts: rec.ts });
+          } else if (rec.kind === "agent.say") {
+            var aText = cleanSessionText("dir", payload.text || "");
+            if (aText) appendBubble("dir", aText, { seq: seq, ts: rec.ts });
+          }
+        });
+      }).catch(function () {
+        // 会话尚未创建或网络瞬断时静默等待下一轮同步
+      }).then(function () {
+        syncingRecords = false;
+      });
+    }
+
+    els.syncSessionRecords = syncSessionRecords;
+    syncSessionRecords();
+    setInterval(syncSessionRecords, 2500);
+
     function submit() {
       var line = text.value.trim();
       if (!line) return;
-      send.disabled = true;
-      note("正在排队…");
+      sendBtn.disabled = true;
+      sendBtn.textContent = tr("sendQueueing");
+      box.dataset.mode = "sending";
+      noteKey("statusQueueing", false);
+      var reqBody = { text: line, wait: false };
+      if (!skillSent) {
+        reqBody.skills = ["how-frago-agent-runs-an-agent-os"];
+      }
       fetch("/api/workbench/sessions/" + encodeURIComponent(sid) + "/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line, wait: false })
+        body: JSON.stringify(reqBody)
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (body) {
           if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
           return body;
         });
       }).then(function () {
-        remember(line);
+        skillSent = true;
+        appendBubble("usr", line, { optimistic: true });
         text.value = "";
-        note("已排给导演，它会转达给正在干活的 worker");
+        autoGrowInput();
+        noteKey("statusQueued", false);
+        syncSessionRecords();
       }).catch(function (err) {
-        note("没发出去：" + (err && err.message ? err.message : err), true);
+        noteKey("statusFailedPrefix", true, err && err.message ? err.message : String(err));
       }).then(function () {
-        send.disabled = false;
-        text.focus();
+        sendBtn.disabled = false;
+        sendBtn.textContent = tr("sendIdle");
+        box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
+        if (!document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
+          text.focus();
+        }
       });
     }
-    send.addEventListener("click", submit);
+    sendBtn.addEventListener("click", submit);
+    text.addEventListener("input", autoGrowInput);
     text.addEventListener("keydown", function (e) {
       // 回车发送，Shift+回车换行——与聊天框一致。
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
     });
-    text.focus();
   }
 
   /* ── 桌布：噪声网格渐变 ──────────────────────────────────
@@ -1374,7 +2346,7 @@
     var PALETTES = {
       plum:   ["140f26", "4a2a7a", "8f2f5e", "2f5a9e"],  // 深紫 → 洋红 → 蓝（Stripe 原配色降明度）
       indigo: ["101a33", "23306b", "3a3a86", "553f8f"],  // 靛蓝 → 紫罗兰（Linear / Big Sur 深色一路）
-      mono:   ["0d1b2e", "14263f", "1b3355", "22406b"],  // 近乎单色的深蓝，只有明度起伏
+      mono:   ["07080c", "0c0f18", "121624", "181d30"],  // 深空碳晶黑曜石微澜，克制内敛不抢前景
       forest: ["0a1a18", "123330", "164a44", "1a5e63"]   // 墨绿 → 青，和终端窗口同语系
     };
     function hex2rgb(h) {
@@ -1421,8 +2393,16 @@
     }
 
     var t0 = null, last = 0, ms = 0;
+    var rafId = null;
+    var firstDrawn = false;
     function loop(ts) {
+      rafId = null;
+      if (firstDrawn && !shouldAnimateStage()) {
+        last = 0;
+        return;
+      }
       if (t0 === null) { t0 = ts; last = ts; }
+      else if (last === 0) { last = ts; }
       // 帧间隔钳在 1/15 秒：切后台或掉帧回来时，时间不会一次跳一大段，
       // 画面不会"闪一下"。stripe 原实现同样这么钳。
       ms += Math.min(ts - last, 1000 / 15);
@@ -1461,9 +2441,20 @@
         }
       }
       cx.putImageData(img, 0, 0);
-      requestAnimationFrame(loop);
+      firstDrawn = true;
+      if (shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      } else {
+        last = 0;
+      }
     }
-    requestAnimationFrame(loop);
+    els.wakeWallpaper = function () {
+      if (rafId !== null) return;
+      if (!firstDrawn || shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    els.wakeWallpaper();
   }
 
   /* ── 扫描灯 ──────────────────────────────────────────────
@@ -1482,7 +2473,11 @@
     var x = c.getContext("2d");
     var N = 48, W = 1920 / N, GLOW = 6, SPEED = 0.10;
     var t = 0;
-    (function loop() {
+    var rafId = null;
+    var firstDrawn = false;
+    function loop() {
+      rafId = null;
+      if (firstDrawn && !shouldAnimateStage()) return;
       t += SPEED;
       // 往复用三角波：0 → N-1 → 0，端点自然减速，不需要额外缓动
       var p = (N - 1) * Math.abs(((t / (N - 1)) % 2) - 1);
@@ -1492,12 +2487,35 @@
         a = a * a;                      // 衰减取平方，主光点更突出、拖尾更收敛
         if (a < 0.01) continue;
         x.globalAlpha = a;
-        x.fillStyle = "#ff2b2b";
-        x.fillRect(i * W + 1, 3, W - 2, 12);
+        x.fillStyle = "#8b7cff";
+        x.fillRect(i * W + 1, 14, W - 2, 2);
       }
       x.globalAlpha = 1;
-      requestAnimationFrame(loop);
-    })();
+      firstDrawn = true;
+      if (shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    }
+    els.wakeScanline = function () {
+      if (rafId !== null) return;
+      if (!firstDrawn || shouldAnimateStage()) {
+        rafId = requestAnimationFrame(loop);
+      }
+    };
+    els.wakeScanline();
+  }
+
+  function handleStageVisibilityChange() {
+    if (!isStageVisible()) return;
+    fitStage();
+    tickClock();
+    if (state.wsOpen) {
+      wakeStageLoops();
+      sendLayout();
+    } else {
+      connect();
+    }
+    if (els.syncSessionRecords) els.syncSessionRecords();
   }
 
   function boot() {
@@ -1542,9 +2560,21 @@
     measureHeaders();
     tickClock();
     setInterval(tickClock, 1000);
-    window.addEventListener("resize", fitStage);
+    window.addEventListener("resize", function () {
+      fitStage();
+      handleStageVisibilityChange();
+    });
+    document.addEventListener("visibilitychange", handleStageVisibilityChange);
+    window.addEventListener("message", function (e) {
+      var d = e && e.data;
+      if (d && d.type === "frago:desktop-visibility") {
+        state.hostVisible = !!d.visible;
+        handleStageVisibilityChange();
+      }
+    });
     setupHumanInput();
     els.soundUnlock = setupSoundUnlock();
+    setupBrowserTakeover();
     blockInput();
 
     startWallpaper();

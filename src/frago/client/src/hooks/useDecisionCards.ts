@@ -41,12 +41,23 @@ export function humanReplyText(r: WorkbenchRecord): string | null {
   return text;
 }
 
-/** 每条主会话 agent 回复之后人的第一句话。没有就不在表里。 */
+/** 这条记录是否可能承载一张主会话的交互卡（`agent.say` 或产出 UI 组件的 `tool.result`）。 */
+function canHostDecisionCard(r: WorkbenchRecord): boolean {
+  if (r.agent_path.length) return false;
+  if (r.kind === 'agent.say') return true;
+  if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+    const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+    return body.includes('"frago_ui_component"');
+  }
+  return false;
+}
+
+/** 每条主会话交互卡宿主记录（agent.say 或 UI 组件 tool.result）之后人的第一句话。没有就不在表里。 */
 export function repliesAfter(records: WorkbenchRecord[]): Map<string, WorkbenchRecord> {
   const out = new Map<string, WorkbenchRecord>();
   let waiting: string[] = [];
   for (const r of records) {
-    if (r.kind === 'agent.say' && !r.agent_path.length) {
+    if (canHostDecisionCard(r)) {
       waiting.push(r.id);
     } else if (waiting.length && humanReplyText(r) !== null) {
       for (const id of waiting) out.set(id, r);
@@ -87,13 +98,17 @@ export function useDecisionCards({
   onSendFailed,
 }: UseDecisionCardsOptions): DecisionCardsState {
   const [pending, setPending] = useState<Record<string, Pending>>({});
-  const [answer, setAnswer] = useState<{ text: string; at: number } | null>(null);
+  const [answerState, setAnswerState] = useState<{
+    sessionId: string | null;
+    text: string;
+    at: number;
+  } | null>(null);
   // 编号用自增次数：同一句答复连发两次是两件事
   const seq = useRef(0);
 
   useEffect(() => {
     setPending({});
-    setAnswer(null);
+    setAnswerState(null);
   }, [sessionId]);
 
   const replies = useMemo(() => repliesAfter(records), [records]);
@@ -111,11 +126,14 @@ export function useDecisionCards({
     [replies, pending]
   );
 
-  const answerCard = useCallback((recordId: string, text: string) => {
-    setPending((cur) => ({ ...cur, [recordId]: { text, at: Date.now() } }));
-    seq.current += 1;
-    setAnswer({ text, at: seq.current });
-  }, []);
+  const answerCard = useCallback(
+    (recordId: string, text: string) => {
+      setPending((cur) => ({ ...cur, [recordId]: { text, at: Date.now() } }));
+      seq.current += 1;
+      setAnswerState({ sessionId, text, at: seq.current });
+    },
+    [sessionId]
+  );
 
   // 出门那一刻把信封编号记到对应那一笔「在答」上：失败时凭它撤。
   const startRef = useRef(onSendStart);
@@ -149,6 +167,11 @@ export function useDecisionCards({
     () => ({ canAnswer: !blockedReason, blockedReason, answerOf, answer: answerCard }),
     [blockedReason, answerOf, answerCard]
   );
+
+  const answer =
+    answerState && answerState.sessionId === sessionId
+      ? { text: answerState.text, at: answerState.at }
+      : null;
 
   return { host, answer, onSendStart: wrappedStart, onSendFailed: wrappedFailed };
 }

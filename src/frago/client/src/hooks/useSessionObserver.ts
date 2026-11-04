@@ -20,7 +20,7 @@
  * 去通知服务端停下什么。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getWebSocketClient, MessageType, type WebSocketMessage } from '../api/websocket';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -40,14 +40,30 @@ export interface ObserverTail {
   text: string;
 }
 
+export interface ObserverRun {
+  id: string;
+  at: number | null;
+  cursor_from: number;
+  cursor_to: number;
+  phase_goal?: string | null;
+  tail: ObserverTail | null;
+  happened_add: string[];
+  decision: string;
+  summary: string;
+}
+
 export interface ObserverState {
   bound: boolean;
   /** 这场在做什么：人说过的原话，不经模型改写。 */
   anchor: string | null;
+  /** 当前所处阶段的目标（随人新指令或 agent 阶段推进更新）。 */
+  phase_goal?: string | null;
   tail: ObserverTail | null;
   decision: string;
   /** 已经发生的事（不含末条），新的在前。 */
   happened: string[];
+  /** 按游标区间保存的每次定期 observer 总结（从旧到新），供 Watcher 视图包裹对应 Talk 片段。 */
+  runs?: ObserverRun[];
   /**
    * 每一格自己上次变样的时刻（毫秒），跟正文一一对应。右栏按时间线读要用它。
    *
@@ -56,6 +72,7 @@ export interface ObserverState {
    */
   happened_at?: (number | null)[];
   anchor_at?: number | null;
+  phase_goal_at?: number | null;
   tail_at?: number | null;
   decision_at?: number | null;
   /** 毫秒时间戳。槽位真的变过才会动。 */
@@ -86,7 +103,8 @@ function newer(current: ObserverState | null, fetched: ObserverState): ObserverS
     got === had &&
     fetched.status === current.status &&
     fetched.status_detail === current.status_detail &&
-    fetched.bound === current.bound
+    fetched.bound === current.bound &&
+    (fetched.runs?.length ?? 0) === (current.runs?.length ?? 0)
   ) {
     return current;
   }
@@ -135,7 +153,7 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
     const onUpdate = (msg: WebSocketMessage) => {
       const data = msg.data as { session_id?: string; state?: ObserverState } | undefined;
       if (!data || data.session_id !== sessionId || !data.state) return;
-      setState(data.state);
+      setState((prev) => newer(prev, data.state!));
       setError(null);
     };
     const unsubscribe = client.on(MessageType.SESSION_OBSERVER_UPDATE, onUpdate);
@@ -159,5 +177,5 @@ export function useSessionObserver(sessionId: string | null): SessionObserverVie
     };
   }, [sessionId, pull]);
 
-  return { state, loading, error };
+  return useMemo(() => ({ state, loading, error }), [state, loading, error]);
 }

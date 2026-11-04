@@ -523,9 +523,13 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
      @action（页面能按，允许干活）、不标（只有主人能跑）。
   3. 要别的模块的数据：先在 imports 里声明，再 self.ask(模块, mode)。
      NEVER 去读对方的文件，NEVER import 对方的代码。
-  4. 标了 @export 的 mode MUST 只读：不触网、不重算、不改状态、不开浏览器。
-  5. 页面是前端、配方是后端。publish 只发渲染状态，NEVER 发路径。
-  6. 说话用 self.progress() / self.warn() / self.log()，
+  4. 要问大模型拿一段字或一个 JSON（摘要、分类、扩写、结构化抽取）：先在类上写 ai = True，
+     再调 self.ask_ai(提示词, system=..., response_json=...)。NEVER 为纯文本或 JSON 生成去起
+     frago agent 子进程。要跑 frago 自己的命令（或派一个真要读写代码仓库的 worker），
+     走 self.ask_frago(["...", ...])。
+  5. 标了 @export 的 mode MUST 只读：不触网、不重算、不改状态、不开浏览器。
+  6. 页面是前端、配方是后端。publish 只发渲染状态，NEVER 发路径。
+  7. 说话用 self.progress() / self.warn() / self.log()，
      NEVER 直接 print 到 stdout——stdout 是消息流，混一句进去整段就解不动。
 
 写完跑 frago recipe validate {recipe_dir}。
