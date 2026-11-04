@@ -107,6 +107,17 @@ class TestWhatCountsAsSomethingThePersonSaid:
         assert so.spoken_text(None) is None
         assert so.human_text(rec(0, "agent.say", text="在")) is None, "kind is judged outside"
 
+    def test_strips_frago_employee_context_block(self):
+        prompt = (
+            '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n'
+            "【员工身份与工作范畴】\n岗位：Stock 投研与策略专员\n"
+            "</frago-employee>\n\n"
+            "评估 159518 明天可能的走势"
+        )
+        assert so.spoken_text({"text": prompt}) == "评估 159518 明天可能的走势"
+        state = so.public_state({"anchor": {"seq": 1, "text": prompt}}, bound=True)
+        assert state["anchor"] == "评估 159518 明天可能的走势"
+
 
 class TestWhenTheObserverIsWoken:
     """人刚发话就该叫一次，不等 agent 把话交还——两格说的都是眼下。"""

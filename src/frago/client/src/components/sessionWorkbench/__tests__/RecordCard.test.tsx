@@ -282,6 +282,57 @@ describe('点名了 skill 的那句话', () => {
   });
 });
 
+describe('挂载了 <frago-employee> 语境块的那句话', () => {
+  const EMP_BLOCK =
+    '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n' +
+    '【员工身份与工作范畴】\n' +
+    '岗位：Stock 投研与策略专员（id: stock）\n' +
+    '职责：专门负责股票与 ETF 全场景投研工作\n' +
+    '</frago-employee>';
+
+  it('人发言卡把 <frago-employee> 渲染成消息上方的员工卡片，内部正文一个字不摆', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', {
+          payload: { text: `${EMP_BLOCK}\n\n评估 159518 明天可能的走势` },
+        })}
+        sessionId={SID}
+      />
+    );
+    const quote = screen.getByTestId('employee-quote');
+    expect(quote.getAttribute('data-employee')).toBe('stock');
+    expect(quote.textContent).toContain('@stock');
+    expect(quote.textContent).toContain('Stock 投研与策略专员');
+    expect(screen.getByText('评估 159518 明天可能的走势')).not.toBeNull();
+    expect(container.textContent).not.toContain('【员工身份与工作范畴】');
+    expect(container.textContent).not.toContain('frago-employee');
+  });
+
+  it('插话卡与排队行同样把 <frago-employee> 渲染成员工卡片', () => {
+    const inject = makeRecord('context.inject', {
+      payload: {
+        channel: 'queued_command',
+        body: `${EMP_BLOCK}\n\n补充看看 603198`,
+        queue_state: 'absorbed',
+      },
+    });
+    const queued = makeRecord('session.state', {
+      payload: {
+        field: 'queue-operation',
+        operation: 'enqueue',
+        content: `${EMP_BLOCK}\n\n补充看看 603198`,
+        queue_state: 'pending',
+      },
+    });
+    for (const record of [inject, queued]) {
+      const { container, unmount } = render(<RecordCard record={record} sessionId={SID} />);
+      expect(screen.getByTestId('employee-quote').getAttribute('data-employee')).toBe('stock');
+      expect(container.textContent).not.toContain('【员工身份与工作范畴】');
+      unmount();
+    }
+  });
+});
+
 describe('旁路注入卡', () => {
   function hookRecord(payload: Record<string, unknown> = {}): WorkbenchRecord {
     return makeRecord('context.inject', {

@@ -34,6 +34,8 @@ describe('新会话启动面板', () => {
     const steps = screen.getAllByTestId('launch-step');
     expect(steps[0].getAttribute('data-state')).toBe('active');
     expect(steps[1].getAttribute('data-state')).toBe('waiting');
+    expect(screen.getByTestId('launch-elapsed').textContent).toBeTruthy();
+    expect(screen.queryByTestId('launch-live-status')).toBeNull();
     // 他刚打的那句话得在——等待期间界面上只有它是他自己的东西。
     expect(screen.getByTestId('launch-first-message').textContent).toBe('把 recipes 目录清一遍');
     // 顶部镜头栏与会话详情保持完全一致：默认落在「对话」档，且词条已正常翻译（非原始键名）

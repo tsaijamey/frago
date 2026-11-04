@@ -61,6 +61,8 @@ import {
   type ObserverTail,
   type SessionObserverView,
 } from '@/hooks/useSessionObserver';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
 import {
   MAX_PANEL_WIDTH,
   MAX_SLOT_HEIGHT,
@@ -478,7 +480,7 @@ function SlotStack({
   const anchor = {
     key: 'anchor' as CoverKey,
     label: t('workbench.report.slotAnchor'),
-    value: state?.anchor ?? '',
+    value: splitSkillBlocks(splitEmployeeBlocks(state?.anchor ?? '').text).text,
     at: state?.anchor_at ?? null,
   };
 

@@ -36,8 +36,7 @@ const REFRESH_MS = 30_000;
 
 export default function EmployeesPage() {
   const { t } = useTranslation();
-  const switchPage = usePageStore((s) => s.switchPage);
-  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+  const launchWorkbenchSession = usePageStore((s) => s.launchWorkbenchSession);
 
   const { employees, loading, error, reload } = useEmployeeList(true);
   useAutoRefresh(reload, { intervalMs: REFRESH_MS });
@@ -106,10 +105,9 @@ export default function EmployeesPage() {
       <LaunchEmployeeDialog
         post={launchFor}
         onClose={() => setLaunchFor(null)}
-        onCreated={(sessionId) => {
-          // 会话页的选中位记的是「此刻在看哪一场」，这里正当地把它指过去。
-          setWorkbenchSessionId(sessionId);
-          switchPage('session_workbench');
+        onCreated={(launch, text) => {
+          // 统一交由会话工作台的成熟启动管线（useSessionLaunch + SessionLaunchPanel + SessionRail）接管。
+          launchWorkbenchSession(launch, text);
         }}
       />
 
@@ -121,6 +119,14 @@ export default function EmployeesPage() {
           setCreating(false);
         }}
         onSaved={reload}
+        /**
+         * 新建成功就当场换成这个员工的详情：服务端返回前已经跑完首次巡检，那份编制里带着
+         * 刚认下的资源，人不用自己再找回来。清单由 `onSaved` 那边重取，这里只管切态。
+         */
+        onCreated={(created) => {
+          setCreating(false);
+          setDetailFor(created);
+        }}
       />
     </div>
   );

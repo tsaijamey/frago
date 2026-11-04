@@ -422,6 +422,33 @@ async def test_a_file_the_session_changed_outside_its_own_directory_opens(
 
 
 @pytest.mark.asyncio
+async def test_a_file_under_frago_data_opens_even_when_created_by_script(
+    session_dir, touched, opened, tmp_path_factory, monkeypatch
+):
+    """~/.frago/data 下的脚本/截图产物不在 Write/Edit 清单里，点「打开所在目录」也必须放行。"""
+    fake_home = tmp_path_factory.mktemp("fake-home")
+    monkeypatch.setattr(workbench_routes.Path, "home", classmethod(lambda cls: fake_home))
+    artifact = (
+        fake_home
+        / ".frago"
+        / "data"
+        / "frago-promotion"
+        / "20261031-upwork-profile-v2"
+        / "portfolio"
+        / "portfolio-1-quant-dashboard.png"
+    )
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"\x89PNG\r\n\x1a\n")
+    touched([])
+
+    await workbench_routes.reveal_session_path(
+        "sid-1", workbench_routes.RevealPathRequest(path=str(artifact))
+    )
+
+    assert opened == [("reveal", str(artifact.resolve()), True)]
+
+
+@pytest.mark.asyncio
 async def test_a_directory_inside_opens_as_a_directory(session_dir, touched, opened):
     target = session_dir / "docs"
     target.mkdir()

@@ -484,12 +484,13 @@ def _agy_cards(
             if entry is not None and entry.created_at is not None and entry.created_at > 0
             else last_active
         )
+        first_user = entry.title if entry is not None else None
         _, clean_preview = session_index.split_employee_block(conv.preview or "")
         cards.append(
             SessionCard(
                 session_id=cid,
                 family="agy",
-                title=conv.title or clean_preview or cid,
+                title=conv.title or first_user or clean_preview or cid,
                 directory=conv.workspace,
                 created_at=created,
                 last_active_at=last_active,

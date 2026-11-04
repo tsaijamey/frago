@@ -4,7 +4,7 @@
  * 点击「开始会话」后不再展示突兀的居中绿色信封卡片，而是直接进入与会话详情一致的
  * 「档位条 + 对话流 + 底部输入框」布局：
  * - 刚发出的第一句话置顶渲染为标准「你说」气泡（带新消息描边）；
- * - 气泡下方紧接轻量步骤链（认领编号 › 写下第一笔）与单行实时状态条；
+ * - 气泡下方紧接单行轻量步骤链（认领编号 › 写下第一笔 · 实时耗时）；
  * - 若启动失败，第一句话仍保留在气泡中，下方内联展示错误原因并提供「返回修改」与「收起」。
  */
 
@@ -12,10 +12,13 @@ import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, Loader2, Paperclip, Send } from 'lucide-react';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
-import { withTilde } from './filePaths';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { EmployeeQuotes } from './EmployeeQuote';
 import { KIND_LABEL_KEY, formatClock, formatDuration } from './RecordCard';
 import { LENS_LABEL_KEY, LENS_ORDER, type StreamLens } from './RecordStream';
 import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
+import { SkillQuotes } from './SkillQuote';
 
 export interface SessionLaunchPanelProps {
   launch: SessionLaunch;
@@ -75,6 +78,8 @@ export default function SessionLaunchPanel({
   const clock = formatClock(launch.at);
   const elapsed = formatDuration(Math.max(1_000, now - launch.at));
   const hasMessage = Boolean(launch.text);
+  const { text: afterEmp, employees: launchEmployees } = splitEmployeeBlocks(launch.text ?? '');
+  const { text: launchSaid, skills: launchSkills } = splitSkillBlocks(afterEmp);
   const [lens, setLens] = useState<StreamLens>('talk');
   const counts: Record<StreamLens, number> = {
     all: hasMessage ? 1 : 0,
@@ -171,12 +176,16 @@ export default function SessionLaunchPanel({
                     <span className="flex-1" />
                   </header>
                   <div className="mt-1.5 min-w-0">
-                    <p
-                      data-testid="launch-first-message"
-                      className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary"
-                    >
-                      {launch.text}
-                    </p>
+                    <EmployeeQuotes employees={launchEmployees} />
+                    <SkillQuotes names={launchSkills} />
+                    {launchSaid || (!launchEmployees.length && !launchSkills.length) ? (
+                      <p
+                        data-testid="launch-first-message"
+                        className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary"
+                      >
+                        {launchSaid}
+                      </p>
+                    ) : null}
                   </div>
                 </article>
               </div>
@@ -212,52 +221,27 @@ export default function SessionLaunchPanel({
               </div>
             </div>
           ) : (
-            <div className="flex min-w-0 flex-col gap-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-[11px]">
-                <Step
-                  state={claiming ? 'active' : 'done'}
-                  label={t('workbench.launch.stepClaim', { name: launch.agentName })}
-                />
-                <span aria-hidden className="text-text-dim">
-                  ›
-                </span>
-                <Step
-                  state={claiming ? 'waiting' : 'active'}
-                  label={t('workbench.launch.stepFirstRecord')}
-                />
-              </div>
-
-              <div
-                data-testid="launch-live-status"
-                className="flex min-w-0 max-w-[640px] items-center gap-2 self-start rounded-[8px] border border-border-color bg-bg-secondary px-3 py-1.5 text-[11.5px] text-text-muted"
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-[11px]">
+              <Step
+                state={claiming ? 'active' : 'done'}
+                label={t('workbench.launch.stepClaim', { name: launch.agentName })}
+              />
+              <span aria-hidden className="text-text-dim">
+                ›
+              </span>
+              <Step
+                state={claiming ? 'waiting' : 'active'}
+                label={t('workbench.launch.stepFirstRecord')}
+              />
+              <span aria-hidden className="text-text-dim">
+                ·
+              </span>
+              <span
+                data-testid="launch-elapsed"
+                className="shrink-0 font-mono text-[11px] text-text-dim"
               >
-                {claiming ? (
-                  <>
-                    <Loader2 size={12} className="shrink-0 animate-spin text-text-secondary" />
-                    <span className="shrink-0 font-medium text-text-primary">
-                      {t('workbench.launch.railClaiming', { name: launch.agentName })}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
-                      {withTilde(launch.cwd)}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span
-                      aria-hidden
-                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
-                    />
-                    <span className="shrink-0 font-medium text-text-primary">
-                      {t('workbench.progress.agentOnIt')}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-text-muted">
-                      {t('workbench.launch.railWarming', { name: launch.agentName })} ·{' '}
-                      <span className="font-mono">{withTilde(launch.cwd)}</span>
-                    </span>
-                  </>
-                )}
-                <span className="shrink-0 font-mono text-[11px] text-text-dim">{elapsed}</span>
-              </div>
+                {elapsed}
+              </span>
             </div>
           )}
         </div>
@@ -266,7 +250,7 @@ export default function SessionLaunchPanel({
       {/* 底部输入框占位：与真实会话详情输入框同位同高，避免首条记录落盘时底栏跳变 */}
       <div className="shrink-0 border-t border-border-color bg-bg-primary px-4 py-3">
         <div className="flex flex-col gap-2 rounded-[10px] border border-border-color bg-bg-secondary px-3 py-2.5 opacity-60">
-          <p className="select-none text-[13px] text-text-muted">
+          <p className="select-none text-[16px] leading-6 text-text-muted">
             {t('workbench.composer.placeholderWithFamily', { family: launch.agentName })}
           </p>
           <div className="flex items-center justify-between pt-1">

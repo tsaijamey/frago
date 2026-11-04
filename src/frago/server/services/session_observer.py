@@ -285,7 +285,13 @@ def _join_clauses(items: Sequence[str]) -> str:
 def _safe_goal_text(text: Any) -> str | None:
     if not isinstance(text, str):
         return None
-    cleaned = text.strip()
+    from frago.session.session_index import split_employee_block
+    from frago.skills.skill_prompt import split_skill_blocks
+
+    _, body = split_employee_block(text.strip())
+    _, body = split_skill_blocks(body)
+    _, body = split_employee_block(body)
+    cleaned = body.strip()
     if not cleaned or is_card_answer_text(cleaned):
         return None
     return cleaned
@@ -440,14 +446,18 @@ def spoken_text(payload: Any) -> str | None:
     记录），人刚发话时要在那里就问一句「这是不是人在说话」，那时还没有记录对象。
     """
     from frago.session.opencode_store import strip_hook_injection
-    from frago.session.session_index import is_wake_text
+    from frago.session.session_index import is_wake_text, split_employee_block
 
     if not isinstance(payload, dict) or payload.get("is_tool_result"):
         return None
     text = payload.get("text")
     if is_wake_text(text) or not isinstance(text, str):
         return None
-    return strip_hook_injection(text) or None
+    stripped = strip_hook_injection(text)
+    if not stripped:
+        return None
+    _, body = split_employee_block(stripped)
+    return body or stripped
 
 
 def person_spoke(records: Sequence[Any]) -> bool:

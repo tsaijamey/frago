@@ -32,6 +32,7 @@ export interface EmployeePost {
   schedule_ids: string[];
   active_session_ids: string[];
   allowed_commands: string[];
+  skills?: string[];
   created_at: string;
   updated_at: string;
   /** 清单接口顺带给的一行总览：几个槽位、每个槽位几项、合计几项。 */
@@ -51,7 +52,81 @@ export interface DataSlotScan {
   entries: { name: string; summary: string; file_count: number }[];
 }
 
-/** 某个员工的详情：编制本身、领地索引、以及新会话会自动带入的那段语境原文。 */
+/** 账本里一条认领项的来路：叫什么、凭什么认的。 */
+export interface ClaimedSlot {
+  path: string;
+  name: string;
+  /** 是不是人手绑的（而不是巡检认出来的）。 */
+  bound?: boolean;
+  /** 巡检时靠什么认出来的，如 `name` / `entry_summary`。 */
+  discovered_by?: string;
+  /** 认领依据的原文片段，让人能核对「凭什么说这块归他」。 */
+  evidence?: string;
+}
+
+export interface ClaimedRecipe {
+  name: string;
+  display_title?: string;
+  description?: string;
+}
+
+export interface ClaimedDomain {
+  name: string;
+  purpose?: string;
+  doc_count?: number;
+}
+
+export interface ClaimedSession {
+  session_id: string;
+  title: string;
+  first_prompt_summary?: string;
+}
+
+export interface ClaimedGlossaryTerm {
+  term: string;
+  meaning: string;
+  mapped_targets?: string[];
+}
+
+/**
+ * 账本摘要 —— 员工自己巡检一趟认下了什么。
+ *
+ * 四栏各有一个「几条」的计数，明细在 `claimed_details` 里。计数与明细分开，是因为列表接口
+ * 只要计数（卡片上那一行摘要），而弹窗要明细。`claimed_details` 可以没有：老账本没存明细
+ * 时不代表「一条没认」，所以页面 NEVER 拿它缺席当空。
+ */
+export interface LedgerSummary {
+  member_post_id: string;
+  updated_at: string;
+  last_synced_at: string;
+  claimed_resources: {
+    data_slots: string[];
+    recipe_count: number;
+    knowledge_domain_count: number;
+    matched_session_count: number;
+  };
+  claimed_details?: {
+    data_slots: ClaimedSlot[];
+    recipes: ClaimedRecipe[];
+    knowledge_domains: ClaimedDomain[];
+    matched_sessions: ClaimedSession[];
+    glossary: ClaimedGlossaryTerm[];
+  };
+  excluded_resources?: {
+    data_slots: string[];
+    recipes: string[];
+    knowledge_domains: string[];
+  };
+}
+
+/** 本机上还能往这个员工身上绑的东西：数据目录、知识域、配方各一份候选。 */
+export interface AvailableResources {
+  data_slots: { path: string; name: string }[];
+  knowledge_domains: { name: string; purpose: string }[];
+  recipes: { name: string; display_title: string; description: string }[];
+}
+
+/** 某个员工的详情：编制本身、领地索引、账本、可补绑的候选，以及新会话会自动带入的那段语境原文。 */
 export interface EmployeeDetail {
   employee: EmployeePost;
   managed_data: {
@@ -60,6 +135,9 @@ export interface EmployeeDetail {
     knowledge_domains: string[];
     recipes: string[];
   };
+  /** 还没巡检过的岗位没有账本，这里是 null——那是「还没查」，不是「没查到」。 */
+  ledger?: LedgerSummary | null;
+  available_resources?: AvailableResources;
   business_context_block: string;
 }
 
@@ -76,6 +154,7 @@ export interface EmployeeUpsert {
   data_slots: string[];
   schedule_ids: string[];
   allowed_commands: string[];
+  skills?: string[];
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -134,6 +213,33 @@ export async function saveEmployee(
     );
   }
   return (await res.json()) as EmployeePost;
+}
+
+/**
+ * 手动触发一次该员工的巡检记账。
+ *
+ * `full` 为真时丢掉游标重扫一遍，用于「改过岗位职责、想重新认领」的场合。默认走增量：
+ * 指纹没变的资源直接跳过，所以第二次点通常是「新增 0」——那不是没干活，是没活可干。
+ *
+ * 返回的是巡检结果本身（新增几条、跳了几条），页面不解释它，只拿它当「这一趟跑完了」的
+ * 信号，随后重取详情。所以这里给 `unknown`，NEVER 在这一侧另造一份与账本并行的形状。
+ */
+export async function syncEmployeeLedger(
+  memberPostId: string,
+  full = true
+): Promise<unknown> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/employees/${encodeURIComponent(memberPostId)}/sync-ledger?full=${
+      full ? 'true' : 'false'
+    }`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    throw new Error(
+      await readError(res, i18n.t('employees.errors.syncFailed', { status: res.status }))
+    );
+  }
+  return res.json();
 }
 
 /** 在员工领地里登记一个归档目录。越界由服务端的契约当场拒绝，这一侧不另判一遍。 */

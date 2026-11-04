@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, NoReturn
 
 from frago.agent_driver.driver import (
@@ -565,6 +566,23 @@ class TmuxAgentSession:
             merged_env.setdefault("FRAGO_SESSION_ID", self._own_listed_id())
         # launch 要看得见最终环境：codex 的 provider 开关由它推出（见 LaunchCtx.env）。
         ctx = dataclasses.replace(ctx, env=dict(merged_env))
+
+        # 兜底：``tmux new-session -c <目录>`` 碰到不存在的目录不报错，静默退回 ``$HOME``
+        # 起会话。对认领型内核来说，会话把工作区记成了 ``$HOME``，认领器却按原目录去比对，
+        # 两边永远对不上，最终只报一句「会话没起来」。上层（工作台新建会话那条接口）已经
+        # 会把这类目录拦下来或建出来，这里再兜一道：持久池预热、命令行直接拉起等不经那条
+        # 接口的路径同样会走到这儿。只建 ``~/.frago`` 下的——那是 frago 自己的地盘；家目录
+        # 外的路径不在这儿凭空造，那种目录该由调用方负责，宁可让它建会话失败得明白。
+        # 只在真驱动本机 tmux 时做：单测塞的 fake runner 没有客户端，也不该有建目录的副作用。
+        if self._native_client and not self.tmux_target:
+            _cwd_path = Path(self.cwd)
+            _frago_root = (Path.home() / ".frago").resolve()
+            _resolved = _cwd_path.resolve()
+            if (
+                _resolved == _frago_root or _frago_root in _resolved.parents
+            ) and not _cwd_path.exists():
+                with contextlib.suppress(OSError):
+                    _cwd_path.mkdir(parents=True, exist_ok=True)
 
         if self.tmux_target:
             self._enter_target(ctx, merged_env)

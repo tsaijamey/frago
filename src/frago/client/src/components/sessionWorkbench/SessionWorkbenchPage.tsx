@@ -111,6 +111,8 @@ export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
   const selectedId = usePageStore((s) => s.workbenchSessionId);
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+  const pendingWorkbenchLaunch = usePageStore((s) => s.pendingWorkbenchLaunch);
+  const consumePendingWorkbenchLaunch = usePageStore((s) => s.consumePendingWorkbenchLaunch);
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const showToast = useAppStore((s) => s.showToast);
@@ -558,6 +560,15 @@ export default function SessionWorkbenchPage() {
     recordCount: records.length,
   });
 
+  useEffect(() => {
+    if (!pendingWorkbenchLaunch) return;
+    const next = consumePendingWorkbenchLaunch();
+    if (!next) return;
+    setCreatingNew(false);
+    setWorkbenchSessionId(next.launch.session_id ?? null);
+    begin(next.launch, next.text);
+  }, [pendingWorkbenchLaunch, consumePendingWorkbenchLaunch, setWorkbenchSessionId, begin]);
+
   // 中栏此刻该让给启动面板：正在起，而且人没有把中栏切到别的会话上去。
   const showLaunch = Boolean(launch) && (selectedId === null || selectedId === launch?.sessionId);
 
@@ -778,20 +789,38 @@ export default function SessionWorkbenchPage() {
 
   /**
    * 「打开所在目录」：这一下是服务端在**跑 frago 那台机器**上开文件管理器（浏览器自己开不了
-   * 本机目录）。开不了要说出来——没反应时人只会以为按钮坏了。服务端只认这一场自己的工作目录
-   * 与它改过的文件，别处一律拒。
+   * 本机目录）。开不了要说出来——没反应时人只会以为按钮坏了。
+   * 若是从对话链接点开的本机绝对路径（不在会话工作目录或 Write/Edit 清单里），自动回退走
+   * 本机通用 `/api/reveal`。
    */
   const onReveal = useCallback(
     (path: string) => {
       if (!selectedId) return;
-      revealSessionPath(selectedId, path).catch((e: unknown) => {
-        showToast(
-          t('workbench.files.revealFailed', {
-            reason: e instanceof Error ? e.message : String(e),
-          }),
-          'error'
-        );
-      });
+      revealSessionPath(selectedId, path)
+        .catch(async (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            path.startsWith('/') &&
+            typeof fetch === 'function' &&
+            (msg.includes("neither in this session's working directory") ||
+              msg.includes('Refused:') ||
+              msg.includes('403'))
+          ) {
+            const res = await fetch(`/api/reveal?path=${encodeURIComponent(path)}`, {
+              method: 'POST',
+            });
+            if (res.ok) return;
+          }
+          throw err;
+        })
+        .catch((e: unknown) => {
+          showToast(
+            t('workbench.files.revealFailed', {
+              reason: e instanceof Error ? e.message : String(e),
+            }),
+            'error'
+          );
+        });
     },
     [selectedId, showToast, t]
   );

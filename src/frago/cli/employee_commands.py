@@ -11,6 +11,7 @@ Thin CLI wrapper over ``frago.employee`` (`store.py` + `ledger.py` + `service.py
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import click
@@ -113,6 +114,8 @@ def employee_show(member_post_id: str, as_json: bool) -> None:
     click.echo(f"Domains:     {', '.join(record.knowledge_domains) or '-'}")
     click.echo(f"Recipes:     {', '.join(record.recipes) or '-'}")
     click.echo(f"DataSlots:   {', '.join(record.data_slots) or '-'}")
+    click.echo(f"Skills:      {', '.join(record.skills) or '-'}")
+    click.echo(f"Commands:    {', '.join(record.allowed_commands) or '-'}")
     click.echo(f"Schedules:   {', '.join(record.schedule_ids) or '-'}")
     click.echo(f"Sessions:    {', '.join(record.active_session_ids) or '-'}")
 
@@ -164,6 +167,24 @@ def employee_show(member_post_id: str, as_json: bool) -> None:
     multiple=True,
     help="ScheduleRuleSpec ID governing this role (repeatable)",
 )
+@click.option(
+    "--command",
+    "allowed_commands",
+    multiple=True,
+    help="CliCommandActionContract command_path granted to this post (repeatable)",
+)
+@click.option(
+    "--skill",
+    "skills",
+    multiple=True,
+    help="Default Skill name automatically mounted when starting a session (repeatable)",
+)
+@click.option(
+    "--no-schedule",
+    "skip_schedule",
+    is_flag=True,
+    help="Skip auto-registering the daily ledger sync schedule",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def employee_hire(
     member_post_id: str,
@@ -176,6 +197,9 @@ def employee_hire(
     recipes: tuple[str, ...],
     data_slots: tuple[str, ...],
     schedule_ids: tuple[str, ...],
+    allowed_commands: tuple[str, ...],
+    skills: tuple[str, ...],
+    skip_schedule: bool,
     as_json: bool,
 ) -> None:
     """Create or update an employee post (+R) and bind its AgentKernel role (~R)."""
@@ -192,9 +216,26 @@ def employee_hire(
             recipes=recipes,
             data_slots=data_slots,
             schedule_ids=schedule_ids,
+            allowed_commands=allowed_commands if allowed_commands else None,
+            skills=skills if skills else None,
         )
     except (ValueError, ContractViolationError) as exc:
         raise click.ClickException(str(exc)) from None
+
+    if not skip_schedule and (
+        not os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("FRAGO_EMPLOYEE_AUTO_SCHEDULE") == "1"
+    ):
+        try:
+            add_schedule, list_schedules = _scheduler_hooks()
+            svc.ensure_ledger_schedule(
+                record.member_post_id,
+                add_schedule=add_schedule,
+                list_schedules=list_schedules,
+            )
+            record = get_post(record.member_post_id) or record
+        except Exception:  # noqa: BLE001 - 排程接不上不阻断建岗
+            pass
 
     if as_json:
         payload = record.to_dict()
@@ -251,6 +292,18 @@ def employee_hire(
     multiple=True,
     help="Additional ScheduleRuleSpec ID to bind (repeatable)",
 )
+@click.option(
+    "--command",
+    "allowed_commands",
+    multiple=True,
+    help="Additional CliCommandActionContract command_path to bind (repeatable)",
+)
+@click.option(
+    "--skill",
+    "skills",
+    multiple=True,
+    help="Additional default Skill name to bind (repeatable)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def employee_bind(
     member_post_id: str,
@@ -261,6 +314,8 @@ def employee_bind(
     recipes: tuple[str, ...],
     data_slots: tuple[str, ...],
     schedule_ids: tuple[str, ...],
+    allowed_commands: tuple[str, ...],
+    skills: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Bind territory assets or reassign the AgentKernel (~R) without changing post identity (+R)."""
@@ -275,6 +330,8 @@ def employee_bind(
             recipes=recipes,
             data_slots=data_slots,
             schedule_ids=schedule_ids,
+            allowed_commands=allowed_commands,
+            skills=skills,
         )
     except (KeyError, ValueError, ContractViolationError) as exc:
         raise click.ClickException(str(exc)) from None
@@ -325,6 +382,136 @@ def employee_discover(
         click.echo(f"{post.member_post_id}  [{post.agent_kernel}]  {post.title}")
 
 
+def _launch_employee_session(
+    record: Any,
+    query_or_task: str,
+) -> dict[str, Any]:
+    """为 CLI `frago employee invoke` 拉起真实会话，完整挂载员工语境、默认技能与三角色舞台编排。"""
+    import time
+    import uuid
+    from pathlib import Path
+
+    from frago.server.services import stage_orchestrator, workbench_new_session
+    from frago.skills.skill_prompt import embed_skills, load_skills
+
+    svc = EmployeeOntologyService()
+    session_cwd = record.cwd.strip() if getattr(record, "cwd", "") else ""
+    if not session_cwd:
+        fallback = Path.home() / ".frago"
+        fallback.mkdir(parents=True, exist_ok=True)
+        session_cwd = str(fallback)
+    session_cwd = str(Path(session_cwd).expanduser())
+    cwd_path = Path(session_cwd)
+    frago_root = (Path.home() / ".frago").resolve()
+    resolved_cwd = cwd_path.resolve()
+    if resolved_cwd == frago_root or frago_root in resolved_cwd.parents:
+        cwd_path.mkdir(parents=True, exist_ok=True)
+
+    effective_skills = list(getattr(record, "skills", None) or [])
+    is_stage = stage_orchestrator.is_stage_session(effective_skills, "")
+
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        import urllib.error
+        import urllib.request
+
+        server_port = os.environ.get("FRAGO_SERVER_PORT", "8093")
+        api_base = f"http://127.0.0.1:{server_port}/api/workbench/sessions"
+        payload = json.dumps(
+            {
+                "agent": record.agent_kernel,
+                "cwd": session_cwd,
+                "text": query_or_task.strip(),
+                "employee": record.member_post_id,
+                "skills": effective_skills,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            api_base,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            sid = data.get("session_id")
+            handle = data.get("handle")
+            err = data.get("error")
+            if sid is None and handle and not err:
+                for _ in range(16):
+                    time.sleep(0.5)
+                    try:
+                        with urllib.request.urlopen(
+                            f"{api_base}/pending/{handle}", timeout=5
+                        ) as p_resp:
+                            p_data = json.loads(p_resp.read().decode("utf-8"))
+                        if p_data.get("session_id") or p_data.get("error"):
+                            sid = p_data.get("session_id")
+                            err = p_data.get("error")
+                            break
+                    except Exception:  # noqa: BLE001
+                        break
+            return {
+                "session_id": sid,
+                "handle": handle,
+                "cwd": data.get("cwd") or session_cwd,
+                "agent": data.get("agent") or record.agent_kernel,
+                "stage_orchestrated": is_stage,
+                "error": err,
+            }
+        except urllib.error.HTTPError as http_exc:
+            detail = http_exc.read().decode("utf-8", errors="replace")
+            return {
+                "session_id": None,
+                "handle": None,
+                "cwd": session_cwd,
+                "agent": record.agent_kernel,
+                "stage_orchestrated": is_stage,
+                "error": f"HTTP {http_exc.code}: {detail}",
+            }
+        except Exception:  # noqa: BLE001 — 本地服务未启动时降级走进程内直起
+            pass
+
+    launch_id = str(uuid.uuid4())
+    context_block = svc.build_business_context_block(record.member_post_id)
+    prompt = f"{context_block}\n\n{query_or_task.strip()}"
+
+    if effective_skills:
+        loaded = load_skills(effective_skills)
+        prompt = embed_skills(prompt, loaded, user_text=query_or_task)
+
+    is_stage = stage_orchestrator.is_stage_session(effective_skills, prompt)
+    if is_stage:
+        prompt = stage_orchestrator.orchestrate_stage_session(
+            launch_id, prompt, query_or_task
+        )
+
+    launch = workbench_new_session.start_with_id(
+        record.agent_kernel,
+        session_cwd,
+        prompt,
+        session_id=launch_id,
+    )
+    workbench_new_session.bind_employee(launch.handle, record.member_post_id)
+
+    if launch.session_id is None and not launch.error and not os.environ.get("PYTEST_CURRENT_TEST"):
+        for _ in range(16):
+            st = workbench_new_session.status(launch.handle)
+            if st is not None and (st.session_id or st.error or st.finished):
+                launch = st
+                break
+            time.sleep(0.5)
+
+    return {
+        "session_id": launch.session_id,
+        "handle": launch.handle,
+        "cwd": launch.cwd,
+        "agent": launch.agent_type,
+        "stage_orchestrated": is_stage,
+        "error": launch.error,
+    }
+
+
 @employee_group.command(name="invoke", cls=AgentFriendlyCommand)
 @click.argument("member_post_id")
 @click.argument("query_or_task")
@@ -341,31 +528,54 @@ def employee_discover(
     show_default=True,
     help="Caller context identifier",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Validate invocation contract only without spawning a live agent session",
+)
+@click.option(
+    "--spawn",
+    "force_spawn",
+    is_flag=True,
+    help="Force real session launch even under test environment",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def employee_invoke(
     member_post_id: str,
     query_or_task: str,
     requested_asset_id: str | None,
     caller_context_id: str,
+    dry_run: bool,
+    force_spawn: bool,
     as_json: bool,
 ) -> None:
     """Invoke a domain employee guarded by the `invoke_domain_employee` kinetic contract."""
     svc = EmployeeOntologyService()
+    should_spawn = not dry_run and (
+        force_spawn or not os.environ.get("PYTEST_CURRENT_TEST")
+    )
     try:
         receipt = svc.invoke(
             member_post_id,
             query_or_task,
             caller_context_id=caller_context_id,
             requested_asset_id=requested_asset_id,
+            session_launcher=_launch_employee_session if should_spawn else None,
         )
     except (ValueError, KeyError, ContractViolationError) as exc:
         raise click.ClickException(str(exc)) from None
+    except Exception as exc:  # noqa: BLE001 - 启动代理会话失败时翻转成命令行错误
+        raise click.ClickException(str(exc)) from None
+
+    if receipt.get("error"):
+        raise click.ClickException(str(receipt["error"]))
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
         return
+    sid_display = receipt.get("session_id") or receipt.get("handle")
     click.echo(
-        f"[{receipt['status']}] {receipt['role_id']} (session={receipt['session_id']}): {receipt['answer_summary']}"
+        f"[{receipt['status']}] {receipt['role_id']} (session={sid_display}): {receipt['answer_summary']}"
     )
 
 

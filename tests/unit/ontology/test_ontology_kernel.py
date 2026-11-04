@@ -2561,4 +2561,460 @@ class TestEmployeeLedgerProactiveSweep:
         assert bare["schedule_id"] is None
         assert "调度器未接入" in bare["reason"]
 
+    def test_cjk_scope_words_keep_two_character_duty_terms(self) -> None:
+        """中文职责串剥掉两头虚词后，两字的领域词要留下来。
+
+        岗位描述里写的是「个人事务包括不限于工作、公积金、赚钱、社保、商业保险、债务、
+        存款等」这样一长串连续汉字，领域词被虚词包着。整段留会落在长度窗口之外，一条
+        职责都提取不出；按 3 字卡又会把「家庭」「社保」「债务」「存款」这一整类中文短词
+        一次性丢干净。这里同时钉住两件事：两头虚词要剥掉，剥完两字词要活下来。
+
+        「人际关系」剥成「人际」、「家庭事务」剥成「家庭」、「存款等」剥成「存款」：
+        剥的判据是词表，剥掉的都是不指向任何领域的泛化词，剩下的那一截才拿得去认领。
+        """
+        from frago.employee.ledger import _cjk_words
+
+        words = _cjk_words(
+            "个人事务包括不限于工作、公积金、赚钱、社保、商业保险、债务、存款等\n"
+            "人际关系\n家庭事务\n等等"
+        )
+        for expected in ("家庭", "人际", "社保", "商业保险", "公积金", "债务", "存款"):
+            assert expected in words, f"职责词「{expected}」没被提取出来"
+
+    @staticmethod
+    def _build_personal_sandbox(tmp_path: Path) -> None:
+        """造一份个人助理视角的沙箱：目录名是英文，内容是中文。
+
+        这一形状是本机真实情况：职责词是「家庭」「社保」「人际」，而对应的目录叫
+        ``health-report-reading``、``relationships``，名字里一个中文都没有。靠目录名
+        永远认领不到，只有看事务目录里那几件事的摘要才认得出。
+        """
+        data = tmp_path / "data"
+        (data / "health-report-reading" / "20260101-社保缴费记录核对").mkdir(parents=True)
+        (
+            data / "health-report-reading" / "20260101-社保缴费记录核对" / "notebook.md"
+        ).write_text(
+            "# 社保缴费记录核对\n\n2026 年度缴费基数确认，缺两个月记录。\n",
+            encoding="utf-8",
+        )
+        (data / "cooking" / "20260101-dinner").mkdir(parents=True)
+        (data / "cooking" / "20260101-dinner" / "notebook.md").write_text(
+            "# 晚饭\n\n番茄炒蛋。\n", encoding="utf-8"
+        )
+        for sub in ("recipes", "books", "sessions"):
+            (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _hire_personal_assistant() -> Any:
+        from frago.employee import EmployeeOntologyService
+
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "personal-assistant",
+            title="个人助理",
+            description="解决跟我个人生活、人际关系、家庭等私人相关的一切问题或事务",
+            work_scope=(
+                "个人事务包括不限于工作、公积金、赚钱、社保、商业保险、债务、存款等\n"
+                "人际关系\n家庭事务\n等等"
+            ),
+        )
+        return svc
+
+    def test_data_slot_discovered_by_entry_summary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """目录名对不上职责词时，靠事务目录的摘要把它认领回来。
+
+        要看「凭哪一条认领到的」，得看建岗位那一次的账本：那一刻编制里还没有这个槽位，
+        认领只能靠摘要。之后巡检把它反哺回编制，再重扫时它就是「编制里已绑着」，
+        凭据换成 ``bound``——凭据是会随编制推进而变的一栏。
+        """
+        from frago.employee import load_ledger, sync_employee_ledger
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_personal_sandbox(tmp_path)
+        self._hire_personal_assistant()
+
+        born = load_ledger("personal-assistant")
+        assert born is not None
+        slots = {s["name"]: s for s in born.claimed_resources["data_slots"]}
+        assert "health-report-reading" in slots
+        # 认领的凭据是摘要，且把命中的原话记下来了：页面要靠它让人判断这是不是误伤
+        assert slots["health-report-reading"]["discovered_by"] == "entry_summary"
+        assert "社保" in slots["health-report-reading"]["evidence"]
+        # 职责词与内容都沾不上边的目录不进来
+        assert "cooking" not in slots
+
+        # 反哺回编制之后再重扫，槽位仍在（此时凭据是 bound），且不重复占两行
+        sync_employee_ledger("personal-assistant", full_rescan=True)
+        again = load_ledger("personal-assistant")
+        assert again is not None
+        rescanned = [s for s in again.claimed_resources["data_slots"] if s["name"] == "health-report-reading"]
+        assert len(rescanned) == 1
+        assert rescanned[0]["discovered_by"] == "bound"
+
+    def test_excluded_resource_stays_out_after_full_rescan(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """人剔除过的资源，重新巡检不再认领回来。
+
+        这是「排除名单」存在的全部理由：巡检的判据是职责词，词面匹配天然会误伤；人删掉
+        一次、下一轮又长出来，这个删除动作就等于没做。所以全量重扫丢的是游标，不是名单。
+        """
+        from frago.employee import (
+            apply_resource_exclusions,
+            load_ledger,
+            save_ledger,
+            sync_employee_ledger,
+        )
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_personal_sandbox(tmp_path)
+        self._hire_personal_assistant()
+
+        sync_employee_ledger("personal-assistant", full_rescan=True)
+        ledger = load_ledger("personal-assistant")
+        assert ledger is not None
+        claimed = {s["name"]: s["path"] for s in ledger.claimed_resources["data_slots"]}
+        assert "health-report-reading" in claimed
+        excluded_path = claimed["health-report-reading"]
+
+        # 人在页面上删掉它
+        apply_resource_exclusions(ledger, data_slots=[excluded_path])
+        save_ledger(ledger)
+
+        after = load_ledger("personal-assistant")
+        assert after is not None
+        assert excluded_path in after.excluded_resources["data_slots"]
+        assert not any(
+            s["name"] == "health-report-reading" for s in after.claimed_resources["data_slots"]
+        )
+
+        # 全量重扫：游标重置，名单不重置
+        sync_employee_ledger("personal-assistant", full_rescan=True)
+        rescanned = load_ledger("personal-assistant")
+        assert rescanned is not None
+        assert excluded_path in rescanned.excluded_resources["data_slots"]
+        assert not any(
+            s["name"] == "health-report-reading"
+            for s in rescanned.claimed_resources["data_slots"]
+        ), "剔除过的槽位在重扫后复活了"
+
+        # 编制这一侧此刻仍然绑着它（巡检只往编制里加，从不删），而账本已经不再认领：
+        # 这正说明拦住它的是排除名单本身，不是「编制里没有所以扫不到」。
+        from frago.employee import get_post
+
+        record = get_post("personal-assistant")
+        assert record is not None
+        assert excluded_path in record.data_slots
+        # 编制那一侧也不写回去：编制里已有的写法原样保留，不因重扫变成两行
+        assert record.data_slots.count(excluded_path) == 1
+
+    def test_hire_dropping_a_slot_records_it_as_excluded(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """走界面保存这条路删掉的槽位，同样进排除名单，且不因随后那次巡检复活。"""
+        from frago.employee import get_post, load_ledger
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_personal_sandbox(tmp_path)
+        svc = self._hire_personal_assistant()
+
+        record = get_post("personal-assistant")
+        assert record is not None
+        assert any("health-report-reading" in s for s in record.data_slots)
+
+        # 第二次保存时不再带上这个槽位 —— 界面上就是「取消勾选」
+        svc.hire(
+            "personal-assistant",
+            title="个人助理",
+            description="解决跟我个人生活、人际关系、家庭等私人相关的一切问题或事务",
+            work_scope="个人事务包括不限于工作、公积金、社保、债务、存款等\n家庭事务",
+            data_slots=[],
+            recipes=list(record.recipes),
+            knowledge_domains=list(record.knowledge_domains),
+        )
+
+        ledger = load_ledger("personal-assistant")
+        assert ledger is not None
+        assert any(
+            "health-report-reading" in value
+            for value in ledger.excluded_resources["data_slots"]
+        )
+        assert not any(
+            "health-report-reading" in s.get("path", "")
+            for s in ledger.claimed_resources["data_slots"]
+        ), "保存时删掉的槽位在随后的巡检里复活了"
+
+    def test_rebinding_a_slot_lifts_its_exclusion(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """人改主意把槽位重新勾上，排除名单上那条要撤掉，下一轮巡检才认得回它。
+
+        少了这一半，人的调整只能单向走：删掉的东西再也回不来——即便他随后重新勾选，
+        巡检仍然按名单把它挡在外面，页面上刚勾上的东西过一天自己又没了。
+        """
+        from frago.employee import get_post, load_ledger
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_personal_sandbox(tmp_path)
+        svc = self._hire_personal_assistant()
+
+        record = get_post("personal-assistant")
+        assert record is not None
+        slot = next(s for s in record.data_slots if "health-report-reading" in s)
+
+        def _save(slots: list[str]) -> None:
+            svc.hire(
+                "personal-assistant",
+                title="个人助理",
+                description="解决跟我个人生活、人际关系、家庭等私人相关的一切问题或事务",
+                work_scope="个人事务包括不限于工作、公积金、社保、债务、存款等\n家庭事务",
+                data_slots=slots,
+                recipes=list(get_post("personal-assistant").recipes),
+                knowledge_domains=list(get_post("personal-assistant").knowledge_domains),
+            )
+
+        # 先删：进名单
+        _save([])
+        ledger = load_ledger("personal-assistant")
+        assert ledger is not None
+        assert ledger.excluded_resources["data_slots"], "删除那一步没记进排除名单"
+
+        # 再补回来：名单上那条要撤掉。写法故意用另一种（绝对路径 vs ~ 形式），
+        # 名单里存的与编制里补的常常不是同一串字，只按字面比会撤不掉。
+        expanded = str(Path(slot).expanduser())
+        _save([expanded])
+        restored = load_ledger("personal-assistant")
+        assert restored is not None
+        assert not restored.excluded_resources["data_slots"], (
+            "重新绑回来的槽位仍在排除名单上，下一轮巡检还会把它挡掉"
+        )
+
+    def test_demo_director_proactive_sweep_does_not_overclaim_unrelated_assets(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """视频导演岗位在多领域混杂沙箱里只认领桌面录制相关资产，不因通用技术词或工作流词误领投研与家庭健康资产。"""
+        from frago.employee import EmployeeOntologyService, get_post, load_ledger
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_sandbox(tmp_path)
+        (
+            tmp_path
+            / "data"
+            / "health-report-reading"
+            / "20260101-社保缴费记录核对"
+        ).mkdir(parents=True, exist_ok=True)
+        (
+            tmp_path
+            / "data"
+            / "health-report-reading"
+            / "20260101-社保缴费记录核对"
+            / "notebook.md"
+        ).write_text(
+            "# 社保缴费记录核对\n\n2026 年度缴费基数确认，缺两个月记录。\n",
+            encoding="utf-8",
+        )
+
+        # 在不相关的领域描述里故意放入 agent / 结合 / 代码 / 提交 / 记录 等通用词
+        books = tmp_path / "books"
+        (books / "desktop-recording").mkdir(parents=True, exist_ok=True)
+        (books / "desktop-recording" / "silky-demo.md").write_text(
+            "# 丝滑演示视频录制规范\n", encoding="utf-8"
+        )
+        (books / "video-narration").mkdir(parents=True, exist_ok=True)
+        (books / "video-narration" / "tts-guide.md").write_text(
+            "# 视频配音指南\n", encoding="utf-8"
+        )
+        (books / "family-health").mkdir(parents=True, exist_ok=True)
+        (books / "family-health" / "checkup.md").write_text(
+            "# 体检报告解读结论\n", encoding="utf-8"
+        )
+        (books / "registry.json").write_text(
+            json.dumps(
+                {
+                    "etf-research": {"purpose": "结合 agent 工作流与代码提交进行 ETF 投研分析"},
+                    "family-health": {"purpose": "家庭成员健康体检记录与就医建议"},
+                    "desktop-recording": {"purpose": "虚拟桌面与容器舞台演示视频录制方法论"},
+                    "video-narration": {"purpose": "演示视频英文配音与音画合成规范"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "data" / "frago-desktop" / "20261103-employee-feature-demo").mkdir(
+            parents=True
+        )
+        (
+            tmp_path
+            / "data"
+            / "frago-desktop"
+            / "20261103-employee-feature-demo"
+            / "notebook.md"
+        ).write_text("# 新功能演示视频录制归档\n\n成片已交付。\n", encoding="utf-8")
+
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "demo-director",
+            title="Agent OS 新功能推特视频导演",
+            agent_kernel="agy",
+            description=(
+                "负责借助 agent_os 虚拟桌面与 frago-support-linux 隔离容器舞台，"
+                "将已提交的 Frago 新功能录制成丝滑、高完播率的 Twitter/X 演示视频"
+            ),
+            work_scope=(
+                "① 代码与特性拆解：根据已提交的 git commit 或功能模块，提炼痛点钩子、丝滑实操、结果落定；"
+                "② 容器舞台布景：按需启动隔离容器，通过只读挂载宿主机源码同步最新特性，结束后清理还原；"
+                "③ 虚拟桌面与三角色协同编排：唤醒虚拟桌面，技能拉起主操作员、驻场主持人与场外参谋，窗口最大化铺满、暗色主题；"
+                "④ 丝滑录制与音画合成：使用 frago desktop record start/stop 录制视频，结合 Kokoro TTS 生成英文旁白并合成为 MP4；"
+                "⑤ 成果归档：将成片与分镜脚本归档并写入 notebook.md。"
+            ),
+        )
+
+        ledger = load_ledger("demo-director")
+        assert ledger is not None
+        claimed_domains = {d["name"] for d in ledger.claimed_resources["knowledge_domains"]}
+        assert "desktop-recording" in claimed_domains
+        assert "video-narration" in claimed_domains
+        assert "etf-research" not in claimed_domains
+        assert "family-health" not in claimed_domains
+
+        claimed_slots = {s["name"] for s in ledger.claimed_resources["data_slots"]}
+        assert "frago-desktop" in claimed_slots
+        assert "stock" not in claimed_slots
+        assert "health-report-reading" not in claimed_slots
+        assert "cooking" not in claimed_slots
+
+        claimed_recipes = {r["name"] for r in ledger.claimed_resources["recipes"]}
+        assert "a_stock_dma_signal_engine" not in claimed_recipes
+        assert "a_stock_dma_data_console" not in claimed_recipes
+
+        record = get_post("demo-director")
+        assert record is not None
+        assert not any("stock" in s or "health" in s for s in record.data_slots)
+
+    def test_cli_hire_skills_commands_auto_schedule_and_real_invoke(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """命令行 `hire` 支持 `--skill` / `--command` 与自动注册每日巡检排程；`invoke --spawn` 走真实会话拉起通道。"""
+        from click.testing import CliRunner
+
+        import frago.cli.employee_commands as emp_cli
+        from frago.employee import get_post
+        from frago.server.services import stage_orchestrator, workbench_new_session
+        from frago.skills.skill_prompt import EmbeddedSkill
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        monkeypatch.setenv("FRAGO_EMPLOYEE_AUTO_SCHEDULE", "1")
+
+        schedules: list[dict[str, Any]] = []
+
+        def fake_add(**kwargs: Any) -> dict[str, Any]:
+            entry = {"id": "sch_auto_demo_01", **kwargs}
+            schedules.append(entry)
+            return entry
+
+        monkeypatch.setattr(
+            emp_cli, "_scheduler_hooks", lambda: (fake_add, lambda: list(schedules))
+        )
+
+        runner = CliRunner()
+        hire_res = runner.invoke(
+            emp_cli.employee_group,
+            [
+                "hire",
+                "demo-director",
+                "--title",
+                "Agent OS 新功能推特视频导演",
+                "--kernel",
+                "agy",
+                "--skill",
+                "how-frago-agent-runs-an-agent-os",
+                "--skill",
+                "frago-agent-os-twitter-demo",
+                "--command",
+                "frago desktop",
+                "--json",
+            ],
+        )
+        assert hire_res.exit_code == 0, hire_res.output
+        hired = json.loads(hire_res.output)
+        assert hired["skills"] == [
+            "how-frago-agent-runs-an-agent-os",
+            "frago-agent-os-twitter-demo",
+        ]
+        assert hired["allowed_commands"] == ["frago desktop"]
+        assert "sch_auto_demo_01" in hired["schedule_ids"]
+
+        # 1. dry-run 只做本体契约校验，绝不往 active_session_ids 写入假 emp-* 编号
+        dry_res = runner.invoke(
+            emp_cli.employee_group,
+            ["invoke", "demo-director", "检查舞台状态", "--dry-run", "--json"],
+        )
+        assert dry_res.exit_code == 0, dry_res.output
+        after_dry = get_post("demo-director")
+        assert after_dry is not None
+        assert after_dry.active_session_ids == []
+
+        # 2. --spawn 走真实会话拉起通道，自动挂载默认技能并触发三角色舞台编排
+        monkeypatch.setattr(
+            "frago.skills.skill_prompt.load_skills",
+            lambda names: [
+                EmbeddedSkill(name=n, path=tmp_path / f"{n}.md", body=f"# {n}")
+                for n in names
+            ],
+        )
+        monkeypatch.setattr(
+            stage_orchestrator,
+            "orchestrate_stage_session",
+            lambda sid, prompt, text: f"{prompt}\n[STAGE_READY:{sid}]",
+        )
+        launched_prompts: list[str] = []
+
+        def fake_start(agent_type: str, cwd: str, prompt: str, *, session_id: str | None):
+            launched_prompts.append(prompt)
+            return workbench_new_session.PendingLaunch(
+                handle="webui-cli-spawn-01",
+                agent_type=agent_type,
+                display_name="Antigravity",
+                cwd=cwd,
+                session_id="real-session-cli-888",
+            )
+
+        monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start)
+
+        spawn_res = runner.invoke(
+            emp_cli.employee_group,
+            ["invoke", "demo-director", "录制员工新特性视频", "--spawn", "--json"],
+        )
+        assert spawn_res.exit_code == 0, spawn_res.output
+        spawn_payload = json.loads(spawn_res.output)
+        assert spawn_payload["session_id"] == "real-session-cli-888"
+        assert spawn_payload["stage_orchestrated"] is True
+        assert len(launched_prompts) == 1
+        assert "[STAGE_READY:" in launched_prompts[0]
+        assert "# how-frago-agent-runs-an-agent-os" in launched_prompts[0]
+
+        after_spawn = get_post("demo-director")
+        assert after_spawn is not None
+        assert after_spawn.active_session_ids == ["real-session-cli-888"]
+
 

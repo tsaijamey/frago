@@ -22,6 +22,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -137,6 +138,13 @@ EMPLOYEE_POST_SCHEMA: dict[str, Any] = {
             "description": "CliCommandActionContract command_paths granted to this post.",
         },
         {
+            "name": "skills",
+            "type": "list[str]",
+            "default": [],
+            "rigidity": "+R",
+            "description": "Default Skill names automatically embedded when starting a session for this post.",
+        },
+        {
             "name": "created_at",
             "type": "iso-datetime",
             "auto": True,
@@ -218,6 +226,7 @@ class EmployeePostRecord:
     schedule_ids: list[str] = field(default_factory=list)
     active_session_ids: list[str] = field(default_factory=list)
     allowed_commands: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
 
@@ -237,6 +246,7 @@ class EmployeePostRecord:
         self.schedule_ids = _dedup_preserve_order(self.schedule_ids)
         self.active_session_ids = _dedup_preserve_order(self.active_session_ids)
         self.allowed_commands = _dedup_preserve_order(self.allowed_commands)
+        self.skills = _dedup_preserve_order(self.skills)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -268,6 +278,7 @@ class EmployeePostRecord:
             schedule_ids=list(raw.get("schedule_ids", [])),
             active_session_ids=list(raw.get("active_session_ids", [])),
             allowed_commands=list(raw.get("allowed_commands", [])),
+            skills=list(raw.get("skills", [])),
             created_at=str(raw.get("created_at", "") or _now_iso()),
             updated_at=str(raw.get("updated_at", "") or _now_iso()),
         )
@@ -533,6 +544,134 @@ LEDGER_SYNC_SESSION_MARKERS: tuple[str, ...] = (
     "员工账本巡检",
 )
 
+#: 可以被「排除名单」否决的三类资源，与 ``claimed_resources`` 的键一一对应。
+#:
+#: 会话与事务条目不在其中：那两类是**记录**，说的是「这台机器上发生过什么」，人否决它们
+#: 等于要求账本假装某件事没发生过，而账本的价值恰恰在如实记录。能被否决的是**归属**——
+#: 这块目录、这个知识域、这张配方算不算我这个岗位管的。会话按首句匹配，误伤面太大，
+#: 一次误判就把一整场工作从岗位视野里抹掉，代价远高于它带来的干净。
+EXCLUDABLE_RESOURCE_KINDS: tuple[str, ...] = (
+    "data_slots",
+    "recipes",
+    "knowledge_domains",
+)
+
+#: 三类资源各自的主键字段，排除名单里存的就是这个字段的值。
+RESOURCE_IDENTITY: dict[str, str] = {
+    "data_slots": "path",
+    "recipes": "name",
+    "knowledge_domains": "name",
+}
+
+
+def apply_resource_exclusions(
+    ledger: EmployeeLedger,
+    *,
+    data_slots: Sequence[str] = (),
+    recipes: Sequence[str] = (),
+    knowledge_domains: Sequence[str] = (),
+) -> EmployeeLedger:
+    """把人剔除掉的资源记进排除名单，并从账本当前的认领结果里拿掉。
+
+    一次调用做两件事，缺一不可：
+
+    - **记进名单**，否则下一轮巡检按职责词又会把它认领回来，人的这一次删除等于没做；
+    - **当场从账本里拿掉**，否则页面保存完再一读，被删的那条还在，人以为自己没删掉。
+
+    只处理被明确点名的条目，不碰其余——「保存」这个动作本身不代表要重扫一遍。
+    """
+    for kind, values in (
+        ("data_slots", data_slots),
+        ("recipes", recipes),
+        ("knowledge_domains", knowledge_domains),
+    ):
+        if not values:
+            continue
+        identity = RESOURCE_IDENTITY[kind]
+        excluded = ledger.excluded_resources.setdefault(kind, [])
+        for value in values:
+            cleaned = str(value).strip()
+            if cleaned and cleaned not in excluded:
+                excluded.append(cleaned)
+        removed = {str(v).strip() for v in values if str(v).strip()}
+        ledger.claimed_resources[kind] = [
+            item
+            for item in ledger.claimed_resources.get(kind, [])
+            if str(item.get(identity, "") if isinstance(item, dict) else item).strip()
+            not in removed
+        ]
+    return ledger
+
+
+def is_resource_excluded(ledger: EmployeeLedger | None, kind: str, value: str) -> bool:
+    """这条资源在不在排除名单上。巡检扫描时用它做最后一道筛。
+
+    比对的是字符串本身，不做路径展开：名单里存的是人看到并删掉的那一行原文
+    （``~/.frago/data/etf``），而巡检手上的是绝对路径。两种写法都要能对上，
+    所以扫描侧传进来时把两种形式都试一遍，这里只管比。
+    """
+    if ledger is None:
+        return False
+    cleaned = str(value).strip()
+    if not cleaned:
+        return False
+    return cleaned in (ledger.excluded_resources.get(kind) or [])
+
+
+def _exclusion_forms(value: str) -> set[str]:
+    """同一个资源可能以几种写法出现在名单里，把它们都算成同一个。
+
+    槽位是最麻烦的一类：人从页面上删的时候存进去的是 ``~/.frago/data/etf``，
+    而编制里可能写着绝对路径。只按字面比，人重新勾回来这一下就落不到名单上，
+    下一次巡检又把它挡在外面——「撤销上次的剔除」成了空操作。
+    """
+    cleaned = str(value).strip()
+    if not cleaned:
+        return set()
+    home = str(Path.home())
+    forms = {cleaned}
+    if cleaned.startswith(home):
+        forms.add(f"~{cleaned[len(home):]}")
+    elif cleaned.startswith("~"):
+        forms.add(str(Path(cleaned).expanduser()))
+    return forms
+
+
+def lift_resource_exclusions(
+    ledger: EmployeeLedger,
+    *,
+    data_slots: Sequence[str] = (),
+    recipes: Sequence[str] = (),
+    knowledge_domains: Sequence[str] = (),
+) -> EmployeeLedger:
+    """把人重新绑回来的资源从排除名单上撤掉。
+
+    与 :func:`apply_resource_exclusions` 是同一件事的两个方向。少了这一半，人的调整就
+    只能单向走：删掉的东西再也回不来——即使他随后在页面上重新勾选，巡检下一轮仍然按
+    名单把它挡在外面，页面上刚勾上的那一项又消失了。
+
+    只撤被明确点名的条目。撤了名单不等于当场重新认领：这一轮该资源是否真的归这个岗位，
+    由下一次巡检按职责词重新判，这里只负责把「人否决过」这个记忆抹掉。
+    """
+    for kind, values in (
+        ("data_slots", data_slots),
+        ("recipes", recipes),
+        ("knowledge_domains", knowledge_domains),
+    ):
+        if not values:
+            continue
+        wanted: set[str] = set()
+        for value in values:
+            wanted |= _exclusion_forms(value)
+        if not wanted:
+            continue
+        ledger.excluded_resources[kind] = [
+            kept
+            for kept in ledger.excluded_resources.get(kind, [])
+            if not (_exclusion_forms(kept) & wanted)
+        ]
+    return ledger
+
 
 def employee_ledger_path(
     member_post_id: str,
@@ -625,6 +764,12 @@ class EmployeeLedger:
     这四栏对着「新会话第一句话要秒懂什么」逐条排的：``claimed_resources`` 答「手上有
     什么」，``glossary`` 答「用户说的那个词指什么」，``intent_playbooks`` 答「这句话
     通常要我干什么」，``active_topics`` 答「上次停在哪」。
+
+    ``excluded_resources`` 是人否决过的资源，答「巡检别再把这几样算进来」。它必须存在，
+    因为巡检的判据是职责词，而职责词匹配天然会有误伤：岗位写着「股票与 ETF」，本机有个
+    叫 ``etf-notes`` 的目录其实属于别的岗位，职责词解释不了这种例外，只有人能。人删掉
+    一次，巡检下一轮又把它认领回来，这个「删」就等于没做——排除名单就是让人的判断
+    压过词面匹配的那一处落点。
     """
 
     member_post_id: str
@@ -640,6 +785,7 @@ class EmployeeLedger:
             "matched_sessions": [],
         }
     )
+    excluded_resources: dict[str, list[str]] = field(default_factory=dict)
     glossary: list[dict[str, Any]] = field(default_factory=list)
     intent_playbooks: list[dict[str, Any]] = field(default_factory=list)
     active_topics: list[dict[str, Any]] = field(default_factory=list)
@@ -663,6 +809,18 @@ class EmployeeLedger:
             value = raw_resources.get(key, default)
             merged[key] = value if isinstance(value, list) else default
         self.claimed_resources = merged
+
+        raw_excluded = (
+            self.excluded_resources if isinstance(self.excluded_resources, dict) else {}
+        )
+        self.excluded_resources = {
+            key: [
+                str(x).strip()
+                for x in (raw_excluded.get(key) or [])
+                if str(x).strip()
+            ]
+            for key in EXCLUDABLE_RESOURCE_KINDS
+        }
         self.glossary = [x for x in self.glossary if isinstance(x, dict)]
         self.intent_playbooks = [
             x for x in self.intent_playbooks if isinstance(x, dict)
@@ -676,6 +834,7 @@ class EmployeeLedger:
             "updated_at": self.updated_at,
             "cursor": asdict(self.cursor),
             "claimed_resources": self.claimed_resources,
+            "excluded_resources": self.excluded_resources,
             "glossary": self.glossary,
             "intent_playbooks": self.intent_playbooks,
             "active_topics": self.active_topics,
@@ -689,6 +848,7 @@ class EmployeeLedger:
             updated_at=str(raw.get("updated_at", "") or _now_iso()),
             cursor=LedgerCursor.from_dict(raw.get("cursor")),
             claimed_resources=raw.get("claimed_resources") or {},
+            excluded_resources=raw.get("excluded_resources") or {},
             glossary=list(raw.get("glossary") or []),
             intent_playbooks=list(raw.get("intent_playbooks") or []),
             active_topics=list(raw.get("active_topics") or []),
@@ -927,6 +1087,14 @@ def merge_ledger_entries(
     if new_ledger.work_scope_anchor:
         base.work_scope_anchor = new_ledger.work_scope_anchor
 
+    # 排除名单只增不减：它是人的判断，巡检这一侧产不出「人改主意了」这个信号，
+    # 新一轮合并时把新账本里那几栏并进去就够了，绝不覆盖。
+    for kind in EXCLUDABLE_RESOURCE_KINDS:
+        existing = base.excluded_resources.setdefault(kind, [])
+        for value in new_ledger.excluded_resources.get(kind, []):
+            if value not in existing:
+                existing.append(value)
+
     cursor = base.cursor
     incoming = new_ledger.cursor
     cursor.sessions_through = _later_timestamp(
@@ -949,7 +1117,14 @@ def merge_ledger_entries(
 
 
 def ledger_summary(ledger: EmployeeLedger) -> dict[str, Any]:
-    """账本的一页摘要：给接口和命令行用，不带全量条目正文。"""
+    """账本的一页摘要：给接口和命令行用，不带全量条目正文。
+
+    ``claimed_details`` 是给页面看的逐条明细：人要在详情弹窗里一眼看清「他到底认领到了
+    什么、这些东西是干什么用的」，光有几个计数看不出该不该剔除。会话与词条各取前若干条，
+    完整清单仍旧走 `frago employee ledger`——页面要的是「够判断」，不是「全量」。
+
+    阈值取 10 / 20 是页面密度决定的：一屏能扫完的量。再多就得滚，滚起来反而没人看。
+    """
     return {
         "member_post_id": ledger.member_post_id,
         "updated_at": ledger.updated_at,
@@ -973,6 +1148,21 @@ def ledger_summary(ledger: EmployeeLedger) -> dict[str, Any]:
             "matched_session_count": len(
                 ledger.claimed_resources.get("matched_sessions", [])
             ),
+        },
+        "claimed_details": {
+            "data_slots": list(ledger.claimed_resources.get("data_slots", [])),
+            "recipes": list(ledger.claimed_resources.get("recipes", [])),
+            "knowledge_domains": list(
+                ledger.claimed_resources.get("knowledge_domains", [])
+            ),
+            "matched_sessions": list(
+                ledger.claimed_resources.get("matched_sessions", [])
+            )[:10],
+            "glossary": list(ledger.glossary)[:20],
+        },
+        "excluded_resources": {
+            kind: list(ledger.excluded_resources.get(kind, []))
+            for kind in EXCLUDABLE_RESOURCE_KINDS
         },
         "glossary": list(ledger.glossary),
         "intent_playbooks": list(ledger.intent_playbooks),

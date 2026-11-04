@@ -8,27 +8,42 @@
  * ——只知道有这么回事。所以这里把那**段原文原样摆出来**（可展开的「自动带入业务语境」），
  * 连同纳管目录的统计。看得见，才敢信。
  *
- * ## 内核、目录、第一句话
+ * ## 复用成熟的会话启动管线（`PromptComposerBox` + 目录浏览 + `useSessionLaunch`）
  *
- * 内核默认取员工自己那一栏（`agent_kernel`），能改——员工记的是「这个岗位习惯用哪家」，
- * 不是「只能用这家」。改过之后只影响这一场，NEVER 写回员工的编制：一次临时换机位不是
- * 重新定岗。
- *
- * 目录默认取员工那一栏（`cwd`），空着也可以：服务端在请求里没给目录时会取员工那一栏
- * （`routes/workbench.py` 里那一段），所以这里留空等于「到那个员工的领地里去」。人在这一栏
- * 手写了路径则以他写的为准。
- *
- * ## 起完之后
- *
- * 编号当场就有的（claude）直接跳进那一场；要认领的（codex / opencode）在这里等，等的全过程
- * 摆在人眼前——照的是结对页那套（`StartTeamPanel`）：起会话那条路本来就有两种编号来路，
- * 假装编号已经有了会把人送进一场并不存在的会话。等到编号再跳，**NEVER 先跳再补**。
+ * 1. 输入盒直接复用会话工作台统一的 `PromptComposerBox`：天然支持截图粘贴（兼容 `files` 与
+ *    `items` 两种剪贴板载体，并在弹窗容器层兜底粘贴）、拖拽文件、点击选附件、行首 `/` 挑
+ *    skill、文本框自动增高与 `Cmd/Ctrl + Enter` 发送；
+ * 2. 工作目录默认取员工那一栏（`cwd`），岗位没配就取 `~/.frago`，并复用工作台同款目录树浏览；
+ * 3. 点下「开始对话」调完 `createSession` 后**立即交由会话工作台 `useSessionLaunch` 接手**
+ *    （左栏启动卡 + 中栏两步启动面板 `SessionLaunchPanel`），不再把人困在模态弹窗里阻塞空等。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, Folder, Loader2, Sparkles } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  CornerLeftUp,
+  Folder,
+  FolderSearch,
+  Info,
+  Sparkles,
+} from 'lucide-react';
 import DialogShell from './DialogShell';
+import AttachmentStrip from '@/components/ui/AttachmentStrip';
+import { useAttachments } from '@/hooks/useAttachments';
+import { modKey } from '@/hooks/usePlatform';
+import { browseDirectories } from '@/api/client';
+import { useDataStore } from '@/stores/dataStore';
+import type { DirectoryListing, SkillItem } from '@/types/api';
 import { kernelLabel } from './employeeMeta';
 import { fetchEmployee, type EmployeeDetail, type EmployeePost } from '@/hooks/useEmployees';
 import {
@@ -37,20 +52,25 @@ import {
   pickDefaultAgent,
   rememberLastAgent,
   useAgentClients,
-  waitForSession,
+  type PendingLaunch,
 } from '@/hooks/useAgentClients';
 import { addRecentDirectory } from '@/utils/recentDirectories';
 import { withTilde } from '@/components/sessionWorkbench/filePaths';
+import PromptComposerBox, {
+  extractClipboardFiles,
+} from '@/components/sessionWorkbench/PromptComposerBox';
+
+const DEFAULT_CWD = '~/.frago';
 
 interface LaunchEmployeeDialogProps {
   /** 点的是哪个员工。null 表示这个窗没开着。 */
   post: EmployeePost | null;
   onClose: () => void;
   /**
-   * 会话起来了，编号在这里。第二个参数是人刚打的那句话——切过去之后没别的地方存，而这一场
-   * 刚起时记录流还是空的，页面要靠它告诉人「起来的是哪一句」。
+   * 会话建出去了，把把手（`PendingLaunch`）与第一句话交回宿主，由会话工作台的
+   * `useSessionLaunch`（`SessionLaunchPanel` + `SessionRail`）统一接管认领与预热进度。
    */
-  onCreated: (sessionId: string, text: string) => void;
+  onCreated: (launch: PendingLaunch, text: string) => void;
 }
 
 export default function LaunchEmployeeDialog({
@@ -65,49 +85,62 @@ export default function LaunchEmployeeDialog({
   const [detailError, setDetailError] = useState<string | null>(null);
   const [ctxOpen, setCtxOpen] = useState(false);
   const [agent, setAgent] = useState<string | null>(null);
-  const [cwd, setCwd] = useState('');
+  const [showUnavailable, setShowUnavailable] = useState(false);
+  const [cwd, setCwd] = useState(DEFAULT_CWD);
+  const [browsing, setBrowsing] = useState(false);
+  const [listing, setListing] = useState<DirectoryListing | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [filter, setFilter] = useState('');
   const [text, setText] = useState('');
+  const [skills, setSkills] = useState<SkillItem[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** 正在等哪一步。null = 没在等。文案照结对页那三档的写法。 */
-  const [waiting, setWaiting] = useState<'claiming' | null>(null);
-  /** 人在等的时候按了取消。取消的是「等」，不是那场会话——它已经起来了。 */
-  const [cancelled, setCancelled] = useState(false);
-  const abort = useRef<AbortController | null>(null);
+  const browseSeq = useRef(0);
+
+  const allSkills = useDataStore((s) => s.skills);
+  const { images, documents, addFiles, removeImage, removeDocument, clear, count } =
+    useAttachments();
+
+  const addSkill = useCallback((skill: SkillItem) => {
+    setSkills((prev) => (prev.some((s) => s.name === skill.name) ? prev : [...prev, skill]));
+  }, []);
+  const removeSkill = useCallback((name: string) => {
+    setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
 
   const clients = useAgentClients(open);
   const selectable = useMemo(() => clients.agents.filter((a) => a.selectable), [clients.agents]);
+  const unavailable = useMemo(() => clients.agents.filter((a) => !a.selectable), [clients.agents]);
   const chosen = useMemo(
     () => selectable.find((a) => a.agent_type === agent) ?? null,
     [selectable, agent]
   );
 
-  // 换一张卡片就把整块重置。上一个人的目录、上一个人打了一半的话带过来，人就以为自己在
-  // 跟新的那个员工说话，而框里全是他刚跟别人说过的东西。
+  // 换一张卡片就把整块重置。
   useEffect(() => {
     if (!post) return;
     setDetail(null);
     setDetailError(null);
     setCtxOpen(false);
     setAgent(null);
-    setCwd(post.cwd ?? '');
+    setShowUnavailable(false);
+    setCwd(post.cwd || DEFAULT_CWD);
+    setBrowsing(false);
+    setListing(null);
+    setFilter('');
     setText('');
+    setSkills(
+      (post.skills ?? []).map((name) => {
+        const matched = allSkills.find((s) => s.name === name);
+        return matched ?? { name, description: '', file_path: '' };
+      })
+    );
     setError(null);
     setCreating(false);
-    setWaiting(null);
-    setCancelled(false);
-  }, [post]);
+    clear();
+  }, [post, clear, allSkills]);
 
-  // 窗一关就撒手：等编号那一趟不该在人已经走了之后还挂着。
-  useEffect(
-    () => () => {
-      abort.current?.abort();
-    },
-    []
-  );
-
-  // 详情（含语境原文与纳管目录）只在窗开着时取一次：这些是这台机器上的事实，不会在窗开着
-  // 的这十几秒里变。
+  // 详情（含语境原文与纳管目录）只在窗开着时取一次。
   useEffect(() => {
     if (!post) return;
     let alive = true;
@@ -117,8 +150,6 @@ export default function LaunchEmployeeDialog({
       })
       .catch((e: unknown) => {
         if (!alive) return;
-        // 取不到详情不让这一场开不下去——起会话本身不需要它（服务端自己会拼）。但要说出来，
-        // 否则下面那块语境预览一直转圈，人会以为这一场起不来。
         setDetailError(e instanceof Error ? e.message : t('employees.errors.detailFailedPlain'));
       });
     return () => {
@@ -127,8 +158,7 @@ export default function LaunchEmployeeDialog({
   }, [post, t]);
 
   /**
-   * 默认选哪家：员工自己那一栏优先，它在清单里挑不了就退回 `pickDefaultAgent` 那套判断
-   * （人上次用的、服务端建议的）。员工记的是这个岗位习惯用哪家，不是只能用这家。
+   * 默认选哪家：员工自己那一栏优先，它在清单里挑不了就退回 `pickDefaultAgent`。
    */
   useEffect(() => {
     if (!post || !clients.agents.length) return;
@@ -139,31 +169,70 @@ export default function LaunchEmployeeDialog({
     });
   }, [post, clients.agents, clients.fallbackDefault]);
 
+  const openFolder = async (path: string) => {
+    const seq = ++browseSeq.current;
+    setBrowseLoading(true);
+    try {
+      const next = await browseDirectories(path);
+      if (seq !== browseSeq.current) return;
+      setListing(next);
+      setFilter('');
+      setCwd(next.path);
+    } catch {
+      if (seq === browseSeq.current) setListing(null);
+    } finally {
+      if (seq === browseSeq.current) setBrowseLoading(false);
+    }
+  };
+
+  const toggleBrowsing = () => {
+    const next = !browsing;
+    setBrowsing(next);
+    if (next) void openFolder(cwd.trim() || post?.cwd || DEFAULT_CWD);
+  };
+
+  const visibleEntries = useMemo(() => {
+    const entries = listing?.entries ?? [];
+    const needle = filter.trim().toLowerCase();
+    return needle ? entries.filter((e) => e.name.toLowerCase().includes(needle)) : entries;
+  }, [listing, filter]);
+
   const ctx = detail?.business_context_block ?? '';
   const slots = detail?.managed_data.data_slots ?? [];
   const folderCount = slots.length || post?.data_summary.slot_count || 0;
   const entryCount =
     slots.reduce((n, s) => n + s.total_count, 0) || post?.data_summary.entry_count || 0;
 
-  // 第一句话可以留空：服务端那边「第一句话和附件不能都是空的」，而这里没有附件入口，
-  // 所以这一栏就是必填。空着时按钮不可点，别让人点了才发现。
-  const canSubmit = !creating && !!chosen && text.trim().length > 0;
+  const defaultSkillCount = post?.skills?.length ?? 0;
+  const canSubmit =
+    !creating &&
+    !!chosen &&
+    (text.trim().length > 0 || count > 0 || skills.length > defaultSkillCount);
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    e.preventDefault();
+    void addFiles(files);
+  };
+
+  const handleContainerPaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    if (e.defaultPrevented) return;
+    const extracted = extractClipboardFiles(e.clipboardData);
+    if (extracted.length === 0) return;
+    e.preventDefault();
+    void addFiles(e.clipboardData?.files?.length ? e.clipboardData.files : extracted);
+  };
 
   /**
-   * 建这一场。**建与等分成两段，因为编号的来路本来就是两种。**
-   *
-   * claude 接受由调用方指定编号，点完创建当场就知道这一场叫什么，直接切过去。codex 与
-   * opencode 的编号由它们自己分配，frago 要等会话起来后认领——那一段空窗如实说出来，人
-   * 按了取消只停「等」，那场会话本身照旧起来，所以取消之后要把「它起来了、编号是多少」
-   * 说清楚，别让人以为白按了一次。
+   * 建这一场，并立即把 `PendingLaunch` 交给会话工作台的 `useSessionLaunch` 接手。
+   * 对话框只管建、不管等：认领编号（agy / codex / opencode）与预热进度统一由会话页中栏的
+   * `SessionLaunchPanel` 与左栏启动卡展示。
    */
   const handleCreate = async () => {
     if (!post || !chosen || !canSubmit) return;
     setError(null);
-    setCancelled(false);
     setCreating(true);
-    const controller = new AbortController();
-    abort.current = controller;
 
     try {
       const first = text.trim();
@@ -171,33 +240,19 @@ export default function LaunchEmployeeDialog({
         agent: chosen.agent_type,
         cwd: cwd.trim(),
         text: first,
+        images: images.map((im) => im.dataUrl),
+        documents: documents.map((d) => ({ name: d.name, data: d.dataUrl })),
+        skills: skills.map((s) => s.name),
         employee: post.member_post_id,
       });
       rememberLastAgent(chosen.agent_type);
       if (cwd.trim()) addRecentDirectory(cwd.trim());
 
-      let sessionId = launch.session_id;
-      if (!sessionId) {
-        setWaiting('claiming');
-        sessionId = await waitForSession(launch.handle, { signal: controller.signal });
-        setWaiting(null);
-      }
-
-      onCreated(sessionId, first);
+      onCreated(launch, first);
       onClose();
     } catch (e) {
-      setWaiting(null);
-      if (controller.signal.aborted) {
-        // 取消的是「等」，不是那场会话。
-        setCancelled(true);
-        setCreating(false);
-      } else {
-        // 建不起来就**留在这个窗里**并把话原样摆出来。关掉再弹一句提示，人打的那段话就没了。
-        setError(e instanceof Error ? e.message : t('employees.launch.createFailedPlain'));
-        setCreating(false);
-      }
-    } finally {
-      abort.current = null;
+      setError(e instanceof Error ? e.message : t('employees.launch.createFailedPlain'));
+      setCreating(false);
     }
   };
 
@@ -207,225 +262,339 @@ export default function LaunchEmployeeDialog({
     <DialogShell
       title={t('employees.launch.title', { name: post.title })}
       onClose={onClose}
-      width={560}
+      width={600}
       closable={!creating}
-      footer={
-        <>
-          {waiting ? (
-            // 等编号这一段：能按的只有取消，而取消停的是「等」，那场会话照旧起来。
-            <button
-              type="button"
-              className="page-header-btn"
-              onClick={() => abort.current?.abort()}
-              data-testid="employee-cancel-wait"
-            >
-              {t('employees.launch.cancelWait')}
-            </button>
+    >
+      <div
+        className="flex flex-col gap-3"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+        onPaste={handleContainerPaste}
+      >
+        {/* 这个员工是谁：缩写 + 一行职责 + 内核。 */}
+        <div className="flex items-center gap-2.5 rounded-[8px] border border-border-color bg-bg-secondary px-2.5 py-2">
+          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] border border-border-color bg-bg-primary font-mono text-[11px] font-semibold text-text-primary">
+            {post.member_post_id.slice(0, 3).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-secondary">
+            {post.description || post.work_scope}
+          </span>
+          <span className="shrink-0 rounded-[4px] border border-border-color bg-bg-hover px-1.5 font-mono text-[11px] text-text-secondary">
+            {kernelLabel(post.agent_kernel)}
+          </span>
+        </div>
+
+        {/* 自动带入的业务语境：平时收成一行摘要，点开看服务端拼出来的原文 */}
+        <div className="flex-shrink-0 overflow-hidden rounded-[8px] border border-border-color bg-bg-secondary">
+          <button
+            type="button"
+            className="flex h-8 w-full min-w-0 items-center gap-2 px-2.5 text-left transition-colors hover:bg-bg-hover"
+            onClick={() => setCtxOpen((v) => !v)}
+            aria-expanded={ctxOpen}
+            data-testid="employee-context-toggle"
+          >
+            {ctxOpen ? (
+              <ChevronDown size={13} className="shrink-0 text-text-muted" />
+            ) : (
+              <ChevronRight size={13} className="shrink-0 text-text-muted" />
+            )}
+            <Sparkles size={13} className="shrink-0 text-text-muted" />
+            <span className="shrink-0 text-[11.5px] font-semibold text-text-primary">
+              {t('employees.launch.contextTitle')}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-muted">
+              {detailError
+                ? t('employees.launch.contextFailed')
+                : t('employees.launch.contextSummary', {
+                    folders: folderCount,
+                    entries: entryCount,
+                    domains: detail?.managed_data.knowledge_domains.length ?? 0,
+                    recipes: detail?.managed_data.recipes.length ?? 0,
+                  })}
+            </span>
+            <span className="shrink-0 text-[11.5px] text-text-secondary">
+              {ctxOpen ? t('employees.launch.contextHide') : t('employees.launch.contextPreview')}
+            </span>
+          </button>
+
+          {ctxOpen ? (
+            <div className="border-t border-border-color px-2.5 pb-2.5">
+              {ctx ? (
+                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words pt-2 font-mono text-[11px] leading-[1.55] text-text-secondary">
+                  {ctx}
+                </pre>
+              ) : (
+                <p className="pt-2 text-[11.5px] text-text-muted">
+                  {detailError ?? t('employees.launch.contextLoading')}
+                </p>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        {/* 交给哪个内核跑 */}
+        <div className="fgrp">
+          <label>{t('employees.launch.kernelLabel')}</label>
+          {clients.loading && !clients.agents.length ? (
+            <p className="text-[11.5px] text-text-muted">{t('employees.launch.kernelProbing')}</p>
+          ) : clients.error ? (
+            <p className="break-words text-[11.5px] text-accent-error">{clients.error}</p>
+          ) : !selectable.length ? (
+            <p className="break-words text-[11.5px] text-accent-error">
+              {t('employees.launch.kernelNone')}
+            </p>
           ) : (
-            <>
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="radiogroup"
+              aria-label={t('employees.launch.kernelLabel')}
+            >
+              {selectable.map((c) => {
+                const selected = c.agent_type === agent;
+                return (
+                  <button
+                    key={c.agent_type}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    data-testid={`employee-kernel-${c.agent_type}`}
+                    onClick={() => setAgent(c.agent_type)}
+                    title={c.path ?? undefined}
+                    className={`inline-flex h-7 items-center gap-1.5 rounded-[8px] border px-[11px] text-[12.5px] transition-colors ${
+                      selected
+                        ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
+                        : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        selected ? 'bg-accent-primary' : 'bg-text-dim'
+                      }`}
+                    />
+                    {c.display_name}
+                  </button>
+                );
+              })}
+
+              {unavailable.length ? (
+                <button
+                  type="button"
+                  onClick={() => setShowUnavailable((v) => !v)}
+                  aria-expanded={showUnavailable}
+                  data-testid="employee-toggle-unavailable-agents"
+                  className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11.5px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
+                >
+                  {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  <span>
+                    {t('workbench.newSession.unavailableCount', { n: unavailable.length })}
+                  </span>
+                </button>
+              ) : null}
+            </div>
+          )}
+
+          {chosen && post.agent_kernel && chosen.agent_type !== post.agent_kernel ? (
+            <p className="hint">
+              {t('employees.launch.kernelSwitched', {
+                wanted: kernelLabel(post.agent_kernel),
+                using: chosen.display_name,
+                reason:
+                  agentReasonText(
+                    clients.agents.find((a) => a.agent_type === post.agent_kernel)?.reason
+                  ) ?? '',
+              })}
+            </p>
+          ) : null}
+
+          {chosen?.id_origin === 'claimed' ? (
+            <p className="flex items-center gap-1.5 pt-0.5 text-[11.5px] leading-[1.45] text-text-muted">
+              <Info size={13} className="shrink-0 text-text-dim" />
+              <span>{t('workbench.newSession.claimedHint', { name: chosen.display_name })}</span>
+            </p>
+          ) : null}
+
+          {showUnavailable && unavailable.length ? (
+            <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-2.5 py-2 text-[11.5px] text-text-muted">
+              {unavailable.map((c) => (
+                <p key={c.agent_type} className="leading-relaxed">
+                  <span className="font-medium text-text-secondary">{c.display_name}</span>
+                  {' — '}
+                  {agentReasonText(c.reason)}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* 第一句话：直接复用成熟统一的 PromptComposerBox（粘贴/拖拽/选文件 + `/` 挑 skill + 自动伸缩 + 快捷键提交） */}
+        <PromptComposerBox
+          text={text}
+          onChangeText={setText}
+          skills={skills}
+          onAddSkill={addSkill}
+          onRemoveSkill={removeSkill}
+          onAddFiles={addFiles}
+          attachCount={count}
+          canSubmit={canSubmit}
+          submitting={creating}
+          onSubmit={handleCreate}
+          onCancel={onClose}
+          autoFocus
+          disabled={creating}
+          placeholder={t('employees.launch.firstMessagePlaceholder', { name: post.title })}
+          idPrefix="employee-launch"
+          textareaId="employee-launch-text"
+          ariaLabelledBy="employee-launch-first"
+          minLines={3}
+          maxLines={8}
+          menuPlacement="above"
+          headerSlot={
+            <div className="flex items-baseline justify-between gap-2">
+              <label
+                id="employee-launch-first"
+                htmlFor="employee-launch-text"
+                className="text-[12px] font-medium text-text-secondary"
+              >
+                {t('employees.launch.firstMessage')}
+              </label>
+              <span className="text-[11px] text-text-muted">
+                {t('employees.launch.attachHint')}
+              </span>
+            </div>
+          }
+          attachmentSlot={
+            <AttachmentStrip
+              images={images}
+              documents={documents}
+              onRemoveImage={removeImage}
+              onRemoveDocument={removeDocument}
+              idPrefix="employee-launch"
+            />
+          }
+          attachButtonLabel={t('employees.launch.attach')}
+          rightActionsSlot={
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="page-header-btn"
+                className="h-7 rounded-[7px] px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
                 onClick={onClose}
                 disabled={creating}
               >
                 {t('common.cancel')}
               </button>
-              <button
-                type="button"
-                className="page-header-btn page-header-primary"
-                onClick={handleCreate}
-                disabled={!canSubmit}
-                data-testid="employee-start-session"
-              >
-                {creating ? <Loader2 size={14} className="cs-spin" /> : null}
-                {t('employees.launch.start')}
-              </button>
-            </>
-          )}
-        </>
-      }
-    >
-      {/* 这个员工是谁：缩写 + 一行职责 + 内核。与人点卡片之前看到的那张卡片同一个身份。 */}
-      <div className="flex items-center gap-2.5 rounded-[8px] border border-border-color bg-bg-secondary px-2.5 py-2">
-        <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] border border-border-color bg-bg-primary font-mono text-[11px] font-semibold text-text-primary">
-          {post.member_post_id.slice(0, 3).toUpperCase()}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-secondary">
-          {post.description || post.work_scope}
-        </span>
-        <span className="shrink-0 rounded-[4px] border border-border-color bg-bg-hover px-1.5 font-mono text-[11px] text-text-secondary">
-          {kernelLabel(post.agent_kernel)}
-        </span>
-      </div>
-
-      {/* 自动带入的业务语境：平时收成一行摘要，点开看服务端拼出来的原文 */}
-      <div className="flex-shrink-0 overflow-hidden rounded-[8px] border border-border-color bg-bg-secondary">
-        <button
-          type="button"
-          className="flex h-8 w-full min-w-0 items-center gap-2 px-2.5 text-left transition-colors hover:bg-bg-hover"
-          onClick={() => setCtxOpen((v) => !v)}
-          aria-expanded={ctxOpen}
-          data-testid="employee-context-toggle"
-        >
-          {ctxOpen ? (
-            <ChevronDown size={13} className="shrink-0 text-text-muted" />
-          ) : (
-            <ChevronRight size={13} className="shrink-0 text-text-muted" />
-          )}
-          <Sparkles size={13} className="shrink-0 text-text-muted" />
-          <span className="shrink-0 text-[11.5px] font-semibold text-text-primary">
-            {t('employees.launch.contextTitle')}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-muted">
-            {detailError
-              ? t('employees.launch.contextFailed')
-              : t('employees.launch.contextSummary', {
-                  folders: folderCount,
-                  entries: entryCount,
-                  domains: detail?.managed_data.knowledge_domains.length ?? 0,
-                  recipes: detail?.managed_data.recipes.length ?? 0,
-                })}
-          </span>
-          <span className="shrink-0 text-[11.5px] text-text-secondary">
-            {ctxOpen ? t('employees.launch.contextHide') : t('employees.launch.contextPreview')}
-          </span>
-        </button>
-
-        {ctxOpen ? (
-          <div className="border-t border-border-color px-2.5 pb-2.5">
-            {ctx ? (
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words pt-2 font-mono text-[11px] leading-[1.55] text-text-secondary">
-                {ctx}
-              </pre>
-            ) : (
-              <p className="pt-2 text-[11.5px] text-text-muted">
-                {detailError ?? t('employees.launch.contextLoading')}
-              </p>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {/* 交给哪个内核跑 */}
-      <div className="fgrp">
-        <label>{t('employees.launch.kernelLabel')}</label>
-        {clients.loading && !clients.agents.length ? (
-          <p className="text-[11.5px] text-text-muted">{t('employees.launch.kernelProbing')}</p>
-        ) : clients.error ? (
-          <p className="break-words text-[11.5px] text-accent-error">{clients.error}</p>
-        ) : !selectable.length ? (
-          <p className="break-words text-[11.5px] text-accent-error">
-            {t('employees.launch.kernelNone')}
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('employees.launch.kernelLabel')}>
-            {selectable.map((c) => {
-              const selected = c.agent_type === agent;
-              return (
-                <button
-                  key={c.agent_type}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  data-testid={`employee-kernel-${c.agent_type}`}
-                  onClick={() => setAgent(c.agent_type)}
-                  title={c.path ?? undefined}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded-[8px] border px-[11px] text-[12.5px] transition-colors ${
-                    selected
-                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
-                      : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                      selected ? 'bg-accent-primary' : 'bg-text-dim'
-                    }`}
-                  />
-                  {c.display_name}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {/* 员工自己那一栏挑不了时才说一句：不说的话人会觉得「默认怎么不是我这个岗位配的那家」 */}
-        {chosen && post.agent_kernel && chosen.agent_type !== post.agent_kernel ? (
-          <p className="hint">
-            {t('employees.launch.kernelSwitched', {
-              wanted: kernelLabel(post.agent_kernel),
-              using: chosen.display_name,
-              reason: agentReasonText(
-                clients.agents.find((a) => a.agent_type === post.agent_kernel)?.reason
-              ) ?? '',
-            })}
-          </p>
-        ) : null}
-      </div>
-
-      {/* 在哪儿干活。留空 = 到员工自己的领地里去，服务端会取员工那一栏。 */}
-      <div className="fgrp">
-        <label htmlFor="employee-launch-cwd">{t('employees.launch.cwdLabel')}</label>
-        <div className="flex items-center gap-1.5">
-          <Folder size={13} className="shrink-0 text-text-muted" />
-          <input
-            id="employee-launch-cwd"
-            type="text"
-            className="sinput mono min-w-0 flex-1"
-            value={cwd}
-            onChange={(e) => setCwd(e.target.value)}
-            placeholder={t('employees.launch.cwdPlaceholder')}
-            spellCheck={false}
-            disabled={creating}
-          />
-        </div>
-        <p className="hint">
-          {cwd.trim()
-            ? withTilde(cwd.trim())
-            : post.cwd
-              ? t('employees.launch.cwdUsesEmployee', { dir: withTilde(post.cwd) })
-              : t('employees.launch.cwdNeeded')}
-        </p>
-      </div>
-
-      {/* 第一句话 */}
-      <div className="fgrp">
-        <label htmlFor="employee-launch-text">{t('employees.launch.firstMessage')}</label>
-        <textarea
-          id="employee-launch-text"
-          className="sinput"
-          style={{ height: 72, padding: '7px 9px', resize: 'none', lineHeight: 1.45 }}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={t('employees.launch.firstMessagePlaceholder', { name: post.title })}
-          disabled={creating}
+              <span className="mr-0.5 font-mono text-[11px] text-text-dim">{modKey}↵</span>
+            </div>
+          }
+          submitTestId="employee-start-session"
+          submitLabel={t('employees.launch.start')}
         />
+
+        {/* 在哪儿干活：默认取员工岗位目录（或 ~/.frago），同时提供与新建会话一致的目录树浏览 */}
+        <div className="fgrp">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="employee-launch-cwd">{t('employees.launch.cwdLabel')}</label>
+            <button
+              type="button"
+              data-testid="employee-toggle-browse-dirs"
+              onClick={toggleBrowsing}
+              aria-expanded={browsing}
+              className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-[6px] border px-2 text-[11px] transition-colors ${
+                browsing
+                  ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                  : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+              }`}
+            >
+              <FolderSearch size={12} strokeWidth={1.5} />
+              {browsing
+                ? t('workbench.newSession.cwdBrowseClose')
+                : t('workbench.newSession.cwdBrowse')}
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Folder size={13} className="shrink-0 text-text-muted" />
+            <input
+              id="employee-launch-cwd"
+              type="text"
+              className="sinput mono min-w-0 flex-1"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder={t('employees.launch.cwdPlaceholder')}
+              spellCheck={false}
+              disabled={creating}
+            />
+          </div>
+          <p className="hint">
+            {cwd.trim()
+              ? withTilde(cwd.trim())
+              : t('employees.launch.cwdUsesEmployee', {
+                  dir: withTilde(post.cwd || DEFAULT_CWD),
+                })}
+          </p>
+
+          {browsing ? (
+            <div className="mt-1.5 flex flex-col gap-2 rounded-[8px] border border-border-color bg-bg-secondary p-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="employee-browse-up"
+                  disabled={!listing?.parent || browseLoading}
+                  onClick={() => listing?.parent && void openFolder(listing.parent)}
+                  title={t('workbench.newSession.cwdUp')}
+                  aria-label={t('workbench.newSession.cwdUp')}
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border border-border-color bg-bg-primary px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+                >
+                  <CornerLeftUp size={13} strokeWidth={1.5} />
+                  <span>{t('workbench.newSession.cwdUp')}</span>
+                </button>
+                <input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder={t('workbench.newSession.cwdFilter')}
+                  data-testid="employee-browse-filter"
+                  className="h-7 min-w-0 flex-1 rounded-[7px] border border-border-color bg-bg-primary px-2.5 text-[12px] text-text-primary outline-none focus:border-[var(--sel-border)]"
+                />
+              </div>
+
+              <div
+                className="flex max-h-48 flex-col divide-y divide-border-color overflow-y-auto rounded-[8px] border border-border-color bg-bg-primary"
+                data-testid="employee-browse-list"
+              >
+                {browseLoading && !listing ? (
+                  <p className="px-3 py-2.5 text-[12px] text-text-muted">
+                    {t('workbench.newSession.cwdLoading')}
+                  </p>
+                ) : visibleEntries.length ? (
+                  visibleEntries.map((e) => (
+                    <button
+                      key={e.path}
+                      type="button"
+                      onClick={() => void openFolder(e.path)}
+                      title={e.path}
+                      className="flex h-8 w-full shrink-0 items-center gap-2.5 px-3 text-left font-mono text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+                    >
+                      <Folder size={13} className="shrink-0 text-text-muted" />
+                      <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                      <ChevronRight size={12} className="shrink-0 text-text-dim" />
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-3 py-2.5 text-center text-[12px] text-text-muted">
+                    {t('workbench.newSession.cwdEmpty')}
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {error ? (
+          <p className="break-words rounded-[8px] bg-accent-error-10 px-3 py-2 text-[12px] text-accent-error">
+            {t('employees.launch.createFailed', { reason: error })}
+          </p>
+        ) : null}
       </div>
-
-      {/* 等编号那一档。**必须说出来在等什么**：这一档可能十几秒，界面纹丝不动的话人分不出
-          是没建成、还是在起，只好再点一次，于是起了两场。 */}
-      {waiting ? (
-        <p
-          className="flex items-center gap-2 rounded-[8px] bg-bg-secondary px-3 py-2 text-[12px] text-text-secondary"
-          data-testid="employee-waiting"
-        >
-          <Loader2 size={13} className="cs-spin shrink-0" />
-          {t('employees.launch.waitingId', { name: chosen?.display_name ?? '' })}
-        </p>
-      ) : null}
-
-      {/* 人按了取消之后：那场会话本身照旧起来了，把这件事和它叫什么说清楚。 */}
-      {cancelled ? (
-        <p className="rounded-[8px] bg-bg-secondary px-3 py-2 text-[12px] text-text-secondary">
-          {t('employees.launch.waitCancelled')}
-        </p>
-      ) : null}
-
-      {error ? (
-        <p className="break-words rounded-[8px] bg-accent-error-10 px-3 py-2 text-[12px] text-accent-error">
-          {t('employees.launch.createFailed', { reason: error })}
-        </p>
-      ) : null}
     </DialogShell>
   );
 }

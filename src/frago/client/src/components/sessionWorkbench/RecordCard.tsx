@@ -61,7 +61,9 @@ import {
   stripImageGridBlocks,
 } from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { EmployeeQuotes } from './EmployeeQuote';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
 import ImageGridCard from './ImageGridCard';
@@ -712,9 +714,10 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const mode = str(p, 'input_mode');
   const command = str(p, 'command');
   const reminders = list(p, 'reminders').filter((r): r is string => typeof r === 'string' && !!r);
-  // 会话页点名的 skill 整篇嵌在正文前面，只摆名字；发的图以路径拼在正文尾巴上，摘出来
-  // 摆成缩略图。正文只留人写的话。
-  const { text: said, skills } = splitSkillBlocks(str(p, 'text'));
+  // 会话页点名的员工语境与 skill 整篇嵌在正文前面，只摆成引用卡片；发的图以路径拼在正文尾巴上，
+  // 摘出来摆成缩略图。正文只留人写的话。
+  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'text'));
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images: attached } = splitAttachedImages(said);
 
   // 敲在输入框里是常态，说出来等于没说。只有"当时不是直接打字"才值得标一句：插话是
@@ -732,6 +735,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       tone={YOU_TONE}
       meta={cardAnswer ? <CardAnswerTag /> : modeKey ? t(modeKey) : undefined}
     >
+      <EmployeeQuotes employees={employees} />
       <SkillQuotes names={skills} />
       {/* 命令摆成一枚等宽徽标。参数跟不跟它连排，看参数是**一个取值**还是**一段话**：
           `/model Opus` 人打的就是连着的一句，拆成两行两种字号会读成"命令是 /model，
@@ -746,7 +750,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
           {inline ? `${command} ${text}` : command}
         </p>
       ) : null}
-      {!inline && (text || (!command && !skills.length)) ? (
+      {!inline && (text || (!command && !skills.length && !employees.length)) ? (
         <div className={command ? 'mt-1.5' : undefined}>
           {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
         </div>
@@ -1206,7 +1210,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
-  const { text: said, skills } = splitSkillBlocks(str(p, 'body'));
+  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'body'));
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images } = splitAttachedImages(said);
   const cardAnswer = parseCardAnswer(text);
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
@@ -1221,10 +1226,11 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
+      <EmployeeQuotes employees={employees} />
       <SkillQuotes names={skills} />
       {cardAnswer ? (
         <CardAnswerBody answer={cardAnswer} />
-      ) : text || !skills.length ? (
+      ) : text || (!skills.length && !employees.length) ? (
         <Prose text={text} />
       ) : null}
       <AttachedImages images={images} />
@@ -1785,7 +1791,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
   // 正文里带着服务端拼的图片路径段。与插话卡、人发言走同一条拆图：排队这段时间人该
   // 看见自己刚发的那张图，而不是一串十六进制路径。
-  const { text: said, skills } = splitSkillBlocks(content);
+  const { text: afterEmp, employees } = splitEmployeeBlocks(content);
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images } = splitAttachedImages(said);
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
@@ -1800,8 +1807,9 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         tone={YOU_TONE}
         meta={chip}
       >
+        <EmployeeQuotes employees={employees} />
         <SkillQuotes names={skills} />
-        {text || !skills.length ? <Prose text={text} /> : null}
+        {text || (!skills.length && !employees.length) ? <Prose text={text} /> : null}
         <AttachedImages images={images} />
       </TextShell>
     );
@@ -1819,7 +1827,13 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         <span className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[11px]">{chip}</span>
           <span className="truncate text-text-secondary">
-            {[...skills.map((n) => `/${n}`), text].filter(Boolean).join(' ')}
+            {[
+              ...employees.map((e) => `@${e.id}`),
+              ...skills.map((n) => `/${n}`),
+              text,
+            ]
+              .filter(Boolean)
+              .join(' ')}
           </span>
         </span>
       }

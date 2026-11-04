@@ -37,6 +37,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWebSocketClient, MessageType, type WebSocketMessage } from '../api/websocket';
 import i18n from '@/i18n';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -246,7 +247,8 @@ type Landing = 'say' | 'queued' | 'drained';
  * 人打的那一句接在后面。先把那几段摘掉，比的才是人打的话。
  */
 function flatten(text: string): string {
-  return splitSkillBlocks(text).text.replace(/\s+/g, ' ').trim();
+  const withoutEmp = splitEmployeeBlocks(text).text;
+  return splitSkillBlocks(withoutEmp).text.replace(/\s+/g, ' ').trim();
 }
 
 /**

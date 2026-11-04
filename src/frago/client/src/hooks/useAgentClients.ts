@@ -165,7 +165,11 @@ export async function waitForSession(
   handle: string,
   options: { signal?: AbortSignal } = {}
 ): Promise<string> {
-  const delays = [700, 700, 1000, 1000, 1500, 1500, 2000, 2000, 3000, 3000, 5000, 5000, 5000];
+  const delays = [
+    700, 700, 1000, 1000, 1500, 1500, 2000, 2000, 3000, 3000,
+    5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000,
+    5000, 5000, 5000, 5000,
+  ];
   for (const delay of delays) {
     await new Promise((r) => setTimeout(r, delay));
     if (options.signal?.aborted) throw new Error(i18n.t('workbench.errors.cancelled'));

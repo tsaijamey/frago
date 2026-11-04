@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -26,7 +27,9 @@ from frago.employee import (
     EmployeeOntologyService,
     EmployeePostRecord,
     ensure_builtin_stock_employee,
+    get_post,
     ledger_summary,
+    list_available_resources,
     list_posts,
     load_ledger,
     scan_data_slot_entries,
@@ -70,7 +73,8 @@ class EmployeeUpsertRequest(BaseModel):
     recipes: list[str] = []
     data_slots: list[str] = []
     schedule_ids: list[str] = []
-    allowed_commands: list[str] = []
+    allowed_commands: list[str] | None = None
+    skills: list[str] | None = None
 
 
 class DataEntryRequest(BaseModel):
@@ -135,6 +139,10 @@ async def get_employee(member_post_id: str) -> dict[str, Any]:
 
     ``ledger`` 是该员工账本的摘要（同步到哪个时刻、四栏各有几条）。没有账本时为 null，
     这不是错误：岗位刚建好、巡检还没跑过的那个瞬间就是没有。
+
+    ``available_resources`` 是本机此刻能绑给员工的全部资源，**不做职责词筛选**。巡检认领
+    的那份给不出「还有哪些没绑上」，而详情弹窗要的正是「他认领到的」与「本机还有的」并排
+    摆出来，人才能补绑、改判、撤销上次剔除。它跟着详情一次给完，页面不必再发一次请求。
     """
     service = EmployeeOntologyService()
 
@@ -149,6 +157,7 @@ async def get_employee(member_post_id: str) -> dict[str, Any]:
             "employee": _post_payload(record),
             "managed_data": service.inspect_managed_data(member_post_id),
             "ledger": _ledger_payload(member_post_id),
+            "available_resources": list_available_resources(),
             "business_context_block": service.build_business_context_block(member_post_id),
         }
 
@@ -176,9 +185,28 @@ async def _upsert(member_post_id: str, request: EmployeeUpsertRequest) -> dict[s
             data_slots=request.data_slots,
             schedule_ids=request.schedule_ids,
             allowed_commands=request.allowed_commands,
+            skills=request.skills,
         )
     except (ValueError, ContractViolationError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if not os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("FRAGO_EMPLOYEE_AUTO_SCHEDULE") == "1":
+        def _auto_schedule() -> EmployeePostRecord:
+            try:
+                from frago.server.services.scheduler_service import SchedulerService
+
+                scheduler = SchedulerService.get_instance()
+                service.ensure_ledger_schedule(
+                    member_post_id,
+                    add_schedule=scheduler.add_schedule,
+                    list_schedules=scheduler.list_schedules,
+                )
+            except Exception:  # noqa: BLE001 - 排程接不上不阻断岗位保存
+                pass
+            return get_post(member_post_id) or record
+
+        record = await run_in_threadpool(_auto_schedule)
+
     payload = _post_payload(record)
     payload["post_ontological_id"] = projection.post.ontological_id()
     payload["role_ontological_id"] = projection.employee_role.ontological_id()

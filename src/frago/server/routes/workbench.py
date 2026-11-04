@@ -32,6 +32,7 @@ from frago.server.services import (
     coreagent_runner,
     file_history,
     session_send,
+    stage_orchestrator,
     workbench_agents,
     workbench_branch,
     workbench_groups,
@@ -263,6 +264,10 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
     # 这一段排在上面那条「目录不能为空」之前：员工配了目录的场合，请求里那一栏本来就该
     # 允许空着。顺序反了的话，人点卡片起会话会先撞上一个 400，而那个 400 说的正是
     # 岗位已经替他填好的那一栏。
+    #
+    # 岗位也没配目录时，落到 ``~/.frago``：员工本来就是 frago 自己的一支人马，它的领地
+    # 就是 frago 家目录。从前这一档回 400「起始目录不能是空的」，人点卡片起会话、什么都没
+    # 填，看到的是一句要他先去填一栏的话——而这一栏本来就该有默认值。
     session_cwd = request.cwd
     employee_record = None
     if request.employee.strip():
@@ -276,9 +281,43 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
             )
         if not session_cwd.strip() and employee_record.cwd:
             session_cwd = employee_record.cwd
+        if not session_cwd.strip():
+            fallback = Path.home() / ".frago"
+            # 先建出来再用：这一栏空着就往下传的话，起会话那一步会拿着一个不存在的目录
+            # 去挂 TUI，而失败的样子是"会话没起来"，与这一栏的关系谁都看不出来。
+            fallback.mkdir(parents=True, exist_ok=True)
+            session_cwd = str(fallback)
 
     if not session_cwd.strip():
         raise HTTPException(status_code=400, detail="起始目录不能是空的")
+
+    # ``~`` 是给人写的，起会话那一步认的是绝对路径。展开放在这一栏的最后一步：前面几处
+    # 判空、回退、拼接都按人写下的原样比，展开只做一次，谁都别再各展开一遍。
+    session_cwd = str(Path(session_cwd.strip()).expanduser())
+
+    # 这一栏的目录必须在起会话之前真的在盘上。``tmux new-session -c <目录>`` 碰到不存在的
+    # 目录不报错，而是静默退回 ``$HOME`` 起会话（见 ``agent_driver/tmux_session.py``）。对
+    # 认领型内核（codex / opencode / agy）来说，会话把工作区记成了 ``$HOME``，而认领器一直
+    # 拿原来那个目录去比对，两边永远对不上，人看到的只是等 30 秒后一句「会话没起来」，与
+    # 这一栏的关系谁都看不出来。
+    #
+    # frago 家目录下与家目录外分两档处置。家目录下的（``~/.frago``、员工领地
+    # ``~/.frago/data/<员工>``、数据槽位）是随用随建的：人点卡片起会话时这些目录多半还
+    # 没建过，而这本来就是 frago 自己的地盘。家目录外的一律不替人做主，不存在就当场回
+    # 400——把「目录写错了」这句话留在它该出现的地方，而不是让它变形为一次认领超时。
+    cwd_path = Path(session_cwd)
+    frago_root = (Path.home() / ".frago").resolve()
+    resolved_cwd = cwd_path.resolve()
+    under_frago = resolved_cwd == frago_root or frago_root in resolved_cwd.parents
+    if under_frago:
+        if cwd_path.exists() and not cwd_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"起始目录不是文件夹：{session_cwd}")
+        cwd_path.mkdir(parents=True, exist_ok=True)
+    else:
+        if not cwd_path.exists():
+            raise HTTPException(status_code=400, detail=f"起始目录不存在：{session_cwd}")
+        if not cwd_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"起始目录不是文件夹：{session_cwd}")
 
     # 附件要落盘，落盘要有个目录名，而目录名该是这场会话自己的编号——事后回头看
     # ``~/.frago/webui_uploads/`` 时，一眼就知道这几张图是哪一场的。编号在这里先 mint
@@ -290,14 +329,27 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+    effective_skills: list[str] = []
+    for sk in (*(employee_record.skills if employee_record is not None else ()), *request.skills):
+        cleaned_sk = str(sk).strip()
+        if cleaned_sk and cleaned_sk not in effective_skills:
+            effective_skills.append(cleaned_sk)
+
     prompt = _with_skills(
         _with_employee_context(
             build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths),
             request.employee,
         ),
-        request.skills,
+        effective_skills,
         request.text,
     )
+    if stage_orchestrator.is_stage_session(effective_skills, prompt):
+        prompt = await asyncio.to_thread(
+            stage_orchestrator.orchestrate_stage_session,
+            launch_id,
+            prompt,
+            request.text,
+        )
 
     try:
         launch = await asyncio.to_thread(
@@ -310,13 +362,18 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    if (
-        employee_record is not None
-        and launch.session_id
-        and launch.session_id not in employee_record.active_session_ids
-    ):
-        employee_record.active_session_ids.append(launch.session_id)
-        await asyncio.to_thread(save_post, employee_record)
+    if employee_record is not None:
+        await asyncio.to_thread(
+            workbench_new_session.bind_employee,
+            launch.handle,
+            employee_record.member_post_id,
+        )
+        if (
+            launch.session_id
+            and launch.session_id not in employee_record.active_session_ids
+        ):
+            employee_record.active_session_ids.append(launch.session_id)
+            await asyncio.to_thread(save_post, employee_record)
 
     return _launch_payload(launch)
 
@@ -877,13 +934,27 @@ async def read_session_file_diff(
     return await _compute_file_diff(sid, listed, current)
 
 
+def _inside_frago_data(target: str) -> bool:
+    """产物目录（``~/.frago/data``）下的真实路径。
+
+    宪法要求运行时数据与产出物落入 ``~/.frago/data/<project>/``，而图片、PDF、脚本产物等
+    往往经由命令或脚本生成、不在 Write/Edit 的结构化工具记录里；在会话详情里点「打开所在目录」
+    应当允许直接定位这些产物。
+    """
+    try:
+        data_root = (Path.home() / ".frago" / "data").resolve()
+        return target == str(data_root) or Path(target).is_relative_to(data_root)
+    except OSError:
+        return False
+
+
 @router.post("/workbench/sessions/{sid}/reveal")
 async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str, Any]:
     """在系统文件管理器里打开这个路径：是文件就选中它，是目录就打开它。
 
-    **只认两处**：这场会话自己的工作目录底下的东西，以及它改过的那些文件。路径由页面给过来，
-    服务端不校验就成了一个「随便开哪个目录」的口子；会话详情里这个按钮挨着本会话改过的文件，
-    够不着这场之外的地方。
+    **只认三处**：这场会话自己的工作目录底下的东西、``~/.frago/data`` 下的产物，以及它改过
+    的那些文件。路径由页面给过来，服务端不校验就成了一个「随便开哪个目录」的口子；会话详情里
+    这个按钮挨着本会话改过的文件与产出物，够不着那之外的地方。
 
     跨平台怎么开在 :meth:`~frago.server.services.system_service.SystemService.reveal_or_open`
     里，本模块不重复一遍平台判断。
@@ -899,9 +970,12 @@ async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str,
             ),
         )
     inside_root = base is not None and (target == base or Path(target).is_relative_to(base))
-    if not inside_root and target not in {
-        n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None
-    }:
+    inside_data = _inside_frago_data(target)
+    if (
+        not inside_root
+        and not inside_data
+        and target not in {n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None}
+    ):
         raise HTTPException(
             status_code=403,
             detail=f"Refused: {target} is neither in this session's working directory nor a file it changed",

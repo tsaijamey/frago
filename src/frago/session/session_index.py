@@ -1252,13 +1252,15 @@ def codex_tail_signals(
 class AgyIndexEntry:
     """agy 一场会话在索引里的一条。
 
-    除状态与摘要信号外，连带缓存转录里第一条正时刻（``created_at``，毫秒整数）：
-    摘要库不存创建时刻，与状态信号同一趟翻译出来后一并缓存，避免每轮列会话把上百场
-    agy 转录从头重翻一遍。
+    除状态与摘要信号外，连带缓存转录里第一条正时刻（``created_at``，毫秒整数）与
+    剥离员工/技能块后的开口第一句（``title``）：摘要库的 ``preview`` 在长注入块下
+    可能被截断在标签内部，与状态信号同一趟从转录里提取并缓存后，左栏在模型尚未生成
+    正式标题的首轮运行期也能直接显示人说的真话。
     """
 
     tail: TailSignals
     created_at: int | None
+    title: str | None = None
 
 
 def agy_tail_signals(
@@ -1302,8 +1304,10 @@ def agy_tail_signals(
             and entry.get("last_user_input") == last_input
             and entry.get("t_size") == t_size
             and entry.get("t_mtime_ns") == t_mtime_ns
+            and "title" in entry
         ):
             created_raw = entry.get("created_at")
+            title_raw = entry.get("title")
             entries[cid] = AgyIndexEntry(
                 tail=TailSignals(
                     last_kind=entry.get("last_kind"),
@@ -1313,6 +1317,7 @@ def agy_tail_signals(
                     employee_id=entry.get("employee_id"),
                 ),
                 created_at=int(created_raw) if isinstance(created_raw, int) else None,
+                title=title_raw if isinstance(title_raw, str) else None,
             )
             fresh[cid] = entry
             continue
@@ -1324,7 +1329,8 @@ def agy_tail_signals(
             records = []
         tail = tail_signals_of(records)
         created_at = next((r.ts for r in records if r.ts > 0), None)
-        entries[cid] = AgyIndexEntry(tail=tail, created_at=created_at)
+        title = _codex_first_user_line(records)
+        entries[cid] = AgyIndexEntry(tail=tail, created_at=created_at, title=title)
         fresh[cid] = {
             "last_modified": last_mod,
             "last_user_input": last_input,
@@ -1336,6 +1342,7 @@ def agy_tail_signals(
             "last_reply_ts": tail.last_reply_ts,
             "employee_id": tail.employee_id,
             "created_at": created_at,
+            "title": title,
         }
 
     if dirty or len(fresh) != len(cached):

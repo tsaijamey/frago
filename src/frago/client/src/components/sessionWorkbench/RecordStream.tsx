@@ -67,6 +67,8 @@ import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
+import { splitSkillBlocks } from '@/utils/skillBlocks';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
@@ -955,7 +957,9 @@ interface WatcherSlice {
 
 function cleanGoalText(raw?: string | null): string | null {
   if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
+  const withoutEmp = splitEmployeeBlocks(raw).text;
+  const withoutSkill = splitSkillBlocks(withoutEmp).text;
+  const trimmed = withoutSkill.trim();
   if (!trimmed || trimmed.startsWith('【answer】')) return null;
   return trimmed;
 }

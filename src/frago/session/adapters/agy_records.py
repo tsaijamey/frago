@@ -139,6 +139,33 @@ def _ms(raw: Any) -> int:
     return int(parsed.timestamp() * 1000)
 
 
+_PROMPT_FILE_BLOCK_RE = re.compile(
+    r'<frago-prompt-file\s+path="([^"]+)"[^>]*>[\s\S]*?</frago-prompt-file>(?:\r?\n([^\n]*))?'
+)
+
+
+def _restore_prompt_file_blocks(text: str) -> str:
+    """若用户消息包含 agy 驱动压缩生成的 ``<frago-prompt-file path="…">`` 块，从载体文件还原原文。"""
+    if "<frago-prompt-file" not in text:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_path = match.group(1).strip()
+        preview = (match.group(2) or "").strip()
+        if raw_path:
+            try:
+                p = Path(raw_path)
+                if p.is_file():
+                    loaded = p.read_text(encoding="utf-8", errors="replace").strip()
+                    if loaded:
+                        return loaded
+            except OSError:
+                pass
+        return preview
+
+    return _PROMPT_FILE_BLOCK_RE.sub(_replace, text).strip()
+
+
 def _split_user_input(content: str) -> tuple[str, str]:
     """``USER_INPUT`` 的正文拆成（人那句话, agy 自己拼的元数据）。
 
@@ -147,8 +174,8 @@ def _split_user_input(content: str) -> tuple[str, str]:
     """
     match = _USER_REQUEST_RE.search(content)
     if match is None:
-        return content.strip(), ""
-    request = match.group(1).strip()
+        return _restore_prompt_file_blocks(content.strip()), ""
+    request = _restore_prompt_file_blocks(match.group(1).strip())
     rest = (content[: match.start()] + content[match.end() :]).strip()
     return request, rest
 

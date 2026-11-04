@@ -17,17 +17,20 @@ NEVER imports `frago.server` or `frago.cli`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from frago.employee.store import (
     EmployeeLedger,
     EmployeePostRecord,
+    apply_resource_exclusions,
     create_data_slot_entry,
     get_post,
+    lift_resource_exclusions,
     list_posts,
     load_ledger,
+    save_ledger,
     save_post,
     scan_data_slot_entries,
     validate_post_id,
@@ -98,12 +101,13 @@ class EmployeeOntologyService:
         recipes: Sequence[str] = (),
         data_slots: Sequence[str] = (),
         schedule_ids: Sequence[str] = (),
-        allowed_commands: Sequence[str] = (),
+        allowed_commands: Sequence[str] | None = None,
+        skills: Sequence[str] | None = None,
     ) -> tuple[EmployeePostRecord, EmployeePostProjection]:
         """Create or update an employee post after validating its ontology shadow projection.
 
-        ``work_scope`` 与 ``cwd`` 给 ``None`` 表示「这一栏不动」，沿用磁盘上已有的值：
-        改一条领地绑定不该顺手把岗位的工作范畴抹掉。
+        ``work_scope``、``cwd``、``allowed_commands`` 与 ``skills`` 给 ``None`` 表示「这一栏不动」，
+        沿用磁盘上已有的值：改一条领地绑定不该顺手把岗位的工作范畴或默认技能抹掉。
         """
         existing = get_post(member_post_id, base_dir=self._base_dir)
         record = EmployeePostRecord(
@@ -122,7 +126,16 @@ class EmployeeOntologyService:
             data_slots=list(data_slots),
             schedule_ids=list(schedule_ids),
             active_session_ids=list(existing.active_session_ids) if existing else [],
-            allowed_commands=list(allowed_commands),
+            allowed_commands=(
+                list(allowed_commands)
+                if allowed_commands is not None
+                else (list(existing.allowed_commands) if existing else [])
+            ),
+            skills=(
+                list(skills)
+                if skills is not None
+                else (list(existing.skills) if existing else [])
+            ),
             created_at=existing.created_at if existing else "",
         )
         # Gate 2 validation before Gate 4 persistence
@@ -131,6 +144,8 @@ class EmployeeOntologyService:
             registry=self._registry,
         )
         save_post(record, base_dir=self._base_dir)
+        self._prune_ledger_to_post(record, previous=existing)
+        self._restore_ledger_exclusions(record, previous=existing)
         # 诞生即巡检：一个新岗位刚立起来时除了「我负责什么」一无所有，这时主动把
         # ``~/.frago`` 下与职责相关的资源认领一遍，账本才有内容可注入第一场会话。
         # 失败不阻断创建：岗位本身已经落盘可用，巡检是可以补跑的一步。
@@ -151,6 +166,8 @@ class EmployeeOntologyService:
         recipes: Sequence[str] = (),
         data_slots: Sequence[str] = (),
         schedule_ids: Sequence[str] = (),
+        allowed_commands: Sequence[str] = (),
+        skills: Sequence[str] = (),
     ) -> tuple[EmployeePostRecord, EmployeePostProjection]:
         """Bind additional territory assets or switch the `AgentKernel` (~R) on an existing post (+R).
 
@@ -171,6 +188,8 @@ class EmployeeOntologyService:
         record.recipes.extend(recipes)
         record.data_slots.extend(data_slots)
         record.schedule_ids.extend(schedule_ids)
+        record.allowed_commands.extend(allowed_commands)
+        record.skills.extend(skills)
         record.__post_init__()
         proj = project_employee_post_dict(
             record.to_projection_dict(),
@@ -274,6 +293,21 @@ class EmployeeOntologyService:
             if pid in all_records
         ]
 
+    def list_available_resources(self) -> dict[str, Any]:
+        """本机此刻有哪些资源可以绑给员工：数据目录、知识域、配方。
+
+        与巡检不同，这里**不做任何职责词筛选**：它回答的是「这台机器上有什么」，由人在
+        详情弹窗里挑。巡检给的是「按职责猜它该管什么」，猜错了由人在这里补；两件事分开，
+        页面才能同时摆出「他认领到的」与「本机还有的」。
+
+        实现在 :func:`frago.employee.ledger.list_available_resources`：清单的取法与巡检
+        写回编制用的是同一套路径归一化与目录约定，两份实现并存迟早会在「哪些目录算一层」
+        这种细节上分岔，而分岔的后果是页面上能选的与巡检认得的不一致。
+        """
+        from frago.employee.ledger import list_available_resources as _list
+
+        return _list()
+
     def inspect_managed_data(
         self,
         member_post_id: str,
@@ -339,6 +373,87 @@ class EmployeeOntologyService:
         )
         entry = create_data_slot_entry(target_slot, folder_name, summary=summary)
         return {**entry, "governance": receipt}
+
+    def _prune_ledger_to_post(
+        self,
+        record: EmployeePostRecord,
+        *,
+        previous: EmployeePostRecord | None,
+    ) -> None:
+        """岗位编制上被删掉的那几项，同步从账本里拿掉并记进排除名单。
+
+        人删掉一项，意图是「这东西不归我管」，而不是「这一轮先别看它」。只在编制里删、
+        账本不动，下一轮巡检按职责词又把它认领回来，页面上的「删」等于白点。所以这里
+        把差集写进账本的排除名单：账本与编制两条路都会跳过它。
+
+        判据是**差集**（老编制有、新编制没有），不是「新编制里没有的都不算」：账本里认领
+        到而编制里还没写回去的条目（巡检刚发现、人还没保存）不能因为一次保存就被判成
+        「人不想要」。只有人明确从编制上划掉的才算。
+        """
+        if previous is None:
+            return
+        ledger = load_ledger(record.member_post_id, base_dir=self._base_dir)
+        if ledger is None:
+            return
+
+        def _removed(old: Sequence[str], new: Sequence[str]) -> list[str]:
+            kept = {str(x).strip() for x in new}
+            return [str(x).strip() for x in old if str(x).strip() and str(x).strip() not in kept]
+
+        removed_slots = _removed(previous.data_slots, record.data_slots)
+        removed_recipes = _removed(previous.recipes, record.recipes)
+        removed_domains = _removed(previous.knowledge_domains, record.knowledge_domains)
+        if not (removed_slots or removed_recipes or removed_domains):
+            return
+
+        apply_resource_exclusions(
+            ledger,
+            data_slots=removed_slots,
+            recipes=removed_recipes,
+            knowledge_domains=removed_domains,
+        )
+        save_ledger(ledger, base_dir=self._base_dir)
+
+    def _restore_ledger_exclusions(
+        self,
+        record: EmployeePostRecord,
+        *,
+        previous: EmployeePostRecord | None,
+    ) -> None:
+        """编制上重新绑回来的那几项，从账本的排除名单上撤掉。
+
+        与 :meth:`_prune_ledger_to_post` 是一件事的两个方向，缺了这一半，人的调整只能
+        单向走：他删掉一项、过后又改主意重新勾上，账本里那条「人否决过」的记忆还在，
+        下一次巡检仍旧把它挡在外面——页面上刚勾上的东西过一天自己又没了，而人根本没
+        再动过它。
+
+        判据是**新增的差集**（老编制没有、新编制有），不是「新编制里有的都撤」：账本认领
+        到、编制里也有的那些常态条目本就不在名单上，逐个去撤是多写一遍；真正要撤的是
+        人这一次明确补上的那几项。
+        """
+        if previous is None:
+            return
+        ledger = load_ledger(record.member_post_id, base_dir=self._base_dir)
+        if ledger is None:
+            return
+
+        def _added(old: Sequence[str], new: Sequence[str]) -> list[str]:
+            had = {str(x).strip() for x in old}
+            return [str(x).strip() for x in new if str(x).strip() and str(x).strip() not in had]
+
+        added_slots = _added(previous.data_slots, record.data_slots)
+        added_recipes = _added(previous.recipes, record.recipes)
+        added_domains = _added(previous.knowledge_domains, record.knowledge_domains)
+        if not (added_slots or added_recipes or added_domains):
+            return
+
+        lift_resource_exclusions(
+            ledger,
+            data_slots=added_slots,
+            recipes=added_recipes,
+            knowledge_domains=added_domains,
+        )
+        save_ledger(ledger, base_dir=self._base_dir)
 
     def _sync_ledger_quietly(self, member_post_id: str) -> dict[str, Any] | None:
         """跑一次巡检并把异常吞掉。
@@ -466,7 +581,7 @@ class EmployeeOntologyService:
                 "  新产出按 ~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/ 归档到上述槽位内。"
             )
 
-        if record.knowledge_domains or record.recipes:
+        if record.knowledge_domains or record.recipes or record.skills:
             lines.append("")
             lines.append("【管辖的知识域与配方工具链】")
             if record.knowledge_domains:
@@ -478,6 +593,11 @@ class EmployeeOntologyService:
                 lines.append(
                     f"配方：{', '.join(record.recipes)}"
                     "（按需 `frago recipe info <name>` / `frago recipe run <name>`）"
+                )
+            if record.skills:
+                lines.append(
+                    f"默认技能：{', '.join(record.skills)}"
+                    "（新会话自动挂载技能正文；含舞台技能时自动触发三角色协同编排）"
                 )
 
         lines.extend(_render_ledger_sections(ledger))
@@ -493,6 +613,7 @@ class EmployeeOntologyService:
         caller_context_id: str = "cli:owner",
         requested_asset_id: str | None = None,
         initiator: OntologyEntity | None = None,
+        session_launcher: Callable[[EmployeePostRecord, str], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Invoke an employee post under the `invoke_domain_employee` kinetic contract and persist session trail."""
         runtime, _ = self.build_runtime_graph()
@@ -508,11 +629,16 @@ class EmployeeOntologyService:
             requested_asset_id=requested_asset_id,
         )
         record = get_post(member_post_id, base_dir=self._base_dir)
-        if record is not None:
-            sess_id = str(result.get("session_id", ""))
-            if sess_id and sess_id not in record.active_session_ids:
-                record.active_session_ids.append(sess_id)
-                save_post(record, base_dir=self._base_dir)
+        if record is not None and session_launcher is not None:
+            launch_info = session_launcher(record, query_or_task)
+            if isinstance(launch_info, dict):
+                result.update(launch_info)
+                real_sid = str(launch_info.get("session_id") or "").strip()
+                if real_sid:
+                    refreshed = get_post(member_post_id, base_dir=self._base_dir) or record
+                    if real_sid not in refreshed.active_session_ids:
+                        refreshed.active_session_ids.append(real_sid)
+                        save_post(refreshed, base_dir=self._base_dir)
         return result
 
     def govern(
