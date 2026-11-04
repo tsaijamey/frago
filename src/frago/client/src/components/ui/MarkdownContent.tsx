@@ -1,4 +1,17 @@
-import { createContext, useContext, type ComponentPropsWithoutRef } from 'react';
+import {
+  Children,
+  Fragment,
+  cloneElement,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react';
+import { Check, Copy } from 'lucide-react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
@@ -124,16 +137,107 @@ function mermaidSource(node: unknown): string | null {
   return (code.children ?? []).map((c) => (typeof c.value === 'string' ? c.value : '')).join('');
 }
 
-const components: Components = {
-  pre({ children, node, ...props }) {
-    const diagram = mermaidSource(node);
-    if (diagram !== null) return <MermaidDiagram source={diagram.trimEnd()} />;
-    return (
-      <pre className="code-block" {...props}>
+function extractNodeText(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const n = node as { value?: unknown; children?: unknown[] };
+  if (typeof n.value === 'string') return n.value;
+  if (Array.isArray(n.children)) {
+    return n.children.map(extractNodeText).join('');
+  }
+  return '';
+}
+
+function CodeBlockPre({
+  children,
+  node,
+  ...props
+}: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const diagram = mermaidSource(node);
+  if (diagram !== null) return <MermaidDiagram source={diagram.trimEnd()} />;
+
+  const handleCopy = () => {
+    const raw = extractNodeText(node) || preRef.current?.textContent || '';
+    const text = raw.replace(/\r?\n$/, '');
+    if (!navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
+      setCopied(false);
+      timerRef.current = null;
+    }, 2000);
+  };
+
+  return (
+    <div className="code-block-wrap">
+      <button
+        type="button"
+        className={`code-block-copy${copied ? ' is-copied' : ''}`}
+        onClick={handleCopy}
+        aria-label={copied ? 'Copied' : 'Copy'}
+        title={copied ? 'Copied' : 'Copy'}
+        data-testid="code-block-copy"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+      <pre ref={preRef} className="code-block" {...props}>
         {children}
       </pre>
-    );
-  },
+    </div>
+  );
+}
+
+const BR_TAG_RE = /<br\s*\/?>/i;
+const BR_SPLIT_RE = /<br\s*\/?>/gi;
+
+/**
+ * 表格单元格里常以 `<br>` / `<br/>` 拆出多行命令或条目，而 `react-markdown` 默认不挂
+ * `rehype-raw`，会把 `<br>` 当纯文本吐出来。这里只把单元格内非 `code` 节点里的 `<br>`
+ * 转成真正的换行，行内代码里的 `` `<br>` `` 字面量照旧保留。
+ */
+function renderCellChildren(children: ReactNode): ReactNode {
+  return Children.map(children, (child, childIdx) => {
+    if (typeof child === 'string') {
+      if (!BR_TAG_RE.test(child)) return child;
+      const parts = child.split(BR_SPLIT_RE);
+      return parts.map((part, partIdx) =>
+        partIdx === 0 ? (
+          part
+        ) : (
+          <Fragment key={`br-${childIdx}-${partIdx}`}>
+            <br />
+            {part}
+          </Fragment>
+        )
+      );
+    }
+    if (isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
+      const tagName = child.props.node?.tagName;
+      if (child.type === 'code' || tagName === 'code' || !child.props.children) {
+        return child;
+      }
+      return cloneElement(child, undefined, renderCellChildren(child.props.children));
+    }
+    return child;
+  });
+}
+
+const components: Components = {
+  pre: CodeBlockPre,
   code({ children, ...props }) {
     const isInline = !props.className;
     if (isInline) {
@@ -152,6 +256,12 @@ const components: Components = {
         <table {...props}>{children}</table>
       </div>
     );
+  },
+  th({ children, node: _node, ...props }) {
+    return <th {...props}>{renderCellChildren(children)}</th>;
+  },
+  td({ children, node: _node, ...props }) {
+    return <td {...props}>{renderCellChildren(children)}</td>;
   },
   a: MarkdownLink,
 };

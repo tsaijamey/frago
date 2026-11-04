@@ -21,13 +21,13 @@
 import { memo, useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Maximize2, X } from 'lucide-react';
+import { Check, Copy, Download, Maximize2, X } from 'lucide-react';
 import type { Mermaid } from 'mermaid';
 import mermaidUrl from 'mermaid/dist/mermaid.min.js?url';
 // 普通脚本，加载时把 fragoMermaid 挂到全局上
 import '../../../../resources/viewer/mermaid/frago-theme.js';
 
-type DiagramTheme = 'dark' | 'light';
+export type DiagramTheme = 'dark' | 'light';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -97,14 +97,145 @@ function useDocumentTheme(): DiagramTheme {
 // 代理边写边推时源码每几十毫秒变一次，等它停一停再画
 const SETTLE_MS = 250;
 
-/** 图的自然宽度（像素）。mermaid 配的是 `useMaxWidth: false`，尺寸写在 svg 自己的属性上；
- *  万一只有 viewBox，就拿 viewBox 的宽度兜底。取不到时返回 0，浮窗退回按窗宽铺满。 */
-function naturalWidth(svg: SVGSVGElement): number {
-  const own = Number(svg.getAttribute('width'));
-  if (Number.isFinite(own) && own > 0) return own;
-  const box = svg.viewBox?.baseVal;
-  return box && box.width > 0 ? box.width : 0;
+/** 图的自然宽高（逻辑像素）。mermaid 配的是 `useMaxWidth: false`，优先读 viewBox 与数值型 width/height；
+ *  万一写成百分比（如 `width="100%"`），会落到 viewBox 或实测包围盒上。 */
+export function naturalSize(svg: SVGSVGElement): { width: number; height: number } {
+  const ownW = Number(svg.getAttribute('width'));
+  const ownH = Number(svg.getAttribute('height'));
+  const vbAttr = svg.getAttribute('viewBox');
+  let vbW = 0;
+  let vbH = 0;
+  if (vbAttr) {
+    const parts = vbAttr
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+    if (
+      parts.length === 4 &&
+      Number.isFinite(parts[2]) &&
+      parts[2] > 0 &&
+      Number.isFinite(parts[3]) &&
+      parts[3] > 0
+    ) {
+      vbW = parts[2];
+      vbH = parts[3];
+    }
+  }
+  if ((vbW <= 0 || vbH <= 0) && svg.viewBox?.baseVal) {
+    if (svg.viewBox.baseVal.width > 0) vbW = svg.viewBox.baseVal.width;
+    if (svg.viewBox.baseVal.height > 0) vbH = svg.viewBox.baseVal.height;
+  }
+  const rect = typeof svg.getBoundingClientRect === 'function' ? svg.getBoundingClientRect() : null;
+  const width =
+    Number.isFinite(ownW) && ownW > 0 ? ownW : vbW > 0 ? vbW : rect && rect.width > 0 ? rect.width : 0;
+  const height =
+    Number.isFinite(ownH) && ownH > 0 ? ownH : vbH > 0 ? vbH : rect && rect.height > 0 ? rect.height : 0;
+  return { width, height };
 }
+
+function naturalWidth(svg: SVGSVGElement): number {
+  return naturalSize(svg).width;
+}
+
+/**
+ * 导出成 PNG 的尺寸规格：
+ * - 至少 2× 矢量超采样（Retina 下跟随 ceil(devicePixelRatio)），让 14px 节点字和 11.5px 边标签
+ *   在位图里至少达到 28px / 23px 物理像素，笔画边缘不发虚；
+ * - 窄小流程图自动把倍率抬到使输出总宽 ≥ 1600px（最高封顶 4×），避免三四个节点的小图导出后
+ *   贴到聊天窗或文档里被二次拉大而糊掉；
+ * - 四周留 24px（逻辑像素）同主题实心底色留白（深色 #1a1a1a / 浅色 #f7f7f7），防止圆角框描边贴边被裁、
+ *   以及深色图的浅色字落在透明底上看不清；
+ * - 单边硬上限 8192px，守住浏览器 Canvas 硬件纹理上限。
+ */
+export const MIN_EXPORT_WIDTH = 1600;
+export const MIN_EXPORT_SCALE = 2;
+export const MAX_EXPORT_SCALE = 4;
+export const MAX_CANVAS_SIDE = 8192;
+export const EXPORT_PADDING = 24;
+
+export function computeExportDimensions(
+  naturalW: number,
+  naturalH: number,
+  dpr: number = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+): { width: number; height: number; scale: number; pad: number } {
+  const baseW = Math.max(1, naturalW);
+  const baseH = Math.max(1, naturalH);
+  const contentWithPadW = baseW + EXPORT_PADDING * 2;
+  const contentWithPadH = baseH + EXPORT_PADDING * 2;
+  const neededForMinWidth = MIN_EXPORT_WIDTH / contentWithPadW;
+  const rawScale = Math.max(MIN_EXPORT_SCALE, Math.ceil(dpr || 1), neededForMinWidth);
+  const maxAllowedScale = Math.min(
+    MAX_EXPORT_SCALE,
+    MAX_CANVAS_SIDE / contentWithPadW,
+    MAX_CANVAS_SIDE / contentWithPadH,
+  );
+  const scale = Math.max(1, Math.min(rawScale, maxAllowedScale));
+  const width = Math.round(contentWithPadW * scale);
+  const height = Math.round(contentWithPadH * scale);
+  const pad = Math.round(EXPORT_PADDING * scale);
+  return { width, height, scale, pad };
+}
+
+export async function renderSvgToPngBlob(
+  svg: SVGSVGElement,
+  theme: DiagramTheme,
+): Promise<Blob> {
+  const { width: natW, height: natH } = naturalSize(svg);
+  const baseW = natW > 0 ? natW : 800;
+  const baseH = natH > 0 ? natH : 600;
+  const { width, height, scale, pad } = computeExportDimensions(baseW, baseH);
+  const drawW = Math.round(baseW * scale);
+  const drawH = Math.round(baseH * scale);
+
+  const clone = svg.cloneNode(true) as SVGSVGElement;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (!clone.getAttribute('viewBox')) {
+    clone.setAttribute('viewBox', `0 0 ${baseW} ${baseH}`);
+  }
+  clone.setAttribute('width', String(drawW));
+  clone.setAttribute('height', String(drawH));
+  clone.style.maxWidth = 'none';
+  clone.style.width = `${drawW}px`;
+  clone.style.height = `${drawH}px`;
+  // mermaid 内置的 stylis 会把 themeCSS 里的 `foreignObject` 转成全小写 `foreignobject`，
+  // 在 HTML 文档里大小写不敏感能命中，但序列化成独立 XML (`image/svg+xml`) 后大小写敏感会失效，
+  // 导致悬在段落左侧的状态记号（✓ / ● / !）被默认 overflow 裁掉。这里显式补在节点上。
+  clone.querySelectorAll('foreignObject').forEach((fo) => {
+    fo.setAttribute('overflow', 'visible');
+    fo.style.overflow = 'visible';
+  });
+
+  const xml = new XMLSerializer().serializeToString(clone);
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = 'sync';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('failed to rasterize diagram svg'));
+    image.src = dataUrl;
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d context unavailable');
+
+  ctx.fillStyle = theme === 'light' ? '#f7f7f7' : '#1a1a1a';
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(img, pad, pad, drawW, drawH);
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('canvas toBlob returned null'));
+    }, 'image/png');
+  });
+}
+
+const TOOLBAR_BTN_CLASS =
+  'inline-flex items-center gap-1 rounded-md border border-border-color bg-bg-base px-2 py-1 text-[11px] text-text-muted opacity-70 transition-opacity hover:text-text-primary hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100';
 
 function MermaidDiagram({ source }: { source: string }) {
   const { t } = useTranslation();
@@ -115,13 +246,64 @@ function MermaidDiagram({ source }: { source: string }) {
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [zoomWidth, setZoomWidth] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<number | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const zoomHost = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
 
   const openZoom = () => {
     const el = host.current?.querySelector('svg');
     setZoomWidth(el ? naturalWidth(el) : 0);
     setZoomed(true);
+  };
+
+  const copyImage = async () => {
+    const el = host.current?.querySelector('svg');
+    if (!el || !navigator.clipboard?.write) return;
+    const blobPromise = renderSvgToPngBlob(el, theme);
+    try {
+      if (typeof ClipboardItem !== 'undefined') {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blobPromise }),
+          ]);
+        } catch {
+          const blob = await blobPromise;
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob }),
+          ]);
+        }
+      }
+      setCopied(true);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // 剪贴板被拒或不可用时静默回退
+    }
+  };
+
+  const downloadImage = async () => {
+    const el = host.current?.querySelector('svg');
+    if (!el) return;
+    try {
+      const blob = await renderSvgToPngBlob(el, theme);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `diagram-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      // 导出失败时静默回退
+    }
   };
 
   useEffect(() => {
@@ -177,7 +359,7 @@ function MermaidDiagram({ source }: { source: string }) {
       <div
         ref={host}
         data-testid="mermaid-diagram"
-        className="flex justify-center overflow-x-auto rounded-[10px] border border-border-color bg-bg-secondary p-3.5 [&_svg]:h-auto [&_svg]:max-w-full"
+        className="flex justify-center overflow-x-auto rounded-[10px] border border-border-color bg-bg-secondary px-3.5 pb-3.5 pt-10 [&_svg]:h-auto [&_svg]:max-w-full"
         // mermaid 以 strict 安全级别渲染，输出的 SVG 已经过它自己的净化
         dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
       >
@@ -186,17 +368,44 @@ function MermaidDiagram({ source }: { source: string }) {
         )}
       </div>
       {svg ? (
-        <button
-          type="button"
-          data-testid="mermaid-zoom"
-          onClick={openZoom}
-          title={t('common.zoomDiagram')}
-          aria-label={t('common.zoomDiagram')}
-          className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-border-color bg-bg-base px-2 py-1 text-[11px] text-text-muted opacity-70 transition-opacity hover:text-text-primary hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100"
+        <div
+          data-testid="mermaid-toolbar"
+          className="absolute right-2 top-2 flex items-center gap-1"
         >
-          <Maximize2 size={13} />
-          {t('common.zoomDiagram')}
-        </button>
+          <button
+            type="button"
+            data-testid="mermaid-copy"
+            onClick={copyImage}
+            title={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+            aria-label={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+            className={TOOLBAR_BTN_CLASS}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+          </button>
+          <button
+            type="button"
+            data-testid="mermaid-download"
+            onClick={downloadImage}
+            title={t('common.downloadDiagram')}
+            aria-label={t('common.downloadDiagram')}
+            className={TOOLBAR_BTN_CLASS}
+          >
+            <Download size={13} />
+            {t('common.downloadDiagram')}
+          </button>
+          <button
+            type="button"
+            data-testid="mermaid-zoom"
+            onClick={openZoom}
+            title={t('common.zoomDiagram')}
+            aria-label={t('common.zoomDiagram')}
+            className={TOOLBAR_BTN_CLASS}
+          >
+            <Maximize2 size={13} />
+            {t('common.zoomDiagram')}
+          </button>
+        </div>
       ) : null}
       {zoomed && svg ? (
         <DiagramViewer

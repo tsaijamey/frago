@@ -6,7 +6,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { baseOf, dirOf, langOf, withTilde } from '../filePaths';
+import {
+  baseOf,
+  dirOf,
+  formatTokensK,
+  formatTokensM,
+  isEditableTextFile,
+  langOf,
+  shortenPathMiddle,
+  withTilde,
+} from '../filePaths';
 
 describe('家目录缩成 ~', () => {
   it('macOS 与 Linux 两种家目录写法都缩，别处原样', () => {
@@ -65,3 +74,58 @@ describe('按扩展名认语言', () => {
     expect(langOf('/w/Makefile')).toBe('makefile');
   });
 });
+
+describe('判断文件是否支持直接进入 Edit 模式', () => {
+  it('当且仅当 md、txt 或类似文稿/纯文本类型文件返回 true，代码与 HTML/二进制文件返回 false', () => {
+    expect(isEditableTextFile('/w/poster.md')).toBe(true);
+    expect(isEditableTextFile('/w/README.MARKDOWN')).toBe(true);
+    expect(isEditableTextFile('/w/notes.txt')).toBe(true);
+    expect(isEditableTextFile('/w/config.yaml')).toBe(true);
+    expect(isEditableTextFile('/w/data.json')).toBe(true);
+
+    expect(isEditableTextFile('/w/src/a.py')).toBe(false);
+    expect(isEditableTextFile('/w/src/b.tsx')).toBe(false);
+    expect(isEditableTextFile('/w/proto/index.html')).toBe(false);
+    expect(isEditableTextFile('/w/logo.png')).toBe(false);
+    expect(isEditableTextFile('/w/Makefile')).toBe(false);
+  });
+});
+
+describe('路径过长时中间省略 shortenPathMiddle', () => {
+  it('未超长时原样返回', () => {
+    expect(shortenPathMiddle('~/Repos/frago')).toBe('~/Repos/frago');
+    expect(shortenPathMiddle('/var/log/app.log')).toBe('/var/log/app.log');
+    expect(shortenPathMiddle('')).toBe('');
+  });
+
+  it('层级较多且超长时，保留首段与尾段，中间用省略号替换', () => {
+    const longPath = '~/Repos/very-long-project-folder/sub/nested/components';
+    const shortened = shortenPathMiddle(longPath, 32);
+    expect(shortened.length).toBeLessThanOrEqual(32);
+    expect(shortened.startsWith('~/Repos/…/')).toBe(true);
+    expect(shortened.endsWith('/components')).toBe(true);
+  });
+
+  it('单段超长时按字符首尾切分', () => {
+    const singleSegment = '~/very-extremely-long-folder-name-that-is-too-long';
+    const shortened = shortenPathMiddle(singleSegment, 20);
+    expect(shortened.length).toBeLessThanOrEqual(20);
+    expect(shortened).toContain('…');
+    expect(shortened.startsWith('~/')).toBe(true);
+  });
+});
+
+describe('token 格式化 formatTokensK 与 formatTokensM', () => {
+  it('formatTokensK', () => {
+    expect(formatTokensK(15_200)).toBe('15k');
+    expect(formatTokensK(449_120)).toBe('449k');
+    expect(formatTokensK(0)).toBe('0k');
+  });
+
+  it('formatTokensM', () => {
+    expect(formatTokensM(28_400)).toBe('28k');
+    expect(formatTokensM(5_022_011)).toBe('5.0M');
+    expect(formatTokensM(41_900_000)).toBe('41.9M');
+  });
+});
+

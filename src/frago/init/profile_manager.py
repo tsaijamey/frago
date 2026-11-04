@@ -72,6 +72,10 @@ PROFILE_KINDS = (KIND_ENDPOINT, KIND_OFFICIAL, KIND_VENDOR_CLI, KIND_WORKBUDDY)
 # a typo (1000000000 for 1000000) before it is written into three CLIs.
 CONTEXT_WINDOW_MIN = 1_000
 CONTEXT_WINDOW_MAX = 10_000_000
+# Antigravity CLI (agy 1.4.12) does not accept arbitrary token counts; it only
+# accepts these three fixed context window tiers (1x / 1.3x / 1.8x quota) for
+# Gemini 4 Argon series models in ~/.gemini/antigravity-cli/settings.json.
+AGY_CONTEXT_WINDOW_TIERS = ("256K", "512K", "900K")
 
 # The plain subscription is a fixed id rather than a saved row: nothing about
 # it is editable, and a row could be deleted out from under a binding.
@@ -132,11 +136,20 @@ class APIProfile(BaseModel):
     default_model: str | None = None
     sonnet_model: str | None = None
     haiku_model: str | None = None
+    # Optional decision endpoint fields read by frago-core (kernel/decision.rs).
+    decision_url: str | None = None
+    decision_model: str | None = None
+    decision_api_key: str | None = None
+    # Optional default wire protocol read by frago-core (anthropic or openai).
+    wire: str | None = None
     # The model's context window, in tokens. None means "let the CLI decide",
     # which is what every profile saved before this field existed gets. The
     # number is written into each CLI's own config so that a model ID the CLI
     # does not recognise is not silently budgeted at its default window.
     context_window: int | None = None
+    # Antigravity CLI (agy 1.4.12) fixed context window tier: "256K" (1x),
+    # "512K" (1.3x), or "900K" (1.8x). Only effective on Gemini 4 Argon models.
+    agy_context_window: str | None = None
     # endpoint only: the doors besides the Anthropic one. Absent from every
     # profile saved before channels existed, which reads as "Anthropic only"
     # plus whatever the preset table knows about the vendor.
@@ -171,6 +184,10 @@ class ProfileStore(BaseModel):
     # What CoreAgent (frago-core's own agent loop) is bound to. None falls back the
     # way the light agent does: the active profile, else the first saved one.
     coreagent_profile_id: str | None = None
+    # Per-harness main session binding: agent_type -> profile_id | "official".
+    harness_profiles: dict[str, str] = Field(default_factory=dict)
+    # Per-harness worker binding: agent_type -> "follow" | "official" | profile_id.
+    worker_harness_profiles: dict[str, str] = Field(default_factory=dict)
     profiles: list[APIProfile] = Field(default_factory=list)
 
 
@@ -399,6 +416,7 @@ def _validate_profile(
     agent_type: str | None = None,
     channels: Sequence[ProfileChannel] = (),
     context_window: int | None = None,
+    agy_context_window: str | None = None,
 ) -> None:
     """Reject the profile shapes that break something later and quietly.
 
@@ -432,6 +450,14 @@ def _validate_profile(
                 f"Context window must be between {CONTEXT_WINDOW_MIN:,} and "
                 f"{CONTEXT_WINDOW_MAX:,} tokens"
             )
+
+    if agy_context_window is not None and (
+        not isinstance(agy_context_window, str)
+        or agy_context_window not in AGY_CONTEXT_WINDOW_TIERS
+    ):
+        raise ValueError(
+            f"Antigravity context window must be one of: {', '.join(AGY_CONTEXT_WINDOW_TIERS)}"
+        )
 
     if kind not in PROFILE_KINDS:
         raise ValueError(f"Unknown profile kind '{kind}' (expected one of: {', '.join(PROFILE_KINDS)})")
@@ -467,7 +493,25 @@ def _validate_profile(
         raise ValueError(f"Unknown endpoint type '{endpoint_type}' (expected one of: {known_types})")
 
     if endpoint_type == "custom" and not validate_endpoint_url(url or ""):
-        raise ValueError("A custom endpoint needs an API URL starting with http:// or https://")
+        has_valid_channel_url = any(
+            validate_endpoint_url(c.url or "") for c in channels
+        )
+        if not has_valid_channel_url:
+            raise ValueError("A custom endpoint needs an API URL starting with http:// or https://")
+
+
+def _sync_agy_context_window(profile: APIProfile, *, force_clear: bool = False) -> None:
+    """When a profile carries or clears an Antigravity context window tier,
+    sync that tier into ~/.gemini/antigravity-cli/settings.json without touching
+    agy's own login or model fields."""
+    if profile.agy_context_window is None and not force_clear:
+        return
+    try:
+        from frago.agent_driver.drivers.agy import apply_agy_context_window
+
+        apply_agy_context_window(profile.agy_context_window)
+    except Exception:
+        logger.warning("Failed to sync agy context window for profile %s", profile.id, exc_info=True)
 
 
 def add_profile(profile: APIProfile) -> ProfileStore:
@@ -484,10 +528,16 @@ def add_profile(profile: APIProfile) -> ProfileStore:
         profile.agent_type,
         profile.channels,
         profile.context_window,
+        profile.agy_context_window,
     )
     store = load_profiles()
     store.profiles.append(profile)
     save_profiles(store)
+    if profile.agy_context_window and (
+        (profile.kind == KIND_VENDOR_CLI and profile.agent_type == "agy")
+        or store.active_profile_id is None
+    ):
+        _sync_agy_context_window(profile)
     return store
 
 
@@ -517,6 +567,7 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
 
     for profile in store.profiles:
         if profile.id == profile_id:
+            previous_agy_window = profile.agy_context_window
             _validate_profile(
                 updates.get("name", profile.name),
                 updates.get("endpoint_type") or profile.endpoint_type,
@@ -525,6 +576,7 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                 updates.get("agent_type", profile.agent_type),
                 updates.get("channels", profile.channels),
                 updates.get("context_window", profile.context_window),
+                updates.get("agy_context_window", profile.agy_context_window),
             )
             for key, value in updates.items():
                 if key == "api_key" and not value:
@@ -536,6 +588,23 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
 
             if store.active_profile_id == profile_id:
                 activate_profile(profile_id, store.active_targets or None)
+                if previous_agy_window and profile.agy_context_window is None:
+                    _sync_agy_context_window(profile, force_clear=True)
+            else:
+                from frago.init.profile_targets import apply_profile
+
+                bound_harnesses = [
+                    t for t, pid in store.harness_profiles.items() if pid == profile_id
+                ]
+                if bound_harnesses:
+                    apply_profile(profile, bound_harnesses)
+                if "agy_context_window" in updates and (
+                    profile.agy_context_window != previous_agy_window
+                ):
+                    _sync_agy_context_window(
+                        profile,
+                        force_clear=bool(previous_agy_window and profile.agy_context_window is None),
+                    )
             return store
 
     raise ValueError(f"Profile not found: {profile_id}")
@@ -572,6 +641,12 @@ def delete_profile(profile_id: str) -> ProfileStore:
         store.observer_profile_id = None
     if store.coreagent_profile_id == profile_id:
         store.coreagent_profile_id = None
+    for k, v in list(store.harness_profiles.items()):
+        if v == profile_id:
+            store.harness_profiles[k] = OFFICIAL_ID
+    for k, v in list(store.worker_harness_profiles.items()):
+        if v == profile_id:
+            store.worker_harness_profiles[k] = "follow"
 
     save_profiles(store)
     return store
@@ -650,8 +725,19 @@ def activate_profile(
         if reason:
             raise ValueError(reason)
 
+    previous_active_profile = next(
+        (p for p in store.profiles if p.id == store.active_profile_id), None
+    )
     previous = list(store.active_targets)
     apply_profile(profile, resolved)
+    _sync_agy_context_window(
+        profile,
+        force_clear=bool(
+            previous_active_profile
+            and previous_active_profile.agy_context_window
+            and profile.agy_context_window is None
+        ),
+    )
 
     # Targets that were in force and are not chosen this time have to be handed
     # back. Skipping this is the silent-stale-config bug: unchecking opencode
@@ -676,6 +762,10 @@ def activate_profile(
 
     store.active_profile_id = profile_id
     store.active_targets = resolved
+    for t in resolved:
+        store.harness_profiles[t] = profile_id
+    for t in dropped:
+        store.harness_profiles[t] = OFFICIAL_ID
     save_profiles(store)
     return resolved
 
@@ -698,6 +788,9 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     # Code — see load_profiles. Falling back here as well covers a store whose
     # active id was set directly rather than through activate_profile.
     active = list(store.active_targets) or list(DEFAULT_TARGETS)
+    for t, pid in store.harness_profiles.items():
+        if pid and pid != OFFICIAL_ID and t not in active:
+            active.append(t)
     handing_back = [t for t in active if t in targets] if targets is not None else active
 
     revert_targets(handing_back)
@@ -708,12 +801,187 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
         config.api_endpoint = None
         save_config(config)
 
+    for t in handing_back:
+        store.harness_profiles[t] = OFFICIAL_ID
     remaining = [t for t in active if t not in handing_back]
     store.active_targets = remaining
     if not remaining:
         store.active_profile_id = None
     save_profiles(store)
     return handing_back
+
+
+def get_harness_main_binding(store: ProfileStore, agent_type: str) -> str:
+    """Resolve the active daily-session profile ID for ``agent_type`` (or ``"official"``)."""
+    profile_ids = {p.id for p in store.profiles}
+    if agent_type in store.harness_profiles:
+        pid = store.harness_profiles[agent_type]
+        if pid == OFFICIAL_ID or pid not in profile_ids:
+            return OFFICIAL_ID
+        return pid
+    if (
+        store.active_profile_id
+        and store.active_profile_id in profile_ids
+        and agent_type in (store.active_targets or list(DEFAULT_TARGETS))
+    ):
+        return store.active_profile_id
+    return OFFICIAL_ID
+
+
+def get_harness_worker_binding(store: ProfileStore, agent_type: str) -> str:
+    """Resolve the worker binding for ``agent_type`` (``"follow"``, ``"official"``, or a profile_id)."""
+    profile_ids = {p.id for p in store.profiles}
+    if agent_type in store.worker_harness_profiles:
+        val = store.worker_harness_profiles[agent_type]
+        if val in ("follow", OFFICIAL_ID):
+            return val
+        if val in profile_ids:
+            return val
+        return "follow"
+    if store.worker_profile_id and store.worker_profile_id in profile_ids:
+        return store.worker_profile_id
+    return "follow"
+
+
+def resolve_worker_profile(agent_type: str | None = None) -> APIProfile:
+    """Resolve the connection a worker session runs on for ``agent_type``."""
+    from frago.init.profile_targets import HARNESS_TARGETS
+
+    store = load_profiles()
+    by_id = {p.id: p for p in store.profiles}
+    if agent_type:
+        binding = get_harness_worker_binding(store, agent_type)
+        if binding == OFFICIAL_ID:
+            return official_connection()
+        if binding != "follow" and binding in by_id:
+            return by_id[binding]
+        return official_connection()
+
+    if store.worker_profile_id and store.worker_profile_id in by_id:
+        return by_id[store.worker_profile_id]
+    for target in HARNESS_TARGETS:
+        val = store.worker_harness_profiles.get(target)
+        if val and val not in ("follow", OFFICIAL_ID) and val in by_id:
+            return by_id[val]
+    return official_connection()
+
+
+def bind_harness(agent_type: str, role: str, profile_id: str) -> APIProfile | None:
+    """Bind a specific harness CLI's ``main`` (daily session) or ``worker`` role independently."""
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.profile_targets import (
+        HARNESS_TARGETS,
+        apply_profile,
+        can_apply_to,
+        missing_channel_reason,
+        revert_targets,
+    )
+
+    if agent_type not in HARNESS_TARGETS:
+        raise ValueError(
+            f"Unknown harness '{agent_type}' (expected one of: {', '.join(HARNESS_TARGETS)})"
+        )
+    if role not in (MAIN_ROLE, WORKER_ROLE):
+        raise ValueError(f"Unknown harness role '{role}' (expected 'main' or 'worker')")
+
+    store = load_profiles()
+    by_id = {p.id: p for p in store.profiles}
+
+    # Materialize any legacy active_targets into harness_profiles before mutating one row
+    if store.active_profile_id and store.active_profile_id in by_id:
+        for t in store.active_targets or list(DEFAULT_TARGETS):
+            store.harness_profiles.setdefault(t, store.active_profile_id)
+
+    if role == MAIN_ROLE:
+        if not profile_id or profile_id == OFFICIAL_ID:
+            revert_targets([agent_type])
+            if agent_type == "claude":
+                config = load_config()
+                config.auth_method = "official"
+                config.api_endpoint = None
+                save_config(config)
+            store.harness_profiles[agent_type] = OFFICIAL_ID
+            store.active_targets = [t for t in store.active_targets if t != agent_type]
+            active_non_official = [
+                (t, pid)
+                for t in HARNESS_TARGETS
+                if (pid := store.harness_profiles.get(t))
+                and pid != OFFICIAL_ID
+                and pid in by_id
+            ]
+            if not active_non_official:
+                store.active_profile_id = None
+                store.active_targets = []
+            elif store.active_profile_id not in {pid for _, pid in active_non_official}:
+                store.active_profile_id = active_non_official[0][1]
+            save_profiles(store)
+            return official_connection()
+
+        profile = by_id.get(profile_id)
+        if profile is None:
+            raise ValueError(f"Profile not found: {profile_id}")
+        if profile.kind == KIND_WORKBUDDY:
+            raise ValueError(
+                "WorkBuddy 借登录这条连接已下线：客户端升级后把登录文件加密了，frago 读不到凭据。"
+            )
+        if profile.kind == KIND_VENDOR_CLI and (
+            agent_type != "agy" or profile.agent_type not in (None, "", "agy")
+        ):
+            raise ValueError("厂商 CLI 账号仅可用于对应工具或派活 Worker")
+        if not can_apply_to(profile, agent_type):
+            reason = missing_channel_reason(profile, agent_type)
+            raise ValueError(
+                reason or f"Profile '{profile.name}' cannot be applied to {agent_type}"
+            )
+
+        apply_profile(profile, [agent_type])
+        if agent_type == "agy" or profile.agy_context_window:
+            _sync_agy_context_window(profile)
+        if agent_type == "claude":
+            config = load_config()
+            config.auth_method = "custom"
+            config.api_endpoint = None
+            save_config(config)
+
+        store.harness_profiles[agent_type] = profile.id
+        if agent_type == "claude" or not store.active_profile_id:
+            store.active_profile_id = profile.id
+        if agent_type not in store.active_targets:
+            store.active_targets = [*store.active_targets, agent_type]
+        save_profiles(store)
+        return profile
+
+    # role == "worker"
+    if not profile_id or profile_id == "follow":
+        store.worker_harness_profiles[agent_type] = "follow"
+        if agent_type == "claude":
+            store.worker_profile_id = None
+        save_profiles(store)
+        return None
+    if profile_id == OFFICIAL_ID:
+        store.worker_harness_profiles[agent_type] = OFFICIAL_ID
+        if agent_type == "claude":
+            store.worker_profile_id = None
+        save_profiles(store)
+        return official_connection()
+
+    profile = by_id.get(profile_id)
+    if profile is None:
+        raise ValueError(f"Profile not found: {profile_id}")
+    if profile.kind == KIND_WORKBUDDY:
+        raise ValueError(
+            "WorkBuddy 借登录这条连接已下线：客户端升级后把登录文件加密了，frago 读不到凭据。"
+        )
+    if profile.kind == KIND_ENDPOINT and agent_type in ("claude", "opencode", "codex"):
+        reason = missing_channel_reason(profile, agent_type)
+        if reason:
+            raise ValueError(reason)
+
+    store.worker_harness_profiles[agent_type] = profile.id
+    if agent_type == "claude":
+        store.worker_profile_id = profile.id
+    save_profiles(store)
+    return profile
 
 
 def role_binding_id(role: str) -> str | None:
@@ -838,6 +1106,9 @@ def bind_role(
 
     store = load_profiles()
     store.worker_profile_id = None if connection.kind == KIND_OFFICIAL else connection.id
+    store.worker_harness_profiles["claude"] = (
+        "follow" if connection.kind == KIND_OFFICIAL else connection.id
+    )
     save_profiles(store)
     return connection
 

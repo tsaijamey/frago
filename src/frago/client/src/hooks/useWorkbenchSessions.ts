@@ -62,6 +62,10 @@ export interface WorkbenchSession {
   session_id: string;
   family: SessionFamily;
   title: string;
+  /** 引擎侧原始会话标题（未被用户自定义标题覆盖前的标题）。 */
+  raw_title?: string | null;
+  /** 用户在工作台自定义的会话标题。 */
+  custom_title?: string | null;
   directory: string;
   /** 毫秒时间戳。 */
   created_at: number;
@@ -122,6 +126,11 @@ export interface WorkbenchSession {
    * 左栏日常清单默认不把这类机器自发孤例混入主干；从 Timeline 捡回今日时仍可显式放入。
    */
   local_ops?: boolean;
+  /**
+   * 由「员工（Employees）」入口发起时对应的岗位编号（如 `stock`）。
+   * 左栏会话卡据此展示非文字员工标识图标，普通会话为 null 或缺省。
+   */
+  employee_id?: string | null;
 }
 
 /**
@@ -231,22 +240,120 @@ export function startOfToday(now: number = Date.now()): number {
   return d.getTime();
 }
 
+/**
+ * 构建会话家族树（主会话 + 分支会话 + 各自的 worker 会话）的父子映射。
+ *
+ * 一个会话与它的 branched 会话、worker 会话共同构建了完整上下文，属于同一个整体。
+ */
+function buildSessionFamilyGraph(sessions: WorkbenchSession[]) {
+  const byId = new Map<string, WorkbenchSession>();
+  for (const s of sessions) {
+    if (!byId.has(s.session_id)) byId.set(s.session_id, s);
+  }
+  const parentOf = new Map<string, string>();
+  const kidsOf = new Map<string, string[]>();
+  for (const s of byId.values()) {
+    const p = s.parent_session_id;
+    if (!p || p === s.session_id || !byId.has(p)) continue;
+    parentOf.set(s.session_id, p);
+    const list = kidsOf.get(p);
+    if (list) list.push(s.session_id);
+    else kidsOf.set(p, [s.session_id]);
+  }
+  return { byId, parentOf, kidsOf };
+}
+
+function findGroupRoot(id: string, parentOf: Map<string, string>): string {
+  let cur = id;
+  const seen = new Set<string>([cur]);
+  while (parentOf.has(cur)) {
+    const next = parentOf.get(cur)!;
+    if (seen.has(next)) break;
+    seen.add(next);
+    cur = next;
+  }
+  return cur;
+}
+
+function collectSubtreeIds(root: string, kidsOf: Map<string, string[]>): string[] {
+  const out: string[] = [];
+  const queue: string[] = [root];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    out.push(cur);
+    for (const child of kidsOf.get(cur) ?? []) {
+      if (!seen.has(child)) queue.push(child);
+    }
+  }
+  return out;
+}
+
+/**
+ * 获取某场会话所属完整上下文组（主会话 + 所有分支会话 + 所有 worker 会话）的全部会话编号。
+ */
+export function getSessionGroupIds(
+  sessions: WorkbenchSession[],
+  sessionId: string
+): string[] {
+  if (!sessionId) return [];
+  const { byId, parentOf, kidsOf } = buildSessionFamilyGraph(sessions);
+  if (!byId.has(sessionId)) return [sessionId];
+  const root = findGroupRoot(sessionId, parentOf);
+  return collectSubtreeIds(root, kidsOf);
+}
+
+/**
+ * 将一组种子会话编号扩展为它们各自所属完整上下文组的全部会话编号集合。
+ *
+ * 任何一方（主会话、branched 会话或 worker 会话）被添加到 Today，整组成员一起进入 Today。
+ */
+export function expandSessionGroupIds(
+  sessions: WorkbenchSession[],
+  seedIds: Iterable<string>
+): Set<string> {
+  const seeds = Array.from(seedIds).filter(Boolean);
+  if (!seeds.length) return new Set();
+  const { byId, parentOf, kidsOf } = buildSessionFamilyGraph(sessions);
+  const out = new Set<string>();
+  const visitedRoots = new Set<string>();
+  for (const id of seeds) {
+    out.add(id);
+    if (!byId.has(id)) continue;
+    const root = findGroupRoot(id, parentOf);
+    if (visitedRoots.has(root)) continue;
+    visitedRoots.add(root);
+    for (const memberId of collectSubtreeIds(root, kidsOf)) {
+      out.add(memberId);
+    }
+  }
+  return out;
+}
+
 export function withinToday(
   sessions: WorkbenchSession[],
   pickedToday: ReadonlySet<string> = EMPTY_PICKED,
-  now: number = Date.now()
+  now: number = Date.now(),
+  isForYou: (sessionId: string) => boolean = () => false
 ): WorkbenchSession[] {
   const floor = startOfToday(now);
+  const pickedGroupIds = expandSessionGroupIds(sessions, pickedToday);
   const localOpsIds = new Set(
     sessions.filter((s) => s.local_ops).map((s) => s.session_id)
   );
   return sessions.filter((s) => {
-    if (pickedToday.has(s.session_id)) return true;
+    if (pickedGroupIds.has(s.session_id)) return true;
     if (s.local_ops) return false;
     if (s.parent_session_id && localOpsIds.has(s.parent_session_id)) return false;
     const repliedToday = s.last_reply_at !== null && s.last_reply_at >= floor;
     const bornToday = s.last_reply_at === null && s.created_at >= floor;
-    return repliedToday || bornToday || s.status === 'running';
+    // 终端正停在输入提示符等人（isForYou 为真）时，这场会话不可能同时"正在跑新一轮"。
+    // 挡掉被后台保活或外部触碰短暂标成 running 的隔日旧会话，避免幽灵闪现 90 秒又消失。
+    const runningToday =
+      s.status === 'running' && s.last_active_at >= floor && !isForYou(s.session_id);
+    return repliedToday || bornToday || runningToday;
   });
 }
 
@@ -334,7 +441,11 @@ export function useWorkbenchSessions(
   }, []);
   const setSessionTitle = useCallback((sessionId: string, title: string) => {
     setSessionsState((prev) => {
-      const next = prev.map((s) => (s.session_id === sessionId ? { ...s, title } : s));
+      const next = prev.map((s) =>
+        s.session_id === sessionId
+          ? { ...s, raw_title: s.raw_title ?? s.title, custom_title: title, title }
+          : s
+      );
       lastSessions.set(next);
       return next;
     });
@@ -419,8 +530,8 @@ export function useWorkbenchSessions(
    * 就会把昨天那批收走。捡回来的名单由页面那一层持有（见 `useSessionToday`）。
    */
   const inToday = useMemo(
-    () => withinToday(sessions, pickedToday, Date.now()),
-    [sessions, pickedToday]
+    () => withinToday(sessions, pickedToday, Date.now(), isForYou),
+    [sessions, pickedToday, isForYou]
   );
 
   const counts = useMemo<ListCounts>(

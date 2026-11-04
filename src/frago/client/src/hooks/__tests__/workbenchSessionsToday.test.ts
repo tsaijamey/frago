@@ -78,6 +78,29 @@ describe('withinToday', () => {
     expect(withinToday([running], new Set(), NOW).map((s) => s.session_id)).toEqual(['running']);
   });
 
+  it('终端停在输入提示符等人（For you）的隔日旧会话，哪怕被短暂标成 running 也不混入今日', () => {
+    const ghostOld = card({
+      session_id: 'ghost-old',
+      status: 'running',
+      last_active_at: NOW - 10_000,
+      last_reply_at: TODAY_START - 36 * HOUR,
+    });
+    const todayForYou = card({
+      session_id: 'today-for-you',
+      status: 'running',
+      last_active_at: NOW - 10_000,
+      last_reply_at: NOW - 30 * 60_000,
+    });
+    expect(
+      withinToday(
+        [ghostOld, todayForYou],
+        new Set(),
+        NOW,
+        (id) => id === 'ghost-old' || id === 'today-for-you'
+      ).map((s) => s.session_id)
+    ).toEqual(['today-for-you']);
+  });
+
   it('tmux 还开着但今天没回复：不留', () => {
     // 2026-10-19 主人报缺陷后收紧：终端挂着不等于今天有数据。
     const alive = card({
@@ -159,6 +182,76 @@ describe('withinToday', () => {
     ]);
     expect(
       withinToday([sched, schedWorker, human], new Set(['core_sched']), NOW).map((s) => s.session_id)
-    ).toEqual(['core_sched', 'human_today']);
+    ).toEqual(['core_sched', 'core_sched_worker', 'human_today']);
+  });
+
+  it('当主会话被添加到 Today 时，它的 branched 会话、worker 会话与分支的 worker 一起进入 Today', () => {
+    const main = card({ session_id: 'main', last_reply_at: NOW - 10 * 24 * HOUR });
+    const mainWorker = card({
+      session_id: 'main-w',
+      origin: 'worker',
+      parent_session_id: 'main',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+    const branch = card({
+      session_id: 'branch-1',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const branchWorker = card({
+      session_id: 'branch-1-w',
+      origin: 'worker',
+      parent_session_id: 'branch-1',
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const unrelated = card({
+      session_id: 'unrelated',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+
+    expect(
+      withinToday(
+        [main, mainWorker, branch, branchWorker, unrelated],
+        new Set(['main']),
+        NOW
+      ).map((s) => s.session_id)
+    ).toEqual(['main', 'main-w', 'branch-1', 'branch-1-w']);
+  });
+
+  it('当 branched 会话被添加到 Today 时，其主会话、主会话的 worker、兄弟分支及自身 worker 也全部一起进入 Today', () => {
+    const main = card({ session_id: 'main', last_reply_at: NOW - 10 * 24 * HOUR });
+    const mainWorker = card({
+      session_id: 'main-w',
+      origin: 'worker',
+      parent_session_id: 'main',
+      last_reply_at: NOW - 10 * 24 * HOUR,
+    });
+    const branch1 = card({
+      session_id: 'branch-1',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+    const branch2 = card({
+      session_id: 'branch-2',
+      parent_session_id: 'main',
+      relation: { kind: 'branch', closed: false },
+      last_reply_at: NOW - 8 * 24 * HOUR,
+    });
+    const branch1Worker = card({
+      session_id: 'branch-1-w',
+      origin: 'worker',
+      parent_session_id: 'branch-1',
+      last_reply_at: NOW - 9 * 24 * HOUR,
+    });
+
+    expect(
+      withinToday(
+        [main, mainWorker, branch1, branch2, branch1Worker],
+        new Set(['branch-1']),
+        NOW
+      ).map((s) => s.session_id)
+    ).toEqual(['main', 'main-w', 'branch-1', 'branch-2', 'branch-1-w']);
   });
 });

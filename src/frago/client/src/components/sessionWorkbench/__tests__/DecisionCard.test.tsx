@@ -50,13 +50,31 @@ const options = () => screen.getAllByTestId('decision-option');
 const answerBtn = () => screen.getByTestId('decision-answer') as HTMLButtonElement;
 
 describe('4 型点选后交出的原文', () => {
-  it('single-choice：点即答，带 label 与 effect', () => {
+  it('single-choice：点选项仅选中不立即发送，带可选输入框，点 Answer 按钮才发送', () => {
     const h = host();
     renderCard('single-choice', h);
+    expect(screen.getByTestId('decision-input')).toBeTruthy();
+    expect(answerBtn().disabled).toBe(true);
     fireEvent.click(options()[0]);
+    expect(h.answer).not.toHaveBeenCalled();
+    expect(options()[0].dataset.on).toBe('true');
+    expect(answerBtn().disabled).toBe(false);
+    fireEvent.click(answerBtn());
     expect(h.answer).toHaveBeenCalledWith(
       'r1',
       '【answer】A · 一起改，旧地址自动跳转 —— 路由改成 #/teams，打开 #/teaming 自动跳到新地址，旧书签照常能用'
+    );
+  });
+
+  it('single-choice：选选项并补充输入框文字，点 Answer 一并发送', () => {
+    const h = host();
+    renderCard('single-choice', h);
+    fireEvent.click(options()[0]);
+    fireEvent.change(screen.getByTestId('decision-input'), { target: { value: '顺便把旧文档链接也查一遍' } });
+    fireEvent.click(answerBtn());
+    expect(h.answer).toHaveBeenCalledWith(
+      'r1',
+      '【answer】A · 一起改，旧地址自动跳转 —— 路由改成 #/teams，打开 #/teaming 自动跳到新地址，旧书签照常能用\n\n顺便把旧文档链接也查一遍'
     );
   });
 
@@ -104,10 +122,13 @@ describe('4 型点选后交出的原文', () => {
 });
 
 describe('收不回的先确认', () => {
-  it('点下去先出确认条，Yes, do it 才发', () => {
+  it('选中不可撤回项后点 Answer 先出确认条，Yes, do it 才发', () => {
     const h = host();
     renderCard('single-choice-irreversible', h);
     fireEvent.click(options()[0]);
+    expect(h.answer).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('decision-confirm')).toBeNull();
+    fireEvent.click(answerBtn());
     expect(h.answer).not.toHaveBeenCalled();
     expect(screen.getByTestId('decision-confirm').textContent).toContain("This can't be undone — do it?");
     expect(screen.getByTestId('decision-confirm').textContent).toContain('A · 发布 — 打 v1.4.111 tag');
@@ -115,10 +136,12 @@ describe('收不回的先确认', () => {
     expect(h.answer).toHaveBeenCalledWith('r1', '【answer】A · 发布 —— 打 v1.4.111 tag 并上传 PyPI，发出去收不回');
   });
 
-  it('可撤回的那项点了直接发', () => {
+  it('可撤回的那项选中后点 Answer 直接发', () => {
     const h = host();
     renderCard('single-choice-irreversible', h);
     fireEvent.click(options()[1]);
+    expect(h.answer).not.toHaveBeenCalled();
+    fireEvent.click(answerBtn());
     expect(screen.queryByTestId('decision-confirm')).toBeNull();
     expect(h.answer).toHaveBeenCalledTimes(1);
   });
@@ -225,9 +248,25 @@ describe('什么时候点不动', () => {
 });
 
 describe('视觉规矩', () => {
-  it('卡片上没有实心绿', () => {
-    const { container } = renderCard('multi-choice');
+  it('卡片未选未填时 Answer 按钮保持主色边框透明底；选中文本或输入后直接 fill 主色', () => {
+    const { container } = renderCard('single-choice');
+    // 未选未填：保持主色边框透明底，卡片无实心主色
     expect(container.querySelector('.bg-accent-primary')).toBeNull();
+    expect(answerBtn().className).toContain('border-accent-primary');
+    expect(answerBtn().className).toContain('text-accent-primary');
+    expect(answerBtn().className).toContain('bg-transparent');
+    expect(answerBtn().className).toContain('h-[32px]');
+
+    // 选中选项后：按钮直接 fill 主色
+    fireEvent.click(options()[0]);
+    expect(answerBtn().className).toContain('bg-accent-primary');
+    expect(answerBtn().className).toContain('text-[var(--text-on-accent)]');
+
+    // 取消选中后填入输入框内容：同样直接 fill 主色
+    fireEvent.click(options()[0]);
+    expect(answerBtn().className).toContain('bg-transparent');
+    fireEvent.change(screen.getByTestId('decision-input'), { target: { value: '自定义答复' } });
+    expect(answerBtn().className).toContain('bg-accent-primary');
   });
 
   it('队友请求卡：From your teammate，原话与会改什么两框', () => {

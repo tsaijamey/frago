@@ -7,13 +7,11 @@
  * tallest single category. Styling matches the Claude Sessions page tokens.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   KeyRound,
-  Terminal,
   Inbox,
-  RefreshCw,
   Palette,
   Rocket,
   Info,
@@ -22,21 +20,18 @@ import {
 } from 'lucide-react';
 
 import GeneralSettings from './GeneralSettings';
-import CliAgentSettings from './CliAgentSettings';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
-import { InitSettings } from './InitSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
-import OfficialResourceSettings from './OfficialResourceSettings';
 import PromptCapabilitySettings from './PromptCapabilitySettings';
 import PageHeader from '@/components/layout/PageHeader';
-import { getInitStatus } from '../../api/client';
+import { getInitStatus, getProfiles, getTaskIngestion } from '../../api/client';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
 }
 
-type TabId = 'capability' | 'general' | 'agents' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
+type TabId = 'capability' | 'general' | 'channels' | 'appearance' | 'about';
 
 /** What each panel gets to render with — page props plus the cross-panel wiring. */
 interface PanelContext extends SettingsPageProps {
@@ -68,17 +63,8 @@ const TABS: TabDef[] = [
     Icon: KeyRound,
     render: ({ profileSignal }) => <GeneralSettings openProfilesSignal={profileSignal} />,
   },
-  { id: 'agents', Icon: Terminal, render: () => <CliAgentSettings /> },
   { id: 'channels', Icon: Inbox, render: () => <TaskIngestionPanel /> },
-  { id: 'resources', Icon: RefreshCw, render: () => <OfficialResourceSettings /> },
   { id: 'appearance', Icon: Palette, render: () => <AppearanceSettings /> },
-  {
-    id: 'init',
-    Icon: Rocket,
-    render: ({ onOpenInitWizard }) => (
-      <InitSettings onOpenWizard={onOpenInitWizard || (() => {})} />
-    ),
-  },
   { id: 'about', Icon: Info, render: () => <AboutSettings /> },
 ];
 
@@ -86,6 +72,8 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
   const { t } = useTranslation();
   const [active, setActive] = useState<TabId>('capability');
   const [profileSignal, setProfileSignal] = useState(0);
+  const [profileCount, setProfileCount] = useState<number | null>(null);
+  const [channelCount, setChannelCount] = useState<number | null>(null);
 
   const handleConfigureProfile = () => {
     setProfileSignal((n) => n + 1);
@@ -93,6 +81,15 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
   };
 
   const activeTab = TABS.find((tab) => tab.id === active) ?? TABS[0];
+
+  const refreshNavBadges = useCallback(() => {
+    getProfiles()
+      .then((res) => setProfileCount(res.profiles.length))
+      .catch(() => {});
+    getTaskIngestion()
+      .then((res) => setChannelCount(res.channels.length))
+      .catch(() => {});
+  }, []);
 
   // 页头的计数写正在跑的 frago 版本。取的是 About 面板已在用的初始化状态接口，
   // 不另开接口；取不到就不写，页头只剩标题。
@@ -104,10 +101,21 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
         if (alive) setVersion(status.current_frago_version || null);
       })
       .catch(() => {});
+    refreshNavBadges();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refreshNavBadges]);
+
+  useEffect(() => {
+    refreshNavBadges();
+  }, [active, refreshNavBadges]);
+
+  const badgeFor = (id: TabId): number | null => {
+    if (id === 'general') return profileCount;
+    if (id === 'channels') return channelCount;
+    return null;
+  };
 
   return (
     /* 页头补回来了，跟其余几页同一条 52px 的统一页头：标题「Settings」加版本号，只有一行。
@@ -117,25 +125,45 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
       <PageHeader
         title={t('settings.title')}
         meta={version ? t('settings.headerMeta', { version }) : undefined}
+        secondary={
+          onOpenInitWizard ? (
+            <button
+              type="button"
+              onClick={onOpenInitWizard}
+              data-testid="settings-open-setup-flow"
+              title="Preview the edge-case onboarding flow when ~/.frago settings files are missing"
+              className="inline-flex items-center gap-1.5 rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            >
+              <Rocket size={13} strokeWidth={1.6} />
+              <span>Initial setup flow</span>
+            </button>
+          ) : undefined
+        }
       />
       {/* 页头以下两栏：二级菜单钉住不动，只有右侧正文自己滚。 */}
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('settings.title')}>
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
-              onClick={() => setActive(tab.id)}
-              /* 描述搬到了右侧面板的标题下面。这里留一份 title，
-                 鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
-              title={t(`settings.tabDesc.${tab.id}`)}
-              aria-current={tab.id === active ? 'true' : undefined}
-            >
-              <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
-              <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
-            </button>
-          ))}
+          {TABS.map((tab) => {
+            const count = badgeFor(tab.id);
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`settings-nav-item ${tab.id === active ? 'active' : ''}`}
+                onClick={() => setActive(tab.id)}
+                /* 描述搬到了右侧面板的标题下面。这里留一份 title，
+                   鼠标停住时仍然读得到，不必先点进去才知道这一项管什么。 */
+                title={t(`settings.tabDesc.${tab.id}`)}
+                aria-current={tab.id === active ? 'true' : undefined}
+              >
+                <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
+                <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
+                {count !== null && (
+                  <span className="settings-nav-badge">{count}</span>
+                )}
+              </button>
+            );
+          })}
         </nav>
 
         <section className="settings-panel">

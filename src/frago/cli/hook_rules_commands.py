@@ -217,7 +217,7 @@ def _fmt_match(m: dict) -> str:
 
 def _fmt_action(a: dict) -> str:
     t = a.get("type", "?")
-    for k in ("topic", "recipe"):
+    for k in ("topic", "recipe", "path"):
         if k in a:
             return f"{t}({a[k]})"
     if "command" in a:
@@ -463,6 +463,7 @@ def hook_rules_validate():
         "inject_book_topic",
         "inject_book_section",
         "inject_literal",
+        "inject_file",
         "run_command_and_inject_stdout",
         "deny_tool_call",
         "spawn_recipe_async",

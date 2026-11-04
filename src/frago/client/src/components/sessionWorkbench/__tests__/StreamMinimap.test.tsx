@@ -156,6 +156,20 @@ describe('StreamMinimap', () => {
     expect(bars[1].className).not.toContain('bg-accent-primary');
   });
 
+  it('可视区滑块用半透明中性底色与中性描边，不复用不透明的选中态实色底', () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 200 });
+    try {
+      mount();
+      const thumb = screen.getByTestId('stream-minimap-thumb');
+      expect(thumb.className).toContain('bg-[var(--bg-active)]');
+      expect(thumb.className).toContain('border-[var(--border-strong)]');
+      expect(thumb.className).not.toContain('--sel-bg');
+      expect(thumb.className).not.toContain('--sel-border');
+    } finally {
+      delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    }
+  });
+
   it('刻度颜色按标注状态出：没用过的暂存橙，没收口的分支正文色，其余中性', () => {
     mount([
       mark('s1', reply.id, '第三点待定'),

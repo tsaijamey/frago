@@ -135,23 +135,39 @@ class _Session:
     in_flight: int = 0
     #: 这一场被叫停了（或服务要停了）。置上之后喂料线程不再往下走，自己退出去。
     closed: bool = False
+    #: 虚拟桌面导演等无人值守会话：人看的是桌面画面而不是工作台聊天页，关闭轻量审阅与拍板卡强拦。
+    unattended: bool = False
 
 
 _sessions: dict[str, _Session] = {}
 _sessions_lock = threading.Lock()
 
+_DIRECTOR_SKILL_MARKER = 'name="how-frago-agent-runs-an-agent-os"'
 
-def _session_for(session_id: str, cwd: str, title: str | None) -> _Session:
+
+def _is_director_prompt(prompt: str) -> bool:
+    return _DIRECTOR_SKILL_MARKER in prompt
+
+
+def _session_for(
+    session_id: str,
+    cwd: str,
+    title: str | None,
+    *,
+    unattended: bool = False,
+) -> _Session:
     """取这一场的常驻条目，没有就建一个（此时还没起进程）。"""
     with _sessions_lock:
         got = _sessions.get(session_id)
         if got is None:
-            got = _Session(session_id=session_id, cwd=cwd, title=title)
+            got = _Session(session_id=session_id, cwd=cwd, title=title, unattended=unattended)
             _sessions[session_id] = got
         else:
             got.cwd = cwd
             if title:
                 got.title = title
+            if unattended:
+                got.unattended = True
         return got
 
 
@@ -164,6 +180,15 @@ def running(session_id: str) -> bool:
     with _sessions_lock:
         got = _sessions.get(session_id)
     return got is not None and got.state != "absent"
+
+
+def live_cwd(session_id: str) -> str | None:
+    """此刻还开着的这一场跑在哪个目录；没有常驻条目或已收掉时返回 None。"""
+    with _sessions_lock:
+        got = _sessions.get(session_id)
+    if got is None or got.state == "absent":
+        return None
+    return got.cwd or None
 
 
 def live_states() -> dict[str, bool]:
@@ -207,6 +232,8 @@ class LiveSessionSnapshot:
     title: str | None
     #: 最近一次有动静的时刻：发进一句话，或收到一轮 result。
     touched_at: float
+    #: 若跑在 tmux 窗格里，对应它的 tmux 会话名（``frago-agent-core_<hex>``）；直跑回退时为 None。
+    tmux_name: str | None = None
 
 
 def live_snapshot() -> list[LiveSessionSnapshot]:
@@ -225,6 +252,7 @@ def live_snapshot() -> list[LiveSessionSnapshot]:
                 cwd=sess.cwd,
                 title=sess.title,
                 touched_at=sess.touched_at,
+                tmux_name=getattr(sess.proc, "tmux_name", None) if sess.proc is not None else None,
             )
             for sid, sess in _sessions.items()
             if sess.state != "absent"
@@ -326,23 +354,65 @@ def _user_line(prompt: str) -> str:
     )
 
 
+_REAL_POPEN = subprocess.Popen
+
+
+def _should_use_tmux() -> bool:
+    """是否通过 tmux 承载常驻 CoreAgent 进程。
+
+    两条不走 tmux 的情况：
+    1. 单测把 ``subprocess.Popen`` 换成了替身（``no_real_popen``），此时走替身；
+    2. 本机未安装 ``tmux`` 或显式设了 ``FRAGO_COREAGENT_NO_TMUX=1``，自动回退直跑。
+    """
+    if subprocess.Popen is not _REAL_POPEN:
+        return False
+    from frago.agent_driver.coreagent_pane_host import tmux_available
+
+    return tmux_available()
+
+
 def _spawn(sess: _Session) -> None:
     """起这一场的常驻进程并挂上两个线程。调用方持有 ``sess.lock``。"""
     from frago.server.services.subprocess_utils import get_utf8_env
 
     cmd = build_command(sess.session_id, cwd=sess.cwd, title=sess.title)
-    sess.proc = subprocess.Popen(  # noqa: S603 — 命令由本模块拼，无 shell
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,  # 内核的进度话走 stderr，这里不读、别把管道塞满
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=sess.cwd,
-        env=get_utf8_env(),
-        bufsize=1,  # 行缓冲：一轮的 result 立刻读得到，不等它攒满
-    )
+    env = get_utf8_env()
+    if sess.unattended:
+        env["FRAGO_REVIEW"] = "off"
+        env["FRAGO_STOP_CHECK"] = "off"
+    proc = None
+    if _should_use_tmux():
+        from frago.agent_driver.coreagent_pane_host import TmuxCoreProcess
+
+        try:
+            proc = TmuxCoreProcess(
+                session_id=sess.session_id,
+                cmd=cmd,
+                cwd=sess.cwd,
+                env=env,
+                mode="resident",
+            )
+        except Exception:  # noqa: BLE001 — tmux 拉起失败时自动回退直跑，不阻断会话创建
+            logger.warning(
+                "通过 tmux 启动 CoreAgent 失败，回退直接子进程（session=%s）",
+                sess.session_id,
+                exc_info=True,
+            )
+            proc = None
+    if proc is None:
+        proc = subprocess.Popen(  # noqa: S603 — 命令由本模块拼，无 shell
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # 内核的进度话走 stderr，这里不读、别把管道塞满
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=sess.cwd,
+            env=env,
+            bufsize=1,  # 行缓冲：一轮的 result 立刻读得到，不等它攒满
+        )
+    sess.proc = proc
     sess.state = "starting"
     sess.turn_done.clear()
     sess.reader = threading.Thread(
@@ -357,7 +427,12 @@ def _spawn(sess: _Session) -> None:
     sess.reader.start()
     sess.feeder.start()
     sess.janitor.start()
-    logger.info("coreagent 常驻进程起来了（session=%s pid=%s）", sess.session_id, sess.proc.pid)
+    logger.info(
+        "coreagent 常驻进程起来了（session=%s pid=%s tmux=%s）",
+        sess.session_id,
+        sess.proc.pid,
+        getattr(sess.proc, "tmux_name", None),
+    )
 
 
 def _reclaim(sess: _Session) -> None:
@@ -366,6 +441,11 @@ def _reclaim(sess: _Session) -> None:
     回收动作就是**关 stdin**：实测内核读到 EOF 自己收场退出（``next_stream_message``
     返回 ``None`` → 循环结束），干净退出，不需要信号。等一小会儿退不掉才动硬的。
     """
+    if sess.unattended:
+        with contextlib.suppress(Exception):
+            from frago.server.services import stage_orchestrator
+
+            stage_orchestrator.cleanup_presenter(sess.session_id)
     proc = sess.proc
     sess.proc = None
     sess.state = "absent"
@@ -385,32 +465,38 @@ def _let_it_go(proc: subprocess.Popen, grace: float, what: str) -> None:
     那些命令会被 init 收养、接着跑。收不干净只记一句日志，NEVER 把它带的这件事本身带崩。
     """
     try:
-        if proc.stdin and not proc.stdin.closed:
-            proc.stdin.close()
-    except Exception:  # noqa: BLE001 — 关不成 stdin 也还有下面两级
-        logger.warning("%s：关 coreagent 的 stdin 时出错（pid=%s）", what, proc.pid, exc_info=True)
-    try:
-        proc.wait(timeout=grace)
-        return
-    except subprocess.TimeoutExpired:
-        logger.info("%s：关 stdin 后 %ss 没退，先送 SIGTERM（pid=%s）", what, grace, proc.pid)
-    except Exception:  # noqa: BLE001
-        logger.warning("%s：等 coreagent 退出时出错（pid=%s）", what, proc.pid, exc_info=True)
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=_TERM_GRACE_S)
-        return
-    except subprocess.TimeoutExpired:
-        logger.warning("%s：SIGTERM 之后 %ss 还没退，补一刀（pid=%s）", what, _TERM_GRACE_S, proc.pid)
-    except Exception:  # noqa: BLE001
-        logger.warning("%s：送 SIGTERM 时出错（pid=%s）", what, proc.pid, exc_info=True)
-        return
-    try:
-        proc.kill()
-        proc.wait(timeout=_REAP_GRACE_S)
-    except Exception:  # noqa: BLE001
-        logger.warning("%s：补刀之后还是收不干净（pid=%s）", what, proc.pid, exc_info=True)
+        try:
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.close()
+        except Exception:  # noqa: BLE001 — 关不成 stdin 也还有下面两级
+            logger.warning("%s：关 coreagent 的 stdin 时出错（pid=%s）", what, proc.pid, exc_info=True)
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            logger.info("%s：关 stdin 后 %ss 没退，先送 SIGTERM（pid=%s）", what, grace, proc.pid)
+        except Exception:  # noqa: BLE001
+            logger.warning("%s：等 coreagent 退出时出错（pid=%s）", what, proc.pid, exc_info=True)
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=_TERM_GRACE_S)
+            return
+        except subprocess.TimeoutExpired:
+            logger.warning("%s：SIGTERM 之后 %ss 还没退，补一刀（pid=%s）", what, _TERM_GRACE_S, proc.pid)
+        except Exception:  # noqa: BLE001
+            logger.warning("%s：送 SIGTERM 时出错（pid=%s）", what, proc.pid, exc_info=True)
+            return
+        try:
+            proc.kill()
+            proc.wait(timeout=_REAP_GRACE_S)
+        except Exception:  # noqa: BLE001
+            logger.warning("%s：补刀之后还是收不干净（pid=%s）", what, proc.pid, exc_info=True)
+    finally:
+        cleanup = getattr(proc, "cleanup_runtime_dir", None)
+        if callable(cleanup):
+            with contextlib.suppress(Exception):
+                cleanup()
 
 
 def _read_loop(sess: _Session) -> None:
@@ -433,6 +519,16 @@ def _read_loop(sess: _Session) -> None:
                 if sess.state == "busy":
                     sess.state = "idle"
             sess.turn_done.set()
+            try:
+                from frago.server.services import workbench_queue
+
+                workbench_queue.schedule_auto_inject_after_settle(sess.session_id)
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "coreagent 轮次结束触发队列注入失败（session=%s）",
+                    sess.session_id,
+                    exc_info=True,
+                )
     except Exception:  # noqa: BLE001 — 读线程崩了不该静默
         logger.warning("读 coreagent stdout 时出错（session=%s）", sess.session_id, exc_info=True)
     finally:
@@ -589,7 +685,14 @@ def send(
     会话记录里留下任何一行，页面上除了这句抛出来的话没有别的线索。等不到就只记日志：那时
     记录里已经有行在写了，人看得见。
     """
-    sess = _session_for(session_id, cwd, title)
+    if _is_director_prompt(prompt):
+        from frago.server.services import stage_orchestrator
+
+        prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
+
+    sess = _session_for(
+        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+    )
     _enqueue(sess, prompt)
     got = _wait_for_turn(sess, wait_s)
     if not got:
@@ -615,7 +718,14 @@ def send_queued(
     排满仍当场抛 :class:`CoreAgentBusy`——「收不下」必须当场回给页面，NEVER 收下再在后台
     静默地把它丢掉。返回喂料线程名，便于日志对号。
     """
-    sess = _session_for(session_id, cwd, title)
+    if _is_director_prompt(prompt):
+        from frago.server.services import stage_orchestrator
+
+        prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
+
+    sess = _session_for(
+        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+    )
     _enqueue(sess, prompt)
     return sess.feeder.name if sess.feeder else f"coreagent-queue-{session_id[:16]}"
 
@@ -687,6 +797,10 @@ def stop(session_id: str, *, by: str = "页面上的人") -> dict[str, object]:
     """
     with _sessions_lock:
         sess = _sessions.pop(session_id, None)
+    with contextlib.suppress(Exception):
+        from frago.server.services import stage_orchestrator
+
+        stage_orchestrator.cleanup_presenter(session_id)
     if sess is None:
         return {"running": False, "stopped": False, "busy": False, "dropped": 0}
 

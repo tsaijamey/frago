@@ -98,7 +98,9 @@ xcode-select --install
 <details>
 <summary><b>Windows Prerequisites</b></summary>
 
-> **Important**: Windows does NOT support automatic Node.js installation. Install Node.js manually before `frago init`.
+> **Important**: install Node.js manually before running the install script. The
+> Windows installer does not add Node.js for you — it stops with an error when
+> `node` is missing.
 
 ```powershell
 # Install Python
@@ -117,13 +119,14 @@ winget install Microsoft.Edge
 
 ## What `frago init` Does
 
-1. **Checks dependencies** — Python 3.13+, Node.js 20+, Claude Code CLI, browser
-2. **Auto-installs** — Node.js via nvm (macOS/Linux only), Claude Code via npm
+1. **Checks dependencies** — Claude Code CLI is the only one reported and acted on;
+   Node.js 20+ is checked alongside it but not installed for you
+2. **Auto-installs Claude Code** — through the official installer; `frago init` does
+   not install Node.js on any platform
 3. **Configures a model profile** — official endpoint or custom (DeepSeek, proxies, local models)
 4. **Installs the prompting engine** — deploys `frago-core` and registers hooks
    (static rules + LightAgent) for Claude Code and opencode
-5. **Installs resources** — slash commands to `~/.claude/commands/`, recipes to
-   `~/.frago/recipes/`
+5. **Offers autostart** — optionally starts the server on system boot
 
 ### Init Options
 

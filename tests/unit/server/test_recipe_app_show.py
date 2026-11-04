@@ -29,8 +29,8 @@ from frago.viewer.browser import recipe_page_of, webui_url_for
         ("http://localhost:8093/app/demo?userInput=true", None),
         ("http://localhost:8093/viewer/content/abc/index.html", None),
         ("file:///tmp/x.html", None),
-        # 虚拟桌面有自己的窗口
-        ("http://127.0.0.1:8093/app/agent_os", None),
+        # 虚拟桌面常驻在 WebUI 左侧菜单 desktop 项下，同样改道进 WebUI
+        ("http://127.0.0.1:8093/app/agent_os", ("agent_os", None, "http://127.0.0.1:8093")),
     ],
 )
 def test_recipe_page_of(url, expected) -> None:
@@ -41,6 +41,7 @@ def test_webui_url_for() -> None:
     assert webui_url_for("http://localhost:8093", "demo", None) == "http://localhost:8093/#/app/demo"
     assert webui_url_for("http://localhost:8093", "demo", "default") == "http://localhost:8093/#/app/demo"
     assert webui_url_for("http://localhost:8093", "demo", "a-1") == "http://localhost:8093/#/app/demo/a-1"
+    assert webui_url_for("http://127.0.0.1:8093", "agent_os", None) == "http://127.0.0.1:8093/#/desktop"
 
 
 class _FakeManager:

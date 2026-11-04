@@ -42,17 +42,21 @@ NEVER 用文件大小、行数比例之类的办法估算任何字段。这个�
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from frago.session.adapters.agy_records import (
+    translate_session as translate_agy_session,
+)
 from frago.session.adapters.claude_code_records import translate_records
 from frago.session.adapters.codex_records import (
     translate_session as translate_codex_session,
@@ -68,21 +72,26 @@ from frago.session.unified_record import UnifiedRecord
 from frago.skills.skill_prompt import split_skill_blocks
 
 __all__ = [
+    "AGY_CACHE_FILE",
     "CACHE_FILE",
     "CODEX_CACHE_FILE",
     "COREAGENT_CACHE_FILE",
     "FRAGO_WAKE_MARKERS",
+    "IN_PROGRESS_KINDS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
+    "AgyIndexEntry",
     "CodexIndexEntry",
     "SessionStatus",
     "SessionSummary",
     "TailSignals",
+    "agy_tail_signals",
     "clear_cache",
     "codex_tail_signals",
     "derive_status",
     "list_session_summaries",
     "opencode_tail_signals",
+    "split_employee_block",
     "tail_signals_of",
 ]
 
@@ -106,6 +115,11 @@ CODEX_CACHE_FILE = CACHE_DIR / "codex-session-index.json"
 # 下一次列会话就得把另一侧全部重算一遍。
 COREAGENT_CACHE_FILE = CACHE_DIR / "coreagent-session-index.json"
 
+# agy 的会话原文落在 ``~/.gemini/antigravity-cli/brain/<cid>/.system_generated/logs/``，
+# 本机会话长到上百场后逐场整翻一次要 1 秒以上；按摘要库时刻与转录文件（大小 + 修改时刻）
+# 联合失效，没动过的会话直接复用索引。
+AGY_CACHE_FILE = CACHE_DIR / "agy-session-index.json"
+
 # 提取规则改了就得让旧条目全部失效，否则会拿着按老规则算出来的字段一直用下去。
 # 版本 2 起条目里多了状态与摘要三个字段；版本 3 起多了"最后那句回复是什么时候说的"；
 # 版本 4 起"哪句算回复"的判据变了（frago 自己戳出来的心跳不算）；版本 5 修了版本 4 那次
@@ -114,7 +128,11 @@ COREAGENT_CACHE_FILE = CACHE_DIR / "coreagent-session-index.json"
 # **判据一改就得动这个数**，哪怕改的是同一条判据的第二版：条目里存的是判完的结果，
 # 失效判据只看文件有没有变，文件没变就永远拿老结果顶着。版本 4 那次少动了一次这个数，
 # 结果是判据改对了、界面上却还是错的，查了一轮才发现错在缓存。
-_CACHE_VERSION = 5
+# 版本 6 起记录文件内容摘要与回合收尾时刻：Claude Code 每小时 utimes 保活只改 mtime
+# 不改内容，不再推进 last_active_ts 把已收尾旧会话误判成 running。
+# 版本 7 起识别并剥离首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块，写出
+# ``employee_id`` 并还原用户的真实首句标题。
+_CACHE_VERSION = 7
 
 # 标题类字段可能出现在文件任何位置，所以开头之后的每一行都要做这两个判定。
 #
@@ -149,6 +167,13 @@ RUNNING_WINDOW_SECONDS = 90.0
 _BOOKKEEPING_KINDS = frozenset(
     {"call.envelope", "session.state", "context.inject", "todo.snapshot", "usage.tick"}
 )
+
+# 轮次未完工形态：工具调用中、工具结果返回待处理、子代理派发、人刚发言、思考中。
+# 当会话进程存活时，停在这些形态说明正在干活，不应被 90 秒超时降级为空闲。
+_IN_PROGRESS_KINDS = frozenset(
+    {"tool.call", "tool.result", "subagent.dispatch", "user.say", "agent.think"}
+)
+IN_PROGRESS_KINDS = _IN_PROGRESS_KINDS
 
 # ── frago 自己戳的那一下 ────────────────────────────────────────────
 # 常驻主控会话（PA）由 frago 的调度器按节拍唤醒：每隔几分钟把同一段角色定义当成
@@ -217,22 +242,32 @@ class TailSignals:
     与上一格分开：一个是"看清了，是机器戳的"，一个是"没看清"。混成一个值的话，窗口
     开多大都会 settle 在最老的那条心跳上。同样不进缓存。"""
 
+    turn_end_ts: float | None = None
+    """末条实质记录是 agent 回复且尾部已有带时刻的轮次收尾记账（``turn_duration`` /
+    ``stop_hook_summary``）时，记录那一轮真正收尾的时刻（epoch 秒）。"""
+
+    employee_id: str | None = None
+    """从首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块提取的员工岗位编号。"""
+
 
 def derive_status(
     last_kind: str | None,
     last_active_ts: float,
     now: float | None = None,
+    *,
+    alive: bool | None = None,
 ) -> SessionStatus:
     """四档状态。**判定顺序不能换**，顺序即语义。
 
-    ========  ============================  ========
-    序        条件                          判为
-    ========  ============================  ========
-    1         末条记录是报错                ``error``
-    2         最后活动距今 90 秒内          ``running``
-    3         末条记录是 agent 回复         ``done``
-    4         其余                          ``idle``
-    ========  ============================  ========
+    ========  ======================================  ========
+    序        条件                                    判为
+    ========  ======================================  ========
+    1         末条记录是报错                          ``error``
+    2         进程存活且末条处于未完工形态（长脚本等）``running``
+    3         进程未死亡且最后活动距今 90 秒内        ``running``
+    4         末条记录是 agent 回复                   ``done``
+    5         其余                                    ``idle``
+    ========  ======================================  ========
 
     **「等你决策」这一档不做。** 会话停在等人输入时，末条记录就是 agent 的那句回复，与
     「已经答完了」在数据上一模一样。要分开必须读正文判断 agent 是不是在提问，那是语义
@@ -240,9 +275,18 @@ def derive_status(
     绝大多数是正常答完的，那样一凑，左栏会变成一片假的"在等你"，比没有这一档糟得多。
 
     ``now`` 取 epoch 秒（:func:`time.time`）。这里只做减法，不落 ``datetime``。
+    ``alive`` 传自外界的存活性探测（tmux 前台命令不是 shell 或 CoreAgent 常驻进程还在）。
     """
     if last_kind == "error":
         return "error"
+    # 当会话明确存活且末条处于未闭环工作状态（如执行长脚本）时，恒为 running，不被 90 秒超时降级
+    if alive is True and last_kind in _IN_PROGRESS_KINDS:
+        return "running"
+    # 若已知进程已明确退出（alive is False），不再以 90 秒内有活动判 running
+    if alive is False:
+        if last_kind == "agent.say":
+            return "done"
+        return "idle"
     current = time.time() if now is None else now
     if current - last_active_ts <= RUNNING_WINDOW_SECONDS:
         return "running"
@@ -356,6 +400,7 @@ def tail_signals_of(records: Sequence[UnifiedRecord]) -> TailSignals:
         last_reply_ts=last_reply_ts,
         heartbeat_only=heartbeat_only,
         reply_unsettled=reply_unsettled,
+        employee_id=_first_employee_id(records),
     )
 
 
@@ -370,6 +415,37 @@ def _iter_lines_backwards(buf: bytes) -> Iterator[bytes]:
             yield line
         if start == -1:
             return
+
+
+def _completed_turn_ts(
+    newest_first: Sequence[dict[str, Any]],
+    last_kind: str | None,
+) -> float | None:
+    """末条实质记录是 agent 回复且尾部已有轮次收尾记账时，返回收尾记账时刻。
+
+    Claude Code 对挂在终端里的已完成会话每小时调一次 ``utimes`` 刷新 ``st_mtime``，
+    不改动任何字节。若直接拿 ``st_mtime`` 当最后活动时刻，冷启动重算索引时会把几天前
+    早已写下 ``turn_duration`` 的旧会话当成「90 秒内刚动过」判成 ``running``。
+    """
+    if last_kind != "agent.say":
+        return None
+    turn_closed = False
+    latest_ts: float | None = None
+    for record in newest_first:
+        ts = _iso_to_epoch(record.get("timestamp"))
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+        rtype = record.get("type")
+        if rtype == "system" and record.get("subtype") in (
+            "turn_duration",
+            "stop_hook_summary",
+        ):
+            if ts is not None:
+                turn_closed = True
+            continue
+        if rtype == "assistant":
+            break
+    return latest_ts if turn_closed else None
 
 
 def _tail_signals(buf: bytes, sid: str) -> TailSignals:
@@ -411,7 +487,10 @@ def _tail_signals(buf: bytes, sid: str) -> TailSignals:
             and not signals.reply_unsettled
         )
         if settled or exhausted:
-            return signals
+            break
+    turn_end_ts = _completed_turn_ts(newest_first, signals.last_kind)
+    if turn_end_ts is not None:
+        signals = replace(signals, turn_end_ts=turn_end_ts)
     return signals
 
 
@@ -434,6 +513,12 @@ class SessionSummary:
     tail: TailSignals = TailSignals()
     """末尾那几条记录读出来的状态与摘要信号。判到底哪一档由 :func:`derive_status` 做，
     那件事跟"现在几点"有关，不能连同索引一起缓存。"""
+
+    content_digest: str | None = None
+    """文件内容摘要（8 字节 blake2b 十六进制），用于识别只刷 mtime 未改字节的保活触碰。"""
+
+    employee_id: str | None = None
+    """从首条用户消息前拼入的 ``<frago-employee id="…">`` 语境块提取的员工岗位编号。"""
 
 
 def _iso_to_epoch(raw: Any) -> float | None:
@@ -465,6 +550,55 @@ def _loads(line: bytes) -> Any:
 _COMMAND_NAME_RE = re.compile(r"<command-name>([\s\S]*?)</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>([\s\S]*?)</command-args>")
 
+#: 点员工卡片起会话时拼在第一句话最前面的业务语境块（见 ``EmployeeOntologyService.build_business_context_block``）。
+#: 只匹配排在消息开头（或紧跟在 ``<must-use-skill>`` 之后）的整段块，避免普通任务书提及标签名时误判。
+_EMPLOYEE_BLOCK_RE = re.compile(
+    r'^\s*<frago-employee\s+id="([^"]+)"[^>]*>[\s\S]*?</frago-employee>\s*'
+)
+
+
+def split_employee_block(text: str) -> tuple[str | None, str]:
+    """剥掉排在首条用户消息最前面的 ``<frago-employee id="…">…</frago-employee>`` 语境块。
+
+    返回 ``(employee_id, 剩余正文)``；不带该语境块时 ``employee_id`` 为 ``None``、正文原样返回。
+    """
+    m = _EMPLOYEE_BLOCK_RE.match(text)
+    if not m:
+        return None, text
+    emp_id = m.group(1).strip() or None
+    return emp_id, text[m.end() :].strip()
+
+
+def _first_user_text_and_employee(txt: str) -> tuple[str | None, str | None]:
+    """同时拆出用户真实开口第一句与员工岗位编号（``(first_user, employee_id)``）。"""
+    body = txt.strip()
+    emp_id, body = split_employee_block(body)
+    skills, said = split_skill_blocks(body)
+    if emp_id is None:
+        emp_id, said = split_employee_block(said)
+    if skills:
+        return " ".join([*(f"/{n}" for n in skills), said]).strip() or None, emp_id
+    body = said
+    name = _COMMAND_NAME_RE.search(body)
+    if name:
+        args = _COMMAND_ARGS_RE.search(body)
+        written = (args.group(1) if args else "").strip()
+        if not written:
+            return None, emp_id
+        return f"{name.group(1).strip()} {written}".strip(), emp_id
+    if _COMMAND_ECHO.match(body):
+        return None, emp_id
+    return (body or None), emp_id
+
+
+def _first_employee_id(records: Sequence[UnifiedRecord]) -> str | None:
+    """从统一记录流的首条 ``user.say`` 里取出员工岗位编号（若该场会话由员工入口发起）。"""
+    for record in records:
+        if record.kind == "user.say":
+            _, emp_id = _first_user_text_and_employee(str(record.payload.get("text") or ""))
+            return emp_id
+    return None
+
 
 def _first_user_text(txt: str) -> str | None:
     """这条用户记录里，人**自己打的那句话**是什么；不是人打的返回 None。
@@ -486,22 +620,8 @@ def _first_user_text(txt: str) -> str | None:
     的还是 agent 开的——动它就动了那页的会话分类。所以两边只在这一条上分开：那边管分类，
     这边管左栏那一行叫什么名字。光杆命令与命令输出的处置两边完全一致。
     """
-    body = txt.strip()
-    # 会话页点名的 skill 整篇嵌在这句话前面。标题只要名字加人写的话，与斜杠命令同一个
-    # 读法：``/git-push 帮我提交``。整篇 skill 进标题，左栏那一行只剩一串标签。
-    skills, said = split_skill_blocks(body)
-    if skills:
-        return " ".join([*(f"/{n}" for n in skills), said]).strip()
-    name = _COMMAND_NAME_RE.search(body)
-    if name:
-        args = _COMMAND_ARGS_RE.search(body)
-        written = (args.group(1) if args else "").strip()
-        if not written:
-            return None
-        return f"{name.group(1).strip()} {written}".strip()
-    if _COMMAND_ECHO.match(body):
-        return None
-    return body
+    first_user, _ = _first_user_text_and_employee(txt)
+    return first_user
 
 
 def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
@@ -515,6 +635,7 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
     custom_title: str | None = None
     ai_title: str | None = None
     first_user: str | None = None
+    employee_id: str | None = None
     cwd: str | None = None
     first_ts: float | None = None
 
@@ -553,7 +674,9 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
             msg = record.get("message") or {}
             txt = _extract_text(msg.get("content", ""))
             if txt and txt.strip():
-                first_user = _first_user_text(txt)
+                first_user, emp_id = _first_user_text_and_employee(txt)
+                if employee_id is None and emp_id is not None:
+                    employee_id = emp_id
         if cwd is not None and first_ts is not None and first_user is not None:
             break
 
@@ -587,6 +710,11 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
         elif rtype == "ai-title" and record.get("aiTitle"):
             ai_title = record["aiTitle"]
 
+    # 整块字节已经在手上，末尾那几条不再碰一次磁盘。
+    tail = _tail_signals(buf, sid)
+    active_ts = tail.turn_end_ts if tail.turn_end_ts is not None else mtime
+    digest = hashlib.blake2b(buf, digest_size=8).hexdigest()
+
     return SessionSummary(
         sid=sid,
         slug=slug,
@@ -595,17 +723,137 @@ def _extract(path: Path, sid: str, mtime: float) -> SessionSummary | None:
         first_user=first_user,
         cwd=cwd,
         first_ts=first_ts,
-        last_active_ts=mtime,
-        # 整块字节已经在手上，末尾那几条不再碰一次磁盘。
-        tail=_tail_signals(buf, sid),
+        last_active_ts=active_ts,
+        tail=tail,
+        content_digest=digest,
+        employee_id=employee_id or tail.employee_id,
+    )
+
+
+_DEFAULT_EXTRACT = _extract
+_INCREMENTAL_MIN_BYTES = 64 * 1024
+_INCREMENTAL_TAIL_BYTES = 512 * 1024
+
+
+def _extract_incremental(
+    path: Path,
+    sid: str,
+    mtime: float,
+    prev: dict[str, Any],
+) -> SessionSummary | None:
+    """对正在运行、仅在文件末尾追加新行的会话做增量提取。
+
+    当旧索引条目已具备 ``cwd`` / ``first_ts`` / ``first_user`` 且文件体积大于阈值、
+    ``st_size > prev_size`` 时，不必每次轮询都从头重读并哈希数兆乃至数十兆的前缀字节：
+    - 仅扫描 ``[prev_size:]`` 新增字节段中可能出现的标题标记（``slug`` / ``custom-title`` / ``ai-title``）；
+    - 仅回读文件尾部窗口计算 ``_tail_signals``（若遇到心跳未决或长轮次未决则退回全量 ``_extract``）。
+    """
+    prev_size = prev.get("size")
+    if not isinstance(prev_size, int) or prev_size < _INCREMENTAL_MIN_BYTES:
+        return _extract(path, sid, mtime)
+    if (
+        prev.get("cwd") is None
+        or prev.get("first_ts") is None
+        or prev.get("first_user") is None
+    ):
+        return _extract(path, sid, mtime)
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            total_size = fh.tell()
+            if total_size <= prev_size:
+                return _extract(path, sid, mtime)
+
+            # 1. 读取新增段（往回多取一行边界，防止切在行中间）
+            delta_start = max(0, prev_size - 4096)
+            fh.seek(delta_start)
+            delta_buf = fh.read(total_size - delta_start)
+
+            # 2. 读取尾部窗口供 _tail_signals 判状态与摘要
+            tail_start = max(0, total_size - _INCREMENTAL_TAIL_BYTES)
+            if tail_start == delta_start:
+                tail_buf = delta_buf
+            else:
+                fh.seek(tail_start)
+                tail_buf = fh.read(total_size - tail_start)
+    except OSError:
+        return None
+
+    if delta_start > 0:
+        first_nl = delta_buf.find(b"\n")
+        if first_nl != -1 and delta_start + first_nl < prev_size:
+            delta_buf = delta_buf[first_nl + 1 :]
+    if tail_start > 0:
+        tail_nl = tail_buf.find(b"\n")
+        if tail_nl != -1:
+            tail_buf = tail_buf[tail_nl + 1 :]
+
+    slug: str | None = prev.get("slug")
+    custom_title: str | None = prev.get("custom_title")
+    ai_title: str | None = prev.get("ai_title")
+
+    starts: set[int] = set()
+    for marker in _TITLE_MARKERS:
+        at = delta_buf.find(marker, 0)
+        while at != -1:
+            line_start = delta_buf.rfind(b"\n", 0, at) + 1
+            starts.add(line_start)
+            line_end = delta_buf.find(b"\n", at)
+            if line_end == -1:
+                break
+            at = delta_buf.find(marker, line_end + 1)
+
+    for start in sorted(starts):
+        end = delta_buf.find(b"\n", start)
+        record = _loads(delta_buf[start:end] if end != -1 else delta_buf[start:])
+        if not isinstance(record, dict):
+            continue
+        if slug is None and record.get("slug"):
+            slug = record["slug"]
+        rtype = record.get("type")
+        if rtype == "custom-title" and record.get("customTitle"):
+            custom_title = record["customTitle"]
+        elif rtype == "ai-title" and record.get("aiTitle"):
+            ai_title = record["aiTitle"]
+
+    tail = _tail_signals(tail_buf, sid)
+    if (tail.heartbeat_only or tail.reply_unsettled) and tail_start > 0:
+        return _extract(path, sid, mtime)
+
+    # 若尾部窗口内还没有新的 agent 回复，保留此前已确认的摘要与最后回复时刻
+    if tail.digest_done is None and prev.get("digest_done") is not None:
+        tail = replace(
+            tail,
+            digest_done=prev.get("digest_done"),
+            last_reply_ts=prev.get("last_reply_ts"),
+        )
+
+    active_ts = tail.turn_end_ts if tail.turn_end_ts is not None else mtime
+    prev_digest = str(prev.get("digest") or "").encode("ascii", errors="ignore")[:64]
+    digest = hashlib.blake2b(delta_buf, key=prev_digest, digest_size=8).hexdigest()
+
+    return SessionSummary(
+        sid=sid,
+        slug=slug,
+        custom_title=custom_title,
+        ai_title=ai_title,
+        first_user=prev.get("first_user"),
+        cwd=prev.get("cwd"),
+        first_ts=prev.get("first_ts"),
+        last_active_ts=active_ts,
+        tail=tail,
+        content_digest=digest,
+        employee_id=prev.get("employee_id"),
     )
 
 
 def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, Any]:
-    """缓存条目 = 失效判据（大小 + 修改时刻）+ 字段本身。"""
+    """缓存条目 = 失效判据（大小 + 修改时刻 + 内容摘要）+ 字段本身。"""
     return {
         "size": size,
         "mtime_ns": mtime_ns,
+        "digest": summary.content_digest,
         "sid": summary.sid,
         "slug": summary.slug,
         "custom_title": summary.custom_title,
@@ -618,12 +866,20 @@ def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, An
         "error_message": summary.tail.error_message,
         "digest_done": summary.tail.digest_done,
         "last_reply_ts": summary.tail.last_reply_ts,
+        "turn_end_ts": summary.tail.turn_end_ts,
+        "employee_id": summary.employee_id,
     }
 
 
 def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
     """缓存条目 → 字段。形状不对就当没缓存，重算那一份。"""
     try:
+        turn_end_raw = entry.get("turn_end_ts")
+        turn_end_ts = float(turn_end_raw) if isinstance(turn_end_raw, (int, float)) else None
+        digest_raw = entry.get("digest")
+        content_digest = str(digest_raw) if isinstance(digest_raw, str) else None
+        employee_raw = entry.get("employee_id")
+        employee_id = str(employee_raw) if isinstance(employee_raw, str) and employee_raw else None
         return SessionSummary(
             sid=str(entry["sid"]),
             slug=entry["slug"],
@@ -638,29 +894,53 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
                 error_message=entry["error_message"],
                 digest_done=entry["digest_done"],
                 last_reply_ts=entry["last_reply_ts"],
+                turn_end_ts=turn_end_ts,
+                employee_id=employee_id,
             ),
+            content_digest=content_digest,
+            employee_id=employee_id,
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
+#: 内存态索引缓存：cache_file 路径 → (mtime_ns, size, entries)，省掉每轮重复读盘反序列化。
+_MEM_INDEX_CACHE: dict[str, tuple[int, int, dict[str, dict[str, Any]]]] = {}
+
+#: 内存态 SessionSummary 对象缓存：jsonl 路径 → (size, mtime_ns, SessionSummary)。
+_SUMMARY_OBJ_CACHE: dict[str, tuple[int, int, SessionSummary]] = {}
+
+
 def _load_cache(cache_file: Path) -> dict[str, dict[str, Any]]:
-    """读索引。读不出来、版本对不上，都当成空——最坏结果是这次全量重算。"""
+    """读索引。盘上索引未变时直接命中内存态；读不出来、版本对不上，都当成空。"""
+    cache_key = str(cache_file)
+    try:
+        st = cache_file.stat()
+    except OSError:
+        _MEM_INDEX_CACHE.pop(cache_key, None)
+        return {}
+    mem_hit = _MEM_INDEX_CACHE.get(cache_key)
+    if mem_hit is not None and mem_hit[0] == st.st_mtime_ns and mem_hit[1] == st.st_size:
+        return mem_hit[2]
     try:
         raw = json.loads(cache_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
+        _MEM_INDEX_CACHE.pop(cache_key, None)
         return {}
     if not isinstance(raw, dict) or raw.get("version") != _CACHE_VERSION:
+        _MEM_INDEX_CACHE.pop(cache_key, None)
         return {}
     entries = raw.get("entries")
-    return entries if isinstance(entries, dict) else {}
+    if not isinstance(entries, dict):
+        _MEM_INDEX_CACHE.pop(cache_key, None)
+        return {}
+    _MEM_INDEX_CACHE[cache_key] = (st.st_mtime_ns, st.st_size, entries)
+    return entries
 
 
 def _save_cache(cache_file: Path, entries: dict[str, dict[str, Any]]) -> None:
-    """落索引。先写临时文件再改名，让并发的读者要么读到旧的要么读到新的，NEVER 读到半份。
-
-    写不进去只是下次列会话慢一点，不该让列会话本身失败。
-    """
+    """落索引并同步更新内存态缓存。先写临时文件再改名，NEVER 让读者读到半份。"""
+    cache_key = str(cache_file)
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.tmp")
@@ -672,21 +952,28 @@ def _save_cache(cache_file: Path, entries: dict[str, dict[str, Any]]) -> None:
             encoding="utf-8",
         )
         tmp.replace(cache_file)
+        st = cache_file.stat()
+        _MEM_INDEX_CACHE[cache_key] = (st.st_mtime_ns, st.st_size, entries)
     except OSError:
         with contextlib.suppress(OSError):
             tmp.unlink()
 
 
 def clear_cache(cache_file: Path | None = None) -> None:
-    """删掉索引。下一次列会话会全量重算。
-
-    不指定路径时各家的索引一起删——只删一部分会让下一次列会话半新半旧，比全删更难解释。
-    """
-    targets = (
-        [cache_file]
-        if cache_file is not None
-        else [CACHE_FILE, OPENCODE_CACHE_FILE, CODEX_CACHE_FILE, COREAGENT_CACHE_FILE]
-    )
+    """删掉索引并清空内存态缓存。下一次列会话会全量重算。"""
+    if cache_file is not None:
+        _MEM_INDEX_CACHE.pop(str(cache_file), None)
+        targets = [cache_file]
+    else:
+        _MEM_INDEX_CACHE.clear()
+        _SUMMARY_OBJ_CACHE.clear()
+        targets = [
+            CACHE_FILE,
+            OPENCODE_CACHE_FILE,
+            CODEX_CACHE_FILE,
+            COREAGENT_CACHE_FILE,
+            AGY_CACHE_FILE,
+        ]
     for target in targets:
         with contextlib.suppress(OSError):
             target.unlink()
@@ -694,6 +981,7 @@ def clear_cache(cache_file: Path | None = None) -> None:
 
 def _extract_many(
     stale: list[tuple[str, Path, str, os.stat_result]],
+    cached: dict[str, dict[str, Any]] | None = None,
 ) -> list[tuple[str, os.stat_result, SessionSummary | None]]:
     """把要重算的文件分头算完。
 
@@ -701,11 +989,12 @@ def _extract_many(
     的纯计算，多个线程只会互相排队——实测 8 线程 5.23 秒，比单线程的 4.80 秒还慢；换成
     8 个进程是 1.33 秒。
 
-    只变了几份时不起池子：池子本身的启动成本比重算几份还贵。
+    只变了几份时不起池子：池子本身的启动成本比重算几份还贵。且在单进程增量路径下，对已
+    有前值、仅在尾部追加的大文件走 :func:`_extract_incremental`，避免重读整份历史前缀。
     """
     if not stale:
         return []
-    if len(stale) >= _POOL_THRESHOLD:
+    if len(stale) >= _POOL_THRESHOLD and _extract is _DEFAULT_EXTRACT:
         try:
             workers = min(8, os.cpu_count() or 4, len(stale))
             with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -723,18 +1012,25 @@ def _extract_many(
                 for item, summary in zip(stale, computed, strict=True)
             ]
         except Exception:  # noqa: BLE001 - 见下
-            # 进程池在受限环境里可能压根起不来（已经身处 daemon 进程、被沙箱掐掉 fork
-            # 等等），失败形态五花八门。列会话不该因为提速手段用不了就整个失败，退回
-            # 单进程算完——慢，但结果一模一样。
             pass
-    return [(item[0], item[3], _extract(item[1], item[2], item[3].st_mtime)) for item in stale]
+    results: list[tuple[str, os.stat_result, SessionSummary | None]] = []
+    for key, path, sid, st in stale:
+        prev = cached.get(key) if cached is not None else None
+        if isinstance(prev, dict) and st.st_size > (prev.get("size") or 0):
+            summary = _extract_incremental(path, sid, st.st_mtime, prev)
+            if summary is None:
+                summary = _extract(path, sid, st.st_mtime)
+        else:
+            summary = _extract(path, sid, st.st_mtime)
+        results.append((key, st, summary))
+    return results
 
 
 def list_session_summaries(
     projects_root: Path | None = None,
     cache_file: Path | None = None,
 ) -> list[SessionSummary]:
-    """本机全部 Claude Code 会话的清单字段，读过的文件走缓存。
+    """本机全部 Claude Code 会话的清单字段，读过的文件走内存态 + 磁盘双层缓存。
 
     缓存按「文件大小 + 修改时刻（纳秒）」判定失效。会话文件只会被追加，追加必然同时改变
     这两个数，所以对得上就一定没变过，对不上就重算那一份。
@@ -748,37 +1044,72 @@ def list_session_summaries(
     fresh: dict[str, dict[str, Any]] = {}
     summaries: list[SessionSummary] = []
     stale: list[tuple[str, Path, str, os.stat_result]] = []
+    dirty = False
 
-    for proj_dir in sorted(root.iterdir()):
-        if not proj_dir.is_dir():
+    try:
+        proj_entries = sorted(
+            (e for e in os.scandir(root) if e.is_dir()),
+            key=lambda e: e.name,
+        )
+    except OSError:
+        return []
+
+    for proj_entry in proj_entries:
+        try:
+            file_entries = list(os.scandir(proj_entry.path))
+        except OSError:
             continue
-        for jsonl in proj_dir.glob("*.jsonl"):
+        for fentry in file_entries:
+            name = fentry.name
+            if not name.endswith(".jsonl"):
+                continue
             try:
-                st = jsonl.stat()
+                st = fentry.stat()
             except OSError:
                 continue
-            key = str(jsonl)
+            key = fentry.path
             entry = cached.get(key)
             if (
                 isinstance(entry, dict)
                 and entry.get("size") == st.st_size
                 and entry.get("mtime_ns") == st.st_mtime_ns
             ):
+                obj_hit = _SUMMARY_OBJ_CACHE.get(key)
+                if (
+                    obj_hit is not None
+                    and obj_hit[0] == st.st_size
+                    and obj_hit[1] == st.st_mtime_ns
+                ):
+                    summaries.append(obj_hit[2])
+                    fresh[key] = entry
+                    continue
                 hit = _from_entry(entry)
                 if hit is not None:
+                    _SUMMARY_OBJ_CACHE[key] = (st.st_size, st.st_mtime_ns, hit)
                     summaries.append(hit)
                     fresh[key] = entry
                     continue
-            stale.append((key, jsonl, jsonl.stem, st))
+            dirty = True
+            stale.append((key, Path(key), name[:-6], st))
 
-    for key, st, summary in _extract_many(stale):
+    for key, st, summary in _extract_many(stale, cached):
         if summary is None:
             continue
+        prev = cached.get(key)
+        if (
+            isinstance(prev, dict)
+            and prev.get("size") == st.st_size
+            and prev.get("digest")
+            and prev.get("digest") == summary.content_digest
+            and isinstance(prev.get("last_active_ts"), (int, float))
+        ):
+            summary = replace(summary, last_active_ts=float(prev["last_active_ts"]))
+        _SUMMARY_OBJ_CACHE[key] = (st.st_size, st.st_mtime_ns, summary)
         summaries.append(summary)
         fresh[key] = _as_entry(summary, st.st_size, st.st_mtime_ns)
 
     # 删掉的会话文件不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return summaries
 
@@ -800,6 +1131,7 @@ def opencode_tail_signals(
     cached = _load_cache(target_cache)
     fresh: dict[str, dict[str, Any]] = {}
     signals: dict[str, TailSignals] = {}
+    dirty = False
 
     for row in rows:
         sid = row.session_id
@@ -810,9 +1142,11 @@ def opencode_tail_signals(
                 error_message=entry.get("error_message"),
                 digest_done=entry.get("digest_done"),
                 last_reply_ts=entry.get("last_reply_ts"),
+                employee_id=entry.get("employee_id"),
             )
             fresh[sid] = entry
             continue
+        dirty = True
         tail = tail_signals_of(translate_session(sid))
         signals[sid] = tail
         fresh[sid] = {
@@ -821,10 +1155,11 @@ def opencode_tail_signals(
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
             "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return signals
 
@@ -847,7 +1182,8 @@ def _codex_first_user_line(records: Sequence[UnifiedRecord]) -> str | None:
     """整场会话里用户开口的第一句，截成卡片上那一行。一句都没有时 None。"""
     for record in records:
         if record.kind == "user.say":
-            return _one_line(record.payload.get("text"))
+            cleaned, _ = _first_user_text_and_employee(str(record.payload.get("text") or ""))
+            return _one_line(cleaned)
     return None
 
 
@@ -868,6 +1204,7 @@ def codex_tail_signals(
     cached = _load_cache(target_cache)
     fresh: dict[str, dict[str, Any]] = {}
     entries: dict[str, CodexIndexEntry] = {}
+    dirty = False
 
     for meta in metas:
         sid = meta.session_id
@@ -879,11 +1216,13 @@ def codex_tail_signals(
                     error_message=entry.get("error_message"),
                     digest_done=entry.get("digest_done"),
                     last_reply_ts=entry.get("last_reply_ts"),
+                    employee_id=entry.get("employee_id"),
                 ),
                 title=entry.get("title"),
             )
             fresh[sid] = entry
             continue
+        dirty = True
         try:
             records = translate_codex_session(sid)
         except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
@@ -898,10 +1237,115 @@ def codex_tail_signals(
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
             "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
             "title": title,
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
-    if fresh != cached:
+    if dirty or len(fresh) != len(cached):
         _save_cache(target_cache, fresh)
     return entries
+
+
+# ── agy 那一侧 ──────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class AgyIndexEntry:
+    """agy 一场会话在索引里的一条。
+
+    除状态与摘要信号外，连带缓存转录里第一条正时刻（``created_at``，毫秒整数）与
+    剥离员工/技能块后的开口第一句（``title``）：摘要库的 ``preview`` 在长注入块下
+    可能被截断在标签内部，与状态信号同一趟从转录里提取并缓存后，左栏在模型尚未生成
+    正式标题的首轮运行期也能直接显示人说的真话。
+    """
+
+    tail: TailSignals
+    created_at: int | None
+    title: str | None = None
+
+
+def agy_tail_signals(
+    convs: Iterable[Any],
+    cache_file: Path | None = None,
+    *,
+    translate_fn: Callable[[str], Sequence[UnifiedRecord]] | None = None,
+) -> dict[str, AgyIndexEntry]:
+    """agy 那一侧每场会话的状态、摘要与创建时刻，读过的会话走内存态 + 磁盘双层缓存。
+
+    失效判据由摘要库时刻（``last_modified`` / ``last_user_input``）与转录文件
+    （``st_size`` + ``st_mtime_ns``）共同组成：任意一处推进都会触发该场重算。
+    """
+    from frago.session import agy_store
+
+    target_cache = cache_file or AGY_CACHE_FILE
+    cached = _load_cache(target_cache)
+    fresh: dict[str, dict[str, Any]] = {}
+    entries: dict[str, AgyIndexEntry] = {}
+    translator = translate_fn or translate_agy_session
+    dirty = False
+
+    for conv in convs:
+        cid = conv.conversation_id
+        last_mod = getattr(conv, "last_modified", 0.0)
+        last_input = getattr(conv, "last_user_input", 0.0)
+        t_size = 0
+        t_mtime_ns = 0
+        try:
+            t_path = getattr(conv, "transcript_path", None) or agy_store.transcript_path(cid)
+            st = t_path.stat()
+            t_size = st.st_size
+            t_mtime_ns = st.st_mtime_ns
+        except OSError:
+            pass
+
+        entry = cached.get(cid)
+        if (
+            isinstance(entry, dict)
+            and entry.get("last_modified") == last_mod
+            and entry.get("last_user_input") == last_input
+            and entry.get("t_size") == t_size
+            and entry.get("t_mtime_ns") == t_mtime_ns
+            and "title" in entry
+        ):
+            created_raw = entry.get("created_at")
+            title_raw = entry.get("title")
+            entries[cid] = AgyIndexEntry(
+                tail=TailSignals(
+                    last_kind=entry.get("last_kind"),
+                    error_message=entry.get("error_message"),
+                    digest_done=entry.get("digest_done"),
+                    last_reply_ts=entry.get("last_reply_ts"),
+                    employee_id=entry.get("employee_id"),
+                ),
+                created_at=int(created_raw) if isinstance(created_raw, int) else None,
+                title=title_raw if isinstance(title_raw, str) else None,
+            )
+            fresh[cid] = entry
+            continue
+
+        dirty = True
+        try:
+            records = translator(cid)
+        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
+            records = []
+        tail = tail_signals_of(records)
+        created_at = next((r.ts for r in records if r.ts > 0), None)
+        title = _codex_first_user_line(records)
+        entries[cid] = AgyIndexEntry(tail=tail, created_at=created_at, title=title)
+        fresh[cid] = {
+            "last_modified": last_mod,
+            "last_user_input": last_input,
+            "t_size": t_size,
+            "t_mtime_ns": t_mtime_ns,
+            "last_kind": tail.last_kind,
+            "error_message": tail.error_message,
+            "digest_done": tail.digest_done,
+            "last_reply_ts": tail.last_reply_ts,
+            "employee_id": tail.employee_id,
+            "created_at": created_at,
+            "title": title,
+        }
+
+    if dirty or len(fresh) != len(cached):
+        _save_cache(target_cache, fresh)
+    return entries
+

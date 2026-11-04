@@ -7,10 +7,18 @@
 
 import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import RecordStream, { groupRecords, lensOf, talkView } from '../RecordStream';
+import RecordStream, {
+  buildTalkSegments,
+  groupRecords,
+  lensOf,
+  talkView,
+  withTurnDecisionCards,
+} from '../RecordStream';
+import { DecisionCardContext } from '../DecisionCard';
 import { TestRail } from './railTestKit';
 import { relativeTime, shortAge } from '../SessionItem';
 import { ReportBody } from '../ReportPanel';
+import { parseAnsiSegments } from '../SessionTerminal';
 import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObserver';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { WorkbenchSession, WorkbenchSessionsState } from '@/hooks/useWorkbenchSessions';
@@ -152,8 +160,8 @@ describe('插话队列的入队行', () => {
   });
 });
 
-describe('talkView 对话档捎带用量', () => {
-  it('两段对话之间只留最后一条用量，工具不进来', () => {
+describe('talkView 对话档用量内联至回复卡头', () => {
+  it('talkView 不再在对话之间独立插入用量行，用量上下文内联挂载到回复中', () => {
     const tick = (id: string, seq: number) =>
       record({ id, seq, kind: 'usage.tick', payload: { context_tokens: seq, total_tokens: seq } });
     const view = talkView([
@@ -164,7 +172,8 @@ describe('talkView 对话档捎带用量', () => {
       record({ id: 'a', seq: 4, kind: 'agent.say', payload: { text: '好了' } }),
       tick('t3', 5),
     ]);
-    expect(view.map((r) => r.id)).toEqual(['u', 't2', 'a', 't3']);
+    expect(view.map((r) => r.id)).toEqual(['u', 'a']);
+    expect(view[1].payload.context_tokens).toBe(5);
   });
 
   it('用量仍归系统档，条数不重复计', () => {
@@ -386,8 +395,8 @@ describe('RecordStream 中栏', () => {
       expect(screen.queryByTestId('stream-lens')).toBeNull();
     });
 
-    it('模型与用量读数常驻在档位条右侧，支持窄屏折行与超长省略', () => {
-      const { rerender } = render(
+    it('档位条保持纯净，不再冗余放置用量读数', () => {
+      render(
         <RecordStream
           {...streamProps({
             records: mixed,
@@ -395,26 +404,302 @@ describe('RecordStream 中栏', () => {
           })}
         />
       );
-      const lensBar = screen.getByTestId('stream-lens');
-      expect(lensBar.className).toContain('flex-wrap');
-      expect(lensBar.className).toContain('justify-between');
+      expect(screen.queryByTestId('stream-lens-usage')).toBeNull();
+    });
 
-      const usage = screen.getByTestId('stream-lens-usage');
-      expect(lensBar.contains(usage)).toBe(true);
-      expect(usage.textContent).toBe('gemini-4-argon-medium · 上下文 15k · 累计 28k');
-      expect(usage.className).toContain('truncate');
+    it('档位条左侧依次紧贴展示 Watcher 菜单、隔离纯文本 Executor 与现有 All | Talk 等菜单', () => {
+      render(<RecordStream {...streamProps({ records: mixed })} />);
+      const watcherBtn = screen.getByTestId('lens-watcher');
+      const executorLabel = screen.getByTestId('lens-executor-label');
+      const allBtn = screen.getByTestId('lens-all');
+      expect(watcherBtn.textContent).toContain('Watcher');
+      expect(executorLabel.textContent).toBe('Executor');
+      expect(allBtn.textContent).toContain('全部');
+    });
 
-      rerender(
+    it('Talk 视图将每个回复前的多次工具调用与 thinking 叠加为单行自增计数，不刷多行', () => {
+      const turnWithMultiToolsAndThinks = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '排查问题' } }),
+        record({ id: 'th1', seq: 1, kind: 'agent.think', payload: { text: '第一轮思考' } }),
+        record({ id: 'tc1', seq: 2, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'tr1', seq: 3, kind: 'tool.result', payload: { tool_name: 'Read', status: 'ok', body: 'ok' } }),
+        record({ id: 'th2', seq: 4, kind: 'agent.think', payload: { text: '第二轮思考' } }),
+        record({ id: 'tc2', seq: 5, kind: 'tool.call', payload: { tool_name: 'Grep', args: {} } }),
+        record({ id: 'tc3', seq: 6, kind: 'tool.call', payload: { tool_name: 'Bash', args: {} } }),
+        record({ id: 'th3', seq: 7, kind: 'agent.think', payload: { text: '第三轮思考' } }),
+        record({ id: 'th4', seq: 8, kind: 'agent.think', payload: { text: '第四轮思考' } }),
+        record({ id: 'th5', seq: 9, kind: 'agent.think', payload: { text: '第五轮思考' } }),
+        record({ id: 'a1', seq: 10, kind: 'agent.say', payload: { text: '已定位根因。' } }),
+      ];
+
+      const segs = buildTalkSegments(turnWithMultiToolsAndThinks);
+      const aggSegs = segs.filter((s) => s.kind === 'talk-agg');
+      expect(aggSegs).toHaveLength(1);
+      if (aggSegs[0].kind === 'talk-agg') {
+        expect(aggSegs[0].toolCalls).toBe(3);
+        expect(aggSegs[0].thinkingSteps).toBe(5);
+      }
+
+      render(<RecordStream {...streamProps({ records: turnWithMultiToolsAndThinks })} />);
+      const aggRows = screen.getAllByTestId('talk-pre-response-agg');
+      expect(aggRows).toHaveLength(1);
+      expect(aggRows[0].textContent).toContain('3次工具调用');
+      expect(aggRows[0].textContent).toContain('5次thinking');
+      // Talk 计数只计真实可见的对话气泡（u1 与 a1 共 2 条），不把折叠进聚合行的 5 条 thinking 算进去
+      expect(screen.getByTestId('lens-talk').textContent).toContain('2');
+    });
+
+    it('Talk 视图下当首屏满 200 条但筛入 Talk 不足 40 条气泡或视口未填满且 hasOlder=true 时，自动调用 onLoadOlder 补页，且内容容器贴底向上排列', () => {
+      const onLoadOlder = vi.fn();
+      const sparsePage = Array.from({ length: 200 }, (_, i) =>
+        record({
+          id: `sp-${i}`,
+          seq: 158 + i,
+          kind: i < 25 ? 'agent.say' : 'tool.call',
+          payload: i < 25 ? { text: `回复 ${i}` } : { tool_name: 'Bash', args: {} },
+        })
+      );
+      render(
         <RecordStream
           {...streamProps({
-            records: mixed,
-            usage: { model: 'claude-opus-5', context: 166_518, total: 5_022_011 },
+            records: sparsePage,
+            hasOlder: true,
+            onLoadOlder,
           })}
         />
       );
-      expect(screen.getByTestId('stream-lens-usage').textContent).toBe(
-        'claude-opus-5 · 上下文 167k · 累计 5.0M'
+      expect(screen.getByTestId('lens-talk').textContent).toContain('25');
+      expect(onLoadOlder).toHaveBeenCalledTimes(1);
+      const contentBox = screen.getByTestId('record-stream-content');
+      expect(contentBox.className).toContain('min-h-full');
+      expect(contentBox.className).toContain('justify-end');
+    });
+
+    it('Watcher 视图对每个游标切片外部上方展示观察者总结，下方包裹默认折叠的 Talk 并原样展示可交互决策卡', () => {
+      const uiCardJson = JSON.stringify({
+        frago_ui_component: 'decision-card',
+        component_type: 'single-choice',
+        data: {
+          type: 'single-choice',
+          question: 'Observer 信息结构采用哪种组织方式？',
+          options: [
+            {
+              key: 'A',
+              label: '三段式（执行动作 + 背景上下文 + 决策选项）',
+              effect: '直接服务于用户拍板',
+              recommended: true,
+              reversible: true,
+            },
+            {
+              key: 'B',
+              label: '双段式（当前进展 + 待决问题）',
+              effect: '极简展示',
+              recommended: false,
+              reversible: true,
+            },
+          ],
+        },
+      });
+      const recordsWithCard = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '梳理信息结构' } }),
+        record({ id: 'tc1', seq: 1, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'tr1', seq: 2, kind: 'tool.result', payload: { tool_name: 'Bash', status: 'ok', body: uiCardJson } }),
+        record({ id: 'a1', seq: 3, kind: 'agent.say', payload: { text: '请选择信息结构方案。' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '梳理信息结构',
+          tail: { kind: 'output', text: '已完成代码改造，等待选择信息结构' },
+          decision: 'Observer 信息结构采用哪种组织方式？',
+          happened: ['完成了 Watcher 与 Talk 改造'],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 4,
+              tail: { kind: 'output', text: '已完成代码改造，等待选择信息结构' },
+              happened_add: ['完成了 Watcher 与 Talk 改造'],
+              decision: 'Observer 信息结构采用哪种组织方式？',
+              summary: '完成了 Watcher 与 Talk 改造\n已完成代码改造，等待选择信息结构',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+      const answer = vi.fn();
+
+      render(
+        <DecisionCardContext.Provider
+          value={{
+            canAnswer: true,
+            blockedReason: null,
+            answerOf: () => null,
+            answer,
+          }}
+        >
+          <RecordStream {...streamProps({ records: recordsWithCard, observer: observerView })} />
+        </DecisionCardContext.Provider>
       );
+
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+      expect(screen.getByTestId('watcher-view')).toBeTruthy();
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
+      expect(screen.getByTestId('watcher-phase-goal').textContent).toContain('梳理信息结构');
+      expect(screen.getByTestId('watcher-summary').textContent).toContain('完成了 Watcher 与 Talk 改造');
+      expect(screen.getByTestId('watcher-summary').textContent).not.toContain('。；');
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
+      expect(screen.getByTestId('watcher-part-doing').textContent).toContain('完成了 Watcher 与 Talk 改造');
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
+      expect(screen.getByTestId('watcher-part-findings').textContent).toContain(
+        '已完成代码改造，等待选择信息结构'
+      );
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
+      expect(screen.getByTestId('watcher-part-decision').textContent).toContain(
+        'Observer 信息结构采用哪种组织方式？'
+      );
+
+      // Talk 默认折叠，但决策卡在 Watcher 下原样展示且可直接选择发送
+      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('watcher-talk-body-0')).toBeNull();
+      expect(screen.getByTestId('decision-card')).toBeTruthy();
+
+      fireEvent.click(screen.getAllByTestId('decision-option')[1]);
+      expect(answer).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId('decision-answer'));
+      expect(answer).toHaveBeenCalledTimes(1);
+
+      // 点击展开包裹的 Talk，展示内部对话与响应前动作聚合
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByTestId('watcher-talk-body-0')).toBeTruthy();
+      expect(screen.getByText('请选择信息结构方案。')).toBeTruthy();
+    });
+
+    it('Watcher 每段总结严格锁定 [cursor_from, cursor_to) 闭区间，不会把游标之后新发生的回复塞进旧总结槽位', () => {
+      const recordsWithTrailing = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第一问' } }),
+        record({ id: 'a1', seq: 1, kind: 'agent.say', payload: { text: '第一答' } }),
+        record({ id: 'u2', seq: 2, kind: 'user.say', payload: { text: '浮动按钮上的L和数字是什么含义？' } }),
+        record({ id: 'a2', seq: 3, kind: 'agent.say', payload: { text: 'L是行号的缩写，代表起始行号到结束行号。' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '第一问',
+          tail: { kind: 'output', text: '完成了第一问答复' },
+          decision: '',
+          happened: ['完成了第一问答复'],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              tail: { kind: 'output', text: '完成了第一问答复' },
+              happened_add: ['完成了第一问答复'],
+              decision: '',
+              summary: '完成了第一问答复',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      render(<RecordStream {...streamProps({ records: recordsWithTrailing, observer: observerView })} />);
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // #1 总结严格只包裹 [0, 2) 内的 1 条提问 · 1 条回复，不会把 seq=2,3 的后续问答吞进去
+      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      expect(toggle.textContent).toContain('1条提问');
+      expect(toggle.textContent).toContain('1条回复');
+
+      // 游标 2 之后尚未总结的新对话独立呈现在尾部，不预设虚假的 #2 总结槽位
+      expect(screen.getAllByTestId('watcher-item')).toHaveLength(1);
+      const tail = screen.getByTestId('watcher-unsummarized-tail');
+      expect(tail.textContent).toContain('浮动按钮上的L和数字是什么含义？');
+      expect(tail.textContent).toContain('L是行号的缩写，代表起始行号到结束行号。');
+    });
+
+    it('Watcher 小标题独立成行、多条内容逐行分列，且随中英语言切换完整切换小标题与计数词条', async () => {
+      const recordsForI18n = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第一段目标。第二段目标？' } }),
+        record({ id: 'tc1', seq: 1, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
+        record({ id: 'a1', seq: 2, kind: 'agent.say', payload: { text: '已完成检查' } }),
+      ];
+      const observerView: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '第一段目标。第二段目标？',
+          tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+          decision: '请选择排版方案',
+          happened: [
+            '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
+            'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
+          ],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 3,
+              tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+              happened_add: [
+                '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
+                'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
+              ],
+              decision: '请选择排版方案',
+              summary: '正在检查 RecordStream 排版',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const { rerender } = render(
+        <RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // 多条内容被拆分为独立的多行条目
+      expect(screen.getAllByTestId('watcher-phase-goal-line')).toHaveLength(2);
+      expect(screen.getAllByTestId('watcher-part-doing-line')).toHaveLength(2);
+      expect(screen.getAllByTestId('watcher-part-findings-line')).toHaveLength(3);
+
+      // 中文状态下：小标题与计数均为中文，且无硬编码冒号
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
+      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1条提问 · 1次工具调用 · 1条回复');
+
+      // 切换到英文状态：小标题与计数全部切换为纯英文
+      await i18n.changeLanguage('en');
+      rerender(<RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />);
+      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('Stage goal');
+      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe("What's happening now");
+      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('Key findings or output');
+      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('Decision context');
+      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1 prompts · 1 tool calls · 1 replies');
+
+      await i18n.changeLanguage('zh');
     });
   });
 });
@@ -493,14 +778,80 @@ describe('SessionRail 左栏', () => {
     const [first] = screen.getAllByTestId('session-item');
     expect(first.getAttribute('aria-current')).toBe('true');
     const className = first.className;
-    // 整行换底加整圈描边。这一条从前钉的是绿淡底——那是当时的实现，不是这条规矩本身。
-    // 选中不是动作，现在换成中性底（--sel-bg）加一圈 --sel-border，规矩没变：状态由整行承担。
+    // 整行换底加整圈描边与微阴影（--sel-bg / --sel-border / --sel-shadow），状态由整行承担。
     expect(className).toContain('bg-[var(--sel-bg)]');
     expect(className).toContain('var(--sel-border)');
+    expect(className).toContain('var(--sel-shadow)');
     expect(className).not.toContain('accent-primary');
     // 真正的禁令：任何单边色条都不许出现。
     expect(className).not.toMatch(/border-[lrtb]-\d/);
     expect(className).not.toMatch(/\bborder-[lrtb]\b/);
+  });
+
+  it('组容器下沉为暗托盘、组间距拉开到 14px，未选中分支卡与选中项样式层级分明', () => {
+    const rows = [
+      session({ session_id: 'solo-0', title: '独立会话 0' }),
+      session({ session_id: 'parent-1', title: '主会话 1' }),
+      session({
+        session_id: 'branch-1',
+        title: '分支会话 1',
+        parent_session_id: 'parent-1',
+        relation: { kind: 'branch', closed: false },
+      }),
+      session({ session_id: 'parent-2', title: '主会话 2' }),
+      session({
+        session_id: 'branch-2',
+        title: '分支会话 2',
+        parent_session_id: 'parent-2',
+        relation: { kind: 'branch', closed: false },
+      }),
+    ];
+    const { container } = render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId="branch-1"
+        onSelect={NOOP}
+      />
+    );
+    const heads = container.querySelectorAll('[data-branch-pos="head"]');
+    const tails = container.querySelectorAll('[data-branch-pos="tail"]');
+    expect(heads).toHaveLength(2);
+    expect(tails).toHaveLength(2);
+    // 第一个组头跟在普通独立卡片后面，补 pt-3（12px + 上一行 2px = 14px）；第二个组头紧跟上一组尾（已有 h-3.5 = 14px），不再重复叠加
+    expect(heads[0].className).toContain('pt-3');
+    expect(heads[1].className).not.toContain('pt-3');
+    // 组容器采用下沉暗托盘 --grp-bg 与淡描边 --grp-border，组内卡片间距为 pb-[5px]
+    expect(heads[0].firstElementChild?.className).toContain('bg-[var(--grp-bg)]');
+    expect(heads[0].firstElementChild?.className).toContain('border-[var(--grp-border)]');
+    expect(heads[0].firstElementChild?.firstElementChild?.className).toContain('pb-[5px]');
+    // 每个分支组尾部留 14px（h-3.5）组间距
+    const gaps = screen.getAllByTestId('group-gap');
+    expect(gaps).toHaveLength(2);
+    for (const g of gaps) {
+      expect(g.className).toContain('h-3.5');
+    }
+    const items = screen.getAllByTestId('session-item');
+    // 组内主次：源头父卡浮起在暗槽之上（实色底 + 整圈细描边），派生分支子卡退到暗槽底
+    const root1 = items.find((el) => el.textContent?.includes('主会话 1'))!;
+    const root2 = items.find((el) => el.textContent?.includes('主会话 2'))!;
+    for (const root of [root1, root2]) {
+      expect(root.getAttribute('data-branch-root')).toBe('true');
+      expect(root.className).toContain('bg-[var(--grp-card-bg)]');
+      expect(root.className).toContain('var(--grp-card-border)');
+    }
+    // 选中的分支卡整卡换品牌绿底与整圈描边；未选中的分支卡落在暗槽底、不画凸起盒、左缩进 14px、标题降半档字重
+    const selectedBranch = items.find((el) => el.textContent?.includes('分支会话 1'))!;
+    const unselectedBranch = items.find((el) => el.textContent?.includes('分支会话 2'))!;
+    expect(selectedBranch.getAttribute('data-branch-card')).toBe('true');
+    expect(selectedBranch.className).toContain('bg-[var(--sel-bg)]');
+    expect(selectedBranch.className).toContain('var(--sel-border)');
+    expect(selectedBranch.className).toContain('var(--sel-shadow)');
+    expect(unselectedBranch.getAttribute('data-branch-card')).toBe('true');
+    expect(unselectedBranch.className).toContain('bg-[var(--branch-card-bg)]');
+    expect(unselectedBranch.className).not.toContain('inset_0_0_0_1px_var(--branch-card-border)');
+    expect(unselectedBranch.className).toContain('pl-[14px]');
+    const unselectedTitle = unselectedBranch.querySelector('[data-testid=session-title]')!;
+    expect(unselectedTitle.className).toContain('font-medium');
   });
 
   it('一场都没匹配上时说清楚，不当成坏了', () => {
@@ -526,6 +877,39 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByTestId(/^status-filter-/)).toBeNull();
   });
 
+  it('员工入口创建的会话在状态行展示非文字图标标识，普通会话不展示', () => {
+    const rows = [
+      session({
+        session_id: 'emp-session-1',
+        title: '获取腾讯接口的所有标准板块并分析波动率',
+        employee_id: 'stock',
+      }),
+      session({
+        session_id: 'normal-session-1',
+        title: '普通会话',
+        employee_id: null,
+      }),
+    ];
+    render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+    const items = screen.getAllByTestId('session-item');
+    expect(items[0].getAttribute('data-employee')).toBe('stock');
+    expect(items[1].getAttribute('data-employee')).toBeNull();
+
+    const badges = screen.getAllByTestId('session-employee');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].getAttribute('data-employee-id')).toBe('stock');
+    // 仅图标、非文字
+    expect(badges[0].textContent).toBe('');
+    expect(badges[0].querySelector('svg')).not.toBeNull();
+  });
+
+
   it('每一档带真实条数，不是摆设', () => {
     render(
       <TestRail
@@ -545,7 +929,7 @@ describe('SessionRail 左栏', () => {
     expect(setFilter).toHaveBeenCalledWith('for-you');
   });
 
-  it('会话卡不再摆状态与来源；预览行取回复摘要，卡住摘要不上卡', () => {
+  it('会话卡不再摆状态、来源与内容预览；仅保留标题与状态行', () => {
     const one = session({
       session_id: SID,
       status: 'error',
@@ -563,10 +947,10 @@ describe('SessionRail 左栏', () => {
     expect(item.getAttribute('data-status')).toBeNull();
     expect(screen.queryByTestId('digest-done')).toBeNull();
     expect(screen.queryByTestId('digest-stuck')).toBeNull();
+    expect(item.querySelector('[data-testid=session-preview]')).toBeNull();
     expect(item.textContent).not.toContain('Claude Code');
     expect(item.textContent).not.toContain('API Error');
-    // 第五轮：所有会话都有预览行，服务端出「回复结尾」之前取最近一条回复的摘要
-    expect(item.querySelector('[data-testid=session-preview]')?.textContent).toContain('verdict.jsonl');
+    expect(item.textContent).not.toContain('verdict.jsonl');
   });
 
   it('没有等你决策那一档', () => {
@@ -625,7 +1009,8 @@ describe('SessionRail 左栏', () => {
     const card = screen.getByTestId('rail-launch');
     expect(card.getAttribute('data-phase')).toBe('claiming');
     expect(card.textContent).toContain('起一场新的');
-    expect(card.textContent).toContain('codex');
+    expect(card.textContent).toContain('发送中');
+    expect(card.querySelector('p')).toBeNull();
   });
 
   it('没有正在起的会话时，清单上方不多出任何东西', () => {
@@ -633,16 +1018,30 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByTestId('rail-launch')).toBeNull();
   });
 
-  it('新建会话的入口在左栏顶部，点开是弹窗不是跳页', async () => {
-    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
-    // 搜索框右边一颗中性图标按钮，不再是一整块实心绿
+  it('新建会话的入口在左栏顶部，交给页面中栏渲染内联起始页（单独摆左栏时仍可内联展开三项决定）', async () => {
+    const onToggleNew = vi.fn();
+    const { unmount } = render(
+      <TestRail
+        state={railState()}
+        selectedId={null}
+        onSelect={NOOP}
+        creatingNew={false}
+        onToggleNew={onToggleNew}
+      />
+    );
     const entry = screen.getByTestId('new-session');
     expect(entry.getAttribute('aria-label')).toBe('新建会话');
     expect(entry.className).not.toContain('accent-primary');
-    expect(screen.queryByText('让它在哪个项目里干活？')).toBeNull();
+    fireEvent.click(entry);
+    expect(onToggleNew).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('new-session-inline')).toBeNull();
+    unmount();
+
+    render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     await act(async () => {
       fireEvent.click(screen.getByTestId('new-session'));
     });
+    expect(screen.getByTestId('new-session-inline')).toBeTruthy();
     // 三块的标题是三句并列的问话——人读一遍就知道自己在做哪三个决定。
     expect(screen.getByText('这场会话交给哪个 agent 跑？')).toBeTruthy();
     expect(screen.getByText('让它在哪个项目里干活？')).toBeTruthy();
@@ -943,6 +1342,21 @@ describe('ReportPanel 右栏', () => {
       fireEvent.doubleClick(handle);
       expect(onWidthChange).toHaveBeenLastCalledWith(null);
     });
+
+    it('stackOnly 模式下右栏不再渲染观察者摘要槽位，仅保留暂存面板', () => {
+      render(
+        <ReportBody
+          stackOnly
+          sessionId="s1"
+          view={view({ decision: '待决问题' })}
+          lower={<div data-testid="only-stack">暂存区</div>}
+        />,
+      );
+      expect(screen.getByTestId('only-stack')).toBeTruthy();
+      expect(screen.queryByTestId('report-upper')).toBeNull();
+      expect(screen.queryByText('这场在做什么')).toBeNull();
+      expect(screen.queryByText('轮到你了')).toBeNull();
+    });
   });
 });
 
@@ -1075,4 +1489,127 @@ describe('RecordStream 自动跟随的滑法', () => {
     expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('in_the_session');
     expect(screen.getByTestId('agent-on-it').textContent).toContain('在想，还没写字');
   });
+
+  it('同回合既有 frago app ask 工具结果又有多条回复或内联 YAML 区块时，去重只渲染一张决策卡', () => {
+    const cliCard = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '是否部署？',
+        options: [
+          { key: 'A', label: '立即部署', effect: '构建并重启服务', recommended: true },
+          { key: 'B', label: '暂不部署', effect: '仅保留代码改动' },
+        ],
+      },
+    });
+    const inlineYaml = [
+      '请在下方卡片点选：',
+      '```answer-needed-by-human',
+      'type: single-choice',
+      'question: 是否部署？',
+      'options:',
+      '  - key: A',
+      '    label: 立即部署',
+      '    effect: 构建并重启服务',
+      '    recommended: true',
+      '  - key: B',
+      '    label: 暂不部署',
+      '    effect: 仅保留代码改动',
+      '```',
+    ].join('\n');
+
+    const turnRecords: WorkbenchRecord[] = [
+      rec({ id: 'u1', seq: 1, kind: 'user.say', payload: { text: '帮我准备部署' } }),
+      rec({
+        id: 't1',
+        seq: 2,
+        kind: 'tool.result',
+        payload: { tool_name: 'Bash', status: 'ok', body: cliCard },
+      }),
+      rec({ id: 'a1', seq: 3, kind: 'agent.say', payload: { text: inlineYaml } }),
+      rec({ id: 'a2', seq: 4, kind: 'agent.say', payload: { text: inlineYaml } }),
+    ];
+
+    const processed = withTurnDecisionCards(turnRecords);
+    // t1 与前一条内联卡片回复 a1 均被标记为 delegated，仅最后一条回复 a2 承载当轮决策卡
+    expect(processed[1].payload.ui_component_delegated).toBe(true);
+    expect(processed[2].payload.ui_component_delegated).toBe(true);
+    expect(processed[3].payload.ui_component).toBe(cliCard);
+
+    render(<RecordStream {...props({ records: turnRecords })} />);
+    expect(screen.getAllByTestId('decision-card')).toHaveLength(1);
+  });
+
+  it('工具输出同时含前文闭合花括号、注释里的 frago_ui_component 与 image-grid 字样时不发生死循环', () => {
+    const diffLikeBody = [
+      'fn helper() {}',
+      '/// 与页面 `parseUiComponentOutput` 同构：找最后一个 `"frago_ui_component"`',
+      '/// 以及 `"image-grid"` 组件标记',
+    ].join('\n');
+    const turnRecords: WorkbenchRecord[] = [
+      rec({ id: 'u1', seq: 1, kind: 'user.say', payload: { text: '检查代码' } }),
+      rec({
+        id: 't1428',
+        seq: 1428,
+        kind: 'tool.result',
+        payload: { tool_name: 'Bash', status: 'ok', body: diffLikeBody },
+      }),
+      rec({ id: 'a1', seq: 1429, kind: 'agent.say', payload: { text: '检查完毕。' } }),
+    ];
+
+    const processed = withTurnDecisionCards(turnRecords);
+    expect(processed).toHaveLength(3);
+    render(<RecordStream {...props({ records: turnRecords })} />);
+    expect(screen.getByText('检查完毕。')).toBeTruthy();
+  });
+
+  it('Executor 栏支持终端档位切换，展开终端视图时不卸载底层记录流，并支持 ANSI 色彩解析', () => {
+    const onTerminalOpenChange = vi.fn();
+    const onFilesOpenChange = vi.fn();
+    const { rerender } = render(
+      <RecordStream
+        {...props({
+          terminalView: <div data-testid="mock-terminal-body">tmux pane output</div>,
+          terminalOpen: false,
+          onTerminalOpenChange,
+          onFilesOpenChange,
+          terminalAlive: true,
+        })}
+      />
+    );
+
+    const termBtn = screen.getByTestId('lens-terminal');
+    expect(termBtn.textContent).toContain('终端');
+    expect(screen.getByTestId('lens-terminal-alive')).toBeTruthy();
+    expect(screen.queryByTestId('terminal-panel')).toBeNull();
+
+    fireEvent.click(termBtn);
+    expect(onFilesOpenChange).toHaveBeenCalledWith(false);
+    expect(onTerminalOpenChange).toHaveBeenCalledWith(true);
+
+    rerender(
+      <RecordStream
+        {...props({
+          terminalView: <div data-testid="mock-terminal-body">tmux pane output</div>,
+          terminalOpen: true,
+          onTerminalOpenChange,
+          onFilesOpenChange,
+          terminalAlive: true,
+        })}
+      />
+    );
+    expect(screen.getByTestId('terminal-panel')).toBeTruthy();
+    expect(screen.getByTestId('mock-terminal-body').textContent).toBe('tmux pane output');
+    // 底层滚动容器依旧存在，不因切到终端档位而卸载
+    expect(screen.getByTestId('record-stream-scroll')).toBeTruthy();
+
+    // ANSI 色彩与清屏控制序列解析验证
+    const spans = parseAnsiSegments('\x1b[2J\x1b[H\x1b[1;32m✔ Turn complete\x1b[0m plain');
+    expect(spans).toEqual([
+      { text: '✔ Turn complete', fg: '#3fb950', bold: true, dim: undefined },
+      { text: ' plain', fg: undefined, bold: undefined, dim: undefined },
+    ]);
+  });
 });
+

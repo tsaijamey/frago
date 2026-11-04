@@ -126,15 +126,14 @@ async function openPage() {
   return () => usePageStore.getState().setWorkbenchSessionId(null);
 }
 
-function previewOfCard(sid: string) {
-  const item = screen
+function cardBySid(sid: string) {
+  return screen
     .getAllByTestId('session-item')
     .find((el) => el.querySelector('[data-testid=session-title]')?.textContent === `title ${sid}`)!;
-  return item.querySelector('[data-testid=session-preview]')?.textContent ?? '';
 }
 
 describe('页面接上 For you', () => {
-  it('终端报出在等你的那一场：左栏挂 For you（品牌绿、不加重），页头写 For you · waiting', async () => {
+  it('终端报出在等你的那一场：左栏挂 For you（品牌绿、不加重、无预览行），页头写 For you · waiting', async () => {
     page.sessions = [session(SID), session('other')];
     const done = await openPage();
 
@@ -144,7 +143,7 @@ describe('页面接上 For you', () => {
     const chip = screen.getAllByTestId('for-you-chip')[0];
     expect(chip.hasAttribute('data-emphasis')).toBe(false);
     expect(chip.className).toContain('text-accent-primary');
-    expect(previewOfCard(SID)).toContain('A or B');
+    expect(cardBySid(SID).querySelector('[data-testid=session-preview]')).toBeNull();
     expect(screen.getByTestId('list-filter-for-you').textContent).toContain('1');
     // 原型里 For you 是页头里的一枚标签，正文只说「waiting 多久」。
     const head = screen.getByTestId('head-status');
@@ -153,7 +152,7 @@ describe('页面接上 For you', () => {
     done();
   });
 
-  it('选中那场留了合法卡片：左栏预览换成卡片的问题，For you 标签照旧不加重', async () => {
+  it('选中那场留了合法卡片：左栏卡片保持无预览两行结构，For you 标签照旧不加重', async () => {
     const { DEMOS, wrap } = await import('@/utils/__tests__/decisionDemos');
     page.sessions = [session(SID), session('other')];
     page.recordsSessionId = SID;
@@ -168,7 +167,10 @@ describe('页面接上 For you', () => {
     ];
     const done = await openPage();
 
-    await waitFor(() => expect(previewOfCard(SID)).toContain('地址要不要也从'));
+    await waitFor(() =>
+      expect(document.querySelectorAll('[data-for-you="true"]')).toHaveLength(1)
+    );
+    expect(cardBySid(SID).querySelector('[data-testid=session-preview]')).toBeNull();
     const chip = screen.getAllByTestId('for-you-chip')[0];
     expect(chip.hasAttribute('data-emphasis')).toBe(false);
     expect(chip.getAttribute('title')).toBeNull();

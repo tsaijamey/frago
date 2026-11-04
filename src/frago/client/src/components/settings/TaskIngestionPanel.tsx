@@ -42,10 +42,10 @@ export default function TaskIngestionPanel() {
 
   if (loading) {
     return (
-      <div className="card p-6">
-        <div className="flex items-center gap-3 text-[var(--text-muted)]">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          {t('settings.channels.loading')}
+      <div className="s-card">
+        <div className="ssec flex items-center gap-3 text-[var(--text-muted)]">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-xs">{t('settings.channels.loading')}</span>
         </div>
       </div>
     );
@@ -53,48 +53,27 @@ export default function TaskIngestionPanel() {
 
   if (!state) {
     return (
-      <div className="card p-6">
-        <div className="flex items-center gap-3 text-[var(--text-error)]">
-          <XCircle className="w-5 h-5" />
-          {error ?? t('settings.channels.noData')}
-          <button
-            type="button"
-            onClick={load}
-            className="ml-auto"
-            aria-label={t('settings.channels.refresh')}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+      <div className="salert err items-center">
+        <XCircle className="w-4 h-4 shrink-0" />
+        <span>{error ?? t('settings.channels.noData')}</span>
+        <button
+          type="button"
+          onClick={load}
+          className="ml-auto btn btn-ghost btn-sm p-1"
+          aria-label={t('settings.channels.refresh')}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="card space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--accent-primary)]">
-            {t('settings.channels.title')}
-          </h2>
-          <p className="text-sm text-[var(--text-muted)]">
-            {t('settings.channels.description')}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={load}
-          className="p-2 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-          aria-label={t('settings.channels.refresh')}
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
-      </div>
-
+    <div>
       {error && (
-        <div className="flex items-center gap-2 text-sm text-[var(--text-error)]">
-          <XCircle className="w-4 h-4" />
-          {error}
+        <div className="salert err">
+          <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
         </div>
       )}
 

@@ -95,7 +95,8 @@ PRESET_ENDPOINTS = {
 # 两扇门的地址不同，能用的模型也可能不同，所以通道各记各的。
 PROTOCOL_ANTHROPIC = "anthropic"
 PROTOCOL_RESPONSES = "responses"
-CHANNEL_PROTOCOLS = (PROTOCOL_ANTHROPIC, PROTOCOL_RESPONSES)
+PROTOCOL_GEMINI = "gemini"
+CHANNEL_PROTOCOLS = (PROTOCOL_ANTHROPIC, PROTOCOL_RESPONSES, PROTOCOL_GEMINI)
 
 # 各预设厂商 Responses 通道的默认值。只收厂商文档明写、或本机实测过的；没有把握的
 # 厂商不列——列错了等于在 codex 那格上许诺一条走不通的路。

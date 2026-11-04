@@ -36,10 +36,28 @@ if TYPE_CHECKING:
 # activation has always meant, and the default when a caller names none.
 AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex")
 
+# All four external Harness CLIs managed on the Settings -> General matrix.
+HARNESS_TARGETS: tuple[str, ...] = ("claude", "codex", "opencode", "agy")
+
 DISPLAY_NAMES: dict[str, str] = {
     "claude": "Claude Code",
     "opencode": "opencode",
     "codex": "Codex CLI",
+    "agy": "Antigravity CLI",
+}
+
+HARNESS_CONFIG_PATHS: dict[str, str] = {
+    "claude": "~/.claude/settings.json",
+    "codex": "~/.codex/config.toml",
+    "opencode": "~/.config/opencode/opencode.json",
+    "agy": "~/.gemini/antigravity-cli/settings.json",
+}
+
+HARNESS_PROTOCOLS: dict[str, tuple[str, str]] = {
+    "claude": ("anthropic", "Anthropic"),
+    "codex": ("responses", "OpenAI Responses"),
+    "opencode": ("anthropic", "Anthropic"),
+    "agy": ("gemini", "Gemini / 厂商 CLI"),
 }
 
 # What activation meant before targets existed. Callers that name no targets
@@ -95,13 +113,40 @@ def target_status(agent_type: str) -> TargetStatus:
     )
 
 
-_PROTOCOL_NAMES = {"anthropic": "Anthropic", "responses": "OpenAI Responses"}
+_PROTOCOL_NAMES = {
+    "anthropic": "Anthropic",
+    "responses": "OpenAI Responses",
+    "gemini": "Gemini",
+}
+
+
+def can_apply_to(profile: APIProfile, agent_type: str) -> bool:
+    """Whether ``profile`` can be applied to ``agent_type``'s local configuration."""
+    from frago.init.profile_manager import KIND_ENDPOINT, KIND_VENDOR_CLI, profile_channel
+
+    if agent_type in ("claude", "opencode"):
+        if profile.kind != KIND_ENDPOINT:
+            return False
+        ch = profile_channel(profile, "anthropic")
+        return ch is not None and bool(ch.url)
+    if agent_type == "codex":
+        if profile.kind != KIND_ENDPOINT:
+            return False
+        ch = profile_channel(profile, "responses")
+        return ch is not None and bool(ch.url)
+    if agent_type == "agy":
+        if profile.kind == KIND_VENDOR_CLI:
+            return profile.agent_type in (None, "", "agy")
+        return profile.kind == KIND_ENDPOINT
+    return False
 
 
 def missing_channel_reason(profile: APIProfile, agent_type: str) -> str | None:
     """Why this profile cannot go to this CLI, or None when it has the channel it needs."""
     from frago.init.profile_manager import profile_channel
 
+    if agent_type == "agy" and can_apply_to(profile, "agy"):
+        return None
     protocol = _driver(agent_type).profile_protocol
     channel = profile_channel(profile, protocol)
     if channel is not None and channel.url:

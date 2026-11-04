@@ -25,11 +25,16 @@ frago 包本身不带任何配方。
 atomic/system/<name>/      # Python / shell 配方
 ├── recipe.md              # 元数据（YAML frontmatter）
 └── recipe.py              # 执行脚本
-atomic/browser/<name>/     # Chrome-js 配方（浏览器自动化）
+atomic/chrome/<name>/      # Chrome-js 配方（浏览器自动化）
+├── recipe.md
 └── recipe.js
 workflows/<name>/          # 编排型工作流
+├── recipe.md
 └── recipe.py
 ```
+
+配方扫描只认这三个子目录（`atomic/chrome`、`atomic/system`、`workflows`）下带
+`recipe.md` 的目录，放在别处不会被当成配方。
 
 **元数据示例**：
 ```yaml
@@ -37,10 +42,13 @@ workflows/<name>/          # 编排型工作流
 name: youtube_extract_video_transcript
 type: atomic
 runtime: chrome-js
+version: 1.0
 description: "提取 YouTube 视频的完整转录文本"
 use_cases:
   - "批量提取视频字幕内容"
   - "为视频创建索引或摘要"
+output_targets:
+  - stdout
 ---
 ```
 
@@ -86,9 +94,10 @@ frago <域名> save --name=<文档名> --data='{"tags":["..."]}' --content='[...
 
 frago 在每次提交 prompt 时给 agent 注入提示，分两层：
 
-- **静态规则**——编译进 `frago-core` 二进制的路由规则，叠加
+- **静态规则**——随包发布的那批规则在 `~/.frago/hook/builtin-rules.json`，叠加
   `~/.frago/hook-rules.json` 里的用户规则。毫秒级匹配、不需要配置、常驻
-  生效，用 `frago hook-rules` 管理。
+  生效，用 `frago hook-rules` 管理（`list` / `show` / `add` / `enable` / `disable` /
+  `remove` / `validate` 改的都是这两份文件，不重建引擎）。
 - **LightAgent**——把最近几轮会话连同规则 / book / 经验域索引交给一个便宜
   模型，换回一句该注入的提示。这一层要有可用的模型 profile 才存在；开关
   在 `~/.frago/config.json` → `hook_review.enabled`（段缺失视为开），
@@ -209,12 +218,16 @@ frago recipe validate + run             验证配方，趁上下文还在
 ~/.frago/sessions/claude/abc123/
 ├── metadata.json    # 会话元数据（项目、时间、状态）
 ├── steps.jsonl      # 执行步骤（消息、工具调用）
-└── summary.json     # 会话摘要（统计信息）
+├── summary.json     # 会话摘要（统计信息）
+└── raw.jsonl        # 原文副本（agent 自己的记录原样留一份）
 ```
+
+`metadata.json` 只有 frago 亲自监控过的会话才有；从 agent 已有记录同步进来的会话
+可能只有 `raw.jsonl`，读的时候会就地派生一份最小元数据。
 
 **特点**：
 - 通过文件系统监控实时监控
-- 监控多种 Agent 类型——Claude Code、opencode、Cursor、Cline——统一规整为一种记录格式
+- 监控多种 Agent 类型——Claude Code、codex、opencode、agy（Cursor、Cline 只在类型里占位，尚未接入）
 - 支持 Agent 行为的事后分析
 
 ---
@@ -223,6 +236,6 @@ frago recipe validate + run             验证配方，趁上下文还在
 
 - **Skill**（Claude Code）：方法论，告诉 AI 如何做事
 - **Recipe**（frago）：配方，具体怎么执行
-- **Run**（frago）：任务实例，记录探索过程
+- **知识域**（frago）：经验按域沉淀，跨会话复用（`frago def list`、`frago <域名> find/save`）
 - **Session**（frago）：Agent 会话，实时执行监控
 - **frago 的贡献**：将所有概念关联，提供探索→固化→执行→监控的工具链

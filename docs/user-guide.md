@@ -34,9 +34,15 @@ browser tab groups — `navigate` replaces the group's current tab, and
 `--new` is the only way to open another one.
 
 There are two backends. The default **extension** backend drives the
-browser's own real profile (no flags needed). The **CDP** backend
-(`-b cdp`) is the fallback for true headless or dedicated instances; see
-[Browser Support](browser-support.md) for when to use it.
+browser's own real profile and needs no flags — the browser is Chrome
+for Testing, which frago fetches itself, falling back to one you
+installed only if the fetch fails. If the extension isn't connected, the
+answer is `frago browser start`, not a backend switch: a browser window
+appearing is expected. The **CDP** backend (`-b cdp`) is reserved for
+the virtual desktop stage and its recorder — a truly headless stage
+browser and a separate recorder instance — so it is not a general
+fallback for ordinary page work. See
+[Browser Support](browser-support.md) for details.
 
 ### Proxy Configuration
 
@@ -117,7 +123,7 @@ frago <domain> save --name=<doc> \
   --data='{"tags":["..."]}' --content='[...]'
 
 # Look up something you did before
-frago session search "<a sentence>"  # By meaning, across Claude Code and opencode
+frago session search "<a sentence>"  # By meaning, across Claude Code, codex and opencode
 ```
 
 ### Output directory structure
@@ -137,7 +143,7 @@ Output always lands in `~/.frago/data/<subject>/<YYYYMMDD>-<slug>/`. Both levels
 ```bash
 frago session list                   # List sessions (all agent types)
 frago session list --status running  # Filter by status
-frago session list --agent-type opencode  # Filter by agent (claude|opencode|cursor|cline)
+frago session list --agent-type opencode  # Filter by agent (claude|opencode|coreagent|cursor|cline)
 frago session show <session_id>      # Show details
 frago session search "keyword"       # Search transcripts
 frago session watch                  # Watch latest session
@@ -147,12 +153,14 @@ frago session clean                  # Clean stale records
 frago session delete <session_id>    # Delete one session
 ```
 
-Sessions from multiple agent runtimes (Claude Code, opencode, Cursor,
-Cline) are normalized into `~/.frago/sessions/`.
+Sessions from multiple agent runtimes (Claude Code, codex, opencode,
+Cursor, Cline) are normalized into `~/.frago/sessions/`; frago's own
+agent runs land there as `coreagent`.
 
 ## Web Service
 
 ```bash
+frago start             # Start the service and open the UI in your browser
 frago server start      # Start on port 8093
 frago server stop       # Stop server
 frago server status     # Check status
@@ -163,13 +171,24 @@ Access: `http://127.0.0.1:8093`
 
 ### Features
 
-- **Workbench**: live timeline of agent sessions and their records
+- **Sessions**: live timeline of agent sessions and their records
+- **Desktop**: the virtual desktop stage an agent drives for recording and
+  demos
+- **Pairs**: two people's sessions side by side
+- **Recipes**: browse local and community recipes, inspect parameters, run
+  with one click
+- **Todos**: the local todo list, one JSON file per todo
+- **Schedules**: recipes re-run at a fixed interval by the server
+- **Data**: back up `~/.frago` to your own git remote
+- **Files**: browse this machine's directory tree
 - **Tasks**: start a new agent task and watch it run
-- **Recipes**: browse local and community recipes, inspect parameters, run with one click
 - **Skills**: manage installed skills
-- **Workspace**: project files, logs, screenshots and outputs
+- **Workspace**: discovered projects, and the agent resources collected
+  from them
 - **Guide**: built-in documentation
-- **Settings**: prompting capability (static rules + LightAgent), model profiles, task channels, official resource sync, appearance, init status, about
+- **Settings**: prompting capability (static rules + LightAgent), model
+  profiles, CLI agents, task channels, official command/skill sync,
+  appearance, about
 
 ## Resources & Sync
 
@@ -206,8 +225,9 @@ Secrets are never synced anywhere.
 
 ### CDP Connection
 
-The CDP backend is a frago-managed browser instance — never a
-hand-launched Chrome:
+The CDP backend serves the virtual desktop stage and its recorder: a
+frago-managed browser instance, never a hand-launched Chrome. Ordinary
+page work stays on the default extension backend.
 
 ```bash
 frago browser -b cdp start --headless   # Dedicated headless instance (port 9222)
@@ -215,9 +235,9 @@ frago browser status                    # Health check
 frago browser -b cdp stop               # Tear it down
 ```
 
-- Ports are whitelisted: **9222** (default) and **9223** (the agent_os recorder). Any other value is rejected.
+- Ports are whitelisted: **9222** (default) and **9223** (the stage's recorder). Any other value is rejected.
 - While the virtual desktop stage is running, its actor lives on **9222** — `-b cdp start` replaces whatever is already on that port, so check `frago desktop status` first.
-- Never launch a browser with raw `--remote-debugging-port`; the CDP backend already covers headless and dedicated-instance needs.
+- Never launch a browser with raw `--remote-debugging-port`; the extension backend already covers ordinary page work, and `-b cdp` covers the stage's headless and separate-instance needs.
 
 ### Common Issues
 

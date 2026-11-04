@@ -107,6 +107,8 @@ class TestSessionList:
             "session_id",
             "family",
             "title",
+            "raw_title",
+            "custom_title",
             "directory",
             "created_at",
             "last_active_at",
@@ -130,6 +132,8 @@ class TestSessionList:
             "alive",
             # 这一场是否归在「本机管理」（定时任务等），左栏日常清单据此默认不混入主干。
             "local_ops",
+            # 由员工岗位入口创建的会话所归属的岗位编号（如 stock），左栏据此展示非文字员工标识。
+            "employee_id",
         }
 
     def test_开在tmux里的那一场才标上(self, client, monkeypatch):

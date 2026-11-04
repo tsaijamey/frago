@@ -19,7 +19,7 @@ import asyncio
 import os
 import subprocess
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,16 +27,19 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from frago.employee import EmployeeOntologyService, get_post, list_posts, save_post
 from frago.server.services import (
     coreagent_runner,
     file_history,
     session_send,
+    stage_orchestrator,
     workbench_agents,
     workbench_branch,
     workbench_groups,
     workbench_handoff,
     workbench_new_session,
     workbench_pins,
+    workbench_queue,
     workbench_titles,
     workbench_today,
     workbench_views,
@@ -53,6 +56,7 @@ from frago.session import record_reader, session_files
 from frago.session import search as session_search
 from frago.session.engine_cli import EngineCliFailed, EngineCliMissing
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
+from frago.session.session_index import IN_PROGRESS_KINDS
 from frago.skills.skill_prompt import UnknownSkill, embed_skills, load_skills
 
 router = APIRouter()
@@ -91,15 +95,36 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     # （见 ``coreagent_runner.live_states``）。
     core_alive = await asyncio.to_thread(coreagent_runner.live_states)
     local_ops_ids = await asyncio.to_thread(workbench_groups.local_ops_session_ids)
+    employee_posts = await asyncio.to_thread(list_posts)
+    active_employee_by_sid: dict[str, str] = {
+        sid: post.member_post_id
+        for post in employee_posts
+        for sid in post.active_session_ids
+        if sid
+    }
     rows = []
     for card in cards:
         name = tmux_name_for(card.session_id)
         alive = name in open_names
+        is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
+        status = card.status
+        if card.status != "error":
+            if is_alive and card.last_kind in IN_PROGRESS_KINDS:
+                status = "running"
+            elif not is_alive and status == "running":
+                status = "done" if card.last_kind == "agent.say" else "idle"
+        card_data = asdict(card)
+        card_data.pop("last_kind", None)
+        employee_id = card.employee_id or active_employee_by_sid.get(card.session_id)
         row = {
-            **asdict(card),
+            **card_data,
+            "status": status,
+            "employee_id": employee_id,
+            "raw_title": card.title,
+            "custom_title": titles.get(card.session_id),
             "in_tmux": alive,
             "tmux_name": name if alive else None,
-            "alive": _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive),
+            "alive": is_alive,
             "local_ops": card.session_id in local_ops_ids,
         }
         if card.session_id in titles:
@@ -149,6 +174,10 @@ class CreateSessionRequest(BaseModel):
     ``agent`` 是挑中的那一家（``/workbench/agents`` 里的 ``agent_type``）；
     ``cwd`` 是会话的起始目录；``text`` 是第一句话。
 
+    ``employee`` 是点哪张员工卡片起的这一场。给了编号，服务端就把该员工的业务语境块
+    拼在第一句话最前面（见 :func:`_with_employee_context`），人不必每开一场都重述
+    「我是谁、我手上有哪些数据」。默认空串，老的调用方一个字都不用改。
+
     ``images`` 与 ``documents`` 走的是与发送那条接口完全相同的一条路：内容以 base64
     传上来，服务端落盘成真实文件，绝对路径拼进投给 agent 的第一句话。第一句话最需要
     附件——人往往一上来就要交代"照着这张图改"，而从前这里只收文字，那张图只能等会话
@@ -161,6 +190,30 @@ class CreateSessionRequest(BaseModel):
     images: list[str] = []
     documents: list[Document] = []
     skills: list[str] = []
+    employee: str = ""
+
+
+def _with_employee_context(prompt: str, employee_id: str) -> str:
+    """点员工卡片起会话：把该员工的业务语境块拼在这句话最前面。
+
+    排在 skill 块之前，顺序是「员工语境 → skill 正文 → 人的原话」：员工块讲的是这一场
+    归谁管、手上有什么，是最外层的框；skill 是这一场具体要用的做法；人的原话收尾。
+
+    编号对不上任何员工就回 400，NEVER 当成没写照样发——人以为这一场带着员工画像起来的，
+    实际它什么都没带，等到 agent 答偏了才发现，那时已经查不回原因。
+    """
+    cleaned = employee_id.strip()
+    if not cleaned:
+        return prompt
+    try:
+        block = EmployeeOntologyService().build_business_context_block(cleaned)
+    except KeyError as e:
+        raise HTTPException(
+            status_code=400, detail=f"员工编号 '{cleaned}' 不存在：{e}"
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return f"{block}\n\n{prompt}"
 
 
 def _with_skills(prompt: str, skills: list[str], user_text: str) -> str:
@@ -203,8 +256,68 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         and not request.skills
     ):
         raise HTTPException(status_code=400, detail="第一句话和附件不能都是空的")
-    if not request.cwd.strip():
+
+    # 员工自己配了起始目录、而这一场又没另指定，就用员工那一栏：点卡片起会话的场景里
+    # 人往往不填目录，期望的是"到那个员工的领地里去"。请求里显式给了目录则以请求为准——
+    # 人手上写下的路径比岗位的默认值更贴近这一场要做的事。
+    #
+    # 这一段排在上面那条「目录不能为空」之前：员工配了目录的场合，请求里那一栏本来就该
+    # 允许空着。顺序反了的话，人点卡片起会话会先撞上一个 400，而那个 400 说的正是
+    # 岗位已经替他填好的那一栏。
+    #
+    # 岗位也没配目录时，落到 ``~/.frago``：员工本来就是 frago 自己的一支人马，它的领地
+    # 就是 frago 家目录。从前这一档回 400「起始目录不能是空的」，人点卡片起会话、什么都没
+    # 填，看到的是一句要他先去填一栏的话——而这一栏本来就该有默认值。
+    session_cwd = request.cwd
+    employee_record = None
+    if request.employee.strip():
+        try:
+            employee_record = get_post(request.employee.strip())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if employee_record is None:
+            raise HTTPException(
+                status_code=400, detail=f"员工编号 '{request.employee.strip()}' 不存在"
+            )
+        if not session_cwd.strip() and employee_record.cwd:
+            session_cwd = employee_record.cwd
+        if not session_cwd.strip():
+            fallback = Path.home() / ".frago"
+            # 先建出来再用：这一栏空着就往下传的话，起会话那一步会拿着一个不存在的目录
+            # 去挂 TUI，而失败的样子是"会话没起来"，与这一栏的关系谁都看不出来。
+            fallback.mkdir(parents=True, exist_ok=True)
+            session_cwd = str(fallback)
+
+    if not session_cwd.strip():
         raise HTTPException(status_code=400, detail="起始目录不能是空的")
+
+    # ``~`` 是给人写的，起会话那一步认的是绝对路径。展开放在这一栏的最后一步：前面几处
+    # 判空、回退、拼接都按人写下的原样比，展开只做一次，谁都别再各展开一遍。
+    session_cwd = str(Path(session_cwd.strip()).expanduser())
+
+    # 这一栏的目录必须在起会话之前真的在盘上。``tmux new-session -c <目录>`` 碰到不存在的
+    # 目录不报错，而是静默退回 ``$HOME`` 起会话（见 ``agent_driver/tmux_session.py``）。对
+    # 认领型内核（codex / opencode / agy）来说，会话把工作区记成了 ``$HOME``，而认领器一直
+    # 拿原来那个目录去比对，两边永远对不上，人看到的只是等 30 秒后一句「会话没起来」，与
+    # 这一栏的关系谁都看不出来。
+    #
+    # frago 家目录下与家目录外分两档处置。家目录下的（``~/.frago``、员工领地
+    # ``~/.frago/data/<员工>``、数据槽位）是随用随建的：人点卡片起会话时这些目录多半还
+    # 没建过，而这本来就是 frago 自己的地盘。家目录外的一律不替人做主，不存在就当场回
+    # 400——把「目录写错了」这句话留在它该出现的地方，而不是让它变形为一次认领超时。
+    cwd_path = Path(session_cwd)
+    frago_root = (Path.home() / ".frago").resolve()
+    resolved_cwd = cwd_path.resolve()
+    under_frago = resolved_cwd == frago_root or frago_root in resolved_cwd.parents
+    if under_frago:
+        if cwd_path.exists() and not cwd_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"起始目录不是文件夹：{session_cwd}")
+        cwd_path.mkdir(parents=True, exist_ok=True)
+    else:
+        if not cwd_path.exists():
+            raise HTTPException(status_code=400, detail=f"起始目录不存在：{session_cwd}")
+        if not cwd_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"起始目录不是文件夹：{session_cwd}")
 
     # 附件要落盘，落盘要有个目录名，而目录名该是这场会话自己的编号——事后回头看
     # ``~/.frago/webui_uploads/`` 时，一眼就知道这几张图是哪一场的。编号在这里先 mint
@@ -216,22 +329,51 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+    effective_skills: list[str] = []
+    for sk in (*(employee_record.skills if employee_record is not None else ()), *request.skills):
+        cleaned_sk = str(sk).strip()
+        if cleaned_sk and cleaned_sk not in effective_skills:
+            effective_skills.append(cleaned_sk)
+
     prompt = _with_skills(
-        build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths),
-        request.skills,
+        _with_employee_context(
+            build_prompt_with_attachments(request.text.strip(), image_paths, doc_paths),
+            request.employee,
+        ),
+        effective_skills,
         request.text,
     )
+    if stage_orchestrator.is_stage_session(effective_skills, prompt):
+        prompt = await asyncio.to_thread(
+            stage_orchestrator.orchestrate_stage_session,
+            launch_id,
+            prompt,
+            request.text,
+        )
 
     try:
         launch = await asyncio.to_thread(
             workbench_new_session.start_with_id,
             request.agent,
-            request.cwd,
+            session_cwd,
             prompt,
             session_id=launch_id,
         )
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if employee_record is not None:
+        await asyncio.to_thread(
+            workbench_new_session.bind_employee,
+            launch.handle,
+            employee_record.member_post_id,
+        )
+        if (
+            launch.session_id
+            and launch.session_id not in employee_record.active_session_ids
+        ):
+            employee_record.active_session_ids.append(launch.session_id)
+            await asyncio.to_thread(save_post, employee_record)
 
     return _launch_payload(launch)
 
@@ -273,7 +415,9 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    old_title, new_title = await asyncio.to_thread(workbench_handoff.name_pair, sid, launch)
+    old_title, new_title = await asyncio.to_thread(
+        workbench_handoff.name_pair, sid, launch, handoff=handoff
+    )
     return {
         **_launch_payload(launch),
         "text": handoff.text,
@@ -328,13 +472,17 @@ async def generate_workbench_session_title(sid: str) -> dict[str, Any]:
 class BranchRequest(BaseModel):
     """``POST /workbench/sessions/{sid}/branch`` 的请求体：从主线哪段原文分出去、人写的那句话。
 
-    ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）。
+    ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）；
+    ``images`` / ``documents`` / ``skills`` 与新建会话及发送接口同一套。
     """
 
     record_id: str
     text: str
     occurrence: int = 0
     note: str = ""
+    images: list[str] = []
+    documents: list[Document] = []
+    skills: list[str] = []
 
 
 @router.post("/workbench/sessions/{sid}/branch", status_code=201)
@@ -353,7 +501,12 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
     """
     try:
         anchor, note = workbench_branch.validate(
-            request.record_id, request.text, request.occurrence, request.note
+            request.record_id,
+            request.text,
+            request.occurrence,
+            request.note,
+            skills=request.skills,
+            has_attachments=bool(request.images or request.documents),
         )
     except workbench_branch.BranchRequestInvalid as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -370,13 +523,27 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
     ) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
+    launch_id = str(uuid.uuid4())
+    try:
+        image_paths = save_uploaded_images(request.images, launch_id)
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], launch_id)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+
+    base_note = request.note.strip() or note
+    prompt_note = build_prompt_with_attachments(base_note, image_paths, doc_paths)
+    rendered = workbench_branch.render(sid, anchor.text, prompt_note)
+    prompt = _with_skills(rendered, request.skills, request.note)
+    if prompt != branch.text:
+        branch = replace(branch, text=prompt)
+
     try:
         launch = await asyncio.to_thread(
             workbench_new_session.start_with_id,
             branch.agent_type,
             branch.cwd,
             branch.text,
-            session_id=str(uuid.uuid4()),
+            session_id=launch_id,
         )
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -642,6 +809,13 @@ async def _read_text(sid: str, path: str) -> dict[str, Any]:
     return _read_body(await _listed_target(sid, path), path)
 
 
+class WriteSessionFileRequest(BaseModel):
+    """``PUT /workbench/sessions/{sid}/file`` 的请求体：要改的那份文件路径与新正文。"""
+
+    path: str
+    text: str
+
+
 @router.get("/workbench/sessions/{sid}/file")
 async def read_session_file(
     sid: str,
@@ -654,6 +828,86 @@ async def read_session_file(
 # 对照最多摆这么多行。两列并排，行数再往上没人会一行行看了；而算对齐要两边都在手上，
 # 这个数也顺带挡住了把一份几万行的文件塞进浏览器的那种请求。
 _DIFF_MAX_LINES = 3000
+
+
+async def _compute_file_diff(
+    sid: str, listed: Path, current: dict[str, Any]
+) -> dict[str, Any]:
+    """根据当前文件内容与上一版（git HEAD 或会话内编辑前快照）计算对齐后的左右对照行。
+
+    人类给的那个相对路径不再单独收一个形参：``current`` 里已经带着它，收两份迟早会分叉。
+    """
+    body: dict[str, Any] = {
+        "path": current["path"],
+        "size": current["size"],
+        "reason": current["reason"],
+        "before": None,
+        "source": None,
+        "rows": None,
+    }
+    if current["text"] is None:
+        # 现在这一份就读不出来（太大、不是文本）：没有可对照的东西，界面照 `/file` 那套说。
+        return body
+    after = current["text"]
+    if after.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+
+    before = await asyncio.to_thread(
+        file_history.before_at_head, str(listed), max_bytes=_PREVIEW_MAX_BYTES
+    )
+    body["before"] = before.reason
+    body["source"] = before.source
+    if before.text is None:
+        # 若 git HEAD 没有上一版（如不在 git 仓库里或本会话新建未提交），但人类在本会话中
+        # 通过 Edit 保存过该文件，则拿首次编辑前的快照作为左边基线，展示最新修改对比。
+        edit_baseline = file_history.get_edit_baseline(sid, str(listed))
+        if edit_baseline is not None:
+            if edit_baseline.count("\n") + 1 > _DIFF_MAX_LINES:
+                body["reason"] = "too-many-lines"
+                return body
+            body["before"] = None
+            body["source"] = file_history.EDIT_BASELINE_SOURCE
+            body["rows"] = await asyncio.to_thread(file_history.diff_rows, edit_baseline, after)
+            return body
+        # 没有左边：整份当新增摆，左边整列空着。为什么没有写在 `before` 那一格上。
+        body["rows"] = file_history.added_rows(after)
+        return body
+    if before.text.count("\n") + 1 > _DIFF_MAX_LINES:
+        body["reason"] = "too-many-lines"
+        return body
+    body["rows"] = await asyncio.to_thread(file_history.diff_rows, before.text, after)
+    return body
+
+
+@router.put("/workbench/sessions/{sid}/file")
+async def write_session_file(sid: str, request: WriteSessionFileRequest) -> dict[str, Any]:
+    """保存人类在 FileViewer Edit 模式中修改的文本文件，并返回最新内容与最新版本比较结果。"""
+    listed = await _listed_target(sid, request.path)
+    encoded = request.text.encode("utf-8")
+    if len(encoded) > _PREVIEW_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File content exceeds {_PREVIEW_MAX_BYTES} bytes",
+        )
+
+    def _save_and_read() -> dict[str, Any]:
+        if listed.is_file():
+            try:
+                old_text = listed.read_text(encoding="utf-8")
+                file_history.record_edit_baseline(sid, str(listed), old_text)
+            except (UnicodeDecodeError, OSError):
+                pass
+        listed.parent.mkdir(parents=True, exist_ok=True)
+        listed.write_text(request.text, encoding="utf-8")
+        return _read_body(listed, request.path)
+
+    current = await asyncio.to_thread(_save_and_read)
+    diff = await _compute_file_diff(sid, listed, current)
+    return {
+        **current,
+        "diff": diff,
+    }
 
 
 @router.get("/workbench/sessions/{sid}/file/diff")
@@ -677,45 +931,30 @@ async def read_session_file_diff(
     """
     listed = await _listed_target(sid, path)
     current = await asyncio.to_thread(_read_body, listed, path)
-    body: dict[str, Any] = {
-        "path": current["path"],
-        "size": current["size"],
-        "reason": current["reason"],
-        "before": None,
-        "source": None,
-        "rows": None,
-    }
-    if current["text"] is None:
-        # 现在这一份就读不出来（太大、不是文本）：没有可对照的东西，界面照 `/file` 那套说。
-        return body
-    after = current["text"]
-    if after.count("\n") + 1 > _DIFF_MAX_LINES:
-        body["reason"] = "too-many-lines"
-        return body
+    return await _compute_file_diff(sid, listed, current)
 
-    before = await asyncio.to_thread(
-        file_history.before_at_head, str(listed), max_bytes=_PREVIEW_MAX_BYTES
-    )
-    body["before"] = before.reason
-    body["source"] = before.source
-    if before.text is None:
-        # 没有左边：整份当新增摆，左边整列空着。为什么没有写在 `before` 那一格上。
-        body["rows"] = file_history.added_rows(after)
-        return body
-    if before.text.count("\n") + 1 > _DIFF_MAX_LINES:
-        body["reason"] = "too-many-lines"
-        return body
-    body["rows"] = await asyncio.to_thread(file_history.diff_rows, before.text, after)
-    return body
+
+def _inside_frago_data(target: str) -> bool:
+    """产物目录（``~/.frago/data``）下的真实路径。
+
+    宪法要求运行时数据与产出物落入 ``~/.frago/data/<project>/``，而图片、PDF、脚本产物等
+    往往经由命令或脚本生成、不在 Write/Edit 的结构化工具记录里；在会话详情里点「打开所在目录」
+    应当允许直接定位这些产物。
+    """
+    try:
+        data_root = (Path.home() / ".frago" / "data").resolve()
+        return target == str(data_root) or Path(target).is_relative_to(data_root)
+    except OSError:
+        return False
 
 
 @router.post("/workbench/sessions/{sid}/reveal")
 async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str, Any]:
     """在系统文件管理器里打开这个路径：是文件就选中它，是目录就打开它。
 
-    **只认两处**：这场会话自己的工作目录底下的东西，以及它改过的那些文件。路径由页面给过来，
-    服务端不校验就成了一个「随便开哪个目录」的口子；会话详情里这个按钮挨着本会话改过的文件，
-    够不着这场之外的地方。
+    **只认三处**：这场会话自己的工作目录底下的东西、``~/.frago/data`` 下的产物，以及它改过
+    的那些文件。路径由页面给过来，服务端不校验就成了一个「随便开哪个目录」的口子；会话详情里
+    这个按钮挨着本会话改过的文件与产出物，够不着那之外的地方。
 
     跨平台怎么开在 :meth:`~frago.server.services.system_service.SystemService.reveal_or_open`
     里，本模块不重复一遍平台判断。
@@ -731,9 +970,12 @@ async def reveal_session_path(sid: str, request: RevealPathRequest) -> dict[str,
             ),
         )
     inside_root = base is not None and (target == base or Path(target).is_relative_to(base))
-    if not inside_root and target not in {
-        n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None
-    }:
+    inside_data = _inside_frago_data(target)
+    if (
+        not inside_root
+        and not inside_data
+        and target not in {n for f in await _touched(sid) if (n := _norm(f.path, base)) is not None}
+    ):
         raise HTTPException(
             status_code=403,
             detail=f"Refused: {target} is neither in this session's working directory nor a file it changed",
@@ -1046,7 +1288,7 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         #
         # 忙的时候不等，丢不掉失败信号：同步能出的错只剩「队列满」（send_queued 照样
         # 当场抛），而「内核不在」「没配连接」那几种——它正跑着，不可能碰得上。
-        if record_reader.detect_family(sid) == "coreagent" and coreagent_runner.busy(sid):
+        if coreagent_runner.busy(sid):
             await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
         # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。
@@ -1077,6 +1319,119 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     }
 
 
+class QueueReorderRequest(BaseModel):
+    """``PUT /workbench/sessions/{sid}/queue`` 的请求体：按给定顺序重排队列项编号。"""
+
+    item_ids: list[str] = []
+
+
+@router.get("/workbench/sessions/{sid}/queue")
+async def get_workbench_session_queue(sid: str) -> dict[str, Any]:
+    """读取会话自有的消息队列与当前自动注入门控状态。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+        state = await asyncio.to_thread(workbench_queue.evaluate_queue_state, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {
+        "sid": sid,
+        "items": items,
+        **state,
+    }
+
+
+@router.post("/workbench/sessions/{sid}/queue")
+async def enqueue_workbench_session_message(sid: str, request: SendRequest) -> dict[str, Any]:
+    """把一条消息（支持文本、图片、文档、skills）加入会话自有的消息队列。
+
+    与直接发送不同，入队不会在 agent 执行过程中向其原生运行队列插话打断流程，而是持久化在
+    会话自有队列中；若入队时会话恰好已处于 stop 状态且末尾 ``[end, end-5]`` 轮无交互卡，
+    也会按规则自动触发队首注入。
+    """
+    if (
+        not request.text.strip()
+        and not request.images
+        and not request.documents
+        and not request.skills
+    ):
+        raise HTTPException(status_code=400, detail="要入队的话和附件不能都是空的")
+
+    try:
+        await asyncio.to_thread(record_reader.detect_family, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    try:
+        image_paths = save_uploaded_images(request.images, sid)
+        doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], sid)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
+
+    prompt = _with_skills(
+        build_prompt_with_attachments(request.text, image_paths, doc_paths),
+        request.skills,
+        request.text,
+    )
+
+    try:
+        item = await asyncio.to_thread(
+            workbench_queue.enqueue,
+            sid,
+            text=request.text,
+            prompt=prompt,
+            skills=request.skills,
+            image_paths=image_paths,
+            doc_paths=doc_paths,
+            cwd=request.cwd,
+        )
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+    except workbench_queue.QueueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        "sid": sid,
+        "item": item,
+        "items": items,
+    }
+
+
+@router.delete("/workbench/sessions/{sid}/queue/{item_id}")
+async def delete_workbench_session_queue_item(sid: str, item_id: str) -> dict[str, Any]:
+    """从会话自有消息队列中删除指定的一条消息。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.remove_item, sid, item_id)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"sid": sid, "items": items}
+
+
+@router.put("/workbench/sessions/{sid}/queue")
+async def reorder_workbench_session_queue(
+    sid: str, request: QueueReorderRequest
+) -> dict[str, Any]:
+    """重排或批量更新会话自有消息队列中的条目顺序。"""
+    try:
+        items = await asyncio.to_thread(workbench_queue.reorder_queue, sid, request.item_ids)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"sid": sid, "items": items}
+
+
+@router.post("/workbench/sessions/{sid}/queue/drain")
+async def drain_workbench_session_queue(sid: str) -> dict[str, Any]:
+    """检查会话是否满足「已 stop 且 [end, end-5] 轮无交互卡」，满足则自动弹出最早一条并注入。"""
+    try:
+        outcome = await asyncio.to_thread(workbench_queue.try_auto_inject, sid)
+        items = await asyncio.to_thread(workbench_queue.list_queue, sid)
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {
+        "sid": sid,
+        "items": items,
+        **outcome,
+    }
+
+
 @router.get("/workbench/uploads/{folder}/{name}")
 async def read_uploaded_image(folder: str, name: str) -> FileResponse:
     """取回人随某句话发过的一张图，会话页据此把「附带图片」那几行路径摆成缩略图。
@@ -1095,9 +1450,11 @@ class StopRunRequest(BaseModel):
 
     ``force`` 是人第二次按下去时才带的：第一次按下若发现屏上还在干活，服务端不动它，
     把「还在干活」如实回给页面，由人自己决定要不要打断。
+    ``stage_reset`` 为真时，表示由虚拟桌面「重置」按钮触发，一并销毁所有驻场主持人守护线程与旧舞台会话进程。
     """
 
     force: bool = False
+    stage_reset: bool = False
 
 
 @router.post("/workbench/sessions/{sid}/stop")
@@ -1123,13 +1480,39 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
       等人带 ``force`` 再按一次；
     - ``stopped`` 为真——关掉了，``via`` 说明走的是池的驱逐还是 tmux。
     """
+    from frago.server.services import stage_orchestrator
     from frago.server.services import tmux_sessions_service as svc
 
     def _stop() -> dict[str, Any]:
+        if request.stage_reset or sid == "__stage_reset__":
+            target_sid = None if sid == "__stage_reset__" else sid
+            stage_info = stage_orchestrator.reset_stage_sessions(target_sid)
+            stopped_any = bool(
+                stage_info["stopped_presenters"] or stage_info["stopped_sessions"]
+            )
+            return {
+                "sid": sid,
+                "alive": stopped_any,
+                "busy": False,
+                "stopped": stopped_any,
+                "dropped": 0,
+                "name": None,
+                "via": "stage_reset" if stopped_any else None,
+                "stage_reset": stage_info,
+                "error": None,
+            }
+
+        stage_orchestrator.cleanup_presenter(sid)
+
         # CoreAgent 不跑在 tmux 里：它那一场是 frago 服务自己的子进程，找 tmux 永远找不到。
         # 从前不分家，按下这个按钮只回一句「这一场此刻没有在跑的会话」，而它其实还在跑，
         # 跑多久也没人停得下来。
-        if record_reader.detect_family(sid) == "coreagent":
+        is_core = False
+        try:
+            is_core = record_reader.detect_family(sid) == "coreagent"
+        except UnknownSessionFamily:
+            is_core = sid.startswith("core_")
+        if is_core or coreagent_runner.live_cwd(sid) is not None:
             outcome = coreagent_runner.stop(sid, by="页面上的人")
             return {
                 "sid": sid,
@@ -1180,6 +1563,17 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
 
     # 找会话要跑 tmux、读屏，关闭要跑 ps 与 kill，整趟都是阻塞 IO。
     return await asyncio.to_thread(_stop)
+
+
+@router.get("/workbench/sessions/{sid}/terminal")
+async def get_workbench_session_terminal(
+    sid: str,
+    lines: int = Query(500, ge=50, le=5000, description="抓取的最大行数"),
+) -> dict[str, Any]:
+    """抓取指定会话此刻的 tmux 终端屏幕（或已结束 CoreAgent 会话的留底终端输出）。"""
+    from frago.server.services import tmux_sessions_service as svc
+
+    return await asyncio.to_thread(svc.capture_session_terminal, sid, lines=lines)
 
 
 @router.delete("/workbench/sessions/{sid}")
@@ -1351,13 +1745,22 @@ def _ensure_watching(session_id: str) -> None:
 
 
 def _keep_watching_only(session_ids: set[str]) -> None:
-    """只留这几场的监听，其余撤掉。撤不掉不打断取清单。"""
+    """只留这几场的监听，其余撤掉，并顺带巡检存在待发队列的后台会话。撤不掉不打断取清单。"""
     try:
         from frago.server.services.workbench_stream_bridge import (
             WorkbenchStreamBridge,
         )
 
-        WorkbenchStreamBridge.get_instance().keep_only(session_ids)
+        bridge = WorkbenchStreamBridge.get_instance()
+        bridge.keep_only(session_ids)
+        workbench_queue._seed_queued_sessions_once()
+        with workbench_queue._locks_guard:
+            queued_alive = [
+                sid for sid in workbench_queue._queued_sessions if sid in session_ids
+            ]
+        for sid in queued_alive:
+            bridge.ensure_watching(sid)
+        workbench_queue.patrol_active_queues_async()
     except Exception:
         import logging
 

@@ -88,11 +88,20 @@ function App() {
     console.log('App mounted, apiReady:', apiReady);
   }, [apiReady]);
 
-  // Show init wizard page if not completed
+  // Show init wizard page inside MainLayout if not completed (matching #setup prototype)
   if (initCompleted === false) {
     return (
       <>
-        <InitWizardPage onComplete={handleInitComplete} />
+        <MainLayout>
+          <InitWizardPage onComplete={handleInitComplete} />
+        </MainLayout>
+        {toasts.length > 0 && (
+          <div className="toast-container">
+            {toasts.map((toast) => (
+              <Toast key={toast.id} {...toast} />
+            ))}
+          </div>
+        )}
         <ReconnectOverlay />
       </>
     );
@@ -107,7 +116,7 @@ function App() {
   return (
     <>
       <MainLayout>
-        <PageHost />
+        <PageHost onOpenInitWizard={() => setInitCompleted(false)} />
       </MainLayout>
 
       {/* Toast container */}

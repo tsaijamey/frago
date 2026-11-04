@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -283,6 +284,34 @@ class Test四档状态:
         """
         now = 1_753_800_000.0
         assert session_index.derive_status("agent.say", now - 86_400, now) == "done"
+
+    def test_进程存活且末条处于未完工形态时无视九十秒超时恒判正在跑(self) -> None:
+        """长脚本或未结束动作：只要进程活着，超过 90 秒也必须判定为 running。"""
+        now = 1_753_800_000.0
+        for kind in ("tool.call", "tool.result", "user.say", "agent.think", "subagent.dispatch"):
+            assert (
+                session_index.derive_status(kind, now - 600, now, alive=True)
+                == "running"
+            )
+
+    def test_进程明确退出时即便活动在九十秒内也不判正在跑(self) -> None:
+        """进程已死（退出或崩溃），不能拿最近有写入冒充运行中。"""
+        now = 1_753_800_000.0
+        assert (
+            session_index.derive_status("tool.call", now - 5, now, alive=False)
+            == "idle"
+        )
+        assert (
+            session_index.derive_status("agent.say", now - 5, now, alive=False)
+            == "done"
+        )
+
+    def test_进程存活但末条为报错时报错排第一(self) -> None:
+        now = 1_753_800_000.0
+        assert (
+            session_index.derive_status("error", now - 600, now, alive=True)
+            == "error"
+        )
 
 
 class Test末条记录与摘要:
@@ -782,6 +811,84 @@ class Test状态跟着索引一起缓存:
         assert again.tail.last_kind == "agent.say"
         assert again.tail.digest_done == "答完了"
 
+    def test_只刷修改时刻不改内容时不推进最后活动时刻(self, tmp_path: Path) -> None:
+        """Claude Code 每小时调一次 utimes 保活。只改 mtime 未改任何字节时，
+        NEVER 推进 last_active_ts 把早已收尾的旧会话误判成 running。
+        """
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        path = _write_session(
+            root,
+            "proj",
+            "sid-utimes-keepalive",
+            [
+                *_basic_records(),
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "答完了"}]}},
+            ],
+        )
+        old_ts = 1_750_000_000.0
+        os.utime(path, (old_ts, old_ts))
+
+        (before,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert before.last_active_ts == old_ts
+
+        # 模拟一小时后 Claude Code 的 touchSessionTranscript 只刷新 mtime。
+        touch_ts = old_ts + 86_400.0
+        os.utime(path, (touch_ts, touch_ts))
+
+        (after,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert after.last_active_ts == old_ts
+        assert (
+            session_index.derive_status(after.tail.last_kind, after.last_active_ts, now=touch_ts)
+            == "done"
+        )
+
+    def test_已写下轮次耗时的旧会话即使冷启动遇到utimes也不判为运行中(
+        self, tmp_path: Path
+    ) -> None:
+        """末条已是带时刻的 turn_duration 收尾记账时，冷启动重算索引也按收尾时刻定锚，
+        不被事后的 utimes 保活时间戳带偏。
+        """
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        closed_iso = "2026-10-23T15:39:05.627Z"
+        closed_epoch = datetime.fromisoformat("2026-10-23T15:39:05.627+00:00").timestamp()
+        path = _write_session(
+            root,
+            "proj",
+            "sid-cold-utimes",
+            [
+                *_basic_records(),
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-10-23T15:39:05.002Z",
+                    "message": {"content": [{"type": "text", "text": "那两个问题修好了"}]},
+                },
+                {
+                    "type": "system",
+                    "subtype": "stop_hook_summary",
+                    "timestamp": closed_iso,
+                },
+                {
+                    "type": "system",
+                    "subtype": "turn_duration",
+                    "durationMs": 713880,
+                    "timestamp": closed_iso,
+                },
+            ],
+        )
+        touch_ts = closed_epoch + 150_000.0
+        os.utime(path, (touch_ts, touch_ts))
+
+        (summary,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert summary.last_active_ts == closed_epoch
+        assert (
+            session_index.derive_status(
+                summary.tail.last_kind, summary.last_active_ts, now=touch_ts
+            )
+            == "done"
+        )
+
 
 class Test与全量扫描逐字段一致:
     def test_同一份文件两条路径取到的字段完全相同(self, tmp_path: Path) -> None:
@@ -805,3 +912,179 @@ class Test与全量扫描逐字段一致:
         assert fast.custom_title == full["custom_title"]
         assert fast.cwd == full["cwd"]
         assert fast.first_user == full["first_user"]
+
+
+class Test内存增量缓存与Agy缓存:
+    def test_追加写入走增量读取而非整份重读(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        path = _write_session(
+            root,
+            "proj",
+            "sid-inc-1",
+            [
+                *_basic_records(),
+                {"type": "assistant", "slug": "init-slug", "message": {"content": "x" * 70_000}},
+            ],
+        )
+        (first,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert first.first_user == "帮我把列会话提速"
+        assert first.slug == "init-slug"
+
+        def forbid_full_extract(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("已有完整头部字段并追加写入时，应走 _extract_incremental 而非全量 _extract")
+
+        monkeypatch.setattr(session_index, "_extract", forbid_full_extract)
+
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-07-29T12:00:00.000Z",
+                        "message": {"content": [{"type": "text", "text": "增量追加的新回复"}]},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            fh.write(
+                json.dumps({"type": "custom-title", "customTitle": "增量改名"}, ensure_ascii=False)
+                + "\n"
+            )
+
+        (second,) = session_index.list_session_summaries(projects_root=root, cache_file=cache)
+        assert second.first_user == "帮我把列会话提速"
+        assert second.custom_title == "增量改名"
+        assert second.tail.digest_done == "增量追加的新回复"
+
+    def test_agy_tail_signals_命中缓存时不重复翻译(self, tmp_path: Path) -> None:
+        from dataclasses import dataclass
+        from frago.session.unified_record import UnifiedRecord
+
+        @dataclass
+        class _FakeAgyConv:
+            conversation_id: str
+            last_modified_s: float
+            created_s: float
+            transcript_path: Path | None
+
+        tpath = tmp_path / "conv-1.jsonl"
+        tpath.write_text('{"x": 1}\n', encoding="utf-8")
+        conv = _FakeAgyConv(
+            conversation_id="conv-1",
+            last_modified_s=1_750_000_010.0,
+            created_s=1_750_000_000.0,
+            transcript_path=tpath,
+        )
+        cache_file = tmp_path / "agy_index.json"
+        calls: list[str] = []
+
+        def fake_translate(cid: str) -> list[UnifiedRecord]:
+            calls.append(cid)
+            return [
+                UnifiedRecord(
+                    id="r1",
+                    session_id=cid,
+                    group_id=None,
+                    seq=1,
+                    ts=1_750_000_005_000,
+                    kind="agent.say",
+                    agent_path=[],
+                    payload={"text": "agy 已完成"},
+                )
+            ]
+
+        res1 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1"]
+        assert res1["conv-1"].tail.digest_done == "agy 已完成"
+        assert res1["conv-1"].created_at == 1_750_000_005_000
+
+        # 第二次文件与时刻均未变化：直接命中缓存，不再调用 translate_fn
+        res2 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1"]
+        assert res2["conv-1"].tail.digest_done == "agy 已完成"
+
+        # 当转录文件追加内容后：自动失效重算
+        with open(tpath, "a", encoding="utf-8") as fh:
+            fh.write('{"x": 2}\n')
+        res3 = session_index.agy_tail_signals(
+            [conv], translate_fn=fake_translate, cache_file=cache_file
+        )
+        assert calls == ["conv-1", "conv-1"]
+        assert res3["conv-1"].tail.digest_done == "agy 已完成"
+
+    def test_员工入口会话剥离语境块并提取岗位编号且普通提及不误判(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "projects"
+        cache = tmp_path / "index.json"
+        emp_prompt = (
+            '<frago-employee id="stock" title="Stock 投研与策略专员" kernel="claude">\n'
+            "【员工身份与工作范畴】\n"
+            "岗位：Stock 投研与策略专员（id: stock）\n"
+            "</frago-employee>\n\n"
+            "获取腾讯接口的所有标准板块并分析波动率"
+        )
+        _write_session(
+            root,
+            "proj",
+            "sid-emp-1",
+            [
+                {
+                    "type": "user",
+                    "cwd": "/tmp/stock",
+                    "timestamp": "2026-10-30T10:00:00.000Z",
+                    "message": {"content": emp_prompt},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-10-30T10:01:00.000Z",
+                    "message": {"content": [{"type": "text", "text": "已完成板块波动率分析"}]},
+                },
+            ],
+        )
+        _write_session(
+            root,
+            "proj",
+            "sid-normal-mention",
+            [
+                {
+                    "type": "user",
+                    "cwd": "/tmp/repo",
+                    "timestamp": "2026-10-30T11:00:00.000Z",
+                    "message": {
+                        "content": '# 任务书：排查 `<frago-employee id="stock">` 标签解析逻辑'
+                    },
+                },
+            ],
+        )
+
+        summaries = {
+            s.sid: s
+            for s in session_index.list_session_summaries(
+                projects_root=root, cache_file=cache
+            )
+        }
+        assert summaries["sid-emp-1"].employee_id == "stock"
+        assert summaries["sid-emp-1"].first_user == "获取腾讯接口的所有标准板块并分析波动率"
+        assert summaries["sid-normal-mention"].employee_id is None
+
+        # 命中磁盘缓存还原时 employee_id 同样保留
+        session_index._MEM_INDEX_CACHE.clear()
+        session_index._SUMMARY_OBJ_CACHE.clear()
+        cached_summaries = {
+            s.sid: s
+            for s in session_index.list_session_summaries(
+                projects_root=root, cache_file=cache
+            )
+        }
+        assert cached_summaries["sid-emp-1"].employee_id == "stock"
+        assert cached_summaries["sid-emp-1"].first_user == "获取腾讯接口的所有标准板块并分析波动率"
+        assert cached_summaries["sid-normal-mention"].employee_id is None
+
+

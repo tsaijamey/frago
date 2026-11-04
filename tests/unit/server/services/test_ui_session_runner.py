@@ -25,6 +25,7 @@ class FakePool:
         self.runs: list[tuple[str, str]] = []  # (session_id, prompt)
         self.builds: list[str] = []  # 触发冷启动重建的 session_id
         self.native_flags: list[bool] = []  # 每轮 run 收到的 native_session_id
+        self.origins: list[str | None] = []  # 每轮 run 收到的会话出身
         # session_id → 会话替身。只需带一个 adopted 标志：runner 据此分辨"接管"与
         # "冷启动"，两者都是零等待与十几秒等待的差别。
         self.sessions: dict[str, SimpleNamespace] = {}
@@ -51,6 +52,7 @@ class FakePool:
         native_session_id=False,
         timeout_s=120.0,
         resume_hook=None,
+        origin=None,
     ):  # noqa: ARG002
         if session_id not in self.live:
             # 冷会话：pool 会 resume 重建。
@@ -59,6 +61,7 @@ class FakePool:
             self.sessions[session_id] = SimpleNamespace(adopted=False)
         self.runs.append((session_id, prompt))
         self.native_flags.append(native_session_id)
+        self.origins.append(origin)
         return TurnResult(text=self.reply_text, raw_delta="", status="ok", duration_ms=1)
 
     def evict(self, session_id: str) -> bool:
@@ -97,6 +100,7 @@ def test_send_passes_native_session_id_true():
     runner.send("real-claude-sid", "hi")
 
     assert pool.native_flags == [True]
+    assert pool.origins == ["human"]
 
 
 def test_cold_session_triggers_resume_rebuild():
@@ -153,7 +157,9 @@ class _AcquirePool:
     def __init__(self, session) -> None:
         self.session = session
 
-    def acquire(self, agent_type, session_id, cwd, *, native_session_id=False):  # noqa: ARG002
+    def acquire(
+        self, agent_type, session_id, cwd, *, native_session_id=False, origin=None
+    ):  # noqa: ARG002
         return self.session
 
 

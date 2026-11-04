@@ -460,8 +460,8 @@ class TestRelationKinds:
         assert entry["note"] == "这个报错要不要查"
         assert entry["closed_at"] is None
 
-    def test_交接认得但不折叠也不算worker(self, ledger, empty_projects):
-        # 交接本次只在读取侧认得。它不进父子表：交接的两场是并排的，不是谁挂谁。
+    def test_交接算人开的且认得原会话父亲(self, ledger, empty_projects):
+        # 交接是人换一场继续谈，算 human，同时记下原会话 parent_session_id 供左栏同组向上排列。
         child = str(uuid.uuid4())
         session_origin.LAUNCH_LEDGER.write_text(
             json.dumps([{"child": child, "parent": HUMAN_SID, "kind": "handoff"}]),
@@ -469,7 +469,7 @@ class TestRelationKinds:
         )
         index = _index(empty_projects)
         assert index.relation_of(child) == session_origin.SessionRelation("handoff")
-        assert index.parent_of(child) is None
+        assert index.parent_of(child) == HUMAN_SID
         assert index.origin_of(child) == "human"
 
     def test_读不懂的单条跳过_其余照读(self, ledger, empty_projects):
@@ -541,6 +541,18 @@ class TestAttributedDispatch:
         assert index.parent_of(child) == HUMAN_SID
         assert index.origin_of(child) == "worker"
 
+    def test_agy会话自报编号时认得出派活者(self, ledger, empty_projects, monkeypatch):
+        child = "core_1234567890abcdef1234567890abcdef"
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+        monkeypatch.setenv("ANTIGRAVITY_CONVERSATION_ID", HUMAN_SID)
+        assert session_origin.record_dispatch(
+            child, agent_type="coreagent", cwd="/tmp"
+        )
+        index = _index(empty_projects)
+        assert index.parent_of(child) == HUMAN_SID
+        assert index.origin_of(child) == "worker"
+
     def test_认不出派活者就不记(self, ledger, empty_projects, monkeypatch):
         child = str(uuid.uuid4())
         monkeypatch.setattr(session_origin, "parent_from_env", lambda: None)
@@ -549,6 +561,31 @@ class TestAttributedDispatch:
         )
         assert session_origin.find_relation(child) is None
         assert _index(empty_projects).origin_of(child) == "human"
+
+    def test_网页新建会话就算环境里残留了父会话编号也绝不记派活(
+        self, ledger, empty_projects, monkeypatch
+    ):
+        """2026-10-23：服务端环境残留 ANTIGRAVITY_CONVERSATION_ID 时，网页新建会话也不得记为 worker。"""
+        monkeypatch.setenv("ANTIGRAVITY_CONVERSATION_ID", HUMAN_SID)
+        child_by_origin = str(uuid.uuid4())
+        assert not session_origin.record_attributed_dispatch(
+            child_by_origin,
+            agent_type="agy",
+            cwd="/tmp",
+            origin="human",
+        )
+        assert session_origin.find_relation(child_by_origin) is None
+        assert _index(empty_projects).origin_of(child_by_origin) == "human"
+
+        child_by_handle = str(uuid.uuid4())
+        assert not session_origin.record_attributed_dispatch(
+            child_by_handle,
+            agent_type="agy",
+            cwd="/tmp",
+            handle=f"webui-{uuid.uuid4()}",
+        )
+        assert session_origin.find_relation(child_by_handle) is None
+        assert _index(empty_projects).origin_of(child_by_handle) == "human"
 
     def test_命令行那一版认不出父亲也记(self, ledger, empty_projects, monkeypatch):
         # 两条路的分水岭就在这里：`frago agent <任务>` 敲下去本身就是派活，父亲认不出来

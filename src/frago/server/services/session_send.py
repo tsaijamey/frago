@@ -90,13 +90,12 @@ class SendTarget:
     family: RecordFamily
     agent_type: str
     cwd: str | None
-    """起 tmux 用的工作目录。只有"页面刚 mint 的新 claude 会话"才允许为 None，
+    """起会话用的工作目录。只有"档案里还没有记录的新会话"才允许为 None，
     那时由调用方给的起始目录决定（给不出就退回家目录）。"""
 
     is_new: bool
-    """这个编号在档案里还没有任何记录——即页面新建会话时自己 mint 的那个 uuid。
-    只可能出现在 claude 一家：另外两家的编号是各自的 CLI 建会话时分配的，页面
-    只能续接已经存在的那些。"""
+    """这个编号在档案里还没有任何记录——即外部/页面先 mint 的新 uuid。
+    无记录的裸 uuid 一律交由内置保底的 CoreAgent 新建接管，不再假定本机装了 claude。"""
 
 
 def _claude_cwd(session_id: str) -> str | None:
@@ -112,10 +111,14 @@ def _coreagent_cwd(session_id: str) -> str | None:
     """这场 CoreAgent 会话当初跑在哪个目录。
 
     记录的形状与 claude 那一套一样，只是躺在 CoreAgent 自己的根目录下，所以读法共用。
+    若首轮刚起、还没有落盘带 ``cwd`` 的行，则向常驻进程表问一眼。
     """
+    from frago.server.services import coreagent_runner
     from frago.session import coreagent_store
 
-    return _recorded_cwd(coreagent_store.find_session_file(session_id))
+    return _recorded_cwd(coreagent_store.find_session_file(session_id)) or coreagent_runner.live_cwd(
+        session_id
+    )
 
 
 def _recorded_cwd(path: Path | None) -> str | None:
@@ -148,15 +151,31 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
     :class:`SessionNotResumable`（这一家的会话只能回看）、:class:`SessionGone`（记录没了）、
     :class:`SessionDirectoryUnknown`（问不出目录）。
     """
-    family = record_reader.detect_family(session_id)
+    sid = session_id.strip()
+    if not sid:
+        raise record_reader.UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
+
+    try:
+        family = record_reader.detect_family(sid)
+    except record_reader.UnknownSessionFamily:
+        # 既不是 ses_ / core_ 前缀，也不是 36 位 UUID（例如人在地址栏随手写的 session=1），
+        # 且盘上还没有记录：交给唯一保底内置的 CoreAgent 以该编号新建会话。
+        live = _coreagent_cwd(sid)
+        if live:
+            return SendTarget(sid, "coreagent", COREAGENT_AGENT, live, is_new=False)
+        return SendTarget(sid, "coreagent", COREAGENT_AGENT, cwd_hint, is_new=True)
 
     if family == "coreagent":
-        # CoreAgent 每一轮都是一个新进程，靠把这一场的记录读回来接上前文。所以这里要的
-        # 只有一样：它当初跑在哪个目录。问不出来就不发——猜一个目录等于把它挪到另一个
-        # 仓库里接着干活。
-        recorded = _coreagent_cwd(session_id)
+        from frago.session import coreagent_store
+
+        has_file = coreagent_store.find_session_file(sid) is not None
+        recorded = _coreagent_cwd(sid)
         if recorded is None:
-            raise SessionGone(f"CoreAgent 那边找不到会话 {session_id} 的记录，续不上")
+            if has_file:
+                raise SessionDirectoryUnknown(
+                    f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
+                )
+            return SendTarget(sid, family, COREAGENT_AGENT, cwd_hint, is_new=True)
         if not recorded.strip():
             raise SessionDirectoryUnknown(
                 f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
@@ -174,9 +193,13 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
         recorded = _claude_cwd(session_id)
         if recorded:
             return SendTarget(session_id, family, agent_type, recorded, is_new=False)
-        # 档案里没有这个编号：页面新建会话就是这条路——claude 以 ``--session-id`` 起，
-        # 自己把 jsonl 写到该去的地方，下一次扫描它就是一行普通会话。
-        return SendTarget(session_id, family, agent_type, cwd_hint, is_new=True)
+        live = _coreagent_cwd(session_id)
+        if live:
+            return SendTarget(session_id, "coreagent", COREAGENT_AGENT, live, is_new=False)
+        # 档案里没有这个裸 UUID：本机唯一能保证一定存在的内置内核是 CoreAgent，且它原生支持
+        # ``--session-id`` 建新会话；首轮落盘到 ``~/.frago/coreagent/sessions/`` 后，下一次
+        # ``detect_family`` 与会话清单都会直接认出它是 CoreAgent 会话。
+        return SendTarget(session_id, "coreagent", COREAGENT_AGENT, cwd_hint, is_new=True)
 
     if family == "codex":
         meta = codex_store.session_meta(session_id)
@@ -220,7 +243,7 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
     from frago.server.services.ui_session_runner import get_runner
 
     target = resolve_target(session_id, cwd_hint=cwd_hint)
-    if target.is_new and cwd_hint:
+    if target.is_new and cwd_hint and target.family == "claude-code":
         claude_svc.register_webui_session(session_id)
     logger.info(
         "webui send → session=%s family=%s agent=%s cwd=%s",
@@ -233,6 +256,11 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
         from frago.server.services import coreagent_runner
 
         return coreagent_runner.send(session_id, prompt, cwd=target.cwd or str(Path.home()))
+    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
+        with contextlib.suppress(Exception):
+            from frago.server.services import stage_orchestrator
+
+            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
     return get_runner().send(
         session_id,
         prompt,
@@ -255,7 +283,7 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
     from frago.server.services.ui_session_runner import get_runner
 
     target = resolve_target(session_id, cwd_hint=cwd_hint)
-    if target.is_new and cwd_hint:
+    if target.is_new and cwd_hint and target.family == "claude-code":
         claude_svc.register_webui_session(session_id)
 
     if target.family == "coreagent":
@@ -264,6 +292,11 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
         return coreagent_runner.send_queued(
             session_id, prompt, cwd=target.cwd or str(Path.home())
         )
+    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
+        with contextlib.suppress(Exception):
+            from frago.server.services import stage_orchestrator
+
+            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
 
     def _feed() -> None:
         try:

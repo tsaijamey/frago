@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Wand2 } from 'lucide-react';
 import { forgeRecipe } from '@/api/client';
+import { usePageStore } from '@/stores/pageStore';
 
 interface RecipeForgeModalProps {
   onClose: () => void;
@@ -34,15 +35,8 @@ export default function RecipeForgeModal({ onClose }: RecipeForgeModalProps) {
         page,
         name: name.trim() || undefined,
       });
-      // 桌面页要独占一扇窗口：它按窗口尺寸整体缩放，塞进工作台的某个格子里就看不清
-      // 终端了。弹窗被拦下（桌面壳、或浏览器拦截）时退回当前页跳过去，总比什么都
-      // 不发生强——那时人以为没点上。
-      const features = 'popup=yes,width=1680,height=980,resizable=yes';
-      const opened = window.open(result.desktop_url, 'frago-recipe-forge', features);
-      if (!opened) {
-        window.location.href = result.desktop_url;
-        return;
-      }
+      // 虚拟桌面常驻在左侧菜单 desktop 项下：带上导演会话编号直接切过去，不再另开浏览器窗口。
+      usePageStore.getState().switchPage('desktop', result.session_id);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

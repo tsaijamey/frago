@@ -16,6 +16,7 @@
  */
 
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+import { parseUiComponentOutput } from '@/utils/decisionBlock';
 
 // ── 连接码 ───────────────────────────────────────────────────────────────
 
@@ -201,6 +202,10 @@ export function predictionKey(guess: TierGuess, rules: RequestRules): Prediction
  * 顶层有没有 `from: teammate`。那份解析落地后换成它的判据，两处 NEVER 各判各的。
  */
 export function endsWithTeammateCard(text: string): boolean {
+  const uiCard = parseUiComponentOutput(text);
+  if (uiCard && uiCard.ok) {
+    return uiCard.block.fromTeammate;
+  }
   const fence = /```answer-needed-by-human[^\n]*\n([\s\S]*?)\n```\s*$/.exec(text);
   if (!fence) return false;
   return /^from:\s*['"]?teammate['"]?\s*$/m.test(fence[1]);
@@ -246,14 +251,23 @@ export function afterDelivery(
   deliveredIndex: number,
 ): { step: 'on_it' | 'waiting_owner' | 'replied'; at: number | null } {
   let last: WorkbenchRecord | null = null;
+  let teammateToolCardAt: number | null = null;
   for (let i = deliveredIndex + 1; i < peerRecords.length; i += 1) {
     const r = peerRecords[i];
     if (r.kind === 'user.say' && !r.agent_path.length && !textOf(r).startsWith('【answer】')) break;
+    if (r.kind === 'user.say' && !r.agent_path.length && textOf(r).startsWith('【answer】')) {
+      teammateToolCardAt = null;
+    }
     if (isMainAgentSay(r)) last = r;
+    if (r.kind === 'tool.result' && !r.agent_path.length && r.payload.status !== 'error') {
+      const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+      if (endsWithTeammateCard(body)) teammateToolCardAt = r.ts;
+    }
   }
-  if (!last) return { step: 'on_it', at: null };
-  if (endsWithTeammateCard(textOf(last))) return { step: 'waiting_owner', at: last.ts };
-  return { step: 'replied', at: last.ts };
+  if (!last && teammateToolCardAt === null) return { step: 'on_it', at: null };
+  if (last && endsWithTeammateCard(textOf(last))) return { step: 'waiting_owner', at: last.ts };
+  if (teammateToolCardAt !== null) return { step: 'waiting_owner', at: last?.ts ?? teammateToolCardAt };
+  return { step: 'replied', at: last!.ts };
 }
 
 /**

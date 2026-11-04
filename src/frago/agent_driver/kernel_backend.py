@@ -93,6 +93,35 @@ class KernelTurn:
     text: str
     status: Literal["ok", "timeout", "needs_input", "error"]
     duration_ms: int
+    tmux_name: str | None = None
+
+
+_REAL_POPEN = subprocess.Popen
+
+
+def _should_use_tmux() -> bool:
+    """``run_turn``（agent 模式）是否通过 tmux 承载。
+
+    - 单测把 ``subprocess.Popen`` 换成替身时不走 tmux；
+    - 本机无 ``tmux`` 或显式设了 ``FRAGO_COREAGENT_NO_TMUX=1`` 时自动回退直跑。
+    """
+    if subprocess.Popen is not _REAL_POPEN:
+        return False
+    from frago.agent_driver.coreagent_pane_host import tmux_available
+
+    return tmux_available()
+
+
+def _notify_spawn(
+    on_spawn: Callable[..., None] | None, pid: int, tmux_name: str | None = None
+) -> None:
+    if on_spawn is None:
+        return
+    with contextlib.suppress(Exception):
+        try:
+            on_spawn(pid, tmux_name)
+        except TypeError:
+            on_spawn(pid)
 
 
 def kernel_path() -> Path:
@@ -122,8 +151,10 @@ def _base_command(
     *,
     cwd: str,
     profile_id: str | None,
+    role: str | None = None,
     session_id: str | None = None,
     model: str | None = None,
+    wire: str | None = None,
 ) -> list[str]:
     """两种形状共用的那一截：定模式、定输出格式、定工作目录与连接，任务从 stdin 来。
 
@@ -141,8 +172,12 @@ def _base_command(
     cmd += ["--cwd", cwd]
     if profile_id:
         cmd += ["--as-profile", profile_id]
+    elif role and role.strip():
+        cmd += ["--as-role", role.strip()]
     if model and model.strip():
         cmd += ["--model", model.strip()]
+    if wire and wire.strip():
+        cmd += ["--wire", wire.strip().lower()]
     cmd += ["-p", "-"]
     return cmd
 
@@ -153,18 +188,36 @@ def build_command(
     cwd: str,
     profile_id: str | None,
     model: str | None = None,
+    wire: str | None = None,
 ) -> list[str]:
     """拼 ``frago agent`` 那一条一次性命令（agent 模式，带工具，落会话记录）。"""
     return _base_command(
-        "agent", cwd=cwd, profile_id=profile_id, session_id=session_id, model=model
+        "agent",
+        cwd=cwd,
+        profile_id=profile_id,
+        session_id=session_id,
+        model=model,
+        wire=wire,
     )
 
 
 def build_chat_command(
-    *, cwd: str, profile_id: str | None, model: str | None = None
+    *,
+    cwd: str,
+    profile_id: str | None,
+    role: str | None = None,
+    model: str | None = None,
+    wire: str | None = None,
 ) -> list[str]:
     """拼"问一句、答一句"那一条命令（chat 模式，无工具，不留会话记录）。"""
-    return _base_command("chat", cwd=cwd, profile_id=profile_id, model=model)
+    return _base_command(
+        "chat",
+        cwd=cwd,
+        profile_id=profile_id,
+        role=role,
+        model=model,
+        wire=wire,
+    )
 
 
 def _run_process(
@@ -234,6 +287,67 @@ def _run_process(
     return out, err, proc.returncode, int((time.monotonic() - started) * 1000)
 
 
+def _run_tmux_process(
+    cmd: list[str],
+    prompt_text: str,
+    *,
+    session_id: str,
+    cwd: str,
+    timeout_s: float | None,
+    env: Mapping[str, str] | None,
+    on_spawn: Callable[..., None] | None = None,
+) -> KernelTurn | tuple[str, str, int | None, int, str]:
+    """在 ``frago-agent-<session_id>`` tmux 会话内跑一轮 ``frago-core``，回传 ``stdout`` 与退出码。"""
+    from frago.agent_driver.coreagent_pane_host import TmuxCoreProcess
+
+    if not kernel_path().exists():
+        return KernelTurn(
+            text=f"内核不在：{kernel_path()} 找不到。跑一次 frago init 补上。",
+            status="error",
+            duration_ms=0,
+        )
+
+    started = time.monotonic()
+    proc = TmuxCoreProcess(
+        session_id=session_id,
+        cmd=cmd,
+        cwd=cwd,
+        env=env,
+        mode="oneshot",
+        prompt_text=prompt_text,
+    )
+    try:
+        _notify_spawn(on_spawn, proc.pid or os.getpid(), proc.tmux_name)
+        try:
+            if timeout_s and timeout_s > 0:
+                proc.wait(timeout=timeout_s)
+            else:
+                proc.wait()
+        except subprocess.TimeoutExpired:
+            _reap(proc)
+            return KernelTurn(
+                text="",
+                status="timeout",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                tmux_name=proc.tmux_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _reap(proc)
+            return KernelTurn(
+                text=f"内核那一轮没跑起来：{type(exc).__name__}: {exc}",
+                status="error",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                tmux_name=proc.tmux_name,
+            )
+
+        out = proc.read_stdout()
+        err = proc.read_stderr()
+        rc = proc.returncode
+        return out, err, rc, int((time.monotonic() - started) * 1000), proc.tmux_name
+    finally:
+        proc.cleanup_runtime_dir()
+
+
 def run_turn(
     prompt_text: str,
     *,
@@ -241,9 +355,10 @@ def run_turn(
     cwd: str,
     profile_id: str | None = None,
     model: str | None = None,
+    wire: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
-    on_spawn: Callable[[int], None] | None = None,
+    on_spawn: Callable[..., None] | None = None,
 ) -> KernelTurn:
     """把一件事交给内核跑一轮，返回归一化结果。
 
@@ -255,12 +370,34 @@ def run_turn(
     「超时」写进 result 的不同字段），转译过来多一层反推、也多一处会与 frago 的四态脱节。
     这边的墙钟就是 frago 契约里那个墙钟，一处判、一处报。
 
-    ``on_spawn`` 在进程起来之后、喂任务之前被叫一次，带上内核那个进程号——调用方拿它登记
-    名册（内核 worker 没有 tmux 会话，能按名字收走它靠的就是这个号）。
+    ``on_spawn`` 在进程起来之后、喂任务之前被叫一次，带上内核那个进程号（以及 tmux 会话名，
+    若本轮跑在 tmux 内）——调用方拿它登记名册。本机无 tmux 时自动回退为直接子进程。
     """
     cmd = build_command(
-        session_id=session_id, cwd=cwd, profile_id=profile_id, model=model
+        session_id=session_id,
+        cwd=cwd,
+        profile_id=profile_id,
+        model=model,
+        wire=wire,
     )
+    if _should_use_tmux():
+        try:
+            tmux_collected = _run_tmux_process(
+                cmd,
+                prompt_text,
+                session_id=session_id,
+                cwd=cwd,
+                timeout_s=timeout_s,
+                env=env,
+                on_spawn=on_spawn,
+            )
+            if isinstance(tmux_collected, KernelTurn):
+                return tmux_collected
+            out, err, returncode, duration_ms, tmux_name = tmux_collected
+            return _classify(out, err, returncode, duration_ms, tmux_name=tmux_name)
+        except Exception:  # noqa: BLE001 — tmux 启动异常时自动回退直跑
+            pass
+
     collected = _run_process(
         cmd,
         prompt_text,
@@ -280,7 +417,9 @@ def run_chat_turn(
     *,
     cwd: str,
     profile_id: str | None = None,
+    role: str | None = None,
     model: str | None = None,
+    wire: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
 ) -> KernelTurn:
@@ -290,9 +429,12 @@ def run_chat_turn(
     与 :func:`run_turn` 的区别只在模式：这条路上内核不挂会话、不写
     ``~/.frago/coreagent/sessions/``，因此不会把调用方自己的语料越搜越脏。
 
-    连接同上：``--as-profile`` 收 **id**；给 None 就用内核自己那条默认连接。
+    连接同上：``--as-profile`` 收 **id**；未传时可按 ``role``（如 ``lightagent``）
+    走 ``--as-role``，都不给就用内核自己那条默认连接。
     """
-    cmd = build_chat_command(cwd=cwd, profile_id=profile_id, model=model)
+    cmd = build_chat_command(
+        cwd=cwd, profile_id=profile_id, role=role, model=model, wire=wire
+    )
     collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=env)
     if isinstance(collected, KernelTurn):
         return collected
@@ -300,7 +442,14 @@ def run_chat_turn(
     return _classify_chat(out, err, returncode, duration_ms)
 
 
-def _classify(stdout: str, stderr: str, returncode: int | None, duration_ms: int) -> KernelTurn:
+def _classify(
+    stdout: str,
+    stderr: str,
+    returncode: int | None,
+    duration_ms: int,
+    *,
+    tmux_name: str | None = None,
+) -> KernelTurn:
     """把内核的 ``(returncode, stdout JSON)`` 翻成 frago 的四态。
 
     内核自报的退出码只有三档（``--help``）：``0`` 有最终答案 / ``1`` 没有最终答案 /
@@ -314,7 +463,9 @@ def _classify(stdout: str, stderr: str, returncode: int | None, duration_ms: int
     if payload is None:
         # 连 result 对象都没有：多半是用法错（我们拼错了命令）或内核启动就崩了。
         note = (stderr or stdout or "").strip()
-        return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
+        return KernelTurn(
+            text=note[:500], status="error", duration_ms=duration_ms, tmux_name=tmux_name
+        )
 
     text = str(payload.get("result") or "")
     if not payload.get("is_error"):
@@ -322,11 +473,18 @@ def _classify(stdout: str, stderr: str, returncode: int | None, duration_ms: int
             # **自相矛盾：result 说自己没出错，内核却以非零退出。** 以退出码为准——一轮
             # 出了事却报成成功，比多报一次失败坏得多（调用方会拿着半截产出当成品）。
             note = (stderr or text or "").strip()
-            return KernelTurn(text=note[:500], status="error", duration_ms=duration_ms)
-        return KernelTurn(text=text, status="ok", duration_ms=duration_ms)
+            return KernelTurn(
+                text=note[:500], status="error", duration_ms=duration_ms, tmux_name=tmux_name
+            )
+        return KernelTurn(
+            text=text, status="ok", duration_ms=duration_ms, tmux_name=tmux_name
+        )
 
     return KernelTurn(
-        text=text, status=_failure_status(payload, text), duration_ms=duration_ms
+        text=text,
+        status=_failure_status(payload, text),
+        duration_ms=duration_ms,
+        tmux_name=tmux_name,
     )
 
 

@@ -379,3 +379,37 @@ describe('Codex 要的是 Responses 地址', () => {
     ]);
   });
 });
+
+describe('Antigravity CLI (agy) 三档上下文窗口切换', () => {
+  it('可在 256K / 512K / 900K 三档间切换并随保存提交 agy_context_window', async () => {
+    open();
+    await openEditForm();
+
+    fireEvent.click(screen.getByText('512K (1.3x)'));
+    fireEvent.click(screen.getByText('settings.profiles.save'));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalled());
+    expect(updateProfile.mock.calls[0][1]).toMatchObject({
+      agy_context_window: '512K',
+    });
+  });
+
+  it('再次点击已选档位可取消覆盖并传 null', async () => {
+    getProfiles.mockResolvedValue({
+      profiles: [{ ...CUSTOM_PROFILE, agy_context_window: '900K' }],
+      active_profile_id: null,
+      active_targets: [],
+    });
+    open();
+    await openEditForm();
+
+    fireEvent.click(screen.getByText('900K (1.8x)'));
+    fireEvent.click(screen.getByText('settings.profiles.save'));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalled());
+    expect(updateProfile.mock.calls[0][1]).toMatchObject({
+      agy_context_window: null,
+    });
+  });
+});
+

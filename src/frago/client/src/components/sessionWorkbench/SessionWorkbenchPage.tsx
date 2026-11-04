@@ -20,25 +20,29 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft, Loader2, Star } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Loader2, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import SessionRail from './SessionRail';
 import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
-import FileViewer from './FileViewer';
-import { withTilde } from './filePaths';
+import { SessionTerminal } from './SessionTerminal';
+import FileViewer, { type FileEditSendPayload } from './FileViewer';
+import { formatTokensK, formatTokensM, shortenPathMiddle, withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
-import { squeeze, type MarkAnchor } from './SelectionQuote';
+import { squeeze, type BranchExtras, type MarkAnchor } from './SelectionQuote';
 import { DecisionCardContext } from './DecisionCard';
 import { useDecisionCards } from '@/hooks/useDecisionCards';
+import NewSessionModal from './NewSessionModal';
 import SessionLaunchPanel from './SessionLaunchPanel';
 import SessionMenu from './SessionMenu';
 import SessionTimeline from './SessionTimeline';
 import { useSessionPins } from '@/hooks/useSessionPins';
-import { useSessionToday } from '@/hooks/useSessionToday';
+import { useSessionToday, type SessionTodayState } from '@/hooks/useSessionToday';
 import {
+  expandSessionGroupIds,
+  getSessionGroupIds,
   isSessionAlive,
   useWorkbenchLabels,
   useWorkbenchSessions,
@@ -50,10 +54,12 @@ import { useSessionViews } from '@/hooks/useSessionViews';
 import { useForYou } from '@/hooks/useForYou';
 import { formatClock, formatDuration } from './RecordCard';
 import { ForYouChip, resumeCommand, shortAge } from './SessionItem';
-import { loadYaml, trailingDecision, yamlNow } from '@/utils/decisionBlock';
+import { loadYaml, parseUiComponentOutput, trailingDecision, yamlNow } from '@/utils/decisionBlock';
 import { useSessionLaunch } from '@/hooks/useSessionLaunch';
 import { useReportWidth } from '@/hooks/useReportLayout';
 import { useSessionMarks, type WorkbenchMark } from '@/hooks/useSessionMarks';
+import { useSessionObserver } from '@/hooks/useSessionObserver';
+import { useSessionQueue } from '@/hooks/useSessionQueue';
 import { usePageStore } from '@/stores/pageStore';
 import { useAppStore } from '@/stores/appStore';
 import { fetchPending, handoffSession, waitForSession } from '@/hooks/useAgentClients';
@@ -99,12 +105,14 @@ interface BringBack {
  * 会话文件那几处要用同一套缩写，实现搬去了 `./filePaths`（同一个东西两个地方长得一样），
  * 这里照样转出来，这一页自己的用法与外面的引用都不动。
  */
-export { withTilde };
+export { shortenPathMiddle, withTilde };
 
 export default function SessionWorkbenchPage() {
   // 选中记在页面导航状态里，切去别的菜单再回来还停在那一场上。
   const selectedId = usePageStore((s) => s.workbenchSessionId);
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+  const pendingWorkbenchLaunch = usePageStore((s) => s.pendingWorkbenchLaunch);
+  const consumePendingWorkbenchLaunch = usePageStore((s) => s.consumePendingWorkbenchLaunch);
   const { t } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const showToast = useAppStore((s) => s.showToast);
@@ -118,12 +126,37 @@ export default function SessionWorkbenchPage() {
    * 里那几颗「+ Today」改的也是这一份——两处必须持有同一份状态，否则捡回来的一场要等
    * 下一趟轮询才出现。
    */
-  const today = useSessionToday();
-  const pickedToday = useMemo(() => new Set(today.picked), [today.picked]);
-  const sessions = useWorkbenchSessions(isForYou, pickedToday);
+  const rawToday = useSessionToday();
+  const rawPickedToday = useMemo(() => new Set(rawToday.picked), [rawToday.picked]);
+  const sessions = useWorkbenchSessions(isForYou, rawPickedToday);
+  const pickedToday = useMemo(
+    () => expandSessionGroupIds(sessions.sessions, rawToday.picked),
+    [sessions.sessions, rawToday.picked]
+  );
+  const today = useMemo<SessionTodayState>(
+    () => ({
+      ...rawToday,
+      picked: Array.from(pickedToday),
+      isPicked: (sid: string) => pickedToday.has(sid) || rawToday.isPicked(sid),
+      toggle: async (sid: string) => {
+        const groupIds = getSessionGroupIds(sessions.sessions, sid);
+        const pickedInGroup = groupIds.filter((id) => rawPickedToday.has(id));
+        if (pickedInGroup.length > 0) {
+          for (const id of pickedInGroup) {
+            await rawToday.toggle(id);
+          }
+        } else {
+          await rawToday.toggle(sid);
+        }
+      },
+    }),
+    [rawToday, pickedToday, rawPickedToday, sessions.sessions]
+  );
   const views = useSessionViews();
   const pins = useSessionPins();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
+  const [creatingNew, setCreatingNew] = useState(false);
   /** 刚复制了哪一场的续接命令：页头「…」菜单里那一项换成勾选，1.5 秒后复原。 */
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const handleCopy = useCallback(
@@ -200,22 +233,42 @@ export default function SessionWorkbenchPage() {
   } = useWorkbenchRecords(selectedId, { live: selectedAlive });
 
   useEffect(() => {
-    if (!selectedId || recordsSessionId !== selectedId || !yamlReady) {
+    if (!selectedId || recordsSessionId !== selectedId) {
       setCardQuestion(null);
       return;
     }
-    let last: string | null = null;
+    let seenLastAgentSay = false;
+    let foundQuestion: string | null = null;
     for (let i = records.length - 1; i >= 0; i -= 1) {
       const r = records[i];
       if (r.agent_path.length) continue;
       if (r.kind === 'user.say') break;
-      if (r.kind === 'agent.say') {
-        last = typeof r.payload.text === 'string' ? r.payload.text : '';
-        break;
+      if (r.kind === 'agent.say' && !seenLastAgentSay) {
+        seenLastAgentSay = true;
+        const text = typeof r.payload.text === 'string' ? r.payload.text : '';
+        if (yamlReady) {
+          const card = text ? trailingDecision(text) : null;
+          if (card && card.result.ok) {
+            foundQuestion = card.result.block.question;
+            break;
+          }
+        }
+        const uiCard = text ? parseUiComponentOutput(text) : null;
+        if (uiCard && uiCard.ok) {
+          foundQuestion = uiCard.block.question;
+          break;
+        }
+      }
+      if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+        const body = typeof r.payload.body === 'string' ? r.payload.body : '';
+        const uiCard = body ? parseUiComponentOutput(body) : null;
+        if (uiCard && uiCard.ok) {
+          foundQuestion = uiCard.block.question;
+          break;
+        }
       }
     }
-    const card = last ? trailingDecision(last) : null;
-    setCardQuestion(card && card.result.ok ? { sid: selectedId, question: card.result.block.question } : null);
+    setCardQuestion(foundQuestion ? { sid: selectedId, question: foundQuestion } : null);
   }, [records, recordsSessionId, selectedId, yamlReady]);
 
   /** 输入区「Show」要把记录流滚到的那一条。 */
@@ -232,6 +285,16 @@ export default function SessionWorkbenchPage() {
     return null;
   }, [trails]);
   const inFlight = latestTrail !== null && !trailSettled(latestTrail);
+  const sessionRunning = Boolean(selected?.status === 'running' || awaitingAgent || inFlight);
+  const sessionQueue = useSessionQueue(selectedId, {
+    records,
+    recordsSessionId,
+    running: sessionRunning,
+    onInjected: () => {
+      void reload();
+      void sessions.reload();
+    },
+  });
   const sendingId =
     selectedId && outbound.some((m) => m.state === 'sent') ? selectedId : null;
   const busyId = selectedId && inFlight ? selectedId : null;
@@ -283,6 +346,7 @@ export default function SessionWorkbenchPage() {
    * 着色，右栏下半按它列暂存。
    */
   const marks = useSessionMarks(selectedId);
+  const observer = useSessionObserver(selectedId);
   const marksRef = useRef<WorkbenchMark[]>(marks.marks);
   marksRef.current = marks.marks;
 
@@ -447,6 +511,11 @@ export default function SessionWorkbenchPage() {
   const packedSeq = useRef(0);
   useEffect(() => setPackedPrompt(null), [selectedId]);
 
+  /** FileViewer Edit 模式直接发送到对话区的文件修改通知。 */
+  const [directSend, setDirectSend] = useState<{ text: string; at: number } | null>(null);
+  const directSendSeq = useRef(0);
+  useEffect(() => setDirectSend(null), [selectedId]);
+
   /** 暂存列表「填入」：按引用格式落进输入框，想法接在后面；这一条进入待发出。 */
   const fillFromStack = useCallback((mark: WorkbenchMark) => {
     setQuote({ text: mark.text, note: mark.note, at: (quoteSeq.current += 1) });
@@ -491,6 +560,15 @@ export default function SessionWorkbenchPage() {
     recordCount: records.length,
   });
 
+  useEffect(() => {
+    if (!pendingWorkbenchLaunch) return;
+    const next = consumePendingWorkbenchLaunch();
+    if (!next) return;
+    setCreatingNew(false);
+    setWorkbenchSessionId(next.launch.session_id ?? null);
+    begin(next.launch, next.text);
+  }, [pendingWorkbenchLaunch, consumePendingWorkbenchLaunch, setWorkbenchSessionId, begin]);
+
   // 中栏此刻该让给启动面板：正在起，而且人没有把中栏切到别的会话上去。
   const showLaunch = Boolean(launch) && (selectedId === null || selectedId === launch?.sessionId);
 
@@ -530,6 +608,20 @@ export default function SessionWorkbenchPage() {
   }, [records, recordsSessionId, selectedId]);
   const contextTokens = usageReadout?.context ?? null;
 
+  /** 页头副标题栏展示的用量读数（模型名 · 上下文 · 累计） */
+  const usageText = useMemo(() => {
+    if (!usageReadout) return '';
+    const parts: string[] = [];
+    if (usageReadout.model) parts.push(usageReadout.model);
+    if (usageReadout.context !== null) {
+      parts.push(`${t('workbench.record.usage.context')} ${formatTokensK(usageReadout.context)}`);
+    }
+    if (usageReadout.total !== null) {
+      parts.push(`${t('workbench.record.usage.total')} ${formatTokensM(usageReadout.total)}`);
+    }
+    return parts.join(' · ');
+  }, [usageReadout, t]);
+
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
    * 专门处理这个旁支问题。**页面不跳走**——主线接着谈，输入框上方一行说分支去了哪，点「打开」
@@ -540,7 +632,7 @@ export default function SessionWorkbenchPage() {
   /** 每起一次分支加一：回来晚的那次不许盖掉后来那次的提示。 */
   const branchSeq = useRef(0);
   const onBranch = useCallback(
-    async (anchor: MarkAnchor, note: string) => {
+    async (anchor: MarkAnchor, note: string, extras?: BranchExtras) => {
       const parent = selectedId;
       if (!parent) return;
       const seq = (branchSeq.current += 1);
@@ -553,7 +645,13 @@ export default function SessionWorkbenchPage() {
       show({ state: 'starting' });
       let launch;
       try {
-        launch = await startBranch(parent, { ...anchor, note });
+        launch = await startBranch(parent, {
+          ...anchor,
+          note,
+          ...(extras?.images?.length ? { images: extras.images } : {}),
+          ...(extras?.documents?.length ? { documents: extras.documents } : {}),
+          ...(extras?.skills?.length ? { skills: extras.skills } : {}),
+        });
       } catch (e) {
         show({ state: 'failed', reason: e instanceof Error ? e.message : String(e) });
         return;
@@ -598,6 +696,7 @@ export default function SessionWorkbenchPage() {
 
   const openSession = useCallback(
     (sid: string) => {
+      setCreatingNew(false);
       setWorkbenchSessionId(sid);
       void sessions.reload();
     },
@@ -612,11 +711,15 @@ export default function SessionWorkbenchPage() {
    * `viewerIndex` 指的那一份与清单永远是同一份，不会对错。
    */
   const [filesOpen, setFilesOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalAliveOverride, setTerminalAliveOverride] = useState<boolean | null>(null);
   const sessionFiles = useSessionFiles(selectedId);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  // 换会话：清单与浮窗一起收掉。浮窗里那份是上一场的文件，留在屏幕上就是摆错了。
+  // 换会话：清单、终端与浮窗一起收掉。浮窗里那份是上一场的文件，留在屏幕上就是摆错了。
   useEffect(() => {
     setFilesOpen(false);
+    setTerminalOpen(false);
+    setTerminalAliveOverride(null);
     setViewerIndex(null);
   }, [selectedId]);
   /**
@@ -632,6 +735,13 @@ export default function SessionWorkbenchPage() {
    * 打开那一档时再 `ensure` 一次是留着的兜底：上一次取失败了，点开就重试。
    */
   const { ensure: ensureFiles, reload: reloadFiles } = sessionFiles;
+  const handleSendFileEdit = useCallback(
+    (payload: FileEditSendPayload) => {
+      setDirectSend({ text: payload.text, at: (directSendSeq.current += 1) });
+      reloadFiles();
+    },
+    [reloadFiles]
+  );
   useEffect(() => {
     // `ensure` 本身是稳的，它认哪一场靠的是会话编号——所以这条效应得盯着 `selectedId`
     // 才会在换会话时再跑一趟。
@@ -679,20 +789,38 @@ export default function SessionWorkbenchPage() {
 
   /**
    * 「打开所在目录」：这一下是服务端在**跑 frago 那台机器**上开文件管理器（浏览器自己开不了
-   * 本机目录）。开不了要说出来——没反应时人只会以为按钮坏了。服务端只认这一场自己的工作目录
-   * 与它改过的文件，别处一律拒。
+   * 本机目录）。开不了要说出来——没反应时人只会以为按钮坏了。
+   * 若是从对话链接点开的本机绝对路径（不在会话工作目录或 Write/Edit 清单里），自动回退走
+   * 本机通用 `/api/reveal`。
    */
   const onReveal = useCallback(
     (path: string) => {
       if (!selectedId) return;
-      revealSessionPath(selectedId, path).catch((e: unknown) => {
-        showToast(
-          t('workbench.files.revealFailed', {
-            reason: e instanceof Error ? e.message : String(e),
-          }),
-          'error'
-        );
-      });
+      revealSessionPath(selectedId, path)
+        .catch(async (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            path.startsWith('/') &&
+            typeof fetch === 'function' &&
+            (msg.includes("neither in this session's working directory") ||
+              msg.includes('Refused:') ||
+              msg.includes('403'))
+          ) {
+            const res = await fetch(`/api/reveal?path=${encodeURIComponent(path)}`, {
+              method: 'POST',
+            });
+            if (res.ok) return;
+          }
+          throw err;
+        })
+        .catch((e: unknown) => {
+          showToast(
+            t('workbench.files.revealFailed', {
+              reason: e instanceof Error ? e.message : String(e),
+            }),
+            'error'
+          );
+        });
     },
     [selectedId, showToast, t]
   );
@@ -774,6 +902,7 @@ export default function SessionWorkbenchPage() {
       return;
     }
     bringBackRef.current = { parent: branchParent, child: selectedId, text: reply };
+    setCreatingNew(false);
     setWorkbenchSessionId(branchParent);
   }, [selectedId, branchParent, records, recordsSessionId, setWorkbenchSessionId, showToast, t]);
 
@@ -838,6 +967,7 @@ export default function SessionWorkbenchPage() {
     setHandingOff(true);
     try {
       const pending = await handoffSession(selectedId);
+      setCreatingNew(false);
       setWorkbenchSessionId(null);
       begin(pending, t('workbench.composer.handoffLaunchText', { title: pending.old_title }));
       void sessions.reload();
@@ -934,15 +1064,21 @@ export default function SessionWorkbenchPage() {
     <div data-session-menu-page className="grid h-full min-h-0 w-full flex-1 grid-cols-[288px_minmax(0,1fr)_var(--report-w,228px)] tablet:grid-cols-[288px_minmax(0,1fr)] phone:grid-cols-1"
       style={report.width ? ({ '--report-w': `${report.width}px` } as CSSProperties) : undefined}
     >
-      {/* 手机上一次只放得下一栏：没选会话时给清单，选了就整屏让给记录流。 */}
-      <div className={`min-h-0 min-w-0 ${selectedId || showLaunch ? 'phone:hidden' : ''}`}>
+      {/* 手机上一次只放得下一栏：没选会话时给清单，选了或正在新建时整屏让给中栏。 */}
+      <div className={`min-h-0 min-w-0 ${selectedId || showLaunch || creatingNew ? 'phone:hidden' : ''}`}>
         <SessionRail
           state={sessions}
-          selectedId={selectedId}
-          onSelect={setWorkbenchSessionId}
+          selectedId={creatingNew ? null : selectedId}
+          onSelect={(sid) => {
+            setCreatingNew(false);
+            setWorkbenchSessionId(sid);
+          }}
+          creatingNew={creatingNew}
+          onToggleNew={() => setCreatingNew((v) => !v)}
           launch={launch}
           onDismissLaunch={dismiss}
           onCreated={(pending, text) => {
+            setCreatingNew(false);
             setWorkbenchSessionId(null);
             begin(pending, text);
           }}
@@ -963,9 +1099,21 @@ export default function SessionWorkbenchPage() {
 
       <div
         className={`flex min-h-0 min-w-0 flex-col bg-bg-primary ${
-          selectedId || showLaunch ? '' : 'phone:hidden'
+          selectedId || showLaunch || creatingNew ? '' : 'phone:hidden'
         }`}
       >
+        {creatingNew ? (
+          <NewSessionModal
+            isOpen={creatingNew}
+            onClose={() => setCreatingNew(false)}
+            onCreated={(pending, text) => {
+              setCreatingNew(false);
+              setWorkbenchSessionId(null);
+              begin(pending, text);
+            }}
+          />
+        ) : (
+          <>
         {/* 页头两行：标题独占一行，状态 · 哪家 CLI · 目录另起一行（原型 20260924-page-polish）。
             整条 52px 高、左右 16px，与原型一致。 */}
         <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border-color px-4">
@@ -1041,7 +1189,9 @@ export default function SessionWorkbenchPage() {
               </div>
             ) : (
               <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
-                {showLaunch ? t('workbench.launch.railTitle') : t('workbench.page.title')}
+                {showLaunch
+                  ? launch?.text || t('workbench.launch.railTitle')
+                  : t('workbench.page.title')}
               </h1>
             )}
             {selected ? (
@@ -1081,10 +1231,57 @@ export default function SessionWorkbenchPage() {
                   </>
                 ) : null}
                 <span
+                  data-testid="head-directory"
                   className="min-w-[56px] truncate font-mono"
                   title={t('workbench.page.dirHint', { dir: selected.directory })}
                 >
-                  {withTilde(selected.directory)}
+                  {shortenPathMiddle(withTilde(selected.directory))}
+                </span>
+                {usageText ? (
+                  <>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span
+                      data-testid="head-usage"
+                      title={t('workbench.composer.usageHint')}
+                      className="min-w-0 truncate font-mono text-text-dim"
+                    >
+                      {usageText}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            ) : showLaunch && launch ? (
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+                {launch.phase === 'failed' ? (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-error">
+                    <AlertTriangle size={11} className="shrink-0" />
+                    <span className="truncate">{t('workbench.launch.failedTitle')}</span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                ) : launch.phase === 'claiming' ? (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-text-secondary">
+                    <Loader2 size={10} className="shrink-0 animate-spin" />
+                    <span className="truncate">
+                      {t('workbench.launch.railClaiming', { name: launch.agentName })}
+                    </span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                ) : (
+                  <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-primary">
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary" />
+                    <span className="truncate">
+                      {t('workbench.launch.title', { name: launch.agentName })}
+                    </span>
+                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                  </span>
+                )}
+                <span className="shrink-0 whitespace-nowrap">{launch.agentName}</span>
+                <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                <span
+                  className="min-w-[56px] truncate font-mono"
+                  title={t('workbench.page.dirHint', { dir: launch.cwd })}
+                >
+                  {shortenPathMiddle(withTilde(launch.cwd))}
                 </span>
               </div>
             ) : null}
@@ -1126,7 +1323,14 @@ export default function SessionWorkbenchPage() {
 
         <div className="min-h-0 flex-1">
           {showLaunch && launch ? (
-            <SessionLaunchPanel launch={launch} onDismiss={dismiss} />
+            <SessionLaunchPanel
+              launch={launch}
+              onDismiss={dismiss}
+              onBackToEdit={() => {
+                dismiss();
+                setCreatingNew(true);
+              }}
+            />
           ) : (
             <DecisionCardContext.Provider value={cards.host}>
             <RecordStream
@@ -1147,7 +1351,7 @@ export default function SessionWorkbenchPage() {
                 if (anchor) setPendingQuotes((prev) => [...prev, anchor]);
               }}
               onStack={(anchor, note) => marks.addMark({ kind: 'stack', ...anchor, note })}
-              onBranch={(anchor, note) => void onBranch(anchor, note)}
+              onBranch={(anchor, note, extras) => void onBranch(anchor, note, extras)}
               onOpenBranch={openSession}
               onCloseBranch={(mark) => {
                 if (selectedId && mark.child_session_id) {
@@ -1175,12 +1379,28 @@ export default function SessionWorkbenchPage() {
               /* 还没数出来、而且没出错 → 那一档后面写个省略号。出错就不写：个数出不来是
                  因为有故障，那时该说的是故障，不是「正在数」。 */
               filesPending={sessionFiles.files === null && sessionFiles.error === null}
+              terminalView={
+                <SessionTerminal
+                  sessionId={selectedId}
+                  open={terminalOpen}
+                  onAliveChange={setTerminalAliveOverride}
+                  onStopped={() => {
+                    forYou.refresh();
+                    void sessions.reload();
+                  }}
+                />
+              }
+              terminalOpen={terminalOpen}
+              onTerminalOpenChange={setTerminalOpen}
+              terminalAlive={terminalAliveOverride ?? selectedInTmux}
               usage={usageReadout}
               sessionFiles={sessionFiles.files}
               onRevealFile={onReveal}
               onPackPrompt={(payload) =>
                 setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
               }
+              onSendFileEdit={handleSendFileEdit}
+              observer={observer}
             />
             </DecisionCardContext.Provider>
           )}
@@ -1200,11 +1420,12 @@ export default function SessionWorkbenchPage() {
           family={selected?.family ?? null}
           // 上沿那条线上的小人跟着这一场走：会话在跑、或者刚发出去还没等到 agent 开口，
           // 他就在线上踱步；两样都落下他才坐下。
-          running={selected?.status === 'running' || awaitingAgent}
+          running={sessionRunning}
           onSendStart={cards.onSendStart}
           onSendFailed={cards.onSendFailed}
           onQueued={markQueued}
           answer={cards.answer}
+          directSend={directSend}
           deliveredAt={deliveredAt}
           outbound={outbound}
           trails={trails}
@@ -1216,6 +1437,11 @@ export default function SessionWorkbenchPage() {
           handingOff={handingOff}
           notice={composerNotice}
           onBringBack={canBringBack ? bringBack : undefined}
+          queueItems={sessionQueue.items}
+          queueBlockedByCard={sessionQueue.blockedByCard}
+          onEnqueue={sessionQueue.enqueue}
+          onRemoveQueueItem={sessionQueue.remove}
+          onMoveQueueItem={sessionQueue.move}
           onSent={(outboundId) => {
             void reload();
             void sessions.reload();
@@ -1227,11 +1453,15 @@ export default function SessionWorkbenchPage() {
           }}
         />
         )}
+          </>
+        )}
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
-        {/* 右栏下半是这场会话的暂存列表。没选会话时右栏只有一句说明，不分上下。 */}
+        {/* 右栏只保留这场会话的暂存列表；旁路 AI 定期解读已收进中栏 Watcher 档。 */}
         <ReportPanel
+          stackOnly
+          view={observer}
           sessionId={selectedId}
           width={report.width}
           onWidthChange={report.setWidth}
@@ -1269,6 +1499,7 @@ export default function SessionWorkbenchPage() {
           onPackPrompt={(payload) =>
             setPackedPrompt({ ...payload, at: (packedSeq.current += 1) })
           }
+          onSendFileEdit={handleSendFileEdit}
         />
       ) : null}
 

@@ -5,7 +5,7 @@
 # 第一性原理 — frago 的根本主张，决定一切设计取舍
 - name: frago-principle-os
   category: available
-  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/agy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/apps/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
+  brief: "frago=agent OS；底座内核可换（Claude Code/codex/opencode/agy）；agent 面五支柱 会话伴侣(hook+LightAgent+book)/手和眼(browser/desktop/app[ask决策卡|image图片网格|mermaid图表]/view)/记忆与召回(def/context/session search/todo)/配方(recipe/daemon/market)/边界(agent/channel/remote/schedule)；人面一层（WebUI/客户端/profile/市场/安装）不在 agent 视野"
 
 - name: frago-principle-supreme
   category: must
@@ -30,11 +30,11 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch；三层优先级 默认 > -b cdp（无头/独立实例）> 自起进程（禁止）"
+  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch；三层优先级 默认 > -b cdp（仅限 agent_os：舞台真无头/机位独立实例）> 自起进程（禁止）"
 
 - name: must-browser-fetch
   category: must
-  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch；要无头走 frago browser -b cdp，NEVER 自起 chrome --headless"
+  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch；无条件走默认 frago browser（-b cdp 仅限 agent_os），NEVER 自起 chrome --headless"
 
 - name: must-tool-priority
   category: must
@@ -72,10 +72,6 @@
   category: available
   brief: "browser start：零参数拉起浏览器+扩展桥，Chrome for Testing 是 frago 的默认浏览器（frago 自己下载到 ~/.frago/tools/chrome-for-testing，profile 在 ~/.frago/profiles/cft/extension），没有它才依次退到用户装的 Edge/Chromium 等并用那些浏览器自己的真实 profile；NEVER 传 --browser（换不了浏览器，只会让 profile 目录错位）"
 
-- name: must-no-auto-memory
-  category: must
-  brief: "禁用 Claude Code auto memory，结构化沉淀走 frago <domain> save，忽略 MEMORY.md"
-
 - name: agent-worker-driving
   category: must
   brief: "子任务用 frago agent 驱动 worker：--yes 一轮 / start-send-peek-stop 常驻；禁止手搓 tmux+claude（权限确认卡死+代批被平台拦截）"
@@ -102,7 +98,7 @@
 
 - name: must-output-shape
   category: must
-  brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"
+  brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了（展示图片用 frago app image 渲染网格卡片）、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"
 
 - name: must-diagram-reply
   category: must
@@ -144,7 +140,7 @@
 
 - name: session-search
   category: available
-  brief: "【召回三入口·过程层】当时怎么做的、怎么定的、用户怎么说的：frago session search \"<一句话>\"，模型扩关键词 + ripgrep 扫 ~/.frago/sessions 双库备份（含 Claude 已滚删的老会话）；NEVER 回答「我不记得了」，NEVER 手工 grep 原始会话库（见宪法条目「召回优先」）"
+  brief: "【召回三入口·过程层】当时怎么做的、怎么定的、用户怎么说的：先 frago session search \"<一句话>\" 找会话 id，再 frago session ask <会话id> \"<要提取的问题>\" 让轻量模型单轮提取内容；NEVER 回答「我不记得了」，NEVER 手工 grep、直接 Read 或写 python 读会话 .jsonl（见宪法条目「召回优先」）"
 
 - name: recipe-execution
   category: available

@@ -48,7 +48,7 @@ description: A test skill
         assert result[0]["name"] == "test-skill"
         assert result[0]["description"] == "A test skill"
         assert result[0]["file_path"].endswith(".frago/skills/test-skill/SKILL.md")
-        assert result[0]["agents"] == ["claude-code", "opencode"]
+        assert result[0]["agents"] == ["claude-code", "opencode", "coreagent"]
 
     def test_uses_dir_name_as_fallback(self, mock_home):
         """Should use directory name if SKILL.md has no frontmatter."""

@@ -1,10 +1,10 @@
 [project]
 name = "frago-cli"
-version = "1.4.268"
+version = "1.5.8"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
-license = {text = "AGPL-3.0-or-later"}
+license = {text = "MIT"}
 authors = [
     {name = "Jamey Tsai", email = "caijia@frago.ai"}
 ]
@@ -12,7 +12,7 @@ keywords = ["agent-os", "ai-agent", "automation", "cdp", "browser", "recipe"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
@@ -58,6 +58,8 @@ dependencies = [
     # 必装，不是可选：装完 frago 就该能说话，不许让用户事后自己补装。
     # 7.2.8 起按恒定码率算时长，与 voice.py 的时长算法一致。
     "edge-tts>=7.2.8",
+    # 内置 Excel 工作簿原位读写（frago app xlsx），配合 pillow 保证带图表格往返不丢图。
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]

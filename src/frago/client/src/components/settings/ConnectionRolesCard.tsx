@@ -33,7 +33,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layers } from 'lucide-react';
+import { List, AlertTriangle } from 'lucide-react';
 import { bindRole } from '@/api';
 import type { ConnectionRole, ProfileItem, RoleBinding } from '@/api';
 
@@ -42,12 +42,13 @@ interface ConnectionRolesCardProps {
   bindings: RoleBinding[];
   /** agent_type → display name, so the rows read "Antigravity CLI", not "agy". */
   coreNames: Record<string, string>;
+  profileCount?: number;
   onManageProfiles: () => void;
   /** Reload after a binding lands: every row and the cards below read this data. */
   onBindingChanged: () => void;
 }
 
-const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'coreagent', 'lightagent', 'observer'];
+const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'lightagent', 'observer', 'coreagent'];
 
 /** The roles frago-core asks the model for. */
 const FRAGO_CORE_ROLES: ReadonlySet<ConnectionRole> = new Set<ConnectionRole>([
@@ -77,6 +78,7 @@ export default function ConnectionRolesCard({
   connections,
   bindings,
   coreNames,
+  profileCount,
   onManageProfiles,
   onBindingChanged,
 }: ConnectionRolesCardProps) {
@@ -164,90 +166,78 @@ export default function ConnectionRolesCard({
   };
 
   return (
-    <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border-color)] p-4">
-      <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3">
-        {t('settings.connections.title')}
-      </h3>
-
-      {/* One row per role: what it is on the left, the picker on the right —
-          the shape every other settings row on this page already has. Nothing
-          here carries an accent colour: every row is simply the state things
-          are in, and the page reserves colour for the states that need someone
-          to act. */}
-      <div className="mb-4">
-        {ROLE_ORDER.map((role, index) => {
-          const binding = bindings.find((b) => b.role === role);
-          if (!binding) return null;
-          const fragoCore = FRAGO_CORE_ROLES.has(role);
-          const rowDetail = detail(binding);
-          const roleName = t(ROLE_TEXT[role].name);
-          // The frago-core rows have no subscription to show; their empty value
-          // is "unbound", and picking it unbinds.
-          const value = fragoCore ? (binding.profile_id ?? '') : (binding.profile_id ?? 'official');
-          const options = fragoCore ? connections.filter((c) => c.kind !== 'official') : connections;
-
-          return (
-            <div
-              key={role}
-              className={`flex items-center justify-between gap-4 py-2 ${
-                index > 0 ? 'border-t border-[var(--border-color)] pt-3 mt-1' : ''
-              }`}
-            >
-              <div className="min-w-0">
-                <div className="text-sm text-[var(--text-primary)]">{roleName}</div>
-                <div className="text-xs text-[var(--text-secondary)] mt-0.5">
-                  {t(ROLE_TEXT[role].hint)}
-                </div>
-                {rowDetail && (
-                  <div className="text-xs text-[var(--text-muted)] mt-0.5">{rowDetail}</div>
-                )}
-                {busyRole === role && (
-                  <div className="text-xs text-[var(--text-muted)] mt-0.5">
-                    {t('settings.connections.switching')}
-                  </div>
-                )}
-              </div>
-              <select
-                className="shrink-0 max-w-[50%] px-3 py-1.5 rounded-md bg-[var(--bg-subtle)] border border-[var(--border-color)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
-                value={value}
-                disabled={busyRole !== null}
-                onChange={(e) => handleBind(role, e.target.value)}
-                aria-label={roleName}
-              >
-                {fragoCore && (
-                  <option value="">
-                    {role === 'observer'
-                      ? t('settings.connections.observerOff')
-                      : t('settings.connections.followDefault')}
-                  </option>
-                )}
-                {options.map((connection) => {
-                  const blocked = blockedReason(role, connection);
-                  return (
-                    <option key={connection.id} value={connection.id} disabled={blocked !== null}>
-                      {label(connection)}
-                      {blocked ? ` — ${blocked}` : ''}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          );
-        })}
-      </div>
-
+    <>
       {error && (
-        <p className="text-xs text-[var(--accent-error)] mb-3">{error}</p>
+        <div className="salert err">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
       )}
+      <div className="s-card">
+        <div className="ssec">
+          <div className="ssec-h">
+            <h3>{t('settings.connections.title')}</h3>
+            <button
+              type="button"
+              onClick={onManageProfiles}
+              className="btn btn-sm"
+            >
+              <List size={13} />
+              {t('settings.general.manageProfiles')}
+              {profileCount !== undefined ? ` (${profileCount})` : ''}
+            </button>
+          </div>
 
-      <button
-        type="button"
-        onClick={onManageProfiles}
-        className="btn btn-ghost btn-sm flex items-center gap-1"
-      >
-        <Layers size={16} />
-        {t('settings.general.manageProfiles')}
-      </button>
-    </div>
+          {ROLE_ORDER.map((role) => {
+            const binding = bindings.find((b) => b.role === role);
+            if (!binding) return null;
+            const fragoCore = FRAGO_CORE_ROLES.has(role);
+            const rowDetail = detail(binding);
+            const roleName = t(ROLE_TEXT[role].name);
+            // The frago-core rows have no subscription to show; their empty value
+            // is "unbound", and picking it unbinds.
+            const value = fragoCore ? (binding.profile_id ?? '') : (binding.profile_id ?? 'official');
+            const options = fragoCore ? connections.filter((c) => c.kind !== 'official') : connections;
+
+            return (
+              <div key={role} className="srow">
+                <div className="l">
+                  <div className="t">{roleName}</div>
+                  <div className="d">{t(ROLE_TEXT[role].hint)}</div>
+                  {rowDetail && <div className="m">{rowDetail}</div>}
+                  {busyRole === role && (
+                    <div className="m">{t('settings.connections.switching')}</div>
+                  )}
+                </div>
+                <select
+                  className="sselect"
+                  value={value}
+                  disabled={busyRole !== null}
+                  onChange={(e) => handleBind(role, e.target.value)}
+                  aria-label={roleName}
+                >
+                  {fragoCore && (
+                    <option value="">
+                      {role === 'observer'
+                        ? t('settings.connections.observerOff')
+                        : t('settings.connections.followDefault')}
+                    </option>
+                  )}
+                  {options.map((connection) => {
+                    const blocked = blockedReason(role, connection);
+                    return (
+                      <option key={connection.id} value={connection.id} disabled={blocked !== null}>
+                        {label(connection)}
+                        {blocked ? ` — ${blocked}` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
   );
 }

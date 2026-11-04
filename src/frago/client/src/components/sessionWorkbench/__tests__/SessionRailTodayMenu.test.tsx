@@ -30,6 +30,16 @@ vi.mock('@/hooks/useSessionPins', () => ({
   }),
 }));
 
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({
+    data,
+    itemContent,
+  }: {
+    data: unknown[];
+    itemContent: (index: number, row: unknown) => React.ReactNode;
+  }) => <div>{(data ?? []).map((row, i) => <div key={i}>{itemContent(i, row)}</div>)}</div>,
+}));
+
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
 const OTHER = 'ses_058288655ffeYMxYC1AZKCcv56';
 
@@ -190,5 +200,62 @@ describe('卡片「…」菜单里的「从今天移出」', () => {
     );
     fireEvent.click(screen.getByTestId('session-menu-button'));
     expect(screen.queryByTestId('session-menu-remove-today')).toBeNull();
+  });
+
+  it('主会话或 branched 会话任意一方加入 Today，整个上下文组在「今天捡回」里合为一整个 group 显示', () => {
+    const MAIN = 'main-sess-01';
+    const WORKER = 'worker-sess-01';
+    const BRANCH = 'branch-sess-01';
+    const rows = [
+      session(MAIN, { title: '主线会话：日历迭代' }),
+      session(WORKER, {
+        title: '后台 worker 会话',
+        origin: 'worker',
+        parent_session_id: MAIN,
+      }),
+      session(BRANCH, {
+        title: '分支会话：时间轴样式',
+        parent_session_id: MAIN,
+        relation: { kind: 'branch', closed: false },
+      }),
+    ];
+
+    // 仅将 branched 会话加入 Today，主会话与 worker 也应作为一个整体 group 出现在「今天捡回」区
+    render(
+      <TestRail
+        state={railState(rows)}
+        selectedId={null}
+        onSelect={() => {}}
+        today={fakeToday([BRANCH])}
+      />
+    );
+
+    const header = screen.getByTestId('picked-header');
+    expect(header.textContent).toContain('今天捡回');
+    expect(header.textContent).toContain('1');
+
+    const items = screen.getAllByTestId('session-item');
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain('主线会话：日历迭代');
+    expect(items[1].textContent).toContain('分支会话：时间轴样式');
+
+    // 主会话与分支会话包在同一个 branchPos 容器（group）内
+    const branchPosOf = (el: HTMLElement) =>
+      el.closest('[data-branch-pos]')?.getAttribute('data-branch-pos') ?? null;
+    expect(branchPosOf(items[0])).toBe('head');
+    expect(branchPosOf(items[1])).toBe('tail');
+
+    // 主会话带着折叠的 worker（点击可展开进同一 group）
+    expect(screen.getByTestId('toggle-workers').textContent).toBe('1');
+    fireEvent.click(screen.getByTestId('toggle-workers'));
+    const expandedItems = screen.getAllByTestId('session-item');
+    expect(expandedItems).toHaveLength(3);
+    expect(expandedItems.map(branchPosOf)).toEqual(['head', 'mid', 'tail']);
+
+    // 在主会话的「…」菜单点「从今天放下」也能把整组一起放下
+    const menuButtons = screen.getAllByTestId('session-menu-button');
+    fireEvent.click(menuButtons[0]);
+    fireEvent.click(screen.getByTestId('session-menu-remove-today'));
+    expect(toggle).toHaveBeenCalledWith(BRANCH);
   });
 });

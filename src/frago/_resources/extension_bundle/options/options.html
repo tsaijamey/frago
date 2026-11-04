@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>frago bridge — 代理与直连域名设置</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --card-bg: #ffffff;
+      --border: #dfe3e8;
+      --text: #1f2328;
+      --muted: #59636e;
+      --primary: #1f6feb;
+      --primary-hover: #1a5fd0;
+      --active-bg: #eef6ff;
+      --active-border: #9ec5fe;
+      --active-text: #0a3622;
+      --inactive-bg: #f3f4f6;
+      --inactive-border: #d0d7de;
+      --danger-bg: #fff5f5;
+      --danger-border: #f1aeb5;
+      --danger-text: #842029;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 36px 20px;
+      font: 14px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin: 0;
+      font-size: 13px;
+    }
+    .status-banner {
+      padding: 14px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--inactive-border);
+      background: var(--inactive-bg);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .status-banner.is-active {
+      background: var(--active-bg);
+      border-color: var(--active-border);
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #e5e7eb;
+      color: #374151;
+    }
+    .status-banner.is-active .status-badge {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 2px rgba(31, 35, 40, 0.04);
+      transition: opacity 0.15s ease, background-color 0.15s ease;
+    }
+    .card.is-muted {
+      background: #fafbfc;
+      opacity: 0.72;
+    }
+    .field-label {
+      display: block;
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .field-hint {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 0 0 12px;
+    }
+    .input-row {
+      display: flex;
+      gap: 8px;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      padding: 9px 12px;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+    }
+    input[type="text"]:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.15);
+    }
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+    }
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f0f4f9;
+      border: 1px solid #d0d7de;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .chip button {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .chip button:hover {
+      color: var(--danger-text);
+    }
+    .builtin-box {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f6f8fa;
+      border: 1px solid #eaeef2;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .builtin-box code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #eaeef2;
+      padding: 1px 5px;
+      border-radius: 4px;
+      margin-right: 4px;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .btn {
+      padding: 9px 16px;
+      border-radius: 8px;
+      font: 600 13px system-ui, sans-serif;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:hover {
+      background: #f3f4f6;
+    }
+    .btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+    .toast {
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      display: none;
+    }
+    .toast.is-visible {
+      display: inline-block;
+    }
+    .toast.is-ok {
+      background: #e6f4ea;
+      border: 1px solid #a8dab5;
+      color: #137333;
+    }
+    .toast.is-err {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      color: var(--danger-text);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>frago bridge 代理与直连域名设置</h1>
+      <p class="subtitle">填写代理地址即启用代理；留空则全部流量直连，一切代理与直连域名规则均不生效。</p>
+    </header>
+
+    <div id="status-banner" class="status-banner">
+      <div>
+        <strong id="status-title">当前未启用代理</strong>
+        <div id="status-detail" class="subtitle">未填写代理地址，浏览器所有请求直连。</div>
+      </div>
+      <span id="status-badge" class="status-badge">不生效</span>
+    </div>
+
+    <section class="card">
+      <label class="field-label" for="proxy-url">代理服务器地址</label>
+      <p class="field-hint">
+        支持 <code>http://host:port</code>、<code>https://host:port</code>、<code>socks5://host:port</code>（不写协议默认按 <code>http://</code> 处理）。留空保存即关闭代理。
+      </p>
+      <div class="input-row">
+        <input
+          id="proxy-url"
+          type="text"
+          placeholder="例如 127.0.0.1:7890 或 socks5://127.0.0.1:1080（留空则不生效）"
+          spellcheck="false"
+        >
+        <button id="clear-proxy-btn" class="btn" type="button">清空地址</button>
+      </div>
+    </section>
+
+    <section id="bypass-card" class="card is-muted">
+      <label class="field-label" for="bypass-domains">强制不通过代理的域名列表</label>
+      <p id="bypass-hint" class="field-hint">
+        仅在上方填写了代理服务器地址时生效。每行一个域名或通配符（例如 <code>*.lenovo.com</code>、<code>ccopyright.com.cn</code>）。
+      </p>
+
+      <div class="input-row" style="margin-bottom: 10px;">
+        <input
+          id="quick-domain"
+          type="text"
+          placeholder="输入要直连的域名（如 *.lenovo.com 或 ccopyright.com.cn）按回车添加"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <button id="add-domain-btn" class="btn" type="button">添加域名</button>
+      </div>
+
+      <div id="domain-chips" class="chip-list"></div>
+
+      <textarea
+        id="bypass-domains"
+        placeholder="*.lenovo.com&#10;ccopyright.com.cn"
+        spellcheck="false"
+      ></textarea>
+
+      <div class="builtin-box">
+        <div><strong>内置默认直连（启用代理时自动包含，无需重复填写）：</strong></div>
+        <div id="builtin-list" style="margin-top: 4px;"></div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="save-btn" class="btn btn-primary" type="button">保存并立即生效</button>
+      <span id="toast" class="toast" role="status"></span>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

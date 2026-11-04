@@ -11,7 +11,7 @@ frago drives Chromium-based browsers through two backends:
   `-b cdp`. This is the fallback when the default backend cannot do the
   job: true headless, a dedicated instance that must not disturb the
   standing browser (e.g. the `agent_os` screen-record rig), or
-  `--void` / `--app` / `--profile-dir` startup shapes. CDP ports are
+  `--headless` / `--app` / `--profile-dir` startup shapes. CDP ports are
   whitelisted to **9222** (default) and **9223** (the agent_os recorder).
 
 The order is fixed: **default extension > `-b cdp` > launching a browser
@@ -28,7 +28,8 @@ Full command reference and anti-bot guidance live in the built-in books:
 
 | Browser | Support | Notes |
 |---------|---------|-------|
-| **Edge** | ✅ Default | Picked first when installed (Stable > Beta > Dev) |
+| **Chrome for Testing** | ✅ Default | frago's own download at `~/.frago/tools/chrome-for-testing/`; fetched on demand |
+| **Edge** | ✅ | Stable > Beta > Dev; taken when frago has no CfT of its own |
 | **Chromium** | ✅ | Open-source base |
 | **Chrome** | ✅ (non-Stable) | Beta/Dev/Canary; Stable is excluded (v137+ silently ignores `--load-extension`) |
 | **Brave / Vivaldi** | ✅ | Also auto-detectable |
@@ -36,26 +37,40 @@ Full command reference and anti-bot guidance live in the built-in books:
 | **Safari** | ❌ None | No CDP support |
 
 The picker takes the first installed browser in this fixed order:
-Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev →
-Chrome Canary → Brave → Vivaldi.
+Chrome for Testing → Edge Stable → Edge Beta → Edge Dev → Chromium →
+Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi. Everything
+after Chrome for Testing is a browser the user installed, reached only when
+frago has none of its own — and in that case `start` fetches Chrome for
+Testing first and falls back to that list only if the fetch fails. The CDP
+backend keeps its own shorter order, Edge → Chromium → Chrome; there Chrome
+for Testing is reachable only by name (`--browser cft`).
 
-**`--browser` means different things per backend.** Under the extension
-backend it does not change which browser launches — it only redirects the
-profile directory. Under `-b cdp` it switches the browser for real, and the
-profile path follows along (`--browser chrome` →
-`~/.frago/profiles/chrome/9222/`). frago itself only ever pins `--browser`
-when the agent_os stage brings up its actor and recorder (`edge`); anywhere
-else, let the picker choose.
+**`--browser` belongs to the CDP backend.** Under the default extension
+backend it is refused outright: it cannot change which binary launches (the
+picker decides), so all it could do is point the profile directory at another
+brand and drive one browser against another browser's profile — `--browser
+chrome` being the worst case, that being the person's everyday Chrome
+profile. Under `-b cdp` it really switches the browser, accepts `chrome` /
+`edge` / `chromium` / `cft`, and the profile path follows along (`--browser
+chrome` → `~/.frago/profiles/chrome/9222/`). frago itself pins it in exactly
+one place: the agent_os stage bringing up its actor and recorder, with
+`cft`. Everywhere else, let the picker choose.
 
 ## Browser Detection
 
 ```bash
-# List installed browsers and which one frago would pick
+# Installed browsers and their paths. Its "default" line follows the CDP
+# order (Edge → Chromium → Chrome), not what `start` would pick.
 frago browser detect
 
-# Per-browser capability + running status
+# Per-browser backend support, running status, and the browser `start`
+# would actually pick — Chrome for Testing included.
 frago browser check
 ```
+
+`detect` carries a second meaning: with `--group` it probes that group's
+current page for anti-bot challenges (extension backend only) — see
+[Anti-Bot](#anti-bot).
 
 ## Browser Lifecycle
 
@@ -68,34 +83,54 @@ frago browser status
 
 # Stop browser + daemon + socket
 frago browser stop
+
+# Fetch frago's own browser ahead of time, or upgrade it with --force
+frago browser install
 ```
 
-`start` runs the whole chain: pick browser → launch native-messaging
-daemon → write manifest → launch browser with the extension → wait for the
-bridge handshake. No manual preparation needed.
+`start` runs the whole chain: fetch Chrome for Testing if the machine has none
+yet → pick browser → launch native-messaging daemon → write manifest → launch
+browser with the extension → wait for the bridge handshake. No manual
+preparation needed.
 
 The browser runs on its **own default profile** (logins, saved passwords and
-cookies are visible to the agent, and vice versa). One instance per profile —
-if `start` hits a lock it errors and tells you to `stop` first.
+cookies are visible to the agent, and vice versa). Chrome for Testing has no
+vendor profile to use, so frago owns one for it at
+`~/.frago/profiles/cft/extension/` — still one real profile, nothing copied
+or branched. One instance per profile — if `start` hits a live lock it errors
+and tells you to `stop` first.
 
 ### CDP-only launch options
 
-`--headless`, `--void`, `--app/--app-url`, `--width`, `--height`, `--port`,
-`--profile-dir`, `--no-kill`, `--keep-alive` and `--reseed-profile` are
-**CDP-backend options**. Under the default extension backend they are silently
-dropped. To use them, select CDP explicitly:
+`--headless`, `--width`, `--height`, `--window-x`, `--window-y`, `--port`,
+`--profile-dir`, `--no-kill` and `--keep-alive` are **CDP-backend options**.
+Under the default extension backend they are silently dropped. To use them,
+select CDP explicitly:
 
 ```bash
-frago browser -b cdp start --headless          # headless CDP instance (port 9222)
-frago browser -b cdp start --void --keep-alive # off-screen, keep running
+frago browser -b cdp start --headless   # headless CDP instance (port 9222)
 ```
+
+Two footnotes on that option set:
+
+- `--void` is gone (removed 2026-08-23). It only parked the window at
+  -32000,-32000, which macOS honours for the first window a process opens and
+  nothing after it, so the window came back on screen. Passing it now fails
+  with that explanation; pick an ordinary window (real GPU/WebGL) or
+  `--headless` (no window, no WebGL).
+- `--reseed-profile` is obsolete and ignored: the default backend drives the
+  browser's own profile, so there is nothing left to re-seed.
+
+`--app` / `--app-url` are the exception — **both backends honour them**, and
+the browser opens that page as a borderless app window instead of a blank tab.
 
 CDP ports are whitelisted to **9222** (default) and **9223** (the agent_os
 recorder). Any other value is rejected; never invent ports. **9222 is
 shared**: while the virtual desktop stage is running, its actor lives on
-that port to reuse the seeded login profile — and `-b cdp start` replaces
-whatever is already there unless you pass `--no-kill`. Check
-`frago desktop status` before starting (see `frago book browser-backend-choice`).
+that port, working out of the same `~/.frago/profiles/cft/9222/` profile —
+and `-b cdp start` kills whatever is already there unless you pass
+`--no-kill`. Check `frago desktop status` before starting (see
+`frago book browser-backend-choice`).
 
 ## Tab Groups
 
@@ -146,6 +181,10 @@ frago browser navigate https://example.com --group research --wait-for '.content
 frago browser wait --group research 2
 ```
 
+`--wait-for` is CDP-only. The default backend returns as soon as the tab
+reports loaded, dropping the selector wait — poll for the selector yourself
+with `exec-js ... --return-value` if the page needs it to exist first.
+
 ### Element Interaction
 
 ```bash
@@ -178,6 +217,9 @@ frago browser screenshot --group research output.png
 # Full-page screenshot
 frago browser screenshot --group research page.png --full-page --quality 90
 ```
+
+`--full-page` and `--quality` are CDP-only too: the default backend always
+captures the current viewport as a PNG and ignores both.
 
 ### Scrolling
 
@@ -240,10 +282,16 @@ frago browser clear-effects --group research
 ## Profile Management
 
 - **extension backend** — uses the browser's own default profile. frago does
-  not copy, isolate or clean it.
+  not copy, isolate or clean it. Chrome for Testing is the one browser with no
+  vendor profile: frago keeps its profile at
+  `~/.frago/profiles/cft/extension/`.
 - **cdp backend** — uses a dedicated profile per browser per port:
   `~/.frago/profiles/<browser>/<port>/` (e.g. `~/.frago/profiles/edge/9222`),
-  seeded from the system browser profile. Port is always explicit in the path.
+  seeded once from that browser's system profile — the first launch copies
+  the tree, later launches leave it alone. Port is always explicit in the
+  path. Chrome for Testing has no system profile to seed from, so
+  `~/.frago/profiles/cft/<port>/` starts empty and its logins are made there
+  once.
 
 ```bash
 # CDP instance against a custom profile (port stays 9222)
@@ -256,12 +304,22 @@ frago browser -b cdp start --profile-dir /path/to/custom/profile
 browser tab, and a local image) used by the `agent_os` workflow to record
 replays. It owns both CDP ports while it is up:
 
-- **9222** — the stage **actor**, a headless Edge whose profile was seeded
-  from your real Edge logins. It is the same instance a standalone
-  `frago browser -b cdp start` would target, so do not start or stop a CDP
-  instance while the stage is running.
-- **9223** — the **recorder**, created when the camera comes up (`camera up`
-  or `rec start`) and torn down by `rec stop` / `camera down`.
+- **9222** — the stage **actor**, a headless Chrome for Testing browser
+  working out of `~/.frago/profiles/cft/9222/`. That profile is frago's own,
+  not seeded from anyone's Edge or Chrome. It is the same instance a
+  standalone `frago browser -b cdp start` would target, so do not start or
+  stop a CDP instance while the stage is running.
+- **9223** — the **recorder**, also Chrome for Testing, created when the
+  camera comes up (`camera up` or `rec start`) and torn down by `rec stop` /
+  `camera down`.
+
+Both are Chrome for Testing and nothing else. When the machine has none, the
+stage fetches it on the spot; when that fetch fails the stage does not come up
+at all, rather than occupying the Edge or Chrome a person browses with. It
+also puts up a visible Chrome for Testing window (app window, through the
+extension backend) before the headless pair starts: macOS hands icon clicks
+to whichever instance of an app registered first, so a headless one first
+would leave a person clicking the icon and seeing nothing.
 
 Always check first: `frago desktop status`. Full usage lives in
 `frago book desktop-usage`.
@@ -283,17 +341,27 @@ three-tier handling.
 
 ### Linux
 
-- Wayland sessions automatically use XWayland for void mode.
-- Root user automatically disables sandbox (`--no-sandbox`).
+- The sandbox is disabled (`--no-sandbox`) automatically when running as
+  root, and on Ubuntu 23.10+ when AppArmor blocks unprivileged user
+  namespaces for a binary with no AppArmor profile — the usual case for
+  Chrome for Testing unpacked under `~/.frago/tools/`. `FRAGO_NO_SANDBOX=1`
+  forces it.
+- Chrome for Testing may need system libraries (e.g. `libnss3`,
+  `libatk-1.0-0`) that a desktop install already has. When they are missing,
+  the fetch reports which library and the command that installs it; that
+  install needs sudo and frago does not do it for you.
 
 ### Windows
 
 - Browser detection includes a registry lookup for non-standard installations.
-- Edge is pre-installed on Windows 10/11.
+- Edge is pre-installed on Windows 10/11, which makes it the first fallback
+  when Chrome for Testing cannot be fetched.
 
 ### macOS
 
 - Browsers are detected in `/Applications/`.
+- Chrome for Testing is not in `/Applications/` — it lives under
+  `~/.frago/tools/chrome-for-testing/`, not registered as a system browser.
 - Edge may need manual installation.
 
 ## Troubleshooting
@@ -301,9 +369,12 @@ three-tier handling.
 ### Browser Not Found
 
 ```bash
-# Check available browsers and what would be picked
-frago browser detect
+# What `start` would pick, and what else is installed
 frago browser check
+frago browser detect
+
+# No Chrome for Testing on this machine yet — fetch frago's own browser
+frago browser install
 
 # Verify browser binary is in PATH
 which microsoft-edge
@@ -337,8 +408,9 @@ frago browser -b cdp start
 
 ### Permission Denied (Linux)
 
-Running as root requires disabling the sandbox — frago handles this
-automatically, but you can set it explicitly:
+Running as root, or on a kernel where AppArmor blocks unprivileged user
+namespaces for a binary without an AppArmor profile, requires disabling the
+sandbox — frago handles both cases automatically, but you can force it:
 
 ```bash
 export FRAGO_NO_SANDBOX=1

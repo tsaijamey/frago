@@ -37,21 +37,38 @@ frago session search "<一句话>" --terms "a,b"  # 你自己给关键词，跳�
 frago session search "<一句话>" --json         # 机器可读
 ```
 
-模型扩展要起一轮子会话，几十秒量级。**已经知道该搜哪几个字面量时用 `--terms` 直接给**，省掉这一轮。心里没数、只有一句话时才让模型扩。
+模型扩展默认走 `frago-core --mode chat --as-role lightagent` 单轮无状态模式（几秒量级，不起子会话、不落新会话文件）。**已经知道该搜哪几个字面量时用 `--terms` 直接给**，省掉这一轮。心里没数、只有一句话时才让模型扩。
 
 扩展那一轮失败、超时或输出格式不对时，命令自动退回按原句切词继续搜，并在输出里写明这次是退回来的——NEVER 因为扩展没跑成就整条命令失败。
 
+## 提取会话内容：frago session ask
+
+找到目标会话 id（或拿到现成的会话 id）后，**NEVER 直接 `Read` 那个 `raw.jsonl` 文件，也 NEVER 写 `uv run python` / `jq` / `cat` 切片硬读**——原始会话文件动辄数兆到数十兆，直接读会把大量原始工具输出塞进主会话上下文。
+
+一律用 `frago session ask` 让轻量模型单轮读取并提炼你要的结论：
+
+```bash
+frago session ask <会话id或前8位> "<你要提取的具体问题或结论>"
+frago session ask 32c0bb7a "提取最后一条结论记录并脱敏连接串" --tail 20
+frago session ask a1d5f9f8 "第 450 至 520 条记录中引用的 32c0bb7a 历史结论是什么" --range 450:520
+frago session ask 32c0bb7a "当时报错原因和最终修复命令是什么" --grep "error,fix"
+```
+
+- **位置参数**：第一个是 `<session_id>`（支持完整 UUID 或前 8 位唯一前缀），第二个是一句自然语言问句 `"<question>"`。
+- **可选范围参数**：`--range <起:止>`（按 1-based 记录序号切片，问句里写「第 450 至 520 条」也会自动识别）、`--tail <N>`（只看末尾 N 条有效记录）、`--grep "<词1,词2>"`（按字面量筛记录并带前后 2 条上下文）。
+- **底层机制**：代码层自动剥离 `<frago-employee>`、`<must-use-skill>` 与超长噪音并对连接串/密钥脱敏，再通过标准输入交给 `frago-core --mode chat --as-role lightagent` 单轮作答（不调 `frago agent`、不起 tmux、不落会话文件）。
+
 ## 读结果
 
-每一场命中给出：来源（claude / opencode / codex）、会话 id、标题、命中了哪几个词、命中记录数、最后活动时刻、工作目录、原始文件路径，以及几段命中处的上下文。
+每一场命中给出：来源（claude / opencode / codex / coreagent / agy）、会话 id、标题、命中了哪几个词、命中记录数、最后活动时刻、工作目录、原始文件路径、单轮提取命令模板，以及几段命中处的上下文。
 
-还给一条可直接执行的续接命令（`claude --resume <id>`、`opencode -s <id>` 或 `codex resume <id>`）。要看全貌就续接过去，或者直接 Read 那个原始文件。
+还给一条可直接执行的续接命令（`claude --resume <id>`、`opencode -s <id>` 或 `codex resume <id>`）。要把整场会话接过来继续聊才用续接命令；**只提取某段结论、某次查询输出或某个决定依据，一律跑 `frago session ask <id> "<问句>"`**。
 
 记录数带 `+` 号（如 `40+`）表示该会话触到了每文件的计数上限，实际命中只多不少——那是"数到这就不数了"，不是"总共就这些"。
 
 最后活动时刻取自记录自己带的时间戳（claude 与 codex 是 `timestamp`，opencode 是 `time`），不是文件的修改时间——备份文件的 mtime 是"什么时候备的"，批量回填过的一整批都是同一个时刻，拿它当会话时间会全错。极少数只有元数据记录的空壳会话文件里根本没有时间，给了 `--days` 时它们被排除并在告警里报数。
 
-那 7000 多场已从 `~/.claude/projects` 滚删的会话，`claude --resume` 接不回去——直接 Read 结果里给的原始文件路径。
+那些已从 `~/.claude/projects` 滚删的归档会话，`claude --resume` 接不回去——直接用 `frago session ask <id> "<问句>"` 从备份库提取内容。
 
 ## 什么时候用
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -121,6 +121,12 @@ class SessionCard:
     """这场会话作为子会话的那层关系：种类（派活 / 分支 / 交接）与收口没有。不是任何会话的
     子会话时为空。判据见 :mod:`frago.session.session_origin`「关系种类」。"""
 
+    last_kind: str | None = None
+    """末条实质记录的形态（如 tool.call / user.say / agent.say）。"""
+
+    employee_id: str | None = None
+    """由员工岗位入口发起时对应的岗位编号（如 ``stock``）；普通会话为 ``None``。"""
+
 
 def detect_family(session_id: str) -> RecordFamily:
     """判出这个会话编号属于哪一家。
@@ -144,6 +150,8 @@ def detect_family(session_id: str) -> RecordFamily:
     默认一家会让别家的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
     """
     sid = session_id.strip()
+    if not sid:
+        raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
     if sid.startswith(_OPENCODE_SESSION_PREFIX):
         return "opencode"
     if sid.startswith(coreagent_store.SESSION_ID_PREFIX):
@@ -156,6 +164,8 @@ def detect_family(session_id: str) -> RecordFamily:
         if _is_agy_session(sid):
             return "agy"
         return "claude-code"
+    if _is_coreagent_session(sid):
+        return "coreagent"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
 
 
@@ -218,7 +228,9 @@ def _digests(status: SessionStatus, tail: TailSignals) -> tuple[str | None, str 
     return tail.digest_done, (tail.error_message if status == "error" else None)
 
 
-def _claude_cards(origins: OriginIndex) -> list[SessionCard]:
+def _claude_cards(
+    origins: OriginIndex, liveness: Mapping[str, bool] | None = None
+) -> list[SessionCard]:
     """Claude Code 那一侧的会话卡片。
 
     标题按「人定的 > 模型起的 > CLI 分配的 > 开口第一句 > 会话编号」依次退让，取到
@@ -239,7 +251,8 @@ def _claude_cards(origins: OriginIndex) -> list[SessionCard]:
             continue
         last_active = _ms(row.last_active_ts) or 0
         created = _ms(row.first_ts)
-        status = derive_status(row.tail.last_kind, row.last_active_ts, now)
+        alive = liveness.get(sid) if liveness is not None else None
+        status = derive_status(row.tail.last_kind, row.last_active_ts, now, alive=alive)
         digest_done, digest_stuck = _digests(status, row.tail)
         title = (
             row.custom_title
@@ -267,12 +280,16 @@ def _claude_cards(origins: OriginIndex) -> list[SessionCard]:
                 origin=origins.origin_of(sid),
                 parent_session_id=origins.parent_of(sid),
                 relation=origins.relation_of(sid),
+                last_kind=row.tail.last_kind,
+                employee_id=row.employee_id,
             )
         )
     return cards
 
 
-def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
+def _coreagent_cards(
+    origins: OriginIndex, liveness: Mapping[str, bool] | None = None
+) -> list[SessionCard]:
     """CoreAgent 那一侧的会话卡片。
 
     字段全部走 Claude Code 那条路径——记录的形状就是那一套，只是根目录换成 CoreAgent
@@ -294,7 +311,8 @@ def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
             continue
         last_active = _ms(row.last_active_ts) or 0
         created = _ms(row.first_ts)
-        status = derive_status(row.tail.last_kind, row.last_active_ts, now)
+        alive = liveness.get(sid) if liveness is not None else None
+        status = derive_status(row.tail.last_kind, row.last_active_ts, now, alive=alive)
         digest_done, digest_stuck = _digests(status, row.tail)
         cards.append(
             SessionCard(
@@ -312,12 +330,16 @@ def _coreagent_cards(origins: OriginIndex) -> list[SessionCard]:
                 origin=origins.origin_of(sid),
                 parent_session_id=origins.parent_of(sid),
                 relation=origins.relation_of(sid),
+                last_kind=row.tail.last_kind,
+                employee_id=row.employee_id,
             )
         )
     return cards
 
 
-def _opencode_cards(origins: OriginIndex) -> list[SessionCard]:
+def _opencode_cards(
+    origins: OriginIndex, liveness: Mapping[str, bool] | None = None
+) -> list[SessionCard]:
     """opencode 那一侧的会话卡片。时刻本来就是毫秒，直接照抄。
 
     状态与摘要跟 Claude Code 那侧共用同一套判据（``session_index``），只是这一家的失效
@@ -331,13 +353,15 @@ def _opencode_cards(origins: OriginIndex) -> list[SessionCard]:
         tail = tails.get(row.session_id, TailSignals())
         # 这一家的时刻是毫秒，判"还在跑吗"要换回秒——两家的口径必须一致，否则 opencode
         # 那侧会因为数值大了一千倍而永远判成刚刚活动过。
-        status = derive_status(tail.last_kind, row.time_updated / 1000, now)
+        alive = liveness.get(row.session_id) if liveness is not None else None
+        status = derive_status(tail.last_kind, row.time_updated / 1000, now, alive=alive)
         digest_done, digest_stuck = _digests(status, tail)
+        _, clean_title = session_index.split_employee_block(row.title or "")
         cards.append(
             SessionCard(
                 session_id=row.session_id,
                 family="opencode",
-                title=row.title or row.session_id,
+                title=clean_title or row.session_id,
                 directory=row.directory,
                 created_at=row.time_created,
                 last_active_at=row.time_updated,
@@ -349,12 +373,16 @@ def _opencode_cards(origins: OriginIndex) -> list[SessionCard]:
                 origin=origins.origin_of(row.session_id),
                 parent_session_id=origins.parent_of(row.session_id),
                 relation=origins.relation_of(row.session_id),
+                last_kind=tail.last_kind,
+                employee_id=tail.employee_id,
             )
         )
     return cards
 
 
-def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
+def _codex_cards(
+    origins: OriginIndex, liveness: Mapping[str, bool] | None = None
+) -> list[SessionCard]:
     """codex 那一侧的会话卡片。
 
     时刻的来源与另外两家不同：codex 不给会话存"最后更新时刻"这种字段，rollout 文件的
@@ -372,7 +400,8 @@ def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
     for meta in metas:
         entry = entries.get(meta.session_id)
         tail = entry.tail if entry is not None else TailSignals()
-        status = derive_status(tail.last_kind, meta.mtime, now)
+        alive = liveness.get(meta.session_id) if liveness is not None else None
+        status = derive_status(tail.last_kind, meta.mtime, now, alive=alive)
         digest_done, digest_stuck = _digests(status, tail)
         last_active = int(meta.mtime * 1000)
         created = (
@@ -394,6 +423,8 @@ def _codex_cards(origins: OriginIndex) -> list[SessionCard]:
                 origin=origins.origin_of(meta.session_id),
                 parent_session_id=origins.parent_of(meta.session_id),
                 relation=origins.relation_of(meta.session_id),
+                last_kind=tail.last_kind,
+                employee_id=tail.employee_id,
             )
         )
     return cards
@@ -415,16 +446,16 @@ def _agy_moment(conv: agy_store.AgyConversation) -> float | None:
         return None
 
 
-def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
+def _agy_cards(
+    origins: OriginIndex, liveness: Mapping[str, bool] | None = None
+) -> list[SessionCard]:
     """agy 那一侧的会话卡片。
 
     门面那几样（标题、工作目录、时刻）取自 agy 自己的摘要库，**不为了凑清单去翻转录**；
     而状态与摘要要判「末条记录是谁」，这一步非翻转录不可，于是走
-    :func:`~frago.session.session_index.tail_signals_of` 那一条**四家共用**的判据，
+    :func:`~frago.session.session_index.agy_tail_signals`（内部按摘要库时刻与转录文件
+    大小、修改时刻缓存 :func:`~frago.session.session_index.tail_signals_of` 的结果），
     NEVER 自己再定一套——各家各定一套，同一批会话在左栏与中栏就会各说各话。
-
-    整场转录翻一遍是毫秒量级（本机三场加起来不到 8 KB），所以既不做尾部读取也不做缓存；
-    哪天它长大了，照 codex 那一侧的写法补一份按时刻失效的索引。
 
     标题按「模型起的 > 摘要库里那句提要 > 会话编号」退让。提要多半就是开口那句，两样都
     没有时用会话编号，NEVER 留空串——左栏一行没有字，人点不动它。
@@ -432,30 +463,34 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
     时刻三处依次退让（见 :func:`_agy_moment`）；三者全为零、转录又不存在时这张卡不摆：
     那是一条空壳会话（agy 连一次输入都没记下），摆出来就是一张时刻为 0 的卡。
     """
+    convs = agy_store.list_conversations()
+    entries = session_index.agy_tail_signals(convs, translate_fn=translate_agy_session)
     now = time.time()
     cards: list[SessionCard] = []
-    for conv in agy_store.list_conversations():
+    for conv in convs:
         cid = conv.conversation_id
-        try:
-            records = translate_agy_session(cid)
-        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
-            records = []
         moment = _agy_moment(conv)
         if moment is None:
             logger.debug("agy conversation %s has neither a timestamp nor a transcript", cid)
             continue
-        tail = session_index.tail_signals_of(records)
-        status = session_index.derive_status(tail.last_kind, moment, now)
+        entry = entries.get(cid)
+        tail = entry.tail if entry is not None else TailSignals()
+        alive = liveness.get(cid) if liveness is not None else None
+        status = session_index.derive_status(tail.last_kind, moment, now, alive=alive)
         digest_done, digest_stuck = _digests(status, tail)
         last_active = int(moment * 1000)
-        # 摘要库不存建立时刻，转录里第一条记录带的就是它。整场已经翻在手上，直接取
-        # 第一个正时刻；翻不出时刻时才退回最后活动时刻（NEVER 留 0）。
-        created = next((record.ts for record in records if record.ts > 0), last_active)
+        created = (
+            entry.created_at
+            if entry is not None and entry.created_at is not None and entry.created_at > 0
+            else last_active
+        )
+        first_user = entry.title if entry is not None else None
+        _, clean_preview = session_index.split_employee_block(conv.preview or "")
         cards.append(
             SessionCard(
                 session_id=cid,
                 family="agy",
-                title=conv.title or conv.preview or cid,
+                title=conv.title or first_user or clean_preview or cid,
                 directory=conv.workspace,
                 created_at=created,
                 last_active_at=last_active,
@@ -468,6 +503,8 @@ def _agy_cards(origins: OriginIndex) -> list[SessionCard]:
                 origin=origins.origin_of(cid),
                 parent_session_id=origins.parent_of(cid),
                 relation=origins.relation_of(cid),
+                last_kind=tail.last_kind,
+                employee_id=tail.employee_id,
             )
         )
     return cards
@@ -483,7 +520,7 @@ def sort_key(card: SessionCard) -> int:
     return card.created_at
 
 
-def list_sessions() -> list[SessionCard]:
+def list_sessions(liveness: Mapping[str, bool] | None = None) -> list[SessionCard]:
     """五家的会话合并成一份清单，按创建时刻倒序（见 :func:`sort_key`）。
 
     一家读不出来（库不存在、目录不存在）不影响其余几家——各家的读取层各自把失败收敛成
@@ -493,13 +530,22 @@ def list_sessions() -> list[SessionCard]:
     同一批卡片会按两份数据判，界面上就会出现一场会话在这一刻是主干、下一刻是子项。
     """
     origins = session_origin.load_origin_index()
-    cards = (
-        _claude_cards(origins)
-        + _opencode_cards(origins)
-        + _codex_cards(origins)
-        + _coreagent_cards(origins)
-        + _agy_cards(origins)
-    )
+    if liveness is None:
+        cards = (
+            _claude_cards(origins)
+            + _opencode_cards(origins)
+            + _codex_cards(origins)
+            + _coreagent_cards(origins)
+            + _agy_cards(origins)
+        )
+    else:
+        cards = (
+            _claude_cards(origins, liveness=liveness)
+            + _opencode_cards(origins, liveness=liveness)
+            + _codex_cards(origins, liveness=liveness)
+            + _coreagent_cards(origins, liveness=liveness)
+            + _agy_cards(origins, liveness=liveness)
+        )
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
     cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
     return cards

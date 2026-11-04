@@ -776,6 +776,52 @@ export const setHookReviewEnabled = withMode(
     Promise.resolve({ ...HOOK_REVIEW_UNAVAILABLE, enabled }),
 );
 
+// ============================================================
+// Decision Model Configuration API
+// ============================================================
+
+export type {
+  DecisionWireMode,
+  DecisionModelSettings,
+  DecisionModelUpdatePayload,
+} from './client';
+
+const DECISION_MODEL_UNAVAILABLE: httpApi.DecisionModelSettings = {
+  configured: false,
+  enabled: false,
+  wire: 'decisions',
+  url: null,
+  model: '',
+  has_api_key: false,
+  api_key_masked: '',
+  temperature: null,
+};
+
+export const getDecisionModelSettings = withMode(
+  (): Promise<httpApi.DecisionModelSettings> => httpApi.getDecisionModelSettings(),
+  (): Promise<httpApi.DecisionModelSettings> => Promise.resolve(DECISION_MODEL_UNAVAILABLE),
+);
+
+export const updateDecisionModelSettings = withMode(
+  (payload: httpApi.DecisionModelUpdatePayload): Promise<httpApi.DecisionModelSettings> =>
+    httpApi.updateDecisionModelSettings(payload),
+  (payload: httpApi.DecisionModelUpdatePayload): Promise<httpApi.DecisionModelSettings> =>
+    Promise.resolve({
+      ...DECISION_MODEL_UNAVAILABLE,
+      configured: true,
+      enabled: payload.enabled,
+      wire: payload.wire,
+      url: payload.url ?? null,
+      model: payload.model,
+      temperature: payload.temperature ?? null,
+    }),
+);
+
+export const resetDecisionModelSettings = withMode(
+  (): Promise<httpApi.DecisionModelSettings> => httpApi.resetDecisionModelSettings(),
+  (): Promise<httpApi.DecisionModelSettings> => Promise.resolve(DECISION_MODEL_UNAVAILABLE),
+);
+
 export type {
   CliAgentClientStatus,
   CliAgentsStatus,
@@ -798,13 +844,13 @@ export const setOpencodeServiceDisabled = withMode(
 // ============================================================
 
 export const checkVSCode = withMode(
-  (): Promise<{ available: boolean }> => httpApi.checkVSCode(),
-  (): Promise<{ available: boolean }> => Promise.resolve({ available: false }), // pywebview mode doesn't support this
+  (): Promise<httpApi.VSCodeStatus> => httpApi.checkVSCode(),
+  (): Promise<httpApi.VSCodeStatus> => Promise.resolve({ available: false, vscode_installed: false, configs: {} }), // pywebview mode doesn't support this
 );
 
 export const openConfigInVSCode = withMode(
-  (): Promise<ApiResponse> => httpApi.openConfigInVSCode(),
-  (): Promise<ApiResponse> => Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
+  (agentType?: string): Promise<ApiResponse> => httpApi.openConfigInVSCode(agentType),
+  (_agentType?: string): Promise<ApiResponse> => Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
 );
 
 
@@ -1177,6 +1223,7 @@ export const searchGuide = withMode(
 export type {
   EndpointPreset,
   EndpointPresetListResponse,
+  AgyContextWindowTier,
   ProfileItem,
   ProfileListResponse,
   ConnectionKind,
@@ -1184,6 +1231,7 @@ export type {
   ConnectionsResponse,
   RoleBinding,
   VendorCore,
+  HarnessBinding,
   ActivationTarget,
   ActivationTargetListResponse,
   CreateProfileRequest,
@@ -1217,6 +1265,13 @@ export const bindRole = withMode(
   (role: httpApi.ConnectionRole, profileId: string, targets?: string[]): Promise<ApiResponse> =>
     httpApi.bindRole(role, profileId, targets),
   (_role: httpApi.ConnectionRole, _profileId: string, _targets?: string[]): Promise<ApiResponse> =>
+    Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
+);
+
+export const bindHarness = withMode(
+  (agentType: string, role: 'main' | 'worker', profileId: string): Promise<ApiResponse> =>
+    httpApi.bindHarness(agentType, role, profileId),
+  (_agentType: string, _role: 'main' | 'worker', _profileId: string): Promise<ApiResponse> =>
     Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
 );
 
@@ -1402,6 +1457,7 @@ export type {
   SessionFileAction,
   SessionFileContent,
   SessionFileDiff,
+  SessionFileWriteResult,
   FileDiffCell,
   FileDiffBefore,
   FileListing,
@@ -1471,6 +1527,13 @@ export const getSessionFileDiff = withMode(
     Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
 );
 
+export const putSessionFileContent = withMode(
+  (sessionId: string, path: string, text: string): Promise<httpApi.SessionFileWriteResult> =>
+    httpApi.putSessionFileContent(sessionId, path, text),
+  (_sessionId: string, _path: string, _text: string): Promise<httpApi.SessionFileWriteResult> =>
+    Promise.reject(new Error(SESSION_FILES_UNAVAILABLE)),
+);
+
 export const revealSessionPath = withMode(
   (sessionId: string, path: string): Promise<{ status: string; opened: string }> =>
     httpApi.revealSessionPath(sessionId, path),
@@ -1499,4 +1562,28 @@ export const generateSessionTitle = withMode(
   (_sessionId: string): Promise<httpApi.SessionTitleResult> =>
     Promise.reject(new Error(SESSION_TITLE_UNAVAILABLE)),
 );
+
+// ============================================================
+// 会话终端视图（Terminal View）
+// ============================================================
+
+export type { SessionTerminalSnapshot } from './client';
+
+export const getSessionTerminal = withMode(
+  (sessionId: string, lines?: number): Promise<httpApi.SessionTerminalSnapshot> =>
+    httpApi.getSessionTerminal(sessionId, lines),
+  (sessionId: string, _lines?: number): Promise<httpApi.SessionTerminalSnapshot> =>
+    Promise.resolve({
+      session_id: sessionId,
+      alive: false,
+      tmux_name: null,
+      pane_command: null,
+      client_alive: null,
+      busy: false,
+      memory_mb: 0,
+      source: 'none',
+      content: '',
+    }),
+);
+
 

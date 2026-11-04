@@ -605,7 +605,13 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         # worker。驱动里这两条路长得一模一样，只认得出父亲这一条判据。
         from frago.session.session_origin import record_attributed_dispatch
 
-        record_attributed_dispatch(claimed, agent_type="codex", cwd=session.cwd)
+        record_attributed_dispatch(
+            claimed,
+            agent_type="codex",
+            cwd=session.cwd,
+            handle=session.session_id,
+            origin=getattr(session, "origin", None),
+        )
         # 认到真编号就把这个窗口改认它。名字与真编号一致之后，常驻池重启时按名字就能
         # 找到这个还活着的窗口并接管，不必另起一个去 resume 同一场对话——那正是撞单写
         # 者锁、把用户那句话挡在门外的那条路（20261009 现场）。改不动只是名字留在原处，

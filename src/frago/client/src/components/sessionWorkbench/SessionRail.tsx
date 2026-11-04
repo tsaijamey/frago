@@ -35,22 +35,21 @@
  * 是列表里的普通一行，不是 group header——后者要等量完每一行的高度才摆得出来。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
-  CalendarMinus,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
-  Clock,
   Loader2,
-  Mail,
-  Pin,
   Plus,
   RefreshCw,
   Search,
+  SquareTerminal,
   X,
 } from 'lucide-react';
 import { useAppStore, useUIStore } from '@/stores/appStore';
@@ -64,10 +63,13 @@ import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
-import type {
-  ListFilter,
-  WorkbenchSession,
-  WorkbenchSessionsState,
+import {
+  activityTs,
+  expandSessionGroupIds,
+  getSessionGroupIds,
+  type ListFilter,
+  type WorkbenchSession,
+  type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
 
 /** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
@@ -101,22 +103,22 @@ type RailRow =
   | { kind: 'picked-header'; count: number }
   | { kind: 'rest-header'; count: number }
   | { kind: 'workers-header' }
-  /** 置顶组的收尾：组是一块整的底，末一行要把框收上。 */
-  | { kind: 'pinned-tail' }
   | {
       kind: 'session';
       session: WorkbenchSession;
       nested?: boolean;
       /** 组内缩进层级：0 顶层，1 父卡下的 worker / 分支卡，2 分支下的 worker / 分支的分支卡。 */
       indent?: number;
-      /** 这是分支容器里的分支卡：整卡描边加底色，不是折角的 worker 行。 */
+      /** 这是分支组里的源头父卡：浮起实色底加整圈细描边，是这一组的主卡。 */
+      branchRoot?: boolean;
+      /** 这是分支组里派生的分支子卡：退到暗槽底，收左缩进，降半档字重。 */
       branchCard?: boolean;
-      /** 分支容器在这一行上的位置：头、中、尾。 */
+      /** 分支组在这一行上的位置：头、中、尾。 */
       branchPos?: GroupPos;
       workerCount?: number;
       workersExpanded?: boolean;
       groupPos?: GroupPos;
-      /** 在置顶那一块里。 */
+      /** 在置顶那一区里。只用来省掉每张卡上重复的图钉——分区标题已经说了这是置顶区。 */
       inPinned?: boolean;
     };
 
@@ -224,6 +226,10 @@ export interface SessionRailProps {
    * 页面那一层持有时从这里传进来；不传（用例、单独摆左栏）就长不出那一项。
    */
   today?: SessionTodayState;
+  /** 中栏是否正在展示内联新建会话起始页。 */
+  creatingNew?: boolean;
+  /** 切换中栏内联新建会话起始页；不传时退回左栏自持状态（供单独挂载左栏的组件测试使用）。 */
+  onToggleNew?: () => void;
 }
 
 export default function SessionRail({
@@ -243,6 +249,8 @@ export default function SessionRail({
   pins: pinsProp,
   onOpenTimeline,
   today,
+  creatingNew = false,
+  onToggleNew,
 }: SessionRailProps) {
   const { sessions, visible, counts, loading, error, filter, setFilter, reload } = state;
   const { t } = useTranslation();
@@ -256,6 +264,10 @@ export default function SessionRail({
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   /** 认不出谁派的那堆 worker 那一区是不是展开着。默认折起来。 */
   const [orphansOpen, setOrphansOpen] = useState(false);
+  /** 「今天捡回」那一区是不是折起来了。默认摊开——捡回来的就是要一眼看见。 */
+  const [pickedCollapsed, setPickedCollapsed] = useState(false);
+  /** 「其余会话」那一区是不是折起来了。默认摊开。 */
+  const [restCollapsed, setRestCollapsed] = useState(false);
   /** 眼下这条清单已经放进来多少场。滚到底加一批（见 `PAGE_SIZE`）。 */
   const [shown, setShown] = useState(PAGE_SIZE);
 
@@ -306,78 +318,225 @@ export default function SessionRail({
   /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
   const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
 
-  const { trunkRows, childrenOf, branchChildrenOf, orphanRows, pickedRows } = useMemo(() => {
-    // 认父亲要在**整份清单**里认，不是只在下面那一片里认：派活的那场会话可能被置顶了，
-    // 只看下面那一片的话，它的 worker 会认不出父亲、掉进末尾那一区——而它的父亲就摆在
-    // 屏幕最上面。
-    const present = new Set(visible.map((s) => s.session_id));
-    const byId = new Map(visible.map((s) => [s.session_id, s]));
+  /**
+   * 今天从 Timeline 捡回来的完整上下文组。
+   *
+   * 主会话、它的 branched 会话与各自的 worker 会话共同构建了上下文，是一个整体：
+   * 任何一方被添加到 Today，整棵树上的全部会话一起进入 Today，并在左栏显示为一整个 group。
+   */
+  const pickedGroupIds = useMemo(() => {
+    if (!today) return new Set<string>();
+    const seeds = new Set<string>(today.picked);
+    for (const s of sessions) {
+      if (today.isPicked(s.session_id)) seeds.add(s.session_id);
+    }
+    return expandSessionGroupIds(sessions, seeds);
+  }, [sessions, today]);
+
+  const { trunkRows, childrenOf, branchChildrenOf, handoffChildrenOf, orphanRows, pickedRows } = useMemo(() => {
+    // 认父亲要在**整份可见清单 + 置顶区**里认，不是只在下面那一片里认：派活、分出分支或交接的
+    // 原会话可能被置顶了（即便原会话自己是昨天的、不在 visible 里），或者在「今天捡回」里，
+    // 它的 worker、分支与交接都要跟着它挂在同一棵树下，绝不能脱离原会话掉进 Everything else。
+    const allById = new Map(sessions.map((s) => [s.session_id, s]));
+    const pinnedSeedIds = new Set(pinnedRows.map((s) => s.session_id));
+    const isUnderPinned = (session: WorkbenchSession): boolean => {
+      let cur = session.parent_session_id;
+      const seen = new Set<string>([session.session_id]);
+      while (cur && !seen.has(cur)) {
+        if (pinnedSeedIds.has(cur)) return true;
+        seen.add(cur);
+        cur = allById.get(cur)?.parent_session_id ?? null;
+      }
+      return false;
+    };
+
+    const byId = new Map<string, WorkbenchSession>();
+    for (const s of pinnedRows) {
+      byId.set(s.session_id, s);
+    }
+    for (const s of visible) {
+      byId.set(s.session_id, s);
+    }
+    if (pinnedSeedIds.size > 0) {
+      for (const s of sessions) {
+        if (!byId.has(s.session_id) && isUnderPinned(s)) {
+          byId.set(s.session_id, s);
+        }
+      }
+    }
+    // 全部档位下，若某条交接会话今天在可见列表中，把它的交接祖先链也一并认进 byId，保证跨零点交接不断组。
+    if (filter === 'all') {
+      for (const s of Array.from(byId.values())) {
+        if (s.relation?.kind !== 'handoff') continue;
+        let cur = s.parent_session_id;
+        const seen = new Set<string>([s.session_id]);
+        while (cur && !seen.has(cur)) {
+          seen.add(cur);
+          const parentSession = allById.get(cur);
+          if (!parentSession) break;
+          if (!byId.has(cur)) byId.set(cur, parentSession);
+          if (parentSession.relation?.kind !== 'handoff') break;
+          cur = parentSession.parent_session_id;
+        }
+      }
+    }
+    const present = new Set(byId.keys());
     const children = new Map<string, WorkbenchSession[]>();
     const branches = new Map<string, WorkbenchSession[]>();
+    const handoffs = new Map<string, WorkbenchSession[]>();
     const trunk: WorkbenchSession[] = [];
     const orphans: WorkbenchSession[] = [];
     const picked: WorkbenchSession[] = [];
-    for (const session of visible) {
-      const parent = session.parent_session_id;
+    const placedRoots = new Set<string>();
+
+    /**
+     * 找出一场子会话在当前可见列表里能够挂载的最近非平铺 worker 祖先（主会话、分支会话或交接会话）。
+     * 若直接父会话是一条平铺 worker，则继续向上追溯到派它的主会话或分支/交接会话，保证多级子会话
+     * 也能完整收进同一个 group 里而不丢失。
+     */
+    const resolveHostParent = (session: WorkbenchSession): string | null => {
+      let cur = session.parent_session_id;
+      const seen = new Set<string>([session.session_id]);
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        if (!present.has(cur)) return null;
+        const pSession = byId.get(cur);
+        const isFlatWorker =
+          pSession?.origin === 'worker' &&
+          pSession?.relation?.kind !== 'branch' &&
+          pSession?.relation?.kind !== 'handoff';
+        if (!isFlatWorker) return cur;
+        cur = pSession?.parent_session_id ?? null;
+      }
+      return null;
+    };
+
+    /** 沿交接链向上找根会话，使整组在主干里排在最新那场交接会话所在的位置。 */
+    const resolveHandoffRoot = (session: WorkbenchSession): WorkbenchSession => {
+      let cur = session;
+      const seen = new Set<string>([session.session_id]);
+      while (cur.relation?.kind === 'handoff') {
+        const parentId = resolveHostParent(cur);
+        if (!parentId || seen.has(parentId)) break;
+        const parentSession = byId.get(parentId);
+        if (!parentSession) break;
+        seen.add(parentId);
+        cur = parentSession;
+      }
+      return cur;
+    };
+
+    const placeTrunkOrPicked = (root: WorkbenchSession) => {
+      if (placedRoots.has(root.session_id) || pins.isPinned(root.session_id)) return;
+      if (resolveHostParent(root) !== null) return;
+      if (root.relation?.kind === 'branch' || root.relation?.kind === 'handoff') return;
+      if (root.origin === 'worker') return;
+      placedRoots.add(root.session_id);
+      if (pickedGroupIds.has(root.session_id)) {
+        picked.push(root);
+      } else {
+        trunk.push(root);
+      }
+    };
+
+    for (const session of byId.values()) {
       // 置顶的那几场由置顶区去摆，这里只管下面那一片。置顶不跟今天走，也不跟捡回走：
       // 同一场在 Pinned 里已经有一张，不再在「今天捡回」里重复一张。
       if (pins.isPinned(session.session_id)) continue;
-      /**
-       * **今天从 timeline 捡回来的，一律摆成顶层卡，放在 Pinned 下面。**
-       *
-       * 不折进父会话、也不收进 worker 那一区：人捡它回来就是为了今天接着用，折起或收进
-       * 默认折起的区块等于没捡回来。2026-10-19 主人正是这样找不到自己刚加的那一场。
-       */
-      if (today?.isPicked(session.session_id)) {
-        picked.push(session);
-        continue;
-      }
-      const parentKnown =
-        Boolean(parent) &&
-        parent !== session.session_id &&
-        present.has(parent as string) &&
-        // 自己也被置顶的那几场留在置顶区，不再折进父亲下面：同一场摆两处，人会以为是两场。
-        !pins.isPinned(session.session_id);
+
+      const hostParent = resolveHostParent(session);
 
       /**
-       * **分支会话和原会话装进同一个容器。** 分支是人亲手起的、等的也是人；把它摊在主干上，
-       * 人看不出它从哪里来。装进容器后，顺序是父卡 → 父的 worker → 分支卡 → 分支的 worker，
-       * 层级一眼能读。父会话被筛掉、或被单独捡回今天时，分支仍按顶层卡处理。
+       * **交接会话与原会话装进同一个容器，并在组内向上排列（如 #3 → #2 → #1）。**
+       * 当交接产生的新会话排在可见列表更靠前的位置时，顺手把整组的根会话提前到该位置，
+       * 避免新交接出的会话被旧会话拽回列表底部。
        */
-      if (session.relation?.kind === 'branch') {
-        // 父会话若只是一条平铺的 worker 行（没有自己的分支容器），分支没地方挂，
-        // 宁可摆回主干，也不能让它从清单里消失。
-        const parentIsFlatWorker =
-          Boolean(parent) &&
-          byId.get(parent as string)?.origin === 'worker' &&
-          byId.get(parent as string)?.relation?.kind !== 'branch';
-        if (parentKnown && !parentIsFlatWorker) {
-          const bucket = branches.get(parent as string);
+      if (session.relation?.kind === 'handoff') {
+        if (hostParent) {
+          const bucket = handoffs.get(hostParent);
           if (bucket) bucket.push(session);
-          else branches.set(parent as string, [session]);
+          else handoffs.set(hostParent, [session]);
+          placeTrunkOrPicked(resolveHandoffRoot(session));
+        } else if (pickedGroupIds.has(session.session_id)) {
+          placedRoots.add(session.session_id);
+          picked.push(session);
         } else {
+          placedRoots.add(session.session_id);
           trunk.push(session);
         }
         continue;
       }
 
-      if (parentKnown) {
-        const bucket = children.get(parent as string);
-        if (bucket) bucket.push(session);
-        else children.set(parent as string, [session]);
+      /**
+       * **分支会话和原会话装进同一个容器。** 分支是人亲手起的、等的也是人；把它摊在主干上，
+       * 人看不出它从哪里来。装进容器后，顺序是父卡 → 父的 worker → 分支卡 → 分支的 worker，
+       * 层级一眼能读。无论是日常在今天活跃的，还是通过 Today 整组捡回的，都与主会话合成一整组展示。
+       */
+      if (session.relation?.kind === 'branch') {
+        if (hostParent) {
+          const bucket = branches.get(hostParent);
+          if (bucket) bucket.push(session);
+          else branches.set(hostParent, [session]);
+        } else if (pickedGroupIds.has(session.session_id)) {
+          placedRoots.add(session.session_id);
+          picked.push(session);
+        } else {
+          placedRoots.add(session.session_id);
+          trunk.push(session);
+        }
         continue;
       }
+
+      if (hostParent) {
+        const bucket = children.get(hostParent);
+        if (bucket) bucket.push(session);
+        else children.set(hostParent, [session]);
+        continue;
+      }
+
+      if (placedRoots.has(session.session_id)) continue;
+
+      /**
+       * 今天从 timeline 捡回来的上下文组根会话（或认不出父会话的独立捡回会话），
+       * 摆在 Pinned 下面的「今天捡回」区；它的分支与 worker 已经挂在 `branches` 与 `children` 下，
+       * 渲染时经 `trunkWithKids` 作为一整个 group 一起摆出来。
+       */
+      if (pickedGroupIds.has(session.session_id)) {
+        placedRoots.add(session.session_id);
+        picked.push(session);
+        continue;
+      }
+
       if (session.origin === 'worker') orphans.push(session);
-      else trunk.push(session);
+      else {
+        placedRoots.add(session.session_id);
+        trunk.push(session);
+      }
     }
+
+    // 同一父会话下若有多条交接，按标题尾号 #N（或创建时间 / 最近活动时间）倒序，确保最新序号排在最上面。
+    const handoffNumber = (s: WorkbenchSession): number => {
+      const m = /#(\d+)\s*$/.exec(s.title);
+      return m ? Number(m[1]) : 0;
+    };
+    for (const bucket of handoffs.values()) {
+      bucket.sort((a, b) => {
+        const numDiff = handoffNumber(b) - handoffNumber(a);
+        if (numDiff !== 0) return numDiff;
+        if (b.created_at !== a.created_at) return b.created_at - a.created_at;
+        return activityTs(b) - activityTs(a);
+      });
+    }
+
     return {
       trunkRows: trunk,
       childrenOf: children,
       branchChildrenOf: branches,
+      handoffChildrenOf: handoffs,
       orphanRows: orphans,
       pickedRows: picked,
     };
-  }, [visible, pins, today]);
+  }, [sessions, pinnedRows, visible, pins, pickedGroupIds, filter]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -439,10 +598,13 @@ export default function SessionRail({
       session: WorkbenchSession,
       inPinned = false,
       depth = 0,
-      branchCard = false
+      branchCard = false,
+      inGroupContainer = false
     ): SessionRow[] => {
       const kids = childrenOf.get(session.session_id) ?? [];
       const branches = branchChildrenOf.get(session.session_id) ?? [];
+      const handoffs = handoffChildrenOf.get(session.session_id) ?? [];
+      const hasGroupPeers = inGroupContainer || branches.length > 0 || handoffs.length > 0;
       const expanded = expandedWorkers.has(session.session_id);
       const head: SessionRow = {
         kind: 'session',
@@ -453,11 +615,11 @@ export default function SessionRail({
         indent: depth,
         branchCard,
       };
-      const out: SessionRow[] = [head];
+      const selfOut: SessionRow[] = [head];
       if (kids.length && expanded) {
         // 展开之后这一组被一个框圈起来：主会话那行画上半框，子会话画两侧，末一行收底。
         head.groupPos = 'head';
-        out.push(
+        selfOut.push(
           ...kids.map((kid, i) => ({
             kind: 'session' as const,
             session: kid,
@@ -469,13 +631,23 @@ export default function SessionRail({
         );
       }
       for (const branch of branches) {
-        out.push(...trunkWithKids(branch, inPinned, depth + 1, true));
+        selfOut.push(...trunkWithKids(branch, inPinned, depth, true, true));
       }
-      // 只有最外层这段需要画容器；里层的分支继续用同一个框，不再各画一圈。
-      if (depth === 0 && branches.length) {
+      // 交接会话在组内向上排列（如 #3 排在 #2 上面，#2 排在 #1 上面）。
+      const handoffOut: SessionRow[] = [];
+      for (const handoff of handoffs) {
+        handoffOut.push(...trunkWithKids(handoff, inPinned, depth, true, true));
+      }
+      const out: SessionRow[] = [...handoffOut, ...selfOut];
+      // 只有最外层这段需要画容器；里层的分支与交接继续用同一个框，不再各画一圈。
+      if (depth === 0 && !inGroupContainer && hasGroupPeers) {
+        /* 组内主次：第一张非 worker 的卡是这一组的源头主卡，浮起在暗槽之上；其余派生卡退到暗槽底。
+           展开的 worker 行两样都不是，它靠缩进和折角说自己是从属的。 */
         return out.map((row, i) => ({
           ...row,
           branchPos: i === 0 ? 'head' : i === out.length - 1 ? 'tail' : 'mid',
+          branchRoot: !row.nested && i === 0,
+          branchCard: !row.nested && i > 0,
         }));
       }
       return out;
@@ -485,17 +657,19 @@ export default function SessionRail({
     if (pins.pinned.length) {
       out.push({ kind: 'pinned-header' });
       if (!pins.collapsed) out.push(...pinnedPlaced.flatMap((s) => trunkWithKids(s, true)));
-      out.push({ kind: 'pinned-tail' });
     }
-    // 今天捡回来的紧跟 Pinned 之后（主人 2026-10-19 定的位置）：不折、不收，一眼看得见。
+    /* 今天捡回来的紧跟 Pinned 之后（主人 2026-10-19 定的位置）。这一区与其余分区同一套标题样式，
+       点标题可以折起来，折起来时只留标题和条数。 */
     if (pickedRows.length) {
       out.push({ kind: 'picked-header', count: pickedRows.length });
-      out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
+      if (!pickedCollapsed) out.push(...pickedRows.flatMap((s) => trunkWithKids(s)));
     }
-    if (pins.pinned.length > 0 && pagedRest.length) {
+    /* 今天捡回与其余会话之间也要一道水平分割线加分区标题，所以只要主干还有内容就推这一行，
+       不再要求「有置顶」才推——那条旧条件会让没有置顶时两个区黏在一起分不出来。 */
+    if ((pins.pinned.length > 0 || pickedRows.length > 0) && pagedRest.length) {
       out.push({ kind: 'rest-header', count: restPlaced.length });
     }
-    out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
+    if (!restCollapsed) out.push(...pagedRest.flatMap((s) => trunkWithKids(s)));
     if (orphanRows.length) {
       out.push({ kind: 'workers-header' });
       out.push(
@@ -506,12 +680,15 @@ export default function SessionRail({
   }, [
     pins.pinned.length,
     pins.collapsed,
+    pickedCollapsed,
+    restCollapsed,
     pinnedPlaced,
     pickedRows,
     pagedRest,
     restPlaced.length,
     childrenOf,
     branchChildrenOf,
+    handoffChildrenOf,
     orphanRows.length,
     pagedOrphans,
     expandedWorkers,
@@ -619,10 +796,21 @@ export default function SessionRail({
     }
   };
 
-  /** 卡片「…」菜单里的「从今天移出」：撤掉捡回来的那一条，今天没再动过的会话随即收起。 */
+  /** 卡片「…」菜单里的「从今天移出」：撤掉捡回来的那一组，今天没再动过的会话随即收起。 */
   const handleRemoveToday = async (session: WorkbenchSession) => {
+    if (!today) return;
     try {
-      await today?.toggle(session.session_id);
+      const groupIds = getSessionGroupIds(sessions, session.session_id);
+      const pickedInGroup = groupIds.filter(
+        (id) => today.isPicked(id) || today.picked.includes(id)
+      );
+      if (pickedInGroup.length > 0 && !pickedInGroup.includes(session.session_id)) {
+        for (const id of pickedInGroup) {
+          await today.toggle(id);
+        }
+      } else {
+        await today.toggle(session.session_id);
+      }
     } catch (e) {
       showToast(
         e instanceof Error ? e.message : t('workbench.errors.todaySaveFailedPlain'),
@@ -731,11 +919,16 @@ export default function SessionRail({
           </button>
           <button
             type="button"
-            onClick={() => setNewOpen(true)}
+            onClick={() => (onToggleNew ? onToggleNew() : setNewOpen((v) => !v))}
             data-testid="new-session"
             aria-label={t('workbench.rail.newSession')}
+            aria-pressed={creatingNew || newOpen}
             title={t('workbench.rail.newSession')}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border-color text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border transition-colors duration-200 ${
+              creatingNew || newOpen
+                ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                : 'border-border-color text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+            }`}
           >
             <Plus size={16} strokeWidth={1.5} />
           </button>
@@ -752,7 +945,7 @@ export default function SessionRail({
             title={t('workbench.rail.timelineHint')}
             className="flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[11.5px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
           >
-            <Clock size={13} strokeWidth={1.5} className="shrink-0" />
+            <CalendarDays size={13} strokeWidth={1.5} className="shrink-0" />
             <span>{t('workbench.rail.timeline')}</span>
           </button>
           <span className="text-[11px] text-text-muted" title={t('workbench.rail.todayOnlyHint')}>
@@ -862,50 +1055,73 @@ export default function SessionRail({
       </div>
 
       {/* 正在起的那一场先占一行。它摆在滚动区**外面**：这一行的意义是"你刚建的那场在
-          这儿"，滚下去看不见就等于没有。会话真进了清单它自己就消失，位置随即让给真那一行。 */}
+          这儿"，滚下去看不见就等于没有。直接采用与普通会话一致的两行卡片结构（标题 + 状态行），会话真进了
+          清单它自己就消失，位置随即让给真那一行。 */}
       {launch ? (
-        <div className="shrink-0 px-2 pt-2">
+        <div className="shrink-0 px-1 pt-2">
           <div
             data-testid="rail-launch"
             data-phase={launch.phase}
-            className={`flex items-center gap-2 rounded-[8px] border px-2.5 py-2 ${
-              launch.phase === 'failed'
-                ? 'border-accent-error bg-accent-error-10'
-                : 'border-border-strong bg-bg-subtle'
+            onClick={() => {
+              if (launch.sessionId) onSelect(launch.sessionId);
+            }}
+            className={`group/session relative w-full rounded-[8px] px-3 pb-[7px] pt-2 text-left transition-colors duration-200 ${
+              !creatingNew && (selectedId === null || selectedId === launch.sessionId)
+                ? 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]'
+                : 'hover:bg-bg-hover'
             }`}
           >
-            <Mail
-              size={14}
-              strokeWidth={2}
-              className={`shrink-0 ${
-                launch.phase === 'failed' ? 'text-accent-error' : 'text-text-secondary'
-              }`}
-            />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[12px] font-medium text-text-primary">
+            {/* 第 1 行：标题（首条消息或「新会话」） */}
+            <div className="flex min-w-0 items-start gap-1.5">
+              <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
                 {launch.text || t('workbench.launch.railTitle')}
               </span>
-              <span className="truncate text-[11px] text-text-muted">
-                {launch.phase === 'failed'
-                  ? t('workbench.launch.railFailed')
-                  : launch.phase === 'claiming'
-                    ? t('workbench.launch.railClaiming', { name: launch.agentName })
-                    : t('workbench.launch.railWarming', { name: launch.agentName })}
-              </span>
             </div>
-            {launch.phase === 'failed' ? (
-              <button
-                type="button"
-                data-testid="rail-launch-dismiss"
-                onClick={() => onDismissLaunch?.()}
-                aria-label={t('workbench.launch.dismiss')}
-                className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:text-text-primary"
-              >
-                <X size={13} />
-              </button>
-            ) : (
-              <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
-            )}
+
+            {/* 第 2 行：状态行（与 SessionItem 对齐） */}
+            <div className="mt-[5px] flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {launch.phase === 'failed' ? (
+                  <span className="inline-flex min-w-0 items-center gap-1 font-medium text-accent-error">
+                    <AlertTriangle size={11} className="shrink-0" />
+                    <span className="truncate">{t('workbench.launch.failedTitle')}</span>
+                  </span>
+                ) : launch.phase === 'claiming' ? (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                      <Loader2 size={10} className="shrink-0 animate-spin text-text-muted" />
+                      <span className="truncate">{t('workbench.forYou.sending')}</span>
+                    </span>
+                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                      <span
+                        aria-hidden
+                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
+                      />
+                      <span className="truncate">{t('workbench.forYou.agentOnIt')}</span>
+                    </span>
+                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                  </>
+                )}
+              </div>
+              {launch.phase === 'failed' ? (
+                <button
+                  type="button"
+                  data-testid="rail-launch-dismiss"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDismissLaunch?.();
+                  }}
+                  aria-label={t('workbench.launch.dismiss')}
+                  className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -949,9 +1165,8 @@ export default function SessionRail({
         {loading && !visible.length ? (
           <div className="animate-pulse px-1 pt-2">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="mb-0.5 w-full rounded-[8px] px-3 py-2.5">
-                <div className="mb-2 h-3.5 w-2/3 rounded bg-bg-hover" />
-                <div className="mb-2 h-2.5 w-5/6 rounded bg-bg-hover" />
+              <div key={i} className="mb-0.5 w-full rounded-[8px] px-3 pb-[7px] pt-2">
+                <div className="mb-[5px] h-3.5 w-2/3 rounded bg-bg-hover" />
                 <div className="h-2.5 w-1/3 rounded bg-bg-hover" />
               </div>
             ))}
@@ -966,8 +1181,8 @@ export default function SessionRail({
             ref={virtuoso}
             data={rows}
             initialItemCount={Math.min(rows.length, 30)}
-            /* 条目高度基线：标题一行、预览两行约 102px（第五轮三行卡）。 */
-            defaultItemHeight={102}
+            /* 条目高度基线：标题与状态行两行结构约 52px。 */
+            defaultItemHeight={52}
             components={listComponents}
             rangeChanged={setRange}
             /* 滚到底就续上下一批。人已经滚到底了，那一下就是"还要看"本身。 */
@@ -978,191 +1193,234 @@ export default function SessionRail({
             computeItemKey={(index, row) =>
               !row ? `row-${index}` : row.kind === 'session' ? row.session.session_id : row.kind
             }
-            itemContent={(_, row) => {
+            itemContent={(index, row) => {
               // 同上：位置对不上时给一个空位，NEVER 伸手去读一个不在的行。
               if (!row) return null;
+              /**
+               * 分区标题的外壳：第一个标题行贴着清单顶，其余标题行前面带一道 1px 水平分割线
+               * 与 8px 上间距，把两个区清楚地切开。四个分区共用这一个壳，字号与左边缘才对齐得上。
+               */
+              const headerShell = (inner: ReactNode, key: string) => (
+                <div
+                  key={key}
+                  className={index > 0 ? 'mt-2 border-t border-border-color px-1 pt-1' : 'px-1 pt-0.5'}
+                >
+                  {inner}
+                </div>
+              );
               if (row.kind === 'pinned-header') {
-                /* 置顶整组一块略浅的底加一圈发丝描边，这是它的上半框。标题正常字重、正文色，
-                   右端写「Always on top」——不用绿，不用大写。 */
-                return (
-                  <div className="px-1 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => pins.setCollapsed(!pins.collapsed)}
-                      aria-expanded={!pins.collapsed}
-                      data-testid="pinned-header"
-                      className={`flex w-full items-center gap-1.5 border border-border-color bg-[var(--rail-pinned-fill)] px-2.5 py-1.5 text-[12px] text-text-primary transition-colors duration-200 hover:bg-bg-active ${
-                        pins.collapsed ? 'rounded-[8px]' : 'rounded-t-[8px] border-b-0'
-                      }`}
-                    >
-                      {pins.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                      <Pin size={11} fill="currentColor" className="text-text-primary" />
-                      <span>{t('workbench.rail.pinnedHeader')}</span>
-                      <span className="font-mono text-[11px] text-text-muted">{pinnedRows.length}</span>
-                      <span className="flex-1" />
-                      <span className="text-[11px] text-text-muted">{t('workbench.rail.alwaysOnTop')}</span>
-                    </button>
-                  </div>
-                );
-              }
-              if (row.kind === 'pinned-tail') {
-                return pins.collapsed ? (
-                  <div className="h-2" />
-                ) : (
-                  <div className="px-1 pb-2">
-                    <div className="h-1.5 rounded-b-[8px] border border-t-0 border-border-color bg-[var(--rail-pinned-fill)]" />
-                  </div>
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => pins.setCollapsed(!pins.collapsed)}
+                    aria-expanded={!pins.collapsed}
+                    data-testid="pinned-header"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
+                  >
+                    {pins.collapsed ? (
+                      <ChevronRight size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronDown size={12} className="shrink-0" />
+                    )}
+                    <span>{t('workbench.rail.pinnedHeader')}</span>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {pinnedRows.length}
+                    </span>
+                    <span className="ml-auto text-[11px] font-normal normal-case tracking-normal text-text-muted">
+                      {t('workbench.rail.alwaysOnTop')}
+                    </span>
+                  </button>,
+                  'pinned-header'
                 );
               }
               if (row.kind === 'picked-header') {
-                return (
-                  <div
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => setPickedCollapsed((v) => !v)}
+                    aria-expanded={!pickedCollapsed}
                     data-testid="picked-header"
-                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
+                    className="flex w-full flex-col items-start gap-0.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    <CalendarMinus size={11} className="shrink-0" />
-                    <span className="font-medium text-text-secondary">
-                      {t('workbench.rail.pickedHeader')}
+                    <span className="flex w-full items-center gap-1.5">
+                      {pickedCollapsed ? (
+                        <ChevronRight size={12} className="shrink-0" />
+                      ) : (
+                        <ChevronDown size={12} className="shrink-0" />
+                      )}
+                      <span>{t('workbench.rail.pickedHeader')}</span>
+                      <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                        {row.count}
+                      </span>
                     </span>
-                    <span className="font-mono opacity-70">{row.count}</span>
-                    <span className="flex-1" />
-                    <span>{t('workbench.rail.pickedHeaderHint')}</span>
-                  </div>
+                    <span className="pl-[18px] text-[11px] font-normal normal-case leading-[1.35] tracking-normal text-text-muted">
+                      {t('workbench.rail.pickedHeaderHint')}
+                    </span>
+                  </button>,
+                  'picked-header'
                 );
               }
               if (row.kind === 'rest-header') {
-                return (
-                  <div
+                return headerShell(
+                  <button
+                    type="button"
+                    onClick={() => setRestCollapsed((v) => !v)}
+                    aria-expanded={!restCollapsed}
                     data-testid="rest-header"
-                    className="flex items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    <span className="font-medium text-text-secondary">
-                      {t('workbench.rail.everythingElse')}
+                    {restCollapsed ? (
+                      <ChevronRight size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronDown size={12} className="shrink-0" />
+                    )}
+                    <span>{t('workbench.rail.everythingElse')}</span>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {row.count}
                     </span>
-                    <span className="font-mono opacity-70">{row.count}</span>
-                  </div>
+                  </button>,
+                  'rest-header'
                 );
               }
               if (row.kind === 'workers-header') {
-                return (
+                return headerShell(
                   <button
                     type="button"
                     onClick={toggleOrphans}
                     aria-expanded={orphansVisible}
                     data-testid="workers-header"
-                    className="flex w-full items-center gap-1.5 px-2.5 pb-1 pt-3 text-[11px] text-text-muted transition-colors duration-200 hover:text-text-secondary"
+                    className="flex w-full items-center gap-1.5 rounded-[6px] px-2 pb-[5px] pt-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-text-muted transition-colors duration-200 hover:bg-bg-hover hover:text-text-secondary"
                   >
-                    {orphansVisible ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    {orphansVisible ? (
+                      <ChevronDown size={12} className="shrink-0" />
+                    ) : (
+                      <ChevronRight size={12} className="shrink-0" />
+                    )}
                     <span>{t('workbench.rail.orphanWorkersHeader')}</span>
-                    <span className="font-mono opacity-70">{orphanRows.length}</span>
-                  </button>
+                    <span className="font-mono font-medium tabular-nums tracking-normal text-text-dim">
+                      {orphanRows.length}
+                    </span>
+                  </button>,
+                  'workers-header'
                 );
               }
               const session = row.session;
               const pos = row.groupPos;
               const branchPos = row.branchPos;
-              /* 缩进按层级走：父卡 0，父的 worker / 分支卡 1，分支的 worker 2，再往下递增。 */
+              /* 分支组内的横向内边距由容器自己给（`branchPad`），组里的行不再各加一份，
+                 否则卡片会被往里挤两次。组外的 worker 才需要按层级缩进。 */
               const indent = row.indent ?? (row.nested ? 1 : 0);
-              const indentCls =
-                indent <= 0
-                  ? row.inPinned
-                    ? 'px-[3px]'
-                    : 'px-1'
-                  : indent === 1
+              const outerIndentCls = branchPos
+                ? indent > 0
+                  ? indent === 1
+                    ? 'pl-3'
+                    : 'pl-6'
+                  : ''
+                : indent > 0
+                  ? indent === 1
                     ? 'pl-4 pr-1'
-                    : indent === 2
-                      ? 'pl-8 pr-1'
-                      : 'pl-12 pr-1';
-              /* worker 框的三段：1px、清单的分隔线色、8px 圆角。 */
-              const box =
-                pos === 'head'
-                  ? 'rounded-t-[8px] border border-b-0 border-border-color'
-                  : pos === 'mid'
-                    ? 'border-x border-border-color'
-                    : pos === 'tail'
-                      ? 'rounded-b-[8px] border border-t-0 border-border-color'
-                      : '';
-              /* 分支容器：整段用同一层浅底和一圈 10px 圆角框，跨行拆成头、中、尾三段画。 */
+                    : 'pl-7 pr-1'
+                  : 'px-1';
+              const innerIndentCls = '';
+              /* 展开的 worker 不再另套一圈框：它靠缩进、行首折角与次级字色说自己从属，
+                 再画一个类似分支组的描边盒子就成了第二个框。 */
+              const box = '';
+              /* 分支组容器：整段用下沉暗槽底 --grp-bg 与一圈 10px 圆角淡描边 --grp-border，跨行拆成头、中、尾三段画。
+                 组里所有卡都落在这个底上，卡自己不再画背景（见 SessionItem 的 --surface-fill 继承）。
+                 flow-root 封住内部卡片（如折叠 worker 的外边距）的外边距，防止穿透底边造成容器背景断裂。 */
               const branchBox =
                 branchPos === 'head'
-                  ? 'rounded-t-[10px] border-x border-t border-border-color bg-[var(--bg-hover)]'
+                  ? 'flow-root rounded-t-[10px] border-x border-t border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                   : branchPos === 'mid'
-                    ? 'border-x border-border-color bg-[var(--bg-hover)]'
+                    ? 'flow-root border-x border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                     : branchPos === 'tail'
-                      ? 'rounded-b-[10px] border-x border-b border-border-color bg-[var(--bg-hover)]'
+                      ? 'flow-root rounded-b-[10px] border-x border-b border-[var(--grp-border)] bg-[var(--grp-bg)] [--surface-fill:var(--grp-bg)]'
                       : '';
-              /* 容器内边距：左右各 8px，头尾各 6px，卡片不再贴着外框。 */
+              /* 容器内边距：左右各 6px，头尾各 6px；组内卡片之间留 5px 间距。 */
+              const branchRowGap =
+                (branchPos === 'head' || branchPos === 'mid') && pos !== 'head' && pos !== 'mid'
+                  ? 'pb-[5px]'
+                  : '';
               const branchPad =
                 branchPos === 'head'
-                  ? 'px-2 pt-1.5'
+                  ? `px-1.5 pt-1.5 ${branchRowGap}`.trim()
                   : branchPos === 'tail'
-                    ? 'px-2 pb-1.5'
+                    ? 'px-1.5 pb-1.5'
                     : branchPos === 'mid'
-                      ? 'px-2'
+                      ? `px-1.5 ${branchRowGap}`.trim()
                       : '';
+              /* 组与组（或组与普通独立卡片）之间拉开到 14px（接近组内 5px 间距的 3 倍）：
+                 - 组尾（branchPos === 'tail' 或顶层 worker 组 pos === 'tail'）统一留 h-3.5（14px）；
+                 - 组头（branchPos === 'head' 或顶层 worker 组 pos === 'head'）若前一行是只带 2px 缝的普通独立卡片，补 pt-3（12px），合起来同样是 14px。
+                 Pinned 区里的组与其余区同一个待遇，不再因为所在分区不同而换一套间距。 */
+              const isGroupHead = branchPos === 'head' || (!branchPos && pos === 'head');
+              const isGroupTail = branchPos === 'tail' || (!branchPos && pos === 'tail');
+              const prevRow = index > 0 ? rows[index - 1] : null;
+              const prevIsStandaloneSession =
+                prevRow?.kind === 'session' &&
+                prevRow.branchPos !== 'tail' &&
+                !(!prevRow.branchPos && prevRow.groupPos === 'tail');
+              const groupTopGap = isGroupHead && prevIsStandaloneSession ? 'pt-3' : '';
               const item = (
-                <div className={branchPos ? 'mx-1' : ''} data-branch-pos={branchPos}>
+                <div className={`${branchPos ? 'mx-1' : ''} ${groupTopGap}`.trim()} data-branch-pos={branchPos}>
                   <div className={branchBox}>
                     <div className={branchPad}>
-                      {/* 缩进放在容器内层：外框每一行都用同一条左边界，末行收底时才不会缺角。 */}
-                      <div className={indentCls}>
+                      <div className={outerIndentCls}>
                         <div className={box} data-group={pos}>
-                          {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
-                              只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
-                          <SessionItem
-                            live={views.isInTmux(session)}
-                            session={session}
-                            selected={session.session_id === selectedId}
-                            copied={copiedId === session.session_id}
-                            pinned={pins.isPinned(session.session_id)}
-                            inPinnedGroup={row.inPinned}
-                            forYou={forYou.infoOf(session.session_id)}
-                            sending={sendingId === session.session_id}
-                            agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
-                            busyTurn={busyId === session.session_id}
-                            inTmux={inTmuxOf(session)}
-                            card={decisionCardOf?.(session.session_id) ?? null}
-                            nested={row.nested}
-                            branchCard={row.branchCard}
-                            branchOf={
-                              session.relation?.kind === 'branch' && session.parent_session_id
-                                ? {
-                                    id: session.parent_session_id,
-                                    title: titleOf.get(session.parent_session_id) ?? null,
-                                  }
-                                : null
-                            }
-                            workerCount={row.workerCount}
-                            workersExpanded={row.workersExpanded}
-                            onSelect={handleSelect}
-                            onCopy={handleCopy}
-                            onTogglePin={handleTogglePin}
-                            pickedToday={today?.isPicked(session.session_id) ?? false}
-                            onRemoveToday={today ? handleRemoveToday : undefined}
-                            onToggleWorkers={toggleWorkers}
-                            onStopped={handleStopped}
-                            onDeleted={handleDeleted}
-                          />
+                          <div className={innerIndentCls}>
+                            {/* 开在 tmux 里的那几场一圈流光（主人 09-24 定：保留）。画在 SessionItem 里、
+                                只围最上面那张卡——底下压着 worker 的那一叠纸不进光圈。 */}
+                            <SessionItem
+                              live={views.isInTmux(session)}
+                              session={session}
+                              selected={session.session_id === selectedId}
+                              copied={copiedId === session.session_id}
+                              pinned={pins.isPinned(session.session_id)}
+                              inPinnedGroup={row.inPinned}
+                              inBranchGroup={Boolean(branchPos)}
+                              forYou={forYou.infoOf(session.session_id)}
+                              sending={sendingId === session.session_id}
+                              agentOnIt={busyId === session.session_id && sendingId !== session.session_id}
+                              busyTurn={busyId === session.session_id}
+                              inTmux={inTmuxOf(session)}
+                              card={decisionCardOf?.(session.session_id) ?? null}
+                              nested={row.nested}
+                              branchRoot={row.branchRoot}
+                              branchCard={row.branchCard}
+                              branchOf={
+                                session.relation?.kind === 'branch' && session.parent_session_id
+                                  ? {
+                                      id: session.parent_session_id,
+                                      title: titleOf.get(session.parent_session_id) ?? null,
+                                    }
+                                  : null
+                              }
+                              workerCount={row.workerCount}
+                              workersExpanded={row.workersExpanded}
+                              onSelect={handleSelect}
+                              onCopy={handleCopy}
+                              onTogglePin={handleTogglePin}
+                              pickedToday={pickedGroupIds.has(session.session_id)}
+                              onRemoveToday={today ? handleRemoveToday : undefined}
+                              onToggleWorkers={toggleWorkers}
+                              onStopped={handleStopped}
+                              onDeleted={handleDeleted}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                  {/* 行与行之间的间隔。一组之内不留这道缝，留了框就断成几截。 */}
-                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : (
+                  {/* 行与行之间的间隔：同一组之内不留外缝；组尾留 14px（h-3.5）与下一组或下一张卡彻底断开；普通独立卡片之间留 2px（h-0.5）。 */}
+                  {pos === 'head' || pos === 'mid' || branchPos === 'head' || branchPos === 'mid' ? null : isGroupTail ? (
+                    <div className="h-3.5" data-testid="group-gap" />
+                  ) : (
                     <div className="h-0.5" />
                   )}
                 </div>
               );
-              /* 置顶那一块的中段：两侧发丝线，底色与标题同一块。底色照原型用悬停色那一层浅底，写成不透明的 --rail-pinned-fill
-                 （.pingrp 的 --bg-hover）：原先写的 bg-subtle 在深色下与清单底同为 #1a1a1a，
-                 整块看不出来，清单与左侧导航栏也就连成一片（主人 09-29 指出）。 */
-              return row.inPinned ? (
-                <div className="px-1">
-                  <div className="border-x border-border-color bg-[var(--rail-pinned-fill)] pt-0.5">{item}</div>
-                </div>
-              ) : (
-                item
-              );
+              /* Pinned 区不再有专属背景层与外框：区里的卡片与其余分区同一套外层边距，直接落左栏基准面上。 */
+              return item;
             }}
           />
         )}
@@ -1178,13 +1436,14 @@ export default function SessionRail({
         })}
       </div>
 
-      {/* 建完就交出去。等编号、反复重取清单、把中栏切过去，这些事由页面那边的启动状态
-          统一管（见 `useSessionLaunch`）。 */}
-      <NewSessionModal
-        isOpen={newOpen}
-        onClose={() => setNewOpen(false)}
-        onCreated={(pending, text) => onCreated?.(pending, text)}
-      />
+      {/* 页面传入 `onToggleNew` 时由中栏直接渲染内联新建会话起始页；仅在单独挂载左栏时兜底渲染。 */}
+      {!onToggleNew ? (
+        <NewSessionModal
+          isOpen={newOpen}
+          onClose={() => setNewOpen(false)}
+          onCreated={(pending, text) => onCreated?.(pending, text)}
+        />
+      ) : null}
     </aside>
   );
 }

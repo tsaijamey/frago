@@ -83,4 +83,23 @@ describe('useDecisionCards', () => {
     expect(result.current.host.canAnswer).toBe(false);
     expect(result.current.host.blockedReason).toBe('k');
   });
+
+  it('切换 sessionId 当帧立即隐去上一场的 answer，不在新会话首帧残留', () => {
+    const card = rec('agent.say', { text: '卡' });
+    const { result, rerender } = renderHook(
+      ({ sid }) =>
+        useDecisionCards({
+          sessionId: sid,
+          records: [card],
+          blockedReason: null,
+          onSendStart: () => 'out-1',
+        }),
+      { initialProps: { sid: 'session-a' } }
+    );
+    act(() => result.current.host.answer(card.id, '【answer】A · 立即重启'));
+    expect(result.current.answer?.text).toBe('【answer】A · 立即重启');
+
+    rerender({ sid: 'session-b' });
+    expect(result.current.answer).toBeNull();
+  });
 });

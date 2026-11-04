@@ -25,19 +25,22 @@
  * 「定时任务」；手机底栏复用同一份清单，跟着一起变。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AppWindow,
+  Briefcase,
   MessageSquare,
+  Monitor,
   LayoutGrid,
   Database,
+  File as FileIcon,
+  Folder,
   FolderTree,
   ListChecks,
   Settings,
   PanelLeft,
-  CalendarDays,
   Clock,
   Gauge,
   Loader2,
@@ -50,10 +53,10 @@ import {
 import { useAppStore, type PageType } from '@/stores/appStore';
 import { usePageStore } from '@/stores/pageStore';
 import { splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
+import { filePinLabel, useFilePins } from '@/stores/filePins';
 import { useClaudeUsage } from '@/hooks/useClaudeUsage';
 import { useTmuxSessionCount } from '@/hooks/useTmuxSessions';
 import { countAttention, useEnvironment, useEnvironmentUpgrade } from '@/hooks/useEnvironment';
-import TokenCalendarModal from '@/components/sessionWorkbench/TokenCalendarModal';
 import TmuxSessionsModal from './TmuxSessionsModal';
 import EnvironmentModal from './EnvironmentModal';
 import type { ClaudeUsageBucket } from '@/types/api';
@@ -77,8 +80,13 @@ const ICON = { size: 16, strokeWidth: 1.5 } as const;
 export const NAV_ITEMS: RailItem[] = [
   // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 Sessions。
   { id: 'session_workbench', labelKey: 'sidebar.nav.sessions', icon: <MessageSquare {...ICON} /> },
-  // 结对会话：两个人的会话并排摆着。紧跟 Sessions，因为它就是会话的另一种看法。
+  // 虚拟桌面：agent_os 的常驻舞台，紧跟 Sessions 下方。
+  { id: 'desktop', labelKey: 'sidebar.nav.desktop', icon: <Monitor {...ICON} /> },
+  // 结对会话：两个人的会话并排摆着。
   { id: 'vibe_teaming', labelKey: 'sidebar.nav.teams', icon: <Users {...ICON} /> },
+  // 员工：这台机器上的岗位编制，点卡片起一场带着业务语境的新会话。
+  // 图标用 Briefcase，与结对的 Users 分开——两项挨着排，撞车的话收起时只剩图标就分不出谁是谁。
+  { id: 'employees', labelKey: 'sidebar.nav.employees', icon: <Briefcase {...ICON} /> },
   { id: 'recipes', labelKey: 'sidebar.nav.recipes', icon: <LayoutGrid {...ICON} /> },
   // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
   { id: 'todos', labelKey: 'sidebar.nav.todos', icon: <ListChecks {...ICON} /> },
@@ -93,7 +101,9 @@ export const NAV_ITEMS: RailItem[] = [
 
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
+  if (id === 'desktop') return currentPage === 'desktop';
   if (id === 'vibe_teaming') return currentPage === 'vibe_teaming';
+  if (id === 'employees') return currentPage === 'employees';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
   if (id === 'schedules') return currentPage === 'schedules' || currentPage === 'schedule_detail';
@@ -152,6 +162,63 @@ function RecipeAppPinItems({ expanded }: { expanded: boolean }) {
                 }}
                 title={t('recipes.app.unpin')}
                 aria-label={`${t('recipes.app.unpin')} ${label}`}
+              >
+                <X size={12} strokeWidth={1.5} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * files 下面 pin 着的目录或文件，一个一行。
+ *
+ * 与 `RecipeAppPinItems` 同一个排法：展开时显示文件夹或文件图标加短名，悬停出 × 摘掉；
+ * 收起时只留图标，完整路径放在 tooltip 里。点一下切到文件页并直接跳进那个目录或打开那份文件。
+ */
+function FilePinItems({ expanded }: { expanded: boolean }) {
+  const { t } = useTranslation();
+  const pins = useFilePins((s) => s.pins);
+  const unpin = useFilePins((s) => s.unpin);
+  const openPin = useFilePins((s) => s.openPin);
+  const activePath = useFilePins((s) => s.activePath);
+  const currentPage = usePageStore((s) => s.currentPage);
+  const switchPage = usePageStore((s) => s.switchPage);
+
+  if (pins.length === 0) return null;
+
+  return (
+    <div className="rail-subnav" role="group" aria-label={t('files.pinned')}>
+      {pins.map((item) => {
+        const label = filePinLabel(item.path);
+        const active = currentPage === 'files' && activePath === item.path;
+        return (
+          <div key={item.path} className={`rail-subitem ${active ? 'rail-subitem--active' : ''}`}>
+            <button
+              type="button"
+              className="rail-subitem-open"
+              onClick={() => {
+                openPin(item);
+                switchPage('files');
+              }}
+              title={item.path}
+              aria-current={active ? 'page' : undefined}
+            >
+              <span className="rail-item-icon">
+                {item.is_dir ? <Folder {...ICON} /> : <FileIcon {...ICON} />}
+              </span>
+              {expanded ? <span className="rail-item-label">{label}</span> : null}
+            </button>
+            {expanded ? (
+              <button
+                type="button"
+                className="rail-subitem-unpin"
+                onClick={() => unpin(item.path)}
+                title={t('files.unpin')}
+                aria-label={`${t('files.unpin')} ${label}`}
               >
                 <X size={12} strokeWidth={1.5} />
               </button>
@@ -335,20 +402,9 @@ function RailEnvironment() {
 function RailTools() {
   const { t } = useTranslation();
   const { config, setTheme } = useAppStore();
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const [tmuxOpen, setTmuxOpen] = useState(false);
   const { total: tmuxTotal, totalMemoryMb } = useTmuxSessionCount();
   const theme = config?.theme === 'light' ? 'light' : 'dark';
-
-  // Esc 关月历。它是个盖住半屏的浮层，不该只有一个关闭按钮能收。
-  useEffect(() => {
-    if (!calendarOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setCalendarOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [calendarOpen]);
 
   return (
     <div className="rail-tools">
@@ -365,16 +421,6 @@ function RailTools() {
       >
         <Terminal {...ICON} />
         <span className="rail-tool-count">{tmuxTotal}</span>
-      </button>
-
-      <button
-        type="button"
-        className="rail-tool"
-        onClick={() => setCalendarOpen(true)}
-        title={t('tokenCalendar.open')}
-        aria-label={t('tokenCalendar.open')}
-      >
-        <CalendarDays {...ICON} />
       </button>
 
       <div className="rail-theme" role="group" aria-label={t('sidebar.appearance.label')}>
@@ -399,15 +445,6 @@ function RailTools() {
           <Moon size={14} strokeWidth={1.5} />
         </button>
       </div>
-
-      {/* 月历挂到 body 上，不留在这根栏里面。左栏是 flex 子项且带 z-index，自己就是一层
-          堆叠上下文——浮层写多高的 z-index 都只在这一层里比，会被栏外的东西压住。 */}
-      {calendarOpen
-        ? createPortal(
-            <TokenCalendarModal t={t} onClose={() => setCalendarOpen(false)} />,
-            document.body
-          )
-        : null}
 
       {tmuxOpen
         ? createPortal(<TmuxSessionsModal onClose={() => setTmuxOpen(false)} />, document.body)
@@ -472,6 +509,11 @@ export default function Sidebar() {
             <div key={item.id} className="rail-group">
               {renderItem(item)}
               <RecipeAppPinItems expanded={expanded} />
+            </div>
+          ) : item.id === 'files' ? (
+            <div key={item.id} className="rail-group">
+              {renderItem(item)}
+              <FilePinItems expanded={expanded} />
             </div>
           ) : (
             renderItem(item)

@@ -54,12 +54,20 @@ import {
 } from 'lucide-react';
 import i18n from '@/i18n';
 import MarkdownContent from '@/components/ui/MarkdownContent';
-import { parseCardAnswer, splitTrailingBlock } from '@/utils/decisionBlock';
+import { parseCardAnswer, parseUiComponentOutput, splitTrailingBlock } from '@/utils/decisionBlock';
+import {
+  dedupeImageGrids,
+  parseAllImageGridOutputs,
+  stripImageGridBlocks,
+} from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
+import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { EmployeeQuotes } from './EmployeeQuote';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
-import { CardAnswerBody, CardAnswerTag, DecisionReply } from './DecisionCard';
+import ImageGridCard from './ImageGridCard';
+import { CardAnswerBody, CardAnswerTag, DecisionCard, DecisionReply } from './DecisionCard';
 import {
   fetchWorkbenchRaw,
   queueOpOf,
@@ -200,6 +208,16 @@ export function formatBytes(bytes: number | null): string {
   return i18n.t('workbench.record.bytes.mb', { n: (bytes / 1024 / 1024).toFixed(1) });
 }
 
+/** 毫秒时间戳 → 本地日期与时刻：2026-10-31 14:50:18。naive local time，不拼 Z 后缀。 */
+export function formatDateTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 毫秒时间戳 → 本地时刻。naive local time，不拼 Z 后缀。 */
 export function formatClock(ts: number): string {
   if (!ts) return '';
@@ -323,9 +341,9 @@ interface ShellProps {
 }
 
 function Timestamp({ ts }: { ts: number }) {
-  const clock = formatClock(ts);
-  if (!clock) return null;
-  return <span className="shrink-0 font-mono text-[11px] text-text-muted">{clock}</span>;
+  const dt = formatDateTime(ts);
+  if (!dt) return null;
+  return <span className="shrink-0 font-mono text-[11px] text-text-muted">{dt}</span>;
 }
 
 function AgentPath({ path }: { path: string[] }) {
@@ -377,6 +395,8 @@ function CardHead({
   open?: boolean;
   onToggle?: () => void;
 }) {
+  const { t } = useTranslation();
+  const context = num(record.payload, 'context_tokens');
   const name = (
     <span className={`inline-flex shrink-0 items-center gap-1 ${labelTone}`}>
       {icon}
@@ -404,8 +424,17 @@ function CardHead({
       )}
       {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
       <Timestamp ts={record.ts} />
-      {/* 撑开的空档摆在时刻**之后**：左边那几样紧挨着连成一句，右边缘只接结局。 */}
-      <span className="flex-1" />
+      {/* 分割线显示在时间的右侧，撑开空档并连起右侧上下文读数与结局 */}
+      <span aria-hidden className="h-px flex-1 bg-border-color" />
+      {context !== null ? (
+        <span
+          className="shrink-0 font-mono text-[11px] text-text-dim"
+          data-testid="card-head-context"
+          title={`Context: ${context.toLocaleString()}`}
+        >
+          {t('workbench.record.usage.context')} {formatTokens(context)}
+        </span>
+      ) : null}
       {trailing}
       <AgentPath path={record.agent_path} />
     </header>
@@ -614,7 +643,7 @@ function SystemShell({
         <span className="shrink-0">{label}</span>
         {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         <AgentPath path={record.agent_path} />
       </div>
       {hasBody && open ? <div className="mt-1.5 min-w-0">{children}</div> : null}
@@ -623,14 +652,14 @@ function SystemShell({
 }
 
 // ── 正文块 ────────────────────────────────────────────────────────────
-/** 记录正文：13px / 1.65，照原型。长会话一路读下来，长文行高比正文的 1.5 明显省力。 */
+/** 记录正文：基础阅读字号固定在 16px / 1.72，照原型。长会话一路读下来，长文行高明显省力。 */
 function Prose({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.65] text-text-primary">
+    <p className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary">
       {text}
     </p>
   );
@@ -643,12 +672,12 @@ function Prose({ text }: { text: string }) {
 function Rich({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[13px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
     <MarkdownContent
       content={text}
-      className="min-w-0 break-words text-[13px] leading-[1.65] text-text-primary"
+      className="min-w-0 break-words text-[16px] leading-[1.72] text-text-primary"
     />
   );
 }
@@ -685,9 +714,10 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const mode = str(p, 'input_mode');
   const command = str(p, 'command');
   const reminders = list(p, 'reminders').filter((r): r is string => typeof r === 'string' && !!r);
-  // 会话页点名的 skill 整篇嵌在正文前面，只摆名字；发的图以路径拼在正文尾巴上，摘出来
-  // 摆成缩略图。正文只留人写的话。
-  const { text: said, skills } = splitSkillBlocks(str(p, 'text'));
+  // 会话页点名的员工语境与 skill 整篇嵌在正文前面，只摆成引用卡片；发的图以路径拼在正文尾巴上，
+  // 摘出来摆成缩略图。正文只留人写的话。
+  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'text'));
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images: attached } = splitAttachedImages(said);
 
   // 敲在输入框里是常态，说出来等于没说。只有"当时不是直接打字"才值得标一句：插话是
@@ -705,6 +735,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       tone={YOU_TONE}
       meta={cardAnswer ? <CardAnswerTag /> : modeKey ? t(modeKey) : undefined}
     >
+      <EmployeeQuotes employees={employees} />
       <SkillQuotes names={skills} />
       {/* 命令摆成一枚等宽徽标。参数跟不跟它连排，看参数是**一个取值**还是**一段话**：
           `/model Opus` 人打的就是连着的一句，拆成两行两种字号会读成"命令是 /model，
@@ -719,7 +750,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
           {inline ? `${command} ${text}` : command}
         </p>
       ) : null}
-      {!inline && (text || (!command && !skills.length)) ? (
+      {!inline && (text || (!command && !skills.length && !employees.length)) ? (
         <div className={command ? 'mt-1.5' : undefined}>
           {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
         </div>
@@ -815,7 +846,32 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const voice = useContext(RecordVoiceContext);
   const p = record.payload;
   const text = str(p, 'text');
-  const trailing = record.agent_path.length ? null : splitTrailingBlock(text);
+  const delegatedUi = str(p, 'ui_component');
+  const suppressed = p.ui_component_delegated === true;
+  const delegatedGridBodies = list(p, 'ui_image_grids').filter(
+    (v): v is string => typeof v === 'string' && !!v
+  );
+  const delegatedGrids = !record.agent_path.length
+    ? delegatedGridBodies.flatMap((raw) => parseAllImageGridOutputs(raw))
+    : [];
+  const imageGrids = !record.agent_path.length
+    ? dedupeImageGrids(
+        delegatedGrids.length > 0 ? delegatedGrids : parseAllImageGridOutputs(text)
+      )
+    : [];
+  const bodyWithoutGrid =
+    !record.agent_path.length && imageGrids.length > 0 ? stripImageGridBlocks(text) : text;
+  const rawTrailing = record.agent_path.length ? null : splitTrailingBlock(bodyWithoutGrid);
+  const uiFromDelegated =
+    !suppressed && !record.agent_path.length && delegatedUi
+      ? parseUiComponentOutput(delegatedUi)
+      : null;
+  const trailing = suppressed || (uiFromDelegated && uiFromDelegated.ok) ? null : rawTrailing;
+  const displayText = rawTrailing && !trailing ? rawTrailing.body : bodyWithoutGrid;
+  const uiComponent =
+    !trailing && !suppressed && !record.agent_path.length
+      ? uiFromDelegated ?? parseUiComponentOutput(bodyWithoutGrid)
+      : null;
   return (
     <TextShell
       record={record}
@@ -830,14 +886,27 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
       tone="bg-transparent"
     >
       {trailing ? (
-        <DecisionReply
-          recordId={record.id}
-          text={text}
-          split={trailing}
-          rich={(s) => <Rich text={s} />}
-        />
+        <>
+          <DecisionReply
+            recordId={record.id}
+            text={bodyWithoutGrid}
+            split={trailing}
+            rich={(s) => <Rich text={s} />}
+          />
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
+        </>
       ) : (
-        <Rich text={text} />
+        <>
+          <Rich text={displayText} />
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
+          {uiComponent && uiComponent.ok ? (
+            <DecisionCard block={uiComponent.block} recordId={record.id} />
+          ) : null}
+        </>
       )}
     </TextShell>
   );
@@ -978,7 +1047,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </button>
           {target ? <span className="min-w-0 truncate font-mono">{target}</span> : null}
           <Timestamp ts={record.ts} />
-          <span className="flex-1" />
+          <span aria-hidden className="h-px flex-1 bg-border-color" />
           <AgentPath path={record.agent_path} />
         </header>
         {open ? (
@@ -1055,7 +1124,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         {segments.length > 1 ? (
           <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
             {t('workbench.record.segments', { n: segments.length })}
@@ -1141,7 +1210,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
-  const { text: said, skills } = splitSkillBlocks(str(p, 'body'));
+  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'body'));
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images } = splitAttachedImages(said);
   const cardAnswer = parseCardAnswer(text);
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
@@ -1156,10 +1226,11 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
         <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
       }
     >
+      <EmployeeQuotes employees={employees} />
       <SkillQuotes names={skills} />
       {cardAnswer ? (
         <CardAnswerBody answer={cardAnswer} />
-      ) : text || !skills.length ? (
+      ) : text || (!skills.length && !employees.length) ? (
         <Prose text={text} />
       ) : null}
       <AttachedImages images={images} />
@@ -1368,49 +1439,66 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
 
   const duration = formatDuration(num(p, 'duration_ms'));
   const status = str(p, 'status');
+  const bodyText = str(p, 'body');
   // 失败的那一条自己摊开。其余收着——一次 Read 的输出两百行，一屏躺着七八次调用，
   // 全摊开的话人要滚过几千行才看得到 agent 下一句说了什么。
   const failed = status === 'error';
   // 内容被截断或被挪走的那几条也摊开：卡身里放着「取原文」，那是人拿回丢掉那段的
   // 唯一入口。收起来等于把补救办法藏在一次点击后面，而卡头上的徽章刚说完"没了"。
   const needsAction = failed || Boolean(truncation);
+  const uiComponent =
+    !failed && !record.agent_path.length && p.ui_component_delegated !== true
+      ? parseUiComponentOutput(bodyText)
+      : null;
+  const imageGrids =
+    !failed && !record.agent_path.length && p.ui_component_delegated !== true
+      ? parseAllImageGridOutputs(bodyText)
+      : [];
   return (
-    <ToolShell
-      record={record}
-      icon={<Terminal size={14} />}
-      title={str(p, 'tool_name') || t(KIND_LABEL_KEY['tool.result'])}
-      subtitle={duration ? t('workbench.record.elapsed', { duration }) : undefined}
-      headTone={failed ? ERR_BG : undefined}
-      ringTone={failed ? ERR_RING : undefined}
-      collapsible
-      defaultOpen={needsAction}
-      chips={
-        <>
-          <TruncationChip state={truncation} ref_={str(p, 'truncation_ref')} />
-          <StatusChip status={status} />
-        </>
-      }
-    >
-      <Mono text={str(p, 'body')} />
-      {canFetchRaw ? (
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={takeRaw}
-            disabled={rawLoading}
-            className="rounded-[3px] border border-border-color px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-50"
-          >
-            {rawLoading ? t('workbench.record.fetchingRaw') : t('workbench.record.fetchRaw')}
-          </button>
-          {rawError ? <p className={`mt-1 text-[11px] ${ERR_TEXT}`}>{rawError}</p> : null}
-          {raw ? (
-            <div className="mt-2">
-              <Mono text={raw} />
-            </div>
-          ) : null}
-        </div>
+    <div className="min-w-0">
+      <ToolShell
+        record={record}
+        icon={<Terminal size={14} />}
+        title={str(p, 'tool_name') || t(KIND_LABEL_KEY['tool.result'])}
+        subtitle={duration ? t('workbench.record.elapsed', { duration }) : undefined}
+        headTone={failed ? ERR_BG : undefined}
+        ringTone={failed ? ERR_RING : undefined}
+        collapsible
+        defaultOpen={needsAction}
+        chips={
+          <>
+            <TruncationChip state={truncation} ref_={str(p, 'truncation_ref')} />
+            <StatusChip status={status} />
+          </>
+        }
+      >
+        <Mono text={bodyText} />
+        {canFetchRaw ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={takeRaw}
+              disabled={rawLoading}
+              className="rounded-[3px] border border-border-color px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary disabled:opacity-50"
+            >
+              {rawLoading ? t('workbench.record.fetchingRaw') : t('workbench.record.fetchRaw')}
+            </button>
+            {rawError ? <p className={`mt-1 text-[11px] ${ERR_TEXT}`}>{rawError}</p> : null}
+            {raw ? (
+              <div className="mt-2">
+                <Mono text={raw} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </ToolShell>
+      {imageGrids.map((grid, idx) => (
+        <ImageGridCard key={`grid-${idx}`} block={grid} />
+      ))}
+      {uiComponent && uiComponent.ok ? (
+        <DecisionCard block={uiComponent.block} recordId={record.id} />
       ) : null}
-    </ToolShell>
+    </div>
   );
 }
 
@@ -1605,7 +1693,7 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
           {t(KIND_LABEL_KEY.error)}
         </span>
         <Timestamp ts={record.ts} />
-        <span className="flex-1" />
+        <span aria-hidden className="h-px flex-1 bg-border-color" />
         <AgentPath path={record.agent_path} />
       </header>
       <dl className="space-y-1 text-[12px]">
@@ -1703,7 +1791,8 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
   // 正文里带着服务端拼的图片路径段。与插话卡、人发言走同一条拆图：排队这段时间人该
   // 看见自己刚发的那张图，而不是一串十六进制路径。
-  const { text: said, skills } = splitSkillBlocks(content);
+  const { text: afterEmp, employees } = splitEmployeeBlocks(content);
+  const { text: said, skills } = splitSkillBlocks(afterEmp);
   const { text, images } = splitAttachedImages(said);
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
@@ -1718,8 +1807,9 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         tone={YOU_TONE}
         meta={chip}
       >
+        <EmployeeQuotes employees={employees} />
         <SkillQuotes names={skills} />
-        {text || !skills.length ? <Prose text={text} /> : null}
+        {text || (!skills.length && !employees.length) ? <Prose text={text} /> : null}
         <AttachedImages images={images} />
       </TextShell>
     );
@@ -1737,7 +1827,13 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         <span className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[11px]">{chip}</span>
           <span className="truncate text-text-secondary">
-            {[...skills.map((n) => `/${n}`), text].filter(Boolean).join(' ')}
+            {[
+              ...employees.map((e) => `@${e.id}`),
+              ...skills.map((n) => `/${n}`),
+              text,
+            ]
+              .filter(Boolean)
+              .join(' ')}
           </span>
         </span>
       }
@@ -1928,6 +2024,21 @@ function ToolRunLine({
     num(result, 'duration_ms') ??
     (row.call && row.result && row.result.ts >= row.call.ts ? row.result.ts - row.call.ts : null);
   const failed = status === 'error';
+  const resultBody = str(result, 'body');
+  const uiComponent =
+    !failed &&
+    row.result &&
+    !row.result.agent_path.length &&
+    result.ui_component_delegated !== true
+      ? parseUiComponentOutput(resultBody)
+      : null;
+  const imageGrids =
+    !failed &&
+    row.result &&
+    !row.result.agent_path.length &&
+    result.ui_component_delegated !== true
+      ? parseAllImageGridOutputs(resultBody)
+      : [];
   return (
     <li className="min-w-0">
       <button
@@ -1959,6 +2070,18 @@ function ToolRunLine({
           </span>
         )}
       </button>
+      {!open && imageGrids.length > 0 ? (
+        <div className="min-w-0 px-3 pb-2">
+          {imageGrids.map((grid, idx) => (
+            <ImageGridCard key={`grid-${idx}`} block={grid} />
+          ))}
+        </div>
+      ) : null}
+      {!open && uiComponent && uiComponent.ok && row.result ? (
+        <div className="min-w-0 px-3 pb-2">
+          <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+        </div>
+      ) : null}
       {open ? (
         <div className="min-w-0 space-y-1 px-3 pb-2 pt-1">
           {row.call ? <RecordCardInner record={row.call} sessionId={sessionId} /> : null}

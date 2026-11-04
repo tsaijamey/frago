@@ -292,11 +292,30 @@ class TestWhichBackendGetsAsked:
         assert plan.source == "literal"
         assert "没跑成" in plan.note
 
-    def test_driver_is_still_used_when_the_preference_is_a_cli(self, monkeypatch):
-        """选定一家 CLI（且它装着）时照旧走 tmux，内核那条路不该被叫到。"""
+    def test_default_expansion_always_uses_lightagent_chat_turn(self, monkeypatch):
+        """不点名 agent_type 时一律走 frago-core --mode chat --as-role lightagent 单轮模式，
+        哪怕偏好设的是某家 CLI，也不再为扩词拉起 tmux 会话。"""
+        asked_kwargs: list[dict] = []
         monkeypatch.setattr("frago.init.config_manager.get_agent_core", lambda: "opencode")
         monkeypatch.setattr("frago.init.agent_core.core_installed", lambda _t: True)
 
+        class Boom:
+            def run(self, *a, **kw):
+                raise AssertionError("默认扩词不该走 SessionLauncher")
+
+        monkeypatch.setattr("frago.agent_driver.SessionLauncher", Boom)
+        monkeypatch.setattr(
+            "frago.agent_driver.kernel_backend.run_chat_turn",
+            lambda prompt, **kw: asked_kwargs.append(kw)
+            or kernel_turn(text='{"terms": ["sqlite"], "note": "n"}'),
+        )
+        plan = search_mod.expand_query("q")
+        assert plan.source == "agent"
+        assert plan.terms == ["sqlite"]
+        assert asked_kwargs and asked_kwargs[0].get("role") == "lightagent"
+
+    def test_explicit_cli_agent_type_still_uses_driver(self, monkeypatch):
+        """显式传 --agent-type opencode 时走对应的 CLI 后端。"""
         class Good:
             def run(self, *a, **kw):
                 return type("R", (), {"status": "ok", "text": '{"terms": ["sqlite"]}'})()
@@ -304,9 +323,9 @@ class TestWhichBackendGetsAsked:
         monkeypatch.setattr("frago.agent_driver.SessionLauncher", Good)
         monkeypatch.setattr(
             "frago.agent_driver.kernel_backend.run_chat_turn",
-            lambda *a, **kw: pytest.fail("选了 CLI 就不该问内核"),
+            lambda *a, **kw: pytest.fail("显式点名 CLI 时不该问内核"),
         )
-        plan = search_mod.expand_query("q")
+        plan = search_mod.expand_query("q", agent_type="opencode")
         assert plan.source == "agent"
         assert plan.terms == ["sqlite"]
 

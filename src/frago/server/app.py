@@ -618,6 +618,10 @@ def create_app(
     app.include_router(agent_router, prefix="/api", tags=["agent"])
     app.include_router(config_router, prefix="/api", tags=["config"])
     app.include_router(data_repo_router, prefix="/api", tags=["data_repo"])
+
+    from frago.server.routes.employees import router as employees_router
+
+    app.include_router(employees_router, prefix="/api", tags=["employees"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
     app.include_router(github_star_router, prefix="/api", tags=["github_star"])

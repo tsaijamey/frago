@@ -391,6 +391,8 @@ export interface RecipeSecretsResponseHttp {
 
 export interface VSCodeStatus {
   available: boolean;  // True only if VSCode installed AND settings.json exists
+  vscode_installed?: boolean;
+  configs?: Record<string, { path: string; exists: boolean }>;
 }
 
 export interface RunningTaskSummary {
@@ -660,6 +662,7 @@ export interface EndpointPresetListResponse {
 // key to itself, so frago can no longer read the credential. Kept in the union so
 // rows saved before then still typecheck, and can be shown as unusable.
 export type ConnectionKind = 'endpoint' | 'official' | 'vendor_cli' | 'workbuddy';
+export type AgyContextWindowTier = '256K' | '512K' | '900K';
 
 export interface ProfileItem {
   id: string;
@@ -675,6 +678,8 @@ export interface ProfileItem {
   haiku_model?: string | null;
   /** The model's context window in tokens; null means "let each CLI decide". */
   context_window?: number | null;
+  /** Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" | "512K" | "900K"). */
+  agy_context_window?: AgyContextWindowTier | null;
   /** Every protocol door this connection opens, Anthropic first. */
   channels?: ProfileChannel[];
   is_active: boolean;
@@ -745,11 +750,23 @@ export interface RoleBinding {
   targets: string[];
 }
 
+export interface HarnessBinding {
+  agent_type: string;
+  display_name: string;
+  protocol: string;
+  protocol_label: string;
+  config_path: string;
+  installed: boolean;
+  main_profile_id: string;
+  worker_profile_id: string;
+}
+
 export interface ConnectionsResponse {
   /** Every bindable connection, subscription first. */
   connections: ProfileItem[];
   bindings: RoleBinding[];
   vendor_cores: VendorCore[];
+  harnesses?: HarnessBinding[];
 }
 
 /**
@@ -790,6 +807,8 @@ export interface CreateProfileRequest {
   haiku_model?: string | null;
   /** Model context window in tokens; null means "let each CLI decide". */
   context_window?: number | null;
+  /** Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" | "512K" | "900K"). */
+  agy_context_window?: AgyContextWindowTier | null;
   channels?: ProfileChannelInput[];
 }
 
@@ -810,6 +829,8 @@ export interface UpdateProfileRequest {
   haiku_model?: string | null;
   /** Sent as null to clear the window; omitted keeps what is saved. */
   context_window?: number | null;
+  /** Sent as null to clear the agy tier; omitted keeps what is saved. */
+  agy_context_window?: AgyContextWindowTier | null;
   /** Omitted keeps the saved channels; `[]` drops them. */
   channels?: ProfileChannelInput[];
 }
@@ -1246,12 +1267,15 @@ export interface SessionFileAnnotations {
 // 会话分支 — 圈一段原文起一场新会话处理旁支问题
 // ============================================================
 
-/** 起分支：从哪条记录、哪段原文分出去，人写的那句话（必填）。 */
+/** 起分支：从哪条记录、哪段原文分出去，人写的那句话与可选挂带的附件 / skill。 */
 export interface BranchRequest {
   record_id: string;
   text: string;
   occurrence: number;
   note: string;
+  images?: string[];
+  documents?: { name: string; data: string }[];
+  skills?: string[];
 }
 
 /**
@@ -1355,6 +1379,11 @@ export interface SessionFileDiff {
   rows: [FileDiffCell | null, FileDiffCell | null][] | null;
 }
 
+/** 在浮窗 Edit 模式保存文本文件后的返回结构，同时返回更新后的内容与最新对照。 */
+export interface SessionFileWriteResult extends SessionFileContent {
+  diff: SessionFileDiff;
+}
+
 // ============================================================
 // 文件浏览器
 // ============================================================
@@ -1408,3 +1437,24 @@ export interface PathProbe {
   /** 是文件时的字节数；否则 null。浮层拿它挡住过大的文件。 */
   size: number | null;
 }
+
+/**
+ * 会话终端视图（Terminal View）抓屏快照。
+ *
+ * `source`:
+ * - `"tmux"`：实时从存活的 `frago-agent-<sid>` tmux 窗格抓出的带 ANSI 屏幕文本
+ * - `"saved_pane"`：tmux 会话已退出（如单轮 CoreAgent Worker 跑完），从留底终端日志读取
+ * - `"none"`：既无活着的 tmux 会话，也没有留底终端日志
+ */
+export interface SessionTerminalSnapshot {
+  session_id: string;
+  alive: boolean;
+  tmux_name: string | null;
+  pane_command: string | null;
+  client_alive: boolean | null;
+  busy: boolean;
+  memory_mb: number;
+  source: 'tmux' | 'saved_pane' | 'none';
+  content: string;
+}
+

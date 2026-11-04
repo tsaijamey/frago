@@ -172,6 +172,44 @@ describe('useWorkbenchRecords', () => {
     });
     await waitFor(() => expect(result.current.records).toHaveLength(PAGE_SIZE));
   });
+
+  it('尾部一页绝大多数为工具/思考记录导致可见对话不足 40 条时，自动向前补取旧页', async () => {
+    const total = 358;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const limit = Number(url.match(/limit=(\d+)/)?.[1] ?? PAGE_SIZE);
+      let seqs: number[];
+      if (/[?&]tail=true/.test(url)) {
+        const start = Math.max(0, total - limit);
+        seqs = Array.from({ length: total - start }, (_, i) => start + i);
+      } else {
+        const after = Number(url.match(/after=(\d+)/)?.[1] ?? 0);
+        const end = Math.min(after + limit, total);
+        seqs = Array.from({ length: Math.max(end - after, 0) }, (_, i) => after + i);
+      }
+      const rows = seqs.map((seq) => {
+        const base = record(seq);
+        // 模拟真实长会话：最后 200 条（158..357）里只有 4 条对话，其余全是工具与思考；
+        // 前 158 条（0..157）里有 36 条对话。
+        const isTalk =
+          (seq >= 158 && seq < 162) ||
+          (seq >= 0 && seq < 36);
+        return {
+          ...base,
+          kind: isTalk ? ('agent.say' as const) : ('tool.call' as const),
+        };
+      });
+      return { ok: true, json: async () => rows } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useWorkbenchRecords(SID));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.records).toHaveLength(358);
+    expect(result.current.records[0].seq).toBe(0);
+    expect(result.current.hasOlder).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('只有开在 tmux 里的会话才一直轮询（主人 09-30 定）', () => {

@@ -1816,8 +1816,8 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
 # 尾部追加，两者任一变了就是真的变了。判据一改必须 bump 版本号，否则改对了判据、
 # 命令行现算是对的、界面上还是旧的。
 #
-# 只留最近几场：一场大会话的记录对象是十兆量级，留多了内存换不回速度。
-_CACHE_CAPACITY = 4
+# 留最近 32 场：后台有多场会话并行跑、巡检与列表轮询交错时，容量太小（如 4）会反复互踢缓存。
+_CACHE_CAPACITY = 32
 _cache: OrderedDict[str, tuple[int, int, list[UnifiedRecord]]] = OrderedDict()
 _cache_lock = Lock()
 

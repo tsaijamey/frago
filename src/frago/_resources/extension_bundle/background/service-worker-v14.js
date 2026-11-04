@@ -1607,7 +1607,172 @@ async function visualClearEffects({ group, tab_id }) {
     }, []);
 }
 
-// ════════════════════════ popup messaging ════════════════════════
+// ════════════════════════ proxy & bypass settings ════════════════════════
+//
+// Proxy behavior is governed strictly by whether ``proxyUrl`` is filled in
+// the extension Options page (`options/options.html`):
+//   - Non-empty ``proxyUrl``: route through that proxy (`fixed_servers`) and
+//     bypass ``BASE_BYPASS`` + user-configured ``bypassDomains``.
+//   - Empty ``proxyUrl``: clear extension proxy settings so nothing is active.
+
+const PROXY_CONFIG_KEY = "fragoProxyConfig";
+const BASE_BYPASS = [
+    "<local>",
+    "*.local",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+];
+
+function normalizeProxyUrlInput(raw) {
+    return String(raw || "")
+        .trim()
+        .replace(/：/g, ":")
+        .replace(/。/g, ".")
+        .replace(/　/g, " ");
+}
+
+function parseProxyUrl(raw) {
+    const value = normalizeProxyUrlInput(raw);
+    if (!value) return null;
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)
+        ? value
+        : `http://${value}`;
+    let parsed;
+    try {
+        parsed = new URL(withScheme);
+    } catch (_) {
+        throw new Error(`无效的代理地址格式: ${value}`);
+    }
+    let scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+    if (scheme === "socks") scheme = "socks5";
+    if (!["http", "https", "socks4", "socks5"].includes(scheme)) {
+        throw new Error(`不支持的代理协议 "${scheme}"（仅支持 http / https / socks4 / socks5）`);
+    }
+    const port = Number(parsed.port);
+    if (!parsed.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("代理地址必须同时包含主机名与端口号（例如 127.0.0.1:7890）");
+    }
+    return {
+        scheme,
+        host: parsed.hostname,
+        port,
+        normalized: `${scheme}://${parsed.hostname}:${port}`,
+    };
+}
+
+function normalizeBypassList(rawList) {
+    const items = Array.isArray(rawList)
+        ? rawList
+        : String(rawList || "").split(/[\r\n,;]+/);
+    const seen = new Set();
+    const out = [];
+    for (const raw of items) {
+        const entry = String(raw || "").trim().replace(/。/g, ".");
+        if (!entry || entry.startsWith("#")) continue;
+        if (!seen.has(entry)) {
+            seen.add(entry);
+            out.push(entry);
+        }
+    }
+    return out;
+}
+
+function expandBypassRule(item) {
+    const clean = String(item || "").trim();
+    if (!clean) return [];
+    if (
+        clean.startsWith("<") ||
+        clean.includes("/") ||
+        /^\d+\.\d+\.\d+\.\d+$/.test(clean) ||
+        clean.startsWith("[")
+    ) {
+        return [clean];
+    }
+    if (clean.startsWith("*.")) {
+        const bare = clean.slice(2);
+        return bare ? [clean, bare] : [clean];
+    }
+    if (!clean.includes("*")) {
+        const hostOnly = clean.split(":")[0];
+        if (hostOnly.includes(".") && hostOnly !== "localhost") {
+            return [clean, `*.${clean}`];
+        }
+    }
+    return [clean];
+}
+
+function mergeBypassEntries(userDomains) {
+    const seen = new Set();
+    const merged = [];
+    const pushUnique = (entry) => {
+        if (entry && !seen.has(entry)) {
+            seen.add(entry);
+            merged.push(entry);
+        }
+    };
+    for (const item of BASE_BYPASS) {
+        pushUnique(item);
+    }
+    for (const item of userDomains) {
+        for (const expanded of expandBypassRule(item)) {
+            pushUnique(expanded);
+        }
+    }
+    return merged;
+}
+
+async function applyProxySettings(cfg) {
+    let current = cfg;
+    if (!current) {
+        const stored = await chrome.storage.local.get(PROXY_CONFIG_KEY);
+        current = stored[PROXY_CONFIG_KEY] || {};
+    }
+    const rawUrl = String(current.proxyUrl || "").trim();
+    const bypassDomains = normalizeBypassList(current.bypassDomains || []);
+
+    if (!rawUrl) {
+        if (chrome.proxy?.settings) {
+            await chrome.proxy.settings.clear({ scope: "regular" });
+        }
+        return {
+            active: false,
+            proxyUrl: "",
+            bypassDomains,
+            effectiveBypass: [],
+            baseBypass: BASE_BYPASS,
+        };
+    }
+
+    const parsed = parseProxyUrl(rawUrl);
+    const effectiveBypass = mergeBypassEntries(bypassDomains);
+    if (chrome.proxy?.settings) {
+        await chrome.proxy.settings.set({
+            scope: "regular",
+            value: {
+                mode: "fixed_servers",
+                rules: {
+                    singleProxy: {
+                        scheme: parsed.scheme,
+                        host: parsed.host,
+                        port: parsed.port,
+                    },
+                    bypassList: effectiveBypass,
+                },
+            },
+        });
+    }
+    return {
+        active: true,
+        proxyUrl: parsed.normalized,
+        bypassDomains,
+        effectiveBypass,
+        baseBypass: BASE_BYPASS,
+    };
+}
+
+// ════════════════════════ popup & options messaging ════════════════════════
 //
 // popup/popup.js asks ``{type: "frago.popup.status"}`` to learn whether
 // the native host port is alive. Synchronous response — no async work
@@ -1617,6 +1782,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "frago.popup.status") {
         sendResponse({ ok: !!port, extensionId: chrome.runtime.id });
         return false;  // synchronous response
+    }
+    if (msg?.type === "frago.proxy.get") {
+        chrome.storage.local.get(PROXY_CONFIG_KEY).then((stored) => {
+            const cfg = stored[PROXY_CONFIG_KEY] || {};
+            const rawUrl = String(cfg.proxyUrl || "").trim();
+            const bypassDomains = normalizeBypassList(cfg.bypassDomains || []);
+            let normalized = "";
+            let active = false;
+            if (rawUrl) {
+                try {
+                    normalized = parseProxyUrl(rawUrl).normalized;
+                    active = true;
+                } catch (_) {
+                    normalized = rawUrl;
+                }
+            }
+            sendResponse({
+                ok: true,
+                active,
+                proxyUrl: normalized,
+                bypassDomains,
+                baseBypass: BASE_BYPASS,
+            });
+        }).catch((err) => {
+            sendResponse({ ok: false, error: String(err?.message || err) });
+        });
+        return true;
+    }
+    if (msg?.type === "frago.proxy.save") {
+        (async () => {
+            const rawUrl = normalizeProxyUrlInput(msg.proxyUrl || "");
+            const bypassDomains = normalizeBypassList(msg.bypassDomains || []);
+            const stored = await chrome.storage.local.get(PROXY_CONFIG_KEY);
+            const prevCfg = stored[PROXY_CONFIG_KEY] || {};
+            await chrome.storage.local.set({
+                [PROXY_CONFIG_KEY]: {
+                    proxyUrl: prevCfg.proxyUrl || "",
+                    bypassDomains,
+                },
+            });
+            const parsed = rawUrl ? parseProxyUrl(rawUrl) : null;
+            const nextCfg = {
+                proxyUrl: parsed ? parsed.normalized : "",
+                bypassDomains,
+            };
+            await chrome.storage.local.set({ [PROXY_CONFIG_KEY]: nextCfg });
+            const state = await applyProxySettings(nextCfg);
+            sendResponse({ ok: true, ...state });
+        })().catch((err) => {
+            sendResponse({ ok: false, error: String(err?.message || err) });
+        });
+        return true;
     }
     // 页面内的动静（滚动、点击、按键）也算这个 group 在被使用。
     // 只认自己 group 名下的标签，别的页面发来的一概不理。
@@ -1641,6 +1858,8 @@ ready = loadGroups();
 function bootstrap() {
     ready.then(() => {
         connectHost();
+        applyProxySettings().catch((e) =>
+            console.warn("[frago] proxy init failed:", e));
         // 幂等：同名 alarm 重复 create 只是覆盖周期。
         chrome.alarms.create(EXPIRY_ALARM, { periodInMinutes: 1 });
         return expireIdleGroups();

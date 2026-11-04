@@ -18,16 +18,16 @@
 
 | type | 人怎么作答 | 卡片 |
 |---|---|---|
-| `single-choice` | 从几个选项里点一个 | 选项按钮，点即作答 |
-| `multi-choice` | 勾一个或几个，再确认 | 勾选框 + 全选 + 确认键 |
-| `text-answer` | 打一段字 | 输入框 + 作答键；可带可点的建议答案 |
-| `choice-and-text` | 选并写一段字；可以只选、只写、或都有 | 选项 + 「Or write your own」输入框 |
+| `single-choice` | 从几个选项里选一个（可附补充说明），再点作答键发送 | 选项按钮 + 可选输入框 + 固定 Answer 主色边框按钮 |
+| `multi-choice` | 勾一个或几个（可附补充说明），再点作答键发送 | 勾选框 + 全选 + 可选输入框 + 固定 Answer 主色边框按钮 |
+| `text-answer` | 打一段字，再点作答键发送 | 输入框 + 固定 Answer 主色边框按钮；可带可点的建议答案 |
+| `choice-and-text` | 选并写一段字；可以只选、只写、或都有，再点作答键发送 | 选项 + 可选输入框 + 固定 Answer 主色边框按钮 |
 
 13 类旧名（`approve-irreversible`、`relay-approval` 之类）不再认，写了页面就照原文显示。原来那些差别落成下面几个标记：
 
 | 标记 | 写在哪 | 卡片怎么变 |
 |---|---|---|
-| `reversible: false` | 单个选项上（缺省视为可撤回） | 标「Can't be undone」、告警橙；点下去先二次确认；整张卡告警橙框 |
+| `reversible: false` | 单个选项上（缺省视为可撤回） | 标「Can't be undone」、告警橙；选中后点 Answer 按钮先出黄色二次确认条；整张卡告警橙框 |
 | `recommended: true` | 单个选项上，**至多一个** | 标「Recommended」；推荐理由写进 `why` |
 | `from: teammate` | 区块顶层 | 顶部标「From your teammate」，并显示 `request`（队友原话）与 `changes`（会改本机什么） |
 | `draft:` | 区块顶层，只用在 `text-answer` / `choice-and-text` | 先以只读文字显示，人可点「Edit」改 |
@@ -38,7 +38,36 @@
 
 ## 写法
 
-块内是 YAML。`type`、`question` 必填；除 `text-answer` 外 `options` 必填；每个选项 `key`、`label`、`effect` 都必写。
+优先调用会话工具 `frago app ask <type>` 生成前端 UI 交互组件数据（参数写错会立即报错并返回该组件类型的正确示例，不会发出坏卡片）；WebUI 根据输出数据直接渲染对应组件。
+
+```bash
+# 1. single-choice（单选）
+frago app ask single-choice \
+  -q "1.4.111 要发到 PyPI 吗？" \
+  --why "版本比较的崩溃已修，测试全过" \
+  -o '{"key":"A","label":"发布","effect":"打 v1.4.111 tag 并上传 PyPI，发出去收不回","reversible":false,"recommended":true}' \
+  -o '{"key":"B","label":"先不发","effect":"改动留在 main，不打 tag"}'
+
+# 2. multi-choice（多选）
+frago app ask multi-choice \
+  -q "本次要同步更新哪些环境？" \
+  -o "A|SIT 环境|写入 SIT Admin DB 并跑抽样验证" \
+  -o "B|本地单测|跑通全量 pytest"
+
+# 3. text-answer（文本作答）
+frago app ask text-answer \
+  -q "请填写目标物理表名：" \
+  --suggestion "rtm_data" \
+  --suggestion "cust_engage_rtm_summary"
+
+# 4. choice-and-text（选并写）
+frago app ask choice-and-text \
+  -q "确认改造范围（可补充额外说明）：" \
+  -o "A|全量改造 + SIT 验证|改代码、跑单测并同步更新 SIT|recommended" \
+  -o "B|仅本地改造|只修改本地代码与单测"
+```
+
+若手写 `answer-needed-by-human` 代码块，块内是 YAML。`type`、`question` 必填；除 `text-answer` 外 `options` 必填；每个选项 `key`、`label`、`effect` 都必写。
 
 ```answer-needed-by-human
 type: single-choice

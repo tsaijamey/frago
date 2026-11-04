@@ -7,8 +7,8 @@
 **AI 核心能力**:
 1. 通过元数据发现和选择合适的 Recipe
 2. 根据任务需求选择输出去向（stdout/file/clipboard）
-3. 通过 `/frago.recipe` 生成编排 Workflow Recipe
-4. 理解结构化错误并采取应对策略
+3. 通过 `frago recipe plan` / `frago recipe create` 生成编排 Workflow Recipe
+4. 读懂失败提示与执行记录，据此采取应对策略
 
 ---
 
@@ -79,51 +79,48 @@ frago recipe run youtube_extract_video_transcript \
   --output-file transcript.json
 ```
 
-**执行成功响应**:
+**执行成功**: 落进文件的是配方自己的结果，只有 `data`，没有 `success` 之类的包裹：
+
 ```json
 {
-  "success": true,
-  "data": {
-    "title": "Rick Astley - Never Gonna Give You Up",
-    "transcript": "We're no strangers to love...",
-    "language": "en",
-    "duration": 213
-  },
-  "execution_time": 3.21,
-  "recipe_name": "youtube_extract_video_transcript",
-  "runtime": "chrome-js"
+  "title": "Rick Astley - Never Gonna Give You Up",
+  "transcript": "We're no strangers to love...",
+  "language": "en",
+  "duration": 213
 }
 ```
 
 **同时文件已保存**: `transcript.json`
 
+stderr 上另有一行执行摘要和一个保存提示，不影响解析：
+
+```text
+[recipe] youtube_extract_video_transcript | <execution_id> | OK | 3.2s
+[OK] Result saved to: transcript.json
+```
+
+真实去向：配方数据走 stdout（或 `--output-file` / `--output-clipboard`），
+stderr 只放执行日志和摘要行，两边不混；不带 `--output-file` 时 stdout 拿到的同样只是 `data`。
+
 ---
 
 ### 场景 2: AI 处理错误并重试
 
-**执行失败响应**:
-```json
-{
-  "success": false,
-  "error": {
-    "type": "RecipeExecutionError",
-    "message": "Recipe 'youtube_extract_video_transcript' 执行失败",
-    "recipe_name": "youtube_extract_video_transcript",
-    "runtime": "chrome-js",
-    "exit_code": 1,
-    "stdout": "Navigated to https://youtube.com/watch?v=...",
-    "stderr": "Error: Element not found: .transcript-button"
-  },
-  "execution_time": 1.5,
-  "recipe_name": "youtube_extract_video_transcript",
-  "runtime": "chrome-js"
-}
+**执行失败**: stdout 为空，退出码非零，stderr 上是这一行：
+
+```text
+Error: Recipe 'youtube_extract_video_transcript' execution failed (exit code: 1): Error: Element not found: .transcript-button
 ```
 
+失败时 CLI 不产出结构化错误对象。配方自己写到 stderr 的内容会作为「原因」拼在这一行末尾。
+
 **AI 分析错误**:
-1. `error.type`: RecipeExecutionError → 执行失败
-2. `error.stderr`: "Element not found: .transcript-button" → 页面结构变化或无字幕
+1. 退出码非零 + `Error:` 行 → 执行失败
+2. 行尾原因 "Element not found: .transcript-button" → 页面结构变化或无字幕
 3. **AI 策略**: 向用户报告 "该视频可能没有字幕或 YouTube 页面结构已更新"
+
+需要事后核对细节时用 `frago recipe executions --status failed --format json`，
+那里有每次执行的记录（含 stdout/stderr、退出码、耗时），比解析 CLI 提示可靠。
 
 ---
 
@@ -133,11 +130,17 @@ frago recipe run youtube_extract_video_transcript \
 
 **AI 执行流程**:
 
-#### Step 1: AI 调用 `/frago.recipe` 命令
+#### Step 1: AI 用 `frago recipe plan` 起草规格
 
+```bash
+# 两条都必须后台跑（Bash 工具的 run_in_background: true）：
+# 每一条都会拉起一个 worker 写十几到几十分钟，前台 10 分钟就被砍
+frago recipe plan arxiv_batch_search \
+  --prompt "在 arXiv 批量搜索 10 个主题并保存为 JSON" \
+  --type workflow --runtime python
 ```
-/frago.recipe create workflow "在 arXiv 批量搜索 10 个主题并保存为 JSON"
-```
+
+规格文件写完后，再用 `frago recipe create arxiv_batch_search` 按规格生成模板。
 
 #### Step 2: AI 自动生成 Workflow 脚本
 
@@ -149,8 +152,17 @@ AI 生成的文件: `~/.frago/recipes/workflows/arxiv_batch_search/recipe.py`
 Workflow: 批量搜索 arXiv
 由 Claude Code 自动生成
 """
-import sys, json
-from frago.recipes import RecipeRunner
+import sys, json, subprocess
+
+def run_recipe(name, params):
+    """配方跑在隔离视图里，导入不了 frago，调子配方只能走命令行"""
+    proc = subprocess.run(
+        ['frago', 'recipe', 'run', name, '--params', json.dumps(params, ensure_ascii=False)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"{name} failed")
+    return json.loads(proc.stdout)   # stdout 只有子配方的 data
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
@@ -160,18 +172,16 @@ def main():
         print(json.dumps({"error": "Missing 'queries' parameter"}), file=sys.stderr)
         sys.exit(1)
 
-    runner = RecipeRunner()
     results = []
 
     for i, query in enumerate(queries[:10], 1):
         try:
             print(f"正在搜索第 {i}/10 个主题...", file=sys.stderr)
-            result = runner.run('arxiv_search_papers', {'query': query})
-            results.append({"query": query, "papers": result['data']})
+            results.append({"query": query, "papers": run_recipe('arxiv_search_papers', {'query': query})})
         except Exception as e:
             results.append({"query": query, "error": str(e)})
 
-    print(json.dumps({"success": True, "results": results}, ensure_ascii=False))
+    print(json.dumps({"results": results}, ensure_ascii=False))
 
 if __name__ == '__main__':
     main()
@@ -198,6 +208,22 @@ output_targets:
   - file
 dependencies:
   - arxiv_search_papers
+uses_frago_cli: true    # 脚本要 shell 调 frago recipe run，不写就拿不到 frago 的工作目录
+flow:                   # workflow 必填；step 编号不重复，recipe 引用要在 dependencies 里
+  - step: 1
+    action: "validate_input"
+    description: "检查 queries 非空且不超过 10 条"
+    inputs:
+      - source: "params.queries"
+  - step: 2
+    action: "search_each_topic"
+    description: "逐条调用 arxiv_search_papers 取论文列表"
+    recipe: "arxiv_search_papers"
+    inputs:
+      - source: "params.queries"
+    outputs:
+      - name: "papers"
+        type: "list"
 version: 1.0.0
 ---
 ```
@@ -213,6 +239,9 @@ frago recipe run arxiv_batch_search \
 ---
 
 ## 人类手动使用（次要场景）
+
+下面演示配方目录里到底有什么。**正式做法不手搓文件**：先 `frago recipe plan` 定规格、
+`frago recipe create` 生成模板，再在模板上填，最后 `frago recipe validate` 过一遍。
 
 ### 场景：创建一个简单的剪贴板读取 Recipe
 
@@ -254,13 +283,18 @@ cat > ~/.frago/recipes/atomic/system/clipboard_read/recipe.md <<'EOF'
 name: clipboard_read
 type: atomic
 runtime: python
+description: "读取系统剪贴板内容"
+use_cases:
+  - "把刚复制的内容接进自动化流程"
+output_targets:
+  - stdout
 inputs: {}
 outputs:
   content: string
   length: number
 version: 1.0.0
 dependencies: []
-description: "读取系统剪贴板内容"
+uses_commands: [xclip]    # 脚本要起外部命令；不写就拿不到它的配置与登录态
 ---
 
 # 剪贴板读取 Recipe
@@ -284,11 +318,8 @@ frago recipe run clipboard_read
 
 ```json
 {
-  "success": true,
-  "data": {
-    "content": "复制的文本内容",
-    "length": 10
-  }
+  "content": "复制的文本内容",
+  "length": 10
 }
 ```
 
@@ -323,10 +354,17 @@ cat > ~/.frago/recipes/workflows/youtube_batch_extract/recipe.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
-from pathlib import Path
+import subprocess
 
-# 导入 RecipeRunner（假设已实现）
-# from frago.recipes import RecipeRunner
+def run_recipe(name, params):
+    # 配方跑在隔离视图里，导入不了 frago，调子配方只能走命令行
+    proc = subprocess.run(
+        ['frago', 'recipe', 'run', name, '--params', json.dumps(params, ensure_ascii=False)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"{name} failed")
+    return json.loads(proc.stdout)   # stdout 只有子配方的 data
 
 def main():
     # 从命令行参数读取输入
@@ -337,22 +375,10 @@ def main():
         print(json.dumps({"error": "Missing 'urls' parameter"}), file=sys.stderr)
         sys.exit(1)
 
-    # 初始化 RecipeRunner
-    # runner = RecipeRunner()
-
     results = []
     for url in video_urls:
         try:
-            # 调用原子 Recipe
-            # result = runner.run('youtube_extract_video_transcript', {'url': url})
-            # results.append(result)
-
-            # 临时模拟（实际实现后删除）
-            results.append({
-                "url": url,
-                "title": f"Video from {url}",
-                "transcript": "..."
-            })
+            results.append(run_recipe('youtube_extract_video_transcript', {'url': url}))
         except Exception as e:
             results.append({
                 "url": url,
@@ -361,7 +387,6 @@ def main():
 
     # 输出 JSON 结果
     output = {
-        "success": True,
         "videos": results,
         "total": len(video_urls),
         "success_count": sum(1 for r in results if 'error' not in r)
@@ -383,6 +408,12 @@ cat > ~/.frago/recipes/workflows/youtube_batch_extract/recipe.md <<'EOF'
 name: youtube_batch_extract
 type: workflow
 runtime: python
+description: "批量提取多个 YouTube 视频字幕"
+use_cases:
+  - "把一串视频链接的字幕一次抓完"
+  - "给翻译流水线准备素材"
+output_targets:
+  - stdout
 inputs:
   urls:
     type: array
@@ -395,7 +426,22 @@ outputs:
 version: 1.0.0
 dependencies:
   - youtube_extract_video_transcript
-description: "批量提取多个 YouTube 视频字幕"
+uses_frago_cli: true    # 脚本要 shell 调 frago recipe run
+flow:                   # workflow 必填
+  - step: 1
+    action: "validate_input"
+    description: "检查 urls 非空"
+    inputs:
+      - source: "params.urls"
+  - step: 2
+    action: "extract_each_video"
+    description: "逐个调用 youtube_extract_video_transcript 取字幕"
+    recipe: "youtube_extract_video_transcript"
+    inputs:
+      - source: "params.urls"
+    outputs:
+      - name: "videos"
+        type: "list"
 ---
 
 # YouTube 批量提取 Workflow
@@ -415,10 +461,9 @@ frago recipe run youtube_batch_extract \
 
 ```json
 {
-  "success": true,
   "videos": [
-    {"url": "...", "title": "...", "transcript": "..."},
-    {"url": "...", "title": "...", "transcript": "..."}
+    {"title": "...", "transcript": "..."},
+    {"title": "...", "transcript": "..."}
   ],
   "total": 2,
   "success_count": 2
@@ -479,17 +524,12 @@ frago recipe run youtube_extract_video_transcript \
 frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
-**输出**:
+`--debug` 打开的是执行链路的技术日志（配方扫描、隔离后端、退出码），
+输出到 stderr，与结构化结果（stdout 上的 JSON）分开。日志的具体行不构成契约，
+排查问题时按「哪一步报错、报的什么」读，别写脚本去解析它。
+
 ```text
-[DEBUG] RecipeRegistry: 扫描路径 /home/user/.frago/recipes
-[DEBUG] RecipeRegistry: 找到 5 个 Recipe
-[DEBUG] RecipeRunner: 选择执行器 ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: 执行命令: frago browser exec-js ...
-[DEBUG] ChromeJSExecutor: 退出码: 0
-{
-  "success": true,
-  "data": { ... }
-}
+{ "…配方自己的结果…" }
 ```
 
 ---
@@ -500,27 +540,31 @@ frago --debug recipe run <recipe_name> --params '{...}'
 
 | 命令 | 用途 |
 |------|------|
-| `plan` | 从 spec 或 prompt 起草配方（agent 辅助） |
-| `create` | 从 spec 或 prompt 创建配方 |
-| `list` | 列出配方（`--source user\|community\|official`、`--type atomic\|workflow`、`--format table\|json\|names`） |
-| `info` | 查看元数据、参数与 env 定义 |
-| `run` | 执行（`--params`、`--params-file`、`--env`、`--output-file`、`--output-clipboard`、`--timeout`、`--async`） |
-| `schedule` | 定时执行（`--interval 30s/10m/2h`、`--max-runs`、`--start-at/--stop-at`） |
+| `plan` | 由 agent 起草配方规格 `spec.md`（`--prompt`、`--type`、`--runtime`，须后台跑） |
+| `create` | 由 agent 按规格或 prompt 生成配方（须后台跑） |
+| `list` | 列出配方（`--source user\|community\|all`、`--type atomic\|workflow\|all`、`--format table\|json\|names`） |
+| `info` | 查看元数据、输入参数、依赖与 `secrets` 定义（`--format text\|json\|yaml`） |
+| `run` | 执行（`--source`、`--params`、`--params-file`、`-e/--env`、`--output-file`、`--output-clipboard`、`--timeout`、`--async`） |
+| `schedule` | 定时执行（`--interval 30s/10m/2h`、`--max-runs`、`--start-at/--stop-at`、`--params`、`-e/--env`、`--timeout`） |
 | `executions` / `execution` | 列出 / 查看历史执行 |
 | `cancel` | 取消正在运行的执行 |
-| `publish` | 查看某个已发布配方槽位 |
-| `open` | 按配方名或 URL 打开 |
-| `validate` | 校验配方元数据 |
+| `publish` | 发布配方页面要展示的状态，并打印页面地址 |
+| `open` | 按配方名或页面地址打开配方页面（`--slot`） |
+| `expose` / `unexpose` / `exposed` | 决定谁能打开配方页面 / 收回对外开放 / 列出当前对外开放的页面 |
+| `validate` | 校验配方目录的字段完整性与正确性 |
 | `install` / `update` / `uninstall` | 管理社区配方 |
-| `search` | 按关键字搜索配方 |
-| `share` | 分享配方 |
+| `search` | 按关键字搜索社区配方仓库 |
+| `share` | 分享配方到社区仓库 |
+| `folder` | 在本机给配方分文件夹（顺序即网格上的顺序） |
+| `reads` | 查哪些配方读了别的配方的哪块数据、实际拿到什么 |
+| `data-migrate` | 把配方数据迁到新布局（只复制不删除，记迁移清单） |
 
 ### 配方存放位置
 
 ```
 ~/.frago/recipes/                  # 用户级（最高优先级）
 ├── atomic/system/<name>/          # Python / shell
-├── atomic/browser/<name>/         # Chrome-js
+├── atomic/chrome/<name>/          # Chrome-js
 └── workflows/<name>/              # 工作流
 ~/.frago/community-recipes/        # 已安装的社区配方
 ```
@@ -533,6 +577,26 @@ frago --debug recipe run <recipe_name> --params '{...}'
 frago 包本身不带任何配方。你能跑的每一个配方，要么是自己写的，要么是装来的——
 不存在第三层「装完就有、换台机器却没有」的隐形配方。
 
+### 沙箱隔离
+
+配方不直接跑在你的系统里，跑在一个只看得见指定目录的视图中：
+
+- 可写：本次运行的落点、`~/.frago/recipe-data/<配方名>/`；别人写了 `shares` 交出来的那块只读
+- 只读：系统与解释器、配方自身源码
+- 其余一切不存在，越界当场失败
+
+视图只管文件，麦克风、摄像头、系统服务这些仍由操作系统的授权决定。后端由内核来管：
+macOS 用自带的 `sandbox-exec`；Linux 用 `bwrap`，没装 bubblewrap 就拒绝起配方
+（`apt install bubblewrap`）。
+
+配方要起外部命令（`gh`、`ffmpeg`、`yt-dlp`……）必须在 `recipe.md` 写 `uses_commands: [命令名]`；
+要 shell 调 frago 自己的命令写 `uses_frago_cli: true`。不写的话命令多半启动得了，但读不到它放在
+家目录里的配置和登录态。写了之后每台机器**第一次运行**时由 CoreAgent 实地查看安装位置、判断
+只读交出去是否安全，结论登记在 `~/.frago/recipe-data/<配方名>/grants.json`，之后照登记开放；
+配方代码改了会重审。服务端常驻启动不做审计，新机器上先手动 `frago recipe run` 一次。
+
+要关掉隔离，必须在 `~/.frago/config.json` 明写 `"recipe": {"isolation": "off"}`。
+
 ## 最佳实践
 
 ### 1. Recipe 命名规范
@@ -543,7 +607,8 @@ frago 包本身不带任何配方。你能跑的每一个配方，要么是自�
 
 ### 2. 参数验证
 
-在 Recipe 脚本中验证必需参数：
+在 Recipe 脚本中验证必需参数。自己处理掉的失败按约定往 stdout 打一个带 `error` 的 JSON，
+退出码非零，执行器会把 `error` 里的那句话当成失败原因呈现出来：
 
 ```python
 import sys, json
@@ -552,31 +617,25 @@ params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
 
 # 验证必需参数
 if 'url' not in params:
-    error = {"error": "Missing required parameter: url"}
-    print(json.dumps(error), file=sys.stderr)
+    print(json.dumps({"success": False, "error": "Missing required parameter: url"}))
     sys.exit(1)
 ```
 
 ### 3. 错误处理
 
-统一错误输出格式：
+成功时 stdout 只放配方自己的数据，不要再套一层 `success`/`data`：
 
 ```python
 try:
-    # Recipe 逻辑
     result = do_something()
-    print(json.dumps({"success": True, "data": result}))
+    print(json.dumps(result, ensure_ascii=False))
 except Exception as e:
-    error = {
-        "success": False,
-        "error": {
-            "type": type(e).__name__,
-            "message": str(e)
-        }
-    }
-    print(json.dumps(error), file=sys.stderr)
+    # error 写成人能读的一句话，它会出现在 CLI 的失败提示里
+    print(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False))
     sys.exit(1)
 ```
+
+过程日志一律走 stderr（`print(..., file=sys.stderr)`），否则会把结果 JSON 弄脏。
 
 ### 4. 版本管理
 
@@ -600,7 +659,7 @@ dependencies:
   - clipboard_read
 ```
 
-系统会在执行前检查依赖是否存在。
+`frago recipe validate` 会检查 workflow 声明的依赖是否已在这台机器上注册；`run` 之前不会替你补装。
 
 ---
 
@@ -611,13 +670,13 @@ Recipe 系统支持环境变量，用于管理 API 密钥、运行时配置等�
 ### 设计原则
 
 - **完整继承系统环境**：Recipe 执行时继承所有系统环境变量（PATH、HOME 等）
-- **三级配置优先级**：项目级 > 用户级 > 系统环境
-- **声明式定义**：在 Recipe 元数据中声明所需环境变量
+- **多级配置优先级**：CLI `--env` > Workflow 共享变量 > 项目级 `.env` > 用户级 `.env` > 系统环境
+- **凭据单独走一条通道**：密钥、令牌声明在 `secrets` 里，运行时经 `FRAGO_SECRETS` 注入，不散落在环境变量里
 - **Workflow 上下文共享**：多个 Recipe 间可共享环境变量
 
 ### 在 Recipe 中声明环境变量
 
-在元数据的 `env` 字段中声明所需的环境变量：
+非凭据类配置（模型名、上限之类的可变量）写在元数据的 `env` 字段：
 
 ```yaml
 ---
@@ -631,28 +690,43 @@ use_cases:
 output_targets:
   - stdout
 env:
-  OPENAI_API_KEY:
-    required: true
-    description: "OpenAI API 密钥"
   MODEL_NAME:
-    required: false
     default: "gpt-4o"
     description: "使用的模型名称"
   MAX_TOKENS:
-    required: false
     default: "1000"
     description: "最大 token 数"
 version: "1.0.0"
 ---
 ```
 
+`env` 目前只是声明：执行时环境变量的实际来源是 `.env` 文件、系统环境和 `-e` 覆盖，
+字段里的 `required` / `default` 不再由执行器校验。
+
+**凭据必须声明在 `secrets` 里**，不能写进 `env`：
+
+```yaml
+secrets:
+  OPENAI_API_KEY:
+    type: string
+    required: true
+    description: "OpenAI API 密钥"
+```
+
+执行器按 schema 从 `~/.frago/recipes.local.json` 过滤出声明的字段，序列化成
+`FRAGO_SECRETS` 注入进程；`required: true` 的字段缺失时直接拒绝执行。
+脚本里硬读 `*_API_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` / `*_ACCESS_KEY`
+（`os.environ[...]` 或 `$VAR`），会被 `frago recipe validate` 判成 error；
+声明了 `secrets` 却没读 `FRAGO_SECRETS` 同样是 error。
+
 **字段说明**：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `required` | boolean | 是否必需（缺失时报错） |
-| `default` | string | 默认值（未提供时使用） |
-| `description` | string | 环境变量描述 |
+| `type` | string | `secrets` 必填，取 string / number / boolean / object / array |
+| `required` | boolean | `secrets` 中为是否必需（缺失时拒绝执行） |
+| `default` | string | `env` 中的默认值（仅声明用，执行器不代填） |
+| `description` | string | 给人看的说明 |
 
 ### 配置环境变量
 
@@ -663,9 +737,8 @@ version: "1.0.0"
 **用户级配置**（适用于所有项目）：
 ```bash
 # ~/.frago/.env
-OPENAI_API_KEY=sk-your-api-key
-DEEPSEEK_API_KEY=sk-your-deepseek-key
 DEFAULT_MODEL=gpt-4o
+MAX_TOKENS=1000
 ```
 
 **项目级配置**（仅当前项目）：
@@ -676,20 +749,32 @@ MAX_TOKENS=2000
 DEBUG=true
 ```
 
+凭据不放 `.env`，放 `~/.frago/recipes.local.json`，按配方名归拢：
+
+```json
+{
+  "openai_chat": {
+    "OPENAI_API_KEY": "sk-your-api-key"
+  }
+}
+```
+
+WebUI 的配方设置页读写的就是这个文件；手工改也行，key 要与 `recipe.md` 里
+`secrets` 声明的字段同名。
+
 #### 方式二：CLI 参数覆盖
 
-使用 `--env` 或 `-e` 参数在执行时覆盖：
+使用 `--env` 或 `-e` 参数在执行时覆盖非凭据的环境变量：
 
 ```bash
 # 单个环境变量
 frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
-  -e OPENAI_API_KEY=sk-xxx
+  -e MODEL_NAME=gpt-4
 
 # 多个环境变量
 frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
-  -e OPENAI_API_KEY=sk-xxx \
   -e MODEL_NAME=gpt-4 \
   -e MAX_TOKENS=500
 ```
@@ -699,7 +784,7 @@ frago recipe run openai_chat \
 直接在 shell 中导出：
 
 ```bash
-export OPENAI_API_KEY=sk-your-api-key
+export MODEL_NAME=gpt-4o
 frago recipe run openai_chat --params '{"prompt": "Hello"}'
 ```
 
@@ -708,6 +793,9 @@ frago recipe run openai_chat --params '{"prompt": "Hello"}'
 环境变量按以下优先级解析（高到低）：
 
 ![Environment Variable Priority](images/frago-env-priority.jpg)
+
+实际解析顺序：`-e/--env` 覆盖 > Workflow 共享变量 > 项目级 `.env` > 用户级 `.env` > 系统环境。
+`FRAGO_SECRETS` 单独注入，不参与这个合并。
 
 ### 在脚本中使用环境变量
 
@@ -718,9 +806,12 @@ import os
 import sys
 import json
 
-# 环境变量已自动注入，直接使用 os.environ
-api_key = os.environ.get('OPENAI_API_KEY')
+# 非凭据配置：环境变量已注入，直接读 os.environ
 model = os.environ.get('MODEL_NAME', 'gpt-4o')
+
+# 凭据：只从 FRAGO_SECRETS 读，别直接读 os.environ['OPENAI_API_KEY']
+secrets = json.loads(os.environ.get('FRAGO_SECRETS', '{}'))
+api_key = secrets.get('OPENAI_API_KEY')
 
 if not api_key:
     print(json.dumps({"error": "OPENAI_API_KEY not set"}), file=sys.stderr)
@@ -736,7 +827,7 @@ print(json.dumps(result))
 #!/bin/bash
 # 环境变量已自动注入，直接使用
 echo "Using model: $MODEL_NAME"
-echo "API Key present: $([ -n \"$OPENAI_API_KEY\" ] && echo 'yes' || echo 'no')"
+echo "API Key present: $(printf '%s' "$FRAGO_SECRETS" | grep -q OPENAI_API_KEY && echo 'yes' || echo 'no')"
 
 # 输出 JSON
 cat <<EOF
@@ -749,47 +840,43 @@ EOF
 
 ### Workflow 上下文共享
 
-在 Workflow 中，多个 Recipe 可共享环境变量：
+在 Workflow 中，多个 Recipe 可共享环境变量。配方之间靠 `-e` 逐层传下去：
 
 ```python
 #!/usr/bin/env python3
 """Workflow: 批量处理任务"""
 import sys
 import json
-from frago.recipes import RecipeRunner, WorkflowContext
+import subprocess
+
+def run_recipe(name, params, env):
+    cmd = ['frago', 'recipe', 'run', name, '--params', json.dumps(params, ensure_ascii=False)]
+    for key, value in env.items():
+        cmd += ['-e', f'{key}={value}']
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"{name} failed")
+    return json.loads(proc.stdout)
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+    items = params.get('items', [])
 
-    # 创建共享上下文
-    context = WorkflowContext()
-
-    # 设置共享的环境变量
-    context.set("BATCH_ID", "batch_001")
-    context.set("TOTAL_ITEMS", str(len(params.get('items', []))))
-
-    runner = RecipeRunner()
+    shared = {"BATCH_ID": "batch_001", "TOTAL_ITEMS": str(len(items))}
     results = []
 
-    for i, item in enumerate(params.get('items', [])):
-        # 更新当前进度
-        context.set("CURRENT_INDEX", str(i + 1))
+    for i, item in enumerate(items):
+        env = dict(shared, CURRENT_INDEX=str(i + 1))
+        results.append(run_recipe('process_item', {'item': item}, env))
 
-        # 执行 Recipe，传递共享上下文
-        result = runner.run(
-            'process_item',
-            params={'item': item},
-            workflow_context=context
-        )
-        results.append(result['data'])
-
-    print(json.dumps({"success": True, "results": results}))
+    print(json.dumps({"results": results}))
 
 if __name__ == '__main__':
     main()
 ```
 
-被调用的 Recipe 可以通过 `os.environ` 访问这些共享变量：
+被调用的 Recipe 通过 `os.environ` 读到这些值（上面 Workflow 的 recipe.md 同样要写
+`uses_frago_cli: true`）：
 
 ```python
 #!/usr/bin/env python3
@@ -798,7 +885,7 @@ import os
 import sys
 import json
 
-# 获取 Workflow 共享的上下文
+# 获取 Workflow 传下来的上下文
 batch_id = os.environ.get('BATCH_ID', 'unknown')
 current = os.environ.get('CURRENT_INDEX', '0')
 total = os.environ.get('TOTAL_ITEMS', '0')
@@ -812,50 +899,69 @@ result = {"item": item, "batch_id": batch_id, "processed": True}
 print(json.dumps(result))
 ```
 
-### 查看 Recipe 环境变量定义
+`frago.recipes.WorkflowContext` 与 `RecipeRunner.run(..., workflow_context=...)` 是
+留在 Python 侧的进程内接口（`frago` 自己的调用方可用），配方脚本里 import 不到它——
+隔离视图只把配方基类 `frago_recipe` 放上 `PYTHONPATH`。
+
+### 查看 Recipe 的凭据与参数定义
 
 ```bash
-# 查看 Recipe 详情，包含环境变量定义
+# 查看 Recipe 详情（基本信息、描述、输入参数、依赖、示例文件）
 frago recipe info openai_chat
 
-# JSON 格式输出（包含 env 字段）
+# JSON 格式输出（含 secrets 字段的 schema，不含任何密钥值）
 frago recipe info openai_chat --format json
 ```
 
-**输出示例**：
+**输出示例**（文本形态，界面文案为英文）：
 ```
 Recipe: openai_chat
 ==================================================
 
-基本信息
-──────────────────────────────────────────────────
-名称:     openai_chat
-类型:     atomic
-运行时:   python
-版本:     1.0.0
-来源:     User
+Basic Information
+--------------------------------------------------
+Name:     openai_chat
+Type:     atomic
+Runtime:  python
+Version:  1.0.0
+Source:   User
+Path:     /Users/you/.frago/recipes/atomic/system/openai_chat/recipe.py
 
-环境变量
-──────────────────────────────────────────────────
-• OPENAI_API_KEY (必需): OpenAI API 密钥
-• MODEL_NAME (可选, 默认: gpt-4o): 使用的模型名称
-• MAX_TOKENS (可选, 默认: 1000): 最大 token 数
+Description
+--------------------------------------------------
+调用 OpenAI API 进行对话
 
-依赖
-──────────────────────────────────────────────────
-无
+Output Targets
+--------------------------------------------------
+stdout
+
+Input Parameters
+--------------------------------------------------
+prompt (string, required): 对话内容
+
+Dependencies
+--------------------------------------------------
+None
+
+Example Files
+--------------------------------------------------
+None
 ```
+
+`secrets` 的 schema 只在 `--format json`（或 `yaml`）里给出：字段名、类型、是否必需，
+密钥值本身存在 `~/.frago/recipes.local.json`，命令不会打印出来。
 
 ### 安全最佳实践
 
-1. **不要硬编码敏感信息**：将 API 密钥等存储在 `.env` 文件中
-2. **将 `.env` 加入 `.gitignore`**：避免提交敏感信息到版本控制
-3. **使用 `required: true`**：确保关键环境变量存在
-4. **提供合理默认值**：对非敏感配置使用 `default` 字段
+1. **不要硬编码敏感信息**：密钥、令牌声明在 `recipe.md` 的 `secrets` 里，值存 `~/.frago/recipes.local.json`
+2. **把凭据文件排除出版本控制**：`recipes.local.json` 与 `.frago/.env` 都不该提交
+3. **使用 `required: true`**：让缺失的凭据在执行前就暴露，而不是跑到一半才炸
+4. **非敏感配置加默认值**：模型名这类用 `env` 的 `default` 字段写清
 
 ```bash
 # .gitignore
 .frago/.env
+recipes.local.json
 ```
 
 ---
@@ -874,8 +980,8 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 
 1. **把脚本和元数据收进一个目录**:
    ```bash
-   #   ~/.frago/recipes/atomic/browser/<name>/recipe.md
-   #   ~/.frago/recipes/atomic/browser/<name>/recipe.js
+   #   ~/.frago/recipes/atomic/chrome/<name>/recipe.md
+   #   ~/.frago/recipes/atomic/chrome/<name>/recipe.js
    ```
 
 2. **使用新命令**:
@@ -891,9 +997,10 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 | 参数传递 | 命令行参数 | JSON 格式（统一） |
 | 元数据 | 无 | YAML frontmatter |
 | 查找路径 | 固定路径 | 两级查找（用户/社区） |
-| 错误处理 | 原始输出 | 结构化 JSON 错误 |
-| 依赖管理 | 无 | 自动检查依赖 |
+| 错误处理 | 原始输出 | 带原因的失败提示（退出码非零），完整记录进执行历史 |
+| 依赖管理 | 无 | `validate` 检查依赖是否注册 |
 | 编排能力 | 无 | 支持 Workflow |
+| 隔离 | 无 | 跑在受限视图里，越界当场失败 |
 
 ---
 
@@ -901,16 +1008,16 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 
 ### Recipe 未找到
 
-**问题**: `错误: Recipe 'xxx' 未找到`
+**问题**: `Error: Recipe 'xxx' not found`，后面跟着 `Searched paths:` 与扫过的两个目录
 
 **解决**:
 1. 检查 Recipe 名称拼写
 2. 运行 `frago recipe list` 查看可用 Recipe
-3. 确认元数据文件 `.md` 存在
+3. 确认配方目录里有 `recipe.md`，且目录落在 `atomic/system`、`atomic/chrome`、`workflows` 之一
 
 ### 参数格式错误
 
-**问题**: `错误: 参数格式无效`
+**问题**: `Error: Invalid parameter format`，下一行是 JSON 解析器给的位置
 
 **解决**:
 - 使用双引号（JSON 规范）: `{"url": "..."}` 而非 `{'url': '...'}`
@@ -919,7 +1026,7 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 
 ### 依赖 Recipe 未找到
 
-**问题**: Workflow 执行失败，提示依赖缺失
+**问题**: `frago recipe validate` 报 workflow 声明的依赖没注册
 
 **解决**:
 ```bash
@@ -929,7 +1036,7 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 
 ### Recipe 执行超时
 
-**问题**: `错误: Recipe 执行超时`
+**问题**: 执行被 `--timeout` 掐断，退出码非零，stderr 的 `Error:` 行里带 timeout
 
 **解决**:
 - 增加超时时间: `--timeout 600`
@@ -956,29 +1063,29 @@ frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
    ↓
 4. AI 决策:
    - 使用现有 Recipe → 执行
-   - 无合适 Recipe → 调用 /frago.recipe 生成新 Recipe
+   - 无合适 Recipe → 用 `frago recipe plan` 起草规格，再 `frago recipe create` 生成新配方
    ↓
 5. AI 执行: frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
 6. AI 处理结果:
-   - success: true → 向用户报告
-   - success: false → 分析 error.stderr，采取策略（重试/报告）
+   - 退出码 0 → stdout/文件里的配方数据即结果，向用户报告
+   - 退出码非零 → 读 stderr 的 Error: 行，必要时查 frago recipe executions --format json，再决定重试还是报告
 ```
 
 ### 关键设计原则
 
 1. **元数据驱动**: AI 通过语义字段理解 Recipe 能力，无需读取脚本代码
-2. **结构化输出**: 所有 CLI 命令支持 `--format json`，便于 AI 解析
+2. **结构化输出**: 查询类命令（`list`、`info`、`executions`、`validate` 等）支持 `--format json`，便于 AI 解析；`run` 的 stdout 只放配方数据
 3. **输出形态声明**: Recipe 明确声明支持的输出去向，AI 可根据任务规划
-4. **AI 生成 Workflow**: `/frago.recipe` 命令让 AI 创建编排 Recipe（需手动触发）
-5. **错误可理解**: 结构化错误让 AI 能分析失败原因并自动应对
+4. **AI 生成 Workflow**: `frago recipe plan` 定规格、`frago recipe create` 生成模板（须后台跑）
+5. **错误可理解**: 失败时给出带原因的单行提示，执行记录里留存完整 stdout/stderr，AI 据此判断怎么应对
 
 ### AI vs 人类使用对比
 
 | 特性 | AI 使用方式 | 人类使用方式 |
 |------|------------|-------------|
 | **发现 Recipe** | `recipe list --format json` + 语义分析 | `recipe list`（表格）或 `recipe info` |
-| **创建 Recipe** | `/frago.recipe create` 自动生成 | 手动编写脚本和元数据 |
+| **创建 Recipe** | `frago recipe plan` → `frago recipe create` 自动生成 | 手动编写脚本和元数据 |
 | **执行 Recipe** | Bash 工具调用，自动选择输出方式 | 手动敲命令，手动指定 --output-file |
 | **错误处理** | 解析 JSON 错误，自动应对策略 | 读取错误信息，手动排查 |
 | **编排任务** | 自动生成 Workflow Python 脚本 | 手动组合多个 Recipe |
