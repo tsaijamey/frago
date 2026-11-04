@@ -179,3 +179,56 @@ def test_crud_survives_reload(svc):
     listed = other.list_schedules()
     assert len(listed) == 1
     assert listed[0]["name"] == "persisted"
+
+
+@pytest.mark.asyncio
+async def test_multiple_due_schedules_in_same_tick_do_not_retrigger(svc, monkeypatch):
+    """When an earlier schedule reloads self._schedules in _execute_native,
+    subsequent due schedules in the same tick must still persist last_run_at
+    and not re-trigger on the next tick.
+    """
+    from frago.server.services import schedule_executor as ex
+
+    s1 = svc.add_schedule(name="first_9am", command="echo 1", cron="0 9 * * *")
+    s2 = svc.add_schedule(name="second_9am", command="echo 2", cron="0 9 * * *")
+    yesterday = "2026-11-02T09:00:00"
+    for s in svc._schedules:
+        s["last_run_at"] = yesterday
+    svc._save()
+
+    async def fake_run_scheduled(schedule):
+        return ex.RunOutcome(
+            ok=True,
+            kind=schedule.get("kind", "command"),
+            exit_code=0,
+            stdout="ok",
+            duration_ms=10,
+            digest="d1",
+        )
+
+    monkeypatch.setattr(ex, "run_scheduled", fake_run_scheduled)
+
+    now = datetime(2026, 11, 3, 9, 0, 5)
+    monkeypatch.setattr("frago.server.services.scheduler_service._now_utc", lambda: now)
+
+    # Simulate one tick loop body over all schedules
+    svc._load()
+    for schedule_id in [s["id"] for s in svc._schedules]:
+        schedule = next((s for s in svc._schedules if s["id"] == schedule_id), None)
+        assert schedule is not None
+        assert svc._is_due(schedule, now) is True
+        await svc._execute(schedule)
+
+    # Reload from disk and verify both schedules persisted today's last_run_at and run_count == 1
+    svc._load()
+    by_id = {s["id"]: s for s in svc._schedules}
+    assert by_id[s1["id"]]["run_count"] == 1
+    assert by_id[s2["id"]]["run_count"] == 1
+    assert by_id[s1["id"]]["last_run_at"] == now.isoformat()
+    assert by_id[s2["id"]]["last_run_at"] == now.isoformat()
+
+    # On the next tick 5 seconds later, neither schedule is due again
+    next_tick = datetime(2026, 11, 3, 9, 0, 10)
+    assert svc._is_due(by_id[s1["id"]], next_tick) is False
+    assert svc._is_due(by_id[s2["id"]], next_tick) is False
+
