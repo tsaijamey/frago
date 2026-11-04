@@ -25,6 +25,7 @@ import click
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from .ask_commands import ask_group
 from .image_commands import image_cmd
+from .xlsx_commands import xlsx_group
 
 # 渲染专属 tab group。独立于任何用户 group，用完即关。
 APPS_GROUP = "frago-apps"
@@ -234,6 +235,13 @@ _UI_APPS: list[App] = [
         output_kind="frago_ui_component (image-grid)",
         render=lambda _x: "",
     ),
+    App(
+        name="xlsx",
+        description="原位读取、公式求值、修改与原子保存本机 Excel (.xlsx) 工作簿（frago app xlsx <inspect|sheet|create|write-bytes|save>）",
+        input_kind="本机 .xlsx 文件路径与操作参数",
+        output_kind="JSON",
+        render=lambda _x: "",
+    ),
 ]
 
 
@@ -263,7 +271,7 @@ def _run_text_app(name: str, input_text: str, output_path: str | None) -> None:
 
 @click.group(name="app", cls=AgentFriendlyGroup)
 def apps_group() -> None:
-    """Built-in session UI components and delivery capabilities (ask, image, mermaid)."""
+    """Built-in session UI components and delivery capabilities (ask, image, mermaid, xlsx)."""
 
 
 app_group = apps_group
@@ -337,3 +345,4 @@ def apps_use(name: str, input_text: str, output_path: str | None) -> None:
 
 apps_group.add_command(ask_group, name="ask")
 apps_group.add_command(image_cmd, name="image")
+apps_group.add_command(xlsx_group, name="xlsx")

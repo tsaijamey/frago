@@ -58,6 +58,8 @@ dependencies = [
     # 必装，不是可选：装完 frago 就该能说话，不许让用户事后自己补装。
     # 7.2.8 起按恒定码率算时长，与 voice.py 的时长算法一致。
     "edge-tts>=7.2.8",
+    # 内置 Excel 工作簿原位读写（frago app xlsx），配合 pillow 保证带图表格往返不丢图。
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
