@@ -2,8 +2,8 @@
  * 点开一份文件那个浮窗。
  *
  * 盯五件事：内容照实摆（过大、读不成文本、取不到各说各的，NEVER 拿半份当整份）、
- * Esc 关与 ‹ › 翻这一套键在位、「打开所在目录」把路径原样交给外面、左边那一列点一下就翻、
- * 染色回来之后确实换成了染过的 HTML。
+ * Esc 关与 ‹ › 翻这一套键在位（铺满视口时 Esc 先退铺满再关窗）、「打开所在目录」把路径原样交给外面、
+ * 左边那一列点一下就翻、染色回来之后确实换成了染过的 HTML。
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -201,6 +201,29 @@ describe('翻页与那几个动作', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId('file-viewer-backdrop'));
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('铺满视口：点一下铺满，再点还原；Esc 逐层退，不一口气关窗', () => {
+    const { onClose } = open();
+    const win = screen.getByTestId('file-viewer-window');
+
+    // 默认是固定比例窗口，没有铺满。
+    expect(win.className).not.toContain('w-full');
+    expect(screen.getByTestId('file-viewer-maximize').getAttribute('aria-pressed')).toBe('false');
+
+    // 点铺满：窗口换成占满整屏的那套尺寸。
+    fireEvent.click(screen.getByTestId('file-viewer-maximize'));
+    expect(win.className).toContain('w-full');
+    expect(screen.getByTestId('file-viewer-maximize').getAttribute('aria-pressed')).toBe('true');
+
+    // 全屏时 Esc 先退全屏，浮窗还在。
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(win.className).not.toContain('w-full');
+    expect(onClose).not.toHaveBeenCalled();
+
+    // 退出全屏后再按 Esc 才关窗。
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('左边那一列点一下就是翻到那一份', () => {
@@ -498,6 +521,16 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     );
     const iframe = screen.getByTestId('file-viewer-html-preview') as HTMLIFrameElement;
     expect(iframe.getAttribute('srcdoc')).toBe(htmlSource);
+
+    // HTML 预览 iframe 内按 Esc 同样先退出铺满视口、不直接把浮窗关掉
+    fireEvent.load(iframe);
+    fireEvent.click(screen.getByTestId('file-viewer-maximize'));
+    const win = screen.getByTestId('file-viewer-window');
+    expect(win.className).toContain('w-full');
+    if (iframe.contentDocument) {
+      fireEvent.keyDown(iframe.contentDocument, { key: 'Escape' });
+      expect(win.className).not.toContain('w-full');
+    }
 
     // 切到「内容」可查看 HTML 源码行
     fireEvent.click(screen.getByTestId('file-viewer-mode-file'));
