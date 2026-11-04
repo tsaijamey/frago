@@ -1,6 +1,28 @@
 import { Eye, EyeOff } from 'lucide-react';
+import type { AgyContextWindowTier } from '@/api';
 import { agentReasonText } from '@/hooks/useAgentClients';
 import type { ProfilesController } from './useProfiles';
+
+const AGY_CONTEXT_TIERS: ReadonlyArray<{
+  tier: AgyContextWindowTier;
+  quota: string;
+  isDefault: boolean;
+}> = [
+  { tier: '256K', quota: '1x', isDefault: true },
+  { tier: '512K', quota: '1.3x', isDefault: false },
+  { tier: '900K', quota: '1.8x', isDefault: false },
+];
+
+/**
+ * agy 1.4.12 仅允许 Gemini 4 Argon 系列切换三档上下文窗口；
+ * 检查时先剥离末尾括号后缀（如 "Gemini 4 Argon (High)" -> "Gemini 4 Argon"）。
+ */
+function isAgyArgonModel(model: string): boolean {
+  const trimmed = model.trim();
+  if (!trimmed) return true;
+  const base = trimmed.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
+  return base === 'gemini 4 argon' || base.startsWith('gemini-4-argon');
+}
 
 export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   const {
@@ -28,6 +50,8 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     setFormHaikuModel,
     formContextWindow,
     setFormContextWindow,
+    formAgyContextWindow,
+    setFormAgyContextWindow,
     formResponsesUrl,
     setFormResponsesUrl,
     formResponsesModel,
@@ -35,6 +59,8 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     showFormApiKey,
     setShowFormApiKey,
     formSubmitting,
+    initialMode,
+    onClose,
     setViewMode,
     resetForm,
     handleFormSubmit,
@@ -49,7 +75,18 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   // ones: no endpoint to reach, no key to hold, and a model list that comes
   // from that CLI's own service rather than from a preset table.
   const isVendorCli = formKind === 'vendor_cli';
-  const core = vendorCores.find((c) => c.agent_type === formAgentType);
+  const effectiveVendorCores =
+    vendorCores.length > 0
+      ? vendorCores
+      : [
+          {
+            agent_type: 'agy',
+            display_name: 'Antigravity CLI (agy)',
+            installed: true,
+            known_models: ['Gemini 4 Argon (High)', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+          },
+        ];
+  const core = effectiveVendorCores.find((c) => c.agent_type === formAgentType);
 
   // Borrowing the WorkBuddy login was retired 2026-10-09: the client began
   // encrypting its login file and kept the key to itself, so frago has nothing
@@ -90,14 +127,14 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             setFormKind(kind);
             // Land on a usable core straight away; an empty core is the one
             // thing the backend will refuse to save.
-            if (kind === 'vendor_cli' && !formAgentType && vendorCores.length > 0) {
-              setFormAgentType(vendorCores[0].agent_type);
+            if (kind === 'vendor_cli' && !formAgentType && effectiveVendorCores.length > 0) {
+              setFormAgentType(effectiveVendorCores[0].agent_type);
             }
           }}
           className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
         >
           <option value="endpoint">{t('settings.profiles.kindEndpoint')}</option>
-          {vendorCores.length > 0 && (
+          {(vendorCores.length > 0 || isVendorCli) && (
             <option value="vendor_cli">{t('settings.profiles.kindVendorCli')}</option>
           )}
           {/* 借 WorkBuddy 登录这条路 2026-10-09 下线。条目留着而不是摘掉，是让老记录
@@ -135,7 +172,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
               onChange={(e) => setFormAgentType(e.target.value)}
               className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
             >
-              {vendorCores.map((c) => (
+              {effectiveVendorCores.map((c) => (
                 <option key={c.agent_type} value={c.agent_type}>
                   {c.display_name}
                   {c.installed ? '' : ` — ${t('settings.profiles.notInstalled')}`}
@@ -358,43 +395,81 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
       {/* One window for every CLI this profile is activated on. Each target
           gets it in its own vocabulary when the profile is saved: Claude
           Code's pair of environment variables, Codex's two top-level TOML
-          keys, opencode's per-model limit. */}
-      {!isWorkbuddy && !isVendorCli && (
-        <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2">
-          <div>
-            <p className="text-xs font-medium text-[var(--text-secondary)]">
-              {t('settings.profiles.contextWindow')}
-            </p>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              {t('settings.profiles.contextWindowHint')}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <input
-              id="profile-context-window"
-              type="number"
-              min={1000}
-              max={10000000}
-              step={1000}
-              value={formContextWindow}
-              onChange={(e) => setFormContextWindow(e.target.value)}
-              placeholder={t('settings.profiles.contextWindowPlaceholder')}
-              className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
-            />
-            <button
-              type="button"
-              onClick={() => setFormContextWindow('200000')}
-              className="btn btn-ghost btn-sm"
-            >
-              200K
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormContextWindow('1000000')}
-              className="btn btn-ghost btn-sm"
-            >
-              1M
-            </button>
+          keys, opencode's per-model limit. Antigravity CLI (agy 1.4.12) does
+          not accept arbitrary token counts and instead switches among three
+          fixed tiers (256K / 512K / 900K) for Gemini 4 Argon models. */}
+      {!isWorkbuddy && (!isVendorCli || formAgentType === 'agy') && (
+        <div className="rounded-md border border-[var(--border-color)] px-3 py-2.5 space-y-2.5">
+          {!isVendorCli && (
+            <>
+              <div>
+                <p className="text-xs font-medium text-[var(--text-secondary)]">
+                  {t('settings.profiles.contextWindow')}
+                </p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {t('settings.profiles.contextWindowHint')}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  id="profile-context-window"
+                  type="number"
+                  min={1000}
+                  max={10000000}
+                  step={1000}
+                  value={formContextWindow}
+                  onChange={(e) => setFormContextWindow(e.target.value)}
+                  placeholder={t('settings.profiles.contextWindowPlaceholder')}
+                  className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setFormContextWindow('200000')}
+                  className="btn btn-ghost btn-sm"
+                >
+                  200K
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormContextWindow('1000000')}
+                  className="btn btn-ghost btn-sm"
+                >
+                  1M
+                </button>
+              </div>
+            </>
+          )}
+
+          <div className={!isVendorCli ? 'border-t border-[var(--border-color)] pt-2.5 space-y-2' : 'space-y-2'}>
+            <div>
+              <p className="text-xs font-medium text-[var(--text-secondary)]">
+                {t('settings.profiles.agyContextWindow')}
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                {t('settings.profiles.agyContextWindowHint')}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2" role="group" aria-label={t('settings.profiles.agyContextWindow')}>
+              {AGY_CONTEXT_TIERS.map(({ tier, quota, isDefault }) => {
+                const selected = formAgyContextWindow === tier;
+                return (
+                  <button
+                    key={tier}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setFormAgyContextWindow(selected ? '' : tier)}
+                    className={`btn btn-sm font-mono ${selected ? 'btn-primary' : 'btn-ghost'}`}
+                  >
+                    {tier} ({isDefault ? `${t('settings.profiles.agyTierDefault')}, ${quota}` : quota})
+                  </button>
+                );
+              })}
+            </div>
+            {formDefaultModel.trim() && !isAgyArgonModel(formDefaultModel) && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {t('settings.profiles.agyContextWindowModelNote')}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -416,8 +491,12 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         <button
           type="button"
           onClick={() => {
-            setViewMode('list');
             resetForm();
+            if (initialMode && initialMode !== 'list') {
+              onClose();
+            } else {
+              setViewMode('list');
+            }
           }}
           className="btn btn-ghost btn-sm"
         >

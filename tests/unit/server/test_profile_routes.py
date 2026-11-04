@@ -399,3 +399,167 @@ class TestConnectionsAndBindings:
 
         assert result.status == "ok"
         assert load_profiles().worker_profile_id is None
+
+    @pytest.mark.asyncio
+    async def test_create_and_update_profile_preserve_agy_context_window(
+        self, tmp_profiles_path, tmp_path
+    ):
+        from frago.server.routes.settings import (
+            CreateProfileRequest,
+            UpdateProfileRequest,
+            create_profile,
+            get_profiles,
+            update_profile_endpoint,
+        )
+
+        agy_settings = tmp_path / "settings.json"
+        with patch("frago.agent_driver.drivers.agy._settings_path", return_value=agy_settings):
+            created = await create_profile(
+                CreateProfileRequest(
+                    name="Antigravity Gemini 4 Argon",
+                    endpoint_type="custom",
+                    api_key="sk-test",
+                    url="http://127.0.0.1:8080",
+                    default_model="gemini-4-argon-high",
+                    context_window=500000,
+                    agy_context_window="512K",
+                )
+            )
+            assert created.status == "ok"
+            listed = await get_profiles()
+            profile_id = listed.profiles[0].id
+            assert listed.profiles[0].agy_context_window == "512K"
+
+            updated = await update_profile_endpoint(
+                profile_id,
+                UpdateProfileRequest(agy_context_window="900K"),
+            )
+            assert updated.status == "ok"
+
+            listed = await get_profiles()
+            assert listed.profiles[0].agy_context_window == "900K"
+
+    @pytest.mark.asyncio
+    async def test_per_harness_independent_bindings_and_vscode_status(
+        self, tmp_profiles_path, tmp_path
+    ):
+        from frago.server.routes.settings import (
+            BindHarnessRequest,
+            OpenInVSCodeRequest,
+            bind_harness_endpoint,
+            check_vscode,
+            get_connections,
+            open_in_vscode,
+        )
+
+        add_profile(
+            APIProfile(
+                id="p_ds",
+                name="DeepSeek",
+                endpoint_type="deepseek",
+                api_key="sk-ds",
+                default_model="deepseek-chat",
+            )
+        )
+        add_profile(
+            APIProfile(
+                id="p_or",
+                name="OpenRouter",
+                endpoint_type="custom",
+                api_key="sk-or",
+                url="https://openrouter.ai/api",
+                default_model="claude-sonnet-4.5",
+            )
+        )
+        add_profile(
+            APIProfile(
+                id="p_v",
+                name="Agy Own",
+                kind="vendor_cli",
+                endpoint_type="vendor_cli",
+                agent_type="agy",
+                default_model="gemini-4-argon",
+            )
+        )
+
+        fakes = {}
+        for agent_type, protocol in (
+            ("claude", "anthropic"),
+            ("opencode", "anthropic"),
+            ("codex", "responses"),
+            ("agy", "gemini"),
+        ):
+            fake = MagicMock()
+            fake.profile_apply = MagicMock()
+            fake.profile_revert = MagicMock()
+            fake.profile_protocol = protocol
+            fakes[agent_type] = fake
+
+        with (
+            patch("frago.init.profile_targets._driver", side_effect=fakes.__getitem__),
+            patch(
+                "frago.init.profile_targets._installed_path",
+                side_effect=lambda agent: f"/bin/{agent}",
+            ),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+            patch("frago.server.routes.settings.StateManager") as mock_state,
+        ):
+            mock_state.get_instance.return_value.refresh_config = _async_noop()
+
+            res1 = await bind_harness_endpoint(
+                "claude", BindHarnessRequest(role="main", profile_id="p_ds")
+            )
+            res2 = await bind_harness_endpoint(
+                "opencode", BindHarnessRequest(role="main", profile_id="p_or")
+            )
+            res3 = await bind_harness_endpoint(
+                "codex", BindHarnessRequest(role="worker", profile_id="p_ds")
+            )
+            res_err = await bind_harness_endpoint(
+                "codex", BindHarnessRequest(role="main", profile_id="p_or")
+            )
+            res_vendor_err = await bind_harness_endpoint(
+                "claude", BindHarnessRequest(role="main", profile_id="p_v")
+            )
+
+            assert res1.status == "ok"
+            assert res2.status == "ok"
+            assert res3.status == "ok"
+            assert res_err.status == "error"
+            assert "Responses" in (res_err.error or "")
+            assert res_vendor_err.status == "error"
+
+            conns = await get_connections()
+            by_h = {h.agent_type: h for h in conns.harnesses}
+            assert set(by_h) == {"claude", "codex", "opencode", "agy"}
+            assert by_h["claude"].main_profile_id == "p_ds"
+            assert by_h["opencode"].main_profile_id == "p_or"
+            assert by_h["codex"].main_profile_id == "official"
+            assert by_h["codex"].worker_profile_id == "p_ds"
+
+        cfg_file = tmp_path / "config.toml"
+        cfg_file.write_text("", encoding="utf-8")
+        with (
+            patch("frago.server.routes.settings.SystemService.find_vscode", return_value="/usr/bin/code"),
+            patch("frago.server.routes.settings.SystemService.open_in_vscode") as mock_open,
+            patch(
+                "frago.init.profile_targets.HARNESS_CONFIG_PATHS",
+                {
+                    "claude": str(tmp_path / "missing_claude.json"),
+                    "codex": str(cfg_file),
+                    "opencode": str(tmp_path / "missing_opencode.json"),
+                    "agy": str(tmp_path / "missing_agy.json"),
+                },
+            ),
+        ):
+            status = await check_vscode()
+            assert status.vscode_installed is True
+            assert status.configs["codex"]["exists"] is True
+            assert status.configs["claude"]["exists"] is False
+
+            opened = await open_in_vscode(OpenInVSCodeRequest(agent_type="codex"))
+            assert opened.status == "ok"
+            mock_open.assert_called_once_with("/usr/bin/code", str(cfg_file))
+
+

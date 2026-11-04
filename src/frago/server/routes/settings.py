@@ -5,9 +5,9 @@ Provides endpoints for main config, environment variables, and GitHub integratio
 
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 from frago.server.services.gh_install_service import GhInstallService, detect_install_plan
@@ -174,6 +174,13 @@ class RecipeSecretsUpdateRequest(BaseModel):
 class VSCodeStatusResponse(BaseModel):
     """VSCode installation status response"""
     available: bool  # True only if VSCode installed AND settings.json exists
+    vscode_installed: bool = False
+    configs: dict[str, dict[str, Any]] = {}
+
+
+class OpenInVSCodeRequest(BaseModel):
+    """Request to open a specific harness configuration file in VSCode."""
+    agent_type: str = "claude"
 
 
 class VersionInfoResponse(BaseModel):
@@ -526,26 +533,46 @@ async def open_path(request: OpenPathRequest) -> ApiResponse:
 
 @router.get("/settings/vscode-status", response_model=VSCodeStatusResponse)
 async def check_vscode() -> VSCodeStatusResponse:
-    """Check if VSCode is installed AND ~/.claude/settings.json exists.
+    """Check if VSCode is installed and inspect each harness CLI's config file."""
+    from frago.init.profile_targets import HARNESS_CONFIG_PATHS
 
-    The Edit button should only show when both conditions are met.
-    ~/.claude/settings.json is created when user configures custom API endpoint.
-    """
     vscode_path = SystemService.find_vscode()
-    settings_path = os.path.expanduser("~/.claude/settings.json")
-    settings_exists = os.path.exists(settings_path)
+    configs: dict[str, dict[str, Any]] = {}
+    for agent_type, raw_path in HARNESS_CONFIG_PATHS.items():
+        expanded = os.path.expanduser(raw_path)
+        configs[agent_type] = {
+            "path": raw_path,
+            "exists": os.path.exists(expanded),
+        }
+    claude_exists = configs.get("claude", {}).get("exists", False)
 
-    return VSCodeStatusResponse(available=vscode_path is not None and settings_exists)
+    return VSCodeStatusResponse(
+        available=vscode_path is not None and bool(claude_exists),
+        vscode_installed=vscode_path is not None,
+        configs=configs,
+    )
 
 
 @router.post("/settings/open-in-vscode", response_model=ApiResponse)
-async def open_in_vscode() -> ApiResponse:
-    """Open ~/.claude/settings.json in VSCode."""
+async def open_in_vscode(
+    request: OpenInVSCodeRequest | None = Body(default=None),
+) -> ApiResponse:
+    """Open a harness CLI's native configuration file in VSCode."""
+    from frago.init.profile_targets import HARNESS_CONFIG_PATHS
+
     try:
-        settings_path = os.path.expanduser("~/.claude/settings.json")
+        agent_type = (request.agent_type if request and request.agent_type else "claude").strip()
+        raw_path = HARNESS_CONFIG_PATHS.get(agent_type)
+        if not raw_path:
+            return ApiResponse(status="error", error=f"Unknown harness: {agent_type}")
+
+        settings_path = os.path.expanduser(raw_path)
 
         if not os.path.exists(settings_path):
-            return ApiResponse(status="error", error="Settings file not found")
+            return ApiResponse(
+                status="error",
+                error=f"Settings file not found: {raw_path}",
+            )
 
         vscode_path = SystemService.find_vscode()
         if not vscode_path:
@@ -554,7 +581,7 @@ async def open_in_vscode() -> ApiResponse:
         # Use Popen to avoid blocking the server
         SystemService.open_in_vscode(vscode_path, settings_path)
 
-        return ApiResponse(status="ok", message="Opened in VSCode")
+        return ApiResponse(status="ok", message=f"Opened {raw_path} in VSCode")
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
 
@@ -962,6 +989,8 @@ class ProfileResponse(BaseModel):
     haiku_model: str | None = None
     # The model's context window in tokens; None means "let each CLI decide".
     context_window: int | None = None
+    # Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" / "512K" / "900K").
+    agy_context_window: str | None = None
     # Every door this connection opens, Anthropic first. Empty for the kinds
     # that carry no endpoint.
     channels: list[ChannelResponse] = []
@@ -1030,6 +1059,8 @@ class CreateProfileRequest(BaseModel):
     # The model's context window in tokens; omitted or null means "let each
     # CLI decide", which is what every profile saved before this field gets.
     context_window: int | None = None
+    # Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" / "512K" / "900K").
+    agy_context_window: str | None = None
     channels: list[ChannelRequest] = []
 
 
@@ -1046,6 +1077,7 @@ class UpdateProfileRequest(BaseModel):
     haiku_model: str | None = None
     # Sent as null to clear the window; omitted keeps what is saved.
     context_window: int | None = None
+    agy_context_window: str | None = None
     # Omitted = keep the saved channels; [] = drop them all.
     channels: list[ChannelRequest] | None = None
 
@@ -1109,6 +1141,7 @@ def _profile_to_response(
         sonnet_model=profile.sonnet_model,
         haiku_model=profile.haiku_model,
         context_window=profile.context_window,
+        agy_context_window=profile.agy_context_window,
         channels=channels,
         is_active=profile.id == active_id,
         created_at=profile.created_at.isoformat() if hasattr(profile.created_at, 'isoformat') else str(profile.created_at),
@@ -1141,6 +1174,7 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
     from frago.init.profile_manager import APIProfile, add_profile
 
     try:
+        raw_agy_window = _blank_to_none(request.agy_context_window)
         profile = APIProfile(
             name=request.name,
             kind=request.kind,
@@ -1152,6 +1186,7 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
             sonnet_model=_blank_to_none(request.sonnet_model),
             haiku_model=_blank_to_none(request.haiku_model),
             context_window=request.context_window,
+            agy_context_window=raw_agy_window.upper() if raw_agy_window else None,
             channels=_channels_from_request(request.channels),
         )
         add_profile(profile)
@@ -1182,7 +1217,11 @@ async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest
             # here — it clears the window.
             key: value
             if key in ("api_key", "context_window")
-            else _blank_to_none(value)
+            else (
+                (_blank_to_none(value) or "").upper() or None
+                if key == "agy_context_window"
+                else _blank_to_none(value)
+            )
             for key, value in sent.items()
         }
         if channels is not None:
@@ -1316,11 +1355,24 @@ class RoleBindingResponse(BaseModel):
     targets: list[str] = []
 
 
+class HarnessBindingResponse(BaseModel):
+    """Per-harness daily-session (main) and background worker binding state."""
+    agent_type: str
+    display_name: str
+    protocol: str
+    protocol_label: str
+    config_path: str
+    installed: bool
+    main_profile_id: str = "official"
+    worker_profile_id: str = "follow"
+
+
 class ConnectionsResponse(BaseModel):
     """Everything the two role pickers need, in one round trip."""
     connections: list[ProfileResponse]
     bindings: list[RoleBindingResponse]
     vendor_cores: list[VendorCoreResponse]
+    harnesses: list[HarnessBindingResponse] = []
 
 
 class BindRoleRequest(BaseModel):
@@ -1329,6 +1381,12 @@ class BindRoleRequest(BaseModel):
     # main only: which agent CLIs to write it into. Omitted keeps frago's
     # historical default (Claude Code).
     targets: list[str] | None = None
+
+
+class BindHarnessRequest(BaseModel):
+    """Point one harness CLI's ``main`` or ``worker`` slot at a connection."""
+    role: Literal["main", "worker"]
+    profile_id: str
 
 
 def _vendor_cores() -> list[VendorCoreResponse]:
@@ -1369,10 +1427,19 @@ async def get_connections() -> ConnectionsResponse:
     from frago.init.profile_manager import (
         MAIN_ROLE,
         ROLES,
+        get_harness_main_binding,
+        get_harness_worker_binding,
         list_connections,
         load_profiles,
         role_binding_id,
         role_view,
+    )
+    from frago.init.profile_targets import (
+        DISPLAY_NAMES,
+        HARNESS_CONFIG_PATHS,
+        HARNESS_PROTOCOLS,
+        HARNESS_TARGETS,
+        target_status,
     )
 
     store = load_profiles()
@@ -1394,8 +1461,58 @@ async def get_connections() -> ConnectionsResponse:
         for role in ROLES
     ]
 
+    harnesses: list[HarnessBindingResponse] = []
+    for agent_type in HARNESS_TARGETS:
+        proto, proto_label = HARNESS_PROTOCOLS.get(agent_type, ("anthropic", "Anthropic"))
+        try:
+            installed = target_status(agent_type).installed
+        except Exception:
+            installed = False
+        harnesses.append(
+            HarnessBindingResponse(
+                agent_type=agent_type,
+                display_name=DISPLAY_NAMES.get(agent_type, agent_type),
+                protocol=proto,
+                protocol_label=proto_label,
+                config_path=HARNESS_CONFIG_PATHS.get(agent_type, ""),
+                installed=installed,
+                main_profile_id=get_harness_main_binding(store, agent_type),
+                worker_profile_id=get_harness_worker_binding(store, agent_type),
+            )
+        )
+
     return ConnectionsResponse(
-        connections=connections, bindings=bindings, vendor_cores=_vendor_cores()
+        connections=connections,
+        bindings=bindings,
+        vendor_cores=_vendor_cores(),
+        harnesses=harnesses,
+    )
+
+
+@router.put("/settings/connections/harnesses/{agent_type}", response_model=ApiResponse)
+async def bind_harness_endpoint(
+    agent_type: str, request: BindHarnessRequest
+) -> ApiResponse:
+    """Bind a specific harness CLI's daily session (main) or worker slot independently."""
+    from frago.init.profile_manager import MAIN_ROLE, bind_harness
+
+    try:
+        bound = bind_harness(agent_type, request.role, request.profile_id)
+    except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return ApiResponse(status="error", error=str(e))
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+    if request.role == MAIN_ROLE:
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
+
+    target_label = bound.name if bound is not None else request.profile_id
+    return ApiResponse(
+        status="ok",
+        message=f"{agent_type}.{request.role} → {target_label}",
     )
 
 

@@ -111,6 +111,13 @@ export default function ActiveProfileCard({
               </div>
             </>
           )}
+
+          {profile.agy_context_window && (
+            <>
+              <div className="k">{t('settings.profiles.agyContextWindowLabel')}</div>
+              <div className="v mono">{profile.agy_context_window}</div>
+            </>
+          )}
         </div>
       </div>
 

@@ -14,6 +14,7 @@ import {
 } from '@/api';
 import type {
   ActivationTarget,
+  AgyContextWindowTier,
   ConnectionKind,
   EndpointPreset,
   ProfileItem,
@@ -24,6 +25,7 @@ import type {
 import { useAppStore } from '@/stores/appStore';
 
 export type ViewMode = 'list' | 'add' | 'edit';
+export type InitialProfileModalMode = 'list' | 'add-endpoint' | 'add-vendor' | 'edit';
 
 interface UseProfilesArgs {
   isOpen: boolean;
@@ -34,6 +36,10 @@ interface UseProfilesArgs {
   onProfilesChanged?: () => void;
   /** Optional profile ID whose target picker should open immediately. */
   initialPickTargetId?: string | null;
+  /** Optional direct entry mode from the AI Providers table. */
+  initialMode?: InitialProfileModalMode;
+  /** Profile to edit when initialMode === 'edit'. */
+  initialEditProfile?: ProfileItem | null;
 }
 
 /**
@@ -41,7 +47,14 @@ interface UseProfilesArgs {
  * list loading, the add/edit form, activate/deactivate/delete actions,
  * and the "save current config" inline flow. The modal just renders.
  */
-export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTargetId }: UseProfilesArgs) {
+export function useProfiles({
+  isOpen,
+  onClose,
+  onProfilesChanged,
+  initialPickTargetId,
+  initialMode = 'list',
+  initialEditProfile = null,
+}: UseProfilesArgs) {
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
 
@@ -87,6 +100,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
   // Kept as the raw input string: the field is optional, and an empty box has
   // to mean "no window" rather than zero.
   const [formContextWindow, setFormContextWindow] = useState('');
+  // Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" | "512K" | "900K" | "").
+  const [formAgyContextWindow, setFormAgyContextWindow] = useState<'' | AgyContextWindowTier>('');
   // The vendor's OpenAI Responses door — what Codex speaks. Blank on a preset
   // that knows one means "use the preset's"; blank anywhere else means none.
   const [formResponsesUrl, setFormResponsesUrl] = useState('');
@@ -109,11 +124,24 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
       loadPresets();
       loadTargets();
       loadVendorCores();
-      setViewMode('list');
       setPickingTargetsFor(initialPickTargetId ?? null);
+      if (initialMode === 'edit' && initialEditProfile) {
+        handleEditClick(initialEditProfile);
+      } else if (initialMode === 'add-vendor') {
+        resetForm();
+        setFormKind('vendor_cli');
+        setFormAgentType('agy');
+        setViewMode('add');
+      } else if (initialMode === 'add-endpoint') {
+        resetForm();
+        setFormKind('endpoint');
+        setViewMode('add');
+      } else {
+        setViewMode('list');
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialPickTargetId]);
+  }, [isOpen, initialPickTargetId, initialMode, initialEditProfile]);
 
   useEffect(() => {
     if (isOpen && initialPickTargetId && profiles.length > 0 && pickingTargetsFor === initialPickTargetId) {
@@ -210,6 +238,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
     setFormSonnetModel('');
     setFormHaikuModel('');
     setFormContextWindow('');
+    setFormAgyContextWindow('');
     setFormResponsesUrl('');
     setFormResponsesModel('');
     setShowFormApiKey(false);
@@ -234,6 +263,16 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
     setFormContextWindow(
       profile.context_window != null ? String(profile.context_window) : '',
     );
+    const inferredAgyTier: '' | AgyContextWindowTier =
+      profile.agy_context_window ||
+      (profile.context_window === 256000
+        ? '256K'
+        : profile.context_window === 512000
+          ? '512K'
+          : profile.context_window === 900000
+            ? '900K'
+            : '');
+    setFormAgyContextWindow(inferredAgyTier);
     // Only what was saved on this profile goes into the fields. A door filled in
     // from the vendor table shows as the placeholder, so saving the form without
     // touching it does not pin today's preset address onto the profile.
@@ -251,6 +290,13 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
     if (!raw) return null;
     const value = Number(raw);
     return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+  };
+
+  /** Antigravity CLI 3-tier context window value ("256K" | "512K" | "900K" | null). */
+  const agyContextWindowValue = (): AgyContextWindowTier | null => {
+    const raw = formAgyContextWindow.trim().toUpperCase();
+    if (raw === '256K' || raw === '512K' || raw === '900K') return raw;
+    return null;
   };
 
   /**
@@ -279,12 +325,11 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
         sonnet_model: null,
         haiku_model: null,
         context_window: null,
+        agy_context_window: null,
       };
     }
     if (formKind === 'vendor_cli') {
-      // A vendor CLI has no endpoint, no key and no per-tier model overrides —
-      // its models come from its own service. Sending the endpoint fields
-      // anyway would save a connection that looks half-configured on the card.
+      const agyTier = formAgentType === 'agy' ? agyContextWindowValue() : null;
       return {
         name: formName.trim(),
         kind: 'vendor_cli' as ConnectionKind,
@@ -294,8 +339,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
         default_model: formDefaultModel.trim() || null,
         sonnet_model: null,
         haiku_model: null,
-        // A vendor CLI runs on its own service; frago writes no window for it.
         context_window: null,
+        agy_context_window: agyTier,
       };
     }
     const responsesUrl = formResponsesUrl.trim();
@@ -311,6 +356,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
       haiku_model: formHaikuModel.trim() || null,
       // Always sent, so emptying the box clears a saved window.
       context_window: contextWindowValue(),
+      agy_context_window: agyContextWindowValue(),
       // Always sent, so emptying both fields removes a saved door. A preset that
       // knows a Responses door keeps offering it from the vendor table regardless.
       channels:
@@ -348,8 +394,12 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
         if (result.status === 'ok') {
           showToast(t('settings.profiles.savedProfile'), 'success');
           await refreshAll();
-          setViewMode('list');
           resetForm();
+          if (initialMode !== 'list') {
+            onClose();
+          } else {
+            setViewMode('list');
+          }
         } else {
           showToast(result.error || 'Failed to create profile', 'error');
         }
@@ -363,8 +413,12 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
         if (result.status === 'ok') {
           showToast(t('settings.profiles.savedProfile'), 'success');
           await refreshAll();
-          setViewMode('list');
           resetForm();
+          if (initialMode !== 'list') {
+            onClose();
+          } else {
+            setViewMode('list');
+          }
         } else {
           showToast(result.error || 'Failed to update profile', 'error');
         }
@@ -550,6 +604,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
     setFormHaikuModel,
     formContextWindow,
     setFormContextWindow,
+    formAgyContextWindow,
+    setFormAgyContextWindow,
     formResponsesUrl,
     setFormResponsesUrl,
     formResponsesModel,
@@ -564,6 +620,8 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTar
     setShowSaveCurrentInput,
     saveCurrentName,
     setSaveCurrentName,
+    initialMode,
+    onClose,
     resetForm,
     handleAddClick,
     handleEditClick,

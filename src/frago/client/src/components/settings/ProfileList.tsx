@@ -230,6 +230,12 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                     <span>{(profile.context_window / 1000).toFixed(0)}k ctx</span>
                   </>
                 )}
+                {profile.agy_context_window && (
+                  <>
+                    <span>·</span>
+                    <span>agy {profile.agy_context_window}</span>
+                  </>
+                )}
               </div>
 
               {/* Where this profile is actually in force. "Active" on its own

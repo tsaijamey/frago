@@ -891,3 +891,53 @@ class TestProfileChannels:
                 agent_type="agy",
                 channels=[ProfileChannel(protocol="responses", url="https://x.example.com")],
             )
+
+
+class TestAgyContextWindow:
+    """agy 1.4.12 only accepts 256K / 512K / 900K tiers for contextWindow."""
+
+    def test_rejects_invalid_agy_context_window_tier(self):
+        from frago.init.profile_manager import _validate_profile
+
+        with pytest.raises(ValueError, match="Antigravity context window must be one of"):
+            _validate_profile(
+                "Antigravity",
+                "custom",
+                "http://127.0.0.1:8080",
+                agy_context_window="300K",
+            )
+
+    def test_saving_and_updating_agy_context_window_syncs_agy_settings(
+        self, tmp_profiles_path, tmp_path
+    ):
+        agy_settings = tmp_path / "settings.json"
+        agy_settings.write_text(
+            json.dumps({"model": "Gemini 4 Argon (High)", "vimMode": True}),
+            encoding="utf-8",
+        )
+        with patch("frago.agent_driver.drivers.agy._settings_path", return_value=agy_settings):
+            add_profile(
+                APIProfile(
+                    id="agy00001",
+                    name="Antigravity Gemini 4 Argon",
+                    endpoint_type="custom",
+                    api_key="sk-test",
+                    url="http://127.0.0.1:8080",
+                    default_model="gemini-4-argon-high",
+                    agy_context_window="512K",
+                )
+            )
+            saved_agy = json.loads(agy_settings.read_text(encoding="utf-8"))
+            assert saved_agy["contextWindow"] == "512K"
+            assert saved_agy["model"] == "Gemini 4 Argon (High)"
+
+            update_profile("agy00001", {"agy_context_window": "900K"})
+            assert get_profile("agy00001").agy_context_window == "900K"
+            saved_agy = json.loads(agy_settings.read_text(encoding="utf-8"))
+            assert saved_agy["contextWindow"] == "900K"
+
+            update_profile("agy00001", {"agy_context_window": None})
+            assert get_profile("agy00001").agy_context_window is None
+            saved_agy = json.loads(agy_settings.read_text(encoding="utf-8"))
+            assert "contextWindow" not in saved_agy
+

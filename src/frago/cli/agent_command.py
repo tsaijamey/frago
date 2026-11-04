@@ -155,16 +155,21 @@ def _profile_env_via_driver(profile, agent_type: str, *, label: str) -> dict[str
         sys.exit(1)
 
 
-def _worker_bound_connection():
+def _worker_bound_connection(agent_type: str | None = None):
     """设置里绑给 worker 角色的那条连接，没绑（或绑的是官方订阅）时返回 None.
 
     绑定只在这里被读一次，且只作用于本次要开的这一场会话——它 NEVER 写进任何 agent
     的常驻配置，所以人自己敲 claude 起的会话不受影响。这正是 worker 与主 agent 的
     区别：主 agent 那条是写进配置的，worker 这条是每次开会话时现读的。
     """
-    from frago.init.profile_manager import KIND_OFFICIAL, WORKER_ROLE, role_connection
+    from frago.init.profile_manager import (
+        KIND_OFFICIAL,
+        WORKER_ROLE,
+        resolve_worker_profile,
+        role_connection,
+    )
 
-    connection = role_connection(WORKER_ROLE)
+    connection = resolve_worker_profile(agent_type) if agent_type else role_connection(WORKER_ROLE)
     return None if connection.kind == KIND_OFFICIAL else connection
 
 
@@ -794,7 +799,7 @@ def agent_run(
 
     # 显式 --use-profile 是"这一轮跑哪条连接"，没给就看设置里绑给 worker 的那一条。
     # 绑定只在这一层生效：它决定这一场会话的内核、模型与端点，写不到任何常驻配置里。
-    worker_connection = None if use_profile else _worker_bound_connection()
+    worker_connection = None if use_profile else _worker_bound_connection(agent_type)
 
     # --agent-type 是"这一次破例用谁"；其次是 worker 那条连接自带的内核（厂商 CLI 型
     # 连接的内核就是它本身，换模型也只能在它自己身上换）；最后才是界面上选定的内核。
@@ -811,6 +816,10 @@ def agent_run(
             agent_type, core_note = resolve_agent_core(get_agent_core())
             if core_note:
                 click.echo(f"[!] {core_note}", err=True)
+        if not use_profile and agent_type:
+            specific_conn = _worker_bound_connection(agent_type)
+            if specific_conn is not None:
+                worker_connection = specific_conn
 
     # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
     # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。

@@ -8,7 +8,8 @@
 
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { useProfiles } from './useProfiles';
+import type { ProfileItem } from '@/api';
+import { useProfiles, type InitialProfileModalMode } from './useProfiles';
 import ProfileList from './ProfileList';
 import ProfileForm from './ProfileForm';
 
@@ -19,6 +20,8 @@ interface ProfileManagerProps {
   onProfilesChanged?: () => void;
   hasCustomConfig?: boolean; // Whether a custom API config is currently active
   initialPickTargetId?: string | null;
+  initialMode?: InitialProfileModalMode;
+  initialEditProfile?: ProfileItem | null;
 }
 
 export default function ProfileManager({
@@ -27,8 +30,17 @@ export default function ProfileManager({
   onProfilesChanged,
   hasCustomConfig,
   initialPickTargetId,
+  initialMode = 'list',
+  initialEditProfile = null,
 }: ProfileManagerProps) {
-  const pm = useProfiles({ isOpen, onClose, onProfilesChanged, initialPickTargetId });
+  const pm = useProfiles({
+    isOpen,
+    onClose,
+    onProfilesChanged,
+    initialPickTargetId,
+    initialMode,
+    initialEditProfile,
+  });
   const { t, loading, viewMode } = pm;
 
   if (!isOpen) return null;

@@ -82,6 +82,7 @@ import type {
   StarResult,
   EndpointPreset,
   EndpointPresetListResponse,
+  AgyContextWindowTier,
   ProfileItem,
   ProfileListResponse,
   ConnectionsResponse,
@@ -89,6 +90,7 @@ import type {
   ConnectionRole,
   RoleBinding,
   VendorCore,
+  HarnessBinding,
   ActivationTarget,
   ActivationTargetListResponse,
   CreateProfileRequest,
@@ -218,6 +220,7 @@ export type {
   StarResult,
   EndpointPreset,
   EndpointPresetListResponse,
+  AgyContextWindowTier,
   ProfileItem,
   ProfileListResponse,
   ConnectionsResponse,
@@ -225,6 +228,7 @@ export type {
   ConnectionRole,
   RoleBinding,
   VendorCore,
+  HarnessBinding,
   ActivationTarget,
   ActivationTargetListResponse,
   CreateProfileRequest,
@@ -1074,8 +1078,11 @@ export async function checkVSCode(): Promise<VSCodeStatus> {
   return fetchApi<VSCodeStatus>('/settings/vscode-status');
 }
 
-export async function openConfigInVSCode(): Promise<ApiResponse> {
-  return fetchApi<ApiResponse>('/settings/open-in-vscode', { method: 'POST' });
+export async function openConfigInVSCode(agentType: string = 'claude'): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/open-in-vscode', {
+    method: 'POST',
+    body: JSON.stringify({ agent_type: agentType }),
+  });
 }
 
 // ============================================================
@@ -1457,6 +1464,17 @@ export async function bindRole(
   return fetchApi<ApiResponse>(`/settings/connections/bindings/${encodeURIComponent(role)}`, {
     method: 'PUT',
     body: JSON.stringify({ profile_id: profileId, targets: targets ?? null }),
+  });
+}
+
+export async function bindHarness(
+  agentType: string,
+  role: 'main' | 'worker',
+  profileId: string,
+): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/connections/harnesses/${encodeURIComponent(agentType)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ role, profile_id: profileId }),
   });
 }
 

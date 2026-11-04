@@ -391,6 +391,8 @@ export interface RecipeSecretsResponseHttp {
 
 export interface VSCodeStatus {
   available: boolean;  // True only if VSCode installed AND settings.json exists
+  vscode_installed?: boolean;
+  configs?: Record<string, { path: string; exists: boolean }>;
 }
 
 export interface RunningTaskSummary {
@@ -660,6 +662,7 @@ export interface EndpointPresetListResponse {
 // key to itself, so frago can no longer read the credential. Kept in the union so
 // rows saved before then still typecheck, and can be shown as unusable.
 export type ConnectionKind = 'endpoint' | 'official' | 'vendor_cli' | 'workbuddy';
+export type AgyContextWindowTier = '256K' | '512K' | '900K';
 
 export interface ProfileItem {
   id: string;
@@ -675,6 +678,8 @@ export interface ProfileItem {
   haiku_model?: string | null;
   /** The model's context window in tokens; null means "let each CLI decide". */
   context_window?: number | null;
+  /** Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" | "512K" | "900K"). */
+  agy_context_window?: AgyContextWindowTier | null;
   /** Every protocol door this connection opens, Anthropic first. */
   channels?: ProfileChannel[];
   is_active: boolean;
@@ -745,11 +750,23 @@ export interface RoleBinding {
   targets: string[];
 }
 
+export interface HarnessBinding {
+  agent_type: string;
+  display_name: string;
+  protocol: string;
+  protocol_label: string;
+  config_path: string;
+  installed: boolean;
+  main_profile_id: string;
+  worker_profile_id: string;
+}
+
 export interface ConnectionsResponse {
   /** Every bindable connection, subscription first. */
   connections: ProfileItem[];
   bindings: RoleBinding[];
   vendor_cores: VendorCore[];
+  harnesses?: HarnessBinding[];
 }
 
 /**
@@ -790,6 +807,8 @@ export interface CreateProfileRequest {
   haiku_model?: string | null;
   /** Model context window in tokens; null means "let each CLI decide". */
   context_window?: number | null;
+  /** Antigravity CLI (agy 1.4.12) fixed context window tier ("256K" | "512K" | "900K"). */
+  agy_context_window?: AgyContextWindowTier | null;
   channels?: ProfileChannelInput[];
 }
 
@@ -810,6 +829,8 @@ export interface UpdateProfileRequest {
   haiku_model?: string | null;
   /** Sent as null to clear the window; omitted keeps what is saved. */
   context_window?: number | null;
+  /** Sent as null to clear the agy tier; omitted keeps what is saved. */
+  agy_context_window?: AgyContextWindowTier | null;
   /** Omitted keeps the saved channels; `[]` drops them. */
   channels?: ProfileChannelInput[];
 }

@@ -366,6 +366,141 @@ def transcript_path_for(session: TmuxAgentSession) -> Path | None:
 
 
 # ── 提交 ────────────────────────────────────────────────────────────
+# agy TUI 的输入框对多行长文本会逐字符重排重绘（实测 15,773 字符 / 182 行的 <frago-employee>
+# 语境块会让 input_loop.go 持续重绘 281 秒才响应 Enter）。
+# 超出内联阈值的 <frago-employee>、<must-use-skill> 或超长用户正文改走本地文件载体：
+# 外层保留原标签壳（供 session_index 与前端 EmployeeQuote / SkillQuote 识别并折叠），
+# 内层换成单行读文件指令；超长用户正文包入 <frago-prompt-file path="...">，由
+# agy_records._split_user_input 在翻译转录时无损还原原文。
+_AGY_BLOCK_INLINE_MAX_CHARS = 240
+_AGY_BLOCK_INLINE_MAX_LINES = 4
+_AGY_USER_INLINE_MAX_CHARS = 600
+_AGY_USER_INLINE_MAX_LINES = 8
+_AGY_PROMPT_SPOOL_TTL_S = 7 * 24 * 3600
+_AGY_SPOOL_SEQ = 0
+
+_EMPLOYEE_BLOCK_RE = re.compile(
+    r"(<frago-employee\s+[^>]*>)([\s\S]*?)(</frago-employee>)"
+)
+_SKILL_BLOCK_RE = re.compile(
+    r"(<must-use-skill\s+[^>]*>)([\s\S]*?)(</must-use-skill>)"
+)
+_LEADING_TAG_BLOCKS_RE = re.compile(
+    r"^(?:\s*(?:<frago-employee\s+[^>]*>[\s\S]*?</frago-employee>"
+    r"|<must-use-skill\s+[^>]*>[\s\S]*?</must-use-skill>)\s*)+"
+)
+
+
+def _agy_prompt_spool_dir() -> Path:
+    """agy 长提示词载体文件目录。测试设置了 FRAGO_AGY_APP_DIR 时落在该隔离目录下。"""
+    override = os.environ.get("FRAGO_AGY_PROMPT_SPOOL_DIR")
+    if override:
+        return Path(override)
+    app_override = os.environ.get("FRAGO_AGY_APP_DIR")
+    if app_override:
+        return Path(app_override) / "frago-prompts"
+    return Path.home() / ".frago" / "prompts" / "agy"
+
+
+def _prune_agy_prompt_spool(spool: Path) -> None:
+    """清理过期的载体文件，失败静默忽略。"""
+    cutoff = time.time() - _AGY_PROMPT_SPOOL_TTL_S
+    try:
+        for child in spool.iterdir():
+            try:
+                if child.stat().st_mtime < cutoff:
+                    child.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError:
+        return
+
+
+def _spool_agy_prompt_file(content: str, *, prefix: str, session_id: str) -> Path | None:
+    """把长提示词片段写成 UTF-8 文件，返回绝对路径；写失败返回 None（退回原样投喂）。"""
+    global _AGY_SPOOL_SEQ
+    _AGY_SPOOL_SEQ += 1
+    safe_sid = "".join(c if (c.isalnum() or c in "_-") else "_" for c in (session_id or "agy"))
+    spool = _agy_prompt_spool_dir()
+    target = spool / f"{prefix}-{safe_sid}-{int(time.time() * 1000)}-{_AGY_SPOOL_SEQ}.md"
+    try:
+        spool.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError:
+        logger.debug("agy prompt spool write failed for %s", target, exc_info=True)
+        return None
+    _prune_agy_prompt_spool(spool)
+    return target.resolve()
+
+
+def _prepare_agy_prompt(prompt: str, *, session_id: str) -> str:
+    """将发往 agy TUI 的长提示词压缩为「保留标签壳 + 单行文件读取指令」。"""
+    if not prompt:
+        return prompt
+
+    def _replace_employee(match: re.Match[str]) -> str:
+        open_tag, body, close_tag = match.group(1), match.group(2), match.group(3)
+        stripped = body.strip()
+        if (
+            len(stripped) <= _AGY_BLOCK_INLINE_MAX_CHARS
+            and stripped.count("\n") <= _AGY_BLOCK_INLINE_MAX_LINES
+        ):
+            return match.group(0)
+        spooled = _spool_agy_prompt_file(stripped, prefix="employee", session_id=session_id)
+        if spooled is None:
+            return match.group(0)
+        return (
+            f"{open_tag}"
+            f"请先用读文件工具完整读取本岗位的业务语境文件：{spooled} ，"
+            "并严格按其中的岗位职责、数据底账、知识域与配方工具链及账本约束处理下方请求"
+            "（回复中不要提及该临时文件）。"
+            f"{close_tag}"
+        )
+
+    def _replace_skill(match: re.Match[str]) -> str:
+        open_tag, body, close_tag = match.group(1), match.group(2), match.group(3)
+        stripped = body.strip()
+        if (
+            len(stripped) <= _AGY_BLOCK_INLINE_MAX_CHARS
+            and stripped.count("\n") <= _AGY_BLOCK_INLINE_MAX_LINES
+        ):
+            return match.group(0)
+        spooled = _spool_agy_prompt_file(stripped, prefix="skill", session_id=session_id)
+        if spooled is None:
+            return match.group(0)
+        return (
+            f"{open_tag}"
+            f"请先用读文件工具完整阅读本轮点名的技能文件：{spooled} ，"
+            "并严格按其流程执行（回复中不要提及该临时文件）。"
+            f"{close_tag}"
+        )
+
+    compacted = _EMPLOYEE_BLOCK_RE.sub(_replace_employee, prompt)
+    compacted = _SKILL_BLOCK_RE.sub(_replace_skill, compacted)
+
+    lead_match = _LEADING_TAG_BLOCKS_RE.match(compacted)
+    prefix = lead_match.group(0) if lead_match else ""
+    user_body = compacted[len(prefix) :]
+    if (
+        len(user_body) <= _AGY_USER_INLINE_MAX_CHARS
+        and user_body.count("\n") <= _AGY_USER_INLINE_MAX_LINES
+    ):
+        return compacted
+
+    spooled_user = _spool_agy_prompt_file(user_body, prefix="prompt", session_id=session_id)
+    if spooled_user is None:
+        return compacted
+    first_line = next((ln.strip() for ln in user_body.splitlines() if ln.strip()), "")[:80]
+    preview_suffix = f"\n{first_line}" if first_line else ""
+    wrapped_user = (
+        f'<frago-prompt-file path="{spooled_user}">'
+        f"请先用读文件工具完整读取本轮用户输入文件：{spooled_user} ，"
+        "并完全按其中的内容响应（回复中不要提及该临时文件）。"
+        f"</frago-prompt-file>{preview_suffix}"
+    )
+    return f"{prefix}{wrapped_user}"
+
+
 def _transcript_size(session: TmuxAgentSession) -> int | None:
     path = transcript_path_for(session)
     if path is None:
@@ -391,17 +526,22 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     """
     _claim_once(session)
     baseline = _transcript_size(session)
-    session.send_text(prompt)
+    prepared = _prepare_agy_prompt(prompt, session_id=session.session_id)
+    session.send_text(prepared)
 
     landed = False
     for attempt in range(1 + _ENTER_RETRIES):
         session.send_keys("Enter")
         for _ in range(_SUBMIT_VERIFY_POLLS):
             if baseline is None:
-                # 还没认领到会话编号：这一拍再试一次，认到之后就有基线可比。
-                baseline = _transcript_size(session)
-                if baseline is not None:
-                    break
+                # 首轮送出前 agy 尚未建库落盘，baseline 为 None；Enter 后一旦认到且
+                # transcript 已有字节写入（> 0），说明首轮提交已落地，切勿 break 后重发 Enter。
+                size = _transcript_size(session)
+                if size is not None:
+                    if size > 0:
+                        landed = True
+                        break
+                    baseline = 0
             else:
                 size = _transcript_size(session)
                 if size is not None and size > baseline:
@@ -505,6 +645,86 @@ _ENV_BASE_URL = "GOOGLE_GEMINI_BASE_URL"
 _ENV_API_KEY = "GEMINI_API_KEY"
 #: 配套的 provider 选择，落在 agy 自己的 settings.json 上。``gemini`` 是唯一接受的值。
 _PROVIDER_GEMINI = "gemini"
+#: agy 1.4.12 开放的三档固定上下文窗口（分别对应 1x / 1.3x / 1.8x 配额倍率）。
+#: 填写这三个值以外的任何数值或百分比都会被客户端校验逻辑丢弃并回退到默认 256K。
+AGY_CONTEXT_WINDOW_TIERS: tuple[str, ...] = ("256K", "512K", "900K")
+AGY_CONTEXT_WINDOW_DEFAULT = "256K"
+_TOKEN_TO_TIER: dict[int, str] = {
+    256_000: "256K",
+    512_000: "512K",
+    900_000: "900K",
+}
+#: agy 1.4.12 允许切换上下文窗口的单模型白名单基名（先剥离末尾括号后缀再比对）。
+_ARGON_BASE_MODEL = "Gemini 4 Argon"
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^)]*\)\s*$")
+#: 激活时 frago 可能改写的 settings.json 顶层键，用于首次接管备份与撤销还原。
+_TAKEOVER_KEYS: tuple[str, ...] = ("modelProvider", "model", "contextWindow")
+
+
+def normalize_agy_model_base(model: str | None) -> str:
+    """按 agy 1.4.12 规则剥离模型显示名称末尾的括号后缀（如 ``Gemini 4 Argon (High)`` -> ``Gemini 4 Argon``）。"""
+    if not model:
+        return ""
+    return _TRAILING_PAREN_RE.sub("", model.strip()).strip()
+
+
+def supports_agy_context_window(model: str | None) -> bool:
+    """检查模型是否属于 agy 1.4.12 允许切换三档上下文窗口的 Gemini 4 Argon 系列。"""
+    base = normalize_agy_model_base(model)
+    if not base:
+        return False
+    lowered = base.lower()
+    return lowered == _ARGON_BASE_MODEL.lower() or lowered.startswith("gemini-4-argon")
+
+
+def normalize_agy_context_window(value: str | int | None) -> str | None:
+    """把输入规整为 agy 1.4.12 接受的三档常量（``256K`` / ``512K`` / ``900K``）；其余值返回 None。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return _TOKEN_TO_TIER.get(value)
+    text = str(value).strip().upper()
+    if text in AGY_CONTEXT_WINDOW_TIERS:
+        return text
+    if text.isdigit():
+        return _TOKEN_TO_TIER.get(int(text))
+    return None
+
+
+def resolve_profile_agy_context_window(profile: APIProfile) -> str | None:
+    """从 profile 解析要写入 agy settings.json 的 ``contextWindow`` 档位。
+
+    优先读取显式的 ``agy_context_window``（``256K`` / ``512K`` / ``900K``），未设时兼容
+    ``context_window`` 刚好为 256000 / 512000 / 900000 的整数写法。
+    """
+    explicit = normalize_agy_context_window(getattr(profile, "agy_context_window", None))
+    if explicit is not None:
+        return explicit
+    return normalize_agy_context_window(getattr(profile, "context_window", None))
+
+
+def apply_agy_context_window(tier: str | int | None) -> str | None:
+    """单独把三档 ``contextWindow`` 同步进 ``~/.gemini/antigravity-cli/settings.json``。
+
+    不动 ``model``、``modelProvider``、``trustedWorkspaces`` 等其余字段，专供用户在
+    WebUI profile 中切换 agy 三档上下文窗口时落地。传 ``None`` 或空串时移除
+    ``contextWindow`` 键，恢复默认 256K 档位。
+    """
+    normalized = normalize_agy_context_window(tier)
+    path = _settings_path()
+    data = _load_settings(path)
+    if data is None:
+        logger.warning("agy settings at %s is not a JSON object; leaving it alone", path)
+        return None
+    if normalized is None:
+        if "contextWindow" in data:
+            data.pop("contextWindow", None)
+            _write_settings(path, data)
+        return None
+    if data.get("contextWindow") != normalized:
+        data["contextWindow"] = normalized
+        _write_settings(path, data)
+    return normalized
 
 
 def _profile_env(profile: APIProfile) -> dict[str, str]:
@@ -538,23 +758,27 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
 
 
 def _profile_model(profile: APIProfile) -> dict[str, Any]:
-    """profile 里要写进 agy settings.json 的模型/provider 那几格。
+    """profile 里要写进 agy settings.json 的模型/provider/contextWindow 那几格。
 
     与 ``_profile_env`` 同源同字段，区别只是落点。只有走 API 密钥时才需要写
     ``modelProvider``——它是"用密钥而非订阅"的总开关，缺了它密钥不生效。
+    ``contextWindow`` 仅在解析出合法三档（``256K`` / ``512K`` / ``900K``）时写入。
     """
     patch: dict[str, Any] = {}
     if profile.api_key:
         patch["modelProvider"] = _PROVIDER_GEMINI
     if profile.default_model:
         patch["model"] = profile.default_model
+    tier = resolve_profile_agy_context_window(profile)
+    if tier:
+        patch["contextWindow"] = tier
     return patch
 
 
 def _profile_apply(profile: APIProfile) -> None:
     """激活到 agy：把这条 profile 写进它的 ``~/.gemini/antigravity-cli/settings.json``。
 
-    **只增/改 frago 自己那几个键**（``modelProvider`` / ``model``），用户的
+    **只增/改 frago 自己那几个键**（``modelProvider`` / ``model`` / ``contextWindow``），用户的
     ``colorScheme``、``trustedWorkspaces`` 与其余键逐键原样保留——这与
     ``_ensure_workspace_trusted`` 改写同一份文件时的纪律一致，两处 MUST 用同一种
     合并方式，否则激活 profile 会把用户的信任名单抹掉。
@@ -573,8 +797,12 @@ def _profile_apply(profile: APIProfile) -> None:
 
     patch = _profile_model(profile)
     if not profile_target_backup.has("agy"):
-        profile_target_backup.remember("agy", {k: data.get(k) for k in patch})
+        profile_target_backup.remember(
+            "agy", {k: data.get(k) for k in (*_TAKEOVER_KEYS, *patch)}
+        )
 
+    if "contextWindow" not in patch:
+        data.pop("contextWindow", None)
     data.update(patch)
     _write_settings(path, data)
 
@@ -642,6 +870,9 @@ register_driver(
         profile_protocol="gemini",
         # 名单由 agy 自己的服务端下发（``agy models``），frago 无从推断。
         known_models=(
+            "Gemini 4 Argon (High)",
+            "Gemini 4 Argon (Medium)",
+            "Gemini 4 Argon (Max)",
             "gemini-3.8-flash-high",
             "gemini-3.8-flash-medium",
             "gemini-3.8-flash-low",
