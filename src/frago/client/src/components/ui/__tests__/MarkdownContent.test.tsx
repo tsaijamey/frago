@@ -108,3 +108,26 @@ describe('MarkdownContent — file:// 本地文件链接', () => {
   });
 });
 
+describe('MarkdownContent — 表格单元格内 <br> 换行', () => {
+  it('把单元格里非 code 节点的 <br> 与 <br/> 渲染成换行元素，保留行内代码里的 <br> 字面量', () => {
+    const md = [
+      '| 维度 | 具体设计 | 说明 |',
+      '|---|---|---|',
+      '| **三条调用** | `cmd1`<br>`cmd2`<br/>`cmd3` | 支持 `<br>` 标签换行<br>第二行说明 |',
+    ].join('\n');
+
+    const { container } = render(<MarkdownContent content={md} />);
+    const cells = container.querySelectorAll('tbody td');
+    expect(cells.length).toBe(3);
+
+    // 第二列：两个 <br> 被转换成真 <br> 元素
+    expect(cells[1].querySelectorAll('br').length).toBe(2);
+    expect(cells[1].querySelectorAll('code.inline-code').length).toBe(3);
+
+    // 第三列：行内代码里的 `<br>` 保持字面量，外层的 <br> 转为真 <br> 元素
+    expect(cells[2].querySelectorAll('br').length).toBe(1);
+    expect(cells[2].querySelector('code.inline-code')?.textContent).toBe('<br>');
+  });
+});
+
+

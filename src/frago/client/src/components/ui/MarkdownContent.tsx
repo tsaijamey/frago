@@ -1,10 +1,15 @@
 import {
+  Children,
+  Fragment,
+  cloneElement,
   createContext,
+  isValidElement,
   useContext,
   useEffect,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type ReactNode,
 } from 'react';
 import { Check, Copy } from 'lucide-react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -196,6 +201,41 @@ function CodeBlockPre({
   );
 }
 
+const BR_TAG_RE = /<br\s*\/?>/i;
+const BR_SPLIT_RE = /<br\s*\/?>/gi;
+
+/**
+ * 表格单元格里常以 `<br>` / `<br/>` 拆出多行命令或条目，而 `react-markdown` 默认不挂
+ * `rehype-raw`，会把 `<br>` 当纯文本吐出来。这里只把单元格内非 `code` 节点里的 `<br>`
+ * 转成真正的换行，行内代码里的 `` `<br>` `` 字面量照旧保留。
+ */
+function renderCellChildren(children: ReactNode): ReactNode {
+  return Children.map(children, (child, childIdx) => {
+    if (typeof child === 'string') {
+      if (!BR_TAG_RE.test(child)) return child;
+      const parts = child.split(BR_SPLIT_RE);
+      return parts.map((part, partIdx) =>
+        partIdx === 0 ? (
+          part
+        ) : (
+          <Fragment key={`br-${childIdx}-${partIdx}`}>
+            <br />
+            {part}
+          </Fragment>
+        )
+      );
+    }
+    if (isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
+      const tagName = child.props.node?.tagName;
+      if (child.type === 'code' || tagName === 'code' || !child.props.children) {
+        return child;
+      }
+      return cloneElement(child, undefined, renderCellChildren(child.props.children));
+    }
+    return child;
+  });
+}
+
 const components: Components = {
   pre: CodeBlockPre,
   code({ children, ...props }) {
@@ -216,6 +256,12 @@ const components: Components = {
         <table {...props}>{children}</table>
       </div>
     );
+  },
+  th({ children, node: _node, ...props }) {
+    return <th {...props}>{renderCellChildren(children)}</th>;
+  },
+  td({ children, node: _node, ...props }) {
+    return <td {...props}>{renderCellChildren(children)}</td>;
   },
   a: MarkdownLink,
 };

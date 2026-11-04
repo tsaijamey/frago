@@ -68,7 +68,7 @@
  * 的启动面板接手——对话框继续挂在屏幕上会挡住新会话本身，而人此刻要看的正是它。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -86,7 +86,7 @@ import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import { useAttachments } from '@/hooks/useAttachments';
 import { modKey } from '@/hooks/usePlatform';
 import { withTilde } from './filePaths';
-import PromptComposerBox from './PromptComposerBox';
+import PromptComposerBox, { extractClipboardFiles } from './PromptComposerBox';
 import type { DirectoryListing, SkillItem } from '@/types/api';
 import {
   createSession,
@@ -246,6 +246,14 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     void addFiles(files);
   };
 
+  const handleContainerPaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    if (e.defaultPrevented) return;
+    const extracted = extractClipboardFiles(e.clipboardData);
+    if (extracted.length === 0) return;
+    e.preventDefault();
+    void addFiles(e.clipboardData?.files?.length ? e.clipboardData.files : extracted);
+  };
+
   const handleCreate = async () => {
     if (!canSubmit || !chosen) return;
     setError(null);
@@ -280,6 +288,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg-primary"
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
+      onPaste={handleContainerPaste}
     >
       {/* 顶部栏：与会话详情页头同高（52px），实时反映当前挑中的 CLI Agent 与工作目录 */}
       <header className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-border-color px-4">

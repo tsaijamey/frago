@@ -39,6 +39,7 @@ import {
   dirOf,
   isEditableTextFile,
   langOf,
+  mediaKindOf,
   previewKindOf,
   withTilde,
 } from './filePaths';
@@ -351,7 +352,12 @@ export default function FileViewer({
   const path = file?.path ?? '';
   const lang = useMemo(() => langOf(path), [path]);
   const previewKind = useMemo(() => previewKindOf(path), [path]);
+  const mediaKind = useMemo(() => mediaKindOf(path), [path]);
   const canEdit = useMemo(() => isEditableTextFile(path), [path]);
+  const fileRawUrl = useCallback(
+    (p: string) => `/api/file?disposition=inline&path=${encodeURIComponent(p)}`,
+    []
+  );
   const modeTabs = useMemo(() => {
     const tabs: Array<'preview' | 'file' | 'changes' | 'edit'> = [];
     if (previewKind) tabs.push('preview');
@@ -389,7 +395,6 @@ export default function FileViewer({
     let alive = true;
     setContent(null);
     setError(null);
-    setLoading(true);
     setMode(previewKindOf(path) ? 'preview' : 'file');
     setDiff(null);
     setDiffError(null);
@@ -401,6 +406,13 @@ export default function FileViewer({
     setDraftRange(null);
     setDraftNote('');
     setPendingSelection(null);
+    if (mediaKindOf(path)) {
+      setLoading(false);
+      return () => {
+        alive = false;
+      };
+    }
+    setLoading(true);
     getSessionFileContent(sessionId, path)
       .catch(async (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1119,6 +1131,39 @@ export default function FileViewer({
           >
             {mode === 'changes' ? (
               <FileDiff diff={diff} loading={diffLoading} error={diffError} />
+            ) : mediaKind === 'image' ? (
+              <div
+                data-testid="file-viewer-media-preview"
+                className="flex h-full items-center justify-center overflow-auto bg-bg-base p-4"
+              >
+                <img
+                  data-testid="file-viewer-image-preview"
+                  src={fileRawUrl(path)}
+                  alt={baseOf(path)}
+                  className="max-h-full max-w-full rounded-[6px] object-contain"
+                />
+              </div>
+            ) : mediaKind === 'video' ? (
+              <div
+                data-testid="file-viewer-media-preview"
+                className="flex h-full items-center justify-center bg-bg-base p-4"
+              >
+                <video src={fileRawUrl(path)} controls className="max-h-full max-w-full" />
+              </div>
+            ) : mediaKind === 'audio' ? (
+              <div
+                data-testid="file-viewer-media-preview"
+                className="flex h-full items-center justify-center bg-bg-base p-4"
+              >
+                <audio src={fileRawUrl(path)} controls className="w-[min(520px,100%)]" />
+              </div>
+            ) : mediaKind === 'pdf' ? (
+              <iframe
+                data-testid="file-viewer-pdf-preview"
+                title={baseOf(path)}
+                src={fileRawUrl(path)}
+                className="h-full w-full border-0 bg-bg-base"
+              />
             ) : loading ? (
               <p className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
                 <Loader2 size={14} className="animate-spin" />

@@ -115,9 +115,13 @@ export function langOf(path: string): string {
 }
 
 export type DocPreviewKind = 'markdown' | 'html';
+export type MediaPreviewKind = 'image' | 'video' | 'audio' | 'pdf';
 
 const MARKDOWN_EXTS = new Set(['md', 'markdown']);
 const HTML_EXTS = new Set(['html', 'htm']);
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif']);
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac']);
 
 /**
  * 判断文件是否支持在 FileViewer 中直接进行文档渲染预览（目前针对 Markdown 与 HTML）。
@@ -130,6 +134,21 @@ export function previewKindOf(path: string): DocPreviewKind | null {
   const ext = base.slice(cut + 1).toLowerCase();
   if (MARKDOWN_EXTS.has(ext)) return 'markdown';
   if (HTML_EXTS.has(ext)) return 'html';
+  return null;
+}
+
+/**
+ * 判断文件是否属于浏览器原生可渲染的多媒体/二进制预览类型（图片、视频、音频、PDF）。
+ */
+export function mediaKindOf(path: string): MediaPreviewKind | null {
+  const base = baseOf(path);
+  const cut = base.lastIndexOf('.');
+  if (cut <= 0 || cut === base.length - 1) return null;
+  const ext = base.slice(cut + 1).toLowerCase();
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  if (VIDEO_EXTS.has(ext)) return 'video';
+  if (AUDIO_EXTS.has(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
   return null;
 }
 

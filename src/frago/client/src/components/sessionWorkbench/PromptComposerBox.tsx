@@ -44,6 +44,31 @@ export function slashQuery(text: string, caret: number): { start: number; query:
   return { start: before.length - m[2].length - 1, query: m[2] };
 }
 
+/**
+ * 从剪贴板事件数据中提取文件列表：优先读取 `files`，若为空则回退遍历 `items`（`kind === 'file'`），
+ * 兼容不同浏览器/系统截图粘贴入剪贴板时的载体差异。
+ */
+export function extractClipboardFiles(
+  data: Pick<DataTransfer, 'files' | 'items'> | null | undefined
+): File[] {
+  if (!data) return [];
+  if (data.files && data.files.length > 0) {
+    return Array.from(data.files);
+  }
+  if (data.items && data.items.length > 0) {
+    const out: File[] = [];
+    for (let i = 0; i < data.items.length; i += 1) {
+      const item = data.items[i];
+      if (item && item.kind === 'file') {
+        const file = item.getAsFile?.() ?? null;
+        if (file) out.push(file);
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
 export interface PromptComposerBoxProps {
   text: string;
   onChangeText: (value: string) => void;
@@ -188,7 +213,7 @@ export default function PromptComposerBox({
   }, [text, minLines, maxLines, caretTo]);
 
   const takeFiles = useCallback(
-    (files: FileList | null) => {
+    (files: FileList | File[] | null) => {
       if (!files || files.length === 0) return;
       void onAddFiles(files);
     },
@@ -197,10 +222,10 @@ export default function PromptComposerBox({
 
   const handlePaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = e.clipboardData?.files;
-      if (!files || files.length === 0) return;
+      const extracted = extractClipboardFiles(e.clipboardData);
+      if (extracted.length === 0) return;
       e.preventDefault();
-      takeFiles(files);
+      takeFiles(e.clipboardData?.files?.length ? e.clipboardData.files : extracted);
     },
     [takeFiles]
   );
@@ -305,7 +330,7 @@ export default function PromptComposerBox({
           disabled={disabled}
           rows={minLines}
           placeholder={placeholder}
-          className="min-h-[48px] w-full resize-none bg-transparent text-[13px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
+          className="min-h-[48px] w-full resize-none bg-transparent text-[16px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed"
         />
 
         {attachmentSlot ? <div className="mt-1.5">{attachmentSlot}</div> : null}

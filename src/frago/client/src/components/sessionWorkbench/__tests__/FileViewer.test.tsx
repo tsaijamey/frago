@@ -155,6 +155,20 @@ describe('内容摆出来', () => {
     await waitFor(() => expect(screen.getByText(/读不成文本/)).toBeTruthy());
   });
 
+  it('图片文件（如 .png）直接内联渲染图片预览，不当文本去读也不报二进制错误', () => {
+    const pngPath =
+      '/Users/frago/.frago/data/frago-promotion/20261031-upwork-profile-v2/portfolio/portfolio-1-quant-dashboard.png';
+    open({
+      files: [{ path: pngPath, action: 'modified', count: 1, first_seq: 0 }],
+      index: 0,
+    });
+
+    const img = screen.getByTestId('file-viewer-image-preview') as HTMLImageElement;
+    expect(img).toBeTruthy();
+    expect(img.getAttribute('src')).toContain(encodeURIComponent(pngPath));
+    expect(getSessionFileContent).not.toHaveBeenCalled();
+  });
+
   it('取不到：把服务端说的话摆出来，不摆一个空白窗口', async () => {
     getSessionFileContent.mockRejectedValue(new Error('File is gone: /w/src/a.py'));
 

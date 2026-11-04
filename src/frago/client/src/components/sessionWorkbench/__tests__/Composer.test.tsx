@@ -230,12 +230,12 @@ describe('Composer 输入区', () => {
     expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${CODEX_SID}/send`);
   });
 
-  it('输入框的占位话写明这一场是哪一家', () => {
+  it('输入框的占位话写明这一场是哪一家，且文本字号为 16px 与内容区一致', () => {
     render(<Composer sessionId={CODEX_SID} family="codex" onSent={NOOP} />);
 
-    expect(
-      (screen.getByTestId('composer-input') as HTMLTextAreaElement).placeholder
-    ).toContain('codex');
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement;
+    expect(input.placeholder).toContain('codex');
+    expect(input.className).toContain('text-[16px]');
   });
 
   it('一场会话都没选时同样闸死，理由是让人先挑一场', () => {
