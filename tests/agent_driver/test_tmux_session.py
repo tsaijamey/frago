@@ -937,19 +937,54 @@ def test_windows_posix_shell_skips_wsl_bash_and_uses_git_sibling(monkeypatch) ->
 
 
 def test_windows_posix_shell_falls_back_to_common_paths(monkeypatch) -> None:
-    """git.exe 不在 PATH 时退到常见安装路径。"""
+    """git.exe 不在 PATH 时退到常见安装路径（支持 C/D 盘与 WindowsApps 过滤）。"""
     from frago.agent_driver import tmux_session
 
     monkeypatch.setattr(tmux_session, "shutil", type("S", (), {"which": staticmethod(
-        lambda name: None
+        lambda name: r"C:\Users\u\AppData\Local\Microsoft\WindowsApps\bash.exe" if name == "bash.exe" else None
     )})())
     monkeypatch.setattr(
         tmux_session.os.path, "isfile",
-        lambda p: p == r"C:\Program Files\Git\bin\bash.exe",
+        lambda p: p == r"D:\Program Files\Git\bin\bash.exe",
     )
     assert (
-        tmux_session._windows_posix_shell() == r"C:\Program Files\Git\bin\bash.exe"
+        tmux_session._windows_posix_shell() == r"D:\Program Files\Git\bin\bash.exe"
     )
+
+
+def test_merged_coreagent_env_injects_windows_shell_and_git_companion_path(monkeypatch) -> None:
+    """Windows 下 merged_coreagent_env 自动写入 SHELL 并将 Git\\bin 与 Git\\usr\\bin 前置到 PATH。"""
+    import ntpath
+
+    from frago.agent_driver import coreagent_pane_host, tmux_session
+
+    monkeypatch.setattr(coreagent_pane_host, "_WINDOWS", True)
+    monkeypatch.setattr(
+        coreagent_pane_host,
+        "_windows_posix_shell",
+        lambda: r"D:\Program Files\Git\bin\bash.exe",
+    )
+    monkeypatch.setattr(
+        tmux_session.os.path, "dirname", ntpath.dirname
+    )
+    monkeypatch.setattr(
+        tmux_session.os.path, "join", ntpath.join
+    )
+    monkeypatch.setattr(
+        tmux_session.os.path, "isdir", lambda p: True
+    )
+    monkeypatch.setattr(
+        coreagent_pane_host.os.path, "isfile", lambda p: p == r"D:\Program Files\Git\bin\bash.exe"
+    )
+    env = coreagent_pane_host.merged_coreagent_env(
+        {"SHELL": "/usr/bin/bash", "PATH": r"C:\Windows\System32;D:\Program Files\Git\cmd"},
+        session_id="sid_win",
+    )
+    assert env["SHELL"] == r"D:\Program Files\Git\bin\bash.exe"
+    path_parts = env["PATH"].split(";")
+    assert path_parts[0] == r"D:\Program Files\Git\bin"
+    assert r"D:\Program Files\Git\usr\bin" in path_parts
+    assert r"D:\Program Files\Git\cmd" in path_parts
 
 
 class ColdServerTmux(FakeTmux):

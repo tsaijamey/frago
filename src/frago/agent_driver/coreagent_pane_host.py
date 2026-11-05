@@ -36,6 +36,8 @@ from typing import Any
 from frago.agent_driver.tmux_session import (
     _PROXY_ENV_NAMES,
     _WINDOWS,
+    _is_windows_stub_bash,
+    _windows_git_companion_dirs,
     _windows_posix_shell,
     tmux_name_for,
 )
@@ -85,7 +87,12 @@ def read_saved_pane_log(session_id: str, *, max_lines: int = 500) -> str:
 
 
 def merged_coreagent_env(base_env: Mapping[str, str] | None, *, session_id: str) -> dict[str, str]:
-    """合并 CoreAgent 启动所需的完整环境变量（UTF-8 + 代理 + 会话身份 + 调用方显式键值）。"""
+    """合并 CoreAgent 启动所需的完整环境变量（UTF-8 + 代理 + 会话身份 + 调用方显式键值）。
+
+    Windows 下额外把定位到的 Git Bash 写入 ``SHELL``，并将其同仓的 ``bin``、``usr\\bin``、
+    ``mingw64\\bin``、``cmd`` 前置写入 ``PATH``（通过 ``launch.json`` 直接传给 ``frago-core.exe``），
+    避免依赖常驻 ``tmux.exe`` 服务端过期的全局环境或落到 ``C:\\Windows\\System32\\bash.exe``。
+    """
     env: dict[str, str] = {
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -102,6 +109,29 @@ def merged_coreagent_env(base_env: Mapping[str, str] | None, *, session_id: str)
         for k, v in base_env.items():
             if v is not None:
                 env[str(k)] = str(v)
+    if _WINDOWS:
+        bash = _windows_posix_shell()
+        if bash:
+            existing_shell = env.get("SHELL", "").strip()
+            if (
+                not existing_shell
+                or existing_shell.startswith("/")
+                or _is_windows_stub_bash(existing_shell)
+                or not os.path.isfile(existing_shell)
+            ):
+                env["SHELL"] = bash
+            companion_dirs = _windows_git_companion_dirs(bash)
+            if companion_dirs:
+                raw_path = env.get("PATH") or env.get("Path") or os.environ.get("PATH") or os.environ.get("Path") or ""
+                sep = ";"
+                merged_parts: list[str] = list(companion_dirs)
+                seen_lower = {p.lower() for p in merged_parts}
+                for part in raw_path.split(sep):
+                    cleaned = part.strip()
+                    if cleaned and cleaned.lower() not in seen_lower:
+                        seen_lower.add(cleaned.lower())
+                        merged_parts.append(cleaned)
+                env["PATH"] = sep.join(merged_parts)
     return env
 
 
@@ -416,6 +446,12 @@ class TmuxCoreProcess:
                 with contextlib.suppress(Exception):
                     subprocess.run(
                         ["tmux", "set-option", "-g", "default-shell", bash],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                with contextlib.suppress(Exception):
+                    subprocess.run(
+                        ["tmux", "set-environment", "-g", "SHELL", bash],
                         capture_output=True,
                         timeout=5,
                     )

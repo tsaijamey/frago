@@ -119,8 +119,17 @@ class _SessionVanished(RuntimeError):
         super().__init__("tmux session vanished")
 
 
+def _is_windows_stub_bash(path: str) -> bool:
+    """判断路径是不是 Windows 自带的 WSL 转发器或应用执行别名（不能当 POSIX shell 用）。"""
+    lower = path.replace("/", "\\").lower()
+    return any(
+        marker in lower
+        for marker in ("\\system32\\", "\\syswow64\\", "\\windowsapps\\")
+    )
+
+
 def _windows_posix_shell() -> str | None:
-    """定位 Windows 下可当 tmux 面板默认 shell 的 Git Bash，找不到返回 None。
+    """定位 Windows 下可当 tmux 面板与 CoreAgent 默认 shell 的 Git Bash，找不到返回 None。
 
     win32 tmux 移植版给新面板挑默认 shell 的规则：server 进程的环境里有
     ``SHELL`` 就用它，没有就落到 cmd.exe。而 tmux server 的环境继承自「第一次
@@ -131,24 +140,89 @@ def _windows_posix_shell() -> str | None:
     运行的 server 也生效，不再依赖它的启动环境。
 
     查找顺序：git.exe 同仓的 ``bin\\bash.exe``（常规安装 PATH 里有 git 没 bash）
-    → 常见安装路径 → ``shutil.which``。``C:\\Windows\\System32\\bash.exe`` 是 WSL
-    的入口，tmux 面板里起不出来 POSIX 语义，命中也必须跳过。
+    → 常见安装路径（含 C/D/E 盘、AppData、Scoop） → ``shutil.which``。
+    ``C:\\Windows\\System32\\bash.exe`` 与 ``WindowsApps\\bash.exe`` 是 WSL 入口，
+    无 WSL 发行版时直接退 1，命中也必须跳过。
     """
     git = shutil.which("git.exe")
     if git:
-        sibling = os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
-        if os.path.isfile(sibling):
-            return sibling
-    for cand in (
+        git_dir = os.path.dirname(git)
+        git_root = os.path.dirname(git_dir)
+        for rel in (
+            os.path.join(git_root, "bin", "bash.exe"),
+            os.path.join(git_root, "usr", "bin", "bash.exe"),
+            os.path.join(git_dir, "bash.exe"),
+            os.path.join(git_root, "apps", "git", "current", "bin", "bash.exe"),
+        ):
+            if not _is_windows_stub_bash(rel) and os.path.isfile(rel):
+                return rel
+
+    common_candidates = [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
-    ):
-        if os.path.isfile(cand):
+        r"D:\Program Files\Git\bin\bash.exe",
+        r"D:\Program Files (x86)\Git\bin\bash.exe",
+        r"E:\Program Files\Git\bin\bash.exe",
+        r"C:\Git\bin\bash.exe",
+        r"D:\Git\bin\bash.exe",
+        r"C:\msys64\usr\bin\bash.exe",
+        r"D:\msys64\usr\bin\bash.exe",
+    ]
+    env = getattr(os, "environ", None)
+    if isinstance(env, dict):
+        exepath = env.get("EXEPATH", "").strip()
+        if exepath:
+            common_candidates.insert(0, os.path.join(exepath, "bin", "bash.exe"))
+            common_candidates.insert(1, os.path.join(exepath, "usr", "bin", "bash.exe"))
+        local_app_data = env.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            common_candidates.append(
+                os.path.join(local_app_data, "Programs", "Git", "bin", "bash.exe")
+            )
+        user_profile = env.get("USERPROFILE", "").strip()
+        if user_profile:
+            common_candidates.append(
+                os.path.join(user_profile, "scoop", "apps", "git", "current", "bin", "bash.exe")
+            )
+
+    for cand in common_candidates:
+        if not _is_windows_stub_bash(cand) and os.path.isfile(cand):
             return cand
     found = shutil.which("bash.exe")
-    if found and "system32" not in found.lower():
+    if found and not _is_windows_stub_bash(found):
         return found
     return None
+
+
+def _windows_git_companion_dirs(bash_path: str | None) -> list[str]:
+    """从定位到的 Git Bash 路径推导同仓配套工具目录（``bin``、``usr\\bin``、``mingw64\\bin``、``cmd``）。"""
+    if not bash_path:
+        return []
+    bin_dir = os.path.dirname(bash_path)
+    if not bin_dir:
+        return []
+    parent = os.path.dirname(bin_dir)
+    basename_fn = getattr(os.path, "basename", lambda p: p.replace("/", "\\").rsplit("\\", 1)[-1])
+    if basename_fn(parent).lower() == "usr":
+        git_root = os.path.dirname(parent)
+    else:
+        git_root = parent
+    candidates = [
+        bin_dir,
+        os.path.join(git_root, "bin"),
+        os.path.join(git_root, "usr", "bin"),
+        os.path.join(git_root, "mingw64", "bin"),
+        os.path.join(git_root, "cmd"),
+    ]
+    out: list[str] = []
+    seen: set[str] = set()
+    isdir = getattr(os.path, "isdir", lambda _: False)
+    for d in candidates:
+        key = d.lower()
+        if d and key not in seen and isdir(d):
+            seen.add(key)
+            out.append(d)
+    return out
 
 
 def _default_runner(argv: list[str]) -> str:
