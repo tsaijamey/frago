@@ -23,8 +23,10 @@ from frago.employee.ledger import (
     sync_employee_ledger,
 )
 from frago.employee.service import (
+    DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC,
     DEFAULT_STOCK_EMPLOYEE_SPEC,
     EmployeeOntologyService,
+    ensure_builtin_desktop_operator_employee,
     ensure_builtin_stock_employee,
 )
 from frago.employee.store import (
@@ -56,6 +58,7 @@ from frago.employee.store import (
 )
 
 __all__ = [
+    "DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC",
     "DEFAULT_STOCK_EMPLOYEE_SPEC",
     "EMPLOYEE_LEDGER_SUFFIX",
     "EMPLOYEE_POST_SCHEMA",
@@ -72,6 +75,7 @@ __all__ = [
     "delete_post",
     "employee_ledger_path",
     "employees_dir",
+    "ensure_builtin_desktop_operator_employee",
     "ensure_builtin_stock_employee",
     "ensure_employee_ledger_schedule",
     "extract_scope_keywords",

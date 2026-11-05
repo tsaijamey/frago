@@ -995,3 +995,59 @@ def ensure_builtin_stock_employee(
         schedule_ids=DEFAULT_STOCK_EMPLOYEE_SPEC["schedule_ids"],
     )
     return record
+
+
+# --- The built-in `desktop-operator` post: dedicated operator for `frago desktop` / `agent_os` ---
+_DESKTOP_OPERATOR_WORK_SCOPE = (
+    "作为虚拟桌面（frago desktop / agent_os）的主操作员，只负责两件事："
+    "① 识别用户语音转写或输入中的命令请求并操作 agent_os（即 frago desktop，含终端、浏览器、"
+    "图片/视频窗口、全屏幻灯、浮层标注与字条）；"
+    "② 生成准确的文本回答。"
+    "严格边界：不负责直接语音回答（禁止自行调用 `frago desktop say --speak`），"
+    "语音回答统一由内部旁路语音提炼系统（LightAgent 增量总结 + Edge TTS）完成。"
+)
+
+DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
+    "member_post_id": "desktop-operator",
+    "title": "桌面主操作员",
+    "agent_kernel": "claude",
+    "description": (
+        "虚拟桌面（frago desktop / agent_os）主操作员，只负责两件事："
+        "1. 识别请求命令并操作虚拟桌面（agent_os / desktop）；"
+        "2. 生成文本回答。不负责直接语音回答。"
+    ),
+    "work_scope": _DESKTOP_OPERATOR_WORK_SCOPE,
+    # 仅配置创建员工时必须的字段，四类资源留空由岗位通过 sync-ledger 自行整理认领
+    "knowledge_domains": [],
+    "recipes": [],
+    "data_slots": [],
+    "schedule_ids": [],
+}
+
+
+def ensure_builtin_desktop_operator_employee(
+    base_dir: Path | None = None,
+) -> EmployeePostRecord:
+    """Create the built-in `desktop-operator` post if it is not on disk yet, and return it either way."""
+    existing = get_post(DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["member_post_id"], base_dir=base_dir)
+    if existing is not None:
+        if load_ledger(existing.member_post_id, base_dir=base_dir) is None:
+            EmployeeOntologyService(base_dir=base_dir)._sync_ledger_quietly(
+                existing.member_post_id
+            )
+        return existing
+
+    service = EmployeeOntologyService(base_dir=base_dir)
+    record, _ = service.hire(
+        DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["member_post_id"],
+        title=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["title"],
+        agent_kernel=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["agent_kernel"],
+        description=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["description"],
+        work_scope=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["work_scope"],
+        knowledge_domains=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["knowledge_domains"],
+        recipes=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["recipes"],
+        data_slots=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["data_slots"],
+        schedule_ids=DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["schedule_ids"],
+    )
+    return record
+

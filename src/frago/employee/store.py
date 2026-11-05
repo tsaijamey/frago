@@ -53,6 +53,7 @@ VALID_EMPLOYEE_COLORS: tuple[str, ...] = (
 
 _PRESET_EMPLOYEE_COLORS: dict[str, str] = {
     "stock": "amber",
+    "desktop-operator": "violet",
     "jira-guardian": "ocean",
     "frago-developer": "violet",
     "frago-webui": "cyan",
