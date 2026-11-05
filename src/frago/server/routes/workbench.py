@@ -1543,6 +1543,7 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             }
 
         stage_orchestrator.cleanup_presenter(sid)
+        stage_orchestrator.cleanup_speech_summarizer(sid)
 
         # CoreAgent 不跑在 tmux 里：它那一场是 frago 服务自己的子进程，找 tmux 永远找不到。
         # 从前不分家，按下这个按钮只回一句「这一场此刻没有在跑的会话」，而它其实还在跑，
@@ -1805,3 +1806,160 @@ def _keep_watching_only(session_ids: set[str]) -> None:
         import logging
 
         logging.getLogger(__name__).warning("Failed to prune workbench watching", exc_info=True)
+
+
+class DesktopVoiceTranscribeRequest(BaseModel):
+    """桌面右下角花瓣麦克风监听器提交的语音转写与投喂请求。"""
+
+    audio_base64: str
+    mime_type: str = "audio/webm"
+    filename: str = "speech.webm"
+    language: str | None = None
+    session_id: str | None = None
+    auto_send: bool = True
+    cwd: str | None = None
+
+
+class DesktopVoiceDispatchRequest(BaseModel):
+    """直接将文本指令投喂给 desktop-operator 员工并开启旁路语音总结。"""
+
+    text: str
+    session_id: str | None = None
+    cwd: str | None = None
+
+
+class DesktopVoiceSummarizeRequest(BaseModel):
+    """触发指定 desktop-operator 会话的 LightAgent 增量语音总结。"""
+
+    session_id: str
+    previous_summary: str = ""
+    human_asr: str = ""
+    max_turns: int = 3
+    speak: bool = True
+
+
+@router.post("/workbench/desktop-voice/transcribe")
+async def transcribe_desktop_voice(request: DesktopVoiceTranscribeRequest) -> dict[str, Any]:
+    """接收花瓣监听器录制的音频，经 Groq Whisper 转写后自动投喂给 desktop-operator 员工。"""
+    import base64
+
+    from frago.server.services import stage_orchestrator
+
+    raw_b64 = (request.audio_base64 or "").strip()
+    if "," in raw_b64 and raw_b64.startswith("data:"):
+        raw_b64 = raw_b64.split(",", 1)[1].strip()
+    if not raw_b64:
+        raise HTTPException(status_code=400, detail="未收到有效的录音数据。")
+
+    try:
+        audio_bytes = base64.b64decode(raw_b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"音频 base64 解码失败：{e}") from e
+
+    if len(audio_bytes) < 64:
+        return {
+            "text": "",
+            "dispatched": False,
+            "session_id": request.session_id,
+            "reason": "audio_too_short",
+        }
+
+    try:
+        asr_res = await asyncio.to_thread(
+            stage_orchestrator.transcribe_audio_with_groq,
+            audio_bytes,
+            filename=request.filename,
+            mime_type=request.mime_type,
+            language=request.language,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    text = str(asr_res.get("text") or "").strip()
+    if not text or not request.auto_send:
+        return {
+            "text": text,
+            "language": asr_res.get("language"),
+            "model": asr_res.get("model"),
+            "dispatched": False,
+            "session_id": request.session_id,
+        }
+
+    try:
+        dispatch_res = await asyncio.to_thread(
+            stage_orchestrator.dispatch_desktop_voice_command,
+            text,
+            session_id=request.session_id,
+            cwd=request.cwd,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"投喂给 desktop-operator 失败：{e}") from e
+
+    _ensure_watching(dispatch_res["session_id"])
+    return {
+        "text": text,
+        "language": asr_res.get("language"),
+        "model": asr_res.get("model"),
+        "dispatched": True,
+        "session_id": dispatch_res["session_id"],
+        "employee": dispatch_res["employee"],
+        "status": dispatch_res["status"],
+    }
+
+
+@router.post("/workbench/desktop-voice/dispatch")
+async def dispatch_desktop_voice_text(request: DesktopVoiceDispatchRequest) -> dict[str, Any]:
+    """将文本请求直接派发给 desktop-operator 员工，并确保旁路语音总结器在线。"""
+    from frago.server.services import stage_orchestrator
+
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="发送内容不能为空。")
+    try:
+        res = await asyncio.to_thread(
+            stage_orchestrator.dispatch_desktop_voice_command,
+            request.text,
+            session_id=request.session_id,
+            cwd=request.cwd,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"投喂给 desktop-operator 失败：{e}") from e
+
+    _ensure_watching(res["session_id"])
+    return res
+
+
+@router.post("/workbench/desktop-voice/summarize")
+async def summarize_desktop_operator_speech(request: DesktopVoiceSummarizeRequest) -> dict[str, Any]:
+    """调用 LightAgent 单轮总结提炼 desktop-operator 的最近响应，并可选择立即合成语音播报。"""
+    from frago.desktop import voice
+    from frago.server.services import stage_orchestrator
+
+    sid = request.session_id.strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id 不能为空。")
+
+    spoken = await asyncio.to_thread(
+        stage_orchestrator.summarize_operator_for_speech,
+        sid,
+        request.previous_summary,
+        human_asr=request.human_asr,
+        max_turns=request.max_turns,
+    )
+    chosen_voice = voice.resolve_emotional_voice(spoken) if spoken else voice.DEFAULT_VOICE
+    spoke_on_desktop = False
+    if spoken and request.speak:
+        daemon = stage_orchestrator.ensure_speech_summarizer(sid, max_turns=request.max_turns)
+        daemon.previous_summary = spoken
+        spoke_on_desktop = await asyncio.to_thread(
+            daemon._speak_on_desktop, spoken, chosen_voice
+        )
+
+    return {
+        "session_id": sid,
+        "spoken_text": spoken,
+        "voice": chosen_voice,
+        "spoke_on_desktop": spoke_on_desktop,
+    }
+

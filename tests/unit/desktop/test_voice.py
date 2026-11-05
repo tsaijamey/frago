@@ -156,30 +156,33 @@ def test_bad_params_fail_before_the_network(cache, edge):
     assert fake.calls == []
 
 
-def test_english_only_rejects_cjk_lines_before_the_network(cache, edge):
-    """这一层只说英文：中文台词当场拒，一个字节都不联网。
-
-    拒（ValueError）不是「没合成成」（VoiceFailed）——后者退回只显示字幕照常往下走，
-    会把「台词写了中文」这件事藏起来，而那正是要让人看见的。
-    """
+def test_english_only_rejects_cjk_lines_before_the_network(cache, edge, monkeypatch):
+    """当显式开启 ENFORCE_ENGLISH_TEXT 门禁时：中文台词当场拒，一个字节都不联网。"""
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_TEXT", True)
     fake = edge()
     with pytest.raises(ValueError, match="只说英文"):
         voice.synthesize_sync("这一句是中文。")
     assert fake.calls == []
 
 
-def test_english_only_rejects_a_non_english_voice(cache, edge):
-    """只锁正文锁不住语言：中文嗓子念英文台词，出来的还是一口中文腔。"""
+def test_english_only_rejects_a_non_english_voice(cache, edge, monkeypatch):
+    """当显式开启 ENFORCE_ENGLISH_VOICE 门禁时：非 en- 嗓子当场拒。"""
+    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_VOICE", True)
     fake = edge()
     with pytest.raises(ValueError, match="只说英文"):
         voice.synthesize_sync("First line.", voice="zh-CN-XiaoxiaoNeural")
     assert fake.calls == []
 
 
-def test_english_only_relaxes_by_the_switches(cache, edge, monkeypatch):
-    """两处开关是常量，不是埋在逻辑里的硬编：关掉就回到从前。"""
-    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_TEXT", False)
-    monkeypatch.setattr(voice, "ENFORCE_ENGLISH_VOICE", False)
+def test_english_only_relaxes_by_the_switches(cache, edge):
+    """默认放开中英文自适应合成，支持多语言情感音色（Ava / Andrew / Xiaoxiao）。"""
+    assert voice.ENFORCE_ENGLISH_TEXT is False
+    assert voice.ENFORCE_ENGLISH_VOICE is False
+    assert voice.detect_language("已经为你打开终端。") == "zh"
+    assert voice.detect_language("Terminal is now open.") == "en"
+    assert voice.resolve_emotional_voice("你好") == "zh-CN-XiaoxiaoNeural"
+    assert voice.resolve_emotional_voice("Hello") == "en-US-AvaMultilingualNeural"
+    assert voice.resolve_emotional_voice("Hello", "male") == "en-US-AndrewMultilingualNeural"
     fake = edge()
     out = voice.synthesize_sync("这一句是中文。", voice="zh-CN-XiaoxiaoNeural")
     assert out["voice"] == "zh-CN-XiaoxiaoNeural" and len(fake.calls) == 1
@@ -660,3 +663,22 @@ def test_wait_speech_rides_in_the_same_batch():
 def test_voice_synth_needs_no_stage():
     kind, _ = aos.parse(["voice", "synth", "先合成好"])
     assert kind == "free"
+
+
+def test_resolve_emotional_voice_prefers_native_zh_and_en_voices():
+    """中文文本必须使用地道中文母语音色（zh-CN-XiaoxiaoNeural），杜绝英文音色念中文；纯英文文本使用英文情感音色。"""
+    assert voice.resolve_emotional_voice("你好，我已经帮你打开了终端。") == "zh-CN-XiaoxiaoNeural"
+    assert (
+        voice.resolve_emotional_voice("你好，世界", "en-US-AvaMultilingualNeural")
+        == "zh-CN-XiaoxiaoNeural"
+    )
+    assert voice.resolve_emotional_voice("你好，世界", "male") == "zh-CN-YunxiNeural"
+    assert (
+        voice.resolve_emotional_voice("Hello, I have opened the browser for you.")
+        == "en-US-AvaMultilingualNeural"
+    )
+    assert (
+        voice.resolve_emotional_voice("Hello world", "zh-CN-XiaoxiaoNeural")
+        == "en-US-AvaMultilingualNeural"
+    )
+    assert voice.resolve_emotional_voice("Hello world", "male") == "en-US-AndrewMultilingualNeural"

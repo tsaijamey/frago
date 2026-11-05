@@ -68,7 +68,13 @@ from contextlib import suppress
 from pathlib import Path
 
 ENGINE = "edge"
-DEFAULT_VOICE = "en-US-AndrewMultilingualNeural"
+DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+EMOTIONAL_ZH_VOICE = "zh-CN-XiaoxiaoNeural"
+EMOTIONAL_ZH_MALE_VOICE = "zh-CN-YunxiNeural"
+EMOTIONAL_EN_VOICE = "en-US-AvaMultilingualNeural"
+EMOTIONAL_EN_MALE_VOICE = "en-US-AndrewMultilingualNeural"
+EMOTIONAL_MULTILINGUAL_VOICE = "en-US-AvaMultilingualNeural"
+EMOTIONAL_MULTILINGUAL_MALE_VOICE = "en-US-AndrewMultilingualNeural"
 MIN_EDGE_TTS = "7.2.8"
 
 #: 合成端点。edge-tts 把旧主机写死在它自己的 constants 里，调用前由
@@ -77,11 +83,12 @@ WSS_ENDPOINT = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
 #: 新主机认的凭证参数名。旧主机叫 ``TrustedClientToken``，写成旧名同样 403。
 CREDENTIAL_PARAM = "Ocp-Apim-Subscription-Key"
 
-#: 这一层只说英文。两处开关：嗓子必须 en- 开头；正文里不许出现中日文字符。
-#: 两个都得开着才锁得住语言，理由见文件头「语言」一节。
+#: 默认放开中英文自适应合成（ENFORCE_ENGLISH_VOICE / ENFORCE_ENGLISH_TEXT 均设为 False），
+#: 支持多语言情感音色（en-US-AvaMultilingualNeural / en-US-AndrewMultilingualNeural / zh-CN-XiaoxiaoNeural）。
+#: 若特定纯英文场景需强制拦截，可按需开启这两个开关。
 LANGUAGE = "en"
-ENFORCE_ENGLISH_VOICE = True
-ENFORCE_ENGLISH_TEXT = True
+ENFORCE_ENGLISH_VOICE = False
+ENFORCE_ENGLISH_TEXT = False
 
 CACHE_ROOT = Path.home() / ".frago" / "cache" / "tts"
 CONFIG_PATH = Path.home() / ".frago" / "config.json"
@@ -155,6 +162,40 @@ def check_params(rate: str, volume: str, pitch: str) -> None:
         raise ValueError(f"音量写成 +10% / -20% 这种形状，得到: {volume!r}")
     if not _PITCH_RE.match(pitch):
         raise ValueError(f"音高写成 +5Hz / -10Hz 这种形状，得到: {pitch!r}")
+
+
+def detect_language(text: str) -> str:
+    """根据正文是否包含中日韩字符自适应判定语言（'zh' 或 'en'）。"""
+    return "zh" if _CJK_RE.search(str(text or "")) else "en"
+
+
+def resolve_emotional_voice(text: str, voice_name: str | None = None) -> str:
+    """为中英文回答自适应选择母语级富有感情的 Edge TTS Neural 音色。
+
+    - 当文本含中文字符（``detect_language(text) == "zh"``）时，强制优先使用地道中文母语情感音色
+      ``zh-CN-XiaoxiaoNeural``（男声为 ``zh-CN-YunxiNeural``），杜绝 ``en-*`` 外国口音朗读中文；
+    - 当文本为纯英文（``detect_language(text) == "en"``）时，使用地道英文情感音色
+      ``en-US-AvaMultilingualNeural``（男声为 ``en-US-AndrewMultilingualNeural``）；
+    - 若显式传入与当前文本语系一致的具体音色名（如中文下的 ``zh-CN-XiaoyiNeural`` 或英文下的
+      ``en-US-AriaNeural``），则沿用该指定音色。
+    """
+    lang = detect_language(text)
+    cleaned = str(voice_name or "").strip()
+    lower = cleaned.lower()
+    is_male = lower == "male" or any(
+        k in lower for k in ("yunxi", "yunjian", "andrew", "guy", "brian", "christopher")
+    )
+
+    if lang == "zh":
+        if cleaned.startswith("zh-"):
+            return cleaned
+        return EMOTIONAL_ZH_MALE_VOICE if is_male else EMOTIONAL_ZH_VOICE
+
+    if lower == "zh":
+        return EMOTIONAL_ZH_VOICE
+    if cleaned.startswith("en-"):
+        return cleaned
+    return EMOTIONAL_EN_MALE_VOICE if is_male else EMOTIONAL_EN_VOICE
 
 
 def check_language(text: str, voice_name: str) -> None:
@@ -238,6 +279,8 @@ async def synthesize(text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
     if not text:
         raise ValueError("没有要合成的文字")
     check_params(rate, volume, pitch)
+    if not ENFORCE_ENGLISH_VOICE:
+        voice = resolve_emotional_voice(text, voice)
     check_language(text, voice)
     key = cache_key(text, voice, rate, volume, pitch)
     audio, meta = _paths(key)

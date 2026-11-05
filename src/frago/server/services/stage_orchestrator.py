@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -706,6 +707,8 @@ def reset_stage_sessions(session_id: str | None = None) -> dict[str, Any]:
     stopped_presenters = cleanup_all_presenters()
     if session_id and session_id not in stopped_presenters:
         cleanup_presenter(session_id)
+    with contextlib.suppress(Exception):
+        cleanup_all_speech_summarizers()
 
     stopped_sessions: list[str] = []
     for sid in target_sids:
@@ -764,3 +767,691 @@ def orchestrate_stage_session(session_id: str, prompt: str, user_text: str = "")
     ensure_presenter(session_id, ledger_path, clean_req)
     # 5. 幂等注入硬性执行指令
     return inject_stage_directive(prompt, session_id, ledger_path)
+
+
+# ── 桌面语音监听（Groq Whisper ASR）+ desktop-operator 主操作员 + LightAgent 旁路语音提炼 ──
+
+GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
+DESKTOP_OPERATOR_POST_ID = "desktop-operator"
+
+SPEECH_SUMMARIZER_SYSTEM_PROMPT = """你是虚拟桌面（Agent OS）的「旁路语音播报大模型（Speech Broadcaster / Summarizer）」。
+你的输入由四个部分共同构成：
+1. 用户的语音 ASR 转录文本（`<human_voice_asr>`）
+2. 主操作员的操作（`<operator_actions>`，含工具调用与执行回执语义，限制轮次、不限制字数）
+3. 主操作员的响应（`<operator_responses>`，即主操作员的文本回答，限制轮次、不限制字数）
+4. 上一次已播报的语音总结（`<previous_spoken_summary>`）
+
+【核心职责与两阶段响应铁律】
+1. **第一时间响应与“暖场”响应（当 `<response_stage>` 为 `FIRST_RESPONSE_WARMUP`，即刚收到用户的语音 ASR 转录文本，但还不确定主操作员会如何操作时）**：
+   - 你必须理解什么叫「第一时间响应」：用户刚说完话，必须立刻给出简短、亲切、自然的口头回应，确认已听见用户的诉求并正在转交主操作员处理，起到不冷场的「暖场」衔接作用；
+   - **严禁掺杂自己对 prompt 的理解**：在还不确定主操作员会如何操作的前提下，**绝对禁止**自行拆解需求、猜测操作方案、预判具体执行步骤、替主操作员承诺操作细节，或越俎代庖直接回答用户的问题！只能贴合 `<human_voice_asr>` 的字面意思做干净利落的第一时间接话暖场。
+2. **增量进展与结果播报（当 `<response_stage>` 为 `INCREMENTAL_UPDATE`，即主操作员已产生实际操作或文本响应时）**：
+   - 结合 `<human_voice_asr>`、`<operator_actions>`、`<operator_responses>` 与 `<previous_spoken_summary>`，只提炼相对于 `<previous_spoken_summary>` 新增的桌面动作进展或最终回答结论；
+   - 若主操作员仍在执行与上一轮相同的动作且没有任何新增进展，只输出 `<SILENCE>`。
+3. **纯文本口语化与母语自适应**：
+   - 输出结果必须是**100% 纯自然口语文本**，将直接送入母语级情感语音合成引擎（中文使用 `zh-CN-XiaoxiaoNeural`，纯英文使用 `en-US-AvaMultilingualNeural`）；
+   - **严禁**输出任何 JSON 对象、请求返回值（如 `{"ok": true, ...}` 或 `KernelTurn(...)`）、代码块、Markdown 符号（`*`、`#`、`` ` ``）、命令行参数或长路径；必须把工具调用转化为自然的人类动作描述；
+   - 每次输出控制在 1～3 句简短自然的口语（15～80 字），直接输出要说给用户听的纯文本正文，不要加任何前缀、引号或角色标签。"""
+
+
+def resolve_groq_whisper_api_key() -> str:
+    """复用 ~/.frago/recipes.local.json 中已配置的 groq_whisper_transcribe 密钥（支持 $ref 与环境变量兜底）。"""
+    try:
+        from frago.server.services.recipe_secrets_service import RecipeSecretsService
+
+        secrets = RecipeSecretsService._load_secrets_file()
+        for recipe_name in ("groq_whisper_transcribe", "groq_whisper_asr"):
+            entry = secrets.get(recipe_name)
+            if isinstance(entry, dict):
+                ref = entry.get("$ref")
+                if isinstance(ref, str) and ref.strip() and isinstance(secrets.get(ref.strip()), dict):
+                    entry = secrets[ref.strip()]
+                key = str(entry.get("api_key") or "").strip()
+                if key:
+                    return key
+    except Exception:
+        logger.debug("读取 recipes.local.json 中的 Groq 密钥失败", exc_info=True)
+
+    env_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    raise ValueError(
+        "未找到 Groq Whisper API Key：请在 ~/.frago/recipes.local.json 的 groq_whisper_transcribe 中配置 api_key。"
+    )
+
+
+def transcribe_audio_with_groq(
+    audio_bytes: bytes,
+    *,
+    filename: str = "speech.webm",
+    mime_type: str = "audio/webm",
+    language: str | None = None,
+    prompt: str | None = None,
+    timeout: float = 25.0,
+) -> dict[str, Any]:
+    """调用 Groq Whisper (whisper-large-v3-turbo) 将语音音频字节流转写为文本。"""
+    import urllib.error
+    import urllib.request
+    import uuid
+
+    if not audio_bytes:
+        raise ValueError("音频内容为空，无法转写。")
+
+    api_key = resolve_groq_whisper_api_key()
+    boundary = f"----FragoGroqBoundary{uuid.uuid4().hex}"
+    parts: list[bytes] = []
+
+    def _add_field(name: str, value: str) -> None:
+        parts.append(f"--{boundary}\r\n".encode("utf-8"))
+        parts.append(
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
+        )
+
+    _add_field("model", GROQ_WHISPER_MODEL)
+    _add_field("response_format", "json")
+    if language and language.strip():
+        _add_field("language", language.strip())
+    if prompt and prompt.strip():
+        _add_field("prompt", prompt.strip())
+
+    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', filename or "speech.webm")
+    safe_mime = (mime_type or "audio/webm").split(";")[0].strip() or "audio/webm"
+    parts.append(f"--{boundary}\r\n".encode("utf-8"))
+    parts.append(
+        (
+            f'Content-Disposition: form-data; name="file"; filename="{safe_name}"\r\n'
+            f"Content-Type: {safe_mime}\r\n\r\n"
+        ).encode("utf-8")
+    )
+    parts.append(audio_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+
+    req = urllib.request.Request(
+        GROQ_TRANSCRIPTION_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "frago-desktop-listener/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as exc:
+        err_body = ""
+        with contextlib.suppress(Exception):
+            err_body = exc.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Groq Whisper 转写请求失败 (HTTP {exc.code}): {err_body}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Groq Whisper 转写连接异常: {exc}") from exc
+
+    text = str(data.get("text") or "").strip()
+    return {
+        "text": text,
+        "model": GROQ_WHISPER_MODEL,
+        "language": data.get("language"),
+    }
+
+
+def _strip_operator_directive(text: str) -> str:
+    """剥离首轮 `<frago-employee>` 员工语境头，还原用户真实输入。"""
+    from frago.employee.ledger import strip_injected_session_blocks
+
+    _res = strip_injected_session_blocks(str(text or ""))
+    cleaned = _res[1] if isinstance(_res, tuple) else str(_res or "")
+    return clean_user_requirement(cleaned).strip()
+
+
+def extract_recent_operator_turns(
+    session_id: str,
+    max_turns: int = 3,
+) -> list[dict[str, Any]]:
+    """提取操作员最近 max_turns 轮完整响应（限制轮次、不限制字数、包含工具调用语义）。"""
+    from frago.session import record_reader
+
+    try:
+        records = record_reader.read_records(session_id, limit=250, tail=True)
+    except Exception:
+        return []
+
+    turns: list[dict[str, Any]] = []
+    current_turn: dict[str, Any] | None = None
+
+    for rec in records:
+        payload = rec.payload or {}
+        seq = getattr(rec, "seq", 0) or 0
+        if rec.kind == "user.say" and not payload.get("is_tool_result"):
+            user_text = _strip_operator_directive(str(payload.get("text") or ""))
+            current_turn = {
+                "user_text": user_text,
+                "start_seq": seq,
+                "end_seq": seq,
+                "events": [],
+            }
+            turns.append(current_turn)
+            continue
+
+        if current_turn is None:
+            current_turn = {
+                "user_text": "",
+                "start_seq": seq,
+                "end_seq": seq,
+                "events": [],
+            }
+            turns.append(current_turn)
+
+        if seq > current_turn["end_seq"]:
+            current_turn["end_seq"] = seq
+
+        if rec.kind in ("tool.call", "tool.use"):
+            tool_name = str(payload.get("name") or payload.get("tool") or "tool").strip()
+            tool_input = (
+                payload.get("input")
+                if payload.get("input") is not None
+                else (payload.get("args") or payload.get("summary") or "")
+            )
+            if isinstance(tool_input, dict):
+                input_repr = json.dumps(tool_input, ensure_ascii=False)
+            else:
+                input_repr = str(tool_input or "")
+            current_turn["events"].append(
+                {
+                    "seq": seq,
+                    "type": "tool.call",
+                    "name": tool_name,
+                    "input": input_repr,
+                }
+            )
+        elif rec.kind == "tool.result":
+            is_error = bool(payload.get("is_error") or payload.get("error"))
+            output_text = str(
+                payload.get("output") or payload.get("content") or payload.get("text") or ""
+            ).strip()
+            current_turn["events"].append(
+                {
+                    "seq": seq,
+                    "type": "tool.result",
+                    "is_error": is_error,
+                    "output": output_text,
+                }
+            )
+        elif rec.kind == "agent.say":
+            say_text = str(payload.get("text") or "").strip()
+            if say_text:
+                current_turn["events"].append(
+                    {
+                        "seq": seq,
+                        "type": "agent.say",
+                        "text": say_text,
+                    }
+                )
+
+    if max_turns > 0 and len(turns) > max_turns:
+        turns = turns[-max_turns:]
+    return turns
+
+
+def build_speech_summarizer_prompt(
+    recent_turns: list[dict[str, Any]],
+    previous_summary: str = "",
+    *,
+    human_asr: str = "",
+) -> str:
+    """按四要素公式组装播音大模型输入提示词：
+    每次播音大模型输入 = 用户的语音 ASR（human_asr） + 主操作员的操作（tool.call/result）
+                       + 主操作员的响应（agent.say） + 上一次的总结内容（previous_summary）
+    """
+    latest_asr = str(human_asr or "").strip()
+    if not latest_asr and recent_turns:
+        for turn in reversed(recent_turns):
+            ut = str(turn.get("user_text") or "").strip()
+            if ut:
+                latest_asr = ut
+                break
+
+    action_lines: list[str] = []
+    response_lines: list[str] = []
+    turn_blocks: list[str] = []
+
+    for idx, turn in enumerate(recent_turns, start=1):
+        lines = [f"[Turn {idx}]"]
+        user_text = str(turn.get("user_text") or "").strip()
+        if user_text:
+            lines.append(f"用户语音 ASR: {user_text}")
+        for ev in turn.get("events") or []:
+            ev_type = ev.get("type")
+            if ev_type in ("tool.call", "tool.use"):
+                line = f"[Turn {idx}] 操作员工具调用 ({ev.get('name')}): {ev.get('input')}"
+                action_lines.append(line)
+                lines.append(f"操作员工具调用 ({ev.get('name')}): {ev.get('input')}")
+            elif ev_type == "tool.result":
+                status_tag = "失败" if ev.get("is_error") else "完成"
+                line = f"[Turn {idx}] 工具回执 ({status_tag}): {ev.get('output')}"
+                action_lines.append(line)
+                lines.append(f"工具回执 ({status_tag}): {ev.get('output')}")
+            elif ev_type == "agent.say":
+                line = f"[Turn {idx}] 操作员文本响应: {ev.get('text')}"
+                response_lines.append(line)
+                lines.append(f"操作员文本回答: {ev.get('text')}")
+        turn_blocks.append("\n".join(lines))
+
+    # 判定当前最新一轮是否尚未产生主操作员操作/响应（即处于「第一时间暖场响应」阶段）
+    latest_turn_has_events = bool(recent_turns[-1].get("events")) if recent_turns else False
+    if human_asr and human_asr.strip():
+        if not recent_turns or str(recent_turns[-1].get("user_text") or "").strip() != human_asr.strip():
+            latest_turn_has_events = False
+
+    response_stage = "INCREMENTAL_UPDATE" if latest_turn_has_events else "FIRST_RESPONSE_WARMUP"
+    asr_body = latest_asr if latest_asr else "（暂无最新用户语音 ASR）"
+    actions_body = "\n".join(action_lines) if action_lines else "（主操作员尚未对当前指令执行操作）"
+    responses_body = "\n".join(response_lines) if response_lines else "（主操作员尚未生成文本响应）"
+    turns_body = "\n\n".join(turn_blocks) if turn_blocks else f"[Turn 1]\n用户语音 ASR: {asr_body}"
+    prev_body = previous_summary.strip() if previous_summary and previous_summary.strip() else "（尚无历史播报）"
+
+    return (
+        f"{SPEECH_SUMMARIZER_SYSTEM_PROMPT}\n\n"
+        f"<response_stage>{response_stage}</response_stage>\n\n"
+        f"<human_voice_asr>\n{asr_body}\n</human_voice_asr>\n\n"
+        f"<operator_actions>\n{actions_body}\n</operator_actions>\n\n"
+        f"<operator_responses>\n{responses_body}\n</operator_responses>\n\n"
+        f"<previous_spoken_summary>\n{prev_body}\n</previous_spoken_summary>\n\n"
+        f"<recent_operator_turns turn_count=\"{len(recent_turns)}\">\n{turns_body}\n</recent_operator_turns>\n\n"
+        "请直接输出现在要说给用户听的纯文本口语（若无任何新增进展或无需重复播报，只输出 <SILENCE>）："
+    )
+
+
+def _extract_chat_turn_text(raw_result: Any) -> str:
+    """从 kernel_backend.run_chat_turn 的返回值（KernelTurn / dict / str）中提取纯文本，绝不把请求返回结构当成播报词。"""
+    if raw_result is None:
+        return ""
+    if isinstance(raw_result, str):
+        s = raw_result.strip()
+        m = re.match(
+            r"^KernelTurn\(text=(['\"])(.*?)\1,\s*status=['\"](\w+)['\"]",
+            s,
+            re.DOTALL,
+        )
+        if m:
+            return m.group(2).strip() if m.group(3) == "ok" else ""
+        return s
+    if isinstance(raw_result, dict):
+        if raw_result.get("status") not in (None, "ok") and not raw_result.get("ok", True):
+            return ""
+        if raw_result.get("is_error"):
+            return ""
+        return str(raw_result.get("text") or raw_result.get("result") or "").strip()
+
+    status = getattr(raw_result, "status", "ok")
+    if status != "ok":
+        return ""
+    return str(getattr(raw_result, "text", "") or "").strip()
+
+
+def _clean_spoken_summary(raw_text: Any, previous_summary: str = "") -> str:
+    """清洗 LightAgent 返回的口语总结文本，过滤 KernelTurn/JSON 请求返回体、<SILENCE> 与重复内容。"""
+    cleaned = _extract_chat_turn_text(raw_text)
+    if not cleaned:
+        return ""
+    if "<SILENCE>" in cleaned.upper() or cleaned.upper() == "SILENCE":
+        return ""
+    cleaned = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", cleaned).strip()
+    cleaned = cleaned.strip('"\'“”‘’')
+    if not cleaned:
+        return ""
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or (
+        cleaned.startswith("[") and cleaned.endswith("]")
+    ):
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                if parsed.get("is_error") or parsed.get("ok") is False or "op" in parsed:
+                    return ""
+                extracted = str(
+                    parsed.get("text") or parsed.get("summary") or parsed.get("result") or ""
+                ).strip()
+                cleaned = extracted
+            else:
+                return ""
+        except Exception:
+            return ""
+    if not cleaned:
+        return ""
+    if any(
+        bad in cleaned
+        for bad in (
+            "KernelTurn(",
+            "duration_ms=",
+            "tmux_name=",
+            "Traceback (most recent call last)",
+            '"error_kind"',
+            '"status_code"',
+        )
+    ):
+        return ""
+    if previous_summary and cleaned == previous_summary.strip():
+        return ""
+    return cleaned
+
+
+def summarize_operator_for_speech(
+    session_id: str,
+    previous_summary: str = "",
+    *,
+    human_asr: str = "",
+    max_turns: int = 3,
+    cwd: str | None = None,
+) -> str:
+    """使用 frago-core 单轮对话（--as-role lightagent）结合用户语音 ASR、操作员操作与响应及上次总结生成纯文本播报词。"""
+    from frago.agent_driver import kernel_backend
+
+    recent_turns = extract_recent_operator_turns(session_id, max_turns=max_turns)
+    effective_asr = str(human_asr or "").strip()
+    if not effective_asr and recent_turns:
+        effective_asr = str(recent_turns[-1].get("user_text") or "").strip()
+    has_operator_events = any(bool(t.get("events")) for t in recent_turns)
+    if not has_operator_events and not effective_asr:
+        return ""
+
+    prompt = build_speech_summarizer_prompt(
+        recent_turns,
+        previous_summary,
+        human_asr=effective_asr,
+    )
+    raw = kernel_backend.run_chat_turn(
+        prompt,
+        cwd=cwd or str(Path.home()),
+        role="lightagent",
+        timeout_s=35.0,
+    )
+    spoken = _clean_spoken_summary(raw, previous_summary)
+    if not spoken and getattr(raw, "status", "ok") != "ok":
+        with contextlib.suppress(Exception):
+            fallback_raw = kernel_backend.run_chat_turn(
+                prompt,
+                cwd=cwd or str(Path.home()),
+                role=None,
+                timeout_s=35.0,
+            )
+            spoken = _clean_spoken_summary(fallback_raw, previous_summary)
+    return spoken
+
+
+class SpeechSummarizerDaemon:
+    """监听用户语音 ASR 与 desktop-operator 会话新增响应并调用 LightAgent + Edge TTS 播报的旁路守护线程。"""
+
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        max_turns: int = 3,
+        cwd: str | None = None,
+    ) -> None:
+        self.session_id = session_id
+        self.max_turns = max_turns
+        self.cwd = cwd or str(Path.home())
+        self.previous_summary = ""
+        self.last_summarized_seq = 0
+        self.pending_human_asr: str = ""
+        self.last_warmed_asr: str = ""
+        self._lock = threading.Lock()
+        self._wake_event = threading.Event()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._seed_initial_seq()
+
+    def _seed_initial_seq(self) -> None:
+        from frago.session import record_reader
+
+        with contextlib.suppress(Exception):
+            recs = record_reader.read_records(self.session_id, limit=1, tail=True)
+            if recs:
+                self.last_summarized_seq = getattr(recs[-1], "seq", 0) or 0
+
+    def notify_human_asr(self, human_asr: str) -> None:
+        """在语音转写完成的瞬间通知播音守护线程，触发第一时间暖场响应。"""
+        clean_asr = str(human_asr or "").strip()
+        if not clean_asr:
+            return
+        with self._lock:
+            self.pending_human_asr = clean_asr
+        self._wake_event.set()
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            name=f"speech-summarizer-{self.session_id[:12]}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._wake_event.set()
+
+    def step_once(self) -> str:
+        """检查是否有新的用户语音 ASR（第一时间暖场）或新的操作员操作/响应（增量播报）。"""
+        from frago.desktop import voice
+        from frago.session import record_reader
+
+        with self._lock:
+            immediate_asr = self.pending_human_asr
+            self.pending_human_asr = ""
+
+        new_records: list[Any] = []
+        with contextlib.suppress(Exception):
+            new_records = record_reader.read_records(
+                self.session_id,
+                after=self.last_summarized_seq + 1,
+                limit=100,
+            )
+
+        has_new_operator_output = False
+        latest_record_asr = ""
+        max_seq = self.last_summarized_seq
+        for rec in new_records:
+            seq = getattr(rec, "seq", 0) or 0
+            if seq > max_seq:
+                max_seq = seq
+            payload = getattr(rec, "payload", None) or {}
+            if rec.kind == "user.say" and not payload.get("is_tool_result"):
+                u_text = _strip_operator_directive(str(payload.get("text") or ""))
+                if u_text:
+                    latest_record_asr = u_text
+            elif rec.kind in ("agent.say", "tool.call", "tool.use", "tool.result"):
+                has_new_operator_output = True
+
+        self.last_summarized_seq = max_seq
+
+        effective_asr = immediate_asr or latest_record_asr
+        is_warmup = False
+        if not has_new_operator_output:
+            if effective_asr and effective_asr != self.last_warmed_asr:
+                is_warmup = True
+            else:
+                return ""
+
+        if effective_asr:
+            self.last_warmed_asr = effective_asr
+
+        try:
+            spoken = summarize_operator_for_speech(
+                self.session_id,
+                self.previous_summary,
+                human_asr=effective_asr,
+                max_turns=self.max_turns,
+                cwd=self.cwd,
+            )
+        except Exception:
+            logger.warning("LightAgent 语音总结提炼失败 (%s)", self.session_id, exc_info=True)
+            return ""
+
+        if not spoken:
+            return ""
+
+        self.previous_summary = spoken
+        chosen_voice = voice.resolve_emotional_voice(spoken)
+        self._speak_on_desktop(spoken, chosen_voice, interject=is_warmup)
+        return spoken
+
+    def _speak_on_desktop(
+        self,
+        spoken_text: str,
+        chosen_voice: str,
+        *,
+        interject: bool = False,
+    ) -> bool:
+        from frago.desktop import aos, registry
+
+        try:
+            rec = registry.read_instance("default")
+            if not rec or rec.get("status") != "running":
+                return False
+            steps: list[dict[str, Any]] = [
+                {
+                    "op": "say",
+                    "text": spoken_text,
+                    "speak": True,
+                    "async": True,
+                    "interject": bool(interject),
+                    "voice": chosen_voice,
+                    "out": "page",
+                }
+            ]
+            aos.post(rec, steps, timeout=8.0)
+            return True
+        except Exception:
+            logger.debug("旁路语音提炼器向桌面发送语音失败", exc_info=True)
+            return False
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.step_once()
+            except Exception:
+                logger.debug("SpeechSummarizerDaemon 轮询异常", exc_info=True)
+            self._wake_event.wait(1.2)
+            self._wake_event.clear()
+
+
+_speech_summarizers_lock = threading.Lock()
+_speech_summarizers: dict[str, SpeechSummarizerDaemon] = {}
+
+
+def ensure_speech_summarizer(
+    session_id: str,
+    *,
+    max_turns: int = 3,
+    cwd: str | None = None,
+) -> SpeechSummarizerDaemon:
+    """确保指定 desktop-operator 会话的旁路语音提炼守护线程已启动。"""
+    with _speech_summarizers_lock:
+        existing = _speech_summarizers.get(session_id)
+        if existing is not None:
+            existing.start()
+            return existing
+        daemon = SpeechSummarizerDaemon(session_id, max_turns=max_turns, cwd=cwd)
+        _speech_summarizers[session_id] = daemon
+        daemon.start()
+        return daemon
+
+
+def cleanup_speech_summarizer(session_id: str) -> None:
+    """停止并移除指定会话的旁路语音提炼守护线程。"""
+    with _speech_summarizers_lock:
+        daemon = _speech_summarizers.pop(session_id, None)
+    if daemon is not None:
+        with contextlib.suppress(Exception):
+            daemon.stop()
+
+
+def cleanup_all_speech_summarizers() -> list[str]:
+    """停止并清空全部旁路语音提炼守护线程。"""
+    with _speech_summarizers_lock:
+        items = list(_speech_summarizers.items())
+        _speech_summarizers.clear()
+    stopped: list[str] = []
+    for sid, daemon in items:
+        with contextlib.suppress(Exception):
+            daemon.stop()
+        stopped.append(sid)
+    return stopped
+
+
+def dispatch_desktop_voice_command(
+    text: str,
+    session_id: str | None = None,
+    *,
+    cwd: str | None = None,
+) -> dict[str, Any]:
+    """将识别到的文本投喂给专职员工 desktop-operator，并激活旁路 LightAgent 语音提炼器。"""
+    import uuid
+
+    from frago.employee import (
+        EmployeeOntologyService,
+        ensure_builtin_desktop_operator_employee,
+        get_post,
+    )
+    from frago.server.services import session_send
+    from frago.session import record_reader
+
+    cleaned_text = str(text or "").strip()
+    if not cleaned_text:
+        raise ValueError("识别到的语音文本为空。")
+
+    # 1. 确保 desktop-operator 员工岗位已存在
+    post = ensure_builtin_desktop_operator_employee()
+    emp_service = EmployeeOntologyService()
+
+    # 2. 确保虚拟桌面在线
+    ensure_stage_up()
+
+    # 3. 解析或分配 desktop-operator 的会话 ID
+    sid = str(session_id or "").strip()
+    if not sid:
+        fresh_post = get_post(DESKTOP_OPERATOR_POST_ID) or post
+        if fresh_post.active_session_ids:
+            sid = fresh_post.active_session_ids[-1]
+        else:
+            sid = f"core_{uuid.uuid4().hex[:16]}"
+
+    effective_cwd = (cwd or post.cwd or str(Path.home())).strip() or str(Path.home())
+
+    # 4. 仅在首轮新建会话时前置挂载标准 <frago-employee> 语境块（由终端与网页折叠渲染为 @桌面主操作员 标签），
+    #    后续轮次保持纯净用户原话，绝不在用户消息下方拼接裸露的系统提示词尾缀
+    from frago.session import coreagent_store
+
+    is_existing = False
+    with contextlib.suppress(Exception):
+        is_existing = coreagent_store.session_exists(sid) or bool(record_reader.read_records(sid, limit=1))
+
+    full_prompt = cleaned_text
+    if not is_existing:
+        with contextlib.suppress(Exception):
+            ctx_block = emp_service.build_business_context_block(DESKTOP_OPERATOR_POST_ID)
+            if ctx_block:
+                full_prompt = f"{ctx_block}\n\n{cleaned_text}"
+        with contextlib.suppress(Exception):
+            emp_service.register_session(DESKTOP_OPERATOR_POST_ID, sid)
+
+    # 5. 启动该会话的旁路 LightAgent 语音提炼守护线程，并将用户语音 ASR 同步通知给播音大模型做第一时间暖场响应
+    daemon = ensure_speech_summarizer(sid, cwd=effective_cwd)
+    daemon.notify_human_asr(cleaned_text)
+
+    # 7. 异步入队投喂给主操作员
+    session_send.send_queued(sid, full_prompt, cwd_hint=effective_cwd)
+
+    return {
+        "session_id": sid,
+        "employee": DESKTOP_OPERATOR_POST_ID,
+        "text": cleaned_text,
+        "status": "queued",
+    }
+

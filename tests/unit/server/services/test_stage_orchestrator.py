@@ -305,3 +305,172 @@ def test_idle_pad_stops_once_operator_ready_and_never_loops(tmp_path, monkeypatc
     assert "next visual act" not in say_steps[0]["text"].lower()
 
 
+def test_desktop_operator_employee_and_speech_summarizer(tmp_path, monkeypatch):
+    """验证 desktop-operator 员工岗位创建（仅填必填项，资源留空由巡检自动整理）以及 LightAgent 增量语音总结公式。"""
+    from frago.employee import (
+        DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC,
+        ensure_builtin_desktop_operator_employee,
+    )
+
+    assert DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["knowledge_domains"] == []
+    assert DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["recipes"] == []
+    assert DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["data_slots"] == []
+    assert DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC["schedule_ids"] == []
+
+    emp_dir = tmp_path / "employees"
+    record = ensure_builtin_desktop_operator_employee(base_dir=emp_dir)
+    assert record.member_post_id == "desktop-operator"
+    assert record.title == "桌面主操作员"
+    assert record.schedule_ids == []
+
+    # 模拟操作员 2 轮响应（包含工具调用语义与长文本回答，不截断字数）
+    fake_records = [
+        UnifiedRecord(
+            id="r1",
+            session_id="core_op_test",
+            group_id=None,
+            seq=1,
+            ts=1000,
+            kind="user.say",
+            payload={"text": "帮我打开浏览器看看新闻"},
+        ),
+        UnifiedRecord(
+            id="r2",
+            session_id="core_op_test",
+            group_id=None,
+            seq=2,
+            ts=1001,
+            kind="tool.call",
+            payload={
+                "name": "Bash",
+                "input": {"command": "frago desktop browser open https://news.ycombinator.com"},
+            },
+        ),
+        UnifiedRecord(
+            id="r3",
+            session_id="core_op_test",
+            group_id=None,
+            seq=3,
+            ts=1002,
+            kind="tool.result",
+            payload={"is_error": False, "output": '{"ok": true}'},
+        ),
+        UnifiedRecord(
+            id="r4",
+            session_id="core_op_test",
+            group_id=None,
+            seq=4,
+            ts=1003,
+            kind="agent.say",
+            payload={"text": "我已经为您在虚拟桌面浏览器中打开了 Hacker News 首页。"},
+        ),
+    ]
+    monkeypatch.setattr(
+        "frago.session.record_reader.read_records",
+        lambda sid, limit=250, tail=True, after=None: fake_records,
+    )
+
+    turns = so.extract_recent_operator_turns("core_op_test", max_turns=3)
+    assert len(turns) == 1
+    assert turns[0]["user_text"] == "帮我打开浏览器看看新闻"
+    assert len(turns[0]["events"]) == 3
+
+    prompt = so.build_speech_summarizer_prompt(
+        turns,
+        previous_summary="上一轮已问候用户。",
+        human_asr="帮我打开浏览器看看新闻",
+    )
+    assert "<human_voice_asr>\n帮我打开浏览器看看新闻\n</human_voice_asr>" in prompt
+    assert "<operator_actions>" in prompt
+    assert "<operator_responses>" in prompt
+    assert "<previous_spoken_summary>\n上一轮已问候用户。\n</previous_spoken_summary>" in prompt
+    assert "<response_stage>INCREMENTAL_UPDATE</response_stage>" in prompt
+    assert "frago desktop browser open https://news.ycombinator.com" in prompt
+    assert "我已经为您在虚拟桌面浏览器中打开了 Hacker News 首页。" in prompt
+
+    # 验证「第一时间响应 / 暖场响应」阶段：收到新的 human_asr 且主操作员尚未操作时
+    warmup_prompt = so.build_speech_summarizer_prompt(
+        [],
+        previous_summary="",
+        human_asr="帮我查一下当前目录的 git 状态",
+    )
+    assert "<response_stage>FIRST_RESPONSE_WARMUP</response_stage>" in warmup_prompt
+    assert "<human_voice_asr>\n帮我查一下当前目录的 git 状态\n</human_voice_asr>" in warmup_prompt
+    assert "严禁掺杂自己对 prompt 的理解" in warmup_prompt
+
+    from frago.agent_driver.kernel_backend import KernelTurn
+
+    captured_calls = []
+
+    def fake_run_chat_turn(p, *, cwd, role="lightagent", timeout_s=35.0):
+        captured_calls.append({"prompt": p, "cwd": cwd, "role": role})
+        return KernelTurn(
+            text="我已经帮你在桌面浏览器里打开了 Hacker News 首页，请过目。",
+            status="ok",
+            duration_ms=820,
+            tmux_name=None,
+        )
+
+    monkeypatch.setattr("frago.agent_driver.kernel_backend.run_chat_turn", fake_run_chat_turn)
+    spoken = so.summarize_operator_for_speech("core_op_test", "上一轮已问候用户。")
+    assert spoken == "我已经帮你在桌面浏览器里打开了 Hacker News 首页，请过目。"
+    assert "KernelTurn" not in spoken
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["role"] == "lightagent"
+
+    # 若 LightAgent 返回 <SILENCE>，则静默不播报
+    monkeypatch.setattr(
+        "frago.agent_driver.kernel_backend.run_chat_turn",
+        lambda p, **kw: KernelTurn(text="<SILENCE>", status="ok", duration_ms=100),
+    )
+    assert so.summarize_operator_for_speech("core_op_test", spoken) == ""
+
+
+def test_desktop_operator_single_employee_tag_without_duplicate_directive_tail(tmp_path, monkeypatch):
+    """验证主操作员会话仅在首轮注入 <frago-employee> 标签（职责契约完全写在 employee 内），后续轮次仅发纯文本。"""
+    sent_prompts: list[tuple[str, str]] = []
+    existing_sessions: set[str] = set()
+
+    monkeypatch.setattr(so, "ensure_stage_up", lambda: None)
+    monkeypatch.setattr(
+        "frago.session.coreagent_store.session_exists",
+        lambda sid: sid in existing_sessions,
+    )
+    monkeypatch.setattr(
+        "frago.session.record_reader.read_records",
+        lambda sid, limit=1, **kw: [object()] if sid in existing_sessions else [],
+    )
+
+    class _DummySummarizer:
+        def __init__(self):
+            self.notified: list[str] = []
+
+        def notify_human_asr(self, text: str) -> None:
+            self.notified.append(text)
+
+    dummy_daemon = _DummySummarizer()
+    monkeypatch.setattr(so, "ensure_speech_summarizer", lambda sid, cwd=None: dummy_daemon)
+    monkeypatch.setattr(
+        "frago.server.services.session_send.send_queued",
+        lambda sid, prompt, cwd_hint=None: sent_prompts.append((sid, prompt)),
+    )
+
+    # 第 1 轮（新建会话）：仅前置 <frago-employee id="desktop-operator">
+    res1 = so.dispatch_desktop_voice_command("测试一下", session_id="core_clean_test", cwd=str(tmp_path))
+    assert res1["session_id"] == "core_clean_test"
+    assert len(sent_prompts) == 1
+    first_prompt = sent_prompts[0][1]
+    assert '<frago-employee id="desktop-operator" title="桌面主操作员"' in first_prompt
+    assert first_prompt.endswith("</frago-employee>\n\n测试一下")
+
+    # 第 2 轮（存量会话）：不再重复包裹 <frago-employee>，仅发送纯净用户原话
+    existing_sessions.add("core_clean_test")
+    so.dispatch_desktop_voice_command("你能听见我说话吗？", session_id="core_clean_test", cwd=str(tmp_path))
+    assert len(sent_prompts) == 2
+    second_prompt = sent_prompts[1][1]
+    assert second_prompt == "你能听见我说话吗？"
+    assert "<frago-employee" not in second_prompt
+
+
+
+
