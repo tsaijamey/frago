@@ -273,3 +273,36 @@ class TestDeploySwapsTheBinaryInWhole:
         assert deployed.stat().st_ino != old_inode
         assert deployed.stat().st_mode & 0o111
         assert sorted(p.name for p in deploy.iterdir()) == ["frago-core"]
+
+    def test_windows_locked_running_binary_is_renamed_aside_then_replaced(
+        self, dirs: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        as_platform(monkeypatch, "Windows")
+        _, deploy = dirs
+        dst = deploy / "frago-core.exe"
+        dst.write_bytes(b"old-running")
+        bundled = tmp_path / "frago-core.exe"
+        bundled.write_bytes(b"new-release")
+        monkeypatch.setattr(hook_binary, "get_bundled_binary_path", lambda: bundled)
+        monkeypatch.setattr(hook_binary, "smart_app_control_warning", lambda: None)
+
+        real_replace = hook_binary.os.replace
+        first_direct_swap = True
+
+        def fake_replace(src_p: Path, dst_p: Path) -> None:
+            nonlocal first_direct_swap
+            if first_direct_swap and Path(dst_p) == dst and Path(src_p).name.endswith(".tmp"):
+                first_direct_swap = False
+                raise PermissionError(5, "Access is denied")
+            real_replace(src_p, dst_p)
+
+        monkeypatch.setattr(hook_binary.os, "replace", fake_replace)
+        deployed = hook_binary.deploy_hook_binary()
+        assert deployed.read_bytes() == b"new-release"
+        old_files = [p for p in deploy.iterdir() if p.name.startswith(".frago-core.exe.old.")]
+        assert len(old_files) == 1
+        assert old_files[0].read_bytes() == b"old-running"
+
+        # Next deploy sweeps the retired `.old.` copy once unlocked.
+        hook_binary.deploy_hook_binary()
+        assert sorted(p.name for p in deploy.iterdir()) == ["frago-core.exe"]

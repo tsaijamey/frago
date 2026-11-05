@@ -150,3 +150,20 @@ class TestCheckoutVenvAndSystemdReconcile:
         assert mgr.reconcile_service_unit() is False
         assert reloaded == []
 
+
+def test_cli_checkout_guard_exempts_server_and_agy_hook(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """agy-hook 与 server 在源码仓虚拟环境内必须放行，其余业务命令拦截。"""
+    monkeypatch.delenv(launch_guard.CHECKOUT_OVERRIDE_ENV, raising=False)
+    monkeypatch.setattr(launch_guard, "source_checkout_root", lambda: tmp_path)
+    monkeypatch.setattr(launch_guard.sys, "argv", ["frago", "agy-hook"])
+
+    launch_guard.assert_cli_not_source_checkout("server")
+    launch_guard.assert_cli_not_source_checkout("agy-hook")
+
+    with pytest.raises(SystemExit) as excinfo:
+        launch_guard.assert_cli_not_source_checkout("browser")
+    assert excinfo.value.code == 1
+
+

@@ -76,6 +76,9 @@ _PROTECTED_PATHS = (
     # codex 驱动接上 profile 写入后，一条激活用例把测试密钥写进了真人的
     # ~/.codex/config.toml——codex 家目录是运行期现算的，上面的常量重定向罩不住。
     _REAL_HOME / ".codex",
+    # agy 的全局配置与 hook 注册（~/.gemini/config/hooks.json、~/.gemini/antigravity-cli/settings.json）
+    # 同样是函数内按 Path.home() 现算路径，必须由守门人兜底拦截。
+    _REAL_HOME / ".gemini",
 )
 
 

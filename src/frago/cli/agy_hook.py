@@ -116,17 +116,17 @@ ARG_KEY_MAP: dict[str, dict[str, str]] = {
     "WebFetch": {"Url": "url"},
 }
 
-#: agy 事件 → 引擎事件。**名字不同不等于没有对端**——``PreInvocation`` 就是 agy 那一侧的
-#: ``UserPromptSubmit``：两边都在"用户提交了、模型还没跑"这一刻触发，也都带注入能力。
-#: 只有 ``PostInvocation`` 是引擎真没有的那一路（它唯一的作用是强制续跑，引擎没有对应
-#: 语义）。
-EVENT_MAP: dict[str, str] = {
-    "SessionStart": "SessionStart",
-    "PreInvocation": "UserPromptSubmit",
-    "PreToolUse": "PreToolUse",
-    "PostToolUse": "PostToolUse",
-    "Stop": "Stop",
-}
+#: agy 事件 → 引擎事件（由 :mod:`frago.init.hook_timing` 的权威名字表导出）。
+#:
+#: 注意：``PreInvocation`` 在统一时机表里属于 ``model.pre``（``1x/model_call``，每次调模型前
+#: 触发），而**不是** ``turn.submit``（``1x/turn``，agy 没有这一路）。这里把它借道映射到引擎
+#: 的 ``UserPromptSubmit``，但必须在 :func:`translate_input` 里配合
+#: :func:`frago.session.adapters.agy_records.review_context` 的 ``should_review`` 单轮门控，
+#: 保证轻量 AI 的每轮复核在首拍（或上一拍被 hook 拒绝后）才触发。
+#: ``PostInvocation`` 属于 ``model.post``（仅用于强制续跑），引擎无对端故不收录。
+from frago.init.hook_timing import build_engine_event_map
+
+EVENT_MAP: dict[str, str] = build_engine_event_map("agy")
 
 #: 引擎 PreToolUse 的 ``permissionDecision`` → agy 的 ``decision``。
 #:

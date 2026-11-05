@@ -402,12 +402,14 @@ class _FakeShutil:
 def agy_home(tmp_path, monkeypatch):
     """一个装好 agy 的假家目录：~/.gemini 在，hooks.json 路径指向它。"""
     from frago.init import hook_binary
+    from frago.server import launch_guard
 
     gemini = tmp_path / ".gemini"
     (gemini / "config").mkdir(parents=True)
     path = gemini / "config" / "hooks.json"
     monkeypatch.setattr(hook_binary, "get_agy_hooks_path", lambda: path)
     monkeypatch.setattr(hook_binary, "shutil", _FakeShutil)
+    monkeypatch.setattr(launch_guard, "source_checkout_root", lambda: None)
     return path
 
 
@@ -523,6 +525,20 @@ def test_agy没装就不写(tmp_path, monkeypatch):
 
     assert not path.exists()
     assert not (tmp_path / ".gemini").exists()
+
+
+def test_源码仓虚拟环境内不覆写宿主机hooks_json(agy_home, monkeypatch):
+    """2026-11-04 事故：Worker 用 uv run uvicorn 旁路起临时服务，把 .venv/bin/frago 写进了宿主机 hooks.json。"""
+    from frago.init import hook_binary
+    from frago.server import launch_guard
+
+    before = '{"frago": {"PreToolUse": []}}'
+    agy_home.write_text(before, encoding="utf-8")
+    monkeypatch.setattr(launch_guard, "source_checkout_root", lambda: agy_home.parent)
+
+    hook_binary.sync_agy_hook_events()
+
+    assert agy_home.read_text(encoding="utf-8") == before
 
 
 # ── SessionStart：把这场会话是从谁那儿起来的记进账 ────────────────────

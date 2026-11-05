@@ -133,6 +133,7 @@ def deploy_hook_binary(force: bool = False) -> Path:
     # Otherwise a second server start with an already-current binary would
     # skip it and leftover legacy copies would survive.
     cleanup_legacy_hook_copy()
+    cleanup_retired_locked_copies(dst_dir, dst.name)
 
     if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
         return dst
@@ -149,14 +150,38 @@ def deploy_hook_binary(force: bool = False) -> Path:
     try:
         os.replace(tmp, dst)
     except OSError:
-        # Windows refuses to replace an executable that is running. Copying in
-        # place is what deploy always did there, and it fails the same way if
-        # the file is locked — no worse than before.
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        shutil.copy2(src, dst)
+        # Windows refuses to overwrite or delete an executable that is currently
+        # running (e.g. a resident CoreAgent session in a tmux pane), raising
+        # WinError 5 (Access is denied). However, Windows allows renaming a
+        # running executable in the same directory. Move the locked dst aside
+        # to a `.old.<pid>.<ts>` name, then swap `tmp` into `dst`.
+        swapped = False
+        if dst.exists():
+            retired = dst.with_name(f".{dst.name}.old.{os.getpid()}.{int(time.time() * 1000)}")
+            with contextlib.suppress(OSError):
+                os.replace(dst, retired)
+                try:
+                    os.replace(tmp, dst)
+                    swapped = True
+                except OSError:
+                    with contextlib.suppress(OSError):
+                        os.replace(retired, dst)
+        if not swapped:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            shutil.copy2(src, dst)
 
     return dst
+
+
+def cleanup_retired_locked_copies(dst_dir: Path, binary_name: str) -> None:
+    """Remove `.frago-core.exe.old.*` backups once their holding processes exit."""
+    prefix = f".{binary_name}.old."
+    with contextlib.suppress(OSError):
+        for entry in dst_dir.iterdir():
+            if entry.name.startswith(prefix):
+                with contextlib.suppress(OSError):
+                    entry.unlink()
 
 
 def get_hook_binary_path() -> str:
@@ -506,6 +531,12 @@ def sync_agy_hook_events() -> None:
     path = get_agy_hooks_path()
     if not path.parent.parent.exists():
         logger.debug("agy 没装（%s 不在），跳过 hook 登记", path.parent.parent)
+        return
+
+    from frago.server.launch_guard import source_checkout_root
+
+    if source_checkout_root() is not None:
+        logger.debug("源码仓虚拟环境内运行，跳过 agy hook 登记")
         return
 
     try:

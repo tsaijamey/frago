@@ -154,11 +154,14 @@ def assert_system_install() -> None:
 
 # --- CLI guard -------------------------------------------------------------
 
-# Subcommands still allowed from the source checkout. Only ``server``: it is the
-# packaging path — it builds the repo, installs it as the system frago and execs
-# that (see ``frago.cli.server_command``), so running it from the checkout is
-# the sanctioned way to publish local changes.
-CHECKOUT_ALLOWED_COMMANDS = frozenset({"server"})
+# Subcommands still allowed from the source checkout:
+# - ``server``: the packaging path — it builds the repo, installs it as the
+#   system frago and execs that (see ``frago.cli.server_command``), so running
+#   it from the checkout is the sanctioned way to publish local changes.
+# - ``agy-hook``: lifecycle hook shim invoked automatically by agy on every tool
+#   call; it only translates JSON fields for the system ``frago-core --engine``
+#   binary, and a non-zero exit on PreToolUse bricks all tools in the session.
+CHECKOUT_ALLOWED_COMMANDS = frozenset({"server", "agy-hook"})
 
 # Escape hatch for the test suite, which necessarily runs from the repo venv and
 # drives the CLI callback through click's CliRunner. Set in tests/conftest.py.
