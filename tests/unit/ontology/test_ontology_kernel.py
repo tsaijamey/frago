@@ -3017,4 +3017,178 @@ class TestEmployeeLedgerProactiveSweep:
         assert after_spawn is not None
         assert after_spawn.active_session_ids == ["real-session-cli-888"]
 
+        # 3. rm 同步清理 <id>.json、<id>.ledger.yaml 以及关联巡检排程
+        from frago.employee import employee_ledger_path
+
+        monkeypatch.setattr(
+            emp_cli,
+            "_scheduler_remove_hooks",
+            lambda: (
+                lambda sid: bool(
+                    [schedules.remove(s) for s in list(schedules) if s["id"] == sid]
+                ),
+                lambda: list(schedules),
+            ),
+        )
+        ledger_file = employee_ledger_path("demo-director")
+        assert ledger_file.is_file()
+        rm_res = runner.invoke(emp_cli.employee_group, ["rm", "demo-director"])
+        assert rm_res.exit_code == 0, rm_res.output
+        assert get_post("demo-director") is None
+        assert not ledger_file.exists(), "删除员工后 .ledger.yaml 仍残留在磁盘上"
+        assert schedules == [], "删除员工后每日巡检排程仍残留在调度器中"
+
+    def test_employee_orchestrator_contract_peer_roster_and_lifecycle_continuity(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """验证员工二阶架构三支柱：指挥官角色契约、同侪花名册与同步跨域协查、本岗会话生命延续。"""
+        from click.testing import CliRunner
+
+        import frago.cli.employee_commands as emp_cli
+        from frago.employee import (
+            EmployeeOntologyService,
+            get_post,
+            load_ledger,
+            save_post,
+            sync_employee_ledger,
+        )
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        self._build_sandbox(tmp_path)
+
+        # 造一场带 <frago-employee> 注入头的 agy 历史会话，模拟员工上一阶段已完成的会话
+        agy_sid = "6f7953d5-c901-4282-a979-e000ed7220eb"
+        agy_dir = tmp_path / "sessions" / "agy" / agy_sid
+        agy_dir.mkdir(parents=True)
+        (agy_dir / "raw.jsonl").write_text(
+            json.dumps(
+                {
+                    "step_index": 0,
+                    "type": "USER_INPUT",
+                    "created_at": "2026-04-20T06:51:44Z",
+                    "content": (
+                        "<USER_REQUEST>\n"
+                        '<frago-employee id="personal-assistant" title="个人助理" kernel="agy">\n'
+                        "【员工身份与工作范畴】\n岗位：个人助理\n</frago-employee>\n\n"
+                        "帮我分析一下体检报告数据，给出未来 90 天行动建议\n"
+                        "</USER_REQUEST>"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "step_index": 5,
+                    "type": "PLANNER_RESPONSE",
+                    "created_at": "2026-04-20T06:55:27Z",
+                    "content": "# 核心结论\n\n第一风险是中心性肥胖与颈动脉斑块，建议每日热量缺口 500 kcal。",
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "stock",
+            title="Stock 投研与策略专员",
+            agent_kernel="claude",
+            description="专门负责股票与 ETF 全场景投研工作：标的调研、策略验证与归因分析。",
+            work_scope="负责股票与 ETF 的证券投研全场景，含 DMA 类信号与波动率因子。",
+        )
+        pa_rec, _ = svc.hire(
+            "personal-assistant",
+            title="个人助理",
+            agent_kernel="agy",
+            description="解决个人生活、健康管理、家庭财务与社保等私人事务。",
+            work_scope="个人事务包括工作、公积金、社保、体检健康、商业保险、债务、存款与家庭事务。",
+        )
+        pa_rec.active_session_ids.append(agy_sid)
+        save_post(pa_rec)
+
+        # 巡检后：active_session_ids 中的 agy 会话被认领进账本，且剥离了 <frago-employee> 壳
+        sync_employee_ledger("personal-assistant", full_rescan=True)
+        pa_ledger = load_ledger("personal-assistant")
+        assert pa_ledger is not None
+        matched_by_id = {
+            s["session_id"]: s for s in pa_ledger.claimed_resources["matched_sessions"]
+        }
+        assert agy_sid in matched_by_id
+        own_sess = matched_by_id[agy_sid]
+        assert own_sess["bound_to_post"] is True
+        assert "<frago-employee" not in own_sess["title"]
+        assert "帮我分析一下体检报告数据" in own_sess["first_prompt_summary"]
+        assert "中心性肥胖与颈动脉斑块" in own_sess["latest_conclusion"]
+
+        # 新开会话注入块：三支柱齐全
+        pa_block = svc.build_business_context_block("personal-assistant")
+        # 支柱 1：指挥官契约（编撰上下文任务书并调 frago agent 派给普通 worker，且写明 --params）
+        assert "【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】" in pa_block
+        assert "frago agent --prompt-file" in pa_block
+        assert "--params '<JSON>'" in pa_block
+        # 支柱 2：本机同侪员工花名册与跨域协查协议
+        assert "【本机同侪员工花名册与跨域协查协议】" in pa_block
+        assert "`stock`（Stock 投研与策略专员）" in pa_block
+        assert "frago employee ask" in pa_block
+        # 支柱 3：本岗位生命延续（带真实 session_id、脱壳后的议题、阶段结论与 frago session ask 指引）
+        assert "【本岗位生命延续：近期会话脉络与按需续接" in pa_block
+        assert f"session_id=`{agy_sid}`" in pa_block
+        assert "帮我分析一下体检报告数据" in pa_block
+        assert "中心性肥胖与颈动脉斑块" in pa_block
+        assert "frago session ask <session_id>" in pa_block
+
+        # 同步跨域协查：`frago employee ask` 与 `frago employee invoke --wait` 返回目标员工真实结论
+        captured_turn: dict[str, Any] = {}
+
+        def fake_turn(
+            agent_kernel: str,
+            prompt: str,
+            *,
+            cwd: str,
+            timeout_s: float = 0.0,
+        ) -> tuple[str, str, str]:
+            captured_turn["agent_kernel"] = agent_kernel
+            captured_turn["prompt"] = prompt
+            captured_turn["cwd"] = cwd
+            return (
+                "sess-stock-peer-001",
+                "ok",
+                "迎驾贡酒（603198.SH）当前估值处于历史 35% 分位，DMA 信号呈多头排列，胜率评估偏正面。",
+            )
+
+        monkeypatch.setattr(emp_cli, "_run_agent_turn_for_employee", fake_turn)
+
+        runner = CliRunner()
+        ask_res = runner.invoke(
+            emp_cli.employee_group,
+            [
+                "ask",
+                "stock",
+                "股票 603198 迎驾贡酒买它赚钱的概率大吗？",
+                "--caller",
+                "employee:personal-assistant",
+                "--json",
+            ],
+        )
+        assert ask_res.exit_code == 0, ask_res.output
+        ask_payload = json.loads(ask_res.output)
+        assert ask_payload["status"] == "ok"
+        assert ask_payload["session_id"] == "sess-stock-peer-001"
+        assert "迎驾贡酒（603198.SH）" in ask_payload["answer_summary"]
+        assert "迎驾贡酒（603198.SH）" in ask_payload["text"]
+        # 目标员工收到的提示词里挂载了它自己的 <frago-employee id="stock"> 账本语境
+        assert '<frago-employee id="stock"' in captured_turn["prompt"]
+        assert "employee:personal-assistant" in captured_turn["prompt"]
+
+        # 协查产生的真实会话编号已记入目标员工的 active_session_ids
+        stock_after = get_post("stock")
+        assert stock_after is not None
+        assert "sess-stock-peer-001" in stock_after.active_session_ids
+
+
 

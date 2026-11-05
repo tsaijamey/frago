@@ -24,6 +24,7 @@ import html
 import json
 import re
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1289,33 +1290,280 @@ def _scan_domains(
     return claimed, topics, digests
 
 
-def _session_first_prompt(session_dir: Path) -> str:
-    """会话的第一条用户消息，一行。
+_SESSION_EMPLOYEE_BLOCK_RE = re.compile(
+    r'<frago-employee\s+id="([^"]+)"[^>]*>[\s\S]*?</frago-employee>\s*',
+    re.IGNORECASE,
+)
+_SESSION_SKILL_BLOCK_RE = re.compile(
+    r"<must-use-skill\b[^>]*>[\s\S]*?</must-use-skill>\s*",
+    re.IGNORECASE,
+)
+_SESSION_SYSTEM_REMINDER_RE = re.compile(
+    r"<system-reminder>[\s\S]*?</system-reminder>\s*",
+    re.IGNORECASE,
+)
+_SESSION_USER_REQUEST_BLOCK_RE = re.compile(
+    r"<USER_REQUEST>([\s\S]*?)</USER_REQUEST>",
+    re.IGNORECASE,
+)
+_SESSION_PROMPT_FILE_BLOCK_RE = re.compile(
+    r'<frago-prompt-file\s+path="([^"]+)"[^>]*>[\s\S]*?</frago-prompt-file>(?:\r?\n([^\n]*))?',
+    re.IGNORECASE,
+)
+_SESSION_CORES: tuple[str, ...] = (
+    "claude",
+    "agy",
+    "codex",
+    "opencode",
+    "coreagent",
+    "claude-misc",
+)
+_SESSION_TAIL_BYTES = 64 * 1024
 
-    读 ``steps.jsonl`` 的第一条 ``type=user`` 记录。整个文件可能几十兆，但只需要开头：
-    第一句话就在最前面，把整份记录读进内存去取它没有意义。
-    """
-    steps_path = session_dir / "steps.jsonl"
-    if not steps_path.is_file():
-        return ""
-    try:
-        with steps_path.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(50):
-                line = handle.readline()
-                if not line:
-                    break
+
+def _restore_prompt_file_in_text(text: str) -> str:
+    """还原 `agy` 驱动压缩的 `<frago-prompt-file path="...">` 块原文。"""
+    if "<frago-prompt-file" not in text:
+        return text
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_path = (match.group(1) or "").strip()
+        preview = (match.group(2) or "").strip()
+        if raw_path:
+            try:
+                p = Path(raw_path).expanduser()
+                if p.is_file():
+                    loaded = p.read_text(encoding="utf-8", errors="replace").strip()
+                    if loaded:
+                        return loaded
+            except OSError:
+                pass
+        return preview
+
+    return _SESSION_PROMPT_FILE_BLOCK_RE.sub(_replace, text).strip()
+
+
+def strip_injected_session_blocks(text: str) -> tuple[str | None, str]:
+    """剥离会话首句中的 `<USER_REQUEST>` 外层元数据、`<frago-prompt-file>`、`<frago-employee>`、`<must-use-skill>` 与 `<system-reminder>`，返回 `(employee_id, 真实用户原话)`。"""
+    if not text:
+        return None, ""
+    req_match = _SESSION_USER_REQUEST_BLOCK_RE.search(text)
+    cleaned = req_match.group(1).strip() if req_match is not None else text.strip()
+    cleaned = _restore_prompt_file_in_text(cleaned)
+    emp_id: str | None = None
+    match = _SESSION_EMPLOYEE_BLOCK_RE.search(cleaned)
+    if match:
+        emp_id = match.group(1).strip() or None
+        cleaned = (cleaned[: match.start()] + cleaned[match.end() :]).strip()
+    cleaned = _SESSION_SKILL_BLOCK_RE.sub("", cleaned)
+    cleaned = _SESSION_SYSTEM_REMINDER_RE.sub("", cleaned)
+    return emp_id, cleaned.strip()
+
+
+def _extract_record_role_and_text(record: dict[str, Any]) -> tuple[str, str, str]:
+    """从一条 `raw.jsonl` 或 `steps.jsonl` 记录中提取 `(role, text, iso_timestamp)`。"""
+    stamp = ""
+    raw_ts = record.get("timestamp")
+    if isinstance(raw_ts, str) and raw_ts.strip():
+        stamp = raw_ts.strip()
+    elif "step_index" in record and isinstance(record.get("created_at"), str):
+        stamp = str(record["created_at"]).strip()
+    else:
+        moment = record.get("time")
+        if isinstance(moment, dict):
+            ms = moment.get("end") or moment.get("start")
+            if isinstance(ms, (int, float)) and ms > 0:
                 try:
-                    record = json.loads(line)
+                    stamp = datetime.fromtimestamp(ms / 1000).isoformat(timespec="seconds")
+                except (OSError, OverflowError, ValueError):
+                    stamp = ""
+
+    # 1. steps.jsonl 加工副本
+    rtype = record.get("type")
+    if rtype in ("user", "assistant") and "content_summary" in record:
+        return str(rtype), str(record.get("content_summary") or "").strip(), stamp
+
+    # 2. agy raw.jsonl
+    if "step_index" in record:
+        if rtype == "USER_INPUT":
+            return "user", str(record.get("content") or "").strip(), stamp
+        if rtype == "PLANNER_RESPONSE":
+            return "assistant", str(record.get("content") or "").strip(), stamp
+        return "", "", stamp
+
+    # 3. claude / coreagent raw.jsonl
+    msg = record.get("message")
+    role = msg.get("role") if isinstance(msg, dict) else rtype
+    if role in ("user", "assistant"):
+        content = msg.get("content") if isinstance(msg, dict) else record.get("content")
+        if isinstance(content, str):
+            return str(role), content.strip(), stamp
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and block.get("type") in (None, "text"):
+                    val = block.get("text")
+                    if isinstance(val, str) and val.strip():
+                        parts.append(val.strip())
+            return str(role), "\n".join(parts).strip(), stamp
+
+    # 4. codex raw.jsonl
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        if rtype == "event_msg" and payload.get("type") == "user_message":
+            return "user", str(payload.get("message") or "").strip(), stamp
+        p_role = payload.get("role")
+        if rtype == "response_item" and p_role in ("user", "assistant"):
+            blocks = payload.get("content")
+            if isinstance(blocks, str):
+                return str(p_role), blocks.strip(), stamp
+            if isinstance(blocks, list):
+                c_parts = [
+                    str(b.get("text") or "").strip()
+                    for b in blocks
+                    if isinstance(b, dict) and isinstance(b.get("text"), str)
+                ]
+                return str(p_role), "\n".join(p for p in c_parts if p).strip(), stamp
+
+    # 5. opencode 片段
+    if isinstance(record.get("text"), str) and record.get("text", "").strip():
+        oc_role = str(record.get("role") or ("user" if rtype == "user" else "assistant"))
+        return oc_role, str(record["text"]).strip(), stamp
+
+    return "", "", stamp
+
+
+def _inspect_session_dir(
+    session_dir: Path,
+    session_id: str,
+    raw_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """读取单个会话目录的首条真实用户诉求与末尾助手结论摘要（自动剥离 `<frago-employee>` 注入块）。"""
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+    if not meta:
+        meta_path = session_dir / "metadata.json"
+        if meta_path.is_file():
+            try:
+                loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    meta = loaded
+            except (json.JSONDecodeError, OSError):
+                meta = {}
+
+    started_at = str(meta.get("started_at", "") or "").strip()
+    last_activity = str(meta.get("last_activity", "") or "").strip()
+    first_prompt = ""
+    emp_id: str | None = None
+    latest_conclusion = ""
+
+    raw_name = str(meta.get("name", "") or "").strip()
+    if raw_name:
+        name_emp, cleaned_name = strip_injected_session_blocks(raw_name)
+        if name_emp and not emp_id:
+            emp_id = name_emp
+        meta["name"] = cleaned_name
+
+    transcript_files = [
+        p for p in (session_dir / "raw.jsonl", session_dir / "steps.jsonl") if p.is_file()
+    ]
+    for path in transcript_files:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for _ in range(80):
+                    line = handle.readline()
+                    if not line:
+                        break
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    role, text, stamp = _extract_record_role_and_text(rec)
+                    if stamp and not started_at:
+                        started_at = stamp
+                    if role == "user" and text and not first_prompt:
+                        found_emp, clean_user = strip_injected_session_blocks(text)
+                        if found_emp and not emp_id:
+                            emp_id = found_emp
+                        if clean_user:
+                            first_prompt = " ".join(clean_user.split())[:400]
+                            break
+        except OSError:
+            pass
+        if first_prompt:
+            break
+
+    for path in transcript_files:
+        try:
+            size = path.stat().st_size
+            if size <= 0:
+                continue
+            read_len = min(size, _SESSION_TAIL_BYTES)
+            with path.open("rb") as handle:
+                handle.seek(size - read_len)
+                chunk = handle.read(read_len)
+            lines = chunk.split(b"\n")
+            if size > read_len:
+                lines = lines[1:]
+            for raw_line in reversed(lines):
+                if not raw_line.strip():
+                    continue
+                try:
+                    rec = json.loads(raw_line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     continue
-                if record.get("type") != "user":
+                if not isinstance(rec, dict):
                     continue
-                text = str(record.get("content_summary", "") or "").strip()
-                if text:
-                    return " ".join(text.split())[:400]
-    except OSError:
-        return ""
-    return ""
+                role, text, stamp = _extract_record_role_and_text(rec)
+                if stamp and not last_activity:
+                    last_activity = stamp
+                if role == "assistant" and text and not latest_conclusion:
+                    _, clean_ans = strip_injected_session_blocks(text)
+                    compact = " ".join(
+                        line.strip().lstrip("#*- ").strip()
+                        for line in clean_ans.splitlines()
+                        if line.strip()
+                    )
+                    if compact:
+                        latest_conclusion = compact[:240]
+                if last_activity and latest_conclusion:
+                    break
+        except OSError:
+            pass
+        if latest_conclusion:
+            break
+
+    title = _session_title(meta, first_prompt, session_id)
+    return {
+        "session_id": session_id,
+        "employee_id": emp_id,
+        "started_at": started_at,
+        "last_activity": last_activity or started_at,
+        "title": title,
+        "first_prompt_summary": first_prompt[:200],
+        "latest_conclusion": latest_conclusion or first_prompt[:200] or "（无首条消息摘要）",
+    }
+
+
+def _locate_session_dir_by_id(sessions_root: Path, session_id: str) -> Path | None:
+    """在 `~/.frago/sessions/<core>/<session_id>` 下直接按路径定位会话目录。"""
+    clean_id = str(session_id or "").strip()
+    if not clean_id or not sessions_root.is_dir():
+        return None
+    for core in _SESSION_CORES:
+        candidate = sessions_root / core / clean_id
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _session_first_prompt(session_dir: Path) -> str:
+    """会话的第一条用户消息，一行（自动剥离 `<frago-employee>` 语境块）。"""
+    info = _inspect_session_dir(session_dir, session_dir.name)
+    return str(info.get("first_prompt_summary") or "")
 
 
 def _session_title(raw: dict[str, Any], first_prompt: str, session_id: str) -> str:
@@ -1329,10 +1577,12 @@ def _session_title(raw: dict[str, Any], first_prompt: str, session_id: str) -> s
     ``first_prompt`` 也过同一道筛：派活型会话的第一条消息就是那段任务书本身，直接拿它
     顶替，标题里那串「你是……专家」原样还在。
     """
-    name = str(raw.get("name", "") or "").strip()
+    _, raw_name = strip_injected_session_blocks(str(raw.get("name", "") or "").strip())
+    name = " ".join(raw_name.split())
     if name and name != "-" and not _looks_like_system_prompt(name):
-        return name
-    prompt = first_prompt.strip()
+        return name[:80]
+    _, clean_prompt = strip_injected_session_blocks(first_prompt.strip())
+    prompt = " ".join(clean_prompt.split())
     if prompt and not _looks_like_system_prompt(prompt):
         return prompt[:60]
     # 名字与首句都是任务书：从里面捞出它到底在做什么，总比一串「你是……专家」强。
@@ -1345,7 +1595,7 @@ def _session_title(raw: dict[str, Any], first_prompt: str, session_id: str) -> s
 def _looks_like_system_prompt(text: str) -> bool:
     """这段话是不是一段派给 agent 的任务书，而不是会话标题。"""
     stripped = text.strip()
-    if stripped.startswith(("你是", "You are", "你是一位")):
+    if stripped.startswith(("你是", "You are", "你是一位", "<frago-employee")):
         return True
     if len(stripped) > 120:
         return True
@@ -1372,22 +1622,78 @@ def _intent_from_prompt(prompt: str) -> str:
     return ""
 
 
+def resolve_employee_recent_sessions(
+    record: EmployeePostRecord,
+    ledger: EmployeeLedger | None = None,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """汇总该员工的近期会话脉络（优先本岗 `active_session_ids` 历次会话，合并账本认领的相关会话）。
+
+    新开员工会话时从 0 历史消息 Token 启动，但通过该函数实时提取本岗最近会话的 `session_id`、
+    用户真实诉求与最新结论摘要，供新会话按需执行 `frago session ask <session_id> "<问题>"` 续接。
+    """
+    sessions_root = frago_home() / "sessions"
+    by_id: dict[str, dict[str, Any]] = {}
+    ordered_ids: list[str] = []
+
+    if ledger is not None:
+        for item in ledger.claimed_resources.get("matched_sessions") or []:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("session_id") or "").strip()
+            if not sid:
+                continue
+            by_id[sid] = dict(item)
+
+    # 本岗自己的 active_session_ids 按逆序（最近启动的排最前）实时读取最新结论
+    for sid in reversed(record.active_session_ids):
+        clean_sid = str(sid or "").strip()
+        if not clean_sid or clean_sid in ordered_ids:
+            continue
+        ordered_ids.append(clean_sid)
+        session_dir = _locate_session_dir_by_id(sessions_root, clean_sid)
+        if session_dir is not None:
+            inspected = _inspect_session_dir(session_dir, clean_sid)
+            inspected["bound_to_post"] = True
+            by_id[clean_sid] = inspected
+        elif clean_sid in by_id:
+            by_id[clean_sid]["bound_to_post"] = True
+        else:
+            by_id[clean_sid] = {
+                "session_id": clean_sid,
+                "started_at": "",
+                "last_activity": "",
+                "title": f"本岗会话 {clean_sid[:8]}",
+                "first_prompt_summary": "",
+                "latest_conclusion": "",
+                "bound_to_post": True,
+            }
+
+    for sid in by_id:
+        if sid not in ordered_ids:
+            ordered_ids.append(sid)
+
+    result: list[dict[str, Any]] = []
+    for sid in ordered_ids[: max(limit, 0)]:
+        entry = by_id.get(sid)
+        if entry:
+            result.append(entry)
+    return result
+
+
 def _scan_sessions(
     keywords: set[str],
     cursor: LedgerCursor,
     *,
     limit: int = 200,
+    record: EmployeePostRecord | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
-    """扫会话目录，认领与职责相关的会话。
+    """扫会话目录，认领本岗绑定会话（`active_session_ids`）及与职责相关的会话。
 
-    时间口径一律取 ``metadata.json`` 里的 ``started_at`` / ``last_activity``，NEVER 用
+    时间口径一律取 ``metadata.json`` 或记录自带的 ``started_at`` / ``last_activity``，NEVER 用
     目录 mtime：mtime 会被同步、备份、保活触碰改掉，按它判「有没有新会话」等于按文件的
     最后触碰时刻判内容，两边不是一回事。
-
-    ``limit`` 封顶本轮**逐场细读**的会话数，按时间倒序取最新的那批。一台机器上有一万多场
-    会话，逐场读首条消息是一笔真开销，而账本要的是「近期在跟哪几件事」，不是一份全量
-    会话清单。细读之外的那些由 ``sessions_through`` 水位线代表：「这个时刻之前都已考虑
-    过」。水位线一立，下一轮就只剩新增的几场是候选，巡检从「扫一万场」变成「看几场」。
     """
     sessions_root = frago_home() / "sessions"
     matched: list[dict[str, Any]] = []
@@ -1397,6 +1703,44 @@ def _scan_sessions(
         return matched, topics, watermark
 
     processed = set(cursor.processed_session_ids)
+    seen_in_batch: set[str] = set()
+
+    # 1. 优先认领本岗自己的 active_session_ids（含 agy / claude / codex / opencode / coreagent）
+    if record is not None:
+        for own_sid in reversed(record.active_session_ids):
+            clean_sid = str(own_sid or "").strip()
+            if not clean_sid or clean_sid in processed or clean_sid in seen_in_batch:
+                continue
+            own_dir = _locate_session_dir_by_id(sessions_root, clean_sid)
+            if own_dir is None:
+                continue
+            info = _inspect_session_dir(own_dir, clean_sid)
+            stamp = str(info.get("last_activity") or info.get("started_at") or "")
+            if stamp and stamp > watermark:
+                watermark = stamp
+            processed.add(clean_sid)
+            seen_in_batch.add(clean_sid)
+            matched.append(
+                {
+                    "session_id": clean_sid,
+                    "started_at": info["started_at"],
+                    "last_activity": info["last_activity"],
+                    "title": info["title"],
+                    "first_prompt_summary": info["first_prompt_summary"],
+                    "latest_conclusion": info["latest_conclusion"],
+                    "bound_to_post": True,
+                }
+            )
+            topics.append(
+                {
+                    "topic_key": f"session:{clean_sid}",
+                    "title": info["title"],
+                    "status": "active",
+                    "latest_conclusion": info["latest_conclusion"],
+                    "artifacts": [str(own_dir)],
+                }
+            )
+
     candidates: list[tuple[str, str, Path, dict[str, Any]]] = []
 
     for metadata_path in sessions_root.glob("*/*/metadata.json"):
@@ -1407,7 +1751,7 @@ def _scan_sessions(
         if not isinstance(raw, dict):
             continue
         session_id = str(raw.get("session_id", "") or "").strip()
-        if not session_id or session_id in processed:
+        if not session_id or session_id in processed or session_id in seen_in_batch:
             continue
         started = str(raw.get("started_at", "") or "")
         last_activity = str(raw.get("last_activity", "") or "")
@@ -1433,23 +1777,33 @@ def _scan_sessions(
     # 水位线取全体候选里最新的那个时刻，而不是「细读到哪」。取后者的话，被 limit 截掉的
     # 那一批比它更旧，下一轮会被水位线挡在外面，永远轮不到。
     if candidates:
-        watermark = max(stamp for _, stamp, _, _ in candidates)
+        cand_max = max(stamp for _, stamp, _, _ in candidates)
+        if cand_max > watermark:
+            watermark = cand_max
 
     for session_id, _stamp, session_dir, raw in candidates[: max(limit, 0)]:
-        first_prompt = _session_first_prompt(session_dir)
+        info = _inspect_session_dir(session_dir, session_id, raw)
+        first_prompt = info["first_prompt_summary"]
         haystack = f"{raw['_haystack']} {first_prompt}"
         processed.add(session_id)
-        if not _matches_scope(haystack, keywords):
+        is_own = bool(
+            record is not None
+            and info.get("employee_id")
+            and info.get("employee_id") == record.member_post_id
+        )
+        if not is_own and not _matches_scope(haystack, keywords):
             # 不匹配也记进已处理：不记的话下一轮还得把它读一遍，那场会话的开销白付了。
             continue
-        title = _session_title(raw, first_prompt, session_id)
+        title = info["title"]
         matched.append(
             {
                 "session_id": session_id,
-                "started_at": str(raw.get("started_at", "") or ""),
-                "last_activity": str(raw.get("last_activity", "") or ""),
+                "started_at": info["started_at"],
+                "last_activity": info["last_activity"],
                 "title": title,
-                "first_prompt_summary": first_prompt[:200],
+                "first_prompt_summary": first_prompt,
+                "latest_conclusion": info["latest_conclusion"],
+                "bound_to_post": is_own,
             }
         )
         topics.append(
@@ -1457,7 +1811,7 @@ def _scan_sessions(
                 "topic_key": f"session:{session_id}",
                 "title": title,
                 "status": "active",
-                "latest_conclusion": first_prompt[:200] or "（无首条消息摘要）",
+                "latest_conclusion": info["latest_conclusion"],
                 "artifacts": [str(session_dir)],
             }
         )
@@ -1636,7 +1990,10 @@ def _derive_intent_playbooks(
             {
                 "intent": "执行本岗位配方与自动化工具",
                 "trigger_phrases": triggers[:12],
-                "default_action": "先 `frago recipe info <名字>` 看清参数，再 `frago recipe run`；不要另写脚本重造。",
+                "default_action": (
+                    "先 `frago recipe info <名字>` 看清参数，再执行 `frago recipe run <名字> --params '<JSON>'`"
+                    "（或编入详细上下文任务书交给 `frago agent` 普通 worker 执行）；不要另写脚本重造。"
+                ),
                 "recipes_or_slots": recipe_names,
             }
         )
@@ -1712,7 +2069,7 @@ def sync_employee_ledger(
         keywords, cursor, excluded=prior
     )
     sessions, session_topics, latest_session = _scan_sessions(
-        keywords, cursor, limit=session_limit
+        keywords, cursor, limit=session_limit, record=record
     )
 
     delta = EmployeeLedger(
@@ -1924,6 +2281,48 @@ def _record_schedule_id(
     save_post(record, base_dir=base_dir)
 
 
+def remove_employee_ledger_schedule(
+    member_post_id: str,
+    *,
+    schedule_ids: Sequence[str] = (),
+    remove_schedule: Callable[[str], bool] | None = None,
+    list_schedules: Callable[[], list[dict[str, Any]]] | None = None,
+) -> list[str]:
+    """移除该员工关联的每日账本巡检排程，返回实际删掉的排程编号列表。
+
+    同时按两条线索找：岗位编制 ``schedule_ids`` 里记下的编号，以及调度器里按命名约定
+    （``员工账本巡检:<post_id>`` / ``daily-<post_id>-ledger-sync`` / 命令 ``frago employee sync-ledger <post_id>``）
+    能对上的任务——即使岗位文件先一步删了，也能把孤儿巡检排程清干净。
+    """
+    if remove_schedule is None:
+        return []
+    post_id = str(member_post_id).strip()
+    schedule_name = f"员工账本巡检:{post_id}"
+    default_id = f"daily-{post_id}-ledger-sync"
+    sync_cmd = f"frago employee sync-ledger {post_id}"
+
+    candidates: list[str] = [
+        str(sid).strip() for sid in schedule_ids if str(sid).strip()
+    ]
+    if list_schedules is not None:
+        for existing in list_schedules():
+            sid = str(existing.get("id", "")).strip()
+            if not sid or sid in candidates:
+                continue
+            if (
+                existing.get("name") == schedule_name
+                or sid == default_id
+                or str(existing.get("command", "")).strip() == sync_cmd
+            ):
+                candidates.append(sid)
+
+    removed_ids: list[str] = []
+    for sid in candidates:
+        if remove_schedule(sid):
+            removed_ids.append(sid)
+    return removed_ids
+
+
 def ledger_is_excluded(path: Path) -> bool:
     """巡检扫描时是否要跳过这个路径。防自指的第二道判据（第一道是账本不在 data 下）。"""
     return is_employee_ledger_path(path)
@@ -1934,5 +2333,6 @@ __all__ = [
     "ensure_employee_ledger_schedule",
     "extract_scope_keywords",
     "ledger_is_excluded",
+    "remove_employee_ledger_schedule",
     "sync_employee_ledger",
 ]

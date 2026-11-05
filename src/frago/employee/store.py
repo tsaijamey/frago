@@ -40,6 +40,39 @@ VALID_AGENT_KERNELS: tuple[str, ...] = (
     "coreagent",
 )
 
+VALID_EMPLOYEE_COLORS: tuple[str, ...] = (
+    "ocean",
+    "violet",
+    "amber",
+    "coral",
+    "cyan",
+    "rose",
+    "plum",
+    "slate",
+)
+
+_PRESET_EMPLOYEE_COLORS: dict[str, str] = {
+    "stock": "amber",
+    "jira-guardian": "ocean",
+    "frago-developer": "violet",
+    "frago-webui": "cyan",
+    "feishu-ops": "coral",
+}
+
+
+def default_employee_color(member_post_id: str) -> str:
+    """Return a deterministic dual-theme color preset for `member_post_id`."""
+    cleaned = str(member_post_id or "").strip().lower()
+    if cleaned in _PRESET_EMPLOYEE_COLORS:
+        return _PRESET_EMPLOYEE_COLORS[cleaned]
+    if not cleaned:
+        return VALID_EMPLOYEE_COLORS[0]
+    h = 0
+    for ch in cleaned:
+        h = ((h * 31) + ord(ch)) & 0xFFFFFFFF
+    return VALID_EMPLOYEE_COLORS[h % len(VALID_EMPLOYEE_COLORS)]
+
+
 _POST_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 EMPLOYEE_POST_SCHEMA: dict[str, Any] = {
@@ -145,6 +178,14 @@ EMPLOYEE_POST_SCHEMA: dict[str, Any] = {
             "description": "Default Skill names automatically embedded when starting a session for this post.",
         },
         {
+            "name": "color",
+            "type": "enum",
+            "enum": list(VALID_EMPLOYEE_COLORS),
+            "default": "ocean",
+            "rigidity": "+R",
+            "description": "Dual-theme appearance color key for employee cards and session header bars.",
+        },
+        {
             "name": "created_at",
             "type": "iso-datetime",
             "auto": True,
@@ -227,6 +268,7 @@ class EmployeePostRecord:
     active_session_ids: list[str] = field(default_factory=list)
     allowed_commands: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    color: str = ""
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
 
@@ -239,6 +281,15 @@ class EmployeePostRecord:
         if self.agent_kernel not in VALID_AGENT_KERNELS:
             raise ValueError(
                 f"Invalid agent_kernel '{self.agent_kernel}'; must be one of {VALID_AGENT_KERNELS}."
+            )
+        raw_color = str(self.color or "").strip().lower()
+        if not raw_color:
+            self.color = default_employee_color(self.member_post_id)
+        elif raw_color in VALID_EMPLOYEE_COLORS:
+            self.color = raw_color
+        else:
+            raise ValueError(
+                f"Invalid employee color '{self.color}'; must be one of {VALID_EMPLOYEE_COLORS}."
             )
         self.knowledge_domains = _dedup_preserve_order(self.knowledge_domains)
         self.recipes = _dedup_preserve_order(self.recipes)
@@ -265,6 +316,7 @@ class EmployeePostRecord:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> EmployeePostRecord:
+        raw_color = str(raw.get("color", "") or "").strip().lower()
         return cls(
             member_post_id=str(raw.get("member_post_id", "")),
             title=str(raw.get("title", "") or raw.get("member_post_id", "")),
@@ -279,6 +331,7 @@ class EmployeePostRecord:
             active_session_ids=list(raw.get("active_session_ids", [])),
             allowed_commands=list(raw.get("allowed_commands", [])),
             skills=list(raw.get("skills", [])),
+            color=raw_color if raw_color in VALID_EMPLOYEE_COLORS else "",
             created_at=str(raw.get("created_at", "") or _now_iso()),
             updated_at=str(raw.get("updated_at", "") or _now_iso()),
         )
@@ -352,12 +405,15 @@ def delete_post(
     *,
     base_dir: Path | None = None,
 ) -> bool:
-    """Delete an employee post JSON file. Returns `True` if removed, `False` if not found."""
+    """Delete an employee post JSON file and its companion ledger file. Returns `True` if removed, `False` if not found."""
     post_id = validate_post_id(member_post_id)
     target_path = employees_dir(base_dir) / f"{post_id}.json"
+    ledger_path = employee_ledger_path(post_id, base_dir)
     if not target_path.is_file():
+        ledger_path.unlink(missing_ok=True)
         return False
     target_path.unlink()
+    ledger_path.unlink(missing_ok=True)
     return True
 
 

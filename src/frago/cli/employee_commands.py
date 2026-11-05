@@ -512,6 +512,124 @@ def _launch_employee_session(
     }
 
 
+def _run_agent_turn_for_employee(
+    agent_kernel: str,
+    prompt: str,
+    *,
+    cwd: str,
+    timeout_s: float = 0.0,
+) -> tuple[str, str, str]:
+    """驱动目标员工内核执行单轮同步问答，返回 `(real_session_id, turn_status, answer_text)`。"""
+    import contextlib
+    import uuid
+
+    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+
+    effective_timeout = float(timeout_s) if timeout_s > 0 else None
+    env = {"FRAGO_AGENT_ROLE": "employee"}
+
+    if runs_on_kernel(agent_kernel):
+        from frago.agent_driver import kernel_backend
+
+        sid = kernel_backend.new_session_id()
+        turn = kernel_backend.run_turn(
+            prompt,
+            session_id=sid,
+            cwd=cwd,
+            timeout_s=effective_timeout,
+            env=env,
+        )
+        return sid, str(turn.status or "ok"), str(turn.text or "").strip()
+
+    from frago.agent_driver import SessionLauncher
+
+    sid = str(uuid.uuid4())
+    res = SessionLauncher().run(
+        prompt,
+        agent_type=agent_kernel,
+        session_id=sid,
+        cwd=cwd,
+        env=env,
+        timeout_s=effective_timeout,
+    )
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.transcript import write_turn
+
+        write_turn(sid, agent_kernel, cwd, prompt, res, source="employee-invoke")
+
+    real_sid = sid
+    with contextlib.suppress(Exception):
+        resolved = listed_session_id(agent_kernel, sid, native_session_id=False)
+        if resolved:
+            real_sid = resolved
+    return real_sid, str(res.status or "ok"), str(res.text or "").strip()
+
+
+def _execute_employee_sync_turn(
+    record: Any,
+    query_or_task: str,
+    *,
+    caller_context_id: str = "cli:owner",
+    timeout_s: float = 0.0,
+) -> dict[str, Any]:
+    """装配目标员工完整 `<frago-employee>` 语境块并同步执行一轮推理，返回真实业务结论。"""
+    from pathlib import Path
+
+    from frago.skills.skill_prompt import embed_skills, load_skills
+
+    svc = EmployeeOntologyService()
+    session_cwd = record.cwd.strip() if getattr(record, "cwd", "") else ""
+    if not session_cwd:
+        fallback = Path.home() / ".frago"
+        fallback.mkdir(parents=True, exist_ok=True)
+        session_cwd = str(fallback)
+    session_cwd = str(Path(session_cwd).expanduser())
+    cwd_path = Path(session_cwd)
+    frago_root = (Path.home() / ".frago").resolve()
+    resolved_cwd = cwd_path.resolve()
+    if resolved_cwd == frago_root or frago_root in resolved_cwd.parents:
+        cwd_path.mkdir(parents=True, exist_ok=True)
+
+    context_block = svc.build_business_context_block(record.member_post_id)
+    prompt = (
+        f"{context_block}\n\n"
+        f"【跨域同侪协查请求（调用方: {caller_context_id}）】\n"
+        f"{query_or_task.strip()}\n\n"
+        "请基于你管辖的业务数据底账、知识域、配方工具链与近期会话脉络，"
+        "直接给出清晰、可核验的业务结论（若需调配你名下的配方或普通 worker，可先行执行后再汇总交付）。"
+    )
+    effective_skills = list(getattr(record, "skills", None) or [])
+    if effective_skills:
+        loaded = load_skills(effective_skills)
+        prompt = embed_skills(prompt, loaded, user_text=query_or_task)
+
+    real_sid, turn_status, answer_text = _run_agent_turn_for_employee(
+        record.agent_kernel,
+        prompt,
+        cwd=session_cwd,
+        timeout_s=timeout_s,
+    )
+    mapped_status = "needs_input" if turn_status == "needs_input" else "ok"
+    err = (
+        None
+        if turn_status in ("ok", "needs_input")
+        else f"Employee turn ended with status '{turn_status}'"
+    )
+    return {
+        "status": mapped_status,
+        "session_id": real_sid,
+        "cwd": session_cwd,
+        "agent": record.agent_kernel,
+        "turn_status": turn_status,
+        "text": answer_text,
+        "answer_summary": (
+            answer_text
+            or f"DomainEmployeeRole(post:{record.member_post_id}) executed '{query_or_task}'"
+        ),
+        "error": err,
+    }
+
+
 @employee_group.command(name="invoke", cls=AgentFriendlyCommand)
 @click.argument("member_post_id")
 @click.argument("query_or_task")
@@ -537,7 +655,20 @@ def _launch_employee_session(
     "--spawn",
     "force_spawn",
     is_flag=True,
-    help="Force real session launch even under test environment",
+    help="Force real workbench session launch even under test environment",
+)
+@click.option(
+    "--wait",
+    "wait_for_answer",
+    is_flag=True,
+    help="Synchronously wait for the target employee's real conclusion text",
+)
+@click.option(
+    "--timeout",
+    "timeout_s",
+    type=float,
+    default=0.0,
+    help="Timeout in seconds when waiting synchronously (0 = no wall-clock limit)",
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def employee_invoke(
@@ -547,20 +678,28 @@ def employee_invoke(
     caller_context_id: str,
     dry_run: bool,
     force_spawn: bool,
+    wait_for_answer: bool,
+    timeout_s: float,
     as_json: bool,
 ) -> None:
     """Invoke a domain employee guarded by the `invoke_domain_employee` kinetic contract."""
     svc = EmployeeOntologyService()
-    should_spawn = not dry_run and (
-        force_spawn or not os.environ.get("PYTEST_CURRENT_TEST")
-    )
+    in_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    launcher = None
+    if not dry_run:
+        if wait_for_answer or (not in_pytest and not force_spawn):
+            launcher = lambda rec, q: _execute_employee_sync_turn(  # noqa: E731
+                rec, q, caller_context_id=caller_context_id, timeout_s=timeout_s
+            )
+        elif force_spawn:
+            launcher = _launch_employee_session
     try:
         receipt = svc.invoke(
             member_post_id,
             query_or_task,
             caller_context_id=caller_context_id,
             requested_asset_id=requested_asset_id,
-            session_launcher=_launch_employee_session if should_spawn else None,
+            session_launcher=launcher,
         )
     except (ValueError, KeyError, ContractViolationError) as exc:
         raise click.ClickException(str(exc)) from None
@@ -577,6 +716,67 @@ def employee_invoke(
     click.echo(
         f"[{receipt['status']}] {receipt['role_id']} (session={sid_display}): {receipt['answer_summary']}"
     )
+
+
+@employee_group.command(name="ask", cls=AgentFriendlyCommand)
+@click.argument("member_post_id")
+@click.argument("question")
+@click.option(
+    "--asset",
+    "requested_asset_id",
+    default=None,
+    help="Target asset within the employee's territory (e.g. domain:architecture)",
+)
+@click.option(
+    "--caller",
+    "caller_context_id",
+    default="employee:peer",
+    show_default=True,
+    help="Caller employee or session identifier",
+)
+@click.option(
+    "--timeout",
+    "timeout_s",
+    type=float,
+    default=0.0,
+    help="Timeout in seconds (0 = no wall-clock limit)",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def employee_ask(
+    member_post_id: str,
+    question: str,
+    requested_asset_id: str | None,
+    caller_context_id: str,
+    timeout_s: float,
+    as_json: bool,
+) -> None:
+    """向同侪领域员工发起同步协查提问，挂载其完整账本语境并直接返回真实结论。"""
+    svc = EmployeeOntologyService()
+    try:
+        receipt = svc.invoke(
+            member_post_id,
+            question,
+            caller_context_id=caller_context_id,
+            requested_asset_id=requested_asset_id,
+            session_launcher=lambda rec, q: _execute_employee_sync_turn(
+                rec, q, caller_context_id=caller_context_id, timeout_s=timeout_s
+            ),
+        )
+    except (ValueError, KeyError, ContractViolationError) as exc:
+        raise click.ClickException(str(exc)) from None
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(str(exc)) from None
+
+    if receipt.get("error"):
+        raise click.ClickException(str(receipt["error"]))
+
+    if as_json:
+        click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        return
+    sid_display = receipt.get("session_id") or receipt.get("handle")
+    click.echo(f"[{receipt['status']}] {member_post_id} (session={sid_display})")
+    click.echo("-" * 72)
+    click.echo(receipt.get("text") or receipt["answer_summary"])
 
 
 @employee_group.command(name="govern", cls=AgentFriendlyCommand)
@@ -722,13 +922,31 @@ def employee_data(
 @employee_group.command(name="rm", cls=AgentFriendlyCommand)
 @click.argument("member_post_id")
 def employee_rm(member_post_id: str) -> None:
-    """Remove an employee post definition."""
+    """Remove an employee post definition, its companion ledger, and its ledger sync schedule."""
     try:
+        existing = get_post(member_post_id)
+        schedule_ids = list(existing.schedule_ids) if existing else []
         removed = delete_post(member_post_id)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from None
     if not removed:
         raise click.ClickException(f"Employee post '{member_post_id}' not found.")
+
+    if (
+        not os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("FRAGO_EMPLOYEE_AUTO_SCHEDULE") == "1"
+    ):
+        try:
+            remove_schedule, list_schedules = _scheduler_remove_hooks()
+            EmployeeOntologyService().remove_ledger_schedule(
+                member_post_id,
+                schedule_ids=schedule_ids,
+                remove_schedule=remove_schedule,
+                list_schedules=list_schedules,
+            )
+        except Exception:  # noqa: BLE001 - 排程清理异常不阻断岗位删除
+            pass
+
     click.echo(f"Removed employee post '{member_post_id}'.")
 
 
@@ -743,6 +961,14 @@ def _scheduler_hooks() -> tuple[Any, Any]:
 
     service = SchedulerService.get_instance()
     return service.add_schedule, service.list_schedules
+
+
+def _scheduler_remove_hooks() -> tuple[Any, Any]:
+    """调度器的删与列两个口：删员工时顺手把它的每日账本巡检排程也清掉。"""
+    from frago.server.services.scheduler_service import SchedulerService
+
+    service = SchedulerService.get_instance()
+    return service.remove_schedule, service.list_schedules
 
 
 @employee_group.command(name="sync-ledger", cls=AgentFriendlyCommand)

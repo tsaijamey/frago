@@ -103,10 +103,11 @@ class EmployeeOntologyService:
         schedule_ids: Sequence[str] = (),
         allowed_commands: Sequence[str] | None = None,
         skills: Sequence[str] | None = None,
+        color: str | None = None,
     ) -> tuple[EmployeePostRecord, EmployeePostProjection]:
         """Create or update an employee post after validating its ontology shadow projection.
 
-        ``work_scope``、``cwd``、``allowed_commands`` 与 ``skills`` 给 ``None`` 表示「这一栏不动」，
+        ``work_scope``、``cwd``、``allowed_commands``、``skills`` 与 ``color`` 给 ``None`` 表示「这一栏不动」，
         沿用磁盘上已有的值：改一条领地绑定不该顺手把岗位的工作范畴或默认技能抹掉。
         """
         existing = get_post(member_post_id, base_dir=self._base_dir)
@@ -135,6 +136,11 @@ class EmployeeOntologyService:
                 list(skills)
                 if skills is not None
                 else (list(existing.skills) if existing else [])
+            ),
+            color=(
+                color
+                if color is not None and str(color).strip()
+                else (existing.color if existing else "")
             ),
             created_at=existing.created_at if existing else "",
         )
@@ -168,6 +174,7 @@ class EmployeeOntologyService:
         schedule_ids: Sequence[str] = (),
         allowed_commands: Sequence[str] = (),
         skills: Sequence[str] = (),
+        color: str | None = None,
     ) -> tuple[EmployeePostRecord, EmployeePostProjection]:
         """Bind additional territory assets or switch the `AgentKernel` (~R) on an existing post (+R).
 
@@ -184,6 +191,8 @@ class EmployeeOntologyService:
             record.work_scope = work_scope
         if cwd is not None:
             record.cwd = cwd
+        if color is not None and str(color).strip():
+            record.color = color
         record.knowledge_domains.extend(knowledge_domains)
         record.recipes.extend(recipes)
         record.data_slots.extend(data_slots)
@@ -509,6 +518,24 @@ class EmployeeOntologyService:
             list_schedules=list_schedules,
         )
 
+    def remove_ledger_schedule(
+        self,
+        member_post_id: str,
+        *,
+        schedule_ids: Sequence[str] = (),
+        remove_schedule: Any = None,
+        list_schedules: Any = None,
+    ) -> list[str]:
+        """移除该员工关联的每日账本巡检排程。"""
+        from frago.employee.ledger import remove_employee_ledger_schedule
+
+        return remove_employee_ledger_schedule(
+            member_post_id,
+            schedule_ids=schedule_ids,
+            remove_schedule=remove_schedule,
+            list_schedules=list_schedules,
+        )
+
     def build_business_context_block(
         self,
         member_post_id: str,
@@ -554,9 +581,56 @@ class EmployeeOntologyService:
             lines.append(f"工作范畴与方法论：{record.work_scope}")
         lines.append(
             "这一栏列举的是常见任务，不是边界：凡属同一领域的新问题——包括上面没有枚举过的"
-            "——都按本岗位的职责方法、数据底账与配方工具链自行处理，不要因为「没写在清单里」"
-            "而推给别人或重新造轮子。"
+            "——都按本岗位的职责方法、数据底账与配方工具链统筹推进。"
         )
+        lines.append("")
+        lines.append("【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】")
+        lines.append(
+            "你在本岗位中的核心角色不是亲自埋头写长脚本、硬翻全量文件的底层执行者，"
+            "而是掌握完整领域账本的「指挥者与代理者」（Orchestrator）："
+        )
+        lines.append(
+            "  1. 轻量直答：若人类提问可直接由下方账本（业务词汇、近期活跃事项结论、槽位摘要）"
+            "或一次单点检索（如 `frago <domain> find`）回答，直接给出准确结论；"
+        )
+        lines.append(
+            "  2. 编撰上下文任务书并派发普通 Worker：凡涉及拉取与清洗数据、执行重型配方"
+            "（注意参数语法为 `frago recipe run <name> --params '<JSON>'`，严禁误用 `-p`）、"
+            "编写分析脚本、多步浏览器调研或生成交付报告，你 MUST 先将本岗位的领域上下文"
+            "（数据槽位精确路径、配方名称与参数说明、知识域规范、前序会话结论及目标归档路径 "
+            "`~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/`）汇编成一份详尽自洽的任务书文件，"
+            "再调用 `frago agent --prompt-file <任务书路径>`（可并发调度 1 个或多个普通 worker）"
+            "代为执行重活；你自身聚焦于上下文供给、产物验收、归档登记（`notebook.md`）与最终业务结论提炼。"
+        )
+
+        peer_posts = [
+            p
+            for p in list_posts(base_dir=self._base_dir)
+            if p.member_post_id != record.member_post_id
+        ]
+        if peer_posts:
+            lines.append("")
+            lines.append("【本机同侪员工花名册与跨域协查协议】")
+            lines.append(
+                "本机当前在岗的其他领域员工如下（遇到跨域需求时直接向对方发起协查，切勿自行全盘盲搜）："
+            )
+            for peer in peer_posts:
+                peer_desc = peer.description or peer.work_scope[:80] or "领域专员"
+                lines.append(f"  - `{peer.member_post_id}`（{peer.title}）：{peer_desc}")
+                assets_parts: list[str] = []
+                if peer.knowledge_domains:
+                    assets_parts.append(f"知识域={','.join(peer.knowledge_domains[:5])}")
+                if peer.recipes:
+                    assets_parts.append(f"配方={','.join(peer.recipes[:5])}")
+                if peer.data_slots:
+                    assets_parts.append(f"数据槽位={','.join(peer.data_slots[:4])}")
+                if assets_parts:
+                    lines.append(f"      管辖资产：{'；'.join(assets_parts)}")
+            lines.append(
+                "  跨域协查命令：当人类诉求涉及或落入上述同侪员工的管辖领域时，MUST 执行 "
+                '`frago employee ask <同侪员工id> "<附带必要背景的精准协查问题或任务>"` '
+                '（或 `frago employee invoke <同侪员工id> "<问题>"`）同步获取对方员工的真实结论后再综合回复。'
+            )
 
         slot_sections: list[str] = []
         for slot in record.data_slots:
@@ -592,7 +666,7 @@ class EmployeeOntologyService:
             if record.recipes:
                 lines.append(
                     f"配方：{', '.join(record.recipes)}"
-                    "（按需 `frago recipe info <name>` / `frago recipe run <name>`）"
+                    "（按需 `frago recipe info <name>` / `frago recipe run <name> --params '<JSON>'`，切勿用 `-p`）"
                 )
             if record.skills:
                 lines.append(
@@ -600,7 +674,10 @@ class EmployeeOntologyService:
                     "（新会话自动挂载技能正文；含舞台技能时自动触发三角色协同编排）"
                 )
 
-        lines.extend(_render_ledger_sections(ledger))
+        from frago.employee.ledger import resolve_employee_recent_sessions
+
+        recent_sessions = resolve_employee_recent_sessions(record, ledger, limit=10)
+        lines.extend(_render_ledger_sections(ledger, recent_sessions=recent_sessions))
 
         lines.append("</frago-employee>")
         return "\n".join(lines)
@@ -633,6 +710,14 @@ class EmployeeOntologyService:
             launch_info = session_launcher(record, query_or_task)
             if isinstance(launch_info, dict):
                 result.update(launch_info)
+                answer_text = str(
+                    launch_info.get("answer_summary")
+                    or launch_info.get("text")
+                    or ""
+                ).strip()
+                if answer_text:
+                    result["answer_summary"] = answer_text
+                    result["text"] = answer_text
                 real_sid = str(launch_info.get("session_id") or "").strip()
                 if real_sid:
                     refreshed = get_post(member_post_id, base_dir=self._base_dir) or record
@@ -727,8 +812,12 @@ class EmployeeOntologyService:
         return self._registry.create(class_id, uid=uid_or_norm)
 
 
-def _render_ledger_sections(ledger: EmployeeLedger | None) -> list[str]:
-    """账本的四栏精华，拼进新会话第一句话前面。
+def _render_ledger_sections(
+    ledger: EmployeeLedger | None,
+    *,
+    recent_sessions: Sequence[dict[str, Any]] | None = None,
+) -> list[str]:
+    """账本的四栏精华与岗位生命延续近期会话脉络，拼进新会话第一句话前面。
 
     这四栏是「账本为什么值得存在」的全部理由：用户第一个 prompt 里说的词、省掉的主语、
     指代的那件事，答案都在这里，员工不必多轮反问、也不必去搜与己无关的内容。
@@ -736,11 +825,11 @@ def _render_ledger_sections(ledger: EmployeeLedger | None) -> list[str]:
     每一栏空了就整段不写：一个空标题在每场会话里都占一行，读的人还得判断它是不是
     「还没填」——那是噪声，不是信息。
     """
-    if ledger is None:
+    if ledger is None and not recent_sessions:
         return []
     lines: list[str] = []
 
-    if ledger.glossary:
+    if ledger is not None and ledger.glossary:
         lines.append("")
         lines.append("【本岗位业务词汇与隐含语义速查】")
         lines.append(
@@ -755,7 +844,7 @@ def _render_ledger_sections(ledger: EmployeeLedger | None) -> list[str]:
             target_text = f" → {', '.join(str(t) for t in targets)}" if targets else ""
             lines.append(f"  - 「{term}」：{meaning}{target_text}")
 
-    if ledger.intent_playbooks:
+    if ledger is not None and ledger.intent_playbooks:
         lines.append("")
         lines.append("【高频意图与默认动作】")
         lines.append(
@@ -772,7 +861,7 @@ def _render_ledger_sections(ledger: EmployeeLedger | None) -> list[str]:
             if action:
                 lines.append(f"      默认动作：{action}")
 
-    if ledger.active_topics:
+    if ledger is not None and ledger.active_topics:
         lines.append("")
         lines.append("【近期活跃事项与最新结论】")
         lines.append(
@@ -788,19 +877,41 @@ def _render_ledger_sections(ledger: EmployeeLedger | None) -> list[str]:
             if conclusion:
                 lines.append(f"      {conclusion}")
 
-    resources = ledger.claimed_resources
-    matched_sessions = resources.get("matched_sessions") or []
+    matched_sessions = (
+        list(recent_sessions)
+        if recent_sessions is not None
+        else list((ledger.claimed_resources.get("matched_sessions") or []) if ledger else [])
+    )
     if matched_sessions:
         lines.append("")
-        lines.append("【本岗位相关的近期会话】")
+        lines.append("【本岗位生命延续：近期会话脉络与按需续接（本岗位相关的近期会话）】")
+        lines.append(
+            "新开员工会话从 0 历史消息 Token 轻装启动，但你的岗位生命周期连续不断代："
+            "当人类在当前会话中继续前序话题、提及「上次 / 之前 / 刚才 / 继续 / 那个报告」，"
+            "或当前任务与下列近期会话相关时，你 MUST 主动执行："
+        )
+        lines.append(
+            '  `frago session ask <session_id> "<具体要提取的前序结论、参数、文件路径或上下文>"`'
+        )
+        lines.append(
+            "按需单轮捡起最近会话的精确内容（可加 `--tail 20` 或 `--grep \"关键词\"`），"
+            "切勿假装失忆或要求人类重述。"
+        )
         for entry in matched_sessions[:10]:
-            title = str(entry.get("title", "")).strip()
-            if not title:
+            sid = str(entry.get("session_id", "")).strip()
+            title = str(entry.get("title", "")).strip() or sid
+            if not title and not sid:
                 continue
             when = str(entry.get("last_activity", "") or entry.get("started_at", "")).strip()
-            lines.append(f"  - {title}（{when}）")
+            tag = "[本岗会话]" if entry.get("bound_to_post") else "[领域相关]"
+            sid_part = f"session_id=`{sid}` | " if sid else ""
+            when_part = f"（{when}）" if when else ""
+            lines.append(f"  - {tag} {sid_part}{title}{when_part}")
+            conclusion = str(entry.get("latest_conclusion", "")).strip()
+            if conclusion and conclusion != title and conclusion != "（无首条消息摘要）":
+                lines.append(f"      阶段结论：{conclusion}")
 
-    if lines:
+    if lines and ledger is not None:
         synced = ledger.cursor.sessions_through or "（尚未记录）"
         lines.append("")
         lines.append(
