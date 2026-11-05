@@ -93,8 +93,16 @@ function Test-Command {
 function Get-CommandVersion {
     param([string]$Command)
     try {
+        if ($Command -eq "tmux") {
+            $output = & tmux -V 2>$null | Select-Object -First 1
+            return "$output".Trim()
+        }
+        if ($Command -eq "ffmpeg") {
+            $output = & ffmpeg -version 2>$null | Select-Object -First 1
+            return ("$output" -replace '\s+Copyright.*$', '').Trim()
+        }
         $output = & $Command --version 2>$null | Select-Object -First 1
-        return $output
+        return "$output".Trim()
     } catch {
         return "unknown"
     }
@@ -121,88 +129,52 @@ function Update-SessionPath {
 # Installation Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-function Install-Uv {
-    if (Test-Command "uv") {
-        $version = Get-CommandVersion "uv"
-        Write-Success "uv $version"
-        return
+function Select-NetworkMirror {
+    if ($env:FRAGO_INSTALL_SOURCE -eq "official") { return }
+    $useMirror = $env:FRAGO_INSTALL_SOURCE -in @("cn", "mirror")
+    if (-not $useMirror) {
+        try {
+            $req = [System.Net.HttpWebRequest]::Create("https://github.com/astral-sh/uv")
+            $req.Method = "HEAD"
+            $req.Timeout = 3000
+            $resp = $req.GetResponse()
+            $resp.Close()
+        } catch {
+            $useMirror = $true
+        }
+    }
+    if ($useMirror) {
+        if (-not $env:UV_DEFAULT_INDEX) {
+            $env:UV_DEFAULT_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
+        }
+        if (-not $env:UV_PYTHON_INSTALL_MIRROR) {
+            $env:UV_PYTHON_INSTALL_MIRROR = "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
+        }
+        try {
+            [System.Environment]::SetEnvironmentVariable("UV_DEFAULT_INDEX", $env:UV_DEFAULT_INDEX, "User")
+            [System.Environment]::SetEnvironmentVariable("UV_PYTHON_INSTALL_MIRROR", $env:UV_PYTHON_INSTALL_MIRROR, "User")
+        } catch {}
+        Write-Success "Network source: China Mainland Mirror (Tsinghua PyPI + NJU Python)"
+    }
+}
+
+function Install-Dependencies {
+    Update-SessionPath
+    if ((-not (Test-Command "git")) -or (-not (Test-Command "tmux")) -or (-not (Test-Command "ffmpeg")) -or (-not (Test-Command "uv"))) {
+        if (Test-Path ".\install.ps1") {
+            & .\install.ps1 -NoStart
+            Update-SessionPath
+        }
     }
 
-    Write-Step "Installing uv..."
-
-    try {
-        $response = Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing
-        # Handle both string and byte array responses (varies by PowerShell version)
-        $installScript = if ($response.Content -is [byte[]]) {
-            [System.Text.Encoding]::UTF8.GetString($response.Content)
+    foreach ($cmd in @("git", "tmux", "ffmpeg", "uv")) {
+        if (Test-Command $cmd) {
+            $version = Get-CommandVersion $cmd
+            Write-Success "$cmd ($version)"
         } else {
-            $response.Content
-        }
-        Invoke-Expression $installScript *>$null
-        Update-SessionPath
-
-        if (Test-Command "uv") {
-            $version = Get-CommandVersion "uv"
-            Write-Done "uv $version"
-        } else {
-            Write-Err "uv installation failed"
+            Write-Err "$cmd installation failed"
             exit 1
         }
-    }
-    catch {
-        Write-Err "Failed to install uv: $_"
-        exit 1
-    }
-}
-
-function Test-Node {
-    if (Test-Command "node") {
-        $version = Get-CommandVersion "node"
-        Write-Success "Node.js $version"
-        return $true
-    } else {
-        Write-Err "Node.js not found (required for building frontend)"
-        Write-Info "Install from: https://nodejs.org/"
-        exit 1
-    }
-}
-
-function Test-Pnpm {
-    if (Test-Command "pnpm") {
-        $version = Get-CommandVersion "pnpm"
-        Write-Success "pnpm $version"
-        return
-    }
-
-    Write-Step "Installing pnpm..."
-    & npm install -g pnpm *>$null
-    Update-SessionPath
-
-    if (Test-Command "pnpm") {
-        $version = Get-CommandVersion "pnpm"
-        Write-Done "pnpm $version"
-    } else {
-        Write-Err "pnpm installation failed"
-        exit 1
-    }
-}
-
-function Build-Frontend {
-    Write-Step "Building frontend..."
-
-    Push-Location "src/frago/client"
-    try {
-        & pnpm install --frozen-lockfile *>$null 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            & pnpm install *>$null
-        }
-        & pnpm build *>$null
-        Write-Done "Frontend built"
-    } catch {
-        Write-Err "Frontend build failed: $_"
-        exit 1
-    } finally {
-        Pop-Location
     }
 }
 
@@ -226,6 +198,7 @@ function Install-FragoLocal {
 
     # Install with force to replace any existing version
     & uv tool install $wheel.FullName --force *>$null
+    try { & uv tool update-shell *>$null } catch {}
     Update-SessionPath
 
     if (Test-Command "frago") {
@@ -310,14 +283,12 @@ function Main {
     Write-Section "Environment"
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
     Write-Success "Windows ($arch)"
+    Select-NetworkMirror
 
     Write-Section "Dependencies"
-    Install-Uv
-    Test-Node
-    Test-Pnpm
+    Install-Dependencies
 
     Write-Section "Build"
-    Build-Frontend
     Install-FragoLocal
 
     Show-NextSteps

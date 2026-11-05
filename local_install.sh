@@ -108,7 +108,17 @@ command_exists() {
 }
 
 get_version() {
-    "$1" --version 2>/dev/null | head -n1 || echo "unknown"
+    case "$1" in
+        tmux)
+            tmux -V 2>/dev/null | head -n1 || echo "unknown"
+            ;;
+        ffmpeg)
+            ffmpeg -version 2>/dev/null | head -n1 | sed 's/ Copyright.*$//' || echo "unknown"
+            ;;
+        *)
+            "$1" --version 2>/dev/null | head -n1 || echo "unknown"
+            ;;
+    esac
 }
 
 # Run a build command quietly, but never silently. Output goes to a temp file;
@@ -186,19 +196,20 @@ detect_platform() {
 
     case "$OS" in
         Linux*)
-            if grep -qi microsoft /proc/version 2>/dev/null; then
+            OS_FAMILY="linux"
+            if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
                 PLATFORM="WSL"
             else
                 PLATFORM="Linux"
             fi
             ;;
         Darwin*)
+            OS_FAMILY="macos"
             PLATFORM="macOS"
             ;;
         MINGW*|MSYS*|CYGWIN*)
-            print_error "This script is for Unix-like systems"
-            print_info "For Windows, use: .\\local_install.ps1"
-            exit 1
+            OS_FAMILY="windows"
+            PLATFORM="Windows (POSIX shell)"
             ;;
         *)
             print_error "Unsupported operating system: $OS"
@@ -207,86 +218,49 @@ detect_platform() {
     esac
 }
 
+detect_network_mirror() {
+    if [ "${FRAGO_INSTALL_SOURCE:-auto}" = "official" ]; then
+        return 0
+    fi
+    if [ "${FRAGO_INSTALL_SOURCE:-auto}" = "cn" ] || [ "${FRAGO_INSTALL_SOURCE:-auto}" = "mirror" ]; then
+        export UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone}"
+        print_success "Network source: China Mainland Mirror (Tsinghua PyPI + NJU Python)"
+        return 0
+    fi
+    if command_exists curl && ! curl -fsSLI --connect-timeout 3 --max-time 3 "https://github.com/astral-sh/uv" >/dev/null 2>&1; then
+        export UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone}"
+        print_success "Network source: China Mainland Mirror (Tsinghua PyPI + NJU Python)"
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Installation Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-install_uv() {
-    if command_exists uv; then
-        version=$(get_version uv)
-        print_success "uv $version"
-        return 0
+install_dependencies() {
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+    if ! command_exists git || ! command_exists tmux || ! command_exists ffmpeg || ! command_exists uv; then
+        if [ -f "./install.sh" ]; then
+            sh ./install.sh --no-start
+        fi
     fi
 
-    print_step "Installing uv..."
-
-    if command_exists curl; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
-    elif command_exists wget; then
-        wget -qO- https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
-    else
-        print_error "Neither curl nor wget found"
-        exit 1
-    fi
-
-    # Source env to get uv in PATH
     [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-    if command_exists uv; then
-        version=$(get_version uv)
-        print_done "uv $version"
-    else
-        print_error "uv installation failed"
-        exit 1
-    fi
-}
-
-check_node() {
-    if command_exists node; then
-        version=$(get_version node)
-        print_success "Node.js $version"
-        return 0
-    else
-        print_error "Node.js not found (required for building frontend)"
-        print_info "Install from: https://nodejs.org/ or use 'nvm install --lts'"
-        exit 1
-    fi
-}
-
-check_pnpm() {
-    if command_exists pnpm; then
-        version=$(get_version pnpm)
-        print_success "pnpm $version"
-        return 0
-    fi
-
-    print_step "Installing pnpm..."
-    npm install -g pnpm >/dev/null 2>&1
-
-    if command_exists pnpm; then
-        version=$(get_version pnpm)
-        print_done "pnpm $version"
-    else
-        print_error "pnpm installation failed"
-        exit 1
-    fi
-}
-
-build_frontend() {
-    print_step "Building frontend..."
-
-    cd src/frago/client
-    # --frozen-lockfile is the fast path; if the lockfile is stale that attempt
-    # fails by design, so keep its output out of the way and let the plain
-    # install report anything that actually goes wrong.
-    run_build_step --quiet-fail "pnpm install" pnpm install --frozen-lockfile ||
-        run_build_step "pnpm install" pnpm install
-    run_build_step "pnpm build" pnpm build
-    cd - >/dev/null
-
-    print_done "Frontend built"
+    for req_cmd in git tmux ffmpeg uv; do
+        if command_exists "$req_cmd"; then
+            version=$(get_version "$req_cmd")
+            print_success "$req_cmd ($version)"
+        else
+            print_error "$req_cmd installation failed"
+            exit 1
+        fi
+    done
 }
 
 install_frago_local() {
@@ -309,6 +283,7 @@ install_frago_local() {
 
     # Install with force to replace any existing version
     run_build_step "uv tool install" uv tool install "$WHEEL" --force
+    uv tool update-shell >/dev/null 2>&1 || true
 
     if command_exists frago; then
         version=$(get_version frago)
@@ -413,14 +388,12 @@ main() {
     print_section "Environment"
     detect_platform
     print_success "$PLATFORM ($ARCH)"
+    detect_network_mirror
 
     print_section "Dependencies"
-    install_uv
-    check_node
-    check_pnpm
+    install_dependencies
 
     print_section "Build"
-    build_frontend
     install_frago_local
 
     print_next_steps

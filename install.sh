@@ -1,17 +1,59 @@
 #!/bin/sh
-# frago installation script for Linux, macOS, and WSL
+# frago installation script for macOS, Linux, WSL, and Windows (Git Bash / MSYS2)
 #
 # Usage:
 #   curl -fsSL https://frago.ai/install.sh | sh
 #   wget -qO- https://frago.ai/install.sh | sh
+#   sh install.sh [--cn|--official] [--no-start]
+#
+# Environment overrides:
+#   FRAGO_INSTALL_SOURCE=auto|cn|official    Force installation source (default: auto)
+#   FRAGO_NO_START=1                        Skip starting server & opening browser
+#   UV_DEFAULT_INDEX                        Custom PyPI index URL
+#   UV_PYTHON_INSTALL_MIRROR                Custom python-build-standalone mirror URL
 
 set -e
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Constants & Mirror Definitions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TUNA_PYPI_BASE="https://pypi.tuna.tsinghua.edu.cn"
+TUNA_SIMPLE_INDEX="${TUNA_PYPI_BASE}/simple"
+NJU_PYTHON_MIRROR="https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
+OFFICIAL_UV_INSTALL_SH="https://astral.sh/uv/install.sh"
+
+INSTALL_SOURCE="${FRAGO_INSTALL_SOURCE:-auto}"
+NO_START="${FRAGO_NO_START:-0}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cn|--mirror)
+            INSTALL_SOURCE="cn"
+            ;;
+        --official|--global)
+            INSTALL_SOURCE="official"
+            ;;
+        --no-start|--skip-launch)
+            NO_START="1"
+            ;;
+        -h|--help)
+            echo "Usage: sh install.sh [--cn|--official] [--no-start]"
+            echo ""
+            echo "Options:"
+            echo "  --cn, --mirror       Use China mainland mirrors (Tsinghua PyPI + NJU Python)"
+            echo "  --official, --global Use official global sources (astral.sh + PyPI + GitHub)"
+            echo "  --no-start           Install and verify only; do not launch server/browser"
+            exit 0
+            ;;
+    esac
+    shift
+done
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Color and Style Definitions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Check if terminal supports colors
 if [ -t 1 ]; then
     USE_COLOR=true
     RESET='\033[0m'
@@ -32,7 +74,6 @@ else
     RED=''
 fi
 
-# Gradient colors for banner (cyan → blue → purple)
 print_gradient_line() {
     line="$1"
     index="$2"
@@ -97,7 +138,7 @@ print_done() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Utility Functions
+# Utility & Platform Detection Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
 command_exists() {
@@ -105,102 +146,893 @@ command_exists() {
 }
 
 get_version() {
-    "$1" --version 2>/dev/null | head -n1 || echo "unknown"
+    case "$1" in
+        tmux)
+            tmux -V 2>/dev/null | head -n1 || echo "unknown"
+            ;;
+        ffmpeg)
+            ffmpeg -version 2>/dev/null | head -n1 | sed 's/ Copyright.*$//' || echo "unknown"
+            ;;
+        *)
+            "$1" --version 2>/dev/null | head -n1 || echo "unknown"
+            ;;
+    esac
+}
+
+http_probe() {
+    url="$1"
+    timeout_sec="${2:-3}"
+    if command_exists curl; then
+        curl -fsSLI --connect-timeout "$timeout_sec" --max-time "$timeout_sec" "$url" >/dev/null 2>&1
+        return $?
+    elif command_exists wget; then
+        wget -q --spider --timeout="$timeout_sec" --tries=1 "$url" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+
+http_download() {
+    url="$1"
+    dest="$2"
+    if command_exists curl; then
+        curl -fL --connect-timeout 10 --retry 2 -o "$dest" "$url" >/dev/null 2>&1
+        return $?
+    elif command_exists wget; then
+        wget -q --timeout=15 --tries=2 -O "$dest" "$url" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+
+http_get_text() {
+    url="$1"
+    if command_exists curl; then
+        curl -fsSL --compressed --connect-timeout 8 --max-time 20 "$url" 2>/dev/null
+        return $?
+    elif command_exists wget; then
+        wget -qO- --timeout=15 --tries=2 "$url" 2>/dev/null
+        return $?
+    fi
+    return 1
+}
+
+detect_libc() {
+    if [ "$OS_FAMILY" != "linux" ]; then
+        LIBC="native"
+        return
+    fi
+    if ls /lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+        LIBC="musl"
+    elif command_exists ldd && ldd --version 2>&1 | grep -qi musl; then
+        LIBC="musl"
+    else
+        LIBC="glibc"
+    fi
 }
 
 detect_platform() {
-    OS="$(uname -s)"
-    ARCH="$(uname -m)"
+    OS="$(uname -s 2>/dev/null || echo Unknown)"
+    ARCH="$(uname -m 2>/dev/null || echo unknown)"
 
     case "$OS" in
         Linux*)
-            if grep -qi microsoft /proc/version 2>/dev/null; then
+            OS_FAMILY="linux"
+            if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
                 PLATFORM="WSL"
             else
                 PLATFORM="Linux"
             fi
             ;;
         Darwin*)
+            OS_FAMILY="macos"
             PLATFORM="macOS"
             ;;
         MINGW*|MSYS*|CYGWIN*)
-            print_error "This script is for Unix-like systems"
-            print_info "For Windows, use: irm https://frago.ai/install.ps1 | iex"
-            exit 1
+            OS_FAMILY="windows"
+            PLATFORM="Windows (POSIX shell)"
             ;;
         *)
             print_error "Unsupported operating system: $OS"
             exit 1
             ;;
     esac
+
+    case "$ARCH" in
+        x86_64|amd64|AMD64)
+            NORM_ARCH="x86_64"
+            ;;
+        arm64|aarch64|ARM64)
+            NORM_ARCH="aarch64"
+            ;;
+        armv7l|armv8l)
+            NORM_ARCH="armv7l"
+            ;;
+        armv6l)
+            NORM_ARCH="armv6l"
+            ;;
+        i386|i686|x86)
+            NORM_ARCH="i686"
+            ;;
+        ppc64le)
+            NORM_ARCH="ppc64le"
+            ;;
+        s390x)
+            NORM_ARCH="s390x"
+            ;;
+        riscv64)
+            NORM_ARCH="riscv64"
+            ;;
+        *)
+            NORM_ARCH="$ARCH"
+            ;;
+    esac
+
+    detect_libc
+    resolve_uv_wheel_target
+}
+
+resolve_uv_wheel_target() {
+    UV_WHEEL_TAG=""
+    UV_WHEEL_PINNED_PATH=""
+
+    case "${OS_FAMILY}:${NORM_ARCH}:${LIBC}" in
+        macos:aarch64:*)
+            UV_WHEEL_TAG="macosx_11_0_arm64.whl"
+            UV_WHEEL_PINNED_PATH="packages/40/a5/8756c38ace102fa13fd4e653e8bc40e1f65924f1c0a0d23350339dac97e5/uv-0.13.7-py3-none-macosx_11_0_arm64.whl"
+            ;;
+        macos:x86_64:*)
+            UV_WHEEL_TAG="macosx_10_12_x86_64.whl"
+            UV_WHEEL_PINNED_PATH="packages/3d/5b/e0379e7b172659420b1ec99a8e8229830aa85ea59684847c80b1c959a056/uv-0.13.7-py3-none-macosx_10_12_x86_64.whl"
+            ;;
+        linux:x86_64:glibc)
+            UV_WHEEL_TAG="manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+            UV_WHEEL_PINNED_PATH="packages/b9/93/0e053a2ca4523ee9825ccbedeb7121470d0a188933f11688b6d90d7f5c08/uv-0.13.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+            ;;
+        linux:x86_64:musl)
+            UV_WHEEL_TAG="musllinux_1_1_x86_64.whl"
+            UV_WHEEL_PINNED_PATH="packages/2a/22/065e097ca6051ae7022d7c5c9d1591dcff97ed5609fb9eb450d8ee22fa17/uv-0.13.7-py3-none-musllinux_1_1_x86_64.whl"
+            ;;
+        linux:aarch64:*)
+            UV_WHEEL_TAG="manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl"
+            UV_WHEEL_PINNED_PATH="packages/96/72/da1119f94034d7173e6c8e2cd77a6299744458f0af3cb8e3a04d5cd419d1/uv-0.13.7-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl"
+            ;;
+        linux:armv7l:*)
+            UV_WHEEL_TAG="manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl"
+            UV_WHEEL_PINNED_PATH="packages/f3/a8/d554d757e372d2dc8788e4c07601e440c09ce31535e3107180690233f4a2/uv-0.13.7-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl"
+            ;;
+        linux:armv6l:*)
+            UV_WHEEL_TAG="linux_armv6l.whl"
+            UV_WHEEL_PINNED_PATH="packages/a6/e8/bda02e68c92b896e2c27581843c461e1007cb68c67c0b357d1e4849e6311/uv-0.13.7-py3-none-linux_armv6l.whl"
+            ;;
+        linux:i686:musl)
+            UV_WHEEL_TAG="musllinux_1_1_i686.whl"
+            UV_WHEEL_PINNED_PATH="packages/04/c3/0ca099ff442fb6a01a59b7582d8733f187183d491bc86e6f96c9203c3e1e/uv-0.13.7-py3-none-musllinux_1_1_i686.whl"
+            ;;
+        linux:i686:*)
+            UV_WHEEL_TAG="manylinux_2_17_i686.manylinux2014_i686.whl"
+            UV_WHEEL_PINNED_PATH="packages/78/55/fafeedc33a903456e7fd5fa442e7116331451c50e68e6fa985df47c06b3a/uv-0.13.7-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl"
+            ;;
+        linux:ppc64le:*)
+            UV_WHEEL_TAG="manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl"
+            UV_WHEEL_PINNED_PATH="packages/d0/5e/50494a1cac0ff7030edc430c8ac86ee91ca43c54134d399b0f7a137930c7/uv-0.13.7-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl"
+            ;;
+        linux:s390x:*)
+            UV_WHEEL_TAG="manylinux_2_17_s390x.manylinux2014_s390x.whl"
+            UV_WHEEL_PINNED_PATH="packages/28/b2/7fc68c91580168907f557c8824521973a3f63d1e3629ae3478aaeeebef7f/uv-0.13.7-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl"
+            ;;
+        linux:riscv64:*)
+            UV_WHEEL_TAG="manylinux_2_31_riscv64.musllinux_1_1_riscv64.whl"
+            UV_WHEEL_PINNED_PATH="packages/28/3d/e7db43beff8b219ec392346f11b8aad325bc87bb282eea57e64cbe0aba56/uv-0.13.7-py3-none-manylinux_2_31_riscv64.musllinux_1_1_riscv64.whl"
+            ;;
+        windows:aarch64:*)
+            UV_WHEEL_TAG="win_arm64.whl"
+            UV_WHEEL_PINNED_PATH="packages/44/8d/1594dce4465d9699467a639b25aafd335ce1e5917f8bb60c9c0bed9e0859/uv-0.13.7-py3-none-win_arm64.whl"
+            ;;
+        windows:i686:*)
+            UV_WHEEL_TAG="win32.whl"
+            UV_WHEEL_PINNED_PATH="packages/c4/f2/3cfb8543acb8dc07b228d2517a0962b124ab97bd859690617d957248129c/uv-0.13.7-py3-none-win32.whl"
+            ;;
+        windows:x86_64:*)
+            UV_WHEEL_TAG="win_amd64.whl"
+            UV_WHEEL_PINNED_PATH="packages/8e/4f/041b59d2a38807a3e31ef41064cf3e45d2752fe0409d89040d52778049ae/uv-0.13.7-py3-none-win_amd64.whl"
+            ;;
+    esac
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Installation Functions
+# Network Detection & Mirror Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-install_uv() {
-    if command_exists uv; then
-        version=$(get_version uv)
-        print_success "uv $version"
+ensure_http_client() {
+    if command_exists curl || command_exists wget; then
         return 0
     fi
+    print_step "Installing curl..."
+    if command_exists apt-get; then
+        (sudo apt-get update && sudo apt-get install -y curl ca-certificates) >/dev/null 2>&1 ||
+            (apt-get update && apt-get install -y curl ca-certificates) >/dev/null 2>&1
+    elif command_exists dnf; then
+        sudo dnf install -y curl ca-certificates >/dev/null 2>&1 || dnf install -y curl ca-certificates >/dev/null 2>&1
+    elif command_exists yum; then
+        sudo yum install -y curl ca-certificates >/dev/null 2>&1 || yum install -y curl ca-certificates >/dev/null 2>&1
+    elif command_exists pacman; then
+        sudo pacman -Sy --noconfirm curl ca-certificates >/dev/null 2>&1 || pacman -Sy --noconfirm curl ca-certificates >/dev/null 2>&1
+    elif command_exists apk; then
+        sudo apk add --no-cache curl ca-certificates >/dev/null 2>&1 || apk add --no-cache curl ca-certificates >/dev/null 2>&1
+    elif command_exists zypper; then
+        sudo zypper install -y curl ca-certificates >/dev/null 2>&1 || zypper install -y curl ca-certificates >/dev/null 2>&1
+    fi
+    if command_exists curl || command_exists wget; then
+        print_done "curl ready"
+        return 0
+    fi
+    print_error "Neither curl nor wget found; please install curl first."
+    exit 1
+}
 
-    print_step "Installing uv..."
+ensure_shell_path_persisted() {
+    bin_dir="$HOME/.local/bin"
 
-    if command_exists curl; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
-    elif command_exists wget; then
-        wget -qO- https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+    # Run uv tool update-shell with ~/.local/bin stripped from PATH so uv does not
+    # skip updating shell rc files just because this script exported PATH in-process.
+    if [ -x "$bin_dir/uv" ]; then
+        PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$bin_dir/uv" tool update-shell >/dev/null 2>&1 || true
     else
-        print_error "Neither curl nor wget found"
-        exit 1
+        uv tool update-shell >/dev/null 2>&1 || true
     fi
 
-    # Source env to get uv in PATH
+    profile_target=""
+    case "${SHELL:-}" in
+        */zsh) profile_target="$HOME/.zshrc" ;;
+        */bash)
+            if [ -f "$HOME/.bashrc" ]; then
+                profile_target="$HOME/.bashrc"
+            else
+                profile_target="$HOME/.bash_profile"
+            fi
+            ;;
+        *) profile_target="$HOME/.profile" ;;
+    esac
+
+    if [ -n "$profile_target" ]; then
+        touch "$profile_target" 2>/dev/null || true
+        if ! grep -q '\.local/bin' "$profile_target" 2>/dev/null; then
+            {
+                echo ""
+                echo '# frago & uv tool PATH'
+                echo 'export PATH="$HOME/.local/bin:$PATH"'
+            } >>"$profile_target" 2>/dev/null || true
+        fi
+    fi
+
+    if [ "$OS_FAMILY" = "windows" ] && command_exists powershell.exe; then
+        powershell.exe -NoProfile -Command '
+            $bin = Join-Path $HOME ".local\bin"
+            $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+            $parts = ($userPath -split ";") | Where-Object { $_ }
+            if ($bin -notin $parts) {
+                $newPath = if ($userPath) { "$bin;$userPath" } else { $bin }
+                [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+            }
+        ' >/dev/null 2>&1 || true
+    fi
+}
+
+persist_mirror_env() {
+    idx_url="$1"
+    py_mirror="$2"
+
+    mkdir -p "$HOME/.local/bin"
+    mirror_env_file="$HOME/.local/bin/env.frago-mirror"
+    cat >"$mirror_env_file" <<EOF
+#!/bin/sh
+export UV_DEFAULT_INDEX="${idx_url}"
+export UV_PYTHON_INSTALL_MIRROR="${py_mirror}"
+EOF
+
+    # Persist into user shell profile if not already present
+    profile_target=""
+    case "${SHELL:-}" in
+        */zsh) profile_target="$HOME/.zshrc" ;;
+        */bash)
+            if [ -f "$HOME/.bashrc" ]; then
+                profile_target="$HOME/.bashrc"
+            else
+                profile_target="$HOME/.bash_profile"
+            fi
+            ;;
+        *) profile_target="$HOME/.profile" ;;
+    esac
+
+    if [ -n "$profile_target" ]; then
+        touch "$profile_target" 2>/dev/null || true
+        if ! grep -q "UV_DEFAULT_INDEX" "$profile_target" 2>/dev/null; then
+            {
+                echo ""
+                echo "# frago uv domestic mirror configuration"
+                echo "export UV_DEFAULT_INDEX=\"${idx_url}\""
+                echo "export UV_PYTHON_INSTALL_MIRROR=\"${py_mirror}\""
+            } >>"$profile_target" 2>/dev/null || true
+        fi
+    fi
+
+    if [ "$OS_FAMILY" = "windows" ] && command_exists powershell.exe; then
+        powershell.exe -NoProfile -Command "
+            [System.Environment]::SetEnvironmentVariable('UV_DEFAULT_INDEX', '${idx_url}', 'User');
+            [System.Environment]::SetEnvironmentVariable('UV_PYTHON_INSTALL_MIRROR', '${py_mirror}', 'User')
+        " >/dev/null 2>&1 || true
+    fi
+}
+
+enable_cn_mirror() {
+    USE_CN_MIRROR=true
+    export UV_DEFAULT_INDEX="${UV_DEFAULT_INDEX:-$TUNA_SIMPLE_INDEX}"
+    export UV_PYTHON_INSTALL_MIRROR="${UV_PYTHON_INSTALL_MIRROR:-$NJU_PYTHON_MIRROR}"
+    persist_mirror_env "$UV_DEFAULT_INDEX" "$UV_PYTHON_INSTALL_MIRROR"
+}
+
+detect_network_profile() {
+    ensure_http_client
+
+    USE_CN_MIRROR=false
+
+    case "$INSTALL_SOURCE" in
+        cn|mirror|tuna)
+            enable_cn_mirror
+            print_success "Network source: China Mainland Mirror (Tsinghua PyPI + NJU Python)"
+            return 0
+            ;;
+        official|global)
+            print_success "Network source: Official Global (astral.sh + PyPI + GitHub)"
+            return 0
+            ;;
+    esac
+
+    # If user already configured domestic mirror env vars, honor them
+    case "${UV_DEFAULT_INDEX:-}${UV_PYTHON_INSTALL_MIRROR:-}" in
+        *tuna.tsinghua.edu.cn*|*mirror.nju.edu.cn*|*aliyun.com*|*ustc.edu.cn*)
+            enable_cn_mirror
+            print_success "Network source: China Mainland Mirror (from existing env)"
+            return 0
+            ;;
+    esac
+
+    print_step "Probing network connectivity..."
+    # Probe github.com (where uv & python-build-standalone binaries actually live) and pypi.org
+    if http_probe "https://github.com/astral-sh/uv" 3 && http_probe "https://pypi.org/simple/" 3; then
+        print_done "Network source: Official Global (GitHub + PyPI reachable)"
+    else
+        enable_cn_mirror
+        print_done "Network source: China Mainland Mirror (Tsinghua PyPI + NJU Python)"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Zero-Python uv Bootstrap (Official Script + PyPI Wheel Zip Extraction)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+extract_zip_file() {
+    zip_file="$1"
+    dest_dir="$2"
+    mkdir -p "$dest_dir"
+
+    if command_exists unzip; then
+        unzip -qo "$zip_file" -d "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if command_exists python3; then
+        python3 -m zipfile -e "$zip_file" "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if command_exists python; then
+        python -m zipfile -e "$zip_file" "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if command_exists bsdtar; then
+        bsdtar -xf "$zip_file" -C "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if command_exists tar; then
+        tar -xf "$zip_file" -C "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if command_exists busybox; then
+        busybox unzip -qo "$zip_file" -d "$dest_dir" >/dev/null 2>&1 && return 0
+    fi
+    if [ "$OS_FAMILY" = "windows" ] && command_exists powershell.exe; then
+        powershell.exe -NoProfile -Command "Expand-Archive -Path '$zip_file' -DestinationPath '$dest_dir' -Force" >/dev/null 2>&1 && return 0
+    fi
+
+    # Last resort on minimal Linux: install unzip via package manager
+    if [ "$OS_FAMILY" = "linux" ]; then
+        if command_exists apt-get; then
+            (sudo apt-get update && sudo apt-get install -y unzip) >/dev/null 2>&1 ||
+                (apt-get update && apt-get install -y unzip) >/dev/null 2>&1 || true
+        elif command_exists dnf; then
+            sudo dnf install -y unzip >/dev/null 2>&1 || dnf install -y unzip >/dev/null 2>&1 || true
+        elif command_exists yum; then
+            sudo yum install -y unzip >/dev/null 2>&1 || yum install -y unzip >/dev/null 2>&1 || true
+        elif command_exists pacman; then
+            sudo pacman -Sy --noconfirm unzip >/dev/null 2>&1 || pacman -Sy --noconfirm unzip >/dev/null 2>&1 || true
+        elif command_exists apk; then
+            sudo apk add --no-cache unzip >/dev/null 2>&1 || apk add --no-cache unzip >/dev/null 2>&1 || true
+        elif command_exists zypper; then
+            sudo zypper install -y unzip >/dev/null 2>&1 || zypper install -y unzip >/dev/null 2>&1 || true
+        fi
+        if command_exists unzip; then
+            unzip -qo "$zip_file" -d "$dest_dir" >/dev/null 2>&1 && return 0
+        fi
+    fi
+
+    return 1
+}
+
+resolve_latest_uv_wheel_from_tuna() {
+    [ -z "$UV_WHEEL_TAG" ] && return 1
+    index_html="$(http_get_text "${TUNA_SIMPLE_INDEX}/uv/")" || return 1
+    [ -z "$index_html" ] && return 1
+
+    # Extract relative hrefs matching uv-<ver>-py3-none-<UV_WHEEL_TAG>, sort by semantic version
+    rel_path="$(printf '%s\n' "$index_html" |
+        grep "py3-none-${UV_WHEEL_TAG}" |
+        sed -n 's/.*href="\.\.\/\.\.\/\(packages\/[^"#]*\)".*/\1/p' |
+        awk -F'/' '{
+            fname = $NF
+            ver = fname
+            sub(/^uv-/, "", ver)
+            sub(/-py3-none-.*$/, "", ver)
+            split(ver, p, ".")
+            printf "%05d.%05d.%05d %s\n", p[1], p[2], p[3], $0
+        }' |
+        sort |
+        tail -n 1 |
+        awk '{print $2}')"
+
+    if [ -n "$rel_path" ]; then
+        printf '%s/%s\n' "$TUNA_PYPI_BASE" "$rel_path"
+        return 0
+    fi
+    return 1
+}
+
+install_uv_from_pypi_wheel() {
+    [ -z "$UV_WHEEL_TAG" ] && return 1
+
+    bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+
+    tmp_base="${TMPDIR:-/tmp}"
+    tmp_base="${tmp_base%/}"
+    work_dir="$(mktemp -d "$tmp_base/frago-uv-XXXXXX" 2>/dev/null || echo "$tmp_base/frago-uv-$$")"
+    mkdir -p "$work_dir"
+    wheel_zip="$work_dir/uv.zip"
+    extract_dir="$work_dir/uv-extracted"
+
+    downloaded=false
+
+    # 1. Try pinned verified 0.13.7 wheel URL first (single HTTP request, zero index overhead)
+    if [ -n "$UV_WHEEL_PINNED_PATH" ]; then
+        pinned_url="${TUNA_PYPI_BASE}/${UV_WHEEL_PINNED_PATH}"
+        if http_download "$pinned_url" "$wheel_zip" && [ -s "$wheel_zip" ]; then
+            downloaded=true
+        fi
+    fi
+
+    # 2. Fallback: dynamically resolve latest wheel from Tsinghua Simple Index
+    if [ "$downloaded" = false ]; then
+        latest_url="$(resolve_latest_uv_wheel_from_tuna || true)"
+        if [ -n "$latest_url" ] && http_download "$latest_url" "$wheel_zip" && [ -s "$wheel_zip" ]; then
+            downloaded=true
+        fi
+    fi
+
+    if [ "$downloaded" = false ]; then
+        rm -rf "$work_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    if ! extract_zip_file "$wheel_zip" "$extract_dir"; then
+        rm -rf "$work_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    moved=false
+    for script_bin in "$extract_dir"/uv-*.data/scripts/*; do
+        if [ -f "$script_bin" ]; then
+            base_name="$(basename "$script_bin")"
+            cp -f "$script_bin" "$bin_dir/$base_name"
+            chmod +x "$bin_dir/$base_name" 2>/dev/null || true
+            moved=true
+        fi
+    done
+
+    rm -rf "$work_dir" >/dev/null 2>&1 || true
+
+    export PATH="$bin_dir:$PATH"
+    if [ "$moved" = true ] && command_exists uv; then
+        return 0
+    fi
+    return 1
+}
+
+install_uv_from_official() {
+    if command_exists curl; then
+        curl -LsSf --connect-timeout 10 --max-time 60 "$OFFICIAL_UV_INSTALL_SH" | sh >/dev/null 2>&1 || return 1
+    elif command_exists wget; then
+        wget -qO- --timeout=20 "$OFFICIAL_UV_INSTALL_SH" | sh >/dev/null 2>&1 || return 1
+    else
+        return 1
+    fi
+
     [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
+    command_exists uv
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# System Dependencies Installation (git, tmux / arndawg.tmux-windows, ffmpeg)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+APT_UPDATED=false
+WINDOWS_TMUX_RELEASE_URL="https://github.com/arndawg/tmux-windows/releases/download/v3.6a-win32.7/tmux-windows-v3.6a-win32.7.zip"
+
+run_linux_pkg_install() {
+    pkg="$1"
+    if command_exists apt-get; then
+        if [ "$APT_UPDATED" = false ]; then
+            if [ "$(id -u)" = "0" ]; then
+                apt-get update -qq >/dev/null 2>&1 || true
+            elif command_exists sudo; then
+                sudo apt-get update -qq >/dev/null 2>&1 || true
+            fi
+            APT_UPDATED=true
+        fi
+        if [ "$(id -u)" = "0" ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1
+        elif command_exists sudo; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    elif command_exists dnf; then
+        if [ "$(id -u)" = "0" ]; then
+            dnf install -y "$pkg" >/dev/null 2>&1 ||
+                ([ "$pkg" = "ffmpeg" ] && (dnf install -y --allowerasing ffmpeg >/dev/null 2>&1 || dnf install -y ffmpeg-free >/dev/null 2>&1))
+        elif command_exists sudo; then
+            sudo dnf install -y "$pkg" >/dev/null 2>&1 ||
+                ([ "$pkg" = "ffmpeg" ] && (sudo dnf install -y --allowerasing ffmpeg >/dev/null 2>&1 || sudo dnf install -y ffmpeg-free >/dev/null 2>&1))
+        else
+            return 1
+        fi
+    elif command_exists yum; then
+        if [ "$(id -u)" = "0" ]; then
+            yum install -y "$pkg" >/dev/null 2>&1
+        elif command_exists sudo; then
+            sudo yum install -y "$pkg" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    elif command_exists pacman; then
+        if [ "$(id -u)" = "0" ]; then
+            pacman -Sy --noconfirm --needed "$pkg" >/dev/null 2>&1
+        elif command_exists sudo; then
+            sudo pacman -Sy --noconfirm --needed "$pkg" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    elif command_exists apk; then
+        if [ "$(id -u)" = "0" ]; then
+            apk add --no-cache "$pkg" >/dev/null 2>&1
+        elif command_exists sudo; then
+            sudo apk add --no-cache "$pkg" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    elif command_exists zypper; then
+        if [ "$(id -u)" = "0" ]; then
+            zypper --non-interactive install -y "$pkg" >/dev/null 2>&1
+        elif command_exists sudo; then
+            sudo zypper --non-interactive install -y "$pkg" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    else
+        return 1
+    fi
+}
+
+ensure_homebrew() {
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    if [ "$USE_CN_MIRROR" = true ]; then
+        export HOMEBREW_BREW_GIT_REMOTE="${HOMEBREW_BREW_GIT_REMOTE:-https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git}"
+        export HOMEBREW_CORE_GIT_REMOTE="${HOMEBREW_CORE_GIT_REMOTE:-https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git}"
+        export HOMEBREW_API_DOMAIN="${HOMEBREW_API_DOMAIN:-https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api}"
+        export HOMEBREW_BOTTLE_DOMAIN="${HOMEBREW_BOTTLE_DOMAIN:-https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles}"
+    fi
+    if command_exists brew; then
+        return 0
+    fi
+
+    print_step "Installing Homebrew (macOS package manager)..."
+    if [ "$USE_CN_MIRROR" = true ]; then
+        tmp_brew_dir="$(mktemp -d "${TMPDIR:-/tmp}/frago-brew-XXXXXX" 2>/dev/null || echo "/tmp/frago-brew-$$")"
+        if command_exists git && git clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git "$tmp_brew_dir/ brew-install" >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash "$tmp_brew_dir/ brew-install/install.sh" >/dev/null 2>&1 || true
+        fi
+        rm -rf "$tmp_brew_dir" >/dev/null 2>&1 || true
+    fi
+
+    if ! command_exists brew; then
+        NONINTERACTIVE=1 /bin/bash -c "$(http_get_text https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null 2>&1 || true
+    fi
+
+    [ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+    [ -x /usr/local/bin/brew ] && eval "$(/usr/local/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    command_exists brew
+}
+
+refresh_windows_posix_path() {
+    export PATH="$HOME/.local/bin:/c/Program Files/Git/cmd:/c/Program Files/Git/bin:$PATH"
+    if [ -n "${LOCALAPPDATA:-}" ] && command_exists cygpath; then
+        winget_links="$(cygpath -u "$LOCALAPPDATA/Microsoft/WinGet/Links" 2>/dev/null || true)"
+        [ -n "$winget_links" ] && [ -d "$winget_links" ] && export PATH="$winget_links:$PATH"
+    fi
+}
+
+install_windows_tmux_zip_fallback() {
+    bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+    tmp_base="${TMPDIR:-/tmp}"
+    tmp_base="${tmp_base%/}"
+    work_dir="$(mktemp -d "$tmp_base/frago-tmux-win-XXXXXX" 2>/dev/null || echo "$tmp_base/frago-tmux-win-$$")"
+    mkdir -p "$work_dir"
+    zip_path="$work_dir/tmux-windows.zip"
+    extract_dir="$work_dir/extracted"
+
+    downloaded=false
+    if [ "$USE_CN_MIRROR" = true ]; then
+        for proxy_prefix in "https://ghfast.top/" "https://mirror.ghproxy.com/" ""; do
+            if http_download "${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}" "$zip_path" && [ -s "$zip_path" ]; then
+                downloaded=true
+                break
+            fi
+        done
+    else
+        for proxy_prefix in "" "https://ghfast.top/" "https://mirror.ghproxy.com/"; do
+            if http_download "${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}" "$zip_path" && [ -s "$zip_path" ]; then
+                downloaded=true
+                break
+            fi
+        done
+    fi
+
+    if [ "$downloaded" = true ] && extract_zip_file "$zip_path" "$extract_dir"; then
+        if [ -f "$extract_dir/tmux.exe" ]; then
+            cp -f "$extract_dir/tmux.exe" "$bin_dir/tmux.exe"
+            chmod +x "$bin_dir/tmux.exe" 2>/dev/null || true
+            rm -rf "$work_dir" >/dev/null 2>&1 || true
+            export PATH="$bin_dir:$PATH"
+            return 0
+        fi
+    fi
+
+    rm -rf "$work_dir" >/dev/null 2>&1 || true
+    return 1
+}
+
+install_git() {
+    [ "$OS_FAMILY" = "macos" ] && export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    [ "$OS_FAMILY" = "windows" ] && refresh_windows_posix_path
+
+    if command_exists git && git --version >/dev/null 2>&1; then
+        version=$(get_version git)
+        print_success "git ($version)"
+        return 0
+    fi
+
+    print_step "Installing git..."
+    case "$OS_FAMILY" in
+        macos)
+            if ensure_homebrew; then
+                brew install git >/dev/null 2>&1 || true
+            else
+                xcode-select --install >/dev/null 2>&1 || true
+            fi
+            ;;
+        linux)
+            run_linux_pkg_install git || true
+            ;;
+        windows)
+            if command_exists winget.exe; then
+                winget.exe install --id Git.Git --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                refresh_windows_posix_path
+            elif command_exists pacman; then
+                pacman -Sy --noconfirm --needed git >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+
+    if command_exists git && git --version >/dev/null 2>&1; then
+        version=$(get_version git)
+        print_done "git ($version)"
+        return 0
+    fi
+
+    print_error "git installation failed"
+    exit 1
+}
+
+install_tmux() {
+    [ "$OS_FAMILY" = "macos" ] && export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    [ "$OS_FAMILY" = "windows" ] && refresh_windows_posix_path
+
+    if command_exists tmux; then
+        version=$(get_version tmux)
+        print_success "tmux ($version)"
+        return 0
+    fi
+
+    case "$OS_FAMILY" in
+        macos)
+            print_step "Installing tmux..."
+            if ensure_homebrew; then
+                brew install tmux >/dev/null 2>&1 || true
+            fi
+            ;;
+        linux)
+            print_step "Installing tmux..."
+            run_linux_pkg_install tmux || true
+            ;;
+        windows)
+            print_step "Installing tmux (Windows port: arndawg.tmux-windows)..."
+            if command_exists winget.exe; then
+                winget.exe install --id arndawg.tmux-windows --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                refresh_windows_posix_path
+            fi
+            if ! command_exists tmux; then
+                install_windows_tmux_zip_fallback || true
+            fi
+            ;;
+    esac
+
+    if command_exists tmux; then
+        version=$(get_version tmux)
+        print_done "tmux ($version)"
+        return 0
+    fi
+
+    print_error "tmux installation failed"
+    exit 1
+}
+
+install_ffmpeg() {
+    [ "$OS_FAMILY" = "macos" ] && export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    [ "$OS_FAMILY" = "windows" ] && refresh_windows_posix_path
+
+    if command_exists ffmpeg; then
+        version=$(get_version ffmpeg)
+        print_success "ffmpeg ($version)"
+        return 0
+    fi
+
+    print_step "Installing ffmpeg..."
+    case "$OS_FAMILY" in
+        macos)
+            if ensure_homebrew; then
+                brew install ffmpeg >/dev/null 2>&1 || true
+            fi
+            ;;
+        linux)
+            run_linux_pkg_install ffmpeg || true
+            ;;
+        windows)
+            if command_exists winget.exe; then
+                winget.exe install --id Gyan.FFmpeg --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 ||
+                    winget.exe install ffmpeg --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                refresh_windows_posix_path
+            elif command_exists pacman; then
+                pacman -Sy --noconfirm --needed ffmpeg >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+
+    if command_exists ffmpeg; then
+        version=$(get_version ffmpeg)
+        print_done "ffmpeg ($version)"
+        return 0
+    fi
+
+    print_error "ffmpeg installation failed"
+    exit 1
+}
+
+install_uv() {
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
     if command_exists uv; then
         version=$(get_version uv)
-        print_done "uv $version"
+        print_success "uv ($version)"
+        return 0
+    fi
+
+    if [ "$USE_CN_MIRROR" = true ]; then
+        print_step "Installing uv (via Tsinghua PyPI precompiled wheel)..."
+        if install_uv_from_pypi_wheel; then
+            version=$(get_version uv)
+            print_done "uv ($version, via Tsinghua mirror)"
+            return 0
+        fi
+        print_step "Mirror wheel install failed, trying official installer..."
+        if install_uv_from_official; then
+            version=$(get_version uv)
+            print_done "uv ($version)"
+            return 0
+        fi
     else
-        print_error "uv installation failed"
-        exit 1
+        print_step "Installing uv..."
+        if install_uv_from_official; then
+            version=$(get_version uv)
+            print_done "uv ($version)"
+            return 0
+        fi
+        print_step "Official uv installer unreachable, switching to Tsinghua PyPI wheel..."
+        enable_cn_mirror
+        if install_uv_from_pypi_wheel; then
+            version=$(get_version uv)
+            print_done "uv ($version, via Tsinghua mirror)"
+            return 0
+        fi
+    fi
+
+    print_error "uv installation failed"
+    exit 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# frago-cli & Default CoreAgent Runtime Installation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+run_uv_tool_install() {
+    action="$1"
+    if [ "$action" = "upgrade" ]; then
+        uv tool upgrade frago-cli >/dev/null 2>&1 || uv tool install frago-cli --force >/dev/null 2>&1
+    else
+        uv tool install frago-cli >/dev/null 2>&1
     fi
 }
 
 install_frago() {
-    export PATH="$HOME/.local/bin:$PATH"
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
+    action="install"
     if command_exists frago; then
-        version=$(get_version frago)
-        print_step "Upgrading frago..."
-        uv tool upgrade frago-cli >/dev/null 2>&1 || uv tool install frago-cli --force >/dev/null 2>&1
-        new_version=$(get_version frago)
-        print_done "frago $new_version"
+        action="upgrade"
+        print_step "Upgrading frago-cli (Python >=3.13 + built-in CoreAgent)..."
     else
-        print_step "Installing frago..."
-        uv tool install frago-cli >/dev/null 2>&1
+        print_step "Installing frago-cli (Python >=3.13 + built-in CoreAgent)..."
+    fi
 
-        if command_exists frago; then
-            version=$(get_version frago)
-            print_done "frago $version"
+    if ! run_uv_tool_install "$action"; then
+        if [ "$USE_CN_MIRROR" = false ] && [ "$INSTALL_SOURCE" != "official" ]; then
+            print_step "Retrying with China Mainland Mirror (Tsinghua PyPI + NJU Python)..."
+            enable_cn_mirror
+            run_uv_tool_install "$action" || {
+                print_error "frago-cli installation failed"
+                exit 1
+            }
         else
-            print_error "frago installation failed"
+            print_error "frago-cli installation failed"
             exit 1
         fi
     fi
-}
 
-check_node() {
-    if command_exists node; then
-        version=$(get_version node)
-        print_success "Node.js $version"
+    # Persist ~/.local/bin into user's shell PATH
+    ensure_shell_path_persisted
+
+    if command_exists frago; then
+        version=$(get_version frago)
+        print_done "frago ($version)"
     else
-        print_error "Node.js not found (required)"
-        print_info "Install from: https://nodejs.org/ or use 'nvm install --lts'"
+        print_error "frago installation failed (binary not found in ~/.local/bin)"
         exit 1
     fi
 }
@@ -208,44 +1040,28 @@ check_node() {
 print_next_steps() {
     print_section "Getting Started"
 
-    printf "  ${DIM}To ensure frago is always available, add to your shell profile:${RESET}\n"
-    echo ""
-
-    case "$SHELL" in
-        */zsh)
-            printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc${RESET}\n"
-            ;;
-        */bash)
-            printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}\n"
-            ;;
-        *)
-            printf "    ${CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}\n"
-            ;;
-    esac
-
-    echo ""
     printf "  ${DIM}Commands:${RESET}\n"
-    printf "    ${BOLD}frago start${RESET}         Start frago and open Web UI\n"
+    printf "    ${BOLD}frago start${RESET}         Start frago server and open Web UI\n"
+    printf "    ${BOLD}frago --version${RESET}     Verify installed frago version\n"
     printf "    ${BOLD}frago --help${RESET}        Show all available commands\n"
+    echo ""
+    printf "  ${DIM}Note: Open a new terminal or run 'export PATH=\"\$HOME/.local/bin:\$PATH\"' if 'frago' is not yet in your current shell PATH.${RESET}\n"
     echo ""
 }
 
 wait_for_server() {
-    # Wait for server to accept connections (max 30 seconds)
-    local max_attempts=30
-    local attempt=0
+    max_attempts=30
+    attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
-        # Try to connect to the port
         if (echo >/dev/tcp/127.0.0.1/8093) 2>/dev/null; then
-            # Port is open, wait a bit more for HTTP to be fully ready
             sleep 2
             return 0
         elif command_exists nc && nc -z 127.0.0.1 8093 2>/dev/null; then
             sleep 2
             return 0
-        elif curl -s --connect-timeout 1 "http://127.0.0.1:8093/" >/dev/null 2>&1; then
-            sleep 2
+        elif command_exists curl && curl -s --connect-timeout 1 "http://127.0.0.1:8093/api/status" >/dev/null 2>&1; then
+            sleep 1
             return 0
         fi
         sleep 1
@@ -255,27 +1071,29 @@ wait_for_server() {
 }
 
 launch_frago() {
+    if [ "$NO_START" = "1" ]; then
+        return 0
+    fi
+
     print_section "Launching"
 
     export PATH="$HOME/.local/bin:$PATH"
     printf "  ${DIM}Starting frago server...${RESET}\n"
 
-    # Stop any existing server first, then start fresh
-    # (restart can fail due to process termination issues)
     frago server stop >/dev/null 2>&1 || true
-    sleep 2  # Give port time to be released
+    sleep 2
     frago server start >/dev/null 2>&1 || true
 
-    # Wait for server to be ready before opening browser
     if wait_for_server; then
         printf "  ${DIM}Opening browser...${RESET}\n"
         echo ""
-        frago start --no-browser >/dev/null 2>&1 || true  # Ensure server is tracked
-        # Open browser directly since server is ready
+        frago start --no-browser >/dev/null 2>&1 || true
         if command_exists xdg-open; then
             xdg-open "http://127.0.0.1:8093" >/dev/null 2>&1 &
         elif command_exists open; then
-            open "http://127.0.0.1:8093"
+            open "http://127.0.0.1:8093" >/dev/null 2>&1 || true
+        elif [ "$OS_FAMILY" = "windows" ] && command_exists cmd.exe; then
+            cmd.exe /c start "" "http://127.0.0.1:8093" >/dev/null 2>&1 || true
         else
             printf "  ${CYAN}Open in browser: http://127.0.0.1:8093${RESET}\n"
         fi
@@ -293,11 +1111,14 @@ main() {
 
     print_section "Environment"
     detect_platform
-    print_success "$PLATFORM ($ARCH)"
+    print_success "$PLATFORM ($NORM_ARCH)"
+    detect_network_profile
 
     print_section "Dependencies"
+    install_git
+    install_tmux
+    install_ffmpeg
     install_uv
-    check_node
     install_frago
 
     print_next_steps
