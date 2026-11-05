@@ -1294,6 +1294,11 @@
      "wheel", "keydown", "keyup", "keypress", "selectstart", "dragstart"
     ].forEach(function (type) {
       window.addEventListener(type, function (e) {
+        // 语音花瓣监听器热键（右 Alt 按住说话 / 双击右 Ctrl 持续监听）始终放行。
+        if ((type === "keydown" || type === "keyup") &&
+            (e.code === "AltRight" || e.code === "ControlRight")) {
+          return;
+        }
         // 人类输入行：允许人在右下角对话面板输入。
         if (els.humanInput && !els.humanInput.hidden &&
             e.target && els.humanInput.contains(e.target)) return;
@@ -2000,6 +2005,10 @@
       var s = raw
         .replace(/<must-use-skill[\s\S]*?<\/must-use-skill>\s*/g, "")
         .replace(/<system-reminder[\s\S]*?<\/system-reminder>\s*/g, "")
+        .replace(/<employee-business-context[\s\S]*?<\/employee-business-context>\s*/g, "")
+        .replace(/<employee-recent-sessions[\s\S]*?<\/employee-recent-sessions>\s*/g, "")
+        .replace(/---\s*\n【桌面主操作员（desktop-operator）职责契约】[\s\S]*$/g, "")
+        .replace(/---\s*\n【舞台硬编排指令（Stage Orchestrator）[\s\S]*$/g, "")
         .trim();
       if (!s) return "";
       if (role === "dir") {
@@ -2157,7 +2166,11 @@
     appendBubble("dir", tr("welcome"), { placeholder: true });
     noteKey("statusHint", false);
     applyHumanInputLang();
-    setExpanded(true);
+    if (/[?&]panel=open(&|$)/.test(location.search)) {
+      setExpanded(true);
+    } else {
+      setExpanded(false);
+    }
 
     els.onDirectorCaption = function (captionText) {
       if (!captionText) return;
@@ -2255,6 +2268,405 @@
       // 回车发送，Shift+回车换行——与聊天框一致。
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
     });
+
+    /* ── 右下角彩色偏心花瓣麦克风监听器 (#petal-listener) ──────────────────
+       - 按住右 Alt (AltRight)：按住期间开始录音与动态花瓣监听，松开立即送 Groq Whisper ASR 并投喂 desktop-operator；
+       - 双击右 Ctrl (ControlRight)：开启持续监听模式（VAD 自动切句送转写），再次双击右 Ctrl 关闭持续监听；
+       - 监听期间：每片偏心花瓣围绕各自内部的偏心锚点随机放大/缩小（0.74 ~ 1.38），同时花瓣簇整体旋转。 */
+    var petalDockRow = $("petal-dock-row"),
+        petalListener = $("petal-listener"),
+        petalRotor = $("petal-rotor"),
+        petalStatusPill = $("petal-status-pill"),
+        petalStatusText = $("petal-status-text"),
+        petalNodes = petalRotor ? petalRotor.querySelectorAll(".petal") : [];
+
+    var listenMode = "idle"; // "idle" | "ptt" | "continuous"
+    var transcribingCount = 0;
+    var lastCtrlRightDownAt = 0;
+    var altRightHeld = false;
+
+    var mediaStream = null;
+    var mediaRecorder = null;
+    var recordedChunks = [];
+    var audioCtx = null;
+    var analyser = null;
+    var audioData = null;
+    var currentRms = 0;
+
+    // 持续监听 (continuous) VAD 状态
+    var vadSpeaking = false;
+    var vadSpeechStartedAt = 0;
+    var vadLastVoiceAt = 0;
+    var vadSegmentStartedAt = 0;
+    var discardNextStop = false;
+
+    // 花瓣动画状态（6 片偏心花瓣各自围绕内部偏心锚点随机缩放 + 整体旋转）
+    var rotorAngle = 0;
+    var petalAnimStates = [];
+    for (var pi = 0; pi < petalNodes.length; pi++) {
+      petalAnimStates.push({
+        baseAngle: pi * 60,
+        curSx: 1,
+        curSy: 1,
+        targetSx: 1,
+        targetSy: 1,
+        nextRetargetAt: 0
+      });
+    }
+
+    function setPetalListenState(stateAttr) {
+      var st = stateAttr || (transcribingCount > 0 && listenMode === "idle" ? "transcribing" : listenMode);
+      if (petalListener) petalListener.setAttribute("data-listen-state", st);
+      if (petalDockRow) petalDockRow.setAttribute("data-listen-state", st);
+    }
+
+    function showTranscribedText(recognizedText) {
+      var clean = String(recognizedText || "").trim();
+      if (!clean) return;
+      if (petalStatusText) petalStatusText.textContent = clean;
+      if (petalStatusPill) petalStatusPill.hidden = false;
+    }
+
+    function sampleAudioLevel() {
+      if (!analyser || !audioData) {
+        currentRms = 0;
+        return 0;
+      }
+      try {
+        analyser.getByteTimeDomainData(audioData);
+        var sumSq = 0;
+        for (var i = 0; i < audioData.length; i++) {
+          var v = (audioData[i] - 128) / 128;
+          sumSq += v * v;
+        }
+        currentRms = Math.sqrt(sumSq / audioData.length);
+      } catch (e) {
+        currentRms = 0;
+      }
+      return currentRms;
+    }
+
+    function tickPetals(now) {
+      if (petalRotor && petalNodes.length && shouldAnimateStage()) {
+        var rms = (listenMode === "ptt" || listenMode === "continuous") ? sampleAudioLevel() : 0;
+        var active = (listenMode === "ptt" || listenMode === "continuous");
+        var speed = active ? (1.75 + Math.min(3.2, rms * 18)) : (transcribingCount > 0 ? 1.15 : 0.18);
+        rotorAngle = (rotorAngle + speed) % 360;
+        petalRotor.style.transform = "rotate(" + rotorAngle.toFixed(2) + "deg)";
+
+        for (var i = 0; i < petalNodes.length; i++) {
+          var st = petalAnimStates[i];
+          if (active) {
+            if (now >= st.nextRetargetAt) {
+              var boost = Math.min(0.28, rms * 2.4);
+              st.targetSx = 0.74 + Math.random() * (0.64 + boost);
+              st.targetSy = 0.74 + Math.random() * (0.64 + boost);
+              st.nextRetargetAt = now + 95 + Math.random() * 145;
+            }
+            st.curSx += (st.targetSx - st.curSx) * 0.24;
+            st.curSy += (st.targetSy - st.curSy) * 0.24;
+          } else {
+            var breathe = 1 + 0.045 * Math.sin(now * 0.0026 + i * 1.05);
+            st.curSx += (breathe - st.curSx) * 0.12;
+            st.curSy += (breathe - st.curSy) * 0.12;
+          }
+          petalNodes[i].style.transform =
+            "rotate(" + st.baseAngle + "deg) scale(" +
+            st.curSx.toFixed(3) + ", " + st.curSy.toFixed(3) + ")";
+        }
+
+        // 持续监听模式下的语音活动检测 (VAD) 自动切句
+        if (listenMode === "continuous" && mediaRecorder && mediaRecorder.state === "recording") {
+          var nowMs = Date.now();
+          if (rms > 0.022) {
+            if (!vadSpeaking) {
+              vadSpeaking = true;
+              vadSpeechStartedAt = nowMs;
+            }
+            vadLastVoiceAt = nowMs;
+          }
+          if (vadSpeaking) {
+            var silenceDuration = nowMs - vadLastVoiceAt;
+            var speechDuration = nowMs - vadSpeechStartedAt;
+            if ((silenceDuration >= 880 && speechDuration >= 260) || speechDuration >= 14000) {
+              flushContinuousSegment(true);
+            }
+          } else if (nowMs - vadSegmentStartedAt >= 6500) {
+            // 纯静音段定期滚动清空，避免长静音被拼进下一句开头
+            flushContinuousSegment(false);
+          }
+        }
+      }
+      requestAnimationFrame(tickPetals);
+    }
+    requestAnimationFrame(tickPetals);
+
+    function pickSupportedMimeType() {
+      if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+      var types = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4"
+      ];
+      for (var i = 0; i < types.length; i++) {
+        if (MediaRecorder.isTypeSupported(types[i])) return types[i];
+      }
+      return "";
+    }
+
+    function ensureMicStream() {
+      if (mediaStream && mediaStream.active) {
+        return Promise.resolve(mediaStream);
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return Promise.reject(new Error("当前浏览器环境不支持麦克风采集"));
+      }
+      return navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      }).then(function (stream) {
+        mediaStream = stream;
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext;
+          if (Ctx) {
+            if (!audioCtx) audioCtx = new Ctx();
+            if (audioCtx.state === "suspended") audioCtx.resume();
+            var source = audioCtx.createMediaStreamSource(stream);
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            audioData = new Uint8Array(analyser.frequencyBinCount);
+          }
+        } catch (e) {}
+        return stream;
+      });
+    }
+
+    function releaseMicStream() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      mediaRecorder = null;
+      if (mediaStream) {
+        try {
+          mediaStream.getTracks().forEach(function (t) { t.stop(); });
+        } catch (e) {}
+        mediaStream = null;
+      }
+      currentRms = 0;
+    }
+
+    function uploadAudioBlob(blob) {
+      if (!blob || blob.size < 200) {
+        if (listenMode === "idle") {
+          setPetalListenState("idle");
+        }
+        return;
+      }
+      transcribingCount++;
+      if (listenMode === "idle") {
+        setPetalListenState("transcribing");
+      } else if (listenMode === "continuous") {
+        setPetalListenState("continuous");
+      }
+
+      var reader = new FileReader();
+      reader.onloadend = function () {
+        var dataUrl = typeof reader.result === "string" ? reader.result : "";
+        fetch("/api/workbench/desktop-voice/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audio_base64: dataUrl,
+            mime_type: blob.type || "audio/webm",
+            filename: "speech.webm",
+            session_id: sid || null,
+            auto_send: true
+          })
+        }).then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (body) {
+            if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+            return body;
+          });
+        }).then(function (res) {
+          var recognized = (res && res.text) ? String(res.text).trim() : "";
+          if (res && res.session_id && res.session_id !== sid) {
+            sid = res.session_id;
+            box.dataset.sessionId = sid;
+            if (sidTag) sidTag.textContent = sid.slice(0, 8);
+          }
+          if (recognized) {
+            skillSent = true;
+            appendBubble("usr", recognized, { optimistic: true });
+            syncSessionRecords();
+            showTranscribedText(recognized);
+          }
+          setPetalListenState(listenMode);
+        }).catch(function () {
+          setPetalListenState(listenMode);
+        }).then(function () {
+          transcribingCount = Math.max(0, transcribingCount - 1);
+          setPetalListenState(listenMode);
+        });
+      };
+      reader.readAsDataURL(blob);
+    }
+
+    function spawnRecorder(stream) {
+      recordedChunks = [];
+      discardNextStop = false;
+      vadSpeaking = false;
+      vadSegmentStartedAt = Date.now();
+      var mime = pickSupportedMimeType();
+      var rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      rec.ondataavailable = function (ev) {
+        if (ev.data && ev.data.size > 0) recordedChunks.push(ev.data);
+      };
+      rec.onstop = function () {
+        var shouldDiscard = discardNextStop;
+        var chunks = recordedChunks.slice();
+        recordedChunks = [];
+        if (!shouldDiscard && chunks.length > 0) {
+          var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+          uploadAudioBlob(blob);
+        }
+        if (listenMode === "continuous" && mediaStream && mediaStream.active) {
+          try {
+            mediaRecorder = spawnRecorder(mediaStream);
+            mediaRecorder.start(150);
+          } catch (e) {}
+        }
+      };
+      return rec;
+    }
+
+    function flushContinuousSegment(shouldUpload) {
+      if (!mediaRecorder || mediaRecorder.state !== "recording") return;
+      discardNextStop = !shouldUpload;
+      vadSpeaking = false;
+      try {
+        mediaRecorder.stop();
+      } catch (e) {}
+    }
+
+    function startPttListening() {
+      if (listenMode === "continuous") return;
+      if (listenMode === "ptt") return;
+      listenMode = "ptt";
+      setPetalListenState("ptt");
+      ensureMicStream().then(function (stream) {
+        if (listenMode !== "ptt") {
+          releaseMicStream();
+          return;
+        }
+        mediaRecorder = spawnRecorder(stream);
+        mediaRecorder.start(120);
+      }).catch(function () {
+        listenMode = "idle";
+        setPetalListenState("idle");
+      });
+    }
+
+    function stopPttListening() {
+      if (listenMode !== "ptt") return;
+      listenMode = "idle";
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        discardNextStop = false;
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      setPetalListenState(transcribingCount > 0 ? "transcribing" : "idle");
+      setTimeout(function () {
+        if (listenMode === "idle") releaseMicStream();
+      }, 180);
+    }
+
+    function toggleContinuousListening() {
+      if (listenMode === "continuous") {
+        listenMode = "idle";
+        discardNextStop = !vadSpeaking;
+        releaseMicStream();
+        setPetalListenState("idle");
+        return;
+      }
+      listenMode = "continuous";
+      setPetalListenState("continuous");
+      ensureMicStream().then(function (stream) {
+        if (listenMode !== "continuous") {
+          releaseMicStream();
+          return;
+        }
+        mediaRecorder = spawnRecorder(stream);
+        mediaRecorder.start(150);
+      }).catch(function () {
+        listenMode = "idle";
+        setPetalListenState("idle");
+      });
+    }
+
+    function handleAltRightDown() {
+      if (altRightHeld) return;
+      altRightHeld = true;
+      startPttListening();
+    }
+
+    function handleAltRightUp() {
+      if (!altRightHeld) return;
+      altRightHeld = false;
+      stopPttListening();
+    }
+
+    function handleCtrlRightDown() {
+      var now = Date.now();
+      if (now - lastCtrlRightDownAt <= 380) {
+        lastCtrlRightDownAt = 0;
+        toggleContinuousListening();
+      } else {
+        lastCtrlRightDownAt = now;
+      }
+    }
+
+    window.addEventListener("keydown", function (e) {
+      if (e.code === "AltRight") {
+        e.preventDefault();
+        if (!e.repeat) handleAltRightDown();
+      } else if (e.code === "ControlRight") {
+        if (!e.repeat) handleCtrlRightDown();
+      }
+    }, true);
+
+    window.addEventListener("keyup", function (e) {
+      if (e.code === "AltRight") {
+        e.preventDefault();
+        handleAltRightUp();
+      }
+    }, true);
+
+    window.addEventListener("blur", function () {
+      if (altRightHeld) {
+        altRightHeld = false;
+        stopPttListening();
+      }
+    });
+
+    window.addEventListener("message", function (e) {
+      var d = e && e.data;
+      if (!d || d.type !== "frago:desktop-hotkey") return;
+      if (d.action === "alt-right-down") handleAltRightDown();
+      else if (d.action === "alt-right-up") handleAltRightUp();
+      else if (d.action === "ctrl-right-down") handleCtrlRightDown();
+    });
+
+    if (petalListener) {
+      petalListener.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleContinuousListening();
+      });
+    }
   }
 
   /* ── 桌布：噪声网格渐变 ──────────────────────────────────
@@ -2512,7 +2924,7 @@
     if (state.wsOpen) {
       wakeStageLoops();
       sendLayout();
-    } else {
+    } else if (state.configReady) {
       connect();
     }
     if (els.syncSessionRecords) els.syncSessionRecords();
@@ -2606,7 +3018,10 @@
         if (cfg.desktop) { CONFIG.desktop = cfg.desktop; fitStage(); }
       })
       .catch(function () { /* 无 config.json 时用默认值 */ })
-      .then(connect);
+      .then(function () {
+        state.configReady = true;
+        connect();
+      });
   }
 
   document.addEventListener("DOMContentLoaded", boot);

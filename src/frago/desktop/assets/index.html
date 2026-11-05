@@ -236,14 +236,32 @@
           <div class="hi-status" id="hi-status"></div>
         </div>
       </div>
-      <button type="button" class="hi-fab" id="hi-trigger" title="导演对话面板">
-        <span class="dot idle" id="hi-fab-dot"></span>
-        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-          <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H6l-3.5 2.5V4.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span id="hi-fab-label">对话</span>
-        <span class="cnt" id="hi-badge" hidden>0</span>
-      </button>
+      <div class="petal-dock-row" id="petal-dock-row">
+        <div class="petal-status-pill" id="petal-status-pill" hidden>
+          <span class="petal-status-dot" id="petal-status-dot"></span>
+          <span class="petal-status-text" id="petal-status-text"></span>
+        </div>
+        <button type="button" class="hi-fab" id="hi-trigger" title="展开/收起对话记录面板">
+          <span class="dot idle" id="hi-fab-dot"></span>
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H6l-3.5 2.5V4.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="hi-fab-label">对话</span>
+          <span class="cnt" id="hi-badge" hidden>0</span>
+        </button>
+        <div id="petal-listener" class="petal-listener" data-listen-state="idle" role="button" tabindex="0" aria-label="语音花瓣监听器（按住右Alt说话，双击右Ctrl持续监听）" title="按住右Alt说话 · 双击右Ctrl持续监听（点击也可切换持续监听）">
+          <div class="petal-aura" id="petal-aura"></div>
+          <div class="petal-rotor" id="petal-rotor">
+            <span class="petal p0" data-petal-index="0"></span>
+            <span class="petal p1" data-petal-index="1"></span>
+            <span class="petal p2" data-petal-index="2"></span>
+            <span class="petal p3" data-petal-index="3"></span>
+            <span class="petal p4" data-petal-index="4"></span>
+            <span class="petal p5" data-petal-index="5"></span>
+          </div>
+          <div class="petal-core-pivot" aria-hidden="true"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 贴纸栏：电视节目下三分之一那条说明字条。

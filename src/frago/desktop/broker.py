@@ -3650,6 +3650,9 @@ def build_app(cfg: dict) -> FastAPI:
                         meta["reason"] = f"uiVersion={got} 与当前 {want} 不符"
                         note_screens()
                         continue
+                    if meta.get("stale"):
+                        meta["stale"] = False
+                        stage.stale_clients = stage.stale_clients - {0, got}
                     # 归属对、版本也对，仍可能是同一实例被开了两块荧幕：
                     # 实例身份永久，桌面页地址永久稳定，历史上开过的每个标签
                     # 只要还在就都会连回来。两块荧幕各有各的窗口几何、轮流上报，

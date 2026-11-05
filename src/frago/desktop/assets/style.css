@@ -1337,6 +1337,202 @@ html, body {
   color: #e0e7ff;
 }
 
+/* ── 右下角彩色偏心花瓣麦克风监听器 (#petal-listener) ──────────────────
+   视觉特征：
+   1. 6 片不同配色的半透明水滴状花瓣围绕同一个公共圆心排布；
+   2. 圆心位于每片花瓣的内部且偏心（transform-origin: 34% 68%），使各片花瓣在圆心处交叠、向外偏心散开；
+   3. 监听时（右 Alt 按住说话 / 双击右 Ctrl 持续监听）每片花瓣围绕各自的内部偏心圆心随机放大或缩小，且花瓣簇整体旋转。 */
+.petal-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.petal-status-pill {
+  height: 34px;
+  max-width: 340px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: rgba(10, 13, 20, 0.84);
+  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.petal-status-pill[hidden] {
+  display: none !important;
+}
+
+.petal-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.65);
+  flex-shrink: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.petal-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.petal-listener {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.62));
+  transition: filter 0.25s ease, transform 0.2s ease;
+}
+
+.petal-listener:hover {
+  transform: scale(1.04);
+}
+
+.petal-aura {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(139, 124, 255, 0.26) 0%,
+    rgba(34, 211, 238, 0.14) 48%,
+    transparent 74%
+  );
+  opacity: 0.65;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.petal-listener[data-listen-state="ptt"] .petal-aura,
+.petal-listener[data-listen-state="continuous"] .petal-aura {
+  opacity: 1;
+  transform: scale(1.24);
+  background: radial-gradient(
+    circle,
+    rgba(244, 114, 182, 0.42) 0%,
+    rgba(34, 211, 238, 0.28) 52%,
+    transparent 76%
+  );
+}
+
+.petal-rotor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 每片花瓣宽 34px、高 48px，偏心锚点在花瓣内部 (34%, 68%) 即 (11.56px, 32.64px)，
+   将该锚点对齐到容器中心 (39px, 39px)，所有花瓣围绕同一个内部偏心圆心旋转与随机缩放 */
+.petal {
+  position: absolute;
+  width: 34px;
+  height: 48px;
+  left: calc(50% - 11.56px);
+  top: calc(50% - 32.64px);
+  transform-origin: 34% 68%;
+  border-radius: 64% 36% 52% 48% / 68% 62% 38% 32%;
+  mix-blend-mode: screen;
+  opacity: 0.86;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1px 6px rgba(255, 255, 255, 0.35),
+    0 2px 12px rgba(0, 0, 0, 0.25);
+  will-change: transform;
+  transform: rotate(var(--petal-angle, 0deg)) scale(var(--petal-scale-x, 1), var(--petal-scale-y, 1));
+}
+
+.petal.p0 {
+  --petal-angle: 0deg;
+  background: linear-gradient(155deg, rgba(34, 211, 238, 0.92) 0%, rgba(6, 182, 212, 0.42) 100%);
+}
+.petal.p1 {
+  --petal-angle: 60deg;
+  background: linear-gradient(155deg, rgba(96, 165, 250, 0.92) 0%, rgba(59, 130, 246, 0.42) 100%);
+}
+.petal.p2 {
+  --petal-angle: 120deg;
+  background: linear-gradient(155deg, rgba(167, 139, 250, 0.92) 0%, rgba(124, 58, 237, 0.42) 100%);
+}
+.petal.p3 {
+  --petal-angle: 180deg;
+  background: linear-gradient(155deg, rgba(244, 114, 182, 0.92) 0%, rgba(219, 39, 119, 0.42) 100%);
+}
+.petal.p4 {
+  --petal-angle: 240deg;
+  background: linear-gradient(155deg, rgba(251, 113, 133, 0.92) 0%, rgba(244, 63, 94, 0.42) 100%);
+}
+.petal.p5 {
+  --petal-angle: 300deg;
+  background: linear-gradient(155deg, rgba(251, 191, 36, 0.92) 0%, rgba(245, 158, 11, 0.42) 100%);
+}
+
+.petal-core-pivot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 0 10px rgba(255, 255, 255, 0.9),
+    0 0 20px rgba(139, 124, 255, 0.75);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.petal-listener[data-listen-state="ptt"] .petal,
+.petal-listener[data-listen-state="continuous"] .petal {
+  opacity: 0.96;
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.petal-dock-row[data-listen-state="ptt"] .petal-status-pill,
+.petal-dock-row[data-listen-state="continuous"] .petal-status-pill {
+  border-color: rgba(244, 114, 182, 0.55);
+  background: rgba(16, 12, 28, 0.92);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65), 0 0 18px rgba(244, 114, 182, 0.22);
+}
+
+.petal-dock-row[data-listen-state="ptt"] .petal-status-dot {
+  background: #f472b6;
+  box-shadow: 0 0 10px rgba(244, 114, 182, 0.9);
+}
+
+.petal-dock-row[data-listen-state="continuous"] .petal-status-dot {
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.9);
+}
+
+.petal-dock-row[data-listen-state="transcribing"] .petal-status-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.9);
+}
+
 #strap-layer.at-bottom { bottom: 132px; }
 #strap-layer.at-top { top: 44px; }
 

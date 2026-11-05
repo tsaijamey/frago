@@ -33,6 +33,44 @@ export default function DesktopPage() {
     }
   }, [isActive]);
 
+  useEffect(() => {
+    if (!isActive) return;
+
+    const postHotkey = (action: 'alt-right-down' | 'alt-right-up' | 'ctrl-right-down') => {
+      try {
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: 'frago:desktop-hotkey', action },
+          '*'
+        );
+      } catch {
+        // ignore
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'AltRight') {
+        e.preventDefault();
+        if (!e.repeat) postHotkey('alt-right-down');
+      } else if (e.code === 'ControlRight' && !e.repeat) {
+        postHotkey('ctrl-right-down');
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'AltRight') {
+        e.preventDefault();
+        postHotkey('alt-right-up');
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
+  }, [isActive]);
+
   return (
     <div className="desktop-page">
       <iframe
@@ -40,6 +78,7 @@ export default function DesktopPage() {
         className="desktop-page-frame"
         src={src}
         title={t('sidebar.nav.desktop')}
+        allow="microphone; autoplay"
         onLoad={() => {
           try {
             iframeRef.current?.contentWindow?.postMessage(

@@ -91,3 +91,33 @@ def test_desktop_stage_suspends_loops_and_polling_when_hidden_or_disconnected():
     assert "function scheduleReconnect()" in js
     assert 'd.type === "frago:desktop-visibility"' in js
     assert "if (firstDrawn && !shouldAnimateStage())" in js
+
+
+def test_petal_listener_ui_and_hotkey_wiring():
+    """右下角默认展示彩色偏心花瓣麦克风监听器：支持右Alt按住说话、双击右Ctrl持续监听与Groq Whisper转写。"""
+    assets = files("frago.desktop").joinpath("assets")
+    index = assets.joinpath("index.html").read_text(encoding="utf-8")
+    css = assets.joinpath("style.css").read_text(encoding="utf-8")
+    js = assets.joinpath("app.js").read_text(encoding="utf-8")
+
+    # 1. HTML 结构：6 片不同颜色的花瓣围绕同一旋转容器排布
+    assert 'id="petal-listener"' in index
+    assert 'id="petal-rotor"' in index
+    for idx in range(6):
+        assert f'class="petal p{idx}"' in index
+
+    # 2. CSS 偏心圆心设计：每片花瓣的旋转/缩放圆心位于花瓣内部且偏心（34% 68%）
+    assert "transform-origin: 34% 68%;" in css
+
+    # 3. JS 热键与动画：AltRight 按住说话、ControlRight 双击持续监听、随机缩放与旋转、转写接口
+    assert 'e.code === "AltRight"' in js
+    assert 'e.code === "ControlRight"' in js
+    assert '"/api/workbench/desktop-voice/transcribe"' in js
+    assert 'd.type !== "frago:desktop-hotkey"' in js
+
+    # 4. 转写过程不暴露为文字，仅在转写完成后显示纯转写文本
+    assert "function showTranscribedText(" in js
+    assert "Groq Whisper 识别中" not in js
+    assert "正在聆听…" not in js
+    assert "正在转写上一句" not in js
+
