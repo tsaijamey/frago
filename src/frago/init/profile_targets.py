@@ -36,10 +36,11 @@ if TYPE_CHECKING:
 # activation has always meant, and the default when a caller names none.
 AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex")
 
-# All four external Harness CLIs managed on the Settings -> General matrix.
-HARNESS_TARGETS: tuple[str, ...] = ("claude", "codex", "opencode", "agy")
+# Built-in CoreAgent plus all four external Harness CLIs managed on the Settings -> General matrix.
+HARNESS_TARGETS: tuple[str, ...] = ("coreagent", "claude", "codex", "opencode", "agy")
 
 DISPLAY_NAMES: dict[str, str] = {
+    "coreagent": "CoreAgent",
     "claude": "Claude Code",
     "opencode": "opencode",
     "codex": "Codex CLI",
@@ -47,6 +48,7 @@ DISPLAY_NAMES: dict[str, str] = {
 }
 
 HARNESS_CONFIG_PATHS: dict[str, str] = {
+    "coreagent": "~/.frago/profiles.json",
     "claude": "~/.claude/settings.json",
     "codex": "~/.codex/config.toml",
     "opencode": "~/.config/opencode/opencode.json",
@@ -54,6 +56,7 @@ HARNESS_CONFIG_PATHS: dict[str, str] = {
 }
 
 HARNESS_PROTOCOLS: dict[str, tuple[str, str]] = {
+    "coreagent": ("anthropic", "内置内核 · Anthropic"),
     "claude": ("anthropic", "Anthropic"),
     "codex": ("responses", "OpenAI Responses"),
     "opencode": ("anthropic", "Anthropic"),
@@ -124,7 +127,7 @@ def can_apply_to(profile: APIProfile, agent_type: str) -> bool:
     """Whether ``profile`` can be applied to ``agent_type``'s local configuration."""
     from frago.init.profile_manager import KIND_ENDPOINT, KIND_VENDOR_CLI, profile_channel
 
-    if agent_type in ("claude", "opencode"):
+    if agent_type in ("coreagent", "claude", "opencode"):
         if profile.kind != KIND_ENDPOINT:
             return False
         ch = profile_channel(profile, "anthropic")
@@ -223,7 +226,10 @@ def apply_profile(profile: APIProfile, targets: Sequence[str]) -> None:
     target list after that CLI stopped being supported.
     """
     for agent_type in targets:
-        apply = _driver(agent_type).profile_apply
+        try:
+            apply = _driver(agent_type).profile_apply
+        except KeyError:
+            continue
         if apply is not None:
             apply(profile)
 

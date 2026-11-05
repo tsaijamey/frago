@@ -1461,11 +1461,16 @@ async def get_connections() -> ConnectionsResponse:
         for role in ROLES
     ]
 
+    from frago.init.agent_core import kernel_installed
+
     harnesses: list[HarnessBindingResponse] = []
     for agent_type in HARNESS_TARGETS:
         proto, proto_label = HARNESS_PROTOCOLS.get(agent_type, ("anthropic", "Anthropic"))
         try:
-            installed = target_status(agent_type).installed
+            if agent_type == "coreagent":
+                installed = kernel_installed()
+            else:
+                installed = target_status(agent_type).installed
         except Exception:
             installed = False
         harnesses.append(

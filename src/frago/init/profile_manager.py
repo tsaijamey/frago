@@ -594,7 +594,9 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                 from frago.init.profile_targets import apply_profile
 
                 bound_harnesses = [
-                    t for t, pid in store.harness_profiles.items() if pid == profile_id
+                    t
+                    for t, pid in store.harness_profiles.items()
+                    if pid == profile_id and t != "coreagent"
                 ]
                 if bound_harnesses:
                     apply_profile(profile, bound_harnesses)
@@ -789,6 +791,8 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     # active id was set directly rather than through activate_profile.
     active = list(store.active_targets) or list(DEFAULT_TARGETS)
     for t, pid in store.harness_profiles.items():
+        if t == "coreagent":
+            continue
         if pid and pid != OFFICIAL_ID and t not in active:
             active.append(t)
     handing_back = [t for t in active if t in targets] if targets is not None else active
@@ -814,6 +818,16 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
 def get_harness_main_binding(store: ProfileStore, agent_type: str) -> str:
     """Resolve the active daily-session profile ID for ``agent_type`` (or ``"official"``)."""
     profile_ids = {p.id for p in store.profiles}
+    if agent_type == "coreagent":
+        pid = store.harness_profiles.get("coreagent")
+        if pid:
+            if pid == OFFICIAL_ID:
+                return OFFICIAL_ID
+            if pid in profile_ids:
+                return pid
+        if store.coreagent_profile_id and store.coreagent_profile_id in profile_ids:
+            return store.coreagent_profile_id
+        return OFFICIAL_ID
     if agent_type in store.harness_profiles:
         pid = store.harness_profiles[agent_type]
         if pid == OFFICIAL_ID or pid not in profile_ids:
@@ -855,6 +869,10 @@ def resolve_worker_profile(agent_type: str | None = None) -> APIProfile:
             return official_connection()
         if binding != "follow" and binding in by_id:
             return by_id[binding]
+        if agent_type == "coreagent":
+            main_id = get_harness_main_binding(store, "coreagent")
+            if main_id != OFFICIAL_ID and main_id in by_id:
+                return by_id[main_id]
         return official_connection()
 
     if store.worker_profile_id and store.worker_profile_id in by_id:
@@ -887,6 +905,52 @@ def bind_harness(agent_type: str, role: str, profile_id: str) -> APIProfile | No
     store = load_profiles()
     by_id = {p.id: p for p in store.profiles}
 
+    if agent_type == "coreagent":
+        if role == MAIN_ROLE:
+            if not profile_id or profile_id == OFFICIAL_ID:
+                store.coreagent_profile_id = None
+                store.harness_profiles["coreagent"] = OFFICIAL_ID
+                save_profiles(store)
+                return official_connection()
+            profile = by_id.get(profile_id)
+            if profile is None:
+                raise ValueError(f"Profile not found: {profile_id}")
+            if profile.kind == KIND_WORKBUDDY:
+                raise ValueError("WorkBuddy 借登录这条连接已下线，frago-core 读不到它的凭据。")
+            if profile.kind == KIND_VENDOR_CLI:
+                raise ValueError(
+                    "CoreAgent 为内置内核，需绑定带 API 密钥的 AI 服务商（无法借用厂商 CLI 登录）"
+                )
+            if not can_apply_to(profile, "claude"):
+                raise ValueError("所选服务商缺少 Anthropic 协议通道")
+            store.coreagent_profile_id = profile.id
+            store.harness_profiles["coreagent"] = profile.id
+            save_profiles(store)
+            return profile
+
+        if not profile_id or profile_id == "follow":
+            store.worker_harness_profiles["coreagent"] = "follow"
+            save_profiles(store)
+            return None
+        if profile_id == OFFICIAL_ID:
+            store.worker_harness_profiles["coreagent"] = OFFICIAL_ID
+            save_profiles(store)
+            return official_connection()
+        profile = by_id.get(profile_id)
+        if profile is None:
+            raise ValueError(f"Profile not found: {profile_id}")
+        if profile.kind == KIND_WORKBUDDY:
+            raise ValueError("WorkBuddy 借登录这条连接已下线，frago-core 读不到它的凭据。")
+        if profile.kind == KIND_VENDOR_CLI:
+            raise ValueError(
+                "CoreAgent 为内置内核，需绑定带 API 密钥的 AI 服务商（无法借用厂商 CLI 登录）"
+            )
+        if not can_apply_to(profile, "claude"):
+            raise ValueError("所选服务商缺少 Anthropic 协议通道")
+        store.worker_harness_profiles["coreagent"] = profile.id
+        save_profiles(store)
+        return profile
+
     # Materialize any legacy active_targets into harness_profiles before mutating one row
     if store.active_profile_id and store.active_profile_id in by_id:
         for t in store.active_targets or list(DEFAULT_TARGETS):
@@ -905,7 +969,8 @@ def bind_harness(agent_type: str, role: str, profile_id: str) -> APIProfile | No
             active_non_official = [
                 (t, pid)
                 for t in HARNESS_TARGETS
-                if (pid := store.harness_profiles.get(t))
+                if t != "coreagent"
+                and (pid := store.harness_profiles.get(t))
                 and pid != OFFICIAL_ID
                 and pid in by_id
             ]
@@ -1118,6 +1183,8 @@ def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
     field = _FRAGO_CORE_FIELDS[role]
     if not profile_id or profile_id == OFFICIAL_ID:
         setattr(store, field, None)
+        if role == COREAGENT_ROLE:
+            store.harness_profiles["coreagent"] = OFFICIAL_ID
         save_profiles(store)
         return None
     connection = get_profile(profile_id)
@@ -1133,6 +1200,8 @@ def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:
             "The light agent, the session observer and CoreAgent take a connection with its own key."
         )
     setattr(store, field, connection.id)
+    if role == COREAGENT_ROLE:
+        store.harness_profiles["coreagent"] = connection.id
     save_profiles(store)
     return connection
 

@@ -516,6 +516,18 @@ class TestConnectionsAndBindings:
             res3 = await bind_harness_endpoint(
                 "codex", BindHarnessRequest(role="worker", profile_id="p_ds")
             )
+            res_core_main = await bind_harness_endpoint(
+                "coreagent", BindHarnessRequest(role="main", profile_id="p_ds")
+            )
+            res_core_worker = await bind_harness_endpoint(
+                "coreagent", BindHarnessRequest(role="worker", profile_id="p_or")
+            )
+            res_core_vendor_err = await bind_harness_endpoint(
+                "coreagent", BindHarnessRequest(role="main", profile_id="p_v")
+            )
+            res_core_worker_vendor_err = await bind_harness_endpoint(
+                "coreagent", BindHarnessRequest(role="worker", profile_id="p_v")
+            )
             res_err = await bind_harness_endpoint(
                 "codex", BindHarnessRequest(role="main", profile_id="p_or")
             )
@@ -526,17 +538,26 @@ class TestConnectionsAndBindings:
             assert res1.status == "ok"
             assert res2.status == "ok"
             assert res3.status == "ok"
+            assert res_core_main.status == "ok"
+            assert res_core_worker.status == "ok"
+            assert res_core_vendor_err.status == "error"
+            assert "CoreAgent" in (res_core_vendor_err.error or "")
+            assert res_core_worker_vendor_err.status == "error"
+            assert "CoreAgent" in (res_core_worker_vendor_err.error or "")
             assert res_err.status == "error"
             assert "Responses" in (res_err.error or "")
             assert res_vendor_err.status == "error"
 
             conns = await get_connections()
             by_h = {h.agent_type: h for h in conns.harnesses}
-            assert set(by_h) == {"claude", "codex", "opencode", "agy"}
+            assert set(by_h) == {"coreagent", "claude", "codex", "opencode", "agy"}
+            assert by_h["coreagent"].main_profile_id == "p_ds"
+            assert by_h["coreagent"].worker_profile_id == "p_or"
             assert by_h["claude"].main_profile_id == "p_ds"
             assert by_h["opencode"].main_profile_id == "p_or"
             assert by_h["codex"].main_profile_id == "official"
             assert by_h["codex"].worker_profile_id == "p_ds"
+            assert load_profiles().coreagent_profile_id == "p_ds"
 
         cfg_file = tmp_path / "config.toml"
         cfg_file.write_text("", encoding="utf-8")

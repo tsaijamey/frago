@@ -70,7 +70,11 @@ describe('withMode dispatch', () => {
     expect(httpApi.checkVSCode).toHaveBeenCalledTimes(1);
 
     enterPywebviewMode();
-    await expect(checkVSCode()).resolves.toEqual({ available: false });
+    await expect(checkVSCode()).resolves.toEqual({
+      available: false,
+      vscode_installed: false,
+      configs: {},
+    });
     // still only the one http-mode call
     expect(httpApi.checkVSCode).toHaveBeenCalledTimes(1);
   });
