@@ -44,7 +44,7 @@ import { modKey } from '@/hooks/usePlatform';
 import { browseDirectories } from '@/api/client';
 import { useDataStore } from '@/stores/dataStore';
 import type { DirectoryListing, SkillItem } from '@/types/api';
-import { kernelLabel } from './employeeMeta';
+import { employeeInitials, kernelLabel, resolveEmployeeColor } from './employeeMeta';
 import { fetchEmployee, type EmployeeDetail, type EmployeePost } from '@/hooks/useEmployees';
 import {
   agentReasonText,
@@ -272,9 +272,19 @@ export default function LaunchEmployeeDialog({
         onPaste={handleContainerPaste}
       >
         {/* 这个员工是谁：缩写 + 一行职责 + 内核。 */}
-        <div className="flex items-center gap-2.5 rounded-[8px] border border-border-color bg-bg-secondary px-2.5 py-2">
-          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] border border-border-color bg-bg-primary font-mono text-[11px] font-semibold text-text-primary">
-            {post.member_post_id.slice(0, 3).toUpperCase()}
+        <div
+          className="flex items-center gap-2.5 rounded-[8px] border border-border-color bg-bg-secondary px-2.5 py-2"
+          data-emp-color={resolveEmployeeColor(post.color, post.member_post_id)}
+        >
+          <span
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] border font-mono text-[11px] font-semibold"
+            style={{
+              background: 'var(--emp-bg, var(--bg-primary))',
+              color: 'var(--emp-fg, var(--text-primary))',
+              borderColor: 'var(--emp-border, var(--border-color))',
+            }}
+          >
+            {employeeInitials(post.member_post_id)}
           </span>
           <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-secondary">
             {post.description || post.work_scope}

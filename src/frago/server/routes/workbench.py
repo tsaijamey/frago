@@ -27,7 +27,13 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from frago.employee import EmployeeOntologyService, get_post, list_posts, save_post
+from frago.employee import (
+    EmployeeOntologyService,
+    default_employee_color,
+    get_post,
+    list_posts,
+    save_post,
+)
 from frago.server.services import (
     coreagent_runner,
     file_history,
@@ -96,12 +102,39 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     core_alive = await asyncio.to_thread(coreagent_runner.live_states)
     local_ops_ids = await asyncio.to_thread(workbench_groups.local_ops_session_ids)
     employee_posts = await asyncio.to_thread(list_posts)
+    posts_by_id = {post.member_post_id: post for post in employee_posts}
     active_employee_by_sid: dict[str, str] = {
         sid: post.member_post_id
         for post in employee_posts
         for sid in post.active_session_ids
         if sid
     }
+    direct_employee_by_sid: dict[str, str] = {}
+    parent_by_sid: dict[str, str | None] = {}
+    for card in cards:
+        parent_by_sid[card.session_id] = card.parent_session_id
+        emp_id = card.employee_id or active_employee_by_sid.get(card.session_id)
+        if emp_id:
+            direct_employee_by_sid[card.session_id] = emp_id
+
+    def _resolve_employee_id(card: Any) -> str | None:
+        direct = direct_employee_by_sid.get(card.session_id)
+        if direct:
+            return direct
+        if getattr(card, "origin", "human") == "worker":
+            return None
+        cur = getattr(card, "parent_session_id", None)
+        visited: set[str] = {card.session_id}
+        for _ in range(8):
+            if not cur or cur in visited:
+                break
+            visited.add(cur)
+            found = direct_employee_by_sid.get(cur)
+            if found:
+                return found
+            cur = parent_by_sid.get(cur)
+        return None
+
     rows = []
     for card in cards:
         name = tmux_name_for(card.session_id)
@@ -115,11 +148,22 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
                 status = "done" if card.last_kind == "agent.say" else "idle"
         card_data = asdict(card)
         card_data.pop("last_kind", None)
-        employee_id = card.employee_id or active_employee_by_sid.get(card.session_id)
+        employee_id = _resolve_employee_id(card)
+        matched_post = posts_by_id.get(employee_id) if employee_id else None
+        employee_title = (
+            matched_post.title if matched_post is not None else employee_id
+        )
+        employee_color = (
+            matched_post.color
+            if matched_post is not None
+            else (default_employee_color(employee_id) if employee_id else None)
+        )
         row = {
             **card_data,
             "status": status,
             "employee_id": employee_id,
+            "employee_title": employee_title,
+            "employee_color": employee_color,
             "raw_title": card.title,
             "custom_title": titles.get(card.session_id),
             "in_tmux": alive,
@@ -398,7 +442,6 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except (
         session_send.SessionGone,
-        session_send.SessionDirectoryUnknown,
         session_send.SessionNotResumable,
         workbench_handoff.HandoffUnavailable,
     ) as e:
@@ -517,7 +560,6 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
         raise HTTPException(status_code=404, detail=str(e)) from e
     except (
         session_send.SessionGone,
-        session_send.SessionDirectoryUnknown,
         session_send.SessionNotResumable,
         workbench_branch.BranchUnavailable,
     ) as e:
@@ -1243,12 +1285,11 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
     命令重建之后再投。CoreAgent 每一轮新起一个进程，靠把那一场的记录读回来接上前文。
     返回激活态，页面据此在冷启动那一轮显示进度条。
 
-    六类拒绝各有各的意思，NEVER 合并成一个 500：
+    五类拒绝各有各的意思，NEVER 合并成一个 500：
 
     - 编号三家的形状都不像 → 404，这不是一场会话；
     - 记录已经不在了（用户删了那场会话）→ 409。**这一档最要紧**：驱动层遇到续不上的
       目标会自愈成裸起一场新的，那正是页面上最不该发生的事——人以为在跟原来那场说话；
-    - 问不出这场会话当初跑在哪个目录 → 409，替它猜一个目录等于把 agent 挪进另一个仓库；
     - CoreAgent 那一场还在跑 → 409，等它答完就能发；
     - 内核不在或者 CoreAgent 没配连接 → 503，这一轮连记录都没留下，理由只能从这里带出去；
     - 一个字没有也没有附件 → 400，空轮次投进去只会白占一次冷启动。
@@ -1297,7 +1338,6 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except (
         session_send.SessionGone,
-        session_send.SessionDirectoryUnknown,
         # 这一家的会话接不上话。照实说，NEVER 让它落进下面那个 500——那在页面上只剩
         # 一句"没发出去"，人会以为是出了故障。
         session_send.SessionNotResumable,

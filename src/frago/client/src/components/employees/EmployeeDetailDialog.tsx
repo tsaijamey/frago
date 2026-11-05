@@ -33,8 +33,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronRight, FolderPlus, Loader2, RefreshCw, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FolderPlus, Loader2, RefreshCw, X } from 'lucide-react';
 import DialogShell from './DialogShell';
+import {
+  EMPLOYEE_COLORS,
+  getEmployeeColorMeta,
+  resolveEmployeeColor,
+  type EmployeeColorId,
+} from './employeeMeta';
 import {
   fetchEmployee,
   registerEmployeeData,
@@ -129,6 +135,8 @@ export default function EmployeeDetailDialog({
   const [memberPostId, setMemberPostId] = useState('');
   const [title, setTitle] = useState('');
   const [kernel, setKernel] = useState('claude');
+  const [color, setColor] = useState<EmployeeColorId>('ocean');
+  const [colorTouched, setColorTouched] = useState(false);
   const [description, setDescription] = useState('');
   const [workScope, setWorkScope] = useState('');
   const [cwd, setCwd] = useState('');
@@ -201,6 +209,8 @@ export default function EmployeeDetailDialog({
       setMemberPostId('');
       setTitle('');
       setKernel('claude');
+      setColor('ocean');
+      setColorTouched(false);
       setDescription('');
       setWorkScope('');
       // 默认工作目录预填家目录：这一栏留空本来就等价于用 `~/.frago`，那不如直接写出来。
@@ -216,6 +226,8 @@ export default function EmployeeDetailDialog({
     setMemberPostId(activePost.member_post_id);
     setTitle(activePost.title);
     setKernel(activePost.agent_kernel);
+    setColor(resolveEmployeeColor(activePost.color, activePost.member_post_id));
+    setColorTouched(true);
     setDescription(activePost.description);
     setWorkScope(activePost.work_scope);
     setCwd(activePost.cwd);
@@ -270,6 +282,7 @@ export default function EmployeeDetailDialog({
           schedule_ids: activePost?.schedule_ids ?? [],
           allowed_commands: activePost?.allowed_commands ?? [],
           skills: activePost?.skills ?? [],
+          color,
         },
         { create: isCreate }
       );
@@ -431,7 +444,13 @@ export default function EmployeeDetailDialog({
             type="text"
             className="sinput mono"
             value={memberPostId}
-            onChange={(e) => setMemberPostId(e.target.value)}
+            onChange={(e) => {
+              const nextId = e.target.value;
+              setMemberPostId(nextId);
+              if (isCreate && !colorTouched) {
+                setColor(resolveEmployeeColor(undefined, nextId));
+              }
+            }}
             disabled={!isCreate}
             spellCheck={false}
             placeholder="stock"
@@ -467,6 +486,107 @@ export default function EmployeeDetailDialog({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
+      </div>
+
+      {/* 外观颜色配置：模仿 Chrome/Edge 外观主题选色，深浅主题分别给两套色彩体系但建立 1:1 映射关系 */}
+      <div className="fgrp" data-testid="employee-color-picker">
+        <div className="flex items-center justify-between gap-2">
+          <label>{t('employees.detail.colorLabel')}</label>
+          <span
+            className="font-mono text-[11px] text-text-secondary"
+            data-testid="employee-color-current-label"
+          >
+            {(() => {
+              const meta = getEmployeeColorMeta(color, memberPostId);
+              const translated = t(meta.labelKey, { defaultValue: meta.defaultLabel });
+              return `${translated} (${meta.id})`;
+            })()}
+          </span>
+        </div>
+        <div
+          className="emp-swatch-grid"
+          role="radiogroup"
+          aria-label={t('employees.detail.colorLabel')}
+        >
+          {EMPLOYEE_COLORS.map((c) => {
+            const selected = c.id === color;
+            const swatchName = t(c.labelKey, { defaultValue: c.defaultLabel });
+            return (
+              <button
+                key={c.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={swatchName}
+                title={`${swatchName} · Dark ${c.darkBg} ↔ Light ${c.lightBg}`}
+                data-testid={`employee-color-swatch-${c.id}`}
+                data-color-id={c.id}
+                className={`emp-swatch ${selected ? 'on' : ''}`}
+                onClick={() => {
+                  setColor(c.id);
+                  setColorTouched(true);
+                }}
+              >
+                <span
+                  className="emp-swatch-split"
+                  style={{
+                    background: `linear-gradient(135deg, ${c.darkBg} 0% 50%, ${c.lightBg} 50% 100%)`,
+                  }}
+                />
+                <span className="emp-swatch-check" aria-hidden="true">
+                  <Check size={13} strokeWidth={2.5} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {(() => {
+          const meta = getEmployeeColorMeta(color, memberPostId);
+          const previewName = title.trim() || memberPostId.trim() || 'Employee';
+          return (
+            <div className="emp-map-preview" data-testid="employee-color-map-preview">
+              <div className="emp-map-card dark-preview">
+                <div className="emp-map-head">
+                  <span>{t('employees.detail.darkPalette')}</span>
+                  <span>{meta.darkBg}</span>
+                </div>
+                <div className="emp-map-sample">
+                  <div
+                    className="bar"
+                    style={{
+                      background: meta.darkBg,
+                      color: meta.darkFg,
+                      borderBottom: `1px solid ${meta.darkBorder}`,
+                    }}
+                  >
+                    {previewName}
+                  </div>
+                  <div className="sbody">{t('employees.detail.sampleSessionTitle')}</div>
+                </div>
+              </div>
+              <div className="emp-map-card light-preview">
+                <div className="emp-map-head">
+                  <span>{t('employees.detail.lightPalette')}</span>
+                  <span>{meta.lightBg}</span>
+                </div>
+                <div className="emp-map-sample">
+                  <div
+                    className="bar"
+                    style={{
+                      background: meta.lightBg,
+                      color: meta.lightFg,
+                      borderBottom: `1px solid ${meta.lightBorder}`,
+                    }}
+                  >
+                    {previewName}
+                  </div>
+                  <div className="sbody">{t('employees.detail.sampleSessionTitle')}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+        <p className="hint">{t('employees.detail.colorHint')}</p>
       </div>
 
       <div className="fgrp">

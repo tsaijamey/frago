@@ -66,3 +66,164 @@ export function kernelLabel(kernel: string): string {
   const key = String(kernel ?? '').trim();
   return KERNEL_LABEL[key] ?? key;
 }
+
+/**
+ * Employee 双色系映射色板（Chrome / Edge 外观主题选色技巧：深浅色分别配置两套独立颜色体系并建立 1:1 映射关系）。
+ *
+ * 与服务端 `frago.employee.store.VALID_EMPLOYEE_COLORS` 完全对齐。
+ */
+export type EmployeeColorId =
+  | 'ocean'
+  | 'violet'
+  | 'amber'
+  | 'coral'
+  | 'cyan'
+  | 'rose'
+  | 'plum'
+  | 'slate';
+
+export interface EmployeeColorMeta {
+  id: EmployeeColorId;
+  labelKey: string;
+  defaultLabel: string;
+  darkBg: string;
+  darkFg: string;
+  darkBorder: string;
+  lightBg: string;
+  lightFg: string;
+  lightBorder: string;
+}
+
+export const EMPLOYEE_COLORS: readonly EmployeeColorMeta[] = [
+  {
+    id: 'ocean',
+    labelKey: 'employees.colors.ocean',
+    defaultLabel: 'Ocean Blue',
+    darkBg: '#1f3a68',
+    darkFg: '#e2eeff',
+    darkBorder: 'rgba(96, 152, 245, 0.28)',
+    lightBg: '#d8e8ff',
+    lightFg: '#15356e',
+    lightBorder: 'rgba(37, 99, 235, 0.22)',
+  },
+  {
+    id: 'violet',
+    labelKey: 'employees.colors.violet',
+    defaultLabel: 'Royal Violet',
+    darkBg: '#362863',
+    darkFg: '#ece4ff',
+    darkBorder: 'rgba(158, 126, 248, 0.28)',
+    lightBg: '#e7deff',
+    lightFg: '#392075',
+    lightBorder: 'rgba(109, 64, 212, 0.22)',
+  },
+  {
+    id: 'amber',
+    labelKey: 'employees.colors.amber',
+    defaultLabel: 'Warm Amber',
+    darkBg: '#523612',
+    darkFg: '#ffebd0',
+    darkBorder: 'rgba(235, 168, 68, 0.30)',
+    lightBg: '#fde6be',
+    lightFg: '#663806',
+    lightBorder: 'rgba(180, 105, 14, 0.24)',
+  },
+  {
+    id: 'coral',
+    labelKey: 'employees.colors.coral',
+    defaultLabel: 'Terracotta Coral',
+    darkBg: '#58281e',
+    darkFg: '#ffe3dc',
+    darkBorder: 'rgba(240, 118, 92, 0.28)',
+    lightBg: '#ffded4',
+    lightFg: '#752312',
+    lightBorder: 'rgba(204, 68, 40, 0.22)',
+  },
+  {
+    id: 'cyan',
+    labelKey: 'employees.colors.cyan',
+    defaultLabel: 'Glacier Cyan',
+    darkBg: '#17424d',
+    darkFg: '#daf5fb',
+    darkBorder: 'rgba(72, 184, 210, 0.28)',
+    lightBg: '#d2f1f8',
+    lightFg: '#0f4654',
+    lightBorder: 'rgba(14, 132, 163, 0.22)',
+  },
+  {
+    id: 'rose',
+    labelKey: 'employees.colors.rose',
+    defaultLabel: 'Crimson Rose',
+    darkBg: '#54213a',
+    darkFg: '#ffe0ee',
+    darkBorder: 'rgba(236, 108, 168, 0.28)',
+    lightBg: '#ffdbe9',
+    lightFg: '#731842',
+    lightBorder: 'rgba(194, 48, 114, 0.22)',
+  },
+  {
+    id: 'plum',
+    labelKey: 'employees.colors.plum',
+    defaultLabel: 'Velvet Plum',
+    darkBg: '#4a234f',
+    darkFg: '#f8e0fc',
+    darkBorder: 'rgba(208, 118, 222, 0.28)',
+    lightBg: '#f6dcf9',
+    lightFg: '#5e1d66',
+    lightBorder: 'rgba(162, 56, 176, 0.22)',
+  },
+  {
+    id: 'slate',
+    labelKey: 'employees.colors.slate',
+    defaultLabel: 'Nordic Slate',
+    darkBg: '#2b3644',
+    darkFg: '#e3eaf2',
+    darkBorder: 'rgba(138, 162, 192, 0.26)',
+    lightBg: '#dfe6ef',
+    lightFg: '#243242',
+    lightBorder: 'rgba(71, 95, 122, 0.22)',
+  },
+];
+
+const EMPLOYEE_COLOR_IDS = EMPLOYEE_COLORS.map((c) => c.id);
+
+const PRESET_EMPLOYEE_COLORS: Record<string, EmployeeColorId> = {
+  stock: 'amber',
+  'jira-guardian': 'ocean',
+  'frago-developer': 'violet',
+  'frago-webui': 'cyan',
+  'feishu-ops': 'coral',
+};
+
+/** 与服务端 `default_employee_color` 完全同构的确定性默认色计算。 */
+export function defaultEmployeeColor(memberPostId: string): EmployeeColorId {
+  const cleaned = String(memberPostId ?? '').trim().toLowerCase();
+  if (cleaned in PRESET_EMPLOYEE_COLORS) {
+    return PRESET_EMPLOYEE_COLORS[cleaned];
+  }
+  if (!cleaned) return EMPLOYEE_COLOR_IDS[0];
+  let h = 0;
+  for (let i = 0; i < cleaned.length; i += 1) {
+    h = (Math.imul(h, 31) + cleaned.charCodeAt(i)) >>> 0;
+  }
+  return EMPLOYEE_COLOR_IDS[h % EMPLOYEE_COLOR_IDS.length];
+}
+
+export function resolveEmployeeColor(
+  color: string | null | undefined,
+  memberPostId?: string | null
+): EmployeeColorId {
+  const cleaned = String(color ?? '').trim().toLowerCase() as EmployeeColorId;
+  if (EMPLOYEE_COLOR_IDS.includes(cleaned)) {
+    return cleaned;
+  }
+  return defaultEmployeeColor(memberPostId ?? '');
+}
+
+export function getEmployeeColorMeta(
+  color: string | null | undefined,
+  memberPostId?: string | null
+): EmployeeColorMeta {
+  const resolved = resolveEmployeeColor(color, memberPostId);
+  return EMPLOYEE_COLORS.find((c) => c.id === resolved) ?? EMPLOYEE_COLORS[0];
+}

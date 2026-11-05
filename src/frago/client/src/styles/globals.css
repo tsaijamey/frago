@@ -9669,3 +9669,229 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-dim);
   user-select: none;
 }
+
+/* === Employee 双色系映射色板（深浅色各自独立配值、建立 1:1 映射关系） ===
+   模仿 Chrome / Edge 外观主题选色技巧：
+   - 深色主题下使用「沉稳深色实底 + 柔亮高对比字色」；
+   - 浅色主题下映射为「柔和粉彩浅底 + 浓重深色字色」；
+   两套色值独立调校但共享同一个语义色名（ocean / violet / amber / coral / cyan / rose / plum / slate）。 */
+[data-emp-color='ocean'] {
+  --emp-bg: #1f3a68;
+  --emp-fg: #e2eeff;
+  --emp-border: rgba(96, 152, 245, 0.28);
+}
+[data-emp-color='violet'] {
+  --emp-bg: #362863;
+  --emp-fg: #ece4ff;
+  --emp-border: rgba(158, 126, 248, 0.28);
+}
+[data-emp-color='amber'] {
+  --emp-bg: #523612;
+  --emp-fg: #ffebd0;
+  --emp-border: rgba(235, 168, 68, 0.3);
+}
+[data-emp-color='coral'] {
+  --emp-bg: #58281e;
+  --emp-fg: #ffe3dc;
+  --emp-border: rgba(240, 118, 92, 0.28);
+}
+[data-emp-color='cyan'] {
+  --emp-bg: #17424d;
+  --emp-fg: #daf5fb;
+  --emp-border: rgba(72, 184, 210, 0.28);
+}
+[data-emp-color='rose'] {
+  --emp-bg: #54213a;
+  --emp-fg: #ffe0ee;
+  --emp-border: rgba(236, 108, 168, 0.28);
+}
+[data-emp-color='plum'] {
+  --emp-bg: #4a234f;
+  --emp-fg: #f8e0fc;
+  --emp-border: rgba(208, 118, 222, 0.28);
+}
+[data-emp-color='slate'] {
+  --emp-bg: #2b3644;
+  --emp-fg: #e3eaf2;
+  --emp-border: rgba(138, 162, 192, 0.26);
+}
+
+[data-theme='light'] [data-emp-color='ocean'] {
+  --emp-bg: #d8e8ff;
+  --emp-fg: #15356e;
+  --emp-border: rgba(37, 99, 235, 0.22);
+}
+[data-theme='light'] [data-emp-color='violet'] {
+  --emp-bg: #e7deff;
+  --emp-fg: #392075;
+  --emp-border: rgba(109, 64, 212, 0.22);
+}
+[data-theme='light'] [data-emp-color='amber'] {
+  --emp-bg: #fde6be;
+  --emp-fg: #663806;
+  --emp-border: rgba(180, 105, 14, 0.24);
+}
+[data-theme='light'] [data-emp-color='coral'] {
+  --emp-bg: #ffded4;
+  --emp-fg: #752312;
+  --emp-border: rgba(204, 68, 40, 0.22);
+}
+[data-theme='light'] [data-emp-color='cyan'] {
+  --emp-bg: #d2f1f8;
+  --emp-fg: #0f4654;
+  --emp-border: rgba(14, 132, 163, 0.22);
+}
+[data-theme='light'] [data-emp-color='rose'] {
+  --emp-bg: #ffdbe9;
+  --emp-fg: #731842;
+  --emp-border: rgba(194, 48, 114, 0.22);
+}
+[data-theme='light'] [data-emp-color='plum'] {
+  --emp-bg: #f6dcf9;
+  --emp-fg: #5e1d66;
+  --emp-border: rgba(162, 56, 176, 0.22);
+}
+[data-theme='light'] [data-emp-color='slate'] {
+  --emp-bg: #dfe6ef;
+  --emp-fg: #243242;
+  --emp-border: rgba(71, 95, 122, 0.22);
+}
+
+/* SessionRail 员工会话顶栏色带（背景色 = Employee 颜色配置，字号 14px 略大于 13px 会话标题） */
+.si-emp-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 4px;
+  background: var(--emp-bg);
+  color: var(--emp-fg);
+  border-bottom: 1px solid var(--emp-border);
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.si-emp-bar .emp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+  flex-shrink: 0;
+}
+.si-emp-bar .emp-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Chrome / Edge 风格双色对角拼合选色圆片与深浅映射预览 */
+.emp-swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.emp-swatch {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 2px solid var(--border-strong);
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  background: transparent;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+.emp-swatch:hover {
+  transform: translateY(-1px);
+  border-color: var(--text-secondary);
+}
+.emp-swatch.on {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--text-primary);
+}
+.emp-swatch-split {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+}
+.emp-swatch-check {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  color: #ffffff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.65));
+  transition: opacity 0.12s ease;
+}
+.emp-swatch.on .emp-swatch-check {
+  opacity: 1;
+}
+.emp-map-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.emp-map-card {
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.emp-map-card.dark-preview {
+  background: #1a1a1a;
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.emp-map-card.light-preview {
+  background: #f7f7f7;
+  color: rgba(0, 0, 0, 0.88);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+.emp-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  opacity: 0.65;
+  font-family: var(--font-mono);
+}
+.emp-map-sample {
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+}
+.emp-map-sample .bar {
+  padding: 4px 9px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.emp-map-sample .bar::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+}
+.emp-map-sample .sbody {
+  padding: 5px 9px 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

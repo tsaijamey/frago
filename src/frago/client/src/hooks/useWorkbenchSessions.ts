@@ -128,9 +128,17 @@ export interface WorkbenchSession {
   local_ops?: boolean;
   /**
    * 由「员工（Employees）」入口发起时对应的岗位编号（如 `stock`）。
-   * 左栏会话卡据此展示非文字员工标识图标，普通会话为 null 或缺省。
+   * 左栏会话卡据此在卡片顶部渲染员工专属色带与员工名称，普通会话为 null 或缺省。
    */
   employee_id?: string | null;
+  /**
+   * 员工岗位的展示名称（如 `Stock 投研与策略专员`）。服务端联表补齐；旧数据缺省时回退到 `employee_id`。
+   */
+  employee_title?: string | null;
+  /**
+   * 员工岗位配置的双色系颜色名（如 `amber` / `ocean`）。服务端联表补齐；缺省时按 `employee_id` 确定性回退。
+   */
+  employee_color?: string | null;
 }
 
 /**
@@ -212,32 +220,32 @@ export type ListFilter = 'for-you' | 'all';
 export type ListCounts = Record<ListFilter, number>;
 
 /**
- * 左栏的口径：**逐场看今天有没有真正动过**。
+ * 左栏的口径：**逐场看过去 24 小时内有没有真正动过**。
  *
  * 「真正动过」只认四件事：
- * - 它**自己**的最后一句真回复在今天（`last_reply_at`，服务端已跳过心跳与簿记）；
- * - 今天刚建、还没说过话（`last_reply_at` 为空、`created_at` 在今天）；
+ * - 它**自己**的最后一句真回复在过去 24 小时内（`last_reply_at`，服务端已跳过心跳与簿记）；
+ * - 过去 24 小时内刚建、还没说过话（`last_reply_at` 为空、`created_at` 在过去 24 小时内）；
  * - 此刻在跑（`status === 'running'`，文件近 90 秒内还在动）；
  * - 人今天从 timeline 捡回来的（`pickedToday`）。
  *
  * **NEVER 用 `last_active_at` 判今天**：hook 每拦一次工具、模型每改一次标题都会推进文件
- * 修改时刻，昨晚 23:59:59 说过话的会话今天可能被后台蹭了无数次。
+ * 修改时刻，旧会话可能被后台蹭了无数次。
  *
  * **三条不再放行的旧路**（2026-10-19 主人报缺陷后收紧）：
  * - **置顶不再豁免**：置顶只决定今天这批里的次序，不再把旧会话拉进来；
- * - **父子不连坐**：父会话今天说过话，不代表它几天前派出去的 worker 今天有数据；
+ * - **父子不连坐**：父会话在窗口内说过话，不代表它几天前派出去的 worker 有数据；
  *   子会话要和任何一场一样，自己满足上面四条之一；
- * - **tmux 开着不算**：终端挂着不等于今天有回复，`alive` 不再是留下理由。
+ * - **tmux 开着不算**：终端挂着不等于有回复，`alive` 不再是留下理由。
  *
- * 这四条都指「这一场自己的数据」。要在左栏看到旧会话，用 timeline 把它捡到今天。
+ * 这四条都指「这一场自己的数据」。要在左栏看到更早的旧会话，用 timeline 把它捡到今天。
  */
 const EMPTY_PICKED: ReadonlySet<string> = new Set();
 
-/** 本地日历上今天零点（毫秒）。用本地时区而不是 UTC：人夜里说的话在他眼里就是今天说的。 */
+export const TODAY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** 过去 24 小时窗口的起点（毫秒）。按滚动 24 小时而非自然日零点截断，避免一到 0 点会话全部消失。 */
 export function startOfToday(now: number = Date.now()): number {
-  const d = new Date(now);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+  return now - TODAY_WINDOW_MS;
 }
 
 /**
@@ -526,8 +534,8 @@ export function useWorkbenchSessions(
   /**
    * 今天这一道，判据全在 `withinToday` 里（见它的注释）。
    *
-   * `Date.now()` 每趟渲染现取：会话清单每 15 秒自己重取一次，跨过本地零点之后下一趟
-   * 就会把昨天那批收走。捡回来的名单由页面那一层持有（见 `useSessionToday`）。
+   * `Date.now()` 每趟渲染现取：会话清单每 15 秒自己重取一次，按过去 24 小时滚动窗口筛，
+   * 跨过零点不会断崖清空。捡回来的名单由页面那一层持有（见 `useSessionToday`）。
    */
   const inToday = useMemo(
     () => withinToday(sessions, pickedToday, Date.now(), isForYou),

@@ -75,6 +75,7 @@ class EmployeeUpsertRequest(BaseModel):
     schedule_ids: list[str] = []
     allowed_commands: list[str] | None = None
     skills: list[str] | None = None
+    color: str | None = None
 
 
 class DataEntryRequest(BaseModel):
@@ -186,6 +187,7 @@ async def _upsert(member_post_id: str, request: EmployeeUpsertRequest) -> dict[s
             schedule_ids=request.schedule_ids,
             allowed_commands=request.allowed_commands,
             skills=request.skills,
+            color=request.color,
         )
     except (ValueError, ContractViolationError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

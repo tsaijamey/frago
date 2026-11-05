@@ -14,8 +14,9 @@
 
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Briefcase, ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
+import { ChevronRight, CornerDownRight, GitBranch, Loader2, Pin, SquareTerminal } from 'lucide-react';
 import i18n from '@/i18n';
+import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { formatClock } from './RecordCard';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { keepTail, type ForYouInfo } from '@/hooks/useForYou';
@@ -316,6 +317,11 @@ export default function SessionItem({
   const hasWorkers = workerCount > 0 && Boolean(onToggleWorkers);
   /** 折着的时候才叠纸——展开之后那一叠已经摊在下面了，再画一叠是重复说一遍。 */
   const stacked = hasWorkers && !workersExpanded;
+  const hasEmpBar = !nested && Boolean(session.employee_id);
+  const empColor = hasEmpBar
+    ? resolveEmployeeColor(session.employee_color, session.employee_id)
+    : undefined;
+  const empTitle = session.employee_title || session.employee_id || '';
   /**
    * 分支组里的三种卡各有一层底，主次由此分开：
    * - 源头父卡（`branchRoot`）：浮起实色底 `--grp-card-bg` 加整圈细描边，稳住主卡重心；
@@ -337,18 +343,25 @@ export default function SessionItem({
     stacked && !selected && !live
       ? 'bg-[var(--surface-fill)] [box-shadow:inset_0_0_0_1px_var(--grp-border)] hover:bg-[color-mix(in_srgb,var(--text-primary)_5%,var(--surface-fill))]'
       : '';
+  const empCardLook =
+    hasEmpBar && !selected && !branchRoot && !stacked && !branchCard
+      ? 'bg-[var(--surface-fill)] [box-shadow:inset_0_0_0_1px_var(--emp-border,var(--border-color))] hover:bg-[color-mix(in_srgb,var(--text-primary)_5%,var(--surface-fill))]'
+      : '';
   /** 叠纸那两层纸片与流光内层要填的底：有 worker 的主卡自身有实色底，纸片就跟它同色。 */
   const onGroupFill = inBranchGroup;
   const paperFill = 'bg-[var(--surface-fill)]';
   const liveFill = undefined;
   /** 分支父卡的底面要一路传下去（叠纸、流光内层都读它），否则内层会填回栏底而露出浅灰补丁。 */
   const surfaceScope = branchRoot ? '[--surface-fill:var(--grp-card-bg)]' : '';
-  /** 组内三种卡的横向内边距：分支子卡微收左缩进，worker 行紧凑，其余是默认那一档。 */
-  const padding = nested
+  /** 组内三种卡的横向内边距：分支子卡微收左缩进，worker 行紧凑，其余是默认那一档。带员工顶栏的卡由内层承载边距，顶栏铺满整卡上沿。 */
+  const bodyPadding = nested
     ? 'py-[5px] pl-2 pr-2.5'
     : branchCard
       ? 'pl-[14px] pr-[11px] py-[7px]'
-      : 'px-3 pt-2 pb-[7px]';
+      : hasEmpBar
+        ? 'px-3 pt-[7px] pb-[7px]'
+        : 'px-3 pt-2 pb-[7px]';
+  const padding = hasEmpBar ? 'overflow-hidden p-0' : bodyPadding;
   /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
   const progress = sending ? 'sending' : agentOnIt ? 'agent' : null;
   /**
@@ -356,10 +369,11 @@ export default function SessionItem({
    * 分支组里的三种卡、以及折着 worker 的那张主卡，各自已经带了自己的底与悬停色，
    * 这里不再叠一层，免得两个悬停色打架。
    */
-  const hasOwnLook = branchRootLook !== '' || stackedLook !== '' || branchCardLook !== '';
+  const hasOwnLook =
+    branchRootLook !== '' || stackedLook !== '' || branchCardLook !== '' || empCardLook !== '';
   const stateCls = selected
     ? SELECTED
-    : `${branchRootLook || stackedLook || branchCardLook}${
+    : `${branchRootLook || stackedLook || branchCardLook || empCardLook}${
         hasOwnLook ? '' : onGroupFill ? ' hover:bg-bg-active' : ' hover:bg-bg-hover'
       }`;
   /** 标题的字重与字色：分支子卡降半档，worker 行再降一档并改用次级字色，选中时都回到最重那一档。 */
@@ -411,6 +425,7 @@ export default function SessionItem({
         data-pinned={pinned ? 'true' : undefined}
         data-origin={session.origin}
         data-employee={session.employee_id ?? undefined}
+        data-emp-color={empColor}
         data-nested={nested ? 'true' : undefined}
         data-stacked={stacked ? 'true' : undefined}
         data-branch-root={branchRoot ? 'true' : undefined}
@@ -422,150 +437,154 @@ export default function SessionItem({
            行各收一档，见上面的 `padding`。 */
         className={`group/session relative z-[1] w-full cursor-pointer rounded-[8px] text-left transition-colors duration-200 ${padding} ${stateCls}`}
       >
-        {/* 分支只留一枚 branched 微标：无底无框的行内小字，出处全称放进悬停提示，不占正文。
-            从前它是一枚灰底胶囊，和下面 For you 的胶囊叠在一起成了双重盒感。 */}
-        {branchOf ? (
-          <button
-            type="button"
-            data-testid="branch-of"
-            title={branchOf.title ?? branchOf.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect(branchOf.id);
-            }}
-            className="mb-[2px] inline-flex w-fit max-w-full items-center gap-[3.5px] bg-transparent p-0 text-left text-[10.5px] font-medium leading-[1.25] text-[var(--card-meta)] hover:text-text-secondary"
+        {hasEmpBar ? (
+          <div
+            data-testid="session-employee"
+            data-employee-id={session.employee_id ?? undefined}
+            title={t('workbench.rail.employeeSession', { id: empTitle })}
+            aria-label={t('workbench.rail.employeeSession', { id: empTitle })}
+            className="si-emp-bar"
           >
-            <GitBranch size={10.5} className="shrink-0" aria-hidden="true" />
-            <span>{t('workbench.rail.branched')}</span>
-          </button>
+            <span className="emp-dot" aria-hidden="true" />
+            <span className="emp-name">{empTitle}</span>
+          </div>
         ) : null}
 
-        {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
-        <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>
-          {nested ? (
-            <CornerDownRight size={12} className="mt-[2px] shrink-0 text-text-dim" aria-hidden="true" />
+        <div className={hasEmpBar ? bodyPadding : undefined}>
+          {/* 分支只留一枚 branched 微标：无底无框的行内小字，出处全称放进悬停提示，不占正文。
+              从前它是一枚灰底胶囊，和下面 For you 的胶囊叠在一起成了双重盒感。 */}
+          {branchOf ? (
+            <button
+              type="button"
+              data-testid="branch-of"
+              title={branchOf.title ?? branchOf.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(branchOf.id);
+              }}
+              className="mb-[2px] inline-flex w-fit max-w-full items-center gap-[3.5px] bg-transparent p-0 text-left text-[10.5px] font-medium leading-[1.25] text-[var(--card-meta)] hover:text-text-secondary"
+            >
+              <GitBranch size={10.5} className="shrink-0" aria-hidden="true" />
+              <span>{t('workbench.rail.branched')}</span>
+            </button>
           ) : null}
-          <span
-            data-testid="session-title"
-            title={session.title}
-            className={`line-clamp-2 min-w-0 flex-1 break-words leading-[1.35] ${
-              nested ? 'text-[12px]' : 'text-[13px]'
-            } ${titleCls}`}
-          >
-            {session.title}
-          </span>
-        </div>
 
-        {/* 第 2 行：状态行（去掉会话内容预览以节省垂直空间，照原型 .si .sr 顶距 5px）。
-            worker 行再压一档顶距并把左内边距缩到 17px，越过 12px 折角图标加 5px 间距，
-            于是状态行与上方的 worker 标题文字左对齐。 */}
-        <div
-          data-testid="session-status"
-          className={`flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)] ${
-            nested ? 'mt-[3px] pl-[17px]' : 'mt-[5px]'
-          }`}
-        >
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            {progress === 'sending' ? (
-              <SendingChip />
-            ) : progress === 'agent' ? (
-              <AgentOnItChip />
-            ) : forYou ? (
-              <ForYouChip />
+          {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
+          <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>
+            {nested ? (
+              <CornerDownRight size={12} className="mt-[2px] shrink-0 text-text-dim" aria-hidden="true" />
             ) : null}
-            {progress ? null : (
-              <span
-                data-testid="session-age"
-                className="min-w-0 truncate"
-                title={
-                  forYou
-                    ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
-                    : session.last_reply_at
-                      ? t('workbench.rail.tsLastReply')
-                      : t('workbench.rail.tsLastActive')
-                }
-              >
-                {shortAge(age)}
-              </span>
-            )}
-            {session.employee_id ? (
-              <span
-                data-testid="session-employee"
-                data-employee-id={session.employee_id}
-                title={t('workbench.rail.employeeSession', { id: session.employee_id })}
-                aria-label={t('workbench.rail.employeeSession', { id: session.employee_id })}
-                className="inline-flex shrink-0 items-center"
-              >
-                <Briefcase size={12} aria-hidden="true" />
-              </span>
-            ) : null}
-            {inTmux ? (
-              <SquareTerminal
-                size={12}
-                data-testid="session-in-tmux"
-                className="shrink-0"
-                aria-label="tmux"
+            <span
+              data-testid="session-title"
+              title={session.title}
+              className={`line-clamp-2 min-w-0 flex-1 break-words leading-[1.35] ${
+                nested ? 'text-[12px]' : 'text-[13px]'
+              } ${titleCls}`}
+            >
+              {session.title}
+            </span>
+          </div>
+
+          {/* 第 2 行：状态行（去掉会话内容预览以节省垂直空间，照原型 .si .sr 顶距 5px）。
+              worker 行再压一档顶距并把左内边距缩到 17px，越过 12px 折角图标加 5px 间距，
+              于是状态行与上方的 worker 标题文字左对齐。 */}
+          <div
+            data-testid="session-status"
+            className={`flex h-[17px] min-w-0 items-center gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)] ${
+              nested ? 'mt-[3px] pl-[17px]' : 'mt-[5px]'
+            }`}
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              {progress === 'sending' ? (
+                <SendingChip />
+              ) : progress === 'agent' ? (
+                <AgentOnItChip />
+              ) : forYou ? (
+                <ForYouChip />
+              ) : null}
+              {progress ? null : (
+                <span
+                  data-testid="session-age"
+                  className="min-w-0 truncate"
+                  title={
+                    forYou
+                      ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
+                      : session.last_reply_at
+                        ? t('workbench.rail.tsLastReply')
+                        : t('workbench.rail.tsLastActive')
+                  }
+                >
+                  {shortAge(age)}
+                </span>
+              )}
+              {inTmux ? (
+                <SquareTerminal
+                  size={12}
+                  data-testid="session-in-tmux"
+                  className="shrink-0"
+                  aria-label="tmux"
+                />
+              ) : null}
+              {hasWorkers ? (
+                <button
+                  type="button"
+                  aria-expanded={workersExpanded}
+                  aria-label={
+                    workersExpanded
+                      ? t('workbench.rail.collapseWorkers')
+                      : t('workbench.rail.expandWorkers', { n: workerCount })
+                  }
+                  title={t('workbench.rail.workerCount', { n: workerCount })}
+                  data-testid="toggle-workers"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleWorkers?.(session);
+                  }}
+                  className="flex shrink-0 items-center gap-0.5 rounded-[4px] px-0.5 hover:bg-bg-hover hover:text-text-primary"
+                >
+                  <ChevronRight
+                    size={12}
+                    className={`transition-transform duration-200 ${workersExpanded ? 'rotate-90' : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span className="font-mono">{workerCount}</span>
+                </button>
+              ) : null}
+              {pinned && !inPinnedGroup ? (
+                <Pin size={12} fill="currentColor" data-testid="session-pinned" className="shrink-0" aria-hidden />
+              ) : null}
+            </div>
+            <SessionMenu
+              session={session}
+              pinned={pinned}
+              onTogglePin={onTogglePin}
+              pickedToday={pickedToday}
+              onRemoveToday={onRemoveToday}
+              inTmux={inTmux}
+              busyTurn={busyTurn}
+              onStopped={() => onStopped?.(session)}
+              onDeleted={(result) => onDeleted?.(session, result)}
+              onCopy={onCopy}
+              copied={copied}
+            />
+            {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
+                OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、
+                压低对比退到后面，鼠标经过这张卡或它被选中时才恢复辨识度。 */}
+            {FAMILY_ICON[session.family] ? (
+              <img
+                src={FAMILY_ICON[session.family].src}
+                alt={FAMILY_ICON[session.family].label}
+                title={FAMILY_ICON[session.family].label}
+                data-testid="session-family-icon"
+                data-family={session.family}
+                className={`pointer-events-none h-[13px] w-[13px] shrink-0 select-none rounded-[3px] object-contain transition-[filter,opacity] duration-150 ${
+                  selected
+                    ? 'opacity-[0.82] [filter:grayscale(0.15)]'
+                    : 'opacity-[0.36] [filter:grayscale(0.88)] group-hover/session:opacity-[0.82] group-hover/session:[filter:grayscale(0.15)]'
+                }`}
               />
             ) : null}
-            {hasWorkers ? (
-              <button
-                type="button"
-                aria-expanded={workersExpanded}
-                aria-label={
-                  workersExpanded
-                    ? t('workbench.rail.collapseWorkers')
-                    : t('workbench.rail.expandWorkers', { n: workerCount })
-                }
-                title={t('workbench.rail.workerCount', { n: workerCount })}
-                data-testid="toggle-workers"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleWorkers?.(session);
-                }}
-                className="flex shrink-0 items-center gap-0.5 rounded-[4px] px-0.5 hover:bg-bg-hover hover:text-text-primary"
-              >
-                <ChevronRight
-                  size={12}
-                  className={`transition-transform duration-200 ${workersExpanded ? 'rotate-90' : ''}`}
-                  aria-hidden="true"
-                />
-                <span className="font-mono">{workerCount}</span>
-              </button>
-            ) : null}
-            {pinned && !inPinnedGroup ? (
-              <Pin size={12} fill="currentColor" data-testid="session-pinned" className="shrink-0" aria-hidden />
-            ) : null}
           </div>
-          <SessionMenu
-            session={session}
-            pinned={pinned}
-            onTogglePin={onTogglePin}
-            pickedToday={pickedToday}
-            onRemoveToday={onRemoveToday}
-            inTmux={inTmux}
-            busyTurn={busyTurn}
-            onStopped={() => onStopped?.(session)}
-            onDeleted={(result) => onDeleted?.(session, result)}
-            onCopy={onCopy}
-            copied={copied}
-          />
-          {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
-              OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、
-              压低对比退到后面，鼠标经过这张卡或它被选中时才恢复辨识度。 */}
-          {FAMILY_ICON[session.family] ? (
-            <img
-              src={FAMILY_ICON[session.family].src}
-              alt={FAMILY_ICON[session.family].label}
-              title={FAMILY_ICON[session.family].label}
-              data-testid="session-family-icon"
-              data-family={session.family}
-              className={`pointer-events-none h-[13px] w-[13px] shrink-0 select-none rounded-[3px] object-contain transition-[filter,opacity] duration-150 ${
-                selected
-                  ? 'opacity-[0.82] [filter:grayscale(0.15)]'
-                  : 'opacity-[0.36] [filter:grayscale(0.88)] group-hover/session:opacity-[0.82] group-hover/session:[filter:grayscale(0.15)]'
-              }`}
-            />
-          ) : null}
         </div>
       </div>
       </MaybeLiveCard>

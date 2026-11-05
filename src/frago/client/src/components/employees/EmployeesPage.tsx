@@ -29,7 +29,7 @@ import { useEmployeeList, type EmployeePost } from '@/hooks/useEmployees';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import LaunchEmployeeDialog from './LaunchEmployeeDialog';
 import EmployeeDetailDialog from './EmployeeDetailDialog';
-import { employeeInitials, employeeSummary } from './employeeMeta';
+import { employeeInitials, employeeSummary, resolveEmployeeColor } from './employeeMeta';
 
 /** 这一页的数据是本机磁盘上的编制，变得不快。半分钟一次够用，切回来时另有一次。 */
 const REFRESH_MS = 30_000;
@@ -149,6 +149,7 @@ function EmployeeCard({
 }) {
   const { t } = useTranslation();
   const summary = employeeSummary(post);
+  const empColor = resolveEmployeeColor(post.color, post.member_post_id);
 
   return (
     <div
@@ -164,8 +165,16 @@ function EmployeeCard({
       }}
       title={t('employees.card.startWith', { name: post.title })}
       data-testid={`employee-card-${post.member_post_id}`}
+      data-emp-color={empColor}
     >
-      <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[8px] border border-border-color bg-bg-hover font-mono text-[12px] font-semibold text-text-primary">
+      <span
+        className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[8px] border font-mono text-[12px] font-semibold"
+        style={{
+          background: 'var(--emp-bg, var(--bg-hover))',
+          color: 'var(--emp-fg, var(--text-primary))',
+          borderColor: 'var(--emp-border, var(--border-color))',
+        }}
+      >
         {employeeInitials(post.member_post_id)}
       </span>
 

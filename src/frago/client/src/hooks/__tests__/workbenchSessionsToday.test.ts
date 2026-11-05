@@ -1,11 +1,11 @@
 /**
- * 左栏「今天」那一道筛选。
+ * 左栏「今天」那一道筛选（过去 24 小时滚动窗口）。
  *
  * 判据是**最后一句真正的 agent 回复**（`last_reply_at`），不是文件最后动过的时刻：
- * 一场昨晚 23:59:59 说过话的会话，今天可能被 hook 蹭了无数次，按文件时刻判就会一直
- * 留在今天的清单里——这正是这条口径要挡掉的。
+ * 一场超过 24 小时前说过话的会话，哪怕今天被 hook 蹭了无数次，按文件时刻判就会一直
+ * 留在清单里——这正是这条口径要挡掉的。
  *
- * 今天刚开、还没说过话的留下；正在跑的留下；人从 timeline 捡回来的留下。
+ * 过去 24 小时内刚开、还没说过话的留下；正在跑的留下；人从 timeline 捡回来的留下。
  * 置顶、父子关系、tmux 还开着都不再单独放行（2026-10-19 主人报缺陷后收紧）。
  */
 
@@ -16,7 +16,7 @@ import { startOfToday, withinToday, type WorkbenchSession } from '@/hooks/useWor
 const HOUR = 3600_000;
 // 固定本地时间：2026-10-19 12:00。用本地构造，避免用例自己跨时区。
 const NOW = new Date(2026, 9, 19, 12, 0, 0).getTime();
-const TODAY_START = new Date(2026, 9, 19, 0, 0, 0).getTime();
+const TODAY_START = NOW - 24 * HOUR;
 
 function card(over: Partial<WorkbenchSession> & { session_id: string }): WorkbenchSession {
   return {
@@ -37,21 +37,25 @@ function card(over: Partial<WorkbenchSession> & { session_id: string }): Workben
 }
 
 describe('startOfToday', () => {
-  it('落在本地日历的零点', () => {
+  it('落在过去 24 小时的起点', () => {
     expect(startOfToday(NOW)).toBe(TODAY_START);
   });
 });
 
 describe('withinToday', () => {
-  it('今天说过真话的留下，昨天 23:59:59 说了话的今天就不在', () => {
-    const justNow = card({ session_id: 'just-now', last_reply_at: NOW - 5 * 60_000 });
-    const yesterday = card({
-      session_id: 'yesterday',
-      last_reply_at: TODAY_START - 1_000,
+  it('过去 24 小时内说过真话的留下（跨过 0 点也不消失），超过 24 小时的就不在', () => {
+    const justMidnight = new Date(2026, 9, 19, 0, 2, 0).getTime();
+    const lastNight = card({
+      session_id: 'last-night',
+      last_reply_at: new Date(2026, 9, 18, 23, 50, 0).getTime(),
     });
-    expect(withinToday([justNow, yesterday], new Set(), NOW).map((s) => s.session_id)).toEqual([
-      'just-now',
-    ]);
+    const over24h = card({
+      session_id: 'over-24h',
+      last_reply_at: justMidnight - 24 * HOUR - 1_000,
+    });
+    expect(
+      withinToday([lastNight, over24h], new Set(), justMidnight).map((s) => s.session_id)
+    ).toEqual(['last-night']);
   });
 
   it('文件今天被动过、但最后一句回复是昨天：不留', () => {

@@ -917,12 +917,14 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByTestId(/^status-filter-/)).toBeNull();
   });
 
-  it('员工入口创建的会话在状态行展示非文字图标标识，普通会话不展示', () => {
+  it('员工入口创建的会话在卡片上方展示对应 Employee 颜色色带与员工名字，普通会话不展示', () => {
     const rows = [
       session({
         session_id: 'emp-session-1',
         title: '获取腾讯接口的所有标准板块并分析波动率',
         employee_id: 'stock',
+        employee_title: 'Stock 投研与策略专员',
+        employee_color: 'amber',
       }),
       session({
         session_id: 'normal-session-1',
@@ -939,14 +941,15 @@ describe('SessionRail 左栏', () => {
     );
     const items = screen.getAllByTestId('session-item');
     expect(items[0].getAttribute('data-employee')).toBe('stock');
+    expect(items[0].getAttribute('data-emp-color')).toBe('amber');
     expect(items[1].getAttribute('data-employee')).toBeNull();
+    expect(items[1].getAttribute('data-emp-color')).toBeNull();
 
-    const badges = screen.getAllByTestId('session-employee');
-    expect(badges).toHaveLength(1);
-    expect(badges[0].getAttribute('data-employee-id')).toBe('stock');
-    // 仅图标、非文字
-    expect(badges[0].textContent).toBe('');
-    expect(badges[0].querySelector('svg')).not.toBeNull();
+    const bars = screen.getAllByTestId('session-employee');
+    expect(bars).toHaveLength(1);
+    expect(bars[0].getAttribute('data-employee-id')).toBe('stock');
+    expect(bars[0].className).toContain('si-emp-bar');
+    expect(bars[0].textContent).toBe('Stock 投研与策略专员');
   });
 
 

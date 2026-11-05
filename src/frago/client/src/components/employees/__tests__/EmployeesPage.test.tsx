@@ -653,4 +653,38 @@ describe('员工页', () => {
     expect(await screen.findByText('巡检完成，认领结果已更新。')).toBeTruthy();
     vi.unstubAllGlobals();
   });
+
+  it('支持双色系映射色板选色并随编制保存，员工卡片同步绑定 data-emp-color', async () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        update: (body) => {
+          seen.push(body);
+          return new Response(JSON.stringify(makePost({ color: 'violet' })), { status: 200 });
+        },
+      })
+    );
+
+    render(<EmployeesPage />);
+    const card = await screen.findByTestId('employee-card-stock');
+    expect(card.getAttribute('data-emp-color')).toBe('amber');
+
+    fireEvent.click(screen.getByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+    expect(await screen.findByTestId('employee-color-picker')).toBeTruthy();
+    expect(screen.getByTestId('employee-color-map-preview')).toBeTruthy();
+
+    const violetSwatch = screen.getByTestId('employee-color-swatch-violet');
+    fireEvent.click(violetSwatch);
+    expect(violetSwatch.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('employee-save'));
+    await waitFor(() => {
+      expect(seen[0]).toMatchObject({
+        member_post_id: 'stock',
+        color: 'violet',
+      });
+    });
+    vi.unstubAllGlobals();
+  });
 });

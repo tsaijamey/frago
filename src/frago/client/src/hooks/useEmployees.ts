@@ -33,6 +33,7 @@ export interface EmployeePost {
   active_session_ids: string[];
   allowed_commands: string[];
   skills?: string[];
+  color?: string;
   created_at: string;
   updated_at: string;
   /** 清单接口顺带给的一行总览：几个槽位、每个槽位几项、合计几项。 */
@@ -155,6 +156,7 @@ export interface EmployeeUpsert {
   schedule_ids: string[];
   allowed_commands: string[];
   skills?: string[];
+  color?: string;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
