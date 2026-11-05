@@ -981,4 +981,102 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     expect(screen.getAllByTestId('image-grid-card')).toHaveLength(1);
     expect(container.textContent).not.toContain('frago_ui_component');
   });
+
+  it('frago app ask 命令报错且当轮无有效卡片时，挂载到收尾消息显示运行结果代码块与一行报错小字', () => {
+    const failedAskOutput = [
+      'Error: single-choice 组件必须提供 --option（格式为 "KEY|LABEL|EFFECT"，至少 1 项）。',
+      '[Fix] frago app ask single-choice --question "是否继续？" --option "A|继续|立即执行"',
+    ].join('\n');
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '开始部署' } }),
+      makeRecord('tool.call', {
+        id: 'tc_ask',
+        seq: 2,
+        payload: {
+          call_id: 'call_ask_1',
+          tool_name: 'Bash',
+          tool_family: 'shell',
+          args: { command: 'frago app ask single-choice --question "是否继续？"' },
+        },
+      }),
+      makeRecord('tool.result', {
+        id: 'tr_ask',
+        seq: 3,
+        payload: {
+          call_id: 'call_ask_1',
+          tool_name: 'Bash',
+          status: 'error',
+          duration_ms: 35,
+          body: failedAskOutput,
+        },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 4,
+        payload: {
+          text: '请在下方卡片中确认是否继续。',
+          model: 'claude-opus-5',
+        },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    expect(talk.map((r) => r.id)).toEqual(['u1', 'a_stop']);
+
+    const { container } = render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.queryByTestId('decision-card')).toBeNull();
+    expect(container.querySelector('pre')?.textContent).toContain(
+      'Error: single-choice 组件必须提供 --option'
+    );
+    const brokenLine = screen.getByTestId('decision-broken');
+    expect(brokenLine.textContent).toBe(
+      '照原文显示——这个 answer-needed-by-human 区块读不了，没有画成卡片：' +
+        'single-choice 组件必须提供 --option（格式为 "KEY|LABEL|EFFECT"，至少 1 项）。'
+    );
+  });
+
+  it('frago app ask 先失败但同轮随后重调成功时，只渲染成功决策卡而不残留报错代码块', () => {
+    const failedAskOutput = [
+      'Error: single-choice 组件必须提供 --option（格式为 "KEY|LABEL|EFFECT"，至少 1 项）。',
+      '[Fix] frago app ask single-choice --question "是否继续？" --option "A|继续|立即执行"',
+    ].join('\n');
+    const validAskOutput = JSON.stringify({
+      frago_ui_component: 'decision-card',
+      component_type: 'single-choice',
+      data: {
+        type: 'single-choice',
+        question: '是否继续？',
+        options: [
+          { key: 'A', label: '继续', effect: '立即执行', recommended: true, reversible: true },
+          { key: 'B', label: '取消', effect: '停止执行', recommended: false, reversible: true },
+        ],
+      },
+    });
+
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u1', seq: 1, payload: { text: '开始部署' } }),
+      makeRecord('tool.result', {
+        id: 'tr_fail',
+        seq: 2,
+        payload: { tool_name: 'Bash', status: 'error', duration_ms: 20, body: failedAskOutput },
+      }),
+      makeRecord('tool.result', {
+        id: 'tr_ok',
+        seq: 3,
+        payload: { tool_name: 'Bash', status: 'ok', duration_ms: 25, body: validAskOutput },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_stop',
+        seq: 4,
+        payload: { text: '请在下方卡片中确认是否继续。', model: 'claude-opus-5' },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    const { container } = render(<RecordCard record={talk[1]} sessionId={SID} />);
+    expect(screen.getByTestId('decision-card')).toBeTruthy();
+    expect(screen.queryByTestId('decision-broken')).toBeNull();
+    expect(container.querySelector('pre')).toBeNull();
+  });
 });

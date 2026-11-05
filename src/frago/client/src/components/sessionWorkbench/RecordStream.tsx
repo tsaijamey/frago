@@ -159,15 +159,34 @@ export function isTalkBubbleRecord(record: WorkbenchRecord): boolean {
   if (
     record.kind === 'tool.result' &&
     !record.agent_path.length &&
-    record.payload.status !== 'error' &&
     record.payload.ui_component_delegated !== true
   ) {
     const body = typeof record.payload.body === 'string' ? record.payload.body : '';
-    const uiCard = body ? parseUiComponentOutput(body) : null;
-    const imageGrids = body ? parseAllImageGridOutputs(body) : [];
-    if ((uiCard && uiCard.ok) || imageGrids.length > 0) return true;
+    const uiCard = body
+      ? parseUiComponentOutput(body, record.payload.ui_component_broken === true)
+      : null;
+    const imageGrids =
+      record.payload.status !== 'error' && body ? parseAllImageGridOutputs(body) : [];
+    if (uiCard !== null || imageGrids.length > 0) return true;
   }
   return lensOf(record) === 'talk';
+}
+
+const ASK_CMD_CALL_RE = /\bfrago(?:\.exe)?\s+(?:app\s+)?ask\b/;
+const ASK_CMD_HELP_RE = /\s(?:-h|--help)\b/;
+
+function isAskToolCall(record: WorkbenchRecord): boolean {
+  if (record.kind !== 'tool.call' || record.agent_path.length > 0) return false;
+  const args = record.payload.args;
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
+  const obj = args as Record<string, unknown>;
+  const cmd =
+    typeof obj.command === 'string'
+      ? obj.command
+      : typeof obj.cmd === 'string'
+        ? obj.cmd
+        : '';
+  return Boolean(cmd && ASK_CMD_CALL_RE.test(cmd) && !ASK_CMD_HELP_RE.test(cmd));
 }
 
 /**
@@ -191,15 +210,20 @@ export function isBodyRecord(record: WorkbenchRecord): boolean {
  * 卡片就会出现在收尾消息上方，而收尾消息里写的却是「请在下方卡片中选择」。
  * 挂载到当轮最后一条 `agent.say` 后，卡片永远紧贴在收尾消息正文的最下方；仅当该轮尚无
  * 任何 `agent.say` 时，才保留在最后一条 `tool.result` 上兜底显示。
+ * 当轮若无有效卡片但存在报错的 `frago ask` 输出，同样挂载到收尾回复（或原位兜底）展示代码块与报错说明。
  */
 export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchRecord[] {
   const delegateToolIndices = new Set<number>();
+  const markBrokenToolIndices = new Set<number>();
   const attachToAgentSay = new Map<number, string>();
   const attachImagesToAgentSay = new Map<number, string[]>();
   const attachContextToAgentSay = new Map<number, number>();
 
   let turnToolIndices: number[] = [];
   let turnToolBody = '';
+  let turnBrokenToolIndices: number[] = [];
+  let turnBrokenToolBody = '';
+  let turnAskCallIds = new Set<string>();
   let turnImageIndices: number[] = [];
   let turnImageBodies: string[] = [];
   let turnInlineCardAgentIndices: number[] = [];
@@ -208,6 +232,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
 
   const flushTurn = () => {
     if (turnToolIndices.length) {
+      for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
       if (lastAgentSayIdx >= 0) {
         for (const idx of turnToolIndices) delegateToolIndices.add(idx);
         attachToAgentSay.set(lastAgentSayIdx, turnToolBody);
@@ -218,6 +243,19 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         for (let k = 0; k < turnToolIndices.length - 1; k += 1) {
           delegateToolIndices.add(turnToolIndices[k]);
         }
+      }
+    } else if (turnBrokenToolIndices.length) {
+      if (lastAgentSayIdx >= 0) {
+        for (const idx of turnBrokenToolIndices) delegateToolIndices.add(idx);
+        attachToAgentSay.set(lastAgentSayIdx, turnBrokenToolBody);
+        for (const idx of turnInlineCardAgentIndices) {
+          if (idx !== lastAgentSayIdx) delegateToolIndices.add(idx);
+        }
+      } else {
+        for (let k = 0; k < turnBrokenToolIndices.length - 1; k += 1) {
+          delegateToolIndices.add(turnBrokenToolIndices[k]);
+        }
+        markBrokenToolIndices.add(turnBrokenToolIndices[turnBrokenToolIndices.length - 1]);
       }
     } else if (turnInlineCardAgentIndices.length > 1) {
       for (let k = 0; k < turnInlineCardAgentIndices.length - 1; k += 1) {
@@ -233,6 +271,9 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
     }
     turnToolIndices = [];
     turnToolBody = '';
+    turnBrokenToolIndices = [];
+    turnBrokenToolBody = '';
+    turnAskCallIds = new Set<string>();
     turnImageIndices = [];
     turnImageBodies = [];
     turnInlineCardAgentIndices = [];
@@ -271,18 +312,36 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
         }
         continue;
       }
-      if (r.kind === 'tool.result' && r.payload.status !== 'error') {
+      if (r.kind === 'tool.call') {
+        if (isAskToolCall(r)) {
+          const callId = typeof r.payload.call_id === 'string' ? r.payload.call_id : '';
+          if (callId) turnAskCallIds.add(callId);
+        }
+        continue;
+      }
+      if (r.kind === 'tool.result') {
         const body = typeof r.payload.body === 'string' ? r.payload.body : '';
         if (body) {
-          const uiCard = parseUiComponentOutput(body);
-          if (uiCard && uiCard.ok) {
-            turnToolIndices.push(i);
-            turnToolBody = body;
+          const callId = typeof r.payload.call_id === 'string' ? r.payload.call_id : '';
+          const isFailedAskCall = Boolean(
+            callId && turnAskCallIds.has(callId) && r.payload.status === 'error'
+          );
+          const uiCard = parseUiComponentOutput(body, isFailedAskCall);
+          if (uiCard) {
+            if (uiCard.ok && r.payload.status !== 'error') {
+              turnToolIndices.push(i);
+              turnToolBody = body;
+            } else {
+              turnBrokenToolIndices.push(i);
+              turnBrokenToolBody = body;
+            }
           }
-          const imageGrids = parseAllImageGridOutputs(body);
-          if (imageGrids.length > 0) {
-            turnImageIndices.push(i);
-            turnImageBodies.push(body);
+          if (r.payload.status !== 'error') {
+            const imageGrids = parseAllImageGridOutputs(body);
+            if (imageGrids.length > 0) {
+              turnImageIndices.push(i);
+              turnImageBodies.push(body);
+            }
           }
         }
       }
@@ -292,6 +351,7 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
 
   if (
     !delegateToolIndices.size &&
+    !markBrokenToolIndices.size &&
     !attachToAgentSay.size &&
     !attachImagesToAgentSay.size &&
     !attachContextToAgentSay.size
@@ -304,6 +364,11 @@ export function withTurnDecisionCards(records: WorkbenchRecord[]): WorkbenchReco
       return r.payload.ui_component_delegated === true
         ? r
         : { ...r, payload: { ...r.payload, ui_component_delegated: true } };
+    }
+    if (markBrokenToolIndices.has(idx)) {
+      return r.payload.ui_component_broken === true
+        ? r
+        : { ...r, payload: { ...r.payload, ui_component_broken: true } };
     }
     const attached = attachToAgentSay.get(idx);
     const attachedImages = attachImagesToAgentSay.get(idx);
@@ -361,13 +426,15 @@ export function talkView(records: WorkbenchRecord[]): WorkbenchRecord[] {
     if (
       record.kind === 'tool.result' &&
       !record.agent_path.length &&
-      record.payload.status !== 'error' &&
       record.payload.ui_component_delegated !== true
     ) {
       const body = typeof record.payload.body === 'string' ? record.payload.body : '';
-      const uiCard = body ? parseUiComponentOutput(body) : null;
-      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
-      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
+      const uiCard = body
+        ? parseUiComponentOutput(body, record.payload.ui_component_broken === true)
+        : null;
+      const imageGrids =
+        record.payload.status !== 'error' && body ? parseAllImageGridOutputs(body) : [];
+      if (uiCard !== null || imageGrids.length > 0) {
         out.push(record);
         continue;
       }
@@ -478,13 +545,15 @@ export function buildTalkSegments(records: WorkbenchRecord[]): StreamSegment[] {
     if (
       record.kind === 'tool.result' &&
       !record.agent_path.length &&
-      record.payload.status !== 'error' &&
       record.payload.ui_component_delegated !== true
     ) {
       const body = typeof record.payload.body === 'string' ? record.payload.body : '';
-      const uiCard = body ? parseUiComponentOutput(body) : null;
-      const imageGrids = body ? parseAllImageGridOutputs(body) : [];
-      if ((uiCard && uiCard.ok) || imageGrids.length > 0) {
+      const uiCard = body
+        ? parseUiComponentOutput(body, record.payload.ui_component_broken === true)
+        : null;
+      const imageGrids =
+        record.payload.status !== 'error' && body ? parseAllImageGridOutputs(body) : [];
+      if (uiCard !== null || imageGrids.length > 0) {
         flushPreResponse(record.group_id);
         out.push({ kind: 'record', record });
         continue;

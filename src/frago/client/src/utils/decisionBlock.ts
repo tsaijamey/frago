@@ -111,14 +111,19 @@ export function yamlNow(): Yaml | null {
   return yamlLib;
 }
 
-/** 加载 YAML 解析器。只加载一次，并发调用拿到的是同一个 Promise。 */
+/** 加载 YAML 解析器。只加载一次，并发调用拿到的是同一个 Promise；若加载失败则重置以便重试。 */
 export function loadYaml(): Promise<Yaml> {
   if (yamlLib) return Promise.resolve(yamlLib);
   if (!yamlLoading) {
-    yamlLoading = import('js-yaml').then((m) => {
-      yamlLib = m as Yaml;
-      return yamlLib;
-    });
+    yamlLoading = import('js-yaml')
+      .then((m) => {
+        yamlLib = m as Yaml;
+        return yamlLib;
+      })
+      .catch((err) => {
+        yamlLoading = null;
+        throw err;
+      });
   }
   return yamlLoading;
 }
@@ -252,37 +257,79 @@ function findMatchingBrace(src: string, start: number): number {
   return -1;
 }
 
+const ASK_CLI_ERROR_LINE_RE =
+  /(?:^|\n)(?:Error:|\[Error\])\s*([^\n]+(?:\b(?:single-choice|multi-choice|text-answer|choice-and-text)\s*组件|未知的交互组件类型|请指定要生成的交互组件类型|--option\b|--question\b|--recommended\b|--irreversible\b|--draft\b|--suggestion\b|--multi\b|--from-teammate\b)[^\n]*)/;
+const ASK_FIX_HINT_RE = /\[Fix\][\s\S]*\bfrago(?:\.exe)?\s+(?:app\s+)?ask\b/;
+const ASK_NO_SUCH_CMD_RE =
+  /Usage:\s*frago(?:\.exe)?\b[\s\S]*No such command ['"](?:ask|app)['"]/;
+const TRUNCATED_DECISION_ENVELOPE_RE = /\{\s*"frago_ui_component"\s*:\s*"decision-card"/;
+
+function extractAskErrorDetail(raw: string): string {
+  const errMatch = /(?:^|\n)\s*(?:Error:|\[Error\])\s*([^\n]+)/.exec(raw);
+  const line = errMatch
+    ? errMatch[1].trim()
+    : raw
+        .trim()
+        .split('\n')
+        .map((l) => l.trim())
+        .find((l) => Boolean(l)) ?? 'command failed';
+  return line.replace(/[。.]+$/, '').trim() || 'command failed';
+}
+
 /**
- * 解析 `frago ask` CLI 工具输出的结构化 UI 组件数据（`frago_ui_component: "decision-card"`）。
+ * 解析 `frago ask` / `frago app ask` CLI 工具输出的结构化 UI 组件数据（`frago_ui_component: "decision-card"`）
+ * 或其命令执行失败报错。
  *
- * 工具输出可能直接是 JSON，也可能前面包着终端执行日志（如 `Command output:\n{...}`）。
- * 不含组件标记或不是合法 JSON 信封时返回 null；命中信封则校验 `data` 并返回 `ParseResult`。
+ * 工具输出可能直接是 JSON，也可能前面包着终端执行日志（如 `Command output:\n{...}`），
+ * 或因参数错误直接输出 `Error: ...` / `[Fix] frago app ask ...`。
+ * 不含组件标记且非 ask 报错时返回 null；命中信封或报错时返回 `ParseResult`。
  */
-export function parseUiComponentOutput(raw: string): ParseResult | null {
-  if (!raw || !raw.includes('"frago_ui_component"')) return null;
-  let searchEnd = raw.length;
-  while (searchEnd > 0) {
-    const markerIdx = raw.lastIndexOf('"frago_ui_component"', searchEnd - 1);
-    if (markerIdx < 0) break;
-    searchEnd = markerIdx;
-    const start = raw.lastIndexOf('{', markerIdx);
-    if (start < 0) continue;
-    const end = findMatchingBrace(raw, start);
-    if (end <= markerIdx) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.slice(start, end + 1));
-    } catch {
-      continue;
+export function parseUiComponentOutput(
+  raw: string,
+  fallbackAsBroken = false
+): ParseResult | null {
+  if (!raw || !raw.trim()) return null;
+  if (raw.includes('"frago_ui_component"')) {
+    let searchEnd = raw.length;
+    while (searchEnd > 0) {
+      const markerIdx = raw.lastIndexOf('"frago_ui_component"', searchEnd - 1);
+      if (markerIdx < 0) break;
+      searchEnd = markerIdx;
+      const start = raw.lastIndexOf('{', markerIdx);
+      if (start < 0) continue;
+      const end = findMatchingBrace(raw, start);
+      if (end <= markerIdx) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        continue;
+      }
+      if (!isObj(parsed) || parsed.frago_ui_component !== UI_COMPONENT_MARKER) continue;
+      const target = isObj(parsed.data)
+        ? {
+            ...(typeof parsed.component_type === 'string' ? { type: parsed.component_type } : {}),
+            ...parsed.data,
+          }
+        : parsed.data;
+      return validateDecisionObject(target);
     }
-    if (!isObj(parsed) || parsed.frago_ui_component !== UI_COMPONENT_MARKER) continue;
-    const target = isObj(parsed.data)
-      ? {
-          ...(typeof parsed.component_type === 'string' ? { type: parsed.component_type } : {}),
-          ...parsed.data,
-        }
-      : parsed.data;
-    return validateDecisionObject(target);
+    if (TRUNCATED_DECISION_ENVELOPE_RE.test(raw)) {
+      return broken('yaml', { detail: 'JSON 输出被截断或格式损坏' });
+    }
+  }
+  const cliErr = ASK_CLI_ERROR_LINE_RE.exec(raw);
+  if (cliErr) {
+    return broken('yaml', { detail: cliErr[1].trim().replace(/[。.]+$/, '') });
+  }
+  if (ASK_FIX_HINT_RE.test(raw) && /(?:^|\n)\s*(?:Error:|\[Error\])\s*/.test(raw)) {
+    return broken('yaml', { detail: extractAskErrorDetail(raw) });
+  }
+  if (ASK_NO_SUCH_CMD_RE.test(raw)) {
+    return broken('yaml', { detail: extractAskErrorDetail(raw) });
+  }
+  if (fallbackAsBroken) {
+    return broken('yaml', { detail: extractAskErrorDetail(raw) });
   }
   return null;
 }

@@ -634,6 +634,36 @@ function useBrokenText() {
 }
 
 /**
+ * 报错或写坏的交互卡片：把原始输出塞进 ```code 围栏块展示，并在下方附一行小字说明原因。
+ */
+export function DecisionBroken({
+  raw,
+  reason,
+  rich,
+}: {
+  raw?: string;
+  reason: BrokenReason;
+  rich?: (text: string) => ReactNode;
+}) {
+  const brokenText = useBrokenText();
+  const trimmed = raw?.trim() ?? '';
+  return (
+    <>
+      {trimmed && rich ? (
+        <div className="mt-2 min-w-0">{rich(`\`\`\`\n${trimmed}\n\`\`\``)}</div>
+      ) : null}
+      <p
+        data-testid="decision-broken"
+        className="mt-1 flex items-start gap-1.5 text-[11px] leading-[1.5] text-text-muted"
+      >
+        <Info size={12} className="mt-0.5 shrink-0" />
+        <span>{brokenText(reason)}</span>
+      </p>
+    </>
+  );
+}
+
+/**
  * 一条末尾带区块的 agent 回复：正文照常，区块换成卡片；读不了就照原文显示并写明原因。
  *
  * `rich` 由记录卡给：正文怎么排版归它管，这里只决定哪一段交给它。
@@ -650,7 +680,6 @@ export function DecisionReply({
   rich: (text: string) => ReactNode;
 }) {
   const yaml = useYaml();
-  const brokenText = useBrokenText();
   // YAML 解析器还在路上：先只画正文，不把区块原文先摆出来再换掉。
   if (!yaml) return <>{split.body ? rich(split.body) : null}</>;
   const result = parseDecisionBlock(split.raw, yaml);
@@ -658,10 +687,7 @@ export function DecisionReply({
     return (
       <>
         {rich(text)}
-        <p data-testid="decision-broken" className="mt-1 flex items-start gap-1.5 text-[11px] leading-[1.5] text-text-muted">
-          <Info size={12} className="mt-0.5 shrink-0" />
-          <span>{brokenText(result.reason)}</span>
-        </p>
+        <DecisionBroken reason={result.reason} />
       </>
     );
   }

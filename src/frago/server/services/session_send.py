@@ -12,11 +12,12 @@ driver 里都有 native 分支），缺的只是"告诉 runner 这个编号是�
 
 - **哪一家**由 :func:`~frago.session.record_reader.detect_family` 判——与左栏清单、
   记录流用的是同一份判据，NEVER 在这里另写一套形状匹配。
-- **哪个目录**各家问各家的档案：claude 读 jsonl 首条记录的 ``cwd``，codex 读 rollout
-  首行的 ``session_meta.cwd``，opencode 查会话行的 ``directory``。
-- **目录问不出来就不发**（claude 的新会话除外，见 :class:`SendTarget`）。续接命令本身
-  不带目录，tmux 在哪儿起，agent 的工作目录就是哪儿；给错目录续接照样成功，但 agent
-  看到的是另一个仓库——比起不了还难发现。
+- **哪个目录**各家先问各家的档案：claude 读 jsonl 首条记录的 ``cwd``，codex 读 rollout
+  首行的 ``session_meta.cwd``，opencode 查会话行的 ``directory``，agy 查摘要库的
+  ``workspace_uris``。
+- **档案里读不到目录时按链兜底回退，不抛错拦截**：依次回退 frago 认领绑定账本
+  （``~/.frago/{agy,codex,opencode}-sessions.json``）→ 调用方传入的 ``cwd_hint`` →
+  用户主目录 ``str(Path.home())``。五家 CLI Agent 实测均支持跨目录续接会话上下文。
 
 第四家 CoreAgent 判落点走同一条路，投喂换一条：它没有挂在 tmux 里的交互界面，一轮就是
 一个进程，靠 ``--session-id`` 把上一场的记录读回来接上前文（见
@@ -78,10 +79,6 @@ class SessionGone(LookupError):
     """
 
 
-class SessionDirectoryUnknown(LookupError):
-    """问不出这场会话当初跑在哪个目录，因此不能替它决定在哪儿续接。"""
-
-
 @dataclass(frozen=True)
 class SendTarget:
     """一次投喂的落点：驱动哪一家、在哪个目录续接。"""
@@ -140,16 +137,29 @@ def _recorded_cwd(path: Path | None) -> str | None:
     return None
 
 
+def _fallback_cwd(*candidates: str | None) -> str:
+    """按优先级挑第一个非空工作目录；全部为空时兜底回退到 ``str(Path.home())``。
+
+    五种 CLI Agent（claude / codex / opencode / agy / frago-core）实测均支持跨目录恢复会话上下文
+    （见 ``20261104-cli-resume-cwd-experiment``）；当原记录或摘要库里的目录字段缺失或被清空时，
+    依次回退：原记录目录 → frago 认领账本目录 → 调用方传入的 ``cwd_hint`` → ``str(Path.home())``，
+    彻底去掉「读不到工作目录不能续接」的报错拦截。
+    """
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return str(Path.home())
+
+
 def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarget:
     """判出这个会话编号该由哪一家驱动、在哪个目录续接。
 
-    ``cwd_hint`` 只对"页面刚 mint 的新 claude 会话"有意义（新建会话对话框里挑的那个
-    起始目录）。已经有记录的会话一律以档案里记着的目录为准，NEVER 让页面传来的值
-    覆盖它——同一场会话换个目录续接，等于把 agent 挪到另一个仓库里接着干。
+    已经有目录记录的会话优先以档案或认领账本里记着的目录为准，不让页面传来的 ``cwd_hint``
+    覆盖已记录目录；当原记录和认领账本都读不到目录时，依次回退到 ``cwd_hint`` 与
+    ``str(Path.home())``。
 
-    抛 :class:`~frago.session.record_reader.UnknownSessionFamily`（编号形状各家都不像）、
-    :class:`SessionNotResumable`（这一家的会话只能回看）、:class:`SessionGone`（记录没了）、
-    :class:`SessionDirectoryUnknown`（问不出目录）。
+    抛 :class:`~frago.session.record_reader.UnknownSessionFamily`（编号为空）、
+    :class:`SessionNotResumable`（这一家的会话只能回看）、:class:`SessionGone`（记录没了）。
     """
     sid = session_id.strip()
     if not sid:
@@ -170,17 +180,15 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
 
         has_file = coreagent_store.find_session_file(sid) is not None
         recorded = _coreagent_cwd(sid)
-        if recorded is None:
-            if has_file:
-                raise SessionDirectoryUnknown(
-                    f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
-                )
+        if (recorded is None or not recorded.strip()) and not has_file:
             return SendTarget(sid, family, COREAGENT_AGENT, cwd_hint, is_new=True)
-        if not recorded.strip():
-            raise SessionDirectoryUnknown(
-                f"CoreAgent 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
-            )
-        return SendTarget(session_id, family, COREAGENT_AGENT, recorded, is_new=False)
+        return SendTarget(
+            session_id,
+            family,
+            COREAGENT_AGENT,
+            _fallback_cwd(recorded, cwd_hint),
+            is_new=False,
+        )
 
     agent_type = AGENT_TYPE_BY_FAMILY.get(family)
     if agent_type is None:
@@ -190,9 +198,16 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
         )
 
     if family == "claude-code":
-        recorded = _claude_cwd(session_id)
-        if recorded:
-            return SendTarget(session_id, family, agent_type, recorded, is_new=False)
+        transcript = tc.locate_transcript(session_id)
+        if transcript is not None:
+            recorded = _recorded_cwd(transcript)
+            return SendTarget(
+                session_id,
+                family,
+                agent_type,
+                _fallback_cwd(recorded, cwd_hint),
+                is_new=False,
+            )
         live = _coreagent_cwd(session_id)
         if live:
             return SendTarget(session_id, "coreagent", COREAGENT_AGENT, live, is_new=False)
@@ -205,32 +220,21 @@ def resolve_target(session_id: str, *, cwd_hint: str | None = None) -> SendTarge
         meta = codex_store.session_meta(session_id)
         if meta is None:
             raise SessionGone(f"codex 那边找不到会话 {session_id} 的记录，续不上")
-        if not meta.cwd:
-            raise SessionDirectoryUnknown(
-                f"codex 会话 {session_id} 的记录里没写工作目录，不能替它决定在哪儿续接"
-            )
-        return SendTarget(session_id, family, agent_type, meta.cwd, is_new=False)
+        directory = _fallback_cwd(meta.cwd, codex_store.bound_directory(session_id), cwd_hint)
+        return SendTarget(session_id, family, agent_type, directory, is_new=False)
 
     if family == "agy":
-        # agy 的转录文件就是它这一场的记录；目录记在摘要库的 workspace_uris 里，续接要在
-        # 原来那个目录里起 ``--conversation`` 才接得回同一场。
+        # agy 的转录文件就是它这一场的记录；目录优先取摘要库 workspace_uris 及认领账本，
+        # 缺失时回退 cwd_hint / Path.home()。
         if not agy_store.conversation_exists(session_id):
             raise SessionGone(f"agy 那边找不到会话 {session_id} 的转录，续不上")
-        directory = agy_store.session_directory(session_id)
-        if not directory:
-            raise SessionDirectoryUnknown(
-                f"读不到 agy 会话 {session_id} 的工作目录，不能替它决定在哪儿续接"
-            )
+        directory = _fallback_cwd(agy_store.session_directory(session_id), cwd_hint)
         return SendTarget(session_id, family, agent_type, directory, is_new=False)
 
     # opencode
     if not opencode_store.session_exists(session_id):
         raise SessionGone(f"opencode 库里没有会话 {session_id}，续不上")
-    directory = opencode_store.session_directory(session_id)
-    if not directory:
-        raise SessionDirectoryUnknown(
-            f"读不到 opencode 会话 {session_id} 的工作目录，不能替它决定在哪儿续接"
-        )
+    directory = _fallback_cwd(opencode_store.session_directory(session_id), cwd_hint)
     return SendTarget(session_id, family, agent_type, directory, is_new=False)
 
 

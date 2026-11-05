@@ -67,7 +67,13 @@ import { EmployeeQuotes } from './EmployeeQuote';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
 import ImageGridCard from './ImageGridCard';
-import { CardAnswerBody, CardAnswerTag, DecisionCard, DecisionReply } from './DecisionCard';
+import {
+  CardAnswerBody,
+  CardAnswerTag,
+  DecisionBroken,
+  DecisionCard,
+  DecisionReply,
+} from './DecisionCard';
 import {
   fetchWorkbenchRaw,
   queueOpOf,
@@ -864,7 +870,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
   const rawTrailing = record.agent_path.length ? null : splitTrailingBlock(bodyWithoutGrid);
   const uiFromDelegated =
     !suppressed && !record.agent_path.length && delegatedUi
-      ? parseUiComponentOutput(delegatedUi)
+      ? parseUiComponentOutput(delegatedUi, true)
       : null;
   const trailing = suppressed || (uiFromDelegated && uiFromDelegated.ok) ? null : rawTrailing;
   const displayText = rawTrailing && !trailing ? rawTrailing.body : bodyWithoutGrid;
@@ -872,6 +878,10 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
     !trailing && !suppressed && !record.agent_path.length
       ? uiFromDelegated ?? parseUiComponentOutput(bodyWithoutGrid)
       : null;
+  const brokenRaw =
+    uiComponent && !uiComponent.ok
+      ? delegatedUi || (!bodyWithoutGrid.includes('```') ? bodyWithoutGrid : '')
+      : '';
   return (
     <TextShell
       record={record}
@@ -903,8 +913,16 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
           ))}
-          {uiComponent && uiComponent.ok ? (
-            <DecisionCard block={uiComponent.block} recordId={record.id} />
+          {uiComponent ? (
+            uiComponent.ok ? (
+              <DecisionCard block={uiComponent.block} recordId={record.id} />
+            ) : (
+              <DecisionBroken
+                raw={brokenRaw}
+                reason={uiComponent.reason}
+                rich={(s) => <Rich text={s} />}
+              />
+            )
           ) : null}
         </>
       )}
@@ -1447,8 +1465,8 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
   // 唯一入口。收起来等于把补救办法藏在一次点击后面，而卡头上的徽章刚说完"没了"。
   const needsAction = failed || Boolean(truncation);
   const uiComponent =
-    !failed && !record.agent_path.length && p.ui_component_delegated !== true
-      ? parseUiComponentOutput(bodyText)
+    !record.agent_path.length && p.ui_component_delegated !== true
+      ? parseUiComponentOutput(bodyText, p.ui_component_broken === true)
       : null;
   const imageGrids =
     !failed && !record.agent_path.length && p.ui_component_delegated !== true
@@ -1495,8 +1513,16 @@ function ToolResult({ record, sessionId }: { record: WorkbenchRecord; sessionId:
       {imageGrids.map((grid, idx) => (
         <ImageGridCard key={`grid-${idx}`} block={grid} />
       ))}
-      {uiComponent && uiComponent.ok ? (
-        <DecisionCard block={uiComponent.block} recordId={record.id} />
+      {uiComponent ? (
+        uiComponent.ok ? (
+          <DecisionCard block={uiComponent.block} recordId={record.id} />
+        ) : (
+          <DecisionBroken
+            raw={bodyText}
+            reason={uiComponent.reason}
+            rich={(s) => <Rich text={s} />}
+          />
+        )
       ) : null}
     </div>
   );
@@ -2026,11 +2052,10 @@ function ToolRunLine({
   const failed = status === 'error';
   const resultBody = str(result, 'body');
   const uiComponent =
-    !failed &&
     row.result &&
     !row.result.agent_path.length &&
     result.ui_component_delegated !== true
-      ? parseUiComponentOutput(resultBody)
+      ? parseUiComponentOutput(resultBody, result.ui_component_broken === true)
       : null;
   const imageGrids =
     !failed &&
@@ -2077,9 +2102,17 @@ function ToolRunLine({
           ))}
         </div>
       ) : null}
-      {!open && uiComponent && uiComponent.ok && row.result ? (
+      {!open && uiComponent && row.result ? (
         <div className="min-w-0 px-3 pb-2">
-          <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+          {uiComponent.ok ? (
+            <DecisionCard block={uiComponent.block} recordId={row.result.id} />
+          ) : (
+            <DecisionBroken
+              raw={resultBody}
+              reason={uiComponent.reason}
+              rich={(s) => <Rich text={s} />}
+            />
+          )}
         </div>
       ) : null}
       {open ? (

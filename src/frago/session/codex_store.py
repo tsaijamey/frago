@@ -633,6 +633,18 @@ def get_binding(frago_session_id: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def bound_directory(codex_session_id: str) -> str | None:
+    """从身份映射账本反查该 codex 会话认领时记下的工作目录；没有则 None。"""
+    if not codex_session_id:
+        return None
+    for entry in _load_bindings().values():
+        if entry.get("codex_session_id") == codex_session_id:
+            directory = entry.get("directory")
+            if isinstance(directory, str) and directory.strip():
+                return directory.strip()
+    return None
+
+
 def put_binding(frago_session_id: str, codex_session_id: str, directory: str) -> None:
     """写入映射。一旦建立就不再重认（重认会让两个会话的记录互串）。"""
     bindings = _load_bindings()

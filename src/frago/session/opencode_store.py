@@ -627,38 +627,37 @@ def delete_session(opencode_session_id: str) -> str:
 
 
 def session_directory(opencode_session_id: str) -> str | None:
-    """该会话当初跑在哪个目录。会话不在库里 / 库读不出来 / 没记目录时返回 None。
+    """该会话当初跑在哪个目录。会话库与认领账本都读不到时返回 None。
 
-    续接一场已有会话时要用它起 tmux：``opencode -s <id>`` 本身不带目录，进程的工作
-    目录就是 tmux 起会话时给的那个。给错了续接照样成功，但 agent 看到的是另一个
-    仓库——比起不了还难发现，所以调用方 MUST 拿这个目录去起会话。
+    优先读 SQLite 会话行（``session_v2`` / ``session``）的 ``directory``；
+    若库读不出来或字段为空，回退反查 ``~/.frago/opencode-sessions.json`` 认领账本里的
+    ``directory``。
 
     与 ``session_exists`` 分工：那个回答"还在不在"（库读不出来时保守答"在"），这个
     回答"在哪儿"（读不出来就是不知道）。两者 NEVER 合并成一个返回值。
     """
     conn = _connect()
-    if conn is None:
-        return None
-    names = _table_names(conn) or frozenset()
-    row = None
-    try:
-        for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
-            if table not in names:
-                continue
-            row = conn.execute(
-                f"SELECT directory FROM {table} WHERE id = ? LIMIT 1",  # noqa: S608
-                (opencode_session_id,),
-            ).fetchone()
-            if row:
-                break
-    except sqlite3.Error as exc:
-        logger.debug("opencode session_directory failed: %s", exc)
-        return None
-    finally:
-        conn.close()
-    if not row:
-        return None
-    return str(row[0]) if isinstance(row[0], str) and row[0] else None
+    if conn is not None:
+        names = _table_names(conn) or frozenset()
+        row = None
+        try:
+            for table in (_V2_SESSION_TABLE, _LEGACY_SESSION_TABLE):
+                if table not in names:
+                    continue
+                row = conn.execute(
+                    f"SELECT directory FROM {table} WHERE id = ? LIMIT 1",  # noqa: S608
+                    (opencode_session_id,),
+                ).fetchone()
+                if row:
+                    break
+        except sqlite3.Error as exc:
+            logger.debug("opencode session_directory failed: %s", exc)
+            row = None
+        finally:
+            conn.close()
+        if row and isinstance(row[0], str) and row[0].strip():
+            return str(row[0]).strip()
+    return bound_directory(opencode_session_id)
 
 
 # ── 本轮完成判定 ────────────────────────────────────────────────────
@@ -1424,6 +1423,18 @@ def bound_session_ids() -> set[str]:
 def get_binding(frago_session_id: str) -> str | None:
     """取该 frago 会话已认领的 opencode 会话 id；没有则 None。"""
     return _bound_id(_load_bindings(), frago_session_id)
+
+
+def bound_directory(opencode_session_id: str) -> str | None:
+    """从身份映射账本反查该 opencode 会话认领时记下的工作目录；没有则 None。"""
+    if not opencode_session_id:
+        return None
+    for entry in _load_bindings().values():
+        if entry.get("opencode_session_id") == opencode_session_id:
+            directory = entry.get("directory")
+            if isinstance(directory, str) and directory.strip():
+                return directory.strip()
+    return None
 
 
 def _new_entry(

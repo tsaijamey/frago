@@ -241,14 +241,14 @@ def conversation_exists(conversation_id: str) -> bool:
 def session_directory(conversation_id: str) -> str | None:
     """这场会话当初在哪个工作目录跑的。读不到时 None。
 
-    续接要用：agy 的 ``--conversation <id>`` 必须在原来那个目录里起，才接得回同一场。
-    目录记在摘要库的 ``workspace_uris`` 里（与 codex 的 rollout 元数据、opencode 的会话库
-    同一个用途）。
+    优先读摘要库 ``conversation_summaries.db`` 的 ``workspace_uris``；若摘要库尚未写入
+    或冷启动恢复时被 agy 覆写为空串，再回退查 ``~/.frago/agy-sessions.json`` 认领账本里
+    记下的 ``directory``。
     """
     for conv in list_conversations():
-        if conv.conversation_id == conversation_id:
-            return conv.workspace or None
-    return None
+        if conv.conversation_id == conversation_id and conv.workspace:
+            return conv.workspace
+    return bound_directory(conversation_id)
 
 
 # ── 记录读取 ────────────────────────────────────────────────────────
@@ -577,7 +577,7 @@ def list_conversations(limit: int | None = None) -> list[AgyConversation]:
             conversation_id=str(row[0]),
             title=str(row[1] or ""),
             preview=str(row[2] or ""),
-            workspace=_workspace_of(row[3]),
+            workspace=_workspace_of(row[3]) or (bound_directory(str(row[0])) or ""),
             last_modified=_parse_modified(row[4]),
             last_user_input=_parse_modified(row[5]),
             step_count=int(row[6] or 0),
@@ -700,6 +700,23 @@ def get_binding(frago_session_id: str) -> str | None:
         return None
     value = entry.get("agy_conversation_id")
     return value if isinstance(value, str) and value else None
+
+
+def bound_directory(conversation_id: str) -> str | None:
+    """从身份映射账本反查该 agy 会话认领时记下的工作目录；没有则 None。
+
+    agy 在冷启动 ``--conversation <id>`` 重建轨迹时可能把 ``conversation_summaries.db``
+    里的 ``workspace_uris`` 覆写为空串，但 frago 首次认领该会话时已在 ``agy-sessions.json``
+    里记下了真实启动目录，据此兜底。
+    """
+    if not conversation_id:
+        return None
+    for entry in _load_bindings().values():
+        if entry.get("agy_conversation_id") == conversation_id:
+            directory = entry.get("directory")
+            if isinstance(directory, str) and directory.strip():
+                return directory.strip()
+    return None
 
 
 def put_binding(frago_session_id: str, conversation_id: str, directory: str) -> None:

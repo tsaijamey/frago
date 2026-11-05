@@ -191,10 +191,37 @@ class TestResolveTarget:
         with pytest.raises(session_send.SessionGone):
             session_send.resolve_target(AGY_SID)
 
-    def test_agy_directory_unknown_is_refused(self, three_families, monkeypatch):
+    def test_agy_directory_unknown_falls_back_to_binding_or_hint_or_home(
+        self, three_families, monkeypatch, tmp_path
+    ):
+        """agy 摘要库 workspace_uris 被清空时，依次回退认领账本 → cwd_hint → Path.home()。"""
+        monkeypatch.setattr(agy_store, "list_conversations", lambda limit=None: [])
+        bindings_file = tmp_path / "agy-sessions.json"
+        bindings_file.write_text(
+            json.dumps(
+                {
+                    "webui-1": {
+                        "frago_session_id": "webui-1",
+                        "agy_conversation_id": AGY_SID,
+                        "directory": "/repos/agy-bound",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agy_store, "BINDINGS_PATH", bindings_file)
+        monkeypatch.setattr(agy_store, "session_directory", agy_store.session_directory)
+        # 需用未被 fixture 替换的原函数验证认领账本回退
+        assert agy_store.bound_directory(AGY_SID) == "/repos/agy-bound"
+
         monkeypatch.setattr(agy_store, "session_directory", lambda _sid: None)
-        with pytest.raises(session_send.SessionDirectoryUnknown):
-            session_send.resolve_target(AGY_SID)
+        target_hint = session_send.resolve_target(AGY_SID, cwd_hint="/repos/hint-dir")
+        assert target_hint.cwd == "/repos/hint-dir"
+        assert target_hint.is_new is False
+
+        target_home = session_send.resolve_target(AGY_SID)
+        assert target_home.cwd == str(Path.home())
+        assert target_home.is_new is False
 
     def test_brand_new_uuid_falls_back_to_coreagent_and_takes_the_directory_hint(self, three_families):
         """档案里还没有记录的裸 UUID：交给保底内置的 CoreAgent 新建，目录由调用方给。"""
@@ -223,11 +250,45 @@ class TestResolveTarget:
         with pytest.raises(session_send.SessionGone):
             session_send.resolve_target(OC_SID)
 
-    def test_unknown_directory_is_refused(self, three_families, monkeypatch):
-        """目录问不出来就不发：续接命令本身不带目录，猜一个等于换个仓库开工。"""
+    def test_unknown_directory_falls_back_across_all_five_families(
+        self, three_families, coreagent_record, monkeypatch, tmp_path
+    ):
+        """五家读不到原记录目录时，全部按链兜底回退（认领账本 → cwd_hint → Path.home()），不再抛错拦截。"""
+        # 1. opencode
         monkeypatch.setattr(opencode_store, "session_directory", lambda _sid: None)
-        with pytest.raises(session_send.SessionDirectoryUnknown):
-            session_send.resolve_target(OC_SID)
+        assert session_send.resolve_target(OC_SID, cwd_hint="/repos/oc-hint").cwd == "/repos/oc-hint"
+        assert session_send.resolve_target(OC_SID).cwd == str(Path.home())
+
+        # 2. codex（先回退 bound_directory，再回退 cwd_hint / Path.home()）
+        rollout = tmp_path / f"rollout-2026-{CODEX_SID}.jsonl"
+        monkeypatch.setattr(
+            codex_store,
+            "session_meta",
+            lambda sid: codex_store.RolloutMeta(
+                session_id=sid, path=rollout, cwd="", started_at=None, mtime=0.0
+            ),
+        )
+        monkeypatch.setattr(codex_store, "bound_directory", lambda _sid: "/repos/codex-bound")
+        assert session_send.resolve_target(CODEX_SID).cwd == "/repos/codex-bound"
+        monkeypatch.setattr(codex_store, "bound_directory", lambda _sid: None)
+        assert session_send.resolve_target(CODEX_SID, cwd_hint="/repos/codex-hint").cwd == "/repos/codex-hint"
+        assert session_send.resolve_target(CODEX_SID).cwd == str(Path.home())
+
+        # 3. claude-code（转录文件存在但无 cwd 字段）
+        no_cwd_transcript = tmp_path / f"{CC_SID}.jsonl"
+        no_cwd_transcript.write_text('{"type": "user"}\n', encoding="utf-8")
+        assert session_send.resolve_target(CC_SID, cwd_hint="/repos/cc-hint").cwd == "/repos/cc-hint"
+        assert session_send.resolve_target(CC_SID).cwd == str(Path.home())
+
+        # 4. coreagent（会话文件存在但无 cwd 字段）
+        coreagent_record.write_text(
+            json.dumps({"type": "ai-title", "aiTitle": "无目录", "sessionId": CORE_SID}) + "\n",
+            encoding="utf-8",
+        )
+        core_target = session_send.resolve_target(CORE_SID, cwd_hint="/repos/core-hint")
+        assert core_target.is_new is False
+        assert core_target.cwd == "/repos/core-hint"
+        assert session_send.resolve_target(CORE_SID).cwd == str(Path.home())
 
     def test_挂在tmux里的每一家都有驱动(self):
         """少一家就等于那一家的会话在页面上发不出去。

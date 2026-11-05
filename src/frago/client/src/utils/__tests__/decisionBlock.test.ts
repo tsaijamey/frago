@@ -370,4 +370,31 @@ describe('parseUiComponentOutput：解析 frago ask 生成的 UI 组件数据', 
     expect(parseUiComponentOutput('普通命令输出')).toBeNull();
     expect(parseUiComponentOutput('{"frago_ui_component": "other"}')).toBeNull();
   });
+
+  it('识别 frago app ask 命令报错与被截断的 decision-card JSON 并返回写坏原因', () => {
+    const cliErr = [
+      'Error: single-choice 组件必须提供 --option（格式为 "KEY|LABEL|EFFECT"，至少 1 项）。',
+      '[Fix] frago app ask single-choice --question "是否继续？" --option "A|继续|立即执行"',
+    ].join('\n');
+    const r1 = parseUiComponentOutput(cliErr);
+    expect(r1).toEqual({
+      ok: false,
+      reason: {
+        code: 'yaml',
+        params: {
+          detail: 'single-choice 组件必须提供 --option（格式为 "KEY|LABEL|EFFECT"，至少 1 项）',
+        },
+      },
+    });
+
+    const truncated = '{"frago_ui_component": "decision-card", "component_type": "single-choice"';
+    const r2 = parseUiComponentOutput(truncated);
+    expect(r2).toEqual({
+      ok: false,
+      reason: {
+        code: 'yaml',
+        params: { detail: 'JSON 输出被截断或格式损坏' },
+      },
+    });
+  });
 });

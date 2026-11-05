@@ -302,6 +302,120 @@ class TestEmployeeSession:
         assert record is not None
         assert "agy-claimed-session-777" in record.active_session_ids
 
+    def test_会话清单联表补齐员工名称与双色系颜色且分支子会话继承员工归属(
+        self, client, monkeypatch
+    ):
+        """GET /api/workbench/sessions 将员工会话与分支子会话映射到对应 Employee 的名称与颜色配置。"""
+        from frago.session.record_reader import SessionCard
+
+        stock_post = EmployeePostRecord(
+            member_post_id="stock",
+            title="Stock 投研与策略专员",
+            color="amber",
+            active_session_ids=["sid-active-only"],
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.list_posts",
+            lambda: [stock_post],
+        )
+        fake_cards = [
+            SessionCard(
+                session_id="sid-emp-root",
+                family="claude-code",
+                title="获取腾讯接口的所有标准板块",
+                directory="/tmp/work",
+                created_at=1000,
+                last_active_at=2000,
+                last_reply_at=2000,
+                agent_paths=[],
+                status="done",
+                last_kind="agent.say",
+                digest_done=None,
+                digest_stuck=None,
+                origin="human",
+                parent_session_id=None,
+                employee_id="stock",
+            ),
+            SessionCard(
+                session_id="sid-emp-branch",
+                family="claude-code",
+                title="分支：验证板块指数",
+                directory="/tmp/work",
+                created_at=1500,
+                last_active_at=2500,
+                last_reply_at=2500,
+                agent_paths=[],
+                status="done",
+                last_kind="agent.say",
+                digest_done=None,
+                digest_stuck=None,
+                origin="human",
+                parent_session_id="sid-emp-root",
+                employee_id=None,
+            ),
+            SessionCard(
+                session_id="sid-emp-worker",
+                family="claude-code",
+                title="worker 子任务",
+                directory="/tmp/work",
+                created_at=1600,
+                last_active_at=2600,
+                last_reply_at=2600,
+                agent_paths=[],
+                status="done",
+                last_kind="agent.say",
+                digest_done=None,
+                digest_stuck=None,
+                origin="worker",
+                parent_session_id="sid-emp-root",
+                employee_id=None,
+            ),
+            SessionCard(
+                session_id="sid-active-only",
+                family="agy",
+                title="通过 active_session_ids 关联的会话",
+                directory="/tmp/work",
+                created_at=1700,
+                last_active_at=2700,
+                last_reply_at=2700,
+                agent_paths=[],
+                status="done",
+                last_kind="agent.say",
+                digest_done=None,
+                digest_stuck=None,
+                origin="human",
+                parent_session_id=None,
+                employee_id=None,
+            ),
+        ]
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.record_reader.list_sessions",
+            lambda: fake_cards,
+        )
+
+        res = client.get("/api/workbench/sessions")
+        assert res.status_code == 200
+        by_id = {row["session_id"]: row for row in res.json()}
+
+        assert by_id["sid-emp-root"]["employee_id"] == "stock"
+        assert by_id["sid-emp-root"]["employee_title"] == "Stock 投研与策略专员"
+        assert by_id["sid-emp-root"]["employee_color"] == "amber"
+
+        # 分支子会话（human + parent_session_id）继承父会话的员工身份
+        assert by_id["sid-emp-branch"]["employee_id"] == "stock"
+        assert by_id["sid-emp-branch"]["employee_title"] == "Stock 投研与策略专员"
+        assert by_id["sid-emp-branch"]["employee_color"] == "amber"
+
+        # worker 子会话不继承顶层员工色带身份
+        assert by_id["sid-emp-worker"]["employee_id"] is None
+        assert by_id["sid-emp-worker"]["employee_title"] is None
+        assert by_id["sid-emp-worker"]["employee_color"] is None
+
+        # active_session_ids 命中同样能补齐员工名称与颜色
+        assert by_id["sid-active-only"]["employee_id"] == "stock"
+        assert by_id["sid-active-only"]["employee_title"] == "Stock 投研与策略专员"
+        assert by_id["sid-active-only"]["employee_color"] == "amber"
+
 
 class TestPlainSession:
     def test_普通会话没填目录仍然回400(self, client, launches):
