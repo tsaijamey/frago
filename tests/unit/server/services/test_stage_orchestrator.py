@@ -379,10 +379,13 @@ def test_desktop_operator_employee_and_speech_summarizer(tmp_path, monkeypatch):
         turns,
         previous_summary="上一轮已问候用户。",
         human_asr="帮我打开浏览器看看新闻",
+        screen_context="当前聚焦窗口: win:browser | 已打开虚拟应用窗口: win:term, win:browser\n[虚拟浏览器 win:browser] 标题: Hacker News | URL: https://news.ycombinator.com",
     )
     assert "<human_voice_asr>\n帮我打开浏览器看看新闻\n</human_voice_asr>" in prompt
     assert "<operator_actions>" in prompt
     assert "<operator_responses>" in prompt
+    assert "<agent_os_screen_context>" in prompt
+    assert "标题: Hacker News | URL: https://news.ycombinator.com" in prompt
     assert "<previous_spoken_summary>\n上一轮已问候用户。\n</previous_spoken_summary>" in prompt
     assert "<response_stage>INCREMENTAL_UPDATE</response_stage>" in prompt
     assert "frago desktop browser open https://news.ycombinator.com" in prompt
@@ -396,6 +399,7 @@ def test_desktop_operator_employee_and_speech_summarizer(tmp_path, monkeypatch):
     )
     assert "<response_stage>FIRST_RESPONSE_WARMUP</response_stage>" in warmup_prompt
     assert "<human_voice_asr>\n帮我查一下当前目录的 git 状态\n</human_voice_asr>" in warmup_prompt
+    assert "<agent_os_screen_context>" in warmup_prompt
     assert "严禁掺杂自己对 prompt 的理解" in warmup_prompt
 
     from frago.agent_driver.kernel_backend import KernelTurn
@@ -412,11 +416,17 @@ def test_desktop_operator_employee_and_speech_summarizer(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr("frago.agent_driver.kernel_backend.run_chat_turn", fake_run_chat_turn)
+    monkeypatch.setattr(
+        so,
+        "fetch_agent_os_screen_context",
+        lambda port=8770, timeout=2.5: "[虚拟终端 win:term (cli) 屏幕可见内容]:\n$ git status\nOn branch main",
+    )
     spoken = so.summarize_operator_for_speech("core_op_test", "上一轮已问候用户。")
     assert spoken == "我已经帮你在桌面浏览器里打开了 Hacker News 首页，请过目。"
     assert "KernelTurn" not in spoken
     assert len(captured_calls) == 1
     assert captured_calls[0]["role"] == "lightagent"
+    assert "[虚拟终端 win:term (cli) 屏幕可见内容]:" in captured_calls[0]["prompt"]
 
     # 若 LightAgent 返回 <SILENCE>，则静默不播报
     monkeypatch.setattr(
@@ -424,6 +434,50 @@ def test_desktop_operator_employee_and_speech_summarizer(tmp_path, monkeypatch):
         lambda p, **kw: KernelTurn(text="<SILENCE>", status="ok", duration_ms=100),
     )
     assert so.summarize_operator_for_speech("core_op_test", spoken) == ""
+
+
+def test_asr_profile_resolution_and_desktop_operator_tool_boundary(tmp_path, monkeypatch):
+    """验证 ASR 鉴权从 Profile (profiles.json) 读取，且 desktop-operator 会话强制限定仅允许调用 frago desktop 工具。"""
+    from frago.init.profile_manager import APIProfile, ProfileStore, resolve_asr_profile, save_profiles
+    from frago.server.services import coreagent_runner
+
+    profiles_file = tmp_path / "profiles.json"
+    monkeypatch.setattr("frago.init.profile_manager.PROFILES_PATH", profiles_file)
+
+    groq_prof = APIProfile(
+        id="prof_groq",
+        name="Groq",
+        kind="endpoint",
+        endpoint_type="custom",
+        url="https://api.groq.com/openai/v1",
+        default_model="whisper-large-v3-turbo",
+        api_key="gsk_test_profile_key_123",
+    )
+    store = ProfileStore(profiles=[groq_prof], asr_profile_id="prof_groq")
+    save_profiles(store)
+
+    resolved = resolve_asr_profile()
+    assert resolved is not None
+    assert resolved.id == "prof_groq"
+    assert resolved.api_key == "gsk_test_profile_key_123"
+
+    api_key, transcription_url, model = so.resolve_asr_connection()
+    assert api_key == "gsk_test_profile_key_123"
+    assert transcription_url == "https://api.groq.com/openai/v1/audio/transcriptions"
+    assert model == "whisper-large-v3-turbo"
+    assert so.resolve_groq_whisper_api_key() == "gsk_test_profile_key_123"
+
+    # 验证 desktop-operator 会话构建命令时强制注入 --allowed-tools 与 --disallowed-tools
+    monkeypatch.setattr(coreagent_runner, "binary", lambda: Path("/usr/local/bin/frago-core"))
+    cmd = coreagent_runner.build_command(
+        "core_op_bound",
+        cwd=str(tmp_path),
+        desktop_operator=True,
+    )
+    assert "--allowed-tools" in cmd
+    assert cmd[cmd.index("--allowed-tools") + 1] == "Bash(frago desktop:*)"
+    assert "--disallowed-tools" in cmd
+    assert cmd[cmd.index("--disallowed-tools") + 1] == "Bash(frago desktop say:*)"
 
 
 def test_desktop_operator_single_employee_tag_without_duplicate_directive_tail(tmp_path, monkeypatch):

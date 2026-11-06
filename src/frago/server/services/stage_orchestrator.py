@@ -692,12 +692,16 @@ def cleanup_all_presenters() -> list[str]:
 
 
 def reset_stage_sessions(session_id: str | None = None) -> dict[str, Any]:
-    """销毁虚拟桌面关联的后台运行态：关停全部驻场主持人线程，并终止旧主操作员会话进程与队列。"""
+    """销毁虚拟桌面关联的后台运行态：关停全部驻场主持人与旁路语音总结器线程，并终止旧主操作员会话进程与队列。"""
     from frago.server.services import coreagent_runner
     from frago.server.services import tmux_sessions_service as tsvc
 
     with _presenters_lock:
         active_stage_sids = list(_presenters.keys())
+    with _speech_summarizers_lock:
+        for s_sid in _speech_summarizers.keys():
+            if s_sid not in active_stage_sids:
+                active_stage_sids.append(s_sid)
 
     target_sids: list[str] = []
     for s in ([session_id] if session_id else []) + active_stage_sids:
@@ -708,7 +712,9 @@ def reset_stage_sessions(session_id: str | None = None) -> dict[str, Any]:
     if session_id and session_id not in stopped_presenters:
         cleanup_presenter(session_id)
     with contextlib.suppress(Exception):
-        cleanup_all_speech_summarizers()
+        for s_sid in cleanup_all_speech_summarizers():
+            if s_sid not in stopped_presenters:
+                stopped_presenters.append(s_sid)
 
     stopped_sessions: list[str] = []
     for sid in target_sids:
@@ -776,49 +782,60 @@ GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
 DESKTOP_OPERATOR_POST_ID = "desktop-operator"
 
 SPEECH_SUMMARIZER_SYSTEM_PROMPT = """你是虚拟桌面（Agent OS）的「旁路语音播报大模型（Speech Broadcaster / Summarizer）」。
-你的输入由四个部分共同构成：
+你的输入由五个部分共同构成：
 1. 用户的语音 ASR 转录文本（`<human_voice_asr>`）
-2. 主操作员的操作（`<operator_actions>`，含工具调用与执行回执语义，限制轮次、不限制字数）
+2. 主操作员的操作（`<operator_actions>`，含调用 `agent_os` 桌面工具的指令与回执语义，限制轮次、不限制字数）
 3. 主操作员的响应（`<operator_responses>`，即主操作员的文本回答，限制轮次、不限制字数）
-4. 上一次已播报的语音总结（`<previous_spoken_summary>`）
+4. `agent_os` 实时屏幕画面与虚拟应用信息流（`<agent_os_screen_context>`，含当前聚焦窗口、打开的虚拟应用、虚拟终端屏幕可见输出流、虚拟浏览器当前 URL/标题/页面可见文本、幻灯片/视频/字幕条状态）
+5. 上一次已播报的语音总结（`<previous_spoken_summary>`）
 
 【核心职责与两阶段响应铁律】
 1. **第一时间响应与“暖场”响应（当 `<response_stage>` 为 `FIRST_RESPONSE_WARMUP`，即刚收到用户的语音 ASR 转录文本，但还不确定主操作员会如何操作时）**：
    - 你必须理解什么叫「第一时间响应」：用户刚说完话，必须立刻给出简短、亲切、自然的口头回应，确认已听见用户的诉求并正在转交主操作员处理，起到不冷场的「暖场」衔接作用；
    - **严禁掺杂自己对 prompt 的理解**：在还不确定主操作员会如何操作的前提下，**绝对禁止**自行拆解需求、猜测操作方案、预判具体执行步骤、替主操作员承诺操作细节，或越俎代庖直接回答用户的问题！只能贴合 `<human_voice_asr>` 的字面意思做干净利落的第一时间接话暖场。
 2. **增量进展与结果播报（当 `<response_stage>` 为 `INCREMENTAL_UPDATE`，即主操作员已产生实际操作或文本响应时）**：
-   - 结合 `<human_voice_asr>`、`<operator_actions>`、`<operator_responses>` 与 `<previous_spoken_summary>`，只提炼相对于 `<previous_spoken_summary>` 新增的桌面动作进展或最终回答结论；
-   - 若主操作员仍在执行与上一轮相同的动作且没有任何新增进展，只输出 `<SILENCE>`。
+   - 主操作员的会话流（`<operator_actions>`）中仅记录了 `frago desktop` 控制指令与 `{"ok": true}` 回执，不包含画面内的真实输出；你必须结合 `<agent_os_screen_context>` 中从 `agent_os` 实时获取的屏幕画面与虚拟应用信息流（如终端屏幕上的命令输出、浏览器页面内容、当前窗口状态），以及 `<human_voice_asr>`、`<operator_actions>`、`<operator_responses>` 与 `<previous_spoken_summary>`，提炼相对于 `<previous_spoken_summary>` 新增的桌面画面进展或最终结论；
+   - 若主操作员仍在执行与上一轮相同的动作且屏幕画面与响应没有任何新增进展，只输出 `<SILENCE>`。
 3. **纯文本口语化与母语自适应**：
    - 输出结果必须是**100% 纯自然口语文本**，将直接送入母语级情感语音合成引擎（中文使用 `zh-CN-XiaoxiaoNeural`，纯英文使用 `en-US-AvaMultilingualNeural`）；
-   - **严禁**输出任何 JSON 对象、请求返回值（如 `{"ok": true, ...}` 或 `KernelTurn(...)`）、代码块、Markdown 符号（`*`、`#`、`` ` ``）、命令行参数或长路径；必须把工具调用转化为自然的人类动作描述；
+   - **严禁**输出任何 JSON 对象、请求返回值（如 `{"ok": true, ...}` 或 `KernelTurn(...)`）、代码块、Markdown 符号（`*`、`#`、`` ` ``）、命令行参数或长路径；必须把工具调用与屏幕画面变化转化为自然的人类动作与结果描述；
    - 每次输出控制在 1～3 句简短自然的口语（15～80 字），直接输出要说给用户听的纯文本正文，不要加任何前缀、引号或角色标签。"""
 
 
-def resolve_groq_whisper_api_key() -> str:
-    """复用 ~/.frago/recipes.local.json 中已配置的 groq_whisper_transcribe 密钥（支持 $ref 与环境变量兜底）。"""
+def resolve_asr_connection() -> tuple[str, str, str]:
+    """从 ~/.frago/profiles.json 的 Profile 体系解析 ASR 鉴权密钥、转写端点 URL 与模型名。"""
     try:
-        from frago.server.services.recipe_secrets_service import RecipeSecretsService
+        from frago.init.profile_manager import resolve_asr_profile
 
-        secrets = RecipeSecretsService._load_secrets_file()
-        for recipe_name in ("groq_whisper_transcribe", "groq_whisper_asr"):
-            entry = secrets.get(recipe_name)
-            if isinstance(entry, dict):
-                ref = entry.get("$ref")
-                if isinstance(ref, str) and ref.strip() and isinstance(secrets.get(ref.strip()), dict):
-                    entry = secrets[ref.strip()]
-                key = str(entry.get("api_key") or "").strip()
-                if key:
-                    return key
+        profile = resolve_asr_profile()
+        if profile is not None and (profile.api_key or "").strip():
+            api_key = profile.api_key.strip()
+            raw_url = (profile.url or "").strip().rstrip("/")
+            if not raw_url:
+                transcription_url = GROQ_TRANSCRIPTION_URL
+            elif raw_url.endswith("/audio/transcriptions"):
+                transcription_url = raw_url
+            elif raw_url.endswith("/openai/v1") or raw_url.endswith("/v1"):
+                transcription_url = f"{raw_url}/audio/transcriptions"
+            else:
+                transcription_url = f"{raw_url}/openai/v1/audio/transcriptions"
+            model = (profile.default_model or "").strip() or GROQ_WHISPER_MODEL
+            return api_key, transcription_url, model
     except Exception:
-        logger.debug("读取 recipes.local.json 中的 Groq 密钥失败", exc_info=True)
+        logger.debug("从 Profile 解析 ASR 鉴权配置失败", exc_info=True)
 
     env_key = os.environ.get("GROQ_API_KEY", "").strip()
     if env_key:
-        return env_key
+        return env_key, GROQ_TRANSCRIPTION_URL, GROQ_WHISPER_MODEL
     raise ValueError(
-        "未找到 Groq Whisper API Key：请在 ~/.frago/recipes.local.json 的 groq_whisper_transcribe 中配置 api_key。"
+        "未找到 ASR Profile 鉴权配置：请在 ~/.frago/profiles.json 中配置 Groq/Whisper Profile 并绑定 asr_profile_id。"
     )
+
+
+def resolve_groq_whisper_api_key() -> str:
+    """从 ~/.frago/profiles.json 的 ASR Profile 读取 API Key（兼容旧函数签名，绝不读取 recipes.local.json）。"""
+    api_key, _, _ = resolve_asr_connection()
+    return api_key
 
 
 def transcribe_audio_with_groq(
@@ -830,7 +847,7 @@ def transcribe_audio_with_groq(
     prompt: str | None = None,
     timeout: float = 25.0,
 ) -> dict[str, Any]:
-    """调用 Groq Whisper (whisper-large-v3-turbo) 将语音音频字节流转写为文本。"""
+    """通过 Profile 鉴权调用 Whisper ASR 端点将语音音频字节流转写为文本。"""
     import urllib.error
     import urllib.request
     import uuid
@@ -838,7 +855,7 @@ def transcribe_audio_with_groq(
     if not audio_bytes:
         raise ValueError("音频内容为空，无法转写。")
 
-    api_key = resolve_groq_whisper_api_key()
+    api_key, transcription_url, whisper_model = resolve_asr_connection()
     boundary = f"----FragoGroqBoundary{uuid.uuid4().hex}"
     parts: list[bytes] = []
 
@@ -848,7 +865,7 @@ def transcribe_audio_with_groq(
             f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
         )
 
-    _add_field("model", GROQ_WHISPER_MODEL)
+    _add_field("model", whisper_model)
     _add_field("response_format", "json")
     if language and language.strip():
         _add_field("language", language.strip())
@@ -869,7 +886,7 @@ def transcribe_audio_with_groq(
     body = b"".join(parts)
 
     req = urllib.request.Request(
-        GROQ_TRANSCRIPTION_URL,
+        transcription_url,
         data=body,
         method="POST",
         headers={
@@ -893,9 +910,107 @@ def transcribe_audio_with_groq(
     text = str(data.get("text") or "").strip()
     return {
         "text": text,
-        "model": GROQ_WHISPER_MODEL,
+        "model": whisper_model,
         "language": data.get("language"),
     }
+
+
+def fetch_agent_os_screen_context(port: int = 8770, timeout: float = 2.5) -> str:
+    """从 agent_os (broker) 实时获取当前桌面画面与虚拟应用信息流（窗口焦点、虚拟终端屏幕输出、虚拟浏览器页面内容、幻灯片/视频/字幕条）。"""
+    import subprocess
+    import urllib.request
+
+    screen_data: dict[str, Any] = {}
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/screen", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            parsed = json.loads(raw) if raw.strip() else {}
+            if isinstance(parsed, dict) and parsed.get("ok"):
+                screen_data = parsed
+    except Exception:
+        logger.debug("请求 agent_os /screen 失败，尝试回退到 /status 与 tmux capture-pane", exc_info=True)
+
+    if not screen_data:
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/status", method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                st = json.loads(raw) if raw.strip() else {}
+                if isinstance(st, dict):
+                    windows = st.get("windows") or {}
+                    open_wins = [
+                        wid for wid, meta in windows.items()
+                        if isinstance(meta, dict) and meta.get("open")
+                    ]
+                    screen_data = {
+                        "ok": True,
+                        "focus": st.get("focus") or "",
+                        "windows_open": open_wins,
+                        "strap": st.get("strap") or {},
+                    }
+        except Exception:
+            pass
+
+    lines: list[str] = []
+    focus = str(screen_data.get("focus") or "").strip()
+    raw_windows_open = screen_data.get("windows_open") or []
+    if isinstance(raw_windows_open, dict):
+        windows_open = [str(k) for k, v in raw_windows_open.items() if v]
+    elif isinstance(raw_windows_open, list):
+        windows_open = [str(w) for w in raw_windows_open if w]
+    else:
+        windows_open = []
+    if focus or windows_open:
+        lines.append(
+            f"当前聚焦窗口: {focus or '无'} | 已打开虚拟应用窗口: {', '.join(windows_open) if windows_open else '无'}"
+        )
+
+    strap_info = screen_data.get("strap")
+    if isinstance(strap_info, dict) and str(strap_info.get("text") or "").strip():
+        lines.append(f"桌面顶部状态横幅 (strap): {str(strap_info.get('text')).strip()}")
+
+    term_info = screen_data.get("term") if isinstance(screen_data.get("term"), dict) else {}
+    term_lines = term_info.get("visible_lines") or term_info.get("tail_lines") or []
+    if not term_lines:
+        with contextlib.suppress(Exception):
+            proc = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", "frago-stage", "-S", "-20"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                term_lines = [ln.rstrip() for ln in proc.stdout.splitlines() if ln.strip()][-18:]
+    if term_lines:
+        clean_term = [str(ln) for ln in term_lines if str(ln).strip()][-18:]
+        if clean_term:
+            term_view = str(term_info.get("view") or "cli")
+            lines.append(f"[虚拟终端 win:term ({term_view}) 屏幕可见内容]:\n" + "\n".join(clean_term))
+
+    browser_info = screen_data.get("browser") if isinstance(screen_data.get("browser"), dict) else {}
+    b_url = str(browser_info.get("url") or "").strip()
+    b_title = str(browser_info.get("title") or "").strip()
+    b_text = str(browser_info.get("visible_text") or "").strip()
+    if browser_info.get("open") or b_url or b_title or b_text:
+        b_header = f"[虚拟浏览器 win:browser] 标题: {b_title or '无'} | URL: {b_url or 'about:blank'}"
+        lines.append(b_header)
+        if b_text:
+            lines.append(f"浏览器页面可见文本:\n{b_text[:1200]}")
+
+    slide_info = screen_data.get("slide") if isinstance(screen_data.get("slide"), dict) else {}
+    if slide_info.get("active"):
+        lines.append(
+            f"[虚拟幻灯片 win:slide] 演示文稿: {slide_info.get('deck')} (第 {slide_info.get('page')}/{slide_info.get('total')} 页)"
+        )
+
+    video_info = screen_data.get("video") if isinstance(screen_data.get("video"), dict) else {}
+    if video_info.get("active"):
+        lines.append(
+            f"[虚拟视频播放器 win:video] 片源: {video_info.get('src')} | 播放中: {bool(video_info.get('playing'))}"
+        )
+
+    return "\n".join(lines).strip()
 
 
 def _strip_operator_directive(text: str) -> str:
@@ -1001,10 +1116,12 @@ def build_speech_summarizer_prompt(
     previous_summary: str = "",
     *,
     human_asr: str = "",
+    screen_context: str = "",
 ) -> str:
-    """按四要素公式组装播音大模型输入提示词：
+    """按五要素公式组装播音大模型输入提示词：
     每次播音大模型输入 = 用户的语音 ASR（human_asr） + 主操作员的操作（tool.call/result）
-                       + 主操作员的响应（agent.say） + 上一次的总结内容（previous_summary）
+                       + 主操作员的响应（agent.say） + agent_os 屏幕画面与虚拟应用信息流（screen_context）
+                       + 上一次的总结内容（previous_summary）
     """
     latest_asr = str(human_asr or "").strip()
     if not latest_asr and recent_turns:
@@ -1050,6 +1167,11 @@ def build_speech_summarizer_prompt(
     asr_body = latest_asr if latest_asr else "（暂无最新用户语音 ASR）"
     actions_body = "\n".join(action_lines) if action_lines else "（主操作员尚未对当前指令执行操作）"
     responses_body = "\n".join(response_lines) if response_lines else "（主操作员尚未生成文本响应）"
+    screen_body = (
+        str(screen_context or "").strip()
+        if screen_context and str(screen_context).strip()
+        else "（当前未采集到 agent_os 屏幕画面或虚拟应用活动输出）"
+    )
     turns_body = "\n\n".join(turn_blocks) if turn_blocks else f"[Turn 1]\n用户语音 ASR: {asr_body}"
     prev_body = previous_summary.strip() if previous_summary and previous_summary.strip() else "（尚无历史播报）"
 
@@ -1059,6 +1181,7 @@ def build_speech_summarizer_prompt(
         f"<human_voice_asr>\n{asr_body}\n</human_voice_asr>\n\n"
         f"<operator_actions>\n{actions_body}\n</operator_actions>\n\n"
         f"<operator_responses>\n{responses_body}\n</operator_responses>\n\n"
+        f"<agent_os_screen_context>\n{screen_body}\n</agent_os_screen_context>\n\n"
         f"<previous_spoken_summary>\n{prev_body}\n</previous_spoken_summary>\n\n"
         f"<recent_operator_turns turn_count=\"{len(recent_turns)}\">\n{turns_body}\n</recent_operator_turns>\n\n"
         "请直接输出现在要说给用户听的纯文本口语（若无任何新增进展或无需重复播报，只输出 <SILENCE>）："
@@ -1143,10 +1266,11 @@ def summarize_operator_for_speech(
     previous_summary: str = "",
     *,
     human_asr: str = "",
+    screen_context: str | None = None,
     max_turns: int = 3,
     cwd: str | None = None,
 ) -> str:
-    """使用 frago-core 单轮对话（--as-role lightagent）结合用户语音 ASR、操作员操作与响应及上次总结生成纯文本播报词。"""
+    """使用 frago-core 单轮对话（--as-role lightagent）结合用户语音 ASR、操作员操作与响应、agent_os 实时屏幕信息流及上次总结生成纯文本播报词。"""
     from frago.agent_driver import kernel_backend
 
     recent_turns = extract_recent_operator_turns(session_id, max_turns=max_turns)
@@ -1157,10 +1281,16 @@ def summarize_operator_for_speech(
     if not has_operator_events and not effective_asr:
         return ""
 
+    effective_screen = (
+        screen_context
+        if screen_context is not None
+        else fetch_agent_os_screen_context()
+    )
     prompt = build_speech_summarizer_prompt(
         recent_turns,
         previous_summary,
         human_asr=effective_asr,
+        screen_context=effective_screen,
     )
     raw = kernel_backend.run_chat_turn(
         prompt,

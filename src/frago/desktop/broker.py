@@ -6920,6 +6920,66 @@ def build_app(cfg: dict) -> FastAPI:
             },
         }
 
+    @app.get("/screen")
+    async def screen() -> dict:
+        """返回 agent_os 当前屏幕画面与虚拟应用的实时信息流（供旁路播音大模型等感知画面实况）。"""
+        obs = await observe()
+        term_visible: list[str] = []
+        with suppress(Exception):
+            if term._last is not None:
+                term_visible = [ln for ln in term_screen_lines() if ln.strip()]
+        browser_text = ""
+        tabs_info: list[dict] = []
+        if stage.open.get("browser") and not browser.actor_gone:
+            with suppress(Exception):
+                raw_txt = await browser.evaluate(
+                    "document.body ? (document.body.innerText || '') : ''"
+                )
+                if isinstance(raw_txt, str):
+                    browser_text = raw_txt.strip()[:2000]
+            with suppress(Exception):
+                tabs_info = await browser.list_tabs()
+        return {
+            "ok": True,
+            "focus": stage.focus,
+            "windows_open": dict(stage.open),
+            "z_order": list(stage.z_order),
+            "cursor": {"x": round(stage.cursor[0], 1), "y": round(stage.cursor[1], 1)},
+            "hover": (stage.hover or {}).get("ref"),
+            "term": {
+                "open": bool(stage.open.get("term")),
+                "visible_lines": term_visible[-24:],
+                "tail_lines": obs.get("term_tail") or [],
+                "view": term_view_state(),
+            },
+            "browser": {
+                "open": bool(stage.open.get("browser")),
+                "url": obs.get("url"),
+                "title": obs.get("title"),
+                "visible_text": browser_text,
+                "tabs": tabs_info,
+            },
+            "slide": (
+                None
+                if stage.last_slide is None
+                else {"name": stage.last_slide["name"], "path": stage.last_slide["path"]}
+            ),
+            "video": (
+                None
+                if stage.last_video is None
+                else {
+                    "name": stage.last_video["name"],
+                    "path": stage.last_video["path"],
+                    "playing": bool(stage.last_video.get("playing")),
+                }
+            ),
+            "strap": (
+                None
+                if stage.last_strap is None
+                else {k: v for k, v in stage.last_strap.items() if k != "at_ts"}
+            ),
+        }
+
     return app
 
 
