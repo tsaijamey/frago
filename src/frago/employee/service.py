@@ -584,24 +584,39 @@ class EmployeeOntologyService:
             "——都按本岗位的职责方法、数据底账与配方工具链统筹推进。"
         )
         lines.append("")
-        lines.append("【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】")
-        lines.append(
-            "你在本岗位中的核心角色不是亲自埋头写长脚本、硬翻全量文件的底层执行者，"
-            "而是掌握完整领域账本的「指挥者与代理者」（Orchestrator）："
-        )
-        lines.append(
-            "  1. 轻量直答：若人类提问可直接由下方账本（业务词汇、近期活跃事项结论、槽位摘要）"
-            "或一次单点检索（如 `frago <domain> find`）回答，直接给出准确结论；"
-        )
-        lines.append(
-            "  2. 编撰上下文任务书并派发普通 Worker：凡涉及拉取与清洗数据、执行重型配方"
-            "（注意参数语法为 `frago recipe run <name> --params '<JSON>'`，严禁误用 `-p`）、"
-            "编写分析脚本、多步浏览器调研或生成交付报告，你 MUST 先将本岗位的领域上下文"
-            "（数据槽位精确路径、配方名称与参数说明、知识域规范、前序会话结论及目标归档路径 "
-            "`~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/`）汇编成一份详尽自洽的任务书文件，"
-            "再调用 `frago agent --prompt-file <任务书路径>`（可并发调度 1 个或多个普通 worker）"
-            "代为执行重活；你自身聚焦于上下文供给、产物验收、归档登记（`notebook.md`）与最终业务结论提炼。"
-        )
+        if record.member_post_id == "desktop-operator":
+            lines.append("【桌面主操作员工具与执行铁律：仅允许调用 agent_os 操作工具】")
+            lines.append(
+                "你是虚拟桌面（`agent_os` / `frago desktop`）的专职操作员，用户正在屏幕前直接观看 `agent_os` 的桌面画面，而不是在后台会话里看你敲命令："
+            )
+            lines.append(
+                "  1. **只允许操作 `agent_os`**：你唯一允许调用的工具是 `agent_os` 提供的操作工具（即 `Bash(frago desktop:*)` 子命令族：`frago desktop term run/key/clear/scroll/fontsize`、`frago desktop browser open/goto/click/type/scroll`、`frago desktop window/focus/mouse/click/type/key/wait/elements`、`frago desktop image/video/slide/spot/mark/strap/clear/status`）；"
+            )
+            lines.append(
+                "  2. **严禁在自己的后台会话里直接执行业务操作**：**绝对禁止**在自身后台会话里直接跑 `ls`、`cd`、`cat`、`git`、`python` 等普通 Shell 命令，也**绝对禁止**调用 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`Skill`、`TodoWrite` 或 `frago agent`！凡需查看目录、运行命令、操作仓库或浏览网页，MUST 全部通过 `frago desktop term run \"<命令>\"` 或 `frago desktop browser ...` 在 `agent_os` 屏幕上的虚拟终端（`win:term`）或虚拟浏览器（`win:browser`）内可视化执行；"
+            )
+            lines.append(
+                "  3. **严禁直接语音播报**：**绝对禁止**调用 `frago desktop say --speak`，面向用户的语音播报统一由系统旁路播音大模型实时读取你的会话与 `agent_os` 屏幕画面后自动完成。"
+            )
+        else:
+            lines.append("【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】")
+            lines.append(
+                "你在本岗位中的核心角色不是亲自埋头写长脚本、硬翻全量文件的底层执行者，"
+                "而是掌握完整领域账本的「指挥者与代理者」（Orchestrator）："
+            )
+            lines.append(
+                "  1. 轻量直答：若人类提问可直接由下方账本（业务词汇、近期活跃事项结论、槽位摘要）"
+                "或一次单点检索（如 `frago <domain> find`）回答，直接给出准确结论；"
+            )
+            lines.append(
+                "  2. 编撰上下文任务书并派发普通 Worker：凡涉及拉取与清洗数据、执行重型配方"
+                "（注意参数语法为 `frago recipe run <name> --params '<JSON>'`，严禁误用 `-p`）、"
+                "编写分析脚本、多步浏览器调研或生成交付报告，你 MUST 先将本岗位的领域上下文"
+                "（数据槽位精确路径、配方名称与参数说明、知识域规范、前序会话结论及目标归档路径 "
+                "`~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/`）汇编成一份详尽自洽的任务书文件，"
+                "再调用 `frago agent --prompt-file <任务书路径>`（可并发调度 1 个或多个普通 worker）"
+                "代为执行重活；你自身聚焦于上下文供给、产物验收、归档登记（`notebook.md`）与最终业务结论提炼。"
+            )
 
         peer_posts = [
             p
@@ -1000,11 +1015,12 @@ def ensure_builtin_stock_employee(
 # --- The built-in `desktop-operator` post: dedicated operator for `frago desktop` / `agent_os` ---
 _DESKTOP_OPERATOR_WORK_SCOPE = (
     "作为虚拟桌面（frago desktop / agent_os）的主操作员，只负责两件事："
-    "① 识别用户语音转写或输入中的命令请求并操作 agent_os（即 frago desktop，含终端、浏览器、"
-    "图片/视频窗口、全屏幻灯、浮层标注与字条）；"
+    "① 识别用户语音转写或输入中的命令请求并仅操作 agent_os（只允许调用 agent_os 提供的 `frago desktop` 操作工具："
+    "含 `term` 虚拟终端、`browser` 虚拟浏览器、`image`/`video` 媒体窗口、`slide` 全屏幻灯、`mouse`/`spot`/`mark`/`strap` 指针与字条；"
+    "严禁在自身后台会话里直接执行普通命令或调用 Read/Write/Edit/Glob/Grep/Skill/TodoWrite 等非 agent_os 工具，一切终端与文件操作必须通过 `frago desktop term run` 在虚拟桌面终端内完成）；"
     "② 生成准确的文本回答。"
     "严格边界：不负责直接语音回答（禁止自行调用 `frago desktop say --speak`），"
-    "语音回答统一由内部旁路语音提炼系统（LightAgent 增量总结 + Edge TTS）完成。"
+    "语音回答统一由内部旁路语音提炼系统（LightAgent 结合会话与 agent_os 实时屏幕信息增量总结 + Edge TTS）完成。"
 )
 
 DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
@@ -1012,9 +1028,8 @@ DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
     "title": "桌面主操作员",
     "agent_kernel": "claude",
     "description": (
-        "虚拟桌面（frago desktop / agent_os）主操作员，只负责两件事："
-        "1. 识别请求命令并操作虚拟桌面（agent_os / desktop）；"
-        "2. 生成文本回答。不负责直接语音回答。"
+        "虚拟桌面（frago desktop / agent_os）主操作员，只允许调用 agent_os 提供的操作工具（frago desktop），"
+        "严禁在自身后台会话直接执行其他工具或命令；只负责操作 agent_os 与生成文本回答，不负责直接语音回答。"
     ),
     "work_scope": _DESKTOP_OPERATOR_WORK_SCOPE,
     # 仅配置创建员工时必须的字段，四类资源留空由岗位通过 sync-ledger 自行整理认领

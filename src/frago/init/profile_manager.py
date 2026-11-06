@@ -184,6 +184,8 @@ class ProfileStore(BaseModel):
     # What CoreAgent (frago-core's own agent loop) is bound to. None falls back the
     # way the light agent does: the active profile, else the first saved one.
     coreagent_profile_id: str | None = None
+    # What desktop voice ASR (speech-to-text) is bound to.
+    asr_profile_id: str | None = None
     # Per-harness main session binding: agent_type -> profile_id | "official".
     harness_profiles: dict[str, str] = Field(default_factory=dict)
     # Per-harness worker binding: agent_type -> "follow" | "official" | profile_id.
@@ -643,6 +645,8 @@ def delete_profile(profile_id: str) -> ProfileStore:
         store.observer_profile_id = None
     if store.coreagent_profile_id == profile_id:
         store.coreagent_profile_id = None
+    if store.asr_profile_id == profile_id:
+        store.asr_profile_id = None
     for k, v in list(store.harness_profiles.items()):
         if v == profile_id:
             store.harness_profiles[k] = OFFICIAL_ID
@@ -660,6 +664,25 @@ def get_profile(profile_id: str) -> APIProfile | None:
     for profile in store.profiles:
         if profile.id == profile_id:
             return profile
+    return None
+
+
+def resolve_asr_profile() -> APIProfile | None:
+    """Resolve the APIProfile configured for desktop voice ASR from ~/.frago/profiles.json."""
+    store = load_profiles()
+    by_id = {p.id: p for p in store.profiles}
+    if store.asr_profile_id and store.asr_profile_id in by_id:
+        bound = by_id[store.asr_profile_id]
+        if (bound.api_key or "").strip():
+            return bound
+    for p in store.profiles:
+        if not (p.api_key or "").strip():
+            continue
+        name_l = (p.name or "").lower()
+        url_l = (p.url or "").lower()
+        model_l = (p.default_model or "").lower()
+        if "groq" in name_l or "api.groq.com" in url_l or "whisper" in model_l:
+            return p
     return None
 
 

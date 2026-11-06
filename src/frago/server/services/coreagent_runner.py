@@ -137,16 +137,31 @@ class _Session:
     closed: bool = False
     #: 虚拟桌面导演等无人值守会话：人看的是桌面画面而不是工作台聊天页，关闭轻量审阅与拍板卡强拦。
     unattended: bool = False
+    #: 虚拟桌面专职主操作员会话：仅允许调用 agent_os 提供的操作工具（Bash(frago desktop:*)）。
+    desktop_operator: bool = False
 
 
 _sessions: dict[str, _Session] = {}
 _sessions_lock = threading.Lock()
 
 _DIRECTOR_SKILL_MARKER = 'name="how-frago-agent-runs-an-agent-os"'
+_DESKTOP_OPERATOR_TAG_MARKER = '<frago-employee id="desktop-operator"'
 
 
 def _is_director_prompt(prompt: str) -> bool:
     return _DIRECTOR_SKILL_MARKER in prompt
+
+
+def _is_desktop_operator_session(session_id: str, prompt: str) -> bool:
+    if _DESKTOP_OPERATOR_TAG_MARKER in prompt:
+        return True
+    with contextlib.suppress(Exception):
+        from frago.employee.store import get_post
+
+        post = get_post("desktop-operator")
+        if post and session_id in (post.active_session_ids or []):
+            return True
+    return False
 
 
 def _session_for(
@@ -155,19 +170,28 @@ def _session_for(
     title: str | None,
     *,
     unattended: bool = False,
+    desktop_operator: bool = False,
 ) -> _Session:
     """取这一场的常驻条目，没有就建一个（此时还没起进程）。"""
     with _sessions_lock:
         got = _sessions.get(session_id)
         if got is None:
-            got = _Session(session_id=session_id, cwd=cwd, title=title, unattended=unattended)
+            got = _Session(
+                session_id=session_id,
+                cwd=cwd,
+                title=title,
+                unattended=unattended or desktop_operator,
+                desktop_operator=desktop_operator,
+            )
             _sessions[session_id] = got
         else:
             got.cwd = cwd
             if title:
                 got.title = title
-            if unattended:
+            if unattended or desktop_operator:
                 got.unattended = True
+            if desktop_operator:
+                got.desktop_operator = True
         return got
 
 
@@ -319,6 +343,7 @@ def build_command(
     *,
     cwd: str,
     title: str | None = None,
+    desktop_operator: bool = False,
 ) -> list[str]:
     """起这一场的常驻进程时交给内核的那条命令。
 
@@ -330,8 +355,8 @@ def build_command(
     时它新建这一场。所以「刚建的会话」与「进程被回收后重来」共用这一条路径，不必先探记录
     在不在。
 
-    工具不加限制——人在页面上跟自己的 agent 说话，与在终端里跑 ``frago-core`` 是同一件
-    事，而每一步仍然要过 frago 的规则闸（内核自己在 PreToolUse 那一刻问规则引擎）。
+    普通会话工具不加限制；``desktop_operator=True`` 时通过 ``--allowed-tools`` 严格限定
+    只允许调用 ``agent_os`` 操作工具（``Bash(frago desktop:*)``），并禁用直接语音播报。
     """
     cmd = [
         str(binary()),
@@ -343,6 +368,13 @@ def build_command(
     ]
     if title:
         cmd += ["--title", title]
+    if desktop_operator:
+        cmd += [
+            "--allowed-tools",
+            "Bash(frago desktop:*)",
+            "--disallowed-tools",
+            "Bash(frago desktop say:*)",
+        ]
     return cmd
 
 
@@ -375,7 +407,15 @@ def _spawn(sess: _Session) -> None:
     """起这一场的常驻进程并挂上两个线程。调用方持有 ``sess.lock``。"""
     from frago.server.services.subprocess_utils import get_utf8_env
 
-    cmd = build_command(sess.session_id, cwd=sess.cwd, title=sess.title)
+    if sess.desktop_operator:
+        cmd = build_command(
+            sess.session_id,
+            cwd=sess.cwd,
+            title=sess.title,
+            desktop_operator=True,
+        )
+    else:
+        cmd = build_command(sess.session_id, cwd=sess.cwd, title=sess.title)
     env = get_utf8_env()
     if sess.unattended:
         env["FRAGO_REVIEW"] = "off"
@@ -690,8 +730,13 @@ def send(
 
         prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
 
+    is_op = _is_desktop_operator_session(session_id, prompt)
     sess = _session_for(
-        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+        session_id,
+        cwd,
+        title,
+        unattended=_is_director_prompt(prompt) or is_op,
+        desktop_operator=is_op,
     )
     _enqueue(sess, prompt)
     got = _wait_for_turn(sess, wait_s)
@@ -723,8 +768,13 @@ def send_queued(
 
         prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
 
+    is_op = _is_desktop_operator_session(session_id, prompt)
     sess = _session_for(
-        session_id, cwd, title, unattended=_is_director_prompt(prompt)
+        session_id,
+        cwd,
+        title,
+        unattended=_is_director_prompt(prompt) or is_op,
+        desktop_operator=is_op,
     )
     _enqueue(sess, prompt)
     return sess.feeder.name if sess.feeder else f"coreagent-queue-{session_id[:16]}"
