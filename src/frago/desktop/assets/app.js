@@ -2003,6 +2003,7 @@
     function cleanSessionText(role, raw) {
       if (typeof raw !== "string") return "";
       var s = raw
+        .replace(/<frago-employee[\s\S]*?<\/frago-employee>\s*/g, "")
         .replace(/<must-use-skill[\s\S]*?<\/must-use-skill>\s*/g, "")
         .replace(/<system-reminder[\s\S]*?<\/system-reminder>\s*/g, "")
         .replace(/<employee-business-context[\s\S]*?<\/employee-business-context>\s*/g, "")
@@ -2231,20 +2232,24 @@
       sendBtn.textContent = tr("sendQueueing");
       box.dataset.mode = "sending";
       noteKey("statusQueueing", false);
-      var reqBody = { text: line, wait: false };
-      if (!skillSent) {
-        reqBody.skills = ["how-frago-agent-runs-an-agent-os"];
-      }
-      fetch("/api/workbench/sessions/" + encodeURIComponent(sid) + "/send", {
+      fetch("/api/workbench/desktop-voice/dispatch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reqBody)
+        body: JSON.stringify({
+          text: line,
+          session_id: sid || null
+        })
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (body) {
           if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
           return body;
         });
-      }).then(function () {
+      }).then(function (res) {
+        if (res && res.session_id && res.session_id !== sid) {
+          sid = res.session_id;
+          box.dataset.sessionId = sid;
+          if (sidTag) sidTag.textContent = sid.slice(0, 8);
+        }
         skillSent = true;
         appendBubble("usr", line, { optimistic: true });
         text.value = "";

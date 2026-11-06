@@ -76,6 +76,9 @@ def test_human_input_is_a_bottom_right_support_widget():
     assert "setExpanded(false);" in js
     assert "setExpanded(true);" in js
     assert "/api/workbench/sessions/" in js
+    # 4. 导演对话面板（Director Chat）文本发送与语音交互走同一执行路径（/api/workbench/desktop-voice/dispatch）
+    assert '"/api/workbench/desktop-voice/dispatch"' in js
+    assert '"how-frago-agent-runs-an-agent-os"' not in js
 
 
 def test_desktop_stage_suspends_loops_and_polling_when_hidden_or_disconnected():

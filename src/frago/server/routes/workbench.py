@@ -1319,6 +1319,20 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
 
     try:
         if not request.wait:
+            if (
+                "how-frago-agent-runs-an-agent-os" in (request.skills or [])
+                or coreagent_runner._is_desktop_operator_session(sid, "")
+            ):
+                from frago.server.services import stage_orchestrator
+
+                dispatch_res = await asyncio.to_thread(
+                    stage_orchestrator.dispatch_desktop_voice_command,
+                    request.text,
+                    session_id=sid,
+                    cwd=request.cwd,
+                )
+                _ensure_watching(dispatch_res["session_id"])
+                return {"sid": dispatch_res["session_id"], "status": "queued", "text": ""}
             # 只排队：判落点仍会读盘，照样进工作线程；投喂本身由它自己开的线程做。
             await asyncio.to_thread(session_send.send_queued, sid, prompt, cwd_hint=request.cwd)
             return {"sid": sid, "status": "queued", "text": ""}
