@@ -37,16 +37,24 @@ from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 from frago.session.monitor import encode_project_path
 from frago.session.transcript_completion import locate_transcript
 
-# 自己报的 id 优先，其次是环境里的声明。次序为什么是这个方向，见模块开头。
-ENV_KEYS = ("CLAUDE_CODE_SESSION_ID", "ANTIGRAVITY_CONVERSATION_ID", "FRAGO_SESSION_ID")
+# 自己报的 id 优先，其次是环境里的声明与认领把手。次序为什么是这个方向，见模块开头。
+ENV_KEYS = (
+    "CLAUDE_CODE_SESSION_ID",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "CODEX_THREAD_ID",
+    "OPENCODE_SESSION_ID",
+    "FRAGO_SESSION_ID",
+    "FRAGO_LAUNCH_HANDLE",
+)
 
 # 各家 CLI Agent 注入给子进程、代表「当前处在哪场会话 / 哪个角色」的全部环境变量。
 # 守护进程（如 frago server）启动时直接引用本元组剥离会话身份，单一真源维护在此，
 # 防止 ENV_KEYS 新增变量时守护进程剥离名单漏改。
 SESSION_IDENTITY_ENV = (
     *ENV_KEYS,
-    "CODEX_THREAD_ID",
-    "OPENCODE_SESSION_ID",
+    "FRAGO_CALLBACK_SESSION_ID",
+    "FRAGO_EMPLOYEE_ID",
+    "FRAGO_ASYNC_DISPATCH_CHILD",
     "FRAGO_AGENT_ROLE",
     "FRAGO_CLI_AGENT",
     "ANTIGRAVITY_AGENT",
@@ -122,6 +130,28 @@ def _newest_transcript(
     return fresh[0][1], fresh[0][2], len(fresh)
 
 
+def _resolve_bound_session_id(raw_sid: str) -> tuple[str, str | None]:
+    """若传入的是认领型内核的启动把手（如 webui-...），尝试从认领账本还原为真实会话 id。"""
+    cleaned = (raw_sid or "").strip()
+    if not cleaned:
+        return "", None
+    with contextlib.suppress(Exception):
+        from frago.session import agy_store, codex_store, opencode_store
+
+        bound_codex = codex_store.get_binding(cleaned)
+        if bound_codex:
+            return bound_codex, "codex"
+        bound_oc = opencode_store.get_binding(cleaned)
+        if bound_oc:
+            return bound_oc, "opencode"
+        bound_agy = agy_store.get_binding(cleaned)
+        if bound_agy:
+            return bound_agy, "agy"
+    if cleaned.startswith("webui-"):
+        return "", None
+    return cleaned, None
+
+
 def resolve_self(
     *,
     cwd: str | None = None,
@@ -135,15 +165,21 @@ def resolve_self(
     root = projects_root or CLAUDE_PROJECTS_DIR
 
     for key in ENV_KEYS:
-        sid = (environ.get(key) or "").strip()
-        if not sid:
+        raw_sid = (environ.get(key) or "").strip()
+        if not raw_sid:
             continue
+        if key == "FRAGO_LAUNCH_HANDLE" or raw_sid.startswith("webui-"):
+            sid, bound_agent = _resolve_bound_session_id(raw_sid)
+            if not sid or (key == "FRAGO_LAUNCH_HANDLE" and bound_agent is None):
+                continue
+        else:
+            sid, bound_agent = raw_sid, None
         transcript = locate_transcript(sid, cwd=here, projects_root=root)
         return SelfSession(
             session_id=sid,
             source=f"env:{key}",
             certain=True,
-            agent="claude" if transcript else "unknown",
+            agent="claude" if transcript else (bound_agent or "unknown"),
             cwd=here,
             transcript=str(transcript) if transcript else None,
             resume_command=f"claude --resume {sid}" if transcript else None,
@@ -269,15 +305,21 @@ def _session_id_for_agent(agent_type: str, environ: dict[str, str] | os._Environ
     """按已认出的 agent_type 从环境里捞出对应的会话 id（若有）。"""
     env_by_agent: dict[str, tuple[str, ...]] = {
         "claude": ("CLAUDE_CODE_SESSION_ID", "FRAGO_SESSION_ID"),
-        "agy": ("ANTIGRAVITY_CONVERSATION_ID", "FRAGO_SESSION_ID"),
-        "codex": ("CODEX_THREAD_ID", "FRAGO_SESSION_ID"),
-        "opencode": ("OPENCODE_SESSION_ID", "FRAGO_SESSION_ID"),
+        "agy": ("ANTIGRAVITY_CONVERSATION_ID", "FRAGO_SESSION_ID", "FRAGO_LAUNCH_HANDLE"),
+        "codex": ("CODEX_THREAD_ID", "FRAGO_SESSION_ID", "FRAGO_LAUNCH_HANDLE"),
+        "opencode": ("OPENCODE_SESSION_ID", "FRAGO_SESSION_ID", "FRAGO_LAUNCH_HANDLE"),
         "coreagent": ("FRAGO_SESSION_ID",),
     }
-    for key in env_by_agent.get(agent_type, ("FRAGO_SESSION_ID",)):
+    for key in env_by_agent.get(agent_type, ("FRAGO_SESSION_ID", "FRAGO_LAUNCH_HANDLE")):
         val = (environ.get(key) or "").strip()
-        if val:
-            return val
+        if not val:
+            continue
+        if key == "FRAGO_LAUNCH_HANDLE" or val.startswith("webui-"):
+            resolved, bound_agent = _resolve_bound_session_id(val)
+            if resolved and (key != "FRAGO_LAUNCH_HANDLE" or bound_agent is not None):
+                return resolved
+            continue
+        return val
     return None
 
 

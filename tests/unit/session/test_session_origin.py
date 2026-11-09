@@ -597,6 +597,61 @@ class TestAttributedDispatch:
         assert index.origin_of(child) == "worker"
         assert index.parent_of(child) is None
 
+    def test_异步派发把手预记账在认领时过户真实父亲_绝不认把手自己当父亲(
+        self, ledger, empty_projects, tmp_path, monkeypatch
+    ):
+        """回归（e875e9e1 / c69c589f）：异步 watcher 进程环境里即便带了 FRAGO_SESSION_ID=<handle>，
+        认领到真会话编号 child 时，record_attributed_dispatch 与 _ledger_pairs 都必须继承 handle
+        预记下的真实 caller_sid，绝不能把临时把手 handle 当作父会话导致左栏掉进『不知道谁派的 WORKER』。
+        """
+        from frago.session import agy_store
+
+        monkeypatch.setattr(agy_store, "BINDINGS_PATH", tmp_path / "agy-sessions.json")
+        caller_sid = "daeec834-e3d5-4ac6-ab35-9fd7981a6972"
+        handle = "c69c589f-670c-481c-af79-ac870f4f7598"
+        claimed_cid = "e875e9e1-0fc7-4f18-ab22-cc596d1883e9"
+
+        # 1. 派发入口先按临时把手记账
+        session_origin.record_relation(
+            kind="dispatch",
+            child_session_id=handle,
+            parent_session_id=caller_sid,
+            agent_type="agy",
+            cwd="/tmp",
+            prompt_head="修复认领型内核父会话挂接",
+        )
+        agy_store.put_binding(handle, claimed_cid, "/tmp")
+
+        # 即使尚未写第二条账，_ledger_pairs 已能通过把手绑定解析出 claimed_cid 的真实父亲
+        early_index = _index(empty_projects)
+        assert early_index.origin_of(claimed_cid) == "worker"
+        assert early_index.parent_of(claimed_cid) == caller_sid
+
+        # 2. 模拟后台 watcher 环境（FRAGO_SESSION_ID=handle）下驱动调用 record_attributed_dispatch
+        monkeypatch.setenv("FRAGO_SESSION_ID", handle)
+        assert session_origin.record_attributed_dispatch(
+            claimed_cid,
+            agent_type="agy",
+            cwd="/tmp",
+            handle=handle,
+        )
+        entry = session_origin.find_relation(claimed_cid)
+        assert entry is not None
+        assert entry["parent"] == caller_sid
+        assert entry["prompt_head"] == "修复认领型内核父会话挂接"
+
+        # 3. 哪怕历史账本里曾误写入一条 parent=handle 的脏记录，_ledger_pairs 也会将其还原为 caller_sid
+        session_origin.record_relation(
+            kind="dispatch",
+            child_session_id=claimed_cid,
+            parent_session_id=handle,
+            agent_type="agy",
+            cwd="/tmp",
+        )
+        final_index = _index(empty_projects)
+        assert final_index.origin_of(claimed_cid) == "worker"
+        assert final_index.parent_of(claimed_cid) == caller_sid
+
 
 class TestCloseRelation:
     """收口写入：改的只有那一条分支，别的记录一字不动。"""

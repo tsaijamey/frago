@@ -203,10 +203,7 @@ def _windows_git_companion_dirs(bash_path: str | None) -> list[str]:
         return []
     parent = os.path.dirname(bin_dir)
     basename_fn = getattr(os.path, "basename", lambda p: p.replace("/", "\\").rsplit("\\", 1)[-1])
-    if basename_fn(parent).lower() == "usr":
-        git_root = os.path.dirname(parent)
-    else:
-        git_root = parent
+    git_root = os.path.dirname(parent) if basename_fn(parent).lower() == "usr" else parent
     candidates = [
         bin_dir,
         os.path.join(git_root, "bin"),
@@ -613,6 +610,24 @@ class TmuxAgentSession:
             with contextlib.suppress(Exception):
                 merged_env.update(self.driver.session_env(ctx))
         merged_env.update(self.env)
+        # 数字员工（Employee）会话角色保护：若调用方显式传入了 FRAGO_EMPLOYEE_ID 或
+        # FRAGO_AGENT_ROLE=employee（或当前进程环境已携带 FRAGO_EMPLOYEE_ID 且调用方未显式
+        # 声明 worker），确保 FRAGO_AGENT_ROLE 固定为 "employee"，绝不被默认的 "worker" 覆盖。
+        _emp_id = (
+            self.env.get("FRAGO_EMPLOYEE_ID")
+            or merged_env.get("FRAGO_EMPLOYEE_ID")
+            or (
+                os.environ.get("FRAGO_EMPLOYEE_ID", "")
+                if self.env.get("FRAGO_AGENT_ROLE") != "worker"
+                else ""
+            )
+        ).strip()
+        if _emp_id:
+            merged_env["FRAGO_EMPLOYEE_ID"] = _emp_id
+            if self.env.get("FRAGO_AGENT_ROLE") != "worker":
+                merged_env["FRAGO_AGENT_ROLE"] = "employee"
+        elif self.env.get("FRAGO_AGENT_ROLE"):
+            merged_env["FRAGO_AGENT_ROLE"] = self.env["FRAGO_AGENT_ROLE"]
         # 代理设置随会话走，不靠 tmux server 的继承环境。tmux server 是独立守护进程，
         # 它的环境在**第一次被谁拉起**时就定死；之后新建的 pane 继承的是那一份，而不是
         # 本进程当下的环境。于是在必须走代理才能出网的机器上，服务带着代理重启也没用
@@ -638,6 +653,11 @@ class TmuxAgentSession:
         # 命令，不碰主人的环境。
         if self._own_listed_id():
             merged_env.setdefault("FRAGO_SESSION_ID", self._own_listed_id())
+        elif self.session_id and (
+            self.session_id.startswith("webui-")
+            or self.driver.agent_type in ("agy", "codex", "opencode")
+        ):
+            merged_env.setdefault("FRAGO_LAUNCH_HANDLE", self.session_id)
         # launch 要看得见最终环境：codex 的 provider 开关由它推出（见 LaunchCtx.env）。
         ctx = dataclasses.replace(ctx, env=dict(merged_env))
 

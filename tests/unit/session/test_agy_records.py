@@ -853,13 +853,9 @@ def test_转录读不到时当第一次处理(app_dir):
     assert agy_records.review_context(None, None)[2] is True
 
 
-# ── 补窟窿：上一拍被拒时再跑一次 ──────────────────────────────────────
+# ── 步骤中途报错或被拒不重跑 UserPromptSubmit ─────────────────────────
 def _denied(step, reason="tool call denied by pre-tool hook: 先取后动"):
-    """被 hook 挡下的那一拍。形状照抄 agy 1.3.5 的真实记录（2026-10-20 实测）：
-
-    ``status: ERROR`` + 一个 ``error`` 字段。**注意与"命令自己失败"不同**——后者是
-    ``status: DONE``、失败信息在 ``content`` 正文里。
-    """
+    """工具报错或被 hook 挡下的那一拍（``status: ERROR``）。"""
     return {
         "step_index": step,
         "source": "MODEL",
@@ -870,8 +866,11 @@ def _denied(step, reason="tool call denied by pre-tool hook: 先取后动"):
     }
 
 
-def test_上一拍被拒要再跑一次(app_dir):
-    """工具刚被 hook 拒掉，模型马上要换做法重来——这正是最需要提醒的时刻。"""
+def test_步骤中途工具报错或被拒不重跑UserPromptSubmit(app_dir):
+    """本轮已跑过 PLANNER_RESPONSE 后，哪怕上一步 status==ERROR 也不再重跑 UserPromptSubmit。
+
+    否则任何工具自身报错（或拦截）都会在步骤序列中间重新插入整套 UserPromptSubmit 钩子卡片。
+    """
     _write(
         app_dir,
         [
@@ -881,7 +880,7 @@ def test_上一拍被拒要再跑一次(app_dir):
         ],
     )
     _prompt, _recent, should_review = agy_records.review_context(None, CONVERSATION_ID)
-    assert should_review is True
+    assert should_review is False
 
 
 def test_上一拍成功且非首拍就不跑(app_dir):
@@ -1058,3 +1057,78 @@ def test_adapter_也认driver递过来的纯文本轮次(app_dir):
 
     assert record is not None
     assert record.content_text == "答一句"
+
+
+# ── 定时器 SYSTEM_MESSAGE 销账与会话续接回放边界 ──────────────────────
+def test_定时器到期系统消息sender销账后本轮正常完结(app_dir):
+    """回归（c767deb5）：Timer 到期时 agy 写入 ``<SYSTEM_MESSAGE> sender=.../task-160``，
+    不含 ``Task id "..." finished with result:``；且前一条过渡 PLANNER_RESPONSE 可能粘连
+    fused 系统消息。收到独立 SYSTEM_MESSAGE 后必须销账并作废过渡播报，待后续终答落盘即判 done=True。
+    """
+    records = [
+        _user(0, "<USER_REQUEST>推进本体改造并等待验证</USER_REQUEST>"),
+        _planner(1, tool_calls=[{"name": "wait_timer", "args": {"seconds": 45}}]),
+        {
+            "step_index": 160,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "created_at": "2026-11-08T07:57:18Z",
+            "content": (
+                "Created At: 2026-11-08T15:57:18+08:00\n"
+                f"Tool is running as a background task with task id: {CONVERSATION_ID}/task-160\n"
+                "Task Description: Timer: 45s, Prompt: Check if worker finished.\n"
+            ),
+        },
+        _planner(
+            161,
+            content=(
+                "已设定 45 秒后台定时唤醒。\n\n\nfused\n"
+                "The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n"
+                "<SYSTEM_MESSAGE>\n"
+                f"[Message] timestamp=2026-11-08T07:58:03Z sender={CONVERSATION_ID}/task-160 "
+                "priority=MESSAGE_PRIORITY_HIGH content=Check if worker finished.\n"
+                "</SYSTEM_MESSAGE>"
+            ),
+        ),
+        _system_message(
+            162,
+            f"[Message] timestamp=2026-11-08T07:58:03Z sender={CONVERSATION_ID}/task-160 "
+            "priority=MESSAGE_PRIORITY_HIGH content=Check if worker finished.",
+            source="SYSTEM",
+        ),
+    ]
+    _write(app_dir, records)
+    # 定时器刚到期、模型尚未给出新答复时，过渡播报已作废，done 仍为 False
+    mid_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert mid_turn is not None
+    assert mid_turn.done is False
+
+    # 模型在定时器唤醒后完成检查并给出终答，此时 pending_bg_tasks 已清空，done 必须为 True
+    records.append(_planner(163, content="全部 84 项单元测试已通过，等待容器实测回调。"))
+    _write(app_dir, records)
+    final_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert final_turn is not None
+    assert final_turn.done is True
+    assert final_turn.text == "全部 84 项单元测试已通过，等待容器实测回调。"
+
+
+def test_跨进程续接回放边界清空遗留后台任务(app_dir):
+    """会话异常中断后通过 ``--conversation`` 续接时，``CONVERSATION_HISTORY`` 之前的遗留后台任务不得永久阻塞本轮。"""
+    records = [
+        _user(0, "<USER_REQUEST>执行长任务</USER_REQUEST>"),
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "content": f"Tool is running as a background task with task id: {CONVERSATION_ID}/task-99\n",
+        },
+        {"step_index": 2, "source": "SYSTEM", "type": "CONVERSATION_HISTORY", "status": "DONE"},
+        _planner(3, content="续接后已完成收尾。"),
+    ]
+    _write(app_dir, records)
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is True
+    assert turn.text == "续接后已完成收尾。"

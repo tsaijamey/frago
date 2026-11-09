@@ -375,6 +375,51 @@ def record_dispatch(
     )
 
 
+def _load_handle_bindings() -> dict[str, str]:
+    """一次性读取三家认领型内核的『启动把手 → 真实会话编号』映射表。"""
+    mapping: dict[str, str] = {}
+    with contextlib.suppress(Exception):
+        from frago.session import agy_store, codex_store, opencode_store
+
+        for store, field in (
+            (agy_store, "agy_conversation_id"),
+            (codex_store, "codex_session_id"),
+            (opencode_store, "opencode_session_id"),
+        ):
+            with contextlib.suppress(Exception):
+                for raw_handle, entry in store._load_bindings().items():
+                    if not isinstance(entry, dict):
+                        continue
+                    bound = entry.get(field)
+                    if (
+                        isinstance(bound, str)
+                        and bound.strip()
+                        and bound.strip() != raw_handle
+                    ):
+                        mapping[raw_handle] = bound.strip()
+    return mapping
+
+
+def _bound_session_id_for_handle(
+    handle: str,
+    *,
+    bindings_cache: dict[str, str] | None = None,
+) -> str | None:
+    """若 handle 是三家认领型内核已绑定的临时启动把手，返回其绑定的真实会话编号。"""
+    cleaned = (handle or "").strip()
+    if not cleaned:
+        return None
+    if bindings_cache is not None and cleaned in bindings_cache:
+        return bindings_cache[cleaned]
+    with contextlib.suppress(Exception):
+        from frago.session.self_id import _resolve_bound_session_id
+
+        bound, bound_agent = _resolve_bound_session_id(cleaned)
+        if bound and bound_agent is not None and bound != cleaned:
+            return bound
+    return None
+
+
 def record_attributed_dispatch(
     child_session_id: str,
     *,
@@ -394,12 +439,56 @@ def record_attributed_dispatch(
     ``webui-`` 前缀）在入口处就已经确定是人类亲自开的会话，直接跳过、绝不去进程环境里
     猜父会话——否则一旦服务端进程环境残留了某场旧会话的编号，人在网页上新建的会话就会被
     误记成那场旧会话派出的 worker。只有命令行派活路径才继续从环境里认父亲。
+
+    当 ``handle``（如异步派发预生成的临时启动把手）在账本里已有预记账时，优先把该把手记下
+    的真实 ``parent``（及 ``prompt_head``）过户到认领出的 ``child_session_id`` 上，且绝不把
+    临时启动把手自身当作父会话。
     """
     if origin == "human" or (handle or "").startswith("webui-"):
         return False
-    parent = parent_from_env()
+    clean_handle = (handle or "").strip()
+    parent: str | None = None
+    has_prerecorded_dispatch = False
+    if clean_handle and clean_handle != child_session_id:
+        pre = find_relation(clean_handle)
+        if pre is not None and pre.get("kind") == "dispatch":
+            has_prerecorded_dispatch = True
+            pre_parent = pre.get("parent")
+            if pre_parent and pre_parent not in (child_session_id, clean_handle):
+                parent = str(pre_parent)
+            if not prompt_head and pre.get("prompt_head"):
+                prompt_head = str(pre["prompt_head"])
+
     if parent is None:
+        env_parent = parent_from_env()
+        if env_parent and env_parent not in (child_session_id, clean_handle):
+            # 若环境里读到的是绑定到本会话自身的临时启动把手（如 watcher 注入的 FRAGO_SESSION_ID=<handle>），
+            # 绝不认把手自己当父亲，而是尝试从该把手的预记账里继承真实父会话。
+            if _bound_session_id_for_handle(env_parent) == child_session_id:
+                env_pre = find_relation(env_parent)
+                if env_pre is not None and env_pre.get("kind") == "dispatch":
+                    has_prerecorded_dispatch = True
+                    env_pre_parent = env_pre.get("parent")
+                    if env_pre_parent and env_pre_parent not in (child_session_id, env_parent):
+                        parent = str(env_pre_parent)
+                    if not prompt_head and env_pre.get("prompt_head"):
+                        prompt_head = str(env_pre["prompt_head"])
+            else:
+                parent = env_parent
+
+    if parent is None and not has_prerecorded_dispatch:
         return False
+
+    existing = find_relation(child_session_id)
+    trimmed_head = (prompt_head or "").strip()[:120]
+    if (
+        existing is not None
+        and existing.get("kind") == "dispatch"
+        and existing.get("parent") == parent
+        and (bool(existing.get("prompt_head")) or not trimmed_head)
+    ):
+        return True
+
     return record_relation(
         kind="dispatch",
         child_session_id=child_session_id,
@@ -454,22 +543,35 @@ def _ledger_pairs() -> tuple[dict[str, str], set[str], dict[str, SessionRelation
     parents: dict[str, str] = {}
     workers: set[str] = set()
     relations: dict[str, SessionRelation] = {}
+    handle_bindings = _load_handle_bindings()
     for item in _ledger_entries():
         entry = _parse_entry(item)
         if entry is None:
             continue
         child = entry["child"]
         kind = entry["kind"]
-        relations[child] = SessionRelation(kind=kind, closed=entry["closed_at"] is not None)
+        rel = SessionRelation(kind=kind, closed=entry["closed_at"] is not None)
+        relations[child] = rel
         if kind == "dispatch":
             workers.add(child)
+        bound_child = handle_bindings.get(child)
+        if bound_child and bound_child != child:
+            relations.setdefault(bound_child, rel)
+            if kind == "dispatch":
+                workers.add(bound_child)
         if kind not in ("dispatch", "branch", "handoff"):
             continue
         parent = entry["parent"]
+        if parent and handle_bindings.get(parent) == child:
+            # parent 实际上是 child 自己的临时启动把手，绝不能认作父亲；
+            # 若账本先前已为该把手记过真实父会话，则继承那一位真实父会话。
+            parent = parents.get(parent)
         # 自己不能是自己的父亲：真出现了就是记账时把编号取错了，认下来会让那一行
         # 在清单里既是主干又是它自己的子项。
         if parent and parent != child:
             parents[child] = parent
+            if bound_child and parent != bound_child:
+                parents.setdefault(bound_child, parent)
     return parents, workers, relations
 
 

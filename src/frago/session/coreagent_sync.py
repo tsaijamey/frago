@@ -66,12 +66,28 @@ def sync_coreagent_session(source: Path) -> str | None:
     """备份单个会话。有实质变化时返回 session_id，无变化返回 None。"""
     session_id = source.stem
     try:
-        source_lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-        source_mtime = source.stat().st_mtime
+        source_stat = source.stat()
+        source_mtime = source_stat.st_mtime
     except OSError as exc:
         raise RuntimeError(f"CoreAgent 会话记录读不出来: {exc}") from exc
 
     backup = raw_backup_path(session_id)
+    try:
+        if backup.exists():
+            backup_stat = backup.stat()
+            if (
+                backup_stat.st_size == source_stat.st_size
+                and abs(backup_stat.st_mtime - source_mtime) < 1e-3
+            ):
+                return None
+    except OSError:
+        pass
+
+    try:
+        source_lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        raise RuntimeError(f"CoreAgent 会话记录读不出来: {exc}") from exc
+
     backed_up = _line_count(backup)
 
     if len(source_lines) < backed_up:

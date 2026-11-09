@@ -412,7 +412,13 @@ def _try_clear_residual_input(session, driver, pane: str) -> tuple[str, bool]:
 
 @click.command("send")
 @click.argument("name")
-@click.argument("prompt")
+@click.argument("prompt", required=False, default=None)
+@click.option(
+    "--prompt-file",
+    type=click.File("r", encoding="utf-8"),
+    default=None,
+    help="Read prompt from file (use '-' for stdin).",
+)
 @click.option(
     "--timeout",
     type=float,
@@ -420,12 +426,47 @@ def _try_clear_residual_input(session, driver, pane: str) -> tuple[str, bool]:
     help="Wall-clock cap for this turn, in seconds. Default 0 = no cap: wait until the "
          "turn finishes (or the agent needs a human, or the session dies).",
 )
-def drive_send(name: str, prompt: str, timeout: float) -> None:
+@click.option(
+    "--wait",
+    "wait_for_answer",
+    is_flag=True,
+    help="Synchronously wait for the turn to complete before returning.",
+)
+@click.option(
+    "--async",
+    "force_async",
+    is_flag=True,
+    help="Non-blocking async dispatch with automatic callback into caller session stream.",
+)
+@click.option(
+    "--callback-session",
+    "callback_session_id",
+    type=str,
+    default=None,
+    help="Explicit caller session ID to receive the async completion callback.",
+)
+def drive_send(
+    name: str,
+    prompt: str | None,
+    prompt_file,
+    timeout: float,
+    wait_for_answer: bool = False,
+    force_async: bool = False,
+    callback_session_id: str | None = None,
+) -> None:
     """Feed one turn to a live session and print the extracted answer (kept alive).
 
     缺省不设时间上限：一轮该跑多久由任务决定。墙钟到点就判死的老行为会把还在干活的
     会话报成 timeout，人以为它停了、实际还在跑。要上限就显式 ``--timeout N``。
     """
+    if prompt_file is not None:
+        prompt_text = prompt_file.read().strip()
+    elif prompt is not None:
+        prompt_text = prompt
+    else:
+        click.echo("Error: Please provide prompt (argument or --prompt-file).", err=True)
+        sys.exit(1)
+
     entry = _resolve_or_die(name)
     runner = make_runner()
 
@@ -436,6 +477,37 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
         click.echo(f"Error: drive session {name!r} is no longer alive.", err=True)
         _echo_active_sessions()
         sys.exit(1)
+
+    from frago.session.async_dispatch import (
+        dispatch_drive_send_async,
+        format_dispatched_receipt,
+        resolve_caller_session_id,
+        should_dispatch_worker_async,
+    )
+
+    caller_sid = resolve_caller_session_id(callback_session_id)
+    target_sid = getattr(entry, "session_id", None) or entry.name
+    if should_dispatch_worker_async(
+        caller_sid,
+        wait_for_answer=wait_for_answer,
+        force_async=force_async,
+        dry_run=False,
+        explicit_caller_sid=callback_session_id,
+        target_session_id=target_sid,
+    ):
+        assert caller_sid is not None
+        job = dispatch_drive_send_async(
+            caller_session_id=caller_sid,
+            caller_cwd=os.getcwd(),
+            target_session_id=target_sid,
+            target_name=entry.name,
+            agent=entry.agent_type,
+            cwd=entry.cwd,
+            prompt=prompt_text,
+            timeout=timeout if timeout > 0 else 600.0,
+        )
+        click.echo(format_dispatched_receipt(job, output_format="text"))
+        return
 
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)
@@ -454,7 +526,7 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
         click.echo(pane, err=True)
         sys.exit(1)
 
-    result = session.send(prompt, timeout_s=timeout if timeout > 0 else None)
+    result = session.send(prompt_text, timeout_s=timeout if timeout > 0 else None)
 
     # 这一轮里驱动可能刚把窗口改了名（认领到真编号）。侧车要跟上，否则下一轮找不到它。
     _refresh_tmux_name(entry, session)

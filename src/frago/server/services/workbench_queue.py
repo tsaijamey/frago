@@ -5,23 +5,28 @@
    CoreAgent 的 stdin 中途插话），因为实践证明中途插话会打断 agent 正在执行的流程。
 2. 当会话正在执行（或队列中已有待发消息、或用户把消息加入队列）时，消息堆积到 frago 会话自有的
    持久化队列（``~/.frago/sessions/<family>/<sid>/workbench-queue.json``）中。
-3. **自动注入条件**：当且仅当会话已停止（``stop``）且检测到 stop 轮次出现后，其 ``[end, end-5]``
-   轮会话（即末尾最近 6 轮会话）都没有未作答的交互卡（避免因为 hook 导致含交互卡的那一轮被后续
-   补充会话遮挡），才自动从队列头部取出最早的那一条消息注入会话，并从队列中删除该消息。
+3. **自动注入条件**：当且仅当会话已停止（``stop``）且检测到含实际内容（如 assistant response 文本）的 stop 轮次出现后，
+   其最后一轮实际内容会话没有未作答的交互卡，才自动从队列头部取出最早的那一条消息注入会话，并从队列中删除该消息。
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import threading
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None  # type: ignore[assignment]
 
 from frago.server.services.schedule_pending import _extract_ui_component_dict, card_in
 from frago.session.unified_record import UnifiedRecord
@@ -29,14 +34,20 @@ from frago.session.unified_record import UnifiedRecord
 logger = logging.getLogger(__name__)
 
 QUEUE_FILENAME = "workbench-queue.json"
+QUEUE_LOCK_FILENAME = "workbench-queue.lock"
+INJECT_LOCK_FILENAME = "workbench-inject.lock"
+QUEUE_STATE_FILENAME = "workbench-queue-state.json"
 QUEUE_VERSION = 1
+
+#: 跨进程注入状态锁的最大保活毫秒数（防止极端情况下进程被 SIGKILL 后残留死锁）。
+CROSS_PROCESS_INJECT_STALE_MS = 60_000
 
 MAX_QUEUE_ITEMS = 100
 MAX_TEXT = 100_000
 MAX_ID = 64
 
-#: 检测 ``[end, end-5]`` 轮会话是否存在交互卡（含 ``end`` 到 ``end-5`` 共 6 轮）。
-TAIL_TURN_WINDOW = 6
+#: 仅检测最后一轮实际内容会话是否存在交互卡。
+TAIL_TURN_WINDOW = 1
 
 #: 放送给前端的 WebSocket 消息类型。
 WS_SESSION_QUEUE_UPDATE = "session_queue_update"
@@ -48,6 +59,7 @@ _BOOKKEEPING_KINDS = frozenset(
 
 _locks_guard = threading.Lock()
 _session_locks: dict[str, threading.RLock] = {}
+_file_lock_state: dict[str, list[Any]] = {}
 
 #: 正在执行自动注入的会话集合（防止同一时刻并发触发两次 pop）。
 _injecting_sessions: set[str] = set()
@@ -84,13 +96,146 @@ class QueueError(ValueError):
     """队列请求不合规矩，路由据此返回 400。"""
 
 
-def _lock_for(session_id: str) -> threading.RLock:
+def _thread_lock_for(session_id: str) -> threading.RLock:
     with _locks_guard:
         lock = _session_locks.get(session_id)
         if lock is None:
             lock = threading.RLock()
             _session_locks[session_id] = lock
         return lock
+
+
+@contextlib.contextmanager
+def _lock_for(session_id: str) -> Iterator[None]:
+    """同时获取进程内可重入线程锁与基于会话目录 ``workbench-queue.lock`` 的跨进程文件排他锁。"""
+    tlock = _thread_lock_for(session_id)
+    with tlock:
+        entry = _file_lock_state.get(session_id)
+        if entry is None:
+            fd: int | None = None
+            if fcntl is not None:
+                with contextlib.suppress(OSError):
+                    d = queue_dir(session_id)
+                    d.mkdir(parents=True, exist_ok=True)
+                    lock_path = d / QUEUE_LOCK_FILENAME
+                    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+            entry = [fd, 1]
+            _file_lock_state[session_id] = entry
+        else:
+            entry[1] += 1
+        try:
+            yield
+        finally:
+            entry[1] -= 1
+            if entry[1] <= 0:
+                _file_lock_state.pop(session_id, None)
+                held_fd = entry[0]
+                if held_fd is not None:
+                    if fcntl is not None:
+                        with contextlib.suppress(OSError):
+                            fcntl.flock(held_fd, fcntl.LOCK_UN)
+                    with contextlib.suppress(OSError):
+                        os.close(held_fd)
+
+
+def _try_acquire_inject_lock(session_id: str) -> int | None:
+    """尝试以非阻塞方式获取跨进程注入排他锁（``workbench-inject.lock``）。
+
+    若当前已有其他进程正在向该会话执行终端投喂，立即返回 ``None``；
+    在无 ``fcntl`` 的平台上返回 ``-1`` 作为占位符。
+    """
+    if fcntl is None:
+        return -1
+    fd: int | None = None
+    try:
+        d = queue_dir(session_id)
+        d.mkdir(parents=True, exist_ok=True)
+        lock_path = d / INJECT_LOCK_FILENAME
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError:
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        return None
+
+
+def _release_inject_lock(fd: int | None) -> None:
+    """释放 ``_try_acquire_inject_lock`` 获取的跨进程注入排他锁。"""
+    if fd is None or fd < 0:
+        return
+    if fcntl is not None:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    with contextlib.suppress(OSError):
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def cross_process_inject_guard(session_id: str) -> Iterator[bool]:
+    """供外部调用方（如 ``async_dispatch`` 兜底直发路径）使用的非阻塞跨进程注入互斥护栏。"""
+    fd = _try_acquire_inject_lock(session_id)
+    if fd is None:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _release_inject_lock(fd)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _read_queue_state(directory: Path) -> dict[str, Any]:
+    path = directory / QUEUE_STATE_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_queue_state(directory: Path, state_data: dict[str, Any]) -> None:
+    with contextlib.suppress(OSError):
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / QUEUE_STATE_FILENAME
+        tmp = target.with_name(f"{QUEUE_STATE_FILENAME}.tmp{os.getpid()}.{uuid.uuid4().hex[:6]}")
+        tmp.write_text(json.dumps(state_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+
+
+def _is_cross_process_injecting(session_id: str, state_data: dict[str, Any] | None = None) -> bool:
+    """检查是否有本进程或其他存活子进程正在向 ``session_id`` 投喂消息。"""
+    if session_id in _injecting_sessions:
+        return True
+    probe_fd = _try_acquire_inject_lock(session_id)
+    if probe_fd is None:
+        return True
+    _release_inject_lock(probe_fd)
+    if state_data is None:
+        state_data = _read_queue_state(queue_dir(session_id))
+    inj_pid = state_data.get("injecting_pid")
+    inj_started = state_data.get("injecting_started_at_ms")
+    if isinstance(inj_pid, int) and inj_pid > 0:
+        now_ms = int(time.time() * 1000)
+        started_ms = int(inj_started) if isinstance(inj_started, (int, float)) else 0
+        if (now_ms - started_ms) < CROSS_PROCESS_INJECT_STALE_MS and _pid_is_alive(inj_pid):
+            return True
+    return False
 
 
 def _cancel_settle_timer(session_id: str) -> None:
@@ -107,6 +252,7 @@ def reset_runtime_state() -> None:
         timers = list(_settle_timers.values())
         _settle_timers.clear()
         _session_locks.clear()
+        _file_lock_state.clear()
         _injecting_sessions.clear()
         _last_injected_turn.clear()
         _queued_sessions.clear()
@@ -366,13 +512,27 @@ def prepend_item(session_id: str, item: dict[str, Any]) -> None:
     _broadcast_queue_update(session_id, items)
 
 
-# ── 轮次切分与 [end, end-5] 交互卡检测 ──────────────────────────────
+# ── 轮次切分与最后一轮交互卡检测 ────────────────────────────────────
 
 
 def _record_field(rec: UnifiedRecord | dict[str, Any], name: str, default: Any = None) -> Any:
     if isinstance(rec, dict):
         return rec.get(name, default)
     return getattr(rec, name, default)
+
+
+def _has_substantive_assistant_response(rec: UnifiedRecord | dict[str, Any]) -> bool:
+    """判断单条主会话记录是否为含实际文本内容的 assistant 回复（``agent.say`` 非空文本）。"""
+    agent_path = _record_field(rec, "agent_path") or []
+    if agent_path:
+        return False
+    if _record_field(rec, "kind") != "agent.say":
+        return False
+    payload = _record_field(rec, "payload") or {}
+    if not isinstance(payload, dict):
+        return False
+    text = payload.get("text")
+    return isinstance(text, str) and bool(text.strip())
 
 
 def _has_ui_decision_card(text: str) -> bool:
@@ -443,8 +603,8 @@ def segment_main_turns(
         或属于不同 ``group_id`` 的非记账记录时，开启新一轮；
       - 当当前轮尚未出现 ``agent.say`` 但已包含工具或思考记录，若遇到新的 ``user.say`` 或
         hook 注入（``context.inject`` 且 ``source == "hook"``），也开启新一轮。
-    - 只保留至少包含一条实质回复或交互卡（``agent.say`` 或 ``record_has_interactive_card``）
-      的轮次，因此末尾索引 ``-1`` 即为 ``end`` 轮，``-6`` 即为 ``end-5`` 轮。
+    - 只保留至少包含一条实质回复或交互卡（非空 ``agent.say`` 或 ``record_has_interactive_card``）
+      的轮次，因此末尾索引 ``-1`` 即为最后一轮实际内容会话。
     """
     turns: list[list[UnifiedRecord | dict[str, Any]]] = []
     current: list[UnifiedRecord | dict[str, Any]] = []
@@ -488,22 +648,22 @@ def segment_main_turns(
                 current_has_assistant_step = False
 
         current.append(rec)
-        if kind == "agent.say":
+        if _has_substantive_assistant_response(rec):
             current_has_say = True
             current_say_group = str(group_id) if group_id else None
             current_has_assistant_step = True
-        elif kind in {"agent.think", "tool.call", "tool.result"}:
+        elif kind in {"agent.say", "agent.think", "tool.call", "tool.result"}:
             current_has_assistant_step = True
 
     if current:
         turns.append(current)
 
-    # 过滤出真正构成了会话轮次的段（含 agent.say 或含交互卡）
+    # 过滤出真正构成了实际会话轮次的段（含非空 assistant response 文本或含交互卡）
     valid_turns = [
         turn
         for turn in turns
         if any(
-            _record_field(r, "kind") == "agent.say" or record_has_interactive_card(r)
+            _has_substantive_assistant_response(r) or record_has_interactive_card(r)
             for r in turn
         )
     ]
@@ -515,14 +675,7 @@ def has_interactive_card_in_tail_turns(
     *,
     window: int = TAIL_TURN_WINDOW,
 ) -> bool:
-    """检查末尾 ``[end, end-5]``（共 ``window=6``）轮会话中是否存在未作答的交互卡。
-
-    为什么检查 ``[end, end-5]`` 而不只看 ``end``：
-    当 agent 在某一轮输出了交互卡（``frago ask`` 或 ``answer-needed-by-human``）后，
-    Stop hook 或 PostToolUse hook 可能阻塞停止并触发 1～5 轮补充回复，把交互卡所在的那一轮
-    遮挡在 ``end-1`` 乃至 ``end-5``。只要 ``[end, end-5]`` 轮内存在尚未被人类通过
-    ``【answer】`` 作答的交互卡，就视为存在交互卡，禁止自动注入队列消息。
-    """
+    """检查最后一轮实际内容会话（默认 ``window=1``）中是否存在未作答的交互卡。"""
     turns = segment_main_turns(records)
     if not turns:
         return False
@@ -540,7 +693,7 @@ def has_interactive_card_in_tail_turns(
 def detect_stop_turn_id(
     records: Sequence[UnifiedRecord | dict[str, Any]],
 ) -> str | None:
-    """检测会话末尾是否已经出现完成的 stop 轮次，返回该轮末尾实质记录的 ``id``。
+    """检测会话末尾是否已经出现完成的 stop 轮次（最后一轮必须是实际内容如 assistant response 文本），返回该轮末尾实质记录的 ``id``。
 
     若会话还没有任何记录，或者最后一条实质记录是用户发言 / 正在执行中的工具调用（说明新一轮
     还没产完 stop 轮次的回复），返回 ``None``。
@@ -556,16 +709,20 @@ def detect_stop_turn_id(
         if kind == "context.inject":
             payload = _record_field(rec, "payload") or {}
             # 排队中的插话尚未执行完
-            if isinstance(payload, dict) and payload.get("channel") == "queued_command":
-                if payload.get("queue_state") == "pending":
-                    last_substantive = rec
+            if (
+                isinstance(payload, dict)
+                and payload.get("channel") == "queued_command"
+                and payload.get("queue_state") == "pending"
+            ):
+                last_substantive = rec
             continue
         last_substantive = rec
 
     if last_substantive is None:
         return None
-    last_kind = str(_record_field(last_substantive, "kind") or "")
-    if last_kind == "agent.say" or record_has_interactive_card(last_substantive):
+    if _has_substantive_assistant_response(last_substantive) or record_has_interactive_card(
+        last_substantive
+    ):
         rec_id = _record_field(last_substantive, "id")
         return str(rec_id) if rec_id else "stop"
     return None
@@ -586,12 +743,12 @@ def is_session_busy(session_id: str) -> bool:
     from frago.session import (
         agy_store,
         codex_store,
+        coreagent_store,
         opencode_store,
         record_reader,
         transcript_completion,
     )
     from frago.session.adapters.claude_code_records import find_session_file
-    from frago.session import coreagent_store
 
     if session_id in _injecting_sessions:
         return True
@@ -678,22 +835,29 @@ def evaluate_queue_state(
             records = []
 
     stop_turn_id = detect_stop_turn_id(records)
-    session_stopped = (not busy) and (stop_turn_id is not None)
+    directory = queue_dir(session_id)
+    persisted_state = _read_queue_state(directory)
+    persisted_turn = persisted_state.get("last_injected_turn")
+    cross_injecting = _is_cross_process_injecting(session_id, persisted_state)
+    session_stopped = (not busy) and (stop_turn_id is not None) and (not cross_injecting)
     blocked_by_card = has_interactive_card_in_tail_turns(records, window=TAIL_TURN_WINDOW)
-    already_injected_this_turn = (
-        stop_turn_id is not None and _last_injected_turn.get(session_id) == stop_turn_id
+    already_injected_this_turn = stop_turn_id is not None and (
+        _last_injected_turn.get(session_id) == stop_turn_id
+        or persisted_turn == stop_turn_id
     )
     can_inject = (
         session_stopped
         and not blocked_by_card
         and not already_injected_this_turn
-        and session_id not in _injecting_sessions
+        and not cross_injecting
     )
     return {
         "session_stopped": session_stopped,
         "stop_turn_id": stop_turn_id,
         "blocked_by_card": blocked_by_card,
         "can_inject": can_inject,
+        "has_records": bool(records),
+        "injecting": cross_injecting,
     }
 
 
@@ -717,6 +881,7 @@ def try_auto_inject(
     ``sync=True`` 时在当前线程直接完成投喂（方便单元测试确定性断言）；默认在后台线程投喂，
     避免阻塞文件监听回调或 HTTP 响应。
     """
+    inject_fd: int | None = None
     with _lock_for(session_id):
         raw_items = list_raw_queue(session_id)
         if not raw_items:
@@ -727,9 +892,17 @@ def try_auto_inject(
             reason = (
                 "blocked_by_card"
                 if state["blocked_by_card"]
-                else "not_stopped"
-                if not state["session_stopped"]
                 else "already_injected_for_turn"
+                if (
+                    state["stop_turn_id"] is not None
+                    and not state["injecting"]
+                    and (
+                        _last_injected_turn.get(session_id) == state["stop_turn_id"]
+                        or _read_queue_state(queue_dir(session_id)).get("last_injected_turn")
+                        == state["stop_turn_id"]
+                    )
+                )
+                else "not_stopped"
             )
             return {
                 "injected": False,
@@ -738,14 +911,36 @@ def try_auto_inject(
                 **state,
             }
 
+        inject_fd = _try_acquire_inject_lock(session_id)
+        if inject_fd is None:
+            return {
+                "injected": False,
+                "reason": "not_stopped",
+                "item": None,
+                **state,
+                "session_stopped": False,
+                "can_inject": False,
+                "injecting": True,
+            }
+
         earliest = pop_earliest(session_id)
         if earliest is None:
+            _release_inject_lock(inject_fd)
             return {"injected": False, "reason": "empty", "item": None}
 
         stop_turn_id = state["stop_turn_id"]
         if stop_turn_id:
             _last_injected_turn[session_id] = stop_turn_id
         _injecting_sessions.add(session_id)
+        directory = queue_dir(session_id)
+        persisted = _read_queue_state(directory)
+        now_ms = int(time.time() * 1000)
+        if stop_turn_id:
+            persisted["last_injected_turn"] = stop_turn_id
+        persisted["last_injected_at_ms"] = now_ms
+        persisted["injecting_pid"] = os.getpid()
+        persisted["injecting_started_at_ms"] = now_ms
+        _write_queue_state(directory, persisted)
 
     def _run_injection() -> None:
         try:
@@ -757,13 +952,30 @@ def try_auto_inject(
                 earliest.get("id"),
                 exc,
             )
-            # 若因为瞬时未就绪/忙碌投喂失败，放回队首并清除本轮已注入标记
-            if stop_turn_id and _last_injected_turn.get(session_id) == stop_turn_id:
-                _last_injected_turn.pop(session_id, None)
-            prepend_item(session_id, earliest)
-        finally:
             with _lock_for(session_id):
-                _injecting_sessions.discard(session_id)
+                # 若因为瞬时未就绪/忙碌投喂失败，放回队首并清除本轮已注入标记
+                if stop_turn_id and _last_injected_turn.get(session_id) == stop_turn_id:
+                    _last_injected_turn.pop(session_id, None)
+                directory = queue_dir(session_id)
+                st = _read_queue_state(directory)
+                if stop_turn_id and st.get("last_injected_turn") == stop_turn_id:
+                    st.pop("last_injected_turn", None)
+                st.pop("injecting_pid", None)
+                st.pop("injecting_started_at_ms", None)
+                _write_queue_state(directory, st)
+                prepend_item(session_id, earliest)
+        finally:
+            try:
+                with _lock_for(session_id):
+                    _injecting_sessions.discard(session_id)
+                    directory = queue_dir(session_id)
+                    st = _read_queue_state(directory)
+                    if st.get("injecting_pid") == os.getpid():
+                        st.pop("injecting_pid", None)
+                        st.pop("injecting_started_at_ms", None)
+                        _write_queue_state(directory, st)
+            finally:
+                _release_inject_lock(inject_fd)
             # 这一轮投喂跑完后，若又产生了新的 stop 轮次且队列还有后续消息，继续检查下一条
             if not sync:
                 schedule_auto_inject_after_settle(session_id, delay_s=0.8)

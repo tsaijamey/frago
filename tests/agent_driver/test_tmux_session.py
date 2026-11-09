@@ -1270,3 +1270,32 @@ def test_send_text_off_windows_never_gates(monkeypatch) -> None:
     sess = TmuxAgentSession("w5", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep)
     sess.send_text("中文 mixed")
     assert any("中文 mixed" in c for c in fake.sent_keys())
+
+
+@pytest.mark.parametrize("claim_agent", ["agy", "codex", "opencode"])
+def test_open_injects_launch_handle_instead_of_session_id_for_unclaimed_kernels(
+    monkeypatch, claim_agent: str
+) -> None:
+    """回归（e875e9e1 / c69c589f）：三家认领型内核在新建会话（native_session_id=False）时，
+    无论启动把手带不带 webui- 前缀（如 employee invoke / agent 异步派发的 UUID 把手），
+    open() 都必须注入 FRAGO_LAUNCH_HANDLE 而非 FRAGO_SESSION_ID，防止钩子或子进程把临时把手误认作父会话。
+    """
+    import dataclasses
+
+    _without_proxy_env(monkeypatch)
+    handle = "c69c589f-670c-481c-af79-ac870f4f7598"
+    driver = dataclasses.replace(_echo_driver(), agent_type=claim_agent, accepts_session_id=False)
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        handle,
+        driver,
+        cwd="/tmp",
+        native_session_id=False,
+        runner=fake,
+        sleep=_no_sleep,
+    )
+    sess.open(ready_timeout_s=5)
+    new_session = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    pairs = [new_session[i + 1] for i, a in enumerate(new_session) if a == "-e"]
+    assert f"FRAGO_LAUNCH_HANDLE={handle}" in pairs
+    assert not any(one.startswith("FRAGO_SESSION_ID=") for one in pairs)

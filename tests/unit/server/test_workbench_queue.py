@@ -112,31 +112,27 @@ def client():
 
 
 class TestTailTurnsInteractiveCardCheck:
-    """验证 [end, end-5]（最近 6 轮）交互卡门控逻辑。"""
+    """验证仅看最后一轮实际内容（如 assistant response 文本）的交互卡门控逻辑。"""
 
-    def test_no_card_in_tail_turns_allows_injection(self):
+    def test_no_card_in_last_turn_allows_injection(self):
         records: list[UnifiedRecord] = []
         for i in range(6):
             records.extend(_normal_turn(i, i * 10))
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
         assert workbench_queue.detect_stop_turn_id(records) == "rec-51"
 
-    @pytest.mark.parametrize("hook_turns_after_card", [0, 1, 2, 3, 4, 5])
-    def test_card_within_end_to_end_minus_5_blocks_injection(self, hook_turns_after_card: int):
-        """当交互卡出现在 end（0 轮补充）到 end-5（5 轮补充）之间时，一律阻断自动注入。"""
+    def test_card_in_last_turn_blocks_injection(self):
+        """当交互卡出现在最后一轮（end）时，阻断自动注入。"""
         records: list[UnifiedRecord] = [
             _rec(1, "user.say", {"text": "帮我准备发布"}),
             _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-card"),
         ]
-        for h in range(hook_turns_after_card):
-            records.extend(_hook_supplement_turn(h + 1, 10 + h * 10))
-
         turns = workbench_queue.segment_main_turns(records)
-        assert len(turns) == 1 + hook_turns_after_card
+        assert len(turns) == 1
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
 
-    def test_frago_ask_tool_result_occluded_by_5_hook_turns_still_blocks(self):
-        """`frago ask` 产出的 tool.result 交互卡即使被 5 轮 hook 补充回复遮挡（位于 end-5），仍阻断注入。"""
+    def test_frago_ask_tool_result_in_last_turn_blocks(self):
+        """`frago ask` 产出的 tool.result 交互卡与收尾回复同属最后一轮时，阻断注入。"""
         records: list[UnifiedRecord] = [
             _rec(1, "user.say", {"text": "部署到哪里？"}),
             _rec(2, "tool.call", {"tool": "ask"}, group_id="grp-ask"),
@@ -148,25 +144,33 @@ class TestTailTurnsInteractiveCardCheck:
             ),
             _rec(4, "agent.say", {"text": "请在上方卡片选择环境"}, group_id="grp-ask"),
         ]
-        for h in range(5):
-            records.extend(_hook_supplement_turn(h + 1, 20 + h * 10))
-
         turns = workbench_queue.segment_main_turns(records)
-        assert len(turns) == 6  # [end-5 .. end]
+        assert len(turns) == 1
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
 
-    def test_card_at_end_minus_6_no_longer_blocks(self):
-        """当交互卡已经在 end-6（后面已有 6 轮无卡轮次）时，不再阻断。"""
+    def test_card_in_previous_turn_no_longer_blocks_when_last_turn_has_substantive_response(self):
+        """当交互卡在上一轮（end-1），而最后一轮（end）已经是新的实际 assistant response 文本时，不再阻断。"""
         records: list[UnifiedRecord] = [
             _rec(1, "user.say", {"text": "帮我准备发布"}),
             _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-card"),
+            *_normal_turn(1, 10),
         ]
-        for h in range(6):
-            records.extend(_hook_supplement_turn(h + 1, 10 + h * 10))
-
         turns = workbench_queue.segment_main_turns(records)
-        assert len(turns) == 7
+        assert len(turns) == 2
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+    def test_empty_agent_say_does_not_count_as_substantive_last_turn(self):
+        """若末尾只有空文本的 agent.say，不构成实际内容轮次，最后一轮仍为含交互卡的那一轮。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "帮我准备发布"}),
+            _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-card"),
+            _rec(3, "user.say", {"text": "追问一句"}),
+            _rec(4, "agent.say", {"text": "   "}, group_id="grp-empty"),
+        ]
+        turns = workbench_queue.segment_main_turns(records)
+        assert len(turns) == 1
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+        assert workbench_queue.detect_stop_turn_id(records) is None
 
     def test_card_answered_by_human_no_longer_blocks(self):
         """若交互卡已被人类通过【answer】回复确认，后续 stop 轮次不再被该旧卡阻断。"""
@@ -242,12 +246,10 @@ class TestQueueAutoInjectionAndRoutes:
         )
         monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
 
-        # 先构造存在交互卡被 hook 遮挡在 end-2 的记录：此时 drain 不应注入
+        # 先构造最后一轮存在交互卡的记录：此时 drain 不应注入
         records_with_card: list[UnifiedRecord] = [
             _rec(1, "user.say", {"text": "请处理"}),
             _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="g1"),
-            *_hook_supplement_turn(1, 10),
-            *_hook_supplement_turn(2, 20),
         ]
         current_records = {"data": records_with_card}
         monkeypatch.setattr(
@@ -370,4 +372,61 @@ class TestQueueAutoInjectionAndRoutes:
         assert injected_sids == [CC_SID]
         assert injected == [(CC_SID, "后台巡检任务")]
         assert workbench_queue.list_queue(CC_SID) == []
+
+    def test_cross_process_state_and_inject_lock_prevent_duplicate_injection_for_same_turn(
+        self, monkeypatch
+    ):
+        """回归（disp-0c1150941a47 / disp-580a86cdc45c 并发回投）：两个独立 OS 子进程在毫秒级窗口内
+        先后调用 try_auto_inject 时，持久化状态文件 workbench-queue-state.json 与非阻塞排他锁
+        workbench-inject.lock 必须阻止第二个进程对同一 stop_turn_id 重复弹出或并发敲入终端。
+        """
+        injected: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            workbench_queue,
+            "_sender_override",
+            lambda sid, prompt, _cwd: injected.append((sid, prompt)),
+        )
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+
+        records: list[UnifiedRecord] = _normal_turn(1, 10)
+        monkeypatch.setattr(
+            record_reader, "read_records", lambda *_a, **_k: list(records)
+        )
+
+        workbench_queue.enqueue(CC_SID, text="进程1回传报文", prompt="进程1回传报文")
+        workbench_queue.enqueue(CC_SID, text="进程2回传报文", prompt="进程2回传报文")
+
+        # 1. 进程 1 完成注入：写入 workbench-queue-state.json 的 last_injected_turn
+        res_p1 = workbench_queue.try_auto_inject(CC_SID, sync=True)
+        assert res_p1["injected"] is True
+        assert res_p1["item"]["text"] == "进程1回传报文"
+
+        # 2. 模拟独立子进程 2：清空当前进程内存中的 _last_injected_turn 与 _injecting_sessions
+        workbench_queue._last_injected_turn.clear()
+        workbench_queue._injecting_sessions.clear()
+
+        # 子进程 2 尝试在同一 stop_turn_id 下注入：由于磁盘 workbench-queue-state.json 已记录该轮，被拦截
+        res_p2 = workbench_queue.try_auto_inject(CC_SID, sync=True)
+        assert res_p2["injected"] is False
+        assert res_p2["reason"] == "already_injected_for_turn"
+        assert [it["text"] for it in workbench_queue.list_queue(CC_SID)] == ["进程2回传报文"]
+
+        # 3. 模拟新一轮 stop 轮次出现，但另一进程正持有 workbench-inject.lock 正在敲终端
+        records.extend(_normal_turn(2, 20))
+        with workbench_queue.cross_process_inject_guard(CC_SID) as acquired:
+            assert acquired is True
+            # 锁被占用期间再次 acquire 返回 False
+            with workbench_queue.cross_process_inject_guard(CC_SID) as nested_acquired:
+                assert nested_acquired is False
+            res_locked = workbench_queue.try_auto_inject(CC_SID, sync=True)
+            assert res_locked["injected"] is False
+            assert res_locked["reason"] == "not_stopped"
+            assert [it["text"] for it in workbench_queue.list_queue(CC_SID)] == ["进程2回传报文"]
+
+        # 4. 跨进程注入锁释放后，下一轮可正常弹出并注入
+        res_unlocked = workbench_queue.try_auto_inject(CC_SID, sync=True)
+        assert res_unlocked["injected"] is True
+        assert res_unlocked["item"]["text"] == "进程2回传报文"
+        assert workbench_queue.list_queue(CC_SID) == []
+
 

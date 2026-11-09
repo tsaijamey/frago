@@ -50,6 +50,7 @@ driver **不代替用户按键**：菜单若还是弹出来（预写没生效）
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -148,6 +149,13 @@ _CHROME_LINE = re.compile(
 # 认领起算点：按会话记住"起会话前一刻"的毫秒时间戳。agy 的摘要行在首轮提交后才有，
 # 锚在启动之前即可罩住它；MUST 保留最早那个而不是每轮刷新。
 _CLAIM_ANCHORS: MutableMapping[TmuxAgentSession, int] = WeakKeyDictionary()
+
+# 首轮提交时记录的提示词去空白尾段（供转录首条 USER_INPUT 精确因果认领）。
+_CLAIM_PROMPT_TAILS: MutableMapping[TmuxAgentSession, str] = WeakKeyDictionary()
+_TAIL_CHARS = 32
+
+# 已完成驱动侧一次性认领收尾（记派活账、改 tmux 窗口名）的会话。
+_FINALIZED_CLAIMS: MutableMapping[TmuxAgentSession, str] = WeakKeyDictionary()
 
 # launch 那一刻记下的锚点，键是 frago 会话标识。launch 拿不到 session 对象（会话对象
 # 还在构造中），故先落在这里，首次需要认领时再挪进 ``_CLAIM_ANCHORS``。
@@ -256,12 +264,11 @@ def _launch(ctx: LaunchCtx) -> str:
     故读失败 NEVER 误清一条好绑定。
     """
     _ensure_workspace_trusted(ctx.cwd)
-    # 认领的起算点锚在启动之前：摘要行是会话建出来之后才写的，锚晚了会错过它。
-    _LAUNCH_ANCHORS.setdefault(ctx.session_id, int(time.time() * 1000))
 
     if ctx.native_session_id:
         if agy_store.conversation_exists(ctx.session_id):
             return f"agy {_BASE_FLAGS} --conversation {ctx.session_id}"
+        _LAUNCH_ANCHORS.setdefault(ctx.session_id, int(time.time() * 1000))
         return f"agy {_BASE_FLAGS}"
 
     bound = agy_store.get_binding(ctx.session_id)
@@ -269,6 +276,8 @@ def _launch(ctx: LaunchCtx) -> str:
         if agy_store.conversation_exists(bound):
             return f"agy {_BASE_FLAGS} --conversation {bound}"
         agy_store.drop_binding(ctx.session_id)
+    # 认领的起算点锚在新会话裸起之前：转录与摘要行都是会话建出来之后才写的，锚晚了会错过它。
+    _LAUNCH_ANCHORS.setdefault(ctx.session_id, int(time.time() * 1000))
     return f"agy {_BASE_FLAGS}"
 
 
@@ -303,9 +312,9 @@ def _claim_anchor(session: TmuxAgentSession) -> int | None:
 
 
 def _claim_once(session: TmuxAgentSession) -> str | None:
-    """认领动作：一次廉价尝试（单次读库，不轮询、不阻塞）。
+    """认领动作：一次廉价尝试（单次读盘/读库，不轮询、不阻塞）。
 
-    这是**副作用**，不是判定——认不到只说明 agy 还没把会话写进摘要库，与本轮提交
+    这是**副作用**，不是判定——认不到只说明 agy 还没写下转录或摘要，与本轮提交
     有没有落地毫不相干。已有身份时直接返回 None，映射一旦建立就不再重认，重认会让
     两场会话的记录互串。全程吞异常：库被占、映射文件不可写都只是"这次没认到"。
     """
@@ -313,15 +322,30 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
     try:
         if session.native_session_id:
             return None
-        if agy_store.get_binding(session.session_id) is not None:
+        if session in _FINALIZED_CLAIMS:
             return None
-        since_ms = _claim_anchor(session)
-        if since_ms is None:
-            return None
-        claimed = agy_store.claim_conversation(session.cwd, since_ms)
-        if not claimed:
-            return None
-        agy_store.put_binding(session.session_id, claimed, session.cwd)
+        existing = agy_store.get_binding(session.session_id)
+        if existing is not None:
+            # 若本会话以未绑定状态裸起（锚点在），说明 agy-hook 已在 SessionStart 抢先写好了
+            # 绑定；此处仍需完成一次驱动侧收尾（记派活账、改 tmux 窗口名）。
+            if session not in _CLAIM_ANCHORS and session.session_id not in _LAUNCH_ANCHORS:
+                _FINALIZED_CLAIMS[session] = existing
+                return None
+            claimed = existing
+        else:
+            since_ms = _claim_anchor(session)
+            if since_ms is None:
+                return None
+            claimed = agy_store.claim_conversation(
+                session.cwd,
+                since_ms,
+                prompt_tail=_CLAIM_PROMPT_TAILS.get(session),
+                handle=session.session_id,
+            )
+            if not claimed:
+                return None
+            agy_store.put_binding(session.session_id, claimed, session.cwd)
+        _FINALIZED_CLAIMS[session] = claimed
         # 认到真编号，顺手把「这场是 frago 派出去的」记进会话关系账——父会话编号从起会话
         # 那一刻的环境里认。记账 MUST 在这里做：绑定表在会话收场时就清了，跑完之后再想拿
         # 这个编号已经拿不到。
@@ -338,6 +362,15 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
             handle=session.session_id,
             origin=getattr(session, "origin", None),
         )
+        with contextlib.suppress(Exception):
+            from frago.session.async_dispatch import sync_claimed_target_session_id
+
+            sync_claimed_target_session_id(
+                session.session_id,
+                claimed,
+                agent_type="agy",
+                cwd=session.cwd,
+            )
         # 认到真编号就把这个窗口改认它。名字与真编号一致之后，常驻池重启时按名字就能
         # 找到这个还活着的窗口并接管，不必另起一个去续接同一场对话。改不动只是名字
         # 留在原处，不阻断认领本身。
@@ -352,13 +385,14 @@ def _claim_once(session: TmuxAgentSession) -> str | None:
         logger.debug("agy claim attempt raised", exc_info=True)
         return None
     _LAUNCH_ANCHORS.pop(session.session_id, None)
+    _CLAIM_PROMPT_TAILS.pop(session, None)
     logger.debug("agy claimed session %s for %s", claimed, session.session_id)
     return claimed
 
 
 def transcript_path_for(session: TmuxAgentSession) -> Path | None:
     """该会话的原文文件路径（探针与投喂验证共用）。未认领时 None。"""
-    sid = _bound_session_id(session) or _claim_once(session)
+    sid = _claim_once(session) or _bound_session_id(session)
     if sid is None:
         return None
     path = agy_store.transcript_path(sid)
@@ -511,7 +545,20 @@ def _transcript_size(session: TmuxAgentSession) -> int | None:
         return None
 
 
-def _submit(session: TmuxAgentSession, prompt: str) -> None:
+def is_terminal_busy(pane: str) -> bool:
+    """agy 专属终端忙碌探针契约：仅匹配真实生成态（``Generating`` 或 ``esc to cancel``）。
+
+    坚决剔除 Claude 专属的括号耗时正则（如 ``(45s``），防止定时器历史输出误触忙碌判定。
+    """
+    return bool(pane and _BUSY.search(pane))
+
+
+def _pane_looks_busy(pane: str) -> bool:
+    """判断当前 agy 终端窗格是否正处于忙碌生成态（``Generating`` 或 ``esc to cancel``）。"""
+    return is_terminal_busy(pane)
+
+
+def _submit(session: TmuxAgentSession, prompt: str) -> bool:
     """投喂一轮：文本进框 → Enter → 确认落地（确认不了才补发）。
 
     落地判据是 **transcript 文件变长**。agy 一收到提交就把用户那一轮追加进记录，
@@ -524,9 +571,25 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
     确认不了也不抛不卡：留一条 debug 日志，交给完成轮询的超时兜底。那条日志是事后
     排查"整段提示词滞留输入框"的唯一线索，NEVER 静默走掉。
     """
+    pane_now = ""
+    capture = getattr(session, "capture_pane", None)
+    if callable(capture):
+        with contextlib.suppress(Exception):
+            pane_now = capture() or ""
+    if _pane_looks_busy(pane_now):
+        logger.warning(
+            "agy pane is busy (Generating / esc to cancel); refusing to type prompt into input box (session=%s)",
+            getattr(session, "session_id", None),
+        )
+        return False
+
     _claim_once(session)
     baseline = _transcript_size(session)
     prepared = _prepare_agy_prompt(prompt, session_id=session.session_id)
+    squeezed_tail = "".join(prepared.split())[-_TAIL_CHARS:]
+    if squeezed_tail:
+        with contextlib.suppress(TypeError):
+            _CLAIM_PROMPT_TAILS[session] = squeezed_tail
     session.send_text(prepared)
 
     landed = False
@@ -562,6 +625,7 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
             1 + _ENTER_RETRIES,
             session.session_id,
         )
+    return landed
 
 
 # ── 完成探针 ────────────────────────────────────────────────────────
@@ -572,13 +636,26 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     这么长的机会窗口，不必赌任何固定时长。认不到就返回 None，由主路径当帧退回读屏
     信号，本轮照常跑完。
     """
-    sid = _bound_session_id(session) or _claim_once(session)
+    sid = _claim_once(session) or _bound_session_id(session)
     if sid is None:
         return None
     turn = agy_store.latest_turn(sid)
     if turn is None:
         return None
     if not turn.done:
+        if turn.error:
+            pane_now = ""
+            capture = getattr(session, "capture_pane", None)
+            if callable(capture):
+                with contextlib.suppress(Exception):
+                    pane_now = capture() or ""
+            if pane_now and _READY.matches(pane_now):
+                return CompletionVerdict(
+                    done=True,
+                    text=turn.error,
+                    marker=turn.turn_id,
+                    status="error",
+                )
         return CompletionVerdict(done=False, text=None, marker=turn.turn_id)
     return CompletionVerdict(done=True, text=turn.text, marker=turn.turn_id)
 
@@ -868,6 +945,7 @@ register_driver(
         profile_revert=_profile_revert,
         # agy 只讲 Gemini 协议，不接受 Anthropic 那套通道。
         profile_protocol="gemini",
+        profile_mode="file_and_env",
         # 名单由 agy 自己的服务端下发（``agy models``），frago 无从推断。
         known_models=(
             "Gemini 4 Argon (High)",

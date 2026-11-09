@@ -171,3 +171,66 @@ def test_命中后给的续接命令是内核自己那条():
     落到 Claude Code 那条默认分支上会给出 ``claude --resume core_xxx``——照做必然失败。
     """
     assert search._resume_command("coreagent", _SID) == f"frago-core --resume {_SID}"
+
+
+def test_已结束的_CoreAgent_会话在清单里显示_completed_与真实步数(mock_home):
+    """镜像同步后，已结束的 CoreAgent 会话在 storage.list_sessions 中应为 completed 并带步数与 ended_at。"""
+    import json
+    from frago.session.models import SessionStatus
+
+    lines = [
+        json.dumps({
+            "type": "user",
+            "cwd": "/tmp/proj",
+            "timestamp": "2026-11-05T15:00:00.000Z",
+            "message": {"role": "user", "content": [{"type": "text", "text": "巡检会话状态"}]},
+        }, ensure_ascii=False),
+        json.dumps({
+            "type": "assistant",
+            "cwd": "/tmp/proj",
+            "timestamp": "2026-11-05T15:00:02.000Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+                ],
+            },
+        }, ensure_ascii=False),
+        json.dumps({
+            "type": "user",
+            "cwd": "/tmp/proj",
+            "timestamp": "2026-11-05T15:00:03.000Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+            },
+        }, ensure_ascii=False),
+        json.dumps({
+            "type": "assistant",
+            "cwd": "/tmp/proj",
+            "timestamp": "2026-11-05T15:00:05.000Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "巡检完成"}]},
+        }, ensure_ascii=False),
+        json.dumps({
+            "type": "system",
+            "subtype": "turn_duration",
+            "cwd": "/tmp/proj",
+            "timestamp": "2026-11-05T15:00:05.100Z",
+            "durationMs": 5100,
+            "finished": True,
+        }, ensure_ascii=False),
+    ]
+    _write_source(mock_home, lines, session_id="core_finished01")
+    coreagent_sync.sync_coreagent_sessions()
+
+    sessions = storage.list_sessions(agent_type=AgentType.COREAGENT, limit=20)
+    hit = next(s for s in sessions if s.session_id == "core_finished01")
+    assert hit.status is SessionStatus.COMPLETED
+    assert hit.ended_at is not None
+    assert hit.step_count == 5
+    assert hit.tool_call_count == 1
+    assert hit.project_path == "/tmp/proj"
+    assert hit.name == "巡检会话状态"
+
+    steps = storage.read_steps("core_finished01", AgentType.COREAGENT)
+    assert len(steps) == 5

@@ -32,6 +32,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,7 +43,21 @@ logger = logging.getLogger(__name__)
 
 # frago 侧的身份映射文件：frago 会话标识 → agy 原生会话编号。设备本地产物，
 # 与 codex / opencode 的映射文件同级同规格。
-BINDINGS_PATH = Path.home() / ".frago" / "agy-sessions.json"
+_DEFAULT_BINDINGS_PATH = Path.home() / ".frago" / "agy-sessions.json"
+BINDINGS_PATH = _DEFAULT_BINDINGS_PATH
+_claim_lock = threading.Lock()
+
+
+def _bindings_path() -> Path:
+    """身份映射账本路径：测试若显式 monkeypatch 了 ``BINDINGS_PATH`` 则从之；
+    若设了 ``FRAGO_AGY_APP_DIR`` 隔离测试目录则落在该目录下；否则走 ``Path.home()``。
+    """
+    if BINDINGS_PATH != _DEFAULT_BINDINGS_PATH:
+        return BINDINGS_PATH
+    override = os.environ.get("FRAGO_AGY_APP_DIR")
+    if override:
+        return Path(override).expanduser() / "agy-sessions.json"
+    return Path.home() / ".frago" / "agy-sessions.json"
 
 # transcript.jsonl 的已知记录类型（``type`` 字段的取值）。
 #
@@ -118,6 +133,11 @@ def summaries_db_path() -> Path:
 def last_conversations_path() -> Path:
     """工作目录 → 最近一场会话编号的映射文件。"""
     return get_app_data_dir() / "cache" / "last_conversations.json"
+
+
+def history_path() -> Path:
+    """agy 输入历史流水（每次敲下回车即落一行含 ``timestamp`` / ``text`` / ``workspace``）。"""
+    return get_app_data_dir() / "history.jsonl"
 
 
 def _transcripts_dir(conversation_id: str) -> Path:
@@ -334,7 +354,7 @@ class AgyTurn:
     """本轮终答。"""
 
     error: str | None
-    """暂恒为 None。agy 把失败写在别处（如配额耗尽提示），本模块暂不解析。"""
+    """若本轮末尾停在 SYSTEM ERROR_MESSAGE 且无后续推进与后台任务，记录该错误文本；否则为 None。"""
 
 
 _BG_TASK_START_RE = re.compile(r"Tool is running as a background task with task id:\s*(\S+)")
@@ -342,11 +362,18 @@ _BG_TASK_DONE_RE = re.compile(
     r'Task id "([^"]+)" (?:finished with result:|was canceled with result:|failed with)'
 )
 _BG_TASK_CANCEL_RE = re.compile(r'Task "([^"]+)" cancelled\.')
+_BG_TASK_SYSTEM_SENDER_RE = re.compile(r"\bsender=(\S+/(?:task-\d+|subagent-\S+))\b")
 _BG_TASK_STOPPED_ALL = "All your subagents and background tasks have been stopped"
 
 
 def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> None:
-    """按单条记录推进本轮后台任务集合：转入后台入集，收到完成/取消/重启通知出集。"""
+    """按单条记录推进本轮后台任务集合：转入后台入集，收到完成/取消/定时器到期/重启通知出集。"""
+    record_type = record.get("type")
+    if record_type == RECORD_CONVERSATION_HISTORY:
+        # 跨进程续接会话回放边界：此前进程遗留的后台任务全部失效归零
+        pending.clear()
+        return
+
     content = record.get("content")
     if not isinstance(content, str) or not content:
         return
@@ -355,6 +382,10 @@ def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> None:
         if match:
             pending.add(match.group(1))
             return
+    if record_type == RECORD_PLANNER:
+        # 模型自身发言（含过渡播报末尾可能粘连的 fused 文本）不执行任务销账，
+        # 留待紧随其后的独立 SYSTEM_MESSAGE 记录触发销账并作废过渡播报。
+        return
     if _BG_TASK_STOPPED_ALL in content:
         pending.clear()
         return
@@ -362,6 +393,9 @@ def _update_pending_bg_tasks(record: dict[str, Any], pending: set[str]) -> None:
         pending.discard(match.group(1))
     for match in _BG_TASK_CANCEL_RE.finditer(content):
         pending.discard(match.group(1))
+    if record_type == RECORD_SYSTEM_MESSAGE:
+        for match in _BG_TASK_SYSTEM_SENDER_RE.finditer(content):
+            pending.discard(match.group(1))
 
 
 def latest_turn(conversation_id: str) -> AgyTurn | None:
@@ -396,6 +430,7 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
     # 只在**最后一条**用户输入之后找收尾回复。上一轮那次收尾也在同一个窗口里，
     # 不划这条线的话，第二轮刚提交就会被判成"已经答完"，取回上一轮的答案。
     final_text: str | None = None
+    terminal_error: str | None = None
     pending_bg_tasks: set[str] = set()
     for record in records[last_user_pos + 1 :]:
         before_pending = set(pending_bg_tasks)
@@ -403,10 +438,23 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
         if before_pending != pending_bg_tasks and not pending_bg_tasks:
             # 后台任务刚刚完结或被终止：此前为了等待它而留下的过渡播报作废，等后续真正的收尾回复。
             final_text = None
+            terminal_error = None
         record_type = record.get("type")
         if record_type == RECORD_PLANNER and record.get("tool_calls"):
             # 模型继续发起新一拍工具调用：早先的文字回复只是中间播报。
             final_text = None
+            terminal_error = None
+        elif record_type == RECORD_ERROR_MESSAGE and record.get("source") == "SYSTEM":
+            # 系统级错误帧（如 401 UNAUTHENTICATED / unexpected EOF / stream interrupted）：
+            # 先废掉此前可能落盘的半截回复并记录错误文本；若后续 agy 自动续写（追加
+            # EPHEMERAL_MESSAGE 或新的 PLANNER_RESPONSE），则在后续帧中清掉 terminal_error。
+            final_text = None
+            raw_err = record.get("error") or record.get("content")
+            terminal_error = (
+                str(raw_err).strip()
+                if isinstance(raw_err, str) and str(raw_err).strip()
+                else "AGY system error (ERROR_MESSAGE)"
+            )
         elif record_type in (RECORD_ERROR_MESSAGE, RECORD_EPHEMERAL_MESSAGE) or (
             record.get("status") == STATUS_ERROR
         ):
@@ -414,11 +462,20 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
             # （EPHEMERAL_MESSAGE）出现在回复之后：说明方才那条无 tool_calls 的
             # PLANNER_RESPONSE 只是断流残片或中间播报，本轮尚未真正收尾。
             final_text = None
+            terminal_error = None
         elif _is_final_model_turn(record):
             final_text = _model_text(record)
+            terminal_error = None
+        elif record_type not in (RECORD_CONVERSATION_HISTORY, RECORD_SYSTEM_MESSAGE):
+            terminal_error = None
     marker = str(last_user_step) if last_user_step is not None else None
     if final_text is None or pending_bg_tasks:
-        return AgyTurn(turn_id=marker, done=False, text="", error=None)
+        return AgyTurn(
+            turn_id=marker,
+            done=False,
+            text="",
+            error=None if pending_bg_tasks else terminal_error,
+        )
     return AgyTurn(turn_id=marker, done=True, text=final_text, error=None)
 
 
@@ -557,21 +614,24 @@ def list_conversations(limit: int | None = None) -> list[AgyConversation]:
     """列出本机的 agy 会话，最新在上。读不到时返回空列表。
 
     排序按最后修改时刻。摘要库里的行是 agy 自己维护的，本模块只读不改。
+    当新会话首轮连续密集调工具、``conversation_summaries.db`` 尚未写入这一行，但
+    ``agy-sessions.json`` 已完成认领且 ``brain/<id>/.../transcript.jsonl`` 已落盘时，
+    按绑定的目录与转录修改时刻补入清单，避免新会话在摘要库滞后期的 60~95 秒内从左栏和备份隐身。
     """
     conn = _open_summaries()
-    if conn is None:
-        return []
-    try:
-        rows = conn.execute(
-            "SELECT conversation_id, title, preview, workspace_uris, last_modified_time,"
-            " last_user_input_time, step_count"
-            " FROM conversation_summaries ORDER BY last_modified_time DESC"
-        ).fetchall()
-    except sqlite3.Error as exc:
-        logger.debug("agy summaries query failed: %s", exc)
-        return []
-    finally:
-        conn.close()
+    rows: list[Any] = []
+    if conn is not None:
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id, title, preview, workspace_uris, last_modified_time,"
+                " last_user_input_time, step_count"
+                " FROM conversation_summaries ORDER BY last_modified_time DESC"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            logger.debug("agy summaries query failed: %s", exc)
+            rows = []
+        finally:
+            conn.close()
     out = [
         AgyConversation(
             conversation_id=str(row[0]),
@@ -585,6 +645,30 @@ def list_conversations(limit: int | None = None) -> list[AgyConversation]:
         for row in rows
         if row and row[0]
     ]
+    seen_ids = {conv.conversation_id for conv in out}
+    for entry in _load_bindings().values():
+        cid = entry.get("agy_conversation_id")
+        if not isinstance(cid, str) or not cid or cid in seen_ids:
+            continue
+        t_path = transcript_path(cid)
+        try:
+            st_mtime = t_path.stat().st_mtime
+        except OSError:
+            continue
+        directory = entry.get("directory")
+        out.append(
+            AgyConversation(
+                conversation_id=cid,
+                title="",
+                preview="",
+                workspace=directory.strip() if isinstance(directory, str) else "",
+                last_modified=st_mtime,
+                last_user_input=st_mtime,
+                step_count=0,
+            )
+        )
+        seen_ids.add(cid)
+    out.sort(key=lambda c: c.last_modified, reverse=True)
     return out[:limit] if limit is not None else out
 
 
@@ -621,20 +705,165 @@ def bound_session_ids() -> set[str]:
     return out
 
 
-def claim_conversation(directory: str, since_ms: int) -> str | None:
+def _squeeze(text: str) -> str:
+    """去掉全部空白字符，抹平输入框折行与段落缩进差异。"""
+    return "".join(text.split())
+
+
+def _first_user_input_from_transcript(path: Path) -> tuple[float | None, str]:
+    """从转录文件开头读取首条 ``USER_INPUT`` 的创建时刻（epoch 秒）与原始 ``content``。
+
+    首条用户输入恒在开头几行，只读头部最多 64KB 即可，不扫整份大文件。
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(64 * 1024).decode("utf-8", errors="replace")
+    except OSError:
+        return None, ""
+    for raw_line in head.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("type") == RECORD_USER_INPUT:
+            dt = _parse_timestamp(rec.get("created_at"))
+            ts = dt.timestamp() if dt is not None else None
+            content = rec.get("content")
+            return ts, (content if isinstance(content, str) else "")
+    return None, ""
+
+
+def _recent_history_entries(since_s: float) -> list[tuple[str, str]]:
+    """读取 ``history.jsonl`` 尾部在 ``since_s`` 之后提交的 ``(workspace, squeezed_text)``。"""
+    path = history_path()
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > 64 * 1024:
+                fh.seek(size - 64 * 1024)
+                chunk = fh.read()
+                _, _, chunk = chunk.partition(b"\n")
+            else:
+                chunk = fh.read()
+        lines = chunk.decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    entries: list[tuple[str, str]] = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        dt = _parse_timestamp(rec.get("timestamp"))
+        if dt is not None and dt.timestamp() + 1.0 < since_s:
+            continue
+        workspace = rec.get("workspace")
+        text = rec.get("text")
+        if isinstance(workspace, str) and isinstance(text, str) and text.strip():
+            entries.append((workspace, _squeeze(text)))
+    return entries
+
+
+def _history_contradicts_workspace(
+    candidates: set[str], since_s: float, squeezed_tail: str
+) -> bool:
+    """若 ``history.jsonl`` 存在且记下了含 ``squeezed_tail`` 的近期输入，核对是否全落在别的目录。"""
+    entries = _recent_history_entries(since_s)
+    if not entries:
+        return False
+    matched_workspaces = [
+        ws for ws, text in entries if squeezed_tail in text or text[-32:] in squeezed_tail
+    ]
+    if not matched_workspaces:
+        return False
+    return not any(
+        ws in candidates or normalize_directory(ws) in candidates for ws in matched_workspaces
+    )
+
+
+def _iter_fresh_unclaimed_transcripts(
+    since_s: float,
+    taken: set[str],
+    conversations: dict[str, AgyConversation],
+    matches_workspace: Any,
+) -> list[tuple[float, str, str]]:
+    """枚举 ``brain/`` 下未认领、修改时刻不早于 ``since_s`` 且首条用户输入不早于 ``since_s`` 的转录。
+
+    返回 ``[(moment, conversation_id, first_user_content), ...]``，按 ``moment`` 升序。
+    ``transcript.jsonl`` 的 ``created_at`` 精确到整秒（无毫秒小数），而 ``since_ms`` 含毫秒，
+    故时刻比较统一留 1 秒整秒截断余量（``+ 1.0 >= since_s``）。
+    """
+    root = brain_root()
+    if not root.is_dir():
+        return []
+    fresh: list[tuple[float, str, str]] = []
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return []
+    for dentry in entries:
+        if not dentry.is_dir():
+            continue
+        cid = dentry.name
+        if cid in taken:
+            continue
+        conv = conversations.get(cid)
+        if conv is not None and conv.workspace and not matches_workspace(conv):
+            continue
+        t_path = transcript_path(cid)
+        try:
+            st = t_path.stat()
+        except OSError:
+            continue
+        if st.st_mtime + 1.0 < since_s:
+            continue
+        first_ts, first_content = _first_user_input_from_transcript(t_path)
+        if first_ts is not None and first_ts + 1.0 < since_s:
+            continue
+        moment = first_ts if first_ts is not None else st.st_mtime
+        fresh.append((moment, cid, first_content))
+    fresh.sort(key=lambda item: (item[0], item[1]))
+    return fresh
+
+
+def claim_conversation(
+    directory: str,
+    since_ms: int,
+    *,
+    prompt_tail: str | None = None,
+    handle: str | None = None,
+) -> str | None:
     """认领会话编号：取工作目录匹配、在 ``since_ms`` 之后动过、且还没被认过的那个。
 
-    两个来源依次试：
+    四个来源依次试：
 
-    1. ``cache/last_conversations.json`` —— 最直接，一个目录一条。但它只记"最近
-       一场"，同一目录里先后起了两场时它已经指向新的那场。故取到之后 MUST 拿摘要库
-       对一次时刻：早于锚点的说明那场是**别人**起的，弃用。
-    2. 摘要库按时刻筛 —— 工作目录匹配、最后修改晚于锚点、且未被认过的那些里取**最早**
-       起的那个。锚点之后最早起的才是这一次新建出来的；取最晚会认到同一目录里另一场
-       正在跑的会话上。
+    1. **实时转录精确因果认领**（``brain/<id>/.system_generated/logs/transcript.jsonl``）——
+       agy 在按下回车后 2~4 秒内即写下第 0 步 ``USER_INPUT``，而 ``conversation_summaries.db``
+       在首轮连续调工具时可能滞后 60~95 秒才写入。若调用方给出了本次把手 ``handle``（落在
+       载体文件路径中）或提示词尾段 ``prompt_tail``，直接与新转录首条用户输入比对，秒级命中。
+    2. ``cache/last_conversations.json`` —— 目录最近一场会话线索。摘要库已有行时核对摘要库时刻；
+       摘要库尚未刷新时直接核对该会话转录文件的首条记录时刻。
+    3. 摘要库按时刻筛 —— 工作目录匹配、最后修改晚于锚点、且未被认过的那些里取**最早**起的那个。
+    4. ``history.jsonl`` + 新转录兜底 —— 跨进程未传 ``prompt_tail`` 且摘要库滞后时，用
+       ``history.jsonl`` 里记录的同目录近期输入文本配对新转录的首条 ``USER_INPUT``。
 
     找不到返回 None，NEVER 抛。
     """
+    if handle:
+        already = get_binding(handle)
+        if already:
+            return already
+
     candidates = {directory, normalize_directory(directory)}
     since_s = since_ms / 1000.0
     taken = bound_session_ids()
@@ -644,11 +873,44 @@ def claim_conversation(directory: str, since_ms: int) -> str | None:
 
     conversations = {c.conversation_id: c for c in list_conversations()}
 
+    safe_handle = (
+        "".join(c if (c.isalnum() or c in "_-") else "_" for c in handle) if handle else ""
+    )
+    squeezed_tail = _squeeze(prompt_tail or "")
+    fresh_transcripts: list[tuple[float, str, str]] | None = None
+
+    if (len(safe_handle) >= 6) or squeezed_tail:
+        fresh_transcripts = _iter_fresh_unclaimed_transcripts(
+            since_s, taken, conversations, _matches
+        )
+        if len(safe_handle) >= 6:
+            for _moment, cid, first_content in fresh_transcripts:
+                if first_content and safe_handle in first_content:
+                    return cid
+        if squeezed_tail and not _history_contradicts_workspace(
+            candidates, since_s, squeezed_tail
+        ):
+            for _moment, cid, first_content in fresh_transcripts:
+                if first_content and squeezed_tail in _squeeze(first_content):
+                    return cid
+
     hinted = _last_conversation_for(directory)
     if hinted and hinted not in taken:
         conv = conversations.get(hinted)
-        if conv is not None and conv.last_modified >= since_s and _matches(conv):
-            return hinted
+        if conv is not None:
+            if conv.last_modified >= since_s and _matches(conv):
+                return hinted
+        else:
+            t_path = transcript_path(hinted)
+            try:
+                st = t_path.stat()
+            except OSError:
+                st = None
+            if st is not None and st.st_mtime + 1.0 >= since_s:
+                first_ts, _ = _first_user_input_from_transcript(t_path)
+                moment = first_ts if first_ts is not None else st.st_mtime
+                if moment + 1.0 >= since_s:
+                    return hinted
 
     best: tuple[float, str] | None = None
     for conv in conversations.values():
@@ -658,14 +920,59 @@ def claim_conversation(directory: str, since_ms: int) -> str | None:
             continue
         if best is None or conv.last_modified < best[0]:
             best = (conv.last_modified, conv.conversation_id)
-    return best[1] if best else None
+    if best is not None:
+        return best[1]
+
+    history_tails = [
+        text[-32:]
+        for ws, text in _recent_history_entries(since_s)
+        if (ws in candidates or normalize_directory(ws) in candidates) and text
+    ]
+    if history_tails:
+        if fresh_transcripts is None:
+            fresh_transcripts = _iter_fresh_unclaimed_transcripts(
+                since_s, taken, conversations, _matches
+            )
+        for _moment, cid, first_content in fresh_transcripts:
+            if not first_content:
+                continue
+            squeezed_content = _squeeze(first_content)
+            if any(ht in squeezed_content for ht in history_tails):
+                return cid
+
+    return None
+
+
+def claim_and_bind(
+    frago_session_id: str,
+    directory: str,
+    since_ms: int,
+    *,
+    prompt_tail: str | None = None,
+) -> str | None:
+    """互斥执行「认领 + 落盘绑定」：防止并发会话在各自写绑定前挑中同一个编号。"""
+    with _claim_lock:
+        existing = get_binding(frago_session_id)
+        if existing is not None:
+            return existing
+        claimed = claim_conversation(
+            directory,
+            since_ms,
+            prompt_tail=prompt_tail,
+            handle=frago_session_id,
+        )
+        if not claimed:
+            return None
+        put_binding(frago_session_id, claimed, directory)
+        return claimed
 
 
 # ── 身份映射 ────────────────────────────────────────────────────────
 def _load_bindings() -> dict[str, dict[str, Any]]:
     """读映射文件。不存在 / 损坏一律当"没有绑定"，NEVER 让调用方崩。"""
+    path = _bindings_path()
     try:
-        raw = BINDINGS_PATH.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
     except OSError:
         return {}
     try:
@@ -680,14 +987,13 @@ def _load_bindings() -> dict[str, dict[str, Any]]:
 
 def _save_bindings(bindings: dict[str, dict[str, Any]]) -> None:
     """先写临时文件再原子替换，避免半截文件把下次读取带崩。"""
-    BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(BINDINGS_PATH.parent), prefix=BINDINGS_PATH.name, suffix=".tmp"
-    )
+    path = _bindings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(bindings, fh, ensure_ascii=False, indent=2)
-        os.replace(tmp_name, BINDINGS_PATH)
+        os.replace(tmp_name, path)
     except OSError:
         Path(tmp_name).unlink(missing_ok=True)
         raise
@@ -729,6 +1035,22 @@ def put_binding(frago_session_id: str, conversation_id: str, directory: str) -> 
         "claimed_at": int(time.time() * 1000),
     }
     _save_bindings(bindings)
+    try:
+        from frago.session.async_dispatch import sync_claimed_target_session_id
+
+        sync_claimed_target_session_id(
+            frago_session_id,
+            conversation_id,
+            agent_type="agy",
+            cwd=directory,
+        )
+    except Exception:
+        logger.debug(
+            "sync_claimed_target_session_id failed for %s -> %s",
+            frago_session_id,
+            conversation_id,
+            exc_info=True,
+        )
 
 
 def drop_binding(frago_session_id: str) -> None:

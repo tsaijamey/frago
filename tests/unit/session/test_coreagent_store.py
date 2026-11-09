@@ -233,3 +233,46 @@ def test_冷启动第一个导入就是它也不炸():
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
     )
     assert done.returncode == 0, f"冷启动先导入这一家失败了：\n{done.stderr}"
+
+
+def test_inspect_session_file_derives_completed_status_and_counts(tmp_path):
+    """已收尾的 CoreAgent 会话能算出 completed 状态、ended_at、实际步数与工具调用数。"""
+    from frago.session.models import SessionStatus
+
+    rows = [
+        *_transcript(),
+        _row(
+            "u7",
+            "u6",
+            "system",
+            {"subtype": "turn_duration", "durationMs": 1200, "finished": True},
+            ts="2026-09-21T13:20:05.000Z",
+        ),
+    ]
+    path = _write(tmp_path, rows=rows)
+    stats = coreagent_store.inspect_session_file(path)
+    assert stats is not None
+    assert stats.status is SessionStatus.COMPLETED
+    assert stats.ended_at is not None
+    assert stats.step_count == 6  # u1(user) + u3(asst) + u4(tool) + u5(res) + u6(asst) + u7(sys)
+    assert stats.tool_call_count == 1
+    assert stats.project_path == _CWD
+    assert stats.name == "清一下临时目录"
+
+
+def test_inspect_session_file_running_when_mid_turn_and_recent(tmp_path):
+    """刚写入 user 或 tool_use 且距今在 90s 活跃窗口内时判为 running，ended_at 为 None。"""
+    from frago.session.models import SessionStatus
+
+    rows = [
+        _row("u1", None, "user", {
+            "promptSource": "typed",
+            "message": {"role": "user", "content": [{"type": "text", "text": "正在执行的任务"}]},
+        }),
+    ]
+    path = _write(tmp_path, rows=rows)
+    stats = coreagent_store.inspect_session_file(path)
+    assert stats is not None
+    assert stats.status is SessionStatus.RUNNING
+    assert stats.ended_at is None
+    assert stats.step_count == 1

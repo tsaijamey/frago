@@ -254,6 +254,30 @@ def _derive_session_from_raw(
     这种目录是同步进来的「你自己跑的会话」——CLI 写了转录、镜像落在盘上，而 frago 的
     监控没参与过，所以没有 metadata。它在磁盘上明明存在，清单里不该缺席。
     """
+    if agent_type == AgentType.COREAGENT:
+        from frago.session import coreagent_store
+
+        stats = coreagent_store.inspect_session_file(raw_path, now=now)
+        if stats is None:
+            return None
+        if status_filter is not None and stats.status != status_filter:
+            return None
+        fallback_dt = stats.last_activity or datetime.now()
+        return MonitoredSession(
+            session_id=session_dir.name,
+            agent_type=agent_type,
+            project_path=stats.project_path,
+            name=stats.name,
+            source_file=str(raw_path),
+            started_at=stats.started_at or fallback_dt,
+            last_activity=fallback_dt,
+            ended_at=stats.ended_at,
+            status=stats.status,
+            step_count=stats.step_count,
+            tool_call_count=stats.tool_call_count,
+            source=SessionSource.UNKNOWN,
+        )
+
     try:
         last_active = datetime.fromtimestamp(raw_path.stat().st_mtime)
     except OSError:
@@ -547,6 +571,19 @@ def read_steps(
     steps_path = session_dir / "steps.jsonl"
 
     if not steps_path.exists():
+        if agent_type == AgentType.COREAGENT:
+            raw_path = _raw_jsonl_path(session_dir)
+            if raw_path is not None:
+                from frago.session.parser import IncrementalParser, record_to_step
+
+                derived: list[SessionStep] = []
+                parser = IncrementalParser(raw_path)
+                parser._session_id = session_id
+                for record in parser.parse_new_records():
+                    step, _ = record_to_step(record, len(derived) + 1)
+                    if step is not None:
+                        derived.append(step)
+                return derived
         return []
 
     steps = []

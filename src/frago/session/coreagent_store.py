@@ -25,7 +25,12 @@ Claude Code（``<工作目录编码>/<会话编号>.jsonl``），所以读法换
 
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from frago.session.adapters.claude_code_records import (
     ClaudeCodeRecordAdapter,
@@ -37,12 +42,16 @@ from frago.session.adapters.claude_code_records import (
 from frago.session.adapters.claude_code_records import (
     find_session_file as _find_file,
 )
+from frago.session.models import SessionStatus
 
 __all__ = [
+    "COREAGENT_RUNNING_WINDOW_SECONDS",
     "SESSION_ID_PREFIX",
     "CoreAgentRecordAdapter",
+    "CoreAgentSessionStats",
     "delete_session_files",
     "find_session_file",
+    "inspect_session_file",
     "iter_session_files",
     "session_exists",
     "sessions_root",
@@ -50,6 +59,15 @@ __all__ = [
 
 #: 会话编号的前缀。frago-core 那边生成编号时写的也是它（``kernel/transcript_log.rs``）。
 SESSION_ID_PREFIX = "core_"
+
+#: 与 ``session_index.RUNNING_WINDOW_SECONDS`` 对齐：当 CoreAgent 会话停在中间态且距今超过
+#: 该窗口仍无新写入时，视为已结束（CoreAgent 是单次进程，收场或中断后不会像常驻 TUI 那样挂数小时）。
+COREAGENT_RUNNING_WINDOW_SECONDS = 90.0
+
+_EMPLOYEE_BLOCK_RE = re.compile(
+    r"^\s*<frago-employee\b[^>]*>.*?</frago-employee>\s*",
+    re.DOTALL,
+)
 
 #: 一份会话记录就是一个 JSONL，文件名是会话编号。同一级目录下还有观察者槽位
 #: （``observer-*.json``）这类附属文件，认扩展名就不会把它们当成会话。
@@ -110,3 +128,189 @@ class CoreAgentRecordAdapter(ClaudeCodeRecordAdapter):
 
     def __init__(self, root: Path | None = None) -> None:
         super().__init__(root if root is not None else sessions_root())
+
+
+@dataclass(frozen=True)
+class CoreAgentSessionStats:
+    """从 CoreAgent JSONL 记录（原件或 ``raw.jsonl`` 镜像）提取的会话运行统计与状态。"""
+
+    started_at: datetime | None
+    last_activity: datetime | None
+    ended_at: datetime | None
+    status: SessionStatus
+    step_count: int
+    tool_call_count: int
+    project_path: str
+    name: str | None
+
+
+def _parse_iso_to_local_dt(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        epoch = datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        return datetime.fromtimestamp(epoch)
+    except (ValueError, AttributeError, OSError, OverflowError):
+        return None
+
+
+def _extract_first_user_title(content: Any) -> str | None:
+    raw_text = ""
+    if isinstance(content, str):
+        raw_text = content
+    elif isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                txt = item.get("text")
+                if isinstance(txt, str) and txt.strip():
+                    parts.append(txt)
+        raw_text = "\n".join(parts)
+    if not raw_text:
+        return None
+    cleaned = _EMPLOYEE_BLOCK_RE.sub("", raw_text).strip()
+    for line in cleaned.splitlines():
+        compact = " ".join(line.split())
+        if compact:
+            return compact[:80]
+    return None
+
+
+def inspect_session_file(
+    path: Path,
+    *,
+    now: datetime | None = None,
+) -> CoreAgentSessionStats | None:
+    """解析单份 CoreAgent JSONL（支持原生记录与 ``raw.jsonl`` 镜像）。
+
+    返回 ``started_at``、``last_activity``、``ended_at``、``status``、``step_count``、
+    ``tool_call_count``、``project_path`` 与 ``name``。文件不存在或为空时返回 None。
+    """
+    try:
+        st = path.stat()
+        if st.st_size <= 0:
+            return None
+        mtime_dt = datetime.fromtimestamp(st.st_mtime)
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+    first_dt: datetime | None = None
+    last_dt: datetime | None = None
+    project_path = ""
+    custom_title: str | None = None
+    ai_title: str | None = None
+    first_user_title: str | None = None
+    step_count = 0
+    tool_call_count = 0
+    last_event_kind: str | None = None
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+
+        rec_dt = _parse_iso_to_local_dt(
+            record.get("timestamp") or record.get("created_at")
+        )
+        if rec_dt is not None:
+            if first_dt is None:
+                first_dt = rec_dt
+            last_dt = rec_dt
+
+        if not project_path:
+            cwd = record.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                project_path = cwd
+
+        rec_type = record.get("type")
+        if rec_type == "custom-title":
+            val = record.get("customTitle")
+            if isinstance(val, str) and val.strip():
+                custom_title = val.strip()
+            continue
+        if rec_type == "ai-title":
+            val = record.get("aiTitle")
+            if isinstance(val, str) and val.strip():
+                ai_title = val.strip()
+            continue
+
+        if rec_type == "user":
+            if record.get("isCompactSummary"):
+                continue
+            step_count += 1
+            last_event_kind = "user"
+            if first_user_title is None and not record.get("isMeta"):
+                msg = record.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                first_user_title = _extract_first_user_title(content)
+        elif rec_type == "assistant":
+            msg = record.get("message")
+            content = msg.get("content") if isinstance(msg, dict) else None
+            n_tools = 0
+            has_text = False
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "tool_use":
+                        n_tools += 1
+                    elif btype == "text" and str(block.get("text") or "").strip():
+                        has_text = True
+            elif isinstance(content, str) and content.strip():
+                has_text = True
+            tool_call_count += n_tools
+            if n_tools > 0 or has_text:
+                step_count += 1
+            last_event_kind = "assistant_tool" if n_tools > 0 else "assistant_text"
+        elif rec_type == "system":
+            step_count += 1
+            subtype = record.get("subtype")
+            if subtype in ("turn_duration", "stop_hook_summary"):
+                last_event_kind = "turn_end"
+            elif last_event_kind is None:
+                last_event_kind = "system"
+
+    started_at = first_dt or mtime_dt
+    last_activity = mtime_dt
+    current = now if now is not None else datetime.now()
+    if current.tzinfo is not None:
+        current = current.astimezone().replace(tzinfo=None)
+    try:
+        idle = (current - last_activity).total_seconds()
+    except (OverflowError, OSError):
+        idle = 0.0
+
+    # 判定状态与 ended_at：
+    # 1. 末尾明确落了 turn_duration / stop_hook_summary 收尾记账 → 已结束；
+    # 2. 末尾对话停在纯文本 assistant 回复（无待执行 tool_use）→ 已结束；
+    # 3. 停在中间态但最后活动距今已超过 COREAGENT_RUNNING_WINDOW_SECONDS（90s）→ 已结束；
+    # 4. 其余（刚写入中间态且在 90s 活跃窗口内）→ running。
+    if (
+        last_event_kind in ("turn_end", "assistant_text")
+        or idle > COREAGENT_RUNNING_WINDOW_SECONDS
+    ):
+        status = SessionStatus.COMPLETED
+        ended_at = last_dt or mtime_dt
+    else:
+        status = SessionStatus.RUNNING
+        ended_at = None
+
+    name = custom_title or ai_title or first_user_title
+    return CoreAgentSessionStats(
+        started_at=started_at,
+        last_activity=last_activity,
+        ended_at=ended_at,
+        status=status,
+        step_count=step_count,
+        tool_call_count=tool_call_count,
+        project_path=project_path,
+        name=name,
+    )

@@ -757,3 +757,238 @@ def test_submit_spools_long_user_message_and_agy_records_restores_it(app_dir, mo
     assert extra == "<ADDITIONAL_METADATA>meta</ADDITIONAL_METADATA>"
 
 
+def test_claim_succeeds_from_live_transcript_before_summary_db_flushes(app_dir):
+    """回归（82d53e1b）：agy 在首轮密集调工具时 conversation_summaries.db 可能滞后 90+ 秒才写入，
+    但 brain/<cid>/.../transcript.jsonl 在 4 秒内即落盘第 0 步 USER_INPUT。认领必须直接从实时转录
+    命中，不再苦等摘要库刷新导致前端 86.4 秒超时误报失败。
+    """
+    cid = "82d53e1b-fe99-4d8a-888c-42c4c1936473"
+    handle = "webui-f622777a-4561-4fc5-a61e-f76986e12ae0"
+    _write_transcript(
+        app_dir,
+        [
+            {
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "created_at": "2026-11-06T05:28:54Z",
+                "content": (
+                    "<USER_REQUEST>\n"
+                    f"请先用读文件工具完整读取：/tmp/employee-{handle}-1793942930915-7.md\n"
+                    "帮我排查输入框回车问题\n"
+                    "</USER_REQUEST>"
+                ),
+            }
+        ],
+        cid,
+    )
+    # 此时 conversation_summaries.db 尚不存在（或尚未写入该行），锚点含同秒毫秒小数
+    since_ms = 1_793_942_934_812
+    assert (
+        agy_store.claim_conversation(
+            "/tmp/proj",
+            since_ms=since_ms,
+            prompt_tail="帮我排查输入框回车问题",
+            handle=handle,
+        )
+        == cid
+    )
+
+
+def test_list_conversations_includes_bound_session_before_summary_db_flushes(app_dir):
+    """一旦会话已完成认领（写入 agy-sessions.json）且实时转录在盘上，即使摘要库尚未写入该行，
+    list_conversations 也必须返回该会话，确保左栏卡片与备份同步无需再等 90 秒。
+    """
+    cid = "82d53e1b-fe99-4d8a-888c-42c4c1936473"
+    handle = "webui-f622777a-4561-4fc5-a61e-f76986e12ae0"
+    _write_transcript(
+        app_dir,
+        [{"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>hi</USER_REQUEST>"}],
+        cid,
+    )
+    agy_store.put_binding(handle, cid, "/tmp/proj")
+
+    convs = agy_store.list_conversations()
+    assert [c.conversation_id for c in convs] == [cid]
+    assert convs[0].workspace == agy_store.normalize_directory("/tmp/proj")
+    assert convs[0].last_modified > 0
+
+
+def test_claim_once_finalizes_rename_when_hook_bound_first(app_dir, monkeypatch):
+    """当 SessionStart 钩子已抢先把 handle -> cid 写入 agy-sessions.json 时，驱动侧首次调用
+    _claim_once 仍须补齐 tmux 窗口重命名，不能因 get_binding 非空就直接跳过。
+    """
+    cid = "82d53e1b-fe99-4d8a-888c-42c4c1936473"
+    handle = "webui-hook-first"
+    agy_store.put_binding(handle, cid, "/tmp/proj")
+    monkeypatch.setattr(agy_driver, "_LAUNCH_ANCHORS", {handle: 1_793_942_929_000})
+    monkeypatch.setattr(agy_driver, "_CLAIM_ANCHORS", {})
+    monkeypatch.setattr(agy_driver, "_FINALIZED_CLAIMS", {})
+
+    renamed: list[str] = []
+
+    class _HookBoundSession:
+        session_id = handle
+        cwd = "/tmp/proj"
+        native_session_id = False
+        origin = "human"
+        tmux_name = f"frago-agent-{handle}"
+
+        def rename_tmux(self, new_id: str) -> bool:
+            renamed.append(new_id)
+            return True
+
+    sess = _HookBoundSession()
+    assert agy_driver._claim_once(sess) == cid
+    assert renamed == [cid]
+    # 第二次调用已收尾，不再重复重命名
+    assert agy_driver._claim_once(sess) is None
+    assert renamed == [cid]
+
+
+def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkeypatch):
+    """回归（98dae23a 忙碌态敲字滞留）：当 agy 终端窗格处于 Generating / esc to cancel 忙碌状态时，
+    _submit 必须在调用 send_text 前直接返回 False，禁止把长文本或载体文件引用敲入输入框滞留。
+    """
+    texts_sent: list[str] = []
+    keys_sent: list[str] = []
+
+    class _BusySubmitSession:
+        session_id = "98dae23a-483c-45a1-b335-5464cb994225"
+        cwd = "/tmp/proj"
+        native_session_id = True
+        _poll_interval_s = 0.0
+
+        def capture_pane(self) -> str:
+            return BUSY_PANE
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            keys_sent.append(key)
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    assert agy_driver._pane_looks_busy(BUSY_PANE) is True
+    assert agy_driver._pane_looks_busy(READY_PANE) is False
+
+    landed = agy_driver._submit(
+        _BusySubmitSession(),
+        '<frago-async-callback kind="worker" mode="new" job_id="disp-0c1150941a47">...</frago-async-callback>',
+    )
+    assert landed is False
+    assert texts_sent == []
+    assert keys_sent == []
+
+
+def test_completion_probe_surfaces_system_error_message_when_pane_is_idle(app_dir):
+    """修复 2（问题 2 · P0）：当 USER_INPUT 之后末尾停在 source=='SYSTEM', type=='ERROR_MESSAGE'，
+    且终端窗格已回到就绪空闲态（READY_PANE）时，_completion_probe 应立即返回 done=True, status='error'
+    并携带错误文本；若终端仍在忙碌态（BUSY_PANE），则继续等待。
+    """
+    err_text = "API error (attempt 1): UNAUTHENTICATED (code 401)"
+    _write_transcript(
+        app_dir,
+        [
+            {"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>run</USER_REQUEST>"},
+            {"step_index": 1, "type": "PLANNER_RESPONSE", "tool_calls": [{"name": "read_file"}]},
+            {
+                "step_index": 2,
+                "source": "SYSTEM",
+                "type": "ERROR_MESSAGE",
+                "status": "DONE",
+                "error": err_text,
+            },
+        ],
+    )
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.done is False
+    assert turn.error == err_text
+
+    class _BusyErrSession:
+        session_id = CONVERSATION_ID
+        cwd = "/tmp/proj"
+        native_session_id = True
+
+        def capture_pane(self) -> str:
+            return BUSY_PANE
+
+    verdict_busy = agy_driver._completion_probe(_BusyErrSession())
+    assert verdict_busy is not None
+    assert verdict_busy.done is False
+
+    class _IdleErrSession:
+        session_id = CONVERSATION_ID
+        cwd = "/tmp/proj"
+        native_session_id = True
+
+        def capture_pane(self) -> str:
+            return READY_PANE
+
+    verdict_idle = agy_driver._completion_probe(_IdleErrSession())
+    assert verdict_idle is not None
+    assert verdict_idle.done is True
+    assert verdict_idle.status == "error"
+    assert verdict_idle.text == err_text
+
+
+def test_agy_hook_passes_employee_id_to_engine_even_if_worker_role_inherited(
+    app_dir, monkeypatch
+):
+    """修复 4（问题 5 Python 侧 · P1）：当 agy 会话首轮包含 <frago-employee id='...'> 时，
+    即使外层环境残留了 FRAGO_AGENT_ROLE=worker，agy_hook 也必须识别出 employee_id 并向
+    frago-core --engine 子进程注入 FRAGO_EMPLOYEE_ID 与 FRAGO_AGENT_ROLE=employee。
+    """
+    from frago.cli import agy_hook
+
+    monkeypatch.setenv("FRAGO_AGENT_ROLE", "worker")
+    monkeypatch.delenv("FRAGO_EMPLOYEE_ID", raising=False)
+
+    t_path = _write_transcript(
+        app_dir,
+        [
+            {
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "content": (
+                    '<USER_REQUEST><frago-employee id="personal-assistant" title="个人助理">'
+                    "职责说明</frago-employee>\n\n核查定时任务</USER_REQUEST>"
+                ),
+            }
+        ],
+    )
+    payload = {
+        "conversationId": CONVERSATION_ID,
+        "transcriptPath": str(t_path),
+        "workspacePaths": ["/tmp/proj"],
+    }
+    engine_in = agy_hook.translate_input(payload, "PreInvocation")
+    assert engine_in.get("employee_id") == "personal-assistant"
+
+    captured_sub_env: dict[str, str] = {}
+
+    def fake_run(argv, **kwargs):
+        captured_sub_env.update(kwargs.get("env") or {})
+
+        class _Proc:
+            returncode = 0
+            stdout = "{}"
+
+        return _Proc()
+
+    monkeypatch.setattr("frago.init.hook_binary.get_hook_binary_path", lambda: "/bin/echo")
+    monkeypatch.setattr("frago.init.hook_binary.get_engine_argv", lambda: ["--engine"])
+    monkeypatch.setattr(agy_hook.subprocess, "run", fake_run)
+
+    agy_hook._call_engine(engine_in)
+    assert captured_sub_env.get("FRAGO_EMPLOYEE_ID") == "personal-assistant"
+    assert captured_sub_env.get("FRAGO_AGENT_ROLE") == "employee"
+
+
+
+
+

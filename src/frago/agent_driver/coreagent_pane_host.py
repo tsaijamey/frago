@@ -68,6 +68,12 @@ def saved_pane_log_path(session_id: str) -> Path:
     return panes_dir() / f"{safe}.log"
 
 
+def active_run_marker_path(session_id: str) -> Path:
+    """某场 CoreAgent 会话当前持有 tmux 窗格的活跃 run_dir 登记文件路径。"""
+    safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in session_id)
+    return panes_dir() / f"{safe}.active_run"
+
+
 def read_saved_pane_log(session_id: str, *, max_lines: int = 500) -> str:
     """读取留底的终端屏幕输出（tmux 已退出时兜底展示）。找不到返回空串。"""
     if not session_id:
@@ -105,6 +111,7 @@ def merged_coreagent_env(base_env: Mapping[str, str] | None, *, session_id: str)
             env.setdefault(proxy_name, val)
     if session_id:
         env["FRAGO_SESSION_ID"] = session_id
+        env["FRAGO_CONV_KEY"] = os.environ.get("FRAGO_CONV_KEY") or session_id
     if base_env:
         for k, v in base_env.items():
             if v is not None:
@@ -122,7 +129,13 @@ def merged_coreagent_env(base_env: Mapping[str, str] | None, *, session_id: str)
                 env["SHELL"] = bash
             companion_dirs = _windows_git_companion_dirs(bash)
             if companion_dirs:
-                raw_path = env.get("PATH") or env.get("Path") or os.environ.get("PATH") or os.environ.get("Path") or ""
+                raw_path = (
+                    env.get("PATH")
+                    or env.get("Path")
+                    or os.environ.get("PATH")
+                    or os.environ.get("Path")  # noqa: SIM112
+                    or ""
+                )
                 sep = ";"
                 merged_parts: list[str] = list(companion_dirs)
                 seen_lower = {p.lower() for p in merged_parts}
@@ -339,10 +352,9 @@ class _TmuxStdout:
             if chunk:
                 data = partial + chunk
                 lines = data.splitlines(keepends=True)
-                if lines and not lines[-1].endswith(("\n", "\r")):
-                    partial = lines.pop()
-                else:
-                    partial = ""
+                partial = (
+                    lines.pop() if lines and not lines[-1].endswith(("\n", "\r")) else ""
+                )
                 for ln in lines:
                     yield ln
                 continue
@@ -355,12 +367,14 @@ class _TmuxStdout:
             if time.monotonic() >= grace_until and not self._is_alive():
                 # 再读最后一次防止尾行遗漏
                 if self._stdout_file.is_file():
-                    with contextlib.suppress(OSError):
-                        with self._stdout_file.open("r", encoding="utf-8", errors="replace") as fh:
-                            fh.seek(offset)
-                            tail = partial + fh.read()
-                            for ln in tail.splitlines(keepends=True):
-                                yield ln
+                    with (
+                        contextlib.suppress(OSError),
+                        self._stdout_file.open("r", encoding="utf-8", errors="replace") as fh,
+                    ):
+                        fh.seek(offset)
+                        tail = partial + fh.read()
+                        for ln in tail.splitlines(keepends=True):
+                            yield ln
                 return
 
             time.sleep(0.04)
@@ -396,6 +410,7 @@ class TmuxCoreProcess:
         self._stderr_file = self.run_dir / "stderr.log"
         self._pid_file = self.run_dir / "core.pid"
         self._exit_file = self.run_dir / "exit.code"
+        self._superseded_file = self.run_dir / "superseded"
         self._stdout_file.write_text("", encoding="utf-8")
         self._stderr_file.write_text("", encoding="utf-8")
         (self.run_dir / "stdin.jsonl").write_text("", encoding="utf-8")
@@ -432,6 +447,20 @@ class TmuxCoreProcess:
     def _start_tmux_session(
         self, full_env: Mapping[str, str], *, width: int, height: int
     ) -> None:
+        # 若同 session_id 的前序运行仍登记在册，先写 superseded 标记通知旧等待进程立即停止陪跑
+        marker = active_run_marker_path(self.session_id)
+        with contextlib.suppress(OSError):
+            if marker.is_file():
+                prev_run = marker.read_text(encoding="utf-8", errors="replace").strip()
+                if prev_run:
+                    prev_dir = Path(prev_run)
+                    if prev_dir != self.run_dir and prev_dir.is_dir():
+                        (prev_dir / "superseded").write_text(
+                            f"{self.run_dir}\n", encoding="utf-8"
+                        )
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"{self.run_dir}\n", encoding="utf-8")
+
         # 若同名旧壳残留，先清掉以免 new-session 撞名退非零
         with contextlib.suppress(Exception):
             subprocess.run(
@@ -516,8 +545,20 @@ class TmuxCoreProcess:
             pass
         return None
 
+    def is_superseded(self) -> bool:
+        """判断本轮运行对应的 tmux 窗格是否已被同 session_id 的新一轮运行抢占取代。"""
+        if self._superseded_file.is_file():
+            return True
+        marker = active_run_marker_path(self.session_id)
+        if marker.is_file():
+            with contextlib.suppress(OSError):
+                active = marker.read_text(encoding="utf-8", errors="replace").strip()
+                if active and Path(active) != self.run_dir:
+                    return True
+        return False
+
     def is_alive(self) -> bool:
-        if self._exit_file.is_file():
+        if self._exit_file.is_file() or self.is_superseded():
             return False
         try:
             res = subprocess.run(
@@ -534,6 +575,8 @@ class TmuxCoreProcess:
         if self._exit_file.is_file():
             with contextlib.suppress(ValueError, OSError):
                 return int(self._exit_file.read_text(encoding="utf-8").strip())
+        if self.is_superseded():
+            return 130
         if not self.is_alive():
             return 1
         return None
@@ -557,7 +600,8 @@ class TmuxCoreProcess:
         while True:
             rc = self.returncode
             if rc is not None:
-                self._kill_tmux_quietly()
+                if not self.is_superseded():
+                    self._kill_tmux_quietly()
                 return rc
             if deadline is not None and time.monotonic() >= deadline:
                 raise subprocess.TimeoutExpired(cmd=self.tmux_name, timeout=timeout or 0)
@@ -597,6 +641,12 @@ class TmuxCoreProcess:
             )
 
     def cleanup_runtime_dir(self) -> None:
+        with contextlib.suppress(Exception):
+            marker = active_run_marker_path(self.session_id)
+            if marker.is_file():
+                active = marker.read_text(encoding="utf-8", errors="replace").strip()
+                if active and Path(active) == self.run_dir:
+                    marker.unlink(missing_ok=True)
         with contextlib.suppress(Exception):
             shutil.rmtree(self.run_dir, ignore_errors=True)
 
@@ -668,7 +718,7 @@ def _run_pane_host(run_dir: Path) -> int:
 
     stop_event = threading.Event()
 
-    def _forward_sig(signum: int, _frame: Any) -> None:
+    def _forward_sig(_signum: int, _frame: Any) -> None:
         stop_event.set()
         with contextlib.suppress(Exception):
             if proc.stdin and not proc.stdin.closed:
@@ -684,10 +734,12 @@ def _run_pane_host(run_dir: Path) -> int:
             return
         try:
             for err_line in proc.stderr:
-                with contextlib.suppress(OSError):
-                    with stderr_file.open("a", encoding="utf-8") as ef:
-                        ef.write(err_line)
-                        ef.flush()
+                with (
+                    contextlib.suppress(OSError),
+                    stderr_file.open("a", encoding="utf-8") as ef,
+                ):
+                    ef.write(err_line)
+                    ef.flush()
                 _emit_to_pane(f"\x1b[2m{err_line}\x1b[0m", is_err=True)
         except Exception:  # noqa: BLE001
             pass
@@ -721,10 +773,11 @@ def _run_pane_host(run_dir: Path) -> int:
                 if chunk:
                     data = partial + chunk
                     lines = data.splitlines(keepends=True)
-                    if lines and not lines[-1].endswith(("\n", "\r")):
-                        partial = lines.pop()
-                    else:
-                        partial = ""
+                    partial = (
+                        lines.pop()
+                        if lines and not lines[-1].endswith(("\n", "\r"))
+                        else ""
+                    )
                     for ln in lines:
                         _echo_user_line_to_pane(ln, _emit_to_pane)
                         try:
@@ -747,10 +800,12 @@ def _run_pane_host(run_dir: Path) -> int:
     if proc.stdout is not None:
         try:
             for out_line in proc.stdout:
-                with contextlib.suppress(OSError):
-                    with stdout_file.open("a", encoding="utf-8") as of:
-                        of.write(out_line)
-                        of.flush()
+                with (
+                    contextlib.suppress(OSError),
+                    stdout_file.open("a", encoding="utf-8") as of,
+                ):
+                    of.write(out_line)
+                    of.flush()
                 rendered = format_stream_line_for_pane(out_line)
                 if rendered:
                     _emit_to_pane(rendered)
