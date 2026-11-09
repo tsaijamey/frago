@@ -4,6 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frago · Agent OS</title>
+    <script>
+      // 浏览器直接访问 /sessions/<id>、/todos/<id> 等真实路径时，先把地址栏改写成
+      // /#/<路径>：打包资源走相对路径（./assets/...），停在多层路径下会让后续脚本
+      // 去 /sessions/assets/... 找文件；改写后 React 挂载时可直接读出目标页与编号。
+      (function () {
+        try {
+          if (
+            (window.location.protocol === 'http:' || window.location.protocol === 'https:') &&
+            window.location.pathname &&
+            window.location.pathname !== '/' &&
+            window.location.pathname !== '/index.html'
+          ) {
+            var hash = window.location.hash;
+            var targetHash =
+              hash && hash !== '#' && hash !== '#/'
+                ? hash
+                : '#' + window.location.pathname + window.location.search;
+            window.history.replaceState(null, '', '/' + targetHash);
+          }
+        } catch (_) {
+          // history 不可用时交由后端嵌套静态资源兜底与前端 readLocationRoute 处理
+        }
+      })();
+    </script>
     <link rel="icon" type="image/png" sizes="32x32" href="./icons/logo-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="./icons/logo-64.png" />
     <link rel="apple-touch-icon" href="./icons/logo-128.png" />
@@ -160,6 +184,6 @@
         }
       };
     </script>
-    <script src="./assets/index-CyTPWfYq.js"></script>
+    <script src="./assets/index-vE8beIml.js"></script>
   </body>
 </html>
