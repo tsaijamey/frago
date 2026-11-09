@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 # Ensure TLS 1.2+ is enabled in Windows PowerShell 5.1
 try {
@@ -27,8 +28,14 @@ try {
 # Constants & Mirror Definitions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+$AliyunPypiBase = "https://mirrors.aliyun.com/pypi"
+$TencentPypiBase = "https://mirrors.cloud.tencent.com/pypi"
 $TunaPypiBase = "https://pypi.tuna.tsinghua.edu.cn"
+$OfficialPypiFilesBase = "https://files.pythonhosted.org"
 $TunaSimpleIndex = "$TunaPypiBase/simple"
+$AliyunSimpleIndex = "$AliyunPypiBase/simple"
+$TencentSimpleIndex = "$TencentPypiBase/simple"
+$OfficialSimpleIndex = "https://pypi.org/simple"
 $NjuPythonMirror = "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
 $OfficialUvInstallPs1 = "https://astral.sh/uv/install.ps1"
 
@@ -38,6 +45,8 @@ $Script:PlatformLabel = "Windows"
 $Script:ArchLabel = "x64"
 $Script:UvWheelTag = "win_amd64.whl"
 $Script:UvWheelPinnedPath = "packages/8e/4f/041b59d2a38807a3e31ef41064cf3e45d2752fe0409d89040d52778049ae/uv-0.13.7-py3-none-win_amd64.whl"
+$Script:FfmpegWheelTag = "win_amd64.whl"
+$Script:FfmpegWheelPinnedPath = "packages/82/0c/a1d49f3dd2688bd750b4986f8e271ad11f8e729a896070ea25f587b44da8/imageio_ffmpeg-0.8.1-py3-none-win_amd64.whl"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Color and Style Functions
@@ -154,12 +163,22 @@ function Update-SessionPath {
         $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 
         $extraDirs = @()
+        $wingetRoots = @()
         if ($env:LOCALAPPDATA) {
-            $wingetLinks = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
+            $wingetRoots += (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet")
+        }
+        if ($env:ProgramFiles) {
+            $wingetRoots += (Join-Path $env:ProgramFiles "WinGet")
+        }
+        if (${env:ProgramFiles(x86)}) {
+            $wingetRoots += (Join-Path ${env:ProgramFiles(x86)} "WinGet")
+        }
+        foreach ($wgRoot in ($wingetRoots | Select-Object -Unique)) {
+            $wingetLinks = Join-Path $wgRoot "Links"
             if (Test-Path $wingetLinks) {
                 $extraDirs += $wingetLinks
             }
-            $wingetPkgs = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+            $wingetPkgs = Join-Path $wgRoot "Packages"
             if (Test-Path $wingetPkgs) {
                 $tmuxExes = Get-ChildItem -Path $wingetPkgs -Filter "tmux.exe" -Recurse -ErrorAction SilentlyContinue
                 foreach ($exe in $tmuxExes) {
@@ -230,14 +249,20 @@ function Select-PlatformTarget {
             "arm64" {
                 $Script:UvWheelTag = "win_arm64.whl"
                 $Script:UvWheelPinnedPath = "packages/44/8d/1594dce4465d9699467a639b25aafd335ce1e5917f8bb60c9c0bed9e0859/uv-0.13.7-py3-none-win_arm64.whl"
+                $Script:FfmpegWheelTag = "win_arm64.whl"
+                $Script:FfmpegWheelPinnedPath = "packages/ee/39/ab95a2afd202772a69aab1fa5015f13b038f289c8617242cc5eebd0ec0e1/imageio_ffmpeg-0.8.1-py3-none-win_arm64.whl"
             }
             "x86" {
                 $Script:UvWheelTag = "win32.whl"
                 $Script:UvWheelPinnedPath = "packages/c4/f2/3cfb8543acb8dc07b228d2517a0962b124ab97bd859690617d957248129c/uv-0.13.7-py3-none-win32.whl"
+                $Script:FfmpegWheelTag = "win32.whl"
+                $Script:FfmpegWheelPinnedPath = "packages/9b/4f/737258e8efa9264bcd7eb9615b0be6a58e4ad1d15c259982dbe53b071ce4/imageio_ffmpeg-0.8.1-py3-none-win32.whl"
             }
             default {
                 $Script:UvWheelTag = "win_amd64.whl"
                 $Script:UvWheelPinnedPath = "packages/8e/4f/041b59d2a38807a3e31ef41064cf3e45d2752fe0409d89040d52778049ae/uv-0.13.7-py3-none-win_amd64.whl"
+                $Script:FfmpegWheelTag = "win_amd64.whl"
+                $Script:FfmpegWheelPinnedPath = "packages/82/0c/a1d49f3dd2688bd750b4986f8e271ad11f8e729a896070ea25f587b44da8/imageio_ffmpeg-0.8.1-py3-none-win_amd64.whl"
             }
         }
     } elseif ($Script:OsFamily -eq "macos") {
@@ -327,30 +352,120 @@ function Select-NetworkProfile {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Zero-Python uv Bootstrap (Official Script + PyPI Wheel Zip Extraction)
+# Zero-Python Binary Bootstrap Helpers (Native curl.exe + PyPI Wheel Extraction)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-function Resolve-LatestUvWheelFromTuna {
+function Invoke-NativeSilent {
+    param([scriptblock]$CommandBlock)
+    $prevEap = $ErrorActionPreference
     try {
-        $resp = Invoke-WebRequest -Uri "$TunaSimpleIndex/uv/" -UseBasicParsing -TimeoutSec 15
-        $html = if ($resp.Content -is [byte[]]) {
-            [System.Text.Encoding]::UTF8.GetString($resp.Content)
-        } else {
-            [string]$resp.Content
-        }
-        $escapedTag = [regex]::Escape($Script:UvWheelTag)
-        $pattern = 'href="\.\./\.\./(packages/[^"#]+/uv-(\d+\.\d+\.\d+)-py3-none-' + $escapedTag + ')"'
-        $matchesList = [regex]::Matches($html, $pattern)
-        if ($matchesList.Count -eq 0) {
-            return $null
-        }
-        $latest = $matchesList |
-            Sort-Object { [version]$_.Groups[2].Value } |
-            Select-Object -Last 1
-        return "$TunaPypiBase/$($latest.Groups[1].Value)"
+        $ErrorActionPreference = "Continue"
+        & $CommandBlock
+        return $LASTEXITCODE
     } catch {
-        return $null
+        return 1
+    } finally {
+        $ErrorActionPreference = $prevEap
     }
+}
+
+function Invoke-FileDownload {
+    param(
+        [string]$Uri,
+        [string]$OutFile,
+        [long]$MinBytes = 102400,
+        [int]$TimeoutSec = 120
+    )
+    Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+    if (Test-Command "curl.exe") {
+        $rc = Invoke-NativeSilent {
+            & curl.exe -fsSL --connect-timeout 10 --max-time $TimeoutSec --retry 2 -A $ua -o $OutFile $Uri *>$null
+        }
+        if (($rc -eq 0) -and (Test-Path $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+            return $true
+        }
+        Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue
+    }
+
+    try {
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSec -UserAgent $ua
+        if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+            return $true
+        }
+    } catch {}
+
+    Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue
+    return $false
+}
+
+function Get-PypiMirrorBases {
+    if ($Script:UseCnMirror) {
+        return @($AliyunPypiBase, $TencentPypiBase, $TunaPypiBase, $OfficialPypiFilesBase)
+    }
+    return @($OfficialPypiFilesBase, $AliyunPypiBase, $TencentPypiBase, $TunaPypiBase)
+}
+
+function Get-PypiSimpleIndexes {
+    if ($Script:UseCnMirror) {
+        return @($AliyunSimpleIndex, $TencentSimpleIndex, $TunaSimpleIndex, $OfficialSimpleIndex)
+    }
+    return @($OfficialSimpleIndex, $AliyunSimpleIndex, $TencentSimpleIndex, $TunaSimpleIndex)
+}
+
+function Ensure-UserPathContains {
+    param([string]$Dir)
+    if ((-not $Dir) -or ($Script:OsFamily -ne "windows")) {
+        return
+    }
+    try {
+        $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $parts = ($userPath -split ";") | Where-Object { $_ }
+        if ($Dir -notin $parts) {
+            $newUserPath = if ($userPath) { "$Dir;$userPath" } else { $Dir }
+            [System.Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+        }
+    } catch {}
+}
+
+function Resolve-LatestPypiWheelUrl {
+    param(
+        [string]$PackageSlug,
+        [string]$FilePrefix,
+        [string]$WheelTag
+    )
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    $escapedTag = [regex]::Escape($WheelTag)
+    $escapedPrefix = [regex]::Escape($FilePrefix)
+
+    foreach ($simpleBase in (Get-PypiSimpleIndexes)) {
+        try {
+            $indexUri = "$simpleBase/$PackageSlug/"
+            $resp = Invoke-WebRequest -Uri $indexUri -UseBasicParsing -TimeoutSec 15 -UserAgent $ua
+            $html = if ($resp.Content -is [byte[]]) {
+                [System.Text.Encoding]::UTF8.GetString($resp.Content)
+            } else {
+                [string]$resp.Content
+            }
+            $pattern = 'href="([^"#]*packages/[^"#]+/' + $escapedPrefix + '-(\d+\.\d+\.\d+)-py3-none-' + $escapedTag + ')"'
+            $matchesList = [regex]::Matches($html, $pattern)
+            if ($matchesList.Count -eq 0) {
+                continue
+            }
+            $latest = $matchesList |
+                Sort-Object { [version]$_.Groups[2].Value } |
+                Select-Object -Last 1
+            $href = $latest.Groups[1].Value
+            if ($href -match '^https?://') {
+                return $href
+            }
+            $relPath = $href -replace '^(\.\./)+', ''
+            $mirrorRoot = $simpleBase -replace '/simple/?$', ''
+            return "$mirrorRoot/$relPath"
+        } catch {}
+    }
+    return $null
 }
 
 function Install-UvFromPypiWheel {
@@ -366,24 +481,19 @@ function Install-UvFromPypiWheel {
     try {
         $downloaded = $false
         if ($Script:UvWheelPinnedPath) {
-            $pinnedUrl = "$TunaPypiBase/$($Script:UvWheelPinnedPath)"
-            try {
-                Invoke-WebRequest -Uri $pinnedUrl -OutFile $uvZip -UseBasicParsing -TimeoutSec 60
-                if ((Test-Path $uvZip) -and ((Get-Item $uvZip).Length -gt 0)) {
+            foreach ($base in (Get-PypiMirrorBases)) {
+                $pinnedUrl = "$base/$($Script:UvWheelPinnedPath)"
+                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90) {
                     $downloaded = $true
+                    break
                 }
-            } catch {
-                $downloaded = $false
             }
         }
 
         if (-not $downloaded) {
-            $latestUrl = Resolve-LatestUvWheelFromTuna
+            $latestUrl = Resolve-LatestPypiWheelUrl -PackageSlug "uv" -FilePrefix "uv" -WheelTag $Script:UvWheelTag
             if ($latestUrl) {
-                Invoke-WebRequest -Uri $latestUrl -OutFile $uvZip -UseBasicParsing -TimeoutSec 60
-                if ((Test-Path $uvZip) -and ((Get-Item $uvZip).Length -gt 0)) {
-                    $downloaded = $true
-                }
+                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90
             }
         }
 
@@ -410,6 +520,7 @@ function Install-UvFromPypiWheel {
             }
         }
 
+        Ensure-UserPathContains -Dir $binDir
         Update-SessionPath
         return (Test-Command "uv")
     } catch {
@@ -562,9 +673,9 @@ function Install-Git {
         }
         if (Test-Command "winget") {
             Write-Step "Installing Git for Windows (provides git & Git Bash)..."
-            try {
-                & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --silent *>$null
-            } catch {}
+            Invoke-NativeSilent {
+                & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+            } | Out-Null
             Update-SessionPath
             $gitRoot = Find-WindowsGitRoot
             if ($gitRoot) {
@@ -576,11 +687,11 @@ function Install-Git {
         }
         if (Test-Command "scoop") {
             Write-Step "Installing git via scoop..."
-            try { & scoop install git *>$null } catch {}
+            Invoke-NativeSilent { & scoop install git *>$null } | Out-Null
             Update-SessionPath
         } elseif (Test-Command "choco") {
             Write-Step "Installing git via choco..."
-            try { & choco install git -y *>$null } catch {}
+            Invoke-NativeSilent { & choco install git -y *>$null } | Out-Null
             Update-SessionPath
         }
         $gitRoot = Find-WindowsGitRoot
@@ -650,13 +761,10 @@ function Install-WindowsTmuxZipFallback {
     try {
         $downloaded = $false
         foreach ($url in $candidates) {
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 60
-                if ((Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 0)) {
-                    $downloaded = $true
-                    break
-                }
-            } catch {}
+            if (Invoke-FileDownload -Uri $url -OutFile $zipPath -MinBytes 102400 -TimeoutSec 60) {
+                $downloaded = $true
+                break
+            }
         }
         if (-not $downloaded) {
             return $false
@@ -665,6 +773,7 @@ function Install-WindowsTmuxZipFallback {
         $tmuxExe = Join-Path $extractDir "tmux.exe"
         if (Test-Path $tmuxExe) {
             Move-Item -Path $tmuxExe -Destination (Join-Path $binDir "tmux.exe") -Force
+            Ensure-UserPathContains -Dir $binDir
             Update-SessionPath
             return (Test-Command "tmux")
         }
@@ -688,9 +797,9 @@ function Install-Tmux {
     if ($Script:OsFamily -eq "windows") {
         Write-Step "Installing tmux (Windows port: arndawg.tmux-windows)..."
         if (Test-Command "winget") {
-            try {
-                & winget install --id arndawg.tmux-windows -e --source winget --accept-package-agreements --accept-source-agreements --silent *>$null
-            } catch {}
+            Invoke-NativeSilent {
+                & winget install --id arndawg.tmux-windows -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+            } | Out-Null
             Update-SessionPath
         }
         if (-not (Test-Command "tmux")) {
@@ -727,6 +836,57 @@ function Install-Tmux {
     exit 1
 }
 
+function Install-WindowsFfmpegFromPypiWheel {
+    $binDir = Get-LocalBinDir
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+
+    $tempRoot = if ($env:TEMP) { $env:TEMP } else { [IO.Path]::GetTempPath() }
+    $workDir = Join-Path $tempRoot "frago-ffmpeg-$PID"
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+    $ffmpegZip = Join-Path $workDir "ffmpeg.zip"
+    $ffmpegExtractDir = Join-Path $workDir "ffmpeg"
+
+    try {
+        $downloaded = $false
+        if ($Script:FfmpegWheelPinnedPath) {
+            foreach ($base in (Get-PypiMirrorBases)) {
+                $pinnedUrl = "$base/$($Script:FfmpegWheelPinnedPath)"
+                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120) {
+                    $downloaded = $true
+                    break
+                }
+            }
+        }
+
+        if (-not $downloaded) {
+            $latestUrl = Resolve-LatestPypiWheelUrl -PackageSlug "imageio-ffmpeg" -FilePrefix "imageio_ffmpeg" -WheelTag $Script:FfmpegWheelTag
+            if ($latestUrl) {
+                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120
+            }
+        }
+
+        if (-not $downloaded) {
+            return $false
+        }
+
+        Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtractDir -Force
+        $exePattern = Join-Path $ffmpegExtractDir "imageio_ffmpeg\binaries\ffmpeg-*.exe"
+        $ffmpegBin = Get-Item $exePattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $ffmpegBin) {
+            return $false
+        }
+
+        Move-Item -Path $ffmpegBin.FullName -Destination (Join-Path $binDir "ffmpeg.exe") -Force
+        Ensure-UserPathContains -Dir $binDir
+        Update-SessionPath
+        return (Test-Command "ffmpeg")
+    } catch {
+        return $false
+    } finally {
+        Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Install-Ffmpeg {
     Update-SessionPath
 
@@ -736,22 +896,40 @@ function Install-Ffmpeg {
         return
     }
 
-    Write-Step "Installing ffmpeg..."
     if ($Script:OsFamily -eq "windows") {
+        if ($Script:UseCnMirror) {
+            Write-Step "Installing ffmpeg (via China Mainland PyPI mirror)..."
+        } else {
+            Write-Step "Installing ffmpeg..."
+        }
+
+        if (Install-WindowsFfmpegFromPypiWheel) {
+            $version = Get-CommandVersion "ffmpeg"
+            if ($Script:UseCnMirror) {
+                Write-Done "ffmpeg ($version, via PyPI mirror)"
+            } else {
+                Write-Done "ffmpeg ($version)"
+            }
+            return
+        }
+
         if (Test-Command "winget") {
-            try {
-                & winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements --accept-source-agreements --silent *>$null
-                if ($LASTEXITCODE -ne 0) {
-                    & winget install ffmpeg --source winget --accept-package-agreements --accept-source-agreements --silent *>$null
-                }
-            } catch {}
+            Write-Step "PyPI mirror wheel unavailable, trying winget..."
+            $rc = Invoke-NativeSilent {
+                & winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+            }
+            if ($rc -ne 0) {
+                Invoke-NativeSilent {
+                    & winget install --id Gyan.FFmpeg.Essentials -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+                } | Out-Null
+            }
             Update-SessionPath
         }
         if ((-not (Test-Command "ffmpeg")) -and (Test-Command "scoop")) {
-            try { & scoop install ffmpeg *>$null } catch {}
+            Invoke-NativeSilent { & scoop install ffmpeg *>$null } | Out-Null
             Update-SessionPath
         } elseif ((-not (Test-Command "ffmpeg")) -and (Test-Command "choco")) {
-            try { & choco install ffmpeg -y *>$null } catch {}
+            Invoke-NativeSilent { & choco install ffmpeg -y *>$null } | Out-Null
             Update-SessionPath
         }
         if (Test-Command "ffmpeg") {
@@ -759,40 +937,34 @@ function Install-Ffmpeg {
                 $ffCmd = Get-Command "ffmpeg" -ErrorAction SilentlyContinue
                 if ($ffCmd -and $ffCmd.Source) {
                     $ffDir = Split-Path -Parent $ffCmd.Source
-                    $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-                    $parts = ($userPath -split ";") | Where-Object { $_ }
-                    if ($ffDir -notin $parts) {
-                        $newUserPath = if ($userPath) { "$ffDir;$userPath" } else { $ffDir }
-                        [System.Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
-                    }
+                    Ensure-UserPathContains -Dir $ffDir
                 }
             } catch {}
             $version = Get-CommandVersion "ffmpeg"
             Write-Done "ffmpeg ($version)"
             return
         }
-        Write-Err "ffmpeg installation failed"
-        exit 1
+        Write-Warn "ffmpeg installation skipped (optional for video recording; run 'winget install --id Gyan.FFmpeg -e' later)"
+        return
     }
 
     if (Test-Command "brew") {
-        try { & brew install ffmpeg *>$null } catch {}
+        Invoke-NativeSilent { & brew install ffmpeg *>$null } | Out-Null
     } elseif (Test-Command "apt-get") {
-        try { & sudo apt-get update -qq *>$null; & sudo apt-get install -y ffmpeg *>$null } catch {}
+        Invoke-NativeSilent { & sudo apt-get update -qq *>$null; & sudo apt-get install -y ffmpeg *>$null } | Out-Null
     } elseif (Test-Command "dnf") {
-        try { & sudo dnf install -y ffmpeg *>$null } catch {}
+        Invoke-NativeSilent { & sudo dnf install -y ffmpeg *>$null } | Out-Null
     } elseif (Test-Command "pacman") {
-        try { & sudo pacman -Sy --noconfirm --needed ffmpeg *>$null } catch {}
+        Invoke-NativeSilent { & sudo pacman -Sy --noconfirm --needed ffmpeg *>$null } | Out-Null
     } elseif (Test-Command "apk") {
-        try { & sudo apk add --no-cache ffmpeg *>$null } catch {}
+        Invoke-NativeSilent { & sudo apk add --no-cache ffmpeg *>$null } | Out-Null
     }
     if (Test-Command "ffmpeg") {
         $version = Get-CommandVersion "ffmpeg"
         Write-Done "ffmpeg ($version)"
         return
     }
-    Write-Err "ffmpeg installation failed"
-    exit 1
+    Write-Warn "ffmpeg installation skipped (optional for video recording)"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -801,18 +973,15 @@ function Install-Ffmpeg {
 
 function Invoke-UvToolInstall {
     param([string]$Action)
-    try {
-        if ($Action -eq "upgrade") {
-            & uv tool upgrade frago-cli *>$null
-            if ($LASTEXITCODE -ne 0) {
-                & uv tool install frago-cli --force *>$null
-            }
-        } else {
-            & uv tool install frago-cli *>$null
+    if ($Action -eq "upgrade") {
+        $rc = Invoke-NativeSilent { & uv tool upgrade frago-cli *>$null }
+        if ($rc -ne 0) {
+            $rc = Invoke-NativeSilent { & uv tool install frago-cli --force *>$null }
         }
-        return ($LASTEXITCODE -eq 0)
-    } catch {
-        return $false
+        return ($rc -eq 0)
+    } else {
+        $rc = Invoke-NativeSilent { & uv tool install frago-cli *>$null }
+        return ($rc -eq 0)
     }
 }
 
@@ -834,27 +1003,30 @@ function Install-Frago {
             $ok = Invoke-UvToolInstall -Action $action
         }
     }
+    if ((-not $ok) -and $Script:UseCnMirror) {
+        foreach ($altIndex in @($AliyunSimpleIndex, $TencentSimpleIndex)) {
+            $env:UV_DEFAULT_INDEX = $altIndex
+            $ok = Invoke-UvToolInstall -Action $action
+            if ($ok) {
+                try {
+                    [System.Environment]::SetEnvironmentVariable("UV_DEFAULT_INDEX", $env:UV_DEFAULT_INDEX, "User")
+                } catch {}
+                break
+            }
+        }
+    }
 
     if (-not $ok) {
         Write-Err "frago-cli installation failed"
         exit 1
     }
 
-    try {
-        & uv tool update-shell *>$null
-    } catch {}
+    Invoke-NativeSilent { & uv tool update-shell *>$null } | Out-Null
 
     # Also ensure ~/.local/bin is persisted in User PATH on Windows even if current process already had it
     if ($Script:OsFamily -eq "windows") {
-        try {
-            $binDir = Get-LocalBinDir
-            $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-            $parts = ($userPath -split ";") | Where-Object { $_ }
-            if ($binDir -notin $parts) {
-                $newUserPath = if ($userPath) { "$binDir;$userPath" } else { $binDir }
-                [System.Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
-            }
-        } catch {}
+        $binDir = Get-LocalBinDir
+        Ensure-UserPathContains -Dir $binDir
     }
     Update-SessionPath
 
@@ -911,9 +1083,9 @@ function Start-Frago {
     Write-Host "  " -NoNewline
     Write-Host "Starting frago server..." -ForegroundColor DarkGray
 
-    try { & frago server stop *>$null } catch {}
+    Invoke-NativeSilent { & frago server stop *>$null } | Out-Null
     Start-Sleep -Seconds 2
-    try { & frago server start *>$null } catch {}
+    Invoke-NativeSilent { & frago server start *>$null } | Out-Null
 
     if (Wait-ForServer) {
         Write-Host "  " -NoNewline
