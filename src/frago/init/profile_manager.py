@@ -37,6 +37,8 @@ can only call a connection that carries its own key:
   ``observer_profile_id``.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -45,6 +47,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -86,16 +89,23 @@ WORKER_ROLE = "worker"
 LIGHTAGENT_ROLE = "lightagent"
 OBSERVER_ROLE = "observer"
 COREAGENT_ROLE = "coreagent"
+ASR_ROLE = "asr"
 #: The roles whose connection an agent CLI runs on.
 CLI_ROLES = (MAIN_ROLE, WORKER_ROLE)
-#: The roles frago-core asks the model for. It can call a connection with its own
-#: key, and nothing else.
-FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE, COREAGENT_ROLE)
-#: frago-core role → the profiles.json field frago-core reads it from.
+#: The roles frago-core / desktop ASR asks the model for. They can call a
+#: connection with its own key, and nothing else.
+FRAGO_CORE_ROLES = (LIGHTAGENT_ROLE, OBSERVER_ROLE, COREAGENT_ROLE, ASR_ROLE)
+#: frago-core / ASR role → the profiles.json field it reads from.
 _FRAGO_CORE_FIELDS = {
     LIGHTAGENT_ROLE: "lightagent_profile_id",
     OBSERVER_ROLE: "observer_profile_id",
     COREAGENT_ROLE: "coreagent_profile_id",
+    ASR_ROLE: "asr_profile_id",
+}
+ROLE_FIELD_MAP = {
+    MAIN_ROLE: "active_profile_id",
+    WORKER_ROLE: "worker_profile_id",
+    **_FRAGO_CORE_FIELDS,
 }
 ROLES = CLI_ROLES + FRAGO_CORE_ROLES
 _FRAGO_CORE_KINDS = (KIND_ENDPOINT,)
@@ -1083,13 +1093,7 @@ def role_binding_id(role: str) -> str | None:
     if role not in ROLES:
         raise ValueError(f"Unknown role '{role}' (expected one of: {', '.join(ROLES)})")
     store = load_profiles()
-    stored = {
-        MAIN_ROLE: store.active_profile_id,
-        WORKER_ROLE: store.worker_profile_id,
-        LIGHTAGENT_ROLE: store.lightagent_profile_id,
-        OBSERVER_ROLE: store.observer_profile_id,
-        COREAGENT_ROLE: store.coreagent_profile_id,
-    }[role]
+    stored = getattr(store, ROLE_FIELD_MAP[role], None)
     if role in FRAGO_CORE_ROLES:
         # These only ever name a saved row: the subscription is not one, and
         # frago-core could not call it anyway.
@@ -1120,6 +1124,8 @@ def role_view(role: str) -> APIProfile | None:
     - observer: the bound connection, else nothing. An unbound observer does not run.
     - coreagent: like the light agent — the bound connection, else the active
       profile, else the first saved one.
+    - asr: the bound connection, else the auto-matched Groq/Whisper profile from
+      :func:`resolve_asr_profile`.
     """
     if role in CLI_ROLES:
         return role_connection(role)
@@ -1128,13 +1134,15 @@ def role_view(role: str) -> APIProfile | None:
         return get_profile(bound)
     if role == OBSERVER_ROLE:
         return None
+    if role == ASR_ROLE:
+        return resolve_asr_profile()
     store = load_profiles()
     active = next((p for p in store.profiles if p.id == store.active_profile_id), None)
     return active or (store.profiles[0] if store.profiles else None)
 
 
 def bind_role(
-    role: str, profile_id: str, targets: Sequence[str] | None = None
+    role: str, profile_id: str | None = None, targets: Sequence[str] | None = None
 ) -> APIProfile | None:
     """Point a role at a connection.
 
@@ -1153,13 +1161,13 @@ def bind_role(
     into Claude Code to put the person's own agent on it — the honest answer is
     to say so rather than to accept the binding and change nothing.
 
-    The two frago-core roles only record the choice, like worker. An empty id or
+    The frago-core / ASR roles only record the choice, like worker. An empty id or
     the subscription unbinds them: the light agent goes back to what it always
-    used, the observer stops.
+    used, the observer stops, and ASR falls back to auto-matching.
 
     Returns:
-        The connection now bound to that role; None when a frago-core role was
-        unbound.
+        The connection now bound to that role; None when a frago-core / ASR role
+        was unbound.
 
     Raises:
         ValueError: Unknown role, unknown profile, or a binding this kind of
@@ -1168,12 +1176,13 @@ def bind_role(
     if role not in ROLES:
         raise ValueError(f"Unknown role '{role}' (expected one of: {', '.join(ROLES)})")
 
+    normalized_id = profile_id or ""
     if role in FRAGO_CORE_ROLES:
-        return _bind_frago_core_role(role, profile_id)
+        return _bind_frago_core_role(role, normalized_id)
 
-    connection = find_connection(profile_id)
+    connection = find_connection(normalized_id)
     if connection is None:
-        raise ValueError(f"Profile not found: {profile_id}")
+        raise ValueError(f"Profile not found: {normalized_id}")
     if connection.kind == KIND_WORKBUDDY:
         raise ValueError(
             "WorkBuddy 借登录这条连接已下线：客户端升级后把登录文件加密了，frago 读不到凭据。"
@@ -1199,6 +1208,27 @@ def bind_role(
     )
     save_profiles(store)
     return connection
+
+
+def bind_role_profile(
+    role: str, profile_id: str | None = None, targets: Sequence[str] | None = None
+) -> APIProfile | None:
+    """Bind or unbind a role to a connection profile."""
+    return bind_role(role, profile_id or "", targets)
+
+
+def get_role_bindings() -> list[dict[str, Any]]:
+    """Return the current binding entries for every role in ``ROLES``."""
+    store = load_profiles()
+    return [
+        {
+            "role": role,
+            "profile_id": role_binding_id(role),
+            "connection": role_view(role),
+            "targets": list(store.active_targets) if role == MAIN_ROLE else [],
+        }
+        for role in ROLES
+    ]
 
 
 def _bind_frago_core_role(role: str, profile_id: str) -> APIProfile | None:

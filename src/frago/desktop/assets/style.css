@@ -1253,13 +1253,15 @@ html, body {
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
 }
 #human-input .hi-send::after {
-  content: "↵";
+  content: attr(data-shortcut);
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  opacity: 0.75;
+  font-size: 10px;
+  opacity: 0.78;
 }
-#human-input.has-text .hi-send,
-#human-input .hi-foot:focus-within .hi-send,
+#human-input .hi-send:not([data-shortcut])::after {
+  content: "⌘↵";
+}
+#human-input.has-text .hi-send:not(:disabled),
 #human-input .hi-send:hover:not(:disabled) {
   background: linear-gradient(180deg, #8b7cff 0%, #6d5ce8 100%);
   border-color: rgba(186, 179, 255, 0.45);
@@ -1430,12 +1432,12 @@ html, body {
 
 .petal-listener[data-listen-state="ptt"] .petal-aura,
 .petal-listener[data-listen-state="continuous"] .petal-aura {
-  opacity: 1;
-  transform: scale(1.24);
+  opacity: 0.88;
+  transform: scale(1.08);
   background: radial-gradient(
     circle,
-    rgba(244, 114, 182, 0.42) 0%,
-    rgba(34, 211, 238, 0.28) 52%,
+    rgba(244, 114, 182, 0.34) 0%,
+    rgba(34, 211, 238, 0.22) 52%,
     transparent 76%
   );
 }

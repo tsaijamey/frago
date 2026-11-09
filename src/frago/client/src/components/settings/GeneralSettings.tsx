@@ -3,7 +3,7 @@
  *
  * Implements the 3-segment tabbed layout (harnesses / sidecar / profiles):
  * 1. Harness 工具 — Built-in CoreAgent + 4 external CLI coding tools with independent Daily Session & Worker bindings + single-line Danger Zone
- * 2. 旁路与轻量 AI — LightAgent, Session Observer, and inline Decision Model configuration
+ * 2. 旁路与轻量 AI — LightAgent, Session Observer, Desktop Speech Recognition (ASR), and inline Decision Model configuration
  * 3. AI 服务商 — 5-column provider & protocol routing table with live reverse-reference chips
  */
 
@@ -41,6 +41,7 @@ import {
   EyeOff,
   Gauge,
   KeyRound,
+  Mic,
   Pencil,
   Plus,
   Sparkles,
@@ -478,6 +479,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
     }
     const lightBinding = bindings.find((b) => b.role === 'lightagent');
     const obsBinding = bindings.find((b) => b.role === 'observer');
+    const asrBinding = bindings.find((b) => b.role === 'asr');
 
     const lightPid = lightBinding?.profile_id || lightBinding?.connection?.id;
     if (lightPid && map[lightPid]) {
@@ -486,6 +488,10 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
     const obsPid = obsBinding?.profile_id;
     if (obsPid && map[obsPid]) {
       map[obsPid].push(t('settings.general.providers.refObserver'));
+    }
+    const asrPid = asrBinding?.profile_id || asrBinding?.connection?.id;
+    if (asrPid && map[asrPid]) {
+      map[asrPid].push(t('settings.general.providers.refAsr'));
     }
     return map;
   };
@@ -511,9 +517,12 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
 
   const lightBinding = bindings.find((b) => b.role === 'lightagent');
   const obsBinding = bindings.find((b) => b.role === 'observer');
+  const asrBinding = bindings.find((b) => b.role === 'asr');
 
   const lightConnection = lightBinding?.connection ?? profiles[0] ?? null;
   const obsConnection = obsBinding?.profile_id ? (obsBinding.connection ?? findProfile(obsBinding.profile_id)) : null;
+  const asrConnection =
+    asrBinding?.connection ?? (asrBinding?.profile_id ? findProfile(asrBinding.profile_id) : null);
 
   const lightModelLabel =
     lightConnection?.haiku_model ||
@@ -522,9 +531,11 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
     t('settings.general.sidecar.unconfigured');
   const obsModelLabel =
     obsConnection?.haiku_model || obsConnection?.default_model || null;
+  const asrModelLabel =
+    asrConnection?.default_model || asrConnection?.haiku_model || 'whisper-large-v3-turbo';
   const hookReviewEnabled = hookReview ? hookReview.enabled : true;
 
-  const renderSidecarOptions = () =>
+  const renderSidecarOptions = (useDefaultModel = false) =>
     profiles.map((p) => {
       if (p.kind === 'workbuddy') {
         return (
@@ -540,7 +551,9 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
           </option>
         );
       }
-      const modelHint = p.haiku_model || p.default_model;
+      const modelHint = useDefaultModel
+        ? p.default_model || p.haiku_model
+        : p.haiku_model || p.default_model;
       return (
         <option key={p.id} value={p.id}>
           {p.name}
@@ -602,7 +615,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
           >
             <Sparkles size={13} />
             <span>{t('settings.general.tabs.sidecar')}</span>
-            <span className="cnt">3</span>
+            <span className="cnt">4</span>
           </button>
           <button
             type="button"
@@ -1057,7 +1070,52 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
               </div>
             </div>
 
-            {/* 第 3 行：决策模型 · Decision Model */}
+            {/* 第 3 行：桌面语音识别 · asr */}
+            <div className="srow" data-testid="sidecar-asr">
+              <div className="l">
+                <div className="t">
+                  <Mic size={14} />
+                  <span>
+                    {t('settings.general.sidecar.asr.name')} · <code>asr</code>
+                  </span>
+                  {asrConnection ? (
+                    <span className="s-kind">
+                      {t('settings.general.sidecar.asr.activeBadge', {
+                        name: asrConnection.name,
+                        model: asrModelLabel,
+                      })}
+                    </span>
+                  ) : (
+                    <span className="s-pill off" style={{ marginLeft: 0 }}>
+                      {t('settings.general.sidecar.unconfigured')}
+                    </span>
+                  )}
+                </div>
+                <div className="d">
+                  <b>{t('settings.general.sidecar.roleLabel')}</b>
+                  {t('settings.general.sidecar.asr.role')}
+                  <br />
+                  <b>{t('settings.general.sidecar.whyLabel')}</b>
+                  {t('settings.general.sidecar.asr.why')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <select
+                  className="sselect"
+                  style={{ width: 222, height: 28, fontSize: 12 }}
+                  aria-label={t('settings.general.sidecar.asr.selectAria')}
+                  value={asrBinding?.profile_id ?? ''}
+                  disabled={busyKey !== null}
+                  onChange={(e) => handleBindSidecar('asr', e.target.value)}
+                  data-testid="sidecar-asr-select"
+                >
+                  <option value="">{t('settings.general.sidecar.asr.optAutoMatch')}</option>
+                  {renderSidecarOptions(true)}
+                </select>
+              </div>
+            </div>
+
+            {/* 第 4 行：决策模型 · Decision Model */}
             <div
               className="srow"
               data-testid="sidecar-decision"

@@ -180,6 +180,17 @@ export interface SkillItem {
   agents?: string[];
 }
 
+export interface EmployeeItem {
+  member_post_id: string;
+  title?: string;
+  agent_kernel?: string;
+  description?: string | null;
+  work_scope?: string | null;
+  cwd?: string | null;
+  skills?: string[];
+  color?: string | null;
+}
+
 export interface GhRateLimit {
   limit: number;
   remaining: number;
@@ -710,15 +721,18 @@ export interface ProfileListResponse {
   active_targets: string[];
   /** What the worker role is bound to; null means the plain subscription. */
   worker_profile_id?: string | null;
+  /** What the desktop speech recognition (ASR) role is explicitly bound to. */
+  asr_profile_id?: string | null;
 }
 
 /**
  * The roles that consume a connection. `main` and `worker` run on an agent CLI;
  * `lightagent` (the hook's review passes) and `observer` (the session page's side
  * panel) are served by frago-core, which can only call a connection that carries
- * its own key. So is `coreagent`, frago-core's own agent loop.
+ * its own key. So is `coreagent`, frago-core's own agent loop, and `asr` (virtual
+ * desktop speech-to-text).
  */
-export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer' | 'coreagent';
+export type ConnectionRole = 'main' | 'worker' | 'lightagent' | 'observer' | 'coreagent' | 'asr';
 
 /**
  * A core that runs on its own account rather than on a key frago holds.
@@ -1276,6 +1290,7 @@ export interface BranchRequest {
   images?: string[];
   documents?: { name: string; data: string }[];
   skills?: string[];
+  employee?: string;
 }
 
 /**

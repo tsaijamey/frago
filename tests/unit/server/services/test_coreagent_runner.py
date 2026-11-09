@@ -442,12 +442,8 @@ class TestDirectorUnattendedEnv:
             assert len(captured_envs) == 1
             assert captured_envs[0].get("FRAGO_REVIEW") == "off"
             assert captured_envs[0].get("FRAGO_STOP_CHECK") == "off"
-            presenter = so._presenters.get("1")
-            assert presenter is not None
-            assert presenter.thread is None
-            # 即使直接调用未打桩的语音推送入口，单测隔离下也绝不向 8770 发请求
-            presenter._say_interject("Welcome to the live stage.")
-            presenter._say_queue("Moving forward on stage.")
+            # 旧版男声 PresenterDaemon 已退役，send_queued 不再自动挂载 _presenters
+            assert so._presenters.get("1") is None
             assert stage_urls == []
         finally:
             so.cleanup_all_presenters()

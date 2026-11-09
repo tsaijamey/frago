@@ -20,6 +20,7 @@ import platform
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from frago.browser.cdp.process import kill_existing_chrome
 from frago.browser.cdp.targets import is_real_tab
 from frago.browser.cdp.transport import cdp_get, cdp_ws_connect
 from frago.browser.profile_seed import seed_profile_from_system, system_profile_dir
+from frago.browser.proxy_detect import detect_local_proxy, proxy_bypass_list
 
 # frago profile directory names (legacy flat layout).
 # Kept only to locate old directories for lazy migration; the new layout
@@ -71,6 +73,7 @@ class ChromeLauncher:
         window_y: int | None = None,
         profile_dir: Path | None = None,
         browser: str | None = None,
+        extra_args: Sequence[str] | None = None,
     ):
         self.system = platform.system()
 
@@ -86,6 +89,7 @@ class ChromeLauncher:
         self.app_mode = app_mode
         self.kiosk_mode = kiosk_mode
         self.app_url = app_url
+        self.extra_args: list[str] = list(extra_args) if extra_args else []
         self.browser_process: subprocess.Popen | None = None
 
         # Validate app/kiosk mode parameters
@@ -477,12 +481,17 @@ class ChromeLauncher:
         except Exception:
             return False
 
-    def launch(self, kill_existing: bool = True) -> bool:
+    def launch(
+        self,
+        kill_existing: bool = True,
+        extra_args: Sequence[str] | None = None,
+    ) -> bool:
         """
         Launch Chrome browser
 
         Args:
             kill_existing: Whether to close existing CDP Chrome processes first
+            extra_args: Optional additional command-line flags passed to the browser
 
         Returns:
             bool: Whether successfully launched and ready
@@ -576,9 +585,45 @@ class ChromeLauncher:
                 [
                     "--headless=new",
                     "--disable-gpu",
+                    "--high-dpi-support=1",
+                    "--force-device-scale-factor=2",
                     f"--window-size={self.width},{self.height}",
                 ]
             )
+
+        merged_extra_args = list(self.extra_args)
+        if extra_args:
+            merged_extra_args.extend(extra_args)
+        if merged_extra_args:
+            cmd.extend(merged_extra_args)
+
+        # Auto-attach local HTTP proxy unless caller already passed a proxy flag
+        # or disabled proxy detection via FRAGO_BROWSER_PROXY=off.
+        has_proxy_arg = any(
+            arg in ("--no-proxy-server", "--proxy-server")
+            or arg.startswith("--proxy-server=")
+            for arg in cmd
+        )
+        if not has_proxy_arg:
+            proxy_url = detect_local_proxy()
+            if proxy_url:
+                cmd.append(f"--proxy-server={proxy_url}")
+                has_bypass_arg = any(
+                    arg == "--proxy-bypass-list"
+                    or arg.startswith("--proxy-bypass-list=")
+                    for arg in cmd
+                )
+                if not has_bypass_arg:
+                    bypass_entries = [
+                        entry for entry in proxy_bypass_list().split(";") if entry
+                    ]
+                    for loopback in ("localhost", "127.0.0.1", "::1"):
+                        if loopback not in bypass_entries:
+                            bypass_entries.append(loopback)
+                    if bypass_entries:
+                        cmd.append(
+                            f"--proxy-bypass-list={';'.join(bypass_entries)}"
+                        )
 
         # Launch Chrome
         # stdin=DEVNULL prevents subprocess from waiting for input, which causes blocking on Windows

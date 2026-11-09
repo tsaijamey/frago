@@ -97,6 +97,15 @@ def _frago_bin() -> str:
     return "frago"
 
 
+def _live_ui_version(fallback: int | None = None) -> int | None:
+    """动态读取当前磁盘上 assets/ 的 uiVersion（使常驻保活的 broker 在前端资产热更新后无需重启即可对齐新版本号）。"""
+    with suppress(Exception):
+        from . import stage as _stage_mod
+
+        return _stage_mod.ui_version()
+    return fallback
+
+
 def _log(msg: str) -> None:
     print(f"[broker] {msg}", file=sys.stderr, flush=True)
 
@@ -874,6 +883,14 @@ class StageBrowser:
         return res.get("result", {}).get("result", {}).get("value")
 
     # ── 画面 ──
+    #
+    # 演员浏览器在无头模式下以 2x Retina 像素比（--force-device-scale-factor=2）
+    # 渲染，CSS 布局视口仍为 self.width × self.height。startScreencast 的
+    # maxWidth / maxHeight 限制的是输出位图的物理像素上限——若仍传 1x 视口尺寸，
+    # Chrome 会在编码前把 2x 高清画面重新缩回 1x，再叠一层虚拟窗口拉伸就会发糊。
+    # 因此按 SCREENCAST_SCALE=2 放开物理像素上限并提升 JPEG 质量到 92。
+    SCREENCAST_SCALE = 2
+    SCREENCAST_QUALITY = 92
 
     async def start_stream(self, fps: int) -> None:
         """开帧流。everyNthFrame 恒为 1，抽稀在下游做。
@@ -884,16 +901,18 @@ class StageBrowser:
         限流必须发生在有帧可丢的地方，不能发生在源头。
         """
         del fps  # 保留入参形状，实际节流在 pump_frames_forever 里按时间戳做
+        max_w = int(self.width * self.SCREENCAST_SCALE)
+        max_h = int(self.height * self.SCREENCAST_SCALE)
         await self.send("Page.startScreencast", {
-            "format": "jpeg", "quality": 80,
-            "maxWidth": self.width, "maxHeight": self.height,
+            "format": "jpeg", "quality": self.SCREENCAST_QUALITY,
+            "maxWidth": max_w, "maxHeight": max_h,
             "everyNthFrame": 1,
         })
         # 助推一次重绘。screencast 只在页面重绘时发帧，而开流那一刻页面往往
         # 已经画完静止了——不推的话首帧永远不来，桌面上的浏览器窗口一直是空的，
         # 且看不出任何报错。
         await self.nudge_repaint()
-        _log(f"screencast 已启动 target={self.target_id}")
+        _log(f"screencast 已启动 target={self.target_id} max={max_w}x{max_h} q={self.SCREENCAST_QUALITY}")
 
     async def pump_frames_forever(self) -> None:
         """按目标帧率取当前最新帧发出去。
@@ -3294,6 +3313,8 @@ def build_app(cfg: dict) -> FastAPI:
 
     async def on_viewport(w: int, h: int, reason: str) -> None:
         """演员视口变了，窗口形状跟着改。跟随的方向只有这一个。"""
+        cfg["browser"] = {"w": int(w), "h": int(h)}
+        await broadcast({"t": "viewport", "w": int(w), "h": int(h)})
         await push_browser_window(reason=f"演员视口变为 {w}x{h}（{reason}）")
 
     browser.on_viewport = on_viewport
@@ -3332,7 +3353,12 @@ def build_app(cfg: dict) -> FastAPI:
         if now - last_beat < 10:
             return
         last_beat = now
-        await asyncio.to_thread(registry.touch_heartbeat, instance_id)
+        await asyncio.to_thread(
+            registry.touch_heartbeat,
+            instance_id,
+            pid=os.getpid(),
+            port=int(cfg["port"]),
+        )
 
     async def confirm_running() -> None:
         """等到自己真的能应答了，再把"在跑"落一次盘。
@@ -3394,6 +3420,21 @@ def build_app(cfg: dict) -> FastAPI:
         _log(f"实例 {instance_id} 已标记 stopped")
 
     app = FastAPI(lifespan=lifespan)
+    boot_disk_ver = _live_ui_version()
+    dynamic_ui_version = (
+        cfg.get("ui_version") is None or cfg.get("ui_version") == boot_disk_ver
+    )
+
+    def current_ui_version(reported_ver: Any = None) -> int | None:
+        """解析当前 broker 期望的 uiVersion：若启动时绑定的是真实资产哈希（或客户端上报了最新磁盘哈希），动态刷新。"""
+        want_now = cfg.get("ui_version")
+        if dynamic_ui_version or (reported_ver and reported_ver == _live_ui_version()):
+            live_ver = _live_ui_version(want_now)
+            if live_ver and live_ver != want_now:
+                cfg["ui_version"] = live_ver
+                stage.stale_clients.discard(live_ver)
+                want_now = live_ver
+        return want_now
 
     def note_identity(meta: dict, msg: dict) -> bool:
         """记下客户端自报的身份，返回这块荧幕是否属于本实例。
@@ -3623,8 +3664,8 @@ def build_app(cfg: dict) -> FastAPI:
                     # 版本对不上同样整条丢弃。人手里可能同时开着好几个桌面页
                     # 标签，旧的那个几何算法不一样，两边轮流覆盖 stage.layout，
                     # 视口就跟着来回改，画面被拉伸变形。认版本，不认先来后到。
-                    want = cfg.get("ui_version")
                     got = msg.get("uiVersion")
+                    want = current_ui_version(got)
                     if want and got != want:
                         ver_key = got or 0
                         # 跨连接按版本号去重，而不是只记在单条连接 meta 上：

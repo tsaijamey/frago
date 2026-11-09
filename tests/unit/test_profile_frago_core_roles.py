@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from frago.init.profile_manager import (
+    ASR_ROLE,
     COREAGENT_ROLE,
     KIND_VENDOR_CLI,
     KIND_WORKBUDDY,
@@ -18,12 +19,15 @@ from frago.init.profile_manager import (
     MAIN_ROLE,
     OBSERVER_ROLE,
     OFFICIAL_ID,
+    ROLE_FIELD_MAP,
     WORKER_ROLE,
     APIProfile,
     activate_profile,
     add_profile,
     bind_role,
+    bind_role_profile,
     delete_profile,
+    get_role_bindings,
     load_profiles,
     role_binding_id,
     role_connection,
@@ -254,3 +258,45 @@ class TestCoreAgent:
             encoding="utf-8",
         )
         assert load_profiles().coreagent_profile_id is None
+
+
+class TestAsrRole:
+    """桌面语音识别（ASR）角色绑定与未显式绑定时的自动匹配。"""
+
+    def test_role_field_map_and_explicit_binding(
+        self, tmp_profiles_path, endpoint_profile, second_endpoint_profile
+    ):
+        assert ROLE_FIELD_MAP[ASR_ROLE] == "asr_profile_id"
+        add_profile(endpoint_profile)
+        add_profile(second_endpoint_profile)
+
+        bound = bind_role_profile(ASR_ROLE, second_endpoint_profile.id)
+        assert bound is not None
+        assert bound.id == second_endpoint_profile.id
+        assert role_binding_id(ASR_ROLE) == second_endpoint_profile.id
+        assert role_view(ASR_ROLE).id == second_endpoint_profile.id
+
+        by_role = {b["role"]: b for b in get_role_bindings()}
+        assert by_role[ASR_ROLE]["profile_id"] == second_endpoint_profile.id
+        assert by_role[ASR_ROLE]["connection"].id == second_endpoint_profile.id
+
+    def test_unbound_returns_resolve_asr_profile_auto_match(self, tmp_profiles_path, endpoint_profile):
+        groq_profile = APIProfile(
+            id="ep_groq1",
+            name="Groq Whisper ASR",
+            endpoint_type="custom",
+            url="https://api.groq.com/openai/v1",
+            api_key="gsk_test_groq_key",
+            default_model="whisper-large-v3-turbo",
+        )
+        add_profile(endpoint_profile)
+        add_profile(groq_profile)
+
+        assert role_binding_id(ASR_ROLE) is None
+        resolved = role_view(ASR_ROLE)
+        assert resolved is not None
+        assert resolved.id == groq_profile.id
+
+        by_role = {b["role"]: b for b in get_role_bindings()}
+        assert by_role[ASR_ROLE]["profile_id"] is None
+        assert by_role[ASR_ROLE]["connection"].id == groq_profile.id

@@ -206,6 +206,15 @@ def up(params: dict | None = None) -> dict:
     opened, reused = _settle_desktop_page(params, cfg, content_id, url)
 
     broker_status = _await_handshake(cfg["port"])
+    if (
+        isinstance(broker_status, dict)
+        and broker_status.get("pid")
+        and runtime.get("status") != "running"
+        and registry._pid_alive(int(broker_status["pid"]))
+    ):
+        runtime = registry.mark_running(
+            cfg["id"], int(broker_status["pid"]), int(cfg["port"])
+        )
     report = health.report(_for_health(runtime), status=broker_status)
     _warn_stale_clips(runtime)
     _warn_from(report)

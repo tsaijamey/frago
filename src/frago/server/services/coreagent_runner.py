@@ -156,6 +156,11 @@ def _is_desktop_operator_session(session_id: str, prompt: str) -> bool:
     if _DESKTOP_OPERATOR_TAG_MARKER in prompt:
         return True
     with contextlib.suppress(Exception):
+        from frago.server.services import stage_orchestrator
+
+        if stage_orchestrator.is_desktop_operator_session(session_id):
+            return True
+    with contextlib.suppress(Exception):
         from frago.employee.store import get_post
 
         post = get_post("desktop-operator")
@@ -725,12 +730,14 @@ def send(
     会话记录里留下任何一行，页面上除了这句抛出来的话没有别的线索。等不到就只记日志：那时
     记录里已经有行在写了，人看得见。
     """
-    if _is_director_prompt(prompt):
+    is_op = _is_desktop_operator_session(session_id, prompt)
+    with contextlib.suppress(Exception):
         from frago.server.services import stage_orchestrator
 
-        prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
-
-    is_op = _is_desktop_operator_session(session_id, prompt)
+        if is_op:
+            stage_orchestrator.ensure_speech_summarizer(session_id, cwd=cwd)
+        else:
+            stage_orchestrator.maybe_ensure_desktop_operator_speech(session_id, cwd=cwd)
     sess = _session_for(
         session_id,
         cwd,
@@ -763,12 +770,14 @@ def send_queued(
     排满仍当场抛 :class:`CoreAgentBusy`——「收不下」必须当场回给页面，NEVER 收下再在后台
     静默地把它丢掉。返回喂料线程名，便于日志对号。
     """
-    if _is_director_prompt(prompt):
+    is_op = _is_desktop_operator_session(session_id, prompt)
+    with contextlib.suppress(Exception):
         from frago.server.services import stage_orchestrator
 
-        prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
-
-    is_op = _is_desktop_operator_session(session_id, prompt)
+        if is_op:
+            stage_orchestrator.ensure_speech_summarizer(session_id, cwd=cwd)
+        else:
+            stage_orchestrator.maybe_ensure_desktop_operator_speech(session_id, cwd=cwd)
     sess = _session_for(
         session_id,
         cwd,

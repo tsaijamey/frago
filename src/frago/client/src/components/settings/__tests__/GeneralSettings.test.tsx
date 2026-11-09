@@ -162,6 +162,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
         { role: 'lightagent', profile_id: 'deepseek', connection: SAMPLE_PROFILES[0], targets: [] },
         { role: 'observer', profile_id: null, connection: null, targets: [] },
         { role: 'coreagent', profile_id: 'deepseek', connection: SAMPLE_PROFILES[0], targets: [] },
+        { role: 'asr', profile_id: null, connection: SAMPLE_PROFILES[1], targets: [] },
       ],
       vendor_cores: [],
       harnesses: SAMPLE_HARNESSES,
@@ -217,7 +218,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     await waitFor(() => expect(openConfigInVSCode).toHaveBeenCalledWith('opencode'));
   });
 
-  it('切换到「旁路与轻量 AI」与「AI 服务商」子视图，仅展示 3 行旁路 AI 且正确汇总反向引用气泡', async () => {
+  it('切换到「旁路与轻量 AI」与「AI 服务商」子视图，展示 4 行旁路 AI（含桌面语音识别 asr）且正确汇总反向引用气泡与报错提示', async () => {
     render(<GeneralSettings />);
     await screen.findByTestId('zone-harnesses');
 
@@ -226,8 +227,24 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     expect(await screen.findByTestId('zone-sidecar-ai')).toBeTruthy();
     expect(screen.getByTestId('sidecar-lightagent')).toBeTruthy();
     expect(screen.getByTestId('sidecar-observer')).toBeTruthy();
+    expect(screen.getByTestId('sidecar-asr')).toBeTruthy();
     expect(screen.queryByTestId('sidecar-coreagent')).toBeNull();
     expect(screen.getByTestId('sidecar-decision')).toBeTruthy();
+
+    // 验证桌面语音识别（asr）行支持自动匹配展示、切换绑定与报错提示
+    const asrSelect = screen.getByLabelText('桌面语音识别服务商') as HTMLSelectElement;
+    expect(asrSelect.value).toBe('');
+    expect(screen.getByText('转写：OpenRouter (anthropic/claude-sonnet-4.5)')).toBeTruthy();
+
+    fireEvent.change(asrSelect, { target: { value: 'deepseek' } });
+    await waitFor(() => expect(bindRole).toHaveBeenCalledWith('asr', 'deepseek'));
+
+    const refreshedAsrSelect = (await screen.findByTestId('sidecar-asr-select')) as HTMLSelectElement;
+    bindRole.mockResolvedValueOnce({ status: 'error', error: '厂商 CLI 无 API 密钥，无法绑定至 asr' });
+    fireEvent.change(refreshedAsrSelect, { target: { value: 'openrouter' } });
+    expect((await screen.findByTestId('general-bind-err')).textContent).toContain(
+      '厂商 CLI 无 API 密钥，无法绑定至 asr',
+    );
 
     // 展开决策模型内联配置
     fireEvent.click(screen.getByTestId('decision-model-toggle-btn'));
@@ -240,6 +257,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     expect(screen.getByText('CoreAgent 日常')).toBeTruthy();
     expect(screen.getByText('Claude Code 日常')).toBeTruthy();
     expect(screen.getByText('Codex CLI Worker')).toBeTruthy();
+    expect(screen.getByText('桌面语音识别')).toBeTruthy();
     expect(screen.queryByText('内核代理')).toBeNull();
   });
 
@@ -258,6 +276,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     // 切换到 Sidecar & Light AI 并展开决策模型配置
     fireEvent.click(screen.getByTestId('general-tab-sidecar'));
     await screen.findByTestId('zone-sidecar-ai');
+    expect(screen.getByTestId('sidecar-asr')).toBeTruthy();
     fireEvent.click(screen.getByTestId('decision-model-toggle-btn'));
     expect(screen.getByTestId('decision-model-wire-select')).toBeTruthy();
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
@@ -268,6 +287,7 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     expect(screen.getByText('CoreAgent Daily')).toBeTruthy();
     expect(screen.getByText('Claude Code Daily')).toBeTruthy();
     expect(screen.getByText('Codex CLI Worker')).toBeTruthy();
+    expect(screen.getByText('Desktop ASR')).toBeTruthy();
     expect(container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
 
     // 校验 en.json 与 zh.json 中 settings.general 递归键路径完全对称

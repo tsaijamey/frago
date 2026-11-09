@@ -248,4 +248,21 @@ describe('ConnectionRolesCard · frago-core 替它们问模型的两行', () => 
       'deepseek-v4-flash',
     );
   });
+
+  it('桌面语音识别（asr）角色下拉框支持自动匹配展示与显式切换绑定', async () => {
+    renderFour({
+      bindings: [
+        ...four,
+        { role: 'asr', profile_id: null, connection: deepseek, targets: [] },
+      ],
+    });
+    const asrSelect = screen.getByLabelText('settings.connections.asrRole') as HTMLSelectElement;
+    expect(asrSelect.value).toBe('');
+    const values = Array.from(asrSelect.querySelectorAll('option')).map((o) => o.value);
+    expect(values[0]).toBe('');
+    expect(values).not.toContain('official');
+
+    fireEvent.change(asrSelect, { target: { value: 'prof0001' } });
+    await waitFor(() => expect(bindRole).toHaveBeenCalledWith('asr', 'prof0001', undefined));
+  });
 });

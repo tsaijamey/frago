@@ -263,6 +263,13 @@ async def serve_app_config(name: str, request: Request):
 
     owner = is_owner_request(request)
     config = dict(state) if owner else public_view(state)
+    if name == "agent_os" and owner:
+        try:
+            from frago.desktop import stage as _desktop_stage
+
+            config["uiVersion"] = _desktop_stage.ui_version()
+        except Exception:
+            pass
     config["apiBase"] = "/api" if owner else None
     config["readOnly"] = not owner
     config["recipeName"] = name

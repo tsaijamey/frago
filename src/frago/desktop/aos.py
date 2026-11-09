@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -302,6 +303,34 @@ def js_literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+_CLI_AGENT_DELEGATION_RE = re.compile(
+    r"^\s*(?:env\s+\S+=\S+\s+)*(?:uv\s+run\s+)?(?:frago\s+(?:employee|agent|session)\b|claude\b|agy\b|codex\b|gemini\b)"
+)
+_SOURCE_EDIT_INPLACE_RE = re.compile(
+    r"(?:^|[;&|]\s*)\s*(?:sed\s+-i(?:\s+['\"][^'\"]*['\"])?|perl\s+-[a-zA-Z]*i[a-zA-Z]*|patch\b|git\s+apply\b)"
+    r"[^;&|]*\.(?:py|ts|tsx|jsx|js|rs|go|css|scss)\b"
+)
+_SOURCE_REDIRECT_WRITE_RE = re.compile(
+    r"(?:>>?|\|\s*tee(?:\s+-a)?)\s*['\"]?(?!/tmp/)(?:[^\s'\"`|;&]+/)?[^\s'\"`|;&]+\.(?:py|ts|tsx|jsx|js|rs|go|css|scss)\b"
+)
+
+
+def _guard_term_run_command(cmd: str) -> None:
+    """拦截主操作员在虚拟终端中绕过 CLI Agent 直接原地篡改项目源码文件的反模式命令。"""
+    s = (cmd or "").strip()
+    if not s or _CLI_AGENT_DELEGATION_RE.match(s):
+        return
+    if _SOURCE_EDIT_INPLACE_RE.search(s) or _SOURCE_REDIRECT_WRITE_RE.search(s):
+        raise die(
+            "桌面主操作员严禁在 win:term 中直接修改项目源码文件",
+            hint=(
+                "请像人类使用操作系统一样通过 CLI Agent 或领域员工完成代码修改："
+                '例如执行 `frago desktop term run "frago employee invoke frago-developer \\"<修改目标>\\""` '
+                "或在虚拟终端中拉起 CLI Agent 会话处理。"
+            ),
+        )
+
+
 def parse(tokens: list[str]) -> tuple[str, object]:
     if not tokens:
         raise die("空指令")
@@ -408,6 +437,7 @@ def parse(tokens: list[str]) -> tuple[str, object]:
         if verb == "run":
             cmd, rest = one_positional(rest, "要执行的命令")
             take_flags(rest, set())
+            _guard_term_run_command(cmd)
             return "steps", [{"op": "shell", "cmd": cmd}]
         if verb == "read":
             # --observe 是无值 flag，与 term scroll 的 --to-end 同一个摘法：

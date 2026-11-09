@@ -230,8 +230,8 @@
         <div class="hi-log hi-msgs" id="hi-log"></div>
         <div class="hi-foot">
           <div class="hi-row hi-input-row">
-            <textarea id="hi-text" class="hi-ta" rows="1" placeholder="随时写下补充或修改意见，回车发送"></textarea>
-            <button type="button" id="hi-send" class="hi-send">发送</button>
+            <textarea id="hi-text" class="hi-ta" rows="1" placeholder="随时写下补充或修改意见，⌘+回车 / Ctrl+回车发送"></textarea>
+            <button type="button" id="hi-send" class="hi-send" data-shortcut="⌘↵" disabled>发送</button>
           </div>
           <div class="hi-status" id="hi-status"></div>
         </div>
@@ -249,7 +249,7 @@
           <span id="hi-fab-label">对话</span>
           <span class="cnt" id="hi-badge" hidden>0</span>
         </button>
-        <div id="petal-listener" class="petal-listener" data-listen-state="idle" role="button" tabindex="0" aria-label="语音花瓣监听器（按住右Alt说话，双击右Ctrl持续监听）" title="按住右Alt说话 · 双击右Ctrl持续监听（点击也可切换持续监听）">
+        <div id="petal-listener" class="petal-listener" data-listen-state="idle" data-asr-missing-hint="未找到桌面语音识别连接：请前往 WebUI「设置 → 常规设置 → 旁路与轻量 AI」配置桌面语音识别连接" role="button" tabindex="0" aria-label="语音花瓣监听器（按住右Alt说话，双击右Ctrl持续监听）" title="按住右Alt说话 · 双击右Ctrl持续监听（点击也可切换持续监听；未配置时请前往 WebUI「设置 → 常规设置 → 旁路与轻量 AI」配置桌面语音识别连接）">
           <div class="petal-aura" id="petal-aura"></div>
           <div class="petal-rotor" id="petal-rotor">
             <span class="petal p0" data-petal-index="0"></span>

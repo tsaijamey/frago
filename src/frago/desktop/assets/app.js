@@ -798,6 +798,8 @@
           c.width = img.naturalWidth;
           c.height = img.naturalHeight;
         }
+        els.ctx.imageSmoothingEnabled = true;
+        els.ctx.imageSmoothingQuality = "high";
         els.ctx.drawImage(img, 0, 0);
         fitCanvas(img.naturalWidth, img.naturalHeight);
         if (!state.firstFrameSent) {
@@ -1112,6 +1114,11 @@
         }
         // 这里不报：补发还没走完，手上还是出厂几何。broker 把整份现状发完
         // 会补一条 synced，那时才报，报的才是真的。
+        break;
+      case "viewport":
+        if (msg.w && msg.h) {
+          state.viewport = { w: msg.w, h: msg.h };
+        }
         break;
       case "reload":
         // broker 说这块荧幕的资产版本与它不符。每个目标版本最多只自动刷新一次
@@ -1648,6 +1655,16 @@
      人打的字不进桌面终端——桌面终端只是被操作的外设，不是代理角色。人的话先发给
      frago 服务的会话发送接口（wait:false 只排队不等答），排进主控会话队列；
      由驻场「主持人」秒级口头确认，再交给「主操作员」与后台「参谋」协商执行。 */
+  var DIRECTOR_SID_STORAGE_KEY = "frago_desktop_director_sid";
+
+  function persistDirectorSessionId(nextSid) {
+    var clean = typeof nextSid === "string" ? nextSid.trim() : "";
+    if (!clean) return;
+    try {
+      localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, clean);
+    } catch (e) {}
+  }
+
   function defaultDirectorSessionId() {
     var hex = "";
     for (var i = 0; i < 16; i++) {
@@ -1661,9 +1678,20 @@
     if (/[?&]userInput=(false|0)(&|$)/.test(q)) return null;
     var m = q.match(/[?&]session=([^&]+)/);
     if (m) {
-      try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+      var sid = m[1];
+      try { sid = decodeURIComponent(m[1]); } catch (e) { sid = m[1]; }
+      try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
+      return sid;
     }
-    return defaultDirectorSessionId();
+    try {
+      var cachedSid = localStorage.getItem(DIRECTOR_SID_STORAGE_KEY);
+      if (cachedSid && typeof cachedSid === "string" && cachedSid.trim()) {
+        return cachedSid.trim();
+      }
+    } catch (e) {}
+    var initialSid = defaultDirectorSessionId();
+    try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, initialSid); } catch (e) {}
+    return initialSid;
   }
 
   var HI_I18N = {
@@ -1687,13 +1715,13 @@
       triggerNoSession: "未带导演会话参数（默认仅显示图标，点击查看）",
       roleDirector: "导演",
       roleUser: "你",
-      placeholderActive: "随时写下补充或修改意见，回车发送",
+      placeholderActive: "随时写下补充或修改意见，⌘+回车 / Ctrl+回车发送",
       placeholderReadonly: "未连接导演会话",
       emptyReadonly: "当前地址未绑定导演会话参数（?userInput=true&session=…），面板默认收起为右下角图标。",
       welcome: "正在虚拟桌面上推进任务。随时在这里写下补充或修改意见，主持人会即时响应，主操作员与参谋将协商并在桌面上执行。",
       sendIdle: "发送",
       sendQueueing: "排队中…",
-      statusHint: "回车发送 · Shift+回车换行",
+      statusHint: "⌘/Ctrl+回车发送 · 回车换行",
       statusReadonly: "只读显示器模式",
       statusQueueing: "正在排队…",
       statusQueued: "已排入主控队列，主持人与操作组正在跟进",
@@ -1720,13 +1748,13 @@
       triggerNoSession: "No director session bound (icon only by default, click to view)",
       roleDirector: "Director",
       roleUser: "You",
-      placeholderActive: "Type follow-ups here, press Enter to send",
+      placeholderActive: "Type follow-ups here, ⌘+Enter / Ctrl+Enter to send",
       placeholderReadonly: "No director session connected",
       emptyReadonly: "No director session bound (?userInput=true&session=…). The panel stays collapsed as a corner icon by default.",
       welcome: "Working on your task on the virtual desktop. Type any follow-ups here — the presenter will acknowledge live while the operator and advisor coordinate execution.",
       sendIdle: "Send",
       sendQueueing: "Queueing…",
-      statusHint: "Enter to send · Shift+Enter for newline",
+      statusHint: "⌘/Ctrl+Enter to send · Enter for newline",
       statusReadonly: "Read-only display mode",
       statusQueueing: "Queueing…",
       statusQueued: "Queued to main session for presenter & operator team",
@@ -1786,6 +1814,14 @@
     var sid = humanInputTarget();
     // 把当前绑定的主线会话编号挂在面板上，方便排查与核验「这个面板接的是哪条会话」。
     box.dataset.sessionId = sid || "";
+    var isApplePlatform = /Mac|iPhone|iPad|iPod/i.test(
+      (typeof navigator !== "undefined" && (navigator.platform || navigator.userAgent)) || ""
+    );
+    var sendShortcutBadge = isApplePlatform ? "⌘↵" : "Ctrl+↵";
+    box.dataset.sendShortcut = sendShortcutBadge;
+    if (sendBtn) sendBtn.setAttribute("data-shortcut", sendShortcutBadge);
+    var isComposing = false;
+    var compositionEndTimer = null;
     var msgCount = 0;
     var currentLang = resolveUiLang();
     var statusState = { key: sid ? "statusHint" : "statusReadonly", extra: "", bad: false };
@@ -1902,9 +1938,7 @@
         if (sidTag) sidTag.textContent = sid.slice(0, 8);
         if (text) text.placeholder = tr("placeholderActive");
       }
-      if (sendBtn) {
-        sendBtn.textContent = box.dataset.mode === "sending" ? tr("sendQueueing") : tr("sendIdle");
-      }
+      syncSendBtnState();
       if (log) {
         var phBubble = log.querySelector('[data-placeholder="1"] .hi-bubble');
         if (phBubble) phBubble.textContent = tr("welcome");
@@ -1923,9 +1957,19 @@
       renderNote();
     }
     var MAX_TA_HEIGHT = 112;
+    function syncSendBtnState() {
+      if (!sendBtn) return;
+      var hasContent = !!(text && text.value && text.value.trim());
+      var isSending = box.dataset.mode === "sending";
+      sendBtn.disabled = !sid || isSending || !hasContent;
+      sendBtn.textContent = isSending ? tr("sendQueueing") : tr("sendIdle");
+      sendBtn.setAttribute("data-shortcut", sendShortcutBadge);
+    }
     function autoGrowInput() {
       if (!text) return;
-      box.classList.toggle("has-text", !!(text.value && text.value.trim()));
+      var hasContent = !!(text.value && text.value.trim());
+      box.classList.toggle("has-text", hasContent);
+      syncSendBtnState();
       if (!text.value) {
         text.style.height = "22px";
         text.style.overflowY = "hidden";
@@ -2061,6 +2105,8 @@
 
       if (sid) {
         sid = defaultDirectorSessionId();
+        try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
+        hasRestoredSession = false;
         box.dataset.sessionId = sid;
         if (/[?&]session=/.test(location.search) && window.history && window.history.replaceState) {
           var nextSearch = location.search.replace(/([?&]session=)[^&]+/, "$1" + encodeURIComponent(sid));
@@ -2077,10 +2123,7 @@
           text.disabled = false;
           autoGrowInput();
         }
-        if (sendBtn) {
-          sendBtn.disabled = false;
-          sendBtn.textContent = tr("sendIdle");
-        }
+        syncSendBtnState();
         syncBadge();
       }
       noteKey("statusResetDone", false);
@@ -2162,7 +2205,7 @@
     if (dot) dot.classList.remove("idle");
     if (fabDot) fabDot.classList.remove("idle");
     if (text) text.disabled = false;
-    if (sendBtn) sendBtn.disabled = false;
+    autoGrowInput();
     if (log) log.innerHTML = "";
     appendBubble("dir", tr("welcome"), { placeholder: true });
     noteKey("statusHint", false);
@@ -2184,6 +2227,7 @@
     };
 
     var hasExplicitSession = /[?&]session=([^&]+)/.test(location.search);
+    var hasRestoredSession = false;
 
     function syncSessionRecords() {
       if (!isStageVisible()) return;
@@ -2192,7 +2236,7 @@
       }
       if (!sid || syncingRecords) return;
       // 舞台未连接且当前面板尚未发起或收到过任何对话时，跳过对默认随机 core_ 会话的空轮询
-      if (!state.wsOpen && !skillSent && lastSeq === 0 && !hasExplicitSession) return;
+      if (!state.wsOpen && !skillSent && lastSeq === 0 && !hasExplicitSession && !hasRestoredSession) return;
       syncingRecords = true;
       var url = "/api/workbench/sessions/" + encodeURIComponent(sid) +
                 "/records?after=" + (lastSeq + 1) + "&limit=100";
@@ -2222,15 +2266,34 @@
     }
 
     els.syncSessionRecords = syncSessionRecords;
+    if (sid && !hasExplicitSession) {
+      fetch("/api/workbench/desktop-voice/active-session")
+        .then(function (r) {
+          if (!r.ok) return null;
+          return r.json().catch(function () { return null; });
+        })
+        .then(function (res) {
+          if (res && res.restored && res.session_id) {
+            if (lastSeq === 0 && !skillSent) {
+              sid = res.session_id;
+              hasRestoredSession = true;
+              try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
+              box.dataset.sessionId = sid;
+              if (sidTag) sidTag.textContent = sid.slice(0, 8);
+              syncSessionRecords();
+            }
+          }
+        })
+        .catch(function () {});
+    }
     syncSessionRecords();
     setInterval(syncSessionRecords, 2500);
 
     function submit() {
       var line = text.value.trim();
       if (!line) return;
-      sendBtn.disabled = true;
-      sendBtn.textContent = tr("sendQueueing");
       box.dataset.mode = "sending";
+      syncSendBtnState();
       noteKey("statusQueueing", false);
       fetch("/api/workbench/desktop-voice/dispatch", {
         method: "POST",
@@ -2245,8 +2308,9 @@
           return body;
         });
       }).then(function (res) {
-        if (res && res.session_id && res.session_id !== sid) {
+        if (res && res.session_id) {
           sid = res.session_id;
+          try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
           box.dataset.sessionId = sid;
           if (sidTag) sidTag.textContent = sid.slice(0, 8);
         }
@@ -2259,9 +2323,8 @@
       }).catch(function (err) {
         noteKey("statusFailedPrefix", true, err && err.message ? err.message : String(err));
       }).then(function () {
-        sendBtn.disabled = false;
-        sendBtn.textContent = tr("sendIdle");
         box.dataset.mode = panel && !panel.hidden ? "open" : "collapsed";
+        syncSendBtnState();
         if (!document.hidden && window.innerWidth > 0 && window.innerHeight > 0) {
           text.focus();
         }
@@ -2269,9 +2332,30 @@
     }
     sendBtn.addEventListener("click", submit);
     text.addEventListener("input", autoGrowInput);
+    text.addEventListener("compositionstart", function () {
+      if (compositionEndTimer) {
+        clearTimeout(compositionEndTimer);
+        compositionEndTimer = null;
+      }
+      isComposing = true;
+    });
+    text.addEventListener("compositionend", function () {
+      if (compositionEndTimer) clearTimeout(compositionEndTimer);
+      // 延迟一帧释放，吞掉中文输入法在部分浏览器下紧随 compositionend 派发的尾随 Enter keydown
+      compositionEndTimer = setTimeout(function () {
+        isComposing = false;
+        compositionEndTimer = null;
+      }, 0);
+      autoGrowInput();
+    });
     text.addEventListener("keydown", function (e) {
-      // 回车发送，Shift+回车换行——与聊天框一致。
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+      // 中文输入法候选上屏保护：组合输入期间或 keyCode===229 时绝不触发发送
+      if (isComposing || e.isComposing || e.keyCode === 229) return;
+      // 仅在 Cmd+Enter (macOS) 或 Ctrl+Enter (Win/Linux) 时发送；普通 Enter 与 Shift+Enter 均为换行
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        e.preventDefault();
+        submit();
+      }
     });
 
     /* ── 右下角彩色偏心花瓣麦克风监听器 (#petal-listener) ──────────────────
@@ -2298,24 +2382,185 @@
     var audioData = null;
     var currentRms = 0;
 
-    // 持续监听 (continuous) VAD 状态
+    // 持续监听 (continuous) 与 PTT 音频能量门限 / VAD 状态
+    // 复盘并吸收 3D 桌宠语音识别首版 (TypeWit recording_service + voice_input_stream) 防噪机制：
+    // 1. 自适应底噪跟踪 (noiseFloorRms) + 动态人声 RMS 门限 (getSpeechRmsThreshold)；
+    // 2. 连续人声起音帧数 (vadOnsetFrames >= VAD_ONSET_MIN_FRAMES) 过滤单帧脉冲/鼠标键盘抖动；
+    // 3. 累计有效发声时长 (vadVoicedMs >= VAD_MIN_VOICED_MS)、实际发声跨度 (vadLastVoiceAt - vadSpeechStartedAt >= VAD_MIN_SPEECH_SPAN_MS，不含静音尾音)、
+    //    有效发声帧数 (vadVoiceFrames >= VAD_MIN_VOICE_FRAMES) 与峰值/均值 RMS 能量预检 (hasValidSpeechSegment)；
+    // 4. 未达有效人声门限的静音切片或微弱声音抖动直接丢弃 (discardNextStop = true)，绝不往 ASR API 发送请求。
+    var VAD_NOISE_FLOOR_INIT = 0.008;
+    var VAD_SPEECH_RMS_MIN = 0.026;
+    var VAD_PEAK_RMS_MIN = 0.036;
+    var VAD_NOISE_MULTIPLIER = 2.8;
+    var VAD_ONSET_MIN_FRAMES = 2;
+    var VAD_MIN_VOICE_FRAMES = 5;
+    var VAD_MIN_VOICED_MS = 180;
+    var VAD_MIN_SPEECH_SPAN_MS = 220;
+    var VAD_SILENCE_HOLD_MS = 880;
+    var VAD_MAX_SPEECH_MS = 14000;
+    var VAD_IDLE_ROLL_MS = 5000;
+    var PTT_MIN_DURATION_MS = 300;
+    var MIN_AUDIO_BLOB_BYTES = 1200;
+
+    var noiseFloorRms = VAD_NOISE_FLOOR_INIT;
+    var lastVadSampleAt = 0;
     var vadSpeaking = false;
+    var vadOnsetFrames = 0;
+    var vadCandidateStartedAt = 0;
     var vadSpeechStartedAt = 0;
     var vadLastVoiceAt = 0;
     var vadSegmentStartedAt = 0;
+    var vadVoiceFrames = 0;
+    var vadVoicedMs = 0;
+    var vadVoiceRmsSum = 0;
+    var vadPeakRms = 0;
+    var vadSampleCount = 0;
     var discardNextStop = false;
 
-    // 花瓣动画状态（6 片偏心花瓣各自围绕内部偏心锚点随机缩放 + 整体旋转）
+    var WHISPER_HALLUCINATION_SET = {
+      "thank you": 1,
+      "thank you very much": 1,
+      "thank you so much": 1,
+      "thanks": 1,
+      "thanks a lot": 1,
+      "thanks for watching": 1,
+      "thank you for watching": 1,
+      "thanks for listening": 1,
+      "thank you for listening": 1,
+      "please subscribe": 1,
+      "subscribe": 1,
+      "like and subscribe": 1,
+      "see you next time": 1,
+      "bye": 1,
+      "bye bye": 1,
+      "bye-bye": 1,
+      "goodbye": 1,
+      "you": 1,
+      "uh": 1,
+      "um": 1,
+      "hmm": 1,
+      "hm": 1,
+      "ah": 1,
+      "eh": 1,
+      "oh": 1,
+      "subtitles by": 1,
+      "captioned by": 1,
+      "amara.org": 1,
+      "amara org": 1,
+      "mbc": 1,
+      "谢谢观看": 1,
+      "感谢观看": 1,
+      "谢谢收看": 1,
+      "感谢收看": 1,
+      "谢谢大家观看": 1,
+      "感谢大家观看": 1,
+      "字幕由": 1,
+      "字幕制作": 1,
+      "优优独播剧场": 1
+    };
+
+    function getSpeechRmsThreshold() {
+      return Math.max(VAD_SPEECH_RMS_MIN, Math.min(0.045, noiseFloorRms * VAD_NOISE_MULTIPLIER));
+    }
+
+    function resetVadSegmentStats(nowMs) {
+      var ts = nowMs || Date.now();
+      vadSpeaking = false;
+      vadOnsetFrames = 0;
+      vadCandidateStartedAt = 0;
+      vadSpeechStartedAt = 0;
+      vadLastVoiceAt = 0;
+      vadSegmentStartedAt = ts;
+      vadVoiceFrames = 0;
+      vadVoicedMs = 0;
+      vadVoiceRmsSum = 0;
+      vadPeakRms = 0;
+      vadSampleCount = 0;
+    }
+
+    function hasValidSpeechSegment() {
+      var actualSpeechSpan = Math.max(0, vadLastVoiceAt - vadSpeechStartedAt);
+      var avgVoiceRms = vadVoiceFrames > 0 ? (vadVoiceRmsSum / vadVoiceFrames) : 0;
+      var dynThreshold = getSpeechRmsThreshold();
+      return (
+        vadSpeaking &&
+        vadVoiceFrames >= VAD_MIN_VOICE_FRAMES &&
+        vadVoicedMs >= VAD_MIN_VOICED_MS &&
+        actualSpeechSpan >= VAD_MIN_SPEECH_SPAN_MS &&
+        vadPeakRms >= Math.max(VAD_PEAK_RMS_MIN, dynThreshold * 1.25) &&
+        avgVoiceRms >= dynThreshold
+      );
+    }
+
+    function updateVadStats(rms, nowMs, frameDtMs) {
+      var dynThreshold = getSpeechRmsThreshold();
+      vadSampleCount++;
+      if (rms > vadPeakRms) vadPeakRms = rms;
+      if (rms >= dynThreshold) {
+        vadOnsetFrames++;
+        vadVoiceFrames++;
+        vadVoicedMs += frameDtMs;
+        vadVoiceRmsSum += rms;
+        if (!vadSpeaking) {
+          if (vadOnsetFrames === 1) {
+            vadCandidateStartedAt = nowMs;
+          }
+          if (vadOnsetFrames >= VAD_ONSET_MIN_FRAMES) {
+            vadSpeaking = true;
+            vadSpeechStartedAt = vadCandidateStartedAt || nowMs;
+          }
+        }
+        vadLastVoiceAt = nowMs;
+      } else {
+        vadOnsetFrames = 0;
+        if (!vadSpeaking && rms < VAD_SPEECH_RMS_MIN) {
+          noiseFloorRms = Math.max(0.003, Math.min(0.020, noiseFloorRms * 0.95 + rms * 0.05));
+        }
+      }
+    }
+
+    function cleanRecognizedSpeechText(rawText) {
+      var s = String(rawText || "").trim();
+      if (!s) return "";
+      if (/^\s*(?:[\[(（【][^\]）】]{1,36}[\])）】]\s*)+$/.test(s)) return "";
+      if (/^[\s.…,，。！？!?、;；:：\-—~～·'"“”‘’()（）\[\]【】♪🎵_]+$/.test(s)) return "";
+      s = s.replace(
+        /([\u4e00-\u9fff])[\s,，.。!！?？;；:：…\-—]*(?:thank\s+you(?:\s+very\s+much|\s+so\s+much|\s+for\s+watching|\s+for\s+listening)?|thanks(?:\s+a\s+lot|\s+for\s+watching|\s+for\s+listening)?|please\s+subscribe|like\s+and\s+subscribe|see\s+you\s+next\s+time|(?:[\.…]{2,}))[\s,，.。!！?？;；:：…]*$/i,
+        "$1"
+      ).trim();
+      if (!s) return "";
+      var lower = s.toLowerCase();
+      if (
+        lower.indexOf("请不吝点赞") >= 0 ||
+        lower.indexOf("明镜与点点") >= 0 ||
+        lower.indexOf("优优独播剧场") >= 0 ||
+        lower.indexOf("subtitles by ") >= 0 ||
+        lower.indexOf("amara.org") >= 0
+      ) {
+        return "";
+      }
+      var parts = lower.split(/[.!?。！？,，;；:：…~～—\n]+/);
+      var hasClause = false;
+      for (var i = 0; i < parts.length; i++) {
+        var clause = parts[i].replace(/\s+/g, " ").replace(/^[\s'"\-_]+|[\s'"\-_]+$/g, "");
+        if (!clause) continue;
+        hasClause = true;
+        if (!WHISPER_HALLUCINATION_SET[clause]) {
+          return s;
+        }
+      }
+      return hasClause ? "" : "";
+    }
+
+    // 花瓣动画状态（6 片花瓣围绕内部偏心锚点保持等比形态，以平滑相位呼吸 + 轻柔音量包络律动）
     var rotorAngle = 0;
+    var smoothRms = 0;
     var petalAnimStates = [];
     for (var pi = 0; pi < petalNodes.length; pi++) {
       petalAnimStates.push({
         baseAngle: pi * 60,
-        curSx: 1,
-        curSy: 1,
-        targetSx: 1,
-        targetSy: 1,
-        nextRetargetAt: 0
+        curScale: 1
       });
     }
 
@@ -2355,51 +2600,53 @@
       if (petalRotor && petalNodes.length && shouldAnimateStage()) {
         var rms = (listenMode === "ptt" || listenMode === "continuous") ? sampleAudioLevel() : 0;
         var active = (listenMode === "ptt" || listenMode === "continuous");
-        var speed = active ? (1.75 + Math.min(3.2, rms * 18)) : (transcribingCount > 0 ? 1.15 : 0.18);
+        smoothRms += ((active ? rms : 0) - smoothRms) * 0.14;
+        var speed = active
+          ? (0.34 + Math.min(0.48, smoothRms * 2.8))
+          : (transcribingCount > 0 ? 0.42 : 0.12);
         rotorAngle = (rotorAngle + speed) % 360;
         petalRotor.style.transform = "rotate(" + rotorAngle.toFixed(2) + "deg)";
 
+        var voiceLift = Math.min(0.095, smoothRms * 0.85);
         for (var i = 0; i < petalNodes.length; i++) {
           var st = petalAnimStates[i];
+          var phase = i * (Math.PI / 3);
+          var targetScale;
           if (active) {
-            if (now >= st.nextRetargetAt) {
-              var boost = Math.min(0.28, rms * 2.4);
-              st.targetSx = 0.74 + Math.random() * (0.64 + boost);
-              st.targetSy = 0.74 + Math.random() * (0.64 + boost);
-              st.nextRetargetAt = now + 95 + Math.random() * 145;
-            }
-            st.curSx += (st.targetSx - st.curSx) * 0.24;
-            st.curSy += (st.targetSy - st.curSy) * 0.24;
+            var wave = Math.sin(now * 0.0034 + phase);
+            targetScale = 1 + wave * (0.032 + voiceLift * 0.35) + voiceLift * 0.55;
+            st.curScale += (targetScale - st.curScale) * 0.09;
           } else {
-            var breathe = 1 + 0.045 * Math.sin(now * 0.0026 + i * 1.05);
-            st.curSx += (breathe - st.curSx) * 0.12;
-            st.curSy += (breathe - st.curSy) * 0.12;
+            var amp = transcribingCount > 0 ? 0.028 : 0.018;
+            targetScale = 1 + amp * Math.sin(now * 0.0021 + phase);
+            st.curScale += (targetScale - st.curScale) * 0.08;
           }
+          var s = st.curScale.toFixed(3);
           petalNodes[i].style.transform =
-            "rotate(" + st.baseAngle + "deg) scale(" +
-            st.curSx.toFixed(3) + ", " + st.curSy.toFixed(3) + ")";
+            "rotate(" + st.baseAngle + "deg) scale(" + s + ", " + s + ")";
         }
 
-        // 持续监听模式下的语音活动检测 (VAD) 自动切句
-        if (listenMode === "continuous" && mediaRecorder && mediaRecorder.state === "recording") {
+        // 持续监听与 PTT 模式下的语音活动检测 (VAD) 与能量预检
+        if (active && mediaRecorder && mediaRecorder.state === "recording") {
           var nowMs = Date.now();
-          if (rms > 0.022) {
-            if (!vadSpeaking) {
-              vadSpeaking = true;
-              vadSpeechStartedAt = nowMs;
+          var frameDtMs = lastVadSampleAt > 0 ? Math.min(100, Math.max(8, nowMs - lastVadSampleAt)) : 16;
+          lastVadSampleAt = nowMs;
+          updateVadStats(rms, nowMs, frameDtMs);
+
+          if (listenMode === "continuous") {
+            if (vadSpeaking) {
+              var silenceDuration = nowMs - vadLastVoiceAt;
+              var totalElapsedSinceOnset = nowMs - vadSpeechStartedAt;
+              if (silenceDuration >= VAD_SILENCE_HOLD_MS || totalElapsedSinceOnset >= VAD_MAX_SPEECH_MS) {
+                flushContinuousSegment(hasValidSpeechSegment());
+              }
+            } else if (nowMs - vadSegmentStartedAt >= VAD_IDLE_ROLL_MS) {
+              // 纯静音或微弱底噪段定期滚动清空，避免长静音被拼进下一句或触发 Whisper 幻觉
+              flushContinuousSegment(false);
             }
-            vadLastVoiceAt = nowMs;
           }
-          if (vadSpeaking) {
-            var silenceDuration = nowMs - vadLastVoiceAt;
-            var speechDuration = nowMs - vadSpeechStartedAt;
-            if ((silenceDuration >= 880 && speechDuration >= 260) || speechDuration >= 14000) {
-              flushContinuousSegment(true);
-            }
-          } else if (nowMs - vadSegmentStartedAt >= 6500) {
-            // 纯静音段定期滚动清空，避免长静音被拼进下一句开头
-            flushContinuousSegment(false);
-          }
+        } else {
+          lastVadSampleAt = 0;
         }
       }
       requestAnimationFrame(tickPetals);
@@ -2466,7 +2713,7 @@
     }
 
     function uploadAudioBlob(blob) {
-      if (!blob || blob.size < 200) {
+      if (!blob || blob.size < MIN_AUDIO_BLOB_BYTES) {
         if (listenMode === "idle") {
           setPetalListenState("idle");
         }
@@ -2498,9 +2745,10 @@
             return body;
           });
         }).then(function (res) {
-          var recognized = (res && res.text) ? String(res.text).trim() : "";
-          if (res && res.session_id && res.session_id !== sid) {
+          var recognized = (res && res.text) ? cleanRecognizedSpeechText(res.text) : "";
+          if (res && res.session_id) {
             sid = res.session_id;
+            try { localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid); } catch (e) {}
             box.dataset.sessionId = sid;
             if (sidTag) sidTag.textContent = sid.slice(0, 8);
           }
@@ -2511,7 +2759,15 @@
             showTranscribedText(recognized);
           }
           setPetalListenState(listenMode);
-        }).catch(function () {
+        }).catch(function (err) {
+          var rawMsg = (err && err.message) ? String(err.message).trim() : "";
+          var fallbackHint = (petalListener && petalListener.getAttribute("data-asr-missing-hint")) ||
+            "未找到桌面语音识别连接：请前往 WebUI「设置 → 常规设置 → 旁路与轻量 AI」配置桌面语音识别连接";
+          var errHint = (!rawMsg || /ASR|asr_profile_id|Groq|Whisper|未找到|未配置/i.test(rawMsg))
+            ? (rawMsg.indexOf("常规设置 → 旁路与轻量 AI") >= 0 ? rawMsg : fallbackHint)
+            : rawMsg;
+          showTranscribedText(errHint);
+          note(errHint, true);
           setPetalListenState(listenMode);
         }).then(function () {
           transcribingCount = Math.max(0, transcribingCount - 1);
@@ -2522,12 +2778,14 @@
     }
 
     function spawnRecorder(stream) {
+      var nowMs = Date.now();
       recordedChunks = [];
       discardNextStop = false;
-      vadSpeaking = false;
-      vadSegmentStartedAt = Date.now();
+      resetVadSegmentStats(nowMs);
       var mime = pickSupportedMimeType();
       var rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      rec._startedAt = nowMs;
+      rec._listenMode = listenMode;
       rec.ondataavailable = function (ev) {
         if (ev.data && ev.data.size > 0) recordedChunks.push(ev.data);
       };
@@ -2535,6 +2793,18 @@
         var shouldDiscard = discardNextStop;
         var chunks = recordedChunks.slice();
         recordedChunks = [];
+        var segDurationMs = Math.max(0, Date.now() - (rec._startedAt || vadSegmentStartedAt));
+        var segMode = rec._listenMode || "continuous";
+        var isSpeechValid = hasValidSpeechSegment();
+        if (segMode === "continuous" && !isSpeechValid) {
+          shouldDiscard = true;
+        } else if (segMode === "ptt") {
+          if (segDurationMs < PTT_MIN_DURATION_MS) {
+            shouldDiscard = true;
+          } else if (vadSampleCount >= 4 && (vadVoiceFrames < 2 || vadPeakRms < VAD_SPEECH_RMS_MIN)) {
+            shouldDiscard = true;
+          }
+        }
         if (!shouldDiscard && chunks.length > 0) {
           var blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
           uploadAudioBlob(blob);
@@ -2552,7 +2822,6 @@
     function flushContinuousSegment(shouldUpload) {
       if (!mediaRecorder || mediaRecorder.state !== "recording") return;
       discardNextStop = !shouldUpload;
-      vadSpeaking = false;
       try {
         mediaRecorder.stop();
       } catch (e) {}
@@ -2592,7 +2861,7 @@
     function toggleContinuousListening() {
       if (listenMode === "continuous") {
         listenMode = "idle";
-        discardNextStop = !vadSpeaking;
+        discardNextStop = !hasValidSpeechSegment();
         releaseMicStream();
         setPetalListenState("idle");
         return;

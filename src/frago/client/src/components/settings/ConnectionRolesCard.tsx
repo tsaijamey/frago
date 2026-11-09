@@ -48,13 +48,14 @@ interface ConnectionRolesCardProps {
   onBindingChanged: () => void;
 }
 
-const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'lightagent', 'observer', 'coreagent'];
+const ROLE_ORDER: ConnectionRole[] = ['main', 'worker', 'lightagent', 'observer', 'coreagent', 'asr'];
 
-/** The roles frago-core asks the model for. */
+/** The roles frago-core / desktop ASR asks the model for. */
 const FRAGO_CORE_ROLES: ReadonlySet<ConnectionRole> = new Set<ConnectionRole>([
   'coreagent',
   'lightagent',
   'observer',
+  'asr',
 ]);
 
 const ROLE_TEXT: Record<ConnectionRole, { name: string; hint: string }> = {
@@ -71,6 +72,10 @@ const ROLE_TEXT: Record<ConnectionRole, { name: string; hint: string }> = {
   coreagent: {
     name: 'settings.connections.coreagentRole',
     hint: 'settings.connections.coreagentRoleHint',
+  },
+  asr: {
+    name: 'settings.connections.asrRole',
+    hint: 'settings.connections.asrRoleHint',
   },
 };
 
@@ -143,9 +148,9 @@ export default function ConnectionRolesCard({
     }
     if (FRAGO_CORE_ROLES.has(binding.role)) {
       // The two one-question roles ask the cheap tier, and the default model when
-      // there is none. CoreAgent does real work and runs on the default model.
+      // there is none. CoreAgent and ASR run on the default model.
       const model =
-        binding.role === 'coreagent'
+        binding.role === 'coreagent' || binding.role === 'asr'
           ? connection.default_model || null
           : connection.haiku_model || connection.default_model || null;
       const how = connection.kind === 'workbuddy' ? t('settings.connections.workbuddyRetired') : null;

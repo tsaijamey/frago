@@ -209,10 +209,26 @@ def wants_running(instance_id: str = DEFAULT_ID) -> bool:
     return record.get(DESIRED_FIELD, DESIRED_RUNNING) == DESIRED_RUNNING
 
 
-def touch_heartbeat(instance_id: str) -> None:
+def touch_heartbeat(
+    instance_id: str,
+    *,
+    pid: int | None = None,
+    port: int | None = None,
+) -> None:
     record = _read_raw(instance_id)
-    if not record or record.get("status") != "running":
+    if not record:
         return
+    if record.get("status") != "running":
+        if (
+            pid
+            and port
+            and record.get(DESIRED_FIELD, DESIRED_RUNNING) == DESIRED_RUNNING
+        ):
+            record["pid"] = int(pid)
+            record["port"] = int(port)
+            record["status"] = "running"
+        else:
+            return
     record["heartbeat_at"] = _now()
     _write_raw(instance_id, record)
 

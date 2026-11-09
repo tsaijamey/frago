@@ -2069,12 +2069,48 @@ def test_desktop_director_chat_supports_zh_and_en_i18n():
     for required_en in (
         "Director Chat · Follow-ups",
         "Queued to main session · Presenter responds live, operator & advisor execute",
-        "Type follow-ups here, press Enter to send",
-        "Enter to send · Shift+Enter for newline",
+        "Type follow-ups here, ⌘+Enter / Ctrl+Enter to send",
+        "⌘/Ctrl+Enter to send · Enter for newline",
         "Director Chat",
         "Send",
     ):
         assert required_en in js
+
+
+def test_desktop_director_chat_cmd_ctrl_enter_ime_and_term_source_guard():
+    """验证导演对话输入框：
+    1. 仅允许 Cmd+Enter / Ctrl+Enter 发送，普通 Enter 换行；
+    2. 具备中文输入法 compositionstart / compositionend 与 keyCode===229 组合输入保护；
+    3. 空输入时禁用发送按钮，且移除 focus-within 空框误高亮；
+    4. aos term run 拦截直接原地修改源码文件的命令并引导交由 CLI Agent / 领域员工。
+    """
+    from frago.desktop import aos
+
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    css = (assets / "style.css").read_text(encoding="utf-8")
+
+    assert 'text.addEventListener("compositionstart"' in js
+    assert 'text.addEventListener("compositionend"' in js
+    assert "isComposing || e.isComposing || e.keyCode === 229" in js
+    assert "e.key === \"Enter\" && (e.metaKey || e.ctrlKey) && !e.altKey" in js
+    assert "function syncSendBtnState()" in js
+    assert "#human-input .hi-foot:focus-within .hi-send" not in css
+    assert "#human-input.has-text .hi-send:not(:disabled)" in css
+
+    # 允许正常终端命令与通过 CLI Agent / 员工委派研发任务
+    kind, steps = aos.parse(["term", "run", 'frago employee invoke frago-developer "修复 app.js 发送快捷键"'])
+    assert kind == "steps" and steps[0]["op"] == "shell"
+
+    # 拦截主操作员在 win:term 直接原地修改源码文件
+    for forbidden_cmd in (
+        "sed -i '' 's/foo/bar/g' src/frago/desktop/assets/app.js",
+        "cat <<'EOF' > src/frago/server/main.py\nprint(1)\nEOF",
+    ):
+        with pytest.raises(aos.Fail) as exc_info:
+            aos.parse(["term", "run", forbidden_cmd])
+        assert "严禁在 win:term 中直接修改项目源码文件" in exc_info.value.payload["error"]
+        assert "CLI Agent" in exc_info.value.payload["hint"]
 
 
 def test_desktop_director_chat_auto_grow_scrollbar_and_fab_collapse():
@@ -2261,6 +2297,150 @@ def test_recorder_stop_encode_failure_still_cleans_frames_and_closes_camera(tmp_
     assert not frames_dir.exists(), "编码失败后临时帧目录仍须清理"
     assert not (rec.out_dir / "encode-fail-take.mp4").exists(), "半截损坏的 mp4 必须清理"
     assert closed == [19223], "编码失败后仍须收走 9223 机位"
+
+
+def test_desktop_director_session_persistence_and_active_session_restore_in_app_js():
+    """验证 app.js 包含 frago_desktop_director_sid localStorage 持久化与 /api/workbench/desktop-voice/active-session 恢复逻辑。"""
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+
+    assert 'var DIRECTOR_SID_STORAGE_KEY = "frago_desktop_director_sid";' in js
+    assert "localStorage.getItem(DIRECTOR_SID_STORAGE_KEY)" in js
+    assert "localStorage.setItem(DIRECTOR_SID_STORAGE_KEY, sid)" in js
+    assert 'fetch("/api/workbench/desktop-voice/active-session")' in js
+    assert "res && res.restored && res.session_id" in js
+    assert "lastSeq === 0 && !skillSent" in js
+
+
+def test_daemon_stop_exempts_desktop_broker_and_descendants():
+    """验证 daemon.py 停机清理子进程时豁免 frago.desktop.broker 及其后代进程（如 9222 浏览器）。"""
+    from frago.server import daemon
+
+    class FakeChildProc:
+        def __init__(self, pid: int, cmd: list[str], *, ppid_val: int = 1000, descendants=None):
+            self.pid = pid
+            self._cmd = cmd
+            self._ppid = ppid_val
+            self._descendants = list(descendants or [])
+
+        def cmdline(self) -> list[str]:
+            return list(self._cmd)
+
+        def ppid(self) -> int:
+            return self._ppid
+
+        def children(self, recursive: bool = True):
+            return list(self._descendants)
+
+    actor_browser = FakeChildProc(
+        2002,
+        ["/Applications/Chrome.app/Contents/MacOS/Chrome", "--remote-debugging-port=9222", "--headless"],
+        ppid_val=2001,
+    )
+    broker_proc = FakeChildProc(
+        2001,
+        ["/usr/bin/python3", "-m", "frago.desktop.broker", '{"port": 8770}'],
+        ppid_val=1000,
+        descendants=[actor_browser],
+    )
+    normal_worker = FakeChildProc(
+        2003,
+        ["/usr/bin/python3", "-m", "frago.recipes.runner"],
+        ppid_val=1000,
+    )
+
+    class FakeServerProc:
+        pid = 1000
+
+        def children(self, recursive: bool = True):
+            return [broker_proc, actor_browser, normal_worker]
+
+    assert daemon._is_desktop_broker_process(broker_proc) is True
+    assert daemon._is_desktop_broker_process(actor_browser) is False
+    assert daemon._is_desktop_broker_process(normal_worker) is False
+
+    stoppable = daemon._collect_stoppable_children(FakeServerProc(), protected_pids={9999})
+    assert [p.pid for p in stoppable] == [2003]
+
+
+def test_broker_dynamically_refreshes_ui_version_when_assets_change(
+    sealed_broker, monkeypatch
+):
+    """验证 broker 常驻保活期间，若磁盘上 assets/ 更新导致 stage.ui_version() 改变，broker 会动态更新 ui_version 并接受新前端 layout。"""
+    current_ver = {"v": 1001}
+    monkeypatch.setattr(broker, "_live_ui_version", lambda fallback=None: current_ver["v"])
+
+    cfg = {**sealed_broker, "ui_version": 1001}
+    app = broker.build_app(cfg)
+    stream_route = next(r for r in app.routes if getattr(r, "path", None) == "/stream")
+
+    class FakeWS:
+        def __init__(self, incoming):
+            self.incoming = list(incoming)
+            self.sent = []
+
+        async def accept(self):
+            pass
+
+        async def send_text(self, text):
+            self.sent.append(json.loads(text))
+
+        async def receive_text(self):
+            if not self.incoming:
+                raise broker.WebSocketDisconnect()
+            return json.dumps(self.incoming.pop(0))
+
+    # 模拟磁盘上 app.js 更新后，stage.ui_version() 变为 1002，前端刷新后携带 uiVersion=1002 连接常驻 broker
+    current_ver["v"] = 1002
+    new_layout = {
+        "t": "layout",
+        "contentId": "test-content",
+        "instanceId": "default",
+        "uiVersion": 1002,
+        "elements": {"win:term": {"x": 10, "y": 10, "w": 800, "h": 500}},
+    }
+    ws = FakeWS([new_layout])
+    asyncio.run(stream_route.endpoint(ws))
+
+    reloads = [m for m in ws.sent if m.get("t") == "reload"]
+    assert reloads == [], "常驻 broker 应动态感知最新磁盘 uiVersion=1002，绝不向已刷新的新前端发 reload"
+    assert cfg["ui_version"] == 1002
+
+
+def test_stage_browser_retina_screencast_and_restrained_petal_animation():
+    """验证虚拟浏览器帧流按 2x Retina 像素上限 + quality=92 采集，且花瓣监听动画收敛为等比平滑呼吸。"""
+    sb = broker.StageBrowser(19222, 1280, 872, "https://example.com")
+    sent = []
+
+    async def fake_send(method, params=None, *, wait=True, timeout=10.0):
+        sent.append((method, params))
+        return {}
+
+    sb.send = fake_send
+    asyncio.run(sb.start_stream(30))
+    screencast_call = next(
+        (params for method, params in sent if method == "Page.startScreencast"),
+        None,
+    )
+    assert screencast_call == {
+        "format": "jpeg",
+        "quality": 92,
+        "maxWidth": 2560,
+        "maxHeight": 1744,
+        "everyNthFrame": 1,
+    }
+
+    assets = Path(stage.__file__).resolve().parent / "assets"
+    js = (assets / "app.js").read_text(encoding="utf-8")
+    css = (assets / "style.css").read_text(encoding="utf-8")
+
+    assert 'els.ctx.imageSmoothingQuality = "high";' in js
+    assert "var smoothRms = 0;" in js
+    assert '"rotate(" + st.baseAngle + "deg) scale(" + s + ", " + s + ")"' in js
+    assert "nextRetargetAt" not in js
+    assert "transform: scale(1.08);" in css
+
+
 
 
 

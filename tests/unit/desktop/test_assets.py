@@ -118,9 +118,75 @@ def test_petal_listener_ui_and_hotkey_wiring():
     assert '"/api/workbench/desktop-voice/transcribe"' in js
     assert 'd.type !== "frago:desktop-hotkey"' in js
 
-    # 4. 转写过程不暴露为文字，仅在转写完成后显示纯转写文本
+    # 4. 转写过程不暴露为文字，仅在转写完成后显示纯转写文本；缺配置时引导前往 WebUI「设置 → 常规设置 → 旁路与轻量 AI」
     assert "function showTranscribedText(" in js
+    assert "常规设置 → 旁路与轻量 AI" in index
+    assert "常规设置 → 旁路与轻量 AI" in js
     assert "Groq Whisper 识别中" not in js
     assert "正在聆听…" not in js
     assert "正在转写上一句" not in js
+
+    # 5. 持续监听防噪门限与 Whisper 幻觉过滤：有效发声跨度不含尾音静音，未达有效人声门限直接丢弃不发 API 请求
+    assert "function getSpeechRmsThreshold()" in js
+    assert "function hasValidSpeechSegment()" in js
+    assert "function updateVadStats(" in js
+    assert "function cleanRecognizedSpeechText(" in js
+    assert "VAD_MIN_VOICED_MS = 180" in js
+    assert "VAD_MIN_SPEECH_SPAN_MS = 220" in js
+    assert "MIN_AUDIO_BLOB_BYTES = 1200" in js
+    assert "flushContinuousSegment(hasValidSpeechSegment())" in js
+    assert "vadLastVoiceAt - vadSpeechStartedAt" in js
+
+    # 6. 若本机有 node，直接实跑前端 VAD 状态机与 cleanRecognizedSpeechText 验证：
+    #    - 单帧脉冲 (16ms) + 880ms 静音 -> hasValidSpeechSegment() === false（修复旧版恒为 true 的漏洞）
+    #    - 3 帧短促杂音 (48ms) + 880ms 静音 -> hasValidSpeechSegment() === false
+    #    - 真实说话 (16 帧 = 256ms, rms=0.065) -> hasValidSpeechSegment() === true
+    import shutil
+    import subprocess
+
+    node_bin = shutil.which("node")
+    if node_bin:
+        snippet = js.split("var VAD_NOISE_FLOOR_INIT =", 1)[1].split(
+            "// 花瓣动画状态", 1
+        )[0]
+        harness = (
+            "var VAD_NOISE_FLOOR_INIT ="
+            + snippet
+            + """
+resetVadSegmentStats(1000);
+// 场景 A：单帧噪音抖动 (16ms, rms=0.032) + 880ms 静音
+updateVadStats(0.032, 1000, 16);
+for (var t = 1016; t <= 1900; t += 16) updateVadStats(0.005, t, 16);
+if (hasValidSpeechSegment() !== false) throw new Error("Single-frame spike should be rejected");
+
+// 场景 B：3 帧轻微杂音/呼吸尾音 (48ms, rms=0.040) + 880ms 静音
+resetVadSegmentStats(2000);
+updateVadStats(0.040, 2000, 16);
+updateVadStats(0.040, 2016, 16);
+updateVadStats(0.040, 2032, 16);
+for (var t2 = 2048; t2 <= 2950; t2 += 16) updateVadStats(0.006, t2, 16);
+if (hasValidSpeechSegment() !== false) throw new Error("48ms noise jitter should be rejected");
+
+// 场景 C：真实短句人声 (16 帧 = 256ms, rms=0.065)
+resetVadSegmentStats(3000);
+for (var i = 0; i < 16; i++) updateVadStats(0.065, 3000 + i * 16, 16);
+if (hasValidSpeechSegment() !== true) throw new Error("Real speech segment should be accepted");
+
+// 场景 D：前端 Whisper 幻觉清洗
+if (cleanRecognizedSpeechText("Thank you.") !== "") throw new Error("Thank you. should be filtered");
+if (cleanRecognizedSpeechText("...") !== "") throw new Error("... should be filtered");
+if (cleanRecognizedSpeechText("做一下本地灯到灯的测试 Thank you.") !== "做一下本地灯到灯的测试") {
+  throw new Error("Trailing Thank you. should be stripped");
+}
+if (cleanRecognizedSpeechText("继续") !== "继续") throw new Error("Short Chinese command should be kept");
+console.log("VAD_AND_FILTER_OK");
+"""
+        )
+        proc = subprocess.run(
+            [node_bin, "-e", harness], capture_output=True, text=True, timeout=10
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "VAD_AND_FILTER_OK" in proc.stdout
+
+
 

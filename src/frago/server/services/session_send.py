@@ -249,6 +249,12 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
     target = resolve_target(session_id, cwd_hint=cwd_hint)
     if target.is_new and cwd_hint and target.family == "claude-code":
         claude_svc.register_webui_session(session_id)
+    with contextlib.suppress(Exception):
+        from frago.server.services import stage_orchestrator
+
+        stage_orchestrator.maybe_ensure_desktop_operator_speech(
+            session_id, cwd=target.cwd or cwd_hint
+        )
     logger.info(
         "webui send → session=%s family=%s agent=%s cwd=%s",
         session_id,
@@ -260,11 +266,6 @@ def send(session_id: str, prompt: str, *, cwd_hint: str | None = None, timeout_s
         from frago.server.services import coreagent_runner
 
         return coreagent_runner.send(session_id, prompt, cwd=target.cwd or str(Path.home()))
-    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
-        with contextlib.suppress(Exception):
-            from frago.server.services import stage_orchestrator
-
-            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
     return get_runner().send(
         session_id,
         prompt,
@@ -289,6 +290,12 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
     target = resolve_target(session_id, cwd_hint=cwd_hint)
     if target.is_new and cwd_hint and target.family == "claude-code":
         claude_svc.register_webui_session(session_id)
+    with contextlib.suppress(Exception):
+        from frago.server.services import stage_orchestrator
+
+        stage_orchestrator.maybe_ensure_desktop_operator_speech(
+            session_id, cwd=target.cwd or cwd_hint
+        )
 
     if target.family == "coreagent":
         from frago.server.services import coreagent_runner
@@ -296,11 +303,6 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
         return coreagent_runner.send_queued(
             session_id, prompt, cwd=target.cwd or str(Path.home())
         )
-    if 'name="how-frago-agent-runs-an-agent-os"' in prompt:
-        with contextlib.suppress(Exception):
-            from frago.server.services import stage_orchestrator
-
-            prompt = stage_orchestrator.orchestrate_stage_session(session_id, prompt)
 
     def _feed() -> None:
         try:

@@ -606,6 +606,59 @@ def _get_self_and_ancestors() -> set:
     return protected
 
 
+def _is_desktop_broker_process(proc: Any) -> bool:
+    """Check whether a process is the virtual desktop broker (frago.desktop.broker).
+
+    The virtual desktop broker (port 8770) and its actor browser children (9222/9223)
+    must survive `frago server stop/restart` so that desktop windows, browser tabs,
+    and stage state are not reset when the 8093 web server restarts.
+    """
+    try:
+        cmdline = proc.cmdline()
+        if isinstance(cmdline, (list, tuple)):
+            cmdline_str = " ".join(str(x) for x in cmdline)
+        else:
+            cmdline_str = str(cmdline or "")
+        lowered = cmdline_str.lower().replace("\\", "/")
+        return "frago.desktop.broker" in lowered or "desktop/broker.py" in lowered
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, Exception):
+        return False
+
+
+def _collect_stoppable_children(
+    parent: Any,
+    protected_pids: set[int] | None = None,
+) -> list[Any]:
+    """Collect child processes to terminate on server stop, exempting virtual desktop broker and its descendants."""
+    exempt_pids: set[int] = set(protected_pids or ())
+    try:
+        all_children = list(parent.children(recursive=True))
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, Exception):
+        return []
+
+    for child in all_children:
+        if _is_desktop_broker_process(child):
+            exempt_pids.add(child.pid)
+            with contextlib.suppress(Exception):
+                for desc in child.children(recursive=True):
+                    exempt_pids.add(desc.pid)
+
+    changed = True
+    while changed:
+        changed = False
+        for child in all_children:
+            if child.pid in exempt_pids:
+                continue
+            with contextlib.suppress(Exception):
+                ppid_attr = getattr(child, "ppid", None)
+                parent_pid = ppid_attr() if callable(ppid_attr) else ppid_attr
+                if isinstance(parent_pid, int) and parent_pid in exempt_pids:
+                    exempt_pids.add(child.pid)
+                    changed = True
+
+    return [c for c in all_children if c.pid not in exempt_pids]
+
+
 def stop_daemon() -> tuple[bool, str]:
     """Stop the running Frago server daemon.
 
@@ -630,13 +683,9 @@ def stop_daemon() -> tuple[bool, str]:
         proc = psutil.Process(pid)
 
         # Get all child processes before terminating parent,
-        # excluding the current process and its ancestors to avoid
-        # killing the caller (e.g., agent task running restart)
+        # excluding the current process, its ancestors, and the virtual desktop broker tree
         protected_pids = _get_self_and_ancestors()
-        children = [
-            child for child in proc.children(recursive=True)
-            if child.pid not in protected_pids
-        ]
+        children = _collect_stoppable_children(proc, protected_pids)
 
         # Send SIGTERM for graceful shutdown
         if platform.system() == "Windows":

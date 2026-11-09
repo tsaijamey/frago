@@ -1008,6 +1008,8 @@ class ProfileListResponse(BaseModel):
     active_targets: list[str] = []
     # What the worker role is bound to. None means the plain subscription.
     worker_profile_id: str | None = None
+    # What the desktop speech recognition (ASR) role is explicitly bound to.
+    asr_profile_id: str | None = None
 
 
 class ActivationTargetResponse(BaseModel):
@@ -1165,6 +1167,7 @@ async def get_profiles() -> ProfileListResponse:
         active_profile_id=store.active_profile_id,
         active_targets=list(store.active_targets),
         worker_profile_id=store.worker_profile_id,
+        asr_profile_id=store.asr_profile_id,
     )
 
 
@@ -1401,7 +1404,7 @@ def _vendor_cores() -> list[VendorCoreResponse]:
 
     cores: list[VendorCoreResponse] = []
     for agent_type, driver in sorted(registered_drivers().items()):
-        if driver.profile_apply is not None:
+        if getattr(driver, "supports_profile_apply", driver.profile_apply is not None):
             continue
         path = driver.locate() if driver.locate else None
         cores.append(
@@ -1425,14 +1428,11 @@ async def get_connections() -> ConnectionsResponse:
     ``profile_manager.official_connection`` for why it is built each time.
     """
     from frago.init.profile_manager import (
-        MAIN_ROLE,
-        ROLES,
         get_harness_main_binding,
         get_harness_worker_binding,
+        get_role_bindings,
         list_connections,
         load_profiles,
-        role_binding_id,
-        role_view,
     )
     from frago.init.profile_targets import (
         DISPLAY_NAMES,
@@ -1449,16 +1449,16 @@ async def get_connections() -> ConnectionsResponse:
 
     bindings = [
         RoleBindingResponse(
-            role=role,
-            profile_id=role_binding_id(role),
+            role=entry["role"],
+            profile_id=entry["profile_id"],
             connection=(
                 _profile_to_response(view, store.active_profile_id)
-                if (view := role_view(role)) is not None
+                if (view := entry["connection"]) is not None
                 else None
             ),
-            targets=list(store.active_targets) if role == MAIN_ROLE else [],
+            targets=entry["targets"],
         )
-        for role in ROLES
+        for entry in get_role_bindings()
     ]
 
     from frago.init.agent_core import kernel_installed

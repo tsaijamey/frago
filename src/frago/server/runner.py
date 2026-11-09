@@ -250,14 +250,16 @@ def _start_https_sidecar(
 
 
 def _cleanup_child_processes() -> None:
-    """Terminate all child processes to release ports."""
+    """Terminate all child processes to release ports (exempting virtual desktop broker)."""
     import os
 
     import psutil
 
+    from frago.server.daemon import _collect_stoppable_children, _get_self_and_ancestors
+
     try:
         current = psutil.Process(os.getpid())
-        children = current.children(recursive=True)
+        children = _collect_stoppable_children(current, _get_self_and_ancestors())
 
         # Terminate children
         for child in children:
