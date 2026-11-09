@@ -29,6 +29,7 @@ import type {
   AgentAttachedStartResponse,
   AgentAttachedInfo,
   SkillItem,
+  EmployeeItem,
   GhCliStatus,
   GhInstallPlan,
   GhInstallStartResult,
@@ -167,6 +168,7 @@ export type {
   AgentAttachedStartResponse,
   AgentAttachedInfo,
   SkillItem,
+  EmployeeItem,
   GhCliStatus,
   GhInstallPlan,
   GhInstallStartResult,
@@ -584,6 +586,11 @@ export async function getSkills(): Promise<SkillItem[]> {
   return fetchApi<SkillItem[]>('/skills');
 }
 
+export async function getEmployees(): Promise<EmployeeItem[]> {
+  const res = await fetchApi<{ employees?: EmployeeItem[] }>('/employees');
+  return res?.employees ?? [];
+}
+
 // ============================================================
 // Todos API — `frago todo` 的事务
 // ============================================================
@@ -777,6 +784,8 @@ export interface ScheduleItem {
   last_run_at: string | null;
   last_status: string | null;
   last_success_at: string | null;
+  last_session_id?: string | null;
+  last_run?: { session_id?: string | null; [key: string]: unknown } | null;
   consecutive_failures: number;
   run_count: number;
   notify: { on: string; to: string | null; context: Record<string, unknown> };
@@ -1589,6 +1598,110 @@ export async function getTokenCalendar(month: string): Promise<TokenCalendarResp
   return fetchApi<TokenCalendarResponse>(
     `/claude-sessions/token-calendar?month=${encodeURIComponent(month)}`
   );
+}
+
+// ============================================================
+// Calendar Affairs API
+// ============================================================
+
+export interface CompletedAffair {
+  id: string;
+  date: string;
+  title: string;
+  summary: string;
+  category: string;
+  tags: string[];
+  employee?: string | null;
+  sessions: string[];
+  artifacts: string[];
+  completed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalendarAffairsResponse {
+  items: CompletedAffair[];
+  by_date: Record<
+    string,
+    {
+      date: string;
+      count: number;
+      categories: string[];
+      employees: string[];
+      previews: string[];
+    }
+  >;
+  summary: {
+    total_affairs: number;
+    active_days: number;
+    categories: string[];
+    employees: string[];
+  };
+  cli_guide?: {
+    add_example: string;
+    write_example: string;
+    prompt_example: string;
+  };
+}
+
+export async function getCalendarAffairs(params?: {
+  month?: string;
+  date?: string;
+  employee?: string;
+  category?: string;
+  q?: string;
+}): Promise<CalendarAffairsResponse> {
+  const query = new URLSearchParams();
+  if (params?.month) query.set('month', params.month);
+  if (params?.date) query.set('date', params.date);
+  if (params?.employee) query.set('employee', params.employee);
+  if (params?.category) query.set('category', params.category);
+  if (params?.q) query.set('q', params.q);
+  const qs = query.toString();
+  return fetchApi<CalendarAffairsResponse>(`/calendar/affairs${qs ? `?${qs}` : ''}`);
+}
+
+export async function createCalendarAffair(
+  payload: Partial<CompletedAffair> & { title: string }
+): Promise<{ ok: boolean; item: CompletedAffair }> {
+  return fetchApi<{ ok: boolean; item: CompletedAffair }>('/calendar/affairs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function batchWriteCalendarAffairs(
+  items: Partial<CompletedAffair>[],
+  options?: { mode?: 'upsert' | 'replace'; default_date?: string }
+): Promise<{ ok: boolean; count: number; items: CompletedAffair[] }> {
+  return fetchApi<{ ok: boolean; count: number; items: CompletedAffair[] }>('/calendar/affairs', {
+    method: 'POST',
+    body: JSON.stringify({
+      items,
+      mode: options?.mode ?? 'upsert',
+      default_date: options?.default_date,
+    }),
+  });
+}
+
+export async function updateCalendarAffair(
+  id: string,
+  payload: Partial<CompletedAffair>
+): Promise<{ ok: boolean; item: CompletedAffair }> {
+  return fetchApi<{ ok: boolean; item: CompletedAffair }>(`/calendar/affairs/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCalendarAffair(
+  id: string,
+  date?: string
+): Promise<{ ok: boolean; id: string }> {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+  return fetchApi<{ ok: boolean; id: string }>(`/calendar/affairs/${encodeURIComponent(id)}${qs}`, {
+    method: 'DELETE',
+  });
 }
 
 /**

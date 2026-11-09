@@ -19,6 +19,7 @@ from .apps_commands import apps_group
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
+from .calendar_commands import calendar_group
 from .channel_commands import channel_group
 from .cloud_commands import (
     config_group,
@@ -62,7 +63,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "app"]),
+    ("Daily Use", ["start", "calendar", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "app"]),
     ("Files", ["cp", "mv", "rm"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "employee", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
@@ -71,7 +72,7 @@ COMMAND_GROUPS = OrderedDict([
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session", "app"]
+EXPAND_SUBCOMMANDS = ["browser", "calendar", "recipe", "dev", "session", "app"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
@@ -467,6 +468,9 @@ cli.add_command(book_command)
 
 # Def command group - structured knowledge domain management
 cli.add_command(def_group)
+
+# Calendar command group - manage daily completed affairs
+cli.add_command(calendar_group, name="calendar")
 
 # Todo command group - standardized CRUD over ~/.frago/todo/ (one JSON per todo)
 cli.add_command(todo_group, name="todo")

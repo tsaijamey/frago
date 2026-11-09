@@ -25,20 +25,29 @@ import {
   CalendarCheck,
   CalendarDays,
   CalendarPlus,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
+  Copy,
+  ExternalLink,
+  FileText,
+  Filter,
   Minus,
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
+  Terminal,
+  Trash2,
+  User,
   X,
 } from 'lucide-react';
 
-import { getTokenCalendar } from '@/api';
-import type { TokenCalendarResponse } from '@/api/client';
+import { deleteCalendarAffair, getCalendarAffairs, getTokenCalendar } from '@/api';
+import type { CalendarAffairsResponse, TokenCalendarResponse } from '@/api/client';
 import i18n from '@/i18n';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { SessionTodayState } from '@/hooks/useSessionToday';
@@ -256,6 +265,8 @@ export interface SessionTimelineProps {
   onClose: () => void;
   /** 可选初始选中日期（YYYY-MM-DD）；默认 null 即首先展示月历网格。 */
   initialDate?: string | null;
+  /** 单日详情初始 Tab：'affairs'（默认优先聚焦完成事务）或 'timeline'（会话时间轴） */
+  initialDetailTab?: 'affairs' | 'timeline';
 }
 
 export default function SessionTimeline({
@@ -266,6 +277,7 @@ export default function SessionTimeline({
   onSelect,
   onClose,
   initialDate = null,
+  initialDetailTab = 'affairs',
 }: SessionTimelineProps) {
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
@@ -280,18 +292,62 @@ export default function SessionTimeline({
   const [calLoading, setCalLoading] = useState(false);
   const [calError, setCalError] = useState<string | null>(null);
 
+  // Completed Affairs data & view states
+  const [affairsData, setAffairsData] = useState<CalendarAffairsResponse | null>(null);
+  const [affairsLoading, setAffairsLoading] = useState(false);
+  const [detailTab, setDetailTab] = useState<'affairs' | 'timeline'>(initialDetailTab);
+  const [affairQuery, setAffairQuery] = useState('');
+  const [employeeFilter, setEmployeeFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [cliGuideOpen, setCliGuideOpen] = useState(false);
+
   const fetchMonth = useCallback(async (m: string) => {
     setCalLoading(true);
+    setAffairsLoading(true);
     setCalError(null);
     try {
-      const res = await getTokenCalendar(m);
-      setCalData(res);
+      const tPromise = getTokenCalendar(m);
+      const aPromise =
+        typeof getCalendarAffairs === 'function'
+          ? getCalendarAffairs({ month: m }).catch(() => null)
+          : Promise.resolve(null);
+      const [tRes, aRes] = await Promise.all([tPromise, aPromise]);
+      setCalData(tRes);
+      if (aRes) setAffairsData(aRes);
     } catch (e) {
       setCalError(e instanceof Error ? e.message : String(e));
     } finally {
       setCalLoading(false);
+      setAffairsLoading(false);
     }
   }, []);
+
+  const handleDeleteAffair = useCallback(
+    async (id: string, date: string) => {
+      if (!window.confirm(t('workbench.timeline.confirmDelete'))) return;
+      try {
+        await deleteCalendarAffair(id, date);
+        showToast(t('workbench.timeline.deleteAffair') + ' OK', 'success');
+        const updated = await getCalendarAffairs({ month });
+        setAffairsData(updated);
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), 'error');
+      }
+    },
+    [month, showToast, t]
+  );
+
+  const handleCopyText = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(t('workbench.timeline.copied'), 'success');
+      } catch {
+        showToast('Copy failed', 'error');
+      }
+    },
+    [showToast, t]
+  );
 
   useEffect(() => {
     void fetchMonth(month);
@@ -304,6 +360,32 @@ export default function SessionTimeline({
     () => parseTagKeywords(filterTags, filterDraft),
     [filterTags, filterDraft]
   );
+
+  const currentDayAffairs = useMemo(() => {
+    if (!selectedDate || !affairsData) return [];
+    return affairsData.items.filter((it) => it.date === selectedDate);
+  }, [selectedDate, affairsData]);
+
+  const filteredAffairs = useMemo(() => {
+    let list = currentDayAffairs;
+    if (employeeFilter !== 'all') {
+      list = list.filter((it) => it.employee === employeeFilter);
+    }
+    if (categoryFilter !== 'all') {
+      list = list.filter((it) => it.category === categoryFilter);
+    }
+    if (affairQuery.trim()) {
+      const q = affairQuery.trim().toLowerCase();
+      list = list.filter(
+        (it) =>
+          it.title.toLowerCase().includes(q) ||
+          it.summary.toLowerCase().includes(q) ||
+          it.tags.some((t) => t.toLowerCase().includes(q)) ||
+          it.sessions.some((s) => s.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [currentDayAffairs, employeeFilter, categoryFilter, affairQuery]);
 
   // Left vertical date rail adaptive count (between n and n + 3)
   const dateRailListRef = useRef<HTMLDivElement>(null);
@@ -844,6 +926,16 @@ export default function SessionTimeline({
               <ChevronRight size={15} />
             </button>
 
+            {affairsData && affairsData.summary.total_affairs > 0 ? (
+              <span
+                data-testid="month-affairs-badge"
+                className="ml-1 inline-flex items-center gap-1 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[11px] font-medium text-accent-primary"
+              >
+                <Check size={11} strokeWidth={2.5} />
+                <span>{t('workbench.timeline.monthAffairsCount', { count: affairsData.summary.total_affairs })}</span>
+              </span>
+            ) : null}
+
             <span className="ml-1.5 text-[12px] text-text-secondary" data-testid="calendar-month-total">
               {t('tokenCalendar.monthTotal')}:{' '}
               <strong className="font-mono text-[13px] text-text-primary">
@@ -856,6 +948,20 @@ export default function SessionTimeline({
                 </span>
               ) : null}
             </span>
+
+            {affairsData ? (
+              <div className="ml-1.5 hidden items-center gap-2 border-l border-border-color pl-2 text-[11.5px] text-text-muted lg:flex">
+                <span>
+                  {t('workbench.timeline.monthAffairsTotal')}:{' '}
+                  <strong className="font-mono text-text-primary">{affairsData.summary.total_affairs}</strong>
+                </span>
+                <span>·</span>
+                <span>
+                  {t('workbench.timeline.productiveDays')}:{' '}
+                  <strong className="font-mono text-text-primary">{affairsData.summary.active_days}</strong>
+                </span>
+              </div>
+            ) : null}
 
             <button
               type="button"
@@ -932,7 +1038,7 @@ export default function SessionTimeline({
           </div>
         </div>
 
-        {calLoading ? (
+        {(calLoading || affairsLoading) ? (
           <div className="cs-cal-progress shrink-0">
             <div className="cs-cal-progress-bar" />
           </div>
@@ -969,7 +1075,9 @@ export default function SessionTimeline({
                 const bucket = calData?.days[cell.date];
                 const hasTokens = Boolean(bucket && bucket.total > 0);
                 const daySessionCount = sessionCountByDate.get(cell.date) ?? 0;
-                const hasActivity = hasTokens || daySessionCount > 0;
+                const affairDay = affairsData?.by_date[cell.date];
+                const dayAffairCount = affairDay?.count ?? 0;
+                const hasActivity = hasTokens || daySessionCount > 0 || dayAffairCount > 0;
                 const isToday = cell.date === todayKey;
 
                 return (
@@ -1000,8 +1108,8 @@ export default function SessionTimeline({
                             : 'border-transparent bg-bg-secondary hover:border-border-color hover:bg-bg-hover'
                     }`}
                   >
-                    {/* 顶行：左上日期数字，右上纯文字会话数（不套胶囊框） */}
-                    <div className="flex w-full items-center justify-between gap-2">
+                    {/* 顶行：左上日期数字与今天标签，右上已完成事务胶囊或会话数 */}
+                    <div className="flex w-full items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5">
                         <span
                           className={`font-mono text-[13px] ${
@@ -1020,20 +1128,47 @@ export default function SessionTimeline({
                           </span>
                         ) : null}
                       </div>
-                      {daySessionCount > 0 ? (
-                        <span className="font-mono text-[11px] text-text-muted">
-                          {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
-                        </span>
-                      ) : null}
+
+                      <div className="flex items-center gap-1">
+                        {dayAffairCount > 0 ? (
+                          <span
+                            data-testid={`affairs-badge-${cell.date}`}
+                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1.5 py-0.2 text-[10.5px] font-medium text-accent-primary"
+                          >
+                            <Check size={10} strokeWidth={2.5} />
+                            <span>{dayAffairCount}</span>
+                          </span>
+                        ) : null}
+                        {daySessionCount > 0 ? (
+                          <span className="font-mono text-[10.5px] text-text-muted">
+                            {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
 
-                    {/* 底行：仅在有 token 用量时展示大字总量 + 淡字入/出，不画横条、不画分割线、不画破折号 */}
+                    {/* 中间行：当日已完成事务核心微缩标题预览（1~2 行） */}
+                    {affairDay && affairDay.previews && affairDay.previews.length > 0 ? (
+                      <div className="my-1.5 flex flex-col gap-0.5 overflow-hidden">
+                        {affairDay.previews.slice(0, 2).map((pv, i) => (
+                          <div
+                            key={i}
+                            className="truncate font-sans text-[11px] leading-tight text-text-secondary group-hover:text-text-primary"
+                            title={pv}
+                          >
+                            • {pv}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {/* 底行：仅在有 token 用量时展示大字总量 + 淡字入/出 */}
                     {hasTokens && bucket ? (
-                      <div className="flex w-full flex-col gap-1">
-                        <span className="font-mono text-[20px] font-semibold leading-none tracking-tight text-text-primary">
+                      <div className="flex w-full flex-col gap-0.5">
+                        <span className="font-mono text-[18px] font-semibold leading-none tracking-tight text-text-primary">
                           {formatTokens(bucket.total)}
                         </span>
-                        <span className="truncate font-mono text-[11px] text-text-muted">
+                        <span className="truncate font-mono text-[10.5px] text-text-muted">
                           {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
                           {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
                         </span>
@@ -1110,6 +1245,8 @@ export default function SessionTimeline({
                   const isToday = cell.date === todayKey;
                   const wk = weekdayKeyOfDate(cell.date);
                   const sessionCount = sessionCountByDate.get(cell.date) ?? 0;
+                  const affairDay = affairsData?.by_date[cell.date];
+                  const dayAffairCount = affairDay?.count ?? 0;
                   return (
                     <button
                       key={cell.date}
@@ -1133,7 +1270,7 @@ export default function SessionTimeline({
                           ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
                           : isToday
                             ? 'border-accent-primary bg-bg-card text-text-primary hover:bg-bg-hover'
-                            : hasTokens || sessionCount > 0
+                            : hasTokens || sessionCount > 0 || dayAffairCount > 0
                               ? 'border-transparent bg-bg-card text-text-secondary hover:bg-bg-hover hover:text-text-primary'
                               : 'border-transparent bg-bg-primary text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                       }`}
@@ -1145,11 +1282,19 @@ export default function SessionTimeline({
                             {t(`tokenCalendar.weekday.${wk}`)}
                           </span>
                         </span>
-                        {sessionCount > 0 ? (
-                          <span className="font-mono text-[10.5px] text-text-muted">
-                            {t('workbench.timeline.daySessionsCount', { count: sessionCount })}
-                          </span>
-                        ) : null}
+                        <div className="flex items-center gap-1">
+                          {dayAffairCount > 0 ? (
+                            <span className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1 text-[10px] font-medium text-accent-primary">
+                              <Check size={9} strokeWidth={2.5} />
+                              <span>{dayAffairCount}</span>
+                            </span>
+                          ) : null}
+                          {sessionCount > 0 ? (
+                            <span className="font-mono text-[10.5px] text-text-muted">
+                              {t('workbench.timeline.daySessionsCount', { count: sessionCount })}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       {hasTokens && bucket ? (
                         <div className="flex items-baseline justify-between gap-1">
@@ -1179,10 +1324,326 @@ export default function SessionTimeline({
               </button>
             </aside>
 
-            {/* 右侧栏：Timeline */}
-            <div data-testid="timeline-pane" className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {/* Timeline 工具条：时间跨度提示 + 档位切换 + 平移/缩放 */}
-              <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color bg-bg-secondary px-3">
+            {/* 右侧栏：已完成事务与会话时间轴双视图 */}
+            <div data-testid="timeline-pane" className="flex min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
+              {/* 顶栏 Tab 视图切换 */}
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-border-color bg-bg-secondary px-3">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="tab-affairs"
+                    onClick={() => setDetailTab('affairs')}
+                    className={`flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-[12px] font-medium transition-colors ${
+                      detailTab === 'affairs'
+                        ? 'border border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                        : 'border border-transparent text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                    }`}
+                  >
+                    <CalendarCheck size={13} strokeWidth={1.75} />
+                    <span>{t('workbench.timeline.tabAffairs')}</span>
+                    {currentDayAffairs.length > 0 ? (
+                      <span className="rounded-full bg-accent-primary/20 px-1.5 py-0.2 text-[10px] font-semibold text-accent-primary">
+                        {currentDayAffairs.length}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="tab-timeline"
+                    onClick={() => setDetailTab('timeline')}
+                    className={`flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-[12px] font-medium transition-colors ${
+                      detailTab === 'timeline'
+                        ? 'border border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                        : 'border border-transparent text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                    }`}
+                  >
+                    <Clock size={13} strokeWidth={1.75} />
+                    <span>{t('workbench.timeline.tabTimeline')}</span>
+                  </button>
+                </div>
+
+                {detailTab === 'affairs' ? (
+                  <button
+                    type="button"
+                    onClick={() => setCliGuideOpen((v) => !v)}
+                    className={`flex h-7 items-center gap-1.5 rounded-[6px] border px-2 text-[11.5px] transition-colors ${
+                      cliGuideOpen
+                        ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
+                        : 'border-border-color bg-bg-card text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                    }`}
+                    title={t('workbench.timeline.cliGuideTitle')}
+                  >
+                    <Terminal size={12} strokeWidth={1.5} />
+                    <span>{t('workbench.timeline.cliGuideTitle')}</span>
+                    <ChevronDown size={12} className={`transition-transform duration-200 ${cliGuideOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                ) : null}
+              </div>
+
+              {detailTab === 'affairs' ? (
+                /* 已完成事务视图主舞台 */
+                <div data-testid="affairs-view" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  {/* 指令引导速查展开面板 */}
+                  {cliGuideOpen ? (
+                    <div
+                      data-testid="cli-guide-panel"
+                      className="shrink-0 border-b border-border-color bg-bg-secondary p-3.5 text-[12px] text-text-secondary"
+                    >
+                      <div className="flex flex-col gap-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text-primary">
+                            💡 {t('workbench.timeline.promptCommandLabel')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyText(t('workbench.timeline.promptCommand'))}
+                            className="inline-flex items-center gap-1 rounded border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[11.5px] font-medium text-accent-primary hover:bg-accent-primary/20"
+                          >
+                            <Copy size={11} />
+                            <span>{t('workbench.timeline.copySummary')}</span>
+                          </button>
+                        </div>
+                        <div className="rounded-[6px] border border-border-dim bg-bg-primary px-3 py-1.5 font-mono text-[12px] text-accent-primary select-all">
+                          {t('workbench.timeline.promptCommand')}
+                        </div>
+
+                        <div className="mt-1 flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between text-[11px] text-text-muted">
+                            <span>{t('workbench.timeline.cliAddLabel')}</span>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyText(affairsData?.cli_guide?.add_example || 'frago calendar add --title "..."')}
+                              className="text-text-muted hover:text-text-primary"
+                            >
+                              <Copy size={11} />
+                            </button>
+                          </div>
+                          <div className="rounded-[4px] bg-bg-primary px-2.5 py-1 font-mono text-[11px] text-text-secondary select-all truncate">
+                            {affairsData?.cli_guide?.add_example || 'frago calendar add --title "完成核心功能" --summary "业务结论"'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* 事务筛选工具栏 */}
+                  <div className="flex min-h-[40px] shrink-0 flex-wrap items-center gap-2 border-b border-border-color bg-bg-secondary px-3.5 py-1.5 text-[12px]">
+                    <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-[6px] border border-border-color bg-bg-card px-2 py-1 text-text-primary focus-within:border-border-strong">
+                      <Search size={13} className="shrink-0 text-text-muted" />
+                      <input
+                        type="text"
+                        data-testid="affair-search-input"
+                        value={affairQuery}
+                        onChange={(e) => setAffairQuery(e.target.value)}
+                        placeholder={t('workbench.timeline.searchPlaceholder')}
+                        className="w-full bg-transparent text-[12px] text-text-primary placeholder:text-text-muted focus:outline-none"
+                      />
+                      {affairQuery ? (
+                        <button
+                          type="button"
+                          onClick={() => setAffairQuery('')}
+                          className="text-text-muted hover:text-text-primary"
+                        >
+                          <X size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {/* 员工下拉筛选 */}
+                    <div className="flex items-center gap-1">
+                      <User size={12} className="text-text-muted" />
+                      <select
+                        data-testid="affair-employee-filter"
+                        value={employeeFilter}
+                        onChange={(e) => setEmployeeFilter(e.target.value)}
+                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[11.5px] text-text-secondary focus:outline-none"
+                      >
+                        <option value="all">{t('workbench.timeline.allEmployees')}</option>
+                        {affairsData?.summary.employees.map((emp) => (
+                          <option key={emp} value={emp}>
+                            {emp}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 分类下拉筛选 */}
+                    <div className="flex items-center gap-1">
+                      <Filter size={12} className="text-text-muted" />
+                      <select
+                        data-testid="affair-category-filter"
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[11.5px] text-text-secondary focus:outline-none"
+                      >
+                        <option value="all">{t('workbench.timeline.allCategories')}</option>
+                        {affairsData?.summary.categories.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <span className="font-mono text-[11px] text-text-muted">
+                      {filteredAffairs.length} / {currentDayAffairs.length}
+                    </span>
+                  </div>
+
+                  {/* 事务卡片流 */}
+                  <div
+                    data-testid="affairs-card-list"
+                    className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
+                  >
+                    {filteredAffairs.length > 0 ? (
+                      filteredAffairs.map((affair) => (
+                        <div
+                          key={affair.id}
+                          data-testid="affair-card"
+                          className="group relative flex flex-col gap-2.5 rounded-[10px] border border-border-color bg-bg-card p-3.5 transition-colors hover:border-border-strong hover:bg-bg-card/90"
+                        >
+                          {/* 顶栏：标题、分类/员工徽章与操作按钮 */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex min-w-0 flex-1 flex-col gap-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {affair.category ? (
+                                  <span className="rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-text-secondary">
+                                    {affair.category}
+                                  </span>
+                                ) : null}
+                                {affair.employee ? (
+                                  <span className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 text-[11px] text-text-muted">
+                                    <User size={10} />
+                                    <span>{affair.employee}</span>
+                                  </span>
+                                ) : null}
+                                {affair.completed_at ? (
+                                  <span className="font-mono text-[11px] text-text-muted">
+                                    {affair.completed_at.slice(-8)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <h3 className="font-sans text-[14.5px] font-semibold leading-snug text-text-primary">
+                                {affair.title}
+                              </h3>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-1 opacity-70 group-hover:opacity-100">
+                              {affair.summary ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCopyText(affair.summary)}
+                                  title={t('workbench.timeline.copySummary')}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+                                >
+                                  <Copy size={12} />
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteAffair(affair.id, affair.date)}
+                                title={t('workbench.timeline.deleteAffair')}
+                                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-hover hover:text-accent-error"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 业务结论摘要 */}
+                          {affair.summary ? (
+                            <div className="rounded-[6px] border border-border-dim bg-bg-secondary/60 p-2.5 font-sans text-[12.5px] leading-relaxed text-text-secondary whitespace-pre-wrap">
+                              {affair.summary}
+                            </div>
+                          ) : null}
+
+                          {/* 关联会话与归档路径 */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11.5px]">
+                            {affair.sessions && affair.sessions.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="text-text-muted">{t('workbench.timeline.sessionsLabel')}:</span>
+                                {affair.sessions.map((sid) => (
+                                  <button
+                                    key={sid}
+                                    type="button"
+                                    onClick={() => onSelect(sid)}
+                                    title={t('workbench.timeline.jumpToSession') + `: ${sid}`}
+                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-accent-primary transition-colors hover:border-accent-primary hover:bg-accent-primary/10"
+                                  >
+                                    <ExternalLink size={10} />
+                                    <span>#{sid.slice(0, 8)}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {affair.artifacts && affair.artifacts.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="text-text-muted">{t('workbench.timeline.artifactsLabel')}:</span>
+                                {affair.artifacts.map((art, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => void handleCopyText(art)}
+                                    title={`复制路径: ${art}`}
+                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                                  >
+                                    <FileText size={10} />
+                                    <span className="max-w-[220px] truncate">{art.split('/').slice(-2).join('/')}</span>
+                                    <Copy size={9} className="opacity-50" />
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {affair.tags && affair.tags.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-1">
+                                {affair.tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="rounded-[3px] bg-bg-secondary px-1.2 py-0.2 text-[10.5px] text-text-dim"
+                                  >
+                                    #{tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      /* 空状态友好引导卡片 */
+                      <div className="flex flex-col items-center justify-center gap-3 rounded-[12px] border border-dashed border-border-color p-8 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-bg-secondary text-text-muted">
+                          <CalendarCheck size={24} strokeWidth={1.5} />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <h4 className="text-[14px] font-medium text-text-primary">
+                            {t('workbench.timeline.emptyTitle')}
+                          </h4>
+                          <p className="max-w-[380px] text-[12px] text-text-muted">
+                            {t('workbench.timeline.emptyDesc')}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyText(t('workbench.timeline.promptCommand'))}
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-[6px] border border-accent-primary/40 bg-accent-primary/10 px-3 py-1.5 text-[12px] font-medium text-accent-primary transition-colors hover:bg-accent-primary/20"
+                        >
+                          <Sparkles size={13} />
+                          <span>{t('workbench.timeline.promptCommand')}</span>
+                          <Copy size={11} className="ml-1 opacity-70" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* 会话时间轴 · 用量视图 (保留原实现) */
+                <>
+                  {/* Timeline 工具条：时间跨度提示 + 档位切换 + 平移/缩放 */}
+                  <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color bg-bg-secondary px-3">
                 <Clock size={13} strokeWidth={1.5} className="shrink-0 text-text-muted" />
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-[11.5px] text-text-muted">
                   {stamp(winStart)} → {stamp(winEnd)} · {spanLabel}
@@ -1378,9 +1839,11 @@ export default function SessionTimeline({
                   {t('workbench.timeline.shown', { count: shownLanes.length })}
                 </span>
               </div>
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </div>
+      </div>
+    )}
       </div>
     </div>
   );

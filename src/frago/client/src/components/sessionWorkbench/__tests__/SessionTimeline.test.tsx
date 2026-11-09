@@ -37,6 +37,17 @@ vi.mock('@/api', () => ({
       total: 1_500_000,
     },
   })),
+  getCalendarAffairs: vi.fn(async () => ({
+    items: [],
+    by_date: {},
+    summary: { total_affairs: 0, active_days: 0, categories: [], employees: [] },
+    cli_guide: {
+      add_example: 'frago calendar add --title "..."',
+      write_example: 'frago calendar write --file affairs.json',
+      prompt_example: '把今天做完的事整理后写入日历',
+    },
+  })),
+  deleteCalendarAffair: vi.fn(async () => ({ ok: true, id: 'test' })),
 }));
 
 /**
@@ -112,6 +123,7 @@ function renderTimeline(
     onSelect?: (id: string) => void;
     onClose?: () => void;
     initialDate?: string | null;
+    initialDetailTab?: 'affairs' | 'timeline';
   } = {}
 ) {
   return render(
@@ -122,6 +134,7 @@ function renderTimeline(
       onSelect={opts.onSelect ?? (() => {})}
       onClose={opts.onClose ?? (() => {})}
       initialDate={opts.initialDate ?? null}
+      initialDetailTab={opts.initialDetailTab ?? 'timeline'}
     />
   );
 }
@@ -182,11 +195,12 @@ describe('SessionTimeline (Merged Token Calendar & Timeline)', () => {
         ?.getAttribute('aria-pressed')
     ).toBe('true');
 
-    // 切回今天，右侧 Timeline 展示了今天的会话
+    // 切回今天并切换至时间轴 Tab，右侧 Timeline 展示了今天的会话
     const todayRailCell = screen
       .getAllByTestId('timeline-day-cell')
       .find((el) => el.getAttribute('data-date') === todayKey);
     if (todayRailCell) fireEvent.click(todayRailCell);
+    fireEvent.click(screen.getByTestId('tab-timeline'));
     expect(ids()).toContain('today-sess');
 
     // 3. 点「返回月历」回到全月网格

@@ -232,6 +232,15 @@ export const refreshSkills = withMode(
 );
 
 // ============================================================
+// Employees API
+// ============================================================
+
+export const getEmployees = withMode(
+  (): Promise<httpApi.EmployeeItem[]> => httpApi.getEmployees(),
+  (): Promise<httpApi.EmployeeItem[]> => Promise.resolve([]),
+);
+
+// ============================================================
 // Todos API — `frago todo` 的事务
 // ============================================================
 
@@ -907,6 +916,58 @@ export const getTokenCalendar = withMode(
   (_month: string): Promise<httpApi.TokenCalendarResponse> => {
     throw new Error('Claude sessions API not available in pywebview mode');
   },
+);
+
+export type {
+  CompletedAffair,
+  CalendarAffairsResponse,
+} from './client';
+
+export const getCalendarAffairs = withMode(
+  (params?: {
+    month?: string;
+    date?: string;
+    employee?: string;
+    category?: string;
+    q?: string;
+  }): Promise<httpApi.CalendarAffairsResponse> => httpApi.getCalendarAffairs(params),
+  (_params?: {
+    month?: string;
+    date?: string;
+    employee?: string;
+    category?: string;
+    q?: string;
+  }): Promise<httpApi.CalendarAffairsResponse> =>
+    Promise.resolve({
+      items: [],
+      by_date: {},
+      summary: { total_affairs: 0, active_days: 0, categories: [], employees: [] },
+    }),
+);
+
+export const createCalendarAffair = withMode(
+  (payload: Partial<httpApi.CompletedAffair> & { title: string }) =>
+    httpApi.createCalendarAffair(payload),
+  () => Promise.reject(new Error('Calendar affairs not available in pywebview mode')),
+);
+
+export const batchWriteCalendarAffairs = withMode(
+  (
+    items: Partial<httpApi.CompletedAffair>[],
+    options?: { mode?: 'upsert' | 'replace'; default_date?: string }
+  ) => httpApi.batchWriteCalendarAffairs(items, options),
+  () => Promise.reject(new Error('Calendar affairs not available in pywebview mode')),
+);
+
+export const updateCalendarAffair = withMode(
+  (id: string, payload: Partial<httpApi.CompletedAffair>) =>
+    httpApi.updateCalendarAffair(id, payload),
+  () => Promise.reject(new Error('Calendar affairs not available in pywebview mode')),
+);
+
+export const deleteCalendarAffair = withMode(
+  (id: string, date?: string) => httpApi.deleteCalendarAffair(id, date),
+  () => Promise.reject(new Error('Calendar affairs not available in pywebview mode')),
 );
 
 /** 桌面壳（pywebview）里没有这条服务，返回「答不出」而不是抛错——它不是错误状态。 */
