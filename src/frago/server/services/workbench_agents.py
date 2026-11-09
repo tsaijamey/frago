@@ -49,9 +49,10 @@ claude 接受 ``--session-id``：页面先 mint 一个编号，会话编号当�
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from frago.agent_driver.driver import registered_drivers
+from frago.ontology.projectors import get_agent_kernel_metadata
 from frago.server.services.session_send import AGENT_TYPE_BY_FAMILY, COREAGENT_AGENT
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,22 @@ class WorkbenchAgent:
     #: 会话编号谁 mint："caller" = 页面先给（claude），"claimed" = 起来后认领
     #: （codex / opencode / agy），后者新建时有一段等编号的空窗。
     id_origin: str
+    #: 本体六大能力切面支持等级字典
+    capabilities: dict[str, str] = field(default_factory=dict)
+    #: 运行形态："tmux_tui" | "headless_kernel"
+    execution_mode: str = "tmux_tui"
+    #: 是否运行在 tmux 窗格中
+    runs_in_tmux: bool = True
+    #: 是否支持续接
+    supports_resume: bool = True
+    #: 是否支持从会话划选起分支
+    supports_branch: bool = False
+    #: 是否支持 For you 待输入态感知
+    supports_for_you: bool = True
+    #: 综合能力等级评级："tier1" | "tier2" | "unsupported"
+    capability_tier: str = "tier2"
+    #: Profile 配置激活模式
+    profile_mode: str = "file_and_env"
 
 
 def _locate(agent_type: str, driver) -> tuple[bool | None, str | None]:  # noqa: ANN001
@@ -188,6 +205,7 @@ def _coreagent_agent() -> WorkbenchAgent:
     else:
         selectable, reason = True, None
 
+    meta = get_agent_kernel_metadata(COREAGENT_AGENT_TYPE)
     return WorkbenchAgent(
         agent_type=COREAGENT_AGENT_TYPE,
         display_name=_COREAGENT_DISPLAY_NAME,
@@ -197,6 +215,14 @@ def _coreagent_agent() -> WorkbenchAgent:
         selectable=selectable,
         reason=reason,
         id_origin="caller",
+        capabilities=dict(meta.get("capabilities", {})),
+        execution_mode=str(meta.get("execution_mode", "headless_kernel")),
+        runs_in_tmux=bool(meta.get("runs_in_tmux", False)),
+        supports_resume=bool(meta.get("supports_resume", False)),
+        supports_branch=bool(meta.get("supports_branch", False)),
+        supports_for_you=bool(meta.get("supports_for_you", False)),
+        capability_tier=str(meta.get("capability_tier", "tier1")),
+        profile_mode=str(meta.get("profile_mode", "native_kernel")),
     )
 
 
@@ -231,6 +257,7 @@ def list_agents() -> list[WorkbenchAgent]:
         else:
             selectable, reason = True, None
 
+        meta = get_agent_kernel_metadata(agent_type)
         agents.append(
             WorkbenchAgent(
                 agent_type=agent_type,
@@ -241,6 +268,14 @@ def list_agents() -> list[WorkbenchAgent]:
                 selectable=selectable,
                 reason=reason,
                 id_origin="caller" if driver.accepts_session_id else "claimed",
+                capabilities=dict(meta.get("capabilities", {})),
+                execution_mode=str(meta.get("execution_mode", "tmux_tui")),
+                runs_in_tmux=bool(meta.get("runs_in_tmux", True)),
+                supports_resume=bool(meta.get("supports_resume", True)),
+                supports_branch=bool(meta.get("supports_branch", False)),
+                supports_for_you=bool(meta.get("supports_for_you", True)),
+                capability_tier=str(meta.get("capability_tier", "tier2")),
+                profile_mode=str(driver.facets.hook_injection.profile_mode),
             )
         )
 

@@ -82,6 +82,241 @@ DESKTOP_RUNTIME_FIELDS: tuple[str, ...] = (
 )
 TODO_VALID_STATUSES: frozenset[str] = frozenset({"todo", "doing", "done", "dropped"})
 
+CAPABILITY_NATIVE: str = "native"
+CAPABILITY_ADAPTED: str = "adapted"
+CAPABILITY_FALLBACK: str = "fallback"
+CAPABILITY_UNSUPPORTED: str = "unsupported"
+
+AGENT_ORTHOGONAL_FACETS: tuple[str, ...] = (
+    "identity_probe",
+    "lifecycle_action",
+    "transcript_sync",
+    "awaiting_input_probe",
+    "busy_probe",
+    "context_watermark",
+    "hook_injection",
+)
+
+AGENT_CAPABILITY_MATRIX: dict[str, dict[str, str]] = {
+    "claude": {
+        "identity_probe": CAPABILITY_NATIVE,
+        "lifecycle_action": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_NATIVE,
+        "awaiting_input_probe": CAPABILITY_ADAPTED,
+        "busy_probe": CAPABILITY_NATIVE,
+        "context_watermark": CAPABILITY_NATIVE,
+        "hook_injection": CAPABILITY_NATIVE,
+    },
+    "agy": {
+        "identity_probe": CAPABILITY_NATIVE,
+        "lifecycle_action": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_ADAPTED,
+        "awaiting_input_probe": CAPABILITY_FALLBACK,
+        "busy_probe": CAPABILITY_ADAPTED,
+        "context_watermark": CAPABILITY_ADAPTED,
+        "hook_injection": CAPABILITY_ADAPTED,
+    },
+    "opencode": {
+        "identity_probe": CAPABILITY_NATIVE,
+        "lifecycle_action": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_NATIVE,
+        "awaiting_input_probe": CAPABILITY_FALLBACK,
+        "busy_probe": CAPABILITY_FALLBACK,
+        "context_watermark": CAPABILITY_ADAPTED,
+        "hook_injection": CAPABILITY_ADAPTED,
+    },
+    "codex": {
+        "identity_probe": CAPABILITY_NATIVE,
+        "lifecycle_action": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_ADAPTED,
+        "awaiting_input_probe": CAPABILITY_FALLBACK,
+        "busy_probe": CAPABILITY_FALLBACK,
+        "context_watermark": CAPABILITY_ADAPTED,
+        "hook_injection": CAPABILITY_UNSUPPORTED,
+    },
+    "coreagent": {
+        "identity_probe": CAPABILITY_NATIVE,
+        "lifecycle_action": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_NATIVE,
+        "awaiting_input_probe": CAPABILITY_UNSUPPORTED,
+        "busy_probe": CAPABILITY_NATIVE,
+        "context_watermark": CAPABILITY_NATIVE,
+        "hook_injection": CAPABILITY_NATIVE,
+    },
+}
+
+AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
+    "claude": {
+        "name": "claude",
+        "display_name": "Claude Code",
+        "execution_mode": "tmux_tui",
+        "runs_in_tmux": True,
+        "supports_resume": True,
+        "supports_branch": True,
+        "supports_for_you": True,
+        "capability_tier": "tier1",
+        "profile_mode": "file_and_env",
+        "capabilities": AGENT_CAPABILITY_MATRIX["claude"],
+    },
+    "agy": {
+        "name": "agy",
+        "display_name": "Antigravity",
+        "execution_mode": "tmux_tui",
+        "runs_in_tmux": True,
+        "supports_resume": True,
+        "supports_branch": False,
+        "supports_for_you": True,
+        "capability_tier": "tier2",
+        "profile_mode": "file_and_env",
+        "capabilities": AGENT_CAPABILITY_MATRIX["agy"],
+    },
+    "opencode": {
+        "name": "opencode",
+        "display_name": "OpenCode",
+        "execution_mode": "tmux_tui",
+        "runs_in_tmux": True,
+        "supports_resume": True,
+        "supports_branch": False,
+        "supports_for_you": True,
+        "capability_tier": "tier2",
+        "profile_mode": "file_and_env",
+        "capabilities": AGENT_CAPABILITY_MATRIX["opencode"],
+    },
+    "codex": {
+        "name": "codex",
+        "display_name": "Codex CLI",
+        "execution_mode": "tmux_tui",
+        "runs_in_tmux": True,
+        "supports_resume": True,
+        "supports_branch": False,
+        "supports_for_you": True,
+        "capability_tier": "tier2",
+        "profile_mode": "file_and_env",
+        "capabilities": AGENT_CAPABILITY_MATRIX["codex"],
+    },
+    "coreagent": {
+        "name": "coreagent",
+        "display_name": "CoreAgent",
+        "execution_mode": "headless_kernel",
+        "runs_in_tmux": False,
+        "supports_resume": False,
+        "supports_branch": False,
+        "supports_for_you": False,
+        "capability_tier": "tier1",
+        "profile_mode": "native_kernel",
+        "capabilities": AGENT_CAPABILITY_MATRIX["coreagent"],
+    },
+}
+
+
+def list_agent_kernels() -> tuple[str, ...]:
+    """Return all declared AgentKernel identifiers in ontological order."""
+    return tuple(AGENT_KERNEL_METADATA.keys())
+
+
+def get_agent_kernel_metadata(kernel: str) -> dict[str, Any]:
+    """Return full execution mode, UI features and capability matrix metadata for an agent kernel."""
+    normalized = kernel.strip().lower()
+    meta = AGENT_KERNEL_METADATA.get(normalized)
+    if meta is not None:
+        return dict(meta)
+    return {
+        "name": normalized,
+        "display_name": normalized,
+        "execution_mode": "unknown",
+        "runs_in_tmux": True,
+        "supports_resume": False,
+        "supports_branch": False,
+        "supports_for_you": False,
+        "capability_tier": "unsupported",
+        "profile_mode": "unsupported",
+        "capabilities": dict.fromkeys(AGENT_ORTHOGONAL_FACETS, CAPABILITY_UNSUPPORTED),
+    }
+
+
+def runs_in_tmux(kernel: str) -> bool:
+    """Return True if the kernel executes within a tmux interactive TUI session."""
+    return bool(get_agent_kernel_metadata(kernel).get("runs_in_tmux", True))
+
+
+def supports_profile_binding(kernel: str) -> bool:
+    """Return True if the kernel supports profile configuration binding."""
+    mode = str(get_agent_kernel_metadata(kernel).get("profile_mode", ""))
+    return mode in ("file_and_env", "env_only", "session_env", "native_flag")
+
+
+def supports_for_you(kernel: str) -> bool:
+    """Return True if the kernel can expose awaiting-input status to For you view."""
+    return bool(get_agent_kernel_metadata(kernel).get("supports_for_you", False))
+
+
+def get_agent_capability_level(agent_kernel: str, facet: str) -> str:
+    """Return the four-level capability declaration ('native' | 'adapted' | 'fallback' | 'unsupported')."""
+    normalized = agent_kernel.strip().lower()
+    kernel_caps = AGENT_CAPABILITY_MATRIX.get(normalized)
+    if kernel_caps is None:
+        return CAPABILITY_UNSUPPORTED
+    return kernel_caps.get(facet, CAPABILITY_UNSUPPORTED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentKernelProjection:
+    """Projected ontological `AgentKernel` actor and its declared capability matrix."""
+
+    kernel: Actor
+    capabilities: Mapping[str, str]
+    graph: OntologyGraph
+
+
+def project_agent_kernel_dict(
+    raw_kernel: Mapping[str, Any],
+    *,
+    registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+    graph: OntologyGraph | None = None,
+) -> AgentKernelProjection:
+    """Project an AgentKernel dictionary into `AgentKernel` (Actor) and linked `Capability` entities."""
+    g = graph if graph is not None else OntologyGraph()
+    raw_name = str(
+        raw_kernel.get("name")
+        or raw_kernel.get("agent_kernel")
+        or raw_kernel.get("kernel")
+        or raw_kernel.get("family")
+        or ""
+    ).strip()
+    if not raw_name:
+        raise ProjectionValidationError("AgentKernel JSON requires a non-empty kernel name.")
+
+    kernel_name = raw_name.lower()
+    if kernel_name not in AGENT_CAPABILITY_MATRIX:
+        raise ProjectionValidationError(
+            f"Unknown agent kernel '{raw_name}'. Allowed kernels: {sorted(AGENT_CAPABILITY_MATRIX.keys())}."
+        )
+
+    kernel_uid = f"kernel:{kernel_name}"
+    existing_kernel = g.get_entity(kernel_uid)
+    if isinstance(existing_kernel, Actor):
+        kernel = existing_kernel
+    else:
+        created_kernel = registry.create("AgentKernel", uid=kernel_uid)
+        assert isinstance(created_kernel, Actor)
+        kernel = created_kernel
+        g.register_entity(kernel)
+
+    caps_map = AGENT_CAPABILITY_MATRIX[kernel_name]
+    for facet, level in caps_map.items():
+        cap = Capability(
+            bearer_id=kernel.ontological_id(),
+            context_id=f"facet:{facet}:{level}",
+            dependent_type=facet,
+        )
+        g.link(kernel, "has_capability", cap)
+
+    return AgentKernelProjection(
+        kernel=kernel,
+        capabilities=caps_map,
+        graph=g,
+    )
+
 
 class ProjectionValidationError(OntologyError):
     """Raised when an on-disk JSON dictionary violates ontological projection constraints."""
@@ -1194,6 +1429,16 @@ class FivePillarShadowProjector:
     ) -> EmployeePostProjection:
         return project_employee_post_dict(
             raw_post,
+            registry=self._registry,
+            graph=self._graph,
+        )
+
+    def project_agent_kernel(
+        self,
+        raw_kernel: Mapping[str, Any],
+    ) -> AgentKernelProjection:
+        return project_agent_kernel_dict(
+            raw_kernel,
             registry=self._registry,
             graph=self._graph,
         )

@@ -966,5 +966,8 @@ register_driver(
         # 激活 → 写进 ~/.claude/settings.json，人自己起的 claude 也跟着走。
         profile_apply=_profile_apply,
         profile_revert=_profile_revert,
+        # 显式挂载待输入探针与 Profile 激活切面
+        awaiting_input=awaiting_input,
+        profile_mode="file_and_env",
     )
 )

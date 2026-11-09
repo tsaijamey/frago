@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from frago.agent_driver.tmux_session import TmuxAgentSession
@@ -98,6 +98,101 @@ class ExceptionHandler:
     name: str
     trigger: PaneMatcher
     action: Callable[[TmuxAgentSession], None]
+
+
+@dataclass(frozen=True)
+class IdentityProbeFacet:
+    """切面 1：刚性身份与二进制探针契约。"""
+
+    agent_type: str
+    display_name: str
+    locate: Callable[[], str | None] | None = None
+    capability_level: str = "native"
+
+
+@dataclass(frozen=True)
+class LifecycleActionFacet:
+    """切面 2：进程生命周期与交互动作契约。"""
+
+    launch_command: Callable[[LaunchCtx], str]
+    ready_signal: PaneMatcher
+    submit: Callable[[TmuxAgentSession, str], None]
+    done_signal: PaneMatcher
+    ready_signal_ansi: bool = False
+    accepts_session_id: bool = False
+    clear_input: Callable[[TmuxAgentSession], bool] | None = None
+    exception_handlers: list[ExceptionHandler] = field(default_factory=list)
+    capability_level: str = "native"
+
+
+@dataclass(frozen=True)
+class TranscriptSyncFacet:
+    """切面 3：会话转录与解析同步契约。"""
+
+    extract: Callable[[str], str]
+    read_answer: Callable[[str, str], str] | None = None
+    completion_probe: Callable[[TmuxAgentSession], CompletionVerdict | None] | None = None
+    transcript_source: Callable[[TmuxAgentSession], TranscriptSource | None] | None = None
+    capability_level: str = "native"
+
+
+@dataclass(frozen=True)
+class AwaitingInputProbeFacet:
+    """切面 4：待输入状态探针与就绪感知契约。"""
+
+    awaiting_input: Callable[[str], bool | None] | None = None
+    needs_input_signal: PaneMatcher | None = None
+    capability_level: str = "fallback"
+
+
+@dataclass(frozen=True)
+class ContextWatermarkFacet:
+    """切面 5：上下文水位统计与模型感知契约。"""
+
+    known_models: tuple[str, ...] = ()
+    capability_level: str = "adapted"
+
+
+@dataclass(frozen=True)
+class HookInjectionFacet:
+    """切面 6：Hook 触发机制与 Profile 激活契约。"""
+
+    profile_mode: str = "file_and_env"
+    profile_protocol: str = "anthropic"
+    session_env: Callable[[LaunchCtx], dict[str, str]] | None = None
+    profile_env: Callable[[APIProfile], dict[str, str]] | None = None
+    profile_apply: Callable[[APIProfile], None] | None = None
+    profile_revert: Callable[[], None] | None = None
+    profile_unsupported_reason: str | None = None
+    capability_level: str = "native"
+
+
+@dataclass(frozen=True)
+class AgentDriverFacets:
+    """结构化汇聚六大正交切面的聚合视图。"""
+
+    identity_probe: IdentityProbeFacet
+    lifecycle_action: LifecycleActionFacet
+    transcript_sync: TranscriptSyncFacet
+    awaiting_input_probe: AwaitingInputProbeFacet
+    context_watermark: ContextWatermarkFacet
+    hook_injection: HookInjectionFacet
+
+    def get_facet(self, name: str) -> Any:
+        try:
+            return getattr(self, name)
+        except AttributeError as exc:
+            raise KeyError(f"Unknown capability facet '{name}'") from exc
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "identity_probe": self.identity_probe,
+            "lifecycle_action": self.lifecycle_action,
+            "transcript_sync": self.transcript_sync,
+            "awaiting_input_probe": self.awaiting_input_probe,
+            "context_watermark": self.context_watermark,
+            "hook_injection": self.hook_injection,
+        }
 
 
 @dataclass(frozen=True)
@@ -208,23 +303,121 @@ class AgentDriver:
     # 给人看的一句话，UI 与 CLI 原样转述。空着的话用户只会看到一个禁用的复选框而不知
     # 道为什么——那比不列出它更让人困惑。
     profile_unsupported_reason: str | None = None
+    # 可选：待输入状态专用读屏探针（pane_ansi -> bool | None）。
+    # 显式挂入驱动契约，供上层解耦调用，无需外部硬编码 import claude。
+    awaiting_input: Callable[[str], bool | None] | None = None
+    # 可选：Profile 配置激活模式显式声明（"file_and_env" | "env_only" | "session_env" | "native_flag" | "unsupported"）。
+    profile_mode: str | None = None
+    # 可选：外部显式注入的完整切面结构覆盖。
+    facets_override: AgentDriverFacets | None = None
+
+    @property
+    def supports_profile_apply(self) -> bool:
+        """显式声明是否支持通过 profile_apply 激活全局配置。"""
+        if self.profile_mode in ("unsupported", "native_kernel"):
+            return False
+        return self.profile_apply is not None
+
+    def get_capability_level(self, facet: str) -> str:
+        """查询此驱动在指定切面上的四级能力等级。"""
+        from frago.ontology.projectors import get_agent_capability_level
+
+        return get_agent_capability_level(self.agent_type, facet)
+
+    @property
+    def facets(self) -> AgentDriverFacets:
+        """返回本驱动结构化的六大正交能力切面视图。"""
+        if self.facets_override is not None:
+            return self.facets_override
+
+        resolved_profile_mode = self.profile_mode
+        if resolved_profile_mode is None:
+            if self.profile_apply is not None:
+                resolved_profile_mode = "file_and_env"
+            elif self.profile_env is not None or self.session_env is not None:
+                resolved_profile_mode = "session_env"
+            else:
+                resolved_profile_mode = "unsupported"
+
+        return AgentDriverFacets(
+            identity_probe=IdentityProbeFacet(
+                agent_type=self.agent_type,
+                display_name=self.display_name or self.agent_type,
+                locate=self.locate,
+                capability_level=self.get_capability_level("identity_probe"),
+            ),
+            lifecycle_action=LifecycleActionFacet(
+                launch_command=self.launch_command,
+                ready_signal=self.ready_signal,
+                submit=self.submit,
+                done_signal=self.done_signal,
+                ready_signal_ansi=self.ready_signal_ansi,
+                accepts_session_id=self.accepts_session_id,
+                clear_input=self.clear_input,
+                exception_handlers=list(self.exception_handlers),
+                capability_level=self.get_capability_level("lifecycle_action"),
+            ),
+            transcript_sync=TranscriptSyncFacet(
+                extract=self.extract,
+                read_answer=self.read_answer,
+                completion_probe=self.completion_probe,
+                transcript_source=self.transcript_source,
+                capability_level=self.get_capability_level("transcript_sync"),
+            ),
+            awaiting_input_probe=AwaitingInputProbeFacet(
+                awaiting_input=self.awaiting_input,
+                needs_input_signal=self.needs_input_signal,
+                capability_level=self.get_capability_level("awaiting_input_probe"),
+            ),
+            context_watermark=ContextWatermarkFacet(
+                known_models=self.known_models,
+                capability_level=self.get_capability_level("context_watermark"),
+            ),
+            hook_injection=HookInjectionFacet(
+                profile_mode=resolved_profile_mode,
+                profile_protocol=self.profile_protocol,
+                session_env=self.session_env,
+                profile_env=self.profile_env,
+                profile_apply=self.profile_apply,
+                profile_revert=self.profile_revert,
+                profile_unsupported_reason=self.profile_unsupported_reason,
+                capability_level=self.get_capability_level("hook_injection"),
+            ),
+        )
+
+    def get_facet(self, name: str) -> Any:
+        """获取指定切面实例。"""
+        return self.facets.get_facet(name)
+
+    def to_ontology_kernel_dict(self) -> dict[str, Any]:
+        """将驱动契约导出为本体层 AgentKernel 投影标准字典。"""
+        from frago.ontology.projectors import get_agent_kernel_metadata
+
+        meta = get_agent_kernel_metadata(self.agent_type)
+        return {
+            "name": self.agent_type,
+            "display_name": self.display_name or meta.get("display_name", self.agent_type),
+            "execution_mode": meta.get("execution_mode", "tmux_tui"),
+            "runs_in_tmux": meta.get("runs_in_tmux", True),
+            "supports_resume": meta.get("supports_resume", True),
+            "supports_branch": meta.get("supports_branch", False),
+            "supports_for_you": meta.get("supports_for_you", True),
+            "capability_tier": meta.get("capability_tier", "tier2"),
+            "profile_mode": self.facets.hook_injection.profile_mode,
+            "capabilities": dict(meta.get("capabilities", {})),
+        }
 
 
 def runs_on_kernel(agent_type: str) -> bool:
     """这一家跑在 frago 自己的内核里吗（而不是挂在 tmux 里）。
 
-    **注册表里那几家都是"挂在 tmux 里的交互程序"**（:data:`_REGISTRY` 那份契约从
-    ``launch_command`` 到 ``read_answer`` 全是 pane 语义）。CoreAgent 是"交一件事、跑完
-    就退"的进程，没有可挂的 TUI，因此**不进注册表**；它在 ``frago agent`` 里走一条并列
-    的后端（见 :mod:`frago.agent_driver.kernel_backend`）。
-
-    判据只有这一处——主路径 NEVER 写 ``if agent == "coreagent"``。名字取自
-    :class:`frago.session.models.AgentType`（``agent_core`` 合法取值的那一份），
-    NEVER 在这里另拼一个字符串。
+    委托给本体元数据协议（execution_mode == 'headless_kernel' / not runs_in_tmux）。
+    同时保持与原有 AgentType.COREAGENT 完全一致的向后兼容判定。
     """
-    from frago.session.models import AgentType
+    from frago.ontology.projectors import get_agent_kernel_metadata
 
-    return agent_type == AgentType.COREAGENT.value
+    meta = get_agent_kernel_metadata(agent_type)
+    return meta.get("execution_mode") == "headless_kernel"
 
 
 def listed_session_id(agent_type: str, session_id: str, *, native_session_id: bool) -> str | None:

@@ -972,6 +972,7 @@ register_driver(
         # 激活 → 写进 ~/.config/opencode/opencode.json，人自己起的 opencode 也跟着走。
         profile_apply=_profile_apply,
         profile_revert=_profile_revert,
+        profile_mode="file_and_env",
         exception_handlers=[
             ExceptionHandler(
                 name="dismiss-update-modal",

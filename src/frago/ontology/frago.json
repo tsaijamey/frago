@@ -192,11 +192,21 @@
         "rigidity": "+R",
         "identity": "agent_family_and_binary_id (claude | codex | opencode | agy | coreagent)",
         "allowed_values": ["claude", "codex", "opencode", "agy", "coreagent"],
+        "capability_levels": ["native", "adapted", "fallback", "unsupported"],
+        "orthogonal_facets": [
+          "identity_probe",
+          "lifecycle_action",
+          "transcript_sync",
+          "awaiting_input_probe",
+          "busy_probe",
+          "context_watermark",
+          "hook_injection"
+        ],
         "current_code_locations": [
           "src/frago/session/models.py#AgentType",
           "src/frago/agent_driver/driver.py",
           "src/frago/agent_driver/kernel_backend.py",
-          "src/frago/bin/"
+          "src/frago/ontology/projectors.py#AGENT_CAPABILITY_MATRIX"
         ],
         "description": "外部或内置 AI Agent 内核本体（Agent Cli 集合）。仅表征智能体内核身份，不内嵌会话状态、不内嵌 Tmux 句柄。"
       },

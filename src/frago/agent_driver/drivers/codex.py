@@ -956,5 +956,6 @@ register_driver(
         profile_apply=_profile_apply,
         profile_revert=_profile_revert,
         profile_protocol="responses",
+        profile_mode="file_and_env",
     )
 )

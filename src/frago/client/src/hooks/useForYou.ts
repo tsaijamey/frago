@@ -11,8 +11,10 @@
  *    输入提示都算空）。
  *
  * 三条全是从终端直接读出的结构信号，NEVER 靠「末条是回复且超过 N 分钟」这类时间规则凑。
- * 判不出的（opencode、codex、agy、非 frago 起的 tmux）一律不挂——宁可漏挂，不误挂。
- * worker 也不挂：它等的是主控，不是你。
+ * 在 Agent Ontology 体系下，待输入探针支持多级降级链（Native/Adapted 专属探针 -> Generic
+ * Heuristic 启发式兜底 -> Explicit Unsupported 显式不支持）。不仅 Claude Code，声明为
+ * fallback 级别的 agy、codex、opencode 会话在满足终端静默与助手输出完工后，亦会自动点亮
+ * 「For you」标签！worker 也不挂：它等的是主控，不是你。
  *
  * **只有一个出口**：人发出一条消息、agent 开始干活（`suppress`）。另外终端关了、客户端
  * 退出，三条不再成立，自然消失。点开、看过都不算离开，NEVER 加 Set aside / dismiss 这类

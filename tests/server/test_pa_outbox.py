@@ -113,10 +113,49 @@ def test_attach_command_errors_without_conv_key(tmp_path, monkeypatch):
     f = tmp_path / "out.md"
     f.write_text("done", encoding="utf-8")
     monkeypatch.delenv("FRAGO_CONV_KEY", raising=False)
+    monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+    monkeypatch.delenv("FRAGO_AGENT_ROLE", raising=False)
 
     result = CliRunner().invoke(agent, ["attach", "--files", json.dumps([str(f)])])
     assert result.exit_code == 1
     assert "conv_key" in result.output
+
+
+def test_attach_command_falls_back_to_session_id_and_accepts_object_items(
+    tmp_path, monkeypatch
+):
+    from frago.cli.agent_command import agent
+
+    f = tmp_path / "report.md"
+    f.write_text("done", encoding="utf-8")
+    monkeypatch.delenv("FRAGO_CONV_KEY", raising=False)
+    monkeypatch.setenv("FRAGO_SESSION_ID", "core_worker_123")
+
+    result = CliRunner().invoke(
+        agent,
+        [
+            "attach",
+            "--files",
+            json.dumps([{"path": str(f), "description": "audit report"}]),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    drained = pa_outbox.drain("core_worker_123")
+    assert len(drained) == 1
+    assert drained[0]["path"] == str(f.resolve())
+
+
+def test_coreagent_env_injects_frago_conv_key(monkeypatch):
+    from frago.agent_driver.coreagent_pane_host import merged_coreagent_env
+
+    monkeypatch.delenv("FRAGO_CONV_KEY", raising=False)
+    env = merged_coreagent_env(None, session_id="core_abc123")
+    assert env["FRAGO_SESSION_ID"] == "core_abc123"
+    assert env["FRAGO_CONV_KEY"] == "core_abc123"
+
+    monkeypatch.setenv("FRAGO_CONV_KEY", "feishu:oc_parent")
+    env_inherited = merged_coreagent_env(None, session_id="core_abc123")
+    assert env_inherited["FRAGO_CONV_KEY"] == "feishu:oc_parent"
 
 
 def test_attach_command_rejects_bad_json(monkeypatch):

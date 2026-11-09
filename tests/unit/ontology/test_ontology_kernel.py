@@ -2974,7 +2974,7 @@ class TestEmployeeLedgerProactiveSweep:
         assert after_dry is not None
         assert after_dry.active_session_ids == []
 
-        # 2. --spawn 走真实会话拉起通道，自动挂载默认技能并触发三角色舞台编排
+        # 2. --spawn 走真实会话拉起通道，自动挂载默认技能且不再触发旧版三角色舞台劫持
         monkeypatch.setattr(
             "frago.skills.skill_prompt.load_skills",
             lambda names: [
@@ -3008,9 +3008,9 @@ class TestEmployeeLedgerProactiveSweep:
         assert spawn_res.exit_code == 0, spawn_res.output
         spawn_payload = json.loads(spawn_res.output)
         assert spawn_payload["session_id"] == "real-session-cli-888"
-        assert spawn_payload["stage_orchestrated"] is True
+        assert spawn_payload["stage_orchestrated"] is False
         assert len(launched_prompts) == 1
-        assert "[STAGE_READY:" in launched_prompts[0]
+        assert "[STAGE_READY:" not in launched_prompts[0]
         assert "# how-frago-agent-runs-an-agent-os" in launched_prompts[0]
 
         after_spawn = get_post("demo-director")
@@ -3127,8 +3127,10 @@ class TestEmployeeLedgerProactiveSweep:
 
         # 新开会话注入块：三支柱齐全
         pa_block = svc.build_business_context_block("personal-assistant")
-        # 支柱 1：指挥官契约（编撰上下文任务书并调 frago agent 派给普通 worker，且写明 --params）
-        assert "【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】" in pa_block
+        # 支柱 1：岗位角色定位（领域主理人与统筹指挥者、权衡直接处理与派 Worker、向 Human 汇报）
+        assert "【岗位角色定位：领域主理人与统筹指挥者】" in pa_block
+        assert "向 Human" in pa_block
+        assert "只允许做" not in pa_block
         assert "frago agent --prompt-file" in pa_block
         assert "--params '<JSON>'" in pa_block
         # 支柱 2：本机同侪员工花名册与跨域协查协议
@@ -3189,6 +3191,477 @@ class TestEmployeeLedgerProactiveSweep:
         stock_after = get_post("stock")
         assert stock_after is not None
         assert "sess-stock-peer-001" in stock_after.active_session_ids
+
+    def test_employee_manager_contract_worker_pool_routing_and_session_employee_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """验证管理者四铁律、本岗在管 Worker 会话池路由，以及分支/交接父链的员工身份继承解析。"""
+        from frago.employee import (
+            EmployeeOntologyService,
+            resolve_employee_worker_sessions,
+            resolve_session_employee_id,
+            save_post,
+            sync_employee_ledger,
+        )
+        from frago.session import session_origin
+
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
+        monkeypatch.setattr(
+            session_origin,
+            "LAUNCH_LEDGER",
+            tmp_path / "sessions" / "launches.jsonl",
+        )
+        monkeypatch.setattr(
+            session_origin,
+            "PARENT_SCAN_CACHE",
+            tmp_path / "sessions" / "parent-scan.json",
+        )
+        session_origin.clear_cache()
+        self._build_sandbox(tmp_path)
+
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "frago-developer",
+            title="frago开发专家",
+            agent_kernel="agy",
+            description="专门负责维护和开发 frago 本体与内核架构。",
+            work_scope="管理 frago 核心源码、开发规范与测试验收。",
+        )
+        risk_rec, _ = svc.hire(
+            "risk-observer",
+            title="风险观察员",
+            agent_kernel="agy",
+            description="守护代理风险与身份痕迹脱敏审查。",
+            work_scope="审查本机代理出口与开源仓库身份痕迹。",
+        )
+
+        # 模拟风险观察员的一场主会话，以及它派出的两个已存在 Worker 会话（一个水位充裕、一个高水位）
+        emp_root_sid = "emp-risk-root-001"
+        worker_sid = "worker-scrub-901"
+        worker_full_sid = "worker-full-902"
+        branch_sid = "emp-risk-branch-002"
+
+        risk_rec.active_session_ids.append(emp_root_sid)
+        save_post(risk_rec)
+
+        # 写入 Worker 1 会话目录（24k tokens，水位充裕）
+        w_dir = tmp_path / "sessions" / "claude" / worker_sid
+        w_dir.mkdir(parents=True)
+        (w_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "session_id": worker_sid,
+                    "agent_type": "claude",
+                    "start_time": "2026-11-06T09:00:00Z",
+                    "last_activity": "2026-11-06T09:05:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (w_dir / "raw.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": "你是身份脱敏审查 Worker。任务：扫描开源仓库提交邮箱与机器名残留并输出核查表"
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "usage": {
+                            "input_tokens": 4000,
+                            "cache_read_input_tokens": 20000,
+                            "output_tokens": 1200,
+                        },
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "已完成全量提交历史扫描，共检出 0 处真实姓名或私域邮箱残留。",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        # 写入 Worker 2 会话目录（520k tokens，>= 500k 不充裕）
+        w_full_dir = tmp_path / "sessions" / "claude" / worker_full_sid
+        w_full_dir.mkdir(parents=True)
+        (w_full_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "session_id": worker_full_sid,
+                    "agent_type": "claude",
+                    "start_time": "2026-11-06T08:00:00Z",
+                    "last_activity": "2026-11-06T08:50:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (w_full_dir / "raw.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": "你是流量抓包审计 Worker。任务：核查近 7 天 request-dumps 全量请求头"
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "usage": {
+                            "input_tokens": 20000,
+                            "cache_read_input_tokens": 500000,
+                            "output_tokens": 3500,
+                        },
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "近 7 天抓包请求头已全部核验完毕，x-api-key 均已脱敏。",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        # 记录派活与分支关系到 launches.jsonl
+        session_origin.record_relation(
+            kind="dispatch",
+            child_session_id=worker_full_sid,
+            parent_session_id=emp_root_sid,
+            agent_type="claude",
+            cwd=str(tmp_path),
+        )
+        session_origin.record_relation(
+            kind="dispatch",
+            child_session_id=worker_sid,
+            parent_session_id=emp_root_sid,
+            agent_type="claude",
+            cwd=str(tmp_path),
+        )
+        session_origin.record_relation(
+            kind="branch",
+            child_session_id=branch_sid,
+            parent_session_id=emp_root_sid,
+            agent_type="agy",
+            cwd=str(tmp_path),
+        )
+
+        sync_employee_ledger("risk-observer", full_rescan=True)
+        workers = resolve_employee_worker_sessions(risk_rec)
+        assert len(workers) == 2
+        w_by_id = {w["session_id"]: w for w in workers}
+        assert "扫描开源仓库提交邮箱与机器名残留" in w_by_id[worker_sid]["title"]
+        assert "共检出 0 处真实姓名或私域邮箱残留" in w_by_id[worker_sid]["latest_conclusion"]
+        assert w_by_id[worker_sid]["context_tokens"] == 24000
+        assert w_by_id[worker_sid]["context_state"] == "low"
+        assert w_by_id[worker_full_sid]["context_tokens"] == 520000
+        assert w_by_id[worker_full_sid]["context_state"] == "high"
+
+        block = svc.build_business_context_block("risk-observer")
+        # 1. 非我职责绝对不由我来处理 + 移交同侪
+        assert "非我职责绝对不由我来处理" in block
+        assert "frago employee invoke <同侪员工id>" in block
+        assert "`frago-developer`（frago开发专家）" in block
+        # 2. 绝不自己去理解问题细节，只把参考信息的「方向」交给 Worker 做事与代审
+        assert "Employee **绝对不要自己去理解问题细节**" in block
+        assert "把**可能与问题相关的所有参考信息的「方向」**" in block
+        assert "让 Worker 帮 Employee 自身进行审核" in block
+        # 3. 本岗在管 Worker 会话池与 Context 水位路由（< 500k 充裕可续接 vs >= 500k 不充裕严禁继续硬塞）
+        assert "【本岗在管 Worker 会话池与在办任务台账" in block
+        assert f"worker_session_id=`{worker_sid}`" in block
+        assert "24.0k（< 500k · 充裕" in block
+        assert f"frago agent --resume {worker_sid} --prompt-file <新任务书.md>" in block
+        assert f"worker_session_id=`{worker_full_sid}`" in block
+        assert "520.0k（>= 500k · 不充裕" in block
+        assert f"frago session ask {worker_full_sid}" in block
+        assert f"frago agent --resume {worker_full_sid}" not in block
+        # 4. 在自身会话里向人类交付完整结果与决策建议
+        assert "人类可能根本不知道任务发生在哪个 Worker 会话或同侪会话里" in block
+        assert "在**当前你自己的会话里**直接向 Human（人类）给出完整结果与下一步决策建议" in block
+
+        # 5. resolve_session_employee_id：主会话与分支会话均解析为 risk-observer，而 Worker 会话返回 None
+        assert resolve_session_employee_id(emp_root_sid) == "risk-observer"
+        assert resolve_session_employee_id(branch_sid) == "risk-observer"
+        assert resolve_session_employee_id(worker_sid) is None
+
+    def test_recipe_builder_proactive_sweep_and_local_activation_guardrails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`recipe-builder` 横向构建岗位：不因「配方」泛化词误吞垂直业务配方，自动认领 `frago-recipe-ops` 槽位并注入本机零权限生效铁律。"""
+        from frago.employee import (
+            EmployeeOntologyService,
+            get_post,
+            load_ledger,
+            sync_employee_ledger,
+        )
+
+        emp_dir = tmp_path / "employees"
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(emp_dir))
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+
+        # 1. 沙箱准备：frago-recipe-ops 知识域与无关知识域
+        import json
+
+        ops_domain = tmp_path / "books" / "frago-recipe-ops"
+        ops_domain.mkdir(parents=True)
+        stock_domain = tmp_path / "books" / "stock-research"
+        stock_domain.mkdir(parents=True)
+        (tmp_path / "books" / "registry.json").write_text(
+            json.dumps(
+                {
+                    "frago-recipe-ops": {
+                        "purpose": "frago recipe CLI 执行规约：同步/异步模式、超时陷阱、参数传递、进度查询、长任务运行模式"
+                    },
+                    "stock-research": {
+                        "purpose": "本机证券行情与后端量化回测知识库"
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        # 2. 沙箱准备：垂直业务配方（描述中含「配方」字样，验证横向构建岗不会误吞垂直业务配方）
+        vertical_recipe = tmp_path / "recipes" / "workflows" / "a_stock_dma_board"
+        vertical_recipe.mkdir(parents=True)
+        (vertical_recipe / "recipe.md").write_text(
+            "---\nname: a_stock_dma_board\ntype: workflow\nversion: 1.0.0\n"
+            'description: "本机 A 股均线信号看板配方"\ntags: [stock, recipe]\n---\n',
+            encoding="utf-8",
+        )
+
+        # 3. 沙箱准备：data/frago-recipe-ops 与无关槽位 data/stock
+        ops_slot = tmp_path / "data" / "frago-recipe-ops" / "20261108-local-recipe-activation"
+        ops_slot.mkdir(parents=True)
+        (ops_slot / "notebook.md").write_text(
+            "# 本机配方零权限生效机制\n\n本机 local 区落盘即生效。\n",
+            encoding="utf-8",
+        )
+        other_slot = tmp_path / "data" / "stock" / "20261002-dma-report"
+        other_slot.mkdir(parents=True)
+        (other_slot / "notebook.md").write_text(
+            "# 本机 ALGO 2 信号报告\n\n本机回测 169 个交易日。\n",
+            encoding="utf-8",
+        )
+
+        # 4. 招聘 recipe-builder（不预填资源，完全靠职责词巡检认领）
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "recipe-builder",
+            title="配方构建师",
+            agent_kernel="agy",
+            description="专门帮助用户创建与迭代 frago recipe，把控配方规格、基类契约、配方页面与后端。",
+            work_scope=(
+                "结合 frago-recipe 执行规约、超时陷阱、进度查询、长任务运行模式，"
+                "负责新配方的需求拆解、撰写需求、规格定义、骨架实现、契约校验与本机运行交付"
+                "（本机配方落盘即免权限直通生效，严禁为本机配方配置外部访问权限）。"
+            ),
+        )
+        sync_employee_ledger("recipe-builder", full_rescan=True)
+
+        rec = get_post("recipe-builder")
+        assert rec is not None
+        assert rec.knowledge_domains == ["frago-recipe-ops"]
+        assert rec.recipes == []
+        assert len(rec.data_slots) == 1
+        assert rec.data_slots[0].endswith("data/frago-recipe-ops")
+
+        ledger = load_ledger("recipe-builder")
+        intents = [p["intent"] for p in ledger.intent_playbooks]
+        assert any("新建或迭代本机配方" in i for i in intents)
+        authoring_pb = next(p for p in ledger.intent_playbooks if "新建或迭代本机配方" in p["intent"])
+        assert "frago book recipe-creation" in authoring_pb["default_action"]
+        assert "严禁" in authoring_pb["default_action"] and "expose" in authoring_pb["default_action"]
+        assert "book:interactive-recipe" in authoring_pb["recipes_or_slots"]
+
+        block = svc.build_business_context_block("recipe-builder")
+        assert "配方构建权威章节与边界铁律" in block
+        assert "frago book interactive-recipe" in block
+        assert "本机配方落盘即自动生效" in block
+        assert "default_mode" in block
+        assert "严禁" in block and "expose" in block
+
+    def test_frago_developer_post_injects_server_restart_rule_not_uv_tool_install(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`frago-developer` 岗位启动语境必须注入 `uv run frago server restart` 铁律并严禁推荐 `uv tool install`。"""
+        from frago.employee import EmployeeOntologyService
+
+        emp_dir = tmp_path / "employees"
+        monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(emp_dir))
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+
+        svc = EmployeeOntologyService()
+        svc.hire(
+            "frago-developer",
+            title="frago Developer",
+            agent_kernel="agy",
+            description="help to develope `frago` and `frago-core` project and recipes, etc.",
+            knowledge_domains=["frago-dev"],
+        )
+
+        block = svc.build_business_context_block("frago-developer")
+        assert "【frago 本机服务重启与代码生效铁律】" in block
+        assert "uv run frago server restart" in block
+        assert "frago book must-system-frago" in block
+        assert "frago book better-server-restart" in block
+        assert "严禁" in block and "uv tool install" in block
+
+
+class TestAgentKernelOntologyAndProjector:
+    """Tests for Phase 1 AgentKernel ontology registration, capability matrix, and shadow projector."""
+
+    def test_agent_kernel_schema_facets_and_levels(self) -> None:
+        introspector = OntologyIntrospector()
+        errs = introspector.validate_schema_integrity()
+        assert errs == []
+
+        agent_spec = introspector.get_domain_class("AgentKernel")
+        assert agent_spec is not None
+        assert agent_spec["rigidity"] == "+R"
+        assert set(agent_spec["capability_levels"]) == {"native", "adapted", "fallback", "unsupported"}
+        assert set(agent_spec["orthogonal_facets"]) == {
+            "identity_probe",
+            "lifecycle_action",
+            "transcript_sync",
+            "awaiting_input_probe",
+            "busy_probe",
+            "context_watermark",
+            "hook_injection",
+        }
+
+    def test_agent_capability_matrix_and_query_helper(self) -> None:
+        from frago.ontology import (
+            AGENT_CAPABILITY_MATRIX,
+            CAPABILITY_ADAPTED,
+            CAPABILITY_FALLBACK,
+            CAPABILITY_NATIVE,
+            CAPABILITY_UNSUPPORTED,
+            get_agent_capability_level,
+        )
+
+        assert len(AGENT_CAPABILITY_MATRIX) == 5
+        assert get_agent_capability_level("claude", "identity_probe") == CAPABILITY_NATIVE
+        assert get_agent_capability_level("claude", "awaiting_input_probe") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("agy", "awaiting_input_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("codex", "awaiting_input_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("opencode", "awaiting_input_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("coreagent", "awaiting_input_probe") == CAPABILITY_UNSUPPORTED
+
+        # busy_probe four-level declarations
+        assert get_agent_capability_level("claude", "busy_probe") == CAPABILITY_NATIVE
+        assert get_agent_capability_level("agy", "busy_probe") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("codex", "busy_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("opencode", "busy_probe") == CAPABILITY_FALLBACK
+        assert get_agent_capability_level("coreagent", "busy_probe") == CAPABILITY_NATIVE
+
+        # Unknown agent or facet returns unsupported
+        assert get_agent_capability_level("unknown_bot", "awaiting_input_probe") == CAPABILITY_UNSUPPORTED
+        assert get_agent_capability_level("unknown_bot", "busy_probe") == CAPABILITY_UNSUPPORTED
+        assert get_agent_capability_level("claude", "nonexistent_facet") == CAPABILITY_UNSUPPORTED
+
+    def test_project_agent_kernel_dict_and_shadow_projector(self) -> None:
+        from frago.ontology import (
+            Actor,
+            Capability,
+            FivePillarShadowProjector,
+            ProjectionValidationError,
+            project_agent_kernel_dict,
+        )
+
+        proj = project_agent_kernel_dict({"agent_kernel": "agy"})
+        assert isinstance(proj.kernel, Actor)
+        assert proj.kernel.ontological_id() == "kernel:agy"
+        assert proj.capabilities["awaiting_input_probe"] == "fallback"
+        assert proj.capabilities["busy_probe"] == "adapted"
+
+        # Capabilities linked in graph
+        caps = proj.graph.query_targets(proj.kernel.ontological_id(), "has_capability")
+        assert len(caps) == 7
+        cap_types = {c.dependent_type for c in caps if isinstance(c, Capability)}
+        assert "awaiting_input_probe" in cap_types
+        assert "busy_probe" in cap_types
+
+        # Re-projecting via FivePillarShadowProjector
+        five_pillar = FivePillarShadowProjector()
+        p2 = five_pillar.project_agent_kernel({"family": "claude"})
+        assert p2.kernel.ontological_id() == "kernel:claude"
+        assert p2.capabilities["awaiting_input_probe"] == "adapted"
+
+        # Validation errors on invalid dict
+        with pytest.raises(ProjectionValidationError, match="non-empty"):
+            project_agent_kernel_dict({})
+        with pytest.raises(ProjectionValidationError, match="Unknown agent kernel"):
+            project_agent_kernel_dict({"agent_kernel": "ghost_agent"})
+
+    def test_agent_kernel_metadata_and_protocol_helpers(self) -> None:
+        from frago.ontology import (
+            get_agent_kernel_metadata,
+            list_agent_kernels,
+            runs_in_tmux,
+            supports_for_you,
+            supports_profile_binding,
+        )
+
+        all_kernels = list_agent_kernels()
+        assert set(all_kernels) == {"claude", "agy", "opencode", "codex", "coreagent"}
+
+        claude_meta = get_agent_kernel_metadata("claude")
+        assert claude_meta["name"] == "claude"
+        assert claude_meta["display_name"] == "Claude Code"
+        assert claude_meta["execution_mode"] == "tmux_tui"
+        assert claude_meta["runs_in_tmux"] is True
+        assert claude_meta["supports_resume"] is True
+        assert claude_meta["supports_branch"] is True
+        assert claude_meta["supports_for_you"] is True
+        assert claude_meta["profile_mode"] == "file_and_env"
+
+        core_meta = get_agent_kernel_metadata("coreagent")
+        assert core_meta["name"] == "coreagent"
+        assert core_meta["execution_mode"] == "headless_kernel"
+        assert core_meta["runs_in_tmux"] is False
+        assert core_meta["supports_for_you"] is False
+
+        assert runs_in_tmux("claude") is True
+        assert runs_in_tmux("agy") is True
+        assert runs_in_tmux("coreagent") is False
+
+        assert supports_profile_binding("claude") is True
+        assert supports_profile_binding("codex") is True
+        assert supports_profile_binding("coreagent") is False
+
+        assert supports_for_you("claude") is True
+        assert supports_for_you("agy") is True
+        assert supports_for_you("codex") is True
+        assert supports_for_you("opencode") is True
+        assert supports_for_you("coreagent") is False
+
+
+
 
 
 

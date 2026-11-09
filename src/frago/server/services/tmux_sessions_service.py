@@ -25,16 +25,27 @@ pane 上任何一个字变了它就往前跳，而 claude 的状态栏一直在�
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import glob
+import json
 import logging
 import os
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from frago.ontology.projectors import (
+    CAPABILITY_ADAPTED,
+    CAPABILITY_FALLBACK,
+    CAPABILITY_NATIVE,
+    CAPABILITY_UNSUPPORTED,
+    get_agent_capability_level,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -255,11 +266,20 @@ def _client_alive(command: str | None) -> bool | None:
     return command not in _SHELL_COMMANDS
 
 
-def _awaiting_input(pane_ansi: str, alive: bool | None) -> bool | None:
-    """客户端退了就不可能在等人（False）；前台问不出就判不出（None）。"""
+def _awaiting_input(pane_ansi: str, alive: bool | None, kernel: str = "claude") -> bool | None:
+    """客户端退了就不可能在等人（False）；前台问不出就判不出（None）。
+
+    优先通过驱动契约（driver.awaiting_input）多态调用，解耦服务层对单一具体驱动文件的依赖。
+    """
     if alive is not True:
         return None if alive is None else False
     try:
+        from frago.agent_driver.driver import registered_drivers
+
+        driver = registered_drivers().get(kernel)
+        if driver is not None and driver.awaiting_input is not None:
+            return driver.awaiting_input(pane_ansi)
+
         from frago.agent_driver.drivers import claude as claude_driver
 
         return claude_driver.awaiting_input(pane_ansi)
@@ -311,13 +331,210 @@ def _transcript_tail(path: Path) -> tuple[str | None, str | None, str]:
     return value
 
 
-def list_waiting() -> list[TmuxWaitingInfo]:
-    """「For you」那三条判据要的全部：开在 tmux 里、客户端活着、停在待输入态。
+def _detect_session_kernel(session_id: str) -> str:
+    """根据会话编号与记录存储判断所属内核 ('claude' | 'agy' | 'codex' | 'opencode' | 'coreagent')."""
+    if not session_id:
+        return "unknown"
+    if session_id.startswith("core_"):
+        return "coreagent"
+    if session_id.startswith("ses_"):
+        return "opencode"
 
-    **awaiting_input 只对认得出记录的 Claude Code 会话判。** opencode、codex、
-    agy 的会话在 ``~/.claude/projects`` 里没有记录，非 frago 起的 tmux 解不出
-    编号——这些一律给 None，前端一律不挂。判不出宁可漏挂，也不拿 claude 的判据去套
-    别家的界面。
+    # 优先查找统一存储 ~/.frago/sessions/<agent>/<sid>
+    try:
+        frago_root = Path.home() / ".frago" / "sessions"
+        for agent in ("agy", "codex", "opencode", "claude", "coreagent"):
+            if (frago_root / agent / session_id).is_dir():
+                return agent
+    except Exception:
+        pass
+
+    try:
+        from frago.session import record_reader
+
+        family = record_reader.detect_family(session_id)
+        if family == "claude-code":
+            return "claude"
+        return str(family)
+    except Exception:
+        if _transcript_path(session_id) is not None:
+            return "claude"
+        return "unknown"
+
+
+_FALLBACK_VERDICT_CACHE: dict[str, tuple[int, bool]] = {}
+
+
+def _resolve_record_file(session_id: str) -> Path | None:
+    """定位多内核会话记录文件（~/.frago/sessions/、agy brain、codex rollout、claude projects）。"""
+    try:
+        frago_root = Path.home() / ".frago" / "sessions"
+        for agent in ("agy", "codex", "opencode", "claude", "coreagent"):
+            candidate = frago_root / agent / session_id / "raw.jsonl"
+            if candidate.is_file():
+                return candidate
+
+        gemini_brain = (
+            Path.home()
+            / ".gemini"
+            / "antigravity-cli"
+            / "brain"
+            / session_id
+            / ".system_generated"
+            / "logs"
+            / "transcript.jsonl"
+        )
+        if gemini_brain.is_file():
+            return gemini_brain
+
+        from frago.session import codex_store
+
+        rollout = codex_store.find_rollout(session_id)
+        if rollout is not None and rollout.is_file():
+            return rollout
+
+        claude_path = _transcript_path(session_id)
+        if claude_path is not None and claude_path.is_file():
+            return claude_path
+    except Exception:
+        pass
+    return None
+
+
+def _check_last_record_is_assistant(record_file: Path, session_id: str) -> bool:
+    """确认会话最后一条实质记录是智能体输出完毕，且无未完成的工具调用。"""
+    try:
+        from frago.session import record_reader
+
+        recs = record_reader.read_records(session_id, limit=10)
+        if recs:
+            for r in reversed(recs):
+                if r.kind == "agent.say":
+                    return True
+                if r.kind in ("user.say", "tool.call", "error", "interrupt", "agent.think"):
+                    return False
+    except Exception:
+        pass
+
+    try:
+        size = record_file.stat().st_size
+        if size <= 0:
+            return False
+        read_size = min(size, 64 * 1024)
+        with record_file.open("rb") as f:
+            f.seek(size - read_size)
+            chunk = f.read(read_size).decode("utf-8", errors="ignore")
+        lines = chunk.splitlines()
+        for raw in reversed(lines):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            role = item.get("role") or item.get("type") or item.get("kind")
+            if role in ("assistant", "agent.say", "PLANNER_RESPONSE"):
+                content = item.get("content") or (item.get("message") or {}).get("content")
+                if isinstance(content, list) and content:
+                    last_block = content[-1]
+                    if isinstance(last_block, dict) and last_block.get("type") in ("tool_use", "tool_call"):
+                        return False
+                return True
+            if role in ("user", "user.say", "tool", "tool.result", "tool_call", "error"):
+                return False
+    except Exception:
+        pass
+    return False
+
+
+def _fallback_awaiting_input(
+    session_id: str,
+    pane_ansi: str,
+    client_alive: bool | None,
+    commands_entry: Any = None,
+) -> bool | None:
+    """通用启发式待输入兜底探针（第 2 级回退链）。
+
+    门禁 1：窗格非忙碌且终端/记录静默满 3.0 秒；
+    门禁 2：末条实质记录为智能体输出完毕（无未完工具调用）；
+    门禁 3：(session_id, file_mtime_ns) O(1) 内存缓存与全异常隔离防护。
+    """
+    _ = commands_entry
+    if client_alive is not True:
+        return None if client_alive is None else False
+
+    try:
+        kernel = _detect_session_kernel(session_id)
+        if _is_busy(_plain(pane_ansi), kernel=kernel):
+            return False
+
+        record_file = _resolve_record_file(session_id)
+        if record_file is None:
+            return None
+
+        st = record_file.stat()
+        file_mtime = st.st_mtime
+        file_mtime_ns = st.st_mtime_ns
+        now = time.time()
+
+        if (now - file_mtime) < 3.0:
+            return False
+
+        cached = _FALLBACK_VERDICT_CACHE.get(session_id)
+        if cached is not None and cached[0] == file_mtime_ns:
+            return cached[1]
+
+        verdict = _check_last_record_is_assistant(record_file, session_id)
+        _FALLBACK_VERDICT_CACHE[session_id] = (file_mtime_ns, verdict)
+        return verdict
+    except Exception:
+        return False
+
+
+def _fallback_tail(record_file: Path, session_id: str) -> tuple[str | None, str | None, str]:
+    """为 fallback 内核提取 (stop_reason, last_stop_at, text)，带缓存。"""
+    try:
+        st = record_file.stat()
+        key = (st.st_size, st.st_mtime)
+        hit = _VERDICT_CACHE.get(str(record_file))
+        if hit is not None and hit[0] == key:
+            return hit[1]
+
+        last_stop_at: str | None = None
+        text = ""
+        try:
+            from frago.session import record_reader
+
+            recs = record_reader.read_records(session_id, limit=5)
+            for r in reversed(recs):
+                if r.kind == "agent.say" and r.payload:
+                    text = str(r.payload.get("text") or "")
+                    if text:
+                        if r.ts:
+                            last_stop_at = datetime.fromtimestamp(r.ts / 1000.0).isoformat()
+                        break
+        except Exception:
+            pass
+
+        if not text:
+            text = _last_assistant_text(record_file)
+        if last_stop_at is None:
+            last_stop_at = datetime.fromtimestamp(st.st_mtime).isoformat()
+
+        val = ("end_turn", last_stop_at, text)
+        _VERDICT_CACHE[str(record_file)] = (key, val)
+        return val
+    except Exception:
+        return None, None, ""
+
+
+def list_waiting() -> list[TmuxWaitingInfo]:
+    """「For you」待输入判定清单，接入 Agent Ontology 三级降级回退链：
+
+    1. native/adapted（Claude）：100% 保持原有专用探针与转录判定逻辑不变；
+    2. fallback（agy / codex / opencode）：通用启发式兜底探针（3 秒静默 + 末条回复完工 + O(1) 缓存）；
+    3. unsupported / 未知：返回 None，不挂标签。
     """
     names = _session_names()
     commands = _pane_commands()
@@ -344,23 +561,67 @@ def list_waiting() -> list[TmuxWaitingInfo]:
             continue
         pane_ansi = pane_by_name.get(name, "")
         session_id = _resolve_session_id(name[len(_PREFIX) :], _plain(pane_ansi))
-        path = _transcript_path(session_id) if session_id else None
         alive = _client_alive(commands.get(name))
-        if path is None:
-            rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
+
+        if not session_id:
+            rows.append(TmuxWaitingInfo(name, None, alive, None, None, None, ""))
             continue
-        stop_reason, last_stop_at, text = _transcript_tail(path)
-        rows.append(
-            TmuxWaitingInfo(
-                name=name,
-                session_id=session_id,
-                client_alive=alive,
-                awaiting_input=_awaiting_input(pane_ansi, alive),
-                stop_reason=stop_reason,
-                last_stop_at=last_stop_at,
-                closing_text=_closing_text(text),
+
+        kernel = _detect_session_kernel(session_id)
+        cap_level = get_agent_capability_level(kernel, "awaiting_input_probe")
+
+        if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED):
+            # 第一级：Claude 专属探针（100% 保持存量行为）
+            path = _transcript_path(session_id)
+            if path is None:
+                rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
+                continue
+            stop_reason, last_stop_at, text = _transcript_tail(path)
+            rows.append(
+                TmuxWaitingInfo(
+                    name=name,
+                    session_id=session_id,
+                    client_alive=alive,
+                    awaiting_input=_awaiting_input(pane_ansi, alive, kernel=kernel),
+                    stop_reason=stop_reason,
+                    last_stop_at=last_stop_at,
+                    closing_text=_closing_text(text),
+                )
             )
-        )
+        elif cap_level == CAPABILITY_FALLBACK:
+            # 第二级：通用启发式兜底探针（agy / codex / opencode）
+            awaiting = _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+            rec_file = _resolve_record_file(session_id)
+            if rec_file is not None:
+                stop_reason, last_stop_at, text = _fallback_tail(rec_file, session_id)
+                closing = _closing_text(text)
+            else:
+                stop_reason, last_stop_at, closing = None, None, ""
+            rows.append(
+                TmuxWaitingInfo(
+                    name=name,
+                    session_id=session_id,
+                    client_alive=alive,
+                    awaiting_input=awaiting,
+                    stop_reason=stop_reason,
+                    last_stop_at=last_stop_at,
+                    closing_text=closing,
+                )
+            )
+        else:
+            # 第三级：CAPABILITY_UNSUPPORTED 或未知内核
+            _ = CAPABILITY_UNSUPPORTED
+            rows.append(
+                TmuxWaitingInfo(
+                    name=name,
+                    session_id=session_id,
+                    client_alive=alive,
+                    awaiting_input=None,
+                    stop_reason=None,
+                    last_stop_at=None,
+                    closing_text="",
+                )
+            )
     return rows
 
 
@@ -372,18 +633,28 @@ def _extract_last_assistant_from_lines(lines: list[str]) -> str:
             record = json.loads(raw)
         except (ValueError, TypeError):
             continue
-        if record.get("type") != "assistant":
+        role = record.get("type") or record.get("role") or record.get("kind")
+        if role not in ("assistant", "agent.say", "PLANNER_RESPONSE"):
             continue
-        content = (record.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        text = " ".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        ).strip()
-        if text:
-            return text
+        msg = record.get("message")
+        content = (msg.get("content") if isinstance(msg, dict) else None) or record.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            text = " ".join(
+                block.get("text", "")
+                if isinstance(block, dict)
+                else str(block)
+                for block in content
+                if (isinstance(block, dict) and block.get("type") == "text") or isinstance(block, str)
+            ).strip()
+            if text:
+                return text
+        payload = record.get("payload")
+        if isinstance(payload, dict) and payload.get("text"):
+            return str(payload["text"]).strip()
+        if isinstance(record.get("text"), str) and record["text"].strip():
+            return record["text"].strip()
     return ""
 
 
@@ -492,27 +763,52 @@ def _pane_pids() -> dict[str, list[int]]:
     return out
 
 
-def _is_busy(pane: str) -> bool:
-    """屏上还在干活吗——转轮在转、或者派出去的后台 shell 还没回来。
+_GENERIC_FALLBACK_BUSY = re.compile(
+    r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)"
+    r"|\bGenerating\b"
+    r"|(?i:running\s+stop\s+hook)"
+    r"|^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…",
+    re.MULTILINE,
+)
 
-    批量关之前必须问这一句。**光看「上次回答在几小时前」会误杀刚点开的旧会话**：
-    工作台 resume 一场昨天的会话时，它的记录最后一条本来就是昨天的，闲置时长天然
-    超过任何阈值，而那一刻它正在重建、马上就要接着干。这个坑自动回收那条路踩过，
-    注释记在 ``ui_session_runner._idle_age`` 里。
+
+def _is_busy(pane: str, kernel: str = "unknown") -> bool:
+    """按智能体本体能力矩阵（busy_probe）派发终端忙碌探测，阻断跨内核正则污染。
+
+    1. native (claude)：保留原生 claude_driver 专属正则链；
+    2. adapted (agy)：走 agy_driver.is_terminal_busy 专属探针，剔除 (45s 括号耗时正则；
+    3. fallback / unknown (codex / opencode 等)：走无副作用通用转轮与中断提示探针。
     """
+    if not pane:
+        return False
     try:
-        from frago.agent_driver.drivers import agy as agy_driver
-        from frago.agent_driver.drivers import claude as claude_driver
+        normalized = (kernel or "unknown").strip().lower()
+        cap_level = get_agent_capability_level(normalized, "busy_probe")
 
-        if claude_driver._SHELL_RUNNING.search(pane) is not None:
-            return True
-        if claude_driver._BUSY.search(pane) is not None:
-            return True
-        if agy_driver._BUSY.search(pane) is not None:
-            return True
-        return claude_driver._WORKING.matches(pane)
+        if cap_level == CAPABILITY_NATIVE and normalized == "claude":
+            from frago.agent_driver.drivers import claude as claude_driver
+
+            if claude_driver._SHELL_RUNNING.search(pane) is not None:
+                return True
+            if claude_driver._BUSY.search(pane) is not None:
+                return True
+            return claude_driver._WORKING.matches(pane)
+
+        if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED) and normalized == "agy":
+            from frago.agent_driver.drivers import agy as agy_driver
+
+            if hasattr(agy_driver, "is_terminal_busy"):
+                return agy_driver.is_terminal_busy(pane)
+            return agy_driver._BUSY.search(pane) is not None
+
+        # CAPABILITY_FALLBACK、coreagent 终端托管窗格或未知内核：
+        # 仅匹配通用转轮行与明确中断提示，绝不套用 Claude 专属的括号耗时 (45s 正则
+        return _GENERIC_FALLBACK_BUSY.search(pane) is not None
     except Exception:  # noqa: BLE001 — 判不出忙就当忙，宁可少关一个也不误杀
         return True
+
+
+check_session_terminal_busy = _is_busy
 
 
 def _managed_ids() -> set[str]:
@@ -557,24 +853,44 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
         excerpt = ""
         closing = ""
         awaiting: bool | None = None
+        kernel = "unknown"
         if session_id:
-            path = _transcript_path(session_id)
-            if path is not None:
-                # 认得出记录才是 Claude Code 会话，才套它的就绪判据
-                awaiting = _awaiting_input(pane_ansi, alive)
-                try:
-                    verdict = tc.evaluate_file(path)
-                    stop_reason = verdict.stop_reason
-                    if verdict.done and verdict.last_terminal_ts is not None:
-                        last_stop_at = verdict.last_terminal_ts.isoformat()
-                        idle_secs = max(0.0, now - verdict.last_terminal_ts.timestamp())
-                    text = verdict.final_text or ""
-                    if not text.strip():
-                        text = _last_assistant_text(path)
-                    excerpt = _excerpt(text, excerpt_chars)
-                    closing = _closing_text(text)
-                except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
-                    logger.debug("transcript probe failed for %s: %s", session_id, e)
+            kernel = _detect_session_kernel(session_id)
+            cap_level = get_agent_capability_level(kernel, "awaiting_input_probe")
+
+            if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED):
+                path = _transcript_path(session_id)
+                if path is not None:
+                    # 认得出记录才是 Claude Code 会话，才套它的就绪判据
+                    awaiting = _awaiting_input(pane_ansi, alive)
+                    try:
+                        verdict = tc.evaluate_file(path)
+                        stop_reason = verdict.stop_reason
+                        if verdict.done and verdict.last_terminal_ts is not None:
+                            last_stop_at = verdict.last_terminal_ts.isoformat()
+                            idle_secs = max(0.0, now - verdict.last_terminal_ts.timestamp())
+                        text = verdict.final_text or ""
+                        if not text.strip():
+                            text = _last_assistant_text(path)
+                        excerpt = _excerpt(text, excerpt_chars)
+                        closing = _closing_text(text)
+                    except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
+                        logger.debug("transcript probe failed for %s: %s", session_id, e)
+            elif cap_level == CAPABILITY_FALLBACK:
+                awaiting = _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+                rec_file = _resolve_record_file(session_id)
+                if rec_file is not None:
+                    try:
+                        stop_reason, last_stop_at, text = _fallback_tail(rec_file, session_id)
+                        if last_stop_at:
+                            dt = datetime.fromisoformat(last_stop_at)
+                            idle_secs = max(0.0, now - dt.timestamp())
+                        excerpt = _excerpt(text, excerpt_chars)
+                        closing = _closing_text(text)
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug("fallback tail probe failed for %s: %s", session_id, e)
+            else:
+                awaiting = None
 
         rows.append(
             TmuxSessionInfo(
@@ -586,7 +902,7 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
                 idle_secs=idle_secs,
                 excerpt=excerpt,
                 memory_mb=sum(mem.get(p, 0) for p in pids.get(name, ())),
-                busy=_is_busy(pane),
+                busy=_is_busy(pane, kernel=kernel),
                 managed=bool(session_id and session_id in managed),
                 client_alive=alive,
                 awaiting_input=awaiting,
@@ -729,10 +1045,11 @@ def find_for_session(session_id: str) -> TmuxSessionLink | None:
 
     pids = _pane_pids().get(hit, ())
     mem = _memory_mb() if pids else {}
+    kernel = _detect_session_kernel(sid)
     return TmuxSessionLink(
         name=hit,
         label=hit[len(_PREFIX) :] if hit.startswith(_PREFIX) else hit,
-        busy=_is_busy(pane),
+        busy=_is_busy(pane, kernel=kernel),
         managed=sid in _managed_ids(),
         memory_mb=sum(mem.get(p, 0) for p in pids),
     )

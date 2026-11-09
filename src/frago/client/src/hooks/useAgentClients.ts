@@ -22,6 +22,10 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 /** 上次挑的那一家记在本地。这是"我这台机器习惯用哪个"，不是跨设备的数据。 */
 const LAST_AGENT_KEY = 'frago-workbench-last-agent';
 
+export type CapabilityLevel = 'native' | 'adapted' | 'fallback' | 'unsupported';
+
+export type AgentCapabilityMatrix = Record<string, CapabilityLevel>;
+
 export interface AgentClient {
   agent_type: string;
   display_name: string;
@@ -35,6 +39,98 @@ export interface AgentClient {
   reason: string | null;
   /** 'caller' = 编号页面这边定；'claimed' = 起来之后认领，新建时要等一会儿。 */
   id_origin: 'caller' | 'claimed';
+  /** 六大正交能力切面支持等级 */
+  capabilities?: Record<string, string>;
+  /** 运行形态："tmux_tui" | "headless_kernel" */
+  execution_mode?: string;
+  /** 是否运行在 tmux 窗格中 */
+  runs_in_tmux?: boolean;
+  /** 是否支持续接 */
+  supports_resume?: boolean;
+  /** 是否支持从会话划选起分支 */
+  supports_branch?: boolean;
+  /** 是否支持 For you 待输入态感知 */
+  supports_for_you?: boolean;
+  /** 综合能力等级评级："tier1" | "tier2" | "unsupported" */
+  capability_tier?: string;
+  /** Profile 配置激活模式 */
+  profile_mode?: string;
+}
+
+/** 离线/初始默认能力矩阵兜底，与后端 AgentKernel 本体保持一致 */
+export const DEFAULT_AGENT_CAPABILITIES: Record<string, Record<string, CapabilityLevel>> = {
+  claude: {
+    identity_probe: 'native',
+    lifecycle_action: 'native',
+    transcript_sync: 'native',
+    awaiting_input_probe: 'adapted',
+    context_watermark: 'native',
+    hook_injection: 'native',
+  },
+  agy: {
+    identity_probe: 'native',
+    lifecycle_action: 'native',
+    transcript_sync: 'adapted',
+    awaiting_input_probe: 'fallback',
+    context_watermark: 'adapted',
+    hook_injection: 'adapted',
+  },
+  opencode: {
+    identity_probe: 'native',
+    lifecycle_action: 'native',
+    transcript_sync: 'native',
+    awaiting_input_probe: 'fallback',
+    context_watermark: 'adapted',
+    hook_injection: 'adapted',
+  },
+  codex: {
+    identity_probe: 'native',
+    lifecycle_action: 'native',
+    transcript_sync: 'adapted',
+    awaiting_input_probe: 'fallback',
+    context_watermark: 'adapted',
+    hook_injection: 'unsupported',
+  },
+  coreagent: {
+    identity_probe: 'native',
+    lifecycle_action: 'native',
+    transcript_sync: 'native',
+    awaiting_input_probe: 'unsupported',
+    context_watermark: 'native',
+    hook_injection: 'native',
+  },
+};
+
+/** 查询某客户端指定切面的能力等级 */
+export function getAgentCapability(
+  agent: AgentClient | undefined,
+  facet: string
+): CapabilityLevel {
+  if (!agent) return 'unsupported';
+  if (agent.capabilities && agent.capabilities[facet]) {
+    return agent.capabilities[facet] as CapabilityLevel;
+  }
+  const fallback = DEFAULT_AGENT_CAPABILITIES[agent.agent_type.toLowerCase()];
+  return (fallback && fallback[facet]) || 'unsupported';
+}
+
+/** 是否支持从该客户端的会话起分支 */
+export function supportsBranch(agent: AgentClient | undefined): boolean {
+  if (!agent) return false;
+  if (typeof agent.supports_branch === 'boolean') {
+    return agent.supports_branch;
+  }
+  return agent.agent_type === 'claude';
+}
+
+/** 是否支持 For you 待输入态感知 */
+export function supportsForYou(agent: AgentClient | undefined): boolean {
+  if (!agent) return false;
+  if (typeof agent.supports_for_you === 'boolean') {
+    return agent.supports_for_you;
+  }
+  const cap = getAgentCapability(agent, 'awaiting_input_probe');
+  return cap !== 'unsupported';
 }
 
 export interface PendingLaunch {
@@ -47,6 +143,10 @@ export interface PendingLaunch {
   /** 起会话这条路上出的错。有值就别再等了。 */
   error: string | null;
   finished: boolean;
+  /** 若由员工岗位发起，附带岗位编号、标题与主题色，供左栏启动卡即刻渲染色条。 */
+  employee_id?: string | null;
+  employee_title?: string | null;
+  employee_color?: string | null;
 }
 
 export interface AgentClientsState {
