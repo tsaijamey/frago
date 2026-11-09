@@ -12,45 +12,18 @@ services:
       - "127.0.0.1:8094:8094"
     environment:
       - HOME=/root/frago-linux-home
-      - PYTHONPATH=/workspace/src
+      # 不在全局写死 PYTHONPATH，让容器默认运行 pip 安装的 wheel 版本；
+      # 需要切换源码模式时可通过 `frago-service mode source` 或环境传参动态启用
       - FRAGO_TEST_TARGET=linux
+      - FRAGO_BROWSER_PROXY=http://host.docker.internal:7890
+      - HTTP_PROXY=http://host.docker.internal:7890
+      - HTTPS_PROXY=http://host.docker.internal:7890
+      - NO_PROXY=localhost,127.0.0.1,::1,host.docker.internal
     volumes:
       - ..:/workspace:ro
     command:
-      - python3
-      - -c
-      - |
-        import asyncio, os, threading
-        from pathlib import Path
-        from frago.server.runner import run_server
-
-        Path(os.environ["HOME"]).mkdir(parents=True, exist_ok=True)
-
-        async def pipe(r, w):
-            try:
-                while data := await r.read(65536):
-                    w.write(data)
-                    await w.drain()
-            except Exception:
-                pass
-            finally:
-                w.close()
-
-        async def handle(cr, cw):
-            try:
-                sr, sw = await asyncio.open_connection("127.0.0.1", 8093)
-            except Exception:
-                cw.close()
-                return
-            await asyncio.gather(pipe(cr, sw), pipe(sr, cw))
-
-        async def forwarder():
-            srv = await asyncio.start_server(handle, "0.0.0.0", 8094)
-            async with srv:
-                await srv.serve_forever()
-
-        threading.Thread(target=lambda: asyncio.run(forwarder()), daemon=True).start()
-        run_server(host="127.0.0.1", port=8093, auto_open=False, auto_port=False, reload=False)
+      - frago-service
+      - run
 
   wsl2:
     image: frago-support-env:py313

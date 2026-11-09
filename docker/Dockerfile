@@ -5,8 +5,7 @@ FROM --platform=linux/amd64 python:3.13-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONPATH=/workspace/src
+    PIP_NO_CACHE_DIR=1
 
 # 安装 frago 运行期最小 Python 依赖（不保留缓存，控制增量体积 <150MB）
 RUN pip install --no-cache-dir \
@@ -39,9 +38,13 @@ RUN pip install --no-cache-dir \
     "edge-tts>=7.2.8" \
     "pytest>=7.4.0"
 
-# 提供直接调用源码的 frago 命令包装器，宿主机改代码无需重建镜像
-RUN printf '#!/bin/sh\nexec python3 -m frago.cli.main "$@"\n' > /usr/local/bin/frago \
-    && chmod +x /usr/local/bin/frago
+# 预安装最新稳定版 frago-cli wheel（默认运行在 wheel 模式，自包含打包的前端静态资源与预编译二进制）
+RUN pip install --no-cache-dir "frago-cli>=1.4.301"
+
+# 安装容器服务托管与版本切换控制工具及全局模式钩子
+COPY docker/frago-service /usr/local/bin/frago-service
+COPY docker/sitecustomize.py /usr/local/lib/python3.13/site-packages/sitecustomize.py
+RUN chmod +x /usr/local/bin/frago-service
 
 WORKDIR /workspace
-CMD ["python3", "/workspace/docker/verify_env.py"]
+CMD ["frago-service", "run"]

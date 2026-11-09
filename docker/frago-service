@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""frago-service - Service supervisor & version switcher for frago-support-linux container."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from urllib import request as url_request
+
+VAR_RUN = Path("/var/run/frago-service")
+MODE_FILE = VAR_RUN / "mode"
+PID_FILE = VAR_RUN / "server.pid"
+FORWARDER_PORT = 8094
+SERVER_PORT = 8093
+
+SHUTDOWN = False
+
+
+def get_mode() -> str:
+    if MODE_FILE.exists():
+        try:
+            m = MODE_FILE.read_text(encoding="utf-8").strip()
+            if m in ("wheel", "source"):
+                return m
+        except OSError:
+            pass
+    # If PYTHONPATH was explicitly set in environment to /workspace/src, default to source
+    if "/workspace/src" in os.environ.get("PYTHONPATH", ""):
+        return "source"
+    return "wheel"
+
+
+def set_mode(mode: str) -> None:
+    VAR_RUN.mkdir(parents=True, exist_ok=True)
+    MODE_FILE.write_text(mode + "\n", encoding="utf-8")
+
+
+def get_server_pid() -> int | None:
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+            # Check if running
+            os.kill(pid, 0)
+            return pid
+        except (ValueError, OSError):
+            return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# TCP Forwarder (0.0.0.0:8094 -> 127.0.0.1:8093)
+# ---------------------------------------------------------------------------
+async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
+
+async def _handle_client(client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
+    server_r, server_w = None, None
+    for _ in range(5):
+        try:
+            server_r, server_w = await asyncio.open_connection("127.0.0.1", SERVER_PORT)
+            break
+        except Exception:
+            await asyncio.sleep(0.1)
+
+    if server_r is None or server_w is None:
+        client_w.close()
+        return
+
+    await asyncio.gather(_pipe(client_r, server_w), _pipe(server_r, client_w))
+
+
+async def _start_forwarder() -> None:
+    server = await asyncio.start_server(_handle_client, "0.0.0.0", FORWARDER_PORT)
+    async with server:
+        await server.serve_forever()
+
+
+def run_forwarder_thread() -> threading.Thread:
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_start_forwarder())
+
+    t = threading.Thread(target=_run, daemon=True, name="frago-forwarder")
+    t.start()
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Server Child Process Management
+# ---------------------------------------------------------------------------
+def spawn_server() -> subprocess.Popen:
+    mode = get_mode()
+    env = os.environ.copy()
+    if mode == "source":
+        env["PYTHONPATH"] = "/workspace/src"
+    else:
+        env.pop("PYTHONPATH", None)
+        env["PYTHONPATH"] = ""
+
+    # Ensure HOME exists
+    home = Path(env.get("HOME", "/root/frago-linux-home"))
+    home.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        "-c",
+        "from frago.server.runner import run_server; run_server(host='127.0.0.1', port=8093, auto_open=False, auto_port=False, reload=False)",
+    ]
+    proc = subprocess.Popen(cmd, env=env)
+    PID_FILE.write_text(f"{proc.pid}\n", encoding="utf-8")
+    return proc
+
+
+def cmd_run() -> None:
+    global SHUTDOWN
+    VAR_RUN.mkdir(parents=True, exist_ok=True)
+
+    # Signal handlers
+    def _sig_handler(signum, frame):
+        global SHUTDOWN
+        SHUTDOWN = True
+        pid = get_server_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
+
+    # Start forwarder
+    run_forwarder_thread()
+    print(f"[frago-service] Forwarder listening on 0.0.0.0:{FORWARDER_PORT} -> 127.0.0.1:{SERVER_PORT}")
+
+    # Supervisor loop
+    while not SHUTDOWN:
+        mode = get_mode()
+        print(f"[frago-service] Starting Frago server (mode={mode})...")
+        start_time = time.time()
+        proc = spawn_server()
+
+        while not SHUTDOWN:
+            ret = proc.poll()
+            if ret is not None:
+                # Process exited
+                print(f"[frago-service] Server process {proc.pid} exited with code {ret}")
+                break
+            time.sleep(0.5)
+
+        if SHUTDOWN:
+            print("[frago-service] Supervisor shutting down.")
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    proc.kill()
+            break
+
+        # Anti-spin debounce: if child crashed in under 1 second, wait 2 seconds before respawning
+        elapsed = time.time() - start_time
+        if elapsed < 1.0:
+            time.sleep(2.0)
+        else:
+            time.sleep(0.3)
+
+
+def cmd_restart(wait_ready: bool = True) -> None:
+    pid = get_server_pid()
+    if pid is None:
+        print("[frago-service] Server not running, supervisor will start it.")
+    else:
+        print(f"[frago-service] Signaling server process {pid} to restart...")
+        try:
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(30):
+                time.sleep(0.1)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    if wait_ready:
+        print("[frago-service] Waiting for server to become healthy on port 8094...")
+        healthy = False
+        for _ in range(40):
+            time.sleep(0.2)
+            try:
+                with url_request.urlopen(f"http://127.0.0.1:{FORWARDER_PORT}/", timeout=1) as resp:
+                    if resp.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                pass
+        if healthy:
+            print("[frago-service] Frago server restarted and responding on port 8094 (HTTP 200).")
+        else:
+            print("[frago-service] Warning: Server restarted but port 8094 not responding within 8s.")
+
+
+def cmd_mode(mode: str) -> None:
+    if mode not in ("wheel", "source"):
+        print(f"Error: Mode must be 'wheel' or 'source', got: {mode}", file=sys.stderr)
+        sys.exit(1)
+    set_mode(mode)
+    print(f"[frago-service] Mode switched to: {mode}")
+    cmd_restart(wait_ready=True)
+
+
+def cmd_switch(version: str) -> None:
+    print(f"[frago-service] Installing frago-cli=={version} via pip...")
+    res = subprocess.run([sys.executable, "-m", "pip", "install", f"frago-cli=={version}"], check=False)
+    if res.returncode != 0:
+        print(f"[frago-service] Error: pip install failed with code {res.returncode}", file=sys.stderr)
+        sys.exit(res.returncode)
+    set_mode("wheel")
+    print(f"[frago-service] Successfully installed frago-cli=={version}. Restarting server...")
+    cmd_restart(wait_ready=True)
+
+
+def cmd_status() -> None:
+    mode = get_mode()
+    pid = get_server_pid()
+    print("=== frago-service status ===")
+    print(f"Active Mode     : {mode}")
+    print(f"Forwarder Port  : {FORWARDER_PORT} -> {SERVER_PORT}")
+    print(f"Server PID      : {pid if pid else 'NOT RUNNING'}")
+
+    inspect_env = os.environ.copy()
+    if mode == "source":
+        inspect_env["PYTHONPATH"] = "/workspace/src"
+    else:
+        inspect_env.pop("PYTHONPATH", None)
+        inspect_env["PYTHONPATH"] = ""
+    try:
+        out = subprocess.check_output(
+            [sys.executable, "-c", "import frago; print(getattr(frago, '__version__', 'unknown'), frago.__file__)"],
+            env=inspect_env,
+            text=True,
+        ).strip()
+        ver, fpath = out.split(" ", 1)
+        print(f"Frago Version   : {ver}")
+        print(f"Frago Path      : {fpath}")
+    except Exception as e:
+        print(f"Frago Module    : Error inspecting ({e})")
+
+    try:
+        with url_request.urlopen(f"http://127.0.0.1:{FORWARDER_PORT}/", timeout=1) as resp:
+            print(f"HTTP 8094 Health: {resp.status} OK")
+    except Exception as e:
+        print(f"HTTP 8094 Health: Failed ({e})")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Frago support container service supervisor")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("run", help="Run supervisor and forwarder in foreground (PID 1)")
+    sub.add_parser("restart", help="Restart the background frago server")
+    sub.add_parser("status", help="Show current service and version status")
+
+    p_mode = sub.add_parser("mode", help="Switch between wheel and source mode")
+    p_mode.add_argument("mode", choices=["wheel", "source"], help="Target mode")
+
+    p_switch = sub.add_parser("switch", help="Install a specific frago-cli version and restart")
+    p_switch.add_argument("version", help="Version string, e.g. 1.4.301")
+
+    args = parser.parse_args()
+    if args.command == "run":
+        cmd_run()
+    elif args.command == "restart":
+        cmd_restart()
+    elif args.command == "mode":
+        cmd_mode(args.mode)
+    elif args.command == "switch":
+        cmd_switch(args.version)
+    elif args.command == "status":
+        cmd_status()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
