@@ -190,10 +190,10 @@ class TestEmployeeSession:
         assert "起始目录不存在" in res.json()["detail"]
         assert launches == []
 
-    def test_员工配了默认技能与舞台技能时自动嵌入并触发三角色舞台编排(
+    def test_员工配了默认技能与舞台技能时自动嵌入且不再触发旧版三角色舞台劫持(
         self, client, posts, monkeypatch, fake_home
     ):
-        """员工编制自带的 `skills` 在起会话时自动并入，含舞台技能时自动触发 `orchestrate_stage_session`。"""
+        """员工编制自带的 `skills` 在起会话时自动并入，且不再自动劫持调用旧版 `orchestrate_stage_session`。"""
         from frago.server.services import stage_orchestrator
         from frago.skills.skill_prompt import EmbeddedSkill
 
@@ -258,10 +258,9 @@ class TestEmployeeSession:
             "how-frago-agent-runs-an-agent-os",
             "frago-agent-os-twitter-demo",
         ]
-        assert len(orchestrated_calls) == 1
-        assert orchestrated_calls[0][2] == "录制新功能演示视频"
+        assert orchestrated_calls == []
         assert len(captured_prompts) == 1
-        assert "[STAGE_ORCHESTRATED]" in captured_prompts[0]
+        assert "[STAGE_ORCHESTRATED]" not in captured_prompts[0]
         assert "# Skill how-frago-agent-runs-an-agent-os" in captured_prompts[0]
 
     def test_认领型内核在异步认到真编号后自动写回员工活跃会话清单(
@@ -415,6 +414,223 @@ class TestEmployeeSession:
         assert by_id["sid-active-only"]["employee_id"] == "stock"
         assert by_id["sid-active-only"]["employee_title"] == "Stock 投研与策略专员"
         assert by_id["sid-active-only"]["employee_color"] == "amber"
+
+    def test_从员工会话起分支时携带背景信息与直接创建员工会话完全幂等(
+        self, client, monkeypatch, fake_home
+    ):
+        """从 Employee 会话（或 Employee 分支会话）起分支时，注入的 <frago-employee> 语境块、岗位默认技能、舞台编排及 active_session_ids 写回，与直接创建 Employee 会话 100% 幂等。"""
+        from frago.server.services import workbench_branch
+        from frago.skills.skill_prompt import EmbeddedSkill
+
+        emp_record = EmployeePostRecord(
+            member_post_id="stock",
+            title="Stock 投研与策略专员",
+            agent_kernel="claude",
+            cwd=str(fake_home),
+            skills=["stock-quant-skill"],
+            active_session_ids=["sid-emp-parent"],
+        )
+        saved_records: list[EmployeePostRecord] = []
+
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.get_post",
+            lambda pid: emp_record if pid == "stock" else None,
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.save_post",
+            lambda r: saved_records.append(r),
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.resolve_session_employee_id",
+            lambda sid: "stock" if sid in ("sid-emp-parent", "sid-emp-branch-1") else None,
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.load_skills",
+            lambda names: [
+                EmbeddedSkill(name=n, path=fake_home / f"{n}.md", body=f"# Skill {n}")
+                for n in names
+            ],
+        )
+        monkeypatch.setattr(
+            workbench_branch,
+            "compose",
+            lambda sid, anchor, note: workbench_branch.Branch(
+                parent_session_id=sid,
+                agent_type="claude",
+                cwd=str(fake_home),
+                anchor=anchor,
+                note=note,
+                text=workbench_branch.render(sid, anchor.text, note),
+            ),
+        )
+        monkeypatch.setattr(
+            workbench_branch,
+            "record",
+            lambda _branch, _child_sid: workbench_branch.Recorded(
+                relation=True, mark_saved=True, mark_id="mk-1"
+            ),
+        )
+
+        captured_prompts: dict[str, str] = {}
+
+        def fake_start(agent_type, cwd, prompt, *, session_id):
+            captured_prompts[session_id] = prompt
+            return workbench_new_session.PendingLaunch(
+                handle=session_id,
+                agent_type=agent_type,
+                display_name="Claude Code",
+                cwd=cwd,
+                session_id=session_id,
+            )
+
+        monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start)
+
+        # 1. 直接创建 Employee 会话
+        direct_res = client.post(
+            "/api/workbench/sessions",
+            json={
+                "agent": "claude",
+                "cwd": str(fake_home),
+                "text": "验证板块动量因子",
+                "employee": "stock",
+            },
+        )
+        assert direct_res.status_code == 201
+        direct_sid = direct_res.json()["session_id"]
+        direct_prompt = captured_prompts[direct_sid]
+
+        # 2. 从 Employee 会话起分支（不显式传 employee 字段）
+        branch_res = client.post(
+            "/api/workbench/sessions/sid-emp-parent/branch",
+            json={
+                "record_id": "rec-1",
+                "text": "DMA 信号呈多头排列",
+                "occurrence": 0,
+                "note": "验证板块动量因子",
+            },
+        )
+        assert branch_res.status_code == 201
+        branch_sid = branch_res.json()["session_id"]
+        branch_prompt = captured_prompts[branch_sid]
+
+        # 幂等断言：直接创建与分支创建的会话注入的员工背景信息头（含默认技能块 + <frago-employee> 块）字节级完全一致
+        assert "<frago-employee id='stock'>…</frago-employee>" in direct_prompt
+        assert "<frago-employee id='stock'>…</frago-employee>" in branch_prompt
+        assert "# Skill stock-quant-skill" in direct_prompt
+        assert "# Skill stock-quant-skill" in branch_prompt
+        direct_header = direct_prompt.split("\n\n验证板块动量因子")[0]
+        branch_header = branch_prompt.split("\n\n这是从另一场会话分出来的旁支问题")[0]
+        assert direct_header == branch_header
+
+        # 分支产出的新会话编号同样记入员工编制的 active_session_ids
+        assert branch_sid in emp_record.active_session_ids
+
+    def test_从会话起分支时通过at显式指定新员工则使用新员工会话配置(
+        self, client, monkeypatch, fake_home
+    ):
+        """起分支时若不指定 employee 则默认继承父会话；若通过 `@` 显式指定 employee，则使用新指定的 Employee 会话（注入新员工语境、技能、内核并绑定新员工 active_session_ids）。"""
+        from frago.server.services import workbench_branch
+        from frago.skills.skill_prompt import EmbeddedSkill
+
+        stock_record = EmployeePostRecord(
+            member_post_id="stock",
+            title="Stock 投研与策略专员",
+            agent_kernel="claude",
+            cwd=str(fake_home),
+            skills=["stock-quant-skill"],
+            active_session_ids=["sid-emp-parent"],
+        )
+        dev_record = EmployeePostRecord(
+            member_post_id="frago-developer",
+            title="frago Developer",
+            agent_kernel="codex",
+            cwd=str(fake_home),
+            skills=["frago-local-deploy"],
+            active_session_ids=[],
+        )
+
+        class _MultiEmpService:
+            def build_business_context_block(self, post_id: str) -> str:
+                return f"<frago-employee id='{post_id}'>…</frago-employee>"
+
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.EmployeeOntologyService", _MultiEmpService
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.get_post",
+            lambda pid: {
+                "stock": stock_record,
+                "frago-developer": dev_record,
+            }.get(pid),
+        )
+        monkeypatch.setattr("frago.server.routes.workbench.save_post", lambda _r: None)
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.resolve_session_employee_id",
+            lambda sid: "stock" if sid == "sid-emp-parent" else None,
+        )
+        monkeypatch.setattr(
+            "frago.server.routes.workbench.load_skills",
+            lambda names: [
+                EmbeddedSkill(name=n, path=fake_home / f"{n}.md", body=f"# Skill {n}")
+                for n in names
+            ],
+        )
+        monkeypatch.setattr(
+            workbench_branch,
+            "compose",
+            lambda sid, anchor, note: workbench_branch.Branch(
+                parent_session_id=sid,
+                agent_type="claude",
+                cwd=str(fake_home),
+                anchor=anchor,
+                note=note,
+                text=workbench_branch.render(sid, anchor.text, note),
+            ),
+        )
+        monkeypatch.setattr(
+            workbench_branch,
+            "record",
+            lambda _branch, _child_sid: workbench_branch.Recorded(
+                relation=True, mark_saved=True, mark_id="mk-2"
+            ),
+        )
+
+        captured_launches: dict[str, tuple[str, str]] = {}
+
+        def fake_start(agent_type, cwd, prompt, *, session_id):
+            captured_launches[session_id] = (agent_type, prompt)
+            return workbench_new_session.PendingLaunch(
+                handle=session_id,
+                agent_type=agent_type,
+                display_name=agent_type,
+                cwd=cwd,
+                session_id=session_id,
+            )
+
+        monkeypatch.setattr(workbench_new_session, "start_with_id", fake_start)
+
+        # 显式带 employee="frago-developer" 且 note 为空（仅靠 @frago-developer 起分支）
+        res = client.post(
+            "/api/workbench/sessions/sid-emp-parent/branch",
+            json={
+                "record_id": "rec-1",
+                "text": "前端构建与装机",
+                "occurrence": 0,
+                "note": "",
+                "employee": "frago-developer",
+            },
+        )
+        assert res.status_code == 201
+        child_sid = res.json()["session_id"]
+        agent_type, prompt = captured_launches[child_sid]
+
+        assert agent_type == "codex"
+        assert "<frago-employee id='frago-developer'>…</frago-employee>" in prompt
+        assert "<frago-employee id='stock'>" not in prompt
+        assert "# Skill frago-local-deploy" in prompt
+        assert child_sid in dev_record.active_session_ids
+        assert child_sid not in stock_record.active_session_ids
+
 
 
 class TestPlainSession:

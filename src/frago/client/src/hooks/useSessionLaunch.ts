@@ -63,6 +63,12 @@ export interface SessionLaunch {
   text: string;
   /** 认到编号没有。null = 还在认领那一档。 */
   sessionId: string | null;
+  /** 员工岗位编号（若是员工会话）。 */
+  employeeId?: string | null;
+  /** 员工岗位显示名。 */
+  employeeTitle?: string | null;
+  /** 员工岗位色板标识。 */
+  employeeColor?: string | null;
   phase: LaunchPhase;
   /** 没起来的原因，照抄服务端的说法。 */
   error: string | null;
@@ -117,6 +123,9 @@ export function useSessionLaunch({
       cwd: pending.cwd,
       text: text.trim(),
       sessionId: pending.session_id,
+      employeeId: pending.employee_id ?? null,
+      employeeTitle: pending.employee_title ?? null,
+      employeeColor: pending.employee_color ?? null,
       // 编号当场就有的（claude）直接进第二档：它没有"认领"这一段可等。
       phase: pending.session_id ? 'warming' : 'claiming',
       error: null,
@@ -203,12 +212,37 @@ export function useSessionLaunch({
   }, [launch]);
 
   // 它在界面上真的存在了（进了清单，或写下了第一笔），这块启动状态就让位。
+  // 即使此前因等待超时先转入了 failed，只要真会话随后出现在清单或记录流里，报错卡也自动让位。
   useEffect(() => {
-    if (!launch || launch.phase !== 'warming' || !launch.sessionId) return;
+    if (!launch || !launch.sessionId) return;
     const inList = sessions.some((s) => s.session_id === launch.sessionId);
     const wrote = recordsSessionId === launch.sessionId && recordCount > 0;
     if (inList || wrote) setLaunch(null);
   }, [launch, sessions, recordsSessionId, recordCount]);
+
+  // 若认领阶段因前端等待超时先进入了 failed（此时 sessionId 为 null），但后台随后完成了认领并刷进
+  // 左栏清单，在清单更新时顺手复核一次把手：一旦服务端已认到 session_id 且无 error，补齐编号并切过去，
+  // 交由上方判据自动收起假超时报错卡。
+  useEffect(() => {
+    if (!launch || launch.phase !== 'failed' || launch.sessionId) return;
+    const handle = launch.handle;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pending = await fetchPending(handle);
+        if (cancelled || !pending.session_id || pending.error) return;
+        setLaunch((cur) =>
+          cur && cur.handle === handle ? { ...cur, sessionId: pending.session_id } : cur
+        );
+        onReadyRef.current(pending.session_id);
+      } catch {
+        // 复核失败时保持原报错卡不动
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [launch, sessions]);
 
   // 等太久就按「没起来」收，不再悄悄撤掉：到点还不在清单里也没写下第一笔，失败的原因
   // 和那句话要留在人眼前，由他自己收。会话本身不受影响，该出现时还是会出现在左栏。

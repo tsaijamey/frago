@@ -112,4 +112,29 @@ describe('pageStore', () => {
     usePageStore.getState().switchPage('settings');
     expect(window.history.length).toBe(before);
   });
+
+  it('会话页选中某一场会话时，地址栏同步更新为 #/sessions/<id>；清空选中则回到 #/sessions', () => {
+    const sid = 'ac80fa5f-03dc-407a-b464-7c29ef5f456e';
+    usePageStore.getState().setWorkbenchSessionId(sid);
+    expect(usePageStore.getState().workbenchSessionId).toBe(sid);
+    expect(window.location.hash).toBe(`#/sessions/${sid}`);
+
+    usePageStore.getState().setWorkbenchSessionId(null);
+    expect(usePageStore.getState().workbenchSessionId).toBeNull();
+    expect(window.location.hash).toBe('#/sessions');
+  });
+
+  it('applyRoute 与 switchPage 支持直达 /sessions/<id> 并自动定位到对应会话', () => {
+    const sid = 'ac80fa5f-03dc-407a-b464-7c29ef5f456e';
+    window.location.hash = `#/sessions/${sid}`;
+    usePageStore.getState().applyRoute('session_workbench', sid);
+    expect(usePageStore.getState().currentPage).toBe('session_workbench');
+    expect(usePageStore.getState().workbenchSessionId).toBe(sid);
+    expect(window.location.hash).toBe(`#/sessions/${sid}`);
+
+    const otherSid = 'bf6c893b-ee4b-4705-9e96-9c345a0f376f';
+    usePageStore.getState().switchPage('session_workbench', otherSid);
+    expect(usePageStore.getState().workbenchSessionId).toBe(otherSid);
+    expect(window.location.hash).toBe(`#/sessions/${otherSid}`);
+  });
 });

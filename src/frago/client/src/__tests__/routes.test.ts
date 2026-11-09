@@ -7,7 +7,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { HOME_PAGE, parsePath, pathForPage } from '@/routes';
+import {
+  HOME_PAGE,
+  parsePath,
+  pathForPage,
+  readLocationRoute,
+  writeLocationRoute,
+} from '@/routes';
 import type { PageType } from '@/stores/pageStore';
 
 describe('pathForPage', () => {
@@ -18,6 +24,9 @@ describe('pathForPage', () => {
   });
 
   it('详情页把编号缀在同一段后面', () => {
+    expect(pathForPage('session_workbench', 'ac80fa5f-03dc-407a-b464-7c29ef5f456e')).toBe(
+      '/sessions/ac80fa5f-03dc-407a-b464-7c29ef5f456e'
+    );
     expect(pathForPage('recipe_detail', 'my-recipe')).toBe('/recipes/my-recipe');
     expect(pathForPage('todo_detail', '20260627-fix-todo-id')).toBe('/todos/20260627-fix-todo-id');
   });
@@ -40,6 +49,14 @@ describe('parsePath', () => {
   });
 
   it('两段读成详情页', () => {
+    expect(parsePath('#/sessions/ac80fa5f-03dc-407a-b464-7c29ef5f456e')).toEqual({
+      page: 'session_workbench',
+      id: 'ac80fa5f-03dc-407a-b464-7c29ef5f456e',
+    });
+    expect(parsePath('/sessions/ac80fa5f-03dc-407a-b464-7c29ef5f456e')).toEqual({
+      page: 'session_workbench',
+      id: 'ac80fa5f-03dc-407a-b464-7c29ef5f456e',
+    });
     expect(parsePath('#/recipes/my-recipe')).toEqual({ page: 'recipe_detail', id: 'my-recipe' });
     expect(parsePath('#/todos/20260627-x')).toEqual({ page: 'todo_detail', id: '20260627-x' });
     expect(parsePath('#/workspace/run-9')).toEqual({ page: 'project_detail', id: 'run-9' });
@@ -89,6 +106,7 @@ describe('parsePath', () => {
 describe('写出去再读回来', () => {
   const cases: [PageType, string | null][] = [
     ['session_workbench', null],
+    ['session_workbench', 'ac80fa5f-03dc-407a-b464-7c29ef5f456e'],
     ['desktop', null],
     ['employees', null],
     ['recipes', null],
@@ -140,5 +158,19 @@ describe('写出去再读回来', () => {
       page: 'todo_detail',
       id: 'a/b',
     });
+  });
+
+  it('浏览器直接访问 /sessions/<id> 真实路径时，readLocationRoute 读出会话详情且 writeLocationRoute 归一到 /#/sessions/<id>', () => {
+    const sid = 'ac80fa5f-03dc-407a-b464-7c29ef5f456e';
+    window.history.replaceState(null, '', `/sessions/${sid}`);
+    expect(window.location.pathname).toBe(`/sessions/${sid}`);
+    expect(window.location.hash).toBe('');
+
+    const route = readLocationRoute();
+    expect(route).toEqual({ page: 'session_workbench', id: sid });
+
+    writeLocationRoute(pathForPage(route.page, route.id), true);
+    expect(window.location.pathname).toBe('/');
+    expect(window.location.hash).toBe(`#/sessions/${sid}`);
   });
 });

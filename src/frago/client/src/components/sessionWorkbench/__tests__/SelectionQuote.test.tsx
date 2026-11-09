@@ -16,8 +16,10 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
 
 const probeSessionPath = vi.fn();
+const getEmployees = vi.fn();
 vi.mock('@/api', () => ({
   probeSessionPath: (sid: string, path: string) => probeSessionPath(sid, path),
+  getEmployees: () => getEmployees(),
 }));
 
 import SelectionQuote, {
@@ -52,6 +54,8 @@ beforeEach(() => {
     is_file: false,
     size: null,
   });
+  getEmployees.mockReset();
+  getEmployees.mockResolvedValue([]);
 });
 
 /**
@@ -515,6 +519,140 @@ describe('分支按钮', () => {
       }
     );
     expect(screen.queryByTestId('selection-quote')).toBeNull();
+  });
+
+  it('浮窗内敲 @ 弹出员工菜单（复用 DirectiveMenu）：挑中员工后转为顶部 EmployeeQuote 签并随分支交出 employee', () => {
+    useDataStore.setState({
+      employees: [
+        {
+          member_post_id: 'stock',
+          title: 'Stock 投研专员',
+          agent_kernel: 'claude',
+          description: '负责 A 股量化回测',
+          work_scope: '负责 A 股量化回测',
+          cwd: '/tmp/stock',
+          recipes: [],
+          data_slots: [],
+          schedule_ids: [],
+          active_session_ids: [],
+          allowed_commands: [],
+          skills: [],
+          color: 'amber',
+          created_at: '2026-10-01T00:00:00Z',
+          updated_at: '2026-11-01T00:00:00Z',
+        },
+        {
+          member_post_id: 'frago-developer',
+          title: 'frago Developer',
+          agent_kernel: 'agy',
+          description: '负责 frago 研发',
+          work_scope: '负责 frago 研发',
+          cwd: '/tmp/frago',
+          recipes: [],
+          data_slots: [],
+          schedule_ids: [],
+          active_session_ids: [],
+          allowed_commands: [],
+          skills: [],
+          color: 'violet',
+          created_at: '2026-10-01T00:00:00Z',
+          updated_at: '2026-11-01T00:00:00Z',
+        },
+      ] as never,
+    });
+    const { container, onBranch } = mountBodies();
+    pick(container, 0, 0, 7);
+    act(() => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    const input = screen.getByTestId('selection-branch-input') as HTMLTextAreaElement;
+    act(() => {
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: '@sto', selectionStart: 4 } });
+    });
+    const menu = screen.getByTestId('employee-menu');
+    expect(menu.getAttribute('data-directive-trigger')).toBe('@');
+    expect(screen.getAllByTestId('employee-menu-item')).toHaveLength(1);
+
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+    expect(screen.queryByTestId('employee-menu')).toBeNull();
+    const quote = screen.getByTestId('employee-quote');
+    expect(quote.getAttribute('data-employee')).toBe('stock');
+    expect(quote.getAttribute('data-directive-trigger')).toBe('@');
+    expect(input.value).toBe('');
+
+    // 不写额外文字、只靠挑中的 @employee 也能直接提交分支，指定新会话为该 employee 会话
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
+    });
+    expect(onBranch).toHaveBeenCalledWith(
+      { record_id: 'r1', text: '配方 A 跑完', occurrence: 0 },
+      '',
+      {
+        images: [],
+        documents: [],
+        skills: [],
+        employee: 'stock',
+      }
+    );
+    expect(screen.queryByTestId('selection-quote')).toBeNull();
+    useDataStore.setState({ employees: [] });
+  });
+
+  it('store.employees 初始为空时：点开分支并敲 @ 会调用 api.getEmployees() 拉取数组并列出全部员工岗位', async () => {
+    useDataStore.setState({ employees: [], employeesLoaded: false });
+    getEmployees.mockResolvedValue([
+      {
+        member_post_id: 'frago-developer',
+        title: 'frago Developer',
+        agent_kernel: 'agy',
+        description: '负责 frago 研发',
+        work_scope: '负责 frago 研发',
+        cwd: '/tmp/frago',
+        recipes: [],
+        data_slots: [],
+        schedule_ids: [],
+        active_session_ids: [],
+        allowed_commands: [],
+        skills: [],
+        color: 'violet',
+        created_at: '2026-10-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z',
+      },
+      {
+        member_post_id: 'personal-assistant',
+        title: '个人助理',
+        agent_kernel: 'claude',
+        description: '处理日常事务',
+        work_scope: '处理日常事务',
+        cwd: '/tmp/pa',
+        recipes: [],
+        data_slots: [],
+        schedule_ids: [],
+        active_session_ids: [],
+        allowed_commands: [],
+        skills: [],
+        color: 'emerald',
+        created_at: '2026-10-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z',
+      },
+    ]);
+    const { container } = mountBodies();
+    pick(container, 0, 0, 7);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('selection-branch-btn'));
+    });
+    const input = screen.getByTestId('selection-branch-input') as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: '@', selectionStart: 1 } });
+    });
+    expect(getEmployees).toHaveBeenCalled();
+    expect(screen.queryByTestId('employee-menu-empty')).toBeNull();
+    expect(screen.getAllByTestId('employee-menu-item')).toHaveLength(2);
+    useDataStore.setState({ employees: [], employeesLoaded: false });
   });
 
   it('选区起点不在正文记录里：不给分支', () => {

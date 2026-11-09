@@ -20,6 +20,7 @@ import type {
   VersionInfo,
   UpdateStatus,
 } from '@/types/pywebview';
+import type { EmployeeItem } from '@/types/api';
 import * as api from '@/api';
 import { useUIStore } from './uiStore';
 
@@ -29,6 +30,9 @@ export interface DataSlice {
   recipes: RecipeItem[];
   communityRecipes: CommunityRecipeItem[];
   skills: SkillItem[];
+  skillsLoaded?: boolean;
+  employees: EmployeeItem[];
+  employeesLoaded?: boolean;
   systemStatus: SystemStatus | null;
 
   // Data sync state (for WebSocket updates)
@@ -54,6 +58,7 @@ export interface DataSlice {
   loadConfig: () => Promise<void>;
   loadRecipes: () => Promise<void>;
   loadSkills: () => Promise<void>;
+  loadEmployees: () => Promise<void>;
   loadSystemStatus: () => Promise<void>;
   updateConfig: (config: Partial<UserConfig>) => Promise<void>;
 
@@ -61,6 +66,7 @@ export interface DataSlice {
   setRecipes: (recipes: RecipeItem[]) => void;
   setCommunityRecipes: (recipes: CommunityRecipeItem[]) => void;
   setSkills: (skills: SkillItem[]) => void;
+  setEmployees: (employees: EmployeeItem[]) => void;
   loadCommunityRecipes: () => Promise<void>;
   setVersionInfo: (info: VersionInfo) => void;
   setUpdateStatus: (status: UpdateStatus | null) => void;
@@ -98,6 +104,7 @@ export const useDataStore = create<DataSlice>((set, get) => ({
   recipes: [],
   communityRecipes: [],
   skills: [],
+  employees: [],
   systemStatus: null,
   dataVersion: 0,
   dataInitialized: false,
@@ -235,10 +242,28 @@ export const useDataStore = create<DataSlice>((set, get) => ({
   // Load skill list
   loadSkills: async () => {
     try {
+      if (typeof api.getSkills !== 'function') return;
       const skills = await api.getSkills();
-      set({ skills });
+      set({ skills, skillsLoaded: true });
     } catch (error) {
       console.error('Failed to load skills:', error);
+    }
+  },
+
+  // Load employee list
+  loadEmployees: async () => {
+    try {
+      const getEmployees = (
+        api as {
+          getEmployees?: () => Promise<EmployeeItem[] | { employees?: EmployeeItem[] }>;
+        }
+      ).getEmployees;
+      if (!getEmployees) return;
+      const res = await getEmployees();
+      const employees = Array.isArray(res) ? res : res?.employees ?? [];
+      set({ employees, employeesLoaded: true });
+    } catch (error) {
+      console.error('Failed to load employees:', error);
     }
   },
 
@@ -283,6 +308,10 @@ export const useDataStore = create<DataSlice>((set, get) => ({
 
   setSkills: (skills) => {
     set({ skills });
+  },
+
+  setEmployees: (employees) => {
+    set({ employees });
   },
 
   setVersionInfo: (versionInfo) => {

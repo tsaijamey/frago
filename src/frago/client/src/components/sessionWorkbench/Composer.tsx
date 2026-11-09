@@ -64,12 +64,12 @@ import {
 import { useSendToSession } from '@/hooks/useSendToSession';
 import type { QueuedMessageItem } from '@/hooks/useSessionQueue';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
-import PromptComposerBox, { slashQuery } from './PromptComposerBox';
+import PromptComposerBox, { directiveQuery, mentionQuery, slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
 import SendProgress from './SendProgress';
 
-export { slashQuery };
+export { directiveQuery, mentionQuery, slashQuery };
 
 export interface ComposerProps {
   sessionId: string | null;
@@ -176,7 +176,8 @@ export interface ComposerProps {
     text: string,
     images: string[],
     documents: { name: string; data: string }[],
-    skills: string[]
+    skills: string[],
+    employees?: string[]
   ) => Promise<unknown>;
   /** 从会话自有消息队列中删除指定消息。 */
   onRemoveQueueItem?: (itemId: string) => void | Promise<void>;
@@ -357,6 +358,9 @@ export default function Composer({
     skills: picked,
     addSkill,
     removeSkill,
+    employees: pickedEmployees,
+    addEmployee,
+    removeEmployee,
     sending,
     error,
     canSend,
@@ -379,7 +383,11 @@ export default function Composer({
   }, [sessionId]);
 
   const hasDraft = Boolean(
-    text.trim() || images.length > 0 || documents.length > 0 || picked.length > 0
+    text.trim() ||
+      images.length > 0 ||
+      documents.length > 0 ||
+      picked.length > 0 ||
+      pickedEmployees.length > 0
   );
   const canEnqueue = Boolean(!blocked && sessionId && onEnqueue && !enqueueing && hasDraft);
 
@@ -389,24 +397,37 @@ export default function Composer({
     const draftImages = [...images];
     const draftDocs = [...documents];
     const draftSkills = [...picked];
+    const draftEmployees = [...pickedEmployees];
     setEnqueueing(true);
     setQueueError(null);
     setPackedBanner(null);
     setText('');
     for (const sk of draftSkills) removeSkill(sk.name);
+    for (const emp of draftEmployees) removeEmployee(emp.member_post_id);
     for (const im of draftImages) removeImage(im.id);
     for (const doc of draftDocs) removeDocument(doc.id);
     try {
-      await onEnqueue(
-        draftText,
-        draftImages.map((im) => im.dataUrl),
-        draftDocs.map((d) => ({ name: d.name, data: d.dataUrl })),
-        draftSkills.map((s) => s.name)
-      );
+      if (draftEmployees.length > 0) {
+        await onEnqueue(
+          draftText,
+          draftImages.map((im) => im.dataUrl),
+          draftDocs.map((d) => ({ name: d.name, data: d.dataUrl })),
+          draftSkills.map((s) => s.name),
+          draftEmployees.map((e) => e.member_post_id)
+        );
+      } else {
+        await onEnqueue(
+          draftText,
+          draftImages.map((im) => im.dataUrl),
+          draftDocs.map((d) => ({ name: d.name, data: d.dataUrl })),
+          draftSkills.map((s) => s.name)
+        );
+      }
     } catch (e) {
       setQueueError(e instanceof Error ? e.message : String(e));
       setText(draftText);
       for (const sk of draftSkills) addSkill(sk);
+      for (const emp of draftEmployees) addEmployee(emp);
     } finally {
       setEnqueueing(false);
     }
@@ -419,11 +440,14 @@ export default function Composer({
     images,
     documents,
     picked,
+    pickedEmployees,
     setText,
     removeSkill,
+    removeEmployee,
     removeImage,
     removeDocument,
     addSkill,
+    addEmployee,
   ]);
   /**
    * 引用刚落进来时光标该停在哪。
@@ -887,6 +911,9 @@ export default function Composer({
           skills={picked}
           onAddSkill={addSkill}
           onRemoveSkill={removeSkill}
+          employees={pickedEmployees}
+          onAddEmployee={addEmployee}
+          onRemoveEmployee={removeEmployee}
           onAddFiles={takeFiles}
           attachCount={attachCount}
           canSubmit={canSend}

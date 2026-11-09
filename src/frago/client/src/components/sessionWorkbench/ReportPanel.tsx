@@ -61,8 +61,7 @@ import {
   type ObserverTail,
   type SessionObserverView,
 } from '@/hooks/useSessionObserver';
-import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
-import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { splitAllLeadingBlocks } from '@/utils/asyncCallbackBlocks';
 import {
   MAX_PANEL_WIDTH,
   MAX_SLOT_HEIGHT,
@@ -480,7 +479,7 @@ function SlotStack({
   const anchor = {
     key: 'anchor' as CoverKey,
     label: t('workbench.report.slotAnchor'),
-    value: splitSkillBlocks(splitEmployeeBlocks(state?.anchor ?? '').text).text,
+    value: splitAllLeadingBlocks(state?.anchor ?? '').text,
     at: state?.anchor_at ?? null,
   };
 

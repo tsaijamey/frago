@@ -172,4 +172,49 @@ describe('Composer 里挑 skill', () => {
     expect(screen.getByTestId('composer-outbound-skill').textContent).toBe('/git-push');
     expect(screen.getByTestId('composer-outbound').textContent).not.toContain('只有附件');
   });
+
+  it('敲 @ 弹出同一套 DirectiveMenu 员工清单，挑中换成 EmployeeQuote 并随发送带出 employees', async () => {
+    useDataStore.setState({
+      employees: [
+        {
+          member_post_id: 'stock',
+          title: 'Stock 投研专员',
+          agent_kernel: 'claude',
+          description: '负责 A 股量化回测',
+          work_scope: '负责 A 股量化回测',
+          cwd: '/tmp/stock',
+          recipes: [],
+          data_slots: [],
+          schedule_ids: [],
+          active_session_ids: [],
+          allowed_commands: [],
+          skills: [],
+          color: 'amber',
+          created_at: '2026-10-01T00:00:00Z',
+          updated_at: '2026-11-01T00:00:00Z',
+        },
+      ] as never,
+    });
+    const onSent = vi.fn();
+    render(<Composer sessionId={SID} family="codex" onSent={onSent} />);
+    type('@sto');
+    expect(screen.getByTestId('employee-menu').getAttribute('data-directive-trigger')).toBe('@');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+
+    const quote = screen.getByTestId('employee-quote');
+    expect(quote.getAttribute('data-employee')).toBe('stock');
+    expect(quote.getAttribute('data-directive-trigger')).toBe('@');
+
+    fireEvent.click(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body).toEqual({
+      text: '',
+      images: [],
+      documents: [],
+      skills: [],
+      employees: ['stock'],
+    });
+    useDataStore.setState({ employees: [] });
+  });
 });

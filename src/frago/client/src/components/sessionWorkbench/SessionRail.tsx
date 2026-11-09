@@ -63,6 +63,7 @@ import type { SessionViewsState } from '@/hooks/useSessionViews';
 import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
+import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import {
   activityTs,
   expandSessionGroupIds,
@@ -364,6 +365,16 @@ export default function SessionRail({
         }
       }
     }
+    // 路由直达或搜索选中了 24 小时之前 / 本机管理会话时，在「全部」档把该会话所属家族组
+    // 一并放入左栏，保证当前打开的会话在左栏有对应选中卡。
+    if (filter === 'all' && selectedId && !byId.has(selectedId) && allById.has(selectedId)) {
+      for (const memberId of getSessionGroupIds(sessions, selectedId)) {
+        const member = allById.get(memberId);
+        if (member && !byId.has(memberId)) {
+          byId.set(memberId, member);
+        }
+      }
+    }
     // 全部档位下，若某条交接会话今天在可见列表中，把它的交接祖先链也一并认进 byId，保证跨零点交接不断组。
     if (filter === 'all') {
       for (const s of Array.from(byId.values())) {
@@ -536,7 +547,7 @@ export default function SessionRail({
       orphanRows: orphans,
       pickedRows: picked,
     };
-  }, [sessions, pinnedRows, visible, pins, pickedGroupIds, filter]);
+  }, [sessions, pinnedRows, visible, pins, pickedGroupIds, filter, selectedId]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -579,6 +590,34 @@ export default function SessionRail({
   useEffect(() => {
     setShown(PAGE_SIZE);
   }, [filter]);
+
+  // 路由直达或搜索选中了折叠在父会话下的 worker、末尾孤立 worker 或超出首屏分页的会话时，
+  // 自动展开对应分组或扩充分页，让当前选中的卡片在左栏可见。
+  useEffect(() => {
+    if (!selectedId) return;
+    for (const [parentId, kids] of childrenOf.entries()) {
+      if (kids.some((k) => k.session_id === selectedId)) {
+        setExpandedWorkers((prev) => {
+          if (prev.has(parentId)) return prev;
+          const next = new Set(prev);
+          next.add(parentId);
+          return next;
+        });
+        return;
+      }
+    }
+    if (orphanRows.some((s) => s.session_id === selectedId)) {
+      setOrphansOpen(true);
+    }
+  }, [selectedId, childrenOf, orphanRows]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const idx = restPlaced.findIndex((s) => s.session_id === selectedId);
+    if (idx >= shown) {
+      setShown(Math.ceil((idx + 1) / PAGE_SIZE) * PAGE_SIZE);
+    }
+  }, [selectedId, restPlaced, shown]);
 
   /**
    * 摆进列表的每一行：分区标题与会话卡走同一条队。
@@ -1062,65 +1101,94 @@ export default function SessionRail({
           <div
             data-testid="rail-launch"
             data-phase={launch.phase}
+            data-employee={launch.employeeId ?? undefined}
+            data-emp-color={
+              launch.employeeId
+                ? resolveEmployeeColor(launch.employeeColor, launch.employeeId)
+                : undefined
+            }
             onClick={() => {
               if (launch.sessionId) onSelect(launch.sessionId);
             }}
-            className={`group/session relative w-full rounded-[8px] px-3 pb-[7px] pt-2 text-left transition-colors duration-200 ${
+            className={`group/session relative w-full rounded-[8px] ${
+              launch.employeeId ? 'overflow-hidden p-0' : 'px-3 pb-[7px] pt-2'
+            } text-left transition-colors duration-200 ${
               !creatingNew && (selectedId === null || selectedId === launch.sessionId)
                 ? 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]'
-                : 'hover:bg-bg-hover'
+                : launch.employeeId
+                  ? 'bg-[var(--surface-fill)] [box-shadow:inset_0_0_0_1px_var(--emp-border,var(--border-color))] hover:bg-[color-mix(in_srgb,var(--text-primary)_5%,var(--surface-fill))]'
+                  : 'hover:bg-bg-hover'
             }`}
           >
-            {/* 第 1 行：标题（首条消息或「新会话」） */}
-            <div className="flex min-w-0 items-start gap-1.5">
-              <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
-                {launch.text || t('workbench.launch.railTitle')}
-              </span>
-            </div>
-
-            {/* 第 2 行：状态行（与 SessionItem 对齐） */}
-            <div className="mt-[5px] flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                {launch.phase === 'failed' ? (
-                  <span className="inline-flex min-w-0 items-center gap-1 font-medium text-accent-error">
-                    <AlertTriangle size={11} className="shrink-0" />
-                    <span className="truncate">{t('workbench.launch.failedTitle')}</span>
-                  </span>
-                ) : launch.phase === 'claiming' ? (
-                  <>
-                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
-                      <Loader2 size={10} className="shrink-0 animate-spin text-text-muted" />
-                      <span className="truncate">{t('workbench.forYou.sending')}</span>
-                    </span>
-                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
-                  </>
-                ) : (
-                  <>
-                    <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
-                      <span
-                        aria-hidden
-                        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
-                      />
-                      <span className="truncate">{t('workbench.forYou.agentOnIt')}</span>
-                    </span>
-                    <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
-                  </>
-                )}
+            {launch.employeeId ? (
+              <div
+                data-testid="session-employee"
+                data-employee-id={launch.employeeId}
+                title={t('workbench.rail.employeeSession', {
+                  id: launch.employeeTitle || launch.employeeId,
+                })}
+                aria-label={t('workbench.rail.employeeSession', {
+                  id: launch.employeeTitle || launch.employeeId,
+                })}
+                className="si-emp-bar"
+              >
+                <span className="emp-dot" aria-hidden="true" />
+                <span className="emp-name">{launch.employeeTitle || launch.employeeId}</span>
               </div>
-              {launch.phase === 'failed' ? (
-                <button
-                  type="button"
-                  data-testid="rail-launch-dismiss"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDismissLaunch?.();
-                  }}
-                  aria-label={t('workbench.launch.dismiss')}
-                  className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary"
-                >
-                  <X size={13} />
-                </button>
-              ) : null}
+            ) : null}
+
+            <div className={launch.employeeId ? 'px-3 pb-[7px] pt-[7px]' : undefined}>
+              {/* 第 1 行：标题（首条消息或「新会话」） */}
+              <div className="flex min-w-0 items-start gap-1.5">
+                <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
+                  {launch.text || t('workbench.launch.railTitle')}
+                </span>
+              </div>
+
+              {/* 第 2 行：状态行（与 SessionItem 对齐） */}
+              <div className="mt-[5px] flex h-[17px] min-w-0 items-center justify-between gap-1.5 text-[11px] leading-[17px] text-[var(--card-meta)]">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  {launch.phase === 'failed' ? (
+                    <span className="inline-flex min-w-0 items-center gap-1 font-medium text-accent-error">
+                      <AlertTriangle size={11} className="shrink-0" />
+                      <span className="truncate">{t('workbench.launch.failedTitle')}</span>
+                    </span>
+                  ) : launch.phase === 'claiming' ? (
+                    <>
+                      <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                        <Loader2 size={10} className="shrink-0 animate-spin text-text-muted" />
+                        <span className="truncate">{t('workbench.forYou.sending')}</span>
+                      </span>
+                      <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                    </>
+                  ) : (
+                    <>
+                      <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-text-secondary">
+                        <span
+                          aria-hidden
+                          className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-primary"
+                        />
+                        <span className="truncate">{t('workbench.forYou.agentOnIt')}</span>
+                      </span>
+                      <SquareTerminal size={12} className="shrink-0" aria-hidden="true" />
+                    </>
+                  )}
+                </div>
+                {launch.phase === 'failed' ? (
+                  <button
+                    type="button"
+                    data-testid="rail-launch-dismiss"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDismissLaunch?.();
+                    }}
+                    aria-label={t('workbench.launch.dismiss')}
+                    className="shrink-0 rounded-[6px] p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary"
+                  >
+                    <X size={13} />
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

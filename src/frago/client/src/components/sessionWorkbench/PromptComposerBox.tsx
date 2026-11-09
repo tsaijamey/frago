@@ -1,10 +1,10 @@
 /**
- * PromptComposerBox — 会话详情底部输入区（Composer）与内联新建会话起始页（NewSessionModal）
- * 共用的统一提示词输入盒组件。
+ * PromptComposerBox — 工作台统一的提示词输入盒组件（Composer、NewSessionModal、SelectionQuote 共用）。
  *
- * 统一承载以下交互能力，避免两处重复维护或体验不一致：
- * 1. 行首或空白后敲 `/` 触发 `SkillMenu` 候选菜单（支持键盘上下移动、Enter/Tab 挑中、Esc 关闭）；
- * 2. 挑中的 skill 转为输入框顶部的 `SkillQuote` 圆角签，可逐个移除；
+ * 统一承载以下交互能力，避免多处重复维护或体验不一致：
+ * 1. 行首或空白后敲 `/`（挑 skill）或 `@`（挑员工）触发统一的 `DirectiveMenu` 候选菜单
+ *    （支持键盘上下移动、Enter/Tab 挑中、Esc 关闭）；
+ * 2. 挑中的员工或 skill 转为输入框顶部的 `EmployeeQuote` / `SkillQuote`（共用 `DirectiveQuote`）圆角签，可逐个移除；
  * 3. 文本域随内容自动伸缩高度（`minLines` ~ `maxLines`），支持 `Cmd/Ctrl + Enter` 提交；
  * 4. 统一处理粘贴截图/文件（拦截二进制避免乱码落入文本框）、点击选文件、拖拽文件上传。
  */
@@ -25,24 +25,21 @@ import { useTranslation } from 'react-i18next';
 import { Loader2, Paperclip, Plus, SendHorizontal } from 'lucide-react';
 import { MAX_ATTACHMENTS } from '@/hooks/useAttachments';
 import { useDataStore } from '@/stores/dataStore';
-import type { SkillItem } from '@/types/api';
-import SkillMenu, { filterSkills } from './SkillMenu';
+import type { EmployeeItem, SkillItem } from '@/types/api';
+import DirectiveMenu, {
+  directiveQuery,
+  filterEmployees,
+  filterSkills,
+  mentionQuery,
+  slashQuery,
+  type DirectiveMenuEntry,
+} from './DirectiveMenu';
+import { EmployeeQuote } from './EmployeeQuote';
 import { SkillQuote } from './SkillQuote';
 
 const LINE_PX = 24;
 
-/**
- * 光标前面那一截是不是正在点名 skill：行首或空白后的一个 `/`，后面跟着还没打空格的几个字。
- *
- * 要求 `/` 前面是行首或空白，是为了不把 `src/frago` 这种路径里的斜杠当成要挑 skill。
- * 对上了回 `/` 所在的位置与后面那几个字，对不上回 null。
- */
-export function slashQuery(text: string, caret: number): { start: number; query: string } | null {
-  const before = text.slice(0, caret);
-  const m = /(^|\s)\/([^\s/]*)$/.exec(before);
-  if (!m) return null;
-  return { start: before.length - m[2].length - 1, query: m[2] };
-}
+export { directiveQuery, mentionQuery, slashQuery };
 
 /**
  * 从剪贴板事件数据中提取文件列表：优先读取 `files`，若为空则回退遍历 `items`（`kind === 'file'`），
@@ -75,12 +72,16 @@ export interface PromptComposerBoxProps {
   skills: SkillItem[];
   onAddSkill: (skill: SkillItem) => void;
   onRemoveSkill: (name: string) => void;
+  employees?: EmployeeItem[];
+  onAddEmployee?: (employee: EmployeeItem) => void;
+  onRemoveEmployee?: (id: string) => void;
+  employeesCatalog?: EmployeeItem[];
   onAddFiles: (files: FileList | File[]) => void | Promise<void>;
   attachCount: number;
   canSubmit: boolean;
   submitting?: boolean;
   onSubmit: () => void | Promise<void>;
-  /** 技能菜单未打开时按 Esc 的回调（如浮窗内取消或收起）。 */
+  /** 技能/员工菜单未打开时按 Esc 的回调（如浮窗内取消或收起）。 */
   onCancel?: () => void;
   autoFocus?: boolean;
   disabled?: boolean;
@@ -91,7 +92,7 @@ export interface PromptComposerBoxProps {
   ariaLabelledBy?: string;
   minLines?: number;
   maxLines?: number;
-  /** `/` 技能菜单弹出方向：底部栏传 `'above'`，新建会话中部卡片传 `'below'`。 */
+  /** `/` 与 `@` 候选菜单弹出方向：底部栏传 `'above'`，新建会话中部卡片传 `'below'`。 */
   menuPlacement?: 'above' | 'below';
   /** 外部（如引用、批注打包填入）需要控制光标落点时传入。 */
   caretToRef?: MutableRefObject<number | null>;
@@ -118,6 +119,10 @@ export default function PromptComposerBox({
   skills,
   onAddSkill,
   onRemoveSkill,
+  employees = [],
+  onAddEmployee,
+  onRemoveEmployee,
+  employeesCatalog,
   onAddFiles,
   attachCount,
   canSubmit,
@@ -156,43 +161,88 @@ export default function PromptComposerBox({
     if (autoFocus) box.current?.focus();
   }, [autoFocus]);
 
-  // ── 敲 `/` 挑 skill ──
+  // ── 敲 `/` 挑 skill 与敲 `@` 挑员工（统一走 DirectiveMenu） ──
   const allSkills = useDataStore((s) => s.skills);
   const loadSkills = useDataStore((s) => s.loadSkills);
-  const [caret, setCaret] = useState(0);
-  const [menuActive, setMenuActive] = useState(0);
-  // Esc 关掉的是"这一个 `/`"：记下它的位置，光标还停在它后面就不再弹；换一个 `/` 照弹。
-  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
-  const slash = focused && !disabled ? slashQuery(text, caret) : null;
-  const menuOpen = slash !== null && slash.start !== dismissedAt;
-  const menuQuery = slash?.query ?? '';
-  const menuItems = useMemo(
-    () => (menuOpen ? filterSkills(allSkills, menuQuery) : []),
-    [menuOpen, allSkills, menuQuery]
+  const storeEmployees = useDataStore((s) => s.employees);
+  const loadEmployees = useDataStore((s) => s.loadEmployees);
+
+  const allEmployees = useMemo(
+    () => (employeesCatalog && employeesCatalog.length > 0 ? employeesCatalog : storeEmployees),
+    [employeesCatalog, storeEmployees]
   );
 
-  useEffect(() => setMenuActive(0), [menuQuery]);
+  const [caret, setCaret] = useState(0);
+  const [menuActive, setMenuActive] = useState(0);
+  // Esc 关掉的是"这一个 `/` 或 `@`"：记下它的位置，光标还停在它后面就不再弹；换一个位置照弹。
+  const [dismissedAt, setDismissedAt] = useState<string | null>(null);
 
-  const slashGone = slash === null;
+  const rawDirective = focused && !disabled ? directiveQuery(text, caret) : null;
+  const directive =
+    rawDirective && (rawDirective.trigger === '/' || Boolean(onAddEmployee))
+      ? rawDirective
+      : null;
+  const directiveId = directive ? `${directive.trigger}:${directive.start}` : null;
+  const menuOpen = directive !== null && directiveId !== dismissedAt;
+  const menuQuery = directive?.query ?? '';
+
+  const menuEntries = useMemo<DirectiveMenuEntry<SkillItem | EmployeeItem>[]>(() => {
+    if (!menuOpen || !directive) return [];
+    if (directive.trigger === '/') {
+      return filterSkills(allSkills, menuQuery).map((item) => ({
+        key: item.name,
+        trigger: '/',
+        name: item.name,
+        description: item.description,
+        raw: item,
+      }));
+    }
+    return filterEmployees(allEmployees, menuQuery).map((item) => ({
+      key: item.member_post_id,
+      trigger: '@',
+      name: item.member_post_id,
+      title: item.title,
+      badge: item.agent_kernel,
+      description: item.work_scope || item.description,
+      raw: item,
+    }));
+  }, [menuOpen, directive, allSkills, allEmployees, menuQuery]);
+
+  useEffect(() => setMenuActive(0), [directive?.trigger, menuQuery]);
+
+  const directiveGone = directive === null;
   useEffect(() => {
-    if (slashGone) setDismissedAt(null);
-  }, [slashGone]);
+    if (directiveGone) setDismissedAt(null);
+  }, [directiveGone]);
 
-  const menuWanted = menuOpen && allSkills.length === 0;
+  const skillsWanted = menuOpen && directive?.trigger === '/' && allSkills.length === 0;
   useEffect(() => {
-    if (menuWanted) void loadSkills();
-  }, [menuWanted, loadSkills]);
+    if (skillsWanted) void loadSkills();
+  }, [skillsWanted, loadSkills]);
 
-  const pickSkill = useCallback(
-    (skill: SkillItem) => {
-      if (!slash) return;
-      const next = text.slice(0, slash.start) + text.slice(caret);
-      onAddSkill(skill);
-      caretTo.current = slash.start;
-      setCaret(slash.start);
+  const employeesWanted =
+    menuOpen &&
+    directive?.trigger === '@' &&
+    Boolean(onAddEmployee) &&
+    allEmployees.length === 0;
+  useEffect(() => {
+    if (employeesWanted) void loadEmployees();
+  }, [employeesWanted, loadEmployees]);
+
+  const pickDirectiveEntry = useCallback(
+    (entry: DirectiveMenuEntry<SkillItem | EmployeeItem>) => {
+      if (!directive) return;
+      const next = text.slice(0, directive.start) + text.slice(caret);
+      if (entry.trigger === '/') {
+        onAddSkill(entry.raw as SkillItem);
+      } else if (onAddEmployee) {
+        onAddEmployee(entry.raw as EmployeeItem);
+      }
+      caretTo.current = directive.start;
+      setCaret(directive.start);
       onChangeText(next);
     },
-    [slash, text, caret, onAddSkill, onChangeText, caretTo]
+    [directive, text, caret, onAddSkill, onAddEmployee, onChangeText, caretTo]
   );
 
   useLayoutEffect(() => {
@@ -235,19 +285,19 @@ export default function PromptComposerBox({
       if (menuOpen && !e.nativeEvent.isComposing) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          setDismissedAt(slash?.start ?? null);
+          setDismissedAt(directiveId);
           return;
         }
-        if (menuItems.length) {
+        if (menuEntries.length) {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
             const step = e.key === 'ArrowDown' ? 1 : -1;
-            setMenuActive((i) => (i + step + menuItems.length) % menuItems.length);
+            setMenuActive((i) => (i + step + menuEntries.length) % menuEntries.length);
             return;
           }
           if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === 'Tab') {
             e.preventDefault();
-            pickSkill(menuItems[Math.min(menuActive, menuItems.length - 1)]);
+            pickDirectiveEntry(menuEntries[Math.min(menuActive, menuEntries.length - 1)]);
             return;
           }
         }
@@ -262,8 +312,19 @@ export default function PromptComposerBox({
         if (canSubmit) void onSubmit();
       }
     },
-    [canSubmit, onSubmit, onCancel, menuOpen, menuItems, menuActive, slash, pickSkill]
+    [
+      canSubmit,
+      onSubmit,
+      onCancel,
+      menuOpen,
+      menuEntries,
+      menuActive,
+      directiveId,
+      pickDirectiveEntry,
+    ]
   );
+
+  const hasDirectives = employees.length > 0 || skills.length > 0;
 
   return (
     <div
@@ -271,13 +332,27 @@ export default function PromptComposerBox({
         focused || submitting ? 'border-text-muted' : 'border-border-strong'
       } ${className}`}
     >
-      {menuOpen ? (
-        <SkillMenu
-          items={menuItems}
-          active={Math.min(menuActive, Math.max(menuItems.length - 1, 0))}
-          onPick={pickSkill}
-          onHover={setMenuActive}
+      {menuOpen && directive ? (
+        <DirectiveMenu
+          trigger={directive.trigger}
+          entries={menuEntries}
+          activeIndex={Math.min(menuActive, Math.max(menuEntries.length - 1, 0))}
           placement={menuPlacement}
+          titleText={
+            directive.trigger === '@'
+              ? t('workbench.employees.menuTitle')
+              : t('workbench.skills.menuTitle')
+          }
+          testId={directive.trigger === '@' ? 'employee-menu' : 'skill-menu'}
+          itemTestId={directive.trigger === '@' ? 'employee-menu-item' : 'skill-menu-item'}
+          emptyTestId={directive.trigger === '@' ? 'employee-menu-empty' : 'skill-menu-empty'}
+          emptyText={
+            directive.trigger === '@'
+              ? t('workbench.employees.noMatch')
+              : t('workbench.skills.noMatch')
+          }
+          onSelect={pickDirectiveEntry}
+          onHover={setMenuActive}
         />
       ) : null}
 
@@ -296,8 +371,23 @@ export default function PromptComposerBox({
 
         {headerSlot ? <div className="mb-1.5">{headerSlot}</div> : null}
 
-        {skills.length ? (
-          <div data-testid={`${idPrefix}-skills`} className="mb-1.5 flex flex-wrap gap-1.5">
+        {hasDirectives ? (
+          <div
+            data-testid={`${idPrefix}-skills`}
+            data-has-employees={employees.length > 0 ? 'yes' : 'no'}
+            data-has-skills={skills.length > 0 ? 'yes' : 'no'}
+            className="mb-1.5 flex flex-wrap gap-1.5"
+          >
+            {employees.map((emp) => (
+              <EmployeeQuote
+                key={emp.member_post_id}
+                id={emp.member_post_id}
+                title={emp.title}
+                kernel={emp.agent_kernel}
+                description={emp.work_scope || emp.description}
+                onRemove={onRemoveEmployee ? () => onRemoveEmployee(emp.member_post_id) : undefined}
+              />
+            ))}
             {skills.map((skill) => (
               <SkillQuote
                 key={skill.name}

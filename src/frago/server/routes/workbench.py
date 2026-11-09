@@ -32,6 +32,7 @@ from frago.employee import (
     default_employee_color,
     get_post,
     list_posts,
+    resolve_session_employee_id,
     save_post,
 )
 from frago.server.services import (
@@ -387,13 +388,6 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
         effective_skills,
         request.text,
     )
-    if stage_orchestrator.is_stage_session(effective_skills, prompt):
-        prompt = await asyncio.to_thread(
-            stage_orchestrator.orchestrate_stage_session,
-            launch_id,
-            prompt,
-            request.text,
-        )
 
     try:
         launch = await asyncio.to_thread(
@@ -422,6 +416,28 @@ async def create_workbench_session(request: CreateSessionRequest) -> dict[str, A
     return _launch_payload(launch)
 
 
+def _resolve_parent_employee_record(sid: str):
+    """解析父会话 `sid` 归属的员工岗位记录（用于从 Employee 会话起分支或交接时保持员工语境幂等）。"""
+    clean_sid = str(sid or "").strip()
+    if not clean_sid:
+        return None
+    employee_id = resolve_session_employee_id(clean_sid)
+    if not employee_id:
+        with workbench_new_session._lock:
+            for launch in workbench_new_session._launches.values():
+                if launch.employee_id and (
+                    launch.session_id == clean_sid or launch.handle == clean_sid
+                ):
+                    employee_id = launch.employee_id
+                    break
+    if not employee_id:
+        return None
+    try:
+        return get_post(employee_id)
+    except ValueError:
+        return None
+
+
 @router.post("/workbench/sessions/{sid}/handoff", status_code=201)
 async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     """把这场会话交接给一场新会话：同一家、同一目录，第一句话由服务端拼好。
@@ -447,6 +463,19 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
     ) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
+    employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
+    if employee_record is not None:
+        effective_skills = [
+            str(sk).strip() for sk in employee_record.skills if str(sk).strip()
+        ]
+        wrapped_text = _with_skills(
+            _with_employee_context(handoff.text, employee_record.member_post_id),
+            effective_skills,
+            "",
+        )
+        if wrapped_text != handoff.text:
+            handoff = replace(handoff, text=wrapped_text)
+
     try:
         launch = await asyncio.to_thread(
             workbench_new_session.start_with_id,
@@ -457,6 +486,19 @@ async def handoff_workbench_session(sid: str) -> dict[str, Any]:
         )
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if employee_record is not None:
+        await asyncio.to_thread(
+            workbench_new_session.bind_employee,
+            launch.handle,
+            employee_record.member_post_id,
+        )
+        if (
+            launch.session_id
+            and launch.session_id not in employee_record.active_session_ids
+        ):
+            employee_record.active_session_ids.append(launch.session_id)
+            await asyncio.to_thread(save_post, employee_record)
 
     old_title, new_title = await asyncio.to_thread(
         workbench_handoff.name_pair, sid, launch, handoff=handoff
@@ -516,7 +558,7 @@ class BranchRequest(BaseModel):
     """``POST /workbench/sessions/{sid}/branch`` 的请求体：从主线哪段原文分出去、人写的那句话。
 
     ``record_id`` / ``text`` / ``occurrence`` 与标注同一套（见 ``workbench_marks``）；
-    ``images`` / ``documents`` / ``skills`` 与新建会话及发送接口同一套。
+    ``images`` / ``documents`` / ``skills`` / ``employee`` 与新建会话及发送接口同一套。
     """
 
     record_id: str
@@ -526,6 +568,7 @@ class BranchRequest(BaseModel):
     images: list[str] = []
     documents: list[Document] = []
     skills: list[str] = []
+    employee: str = ""
 
 
 @router.post("/workbench/sessions/{sid}/branch", status_code=201)
@@ -549,6 +592,7 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
             request.occurrence,
             request.note,
             skills=request.skills,
+            employee=request.employee,
             has_attachments=bool(request.images or request.documents),
         )
     except workbench_branch.BranchRequestInvalid as e:
@@ -575,7 +619,36 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
     base_note = request.note.strip() or note
     prompt_note = build_prompt_with_attachments(base_note, image_paths, doc_paths)
     rendered = workbench_branch.render(sid, anchor.text, prompt_note)
-    prompt = _with_skills(rendered, request.skills, request.note)
+
+    explicit_employee = request.employee.strip()
+    if explicit_employee:
+        try:
+            employee_record = await asyncio.to_thread(get_post, explicit_employee)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if employee_record is None:
+            raise HTTPException(
+                status_code=400, detail=f"员工编号 '{explicit_employee}' 不存在"
+            )
+        if employee_record.agent_kernel in ("claude", "codex", "opencode", "agy"):
+            branch = replace(branch, agent_type=employee_record.agent_kernel)
+    else:
+        employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
+
+    effective_skills: list[str] = []
+    for sk in (*(employee_record.skills if employee_record is not None else ()), *request.skills):
+        cleaned_sk = str(sk).strip()
+        if cleaned_sk and cleaned_sk not in effective_skills:
+            effective_skills.append(cleaned_sk)
+
+    prompt = _with_skills(
+        _with_employee_context(
+            rendered,
+            employee_record.member_post_id if employee_record is not None else "",
+        ),
+        effective_skills,
+        request.note,
+    )
     if prompt != branch.text:
         branch = replace(branch, text=prompt)
 
@@ -589,6 +662,19 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
         )
     except workbench_agents.AgentUnavailable as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if employee_record is not None:
+        await asyncio.to_thread(
+            workbench_new_session.bind_employee,
+            launch.handle,
+            employee_record.member_post_id,
+        )
+        if (
+            launch.session_id
+            and launch.session_id not in employee_record.active_session_ids
+        ):
+            employee_record.active_session_ids.append(launch.session_id)
+            await asyncio.to_thread(save_post, employee_record)
 
     recorded: bool | None = None
     mark_saved: bool | None = None
@@ -1273,8 +1359,43 @@ class SendRequest(BaseModel):
     images: list[str] = []
     documents: list[Document] = []
     skills: list[str] = []
+    employees: list[str] = []
     cwd: str | None = None
     wait: bool = True
+
+
+def _apply_employees_and_skills(
+    base_prompt: str,
+    user_text: str,
+    skills: list[str],
+    employees: list[str],
+) -> tuple[str, list[str]]:
+    """把 `@` 挑中的员工语境块、岗位自带技能与 `/` 挑中的技能依次合并进提示词。"""
+    effective_skills: list[str] = []
+    cleaned_employees: list[str] = []
+    for emp_id in employees or []:
+        cid = str(emp_id or "").strip()
+        if cid and cid not in cleaned_employees:
+            cleaned_employees.append(cid)
+            try:
+                rec = get_post(cid)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if rec is None:
+                raise HTTPException(status_code=400, detail=f"员工编号 '{cid}' 不存在")
+            for sk in rec.skills:
+                csk = str(sk).strip()
+                if csk and csk not in effective_skills:
+                    effective_skills.append(csk)
+    for sk in skills or []:
+        csk = str(sk).strip()
+        if csk and csk not in effective_skills:
+            effective_skills.append(csk)
+    prompt = base_prompt
+    for cid in reversed(cleaned_employees):
+        prompt = _with_employee_context(prompt, cid)
+    prompt = _with_skills(prompt, effective_skills, user_text)
+    return prompt, effective_skills
 
 
 @router.post("/workbench/sessions/{sid}/send")
@@ -1303,6 +1424,7 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         and not request.images
         and not request.documents
         and not request.skills
+        and not request.employees
     ):
         raise HTTPException(status_code=400, detail="要发的话和附件不能都是空的")
 
@@ -1311,10 +1433,11 @@ async def send_to_session(sid: str, request: SendRequest) -> dict:
         doc_paths = save_uploaded_documents([d.model_dump() for d in request.documents], sid)
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
-    prompt = _with_skills(
+    prompt, _ = _apply_employees_and_skills(
         build_prompt_with_attachments(request.text, image_paths, doc_paths),
-        request.skills,
         request.text,
+        request.skills,
+        request.employees,
     )
 
     try:
@@ -1407,6 +1530,7 @@ async def enqueue_workbench_session_message(sid: str, request: SendRequest) -> d
         and not request.images
         and not request.documents
         and not request.skills
+        and not request.employees
     ):
         raise HTTPException(status_code=400, detail="要入队的话和附件不能都是空的")
 
@@ -1421,10 +1545,11 @@ async def enqueue_workbench_session_message(sid: str, request: SendRequest) -> d
     except ImageUploadError as e:
         raise HTTPException(status_code=400, detail=f"附件没收下：{e}") from e
 
-    prompt = _with_skills(
+    prompt, effective_skills = _apply_employees_and_skills(
         build_prompt_with_attachments(request.text, image_paths, doc_paths),
-        request.skills,
         request.text,
+        request.skills,
+        request.employees,
     )
 
     try:
@@ -1433,7 +1558,7 @@ async def enqueue_workbench_session_message(sid: str, request: SendRequest) -> d
             sid,
             text=request.text,
             prompt=prompt,
-            skills=request.skills,
+            skills=effective_skills,
             image_paths=image_paths,
             doc_paths=doc_paths,
             cwd=request.cwd,
@@ -1891,15 +2016,19 @@ async def transcribe_desktop_voice(request: DesktopVoiceTranscribeRequest) -> di
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    text = str(asr_res.get("text") or "").strip()
+    raw_text = str(asr_res.get("text") or "").strip()
+    text = stage_orchestrator.clean_whisper_transcription(raw_text)
     if not text or not request.auto_send:
-        return {
+        resp_payload: dict[str, Any] = {
             "text": text,
             "language": asr_res.get("language"),
             "model": asr_res.get("model"),
             "dispatched": False,
             "session_id": request.session_id,
         }
+        if (raw_text and not text) or asr_res.get("hallucination_filtered"):
+            resp_payload["reason"] = "hallucination_filtered"
+        return resp_payload
 
     try:
         dispatch_res = await asyncio.to_thread(
@@ -1921,6 +2050,21 @@ async def transcribe_desktop_voice(request: DesktopVoiceTranscribeRequest) -> di
         "employee": dispatch_res["employee"],
         "status": dispatch_res["status"],
     }
+
+
+@router.get("/workbench/desktop-voice/active-session")
+async def get_active_desktop_voice_session() -> dict[str, Any]:
+    """查询 desktop-operator 最近活跃的存量会话 ID，并自动在当前服务进程中预挂载旁路语音提炼器。"""
+    from frago.server.services import stage_orchestrator
+
+    res = await asyncio.to_thread(
+        stage_orchestrator.resolve_active_desktop_operator_session,
+        ensure_summarizer=True,
+    )
+    active_sid = res.get("session_id")
+    if isinstance(active_sid, str) and active_sid.strip():
+        _ensure_watching(active_sid.strip())
+    return res
 
 
 @router.post("/workbench/desktop-voice/dispatch")

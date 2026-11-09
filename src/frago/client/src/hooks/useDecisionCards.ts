@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import type { DecisionAnswer, DecisionCardHost } from '@/components/sessionWorkbench/DecisionCard';
+import { splitAllLeadingBlocks } from '@/utils/asyncCallbackBlocks';
 import { isCardAnswer } from '@/utils/decisionBlock';
 
 /** 队友经结对中继转来的请求以它开头：那是队友的话，不是主人在答卡片。 */
@@ -24,7 +25,7 @@ const RELAY_PREFIX = '【frago team】';
  * 这条记录是不是人在主会话里说的一句话，是的话取出原文。
  *
  * 算：直接打进来的发言、agent 正忙时打进去的插话。不算：斜杠命令（那是在操作会话，不是
- * 回话）、子 agent 里的记录、队友经中继转来的请求。
+ * 回话）、子 agent 里的记录、队友经中继转来的请求、后台 Worker / 同侪员工的纯异步回传。
  */
 export function humanReplyText(r: WorkbenchRecord): string | null {
   if (r.agent_path.length) return null;
@@ -37,8 +38,11 @@ export function humanReplyText(r: WorkbenchRecord): string | null {
     text = p.body;
   }
   if (typeof text !== 'string' || !text.trim()) return null;
-  if (text.startsWith(RELAY_PREFIX)) return null;
-  return text;
+  const { text: withoutBlocks, callbacks } = splitAllLeadingBlocks(text);
+  if (callbacks.length > 0 && !withoutBlocks.trim()) return null;
+  const effective = withoutBlocks.trim() ? withoutBlocks : text;
+  if (effective.startsWith(RELAY_PREFIX)) return null;
+  return effective;
 }
 
 /** 这条记录是否可能承载一张主会话的交互卡（`agent.say` 或产出 UI 组件的 `tool.result`）。 */

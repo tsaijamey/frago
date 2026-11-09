@@ -75,8 +75,10 @@ import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
-import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
-import { splitSkillBlocks } from '@/utils/skillBlocks';
+import {
+  isPureAsyncCallbackRecord,
+  splitAllLeadingBlocks,
+} from '@/utils/asyncCallbackBlocks';
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
@@ -1036,9 +1038,8 @@ interface WatcherSlice {
 
 function cleanGoalText(raw?: string | null): string | null {
   if (typeof raw !== 'string') return null;
-  const withoutEmp = splitEmployeeBlocks(raw).text;
-  const withoutSkill = splitSkillBlocks(withoutEmp).text;
-  const trimmed = withoutSkill.trim();
+  const withoutBlocks = splitAllLeadingBlocks(raw).text;
+  const trimmed = withoutBlocks.trim();
   if (!trimmed || trimmed.startsWith('【answer】')) return null;
   return trimmed;
 }
@@ -1381,7 +1382,7 @@ export default function RecordStream({
       <div
         key={record.id}
         data-record-id={record.id}
-        data-record-kind={record.kind}
+        data-record-kind={isPureAsyncCallbackRecord(record) ? 'async.callback' : record.kind}
         {...{ [RECORD_BODY_ATTR]: '' }}
         className="min-w-0"
       >
@@ -2097,8 +2098,9 @@ export default function RecordStream({
                 let replyCount = 0;
                 for (const r of slice.records) {
                   if (
-                    r.kind === 'user.say' ||
-                    (r.kind === 'context.inject' && r.payload.channel === 'queued_command')
+                    (r.kind === 'user.say' ||
+                      (r.kind === 'context.inject' && r.payload.channel === 'queued_command')) &&
+                    !isPureAsyncCallbackRecord(r)
                   ) {
                     promptCount += 1;
                   } else if (r.kind === 'tool.call') {

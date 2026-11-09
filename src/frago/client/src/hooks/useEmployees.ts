@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import i18n from '@/i18n';
+import { useDataStore } from '@/stores/dataStore';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -295,6 +296,7 @@ export function useEmployeeList(enabled = true): EmployeeListState {
       .then((list) => {
         if (!alive) return;
         setEmployees(list);
+        useDataStore.getState().setEmployees(list);
         setError(null);
       })
       .catch((e: unknown) => {

@@ -157,6 +157,9 @@ export default function SessionWorkbenchPage() {
   const [timelineOpen, setTimelineOpen] = useState(false);
   /** 中栏是否正在展示内联「新建会话」起始页（替代原模态弹窗）。 */
   const [creatingNew, setCreatingNew] = useState(false);
+  useEffect(() => {
+    if (selectedId) setCreatingNew(false);
+  }, [selectedId]);
   /** 刚复制了哪一场的续接命令：页头「…」菜单里那一项换成勾选，1.5 秒后复原。 */
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const handleCopy = useCallback(
@@ -651,6 +654,7 @@ export default function SessionWorkbenchPage() {
           ...(extras?.images?.length ? { images: extras.images } : {}),
           ...(extras?.documents?.length ? { documents: extras.documents } : {}),
           ...(extras?.skills?.length ? { skills: extras.skills } : {}),
+          ...(extras?.employee ? { employee: extras.employee } : {}),
         });
       } catch (e) {
         show({ state: 'failed', reason: e instanceof Error ? e.message : String(e) });

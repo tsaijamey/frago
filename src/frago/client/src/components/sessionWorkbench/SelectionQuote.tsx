@@ -56,7 +56,8 @@ import { useTranslation } from 'react-i18next';
 import { Eye, GitBranch, Layers, Quote, X } from 'lucide-react';
 import * as api from '@/api';
 import { useAttachments } from '@/hooks/useAttachments';
-import type { SkillItem } from '@/types/api';
+import { useDataStore } from '@/stores/dataStore';
+import type { EmployeeItem, SkillItem } from '@/types/api';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import PromptComposerBox from './PromptComposerBox';
 import { pathCandidateOf } from './pathLike';
@@ -307,6 +308,7 @@ export interface BranchExtras {
   images?: string[];
   documents?: { name: string; data: string }[];
   skills?: string[];
+  employee?: string;
 }
 
 export interface SelectionQuoteProps {
@@ -356,6 +358,7 @@ export default function SelectionQuote({
   const notingRef = useRef(false);
   const [note, setNote] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [employees, setEmployees] = useState<EmployeeItem[]>([]);
   const {
     images,
     documents,
@@ -366,7 +369,7 @@ export default function SelectionQuote({
     count,
   } = useAttachments();
   const [draggingFile, setDraggingFile] = useState(false);
-  /** 分支那句话空着且没挑 skill / 附件就提交了：提示必填，不起会话。 */
+  /** 分支那句话空着且没挑 skill / 员工 / 附件就提交了：提示必填，不起会话。 */
   const [required, setRequired] = useState(false);
   // 按住拖的过程中不弹按钮：选区每动一下都会来一次通知，那时候摆出来它只会挡住正在选的字。
   const dragging = useRef(false);
@@ -380,6 +383,24 @@ export default function SelectionQuote({
 
   const removeSkill = useCallback((name: string) => {
     setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
+
+  const addEmployee = useCallback(
+    (emp: EmployeeItem) => {
+      if (noting === 'branch') {
+        setEmployees([emp]);
+      } else {
+        setEmployees((prev) =>
+          prev.some((e) => e.member_post_id === emp.member_post_id) ? prev : [...prev, emp]
+        );
+      }
+      setRequired(false);
+    },
+    [noting]
+  );
+
+  const removeEmployee = useCallback((id: string) => {
+    setEmployees((prev) => prev.filter((e) => e.member_post_id !== id));
   }, []);
 
   const dropEcho = useCallback(() => {
@@ -396,6 +417,7 @@ export default function SelectionQuote({
     notingRef.current = false;
     setNote('');
     setSkills([]);
+    setEmployees([]);
     clearAttachments();
     setDraggingFile(false);
     setRequired(false);
@@ -528,18 +550,24 @@ export default function SelectionQuote({
     clear();
   };
 
-  /** 暂存落定：想法去掉首尾空白，留空就是不写；若挑了 skill 一并记入想法前缀。 */
+  /** 暂存落定：想法去掉首尾空白，留空就是不写；若挑了员工或 skill 一并记入想法前缀。 */
   const stack = () => {
+    const employeePrefix = employees.map((e) => `@${e.member_post_id}`).join(' ');
     const skillPrefix = skills.map((s) => `/${s.name}`).join(' ');
-    const combined = [skillPrefix, note.trim()].filter(Boolean).join(' ');
+    const combined = [employeePrefix, skillPrefix, note.trim()].filter(Boolean).join(' ');
     if (anchor && onStack) onStack(anchor, combined);
     done();
   };
 
-  /** 分支落定：那句话、挑中的 skill 或附件至少有一项，全空只提示、不起会话。 */
+  /** 分支落定：那句话、挑中的员工 / skill 或附件至少有一项，全空只提示、不起会话。 */
   const branch = () => {
     const said = note.trim();
-    const hasExtras = images.length > 0 || documents.length > 0 || skills.length > 0;
+    const selectedEmployeeId = employees[0]?.member_post_id;
+    const hasExtras =
+      images.length > 0 ||
+      documents.length > 0 ||
+      skills.length > 0 ||
+      Boolean(selectedEmployeeId);
     if (!said && !hasExtras) {
       setRequired(true);
       return;
@@ -550,6 +578,7 @@ export default function SelectionQuote({
           images: images.map((im) => im.dataUrl),
           documents: documents.map((d) => ({ name: d.name, data: d.dataUrl })),
           skills: skills.map((s) => s.name),
+          ...(selectedEmployeeId ? { employee: selectedEmployeeId } : {}),
         });
       } else {
         onBranch(anchor, said);
@@ -562,10 +591,14 @@ export default function SelectionQuote({
     notingRef.current = true;
     setNote('');
     setSkills([]);
+    setEmployees([]);
     clearAttachments();
     setDraggingFile(false);
     setRequired(false);
     setNoting(mode);
+    const store = useDataStore.getState();
+    if (store.employees.length === 0) void store.loadEmployees();
+    if (store.skills.length === 0) void store.loadSkills();
   };
 
   const handleDragOver = (e: DragEvent<HTMLFormElement>) => {
@@ -652,6 +685,9 @@ export default function SelectionQuote({
             skills={skills}
             onAddSkill={addSkill}
             onRemoveSkill={removeSkill}
+            employees={employees}
+            onAddEmployee={addEmployee}
+            onRemoveEmployee={removeEmployee}
             onAddFiles={async (files) => {
               await addFiles(files);
               setRequired(false);
@@ -660,7 +696,12 @@ export default function SelectionQuote({
             canSubmit={
               noting === 'stack'
                 ? true
-                : Boolean(note.trim().length > 0 || count > 0 || skills.length > 0)
+                : Boolean(
+                    note.trim().length > 0 ||
+                      count > 0 ||
+                      skills.length > 0 ||
+                      employees.length > 0
+                  )
             }
             onSubmit={noting === 'branch' ? branch : stack}
             onCancel={noting === 'branch' ? done : stack}

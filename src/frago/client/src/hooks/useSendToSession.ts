@@ -33,7 +33,7 @@ import {
   type AttachedDoc,
   type AttachedImage,
 } from '@/hooks/useAttachments';
-import type { SkillItem } from '@/types/api';
+import type { EmployeeItem, SkillItem } from '@/types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -84,6 +84,12 @@ export interface SendToSessionState {
   /** 挑一个 skill。已经挑过的不重复加。 */
   addSkill: (skill: SkillItem) => void;
   removeSkill: (name: string) => void;
+  /**
+   * 人敲 `@` 挑中的员工岗位，发出去时带岗位编号（`employees`），服务端把员工业务语境嵌进这句话。
+   */
+  employees: EmployeeItem[];
+  addEmployee: (employee: EmployeeItem) => void;
+  removeEmployee: (id: string) => void;
   sending: boolean;
   /** 失败原因，照抄服务端的说法。成功或重新发送时清掉。 */
   error: string | null;
@@ -116,6 +122,7 @@ interface OutboundPayload {
   images: AttachedImage[];
   documents: AttachedDoc[];
   skills: SkillItem[];
+  employees: EmployeeItem[];
 }
 
 /** 把服务端的说法取出来。FastAPI 的报错落在 `detail` 里，取不到就退回状态码。 */
@@ -134,7 +141,8 @@ export async function sendToSession(
   text: string,
   images: string[],
   documents: { name: string; data: string }[] = [],
-  skills: string[] = []
+  skills: string[] = [],
+  employees: string[] = []
 ): Promise<SendResult> {
   let res: Response;
   try {
@@ -143,7 +151,13 @@ export async function sendToSession(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, images, documents, skills }),
+        body: JSON.stringify({
+          text,
+          images,
+          documents,
+          skills,
+          ...(employees.length ? { employees } : {}),
+        }),
       }
     );
   } catch (e) {
@@ -208,6 +222,7 @@ export function useSendToSession(
 ): SendToSessionState {
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [employees, setEmployees] = useState<EmployeeItem[]>([]);
   const { images, documents, addFiles, removeImage, removeDocument, clear, restore } =
     useAttachments();
   const [sending, setSending] = useState(false);
@@ -228,7 +243,11 @@ export function useSendToSession(
   // text/images 停在点发送那一刻，拿它判"人有没有打新的字"必然判错。
   const boxEmpty = useRef(true);
   boxEmpty.current =
-    !text && images.length === 0 && documents.length === 0 && skills.length === 0;
+    !text &&
+    images.length === 0 &&
+    documents.length === 0 &&
+    skills.length === 0 &&
+    employees.length === 0;
   // 在飞的那一单的编号，以及"哪一单已经被送达信号清过了"。两者一比就知道接口回来时
   // 还该不该清——不比的话，人在放行后新打的字会被上一单的返回抹掉。
   const ticket = useRef(0);
@@ -275,6 +294,7 @@ export function useSendToSession(
     }
     setText('');
     setSkills([]);
+    setEmployees([]);
     clear();
     setSending(false);
     setError(null);
@@ -286,6 +306,14 @@ export function useSendToSession(
   }, []);
   const removeSkill = useCallback((name: string) => {
     setSkills((prev) => prev.filter((s) => s.name !== name));
+  }, []);
+  const addEmployee = useCallback((employee: EmployeeItem) => {
+    setEmployees((prev) =>
+      prev.some((e) => e.member_post_id === employee.member_post_id) ? prev : [...prev, employee]
+    );
+  }, []);
+  const removeEmployee = useCallback((id: string) => {
+    setEmployees((prev) => prev.filter((e) => e.member_post_id !== id));
   }, []);
 
   /**
@@ -316,6 +344,7 @@ export function useSendToSession(
       images.length > 0 ||
       documents.length > 0 ||
       skills.length > 0 ||
+      employees.length > 0 ||
       failed !== null);
 
   /**
@@ -335,6 +364,7 @@ export function useSendToSession(
       if (boxEmpty.current) {
         setText(payload.text);
         setSkills(payload.skills);
+        setEmployees(payload.employees);
         restore(payload.images, payload.documents);
         setFailedState(null);
       } else {
@@ -369,7 +399,8 @@ export function useSendToSession(
           payload.text,
           payload.images.map((im) => im.dataUrl),
           payload.documents.map((d) => ({ name: d.name, data: d.dataUrl })),
-          payload.skills.map((s) => s.name)
+          payload.skills.map((s) => s.name),
+          payload.employees.map((e) => e.member_post_id)
         );
         if (!mounted.current || currentSessionId.current !== targetSessionId) return;
         // 服务端说这一单是排队投进去的（那一场正忙），信封当场换成「排队中」。
@@ -435,12 +466,13 @@ export function useSendToSession(
 
   const send = useCallback(async () => {
     if (!enabled || !sessionId || sending) return;
-    const payload: OutboundPayload = { text: text.trim(), images, documents, skills };
+    const payload: OutboundPayload = { text: text.trim(), images, documents, skills, employees };
     const hasDraft =
       Boolean(payload.text) ||
       payload.images.length > 0 ||
       payload.documents.length > 0 ||
-      payload.skills.length > 0;
+      payload.skills.length > 0 ||
+      payload.employees.length > 0;
     if (!hasDraft) {
       if (failed) {
         const retryPayload = failed;
@@ -452,9 +484,22 @@ export function useSendToSession(
     // 点了发送就撤不回了，输入框当场交还给人。那句话改由上方的信封替它站着。
     setText('');
     setSkills([]);
+    setEmployees([]);
     clear();
     await dispatch(payload);
-  }, [enabled, sessionId, sending, failed, text, images, documents, skills, clear, dispatch]);
+  }, [
+    enabled,
+    sessionId,
+    sending,
+    failed,
+    text,
+    images,
+    documents,
+    skills,
+    employees,
+    clear,
+    dispatch,
+  ]);
 
   const retry = useCallback(async () => {
     if (!enabled || !sessionId || sending) return;
@@ -471,7 +516,7 @@ export function useSendToSession(
     async (value: string) => {
       const body = value.trim();
       if (!enabled || !sessionId || !body) return;
-      await dispatch({ text: body, images: [], documents: [], skills: [] });
+      await dispatch({ text: body, images: [], documents: [], skills: [], employees: [] });
     },
     [enabled, sessionId, dispatch]
   );
@@ -487,6 +532,9 @@ export function useSendToSession(
     skills,
     addSkill,
     removeSkill,
+    employees,
+    addEmployee,
+    removeEmployee,
     sending,
     error,
     canSend,

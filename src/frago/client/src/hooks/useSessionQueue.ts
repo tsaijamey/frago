@@ -4,9 +4,8 @@
  * 作用：
  * 1. 不在 agent 执行过程中把消息直接塞进其原生运行队列（避免打断当前执行流），而是堆积到
  *    frago 会话自有的持久化队列中；
- * 2. 当且仅当会话已 stop 且检测到 stop 轮次出现后，其 `[end, end-5]`（最近 6 轮）会话都没有
- *    未作答的交互卡（避免因 hook 导致含交互卡的那一轮被补充会话遮挡），自动注入队列里最早的
- *    那一条消息，并从队列中删除该消息。
+ * 2. 当且仅当会话已 stop 且检测到含实际内容（如 assistant response 文本）的 stop 轮次出现后，
+ *    其最后一轮实际内容会话没有未作答的交互卡，自动注入队列里最早的那一条消息，并从队列中删除该消息。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,8 +22,8 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-/** 检测 `[end, end-5]` 共 6 轮会话是否包含交互卡。 */
-export const TAIL_TURN_WINDOW = 6;
+/** 仅检测最后一轮实际内容会话是否包含交互卡。 */
+export const TAIL_TURN_WINDOW = 1;
 
 const BOOKKEEPING_KINDS = new Set([
   'call.envelope',
@@ -37,6 +36,7 @@ export interface QueuedMessageItem {
   id: string;
   text: string;
   skills: string[];
+  employees?: string[];
   attachments: number;
   created_at: number;
 }
@@ -104,9 +104,17 @@ export function isCardAnswerRecord(record: WorkbenchRecord): boolean {
   return typeof text === 'string' && isCardAnswer(text.trimStart());
 }
 
+/** 判断单条主会话记录是否为含实际文本内容的 assistant 回复（`agent.say` 非空文本）。 */
+function hasSubstantiveAssistantResponse(record: WorkbenchRecord): boolean {
+  if (record.agent_path.length > 0) return false;
+  if (record.kind !== 'agent.say') return false;
+  const text = typeof record.payload.text === 'string' ? record.payload.text : '';
+  return Boolean(text.trim());
+}
+
 /**
- * 将主会话记录按「轮次」切分，保留每个有效回复轮次（含 `agent.say` 或交互卡），
- * 使末尾索引 `-1` 对应 `end` 轮、`-6` 对应 `end-5` 轮。
+ * 将主会话记录按「轮次」切分，保留每个有效回复轮次（含非空 `agent.say` 或交互卡），
+ * 使末尾索引 `-1` 对应最后一轮实际内容会话。
  */
 export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][] {
   const turns: WorkbenchRecord[][] = [];
@@ -147,11 +155,12 @@ export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][
     }
 
     current.push(rec);
-    if (rec.kind === 'agent.say') {
+    if (hasSubstantiveAssistantResponse(rec)) {
       currentHasSay = true;
       currentSayGroup = rec.group_id ?? null;
       currentHasAssistantStep = true;
     } else if (
+      rec.kind === 'agent.say' ||
       rec.kind === 'agent.think' ||
       rec.kind === 'tool.call' ||
       rec.kind === 'tool.result'
@@ -165,12 +174,12 @@ export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][
   }
 
   return turns.filter((turn) =>
-    turn.some((r) => r.kind === 'agent.say' || recordHasInteractiveCard(r))
+    turn.some((r) => hasSubstantiveAssistantResponse(r) || recordHasInteractiveCard(r))
   );
 }
 
 /**
- * 检查末尾 `[end, end-5]`（共 6 轮）会话中是否存在未作答的交互卡。
+ * 检查最后一轮实际内容会话（默认 `window = 1`）中是否存在未作答的交互卡。
  */
 export function hasInteractiveCardInTailTurns(
   records: WorkbenchRecord[],
@@ -193,7 +202,7 @@ export function hasInteractiveCardInTailTurns(
 }
 
 /**
- * 检测会话末尾是否已出现完成的 stop 轮次，返回该轮末尾实质记录的 `id`。
+ * 检测会话末尾是否已出现完成的 stop 轮次（最后一轮必须是实际内容如 assistant response 文本），返回该轮末尾实质记录的 `id`。
  */
 export function detectStopTurnId(records: WorkbenchRecord[]): string | null {
   let lastSubstantive: WorkbenchRecord | null = null;
@@ -209,7 +218,10 @@ export function detectStopTurnId(records: WorkbenchRecord[]): string | null {
     lastSubstantive = rec;
   }
   if (!lastSubstantive) return null;
-  if (lastSubstantive.kind === 'agent.say' || recordHasInteractiveCard(lastSubstantive)) {
+  if (
+    hasSubstantiveAssistantResponse(lastSubstantive) ||
+    recordHasInteractiveCard(lastSubstantive)
+  ) {
     return lastSubstantive.id || 'stop';
   }
   return null;
@@ -230,14 +242,21 @@ export async function enqueueSessionMessage(
   text: string,
   images: string[] = [],
   documents: { name: string; data: string }[] = [],
-  skills: string[] = []
+  skills: string[] = [],
+  employees: string[] = []
 ): Promise<{ sid: string; item: QueuedMessageItem; items: QueuedMessageItem[] }> {
   const res = await fetch(
     `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/queue`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, images, documents, skills }),
+      body: JSON.stringify({
+        text,
+        images,
+        documents,
+        skills,
+        ...(employees.length ? { employees } : {}),
+      }),
     }
   );
   if (!res.ok) {
@@ -379,10 +398,18 @@ export function useSessionQueue(
       text: string,
       images: string[] = [],
       documents: { name: string; data: string }[] = [],
-      skills: string[] = []
+      skills: string[] = [],
+      employees: string[] = []
     ) => {
       if (!sessionId) return null;
-      const res = await enqueueSessionMessage(sessionId, text, images, documents, skills);
+      const res = await enqueueSessionMessage(
+        sessionId,
+        text,
+        images,
+        documents,
+        skills,
+        employees
+      );
       if (activeSessionRef.current === sessionId) {
         setItems(res.items ?? []);
       }

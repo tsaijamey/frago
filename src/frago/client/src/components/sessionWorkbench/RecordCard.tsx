@@ -61,8 +61,11 @@ import {
   stripImageGridBlocks,
 } from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
-import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
-import { splitSkillBlocks } from '@/utils/skillBlocks';
+import {
+  splitAllLeadingBlocks,
+  type AsyncCallbackBlockItem,
+} from '@/utils/asyncCallbackBlocks';
+import { type EmployeeBlockItem } from '@/utils/employeeBlocks';
 import { EmployeeQuotes } from './EmployeeQuote';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
@@ -466,16 +469,19 @@ function TextShell({
   label,
   labelTone,
   meta,
+  trailing,
   tone = '',
   toneOpenOnly = false,
   collapsible = false,
   defaultOpen = true,
+  testId,
   children,
 }: ShellProps & {
   icon?: ReactNode;
   label: string;
   labelTone?: string;
   meta?: ReactNode;
+  trailing?: ReactNode;
   tone?: string;
   /**
    * 收起来时不上纸色，摊开了才上。
@@ -488,6 +494,7 @@ function TextShell({
   toneOpenOnly?: boolean;
   collapsible?: boolean;
   defaultOpen?: boolean;
+  testId?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const effectiveTone = toneOpenOnly && !open ? '' : tone;
@@ -497,6 +504,7 @@ function TextShell({
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
+      data-testid={testId}
       className={`min-w-0 rounded-[8px] px-3 ${padded ? 'py-2' : 'py-0.5'} ${effectiveTone}`}
     >
       <CardHead
@@ -505,6 +513,7 @@ function TextShell({
         label={label}
         labelTone={labelTone}
         meta={meta}
+        trailing={trailing}
         open={open}
         onToggle={collapsible ? () => setOpen((v) => !v) : undefined}
       />
@@ -705,6 +714,221 @@ function Mono({ text }: { text: string }) {
 }
 
 // ── 十五种形态的内容区 ────────────────────────────────────────────────
+const ASYNC_CALLBACK_MODE_KEY: Record<string, string> = {
+  new: 'workbench.record.asyncCallback.mode.new',
+  resume: 'workbench.record.asyncCallback.mode.resume',
+  send: 'workbench.record.asyncCallback.mode.send',
+  invoke: 'workbench.record.asyncCallback.mode.invoke',
+  ask: 'workbench.record.asyncCallback.mode.ask',
+};
+
+/**
+ * 下属 Worker 或同侪员工后台跑完后的异步回传卡片。
+ *
+ * 物理存储上它经终端 / SDK 注入父会话落为 `user.say`，但语义上它是「子任务 / 同侪协查交付报告」
+ * 而非人类开口发言：
+ * - 外壳走 `TASK_CARD_NEUTRAL`（完成态中性实线卡片，失败态报错红），不套「你说」气泡；
+ * - 头部呈现回传角色（Worker / 同侪员工）、目标会话 / `@employeeId`、派发模式、单号与执行状态；
+ * - 多行任务书摘要默认收成单行标题预览，按需点开看完整派发诉求；
+ * - 交付正文用 `<Rich>` 渲染 Markdown（标题、列表、表格、代码块），并剥掉尾部的管理者复核样板提示词。
+ */
+function AsyncCallbackCard({
+  record,
+  callback,
+  employees,
+  skills,
+  reminders,
+  queueChip,
+}: {
+  record: WorkbenchRecord;
+  callback: AsyncCallbackBlockItem;
+  employees?: EmployeeBlockItem[];
+  skills?: string[];
+  reminders?: string[];
+  queueChip?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  const isEmployee = callback.kind === 'employee';
+  const failed = callback.status === 'failed' || (callback.exitCode !== null && callback.exitCode !== 0);
+  const label = isEmployee
+    ? t('workbench.record.asyncCallback.employeeLabel')
+    : t('workbench.record.asyncCallback.workerLabel');
+  const modeKey = ASYNC_CALLBACK_MODE_KEY[callback.mode];
+  const modeLabel = modeKey ? t(modeKey) : callback.mode;
+
+  const statusObj = TASK_STATUS[failed ? 'failed' : 'completed'];
+  const statusText = statusObj ? t(statusObj.key) : callback.status;
+  const statusWithCode =
+    failed && callback.exitCode !== null
+      ? `${statusText} · ${t('workbench.record.exitCode', { code: callback.exitCode })}`
+      : statusText;
+
+  const summaryLabel = isEmployee
+    ? t('workbench.record.asyncCallback.originalRequest')
+    : t('workbench.record.asyncCallback.taskSummary');
+  const hasExpandableSummary =
+    Boolean(callback.taskSummary) &&
+    (callback.taskSummary.includes('\n') || callback.taskSummary.trim() !== callback.taskTitle.trim());
+
+  const metaNode = (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {callback.employeeId ? (
+        <span
+          data-testid="async-callback-employee"
+          className="shrink-0 font-mono text-text-primary"
+        >
+          @{callback.employeeId}
+        </span>
+      ) : null}
+      {callback.targetSessionId ? (
+        <span
+          data-testid="async-callback-session"
+          className="truncate font-mono text-text-muted"
+          title={callback.targetSessionId}
+        >
+          {callback.targetSessionId}
+        </span>
+      ) : null}
+      {modeLabel ? <span className="shrink-0 text-text-muted">· {modeLabel}</span> : null}
+      {callback.agentKernel ? (
+        <span className="shrink-0 font-mono text-text-dim">· {callback.agentKernel}</span>
+      ) : null}
+    </span>
+  );
+
+  const trailingNode = (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {callback.jobId ? (
+        <span
+          data-testid="async-callback-job"
+          className="font-mono text-[11px] text-text-dim"
+        >
+          {callback.jobId}
+        </span>
+      ) : null}
+      {statusObj ? (
+        <span
+          data-testid="async-callback-status"
+          className={`rounded-full px-2 py-[1px] text-[11px] ${statusObj.tone}`}
+        >
+          {statusWithCode}
+        </span>
+      ) : null}
+      {queueChip}
+    </span>
+  );
+
+  return (
+    <TextShell
+      record={record}
+      testId="async-callback-card"
+      icon={<Bot size={12} />}
+      label={label}
+      labelTone={
+        failed
+          ? `text-[11px] font-semibold ${ERR_TEXT}`
+          : 'text-[11px] font-semibold text-text-secondary'
+      }
+      tone={statusObj?.card ?? TASK_CARD_NEUTRAL}
+      meta={metaNode}
+      trailing={trailingNode}
+      collapsible
+      defaultOpen
+    >
+      {employees?.length ? <EmployeeQuotes employees={employees} /> : null}
+      {skills?.length ? <SkillQuotes names={skills} /> : null}
+      {callback.taskSummary ? (
+        <div
+          data-testid="async-callback-summary"
+          className="mb-2 rounded-[6px] border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px]"
+        >
+          {hasExpandableSummary ? (
+            <button
+              type="button"
+              onClick={() => setSummaryOpen((v) => !v)}
+              aria-expanded={summaryOpen}
+              data-testid="async-callback-summary-toggle"
+              className="flex w-full min-w-0 items-center gap-1.5 text-left text-text-secondary hover:text-text-primary"
+            >
+              <ChevronRight
+                size={11}
+                className={`shrink-0 text-text-muted transition-transform duration-200 ${
+                  summaryOpen ? 'rotate-90' : ''
+                }`}
+              />
+              <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
+              <span className="min-w-0 flex-1 truncate">{callback.taskTitle}</span>
+            </button>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
+              <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
+              <span className="min-w-0 flex-1 truncate">{callback.taskTitle || callback.taskSummary}</span>
+            </div>
+          )}
+          {hasExpandableSummary && summaryOpen ? (
+            <div
+              data-testid="async-callback-summary-full"
+              className="mt-1.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words border-t border-border-color pt-1.5 text-[12px] leading-[1.65] text-text-secondary"
+            >
+              {callback.taskSummary}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div data-testid="async-callback-body" className="min-w-0">
+        <Rich text={callback.resultBody} />
+      </div>
+      {reminders?.length ? <Reminders items={reminders} /> : null}
+    </TextShell>
+  );
+}
+
+function AsyncCallbackCards({
+  record,
+  callbacks,
+  employees,
+  skills,
+  reminders,
+  queueChip,
+}: {
+  record: WorkbenchRecord;
+  callbacks: AsyncCallbackBlockItem[];
+  employees?: EmployeeBlockItem[];
+  skills?: string[];
+  reminders?: string[];
+  queueChip?: ReactNode;
+}) {
+  if (callbacks.length === 1) {
+    return (
+      <AsyncCallbackCard
+        record={record}
+        callback={callbacks[0]}
+        employees={employees}
+        skills={skills}
+        reminders={reminders}
+        queueChip={queueChip}
+      />
+    );
+  }
+  return (
+    <div className="min-w-0 space-y-2">
+      {callbacks.map((cb, idx) => (
+        <AsyncCallbackCard
+          key={cb.jobId || idx}
+          record={record}
+          callback={cb}
+          employees={idx === 0 ? employees : undefined}
+          skills={idx === 0 ? skills : undefined}
+          reminders={idx === callbacks.length - 1 ? reminders : undefined}
+          queueChip={idx === 0 ? queueChip : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
 /**
  * 你说的那句话。
  *
@@ -720,11 +944,26 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const mode = str(p, 'input_mode');
   const command = str(p, 'command');
   const reminders = list(p, 'reminders').filter((r): r is string => typeof r === 'string' && !!r);
-  // 会话页点名的员工语境与 skill 整篇嵌在正文前面，只摆成引用卡片；发的图以路径拼在正文尾巴上，
-  // 摘出来摆成缩略图。正文只留人写的话。
-  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'text'));
-  const { text: said, skills } = splitSkillBlocks(afterEmp);
-  const { text, images: attached } = splitAttachedImages(said);
+  // 会话页点名的员工语境、skill 与后台异步回传块嵌在正文前面，各自拆成独立卡片；发的图以路径
+  // 拼在正文尾巴上，摘出来摆成缩略图。正文只留人写的话。
+  const { text: afterBlocks, employees, skills, callbacks } = splitAllLeadingBlocks(str(p, 'text'));
+  const { text, images: attached } = splitAttachedImages(afterBlocks);
+
+  const hasHumanContent = Boolean(
+    text.trim() || command || images.length || attached.length
+  );
+
+  if (callbacks.length > 0 && !hasHumanContent) {
+    return (
+      <AsyncCallbackCards
+        record={record}
+        callbacks={callbacks}
+        employees={employees}
+        skills={skills}
+        reminders={reminders}
+      />
+    );
+  }
 
   // 敲在输入框里是常态，说出来等于没说。只有"当时不是直接打字"才值得标一句：插话是
   // 趁 agent 在忙时打进去的，接口发起的那几条根本不是人坐在这儿敲的。
@@ -732,7 +971,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const inline = !!command && isInlineArg(text);
   const cardAnswer = command ? null : parseCardAnswer(text);
 
-  return (
+  const userShell = (
     <TextShell
       record={record}
       icon={command ? <Terminal size={12} /> : <User size={12} />}
@@ -770,6 +1009,21 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       {reminders.length ? <Reminders items={reminders} /> : null}
     </TextShell>
   );
+
+  if (callbacks.length > 0) {
+    return (
+      <div className="min-w-0 space-y-2">
+        <div data-minimap-part="agent" className="min-w-0">
+          <AsyncCallbackCards record={record} callbacks={callbacks} />
+        </div>
+        <div data-minimap-part="user" className="min-w-0">
+          {userShell}
+        </div>
+      </div>
+    );
+  }
+
+  return userShell;
 }
 
 /**
@@ -1228,21 +1482,32 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
   const state = QUEUE_STATE[str(p, 'queue_state')] ?? QUEUE_STATE.pending;
-  const { text: afterEmp, employees } = splitEmployeeBlocks(str(p, 'body'));
-  const { text: said, skills } = splitSkillBlocks(afterEmp);
-  const { text, images } = splitAttachedImages(said);
+  const { text: afterBlocks, employees, skills, callbacks } = splitAllLeadingBlocks(str(p, 'body'));
+  const { text, images } = splitAttachedImages(afterBlocks);
+  const chip = <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>;
+
+  if (callbacks.length > 0 && !text.trim() && !images.length) {
+    return (
+      <AsyncCallbackCards
+        record={record}
+        callbacks={callbacks}
+        employees={employees}
+        skills={skills}
+        queueChip={chip}
+      />
+    );
+  }
+
   const cardAnswer = parseCardAnswer(text);
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
-  return (
+  const userShell = (
     <TextShell
       record={record}
       icon={<CornerDownRight size={12} />}
       label={t('workbench.record.youSaidWhileWorking')}
       labelTone={YOU_LABEL}
       tone={YOU_TONE}
-      meta={
-        <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
-      }
+      meta={chip}
     >
       <EmployeeQuotes employees={employees} />
       <SkillQuotes names={skills} />
@@ -1254,6 +1519,21 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
       <AttachedImages images={images} />
     </TextShell>
   );
+
+  if (callbacks.length > 0) {
+    return (
+      <div className="min-w-0 space-y-2">
+        <div data-minimap-part="agent" className="min-w-0">
+          <AsyncCallbackCards record={record} callbacks={callbacks} queueChip={chip} />
+        </div>
+        <div data-minimap-part="user" className="min-w-0">
+          {userShell}
+        </div>
+      </div>
+    );
+  }
+
+  return userShell;
 }
 
 /**
@@ -1817,14 +2097,24 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const state = QUEUE_STATE[raw] ?? QUEUE_STATE.pending;
   // 正文里带着服务端拼的图片路径段。与插话卡、人发言走同一条拆图：排队这段时间人该
   // 看见自己刚发的那张图，而不是一串十六进制路径。
-  const { text: afterEmp, employees } = splitEmployeeBlocks(content);
-  const { text: said, skills } = splitSkillBlocks(afterEmp);
-  const { text, images } = splitAttachedImages(said);
+  const { text: afterBlocks, employees, skills, callbacks } = splitAllLeadingBlocks(content);
+  const { text, images } = splitAttachedImages(afterBlocks);
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
   );
   if (raw === 'pending' || !raw) {
-    return (
+    if (callbacks.length > 0 && !text.trim() && !images.length) {
+      return (
+        <AsyncCallbackCards
+          record={record}
+          callbacks={callbacks}
+          employees={employees}
+          skills={skills}
+          queueChip={chip}
+        />
+      );
+    }
+    const userShell = (
       <TextShell
         record={record}
         icon={<CornerDownRight size={12} />}
@@ -1839,6 +2129,15 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
         <AttachedImages images={images} />
       </TextShell>
     );
+    if (callbacks.length > 0) {
+      return (
+        <div className="min-w-0 space-y-2">
+          <AsyncCallbackCards record={record} callbacks={callbacks} queueChip={chip} />
+          {userShell}
+        </div>
+      );
+    }
+    return userShell;
   }
   return (
     <SystemShell
@@ -1856,6 +2155,10 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
             {[
               ...employees.map((e) => `@${e.id}`),
               ...skills.map((n) => `/${n}`),
+              ...callbacks.map(
+                (cb) =>
+                  `[${cb.jobId || cb.employeeId || cb.kind}] ${cb.taskTitle || cb.targetSessionId}`
+              ),
               text,
             ]
               .filter(Boolean)

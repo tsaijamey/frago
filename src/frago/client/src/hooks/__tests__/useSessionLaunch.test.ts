@@ -278,4 +278,35 @@ describe('新会话正在启动', () => {
     act(() => result.current.dismiss());
     expect(result.current.launch).toBeNull();
   });
+
+  it('等待认领超时先进入失败后，若后台随后认到编号并出现在清单里，假报错卡自动让位并选中该会话', async () => {
+    let claimedSid: string | null = null;
+    stubPending(() => pending({ session_id: claimedSid }));
+    const onReady = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ sessions }) => useSessionLaunch({ sessions, reload: () => {}, onReady }),
+      { initialProps: { sessions: [] as WorkbenchSession[] } }
+    );
+
+    vi.useFakeTimers();
+    act(() => {
+      result.current.begin(pending({ display_name: 'Antigravity CLI' }), '起一场 agy 会话');
+    });
+    expect(result.current.launch?.phase).toBe('claiming');
+
+    // 前端 90s 兜底先到点，进入 failed 且此时 sessionId 仍为 null
+    act(() => {
+      vi.advanceTimersByTime(LAUNCH_CEILING_MS + 1000);
+    });
+    expect(result.current.launch?.phase).toBe('failed');
+    expect(result.current.launch?.sessionId).toBeNull();
+    vi.useRealTimers();
+
+    // 几秒后后台认领成功，且左栏会话清单刷出了该会话
+    claimedSid = SID;
+    rerender({ sessions: [session(SID)] });
+
+    await waitFor(() => expect(result.current.launch).toBeNull(), { timeout: 4000 });
+    expect(onReady).toHaveBeenCalledWith(SID);
+  });
 });

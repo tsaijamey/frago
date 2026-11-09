@@ -1,48 +1,49 @@
 /**
- * 一枚员工语境引用卡片：记录流里那句话带入的 `<frago-employee>` 业务语境块，与 `SkillQuote` 同构。
+ * EmployeeQuote — 一枚点名的员工岗位引用（基于 DirectiveQuote 共享组件）。
  *
- * 一整枚圆角签：公文包图标加 `@编号` 与岗位名称，淡品牌色底加一圈同色细边，整枚代表这句话
- * 挂载了该员工的业务语境；内部上万字的职责、数据底账与账本由 agent 自己读，消息里一个字都不摆。
+ * 与 SkillQuote 同属指令引用签体系（复用 DirectiveQuote）：
+ * - 输入框上方：敲 `@`（或点选员工）选定的员工，带一个叉可去掉；
+ * - 记录流气泡顶部：从 `<frago-employee>` 标签里认回岗位编号、名称与内核，只读展示。
  */
 
-import { Briefcase } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { EmployeeBlockItem } from '@/utils/employeeBlocks';
-import { truncateChars } from '@/utils/skillBlocks';
-import { SKILL_QUOTE_DESC_CHARS } from './SkillQuote';
+import DirectiveQuote from './DirectiveQuote';
 
 export interface EmployeeQuoteProps {
   id: string;
   title?: string | null;
   kernel?: string | null;
+  description?: string | null;
+  onRemove?: () => void;
 }
 
-export function EmployeeQuote({ id, title, kernel }: EmployeeQuoteProps) {
-  const desc = title ? truncateChars(title, SKILL_QUOTE_DESC_CHARS) : '';
-  const tooltip = [title ? `${title} (@${id})` : `@${id}`, kernel ? `[${kernel}]` : '']
-    .filter(Boolean)
-    .join(' ');
+export function EmployeeQuote({ id, title, kernel, description, onRemove }: EmployeeQuoteProps) {
+  const { t } = useTranslation();
   return (
-    <span
-      data-testid="employee-quote"
-      data-employee={id}
-      title={tooltip}
-      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border-accent bg-accent-primary-10 py-[2px] pl-2 pr-2 text-[12px]"
-    >
-      <Briefcase size={12} className="shrink-0 text-accent-primary" />
-      <span className="shrink-0 font-mono text-text-primary">@{id}</span>
-      {desc ? <span className="min-w-0 truncate text-text-muted">{desc}</span> : null}
-    </span>
+    <DirectiveQuote
+      prefix="@"
+      name={id}
+      title={title}
+      badge={kernel}
+      description={description}
+      variant="accent"
+      testId="employee-quote"
+      dataAttrKey="data-employee"
+      removeTestId="employee-quote-remove"
+      removeAriaLabel={t('workbench.employees.remove', { name: id })}
+      onRemove={onRemove}
+    />
   );
 }
 
-/** 记录流里那句话引用的几个员工语境块，一行排开。没有就什么都不画。 */
 export function EmployeeQuotes({ employees }: { employees: EmployeeBlockItem[] }) {
   if (!employees.length) return null;
   return (
     <div data-testid="employee-quotes" className="mb-1.5 flex flex-wrap gap-1.5">
-      {employees.map((emp, idx) => (
+      {employees.map((emp, i) => (
         <EmployeeQuote
-          key={`${emp.id}-${idx}`}
+          key={`${emp.id}-${i}`}
           id={emp.id}
           title={emp.title}
           kernel={emp.kernel}
@@ -51,3 +52,5 @@ export function EmployeeQuotes({ employees }: { employees: EmployeeBlockItem[] }
     </div>
   );
 }
+
+export default EmployeeQuote;

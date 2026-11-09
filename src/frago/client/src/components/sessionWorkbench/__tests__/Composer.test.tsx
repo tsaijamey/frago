@@ -1006,7 +1006,7 @@ describe('Next Task 列表与独立投递按钮', () => {
     const queueBox = screen.getByTestId('session-message-queue');
     expect(queueBox.getAttribute('data-blocked-by-card')).toBe('yes');
     expect(screen.getByTestId('session-queue-count').textContent).toContain('2');
-    expect(screen.getByTestId('session-queue-status').textContent).toContain('[end, end-5]');
+    expect(screen.getByTestId('session-queue-status').textContent).toContain('最后一轮');
 
     const items = screen.getAllByTestId('session-queue-item');
     expect(items).toHaveLength(2);

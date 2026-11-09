@@ -95,15 +95,18 @@ def format_branch_note(
     note: str,
     *,
     skills: list[str] | None = None,
+    employee: str = "",
     has_attachments: bool = False,
 ) -> str:
     """整理分支的简短说明（用于关系账、主线标注与原地提示标题）。"""
     cleaned = (note or "").strip()
+    emp_tag = f"@{employee.strip()}" if employee and employee.strip() else ""
     skill_tags = [f"/{s.strip()}" for s in (skills or []) if s and s.strip()]
-    if skill_tags and cleaned:
-        return f"{' '.join(skill_tags)} {cleaned}"
-    if skill_tags:
-        return " ".join(skill_tags)
+    prefixes = [p for p in ([emp_tag] if emp_tag else []) + skill_tags if p]
+    if prefixes and cleaned:
+        return f"{' '.join(prefixes)} {cleaned}"
+    if prefixes:
+        return " ".join(prefixes)
     if cleaned:
         return cleaned
     if has_attachments:
@@ -118,6 +121,7 @@ def validate(
     note: str,
     *,
     skills: list[str] | None = None,
+    employee: str = "",
     has_attachments: bool = False,
 ) -> tuple[BranchAnchor, str]:
     """校验起分支的请求，交回整理好的原文锚点与那句话。上限与标注同一套。"""
@@ -126,7 +130,10 @@ def validate(
     if len(cleaned_note) > workbench_marks.MAX_NOTE:
         raise BranchRequestInvalid(f"那句话超过 {workbench_marks.MAX_NOTE} 字")
     display_note = format_branch_note(
-        cleaned_note, skills=skills, has_attachments=has_attachments
+        cleaned_note,
+        skills=skills,
+        employee=employee,
+        has_attachments=has_attachments,
     )
     if not display_note:
         raise BranchRequestInvalid("起分支要写一句话：这个旁支问题要问什么")

@@ -168,6 +168,13 @@ const broken = (code: BrokenReason['code'], params?: Record<string, string>): Pa
   reason: params ? { code, params } : { code },
 });
 
+const resolveOptionEffect = (o: Obj): unknown => {
+  if (o.effect != null && text(o.effect).trim() !== '') return o.effect;
+  if (typeof o.why === 'string' && o.why.trim() !== '') return o.why.trim();
+  if (typeof o.description === 'string' && o.description.trim() !== '') return o.description.trim();
+  return o.effect != null && o.effect !== '' ? o.effect : null;
+};
+
 /**
  * 校验已解析的区块对象（或 `frago ask` 生成的 `data` 对象）并构造 `DecisionBlock`。
  */
@@ -177,22 +184,33 @@ export function validateDecisionObject(rawObj: unknown): ParseResult {
     rawObj.frago_ui_component === UI_COMPONENT_MARKER && isObj(rawObj.data)
       ? rawObj.data
       : rawObj;
-  if (!BLOCK_TYPES.includes(y.type as BlockType)) {
+  const rawTypeAbsent = y.type == null || (typeof y.type === 'string' && y.type.trim() === '');
+  const inferredType: unknown =
+    rawTypeAbsent && Array.isArray(y.options) && y.options.length > 0
+      ? y.multi === true
+        ? 'multi-choice'
+        : 'single-choice'
+      : y.type;
+  if (!BLOCK_TYPES.includes(inferredType as BlockType)) {
     return broken('type', { type: y.type == null ? '' : text(y.type), types: BLOCK_TYPES.join(', ') });
   }
-  const type = y.type as BlockType;
+  const type = inferredType as BlockType;
   if (typeof y.question !== 'string' || !y.question.trim()) return broken('question');
   const opts = y.options == null ? [] : y.options;
   if (!Array.isArray(opts)) return broken('optionsNotList');
   if (type !== 'text-answer' && !opts.length) return broken('needsOptions', { type });
   if (type === 'text-answer' && opts.length) return broken('textAnswerNoOptions');
-  if (opts.some((o) => !isObj(o) || o.key == null || o.label == null || o.effect == null)) {
+  if (
+    opts.some(
+      (o) => !isObj(o) || o.key == null || o.label == null || resolveOptionEffect(o) == null
+    )
+  ) {
     return broken('optionFields');
   }
   const options = (opts as Obj[]).map<DecisionOption>((o) => ({
     key: text(o.key),
     label: text(o.label),
-    effect: text(o.effect),
+    effect: text(resolveOptionEffect(o)),
     reversible: o.reversible !== false,
     recommended: o.recommended === true,
   }));
@@ -206,7 +224,7 @@ export function validateDecisionObject(rawObj: unknown): ParseResult {
     if (y.suggestions != null && (type !== 'text-answer' || !Array.isArray(y.suggestions))) {
       return broken('suggestionsPlace');
     }
-    if (y.multi != null && type !== 'choice-and-text') return broken('multiPlace');
+    if (!rawTypeAbsent && y.multi != null && type !== 'choice-and-text') return broken('multiPlace');
   }
 
   const fromTeammate = y.from === 'teammate' || y.fromTeammate === true;

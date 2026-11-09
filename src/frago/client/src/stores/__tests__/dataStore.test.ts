@@ -5,6 +5,7 @@ vi.mock('@/api', () => ({
   getConfig: vi.fn(),
   getRecipes: vi.fn(),
   getSkills: vi.fn(),
+  getEmployees: vi.fn(),
   getSystemStatus: vi.fn(),
   getCommunityRecipes: vi.fn(),
   updateConfig: vi.fn(),
@@ -76,15 +77,21 @@ describe('dataStore — load actions', () => {
     expect(useDataStore.getState().recipes).toEqual([]);
   });
 
-  it('loadSkills / loadSystemStatus / loadCommunityRecipes store their fetched data', async () => {
+  it('loadSkills / loadEmployees / loadSystemStatus / loadCommunityRecipes store their fetched data', async () => {
     vi.mocked(api.getSkills).mockResolvedValue([{ name: 'sk' } as never]);
+    vi.mocked(api.getEmployees).mockResolvedValue([
+      { member_post_id: 'frago-developer', title: 'frago Developer' } as never,
+    ]);
     vi.mocked(api.getSystemStatus).mockResolvedValue({ cpu_percent: 1 } as never);
     vi.mocked(api.getCommunityRecipes).mockResolvedValue([{ name: 'cr' } as never]);
     await useDataStore.getState().loadSkills();
+    await useDataStore.getState().loadEmployees();
     await useDataStore.getState().loadSystemStatus();
     await useDataStore.getState().loadCommunityRecipes();
     const s = useDataStore.getState();
     expect(s.skills).toEqual([{ name: 'sk' }]);
+    expect(s.employees).toEqual([{ member_post_id: 'frago-developer', title: 'frago Developer' }]);
+    expect(s.employeesLoaded).toBe(true);
     expect(s.systemStatus).toEqual({ cpu_percent: 1 });
     expect(s.communityRecipes).toEqual([{ name: 'cr' }]);
   });

@@ -156,6 +156,59 @@ describe('StreamMinimap', () => {
     expect(bars[1].className).not.toContain('bg-accent-primary');
   });
 
+  it('纯 <frago-async-callback> 回传记录标为 async.callback，在缩略滚动条画成中性灰条（agent）而不留白或画成绿条', () => {
+    const pureCallback = rec({
+      kind: 'user.say',
+      payload: {
+        text: '<frago-async-callback kind="worker" mode="new" job_id="disp-1" worker_session_id="core_1" status="completed">\n### Worker 交付结果\n已完成\n</frago-async-callback>',
+      },
+    });
+    const { container } = render(
+      <RecordStream
+        sessionId={SID}
+        records={[user, pureCallback, reply]}
+        loading={false}
+        loadingOlder={false}
+        hasOlder={false}
+        error={null}
+        onLoadOlder={() => {}}
+        minimap
+      />
+    );
+    const bodyWrap = container.querySelector(`[data-record-id="${pureCallback.id}"][data-record-body]`);
+    expect(bodyWrap?.getAttribute('data-record-kind')).toBe('async.callback');
+    const bars = [...screen.getByTestId('stream-minimap').querySelectorAll('[data-minimap-bar]')];
+    expect(bars.map((b) => b.getAttribute('data-minimap-bar'))).toEqual(['user', 'agent', 'agent']);
+    expect(bars[1].className).toContain('bg-text-muted');
+    expect(bars[1].className).not.toContain('bg-accent-primary');
+  });
+
+  it('混合记录（异步回传块 + 人类提问）在缩略滚动条上分别画成上灰条（agent）与下绿条（user）', () => {
+    const mixedRecord = rec({
+      kind: 'user.say',
+      payload: {
+        text: '<frago-async-callback kind="worker" mode="new" job_id="disp-2" worker_session_id="core_2" status="completed">\n### Worker 交付结果\n已完成\n</frago-async-callback>\n查一下本地workbuddy proxy是不是被误关了',
+      },
+    });
+    render(
+      <RecordStream
+        sessionId={SID}
+        records={[mixedRecord, reply]}
+        loading={false}
+        loadingOlder={false}
+        hasOlder={false}
+        error={null}
+        onLoadOlder={() => {}}
+        minimap
+      />
+    );
+    const bars = [...screen.getByTestId('stream-minimap').querySelectorAll('[data-minimap-bar]')];
+    expect(bars.map((b) => b.getAttribute('data-minimap-bar'))).toEqual(['agent', 'user', 'agent']);
+    expect(bars[0].className).toContain('bg-text-muted');
+    expect(bars[1].className).toContain('bg-accent-primary');
+    expect(bars[2].className).toContain('bg-text-muted');
+  });
+
   it('可视区滑块用半透明中性底色与中性描边，不复用不透明的选中态实色底', () => {
     Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 200 });
     try {

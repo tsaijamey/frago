@@ -10,36 +10,20 @@
  */
 
 import { useEffect } from 'react';
-import { usePageStore } from '@/stores/pageStore';
-import { parsePath, pathForPage, writeLocationRoute } from '@/routes';
+import { activeRouteId, usePageStore } from '@/stores/pageStore';
+import { pathForPage, readLocationRoute, writeLocationRoute } from '@/routes';
 
 export function useHashRoute(): void {
   useEffect(() => {
-    const {
-      currentPage,
-      currentTaskId,
-      currentRecipeName,
-      currentProjectId,
-      currentTodoId,
-      currentRecipeAppId,
-    } = usePageStore.getState();
-    const id =
-      currentTaskId ?? currentRecipeName ?? currentProjectId ?? currentTodoId ?? currentRecipeAppId;
-    writeLocationRoute(pathForPage(currentPage, id), true);
-
     const sync = () => {
-      const route = parsePath(window.location.hash);
+      const route = readLocationRoute();
       const state = usePageStore.getState();
-      const currentId =
-        state.currentTaskId ??
-        state.currentRecipeName ??
-        state.currentProjectId ??
-        state.currentTodoId ??
-        state.currentRecipeAppId;
-      // 旧名字的地址（`/teaming`）读得出页面，但地址栏要改写成现在的名字，否则人
-      // 从这里复制出去的还是旧的那个。
+      const currentId = activeRouteId(state);
+      // 旧名字的地址（`/teaming`）或直达真实路径（`/sessions/<id>`）读得出页面，
+      // 但地址栏要改写成规范的 `/#/<路径>`，否则人从这里复制出去的还是旧地址。
       const canonical = pathForPage(route.page, route.id);
-      if (window.location.hash.replace(/^#/, '').split('?')[0] !== canonical) {
+      const currentHashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+      if (currentHashPath !== canonical || window.location.pathname !== '/') {
         writeLocationRoute(canonical, true);
       }
       // 地址栏说的就是现在这一页时不动手：`switchPage` 刚写完地址也会触发
@@ -47,6 +31,22 @@ export function useHashRoute(): void {
       if (state.currentPage === route.page && currentId === route.id) return;
       state.applyRoute(route.page, route.id);
     };
+
+    const hasExplicitRoute =
+      Boolean(window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/') ||
+      Boolean(
+        (window.location.protocol === 'http:' || window.location.protocol === 'https:') &&
+          window.location.pathname &&
+          window.location.pathname !== '/' &&
+          window.location.pathname !== '/index.html'
+      );
+
+    if (hasExplicitRoute) {
+      sync();
+    } else {
+      const state = usePageStore.getState();
+      writeLocationRoute(pathForPage(state.currentPage, activeRouteId(state)), true);
+    }
 
     window.addEventListener('hashchange', sync);
     window.addEventListener('popstate', sync);

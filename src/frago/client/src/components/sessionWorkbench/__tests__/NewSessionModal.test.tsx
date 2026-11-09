@@ -99,6 +99,9 @@ beforeEach(() => {
   localStorage.clear();
   posted = [];
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith('/api/employees')) {
+      return jsonResponse({ employees: [] });
+    }
     if (String(url).endsWith('/api/workbench/agents')) {
       return jsonResponse({ agents: AGENTS, default: 'claude' });
     }
@@ -362,5 +365,262 @@ describe('NewSessionModal — 敲 / 挑 skill（与详情输入区统一组件�
     fireEvent.click(screen.getByText('创建'));
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0].skills).toEqual(['git-push']);
+  });
+});
+
+const EMPLOYEES = [
+  {
+    member_post_id: 'frago-developer',
+    title: 'frago Developer',
+    agent_kernel: 'codex',
+    description: '负责 frago 仓库功能研发与质量守护。',
+    work_scope: '负责 frago 仓库功能研发与质量守护。',
+    cwd: '/Users/frago/repos/frago',
+    knowledge_domains: ['frago-dev'],
+    recipes: [],
+    data_slots: ['~/.frago/data/frago-dev'],
+    schedule_ids: [],
+    active_session_ids: [],
+    allowed_commands: [],
+    skills: ['frago-local-deploy'],
+    color: 'violet',
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-11-01T00:00:00Z',
+    data_summary: {
+      slot_count: 1,
+      entry_count: 4,
+      slots: [{ slot_path: '~/.frago/data/frago-dev', exists: true, entry_count: 4 }],
+    },
+  },
+  {
+    member_post_id: 'stock',
+    title: 'A 股双均线研究员',
+    agent_kernel: 'claude',
+    description: '盯盘、回测与调仓归档。',
+    work_scope: '盯盘、回测与调仓归档。',
+    cwd: '/Users/frago/.frago/data/stock',
+    knowledge_domains: [],
+    recipes: ['a_stock_dma'],
+    data_slots: ['~/.frago/data/stock'],
+    schedule_ids: [],
+    active_session_ids: [],
+    allowed_commands: [],
+    skills: [],
+    color: 'amber',
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-11-01T00:00:00Z',
+    data_summary: {
+      slot_count: 1,
+      entry_count: 2,
+      slots: [{ slot_path: '~/.frago/data/stock', exists: true, entry_count: 2 }],
+    },
+  },
+];
+
+describe('NewSessionModal — 选择 Employee 创建员工会话（主入口）', () => {
+  beforeEach(() => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/api/employees')) {
+        return jsonResponse({ employees: EMPLOYEES });
+      }
+      if (u.includes('/api/employees/')) {
+        const id = decodeURIComponent(u.split('/api/employees/')[1]);
+        const emp = EMPLOYEES.find((e) => e.member_post_id === id) ?? EMPLOYEES[0];
+        return jsonResponse({
+          employee: emp,
+          managed_data: {
+            member_post_id: emp.member_post_id,
+            data_slots: [
+              {
+                slot_path: emp.data_slots[0],
+                resolved_path: emp.cwd,
+                exists: true,
+                total_count: emp.data_summary.entry_count,
+                entries: [],
+              },
+            ],
+            knowledge_domains: emp.knowledge_domains,
+            recipes: emp.recipes,
+          },
+          business_context_block: `<frago-employee id="${emp.member_post_id}" title="${emp.title}">业务语境原文</frago-employee>`,
+        });
+      }
+      if (u.endsWith('/api/workbench/agents')) {
+        return jsonResponse({ agents: AGENTS, default: 'claude' });
+      }
+      if (u.endsWith('/api/workbench/sessions')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        posted.push(body);
+        return jsonResponse({
+          handle: 'emp-handle',
+          agent: body.agent,
+          display_name: body.agent,
+          cwd: body.cwd,
+          session_id: null,
+          error: null,
+          finished: false,
+        });
+      }
+      throw new Error(`没料到的请求：${url}`);
+    });
+  });
+
+  it('有员工编制时默认选中第一位员工，自动对齐内核、目录、预设 skill 并可展开预览业务语境', async () => {
+    const onCreated = open();
+    const devCard = await screen.findByTestId('new-session-employee-frago-developer');
+    expect(devCard.getAttribute('aria-checked')).toBe('true');
+
+    // 内核自动对齐到 frago-developer 的 codex，工作目录对齐到 /Users/frago/repos/frago
+    await waitFor(() =>
+      expect(screen.getByTestId('agent-codex').getAttribute('aria-checked')).toBe('true')
+    );
+    expect((screen.getByPlaceholderText('/absolute/path') as HTMLInputElement).value).toBe(
+      '/Users/frago/repos/frago'
+    );
+    expect(screen.getByTestId('new-session-skills').textContent).toContain('/frago-local-deploy');
+
+    // 可展开查看自动注入的业务语境块
+    const ctxBtn = await screen.findByTestId('employee-context-toggle');
+    fireEvent.click(ctxBtn);
+    expect(await screen.findByText(/业务语境原文/)).toBeTruthy();
+
+    await fillFirstMessage('检查当前状态');
+    fireEvent.click(screen.getByText('创建'));
+
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({
+      agent: 'codex',
+      cwd: '/Users/frago/repos/frago',
+      text: '检查当前状态',
+      skills: ['frago-local-deploy'],
+      employee: 'frago-developer',
+    });
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    expect(onCreated.mock.calls[0][0]).toMatchObject({
+      handle: 'emp-handle',
+      employee_id: 'frago-developer',
+      employee_title: 'frago Developer',
+      employee_color: 'violet',
+    });
+  });
+
+  it('可切换到「普通会话」以不带员工身份创建会话', async () => {
+    open();
+    await screen.findByTestId('new-session-employee-frago-developer');
+
+    fireEvent.click(screen.getByTestId('new-session-employee-plain'));
+    expect(screen.getByTestId('new-session-employee-plain').getAttribute('aria-checked')).toBe(
+      'true'
+    );
+    expect(screen.queryByTestId('employee-context-toggle')).toBeNull();
+
+    await fillFirstMessage('普通任务');
+    fireEvent.click(screen.getByText('创建'));
+
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0].employee).toBeUndefined();
+    expect(localStorage.getItem('frago-workbench-last-employee')).toBe('');
+  });
+
+  it('有 100 个员工时顶栏只露 3 个快捷胶囊 + 置顶普通会话，其余通过可搜索下拉面板瞬时定位', async () => {
+    const hundredEmployees = Array.from({ length: 100 }, (_, i) => {
+      const idx = String(i + 1).padStart(3, '0');
+      return {
+        ...EMPLOYEES[0],
+        member_post_id: `emp-${idx}`,
+        title: `专职员工 ${idx}`,
+        description: `负责第 ${idx} 号业务线`,
+      };
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/api/employees')) {
+        return jsonResponse({ employees: hundredEmployees });
+      }
+      if (u.includes('/api/employees/')) {
+        const id = decodeURIComponent(u.split('/api/employees/')[1]);
+        const emp = hundredEmployees.find((e) => e.member_post_id === id) ?? hundredEmployees[0];
+        return jsonResponse({
+          employee: emp,
+          managed_data: {
+            member_post_id: emp.member_post_id,
+            data_slots: [],
+            knowledge_domains: [],
+            recipes: [],
+          },
+          business_context_block: `<frago-employee id="${emp.member_post_id}">${emp.title}</frago-employee>`,
+        });
+      }
+      if (u.endsWith('/api/workbench/agents')) {
+        return jsonResponse({ agents: AGENTS, default: 'claude' });
+      }
+      if (u.endsWith('/api/workbench/sessions')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        posted.push(body);
+        return jsonResponse({
+          handle: 'emp-handle',
+          agent: body.agent,
+          display_name: body.agent,
+          cwd: body.cwd,
+          session_id: null,
+          error: null,
+          finished: false,
+        });
+      }
+      throw new Error(`没料到的请求：${url}`);
+    });
+
+    open();
+    const trigger = await screen.findByTestId('employee-picker-trigger');
+    expect(trigger.textContent).toContain('全部 100 个');
+
+    // 顶栏不会把第 88 号员工直接平铺出来撑爆页面
+    expect(screen.queryByTestId('new-session-employee-emp-088')).toBeNull();
+    // 「普通会话」始终置顶可见
+    expect(screen.getByTestId('new-session-employee-plain')).toBeTruthy();
+
+    // 打开可搜索下拉面板，输入 088 过滤并挑中第 88 号员工
+    fireEvent.click(trigger);
+    const searchInput = await screen.findByTestId('employee-picker-search');
+    fireEvent.change(searchInput, { target: { value: '088' } });
+
+    const item88 = await screen.findByTestId('picker-employee-emp-088');
+    expect(screen.queryByTestId('picker-employee-emp-001')).toBeNull();
+    fireEvent.click(item88);
+
+    // 挑中后下拉收起，且第 88 号员工被提升到顶栏快捷胶囊第 1 位并处于选中态
+    expect(screen.queryByTestId('employee-picker-popover')).toBeNull();
+    const promoted = await screen.findByTestId('new-session-employee-emp-088');
+    expect(promoted.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('在普通会话模式下于输入框敲 @ 选择员工：自动切回员工会话模式并在输入框顶部渲染 EmployeeQuote', async () => {
+    open();
+    await screen.findByTestId('new-session-employee-frago-developer');
+
+    // 先切到普通会话模式
+    fireEvent.click(screen.getByTestId('new-session-employee-plain'));
+    expect(screen.getByTestId('new-session-employee-plain').getAttribute('aria-checked')).toBe(
+      'true'
+    );
+
+    const input = screen.getByTestId('new-session-input') as HTMLTextAreaElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '@sto', selectionStart: 4 } });
+
+    const menu = await screen.findByTestId('employee-menu');
+    expect(menu.getAttribute('data-directive-trigger')).toBe('@');
+    expect(menu.textContent).toContain('A 股双均线研究员');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.queryByTestId('employee-menu')).toBeNull();
+    expect(input.value).toBe('');
+    expect(screen.getByTestId('employee-quote').getAttribute('data-employee')).toBe('stock');
+    expect(screen.getByTestId('new-session-employee-stock').getAttribute('aria-checked')).toBe(
+      'true'
+    );
   });
 });

@@ -385,6 +385,13 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     get_observer(loop)
 
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from frago.server.services import stage_orchestrator
+
+        stage_orchestrator.resolve_active_desktop_operator_session(ensure_summarizer=True)
+
     yield
 
     # Shutdown
@@ -677,6 +684,9 @@ def create_app(
     from frago.server.routes.todos import router as todos_router
     app.include_router(todos_router, prefix="/api", tags=["todos"])
 
+    from frago.server.routes.calendar import router as calendar_router
+    app.include_router(calendar_router, prefix="/api", tags=["calendar"])
+
     from frago.server.routes.schedules import router as schedules_router
     app.include_router(schedules_router, prefix="/api", tags=["schedules"])
 
@@ -794,6 +804,29 @@ def create_app(
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="Endpoint not found")
+
+        # Resolve nested relative static asset requests (e.g. /sessions/assets/index-*.js
+        # or /sessions/icons/logo-*.png) caused by Vite `base: './'` when visiting a
+        # multi-segment SPA route like /sessions/<session_id>.
+        for static_dir_name in ("assets", "icons"):
+            marker = f"/{static_dir_name}/"
+            rel_asset: str | None = None
+            if full_path.startswith(f"{static_dir_name}/"):
+                rel_asset = full_path[len(static_dir_name) + 1 :]
+            elif marker in f"/{full_path}":
+                rel_asset = f"/{full_path}".split(marker, 1)[1]
+            if rel_asset is not None:
+                from fastapi import HTTPException
+
+                base_dir = (frontend_path / static_dir_name).resolve()
+                candidate = (base_dir / rel_asset).resolve()
+                if (
+                    candidate.is_relative_to(base_dir)
+                    and candidate.exists()
+                    and candidate.is_file()
+                ):
+                    return FileResponse(str(candidate))
+                raise HTTPException(status_code=404, detail="Asset not found")
 
         # Serve index.html for SPA routing
         index_path = frontend_path / "index.html"

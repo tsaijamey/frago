@@ -198,6 +198,29 @@ describe('SessionRail 两层清单', () => {
     );
     expect(screen.queryByTestId('toggle-workers')).toBeNull();
   });
+
+  it('路由直达选中折叠在父会话下的 worker 时，自动展开父会话把该 worker 露出来', () => {
+    render(<TestRail state={railState(FAMILY)} selectedId={WORKER_A} onSelect={NOOP} />);
+    const items = screen.getAllByTestId('session-item');
+    expect(items).toHaveLength(3);
+    expect(items[1].textContent).toContain(WORKER_A);
+    expect(items[1].getAttribute('aria-current')).toBe('true');
+  });
+
+  it('路由直达选中超过 24 小时未在 visible 中的旧会话时，全部档自动把该会话补进左栏', () => {
+    const oldSid = 'ac80fa5f-03dc-407a-b464-7c29ef5f456e';
+    const allRows = [
+      session({ session_id: BOSS }),
+      session({ session_id: oldSid, title: '旧会话直达验证' }),
+    ];
+    const state = railState(allRows, {
+      visible: [allRows[0]],
+      todaySessions: [allRows[0]],
+    });
+    render(<TestRail state={state} selectedId={oldSid} onSelect={NOOP} />);
+    const items = screen.getAllByTestId('session-item');
+    expect(items.some((el) => (el.textContent ?? '').includes('旧会话直达验证'))).toBe(true);
+  });
 });
 
 describe('SessionRail 分支与原会话同容器', () => {

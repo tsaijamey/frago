@@ -64,19 +64,12 @@ function normalTurn(turnIdx: number, baseSeq: number): WorkbenchRecord[] {
   ];
 }
 
-function hookTurn(turnIdx: number, baseSeq: number): WorkbenchRecord[] {
-  return [
-    makeRecord(baseSeq, 'context.inject', { source: 'hook', body: `hook ${turnIdx}` }),
-    makeRecord(baseSeq + 1, 'agent.say', { text: `补充说明 ${turnIdx}` }, `gh-${turnIdx}`),
-  ];
-}
-
 beforeAll(async () => {
   await loadYaml();
 });
 
-describe('hasInteractiveCardInTailTurns ([end, end-5] 轮交互卡检测)', () => {
-  it('近 6 轮无交互卡时返回 false，并识别出末尾 stop 轮次', () => {
+describe('hasInteractiveCardInTailTurns (仅看最后一轮实际内容会话的交互卡检测)', () => {
+  it('最后一轮无交互卡时返回 false，并识别出末尾 stop 轮次', () => {
     const records: WorkbenchRecord[] = [];
     for (let i = 0; i < 6; i += 1) {
       records.push(...normalTurn(i, i * 10));
@@ -85,44 +78,46 @@ describe('hasInteractiveCardInTailTurns ([end, end-5] 轮交互卡检测)', () =
     expect(detectStopTurnId(records)).toBe('rec-51');
   });
 
-  it('交互卡在 end 到 end-5 任一轮（含被 1~5 轮 hook 补充回复遮挡）时返回 true', () => {
-    for (let hookCount = 0; hookCount <= 5; hookCount += 1) {
-      const records: WorkbenchRecord[] = [
-        makeRecord(1, 'user.say', { text: '开始部署' }),
-        makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-card'),
-      ];
-      for (let h = 0; h < hookCount; h += 1) {
-        records.push(...hookTurn(h + 1, 10 + h * 10));
-      }
-      expect(segmentMainTurns(records)).toHaveLength(1 + hookCount);
-      expect(hasInteractiveCardInTailTurns(records)).toBe(true);
-    }
+  it('交互卡在最后一轮（end）时返回 true', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '开始部署' }),
+      makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-card'),
+    ];
+    expect(segmentMainTurns(records)).toHaveLength(1);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
   });
 
-  it('frago ask 的 tool.result 交互卡被 5 轮 hook 遮挡在 end-5 时仍返回 true', () => {
+  it('frago ask 的 tool.result 交互卡位于最后一轮时返回 true', () => {
     const records: WorkbenchRecord[] = [
       makeRecord(1, 'user.say', { text: '怎么回滚？' }),
       makeRecord(2, 'tool.call', { tool: 'ask' }, 'g-ask'),
       makeRecord(3, 'tool.result', { status: 'ok', body: ASK_JSON }, 'g-ask'),
       makeRecord(4, 'agent.say', { text: '请点选上方卡片' }, 'g-ask'),
     ];
-    for (let h = 0; h < 5; h += 1) {
-      records.push(...hookTurn(h + 1, 10 + h * 10));
-    }
-    expect(segmentMainTurns(records)).toHaveLength(6);
+    expect(segmentMainTurns(records)).toHaveLength(1);
     expect(hasInteractiveCardInTailTurns(records)).toBe(true);
   });
 
-  it('交互卡在 end-6（后方已有 6 轮无卡会话）时不再阻断', () => {
+  it('交互卡在上一轮（end-1），最后一轮已是新的实际 assistant response 文本时不再阻断', () => {
     const records: WorkbenchRecord[] = [
       makeRecord(1, 'user.say', { text: '开始部署' }),
       makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-card'),
+      ...normalTurn(1, 10),
     ];
-    for (let h = 0; h < 6; h += 1) {
-      records.push(...hookTurn(h + 1, 10 + h * 10));
-    }
-    expect(segmentMainTurns(records)).toHaveLength(7);
+    expect(segmentMainTurns(records)).toHaveLength(2);
     expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+
+  it('末尾为空白 agent.say 时不构成实际内容轮次，仍保持上一轮交互卡阻断且不产生 stopTurnId', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '开始部署' }),
+      makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-card'),
+      makeRecord(3, 'user.say', { text: '追问' }),
+      makeRecord(4, 'agent.say', { text: '   ' }, 'g-empty'),
+    ];
+    expect(segmentMainTurns(records)).toHaveLength(1);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
+    expect(detectStopTurnId(records)).toBeNull();
   });
 
   it('交互卡已被人类通过【answer】回复后不再阻断', () => {

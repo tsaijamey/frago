@@ -1080,3 +1080,101 @@ describe('agent 回复末尾的「要人拍板」区块', () => {
     expect(container.querySelector('pre')).toBeNull();
   });
 });
+
+describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
+  const WORKER_CB =
+    '<frago-async-callback kind="worker" mode="new" job_id="disp-beaa67f7b8ea" worker_session_id="core_20261106_115104_b00cf771" status="completed">\n' +
+    '【下属 Worker 异步回传】来自 Worker 会话 `core_20261106_115104_b00cf771`（模式：新建执行，内核：`coreagent`）\n' +
+    '- 派发单号：`disp-beaa67f7b8ea`\n' +
+    '- 任务摘要：# Worker 任务书：阶段四验证\n1. 执行全量回归；\n2. 输出验证结论。\n' +
+    '- 执行状态：`completed` (exit_code=0)\n\n' +
+    '### Worker 交付结果\n' +
+    '已完成验证，**48 项测试全部通过**。\n\n' +
+    '---\n' +
+    '请作为管理者（Employee）结合领域知识与执行准则审核上述 Worker 产出：\n' +
+    '1. 若产出合格且满足人类诉求，请提炼结论并向人类给出最终结果与决策建议；\n' +
+    '2. 若发现遗漏或需补充验证，可继续向该 Worker（`frago agent --resume core_20261106_115104_b00cf771`）追派任务书。\n' +
+    '</frago-async-callback>';
+
+  const EMPLOYEE_FAILED_CB =
+    '<frago-async-callback kind="employee" mode="invoke" job_id="disp-998877665544" employee_id="frago-developer" session_id="bbe035d1-73e2-4450-bb69-12fd74bd5587" status="failed">\n' +
+    '【同侪员工异步回传】来自 `frago-developer`（会话 `bbe035d1-73e2-4450-bb69-12fd74bd5587`，模式：任务移交）\n' +
+    '- 派发单号：`disp-998877665544`\n' +
+    '- 原始诉求：修复异步回传卡片渲染\n' +
+    '- 执行状态：`failed` (exit_code=2)\n\n' +
+    '### 同侪员工返回结论\n' +
+    '执行中断：依赖未安装。\n\n' +
+    '---\n' +
+    '请基于上述同侪员工回传结论，结合你掌握的领域背景与事务围栏进行复核，在本会话中直接向人类汇报最终处理结果与决策建议。\n' +
+    '</frago-async-callback>';
+
+  it('纯 Worker 异步回传不再顶着「你说」气泡出现，而是渲染为独立回传卡片并剥离标签与尾部样板话术', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: WORKER_CB } })}
+        sessionId={SID}
+      />
+    );
+    const card = screen.getByTestId('async-callback-card');
+    expect(card).toBeTruthy();
+    expect(card.className).toContain('bg-bg-card');
+    expect(screen.getByText('Worker 异步回传')).toBeTruthy();
+    expect(screen.getByTestId('async-callback-session').textContent).toBe(
+      'core_20261106_115104_b00cf771'
+    );
+    expect(screen.getByTestId('async-callback-job').textContent).toBe('disp-beaa67f7b8ea');
+    expect(screen.getByTestId('async-callback-status').textContent).toBe('完成');
+
+    // 多行任务摘要默认收起为单行标题，点击后展开完整任务书
+    expect(screen.getByTestId('async-callback-summary').textContent).toContain(
+      'Worker 任务书：阶段四验证'
+    );
+    expect(screen.queryByTestId('async-callback-summary-full')).toBeNull();
+    fireEvent.click(screen.getByTestId('async-callback-summary-toggle'));
+    expect(screen.getByTestId('async-callback-summary-full').textContent).toContain(
+      '1. 执行全量回归；'
+    );
+
+    // 交付结果走 Rich Markdown 渲染，且不残留 XML 标签、不显示「你说」、不显示尾部管理者样板提示词
+    expect(screen.getByTestId('async-callback-body').textContent).toContain(
+      '已完成验证，48 项测试全部通过。'
+    );
+    expect(container.textContent).not.toContain('你说');
+    expect(container.textContent).not.toContain('frago-async-callback');
+    expect(container.textContent).not.toContain('请作为管理者（Employee）');
+  });
+
+  it('同侪员工失败回传卡片显示 @employeeId、报错红底色与退出码', () => {
+    render(
+      <RecordCard
+        record={makeRecord('user.say', { payload: { text: EMPLOYEE_FAILED_CB } })}
+        sessionId={SID}
+      />
+    );
+    const card = screen.getByTestId('async-callback-card');
+    expect(card.className).toContain('bg-accent-error-10');
+    expect(screen.getByText('同侪员工回传')).toBeTruthy();
+    expect(screen.getByTestId('async-callback-employee').textContent).toBe('@frago-developer');
+    expect(screen.getByTestId('async-callback-status').textContent).toBe('失败 · 退出码 2');
+    expect(screen.getByTestId('async-callback-body').textContent).toContain(
+      '执行中断：依赖未安装。'
+    );
+  });
+
+  it('回传块后紧跟人类文字时，上方渲染异步回传卡片、下方渲染「你说」气泡', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('user.say', {
+          payload: {
+            text: `${WORKER_CB}\n查一下本地workbuddy proxy是不是被误关了`,
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByTestId('async-callback-card')).toBeTruthy();
+    expect(screen.getByText('你说')).toBeTruthy();
+    expect(screen.getByText('查一下本地workbuddy proxy是不是被误关了')).toBeTruthy();
+    expect(container.textContent).not.toContain('frago-async-callback');
+  });
+});

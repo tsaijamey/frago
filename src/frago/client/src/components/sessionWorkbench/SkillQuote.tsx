@@ -1,17 +1,18 @@
 /**
- * 一枚 skill 引用：输入框里挑中的、记录流里那句话点名的，都是这一种画法。
+ * SkillQuote — 一枚点名的 skill 引用（基于 DirectiveQuote 共享组件）。
  *
- * 一整枚圆角签：书本图标加 `/名字`，淡品牌色底加一圈同色细边，整枚是一个东西——这句话
- * "引了"这个 skill。不用单边竖条（那是肌肉记忆，不是设计）。说明截断着跟在后面，只为让人
- * 认出是哪一个；全文 agent 自己会读，这里一个字都不摆。
+ * 两处共用：
+ * - 输入框上方：刚从 `/` 清单里挑出来、还没发出去的，带一个叉可去掉；
+ * - 记录流气泡顶部：已经发出去的，从 `<must-use-skill>` 标签里认回名字，再按名字去
+ *   全局 skill 清单里取那段说明，不带叉。
  */
 
-import { BookOpen, X } from 'lucide-react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { truncateChars } from '@/utils/skillBlocks';
+import { useDataStore } from '@/stores/dataStore';
+import DirectiveQuote, { DIRECTIVE_QUOTE_DESC_CHARS } from './DirectiveQuote';
 
-/** 引用上说明截到多少字。输入框里空间窄，一行读完就够认出来。 */
-export const SKILL_QUOTE_DESC_CHARS = 40;
+export const SKILL_QUOTE_DESC_CHARS = DIRECTIVE_QUOTE_DESC_CHARS;
 
 export interface SkillQuoteProps {
   name: string;
@@ -19,43 +20,44 @@ export interface SkillQuoteProps {
   onRemove?: () => void;
 }
 
-export function SkillQuote({ name, description, onRemove }: SkillQuoteProps) {
+export function SkillQuote({ name, description = '', onRemove }: SkillQuoteProps) {
   const { t } = useTranslation();
-  const desc = description ? truncateChars(description, SKILL_QUOTE_DESC_CHARS) : '';
   return (
-    <span
-      data-testid="skill-quote"
-      data-skill={name}
-      title={description ?? undefined}
-      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border-accent bg-accent-primary-10 py-[2px] pl-2 pr-1.5 text-[12px]"
-    >
-      <BookOpen size={12} className="shrink-0 text-accent-primary" />
-      <span className="shrink-0 font-mono text-text-primary">/{name}</span>
-      {desc ? <span className="min-w-0 truncate text-text-muted">{desc}</span> : null}
-      {onRemove ? (
-        <button
-          type="button"
-          data-testid="skill-quote-remove"
-          aria-label={t('workbench.skills.remove', { name })}
-          title={t('workbench.skills.remove', { name })}
-          onClick={onRemove}
-          className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-text-muted hover:text-text-primary"
-        >
-          <X size={11} />
-        </button>
-      ) : null}
-    </span>
+    <DirectiveQuote
+      prefix="/"
+      name={name}
+      description={description}
+      testId="skill-quote"
+      dataAttrKey="data-skill"
+      removeTestId="skill-quote-remove"
+      removeAriaLabel={t('workbench.skills.remove', { name })}
+      onRemove={onRemove}
+    />
   );
 }
 
-/** 记录流里那句话点名的几个 skill，一行排开。没有就什么都不画。 */
+/**
+ * 记录流里用：手里只有从标签里拆出来的名字，说明从全局 skill 清单里现查。
+ * 清单还没拉过就顺手拉一次——刷新后直接落进会话页时，清单不一定会由设置页先拉。
+ */
 export function SkillQuotes({ names }: { names: string[] }) {
+  const skills = useDataStore((s) => s.skills);
+  const loaded = useDataStore((s) => s.skillsLoaded);
+  const load = useDataStore((s) => s.loadSkills);
+
+  useEffect(() => {
+    if (!loaded && names.length) void load();
+  }, [loaded, names.length, load]);
+
   if (!names.length) return null;
+  const byName = new Map(skills.map((s) => [s.name, s.description]));
   return (
     <div data-testid="skill-quotes" className="mb-1.5 flex flex-wrap gap-1.5">
-      {names.map((name) => (
-        <SkillQuote key={name} name={name} />
+      {names.map((n, i) => (
+        <SkillQuote key={`${n}-${i}`} name={n} description={byName.get(n) ?? ''} />
       ))}
     </div>
   );
 }
+
+export default SkillQuote;

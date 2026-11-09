@@ -8,7 +8,7 @@
  * | 画什么 | 颜色 |
  * |---|---|
  * | 人发言 | 绿条（品牌色） |
- * | 代理回复 | 灰条 |
+ * | 代理回复（含 Worker / 同侪异步回传） | 灰条 |
  * | 标注 | 横向刻度，与正文同一个意思：橙 = 没用过的暂存，正文色 = 没收口的分支，中性 = 引用、用过的暂存、收了口的分支 |
  *
  * 其余内容留空。当前可视的那一屏用一块半透明滑块盖在上面，拖它滚动，点空白处跳到对应
@@ -99,12 +99,33 @@ export default function StreamMinimap({ scrollRef, ticks, version, onUserScroll 
 
     const bars: Bar[] = [];
     box.querySelectorAll<HTMLElement>(`[${RECORD_BODY_ATTR}]`).forEach((el) => {
+      const recordId = el.getAttribute('data-record-id') ?? String(bars.length);
+      const parts = el.querySelectorAll<HTMLElement>('[data-minimap-part]');
+      if (parts.length > 0) {
+        parts.forEach((part, idx) => {
+          const partWho = part.getAttribute('data-minimap-part');
+          if (partWho !== 'user' && partWho !== 'agent') return;
+          const rect = part.getBoundingClientRect();
+          bars.push({
+            key: `${recordId}:${idx}`,
+            top: topOf(rect) * k,
+            height: Math.max(MIN_BAR_PX, rect.height * k),
+            who: partWho,
+          });
+        });
+        return;
+      }
       const kind = el.getAttribute('data-record-kind');
-      const who = kind === 'user.say' ? 'user' : kind === 'agent.say' ? 'agent' : null;
+      const who =
+        kind === 'user.say'
+          ? 'user'
+          : kind === 'agent.say' || kind === 'async.callback'
+            ? 'agent'
+            : null;
       if (!who) return;
       const rect = el.getBoundingClientRect();
       bars.push({
-        key: el.getAttribute('data-record-id') ?? String(bars.length),
+        key: recordId,
         top: topOf(rect) * k,
         height: Math.max(MIN_BAR_PX, rect.height * k),
         who,

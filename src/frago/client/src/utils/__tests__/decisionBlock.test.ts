@@ -179,6 +179,58 @@ describe('校验清单', () => {
     expect(b.request).toBeNull();
     expect(b.changes).toBeNull();
   });
+
+  it('兼容手写缺省 type 与选项 why/description 字段（c8ba0e28 Step #81 真实样本）', () => {
+    const rawStep81 = `{
+  "question": "已查明「星星按钮」报错根因是 8093 进程残留环境变量污染了轻量 AI 模型名，请选择修复方式：",
+  "options": [
+    {
+      "key": "A",
+      "label": "交由 frago-developer 根治代码（在服务端启动守卫与标题生成调用处剥离 FRAGO_KERNEL_* 环境变量）并重启 8093 服务",
+      "recommended": true,
+      "why": "既能立即恢复当前「星星按钮」生成标题功能（恢复使用 WorkBuddy-LocalProxy 的 deepseek-v4.1-flash），又能从根源上防止后续任何后台 worker 重启 8093 服务时再次把自己的模型环境变量污染进常驻服务，耗时约 3–5 分钟。"
+    },
+    {
+      "key": "B",
+      "label": "暂不改代码，仅在干净环境下立即重启 8093 服务清除残留环境变量",
+      "recommended": false,
+      "why": "执行 env -u FRAGO_KERNEL_MODEL -u FRAGO_KERNEL_ENDPOINT -u FRAGO_KERNEL_API_KEY -u FRAGO_KERNEL_WIRE frago server restart，10 秒内恢复「星星按钮」功能，但下次若由 coreagent 会话重启服务仍可能复发。"
+    },
+    {
+      "key": "C",
+      "label": "同时修改 frago（启动守卫环境剥离）与 frago-core（Rust 内核优先级收口）并重新编译装机",
+      "recommended": false,
+      "why": "双层防御最彻底，但涉及 frago-core Rust 重新编译打包，耗时较长（约 10–15 分钟）。"
+    }
+  ]
+}`;
+    const b = ok(rawStep81);
+    expect(b.type).toBe('single-choice');
+    expect(b.question).toBe(
+      '已查明「星星按钮」报错根因是 8093 进程残留环境变量污染了轻量 AI 模型名，请选择修复方式：'
+    );
+    expect(b.options).toHaveLength(3);
+    expect(b.options[0]).toEqual({
+      key: 'A',
+      label:
+        '交由 frago-developer 根治代码（在服务端启动守卫与标题生成调用处剥离 FRAGO_KERNEL_* 环境变量）并重启 8093 服务',
+      effect:
+        '既能立即恢复当前「星星按钮」生成标题功能（恢复使用 WorkBuddy-LocalProxy 的 deepseek-v4.1-flash），又能从根源上防止后续任何后台 worker 重启 8093 服务时再次把自己的模型环境变量污染进常驻服务，耗时约 3–5 分钟。',
+      recommended: true,
+      reversible: true,
+    });
+    expect(b.options[1].recommended).toBe(false);
+
+    const multiInferred = ok(`{
+  "question": "需要同步更新哪些环境？",
+  "multi": true,
+  "options": [
+    {"key": "A", "label": "SIT", "description": "更新 SIT 配置"}
+  ]
+}`);
+    expect(multiInferred.type).toBe('multi-choice');
+    expect(multiInferred.options[0].effect).toBe('更新 SIT 配置');
+  });
 });
 
 describe('composeAnswer', () => {

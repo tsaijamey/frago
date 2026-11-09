@@ -54,6 +54,7 @@ const PAGE_SEGMENT: Record<PageType, string> = {
 
 /** 某一段后面再跟一个编号时，落到哪一页。 */
 const DETAIL_PAGE: Record<string, PageType> = {
+  sessions: 'session_workbench',
   tasks: 'task_detail',
   recipes: 'recipe_detail',
   app: 'recipe_app',
@@ -66,9 +67,9 @@ const DETAIL_PAGE: Record<string, PageType> = {
 const LIST_PAGE: Record<string, PageType> = (() => {
   const table: Record<string, PageType> = {};
   // 反向查表时详情页会与清单页争同一段。清单页赢：`/recipes` 该是清单，不是一个
-  // 缺了编号的详情。
+  // 缺了编号的详情。`sessions` 清单与单场会话详情共用 `session_workbench`，两头都认。
   for (const [page, segment] of Object.entries(PAGE_SEGMENT) as [PageType, string][]) {
-    if (DETAIL_PAGE[segment] === page) continue;
+    if (DETAIL_PAGE[segment] === page && segment !== 'sessions') continue;
     table[segment] = page;
   }
   // 改过名的段。侧栏这一项改叫 Pairs 之后地址跟着改成 `/pairs`，但聊天记录、书签里
@@ -129,22 +130,48 @@ export function parsePath(raw: string): Route {
   return { page: HOME_PAGE, id: null };
 }
 
-/** 地址栏现在指着哪一页。 */
+/**
+ * 地址栏现在指着哪一页。
+ *
+ * 优先读 `#` 后面的路由；若没有 `#` 路由且当前在 `http(s)` 下直接访问了真实路径
+ * （如 `/sessions/<session_id>`），回退解析 `pathname`，随后由 `writeLocationRoute`
+ * 统一归一到 `/#/<路径>`。
+ */
 export function readLocationRoute(): Route {
   if (typeof window === 'undefined') return { page: HOME_PAGE, id: null };
-  return parsePath(window.location.hash);
+  const hash = window.location.hash;
+  if (hash && hash !== '#' && hash !== '#/') {
+    return parsePath(hash);
+  }
+  if (
+    (window.location.protocol === 'http:' || window.location.protocol === 'https:') &&
+    window.location.pathname &&
+    window.location.pathname !== '/' &&
+    window.location.pathname !== '/index.html'
+  ) {
+    return parsePath(window.location.pathname);
+  }
+  return parsePath(hash);
 }
 
 /**
  * 把地址栏改成这一页。
  *
  * 已经指着同一页时什么都不做——重复的记录会让后退键退不动，人会以为界面卡了。
+ * 若最初是从 `/sessions/<id>` 这类真实路径进来的，写回时一并把 `pathname` 收回 `/`，
+ * 避免地址栏变成 `/sessions/<id>#/sessions/<id>`。
  */
 export function writeLocationRoute(path: string, replace = false): void {
   if (typeof window === 'undefined') return;
   const target = `#${path}`;
-  if (window.location.hash === target) return;
-  const url = `${window.location.pathname}${window.location.search}${target}`;
+  const isHttp =
+    window.location.protocol === 'http:' || window.location.protocol === 'https:';
+  const basePath =
+    isHttp && window.location.pathname !== '/' && window.location.pathname !== '/index.html'
+      ? '/'
+      : window.location.pathname;
+  if (window.location.hash === target && window.location.pathname === basePath) return;
+  const url = `${basePath}${window.location.search}${target}`;
   if (replace) {
     window.history.replaceState(null, '', url);
   } else {

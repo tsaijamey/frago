@@ -89,6 +89,40 @@ function idFields(page: PageType, id?: string | null) {
   };
 }
 
+/** 当前页面对应的地址栏编号（含 `session_workbench` 下的 `workbenchSessionId`）。 */
+export function activeRouteId(
+  state: Pick<
+    PageSlice,
+    | 'currentPage'
+    | 'workbenchSessionId'
+    | 'currentTaskId'
+    | 'currentRecipeName'
+    | 'currentProjectId'
+    | 'currentTodoId'
+    | 'currentScheduleId'
+    | 'currentRecipeAppId'
+  >
+): string | null {
+  switch (state.currentPage) {
+    case 'session_workbench':
+      return state.workbenchSessionId;
+    case 'task_detail':
+      return state.currentTaskId;
+    case 'recipe_detail':
+      return state.currentRecipeName;
+    case 'project_detail':
+      return state.currentProjectId;
+    case 'todo_detail':
+      return state.currentTodoId;
+    case 'schedule_detail':
+      return state.currentScheduleId;
+    case 'recipe_app':
+      return state.currentRecipeAppId;
+    default:
+      return null;
+  }
+}
+
 const initial = readLocationRoute();
 
 function createDesktopSessionId(): string {
@@ -104,34 +138,56 @@ export const usePageStore = create<PageSlice>((set, get) => ({
   currentPage: initial.page,
   ...idFields(initial.page, initial.id),
   desktopSessionId: createDesktopSessionId(),
-  workbenchSessionId: null,
+  workbenchSessionId: initial.page === 'session_workbench' ? initial.id : null,
   pendingWorkbenchLaunch: null,
 
   switchPage: (page, id) => {
+    const nextWorkbenchSessionId =
+      page === 'session_workbench' && id !== undefined
+        ? id || null
+        : get().workbenchSessionId;
     set((state) => ({
       currentPage: page,
       ...idFields(page, id),
+      workbenchSessionId: nextWorkbenchSessionId,
       desktopSessionId:
         page === 'desktop' && id !== undefined ? id || null : state.desktopSessionId,
     }));
-    writeLocationRoute(pathForPage(page, page === 'desktop' ? undefined : id));
+    const routeId =
+      page === 'desktop'
+        ? undefined
+        : page === 'session_workbench'
+          ? nextWorkbenchSessionId
+          : id;
+    writeLocationRoute(pathForPage(page, routeId));
   },
 
   applyRoute: (page, id) => {
-    set({ currentPage: page, ...idFields(page, id) });
+    set((state) => ({
+      currentPage: page,
+      ...idFields(page, id),
+      workbenchSessionId:
+        page === 'session_workbench' ? (id ?? null) : state.workbenchSessionId,
+    }));
   },
 
-  setWorkbenchSessionId: (id) => set({ workbenchSessionId: id }),
+  setWorkbenchSessionId: (id) => {
+    set({ workbenchSessionId: id });
+    if (get().currentPage === 'session_workbench') {
+      writeLocationRoute(pathForPage('session_workbench', id));
+    }
+  },
   setDesktopSessionId: (id) => set({ desktopSessionId: id }),
 
   launchWorkbenchSession: (launch, text) => {
+    const nextSessionId = launch.session_id ?? null;
     set({
       currentPage: 'session_workbench',
       ...idFields('session_workbench'),
-      workbenchSessionId: launch.session_id ?? null,
+      workbenchSessionId: nextSessionId,
       pendingWorkbenchLaunch: { launch, text },
     });
-    writeLocationRoute(pathForPage('session_workbench'));
+    writeLocationRoute(pathForPage('session_workbench', nextSessionId));
   },
 
   consumePendingWorkbenchLaunch: () => {
