@@ -65,6 +65,8 @@ from typing import Any
 
 import click
 
+from frago.init.hook_timing import build_engine_event_map
+
 logger = logging.getLogger(__name__)
 
 #: agy 工具名 → 引擎（Claude Code 词表）工具名。
@@ -122,10 +124,8 @@ ARG_KEY_MAP: dict[str, dict[str, str]] = {
 #: 触发），而**不是** ``turn.submit``（``1x/turn``，agy 没有这一路）。这里把它借道映射到引擎
 #: 的 ``UserPromptSubmit``，但必须在 :func:`translate_input` 里配合
 #: :func:`frago.session.adapters.agy_records.review_context` 的 ``should_review`` 单轮门控，
-#: 保证轻量 AI 的每轮复核在首拍（或上一拍被 hook 拒绝后）才触发。
+#: 非本轮首拍时直接返回 ``{}`` 跳过引擎调用。
 #: ``PostInvocation`` 属于 ``model.post``（仅用于强制续跑），引擎无对端故不收录。
-from frago.init.hook_timing import build_engine_event_map
-
 EVENT_MAP: dict[str, str] = build_engine_event_map("agy")
 
 #: 引擎 PreToolUse 的 ``permissionDecision`` → agy 的 ``decision``。
@@ -144,6 +144,28 @@ DECISION_MAP: dict[str, str] = {
 #: 18 秒是给意外留的余量（hooks.json 那边登记的是 20 秒，留 2 秒把答复写完），超过就
 #: 回 ``{}``，绝不把 agy 的会话拖在一条 hook 上。
 ENGINE_TIMEOUT_SECONDS = 18
+
+
+def _detect_employee_session(payload: dict[str, Any]) -> str | None:
+    """识别当前 hook 事件所在的会话是否属于绑定了 `<frago-employee>` 的 Employee 主会话。"""
+    from frago.session.adapters.agy_records import (
+        _EMPLOYEE_ID_TAG_RE,
+        detect_employee_id,
+    )
+
+    for key in ("prompt", "userPrompt", "text"):
+        val = payload.get(key)
+        if isinstance(val, str) and "<frago-employee" in val:
+            m = _EMPLOYEE_ID_TAG_RE.search(val)
+            if m and m.group(1).strip():
+                return m.group(1).strip()
+
+    conversation_id = payload.get("conversationId") or payload.get("session_id")
+    transcript_path = payload.get("transcriptPath") or payload.get("transcript_path")
+    return detect_employee_id(
+        transcript_path if isinstance(transcript_path, str) else None,
+        conversation_id if isinstance(conversation_id, str) else None,
+    )
 
 
 def _translate_args(engine_tool: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -194,30 +216,31 @@ def translate_input(payload: dict[str, Any], event: str) -> dict[str, Any]:
         # 落盘。故这里回读一次转录，把那句话与前面几轮的提要一并递过去（见
         # ``agy_records.review_context``）。
         #
-        # **不是每次 PreInvocation 都递。** agy 的 ``PreInvocation`` 每次调模型都触发
-        # （实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude 那边一轮只触发一次。
-        # 从前这一路每次都把 prompt 递过去，于是轻量 ai 的每轮复核跟着每一步跑一遍——
-        # 用户看到的就是「每个 agent 步骤都在调用轻量 ai」。
+        # **只在每轮首拍调引擎，其余步骤直接返回空对象 ``{}``。** agy 的 ``PreInvocation``
+        # 每次调模型都触发（实测一轮 5～12 次），而引擎的 ``UserPromptSubmit`` 在 claude
+        # 那边一轮只触发一次。若非首拍仍把 ``hook_event_name="UserPromptSubmit"`` 送进引擎，
+        # 即使不递 ``prompt`` 跳过了轻量 AI，所有不依赖 ``prompt`` 的常驻 ``UserPromptSubmit``
+        # 规则仍会在每一步工具结果后面注入一张钩子卡片。因此 ``should_review`` 为假时直接返回
+        # ``{}``，由 :func:`run` 跳过 ``_call_engine``，严格保证 ``UserPromptSubmit`` 一轮只
+        # 在用户提交后的首拍触发一次。
         #
-        # 只在两种时刻递（见 ``agy_records.review_context`` 的 ``should_review``）：
-        # 本轮的第一次模型调用，或上一拍工具刚被 hook 拒掉——拒绝之后正是最需要提醒的时候，
-        # 也补上「首拍那趟复核没成、整轮就再没人提醒」的窟窿。
-        #
-        # 其余步骤什么都不递：引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型
-        # 调用），而确定性规则照旧由 ``rules::dispatch_with`` 跑完返回，它不依赖这份载荷。
-        #
-        # 读不出来就什么都不加：引擎会退化成"只有规则、没有复核"，而**瞎猜一句喂过去
-        # 比不喂坏得多**——复核会照着错的那句话给建议，人还看不出它判错了对象。
+        # 读不出转录时 ``should_review`` 为真（见 ``review_context``），引擎退化成"只有规则、
+        # 没有复核"，而**瞎猜一句喂过去比不喂坏得多**。
         from frago.session.adapters.agy_records import review_context
 
         prompt, recent, should_review = review_context(
             transcript_path, conversation_id if isinstance(conversation_id, str) else None
         )
-        if should_review:
-            if prompt:
-                out["prompt"] = prompt
-            if recent:
-                out["recent_turns"] = recent
+        if not should_review:
+            return {}
+        if prompt:
+            out["prompt"] = prompt
+        if recent:
+            out["recent_turns"] = recent
+
+    emp_id = _detect_employee_session(payload)
+    if emp_id:
+        out["employee_id"] = emp_id
 
     return out
 
@@ -293,6 +316,14 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
     prompt = engine_payload.get("prompt")
     if isinstance(prompt, str) and prompt:
         env["FRAGO_HOOK_PROMPT"] = prompt
+    emp_id = engine_payload.get("employee_id")
+    if not (isinstance(emp_id, str) and emp_id.strip()):
+        emp_id = _detect_employee_session(engine_payload)
+    if isinstance(emp_id, str) and emp_id.strip():
+        clean_emp = emp_id.strip()
+        env["FRAGO_EMPLOYEE_ID"] = clean_emp
+        env["FRAGO_AGENT_ROLE"] = "employee"
+        engine_payload.setdefault("employee_id", clean_emp)
 
     try:
         result = subprocess.run(
@@ -320,6 +351,47 @@ def _call_engine(engine_payload: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _bind_launch_handle(payload: dict[str, Any]) -> None:
+    """在 SessionStart / PreInvocation 第一时间把 tmux 注入的启动把手绑到本场 agy 会话编号。
+
+    agy 的 ``conversation_summaries.db`` 在首轮连续调用工具时可能滞后 60~95 秒才落盘，
+    但 ``SessionStart`` / ``PreInvocation`` 钩子在会话建好后数秒内即由 agy 子进程触发，
+    且继承了 tmux 注入的 ``FRAGO_LAUNCH_HANDLE``。在此直接落盘绑定，WebUI 与驱动即可
+    秒级认领，无需苦等摘要库刷新。一旦该把手已有绑定（如本会话后续再派生子进程继承了
+    同一环境变量），绝不覆盖。
+    """
+    handle = (os.environ.get("FRAGO_LAUNCH_HANDLE") or "").strip()
+    if not handle:
+        return
+    cid = payload.get("conversationId")
+    if not isinstance(cid, str) or not cid.strip():
+        return
+    cid = cid.strip()
+    from frago.session import agy_store
+
+    if agy_store.get_binding(handle) is not None:
+        return
+    if cid in agy_store.bound_session_ids():
+        return
+    workspaces = payload.get("workspacePaths") or []
+    cwd = (
+        workspaces[0]
+        if isinstance(workspaces, list) and workspaces and isinstance(workspaces[0], str)
+        else os.getcwd()
+    )
+    agy_store.put_binding(handle, cid, cwd)
+    if not handle.startswith("webui-"):
+        with contextlib.suppress(Exception):
+            from frago.session.session_origin import record_attributed_dispatch
+
+            record_attributed_dispatch(
+                cid,
+                agent_type="agy",
+                cwd=cwd,
+                handle=handle,
+            )
+
+
 def _record_launch_relation(payload: dict[str, Any]) -> None:
     """把「这场 agy 会话是从哪场会话里起来的」记进会话关系账。
 
@@ -337,10 +409,19 @@ def _record_launch_relation(payload: dict[str, Any]) -> None:
     if not isinstance(child, str) or not child.strip():
         return
     child = child.strip()
+    handle = (os.environ.get("FRAGO_LAUNCH_HANDLE") or "").strip()
+    if handle:
+        from frago.session import agy_store
+
+        if handle == child or agy_store.get_binding(handle) == child:
+            # 本会话正是由 TmuxAgentSession 注入 FRAGO_LAUNCH_HANDLE 拉起的主体会话，
+            # 其派活归属已在 _bind_launch_handle 或驱动认领时按 handle 落账，此处不重复记。
+            return
+
     from frago.session.session_origin import parent_from_env, record_relation
 
     parent = parent_from_env()
-    if parent is None or parent == child:
+    if parent is None or parent in (child, handle):
         return
     workspace = payload.get("workspacePaths") or []
     record_relation(
@@ -363,13 +444,19 @@ def run(event: str) -> int:
         except json.JSONDecodeError:
             logger.warning("agy-hook: stdin 不是 JSON，本轮无规则", exc_info=True)
 
+    if payload is not None and event in ("SessionStart", "PreInvocation"):
+        with contextlib.suppress(Exception):
+            _bind_launch_handle(payload)
+
     if payload is not None and event == "SessionStart":
         with contextlib.suppress(Exception):  # 记账失败不该挡住 hook 的答复
             _record_launch_relation(payload)
 
-    # 读不出事件就按"没有意见"答复，且答复仍要**按事件分形状**——PreToolUse 缺 decision
-    # 会被 agy 当拒绝（见 translate_output），所以这里也得走它，不能直接吐 {}。
-    engine_response = _call_engine(translate_input(payload, event)) if payload else {}
+    # 读不出事件或被单轮门控拦截（translate_input 返回 {}）就按"没有意见"答复，且答复仍要
+    # **按事件分形状**——PreToolUse 缺 decision 会被 agy 当拒绝（见 translate_output），所以
+    # 这里也得走它，不能直接吐 {}。
+    engine_payload = translate_input(payload, event) if payload else None
+    engine_response = _call_engine(engine_payload) if engine_payload else {}
     click.echo(json.dumps(translate_output(event, engine_response), ensure_ascii=False))
     return 0
 

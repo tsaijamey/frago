@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -725,6 +726,57 @@ def _review_line(record: dict[str, Any]) -> str | None:
     return None
 
 
+_EMPLOYEE_ID_TAG_RE = re.compile(r'<frago-employee\s+id="([^"]+)"')
+
+
+def detect_employee_id(
+    transcript_path: str | Path | None = None,
+    conversation_id: str | None = None,
+    *,
+    records: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """识别当前 agy 会话是否绑定了 Employee 岗位身份，返回员工岗位 id；普通会话或 Worker 返回 None。"""
+    env_emp = os.environ.get("FRAGO_EMPLOYEE_ID", "").strip()
+    if env_emp:
+        return env_emp
+
+    loaded_records = records
+    if loaded_records is None:
+        path: Path | None = Path(transcript_path) if transcript_path else None
+        if path is None or not path.is_file():
+            path = agy_store.display_transcript_path(conversation_id) if conversation_id else None
+        if path is not None and path.is_file():
+            loaded_records = agy_store.read_records(path)
+
+    if loaded_records:
+        for record in loaded_records:
+            if record.get("type") != agy_store.RECORD_USER_INPUT:
+                continue
+            content = record.get("content")
+            if not isinstance(content, str):
+                continue
+            match = _EMPLOYEE_ID_TAG_RE.search(content)
+            if match:
+                emp_id = match.group(1).strip()
+                if emp_id:
+                    return emp_id
+
+    if os.environ.get("FRAGO_AGENT_ROLE", "").strip().lower() == "worker":
+        return None
+
+    if conversation_id and isinstance(conversation_id, str) and conversation_id.strip():
+        clean_cid = conversation_id.strip()
+        try:
+            from frago.employee.store import list_posts
+
+            for post in list_posts():
+                if clean_cid in post.active_session_ids:
+                    return post.member_post_id
+        except Exception:
+            pass
+    return None
+
+
 def review_context(
     transcript_path: str | Path | None,
     conversation_id: str | None = None,
@@ -743,23 +795,22 @@ def review_context(
     本轮那句话**不重复进提要**：它自己有 ``prompt`` 那一栏，两边都给等于让复核把同一句
     读两遍。
 
-    第三个返回值 ``should_review`` 判的是「这一次该不该跑复核」。agy 的 ``PreInvocation``
-    是**每次模型调用**都触发（实测一轮 5 次），而引擎的 ``UserPromptSubmit`` 在 claude
-    那边一轮只有一次。判据落在转录上，**两条任一成立就跑**：
+    第三个返回值 ``should_review`` 判的是「这一次是不是本轮首拍（即 ``UserPromptSubmit``
+    该触发的那一刻）」。agy 的 ``PreInvocation`` 是**每次模型调用**都触发（实测一轮 5 次），
+    而引擎的 ``UserPromptSubmit`` 在 claude 那边一轮只有一次。判据落在转录上：
 
-    1. 本轮的第一次模型调用 —— 最后一条 ``USER_INPUT`` 之后还没出现过 ``PLANNER_RESPONSE``。
-    2. 上一拍刚被拒 —— 这一轮最后一条记录是 ``status: ERROR``，工具调用在跑之前就被
-       hook 挡下了，模型马上要换做法重来。
+    - **本轮的第一次模型调用** —— 最后一条 ``USER_INPUT`` 之后还没出现过 ``PLANNER_RESPONSE``。
 
-    第二条是补窟窿的：只跑首拍的话，首拍那趟复核要是超时或报错，整轮就再没人提醒了。
-    认 ``status == ERROR`` 而非看正文，是因为命令自己 ``exit 1`` 的记录是
-    ``status: DONE``——那不是被拒，模型照常往下走，不该为它多跑一趟。
+    只有首拍为 True，后续步骤一律为 False（由 ``cli/agy_hook.py`` 直接返回空对象跳过引擎，
+    避免把每步都当成 ``UserPromptSubmit`` 重复触发常驻规则与复核）。不在步骤中途按
+    ``status == ERROR`` 补跑：工具自身报错同样是 ``status: ERROR``，在步骤间重跑
+    ``UserPromptSubmit`` 会把整套提交钩子卡片插进工具执行序列中间。
 
     这条判据是无状态的——只读转录，不记事。不依赖 ``invocationNum``：实测它每次模型调用
     都 +1（0、1、2…），不是每轮一个值，拿它判「变化」等于每次都放行。
 
     返回 ``(prompt, recent_turns, should_review)``。转录读不到时有话直说：
-    ``should_review`` 为 True，让引擎照旧干活——**复核少跑一次的代价，远小于它悄悄
+    ``should_review`` 为 True，让引擎照旧干活——**首拍少跑一次的代价，远小于它悄悄
     再也不跑**（那正是这套东西上一次栽的地方）。
     """
     path: Path | None = Path(transcript_path) if transcript_path else None
@@ -783,21 +834,16 @@ def review_context(
         text, _meta = _split_user_input(content if isinstance(content, str) else "")
         prompt = text or None
 
-    # 这一轮从 ``last_user`` 之后开始算。两个判据任一成立就跑复核：
-    #
-    # 1. **本轮的第一次模型调用** —— 之后还没出现过 ``PLANNER_RESPONSE``。这是常态。
-    # 2. **上一拍刚被拒** —— 最后一条记录是 ``status: ERROR``。工具调用在跑之前就被
-    #    hook 挡下了，模型马上要换个做法重来；这一刻最需要提醒，也正好补上"首拍那趟
-    #    复核没成，整轮就没人提醒"的窟窿。
-    #
-    # 认 ``status == ERROR`` 而不是看正文里有没有 error：命令自己 exit 1 的记录是
-    # ``status: DONE``、失败信息在正文里，那不是"被拒"，模型照常往下走，不该为此多跑一趟。
+    emp_id = detect_employee_id(path, conversation_id, records=records)
+    if emp_id and prompt and "<frago-employee" not in prompt:
+        prompt = f'<frago-employee id="{emp_id}"/>\n\n{prompt}'
+
+    # 这一轮从 ``last_user`` 之后开始算：只要还没出现过 ``PLANNER_RESPONSE``，眼下就是
+    # 用户刚提交后的首拍模型调用；一旦出现过，后续步骤都不再触发 ``UserPromptSubmit``。
     in_this_turn = records[last_user + 1 :] if last_user is not None else records
-    is_first_call = not any(
+    should_review = not any(
         record.get("type") == agy_store.RECORD_PLANNER for record in in_this_turn
     )
-    just_denied = bool(in_this_turn) and (in_this_turn[-1].get("status") == agy_store.STATUS_ERROR)
-    should_review = is_first_call or just_denied
 
     earlier = records[:last_user] if last_user is not None else records
     lines: list[str] = []

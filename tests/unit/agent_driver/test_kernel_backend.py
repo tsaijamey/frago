@@ -181,6 +181,37 @@ def test_wire_flag_is_forwarded_in_both_modes():
     assert chat_cmd[chat_cmd.index("--wire") + 1] == "openai"
 
 
+def test_endpoint_flag_is_forwarded_in_both_modes():
+    agent_cmd = build_command(
+        session_id="core_abc",
+        cwd="/repos/x",
+        profile_id=None,
+        model="gpt-4.1",
+        wire="openai",
+        endpoint="https://gw.example.com/v1",
+    )
+    assert agent_cmd[agent_cmd.index("--endpoint") + 1] == "https://gw.example.com/v1"
+    assert agent_cmd[agent_cmd.index("--wire") + 1] == "openai"
+    assert agent_cmd[agent_cmd.index("--model") + 1] == "gpt-4.1"
+    assert "--as-profile" not in agent_cmd
+
+    chat_cmd = build_chat_command(
+        cwd="/repos/x",
+        profile_id=None,
+        model="claude-sonnet-4-6",
+        wire="anthropic",
+        endpoint="https://anth.example.com",
+    )
+    assert chat_cmd[chat_cmd.index("--endpoint") + 1] == "https://anth.example.com"
+
+
+def test_should_use_tmux_is_disabled_inside_recipe_sandbox(monkeypatch):
+    from frago.agent_driver import kernel_backend
+
+    monkeypatch.setenv("FRAGO_RECIPE_DATA_DIR", "/tmp/recipe_data")
+    assert kernel_backend._should_use_tmux() is False
+
+
 def test_api_profile_preserves_wire_field():
     from frago.init.profile_manager import APIProfile
 

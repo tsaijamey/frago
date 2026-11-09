@@ -199,6 +199,48 @@ def test_model_is_passed_through_to_the_kernel(fake_kernel):
     assert "内核不吃 --model" not in res.stderr
 
 
+@pytest.mark.parametrize("protocol", ["anthropic", "openai"])
+def test_inline_credentials_pass_through_to_kernel_without_touching_profiles_json(
+    monkeypatch, fake_kernel, protocol
+):
+    """传了 --api-key / --endpoint / --protocol / --model 时，不读 profiles.json 直连内核。"""
+    import frago.cli.agent_command as agent_cmd_mod
+
+    def _forbid_worker_bound(*_a, **_kw):
+        raise AssertionError("内联凭据直连模式不应读取全局 worker_bound_connection / profiles.json")
+
+    monkeypatch.setattr(agent_cmd_mod, "_worker_bound_connection", _forbid_worker_bound)
+    res = CliRunner().invoke(
+        agent,
+        [
+            "--agent-type",
+            "coreagent",
+            "--protocol",
+            protocol,
+            "--endpoint",
+            "https://private-gw.example.com/v1",
+            "--model",
+            "private-model-v1",
+            "--api-key",
+            "sk-user-private-key",
+            "--quiet",
+            "ping",
+        ],
+    )
+    assert res.exit_code == 0, res.stderr
+    assert "内核不读 --endpoint/--api-key" not in res.stderr
+    call = fake_kernel[0]
+    assert call["profile_id"] is None
+    assert call["wire"] == protocol
+    assert call["endpoint"] == "https://private-gw.example.com/v1"
+    assert call["api_key"] == "sk-user-private-key"
+    assert call["model"] == "private-model-v1"
+    assert call["env"]["FRAGO_KERNEL_API_KEY"] == "sk-user-private-key"
+    assert call["env"]["FRAGO_KERNEL_ENDPOINT"] == "https://private-gw.example.com/v1"
+    assert call["env"]["FRAGO_KERNEL_MODEL"] == "private-model-v1"
+    assert call["env"]["FRAGO_KERNEL_WIRE"] == protocol
+
+
 def test_profile_env_translation_no_longer_raises_for_driverless_agents(fake_profiles):
     """给一个没有 driver 的 agent_type 翻 profile：说清"没生效"，NEVER 抛 KeyError。"""
     from frago.cli.agent_command import _profile_env_via_driver

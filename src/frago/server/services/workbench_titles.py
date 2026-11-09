@@ -61,6 +61,15 @@ PROMPT_REPLY_CLIP = 600
 ASK_TIMEOUT_S = 60
 PROCESS_TIMEOUT_S = ASK_TIMEOUT_S + 10
 
+#: 调用 LightAgent 生成标题时必须剥离的父进程内核覆盖与工作目录同步变量，防止残留环境劫持角色模型。
+_STRIPPED_KERNEL_ENV = (
+    "FRAGO_KERNEL_MODEL",
+    "FRAGO_KERNEL_ENDPOINT",
+    "FRAGO_KERNEL_API_KEY",
+    "FRAGO_KERNEL_WIRE",
+    "FRAGO_COREAGENT_CWD_FILE",
+)
+
 _NUMBERED = re.compile(r"^(?P<base>.*?)\s*#(?P<n>\d+)$")
 _SURROUNDING_QUOTES = re.compile(r'^[\s"“”\'‘’《》「」『』`]+|[\s"“”\'‘’《》「」『』`。！？.!?\n\r]+$')
 _lock = threading.Lock()
@@ -396,6 +405,10 @@ def _ask_coreagent(prompt: str) -> str:
         argv += ["--instructions", instructions.name]
     argv += ["-p", "-"]
 
+    child_env = get_utf8_env()
+    for key in _STRIPPED_KERNEL_ENV:
+        child_env.pop(key, None)
+
     try:
         proc = subprocess.run(  # noqa: S603 — 命令由本模块拼，无 shell
             argv,
@@ -404,7 +417,7 @@ def _ask_coreagent(prompt: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=get_utf8_env(),
+            env=child_env,
             timeout=PROCESS_TIMEOUT_S,
             check=False,
         )

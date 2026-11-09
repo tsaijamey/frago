@@ -111,7 +111,7 @@ def self_cmd(agent_only: bool, signature_only: bool, json_output: bool):
 @session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy", "cursor", "cline", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -202,7 +202,7 @@ def _get_status_display(status: SessionStatus) -> str:
 
 
 @session_group.command("search", cls=AgentFriendlyCommand)
-@click.argument("query")
+@click.argument("query", required=False, default="")
 @click.option(
     "--terms", "-t",
     default=None,
@@ -268,12 +268,18 @@ def search_cmd(
     from frago.session.search import EXPAND_TIMEOUT_S, search_sessions
 
     explicit = [t.strip() for t in terms.split(",") if t.strip()] if terms else None
+    clean_query = (query or "").strip()
+    if not clean_query and not explicit:
+        raise click.ClickException(
+            'Missing search query: provide QUERY argument or --terms "term1,term2".'
+        )
+    effective_query = clean_query or ", ".join(explicit or [])
 
     if not json_output and explicit is None and not no_expand:
         click.echo("正在让模型把这句话摊成关键词（可用 --no-expand 跳过）…", err=True)
 
     result = search_sessions(
-        query,
+        effective_query,
         terms=explicit,
         expand=not no_expand,
         days=days,
@@ -512,7 +518,7 @@ def ask_cmd(
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "coreagent", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -535,15 +541,33 @@ def show_cmd(
     """
     agent = AgentType(agent_type)
 
-    # Support prefix matching
+    # Support prefix matching, with multi-kernel fallback via record_reader
     session = _find_session_by_prefix(session_id, agent)
+    rr_bundle = None
+    if not session or (
+        session.step_count == 0
+        and not is_managed_session(session.session_id, session.agent_type)
+    ):
+        rr_bundle = _resolve_session_via_record_reader(session_id)
+        if rr_bundle is not None:
+            session = rr_bundle[0]
+
     if not session:
         click.echo(f"Session not found: {session_id}", err=True)
         sys.exit(1)
 
     if json_output:
+        if rr_bundle is not None:
+            rr_session, rr_steps, rr_summary = rr_bundle
+            output = {
+                "metadata": rr_session.model_dump(mode="json"),
+                "steps": [s.model_dump(mode="json") for s in rr_steps],
+                "summary": rr_summary.model_dump(mode="json") if rr_summary else None,
+            }
+            click.echo(json.dumps(output, ensure_ascii=False, indent=2))
+            return
         # JSON output
-        data = get_session_data(session.session_id, agent)
+        data = get_session_data(session.session_id, session.agent_type)
         if data:
             # Convert to serializable format
             output = {
@@ -575,7 +599,11 @@ def show_cmd(
     click.echo(f"  Tool calls: {session.tool_call_count}")
 
     # Show summary
-    summary = read_summary(session.session_id, agent)
+    summary = (
+        rr_bundle[2]
+        if rr_bundle is not None
+        else read_summary(session.session_id, session.agent_type)
+    )
     if summary:
         click.echo("\n📈 Session Summary")
         click.echo(f"  Total duration: {format_duration(summary.total_duration_ms)}")
@@ -591,7 +619,11 @@ def show_cmd(
 
     # Show step history
     if steps:
-        step_list = read_steps(session.session_id, agent)
+        step_list = (
+            rr_bundle[1]
+            if rr_bundle is not None
+            else read_steps(session.session_id, session.agent_type)
+        )
         if step_list:
             click.echo(f"\n📜 Step History ({len(step_list)} items)")
             click.echo("-" * 60)
@@ -607,8 +639,225 @@ def show_cmd(
 
 
 def _find_session_by_prefix(prefix: str, agent_type: AgentType):
-    """Find session by prefix"""
-    return find_session_by_prefix(prefix, agent_type)
+    """Find session by prefix, falling back across other AgentType directories."""
+    found = find_session_by_prefix(prefix, agent_type)
+    if found is not None:
+        return found
+    for alt_agent in (
+        AgentType.AGY,
+        AgentType.COREAGENT,
+        AgentType.CODEX,
+        AgentType.OPENCODE,
+        AgentType.CLAUDE,
+    ):
+        if alt_agent == agent_type:
+            continue
+        found = find_session_by_prefix(prefix, alt_agent)
+        if found is not None:
+            return found
+    return None
+
+
+def _resolve_session_via_record_reader(
+    session_id_or_prefix: str,
+):
+    """Fallback to multi-kernel unified `record_reader` (claude-code / opencode / codex / coreagent / agy)."""
+    from collections import Counter
+
+    from frago.session import record_reader
+    from frago.session.models import (
+        MonitoredSession,
+        SessionSource,
+        SessionStep,
+        SessionSummary,
+        StepType,
+        ToolUsageStats,
+    )
+
+    needle = (session_id_or_prefix or "").strip()
+    if not needle:
+        return None
+
+    card = None
+    try:
+        cards = record_reader.list_sessions()
+        matched = [
+            c
+            for c in cards
+            if c.session_id == needle or c.session_id.startswith(needle)
+        ]
+        if matched:
+            exact = [c for c in matched if c.session_id == needle]
+            card = exact[0] if exact else matched[0]
+    except Exception:
+        card = None
+
+    family = card.family if card is not None else None
+    resolved_sid = card.session_id if card is not None else needle
+    if family is None:
+        try:
+            family = record_reader.detect_family(resolved_sid)
+        except Exception:
+            return None
+
+    try:
+        unified_records = record_reader.read_records(
+            resolved_sid, after=0, limit=record_reader.MAX_LIMIT
+        )
+    except Exception:
+        unified_records = []
+
+    if card is None and not unified_records:
+        return None
+
+    family_to_agent = {
+        "claude-code": AgentType.CLAUDE,
+        "opencode": AgentType.OPENCODE,
+        "codex": AgentType.CODEX,
+        "coreagent": AgentType.COREAGENT,
+        "agy": AgentType.AGY,
+    }
+    mapped_agent = family_to_agent.get(str(family), AgentType.CLAUDE)
+
+    if card is not None:
+        if card.status == "running":
+            mapped_status = SessionStatus.RUNNING
+        elif card.status == "error":
+            mapped_status = SessionStatus.ERROR
+        else:
+            mapped_status = SessionStatus.COMPLETED
+        started_dt = (
+            datetime.fromtimestamp(card.created_at / 1000.0)
+            if card.created_at > 0
+            else datetime.now()
+        )
+        last_active_dt = (
+            datetime.fromtimestamp(card.last_active_at / 1000.0)
+            if card.last_active_at > 0
+            else started_dt
+        )
+        project_path = card.directory or ""
+        title = card.title
+    else:
+        mapped_status = SessionStatus.COMPLETED
+        first_ts = next((r.ts for r in unified_records if r.ts > 0), 0)
+        last_ts = next((r.ts for r in reversed(unified_records) if r.ts > 0), first_ts)
+        started_dt = (
+            datetime.fromtimestamp(first_ts / 1000.0)
+            if first_ts > 0
+            else datetime.now()
+        )
+        last_active_dt = (
+            datetime.fromtimestamp(last_ts / 1000.0) if last_ts > 0 else started_dt
+        )
+        project_path = ""
+        title = resolved_sid
+
+    step_list: list[SessionStep] = []
+    user_count = 0
+    assistant_count = 0
+    tool_call_count = 0
+    tool_success_count = 0
+    tool_error_count = 0
+    tool_counter: Counter[str] = Counter()
+
+    for idx, rec in enumerate(unified_records, start=1):
+        payload = rec.payload if isinstance(rec.payload, dict) else {}
+        if rec.kind == "user.say":
+            step_type = StepType.USER_MESSAGE
+            user_count += 1
+        elif rec.kind in ("agent.say", "agent.think"):
+            step_type = StepType.ASSISTANT_MESSAGE
+            if rec.kind == "agent.say":
+                assistant_count += 1
+        elif rec.kind in ("tool.call", "subagent.dispatch"):
+            step_type = StepType.TOOL_CALL
+            tool_call_count += 1
+            t_name = str(
+                payload.get("tool")
+                or payload.get("name")
+                or payload.get("tool_name")
+                or rec.kind
+            )
+            tool_counter[t_name] += 1
+        elif rec.kind == "tool.result":
+            step_type = StepType.TOOL_RESULT
+            if payload.get("is_error") or payload.get("status") == "error":
+                tool_error_count += 1
+            else:
+                tool_success_count += 1
+        else:
+            step_type = StepType.SYSTEM_EVENT
+            if rec.kind == "error":
+                tool_error_count += 1
+
+        summary_text = str(
+            payload.get("text")
+            or payload.get("summary")
+            or payload.get("command")
+            or payload.get("output")
+            or payload.get("message")
+            or payload.get("title")
+            or rec.kind
+        ).strip()
+        if len(summary_text) > 200:
+            summary_text = summary_text[:197] + "..."
+
+        rec_dt = (
+            datetime.fromtimestamp(rec.ts / 1000.0) if rec.ts > 0 else last_active_dt
+        )
+        step_list.append(
+            SessionStep(
+                step_id=idx,
+                session_id=resolved_sid,
+                type=step_type,
+                timestamp=rec_dt,
+                content_summary=summary_text or rec.kind,
+                raw_uuid=str(rec.id or f"seq-{rec.seq}"),
+                tool_name=str(payload.get("tool") or payload.get("name") or "") or None,
+            )
+        )
+
+    duration_ms = max(0, int((last_active_dt - started_dt).total_seconds() * 1000))
+    most_used = [
+        ToolUsageStats(tool_name=name, count=count)
+        for name, count in tool_counter.most_common(5)
+    ]
+    model_name = None
+    source_file = f"record_reader:{family}/{resolved_sid}"
+    if mapped_agent == AgentType.AGY:
+        from frago.session import agy_store
+
+        model_name = agy_store.session_model(resolved_sid)
+        source_file = str(agy_store.transcript_path(resolved_sid))
+
+    monitored = MonitoredSession(
+        session_id=resolved_sid,
+        agent_type=mapped_agent,
+        project_path=project_path,
+        name=title,
+        source_file=source_file,
+        started_at=started_dt,
+        last_activity=last_active_dt,
+        ended_at=last_active_dt if mapped_status != SessionStatus.RUNNING else None,
+        status=mapped_status,
+        step_count=len(step_list),
+        tool_call_count=tool_call_count,
+        source=SessionSource.UNKNOWN,
+    )
+    summary = SessionSummary(
+        session_id=resolved_sid,
+        total_duration_ms=duration_ms,
+        user_message_count=user_count,
+        assistant_message_count=assistant_count,
+        tool_call_count=tool_call_count,
+        tool_success_count=tool_success_count,
+        tool_error_count=tool_error_count,
+        most_used_tools=most_used,
+        final_status=mapped_status,
+        model=model_name,
+    )
+    return monitored, step_list, summary
 
 
 @session_group.command("watch", cls=AgentFriendlyCommand)

@@ -149,6 +149,41 @@ class TestAskSessionExecution:
         assert "TopSecret99" not in captured[0]["prompt"]
         assert captured[0]["role"] == "lightagent"
 
+    def test_strips_kernel_runtime_env_before_invoking_lightagent(self, tmp_path, monkeypatch):
+        import os
+
+        sid = "32c0bb7a-51ca-43d8-a072-cc65c7dea3f4"
+        _write_backup_session(
+            tmp_path,
+            sid,
+            [("user", "请排查环境污染"), ("assistant", "已定位 FRAGO_KERNEL_MODEL 残留")],
+        )
+        polluted_keys = (
+            "FRAGO_KERNEL_MODEL",
+            "FRAGO_KERNEL_ENDPOINT",
+            "FRAGO_KERNEL_API_KEY",
+            "FRAGO_KERNEL_WIRE",
+            "FRAGO_COREAGENT_CWD_FILE",
+        )
+        for key in polluted_keys:
+            monkeypatch.setenv(key, f"polluted-{key}")
+
+        captured: dict = {}
+
+        def fake_chat_turn(prompt_text: str, **kwargs):
+            captured["env"] = dict(kwargs.get("env") or {})
+            captured["os_environ_during_call"] = {k: os.environ.get(k) for k in polluted_keys}
+            return KernelTurn(text="[#2] 已剥离", status="ok", duration_ms=50)
+
+        monkeypatch.setattr("frago.agent_driver.kernel_backend.run_chat_turn", fake_chat_turn)
+
+        res = ask_session("32c0bb7a", "定位结果是什么", root=tmp_path)
+        assert res.answer_source == "lightagent"
+        for key in polluted_keys:
+            assert key not in captured["env"]
+            assert captured["os_environ_during_call"][key] is None
+            assert os.environ.get(key) == f"polluted-{key}"
+
     def test_falls_back_to_redacted_records_when_kernel_fails(self, tmp_path, monkeypatch):
         sid = "a1d5f9f8-9959-4903-a800-f2c32966b934"
         _write_backup_session(

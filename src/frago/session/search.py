@@ -380,6 +380,48 @@ def _record_epoch(record: dict[str, Any]) -> float | None:
     return None
 
 
+_CONVERSATIONAL_RECORD_TYPES = {
+    "user",
+    "assistant",
+    "USER_INPUT",
+    "PLANNER_RESPONSE",
+    "response_item",
+    "event_msg",
+    "text",
+    "tool",
+}
+
+
+def _has_conversational_record(path: Path) -> bool:
+    """判断无内部时间戳的会话文件是否包含真实对话记录（排除仅含 last-prompt / permission-mode 等元数据的空壳文件）。"""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(TAIL_BLOCK_BYTES)
+    except OSError:
+        return False
+    for raw_line in head.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        rtype = record.get("type")
+        if isinstance(rtype, str) and rtype in _CONVERSATIONAL_RECORD_TYPES:
+            return True
+        if isinstance(record.get("message"), dict) or record.get("role") in (
+            "user",
+            "assistant",
+        ):
+            return True
+        if "content_summary" in record:
+            return True
+    return False
+
+
 def last_activity_of(path: Path) -> float | None:
     """这个会话文件里最后一条带时间的记录是什么时候。
 
@@ -882,24 +924,23 @@ def search_backup(
     )
 
     # 时间只对命中的会话取，且要在 top 截断之前算——它是排序的第三优先级，
-    # 也是 --days 的依据。
-    undated = 0
+    # 也是 --days 的依据。当内部记录无时间戳时：若文件含真实对话记录则回退取文件 mtime，
+    # 若只是仅含元数据记录的空壳会话则直接静默排除，不产生刷屏告警噪音。
     dated: list[tuple[_Candidate, float]] = []
     for candidate in ranked:
         moment = last_activity_of(candidate.primary)
         if since_ts is not None:
             if moment is None:
-                undated += 1
-                continue
-            if moment < since_ts:
+                if _has_conversational_record(candidate.primary):
+                    try:
+                        moment = candidate.primary.stat().st_mtime
+                    except OSError:
+                        moment = None
+                if moment is None or moment < since_ts:
+                    continue
+            elif moment < since_ts:
                 continue
         dated.append((candidate, moment or 0.0))
-
-    if undated:
-        warnings.append(
-            f"{undated} 场命中的会话文件里没有任何时间戳（多为只有元数据记录的空壳会话），"
-            f"给了 --days 就无从判断，已排除"
-        )
 
     dated.sort(key=lambda pair: (len(pair[0].matched_terms), pair[0].hit_lines, pair[1]), reverse=True)
     chosen = dated[:top]

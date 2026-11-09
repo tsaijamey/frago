@@ -108,6 +108,32 @@ def test_send_happy(fake):
     assert "DRIVE_OK" in res.output
 
 
+def test_send_prompt_file_happy(fake, tmp_path):
+    _seed_entry("smoke", fake)
+    task_file = tmp_path / "task-brief.md"
+    task_file.write_text("# 续接任务书\n请继续核查代理出口并回复 DRIVE_OK", encoding="utf-8")
+    res = CliRunner().invoke(agent, ["send", "smoke", "--prompt-file", str(task_file)])
+    assert res.exit_code == 0, res.output
+    assert "DRIVE_OK" in res.output
+
+
+def test_resolve_existing_worker_target_auto_detects_agent_type(monkeypatch, tmp_path):
+    from frago.cli.agent_command import _resolve_existing_worker_target
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("FRAGO_HOME", str(tmp_path / ".frago"))
+    worker_sid = "11111111-2222-3333-4444-555555555555"
+    session_dir = tmp_path / ".frago" / "sessions" / "agy" / worker_sid
+    session_dir.mkdir(parents=True)
+    assert _resolve_existing_worker_target(worker_sid) == (worker_sid, "agy", True)
+    assert _resolve_existing_worker_target("non-existent-worker-id") == (
+        "non-existent-worker-id",
+        None,
+        False,
+    )
+
+
+
 def test_peek_happy(fake):
     _seed_entry("smoke", fake)
     res = CliRunner().invoke(agent, ["peek", "smoke"])

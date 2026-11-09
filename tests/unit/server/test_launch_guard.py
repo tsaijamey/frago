@@ -74,6 +74,25 @@ class TestSanctionedSpawnEnv:
         env = launch_guard.sanctioned_spawn_env({"FRAGO_SESSION_ID": "x"})
         assert "FRAGO_SESSION_ID" not in env
 
+    def test_kernel_runtime_env_is_stripped(self) -> None:
+        """2026-11-09：子会话执行 frago server restart 时不得将 FRAGO_KERNEL_* 与 FRAGO_COREAGENT_CWD_FILE 污染进 8093 守护进程。"""
+        expected_keys = (
+            "FRAGO_KERNEL_MODEL",
+            "FRAGO_KERNEL_ENDPOINT",
+            "FRAGO_KERNEL_API_KEY",
+            "FRAGO_KERNEL_WIRE",
+            "FRAGO_COREAGENT_CWD_FILE",
+        )
+        for key in expected_keys:
+            assert key in launch_guard.KERNEL_RUNTIME_ENV
+
+        dirty = {key: f"dirty-{key}" for key in expected_keys}
+        dirty["PATH"] = "/usr/bin"
+        env = launch_guard.sanctioned_spawn_env(dirty)
+        for key in expected_keys:
+            assert key not in env
+        assert env["PATH"] == "/usr/bin"
+
 
 class TestCheckoutVenvAndSystemdReconcile:
     def test_is_checkout_venv_path_recognises_repo_venv(self, tmp_path: Path) -> None:

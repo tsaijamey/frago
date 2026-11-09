@@ -103,9 +103,18 @@ def _should_use_tmux() -> bool:
     """``run_turn``（agent 模式）是否通过 tmux 承载。
 
     - 单测把 ``subprocess.Popen`` 换成替身时不走 tmux；
+    - 配方沙箱执行期内（``FRAGO_RECIPE_DATA_DIR`` / ``FRAGO_EXECUTION_ID`` / ``FRAGO_CURRENT_RUN``）
+      不走宿主 tmux，直接在当前沙箱进程树内起 ``frago-core`` 子进程，避免宿主 tmux 逃逸沙箱或写
+      ``~/.frago/coreagent/panes`` 撞上沙箱写拦截；
     - 本机无 ``tmux`` 或显式设了 ``FRAGO_COREAGENT_NO_TMUX=1`` 时自动回退直跑。
     """
     if subprocess.Popen is not _REAL_POPEN:
+        return False
+    if (
+        os.environ.get("FRAGO_RECIPE_DATA_DIR", "").strip()
+        or os.environ.get("FRAGO_EXECUTION_ID", "").strip()
+        or os.environ.get("FRAGO_CURRENT_RUN", "").strip()
+    ):
         return False
     from frago.agent_driver.coreagent_pane_host import tmux_available
 
@@ -155,6 +164,7 @@ def _base_command(
     session_id: str | None = None,
     model: str | None = None,
     wire: str | None = None,
+    endpoint: str | None = None,
 ) -> list[str]:
     """两种形状共用的那一截：定模式、定输出格式、定工作目录与连接，任务从 stdin 来。
 
@@ -178,6 +188,8 @@ def _base_command(
         cmd += ["--model", model.strip()]
     if wire and wire.strip():
         cmd += ["--wire", wire.strip().lower()]
+    if endpoint and endpoint.strip():
+        cmd += ["--endpoint", endpoint.strip()]
     cmd += ["-p", "-"]
     return cmd
 
@@ -189,6 +201,7 @@ def build_command(
     profile_id: str | None,
     model: str | None = None,
     wire: str | None = None,
+    endpoint: str | None = None,
 ) -> list[str]:
     """拼 ``frago agent`` 那一条一次性命令（agent 模式，带工具，落会话记录）。"""
     return _base_command(
@@ -198,6 +211,7 @@ def build_command(
         session_id=session_id,
         model=model,
         wire=wire,
+        endpoint=endpoint,
     )
 
 
@@ -208,6 +222,7 @@ def build_chat_command(
     role: str | None = None,
     model: str | None = None,
     wire: str | None = None,
+    endpoint: str | None = None,
 ) -> list[str]:
     """拼"问一句、答一句"那一条命令（chat 模式，无工具，不留会话记录）。"""
     return _base_command(
@@ -217,6 +232,7 @@ def build_chat_command(
         role=role,
         model=model,
         wire=wire,
+        endpoint=endpoint,
     )
 
 
@@ -356,6 +372,8 @@ def run_turn(
     profile_id: str | None = None,
     model: str | None = None,
     wire: str | None = None,
+    endpoint: str | None = None,
+    api_key: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
     on_spawn: Callable[..., None] | None = None,
@@ -379,7 +397,22 @@ def run_turn(
         profile_id=profile_id,
         model=model,
         wire=wire,
+        endpoint=endpoint,
     )
+    effective_env: dict[str, str] = {str(k): str(v) for k, v in (env or {}).items() if v is not None}
+    if endpoint and endpoint.strip():
+        effective_env["FRAGO_KERNEL_ENDPOINT"] = endpoint.strip()
+    if api_key and api_key.strip():
+        effective_env["FRAGO_KERNEL_API_KEY"] = api_key.strip()
+    if model and model.strip():
+        effective_env["FRAGO_KERNEL_MODEL"] = model.strip()
+    if wire and wire.strip():
+        effective_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
+    if session_id:
+        effective_env.setdefault("FRAGO_SESSION_ID", session_id)
+        effective_env.setdefault(
+            "FRAGO_CONV_KEY", os.environ.get("FRAGO_CONV_KEY") or session_id
+        )
     if _should_use_tmux():
         try:
             tmux_collected = _run_tmux_process(
@@ -388,7 +421,7 @@ def run_turn(
                 session_id=session_id,
                 cwd=cwd,
                 timeout_s=timeout_s,
-                env=env,
+                env=effective_env,
                 on_spawn=on_spawn,
             )
             if isinstance(tmux_collected, KernelTurn):
@@ -403,7 +436,7 @@ def run_turn(
         prompt_text,
         cwd=cwd,
         timeout_s=timeout_s,
-        env=env,
+        env=effective_env,
         on_spawn=on_spawn,
     )
     if isinstance(collected, KernelTurn):
@@ -420,6 +453,8 @@ def run_chat_turn(
     role: str | None = None,
     model: str | None = None,
     wire: str | None = None,
+    endpoint: str | None = None,
+    api_key: str | None = None,
     timeout_s: float | None = None,
     env: Mapping[str, str] | None = None,
 ) -> KernelTurn:
@@ -433,9 +468,23 @@ def run_chat_turn(
     走 ``--as-role``，都不给就用内核自己那条默认连接。
     """
     cmd = build_chat_command(
-        cwd=cwd, profile_id=profile_id, role=role, model=model, wire=wire
+        cwd=cwd,
+        profile_id=profile_id,
+        role=role,
+        model=model,
+        wire=wire,
+        endpoint=endpoint,
     )
-    collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=env)
+    effective_env: dict[str, str] = {str(k): str(v) for k, v in (env or {}).items() if v is not None}
+    if endpoint and endpoint.strip():
+        effective_env["FRAGO_KERNEL_ENDPOINT"] = endpoint.strip()
+    if api_key and api_key.strip():
+        effective_env["FRAGO_KERNEL_API_KEY"] = api_key.strip()
+    if model and model.strip():
+        effective_env["FRAGO_KERNEL_MODEL"] = model.strip()
+    if wire and wire.strip():
+        effective_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
+    collected = _run_process(cmd, prompt_text, cwd=cwd, timeout_s=timeout_s, env=effective_env or env)
     if isinstance(collected, KernelTurn):
         return collected
     out, err, returncode, duration_ms = collected

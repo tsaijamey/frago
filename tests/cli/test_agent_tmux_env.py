@@ -31,6 +31,9 @@ def captured_env(monkeypatch):
     # CCR 关掉，隔离出 CLI 覆盖这一层。
     monkeypatch.setattr(agent_command, "should_use_ccr", lambda *_a, **_k: (False, None))
     monkeypatch.setattr(agent_command, "load_frago_config", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        agent_command, "_resolve_existing_worker_target", lambda sid: (sid, None, False)
+    )
 
     def _run(*args: str):
         result = CliRunner().invoke(agent, list(args))
@@ -51,6 +54,9 @@ def invoke_tmux(monkeypatch):
     monkeypatch.setattr(agent_command, "_run_tmux_driver", _fake_run_tmux_driver)
     monkeypatch.setattr(agent_command, "should_use_ccr", lambda *_a, **_k: (False, None))
     monkeypatch.setattr(agent_command, "load_frago_config", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        agent_command, "_resolve_existing_worker_target", lambda sid: (sid, None, False)
+    )
 
     def _run(*args: str):
         result = CliRunner().invoke(agent, list(args))
@@ -196,3 +202,45 @@ def test_asset_anchor_watch_call_shape(captured_env) -> None:
     assert env["ANTHROPIC_BASE_URL"] == "https://api.deepseek.example/anthropic"
     assert env["ANTHROPIC_API_KEY"] == "sk-anchor"
     assert env["ANTHROPIC_MODEL"] == "deepseek-v4-flash"
+
+
+def test_run_tmux_driver_does_not_preinject_frago_session_id(monkeypatch) -> None:
+    """_run_tmux_driver 与 _run_worker_turn_sync 不提前往 env 塞 FRAGO_SESSION_ID，
+    交由 TmuxAgentSession.open() 按内核类型统一区分 FRAGO_SESSION_ID 与 FRAGO_LAUNCH_HANDLE。
+    """
+    import frago.agent_driver as agent_driver
+
+    seen_envs: list[dict[str, str]] = []
+
+    class _FakeLauncher:
+        def run(self, _prompt, **kwargs):
+            seen_envs.append(dict(kwargs.get("env") or {}))
+            from frago.agent_driver.tmux_session import TurnResult
+
+            return TurnResult(text="done", raw_delta="done", status="ok", duration_ms=1)
+
+    monkeypatch.setattr(agent_driver, "SessionLauncher", _FakeLauncher)
+
+    with pytest.raises(SystemExit) as exc:
+        agent_command._run_tmux_driver(
+            "hi",
+            agent_type="agy",
+            session_id="handle-uuid-1",
+            cwd="/tmp",
+            timeout=0,
+            quiet=True,
+            dry_run=False,
+            no_persist=True,
+        )
+    assert exc.value.code == 0
+    assert "FRAGO_SESSION_ID" not in seen_envs[-1]
+
+    agent_command._run_worker_turn_sync(
+        "hi",
+        agent_type="agy",
+        session_id="handle-uuid-2",
+        native_session_id=False,
+        cwd="/tmp",
+        timeout=0,
+    )
+    assert "FRAGO_SESSION_ID" not in seen_envs[-1]

@@ -215,6 +215,52 @@ def _emit_and_exit(
     sys.exit(exit_code)
 
 
+def _resolve_existing_worker_target(raw_sid: str) -> tuple[str, str | None, bool]:
+    """若传入的 `raw_sid`（来自 `--resume` 或 `--session-id`）对应磁盘上已存在的会话，
+    返回 `(真实续接编号, 所属agent_type, 是否为原生编号)`；若磁盘上尚无该会话记录，
+    原样返回 `(raw_sid, None, False)`。
+    """
+    sid = (raw_sid or "").strip()
+    if not sid:
+        return raw_sid, None, False
+    with contextlib.suppress(Exception):
+        from frago.employee.store import frago_home
+        from frago.session import (
+            agy_store,
+            codex_store,
+            coreagent_store,
+            opencode_store,
+        )
+        from frago.session import transcript_completion as tc
+
+        if coreagent_store.find_session_file(sid) is not None:
+            return sid, "coreagent", True
+        if tc.locate_transcript(sid) is not None:
+            return sid, "claude", True
+        if codex_store.session_meta(sid) is not None:
+            return sid, "codex", True
+        bound_codex = codex_store.get_binding(sid)
+        if bound_codex and codex_store.session_meta(bound_codex) is not None:
+            return bound_codex, "codex", True
+        if sid.startswith("ses_") and opencode_store.session_directory(sid) is not None:
+            return sid, "opencode", True
+        bound_oc = opencode_store.get_binding(sid)
+        if bound_oc and opencode_store.session_directory(bound_oc) is not None:
+            return bound_oc, "opencode", True
+        if agy_store.has_conversation(sid):
+            return sid, "agy", True
+        bound_agy = agy_store.get_binding(sid)
+        if bound_agy and agy_store.has_conversation(bound_agy):
+            return bound_agy, "agy", True
+
+        sessions_root = frago_home() / "sessions"
+        if sessions_root.is_dir():
+            for core in ("claude", "codex", "opencode", "agy", "coreagent"):
+                if (sessions_root / core / sid).is_dir():
+                    return sid, core, True
+    return raw_sid, None, False
+
+
 def _worker_child_id(sid: str, *, agent_type: str, native_session_id: bool) -> str | None:
     """这场 worker 在**清单上那一行的编号**；认不出来返回 None。
 
@@ -293,6 +339,9 @@ def _run_tmux_driver(
         click.echo("[Dry Run] Skip actual execution", err=json_out)
         return
 
+    run_env = dict(env) if env else {}
+    run_env.setdefault("FRAGO_CONV_KEY", os.environ.get("FRAGO_CONV_KEY") or sid)
+
     # 自有新会话（非借住别人的 tmux）才登记名册：一次性 worker 也该被 `frago agent ls`
     # 看见、按名字停掉。外壳进程被外部杀掉时 finally 不执行，名册里那条会留下——那正是
     # 我们要的：跑飞的孤儿仍可按名字收走（见 frago book agent-worker-driving）。
@@ -311,7 +360,7 @@ def _run_tmux_driver(
             agent_type=agent_type,
             session_id=sid,
             cwd=cwd,
-            env=env,
+            env=run_env,
             model=model,
             native_session_id=native_session_id,
             timeout_s=float(timeout) if timeout > 0 else None,
@@ -396,6 +445,8 @@ def _run_kernel(
     profile_id: str | None,
     model: str | None,
     wire: str | None = None,
+    endpoint: str | None = None,
+    api_key: str | None = None,
     env: dict[str, str] | None,
 ) -> None:
     """把一轮交给 frago 自己的内核跑（不挂 tmux）。
@@ -448,6 +499,10 @@ def _run_kernel(
             native_session_id=False,
         )
 
+    run_env = dict(env) if env else {}
+    run_env.setdefault("FRAGO_SESSION_ID", sid)
+    run_env.setdefault("FRAGO_CONV_KEY", os.environ.get("FRAGO_CONV_KEY") or sid)
+
     try:
         turn = kernel_backend.run_turn(
             prompt_text,
@@ -456,8 +511,10 @@ def _run_kernel(
             profile_id=profile_id,
             model=model,
             wire=wire,
+            endpoint=endpoint,
+            api_key=api_key,
             timeout_s=float(timeout) if timeout > 0 else None,
-            env=env,
+            env=run_env,
             on_spawn=_on_spawn,
         )
     finally:
@@ -483,6 +540,81 @@ def _run_kernel(
         human_note=notes.get(turn.status),
         json_out=json_out,
     )
+
+
+def _run_worker_turn_sync(
+    prompt_text: str,
+    *,
+    agent_type: str,
+    session_id: str | None,
+    native_session_id: bool,
+    cwd: str,
+    timeout: int,
+    model: str | None = None,
+    env_list: list[str] | None = None,
+) -> tuple[str, str, str]:
+    """供后台异步派发 watcher 调用的同步单轮 Worker 执行器，返回 `(real_session_id, status, text)`。"""
+    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+
+    run_env: dict[str, str] = {}
+    for item in env_list or []:
+        if "=" in item:
+            k, v = item.split("=", 1)
+            run_env[k] = v
+    run_env.setdefault("FRAGO_AGENT_ROLE", "worker")
+    effective_timeout = float(timeout) if timeout and timeout > 0 else None
+
+    if runs_on_kernel(agent_type):
+        from frago.agent_driver import kernel_backend
+
+        sid = session_id or kernel_backend.new_session_id()
+        run_env["FRAGO_SESSION_ID"] = sid
+        turn = kernel_backend.run_turn(
+            prompt_text,
+            session_id=sid,
+            cwd=cwd,
+            model=model,
+            timeout_s=effective_timeout,
+            env=run_env,
+        )
+        return sid, str(turn.status or "ok"), str(turn.text or "").strip()
+
+    from frago.agent_driver import SessionLauncher
+    from frago.agent_driver.tmux_session import tmux_name_for
+
+    from .drive_command import deregister_transient_worker, register_transient_worker
+
+    sid = session_id or str(uuid.uuid4())
+    native_flag = bool(native_session_id or (session_id and agent_type == "claude"))
+    tmux_name = tmux_name_for(sid)
+    register_transient_worker(
+        name=sid, agent_type=agent_type, tmux_name=tmux_name, cwd=cwd
+    )
+    try:
+        res = SessionLauncher().run(
+            prompt_text,
+            agent_type=agent_type,
+            session_id=sid,
+            native_session_id=native_flag,
+            cwd=cwd,
+            env=run_env,
+            model=model,
+            timeout_s=effective_timeout,
+        )
+    finally:
+        deregister_transient_worker(sid)
+
+    with contextlib.suppress(Exception):
+        from frago.agent_driver.transcript import write_turn
+
+        write_turn(sid, agent_type, cwd, prompt_text, res, source="terminal")
+
+    real_sid = sid
+    with contextlib.suppress(Exception):
+        resolved = listed_session_id(agent_type, sid, native_session_id=native_flag)
+        if resolved:
+            real_sid = resolved
+    return real_sid, str(res.status or "ok"), str(res.text or "").strip()
 
 
 def check_ccr_auth() -> tuple[bool, dict | None]:
@@ -732,6 +864,26 @@ def agent() -> None:
          "work). The session must be showing an idle shell. When the turn ends the "
          "agent is asked to quit; the session itself is never killed."
 )
+@click.option(
+    "--wait",
+    "wait_for_answer",
+    is_flag=True,
+    help="Synchronously wait for the worker turn to finish before returning."
+)
+@click.option(
+    "--async",
+    "force_async",
+    is_flag=True,
+    help="Non-blocking async dispatch: return [dispatched] immediately and deliver the "
+         "final worker output back into the caller session stream."
+)
+@click.option(
+    "--callback-session",
+    "callback_session_id",
+    type=str,
+    default=None,
+    help="Explicit caller session ID to receive the async completion callback."
+)
 def agent_run(
     prompt: tuple,
     prompt_file,
@@ -752,6 +904,9 @@ def agent_run(
     wire: str | None,
     agent_type: str | None,
     tmux_target: str | None,
+    wait_for_answer: bool = False,
+    force_async: bool = False,
+    callback_session_id: str | None = None,
 ):
     """
     Intelligent Agent: Execute one task turn in a resident tmux cli-agent session.
@@ -797,9 +952,32 @@ def agent_run(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
+    # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
+    # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。
+    if session_id and resume_session_id:
+        click.echo("Error: --session-id and --resume are mutually exclusive", err=True)
+        raise click.Abort()
+
+    target_sid = resume_session_id or session_id
+    detected_agent_type: str | None = None
+    existing_native = False
+    if target_sid:
+        target_sid, detected_agent_type, existing_native = _resolve_existing_worker_target(
+            target_sid
+        )
+        if not agent_type and detected_agent_type:
+            agent_type = detected_agent_type
+
     # 显式 --use-profile 是"这一轮跑哪条连接"，没给就看设置里绑给 worker 的那一条。
-    # 绑定只在这一层生效：它决定这一场会话的内核、模型与端点，写不到任何常驻配置里。
-    worker_connection = None if use_profile else _worker_bound_connection(agent_type)
+    # 若调用方显式传了内联密钥（--api-key 或 FRAGO_KERNEL_API_KEY），则直接按内联连接跑，
+    # 不读全局 profiles.json（供配方沙箱 each-their-own 多租户私有密钥零落盘直连）。
+    has_inline_creds = bool(
+        (api_key and api_key.strip())
+        or os.environ.get("FRAGO_KERNEL_API_KEY", "").strip()
+    )
+    worker_connection = (
+        None if (use_profile or has_inline_creds) else _worker_bound_connection(agent_type)
+    )
 
     # --agent-type 是"这一次破例用谁"；其次是 worker 那条连接自带的内核（厂商 CLI 型
     # 连接的内核就是它本身，换模型也只能在它自己身上换）；最后才是界面上选定的内核。
@@ -816,16 +994,10 @@ def agent_run(
             agent_type, core_note = resolve_agent_core(get_agent_core())
             if core_note:
                 click.echo(f"[!] {core_note}", err=True)
-        if not use_profile and agent_type:
+        if not use_profile and not has_inline_creds and agent_type:
             specific_conn = _worker_bound_connection(agent_type)
             if specific_conn is not None:
                 worker_connection = specific_conn
-
-    # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
-    # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。
-    if session_id and resume_session_id:
-        click.echo("Error: --session-id and --resume are mutually exclusive", err=True)
-        raise click.Abort()
 
     # 会话 env 的优先级：CCR < profile < CLI(--endpoint/--api-key/--model)。
     # 全部经 new-session -e 注入 tmux 会话。
@@ -885,12 +1057,6 @@ def agent_run(
             "[!] 内核不走 CCR：--use-ccr 这一轮不生效，跑在内核自己挑的那条连接上。",
             err=True,
         )
-    if on_kernel and (endpoint or api_key):
-        # 同上：--endpoint/--api-key 落的是 ANTHROPIC_*，内核一个字都不读。
-        click.echo(
-            "[!] 内核不读 --endpoint/--api-key：要换连接请用 --use-profile（它按 id 交给内核）。",
-            err=True,
-        )
 
     # 只认启动开关、不认 ANTHROPIC_MODEL 的内核从这里拿模型；认环境变量
     # 的内核忽略它，模型仍从下面的 ANTHROPIC_MODEL 走，两条路不会打架。
@@ -903,9 +1069,11 @@ def agent_run(
         click.echo(f"[OK] worker connection: {where}", err=json_out)
 
     # CLI 覆盖（最高优先级）。--model 走 ANTHROPIC_MODEL——profile 本就用该变量表达
-    # 模型覆盖，同源同义。
+    # 模型覆盖，同源同义；内核后端（CoreAgent）同时同步 FRAGO_KERNEL_*，支持无 profiles.json 直连。
     if endpoint:
         tmux_env["ANTHROPIC_BASE_URL"] = endpoint
+        if on_kernel:
+            tmux_env["FRAGO_KERNEL_ENDPOINT"] = endpoint.strip()
     if api_key:
         tmux_env["ANTHROPIC_API_KEY"] = api_key
         # 授权头会盖掉密钥头（claude 认 AUTH_TOKEN 优先），置空它才能让显式 key 生效。
@@ -913,10 +1081,83 @@ def agent_run(
         # 旧值——tmux 会话继承服务端那份全局环境，里面可能烤着上一条 profile 的凭据。
         # CCR 模式塞的那把 "test" 也在这里一并被盖掉。
         tmux_env["ANTHROPIC_AUTH_TOKEN"] = ""
+        if on_kernel:
+            tmux_env["FRAGO_KERNEL_API_KEY"] = api_key.strip()
     if model:
         tmux_env["ANTHROPIC_MODEL"] = model
+        if on_kernel:
+            tmux_env["FRAGO_KERNEL_MODEL"] = model.strip()
+    if wire and on_kernel:
+        tmux_env["FRAGO_KERNEL_WIRE"] = wire.strip().lower()
     # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
     tmux_env["FRAGO_AGENT_ROLE"] = "worker"
+
+    from frago.session.async_dispatch import (
+        dispatch_worker_turn_async,
+        format_dispatched_receipt,
+        resolve_caller_session_id,
+        should_dispatch_worker_async,
+    )
+
+    caller_sid = resolve_caller_session_id(callback_session_id)
+    if not tmux_target and should_dispatch_worker_async(
+        caller_sid,
+        wait_for_answer=wait_for_answer,
+        force_async=force_async,
+        dry_run=dry_run,
+        explicit_caller_sid=callback_session_id,
+        target_session_id=target_sid,
+    ):
+        assert caller_sid is not None
+        if target_sid:
+            dispatch_sid = target_sid
+        elif on_kernel:
+            from frago.agent_driver import kernel_backend
+
+            dispatch_sid = kernel_backend.new_session_id()
+        else:
+            from frago.agent_driver.driver import listed_session_id
+
+            raw_sid = str(uuid.uuid4())
+            dispatch_sid = (
+                listed_session_id(agent_type, raw_sid, native_session_id=False)
+                or raw_sid
+            )
+
+        with contextlib.suppress(Exception):
+            from frago.session.session_origin import record_relation
+
+            record_relation(
+                kind="dispatch",
+                child_session_id=dispatch_sid,
+                parent_session_id=caller_sid,
+                agent_type=agent_type,
+                cwd=os.getcwd(),
+                prompt_head=prompt_text,
+            )
+
+        env_pairs = [f"{k}={v}" for k, v in tmux_env.items()]
+        job = dispatch_worker_turn_async(
+            mode="resume" if (resume_session_id or existing_native) else "new",
+            caller_session_id=caller_sid,
+            caller_cwd=os.getcwd(),
+            target_session_id=dispatch_sid,
+            agent=agent_type,
+            cwd=os.getcwd(),
+            prompt=prompt_text,
+            task_summary=prompt_text,
+            resume=dispatch_sid if (resume_session_id or existing_native) else None,
+            model=launch_model,
+            timeout=timeout if timeout > 0 else None,
+            env_list=env_pairs,
+        )
+        click.echo(
+            format_dispatched_receipt(
+                job,
+                output_format="json" if json_out else "text",
+            )
+        )
+        return
 
     # 后端分派：内核（不挂 tmux）与三家 CLI（挂 tmux）各走各的执行路径，共用同一份
     # 停机契约（_EXIT_CODES）。判据只有 runs_on_kernel 一处。
@@ -933,7 +1174,7 @@ def agent_run(
         _run_kernel(
             prompt_text,
             agent_type=agent_type,
-            session_id=resume_session_id or session_id,
+            session_id=target_sid,
             cwd=os.getcwd(),
             timeout=timeout,
             quiet=quiet,
@@ -942,18 +1183,21 @@ def agent_run(
             profile_id=kernel_profile_id,
             model=model,
             wire=wire,
+            endpoint=endpoint,
+            api_key=api_key,
             env=tmux_env or None,
         )
         return
 
     # --resume <uuid> 的语义 = 用真实 id 续接既有会话，即 driver 侧的
     # session_id=<uuid> + native_session_id=True（claude driver 据此走
-    # `--resume <id>` 原样带真实 id，不做 uuid5 派生）。
+    # `--resume <id>` 原样带真实 id，不做 uuid5 派生）。若传入的 --session-id
+    # 本身已经是盘上既有会话的真实 id（existing_native=True），同样按原生 id 续接。
     _run_tmux_driver(
         prompt_text,
         agent_type=agent_type,
-        session_id=resume_session_id or session_id,
-        native_session_id=bool(resume_session_id),
+        session_id=target_sid,
+        native_session_id=bool(resume_session_id) or existing_native,
         cwd=os.getcwd(),
         timeout=timeout,
         quiet=quiet,
@@ -1058,15 +1302,6 @@ def agent_attach(files: str | None, dirs: str | None, conv_key: str | None) -> N
       frago agent attach --files '["report.md"]'
       frago agent attach --files '["chart.png"]' --dirs '["build/"]'
     """
-    key = conv_key or os.environ.get("FRAGO_CONV_KEY")
-    if not key:
-        click.echo(
-            "Error: no conv_key — set $FRAGO_CONV_KEY (auto-injected in agent "
-            "sessions) or pass --conv-key.",
-            err=True,
-        )
-        sys.exit(1)
-
     def _parse(label: str, raw: str | None) -> list[str]:
         if not raw:
             return []
@@ -1075,10 +1310,53 @@ def agent_attach(files: str | None, dirs: str | None, conv_key: str | None) -> N
         except json.JSONDecodeError as e:
             click.echo(f"Error: --{label} must be a JSON array: {e}", err=True)
             sys.exit(1)
-        if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+        if not isinstance(val, list):
             click.echo(f"Error: --{label} must be a JSON array of strings.", err=True)
             sys.exit(1)
-        return val
+        normalized: list[str] = []
+        for item in val:
+            if isinstance(item, str):
+                normalized.append(item)
+            elif isinstance(item, dict) and isinstance(
+                item.get("path") or item.get("file"), str
+            ):
+                normalized.append(str(item.get("path") or item.get("file")))
+            else:
+                click.echo(
+                    f"Error: --{label} must be a JSON array of strings.", err=True
+                )
+                sys.exit(1)
+        return normalized
+
+    key = (
+        conv_key
+        or os.environ.get("FRAGO_CONV_KEY")
+        or os.environ.get("FRAGO_SESSION_ID")
+    )
+    if not key and os.environ.get("FRAGO_AGENT_ROLE") == "worker":
+        with contextlib.suppress(Exception):
+            from frago.session.self_id import resolve_self
+
+            found = resolve_self()
+            if found and found.session_id:
+                key = found.session_id
+
+    if not key:
+        if os.environ.get("FRAGO_AGENT_ROLE") == "worker":
+            file_list = _parse("files", files)
+            dir_list = _parse("dirs", dirs)
+            count = len(file_list) + len(dir_list)
+            click.echo(
+                f"[!] No active conv_key in worker context; {count} artifact(s) "
+                "remain on local disk (skipping outbox attach)."
+            )
+            return
+        click.echo(
+            "Error: no conv_key — set $FRAGO_CONV_KEY (auto-injected in agent "
+            "sessions) or pass --conv-key.",
+            err=True,
+        )
+        sys.exit(1)
 
     file_list = _parse("files", files)
     dir_list = _parse("dirs", dirs)

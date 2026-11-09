@@ -217,6 +217,15 @@ def test_pre_invocation的注入是每轮一次性的():
 
 
 # ── 端到端：stdin → stdout ──────────────────────────────────────────
+@pytest.fixture(autouse=True)
+def _isolate_agy_bindings(tmp_path, monkeypatch):
+    """隔离宿主机的 FRAGO_LAUNCH_HANDLE 与 agy-sessions.json，防止单测改写宿主绑定表。"""
+    from frago.session import agy_store
+
+    monkeypatch.delenv("FRAGO_LAUNCH_HANDLE", raising=False)
+    monkeypatch.setattr(agy_store, "BINDINGS_PATH", tmp_path / "agy-sessions.json")
+
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -309,11 +318,11 @@ def test_pre_invocation把那句话与前面几轮一并递给引擎(monkeypatch
     assert out["recent_turns"] == "[用户] 上一句\n[助手] 上一答"
 
 
-def test_同一轮后续步骤不再递prompt(monkeypatch):
-    """一轮之内第二次及以后的模型调用、上一拍也没被拒：什么都不递。
+def test_同一轮后续步骤直接回空对象不调引擎(runner, monkeypatch):
+    """一轮之内第二次及以后的模型调用：translate_input 直接回 ``{}``，且 run 不再调用引擎。
 
-    引擎的 ``situation`` 因此为空，复核那一趟不跑（省一次模型调用），确定性规则照旧由
-    dispatch 跑完返回。这就是「轻量 ai 不再每个步骤触发一次」的落点。
+    若仍把 ``hook_event_name="UserPromptSubmit"`` 送进引擎，所有不依赖 ``prompt`` 的常驻
+    ``UserPromptSubmit`` 规则仍会在每一步工具结果后注入钩子卡片。
     """
     from frago.session.adapters import agy_records
 
@@ -327,32 +336,18 @@ def test_同一轮后续步骤不再递prompt(monkeypatch):
         {"conversationId": "c-1", "transcriptPath": "/tmp/t.jsonl", "workspacePaths": ["/tmp"]},
         "PreInvocation",
     )
-
-    assert out["hook_event_name"] == "UserPromptSubmit"
-    assert "prompt" not in out
-    assert "recent_turns" not in out
-
-
-def test_上一拍被拒时照样递prompt(monkeypatch):
-    """上一拍工具刚被 hook 拒掉：复核照跑。
-
-    补的是「首拍那趟复核没成、整轮就再没人提醒」的窟窿——被拒之后正是最该提醒的时刻。
-    """
-    from frago.session.adapters import agy_records
+    assert out == {}
 
     monkeypatch.setattr(
-        agy_records,
-        "review_context",
-        lambda path, cid, **kw: ("本轮这句", "[用户] 上一句", True),
+        agy_hook, "_call_engine", lambda p: pytest.fail("非首拍 PreInvocation 不应调用引擎")
     )
-
-    out = agy_hook.translate_input(
-        {"conversationId": "c-1", "transcriptPath": "/tmp/t.jsonl", "workspacePaths": ["/tmp"]},
-        "PreInvocation",
+    result = runner.invoke(
+        agy_hook.agy_hook,
+        ["--event", "PreInvocation"],
+        input=json.dumps({"conversationId": "c-1", "transcriptPath": "/tmp/t.jsonl"}),
     )
-
-    assert out["prompt"] == "本轮这句"
-    assert out["recent_turns"] == "[用户] 上一句"
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {}
 
 
 def test_读不出转录就什么都不补(monkeypatch):
@@ -597,3 +592,127 @@ def test_载荷里没有编号就不动账本(ledger):
     from frago.session import session_origin
 
     assert not session_origin.LAUNCH_LEDGER.exists()
+
+
+def test_session_start_binds_webui_launch_handle_without_marking_worker(
+    runner, ledger, monkeypatch
+):
+    """WebUI 新建 agy 会话时 tmux 注入 FRAGO_LAUNCH_HANDLE=webui-xxx；SessionStart 触发时
+    立即将把手绑到 conversationId，且不会把本场人类会话误记成自己的子 worker。
+    """
+    from frago.session import agy_store, session_origin
+
+    handle = "webui-f622777a-4561-4fc5-a61e-f76986e12ae0"
+    cid = "82d53e1b-fe99-4d8a-888c-42c4c1936473"
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("ANTIGRAVITY_CONVERSATION_ID", raising=False)
+    monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+    monkeypatch.setenv("FRAGO_LAUNCH_HANDLE", handle)
+
+    result, _seen = _feed(
+        runner,
+        "SessionStart",
+        {"conversationId": cid, "workspacePaths": ["/tmp/proj"]},
+        monkeypatch,
+        {"hookSpecificOutput": {}},
+    )
+    assert result.exit_code == 0
+    assert agy_store.get_binding(handle) == cid
+    assert agy_store.bound_directory(cid) == agy_store.normalize_directory("/tmp/proj")
+    assert not session_origin.LAUNCH_LEDGER.exists()
+    index = _origin_index(ledger)
+    assert index.origin_of(cid) == "human"
+    assert index.parent_of(cid) is None
+
+
+def test_session_start_binds_employee_launch_handle_and_inherits_prerecorded_parent(
+    runner, ledger, monkeypatch
+):
+    """回归（e875e9e1 / c69c589f）：frago employee invoke / ask 异步派发 agy 员工时，
+    先按临时把手 handle 记下 child=handle, parent=caller_sid；当 SessionStart 触发并绑定
+    handle -> cid 时，必须当场把真实父会话 caller_sid 过户到 cid 名下，绝不能把 handle 当作父会话。
+    """
+    from frago.session import agy_store, session_origin
+
+    caller_sid = "daeec834-e3d5-4ac6-ab35-9fd7981a6972"
+    handle = "c69c589f-670c-481c-af79-ac870f4f7598"
+    cid = "e875e9e1-0fc7-4f18-ab22-cc596d1883e9"
+
+    session_origin.record_relation(
+        kind="dispatch",
+        child_session_id=handle,
+        parent_session_id=caller_sid,
+        agent_type="agy",
+        cwd="/tmp/proj",
+        prompt_head="排查同侪派发父会话挂接延迟",
+    )
+
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("ANTIGRAVITY_CONVERSATION_ID", raising=False)
+    monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+    monkeypatch.setenv("FRAGO_LAUNCH_HANDLE", handle)
+
+    result, _seen = _feed(
+        runner,
+        "SessionStart",
+        {"conversationId": cid, "workspacePaths": ["/tmp/proj"]},
+        monkeypatch,
+        {"hookSpecificOutput": {}},
+    )
+    assert result.exit_code == 0
+    assert agy_store.get_binding(handle) == cid
+
+    entry = session_origin.find_relation(cid)
+    assert entry is not None
+    assert entry["parent"] == caller_sid
+    assert entry["prompt_head"] == "排查同侪派发父会话挂接延迟"
+
+    index = _origin_index(ledger)
+    assert index.origin_of(cid) == "worker"
+    assert index.parent_of(cid) == caller_sid
+
+
+# ── Employee 会话跨轮次身份事实透传 ──
+def test_employee会话跨轮次识别岗位身份并透传给下游(tmp_path):
+    from frago.session.adapters import agy_records
+
+    transcript = tmp_path / "transcript.jsonl"
+    records = [
+        {
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "content": '<USER_REQUEST><frago-employee id="frago-developer">岗位语境</frago-employee>\n\n第一轮指令</USER_REQUEST>',
+        },
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "content": "第一轮回复",
+        },
+        {
+            "step_index": 2,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>第二轮追问：把 + 号改成选 Employee</USER_REQUEST>",
+        },
+    ]
+    transcript.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records), encoding="utf-8"
+    )
+
+    prompt, _recent, should_review = agy_records.review_context(str(transcript), "conv-emp-1")
+    assert should_review is True
+    assert prompt is not None
+    assert '<frago-employee id="frago-developer"/>' in prompt
+
+    inp = agy_hook.translate_input(
+        {"conversationId": "conv-emp-1", "transcriptPath": str(transcript)},
+        "PreInvocation",
+    )
+    assert inp["employee_id"] == "frago-developer"
+    out = agy_hook.translate_output(
+        "PreInvocation",
+        {"hookSpecificOutput": {"additionalContext": "【轻量 ai】普通引导"}},
+    )
+    assert out == {"injectSteps": [{"ephemeralMessage": "【轻量 ai】普通引导"}]}

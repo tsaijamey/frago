@@ -569,15 +569,34 @@ class TestDaysFilter:
         assert hit.last_activity == pytest.approx(1785232800.0)
 
     def test_undated_sessions_are_excluded_and_counted(self, tmp_path):
-        """判不出时间的会话被排除时 MUST 报数，NEVER 悄悄消失。"""
-        path = tmp_path / "claude" / "shell" / "raw.jsonl"
-        path.parent.mkdir(parents=True)
-        path.write_text(
+        """无时间戳的空壳会话在给 --days 时直接静默排除，不产生刷屏告警；
+        含真实对话但无记录时间戳的会话文件则回退按文件 mtime 参与 --days 判定。
+        """
+        import os
+
+        now = time.time()
+        shell_path = tmp_path / "claude" / "shell" / "raw.jsonl"
+        shell_path.parent.mkdir(parents=True)
+        shell_path.write_text(
             json.dumps({"type": "last-prompt", "lastPrompt": "opencode"}) + "\n", encoding="utf-8"
         )
-        hits, _, warnings = search_backup(["opencode"], since_ts=1_700_000_000, root=tmp_path)
+        os.utime(shell_path, (now, now))
+
+        hits, _, warnings = search_backup(["opencode"], since_ts=now - 86400, root=tmp_path)
         assert hits == []
-        assert any("没有任何时间戳" in w for w in warnings)
+        assert not any("没有任何时间戳" in w for w in warnings)
+
+        conv_path = tmp_path / "claude" / "real-conv" / "raw.jsonl"
+        conv_path.parent.mkdir(parents=True)
+        conv_path.write_text(
+            json.dumps({"type": "user", "message": {"role": "user", "content": "opencode"}})
+            + "\n",
+            encoding="utf-8",
+        )
+        os.utime(conv_path, (now, now))
+        hits2, _, warnings2 = search_backup(["opencode"], since_ts=now - 86400, root=tmp_path)
+        assert [h.session_id for h in hits2] == ["real-conv"]
+        assert warnings2 == []
 
     def test_undated_sessions_survive_when_no_days_given(self, tmp_path):
         path = tmp_path / "claude" / "shell" / "raw.jsonl"
@@ -667,3 +686,104 @@ class TestKeywordPlan:
     def test_plan_carries_its_provenance(self):
         plan = KeywordPlan(["a"], "note", "agent")
         assert (plan.terms, plan.note, plan.source) == (["a"], "note", "agent")
+
+
+class TestSessionCliShowAndSearch:
+    @needs_rg
+    def test_search_cli_allows_terms_without_positional_query(self, tmp_path, monkeypatch):
+        """修复 5（问题 7 · P2）：`frago session search --terms "APEXP-4533,APEXP-4538" --days 5`
+        无需传位置参数 QUERY 即可正常检索。
+        """
+        from click.testing import CliRunner
+
+        from frago.cli.session_commands import session_group
+
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path))
+        write_raw(
+            tmp_path,
+            "apexp-sess-1",
+            [("user", "排查 APEXP-4533 与 APEXP-4538 的录屏问题")],
+            stamp="2026-11-06T10:00:00Z",
+        )
+        runner = CliRunner()
+        res = runner.invoke(
+            session_group,
+            ["search", "--terms", "APEXP-4533,APEXP-4538", "--top", "5"],
+        )
+        assert res.exit_code == 0, res.output
+        assert "apexp-sess-1" in res.output
+        assert "调用方指定" in res.output
+
+        # 若 QUERY 与 --terms 均未提供，则给出清晰的错误提示
+        res_empty = runner.invoke(session_group, ["search"])
+        assert res_empty.exit_code != 0
+        assert "Missing search query" in res_empty.output
+
+    def test_session_show_falls_back_to_record_reader_for_agy_session(
+        self, tmp_path, monkeypatch
+    ):
+        """修复 3（问题 3 · P1）：`frago session show <id>` 当旧版 storage 未命中时，
+        通过多内核统一读取器 `record_reader` 按完整 ID 或前缀读取 AGY 等会话。
+        """
+        from click.testing import CliRunner
+
+        from frago.cli.session_commands import session_group
+        from frago.session import record_reader
+        from frago.session.unified_record import UnifiedRecord
+
+        monkeypatch.setenv("FRAGO_SESSION_DIR", str(tmp_path))
+        agy_sid = "e10d59cf-41ea-4e84-9dbd-1f5e5a00996a"
+        fake_card = record_reader.SessionCard(
+            session_id=agy_sid,
+            family="agy",
+            title="Teams 录屏与三张 Jira 卡",
+            directory="/Users/frago/repos/frago",
+            created_at=1_793_940_000_000,
+            last_active_at=1_793_940_600_000,
+            status="idle",
+        )
+        fake_records = [
+            UnifiedRecord(
+                id="r-0",
+                session_id=agy_sid,
+                group_id=None,
+                seq=0,
+                ts=1_793_940_000_000,
+                kind="user.say",
+                payload={"text": "请分析 Teams 录屏"},
+            ),
+            UnifiedRecord(
+                id="r-1",
+                session_id=agy_sid,
+                group_id="g-1",
+                seq=1,
+                ts=1_793_940_600_000,
+                kind="agent.say",
+                payload={"text": "已整理 APEXP-4533 / 4538 / 4512 卡片结论"},
+            ),
+        ]
+        monkeypatch.setattr(record_reader, "list_sessions", lambda liveness=None: [fake_card])
+        monkeypatch.setattr(
+            record_reader,
+            "read_records",
+            lambda sid, after=0, limit=500, tail=False: fake_records if sid == agy_sid else [],
+        )
+
+        runner = CliRunner()
+        # 1. 文本模式（含前缀匹配与 --steps）
+        res_text = runner.invoke(session_group, ["show", "e10d59cf", "--steps"])
+        assert res_text.exit_code == 0, res_text.output
+        assert agy_sid in res_text.output
+        assert "Agent type: agy" in res_text.output
+        assert "已整理 APEXP-4533 / 4538 / 4512 卡片结论" in res_text.output
+
+        # 2. JSON 模式
+        res_json = runner.invoke(session_group, ["show", agy_sid, "--json"])
+        assert res_json.exit_code == 0, res_json.output
+        parsed = json.loads(res_json.output)
+        assert parsed["metadata"]["session_id"] == agy_sid
+        assert parsed["metadata"]["agent_type"] == "agy"
+        assert len(parsed["steps"]) == 2
+        assert parsed["summary"]["user_message_count"] == 1
+        assert parsed["summary"]["assistant_message_count"] == 1
+

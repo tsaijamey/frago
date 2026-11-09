@@ -52,6 +52,16 @@ SPAWN_TOKEN_VALUE = "frago-sanctioned-daemon-spawn-v1"
 # 会话身份变量直接从 frago.session.self_id.SESSION_IDENTITY_ENV 导入（由 *ENV_KEYS 展开），
 # 保持识别与剥离单一真源，避免新增会话身份环境变量时守护进程漏剥。
 
+# CoreAgent 内核运行期注入给单场子进程的模型/连接覆盖与工作目录同步环境变量。
+# 守护进程启动时必须一并剥离，防止子会话执行 frago server restart 时将自身模型覆盖污染到常驻服务。
+KERNEL_RUNTIME_ENV = (
+    "FRAGO_KERNEL_MODEL",
+    "FRAGO_KERNEL_ENDPOINT",
+    "FRAGO_KERNEL_API_KEY",
+    "FRAGO_KERNEL_WIRE",
+    "FRAGO_COREAGENT_CWD_FILE",
+)
+
 
 def sanctioned_spawn_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Return an environment mapping carrying the daemon spawn token.
@@ -60,12 +70,13 @@ def sanctioned_spawn_env(base: dict[str, str] | None = None) -> dict[str, str]:
     daemon child passes Gate 1. Defaults to a copy of the current environment so
     ``VIRTUAL_ENV`` and friends are preserved.
 
-    Session identity is stripped (see ``SESSION_IDENTITY_ENV``): the daemon
-    outlives whoever started it, so inheriting their identity would make it
-    attribute later work to a session that has already ended.
+    Session identity and kernel runtime overrides are stripped (see
+    ``SESSION_IDENTITY_ENV`` and ``KERNEL_RUNTIME_ENV``): the daemon outlives
+    whoever started it, so inheriting their identity or model overrides would
+    attribute later work to an ended session or hijack lightagent calls.
     """
     env = dict(os.environ if base is None else base)
-    for key in SESSION_IDENTITY_ENV:
+    for key in (*SESSION_IDENTITY_ENV, *KERNEL_RUNTIME_ENV):
         env.pop(key, None)
     env[SPAWN_TOKEN_ENV] = SPAWN_TOKEN_VALUE
     return env

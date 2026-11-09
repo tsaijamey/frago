@@ -161,6 +161,7 @@ class TestGenerateTitleWithCoreAgent:
         def fake_run(cmd, **kwargs):
             called["cmd"] = cmd
             called["input"] = kwargs.get("input")
+            called["env"] = kwargs.get("env")
             return subprocess.CompletedProcess(
                 cmd,
                 0,
@@ -175,6 +176,14 @@ class TestGenerateTitleWithCoreAgent:
                 stderr="",
             )
 
+        for key in (
+            "FRAGO_KERNEL_MODEL",
+            "FRAGO_KERNEL_ENDPOINT",
+            "FRAGO_KERNEL_API_KEY",
+            "FRAGO_KERNEL_WIRE",
+            "FRAGO_COREAGENT_CWD_FILE",
+        ):
+            monkeypatch.setenv(key, f"polluted-{key}")
         monkeypatch.setattr(hook_binary, "get_hook_binary_path", lambda: str(fake_bin))
         monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -193,6 +202,14 @@ class TestGenerateTitleWithCoreAgent:
         assert "/" not in cmd[idx + 1]
         assert "-p" in cmd and "-" in cmd
         assert called["input"] == "测试提示词"
+        for key in (
+            "FRAGO_KERNEL_MODEL",
+            "FRAGO_KERNEL_ENDPOINT",
+            "FRAGO_KERNEL_API_KEY",
+            "FRAGO_KERNEL_WIRE",
+            "FRAGO_COREAGENT_CWD_FILE",
+        ):
+            assert key not in called["env"]
         assert workbench_titles._parse_generated_title(out) == "单轮生成标题"
 
     def test_上游HTTP400原始错误解析为可读提示(self, tmp_path, monkeypatch):

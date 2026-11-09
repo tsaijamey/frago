@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 # 单轮轻量提取默认超时（秒）。
 ASK_TIMEOUT_S = 60.0
 
+# 调用 lightagent 单轮提取时必须剥离的父进程内核覆盖与工作目录同步环境变量，
+# 防止在 CoreAgent 子会话中执行 frago session ask 时把父会话的模型覆盖传给 lightagent。
+_STRIPPED_KERNEL_ENV = (
+    "FRAGO_KERNEL_MODEL",
+    "FRAGO_KERNEL_ENDPOINT",
+    "FRAGO_KERNEL_API_KEY",
+    "FRAGO_KERNEL_WIRE",
+    "FRAGO_COREAGENT_CWD_FILE",
+)
+
 # 喂给轻量模型的会话记录总字符预算（约 1.5~2 万 token，flash 模型数秒可读完）。
 MAX_CONTEXT_CHARS = 32_000
 
@@ -371,12 +381,14 @@ def _load_records_from_live_store(
     search_terms = terms or []
     out: list[AskRecord] = []
     for idx, rec in enumerate(unified, start=1):
+        payload = getattr(rec, "payload", None)
+        payload_dict = payload if isinstance(payload, dict) else {}
         chunks = [
-            rec.text or "",
-            rec.summary or "",
-            rec.command or "",
-            rec.output or "",
-            rec.error or "",
+            getattr(rec, "text", None) or payload_dict.get("text") or "",
+            getattr(rec, "summary", None) or payload_dict.get("summary") or "",
+            getattr(rec, "command", None) or payload_dict.get("command") or "",
+            getattr(rec, "output", None) or payload_dict.get("output") or "",
+            getattr(rec, "error", None) or payload_dict.get("message") or "",
         ]
         cleaned = clean_record_text("\n".join(c for c in chunks if c))
         if not cleaned:
@@ -598,6 +610,12 @@ def ask_session(
     from frago.agent_driver import kernel_backend
 
     note = ""
+    clean_env = dict(os.environ)
+    saved_kernel_env: dict[str, str] = {}
+    for key in _STRIPPED_KERNEL_ENV:
+        clean_env.pop(key, None)
+        if key in os.environ:
+            saved_kernel_env[key] = os.environ.pop(key)
     try:
         turn = kernel_backend.run_chat_turn(
             prompt,
@@ -605,11 +623,14 @@ def ask_session(
             role="lightagent",
             model=model,
             timeout_s=timeout_s,
+            env=clean_env,
         )
         status, text = turn.status, (turn.text or "").strip()
     except Exception as exc:  # noqa: BLE001 - 轻量模型不可用时退回直接展示切窗后的脱敏片段
         logger.debug("session ask chat turn failed: %s", exc)
         status, text = "error", str(exc)
+    finally:
+        os.environ.update(saved_kernel_env)
 
     duration_ms = int((time.monotonic() - started) * 1000)
     if status == "ok" and text:
