@@ -42,18 +42,22 @@ server 手里有没有正在跑的活？
 # Step 1: 检查 server 状态和活跃任务
 frago server status
 
-# Step 2: 无活跃任务时重启
+# Step 2a: 改了 frago 源码需发布生效并重启（在源码仓库目录执行，内部自动完成本地版本打包与切换）
+cd /Users/frago/Repos/frago && uv run frago server restart
+
+# Step 2b: 无源码改动、仅单纯重启运行中的服务
 frago server restart
 
 # Step 3: 有活跃任务时，向用户确认后才 --force
-# NEVER 自行决定 --force
+# NEVER 自行决定 --force，NEVER 单独手写执行 uv tool install / uv tool install --reinstall
 ```
 
 ## server 进程管理的背景
 
-server 运行时永远是系统级安装的 frago（uv tool install）。在 frago 源码仓库里执行 `uv run frago server start|restart` 时，会先自增补丁版本号、把当前代码打成 wheel 装到系统（`uv tool install --force`），再转交给系统 frago 完成启动——仓库 venv 里的 frago 从不作为 server 运行时。Linux 上 server 可由 systemd user service 管理，restart 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
+server 运行时永远是系统级安装的 frago。在 frago 源码仓库 `/Users/frago/Repos/frago` 里执行 `uv run frago server start|restart` 时，会在临时目录生成 `+local.<git>.<timestamp>` 本地版本号（不修改工作区 `pyproject.toml`）、把当前代码打包更新到系统环境，再转交给系统 frago 完成启动——仓库 venv 里的 frago 从不作为 server 运行时。**严禁在命令行、方案或决策卡片中单独手写 `uv tool install` / `uv tool install --reinstall`**（手写既丢失 `+local` 版本戳，也不会重启服务）。Linux 上 server 可由 systemd user service 管理，restart 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
 
 ## 不要做
+- 不要单独手写或向用户推荐 `uv tool install` / `uv tool install --reinstall` — 源码改动生效一律在仓库目录执行 `uv run frago server restart`
 - 不要在 server 手里有活时直接 restart — 那些活会丢失
 - 不要拿「机器上有 agent 在忙」当不重启的理由 — tmux 里的 worker 不受停机影响，先按上面的范围确认再判断
 - 不要自行使用 `--force` — 必须向用户确认

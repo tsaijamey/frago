@@ -18,6 +18,9 @@
     frago recipe validate <目录>                   三、查
     frago recipe run <名字> --params '{...}'       四、跑
 
+**本机配方落盘即自动生效，到第四步 `run`（有页面的配方由 `default_mode` 调用 `self.publish` + `self.open_page`，或执行 `frago recipe open <名字>`）即已完成交付。**
+本机一切请求均落在 `local` 区（主人身份），服务端检测到 `~/.frago/recipes/` 下出现新配方目录会自动重扫注册表，无需重启服务，更**不需要执行 `frago recipe expose` 设置权限**。`expose` 是将配方部署到多账号服务器后向外部人员开放访问的运维命令；用户未明确要求「部署到服务器 / 向外部他人开放页面」时，**NEVER 在本机配方创建或交付阶段执行 `frago recipe expose`，也 NEVER 弹窗询问开放权限**。
+
 `frago recipe create <名字> --prompt "<需求>"` 是把前两步并成一条命令，
 **不是跳过第一步**——它照样先生成规格、让 worker 填完，再按规格生成模板。
 

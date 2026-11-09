@@ -47,6 +47,8 @@ NEVER 用 `frago browser navigate` 打开配方页面。那条命令驱动的是
 
 页面的 html / css / js 就放在配方自己的 `assets/` 目录里，服务端直接从那里发出去，**不复制**。改完前端刷新页面即可看到，磁盘上不会留下副本。
 
+**本机页面落盘即通，不需要跑 `frago recipe expose`。** 本机打开 `/app/<配方名>` 走的是 `local` 区（主人身份），只要 `assets/index.html` 在目录里，服务端检测到新配方会自动重扫注册表并直接放行。`frago recipe expose` 只管多账号服务器上「非主人的外部请求能不能进门」，跟本机页面能不能打开毫无关系。
+
   ~/.frago/recipes/workflows/<配方名>/
   ├── recipe.md           # 元数据（type: workflow, runtime: python）
   ├── recipe.py           # 脚本：算出这一轮的状态，发布，打开页面

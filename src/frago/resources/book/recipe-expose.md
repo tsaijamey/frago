@@ -2,6 +2,14 @@
 
 分类: 效率（AVAILABLE）
 
+## 先判场景：本机使用配方不需要 expose
+
+**本机（`local` 区）新写的或现有的配方，落盘即自动生效，主人直接拥有全部访问与执行权限，不需要、也不应该执行 `frago recipe expose`。**
+
+- 只要配方放在 `~/.frago/recipes/` 下并通过 `frago recipe validate`，本机 WebUI 与 CLI 立即就能打开和运行它（有界面的配方由 `default_mode` 调用 `self.publish()` + `self.open_page()`，或直接执行 `frago recipe open <name>`）。
+- 业务需求里提到「让用户在界面里输入自己的大模型 endpoint / API key」或「多项目独立空间」，那是配方自己的业务配置与项目状态（存于 `self.data_dir`），**不是多租户服务器权限隔离**。
+- `frago recipe expose` 写的 `~/.frago/published.json` **只在多账号服务器（或经反向代理对外提供服务）的非主人请求（`public` / `identity` 区）下起作用**。在本机开发、自用或本机交付配方时，用户没明确下达「把页面开放给外部账号」的指令，**NEVER 主动运行 `frago recipe expose`，也 NEVER 弹窗询问「向谁开放页面权限」**。
+
 ## 三种人，禁止混称
 
 | 说法 | 是什么 | 代码里怎么认 |

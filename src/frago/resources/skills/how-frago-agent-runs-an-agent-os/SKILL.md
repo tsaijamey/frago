@@ -1,21 +1,21 @@
 ---
 name: how-frago-agent-runs-an-agent-os
-description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_os 虚拟桌面），并拉起常驻的「主持人」（驻场解说与盯面板）与「参谋」（场外协商）组成三角色协同：一边推进事务，一边在虚拟桌面上实时英文语音讲解、操纵窗口与鼠标指针、响应桌面右下角对话面板的人类输入，或同步录制带英文配音的演示视频（how frago agent runs an agent os）。当需要在虚拟桌面上边干活边讲解演示、遥控 frago-stage 终端会话、或录制桌面操作视频时使用。
+description: 指导 agent 作为「主操作员」（或协同专职员工 desktop-operator）驱动 frago desktop（agent_os 虚拟桌面）：一边推进事务，一边由旁路女声守护（SpeechSummarizerDaemon，中文 zh-CN-XiaoxiaoNeural / 英文 en-US-AvaMultilingualNeural）或一拍一动剧本实时讲解、操纵窗口与鼠标指针、响应桌面右下角对话面板的人类输入，或同步录制带女声配音的演示视频（how frago agent runs an agent os）。当需要在虚拟桌面上边干活边讲解演示、遥控 frago-stage 终端会话、或录制桌面操作视频时使用。
 ---
 
 # How Frago Agent Runs an Agent OS
 
 观众（或录制机位）只看得到虚拟桌面画面，看不到你所在的主控会话文字。你在这场演出里是**主操作员**：一边推进手头的事务（自己执行或派后台 worker 在桌面终端里跑），一边把思考与进展演出来。**旁白是「我」**——你就是那个接活干活的人，NEVER 把自己讲成监工。
 
-## 三角色协同架构
+## 现行协作与女声播报架构（`desktop-operator` + `SpeechSummarizerDaemon`）
 
-一场演出由三个角色分工完成，三者都是 agent 会话，各占一条线：
+虚拟桌面（Agent OS）现已全面采用专职员工 `desktop-operator` 与旁路女声总结器 `SpeechSummarizerDaemon` 架构（旧版三角色自动劫持链路、共享账本 `ledger.md` 与 `PresenterDaemon` 后台英文男声已退役）：
 
-| 角色 | 是谁 | 独占什么 | NEVER 碰什么 |
+| 组件 | 是谁 | 职责与音色规范 | 边界约束 |
 |---|---|---|---|
-| **主操作员**（Operator，主线会话） | 当前接活、并绑定桌面右下角对话面板（`?userInput=true&session=<会话编号>`）的那个主控会话，就是你 | 虚拟桌面的**键鼠与程序操作权**：`frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`window`、`mouse to/drift/click`；以及工作目录下的**共享协商账本 `ledger.md`** | 不自己抢麦克风（有主持人时） |
-| **参谋**（Advisor，场外协商常驻会话） | 你用 `frago agent start claude --name <参谋名>` 拉起的常驻会话 | 只读代码与日志；把挑刺、备选方案、根因推演写进 `ledger.md` 的「参谋挑刺与备选方案」栏 | **零舞台触碰权**：NEVER 调任何 `frago desktop` 命令，NEVER 改业务文件 |
-| **主持人**（Presenter，驻场解说与盯面板常驻会话） | 你拉起舞台后，用 `frago agent start claude --name <主持人名>` 拉起的驻场会话 | **声画导播权**：`say --speak`、`voice synth`、`strap show/hide`、`slide open/close`、`camera focus/pan/reset`、`mouse drift`（只在主操作员未动鼠标的等待期做呼吸感微移）；以及**静默读屏**（`--observe`） | NEVER 执行 `term run`、`browser open/click`、`window close` |
+| **主操作员**（`desktop-operator` 或当前舞台会话） | 绑定桌面右下角对话面板（`?userInput=true&session=<会话编号>`）的会话 | 虚拟桌面的**键鼠与程序操作权**：`frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`window`、`mouse to/drift/click` | `desktop-operator` 常驻会话自身不直接调 `say`，语音由旁路 `SpeechSummarizerDaemon` 自动生成 |
+| **旁路女声总结器**（`SpeechSummarizerDaemon`） | 服务端自动为 `desktop-operator` 会话挂载的旁路守护线程 | 实时监听用户语音 ASR / 面板输入与主操作员动作及响应，调用 `LightAgent` 提炼第一人称口语并由 `voice.resolve_emotional_voice` 合成女声：**中文默认 `zh-CN-XiaoxiaoNeural`（女声），英文默认 `en-US-AvaMultilingualNeural`（女声）** | 全程第一人称「我 / I」，严禁第三人称「主操作员正在……」转述 |
+| **一拍一动分镜录制**（`acts/actN.txt`） | 录制演示成片时的确定性幕脚本 | 每一拍在幕脚本中显式编排 `strap show` + `say --speak --async --voice en-US-AvaMultilingualNeural`（或中文 `zh-CN-XiaoxiaoNeural`）+ 窗口动作 + `mouse to` + `pause --ms` | 录制分镜脚本时使用女声 `en-US-AvaMultilingualNeural` / `zh-CN-XiaoxiaoNeural`，严禁使用已退役的英文男声 |
 
 **工具载体绝不是代理角色。** 虚拟桌面上的 `frago-stage` 终端、9222 演员浏览器、图片查看器、视频播放器、虚拟鼠标，统统是**虚拟桌面这台电脑上的被操作工具**，绝不是「主操作员」。「主操作员」指的是驱动这些工具的 agent 会话，两者 NEVER 混称。
 
@@ -23,33 +23,20 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
 
 1. **边执行事务边为用户讲解演示（默认）**：观众打开桌面页实时观看，一边推进任务，一边用连续语音、字条、全屏讲稿和窗口焦点向观众讲解正在发生什么。只要用户原话没有明示要求「录视频 / 录屏 / 录成片」，一律按本场景直接现场开演，不开启录制。
 2. **后台 worker + 人类输入行协同**：耗时任务交由后台 worker 借住在桌面终端（`--tmux-target frago-stage`）里执行，主操作员在外围轮询终端与产物，随时把观众在桌面右下角对话面板（输入行）敲下的补充要求转达给 worker。
-3. **同步录制演示视频（仅在用户明示要求录屏时开启）**：当用户明确要求把演示录成视频交付时，开启舞台机位（`rec start`）把画面与英文语音合成为可交付的 MP4 视频。
+3. **同步录制演示视频（仅在用户明示要求录屏时开启）**：当用户明确要求把演示录成视频交付时，开启舞台机位（`rec start`）把画面与英文女声（`en-US-AvaMultilingualNeural`）或中文女声（`zh-CN-XiaoxiaoNeural`）合成为可交付的 MP4 视频。
 
-## 何时用三角色，何时退回单人
+## 何时委派 `desktop-operator`，何时走一拍一动幕脚本
 
-- **默认走三角色**：复杂任务、排障、开放式构建、需要长时间推演或反复权衡的活。参谋补上单 agent 缺的思考深度与广度，主持人把幕后协商翻译成观众听得懂的解说，主操作员专心把事做成。
-- **可以退回单人一拍一动**：仅限 **1–2 分钟纯静态脚本回放演示**——没有真实排障、没有方案权衡、画面按写好的幕脚本走一遍就结束。这时不必拉主持人也不必拉参谋，主操作员自己发声即可（见「一拍一动同轨剧本」）。只要任务里出现「要先想清楚怎么做」，就回三角色。
+- **日常桌面交互与跨员工协作**：优先委派专职员工 `desktop-operator`（`frago employee invoke desktop-operator "..."`），由其操作桌面并由服务端 `SpeechSummarizerDaemon` 自动播报第一人称女声。
+- **录制确定性演示视频或一拍一动同轨演出**：按下方「一拍一动同轨剧本」编写幕脚本（`acts/actN.txt`），使用女声 `--voice en-US-AvaMultilingualNeural`（英文）或 `--voice zh-CN-XiaoxiaoNeural`（中文）预合成测算 `duration_ms` 并执行。
 
-## 主操作员标准开场五步
+## 主操作员标准开场三步
 
 **第一步：检查并拉起舞台，立刻发声。** 先 `frago desktop status`；没在跑就 `frago desktop up`。舞台一起来，MUST 先挂首帧字条并开口说 2–3 句开场白（约 15–25 秒音频）——这两条是你在这个舞台上做的第一件事，不许先忙别的，也不许让 `status` 回执里那些 WARN 的书面回应挡在画面之前（书面回应照写，但 MUST 在同一回合里紧接着发出首帧）。
 
-**第二步：建共享协商账本 `ledger.md`。** 在工作目录下建本场协同目录，写一份 `ledger.md`，四节固定：
+**第二步：桌面布局与预合成。** 调整终端字号（`frago desktop term fontsize 18`），按幕准备台词并用 `frago desktop voice synth "<台词>" --voice en-US-AvaMultilingualNeural` 拿到精确 `duration_ms`。
 
-```text
-# 任务与追加需求        ← 原始任务 + 人类从面板追加的每一条（原话照抄）
-# 参谋挑刺与备选方案     ← 参谋写这里
-# 主操拍板与当前动作     ← 主操作员每推进一个关键动作就更新这一节
-# 阶段进展与产物        ← 到哪一步了、产出了什么（路径写绝对路径）
-```
-
-账本是三个角色唯一的共享事实源，也是主持人播报的素材来源。
-
-**第三步：拉起常驻主持人，交接声画与面板。** 把麦克风、字条、镜头，以及**盯导演对话面板做秒级应答**的职责正式交给主持人：以 `presenter-prompt.md` 为模板，填入你自己的 `session_id` 与 `ledger.md` 的绝对路径，用 `frago agent start claude --name <主持人名>` 后台拉起驻场（`run_in_background: true`）。交接之后，主操作员不再自己写台词合成配音。
-
-**第四步：按需拉起参谋。** 以 `advisor-prompt.md` 为模板，用 `frago agent start claude --name <参谋名>` 拉起。遇到方案权衡、架构设计或报错排障时，先把问题写进 `ledger.md`，等参谋的挑刺与备选方案落到「参谋挑刺与备选方案」栏，再在「主操拍板与当前动作」里拍板。
-
-**第五步：专心干活，边干边记账。** 专心调用 `frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`mouse to` 在虚拟桌面上把事情做成；每推进一个关键动作，同步更新 `ledger.md` 的「主操拍板与当前动作」。任务收尾时通知主持人播报终幕、按需 `rec stop`，并用 `frago agent stop <主持人名>` / `frago agent stop <参谋名>` 回收两个常驻会话。
+**第三步：专心干活，声画同轨推进。** 专心调用 `frago desktop term run`、`browser open/click/scroll`、`image open`、`video open/play`、`mouse to` 在虚拟桌面上把事情做成；任务收尾时播报终幕、按需 `rec stop`。
 
 ## 舞台铁律
 
@@ -98,7 +85,7 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
 
 1. **什么是「一拍（Beat）」—— 四步同轨公式**：
    每一拍只做一件事、说透一句话（英文 15–35 词，约 4–9 秒），在幕脚本里严格按以下 4 步组织：
-   - **第 1 步（字条 + 开口预告）**：`strap show "<步骤说明>" --style chip` + `say "<告诉观众这一拍要操控哪个软件、看什么变化>" --speak --async --voice en-US-AndrewMultilingualNeural`（`--async` 让声音立即起播，不阻塞紧随其后的窗口与指针动作）。
+   - **第 1 步（字条 + 开口预告）**：`strap show "<步骤说明>" --style chip` + `say "<告诉观众这一拍要操控哪个软件、看什么变化>" --speak --async --voice en-US-AvaMultilingualNeural`（`--async` 让声音立即起播，不阻塞紧随其后的窗口与指针动作）。
    - **第 2 步（触发窗口/软件动作，自动开窗并置顶）**：执行本拍真正的业务指令（如 `term run "<命令>"`、`browser open <url>`、`image open <图片>`、`video open <视频>` + `video play`）。该动作会自动把目标窗口打开并提到最顶层（`z_order` 首位）。
    - **第 3 步（指针跟随视线）**：用 `mouse to win:term` / `mouse to win:browser`（或 `mouse drift --x <x> --y <y>`，若已用 `elements` 确认了具体元素名则用 `mouse to <元素>`，**切记不带 `--ref`**）把鼠标指针带到当前置顶窗口上。**注意：切勿在窗口尚未打开或未跑 `elements` 确认前盲写 `mouse to dock:...` 或 `mouse to win:image`，因为批处理中一旦某个 `ref` 不存在报 `RefError`，同一幕余下步骤会被全部中止（`not_reached`）。**
    - **第 4 步（呼吸与留白，决不可省！）**：`pause --ms <本句 duration_ms + 800~1500ms>`。**这一行保证了：在这一拍的话还没讲完、观众还没看清当前置顶窗口之前，绝不会跳进下一拍！**
@@ -109,7 +96,7 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
      2. 先跑 `voice synth` 预合成这 3–5 句，既做英文校验，又拿到每句准确的 `duration_ms`：
 
         ```text
-        frago desktop voice synth "<Beat 1 台词>" --voice en-US-AndrewMultilingualNeural
+        frago desktop voice synth "<Beat 1 台词>" --voice en-US-AvaMultilingualNeural
         ```
 
      3. 把每句的 `duration_ms + 1000` 填入对应拍末尾的 `pause --ms`，写成 `acts/act1.txt`。
@@ -120,14 +107,14 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
    # 每一拍 = 挂字条 + 开口解说(--async) + 软件动作(自动开窗并置顶) + 指针跟随 + 匹配语音时长的停顿(pause --ms)
    # Beat 1: 操控终端（假设 voice synth 测得本句 duration_ms = 5184）
    strap show "1/4 终端：执行命令自动置顶" --style chip
-   say "First, I will run a command in the terminal, and watch how the terminal window rises to the front on its own." --speak --async --voice en-US-AndrewMultilingualNeural
+   say "First, I will run a command in the terminal, and watch how the terminal window rises to the front on its own." --speak --async --voice en-US-AvaMultilingualNeural
    term run "echo 'Step 1: Terminal is active at the top of the window stack'"
    mouse to win:term
    pause --ms 6200
 
    # Beat 2: 操控浏览器（假设 duration_ms = 5496）
    strap show "2/4 浏览器：打开页面自动置顶" --style chip
-   say "Next, I move to the browser and open a page. Touching the browser immediately brings it above the terminal." --speak --async --voice en-US-AndrewMultilingualNeural
+   say "Next, I move to the browser and open a page. Touching the browser immediately brings it above the terminal." --speak --async --voice en-US-AvaMultilingualNeural
    browser open http://127.0.0.1:8093/app/agent_os
    mouse to win:browser
    pause --ms 6500
@@ -143,8 +130,8 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
 
 1. **先写话。** 动手之前先把这一场要说的话整段写出来，落到工作目录下的 `script.md`，一行一句。一个阶段一批，写完再进下一步。
 2. **切短句。** 一句 5–14 秒的量（英文约 15–40 个词）。长了切成两句——短句好排队、好插、好对齐。
-3. **逐句合成。** 每句过一次 `frago desktop voice synth "<这一句>" --voice en-US-AndrewMultilingualNeural`，回执里的 `duration_ms` 抄下来。嗓子就用 Andrew，`say` 与 `voice synth` 都带上同一个 `--voice`，两次不一致缓存对不上，演的时候又得重合成一遍。
-4. **排队放。** 一批话写进文件、一条命令整批发（见下「一次排一长串」）；单句只在插播时发。两种写法都是 `frago desktop say "<这一句>" --speak --async --voice en-US-AndrewMultilingualNeural`。`--async` 是必须的：它立刻返回，下一条马上跟上，几句就接成一条不断的声。要等某一句讲完再往下走时，用 `frago desktop wait --speech <编号>`（编号在回执里）或 `wait --speech all`。
+3. **逐句合成。** 每句过一次 `frago desktop voice synth "<这一句>" --voice en-US-AvaMultilingualNeural`，回执里的 `duration_ms` 抄下来。英文嗓子默认用女声 `en-US-AvaMultilingualNeural`（中文默认女声 `zh-CN-XiaoxiaoNeural`），`say` 与 `voice synth` 都带上同一个 `--voice`，两次不一致缓存对不上，演的时候又得重合成一遍。
+4. **排队放。** 一批话写进文件、一条命令整批发（见下「一次排一长串」）；单句只在插播时发。两种写法都是 `frago desktop say "<这一句>" --speak --async --voice en-US-AvaMultilingualNeural`。`--async` 是必须的：它立刻返回，下一条马上跟上，几句就接成一条不断的声。要等某一句讲完再往下走时，用 `frago desktop wait --speech <编号>`（编号在回执里）或 `wait --speech all`。
 5. **边放边续。** 队列快空了（大约还剩一句）就回到第 1 步续下一批。**NEVER 让它空**——空一次，人听到的就是那十几秒 gap。续批也是写文件、整批发，别一句一句敲。
 
 **两类话，一层一层放。**
@@ -153,7 +140,7 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
 - **插播层（此刻在做什么、为什么）**：画面一变就要说，晚一拍就没意义。变化来的话**插播**一句
   （`--interject`）：
 
-      frago desktop say "<这一句>" --speak --async --interject --voice en-US-AndrewMultilingualNeural
+      frago desktop say "<这一句>" --speak --async --interject --voice en-US-AvaMultilingualNeural
 
   它掐掉正在说的那一句、让这一句**立刻**说，**排着的留着**接着说——画面变了就说，说完原来的接着走。NEVER 用 `--interrupt`（也 NEVER 用 `voice stop`）：那两条把排着的整队丢掉，声音断成一片空白，正好是这一节要防的事。
 - 两层的比例大约是「并行层常年不停、插播层有事才来」。插播来了就紧跟着说，说完接着回并行层。
@@ -162,23 +149,23 @@ description: 指导 agent 作为「主操作员」驱动 frago desktop（agent_o
 
 ```text
 # 并行层
-say "..." --speak --async --voice en-US-AndrewMultilingualNeural
-say "..." --speak --async --voice en-US-AndrewMultilingualNeural
+say "..." --speak --async --voice en-US-AvaMultilingualNeural
+say "..." --speak --async --voice en-US-AvaMultilingualNeural
 ```
 
 **一批多长：10–20 句（约 1–2 分钟音频），别排到十分钟。** 两头都有代价：批太短 → 续批的回合多，gap 就多；批太长 → **转向变慢**：队列里压着十分钟，人从输入行提了新要求、或方向要改时，那十分钟还在照旧讲原来的打算。1–2 分钟的批够把续批的思考藏在声音底下，又能在两分钟内掉头。边放边写下一批，NEVER 让队列空。
 
 **排好的那部分写成幕。** 它是这场演出的主线，不是空档里的加分项：把一批话连同对应的画面动作一起写成幕脚本。一幕一个文件，一行一条桌面指令（不带 `frago desktop` 前缀），用 `frago desktop - < <文件>` 按行执行；节奏用 `pause --ms` 写进脚本里。幕脚本与讲稿放在工作目录的 `acts/` 与 `slides/` 下，讲稿一页只讲一件事、字要大。
 
-**看后台终端的节奏照旧**：每 5–10 秒 `frago desktop term read --lines 40` 看一次它到了哪，有阶段变化就换字条：`strap show "<n>/<总> <阶段> 已花 <分钟>" --style chip`——人关心的是「到哪一步、还要多久」，不是一个抽象的阶段名。主持人盯屏时用 `frago desktop term read --lines 40 --observe`，静默读、不顶窗。
+**看后台终端的节奏照旧**：每 5–10 秒 `frago desktop term read --lines 40` 看一次它到了哪，有阶段变化就换字条：`strap show "<n>/<总> <阶段> 已花 <分钟>" --style chip`——人关心的是「到哪一步、还要多久」，不是一个抽象的阶段名。旁路观察读屏时用 `frago desktop term read --lines 40 --observe`，静默读、不顶窗。
 
 ## 人会跟你说话（桌面右下角的对话面板 / 输入行）
 
 桌面右下角常驻客服式对话入口（人类输入行）：当桌面页地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开（可收起为右下角胶囊图标）；不带参数时收起为右下角胶囊图标（录制机位自动隐藏）。人看着桌面，随时能打字给你：他打的字**不进桌面终端**，而是作为**新消息**排进地址里那场主控会话（主操作员）的队列。
 
 1. **收到人追加的消息后立刻响应**：
-   - **三角色模式下由主持人做秒级口头确认**：主持人轮询主操作员的会话记录（`GET /api/workbench/sessions/<主操作员session_id>/records?after=<last_seq>&limit=50`，或 `frago session show <主操作员session_id>`），一旦发现新的观众消息，立刻 `frago desktop say "Received, passing it on: <英文简短摘要>" --speak --async --interject --voice en-US-AndrewMultilingualNeural`（同时触发面板气泡回显），并把新需求记进 `ledger.md` 的「任务与追加需求」栏提醒主操作员。
-   - **单人模式下由主操作员自己确认**：`frago desktop say "Received, passing it on: <short summary>" --speak --async --interject --voice en-US-AndrewMultilingualNeural`（纯字幕可用中文 `frago desktop say "收到，已转达：<不超过 20 字的摘要>"`）。
+   - **`desktop-operator` 常驻模式下由 `SpeechSummarizerDaemon` 自动女声暖场确认**：服务端旁路守护监听到用户输入后，立即用第一人称女声（中文 `zh-CN-XiaoxiaoNeural` / 英文 `en-US-AvaMultilingualNeural`）插播确认。
+   - **单人脚本回放模式下由主操作员自己确认**：`frago desktop say "Received, passing it on: <short summary>" --speak --async --interject --voice en-US-AvaMultilingualNeural`（或中文女声 `frago desktop say "收到，我马上处理：<不超过 20 字的摘要>" --speak --async --interject --voice zh-CN-XiaoxiaoNeural`）。
    - 后台 worker 还在跑时，把原话排进终端里 worker 的输入队列：
 
          frago desktop focus term
@@ -188,7 +175,7 @@ say "..." --speak --async --voice en-US-AndrewMultilingualNeural
 
    - 后台 worker 已经结束时，把原话追加进任务需求文件末尾，重新起一轮后台 worker。
 2. **宽泛题目自己拍板开演，只有撞上硬阻塞才在桌面上喊话**：
-   像「讲解太阳系」「演示某功能」这类开放式要求，由你直接定下分幕与形式立刻开演，别停下来让人做选择题。只有中途撞上没有人类输入就走不下去的硬阻塞（如登录验证码、缺失密钥、worker 退出码 2）时，才直接说一句 `say "I need your input — please reply in the chat box at the bottom-right corner of the screen." --speak --async --interject --voice en-US-AndrewMultilingualNeural`（或中文纯字幕 `frago desktop say "需要你处理：<原因>"`），且 NEVER 使用 `frago app ask` 或 `answer-needed-by-human` 卡片。
+   像「讲解太阳系」「演示某功能」这类开放式要求，由你直接定下分幕与形式立刻开演，别停下来让人做选择题。只有中途撞上没有人类输入就走不下去的硬阻塞（如登录验证码、缺失密钥、worker 退出码 2）时，才直接说一句 `say "I need your input — please reply in the chat box at the bottom-right corner of the screen." --speak --async --interject --voice en-US-AvaMultilingualNeural`（或中文纯字幕 `frago desktop say "需要你处理：<原因>"`），且 NEVER 使用 `frago app ask` 或 `answer-needed-by-human` 卡片。
 3. **窗口焦点跟随当前讲解对象（不盲目锁死终端）**：
    正在讲解或操控哪个软件，就让哪个软件的窗口随着业务指令自然置顶并停留展示（4–8 秒以上），NEVER 为了换焦点手动补 `focus`，也 NEVER 刚打开浏览器/图片/视频还没让观众看清就切回终端。只有当后台 worker 正在终端里持续跑任务、需要带观众回看终端实时输出时，才用 `term read`（自动激活终端）或 `focus term` 把终端请回最前。只在有事发生时切换画面，NEVER 为了"看看"反复空切。
 
@@ -203,4 +190,4 @@ say "..." --speak --async --voice en-US-AndrewMultilingualNeural
    macOS 一旦进入休眠（Sleep），CDP 停止产帧但命令不报错，几十分钟的动线会被压成几秒。整段录制脚本外层用 `caffeinate -dimsu` 包裹，并确认没有合盖；停录后用 `pmset -g log` 检查录制期间是否有 `Entering Sleep` / `DarkWake`。
 4. **收尾必保 `rec stop` 完全返回**：
    把 `frago desktop rec stop` 放进 `finally` / `trap` 里，先 `wait --speech all` 等语音说完再停录。停录会把录制期间每一句 `say --speak` 的音频按开口时刻（含 `--interject` 的 `cut_ms` 截断位置）贴成音轨封进 MP4。长片编码耗时数分钟，**必须等 `rec stop` 完全返回后**再用 `ffprobe -count_frames` 核验帧数与时长，并抽查音频片段与 `<片名>-voice/` 副本的相似度（正常接近 1.000，叠音约 0.70），防止半途读取报 `moov atom not found` 或漏检叠音。
-5. **收尾回收常驻会话**：终幕播完、`rec stop` 返回后，用 `frago agent stop <主持人名>` / `frago agent stop <参谋名>` 收走两个常驻角色；舞台本身保持活着（NEVER `frago desktop down`）。
+5. **收尾保持舞台在线**：终幕播完、`rec stop` 返回后，舞台本身保持活着（NEVER `frago desktop down`）。

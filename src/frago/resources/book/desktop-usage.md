@@ -88,7 +88,7 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **播放器装载即暂停在第一帧，开播是另一条指令。** `video open <片子>` 只是把片子装进去并把窗口打开，`video play` 才开始放——分镜要的是"到这一拍才开始放"，不是开窗就跑。画面恒静音：浏览器不放没有用户手势的有声播放，而录制链路本来也不收声音。回执里的 `effect` 是荧幕报回来的实况（在不在播、放到第几秒），不是"指令发出去了"——自动播放被拦下时画面停在第一帧，那两件事在回执里必须分得开。
 
-**`say` 默认只是字幕，加 `--speak` 才开口。** 开口用的是 Edge 语音合成（默认声音 en-US-AndrewMultilingualNeural，见 `frago video-narration` 域的 `edge-tts-voice-picks`），同一句话同样的参数只合成一次，缓存在 `~/.frago/cache/tts/`，超过 500MB（`~/.frago/config.json` 的 `tts.cache_max_mb`）从最久没用的删起。开口时字幕跟着声音走，留多久由这句实际多长决定，所以不接受 `--ms`。
+**`say` 默认只是字幕，加 `--speak` 才开口。** 开口用的是 Edge 语音合成（默认女声：中文 `zh-CN-XiaoxiaoNeural` / 英文 `en-US-AvaMultilingualNeural`，按正文语言自适应，见 `frago.desktop.voice` 与 `frago video-narration` 域的 `edge-tts-voice-picks`），同一句话同样的参数只合成一次，缓存在 `~/.frago/cache/tts/`，超过 500MB（`~/.frago/config.json` 的 `tts.cache_max_mb`）从最久没用的删起。开口时字幕跟着声音走，留多久由这句实际多长决定，所以不接受 `--ms`。
 
 **这一层只说英文。** 嗓子限 `en-*`，正文里不许出现中日文字符，两样各由一个常量卡着（`frago.desktop.voice` 里的 `ENFORCE_ENGLISH_VOICE` 与 `ENFORCE_ENGLISH_TEXT`）。不达标当场拒绝合成，回执写 `say 失败 — ValueError: 语音层只说英文…`——不闷声换嗓子，也不退回字幕假装只是没声音。只锁嗓子锁不住语言：Multilingual 那一代给什么文字就念什么语言，英文嗓子念中文，出来的仍是中文。要放宽就改那两个常量。**这一条被拒会把整批带停**：它是步骤失败，同一条命令里余下的步骤一条都不执行（回执里 `not_reached`，HTTP 500）——与下面「合成失败不停整批」那条不是一回事。所以别把开口的话和别的动作排在一条命令里：台词先用 `voice synth` 过一遍（同一道语言关，先跑在联网之前），验过了再整批发。
 
@@ -125,7 +125,7 @@ HTML 由你自己产出，调试走 `frago browser`（`file://` 打开、`get-co
 
 **右下角对话面板（人类输入行）是唯一的例外。** 虚拟桌面右下角常驻客服式对话入口：地址带 `?userInput=true&session=<会话编号>` 时，右下角对话交互面板默认展开（可收起为右下角胶囊图标）；不带参数时仍显示右下角图标但不展开面板（录制机位自动隐藏，录制画面里不会出现它）。人在里面打的字**不进桌面终端**——终端里跑着的是 worker，人的话要先到主控会话那里：输入行发的是 frago 服务的会话发送接口（`POST /api/workbench/sessions/<编号>/send`，`wait: false` 只排队不等答），排进地址里那场会话的队列。
 
-**面板绑的是主控会话，不是终端。** 地址里那个 `session=<编号>` 就是主控会话的编号。三角色协同下，这一条链上的三个角色各有分工：主控会话是「主操作员」，他与后台「参谋」协商并在桌面终端/浏览器上把事情落地；驻场「主持人」同步监听这场会话的新消息（轮询 `GET /api/workbench/sessions/<编号>/records?after=<序号>`，或 `frago session show <编号>`），发现观众新发言就**秒级**用 `frago desktop say ... --speak --async --interject` 口头确认（同时触发面板气泡回显），并把需求记进共享协商账本。单人模式（1–2 分钟纯脚本回放）下，这声确认由主操作员自己发。
+**面板绑的是主控会话，不是终端。** 地址里那个 `session=<编号>` 就是主控会话（日常由专职员工 `desktop-operator` 担任）的编号。`desktop-operator` 专职在桌面终端与浏览器上操作，服务端旁路守护 `SpeechSummarizerDaemon` 实时监听用户语音/面板输入与 `desktop-operator` 的操作及响应，自动用第一人称女声（中文 `zh-CN-XiaoxiaoNeural` / 英文 `en-US-AvaMultilingualNeural`）进行暖场应答与增量解说。一拍一动纯脚本回放演示下，由剧本自身通过 `say --speak --async --voice en-US-AvaMultilingualNeural` 发声。
 
 主操作员怎么把人的话转达给终端里的 worker：通常是 `focus term` → `type "<原话>"` → `key Enter`，把话排进 worker 的 TUI。这条链是「WebUI 创建配方」的展示面：桌面是显示器，主控会话是遥控器，人对着遥控器说话。worker 怎么进桌面终端见 `frago book recipe-creation` 的 `--tmux-target`。
 

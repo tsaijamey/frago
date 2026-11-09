@@ -148,7 +148,7 @@
 
 - name: interactive-recipe
   category: available
-  brief: "Web UI 人机协作 Recipe 架构、launcher、API 交互、状态管理"
+  brief: "Web UI 人机协作 Recipe 架构：本机落盘即自动生效（local 区免 expose），default_mode 调 publish+open_page（或 frago recipe open）即可打开；API 交互与状态管理"
 
 - name: recipe-deploy
   category: available
@@ -156,7 +156,7 @@
 
 - name: recipe-expose
   category: available
-  brief: "frago recipe expose 决定谁能看这张 recipe 页面（与 recipe publish 写页面状态不是一回事）。三种人严禁混称：未登录的人 / 登录用户 / 主人——主人不是账号是请求来源（local 或带 server-token）。三个独立问题：谁能打开（--public/--signed-in/--allow）、从哪个根读（--each-their-own 默认读各人 users/<账号id>/ 那份 / --shared 读配方自己 app-state/ 那份，只读）、页面能按什么（配方那个 mode 方法上的 @action，--runnable 已取消）。首次开放必须明说谁能看，没有默认值；改动是增量的，放宽必须说出口（--deny/--only/--signed-in），--force 已取消；页面调 api/<mode> 就开不成 public（匿名区只收 GET/HEAD），expose --public 会当场拒；--portal 把登录门口写进登记表；跨配方读数据两边各说一句：被读的一方写 shares、读的一方写 reads_common，没有人签字（grant/grants 已删），缺一句 validate 直接拒，查现状用 frago recipe reads"
+  brief: "【仅限服务器端对外开放，本机使用配方严禁 expose】本机（local 区）配方落盘即自动生效，主人拥有全部权限，无需也测不出 expose；仅在多账号服务器向外部人员开放页面时才用 frago recipe expose 决定谁能看这张 recipe 页面（与 recipe publish 写页面状态不是一回事）。三种人严禁混称：未登录的人 / 登录用户 / 主人——主人不是账号是请求来源（local 或带 server-token）。三个独立问题：谁能打开（--public/--signed-in/--allow）、从哪个根读（--each-their-own 默认读各人 users/<账号id>/ 那份 / --shared 读配方自己 app-state/ 那份，只读）、页面能按什么（配方那个 mode 方法上的 @action，--runnable 已取消）。首次开放必须明说谁能看，没有默认值；改动是增量的，放宽必须说出口（--deny/--only/--signed-in），--force 已取消；页面调 api/<mode> 就开不成 public（匿名区只收 GET/HEAD），expose --public 会当场拒；--portal 把登录门口写进登记表；跨配方读数据两边各说一句：被读的一方写 shares、读的一方写 reads_common，没有人签字（grant/grants 已删），缺一句 validate 直接拒，查现状用 frago recipe reads"
 
 - name: team-pairing
   category: must
@@ -184,7 +184,7 @@
 
 - name: recipe-creation
   category: available
-  brief: "Recipe 创建规范：从 spec.md 到 recipe.md + 脚本的完整流程；硬规矩含视图里被拦的三类：自己的数据、第三方库缓存、外部命令的配置（uses_commands）"
+  brief: "Recipe 创建规范：从 spec.md 到 recipe.md + 脚本的完整四步流程（plan → create → validate → run/open）；本机配方落盘即生效（local 区免权限，严禁跑 expose）；硬规矩含视图里被拦的三类：自己的数据、第三方库缓存、外部命令的配置（uses_commands）"
 
 - name: def-knowledge
   category: available

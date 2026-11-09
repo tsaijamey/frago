@@ -294,8 +294,24 @@
       "source": "builtin",
       "event": "SessionStart",
       "match": {
-        "type": "env_exists",
-        "name": "FRAGO_AGENT_ROLE"
+        "type": "all_of",
+        "clauses": [
+          {
+            "type": "not",
+            "clause": {
+              "type": "env_ne",
+              "name": "FRAGO_AGENT_ROLE",
+              "value": "worker"
+            }
+          },
+          {
+            "type": "not",
+            "clause": {
+              "type": "env_exists",
+              "name": "FRAGO_EMPLOYEE_ID"
+            }
+          }
+        ]
       },
       "action": {
         "type": "inject_literal",
