@@ -382,6 +382,11 @@ def employee_discover(
         click.echo(f"{post.member_post_id}  [{post.agent_kernel}]  {post.title}")
 
 
+SPAWN_INCOMPLETE_NOTICE = (
+    "【未完成信号】子会话刚刚启动并在后台运行中，当前尚未产出最终结果，严禁将此启动回执当作任务已完成"
+)
+
+
 def _launch_employee_session(
     record: Any,
     query_or_task: str,
@@ -391,7 +396,7 @@ def _launch_employee_session(
     import uuid
     from pathlib import Path
 
-    from frago.server.services import stage_orchestrator, workbench_new_session
+    from frago.server.services import workbench_new_session
     from frago.skills.skill_prompt import embed_skills, load_skills
 
     svc = EmployeeOntologyService()
@@ -408,7 +413,6 @@ def _launch_employee_session(
         cwd_path.mkdir(parents=True, exist_ok=True)
 
     effective_skills = list(getattr(record, "skills", None) or [])
-    is_stage = stage_orchestrator.is_stage_session(effective_skills, "")
 
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         import urllib.error
@@ -456,7 +460,10 @@ def _launch_employee_session(
                 "handle": handle,
                 "cwd": data.get("cwd") or session_cwd,
                 "agent": data.get("agent") or record.agent_kernel,
-                "stage_orchestrated": is_stage,
+                "stage_orchestrated": False,
+                "completion_state": "error" if err else "running_in_background",
+                "is_completed": False,
+                "notice": SPAWN_INCOMPLETE_NOTICE if not err else "",
                 "error": err,
             }
         except urllib.error.HTTPError as http_exc:
@@ -466,7 +473,10 @@ def _launch_employee_session(
                 "handle": None,
                 "cwd": session_cwd,
                 "agent": record.agent_kernel,
-                "stage_orchestrated": is_stage,
+                "stage_orchestrated": False,
+                "completion_state": "error",
+                "is_completed": False,
+                "notice": "",
                 "error": f"HTTP {http_exc.code}: {detail}",
             }
         except Exception:  # noqa: BLE001 — 本地服务未启动时降级走进程内直起
@@ -479,12 +489,6 @@ def _launch_employee_session(
     if effective_skills:
         loaded = load_skills(effective_skills)
         prompt = embed_skills(prompt, loaded, user_text=query_or_task)
-
-    is_stage = stage_orchestrator.is_stage_session(effective_skills, prompt)
-    if is_stage:
-        prompt = stage_orchestrator.orchestrate_stage_session(
-            launch_id, prompt, query_or_task
-        )
 
     launch = workbench_new_session.start_with_id(
         record.agent_kernel,
@@ -507,7 +511,10 @@ def _launch_employee_session(
         "handle": launch.handle,
         "cwd": launch.cwd,
         "agent": launch.agent_type,
-        "stage_orchestrated": is_stage,
+        "stage_orchestrated": False,
+        "completion_state": "error" if launch.error else "running_in_background",
+        "is_completed": False,
+        "notice": SPAWN_INCOMPLETE_NOTICE if not launch.error else "",
         "error": launch.error,
     }
 
@@ -518,6 +525,8 @@ def _run_agent_turn_for_employee(
     *,
     cwd: str,
     timeout_s: float = 0.0,
+    session_id: str | None = None,
+    employee_id: str | None = None,
 ) -> tuple[str, str, str]:
     """驱动目标员工内核执行单轮同步问答，返回 `(real_session_id, turn_status, answer_text)`。"""
     import contextlib
@@ -526,12 +535,15 @@ def _run_agent_turn_for_employee(
     from frago.agent_driver.driver import listed_session_id, runs_on_kernel
 
     effective_timeout = float(timeout_s) if timeout_s > 0 else None
-    env = {"FRAGO_AGENT_ROLE": "employee"}
+    emp_id = (employee_id or os.environ.get("FRAGO_EMPLOYEE_ID") or "").strip()
 
     if runs_on_kernel(agent_kernel):
         from frago.agent_driver import kernel_backend
 
-        sid = kernel_backend.new_session_id()
+        sid = session_id or kernel_backend.new_session_id()
+        env = {"FRAGO_AGENT_ROLE": "employee", "FRAGO_SESSION_ID": sid}
+        if emp_id:
+            env["FRAGO_EMPLOYEE_ID"] = emp_id
         turn = kernel_backend.run_turn(
             prompt,
             session_id=sid,
@@ -543,11 +555,16 @@ def _run_agent_turn_for_employee(
 
     from frago.agent_driver import SessionLauncher
 
-    sid = str(uuid.uuid4())
+    sid = session_id or str(uuid.uuid4())
+    native_flag = bool(session_id and agent_kernel == "claude")
+    env = {"FRAGO_AGENT_ROLE": "employee"}
+    if emp_id:
+        env["FRAGO_EMPLOYEE_ID"] = emp_id
     res = SessionLauncher().run(
         prompt,
         agent_type=agent_kernel,
         session_id=sid,
+        native_session_id=native_flag,
         cwd=cwd,
         env=env,
         timeout_s=effective_timeout,
@@ -559,20 +576,19 @@ def _run_agent_turn_for_employee(
 
     real_sid = sid
     with contextlib.suppress(Exception):
-        resolved = listed_session_id(agent_kernel, sid, native_session_id=False)
+        resolved = listed_session_id(agent_kernel, sid, native_session_id=native_flag)
         if resolved:
             real_sid = resolved
     return real_sid, str(res.status or "ok"), str(res.text or "").strip()
 
 
-def _execute_employee_sync_turn(
+def _build_employee_peer_prompt(
     record: Any,
     query_or_task: str,
     *,
     caller_context_id: str = "cli:owner",
-    timeout_s: float = 0.0,
-) -> dict[str, Any]:
-    """装配目标员工完整 `<frago-employee>` 语境块并同步执行一轮推理，返回真实业务结论。"""
+) -> tuple[str, str]:
+    """装配目标员工的工作目录与完整 `<frago-employee>` 语境提示词。"""
     from pathlib import Path
 
     from frago.skills.skill_prompt import embed_skills, load_skills
@@ -602,12 +618,48 @@ def _execute_employee_sync_turn(
     if effective_skills:
         loaded = load_skills(effective_skills)
         prompt = embed_skills(prompt, loaded, user_text=query_or_task)
+    return session_cwd, prompt
 
+
+def _maybe_record_schedule_session(session_id: str | None) -> None:
+    """若在定时任务环境中运行，将本轮主会话编号记入回传文件供调度器捕获。"""
+    if not session_id:
+        return
+    sched_file = os.environ.get("FRAGO_SCHEDULE_SESSION_FILE")
+    if sched_file:
+        import contextlib
+        from pathlib import Path
+
+        with contextlib.suppress(Exception):
+            Path(sched_file).write_text(str(session_id).strip(), encoding="utf-8")
+
+
+def _execute_employee_sync_turn(
+    record: Any,
+    query_or_task: str,
+    *,
+    caller_context_id: str = "cli:owner",
+    timeout_s: float = 0.0,
+) -> dict[str, Any]:
+    """装配目标员工完整 `<frago-employee>` 语境块并同步执行一轮推理，返回真实业务结论。"""
+    import inspect
+
+    session_cwd, prompt = _build_employee_peer_prompt(
+        record,
+        query_or_task,
+        caller_context_id=caller_context_id,
+    )
+    turn_kwargs: dict[str, Any] = {
+        "cwd": session_cwd,
+        "timeout_s": timeout_s,
+    }
+    sig = inspect.signature(_run_agent_turn_for_employee)
+    if "employee_id" in sig.parameters:
+        turn_kwargs["employee_id"] = getattr(record, "member_post_id", None)
     real_sid, turn_status, answer_text = _run_agent_turn_for_employee(
         record.agent_kernel,
         prompt,
-        cwd=session_cwd,
-        timeout_s=timeout_s,
+        **turn_kwargs,
     )
     mapped_status = "needs_input" if turn_status == "needs_input" else "ok"
     err = (
@@ -621,12 +673,90 @@ def _execute_employee_sync_turn(
         "cwd": session_cwd,
         "agent": record.agent_kernel,
         "turn_status": turn_status,
+        "completion_state": "completed" if turn_status == "ok" else turn_status,
+        "is_completed": turn_status == "ok",
         "text": answer_text,
         "answer_summary": (
             answer_text
             or f"DomainEmployeeRole(post:{record.member_post_id}) executed '{query_or_task}'"
         ),
         "error": err,
+    }
+
+
+def _dispatch_employee_async_turn(
+    record: Any,
+    query_or_task: str,
+    *,
+    mode: str,
+    caller_session_id: str,
+    caller_context_id: str = "cli:owner",
+    timeout_s: float = 0.0,  # noqa: ARG001
+) -> dict[str, Any]:
+    """非阻塞异步派发目标员工回合，立即返回 `[dispatched]` 回执并在后台完成后回投至发起方会话流。"""
+    import contextlib
+    import uuid
+
+    from frago.agent_driver.driver import listed_session_id, runs_on_kernel
+    from frago.session.async_dispatch import (
+        dispatch_employee_turn_async,
+        format_dispatched_receipt,
+    )
+    from frago.session.session_origin import record_relation
+
+    session_cwd, prompt = _build_employee_peer_prompt(
+        record,
+        query_or_task,
+        caller_context_id=caller_context_id,
+    )
+    if runs_on_kernel(record.agent_kernel):
+        from frago.agent_driver import kernel_backend
+
+        raw_sid = kernel_backend.new_session_id()
+    else:
+        raw_sid = str(uuid.uuid4())
+
+    target_sid = (
+        listed_session_id(record.agent_kernel, raw_sid, native_session_id=False)
+        or raw_sid
+    )
+    with contextlib.suppress(Exception):
+        record_relation(
+            kind="dispatch",
+            child_session_id=target_sid,
+            parent_session_id=caller_session_id,
+            agent_type=record.agent_kernel,
+            cwd=session_cwd,
+            prompt_head=query_or_task,
+        )
+
+    job = dispatch_employee_turn_async(
+        mode=mode,
+        caller_session_id=caller_session_id,
+        caller_cwd=os.getcwd(),
+        employee_id=record.member_post_id,
+        target_session_id=target_sid,
+        agent=record.agent_kernel,
+        cwd=session_cwd,
+        prompt=prompt,
+        task_summary=query_or_task,
+        resume=None,
+        model=None,
+    )
+    receipt_text = format_dispatched_receipt(job, output_format="text")
+    return {
+        "status": "dispatched",
+        "job_id": job.job_id,
+        "session_id": target_sid,
+        "caller_session_id": caller_session_id,
+        "cwd": session_cwd,
+        "agent": record.agent_kernel,
+        "turn_status": "running_in_background",
+        "completion_state": "running_in_background",
+        "is_completed": False,
+        "text": receipt_text,
+        "answer_summary": receipt_text,
+        "error": None,
     }
 
 
@@ -664,6 +794,18 @@ def _execute_employee_sync_turn(
     help="Synchronously wait for the target employee's real conclusion text",
 )
 @click.option(
+    "--async",
+    "force_async",
+    is_flag=True,
+    help="Non-blocking async dispatch with automatic callback into caller session stream",
+)
+@click.option(
+    "--callback-session",
+    "callback_session_id",
+    default=None,
+    help="Explicit caller session ID to receive the async completion callback",
+)
+@click.option(
     "--timeout",
     "timeout_s",
     type=float,
@@ -679,15 +821,45 @@ def employee_invoke(
     dry_run: bool,
     force_spawn: bool,
     wait_for_answer: bool,
+    force_async: bool,
+    callback_session_id: str | None,
     timeout_s: float,
     as_json: bool,
 ) -> None:
     """Invoke a domain employee guarded by the `invoke_domain_employee` kinetic contract."""
+    from frago.session.async_dispatch import (
+        resolve_caller_session_id,
+        should_dispatch_employee_async,
+    )
+
     svc = EmployeeOntologyService()
     in_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    caller_sid = resolve_caller_session_id(callback_session_id)
     launcher = None
     if not dry_run:
-        if wait_for_answer or (not in_pytest and not force_spawn):
+        if should_dispatch_employee_async(
+            caller_sid,
+            wait_for_answer=wait_for_answer,
+            force_async=force_async,
+            dry_run=dry_run,
+            force_spawn=force_spawn,
+            explicit_caller_sid=callback_session_id,
+        ):
+            assert caller_sid is not None
+            effective_caller_ctx = (
+                caller_context_id
+                if caller_context_id != "cli:owner"
+                else f"session:{caller_sid}"
+            )
+            launcher = lambda rec, q: _dispatch_employee_async_turn(  # noqa: E731
+                rec,
+                q,
+                mode="invoke",
+                caller_session_id=caller_sid,
+                caller_context_id=effective_caller_ctx,
+                timeout_s=timeout_s,
+            )
+        elif wait_for_answer or (not in_pytest and not force_spawn):
             launcher = lambda rec, q: _execute_employee_sync_turn(  # noqa: E731
                 rec, q, caller_context_id=caller_context_id, timeout_s=timeout_s
             )
@@ -709,13 +881,21 @@ def employee_invoke(
     if receipt.get("error"):
         raise click.ClickException(str(receipt["error"]))
 
+    sid_display = receipt.get("session_id") or receipt.get("handle")
+    _maybe_record_schedule_session(sid_display)
+
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        return
+    if receipt.get("status") == "dispatched":
+        click.echo(receipt["text"])
         return
     sid_display = receipt.get("session_id") or receipt.get("handle")
     click.echo(
         f"[{receipt['status']}] {receipt['role_id']} (session={sid_display}): {receipt['answer_summary']}"
     )
+    if receipt.get("is_completed") is False and receipt.get("notice"):
+        click.echo(str(receipt["notice"]))
 
 
 @employee_group.command(name="ask", cls=AgentFriendlyCommand)
@@ -735,6 +915,24 @@ def employee_invoke(
     help="Caller employee or session identifier",
 )
 @click.option(
+    "--wait",
+    "wait_for_answer",
+    is_flag=True,
+    help="Synchronously wait for the target employee's real conclusion text",
+)
+@click.option(
+    "--async",
+    "force_async",
+    is_flag=True,
+    help="Non-blocking async dispatch with automatic callback into caller session stream",
+)
+@click.option(
+    "--callback-session",
+    "callback_session_id",
+    default=None,
+    help="Explicit caller session ID to receive the async completion callback",
+)
+@click.option(
     "--timeout",
     "timeout_s",
     type=float,
@@ -747,20 +945,53 @@ def employee_ask(
     question: str,
     requested_asset_id: str | None,
     caller_context_id: str,
+    wait_for_answer: bool,
+    force_async: bool,
+    callback_session_id: str | None,
     timeout_s: float,
     as_json: bool,
 ) -> None:
-    """向同侪领域员工发起同步协查提问，挂载其完整账本语境并直接返回真实结论。"""
+    """向同侪领域员工发起协查提问（在会话内默认非阻塞派发并自动回投结果至当前会话流，加 `--wait` 转为同步等待）。"""
+    from frago.session.async_dispatch import (
+        resolve_caller_session_id,
+        should_dispatch_employee_async,
+    )
+
     svc = EmployeeOntologyService()
+    caller_sid = resolve_caller_session_id(callback_session_id)
+    if should_dispatch_employee_async(
+        caller_sid,
+        wait_for_answer=wait_for_answer,
+        force_async=force_async,
+        dry_run=False,
+        force_spawn=False,
+        explicit_caller_sid=callback_session_id,
+    ):
+        assert caller_sid is not None
+        effective_caller_ctx = (
+            caller_context_id
+            if caller_context_id != "employee:peer"
+            else f"session:{caller_sid}"
+        )
+        launcher = lambda rec, q: _dispatch_employee_async_turn(  # noqa: E731
+            rec,
+            q,
+            mode="ask",
+            caller_session_id=caller_sid,
+            caller_context_id=effective_caller_ctx,
+            timeout_s=timeout_s,
+        )
+    else:
+        launcher = lambda rec, q: _execute_employee_sync_turn(  # noqa: E731
+            rec, q, caller_context_id=caller_context_id, timeout_s=timeout_s
+        )
     try:
         receipt = svc.invoke(
             member_post_id,
             question,
             caller_context_id=caller_context_id,
             requested_asset_id=requested_asset_id,
-            session_launcher=lambda rec, q: _execute_employee_sync_turn(
-                rec, q, caller_context_id=caller_context_id, timeout_s=timeout_s
-            ),
+            session_launcher=launcher,
         )
     except (ValueError, KeyError, ContractViolationError) as exc:
         raise click.ClickException(str(exc)) from None
@@ -770,8 +1001,14 @@ def employee_ask(
     if receipt.get("error"):
         raise click.ClickException(str(receipt["error"]))
 
+    sid_display = receipt.get("session_id") or receipt.get("handle")
+    _maybe_record_schedule_session(sid_display)
+
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        return
+    if receipt.get("status") == "dispatched":
+        click.echo(receipt["text"])
         return
     sid_display = receipt.get("session_id") or receipt.get("handle")
     click.echo(f"[{receipt['status']}] {member_post_id} (session={sid_display})")

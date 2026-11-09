@@ -40,8 +40,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -64,6 +67,23 @@ STALENESS_PERIODS = 3
 
 VALID_NOTIFY_ON = ("change", "always", "failure", "never")
 VALID_KINDS = ("recipe", "command", "prompt")
+
+_SESSION_ID_PATTERNS = (
+    re.compile(r"(?:\[session_id=|\(session=|session_id:\s*|Session ID:\s*)([a-zA-Z0-9_\-]+)"),
+    re.compile(r"\b(core_[0-9a-f]{32})\b"),
+    re.compile(r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b"),
+)
+
+
+def _extract_session_id_from_text(text: str) -> str:
+    """从命令的标准输出或错误流中正则提取会话编号。"""
+    if not text:
+        return ""
+    for pat in _SESSION_ID_PATTERNS:
+        match = pat.search(text)
+        if match:
+            return match.group(1).strip()
+    return ""
 
 
 @dataclass
@@ -122,6 +142,10 @@ def execute_recipe(
         ok = False
         error = str(payload.get("error") or "配方返回 success=false")
 
+    recipe_session_id = ""
+    if isinstance(payload, dict):
+        recipe_session_id = str(payload.get("session_id") or "").strip()
+
     return RunOutcome(
         ok=ok,
         kind="recipe",
@@ -132,6 +156,7 @@ def execute_recipe(
         notify_text=_extract_notify_field(payload),
         digest=_digest(_stable_for_digest(payload, stdout)),
         payload=payload if isinstance(payload, dict) else {},
+        session_id=recipe_session_id,
     )
 
 
@@ -144,18 +169,35 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
     """
     started = time.monotonic()
     shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+
+    # 为捕获命令可能拉起的会话编号（如 frago employee invoke / frago agent），准备专用回传文件
+    session_file: Path | None = None
+    env = dict(os.environ)
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix="frago_schedule_sid_", suffix=".txt")
+        os.close(fd)
+        session_file = Path(tmp_path)
+        env["FRAGO_SCHEDULE_SESSION_FILE"] = str(session_file)
+    except Exception:
+        session_file = None
+
     try:
         proc = subprocess.run(
             [shell, "-lc", command],
             capture_output=True, text=True, timeout=timeout,
             cwd=cwd or str(Path.home()),
+            env=env,
         )
     except subprocess.TimeoutExpired:
+        if session_file and session_file.exists():
+            session_file.unlink(missing_ok=True)
         return RunOutcome(
             ok=False, kind="command", error=f"命令超时（{timeout}s 未结束）",
             duration_ms=int((time.monotonic() - started) * 1000),
         )
     except Exception as e:  # noqa: BLE001
+        if session_file and session_file.exists():
+            session_file.unlink(missing_ok=True)
         return RunOutcome(
             ok=False, kind="command", error=str(e),
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -165,6 +207,19 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     ok = proc.returncode == 0
+
+    session_id = ""
+    if session_file and session_file.exists():
+        try:
+            content = session_file.read_text(encoding="utf-8").strip()
+            if content:
+                session_id = content
+        except Exception:
+            pass
+        session_file.unlink(missing_ok=True)
+
+    if not session_id:
+        session_id = _extract_session_id_from_text(stdout) or _extract_session_id_from_text(stderr)
 
     return RunOutcome(
         ok=ok,
@@ -176,6 +231,7 @@ def execute_command(command: str, timeout: int, cwd: str | None = None) -> RunOu
         error="" if ok else (stderr or stdout or f"退出码 {proc.returncode}")[:NOTIFY_EXCERPT_LIMIT],
         # 命令没法像配方那样自报「有没有新鲜事」，所以拿输出的指纹当变化判据
         digest=_digest(stdout),
+        session_id=session_id,
     )
 
 

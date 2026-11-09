@@ -248,7 +248,15 @@ export default function LaunchEmployeeDialog({
       rememberLastAgent(chosen.agent_type);
       if (cwd.trim()) addRecentDirectory(cwd.trim());
 
-      onCreated(launch, first);
+      onCreated(
+        {
+          ...launch,
+          employee_id: post.member_post_id,
+          employee_title: post.title,
+          employee_color: resolveEmployeeColor(post.color, post.member_post_id),
+        },
+        first
+      );
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('employees.launch.createFailedPlain'));

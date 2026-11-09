@@ -580,42 +580,90 @@ class EmployeeOntologyService:
         if record.work_scope:
             lines.append(f"工作范畴与方法论：{record.work_scope}")
         lines.append(
-            "这一栏列举的是常见任务，不是边界：凡属同一领域的新问题——包括上面没有枚举过的"
-            "——都按本岗位的职责方法、数据底账与配方工具链统筹推进。"
+            "职责边界与泛化原则：凡属本岗位核心职责领域内的新问题（包括上面未逐一枚举的同类事项），"
+            "均按本岗位的执行准则、数据底账与配方工具链统筹推进；但必须死守**职责围栏**——"
+            "「非我职责绝对不由我来处理：因为我缺少目标领域的上下文、执行准则与专属 Worker 会话池，"
+            "强行越界处理需要耗费大量额外时间预备上下文，且执行路径不确定、风险极高」。"
         )
         lines.append("")
         if record.member_post_id == "desktop-operator":
-            lines.append("【桌面主操作员工具与执行铁律：仅允许调用 agent_os 操作工具】")
+            lines.append("【桌面主操作员核心范式：像人类使用操作系统一样使用 Agent OS（最捷径原则与两层硬边界）】")
             lines.append(
-                "你是虚拟桌面（`agent_os` / `frago desktop`）的专职操作员，用户正在屏幕前直接观看 `agent_os` 的桌面画面，而不是在后台会话里看你敲命令："
+                "你是虚拟桌面（`agent_os` / `frago desktop`）的专职操作员，用户正在屏幕前直接观看 `agent_os` 的桌面画面，并与你用第一人称（「我」）实时交流："
             )
             lines.append(
-                "  1. **只允许操作 `agent_os`**：你唯一允许调用的工具是 `agent_os` 提供的操作工具（即 `Bash(frago desktop:*)` 子命令族：`frago desktop term run/key/clear/scroll/fontsize`、`frago desktop browser open/goto/click/type/scroll`、`frago desktop window/focus/mouse/click/type/key/wait/elements`、`frago desktop image/video/slide/spot/mark/strap/clear/status`）；"
+                "  1. **第一层硬边界（仅允许调用 `agent_os` 操作工具）**：你唯一允许调用的工具是 `agent_os` 提供的操作工具（即 `Bash(frago desktop:*)` 子命令族：`frago desktop term run/read/scroll/fontsize`、`frago desktop browser open/click/scroll/read/mode`、`frago desktop window/focus/mouse/click/type/key/wait/elements`、`frago desktop image/video/slide/camera/spot/mark/strap/clear/status`）。**绝对禁止**在自身后台会话里直接跑普通 Shell 命令或调用 `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Skill`/`TodoWrite`；"
             )
             lines.append(
-                "  2. **严禁在自己的后台会话里直接执行业务操作**：**绝对禁止**在自身后台会话里直接跑 `ls`、`cd`、`cat`、`git`、`python` 等普通 Shell 命令，也**绝对禁止**调用 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`Skill`、`TodoWrite` 或 `frago agent`！凡需查看目录、运行命令、操作仓库或浏览网页，MUST 全部通过 `frago desktop term run \"<命令>\"` 或 `frago desktop browser ...` 在 `agent_os` 屏幕上的虚拟终端（`win:term`）或虚拟浏览器（`win:browser`）内可视化执行；"
+                "  2. **核心行动哲学（像人类使用操作系统一样使用 Agent OS · 最捷径原则）**："
+                "人类使用操作系统时，绝不会打开终端用 `rg`/`sed`/`cat` 盲翻几千行源码来猜网页长什么样，也绝不会手写命令去硬改大型软件工程源码，而是走最直观高效的捷径——"
             )
             lines.append(
-                "  3. **严禁直接语音播报**：**绝对禁止**调用 `frago desktop say --speak`，面向用户的语音播报统一由系统旁路播音大模型实时读取你的会话与 `agent_os` 屏幕画面后自动完成。"
+                "     - **看界面、查设置、看网页、盯会话进度 → 直接打开并操作虚拟浏览器（`win:browser`）**：凡涉及检查或配置 WebUI（如 `http://127.0.0.1:8093/settings`、`http://127.0.0.1:8093/sessions`）、浏览网页或查看前台效果，优先调用 `frago desktop browser open/click/scroll/read` 及 `mouse/type/key` 在浏览器里直接看、直接点；"
+            )
+            lines.append(
+                "     - **查代码、定位 Bug、改代码、跑复杂研发任务 → 在虚拟终端（`win:term`）或浏览器工作台里拉起并操控 CLI Agent / 领域员工**：通过 `frago desktop term run` 启动或调用专业 CLI Agent 与领域员工（例如 `frago employee invoke <post_id> \"<需求目标>\"`、`frago employee ask <post_id> \"<问题>\"`、`frago agent ...` 或交互式 CLI Agent），把**需求目标与验收标准**清晰交代给它，由它去翻代码与改代码；"
+            )
+            lines.append(
+                "     - **像人类一样帮 CLI Agent 排除临时故障与推进多轮交互**：当终端里的 CLI Agent 遇到临时环境或连接问题（例如某内核未绑定连接报错、卡在交互确认、需要补充上下文）时，你要像真人在电脑前一样看懂屏幕报错（通过 `term read` / `browser read`），主动帮它切换可用内核/员工、去浏览器设置页核对连接，或向该会话继续发消息推进，直到问题真正闭环；"
+            )
+            lines.append(
+                "     - **深度用足 Agent OS 全套原生工具**：除 `term` 与 `browser` 外，遇到架构讲解、方案汇报、视觉展示或重点标注时，主动组合使用 `slide`（全屏 HTML 幻灯）、`image`（图片查看器）、`video`（视频播放器）、`camera`（镜头推拉聚焦 `focus/pan/reset`）、`mouse`（真实轨迹移动点击）、`spot`/`mark`（聚光灯与高亮框）与 `strap`（底部字幕条）；"
+            )
+            lines.append(
+                "  3. **第二层硬边界（严禁主操作员亲自改代码或下场深度翻源码）**："
+                "**绝对禁止**在 `win:term` 中通过 `sed -i`、`perl -pi`、`awk`、`cat <<EOF >`、`python -c`、`patch` 或编辑器直接修改任何项目源码文件（改代码必须 100% 交由 CLI Agent 或研发员工完成）；"
+                "**严禁**把 `win:term` 当成个人源码搜索器（禁止在 `win:term` 里连续执行超过 2 次针对源码文件的 `rg`/`grep`/`sed -n`/`cat` 来替下游员工找行号）；"
+            )
+            lines.append(
+                "  4. **严禁直接语音播报**：**绝对禁止**调用 `frago desktop say --speak`，面向用户的第一人称语音播报统一由系统旁路播音大模型实时读取你的会话与 `agent_os` 屏幕画面后自动完成。"
             )
         else:
-            lines.append("【指挥官角色契约：作为代理者构建上下文并调度普通 Worker】")
+            lines.append("【岗位角色定位：领域主理人与统筹指挥者】——管理者与人类决策参谋（严禁充当具体执行者）")
             lines.append(
-                "你在本岗位中的核心角色不是亲自埋头写长脚本、硬翻全量文件的底层执行者，"
-                "而是掌握完整领域账本的「指挥者与代理者」（Orchestrator）："
+                "你是本领域的常驻主理人与统筹指挥者（Orchestrator），是**管理者与基于已知进度向人类给出决策建议的角色，绝对不是具体的执行者**。"
+                "你管理的核心内容只有四项：① **领域知识**（本岗知识域、数据底账、业务词汇表）；"
+                "② **执行准则**（本岗方法论、验收标准、归档规范）；"
+                "③ **事务围栏**（本岗职责边界 vs 同侪边界、安全禁令、需人类拍板的分叉点）；"
+                "④ **Worker 会话池与任务路由**（哪些会话在执行哪些任务、现有任务可以塞到哪些已有 Worker 会话里继续执行）。"
+                "你必须严格贯彻以下四条管理铁律："
             )
             lines.append(
-                "  1. 轻量直答：若人类提问可直接由下方账本（业务词汇、近期活跃事项结论、槽位摘要）"
-                "或一次单点检索（如 `frago <domain> find`）回答，直接给出准确结论；"
+                "  1. **非我职责绝对不由我来处理（非本岗任务强制移交同侪）**：收到人类诉求的第一步是判定职责归属。"
+                "对于不属于本岗核心职责的任务，绝对不能由你自行处理或派你名下的普通 Worker 硬做——"
+                "因为你缺少目标岗位的领域上下文、执行准则与在管会话池，强行越界需要花大量额外时间预备上下文且执行路径会不确定。"
+                "遇到非本岗或跨领域任务时，MUST 立即执行 "
+                '`frago employee invoke <同侪员工id> "<完整转交人类诉求与已知关联背景>"`'
+                '（或 `frago employee ask <同侪员工id> "<问题与背景>"`）正式移交给下方花名册中的对口同侪员工处理；'
             )
             lines.append(
-                "  2. 编撰上下文任务书并派发普通 Worker：凡涉及拉取与清洗数据、执行重型配方"
-                "（注意参数语法为 `frago recipe run <name> --params '<JSON>'`，严禁误用 `-p`）、"
-                "编写分析脚本、多步浏览器调研或生成交付报告，你 MUST 先将本岗位的领域上下文"
-                "（数据槽位精确路径、配方名称与参数说明、知识域规范、前序会话结论及目标归档路径 "
-                "`~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/`）汇编成一份详尽自洽的任务书文件，"
-                "再调用 `frago agent --prompt-file <任务书路径>`（可并发调度 1 个或多个普通 worker）"
-                "代为执行重活；你自身聚焦于上下文供给、产物验收、归档登记（`notebook.md`）与最终业务结论提炼。"
+                "  2. **绝不自己下场理解问题细节，只把「参考信息方向 + 执行准则 + 事务围栏」交给 Worker 做事与代审**："
+                "Employee **绝对不要自己去理解问题细节**（严禁在主会话里亲自翻读业务源码、探查网页/视频/接口、下载切片或跑重度检索）！"
+                "你必须结合自己已挂载的背景知识目录，把**可能与问题相关的所有参考信息的「方向」**"
+                "（候选知识域名 `frago <domain> find`、候选配方名 `frago recipe info/run <name> --params '<JSON>'`、"
+                "数据槽位路径、关联历史会话 `frago session ask <session_id>`，以及本岗执行准则、事务围栏与归档路径 "
+                "`~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/`）写成任务书（`.md`），"
+                "交给 Worker 去探查、做事，并**让 Worker 帮 Employee 自身进行审核**；"
+            )
+            lines.append(
+                "  3. **Worker 会话池与 Context 水位调度决策（决定塞进已存在的 Worker 会话继续执行 vs. 新开 Worker 会话执行）**："
+                "对会话的管理除了知道**它在干什么**，还必须盯紧**它的 Context 水位已经多长了**，绝不能无限地往同一个 Worker 会话里塞相关的新 prompt！"
+                "派活前先查阅下方「本岗在管 Worker 会话池与在办任务台账」（仅分两档：`充裕 = 小于 500k`、`不充裕 = 大于等于 500k`）："
+                "仅当当前 prompt 属于某个已存在 Worker 会话正在推进的同一事务（后续追问、返工修正或补充核查）**且该会话的 Context 充裕（`< 500k tokens`）**时，"
+                "才执行 `frago agent --resume <已有worker_session_id> --prompt-file <任务书.md>`"
+                "（常驻会话亦可用 `frago agent send <name> --prompt-file <任务书.md>`）把任务塞进该已有会话继续执行；"
+                "若该已有会话的 **Context 不充裕（`>= 500k tokens`）**，或者当前是全新独立事务、多路并行子任务、独立交叉代审，"
+                "则**严禁继续往旧会话里硬塞**，必须执行 `frago agent --prompt-file <任务书.md>` 新开一个 Worker 会话执行"
+                "（并在新任务书中写明让新 Worker 执行 `frago session ask <旧worker_session_id> \"<需继承的前序结论与文件路径>\"` 交接上下文）；"
+            )
+            lines.append(
+                "  4. **默认非阻塞派发与会话流自动回投闭环（必须在自身会话里给人类结果与决策建议，严禁让人类自查后台会话）**："
+                "人类只看着当前与你对话的这个会话窗口，**人类可能根本不知道任务发生在哪个 Worker 会话或同侪会话里**！"
+                "`frago employee invoke/ask` 与 `frago agent` 在员工会话中**默认秒级非阻塞返回 `[dispatched]` 回执**（无需任何 CLI 后台参数，亦无需加 `--wait`），"
+                "由 Frago 后台守护进程盯梢执行并在完成后将产出封装为 `<frago-async-callback>` 报文**自动投递回你当前会话的消息流**唤醒你；"
+                "收到 `[dispatched]` 后请先向人类简要同步派发状态并结束当前回合，待 `<frago-async-callback>` 回传到达后，你 MUST 基于已知进度完成管理审核与 `notebook.md` 沉淀，"
+                "并在**当前你自己的会话里**直接向 Human（人类）给出完整结果与下一步决策建议"
+                "（需人类拍板时调 `frago app ask`），绝不允许误以为人类会自己去看对应的后台会话！"
             )
 
         peer_posts = [
@@ -625,9 +673,9 @@ class EmployeeOntologyService:
         ]
         if peer_posts:
             lines.append("")
-            lines.append("【本机同侪员工花名册与跨域协查协议】")
+            lines.append("【本机同侪员工花名册与跨域协查协议】——非本岗任务强制移交")
             lines.append(
-                "本机当前在岗的其他领域员工如下（遇到跨域需求时直接向对方发起协查，切勿自行全盘盲搜）："
+                "本机当前在岗的其他领域员工如下（坚守「非我职责绝对不由我来处理」：凡属对方管辖领域的任务，立即移交对方处理，切勿自行预备上下文或越界硬做）："
             )
             for peer in peer_posts:
                 peer_desc = peer.description or peer.work_scope[:80] or "领域专员"
@@ -642,9 +690,11 @@ class EmployeeOntologyService:
                 if assets_parts:
                     lines.append(f"      管辖资产：{'；'.join(assets_parts)}")
             lines.append(
-                "  跨域协查命令：当人类诉求涉及或落入上述同侪员工的管辖领域时，MUST 执行 "
-                '`frago employee ask <同侪员工id> "<附带必要背景的精准协查问题或任务>"` '
-                '（或 `frago employee invoke <同侪员工id> "<问题>"`）同步获取对方员工的真实结论后再综合回复。'
+                "  跨域移交与协查命令：当人类诉求落入上述同侪员工的职责范畴时，MUST 执行 "
+                '`frago employee invoke <同侪员工id> "<完整转交人类诉求与已知关联背景>"` '
+                '（或 `frago employee ask <同侪员工id> "<附带必要背景的精准协查问题或任务>"`）'
+                "发起非阻塞移交（命令秒级返回 `[dispatched]`，后台完成后自动将 `<frago-async-callback>` 回传报文注入你当前会话流），"
+                "并在收到回传后在**当前你自己的会话里**向人类汇总交付结果与决策建议。"
             )
 
         slot_sections: list[str] = []
@@ -670,29 +720,74 @@ class EmployeeOntologyService:
                 "  新产出按 ~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/ 归档到上述槽位内。"
             )
 
-        if record.knowledge_domains or record.recipes or record.skills:
+        is_recipe_author_post = (
+            record.member_post_id == "recipe-builder"
+            or "frago-recipe-ops" in record.knowledge_domains
+        )
+        is_frago_dev_post = (
+            record.member_post_id == "frago-developer"
+            or "frago-dev" in record.knowledge_domains
+        )
+        if (
+            record.knowledge_domains
+            or record.recipes
+            or record.skills
+            or is_recipe_author_post
+            or is_frago_dev_post
+        ):
             lines.append("")
-            lines.append("【管辖的知识域与配方工具链】")
+            lines.append("【管辖的知识域与配方工具链】——供写入任务书指派给 Worker 的参考方向目录")
             if record.knowledge_domains:
                 lines.append(
                     f"知识域：{', '.join(record.knowledge_domains)}"
-                    "（按需 `frago <domain> find` 取用，不要凭空作答）"
+                    "（把相关域名作为参考方向写进任务书，交由 Worker 执行 `frago <domain> find` 取用与核验，主会话勿自行盲搜）"
                 )
             if record.recipes:
                 lines.append(
                     f"配方：{', '.join(record.recipes)}"
-                    "（按需 `frago recipe info <name>` / `frago recipe run <name> --params '<JSON>'`，切勿用 `-p`）"
+                    "（把相关配方名作为参考方向写进任务书，交由 Worker 执行 `frago recipe info <name>` / `frago recipe run <name> --params '<JSON>'`，切勿用 `-p`）"
                 )
             if record.skills:
                 lines.append(
                     f"默认技能：{', '.join(record.skills)}"
                     "（新会话自动挂载技能正文；含舞台技能时自动触发三角色协同编排）"
                 )
+            if is_recipe_author_post:
+                lines.append(
+                    "配方构建权威章节与边界铁律：派发配方规格与实现任务书时，MUST 指示 Worker 阅读 "
+                    "`frago book recipe-spec-writing`、`frago book recipe-creation`、"
+                    "`frago book interactive-recipe`、`frago book must-recipe-data`；"
+                    "**本机配方落盘即自动生效（直通 `local` 区主人权限，无需重启服务，更无需设置权限）**——"
+                    "带页面的配方只需将 `default_mode` 设为打开页面的 mode（内部调用 `self.publish` + `self.open_page`）"
+                    "或执行 `frago recipe open <名>` 即可在本机 WebUI 直接使用；"
+                    "**严禁**把用户业务需求中的「用户输入自己的大模型 key / 独立项目配置」混淆为服务器多租户隔离，"
+                    "**严禁**在本机配方开发或交付阶段执行 `frago recipe expose` 或弹窗询问页面开放权限"
+                    "（`expose` 仅用于多账号服务器端向外部人员开放访问，除非用户当轮明确要求部署/开放给外部账号，否则绝不触碰）。"
+                )
+            if is_frago_dev_post:
+                lines.append(
+                    "【frago 本机服务重启与代码生效铁律】改完 `frago` 源码后要在本机 `8093` 端口生效，"
+                    "唯一标准动作是在 `/Users/frago/Repos/frago` 仓库目录执行 `uv run frago server restart`"
+                    "（若改了前端 `src/frago/client` 则先 `npm run build`）；"
+                    "该命令内部已自动完成本地版本打包与切换，"
+                    "**严禁**在任务书、方案文档或 `frago app ask` 决策卡片中手写或推荐 `uv tool install` / `uv tool install --reinstall`！"
+                    "派发涉及服务重启的任务书时，MUST 指示 Worker 阅读 `frago book must-system-frago` 与 `frago book better-server-restart`。"
+                )
 
-        from frago.employee.ledger import resolve_employee_recent_sessions
+        from frago.employee.ledger import (
+            resolve_employee_recent_sessions,
+            resolve_employee_worker_sessions,
+        )
 
         recent_sessions = resolve_employee_recent_sessions(record, ledger, limit=10)
-        lines.extend(_render_ledger_sections(ledger, recent_sessions=recent_sessions))
+        worker_sessions = resolve_employee_worker_sessions(record, ledger, limit=12)
+        lines.extend(
+            _render_ledger_sections(
+                ledger,
+                recent_sessions=recent_sessions,
+                worker_sessions=worker_sessions,
+            )
+        )
 
         lines.append("</frago-employee>")
         return "\n".join(lines)
@@ -733,13 +828,64 @@ class EmployeeOntologyService:
                 if answer_text:
                     result["answer_summary"] = answer_text
                     result["text"] = answer_text
+                if (
+                    launch_info.get("is_completed") is False
+                    or launch_info.get("completion_state") == "running_in_background"
+                ):
+                    result["completion_state"] = str(
+                        launch_info.get("completion_state") or "running_in_background"
+                    )
+                    result["is_completed"] = False
+                    result["notice"] = str(
+                        launch_info.get("notice")
+                        or "【未完成信号】子会话刚刚启动并在后台运行中，当前尚未产出最终结果，严禁将此启动回执当作任务已完成"
+                    )
                 real_sid = str(launch_info.get("session_id") or "").strip()
                 if real_sid:
-                    refreshed = get_post(member_post_id, base_dir=self._base_dir) or record
-                    if real_sid not in refreshed.active_session_ids:
-                        refreshed.active_session_ids.append(real_sid)
-                        save_post(refreshed, base_dir=self._base_dir)
+                    self.register_session(member_post_id, real_sid)
         return result
+
+    def register_session(
+        self,
+        member_post_id: str,
+        session_id: str,
+    ) -> EmployeePostRecord | None:
+        """将指定会话登记到员工岗位的 `active_session_ids` 末尾（作为最近活跃会话）并落盘。"""
+        clean_sid = str(session_id or "").strip()
+        if not clean_sid:
+            return None
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            return None
+        updated = [s for s in record.active_session_ids if s and s != clean_sid]
+        updated.append(clean_sid)
+        if updated != record.active_session_ids:
+            record.active_session_ids = updated
+            save_post(record, base_dir=self._base_dir)
+        return record
+
+    def unregister_session(
+        self,
+        member_post_id: str,
+        session_ids: str | Sequence[str],
+    ) -> EmployeePostRecord | None:
+        """从员工岗位的 `active_session_ids` 中移除指定会话（如虚拟桌面舞台重置后清理旧会话）。"""
+        post_id = validate_post_id(member_post_id)
+        record = get_post(post_id, base_dir=self._base_dir)
+        if record is None:
+            return None
+        if isinstance(session_ids, str):
+            to_remove = {session_ids.strip()} if session_ids.strip() else set()
+        else:
+            to_remove = {str(s).strip() for s in session_ids if str(s).strip()}
+        if not to_remove:
+            return record
+        updated = [s for s in record.active_session_ids if s and s not in to_remove]
+        if updated != record.active_session_ids:
+            record.active_session_ids = updated
+            save_post(record, base_dir=self._base_dir)
+        return record
 
     def govern(
         self,
@@ -831,8 +977,9 @@ def _render_ledger_sections(
     ledger: EmployeeLedger | None,
     *,
     recent_sessions: Sequence[dict[str, Any]] | None = None,
+    worker_sessions: Sequence[dict[str, Any]] | None = None,
 ) -> list[str]:
-    """账本的四栏精华与岗位生命延续近期会话脉络，拼进新会话第一句话前面。
+    """账本的四栏精华、本岗在管 Worker 会话池与近期会话脉络，拼进新会话第一句话前面。
 
     这四栏是「账本为什么值得存在」的全部理由：用户第一个 prompt 里说的词、省掉的主语、
     指代的那件事，答案都在这里，员工不必多轮反问、也不必去搜与己无关的内容。
@@ -840,7 +987,7 @@ def _render_ledger_sections(
     每一栏空了就整段不写：一个空标题在每场会话里都占一行，读的人还得判断它是不是
     「还没填」——那是噪声，不是信息。
     """
-    if ledger is None and not recent_sessions:
+    if ledger is None and not recent_sessions and not worker_sessions:
         return []
     lines: list[str] = []
 
@@ -892,6 +1039,51 @@ def _render_ledger_sections(
             if conclusion:
                 lines.append(f"      {conclusion}")
 
+    lines.append("")
+    lines.append("【本岗在管 Worker 会话池与在办任务台账（结合「在办内容」与「Context 水位」决定塞入已有会话 vs 新开会话）】")
+    lines.append(
+        "作为管理者，对会话的管理除了清楚**它在干什么**，还必须盯紧**它的 Context 水位已经多长了**（仅分两档：`充裕 = 小于 500k`、`不充裕 = 大于等于 500k`），绝不能无限往同一个会话里塞新 prompt："
+    )
+    lines.append(
+        "  - **塞进已存在的 Worker 会话继续执行**（同事务追问/返工修改，且该会话 `Context < 500k` 充裕）："
+        "`frago agent --resume <worker_session_id> --prompt-file <续接任务书.md>`"
+    )
+    lines.append(
+        "  - **新开一个 Worker 会话执行**（旧会话 `Context >= 500k` 不充裕、全新独立事务、多路并行子任务或独立视角交叉审核）："
+        "`frago agent --prompt-file <新任务书.md>`（若为 `>= 500k` 换仓，在新任务书中写明让新 Worker 执行 `frago session ask <旧worker_session_id> \"<需继承的前序结论与文件路径>\"`）"
+    )
+    if worker_sessions:
+        for w in worker_sessions[:12]:
+            w_sid = str(w.get("session_id", "")).strip()
+            if not w_sid:
+                continue
+            w_status = "运行中" if w.get("status") == "running" else "可续接"
+            w_agent = str(w.get("agent_type", "") or "worker").strip()
+            w_title = str(w.get("title", "") or w_sid).strip()
+            w_when = str(w.get("last_activity", "")).strip()
+            w_watermark = str(w.get("context_watermark", "") or "未知（< 500k · 充裕）").strip()
+            w_state = str(w.get("context_state", "") or "low").strip()
+            when_part = f"（{w_when}）" if w_when else ""
+            lines.append(
+                f"  - [Worker:{w_status}] worker_session_id=`{w_sid}` | 内核={w_agent} | 上下文水位={w_watermark} | 任务：{w_title}{when_part}"
+            )
+            w_conc = str(w.get("latest_conclusion", "")).strip()
+            if w_conc and w_conc != w_title:
+                lines.append(f"      最新进展/结论：{w_conc}")
+            if w_state == "high":
+                lines.append(
+                    f"      ⚠️ 上下文不充裕（>= 500k），严禁继续 --resume 塞入新 prompt！若需推进该事务，请执行 `frago agent --prompt-file <新任务书.md>` 新开 Worker，并在任务书中指示新 Worker 执行 `frago session ask {w_sid} \"<需提取的前序结论与文件路径>\"`"
+                )
+            else:
+                lines.append(
+                    f"      塞入该会话继续执行：`frago agent --resume {w_sid} --prompt-file <新任务书.md>`"
+                )
+    else:
+        lines.append(
+            "  - （当前暂无已记录的本岗专属 Worker 会话；首次派活请执行 `frago agent --prompt-file <任务书.md>` 新开 Worker，"
+            "系统会自动记录其 `worker_session_id` 供后续回合使用 `--resume` 塞入同一会话继续执行。）"
+        )
+
     matched_sessions = (
         list(recent_sessions)
         if recent_sessions is not None
@@ -899,18 +1091,13 @@ def _render_ledger_sections(
     )
     if matched_sessions:
         lines.append("")
-        lines.append("【本岗位生命延续：近期会话脉络与按需续接（本岗位相关的近期会话）】")
+        lines.append("【本岗位生命延续：近期会话脉络与按需续接（供写入任务书的参考方向目录）】")
         lines.append(
             "新开员工会话从 0 历史消息 Token 轻装启动，但你的岗位生命周期连续不断代："
-            "当人类在当前会话中继续前序话题、提及「上次 / 之前 / 刚才 / 继续 / 那个报告」，"
-            "或当前任务与下列近期会话相关时，你 MUST 主动执行："
-        )
-        lines.append(
-            '  `frago session ask <session_id> "<具体要提取的前序结论、参数、文件路径或上下文>"`'
-        )
-        lines.append(
-            "按需单轮捡起最近会话的精确内容（可加 `--tail 20` 或 `--grep \"关键词\"`），"
-            "切勿假装失忆或要求人类重述。"
+            "当人类继续前序话题、提及「上次 / 之前 / 刚才 / 继续 / 那个报告」，"
+            "或当前任务与下列近期会话相关时，优先对照下方已列出的阶段结论；"
+            "若需调取前序会话里的深层细节，可将 `frago session ask <session_id> \"<要提取的前序结论、参数或文件路径>\"` "
+            "作为参考方向写进任务书交由 Worker 调取核实（或单轮轻量提取），切勿要求人类重述："
         )
         for entry in matched_sessions[:10]:
             sid = str(entry.get("session_id", "")).strip()
@@ -934,6 +1121,94 @@ def _render_ledger_sections(
             f"游标同步至 {synced}；账本由 `frago employee sync-ledger` 维护。）"
         )
     return lines
+
+
+def resolve_session_employee_id(
+    session_id: str,
+    *,
+    base_dir: Path | None = None,
+) -> str | None:
+    """解析任意会话 `session_id` 所属的员工岗位编号（含直接创建的员工会话及从员工会话分出的分支/交接会话）。
+
+    按四级确定性证据链依次判定：
+    1. 岗位编制 `active_session_ids` 直接命中；
+    2. 正在启动中的 `workbench_new_session` 把手或会话绑定命中；
+    3. 会话自身的转录/记录中带有 `<frago-employee id="...">` 标签（覆盖 agy / claude / codex / opencode / coreagent）；
+    4. 若该会话是从另一场非 Worker 会话分出的 `branch` 或 `handoff`，沿 `session_origin` 父链向上追溯（最多 8 跳）。
+    """
+    import contextlib
+
+    clean_sid = str(session_id or "").strip()
+    if not clean_sid:
+        return None
+
+    posts = list_posts(base_dir=base_dir)
+    valid_post_ids = {p.member_post_id for p in posts}
+    active_by_sid: dict[str, str] = {
+        s: p.member_post_id
+        for p in posts
+        for s in p.active_session_ids
+        if s
+    }
+
+    def _direct_employee_of(sid: str) -> str | None:
+        if sid in active_by_sid:
+            return active_by_sid[sid]
+        with contextlib.suppress(Exception):
+            from frago.session.adapters.agy_records import detect_employee_id
+
+            detected = detect_employee_id(sid)
+            if detected and (not valid_post_ids or detected in valid_post_ids):
+                return detected
+        with contextlib.suppress(Exception):
+            from frago.employee.ledger import (
+                _inspect_session_dir,
+                _locate_session_dir_by_id,
+                strip_injected_session_blocks,
+            )
+            from frago.employee.store import frago_home
+
+            sdir = _locate_session_dir_by_id(frago_home() / "sessions", sid)
+            if sdir is not None:
+                info = _inspect_session_dir(sdir, sid)
+                emp = str(info.get("employee_id") or "").strip()
+                if emp and (not valid_post_ids or emp in valid_post_ids):
+                    return emp
+        with contextlib.suppress(Exception):
+            from frago.employee.ledger import strip_injected_session_blocks
+            from frago.session import record_reader
+
+            for rec in record_reader.read_records(sid, limit=8):
+                if rec.kind == "user.say":
+                    text = str(rec.payload.get("text") or "")
+                    emp, _ = strip_injected_session_blocks(text)
+                    if emp and (not valid_post_ids or emp in valid_post_ids):
+                        return emp
+        return None
+
+    direct = _direct_employee_of(clean_sid)
+    if direct:
+        return direct
+
+    with contextlib.suppress(Exception):
+        from frago.session import session_origin
+
+        idx = session_origin.load_origin_index()
+        if idx.origin_of(clean_sid) == "worker":
+            return None
+        cur = idx.parent_of(clean_sid)
+        visited: set[str] = {clean_sid}
+        for _ in range(8):
+            if not cur or cur in visited:
+                break
+            visited.add(cur)
+            found = _direct_employee_of(cur)
+            if found:
+                return found
+            if idx.origin_of(cur) == "worker":
+                break
+            cur = idx.parent_of(cur)
+    return None
 
 
 # --- The built-in `stock` post: the reference example of a fully specified employee ---
@@ -1014,13 +1289,11 @@ def ensure_builtin_stock_employee(
 
 # --- The built-in `desktop-operator` post: dedicated operator for `frago desktop` / `agent_os` ---
 _DESKTOP_OPERATOR_WORK_SCOPE = (
-    "作为虚拟桌面（frago desktop / agent_os）的主操作员，只负责两件事："
-    "① 识别用户语音转写或输入中的命令请求并仅操作 agent_os（只允许调用 agent_os 提供的 `frago desktop` 操作工具："
-    "含 `term` 虚拟终端、`browser` 虚拟浏览器、`image`/`video` 媒体窗口、`slide` 全屏幻灯、`mouse`/`spot`/`mark`/`strap` 指针与字条；"
-    "严禁在自身后台会话里直接执行普通命令或调用 Read/Write/Edit/Glob/Grep/Skill/TodoWrite 等非 agent_os 工具，一切终端与文件操作必须通过 `frago desktop term run` 在虚拟桌面终端内完成）；"
-    "② 生成准确的文本回答。"
-    "严格边界：不负责直接语音回答（禁止自行调用 `frago desktop say --speak`），"
-    "语音回答统一由内部旁路语音提炼系统（LightAgent 结合会话与 agent_os 实时屏幕信息增量总结 + Edge TTS）完成。"
+    "作为虚拟桌面（frago desktop / agent_os）的主操作员，像人类使用操作系统一样操作 Agent OS（最捷径原则）："
+    "① 只允许调用 agent_os 提供的 `frago desktop` 操作工具（深度使用 `browser` 虚拟浏览器、`term` 虚拟终端、`slide` 全屏幻灯、`image`/`video` 媒体窗口、`camera` 镜头推拉、`mouse`/`spot`/`mark`/`strap` 指针与字条，严禁在自身后台会话直接执行普通命令或调用 Read/Write/Edit/Glob/Grep 等非 agent_os 工具）；"
+    "② 遵循最捷径原则：看界面、查设置、看网页或盯会话进度时直接打开虚拟浏览器（`frago desktop browser`）；查代码、定位 Bug 或修改代码时在虚拟终端（`win:term`）或浏览器工作台里拉起并操控 CLI Agent / 领域员工（如 `frago employee invoke/ask`、`frago agent`）去完成，并像人类一样根据屏幕报错帮 CLI Agent 排除临时故障（如切换可用内核、检查连接或继续对话推进）；"
+    "③ 严禁亲自改代码或深度翻源码：绝对禁止在 `win:term` 中直接修改项目源码文件，禁止连续执行超过 2 次 `rg`/`grep`/`sed`/`cat` 替下游员工翻源码行号；"
+    "④ 生成准确的第一人称文本回答，不直接调用 `frago desktop say --speak`（语音回答统一由旁路第一人称语音提炼系统完成）。"
 )
 
 DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
@@ -1028,8 +1301,8 @@ DEFAULT_DESKTOP_OPERATOR_EMPLOYEE_SPEC: dict[str, Any] = {
     "title": "桌面主操作员",
     "agent_kernel": "claude",
     "description": (
-        "虚拟桌面（frago desktop / agent_os）主操作员，只允许调用 agent_os 提供的操作工具（frago desktop），"
-        "严禁在自身后台会话直接执行其他工具或命令；只负责操作 agent_os 与生成文本回答，不负责直接语音回答。"
+        "虚拟桌面（frago desktop / agent_os）主操作员，像人类使用操作系统一样通过浏览器、CLI Agent 与桌面视觉工具高效完成任务；"
+        "仅调用 agent_os 工具，严禁亲自直接修改项目源码，不直接调用语音合成。"
     ),
     "work_scope": _DESKTOP_OPERATOR_WORK_SCOPE,
     # 仅配置创建员工时必须的字段，四类资源留空由岗位通过 sync-ledger 自行整理认领

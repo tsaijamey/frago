@@ -187,6 +187,13 @@ _STOPWORDS: frozenset[str] = frozenset(
         "check",
         "test",
         "build",
+        "builder",
+        "plan",
+        "plans",
+        "spec",
+        "specs",
+        "validate",
+        "local",
         "install",
         "sync",
         "save",
@@ -393,6 +400,7 @@ _CJK_STOPWORDS: frozenset[str] = frozenset(
         "操作",
         "交易",
         # 通用动作、工作流状态与工程泛称：在任何岗位的职责或步骤说明里都会出现，不指向特定业务域。
+        "配方",
         "代码",
         "源码",
         "特性",
@@ -415,9 +423,23 @@ _CJK_STOPWORDS: frozenset[str] = frozenset(
         "容器",
         "端口",
         "服务",
+        "服务器",
+        "客户端",
         "宿主机",
+        "本机",
+        "本地",
         "后台",
         "前台",
+        "前端",
+        "后端",
+        "权限",
+        "定义",
+        "把控",
+        "校验",
+        "生效",
+        "直通",
+        "访问",
+        "外部",
         "状态",
         "结果",
         "结果落定",
@@ -1173,6 +1195,7 @@ def _scan_recipes(
     cursor: LedgerCursor,
     *,
     excluded: EmployeeLedger | None = None,
+    record: EmployeePostRecord | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
     """扫本机配方，认领与职责相关的那些。
 
@@ -1187,15 +1210,26 @@ def _scan_recipes(
     if not recipes_root.is_dir():
         return claimed, topics, digests
 
+    bound_recipes = (
+        {str(r).strip() for r in record.recipes if str(r).strip()}
+        if record is not None
+        else set()
+    )
+    is_meta_author_post = (
+        record is not None and record.member_post_id in ("recipe-builder", "hr")
+    )
+
     for metadata_path in _recipe_candidates():
         meta = _read_recipe_frontmatter(metadata_path)
         name = meta["name"]
         description = meta["description"]
         if is_resource_excluded(excluded, "recipes", name):
             continue
+        is_bound = name in bound_recipes
         blob = " ".join([name, description, *meta["tags"]])
-        if not _matches_scope(blob, keywords):
-            continue
+        if not is_bound:
+            if is_meta_author_post or not _matches_scope(blob, keywords):
+                continue
         digest = digest_text(blob)
         if cursor.recipe_digests.get(name) == digest:
             continue
@@ -1228,6 +1262,7 @@ def _scan_domains(
     cursor: LedgerCursor,
     *,
     excluded: EmployeeLedger | None = None,
+    record: EmployeePostRecord | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
     """扫 ``~/.frago/books/`` 下的知识域，认领与职责相关的那些。
 
@@ -1246,6 +1281,11 @@ def _scan_domains(
         return claimed, topics, digests
 
     registry_purposes = _read_books_registry_purposes()
+    bound_domains = (
+        {str(d).strip() for d in record.knowledge_domains if str(d).strip()}
+        if record is not None
+        else set()
+    )
 
     try:
         domains = sorted(p for p in books_root.iterdir() if p.is_dir() and not p.name.startswith("."))
@@ -1256,7 +1296,8 @@ def _scan_domains(
         if is_resource_excluded(excluded, "knowledge_domains", domain.name):
             continue
         purpose = registry_purposes.get(domain.name, "")
-        if not _matches_scope(f"{domain.name} {purpose}", keywords):
+        is_bound = domain.name in bound_domains
+        if not is_bound and not _matches_scope(f"{domain.name} {purpose}", keywords):
             continue
         try:
             docs = sorted(
@@ -1393,7 +1434,7 @@ def _extract_record_role_and_text(record: dict[str, Any]) -> tuple[str, str, str
 
     # 3. claude / coreagent raw.jsonl
     msg = record.get("message")
-    role = msg.get("role") if isinstance(msg, dict) else rtype
+    role = (msg.get("role") or rtype) if isinstance(msg, dict) else rtype
     if role in ("user", "assistant"):
         content = msg.get("content") if isinstance(msg, dict) else record.get("content")
         if isinstance(content, str):
@@ -1435,12 +1476,116 @@ def _extract_record_role_and_text(record: dict[str, Any]) -> tuple[str, str, str
     return "", "", stamp
 
 
+_DEFAULT_CONTEXT_WINDOW = 500_000
+_CONTEXT_AMPLE_LIMIT = 500_000
+
+
+def _extract_record_context_tokens(record: dict[str, Any]) -> tuple[int | None, int | None]:
+    """从单条转录记录中提取 `(context_tokens, context_window)`，无用量字段时返回 `(None, None)`。"""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from frago.session.usage_tick import (
+            PROMPT_FIELDS,
+            breakdown_from_agy_record,
+            breakdown_from_claude_usage,
+            breakdown_from_codex_usage,
+            breakdown_from_opencode_tokens,
+        )
+
+        if isinstance(record.get("context_tokens"), int | float) and record["context_tokens"] > 0:
+            win = record.get("context_window")
+            return (
+                int(record["context_tokens"]),
+                int(win) if isinstance(win, int | float) and win > 0 else None,
+            )
+
+        msg = record.get("message")
+        usage = msg.get("usage") if isinstance(msg, dict) else record.get("usage")
+        if isinstance(usage, dict):
+            bd = breakdown_from_claude_usage(usage)
+            ctx = sum(bd.get(f, 0) for f in PROMPT_FIELDS)
+            if ctx > 0:
+                win = (
+                    (msg.get("context_window") if isinstance(msg, dict) else None)
+                    or usage.get("context_window")
+                    or record.get("context_window")
+                )
+                return ctx, int(win) if isinstance(win, int | float) and win > 0 else None
+
+        if "step_index" in record:
+            bd_agy = breakdown_from_agy_record(record)
+            if bd_agy:
+                ctx = sum(bd_agy.get(f, 0) for f in PROMPT_FIELDS)
+                if ctx > 0:
+                    return ctx, None
+
+        payload = record.get("payload")
+        if record.get("type") == "event_msg" and isinstance(payload, dict):
+            if payload.get("type") == "token_count":
+                info = payload.get("info")
+                if isinstance(info, dict):
+                    last = info.get("last_token_usage")
+                    if isinstance(last, dict):
+                        bd_cdx = breakdown_from_codex_usage(last)
+                        ctx = sum(bd_cdx.get(f, 0) for f in PROMPT_FIELDS)
+                        win = info.get("model_context_window")
+                        if ctx > 0:
+                            return (
+                                ctx,
+                                int(win) if isinstance(win, int | float) and win > 0 else None,
+                            )
+
+        tokens = record.get("tokens")
+        if isinstance(tokens, dict):
+            bd_oc = breakdown_from_opencode_tokens(tokens)
+            if bd_oc:
+                ctx = sum(bd_oc.get(f, 0) for f in PROMPT_FIELDS)
+                if ctx > 0:
+                    return ctx, None
+
+    return None, None
+
+
+def format_context_watermark(
+    context_tokens: int | None,
+    context_window: int | None = None,
+) -> tuple[str, int, str]:
+    """将会话上下文 token 数格式化为 `(capacity_state, pct, watermark_label)`。
+
+    仅分两档（以 500k tokens 为唯一分界）：
+    - ``low``（`< 500k`）：充裕，可继续往该会话塞入同事务新 prompt；
+    - ``high``（`>= 500k`）：不充裕，严禁再往该会话塞入新 prompt，必须新开 Worker 会话。
+    """
+    tok = max(int(context_tokens or 0), 0)
+    win = (
+        int(context_window)
+        if isinstance(context_window, int | float) and int(context_window) > 0
+        else _DEFAULT_CONTEXT_WINDOW
+    )
+    if tok <= 0:
+        return "low", 0, "未知（< 500k · 充裕）"
+    pct = round(tok * 100 / win)
+    tok_str = f"{tok / 1000:.1f}k" if tok >= 1000 else f"{tok}"
+    if tok >= _CONTEXT_AMPLE_LIMIT:
+        return (
+            "high",
+            pct,
+            f"{tok_str}（>= 500k · 不充裕：严禁继续塞入新 prompt，请新开 Worker 会话）",
+        )
+    return (
+        "low",
+        pct,
+        f"{tok_str}（< 500k · 充裕：可继续塞入同事务新 prompt）",
+    )
+
+
 def _inspect_session_dir(
     session_dir: Path,
     session_id: str,
     raw_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """读取单个会话目录的首条真实用户诉求与末尾助手结论摘要（自动剥离 `<frago-employee>` 注入块）。"""
+    """读取单个会话目录的首条真实用户诉求、末尾助手结论摘要与上下文水位（自动剥离 `<frago-employee>` 注入块）。"""
     meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
     if not meta:
         meta_path = session_dir / "metadata.json"
@@ -1457,6 +1602,9 @@ def _inspect_session_dir(
     first_prompt = ""
     emp_id: str | None = None
     latest_conclusion = ""
+    context_tokens: int | None = None
+    context_window: int | None = None
+    max_file_bytes = 0
 
     raw_name = str(meta.get("name", "") or "").strip()
     if raw_name:
@@ -1501,6 +1649,7 @@ def _inspect_session_dir(
             size = path.stat().st_size
             if size <= 0:
                 continue
+            max_file_bytes = max(max_file_bytes, size)
             read_len = min(size, _SESSION_TAIL_BYTES)
             with path.open("rb") as handle:
                 handle.seek(size - read_len)
@@ -1517,6 +1666,11 @@ def _inspect_session_dir(
                     continue
                 if not isinstance(rec, dict):
                     continue
+                if context_tokens is None:
+                    c_tok, c_win = _extract_record_context_tokens(rec)
+                    if c_tok is not None and c_tok > 0:
+                        context_tokens = c_tok
+                        context_window = c_win
                 role, text, stamp = _extract_record_role_and_text(rec)
                 if stamp and not last_activity:
                     last_activity = stamp
@@ -1529,13 +1683,18 @@ def _inspect_session_dir(
                     )
                     if compact:
                         latest_conclusion = compact[:240]
-                if last_activity and latest_conclusion:
+                if last_activity and latest_conclusion and context_tokens is not None:
                     break
         except OSError:
             pass
-        if latest_conclusion:
+        if latest_conclusion and context_tokens is not None:
             break
 
+    if context_tokens is None and max_file_bytes > 0:
+        # 若归档行未记录显式 usage 字段，按转录字节数保守估算上下文水位（约 4 字节/token）
+        context_tokens = max(1, max_file_bytes // 4)
+
+    cap_state, cap_pct, cap_label = format_context_watermark(context_tokens, context_window)
     title = _session_title(meta, first_prompt, session_id)
     return {
         "session_id": session_id,
@@ -1545,6 +1704,11 @@ def _inspect_session_dir(
         "title": title,
         "first_prompt_summary": first_prompt[:200],
         "latest_conclusion": latest_conclusion or first_prompt[:200] or "（无首条消息摘要）",
+        "context_tokens": context_tokens or 0,
+        "context_window": context_window or _DEFAULT_CONTEXT_WINDOW,
+        "context_pct": cap_pct,
+        "context_state": cap_state,
+        "context_watermark": cap_label,
     }
 
 
@@ -1680,6 +1844,164 @@ def resolve_employee_recent_sessions(
         if entry:
             result.append(entry)
     return result
+
+
+def resolve_employee_worker_sessions(
+    record: EmployeePostRecord,
+    ledger: EmployeeLedger | None = None,
+    *,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    """汇总本岗位主会话派出的 Worker 会话池（含运行中与已完成可续接的 Worker 会话）。
+
+    帮助 Employee 作为管理者清晰掌握「哪些 Worker 会话在执行哪些任务、当前新任务适合塞进
+    哪个已存在的 Worker 会话继续执行（`frago agent --resume <session_id> --prompt-file <任务书.md>`），
+    还是应该新开一个 Worker 会话执行（`frago agent --prompt-file <任务书.md>`）」。
+    """
+    import contextlib
+
+    sessions_root = frago_home() / "sessions"
+    own_parent_ids: set[str] = {
+        str(sid).strip() for sid in record.active_session_ids if str(sid).strip()
+    }
+    if ledger is not None:
+        for item in ledger.claimed_resources.get("matched_sessions") or []:
+            if isinstance(item, dict) and item.get("bound_to_post"):
+                sid = str(item.get("session_id") or "").strip()
+                if sid:
+                    own_parent_ids.add(sid)
+
+    launch_entries: list[dict[str, Any]] = []
+    origin_parents: dict[str, str] = {}
+    with contextlib.suppress(Exception):
+        from frago.session import session_origin
+
+        for raw in session_origin._ledger_entries():
+            parsed = session_origin._parse_entry(raw)
+            if parsed is not None:
+                launch_entries.append(parsed)
+        idx = session_origin.load_origin_index()
+        origin_parents = dict(idx.parents)
+        for child_sid, parent_sid in origin_parents.items():
+            rel = idx.relation_of(child_sid)
+            if rel is not None and rel.kind == "branch" and parent_sid in own_parent_ids:
+                own_parent_ids.add(child_sid)
+
+    if not own_parent_ids:
+        return []
+
+    # 包含多级派活（Employee 主会话 -> Worker -> 子 Worker，最多追溯 3 层）
+    tracked_parents = set(own_parent_ids)
+    worker_meta_by_id: dict[str, dict[str, Any]] = {}
+    ordered_worker_ids: list[str] = []
+
+    for _ in range(3):
+        added = False
+        for entry in launch_entries:
+            if entry.get("kind") != "dispatch":
+                continue
+            parent_sid = str(entry.get("parent") or "").strip()
+            child_sid = str(entry.get("child") or "").strip()
+            if not child_sid or parent_sid not in tracked_parents:
+                continue
+            if child_sid not in tracked_parents:
+                tracked_parents.add(child_sid)
+                added = True
+            worker_meta_by_id[child_sid] = entry
+            if child_sid in ordered_worker_ids:
+                ordered_worker_ids.remove(child_sid)
+            ordered_worker_ids.append(child_sid)
+        for child_sid, parent_sid in origin_parents.items():
+            if parent_sid in tracked_parents and child_sid not in own_parent_ids:
+                if child_sid not in tracked_parents:
+                    tracked_parents.add(child_sid)
+                    added = True
+                if child_sid not in worker_meta_by_id:
+                    worker_meta_by_id[child_sid] = {
+                        "child": child_sid,
+                        "parent": parent_sid,
+                        "kind": "dispatch",
+                    }
+                    ordered_worker_ids.append(child_sid)
+        if not added:
+            break
+
+    # 最新派出的排在最前
+    ordered_worker_ids.reverse()
+
+    live_drive_ids: set[str] = set()
+    drive_dir = frago_home() / "drive"
+    if drive_dir.is_dir():
+        for sidecar in drive_dir.glob("*.json"):
+            with contextlib.suppress(Exception):
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("name"):
+                    live_drive_ids.add(str(data["name"]).strip())
+
+    workers: list[dict[str, Any]] = []
+    for w_sid in ordered_worker_ids[: max(limit, 0)]:
+        meta = worker_meta_by_id.get(w_sid) or {}
+        session_dir = _locate_session_dir_by_id(sessions_root, w_sid)
+        inspected: dict[str, Any] = {}
+        if session_dir is not None:
+            inspected = _inspect_session_dir(session_dir, w_sid)
+        agent_type = str(meta.get("agent_type") or "").strip()
+        if not agent_type and session_dir is not None:
+            agent_type = session_dir.parent.name
+        prompt_head = str(meta.get("prompt_head") or "").strip()
+        title = (
+            str(inspected.get("title") or "").strip()
+            or _intent_from_prompt(prompt_head)
+            or prompt_head[:80]
+            or f"Worker {w_sid[:8]}"
+        )
+        conclusion = str(inspected.get("latest_conclusion") or "").strip()
+        if conclusion == "（无首条消息摘要）":
+            conclusion = ""
+        ctx_tokens = int(inspected.get("context_tokens") or 0)
+        ctx_window = int(inspected.get("context_window") or _DEFAULT_CONTEXT_WINDOW)
+        if ctx_tokens <= 0:
+            with contextlib.suppress(Exception):
+                from frago.session import record_reader
+
+                for urec in reversed(record_reader.read_records(w_sid, limit=120)):
+                    if urec.kind == "usage.tick":
+                        tok = urec.payload.get("context_tokens")
+                        win = urec.payload.get("context_window")
+                        if isinstance(tok, int | float) and tok > 0:
+                            ctx_tokens = int(tok)
+                            if isinstance(win, int | float) and win > 0:
+                                ctx_window = int(win)
+                            break
+                    elif urec.kind == "agent.say" and not conclusion:
+                        conclusion = " ".join(
+                            str(urec.payload.get("text") or "").split()
+                        )[:240]
+        cap_state, cap_pct, cap_label = format_context_watermark(ctx_tokens, ctx_window)
+        status = "running" if w_sid in live_drive_ids else "idle"
+        workers.append(
+            {
+                "session_id": w_sid,
+                "parent_session_id": str(meta.get("parent") or "").strip(),
+                "agent_type": agent_type or "worker",
+                "cwd": str(meta.get("cwd") or "").strip(),
+                "status": status,
+                "title": title,
+                "first_prompt_summary": str(
+                    inspected.get("first_prompt_summary") or prompt_head[:200]
+                ).strip(),
+                "latest_conclusion": conclusion,
+                "last_activity": str(
+                    inspected.get("last_activity") or inspected.get("started_at") or ""
+                ).strip(),
+                "context_tokens": ctx_tokens,
+                "context_window": ctx_window,
+                "context_pct": cap_pct,
+                "context_state": cap_state,
+                "context_watermark": cap_label,
+            }
+        )
+    return workers
 
 
 def _scan_sessions(
@@ -1960,6 +2282,7 @@ def _derive_intent_playbooks(
     record: EmployeePostRecord,
     claimed_recipes: list[dict[str, Any]],
     claimed_slots: list[dict[str, Any]],
+    claimed_domains: Sequence[dict[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """从岗位职责与认领到的工具链里，推出「哪句话通常对应哪套动作」。
 
@@ -1971,13 +2294,55 @@ def _derive_intent_playbooks(
     playbooks: list[dict[str, Any]] = []
     slot_paths = [str(s.get("path", "")) for s in claimed_slots if s.get("path")]
     recipe_names = [str(r.get("name", "")) for r in claimed_recipes if r.get("name")]
+    domain_names = {
+        str(d).strip() for d in record.knowledge_domains if str(d).strip()
+    } | {
+        str(d.get("name", "")).strip()
+        for d in claimed_domains
+        if isinstance(d, dict) and str(d.get("name", "")).strip()
+    }
+
+    if record.member_post_id == "recipe-builder" or "frago-recipe-ops" in domain_names:
+        playbooks.append(
+            {
+                "intent": "新建或迭代本机配方（需求拆解 → 规格定义 → 模板实现 → 契约校验 → 本机运行交付）",
+                "trigger_phrases": [
+                    "做个配方",
+                    "新建配方",
+                    "写个配方",
+                    "创建配方",
+                    "配方工作台",
+                    "迭代配方",
+                    "修改配方",
+                ],
+                "default_action": (
+                    "将权威规范章节（`frago book recipe-spec-writing`、`frago book recipe-creation`、"
+                    "`frago book interactive-recipe`、`frago book must-recipe-data`）与 `frago-recipe-ops` 知识域写入任务书，"
+                    "交由 Worker 按标准四步推进（`plan` 写 `spec.md` → `create` 生成模板并填实现 → `validate` 过检 → `run`/`open` 本机验证）。"
+                    "【本机生效 vs 服务器开放硬边界】本机（`local` 区）配方落盘即自动被服务识别生效、主人免权限直通；"
+                    "有界面的配方只需将 `default_mode` 设为打开页面的 mode（调 `self.publish` + `self.open_page`）或执行 `frago recipe open <名字>` 即可使用；"
+                    "严禁为让本机配方生效而执行 `frago recipe expose` 或调 `frago app ask` 询问开放权限（`expose` 仅在用户明确要求向远端/多账号服务器外部他人开放页面时使用）。"
+                ),
+                "recipes_or_slots": [
+                    "book:recipe-spec-writing",
+                    "book:recipe-creation",
+                    "book:interactive-recipe",
+                    "book:must-recipe-data",
+                    "domain:frago-recipe-ops",
+                ],
+            }
+        )
 
     if slot_paths:
         playbooks.append(
             {
                 "intent": "看现状 / 复盘 / 拆解当前情况",
                 "trigger_phrases": ["现在什么情况", "复盘", "看一下", "进展", "拆解"],
-                "default_action": "先读本岗位数据底账里最近的事务目录，再回答；结论要能指回具体文件。",
+                "default_action": (
+                    "结合已挂载的近期活跃事项与槽位目录摘要，将相关数据槽位路径、知识域方向及核查准则写进任务书，"
+                    "塞进对口的已有 Worker 会话（`frago agent --resume <session_id> --prompt-file <任务书.md>`）"
+                    "或新开 Worker 会话（`frago agent --prompt-file <任务书.md>`）去读取核实并代审，拿回结论后在本会话向人类汇报并给出决策建议。"
+                ),
                 "recipes_or_slots": slot_paths,
             }
         )
@@ -1988,22 +2353,26 @@ def _derive_intent_playbooks(
                 triggers.append(word)
         playbooks.append(
             {
-                "intent": "执行本岗位配方与自动化工具",
+                "intent": "调度本岗位配方与自动化工具",
                 "trigger_phrases": triggers[:12],
                 "default_action": (
-                    "先 `frago recipe info <名字>` 看清参数，再执行 `frago recipe run <名字> --params '<JSON>'`"
-                    "（或编入详细上下文任务书交给 `frago agent` 普通 worker 执行）；不要另写脚本重造。"
+                    "将候选配方名、相关数据槽位路径与执行准则作为参考方向编入任务书，交由已有或新开的 Worker 会话"
+                    "（`frago agent --resume <session_id> --prompt-file <任务书.md>` 或 `frago agent --prompt-file <任务书.md>`）"
+                    "去执行 `frago recipe info <名字>` 与 `frago recipe run <名字> --params '<JSON>'`，回收审核结果后在本会话向人类交付结论。"
                 ),
                 "recipes_or_slots": recipe_names,
             }
         )
-    if record.knowledge_domains:
+    if domain_names:
         playbooks.append(
             {
-                "intent": "查本岗位既有结论",
+                "intent": "调取本岗位既有结论与领域准则",
                 "trigger_phrases": ["以前怎么定的", "有没有沉淀", "查一下知识", "之前遇到过吗"],
-                "default_action": "先 `frago <domain> find` 取结论，再决定要不要重新推导。",
-                "recipes_or_slots": [f"domain:{d}" for d in record.knowledge_domains],
+                "default_action": (
+                    "绝不自己在主会话盲搜细节，将候选知识域名与关联历史会话 ID 作为参考方向写入任务书交给 Worker "
+                    "执行 `frago <domain> find` / `frago session ask` 取证与核验，再基于 Worker 交回的结论在本会话向人类输出决策建议。"
+                ),
+                "recipes_or_slots": [f"domain:{d}" for d in sorted(domain_names)],
             }
         )
     return playbooks
@@ -2058,15 +2427,20 @@ def sync_employee_ledger(
     # 这一层只喂给数据目录扫描，不外溢到配方与会话：配方名、会话标题的匹配面本来就宽，
     # 再叠一层间接词，误伤会比多认领到的那点收益更贵。
     domains, domain_topics, domain_digests = _scan_domains(
-        keywords, cursor, excluded=prior
+        keywords, cursor, excluded=prior, record=record
     )
-    slot_keywords = keywords | _domain_evidence_keywords(domains)
+    claimed_domain_names = {
+        str(d.get("name", "")).strip().lower()
+        for d in domains
+        if isinstance(d, dict) and str(d.get("name", "")).strip()
+    } | {str(d).strip().lower() for d in record.knowledge_domains if str(d).strip()}
+    slot_keywords = keywords | _domain_evidence_keywords(domains) | claimed_domain_names
 
     slots, slot_entries, slot_topics, data_digests = _scan_data_slots(
         record, slot_keywords, cursor, excluded=prior
     )
     recipes, recipe_topics, recipe_digests = _scan_recipes(
-        keywords, cursor, excluded=prior
+        keywords, cursor, excluded=prior, record=record
     )
     sessions, session_topics, latest_session = _scan_sessions(
         keywords, cursor, limit=session_limit, record=record
@@ -2090,7 +2464,7 @@ def sync_employee_ledger(
             "matched_sessions": sessions,
         },
         glossary=_derive_glossary(recipes, domains, slots, slot_entries),
-        intent_playbooks=_derive_intent_playbooks(record, recipes, slots),
+        intent_playbooks=_derive_intent_playbooks(record, recipes, slots, domains),
         active_topics=[*slot_topics, *recipe_topics, *domain_topics, *session_topics],
     )
 
@@ -2334,5 +2708,7 @@ __all__ = [
     "extract_scope_keywords",
     "ledger_is_excluded",
     "remove_employee_ledger_schedule",
+    "resolve_employee_recent_sessions",
+    "resolve_employee_worker_sessions",
     "sync_employee_ledger",
 ]

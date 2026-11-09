@@ -102,7 +102,10 @@ function HistoryRow({ entry }: { entry: ScheduleHistoryEntry }) {
       {entry.session_id && (
         <button type="button" className="sc-run-link" onClick={openSession}>
           <ExternalLink size={12} />
-          {t('schedules.history.openSession')}
+          <span>{t('schedules.history.openSession')}</span>
+          <span className="opacity-75 text-xs font-mono">
+            ({entry.session_id.length > 14 ? `${entry.session_id.slice(0, 6)}...${entry.session_id.slice(-4)}` : entry.session_id})
+          </span>
         </button>
       )}
       {entry.notify_reason && (
@@ -139,6 +142,18 @@ export default function ScheduleDetail({
   const state = stateOf(schedule);
   const history = [...schedule.history].reverse();
   const hasParams = Object.keys(schedule.params ?? {}).length > 0;
+  const switchPage = usePageStore((s) => s.switchPage);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
+
+  const effectiveSessionId =
+    schedule.last_session_id ||
+    schedule.last_run?.session_id ||
+    (schedule.history.length > 0 ? schedule.history[schedule.history.length - 1].session_id : null);
+
+  const openSession = (sid: string) => {
+    setWorkbenchSessionId(sid);
+    switchPage('session_workbench');
+  };
 
   return (
     <div className="td-panel tdp-panel">
@@ -230,7 +245,27 @@ export default function ScheduleDetail({
             <span className="tdp-prop-muted">{t('schedules.state.disabled')}</span>
           )}
         </Prop>
-        <Prop label={t('schedules.detail.lastRun')}>{formatTime(schedule.last_run_at)}</Prop>
+        <Prop label={t('schedules.detail.lastRun')}>
+          <div className="sc-last-run-wrap flex items-center gap-2 flex-wrap">
+            <span>{formatTime(schedule.last_run_at)}</span>
+            {effectiveSessionId && (
+              <button
+                type="button"
+                className="sc-run-link inline-flex items-center gap-1 text-xs"
+                onClick={() => openSession(effectiveSessionId)}
+                title={t('schedules.history.openSession')}
+              >
+                <ExternalLink size={12} />
+                <span>{t('schedules.history.openSession')}</span>
+                <span className="opacity-75 text-xs font-mono">
+                  ({effectiveSessionId.length > 14
+                    ? `${effectiveSessionId.slice(0, 6)}...${effectiveSessionId.slice(-4)}`
+                    : effectiveSessionId})
+                </span>
+              </button>
+            )}
+          </div>
+        </Prop>
         <Prop label={t('schedules.detail.lastSuccess')}>{formatTime(schedule.last_success_at)}</Prop>
         <Prop label={t('schedules.detail.runCount')}>{schedule.run_count}</Prop>
         {schedule.consecutive_failures > 0 && (

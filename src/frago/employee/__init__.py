@@ -19,6 +19,7 @@ from frago.employee.ledger import (
     list_available_resources,
     remove_employee_ledger_schedule,
     resolve_employee_recent_sessions,
+    resolve_employee_worker_sessions,
     strip_injected_session_blocks,
     sync_employee_ledger,
 )
@@ -28,6 +29,7 @@ from frago.employee.service import (
     EmployeeOntologyService,
     ensure_builtin_desktop_operator_employee,
     ensure_builtin_stock_employee,
+    resolve_session_employee_id,
 )
 from frago.employee.store import (
     EMPLOYEE_LEDGER_SUFFIX,
@@ -90,6 +92,8 @@ __all__ = [
     "merge_ledger_entries",
     "remove_employee_ledger_schedule",
     "resolve_employee_recent_sessions",
+    "resolve_employee_worker_sessions",
+    "resolve_session_employee_id",
     "save_ledger",
     "save_post",
     "scan_data_slot_entries",

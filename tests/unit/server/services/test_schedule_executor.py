@@ -288,3 +288,31 @@ class TestPromptViaCoreAgent:
         core("not json\n", returncode=2, stderr="frago-core: 连接解析失败")
         out = ex.execute_prompt("x", 60)
         assert not out.ok and "连接解析失败" in out.error
+
+
+class TestCommandSessionCapture:
+    def test_从环境变量回传文件捕获会话编号(self):
+        # 模拟命令往 FRAGO_SCHEDULE_SESSION_FILE 写 session_id
+        cmd = 'echo "core_test123456789012345678901234" > "$FRAGO_SCHEDULE_SESSION_FILE"'
+        out = ex.execute_command(cmd, 10)
+        assert out.ok
+        assert out.session_id == "core_test123456789012345678901234"
+
+    def test_从标准输出正则提取会话编号(self):
+        cmd = 'echo "[ok] frago-developer (session=core_abc123456789012345678901234): 任务完成"'
+        out = ex.execute_command(cmd, 10)
+        assert out.ok
+        assert out.session_id == "core_abc123456789012345678901234"
+
+    def test_配方结果透传会话编号(self, monkeypatch):
+        from frago.recipes import runner as r_mod
+
+        class DummyRunner:
+            def run(self, *args, **kwargs):
+                return {"success": True, "session_id": "ses_dummy_recipe_9876"}
+
+        monkeypatch.setattr(r_mod, "RecipeRunner", DummyRunner)
+        out = ex.execute_recipe("dummy", {}, 10)
+        assert out.ok
+        assert out.session_id == "ses_dummy_recipe_9876"
+

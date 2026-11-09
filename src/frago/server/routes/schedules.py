@@ -62,6 +62,8 @@ class ScheduleItem(BaseModel):
     last_run_at: str | None = None
     last_status: str | None = None
     last_success_at: str | None = None
+    last_session_id: str | None = None
+    last_run: dict[str, Any] | None = None
     consecutive_failures: int = 0
     run_count: int = 0
     notify: ScheduleNotify = ScheduleNotify()
@@ -82,12 +84,25 @@ class ScheduleListResponse(BaseModel):
 def _to_item(service: SchedulerService, raw: dict[str, Any]) -> ScheduleItem:
     enabled = raw.get("enabled", True)
     next_run = service._next_run_at(raw) if enabled else None
+    history = raw.get("history") or []
+    latest_history = history[-1] if history else None
+
+    last_session_id = raw.get("last_session_id")
+    if not last_session_id and latest_history:
+        last_session_id = latest_history.get("session_id")
+
+    last_run = raw.get("last_run")
+    if not last_run and latest_history:
+        last_run = latest_history
+
     fields = {k: v for k, v in raw.items() if k in ScheduleItem.model_fields}
     fields.update(
         kind=raw.get("kind") or ("recipe" if raw.get("recipe") else "prompt"),
         recipe=raw.get("recipe") or raw.get("recipe_name"),
         next_run_at=next_run.isoformat() if next_run else None,
         running=raw["id"] in service._active_schedule_ids,
+        last_session_id=last_session_id,
+        last_run=last_run,
     )
     return ScheduleItem(**fields)
 

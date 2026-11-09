@@ -14,7 +14,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/layout/PageHeader';
-import { CirclePause, Clock, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { CirclePause, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import * as api from '@/api';
 import type { ScheduleItem, ScheduleListResponse } from '@/api';
 import { usePageStore } from '@/stores/pageStore';
@@ -52,10 +52,17 @@ function ScheduleRow({
   onClick: () => void;
 }) {
   const { t } = useTranslation();
+  const switchPage = usePageStore((s) => s.switchPage);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const state = stateOf(schedule);
   const target = targetText(schedule);
   const raw = cronRawText(schedule, t);
   const status = schedule.last_status;
+
+  const effectiveSessionId =
+    schedule.last_session_id ||
+    schedule.last_run?.session_id ||
+    (schedule.history.length > 0 ? schedule.history[schedule.history.length - 1].session_id : null);
 
   // 表格四列：计划 / 何时 / 上次运行 / 次数。整行可点；键盘焦点落在名字那个按钮上，
   // 读屏按表头念列名。「下次运行」和连续失败次数只在详情面板里（照原型）。
@@ -95,6 +102,25 @@ function ScheduleRow({
           <div className={`sc-sub ${status === 'failed' ? 'sc-fail' : ''}`}>
             {t(`schedules.runStatus.${status}`, { defaultValue: status })}
           </div>
+        )}
+        {effectiveSessionId && (
+          <button
+            type="button"
+            className="sc-run-link inline-flex items-center gap-1 mt-0.5 text-xs text-primary hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              setWorkbenchSessionId(effectiveSessionId);
+              switchPage('session_workbench');
+            }}
+            title={t('schedules.history.openSession')}
+          >
+            <ExternalLink size={11} />
+            <span>
+              {effectiveSessionId.length > 12
+                ? `${effectiveSessionId.slice(0, 5)}...${effectiveSessionId.slice(-3)}`
+                : effectiveSessionId}
+            </span>
+          </button>
         )}
       </td>
       <td className="sc-num">{t('schedules.row.runs', { count: schedule.run_count })}</td>

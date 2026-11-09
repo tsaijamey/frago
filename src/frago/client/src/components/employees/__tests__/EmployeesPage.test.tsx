@@ -141,6 +141,17 @@ function mockServer(handlers: {
     if (/\/api\/employees\/[^/]+$/.test(url) && (!init?.method || init.method === 'GET')) {
       return Promise.resolve(handlers.detail?.() ?? new Response(JSON.stringify(makeDetail()), { status: 200 }));
     }
+    if (url.endsWith('/api/skills')) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            { name: 'git-push', description: 'Git 提交推送', file_path: '' },
+            { name: 'how-frago-agent-runs-an-agent-os', description: '虚拟桌面操作', file_path: '' },
+          ]),
+          { status: 200 }
+        )
+      );
+    }
     if (url.endsWith('/api/workbench/agents')) {
       return Promise.resolve(
         new Response(
@@ -532,6 +543,7 @@ describe('员工页', () => {
     expect(screen.queryByLabelText('纳管的数据目录')).toBeNull();
     expect(screen.queryByLabelText('知识域')).toBeNull();
     expect(screen.queryByLabelText('配方')).toBeNull();
+    expect(screen.queryByLabelText('默认技能')).toBeNull();
     expect(
       screen.getByText(/创建后员工会自动在 ~\/\.frago 下巡检并认领/)
     ).toBeTruthy();
@@ -595,6 +607,7 @@ describe('员工页', () => {
     expect(screen.getByTestId('employee-chip-recipe-relationship_board')).toBeTruthy();
     // 切到详情态之后，三栏的手填框该在（它们现在用来补不在下拉里的条目）。
     expect(screen.getByLabelText('知识域')).toBeTruthy();
+    expect(screen.getByLabelText('默认技能')).toBeTruthy();
     vi.unstubAllGlobals();
   });
 
@@ -683,6 +696,63 @@ describe('员工页', () => {
       expect(seen[0]).toMatchObject({
         member_post_id: 'stock',
         color: 'violet',
+      });
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('详情弹窗支持展示、添加、移除默认技能，并随编制保存', async () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        list: () =>
+          new Response(
+            JSON.stringify({
+              employees: [makePost({ skills: ['git-push'] })],
+              total: 1,
+            }),
+            { status: 200 }
+          ),
+        detail: () =>
+          new Response(
+            JSON.stringify(
+              makeDetail({
+                employee: makePost({ skills: ['git-push'] }),
+              })
+            ),
+            { status: 200 }
+          ),
+        update: (body) => {
+          seen.push(body);
+          return new Response(JSON.stringify(makePost({ skills: ['how-frago-agent-runs-an-agent-os'] })), { status: 200 });
+        },
+      })
+    );
+
+    render(<EmployeesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '员工详情 Stock 投研与策略专员' }));
+
+    // 默认技能标签展示已有项
+    expect(await screen.findByTestId('employee-chip-skill-git-push')).toBeTruthy();
+
+    // 移除已有技能
+    fireEvent.click(screen.getByTestId('employee-chip-skill-git-push-remove'));
+    expect(screen.queryByTestId('employee-chip-skill-git-push')).toBeNull();
+    expect(screen.getByText('暂未绑定默认技能。')).toBeTruthy();
+
+    // 手填添加新技能
+    const skillInput = screen.getByLabelText('或手填一个技能名');
+    fireEvent.change(skillInput, { target: { value: 'how-frago-agent-runs-an-agent-os' } });
+    fireEvent.click(screen.getByTestId('employee-add-skill'));
+
+    expect(await screen.findByTestId('employee-chip-skill-how-frago-agent-runs-an-agent-os')).toBeTruthy();
+
+    // 保存并验证 payload 携带更新后的 skills
+    fireEvent.click(screen.getByTestId('employee-save'));
+    await waitFor(() => {
+      expect(seen[0]).toMatchObject({
+        skills: ['how-frago-agent-runs-an-agent-os'],
       });
     });
     vi.unstubAllGlobals();

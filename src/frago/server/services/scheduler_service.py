@@ -535,6 +535,7 @@ class SchedulerService:
                     int(s.get("run_count", 0)), int(schedule.get("run_count", 0))
                 )
             s["last_status"] = "success" if outcome.ok else "failed"
+            s["last_session_id"] = outcome.session_id or None
             if outcome.ok:
                 s["last_success_at"] = _now_utc().isoformat()
                 s["last_digest"] = outcome.digest
@@ -542,8 +543,7 @@ class SchedulerService:
                 s["staleness_notified_at"] = None
             else:
                 s["consecutive_failures"] = int(s.get("consecutive_failures", 0)) + 1
-            history = s.setdefault("history", [])
-            history.append({
+            run_item = {
                 "triggered_at": triggered_at or s.get("last_run_at", _now_utc().isoformat()),
                 "manual": triggered_at is not None,
                 "status": s["last_status"],
@@ -555,12 +555,13 @@ class SchedulerService:
                 "notify_status": notify_result.get("status"),
                 "notify_reason": decision.reason,
                 "task_id": None,
-                # 自然语言任务这一趟 CoreAgent 开的那场会话，以及它最后答的那句话。
-                # 从前这两样都不存：执行记录只有成败、耗时、错误，任务跑完连它自己的
-                # 汇报都留不下，事后要核对它做了什么只能去比对数据前后的变化。
+                # 自然语言任务这一趟 CoreAgent 开的那场会话，以及命令/员工调用可能关联的会话编号。
                 "session_id": outcome.session_id or None,
                 "answer": outcome.stdout[:_ANSWER_LIMIT] if outcome.kind == "prompt" else None,
-            })
+            }
+            s["last_run"] = run_item
+            history = s.setdefault("history", [])
+            history.append(run_item)
             if len(history) > 50:
                 s["history"] = history[-50:]
             self._save()

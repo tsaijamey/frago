@@ -166,6 +166,27 @@ class TestRunNow:
         assert row["instructions"] == "todo-triage.md"
         assert row["allowed_tools"] == ["Bash(frago todo:*)"]
         assert row["disallowed_tools"] == []
+        assert "last_session_id" in row
+        assert "last_run" in row
+
+
+class TestScheduleSessionLinkRoutes:
+    def test_列表接口正确透传_last_session_id_和_last_run(self, client, service):
+        s = service.add_schedule(command="echo 'hi'", interval_seconds=60, name="命令任务")
+        service._load()
+        for item in service._schedules:
+            if item["id"] == s["id"]:
+                item["last_session_id"] = "core_test998877665544332211"
+                item["last_run"] = {
+                    "session_id": "core_test998877665544332211",
+                    "status": "success",
+                    "exit_code": 0,
+                }
+        service._save()
+        res = client.get("/api/schedules").json()
+        target = next(it for it in res["schedules"] if it["id"] == s["id"])
+        assert target["last_session_id"] == "core_test998877665544332211"
+        assert target["last_run"]["session_id"] == "core_test998877665544332211"
 
 
 class TestCompose:

@@ -51,6 +51,7 @@ import {
   type EmployeePost,
 } from '@/hooks/useEmployees';
 import { useAgentClients } from '@/hooks/useAgentClients';
+import { useDataStore } from '@/stores/dataStore';
 
 interface EmployeeDetailDialogProps {
   /** 正看的是哪个员工。null 表示窗没开着。 */
@@ -145,9 +146,20 @@ export default function EmployeeDetailDialog({
   const [slotList, setSlotList] = useState<string[]>([]);
   const [domainList, setDomainList] = useState<string[]>([]);
   const [recipeList, setRecipeList] = useState<string[]>([]);
+  const [skillList, setSkillList] = useState<string[]>([]);
   const [customSlot, setCustomSlot] = useState('');
   const [customDomain, setCustomDomain] = useState('');
   const [customRecipe, setCustomRecipe] = useState('');
+  const [customSkill, setCustomSkill] = useState('');
+
+  const allSkills = useDataStore((s) => s.skills);
+  const loadSkills = useDataStore((s) => s.loadSkills);
+
+  useEffect(() => {
+    if (open && (!allSkills || allSkills.length === 0)) {
+      void loadSkills();
+    }
+  }, [open, allSkills, loadSkills]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -202,6 +214,7 @@ export default function EmployeeDetailDialog({
     setCustomSlot('');
     setCustomDomain('');
     setCustomRecipe('');
+    setCustomSkill('');
 
     if (!activePost) {
       setDetail(null);
@@ -218,6 +231,7 @@ export default function EmployeeDetailDialog({
       setSlotList([]);
       setDomainList([]);
       setRecipeList([]);
+      setSkillList([]);
       return;
     }
 
@@ -234,6 +248,7 @@ export default function EmployeeDetailDialog({
     setSlotList([...activePost.data_slots]);
     setDomainList([...activePost.knowledge_domains]);
     setRecipeList([...activePost.recipes]);
+    setSkillList([...(activePost.skills ?? [])]);
   }, [open, activePost]);
 
   // 详情只在窗开着、且正看着某个员工时取。取不到时上半部分照常可编（编制本来就在 `post`
@@ -281,7 +296,7 @@ export default function EmployeeDetailDialog({
           data_slots: slotList,
           schedule_ids: activePost?.schedule_ids ?? [],
           allowed_commands: activePost?.allowed_commands ?? [],
-          skills: activePost?.skills ?? [],
+          skills: skillList,
           color,
         },
         { create: isCreate }
@@ -320,6 +335,7 @@ export default function EmployeeDetailDialog({
       setSlotList([...fresh.employee.data_slots]);
       setDomainList([...fresh.employee.knowledge_domains]);
       setRecipeList([...fresh.employee.recipes]);
+      setSkillList([...(fresh.employee.skills ?? [])]);
       setSyncNote(t('employees.detail.synced'));
       onSaved();
     } catch (e) {
@@ -372,6 +388,10 @@ export default function EmployeeDetailDialog({
     () => (available?.recipes ?? []).filter((r) => !recipeList.includes(r.name)),
     [available, recipeList]
   );
+  const skillOptions = useMemo(
+    () => (allSkills ?? []).filter((s) => !skillList.includes(s.name)),
+    [allSkills, skillList]
+  );
 
   /** 认领依据：芯片上悬停看的那句话，让人能核对「凭什么说这块归他」。 */
   const slotHint = (value: string): string => {
@@ -393,6 +413,10 @@ export default function EmployeeDetailDialog({
     if (found) return [found.display_title, found.description].filter(Boolean).join(' · ');
     const opt = available?.recipes?.find((r) => r.name === name);
     return opt ? [opt.display_title, opt.description].filter(Boolean).join(' · ') : '';
+  };
+  const skillHint = (name: string): string => {
+    const found = allSkills?.find((s) => s.name === name);
+    return found?.description ?? '';
   };
 
   if (!open) return null;
@@ -905,6 +929,78 @@ export default function EmployeeDetailDialog({
                   const add = parseList(customRecipe);
                   if (add.length) setRecipeList((prev) => [...prev, ...add]);
                   setCustomRecipe('');
+                }}
+              >
+                {t('employees.detail.add')}
+              </button>
+            </div>
+          </div>
+
+          {/* 默认技能 */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11.5px] font-medium text-text-secondary" htmlFor="employee-skills">
+              {t('employees.detail.skillsLabel')}
+            </label>
+            {skillList.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {skillList.map((name) => (
+                  <Chip
+                    key={name}
+                    label={name}
+                    hint={skillHint(name)}
+                    testId={`employee-chip-skill-${name}`}
+                    removeLabel={t('employees.detail.removeItem', { name })}
+                    onRemove={() => setSkillList((prev) => prev.filter((s) => s !== name))}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-text-muted">{t('employees.detail.emptySkills')}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {skillOptions.length ? (
+                <select
+                  className="sselect min-w-[160px] flex-1"
+                  value=""
+                  aria-label={t('employees.detail.addSkill')}
+                  onChange={(e) => {
+                    if (e.target.value) setSkillList((prev) => [...prev, e.target.value]);
+                  }}
+                >
+                  <option value="">{t('employees.detail.addSkill')}</option>
+                  {skillOptions.map((s) => (
+                    <option key={s.name} value={s.name} title={s.description || ''}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <input
+                id="employee-skills"
+                type="text"
+                className="sinput mono min-w-[160px] flex-1"
+                value={customSkill}
+                onChange={(e) => setCustomSkill(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  const add = parseList(customSkill);
+                  if (add.length) setSkillList((prev) => [...prev, ...add]);
+                  setCustomSkill('');
+                }}
+                spellCheck={false}
+                placeholder="git-push"
+                aria-label={t('employees.detail.customSkill')}
+              />
+              <button
+                type="button"
+                className="page-header-btn"
+                disabled={!parseList(customSkill).length}
+                data-testid="employee-add-skill"
+                onClick={() => {
+                  const add = parseList(customSkill);
+                  if (add.length) setSkillList((prev) => [...prev, ...add]);
+                  setCustomSkill('');
                 }}
               >
                 {t('employees.detail.add')}
