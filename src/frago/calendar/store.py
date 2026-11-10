@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-import fcntl
+from contextlib import contextmanager, suppress
 import hashlib
 import json
 import os
@@ -30,6 +30,36 @@ def get_calendar_dir() -> Path:
     path = Path(override).expanduser() if override else Path.home() / ".frago" / "data" / "calendar"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+_IS_WINDOWS = os.name == "nt"
+
+
+@contextmanager
+def _month_lock(month_val: str):
+    """跨平台按月事务文件排他锁（Unix 用 fcntl.flock，Windows 用 msvcrt.locking）。"""
+    lock_file = get_calendar_dir() / f".affairs-{month_val}.lock"
+    with open(lock_file, "a+", encoding="utf-8") as lf:
+        if _IS_WINDOWS or os.name == "nt":
+            import msvcrt
+
+            lf.seek(0)
+            msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                with suppress(OSError):
+                    lf.seek(0)
+                    msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                with suppress(OSError):
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 def _now_iso() -> str:
@@ -182,70 +212,65 @@ def add_affair(
     date_val = (date or _today_str()).strip()
     month_val = date_val[:7]
 
-    lock_file = get_calendar_dir() / f".affairs-{month_val}.lock"
-    with open(lock_file, "w", encoding="utf-8") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-        try:
-            existing = _read_month_file_locked(month_val)
+    with _month_lock(month_val):
+        existing = _read_month_file_locked(month_val)
 
-            # 规范化数组参数
-            tag_list = tags if isinstance(tags, list) else ([t.strip() for t in str(tags).split(",") if t.strip()] if tags else [])
-            session_list = sessions if isinstance(sessions, list) else ([s.strip() for s in str(sessions).split(",") if s.strip()] if sessions else [])
-            artifact_list = artifacts if isinstance(artifacts, list) else ([a.strip() for a in str(artifacts).split(",") if a.strip()] if artifacts else [])
+        # 规范化数组参数
+        tag_list = tags if isinstance(tags, list) else ([t.strip() for t in str(tags).split(",") if t.strip()] if tags else [])
+        session_list = sessions if isinstance(sessions, list) else ([s.strip() for s in str(sessions).split(",") if s.strip()] if sessions else [])
+        artifact_list = artifacts if isinstance(artifacts, list) else ([a.strip() for a in str(artifacts).split(",") if a.strip()] if artifacts else [])
 
-            # 寻找是否已有相同 ID 或同日期同标题的条目（幂等）
-            matched_idx = -1
-            clean_title = title.strip()
+        # 寻找是否已有相同 ID 或同日期同标题的条目（幂等）
+        matched_idx = -1
+        clean_title = title.strip()
 
-            for idx, item in enumerate(existing):
-                if affair_id and item.id == affair_id:
-                    matched_idx = idx
-                    break
-                if not affair_id and item.date == date_val and item.title.strip() == clean_title:
-                    matched_idx = idx
-                    break
+        for idx, item in enumerate(existing):
+            if affair_id and item.id == affair_id:
+                matched_idx = idx
+                break
+            if not affair_id and item.date == date_val and item.title.strip() == clean_title:
+                matched_idx = idx
+                break
 
-            now = _now_iso()
-            if matched_idx >= 0:
-                old = existing[matched_idx]
-                updated_item = CompletedAffair(
-                    id=old.id,
-                    date=date_val,
-                    title=clean_title,
-                    summary=summary.strip() if summary else old.summary,
-                    category=category.strip() if (category and category != "未分类") else old.category,
-                    tags=sorted(set(old.tags + tag_list)),
-                    employee=employee.strip() if employee else old.employee,
-                    sessions=sorted(set(old.sessions + session_list)),
-                    artifacts=sorted(set(old.artifacts + artifact_list)),
-                    completed_at=completed_at or old.completed_at or now,
-                    created_at=old.created_at,
-                    updated_at=now,
-                )
-                existing[matched_idx] = updated_item
-                _write_month_file_atomic(month_val, existing)
-                return updated_item
-
-            new_id = affair_id or _generate_affair_id(date_val, clean_title)
-            new_item = CompletedAffair(
-                id=new_id,
+        now = _now_iso()
+        if matched_idx >= 0:
+            old = existing[matched_idx]
+            updated_item = CompletedAffair(
+                id=old.id,
                 date=date_val,
                 title=clean_title,
-                summary=summary.strip(),
-                category=category.strip() or "未分类",
-                tags=list(set(tag_list)),
-                employee=employee.strip() if employee else None,
-                sessions=list(set(session_list)),
-                artifacts=list(set(artifact_list)),
-                completed_at=completed_at or now,
-                created_at=now,
+                summary=summary.strip() if summary else old.summary,
+                category=category.strip() if (category and category != "未分类") else old.category,
+                tags=sorted(set(old.tags + tag_list)),
+                employee=employee.strip() if employee else old.employee,
+                sessions=sorted(set(old.sessions + session_list)),
+                artifacts=sorted(set(old.artifacts + artifact_list)),
+                completed_at=completed_at or old.completed_at or now,
+                created_at=old.created_at,
                 updated_at=now,
             )
-            existing.append(new_item)
+            existing[matched_idx] = updated_item
             _write_month_file_atomic(month_val, existing)
-            return new_item
-        finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            return updated_item
+
+        new_id = affair_id or _generate_affair_id(date_val, clean_title)
+        new_item = CompletedAffair(
+            id=new_id,
+            date=date_val,
+            title=clean_title,
+            summary=summary.strip(),
+            category=category.strip() or "未分类",
+            tags=list(set(tag_list)),
+            employee=employee.strip() if employee else None,
+            sessions=list(set(session_list)),
+            artifacts=list(set(artifact_list)),
+            completed_at=completed_at or now,
+            created_at=now,
+            updated_at=now,
+        )
+        existing.append(new_item)
+        _write_month_file_atomic(month_val, existing)
+        return new_item
 
 
 def write_affairs(
@@ -276,67 +301,62 @@ def write_affairs(
 
     results: list[CompletedAffair] = []
     for month_val, month_items in by_month.items():
-        lock_file = get_calendar_dir() / f".affairs-{month_val}.lock"
-        with open(lock_file, "w", encoding="utf-8") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                current_list = _read_month_file_locked(month_val)
-                now = _now_iso()
+        with _month_lock(month_val):
+            current_list = _read_month_file_locked(month_val)
+            now = _now_iso()
 
-                if mode == "replace":
-                    target_dates = {it.date for it in month_items}
-                    # 剔除目标日期的旧记录，完全替换
-                    kept = [it for it in current_list if it.date not in target_dates]
-                    for it in month_items:
+            if mode == "replace":
+                target_dates = {it.date for it in month_items}
+                # 剔除目标日期的旧记录，完全替换
+                kept = [it for it in current_list if it.date not in target_dates]
+                for it in month_items:
+                    if not it.created_at:
+                        it.created_at = now
+                    it.updated_at = now
+                    kept.append(it)
+                    results.append(it)
+                _write_month_file_atomic(month_val, kept)
+            else:  # upsert 模式
+                merged_map: dict[str, CompletedAffair] = {it.id: it for it in current_list}
+                # 同时维护 (date, title) 索引用于无显式 ID 的合并
+                title_map: dict[tuple[str, str], str] = {
+                    (it.date, it.title.strip()): it.id for it in current_list
+                }
+
+                for it in month_items:
+                    target_id = it.id
+                    if target_id not in merged_map:
+                        key = (it.date, it.title.strip())
+                        if key in title_map:
+                            target_id = title_map[key]
+
+                    if target_id in merged_map:
+                        old = merged_map[target_id]
+                        updated = CompletedAffair(
+                            id=old.id,
+                            date=it.date,
+                            title=it.title.strip(),
+                            summary=it.summary.strip() or old.summary,
+                            category=it.category if it.category != "未分类" else old.category,
+                            tags=sorted(set(old.tags + it.tags)),
+                            employee=it.employee or old.employee,
+                            sessions=sorted(set(old.sessions + it.sessions)),
+                            artifacts=sorted(set(old.artifacts + it.artifacts)),
+                            completed_at=it.completed_at or old.completed_at or now,
+                            created_at=old.created_at or now,
+                            updated_at=now,
+                        )
+                        merged_map[target_id] = updated
+                        results.append(updated)
+                    else:
                         if not it.created_at:
                             it.created_at = now
                         it.updated_at = now
-                        kept.append(it)
+                        merged_map[it.id] = it
+                        title_map[(it.date, it.title.strip())] = it.id
                         results.append(it)
-                    _write_month_file_atomic(month_val, kept)
-                else:  # upsert 模式
-                    merged_map: dict[str, CompletedAffair] = {it.id: it for it in current_list}
-                    # 同时维护 (date, title) 索引用于无显式 ID 的合并
-                    title_map: dict[tuple[str, str], str] = {
-                        (it.date, it.title.strip()): it.id for it in current_list
-                    }
 
-                    for it in month_items:
-                        target_id = it.id
-                        if target_id not in merged_map:
-                            key = (it.date, it.title.strip())
-                            if key in title_map:
-                                target_id = title_map[key]
-
-                        if target_id in merged_map:
-                            old = merged_map[target_id]
-                            updated = CompletedAffair(
-                                id=old.id,
-                                date=it.date,
-                                title=it.title.strip(),
-                                summary=it.summary.strip() or old.summary,
-                                category=it.category if it.category != "未分类" else old.category,
-                                tags=sorted(set(old.tags + it.tags)),
-                                employee=it.employee or old.employee,
-                                sessions=sorted(set(old.sessions + it.sessions)),
-                                artifacts=sorted(set(old.artifacts + it.artifacts)),
-                                completed_at=it.completed_at or old.completed_at or now,
-                                created_at=old.created_at or now,
-                                updated_at=now,
-                            )
-                            merged_map[target_id] = updated
-                            results.append(updated)
-                        else:
-                            if not it.created_at:
-                                it.created_at = now
-                            it.updated_at = now
-                            merged_map[it.id] = it
-                            title_map[(it.date, it.title.strip())] = it.id
-                            results.append(it)
-
-                    _write_month_file_atomic(month_val, list(merged_map.values()))
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                _write_month_file_atomic(month_val, list(merged_map.values()))
 
     return results
 
@@ -432,86 +452,81 @@ def update_affair(affair_id: str, *, date: str | None = None, **kwargs) -> Compl
         ]
 
     for m in months_to_search:
-        lock_file = cal_dir / f".affairs-{m}.lock"
-        with open(lock_file, "w", encoding="utf-8") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                items = _read_month_file_locked(m)
-                for idx, item in enumerate(items):
-                    if item.id == affair_id:
-                        new_date = str(kwargs.get("date") or item.date).strip()
-                        new_title = str(kwargs.get("title") or item.title).strip()
-                        new_summary = (
-                            kwargs["summary"].strip()
-                            if "summary" in kwargs
-                            else item.summary
+        with _month_lock(m):
+            items = _read_month_file_locked(m)
+            for idx, item in enumerate(items):
+                if item.id == affair_id:
+                    new_date = str(kwargs.get("date") or item.date).strip()
+                    new_title = str(kwargs.get("title") or item.title).strip()
+                    new_summary = (
+                        kwargs["summary"].strip()
+                        if "summary" in kwargs
+                        else item.summary
+                    )
+                    new_category = (
+                        kwargs["category"].strip()
+                        if "category" in kwargs
+                        else item.category
+                    )
+
+                    new_tags = item.tags
+                    if "tags" in kwargs:
+                        raw_tags = kwargs["tags"]
+                        new_tags = raw_tags if isinstance(raw_tags, list) else [t.strip() for t in str(raw_tags).split(",") if t.strip()]
+
+                    new_employee = kwargs.get("employee", item.employee)
+                    if new_employee:
+                        new_employee = str(new_employee).strip()
+
+                    new_sessions = item.sessions
+                    if "sessions" in kwargs:
+                        raw_s = kwargs["sessions"]
+                        new_sessions = raw_s if isinstance(raw_s, list) else [s.strip() for s in str(raw_s).split(",") if s.strip()]
+
+                    new_artifacts = item.artifacts
+                    if "artifacts" in kwargs:
+                        raw_art = kwargs["artifacts"]
+                        new_artifacts = raw_art if isinstance(raw_art, list) else [a.strip() for a in str(raw_art).split(",") if a.strip()]
+
+                    new_completed = str(kwargs.get("completed_at") or item.completed_at)
+
+                    updated_item = CompletedAffair(
+                        id=item.id,
+                        date=new_date,
+                        title=new_title,
+                        summary=new_summary,
+                        category=new_category,
+                        tags=list(set(new_tags)),
+                        employee=new_employee,
+                        sessions=list(set(new_sessions)),
+                        artifacts=list(set(new_artifacts)),
+                        completed_at=new_completed,
+                        created_at=item.created_at,
+                        updated_at=_now_iso(),
+                    )
+
+                    # 如果日期变迁到其他月份
+                    if new_date[:7] != m:
+                        items.pop(idx)
+                        _write_month_file_atomic(m, items)
+                        # 插入到新月份
+                        add_affair(
+                            updated_item.title,
+                            date=updated_item.date,
+                            summary=updated_item.summary,
+                            category=updated_item.category,
+                            tags=updated_item.tags,
+                            employee=updated_item.employee,
+                            sessions=updated_item.sessions,
+                            artifacts=updated_item.artifacts,
+                            completed_at=updated_item.completed_at,
+                            affair_id=updated_item.id,
                         )
-                        new_category = (
-                            kwargs["category"].strip()
-                            if "category" in kwargs
-                            else item.category
-                        )
+                    else:
+                        items[idx] = updated_item
+                        _write_month_file_atomic(m, items)
 
-                        new_tags = item.tags
-                        if "tags" in kwargs:
-                            raw_tags = kwargs["tags"]
-                            new_tags = raw_tags if isinstance(raw_tags, list) else [t.strip() for t in str(raw_tags).split(",") if t.strip()]
-
-                        new_employee = kwargs.get("employee", item.employee)
-                        if new_employee:
-                            new_employee = str(new_employee).strip()
-
-                        new_sessions = item.sessions
-                        if "sessions" in kwargs:
-                            raw_s = kwargs["sessions"]
-                            new_sessions = raw_s if isinstance(raw_s, list) else [s.strip() for s in str(raw_s).split(",") if s.strip()]
-
-                        new_artifacts = item.artifacts
-                        if "artifacts" in kwargs:
-                            raw_art = kwargs["artifacts"]
-                            new_artifacts = raw_art if isinstance(raw_art, list) else [a.strip() for a in str(raw_art).split(",") if a.strip()]
-
-                        new_completed = str(kwargs.get("completed_at") or item.completed_at)
-
-                        updated_item = CompletedAffair(
-                            id=item.id,
-                            date=new_date,
-                            title=new_title,
-                            summary=new_summary,
-                            category=new_category,
-                            tags=list(set(new_tags)),
-                            employee=new_employee,
-                            sessions=list(set(new_sessions)),
-                            artifacts=list(set(new_artifacts)),
-                            completed_at=new_completed,
-                            created_at=item.created_at,
-                            updated_at=_now_iso(),
-                        )
-
-                        # 如果日期变迁到其他月份
-                        if new_date[:7] != m:
-                            items.pop(idx)
-                            _write_month_file_atomic(m, items)
-                            # 插入到新月份
-                            add_affair(
-                                updated_item.title,
-                                date=updated_item.date,
-                                summary=updated_item.summary,
-                                category=updated_item.category,
-                                tags=updated_item.tags,
-                                employee=updated_item.employee,
-                                sessions=updated_item.sessions,
-                                artifacts=updated_item.artifacts,
-                                completed_at=updated_item.completed_at,
-                                affair_id=updated_item.id,
-                            )
-                        else:
-                            items[idx] = updated_item
-                            _write_month_file_atomic(m, items)
-
-                        return updated_item
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                    return updated_item
 
     return None
 
@@ -524,18 +539,13 @@ def remove_affair(affair_id: str, *, date: str | None = None) -> bool:
     ]
 
     for m in months_to_search:
-        lock_file = cal_dir / f".affairs-{m}.lock"
-        with open(lock_file, "w", encoding="utf-8") as lf:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-            try:
-                items = _read_month_file_locked(m)
-                original_len = len(items)
-                items = [it for it in items if it.id != affair_id]
-                if len(items) < original_len:
-                    _write_month_file_atomic(m, items)
-                    return True
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        with _month_lock(m):
+            items = _read_month_file_locked(m)
+            original_len = len(items)
+            items = [it for it in items if it.id != affair_id]
+            if len(items) < original_len:
+                _write_month_file_atomic(m, items)
+                return True
 
     return False
 

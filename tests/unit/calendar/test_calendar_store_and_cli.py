@@ -1,7 +1,12 @@
 """Unit tests for `frago calendar` store, CLI commands, and HTTP routes."""
 
+import importlib
 import json
+import os
 from pathlib import Path
+import sys
+import types
+from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
@@ -235,3 +240,116 @@ def test_api_routes(isolated_cal_dir: Path) -> None:
     del_resp = client.delete(f"/api/calendar/affairs/{aff_id}")
     assert del_resp.status_code == 200
     assert del_resp.json()["ok"] is True
+
+
+def test_windows_store_locking_simulation(isolated_cal_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 1. 模拟 Windows 环境：屏蔽 fcntl，注入 mock msvcrt
+    mock_msvcrt = types.ModuleType("msvcrt")
+    mock_msvcrt.LK_LOCK = 1
+    mock_msvcrt.LK_UNLCK = 2
+    mock_msvcrt.locking = MagicMock()
+
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+    monkeypatch.setitem(sys.modules, "msvcrt", mock_msvcrt)
+
+    # 重新加载 store 模块以验证在无 fcntl 的 Windows 环境下导入零崩溃
+    reloaded_store = importlib.reload(store)
+    monkeypatch.setattr(reloaded_store, "_IS_WINDOWS", True)
+
+    try:
+        # 2. 验证 add_affair 调用触发 msvcrt.locking 加锁与解锁
+        item = reloaded_store.add_affair(
+            title="Windows 端跨平台文件锁验证",
+            date="2026-11-10",
+            category="系统验证",
+            summary="模拟 Windows 环境无 fcntl 运行",
+        )
+        assert item.title == "Windows 端跨平台文件锁验证"
+
+        # 断言 msvcrt.locking 调用记录
+        locking_calls = mock_msvcrt.locking.call_args_list
+        assert len(locking_calls) >= 2
+        assert locking_calls[0].args[1] == mock_msvcrt.LK_LOCK
+        assert locking_calls[1].args[1] == mock_msvcrt.LK_UNLCK
+        assert locking_calls[0].args[2] == 1
+        assert locking_calls[1].args[2] == 1
+        mock_msvcrt.locking.reset_mock()
+
+        # 3. 验证 write_affairs 调用触发加锁与解锁
+        written = reloaded_store.write_affairs(
+            [
+                {
+                    "title": "Windows 批量任务",
+                    "date": "2026-11-10",
+                    "category": "系统验证",
+                }
+            ],
+            mode="upsert",
+        )
+        assert len(written) == 1
+        locking_calls = mock_msvcrt.locking.call_args_list
+        assert len(locking_calls) >= 2
+        assert locking_calls[0].args[1] == mock_msvcrt.LK_LOCK
+        assert locking_calls[1].args[1] == mock_msvcrt.LK_UNLCK
+        mock_msvcrt.locking.reset_mock()
+
+        # 4. 验证 update_affair 调用触发加锁与解锁
+        updated = reloaded_store.update_affair(
+            item.id,
+            date="2026-11-10",
+            summary="Windows 更新完成",
+        )
+        assert updated is not None
+        assert updated.summary == "Windows 更新完成"
+        locking_calls = mock_msvcrt.locking.call_args_list
+        assert len(locking_calls) >= 2
+        assert locking_calls[0].args[1] == mock_msvcrt.LK_LOCK
+        assert locking_calls[1].args[1] == mock_msvcrt.LK_UNLCK
+        mock_msvcrt.locking.reset_mock()
+
+        # 5. 验证 remove_affair 调用触发加锁与解锁
+        removed = reloaded_store.remove_affair(item.id, date="2026-11-10")
+        assert removed is True
+        locking_calls = mock_msvcrt.locking.call_args_list
+        assert len(locking_calls) >= 2
+        assert locking_calls[0].args[1] == mock_msvcrt.LK_LOCK
+        assert locking_calls[1].args[1] == mock_msvcrt.LK_UNLCK
+        mock_msvcrt.locking.reset_mock()
+
+        # 6. 验证 _month_lock 在抛出异常时仍能可靠释放锁
+        with pytest.raises(RuntimeError, match="测试中断"):
+            with reloaded_store._month_lock("2026-11"):
+                raise RuntimeError("测试中断")
+
+        locking_calls = mock_msvcrt.locking.call_args_list
+        assert len(locking_calls) == 2
+        assert locking_calls[0].args[1] == mock_msvcrt.LK_LOCK
+        assert locking_calls[1].args[1] == mock_msvcrt.LK_UNLCK
+    finally:
+        # 恢复环境以防影响其它测试
+        monkeypatch.undo()
+        importlib.reload(store)
+
+
+def test_posix_month_lock_lifecycle_and_exception_safety(isolated_cal_dir: Path) -> None:
+    # 验证 POSIX 原生环境下的 _month_lock 生命周期与异常安全性
+    # 1. 正常加锁与释放
+    with store._month_lock("2026-11"):
+        lock_file = store.get_calendar_dir() / ".affairs-2026-11.lock"
+        assert lock_file.exists()
+
+    # 2. 异常路径下锁安全释放，不影响后续加锁与写入
+    with pytest.raises(ValueError, match="事务模拟失败"):
+        with store._month_lock("2026-11"):
+            raise ValueError("事务模拟失败")
+
+    # 后续操作仍然能够正常获取锁并成功写入
+    item = store.add_affair(
+        title="异常释放后正常重入写入",
+        date="2026-11-10",
+        category="系统验证",
+    )
+    assert item.title == "异常释放后正常重入写入"
+    items = store.list_affairs(date="2026-11-10")
+    assert len(items) == 1
+    assert items[0].id == item.id
