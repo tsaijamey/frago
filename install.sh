@@ -175,11 +175,15 @@ http_probe() {
 http_download() {
     url="$1"
     dest="$2"
+    label="${3:-}"
+    if [ -n "$label" ]; then
+        print_step "$label" >&2
+    fi
     if command_exists curl; then
-        curl -fL --connect-timeout 10 --retry 2 -o "$dest" "$url" >/dev/null 2>&1
+        curl -fL --progress-bar --connect-timeout 10 --retry 2 -o "$dest" "$url"
         return $?
     elif command_exists wget; then
-        wget -q --timeout=15 --tries=2 -O "$dest" "$url" >/dev/null 2>&1
+        wget --show-progress -q --timeout=15 --tries=2 -O "$dest" "$url"
         return $?
     fi
     return 1
@@ -609,7 +613,7 @@ install_uv_from_pypi_wheel() {
     # 1. Try pinned verified 0.13.7 wheel URL first (single HTTP request, zero index overhead)
     if [ -n "$UV_WHEEL_PINNED_PATH" ]; then
         pinned_url="${TUNA_PYPI_BASE}/${UV_WHEEL_PINNED_PATH}"
-        if http_download "$pinned_url" "$wheel_zip" && [ -s "$wheel_zip" ]; then
+        if http_download "$pinned_url" "$wheel_zip" "Downloading uv wheel from mirror ($pinned_url)..." && [ -s "$wheel_zip" ]; then
             downloaded=true
         fi
     fi
@@ -617,7 +621,7 @@ install_uv_from_pypi_wheel() {
     # 2. Fallback: dynamically resolve latest wheel from Tsinghua Simple Index
     if [ "$downloaded" = false ]; then
         latest_url="$(resolve_latest_uv_wheel_from_tuna || true)"
-        if [ -n "$latest_url" ] && http_download "$latest_url" "$wheel_zip" && [ -s "$wheel_zip" ]; then
+        if [ -n "$latest_url" ] && http_download "$latest_url" "$wheel_zip" "Downloading latest uv wheel ($latest_url)..." && [ -s "$wheel_zip" ]; then
             downloaded=true
         fi
     fi
@@ -627,6 +631,7 @@ install_uv_from_pypi_wheel() {
         return 1
     fi
 
+    print_step "Extracting uv binaries from wheel..."
     if ! extract_zip_file "$wheel_zip" "$extract_dir"; then
         rm -rf "$work_dir" >/dev/null 2>&1 || true
         return 1
@@ -652,13 +657,18 @@ install_uv_from_pypi_wheel() {
 }
 
 install_uv_from_official() {
-    if command_exists curl; then
-        curl -LsSf --connect-timeout 10 --max-time 60 "$OFFICIAL_UV_INSTALL_SH" | sh >/dev/null 2>&1 || return 1
-    elif command_exists wget; then
-        wget -qO- --timeout=20 "$OFFICIAL_UV_INSTALL_SH" | sh >/dev/null 2>&1 || return 1
-    else
+    print_step "Downloading uv official installer ($OFFICIAL_UV_INSTALL_SH)..."
+    tmp_sh="$(mktemp "${TMPDIR:-/tmp}/uv-install-XXXXXX.sh" 2>/dev/null || echo "${TMPDIR:-/tmp}/uv-install-$$.sh")"
+    if ! http_download "$OFFICIAL_UV_INSTALL_SH" "$tmp_sh"; then
+        rm -f "$tmp_sh"
         return 1
     fi
+    print_step "Running official uv installer script..."
+    if ! sh "$tmp_sh"; then
+        rm -f "$tmp_sh"
+        return 1
+    fi
+    rm -f "$tmp_sh"
 
     [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
@@ -676,61 +686,63 @@ WINDOWS_TMUX_RELEASE_URL="https://github.com/arndawg/tmux-windows/releases/downl
 
 run_linux_pkg_install() {
     pkg="$1"
+    print_step "Installing $pkg via Linux package manager..."
     if command_exists apt-get; then
         if [ "$APT_UPDATED" = false ]; then
+            print_step "Updating package lists (apt-get update)..."
             if [ "$(id -u)" = "0" ]; then
-                apt-get update -qq >/dev/null 2>&1 || true
+                apt-get update || true
             elif command_exists sudo; then
-                sudo apt-get update -qq >/dev/null 2>&1 || true
+                sudo apt-get update || true
             fi
             APT_UPDATED=true
         fi
         if [ "$(id -u)" = "0" ]; then
-            DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
         elif command_exists sudo; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
         else
             return 1
         fi
     elif command_exists dnf; then
         if [ "$(id -u)" = "0" ]; then
-            dnf install -y "$pkg" >/dev/null 2>&1 ||
-                ([ "$pkg" = "ffmpeg" ] && (dnf install -y --allowerasing ffmpeg >/dev/null 2>&1 || dnf install -y ffmpeg-free >/dev/null 2>&1))
+            dnf install -y "$pkg" ||
+                ([ "$pkg" = "ffmpeg" ] && (dnf install -y --allowerasing ffmpeg || dnf install -y ffmpeg-free))
         elif command_exists sudo; then
-            sudo dnf install -y "$pkg" >/dev/null 2>&1 ||
-                ([ "$pkg" = "ffmpeg" ] && (sudo dnf install -y --allowerasing ffmpeg >/dev/null 2>&1 || sudo dnf install -y ffmpeg-free >/dev/null 2>&1))
+            sudo dnf install -y "$pkg" ||
+                ([ "$pkg" = "ffmpeg" ] && (sudo dnf install -y --allowerasing ffmpeg || sudo dnf install -y ffmpeg-free))
         else
             return 1
         fi
     elif command_exists yum; then
         if [ "$(id -u)" = "0" ]; then
-            yum install -y "$pkg" >/dev/null 2>&1
+            yum install -y "$pkg"
         elif command_exists sudo; then
-            sudo yum install -y "$pkg" >/dev/null 2>&1
+            sudo yum install -y "$pkg"
         else
             return 1
         fi
     elif command_exists pacman; then
         if [ "$(id -u)" = "0" ]; then
-            pacman -Sy --noconfirm --needed "$pkg" >/dev/null 2>&1
+            pacman -Sy --noconfirm --needed "$pkg"
         elif command_exists sudo; then
-            sudo pacman -Sy --noconfirm --needed "$pkg" >/dev/null 2>&1
+            sudo pacman -Sy --noconfirm --needed "$pkg"
         else
             return 1
         fi
     elif command_exists apk; then
         if [ "$(id -u)" = "0" ]; then
-            apk add --no-cache "$pkg" >/dev/null 2>&1
+            apk add --no-cache "$pkg"
         elif command_exists sudo; then
-            sudo apk add --no-cache "$pkg" >/dev/null 2>&1
+            sudo apk add --no-cache "$pkg"
         else
             return 1
         fi
     elif command_exists zypper; then
         if [ "$(id -u)" = "0" ]; then
-            zypper --non-interactive install -y "$pkg" >/dev/null 2>&1
+            zypper --non-interactive install -y "$pkg"
         elif command_exists sudo; then
-            sudo zypper --non-interactive install -y "$pkg" >/dev/null 2>&1
+            sudo zypper --non-interactive install -y "$pkg"
         else
             return 1
         fi
@@ -754,14 +766,18 @@ ensure_homebrew() {
     print_step "Installing Homebrew (macOS package manager)..."
     if [ "$USE_CN_MIRROR" = true ]; then
         tmp_brew_dir="$(mktemp -d "${TMPDIR:-/tmp}/frago-brew-XXXXXX" 2>/dev/null || echo "/tmp/frago-brew-$$")"
-        if command_exists git && git clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git "$tmp_brew_dir/ brew-install" >/dev/null 2>&1; then
-            NONINTERACTIVE=1 /bin/bash "$tmp_brew_dir/ brew-install/install.sh" >/dev/null 2>&1 || true
+        if command_exists git && git clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git "$tmp_brew_dir/brew-install"; then
+            NONINTERACTIVE=1 /bin/bash "$tmp_brew_dir/brew-install/install.sh" || true
         fi
         rm -rf "$tmp_brew_dir" >/dev/null 2>&1 || true
     fi
 
     if ! command_exists brew; then
-        NONINTERACTIVE=1 /bin/bash -c "$(http_get_text https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null 2>&1 || true
+        brew_installer="$(mktemp "${TMPDIR:-/tmp}/brew-install-XXXXXX.sh" 2>/dev/null || echo "/tmp/brew-install-$$.sh")"
+        if http_download "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" "$brew_installer" "Downloading official Homebrew installer..."; then
+            NONINTERACTIVE=1 /bin/bash "$brew_installer" || true
+            rm -f "$brew_installer"
+        fi
     fi
 
     [ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -791,27 +807,32 @@ install_windows_tmux_zip_fallback() {
     downloaded=false
     if [ "$USE_CN_MIRROR" = true ]; then
         for proxy_prefix in "https://ghfast.top/" "https://mirror.ghproxy.com/" ""; do
-            if http_download "${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}" "$zip_path" && [ -s "$zip_path" ]; then
+            download_url="${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}"
+            if http_download "$download_url" "$zip_path" "Downloading tmux zip ($download_url)..." && [ -s "$zip_path" ]; then
                 downloaded=true
                 break
             fi
         done
     else
         for proxy_prefix in "" "https://ghfast.top/" "https://mirror.ghproxy.com/"; do
-            if http_download "${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}" "$zip_path" && [ -s "$zip_path" ]; then
+            download_url="${proxy_prefix}${WINDOWS_TMUX_RELEASE_URL}"
+            if http_download "$download_url" "$zip_path" "Downloading tmux zip ($download_url)..." && [ -s "$zip_path" ]; then
                 downloaded=true
                 break
             fi
         done
     fi
 
-    if [ "$downloaded" = true ] && extract_zip_file "$zip_path" "$extract_dir"; then
-        if [ -f "$extract_dir/tmux.exe" ]; then
-            cp -f "$extract_dir/tmux.exe" "$bin_dir/tmux.exe"
-            chmod +x "$bin_dir/tmux.exe" 2>/dev/null || true
-            rm -rf "$work_dir" >/dev/null 2>&1 || true
-            export PATH="$bin_dir:$PATH"
-            return 0
+    if [ "$downloaded" = true ]; then
+        print_step "Extracting tmux binary..."
+        if extract_zip_file "$zip_path" "$extract_dir"; then
+            if [ -f "$extract_dir/tmux.exe" ]; then
+                cp -f "$extract_dir/tmux.exe" "$bin_dir/tmux.exe"
+                chmod +x "$bin_dir/tmux.exe" 2>/dev/null || true
+                rm -rf "$work_dir" >/dev/null 2>&1 || true
+                export PATH="$bin_dir:$PATH"
+                return 0
+            fi
         fi
     fi
 
@@ -833,9 +854,9 @@ install_git() {
     case "$OS_FAMILY" in
         macos)
             if ensure_homebrew; then
-                brew install git >/dev/null 2>&1 || true
+                brew install git || true
             else
-                xcode-select --install >/dev/null 2>&1 || true
+                xcode-select --install || true
             fi
             ;;
         linux)
@@ -843,10 +864,10 @@ install_git() {
             ;;
         windows)
             if command_exists winget.exe; then
-                winget.exe install --id Git.Git --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                winget.exe install --id Git.Git --exact --accept-package-agreements --accept-source-agreements --disable-interactivity || true
                 refresh_windows_posix_path
             elif command_exists pacman; then
-                pacman -Sy --noconfirm --needed git >/dev/null 2>&1 || true
+                pacman -Sy --noconfirm --needed git || true
             fi
             ;;
     esac
@@ -875,7 +896,7 @@ install_tmux() {
         macos)
             print_step "Installing tmux..."
             if ensure_homebrew; then
-                brew install tmux >/dev/null 2>&1 || true
+                brew install tmux || true
             fi
             ;;
         linux)
@@ -885,7 +906,7 @@ install_tmux() {
         windows)
             print_step "Installing tmux (Windows port: arndawg.tmux-windows)..."
             if command_exists winget.exe; then
-                winget.exe install --id arndawg.tmux-windows --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                winget.exe install --id arndawg.tmux-windows --exact --accept-package-agreements --accept-source-agreements --disable-interactivity || true
                 refresh_windows_posix_path
             fi
             if ! command_exists tmux; then
@@ -918,7 +939,7 @@ install_ffmpeg() {
     case "$OS_FAMILY" in
         macos)
             if ensure_homebrew; then
-                brew install ffmpeg >/dev/null 2>&1 || true
+                brew install ffmpeg || true
             fi
             ;;
         linux)
@@ -926,11 +947,11 @@ install_ffmpeg() {
             ;;
         windows)
             if command_exists winget.exe; then
-                winget.exe install --id Gyan.FFmpeg --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 ||
-                    winget.exe install ffmpeg --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 || true
+                winget.exe install --id Gyan.FFmpeg --exact --accept-package-agreements --accept-source-agreements --disable-interactivity ||
+                    winget.exe install --id Gyan.FFmpeg.Essentials --exact --accept-package-agreements --accept-source-agreements --disable-interactivity || true
                 refresh_windows_posix_path
             elif command_exists pacman; then
-                pacman -Sy --noconfirm --needed ffmpeg >/dev/null 2>&1 || true
+                pacman -Sy --noconfirm --needed ffmpeg || true
             fi
             ;;
     esac
@@ -994,9 +1015,9 @@ install_uv() {
 run_uv_tool_install() {
     action="$1"
     if [ "$action" = "upgrade" ]; then
-        uv tool upgrade frago-cli >/dev/null 2>&1 || uv tool install frago-cli --force >/dev/null 2>&1
+        uv tool upgrade --python 3.13 --refresh-package frago-cli frago-cli || uv tool install --python 3.13 --refresh-package frago-cli frago-cli --force
     else
-        uv tool install frago-cli >/dev/null 2>&1
+        uv tool install --python 3.13 --refresh-package frago-cli frago-cli
     fi
 }
 
@@ -1006,9 +1027,9 @@ install_frago() {
     action="install"
     if command_exists frago; then
         action="upgrade"
-        print_step "Upgrading frago-cli (Python >=3.13 + built-in CoreAgent)..."
+        print_step "Upgrading frago-cli (Python 3.13 + built-in CoreAgent)..."
     else
-        print_step "Installing frago-cli (Python >=3.13 + built-in CoreAgent)..."
+        print_step "Installing frago-cli (Python 3.13 + built-in CoreAgent)..."
     fi
 
     if ! run_uv_tool_install "$action"; then
@@ -1029,7 +1050,12 @@ install_frago() {
     ensure_shell_path_persisted
 
     if command_exists frago; then
-        version=$(get_version frago)
+        version_output="$(frago --version 2>&1 || true)"
+        version="$(printf '%s' "$version_output" | head -n1 | tr -d '\r\n')"
+        if [ -z "$version" ] || printf '%s' "$version_output" | grep -qi "error\|traceback"; then
+            print_error "frago verification failed: ${version_output}"
+            exit 1
+        fi
         print_done "frago ($version)"
     else
         print_error "frago installation failed (binary not found in ~/.local/bin)"
@@ -1051,22 +1077,34 @@ print_next_steps() {
 
 wait_for_server() {
     max_attempts=30
-    attempt=0
+    attempt=1
 
-    while [ $attempt -lt $max_attempts ]; do
+    while [ $attempt -le $max_attempts ]; do
+        connected=false
         if (echo >/dev/tcp/127.0.0.1/8093) 2>/dev/null; then
-            sleep 2
-            return 0
-        elif command_exists nc && nc -z 127.0.0.1 8093 2>/dev/null; then
-            sleep 2
-            return 0
+            connected=true
+        elif command_exists nc && nc -z -w 1 127.0.0.1 8093 2>/dev/null; then
+            connected=true
         elif command_exists curl && curl -s --connect-timeout 1 "http://127.0.0.1:8093/api/status" >/dev/null 2>&1; then
-            sleep 1
+            connected=true
+        fi
+
+        if [ "$connected" = true ]; then
+            printf "\n  ${GREEN}+ frago server is ready at http://127.0.0.1:8093${RESET}\n"
             return 0
         fi
+
+        printf "\r  ${DIM}Waiting for frago server on http://127.0.0.1:8093 (%ds/%ds)...${RESET}" "$attempt" "$max_attempts"
         sleep 1
         attempt=$((attempt + 1))
     done
+
+    printf "\n"
+    log_file="$HOME/.frago/server.log"
+    if [ -f "$log_file" ]; then
+        printf "  ${DIM}Last 10 lines of %s:${RESET}\n" "$log_file"
+        tail -n 10 "$log_file" | sed 's/^/    /' 2>/dev/null || true
+    fi
     return 1
 }
 
@@ -1081,8 +1119,12 @@ launch_frago() {
     printf "  ${DIM}Starting frago server...${RESET}\n"
 
     frago server stop >/dev/null 2>&1 || true
-    sleep 2
-    frago server start >/dev/null 2>&1 || true
+    sleep 0.5
+
+    if ! frago server start; then
+        print_warning "frago server start failed. Run 'frago server --debug' to inspect error."
+        return 0
+    fi
 
     if wait_for_server; then
         printf "  ${DIM}Opening browser...${RESET}\n"
@@ -1098,7 +1140,7 @@ launch_frago() {
             printf "  ${CYAN}Open in browser: http://127.0.0.1:8093${RESET}\n"
         fi
     else
-        print_warning "Server did not start in time. Run 'frago start' manually."
+        print_warning "Server did not respond in time. Run 'frago start' manually."
     fi
 }
 

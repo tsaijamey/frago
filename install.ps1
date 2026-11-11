@@ -374,14 +374,26 @@ function Invoke-FileDownload {
         [string]$Uri,
         [string]$OutFile,
         [long]$MinBytes = 102400,
-        [int]$TimeoutSec = 120
+        [int]$TimeoutSec = 120,
+        [string]$Label = ""
     )
     Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue
     $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+    if ($Label) {
+        Write-Step "$Label"
+    }
+
     if (Test-Command "curl.exe") {
-        $rc = Invoke-NativeSilent {
-            & curl.exe -fsSL --connect-timeout 10 --max-time $TimeoutSec --retry 2 -A $ua -o $OutFile $Uri *>$null
+        $prevEap = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            & curl.exe -fL --progress-bar --connect-timeout 10 --max-time $TimeoutSec --retry 2 -A $ua -o $OutFile $Uri
+            $rc = $LASTEXITCODE
+        } catch {
+            $rc = 1
+        } finally {
+            $ErrorActionPreference = $prevEap
         }
         if (($rc -eq 0) -and (Test-Path $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
             return $true
@@ -390,11 +402,50 @@ function Invoke-FileDownload {
     }
 
     try {
-        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSec -UserAgent $ua
+        $req = [System.Net.HttpWebRequest]::Create($Uri)
+        $req.Timeout = $TimeoutSec * 1000
+        $req.UserAgent = $ua
+        $req.Method = "GET"
+        $resp = $req.GetResponse()
+        $totalBytes = $resp.ContentLength
+        $respStream = $resp.GetResponseStream()
+        $fs = [System.IO.File]::Create($OutFile)
+        $buffer = New-Object byte[] 65536
+        $totalRead = 0
+        $lastUpdate = [System.Diagnostics.Stopwatch]::StartNew()
+
+        while (($read = $respStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fs.Write($buffer, 0, $read)
+            $totalRead += $read
+            if ($lastUpdate.ElapsedMilliseconds -ge 300) {
+                if ($totalBytes -gt 0) {
+                    $pct = [int](($totalRead / $totalBytes) * 100)
+                    $msg = ("`r  -> 已下载 {0:N1} MB / {1:N1} MB ({2}%)" -f ($totalRead / 1MB), ($totalBytes / 1MB), $pct)
+                } else {
+                    $msg = ("`r  -> 已下载 {0:N1} MB" -f ($totalRead / 1MB))
+                }
+                Write-Host -NoNewline $msg
+                $lastUpdate.Restart()
+            }
+        }
+        if ($totalBytes -gt 0) {
+            Write-Host ("`r  -> 已下载 {0:N1} MB / {1:N1} MB (100%)" -f ($totalRead / 1MB), ($totalBytes / 1MB))
+        } else {
+            Write-Host ("`r  -> 已下载 {0:N1} MB (完成)" -f ($totalRead / 1MB))
+        }
+        $fs.Flush()
+        $fs.Close()
+        $respStream.Close()
+        $resp.Close()
+
         if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
             return $true
         }
-    } catch {}
+    } catch {
+        if ($fs) { try { $fs.Dispose() } catch {} }
+        if ($respStream) { try { $respStream.Dispose() } catch {} }
+        if ($resp) { try { $resp.Dispose() } catch {} }
+    }
 
     Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue
     return $false
@@ -483,7 +534,7 @@ function Install-UvFromPypiWheel {
         if ($Script:UvWheelPinnedPath) {
             foreach ($base in (Get-PypiMirrorBases)) {
                 $pinnedUrl = "$base/$($Script:UvWheelPinnedPath)"
-                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90) {
+                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90 -Label "Downloading uv wheel from mirror ($pinnedUrl)...") {
                     $downloaded = $true
                     break
                 }
@@ -493,7 +544,7 @@ function Install-UvFromPypiWheel {
         if (-not $downloaded) {
             $latestUrl = Resolve-LatestPypiWheelUrl -PackageSlug "uv" -FilePrefix "uv" -WheelTag $Script:UvWheelTag
             if ($latestUrl) {
-                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90
+                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $uvZip -MinBytes 1048576 -TimeoutSec 90 -Label "Downloading latest uv wheel ($latestUrl)..."
             }
         }
 
@@ -501,6 +552,8 @@ function Install-UvFromPypiWheel {
             return $false
         }
 
+        $sizeMb = [math]::Round((Get-Item $uvZip).Length / 1MB, 1)
+        Write-Step "Extracting uv binaries from wheel ($sizeMb MB)..."
         Expand-Archive -Path $uvZip -DestinationPath $uvExtractDir -Force
         $scriptsPattern = if ($Script:OsFamily -eq "windows") {
             Join-Path $uvExtractDir "uv-*.data\scripts\*.exe"
@@ -531,18 +584,20 @@ function Install-UvFromPypiWheel {
 }
 
 function Install-UvFromOfficial {
+    $tempRoot = if ($env:TEMP) { $env:TEMP } else { [IO.Path]::GetTempPath() }
+    $tempPs1 = Join-Path $tempRoot "uv-install-$PID.ps1"
     try {
-        $response = Invoke-WebRequest -Uri $OfficialUvInstallPs1 -UseBasicParsing -TimeoutSec 30
-        $installScript = if ($response.Content -is [byte[]]) {
-            [System.Text.Encoding]::UTF8.GetString($response.Content)
-        } else {
-            $response.Content
+        if (-not (Invoke-FileDownload -Uri $OfficialUvInstallPs1 -OutFile $tempPs1 -MinBytes 512 -TimeoutSec 30 -Label "Downloading uv official installer ($OfficialUvInstallPs1)...")) {
+            return $false
         }
-        Invoke-Expression $installScript *>$null
+        Write-Step "Running official uv installer script..."
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tempPs1 | Out-Host
         Update-SessionPath
         return (Test-Command "uv")
     } catch {
         return $false
+    } finally {
+        Remove-Item -Path $tempPs1 -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -674,7 +729,7 @@ function Install-Git {
         if (Test-Command "winget") {
             Write-Step "Installing Git for Windows (provides git & Git Bash)..."
             Invoke-NativeSilent {
-                & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+                & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
             } | Out-Null
             Update-SessionPath
             $gitRoot = Find-WindowsGitRoot
@@ -687,11 +742,11 @@ function Install-Git {
         }
         if (Test-Command "scoop") {
             Write-Step "Installing git via scoop..."
-            Invoke-NativeSilent { & scoop install git *>$null } | Out-Null
+            Invoke-NativeSilent { & scoop install git | Out-Host } | Out-Null
             Update-SessionPath
         } elseif (Test-Command "choco") {
             Write-Step "Installing git via choco..."
-            Invoke-NativeSilent { & choco install git -y *>$null } | Out-Null
+            Invoke-NativeSilent { & choco install git -y | Out-Host } | Out-Null
             Update-SessionPath
         }
         $gitRoot = Find-WindowsGitRoot
@@ -761,7 +816,7 @@ function Install-WindowsTmuxZipFallback {
     try {
         $downloaded = $false
         foreach ($url in $candidates) {
-            if (Invoke-FileDownload -Uri $url -OutFile $zipPath -MinBytes 102400 -TimeoutSec 60) {
+            if (Invoke-FileDownload -Uri $url -OutFile $zipPath -MinBytes 102400 -TimeoutSec 60 -Label "Downloading tmux zip ($url)...") {
                 $downloaded = $true
                 break
             }
@@ -769,6 +824,8 @@ function Install-WindowsTmuxZipFallback {
         if (-not $downloaded) {
             return $false
         }
+        $sizeMb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+        Write-Step "Extracting tmux binary ($sizeMb MB)..."
         Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
         $tmuxExe = Join-Path $extractDir "tmux.exe"
         if (Test-Path $tmuxExe) {
@@ -798,7 +855,7 @@ function Install-Tmux {
         Write-Step "Installing tmux (Windows port: arndawg.tmux-windows)..."
         if (Test-Command "winget") {
             Invoke-NativeSilent {
-                & winget install --id arndawg.tmux-windows -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+                & winget install --id arndawg.tmux-windows -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
             } | Out-Null
             Update-SessionPath
         }
@@ -851,7 +908,7 @@ function Install-WindowsFfmpegFromPypiWheel {
         if ($Script:FfmpegWheelPinnedPath) {
             foreach ($base in (Get-PypiMirrorBases)) {
                 $pinnedUrl = "$base/$($Script:FfmpegWheelPinnedPath)"
-                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120) {
+                if (Invoke-FileDownload -Uri $pinnedUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120 -Label "Downloading imageio-ffmpeg wheel from mirror ($pinnedUrl)...") {
                     $downloaded = $true
                     break
                 }
@@ -861,7 +918,7 @@ function Install-WindowsFfmpegFromPypiWheel {
         if (-not $downloaded) {
             $latestUrl = Resolve-LatestPypiWheelUrl -PackageSlug "imageio-ffmpeg" -FilePrefix "imageio_ffmpeg" -WheelTag $Script:FfmpegWheelTag
             if ($latestUrl) {
-                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120
+                $downloaded = Invoke-FileDownload -Uri $latestUrl -OutFile $ffmpegZip -MinBytes 1048576 -TimeoutSec 120 -Label "Downloading latest imageio-ffmpeg wheel ($latestUrl)..."
             }
         }
 
@@ -869,6 +926,8 @@ function Install-WindowsFfmpegFromPypiWheel {
             return $false
         }
 
+        $sizeMb = [math]::Round((Get-Item $ffmpegZip).Length / 1MB, 1)
+        Write-Step "Extracting ffmpeg binary from wheel ($sizeMb MB)..."
         Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtractDir -Force
         $exePattern = Join-Path $ffmpegExtractDir "imageio_ffmpeg\binaries\ffmpeg-*.exe"
         $ffmpegBin = Get-Item $exePattern -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -916,20 +975,20 @@ function Install-Ffmpeg {
         if (Test-Command "winget") {
             Write-Step "PyPI mirror wheel unavailable, trying winget..."
             $rc = Invoke-NativeSilent {
-                & winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+                & winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
             }
             if ($rc -ne 0) {
                 Invoke-NativeSilent {
-                    & winget install --id Gyan.FFmpeg.Essentials -e --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity *>$null
+                    & winget install --id Gyan.FFmpeg.Essentials -e --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
                 } | Out-Null
             }
             Update-SessionPath
         }
         if ((-not (Test-Command "ffmpeg")) -and (Test-Command "scoop")) {
-            Invoke-NativeSilent { & scoop install ffmpeg *>$null } | Out-Null
+            Invoke-NativeSilent { & scoop install ffmpeg | Out-Host } | Out-Null
             Update-SessionPath
         } elseif ((-not (Test-Command "ffmpeg")) -and (Test-Command "choco")) {
-            Invoke-NativeSilent { & choco install ffmpeg -y *>$null } | Out-Null
+            Invoke-NativeSilent { & choco install ffmpeg -y | Out-Host } | Out-Null
             Update-SessionPath
         }
         if (Test-Command "ffmpeg") {
@@ -974,13 +1033,13 @@ function Install-Ffmpeg {
 function Invoke-UvToolInstall {
     param([string]$Action)
     if ($Action -eq "upgrade") {
-        $rc = Invoke-NativeSilent { & uv tool upgrade frago-cli *>$null }
+        $rc = Invoke-NativeSilent { & uv tool upgrade --python 3.13 --refresh-package frago-cli frago-cli | Out-Host }
         if ($rc -ne 0) {
-            $rc = Invoke-NativeSilent { & uv tool install frago-cli --force *>$null }
+            $rc = Invoke-NativeSilent { & uv tool install --python 3.13 --refresh-package frago-cli frago-cli --force | Out-Host }
         }
         return ($rc -eq 0)
     } else {
-        $rc = Invoke-NativeSilent { & uv tool install frago-cli *>$null }
+        $rc = Invoke-NativeSilent { & uv tool install --python 3.13 --refresh-package frago-cli frago-cli | Out-Host }
         return ($rc -eq 0)
     }
 }
@@ -990,9 +1049,9 @@ function Install-Frago {
 
     $action = if (Test-Command "frago") { "upgrade" } else { "install" }
     if ($action -eq "upgrade") {
-        Write-Step "Upgrading frago-cli (Python >=3.13 + built-in CoreAgent)..."
+        Write-Step "Upgrading frago-cli (Python 3.13 + built-in CoreAgent)..."
     } else {
-        Write-Step "Installing frago-cli (Python >=3.13 + built-in CoreAgent)..."
+        Write-Step "Installing frago-cli (Python 3.13 + built-in CoreAgent)..."
     }
 
     $ok = Invoke-UvToolInstall -Action $action
@@ -1031,7 +1090,13 @@ function Install-Frago {
     Update-SessionPath
 
     if (Test-Command "frago") {
-        $version = Get-CommandVersion "frago"
+        $versionOutput = & frago --version 2>&1
+        $versionRc = $LASTEXITCODE
+        $version = ("$versionOutput" -replace "`r`n", " ").Trim()
+        if ($versionRc -ne 0 -or -not $version) {
+            Write-Err "frago verification failed (exit code $versionRc): $version"
+            exit 1
+        }
         Write-Done "frago ($version)"
     } else {
         Write-Err "frago installation failed (frago not found in ~/.local/bin)"
@@ -1058,16 +1123,39 @@ function Show-NextSteps {
 
 function Wait-ForServer {
     $maxAttempts = 30
+    $port = 8093
 
-    for ($attempt = 0; $attempt -lt $maxAttempts; $attempt++) {
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $connected = $false
         try {
             $tcp = New-Object System.Net.Sockets.TcpClient
-            $tcp.Connect("127.0.0.1", 8093)
+            $iar = $tcp.BeginConnect("127.0.0.1", $port, $null, $null)
+            if ($iar.AsyncWaitHandle.WaitOne(300, $false)) {
+                $tcp.EndConnect($iar)
+                $connected = $true
+            }
             $tcp.Close()
-            Start-Sleep -Seconds 2
-            return $true
         } catch {}
+
+        if ($connected) {
+            Write-Host ""
+            Write-Host "  " -NoNewline
+            Write-Host "+ " -ForegroundColor Green -NoNewline
+            Write-Host "frago server is ready at http://127.0.0.1:$port" -ForegroundColor Green
+            return $true
+        }
+
+        Write-Host -NoNewline ("`r  Waiting for frago server on http://127.0.0.1:{0} ({1}s/{2}s)..." -f $port, $attempt, $maxAttempts)
         Start-Sleep -Seconds 1
+    }
+
+    Write-Host ""
+    $logPath = Join-Path (if ($HOME) { $HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }) ".frago\server.log"
+    if (Test-Path $logPath) {
+        Write-Host "  Last 10 lines of $logPath:" -ForegroundColor DarkGray
+        Get-Content $logPath -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "    $_" -ForegroundColor DarkGray
+        }
     }
     return $false
 }
@@ -1083,9 +1171,16 @@ function Start-Frago {
     Write-Host "  " -NoNewline
     Write-Host "Starting frago server..." -ForegroundColor DarkGray
 
+    # Stop any previous instance quickly without long sleep
     Invoke-NativeSilent { & frago server stop *>$null } | Out-Null
-    Start-Sleep -Seconds 2
-    Invoke-NativeSilent { & frago server start *>$null } | Out-Null
+    Start-Sleep -Milliseconds 500
+
+    # Start frago server and inspect exit code
+    $startRc = Invoke-NativeSilent { & frago server start | Out-Host }
+    if ($startRc -ne 0) {
+        Write-Warn "frago server start exited with code $startRc. Run 'frago server --debug' to inspect error."
+        return
+    }
 
     if (Wait-ForServer) {
         Write-Host "  " -NoNewline
@@ -1093,7 +1188,7 @@ function Start-Frago {
         Write-Host ""
         Start-Process "http://127.0.0.1:8093"
     } else {
-        Write-Warn "Server did not start in time. Run 'frago start' manually."
+        Write-Warn "Server did not respond in time. Run 'frago start' manually."
     }
 }
 
