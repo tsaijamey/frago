@@ -466,7 +466,7 @@ class TestOntologyIntrospector:
         # Missing user dir does not fail and returns the 65 builtin domain classes
         absent_dir = tmp_path / "nonexistent_ontology_dir"
         base_reg = DomainClassRegistry(user_ontology_dir=absent_dir)
-        assert len(base_reg.classes) == 65
+        assert len(base_reg.classes) == 66
         assert getattr(base_reg.get_class("AgentKernel"), "source", None) == "builtin"
 
         # User overlay in ~/.frago/ontology/user-ontology.json + domains/*.json
@@ -535,7 +535,7 @@ class TestOntologyIntrospector:
         assert introspector.validate_schema_integrity() == []
 
         user_reg = DomainClassRegistry(merged_schema)
-        assert len(user_reg.classes) == 67
+        assert len(user_reg.classes) == 68
         contract_res = user_reg.create("SupplierContractResource", uid="contract:2026-001")
         assert isinstance(contract_res, Resource)
         assert getattr(type(contract_res), "source", "").startswith("userdir:")
@@ -603,7 +603,9 @@ class TestOntologyIntrospector:
         pa_actions = introspector.get_allowed_actions_for(
             "PrimarySchedulerRole", "AgentHarness"
         )
-        assert [a["action_id"] for a in pa_actions] == ["drive_agent_turn"]
+        assert {"drive_agent_turn", "probe_harness_lifecycle", "reclaim_harness"} <= {
+            a["action_id"] for a in pa_actions
+        }
 
         rels = introspector.explain_entity_relations("AgentKernel")
         outgoing_preds = {r["predicate"] for r in rels["outgoing"]}
@@ -677,7 +679,8 @@ class TestDomainClassRegistryAndThreeMainlinesRuntime:
 
     def test_all_63_domain_classes_compile_and_enforce_bearer_types(self) -> None:
         reg = DomainClassRegistry()
-        assert len(reg.classes) == 65
+        assert len(reg.classes) == 66
+        assert "HarnessLifecycleState" in reg.classes
         assert "EmployeePostResource" in reg.classes
         assert "DomainEmployeeRole" in reg.classes
 
@@ -3659,9 +3662,3 @@ class TestAgentKernelOntologyAndProjector:
         assert supports_for_you("codex") is True
         assert supports_for_you("opencode") is True
         assert supports_for_you("coreagent") is False
-
-
-
-
-
-

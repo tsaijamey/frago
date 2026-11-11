@@ -765,7 +765,7 @@ def _pane_pids() -> dict[str, list[int]]:
 
 _GENERIC_FALLBACK_BUSY = re.compile(
     r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)"
-    r"|\bGenerating\b"
+    r"|\bGenerating(?:\.\.\.|…|\s+response\b)"
     r"|(?i:running\s+stop\s+hook)"
     r"|^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…",
     re.MULTILINE,
@@ -773,36 +773,37 @@ _GENERIC_FALLBACK_BUSY = re.compile(
 
 
 def _is_busy(pane: str, kernel: str = "unknown") -> bool:
-    """按智能体本体能力矩阵（busy_probe）派发终端忙碌探测，阻断跨内核正则污染。
+    """按五内核统一适配器生命周期能力切面派发终端忙碌探测，单一事实源收口。
 
-    1. native (claude)：保留原生 claude_driver 专属正则链；
-    2. adapted (agy)：走 agy_driver.is_terminal_busy 专属探针，剔除 (45s 括号耗时正则；
-    3. fallback / unknown (codex / opencode 等)：走无副作用通用转轮与中断提示探针。
+    优先委托 KernelSessionAdapter.probe_harness_idle；
+    若未注册或异常，回退至无副作用通用转轮与中断提示探针。
     """
     if not pane:
         return False
     try:
+        from frago.session.adapters.kernel_adapters import get_kernel_session_adapter
+
+        normalized = (kernel or "unknown").strip().lower()
+        if normalized in ("claude", "claude-code"):
+            normalized = "claude-code"
+
+        adapter = get_kernel_session_adapter(normalized)
+        verdict = adapter.probe_harness_idle("__check_busy__", pane_text=pane)
+        return bool(verdict.is_busy or verdict.has_running_subshells)
+    except Exception:
+        pass
+
+    try:
         normalized = (kernel or "unknown").strip().lower()
         cap_level = get_agent_capability_level(normalized, "busy_probe")
 
-        if cap_level == CAPABILITY_NATIVE and normalized == "claude":
-            from frago.agent_driver.drivers import claude as claude_driver
+        if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED):
+            from frago.agent_driver.driver import registered_drivers
 
-            if claude_driver._SHELL_RUNNING.search(pane) is not None:
-                return True
-            if claude_driver._BUSY.search(pane) is not None:
-                return True
-            return claude_driver._WORKING.matches(pane)
+            driver = registered_drivers().get(normalized)
+            if driver is not None and driver.facets.busy_probe.is_busy is not None:
+                return bool(driver.facets.busy_probe.is_busy(pane))
 
-        if cap_level in (CAPABILITY_NATIVE, CAPABILITY_ADAPTED) and normalized == "agy":
-            from frago.agent_driver.drivers import agy as agy_driver
-
-            if hasattr(agy_driver, "is_terminal_busy"):
-                return agy_driver.is_terminal_busy(pane)
-            return agy_driver._BUSY.search(pane) is not None
-
-        # CAPABILITY_FALLBACK、coreagent 终端托管窗格或未知内核：
-        # 仅匹配通用转轮行与明确中断提示，绝不套用 Claude 专属的括号耗时 (45s 正则
         return _GENERIC_FALLBACK_BUSY.search(pane) is not None
     except Exception:  # noqa: BLE001 — 判不出忙就当忙，宁可少关一个也不误杀
         return True

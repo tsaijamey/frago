@@ -15,14 +15,40 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from frago.session.adapters.kernel_adapters import (
+    KERNEL_SESSION_REGISTRY,
+    AgySessionAdapter,
+    ClaudeCodeSessionAdapter,
+    CodexSessionAdapter,
+    CoreAgentSessionAdapter,
+    KernelSessionAdapter,
+    KernelSessionAdapterNotRegistered,
+    OpencodeSessionAdapter,
+    TurnCompletionVerdict,
+    get_kernel_session_adapter,
+    list_kernel_session_adapters,
+    register_kernel_session_adapter,
+)
 from frago.session.unified_record import RecordFamily, UnifiedRecord
 
 __all__ = [
     "AdapterNotRegistered",
+    "AgySessionAdapter",
+    "ClaudeCodeSessionAdapter",
+    "CodexSessionAdapter",
+    "CoreAgentSessionAdapter",
+    "KERNEL_SESSION_REGISTRY",
+    "KernelSessionAdapter",
+    "KernelSessionAdapterNotRegistered",
+    "OpencodeSessionAdapter",
     "RecordAdapter",
+    "TurnCompletionVerdict",
     "get_adapter",
+    "get_kernel_session_adapter",
     "list_adapters",
+    "list_kernel_session_adapters",
     "register_adapter",
+    "register_kernel_session_adapter",
 ]
 
 

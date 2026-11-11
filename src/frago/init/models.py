@@ -106,7 +106,7 @@ class TaskIngestionConfig(BaseModel):
 
 
 class WebuiSessionsConfig(BaseModel):
-    """WebUI 会话集群的生命周期参数，持久化在 ~/.frago/config.json -> webui_sessions。
+    """WebUI 与承载全域生命周期参数，持久化在 ~/.frago/config.json -> webui_sessions。
 
     server 启动时若缺失，config_manager 补默认值后回写（缺省自愈）。
     spec 20260625-webui-session-lifecycle-mediator。
@@ -120,6 +120,12 @@ class WebuiSessionsConfig(BaseModel):
     # idle_timeout_secs 是后台自动杀会话的线，动它会改掉无人值守时的行为；这一条只是
     # 人手动清理时清单默认勾选谁，改它不会让任何会话自己消失。
     cleanup_idle_hours: float = 1.0
+    # 首次观测池外会话的安全冷却宽限期（秒），默认 120 秒，防止重启瞬间误杀
+    observed_cooling_grace_secs: int = 120
+    # 一次性后台 Worker 交卷送达后的静默冷却回收阈值（秒），默认 300 秒（5分钟）
+    worker_idle_timeout_secs: int = 300
+    # 是否启用全域承载自动回收（覆盖池外及重启遗留会话），默认 True（开箱即用）
+    global_reclaim_enabled: bool = True
 
 
 class HookReviewConfig(BaseModel):

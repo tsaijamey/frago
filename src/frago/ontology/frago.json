@@ -543,6 +543,18 @@
           "src/frago/cli/desktop_commands.py"
         ],
         "description": "虚拟桌面实例（agent_os）的运行态属性层（含 pid、port、status、heartbeat_at），随每次启动覆写、随退出置为 stopped，绝不抹除宿主资源身份。"
+      },
+      {
+        "class_id": "HarnessLifecycleState",
+        "pillar": "5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "AgentHarness",
+        "allowed_values": ["active", "cooling", "evictable", "protected", "terminated"],
+        "current_code_locations": [
+          "src/frago/session/adapters/kernel_adapters.py",
+          "src/frago/agent_driver/tmux_session.py"
+        ],
+        "description": "物理承载实例在全域生命周期调度中的即时态（active 活跃忙碌、cooling 冷却宽限期、evictable 可安全回收、protected 命中守卫保护豁免、terminated 已关闭销毁）。"
       }
     ],
     "Occurrent.Process": [
@@ -1262,6 +1274,66 @@
           "initiates": "RecipeExecutionProcess",
           "mutates": ["KnowledgeDomain", "RecipeModule", "DataSlot"],
           "produces": ["DefKnowledgeEntry"]
+        }
+      }
+    },
+    {
+      "action_id": "probe_harness_lifecycle",
+      "parameters": ["harness_id", "session_id", "now_ts"],
+      "signature": {
+        "initiator_domain": "PrimarySchedulerRole | CompanionJudgeRole",
+        "target_range": "AgentHarness",
+        "input_types": {
+          "harness_id": "str",
+          "session_id": "str",
+          "now_ts": "float"
+        },
+        "return_type": "dict",
+        "error_types": ["HarnessNotFoundError", "InvalidHarnessStateError"]
+      },
+      "contract": {
+        "preconditions": [
+          "harness_id MUST be a non-empty physical harness identifier.",
+          "Target AgentHarness MUST exist or be trackable."
+        ],
+        "postconditions": [
+          "Returns structured lifecycle evaluation containing state in {'active', 'cooling', 'evictable', 'protected', 'terminated'}."
+        ],
+        "invariants": [
+          "Probing harness lifecycle MUST be read-only and idempotent with zero mutating side effects."
+        ],
+        "side_effects": {
+          "produces": ["HarnessLifecycleState"]
+        }
+      }
+    },
+    {
+      "action_id": "reclaim_harness",
+      "parameters": ["harness_id", "session_id", "strategy"],
+      "signature": {
+        "initiator_domain": "PrimarySchedulerRole",
+        "target_range": "AgentHarness",
+        "input_types": {
+          "harness_id": "str",
+          "session_id": "str",
+          "strategy": "str"
+        },
+        "return_type": "bool",
+        "error_types": ["HarnessNotFoundError", "HarnessReclaimForbiddenError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target AgentHarness MUST NOT be in 'protected' state.",
+          "strategy MUST be one of {'pool_evict', 'named_kill', 'borrowed_quit'}."
+        ],
+        "postconditions": [
+          "Target AgentHarness is safely released according to strategy with zero orphan resource leakage."
+        ],
+        "invariants": [
+          "Borrowed harness NEVER executes kill-session; batch kill-server is globally prohibited."
+        ],
+        "side_effects": {
+          "mutates": ["AgentHarness"]
         }
       }
     }

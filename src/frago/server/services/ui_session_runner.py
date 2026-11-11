@@ -34,8 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from frago.agent_driver.pool import WarmSessionPool
-from frago.session import agy_store, codex_store, opencode_store
-from frago.session import transcript_completion as tc_mod
+from frago.session import agy_store  # noqa: F401 - 外部单测打桩兼容
 
 if TYPE_CHECKING:
     from frago.agent_driver.tmux_session import TmuxAgentSession
@@ -243,59 +242,41 @@ def _idle_age(session: TmuxAgentSession, now: float) -> float | None:
 
 
 def _turn_finished(session: TmuxAgentSession) -> bool:
-    """这场会话最新一轮确已终结吗——三家各问各的档案。判不出一律 False。
+    """这场会话最新一轮确已终结且承载处于安全空闲态吗——统一委托 KernelSessionAdapter 契约。
 
-    - claude：jsonl 完成探针（``stop_reason`` 是不是终结原因），再叠一道 PA 也在用的
-      ``is_truly_idle``——空输入框 + 无 spinner + 无 "shells still running" + 记录已
-      静默若干秒。探针只知道「最后一轮的话说完了」，它不知道那一轮派出去的后台 shell
-      还在跑；把还在跑的那种当空闲回收，等于连着后台 worker 一起杀。
-    - codex：rollout 里最新一轮已 ``task_complete``。
-    - opencode：会话库里最新一轮已终结。
-    - agy：转录里最新一轮已收尾（末条是带正文的 PLANNER_RESPONSE）。
-
-    哪一家**问会话自己**（``session.driver.agent_type``），不按编号形状去猜：这个
-    会话是拿哪个 driver 起来的，它就是哪一家，没有再判一次的余地。问不出来就 False
-    ——不知道该翻谁的档案时，宁可不回收，也不能拿另一家的判据去断它的生死。
-
-    这里**只判"停没停"，NEVER 顺手把档案里的时间戳当空闲锚点**（理由见 ``_idle_age``）。
-    另外两家没有与 claude 那套 pane 判据等价的东西：codex / opencode 的屏上信号得各自
-    实测一遍才敢写，凭空编一组正则去断它们的生死，比现在这条只问档案的路更危险。
+    问会话所属适配器（probe_turn_completion + probe_harness_idle），彻底拔除末端 if/elif 特判。
+    判不出一律 False。
     """
     driver = getattr(session, "driver", None)
     family = getattr(driver, "agent_type", None)
     if family is None:
         return False
     try:
-        if family == "claude":
-            from frago.agent_driver.drivers import claude as claude_driver
+        from frago.session.adapters.kernel_adapters import get_kernel_session_adapter
 
-            # 定位规则与 driver 自己那份共用（native 原样、否则 uuid5 派生），
-            # NEVER 在这里另派生一份。
-            path = claude_driver.transcript_path_for(session)
-            if path is None:
-                return False
-            if not tc_mod.evaluate_file(path).done:
-                return False
-            return claude_driver.is_truly_idle(session)
-
-        if family == "codex":
-            codex_turn = codex_store.latest_turn(session.session_id)
-            return codex_turn is not None and codex_turn.done
-
-        if family == "opencode":
-            opencode_turn = opencode_store.latest_turn(session.session_id)
-            return opencode_turn is not None and opencode_turn.done
-
+        adapter = get_kernel_session_adapter(family)
+        sid = session.session_id
         if family == "agy":
-            # ``session.session_id`` 多半是 frago 自己给的把手（``webui-…`` 或命令行的
-            # ``--name``），真编号要等认领之后才写进映射。故先按映射换成真编号再问转录。
-            sid = agy_store.get_binding(session.session_id) or session.session_id
-            agy_turn = agy_store.latest_turn(sid)
-            return agy_turn is not None and agy_turn.done
+            from frago.session import agy_store
+
+            sid = agy_store.get_binding(sid) or sid
+
+        completion = adapter.probe_turn_completion(sid)
+        if not completion.done:
+            return False
+
+        pane = ""
+        capture = getattr(session, "capture_pane", None)
+        if callable(capture):
+            try:
+                pane = capture() or ""
+            except Exception:
+                pane = ""
+
+        idle_verdict = adapter.probe_harness_idle(sid, pane)
+        return bool(idle_verdict.is_terminal_idle and not idle_verdict.has_running_subshells)
     except Exception:  # noqa: BLE001 — 读盘/读库/读屏失败只是这一轮判不出空闲
         return False
-    # 注册了新 driver 却没在这里给它一条判据：不回收，NEVER 拿别家的档案去断它。
-    return False
 
 
 # ── UI runner 单例 ──────────────────────────────────────────────────

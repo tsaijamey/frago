@@ -71,9 +71,27 @@ class UiSessionLifecycleService:
 
     async def _scan_once(self) -> None:
         from frago.init.config_manager import load_config
+        from frago.server.services.harness_lifecycle_coordinator import (
+            AgentHarnessLifecycleCoordinator,
+        )
+
+        cfg = load_config().webui_sessions
+        if getattr(cfg, "global_reclaim_enabled", False):
+            coordinator = AgentHarnessLifecycleCoordinator.get_instance()
+            results = await coordinator.scan_once()
+            if results:
+                reclaimed_names = [str(r.get("harness")) for r in results if r.get("ok")]
+                if reclaimed_names:
+                    logger.info(
+                        "Reclaimed %d idle harness(es) via coordinator: %s",
+                        len(reclaimed_names),
+                        ", ".join(reclaimed_names),
+                    )
+            return
+
         from frago.server.services.ui_session_runner import get_runner
 
-        timeout_s = load_config().webui_sessions.idle_timeout_secs
+        timeout_s = cfg.idle_timeout_secs
         runner = get_runner()
         # 探针读 jsonl + tmux kill 都是阻塞 IO，挪到线程里跑。
         evicted = await asyncio.to_thread(runner.evict_idle, float(timeout_s))
