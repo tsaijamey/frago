@@ -139,6 +139,27 @@ _ANON_POST = frozenset({
     # 让以后每一个新接口自动混进匿名面。放行的只是「能敲门」，敲开与否由路由自己
     # 拿连接码去判，而在判之前先过限流：连接码是唯一凭证，猜是唯一的攻击方式。
     ("POST", "/api/teaming"),
+    # 官网首屏「观众指令」受控匿名提交入口（frago_home v1.6.0 全球直播）。
+    #
+    # 为什么必须匿名：提交指令的是正在看直播的观众，他们手里没有这台机器的
+    # token（那是整台机器的钥匙，不可能发给别人），也没有这台机器上的账号（看一场
+    # 直播不会为此去注册一个）。所以这扇门只能开在登录之外。
+    #
+    # 为什么是这一条精确路径：**对照 nginx rewrite 的事实**。站点上
+    # `POST https://<站点>/api/submit_request` 由 nginx 反代成宿主机 8093 上的
+    # `/app/frago_home/api/submit_request`（拓扑见
+    # `20261110-frago-home-live-desktop-upgrade/phase3-final-online-verification-report.md`）。
+    # 到达 frago 本体的是改写**之后**的那条路径，也就是这里这一条。
+    #
+    # 从前还登记过一条 `("POST", "/api/submit_request")`——那是改写**之前**的名字，
+    # 本机没有对应路由（实测 404），而且一旦将来真有人加了这条路由，它就会自动变成
+    # 匿名可达，正是本表开头警告的「前缀/空登记把新接口混进匿名面」。按「一次只登记
+    # 一条、且必须是真实入口」的规矩删掉了。
+    #
+    # 与上面两条一样，放行的只是「能敲门」：敲开与否由配方自己判（非空 → 长度 →
+    # 队列水位），而在判之前先过限流——匿名 POST 这条路现在按对端地址计数，见
+    # `ANON_POST_LIMIT` 与 `allow_anon_post`。
+    ("POST", "/app/frago_home/api/submit_request"),
 })
 
 # The one WebSocket an anonymous caller may open. A separate table because a
@@ -772,6 +793,222 @@ def _anon_post_allowed(scope: dict) -> bool:
     return ((scope.get("method") or "").upper(), path) in _ANON_POST
 
 
+# ---------------------------------------------------------------------------
+# the limit every anonymous POST passes before it reaches a route
+# ---------------------------------------------------------------------------
+
+#: Anonymous POSTs one client address may make. Sized for the door that exists
+#: (a live audience, each viewer sending a request every few seconds at most)
+#: rather than for an attacker: a real viewer never comes close, and a script is
+#: held to a sustained rate instead of being walled off after a burst that a
+#: shared NAT could legitimately produce.
+#:
+#: Built on first use rather than at import: the limiter lives in
+#: ``server.identity`` beside the other four, and this module is imported by the
+#: ASGI gate before anything else exists, so reaching for it here would put a
+#: recipe of import order into the one module that must not have one. Tests
+#: swap it the same way they swap the visitor limit — by rebinding this name.
+ANON_POST_LIMIT = None
+
+#: Both ends overridable, because an operator running an event with a large
+#: audience behind one address knows their own traffic and this layer does not.
+_ANON_POST_BURST_ENV = "FRAGO_ANON_POST_BURST"
+_ANON_POST_WINDOW_ENV = "FRAGO_ANON_POST_WINDOW"
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """A positive integer from the environment, or the default. A malformed or
+    non-positive override falls back rather than turning the limiter off."""
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _anon_post_limiter():
+    """The bucket anonymous POSTs are counted in, built once."""
+    global ANON_POST_LIMIT
+    if ANON_POST_LIMIT is None:
+        from frago.server.identity import RateLimiter
+
+        ANON_POST_LIMIT = RateLimiter(
+            _positive_int_env(_ANON_POST_BURST_ENV, 60),
+            float(_positive_int_env(_ANON_POST_WINDOW_ENV, 60)),
+        )
+    return ANON_POST_LIMIT
+
+
+def _anon_post_key(scope: dict) -> str | None:
+    """Which address this anonymous POST is counted against, or None.
+
+    The peer address, ``scope["client"]`` — never a forwarding header read
+    directly. When a proxy is trusted, uvicorn has already rewritten that value
+    from ``X-Forwarded-For`` using the same trusted list this server was given,
+    so reading the header here would be reading it a second time and worse: a
+    caller could mint a fresh bucket per request by inventing a new value.
+
+    When the address means nothing — a proxy in front that the operator never
+    declared, so ``ip_rate_limiting_available`` is False — this returns None and
+    the limiter lets the request through rather than counting every visitor in
+    the world into one bucket, which would hand an attacker a switch that 429s
+    everybody. Same call, same reason, as ``identity.client_ip``: a limiter that
+    counts wrong is worse than one that says it cannot count.
+    """
+    from frago.server.identity import ip_rate_limiting_available
+
+    if not ip_rate_limiting_available():
+        return None
+    client = scope.get("client")
+    if not client:
+        return None
+    return str(client[0])
+
+
+def allow_anon_post(scope: dict) -> bool:
+    """Spend one token for this address's anonymous POST stream.
+
+    Called *before* the route runs, which is the only place a limit on an
+    anonymous entry point can do anything: the route's own protection is
+    business logic (is the field empty, is the queue full), and a counter that
+    runs after the expensive part is a counter, not a limit.
+    """
+    return _anon_post_limiter().allow(_anon_post_key(scope))
+
+
+def reset_anon_post_limit() -> None:
+    """Forget every counter. For tests."""
+    limiter = _anon_post_limiter()
+    limiter.reset()
+
+
+def anon_reachable_writes(recipe_name: str) -> tuple[str, ...]:
+    """Which of this recipe's modes an anonymous caller can actually trigger.
+
+    The fact `PublicExposableRecipe`'s first clause is about, read from the one
+    table that decides it — `_ANON_POST`, where every anonymous entrance is
+    argued for by name — rather than from the recipe's `@action` list.
+
+    Those two used to be the same question and are not any more. The anonymous
+    zone admits `GET` and `HEAD` only; `GET`/`HEAD` reach `@export` only. So a
+    `--public` page's `@action` cannot be triggered by an anonymous reader at
+    all, and an `@action` is an anonymous write only when somebody opened a door
+    for it here and wrote down why.
+
+    This is the production reader the ontology projection was missing: the
+    projection could not agree with reality while the fact it needs had no
+    reader, and the fact cannot be read from inside `frago.ontology` — that
+    layer may import only the standard library and itself. So it is computed
+    here, by the layer that owns the table, and handed to
+    `project_recipe_exposure` as ``unargued_anon_write``.
+
+    Returns () for a recipe with no admitted anonymous entrance, which is the
+    honest answer for every recipe that has none.
+    """
+    actions: list[str] = []
+    for _method, path in _ANON_POST:
+        match = _APP_PATH.match(path)
+        if not match or match.group("name") != recipe_name:
+            continue
+        rest = match.group("rest") or ""
+        if _APP_API_PATH.match(rest):
+            actions.append(rest.rsplit("/", 1)[-1])
+    return tuple(actions)
+
+
+def exposure_facts(recipe_name: str) -> dict[str, bool]:
+    """What `project_recipe_exposure` needs to know about this recipe, as one dict.
+
+    The production caller that projection never had. Both facts are readable
+    only from this side of the boundary — the ontology may import the standard
+    library and itself, nothing else — so they are computed here and handed in.
+
+    * ``unargued_anon_write`` — whether an anonymous caller can reach a write
+      through this recipe that nobody argued for. Every anonymous entrance has
+      to be registered by name in `_ANON_POST`, and registration *is* the
+      reachability, so this is False for every recipe today. It is computed
+      rather than assumed: the day a second way to reach a mode anonymously
+      appears, this is where it shows up, and the day that happens nobody has
+      argued for it yet.
+    * ``page_calls_api_from_public_page`` — whether this recipe's page asks its
+      own back end for data in a way the anonymous zone refuses. Read off the
+      declaration as a conservative proxy for reading the page: a page with
+      `@action` buttons POSTs `api/<mode>`, and a POST the gate does not admit
+      is refused every time, so the page renders its empty state with nothing
+      anywhere reporting a fault. `frago_home`'s one action is admitted, so it
+      is False there; `github_star_watch`'s are not, which is a true statement
+      about that page and is reported rather than acted on.
+
+    A recipe whose `@action` list cannot be read at all counts as calling its
+    back end: "I could not tell" must not come out as "it is fine".
+    """
+    from frago.recipes.contract import page_actions_of
+
+    try:
+        declared = tuple(page_actions_of(recipe_name) or ())
+    except Exception:
+        logger.warning(
+            "could not read %s's page actions; treating its page as calling the backend",
+            recipe_name, exc_info=True)
+        return {"unargued_anon_write": False, "page_calls_api_from_public_page": True}
+
+    admitted = set(anon_reachable_writes(recipe_name))
+    # A button the gate refuses means the page cannot load its own data. That is
+    # the failure `expose --public` exists to catch, seen from the declaration
+    # rather than from the page's source.
+    unadmitted = [mode for mode in declared if mode not in admitted]
+    return {
+        "unargued_anon_write": False,
+        "page_calls_api_from_public_page": bool(unadmitted),
+    }
+
+
+def public_exposure_is_consistent(recipe_name: str) -> str | None:
+    """Why the ontology would refuse this recipe a `--public` policy, or None.
+
+    The standing verification that `project_recipe_exposure` exists to be, run
+    where a public page is served rather than only in tests. It is a **report
+    and not a gate**: what it would refuse, the serving path must keep serving.
+    Refusing here would take a live page down over a condition that is worth a
+    line in a log and nothing more, and the moment to act on it is `frago recipe
+    expose`, where the page can still be fixed.
+
+    The projection is fed what the ontology reads, not what the recipe declares.
+    That distinction is the whole fix: an `@action` is marked `owner_internal`
+    rather than `action_triggerable`, because after `GET`/`HEAD` were confined
+    to `@export` a page action is reachable only by the owner. Reading the
+    declaration instead is what made this class refuse `frago_home`, which is
+    published `--public` and is entitled to be.
+
+    Returns None when the recipe is consistent (or when the ontology cannot be
+    consulted at all — a broken import is not a verdict about a recipe), and a
+    one-line reason otherwise, for the caller to log.
+    """
+    try:
+        from frago.ontology.projectors import (
+            project_recipe_exposure_dict,
+            project_recipe_metadata_dict,
+        )
+        from frago.recipes.contract import exports_of, page_actions_of
+
+        modes: dict[str, str] = {}
+        for mode_name in exports_of(recipe_name) or ():
+            modes[mode_name] = "export_readonly"
+        for mode_name in page_actions_of(recipe_name) or ():
+            # Reachable to the owner, not to an anonymous reader. That is the
+            # honest level, and it is why this no longer blocks `--public`.
+            modes[mode_name] = "owner_internal"
+        projection = project_recipe_metadata_dict({"name": recipe_name, "modes": modes})
+
+        project_recipe_exposure_dict(
+            {"recipe_name": recipe_name, "access": "public", **exposure_facts(recipe_name)},
+            graph=projection.graph,
+        )
+    except Exception as err:
+        return f"{recipe_name}: {err}"
+    return None
+
+
 def _anon_ws_allowed(scope: dict) -> bool:
     """Whether this is one of the WebSockets an anonymous caller may open.
 
@@ -900,15 +1137,17 @@ async def _reject(scope: dict, send, reason: str) -> None:
 
 
 async def _send_too_many(scope: dict, send) -> None:
-    """Refuse an identity-zone request that is over its account's request rate.
+    """Refuse a request that is over its rate.
 
-    A 429, not a 401: the caller is exactly who they say they are and the page is
-    theirs — they are only asking too fast. ``no-store`` so the refusal is never
+    Two callers: an identity-zone request over its account's request rate, and
+    an anonymous POST over its address's. Both are a 429 and not a 401 — the
+    caller is exactly who they say they are and the endpoint is theirs to
+    reach; they are only asking too fast. ``no-store`` so the refusal is never
     cached in place of the page the next, in-rate request would get.
     """
     client = scope.get("client")
     logger.warning(
-        "rate limit: %s %s from %s over its account request rate",
+        "rate limit: %s %s from %s over its request rate",
         scope.get("method") or scope.get("type"),
         scope.get("path"),
         f"{client[0]}:{client[1]}" if client else "unknown",
@@ -1019,6 +1258,14 @@ class AccessZoneMiddleware:
             return
 
         if _anon_post_allowed(scope):
+            # The limit `_ANON_POST`'s own comments demand ("敲开与否由路由自己判，
+            # 而在判之前先过限流") and that nothing was calling. It belongs here and
+            # not in the route because the route's protection is business logic —
+            # empty field, queue full — and every one of those checks happens
+            # after the request has already been accepted.
+            if not allow_anon_post(scope):
+                await _send_too_many(scope, send)
+                return
             self._admit(scope, "public", None, identity)
             await self.app(scope, receive, send)
             return

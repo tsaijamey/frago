@@ -1368,6 +1368,13 @@ class HarnessBindingResponse(BaseModel):
     installed: bool
     main_profile_id: str = "official"
     worker_profile_id: str = "follow"
+    # The window the kernel will actually read for this harness's daily sessions,
+    # resolved the same way the kernel resolves its connection — bound, else the
+    # fallback the row's label names. None means that connection declares no
+    # window, which for the built-in kernel means it falls back to the model name
+    # and compacts at a line a real session may never reach. That is the fact the
+    # person needs on this page, and it was not visible anywhere before.
+    context_window: int | None = None
 
 
 class ConnectionsResponse(BaseModel):
@@ -1464,6 +1471,7 @@ async def get_connections() -> ConnectionsResponse:
     from frago.init.agent_core import kernel_installed
 
     harnesses: list[HarnessBindingResponse] = []
+    by_id = {p.id: p for p in store.profiles}
     for agent_type in HARNESS_TARGETS:
         proto, proto_label = HARNESS_PROTOCOLS.get(agent_type, ("anthropic", "Anthropic"))
         try:
@@ -1473,6 +1481,7 @@ async def get_connections() -> ConnectionsResponse:
                 installed = target_status(agent_type).installed
         except Exception:
             installed = False
+        main_binding = get_harness_main_binding(store, agent_type)
         harnesses.append(
             HarnessBindingResponse(
                 agent_type=agent_type,
@@ -1481,8 +1490,13 @@ async def get_connections() -> ConnectionsResponse:
                 protocol_label=proto_label,
                 config_path=HARNESS_CONFIG_PATHS.get(agent_type, ""),
                 installed=installed,
-                main_profile_id=get_harness_main_binding(store, agent_type),
+                main_profile_id=main_binding,
                 worker_profile_id=get_harness_worker_binding(store, agent_type),
+                # Read straight off the connection the row already names, so the
+                # page cannot say one thing while the kernel reads another.
+                context_window=(
+                    by_id[main_binding].context_window if main_binding in by_id else None
+                ),
             )
         )
 

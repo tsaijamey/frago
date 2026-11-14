@@ -815,3 +815,151 @@ class TestWhatThePageMayDo:
         config = client.get(f"/app/{RECIPE}/config.json").json()
         assert config["dataDir"] == "/x"
         assert config["runnable"] is True
+
+
+class TestWhichMethodReachesWhichMode:
+    """`api/<mode>` is two doors, and the method says which one you are at.
+
+    Read-only is `GET`/`HEAD` and reaches `@export` only; a button press is
+    `POST` and reaches `@action` too. Before the split, one admission rule
+    ("mode in exports or mode in actions") covered both methods, so any
+    `--public` recipe's `@action` was reachable by a plain `GET` from anywhere —
+    no CSRF protection anywhere in the path, and `github_star_watch`'s `update`
+    (which shells out to `gh` and rewrites three files) was one URL away.
+
+    A shared reading is read-only by construction, so its readers get no
+    `@action` here either — the same subtraction `config.json` already applies.
+    """
+
+    @pytest.fixture
+    def recipe_marks(self, monkeypatch):
+        """Say what this recipe exports and what it opens to its page."""
+        def _set(*, exports=(), actions=()):
+            monkeypatch.setattr(
+                "frago.recipes.contract.exports_of",
+                lambda name, wanted=None: tuple(exports),
+            )
+            monkeypatch.setattr(
+                "frago.recipes.contract.page_actions_of",
+                lambda name, wanted=None: tuple(actions),
+            )
+        return _set
+
+    @pytest.fixture
+    def ran(self, monkeypatch):
+        """Stub the recipe execution so a test can see whether it was reached."""
+        from frago.server.services import recipe_service
+
+        calls: list[dict] = []
+
+        def _run(name, params=None, timeout=None, ctx=None, show_page=True):
+            calls.append({"name": name, "params": params, "ctx": ctx})
+            return {"status": "success", "data": {"ok": True}}
+
+        monkeypatch.setattr(recipe_service.RecipeService, "run_recipe", staticmethod(_run))
+        return calls
+
+    def test_get_reaches_an_export(self, client, recipe_marks, ran):
+        recipe_marks(exports=["stats"])
+        response = client.get(f"/app/{RECIPE}/api/stats")
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert ran and ran[0]["params"]["mode"] == "stats"
+
+    def test_get_cannot_reach_an_action(self, client, recipe_marks, ran):
+        """The regression this class exists for: a GET that triggers a write."""
+        recipe_marks(actions=["update"])
+        response = client.get(f"/app/{RECIPE}/api/update")
+        assert response.status_code == 405
+        assert response.headers.get("allow") == "POST"
+        assert not ran, "a refused GET must not have run the recipe"
+
+    def test_head_cannot_reach_an_action_either(self, client, recipe_marks, ran):
+        """Starlette answers HEAD from the GET handler, so it inherits the rule.
+
+        It used to reach the handler, which meant a request sent purely to fetch
+        metadata carried its query string into a recipe execution.
+        """
+        recipe_marks(actions=["update"])
+        response = client.head(f"/app/{RECIPE}/api/update?content=probe")
+        assert response.status_code == 405
+        assert not ran
+
+    def test_post_still_reaches_an_action(self, client, recipe_marks, ran):
+        """The door that must keep working: this is how a button press arrives."""
+        recipe_marks(actions=["update"])
+        response = client.post(f"/app/{RECIPE}/api/update", json={"content": "hi"})
+        assert response.status_code == 200
+        assert ran and ran[0]["params"]["content"] == "hi"
+
+    def test_post_also_reaches_an_export(self, client, recipe_marks, ran):
+        recipe_marks(exports=["stats"])
+        assert client.post(f"/app/{RECIPE}/api/stats", json={}).status_code == 200
+
+    def test_a_mode_the_recipe_never_opened_is_refused_by_every_method(
+            self, client, recipe_marks, ran):
+        recipe_marks(exports=["stats"], actions=["update"])
+        assert client.get(f"/app/{RECIPE}/api/secret").status_code == 403
+        assert client.post(f"/app/{RECIPE}/api/secret", json={}).status_code == 403
+        assert not ran
+
+    def test_a_shared_reader_cannot_reach_an_action(
+            self, recipe_dir, state_dir, tmp_path, monkeypatch, ran):
+        """`--shared` promises a read-only page, and `/run` already refuses.
+
+        This door has to agree. Otherwise a reader names an action that
+        `config.json` told them they had no buttons for and it runs against the
+        machine's own slot — the exposure's promise defeated by the other route.
+        """
+        from frago.recipes import publish as pub
+        from frago.server import identity as ident
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(ident, "USERS_PATH", tmp_path / "users.json")
+        monkeypatch.setattr(ident, "SESSIONS_DIR", tmp_path / "login-sessions")
+        monkeypatch.setattr(ident, "USER_STATE_DIR", tmp_path / "app-state-users")
+        monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+        monkeypatch.setattr(pub, "_cache", None, raising=False)
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        monkeypatch.delenv("FRAGO_SIGNUP_GATE", raising=False)
+        monkeypatch.delenv("FRAGO_BEHIND_PROXY", raising=False)
+        security.ensure_token()
+        ident.reset_rate_limits()
+
+        monkeypatch.setattr(
+            "frago.recipes.contract.exports_of",
+            lambda name, wanted=None: ("stats",),
+        )
+        monkeypatch.setattr(
+            "frago.recipes.contract.page_actions_of",
+            lambda name, wanted=None: ("update",),
+        )
+
+        user = ident.create_user("shared@frago.ai", "correct-horse-battery-staple")
+        pub.publish(RECIPE, mode="identity", allow=[user.id], reads=pub.READS_RECIPE)
+        client = TestClient(create_app(), client=("93.184.216.34", 41234))
+        signed_in = client.post(
+            "/api/auth/login",
+            json={"email": "shared@frago.ai", "password": "correct-horse-battery-staple"},
+        )
+        assert signed_in.status_code == 200, signed_in.text
+
+        # The page says so itself: no buttons. Asserted on the whole document,
+        # so a fixture that silently fell back to the anonymous branch (where
+        # there is no `actions` key at all) fails loudly instead of vacuously.
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config.get("actions") == [], config
+        assert config["readOnly"] is True, config
+
+        # And the door agrees. 404 and not 403 because a visitor's 4xx is
+        # flattened to one shape by the scrubber in `app.py` — the same answer
+        # `/run` gives a shared reader, and deliberately the same one: telling
+        # "forbidden" from "no such mode" would describe this machine.
+        refused = client.post(f"/app/{RECIPE}/api/update", json={})
+        assert refused.status_code == 404, refused.text
+        assert not ran, "a shared reader must not have run an action"
+
+        # What a shared reader *may* do is read, which is the whole promise.
+        assert client.post(f"/app/{RECIPE}/api/stats", json={}).status_code == 200
+        ident.reset_rate_limits()

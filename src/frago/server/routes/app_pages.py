@@ -12,12 +12,17 @@ a `config.json` next to it and handing out an unreadable URL. That coupled the
 address to a single run, left the copies behind forever, and made "the page for
 this recipe" impossible for a person to type from memory.
 
-Three routes make up the contract:
+Four routes make up the contract:
 
     /app/<name>/              the recipe's index.html
     /app/<name>/config.json   synthesized per request, never a file on disk
     /app/<name>/data/<path>   read out of this requester's landing spot
     /app/<name>/<file>        any other asset, straight from assets/
+
+One more route is the page's way back in, and it is the only one that runs a
+mode: `/app/<name>/api/<mode>`, where the method decides what may be reached —
+`GET`/`HEAD` only `@export` (read-only), `POST` both `@export` and `@action`.
+See `serve_app_api` for why the split is where it is.
 
 The data route names a file, never a place. Which directory that file is in is
 worked out per request from who is asking (`_landing_spot`), by the same
@@ -307,9 +312,10 @@ async def serve_app_config(name: str, request: Request):
     return JSONResponse(content=config, headers=_REVALIDATE)
 
 
+@router.get("/{name}/api/{mode}")
 @router.post("/{name}/api/{mode}")
 async def serve_app_api(name: str, mode: str, request: Request):
-    """A page asking its own recipe for data.
+    """A page asking its own recipe for data, or pressing one of its buttons.
 
     This is the other half of front-end/back-end separation. The page renders;
     when it needs numbers it calls a mode, the same way another module would —
@@ -319,33 +325,86 @@ async def serve_app_api(name: str, mode: str, request: Request):
     machine, and the day the recipe's landing spot moves the page keeps reading
     the old one while every refresh reports success.
 
-    Only ``@export`` modes are reachable here, and an exported mode is
-    read-only by contract. So a page — which is the least trusted thing in the
-    system, since anyone who can open it can call this — can never reach a mode
-    that fetches, recomputes, or changes state through this door. The door for
-    modes that do work is ``/app/<name>/run``, and it opens only for
-    ``@action``.
-    """
-    from frago.recipes.contract import exports_of
+    **The method decides which of the two doors this is**, and the two doors
+    admit different things:
 
-    # Pass the mode: a snapshot can be stale in two ways, and being refused for
-    # an export that was added after the server started is indistinguishable
-    # from never having added it. See ``contract.surface_of``.
+    * ``GET`` / ``HEAD`` — read-only. Only ``@export`` modes, which are
+      read-only by contract. A ``@action`` reached this way is refused with
+      ``405``: the mode exists and the page may reach it, but not by asking.
+      This matters because ``GET`` is not a decision the page makes — browsers
+      prefetch, crawlers follow, chat clients render link previews, and none of
+      them ask first. A ``@action`` reachable by ``GET`` is reachable by
+      *anyone*, with no CSRF protection anywhere in the path, which is how a
+      ``--public`` recipe's ``update``/``backfill`` would have been open to the
+      whole internet. ``HEAD`` rides along on the same route (Starlette answers
+      it from the ``GET`` handler) and gets the same answer — it used to reach
+      the handler as well, so a request sent purely to fetch metadata carried
+      its query string straight into a recipe execution.
+    * ``POST`` — ``@export`` and ``@action`` both. An ``@action`` is a mode the
+      recipe's author marked "my page may press this", and a button press is a
+      POST.
+
+    **A shared reading is read-only by construction.** ``expose --shared``
+    promises that everyone on the list looks at the one copy the recipe itself
+    maintains — there is no per-person directory for a write to land in, which
+    is why ``/run`` refuses those readers outright. This door has to agree: a
+    shared reader gets ``@export`` and nothing else. Before this it did not
+    agree, and a reader could name an ``@action`` that ``config.json`` had
+    already told them they had no buttons for (``actions: []``) and have it run
+    against the machine's own slot.
+
+    The door for a mode that does work on the *caller's own* data is
+    ``/app/<name>/run``, and it opens only for ``@action``.
+    """
+    from frago.recipes.contract import exports_of, page_actions_of
+    from frago.server.security import serves_recipe_slot
+
+    method = (request.method or "").upper()
     exports = exports_of(name, mode) or ()
-    if mode not in exports:
+    actions = page_actions_of(name) or ()
+    # A shared reading subtracts every button, the same way `serve_app_config`
+    # subtracts them from the page. The exposure decides *who is looking*, and
+    # this is that same decision applied to the other door.
+    allowed_actions = () if serves_recipe_slot(request) else actions
+
+    if method in ("GET", "HEAD"):
+        if mode not in exports:
+            if mode in actions:
+                # The recipe declared this and the page may press it — it is
+                # just not a read. Answering 403 would say "no such mode" about
+                # one that plainly exists; the honest answer is that this method
+                # cannot reach it.
+                raise HTTPException(
+                    status_code=405,
+                    detail=(f"{mode} 是 {name} 标了 @action 的动作，不是只读导出。"
+                            f"GET/HEAD 这扇门只收 @export 的只读 mode。"
+                            f"要触发它，用 POST，或者走 POST /app/{name}/run 那扇门。"),
+                    headers={"Allow": "POST"},
+                )
+            raise HTTPException(
+                status_code=403,
+                detail=(f"{name} 没有把 {mode} 开给页面读。"
+                        f"它标了 @export 的是 {'、'.join(exports) or '（一个都没有）'}。"),
+            )
+    elif mode not in exports and mode not in allowed_actions:
+        # One answer for two different failures on purpose, because from here
+        # they are the same one: this recipe never opened this name to this
+        # page. A shared reader naming an @action lands here rather than in a
+        # branch of its own — what they may reach is exactly what they may read.
         raise HTTPException(
             status_code=403,
-            detail=(f"{name} 没有把 {mode} 开给页面读。"
+            detail=(f"{name} 没有把 {mode} 开给页面。"
                     f"它标了 @export 的是 {'、'.join(exports) or '（一个都没有）'}。"
-                    f"页面这个口只收 @export 的只读 mode——"
-                    f"要让页面按一下去干活，那个 mode 标 @action，"
-                    f"走 POST /app/{name}/run 那扇门。"),
+                    f"标了 @action 的是 {'、'.join(actions) or '（一个都没有）'}。"),
         )
 
-    try:
-        params = await request.json()
-    except Exception:
-        params = {}
+    if method in ("GET", "HEAD"):
+        params = dict(request.query_params)
+    else:
+        try:
+            params = await request.json()
+        except Exception:
+            params = {}
     if not isinstance(params, dict):
         params = {}
 

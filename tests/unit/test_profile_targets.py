@@ -84,6 +84,8 @@ def test_selectable_needs_both_supported_and_installed() -> None:
     with _installed("claude", "opencode", "codex"), _without_apply("codex"):
         # 装了也不可选：不可选的原因是不支持，不是安装。
         assert selectable_targets() == ["claude", "opencode"]
+    with _installed("claude", "opencode", "codex", "coreagent"):
+        assert selectable_targets() == ["claude", "opencode", "codex", "coreagent"]
 
 
 # ── 请求校验 ───────────────────────────────────────────────────────

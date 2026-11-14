@@ -92,19 +92,111 @@ class TestTheClosedList:
     def test_the_anonymous_list_holds_only_the_doors_that_were_argued_for(self):
         """攻击面按「匿名能触发的动作」数。多一个就要重新论证一次。
 
-        两扇，各自的理由写在 `_ANON_POST` 上：登录是唯一的入口；vibe teaming 那扇
+        三扇，各自的理由写在 `_ANON_POST` 上：登录是唯一的入口；vibe teaming 那扇
         收的是连接码，而两台个人机器手里只有连接码——没有这台机器的 token，也没有
-        这台机器上的账号，所以它不可能走登录那扇。
+        这台机器上的账号，所以它不可能走登录那扇；官网首屏观众指令那扇同理，看直播
+        的观众两样都没有，而它只放行到 `frago_home` 自己的页面路径。
+
+        第三条曾经写作 `("POST", "/api/submit_request")`——那是 nginx 改写**之前**
+        的名字，本机没有对应路由（实测 404），已在收口时删除。真正到达 frago 的是
+        改写之后的 `/app/frago_home/api/submit_request`，也就是这里留下的这条。
 
         这条断言是一张闸门，不是一个计数:再加一扇就要先在那里写清为什么,然后才
         改这里。"""
         assert set(security._ANON_POST) == {
             ("POST", "/api/auth/login"),
             ("POST", "/api/teaming"),
+            ("POST", "/app/frago_home/api/submit_request"),
         }
 
     def test_the_anonymous_list_does_not_contain_a_preflight(self):
         assert not any(method == "OPTIONS" for method, _ in security._ANON_POST)
+
+
+class TestAnonymousPostRate:
+    """The anonymous POST door is the only write an unauthenticated caller has.
+
+    Its protection used to be entirely the recipe's own business logic — is the
+    field empty, is the queue full — and a check that runs after the request has
+    been accepted is a counter, not a limit. `_ANON_POST`'s own comment asks for
+    a limiter before the judgement; nothing was calling one.
+    """
+
+    @pytest.fixture
+    def anon_app(self, tmp_path, monkeypatch):
+        from fastapi import FastAPI
+
+        from frago.server.security import AccessZoneMiddleware
+
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+        security.reset_anon_post_limit()
+
+        application = FastAPI()
+
+        @application.post("/app/{name}/api/{mode}")
+        async def anon_door(name: str, mode: str):
+            return {"reached": True}
+
+        application.add_middleware(AccessZoneMiddleware)
+        yield application
+        security.reset_anon_post_limit()
+
+    def test_a_flood_from_one_address_is_eventually_429(self, anon_app, monkeypatch):
+        monkeypatch.setattr(
+            security, "ANON_POST_LIMIT", ident.RateLimiter(3, 60), raising=False)
+        client = TestClient(anon_app, client=VISITOR)
+        codes = [
+            client.post("/app/frago_home/api/submit_request", json={"content": "hi"}).status_code
+            for _ in range(8)
+        ]
+        assert codes[0] == 200, "the burst must go through before the wall"
+        assert 429 in codes, codes
+
+    def test_a_different_address_keeps_its_own_bucket(self, anon_app, monkeypatch):
+        monkeypatch.setattr(
+            security, "ANON_POST_LIMIT", ident.RateLimiter(2, 60), raising=False)
+        noisy = TestClient(anon_app, client=VISITOR)
+        for _ in range(6):
+            noisy.post("/app/frago_home/api/submit_request", json={"content": "hi"})
+        assert noisy.post(
+            "/app/frago_home/api/submit_request", json={"content": "hi"}
+        ).status_code == 429
+
+        quiet = TestClient(anon_app, client=("93.184.216.35", 55555))
+        assert quiet.post(
+            "/app/frago_home/api/submit_request", json={"content": "hi"}
+        ).status_code == 200
+
+    def test_the_owner_is_never_counted(self, anon_app, monkeypatch):
+        # Loopback with no proxy header is the local zone, which never reaches
+        # the anonymous branch at all — a bucket of one would wall off a visitor
+        # on its first request, and the owner must be untouched by it.
+        monkeypatch.setattr(
+            security, "ANON_POST_LIMIT", ident.RateLimiter(1, 60), raising=False)
+        owner = TestClient(anon_app, client=OWNER)
+        codes = [
+            owner.post("/app/frago_home/api/submit_request", json={"content": "hi"}).status_code
+            for _ in range(5)
+        ]
+        assert 429 not in codes, codes
+
+    def test_a_path_outside_the_anonymous_list_is_refused_not_counted(
+            self, anon_app, monkeypatch):
+        """The limiter only ever sees a request the list already admitted.
+
+        Anything else is a 401 from the gate — the limit must not turn an
+        unauthorised path into a 429, which would say "this endpoint exists and
+        you are being throttled on it".
+        """
+        monkeypatch.setattr(
+            security, "ANON_POST_LIMIT", ident.RateLimiter(1, 60), raising=False)
+        client = TestClient(anon_app, client=VISITOR)
+        codes = [
+            client.post("/app/some_other_recipe/api/write", json={}).status_code
+            for _ in range(4)
+        ]
+        assert set(codes) == {401}, codes
 
 
 class TestASignedInVisitorIsNotAWeakenedOwner:

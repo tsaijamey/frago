@@ -46,6 +46,11 @@ class TestPathsRedirected:
             ("frago.def_.registry", "BOOKS_DIR"),
             ("frago.session.title_manager", "SESSIONS_JSON_PATH"),
             ("frago.recipes.usage_tracker", "USAGE_FILE"),
+            # 会话存储的根：`storage.py` 里两个模块级常量都在 import 期算死，
+            # 靠 `FRAGO_SESSION_DIR` 环境变量是罩不住的（那是给显式覆写用的）。
+            # 用例一旦没打桩就建目录、写 metadata，落点就是真人的 ~/.frago/sessions。
+            ("frago.session.storage", "DEFAULT_SESSION_DIR"),
+            ("frago.session.storage", "DEFAULT_PROJECTS_DIR"),
         ],
     )
     def test_known_real_data_constants_are_redirected(self, module_name, attr):

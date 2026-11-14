@@ -116,6 +116,7 @@ class FragoRequest(BaseModel):
     #: line for anything to break out of.
     argv: list[str] = Field(..., min_length=1, max_length=64)
     timeout: int = Field(default=120, ge=1, le=600)
+    stdin: str | None = Field(default=None, description="交给子命令的标准输入内容")
 
 
 class AiRequest(BaseModel):
@@ -379,9 +380,9 @@ async def bus_ask(req: AskRequest, request: Request):
 #: here" — true of the caller, false of the command, and a nested
 #: ``frago recipe run`` that inherited them would take the caller's landing spot
 #: for its own and write another module's output into it.
-_CALLER_ONLY_ENV = ("FRAGO_RECIPE_CALLER", "FRAGO_RECIPE_SLOT", "FRAGO_RECIPE_DATA_DIR",
-                    "FRAGO_RECIPE_COMMON_DIR", "FRAGO_BUS_URL", "FRAGO_BUS_TOKEN",
-                    "FRAGO_EXECUTION_ID", "FRAGO_CURRENT_RUN")
+_CALLER_ONLY_ENV = ("FRAGO_RECIPE_CALLER", "FRAGO_RECIPE_CALLER_NAME", "FRAGO_RECIPE_SLOT",
+                    "FRAGO_RECIPE_DATA_DIR", "FRAGO_RECIPE_COMMON_DIR", "FRAGO_BUS_URL",
+                    "FRAGO_BUS_TOKEN", "FRAGO_EXECUTION_ID", "FRAGO_CURRENT_RUN")
 
 
 #: A word that can be a command name. Anything else — a path, a JSON blob, an
@@ -466,20 +467,24 @@ async def bus_frago(req: FragoRequest, request: Request):
         raise HTTPException(status_code=400, detail="参数里不能有 NUL 字节")
 
     env = {k: v for k, v in os.environ.items() if k not in _CALLER_ONLY_ENV}
+    if caller and caller != "(unknown)":
+        env["FRAGO_RECIPE_CALLER_NAME"] = caller
 
     def _run() -> subprocess.CompletedProcess:
+        kwargs: dict[str, Any] = {
+            "capture_output": True,
+            "text": True,
+            "timeout": req.timeout,
+            "env": env,
+            "cwd": str(Path.home()),
+        }
+        if req.stdin is not None:
+            kwargs["input"] = req.stdin
+        else:
+            kwargs["stdin"] = subprocess.DEVNULL
         return subprocess.run(
             [sys.executable, "-m", "frago", *req.argv],
-            capture_output=True, text=True, timeout=req.timeout, env=env,
-            # No terminal, on purpose. `frago user passwd` reads a hidden
-            # password; over this door there is nobody to type it. Given a
-            # closed stdin it fails at once and says so, where an inherited one
-            # would hold a thread until the timeout and report nothing useful.
-            stdin=subprocess.DEVNULL,
-            # The server's own directory, never the caller's. A relative path in
-            # the command would otherwise resolve inside whichever run happened
-            # to be asking.
-            cwd=str(Path.home()),
+            **kwargs,
         )
 
     try:

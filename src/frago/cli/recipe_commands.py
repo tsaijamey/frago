@@ -3971,3 +3971,97 @@ def folder_take(recipe_names):
 
     _folder_call(F.take, list(recipe_names))
     click.echo(f"{len(recipe_names)} recipe(s) -> unfiled")
+
+
+# ── Controlled Recipe Self-Secret Commands ─────────────────────────────────
+
+def _handle_set_secret(key: str, recipe: str | None, output_format: str):
+    """Handle atomic and permission-checked recipe secret writeback from stdin."""
+    import os
+    import sys
+    from frago.recipes.exceptions import RecipeError
+    from frago.recipes.secrets import update_recipe_self_secret
+
+    if sys.stdin.isatty():
+        click.echo(
+            "Error: 凭证内容必须通过标准输入 (stdin) 管道传入，禁止在命令行参数中传递。\n"
+            "示例: echo -n 'TOKEN' | frago recipe set-secret <key> [--recipe <name>]",
+            err=True,
+        )
+        sys.exit(1)
+
+    raw_val = sys.stdin.read()
+    if not raw_val:
+        click.echo("Error: 标准输入内容为空，未收到有效凭证", err=True)
+        sys.exit(1)
+
+    secret_value = raw_val.rstrip("\r\n")
+    if not secret_value:
+        click.echo("Error: 凭证内容去除换行后为空", err=True)
+        sys.exit(1)
+
+    caller_identity = os.environ.get("FRAGO_RECIPE_CALLER_NAME") or os.environ.get("FRAGO_RECIPE_NAME")
+    target_recipe = recipe
+
+    if caller_identity:
+        if target_recipe and target_recipe != caller_identity:
+            click.echo(
+                f"Error: 越权拒绝：当前配方受控身份为 '{caller_identity}'，禁止修改其他配方 '{target_recipe}' 的凭证",
+                err=True,
+            )
+            sys.exit(1)
+        target_recipe = caller_identity
+    elif not target_recipe:
+        click.echo("Error: 未在配方受控环境中运行，请使用 --recipe 指定配方名称", err=True)
+        sys.exit(1)
+
+    try:
+        summary = update_recipe_self_secret(
+            target_recipe,
+            key,
+            secret_value,
+            caller_identity=caller_identity,
+        )
+    except RecipeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: 操作失败: {e}", err=True)
+        sys.exit(1)
+
+    if output_format == "json":
+        click.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        click.echo(
+            f"[OK] 已安全更新配方 '{target_recipe}' 的凭证 '{key}' "
+            f"（长度 {summary['length']}，SHA256: {summary['sha256_prefix']}...）"
+        )
+
+
+@recipe_group.command(name='set-secret', cls=AgentFriendlyCommand)
+@click.argument('key')
+@click.option('--recipe', 'recipe_name', default=None, help='Target recipe name (defaults to self in recipe runtime)')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json'], case_sensitive=False), default='text', help='Output format')
+def recipe_set_secret(key: str, recipe_name: str | None, output_format: str):
+    """Atomically set a declared secret for the recipe from stdin.
+
+    Token value MUST be piped via standard input (stdin) to prevent leakage
+    in command-line arguments, process lists, or execution logs.
+    """
+    _handle_set_secret(key, recipe_name, output_format)
+
+
+@recipe_group.group(name='secret', cls=AgentFriendlyGroup)
+def secret_group():
+    """Recipe secret management command group"""
+    pass
+
+
+@secret_group.command(name='set', cls=AgentFriendlyCommand)
+@click.argument('key')
+@click.option('--recipe', 'recipe_name', default=None, help='Target recipe name (defaults to self in recipe runtime)')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json'], case_sensitive=False), default='text', help='Output format')
+def recipe_secret_set(key: str, recipe_name: str | None, output_format: str):
+    """Atomically set a declared secret for the recipe from stdin."""
+    _handle_set_secret(key, recipe_name, output_format)
+

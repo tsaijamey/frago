@@ -177,11 +177,15 @@ class TestActivationTargets:
         response = await get_activation_targets()
 
         by_type = {t.agent_type: t for t in response.targets}
-        assert set(by_type) == {"claude", "opencode", "codex"}
+        assert set(by_type) == {"claude", "opencode", "codex", "coreagent"}
         # codex 接得了，但只吃 profile 的 Responses 通道——页面据此逐条 profile 判能不能勾。
         assert by_type["codex"].supported is True
         assert by_type["codex"].protocol == "responses"
         assert by_type["claude"].protocol == "anthropic"
+        # 内置内核也在这份名单里：它没有自己的配置文件，但同样是「把这条连接写进
+        # 内核下次会读的地方」的一个落点，人切连接时得能勾上它。
+        assert by_type["coreagent"].supported is True
+        assert by_type["coreagent"].protocol == "anthropic"
         assert response.default_targets == ["claude"]
 
     @pytest.mark.asyncio
@@ -460,6 +464,7 @@ class TestConnectionsAndBindings:
                 endpoint_type="deepseek",
                 api_key="sk-ds",
                 default_model="deepseek-chat",
+                context_window=600_000,
             )
         )
         add_profile(
@@ -559,6 +564,11 @@ class TestConnectionsAndBindings:
             assert by_h["codex"].main_profile_id == "official"
             assert by_h["codex"].worker_profile_id == "p_ds"
             assert load_profiles().coreagent_profile_id == "p_ds"
+            # 设置页要能查到 CoreAgent 现在的压缩线落在哪：窗口取自它绑定的那条连接。
+            # 这是修复前完全看不到的一个数——内核读的是它，人却只能在别处猜。
+            assert by_h["coreagent"].context_window == 600_000
+            # p_or 没声明窗口：页面据此说「按模型名兜底」，而不是显示一个假的值。
+            assert by_h["opencode"].context_window is None
 
         cfg_file = tmp_path / "config.toml"
         cfg_file.write_text("", encoding="utf-8")

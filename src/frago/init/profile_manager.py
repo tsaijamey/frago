@@ -51,7 +51,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from frago.init.profile_targets import DEFAULT_TARGETS
+from frago.init.profile_targets import DEFAULT_TARGETS, is_native_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -605,10 +605,12 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
             else:
                 from frago.init.profile_targets import apply_profile
 
+                # Every harness this profile is bound to, native kernel included:
+                # it has no file to rewrite, and the store it reads was saved a
+                # few lines up, so the re-apply is a no-op for it rather than
+                # something to filter out by name here.
                 bound_harnesses = [
-                    t
-                    for t, pid in store.harness_profiles.items()
-                    if pid == profile_id and t != "coreagent"
+                    t for t, pid in store.harness_profiles.items() if pid == profile_id
                 ]
                 if bound_harnesses:
                     apply_profile(profile, bound_harnesses)
@@ -801,6 +803,20 @@ def activate_profile(
         store.harness_profiles[t] = profile_id
     for t in dropped:
         store.harness_profiles[t] = OFFICIAL_ID
+    # The built-in kernel has no file to write — the store is its configuration,
+    # and frago-core reads the role field. Activating on it therefore means
+    # binding that field, which is also what makes its declared context window
+    # reachable: the kernel reads the window off whichever connection the role
+    # resolves to, and until now nothing kept that connection in step with the
+    # person's switch.
+    #
+    # 「哪个内核是内建内核」这件事问本体（``profile_mode == "native_kernel"``），
+    # 不在这里列名字：同一个问题在 `profile_targets` 那边已经用 `is_native_kernel()`
+    # 回答过一遍，两套判据并存的话，加第二个内建内核时必然漏改一处。
+    if any(is_native_kernel(t) for t in resolved):
+        store.coreagent_profile_id = profile_id
+    elif any(is_native_kernel(t) for t in dropped):
+        store.coreagent_profile_id = None
     save_profiles(store)
     return resolved
 
@@ -824,7 +840,11 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     # active id was set directly rather than through activate_profile.
     active = list(store.active_targets) or list(DEFAULT_TARGETS)
     for t, pid in store.harness_profiles.items():
-        if t == "coreagent":
+        # coreagent stays out of this materialization: its harness row is also
+        # written by the Settings -> General matrix, which binds it without
+        # activating anything. Dragging it in here would make deactivating one
+        # profile undo a matrix choice the person made separately.
+        if is_native_kernel(t):
             continue
         if pid and pid != OFFICIAL_ID and t not in active:
             active.append(t)
@@ -844,6 +864,11 @@ def deactivate_profile(targets: Sequence[str] | None = None) -> list[str]:
     store.active_targets = remaining
     if not remaining:
         store.active_profile_id = None
+    # Handing the built-in kernel back means clearing its role binding, the same
+    # field activation writes. Nothing on disk was written for it, so this is
+    # the whole of the revert.
+    if any(is_native_kernel(t) for t in handing_back):
+        store.coreagent_profile_id = None
     save_profiles(store)
     return handing_back
 

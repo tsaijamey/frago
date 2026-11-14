@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from frago.init.profile_manager import (
+    OFFICIAL_ID,
     APIProfile,
     ProfileStore,
     activate_profile,
@@ -476,6 +477,96 @@ class TestActivationTargets:
         store = delete_profile("test1234")
 
         assert store.active_targets == []
+
+
+class TestActivatingTheBuiltInKernel:
+    """内置内核是激活目标里的一个落点，但它没有自己的配置文件。
+
+    它的配置就是 profiles.json 本身——内核按角色读 coreagent_profile_id。所以
+    "激活到 CoreAgent"落成一个绑定，不落成一次写盘。这一组守的就是这个落点，
+    以及它和设置页矩阵那条绑定路径不互相拆台。
+    """
+
+    @staticmethod
+    @pytest.fixture
+    def drivers():
+        fakes = {}
+        for agent_type, protocol in (
+            ("claude", "anthropic"),
+            ("opencode", "anthropic"),
+        ):
+            fake = MagicMock()
+            fake.profile_apply = MagicMock()
+            fake.profile_revert = MagicMock()
+            fake.profile_protocol = protocol
+            fakes[agent_type] = fake
+
+        with (
+            patch("frago.init.profile_targets._driver", side_effect=fakes.__getitem__),
+            patch(
+                "frago.init.profile_targets._installed_path",
+                side_effect=lambda agent: f"/bin/{agent}",
+            ),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+        ):
+            yield fakes
+
+    def test_activating_on_coreagent_binds_the_role_field(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """内核读的是角色字段，激活必须把它写上——这是窗口声明值到达内核的唯一路径。"""
+        add_profile(sample_profile)
+
+        activated = activate_profile("test1234", ["claude", "coreagent"])
+
+        assert activated == ["claude", "coreagent"]
+        store = load_profiles()
+        assert store.coreagent_profile_id == "test1234"
+        assert store.harness_profiles["coreagent"] == "test1234"
+        # 没有驱动、没有外部文件：只绑字段，不碰任何 CLI 配置。
+        drivers["claude"].profile_apply.assert_called_once()
+
+    def test_activating_without_coreagent_leaves_its_binding_alone(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """没勾它就不该动它：设置页矩阵那条绑定是独立的选择。"""
+        add_profile(sample_profile)
+        store = load_profiles()
+        store.coreagent_profile_id = "kept0000"
+        save_profiles(store)
+
+        activate_profile("test1234", ["claude"])
+
+        assert load_profiles().coreagent_profile_id == "kept0000"
+
+    def test_deactivating_hands_coreagent_back(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+        activate_profile("test1234", ["claude", "coreagent"])
+
+        handed_back = deactivate_profile()
+
+        assert "coreagent" in handed_back
+        store = load_profiles()
+        assert store.coreagent_profile_id is None
+        assert store.harness_profiles["coreagent"] == OFFICIAL_ID
+
+    def test_the_window_on_the_bound_connection_is_what_the_kernel_reads(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """内核按角色解析出这条连接，再读它自己的 context_window。
+
+        这里守的是那一跳的数据可达：激活后，内核会读到的那条连接就是声明了窗口的这条。
+        """
+        add_profile(sample_profile.model_copy(update={"context_window": 600_000}))
+
+        activate_profile("test1234", ["coreagent"])
+
+        store = load_profiles()
+        bound = next(p for p in store.profiles if p.id == store.coreagent_profile_id)
+        assert bound.context_window == 600_000
 
 
 class TestLegacyStoreWithoutTargets:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from frago.cli.ask_commands import ask_group
@@ -255,6 +256,151 @@ class TestAskFriendlyErrorFeedback:
         assert "multi-choice" in res.output
         assert "text-answer" in res.output
         assert "choice-and-text" in res.output
+
+
+class TestAskKeyShape:
+    """选项 KEY 是短标识：卡片上只占一个 18 像素小方块，答复也靠 `·` 切回来。
+
+    2026-11-13 修：此前只查非空与唯一，`IMPL_DYNAMIC` 这类整句被当 KEY 写进卡片，
+    前端方块装不下就溢出去压住标题。这里把「KEY 必须短」钉成命令侧的硬校验。
+    """
+
+    # ── 放行：短标识 ──────────────────────────────────────────────────
+    @pytest.mark.parametrize("key", ["A", "B", "C", "HOLD", "RETRY", "OPT-1", "OPT_1", "APPROVE"])
+    def test_short_keys_accepted(self, key):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", f"{key}|选项|后果"],
+        )
+        assert res.exit_code == 0, res.output
+        assert json.loads(res.output)["data"]["options"][0]["key"] == key
+
+    def test_eight_char_boundary_accepted(self):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", "ABCDEFGH|选项|后果"],
+        )
+        assert res.exit_code == 0, res.output
+        assert json.loads(res.output)["data"]["options"][0]["key"] == "ABCDEFGH"
+
+    # ── 拒绝：截图上那两张真实卡片用的长 KEY ────────────────────────────
+    @pytest.mark.parametrize("key", ["IMPL_DYNAMIC", "REPLY_JIRA"])
+    def test_long_keys_rejected_with_rule_hint(self, key):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", f"{key}|选项|后果"],
+        )
+        assert res.exit_code != 0
+        assert f"KEY '{key}'" in res.output
+        assert "超过 8 个字符的上限" in res.output
+        assert "推荐直接用 A、B、C" in res.output
+        # 只回当前题型示例，不串到别的题型
+        assert "frago app ask single-choice" in res.output
+        assert "frago app ask text-answer" not in res.output
+
+    def test_nine_chars_rejected(self):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", "ABCDEFGHI|选项|后果"],
+        )
+        assert res.exit_code != 0
+        assert "超过 8 个字符的上限" in res.output
+
+    # ── 拒绝：分隔符与空白 ─────────────────────────────────────────────
+    @pytest.mark.parametrize("key", ["A B", "AB\tC", "AB·C", "AB|C"])
+    def test_separators_and_whitespace_rejected(self, key):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", f"{key}|选项|后果"],
+        )
+        assert res.exit_code != 0, f"KEY {key!r} 应当被拒"
+
+    def test_pipe_in_key_cannot_smuggle_extra_field(self):
+        """KEY 里塞竖线会把 KEY|LABEL|EFFECT 切错位——必须在解析后仍被形状校验拦住。"""
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", "A|B|选项|后果"],
+        )
+        assert res.exit_code != 0
+        assert "KEY" in res.output
+
+    @pytest.mark.parametrize("key", ["选项", "选项A"])
+    def test_cjk_key_rejected(self, key):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", f"{key}|选项|后果"],
+        )
+        assert res.exit_code != 0
+
+    @pytest.mark.parametrize("key", ["A.B", "A/B", "A+B", "A:B", "A·B"])
+    def test_symbol_keys_rejected(self, key):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            ["single-choice", "-q", "选哪个？", "-o", f"{key}|选项|后果"],
+        )
+        assert res.exit_code != 0
+
+    # ── 四条带选项的入口共用同一道闸 ────────────────────────────────────
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["multi-choice", "-q", "选哪些？", "-o", "IMPL_DYNAMIC|选项|后果"],
+            ["choice-and-text", "-q", "选哪个？", "-o", "IMPL_DYNAMIC|选项|后果"],
+            ["choice-and-text", "-q", "选哪些？", "--multi", "-o", "IMPL_DYNAMIC|选项|后果"],
+        ],
+    )
+    def test_all_option_types_share_the_key_gate(self, argv):
+        runner = CliRunner()
+        res = runner.invoke(ask_group, argv)
+        assert res.exit_code != 0
+        assert "超过 8 个字符的上限" in res.output
+
+    # ── JSON 写法与简写写法都过同一道闸 ─────────────────────────────────
+    def test_json_option_key_also_checked(self):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            [
+                "single-choice",
+                "-q",
+                "选哪个？",
+                "-o",
+                '{"key":"IMPL_DYNAMIC","label":"按动态字号改造","effect":"启动新任务"}',
+            ],
+        )
+        assert res.exit_code != 0
+        assert "超过 8 个字符的上限" in res.output
+
+    def test_json_short_key_still_accepted(self):
+        runner = CliRunner()
+        res = runner.invoke(
+            ask_group,
+            [
+                "single-choice",
+                "-q",
+                "选哪个？",
+                "-o",
+                '{"key":"HOLD","label":"暂不处理","effect":"仅记录结果"}',
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        assert json.loads(res.output)["data"]["options"][0]["key"] == "HOLD"
+
+    # ── 报错文案要能让人当场改对 ────────────────────────────────────────
+    def test_help_documents_key_shape(self):
+        runner = CliRunner()
+        res = runner.invoke(ask_group, ["single-choice", "--help"])
+        assert res.exit_code == 0
+        assert "KEY 是短标识" in res.output
+        assert "1–8 个字符" in res.output
 
 
 class TestSchedulePendingIntegration:

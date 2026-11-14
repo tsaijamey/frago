@@ -2,11 +2,22 @@
 (function () {
   "use strict";
 
+  function resolveBrokerWs(preferred) {
+    try {
+      var isLocal = location.hostname === "127.0.0.1" || location.hostname === "localhost";
+      var isLivePath = location.pathname.indexOf("/live/desktop") === 0;
+      if (!isLocal || isLivePath) {
+        return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/live/stream";
+      }
+    } catch (e) {}
+    return preferred || "ws://127.0.0.1:8770/stream";
+  }
+
   // contentId / instanceId 由 config.json 下发，是这块荧幕的归属证明。
   // 端口不属于身份，任何一个旧实例遗留的标签都连得上后来的 broker，
   // 所以每次握手都要自报家门，由 broker 判断该不该收下这块荧幕的几何。
   var CONFIG = {
-    brokerWs: "ws://127.0.0.1:8770/stream",
+    brokerWs: resolveBrokerWs("ws://127.0.0.1:8770/stream"),
     desktop: { w: 1920, h: 1080 },
     contentId: null,
     instanceId: null
@@ -35,8 +46,8 @@
     zOrder: ["term", "browser", "image", "video"],
     // 桌面坐标系下的窗口几何（win 消息的目标值，layout 上报以此为准）
     geom: {
-      term: { x: 120, y: 90, w: 900, h: 560 },
-      browser: { x: 620, y: 210, w: 1080, h: 700 },
+      term: { x: 40, y: 70, w: 900, h: 920 },
+      browser: { x: 960, y: 70, w: 920, h: 920 },
       image: { x: 760, y: 250, w: 480, h: 360 },
       video: { x: 560, y: 220, w: 800, h: 450 }
     },
@@ -1789,8 +1800,10 @@
     var box = $("human-input");
     if (!box) return;
     els.humanInput = box;
-    if (ROLE === "camera") {
+    var q = location.search;
+    if (ROLE === "camera" || /[?&]userInput=(false|0)(&|$)/.test(q)) {
       box.hidden = true;
+      box.style.display = "none";
       return;
     }
     box.hidden = false;
@@ -3293,6 +3306,7 @@
       })
       .catch(function () { /* 无 config.json 时用默认值 */ })
       .then(function () {
+        CONFIG.brokerWs = resolveBrokerWs(CONFIG.brokerWs);
         state.configReady = true;
         connect();
       });

@@ -304,6 +304,7 @@ class UserConfigResponse(BaseModel):
 
     theme: str = "dark"
     language: str = "en"
+    language_configured: bool = False
     agent_language: str = ""
     font_size: int = 14
     max_history_items: int = 100

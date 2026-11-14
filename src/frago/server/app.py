@@ -273,6 +273,14 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     team_sync = TeamSyncService.get_instance()
     await team_sync.start()
 
+    # Start autonomous workbench queue patrol (decouples callback delivery from WebUI views)
+    from frago.server.services.workbench_queue_patrol_service import (
+        WorkbenchQueuePatrolService,
+    )
+
+    queue_patrol = WorkbenchQueuePatrolService.get_instance()
+    await queue_patrol.start()
+
     # Deploy frago-core binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
@@ -410,6 +418,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await version_service.stop()
     await community_service.stop()
     await sync_service.stop()
+
+    await team_sync.stop()
+    await queue_patrol.stop()
 
     # Stop workbench stream bridge
     WorkbenchStreamBridge.reset_instance()

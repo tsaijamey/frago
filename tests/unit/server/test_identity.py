@@ -151,7 +151,16 @@ class TestConcurrency:
         assert not errors
         assert len(ident.load_users()) <= 8
 
-    def test_every_issued_session_survives_a_concurrent_burst(self):
+    def test_every_issued_session_survives_a_concurrent_burst(self, monkeypatch):
+        """同时签发的会话不许凭空消失。
+
+        这里量的是**签发本身的原子性**（临时文件 + 硬链接那套），不是容量上限。
+        默认单账号上限是 10 条，而这条用例一次签发 12 条：上限一满，先签发的那几条
+        会被后来者按「最旧先淘汰」挤掉——那是合规行为，却会让这条用例看起来在抖
+        （取决于哪个线程先跑完，结果在 11 与 12 之间摆）。把上限抬到用例规模之上，
+        这条用例才只在测它自己声称在测的那件事。
+        """
+        monkeypatch.setenv("FRAGO_MAX_SESSIONS_PER_USER", "64")
         user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
         tokens: list[str] = []
         lock = threading.Lock()

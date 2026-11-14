@@ -38,6 +38,7 @@ async def get_config() -> UserConfigResponse:
     return UserConfigResponse(
         theme=config.get("theme", "dark"),
         language=config.get("language", "en"),
+        language_configured=ConfigService.has_saved_language(),
         agent_language=config.get("agent_language", ""),
         font_size=config.get("font_size", 14),
         max_history_items=config.get("max_history_items", 100),
@@ -93,6 +94,7 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
     return UserConfigResponse(
         theme=result.get("theme", "dark"),
         language=result.get("language", "en"),
+        language_configured=ConfigService.has_saved_language(),
         agent_language=result.get("agent_language", ""),
         font_size=result.get("font_size", 14),
         max_history_items=result.get("max_history_items", 100),

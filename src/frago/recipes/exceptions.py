@@ -80,3 +80,18 @@ class RecipeAlreadyExistsError(RecipeError):
         self.existing_path = existing_path
         message = f"Recipe '{recipe_name}' already exists at {existing_path}"
         super().__init__(message)
+
+
+class RecipeSecretError(RecipeError):
+    """Recipe secret management error"""
+    pass
+
+
+class RecipeSecretPermissionError(RecipeSecretError):
+    """Recipe secret permission denied / cross-recipe violation"""
+    pass
+
+
+class RecipeSecretValidationError(RecipeSecretError):
+    """Recipe secret validation error (e.g. undeclared key)"""
+    pass

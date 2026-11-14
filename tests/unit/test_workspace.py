@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 
 from frago.cli.workspace import (
     ProjectInfo,
@@ -24,7 +25,6 @@ from frago.cli.workspace import (
     normalize_git_url,
     summarize_workspace_changes,
 )
-
 
 # =============================================================================
 # normalize_git_url
@@ -89,6 +89,17 @@ class TestEncodeProjectPath:
 
 
 class TestEncodedToReadableName:
+    """反解函数的前提：家目录路径里不能含短横（编码把分隔符与短横都换成短横，是有损的）。
+
+    这两条用例必须自己把家目录钉成一个不含短横的路径。钉在跑测试的机器上的真实家目录上，
+    结论就随机器而变——真实家目录带短横（例如 pytest 的临时家目录）时，反解不出原路径，
+    断言当场失败，而那与被测行为无关。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _home_without_hyphen(self, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: Path("/home/tester"))
+
     def test_home_directory(self):
         home = Path.home()
         encoded = "-" + str(home).lstrip("/").replace("/", "-")

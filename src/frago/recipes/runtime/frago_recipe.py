@@ -289,7 +289,7 @@ class Bus:
             )
         return body.get("data") or {}
 
-    def frago(self, argv: list[str], timeout: int = 120) -> dict:
+    def frago(self, argv: list[str], timeout: int = 120, stdin: str | None = None) -> dict:
         """Have the platform run one of its own commands and hand back the result.
 
         The words after ``frago``, as a list — the same list this module would
@@ -298,8 +298,11 @@ class Bus:
         run's confined view of the filesystem and answers out of it, cheerfully
         and with exit 0, having seen none of the platform's own books.
         """
+        payload: dict[str, Any] = {"argv": [str(word) for word in argv], "timeout": timeout}
+        if stdin is not None:
+            payload["stdin"] = str(stdin)
         body = self._call("/api/bus/frago",
-                          {"argv": [str(word) for word in argv], "timeout": timeout},
+                          payload,
                           timeout=timeout + 10)
         return {"code": int(body.get("code") or 0),
                 "stdout": str(body.get("stdout") or ""),
@@ -623,7 +626,7 @@ class Recipe:
         """Ask another module for data. The only sanctioned way to get it."""
         return self.bus.ask(recipe, mode, params, timeout=timeout)
 
-    def ask_frago(self, argv: list[str], timeout: int = 120) -> dict:
+    def ask_frago(self, argv: list[str], timeout: int = 120, stdin: str | None = None) -> dict:
         """Run a frago command through the platform. Returns code/stdout/stderr.
 
         Write the words you would type::
@@ -642,7 +645,7 @@ class Recipe:
         No shell is involved and no line is assembled, so an argument may hold
         quotes, spaces or an apostrophe without anything needing to be escaped.
         """
-        return self.bus.frago(argv, timeout=timeout)
+        return self.bus.frago(argv, timeout=timeout, stdin=stdin)
 
     def ask_ai(
         self,

@@ -5,9 +5,10 @@ CLI 工具调用：
 
 1. **按组件类型分子命令**：``single-choice``、``multi-choice``、``text-answer``、
    ``choice-and-text`` 四种交互组件各为一拍子命令。
-2. **参数错当场拦下，只回当前组件的正确用例**：缺必填项、选项格式不对、跨组件混用标记、
-   或传了不存在的参数名（如 ``--title``、``--questions``），直接以非零退出码报错，并只附上
-   当前所调那一种组件类型的 ``[Fix]`` 正确调用示例，杜绝带病输出流向前端。
+2. **参数错当场拦下，只回当前组件的正确用例**：缺必填项、选项格式不对、选项 ``KEY`` 不是短
+   标识（超长、带空白或分隔符）、跨组件混用标记、或传了不存在的参数名（如 ``--title``、
+   ``--questions``），直接以非零退出码报错，并只附上当前所调那一种组件类型的 ``[Fix]``
+   正确调用示例，杜绝带病输出流向前端。
 3. **输出结构化 UI 组件数据**：校验通过后向 stdout 输出带 ``frago_ui_component`` 标识的
    JSON 数据包，前端工作台据此判断并直接渲染对应交互组件。
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 from typing import Any
 
 import click
@@ -24,6 +26,21 @@ from click import Context
 from .agent_friendly import BusinessError, render_fix_lines
 
 UI_COMPONENT_MARKER = "decision-card"
+
+#: 选项 ``KEY`` 的形状：短标识，不是句子。
+#:
+#: 卡片上 KEY 只占一个 18 像素的小方块（与勾选框并排），答复也靠 ``KEY · 标题 —— 后果``
+#: 这一行的 ``·`` 切回选项——两处都要求它短。上限 8 个字符容得下 ``HOLD`` / ``RETRY`` /
+#: ``APPROVE`` / ``OPT-1`` 这类语义化缩写，拦得住 ``REPLY_JIRA``（10）与 ``IMPL_DYNAMIC``（12）
+#: 这类被误当 KEY 用的句子。允许字符集只有字母数字与 ``-`` / ``_``：空白、``|``、``·``
+#: 是三种字段分隔符，混进 KEY 会把 ``KEY|LABEL|EFFECT`` 与答复行切错位。
+KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,8}$")
+
+#: 报错时统一附上的写法说明。
+KEY_RULE_HINT = (
+    "选项 KEY 是短标识，不是句子：只允许字母、数字、连字符（-）与下划线（_），"
+    "长度 1–8 个字符，推荐直接用 A、B、C…"
+)
 
 COMPONENT_TYPES = (
     "single-choice",
@@ -154,6 +171,41 @@ def _raise_for_component(component_type: str, message: str) -> None:
     """抛出只带当前组件类型正确用例的 BusinessError。"""
     examples = COMPONENT_EXAMPLES.get(component_type, COMPONENT_EXAMPLES["single-choice"])
     raise BusinessError(message, *examples)
+
+
+def _describe_key(raw: str) -> str:
+    """把一个不合规的 KEY 写进报错里：太长就报长度，不逐字回显整句。"""
+    if not raw:
+        return "（空）"
+    if len(raw) > 24:
+        return f"{raw[:24]}…（{len(raw)} 个字符）"
+    return raw
+
+
+def _check_key_shape(component_type: str, raw_key: str, index: int) -> None:
+    """校验选项 KEY 的形状；不合规当场拒绝，不放进前端。
+
+    这是「KEY 必须短」这条契约的唯一执行点。以前只查非空与不重复，于是 ``IMPL_DYNAMIC``
+    这类整句被当成 KEY 写进卡片，前端那个 18 像素的小方块装不下，文字就溢出去压住标题、
+    越过选项行边框。放在这里拦，AI 第一轮就知道该写 ``IMPL`` 或 ``A``。
+    """
+    if KEY_PATTERN.match(raw_key):
+        return
+    shown = _describe_key(raw_key)
+    if not raw_key:
+        reason = "KEY 不能为空"
+    elif len(raw_key) > 8:
+        reason = f"KEY '{shown}' 有 {len(raw_key)} 个字符，超过 8 个字符的上限"
+    elif any(ch.isspace() for ch in raw_key):
+        reason = f"KEY '{shown}' 含有空白字符"
+    elif any(ch in raw_key for ch in "|·"):
+        reason = f"KEY '{shown}' 含有分隔符（| 或 ·），这类符号会把 KEY|LABEL|EFFECT 与答复行切错位"
+    else:
+        reason = f"KEY '{shown}' 含有不允许的字符（只允许字母、数字、-、_）"
+    _raise_for_component(
+        component_type,
+        f"第 {index} 个 --option 的 {reason}。{KEY_RULE_HINT}",
+    )
 
 
 def _parse_single_option(
@@ -315,10 +367,13 @@ def validate_and_build_component(
         )
 
     # ── 解析并校验选项 ──────────────────────────────────────────────────
+    # KEY 的形状在这里统一把关：JSON 写法与 KEY|LABEL|EFFECT 简写两条入口都汇到这一步，
+    # 四种带选项的题型（single-choice / multi-choice / choice-and-text 及其多选）共用。
     parsed_options: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for idx, raw_opt in enumerate(options_raw, start=1):
         opt = _parse_single_option(component_type, raw_opt, idx)
+        _check_key_shape(component_type, opt["key"], idx)
         if opt["key"] in seen_keys:
             _raise_for_component(
                 component_type,
@@ -415,7 +470,9 @@ def _common_component_options(func: Any) -> Any:
             "--option",
             "options_raw",
             multiple=True,
-            help='选项（可多次传入），格式为 "KEY|LABEL|EFFECT"，例如 "A|发布|打 tag 并上传 PyPI"。',
+            help='选项（可多次传入），格式为 "KEY|LABEL|EFFECT"，例如 "A|发布|打 tag 并上传 PyPI"。'
+            "KEY 是短标识：字母数字加 - / _，1–8 个字符，推荐 A、B、C…（不是句子，"
+            "写 IMPL_DYNAMIC 这类长串会被拒）。",
         ),
         click.option(
             "--recommended",

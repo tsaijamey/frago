@@ -7,11 +7,23 @@ running whatever they were running before. Activation now names its targets.
 
 A target is offerable when both halves hold:
 
-- **supported** — its driver knows how to write a frago profile into that CLI's
-  own config. A driver that cannot carries the reason, and it is shown rather
-  than hidden, because a checkbox that is simply missing reads as an oversight.
-- **installed** — the executable is actually on this machine. Writing a config
-  file for a CLI nobody has does nothing except leave a file behind.
+- **supported** — frago knows how to put a profile on it. For the CLI agents that
+  means their driver writes it into that CLI's own config; a driver that cannot
+  carries the reason, and it is shown rather than hidden, because a checkbox that
+  is simply missing reads as an oversight.
+- **installed** — the thing is actually on this machine. Writing a config file
+  for a CLI nobody has does nothing except leave a file behind.
+
+Where a target's own config lives is a property of the kernel, not of this
+module: the ontology declares ``profile_mode``. ``file_and_env`` kernels
+(Claude Code, Codex, opencode, agy) each keep a file frago writes into.
+``native_kernel`` is the built-in CoreAgent, which has no second file — its
+config *is* ``~/.frago/profiles.json``, and the profile being activated already
+lives there. Activating it therefore means binding the connection on the store's
+own role field, which the caller does while it holds the store; nothing external
+is written here. Both kinds are the same concept — "write this connection where
+that kernel will read it next time" — with only the landing spot following the
+kernel.
 
 A third condition belongs to the profile, not the machine: the CLI's driver
 names the protocol it speaks (``profile_protocol``), and the profile has to have
@@ -34,7 +46,12 @@ if TYPE_CHECKING:
 
 # Order is the order the UI lists them in. claude first: it is the target
 # activation has always meant, and the default when a caller names none.
-AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex")
+# coreagent is last because it is the odd one out in landing spot, not in
+# concept: activating it binds the connection on frago's own store instead of
+# writing a file. It belongs here because the person switching a connection
+# means it for every kernel they run, and the built-in one was the only kernel
+# left out — which is how its window declaration never reached it.
+AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex", "coreagent")
 
 # Built-in CoreAgent plus all four external Harness CLIs managed on the Settings -> General matrix.
 HARNESS_TARGETS: tuple[str, ...] = ("coreagent", "claude", "codex", "opencode", "agy")
@@ -94,15 +111,58 @@ def _driver(agent_type: str):
 
 
 def _installed_path(agent_type: str) -> str | None:
+    """Where this target lives, or None when it is not on this machine.
+
+    One seam for the whole roster: a native kernel is on the machine when its
+    binary is (``agent_core.kernel_installed``, the one judge of that — the
+    settings page and the launch path ask the same function), every other
+    target when its executable is on PATH.
+    """
+    if is_native_kernel(agent_type):
+        from frago.init.agent_core import kernel_installed
+
+        if not kernel_installed():
+            return None
+        from frago.init.hook_binary import get_binary_name, get_hook_deploy_dir
+
+        return str(get_hook_deploy_dir() / get_binary_name())
     from frago.compat import find_agent_cli
 
     return find_agent_cli(agent_type)
 
 
+def is_native_kernel(agent_type: str) -> bool:
+    """Whether this kernel keeps no config file of its own.
+
+    The answer comes from the ontology's ``profile_mode`` declaration — the one
+    place that says how a kernel takes a connection. ``native_kernel`` is the
+    built-in CoreAgent: frago's own store is its configuration, so activation
+    binds a field instead of writing a file.
+
+    Asking the ontology rather than listing the name here keeps a second kernel
+    from needing a second special case.
+    """
+    from frago.ontology.projectors import get_agent_kernel_metadata
+
+    return get_agent_kernel_metadata(agent_type).get("profile_mode") == "native_kernel"
+
+
 def target_status(agent_type: str) -> TargetStatus:
     """One target's supported / installed standing, with the reason if not."""
-    driver = _driver(agent_type)
     path = _installed_path(agent_type)
+    if is_native_kernel(agent_type):
+        # No driver and no external file: the built-in kernel's connection is
+        # the store's own field, so there is nothing it could fail to write.
+        return TargetStatus(
+            agent_type=agent_type,
+            display_name=DISPLAY_NAMES.get(agent_type, agent_type),
+            supported=True,
+            installed=path is not None,
+            path=path,
+            unsupported_reason=None,
+            protocol=HARNESS_PROTOCOLS.get(agent_type, ("anthropic", ""))[0],
+        )
+    driver = _driver(agent_type)
     return TargetStatus(
         agent_type=agent_type,
         display_name=DISPLAY_NAMES.get(agent_type, agent_type),
@@ -150,7 +210,10 @@ def missing_channel_reason(profile: APIProfile, agent_type: str) -> str | None:
 
     if agent_type == "agy" and can_apply_to(profile, "agy"):
         return None
-    protocol = _driver(agent_type).profile_protocol
+    # The protocol comes from the target's own standing rather than straight off
+    # a driver: a native kernel has no driver, and asking one here is how adding
+    # it to the roster would blow up in the middle of a validation pass.
+    protocol = target_status(agent_type).protocol
     channel = profile_channel(profile, protocol)
     if channel is not None and channel.url:
         return None
@@ -220,12 +283,21 @@ def resolve_targets(requested: Sequence[str] | None) -> list[str]:
 def apply_profile(profile: APIProfile, targets: Sequence[str]) -> None:
     """Write this profile into each target's own config.
 
+    A native kernel has no config of its own to write: its configuration *is*
+    the store, and the connection is already in it. Putting one on it is a
+    binding, which the caller records on the store it is already holding —
+    there is nothing this function could do to the filesystem for it, and
+    inventing a file here would create a second source of truth for what
+    connection the built-in kernel runs on.
+
     A target whose driver cannot apply is skipped rather than raising: the
     caller has already been through ``resolve_targets`` for anything the person
     chose, and the remaining path here is frago re-applying its own stored
     target list after that CLI stopped being supported.
     """
     for agent_type in targets:
+        if is_native_kernel(agent_type):
+            continue
         try:
             apply = _driver(agent_type).profile_apply
         except KeyError:
@@ -237,12 +309,17 @@ def apply_profile(profile: APIProfile, targets: Sequence[str]) -> None:
 def revert_targets(targets: Sequence[str]) -> None:
     """Undo activation on each target, restoring what was there before frago.
 
+    A native kernel has nothing to hand back: no file was written for it, and
+    the binding is cleared by the caller on the store.
+
     Reverting is best-effort per target: one CLI's config being unwritable must
     not leave the others stuck in a half-activated state, so a failure is
     carried and re-raised only after every target has had its turn.
     """
     first_error: Exception | None = None
     for agent_type in targets:
+        if is_native_kernel(agent_type):
+            continue
         try:
             revert = _driver(agent_type).profile_revert
         except KeyError:

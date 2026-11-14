@@ -111,6 +111,7 @@ class TestConfigServiceGetConfig:
 
         assert result["theme"] == "dark"
         assert result["language"] == "en"
+        assert ConfigService.has_saved_language() is False
 
     def test_loads_existing_config(self, tmp_path, monkeypatch):
         """Should load config from existing file."""
@@ -127,6 +128,7 @@ class TestConfigServiceGetConfig:
 
         assert result["theme"] == "light"
         assert result["language"] == "zh"
+        assert ConfigService.has_saved_language() is True
 
     def test_returns_defaults_on_invalid_json(self, tmp_path, monkeypatch):
         """Should return defaults when config file has invalid JSON."""

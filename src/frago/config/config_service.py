@@ -84,6 +84,17 @@ class ConfigService:
         return CONFIG_DIR
 
     @staticmethod
+    def has_saved_language() -> bool:
+        """Return True when ~/.frago/gui_config.json explicitly stores a valid language."""
+        if not CONFIG_FILE.exists():
+            return False
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return isinstance(data, dict) and data.get("language") in ("en", "zh")
+        except (OSError, json.JSONDecodeError, TypeError):
+            return False
+
+    @staticmethod
     def get_config() -> dict[str, Any]:
         """Load user configuration from file.
 
