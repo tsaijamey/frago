@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "ontology_id": "frago-agent-os-ontology",
-  "ontology_version": "1.1.0",
+  "ontology_version": "1.2.0",
   "description": "frago Agent OS 操作型本体（Operational Ontology）全量原始数据模型：覆盖五根支柱与全部 26 个子系统目录的业务概念，基于三轴正交超类、OntoClean 刚性公理、一等公民关系代数与三层同心圆动作契约。",
   "orthogonal_axes": {
     "mereotemporality": {
@@ -128,11 +128,11 @@
       "description": "主体或资源声明其可被外部或 Harness 调用的能力切面。"
     },
     "exhibits_state": {
-      "domain": "Continuant",
+      "domain": "Continuant | Occurrent",
       "range": "QualityState",
       "inverse": "state_of",
       "algebraic_properties": ["functional"],
-      "description": "延续体在当前时间切片呈现的状态、来源或安全区属性。"
+      "description": "实体（延续体或发生体过程）在当前时间切片呈现的状态、来源或生命周期属性。"
     },
     "hosted_on_harness": {
       "domain": "Actor",
@@ -182,6 +182,20 @@
       "inverse": "depended_on_by",
       "algebraic_properties": ["transitive", "irreflexive"],
       "description": "模块或配方间的有向依赖（含 recipe imports/reads_common 与 Python 包分层依赖），具有传递性且严禁成环。"
+    },
+    "delivers_to_session": {
+      "domain": "Process",
+      "range": "Process",
+      "inverse": "receives_callback_from",
+      "algebraic_properties": ["asymmetric"],
+      "description": "异步回传送达过程将其回传报文投递给发起方会话过程。"
+    },
+    "dispatched_from_worker": {
+      "domain": "Process",
+      "range": "Process",
+      "inverse": "dispatches_callback",
+      "algebraic_properties": ["asymmetric"],
+      "description": "异步回传送达过程来自具体执行方工作者会话过程的执行完结。"
     }
   },
   "domain_classes": {
@@ -525,12 +539,29 @@
         "class_id": "SessionOriginState",
         "pillar": "3. 记忆与召回",
         "rigidity": "~R",
-        "allowed_values": ["terminal", "web", "worker", "unknown"],
+        "bearer_type": "AgentHarness | AgentSessionProcess",
+        "allowed_values": ["terminal", "web", "worker", "schedule", "channel", "unknown"],
         "current_code_locations": [
+          "src/frago/session/store.py",
+          "src/frago/session/service.py",
           "src/frago/session/session_origin.py",
           "src/frago/session/models.py#SessionSource"
         ],
-        "description": "会话实例的发起源状态（终端直起、Web 工作台新建、子任务派活或历史未知），决定工作台左栏过滤与回收归属。"
+        "description": "会话实例的发起源状态（terminal、web、worker、schedule、channel），决定工作台左栏过滤与回收归属。"
+      },
+      {
+        "class_id": "SessionLifecycleState",
+        "pillar": "3. 记忆与召回 / 5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "AgentSessionProcess | AgentHarness",
+        "allowed_values": ["queued", "running", "awaiting_input", "completed", "error", "cancelled"],
+        "current_code_locations": [
+          "src/frago/session/store.py",
+          "src/frago/session/service.py",
+          "src/frago/session/models.py#MonitoredSession",
+          "src/frago/session/transcript_completion.py"
+        ],
+        "description": "会话当前生命周期运行态属性层（queued、running、awaiting_input、completed、error、cancelled），通过 exhibits_state 挂载于 AgentSessionProcess，严格受状态机跃迁约束。"
       },
       {
         "class_id": "DesktopInstanceRuntimeState",
@@ -543,6 +574,19 @@
           "src/frago/cli/desktop_commands.py"
         ],
         "description": "虚拟桌面实例（agent_os）的运行态属性层（含 pid、port、status、heartbeat_at），随每次启动覆写、随退出置为 stopped，绝不抹除宿主资源身份。"
+      },
+      {
+        "class_id": "CallbackDeliveryState",
+        "pillar": "3. 记忆与召回 / 5. 边界",
+        "rigidity": "~R",
+        "bearer_type": "CallbackDeliveryProcess",
+        "allowed_values": ["queued", "delivering", "delivered", "failed"],
+        "current_code_locations": [
+          "src/frago/session/async_dispatch.py#AsyncDispatchJob",
+          "src/frago/server/services/workbench_queue.py",
+          "src/frago/server/services/workbench_queue_patrol_service.py"
+        ],
+        "description": "异步回传报文的送达状态（queued 已入队、delivering 送达中、delivered 已落进发起方会话记录、failed 最终送不到），通过 exhibits_state 挂载于 CallbackDeliveryProcess。合法跃迁：queued→delivering→delivered；delivering→queued（本次注入失败放回队首）；delivering→failed、queued→failed。delivered 为终态，且不得绕过 delivering 直接到 delivered。"
       },
       {
         "class_id": "HarnessLifecycleState",
@@ -559,17 +603,32 @@
     ],
     "Occurrent.Process": [
       {
+        "class_id": "CallbackDeliveryProcess",
+        "pillar": "3. 记忆与召回 / 5. 边界",
+        "rigidity": "+R",
+        "temporality": "interval",
+        "states": ["queued", "delivering", "delivered", "failed"],
+        "current_code_locations": [
+          "src/frago/session/async_dispatch.py",
+          "src/frago/server/services/workbench_queue.py",
+          "src/frago/server/services/workbench_queue_patrol_service.py"
+        ],
+        "description": "一次异步派发结束后，把回传报文送回发起方会话的过程。以派发单号 job_id 为全局稳定身份，引用发起方会话（caller_session_id）与执行方会话（worker_session_id）。派发单记为 completed 的前提是本过程处于 delivered；worker 执行结果（exit_code）与本过程的送达状态是两个独立维度。"
+      },
+      {
         "class_id": "AgentSessionProcess",
         "pillar": "3. 记忆与召回 / 5. 边界",
         "rigidity": "+R",
         "temporality": "interval",
-        "states": ["running", "completed", "error", "cancelled"],
+        "states": ["queued", "running", "awaiting_input", "completed", "error", "cancelled"],
         "current_code_locations": [
+          "src/frago/session/store.py",
+          "src/frago/session/service.py",
           "src/frago/session/models.py#MonitoredSession",
           "src/frago/session/storage.py",
           "src/frago/cli/session_commands.py"
         ],
-        "description": "一场有起止时间的 Agent 会话过程。通过 initiated_by 关联主体，通过 hosted_on_harness 关联底座，通过 produces 产出轨迹文件。"
+        "description": "一场有起止时间的 Agent 会话过程。以 session_id 为全局稳定唯一身份，通过 initiated_by 关联主体或角色，通过 hosted_on_harness 关联底座，通过 exhibits_state 呈现生命周期与发起源状态，通过 emits 发射单步事实，通过 produces 产出轨迹文件。"
       },
       {
         "class_id": "HarnessTurnProcess",
@@ -1274,6 +1333,232 @@
           "initiates": "RecipeExecutionProcess",
           "mutates": ["KnowledgeDomain", "RecipeModule", "DataSlot"],
           "produces": ["DefKnowledgeEntry"]
+        }
+      }
+    },
+    {
+      "action_id": "launch_agent_session",
+      "parameters": ["session_id", "agent_kernel_id", "origin", "initial_prompt"],
+      "signature": {
+        "initiator_domain": "HumanPrincipal | PrimarySchedulerRole | DomainEmployeeRole",
+        "target_range": "AgentSessionProcess",
+        "input_types": {
+          "session_id": "str",
+          "agent_kernel_id": "str",
+          "origin": "str",
+          "initial_prompt": "str"
+        },
+        "return_type": "dict",
+        "error_types": ["InvalidSessionOriginError", "DuplicateSessionIdError", "NestedWorkerLaunchError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Caller MUST NOT bear SubtaskWorkerRole (subtask workers are strictly forbidden from spawning nested child sessions).",
+          "origin MUST be one of {'terminal', 'web', 'worker', 'schedule', 'channel'}.",
+          "session_id MUST be globally unique and not currently in 'running' state."
+        ],
+        "postconditions": [
+          "AgentSessionProcess is instantiated and enters 'running' state with associated SessionOriginState."
+        ],
+        "invariants": [
+          "A session process MUST be bound to exactly one AgentKernel and one AgentHarness."
+        ],
+        "side_effects": {
+          "initiates": "AgentSessionProcess",
+          "emits": ["SessionStepEvent"],
+          "produces": ["SessionTranscriptArtifact"]
+        }
+      }
+    },
+    {
+      "action_id": "record_session_step",
+      "parameters": ["session_id", "step_type", "payload_dict"],
+      "signature": {
+        "initiator_domain": "AgentKernel | HumanPrincipal",
+        "target_range": "AgentSessionProcess",
+        "input_types": {
+          "session_id": "str",
+          "step_type": "str",
+          "payload_dict": "dict"
+        },
+        "return_type": "dict",
+        "error_types": ["SessionNotFoundError", "SessionTerminatedError", "InvalidStepPayloadError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target AgentSessionProcess MUST exist and currently be in 'running' or 'awaiting_input' state.",
+          "step_type MUST be one of {'user', 'assistant', 'tool_call', 'tool_result', 'system'}."
+        ],
+        "postconditions": [
+          "An immutable SessionStepEvent is emitted and appended to the session timeline."
+        ],
+        "invariants": [
+          "SessionStepEvent history is append-only and strictly immutable; step indices monotonically increase."
+        ],
+        "side_effects": {
+          "emits": ["SessionStepEvent"],
+          "mutates": ["AgentSessionProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "yield_awaiting_input",
+      "parameters": ["session_id", "waiting_reason"],
+      "signature": {
+        "initiator_domain": "AgentKernel | CompanionJudgeRole",
+        "target_range": "AgentSessionProcess",
+        "input_types": {
+          "session_id": "str",
+          "waiting_reason": "str"
+        },
+        "return_type": "dict",
+        "error_types": ["SessionNotFoundError", "InvalidStateTransitionError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target AgentSessionProcess MUST currently be in 'running' state."
+        ],
+        "postconditions": [
+          "AgentSessionProcess transitions from 'running' to 'awaiting_input' state with explicit waiting reason recorded."
+        ],
+        "invariants": [
+          "Awaiting input state preserves all uncommitted turn artifacts and leaves the harness ready for human resumption."
+        ],
+        "side_effects": {
+          "mutates": ["AgentSessionProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "terminate_agent_session",
+      "parameters": ["session_id", "terminal_status", "summary"],
+      "signature": {
+        "initiator_domain": "AgentKernel | HumanPrincipal | CompanionJudgeRole",
+        "target_range": "AgentSessionProcess",
+        "input_types": {
+          "session_id": "str",
+          "terminal_status": "str",
+          "summary": "str | None"
+        },
+        "return_type": "dict",
+        "error_types": ["SessionNotFoundError", "IllegalTerminationStateError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target AgentSessionProcess MUST exist and NOT already be in a terminal state ('completed', 'error', 'cancelled').",
+          "terminal_status MUST be one of {'completed', 'error', 'cancelled'}."
+        ],
+        "postconditions": [
+          "AgentSessionProcess transitions to terminal_status and finalizes its SessionTranscriptArtifact."
+        ],
+        "invariants": [
+          "Once terminated, an AgentSessionProcess NEVER transitions back to 'running' or 'awaiting_input' state."
+        ],
+        "side_effects": {
+          "mutates": ["AgentSessionProcess"],
+          "produces": ["SessionTranscriptArtifact"]
+        }
+      }
+    },
+    {
+      "action_id": "adopt_existing_session",
+      "parameters": ["session_id", "agent_kernel_id", "origin", "initial_state", "already_registered", "relation_kind"],
+      "signature": {
+        "initiator_domain": "PrimarySchedulerRole | AgentKernel | CompanionJudgeRole",
+        "target_range": "AgentSessionProcess",
+        "input_types": {
+          "session_id": "str",
+          "agent_kernel_id": "str",
+          "origin": "str",
+          "initial_state": "str",
+          "already_registered": "bool",
+          "relation_kind": "str | None"
+        },
+        "return_type": "dict",
+        "error_types": ["SessionNotFoundError", "InvalidSessionOriginError"]
+      },
+      "contract": {
+        "preconditions": [
+          "Target AgentSessionProcess MUST NOT already be registered in the ontology store (adoption is only for pre-existing or externally launched sessions; a registered session MUST be read back, never re-adopted).",
+          "session_id MUST be a non-empty string.",
+          "origin MUST normalize to one of {'terminal', 'web', 'worker', 'schedule', 'channel'}.",
+          "Adoption NEVER invents a parent relation: relation_kind MUST be left empty so the adopted session is never mistaken for a dispatched worker."
+        ],
+        "postconditions": [
+          "AgentSessionProcess is instantiated with the observed kernel, origin and initial lifecycle state, and becomes visible to the session store."
+        ],
+        "invariants": [
+          "An adopted AgentSessionProcess NEVER acquires a dispatch/branch/handoff relation from this action alone; only an explicitly observed relation may be recorded elsewhere."
+        ],
+        "side_effects": {
+          "initiates": "AgentSessionProcess",
+          "mutates": ["AgentSessionProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "record_callback_delivery_outcome",
+      "parameters": ["job_id", "from_state", "to_state", "reason", "prior_delivery_state"],
+      "signature": {
+        "initiator_domain": "AgentKernel | SubtaskWorkerRole | PrimarySchedulerRole",
+        "target_range": "CallbackDeliveryProcess",
+        "input_types": {
+          "job_id": "str",
+          "from_state": "str",
+          "to_state": "str",
+          "reason": "str | None",
+          "prior_delivery_state": "str | None"
+        },
+        "return_type": "str",
+        "error_types": ["ActionContractError"]
+      },
+      "contract": {
+        "preconditions": [
+          "job_id MUST be a non-empty string.",
+          "from_state and to_state MUST both be CallbackDeliveryState allowed values.",
+          "(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed."
+        ],
+        "postconditions": [
+          "CallbackDeliveryProcess exhibits CallbackDeliveryState == to_state."
+        ],
+        "invariants": [
+          "Once delivered, a CallbackDeliveryProcess NEVER transitions out.",
+          "A CallbackDeliveryProcess NEVER reaches delivered without passing through delivering."
+        ],
+        "side_effects": {
+          "mutates": ["CallbackDeliveryProcess"]
+        }
+      }
+    },
+    {
+      "action_id": "finalize_dispatch_job",
+      "parameters": ["job_id", "exit_code", "delivery_state", "job_status", "prior_delivery_state"],
+      "signature": {
+        "initiator_domain": "AgentKernel | SubtaskWorkerRole | PrimarySchedulerRole",
+        "target_range": "CallbackDeliveryProcess",
+        "input_types": {
+          "job_id": "str",
+          "exit_code": "int | None",
+          "delivery_state": "str",
+          "job_status": "str",
+          "prior_delivery_state": "str | None"
+        },
+        "return_type": "str",
+        "error_types": ["ActionContractError"]
+      },
+      "contract": {
+        "preconditions": [
+          "job_status MUST be one of {'completed', 'failed'}.",
+          "job_status == 'completed' REQUIRES delivery_state == 'delivered' AND exit_code == 0."
+        ],
+        "postconditions": [
+          "The dispatch job records worker outcome (exit_code) and delivery outcome (delivery_state) as two separate fields."
+        ],
+        "invariants": [
+          "A dispatch job is NEVER recorded as completed while its CallbackDeliveryProcess is not delivered."
+        ],
+        "side_effects": {
+          "mutates": ["CallbackDeliveryProcess"]
         }
       }
     },

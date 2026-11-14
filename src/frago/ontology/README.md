@@ -101,8 +101,23 @@ $$\text{入参 (Parameters)} \subset \text{签名 (Signature)} \subset \text{契
 ### 2.1 [`frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) 的核心定位：驱动 Python 运行时的原始数据模型
 
 [`src/frago/ontology/frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) 不是静态说明文档，而是驱动 `frago` 本体包构建 Python 类、关系签名与动作契约的**唯一原始数据源**：
-- [`DomainClassRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L71-L269) 在启动时直接读取 `frago.json`，将其中声明的全部 **63 个领域类**动态编译为强类型的 [`OntologyEntity`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L96-L154) 子类，自动注入 `OntoClean` 刚性标记、状态机合法状态集、`QualityState` 允许取值集合以及 `Role`/`Capability` 宿主约束。
-- [`build_relations_from_schema()`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py#L294-L343) 直接从 `frago.json` 的 `relation_signatures` 构建全部 **10 条一等公民关系签名**及其逆关系。
+- [`DomainClassRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L71-L269) 在启动时直接读取 `frago.json`，将其中声明的全部 **69 个领域类（11 个分组）**动态编译为强类型的 [`OntologyEntity`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L96-L154) 子类，自动注入 `OntoClean` 刚性标记、状态机合法状态集、`QualityState` 允许取值集合以及 `Role`/`Capability` 宿主约束。
+- [`build_relations_from_schema()`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py#L294-L343) 直接从 `frago.json` 的 `relation_signatures` 构建全部 **12 条一等公民关系签名**及其逆关系。
+
+> **本节所有规模数字均为实测值，随时可复算**（2026-11-13 工作区，`ontology_version` = `1.2.0`）：
+> ```bash
+> uv run python -c "
+> from frago.ontology.introspection import OntologyIntrospector
+> i = OntologyIntrospector(); s = i.schema
+> print('integrity:', i.validate_schema_integrity())
+> print('domain_classes:', sum(len(v) for v in s['domain_classes'].values()), '/ groups:', len(s['domain_classes']))
+> print('relation_signatures:', len(s['relation_signatures']))
+> print('kinetic_action_contracts:', len(s['kinetic_action_contracts']))
+> print('defined_classes:', len(s['defined_classes']))
+> "
+> # integrity: []  domain_classes: 69 / groups: 11  relation_signatures: 12
+> # kinetic_action_contracts: 16  defined_classes: 4
+> ```
 
 ---
 
@@ -172,9 +187,22 @@ flowchart TD
 
 ---
 
-### 2.4 五根支柱、26 个子系统与 63 个领域类全景映射表
+### 2.4 五根支柱、26 个子系统与 69 个领域类全景映射表
 
-[`frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) 将 `src/frago/` 下全部 26 个子系统目录映射到 11 个超类路径下的 **63 个领域类**（含 `CallerZoneRole` 的 3 个子角色与 `TeamPeerRole` 的 2 个子角色）：
+[`frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) 将 `src/frago/` 下全部 26 个子系统目录映射到 11 个超类路径分组下的 **69 个领域类**（含 `CallerZoneRole` 的 3 个子角色与 `TeamPeerRole` 的 2 个子角色）：
+
+| 分组 | 超类路径 | 类数 | 刚性 |
+|---|---|---|---|
+| （1） | `Continuant.IndependentContinuant.Actor` | 2 | `+R` |
+| （2） | `Continuant.IndependentContinuant.Resource` | 14 | `+R` |
+| （3） | `Continuant.DependentContinuant.Role` | 6 | `~R` |
+| （4a） | `Continuant.DependentContinuant.Capability` | 4 | `~R` |
+| （4b） | `Continuant.DependentContinuant.QualityState` | 6 | `~R` |
+| （5） | `Occurrent.Process` | 12 | `+R` |
+| （6） | `Occurrent.Event` | 6 | `+R` |
+| （7） | `NormativeEntity`（`RulePolicy` 6 + `Contract` 2 + `Specification` 3） | 11 | `+R` |
+| （8） | `InformationEntity` | 8 | `+R` |
+| **合计** | 11 个分组 | **69** | — |
 
 #### （1）独立延续体 · 主体（`Continuant.IndependentContinuant.Actor`，共 2 类，刚性 `+R`）
 
@@ -183,7 +211,7 @@ flowchart TD
 | `AgentKernel` | 底座与边界 | `claude \| codex \| opencode \| agy \| coreagent` | `session/models.py`、`agent_driver/`、`bin/` | 外部或内置智能体内核本体，不内嵌会话状态与 Tmux 句柄 |
 | `HumanPrincipal` | 跨层底座 | `local_machine_owner \| user_account_id \| team_member_uuid \| anonymous_peer` | `server/identity.py`、`team/state.py`、`cli/user_commands.py` | 与 `frago` 交互的自然人主体（本机主人、登录账号、结对成员、匿名访问者） |
 
-#### （2）独立延续体 · 资源（`Continuant.IndependentContinuant.Resource`，共 13 类，刚性 `+R`）
+#### （2）独立延续体 · 资源（`Continuant.IndependentContinuant.Resource`，共 14 类，刚性 `+R`）
 
 | 类名 `class_id` | 所属支柱 | 同一性判据 | 映射代码位置 | 核心语义 |
 |---|---|---|---|---|
@@ -200,18 +228,20 @@ flowchart TD
 | `KnowledgeDomain` | 3. 记忆与召回 | `domain_name` | `def_/registry.py`、`cli/def_commands.py` | `frago def` 注册的结构化知识域（`~/.frago/books/<domain>/`） |
 | `CommunicationChannel` | 5. 边界 | `feishu \| slack \| email \| team_relay` | `team/relay.py`、`cli/channel_commands.py`、`cli/reply_command.py` | 外部进件与回传渠道或结对中继服务器 |
 | `RemoteFragoNode` | 5. 边界 | `remote_node_name` | `cli/remote_commands.py` | 远端服务器上的另一台 `frago` 实例节点（`frago remote`） |
+| `EmployeePostResource` | 1. 固定员工 | `member_post_id` | `employee/store.py`、`cli/employee_commands.py` | 固定员工岗位编制资源（`+R`：岗位本身是刚性编制，不随某场会话生灭），是 `DomainEmployeeRole` 的宿主 |
 
-#### （3）依附延续体 · 角色（`Continuant.DependentContinuant.Role`，共 5 主类 + 5 子角色 = 10 类，反刚性 `~R`）
+#### （3）依附延续体 · 角色（`Continuant.DependentContinuant.Role`，共 6 类，含 5 个子角色，反刚性 `~R`）
 
 | 类名 `class_id` | 宿主 `bearer_type` | 作用域 `context_type` | 子角色 `subroles` | 核心语义 |
 |---|---|---|---|---|
+| `DomainEmployeeRole` | `AgentKernel` | `EmployeePostResource` | — | 领域员工角色：内核在某固定岗位编制下扮演的领域自治角色，随上岗/卸岗生灭 |
 | `PrimarySchedulerRole` | `AgentKernel` | `AgentSessionProcess` | — | 主控调度角色（PA）：拆解任务、接管自然语言定时与外部进件、调度子任务与配方 |
 | `SubtaskWorkerRole` | `AgentKernel` | `AgentSessionProcess` | — | 子任务执行角色（Worker）：完成有界子任务并交回产物，禁止套娃拉起下级会话 |
 | `CompanionJudgeRole` | `AgentKernel` | `HookEvaluationProcess` | — | 会话伴侣裁决角色（LightAgent）：在提交前、收尾时、否决前与命令审计时执行判读 |
 | `CallerZoneRole` | `HumanPrincipal \| AgentKernel` | `HttpRequestProcess` | `OwnerCallerRole`、`SignedInVisitorRole`、`AnonymousVisitorRole` | 请求方在单次访问上下文中的权限角色（主人身份由请求来源动态赋予） |
 | `TeamPeerRole` | `HumanPrincipal \| AgentKernel` | `TeamPairingScope` | `InitiatorSideARole`、`JoinerSideBRole` | 结对协作中的 A 侧/B 侧队友角色，随连接码绑定生效、随解绑消亡 |
 
-#### （4）依附延续体 · 能力与状态属性（`Capability` 4 类 + `QualityState` 3 类，反刚性 `~R`）
+#### （4）依附延续体 · 能力与状态属性（`Capability` 4 类 + `QualityState` 6 类，反刚性 `~R`）
 
 | 分类 | 类名 `class_id` | 宿主 `bearer_type` | 允许取值 / 能力项 | 核心语义 |
 |---|---|---|---|---|
@@ -220,14 +250,18 @@ flowchart TD
 | `Capability` | `ExternalCommandCapability` | `RecipeModule` | `uses_commands`、`uses_frago_cli` | 配方声明调用外部系统命令或平台 CLI 的受控越界能力切面 |
 | `Capability` | `GlobalHotkeyCapability` | `MachineRuntimeConfig` | 全局热键绑定 | 桌面端全局快捷键唤醒能力切面（`hotkey/`） |
 | `QualityState` | `SecurityZoneState` | `CallerZoneRole` | `local`、`public`、`identity`、`token` | 安全网关对每个请求判定的唯一互斥安全区状态（`server/security.py`） |
-| `QualityState` | `SessionOriginState` | `AgentSessionProcess` | `terminal`、`web`、`worker`、`unknown` | 会话实例的发起源状态（决定工作台左栏过滤与回收归属） |
+| `QualityState` | `SessionOriginState` | `AgentHarness \| AgentSessionProcess` | `terminal`、`web`、`worker`、`schedule`、`channel`、`unknown` | 会话实例的发起源状态（决定工作台左栏过滤与回收归属） |
+| `QualityState` | `SessionLifecycleState` | `AgentSessionProcess \| AgentHarness` | `queued`、`running`、`awaiting_input`、`completed`、`error`、`cancelled` | 会话当前生命周期运行态属性层，受状态机跃迁约束（`session/store.py`、`session/service.py`） |
 | `QualityState` | `DesktopInstanceRuntimeState` | `VirtualDesktopStage` | `running`、`stopped`、`stale` | 虚拟桌面实例的易失运行态属性层，随启停覆写、绝不抹除宿主资源身份 |
+| `QualityState` | `CallbackDeliveryState` | `CallbackDeliveryProcess` | `queued`、`delivering`、`delivered`、`failed` | 异步回传报文的送达状态；`delivered` 为终态，且不得绕过 `delivering` 直接到达（详见 2.8 节） |
+| `QualityState` | `HarnessLifecycleState` | `AgentHarness` | `active`、`cooling`、`evictable`、`protected`、`terminated` | 物理承载实例在全域生命周期调度中的即时态（活跃/冷却宽限/可回收/守卫豁免/已销毁） |
 
-#### （5）发生体 · 持续过程（`Occurrent.Process`，共 11 类，刚性 `+R`，时间区间 `interval`）
+#### （5）发生体 · 持续过程（`Occurrent.Process`，共 12 类，刚性 `+R`，时间区间 `interval`）
 
 | 类名 `class_id` | 所属支柱 | 状态机状态集 `states` | 映射代码位置 | 核心语义 |
 |---|---|---|---|---|
-| `AgentSessionProcess` | 3. 记忆与召回 / 5. 边界 | `running`、`completed`、`error`、`cancelled` | `session/models.py`、`session/storage.py` | 一场有起止时间的 Agent 会话过程，产出 `SessionTranscriptArtifact` |
+| `AgentSessionProcess` | 3. 记忆与召回 / 5. 边界 | `queued`、`running`、`awaiting_input`、`completed`、`error`、`cancelled` | `session/models.py`、`session/storage.py` | 一场有起止时间的 Agent 会话过程，产出 `SessionTranscriptArtifact`（详见 2.8 节） |
+| `CallbackDeliveryProcess` | 3. 记忆与召回 / 5. 边界 | `queued`、`delivering`、`delivered`、`failed` | `session/async_dispatch.py`、`server/services/workbench_queue.py` | 一次异步派发结束后把回传报文送回发起方会话的过程，以派发单号 `job_id` 为全局稳定身份（详见 2.8 节） |
 | `HarnessTurnProcess` | 5. 边界 | `submitting`、`streaming`、`verifying_completion`、`ok`、`needs_input`、`timeout`、`error` | `agent_driver/tmux_session.py`、`kernel_backend.py` | Harness 驱动 Agent 执行单轮问答/干活的原子过程 |
 | `RecipeExecutionProcess` | 4. 配方 | `queued`、`isolating_view`、`running`、`succeeded`、`failed` | `recipes/runner.py`、`recipes/isolation.py` | 配方在受限文件视图中绑定特定用户身份与数据槽位的一次运行过程 |
 | `SupervisedDaemonProcess` | 4. 配方 | `starting`、`running`、`restarting`、`stopped`、`failed` | `recipes/background.py`、`cli/daemon_commands.py` | 声明了 `daemon: true` 的常驻守护配方过程（`frago daemon`） |
@@ -281,13 +315,13 @@ flowchart TD
 
 ---
 
-### 2.5 十条一等公民关系签名表（[`relations.py`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py)）
+### 2.5 十二条一等公民关系签名表（[`relations.py`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py)）
 
 | 正向谓词 `name` | 定义域 `domain` | 值域 `range` | 逆谓词 `inverse` | 代数公理 `algebraic_properties` | 业务语义 |
 |---|---|---|---|---|---|
 | `plays_role` | `IndependentContinuant` | `Role` | `borne_by` | `asymmetric`、`irreflexive` | 刚性主体或资源在特定作用域中动态挂载反刚性角色 |
 | `has_capability` | `IndependentContinuant` | `Capability` | `capability_of` | `asymmetric` | 主体或资源声明其可被调用的能力切面 |
-| `exhibits_state` | `Continuant` | `QualityState` | `state_of` | `functional` | 延续体在当前时间切片呈现唯一函数性状态或安全区属性 |
+| `exhibits_state` | `Continuant \| Occurrent` | `QualityState` | `state_of` | `functional` | 实体（延续体**或发生体过程**）在当前时间切片呈现唯一函数性状态、来源或生命周期属性（放宽理由见 2.9 节） |
 | `hosted_on_harness` | `Actor` | `Resource` | `hosts_actor` | `asymmetric` | `AgentKernel` 挂载于具体 `AgentHarness` 之上运行 |
 | `initiates` | `Actor \| Role` | `Process` | `initiated_by` | `asymmetric` | 主体或角色拉起一个持续过程 |
 | `governed_by` | `Process \| Role \| NormativeEntity` | `NormativeEntity` | `governs` | `asymmetric` | 过程、角色或动作受规范体约束 |
@@ -295,6 +329,8 @@ flowchart TD
 | `emits` | `Process` | `Event` | `emitted_by` | `asymmetric`、`irreflexive` | 持续过程在时间点上发射不可变的瞬时事件 |
 | `produces` | `Process` | `InformationEntity` | `produced_by` | `asymmetric` | 持续过程产出信息制品 |
 | `depends_on_module` | `Resource \| NormativeEntity` | `Resource \| NormativeEntity` | `depended_on_by` | `transitive`、`irreflexive` | 模块或配方间的有向依赖，自动计算传递闭包并阻断循环依赖 |
+| `delivers_to_session` | `Process` | `Process` | `receives_callback_from` | `asymmetric` | 回传送达过程把报文送进发起方会话过程（`CallbackDeliveryProcess` → `AgentSessionProcess`），是异步回调本体的核心边 |
+| `dispatched_from_worker` | `Process` | `Process` | `dispatches_callback` | `asymmetric` | 回传送达过程由执行方 worker 会话过程发起，保留「谁执行、谁回报」的因果链 |
 
 ---
 
@@ -309,15 +345,168 @@ flowchart TD
 
 ---
 
-### 2.7 五大核心动能层动作契约（[`runtime.py`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py)）
+### 2.7 十六条核心动能层动作契约（[`runtime.py`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py)）
+
+`frago.json` 的 `kinetic_action_contracts` 共登记 **16 条**动作契约，按业务域分四组：
+
+#### （a）底座与桌面（3 条，2026-10-27 框架地基）
 
 | 动作契约 `action_id` | 发起方定义域 `initiator_domain` | 目标值域 `target_range` | 核心前置条件与不变量护栏 |
 |---|---|---|---|
 | `drive_agent_turn` | `PrimarySchedulerRole \| HumanPrincipal` | `AgentHarness` | 严禁 `SubtaskWorkerRole` 套娃发起；`ApiProfile` 密钥严禁拼入命令行；遇到 `_AUTH_WALL` 或 0 字符异常完成强制降级为 `needs_input` 或 `error`，严禁伪报 `ok` |
 | `control_desktop_stage` | `AgentKernel \| HumanPrincipal \| PrimarySchedulerRole` | `VirtualDesktopStage` | 强制校验 `content_id == sha256(instance_id)[:12]`；拒绝 `content_id` 不匹配的 `foreign_clients` 覆盖布局；`stop` 仅改运行态为 `stopped`、保留注册表身份 |
+| `reply_to_inbound_channel` | `PrimarySchedulerRole \| AgentKernel` | `CommunicationChannel` | 回传渠道 `channel_id` 必须与进件消息来源渠道严格一致；回传正文严禁包含密钥或私钥字符串 |
+
+#### （b）配方与权限（2 条）
+
+| 动作契约 `action_id` | 发起方定义域 `initiator_domain` | 目标值域 `target_range` | 核心前置条件与不变量护栏 |
+|---|---|---|---|
 | `execute_recipe_mode` | `CallerZoneRole \| AgentKernel` | `RecipeModule` | 访客调用 `@action` 必须经 `RecipeExposurePolicy` 显式授权；`reads_common` 必须通过目标配方 `shares` 双向握手；`uses_commands` 必须具备 `CommandGrantAuditedEvent`；`@export` 严禁写数据槽位 |
 | `execute_state_mutating_operation` | `AgentKernel` | `Resource \| NormativeEntity` | 改状态动作必须绑定当轮明示指令或 `HumanDecisionReceipt`（且操作与目标落在 `effect` 字面范围内）；结对队友请求在 `change == 'ask'` 时必须先获本机主人回执；红线操作无条件拒绝 |
-| `reply_to_inbound_channel` | `PrimarySchedulerRole \| AgentKernel` | `CommunicationChannel` | 回传渠道 `channel_id` 必须与进件消息来源渠道严格一致；回传正文严禁包含密钥或私钥字符串 |
+
+#### （c）固定员工（2 条）
+
+| 动作契约 `action_id` | 发起方定义域 `initiator_domain` | 目标值域 `target_range` | 核心前置条件与不变量护栏 |
+|---|---|---|---|
+| `invoke_domain_employee` | `HumanPrincipal \| PrimarySchedulerRole \| DomainEmployeeRole \| RecipeModule` | `EmployeePostResource \| DomainEmployeeRole` | 被调用岗位必须在编；调用方需带 `caller_context_id` 以界定本轮授权范围 |
+| `govern_employee_domain_assets` | `DomainEmployeeRole` | `KnowledgeDomain \| RecipeModule \| DataSlot \| ScheduleRuleSpec` | 领域员工只能治理本岗位领地内的资产；`asset_kind` 与 `target_asset_id` 必须落在岗位编制登记范围内 |
+
+#### （d）会话与回调投递（7 条，含本次新增 `adopt_existing_session`）
+
+| 动作契约 `action_id` | 发起方定义域 `initiator_domain` | 目标值域 `target_range` | 核心前置条件与不变量护栏 |
+|---|---|---|---|
+| `launch_agent_session` | `HumanPrincipal \| PrimarySchedulerRole \| DomainEmployeeRole` | `AgentSessionProcess` | `agent_kernel_id` 必须归一后落在五内核闭集内（`claude-code` 归一到 `claude`，其余拼错一律拒）；`origin` 必须落在合法闭集内 |
+| `adopt_existing_session` | `PrimarySchedulerRole \| AgentKernel \| CompanionJudgeRole` | `AgentSessionProcess` | **补档只给 `frago` 没开过的会话**：目标不得已在册、`session_id` 非空、`origin` 归一后合法、**补档一律不得编造父子关系**（`relation_kind` 必须为空）；不变量：补档时不得进入终态（`completed`/`error`/`cancelled`）。「在不在册」由调用方以 `already_registered` 明说，函数体再与存储对账 |
+| `record_session_step` | `AgentKernel \| HumanPrincipal` | `AgentSessionProcess` | 单步事实追加不可变；`step_type` 必须落在 `user`/`assistant`/`tool_call`/`tool_result`/`system` 闭集内 |
+| `yield_awaiting_input` | `AgentKernel \| CompanionJudgeRole` | `AgentSessionProcess` | 转入 `awaiting_input` 必须附 `waiting_reason`；严禁在终态会话上再让出 |
+| `terminate_agent_session` | `AgentKernel \| HumanPrincipal \| CompanionJudgeRole` | `AgentSessionProcess` | `terminal_status` 必须是终态之一；已在终态的会话不得重复收尾 |
+| `record_callback_delivery_outcome` | `AgentKernel \| SubtaskWorkerRole \| PrimarySchedulerRole` | `CallbackDeliveryProcess` | 调用方**必须注入**从持久化派发单读到的 `prior_delivery_state`（本体层不读盘）；未注入 = 判据不成立 = 动作被拒；跃迁必须合法（`delivered` 为终态，不得绕过 `delivering` 直达） |
+| `finalize_dispatch_job` | `AgentKernel \| SubtaskWorkerRole \| PrimarySchedulerRole` | `CallbackDeliveryProcess` | 派发单记为 `completed` 的前提是送达过程处于 `delivered`；同样要求注入 `prior_delivery_state`；任务单不存在时由 `async_dispatch.py` 函数体显式抛 `ActionContractError` |
+
+#### （e）Harness 生命周期（2 条）
+
+| 动作契约 `action_id` | 发起方定义域 `initiator_domain` | 目标值域 `target_range` | 核心前置条件与不变量护栏 |
+|---|---|---|---|
+| `probe_harness_lifecycle` | `PrimarySchedulerRole \| CompanionJudgeRole` | `AgentHarness` | 只读探针：按 `harness_id` + `now_ts` 算出即时态（`active`/`cooling`/`evictable`/`protected`/`terminated`），不改变任何持久状态 |
+| `reclaim_harness` | `PrimarySchedulerRole` | `AgentHarness` | 只有 `evictable` 的承载实例才可回收；命中六道安全守卫（`protected`）一律拒；回收前必须确认该槽位无活跃会话 |
+
+**合计：3 + 2 + 2 + 7 + 2 = 16 条**（`ontology_version` = `1.2.0`）。
+
+---
+
+### 2.8 会话、回调投递与 Harness 生命周期三块本体（v1.2.0 新增）
+
+这三块是 2026-11-08 之后逐块走完四道闸并入主线的垂直切面，此前只存在于分散方案文档中，本节给出当前有效口径。
+
+#### 2.8.1 会话本体（Session Ontology）
+
+| 实体 | 超类与刚性 | 身份判据 | 职责边界 |
+|---|---|---|---|
+| `AgentSessionProcess` | `Occurrent.Process`（`+R`） | `session_id`（全局稳定唯一） | 一场有起止时间的会话过程。**注意：它是 `Process` 的有意别名**（注册表按 `process_kind` 记住具体类别）；判「这是不是一场会话」要用 `process_kind`，不要拿别名做第二套类型判断 |
+| `SessionLifecycleState` | `QualityState`（`~R`） | 宿主 `AgentSessionProcess \| AgentHarness` | 当前运行态：`queued → running → awaiting_input → completed/error/cancelled`，受状态机跃迁约束 |
+| `SessionOriginState` | `QualityState`（`~R`） | 宿主 `AgentHarness \| AgentSessionProcess` | 发起源：`terminal`/`web`/`worker`/`schedule`/`channel`/`unknown`，决定工作台左栏过滤与回收归属 |
+| `SessionStepEvent` | `Occurrent.Event`（`+R`） | 因果指纹 | 不可篡改的单步事实（`user`/`assistant`/`tool_call`/`tool_result`/`system`） |
+| `SessionTranscriptArtifact` | `InformationEntity`（`+R`） | `session_id` | 双库备份的会话轨迹文件，`frago session search` 的底层 |
+
+**五个动作契约**：`launch_agent_session`、`adopt_existing_session`、`record_session_step`、`yield_awaiting_input`、`terminate_agent_session`。五个动作在 `session/service.py` 全部挂 `@ontological_action`，契约在 import 期由 `OntologyIntrospector()` 从 `frago.json` 建好；不再用手写 `if` 校验。
+
+**存储职责边界**：`session/store.py` 负责持久化（`SessionOntologyRecord` 与双账本读写），`session/service.py` 负责动作与契约护栏。**双账本（`session-ontology-store.json` 本体存储 + `agent-launches.json` 老账本）的长期合并方案尚未落地**——本次只做了「锁外写」的短期收口，两把锁仍未合并。
+
+**切流现状（必须记住）**：`SessionOntologyService` 的消费方目前只有 `session/stream.py`；`employee/ledger.py` 与前端（`SessionRail.tsx`、`server/routes/workbench.py`）**尚未切流**，仍在判二元 `origin === 'worker'`。
+
+#### 2.8.2 回调投递本体（Callback Delivery Ontology）
+
+| 实体 | 超类与刚性 | 身份判据 | 职责边界 |
+|---|---|---|---|
+| `CallbackDeliveryProcess` | `Occurrent.Process`（`+R`） | 派发单号 `job_id` | 一次异步派发结束后，把回传报文送回发起方会话的过程；引用发起方会话（`caller_session_id`）与执行方会话（`worker_session_id`） |
+| `CallbackDeliveryState` | `QualityState`（`~R`） | 宿主 `CallbackDeliveryProcess` | 送达状态：`queued`（已入队）/`delivering`（送达中）/`delivered`（已落进发起方会话记录）/`failed`（最终送不到） |
+
+**合法跃迁**：`queued → delivering → delivered`；`delivering → queued`（本次注入失败放回队首）；`delivering → failed`、`queued → failed`。**`delivered` 为终态，且不得绕过 `delivering` 直接到 `delivered`。**
+
+**核心不变量**：**worker 执行结果（`exit_code`）与本过程的送达状态是两个独立维度**——干活成功不等于回传成功，回传成功也不代表干活成功。派发单记为 `completed` 的前提是本过程处于 `delivered`。
+
+**两条契约与挂载点**：`record_callback_delivery_outcome` / `finalize_dispatch_job` 挂在 `session/async_dispatch.py`（`@ontological_action` 挂载点）。本体层已恢复纯函数：这两条契约的前置条件要求调用方**注入** `prior_delivery_state`，**本体层绝不读盘**（不注入 = 判据不成立 = 动作被拒）；「任务单必须存在」这条判据下沉到 `async_dispatch.py` 函数体。
+
+#### 2.8.3 Harness 生命周期本体（Harness Lifecycle Ontology）
+
+| 实体 | 超类与刚性 | 身份判据 | 职责边界 |
+|---|---|---|---|
+| `AgentHarness` | `Resource`（`+R`） | `harness_id`（`tmux_pane_target` \| `kernel_subprocess_slot`） | 承载 `AgentKernel` 运行的物理执行底座 |
+| `HarnessLifecycleState` | `QualityState`（`~R`） | 宿主 `AgentHarness` | 全域生命周期调度中的即时态：`active`（活跃忙碌）/`cooling`（冷却宽限期）/`evictable`（可安全回收）/`protected`（命中守卫保护豁免）/`terminated`（已关闭销毁） |
+
+**两条契约**：`probe_harness_lifecycle`（只读探针，按 `harness_id` + `now_ts` 算即时态）与 `reclaim_harness`（只有 `evictable` 可回收，命中六道安全守卫一律拒）。**六道安全守卫的职责边界**：守卫命中即置 `protected`，`reclaim_harness` 无条件拒绝回收；守卫用于保护正在运行、刚被投喂、有未读回传、处于人工审查窗口、被显式钉住、以及属于池外实例（`TmuxCoreProcess` 拉起的独立 tmux 会话）的槽位。
+
+> **已知缺口（待后续演进）**：`stop_session_run` 里仍有 `sid.startswith("core_")` 前缀兜底，用于保护池外 CoreAgent 实例。消掉它需要给适配器注册表加一个「按编号问归属」的反向索引，属独立架构改动。
+
+---
+
+### 2.9 `exhibits_state` 定义域放宽：`Continuant` → `Continuant | Occurrent`
+
+**这是 v1.2.0 的一条实质性公理调整，必须记住原因。**
+
+- **放宽前**：`exhibits_state` 的定义域是 `Continuant`——只有延续体（主体、资源、角色、能力）能通过函数性边挂状态。
+- **放宽后**：定义域为 `Continuant | Occurrent`，**发生体过程也可以挂状态**。
+- **架构原因**：`SessionLifecycleState`（宿主 `AgentSessionProcess`）与 `CallbackDeliveryState`（宿主 `CallbackDeliveryProcess`）这两个新引入的状态属性，宿主都是**过程**而非延续体。若不放宽，会话运行态与回传送达态就无法建模为受状态机约束的一等 `QualityState`，只能退回「过程对象里塞一个 `status` 字符串字段」的实现视角——那正是 `agent-ontology-granularity` 明令禁止的「往大类塞嵌套字段」。
+- **约束（放宽的同时必须守住）**：
+  1. **`functional` 公理不变**——一个实体在当前时间切片仍只能呈现唯一状态，同一宿主不得同时挂两个同类型 `QualityState`。
+  2. **值域不变**，仍是 `QualityState`（`~R` 依附体），过程本身仍是 `+R`；放宽的只是「谁能当宿主」，不是「状态是什么」。
+  3. **过程的状态必须受状态机跃迁约束**（`states` 合法闭集 + `transition_to()`），不得自由赋值。
+  4. 新增过程状态属性时必须走完四道准入闸，`exhibits_state` 不是绕过闸门的捷径。
+
+---
+
+### 2.10 方案索引与当前有效口径
+
+**本手册的规模数字与契约清单是「当前有效口径」的唯一出处；方案文档的权威基准在 `~/.frago/data/frago-dev/20261113-ontology-baseline/baseline.md`。**
+
+`frago` 本体框架从 2026-10-26 到 2026-11-13 累计产生 **11 份分散在 `~/.frago/data/` 下的过程文档**。它们记录的是「当时怎么定的、为什么那样定」，**不是「现在以哪份为准」**。新会话开工前请按下面两条路径取口径，不要逐个目录翻：
+
+| 你要什么 | 去哪里 |
+|---|---|
+| 当前规模、契约清单、切面数、公理调整 | **本手册（`README.md`）**，数字均可按 2.1 节命令复算 |
+| 框架基准、方案演进史、哪些已落地/已废弃 | `~/.frago/data/frago-dev/20261113-ontology-baseline/baseline.md` |
+| 11 份历史方案逐份定性归位 | `~/.frago/data/frago-dev/20261113-ontology-baseline/plan-index.md` |
+| 结论层快查（已沉淀的知识条目） | `frago frago-dev find -- --name=ontology-plan-index` |
+
+**三份旧基线**（各自职责边界，其余 8 份是阶段执行记录与对抗式审计）：
+
+1. **本体框架基准** = `20261026-proactive-employee-product-report/report.md`（2026-10-27 正交本体定稿版：定顶层切分与 Employee/Role/Actor 落位）+ **本手册**（定三轴公理、元公理、真源与投影纪律）。**两份合起来才是框架基准。**
+2. **Agent 内核本体基准** = `20261108-agent-ontology-design/notebook.md`（主干：六切面 + 四级能力 + 三级降级链）+ `20261109-ontology-busy-probe/notebook.md`（只补了切面数量：+`busy_probe`）。
+3. **Session 本体基准** = `20261110-ontology-migration-progress-and-next/notebook.md`（六个实体 + 四道闸规划）+ `20261111-agy-workbench-stream-bridge-fix/ontology-audit-report.md`（适配器契约与状态流转合流路径）。
+
+**第 11 个槽位 `~/.frago/data/frago/20261113-anchor-backfill/` 是备份目录，不是方案**：只有两个 `.bak` 快照（`agent-launches.json.bak` / `session-ontology-store.json.bak`），**两份 `.bak` 各自缺失 33 条 `anchor` 与 1 条 `closed_at`，比生产账本少 19 条会话，绝不能作为恢复源、更不可覆写生产账本**（详见 `report-E-ledger-forensics-and-recovery.md`）。
+
+---
+
+### 2.11 七大切面与三级降级链（`AgentKernel.orthogonal_facets`）
+
+`AgentKernel` 是刚性主体（`+R`），但它**不内嵌任何会话状态或终端句柄**；异构内核的差异一律收敛为**七条彼此正交的能力切面**，声明在 `frago.json` 的 `AgentKernel.orthogonal_facets`，与 [`projectors.py`](file:///home/yammi/repos/frago/src/frago/ontology/projectors.py#L93-L101) 的 `AGENT_ORTHOGONAL_FACETS` 逐字一致：
+
+| # | 切面 `facet` | 追问什么 | 备注 |
+|---|---|---|---|
+| 1 | `identity_probe` | 怎么认出这是哪个内核、哪个二进制？ | 2026-11-08 定稿 |
+| 2 | `lifecycle_action` | 怎么拉起、投喂、中断、收尾一场会话？ | 2026-11-08 定稿 |
+| 3 | `transcript_sync` | 会话转录从哪读、怎么对齐？ | 2026-11-08 定稿 |
+| 4 | `awaiting_input_probe` | 怎么判断它正等着人类输入？ | 2026-11-08 定稿 |
+| 5 | `busy_probe` | **怎么判断它此刻正忙？** | **2026-11-09 追加，切面数由六变七** |
+| 6 | `context_watermark` | 上下文用量水位到哪了？ | 2026-11-08 定稿 |
+| 7 | `hook_injection` | 钩子事件怎么注入、怎么消费？ | 2026-11-08 定稿 |
+
+> **口径修正留档**：2026-11-08 的最初方案（`20261108-agent-ontology-design/notebook.md`）通篇写「**六大**正交能力切面」，2026-11-09 的忙碌探针方案追加了 `busy_probe` 成为**七大**，提交 `11b58c67` 的标题也已写「七大」。**当前有效口径是七大切面**；读旧方案时按「六大 = 缺 `busy_probe` 的过期口径」理解。
+
+**四级能力声明**（`capability_levels`）：`native`（原生精确支持）、`adapted`（驱动适配支持）、`fallback`（通用启发式兜底）、`unsupported`（显式不支持）。五个内核（`claude`/`codex`/`opencode`/`agy`/`coreagent`）在七切面上各有一格取值，全矩阵以常量形式存在于 `projectors.py` 的 `AGENT_CAPABILITY_MATRIX`。
+
+**三级降级链**（禁止静默退化）：
+
+```mermaid
+flowchart LR
+    L1["Level 1 · 专属探针<br/>native / adapted<br/>直接读内核权威信号"] --> L2["Level 2 · 通用启发式兜底<br/>fallback<br/>屏面匹配 + 静默时长 + 末条发言"]
+    L2 --> L3["Level 3 · 显式结构化告知<br/>unsupported<br/>明确告知消费方『判不出』"]
+```
+
+**铁律**：业务消费方 **NEVER 出现「判不出就返回空」的静默退化**——判不出必须显式走到 Level 3 并结构化告知，让上层能区分「确实没有」与「我不知道」。
+
+> **已知缺口（待后续演进）**：方案承诺的 `frago agent ontology-matrix` 自省命令**从未实现**（`cli/` 下无匹配）。能力矩阵目前只能以常量形式核对，没有一键核对「代码是否跟上本体」的入口。
 
 ---
 
@@ -329,15 +518,15 @@ flowchart TD
 
 | 文件路径 | 核心类与函数 | 模块职责说明 |
 |---|---|---|
-| [`frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) | 3 条正交轴、4 大超类、10 条关系、63 个领域类、4 个定义类、5 个动作契约 | `frago` Agent OS 操作型本体的唯一原始数据模型（v1.1.0） |
+| [`frago.json`](file:///home/yammi/repos/frago/src/frago/ontology/frago.json) | 3 条正交轴、4 大超类、12 条关系、69 个领域类（11 分组）、4 个定义类、16 个动作契约 | `frago` Agent OS 操作型本体的唯一原始数据模型（v1.2.0） |
 | [`metamodel.py`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py) | [`OntologyEntity`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L96-L154)、[`Continuant`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L157-L162)、[`Occurrent`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L261-L266)、[`NormativeEntity`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L343-L370)、[`InformationEntity`](file:///home/yammi/repos/frago/src/frago/ontology/metamodel.py#L397-L421) | 四大超类、OntoClean 刚性继承校验器、同一性判据、状态机跃迁与不可变护栏 |
 | [`relations.py`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py) | [`RelationSignature`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py#L51-L82)、[`OntologyGraph`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py#L100-L246)、[`build_relations_from_schema()`](file:///home/yammi/repos/frago/src/frago/ontology/relations.py#L294-L343) | 一等公民关系签名、定义域/值域检查、逆关系自动派生、函数性/非对称性/反自反性/传递闭包图谱引擎 |
 | [`contracts.py`](file:///home/yammi/repos/frago/src/frago/ontology/contracts.py) | [`DefinedClass`](file:///home/yammi/repos/frago/src/frago/ontology/contracts.py#L50-L68)、[`ActionSignature`](file:///home/yammi/repos/frago/src/frago/ontology/contracts.py#L87-L133)、[`OntologicalActionContract`](file:///home/yammi/repos/frago/src/frago/ontology/contracts.py#L152-L263)、[`@ontological_action`](file:///home/yammi/repos/frago/src/frago/ontology/contracts.py#L238-L263) | 公理驱动分类器与「入参 ⊂ 签名 ⊂ 契约」三层同心圆防线执行器 |
 | [`introspection.py`](file:///home/yammi/repos/frago/src/frago/ontology/introspection.py) | [`OntologyIntrospector`](file:///home/yammi/repos/frago/src/frago/ontology/introspection.py#L44-L216)、[`load_ontology_schema()`](file:///home/yammi/repos/frago/src/frago/ontology/introspection.py#L30-L41) | 全图谱自省器：完整性校验、按支柱/超类/代码路径反查本体类、查询主体可执行动作契约 |
-| [`registry.py`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py) | [`DomainClassRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L71-L269)、[`DEFAULT_DOMAIN_REGISTRY`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L272) | 动态领域类编译器：将 `frago.json` 中的 63 个领域类编译为受 OntoClean 约束的 Python 子类 |
-| [`runtime.py`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py) | [`AgentTurnRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L223-L353)、[`DesktopStageLifecycleRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L384-L539)、[`CliActionRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L562-L674)、[`RecipeAndBoundaryRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L682-L923) | 三条核心建模主线与五大动作契约的零侵入运行时沙盒 |
+| [`registry.py`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py) | [`DomainClassRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L71-L269)、[`DEFAULT_DOMAIN_REGISTRY`](file:///home/yammi/repos/frago/src/frago/ontology/registry.py#L272) | 动态领域类编译器：将 `frago.json` 中的 69 个领域类编译为受 OntoClean 约束的 Python 子类 |
+| [`runtime.py`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py) | [`AgentTurnRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L223-L353)、[`DesktopStageLifecycleRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L384-L539)、[`CliActionRegistry`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L562-L674)、[`RecipeAndBoundaryRuntime`](file:///home/yammi/repos/frago/src/frago/ontology/runtime.py#L682-L923) | 三条核心建模主线与 16 条动作契约的零侵入运行时沙盒（**纯函数，无任何 I/O**：持久态一律由调用方注入） |
 | [`reasoning.py`](file:///home/yammi/repos/frago/src/frago/ontology/reasoning.py) | [`OntologyReasoner`](file:///home/yammi/repos/frago/src/frago/ontology/reasoning.py#L261-L476)、[`SparqlQuery`](file:///home/yammi/repos/frago/src/frago/ontology/reasoning.py#L229-L258)、[`serialize_graph_jsonl()`](file:///home/yammi/repos/frago/src/frago/ontology/reasoning.py#L194-L206)、[`merge_graph_snapshots()`](file:///home/yammi/repos/frago/src/frago/ontology/reasoning.py#L220-L226) | 跨会话 JSONL 图谱快照序列化、SPARQL 风格属性路径查询与多跳因果溯源引擎 |
-| [`projectors.py`](file:///home/yammi/repos/frago/src/frago/ontology/projectors.py) | [`FivePillarShadowProjector`](file:///home/yammi/repos/frago/src/frago/ontology/projectors.py#L844-L978) 及 14 个子系统投影函数 | 真实磁盘 JSON 字典（会话、虚拟桌面、配方、钩子、待办、知识域、结对、安全区等）到本体图谱的零侵入影子投影器 |
+| [`projectors.py`](file:///home/yammi/repos/frago/src/frago/ontology/projectors.py) | [`FivePillarShadowProjector`](file:///home/yammi/repos/frago/src/frago/ontology/projectors.py#L844-L978) 及 18 个子系统投影函数（含 `project_session_process_dict` / `project_callback_delivery_dict`） | 真实磁盘 JSON 字典（会话、虚拟桌面、配方、钩子、待办、知识域、结对、安全区等）到本体图谱的零侵入影子投影器；`AGENT_ORTHOGONAL_FACETS` 声明**七大切面** |
 
 ---
 

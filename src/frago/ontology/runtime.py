@@ -30,9 +30,11 @@ Layer: pure ontology runtime (imports only `frago.ontology.*` and Python stdlib)
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from frago.ontology.contracts import (
@@ -58,6 +60,8 @@ from frago.ontology.metamodel import (
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
 from frago.ontology.relations import OntologyGraph
 
+logger = logging.getLogger(__name__)
+
 _AUTH_WALL_PATTERN = re.compile(
     r"invalid\s+api\s+key|api\s+key.{0,24}(?:invalid|expired|revoked)"
     r"|unauthorized|authentication\s+failed|not\s+logged\s+in|invalidsubscription"
@@ -71,6 +75,117 @@ _SECRET_LEAK_PATTERN = re.compile(
     r"sk-ant-[a-zA-Z0-9_-]{8,}|ANTHROPIC_API_KEY\s*=|OPENAI_API_KEY\s*=|PRIVATE_KEY",
     re.IGNORECASE,
 )
+
+
+class SessionLifecycleState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_INPUT = "awaiting_input"
+    COMPLETED = "completed"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class SessionOriginState(StrEnum):
+    TERMINAL = "terminal"
+    WEB = "web"
+    WORKER = "worker"
+    SCHEDULE = "schedule"
+    CHANNEL = "channel"
+
+
+SESSION_VALID_KERNELS: tuple[str, ...] = (
+    "claude",
+    "codex",
+    "opencode",
+    "agy",
+    "coreagent",
+)
+
+SESSION_VALID_LIFECYCLE_STATES: tuple[str, ...] = tuple(s.value for s in SessionLifecycleState)
+SESSION_VALID_ORIGINS: tuple[str, ...] = tuple(s.value for s in SessionOriginState)
+
+#: ``AgentSessionProcess`` 在代码里的落点。``frago.json`` 把它登记为 ``Occurrent.Process``
+#: 下的独立领域类，但**类实体只有 ``Process`` 一个**：注册表按 ``class_id`` 建档、按
+#: ``process_kind`` 记住它具体是哪一类（``registry.create("AgentSessionProcess", ...)``
+#: 建出来的节点 ``process_kind`` 就是它）。所以这里是有意的别名，不是漏建的类——
+#: 判「这是不是一场会话」要用 ``process_kind`` 或 ``isinstance(x, Process)``，不要拿这个
+#: 别名去做第二套类型判断。真要给会话过程加独立行为时，才在 metamodel 里建独立子类。
+AgentSessionProcess = Process
+
+SESSION_STATE_ALIASES: Mapping[str, str] = {
+    "pending": "queued",
+    "waiting": "queued",
+    "in_progress": "running",
+    "active": "running",
+    "busy": "running",
+    "needs_input": "awaiting_input",
+    "awaiting": "awaiting_input",
+    "done": "completed",
+    "finished": "completed",
+    "succeeded": "completed",
+    "ok": "completed",
+    "failed": "error",
+    "fail": "error",
+    "stopped": "cancelled",
+    "aborted": "cancelled",
+}
+
+SESSION_ORIGIN_ALIASES: Mapping[str, str] = {
+    "cli": "terminal",
+    "term": "terminal",
+    "ui": "web",
+    "workbench": "web",
+    "subagent": "worker",
+    "subtask": "worker",
+    "cron": "schedule",
+    "timer": "schedule",
+    "feishu": "channel",
+    "slack": "channel",
+    "email": "channel",
+}
+
+
+def normalize_session_lifecycle_state(raw_state: str | None) -> str:
+    """Normalize raw session status string to canonical SessionLifecycleState enum."""
+    if not raw_state:
+        return "running"
+    s = str(raw_state).strip().lower()
+    if s in SESSION_VALID_LIFECYCLE_STATES:
+        return s
+    fallback = SESSION_STATE_ALIASES.get(s, "running")
+    if s not in SESSION_STATE_ALIASES:
+        # 认不出的状态不抛错（存量记录里存着历史写法，抛错会让整场会话读不出来），
+        # 但也不能悄没声地当 running：这里留一条痕迹，便于排查「状态为什么不对」。
+        logger.warning(
+            "Unknown session lifecycle state %r normalized to %r (allowed: %s)",
+            raw_state,
+            fallback,
+            sorted(SESSION_VALID_LIFECYCLE_STATES),
+        )
+    return fallback
+
+
+def normalize_session_origin(raw_origin: str | None, *, is_worker: bool = False) -> str:
+    """Normalize raw session source string to canonical SessionOriginState enum."""
+    if is_worker:
+        return "worker"
+    if not raw_origin:
+        return "terminal"
+    s = str(raw_origin).strip().lower()
+    if s in SESSION_VALID_ORIGINS:
+        return s
+    fallback = SESSION_ORIGIN_ALIASES.get(s, "terminal")
+    if s not in SESSION_ORIGIN_ALIASES:
+        # 同生命周期状态：非法出身不抛错，但把回落这件事记下来。出身判定直接决定
+        # 会话树挂在哪一层，静默回落成 terminal 会让人查不出「它怎么挂到这儿了」。
+        logger.warning(
+            "Unknown session origin %r normalized to %r (allowed: %s)",
+            raw_origin,
+            fallback,
+            sorted(SESSION_VALID_ORIGINS),
+        )
+    return fallback
 
 
 # ============================================================================
@@ -91,6 +206,7 @@ class AgentFivePartDecomposition:
     profile: Resource | None
     probe_capabilities: tuple[Capability, ...]
     graph: OntologyGraph
+    lifecycle_state: QualityState | None = None
 
 
 def decompose_agent_session(
@@ -129,14 +245,19 @@ def decompose_agent_session(
     )
     assert isinstance(role, Role)
 
+    norm_state = normalize_session_lifecycle_state(session_state)
     session_process = registry.create(
         "AgentSessionProcess",
         process_uid=f"session:{session_id}",
-        state=session_state,
+        state=norm_state,
     )
     assert isinstance(session_process, Process)
 
-    origin_value = "worker" if role_class_id == "SubtaskWorkerRole" else origin
+    origin_value = (
+        "worker"
+        if role_class_id == "SubtaskWorkerRole"
+        else normalize_session_origin(origin, is_worker=(role_class_id == "SubtaskWorkerRole"))
+    )
     origin_state = registry.create(
         "SessionOriginState",
         bearer_id=harness.ontological_id(),
@@ -145,11 +266,22 @@ def decompose_agent_session(
     )
     assert isinstance(origin_state, QualityState)
 
+    lifecycle_state: QualityState | None = None
+    if "SessionLifecycleState" in registry.classes:
+        lifecycle_state = registry.create(
+            "SessionLifecycleState",
+            bearer_id=session_process.ontological_id(),
+            context_id=f"session:{session_id}",
+            value=norm_state,
+        )
+        assert isinstance(lifecycle_state, QualityState)
+        g.link(session_process, "exhibits_state", lifecycle_state, replace_functional=True)
+
     resolved_uri = transcript_uri or f"~/.frago/sessions/{agent_family}/{session_id}/raw.jsonl"
     transcript_artifact = registry.create(
         "SessionTranscriptArtifact",
         artifact_uri=resolved_uri,
-        content=f"{agent_family}:{session_id}:{session_state}",
+        content=f"{agent_family}:{session_id}:{norm_state}",
     )
     assert isinstance(transcript_artifact, InformationEntity)
 
@@ -187,6 +319,223 @@ def decompose_agent_session(
         profile=profile,
         probe_capabilities=tuple(probe_caps),
         graph=g,
+        lifecycle_state=lifecycle_state,
+    )
+
+
+def _session_action_contract(
+    action_id: str,
+    *,
+    introspector: OntologyIntrospector | None = None,
+    preconditions: tuple[ConditionCheck, ...] = (),
+    invariants: tuple[ConditionCheck, ...] = (),
+    postconditions: tuple[ConditionCheck, ...] = (),
+) -> OntologicalActionContract:
+    """按 ``frago.json`` 的登记造一个会话动作契约，并把可执行的判据挂上去。
+
+    会话五动作共用这一段：签名、参数表、副作用全从 ``frago.json`` 读（唯一真源），
+    这里只补那些**能当场算出真假**的判据——纯文字描述的条款留在 JSON 里供人读，
+    不重复写一遍成代码。
+    """
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        action_id,
+        preconditions=preconditions,
+        invariants=invariants,
+        postconditions=postconditions,
+    )
+
+
+def build_launch_agent_session_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `launch_agent_session` contract with executable Ring 3 checks.
+
+    契约判据与函数体的业务校验**说同一句话**：契约先跑，所以它拒掉的那一条必须带上
+    调用方认得出的说法（``Unknown agent kernel`` / ``Invalid session origin`` /
+    ``SubtaskWorkerRole is strictly prohibited``）。两层各写一套文案的话，同一次违规
+    会因为撞上哪一层而给出两种说法，排查时先要判「这是哪一层拒的」。
+    """
+    return _session_action_contract(
+        "launch_agent_session",
+        introspector=introspector,
+        preconditions=(
+            ConditionCheck(
+                description="session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="Unknown agent kernel: agent_kernel_id MUST be one of the five supported kernels ('claude-code' is accepted as the legacy spelling of 'claude').",
+                predicate=lambda args: (
+                    # 与函数体读同一个表达式：``service.launch_agent_session`` 取的是
+                    # ``agent_kernel_id or agent_kernel``（两个名字都认，前者优先）。
+                    # 这里只读 ``agent_kernel_id`` 的话，一次合法的 ``agent_kernel=`` 调用
+                    # 会在契约层被误拒——而函数体本来是接受的。判据与函数体说同一句话，
+                    # 是这套契约存在的意义；两层各写一套，被拒的人还要先判是哪层拒的。
+                    str(args.get("agent_kernel_id") or args.get("agent_kernel") or "")
+                    .strip()
+                    .lower()
+                    in (*SESSION_VALID_KERNELS, "claude-code")
+                ),
+            ),
+            ConditionCheck(
+                description="Invalid session origin: origin MUST be one of {'terminal', 'web', 'worker', 'schedule', 'channel'} or a recognized alias.",
+                predicate=lambda args: (
+                    (raw := str(args.get("origin", "")).strip().lower()) in SESSION_VALID_ORIGINS
+                    or raw in SESSION_ORIGIN_ALIASES
+                    or raw == ""
+                ),
+            ),
+            ConditionCheck(
+                description="SubtaskWorkerRole is strictly prohibited from spawning nested agent sessions.",
+                predicate=lambda args: not (
+                    args.get("caller_is_worker") is True
+                    or str(args.get("caller_role") or "") in {"worker", "SubtaskWorkerRole"}
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="A worker-flagged launch MUST carry the 'worker' origin (a worker is a worker regardless of who dispatched it).",
+                predicate=lambda args: not (
+                    args.get("is_worker") is True
+                    and normalize_session_origin(str(args.get("origin") or "")) != "worker"
+                ),
+            ),
+        ),
+    )
+
+
+def build_record_session_step_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `record_session_step` contract with executable Ring 3 checks."""
+    return _session_action_contract(
+        "record_session_step",
+        introspector=introspector,
+        preconditions=(
+            ConditionCheck(
+                description="session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="step_type MUST be one of {'user', 'assistant', 'tool_call', 'tool_result', 'system'}.",
+                predicate=lambda args: (
+                    str(args.get("step_type", "")).strip()
+                    in {"user", "assistant", "tool_call", "tool_result", "system"}
+                ),
+            ),
+        ),
+    )
+
+
+def build_yield_awaiting_input_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `yield_awaiting_input` contract with executable Ring 3 checks."""
+    return _session_action_contract(
+        "yield_awaiting_input",
+        introspector=introspector,
+        preconditions=(
+            ConditionCheck(
+                description="session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="waiting_reason MUST be a non-empty string (why the session is waiting is the whole point of this action).",
+                predicate=lambda args: bool(str(args.get("waiting_reason", "")).strip()),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Resulting lifecycle_state MUST be 'awaiting_input'.",
+                predicate=lambda ctx: getattr(ctx.get("result"), "lifecycle_state", None)
+                == "awaiting_input",
+            ),
+        ),
+    )
+
+
+def build_terminate_agent_session_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `terminate_agent_session` contract with executable Ring 3 checks."""
+    return _session_action_contract(
+        "terminate_agent_session",
+        introspector=introspector,
+        preconditions=(
+            ConditionCheck(
+                description="session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="terminal_status MUST be one of {'completed', 'error', 'cancelled'}.",
+                predicate=lambda args: (
+                    str(args.get("terminal_status", "")).strip().lower()
+                    in {"completed", "error", "cancelled"}
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Resulting lifecycle_state MUST equal the requested terminal_status.",
+                predicate=lambda ctx: getattr(ctx.get("result"), "lifecycle_state", None)
+                == str(ctx.get("terminal_status", "")).strip().lower(),
+            ),
+        ),
+    )
+
+
+def build_adopt_existing_session_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `adopt_existing_session` contract with executable Ring 3 checks.
+
+    这条动作的存在是为了给「frago 没开过、但确实在跑的会话」一个**说得出口的入口**：
+    从前这类会话走的是 `ensure_managed_session` 这种绕过契约的补档路径，绕过的代价是
+    本体里多出一批没人审计过来历的记录。现在补档走本体登记在册的动作，前置条件写死。
+
+    **「这条会话在不在册」不在这里判。** 契约谓词是纯函数，只看得到入参；「在册与否」
+    要读本体存储，那是函数体的事（`adopt_existing_session` 里查 store）。契约只要求
+    调用方**明说自己查到的结果**（``already_registered``）并保证不带关系进来。
+    """
+    return _session_action_contract(
+        "adopt_existing_session",
+        introspector=introspector,
+        preconditions=(
+            ConditionCheck(
+                description="session_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("session_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="Invalid session origin: origin MUST normalize to one of {'terminal', 'web', 'worker', 'schedule', 'channel'}.",
+                predicate=lambda args: (
+                    normalize_session_origin(str(args.get("origin") or "")) in SESSION_VALID_ORIGINS
+                ),
+            ),
+            ConditionCheck(
+                description="Adoption NEVER invents a parent relation: no dispatch/branch/handoff may be supplied.",
+                predicate=lambda args: args.get("relation_kind") in (None, ""),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="An adopted AgentSessionProcess NEVER enters a terminal state at adoption time.",
+                predicate=lambda args: normalize_session_lifecycle_state(
+                    str(args.get("initial_state") or "running")
+                )
+                not in {"completed", "error", "cancelled"},
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="Result MUST be a persisted SessionOntologyRecord for the adopted session.",
+                predicate=lambda ctx: (
+                    ctx.get("result") is not None
+                    and str(getattr(ctx.get("result"), "session_id", "")) == str(ctx.get("session_id"))
+                ),
+            ),
+        ),
     )
 
 
@@ -235,6 +584,13 @@ def build_drive_agent_turn_contract(
                         not str(ctx["result"].get("text", "")).strip()
                         or bool(_AUTH_WALL_PATTERN.search(str(ctx["result"].get("text", ""))))
                     )
+                ),
+            ),
+            ConditionCheck(
+                description="Turn result with terminal status in {'timeout', 'error'} MUST NOT be accepted as a completed turn.",
+                predicate=lambda ctx: not (
+                    isinstance(ctx.get("result"), Mapping)
+                    and ctx["result"].get("status") in {"timeout", "error"}
                 ),
             ),
         ),
@@ -1350,5 +1706,142 @@ class DomainEmployeeRuntime:
             governance_op=governance_op,
             authorization_source=authorization_source,
         )
+
+
+# ============================================================================
+# Mainline 5: Async Callback Delivery Action Contracts (Gate 3)
+# ============================================================================
+
+
+def _persisted_delivery_state(args: Mapping[str, Any]) -> str | None:
+    """取调用方注入的持久态（``prior_delivery_state``），拿不到就回 None。
+
+    这一格从前是本层自己去 ``~/.frago/sessions/async_dispatches/<job_id>.json`` 读盘
+    拼出来的：落点一变，本体层与业务层的两份路径表达就会不同步，而本体层本该只认入参、
+    不认业务落点。现在由调用方（``session/async_dispatch.py``）先 ``load_dispatch_job``
+    读出持久态再注入。**调用方不注入 = 这一格判据不成立**，动作被拒；绝不回退到读盘，
+    否则「本体层零侵入」这条隔离纪律就名存实亡。
+    """
+    raw = args.get("prior_delivery_state")
+    if raw is None:
+        return None
+    state = str(raw).strip()
+    return state or None
+
+
+def build_record_callback_delivery_outcome_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `record_callback_delivery_outcome` contract with Ring 3 state transition checks."""
+    from frago.ontology.projectors import (
+        CALLBACK_DELIVERY_STATES,
+        is_legal_callback_delivery_transition,
+    )
+
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        "record_callback_delivery_outcome",
+        preconditions=(
+            ConditionCheck(
+                description="job_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("job_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="from_state and to_state MUST both be CallbackDeliveryState allowed values.",
+                predicate=lambda args: (
+                    args.get("from_state") in CALLBACK_DELIVERY_STATES
+                    and args.get("to_state") in CALLBACK_DELIVERY_STATES
+                ),
+            ),
+            ConditionCheck(
+                description="(from_state, to_state) MUST be a legal edge: queued→delivering, delivering→delivered, delivering→queued, delivering→failed, queued→failed.",
+                predicate=lambda args: is_legal_callback_delivery_transition(
+                    str(args.get("from_state", "")), str(args.get("to_state", ""))
+                ),
+            ),
+            ConditionCheck(
+                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match from_state and not be terminal (delivered/failed).",
+                predicate=lambda args: (
+                    (state := _persisted_delivery_state(args)) is not None
+                    and state not in ("delivered", "failed")
+                    and state == args.get("from_state")
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="Once delivered, a CallbackDeliveryProcess NEVER transitions out.",
+                predicate=lambda args: str(args.get("from_state", "")) != "delivered",
+            ),
+            ConditionCheck(
+                description="A CallbackDeliveryProcess NEVER reaches delivered without passing through delivering.",
+                predicate=lambda args: not (
+                    str(args.get("to_state", "")) == "delivered"
+                    and str(args.get("from_state", "")) != "delivering"
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="CallbackDeliveryProcess exhibits CallbackDeliveryState == to_state.",
+                predicate=lambda ctx: ctx.get("result") == ctx.get("to_state"),
+            ),
+        ),
+    )
+
+
+def build_finalize_dispatch_job_contract(
+    introspector: OntologyIntrospector | None = None,
+) -> OntologicalActionContract:
+    """Build the `finalize_dispatch_job` contract enforcing worker/delivery subordination rules."""
+    from frago.ontology.projectors import CALLBACK_DELIVERY_STATES
+
+    insp = introspector if introspector is not None else OntologyIntrospector()
+    return insp.build_action_contract(
+        "finalize_dispatch_job",
+        preconditions=(
+            ConditionCheck(
+                description="job_id MUST be a non-empty string.",
+                predicate=lambda args: bool(str(args.get("job_id", "")).strip()),
+            ),
+            ConditionCheck(
+                description="job_status MUST be one of {'completed', 'failed'}.",
+                predicate=lambda args: args.get("job_status") in {"completed", "failed"},
+            ),
+            ConditionCheck(
+                description="delivery_state MUST be one of CallbackDeliveryState allowed values.",
+                predicate=lambda args: args.get("delivery_state") in CALLBACK_DELIVERY_STATES,
+            ),
+            ConditionCheck(
+                description="Caller MUST inject prior_delivery_state read from the persisted dispatch job; it MUST match delivery_state.",
+                predicate=lambda args: (
+                    (state := _persisted_delivery_state(args)) is not None
+                    and state == args.get("delivery_state")
+                ),
+            ),
+            ConditionCheck(
+                description="job_status == 'completed' REQUIRES delivery_state == 'delivered' AND exit_code == 0.",
+                predicate=lambda args: not (
+                    args.get("job_status") == "completed"
+                    and not (args.get("delivery_state") == "delivered" and args.get("exit_code") == 0)
+                ),
+            ),
+        ),
+        invariants=(
+            ConditionCheck(
+                description="A dispatch job is NEVER recorded as completed while its CallbackDeliveryProcess is not delivered.",
+                predicate=lambda args: not (
+                    args.get("job_status") == "completed" and args.get("delivery_state") != "delivered"
+                ),
+            ),
+        ),
+        postconditions=(
+            ConditionCheck(
+                description="The dispatch job status matches job_status.",
+                predicate=lambda ctx: ctx.get("result") == ctx.get("job_status"),
+            ),
+        ),
+    )
+
 
 

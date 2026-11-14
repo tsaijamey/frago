@@ -406,6 +406,47 @@ class TestDefinedClassesAndKineticContracts:
         with pytest.raises(PostconditionViolationError, match="empty text"):
             drive_turn(pa_role, harness, "run check", simulate_empty_ok=True)
 
+    def test_builtin_drive_agent_turn_contract_rejects_timeout_and_error_results(
+        self,
+    ) -> None:
+        from frago.ontology.runtime import build_drive_agent_turn_contract
+
+        contract = build_drive_agent_turn_contract()
+
+        @ontological_action(contract)
+        def run_turn(
+            initiator: OntologyEntity,
+            target: Resource,
+            session_id: str,
+            prompt_text: str,
+            agent_kernel_id: str = "agy",
+            profile_id: str = "default",
+            *,
+            status: str = "ok",
+        ) -> dict[str, str]:
+            return {
+                "status": status,
+                "session_id": session_id,
+                "agent_kernel_id": agent_kernel_id,
+                "profile_id": profile_id,
+                "text": f"reply:{prompt_text}",
+            }
+
+        pa_role = Role(
+            bearer_id="kernel:agy",
+            context_id="session:pa",
+            dependent_type="PrimarySchedulerRole",
+        )
+        harness = Resource(uid="harness:tmux-agy", resource_kind="AgentHarness")
+
+        assert run_turn(pa_role, harness, "sess-1", "ping", status="ok")["status"] == "ok"
+
+        with pytest.raises(PostconditionViolationError, match="timeout"):
+            run_turn(pa_role, harness, "sess-1", "ping", status="timeout")
+
+        with pytest.raises(PostconditionViolationError, match="error"):
+            run_turn(pa_role, harness, "sess-1", "ping", status="error")
+
 
 class TestOntologyIntrospector:
     """Tests for schema integrity validation and self-explanation queries."""
@@ -463,10 +504,10 @@ class TestOntologyIntrospector:
     ) -> None:
         import json
 
-        # Missing user dir does not fail and returns the 65 builtin domain classes
+        # Missing user dir does not fail and returns the builtin domain classes
         absent_dir = tmp_path / "nonexistent_ontology_dir"
         base_reg = DomainClassRegistry(user_ontology_dir=absent_dir)
-        assert len(base_reg.classes) == 66
+        assert len(base_reg.classes) == 69
         assert getattr(base_reg.get_class("AgentKernel"), "source", None) == "builtin"
 
         # User overlay in ~/.frago/ontology/user-ontology.json + domains/*.json
@@ -535,7 +576,7 @@ class TestOntologyIntrospector:
         assert introspector.validate_schema_integrity() == []
 
         user_reg = DomainClassRegistry(merged_schema)
-        assert len(user_reg.classes) == 68
+        assert len(user_reg.classes) == 71
         contract_res = user_reg.create("SupplierContractResource", uid="contract:2026-001")
         assert isinstance(contract_res, Resource)
         assert getattr(type(contract_res), "source", "").startswith("userdir:")
@@ -679,10 +720,11 @@ class TestDomainClassRegistryAndThreeMainlinesRuntime:
 
     def test_all_63_domain_classes_compile_and_enforce_bearer_types(self) -> None:
         reg = DomainClassRegistry()
-        assert len(reg.classes) == 66
-        assert "HarnessLifecycleState" in reg.classes
+        assert len(reg.classes) == 69
         assert "EmployeePostResource" in reg.classes
         assert "DomainEmployeeRole" in reg.classes
+        assert "SessionLifecycleState" in reg.classes
+        assert "HarnessLifecycleState" in reg.classes
 
         # PrimarySchedulerRole requires bearer_type == AgentKernel
         pa_role = reg.create(
@@ -3662,3 +3704,1007 @@ class TestAgentKernelOntologyAndProjector:
         assert supports_for_you("codex") is True
         assert supports_for_you("opencode") is True
         assert supports_for_you("coreagent") is False
+
+
+class TestSessionOntologyGate1AndGate2:
+    """Gate 1 (Axiomatic Introspection) & Gate 2 (Zero-Intrusion Shadow Projection) for Session Ontology."""
+
+    def test_gate_1_schema_integrity_and_session_class_definitions(self) -> None:
+        introspector = OntologyIntrospector()
+        problems = introspector.validate_schema_integrity()
+        assert problems == [], f"Schema integrity violations: {problems}"
+
+        # 1. AgentSessionProcess (+R Process)
+        sess_proc = introspector.get_domain_class("AgentSessionProcess")
+        assert sess_proc is not None
+        assert sess_proc["rigidity"] == "+R"
+        assert sess_proc["hierarchy_path"] == "Occurrent.Process"
+        assert set(sess_proc["states"]) == {
+            "queued",
+            "running",
+            "awaiting_input",
+            "completed",
+            "error",
+            "cancelled",
+        }
+
+        # 2. SessionLifecycleState (~R QualityState)
+        life_state = introspector.get_domain_class("SessionLifecycleState")
+        assert life_state is not None
+        assert life_state["rigidity"] == "~R"
+        assert life_state["hierarchy_path"] == "Continuant.DependentContinuant.QualityState"
+        assert "AgentSessionProcess" in life_state["bearer_type"]
+        assert set(life_state["allowed_values"]) == {
+            "queued",
+            "running",
+            "awaiting_input",
+            "completed",
+            "error",
+            "cancelled",
+        }
+
+        # 3. SessionOriginState (~R QualityState)
+        orig_state = introspector.get_domain_class("SessionOriginState")
+        assert orig_state is not None
+        assert orig_state["rigidity"] == "~R"
+        for expected_origin in ("terminal", "web", "worker", "schedule", "channel"):
+            assert expected_origin in orig_state["allowed_values"]
+
+        # 4. Action contracts presence
+        action_ids = {a["action_id"] for a in introspector.schema["kinetic_action_contracts"]}
+        for expected_action in (
+            "launch_agent_session",
+            "record_session_step",
+            "yield_awaiting_input",
+            "terminate_agent_session",
+        ):
+            assert expected_action in action_ids
+
+    def test_gate_2_five_agent_kernels_shadow_projection(self) -> None:
+        from frago.ontology.projectors import SessionRecordProjection
+
+        reg = DomainClassRegistry()
+        projector = FivePillarShadowProjector(registry=reg)
+        kernels = ("claude", "codex", "opencode", "agy", "coreagent")
+
+        for k in kernels:
+            proj = projector.project_session_process(
+                {
+                    "session_id": f"sess-test-{k}",
+                    "agent_type": k,
+                    "status": "running",
+                    "source": "terminal",
+                }
+            )
+            assert isinstance(proj, SessionRecordProjection)
+            assert proj.session_process.process_uid == f"session:sess-test-{k}"
+            assert proj.session_process.process_kind == "AgentSessionProcess"
+            assert proj.kernel.uid == f"kernel:{k}"
+            assert proj.origin_state.value == "terminal"
+            assert proj.lifecycle_state is not None
+            assert proj.lifecycle_state.value == "running"
+            assert proj.role.dependent_type == "PrimarySchedulerRole"
+
+            # Graph links verification
+            g = proj.graph
+            linked_roles = g.query_targets(proj.kernel.ontological_id(), "plays_role")
+            assert len(linked_roles) >= 1
+            assert linked_roles[0].ontological_id() == proj.role.ontological_id()
+
+            initiated_procs = g.query_targets(proj.role.ontological_id(), "initiates")
+            assert len(initiated_procs) == 1
+            assert initiated_procs[0].ontological_id() == proj.session_process.ontological_id()
+
+            transcripts = g.query_targets(proj.session_process.ontological_id(), "produces")
+            assert len(transcripts) == 1
+            assert transcripts[0].ontological_id() == proj.transcript_artifact.ontological_id()
+
+    def test_gate_2_session_origins_and_subtask_worker_role(self) -> None:
+        from frago.ontology.projectors import (
+            project_session_dict,
+            project_session_process_dict,
+        )
+
+        reg = DomainClassRegistry()
+        origins = ("terminal", "web", "worker", "schedule", "channel")
+
+        for orig in origins:
+            proj = project_session_process_dict(
+                {
+                    "session_id": f"sess-orig-{orig}",
+                    "agent_family": "claude",
+                    "source": orig,
+                    "status": "running",
+                },
+                registry=reg,
+            )
+            assert proj.origin_state.value == orig
+
+        # Aliases normalization (e.g. cli -> terminal, workbench -> web, cron -> schedule)
+        p_cli = project_session_dict(
+            {"session_id": "s-cli", "agent_type": "codex", "source": "cli"},
+            registry=reg,
+        )
+        assert p_cli.origin_state.value == "terminal"
+
+        p_wb = project_session_dict(
+            {"session_id": "s-wb", "agent_type": "agy", "source": "workbench"},
+            registry=reg,
+        )
+        assert p_wb.origin_state.value == "web"
+
+        # Worker role projection: is_worker=True forces SubtaskWorkerRole and origin="worker"
+        p_worker = project_session_process_dict(
+            {
+                "session_id": "s-worker-sub",
+                "agent_type": "coreagent",
+                "source": "terminal",
+                "status": "running",
+            },
+            is_worker=True,
+            registry=reg,
+        )
+        assert p_worker.role.dependent_type == "SubtaskWorkerRole"
+        assert p_worker.origin_state.value == "worker"
+
+    def test_gate_2_lifecycle_states_and_step_events(self) -> None:
+        from frago.ontology.projectors import (
+            project_session_dict,
+            project_session_process_dict,
+        )
+
+        reg = DomainClassRegistry()
+        states = ("queued", "running", "awaiting_input", "completed", "error", "cancelled")
+
+        for st in states:
+            proj = project_session_process_dict(
+                {
+                    "session_id": f"sess-st-{st}",
+                    "agent_type": "opencode",
+                    "status": st,
+                },
+                registry=reg,
+            )
+            assert proj.session_process.state == st
+            assert proj.lifecycle_state is not None
+            assert proj.lifecycle_state.value == st
+
+        # Aliases normalization (done -> completed, needs_input -> awaiting_input)
+        p_done = project_session_dict(
+            {"session_id": "s-done", "agent_type": "claude", "status": "done"},
+            registry=reg,
+        )
+        assert p_done.session_process.state == "completed"
+        assert p_done.lifecycle_state is not None
+        assert p_done.lifecycle_state.value == "completed"
+
+        # Step events projection
+        p_steps = project_session_process_dict(
+            {
+                "session_id": "sess-with-steps",
+                "agent_type": "claude",
+                "status": "running",
+            },
+            raw_steps=[
+                {"step_id": 1, "type": "user", "timestamp": "2026-11-10T12:00:00", "raw_uuid": "u1"},
+                {"step_id": 2, "type": "tool_call", "timestamp": "2026-11-10T12:00:05", "tool_name": "Read"},
+                {"step_id": 3, "type": "assistant", "timestamp": "2026-11-10T12:00:10"},
+            ],
+            registry=reg,
+        )
+        assert len(p_steps.step_events) == 3
+        emitted = p_steps.graph.query_targets(p_steps.session_process.ontological_id(), "emits")
+        assert len(emitted) == 3
+
+    def test_gate_2_cross_pillar_sparql_query_and_shadow_orchestrator(self) -> None:
+        from frago.ontology.projectors import project_session_process_dict
+
+        reg = DomainClassRegistry()
+        five_pillar = FivePillarShadowProjector(registry=reg)
+
+        # 1. Project Agent Session
+        sess_proj = five_pillar.project_session_process(
+            {
+                "session_id": "sess-sparql-101",
+                "agent_type": "claude",
+                "status": "running",
+                "source": "web",
+            }
+        )
+
+        # 2. SPARQL query from kernel to transcript via process
+        reasoner = OntologyReasoner(five_pillar.graph)
+        rows = reasoner.query(
+            SparqlQuery(
+                where=(
+                    TriplePattern("?kernel", "plays_role", "?role"),
+                    TriplePattern("?role", "initiates", "?proc"),
+                    TriplePattern("?proc", "produces", "?artifact"),
+                ),
+                select=("?kernel", "?proc", "?artifact"),
+            )
+        )
+        assert len(rows) >= 1
+        matched = [r for r in rows if r["?proc"] == sess_proj.session_process]
+        assert len(matched) == 1
+        assert matched[0]["?kernel"] == sess_proj.kernel
+        assert matched[0]["?artifact"] == sess_proj.transcript_artifact
+
+        # 3. Validation errors
+        with pytest.raises(ProjectionValidationError, match="non-empty"):
+            project_session_process_dict({}, registry=reg)
+
+        with pytest.raises(ProjectionValidationError, match="Unknown agent kernel"):
+            project_session_process_dict(
+                {"session_id": "s-err", "agent_type": "unsupported_bot"},
+                registry=reg,
+            )
+
+
+class TestSessionOntologyGate3AndGate4:
+    """Gate 3 (Concentric Action Contract Guards) & Gate 4 (Storage Cutover & Convergence) for Session Ontology."""
+
+    def test_gate_3_lifecycle_concentric_contracts_and_state_machine(self, tmp_path: Path) -> None:
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        store_file = tmp_path / "session_store.json"
+        legacy_file = tmp_path / "legacy_launches.json"
+        store = SessionOntologyStore(store_file, legacy_ledger_path=legacy_file)
+        service = SessionOntologyService(store=store)
+
+        # 1. launch_agent_session (Ring 3 action 1)
+        proj = service.launch_agent_session(
+            session_id="sess-action-01",
+            agent_kernel_id="claude",
+            origin="web",
+            initial_prompt="Hello frago ontology",
+            cwd="/test/path",
+        )
+        assert proj.session_process.process_uid == "session:sess-action-01"
+        assert proj.lifecycle_state is not None
+        assert proj.lifecycle_state.value == "running"
+        assert proj.origin_state.value == "web"
+
+        # 2. record_session_step (Ring 3 action 2)
+        step_1 = service.record_session_step(
+            session_id="sess-action-01",
+            step_type="user",
+            payload_dict={"text": "Hello"},
+        )
+        assert step_1 == 1
+
+        step_2 = service.record_session_step(
+            session_id="sess-action-01",
+            step_type="tool_call",
+            payload_dict={"tool": "Read"},
+            tool_name="Read",
+        )
+        assert step_2 == 2
+
+        # 3. yield_awaiting_input (Ring 3 action 3)
+        awaiting_rec = service.yield_awaiting_input(
+            session_id="sess-action-01",
+            waiting_reason="Waiting for user decision card",
+        )
+        assert awaiting_rec.lifecycle_state == "awaiting_input"
+        assert awaiting_rec.waiting_reason == "Waiting for user decision card"
+
+        # 4. terminate_agent_session (Ring 3 action 4)
+        term_rec = service.terminate_agent_session(
+            session_id="sess-action-01",
+            terminal_status="completed",
+            summary="All affairs completed safely",
+        )
+        assert term_rec.lifecycle_state == "completed"
+        assert term_rec.summary == "All affairs completed safely"
+
+    def test_gate_3_contract_guardrails_prevent_worker_nesting_and_illegal_transitions(self, tmp_path: Path) -> None:
+        from frago.session.service import ActionContractError, SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        store = SessionOntologyStore(tmp_path / "session_store.json", legacy_ledger_path=tmp_path / "legacy.json")
+        service = SessionOntologyService(store=store)
+
+        # 1. Worker nesting hard guardrail
+        with pytest.raises(ActionContractError, match="SubtaskWorkerRole is strictly prohibited"):
+            service.launch_agent_session(
+                session_id="sess-nested-worker",
+                agent_kernel_id="claude",
+                caller_is_worker=True,
+            )
+
+        with pytest.raises(ActionContractError, match="SubtaskWorkerRole is strictly prohibited"):
+            service.launch_agent_session(
+                session_id="sess-nested-worker-2",
+                agent_kernel_id="claude",
+                caller_role="worker",
+            )
+
+        # 2. Invalid kernel / origin validation
+        with pytest.raises(ActionContractError, match="Unknown agent kernel"):
+            service.launch_agent_session(
+                session_id="sess-bad-kernel",
+                agent_kernel_id="nonexistent_kernel",
+            )
+
+        with pytest.raises(ActionContractError, match="Invalid session origin"):
+            service.launch_agent_session(
+                session_id="sess-bad-origin",
+                agent_kernel_id="claude",
+                origin="outer_space",
+            )
+
+        # 3. Illegal backward transition guardrail: once completed, cannot revert without resume
+        service.launch_agent_session(
+            session_id="sess-term-test",
+            agent_kernel_id="coreagent",
+        )
+        service.terminate_agent_session(session_id="sess-term-test", terminal_status="completed")
+
+        with pytest.raises(ActionContractError, match="already in terminal state"):
+            service.terminate_agent_session(session_id="sess-term-test", terminal_status="cancelled")
+
+        with pytest.raises(ActionContractError, match="Illegal state machine transition"):
+            service.transition_state(session_id="sess-term-test", target_state="running")
+
+        # But allow_resume=True is permitted
+        resumed = service.transition_state(session_id="sess-term-test", target_state="running", allow_resume=True)
+        assert resumed.lifecycle_state == "running"
+
+    def test_ensure_managed_session_records_agent_kernel(self, tmp_path: Path) -> None:
+        """防御性纳管建档必须把内核名落进 ``agent_kernel``，且不得因关键字名写错而抛 TypeError。
+
+        存量历史会话与外部 CLI 直接拉起的会话走这条路径补档；一旦构造
+        ``SessionOntologyRecord`` 的关键字名与字段名不符，建档会抛 TypeError 被
+        上层宽 except 吞掉，本体里就永远缺这一条记录。
+        """
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        store = SessionOntologyStore(tmp_path / "session_store.json", legacy_ledger_path=tmp_path / "legacy.json")
+        service = SessionOntologyService(store=store)
+
+        # 1. codex：必须原样落进 agent_kernel（不再是 TypeError 被吞掉）
+        rec = service.ensure_managed_session("sess-codex-1", agent_kernel_id="codex")
+        assert rec.agent_kernel == "codex"
+        assert store.get("sess-codex-1") is not None
+
+        # 2. opencode 同理
+        rec_oc = service.ensure_managed_session("sess-opencode-1", agent_kernel_id="opencode")
+        assert rec_oc.agent_kernel == "opencode"
+
+        # 3. claude 别名归一 + 非法内核回落，落库值与返回值一致
+        assert service.ensure_managed_session("sess-claude-1", agent_kernel_id="claude-code").agent_kernel == "claude"
+        assert service.ensure_managed_session("sess-bad-1", agent_kernel_id="nope").agent_kernel == "claude"
+
+        # 4. 已存在的场次直接返回原记录，不重复建档
+        again = service.ensure_managed_session("sess-codex-1", agent_kernel_id="claude")
+        assert again.agent_kernel == "codex"
+
+    def test_gate_4_store_persistence_and_legacy_ledger_sync(self, tmp_path: Path) -> None:
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        store_file = tmp_path / "store.json"
+        legacy_file = tmp_path / "agent-launches.json"
+        store = SessionOntologyStore(store_file, legacy_ledger_path=legacy_file)
+
+        # 1. 普通人类会话（终端/网页/定时/渠道）：本体里存下，老账本里一条都不该有。
+        #    老账本记的是关系，人自己开的那一场没有关系；写进去会让出身判定把它当成
+        #    「认不出谁派的 worker」，从会话树上掉下去。
+        human = SessionOntologyRecord(
+            session_id="sess-store-sync-1",
+            agent_kernel="claude",
+            origin="terminal",
+            lifecycle_state="running",
+            is_worker=False,
+            cwd="/workspace/frago",
+            prompt_head="test sync",
+        )
+        assert store.save(human) is True
+
+        assert store_file.exists()
+        loaded_rec = store.get("sess-store-sync-1")
+        assert loaded_rec is not None
+        assert loaded_rec.session_id == "sess-store-sync-1"
+        assert loaded_rec.agent_kernel == "claude"
+        assert loaded_rec.relation_kind is None
+        assert loaded_rec.is_worker is False
+
+        assert json.loads(legacy_file.read_text(encoding="utf-8")) == []
+
+        # 2. 无父节点的派活：认不出谁派的，但仍然是 worker，必须进老账本。
+        worker = SessionOntologyRecord(
+            session_id="sess-store-sync-worker-1",
+            agent_kernel="claude",
+            origin="worker",
+            lifecycle_state="running",
+            is_worker=True,
+            parent_session_id=None,
+            relation_kind="dispatch",
+        )
+        assert store.save(worker) is True
+
+        # 3. 分支：从人谈着的那场分出来，也进老账本，并带上收口字段。
+        branch = SessionOntologyRecord(
+            session_id="sess-store-sync-branch-1",
+            agent_kernel="claude",
+            origin="terminal",
+            lifecycle_state="running",
+            is_worker=False,
+            parent_session_id="sess-store-sync-1",
+            relation_kind="branch",
+            extra={"anchor": {"file": "store.py"}, "note": "分出来改一处"},
+        )
+        assert store.save(branch) is True
+
+        legacy_data = json.loads(legacy_file.read_text(encoding="utf-8"))
+        assert [e["child"] for e in legacy_data] == [
+            "sess-store-sync-worker-1",
+            "sess-store-sync-branch-1",
+        ]
+        by_child = {e["child"]: e for e in legacy_data}
+        assert by_child["sess-store-sync-worker-1"]["kind"] == "dispatch"
+        assert by_child["sess-store-sync-worker-1"]["parent"] is None
+        assert by_child["sess-store-sync-worker-1"]["origin"] == "worker"
+        assert by_child["sess-store-sync-branch-1"]["kind"] == "branch"
+        assert by_child["sess-store-sync-branch-1"]["parent"] == "sess-store-sync-1"
+        assert by_child["sess-store-sync-branch-1"]["closed_at"] is None
+
+    def test_gate_4_managed_session_keeps_human_session_human(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """纳管一场人自己开的新会话后，出身判定必须仍然认它是人开的。
+
+        网页端新建会话走 ``ensure_managed_session`` 补档。补档若默认给一个「派活」
+        的关系，这场会话在老账本里就成了「认不出谁派的 worker」，它名下真正的子 worker
+        会跟着一起从会话树上掉下去。这里用一条真实的第 4 版编号（人开的形状）验证：
+        补档之后同一份临时存储下，出身判定给出的仍是 human。
+        """
+        import frago.session.session_origin as so
+        from frago.session.service import SessionOntologyService
+        from frago.session.store import SessionOntologyStore
+
+        session_id = "82474813-cd77-4854-87c5-40b99900d061"
+        legacy_file = tmp_path / "agent-launches.json"
+        store = SessionOntologyStore(tmp_path / "store.json", legacy_ledger_path=legacy_file)
+
+        # 扫描那两条判据一并掐掉：用例只该看账本与本体存储说了什么，
+        # 本机真实会话库里有多少关系与这条断言无关。
+        empty_projects = tmp_path / "projects"
+        empty_projects.mkdir()
+        monkeypatch.setattr(so, "LAUNCH_LEDGER", legacy_file)
+        monkeypatch.setattr(so, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json")
+        monkeypatch.setattr(so, "_coreagent_scan_root", lambda: None)
+
+        service = SessionOntologyService(store=store)
+        rec = service.ensure_managed_session(session_id, agent_kernel_id="agy")
+
+        assert rec.agent_kernel == "agy"
+        assert rec.is_worker is False
+        assert rec.relation_kind is None
+        assert json.loads(legacy_file.read_text(encoding="utf-8")) == []
+
+        index = so.load_origin_index(projects_root=empty_projects, use_memo=False)
+        assert index.origin_of(session_id) == "human"
+
+    def test_gate_4_close_branch_survives_later_store_writes(self, tmp_path: Path) -> None:
+        """收口过的不许被后来的任意一次落盘冲回未收口。
+
+        收口是人在页面上点出来的动作。收口后只要有别的会话落盘，老账本会被整份覆写；
+        若本体存储里还留着收口前那份，虚线分支会重新变实，看起来像收口没生效。
+        """
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        legacy_file = tmp_path / "agent-launches.json"
+        store = SessionOntologyStore(tmp_path / "store.json", legacy_ledger_path=legacy_file)
+        store.save(
+            SessionOntologyRecord(
+                session_id="branch-close-1",
+                agent_kernel="claude",
+                origin="terminal",
+                relation_kind="branch",
+                parent_session_id="parent-1",
+                extra={"anchor": {"file": "a.py"}, "note": "n"},
+            )
+        )
+
+        closed = store.close_branch("branch-close-1", closed_at=1794549000, closed_by="human")
+        assert closed is not None
+        assert closed.extra["closed_at"] == 1794549000
+        assert closed.extra["closed_by"] == "human"
+
+        # 别的会话接着落盘：收口信息必须还在。
+        store.save(
+            SessionOntologyRecord(
+                session_id="human-after-close",
+                agent_kernel="claude",
+                origin="web",
+                is_worker=False,
+            )
+        )
+
+        again = store.get("branch-close-1")
+        assert again is not None
+        assert again.extra["closed_at"] == 1794549000
+        assert again.extra["closed_by"] == "human"
+
+        legacy_data = json.loads(legacy_file.read_text(encoding="utf-8"))
+        assert [e["child"] for e in legacy_data] == ["branch-close-1"]
+        assert legacy_data[0]["closed_at"] == 1794549000
+
+        # 重复收口不改写第一次的时刻与来路。
+        repeat = store.close_branch("branch-close-1", closed_at=1794549999, closed_by="someone-else")
+        assert repeat is not None
+        assert repeat.extra["closed_at"] == 1794549000
+        assert repeat.extra["closed_by"] == "human"
+
+    def test_gate_4_closed_branch_in_legacy_ledger_not_reverted(self, tmp_path: Path) -> None:
+        """老账本里已收口、本体存储里还开着：合并后必须保持已收口。
+
+        收口只写老账本的那段时间里，两边会不一致。合并时若拿本体存储那份当准，
+        已收口的分支会重新变实——人点过的收口看起来没生效。
+        """
+        from frago.session.store import SessionOntologyRecord, SessionOntologyStore
+
+        legacy_file = tmp_path / "agent-launches.json"
+        store_file = tmp_path / "store.json"
+
+        # 老账本：分支已收口（收口字段是顶层键，这是它的原始格式）。
+        legacy_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "child": "branch-legacy-1",
+                        "parent": "parent-legacy-1",
+                        "kind": "branch",
+                        "agent_type": "claude",
+                        "cwd": "/repo",
+                        "prompt_head": "分出来改一处",
+                        "at": 1794548000,
+                        "anchor": {"file": "b.py"},
+                        "note": "分出来改一处",
+                        "closed_at": 1794548500,
+                        "closed_by": "human",
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        # 本体存储：同一条分支，还开着（收口没同步过来）。
+        store_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "sessions": {
+                        "branch-legacy-1": {
+                            "session_id": "branch-legacy-1",
+                            "agent_kernel": "claude",
+                            "origin": "terminal",
+                            "lifecycle_state": "running",
+                            "is_worker": False,
+                            "parent_session_id": "parent-legacy-1",
+                            "relation_kind": "branch",
+                            "created_at": 1794548000,
+                            "updated_at": 1794548000,
+                            "extra": {"anchor": {"file": "b.py"}, "note": "分出来改一处"},
+                        }
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        store = SessionOntologyStore(store_file, legacy_ledger_path=legacy_file)
+        rec = store.get("branch-legacy-1")
+        assert rec is not None
+        assert rec.extra.get("closed_at") == 1794548500
+        assert rec.extra.get("closed_by") == "human"
+
+        # 别的会话落盘之后，收口信息仍在，且回写到老账本。
+        store.save(
+            SessionOntologyRecord(
+                session_id="human-after-legacy-close",
+                agent_kernel="claude",
+                origin="web",
+                is_worker=False,
+            )
+        )
+        legacy_data = json.loads(legacy_file.read_text(encoding="utf-8"))
+        assert [e["child"] for e in legacy_data] == ["branch-legacy-1"]
+        assert legacy_data[0]["closed_at"] == 1794548500
+        assert legacy_data[0]["closed_by"] == "human"
+
+    def test_gate_4_session_origin_convergence(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import frago.session.session_origin as so
+        from frago.session.store import SessionOntologyStore
+
+        custom_store = tmp_path / "store.json"
+        custom_launches = tmp_path / "agent-launches.json"
+        monkeypatch.setattr(so, "LAUNCH_LEDGER", custom_launches)
+        store = SessionOntologyStore(custom_store, legacy_ledger_path=custom_launches)
+        monkeypatch.setattr("frago.session.store._DEFAULT_SESSION_STORE", store)
+        monkeypatch.setattr("frago.session.session_origin.get_default_session_store", lambda: store)
+
+        # Record via session_origin
+        assert so.record_relation(
+            kind="dispatch",
+            child_session_id="child-worker-99",
+            parent_session_id="parent-pa-01",
+            agent_type="claude",
+            cwd="/repo/root",
+            prompt_head="do something",
+        ) is True
+
+        # Check legacy file exists and contains it
+        assert custom_launches.exists()
+        idx = so.load_origin_index()
+        assert idx.is_worker("child-worker-99") is True
+        assert idx.parent_of("child-worker-99") == "parent-pa-01"
+
+        # Check synchronized into SessionOntologyStore
+        ont_rec = store.get("child-worker-99")
+        assert ont_rec is not None
+        assert ont_rec.session_id == "child-worker-99"
+        assert ont_rec.parent_session_id == "parent-pa-01"
+        assert ont_rec.origin == "worker"
+
+
+class TestCallbackDeliveryOntologyGate1AndGate2:
+    """Gate 1 & Gate 2 for the async callback delivery slice (CallbackDeliveryProcess / CallbackDeliveryState)."""
+
+    def test_gate_1_schema_integrity_and_class_definitions(self) -> None:
+        introspector = OntologyIntrospector()
+        assert introspector.validate_schema_integrity() == []
+
+        proc = introspector.get_domain_class("CallbackDeliveryProcess")
+        assert proc is not None
+        assert proc["rigidity"] == "+R"
+        assert proc["hierarchy_path"] == "Occurrent.Process"
+        assert set(proc["states"]) == {"queued", "delivering", "delivered", "failed"}
+
+        state = introspector.get_domain_class("CallbackDeliveryState")
+        assert state is not None
+        assert state["rigidity"] == "~R"
+        assert state["hierarchy_path"] == "Continuant.DependentContinuant.QualityState"
+        assert "CallbackDeliveryProcess" in state["bearer_type"]
+        assert set(state["allowed_values"]) == {"queued", "delivering", "delivered", "failed"}
+
+        repo_root = Path(__file__).resolve().parents[3]
+        for cls in (proc, state):
+            for loc in cls["current_code_locations"]:
+                assert (repo_root / loc.split("#", 1)[0]).exists(), loc
+
+        action_ids = {a["action_id"] for a in introspector.schema["kinetic_action_contracts"]}
+        assert {"record_callback_delivery_outcome", "finalize_dispatch_job"} <= action_ids
+
+    def test_gate_2_transition_table_is_narrower_than_registry_mesh(self) -> None:
+        from frago.ontology.projectors import (
+            CALLBACK_DELIVERY_TRANSITIONS,
+            is_legal_callback_delivery_transition,
+        )
+
+        legal = {
+            ("queued", "delivering"),
+            ("delivering", "delivered"),
+            ("delivering", "queued"),
+            ("delivering", "failed"),
+            ("queued", "failed"),
+        }
+        states = ("queued", "delivering", "delivered", "failed")
+        for a in states:
+            for b in states:
+                assert is_legal_callback_delivery_transition(a, b) is ((a, b) in legal), (a, b)
+        assert CALLBACK_DELIVERY_TRANSITIONS["delivered"] == frozenset()
+        assert is_legal_callback_delivery_transition("queued", "delivered") is False
+        assert is_legal_callback_delivery_transition("delivered", "queued") is False
+
+    def test_gate_2_projects_dispatch_ledger_into_process_and_state(self) -> None:
+        from frago.ontology import project_callback_delivery_dict
+
+        raw = {
+            "job_id": "disp-abc123",
+            "caller_session_id": "caller-sess-1",
+            "target_session_id": "worker-sess-9",
+            "status": "failed",
+            "exit_code": 0,
+            "delivery_state": "failed",
+        }
+        proj = project_callback_delivery_dict(raw)
+        assert proj.job_id == "disp-abc123"
+        assert proj.process.process_uid == "callback-delivery:disp-abc123"
+        assert proj.state.value == "failed"
+        assert proj.caller_session_id == "caller-sess-1"
+        assert proj.worker_session_id == "worker-sess-9"
+        # worker 成功、送达失败：两个维度分开
+        assert proj.worker_succeeded is True
+        assert proj.graph.get_entity(proj.process.ontological_id()) is not None
+
+    def test_gate_2_legacy_ledger_status_inference(self) -> None:
+        from frago.ontology.projectors import infer_callback_delivery_state
+
+        assert infer_callback_delivery_state({"status": "completed"}) == "delivered"
+        assert infer_callback_delivery_state({"status": "failed"}) == "failed"
+        assert infer_callback_delivery_state({"status": "running"}) == "queued"
+        assert infer_callback_delivery_state({"status": "pending"}) == "queued"
+        assert infer_callback_delivery_state({"status": "superseded"}) is None
+        assert infer_callback_delivery_state({"status": "completed", "delivery_state": "delivered"}) == "delivered"
+
+    def test_gate_2_rejects_completed_without_delivered_and_bad_values(self) -> None:
+        from frago.ontology import ProjectionValidationError, project_callback_delivery_dict
+
+        with pytest.raises(ProjectionValidationError):
+            project_callback_delivery_dict(
+                {
+                    "job_id": "disp-x",
+                    "caller_session_id": "c",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "delivery_state": "queued",
+                }
+            )
+        with pytest.raises(ProjectionValidationError):
+            project_callback_delivery_dict(
+                {"job_id": "disp-y", "caller_session_id": "c", "delivery_state": "lost"}
+            )
+        with pytest.raises(ProjectionValidationError):
+            project_callback_delivery_dict({"job_id": "", "caller_session_id": "c", "status": "failed"})
+
+    def test_gate_2_shadow_projector_hosts_callback_delivery(self) -> None:
+        from frago.ontology import FivePillarShadowProjector
+
+        projector = FivePillarShadowProjector()
+        proj = projector.project_callback_delivery(
+            {"job_id": "disp-sp1", "caller_session_id": "c1", "status": "running"}
+        )
+        assert proj.state.value == "queued"
+        assert proj.graph is projector.graph
+
+
+class TestCallbackDeliveryOntologyGate3:
+    """Gate 3: Concentric Action Contract Guards for CallbackDelivery."""
+
+    def test_gate_3_record_outcome_enforces_legal_transitions(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        from frago.ontology import ActionContractError
+        from frago.session.async_dispatch import (
+            AsyncDispatchJob,
+            record_callback_delivery_outcome,
+            save_dispatch_job,
+        )
+
+        def _make_job(jid: str, delivery_state: str = "queued") -> AsyncDispatchJob:
+            return AsyncDispatchJob(
+                job_id=jid,
+                kind="worker",
+                mode="new",
+                caller_session_id="caller-1",
+                caller_employee_id=None,
+                caller_cwd=None,
+                target_session_id="target-1",
+                target_name=None,
+                employee_id=None,
+                agent="coreagent",
+                cwd="/tmp",
+                prompt="test",
+                task_summary="test",
+                delivery_state=delivery_state,
+                status="running",
+            )
+
+        job1 = _make_job("test-job-gate3-linear", "queued")
+        save_dispatch_job(job1)
+
+        # 0. 契约要求调用方把**从持久化任务单上读到的当前态**注入进来（`prior_delivery_state`）：
+        #    不注入就等于「不知道这场现在是什么状态」，一律拒。这条是本轮新增的前置条件，
+        #    本体层不再自己去磁盘上找任务单（那是 async_dispatch 的事）。
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job1.job_id,
+                from_state="queued",
+                to_state="delivering",
+            )
+
+        # 1. 派发单不存在时，调用方也读不到持久态，同样拒
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id="non-existent-job",
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state="queued",
+            )
+
+        # 2. 尝试伪造 from_state（调用方注入的持久态是 queued，却声称是 delivering），必定抛 ActionContractError
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job1.job_id,
+                from_state="delivering",
+                to_state="delivered",
+                prior_delivery_state="queued",
+            )
+
+        # 3. 尝试非法跳跃：queued -> delivered（不得未经 delivering 直接到 delivered）
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job1.job_id,
+                from_state="queued",
+                to_state="delivered",
+                prior_delivery_state="queued",
+            )
+
+        # 4. 合法跃迁链路：queued -> delivering -> delivered
+        res1 = record_callback_delivery_outcome(
+            job_id=job1.job_id,
+            from_state="queued",
+            to_state="delivering",
+            prior_delivery_state="queued",
+        )
+        assert res1 == "delivering"
+
+        res2 = record_callback_delivery_outcome(
+            job_id=job1.job_id,
+            from_state="delivering",
+            to_state="delivered",
+            prior_delivery_state="delivering",
+        )
+        assert res2 == "delivered"
+
+        # 5. 终态不可转出（调用方注入的持久态已是 delivered 终态，必定抛 ActionContractError）
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job1.job_id,
+                from_state="delivered",
+                to_state="queued",
+                prior_delivery_state="delivered",
+            )
+
+        with pytest.raises(ActionContractError):
+            record_callback_delivery_outcome(
+                job_id=job1.job_id,
+                from_state="delivering",
+                to_state="queued",
+                prior_delivery_state="delivered",
+            )
+
+        # 6. 用独立新测试派发单验证完整的 queued -> delivering -> queued -> delivering -> delivered 重试闭环
+        job2 = _make_job("test-job-gate3-retry", "queued")
+        save_dispatch_job(job2)
+
+        # queued -> delivering
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job2.job_id,
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state="queued",
+            )
+            == "delivering"
+        )
+        # delivering -> queued（单次注入失败退回队首）
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job2.job_id,
+                from_state="delivering",
+                to_state="queued",
+                reason="transient_busy",
+                prior_delivery_state="delivering",
+            )
+            == "queued"
+        )
+        # queued -> delivering（二次重试注入）
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job2.job_id,
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state="queued",
+            )
+            == "delivering"
+        )
+        # delivering -> delivered（最终成功送达）
+        assert (
+            record_callback_delivery_outcome(
+                job_id=job2.job_id,
+                from_state="delivering",
+                to_state="delivered",
+                prior_delivery_state="delivering",
+            )
+            == "delivered"
+        )
+
+    def test_gate_3_finalize_dispatch_job_subordination_guardrail(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
+        from frago.ontology import ActionContractError
+        from frago.session.async_dispatch import (
+            AsyncDispatchJob,
+            finalize_dispatch_job,
+            save_dispatch_job,
+        )
+
+        def _make_job(jid: str, delivery_state: str = "delivered") -> AsyncDispatchJob:
+            return AsyncDispatchJob(
+                job_id=jid,
+                kind="worker",
+                mode="new",
+                caller_session_id="caller-1",
+                caller_employee_id=None,
+                caller_cwd=None,
+                target_session_id="target-1",
+                target_name=None,
+                employee_id=None,
+                agent="coreagent",
+                cwd="/tmp",
+                prompt="test",
+                task_summary="test",
+                delivery_state=delivery_state,
+                status="running",
+            )
+
+        job_id = "test-finalize-job-gate3"
+        job = _make_job(job_id, "delivered")
+        save_dispatch_job(job)
+
+        # 1. 派发单不存在时，调用方读不到持久态，抛 ActionContractError
+        with pytest.raises(ActionContractError):
+            finalize_dispatch_job(
+                job_id="non-existent-finalize-job",
+                exit_code=0,
+                delivery_state="delivered",
+                job_status="completed",
+                prior_delivery_state="delivered",
+            )
+
+        # 2. 持久态是 delivered，但传 delivery_state="queued"，抛 ActionContractError
+        with pytest.raises(ActionContractError):
+            finalize_dispatch_job(
+                job_id=job_id,
+                exit_code=0,
+                delivery_state="queued",
+                job_status="completed",
+                prior_delivery_state="delivered",
+            )
+
+        # 3. Illegal: completed requires exit_code == 0
+        with pytest.raises(ActionContractError):
+            finalize_dispatch_job(
+                job_id=job_id,
+                exit_code=1,
+                delivery_state="delivered",
+                job_status="completed",
+                prior_delivery_state="delivered",
+            )
+
+        # 4. Legal: exit_code 0 and delivered can finalize to completed
+        status_ok = finalize_dispatch_job(
+            job_id=job_id,
+            exit_code=0,
+            delivery_state="delivered",
+            job_status="completed",
+            prior_delivery_state="delivered",
+        )
+        assert status_ok == "completed"
+
+        # 5. Failed dispatch test: 创建一个 delivery_state="failed" 的派发单并收口为 failed
+        failed_job = _make_job("test-finalize-job-failed", "failed")
+        save_dispatch_job(failed_job)
+        status_fail = finalize_dispatch_job(
+            job_id=failed_job.job_id,
+            exit_code=0,
+            delivery_state="failed",
+            job_status="failed",
+            prior_delivery_state="failed",
+        )
+        assert status_fail == "failed"
+
+
+
+
+
+
+
+
+

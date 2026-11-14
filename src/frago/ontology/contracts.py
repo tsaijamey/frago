@@ -42,19 +42,23 @@ class ContractViolationError(OntologyError):
     """Base exception for kinetic action contract failures."""
 
 
-class SignatureViolationError(ContractViolationError):
+class ActionContractError(ContractViolationError):
+    """Raised when an ontological action contract (Ring 3) precondition, postcondition, or invariant is violated."""
+
+
+class SignatureViolationError(ActionContractError):
     """Ring 2 violation: parameter slot missing, or domain/range/type mismatch."""
 
 
-class PreconditionViolationError(ContractViolationError):
+class PreconditionViolationError(ActionContractError):
     """Ring 3 violation: business precondition failed before action execution."""
 
 
-class PostconditionViolationError(ContractViolationError):
+class PostconditionViolationError(ActionContractError):
     """Ring 3 violation: action finished without satisfying its promised outcome."""
 
 
-class InvariantViolationError(ContractViolationError):
+class InvariantViolationError(ActionContractError):
     """Ring 3 violation: system-wide invariant broken before or after execution."""
 
 
@@ -95,12 +99,53 @@ def _is_trusted_owner_request(entity: OntologyEntity, graph: OntologyGraph) -> b
     )
 
 
+#: The two capability markers the `PublicExposableRecipe` axiom reads, matching
+#: the two clauses declared in `frago.json`. Named here so the predicate and
+#: every projector agree on the strings instead of spelling them out separately.
+#:
+#: **`action_triggerable` means "an anonymous reader can reach this write".** It
+#: does *not* mean "the recipe marks an `@action`" — those were the same question
+#: until the anonymous surface was closed to writes, and reading it the old way
+#: is what put this class into a standing disagreement with reality: `frago_home`
+#: is published `--public` and marks `@action submit_request`, and both are true,
+#: because the anonymous zone admits GET and HEAD only and those reach `@export`
+#: only. So the fact has to be stated by the layer that knows which anonymous
+#: entrances exist — `frago.server.security.anon_reachable_writes` — and never
+#: inferred here from the recipe's own declaration. A projector handed
+#: `modes={"refresh": "action_triggerable"}` is being told "an anonymous reader
+#: can reach this write", which is exactly what this marker has always meant.
+#:
+#: `app_api_from_public_page` is the axiom's second clause, declared in
+#: `frago.json` since it was written and **not checked by the predicate until
+#: now**: a page that calls back into `api/<mode>` in a way the anonymous zone
+#: refuses renders its empty state with nothing anywhere reporting a fault,
+#: which is the failure `frago recipe expose --public` refuses up front for
+#: exactly this reason. An axiom whose second half is never evaluated is a
+#: clause nobody can rely on.
+ACTION_TRIGGERABLE_CAPABILITY = "action_triggerable"
+PUBLIC_PAGE_CALLS_BACKEND_CAPABILITY = "app_api_from_public_page"
+
+#: Every marker that makes a recipe unfit for `--public`, as one tuple.
+PUBLIC_EXPOSURE_BLOCKING_CAPABILITIES = (
+    ACTION_TRIGGERABLE_CAPABILITY,
+    PUBLIC_PAGE_CALLS_BACKEND_CAPABILITY,
+)
+
+
 def _is_public_exposable_recipe(entity: OntologyEntity, graph: OntologyGraph) -> bool:
+    """Whether this `RecipeModule` may carry a `--public` anonymous policy.
+
+    Both clauses of the axiom declared in `frago.json` are checked here, and
+    both are about **what an anonymous reader can reach** — never about what the
+    recipe declares internally. See the marker constants above for what each one
+    means and who states it.
+    """
     if not isinstance(entity, Resource) or entity.resource_kind != "RecipeModule":
         return False
     capabilities = graph.query_targets(entity.ontological_id(), "has_capability")
     return not any(
-        isinstance(c, DependentContinuant) and c.dependent_type == "action_triggerable"
+        isinstance(c, DependentContinuant)
+        and c.dependent_type in PUBLIC_EXPOSURE_BLOCKING_CAPABILITIES
         for c in capabilities
     )
 
@@ -141,7 +186,10 @@ BUILTIN_DEFINED_CLASSES: dict[str, DefinedClass] = {
         base_type=Resource,
         predicate=_is_public_exposable_recipe,
         description=(
-            "RecipeModule with zero @action write modes, eligible for --public exposure."
+            "RecipeModule with no write an anonymous reader can reach and no page "
+            "call into api/<mode> the anonymous zone refuses, eligible for --public "
+            "exposure. Not 'no @action': a --public page's @action is unreachable to "
+            "anonymous readers now that GET/HEAD reach @export only."
         ),
     ),
     "VerifiedTeammateInstruction": DefinedClass(

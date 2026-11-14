@@ -193,7 +193,6 @@ _STOPWORDS: frozenset[str] = frozenset(
         "spec",
         "specs",
         "validate",
-        "local",
         "install",
         "sync",
         "save",
@@ -1227,9 +1226,8 @@ def _scan_recipes(
             continue
         is_bound = name in bound_recipes
         blob = " ".join([name, description, *meta["tags"]])
-        if not is_bound:
-            if is_meta_author_post or not _matches_scope(blob, keywords):
-                continue
+        if not is_bound and (is_meta_author_post or not _matches_scope(blob, keywords)):
+            continue
         digest = digest_text(blob)
         if cursor.recipe_digests.get(name) == digest:
             continue
@@ -1521,20 +1519,23 @@ def _extract_record_context_tokens(record: dict[str, Any]) -> tuple[int | None, 
                     return ctx, None
 
         payload = record.get("payload")
-        if record.get("type") == "event_msg" and isinstance(payload, dict):
-            if payload.get("type") == "token_count":
-                info = payload.get("info")
-                if isinstance(info, dict):
-                    last = info.get("last_token_usage")
-                    if isinstance(last, dict):
-                        bd_cdx = breakdown_from_codex_usage(last)
-                        ctx = sum(bd_cdx.get(f, 0) for f in PROMPT_FIELDS)
-                        win = info.get("model_context_window")
-                        if ctx > 0:
-                            return (
-                                ctx,
-                                int(win) if isinstance(win, int | float) and win > 0 else None,
-                            )
+        if (
+            record.get("type") == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "token_count"
+        ):
+            info = payload.get("info")
+            if isinstance(info, dict):
+                last = info.get("last_token_usage")
+                if isinstance(last, dict):
+                    bd_cdx = breakdown_from_codex_usage(last)
+                    ctx = sum(bd_cdx.get(f, 0) for f in PROMPT_FIELDS)
+                    win = info.get("model_context_window")
+                    if ctx > 0:
+                        return (
+                            ctx,
+                            int(win) if isinstance(win, int | float) and win > 0 else None,
+                        )
 
         tokens = record.get("tokens")
         if isinstance(tokens, dict):
@@ -1696,7 +1697,7 @@ def _inspect_session_dir(
 
     cap_state, cap_pct, cap_label = format_context_watermark(context_tokens, context_window)
     title = _session_title(meta, first_prompt, session_id)
-    return {
+    entry_dict: dict[str, Any] = {
         "session_id": session_id,
         "employee_id": emp_id,
         "started_at": started_at,
@@ -1710,6 +1711,18 @@ def _inspect_session_dir(
         "context_state": cap_state,
         "context_watermark": cap_label,
     }
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from frago.session.store import get_default_session_store
+
+        ont_rec = get_default_session_store().get(session_id)
+        if ont_rec is not None:
+            entry_dict["lifecycle_state"] = ont_rec.lifecycle_state
+            entry_dict["origin"] = ont_rec.origin
+            if ont_rec.is_worker:
+                entry_dict["is_worker"] = True
+    return entry_dict
 
 
 def _locate_session_dir_by_id(sessions_root: Path, session_id: str) -> Path | None:

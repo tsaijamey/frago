@@ -59,9 +59,12 @@ from frago.ontology.metamodel import (
 from frago.ontology.registry import DEFAULT_DOMAIN_REGISTRY, DomainClassRegistry
 from frago.ontology.relations import OntologyGraph
 from frago.ontology.runtime import (
+    SESSION_VALID_KERNELS,
     AgentFivePartDecomposition,
     compute_desktop_content_id,
     decompose_agent_session,
+    normalize_session_lifecycle_state,
+    normalize_session_origin,
 )
 
 BROWSER_MAX_TABS_PER_GROUP: int = 5
@@ -475,6 +478,10 @@ def project_desktop_instance_dict(
 # ============================================================================
 
 
+#: 五个内核的名字只在本体层留一份定义（`runtime.py`），这里从那里导入。
+#: 从前两份各写一遍（内容相同），加第六个内核时必然漏改一处，本模块这一份已删。
+
+
 @dataclass(frozen=True, kw_only=True)
 class SessionRecordProjection:
     """Projected 5-part Agent decomposition plus immutable `SessionStepEvent` nodes."""
@@ -482,6 +489,33 @@ class SessionRecordProjection:
     decomposition: AgentFivePartDecomposition
     step_events: tuple[Event, ...]
     graph: OntologyGraph
+
+    @property
+    def session_process(self) -> Process:
+        return self.decomposition.session_process
+
+    @property
+    def lifecycle_state(self) -> QualityState | None:
+        return self.decomposition.lifecycle_state
+
+    @property
+    def origin_state(self) -> QualityState:
+        return self.decomposition.origin_state
+
+    @property
+    def role(self) -> Role:
+        return self.decomposition.role
+
+    @property
+    def kernel(self) -> Actor:
+        return self.decomposition.kernel
+
+    @property
+    def transcript_artifact(self) -> InformationEntity:
+        return self.decomposition.transcript_artifact
+
+
+SessionProcessProjection = SessionRecordProjection
 
 
 def project_session_dict(
@@ -497,14 +531,24 @@ def project_session_dict(
     g = graph if graph is not None else OntologyGraph()
 
     session_id = str(raw_session.get("session_id", "")).strip()
-    agent_type = str(raw_session.get("agent_type", "")).strip()
+    raw_agent_type = raw_session.get("agent_type") or raw_session.get("agent_family") or ""
+    agent_type = str(raw_agent_type).strip().lower()
     if not session_id or not agent_type:
         raise ProjectionValidationError(
             "Session JSON must provide non-empty 'session_id' and 'agent_type'."
         )
+    if agent_type not in SESSION_VALID_KERNELS:
+        raise ProjectionValidationError(
+            f"Unknown agent kernel '{agent_type}'. Allowed kernels: {sorted(SESSION_VALID_KERNELS)}."
+        )
 
-    status = str(raw_session.get("status", "running"))
-    source = str(raw_session.get("source", "terminal"))
+    raw_status = raw_session.get("status")
+    status = normalize_session_lifecycle_state(str(raw_status) if raw_status is not None else "running")
+    raw_source = raw_session.get("source")
+    source = normalize_session_origin(
+        str(raw_source) if raw_source is not None else "terminal",
+        is_worker=is_worker,
+    )
     role_cls = "SubtaskWorkerRole" if is_worker else "PrimarySchedulerRole"
     transcript_uri = str(
         raw_session.get("source_jsonl")
@@ -551,6 +595,181 @@ def project_session_dict(
     return SessionRecordProjection(
         decomposition=decomp,
         step_events=tuple(step_events),
+        graph=g,
+    )
+
+
+def project_session_process_dict(
+    raw_session: Mapping[str, Any],
+    *,
+    raw_steps: Sequence[Mapping[str, Any]] = (),
+    is_worker: bool = False,
+    profile_id: str | None = None,
+    registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+    graph: OntologyGraph | None = None,
+) -> SessionRecordProjection:
+    """Project a session dictionary into an ontological process graph (canonical entrypoint)."""
+    return project_session_dict(
+        raw_session,
+        raw_steps=raw_steps,
+        is_worker=is_worker,
+        profile_id=profile_id,
+        registry=registry,
+        graph=graph,
+    )
+
+
+# ============================================================================
+# Pillar 3b: Async Callback Delivery (`~/.frago/sessions/async_dispatches/<job_id>.json`)
+# ============================================================================
+
+CALLBACK_DELIVERY_STATES: tuple[str, ...] = ("queued", "delivering", "delivered", "failed")
+CALLBACK_DELIVERY_TRANSITIONS: Mapping[str, frozenset[str]] = {
+    "queued": frozenset({"delivering", "failed"}),
+    "delivering": frozenset({"delivered", "queued", "failed"}),
+    "delivered": frozenset(),
+    "failed": frozenset(),
+}
+"""Legal callback-delivery transitions.
+
+``queued → delivering → delivered`` is the only road to ``delivered``; a failed injection
+goes ``delivering → queued`` (put back at the head of the queue); ``failed`` is reachable
+from ``queued`` or ``delivering`` once retries are exhausted or the target is unreachable.
+``delivered`` and ``failed`` are terminal. The registry's generic state table is a full
+mesh, so the narrower contract is pinned here.
+"""
+
+
+def is_legal_callback_delivery_transition(from_state: str, to_state: str) -> bool:
+    """Whether ``from_state → to_state`` is allowed for a `CallbackDeliveryProcess`."""
+    return to_state in CALLBACK_DELIVERY_TRANSITIONS.get(from_state, frozenset())
+
+
+def infer_callback_delivery_state(raw_job: Mapping[str, Any]) -> str | None:
+    """Read the delivery state from a dispatch ledger dict.
+
+    New ledgers carry ``delivery_state``. Legacy ledgers (before delivery was modelled)
+    only have ``status``, whose ``completed`` historically meant "worker ok and callback
+    sent": map it to ``delivered``; ``failed`` to ``failed``; anything still in flight
+    (``pending`` / ``running`` / ``delivering``) to ``queued``. ``superseded`` jobs never
+    deliver and are not projected (returns None).
+    """
+    explicit = raw_job.get("delivery_state")
+    if explicit:
+        value = str(explicit).strip().lower()
+        if value not in CALLBACK_DELIVERY_STATES:
+            raise ProjectionValidationError(
+                f"Unknown callback delivery_state '{value}'. Allowed: {list(CALLBACK_DELIVERY_STATES)}."
+            )
+        return value
+    status = str(raw_job.get("status") or "").strip().lower()
+    if status == "completed":
+        return "delivered"
+    if status == "failed":
+        return "failed"
+    if status in {"pending", "running", "delivering"}:
+        return "queued"
+    return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class CallbackDeliveryProjection:
+    """Projected `CallbackDeliveryProcess` (+R, keyed by job_id) and its `CallbackDeliveryState` (~R)."""
+
+    job_id: str
+    caller_session_id: str
+    worker_session_id: str | None
+    process: Process
+    state: QualityState
+    worker_succeeded: bool | None
+    graph: OntologyGraph
+
+
+def project_callback_delivery_dict(
+    raw_job: Mapping[str, Any],
+    *,
+    registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
+    graph: OntologyGraph | None = None,
+) -> CallbackDeliveryProjection:
+    """Project an async dispatch ledger dict into `CallbackDeliveryProcess` + `CallbackDeliveryState`.
+
+    Worker outcome (``exit_code``) and delivery outcome are kept apart: ``worker_succeeded``
+    comes from ``exit_code`` only, the state node from ``delivery_state`` only. A ledger whose
+    ``status`` says ``completed`` while delivery is not ``delivered`` violates the
+    dispatch-status subordination rule and is rejected.
+    """
+    g = graph if graph is not None else OntologyGraph()
+
+    job_id = str(raw_job.get("job_id") or "").strip()
+    caller = str(raw_job.get("caller_session_id") or "").strip()
+    if not job_id or not caller:
+        raise ProjectionValidationError(
+            "Dispatch JSON must provide non-empty 'job_id' and 'caller_session_id'."
+        )
+    delivery_state = infer_callback_delivery_state(raw_job)
+    if delivery_state is None:
+        raise ProjectionValidationError(
+            f"Dispatch job '{job_id}' (status={raw_job.get('status')!r}) has no callback delivery to project."
+        )
+    if str(raw_job.get("status") or "") == "completed" and delivery_state != "delivered":
+        raise ProjectionValidationError(
+            f"Dispatch job '{job_id}' is 'completed' but callback delivery is '{delivery_state}'; "
+            "completed requires delivered."
+        )
+
+    process_uid = f"callback-delivery:{job_id}"
+    existing = g.get_entity(process_uid)
+    if isinstance(existing, Process):
+        process = existing
+    else:
+        created = registry.create(
+            "CallbackDeliveryProcess", process_uid=process_uid, state=delivery_state
+        )
+        assert isinstance(created, Process)
+        process = created
+
+    state = registry.create(
+        "CallbackDeliveryState",
+        bearer_id=process.ontological_id(),
+        context_id=f"caller:{caller}",
+        value=delivery_state,
+    )
+    assert isinstance(state, QualityState)
+    g.link(process, "exhibits_state", state, replace_functional=True)
+
+    caller_uid = f"session:{caller}"
+    caller_proc = g.get_entity(caller_uid)
+    if not isinstance(caller_proc, Process):
+        caller_proc = registry.create("AgentSessionProcess", process_uid=caller_uid)
+        assert isinstance(caller_proc, Process)
+    g.link(process, "delivers_to_session", caller_proc)
+
+    raw_exit = raw_job.get("exit_code")
+    worker_succeeded: bool | None
+    if raw_exit is None:
+        worker_succeeded = None
+    else:
+        try:
+            worker_succeeded = int(raw_exit) == 0
+        except (TypeError, ValueError):
+            worker_succeeded = False
+    worker_sid = str(raw_job.get("target_session_id") or "").strip() or None
+
+    if worker_sid:
+        worker_uid = f"session:{worker_sid}"
+        worker_proc = g.get_entity(worker_uid)
+        if not isinstance(worker_proc, Process):
+            worker_proc = registry.create("AgentSessionProcess", process_uid=worker_uid)
+            assert isinstance(worker_proc, Process)
+        g.link(process, "dispatched_from_worker", worker_proc)
+
+    return CallbackDeliveryProjection(
+        job_id=job_id,
+        caller_session_id=caller,
+        worker_session_id=worker_sid,
+        process=process,
+        state=state,
+        worker_succeeded=worker_succeeded,
         graph=g,
     )
 
@@ -935,7 +1154,39 @@ def project_recipe_exposure_dict(
     registry: DomainClassRegistry = DEFAULT_DOMAIN_REGISTRY,
     graph: OntologyGraph | None = None,
 ) -> RulePolicy:
-    """Project a `RecipeExposurePolicy` and verify `PublicExposableRecipe` axioms when `access == 'public'`."""
+    """Project a `RecipeExposurePolicy` and verify `PublicExposableRecipe` axioms when `access == 'public'`.
+
+    The axiom has two clauses, and both are about what an **anonymous reader can
+    reach**. Both facts live outside this layer — which may import only the
+    standard library and `frago.ontology.*` — so the caller states them:
+
+    * ``unargued_anon_write`` — whether an anonymous caller can reach a write
+      through this recipe that **nobody argued for**. Not "the recipe marks an
+      ``@action``": a page action is reachable only by the owner now that the
+      anonymous zone admits GET and HEAD and those reach `@export` only. Every
+      anonymous entrance has to be registered by name in
+      `frago.server.security._ANON_POST`, with its reason beside it, and a
+      decision is not what this class exists to refuse.
+    * ``page_calls_api_from_public_page`` — whether the page fetches
+      ``api/<mode>`` in a way the anonymous zone refuses, which is the failure
+      ``frago recipe expose --public`` refuses up front.
+
+    Leaving either out means false, which lets a caller project a recipe it
+    knows nothing about without claiming anything about it. What the defaults
+    must not do is *infer* from the recipe's own declaration — that inference is
+    the disagreement with reality this function used to produce for
+    `frago_home`, where the recipe marks `@action submit_request`, is published
+    `--public`, and both are true.
+
+    A recipe that is not in the graph is not judged: there is nothing to attach
+    a capability to, and refusing here would turn "the caller did not project
+    the recipe first" into a security verdict.
+    """
+    from frago.ontology.contracts import (
+        ACTION_TRIGGERABLE_CAPABILITY,
+        PUBLIC_PAGE_CALLS_BACKEND_CAPABILITY,
+    )
+
     g = graph if graph is not None else OntologyGraph()
     recipe_name = str(raw_exposure.get("recipe_name", "")).strip()
     access = str(raw_exposure.get("access", "owner")).strip()
@@ -946,6 +1197,34 @@ def project_recipe_exposure_dict(
 
     recipe_uid = f"recipe:{recipe_name}"
     recipe_ent = g.get_entity(recipe_uid)
+
+    # Stated as capabilities, so the axiom reads one shape whether the caller
+    # passed the fact in or the recipe already carried it. Built directly rather
+    # than through the registry: these two markers are not domain classes in
+    # `frago.json` — they are the vocabulary this axiom is written in, and
+    # `registry.create` instantiates a declared class by name.
+    if recipe_ent is not None:
+        if bool(raw_exposure.get("unargued_anon_write", False)):
+            g.link(
+                recipe_ent,
+                "has_capability",
+                Capability(
+                    bearer_id=recipe_ent.ontological_id(),
+                    context_id=f"recipe:{recipe_name}",
+                    dependent_type=ACTION_TRIGGERABLE_CAPABILITY,
+                ),
+            )
+        if bool(raw_exposure.get("page_calls_api_from_public_page", False)):
+            g.link(
+                recipe_ent,
+                "has_capability",
+                Capability(
+                    bearer_id=recipe_ent.ontological_id(),
+                    context_id=f"page:{recipe_name}",
+                    dependent_type=PUBLIC_PAGE_CALLS_BACKEND_CAPABILITY,
+                ),
+            )
+
     if access == "public" and recipe_ent is not None:
         pub_cls = BUILTIN_DEFINED_CLASSES["PublicExposableRecipe"]
         if not pub_cls.matches(recipe_ent, g):
@@ -1271,6 +1550,30 @@ class FivePillarShadowProjector:
     def graph(self) -> OntologyGraph:
         return self._graph
 
+    def project_session_process(
+        self,
+        raw_session: Mapping[str, Any],
+        *,
+        raw_steps: Sequence[Mapping[str, Any]] = (),
+        is_worker: bool = False,
+        profile_id: str | None = None,
+    ) -> SessionRecordProjection:
+        return project_session_process_dict(
+            raw_session,
+            raw_steps=raw_steps,
+            is_worker=is_worker,
+            profile_id=profile_id,
+            registry=self._registry,
+            graph=self._graph,
+        )
+
+    def project_callback_delivery(
+        self, raw_job: Mapping[str, Any]
+    ) -> CallbackDeliveryProjection:
+        return project_callback_delivery_dict(
+            raw_job, registry=self._registry, graph=self._graph
+        )
+
     def project_session(
         self,
         raw_session: Mapping[str, Any],
@@ -1279,13 +1582,11 @@ class FivePillarShadowProjector:
         is_worker: bool = False,
         profile_id: str | None = None,
     ) -> SessionRecordProjection:
-        return project_session_dict(
+        return self.project_session_process(
             raw_session,
             raw_steps=raw_steps,
             is_worker=is_worker,
             profile_id=profile_id,
-            registry=self._registry,
-            graph=self._graph,
         )
 
     def project_hook_rules(
