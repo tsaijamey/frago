@@ -49,13 +49,16 @@ def _rec(
     *,
     group_id: str | None = None,
     agent_path: list[str] | None = None,
+    ts: int | None = None,
 ) -> UnifiedRecord:
     return UnifiedRecord(
         id=f"rec-{seq}",
         session_id=CC_SID,
         group_id=group_id,
         seq=seq,
-        ts=1_700_000_000_000 + seq * 1000,
+        # 默认步长 1 秒：正常工具流的间隔，绝不触发静默切分。要构造长静默跨段的用例
+        # 显式传 `ts`，免得靠累加默认步长去猜。
+        ts=ts if ts is not None else 1_700_000_000_000 + seq * 1000,
         kind=kind,  # type: ignore[arg-type]
         agent_path=agent_path or [],
         payload=payload,
@@ -181,6 +184,238 @@ class TestTailTurnsInteractiveCardCheck:
             _rec(4, "agent.say", {"text": "好的，已完成发布。"}, group_id="grp-done"),
         ]
         assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+
+class TestCommandEchoCardIsNotLiveCard:
+    """命令回显里的卡片 JSON 不是「等着人点选」的卡，不得关死投递闸门。
+
+    现场依据：会话 82474813 中一条 CLI 校验命令的输出里带测试样例卡片 JSON，
+    被旧判定算成待答卡片，把两条回传压了 3 小时 55 分（2026-11-13）。
+    """
+
+    CLI_ECHO_BODY = (
+        "Created At: 2026-11-13T12:19:27+08:00\n"
+        "Command exited with code 0.\n\n"
+        "Command output:\n"
+        "frago 82135 ... python -m frago.session.async_dispatch --job-file ...\n"
+        "=== CLI VALID TEST ===\n"
+        + FRAGO_ASK_TOOL_OUTPUT
+    )
+
+    def test_bash_echo_with_card_json_does_not_block(self):
+        """复合 shell 命令（含 `=== CLI VALID TEST ===`）回显卡片 JSON 时，不阻断注入。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "核验修复结果"}),
+            _rec(
+                2,
+                "tool.call",
+                {
+                    "tool_name": "run_command",
+                    "call_id": "c1",
+                    "args": {
+                        "CommandLine": 'ls -la /tmp && echo "=== CLI VALID TEST ===" && frago app ask single-choice -q "测试"'
+                    },
+                },
+                group_id="grp-run",
+            ),
+            _rec(
+                3,
+                "tool.result",
+                {"status": "ok", "call_id": "c1", "body": self.CLI_ECHO_BODY},
+                group_id="grp-run",
+            ),
+            _rec(4, "agent.say", {"text": "核验完成，测试全过。"}, group_id="grp-run"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[2], records) is False
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+    def test_standalone_ask_still_blocks(self):
+        """独立 `frago app ask` 调用产出的卡片仍算待答卡片，照常阻断。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "怎么收尾？"}),
+            _rec(
+                2,
+                "tool.call",
+                {
+                    "tool_name": "run_command",
+                    "call_id": "c2",
+                    "args": {
+                        "CommandLine": 'frago app ask single-choice -q "接下来如何收尾？" -o "A|提交|推送"'
+                    },
+                },
+                group_id="grp-ask2",
+            ),
+            _rec(
+                3,
+                "tool.result",
+                {"status": "ok", "call_id": "c2", "body": FRAGO_ASK_TOOL_OUTPUT},
+                group_id="grp-ask2",
+            ),
+            _rec(4, "agent.say", {"text": "请点选上方卡片"}, group_id="grp-ask2"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[2], records) is True
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+
+    def test_ask_with_help_flag_does_not_block(self):
+        """带 `--help` 的 ask 调用只是在查用法，不算挂卡。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "看看用法"}),
+            _rec(
+                2,
+                "tool.call",
+                {
+                    "tool_name": "run_command",
+                    "call_id": "c3",
+                    "args": {"CommandLine": "frago app ask --help"},
+                },
+                group_id="grp-help",
+            ),
+            _rec(
+                3,
+                "tool.result",
+                {"status": "ok", "call_id": "c3", "body": FRAGO_ASK_TOOL_OUTPUT},
+                group_id="grp-help",
+            ),
+            _rec(4, "agent.say", {"text": "用法如上。"}, group_id="grp-help"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[2], records) is False
+
+    def test_agent_say_fenced_example_json_does_not_block(self):
+        """`agent.say` 里用 Markdown 代码围栏贴出的示例卡片 JSON 不算待答卡片。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "给我看看卡片 JSON 长什么样"}),
+            _rec(
+                2,
+                "agent.say",
+                {"text": "示例长这样：\n\n```json\n" + FRAGO_ASK_TOOL_OUTPUT + "\n```\n"},
+                group_id="grp-doc",
+            ),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[1], records) is False
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+    def test_agent_say_unfenced_component_json_still_blocks(self):
+        """非围栏的组件 JSON 仍按真卡片处理（`frago ask` 直接挂在回复正文里的形态）。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "选一个环境"}),
+            _rec(2, "agent.say", {"text": FRAGO_ASK_TOOL_OUTPUT}, group_id="grp-live"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[1], records) is True
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+
+    def test_fence_card_still_recognized(self):
+        """`answer-needed-by-human` 围栏块是真卡片，必须继续识别。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "帮我准备发布"}),
+            _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-fence"),
+        ]
+        assert workbench_queue.record_has_interactive_card(records[1], records) is True
+
+
+class TestLongTurnSilenceSegmentation:
+    """长单轮按静默时长与定时唤醒边界切分，避免一个巨型末轮把闸门关死。
+
+    现场依据：会话 82474813 从 11:38 到 15:42 全程无人类发言，被算成同一个轮次（整场 479 条
+    记录只切出 2 轮，末轮横跨 4 小时），轮内一次误判关死到最后（2026-11-13）。
+    """
+
+    BASE_MS = 1_700_000_000_000
+
+    def test_silent_gap_splits_long_turn_and_unblocks(self):
+        """早先段有卡片、跨过长静默后产生新的实质回复（中间无人发言）时，不再被旧卡卡死。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "帮我准备发布"}),
+            _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-old"),
+            # 静默 10 分钟后，agent 自己接着干活（没有人类发言）
+            _rec(
+                3,
+                "agent.say",
+                {"text": "定时自查：Worker 仍在跑，继续等待。"},
+                group_id="grp-new",
+                ts=self.BASE_MS + 10 * 60 * 1000,
+            ),
+        ]
+        assert len(workbench_queue.segment_main_turns(records)) == 2
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+    def test_normal_tool_flow_is_not_split(self):
+        """默认 1 秒步长的正常工具流不得被静默阈值误切。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "跑一下测试"}),
+            _rec(2, "tool.call", {"tool_name": "run_command"}, group_id="grp-flow"),
+            _rec(3, "tool.result", {"status": "ok", "body": "全部通过"}, group_id="grp-flow"),
+            _rec(4, "agent.say", {"text": "测试全过。"}, group_id="grp-flow"),
+        ]
+        assert len(workbench_queue.segment_main_turns(records)) == 1
+
+    def test_card_followed_by_empty_reply_still_blocks(self):
+        """卡片之后紧跟空回复不构成新轮，闸门继续拦（保留既有保护）。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "帮我准备发布"}),
+            _rec(2, "agent.say", {"text": DECISION_FENCE}, group_id="grp-card"),
+            _rec(
+                3,
+                "agent.say",
+                {"text": "   "},
+                group_id="grp-empty",
+                ts=self.BASE_MS + 10 * 60 * 1000,
+            ),
+        ]
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
+
+    def test_async_wakeup_boundary_splits_without_human_speech(self):
+        """无人发言时，定时唤醒开启新一轮自查，早先轮里的卡不再锁死队列。
+
+        这一场刻意复刻事故现场的形状：同一次派发里所有记录 ``group_id`` 相同、每一轮自查
+        都有 ``agent.say`` 回复——只按 group 或只看「有没有说过话」都切不开，能切开它的
+        只有定时唤醒这条边界。
+        """
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "派发 Worker 后自查"}),
+            # 第 1 轮自查：挂定时器、读状态、回复。这一轮里还挂了一张真卡。
+            _rec(
+                2,
+                "tool.call",
+                {"tool_name": "schedule_wakeup", "tool_family": "schedule"},
+                group_id="grp-same",
+            ),
+            _rec(3, "tool.call", {"tool": "ask"}, group_id="grp-same"),
+            _rec(
+                4,
+                "tool.result",
+                {"status": "ok", "body": FRAGO_ASK_TOOL_OUTPUT},
+                group_id="grp-same",
+            ),
+            _rec(5, "agent.say", {"text": "已挂好定时器，等下次自查。"}, group_id="grp-same"),
+            # 第 2 轮自查：定时唤醒、读状态、回复。没有人类发言，group 也没变。
+            _rec(
+                6,
+                "tool.call",
+                {"tool_name": "schedule_wakeup", "tool_family": "schedule"},
+                group_id="grp-same",
+            ),
+            _rec(7, "tool.result", {"status": "ok", "body": "Worker 仍在跑"}, group_id="grp-same"),
+            _rec(8, "agent.say", {"text": "Worker 仍在跑，继续等。"}, group_id="grp-same"),
+        ]
+        turns = workbench_queue.segment_main_turns(records)
+        assert len(turns) == 2
+        # 末轮已是第 2 轮自查，早先那张卡不再把闸门关死
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is False
+
+    def test_real_ask_card_still_blocks_within_same_turn(self):
+        """真实 `frago ask` 卡片与同轮收尾回复仍照常拦（保留既有保护）。"""
+        records: list[UnifiedRecord] = [
+            _rec(1, "user.say", {"text": "部署到哪里？"}),
+            _rec(2, "tool.call", {"tool": "ask"}, group_id="grp-ask"),
+            _rec(
+                3,
+                "tool.result",
+                {"status": "ok", "body": FRAGO_ASK_TOOL_OUTPUT},
+                group_id="grp-ask",
+            ),
+            _rec(4, "agent.say", {"text": "请在上方卡片选择环境"}, group_id="grp-ask"),
+        ]
+        assert workbench_queue.has_interactive_card_in_tail_turns(records) is True
 
 
 class TestQueueAutoInjectionAndRoutes:
@@ -428,5 +663,80 @@ class TestQueueAutoInjectionAndRoutes:
         assert res_unlocked["injected"] is True
         assert res_unlocked["item"]["text"] == "进程2回传报文"
         assert workbench_queue.list_queue(CC_SID) == []
+
+    def test_is_session_busy_handles_none_verdict_and_logs_warning_on_real_exception(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """回归（75d51ed1 次因）：各内核 latest_turn / evaluate_file 返回 None 时不得抛 AttributeError；
+        窗格真忙时仍由窗格探针拦住；真实运行时异常必须以 WARNING 级别记录而不得被 DEBUG 吞没。
+        """
+        import logging
+        from types import SimpleNamespace
+
+        from frago.server.services import tmux_sessions_service as tsvc
+        from frago.server.services import ui_session_runner as usr
+        from frago.session import (
+            agy_store,
+            codex_store,
+            coreagent_store,
+            opencode_store,
+            transcript_completion,
+        )
+        from frago.session.adapters import claude_code_records
+
+        dummy_file = tmp_path / "dummy.jsonl"
+        dummy_file.write_text("{}\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            usr,
+            "get_runner",
+            lambda: SimpleNamespace(_pool=SimpleNamespace(peek=lambda _sid: None)),
+        )
+        link_busy = {"value": False}
+        monkeypatch.setattr(
+            tsvc,
+            "find_for_session",
+            lambda _sid: SimpleNamespace(busy=link_busy["value"]),
+        )
+
+        # 1. agy / codex / opencode / claude-code / coreagent 返回 None 时均不抛 AttributeError（无 WARNING）
+        monkeypatch.setattr(agy_store, "latest_turn", lambda _sid: None)
+        monkeypatch.setattr(codex_store, "find_rollout", lambda _sid: dummy_file)
+        monkeypatch.setattr(codex_store, "latest_turn", lambda _sid: None)
+        monkeypatch.setattr(opencode_store, "latest_turn", lambda _sid: None)
+        monkeypatch.setattr(claude_code_records, "find_session_file", lambda _sid: dummy_file)
+        monkeypatch.setattr(coreagent_store, "find_session_file", lambda _sid: dummy_file)
+        monkeypatch.setattr(transcript_completion, "evaluate_file", lambda _p: None)
+        monkeypatch.setattr(
+            "frago.server.services.coreagent_runner.busy", lambda _sid: False
+        )
+
+        caplog.set_level(logging.WARNING, logger=workbench_queue.logger.name)
+        for fam in ("agy", "codex", "opencode", "claude-code", "coreagent"):
+            monkeypatch.setattr(record_reader, "detect_family", lambda _sid, f=fam: f)
+            caplog.clear()
+            assert workbench_queue.is_session_busy(f"sid-{fam}") is False
+            assert not any("检查转录完成态失败" in rec.message for rec in caplog.records)
+
+        # 2. agy 转录返回 None 但 tmux 窗格真忙时，绝不误放行
+        monkeypatch.setattr(record_reader, "detect_family", lambda _sid: "agy")
+        link_busy["value"] = True
+        assert workbench_queue.is_session_busy("sid-agy-busy") is True
+        link_busy["value"] = False
+
+        # 3. 真实异常以 WARNING 级别记录，不再被 DEBUG 静默吞掉
+        def _boom(_sid: str):
+            raise RuntimeError("simulated storage failure")
+
+        monkeypatch.setattr(agy_store, "latest_turn", _boom)
+        caplog.clear()
+        assert workbench_queue.is_session_busy("sid-agy-err") is False
+        warnings = [
+            rec
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING and "检查转录完成态失败" in rec.message
+        ]
+        assert len(warnings) == 1
+
 
 

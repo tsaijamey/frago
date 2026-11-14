@@ -1,8 +1,8 @@
-"""会话文件的实时流：盯住 Claude Code 的会话 JSONL，只把**新长出来的**记录推出去。
+"""会话文件的实时流：盯住会话转录文件，只把**新长出来的**记录推出去。
 
-从 :mod:`frago.session.monitor` 里搬出来的，Observer 的生死归 :mod:`frago.watcher` 管，
-这里只做会话这一侧的事：把项目路径编码成会话目录、文件一动就重读重翻、按 ``seq`` 差出
-新记录、顺带判这一轮说完了没有。
+通过五内核统一适配器注册表（KernelSessionAdapter）进行记录读取与探针判定，
+内部维护双向确凿路径映射（Path.resolve() 规范化），杜绝任何物理路径猜解与单监听盲猜兜底；
+在增量记录到达与轮次完工时合流驱动 SessionOntologyService，实现本体状态机闭环。
 
 三条纪律，少一条这条流就会从"实时"退化成"卡顿"：
 
@@ -47,8 +47,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from frago.session.adapters import get_kernel_session_adapter
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 from frago.session.monitor import encode_project_path
+from frago.session.service import SessionOntologyService
 from frago.watcher import FileEvent, WatchdogObserverService, WatchTarget
 
 logger = logging.getLogger(__name__)
@@ -58,19 +60,7 @@ DEFAULT_DEBOUNCE_SECONDS = 0.3
 
 
 class SessionStream:
-    """Watch all ``*.jsonl`` files in one Claude Code project directory.
-
-    Usage::
-
-        stream = SessionStream(
-            project_path="/Users/jamey/Repos/frago",
-            on_records=my_handler,         # called with new UnifiedRecords
-            on_turn_complete=my_handler,   # called when a turn finishes
-        )
-        stream.start()
-        ...
-        stream.stop()
-    """
+    """Watch transcript files and stream incremental unified records."""
 
     def __init__(
         self,
@@ -81,59 +71,66 @@ class SessionStream:
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         session_id_filter: str | None = None,
         watch_dir: str | Path | None = None,
+        family: str | None = None,
+        watch_file: str | Path | None = None,
+        ontology_service: SessionOntologyService | None = None,
+        origin: str = "terminal",
     ) -> None:
         """Create a stream for one project.
 
         Args:
             project_path: Absolute path to the project being watched.
             on_records: Called with ``(session_id, [record_dict, ...])`` when
-                new records arrive.  Each dict is a ``UnifiedRecord`` serialised
-                via ``dataclasses.asdict``.
+                new records arrive.
             on_turn_complete: Called with ``(session_id, done, stop_reason)``
                 when the latest turn flips to complete.
             debounce_seconds: How long to wait after the last file event before
                 re-reading and classifying.
-            session_id_filter: 开局就登记这一场。等价于建好之后调一次
-                :meth:`watch_session`。**没有「不填就全都盯」这一档**——一个项目目录下
-                躺着上千个会话文件，全盯等于每次无关改动都整文件翻一遍。
+            session_id_filter: 开局就登记这一场。等价于建好之后调一次 :meth:`watch_session`。
             watch_dir: 直接指定要盯的那个目录，给了就不再由 *project_path* 推算。
-                调用方手上已经握着会话文件时**应该给**：那个文件所在的目录就是答案，
-                比"读出工作目录再编码回去"这条路可靠得多——编码是有损的，而且要先能
-                读到工作目录才行（见 :class:`~frago.server.services.workbench_stream_bridge.WorkbenchStreamBridge`）。
+            family: 内核家族类型标识（可选）。
+            watch_file: 显式指定要盯的会话文件路径（可选）。
+            ontology_service: 本体服务实例，用于合流推进状态机与事件账本。
+            origin: 这条流是从哪个面看这些会话的（``web`` / ``terminal`` / ``schedule``
+                / ``channel``）。补档时记进本体，页面上的会话因此不再一律被当成终端开的。
+                账本上明记为派活的一律以 ``worker`` 为准，覆盖这个值。
         """
         self._project_path = os.path.abspath(project_path)
         self._on_records = on_records
         self._on_turn_complete = on_turn_complete
         self._debounce = debounce_seconds
+        self._family = family
+        self._origin = origin
+        self._ontology_service = (
+            ontology_service if ontology_service is not None else SessionOntologyService()
+        )
 
         self._watch_dir: Path | None = Path(watch_dir) if watch_dir is not None else None
         self._target: WatchTarget | None = None
 
         # Per-file state: last-known seq (monotonically increasing).
         self._file_seqs: dict[str, int] = {}  # file_path → last seen seq
-        # Per-file state: 已经交出去的那些记录的编号（身份），整场都记。**不能只记 seq**：整份
-        # 记录每次都是重新编号的，引擎重写一条记录就会让它后面的整体往前挪一格——新写下来的那句
-        # 话可能正好落在已经交出去过的编号上，于是被判成「看过了」，当场丢掉，界面上就是人对它
-        # 说话它不理。也**不能只记最近几十条**，见本模块开头纪律 4。
         self._file_handed: dict[str, set[str]] = {}  # file_path → 已交出去的记录编号
-        # Per-file state: last known turn-completion verdict.
         self._file_done: dict[str, bool] = {}  # file_path → done
 
-        # 开始盯的那一刻已经躺在盘上的会话文件。这些文件第一次被处理时只对水位、不出货，
-        # 免得一次无关的改动把整场历史当成新内容推出去（纪律 1）。
+        # 确凿双向映射：标准化绝对路径 (Path.resolve()) <-> session_id
+        self._path_to_session_id: dict[Path, str] = {}
+        self._session_to_path: dict[str, Path] = {}
+
+        # 开始盯的那一刻已经躺在盘上的会话文件（纪律 1）。
         self._preexisting: set[str] = set()
 
         # 谁在被看。空集合 = 谁都不看，事件直接丢（纪律 3）。
         self._watch_ids: set[str] = set()
-        if session_id_filter:
-            self._watch_ids.add(session_id_filter)
 
         # 去抖：事件只往这里登记「这个文件最后一次动是什么时候」，等待与处理由工作线程做。
         self._pending: dict[str, float] = {}
         self._cv = threading.Condition()
         self._worker: threading.Thread | None = None
-        # Running flag
         self._running = False
+
+        if session_id_filter:
+            self.watch_session(session_id_filter, watch_file=watch_file)
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -146,9 +143,8 @@ class SessionStream:
             self._watch_dir = CLAUDE_PROJECTS_DIR / encode_project_path(self._project_path)
         self._watch_dir.mkdir(parents=True, exist_ok=True)
 
-        # 开始盯之前，先把已经在盘上的会话文件记下来（纪律 1）。只列目录不读内容——
-        # 本机单个项目 921 个文件、2.6 GB，读一遍是分钟量级，列一遍是毫秒量级。
-        self._preexisting = {str(p) for p in self._watch_dir.glob("*.jsonl")}
+        # 开始盯之前，先把已经在盘上的会话文件记下来（纪律 1）。
+        self._preexisting = {str(p.resolve()) for p in self._watch_dir.glob("*.jsonl")}
 
         self._target = WatchTarget(
             path=str(self._watch_dir),
@@ -188,50 +184,150 @@ class SessionStream:
 
     # ---- 谁在被看 ---------------------------------------------------------
 
-    def watch_session(self, session_id: str) -> None:
-        """登记一场会话。没登记的会话，它的文件事件当场丢掉（纪律 3）。
-
-        重复调用无副作用——页面每取一次记录都会调一次。
-        """
+    def watch_session(
+        self, session_id: str, *, watch_file: str | Path | None = None
+    ) -> None:
+        """登记一场会话及其确凿物理文件路径。没登记的会话，其事件当场丢弃。"""
         with self._cv:
             self._watch_ids.add(session_id)
+            target_path: Path | None = None
+            if watch_file is not None:
+                target_path = Path(watch_file).resolve()
+            else:
+                try:
+                    if self._family:
+                        adapter = get_kernel_session_adapter(self._family)
+                        located = adapter.locate_transcript(session_id)
+                    else:
+                        from frago.session.record_reader import locate_session_file
+
+                        located = locate_session_file(session_id)
+                    if located is not None:
+                        target_path = located.resolve()
+                except Exception:
+                    target_path = None
+
+            if target_path is not None:
+                self._path_to_session_id[target_path] = session_id
+                self._session_to_path[session_id] = target_path
+            else:
+                # 定位不到就只登记编号、不登记路径：这场会话的事件会一直被丢掉，直到有人
+                # 给出确凿路径（``watch_file``）或适配器能定位到它。
+                #
+                # **这里从前会按 ``<watch_dir>/<session_id>.jsonl`` 拼一条路径兜底。**
+                # 那个形状只对 Claude Code / CoreAgent 成立：codex 是 rollout 形状、
+                # opencode 在 SQLite 里、agy 是 ``transcript.jsonl``。对另外三家拼出来
+                # 必然是个不存在的文件，而它错得无声——登记成功、事件永远不来，页面上
+                # 就是「这场会话半天不动」，没有任何地方报错。宁可明说定位不到。
+                logger.warning(
+                    "SessionStream: could not locate transcript for session %s; "
+                    "registering it without a file binding (events will be dropped until a "
+                    "concrete path is supplied via watch_file).",
+                    session_id,
+                )
 
     def unwatch_session(self, session_id: str) -> None:
-        """撤掉一场会话的登记，连同它的水位一起忘掉。
-
-        忘掉的文件记进「开始盯之前就在盘上」那一批：日后重新登记时，第一次处理只对水位、
-        不出货（纪律 1）。不这么做，一场在本流运行期间新建、撤过又回来的会话，会被当成
-        新文件把整场历史推一遍。
-        """
+        """撤掉一场会话的登记与确凿映射，连同其水位一起忘掉。"""
         with self._cv:
             self._watch_ids.discard(session_id)
+            bound_path = self._session_to_path.pop(session_id, None)
+            if bound_path is not None:
+                self._path_to_session_id.pop(bound_path, None)
+                self._preexisting.add(str(bound_path))
             if self._watch_dir is not None:
-                self._preexisting.add(str(self._watch_dir / f"{session_id}.jsonl"))
+                standard_p = (Path(self._watch_dir) / f"{session_id}.jsonl").resolve()
+                self._path_to_session_id.pop(standard_p, None)
+                self._preexisting.add(str(standard_p))
+                self._preexisting.add(str(Path(self._watch_dir) / f"{session_id}.jsonl"))
+
             for state in (self._file_seqs, self._file_handed, self._file_done, self._pending):
-                for path in [p for p in state if Path(p).stem == session_id]:
-                    state.pop(path, None)
+                for path_str in list(state):
+                    canon_p = Path(path_str).resolve()
+                    if (bound_path is not None and canon_p == bound_path) or canon_p.stem == session_id:
+                        state.pop(path_str, None)
 
     def watching_any(self) -> bool:
         """还有没有登记着的会话。一场都没有时，这条流可以整个停掉。"""
         with self._cv:
             return bool(self._watch_ids)
 
+    def get_session_for_path(self, file_path: str | Path) -> str | None:
+        """根据精确双向路径映射解析会话编号。未登记或无关路径返回 None。"""
+        with self._cv:
+            return self._get_session_id_for_file(file_path)
+
+    def get_session_file(self, session_id: str) -> Path | None:
+        """获取已登记会话绑定的物理文件规范路径。"""
+        with self._cv:
+            return self._session_to_path.get(session_id)
+
     # ---- internal ---------------------------------------------------------
 
-    def _on_file_event(self, event: FileEvent) -> None:
-        """watchdog 的分发线程叫进来。**这里只登记时刻，不做任何重活。**
+    def _get_session_id_for_file(self, file_path: str | Path) -> str | None:
+        """根据精确双向路径映射与标准化规范路径解析会话编号。严禁单监听盲猜兜底。"""
+        canon = Path(file_path).resolve()
+        # 1. 优先查确凿双向映射
+        sid = self._path_to_session_id.get(canon)
+        if sid is not None and (not self._watch_ids or sid in self._watch_ids):
+            return sid
 
-        分发是单线程串行的：在这里睡一下或翻一遍文件，整个 Observer 就跟着停一下，
-        后面排队的事件全被拖住（纪律 2）。
+        # 2. 匹配标准 Claude Code / CoreAgent 命名模式 (<session_id>.jsonl)。
+        #    这一条只在编号**已经登记在册**时才认：文件名与登记过的编号对上，才把
+        #    这条路径补进映射表。登记册是唯一的事实来源，文件名只是它的一个索引。
+        if canon.stem in self._watch_ids:
+            self._path_to_session_id[canon] = canon.stem
+            self._session_to_path[canon.stem] = canon
+            return canon.stem
+
+        # 3. **到此为止。** 从前这里还有一条「没登记任何会话时，把任意 `.jsonl` 的文件名
+        #    当会话编号返回」的兜底（注释说是给纯单测用的，但代码里没有这个限定）。它让
+        #    任何一份恰好躺在监听目录里的 jsonl 都能冒充一场会话，与适配器注册表那套
+        #    「按编号定位」的判据并存。纯单测要直接喂文件路径，走 ``watch_session`` 显式
+        #    登记即可，不需要生产代码替它猜。
+        return None
+
+    def _observed_origin(self, session_id: str) -> str:
+        """这场会话是从哪个面来的。
+
+        判据次序：账本上明记的派活最硬（**认不认得出父亲都算 worker**，与
+        ``session_origin`` 那套出身判定同一个口径），其余取这条流的观测面
+        （``web`` / ``terminal`` / ``schedule`` / ``channel``）。
+
+        从前这里没有这一格，补档一律写死 ``"terminal"``：人在页面上新开的那场会话
+        于是在本体里也记成终端开的，页面按出身分栏时归错地方。出身只有观测方知道，
+        这里就是那个观测方。
         """
+        try:
+            from frago.session.session_origin import load_origin_index
+
+            if load_origin_index().is_worker(session_id):
+                return "worker"
+        except Exception:  # noqa: BLE001 — 判出身失败退回观测面，NEVER 因此不补档
+            logger.debug("could not read origin index for %s", session_id, exc_info=True)
+        return self._origin
+
+    @staticmethod
+    def _map_record_to_step_type(kind: str) -> str:
+        """将 UnifiedRecord kind 映射为 SessionStepEvent 许可的 step_type。"""
+        if kind == "user.say":
+            return "user"
+        if kind in ("agent.say", "agent.think"):
+            return "assistant"
+        if kind == "tool.call":
+            return "tool_call"
+        if kind == "tool.result":
+            return "tool_result"
+        return "system"
+
+    def _on_file_event(self, event: FileEvent) -> None:
+        """watchdog 的分发线程叫进来。这里只登记时刻，不做任何重活。"""
         if event.is_directory:
             return
 
         file_path = event.path
-        stem = os.path.splitext(os.path.basename(file_path))[0]
-
         with self._cv:
-            if stem not in self._watch_ids:
+            session_id = self._get_session_id_for_file(file_path)
+            if session_id is None or session_id not in self._watch_ids:
                 return
             self._pending[file_path] = time.monotonic()
             self._cv.notify()
@@ -247,7 +343,6 @@ class SessionStream:
                 now = time.monotonic()
                 ready = [p for p, at in self._pending.items() if now - at >= self._debounce]
                 if not ready:
-                    # 还没安静下来。睡到最早那个文件到点为止，中途来了新事件会被唤醒。
                     soonest = min(self._pending.values())
                     self._cv.wait(timeout=max(0.0, self._debounce - (now - soonest)))
                     continue
@@ -258,14 +353,38 @@ class SessionStream:
                 self._process_file(path)
 
     def _process_file(self, file_path: str) -> None:
-        """Re-read and classify *file_path*, emit new records."""
+        """通过统一适配器重读、提取增量记录、探针判定完成状态并合流驱动本体服务。"""
         try:
-            from frago.session.adapters.claude_code_records import to_unified
-            from frago.session.transcript_completion import evaluate_file
+            session_id = self._get_session_id_for_file(file_path)
+            if session_id is None or (self._watch_ids and session_id not in self._watch_ids):
+                return
 
-            records = to_unified(file_path)
+            family = self._family
+            if family is None:
+                from frago.session.record_reader import UnknownSessionFamily, detect_family
 
-            session_id = Path(file_path).stem
+                try:
+                    family = detect_family(session_id)
+                except UnknownSessionFamily:
+                    # 编号不属于已知任何一家：**不处理这场会话**，而不是挑一家当默认。
+                    # 从前这里吞掉一切异常并静默退回 "claude-code"——那等于把别家的编号
+                    # 拿去按 Claude Code 的格式解析，翻出来是空的，看起来像「这场会话没
+                    # 记录」。认不出就说不认得出。
+                    logger.info(
+                        "SessionStream: session %s does not belong to any known kernel "
+                        "family; skipping it.",
+                        session_id,
+                    )
+                    return
+
+            adapter = get_kernel_session_adapter(family)
+            target_path = Path(file_path)
+
+            records = adapter.read_unified_records(session_id, path=target_path)
+            verdict = adapter.probe_turn_completion(session_id, path=target_path)
+            done = verdict.done
+            stop_reason = verdict.stop_reason
+
             first_sight = file_path not in self._file_seqs
             last_seq = self._file_seqs.get(file_path, -1)
             handed = self._file_handed.get(file_path)
@@ -275,16 +394,17 @@ class SessionStream:
                 # 认身份不认位置：只要这条记录的编号没交出去过，它就是新的，不管它排在几号。
                 new_records = [r for r in records if r.id not in handed]
 
+            canon_str = str(target_path.resolve())
             if new_records:
-                # Update last known seq
                 self._file_seqs[file_path] = new_records[-1].seq
                 if handed is None:
                     handed = self._file_handed[file_path] = set()
                 handed.update(r.id for r in new_records)
 
                 # 第一次看见一个开始盯之前就存在的文件：只对水位，一条不发（纪律 1）。
-                # 页面那一侧打开会话时已经自己取过尾部，这中间的空档由它的兜底轮询补上。
-                replaying_history = first_sight and file_path in self._preexisting
+                replaying_history = first_sight and (
+                    file_path in self._preexisting or canon_str in self._preexisting
+                )
 
                 if self._on_records is not None and not replaying_history:
                     from dataclasses import asdict
@@ -300,26 +420,67 @@ class SessionStream:
                             session_id,
                         )
 
+                # 合流驱动本体服务：登记单步事实与步数自增（防护存量未纳管会话）
+                if not replaying_history and self._ontology_service is not None:
+                    try:
+                        self._ontology_service.ensure_managed_session(
+                            session_id=session_id,
+                            agent_kernel_id=family or "claude",
+                            origin=self._observed_origin(session_id),
+                        )
+                        for r in new_records:
+                            step_type = self._map_record_to_step_type(r.kind)
+                            payload = r.payload if isinstance(r.payload, dict) else {}
+                            tool_name = (
+                                payload.get("tool_name") if isinstance(payload, dict) else None
+                            )
+                            self._ontology_service.record_session_step(
+                                session_id=session_id,
+                                step_type=step_type,
+                                payload_dict=payload,
+                                tool_name=tool_name,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "SessionStream failed to record ontology steps for session %s",
+                            session_id,
+                        )
+
             # Check turn completion (only if new records arrived or not yet known)
-            verdict = evaluate_file(Path(file_path))
-            done = bool(verdict.done) if verdict is not None else False
             prev_done = self._file_done.get(file_path, False)
 
-            # 第一次看见就只是对齐，不当成刚刚翻面：页面刚打开一场早就答完的老会话，
-            # 不该收到一条"刚刚答完"的通知——那会让它白白热十五分钟、照常五秒一趟地轮询。
+            # 第一次看见就只是对齐，不当成刚刚翻面
             if file_path not in self._file_done:
                 self._file_done[file_path] = done
                 return
 
             if done and not prev_done:
-                # Turn just completed — only fire once per flip
                 self._file_done[file_path] = True
+
+                # 合流驱动本体服务：跃迁至 awaiting_input 状态
+                if self._ontology_service is not None:
+                    try:
+                        self._ontology_service.ensure_managed_session(
+                            session_id=session_id,
+                            agent_kernel_id=family or "claude",
+                            origin=self._observed_origin(session_id),
+                        )
+                        self._ontology_service.yield_awaiting_input(
+                            session_id=session_id,
+                            waiting_reason=stop_reason or "end_turn",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "SessionStream failed to transition ontology awaiting_input for session %s",
+                            session_id,
+                        )
+
                 if self._on_turn_complete is not None:
                     try:
                         self._on_turn_complete(
                             session_id,
                             True,
-                            verdict.stop_reason if verdict is not None else None,
+                            stop_reason,
                         )
                     except Exception:
                         logger.exception(

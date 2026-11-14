@@ -22,7 +22,6 @@ from fastapi.testclient import TestClient
 
 from frago.server.services import session_send
 from frago.session import agy_store, codex_store, opencode_store
-from frago.session import claude_sessions as claude_svc
 from frago.session import transcript_completion as tc
 
 CC_SID = "00a02979-7eb4-5c70-94ae-867c8281e3f6"
@@ -85,6 +84,15 @@ def three_families(monkeypatch, tmp_path):
         lambda sid: "/repos/opencode-repo" if sid == OC_SID else None,
     )
     # agy：转录在 brain 目录下（家族判定据此认它），目录记在摘要库里。
+    #
+    # `has_conversation` 第一道判据先看 agy 的应用数据目录在不在（`get_app_data_dir()`，
+    # 缺省是 `~/.gemini/antigravity-cli`），整个目录不在就一律回 False。不打这一格，
+    # 这一组断言靠的是跑测试的机器上真装了 agy —— 换一台没装的机器、或者家目录被指到
+    # 临时目录时，`resolve_target` 会把这个裸 UUID 判成 coreagent，断言当场失败。
+    # `FRAGO_AGY_APP_DIR` 是它自己的覆写口（见 `agy_store.get_app_data_dir`）。
+    agy_app = tmp_path / "agy-app"
+    agy_app.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FRAGO_AGY_APP_DIR", str(agy_app))
     brain = tmp_path / "agy-brain"
     (brain / AGY_SID).mkdir(parents=True)
     (brain / AGY_SID / "transcript.jsonl").write_text("{}\n", encoding="utf-8")

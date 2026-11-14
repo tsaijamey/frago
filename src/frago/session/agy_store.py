@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -105,14 +106,39 @@ _TAIL_BYTES = 256 * 1024
 def get_app_data_dir() -> Path:
     """agy 的应用数据目录。
 
-    官方文档把它称为 app data directory，Antigravity CLI 那一份是
-    ``~/.gemini/antigravity-cli``（2.0 与 IDE 各是同级另一个目录）。这里写死 CLI
-    那一份：frago 驱动的就是 CLI。``FRAGO_AGY_APP_DIR`` 只给测试用，正常路径不设。
+    官方文档把它称为 app data directory，Antigravity CLI 在 POSIX 下是
+    ``~/.gemini/antigravity-cli``。这里写死 CLI 那一份：frago 驱动的就是 CLI。
+    ``FRAGO_AGY_APP_DIR`` 只给测试用，正常路径不设。
+    在 Windows 平台优先探测 LOCALAPPDATA / APPDATA，避免主目录残留空目录短路；
+    在所有候选目录均未创建时，Windows 默认回退到 %LOCALAPPDATA%（或 %APPDATA%）
+    标准路径，POSIX 默认返回 ~/.gemini/antigravity-cli。
     """
     override = os.environ.get("FRAGO_AGY_APP_DIR")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".gemini" / "antigravity-cli"
+
+    if sys.platform == "win32":
+        # 1. 优先探测 Windows 标准环境变量路径是否存在
+        for env_var in ("LOCALAPPDATA", "APPDATA"):
+            val = os.environ.get(env_var)
+            if val:
+                cand = Path(val) / "Gemini" / "antigravity-cli"
+                if cand.is_dir():
+                    return cand
+
+        # 2. 其次探测用户主目录下的 ~/.gemini/antigravity-cli
+        default_dir = Path.home() / ".gemini" / "antigravity-cli"
+        if default_dir.is_dir():
+            return default_dir
+
+        # 3. 零先验未创建场景：Windows 默认回退标准 LOCALAPPDATA / APPDATA
+        local_app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "Gemini" / "antigravity-cli"
+        return Path.home() / "AppData" / "Local" / "Gemini" / "antigravity-cli"
+
+    default_dir = Path.home() / ".gemini" / "antigravity-cli"
+    return default_dir
 
 
 def is_agy_present() -> bool:
@@ -177,6 +203,27 @@ def display_transcript_path(conversation_id: str) -> Path:
     """
     full = full_transcript_path(conversation_id)
     return full if full.exists() else transcript_path(conversation_id)
+
+
+def find_session_file(conversation_id: str) -> Path | None:
+    """定位 agy 会话的原始转录文件。找不到返回 None，NEVER 抛。
+
+    单一事实源出口：优先返回主账 transcript.jsonl（实时写入与完成判定均使用该文件）；
+    若主账不存在但 transcript_full.jsonl 存在，则退回到未截断转录；
+    若文件尚未落盘但会话目录已就绪（刚启动），仍返回主账路径（便于实时桥接预先挂载监听）；
+    定位不到会话目录或 Antigravity CLI 未安装时返回 None。
+    """
+    if not is_agy_present():
+        return None
+    primary = transcript_path(conversation_id)
+    if primary.is_file():
+        return primary
+    full = full_transcript_path(conversation_id)
+    if full.is_file():
+        return full
+    if primary.parent.is_dir() or has_conversation(conversation_id):
+        return primary
+    return None
 
 
 def conversation_db_path(conversation_id: str) -> Path:
@@ -407,25 +454,42 @@ def latest_turn(conversation_id: str) -> AgyTurn | None:
        模型先输出一条不带 ``tool_calls`` 的过渡播报并结束当前小拍、挂起等待后台完成回调；
        若本轮仍有未收到完成通知的后台任务，或者是后台任务刚回调、模型还没给出回调后的新回复，
        本轮都尚未完结。
-    窗口被某一轮的长工具输出撑爆时，退化成「末尾那一轮没看到用户输入」，此时返回 None，
-    主路径当帧退回读屏信号，本轮照常跑完。
+    回读窗口先走 ``_TAIL_BYTES``（256KB）快速路径；若单轮长输出将最后一条 ``USER_INPUT``
+    挤出初始窗口，则按倍增窗口（512KB → 1MB → … → 整文件）向上扩读重试，直至找到最近一条
+    用户输入，或确认全文件确无用户输入记录后再返回 None（下游在未确定态下退回读屏信号）。
     """
     path = transcript_path(conversation_id)
     if not path.exists():
         return None
-    records = _iter_records(path, tail_bytes=_TAIL_BYTES)
-    if not records:
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        return None
+    if file_size <= 0:
         return None
 
+    window = _TAIL_BYTES
+    records: list[dict[str, Any]] = []
     last_user_pos: int | None = None
     last_user_step: Any = None
-    for position, record in enumerate(records):
-        if record.get("type") == RECORD_USER_INPUT:
-            last_user_pos = position
-            last_user_step = record.get("step_index")
-
-    if last_user_pos is None:
-        return None
+    while True:
+        exhausted = window >= file_size
+        records = _iter_records(path, tail_bytes=None if exhausted else window)
+        last_user_pos = None
+        last_user_step = None
+        for position, record in enumerate(records):
+            if record.get("type") == RECORD_USER_INPUT:
+                last_user_pos = position
+                last_user_step = record.get("step_index")
+        if last_user_pos is not None:
+            break
+        if exhausted:
+            return None
+        window *= 2
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            return None
 
     # 只在**最后一条**用户输入之后找收尾回复。上一轮那次收尾也在同一个窗口里，
     # 不划这条线的话，第二轮刚提交就会被判成"已经答完"，取回上一轮的答案。

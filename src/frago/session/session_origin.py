@@ -76,8 +76,10 @@ try:
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
+from frago.ontology.runtime import normalize_session_origin
 from frago.session import coreagent_store
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
+from frago.session.store import SessionOntologyRecord, get_default_session_store
 
 logger = logging.getLogger(__name__)
 
@@ -240,20 +242,32 @@ def _ledger_lock_path() -> Path:
 
 @contextlib.contextmanager
 def _locked_ledger() -> Iterator[None]:
-    """跨线程 + 跨进程串行持有账本的读—改—写临界区。"""
+    """跨线程 + 跨进程串行持有账本的读—改—写临界区（跨平台支持 Unix fcntl 与 Windows msvcrt）。"""
     with _ledger_lock:
         lock_path = _ledger_lock_path()
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            if fcntl is not None:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            if fcntl is not None:
+        if os.name == "nt":
+            import msvcrt
+
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                yield
+            finally:
                 with contextlib.suppress(OSError):
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                os.close(fd)
+        else:
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                if fcntl is not None:
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
 
 
 def _ledger_entries() -> list[Any]:
@@ -283,10 +297,15 @@ def record_relation(
     global _memo
     if kind not in RELATION_KINDS:
         return False
+    # 派活一律算 worker，**与认不认得出父亲无关**。服务端的常驻会话、定时任务派出去的活
+    # 本来就没有上级会话可指，但它们绝不是人自己开的那一场。这里若按「有父亲才算 worker」，
+    # 同一场会话在老账本里算 worker、在本体存储里却算人开的，两处口径互斥。
+    norm_origin = normalize_session_origin("worker" if kind == "dispatch" else "terminal")
     entry: dict[str, Any] = {
         "child": child_session_id,
         "parent": parent_session_id or None,
         "kind": kind,
+        "origin": norm_origin,
         "agent_type": agent_type,
         "cwd": cwd,
         # 第一句话开头留一句，排查时能认出这条账对应的是哪一次。
@@ -295,11 +314,23 @@ def record_relation(
     }
     if kind == "branch":
         entry.update({"anchor": anchor, "note": note or "", "closed_at": None, "closed_by": None})
+    written = False
     try:
         with _locked_ledger():
             entries = _ledger_entries()
             entries.append(entry)
             written = _write_json(LAUNCH_LEDGER, entries[-LEDGER_LIMIT:])
+        # 锁已经放掉再动本体存储，与 :func:`close_relation` 一个做法。
+        #
+        # **这两步绝不能套在一起。** 两个存储各有各的锁（这里是 ``agent-launches.json.lock``，
+        # 本体存储是 ``session-ontology-store.json.lock``），而本体存储落盘时会**整份覆写**
+        # 老账本。若在本函数持有老账本锁期间去写本体存储，就存在这样一个窗口：本进程按旧
+        # 内容读入 entries，另一个进程趁这一刻把老账本整份覆写，本进程再拿手上的旧内容覆盖
+        # 回去——对方刚写好的关系凭空消失，且不报错。分开持锁之后，最坏结果只是两边短暂不
+        # 一致，下一次任一方落盘就会收敛，不会丢记录。
+        with contextlib.suppress(Exception):
+            store = get_default_session_store()
+            store.save(SessionOntologyRecord.from_dict(entry))
     except Exception:  # noqa: BLE001 — 记账失败最多让左栏认不出这层关系
         logger.debug("could not record relation for %s", child_session_id, exc_info=True)
         return False
@@ -593,10 +624,18 @@ def close_relation(
     已经收口过的不再改写时刻与来路：第一次收口才是事实，后来的重复点击不该把它冲掉。
     写入走整份原子替换，别的记录原样留着——老记录里多出来、这里不认得的字段也一并保留。
 
+    **两处都要落。** 收口原先只写老账本，本体存储停在收口之前；之后随便哪一场会话落盘，
+    老账本都会被按本体存储那一份整份重写回去，已收口的分支重新变实，看起来像人点的那一下
+    根本没生效。所以老账本写完之后，同一份收口状态也要写进本体存储。
+
     与记账不同，这里写不进去要抛 ``OSError``：收口是人点出来的动作，没记上必须告诉他，
     NEVER 让页面以为收了口、刷新之后虚线又回来。
     """
     global _memo
+    # 这两个名字不要跟参数同名：函数体里的 `x: T = None` 会重新绑定参数本身，
+    # 后面读到的就是 None，而收口那一刻明明传了值进来。
+    settled_at: int | None = None
+    settled_by: str | None = None
     with _locked_ledger():
         entries = _ledger_entries()
         hit: int | None = None
@@ -617,8 +656,30 @@ def close_relation(
             item["closed_by"] = closed_by
             if not _write_json(LAUNCH_LEDGER, entries):
                 raise OSError(f"关系账写不进去：{LAUNCH_LEDGER}")
+        # 取账本上此刻的事实，而不是本次传进来的那两个值：重复点击时以第一次为准。
+        settled_at = int(item["closed_at"])
+        settled_by = str(item.get("closed_by") or closed_by)
+    # 锁已经放掉再动本体存储：两个存储各有各的锁，嵌套持有只会让「谁等谁」变得说不清。
+    _sync_branch_close_to_store(
+        child_session_id=child_session_id, closed_at=settled_at, closed_by=settled_by
+    )
     _memo = None
     return _parse_entry(item)
+
+
+def _sync_branch_close_to_store(
+    *, child_session_id: str, closed_at: int, closed_by: str
+) -> None:
+    """把收口状态也写进本体存储。本体里没有这条记录、或存储不可用，就安静地不做。
+
+    与 :func:`record_relation` 同步那一步同样容错：这一步只是让两处一致，失败不该把
+    「收口」这个动作本身判成没做成——人点的那一下已经落进老账本，页面按老账本读得到。
+    """
+    with contextlib.suppress(Exception):
+        store = get_default_session_store()
+        close_branch = getattr(store, "close_branch", None)
+        if close_branch is not None:
+            close_branch(child_session_id, closed_at=closed_at, closed_by=closed_by)
 
 
 # ── 判据二：从旧会话记录里捞父子关系 ────────────────────────────────────────
@@ -901,8 +962,26 @@ class OriginIndex:
             return "worker"
         return "worker" if is_worker_shape(session_id) else "human"
 
+    def is_worker(self, session_id: str) -> bool:
+        """这场会话是否判定为 worker。"""
+        return self.origin_of(session_id) == "worker"
 
-_memo: tuple[float, OriginIndex] | None = None
+
+def _ledger_stamp() -> tuple[float, int] | None:
+    """账本文件此刻的「改动指纹」：最后写入时刻与大小。文件不在就返回 None。
+
+    读一次 stat 是微秒级的事，拿它换掉「30 秒内读到旧索引」这个代价很值：账本不只由本模块
+    在写，本体存储那边也会把关系回写进同一份文件。只按时间判断缓存新不新的话，别人刚写进去
+    的关系要在本进程里躺到缓存过期才看得见。
+    """
+    try:
+        stat = LAUNCH_LEDGER.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
+
+
+_memo: tuple[float, OriginIndex, tuple[float, int] | None] | None = None
 
 
 def load_origin_index(
@@ -911,10 +990,20 @@ def load_origin_index(
     now: float | None = None,
     use_memo: bool = True,
 ) -> OriginIndex:
-    """取出身索引。同一进程内 :data:`MEMO_TTL_S` 秒内复用上一份。"""
+    """取出身索引。同一进程内 :data:`MEMO_TTL_S` 秒内复用上一份。
+
+    复用的前提是账本没被人动过：本体存储回写、命令行另起一个进程记账，都会改到同一份文件。
+    只看「离上次读够不够近」的话，那些刚写进去的关系要等到缓存过期才出现在清单上。
+    """
     global _memo
     clock = _now() if now is None else now
-    if use_memo and _memo is not None and clock - _memo[0] < MEMO_TTL_S:
+    stamp = _ledger_stamp()
+    if (
+        use_memo
+        and _memo is not None
+        and clock - _memo[0] < MEMO_TTL_S
+        and _memo[2] == stamp
+    ):
         return _memo[1]
 
     parents, workers, relations = _ledger_pairs()
@@ -927,7 +1016,7 @@ def load_origin_index(
     merged_relations.update(relations)
     index = OriginIndex(parents=merged, workers=frozenset(workers), relations=merged_relations)
     if use_memo:
-        _memo = (clock, index)
+        _memo = (clock, index, stamp)
     return index
 
 

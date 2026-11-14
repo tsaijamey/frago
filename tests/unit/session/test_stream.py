@@ -157,6 +157,9 @@ def test_a_record_landing_on_an_already_used_number_is_still_emitted(watch_dir, 
         on_records=lambda _sid, recs: seen.append([r["id"] for r in recs]),
         debounce_seconds=0.05,
     )
+    # 显式登记这场会话与它的文件：解析会话编号只看登记册，不再按 `.jsonl` 文件名猜。
+    # （从前这里靠「没人登记时把文件名当会话编号」那条兜底跑通；那条路已删。）
+    stream.watch_session(session.stem, watch_file=session)
     stream._preexisting = set()  # noqa: SLF001 — 当成开始盯之后才出现的文件，第一次就发货
     stream._process_file(str(session))  # noqa: SLF001
     assert seen == [["a", "b"]]

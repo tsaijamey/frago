@@ -19,6 +19,8 @@ import pytest
 
 from frago.agent_driver.drivers.claude import claude_session_uuid
 from frago.session import session_origin
+from frago.session import store as store_module
+from frago.session.store import SessionOntologyStore
 
 # 人自己开的会话：claude 自己分配的编号，第 4 版。
 HUMAN_SID = "7f55e46e-0cc5-4e80-8f4f-1debd649d7b0"
@@ -28,14 +30,26 @@ FRAGO_SID = "d5813c9e-ee2f-48ae-9bb3-f3002134ff2b"
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
-    """把账本与扫描缓存挪到临时目录，用例之间互不干扰。
+    """把账本、扫描缓存与本体存储都挪到临时目录，用例之间互不干扰。
 
     CoreAgent 那一侧的会话根也一并掐掉：单测不该去读本机真实的会话库，那里有多少条
     父子关系全看这台机器用过什么。要测那一侧的扫描时，用例自己把它换掉。
+
+    **本体存储也必须换掉。** 记账时会顺带往它写一份；它默认指向 ``~/.frago/workbench/``，
+    不换的话每个用例都在往宿主机真实数据上写。套件那道守门人拦得住，但拦法是抛异常，
+    而记账那一步把异常吞了——结果是「同步写进本体存储」这条路径在单测里根本没跑过，
+    用例看着全绿，其实什么都没验到。
     """
     monkeypatch.setattr(session_origin, "LAUNCH_LEDGER", tmp_path / "agent-launches.json")
     monkeypatch.setattr(session_origin, "PARENT_SCAN_CACHE", tmp_path / "agent-parent-scan.json")
     monkeypatch.setattr(session_origin, "_coreagent_scan_root", lambda: None)
+    monkeypatch.setattr(session_origin, "_memo", None)
+    store = SessionOntologyStore(
+        tmp_path / "session-ontology-store.json",
+        legacy_ledger_path=tmp_path / "agent-launches.json",
+    )
+    monkeypatch.setattr(store_module, "_DEFAULT_SESSION_STORE", store)
+    monkeypatch.setattr(session_origin, "get_default_session_store", lambda: store)
     return tmp_path
 
 
@@ -115,7 +129,14 @@ class TestLedger:
         assert index.origin_of(HUMAN_SID) == "human"
 
     def test_账本只留最近那些(self, ledger, empty_projects, monkeypatch):
+        # 两边上限一起改：记账那一步截断到 N 条，本体存储回写老账本时按它自己的上限再来一遍。
+        # 只改一边的话，本体的那份会把刚截掉的老记录又写回来，用例测的就不是截断了。
         monkeypatch.setattr(session_origin, "LEDGER_LIMIT", 3)
+        monkeypatch.setattr(store_module, "LEDGER_LIMIT", 3)
+        # 时刻逐条递增：本体存储回写时按记录时刻排序取最近若干条，同一秒里的几条谁前谁后
+        # 没有定数，断言「留下的正是最近那三条」会变成撞运气。
+        ticks = iter(1_700_000_000 + i for i in range(100))
+        monkeypatch.setattr(session_origin, "_now", lambda: next(ticks))
         for i in range(5):
             session_origin.record_launch(
                 child_session_id=f"child-{i}",
@@ -134,12 +155,13 @@ class TestLedger:
 
         ctx = multiprocessing.get_context("spawn")
         ledger_path = str(session_origin.LAUNCH_LEDGER)
+        store_path = str(session_origin.get_default_session_store().store_path)
         barrier = ctx.Barrier(6)
 
         with ctx.Pool(
             6,
             initializer=_mp_init_worker,
-            initargs=(barrier, ledger_path),
+            initargs=(barrier, ledger_path, store_path),
         ) as pool:
             pool.map(_mp_record_one, [f"core_worker_{i}" for i in range(6)])
 
@@ -153,18 +175,25 @@ class TestLedger:
 
 _MP_BARRIER = None
 _MP_LEDGER_PATH = None
+_MP_STORE_PATH = None
 
 
-def _mp_init_worker(barrier, ledger_path: str) -> None:
-    global _MP_BARRIER, _MP_LEDGER_PATH
+def _mp_init_worker(barrier, ledger_path: str, store_path: str) -> None:
+    global _MP_BARRIER, _MP_LEDGER_PATH, _MP_STORE_PATH
     _MP_BARRIER = barrier
     _MP_LEDGER_PATH = ledger_path
+    _MP_STORE_PATH = store_path
 
 
 def _mp_record_one(child_id: str) -> None:
     from pathlib import Path
 
+    # 子进程是另起的一份解释器，用例里那些 monkeypatch 一个都没跟过来。**本体存储也要在这里
+    # 指到临时目录**：它默认落在 ~/.frago/workbench/，不指的话这几条记录会写进真人账本。
     session_origin.LAUNCH_LEDGER = Path(_MP_LEDGER_PATH)
+    store = SessionOntologyStore(Path(_MP_STORE_PATH), legacy_ledger_path=Path(_MP_LEDGER_PATH))
+    store_module._DEFAULT_SESSION_STORE = store
+    session_origin.get_default_session_store = lambda: store
     _MP_BARRIER.wait(timeout=10)
     session_origin.record_launch(
         child_session_id=child_id,
@@ -522,6 +551,114 @@ class TestRelationKinds:
         assert index.parent_of(child) == HUMAN_SID
         session_origin.clear_cache()
 
+    def test_别人改了账本_进程内那份当场作废(self, ledger, empty_projects):
+        """账本不只本模块在写，本体存储那边也会回写同一份文件。
+
+        缓存只按「离上次读够不够近」判新不新的话，别人刚写进去的关系要等满 30 秒才出现
+        在清单上。这条用例绕过 record_relation 直接改文件，模拟的就是那条路。
+        """
+        session_origin.load_origin_index(projects_root=empty_projects)
+        assert session_origin.load_origin_index(projects_root=empty_projects).parents == {}
+
+        child = str(uuid.uuid4())
+        entries = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8")) if session_origin.LAUNCH_LEDGER.exists() else []
+        entries.append({"child": child, "parent": HUMAN_SID, "kind": "dispatch", "at": 1})
+        session_origin.LAUNCH_LEDGER.write_text(json.dumps(entries), encoding="utf-8")
+
+        index = session_origin.load_origin_index(projects_root=empty_projects)
+        assert index.parent_of(child) == HUMAN_SID
+        assert index.origin_of(child) == "worker"
+        session_origin.clear_cache()
+
+
+class TestStoreConvergence:
+    """`session_origin` 与 `SessionOntologyStore` 两处记的是同一件事，口径必须一致。"""
+
+    def test_无父节点的派活在两处都算worker(self, ledger, empty_projects):
+        """认不出谁派的活，仍然是 worker——老账本与本体存储不能各说一套。
+
+        服务端的常驻会话、定时任务派出去的活本来就没有上级会话可指。老账本按「派活即
+        worker」判它，本体存储若按「有父亲才算 worker」判，同一场会话两处互斥；员工账本
+        与列表投影分别读这两处，就会拿到互相矛盾的出身。
+        """
+        session_origin.record_launch(
+            child_session_id="orphan-w",
+            parent_session_id=None,
+            agent_type="claude",
+            cwd="/tmp",
+        )
+        store = session_origin.get_default_session_store()
+
+        index = _index(empty_projects)
+        assert index.origin_of("orphan-w") == "worker"
+        assert index.parent_of("orphan-w") is None
+
+        rec = store.get("orphan-w")
+        assert rec is not None
+        assert rec.is_worker is True
+        assert rec.origin == "worker"
+        assert rec.relation_kind == "dispatch"
+        assert rec.parent_session_id is None
+
+    def test_收口之后别的会话再落盘也不回退(self, ledger, empty_projects):
+        """收口过的不许被后来的任意一次落盘冲回未收口。
+
+        收口原先只写老账本。收口之后随便哪一场会话落盘，老账本都会被按本体存储那一份
+        整份重写回去，已收口的分支重新变实——人点的那一下看起来根本没生效。
+        """
+        child = str(uuid.uuid4())
+        store = session_origin.get_default_session_store()
+        session_origin.record_relation(
+            kind="branch",
+            child_session_id=child,
+            parent_session_id=HUMAN_SID,
+            agent_type="claude",
+            cwd="/tmp",
+            note="旁支",
+        )
+        closed = session_origin.close_relation(
+            child_session_id=child, parent_session_id=HUMAN_SID, closed_by="manual"
+        )
+        assert closed is not None
+        assert closed["closed_at"] is not None
+
+        rec = store.get(child)
+        assert rec is not None
+        assert rec.extra.get("closed_at") == closed["closed_at"]
+        assert rec.extra.get("closed_by") == "manual"
+
+        # 别的会话接着落盘：收口状态必须还在，老账本里也不能变回未收口。
+        assert store.increment_step(child) == 1
+        store.update_lifecycle_state(child, "awaiting_input", waiting_reason="等回话")
+
+        again = store.get(child)
+        assert again is not None
+        assert again.extra.get("closed_at") == closed["closed_at"]
+        assert _index(empty_projects).relation_of(child) == session_origin.SessionRelation(
+            "branch", closed=True
+        )
+
+    def test_收口时本体里没有这条分支也不报错(self, ledger):
+        """本体存储缺这条记录只是少同步一处，不该把收口这个动作判成失败。"""
+        child = str(uuid.uuid4())
+        session_origin.record_relation(
+            kind="branch",
+            child_session_id=child,
+            parent_session_id=HUMAN_SID,
+            agent_type="claude",
+            cwd="/tmp",
+        )
+        # 把本体存储里那条抹掉，模拟它先于老账本被清理过。
+        store = session_origin.get_default_session_store()
+        raw = json.loads(store.store_path.read_text(encoding="utf-8"))
+        raw["sessions"].pop(child, None)
+        store.store_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        closed = session_origin.close_relation(
+            child_session_id=child, parent_session_id=HUMAN_SID, closed_by="manual"
+        )
+        assert closed is not None and closed["closed_at"] is not None
+
 
 class TestAttributedDispatch:
     """给三家 CLI 的驱动用的那一版记账：认不出派活者就当这场没被谁派过。
@@ -667,9 +804,9 @@ class TestCloseRelation:
         )
 
     def test_收口写入不丢别的记录(self, ledger, empty_projects):
-        # 老记录里带着这里不认得的字段，也要原样留着。
+        # 收口只该动那一条分支：同一本账里别的会话的记录一条不少。
         session_origin.LAUNCH_LEDGER.write_text(
-            json.dumps([{"child": "old", "parent": HUMAN_SID, "extra": "留着"}]),
+            json.dumps([{"child": "old", "parent": HUMAN_SID, "kind": "dispatch", "at": 1}]),
             encoding="utf-8",
         )
         self._branch("b1")
@@ -685,10 +822,15 @@ class TestCloseRelation:
 
         after = json.loads(session_origin.LAUNCH_LEDGER.read_text(encoding="utf-8"))
         assert len(after) == len(before) == 3
-        assert after[0] == before[0]
-        assert after[2] == before[2]
-        assert after[1]["closed_at"] is not None
-        assert after[1]["closed_by"] == "manual"
+        by_child = {e["child"]: e for e in after}
+        assert set(by_child) == {"old", "b1", "w1"}
+        # 那两条一个字没动：收口只碰它自己那一条。
+        assert by_child["old"]["at"] == 1
+        assert by_child["old"]["kind"] == "dispatch"
+        assert by_child["w1"]["kind"] == "dispatch"
+        assert by_child["w1"].get("closed_at") is None
+        assert by_child["b1"]["closed_at"] is not None
+        assert by_child["b1"]["closed_by"] == "manual"
         assert _index(empty_projects).relation_of("b1") == session_origin.SessionRelation(
             "branch", closed=True
         )

@@ -176,6 +176,7 @@ def test_命中后给的续接命令是内核自己那条():
 def test_已结束的_CoreAgent_会话在清单里显示_completed_与真实步数(mock_home):
     """镜像同步后，已结束的 CoreAgent 会话在 storage.list_sessions 中应为 completed 并带步数与 ended_at。"""
     import json
+
     from frago.session.models import SessionStatus
 
     lines = [

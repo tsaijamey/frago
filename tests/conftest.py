@@ -94,6 +94,40 @@ def _is_protected(target) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _redirect_real_home(tmp_path, monkeypatch):
+    """把这一用例的家目录整个挪到临时目录：`HOME` 一改，运行期现算的路径跟着走。
+
+    上面那道 `_redirect_protected_paths` 只管得住 import 期算死的 Path 常量，
+    管不住运行期现算的路径——最要命的一处是内核自己：`frago-core` 的会话记录根目录
+    （`~/.frago/coreagent/sessions/<工作目录编码>/<编号>.jsonl`）由它按 `HOME` 现算
+    （内核侧 `rules::home_dir()`，只认 `HOME` / `USERPROFILE` / `HOMEDRIVE+HOMEPATH`，
+    没有别的覆写口）。
+
+    后果实测过（20261113）：用例里出现「用假编号拉一轮内核」的动作时，`frago-core`
+    这个子进程不受 pytest 里任何打桩管辖，它照 `HOME` 把会话写进真人的 `~/.frago`。
+    11-11 清过一次现场，11-13 又被同一批用例重新造了出来。
+
+    改 `HOME` 是唯一一处能同时盖住「父进程现算路径」与「子进程」的口子，且不动产品代码：
+    内核读的就是这台机器上用户的家在哪，把答案换成临时目录，它自然落在临时目录。
+    既有先例：`tests/unit/files/conftest.py` 与
+    `tests/unit/server/test_workbench_employee_cwd.py` 都走这一手，理由相同。
+
+    家目录一挪，`git commit` 也就读不到真人的 `~/.gitconfig` 了。用例里 `git init` 建临时
+    仓库再提交时，git 会以「Author identity unknown」退出 128，用例挂在与被测行为无关的
+    这一步上。给这一轮补上身份——照 `tests/unit/cli/test_server_command_reinstall.py`
+    里那个建仓库的辅助函数，同一组变量。
+    """
+    fake_home = tmp_path / "_fake_home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "frago tests")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "tests@frago.invalid")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "frago tests")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "tests@frago.invalid")
+
+
+@pytest.fixture(autouse=True)
 def _redirect_protected_paths(tmp_path, monkeypatch):
     """把 frago 各模块里指向真人数据位置的 Path 常量改指到 tmp_path 镜像。
 

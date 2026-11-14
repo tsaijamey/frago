@@ -19,16 +19,21 @@ from click.testing import CliRunner
 import frago.cli.agent_command as agent_cli
 import frago.cli.employee_commands as emp_cli
 from frago.employee import EmployeeOntologyService, get_post, save_post
-from frago.server.services import session_send, workbench_queue
+from frago.server.services import workbench_queue
 from frago.session import async_dispatch, session_origin
 
 
 @pytest.fixture()
 def isolated_frago_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """隔离 FRAGO_HOME、员工目录、派发账本与会话关系账本。"""
+    """隔离 FRAGO_HOME、员工目录、派发账本、会话关系账本与 CoreAgent 窗格留底目录。"""
     monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
     monkeypatch.setenv("FRAGO_EMPLOYEES_DIR", str(tmp_path / "employees"))
     monkeypatch.setenv("FRAGO_TEST_ALLOW_ASYNC_DISPATCH", "1")
+    # CoreAgent 的窗格留底目录（`...<session>.log` / `.active_run`）是按 `Path.home()` 现算的，
+    # 不是 import 期常量——`_redirect_protected_paths` 那类打桩罩不住它，得走它自己的
+    # `FRAGO_COREAGENT_PANES_DIR` 覆写口。少了这一句，任何一次「拉起会话终端」的动作都会
+    # 撞上真人数据守门人。
+    monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(tmp_path / "coreagent" / "panes"))
     for k in (
         "CLAUDE_CODE_SESSION_ID",
         "ANTIGRAVITY_CONVERSATION_ID",
@@ -149,11 +154,14 @@ def test_employee_invoke_and_ask_default_nonblocking_with_session_stream_callbac
 
     delivered_callbacks: list[tuple[str, str]] = []
 
-    def fake_send(session_id: str, text: str, *, cwd_hint: str | None = None):
+    def fake_sender(session_id: str, text: str, cwd_hint: str | None = None):
+        # 投喂点在生产里是 `workbench_queue._send_prompt` 的显式注入口 `_sender_override`：
+        # 它取代了从前那条「探测 session_send.send 有没有被 mock 过」的运行时自省分支。
+        # 打桩旧的 `session_send.send` 现在一点作用没有——真函数照跑，会把会话终端拉起来。
         delivered_callbacks.append((session_id, text))
-        return {"status": "ok", "session_id": session_id}
+        return True
 
-    monkeypatch.setattr(session_send, "send", fake_send)
+    monkeypatch.setattr(workbench_queue, "_sender_override", fake_sender)
     monkeypatch.setattr(workbench_queue, "is_session_busy", lambda sid: False)
     monkeypatch.setattr(
         workbench_queue,
@@ -769,5 +777,133 @@ def test_agy_claimed_session_id_dynamically_updates_dispatch_job_and_error_messa
     assert f'session_id="{claimed_cid}"' in cb_text
     assert 'status="failed"' in cb_text
     assert "UNAUTHENTICATED (code 401)" in cb_text
+
+
+def _make_worker_job(*, output: str, target_session_id: str = "worker-sid-900") -> Any:
+    return async_dispatch.AsyncDispatchJob(
+        job_id="disp-summary-001",
+        kind="worker",
+        mode="new",
+        caller_session_id="sess-caller-001",
+        caller_employee_id=None,
+        caller_cwd="/tmp",
+        target_session_id=target_session_id,
+        target_name=target_session_id,
+        employee_id=None,
+        agent="claude",
+        cwd="/tmp",
+        prompt="# 任务书",
+        task_summary="# 任务书：回传报文摘要化",
+        status="completed",
+        exit_code=0,
+        output=output,
+    )
+
+
+def test_summarize_callback_body_keeps_short_output_verbatim() -> None:
+    """改动 3：短输出（<= 600 字符）原样保留，不丢信息、不追加省略提示。"""
+    short_body = "已完成验证，**48 项测试全部通过**，无需补充。"
+    assert len(short_body) <= 600
+    assert (
+        async_dispatch.summarize_callback_body(short_body, "worker-sid-900") == short_body
+    )
+
+    # 恰好等于阈值时同样不截断（边界取闭区间）
+    boundary_body = "字" * 600
+    assert (
+        async_dispatch.summarize_callback_body(boundary_body, "worker-sid-900")
+        == boundary_body
+    )
+
+
+def test_summarize_callback_body_truncates_long_output_with_lookup_guide() -> None:
+    """改动 3：超长输出保留前段核心内容，明确省略字数，并指引回目标会话取全文。"""
+    head_marker = "【核心结论】三处模块重构完成并通过回归测试。"
+    long_body = head_marker + "铺陈" * 900
+    assert len(long_body) > 600
+
+    summarized = async_dispatch.summarize_callback_body(long_body, "worker-sid-900")
+
+    # 保留前段核心内容
+    assert summarized.startswith(head_marker)
+    # 明确省略字数，且与真实省略量一致
+    omitted = len(long_body) - len(summarized.split("\n\n")[0])
+    assert f"此处省略 {omitted} 字" in summarized
+    # 指引两条查全路径：回目标会话问，或读落盘报告
+    assert "frago session ask worker-sid-900" in summarized
+    assert "落盘的交付报告" in summarized
+    # 截断后总量显著小于原文，不再把长报告整篇灌进父会话
+    assert len(summarized) < len(long_body)
+
+
+def test_summarize_callback_body_closes_dangling_code_fence() -> None:
+    """改动 3：截断点落在 ``` 代码围栏内时补一个闭合围栏，防止省略提示与查全指引被 Markdown
+    当成代码块内容吞掉，父会话看不到「去哪里取全文」。
+    """
+    long_body = "【结论】\n```bash\n" + "echo 逐行输出\n" * 60
+    assert len(long_body) > 600
+
+    summarized = async_dispatch.summarize_callback_body(long_body, "worker-sid-900")
+
+    assert summarized.count("```") % 2 == 0
+    assert "此处省略" in summarized
+    assert "frago session ask worker-sid-900" in summarized
+
+
+def test_format_callback_prompt_truncates_long_body_and_keeps_parse_contract() -> None:
+    """改动 3：超长回传报文正文被摘要化，但属性行、小节标题与尾部引导语前缀全部保持不变，
+    确保前端 `asyncCallbackBlocks.ts` 的解析器（属性对、`### 小节`、`---` 后的固定前缀）继续可用。
+    """
+    long_body = "【Worker 结论】链路已修通。" + "细节" * 800
+    job = _make_worker_job(output=long_body)
+
+    prompt = async_dispatch.format_callback_prompt(job)
+
+    # 属性行与小节标题不变（前端解析器依赖）
+    assert (
+        '<frago-async-callback kind="worker" mode="new" '
+        'job_id="disp-summary-001" worker_session_id="worker-sid-900" status="completed">'
+        in prompt
+    )
+    assert "### Worker 交付结果" in prompt
+    assert "\n---\n" in prompt
+    assert prompt.rstrip().endswith("</frago-async-callback>")
+    # 正文已摘要化并附查全指引
+    assert "此处省略" in prompt
+    assert "frago session ask worker-sid-900" in prompt
+    # 尾部引导语前缀保持前端正则依赖的原句
+    assert "请作为管理者（Employee）结合领域知识与执行准则审核上述 Worker 产出：" in prompt
+    assert "仅需一句话确认收口，严禁全文复述" in prompt
+
+
+def test_format_callback_prompt_keeps_short_body_intact_for_employee_kind() -> None:
+    """改动 3：短回传（员工协查）正文完整保留，且尾部引导语收紧为防重复铺陈表达。"""
+    short_body = "定位到原因：缺少前端独立卡片解析。"
+    job = async_dispatch.AsyncDispatchJob(
+        job_id="disp-summary-002",
+        kind="employee",
+        mode="ask",
+        caller_session_id="sess-caller-001",
+        caller_employee_id="frago-developer",
+        caller_cwd="/tmp",
+        target_session_id="sess-peer-700",
+        target_name="frago-developer",
+        employee_id="frago-developer",
+        agent="agy",
+        cwd="/tmp",
+        prompt="请排查",
+        task_summary="请排查 async_dispatch 投喂链路",
+        status="completed",
+        exit_code=0,
+        output=short_body,
+    )
+
+    prompt = async_dispatch.format_callback_prompt(job)
+
+    assert short_body in prompt
+    assert "此处省略" not in prompt
+    assert "### 同侪员工返回结论" in prompt
+    assert "请基于上述同侪员工回传结论，结合你掌握的领域背景与事务围栏进行复核：" in prompt
+    assert "仅需一句话确认收口，严禁全文复述" in prompt
 
 

@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -37,6 +38,16 @@ QUEUE_FILENAME = "workbench-queue.json"
 QUEUE_LOCK_FILENAME = "workbench-queue.lock"
 INJECT_LOCK_FILENAME = "workbench-inject.lock"
 QUEUE_STATE_FILENAME = "workbench-queue-state.json"
+
+#: 活跃队列索引文件名（落在会话根下：``<会话根>/active-workbench-queues.json``）。
+#:
+#: **这是一份可随时重建的缓存，不是事实来源。** 它记的是「哪些会话此刻队列非空」，
+#: 用来把巡检从「每次扫上万个历史目录」换成「读几百字节」。事实是每个会话目录下那份
+#: ``workbench-queue.json``；索引丢了、坏了、或版本对不上，``_seed_queued_sessions_once``
+#: 会全盘扫一次重建（``seeded`` 标记就是「这份索引已经由全盘扫描建过一次」）。
+#: 删掉它不会丢任何用户数据，最坏后果只是下一次巡检慢一拍。
+ACTIVE_QUEUES_FILENAME = "active-workbench-queues.json"
+ACTIVE_QUEUES_LOCK_FILENAME = "active-workbench-queues.lock"
 QUEUE_VERSION = 1
 
 #: 跨进程注入状态锁的最大保活毫秒数（防止极端情况下进程被 SIGKILL 后残留死锁）。
@@ -218,6 +229,119 @@ def _write_queue_state(directory: Path, state_data: dict[str, Any]) -> None:
         os.replace(tmp, target)
 
 
+def get_queue_delivery_receipt(session_id: str) -> dict[str, Any]:
+    """读取指定会话的投递回执持久化状态（delivered_items, delivered_job_ids, inflight_item_id 等）。"""
+    directory = queue_dir(session_id)
+    return _read_queue_state(directory)
+
+
+def sessions_root() -> Path:
+    """所有会话目录的根：``<会话根>``（默认 ``~/.frago/sessions``）。
+
+    **每次现算，不在 import 期算死。** 从前这里是拿一个虚拟会话编号
+    （``"__probe__"``）去问 ``session_dir`` 要路径、再上跳两层反推出根目录：为了拿
+    一个目录而先构造一场假会话，还依赖 ``session_dir`` 的层级不变。更要紧的是，
+    测试里改 ``FRAGO_HOME`` / ``FRAGO_SESSION_DIR`` 时这种「算死的常量」不会跟着走——
+    用例以为自己写进了临时目录，实际写到了真人会话目录里（2026-07 那次事故就是这么
+    发生的）。现在改成函数式惰性求值：谁调用、按谁此刻的环境算。
+    """
+    from frago.session.storage import get_session_base_dir
+
+    return get_session_base_dir()
+
+
+def _sessions_root() -> Path:
+    """向后兼容的私有别名；新代码用 :func:`sessions_root`。"""
+    return sessions_root()
+
+
+@contextlib.contextmanager
+def _active_queues_file_lock() -> Iterator[None]:
+    root = _sessions_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / ACTIVE_QUEUES_LOCK_FILENAME
+    fd = None
+    try:
+        if fcntl is not None:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if fd is not None:
+            if fcntl is not None:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+def _read_active_queues_index_with_meta() -> tuple[set[str], bool]:
+    root = _sessions_root()
+    path = root / ACTIVE_QUEUES_FILENAME
+    if not path.is_file():
+        return set(), False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return set(data.get("session_ids") or []), bool(data.get("seeded", False))
+        if isinstance(data, list):
+            return set(data), False
+    except Exception:
+        return set(), False
+    return set(), False
+
+
+def _read_active_queues_index() -> set[str]:
+    return _read_active_queues_index_with_meta()[0]
+
+
+def _write_active_queues_index(sids: set[str], *, seeded: bool = False) -> None:
+    root = _sessions_root()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / ACTIVE_QUEUES_FILENAME
+    tmp = path.with_name(f"{ACTIVE_QUEUES_FILENAME}.tmp{os.getpid()}.{uuid.uuid4().hex[:6]}")
+    data = {
+        "version": 1,
+        "session_ids": sorted(sids),
+        "seeded": bool(seeded),
+        "updated_at_ms": int(time.time() * 1000),
+    }
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def register_active_queue_session(session_id: str) -> None:
+    """原子将会话加入跨进程活跃队列索引。"""
+    if not session_id:
+        return
+    with _locks_guard:
+        _queued_sessions.add(session_id)
+    try:
+        with _active_queues_file_lock():
+            current, is_seeded = _read_active_queues_index_with_meta()
+            if session_id not in current:
+                current.add(session_id)
+                _write_active_queues_index(current, seeded=is_seeded)
+    except Exception:
+        logger.debug("Failed to register active queue session %s", session_id, exc_info=True)
+
+
+def unregister_active_queue_session(session_id: str) -> None:
+    """原子将已排空且无 inflight 的会话从跨进程活跃队列索引移出。"""
+    if not session_id:
+        return
+    with _locks_guard:
+        _queued_sessions.discard(session_id)
+    try:
+        with _active_queues_file_lock():
+            current, is_seeded = _read_active_queues_index_with_meta()
+            if session_id in current:
+                current.discard(session_id)
+                _write_active_queues_index(current, seeded=is_seeded)
+    except Exception:
+        logger.debug("Failed to unregister active queue session %s", session_id, exc_info=True)
+
+
 def _is_cross_process_injecting(session_id: str, state_data: dict[str, Any] | None = None) -> bool:
     """检查是否有本进程或其他存活子进程正在向 ``session_id`` 投喂消息。"""
     if session_id in _injecting_sessions:
@@ -274,7 +398,13 @@ def empty_queue() -> dict[str, Any]:
     return {"version": QUEUE_VERSION, "items": []}
 
 
-def _normalize_item(raw: Any) -> dict[str, Any]:
+def _normalize_item(raw: Any, *, from_disk: bool = False) -> dict[str, Any]:
+    """把一条原始队列项规整成内部形态。
+
+    ``from_disk=True`` 表示这条是从队列文件里读回来的（可能是 2026-11 之前写下的旧条目），
+    此时才允许那条一次性的 ``job_id`` 文本反解迁移；入队路径一律 ``from_disk=False``，
+    要求入队方把 ``job_id`` 当结构化字段传进来。
+    """
     if not isinstance(raw, dict):
         raise QueueError("队列项必须是对象")
     item_id = str(raw.get("id") or "").strip()
@@ -302,6 +432,23 @@ def _normalize_item(raw: Any) -> dict[str, Any]:
     cwd = raw.get("cwd")
     if cwd is not None and not isinstance(cwd, str):
         cwd = None
+    job_id = raw.get("job_id")
+    if job_id is not None and not isinstance(job_id, str):
+        job_id = str(job_id)
+    if not job_id and from_disk and isinstance(prompt, str):
+        # ── 一次性兼容迁移（只对读旧文件生效） ──────────────────────────────
+        # 2026-11 之前写下的队列文件里，回传条目的 `job_id` 只存在于提示词文本的
+        # `<frago-async-callback job_id="...">` 标签里，没有独立字段。读旧文件时不反解，
+        # 等于把这些历史条目从「可幂等去重」降级成「可能重复投喂」，所以留这最后一条
+        # 迁移路径。
+        #
+        # **退役说明**：新写入的条目一律由入队方传结构化 `job_id`（`enqueue(job_id=...)`），
+        # 入队路径不会走到这里。等旧队列文件自然排空（或统一清理一次）后，本分支连同
+        # 模块顶部的 `re` 导入一并删除。此前这条反解在 `_normalize_item` / `enqueue` /
+        # `try_auto_inject` 三处各写一遍，三处都会随标签格式变化静默失配。
+        m = re.search(r'<frago-async-callback[^>]*job_id="([^"]+)"', prompt)
+        if m:
+            job_id = m.group(1)
     return {
         "id": item_id,
         "text": text,
@@ -311,19 +458,23 @@ def _normalize_item(raw: Any) -> dict[str, Any]:
         "attachments": max(0, attachments),
         "prompt": prompt,
         "cwd": cwd,
+        "job_id": job_id,
         "created_at": created_at,
     }
 
 
 def _public_item(item: dict[str, Any]) -> dict[str, Any]:
     """返回给前端展示的字段。"""
-    return {
+    res: dict[str, Any] = {
         "id": item["id"],
         "text": item["text"],
         "skills": item.get("skills") or [],
         "attachments": item.get("attachments", 0),
         "created_at": item.get("created_at", 0),
     }
+    if item.get("job_id"):
+        res["job_id"] = item["job_id"]
+    return res
 
 
 def read_queue(directory: Path) -> dict[str, Any]:
@@ -340,7 +491,8 @@ def read_queue(directory: Path) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for raw in data["items"]:
         try:
-            items.append(_normalize_item(raw))
+            # 从盘上读回来的条目可能来自 2026-11 之前，允许那条一次性 job_id 迁移。
+            items.append(_normalize_item(raw, from_disk=True))
         except QueueError as exc:
             logger.warning("跳过损坏的队列项：%s（%s）", path, exc)
     return {"version": QUEUE_VERSION, "items": items}
@@ -402,8 +554,16 @@ def enqueue(
     image_paths: list[str] | None = None,
     doc_paths: list[str] | None = None,
     cwd: str | None = None,
+    job_id: str | None = None,
+    auto_schedule: bool = True,
 ) -> dict[str, Any]:
-    """把一条消息追加到会话自有队列末尾（FIFO）。"""
+    """把一条消息追加到会话自有队列末尾（FIFO）。
+
+    ``job_id`` 是**结构化身份**，要幂等去重就由入队方传进来；这里不再从 ``prompt`` 文本
+    里反解（那条路只在 ``read_queue`` 读旧文件时作为一次性迁移保留）。传不传都能入队，
+    区别只在于：带了 ``job_id`` 的条目在投喂前能判「这场会话历史里是否已经收到过同一份
+    回传」，不带就没有这道保护。
+    """
     if not prompt.strip():
         raise QueueError("要入队的消息内容不能为空")
     imgs = list(image_paths or [])
@@ -419,6 +579,7 @@ def enqueue(
             "attachments": len(imgs) + len(docs),
             "prompt": prompt,
             "cwd": cwd,
+            "job_id": job_id,
             "created_at": now_ms,
         }
     )
@@ -430,10 +591,9 @@ def enqueue(
         data["items"].append(item)
         write_queue(directory, data)
         items = list(data["items"])
-    with _locks_guard:
-        _queued_sessions.add(session_id)
+    register_active_queue_session(session_id)
     _broadcast_queue_update(session_id, items)
-    if _sender_override is None:
+    if auto_schedule and _sender_override is None:
         schedule_auto_inject_after_settle(session_id, delay_s=0.3)
     return _public_item(item)
 
@@ -444,13 +604,21 @@ def remove_item(session_id: str, item_id: str) -> list[dict[str, Any]]:
         directory = queue_dir(session_id)
         data = read_queue(directory)
         before = len(data["items"])
+        removed_ids = [it["id"] for it in data["items"] if it["id"] == item_id]
         data["items"] = [it for it in data["items"] if it["id"] != item_id]
         if len(data["items"]) != before:
             write_queue(directory, data)
+            st = _read_queue_state(directory)
+            rem_list = list(st.get("removed_item_ids") or [])
+            rem_list.extend(removed_ids)
+            st["removed_item_ids"] = rem_list[-50:]
+            _write_queue_state(directory, st)
         items = list(data["items"])
     if not items:
-        with _locks_guard:
-            _queued_sessions.discard(session_id)
+        directory = queue_dir(session_id)
+        st = _read_queue_state(directory)
+        if not st.get("inflight_item_id"):
+            unregister_active_queue_session(session_id)
         _cancel_settle_timer(session_id)
     _broadcast_queue_update(session_id, items)
     return [_public_item(it) for it in items]
@@ -468,12 +636,21 @@ def reorder_queue(session_id: str, item_ids: list[str]) -> list[dict[str, Any]]:
             if iid in by_id and iid not in seen:
                 next_items.append(by_id[iid])
                 seen.add(iid)
+        dropped_ids = [it["id"] for it in data["items"] if it["id"] not in seen]
         data["items"] = next_items
         write_queue(directory, data)
+        if dropped_ids:
+            st = _read_queue_state(directory)
+            rem_list = list(st.get("removed_item_ids") or [])
+            rem_list.extend(dropped_ids)
+            st["removed_item_ids"] = rem_list[-50:]
+            _write_queue_state(directory, st)
         items = list(data["items"])
     if not items:
-        with _locks_guard:
-            _queued_sessions.discard(session_id)
+        directory = queue_dir(session_id)
+        st = _read_queue_state(directory)
+        if not st.get("inflight_item_id"):
+            unregister_active_queue_session(session_id)
         _cancel_settle_timer(session_id)
     _broadcast_queue_update(session_id, items)
     return [_public_item(it) for it in items]
@@ -485,15 +662,19 @@ def pop_earliest(session_id: str) -> dict[str, Any] | None:
         directory = queue_dir(session_id)
         data = read_queue(directory)
         if not data["items"]:
-            with _locks_guard:
-                _queued_sessions.discard(session_id)
+            directory = queue_dir(session_id)
+            st = _read_queue_state(directory)
+            if not st.get("inflight_item_id"):
+                unregister_active_queue_session(session_id)
             return None
         earliest = data["items"].pop(0)
         write_queue(directory, data)
         items = list(data["items"])
     if not items:
-        with _locks_guard:
-            _queued_sessions.discard(session_id)
+        directory = queue_dir(session_id)
+        st = _read_queue_state(directory)
+        if not st.get("inflight_item_id"):
+            unregister_active_queue_session(session_id)
     _broadcast_queue_update(session_id, items)
     return earliest
 
@@ -507,8 +688,7 @@ def prepend_item(session_id: str, item: dict[str, Any]) -> None:
             data["items"].insert(0, _normalize_item(item))
             write_queue(directory, data)
         items = list(data["items"])
-    with _locks_guard:
-        _queued_sessions.add(session_id)
+    register_active_queue_session(session_id)
     _broadcast_queue_update(session_id, items)
 
 
@@ -535,6 +715,49 @@ def _has_substantive_assistant_response(rec: UnifiedRecord | dict[str, Any]) -> 
     return isinstance(text, str) and bool(text.strip())
 
 
+#: 相邻记录之间超过这个间隔，说明 agent 已经停过一段（人在等，或定时器在等），不再算同一轮。
+#:
+#: 取 120 秒：正常工具流的间隔是秒级，切不到；而「每隔 45～120 秒自查一次」的长驻轮询会被
+#: 切成独立轮次。2026-11-13 那场会话正是因为没有这道切分，把 11:38～15:42 四个多小时、
+#: 中间无人发言的全部内容算成一个巨型末轮，轮内任何一次误判都无法被后续轮次冲掉。
+TURN_SILENCE_GAP_MS = 120_000
+
+#: 定时唤醒类工具：agent 给自己挂定时器，或查看 / 撤销定时器，标志新一轮自查开始。
+_ASYNC_WAKEUP_TOOL_NAMES = frozenset(
+    {"schedulewakeup", "croncreate", "crondelete", "cronlist"}
+)
+
+
+def _record_ts_ms(rec: UnifiedRecord | dict[str, Any]) -> int | None:
+    """取记录的毫秒时间戳；缺失或形状不对时返回 ``None``（此时不做静默切分）。"""
+    ts = _record_field(rec, "ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return None
+    return int(ts)
+
+
+def _is_async_wakeup_boundary(rec: UnifiedRecord | dict[str, Any]) -> bool:
+    """这条记录是否标志「一次异步定时唤醒」的开始。
+
+    两种形态：agent 自己挂 / 查定时器（``schedule`` 族工具调用），以及后台任务跑完那一刻
+    落下的通知（``task-notification`` 注入）。两者都意味着上一段自查到此为止、下一段另起。
+    """
+    kind = _record_field(rec, "kind")
+    payload = _record_field(rec, "payload") or {}
+    if not isinstance(payload, dict):
+        return False
+    if kind == "tool.call":
+        family = str(payload.get("tool_family") or "").strip().lower()
+        name = str(payload.get("tool_name") or "").strip().lower()
+        return family == "schedule" or name in _ASYNC_WAKEUP_TOOL_NAMES
+    if kind == "context.inject":
+        return (
+            payload.get("channel") == "task-notification"
+            or payload.get("source") == "task-notification"
+        )
+    return False
+
+
 def _has_ui_decision_card(text: str) -> bool:
     """检查文本是否包含 ``frago_ui_component == "decision-card"`` 结构。"""
     if not text or '"frago_ui_component"' not in text:
@@ -552,8 +775,152 @@ def _has_ui_decision_card(text: str) -> bool:
     return isinstance(obj, dict) and obj.get("frago_ui_component") == "decision-card"
 
 
-def record_has_interactive_card(rec: UnifiedRecord | dict[str, Any]) -> bool:
-    """判断单条主会话记录是否包含交互卡（``answer-needed-by-human`` 或 ``decision-card``）。"""
+#: 独立的 ``frago ask`` / ``frago app ask`` 命令行：命令名之前只允许 shell 连接符与空白，
+#: 命令名之后只允许选项与空白。用来把「真的挂了张卡」和「命令回显里出现卡片 JSON」分开。
+_STANDALONE_ASK_CMD_RE = re.compile(
+    r"^\s*(?:[A-Za-z0-9_./-]*/)?frago(?:\.exe)?\s+(?:app\s+)?ask\b"
+)
+#: 帮助类选项：带这些的调用只是在查用法，不会真的产出待人回答的卡片。
+_ASK_HELP_FLAG_RE = re.compile(r"(?:^|\s)(?:-h|--help)\b")
+#: shell 命令分隔符：出现即说明这不是一条独立命令，而是复合脚本的一部分。
+_SHELL_CHAIN_RE = re.compile(r"(?:&&|\|\||;|\||\n)")
+
+
+def _is_standalone_ask_command(command: str) -> bool:
+    """判断一段命令行是不是**独立**的 ``frago ask`` / ``frago app ask`` 调用。
+
+    只有独立调用才可能产出「等着人点选」的卡片。复合脚本（``a && b``、``a; b``）里的
+    ``frago ask`` 往往是校验用例、演示或探测，它打印出来的卡片 JSON 是**命令输出内容**，
+    不是挂给人类的卡。带 ``-h`` / ``--help`` 的调用同理。
+    """
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    if _ASK_HELP_FLAG_RE.search(cmd):
+        return False
+    # 去掉命令末尾用于抑制报错的重定向（如 `2>&1 || true`）后再判连接符
+    head = _SHELL_CHAIN_RE.split(cmd, maxsplit=1)[0]
+    return bool(_STANDALONE_ASK_CMD_RE.match(head))
+
+
+def _paired_tool_call(
+    records: Sequence[UnifiedRecord | dict[str, Any]],
+    index: int,
+) -> UnifiedRecord | dict[str, Any] | None:
+    """为 ``records[index]`` 这条 ``tool.result`` 找配对的 ``tool.call``。
+
+    匹配优先级：``call_id`` 完全相同 → 同 ``group_id`` 的最近一条 → 紧邻的前序调用。
+    找不到返回 ``None``（此时调用方退回「正文是否为规范独立组件输出」的保守判定）。
+    """
+    target = records[index]
+    target_payload = _record_field(target, "payload") or {}
+    if not isinstance(target_payload, dict):
+        target_payload = {}
+    target_call_id = target_payload.get("call_id")
+    target_group = _record_field(target, "group_id")
+
+    fallback: UnifiedRecord | dict[str, Any] | None = None
+    for j in range(index - 1, -1, -1):
+        cand = records[j]
+        if _record_field(cand, "kind") != "tool.call":
+            continue
+        cand_payload = _record_field(cand, "payload") or {}
+        if not isinstance(cand_payload, dict):
+            cand_payload = {}
+        if target_call_id and cand_payload.get("call_id") == target_call_id:
+            return cand
+        if fallback is None and (
+            not target_group or _record_field(cand, "group_id") == target_group
+        ):
+            fallback = cand
+    return fallback
+
+
+def _tool_call_command(rec: UnifiedRecord | dict[str, Any]) -> str:
+    """取出 ``tool.call`` 里的命令行原文（各家内核字段名不一，逐个兜）。"""
+    payload = _record_field(rec, "payload") or {}
+    if not isinstance(payload, dict):
+        return ""
+    args = payload.get("args")
+    if isinstance(args, dict):
+        for key in ("CommandLine", "command", "cmd"):
+            val = args.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+    for key in ("command", "cmd"):
+        val = payload.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    return ""
+
+
+def _tool_call_ask_verdict(rec: UnifiedRecord | dict[str, Any]) -> bool | None:
+    """这条 ``tool.call`` 是不是「挂了张待人回答的卡」的调用。
+
+    返回三态：``True`` 是、``False`` 明确不是、``None`` 判不出（交给正文形状兜底）。
+    命令行原文优先——它最能区分「独立 ask 调用」与「复合脚本里的校验用例」；没有命令行时
+    退回工具名（部分内核与测试夹具直接用 ``{"tool": "ask"}`` 这种写法）。
+    """
+    command = _tool_call_command(rec)
+    if command:
+        return _is_standalone_ask_command(command)
+    payload = _record_field(rec, "payload") or {}
+    if not isinstance(payload, dict):
+        return None
+    for key in ("tool_name", "tool", "name"):
+        name = payload.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip().lower() in {"ask", "app_ask", "frago_ask"} or name.strip().lower().endswith(
+                "_ask"
+            )
+    return None
+
+
+#: 各家内核给工具输出套的元数据行：判「正文是否就是那一个组件输出」时不算内容。
+_TOOL_OUTPUT_WRAPPER_RE = re.compile(
+    r"^\s*(?:Created At|Completed At|Command exited with code|Command output|"
+    r"Showing lines|Tool is running as a background task)\b.*$",
+    re.MULTILINE,
+)
+
+
+def _body_is_bare_component_output(body: str) -> bool:
+    """正文是否就是**规范独立的**组件输出（剥掉内核元数据后只剩那一个卡片 JSON）。
+
+    真卡片由 ``frago ask`` 直接产出；命令回显（``ps aux`` 行、``=== CLI VALID TEST ===``
+    分段日志、多条命令串联输出）在 JSON 之前还夹着别的输出行，据此排除。
+    """
+    if body.count('"frago_ui_component"') != 1:
+        return False
+    idx = body.find('"frago_ui_component"')
+    start = body.rfind("{", 0, idx)
+    if start < 0:
+        return False
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(body[start:])
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(obj, dict) or obj.get("frago_ui_component") != "decision-card":
+        return False
+    # JSON 之前：剥掉内核元数据行后应当什么都不剩；剩了就说明这是命令回显。
+    prefix = _TOOL_OUTPUT_WRAPPER_RE.sub("", body[:start])
+    return not prefix.strip()
+
+
+def record_has_interactive_card(
+    rec: UnifiedRecord | dict[str, Any],
+    records: Sequence[UnifiedRecord | dict[str, Any]] | None = None,
+) -> bool:
+    """判断单条主会话记录是否包含交互卡（``answer-needed-by-human`` 或 ``decision-card``）。
+
+    判据是「这张卡是不是挂给人类、等着人点选的」。``tool.result`` 里的卡片 JSON 有两类来路：
+    真卡片（``frago ask`` 独立调用产出）与**命令回显**（校验用例、演示、复合脚本打印出来的
+    卡片原文）。后者不是待答卡片——把它算成卡会让会话一直被闸门挡住（2026-11-13 实测：
+    一条 CLI 校验回显把两条回传压了 3 小时 55 分）。故对 ``tool.result`` 先看配对的
+    ``tool.call`` 是不是独立 ``ask`` 调用；配不上时退回「正文是否为规范独立组件输出」。
+
+    ``records`` 为所在记录序列（可选）：给了才能回看配对调用，做上面那层判别。
+    """
     agent_path = _record_field(rec, "agent_path") or []
     if agent_path:
         return False
@@ -565,11 +932,59 @@ def record_has_interactive_card(rec: UnifiedRecord | dict[str, Any]) -> bool:
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
             return False
-        return bool(card_in(text)) or _has_ui_decision_card(text)
+        if card_in(text):
+            return True
+        # 代码围栏里贴出来的示例 JSON 不是待人回答的卡：剥掉围栏内容后再判。
+        return _has_ui_decision_card(_strip_markdown_code_fences(text))
     if kind == "tool.result" and payload.get("status") != "error":
         body = payload.get("body")
-        return isinstance(body, str) and bool(body.strip()) and _has_ui_decision_card(body)
+        if not isinstance(body, str) or not body.strip():
+            return False
+        if not _has_ui_decision_card(body):
+            return False
+        return _tool_result_is_live_card(rec, body, records)
     return False
+
+
+def _strip_markdown_code_fences(text: str) -> str:
+    """剥掉 Markdown 代码围栏（```...```）内的内容，用于排除「示例 JSON」误判。
+
+    ``answer-needed-by-human`` 围栏块是**真卡片**，必须保留——它由 ``card_in`` 单独识别，
+    走到这里时已经判过了。
+    """
+    if "```" not in text:
+        return text
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            out.append(line)
+    return "\n".join(out)
+
+
+def _tool_result_is_live_card(
+    rec: UnifiedRecord | dict[str, Any],
+    body: str,
+    records: Sequence[UnifiedRecord | dict[str, Any]] | None,
+) -> bool:
+    """``tool.result`` 里的卡片 JSON 是否为「真的挂给人类」的那张。
+
+    先按配对 ``tool.call`` 判：独立 ``ask`` 调用 → 真卡片；明确配到非 ask 调用 → 回显，不算。
+    配不上时（未给 ``records``、老记录缺 ``tool.call``、或跨窗口截断）退回正文形状判定。
+    """
+    if records is not None:
+        index = next((i for i, r in enumerate(records) if r is rec), None)
+        if index is not None:
+            call = _paired_tool_call(records, index)
+            if call is not None:
+                verdict = _tool_call_ask_verdict(call)
+                if verdict is not None:
+                    return verdict
+    return _body_is_bare_component_output(body)
 
 
 def is_card_answer_record(rec: UnifiedRecord | dict[str, Any]) -> bool:
@@ -603,6 +1018,11 @@ def segment_main_turns(
         或属于不同 ``group_id`` 的非记账记录时，开启新一轮；
       - 当当前轮尚未出现 ``agent.say`` 但已包含工具或思考记录，若遇到新的 ``user.say`` 或
         hook 注入（``context.inject`` 且 ``source == "hook"``），也开启新一轮。
+    - **静默与定时唤醒也要切轮**：若相邻两条记录之间隔了超过
+      :data:`TURN_SILENCE_GAP_MS`，或当前轮里已经走过一段工具流、此刻又遇到一次定时唤醒
+      （``schedule`` 族工具调用、后台任务通知），则把已攒下的那段收成一轮。没有这道切分时，
+      一场「派发 Worker 后用定时器自问自答数小时」的会话会把全部内容算成一个巨型末轮，轮内
+      一次误判（如把命令回显当卡片）就把队列闸门关死到最后，且无法被后续轮次冲掉。
     - 只保留至少包含一条实质回复或交互卡（非空 ``agent.say`` 或 ``record_has_interactive_card``）
       的轮次，因此末尾索引 ``-1`` 即为最后一轮实际内容会话。
     """
@@ -611,6 +1031,16 @@ def segment_main_turns(
     current_has_say = False
     current_say_group: str | None = None
     current_has_assistant_step = False
+    prev_ts: int | None = None
+
+    def _close_current() -> None:
+        nonlocal current, current_has_say, current_say_group, current_has_assistant_step
+        if current:
+            turns.append(current)
+        current = []
+        current_has_say = False
+        current_say_group = None
+        current_has_assistant_step = False
 
     for rec in records:
         agent_path = _record_field(rec, "agent_path") or []
@@ -625,29 +1055,39 @@ def segment_main_turns(
                 current.append(rec)
             continue
 
+        # 定时唤醒是新一轮自查的起点：上一轮已经说过话之后，再出现一次定时唤醒就另起一段。
+        # 这一条不能只挂在「还没说话」的分支下——事故现场那场会话的自查循环每轮都有回复，
+        # 而同一次派发里所有记录的 group_id 相同，只按 group 判永远切不开。
+        # 也不能无条件切：首次挂定时器是本轮内的一个动作，切了会把人的提问和它的回答剥开。
+        if current_has_say and _is_async_wakeup_boundary(rec):
+            _close_current()
+
         # 判断是否应该在此处切开新的一轮
         if current_has_say:
             same_group = bool(group_id and current_say_group and group_id == current_say_group)
             if not same_group:
-                turns.append(current)
-                current = []
-                current_has_say = False
-                current_say_group = None
-                current_has_assistant_step = False
+                _close_current()
         elif current_has_assistant_step:
             is_new_boundary = kind == "user.say" or (
                 kind == "context.inject"
                 and isinstance(payload, dict)
                 and payload.get("source") == "hook"
             )
-            if is_new_boundary:
-                turns.append(current)
-                current = []
-                current_has_say = False
-                current_say_group = None
-                current_has_assistant_step = False
+            # 静默：这一轮还没说过话，却与上一段工具流隔了超过阈值的时间，说明 agent 早已
+            # 停过一段（人没开口、定时器也没唤醒），不该再算同一轮。
+            cur_ts = _record_ts_ms(rec)
+            silent_gap = (
+                prev_ts is not None
+                and cur_ts is not None
+                and cur_ts - prev_ts > TURN_SILENCE_GAP_MS
+            )
+            if is_new_boundary or silent_gap:
+                _close_current()
 
+        cur_ts = _record_ts_ms(rec)
         current.append(rec)
+        if cur_ts is not None:
+            prev_ts = cur_ts
         if _has_substantive_assistant_response(rec):
             current_has_say = True
             current_say_group = str(group_id) if group_id else None
@@ -663,7 +1103,7 @@ def segment_main_turns(
         turn
         for turn in turns
         if any(
-            _has_substantive_assistant_response(r) or record_has_interactive_card(r)
+            _has_substantive_assistant_response(r) or record_has_interactive_card(r, records)
             for r in turn
         )
     ]
@@ -683,7 +1123,7 @@ def has_interactive_card_in_tail_turns(
     has_unanswered_card = False
     for turn in tail_turns:
         for rec in turn:
-            if record_has_interactive_card(rec):
+            if record_has_interactive_card(rec, records):
                 has_unanswered_card = True
             elif has_unanswered_card and is_card_answer_record(rec):
                 has_unanswered_card = False
@@ -721,7 +1161,7 @@ def detect_stop_turn_id(
     if last_substantive is None:
         return None
     if _has_substantive_assistant_response(last_substantive) or record_has_interactive_card(
-        last_substantive
+        last_substantive, records
     ):
         rec_id = _record_field(last_substantive, "id")
         return str(rec_id) if rec_id else "stop"
@@ -757,11 +1197,14 @@ def is_session_busy(session_id: str) -> bool:
     if family == "coreagent":
         if coreagent_runner.busy(session_id):
             return True
-        path = coreagent_store.find_session_file(session_id)
-        if path is not None and path.is_file():
-            verdict = transcript_completion.evaluate_file(path)
-            if not verdict.done:
-                return True
+        try:
+            path = coreagent_store.find_session_file(session_id)
+            if path is not None and path.is_file():
+                verdict = transcript_completion.evaluate_file(path)
+                if verdict is not None and not verdict.done:
+                    return True
+        except Exception:  # noqa: BLE001
+            logger.warning("检查转录完成态失败（session=%s）", session_id, exc_info=True)
         return False
 
     # 检查 UI 会话池
@@ -785,30 +1228,39 @@ def is_session_busy(session_id: str) -> bool:
     except Exception:  # noqa: BLE001
         pass
 
-    # 检查各家转录文件的完成度
+    # 检查各家转录文件的完成度（verdict 为 None 表示无法仅凭转录裁决忙闲，
+    # 不抛异常退化，由前序池/窗格忙探针把关真忙态，并交下游读屏信号二次确认）
     try:
         if family == "claude-code":
             path = find_session_file(session_id)
             if path is not None and path.is_file():
                 verdict = transcript_completion.evaluate_file(path)
-                if not verdict.done:
+                if verdict is None:
+                    logger.debug("转录完成态未确定（session=%s, family=%s）", session_id, family)
+                elif not verdict.done:
                     return True
         elif family == "codex":
             path = codex_store.find_rollout(session_id)
             if path is not None and path.is_file():
-                verdict = codex_store.latest_turn(path)
-                if not verdict.done:
+                verdict = codex_store.latest_turn(session_id)
+                if verdict is None:
+                    logger.debug("转录完成态未确定（session=%s, family=%s）", session_id, family)
+                elif not verdict.done:
                     return True
         elif family == "opencode":
             verdict = opencode_store.latest_turn(session_id)
-            if not verdict.done:
+            if verdict is None:
+                logger.debug("转录完成态未确定（session=%s, family=%s）", session_id, family)
+            elif not verdict.done:
                 return True
         elif family == "agy":
             verdict = agy_store.latest_turn(session_id)
-            if not verdict.done:
+            if verdict is None:
+                logger.debug("转录完成态未确定（session=%s, family=%s）", session_id, family)
+            elif not verdict.done:
                 return True
     except Exception:  # noqa: BLE001
-        logger.debug("检查转录完成态失败（session=%s）", session_id, exc_info=True)
+        logger.warning("检查转录完成态失败（session=%s）", session_id, exc_info=True)
 
     return False
 
@@ -861,13 +1313,129 @@ def evaluate_queue_state(
     }
 
 
-def _send_prompt(session_id: str, prompt: str, cwd_hint: str | None) -> None:
-    from frago.server.services import session_send
+def _sync_dispatch_job_delivering(job_id: str) -> None:
+    try:
+        from frago.session.async_dispatch import load_dispatch_job, record_callback_delivery_outcome
 
+        job = load_dispatch_job(job_id)
+        if job is not None and job.delivery_state == "queued":
+            # 契约要求调用方注入「从持久化派发单上读到的当前态」：本体层已恢复纯函数、
+            # 不自己读盘，不注入就等于判据不成立、动作被拒——而下面的宽 except 会把
+            # 这次拒绝静默吞掉，派发单就永远停在 queued。
+            record_callback_delivery_outcome(
+                job_id,
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state=job.delivery_state,
+            )
+    except Exception:
+        logger.debug("Failed to advance dispatch job %s to delivering", job_id, exc_info=True)
+
+
+def _sync_dispatch_job_delivered_and_finalize(job_id: str) -> None:
+    try:
+        from frago.session.async_dispatch import (
+            finalize_dispatch_job,
+            load_dispatch_job,
+            record_callback_delivery_outcome,
+        )
+
+        job = load_dispatch_job(job_id)
+        if job is None:
+            return
+        if job.delivery_state == "queued":
+            record_callback_delivery_outcome(
+                job_id,
+                from_state="queued",
+                to_state="delivering",
+                prior_delivery_state=job.delivery_state,
+            )
+            job = load_dispatch_job(job_id)
+        if job is not None and job.delivery_state == "delivering":
+            record_callback_delivery_outcome(
+                job_id,
+                from_state="delivering",
+                to_state="delivered",
+                prior_delivery_state=job.delivery_state,
+            )
+            job = load_dispatch_job(job_id)
+        if (
+            job is not None
+            and job.delivery_state == "delivered"
+            and getattr(job, "exit_code", None) is not None
+        ):
+            target_status = "completed" if job.exit_code == 0 else "failed"
+            finalize_dispatch_job(
+                job_id,
+                exit_code=job.exit_code,
+                delivery_state="delivered",
+                job_status=target_status,
+                prior_delivery_state=job.delivery_state,
+            )
+    except Exception:
+        logger.debug("Failed to finalize dispatch job %s on delivery", job_id, exc_info=True)
+
+
+def _sync_dispatch_job_queued_on_failure(job_id: str, reason: str) -> None:
+    try:
+        from frago.session.async_dispatch import load_dispatch_job, record_callback_delivery_outcome
+
+        job = load_dispatch_job(job_id)
+        if job is not None and job.delivery_state == "delivering":
+            record_callback_delivery_outcome(
+                job_id,
+                from_state="delivering",
+                to_state="queued",
+                reason=reason,
+                prior_delivery_state=job.delivery_state,
+            )
+    except Exception:
+        logger.debug("Failed to rollback dispatch job %s to queued", job_id, exc_info=True)
+
+
+def _send_prompt(session_id: str, prompt: str, cwd_hint: str | None) -> bool:
+    """向目标会话投喂消息，并确认消息已被目标会话接收并落入会话记录；绝不等待整轮思考回答结束。
+
+    返回 True 表示已成功落盘送达；返回 False 表示未就绪或未进入会话记录（且输入区已清空残留）。
+    """
     if _sender_override is not None:
-        _sender_override(session_id, prompt, cwd_hint)
-        return
-    session_send.send(session_id, prompt, cwd_hint=cwd_hint)
+        res = _sender_override(session_id, prompt, cwd_hint)
+        return bool(res is None or res)
+
+    # 测试要替换投递行为，走上面那个显式注入点 ``_sender_override``。
+    #
+    # **这里从前还有一条「探测自己是不是被 mock 了」的分支**：比较 ``session_send.send``
+    # 与 import 期记下的原函数是不是同一个对象，不是就走打桩路径。那是生产代码在运行时
+    # 辨认自己有没有被替换过——单测残留一次 monkeypatch、某个装饰器包了一层、热重载换了
+    # 个函数对象，生产行为就会静默切到另一条路上，而且没有任何地方报错。
+    from frago.server.services import session_send
+    from frago.session import record_reader
+
+    # 读取投喂前的记录基线，供 landed 检测
+    initial_records = record_reader.read_records(session_id, tail=True, limit=10)
+    initial_count = len(initial_records)
+    initial_last_id = initial_records[-1].id if initial_records else None
+
+    def _landed() -> bool:
+        new_records = record_reader.read_records(session_id, tail=True, limit=10)
+        if len(new_records) > initial_count:
+            return True
+        if new_records and new_records[-1].id != initial_last_id:
+            return True
+        clean_prompt = prompt.strip()
+        for rec in reversed(new_records):
+            if rec.kind in ("user.say", "user_input"):
+                text = (
+                    (rec.payload or {}).get("text", "")
+                    if isinstance(rec.payload, dict)
+                    else str(rec.payload or "")
+                )
+                if clean_prompt and (clean_prompt in text or text in clean_prompt):
+                    return True
+        return False
+
+    status = session_send.send_when_idle(session_id, prompt, landed=_landed)
+    return status in ("landed", "handed")
 
 
 def try_auto_inject(
@@ -878,8 +1446,7 @@ def try_auto_inject(
 ) -> dict[str, Any]:
     """若满足自动注入条件且队列非空，弹出最早的一条消息并注入会话。
 
-    ``sync=True`` 时在当前线程直接完成投喂（方便单元测试确定性断言）；默认在后台线程投喂，
-    避免阻塞文件监听回调或 HTTP 响应。
+    ``sync=True`` 时在当前线程直接完成投喂（秒级返回确认，不等待整轮回答）；默认在后台线程投喂。
     """
     inject_fd: int | None = None
     with _lock_for(session_id):
@@ -928,24 +1495,90 @@ def try_auto_inject(
             _release_inject_lock(inject_fd)
             return {"injected": False, "reason": "empty", "item": None}
 
+        # job_id 只认结构化字段：条目从盘上读回来时那条一次性迁移已经补过了，投喂这一端
+        # 不再反解提示词文本——格式一变（标签改名、属性顺序变化、单引号）就会静默失配，
+        # 而失配的代价是幂等去重失效、同一条回传被灌进终端两次。
+        job_id = earliest.get("job_id")
+
+        # ── 幂等去重检查（[P0-1] & [P0-2]） ─────────────────────────────
+        # 若该消息包含 job_id 且目标会话近期记录中已经包含该 job_id 的回传报文，
+        # 判定为历史已送达：直接消费出队，绝不向终端二次灌入相同内容！
+        already_present = False
+        if job_id:
+            from frago.session import record_reader
+
+            with contextlib.suppress(Exception):
+                recent_recs = record_reader.read_records(session_id, tail=True, limit=500)
+                for r in recent_recs:
+                    if getattr(r, "kind", "") != "user.say":
+                        continue
+                    t = (
+                        (r.payload or {}).get("text", "")
+                        if isinstance(r.payload, dict)
+                        else str(r.payload or "")
+                    )
+                    if "<frago-async-callback" in t and (f'job_id="{job_id}"' in t or job_id in t):
+                        already_present = True
+                        break
+
+        directory = queue_dir(session_id)
+        persisted = _read_queue_state(directory)
+        now_ms = int(time.time() * 1000)
+
+        if already_present:
+            # 命中幂等去重，持久化送达回执并推进派发单终态
+            deliv_items = list(persisted.get("delivered_items") or [])
+            deliv_items.append(earliest["id"])
+            persisted["delivered_items"] = deliv_items[-100:]
+            if job_id:
+                deliv_jobs = list(persisted.get("delivered_job_ids") or [])
+                deliv_jobs.append(job_id)
+                persisted["delivered_job_ids"] = deliv_jobs[-100:]
+            persisted.pop("inflight_item_id", None)
+            persisted.pop("inflight_job_id", None)
+            _write_queue_state(directory, persisted)
+            _release_inject_lock(inject_fd)
+            if job_id:
+                _sync_dispatch_job_delivered_and_finalize(job_id)
+            return {
+                "injected": True,
+                "delivered": True,
+                "deduped": True,
+                "status": "delivered",
+                "reason": "deduped_already_present",
+                "item": _public_item(earliest),
+                **state,
+            }
+
         stop_turn_id = state["stop_turn_id"]
         if stop_turn_id:
             _last_injected_turn[session_id] = stop_turn_id
         _injecting_sessions.add(session_id)
-        directory = queue_dir(session_id)
-        persisted = _read_queue_state(directory)
-        now_ms = int(time.time() * 1000)
         if stop_turn_id:
             persisted["last_injected_turn"] = stop_turn_id
         persisted["last_injected_at_ms"] = now_ms
         persisted["injecting_pid"] = os.getpid()
         persisted["injecting_started_at_ms"] = now_ms
+        persisted["inflight_item_id"] = earliest["id"]
+        persisted["inflight_job_id"] = job_id
         _write_queue_state(directory, persisted)
 
+    if job_id:
+        _sync_dispatch_job_delivering(job_id)
+
+    send_ok = False
+    send_error: Exception | None = None
+
     def _run_injection() -> None:
+        nonlocal send_ok, send_error
         try:
-            _send_prompt(session_id, earliest["prompt"], earliest.get("cwd"))
+            res = _send_prompt(session_id, earliest["prompt"], earliest.get("cwd"))
+            send_ok = bool(res is None or res)
+            if not send_ok:
+                raise RuntimeError("终端瞬时忙碌或提交未被会话接收")
         except Exception as exc:  # noqa: BLE001
+            send_error = exc
+            send_ok = False
             logger.warning(
                 "自动注入队列消息失败，归还队首（session=%s, item=%s）：%s",
                 session_id,
@@ -953,7 +1586,6 @@ def try_auto_inject(
                 exc,
             )
             with _lock_for(session_id):
-                # 若因为瞬时未就绪/忙碌投喂失败，放回队首并清除本轮已注入标记
                 if stop_turn_id and _last_injected_turn.get(session_id) == stop_turn_id:
                     _last_injected_turn.pop(session_id, None)
                 directory = queue_dir(session_id)
@@ -962,8 +1594,28 @@ def try_auto_inject(
                     st.pop("last_injected_turn", None)
                 st.pop("injecting_pid", None)
                 st.pop("injecting_started_at_ms", None)
+                st.pop("inflight_item_id", None)
+                st.pop("inflight_job_id", None)
                 _write_queue_state(directory, st)
                 prepend_item(session_id, earliest)
+            if job_id:
+                _sync_dispatch_job_queued_on_failure(job_id, str(exc))
+        else:
+            with _lock_for(session_id):
+                directory = queue_dir(session_id)
+                st = _read_queue_state(directory)
+                deliv_items = list(st.get("delivered_items") or [])
+                deliv_items.append(earliest["id"])
+                st["delivered_items"] = deliv_items[-100:]
+                if job_id:
+                    deliv_jobs = list(st.get("delivered_job_ids") or [])
+                    deliv_jobs.append(job_id)
+                    st["delivered_job_ids"] = deliv_jobs[-100:]
+                st.pop("inflight_item_id", None)
+                st.pop("inflight_job_id", None)
+                _write_queue_state(directory, st)
+            if job_id:
+                _sync_dispatch_job_delivered_and_finalize(job_id)
         finally:
             try:
                 with _lock_for(session_id):
@@ -973,25 +1625,47 @@ def try_auto_inject(
                     if st.get("injecting_pid") == os.getpid():
                         st.pop("injecting_pid", None)
                         st.pop("injecting_started_at_ms", None)
+                        st.pop("inflight_item_id", None)
+                        st.pop("inflight_job_id", None)
                         _write_queue_state(directory, st)
             finally:
                 _release_inject_lock(inject_fd)
-            # 这一轮投喂跑完后，若又产生了新的 stop 轮次且队列还有后续消息，继续检查下一条
-            if not sync:
+            if not sync and send_ok:
                 schedule_auto_inject_after_settle(session_id, delay_s=0.8)
 
     if sync:
         _run_injection()
-    else:
-        threading.Thread(
-            target=_run_injection,
-            name=f"queue-inject-{session_id[:16]}",
-            daemon=True,
-        ).start()
+        if not send_ok:
+            return {
+                "injected": False,
+                "delivered": False,
+                "status": "failed",
+                "reason": "send_failed",
+                "error": str(send_error) if send_error else "not_accepted",
+                "item": None,
+                **state,
+            }
+        return {
+            "injected": True,
+            "delivered": True,
+            "status": "delivered",
+            "reason": "ok",
+            "item": _public_item(earliest),
+            **state,
+        }
+
+    threading.Thread(
+        target=_run_injection,
+        name=f"queue-inject-{session_id[:16]}",
+        daemon=True,
+    ).start()
 
     return {
-        "injected": True,
-        "reason": "ok",
+        "injected": False,
+        "accepted": True,
+        "delivering": True,
+        "status": "delivering",
+        "reason": "delivering",
         "item": _public_item(earliest),
         **state,
     }
@@ -1057,35 +1731,48 @@ def schedule_auto_inject_after_settle(
     _schedule_step(delay_s, 0)
 
 
+def scan_persisted_queued_sessions() -> set[str]:
+    """扫描持久化存储中的所有非空队列会话，覆盖所有内核家族目录。"""
+    found: set[str] = set()
+    try:
+        root = sessions_root()
+        if root.is_dir():
+            for qfile in root.glob(f"*/*/{QUEUE_FILENAME}"):
+                sid = qfile.parent.name
+                if not sid:
+                    continue
+                data = read_queue(qfile.parent)
+                if data.get("items"):
+                    found.add(sid)
+    except Exception:  # noqa: BLE001
+        logger.debug("扫描持久化非空队列失败", exc_info=True)
+    return found
+
+
 def _seed_queued_sessions_once() -> None:
-    """进程首次巡检时扫描一次 ``~/.frago/sessions/*/*/workbench-queue.json``，
-    把服务重启前已存在的非空队列纳入内存巡检集合。
-    """
+    """进程首次巡检时初始化活跃队列集合。"""
     global _seeded_from_disk
     with _locks_guard:
         if _seeded_from_disk:
             return
         _seeded_from_disk = True
 
-    try:
-        from frago.server.services import session_observer
+    root = _sessions_root()
+    index_file = root / ACTIVE_QUEUES_FILENAME
+    indexed, is_seeded = _read_active_queues_index_with_meta()
+    if index_file.is_file() and is_seeded:
+        with _locks_guard:
+            _queued_sessions.update(indexed)
+        return
 
-        root = session_observer.session_dir("__probe__", "claude-code").parent.parent
-        if not root.is_dir():
-            return
-        found: list[str] = []
-        for qfile in root.glob(f"*/*/{QUEUE_FILENAME}"):
-            sid = qfile.parent.name
-            if not sid:
-                continue
-            data = read_queue(qfile.parent)
-            if data.get("items"):
-                found.append(sid)
-        if found:
-            with _locks_guard:
-                _queued_sessions.update(found)
-    except Exception:  # noqa: BLE001
-        logger.debug("扫描持久化非空队列失败", exc_info=True)
+    # 首次初始化或存量索引未标记 seeded 时，执行唯一一次存量扫描建索引
+    found = scan_persisted_queued_sessions()
+    with _active_queues_file_lock():
+        current, _ = _read_active_queues_index_with_meta()
+        merged = current | found
+        _write_active_queues_index(merged, seeded=True)
+    with _locks_guard:
+        _queued_sessions.update(merged)
 
 
 def patrol_active_queues(*, sync: bool = False) -> list[str]:
@@ -1097,15 +1784,24 @@ def patrol_active_queues(*, sync: bool = False) -> list[str]:
     3. Stop hook 耗时极长、超出单次退避窗口后才结束的会话。
     """
     _seed_queued_sessions_once()
+    # 彻底移除 scan_persisted_queued_sessions() 全盘 glob 扫描上万个历史目录！
+    # 直接读取轻量索引文件（几百字节），支持跨进程写入（CLI/watcher 入队）同步
+    with contextlib.suppress(Exception):
+        active_from_disk = _read_active_queues_index()
+        with _locks_guard:
+            _queued_sessions.update(active_from_disk)
+
     with _locks_guard:
         candidates = list(_queued_sessions)
     injected_sids: list[str] = []
     for sid in candidates:
         try:
             raw_items = list_raw_queue(sid)
-            if not raw_items:
-                with _locks_guard:
-                    _queued_sessions.discard(sid)
+            directory = queue_dir(sid)
+            st = _read_queue_state(directory)
+            inflight_id = st.get("inflight_item_id")
+            if not raw_items and not inflight_id:
+                unregister_active_queue_session(sid)
                 continue
             outcome = try_auto_inject(sid, sync=sync)
             if outcome.get("injected"):

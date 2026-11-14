@@ -471,8 +471,9 @@ class AgentHarnessLifecycleCoordinator:
             from frago.server.services.ui_session_runner import get_runner
 
             runner = get_runner()
-            return runner._pool.get(session_id)
-        except Exception:
+            return runner._pool.peek(session_id)
+        except (ImportError, AttributeError) as exc:
+            logger.debug("查找常驻会话失败 session_id=%s: %s", session_id, exc)
             return None
 
     def _is_async_dispatch_active(self, session_id: str) -> bool:

@@ -134,6 +134,10 @@ class TestSessionList:
             "local_ops",
             # 由员工岗位入口创建的会话所归属的岗位编号（如 stock），左栏据此展示非文字员工标识。
             "employee_id",
+            # 岗位的中文名与配色：左栏按岗位编号标会话时，把这两样一起摆出来。
+            # 编号是机器认的，名字才是人认的；只给编号，界面上就只剩一串字母。
+            "employee_title",
+            "employee_color",
         }
 
     def test_开在tmux里的那一场才标上(self, client, monkeypatch):

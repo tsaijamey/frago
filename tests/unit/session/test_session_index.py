@@ -960,6 +960,7 @@ class Test内存增量缓存与Agy缓存:
 
     def test_agy_tail_signals_命中缓存时不重复翻译(self, tmp_path: Path) -> None:
         from dataclasses import dataclass
+
         from frago.session.unified_record import UnifiedRecord
 
         @dataclass

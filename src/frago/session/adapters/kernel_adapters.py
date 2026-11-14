@@ -58,11 +58,17 @@ class HarnessIdleVerdict:
 
 @dataclass(frozen=True)
 class TurnCompletionVerdict:
-    """轮次完工判定裁决结果。"""
+    """轮次完工判定裁决结果。
+
+    - ``done=True, unknown=False``：转录明确记录最新轮次已收尾；
+    - ``done=False, unknown=False``：转录明确记录最新轮次仍在进行中；
+    - ``done=False, unknown=True``：转录文件缺失、为空或未包含可定位的用户输入记录，无法仅凭转录裁决。
+    """
 
     done: bool
     stop_reason: str | None = None
     final_text: str = ""
+    unknown: bool = False
 
 
 @runtime_checkable
@@ -144,16 +150,17 @@ class ClaudeCodeSessionAdapter:
     ) -> TurnCompletionVerdict:
         target = path or self.locate_transcript(session_id)
         if target is None or not target.exists():
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         from frago.session.transcript_completion import evaluate_file
 
         verdict = evaluate_file(target)
         if verdict is None:
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         return TurnCompletionVerdict(
             done=bool(verdict.done),
             stop_reason=verdict.stop_reason,
             final_text=verdict.final_text or "",
+            unknown=False,
         )
 
     def probe_harness_idle(
@@ -208,6 +215,56 @@ class ClaudeCodeSessionAdapter:
         return None
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_CORE_TURN_ACTIVE_RE = re.compile(r"^(?:❯\s+\S|\[init\]\s+session=|⚙\s+\S|⏺\s+\S)")
+_CORE_TURN_DONE_RE = re.compile(
+    r"^(?:✓ Turn complete \(|✗ Turn failed \(|✓ Final \(|✗ Error \(|Failed to spawn frago-core:)"
+)
+_CORE_SPINNER_RE = re.compile(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…")
+_BARE_SHELL_LINE_RE = re.compile(
+    r"^(?:\([^)]+\)\s*)?(?:[\w.-]+@[\w.-]+[:\s~][^\n]*|(?:ba)?sh-[\d.]+|zsh)\s*[$%#]\s*$"
+)
+
+
+def _looks_like_bare_shell_prompt(plain_text: str) -> bool:
+    """判断窗格末尾是否已退回裸交互式 shell 提示符（而非运行中的 CoreAgent 宿主）。"""
+    if not plain_text:
+        return False
+    non_empty = [ln.rstrip() for ln in plain_text.splitlines() if ln.strip()]
+    if not non_empty:
+        return False
+    last = non_empty[-1].strip()
+    if last in ("$", "%", "#", "❯"):
+        return True
+    return bool(_BARE_SHELL_LINE_RE.match(last))
+
+
+def _coreagent_pane_is_generating(plain_text: str) -> bool:
+    """判断 CoreAgent 窗格是否正处于未闭合生成或工具执行中（严防历史已完成工具行误报）。"""
+    if not plain_text or _looks_like_bare_shell_prompt(plain_text):
+        return False
+
+    if "━━━ CoreAgent (" in plain_text:
+        in_active_turn = False
+        for raw_ln in plain_text.splitlines():
+            ln = raw_ln.strip()
+            if not ln:
+                continue
+            if _CORE_TURN_DONE_RE.match(ln):
+                in_active_turn = False
+            elif _CORE_TURN_ACTIVE_RE.match(ln):
+                in_active_turn = True
+        return in_active_turn
+
+    lines = [ln for ln in plain_text.splitlines() if ln.strip()]
+    tail = "\n".join(lines[-8:]) if lines else ""
+    return bool(
+        "Thinking..." in tail
+        or "Generating" in tail
+        or _CORE_SPINNER_RE.search(tail)
+    )
+
+
 class CoreAgentSessionAdapter:
     """CoreAgent 内核会话适配器。"""
 
@@ -234,33 +291,54 @@ class CoreAgentSessionAdapter:
     ) -> TurnCompletionVerdict:
         target = path or self.locate_transcript(session_id)
         if target is None or not target.exists():
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         from frago.session.transcript_completion import evaluate_file
 
         verdict = evaluate_file(target)
         if verdict is None:
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         return TurnCompletionVerdict(
             done=bool(verdict.done),
             stop_reason=verdict.stop_reason,
             final_text=verdict.final_text or "",
+            unknown=False,
         )
 
     def probe_harness_idle(
         self, session_id: str, pane_text: str = "", pane_ansi: str = ""
     ) -> HarnessIdleVerdict:
         target_text = pane_text or pane_ansi
-        completion = self.probe_turn_completion(session_id)
+        plain_text = _ANSI_ESCAPE_RE.sub("", target_text) if target_text else ""
+        bare_shell = _looks_like_bare_shell_prompt(plain_text)
+        is_generating = (not bare_shell) and _coreagent_pane_is_generating(plain_text)
 
-        is_generating = False
-        if target_text and (
-            "Thinking..." in target_text
-            or "Generating" in target_text
-            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", target_text))
-        ):
-            is_generating = True
+        transcript_path = self.locate_transcript(session_id)
+        if transcript_path is not None and transcript_path.exists():
+            completion = self.probe_turn_completion(session_id)
+            if not completion.done and not bare_shell:
+                return HarnessIdleVerdict(
+                    is_busy=True,
+                    is_terminal_idle=False,
+                    awaiting_input=False,
+                    detail="CoreAgent turn in progress",
+                )
+            if is_generating:
+                return HarnessIdleVerdict(
+                    is_busy=True,
+                    is_terminal_idle=False,
+                    awaiting_input=False,
+                    detail="CoreAgent is processing turn",
+                )
+            return HarnessIdleVerdict(
+                is_busy=False,
+                is_terminal_idle=True,
+                awaiting_input=True,
+                detail="CoreAgent is idle",
+            )
 
-        if is_generating and not completion.done:
+        # transcript_path 为 None（如虚拟 ID "__check_busy__" 或首条记录落盘前）：
+        # 仅当明确处于生成/运行中窗格态才返回忙，绝不因缺少转录文件而假阳报忙。
+        if is_generating:
             return HarnessIdleVerdict(
                 is_busy=True,
                 is_terminal_idle=False,
@@ -305,13 +383,23 @@ class AgySessionAdapter:
         from frago.session.agy_store import latest_turn
 
         turn = latest_turn(session_id)
-        done = bool(turn.done) if turn is not None else False
+        if turn is None:
+            return TurnCompletionVerdict(
+                done=False,
+                stop_reason=None,
+                final_text="",
+                unknown=True,
+            )
+        done = bool(turn.done)
         stop_reason = "end_turn" if done else None
-        final_text = getattr(turn, "summary", "") or "" if turn is not None else ""
+        final_text = (
+            getattr(turn, "text", "") or getattr(turn, "summary", "") or ""
+        )
         return TurnCompletionVerdict(
             done=done,
             stop_reason=stop_reason,
             final_text=final_text,
+            unknown=False,
         )
 
     def probe_harness_idle(
@@ -400,21 +488,22 @@ class CodexSessionAdapter:
 
         target = path or self.locate_transcript(session_id)
         if target is None or not target.exists():
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
 
         from frago.session.adapters.codex_records import translate_session
 
         records = translate_session(session_id)
         if not records:
-            return TurnCompletionVerdict(done=False, stop_reason=None)
+            return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
         last = records[-1]
         if last.kind in ("agent.think", "agent.say"):
             return TurnCompletionVerdict(
                 done=True,
                 stop_reason="end_turn",
                 final_text=str(last.payload.get("text") or ""),
+                unknown=False,
             )
-        return TurnCompletionVerdict(done=False, stop_reason=None)
+        return TurnCompletionVerdict(done=False, stop_reason=None, unknown=False)
 
     def probe_harness_idle(
         self, session_id: str, pane_text: str = "", pane_ansi: str = ""
@@ -475,8 +564,9 @@ class OpencodeSessionAdapter:
                 done=done,
                 stop_reason="end_turn" if done else None,
                 final_text=getattr(turn, "text", "") or "",
+                unknown=False,
             )
-        return TurnCompletionVerdict(done=False, stop_reason=None)
+        return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
 
     def probe_harness_idle(
         self, session_id: str, pane_text: str = "", pane_ansi: str = ""  # noqa: ARG002

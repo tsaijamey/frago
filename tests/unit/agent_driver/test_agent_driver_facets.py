@@ -6,6 +6,7 @@ from frago.agent_driver.driver import (
     AgentDriver,
     AgentDriverFacets,
     AwaitingInputProbeFacet,
+    BusyProbeFacet,
     ContextWatermarkFacet,
     HookInjectionFacet,
     IdentityProbeFacet,
@@ -53,12 +54,14 @@ def test_agent_driver_facets_structure() -> None:
 
     assert facets.identity_probe.display_name == "Dummy Agent"
     assert facets.get_facet("context_watermark").known_models == ("model-a", "model-b")
+    assert isinstance(facets.get_facet("busy_probe"), BusyProbeFacet)
     as_map = facets.as_dict()
     assert set(as_map.keys()) == {
         "identity_probe",
         "lifecycle_action",
         "transcript_sync",
         "awaiting_input_probe",
+        "busy_probe",
         "context_watermark",
         "hook_injection",
     }
@@ -120,10 +123,14 @@ def test_registered_drivers_have_facets_and_probes() -> None:
     assert claude_driver.awaiting_input is not None
     assert callable(claude_driver.awaiting_input)
     assert claude_driver.facets.awaiting_input_probe.awaiting_input is not None
+    assert callable(claude_driver.facets.busy_probe.is_busy)
+    assert claude_driver.facets.busy_probe.capability_level == "native"
     assert claude_driver.supports_profile_apply is True
 
     agy_driver = load_driver("agy")
     assert agy_driver.facets.hook_injection.profile_mode == "file_and_env"
+    assert callable(agy_driver.facets.busy_probe.is_busy)
+    assert agy_driver.facets.busy_probe.capability_level == "adapted"
     assert agy_driver.supports_profile_apply is True
 
     codex_driver = load_driver("codex")

@@ -20,7 +20,6 @@ import threading
 from pathlib import Path
 
 from frago.server.websocket import create_message, manager
-from frago.session.adapters.claude_code_records import find_session_file
 from frago.session.opencode_stream import OpencodeStream
 from frago.session.stream import SessionStream
 
@@ -38,26 +37,11 @@ _AGENT_AT_WORK = frozenset({"agent.say", "tool.call", "subagent.dispatch"})
 def locate_stream_file(session_id: str) -> Path | None:
     """这场会话的记录文件在哪，找不到返回 None。
 
-    **按家找，不是只在 Claude Code 的目录里找。** CoreAgent 的记录形状与 Claude Code
-    一样、读法共用，只是躺在 ``~/.frago/coreagent/sessions/`` 下。从前这里写死走 Claude
-    Code 那一份查找，CoreAgent 的会话于是每次都找不到文件，实时推送**一次都没启动过**，
-    右栏连被叫醒的机会都没有（2026-09-29 实测）。
-
-    只有记录形状是 Claude Code 形状的那两家走这条路：opencode 的记录在 SQLite 里（由
-    :class:`OpencodeStream` 单独盯），codex 是另一种 rollout 形状，各有各的路——NEVER
-    拿它们的文件来喂这条按 Claude Code 记录解析的流。
+    单一事实源收口：直接委托至 :func:`frago.session.locate_session_file`，杜绝私设分支。
     """
-    from frago.session import coreagent_store, record_reader
+    from frago.session.record_reader import locate_session_file
 
-    try:
-        family = record_reader.detect_family(session_id)
-    except record_reader.UnknownSessionFamily:
-        return None
-    if family == "coreagent":
-        return coreagent_store.find_session_file(session_id)
-    if family == "claude-code":
-        return find_session_file(session_id)
-    return None
+    return locate_session_file(session_id)
 
 
 class WorkbenchStreamBridge:
@@ -163,7 +147,7 @@ class WorkbenchStreamBridge:
             if existing is not None:
                 # 同一个项目共用一条流，但**每一场会话都要单独登记**：没登记的会话被碰
                 # 一下时事件当场丢掉，不去整文件翻一遍。一个项目目录下能躺一千个会话文件。
-                existing.watch_session(session_id)
+                existing.watch_session(session_id, watch_file=file_path)
                 self._registered.add(session_id)
             else:
                 logger.info("WorkbenchStreamBridge: starting stream for %s", watch_dir)
@@ -173,6 +157,10 @@ class WorkbenchStreamBridge:
                     on_records=self._on_new_records,
                     on_turn_complete=self._on_turn_complete,
                     session_id_filter=session_id,
+                    watch_file=file_path,
+                    # 这条流是**页面**在看：它补档时记的出身是 web，不是 terminal。
+                    # 页面新开的那场会话从此在本体里归位（见 `stream._observed_origin`）。
+                    origin="web",
                 )
                 stream.start()
                 self._streams[project_path] = stream

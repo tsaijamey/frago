@@ -27,6 +27,16 @@ from frago.session.models import (
     ToolCallRecord,
     ToolCallStatus,
 )
+from frago.session.service import (
+    ActionContractError,
+    SessionOntologyService,
+    get_default_session_service,
+)
+from frago.session.store import (
+    SessionOntologyRecord,
+    SessionOntologyStore,
+    get_default_session_store,
+)
 
 __all__ = [
     # Enum types
@@ -39,4 +49,20 @@ __all__ = [
     "SessionStep",
     "ToolCallRecord",
     "SessionSummary",
+    # Ontology Layer (Gate 3 & Gate 4)
+    "ActionContractError",
+    "SessionOntologyRecord",
+    "SessionOntologyService",
+    "SessionOntologyStore",
+    "get_default_session_service",
+    "get_default_session_store",
+    "locate_session_file",
 ]
+
+
+def __getattr__(name: str):
+    if name == "locate_session_file":
+        from frago.session.record_reader import locate_session_file
+
+        return locate_session_file
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

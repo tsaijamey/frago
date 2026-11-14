@@ -39,7 +39,6 @@ from frago.server.services import (
     coreagent_runner,
     file_history,
     session_send,
-    stage_orchestrator,
     workbench_agents,
     workbench_branch,
     workbench_groups,
@@ -1600,7 +1599,7 @@ async def reorder_workbench_session_queue(
 async def drain_workbench_session_queue(sid: str) -> dict[str, Any]:
     """检查会话是否满足「已 stop 且 [end, end-5] 轮无交互卡」，满足则自动弹出最早一条并注入。"""
     try:
-        outcome = await asyncio.to_thread(workbench_queue.try_auto_inject, sid)
+        outcome = await asyncio.to_thread(workbench_queue.try_auto_inject, sid, sync=True)
         items = await asyncio.to_thread(workbench_queue.list_queue, sid)
     except UnknownSessionFamily as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1684,30 +1683,35 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
         stage_orchestrator.cleanup_presenter(sid)
         stage_orchestrator.cleanup_speech_summarizer(sid)
 
-        # CoreAgent 不跑在 tmux 里：它那一场是 frago 服务自己的子进程，找 tmux 永远找不到。
-        # 从前不分家，按下这个按钮只回一句「这一场此刻没有在跑的会话」，而它其实还在跑，
-        # 跑多久也没人停得下来。
+        # CoreAgent 有两类运行承载：① frago 服务进程内由 coreagent_runner 托管的实例；
+        # ② CLI（如 frago agent 派发的 Worker）经 TmuxCoreProcess 拉起跑在独立
+        # frago-agent-core_<sid> tmux 会话里的池外实例。因此先查进程内 coreagent_runner：
+        # 若进程内确有活跃运行（running=True）直接就地停机返回；否则保留排队作废计数
+        # core_dropped，继续向下回退查找并关闭同名 tmux 会话。
         is_core = False
         try:
             is_core = record_reader.detect_family(sid) == "coreagent"
         except UnknownSessionFamily:
             is_core = sid.startswith("core_")
+        core_dropped = 0
         if is_core or coreagent_runner.live_cwd(sid) is not None:
             outcome = coreagent_runner.stop(sid, by="页面上的人")
-            return {
-                "sid": sid,
-                # `alive` 与另外三家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
-                # 它与 `stopped` 一起读——两个都真，说的是「本来在跑，这一按停掉了」。
-                "alive": bool(outcome["running"]),
-                "busy": bool(outcome["busy"]),
-                "stopped": bool(outcome["stopped"]),
-                # 排队里还没轮到、被这一按连带作废的条数。人刚发出去的话不见了，得有个数：
-                # 从前它悄没声地丢了，返回值里一个字都没有（这一场的记录里补了那一行）。
-                "dropped": int(outcome["dropped"]),
-                "name": None,
-                "via": "coreagent" if outcome["stopped"] else None,
-                "error": None,
-            }
+            core_dropped = int(outcome.get("dropped", 0))
+            if outcome.get("running"):
+                return {
+                    "sid": sid,
+                    # `alive` 与另外几家同义：**按下去之前**有没有活着的运行，不是「现在还在不在」。
+                    # 它与 `stopped` 一起读——两个都真，说的是「本来在跑，这一按停掉了」。
+                    "alive": True,
+                    "busy": bool(outcome["busy"]),
+                    "stopped": bool(outcome["stopped"]),
+                    # 排队里还没轮到、被这一按连带作废的条数。人刚发出去的话不见了，得有个数：
+                    # 从前它悄没声地丢了，返回值里一个字都没有（这一场的记录里补了那一行）。
+                    "dropped": core_dropped,
+                    "name": None,
+                    "via": "coreagent" if outcome["stopped"] else None,
+                    "error": None,
+                }
 
         link = svc.find_for_session(sid)
         if link is None:
@@ -1716,6 +1720,7 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
                 "alive": False,
                 "busy": False,
                 "stopped": False,
+                "dropped": core_dropped,
                 "name": None,
                 "via": None,
                 "error": None,
@@ -1726,6 +1731,7 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
                 "alive": True,
                 "busy": True,
                 "stopped": False,
+                "dropped": core_dropped,
                 "name": link.name,
                 "via": None,
                 "error": None,
@@ -1736,6 +1742,7 @@ async def stop_session_run(sid: str, request: StopRunRequest) -> dict[str, Any]:
             "alive": True,
             "busy": link.busy,
             "stopped": bool(result["ok"]),
+            "dropped": core_dropped,
             "name": link.name,
             "via": result["via"],
             "error": result["error"],

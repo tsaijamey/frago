@@ -1132,3 +1132,50 @@ def test_跨进程续接回放边界清空遗留后台任务(app_dir):
     assert turn is not None
     assert turn.done is True
     assert turn.text == "续接后已完成收尾。"
+
+
+def test_长转录超过256KB窗口时自适应倍增扩读找回用户输入与收尾态(app_dir):
+    """复现 75d51ed1 现场：最后一条 USER_INPUT 之后追加了超过 530KB 的工具产出与长回复，
+    固定 256KB 与第一跳 512KB 窗口均覆盖不到该 USER_INPUT；latest_turn 必须倍增扩读找回锚点并判定收尾。
+    """
+    chunk_body = "x" * 16_384
+    records = [
+        _user(0, "<USER_REQUEST>旧轮次提问</USER_REQUEST>"),
+        _planner(1, content="旧轮次回答"),
+        _user(287, "<USER_REQUEST>这设计有点丑，全面升华一下</USER_REQUEST>"),
+    ]
+    for idx in range(36):
+        step = 288 + idx * 2
+        records.append(
+            _planner(step, tool_calls=[{"name": "edit_file", "args": {"idx": idx}}])
+        )
+        records.append(_tool_step(step + 1, "GENERIC", chunk_body))
+    records.append(_planner(763, content="WebUI 全套改版已交付完成。"))
+
+    path = _write(app_dir, records)
+    assert path.stat().st_size > 530 * 1024
+
+    turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert turn is not None
+    assert turn.turn_id == "287"
+    assert turn.done is True
+    assert turn.text == "WebUI 全套改版已交付完成。"
+
+    # 若长输出末尾仍在调用工具尚未收尾，扩读后同样必须准确返回 done=False
+    records.append(_planner(764, tool_calls=[{"name": "run_command", "args": {}}]))
+    _write(app_dir, records)
+    running_turn = agy_store.latest_turn(CONVERSATION_ID)
+    assert running_turn is not None
+    assert running_turn.turn_id == "287"
+    assert running_turn.done is False
+
+
+def test_全文件超过256KB且确无用户输入时有界终止返回None(app_dir):
+    """全文件超过 256KB 但确无任何 USER_INPUT 记录时，倍增扩读到整文件后必须有界终止并返回 None。"""
+    chunk_body = "y" * 16_384
+    records = [_tool_step(idx, "GENERIC", chunk_body) for idx in range(20)]
+    path = _write(app_dir, records)
+    assert path.stat().st_size > agy_store._TAIL_BYTES
+
+    assert agy_store.latest_turn(CONVERSATION_ID) is None
+

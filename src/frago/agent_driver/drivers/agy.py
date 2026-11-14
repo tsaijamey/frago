@@ -84,16 +84,45 @@ logger = logging.getLogger(__name__)
 # 真人自己敲 agy 时这个开关不在。
 _BASE_FLAGS = "--dangerously-skip-permissions"
 
-# 状态栏。就绪态那条尾巴是 agy 自己的按键提示；忙碌态换成取消提示。
+# 状态栏与控制区。就绪态那条尾巴是 agy 自己的按键提示；忙碌态换成取消提示与底部转轮。
+#
+# 重要教训（12792dfe 实机排障）：
+# 50 行 tmux 窗格的上方 40 余行是历史对话正文、Markdown 表格与折叠思考块（如
+# ``○ Thought for 11s · ... before generating the final response.``），只有底部最后数行
+# 才是输入框 ``>``、忙碌转轮 ``⣻  Generating...`` 与状态栏（``? for shortcuts`` /
+# ``esc to cancel``）。若在整屏上跑大小写不敏感的 ``(?i)\bGenerating\b``，一旦思考摘要或
+# 回复正文出现英文单词 ``generating``，整场会话就会被永久误判为忙碌：
+#   - ``_submit`` 拒绝把提示词敲进输入框；
+#   - ``_READY`` / ``_DONE`` 永不成立；
+#   - 巡检的忙碌探针永远报忙。
+# 故忙碌判定必须收敛到底部控制区（``_control_tail``），且只认真正的结构化忙碌信号
+# （``esc to cancel`` 或首字母大写的 ``Generating...`` / ``Generating response``）。
+_CONTROL_TAIL_LINES = 6
 _FOOTER_READY = PaneMatcher(name="agy-footer-ready", pattern=r"(?m)^.*\?\s+for\s+shortcuts")
-_BUSY = re.compile(r"(?i)esc\s+to\s+cancel|\bGenerating\b")
+_BUSY = re.compile(
+    r"(?i:\besc\s+to\s+cancel\b)"
+    r"|(?m:^(?!\s*○\s+Thought\b|\s*\|)[^\n]*\bGenerating(?:\.\.\.|…|\s+response\b))"
+)
 
 # 输入框那一行：只有 ``>``。用于确认框是空的，以及读屏退路判答案的边界。
 _INPUT_BOX = re.compile(r"(?m)^\s*>\s*$")
 
 
+def _control_tail(pane: str, lines: int = _CONTROL_TAIL_LINES) -> str:
+    """截取 agy 终端底部控制区（最后 ``lines`` 个非空行：状态栏 + 输入框 + 实时转轮）。
+
+    过滤上方历史对话区与 ``○ Thought for ...`` 折叠思考摘要，阻断正文散文词汇污染状态机。
+    """
+    if not pane:
+        return ""
+    non_empty = [ln for ln in pane.splitlines() if ln.strip()]
+    if not non_empty:
+        return ""
+    return "\n".join(non_empty[-lines:])
+
+
 class _AgyReady:
-    """就绪 = 状态栏在就绪态 **且** 屏上没有忙碌标记。鸭子兼容 ``PaneMatcher``。
+    """就绪 = 状态栏在就绪态 **且** 底部控制区没有忙碌标记。鸭子兼容 ``PaneMatcher``。
 
     只看输入框的话，忙碌中那一拍同样命中（输入框本来就空着），提示词会在模型还在
     干活时被投进去。状态栏那一句才是三态真正的分界。
@@ -102,7 +131,8 @@ class _AgyReady:
     name = "agy-ready"
 
     def matches(self, text: str) -> bool:
-        return _FOOTER_READY.matches(text) and _BUSY.search(text) is None
+        tail = _control_tail(text)
+        return _FOOTER_READY.matches(tail) and _BUSY.search(tail) is None
 
 
 _READY = _AgyReady()
@@ -546,21 +576,24 @@ def _transcript_size(session: TmuxAgentSession) -> int | None:
 
 
 def is_terminal_busy(pane: str) -> bool:
-    """agy 专属终端忙碌探针契约：仅匹配真实生成态（``Generating`` 或 ``esc to cancel``）。
+    """agy 专属终端忙碌探针契约：仅在底部控制区匹配真实生成态（``Generating...`` 或 ``esc to cancel``）。
 
-    坚决剔除 Claude 专属的括号耗时正则（如 ``(45s``），防止定时器历史输出误触忙碌判定。
+    1. 空间收敛：只检查底部控制区（``_control_tail``），隔离上方历史正文与 ``○ Thought`` 摘要；
+    2. 信号收敛：坚决剔除 Claude 专属的括号耗时正则（如 ``(45s``）及散文小写 ``generating``。
     """
-    return bool(pane and _BUSY.search(pane))
+    tail = _control_tail(pane)
+    return bool(tail and _BUSY.search(tail))
 
 
 def _pane_looks_busy(pane: str) -> bool:
-    """判断当前 agy 终端窗格是否正处于忙碌生成态（``Generating`` 或 ``esc to cancel``）。"""
+    """判断当前 agy 终端窗格是否正处于忙碌生成态（``Generating...`` 或 ``esc to cancel``）。"""
     return is_terminal_busy(pane)
 
 
-def _submit(session: TmuxAgentSession, prompt: str) -> bool:
+def _submit(session: TmuxAgentSession, prompt: str) -> None:
     """投喂一轮：文本进框 → Enter → 确认落地（确认不了才补发）。
 
+    严格遵守 ``LifecycleActionFacet.submit: Callable[[TmuxAgentSession, str], None]`` 契约签名。
     落地判据是 **transcript 文件变长**。agy 一收到提交就把用户那一轮追加进记录，
     这是本地、即时、与提示词长度无关的证据。读屏判"输入框空了"在重绘中途会看见假象，
     补发的空 Enter 会落进下一轮——opencode 与 claude 两侧都为此付过代价。
@@ -581,7 +614,7 @@ def _submit(session: TmuxAgentSession, prompt: str) -> bool:
             "agy pane is busy (Generating / esc to cancel); refusing to type prompt into input box (session=%s)",
             getattr(session, "session_id", None),
         )
-        return False
+        return
 
     _claim_once(session)
     baseline = _transcript_size(session)
@@ -625,7 +658,6 @@ def _submit(session: TmuxAgentSession, prompt: str) -> bool:
             1 + _ENTER_RETRIES,
             session.session_id,
         )
-    return landed
 
 
 # ── 完成探针 ────────────────────────────────────────────────────────
@@ -946,6 +978,7 @@ register_driver(
         # agy 只讲 Gemini 协议，不接受 Anthropic 那套通道。
         profile_protocol="gemini",
         profile_mode="file_and_env",
+        is_busy=is_terminal_busy,
         # 名单由 agy 自己的服务端下发（``agy models``），frago 无从推断。
         known_models=(
             "Gemini 4 Argon (High)",

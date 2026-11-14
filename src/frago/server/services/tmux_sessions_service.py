@@ -466,7 +466,7 @@ def _fallback_awaiting_input(
 
     try:
         kernel = _detect_session_kernel(session_id)
-        if _is_busy(_plain(pane_ansi), kernel=kernel):
+        if _is_busy(_plain(pane_ansi), kernel=kernel, session_id=session_id):
             return False
 
         record_file = _resolve_record_file(session_id)
@@ -772,13 +772,15 @@ _GENERIC_FALLBACK_BUSY = re.compile(
 )
 
 
-def _is_busy(pane: str, kernel: str = "unknown") -> bool:
+def _is_busy(pane: str, kernel: str = "unknown", session_id: str = "") -> bool:
     """按五内核统一适配器生命周期能力切面派发终端忙碌探测，单一事实源收口。
 
-    优先委托 KernelSessionAdapter.probe_harness_idle；
+    优先委托 KernelSessionAdapter.probe_harness_idle（传入真实 session_id 时结合落盘
+    转录闭合态判忙，未提供时回退虚拟 ID ``"__check_busy__"`` 仅做窗格级探测）；
     若未注册或异常，回退至无副作用通用转轮与中断提示探针。
     """
-    if not pane:
+    sid_clean = (session_id or "").strip()
+    if not pane and not sid_clean:
         return False
     try:
         from frago.session.adapters.kernel_adapters import get_kernel_session_adapter
@@ -788,10 +790,15 @@ def _is_busy(pane: str, kernel: str = "unknown") -> bool:
             normalized = "claude-code"
 
         adapter = get_kernel_session_adapter(normalized)
-        verdict = adapter.probe_harness_idle("__check_busy__", pane_text=pane)
+        verdict = adapter.probe_harness_idle(
+            sid_clean or "__check_busy__", pane_text=pane
+        )
         return bool(verdict.is_busy or verdict.has_running_subshells)
     except Exception:
         pass
+
+    if not pane:
+        return False
 
     try:
         normalized = (kernel or "unknown").strip().lower()
@@ -903,7 +910,7 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
                 idle_secs=idle_secs,
                 excerpt=excerpt,
                 memory_mb=sum(mem.get(p, 0) for p in pids.get(name, ())),
-                busy=_is_busy(pane, kernel=kernel),
+                busy=_is_busy(pane, kernel=kernel, session_id=session_id or ""),
                 managed=bool(session_id and session_id in managed),
                 client_alive=alive,
                 awaiting_input=awaiting,
@@ -1050,7 +1057,7 @@ def find_for_session(session_id: str) -> TmuxSessionLink | None:
     return TmuxSessionLink(
         name=hit,
         label=hit[len(_PREFIX) :] if hit.startswith(_PREFIX) else hit,
-        busy=_is_busy(pane, kernel=kernel),
+        busy=_is_busy(pane, kernel=kernel, session_id=sid),
         managed=sid in _managed_ids(),
         memory_mb=sum(mem.get(p, 0) for p in pids),
     )

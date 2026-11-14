@@ -113,6 +113,14 @@ class UiSessionRunner:
             timeout_s=timeout_s,
             origin="human",
         )
+        # 对齐本体 HarnessTurnProcess (drive_agent_turn) 后置条件契约：
+        # 终态为 error，或同步等待（timeout_s > 0）下以 timeout 收场的回合，
+        # 绝不可伪造为成功的 SessionActivation 返回 200 OK，否则前端会清空草稿并静默吞掉整轮消息。
+        if result.status == "error":
+            detail = (result.text or "").strip() or "会话执行异常中止"
+            raise RuntimeError(detail)
+        if timeout_s > 0 and result.status == "timeout":
+            raise TimeoutError(f"等待会话响应超时（{int(timeout_s)}s），请确认终端状态后重试")
         # 「接管」也是零冷启动：tmux 里那场本来就活着，池只是重新拿到了它的把手。
         # 报成 activating 等于凭空宣称付了十几秒重建的代价，而实际上一秒都没付。
         adopted = getattr(self._pool.peek(session_id), "adopted", False)
@@ -260,9 +268,17 @@ def _turn_finished(session: TmuxAgentSession) -> bool:
             from frago.session import agy_store
 
             sid = agy_store.get_binding(sid) or sid
+        elif family == "codex":
+            from frago.session import codex_store
+
+            sid = codex_store.get_binding(sid) or sid
+        elif family == "opencode":
+            from frago.session import opencode_store
+
+            sid = opencode_store.get_binding(sid) or sid
 
         completion = adapter.probe_turn_completion(sid)
-        if not completion.done:
+        if not completion.done and not getattr(completion, "unknown", False):
             return False
 
         pane = ""
@@ -273,8 +289,30 @@ def _turn_finished(session: TmuxAgentSession) -> bool:
             except Exception:
                 pane = ""
 
+        if not completion.done:
+            # 转录无法判定轮次完成态（unknown=True，如文件未包含 USER_INPUT）时，
+            # 仅对「已有非空转录落盘」且「实抓到非空终端就绪画面」的会话退回读屏信号；
+            # 新建刚启动尚未落盘或无屏幕快照的会话一律保持 False 不放行。
+            if not pane.strip():
+                return False
+            transcript = adapter.locate_transcript(sid)
+            if transcript is None or not transcript.is_file():
+                return False
+            try:
+                if transcript.stat().st_size <= 0:
+                    return False
+            except OSError:
+                return False
+            ready_matcher = getattr(driver, "ready_signal", None)
+            if ready_matcher is not None and not ready_matcher.matches(pane):
+                return False
+
         idle_verdict = adapter.probe_harness_idle(sid, pane)
-        return bool(idle_verdict.is_terminal_idle and not idle_verdict.has_running_subshells)
+        return bool(
+            not getattr(idle_verdict, "is_busy", False)
+            and idle_verdict.is_terminal_idle
+            and not idle_verdict.has_running_subshells
+        )
     except Exception:  # noqa: BLE001 — 读盘/读库/读屏失败只是这一轮判不出空闲
         return False
 

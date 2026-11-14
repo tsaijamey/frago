@@ -9,6 +9,7 @@ Provides local storage capabilities for session data, including:
 - Session list queries
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -103,16 +104,12 @@ def _session_mtime(session_dir: Path | str) -> float | None:
     """
     base = str(session_dir)
     newest: float | None = None
-    try:
+    with contextlib.suppress(OSError):
         newest = os.stat(f"{base}/metadata.json").st_mtime
-    except OSError:
-        pass
-    try:
+    with contextlib.suppress(OSError):
         st = os.stat(f"{base}/{RAW_FILENAME}")
         if st.st_size > 0 and (newest is None or st.st_mtime > newest):
             newest = st.st_mtime
-    except OSError:
-        pass
     return newest
 
 

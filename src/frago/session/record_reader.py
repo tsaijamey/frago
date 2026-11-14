@@ -17,6 +17,7 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from frago.session import (
@@ -47,6 +48,7 @@ __all__ = [
     "delete_session",
     "detect_family",
     "list_sessions",
+    "locate_session_file",
     "read_raw",
     "read_records",
     "sort_key",
@@ -167,6 +169,24 @@ def detect_family(session_id: str) -> RecordFamily:
     if _is_coreagent_session(sid):
         return "coreagent"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
+
+
+def locate_session_file(session_id: str) -> Path | None:
+    """按家族定位会话的原始记录文件。找不到返回 None，NEVER 抛。
+
+    单一事实源出口：通过内核会话适配器注册表（get_kernel_session_adapter）统一收口，
+    杜绝上层服务私设旁路分支与末端 if/else 穷举。
+    """
+    try:
+        family = detect_family(session_id)
+    except UnknownSessionFamily:
+        return None
+
+    try:
+        adapter = adapters.get_kernel_session_adapter(family)
+        return adapter.locate_transcript(session_id)
+    except Exception:
+        return None
 
 
 def _is_codex_session(session_id: str) -> bool:

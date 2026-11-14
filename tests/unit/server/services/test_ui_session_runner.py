@@ -113,6 +113,36 @@ def test_cold_session_triggers_resume_rebuild():
     assert activation.status == "activating"
 
 
+def test_send_raises_on_synchronous_timeout_or_error_turn_result():
+    """回归（12792dfe 契约后置条件）：同步等待（timeout_s > 0）下 TurnResult.status 为 timeout 或 error 时，
+    必须抛出异常，禁止包装为成功的 SessionActivation 返回 200 OK 吞掉用户草稿；
+    而 timeout_s == 0.0（首轮异步起跑/后台队列）允许 timeout 状态正常返回。
+    """
+    import pytest
+
+    class _StatusPool(FakePool):
+        def __init__(self, status: str, text: str = "") -> None:
+            super().__init__()
+            self._status = status
+            self.reply_text = text
+
+        def run(self, prompt, **kwargs):
+            super().run(prompt, **kwargs)
+            return TurnResult(text=self.reply_text, raw_delta="", status=self._status, duration_ms=100)
+
+    timeout_runner = UiSessionRunner(pool=_StatusPool("timeout"), cwd="/tmp")
+    with pytest.raises(TimeoutError, match="等待会话响应超时"):
+        timeout_runner.send("sess-timeout", "msg", timeout_s=180.0)
+
+    # timeout_s=0.0 为 fire-and-forget 异步起跑，不抛 TimeoutError
+    async_act = timeout_runner.send("sess-async", "msg", timeout_s=0.0)
+    assert async_act.session_id == "sess-async"
+
+    error_runner = UiSessionRunner(pool=_StatusPool("error", text="UNAUTHENTICATED"), cwd="/tmp")
+    with pytest.raises(RuntimeError, match="UNAUTHENTICATED"):
+        error_runner.send("sess-err", "msg", timeout_s=180.0)
+
+
 def test_ui_runner_pool_isolated_from_pa_pool():
     ui = UiSessionRunner(max_size=10)
     pa = PaTmuxRunner()
@@ -268,3 +298,91 @@ def test_agy的会话收尾了才算空闲(monkeypatch):
 
     unknown = SimpleNamespace(driver=SimpleNamespace(agent_type="agy"), session_id="webui-y")
     assert usr._turn_finished(unknown) is False
+
+
+def test_codex的会话收尾也要先把手把换成真编号(monkeypatch):
+    """codex 那一档：与 agy 对称，取 sid 时必须先问绑定表把手把换成真编号。
+
+    手把（``webui-…``）直接拿去问转录是问不到的，绑定表里才有真编号。
+    少了这一跳，codex 会话永远判不出空闲、消息永远投不进去。
+    """
+    from frago.server.services import ui_session_runner as usr
+    from frago.session import codex_store
+
+    seen: list[str] = []
+
+    class _Adapter:
+        def probe_turn_completion(self, sid):
+            seen.append(sid)
+            return SimpleNamespace(done=True)
+
+        def probe_harness_idle(self, sid, pane):
+            return SimpleNamespace(is_terminal_idle=True, has_running_subshells=False)
+
+    monkeypatch.setattr(
+        "frago.session.adapters.kernel_adapters.get_kernel_session_adapter",
+        lambda family: _Adapter(),
+    )
+    monkeypatch.setattr(
+        codex_store, "get_binding", lambda sid: "real-codex-1" if sid == "webui-x" else None
+    )
+
+    claimed = SimpleNamespace(driver=SimpleNamespace(agent_type="codex"), session_id="webui-x")
+    assert usr._turn_finished(claimed) is True
+    assert seen == ["real-codex-1"], "必须把 sid 解析成真编号再问转录，而不是拿手把去问"
+
+
+def test_opencode的会话收尾也要先把手把换成真编号(monkeypatch):
+    """opencode 那一档：与 agy 对称，取 sid 时必须先问绑定表把手把换成真编号。"""
+    from frago.server.services import ui_session_runner as usr
+    from frago.session import opencode_store
+
+    seen: list[str] = []
+
+    class _Adapter:
+        def probe_turn_completion(self, sid):
+            seen.append(sid)
+            return SimpleNamespace(done=True)
+
+        def probe_harness_idle(self, sid, pane):
+            return SimpleNamespace(is_terminal_idle=True, has_running_subshells=False)
+
+    monkeypatch.setattr(
+        "frago.session.adapters.kernel_adapters.get_kernel_session_adapter",
+        lambda family: _Adapter(),
+    )
+    monkeypatch.setattr(
+        opencode_store,
+        "get_binding",
+        lambda sid: "ses_real_opencode" if sid == "webui-y" else None,
+    )
+
+    claimed = SimpleNamespace(driver=SimpleNamespace(agent_type="opencode"), session_id="webui-y")
+    assert usr._turn_finished(claimed) is True
+    assert seen == ["ses_real_opencode"]
+
+
+def test_绑定表里查不到时退回手把原值(monkeypatch):
+    """绑定表里没有这一场时，退回原手把（不抛异常），保持与 agy 同样的「取不到就退回原值」语义。"""
+    from frago.server.services import ui_session_runner as usr
+    from frago.session import codex_store
+
+    seen: list[str] = []
+
+    class _Adapter:
+        def probe_turn_completion(self, sid):
+            seen.append(sid)
+            return SimpleNamespace(done=True)
+
+        def probe_harness_idle(self, sid, pane):
+            return SimpleNamespace(is_terminal_idle=True, has_running_subshells=False)
+
+    monkeypatch.setattr(
+        "frago.session.adapters.kernel_adapters.get_kernel_session_adapter",
+        lambda family: _Adapter(),
+    )
+    monkeypatch.setattr(codex_store, "get_binding", lambda sid: None)
+
+    claimed = SimpleNamespace(driver=SimpleNamespace(agent_type="codex"), session_id="webui-z")
+    assert usr._turn_finished(claimed) is True
+    assert seen == ["webui-z"]

@@ -852,8 +852,8 @@ class TestTheCoreAgentFamily:
 
     def test_records_are_looked_up_in_the_root_of_their_own_family(self, tmp_path, monkeypatch):
         """实时监听按会话编号找对家的记录文件，不是只在 Claude Code 的目录里找。"""
-        from frago.server.services import workbench_stream_bridge as wsb
         from frago.session import coreagent_store, record_reader
+        from frago.session.adapters import claude_code_records
 
         core_file = tmp_path / "coreagent" / "-tmp-work" / f"{self.CORE_SID}.jsonl"
         core_file.parent.mkdir(parents=True)
@@ -862,18 +862,24 @@ class TestTheCoreAgentFamily:
         cc_file.parent.mkdir(parents=True)
         cc_file.write_text("{}\n", encoding="utf-8")
 
-        def core_file_of(sid):
+        def core_file_of(sid, root=None):
             return core_file if sid == self.CORE_SID else None
 
-        def cc_file_of(sid):
+        def cc_file_of(sid, root=None):
             return cc_file if sid == SID else None
 
         def family_of(sid):
             return "coreagent" if sid.startswith("core_") else "claude-code"
 
+        # 打桩点随收口下移了一格：实时监听不再自己找文件（`wsb.find_session_file`
+        # 已随收口删除），而是委托 `record_reader.locate_session_file`，后者按家族
+        # 取内核会话适配器、调它的 `locate_transcript`。只把「文件在哪」这一格替掉、
+        # 保留真实的适配器分派——这才是这条测试要守的东西：两家各找各的根。
         monkeypatch.setattr(coreagent_store, "find_session_file", core_file_of)
-        monkeypatch.setattr(wsb, "find_session_file", cc_file_of)
+        monkeypatch.setattr(claude_code_records, "find_session_file", cc_file_of)
         monkeypatch.setattr(record_reader, "detect_family", family_of)
+
+        from frago.server.services import workbench_stream_bridge as wsb
 
         assert wsb.locate_stream_file(self.CORE_SID) == core_file
         assert wsb.locate_stream_file(SID) == cc_file

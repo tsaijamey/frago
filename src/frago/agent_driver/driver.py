@@ -146,8 +146,16 @@ class AwaitingInputProbeFacet:
 
 
 @dataclass(frozen=True)
+class BusyProbeFacet:
+    """切面 5：终端忙碌状态探针契约。"""
+
+    is_busy: Callable[[str], bool] | None = None
+    capability_level: str = "fallback"
+
+
+@dataclass(frozen=True)
 class ContextWatermarkFacet:
-    """切面 5：上下文水位统计与模型感知契约。"""
+    """切面 6：上下文水位统计与模型感知契约。"""
 
     known_models: tuple[str, ...] = ()
     capability_level: str = "adapted"
@@ -155,7 +163,7 @@ class ContextWatermarkFacet:
 
 @dataclass(frozen=True)
 class HookInjectionFacet:
-    """切面 6：Hook 触发机制与 Profile 激活契约。"""
+    """切面 7：Hook 触发机制与 Profile 激活契约。"""
 
     profile_mode: str = "file_and_env"
     profile_protocol: str = "anthropic"
@@ -169,7 +177,7 @@ class HookInjectionFacet:
 
 @dataclass(frozen=True)
 class AgentDriverFacets:
-    """结构化汇聚六大正交切面的聚合视图。"""
+    """结构化汇聚七大正交切面的聚合视图。"""
 
     identity_probe: IdentityProbeFacet
     lifecycle_action: LifecycleActionFacet
@@ -177,6 +185,7 @@ class AgentDriverFacets:
     awaiting_input_probe: AwaitingInputProbeFacet
     context_watermark: ContextWatermarkFacet
     hook_injection: HookInjectionFacet
+    busy_probe: BusyProbeFacet = field(default_factory=BusyProbeFacet)
 
     def get_facet(self, name: str) -> Any:
         try:
@@ -190,6 +199,7 @@ class AgentDriverFacets:
             "lifecycle_action": self.lifecycle_action,
             "transcript_sync": self.transcript_sync,
             "awaiting_input_probe": self.awaiting_input_probe,
+            "busy_probe": self.busy_probe,
             "context_watermark": self.context_watermark,
             "hook_injection": self.hook_injection,
         }
@@ -306,6 +316,9 @@ class AgentDriver:
     # 可选：待输入状态专用读屏探针（pane_ansi -> bool | None）。
     # 显式挂入驱动契约，供上层解耦调用，无需外部硬编码 import claude。
     awaiting_input: Callable[[str], bool | None] | None = None
+    # 可选：终端忙碌状态专用读屏探针（pane_plain -> bool）。
+    # 显式挂入驱动契约，对齐本体 busy_probe 切面，消除服务层跨内核 if-else 硬编码。
+    is_busy: Callable[[str], bool] | None = None
     # 可选：Profile 配置激活模式显式声明（"file_and_env" | "env_only" | "session_env" | "native_flag" | "unsupported"）。
     profile_mode: str | None = None
     # 可选：外部显式注入的完整切面结构覆盖。
@@ -326,7 +339,7 @@ class AgentDriver:
 
     @property
     def facets(self) -> AgentDriverFacets:
-        """返回本驱动结构化的六大正交能力切面视图。"""
+        """返回本驱动结构化的七大正交能力切面视图。"""
         if self.facets_override is not None:
             return self.facets_override
 
@@ -368,6 +381,10 @@ class AgentDriver:
                 awaiting_input=self.awaiting_input,
                 needs_input_signal=self.needs_input_signal,
                 capability_level=self.get_capability_level("awaiting_input_probe"),
+            ),
+            busy_probe=BusyProbeFacet(
+                is_busy=self.is_busy,
+                capability_level=self.get_capability_level("busy_probe"),
             ),
             context_watermark=ContextWatermarkFacet(
                 known_models=self.known_models,

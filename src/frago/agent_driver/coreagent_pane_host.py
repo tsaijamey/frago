@@ -654,6 +654,74 @@ class TmuxCoreProcess:
 # ── Tmux 窗格内宿主入口（由 ``python -u -m frago.agent_driver.coreagent_pane_host <run_dir>`` 拉起） ──
 
 
+def _pane_host_stop_signals() -> tuple[int, ...]:
+    """返回宿主进程需要拦截并级联转发的终止信号集合（非 Windows 含 SIGHUP）。"""
+    sigs: list[int] = [signal.SIGTERM, signal.SIGINT]
+    if hasattr(signal, "SIGHUP"):
+        sigs.append(signal.SIGHUP)
+    return tuple(sigs)
+
+
+def _terminate_process_tree(
+    proc: subprocess.Popen[Any] | None,
+    grace_timeout: float = 1.0,
+) -> None:
+    """级联优雅终止 ``proc`` 及其派生的整棵子孙进程树，超时后补发 SIGKILL。
+
+    必须在终止父进程之前先通过 ``psutil.Process(proc.pid).children(recursive=True)``
+    收集全部后代快照，防止父进程退出后独立进程组子孙过继为 ``PPID=1`` 孤儿进程。
+    对 ``psutil.NoSuchProcess`` / ``AccessDenied`` 全程吞异常防御；无 ``psutil`` 时
+    回退至 ``proc.terminate()`` / ``proc.kill()``。
+    """
+    if proc is None:
+        return
+
+    try:
+        import psutil
+    except ImportError:
+        psutil = None  # type: ignore[assignment]
+
+    if psutil is not None:
+        targets: list[Any] = []
+        parent: Any = None
+        try:
+            parent = psutil.Process(proc.pid)
+            with contextlib.suppress(psutil.Error, OSError):
+                targets.extend(parent.children(recursive=True))
+            targets.append(parent)
+        except (psutil.Error, OSError):
+            parent = None
+
+        if targets:
+            for target in targets:
+                with contextlib.suppress(psutil.Error, OSError):
+                    target.terminate()
+
+            _, alive = psutil.wait_procs(targets, timeout=max(0.0, grace_timeout))
+            if parent is not None:
+                with contextlib.suppress(psutil.Error, OSError):
+                    for extra in parent.children(recursive=True):
+                        if extra not in alive:
+                            alive.append(extra)
+            if alive:
+                for survivor in alive:
+                    with contextlib.suppress(psutil.Error, OSError):
+                        survivor.kill()
+                with contextlib.suppress(psutil.Error, OSError):
+                    psutil.wait_procs(alive, timeout=0.3)
+
+    if proc.poll() is None:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+        try:
+            proc.wait(timeout=max(0.1, grace_timeout if psutil is None else 0.2))
+        except Exception:  # noqa: BLE001
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=0.2)
+
+
 def _run_pane_host(run_dir: Path) -> int:
     launch_path = run_dir / "launch.json"
     spec = json.loads(launch_path.read_text(encoding="utf-8"))
@@ -717,17 +785,22 @@ def _run_pane_host(run_dir: Path) -> int:
         pid_file.write_text(f"{proc.pid}\n", encoding="utf-8")
 
     stop_event = threading.Event()
+    received_sig: list[int] = []
 
-    def _forward_sig(_signum: int, _frame: Any) -> None:
+    def _forward_sig(signum: int, _frame: Any) -> None:
+        if not received_sig:
+            received_sig.append(signum)
         stop_event.set()
         with contextlib.suppress(Exception):
             if proc.stdin and not proc.stdin.closed:
                 proc.stdin.close()
-        with contextlib.suppress(Exception):
-            proc.terminate()
+        _terminate_process_tree(proc, grace_timeout=0.8)
 
-    signal.signal(signal.SIGTERM, _forward_sig)
-    signal.signal(signal.SIGINT, _forward_sig)
+    prev_handlers: dict[int, Any] = {}
+    for sig in _pane_host_stop_signals():
+        with contextlib.suppress(Exception):
+            prev_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, _forward_sig)
 
     def _stderr_pump() -> None:
         if proc.stderr is None:
@@ -744,78 +817,96 @@ def _run_pane_host(run_dir: Path) -> int:
         except Exception:  # noqa: BLE001
             pass
 
+    rc: int = 1
     stderr_thread = threading.Thread(target=_stderr_pump, daemon=True)
-    stderr_thread.start()
+    try:
+        stderr_thread.start()
 
-    if mode == "oneshot":
-        prompt_path = run_dir / "prompt.txt"
-        prompt_text = prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else ""
-        _emit_to_pane(format_user_prompt_for_pane(prompt_text))
-        with contextlib.suppress(Exception):
-            if proc.stdin:
-                proc.stdin.write(prompt_text)
-                proc.stdin.flush()
-                proc.stdin.close()
-    else:
-        def _stdin_pump() -> None:
-            offset = 0
-            partial = ""
-            while not stop_event.is_set() and proc.poll() is None:
-                chunk = ""
-                if stdin_file.is_file():
-                    try:
-                        with stdin_file.open("r", encoding="utf-8", errors="replace") as sf:
-                            sf.seek(offset)
-                            chunk = sf.read()
-                            offset = sf.tell()
-                    except OSError:
-                        chunk = ""
-                if chunk:
-                    data = partial + chunk
-                    lines = data.splitlines(keepends=True)
-                    partial = (
-                        lines.pop()
-                        if lines and not lines[-1].endswith(("\n", "\r"))
-                        else ""
-                    )
-                    for ln in lines:
-                        _echo_user_line_to_pane(ln, _emit_to_pane)
+        if mode == "oneshot":
+            prompt_path = run_dir / "prompt.txt"
+            prompt_text = prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else ""
+            _emit_to_pane(format_user_prompt_for_pane(prompt_text))
+            with contextlib.suppress(Exception):
+                if proc.stdin:
+                    proc.stdin.write(prompt_text)
+                    proc.stdin.flush()
+                    proc.stdin.close()
+        else:
+            def _stdin_pump() -> None:
+                offset = 0
+                partial = ""
+                while not stop_event.is_set() and proc.poll() is None:
+                    chunk = ""
+                    if stdin_file.is_file():
                         try:
+                            with stdin_file.open("r", encoding="utf-8", errors="replace") as sf:
+                                sf.seek(offset)
+                                chunk = sf.read()
+                                offset = sf.tell()
+                        except OSError:
+                            chunk = ""
+                    if chunk:
+                        data = partial + chunk
+                        lines = data.splitlines(keepends=True)
+                        partial = (
+                            lines.pop()
+                            if lines and not lines[-1].endswith(("\n", "\r"))
+                            else ""
+                        )
+                        for ln in lines:
+                            _echo_user_line_to_pane(ln, _emit_to_pane)
+                            try:
+                                if proc.stdin and not proc.stdin.closed:
+                                    proc.stdin.write(ln)
+                                    proc.stdin.flush()
+                            except Exception:  # noqa: BLE001
+                                return
+                        continue
+                    if eof_file.is_file():
+                        with contextlib.suppress(Exception):
                             if proc.stdin and not proc.stdin.closed:
-                                proc.stdin.write(ln)
-                                proc.stdin.flush()
-                        except Exception:  # noqa: BLE001
-                            return
-                    continue
-                if eof_file.is_file():
-                    with contextlib.suppress(Exception):
-                        if proc.stdin and not proc.stdin.closed:
-                            proc.stdin.close()
-                    return
-                time.sleep(0.03)
+                                proc.stdin.close()
+                        return
+                    time.sleep(0.03)
 
-        stdin_thread = threading.Thread(target=_stdin_pump, daemon=True)
-        stdin_thread.start()
+            stdin_thread = threading.Thread(target=_stdin_pump, daemon=True)
+            stdin_thread.start()
 
-    if proc.stdout is not None:
-        try:
-            for out_line in proc.stdout:
-                with (
-                    contextlib.suppress(OSError),
-                    stdout_file.open("a", encoding="utf-8") as of,
-                ):
-                    of.write(out_line)
-                    of.flush()
-                rendered = format_stream_line_for_pane(out_line)
-                if rendered:
-                    _emit_to_pane(rendered)
-        except Exception:  # noqa: BLE001
-            pass
+        if proc.stdout is not None:
+            try:
+                for out_line in proc.stdout:
+                    with (
+                        contextlib.suppress(OSError),
+                        stdout_file.open("a", encoding="utf-8") as of,
+                    ):
+                        of.write(out_line)
+                        of.flush()
+                    rendered = format_stream_line_for_pane(out_line)
+                    if rendered:
+                        _emit_to_pane(rendered)
+            except Exception:  # noqa: BLE001
+                pass
 
-    stderr_thread.join(timeout=1.0)
-    rc = proc.wait()
-    with contextlib.suppress(OSError):
-        exit_file.write_text(f"{rc}\n", encoding="utf-8")
+        stderr_thread.join(timeout=1.0)
+    finally:
+        stop_event.set()
+        with contextlib.suppress(Exception):
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.close()
+        _terminate_process_tree(proc, grace_timeout=1.0)
+        for sig, prev in prev_handlers.items():
+            with contextlib.suppress(Exception):
+                signal.signal(sig, prev)
+        polled = proc.poll()
+        if polled is None:
+            with contextlib.suppress(Exception):
+                polled = proc.wait(timeout=0.5)
+        if polled is not None:
+            rc = polled
+        elif received_sig:
+            rc = 128 + received_sig[0]
+        with contextlib.suppress(OSError):
+            exit_file.write_text(f"{rc}\n", encoding="utf-8")
     return rc
 
 

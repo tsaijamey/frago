@@ -697,6 +697,17 @@ def is_truly_idle(
     return True
 
 
+def is_terminal_busy(pane: str) -> bool:
+    """claude 专属终端忙碌探针契约：匹配后台 shell、括号耗时/token/interrupt 与工作转轮。"""
+    if not pane:
+        return False
+    if _SHELL_RUNNING.search(pane) is not None:
+        return True
+    if _BUSY.search(pane) is not None:
+        return True
+    return _WORKING.matches(pane)
+
+
 def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     """权威完成探针：读 claude 的 session JSONL 判本轮是否答完 + 取最终文本。
 
@@ -966,8 +977,9 @@ register_driver(
         # 激活 → 写进 ~/.claude/settings.json，人自己起的 claude 也跟着走。
         profile_apply=_profile_apply,
         profile_revert=_profile_revert,
-        # 显式挂载待输入探针与 Profile 激活切面
+        # 显式挂载待输入探针、忙碌探针与 Profile 激活切面
         awaiting_input=awaiting_input,
+        is_busy=is_terminal_busy,
         profile_mode="file_and_env",
     )
 )

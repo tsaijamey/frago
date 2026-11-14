@@ -849,7 +849,8 @@ def test_claim_once_finalizes_rename_when_hook_bound_first(app_dir, monkeypatch)
 
 def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkeypatch):
     """回归（98dae23a 忙碌态敲字滞留）：当 agy 终端窗格处于 Generating / esc to cancel 忙碌状态时，
-    _submit 必须在调用 send_text 前直接返回 False，禁止把长文本或载体文件引用敲入输入框滞留。
+    _submit 必须在调用 send_text 前直接返回 None（遵守 LifecycleActionFacet.submit 签名），
+    禁止把长文本或载体文件引用敲入输入框滞留。
     """
     texts_sent: list[str] = []
     keys_sent: list[str] = []
@@ -875,13 +876,70 @@ def test_submit_refuses_to_type_into_input_box_when_pane_is_busy(app_dir, monkey
     assert agy_driver._pane_looks_busy(BUSY_PANE) is True
     assert agy_driver._pane_looks_busy(READY_PANE) is False
 
-    landed = agy_driver._submit(
+    ret = agy_driver._submit(
         _BusySubmitSession(),
         '<frago-async-callback kind="worker" mode="new" job_id="disp-0c1150941a47">...</frago-async-callback>',
     )
-    assert landed is False
+    assert ret is None
     assert texts_sent == []
     assert keys_sent == []
+
+
+def test_prose_generating_in_upper_pane_never_locks_out_idle_session(app_dir):
+    """回归（12792dfe 实机故障）：上方历史区含 ``○ Thought ... before generating the final response.``
+    或 Markdown 表格含 ``Generating``，而底部控制区已是 ``>`` + ``? for shortcuts`` 空闲态时，
+    _READY / _DONE 必须判就绪，is_terminal_busy 必须为 False，_submit 必须正常送入输入框。
+    """
+    cid = "12792dfe-fb5d-40c2-a6e6-e9cff42ec792"
+    path = _write_transcript(
+        app_dir,
+        [{"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>check</USER_REQUEST>"}],
+        cid,
+    )
+    idle_pane_with_prose_generating = (
+        "○ Thought for 11s · The user wants to check the status before generating the final response.\n"
+        "| 环节 | 状态 |\n"
+        "| --- | --- |\n"
+        "| 2 | Generating report summary |\n"
+        "\n"
+        "● 结论：已排查完毕。\n"
+        "\n"
+        ">\n"
+        "\n"
+        "? for shortcuts                                                                 Gemini 4 Argon · high\n"
+    )
+    assert agy_driver.is_terminal_busy(idle_pane_with_prose_generating) is False
+    assert agy_driver._READY.matches(idle_pane_with_prose_generating) is True
+    assert agy_driver._DONE.matches(idle_pane_with_prose_generating) is True
+
+    texts_sent: list[str] = []
+    keys_sent: list[str] = []
+
+    class _IdleProseSession:
+        session_id = cid
+        cwd = "/tmp/proj"
+        native_session_id = True
+        _poll_interval_s = 0.0
+
+        def capture_pane(self) -> str:
+            return idle_pane_with_prose_generating
+
+        def send_text(self, text: str) -> None:
+            texts_sent.append(text)
+
+        def send_keys(self, key: str) -> None:
+            keys_sent.append(key)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"step_index": 1, "type": "USER_INPUT", "content": "ok"}) + "\n")
+
+        def _sleep(self, _seconds: float) -> None:
+            pass
+
+    ret = agy_driver._submit(_IdleProseSession(), "交互卡选择：立即修复")
+    assert ret is None
+    assert len(texts_sent) == 1
+    assert "交互卡选择：立即修复" in texts_sent[0]
+    assert keys_sent == ["Enter"]
 
 
 def test_completion_probe_surfaces_system_error_message_when_pane_is_idle(app_dir):

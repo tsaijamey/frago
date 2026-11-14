@@ -271,3 +271,58 @@ class TestForYouSignals:
     def test_agy_busy_pane_is_recognized_as_busy(self):
         agy_pane = ">\n\n⣻  Generating...\n\nesc to cancel     Gemini 3.8 Flash · medium\n"
         assert svc._is_busy(agy_pane) is True
+
+    def test_coreagent_busy_probe_backward_compat_and_session_id_propagation(
+        self, tmp_path
+    ):
+        """P2：验证旧两参 _is_busy 零假阳回归，且 find_for_session 透传 session_id 识别未闭合 core_* 忙碌。"""
+        import json
+
+        # 1. 旧两参签名对无转轮静态窗格保持返回 False（不因 '__check_busy__' 缺失转录而误报忙）
+        assert svc._is_busy("some static line\n", "coreagent") is False
+        assert svc.check_session_terminal_busy("some static line\n", "coreagent") is False
+
+        # 2. 真实未闭合 tool_use 转录 + find_for_session 透传 session_id -> link.busy 为 True
+        core_sid = "core_7767busycheck001"
+        tmux_name = f"frago-agent-{core_sid}"
+        transcript = tmp_path / f"{core_sid}.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-11-11T10:00:05Z",
+                    "message": {
+                        "role": "assistant",
+                        "stop_reason": "tool_use",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tu_1",
+                                "name": "Bash",
+                                "input": {"command": "sleep 600"},
+                            }
+                        ],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch.object(svc, "_session_names", return_value=[tmux_name]),
+            patch.object(svc, "_tmux", return_value="static tool output without spinner\n"),
+            patch.object(svc, "_pane_pids", return_value={tmux_name: [42]}),
+            patch.object(svc, "_memory_mb", return_value={42: 180}),
+            patch.object(svc, "_managed_ids", return_value=set()),
+            patch.object(svc, "_detect_session_kernel", return_value="coreagent"),
+            patch(
+                "frago.session.coreagent_store.find_session_file",
+                side_effect=lambda sid: transcript if sid == core_sid else None,
+            ),
+        ):
+            link = svc.find_for_session(core_sid)
+
+        assert link is not None
+        assert link.name == tmux_name
+        assert link.busy is True
