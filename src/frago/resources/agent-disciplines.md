@@ -72,7 +72,7 @@ NEVER 自己 ls/grep/猜目录名，NEVER 回答「我不记得了」。全文�
     例：要表达「旧世界的光」和「剑」同时出现，裸写成「当旧世界的光和剑同时出现时」，读的人断成「旧世界」的「光和剑」。圈起来才看得出是两样不同的东西。
     什么时候必须圈：短语本身含「和、与、或、的」，或一句话里连着出现两个以上能被连读的成分。
     引号用「」，引文里再套一层用『』。命令、文件路径、变量名照旧用反引号，不套这层。
-- 有副作用的变更先呈方案与利弊；禁止用交互式的 AskUserQuestion。多条实现路径，先查本机有没有同类先例：已有配置、历史会话 `frago session search`、知识域、备份文件。有先例且当时的条件还成立，就照着做，汇报时说明参照了哪一条。只有找不到先例、或先例的条件变了，才在收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成交互卡片让用户点选（选项格式 `"KEY|短名|选它之后会发生什么"`，推荐项传 `--recommended KEY`，依据传 `--why`；若手写 `answer-needed-by-human` 区块则必须含顶层 `type` 与每项 `effect`，详见 `frago book answer-needed-by-human`）。
+- 有副作用的变更先呈方案与利弊；禁止用交互式的 AskUserQuestion。多条实现路径，先查本机有没有同类先例：已有配置、历史会话 `frago session search`、知识域、备份文件。有先例且当时的条件还成立，就照着做，汇报时说明参照了哪一条。只有找不到先例、或先例的条件变了，才在收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成交互卡片让用户点选（选项格式 `"KEY|短名|选它之后会发生什么"`，KEY 是短标识——字母数字加 `-`/`_`、1–8 个字符、推荐 A/B/C，不是句子；推荐项传 `--recommended KEY`，依据传 `--why`；若手写 `answer-needed-by-human` 区块则必须含顶层 `type` 与每项 `effect`，详见 `frago book answer-needed-by-human`）。
 - 在本机环境里持续学习。遇到拿不准的事，先找以前是怎么做的，再弄清当时为什么那样做（受什么条件约束、看重什么），模仿这个判断，照做后实地验证。没查过本机就说「办不了」或「你来选」，视为没做完。分情况处理：
     有先例、条件相同：照做。
     有先例、条件变了：说明哪里不同，再给调整后的做法。

@@ -23,7 +23,7 @@ agent 在使用 frago 的过程中会观察到重复模式——同一类路由�
 
 每次遇到"这个领域的 fact 我刚查过、下次还得再查"——这是结构化知识。
 
-不要硬编码进 prompt，不要写散落的 markdown，不要存进 auto memory（见 `frago book must-no-auto-memory`）。`frago <domain> save` 把知识存进对应 domain，下次 `frago <domain> find` 直接拉。详见 `frago book def-knowledge`。
+不要硬编码进 prompt，不要写散落的 markdown。`frago <domain> save` 把知识存进对应 domain，下次 `frago <domain> find` 直接拉。详见 `frago book def-knowledge`。
 
 ### 3. 重复工作流 → `frago recipe`
 

@@ -49,7 +49,7 @@
 
 本轮产出了图片（海报、图表截图、网页截图等）或需在回复中向用户展示本机与互联网图片时，调用 `frago app image <本机路径或URL>...`（或 `-i "地址|图注" --title "标题"`）生成自适应屏幕的图片网格卡片（支持点击放大预览），NEVER 只贴裸路径或手写 Markdown `![](...)`。
 
-本轮需停下来请用户拍板做选择或填答时，在收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成交互卡片（选项格式 `"KEY|短名|选它之后会发生什么"`，详见 `frago book answer-needed-by-human`），NEVER 手写缺少 `type` 或 `effect` 字段的残缺代码块。
+本轮需停下来请用户拍板做选择或填答时，在收尾回复前调用 `frago app ask <single-choice|multi-choice|text-answer|choice-and-text>` 生成交互卡片（选项格式 `"KEY|短名|选它之后会发生什么"`，KEY 是短标识——字母数字加 `-`/`_`、1–8 个字符、推荐 A/B/C，不是句子，详见 `frago book answer-needed-by-human`），NEVER 手写缺少 `type` 或 `effect` 字段的残缺代码块。
 
 ### 5. 压住旁支
 
