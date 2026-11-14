@@ -386,6 +386,29 @@ export default function SessionItem({
         ? 'font-semibold text-text-primary'
         : 'font-medium text-[color-mix(in_srgb,var(--text-primary)_86%,transparent)]'
       : 'font-semibold text-text-primary';
+  /**
+   * 这一场的状态档：等拍板 / 在跑 / 已完成。只用来决定右端那枚信号点的样子。
+   *
+   * 判据全部来自已经在手上的状态，**不新取数据、不改排序**：
+   *   pending  — 有 agent 停在输入框前等人拿主意（For you 那一档）；
+   *   running  — 本地刚发出去还在路上，或这一轮还没答完；
+   *   done     — 其余，也就是「此刻没在等谁、也没在跑」。
+   *
+   * 颜色从不单独承载语义：那枚点带 `title`，写着它是什么档。取字复用会话状态那一套
+   * 词表（`workbench.status.*`，左栏状态行与时间线用的是同一份），不另造一套说法。
+   */
+  const signal: 'pending' | 'running' | 'done' = forYou
+    ? 'pending'
+    : progress
+      ? 'running'
+      : 'done';
+  const signalLabel = t(
+    signal === 'pending'
+      ? 'workbench.report.slotDecision'
+      : signal === 'running'
+        ? 'workbench.status.running'
+        : 'workbench.status.done'
+  );
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
@@ -462,9 +485,9 @@ export default function SessionItem({
                 e.stopPropagation();
                 onSelect(branchOf.id);
               }}
-              className="mb-[2px] inline-flex w-fit max-w-full items-center gap-[3.5px] bg-transparent p-0 text-left text-[10.5px] font-medium leading-[1.25] text-[var(--card-meta)] hover:text-text-secondary"
+              className="mb-[2px] inline-flex w-fit max-w-full items-center gap-[3.5px] bg-transparent p-0 text-left text-[11px] font-medium leading-[1.25] text-[var(--card-meta)] hover:text-text-secondary"
             >
-              <GitBranch size={10.5} className="shrink-0" aria-hidden="true" />
+              <GitBranch size={11} className="shrink-0" aria-hidden="true" />
               <span>{t('workbench.rail.branched')}</span>
             </button>
           ) : null}
@@ -505,7 +528,10 @@ export default function SessionItem({
               {progress ? null : (
                 <span
                   data-testid="session-age"
-                  className="min-w-0 truncate"
+                  /* 「3 分钟前」→「12 分钟前」这种位数变化，会让右邻的 worker 计数与置顶图标
+                     整排横移。等宽数字把这一格钉住（`tabular-nums` 只管数字字形宽度，
+                     汉字与标点照旧按比例排，中文排版宽度不变）。 */
+                  className="min-w-0 truncate tabular-nums"
                   title={
                     forYou
                       ? t('workbench.forYou.stoppedAt', { time: formatClock(forYou.waitingSince) })
@@ -566,6 +592,18 @@ export default function SessionItem({
               onDeleted={(result) => onDeleted?.(session, result)}
               onCopy={onCopy}
               copied={copied}
+            />
+            {/* 状态信号点：整列扫下来一眼看清谁在等我、谁在跑、谁已经停了。
+                它与满幅员工色带并存——色带说的是「这属于哪个员工」，点说的是
+                「这一场此刻什么状态」，两件事，不互相替代。放在「…」菜单右边、
+                内核图标左边，与状态行右端对齐。 */}
+            <span
+              data-testid="session-signal"
+              data-signal={signal}
+              title={signalLabel}
+              aria-label={signalLabel}
+              role="img"
+              className={`wb-rail-signal wb-rail-signal--${signal}`}
             />
             {/* 内核图标：颜色本来就各不相同（Claude Code 橙、CoreAgent 绿、Antigravity 蓝、
                 OpenCode 黑底），每张卡都摆一个会把视线从 For you 与选中态上拉走。平时去饱和、

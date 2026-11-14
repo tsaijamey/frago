@@ -135,6 +135,30 @@ describe('For you 在清单上', () => {
     expect(screen.queryByTestId('for-you-header')).toBeNull();
   });
 
+  it('状态信号点：For you 那场是待拍板，其余是已完成，颜色之外带文字', () => {
+    // 带员工的那一场用来顺带核回归红线：满幅员工色带仍在，与状态点并存互不遮挡。
+    const withEmp = [session('a'), session('b', { employee_id: 'demo', employee_title: '演示专员' }), session('c')];
+    render(<TestRail state={railState(withEmp)} selectedId={null} onSelect={NOOP} forYou={fakeForYou({ b: info() })} />);
+    const items = screen.getAllByTestId('session-item');
+    const waiting = items.find((el) => el.getAttribute('data-for-you') === 'true')!;
+    const other = items.find((el) => !el.getAttribute('data-for-you'))!;
+    const wDot = waiting.querySelector('[data-testid=session-signal]')!;
+    const oDot = other.querySelector('[data-testid=session-signal]')!;
+    expect(wDot.getAttribute('data-signal')).toBe('pending');
+    expect(oDot.getAttribute('data-signal')).toBe('done');
+    // 颜色不是唯一通道：点自己带 aria-label / title 说明它是什么档
+    expect(wDot.getAttribute('aria-label')).toBeTruthy();
+    expect(wDot.getAttribute('title')).toBe(wDot.getAttribute('aria-label'));
+    expect(wDot.getAttribute('aria-label')).not.toBe(oDot.getAttribute('aria-label'));
+    // 满幅员工色带仍在（回归红线）：色带与状态点各说各的，都在，互不替代。
+    // 色带的高度由 `.si-emp-bar` 的 CSS 定（28px），jsdom 里不排版，所以这里核的是
+    // 那枚类名还在卡上、且与状态点同时存在。
+    const empBar = waiting.querySelector('.si-emp-bar')!;
+    expect(empBar).toBeTruthy();
+    expect(empBar.className).toContain('si-emp-bar');
+    expect(waiting.querySelector('[data-testid=session-signal]')).toBeTruthy();
+  });
+
   it('For you 不改变清单次序：仍按传入的创建顺序', () => {
     render(
       <TestRail

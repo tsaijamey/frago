@@ -1092,7 +1092,7 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     '已完成验证，**48 项测试全部通过**。\n\n' +
     '---\n' +
     '请作为管理者（Employee）结合领域知识与执行准则审核上述 Worker 产出：\n' +
-    '1. 若产出合格且满足人类诉求，请提炼结论并向人类给出最终结果与决策建议；\n' +
+    '1. 若结论已向人类汇报且内容一致，仅需一句话确认收口，严禁全文复述；否则请精炼提炼要点并向人类给出最终结果与决策建议；\n' +
     '2. 若发现遗漏或需补充验证，可继续向该 Worker（`frago agent --resume core_20261106_115104_b00cf771`）追派任务书。\n' +
     '</frago-async-callback>';
 
@@ -1105,7 +1105,8 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     '### 同侪员工返回结论\n' +
     '执行中断：依赖未安装。\n\n' +
     '---\n' +
-    '请基于上述同侪员工回传结论，结合你掌握的领域背景与事务围栏进行复核，在本会话中直接向人类汇报最终处理结果与决策建议。\n' +
+    '请基于上述同侪员工回传结论，结合你掌握的领域背景与事务围栏进行复核：\n' +
+    '若结论已向人类汇报且内容一致，仅需一句话确认收口，严禁全文复述；否则请精炼提炼要点并向人类给出最终结果与决策建议。\n' +
     '</frago-async-callback>';
 
   it('纯 Worker 异步回传不再顶着「你说」气泡出现，而是渲染为独立回传卡片并剥离标签与尾部样板话术', () => {
@@ -1139,6 +1140,10 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     expect(screen.getByTestId('async-callback-body').textContent).toContain(
       '已完成验证，48 项测试全部通过。'
     );
+    // 正文容器与同文件等宽输出块一致：限高 230px 并在块内滚动，超长回传不会撑满视口
+    const bodyClassName = screen.getByTestId('async-callback-body').className;
+    expect(bodyClassName).toContain('max-h-[230px]');
+    expect(bodyClassName).toContain('overflow-auto');
     expect(container.textContent).not.toContain('你说');
     expect(container.textContent).not.toContain('frago-async-callback');
     expect(container.textContent).not.toContain('请作为管理者（Employee）');

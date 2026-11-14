@@ -248,6 +248,34 @@ describe('什么时候点不动', () => {
 });
 
 describe('视觉规矩', () => {
+  // 2026-11-14：正在等人拍板的那一张走 `.ui-decision-spotlight`——全流对比度最高的一处。
+  // 聚光是给"还要你动手"的：答过、只读、这场发不出去的那几张必须退回普通卡，
+  // 否则一处亮着就不算信号了。
+  describe('决策聚光：只有还在等你拍板的那一张亮着', () => {
+    it('还能答的卡片带 ui-decision-spotlight', () => {
+      renderCard('single-choice');
+      const card = screen.getByTestId('decision-card');
+      expect(card.dataset.state).toBe('open');
+      expect(card.className).toContain('ui-decision-spotlight');
+    });
+
+    it('答过的卡片不带聚光，退回普通卡', () => {
+      const b = blocks['single-choice'];
+      const answered: DecisionAnswer = { kind: 'card', text: composeAnswer(b, [b.options[0]], ''), at: 1 };
+      renderCard('single-choice', host({ answerOf: () => answered }));
+      const card = screen.getByTestId('decision-card');
+      expect(card.dataset.state).toBe('card');
+      expect(card.className).not.toContain('ui-decision-spotlight');
+    });
+
+    it('这场发不出去（只读）的卡片不带聚光', () => {
+      renderCard('single-choice', null);
+      const card = screen.getByTestId('decision-card');
+      expect(card.dataset.state).toBe('read-only');
+      expect(card.className).not.toContain('ui-decision-spotlight');
+    });
+  });
+
   it('卡片未选未填时 Answer 按钮保持主色边框透明底；选中文本或输入后直接 fill 主色', () => {
     const { container } = renderCard('single-choice');
     // 未选未填：保持主色边框透明底，卡片无实心主色
@@ -275,5 +303,52 @@ describe('视觉规矩', () => {
     expect(container.textContent).toContain('Their request, as relayed');
     expect(container.textContent).toContain('What it would change here');
     expect(container.textContent).toContain('Pick one');
+  });
+
+  // 2026-11-13：KEY 方块原先是写死的 w-[18px]，11 号等宽字下只装得下两三个字符，
+  // HOLD 就往外溢、IMPL_DYNAMIC 直接压住标题并越过选项行边框。
+  describe('KEY 方块：短 KEY 保持方块，长 KEY 撑开截断不越界', () => {
+    const keyBoxOf = (i: number) => options()[i].querySelector('span[title]') as HTMLElement;
+    /** 写死的宽度是这次要根除的东西；`min-w-[18px]` 不算，逐 token 比对。 */
+    const hasFixedWidth = (box: HTMLElement) =>
+      box.className.split(/\s+/).some((c) => /^w-\[/.test(c));
+
+    it('短 KEY：min-w-[18px] 顶住方块观感，不设死宽度', () => {
+      renderCard('single-choice');
+      const box = keyBoxOf(0);
+      expect(box.className).toContain('min-w-[18px]');
+      expect(box.className).toContain('max-w-[72px]');
+      expect(box.className).toContain('overflow-hidden');
+      expect(box.className).toContain('px-1');
+      // 关键：不再有写死的宽度
+      expect(hasFixedWidth(box)).toBe(false);
+    });
+
+    it('长 KEY：截断内层用 truncate，悬停给完整值', () => {
+      renderCard('single-choice-long-key');
+      const box = keyBoxOf(0);
+      expect(box.getAttribute('title')).toBe('IMPL_DYNAMIC');
+      expect(box.textContent).toBe('IMPL_DYNAMIC');
+      expect(box.querySelector('.truncate')).toBeTruthy();
+    });
+
+    it('三种题型（单选/多选/选加写）的 KEY 方块共用同一套边界', () => {
+      for (const id of ['single-choice-long-key', 'multi-choice-long-key', 'choice-and-text-long-key']) {
+        const { unmount } = renderCard(id);
+        const box = keyBoxOf(0);
+        expect(box.className).toContain('min-w-[18px]');
+        expect(box.className).toContain('max-w-[72px]');
+        expect(hasFixedWidth(box)).toBe(false);
+        unmount();
+      }
+    });
+
+    it('多选：勾选框与 KEY 方块都在，两者之间留 gap-2 的间距', () => {
+      renderCard('multi-choice-long-key');
+      const row = options()[0];
+      expect(row.querySelector('input[type="checkbox"]')).toBeTruthy();
+      expect(row.className).toContain('gap-2');
+      expect(keyBoxOf(0).getAttribute('title')).toBe('IMPL_DYNAMIC');
+    });
   });
 });

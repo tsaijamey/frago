@@ -23,7 +23,7 @@ function open(props: Partial<React.ComponentProps<typeof Modal>> = {}) {
 
 /** 那片暗底是浮窗的最外层；窗体本身是它的孩子。 */
 function backdrop() {
-  return screen.getByText('要人填东西的窗').closest('[class*="fixed inset-0"]')!;
+  return screen.getByText('要人填东西的窗').closest('.ui-modal-backdrop')!;
 }
 
 describe('Modal — 谁能关掉这扇窗', () => {

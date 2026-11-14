@@ -128,6 +128,7 @@ export interface TaskStepsResponse {
 export interface UserConfig {
   theme: string;
   language: string;
+  language_configured?: boolean;
   agent_language?: string;
   max_history_items: number;
   shortcuts: Record<string, string>;
@@ -773,6 +774,12 @@ export interface HarnessBinding {
   installed: boolean;
   main_profile_id: string;
   worker_profile_id: string;
+  /**
+   * The window the kernel reads for this harness's daily sessions, taken off the
+   * connection the row names. `null` means that connection declares none — for
+   * the built-in kernel that means it falls back to the model name.
+   */
+  context_window?: number | null;
 }
 
 export interface ConnectionsResponse {

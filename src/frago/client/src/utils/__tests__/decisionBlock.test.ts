@@ -65,8 +65,8 @@ describe('splitTrailingBlock', () => {
   });
 });
 
-describe('原型 10 张演示卡', () => {
-  it('8 张通过、2 张写坏', () => {
+describe('原型 13 张演示卡', () => {
+  it('11 张通过、2 张写坏', () => {
     const passed = Object.entries(DEMOS)
       .filter(([, y]) => trailingDecision(wrap('正文', y), yaml)?.result.ok)
       .map(([k]) => k);
@@ -79,6 +79,11 @@ describe('原型 10 张演示卡', () => {
       'text-answer-suggestions',
       'choice-and-text-draft',
       'choice-and-text-multi',
+      // 长 KEY 的三张：命令侧现在会拦新输入，但历史卡片与手写区块里还有存量，
+      // 页面照样要照原样画出来（2026-11-13 修 KEY 溢出时加的回归样本）
+      'single-choice-long-key',
+      'multi-choice-long-key',
+      'choice-and-text-long-key',
     ]);
   });
 
@@ -324,6 +329,50 @@ describe('parseCardAnswer：不看卡片，只凭原文拆回来排版', () => {
     expect(parseCardAnswer('A · 发布 —— 打 tag')).toBeNull();
     expect(parseCardAnswer('【answer】')).toBeNull();
     expect(parseCardAnswer('【answer】\n- 不像选项的一行')).toBeNull();
+  });
+
+  // 2026-11-13：答复行原先把 KEY 限死为 \S{1,8}，历史会话里 IMPL_DYNAMIC（12 字符）、
+  // REPLY_JIRA（10 字符）拆不开，气泡退回显示整行原文，人在记录流里认不出自己点的是哪一项。
+  it('长 KEY 的答复行照样拆得开（ca6ac282 真实样本）', () => {
+    expect(parseCardAnswer('【answer】IMPL_DYNAMIC · 按动态字号改造 —— 启动新任务：按邮箱长度动态计算字号')).toEqual({
+      picked: [
+        {
+          key: 'IMPL_DYNAMIC',
+          label: '按动态字号改造',
+          effect: '启动新任务：按邮箱长度动态计算字号',
+        },
+      ],
+      written: '',
+    });
+
+    // 多选逐项列出，长 KEY 一样拆得开
+    expect(
+      parseCardAnswer(
+        '【answer】\n- REPLY_JIRA · 先在 Jira 评论回复说明 —— 先基于当前 7px 单行测算结果回复需求方\n- HOLD · 暂不处理 —— 仅记录本次核查结果'
+      )
+    ).toEqual({
+      picked: [
+        {
+          key: 'REPLY_JIRA',
+          label: '先在 Jira 评论回复说明',
+          effect: '先基于当前 7px 单行测算结果回复需求方',
+        },
+        { key: 'HOLD', label: '暂不处理', effect: '仅记录本次核查结果' },
+      ],
+      written: '',
+    });
+  });
+
+  it('KEY 段不设长度上限，但仍要求是「非空 · 不含间隔号」的短标识形状', () => {
+    // 长到 36 个字符照样认——上限是命令侧的事，气泡不替它拦
+    const long = 'A'.repeat(36);
+    expect(parseCardAnswer(`【answer】${long} · 标题 —— 后果`)?.picked[0].key).toBe(long);
+    // 形状不对的照旧拆不出选项，整段算人写的字，气泡照原文显示——宁可朴素，不可读错
+    for (const bad of ['【answer】A·发布 —— 打tag', '【answer】 · 空 KEY —— 后果']) {
+      const got = parseCardAnswer(bad);
+      expect(got?.picked).toEqual([]);
+      expect(got?.written).toBeTruthy();
+    }
   });
 });
 

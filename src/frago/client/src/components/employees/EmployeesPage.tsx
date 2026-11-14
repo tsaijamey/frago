@@ -29,7 +29,7 @@ import { useEmployeeList, type EmployeePost } from '@/hooks/useEmployees';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import LaunchEmployeeDialog from './LaunchEmployeeDialog';
 import EmployeeDetailDialog from './EmployeeDetailDialog';
-import { employeeInitials, employeeSummary, resolveEmployeeColor } from './employeeMeta';
+import { employeeInitials, employeeSummary, employeeSummaryParts, resolveEmployeeColor } from './employeeMeta';
 
 /** 这一页的数据是本机磁盘上的编制，变得不快。半分钟一次够用，切回来时另有一次。 */
 const REFRESH_MS = 30_000;
@@ -78,7 +78,7 @@ export default function EmployeesPage() {
 
       <div className="page-scroll">
         {loading && !cards.length && !error ? (
-          <p className="flex items-center gap-2 px-5 py-4 text-[12.5px] text-text-muted">
+          <p className="flex items-center gap-2 px-5 py-4 text-[13px] text-text-muted">
             <Loader2 size={14} className="cs-spin" />
             {t('common.loading')}
           </p>
@@ -133,9 +133,9 @@ export default function EmployeesPage() {
 }
 
 /**
- * 一张员工卡片。整卡可点，右边那颗铅笔是编辑。
+ * 一张员工卡片。整卡可点，右边那颗编辑胶囊是改配置。
  *
- * 铅笔那颗按钮要 `stopPropagation`：不然点它先触发整卡的起会话，人会看见两个窗一起冒出来
+ * 编辑那颗按钮要 `stopPropagation`：不然点它先触发整卡的起会话，人会看见两个窗一起冒出来
  * ——一个是他要的，另一个是他刚点掉的。
  */
 function EmployeeCard({
@@ -148,14 +148,17 @@ function EmployeeCard({
   onEdit: () => void;
 }) {
   const { t } = useTranslation();
-  const summary = employeeSummary(post);
+  const summaryParts = employeeSummaryParts(employeeSummary(post));
   const empColor = resolveEmployeeColor(post.color, post.member_post_id);
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className="group flex min-w-0 cursor-pointer items-center gap-3 rounded-[10px] border border-border-color bg-bg-card px-3.5 py-3 transition-colors hover:border-border-strong hover:bg-bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+      /* 键盘焦点走全站同一套双环（外扩 3px + 内收 1px）。此前这里自己写了 `ring-2`，
+         它比全局那条 `:focus-visible` 更具体，于是把内收那圈顶掉了——卡片一旦落进
+         会裁剪的容器（窄屏滚动、外层 overflow），焦点环就只剩半圈。 */
+      className="emp-card group focus:outline-none"
       onClick={onLaunch}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -167,16 +170,7 @@ function EmployeeCard({
       data-testid={`employee-card-${post.member_post_id}`}
       data-emp-color={empColor}
     >
-      <span
-        className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[8px] border font-mono text-[12px] font-semibold"
-        style={{
-          background: 'var(--emp-bg, var(--bg-hover))',
-          color: 'var(--emp-fg, var(--text-primary))',
-          borderColor: 'var(--emp-border, var(--border-color))',
-        }}
-      >
-        {employeeInitials(post.member_post_id)}
-      </span>
+      <span className="emp-card-badge">{employeeInitials(post.member_post_id)}</span>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
@@ -184,15 +178,25 @@ function EmployeeCard({
             {post.title}
           </span>
         </div>
-        {/* 摘要只一行。没有摘要时这一行整个不渲染，不留占位灰字。 */}
-        {summary ? (
-          <div className="mt-0.5 truncate text-[12px] text-text-secondary">{summary}</div>
+        {/* 摘要最多两行。没有摘要时这一行整个不渲染，不留占位灰字。
+            里面被反引号圈起来的词渲染成代码词，卡面上不出现反引号字符。
+            截断走 Tailwind 的 `line-clamp-2`，与全站其余多行截断同一写法。 */}
+        {summaryParts.length > 0 ? (
+          <div className="emp-card-summary line-clamp-2">
+            {summaryParts.map((part, i) =>
+              part.code ? <code key={i}>{part.text}</code> : <span key={i}>{part.text}</span>,
+            )}
+          </div>
         ) : null}
       </div>
 
+      {/* 编辑动作：一枚轻量动作胶囊。静置时只有一枚弱色铅笔（没有底、没有边），
+          鼠标停在卡上或键盘把焦点移进来时才长出一圈描边与底色。
+          **不用 `opacity: 0` 藏起来**：那会在卡片右边缘留一块看不见却能点的区域，
+          人想点整卡起会话，落到那里却开了详情窗。 */}
       <button
         type="button"
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] text-text-muted opacity-55 transition-colors hover:bg-bg-active hover:text-text-primary hover:opacity-100 group-hover:opacity-100"
+        className="emp-card-edit"
         title={t('employees.card.edit')}
         aria-label={`${t('employees.card.edit')} ${post.title}`}
         onClick={(e) => {

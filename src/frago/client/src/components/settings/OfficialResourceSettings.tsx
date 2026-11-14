@@ -121,7 +121,7 @@ export default function OfficialResourceSettings() {
             onChange={(e) => handleToggleAutoSync(e.target.checked)}
             aria-label={t('settings.officialSync.autoSync')}
           />
-          <div className="w-11 h-6 bg-[var(--bg-elevated)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--text-muted)] after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)] peer-checked:after:bg-[var(--text-on-accent)]"></div>
+          <div className="w-11 h-6 bg-[var(--bg-elevated)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--text-muted)] after:rounded-full after:h-5 after:w-5 after:transition-[transform,background-color,border-color] peer-checked:bg-[var(--accent-primary)] peer-checked:after:bg-[var(--text-on-accent)]"></div>
         </label>
       </div>
 

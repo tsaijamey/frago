@@ -143,6 +143,7 @@ const SAMPLE_HARNESSES = [
 describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     await i18n.changeLanguage('zh');
     getMainConfig.mockResolvedValue({
       working_directory: '~/.frago',
@@ -303,5 +304,95 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
         });
 
     expect(collectKeys(en.settings.general)).toEqual(collectKeys(zh.settings.general));
+  });
+
+  it('AI 服务商列表与下拉选项支持按名称 A→Z / Z→A 排序并持久化到 localStorage', async () => {
+    const unsortedProfiles = [
+      {
+        ...SAMPLE_PROFILES[1],
+        id: 'zeta',
+        name: 'Zeta 10',
+      },
+      {
+        ...SAMPLE_PROFILES[0],
+        id: 'alpha',
+        name: 'alpha 2',
+      },
+      {
+        ...SAMPLE_PROFILES[1],
+        id: 'groq',
+        name: 'Groq Whisper',
+        url: null,
+        default_model: null,
+        haiku_model: null,
+        channels: [
+          {
+            protocol: 'responses',
+            url: 'https://api.groq.com/openai/v1',
+            models: ['whisper-large-v3-turbo'],
+            source: 'profile' as const,
+          },
+        ],
+      },
+    ];
+    getProfiles.mockResolvedValue({
+      profiles: unsortedProfiles,
+      active_profile_id: 'alpha',
+      active_targets: ['claude'],
+      worker_profile_id: null,
+    });
+    getConnections.mockResolvedValue({
+      connections: unsortedProfiles,
+      bindings: [],
+      vendor_cores: [],
+      harnesses: SAMPLE_HARNESSES,
+    });
+
+    const { unmount } = render(<GeneralSettings />);
+    await screen.findByTestId('zone-harnesses');
+
+    // Harness 下拉默认按名称 A→Z 排列
+    const claudeSelect = screen.getByLabelText('Claude Code 日常会话配置') as HTMLSelectElement;
+    const optionValues = Array.from(claudeSelect.querySelectorAll('option'))
+      .map((o) => o.value)
+      .filter((v) => v !== 'official');
+    expect(optionValues).toEqual(['alpha', 'groq', 'zeta']);
+
+    // 切到 AI 服务商表，默认 A→Z
+    fireEvent.click(screen.getByTestId('general-tab-profiles'));
+    const zone = await screen.findByTestId('zone-profiles');
+    const getRowIds = () =>
+      Array.from(zone.querySelectorAll('tbody tr[data-testid^="profile-row-"]')).map((tr) =>
+        tr.getAttribute('data-testid')?.replace('profile-row-', ''),
+      );
+    expect(getRowIds()).toEqual(['alpha', 'groq', 'zeta']);
+
+    // 无 default_model 的纯通道 profile 展示通道模型与端点 host
+    expect(screen.getByText('whisper-large-v3-turbo')).toBeTruthy();
+    expect(screen.getByText(/api\.groq\.com/)).toBeTruthy();
+
+    // 切换到 Z→A 逆序
+    fireEvent.click(screen.getByTestId('profile-sort-desc'));
+    expect(getRowIds()).toEqual(['zeta', 'groq', 'alpha']);
+    expect(window.localStorage.getItem('frago.settings.profiles.sortOrder')).toBe('desc');
+
+    // 重新挂载仍保持用户持久化的 Z→A 偏好
+    unmount();
+    render(<GeneralSettings />);
+    await screen.findByTestId('zone-harnesses');
+    fireEvent.click(screen.getByTestId('general-tab-profiles'));
+    const remountZone = await screen.findByTestId('zone-profiles');
+    const remountRowIds = Array.from(
+      remountZone.querySelectorAll('tbody tr[data-testid^="profile-row-"]'),
+    ).map((tr) => tr.getAttribute('data-testid')?.replace('profile-row-', ''));
+    expect(remountRowIds).toEqual(['zeta', 'groq', 'alpha']);
+
+    // 点击表头排序按钮可切回 A→Z
+    fireEvent.click(screen.getByTestId('profile-sort-toggle'));
+    const toggledRowIds = Array.from(
+      remountZone.querySelectorAll('tbody tr[data-testid^="profile-row-"]'),
+    ).map((tr) => tr.getAttribute('data-testid')?.replace('profile-row-', ''));
+    expect(toggledRowIds).toEqual(['alpha', 'groq', 'zeta']);
+    expect(window.localStorage.getItem('frago.settings.profiles.sortOrder')).toBe('asc');
   });
 });

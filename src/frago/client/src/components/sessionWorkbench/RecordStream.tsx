@@ -73,6 +73,7 @@ import FileViewer, {
 import { revealPath } from '@/api';
 import type { SessionFileRow } from '@/types/api';
 import { FileLinkContext, type FileLinkTarget } from '@/components/ui/MarkdownContent';
+import EmptyState from '@/components/ui/EmptyState';
 import type { LocateState } from './StackPanel';
 import type { ComposerUsage } from './Composer';
 import {
@@ -82,7 +83,6 @@ import {
 import type { WorkbenchMark } from '@/hooks/useSessionMarks';
 import SendProgress from './SendProgress';
 import StreamMinimap from './StreamMinimap';
-import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 import {
   AGENT_ACTIVITY,
   MAX_BACKFILL_PAGES,
@@ -101,6 +101,7 @@ import {
   type DecisionBlock,
 } from '@/utils/decisionBlock';
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
+import { scrollBehavior } from '@/utils/reducedMotion';
 import type { SessionObserverView } from '@/hooks/useSessionObserver';
 
 /** 中栏的镜头。一次只看一类，条数照实报。 */
@@ -895,14 +896,38 @@ function rangeHit(range: Range, x: number, y: number): boolean {
 
 /** 离顶部多近算「在翻更早的」，触发前插。 */
 const NEAR_TOP_PX = 240;
-/** 离底部多近算「人就在底部」，手动滚到这里立即重新武装自动滚动。 */
-const AT_BOTTOM_PX = 60;
+/**
+ * 判定视口覆盖底部热区的阈值（像素）。
+ * 当视口底边距内容底部的剩余距离 <= 此值时，视为覆盖「[底部上方 100px ～ 底部]」区域。
+ */
+export const SESSION_DETAIL_AUTO_SCROLL_THRESHOLD_PX = 100;
+
+/**
+ * 判断滚动容器的可视视口是否覆盖「[底部上方 100px ～ 底部]」区域。
+ *
+ * 视口覆盖底部上方 threshold 区域的几何条件：
+ *   视口底边 (scrollTop + clientHeight) >= 内容底部上方 threshold (scrollHeight - threshold)
+ * 即：
+ *   scrollHeight - scrollTop - clientHeight <= threshold
+ *
+ * 当内容总高 scrollHeight <= clientHeight 时，视口容纳了全部内容，天然覆盖底部热区。
+ * 为避免高分屏 (DPI) 缩放下浮点舍入误差，加入 0.5px 容差。
+ */
+export function isViewportCoveringBottom(
+  el: { scrollTop: number; scrollHeight: number; clientHeight: number } | null | undefined,
+  threshold: number = SESSION_DETAIL_AUTO_SCROLL_THRESHOLD_PX
+): boolean {
+  if (!el) return false;
+  const { scrollTop, scrollHeight, clientHeight } = el;
+  if (scrollHeight <= clientHeight) return true;
+  const gap = scrollHeight - scrollTop - clientHeight;
+  return gap <= threshold + 0.5;
+}
+
 /** 离底部超过这个距离，「跳到最新」按钮才冒出来。一屏之内随手一滚就回去，不打扰。 */
 const JUMP_SHOW_PX = 240;
 /** 手动输入事件后多久之内的滚动算是人滚的。程序滚动不在这个窗口里。 */
 const MANUAL_INTENT_MS = 400;
-/** 解除后多久没再手动滚动，新条目进来时自动滚动复活。 */
-const REARM_AFTER_MS = 10_000;
 /**
  * 跟到底时，离底部多远之内用动画滑过去。
  *
@@ -972,6 +997,15 @@ export interface RecordStreamProps {
    * 绿」，人发言的绿条放过去就破了它，所以默认不挂。
    */
   minimap?: boolean;
+  /**
+   * 还没挑会话时，空态里给几条最近的会话直接点开。
+   *
+   * 此前这块地方只有一个图标加一行说明——它占着整栏却不提供任何信息，人还得回头去
+   * 左栏翻。这里只把**已经拿在手上的那几场**摆出来，不新取数据、不新加接口。
+   */
+  recentSessions?: { id: string; title: string }[];
+  /** 点空态里那一条：按会话编号打开。不给就只摆标题不可点。 */
+  onOpenRecent?: (sessionId: string) => void;
   /**
    * 「文件」那一档：这一场改过哪些文件的那块界面整个交过来。
    *
@@ -1137,6 +1171,8 @@ export default function RecordStream({
   locateTarget = null,
   onLocateResult,
   minimap = false,
+  recentSessions = [],
+  onOpenRecent,
   filesView,
   filesOpen = false,
   onFilesOpenChange,
@@ -1365,7 +1401,7 @@ export default function RecordStream({
       <span className="min-w-0 truncate">
         — {describeActivity(records, activeTrail.steps.in_the_session ?? activeTrail.steps.queued ?? 0, t)}
       </span>
-      <span className="shrink-0 font-mono text-text-dim">
+      <span className="shrink-0 font-mono tabular-nums text-text-dim">
         · {formatDuration(Math.max(0, now - (activeTrail.steps.on_its_way ?? now)))}
       </span>
     </p>
@@ -1384,7 +1420,7 @@ export default function RecordStream({
         data-record-id={record.id}
         data-record-kind={isPureAsyncCallbackRecord(record) ? 'async.callback' : record.kind}
         {...{ [RECORD_BODY_ATTR]: '' }}
-        className="min-w-0"
+        className="wb-record"
       >
         {bare}
       </div>
@@ -1432,7 +1468,7 @@ export default function RecordStream({
         <div
           key={seg.key}
           data-testid="talk-pre-response-agg"
-          className="flex min-w-0 flex-wrap items-center gap-2 px-3 py-1 font-mono text-[13px] text-text-muted"
+          className="wb-turn-index flex min-w-0 flex-wrap items-center gap-2 px-3 py-1 text-[13px]"
         >
           {parts.map((part, idx) => (
             <Fragment key={idx}>
@@ -1458,10 +1494,15 @@ export default function RecordStream({
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** 自动滚动是否武装。开一场新会话时武装，人手动离开底部解除。 */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** 是否正在用鼠标按住原生滚动条滑块拖拽。 */
+  const isDraggingScrollbar = useRef(false);
+  /**
+   * 自动滚动是否武装。
+   * 仅当视口覆盖「[底部上方 100px ～ 底部]」热区时武装；离开该热区（距底 > 100px）时立即解除。
+   * 初始默认武装（开一场新会话装载最新页时落在底部），用户上翻离开底部 100px 即刻解除。
+   */
   const followArmed = useRef(true);
-  /** 最后一次人手动滚动的时刻。十秒复活的计时起点。 */
-  const lastManualScrollAt = useRef(0);
   /** 手动输入事件的有效期。窗口内的 onScroll 才算人滚的。 */
   const manualIntentUntil = useRef(0);
   /** 前插触发那一刻的滚动几何，插完用来把视口钉回原处。 */
@@ -1511,18 +1552,14 @@ export default function RecordStream({
   // 视图重新交还给自动跟随，下一条新记录照常跟到底。
   const jumpToLatest = useCallback(() => {
     followArmed.current = true;
-    lastManualScrollAt.current = 0;
     manualIntentUntil.current = 0;
     scrollToBottom('smooth');
     setShowJump(false);
   }, [scrollToBottom]);
 
-  // 换会话：一切归零，默认重新武装——新打开的会话就该落在最新内容上。
-  // 必须是布局效应且声明在记录流效应之前：挂载时普通效应跑在布局效应之后，会把记录流
-  // 效应刚记下的首尾编号抹掉，下一帧追加就被误判成初装，视口不由分说沉到底。
+  // 换会话：一切归零，默认重新武装——新打开的会话加载最新尾部一页就该落在最新内容上。
   useLayoutEffect(() => {
     followArmed.current = true;
-    lastManualScrollAt.current = 0;
     manualIntentUntil.current = 0;
     programmaticUntil.current = 0;
     anchor.current = null;
@@ -1532,7 +1569,7 @@ export default function RecordStream({
     setShowJump(false);
   }, [sessionId]);
 
-  // 记录流变化的三种形态：前插钉住视口，追加按状态机走，整流替换与初装沉底。
+  // 记录流变化：前插钉住视口，初装沉底武装，尾部追加与流式单条变长跟底，整流替换按武装状态走。
   useLayoutEffect(() => {
     if (!records.length) {
       prevEnds.current = { first: null, last: null };
@@ -1541,47 +1578,129 @@ export default function RecordStream({
     const first = records[0].id;
     const last = records[records.length - 1].id;
     const prev = prevEnds.current;
+    const el = scrollRef.current;
 
     if (prev.first !== null && first !== prev.first && last === prev.last) {
-      // 前插旧页：把视口钉回原来那张卡，NEVER 让人觉得页面自己跳了。
-      const el = scrollRef.current;
+      // 1. 前插旧页：把视口钉回原来那张卡，NEVER 让人觉得页面自己跳了。
       if (el && anchor.current) {
         el.scrollTop = el.scrollHeight - anchor.current.height + anchor.current.top;
       }
     } else if (prev.first === null) {
-      // 初次装载：沉底并武装。
+      // 2. 初次装载会话最新页（Tail Window 分页）：落位在最新内容底部并武装自动贴底
       scrollToBottom();
       followArmed.current = true;
     } else if (first === prev.first && last !== prev.last) {
-      // 尾部追加：武装着就跟到底；解除满十秒也复活。
-      if (
-        followArmed.current ||
-        Date.now() - lastManualScrollAt.current > REARM_AFTER_MS
-      ) {
+      // 3. 尾部追加不同记录：依据内容增长前的武装状态决定是否自动滚底。
+      //    若内容增长前视口正覆盖底部 100px 热区（followArmed 为真），则自动跟到底；
+      //    若用户已手动上翻离开热区（距底 > 100px），绝对不滚，严禁打扰用户阅读历史！
+      if (followArmed.current) {
         // 近处滑过去，远处直接落位——见 SMOOTH_MAX_PX。
-        const el = scrollRef.current;
+        const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
+        scrollToBottom(gap <= SMOOTH_MAX_PX ? 'smooth' : 'auto');
+        followArmed.current = true;
+      }
+    } else if (first === prev.first && last === prev.last) {
+      // 4. 单条流式增量更新（最后一条内容变长）：
+      //    只要内容变长前视口正处于底部 100px 热区（followArmed 为真），持续平滑跟到底；
+      //    若用户正在上方看历史，视口纹丝不动，严禁抢滚！
+      if (followArmed.current) {
         const gap = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0;
         scrollToBottom(gap <= SMOOTH_MAX_PX ? 'smooth' : 'auto');
         followArmed.current = true;
       }
     } else if (first !== prev.first && last !== prev.last) {
-      // 整流替换（重拉）：落在最新内容上并武装。
-      scrollToBottom();
-      followArmed.current = true;
+      // 5. 整流替换（重拉）：仅当替换前视口处于底部 100px 热区（或武装着）时才沉底并武装；
+      //    若用户正在上方看历史，保持视口位置，绝不强行拉到底部。
+      if (followArmed.current || isViewportCoveringBottom(el)) {
+        scrollToBottom();
+        followArmed.current = true;
+      } else {
+        followArmed.current = false;
+      }
     }
 
     prevEnds.current = { first, last };
     anchor.current = null;
   }, [records, scrollToBottom]);
 
-  // 换镜头后落在这一档的最新一条上。不这么做，视口会停在按旧内容算出来的高度上，
-  // 换完看到的是半空的一屏。
+  // 换镜头后若原先武装着或换后内容天然覆盖底部 100px 热区，才落在这一档的最新一条上；
+  // 初次挂载由 records 效应判定，不在挂载时强制沉底。
+  const prevLensRef = useRef({ lens, watcherOpen });
   useLayoutEffect(() => {
+    const isFirstRun =
+      prevLensRef.current.lens === lens &&
+      prevLensRef.current.watcherOpen === watcherOpen;
+    prevLensRef.current = { lens, watcherOpen };
     autoBackfillCount.current = 0;
-    scrollToBottom();
-    followArmed.current = true;
-    setShowJump(false);
+    if (!isFirstRun) {
+      const el = scrollRef.current;
+      if (followArmed.current || isViewportCoveringBottom(el)) {
+        scrollToBottom();
+        followArmed.current = true;
+      } else {
+        followArmed.current = false;
+      }
+      setShowJump(false);
+    }
   }, [lens, watcherOpen, scrollToBottom]);
+
+  // 全局鼠标/指针抬起与移动监听：维护拖拽原生滚动条滑块的意图状态
+  useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (isDraggingScrollbar.current) {
+        isDraggingScrollbar.current = false;
+        manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
+      }
+    };
+    const handleGlobalPointerMove = (e: MouseEvent) => {
+      if (isDraggingScrollbar.current) {
+        if (e.buttons === 0) {
+          isDraggingScrollbar.current = false;
+        } else {
+          manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
+        }
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalPointerUp);
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('pointercancel', handleGlobalPointerUp);
+    window.addEventListener('mousemove', handleGlobalPointerMove);
+    window.addEventListener('pointermove', handleGlobalPointerMove);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalPointerUp);
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('pointercancel', handleGlobalPointerUp);
+      window.removeEventListener('mousemove', handleGlobalPointerMove);
+      window.removeEventListener('pointermove', handleGlobalPointerMove);
+    };
+  }, []);
+
+  // 容器视口与内部内容尺寸变化时，实时驱动贴底跟随并维护武装状态。
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      // 内部内容撑高时：若增长前处于贴底武装状态，持续自动向下滚动
+      if (followArmed.current) {
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (gap > 0) {
+          scrollToBottom(gap <= SMOOTH_MAX_PX ? 'smooth' : 'auto');
+        }
+      } else if (Date.now() > programmaticUntil.current) {
+        // 未武装状态下视口尺寸变大（如拉高浏览器窗体）使视口覆盖了底部 100px 热区，重新同步
+        followArmed.current = isViewportCoveringBottom(el);
+      }
+    });
+
+    observer.observe(content);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, [scrollToBottom]);
 
   // Talk / Watcher 视图下，若当前已取窗口筛完后可见对话不足最小条数（满页却不足 MIN_TALK_RECORDS）
   // 或内容高度不足以撑出滚动条（导致无法通过上滚触发 NEAR_TOP_PX），且服务端还有更早记录，
@@ -1651,7 +1770,7 @@ export default function RecordStream({
     if (!el) return;
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     followArmed.current = false;
-    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    el.scrollIntoView?.({ block: 'center', behavior: scrollBehavior() });
     // 只在点下去那一刻滚一次；镜头换完再来一趟由 lens 变化带起
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollAt, scrollId, lens, filesOpen, terminalOpen, watcherOpen]);
@@ -1820,7 +1939,7 @@ export default function RecordStream({
     programmaticUntil.current = Date.now() + PROGRAMMATIC_MS.smooth;
     locateScrollUntil.current = programmaticUntil.current;
     followArmed.current = false;
-    if (typeof box.scrollTo === 'function') box.scrollTo({ top, behavior: 'smooth' });
+    if (typeof box.scrollTo === 'function') box.scrollTo({ top, behavior: scrollBehavior() });
     else box.scrollTop = top;
     paintHighlight(MARK_FLASH, [range], HIGHLIGHT_PRIORITY.flash, painter);
     if (flashTimer.current) clearTimeout(flashTimer.current);
@@ -1853,6 +1972,7 @@ export default function RecordStream({
       // 只有按在滚动条那一窄条上才算滚动意图——按在正文上是在点选文字。
       const el = scrollRef.current;
       if (el && e.clientX > el.getBoundingClientRect().right - 20) {
+        isDraggingScrollbar.current = true;
         noteManualIntent();
       }
     },
@@ -1876,15 +1996,22 @@ export default function RecordStream({
         return next;
       });
 
-      // 手动滚动：离开底部就解除自动滚动，回到底部立即重新武装。
-      //
-      // 程序自己滚出来的那一串**不参与这个判定**：平滑滚动一路经过的中间位置全都不在
-      // 底部，落进判定里就会把自动跟随解除掉——人明明没碰过，症状却是「滚着滚着就不跟
-      // 了」。到顶取更早那一页的判定不受这条影响：那件事只看位置，不问是谁滚的。
-      if (now > programmaticUntil.current && now <= manualIntentUntil.current) {
-        lastManualScrollAt.current = now;
-        followArmed.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
+      // 实时判定视口是否覆盖「[底部上方 100px ～ 底部]」热区
+      const coveringBottom = isViewportCoveringBottom(el);
+
+      // 非程序平滑滚动窗口期间的滚动：更新自动贴底跟随状态
+      if (now > programmaticUntil.current) {
+        if (coveringBottom) {
+          // 视口处于或回到「[底部上方 100px ～ 底部]」热区时立即武装
+          followArmed.current = true;
+        } else {
+          // 离开底部 100px 热区：必须是明确的用户手动输入（滚轮、触摸、按键、拖拽滚动条）才解除武装！
+          // 彻底防止平滑滚动动画耗时超出预期时的中间帧把自动跟随误关掉（防止「滚着滚着自己不跟了」）！
+          const isUserManual = now <= manualIntentUntil.current || isDraggingScrollbar.current;
+          if (isUserManual) {
+            followArmed.current = false;
+          }
+        }
       }
 
       // 翻到顶附近：钉住当前几何，取更早的一页前插。
@@ -1908,9 +2035,30 @@ export default function RecordStream({
 
   if (!sessionId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-text-muted">
-        <Inbox size={44} strokeWidth={1.4} />
-        <p className="text-[13px]">{t('workbench.stream.pickSession')}</p>
+      <div className="wb-empty-fill">
+        <EmptyState
+          Icon={Inbox}
+          title={t('workbench.stream.pickSession')}
+          action={
+            recentSessions.length ? (
+              <div className="wb-empty-recent" data-testid="stream-empty-recent">
+                {recentSessions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    data-testid="stream-empty-recent-item"
+                    onClick={() => onOpenRecent?.(s.id)}
+                    title={s.title}
+                    className="wb-empty-recent-item"
+                  >
+                    <span aria-hidden className="wb-rail-signal wb-rail-signal--done" />
+                    <span className="wb-empty-recent-title">{s.title}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null
+          }
+        />
       </div>
     );
   }
@@ -1920,108 +2068,106 @@ export default function RecordStream({
       {records.length ? (
         <div
           data-testid="stream-lens"
-          className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-color px-4 py-2"
+          className="wb-lens shrink-0 border-b border-border-color px-4 py-2"
         >
           {/* 整个左侧区域分为紧贴的 Watcher + 隔离纯文本 Executor + 现有的 All | Talk | ... 菜单 */}
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-            <div className={SEG_GROUP}>
-              <button
-                type="button"
-                data-testid="lens-watcher"
-                onClick={() => {
-                  setWatcherOpen(true);
-                  onFilesOpenChange?.(false);
-                  onTerminalOpenChange?.(false);
-                }}
-                aria-pressed={watcherOpen && !filesOpen && !terminalOpen}
-                className={`${SEG_ITEM} ${SEG_TIGHT} ${watcherOpen && !filesOpen && !terminalOpen ? SEG_ON : SEG_OFF}`}
-              >
-                {t('workbench.stream.watcher')}
-                <span className="font-mono opacity-60">{watcherCount}</span>
-              </button>
-            </div>
-            <span
-              data-testid="lens-executor-label"
-              className="shrink-0 select-none whitespace-nowrap px-0.5 text-[12px] font-medium text-text-muted"
+          <div className="wb-lens-group ui-seg-group">
+            <button
+              type="button"
+              data-testid="lens-watcher"
+              onClick={() => {
+                setWatcherOpen(true);
+                onFilesOpenChange?.(false);
+                onTerminalOpenChange?.(false);
+              }}
+              aria-pressed={watcherOpen && !filesOpen && !terminalOpen}
+              className={`wb-lens-pill ui-seg-pill ${
+                watcherOpen && !filesOpen && !terminalOpen ? 'ui-seg-pill--active' : ''
+              }`}
             >
-              {t('workbench.stream.executor')}
-            </span>
-            <div className={SEG_GROUP}>
-              {LENS_ORDER.map((id) => (
-                <Fragment key={id}>
-                  {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
-                      但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
-                      按灰，人就以为这一场没改过文件。 */}
-                  {id === 'system' && filesView ? (
-                    <button
-                      type="button"
-                      data-testid="lens-files"
-                      onClick={() => {
-                        setWatcherOpen(false);
-                        onTerminalOpenChange?.(false);
-                        onFilesOpenChange?.(!filesOpen);
-                      }}
-                      aria-pressed={filesOpen}
-                      title={t('workbench.files.lensHint')}
-                      className={`${SEG_ITEM} ${SEG_TIGHT} ${filesOpen ? SEG_ON : SEG_OFF}`}
-                    >
-                      {t('workbench.files.lens')}
-                      {typeof filesCount === 'number' ? (
-                        <span className="font-mono opacity-60">{filesCount}</span>
-                      ) : filesPending ? (
-                        /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
-                           而那正是这颗按钮**不该**说的事。 */
-                        <span data-testid="lens-files-pending" className="font-mono opacity-60">
-                          …
-                        </span>
-                      ) : null}
-                    </button>
-                  ) : null}
+              {t('workbench.stream.watcher')}
+              <span className="ui-seg-count">{watcherCount}</span>
+            </button>
+          </div>
+          <span data-testid="lens-executor-label" className="wb-lens-label">
+            {t('workbench.stream.executor')}
+          </span>
+          <div className="wb-lens-group ui-seg-group">
+            {LENS_ORDER.map((id) => (
+              <Fragment key={id}>
+                {/* 文件那一档排在 System 之前，与原型同一顺序：它与镜头同一排、同一套长相，
+                    但它不是镜头——见 `filesView` 那段说明。它**不按条数变灰**：数字还不知道时
+                    按灰，人就以为这一场没改过文件。 */}
+                {id === 'system' && filesView ? (
                   <button
                     type="button"
-                    /* 点某一档镜头就是回记录流：人手上还开着文件清单或 Watcher 时，他这一下是在说「我要看记录」。
-                       不跟着切回来，点了没反应，像坏了。 */
+                    data-testid="lens-files"
                     onClick={() => {
                       setWatcherOpen(false);
-                      setLens(id);
-                      onFilesOpenChange?.(false);
                       onTerminalOpenChange?.(false);
+                      onFilesOpenChange?.(!filesOpen);
                     }}
-                    aria-pressed={lens === id && !filesOpen && !terminalOpen && !watcherOpen}
-                    data-testid={`lens-${id}`}
-                    /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
-                    title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
-                    disabled={counts[id] === 0}
-                    className={`${SEG_ITEM} ${SEG_TIGHT} ${lens === id && !filesOpen && !terminalOpen && !watcherOpen ? SEG_ON : SEG_OFF}`}
+                    aria-pressed={filesOpen}
+                    title={t('workbench.files.lensHint')}
+                    className={`wb-lens-pill ui-seg-pill ${filesOpen ? 'ui-seg-pill--active' : ''}`}
                   >
-                    {t(LENS_LABEL_KEY[id])}
-                    <span className="font-mono opacity-60">{counts[id]}</span>
+                    {t('workbench.files.lens')}
+                    {typeof filesCount === 'number' ? (
+                      <span className="ui-seg-count">{filesCount}</span>
+                    ) : filesPending ? (
+                      /* 还在数：写个省略号占住那个位置。空着一眼看去就是「这个会话没动过文件」，
+                         而那正是这颗按钮**不该**说的事。 */
+                      <span data-testid="lens-files-pending" className="ui-seg-count">
+                        …
+                      </span>
+                    ) : null}
                   </button>
-                </Fragment>
-              ))}
-              {terminalView ? (
+                ) : null}
                 <button
                   type="button"
-                  data-testid="lens-terminal"
+                  /* 点某一档镜头就是回记录流：人手上还开着文件清单或 Watcher 时，他这一下是在说「我要看记录」。
+                     不跟着切回来，点了没反应，像坏了。 */
                   onClick={() => {
                     setWatcherOpen(false);
+                    setLens(id);
                     onFilesOpenChange?.(false);
-                    onTerminalOpenChange?.(!terminalOpen);
+                    onTerminalOpenChange?.(false);
                   }}
-                  aria-pressed={terminalOpen}
-                  title={t('workbench.terminal.lensHint')}
-                  className={`${SEG_ITEM} ${SEG_TIGHT} ${terminalOpen ? SEG_ON : SEG_OFF}`}
+                  aria-pressed={lens === id && !filesOpen && !terminalOpen && !watcherOpen}
+                  data-testid={`lens-${id}`}
+                  /* 「Hooks」是缩写（半宽的 Teams 栏里全称挤成两行），悬停给全称 */
+                  title={id === 'hook' ? t('workbench.stream.lensHookFull') : undefined}
+                  disabled={counts[id] === 0}
+                  className={`wb-lens-pill ui-seg-pill ${
+                    lens === id && !filesOpen && !terminalOpen && !watcherOpen
+                      ? 'ui-seg-pill--active'
+                      : ''
+                  }`}
                 >
-                  {t('workbench.terminal.lens')}
-                  {terminalAlive ? (
-                    <span
-                      data-testid="lens-terminal-alive"
-                      className="h-1.5 w-1.5 rounded-full bg-emerald-400"
-                    />
-                  ) : null}
+                  {t(LENS_LABEL_KEY[id])}
+                  <span className="ui-seg-count">{counts[id]}</span>
                 </button>
-              ) : null}
-            </div>
+              </Fragment>
+            ))}
+            {terminalView ? (
+              <button
+                type="button"
+                data-testid="lens-terminal"
+                onClick={() => {
+                  setWatcherOpen(false);
+                  onFilesOpenChange?.(false);
+                  onTerminalOpenChange?.(!terminalOpen);
+                }}
+                aria-pressed={terminalOpen}
+                title={t('workbench.terminal.lensHint')}
+                className={`wb-lens-pill ui-seg-pill ${terminalOpen ? 'ui-seg-pill--active' : ''}`}
+              >
+                {t('workbench.terminal.lens')}
+                {terminalAlive ? (
+                  <span data-testid="lens-terminal-alive" className="wb-lens-live" />
+                ) : null}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2047,8 +2193,9 @@ export default function RecordStream({
       >
         <FileLinkContext.Provider value={preview ? handleFileLink : null}>
         <div
+          ref={contentRef}
           data-testid="record-stream-content"
-          className="flex min-h-full w-full min-w-0 flex-col justify-end gap-4"
+          className="wb-stream-body flex min-h-full w-full min-w-0 flex-col justify-end gap-4"
         >
           {loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
@@ -2076,10 +2223,12 @@ export default function RecordStream({
           ) : null}
 
           {!records.length && !loading && !error ? (
-            <div className="my-auto flex flex-col items-center gap-3 py-16 text-text-muted">
-              <Inbox size={44} strokeWidth={1.4} />
-              <p className="text-[13px]">{t('workbench.stream.emptySession')}</p>
-              <p className="text-[12px]">{t('workbench.stream.emptySessionHint')}</p>
+            <div className="my-auto flex flex-col items-center py-16">
+              <EmptyState
+                Icon={Inbox}
+                title={t('workbench.stream.emptySession')}
+                description={t('workbench.stream.emptySessionHint')}
+              />
             </div>
           ) : null}
 
@@ -2143,7 +2292,7 @@ export default function RecordStream({
                     data-testid="watcher-item"
                     className="flex min-w-0 flex-col gap-4 py-5 first:pt-1 last:pb-1"
                   >
-                    <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-text-muted">
+                    <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] tabular-nums text-text-muted">
                       <span className="font-semibold text-text-secondary">#{idx + 1}</span>
                       {clock ? <span>{clock}</span> : null}
                     </header>

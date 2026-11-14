@@ -905,7 +905,7 @@ export default function SessionTimeline({
             </button>
             <span
               data-testid="calendar-month-label"
-              className="min-w-[6.5em] text-center text-[13.5px] font-semibold text-text-primary"
+              className="min-w-[6.5em] text-center text-[13px] font-semibold text-text-primary"
             >
               {t('tokenCalendar.monthLabel', {
                 year: y,
@@ -938,11 +938,11 @@ export default function SessionTimeline({
 
             <span className="ml-1.5 text-[12px] text-text-secondary" data-testid="calendar-month-total">
               {t('tokenCalendar.monthTotal')}:{' '}
-              <strong className="font-mono text-[13px] text-text-primary">
+              <strong className="font-mono text-[13px] tabular-nums text-text-primary">
                 {calData ? formatTokens(calData.month_total.total) : '—'}
               </strong>
               {calData && calData.month_total.total > 0 ? (
-                <span className="ml-2 font-mono text-[11px] text-text-muted">
+                <span className="ml-2 font-mono text-[11px] tabular-nums text-text-muted">
                   {t('tokenCalendar.inputShort')} {formatTokens(calData.month_total.input)} ·{' '}
                   {t('tokenCalendar.outputShort')} {formatTokens(calData.month_total.output)}
                 </span>
@@ -950,7 +950,7 @@ export default function SessionTimeline({
             </span>
 
             {affairsData ? (
-              <div className="ml-1.5 hidden items-center gap-2 border-l border-border-color pl-2 text-[11.5px] text-text-muted lg:flex">
+              <div className="ml-1.5 hidden items-center gap-2 border-l border-border-color pl-2 text-[12px] text-text-muted lg:flex">
                 <span>
                   {t('workbench.timeline.monthAffairsTotal')}:{' '}
                   <strong className="font-mono text-text-primary">{affairsData.summary.total_affairs}</strong>
@@ -1066,7 +1066,7 @@ export default function SessionTimeline({
               {WEEKDAY_KEYS.map((k) => (
                 <div
                   key={k}
-                  className="flex items-center px-3 text-[11.5px] font-medium text-text-muted"
+                  className="flex items-center px-3 text-[12px] font-medium text-text-muted"
                 >
                   {t(`tokenCalendar.weekday.${k}`)}
                 </div>
@@ -1133,14 +1133,14 @@ export default function SessionTimeline({
                         {dayAffairCount > 0 ? (
                           <span
                             data-testid={`affairs-badge-${cell.date}`}
-                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1.5 py-0.2 text-[10.5px] font-medium text-accent-primary"
+                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1.5 py-0.2 text-[11px] font-medium text-accent-primary"
                           >
                             <Check size={10} strokeWidth={2.5} />
                             <span>{dayAffairCount}</span>
                           </span>
                         ) : null}
                         {daySessionCount > 0 ? (
-                          <span className="font-mono text-[10.5px] text-text-muted">
+                          <span className="font-mono text-[11px] text-text-muted">
                             {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
                           </span>
                         ) : null}
@@ -1165,10 +1165,10 @@ export default function SessionTimeline({
                     {/* 底行：仅在有 token 用量时展示大字总量 + 淡字入/出 */}
                     {hasTokens && bucket ? (
                       <div className="flex w-full flex-col gap-0.5">
-                        <span className="font-mono text-[18px] font-semibold leading-none tracking-tight text-text-primary">
+                        <span className="font-mono text-[18px] font-semibold leading-none tracking-tight tabular-nums text-text-primary">
                           {formatTokens(bucket.total)}
                         </span>
-                        <span className="truncate font-mono text-[10.5px] text-text-muted">
+                        <span className="truncate font-mono text-[11px] tabular-nums text-text-muted">
                           {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
                           {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
                         </span>
@@ -1179,7 +1179,7 @@ export default function SessionTimeline({
               })}
             </div>
 
-            <div className="flex shrink-0 items-center justify-between text-[11.5px] text-text-muted">
+            <div className="flex shrink-0 items-center justify-between text-[12px] text-text-muted">
               <span>{t('workbench.timeline.clickDayHint')}</span>
               {activeTags.length > 0 ? (
                 <button
@@ -1210,7 +1210,7 @@ export default function SessionTimeline({
                   data-testid="timeline-cross-date"
                   aria-pressed={crossDateMode}
                   onClick={activateCrossDate}
-                  className={`mb-1.5 flex shrink-0 items-center justify-between rounded-[8px] border px-2.5 py-1.5 text-[11.5px] transition-colors ${
+                  className={`mb-1.5 flex shrink-0 items-center justify-between rounded-[8px] border px-2.5 py-1.5 text-[12px] transition-colors ${
                     crossDateMode
                       ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-semibold text-text-primary'
                       : 'border-transparent bg-bg-primary text-text-secondary hover:bg-bg-hover'
@@ -1275,7 +1275,7 @@ export default function SessionTimeline({
                               : 'border-transparent bg-bg-primary text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                       }`}
                     >
-                      <div className="flex w-full items-center justify-between gap-1 text-[11.5px]">
+                      <div className="flex w-full items-center justify-between gap-1 text-[12px]">
                         <span className="font-mono font-medium">
                           {cell.date.slice(5)}{' '}
                           <span className="font-sans text-text-muted">
@@ -1290,7 +1290,7 @@ export default function SessionTimeline({
                             </span>
                           ) : null}
                           {sessionCount > 0 ? (
-                            <span className="font-mono text-[10.5px] text-text-muted">
+                            <span className="font-mono text-[11px] text-text-muted">
                               {t('workbench.timeline.daySessionsCount', { count: sessionCount })}
                             </span>
                           ) : null}
@@ -1298,10 +1298,10 @@ export default function SessionTimeline({
                       </div>
                       {hasTokens && bucket ? (
                         <div className="flex items-baseline justify-between gap-1">
-                          <span className="font-mono text-[14px] font-semibold text-text-primary">
+                          <span className="font-mono text-[14px] font-semibold tabular-nums text-text-primary">
                             {formatTokens(bucket.total)}
                           </span>
-                          <span className="truncate font-mono text-[10px] text-text-muted">
+                          <span className="truncate font-mono text-[10px] tabular-nums text-text-muted">
                             {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
                             {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
                           </span>
@@ -1367,7 +1367,7 @@ export default function SessionTimeline({
                   <button
                     type="button"
                     onClick={() => setCliGuideOpen((v) => !v)}
-                    className={`flex h-7 items-center gap-1.5 rounded-[6px] border px-2 text-[11.5px] transition-colors ${
+                    className={`flex h-7 items-center gap-1.5 rounded-[6px] border px-2 text-[12px] transition-colors ${
                       cliGuideOpen
                         ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
                         : 'border-border-color bg-bg-card text-text-muted hover:bg-bg-hover hover:text-text-primary'
@@ -1398,7 +1398,7 @@ export default function SessionTimeline({
                           <button
                             type="button"
                             onClick={() => void handleCopyText(t('workbench.timeline.promptCommand'))}
-                            className="inline-flex items-center gap-1 rounded border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[11.5px] font-medium text-accent-primary hover:bg-accent-primary/20"
+                            className="inline-flex items-center gap-1 rounded border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[12px] font-medium text-accent-primary hover:bg-accent-primary/20"
                           >
                             <Copy size={11} />
                             <span>{t('workbench.timeline.copySummary')}</span>
@@ -1457,7 +1457,7 @@ export default function SessionTimeline({
                         data-testid="affair-employee-filter"
                         value={employeeFilter}
                         onChange={(e) => setEmployeeFilter(e.target.value)}
-                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[11.5px] text-text-secondary focus:outline-none"
+                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[12px] text-text-secondary focus:outline-none"
                       >
                         <option value="all">{t('workbench.timeline.allEmployees')}</option>
                         {affairsData?.summary.employees.map((emp) => (
@@ -1475,7 +1475,7 @@ export default function SessionTimeline({
                         data-testid="affair-category-filter"
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
-                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[11.5px] text-text-secondary focus:outline-none"
+                        className="h-7 rounded-[6px] border border-border-color bg-bg-card px-2 text-[12px] text-text-secondary focus:outline-none"
                       >
                         <option value="all">{t('workbench.timeline.allCategories')}</option>
                         {affairsData?.summary.categories.map((cat) => (
@@ -1524,7 +1524,7 @@ export default function SessionTimeline({
                                   </span>
                                 ) : null}
                               </div>
-                              <h3 className="font-sans text-[14.5px] font-semibold leading-snug text-text-primary">
+                              <h3 className="font-sans text-[13px] font-semibold leading-snug text-text-primary">
                                 {affair.title}
                               </h3>
                             </div>
@@ -1553,13 +1553,13 @@ export default function SessionTimeline({
 
                           {/* 业务结论摘要 */}
                           {affair.summary ? (
-                            <div className="rounded-[6px] border border-border-dim bg-bg-secondary/60 p-2.5 font-sans text-[12.5px] leading-relaxed text-text-secondary whitespace-pre-wrap">
+                            <div className="rounded-[6px] border border-border-dim bg-bg-secondary/60 p-2.5 font-sans text-[13px] leading-relaxed text-text-secondary whitespace-pre-wrap">
                               {affair.summary}
                             </div>
                           ) : null}
 
                           {/* 关联会话与归档路径 */}
-                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11.5px]">
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[12px]">
                             {affair.sessions && affair.sessions.length > 0 ? (
                               <div className="flex flex-wrap items-center gap-1">
                                 <span className="text-text-muted">{t('workbench.timeline.sessionsLabel')}:</span>
@@ -1602,7 +1602,7 @@ export default function SessionTimeline({
                                 {affair.tags.map((tag) => (
                                   <span
                                     key={tag}
-                                    className="rounded-[3px] bg-bg-secondary px-1.2 py-0.2 text-[10.5px] text-text-dim"
+                                    className="rounded-[3px] bg-bg-secondary px-1.2 py-0.2 text-[11px] text-text-dim"
                                   >
                                     #{tag}
                                   </span>
@@ -1645,7 +1645,7 @@ export default function SessionTimeline({
                   {/* Timeline 工具条：时间跨度提示 + 档位切换 + 平移/缩放 */}
                   <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-color bg-bg-secondary px-3">
                 <Clock size={13} strokeWidth={1.5} className="shrink-0 text-text-muted" />
-                <span className="min-w-0 truncate whitespace-nowrap font-mono text-[11.5px] text-text-muted">
+                <span className="min-w-0 truncate whitespace-nowrap font-mono text-[12px] text-text-muted">
                   {stamp(winStart)} → {stamp(winEnd)} · {spanLabel}
                 </span>
                 {activeTags.length > 0 ? (
@@ -1718,7 +1718,7 @@ export default function SessionTimeline({
               </div>
 
               {/* 刻度栏独立占顶行，下方轨道视口 100% 归 Virtuoso，防止 Virtuoso 内联 position:relative + top-6 造成底部溢出 24px 被遮挡。 */}
-              <div className="relative h-6 shrink-0 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[10.5px] text-text-dim">
+              <div className="relative h-6 shrink-0 overflow-hidden border-b border-border-color bg-bg-primary font-mono text-[11px] text-text-dim">
                 {ticks.map((k, i) => (
                   <span
                     key={i}

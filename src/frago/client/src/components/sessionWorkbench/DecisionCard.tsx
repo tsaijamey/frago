@@ -197,7 +197,9 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   const pending = (i: number) =>
     !done && confirm && picks.includes(i) && !opts[i].reversible;
 
-  const answerBtnClass = `inline-flex h-[32px] shrink-0 items-center justify-center rounded-[8px] border border-accent-primary px-4 text-[13px] font-medium transition-all ${
+  /* 只变底色与透明度（可提交 ↔ 不可提交、hover）。此前是 `transition-all`，把宽高也包了进去——
+     这张卡在记录流里会随答案长度重排，`transition-all` 会让那次重排也走一遍动画。 */
+  const answerBtnClass = `inline-flex h-[32px] shrink-0 items-center justify-center rounded-[8px] border border-accent-primary px-4 text-[13px] font-medium transition-[background-color,color,opacity] ${
     canSubmit
       ? 'bg-accent-primary text-[var(--text-on-accent)] shadow-sm hover:opacity-90 cursor-pointer'
       : 'bg-transparent text-accent-primary opacity-60 cursor-not-allowed'
@@ -220,13 +222,20 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     </>
   );
 
+  /**
+   * 选项行：标题一档、说明一档。
+   *
+   * 卡内字号只留四档——问题标题（正文档 16）、选项标题（13）、说明文字（12）、
+   * 字段标签与提示（11）。此前这里挤了 11/12/13/14/16/17 六档，选项标题 16 与说明 14
+   * 只差两像素、又和卡上别处的 16 撞在一起，读起来层级是平的。2026-11-13 收口。
+   */
   const optionBody = (o: DecisionOption) => (
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-[3px] break-words text-[16px] font-medium leading-[1.45] text-text-primary">
+      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-[3px] break-words text-[13px] font-medium leading-[1.45] text-text-primary">
         <Inline text={o.label} />
         {tags(o)}
       </span>
-      <span className="mt-px break-words text-[14px] leading-[1.55] text-text-secondary">
+      <span className="mt-px break-words text-[12px] leading-[1.55] text-text-secondary">
         <Inline text={o.effect} />
       </span>
     </span>
@@ -240,15 +249,26 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     return `border-transparent bg-bg-primary ${live ? 'hover:bg-bg-hover' : ''} ${dim}`;
   };
 
+  /**
+   * 选项 KEY 的小方块。
+   *
+   * 短 KEY（`A`/`B`/`C`…）保持 18 像素见方的方块观感——`min-w-[18px]` 顶住下限，加不加内边距
+   * 都不变样。KEY 变长时横向自然撑开，到 72 像素封顶后截断加省略号，悬停看完整值。
+   *
+   * 此前这里是写死的 `w-[18px]`：11 号等宽字下 18 像素只装得下两三个字符，`HOLD` 就已经
+   * 往外溢，`IMPL_DYNAMIC` 这种整句直接压住标题、越过选项行边框——2026-11-13 修。
+   * 短 KEY 是常规输入，长 KEY 是历史卡片与手写区块里的遗留，两头都要接住。
+   */
   const keyBox = (o: DecisionOption, i: number) => (
     <span
-      className={`mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border font-mono text-[11px] ${
+      title={o.key}
+      className={`mt-px flex h-[18px] min-w-[18px] max-w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border px-1 font-mono text-[11px] ${
         isOn(i)
           ? 'border-text-primary bg-text-primary text-bg-primary'
           : 'border-border-strong text-text-secondary'
       }`}
     >
-      {o.key}
+      <span className="min-w-0 truncate">{o.key}</span>
     </span>
   );
 
@@ -495,9 +515,22 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
       data-testid="decision-card"
       data-type={T}
       data-state={done ? answered.kind : live ? 'open' : 'read-only'}
-      className={`mt-2 flex min-w-0 flex-col gap-2.5 rounded-[10px] bg-bg-card px-3.5 pb-3.5 pt-3 text-[16px] leading-[1.6] ${
-        irr ? 'border border-accent-warning' : 'border-0'
-      }`}
+      /* 浅色主题下卡片与页面底都是 #FFFFFF（`--bg-card` = `--bg-primary`），白压白，
+         卡片边界只剩圆角在暗示。这里补一圈内描边把它勾出来。
+         用 `box-shadow` 的 inset 而不是 `border`：border 会占内容宽度、把卡里的
+         换行位置挪一挪，而 box-shadow 画在盒内、不参与布局，卡的尺寸一个像素都不动。
+         `--border-card` 只在浅色侧有值，深色侧没定义——那条 shadow 声明在深色下
+         整条作废，等于没加（深色靠 #242424 对 #1f1f1f 的明度差已经分得开）。
+
+         **正在等人拍板的那一张走 `.ui-decision-spotlight`**：品牌绿柔和聚光外环加
+         双层边框，是全流对比度最高的一处——一屏记录扫下来，眼睛先落在「现在等你拍什么板」。
+         答过、只读、这场发不出去的那几张退回普通卡：聚光是给"还要你动手"的，
+         已经答完的再亮着，那一处就不再是信号。 */
+      className={`mt-2 flex min-w-0 flex-col gap-2.5 text-[13px] leading-[1.6] ${
+        live
+          ? 'ui-decision-spotlight'
+          : 'rounded-[10px] bg-bg-card px-3.5 pb-3.5 pt-3 [box-shadow:inset_0_0_0_1px_var(--border-card)]'
+      } ${irr ? 'border border-accent-warning' : 'border-0'}`}
     >
       <div className="flex min-w-0 items-center gap-1.5">
         {block.fromTeammate ? (
@@ -525,11 +558,13 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
           </button>
         ) : null}
       </div>
-      <div className="break-words text-[17px] font-semibold leading-[1.45] text-text-primary">
+      {/* 问题标题：卡内最大的一档，15（与全站页标题同档）。此前是 17——全站只此一处，
+          和选项标题的 16 只差一像素，层级分不开。 */}
+      <div className="break-words text-[15px] font-semibold leading-[1.45] text-text-primary">
         <Inline text={block.question} />
       </div>
       {block.why != null ? (
-        <div className="-mt-[4px] break-words text-[14px] leading-[1.6] text-text-secondary">
+        <div className="-mt-[4px] break-words text-[12px] leading-[1.6] text-text-secondary">
           <Inline text={block.why} />
         </div>
       ) : null}
@@ -573,21 +608,27 @@ export function CardAnswerBody({ answer }: { answer: ParsedCardAnswer }) {
           data-testid="card-answer-option"
           className="flex min-w-0 items-start gap-2 rounded-[8px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-[9px] pb-2 pt-[7px]"
         >
-          <span className="mt-px flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[5px] border border-text-primary bg-text-primary px-1 font-mono text-[11px] text-bg-primary">
-            {o.key}
+          {/* 与卡上的 KEY 方块同一套边界：短 KEY 保持 18 像素见方，长 KEY 撑开到 72 像素封顶后
+              截断，悬停看完整值——历史会话里 `IMPL_DYNAMIC` 这类长 KEY 的答复也撑不破气泡。 */}
+          <span
+            title={o.key}
+            className="mt-px flex h-[18px] min-w-[18px] max-w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-text-primary bg-text-primary px-1 font-mono text-[11px] text-bg-primary"
+          >
+            <span className="min-w-0 truncate">{o.key}</span>
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="break-words text-[16px] font-medium leading-[1.45] text-text-primary">
+            <span className="break-words text-[13px] font-medium leading-[1.45] text-text-primary">
               <Inline text={o.label} />
             </span>
-            <span className="mt-px break-words text-[14px] leading-[1.55] text-text-secondary">
+            <span className="mt-px break-words text-[12px] leading-[1.55] text-text-secondary">
               <Inline text={o.effect} />
             </span>
           </span>
         </div>
       ))}
+      {/* 自己写的那段：跟记录正文同一档 16，读起来是同一种字。 */}
       {answer.written ? (
-        <p className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary">
+        <p className="text-scaled-prose whitespace-pre-wrap break-words leading-[1.72] text-text-primary">
           {answer.written}
         </p>
       ) : null}

@@ -3,6 +3,7 @@ import { ExternalLink, Lightbulb, Link2, Code, GitBranch, ArrowRight, Workflow, 
 import { openPath } from '@/api';
 import type { RecipeDetail as RecipeDetailType, ToastType } from '@/types/pywebview';
 import CollapsibleSection from './CollapsibleSection';
+import InlineMarkdown from '@/components/ui/InlineMarkdown';
 
 interface RecipeOverviewProps {
   recipe: RecipeDetailType;
@@ -40,15 +41,15 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
             )}
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               recipe.category === 'atomic'
-                ? 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
-                : 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
+                ? 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+                : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'
             }`}>
               {recipe.category === 'atomic' ? t('recipes.atomic') : t('recipes.workflow')}
             </span>
           </div>
           {recipe.description && (
             <p className="text-sm text-[var(--text-secondary)] mt-2 leading-relaxed">
-              {recipe.description}
+              <InlineMarkdown content={recipe.description} />
             </p>
           )}
           <div className="flex items-center gap-1.5 mt-2 text-xs text-[var(--text-muted)] font-mono flex-wrap">
@@ -89,7 +90,7 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
       {/* What this recipe does */}
       <section className="rd-step">
         <header className="rd-step-head">
-          <Lightbulb size={16} className="text-[var(--accent-primary)]" />
+          <Lightbulb size={16} className="text-[var(--text-muted)]" />
           <span>{t('recipes.whatItDoes')}</span>
         </header>
         <div className="rd-step-body space-y-3">
@@ -97,21 +98,21 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
             <ul className="space-y-2">
               {recipe.use_cases!.map((useCase, index) => (
                 <li key={index} className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
-                  <span className="text-[var(--accent-primary)] mt-0.5">•</span>
-                  <span>{useCase}</span>
+                  <span className="text-[var(--text-muted)] mt-0.5">•</span>
+                  <span><InlineMarkdown content={useCase} /></span>
                 </li>
               ))}
             </ul>
           ) : (
             <p className="text-sm text-[var(--text-secondary)]">
-              {recipe.description || t('recipes.noDescription')}
+              <InlineMarkdown content={recipe.description || t('recipes.noDescription')} />
             </p>
           )}
 
           {hasFlow && (
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 flex-wrap text-xs text-[var(--text-secondary)]">
-                <GitBranch size={13} className="text-[var(--accent-primary)]" />
+                <GitBranch size={13} className="text-[var(--text-muted)]" />
                 {recipe.flow!.map((step, i) => (
                   <span key={step.step} className="flex items-center gap-1.5">
                     <span className="font-mono text-[var(--text-primary)]">{step.action}</span>
@@ -122,13 +123,14 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
               </div>
               <CollapsibleSection
                 title={t('recipes.viewFullFlow')}
-                icon={<GitBranch size={16} className="text-[var(--accent-primary)]" />}
+                icon={<GitBranch size={16} className="text-[var(--text-muted)]" />}
                 defaultExpanded={true}
               >
                 <div className="space-y-3">
                   {recipe.flow!.map((step, index) => (
                     <div key={step.step} className="flex items-start gap-3">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] flex items-center justify-center text-sm font-medium">
+                      {/* 步骤编号是版式记号，不是状态：中性小胶囊，不刷品牌绿。 */}
+                      <div className="rd-step-no">
                         {step.step}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -137,7 +139,7 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
                             {step.action}
                           </span>
                           {step.recipe && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)]">
+                            <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                               {t('recipes.callsRecipe')}: {step.recipe}
                             </span>
                           )}
@@ -151,7 +153,7 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
                               </span>
                             ))}
                             {step.outputs?.map((output, i) => (
-                              <span key={i} className="px-2 py-0.5 rounded bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
+                              <span key={i} className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
                                 → {output.name}
                               </span>
                             ))}
@@ -176,7 +178,7 @@ export default function RecipeOverview({ recipe, showToast, t }: RecipeOverviewP
       {hasDependencies && (
         <CollapsibleSection
           title={t('recipes.dependencies')}
-          icon={<Link2 size={16} className="text-[var(--accent-success)]" />}
+          icon={<Link2 size={16} className="text-[var(--text-muted)]" />}
           defaultExpanded={false}
         >
           <div className="flex flex-wrap gap-2">

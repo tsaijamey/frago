@@ -20,6 +20,7 @@ import * as api from '@/api';
 import { getApiMode } from '@/api';
 import type { GhCliStatus } from '@/types/api';
 import GitHubSetupModal from './GitHubSetupModal';
+import './github.css';
 
 /** How often to re-check, so a login finished in a terminal clears the banner too. */
 const POLL_INTERVAL_MS = 30_000;
@@ -100,9 +101,12 @@ export default function GitHubGuardBanner() {
 
   return (
     <>
-      <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2.5">
+      {/* 横幅走全站告警令牌（`--accent-warning` 系列），不用 Tailwind 的 `amber-*` 调色板。
+          那一套是写死的十六进制，深浅两套主题下都是同一个色——浅色主题上它的对比度掉到
+          4.5:1 以下，而令牌是逐主题调过的一对。 */}
+      <div className="github-banner">
         <div className="flex min-w-0 items-start gap-3">
-          <ShieldAlert size={18} className="mt-0.5 shrink-0 text-amber-500" />
+          <ShieldAlert size={18} className="github-banner-icon" />
           <div className="min-w-0">
             <p className="text-sm font-medium text-[var(--text-primary)]">
               {needsInstall
@@ -122,7 +126,7 @@ export default function GitHubGuardBanner() {
             type="button"
             onClick={handlePrimary}
             disabled={installRunning}
-            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-60"
+            className="github-banner-action"
           >
             {installRunning ? (
               <Loader2 size={14} className="animate-spin" />
@@ -148,7 +152,7 @@ export default function GitHubGuardBanner() {
             type="button"
             onClick={refresh}
             disabled={checking}
-            className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-50"
+            className="ui-icon-btn"
             aria-label={t('githubGuard.recheck')}
             title={t('githubGuard.recheck')}
           >

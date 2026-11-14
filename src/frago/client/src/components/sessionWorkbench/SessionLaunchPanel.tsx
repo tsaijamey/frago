@@ -204,7 +204,7 @@ export default function SessionLaunchPanel({
                     type="button"
                     data-testid="launch-back-to-edit"
                     onClick={onBackToEdit}
-                    className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-hover"
+                    className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[12px] font-medium text-text-primary hover:bg-bg-hover"
                   >
                     {t('workbench.launch.backToEdit')}
                   </button>
@@ -214,7 +214,7 @@ export default function SessionLaunchPanel({
                   data-testid="launch-dismiss"
                   onClick={onDismiss}
                   aria-label={t('workbench.launch.dismiss')}
-                  className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  className="rounded-[6px] border border-border-color bg-bg-card px-2.5 py-1 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                 >
                   {t('workbench.launch.dismiss')}
                 </button>

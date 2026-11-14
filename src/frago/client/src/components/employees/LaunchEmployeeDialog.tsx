@@ -294,7 +294,7 @@ export default function LaunchEmployeeDialog({
           >
             {employeeInitials(post.member_post_id)}
           </span>
-          <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-secondary">
+          <span className="min-w-0 flex-1 truncate text-[13px] text-text-secondary">
             {post.description || post.work_scope}
           </span>
           <span className="shrink-0 rounded-[4px] border border-border-color bg-bg-hover px-1.5 font-mono text-[11px] text-text-secondary">
@@ -317,10 +317,10 @@ export default function LaunchEmployeeDialog({
               <ChevronRight size={13} className="shrink-0 text-text-muted" />
             )}
             <Sparkles size={13} className="shrink-0 text-text-muted" />
-            <span className="shrink-0 text-[11.5px] font-semibold text-text-primary">
+            <span className="shrink-0 text-[12px] font-semibold text-text-primary">
               {t('employees.launch.contextTitle')}
             </span>
-            <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-muted">
+            <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
               {detailError
                 ? t('employees.launch.contextFailed')
                 : t('employees.launch.contextSummary', {
@@ -330,7 +330,7 @@ export default function LaunchEmployeeDialog({
                     recipes: detail?.managed_data.recipes.length ?? 0,
                   })}
             </span>
-            <span className="shrink-0 text-[11.5px] text-text-secondary">
+            <span className="shrink-0 text-[12px] text-text-secondary">
               {ctxOpen ? t('employees.launch.contextHide') : t('employees.launch.contextPreview')}
             </span>
           </button>
@@ -342,7 +342,7 @@ export default function LaunchEmployeeDialog({
                   {ctx}
                 </pre>
               ) : (
-                <p className="pt-2 text-[11.5px] text-text-muted">
+                <p className="pt-2 text-[12px] text-text-muted">
                   {detailError ?? t('employees.launch.contextLoading')}
                 </p>
               )}
@@ -354,11 +354,11 @@ export default function LaunchEmployeeDialog({
         <div className="fgrp">
           <label>{t('employees.launch.kernelLabel')}</label>
           {clients.loading && !clients.agents.length ? (
-            <p className="text-[11.5px] text-text-muted">{t('employees.launch.kernelProbing')}</p>
+            <p className="text-[12px] text-text-muted">{t('employees.launch.kernelProbing')}</p>
           ) : clients.error ? (
-            <p className="break-words text-[11.5px] text-accent-error">{clients.error}</p>
+            <p className="break-words text-[12px] text-accent-error">{clients.error}</p>
           ) : !selectable.length ? (
-            <p className="break-words text-[11.5px] text-accent-error">
+            <p className="break-words text-[12px] text-accent-error">
               {t('employees.launch.kernelNone')}
             </p>
           ) : (
@@ -378,7 +378,7 @@ export default function LaunchEmployeeDialog({
                     data-testid={`employee-kernel-${c.agent_type}`}
                     onClick={() => setAgent(c.agent_type)}
                     title={c.path ?? undefined}
-                    className={`inline-flex h-7 items-center gap-1.5 rounded-[8px] border px-[11px] text-[12.5px] transition-colors ${
+                    className={`inline-flex h-7 items-center gap-1.5 rounded-[8px] border px-[11px] text-[13px] transition-colors ${
                       selected
                         ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
                         : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
@@ -401,7 +401,7 @@ export default function LaunchEmployeeDialog({
                   onClick={() => setShowUnavailable((v) => !v)}
                   aria-expanded={showUnavailable}
                   data-testid="employee-toggle-unavailable-agents"
-                  className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11.5px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
+                  className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
                 >
                   {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   <span>
@@ -426,14 +426,14 @@ export default function LaunchEmployeeDialog({
           ) : null}
 
           {chosen?.id_origin === 'claimed' ? (
-            <p className="flex items-center gap-1.5 pt-0.5 text-[11.5px] leading-[1.45] text-text-muted">
+            <p className="flex items-center gap-1.5 pt-0.5 text-[12px] leading-[1.45] text-text-muted">
               <Info size={13} className="shrink-0 text-text-dim" />
               <span>{t('workbench.newSession.claimedHint', { name: chosen.display_name })}</span>
             </p>
           ) : null}
 
           {showUnavailable && unavailable.length ? (
-            <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-2.5 py-2 text-[11.5px] text-text-muted">
+            <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-2.5 py-2 text-[12px] text-text-muted">
               {unavailable.map((c) => (
                 <p key={c.agent_type} className="leading-relaxed">
                   <span className="font-medium text-text-secondary">{c.display_name}</span>

@@ -973,14 +973,14 @@ export default function FileViewer({
 
           <span
             data-testid="file-viewer-badge"
-            className={`shrink-0 rounded-[4px] px-1.5 py-[1px] text-[10.5px] ${
+            className={`shrink-0 rounded-[4px] px-1.5 py-[1px] text-[11px] ${
               FILE_BADGE[file.action].tone
             }`}
           >
             {t(FILE_BADGE[file.action].label)}
           </span>
           {file.count > 1 ? (
-            <span className="shrink-0 font-mono text-[10.5px] text-text-muted">
+            <span className="shrink-0 font-mono text-[11px] text-text-muted">
               {t('workbench.files.touched', { n: file.count })}
             </span>
           ) : null}
@@ -1140,7 +1140,7 @@ export default function FileViewer({
                   type="button"
                   title={row.path}
                   onClick={() => onStep(i - index)}
-                  className={`flex w-full items-center justify-between gap-1.5 rounded-[5px] px-2 py-1 text-left font-mono text-[11.5px] ${
+                  className={`flex w-full items-center justify-between gap-1.5 rounded-[5px] px-2 py-1 text-left font-mono text-[12px] ${
                     i === index
                       ? 'bg-bg-active font-medium text-text-primary'
                       : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
@@ -1312,7 +1312,7 @@ export default function FileViewer({
                     }
                   }}
                   spellCheck={false}
-                  className="min-h-0 w-full flex-1 resize-none border-0 bg-bg-base px-4 py-3 font-mono text-[12.5px] leading-[1.65] text-text-primary outline-none"
+                  className="min-h-0 w-full flex-1 resize-none border-0 bg-bg-base px-4 py-3 font-mono text-[13px] leading-[1.65] text-text-primary outline-none"
                 />
               </div>
             ) : mode === 'preview' && previewKind ? (
@@ -1333,7 +1333,7 @@ export default function FileViewer({
                       type="button"
                       data-testid="file-viewer-quick-annotate"
                       onClick={() => openLineDraft(1, 1)}
-                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[10.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                     >
                       + L1
                     </button>
@@ -1388,7 +1388,7 @@ export default function FileViewer({
                           setDraftRange(null);
                           setDraftNote('');
                         }}
-                        className="rounded-[6px] border border-border-color px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        className="rounded-[6px] border border-border-color px-2.5 py-1 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                       >
                         {t('workbench.files.annotateCancel')}
                       </button>
@@ -1397,7 +1397,7 @@ export default function FileViewer({
                         data-testid="file-viewer-inline-save"
                         disabled={!draftNote.trim()}
                         onClick={saveDraft}
-                        className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
+                        className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[12px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
                       >
                         {t('workbench.files.annotateSave')}
                       </button>
@@ -1409,7 +1409,7 @@ export default function FileViewer({
                   <div
                     data-testid="file-viewer-md-preview"
                     onMouseUp={handlePreviewMouseUp}
-                    className="mx-auto w-full max-w-[820px] flex-1 px-6 py-5 text-[13.5px] leading-[1.7] text-text-primary"
+                    className="mx-auto w-full max-w-[820px] flex-1 px-6 py-5 text-[13px] leading-[1.7] text-text-primary"
                   >
                     <MarkdownContent content={text} />
                   </div>
@@ -1438,7 +1438,7 @@ export default function FileViewer({
                       type="button"
                       data-testid="file-viewer-quick-annotate"
                       onClick={() => openLineDraft(1, 1)}
-                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[10.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      className="shrink-0 rounded-[4px] border border-border-color px-1.5 py-[1px] font-mono text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                     >
                       + L1
                     </button>
@@ -1502,7 +1502,7 @@ export default function FileViewer({
                                 data-testid="file-viewer-inline-card"
                                 className="my-1.5 ml-[52px] mr-4 flex items-start gap-2 rounded-[7px] border border-border-strong bg-bg-secondary px-2.5 py-1.5 font-sans text-[12px] text-text-primary"
                               >
-                                <span className="shrink-0 rounded-[4px] bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[10.5px] font-semibold text-accent-warning">
+                                <span className="shrink-0 rounded-[4px] bg-accent-warning-10 px-1.5 py-[1px] font-mono text-[11px] font-semibold text-accent-warning">
                                   {rangeLabel}
                                 </span>
                                 <span className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-[1.45]">
@@ -1569,7 +1569,7 @@ export default function FileViewer({
                                     setDraftRange(null);
                                     setDraftNote('');
                                   }}
-                                  className="rounded-[6px] border border-border-color px-2.5 py-1 text-[11.5px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                                  className="rounded-[6px] border border-border-color px-2.5 py-1 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                                 >
                                   {t('workbench.files.annotateCancel')}
                                 </button>
@@ -1578,7 +1578,7 @@ export default function FileViewer({
                                   data-testid="file-viewer-inline-save"
                                   disabled={!draftNote.trim()}
                                   onClick={saveDraft}
-                                  className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[11.5px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
+                                  className="rounded-[6px] border border-[var(--sel-border)] bg-[var(--sel-bg)] px-2.5 py-1 text-[12px] font-medium text-text-primary hover:bg-bg-active disabled:opacity-40"
                                 >
                                   {t('workbench.files.annotateSave')}
                                 </button>
@@ -1607,12 +1607,12 @@ export default function FileViewer({
                   </span>
                   <span
                     data-testid="file-viewer-annotations-count"
-                    className="rounded-full bg-bg-active px-2 py-[1px] font-mono text-[10.5px] text-text-secondary"
+                    className="rounded-full bg-bg-active px-2 py-[1px] font-mono text-[11px] text-text-secondary"
                   >
                     {annotations.length}
                   </span>
                 </div>
-                <div className="text-[10.5px] text-text-muted">
+                <div className="text-[11px] text-text-muted">
                   <div>{t('workbench.files.annotationsTraceHint')}</div>
                   <code
                     data-testid="file-viewer-trace-path"
@@ -1628,7 +1628,7 @@ export default function FileViewer({
                 {annotations.length === 0 ? (
                   <p
                     data-testid="file-viewer-annotations-empty"
-                    className="px-2 py-6 text-center text-[11.5px] leading-relaxed text-text-muted"
+                    className="px-2 py-6 text-center text-[12px] leading-relaxed text-text-muted"
                   >
                     {t('workbench.files.annotationsEmpty')}
                   </p>
@@ -1651,7 +1651,7 @@ export default function FileViewer({
                         className="cursor-pointer rounded-[8px] border border-border-color bg-bg-primary p-2.5 transition-colors hover:border-border-strong"
                       >
                         <div className="mb-1 flex items-center gap-1.5 text-[11px]">
-                          <span className="font-mono text-[10.5px] text-text-dim">#{idx + 1}</span>
+                          <span className="font-mono text-[11px] text-text-dim">#{idx + 1}</span>
                           <span
                             className="min-w-0 flex-1 truncate font-mono text-text-secondary"
                             title={ann.file}
@@ -1674,7 +1674,7 @@ export default function FileViewer({
                             <X size={11} />
                           </button>
                         </div>
-                        <div className="mb-1.5 truncate rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-1 font-mono text-[10.5px] text-text-muted">
+                        <div className="mb-1.5 truncate rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-1 font-mono text-[11px] text-text-muted">
                           {ann.quote}
                         </div>
                         <div className="whitespace-pre-wrap break-words text-[12px] leading-[1.45] text-text-primary">
@@ -1698,7 +1698,7 @@ export default function FileViewer({
                   <Send size={13} />
                   <span>{t('workbench.files.packToPrompt', { n: annotations.length })}</span>
                 </button>
-                <span className="text-center text-[10.5px] text-text-dim">
+                <span className="text-center text-[11px] text-text-dim">
                   {t('workbench.files.packFootHint')}
                 </span>
               </div>

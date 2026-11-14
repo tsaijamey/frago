@@ -191,3 +191,54 @@ export function moveRow<T>(rows: T[], index: number, delta: -1 | 1): T[] {
   [next[index], next[target]] = [next[target], next[index]];
   return next;
 }
+
+// ── 背景里的时间分隔 ────────────────────────────────────────────────────
+
+/** 背景里那一条分隔线：`--- 2026-09-16 · session b582… ---`。 */
+const STAMP_LINE_RE = /^-{2,}\s*(.+?)\s*-{2,}$/;
+
+export interface ContextEntry {
+  /** 分隔线上那一行字（日期、会话号），原样保留。 */
+  stamp: string;
+  /** 这一段的分隔线之下、下一条分隔线之前的正文。 */
+  body: string;
+}
+
+export interface ContextTimeline {
+  /** 第一条分隔线之前的正文。没有分隔线时它就是全部。 */
+  lead: string;
+  entries: ContextEntry[];
+}
+
+/**
+ * 把背景拆成「开头一段 + 若干条带时间戳的追加」。
+ *
+ * 事务的背景是一路追加写下来的：agent 每次接手都往末尾续一段，续之前落一条
+ * `--- 日期 · session … ---`。在命令行里那行横杠够用；摆进界面就成了一串裸露的
+ * 减号，人读到那儿会以为文件坏了。拆出来交给页面画成时间分隔线，正文一个字不动。
+ *
+ * 分隔线以外的一律当正文，NEVER 猜格式：认不出的行原样留在正文里，最坏的结果是
+ * 少画一条线，不是吃掉一句话。
+ */
+export function splitContextTimeline(context: string): ContextTimeline {
+  const lines = context.split('\n');
+  const lead: string[] = [];
+  const entries: ContextEntry[] = [];
+  let current: ContextEntry | null = null;
+
+  for (const line of lines) {
+    const match = STAMP_LINE_RE.exec(line.trim());
+    if (match) {
+      current = { stamp: match[1], body: '' };
+      entries.push(current);
+      continue;
+    }
+    if (current) current.body += `${line}\n`;
+    else lead.push(line);
+  }
+
+  return {
+    lead: lead.join('\n').trim(),
+    entries: entries.map((entry) => ({ stamp: entry.stamp, body: entry.body.trim() })),
+  };
+}

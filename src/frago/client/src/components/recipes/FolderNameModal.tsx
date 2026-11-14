@@ -61,72 +61,75 @@ export default function FolderNameModal({
   return (
     // 点遮罩不关窗。这扇窗里有人正在打字，手一滑点到旁边就把刚起的名字连同挑好
     // 的那几张配方一起丢掉，而且丢得没有任何提示。关窗只走右上角的 × 和取消——
-    // 两个都是他明确按下去的。
-    <div className="sa-modal-overlay" role="presentation">
+    // 两个都是他明确按下去的。这也是通用 Modal 组件的默认口径（dismissOnBackdrop
+    // 默认关闭），所以这里直接用 .ui-modal-* 那一套壳，不再自绘。
+    <div className="ui-modal-backdrop" role="presentation">
       <form
-        className="recipe-run-modal"
+        className="ui-modal-frame"
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
         aria-labelledby="folder-name-title"
       >
-        <div className="recipe-run-modal-header">
-          <h3 id="folder-name-title" className="recipe-run-modal-title">
+        <div className="ui-modal-head">
+          <h3 id="folder-name-title" className="ui-modal-title">
             {renaming ? t('recipes.folder.rename') : t('recipes.folder.create')}
           </h3>
           <button
             type="button"
-            className="sa-modal-close"
+            className="ui-icon-btn ui-modal-close"
             onClick={onClose}
             aria-label={t('common.close')}
           >
-            <X size={16} />
+            <X size={20} />
           </button>
         </div>
 
-        {withCount > 0 && (
-          <p className="text-sm text-[var(--text-secondary)] mb-3">
-            {t('recipes.folder.willHold', { count: withCount })}
-          </p>
-        )}
+        <div className="ui-modal-body">
+          {withCount > 0 && (
+            <p className="text-sm text-[var(--text-secondary)] mb-3">
+              {t('recipes.folder.willHold', { count: withCount })}
+            </p>
+          )}
 
-        <label className="block text-sm text-[var(--text-secondary)] mb-1" htmlFor="folder-name-zh">
-          {t('recipes.folder.nameZh')}
-        </label>
-        <input
-          id="folder-name-zh"
-          ref={firstField}
-          type="text"
-          className={field}
-          value={zh}
-          maxLength={24}
-          onChange={(e) => setZh(e.target.value)}
-          placeholder={t('recipes.folder.nameZhPlaceholder')}
-        />
+          <label className="block text-sm text-[var(--text-secondary)] mb-1" htmlFor="folder-name-zh">
+            {t('recipes.folder.nameZh')}
+          </label>
+          <input
+            id="folder-name-zh"
+            ref={firstField}
+            type="text"
+            className={field}
+            value={zh}
+            maxLength={24}
+            onChange={(e) => setZh(e.target.value)}
+            placeholder={t('recipes.folder.nameZhPlaceholder')}
+          />
 
-        <label
-          className="block text-sm text-[var(--text-secondary)] mb-1 mt-3"
-          htmlFor="folder-name-en"
-        >
-          {t('recipes.folder.nameEn')}
-        </label>
-        <input
-          id="folder-name-en"
-          type="text"
-          className={field}
-          value={en}
-          maxLength={24}
-          onChange={(e) => setEn(e.target.value)}
-          placeholder={t('recipes.folder.nameEnPlaceholder')}
-        />
+          <label
+            className="block text-sm text-[var(--text-secondary)] mb-1 mt-3"
+            htmlFor="folder-name-en"
+          >
+            {t('recipes.folder.nameEn')}
+          </label>
+          <input
+            id="folder-name-en"
+            type="text"
+            className={field}
+            value={en}
+            maxLength={24}
+            onChange={(e) => setEn(e.target.value)}
+            placeholder={t('recipes.folder.nameEnPlaceholder')}
+          />
 
-        {error && (
-          <div className="mt-3 text-sm text-[var(--accent-error)]" role="alert">
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="mt-3 text-sm text-[var(--accent-error)]" role="alert">
+              {error}
+            </div>
+          )}
+        </div>
 
-        <div className="flex justify-end gap-2 mt-4">
+        <div className="ui-modal-foot">
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </button>

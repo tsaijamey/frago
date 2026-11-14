@@ -1,15 +1,24 @@
 /**
- * InitWizardPage — Prototype-aligned single-page Initial Setup flow (#setup).
+ * InitWizardPage — 面向零先验普通用户的单页首次快速设置向导 (#setup)。
  *
- * Replaces the archaic 5-step onboarding wizard. `how-to-install-frago`
- * installs all software dependencies and writes ~/.frago/{gui_config,profiles,config}.json
- * automatically; this screen only appears in the edge case where those settings
- * files are missing (e.g., a fresh container or manual install without the skill),
- * or when previewed from Settings → "Initial setup flow".
+ * 1. 全量接入 i18n（setupWizard 命名空间），支持中文浏览器开箱 100% 纯正简体中文展示；
+ * 2. 主界面仅保留「界面与回复语言」和「选择服务商 + 粘贴 API 密钥」两步核心动作，
+ *    将协议端点、模型名与角色分配等工程参数收拢至默认折叠的高级面板（选自定义地址时自动展开）；
+ * 3. 保存后自动把密钥绑定给内置 CoreAgent、LightAgent、Observer 与后台数字员工（worker）。
  */
 
 import { useEffect, useState } from 'react';
-import { Check, AlertTriangle, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import {
+  Check,
+  AlertTriangle,
+  Loader2,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+} from 'lucide-react';
 import PageHeader from '@/components/layout/PageHeader';
 import { useAppStore } from '@/stores/appStore';
 import { usePageStore } from '@/stores/pageStore';
@@ -44,11 +53,19 @@ interface BuiltinPresetFallback {
 const FALLBACK_PRESETS: BuiltinPresetFallback[] = [
   {
     id: 'deepseek',
-    display_name: 'DeepSeek (Recommended)',
+    display_name: 'DeepSeek (deepseek-chat)',
     base_url: 'https://api.deepseek.com/anthropic',
     default_model: 'deepseek-chat',
     responses_url: 'https://api.deepseek.com',
     responses_models: ['deepseek-v4-flash'],
+  },
+  {
+    id: 'kimi',
+    display_name: 'Kimi K2 (kimi-k2-turbo-preview)',
+    base_url: 'https://api.moonshot.cn/anthropic',
+    default_model: 'kimi-k2-turbo-preview',
+    responses_url: null,
+    responses_models: [],
   },
   {
     id: 'aliyun',
@@ -79,12 +96,31 @@ const AGENT_LANGUAGES: { value: Exclude<AgentLanguage, ''>; name: string }[] = [
 ];
 
 export function InitWizardPage({ onComplete }: InitWizardPageProps) {
+  const { t, i18n } = useTranslation();
   const { config, setLanguage, updateConfig, showToast } = useAppStore();
   const switchPage = usePageStore((s) => s.switchPage);
 
-  const lang: Language = (config?.language as Language) || 'zh';
-  const agentLang: AgentLanguage = (config?.agent_language as AgentLanguage) || '';
-  const isZh = lang === 'zh';
+  const detectedLang: Language = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+  const [selectedLang, setSelectedLang] = useState<Language>(
+    (config?.language as Language) || detectedLang
+  );
+  const [selectedAgentLang, setSelectedAgentLang] = useState<AgentLanguage>(
+    (config?.agent_language as AgentLanguage) || ''
+  );
+
+  useEffect(() => {
+    if (config?.language === 'zh' || config?.language === 'en') {
+      setSelectedLang(config.language);
+    }
+  }, [config?.language]);
+
+  useEffect(() => {
+    if (config?.agent_language !== undefined) {
+      setSelectedAgentLang((config.agent_language as AgentLanguage) || '');
+    }
+  }, [config?.agent_language]);
+
+  const isZh = selectedLang === 'zh';
 
   const [mode, setMode] = useState<ConnectionMode>('endpoint');
   const [presets, setPresets] = useState<EndpointPreset[]>(FALLBACK_PRESETS as EndpointPreset[]);
@@ -92,6 +128,8 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   const [presetId, setPresetId] = useState<string>('deepseek');
   const [profileName, setProfileName] = useState<string>('deepseek');
   const [apiKey, setApiKey] = useState<string>('');
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
   const [anthropicUrl, setAnthropicUrl] = useState<string>('https://api.deepseek.com/anthropic');
   const [defaultModel, setDefaultModel] = useState<string>('deepseek-chat');
   const [responsesUrl, setResponsesUrl] = useState<string>('https://api.deepseek.com');
@@ -136,14 +174,22 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   const installedClis = cliAgents.filter((a) => a.installed);
   const isBare = installedClis.length === 0;
 
+  const getPresetDisplayLabel = (preset: { id: string; display_name: string }): string => {
+    const key = `setupWizard.presets.${preset.id}`;
+    const translated = t(key, { defaultValue: '' });
+    return translated || preset.display_name;
+  };
+
   const handlePresetChange = (nextId: string) => {
     setPresetId(nextId);
+    setError(null);
     if (nextId === 'custom') {
       setProfileName('custom');
       setAnthropicUrl('https://openrouter.ai/api');
       setDefaultModel('qwen/qwen3.7-flash');
       setResponsesUrl('');
       setResponsesModel('');
+      setShowAdvanced(true);
       return;
     }
     const found = presets.find((p) => p.id === nextId);
@@ -157,18 +203,21 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   };
 
   const handleLanguageChange = (nextLang: Language) => {
+    setSelectedLang(nextLang);
+    void i18n.changeLanguage(nextLang);
     setLanguage(nextLang);
   };
 
   const handleAgentLanguageChange = (nextAgentLang: AgentLanguage) => {
-    updateConfig({ agent_language: nextAgentLang });
+    setSelectedAgentLang(nextAgentLang);
+    void updateConfig({ agent_language: nextAgentLang });
   };
 
   const persistGuiConfig = async () => {
     try {
       await updateConfig({
-        language: lang,
-        agent_language: agentLang,
+        language: selectedLang,
+        agent_language: selectedAgentLang,
       });
     } catch {
       // Non-fatal; continue setup completion
@@ -183,7 +232,7 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
       await markInitComplete();
       onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to complete setup');
+      setError(err instanceof Error && err.message ? err.message : t('setupWizard.errorSkipFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -195,14 +244,19 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   };
 
   const handleSaveAndEnter = async () => {
+    const trimmedKey = apiKey.trim();
+    if (mode === 'endpoint' && !trimmedKey) {
+      setError(t('setupWizard.errorEmptyApiKey'));
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
       // 1. Save GUI language & agent_language -> ~/.frago/gui_config.json
       await persistGuiConfig();
 
-      // 2. If in API key profile mode and an API key is provided, create/update profile & bind roles
-      const trimmedKey = apiKey.trim();
+      // 2. In API key mode, create/update profile & bind selected roles
       if (mode === 'endpoint' && trimmedKey) {
         const cleanName = (profileName || presetId || 'deepseek').trim();
         const channels = responsesUrl.trim()
@@ -226,7 +280,7 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
         });
 
         if (createRes.status === 'error' && !createRes.error?.includes('already exists')) {
-          throw new Error(createRes.error || 'Failed to create profile');
+          throw new Error(createRes.error || t('setupWizard.errorCreateProfile'));
         }
 
         // Resolve profile ID and bind selected roles
@@ -255,32 +309,25 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
 
       // 3. Mark init_completed = true -> ~/.frago/config.json
       await markInitComplete();
-      showToast?.(
-        isZh ? '初始配置已保存，欢迎进入工作台' : 'Initial setup saved',
-        'success'
-      );
+      showToast?.(t('setupWizard.toastSaved'), 'success');
       onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save configuration');
+      setError(err instanceof Error && err.message ? err.message : t('setupWizard.errorSaveFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const inputCls =
-    'w-full rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] focus:border-[var(--text-secondary)] focus:outline-none';
+    'init-field font-mono';
   const selectCls =
-    'w-full rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1.5 text-[12px] text-[var(--text-primary)] focus:border-[var(--text-secondary)] focus:outline-none';
+    'init-field';
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)] text-[var(--text-primary)]">
       <PageHeader
-        title={isZh ? 'Initial setup · 初始配置' : 'Initial setup'}
-        meta={
-          isZh
-            ? '~/.frago 缺失设置文件 · 边界情况恢复流程'
-            : 'Settings files missing in ~/.frago · edge-case recovery flow'
-        }
+        title={t('setupWizard.pageTitle')}
+        meta={t('setupWizard.pageSubtitle')}
         secondary={
           <div className="flex items-center gap-2">
             <button
@@ -289,17 +336,17 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
               disabled={submitting}
               className="rounded-[6px] px-2.5 py-1 text-[12px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
             >
-              Settings
+              {t('setupWizard.openSettings')}
             </button>
             <button
               type="button"
               onClick={handleSkip}
               disabled={submitting}
               data-testid="setup-skip-top"
-              title="Write default config.json (init_completed=true) and open workbench immediately"
+              title={t('setupWizard.skipTopHint')}
               className="rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             >
-              {isZh ? '直接进入工作台 →' : 'Skip to workbench →'}
+              {t('setupWizard.skipTop')}
             </button>
           </div>
         }
@@ -308,127 +355,85 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
       <div className="flex-1 overflow-y-auto px-7 py-4">
         <div className="mx-auto max-w-[680px]" data-testid="setup-container">
           {/* Section Header */}
-          <div className="mb-2.5">
+          <div className="mb-3">
             <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">
-              {isZh ? 'Complete missing settings · 补齐缺失的设置文件' : 'Complete missing settings'}
+              {t('setupWizard.introTitle')}
             </h2>
-            <p className="mt-1 text-[12px] leading-[1.55] text-[var(--text-secondary)]">
-              <code className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[11px]">
-                how-to-install-frago
-              </code>{' '}
-              {isZh
-                ? '会自动装齐全部软件依赖并写入三份配置文件。本页仅在全新容器或手动安装导致 '
-                : 'installs all software dependencies and writes these settings automatically. This screen only appears when '}
-              <code className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[11px]">
-                ~/.frago/
-              </code>{' '}
-              {isZh
-                ? '下缺失设置文件时出现。'
-                : 'settings files are missing in a fresh container or manual install.'}
+            <p className="mt-1 text-[13px] leading-[1.6] text-[var(--text-secondary)]">
+              {t('setupWizard.introDesc')}
             </p>
           </div>
 
           {/* Environment Readiness Strip */}
-          {isBare ? (
-            <div
-              data-testid="setup-env-strip"
-              className="mb-2.5 flex items-center justify-between gap-3 rounded-[8px] border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] px-3 py-2 text-[12px]"
-            >
-              <div className="flex min-w-0 items-center gap-2 text-[var(--text-secondary)]">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-warning)]" />
-                <span className="truncate">
-                  {isZh ? (
-                    <>
-                      全新容器：未检测到外部 Agent CLI · 填入 API Key 后即可直接运行内置{' '}
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                        CoreAgent
-                      </code>
-                    </>
-                  ) : (
-                    <>
-                      Fresh container: 0 external agent CLIs detected · built-in{' '}
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                        CoreAgent
-                      </code>{' '}
-                      is ready once an API key is set
-                    </>
-                  )}
-                </span>
-              </div>
-              <span className="shrink-0 rounded-full border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.1)] px-2 py-0.5 text-[11px] text-[var(--accent-warning)]">
-                Software managed in Environment
+          <div
+            data-testid="setup-env-strip"
+            className="ui-bezel-card init-card init-env-strip mb-3 flex flex-wrap items-center justify-between gap-3 text-[12px]"
+          >
+            <div className="flex min-w-0 items-center gap-2 text-[var(--text-secondary)]">
+              <Sparkles size={14} className="shrink-0 text-[var(--accent-primary)]" />
+              <span>
+                {isBare
+                  ? t('setupWizard.envCoreReady')
+                  : t('setupWizard.envClisDetected', {
+                      clis: installedClis.map((c) => c.display_name).join('、'),
+                    })}
               </span>
             </div>
-          ) : (
-            <div
-              data-testid="setup-env-strip"
-              className="mb-2.5 flex items-center justify-between gap-3 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2 text-[12px]"
-            >
-              <div className="flex min-w-0 items-center gap-2 text-[var(--text-secondary)]">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-primary)]" />
-                <span className="truncate">
-                  Environment ready ·{' '}
-                  <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                    git
-                  </code>
-                  ,{' '}
-                  <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                    uv
-                  </code>
-                  ,{' '}
-                  <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px] text-[var(--text-primary)]">
-                    tmux
-                  </code>{' '}
-                  present ·{' '}
-                  {installedClis.map((c) => c.display_name).join(', ')} hooked
-                </span>
-              </div>
-              <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]">
-                Missing settings in ~/.frago
-              </span>
-            </div>
-          )}
+            <span className="shrink-0 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-subtle)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--accent-primary)]">
+              {isBare ? t('setupWizard.envCoreReadyBadge') : t('setupWizard.envClisDetectedBadge')}
+            </span>
+          </div>
 
-          {/* Card 1: Appearance & Language */}
+          {/* Card 1: Interface & Reply Language */}
           <div
             data-testid="setup-card-appearance"
-            className="mb-2.5 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-4 py-3"
+            className="ui-bezel-card init-card mb-3"
           >
-            <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
-                1. Appearance &amp; language
+                {t('setupWizard.card1Title')}
               </h3>
-              <span className="font-mono text-[11px] text-[var(--text-muted)]">
-                ~/.frago/gui_config.json
+              <span className="text-[12px] text-[var(--text-muted)]">
+                {t('setupWizard.card1Hint')}
               </span>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1">
-                <label className="text-[11.5px] font-medium text-[var(--text-secondary)]">
-                  Interface language
+                <label
+                  htmlFor="setup-lang-select"
+                  className="text-[12px] font-medium text-[var(--text-secondary)]"
+                >
+                  {t('setupWizard.interfaceLangLabel')}
                 </label>
                 <select
+                  id="setup-lang-select"
                   data-testid="setup-lang-select"
-                  value={lang}
+                  value={selectedLang}
                   onChange={(e) => handleLanguageChange(e.target.value as Language)}
                   className={selectCls}
                 >
-                  <option value="zh">简体中文 (Chinese)</option>
-                  <option value="en">English</option>
+                  <option value="zh">{t('setupWizard.interfaceLangZh')}</option>
+                  <option value="en">{t('setupWizard.interfaceLangEn')}</option>
                 </select>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[11.5px] font-medium text-[var(--text-secondary)]">
-                  Agent speaks
+                <label
+                  htmlFor="setup-agent-lang-select"
+                  className="text-[12px] font-medium text-[var(--text-secondary)]"
+                >
+                  {t('setupWizard.agentLangLabel')}
                 </label>
                 <select
+                  id="setup-agent-lang-select"
                   data-testid="setup-agent-lang-select"
-                  value={agentLang}
+                  value={selectedAgentLang}
                   onChange={(e) => handleAgentLanguageChange(e.target.value as AgentLanguage)}
                   className={selectCls}
                 >
                   <option value="">
-                    Same as interface ({isZh ? '简体中文' : 'English'})
+                    {t('setupWizard.agentLangFollow', {
+                      name: isZh ? '简体中文' : 'English',
+                    })}
                   </option>
                   {AGENT_LANGUAGES.map((l) => (
                     <option key={l.value} value={l.value}>
@@ -440,54 +445,46 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
             </div>
           </div>
 
-          {/* Card 2: Model connection & role bindings */}
+          {/* Card 2: Connect AI Model */}
           <div
             data-testid="setup-card-connection"
-            className="mb-2.5 rounded-[8px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-4 py-3"
+            className="ui-bezel-card init-card mb-3"
           >
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
-                  2. Model connection &amp; role bindings
+                  {t('setupWizard.card2Title')}
                 </h3>
-                <div className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
-                  Populates{' '}
-                  <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                    ~/.frago/profiles.json
-                  </code>{' '}
-                  and{' '}
-                  <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                    ~/.frago/config.json
-                  </code>
+                <div className="mt-0.5 text-[12px] text-[var(--text-muted)]">
+                  {t('setupWizard.card2Subtitle')}
                 </div>
               </div>
-              <div
-                role="tablist"
-                className="inline-flex rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] p-0.5"
-              >
+              <div role="tablist" className="ui-seg-group">
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={mode === 'endpoint'}
                   data-testid="setup-mode-endpoint"
-                  onClick={() => setMode('endpoint')}
-                  className={`rounded-[5px] px-2.5 py-1 text-[11.5px] transition-colors ${
-                    mode === 'endpoint'
-                      ? 'border border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
+                  onClick={() => {
+                    setMode('endpoint');
+                    setError(null);
+                  }}
+                  className={`ui-seg-pill ${mode === 'endpoint' ? 'ui-seg-pill--active' : ''}`}
                 >
-                  API key profile
+                  {t('setupWizard.modeEndpoint')}
                 </button>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={mode === 'official'}
                   data-testid="setup-mode-official"
-                  onClick={() => setMode('official')}
-                  className={`rounded-[5px] px-2.5 py-1 text-[11.5px] transition-colors ${
-                    mode === 'official'
-                      ? 'border border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
+                  onClick={() => {
+                    setMode('official');
+                    setError(null);
+                  }}
+                  className={`ui-seg-pill ${mode === 'official' ? 'ui-seg-pill--active' : ''}`}
                 >
-                  CLI login only
+                  {t('setupWizard.modeOfficial')}
                 </button>
               </div>
             </div>
@@ -496,60 +493,46 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
               <div className="divide-y divide-[var(--border-subtle)]">
                 <div className="flex items-center justify-between gap-3 py-2.5">
                   <div>
-                    <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
-                      Main agent CLIs &amp; Sub-agents (
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                        frago agent
-                      </code>
-                      )
+                    <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                      {t('setupWizard.officialMainTitle')}
                     </div>
-                    <div className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
-                      Sessions run on each CLI&apos;s own subscription login. frago writes nothing
-                      into{' '}
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                        ~/.claude/settings.json
-                      </code>
-                      .
+                    <div className="mt-0.5 text-[12px] leading-[1.5] text-[var(--text-muted)]">
+                      {t('setupWizard.officialMainDesc')}
                     </div>
                   </div>
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
                     <Check size={12} />
-                    Official subscription
+                    {t('setupWizard.officialMainBadge')}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3 pt-2.5 pb-1">
                   <div>
-                    <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
-                      LightAgent, Session observer &amp; CoreAgent
+                    <div className="text-[13px] font-medium text-[var(--text-primary)]">
+                      {t('setupWizard.officialCoreTitle')}
                     </div>
-                    <div className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
-                      Require an API endpoint key that{' '}
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                        frago-core
-                      </code>{' '}
-                      can call directly. Rules and knowledge match by keyword until you add a
-                      profile in{' '}
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                        Settings → General
-                      </code>
-                      .
+                    <div className="mt-0.5 text-[12px] leading-[1.5] text-[var(--text-muted)]">
+                      {t('setupWizard.officialCoreDesc')}
                     </div>
                   </div>
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.1)] px-2.5 py-0.5 text-[11px] text-[var(--accent-warning)]">
                     <AlertTriangle size={12} />
-                    Paused for now
+                    {t('setupWizard.officialCoreBadge')}
                   </span>
                 </div>
               </div>
             ) : (
               <div>
-                {/* Preset + Profile Name + API Key */}
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                {/* Primary 2-column row: Provider Preset + API Key */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11.5px] font-medium text-[var(--text-secondary)]">
-                      Provider preset
+                    <label
+                      htmlFor="setup-preset-select"
+                      className="text-[12px] font-medium text-[var(--text-secondary)]"
+                    >
+                      {t('setupWizard.presetLabel')}
                     </label>
                     <select
+                      id="setup-preset-select"
                       data-testid="setup-preset-select"
                       value={presetId}
                       onChange={(e) => handlePresetChange(e.target.value)}
@@ -557,212 +540,244 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
                     >
                       {presets.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.id === 'deepseek' ? 'DeepSeek (Recommended)' : p.display_name}
+                          {getPresetDisplayLabel(p)}
                         </option>
                       ))}
-                      <option value="custom">OpenRouter / Custom URL</option>
+                      <option value="custom">{t('setupWizard.presets.custom')}</option>
                     </select>
                   </div>
+
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11.5px] font-medium text-[var(--text-secondary)]">
-                      Profile name
+                    <label
+                      htmlFor="setup-api-key"
+                      className="text-[12px] font-medium text-[var(--text-secondary)]"
+                    >
+                      {t('setupWizard.apiKeyLabel')}
                     </label>
-                    <input
-                      data-testid="setup-profile-name"
-                      value={profileName}
-                      onChange={(e) => setProfileName(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11.5px] font-medium text-[var(--text-secondary)]">
-                      API Key{' '}
-                      <span className="font-mono font-normal text-[var(--text-muted)]">(0600)</span>
-                    </label>
-                    <input
-                      data-testid="setup-api-key"
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="sk-..."
-                      className={`${inputCls} font-mono`}
-                    />
+                    <div className="relative flex items-center">
+                      <input
+                        id="setup-api-key"
+                        data-testid="setup-api-key"
+                        type={showApiKey ? 'text' : 'password'}
+                        value={apiKey}
+                        onChange={(e) => {
+                          setApiKey(e.target.value);
+                          if (error) setError(null);
+                        }}
+                        placeholder={t('setupWizard.apiKeyPlaceholder')}
+                        className={`${inputCls} pr-8 font-mono`}
+                      />
+                      <button
+                        type="button"
+                        data-testid="setup-toggle-apikey-visibility"
+                        aria-label={
+                          showApiKey ? t('setupWizard.hideApiKey') : t('setupWizard.showApiKey')
+                        }
+                        title={
+                          showApiKey ? t('setupWizard.hideApiKey') : t('setupWizard.showApiKey')
+                        }
+                        onClick={() => setShowApiKey((prev) => !prev)}
+                        className="absolute right-2 inline-flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      >
+                        {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Protocol endpoints & default models */}
-                <div className="mt-2 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-3 py-2">
-                  <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-[12px] font-semibold text-[var(--text-primary)]">
-                      Protocol endpoints &amp; default models
+                <p className="mt-2 text-[12px] leading-[1.5] text-[var(--text-muted)]">
+                  {t('setupWizard.apiKeyHelper')}
+                </p>
+
+                {/* Collapsible Engineering & Role Binding Options */}
+                <div className="mt-2.5">
+                  <button
+                    type="button"
+                    data-testid="setup-advanced-toggle"
+                    aria-expanded={showAdvanced}
+                    onClick={() => setShowAdvanced((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  >
+                    {showAdvanced ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    <span>
+                      {showAdvanced
+                        ? t('setupWizard.advancedToggleHide')
+                        : t('setupWizard.advancedToggleShow')}
                     </span>
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      Anthropic → Claude / LightAgent / Observer / CoreAgent · Responses → Codex
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[var(--text-secondary)]">
-                        Anthropic API URL
-                      </label>
-                      <input
-                        value={anthropicUrl}
-                        onChange={(e) => setAnthropicUrl(e.target.value)}
-                        className={`${inputCls} font-mono py-1`}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[11px] text-[var(--text-secondary)]">
-                        Default Model
-                      </label>
-                      <input
-                        value={defaultModel}
-                        onChange={(e) => setDefaultModel(e.target.value)}
-                        className={`${inputCls} font-mono py-1`}
-                      />
-                    </div>
-                  </div>
-                  {(responsesUrl || presetId === 'deepseek' || presetId === 'volcengine_plan') && (
-                    <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  </button>
+
+                  {showAdvanced && (
+                    <div
+                      data-testid="setup-advanced-panel"
+                      className="init-advanced mt-2 space-y-2.5"
+                    >
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] text-[var(--text-secondary)]">
-                          OpenAI Responses URL (Codex)
+                        <label
+                          htmlFor="setup-profile-name"
+                          className="text-[11px] font-medium text-[var(--text-secondary)]"
+                        >
+                          {t('setupWizard.profileNameLabel')}
                         </label>
                         <input
-                          value={responsesUrl}
-                          onChange={(e) => setResponsesUrl(e.target.value)}
-                          className={`${inputCls} font-mono py-1`}
+                          id="setup-profile-name"
+                          data-testid="setup-profile-name"
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          className={inputCls}
                         />
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[11px] text-[var(--text-secondary)]">
-                          Responses Model
-                        </label>
-                        <input
-                          value={responsesModel}
-                          onChange={(e) => setResponsesModel(e.target.value)}
-                          className={`${inputCls} font-mono py-1`}
-                        />
+
+                      {/* Protocol endpoints & default models */}
+                      <div className="pt-1">
+                        <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-[12px] font-semibold text-[var(--text-primary)]">
+                            {t('setupWizard.endpointsSectionTitle')}
+                          </span>
+                          <span className="text-[11px] text-[var(--text-muted)]">
+                            {t('setupWizard.endpointsSectionHint')}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[11px] text-[var(--text-secondary)]">
+                              {t('setupWizard.anthropicUrlLabel')}
+                            </label>
+                            <input
+                              value={anthropicUrl}
+                              onChange={(e) => setAnthropicUrl(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[11px] text-[var(--text-secondary)]">
+                              {t('setupWizard.defaultModelLabel')}
+                            </label>
+                            <input
+                              value={defaultModel}
+                              onChange={(e) => setDefaultModel(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                        </div>
+                        {(responsesUrl ||
+                          presetId === 'deepseek' ||
+                          presetId === 'volcengine_plan' ||
+                          presetId === 'custom') && (
+                          <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[var(--text-secondary)]">
+                                {t('setupWizard.responsesUrlLabel')}
+                              </label>
+                              <input
+                                value={responsesUrl}
+                                onChange={(e) => setResponsesUrl(e.target.value)}
+                                className={inputCls}
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] text-[var(--text-secondary)]">
+                                {t('setupWizard.responsesModelLabel')}
+                              </label>
+                              <input
+                                value={responsesModel}
+                                onChange={(e) => setResponsesModel(e.target.value)}
+                                className={inputCls}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Role bindings */}
+                      <div className="pt-1">
+                        <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-[12px] font-semibold text-[var(--text-primary)]">
+                            {t('setupWizard.rolesSectionTitle')}
+                          </span>
+                          <span className="text-[11px] text-[var(--text-muted)]">
+                            {t('setupWizard.rolesSectionHint', {
+                              name: profileName || t('setupWizard.defaultProfileFallback'),
+                            })}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="init-check-row">
+                            <input
+                              type="checkbox"
+                              checked={bindCoreRoles}
+                              onChange={(e) => setBindCoreRoles(e.target.checked)}
+                              className="mt-0.5"
+                            />
+                            <div>
+                              <div className="font-medium text-[var(--text-primary)]">
+                                {t('setupWizard.roleCoreTitle')}
+                              </div>
+                              <div className="text-[11px] text-[var(--text-muted)]">
+                                {t('setupWizard.roleCoreDesc')}
+                              </div>
+                            </div>
+                          </label>
+
+                          <label className="init-check-row">
+                            <input
+                              type="checkbox"
+                              checked={bindWorker}
+                              onChange={(e) => setBindWorker(e.target.checked)}
+                              className="mt-0.5"
+                            />
+                            <div>
+                              <div className="font-medium text-[var(--text-primary)]">
+                                {t('setupWizard.roleWorkerTitle')}
+                              </div>
+                              <div className="text-[11px] text-[var(--text-muted)]">
+                                {t('setupWizard.roleWorkerDesc')}
+                              </div>
+                            </div>
+                          </label>
+
+                          <label className={`init-check-row ${isBare ? 'is-disabled' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={bindMain}
+                              disabled={isBare}
+                              onChange={(e) => setBindMain(e.target.checked)}
+                              className="mt-0.5"
+                            />
+                            <div>
+                              <div className="font-medium text-[var(--text-primary)]">
+                                {t('setupWizard.roleMainTitle')}
+                              </div>
+                              <div className="text-[11px] text-[var(--text-muted)]">
+                                {isBare
+                                  ? t('setupWizard.roleMainDescBare')
+                                  : t('setupWizard.roleMainDescInstalled')}
+                              </div>
+                            </div>
+                          </label>
+                        </div>
                       </div>
                     </div>
                   )}
-                </div>
-
-                {/* Role bindings */}
-                <div className="mt-2 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-3 py-2">
-                  <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-[12px] font-semibold text-[var(--text-primary)]">
-                      Role bindings (
-                      <code className="rounded bg-[var(--bg-hover)] px-1 py-0.5 font-mono text-[11px]">
-                        Connections by role
-                      </code>
-                      )
-                    </span>
-                    <span className="text-[11px] text-[var(--text-muted)]">
-                      Roles bound to <b>{profileName || 'this profile'}</b> on startup
-                    </span>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="flex cursor-pointer items-start gap-2.5 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[12px]">
-                      <input
-                        type="checkbox"
-                        checked={bindCoreRoles}
-                        onChange={(e) => setBindCoreRoles(e.target.checked)}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div>
-                          <b className="font-medium text-[var(--text-primary)]">
-                            LightAgent, Session observer &amp; CoreAgent
-                          </b>{' '}
-                          <span className="ml-1 rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
-                            frago-core
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-[var(--text-muted)]">
-                          Pre-turn prompt guidance (
-                          <code className="font-mono">hook_review.enabled = true</code>), live
-                          observer digests &amp; built-in CoreAgent
-                        </div>
-                      </div>
-                    </label>
-
-                    <label className="flex cursor-pointer items-start gap-2.5 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[12px]">
-                      <input
-                        type="checkbox"
-                        checked={bindWorker}
-                        onChange={(e) => setBindWorker(e.target.checked)}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div>
-                          <b className="font-medium text-[var(--text-primary)]">
-                            Sub-agents (
-                            <code className="font-mono text-[11px]">frago agent</code>)
-                          </b>{' '}
-                          <span className="ml-1 rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
-                            worker
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-[var(--text-muted)]">
-                          Background workers dispatched in tmux run on this connection without
-                          touching your main terminal login
-                        </div>
-                      </div>
-                    </label>
-
-                    <label
-                      className={`flex items-start gap-2.5 rounded-[6px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[12px] ${
-                        isBare ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={bindMain}
-                        disabled={isBare}
-                        onChange={(e) => setBindMain(e.target.checked)}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div>
-                          <b className="font-medium text-[var(--text-primary)]">
-                            Main agent CLIs (Claude Code / codex)
-                          </b>{' '}
-                          <span className="ml-1 rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--text-muted)]">
-                            main
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-[var(--text-muted)]">
-                          {isBare
-                            ? 'No external agent CLI installed in this container — sessions default to CoreAgent'
-                            : "Leave unchecked to keep your CLI's own official subscription login untouched"}
-                        </div>
-                      </div>
-                    </label>
-                  </div>
                 </div>
               </div>
             )}
           </div>
 
           {error && (
-            <div className="mb-2.5 rounded-[6px] border border-[rgba(239,68,68,0.35)] bg-[rgba(239,68,68,0.1)] px-3 py-2 text-[12px] text-[var(--accent-error)]">
+            <div
+              data-testid="setup-error-banner"
+              role="alert"
+              className="mb-3 rounded-[6px] border border-[rgba(239,68,68,0.35)] bg-[rgba(239,68,68,0.1)] px-3 py-2 text-[12px] text-[var(--accent-error)]"
+            >
               {error}
             </div>
           )}
 
           {/* Footer Action Row */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div className="text-[11.5px] text-[var(--text-muted)]">
-              Writes{' '}
-              <code className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[11px]">
-                init_completed: true
-              </code>{' '}
-              to{' '}
-              <code className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 font-mono text-[11px]">
-                ~/.frago/config.json
-              </code>
+            <div className="text-[12px] text-[var(--text-muted)]">
+              {t('setupWizard.footerPrivacyNote')}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -772,7 +787,7 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
                 disabled={submitting}
                 className="rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-3 py-1.5 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
               >
-                Skip for now
+                {t('setupWizard.skipBottom')}
               </button>
               <button
                 type="button"
@@ -783,8 +798,8 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
               >
                 {submitting && <Loader2 size={13} className="animate-spin" />}
                 {mode === 'official'
-                  ? 'Save language & enter workbench'
-                  : 'Save & enter workbench'}
+                  ? t('setupWizard.saveLangAndEnter')
+                  : t('setupWizard.saveAndEnter')}
               </button>
             </div>
           </div>

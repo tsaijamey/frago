@@ -699,7 +699,7 @@ export default function Composer({
                   data-earliest={idx === 0 ? 'yes' : 'no'}
                   className="flex min-w-0 items-center gap-2 rounded-[7px] border border-border-color bg-bg-primary px-2.5 py-1.5"
                 >
-                  <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">
                     #{idx + 1}
                   </span>
                   {idx === 0 ? (
@@ -821,7 +821,7 @@ export default function Composer({
                       {msg.text || (msg.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
                     </span>
                     {msg.attachments ? (
-                      <span className="shrink-0 text-[11px] text-text-muted">
+                      <span className="shrink-0 text-[11px] tabular-nums text-text-muted">
                         {t('workbench.composer.outboundAttachments', { n: msg.attachments })}
                       </span>
                     ) : null}
@@ -941,7 +941,7 @@ export default function Composer({
                     {t('workbench.composer.packedBanner', { n: packedBanner.count })}
                   </strong>
                   <span className="mx-1.5 text-text-dim">·</span>
-                  <code className="font-mono text-[10.5px] text-text-muted">
+                  <code className="font-mono text-[11px] text-text-muted">
                     {packedBanner.tracePath}
                   </code>
                 </span>

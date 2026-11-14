@@ -359,7 +359,7 @@ function MermaidDiagram({ source }: { source: string }) {
       <div
         ref={host}
         data-testid="mermaid-diagram"
-        className="flex justify-center overflow-x-auto rounded-[10px] border border-border-color bg-bg-secondary px-3.5 pb-3.5 pt-10 [&_svg]:h-auto [&_svg]:max-w-full"
+        className="mermaid-diagram flex justify-center overflow-x-auto rounded-[10px] border border-border-color bg-bg-secondary px-3.5 pb-3.5 pt-10 [&_svg]:h-auto [&_svg]:max-w-full"
         // mermaid 以 strict 安全级别渲染，输出的 SVG 已经过它自己的净化
         dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
       >
@@ -451,27 +451,25 @@ function DiagramViewer({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="ui-modal-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="mx-4 flex max-h-[88vh] w-[min(1280px,92vw)] flex-col overflow-hidden rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] shadow-xl">
-        <header className="flex items-center gap-2 border-b border-[var(--border-color)] px-3 py-2">
-          <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text-secondary">
-            {title}
-          </span>
+      <div className="ui-modal-frame ui-modal-frame--wide">
+        <header className="ui-modal-head">
+          <span className="ui-modal-title">{title}</span>
           <button
             type="button"
             onClick={onClose}
             aria-label={closeLabel}
             title={closeLabel}
-            className="shrink-0 text-text-muted hover:text-text-primary"
+            className="ui-icon-btn ui-modal-close"
           >
             <X size={17} />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-auto bg-bg-secondary p-4">
+        <div className="ui-modal-body ui-modal-body--flush">
           <div
             ref={hostRef}
             style={width > 0 ? { minWidth: width } : undefined}

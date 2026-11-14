@@ -96,7 +96,7 @@ export default function SendProgress({
                   : t(STEP_LABEL_KEY[step])}
               </span>
               {step === last && !answeredIn ? (
-                <span className="font-mono text-text-dim">{formatClock(trail.steps[step] ?? 0)}</span>
+                <span className="font-mono tabular-nums text-text-dim">{formatClock(trail.steps[step] ?? 0)}</span>
               ) : null}
             </span>
           </Fragment>

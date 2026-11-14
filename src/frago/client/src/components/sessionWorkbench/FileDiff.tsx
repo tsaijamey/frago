@@ -83,7 +83,7 @@ export default function FileDiff({ diff, loading, error }: FileDiffProps) {
 
   return (
     <div data-testid="file-diff" className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 border-b border-border-color bg-bg-secondary px-3 py-[6px] text-[11.5px] leading-relaxed text-text-muted">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-border-color bg-bg-secondary px-3 py-[6px] text-[12px] leading-relaxed text-text-muted">
         <Info size={13} className="shrink-0 text-text-dim" />
         <span>{note}</span>
       </div>
@@ -91,7 +91,7 @@ export default function FileDiff({ diff, loading, error }: FileDiffProps) {
       {!changed ? (
         <p
           data-testid="file-diff-same"
-          className="shrink-0 border-b border-border-color px-3 py-[6px] text-[11.5px] text-text-muted"
+          className="shrink-0 border-b border-border-color px-3 py-[6px] text-[12px] text-text-muted"
         >
           {t('workbench.files.diffSame', { source: source ?? 'git' })}
         </p>
@@ -112,7 +112,7 @@ export default function FileDiff({ diff, loading, error }: FileDiffProps) {
           一行一张网格，行高就按这一行的内容长。改回去之前先看一眼这条注释。 */}
       <div
         data-testid="file-diff-rows"
-        className="min-h-0 flex-1 overflow-auto font-mono text-[11.5px] leading-[1.62]"
+        className="min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-[1.62]"
       >
         {rows.map(([left, right], i) => (
           <div

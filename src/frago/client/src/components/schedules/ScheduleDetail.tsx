@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { ExternalLink, Loader2, Pause, Play, Trash2, X, Zap } from 'lucide-react';
 import type { ScheduleHistoryEntry, ScheduleItem } from '@/api';
 import { usePageStore } from '@/stores/appStore';
+import MarkdownContent from '@/components/ui/MarkdownContent';
 import ScheduleStateIcon from './ScheduleStateIcon';
 import {
   STATE_CHIP,
@@ -96,7 +97,10 @@ function HistoryRow({ entry }: { entry: ScheduleHistoryEntry }) {
       {entry.answer && (
         <div className="sc-run-answer">
           <div className="sc-run-answer-label">{t('schedules.history.answer')}</div>
-          <pre className="sc-run-answer-body">{entry.answer}</pre>
+          {/* CoreAgent 交回来的是 Markdown：`**结论：…**` 这种写法此前被当成纯文本
+              原样印出，屏幕上是一串星号。这一行本来就是整条记录里唯一一段人要逐字读的
+              东西，交给统一的渲染器摆，重点号、列表、链接才各归各位。 */}
+          <MarkdownContent className="sc-run-answer-body" content={entry.answer} />
         </div>
       )}
       {entry.session_id && (
@@ -156,19 +160,28 @@ export default function ScheduleDetail({
   };
 
   return (
-    <div className="td-panel tdp-panel">
-      <div className="td-head">
+    <div className="td-panel tdp-panel ui-drawer">
+      <div className="td-head ui-drawer-head">
         <div className="min-w-0 flex-1">
-          <h2 className="td-title">{schedule.name}</h2>
+          <h2 className="td-title ui-drawer-title">{schedule.name}</h2>
           <div className="td-id">{schedule.id}</div>
         </div>
-        <button type="button" className="td-close" onClick={onClose} aria-label={t('common.close')}>
-          <X size={16} />
-        </button>
+        <div className="ui-drawer-actions">
+          <button
+            type="button"
+            className="td-close ui-icon-btn"
+            onClick={onClose}
+            aria-label={t('common.close')}
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
+      <div className="ui-drawer-body tdp-drawer-body">
       {/* 动作排序：立即跑是最常用的，实心放最前；启停跟在后面；删除推到最右端，
-          跟常用动作隔开一段，手不容易顺势点到。 */}
+          跟常用动作隔开一段，手不容易顺势点到。删除走全站统一的危险动作语言——
+          红色描边胶囊，不再是一枚孤立的垃圾桶小图标。 */}
       <div className="sc-actions">
         <button
           type="button"
@@ -194,7 +207,7 @@ export default function ScheduleDetail({
           <span className="sc-actions-danger">
             <button
               type="button"
-              className="sc-action sc-action--danger"
+              className="ui-danger-pill"
               onClick={onRemove}
               disabled={busy !== null}
             >
@@ -213,7 +226,7 @@ export default function ScheduleDetail({
         ) : (
           <button
             type="button"
-            className="sc-action sc-action--quiet sc-actions-danger"
+            className="ui-danger-pill sc-actions-danger"
             onClick={() => setConfirmRemove(true)}
             disabled={busy !== null}
           >
@@ -328,6 +341,7 @@ export default function ScheduleDetail({
             </ul>
           )}
         </Section>
+      </div>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@
  * 3. AI 服务商 — 5-column provider & protocol routing table with live reverse-reference chips
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   getMainConfig,
@@ -35,6 +35,8 @@ import type {
 import type { MainConfig } from '@/types/pywebview';
 import {
   AlertTriangle,
+  ArrowDownAZ,
+  ArrowUpZA,
   Check,
   Code,
   Eye,
@@ -51,6 +53,13 @@ import {
 } from 'lucide-react';
 import ProfileManager from '@/components/settings/ProfileManager';
 import type { InitialProfileModalMode } from '@/components/settings/useProfiles';
+import {
+  formatProviderMetaEndpoint,
+  readProfileSortOrder,
+  sortProfilesByName,
+  writeProfileSortOrder,
+  type ProfileSortOrder,
+} from '@/components/settings/profileSort';
 import Modal from '@/components/ui/Modal';
 
 export type GeneralSubTab = 'harnesses' | 'sidecar' | 'profiles';
@@ -201,6 +210,19 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const [modalMode, setModalMode] = useState<InitialProfileModalMode>('list');
   const [editingProfile, setEditingProfile] = useState<ProfileItem | null>(null);
   const [deletingProfile, setDeletingProfile] = useState<ProfileItem | null>(null);
+  const [profileSortOrder, setProfileSortOrder] = useState<ProfileSortOrder>(() =>
+    readProfileSortOrder(),
+  );
+
+  const handleChangeProfileSortOrder = (nextOrder: ProfileSortOrder) => {
+    setProfileSortOrder(nextOrder);
+    writeProfileSortOrder(nextOrder);
+  };
+
+  const sortedProfiles = useMemo(
+    () => sortProfilesByName(profiles, profileSortOrder),
+    [profiles, profileSortOrder],
+  );
 
   useEffect(() => {
     void loadData();
@@ -536,7 +558,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const hookReviewEnabled = hookReview ? hookReview.enabled : true;
 
   const renderSidecarOptions = (useDefaultModel = false) =>
-    profiles.map((p) => {
+    sortedProfiles.map((p) => {
       if (p.kind === 'workbuddy') {
         return (
           <option key={p.id} value={p.id} disabled>
@@ -590,44 +612,48 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
         </div>
       )}
 
-      {/* 顶部三段子视图切换器 */}
+      {/* 顶部三段子视图切换器：走全站统一的 C6 分段胶囊，计数内嵌在胶囊里。 */}
       <div className="g-topbar">
-        <div className="g-seg" role="tablist" aria-label={t('settings.general.tabs.ariaLabel')}>
+        <div
+          className="ui-seg-group"
+          role="tablist"
+          aria-label={t('settings.general.tabs.ariaLabel')}
+        >
           <button
             type="button"
             role="tab"
             aria-selected={subTab === 'harnesses'}
-            className={subTab === 'harnesses' ? 'on' : ''}
+            className={`ui-seg-pill ${subTab === 'harnesses' ? 'ui-seg-pill--active' : ''}`}
             onClick={() => setSubTab('harnesses')}
             data-testid="general-tab-harnesses"
           >
             <Terminal size={13} />
             <span>{t('settings.general.tabs.harnesses')}</span>
-            <span className="cnt">{harnesses.length}</span>
+            <span className="ui-seg-count">{harnesses.length}</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={subTab === 'sidecar'}
-            className={subTab === 'sidecar' ? 'on' : ''}
+            className={`ui-seg-pill ${subTab === 'sidecar' ? 'ui-seg-pill--active' : ''}`}
             onClick={() => setSubTab('sidecar')}
             data-testid="general-tab-sidecar"
           >
             <Sparkles size={13} />
             <span>{t('settings.general.tabs.sidecar')}</span>
-            <span className="cnt">4</span>
+            <span className="ui-seg-count">4</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={subTab === 'profiles'}
-            className={subTab === 'profiles' ? 'on' : ''}
+            className={`ui-seg-pill ${subTab === 'profiles' ? 'ui-seg-pill--active' : ''}`}
             onClick={() => setSubTab('profiles')}
             data-testid="general-tab-profiles"
           >
             <KeyRound size={13} />
             <span>{t('settings.general.tabs.profiles')}</span>
-            <span className="cnt">{profiles.length}</span>
+            <span className="ui-seg-count">{profiles.length}</span>
           </button>
         </div>
       </div>
@@ -640,14 +666,15 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
               <div className="ssec-h">
                 <div>
                   <h3>{t('settings.general.harnesses.title')}</h3>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {t('settings.general.harnesses.subtitle')}
-                  </div>
+                  <div className="ssec-sub">{t('settings.general.harnesses.subtitle')}</div>
                 </div>
+                {/* 「全部切回原生登录」是丢弃所有自定义服务商路由的批量动作，所以走统一的
+                    危险胶囊（红色描边、单行不换行）。从前它是一枚普通描边小按钮，文案在
+                    窄列里被折成两行，读起来像一句说明而不是一个按钮。 */}
                 {hasAnyNonOfficialHarness && (
                   <button
                     type="button"
-                    className="btn btn-sm"
+                    className="ui-danger-pill"
                     disabled={busyKey !== null}
                     onClick={handleRevertAllHarnesses}
                     data-testid="revert-all-harnesses-btn"
@@ -661,15 +688,15 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                 <table className="htbl">
                   <thead>
                     <tr>
-                      <th style={{ width: '29%' }}>
+                      <th style={{ width: '24%' }}>
                         {t('settings.general.harnesses.colTool')}
                         <span className="sub">{t('settings.general.harnesses.colToolSub')}</span>
                       </th>
-                      <th style={{ width: '35.5%' }}>
+                      <th style={{ width: '38%' }}>
                         {t('settings.general.harnesses.colDaily')}
                         <span className="sub">{t('settings.general.harnesses.colDailySub')}</span>
                       </th>
-                      <th style={{ width: '35.5%' }}>
+                      <th style={{ width: '38%' }}>
                         {t('settings.general.harnesses.colWorker')}
                         <span className="sub">{t('settings.general.harnesses.colWorkerSub')}</span>
                       </th>
@@ -715,6 +742,18 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                               aria-label={t('settings.general.harnesses.dailySelectAria', {
                                 name: h.display_name,
                               })}
+                              /* 原生下拉在框内只画得下它画得下的部分，「服务商名 · 模型名」这类
+                                 长值会被截成 `OpenRouter DeepSeek · deepseek-v…`。框内截断改不了，
+                                 但悬停时该给出完整值。 */
+                              title={
+                                curMain === 'official'
+                                  ? isBuiltin
+                                    ? t('settings.general.harnesses.optAutoFallback')
+                                    : t('settings.general.harnesses.optNativeLogin')
+                                  : mainP
+                                    ? `${mainP.name}${mainModel ? ` · ${mainModel}` : ''}`
+                                    : curMain
+                              }
                               value={curMain}
                               disabled={busyKey !== null}
                               onChange={(e) =>
@@ -726,7 +765,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                                   ? t('settings.general.harnesses.optAutoFallback')
                                   : t('settings.general.harnesses.optNativeLogin')}
                               </option>
-                              {profiles.map((p) => {
+                              {sortedProfiles.map((p) => {
                                 if (p.kind === 'workbuddy') {
                                   return (
                                     <option key={p.id} value={p.id} disabled>
@@ -814,6 +853,18 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                                 t('settings.general.harnesses.subKeepNative')
                               )}
                             </div>
+                            {/* 这一行是「压缩线现在落在哪」唯一的可见处：内核读的是这条
+                                连接自己的窗口，声明了就在这里显示，没声明就说明它按模型名兜底。 */}
+                            <div
+                              className="cell-sub"
+                              data-testid={`harness-window-${h.agent_type}`}
+                            >
+                              {h.context_window
+                                ? t('settings.general.harnesses.contextWindowOnConnection', {
+                                    window: h.context_window.toLocaleString(),
+                                  })
+                                : t('settings.general.harnesses.contextWindowUnknown')}
+                            </div>
                           </td>
                           <td>
                             <select
@@ -821,6 +872,15 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                               aria-label={t('settings.general.harnesses.workerSelectAria', {
                                 name: h.display_name,
                               })}
+                              title={
+                                curWorker === 'follow'
+                                  ? t('settings.general.harnesses.optFollowDaily')
+                                  : curWorker === 'official'
+                                    ? t('settings.general.harnesses.optForceNative')
+                                    : workerP
+                                      ? `${workerP.name}${workerModel ? ` · ${workerModel}` : ''}`
+                                      : curWorker
+                              }
                               value={curWorker}
                               disabled={busyKey !== null}
                               onChange={(e) =>
@@ -835,7 +895,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                                   {t('settings.general.harnesses.optForceNative')}
                                 </option>
                               )}
-                              {profiles.map((p) => {
+                              {sortedProfiles.map((p) => {
                                 if (p.kind === 'workbuddy') {
                                   return (
                                     <option key={p.id} value={p.id} disabled>
@@ -936,7 +996,6 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
             <div className="dzone-bar-r">
               <select
                 className="sselect"
-                style={{ width: 248, height: 28, fontSize: 12 }}
                 aria-label={t('settings.general.danger.selectAria')}
                 value={selectedDangerAgent}
                 onChange={(e) => setSelectedDangerAgent(e.target.value)}
@@ -951,8 +1010,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
               </select>
               <button
                 type="button"
-                className="btn btn-sm danger-out"
-                style={{ height: 28, fontSize: 12 }}
+                className="ui-danger-pill"
                 onClick={handleOpenInVSCode}
                 data-testid="open-in-vscode-btn"
               >
@@ -971,9 +1029,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
             <div className="ssec-h">
               <div>
                 <h3>{t('settings.general.sidecar.title')}</h3>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {t('settings.general.sidecar.subtitle')}
-                </div>
+                <div className="ssec-sub">{t('settings.general.sidecar.subtitle')}</div>
               </div>
             </div>
 
@@ -1337,11 +1393,39 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                 <h3>
                   {t('settings.general.providers.title', { count: profiles.length })}
                 </h3>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {t('settings.general.providers.subtitle')}
-                </div>
+                <div className="ssec-sub">{t('settings.general.providers.subtitle')}</div>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div className="ssec-actions">
+                <div
+                  className="ui-seg-group"
+                  role="group"
+                  aria-label={t('settings.general.providers.sortAria')}
+                >
+                  <button
+                    type="button"
+                    className={`ui-seg-pill ${profileSortOrder === 'asc' ? 'ui-seg-pill--active' : ''}`}
+                    style={{ height: 22, padding: '0 8px', fontSize: 11.5 }}
+                    aria-pressed={profileSortOrder === 'asc'}
+                    title={t('settings.general.providers.sortAscTitle')}
+                    onClick={() => handleChangeProfileSortOrder('asc')}
+                    data-testid="profile-sort-asc"
+                  >
+                    <ArrowDownAZ size={13} />
+                    <span>{t('settings.general.providers.sortAsc')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ui-seg-pill ${profileSortOrder === 'desc' ? 'ui-seg-pill--active' : ''}`}
+                    style={{ height: 22, padding: '0 8px', fontSize: 11.5 }}
+                    aria-pressed={profileSortOrder === 'desc'}
+                    title={t('settings.general.providers.sortDescTitle')}
+                    onClick={() => handleChangeProfileSortOrder('desc')}
+                    data-testid="profile-sort-desc"
+                  >
+                    <ArrowUpZA size={13} />
+                    <span>{t('settings.general.providers.sortDesc')}</span>
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -1369,8 +1453,32 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
               <table className="stbl">
                 <thead>
                   <tr>
-                    <th style={{ width: '22%' }}>
-                      {t('settings.general.providers.colProvider')}
+                    <th
+                      style={{ width: '22%' }}
+                      aria-sort={profileSortOrder === 'asc' ? 'ascending' : 'descending'}
+                    >
+                      <button
+                        type="button"
+                        className="stbl-sort-btn"
+                        title={
+                          profileSortOrder === 'asc'
+                            ? t('settings.general.providers.sortDescTitle')
+                            : t('settings.general.providers.sortAscTitle')
+                        }
+                        onClick={() =>
+                          handleChangeProfileSortOrder(
+                            profileSortOrder === 'asc' ? 'desc' : 'asc',
+                          )
+                        }
+                        data-testid="profile-sort-toggle"
+                      >
+                        <span>{t('settings.general.providers.colProvider')}</span>
+                        {profileSortOrder === 'asc' ? (
+                          <ArrowDownAZ size={13} />
+                        ) : (
+                          <ArrowUpZA size={13} />
+                        )}
+                      </button>
                     </th>
                     <th style={{ width: '21%' }}>
                       {t('settings.general.providers.colProtocols')}
@@ -1387,7 +1495,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                   </tr>
                 </thead>
                 <tbody>
-                  {profiles.length === 0 ? (
+                  {sortedProfiles.length === 0 ? (
                     <tr>
                       <td
                         colSpan={5}
@@ -1397,13 +1505,18 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                       </td>
                     </tr>
                   ) : (
-                    profiles.map((p) => {
+                    sortedProfiles.map((p) => {
                       const isRet = p.kind === 'workbuddy';
                       const isVendor = p.kind === 'vendor_cli';
                       const refs = refsByProfile[p.id] || [];
                       const protoTags = getProfileProtocolTags(p);
+                      const primaryModel =
+                        p.default_model ||
+                        p.channels?.find((ch) => ch.models && ch.models.length > 0)?.models[0] ||
+                        null;
+                      const endpointLabel = formatProviderMetaEndpoint(p);
                       const ctxParts: string[] = [];
-                      if (p.haiku_model) {
+                      if (p.haiku_model && p.haiku_model !== primaryModel) {
                         ctxParts.push(
                           t('settings.general.providers.lightPrefix', { model: p.haiku_model }),
                         );
@@ -1434,14 +1547,14 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                            <div className="provider-meta">
                               {isRet
                                 ? t('settings.general.providers.metaRetired')
                                 : isVendor
                                   ? t('settings.general.providers.metaVendor', {
                                       core: p.agent_type || 'agy',
                                     })
-                                  : `${p.endpoint_type}${p.api_key_masked ? ` · ${p.api_key_masked}` : ''}`}
+                                  : `${endpointLabel}${p.api_key_masked ? ` · ${p.api_key_masked}` : ''}`}
                             </div>
                           </td>
                           <td>
@@ -1463,18 +1576,16 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                               )}
                             </div>
                           </td>
-                          <td className="mono" style={{ fontSize: 11.5 }}>
+                          <td className="mono">
                             {isRet ? (
                               <span style={{ color: 'var(--text-muted)' }}>—</span>
                             ) : (
                               <>
                                 <div>
-                                  {p.default_model || t('settings.general.providers.modelDefault')}
+                                  {primaryModel || t('settings.general.providers.modelDefault')}
                                 </div>
                                 {ctxParts.length > 0 && (
-                                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                                    {ctxParts.join(' · ')}
-                                  </div>
+                                  <div className="provider-model-sub">{ctxParts.join(' · ')}</div>
                                 )}
                               </>
                             )}

@@ -51,6 +51,38 @@ export function employeeSummary(post: Pick<EmployeePost, 'description' | 'work_s
   return first.trim();
 }
 
+/** 摘要里的一段：普通文字，还是被反引号圈起来的词。 */
+export interface SummaryPart {
+  text: string;
+  code: boolean;
+}
+
+/**
+ * 把摘要里成对反引号圈起来的词切成代码段，其余照旧。
+ *
+ * 岗位说明里常写成「负责 `frago` 与 `frago-core` 两套代码」。这些反引号是 Markdown 的
+ * 写法，铺到卡片上就成了字面量——屏幕上散着几个反引号字符，两行一截断更像排版漏了没清。
+ * 这里把它们拆出来交给界面渲染成微样式代码词，卡片表面就只剩干净的词。
+ *
+ * **没有成对反引号时原样返回一段**，不做任何改动：摘要的纯文本分支必须是一个整体，
+ * 拆成多个节点会让「按整句找这一段」的调用方找不到它。
+ */
+export function employeeSummaryParts(summary: string): SummaryPart[] {
+  const raw = summary ?? '';
+  if (!raw.includes('`')) return raw ? [{ text: raw, code: false }] : [];
+  const parts: SummaryPart[] = [];
+  const re = /`([^`]+)`/g;
+  let at = 0;
+  let hit: RegExpExecArray | null;
+  while ((hit = re.exec(raw)) !== null) {
+    if (hit.index > at) parts.push({ text: raw.slice(at, hit.index), code: false });
+    parts.push({ text: hit[1], code: true });
+    at = hit.index + hit[0].length;
+  }
+  if (at < raw.length) parts.push({ text: raw.slice(at), code: false });
+  return parts;
+}
+
 /** 内核名字显示成人看得懂的样子。认不出的原样返回，不猜近似的。 */
 const KERNEL_LABEL: Record<string, string> = {
   claude: 'Claude Code',

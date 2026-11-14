@@ -1,0 +1,1933 @@
+/* === Settings Page (category-tab layout) === */
+/* 页头以下占满：左 176 的二级菜单，右边正文。菜单与正文之间只隔一道发丝线，
+   不再另加间距——从前菜单外面还套着整页 20px 的内边距再加一段 spacing-xl，
+   宽屏上两边中间空出一大片。 */
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+}
+
+/* 分类项比左侧主导航低一级：高 30、圆角 7、13px、图标 15（主导航是 32 / 8 / 14 / 16）。
+   它是页面里面的菜单，不该和整站的主菜单一样大。
+
+   **描述那一行搬走了。** 从前每一项都是"名字 + 一行小字描述"，右侧面板的标题下面
+   又把同一行小字原样写了一遍——同一句话在一屏里出现两次，还把分类栏撑成了两倍高。
+   描述现在只留在右侧面板的标题下面，分类栏只报名字。 */
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  text-align: left;
+  padding: 0 10px;
+  background: transparent;
+  /* 选中态是整块换底 + 一圈发丝内描边，不靠单边竖条。描边给的是「这一项被按住」的
+     厚度，颜色仍然是中性底——这一页的绿只留给真正在跑的东西。 */
+  border: none;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-nav-item.active {
+  background: var(--sidebar-item-selected-bg);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.settings-nav-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.settings-nav-item.active .settings-nav-label {
+  font-weight: var(--font-weight-medium);
+}
+
+.settings-nav-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.settings-nav-item.active .settings-nav-icon {
+  color: var(--text-primary);
+}
+
+.settings-nav-label {
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 计数角标：它说的是「这一项底下有几条东西」（几个服务商、几条任务通道）。
+   等宽数字 + 中性底，尺寸压到 16px 高，不跟标签抢行。 */
+.settings-nav-badge {
+  margin-left: auto;
+  font: 500 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* 选中项上的角标抬一档：底换成卡片色，字取正文色——它和标签是同一件事的一部分，
+   不该在选中时还留在最弱的灰里。 */
+.settings-nav-item.active .settings-nav-badge {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.settings-nav-badge.warn {
+  background: var(--accent-warning-10);
+  color: var(--accent-warning);
+}
+
+/* 正文自己滚，菜单不跟着走。 */
+.settings-panel {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 28px 28px;
+}
+
+/* 面板限宽 + 居中。设置项是一行行的短句，铺满一块 1400px 宽的画布之后，标签在最左、
+   控件在最右，眼睛要横跨整个屏幕才能把一对配起来，所以限宽这条不能去。
+
+   2026-11-14 改的是**限宽之后那块空白落在哪**：从前 740px 顶在左边，1440 屏上右侧
+   独吞 460 多像素空白，整页看着像没铺满；而 Harness 矩阵与 AI 服务商那两张五列表格
+   挤在 740 里，Provider 名与模型名被 select 截成 `OpenRouter DeepSeek · deepse…`。
+   现在上限抬到 960px 并把余量左右平分，表格拿到该有的宽度，空白也不再单边堆积。 */
+.settings-panel-inner {
+  max-width: min(960px, 100%);
+  width: 100%;
+  min-width: 0;
+  margin-inline: auto;
+}
+
+/* 标题与短说明直接接内容，不再拿横线隔开。 */
+.settings-panel-head {
+  margin-bottom: 16px;
+}
+
+.settings-panel-title {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-panel-desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  margin: 3px 0 0;
+}
+
+.settings-panel-body {
+  max-width: 100%;
+}
+
+/* === Settings ▸ Prompting capability (two-layer status) ===
+   State is carried by the whole card — an even glow ring all the way round,
+   a rounded body, and a slight shift in ground colour. NEVER an edge bar:
+   a single-sided accent is banned by the project design rules, and here it
+   would also read as decoration next to a badge that already names the state. */
+.settings-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-cap-loading,
+.settings-cap-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.settings-cap-error {
+  justify-content: flex-start;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+/* 卡片不填底色，只留一圈发丝描边。卡头之下的每一行（正文、后果、按钮、开关）
+   都左缩进 52，对齐卡头文字、越过 28px 图标。 */
+.settings-cap-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding-bottom: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: transparent;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.settings-cap-card > :not(.settings-cap-head):not(.settings-cap-switch) {
+  margin-left: 52px;
+  margin-right: 14px;
+}
+
+/* One tone per state — the whole card, never a stripe.
+
+   **一切正常的那一档不给颜色。** 从前 is-ok 是一圈绿边加一层绿光晕加一块实心绿图标，
+   而这一页上多数时候两张卡都是 is-ok：结果是打开设置，最先看到的是满屏的绿在庆祝
+   "没事发生"。正常本来就是这一页的默认状态，它不需要被标出来——右上角的徽章已经用
+   文字写着「已生效」。颜色留给需要人动手的两档。 */
+.settings-cap-card.is-ok {
+  border-color: var(--border-color);
+  background: transparent;
+}
+
+.settings-cap-card.is-warn {
+  border-color: color-mix(in srgb, var(--accent-warning) 34%, transparent);
+  background: var(--accent-warning-10);
+}
+
+.settings-cap-card.is-alert {
+  border-color: color-mix(in srgb, var(--accent-error) 40%, transparent);
+  background: var(--accent-error-10);
+}
+
+.settings-cap-card.is-off {
+  border-color: var(--border-color);
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-cap-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px 0;
+}
+
+.settings-cap-mark {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* 正常这一档的图标是中性的。这一屏的绿只留给 LightAgent 在跑的那颗圆点。 */
+.settings-cap-card.is-ok .settings-cap-mark {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.settings-cap-card.is-warn .settings-cap-mark {
+  background: color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  color: var(--accent-warning);
+}
+
+.settings-cap-card.is-alert .settings-cap-mark {
+  background: color-mix(in srgb, var(--accent-error) 22%, transparent);
+  color: var(--accent-error);
+}
+
+.settings-cap-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-cap-name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-cap-lede {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 1px 0 0;
+}
+
+.settings-cap-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* 「In effect」和「Running」都是中性徽章：状态由文字说，Running 前面那颗绿点
+   是这一屏唯一的绿。 */
+.settings-cap-badge.is-ok {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.settings-cap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent-primary);
+}
+
+.settings-cap-badge.is-warn {
+  background: var(--accent-warning-10);
+  color: var(--accent-warning);
+}
+
+.settings-cap-badge.is-alert {
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.settings-cap-badge.is-off {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.settings-cap-body {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.settings-cap-body b {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+/* The "what you lose" line. Loud enough to be read before the button. */
+.settings-cap-consequence {
+  padding: var(--spacing-sm) 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.settings-cap-card.is-alert .settings-cap-consequence {
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.settings-cap-detail {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  word-break: break-all;
+  margin: 0;
+}
+
+.settings-cap-note {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.settings-cap-note code,
+.settings-cap-body code,
+.settings-cap-consequence code,
+.settings-cap-switch-desc code {
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.settings-cap-cta {
+  align-self: flex-start;
+}
+
+/* 开关行上方的横线贯穿整卡；行内文字仍对齐卡头文字。 */
+.settings-cap-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 0 52px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-cap-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-cap-switch-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.settings-cap-switch-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.settings-cap-toggle {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.settings-cap-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+/* 开关打开时是中性的：正文色轨道、底色圆钮。开与关靠轨道深浅和圆钮位置区分，
+   右上徽章同时写着 Running / Turned off。 */
+.settings-cap-toggle-track {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  transition: background var(--transition-fast);
+}
+
+.settings-cap-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.settings-cap-toggle input:checked + .settings-cap-toggle-track {
+  background: var(--text-primary);
+}
+
+.settings-cap-toggle input:checked + .settings-cap-toggle-track::after {
+  background: var(--bg-primary);
+  transform: translateX(14px);
+}
+
+.settings-cap-toggle input:focus-visible + .settings-cap-toggle-track {
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.settings-cap-toggle input:disabled + .settings-cap-toggle-track {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* === Settings ▸ Shared card, row, table & modal primitives (from prototype/index.html) ===
+   `.s-card` 是全站共享的 C3 Double-Bezel 卡片类 `.ui-bezel-card` 在设置页的对应物：同样
+   外一圈托盘、内一圈卡边、顶一道 1px 内高光，读起来有厚度。这一页所有分组卡（Harness
+   矩阵、旁路与轻量 AI、AI 服务商、任务通道、外观、关于、提示能力）都走它，四页一致的
+   卡片语言从这里开始。
+   2026-11-14 改：单层 1px 描边 + 透明底 → 双层微边框 + 抬起来的那一面。 */
+.s-card {
+  border: 0;
+  border-radius: var(--radius-lg);
+  margin-bottom: 10px;
+  background: var(--surface-elevated);
+  min-width: 0;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+/* 状态卡（warn / err / sel）：底色与描边一起换，整张卡是一个状态。
+   这里只用内圈那一层承载语义色，外层托盘线照旧——两层都在说同一件事。 */
+.s-card.warn {
+  background: var(--accent-warning-10);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 36%, transparent),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.s-card.err {
+  background: var(--accent-error-10);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 42%, transparent),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.s-card.sel {
+  background: var(--sel-bg);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--sel-border),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.s-card .hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.s-card .hd > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.s-card .ico {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.s-card.warn .ico {
+  background: color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  color: var(--accent-warning);
+}
+
+.s-card.err .ico {
+  background: color-mix(in srgb, var(--accent-error) 22%, transparent);
+  color: var(--accent-error);
+}
+
+.s-card .nm {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.s-card .ds {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin-top: 1px;
+}
+
+.s-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.s-pill.warn {
+  background: var(--accent-warning-10);
+  color: var(--accent-warning);
+  font-weight: 500;
+}
+
+.s-pill.err {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+  font-weight: 500;
+}
+
+.s-pill.off {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.s-pill.mono {
+  font-family: var(--font-mono);
+}
+
+.s-kind {
+  font: 500 11px var(--font-mono);
+  padding: 0 5px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+}
+
+.s-card .bd {
+  padding: 0 14px 12px 52px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.s-card .bd + .bd {
+  padding-top: 0;
+  margin-top: -4px;
+}
+
+.s-card .row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 12px 52px;
+  border-top: 1px solid var(--border-color);
+}
+
+.s-card .row > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.s-card .row.full {
+  padding-left: 14px;
+}
+
+.s-card .row .t {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.s-card .row .d {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-top: 1px;
+}
+
+.ssec {
+  padding: 12px 14px;
+}
+
+.ssec + .ssec {
+  border-top: 1px solid var(--border-color);
+}
+
+.ssec-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* 卡头左边那坨（标题 + 说明）可以缩，右边那颗动作按钮不缩——不然长说明一挤，
+   按钮就被压成两行。 */
+.ssec-h > div:first-child {
+  min-width: 0;
+}
+
+.ssec-h > button {
+  flex-shrink: 0;
+}
+
+.ssec-h h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* 卡头底下那行说明。原先各处在 JSX 里内联写 `fontSize: 12, color: muted`，同一件事
+   十几种写法，字号也对不齐；收成一个类。 */
+.ssec-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.srow + .srow {
+  border-top: 1px solid var(--border-color);
+}
+
+.srow .l {
+  min-width: 0;
+  flex: 1;
+}
+
+.srow .l .t {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.srow .l .d {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+  line-height: 1.45;
+}
+
+.srow .l .m {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.sselect,
+.sinput {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: 13px var(--font-family);
+  min-width: 0;
+}
+
+/* 下拉框不再卡在 230px。这个上限原本是给窄列里的短选项用的，可 Harness 那一列装的
+   是「服务商名 · 模型名」，230px 装不下就在右边截成 `OpenRouter DeepSeek · deepse…`
+   ——选项文字被腰斩，而框右边还留着一片空。现在按列宽自适应，上限交给具体列自己定。 */
+.sselect {
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.sselect:focus,
+.sinput:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.sinput.mono,
+.kvgrid .v.mono,
+.pitem-m .mono {
+  font-family: var(--font-mono);
+}
+
+.kvgrid {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 5px 12px;
+  font-size: 12px;
+  padding: 2px 0 4px;
+}
+
+.kvgrid .k {
+  color: var(--text-muted);
+}
+
+.kvgrid .v {
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 表格外框与卡片同一套双层微边框语言，别让它在卡里又长成另一种框。 */
+.stbl-wrap {
+  border: 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-top: 8px;
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.stbl {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+/* 表头：中性实底压住，字号抬到 11.5 与 Harness 矩阵同一档——两张表挨着看时
+   表头不该一个比另一个小。 */
+.stbl th {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.stbl td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+  color: var(--text-secondary);
+}
+
+.stbl tr:last-child td {
+  border-bottom: 0;
+}
+
+.stbl tr:hover td {
+  background: var(--bg-hover);
+}
+
+.stbl td.nm {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.stbl td.mono {
+  font: 12px var(--font-mono);
+}
+
+/* AI 服务商行里 Provider 名底下那行小字（端点类型 · 掩码密钥）。11px 抬到 11.5，
+   它是这一列唯一能分辨「这是官方端点还是自建」的地方，太淡就读不出来。 */
+.stbl .provider-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* 模型那一列：模型名走等宽（沿用 `.stbl td.mono` 的 12px），底下的上下文窗口与
+   轻量档说明抬到 11.5——它决定这条连接会不会在长会话里被提前压缩。 */
+.stbl .provider-model-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+.stbl td.acts {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 行内两颗动作按钮：24px 视觉，热区撑到 28px。从前是 24px 的裸图标，鼠标要点两下
+   才落得准；现在热区大一圈，外观仍然是轻的。 */
+.stbl td.acts .btn-icon-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.stbl td.acts .btn-icon-sm:hover {
+  color: var(--text-primary);
+  background: var(--bg-active);
+}
+
+.stbl td.acts .btn-icon-sm:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.stbl-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.stbl-sort-btn:hover {
+  color: var(--text-primary);
+}
+
+.stbl-sort-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.ssec-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sstrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  margin-bottom: 10px;
+}
+
+.sstrip.warn {
+  border-color: color-mix(in srgb, var(--accent-warning) 38%, transparent);
+  background: var(--accent-warning-10);
+}
+
+.sstrip .l {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.sstrip .r {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.s-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.s-dot.d-run {
+  background: var(--accent-primary);
+}
+
+.s-dot.d-idle {
+  background: var(--text-muted);
+}
+
+.salert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.salert.err {
+  border-color: color-mix(in srgb, var(--accent-error) 42%, transparent);
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+.salert.warn {
+  border-color: color-mix(in srgb, var(--accent-warning) 38%, transparent);
+  background: var(--accent-warning-10);
+  color: var(--text-primary);
+}
+
+.salert.ok {
+  border-color: var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+/* Profile 管理里的一张卡（`.pitem`，见 ProfileList）。与 `.s-card` 同一套双层微边框：
+   它是弹窗里成列摆的条目，每一条都得看起来像一张能点的卡。
+   选中态整张卡换底加描边，不用左单边竖线。 */
+.pitem {
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.pitem.on {
+  background: var(--sel-bg);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--sel-border),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.pitem.ret {
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 35%, transparent),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.pitem-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pitem-h .nm {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pitem-h .acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.pitem-m {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  line-height: 1.45;
+}
+
+.ptargets {
+  margin-top: 4px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ptarget {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.ptarget.off {
+  color: var(--text-muted);
+}
+
+.fgrp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fgrp label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.fgrp .hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.fgrp .err {
+  font-size: 11px;
+  color: var(--accent-error);
+  line-height: 1.45;
+}
+
+.fbox {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-secondary);
+}
+
+.fbox-h {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fgrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Settings ▸ General 去堆砌紧凑布局（三段子视图切换 + 双列 Harness 矩阵 + 横排 Profile 胶囊 + 单行 Danger Zone） */
+.s-card code,
+.settings-panel code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.tog {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--text-primary);
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+  cursor: pointer;
+  border: 1px solid transparent;
+  padding: 0;
+}
+
+.tog:after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  transition: all 0.15s;
+}
+
+.tog.off {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.tog.off:after {
+  right: auto;
+  left: 2px;
+  background: var(--text-muted);
+}
+
+.btn.danger-out {
+  border-color: color-mix(in srgb, var(--accent-error) 50%, transparent);
+  color: var(--accent-error);
+}
+
+.btn.danger-out:hover {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+.g-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* 三段子视图切换条改走全站统一的 C6 分段胶囊（`.ui-seg-group` / `.ui-seg-pill`）。
+   原先这里自己写了一套 `.g-seg`：同样的胶囊形状，计数却是另一种字号另一种底色，
+   和配方页、事务页那几处对不上。现在只有一套，计数内嵌在胶囊里。 */
+
+.proto-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font: 500 11px var(--font-mono);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sel-bg);
+  border: 1px solid var(--sel-border);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ref-chip.idle {
+  background: var(--bg-hover);
+  border-color: transparent;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.htbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+/* 表头说明与单元格说明原先都是 11px，五列表格上下叠着五行，读起来是一片灰雾。
+   表头抬到 11.5 并加字距，单元格说明抬到 12 并给足行高——两档都还在弱色里，但
+   能一眼读下去。 */
+.htbl th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.htbl th .sub {
+  display: block;
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.htbl td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.htbl tr:last-child td {
+  border-bottom: 0;
+}
+
+.htbl .h-nm {
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.htbl .h-meta {
+  font: 11.5px var(--font-mono);
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* 下拉框占满它那一列。Harness 矩阵每列 35.5%，此前被 `.sselect` 的 230px 上限压住，
+   「OpenRouter DeepSeek · deepse…」在右边被腰斩，左边还留着空白。 */
+.htbl .sselect {
+  width: 100%;
+  max-width: none;
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.htbl .cell-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.45;
+}
+
+.sc-compact .srow {
+  padding: 10px 0;
+  align-items: flex-start;
+}
+
+.sc-compact .srow:first-child {
+  padding-top: 2px;
+}
+
+.sc-compact .srow:last-child {
+  padding-bottom: 2px;
+}
+
+.sc-compact .t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sc-compact .d {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.sc-compact .d b {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ptile-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 7px;
+}
+
+.ptile {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.ptile:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.ptile.in-use {
+  background: var(--bg-card);
+  border-color: var(--border-strong);
+}
+
+.ptile.ret {
+  border-color: color-mix(in srgb, var(--accent-warning) 40%, transparent);
+  background: var(--accent-warning-10);
+}
+
+.ptile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ptile-m {
+  font: 11px var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ptile-f {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+/* 危险区：整条四边闭合的柔和红底淡边，绝不用左单边竖线。字号与其余分组卡一致，
+   不再比正文小一号。 */
+.dzone-bar {
+  margin-top: 12px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-error) 5%, var(--surface-elevated));
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 30%, transparent),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.dzone-bar-l {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.dzone-bar-l b {
+  color: var(--accent-error);
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dzone-bar-r {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+/* 危险区那个下拉框装的是「工具名 · 原生配置文件的绝对路径」，是最长的一项。
+   它需要的是宽度，不是被截断——上限交给内容。 */
+.dzone-bar-r .sselect {
+  min-width: 300px;
+  max-width: min(460px, 46vw);
+}
+
+@media (max-width: 640px) {
+  .settings-cap-head {
+    flex-wrap: wrap;
+  }
+
+  .settings-cap-badge {
+    order: 3;
+  }
+}
+
+/* Narrow viewport: rail becomes a horizontal scroll strip above the panel */
+@media (max-width: 640px) {
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .settings-panel {
+    flex: 1;
+    padding: 16px;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    flex-shrink: 0;
+  }
+
+  .settings-nav-desc {
+    display: none;
+  }
+}
+
+/* === 环境仪表盘 === */
+/* 遮罩带模糊：这扇窗盖住的是整片工作区，底下那些字如果还清清楚楚，眼睛会一直被它们
+   拽回去。模糊不是装饰，是把注意力交给上面这张表。
+
+   它不接点击。窗里是一张要来回对照着读的表，视线在十几格之间移动时鼠标常落在格与格
+   的空隙上，点周围就关的话，一失手整张表就没了，回来还得重问一遍网络。 */
+.envc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-md);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.envc-card {
+  width: min(960px, 100%);
+  max-height: calc(100vh - 2 * var(--spacing-md));
+  background: var(--surface-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  /* 与全站模态同一套双层微边框：内高光 + 内卡边 + 外托盘 + 浮层阴影。
+     2026-11-14 对齐：此前是单层 1px 描边加一层大阴影，与 ui/Modal 的壳不是一套。 */
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-lg);
+}
+
+/* 弹窗头：与全站模态同高同内距，关闭按钮落在最右同一个位置。
+   2026-11-14 对齐——此前各弹窗头高、内距、关闭键位置三处都不一样。 */
+.envc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-height: 40px;
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.envc-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.envc-subtitle {
+  font-weight: 400;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.envc-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.envc-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.envc-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.envc-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.envc-error,
+.envc-note {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.envc-error {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+.envc-note {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.envc-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.envc-empty {
+  padding: var(--spacing-lg);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.envc-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.envc-group-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* 默认每行四格。四格是一屏横着扫得完、又不至于让版本号折行的那个数；窄下去依次退到
+   三格、两格、一格，而不是让格子自己越挤越瘦。 */
+.envc-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+}
+
+@media (max-width: 900px) {
+  .envc-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .envc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 440px) {
+  .envc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 一格是一整块，状态靠整块的底色和边框说话，不靠边上加一条竖杠。
+
+   **默认是安静的。** 有新版不上色——那不是毛病，是一条可选的消息，一屏十几格全亮着
+   只会让人以为机器坏了一半。只有两种处境上色：缺了必需的东西，和升级没成、等着人
+   自己动手。那两种是真的在向人要一个动作。 */
+.envc-cell {
+  min-width: 0;
+  padding: 10px var(--spacing-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.envc-cell--needs-you,
+.envc-cell--missing-required {
+  background: var(--accent-error-10);
+  border-color: color-mix(in srgb, var(--accent-error) 34%, transparent);
+}
+
+/* 选装的东西没装不是毛病，是一项还没开的能力：整格退到背景里，别当成故障报出来。 */
+.envc-cell--missing {
+  background: transparent;
+  border-style: dashed;
+}
+
+.envc-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.envc-cell-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.envc-tag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-size: calc(11px * var(--font-scale));
+  line-height: 15px;
+}
+
+/* 结论。这一行是一格里最大的字，因为人来这儿要知道的第一件事就是它。 */
+.envc-verdict {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: calc(15px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.envc-verdict--ok {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.envc-verdict--missing {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.envc-verdict--outdated {
+  color: var(--text-primary);
+}
+
+.envc-verdict--needs-you,
+.envc-verdict--missing-required {
+  color: var(--accent-error);
+}
+
+/* 版本号退成小字。想核对的人看得到，不看也不妨碍读上面那句结论。 */
+.envc-versions {
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.4;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  /* 宁可折成两行也不截断：Chrome 的版本号有十几位，截成「外面 …」正好把人要核对的
+     那个数字藏起来，而这一行存在的唯一理由就是给人核对。 */
+  overflow-wrap: anywhere;
+}
+
+/* === 环境仪表盘：升级动作 === */
+/* 「全部升级」跟在标题那一行。它是这扇窗里唯一的主动作，所以给足底色；旁边的刷新和
+   关闭仍旧是安静的图标。 */
+.envc-upgrade-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.envc-upgrade-all:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-primary) 85%, white);
+}
+
+.envc-upgrade-all:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.envc-upgrade-all:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+/* 正在跑的时候那条说明换成醒目一点的底：它解释的是「机器上此刻正在装东西」，
+   人等待时唯一想看的就是这句。 */
+.envc-note--busy {
+  background: var(--accent-info-10);
+  color: var(--accent-info-text);
+}
+
+/* 单格里那颗升级按钮。它排在版本号下面而不是挤进标题行：标题行已经有名字和「必装」
+   标签，再塞一颗按钮，三样东西都读不清。 */
+.envc-cell-upgrade {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.envc-cell-upgrade:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.envc-cell-upgrade:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.envc-cell-upgrade:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+/* 这一格自己那一轮的下场。跑完不清掉——人回头要知道刚才到底成没成。 */
+.envc-cell-job {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.envc-cell-job--running {
+  color: var(--accent-info-text);
+}
+
+.envc-cell-job--ok {
+  color: var(--accent-success);
+}
+
+.envc-cell-job--failed {
+  color: var(--accent-error);
+}
+
+/* 跑完那一轮的总账。有失败就用红底——那一轮没做成的事，人得先看见再决定要不要管。 */
+.envc-note--done {
+  background: var(--accent-primary-10);
+  color: var(--text-secondary);
+}
+
+.envc-note--failed {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+/* 要人自己去终端跑的那条命令。摆成可以原样拿走的样子，旁边一颗复制按钮——让人从
+   一段说明里把命令挑出来手敲，等于把最后一步又推回给他。 */
+.envc-manual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  border: 1px solid var(--border-color);
+}
+
+.envc-manual-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-primary);
+}
+
+.envc-manual-copy {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.envc-manual-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.envc-manual-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+

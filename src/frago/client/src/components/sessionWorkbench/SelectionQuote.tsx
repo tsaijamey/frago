@@ -717,7 +717,7 @@ export default function SelectionQuote({
                   ) : (
                     <Layers size={13} strokeWidth={1.9} className="shrink-0 text-accent-warning" />
                   )}
-                  <span className="shrink-0 text-[11.5px] font-medium text-text-primary">
+                  <span className="shrink-0 text-[12px] font-medium text-text-primary">
                     {t(noting === 'branch' ? 'workbench.stream.branch' : 'workbench.stream.stack')}
                   </span>
                   <span

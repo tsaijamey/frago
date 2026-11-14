@@ -19,6 +19,7 @@ vi.mock('@/i18n', () => ({
 }));
 
 import * as api from '@/api';
+import i18n from '@/i18n';
 import { useDataStore } from '../dataStore';
 import { useUIStore } from '../uiStore';
 
@@ -94,6 +95,44 @@ describe('dataStore — load actions', () => {
     expect(s.employeesLoaded).toBe(true);
     expect(s.systemStatus).toEqual({ cpu_percent: 1 });
     expect(s.communityRecipes).toEqual([{ name: 'cr' }]);
+  });
+
+  it('loadConfig preserves browser-detected zh on fresh machine when language_configured is false', async () => {
+    (i18n as { language: string }).language = 'zh';
+    vi.mocked(api.getConfig).mockResolvedValue({
+      theme: 'dark',
+      language: 'en',
+      language_configured: false,
+      agent_language: '',
+      max_history_items: 100,
+      shortcuts: {},
+    });
+
+    await useDataStore.getState().loadConfig();
+
+    expect(useDataStore.getState().config?.language).toBe('zh');
+    expect(i18n.changeLanguage).not.toHaveBeenCalled();
+    expect(api.updateConfig).not.toHaveBeenCalled();
+    expect(localStorage.getItem('language')).toBeNull();
+    (i18n as { language: string }).language = 'en';
+  });
+
+  it('loadConfig adopts backend language when language_configured is true and localStorage is empty', async () => {
+    (i18n as { language: string }).language = 'zh';
+    vi.mocked(api.getConfig).mockResolvedValue({
+      theme: 'dark',
+      language: 'en',
+      language_configured: true,
+      agent_language: '',
+      max_history_items: 100,
+      shortcuts: {},
+    });
+
+    await useDataStore.getState().loadConfig();
+
+    expect(i18n.changeLanguage).toHaveBeenCalledWith('en');
+    expect(localStorage.getItem('language')).toBe('en');
+    (i18n as { language: string }).language = 'en';
   });
 });
 

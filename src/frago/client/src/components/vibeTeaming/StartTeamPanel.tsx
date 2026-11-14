@@ -99,10 +99,10 @@ export default function StartTeamPanel({
   const shared = { onDone, onCancel, commit: take, confirmLabel, lastStepLabel };
 
   return (
-    <div className="rounded-lg border border-border-color">
-      <div className="border-b border-border-color px-4 py-3">
-        <h3 className="text-sm font-medium">{title ?? t('team.pickTitle')}</h3>
-        <p className="mt-1 text-xs text-text-muted">{hint ?? t('team.pickHint')}</p>
+    <div className="teams-panel">
+      <div className="teams-panel-head">
+        <h3 className="teams-panel-title">{title ?? t('team.pickTitle')}</h3>
+        <p className="teams-panel-hint">{hint ?? t('team.pickHint')}</p>
       </div>
 
       <div className="flex gap-2 border-b border-border-color px-4 py-2.5">
@@ -143,7 +143,7 @@ function SourceTab({
       aria-pressed={active}
       className={`flex-1 rounded-lg border px-3 py-2 text-left transition-shadow ${
         active
-          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
+          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)]'
           : 'border-border-color hover:bg-bg-hover'
       }`}
     >
@@ -637,7 +637,7 @@ function Footer({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center justify-end gap-2 border-t border-border-color px-4 py-2.5">
+    <div className="teams-panel-foot">
       <button onClick={onCancel} className="px-2 py-1 text-xs text-text-muted hover:underline">
         {t('team.cancel')}
       </button>

@@ -46,64 +46,82 @@ export default function RecipeForgeModal({ onClose }: RecipeForgeModalProps) {
   };
 
   return (
-    <div className="sa-modal-overlay" onClick={onClose}>
+    // 点遮罩不关窗：这扇窗里有人正在写需求，手一滑点到旁边就把刚写的东西丢掉。
+    // 关窗走右上角的 × 或 Esc。与通用 Modal 组件同一口径，外壳也用同一套 .ui-modal-*。
+    <div className="ui-modal-backdrop">
       <div
-        className="recipe-run-modal"
-        onClick={(e) => e.stopPropagation()}
+        className="ui-modal-frame"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="recipe-forge-title"
       >
-        <div className="recipe-run-modal-header">
-          <div>
-            <h3 id="recipe-forge-title" className="recipe-run-modal-title flex items-center gap-2">
+        <div className="ui-modal-head">
+          <div className="min-w-0">
+            <h3 id="recipe-forge-title" className="ui-modal-title flex items-center gap-2">
               <Wand2 size={18} />
               {t('recipes.forge.title')}
             </h3>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">{t('recipes.forge.intro')}</p>
           </div>
-          <button type="button" className="sa-modal-close" onClick={onClose} aria-label={t('common.close')}>
-            <X size={16} />
+          <button
+            type="button"
+            className="ui-icon-btn ui-modal-close"
+            onClick={onClose}
+            aria-label={t('common.close')}
+          >
+            <X size={20} />
           </button>
         </div>
 
-        <label className="block text-sm text-[var(--text-secondary)] mb-1" htmlFor="recipe-forge-requirement">
-          {t('recipes.forge.requirementLabel')}
-        </label>
-        <textarea
-          id="recipe-forge-requirement"
-          className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] p-3 text-sm"
-          rows={7}
-          autoFocus
-          placeholder={t('recipes.forge.requirementPlaceholder')}
-          value={requirement}
-          onChange={(e) => setRequirement(e.target.value)}
-        />
+        <div className="ui-modal-body">
+          <p className="text-sm text-[var(--text-secondary)] mb-3">{t('recipes.forge.intro')}</p>
 
-        <div className="flex flex-wrap items-center gap-4 mt-3">
-          <label className="flex items-center gap-2 text-sm text-[var(--text-primary)] cursor-pointer">
-            <input type="checkbox" checked={page} onChange={(e) => setPage(e.target.checked)} />
-            {t('recipes.forge.needPage')}
+          <label className="block text-sm text-[var(--text-secondary)] mb-1" htmlFor="recipe-forge-requirement">
+            {t('recipes.forge.requirementLabel')}
           </label>
-          <input
-            type="text"
-            className="flex-1 min-w-[200px] rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] px-3 py-1.5 text-sm font-mono"
-            placeholder={t('recipes.forge.namePlaceholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            spellCheck={false}
+          <textarea
+            id="recipe-forge-requirement"
+            className="w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] p-3 text-sm"
+            rows={7}
+            autoFocus
+            placeholder={t('recipes.forge.requirementPlaceholder')}
+            value={requirement}
+            onChange={(e) => setRequirement(e.target.value)}
           />
-        </div>
-        <p className="text-xs text-[var(--text-muted)] mt-2">
-          {page ? t('recipes.forge.pageHint') : t('recipes.forge.noPageHint')}
-        </p>
 
-        {error && (
-          <div className="mt-3 text-sm text-[var(--accent-error)]" role="alert">
-            {error}
+          <div className="flex flex-wrap items-center gap-4 mt-3">
+            {/* 「需要界面」是开关，不是勾选框：开关的形态本身就说清了开与关。 */}
+            <label className={`rd-switch ${page ? 'rd-switch--on' : ''}`}>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={page}
+                onChange={(e) => setPage(e.target.checked)}
+                className="sr-only"
+              />
+              <span className="rd-switch-track" aria-hidden="true" />
+              <span className="rd-switch-label">{t('recipes.forge.needPage')}</span>
+            </label>
+            <input
+              type="text"
+              className="flex-1 min-w-[200px] rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] px-3 py-1.5 text-sm font-mono"
+              placeholder={t('recipes.forge.namePlaceholder')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              spellCheck={false}
+            />
           </div>
-        )}
+          <p className="text-xs text-[var(--text-muted)] mt-2">
+            {page ? t('recipes.forge.pageHint') : t('recipes.forge.noPageHint')}
+          </p>
 
-        <div className="flex justify-end gap-2 mt-4">
+          {error && (
+            <div className="mt-3 text-sm text-[var(--accent-error)]" role="alert">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="ui-modal-foot">
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </button>

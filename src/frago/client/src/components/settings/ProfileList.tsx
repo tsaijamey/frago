@@ -1,5 +1,6 @@
 import { X, Plus, Check, Pencil, Trash2, Save, Zap, Ban } from 'lucide-react';
 import type { ProfilesController } from './useProfiles';
+import { readProfileSortOrder, sortProfilesByName } from './profileSort';
 
 interface ProfileListProps {
   pm: ProfilesController;
@@ -125,7 +126,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
         </div>
       ) : (
         <div className="space-y-2">
-          {profiles.map((profile) => {
+          {sortProfilesByName(profiles, readProfileSortOrder()).map((profile) => {
             const { provider, model } = describe(profile.endpoint_type, profile.default_model);
             // A vendor CLI runs on its own account: there is nothing frago can
             // write into another CLI's configuration for it, so the activate

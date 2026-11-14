@@ -45,7 +45,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import PageHeader from '@/components/layout/PageHeader';
+import './teams.css';
 import RecordStream from '@/components/sessionWorkbench/RecordStream';
 import { RecordOverrideContext, RecordVoiceContext } from '@/components/sessionWorkbench/RecordCard';
 import Composer from '@/components/sessionWorkbench/Composer';
@@ -182,58 +182,96 @@ export default function VibeTeamingPage() {
  * 从前这里是一行居中的字，假定人已经知道 teaming 是什么、连接码是干什么的。人第一次
  * 打开这一页时恰恰什么都不知道，而这一页的两个动作一个要交出对话记录、一个要粘一串
  * 从别处拿来的凭证——两件都不该靠猜。
+ *
+ * **顶上那条页头此前只有进了 team 之后才有。** 这一页是全站唯一会在「还没配好」的态下
+ * 顶上一片空白的：没有页头，人不知道自己在哪一页，也找不到那个「?」把说明调出来。所以
+ * 这里补一条与另一态同款的 C1 页头，右侧动作同样只摆一个「?」。
  */
 function Intro({ onChanged }: { onChanged: () => void }) {
   const { t } = useTranslation();
   const [path, setPath] = useState<'open' | 'join' | null>(null);
+  const [guideOpen, toggleGuide] = useTeamsGuide();
   // 这一屏只在一个 team 都没有时出现，所以没有「已经在里面」这种情况。
   const joined: string[] = [];
 
   return (
-    <div className="mx-auto h-full w-full max-w-2xl overflow-y-auto px-6 py-12">
-      <div className="flex items-center gap-2 text-text-muted">
-        <Users size={18} strokeWidth={1.5} />
-        <h2 className="text-base font-semibold text-text-primary">{t('team.title')}</h2>
-      </div>
-      <p className="mt-3 text-sm leading-relaxed text-text-muted">{t('team.pitch')}</p>
-      <p className="mt-2 text-sm leading-relaxed text-text-muted">{t('team.pitchCode')}</p>
-
-      <div className="mt-8 grid gap-3 sm:grid-cols-2">
-        <PathCard
-          icon={<Plus {...ICON} />}
-          title={t('team.pathOpen')}
-          why={t('team.pathOpenWhy')}
-          active={path === 'open'}
-          onClick={() => setPath(path === 'open' ? null : 'open')}
-        />
-        <PathCard
-          icon={<Link2 {...ICON} />}
-          title={t('team.pathJoin')}
-          why={t('team.pathJoinWhy')}
-          active={path === 'join'}
-          onClick={() => setPath(path === 'join' ? null : 'join')}
-        />
-      </div>
-
-      {path === 'open' && (
-        <div className="mt-4">
-          <StartTeamPanel onDone={onChanged} onCancel={() => setPath(null)} />
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="ui-page-header">
+        <div className="ui-page-header-titles">
+          <h1 className="ui-page-header-title">{t('sidebar.nav.teams')}</h1>
         </div>
-      )}
-      {path === 'join' && (
-        <div className="mt-4">
-          <JoinFlow
-            onDone={onChanged}
-            onCancel={() => setPath(null)}
-            joined={joined}
-            onGoTo={() => setPath(null)}
-          />
+        <div className="ui-page-header-actions">
+          <button
+            type="button"
+            onClick={toggleGuide}
+            aria-pressed={guideOpen}
+            title={t('team.help')}
+            aria-label={t('team.help')}
+            data-testid="teams-help"
+            className="page-header-btn page-header-btn--icon page-header-btn--ghost"
+          >
+            <HelpCircle size={14} />
+          </button>
         </div>
-      )}
+      </header>
+
+      {guideOpen && <TeamsGuide onHide={toggleGuide} />}
+
+      {/* 内容列不再卡在 672px：两块入口卡并排时，每块要有足够宽度把「做什么、为什么」
+          两行说明放平，窄柱会让它们各自缩成一小条。上限抬到 880px，仍然居中。 */}
+      <div className="page-scroll">
+        <div className="teams-intro">
+          <div className="teams-intro-lead">
+            <Users size={18} strokeWidth={1.5} className="teams-intro-icon" />
+            <div className="min-w-0">
+              <p className="teams-intro-title">{t('team.pitch')}</p>
+              <p className="teams-intro-why">{t('team.pitchCode')}</p>
+            </div>
+          </div>
+
+          <div className="teams-path-grid">
+            <PathCard
+              icon={<Plus {...ICON} />}
+              title={t('team.pathOpen')}
+              why={t('team.pathOpenWhy')}
+              active={path === 'open'}
+              onClick={() => setPath(path === 'open' ? null : 'open')}
+            />
+            <PathCard
+              icon={<Link2 {...ICON} />}
+              title={t('team.pathJoin')}
+              why={t('team.pathJoinWhy')}
+              active={path === 'join'}
+              onClick={() => setPath(path === 'join' ? null : 'join')}
+            />
+          </div>
+
+          {path === 'open' && (
+            <div className="teams-path-body">
+              <StartTeamPanel onDone={onChanged} onCancel={() => setPath(null)} />
+            </div>
+          )}
+          {path === 'join' && (
+            <div className="teams-path-body">
+              <JoinFlow
+                onDone={onChanged}
+                onCancel={() => setPath(null)}
+                joined={joined}
+                onGoTo={() => setPath(null)}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
+/**
+ * 两块入口卡。选中态给整张卡一个状态（底 + 描边 + 图标色一起变），不用单边竖条。
+ * 图标取品牌绿：这一屏在没进 team 之前没有别的绿，两块卡是仅有的两个可去处，
+ * 绿落在这里是「从这里开始」，不是装饰。
+ */
 function PathCard({
   icon,
   title,
@@ -251,17 +289,11 @@ function PathCard({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-lg border p-4 text-left transition-shadow ${
-        active
-          ? 'border-border-accent bg-bg-hover ring-2 ring-accent-primary-20'
-          : 'border-border-color hover:bg-bg-hover'
-      }`}
+      className={`teams-path-card ${active ? 'on' : ''}`}
     >
-      <span className="flex items-center gap-2 text-sm font-medium">
-        {icon}
-        {title}
-      </span>
-      <span className="mt-1.5 block text-xs leading-relaxed text-text-muted">{why}</span>
+      <span className="teams-path-card-icon">{icon}</span>
+      <span className="teams-path-card-title">{title}</span>
+      <span className="teams-path-card-why">{why}</span>
     </button>
   );
 }
@@ -323,13 +355,13 @@ function JoinFlow({
 
   return (
     <form
-      className="rounded-lg border border-border-color p-4"
+      className="teams-panel p-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (full && !already) setLocked(code);
       }}
     >
-      <p className="text-sm font-medium">{t('team.joinCodeTitle')}</p>
+      <p className="teams-panel-title">{t('team.joinCodeTitle')}</p>
       <div className="mt-2 flex items-center gap-2">
         <input
           autoFocus
@@ -470,9 +502,9 @@ function JoinTroubleCard({
   const canRetry = trouble !== 'bad_code' && !(trouble === 'busy' && waitSecs > 0);
 
   return (
-    <div className="rounded-lg border border-border-color p-4">
-      <p className="text-sm font-medium text-accent-error">{copy.title}</p>
-      <p className="mt-1.5 text-xs leading-relaxed text-text-muted">{copy.why}</p>
+    <div className="teams-panel p-4">
+      <p className="teams-panel-title text-accent-error">{copy.title}</p>
+      <p className="teams-panel-hint">{copy.why}</p>
 
       {/* 中继原话只在「够不着」那一类摆出来——那一句带着地址和底层的网络错误，是排查
           时真用得上的东西。另外两类它只是把上面那句用另一种语言又说了一遍，而它出自
@@ -563,10 +595,10 @@ function TeamBar({
       }
     >
       {/* 这一页没有实心绿的主动作：真正的动作是发送，那一枚绿留给左下的 Send。 */}
-      <PageHeader
-        title={t('sidebar.nav.teams')}
-        meta={
-          <span className="inline-flex min-w-0 items-center gap-1.5">
+      <header className="ui-page-header">
+        <div className="ui-page-header-titles">
+          <h1 className="ui-page-header-title">{t('sidebar.nav.teams')}</h1>
+          <span className="ui-page-header-meta">
             {teams.map((one) => (
               <CodeChip
                 key={one.code}
@@ -576,62 +608,60 @@ function TeamBar({
               />
             ))}
           </span>
-        }
-        secondary={
-          <>
+        </div>
+        <div className="ui-page-header-actions">
+          <button
+            type="button"
+            onClick={onToggleGuide}
+            aria-pressed={guideOpen}
+            title={t('team.help')}
+            aria-label={t('team.help')}
+            data-testid="teams-help"
+            className={`${btn(guideOpen)} page-header-btn--icon page-header-btn--ghost`}
+          >
+            <HelpCircle size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPanel(panel === 'open' ? null : 'open')}
+            aria-pressed={panel === 'open'}
+            title={t('team.openHint')}
+            className={`${btn(panel === 'open')} page-header-btn--ghost`}
+          >
+            <Plus size={14} />
+            {t('team.open')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPanel(panel === 'join' ? null : 'join')}
+            aria-pressed={panel === 'join'}
+            className={`${btn(panel === 'join')} page-header-btn--ghost`}
+          >
+            <Link2 size={14} />
+            {t('team.joinWithCode')}
+          </button>
+          {selected && (
             <button
               type="button"
-              onClick={onToggleGuide}
-              aria-pressed={guideOpen}
-              title={t('team.help')}
-              aria-label={t('team.help')}
-              data-testid="teams-help"
-              className={`${btn(guideOpen)} page-header-btn--icon page-header-btn--ghost`}
+              onClick={() => void leave()}
+              disabled={busy}
+              title={t('team.leaveHint')}
+              className={`${btn(false)} page-header-btn--ghost`}
             >
-              <HelpCircle size={14} />
+              <LogOut size={14} />
+              {t('team.leave')}
             </button>
-            <button
-              type="button"
-              onClick={() => setPanel(panel === 'open' ? null : 'open')}
-              aria-pressed={panel === 'open'}
-              title={t('team.openHint')}
-              className={`${btn(panel === 'open')} page-header-btn--ghost`}
-            >
-              <Plus size={14} />
-              {t('team.open')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setPanel(panel === 'join' ? null : 'join')}
-              aria-pressed={panel === 'join'}
-              className={`${btn(panel === 'join')} page-header-btn--ghost`}
-            >
-              <Link2 size={14} />
-              {t('team.joinWithCode')}
-            </button>
-            {selected && (
-              <button
-                type="button"
-                onClick={() => void leave()}
-                disabled={busy}
-                title={t('team.leaveHint')}
-                className={`${btn(false)} page-header-btn--ghost`}
-              >
-                <LogOut size={14} />
-                {t('team.leave')}
-              </button>
-            )}
-          </>
-        }
-      />
+          )}
+        </div>
+      </header>
 
       {panel === 'open' && (
-        <div className="border-b border-border-color px-4 py-3">
+        <div className="teams-path-body border-b border-border-color px-4 py-3">
           <StartTeamPanel onDone={done} onCancel={() => setPanel(null)} />
         </div>
       )}
       {panel === 'join' && (
-        <div className="border-b border-border-color px-4 py-3">
+        <div className="teams-path-body border-b border-border-color px-4 py-3">
           <JoinFlow
             onDone={done}
             onCancel={() => setPanel(null)}

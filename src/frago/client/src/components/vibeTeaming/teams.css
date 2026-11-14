@@ -1,0 +1,186 @@
+/**
+ * 结对页（Pairs）自己的样式段。
+ *
+ * 这一页此前一行 CSS 都没有：页头、入口卡、挑会话面板全靠 Tailwind 工具类就地拼，
+ * 于是同一件事在这一页和别的页长得不一样——入口卡是一圈 1px 描边的扁块，挑会话面板
+ * 是另一种框。这里把这一页独有的几样收成类名，形状对齐 base.css 里那套 `.ui-*`
+ * 公共原语（C1 页头 / C3 双层卡 / C5 危险动作）。
+ *
+ * 铁律照旧：唯一强调色是品牌绿；选中与高亮给整张卡一个状态，绝不用左单边竖线；
+ * 深浅两套主题逐名对称。
+ */
+
+/* === 空态那一屏：说明 + 两块入口卡 === */
+.teams-intro {
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+}
+
+.teams-intro-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.teams-intro-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.teams-intro-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.teams-intro-why {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* === 两块入口卡 ===
+   每一块是「图标 + 一句话说做什么 + 一句话说为什么」。选中态整张卡一起变：底、描边、
+   图标色三处同时给信号，所以不用边条。 */
+.teams-path-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.teams-path-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 14px 16px;
+  text-align: left;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+  transition: box-shadow var(--transition-fast), background var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.teams-path-card:hover {
+  background: var(--bg-elevated);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--border-accent),
+    var(--shadow-card-hover);
+}
+
+.teams-path-card.on {
+  background: var(--bg-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--border-accent),
+    0 0 0 1px var(--border-accent),
+    var(--shadow-card-hover);
+}
+
+.teams-path-card:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    var(--focus-ring),
+    var(--focus-ring-inset),
+    var(--shadow-card-hover);
+}
+
+/* 图标取品牌绿：这一屏在进 team 之前没有别的东西在动，两块卡是仅有的两个去处。 */
+.teams-path-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+}
+
+.teams-path-card-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.teams-path-card-why {
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.teams-path-body {
+  margin-top: 14px;
+}
+
+/* === 挑会话 / 加入这一套面板 ===
+   它是一张填进去要动手的卡：卡头一行说明，中间可选清单，底下动作条。所以走双层微边框
+   + 抬起来的那一面，和入口卡同一套语言——此前它是一圈描边的透明块，摆在两张入口卡
+   底下看着像掉了一层。 */
+.teams-panel {
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+}
+
+.teams-panel-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.teams-panel-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.teams-panel-hint {
+  margin: 3px 0 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* 面板里的动作条：取消在左、确认在右，确认是这一屏的实心绿。 */
+.teams-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-color);
+}

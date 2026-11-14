@@ -258,7 +258,7 @@ export function SessionTerminal({
 
           {snapshot?.tmux_name ? (
             <span
-              className="truncate font-mono text-[11.5px] text-text-secondary"
+              className="truncate font-mono text-[12px] text-text-secondary"
               title={snapshot.tmux_name}
             >
               {snapshot.tmux_name}
@@ -354,7 +354,7 @@ export function SessionTerminal({
           <pre
             ref={viewportRef}
             data-terminal-screen
-            className="m-0 flex-1 overflow-auto p-4 font-mono text-[12.5px] leading-[1.55] text-[#e6edf3] selection:bg-accent/30 whitespace-pre-wrap break-words"
+            className="m-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-[1.55] text-[#e6edf3] selection:bg-accent/30 whitespace-pre-wrap break-words"
           >
             {segments.map((seg, idx) => (
               <span

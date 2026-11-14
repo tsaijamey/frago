@@ -205,15 +205,18 @@ export const useDataStore = create<DataSlice>((set, get) => ({
       if (savedLanguage) {
         // localStorage has value, use it as authoritative
         if (savedLanguage !== config.language) {
-          console.log('[Config] Syncing localStorage language to backend:', savedLanguage);
-          api.updateConfig({ language: savedLanguage }).catch((err) => {
-            console.error('[Config] Failed to sync language to backend:', err);
-          });
+          set({ config: { ...config, language: savedLanguage } });
+          if (config.language_configured !== false) {
+            console.log('[Config] Syncing localStorage language to backend:', savedLanguage);
+            api.updateConfig({ language: savedLanguage }).catch((err) => {
+              console.error('[Config] Failed to sync language to backend:', err);
+            });
+          }
         }
         // Language already applied during i18n init, no need to changeLanguage again
-      } else {
-        // No localStorage value, use backend config and save to localStorage
-        const language = config.language || 'en';
+      } else if (config.language_configured) {
+        // Backend ~/.frago/gui_config.json has an explicit saved language — adopt it
+        const language: Language = config.language === 'zh' ? 'zh' : 'en';
         if (i18n.language !== language) {
           console.log('[Config] Syncing i18n language:', language);
           i18n.changeLanguage(language);
@@ -222,6 +225,14 @@ export const useDataStore = create<DataSlice>((set, get) => ({
           localStorage.setItem('language', language);
         } catch {
           // localStorage not available
+        }
+      } else {
+        // Fresh machine with neither localStorage nor ~/.frago/gui_config.json:
+        // keep the browser-detected language from i18n init without writing
+        // gui_config.json prematurely (which would skip InitWizardPage auto-heal).
+        const preferred: Language = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+        if (config.language !== preferred) {
+          set({ config: { ...config, language: preferred } });
         }
       }
     } catch (error) {

@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { useRecipeFolders, suggestFolderId } from '@/stores/recipeFolders';
 import EmptyState from '@/components/ui/EmptyState';
+import InlineMarkdown from '@/components/ui/InlineMarkdown';
 import RecipeTabs from './RecipeTabs';
 import CommunityRecipeList from './CommunityRecipeList';
 import RecipeForgeModal from './RecipeForgeModal';
@@ -66,8 +67,11 @@ function RecipeCard({
   const shownName = recipeTitle(recipe, i18n.language);
   const isList = view === 'list';
   const meta = recipeCardMeta(recipe, t);
+  // 卡底只摆得下 CARD_TAG_LIMIT 个标签，多出来的收成「+N」。不收的话末尾那串标签
+  // 会被整行截断成半个词，看起来像界面坏了；收成 +N 至少把「还有几个」说清楚。
+  const moreTags = Math.max(0, (recipe.tags?.length ?? 0) - meta.tags.length);
 
-  // 顺序固定：类型 → 运行时 → 标签。整行单行截断，放不下的标签被截掉，不换行。
+  // 顺序固定：类型 → 运行时 → 标签 → 溢出计数。整行单行截断，不换行。
   const metaLine = (
     <span className="rl-card-meta">
       <span>{meta.kindLabel}</span>
@@ -77,6 +81,7 @@ function RecipeCard({
           {tag}
         </span>
       ))}
+      {moreTags > 0 && <span className="rl-tag-more">+{moreTags}</span>}
     </span>
   );
 
@@ -110,7 +115,7 @@ function RecipeCard({
             </span>
           )}
           <span className="rl-row-name">{title}</span>
-          <span className="rl-row-desc">{recipe.description}</span>
+          <span className="rl-row-desc"><InlineMarkdown content={recipe.description} /></span>
           {metaLine}
         </button>
         <button
@@ -152,7 +157,7 @@ function RecipeCard({
         )}
         {title}
         {/* 没有描述也留两行高，同一排卡的卡底对齐。 */}
-        <span className="rl-card-desc">{recipe.description}</span>
+        <span className="rl-card-desc"><InlineMarkdown content={recipe.description} /></span>
         {metaLine}
       </button>
       <button
@@ -387,11 +392,10 @@ export default function RecipeList() {
           communityCount={communityRecipes.length}
         />
         {showSearch && (
-          <div className="search-box td-search">
-            <Search size={16} className="search-icon" />
+          <div className="ui-search-box td-search">
+            <Search size={16} className="ui-search-box-icon" />
             <input
               type="text"
-              className="search-input"
               placeholder={searchPlaceholder}
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
@@ -400,9 +404,9 @@ export default function RecipeList() {
             {searchValue && (
               <button
                 type="button"
-                className="search-clear"
+                className="ui-search-box-clear"
                 onClick={() => setSearchValue('')}
-                aria-label="Clear search"
+                aria-label={t('common.clear')}
               >
                 <X size={14} />
               </button>
@@ -410,19 +414,25 @@ export default function RecipeList() {
           </div>
         )}
         <span className="rl-toolbar-grow" aria-hidden="true" />
-        {/* 建文件夹的第二个入口。第一个是把一张卡拖到另一张上——那个手感好但看不
-            见，第一次用的人找不到它，所以这里摆一个明摆着的。两个入口通同一张表。 */}
+        {/* 建文件夹只有这一个显式入口。另一条路是把一张卡拖到另一张上——那个手感好但
+            看不见，第一次用的人找不到，所以这里摆一个明摆着的。
+            挑选状态下、手里已经拿着几张时，这条工具栏上的按钮要收起来：那时下面那条
+            挑中提示条里已经有一颗「新建文件夹」，两颗同时挂在屏幕上、点下去做同一件事，
+            人就得停下来分辨哪颗才是「把手里这几张放进去」的那颗。收起来的是这一颗，
+            因为提示条那颗带着手里的选择，语义更完整。 */}
         {!isCommunity && recipes.length > 0 && (
           <>
-            <button
-              type="button"
-              className="rl-tool-btn"
-              onClick={() => setCreating(picked)}
-              title={t('recipes.folder.create')}
-            >
-              <FolderPlus size={15} />
-              <span>{t('recipes.folder.create')}</span>
-            </button>
+            {!(selecting && picked.length > 0) && (
+              <button
+                type="button"
+                className="rl-tool-btn"
+                onClick={() => setCreating(picked)}
+                title={t('recipes.folder.create')}
+              >
+                <FolderPlus size={15} />
+                <span>{t('recipes.folder.create')}</span>
+              </button>
+            )}
             <button
               type="button"
               className={`rl-tool-btn ${selecting ? 'rl-tool-btn--active' : ''}`}

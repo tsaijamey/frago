@@ -982,7 +982,7 @@ export default function SessionRail({
             onClick={onOpenTimeline}
             data-testid="open-timeline"
             title={t('workbench.rail.timelineHint')}
-            className="flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[11.5px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
+            className="flex h-6 items-center gap-1 rounded-[6px] px-1.5 text-[12px] text-text-secondary transition-colors duration-200 hover:bg-bg-hover hover:text-text-primary"
           >
             <CalendarDays size={13} strokeWidth={1.5} className="shrink-0" />
             <span>{t('workbench.rail.timeline')}</span>

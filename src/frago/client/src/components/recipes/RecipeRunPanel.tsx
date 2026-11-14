@@ -61,7 +61,7 @@ export default function RecipeRunPanel({
         </button>
 
         <label className="flex items-center justify-between gap-2 cursor-pointer" title={t('recipes.interactiveModeHint')}>
-          <span className={`text-xs transition-colors ${isInteractiveMode ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'}`}>
+          <span className={`text-xs transition-colors ${isInteractiveMode ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}>
             {t('recipes.interactiveMode')}
           </span>
           <button
@@ -72,13 +72,13 @@ export default function RecipeRunPanel({
             onClick={() => setIsInteractiveMode(!isInteractiveMode)}
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors border-2
               ${isInteractiveMode
-                ? 'bg-[var(--accent-primary)] border-[var(--accent-primary)]'
+                ? 'bg-[var(--bg-elevated)] border-[var(--text-secondary)]'
                 : 'bg-transparent border-[var(--border-color)]'}`}
           >
             <span
-              className={`inline-block h-3 w-3 rounded-full transition-all duration-200 shadow-sm
+              className={`inline-block h-3 w-3 rounded-full transition-[transform,background-color] duration-200 shadow-sm
                 ${isInteractiveMode
-                  ? 'bg-[var(--bg-base)] translate-x-4'
+                  ? 'bg-[var(--text-primary)] translate-x-4'
                   : 'bg-[var(--text-muted)] translate-x-0.5'}`}
             />
           </button>
@@ -124,7 +124,7 @@ export default function RecipeRunPanel({
               </button>
             </div>
             {secretsData!.is_ref && secretsData!.ref_target && (
-              <div className="text-xs text-[var(--accent-primary)]">
+              <div className="text-xs text-[var(--text-muted)]">
                 {t('recipes.sharedWith')}: {secretsData!.ref_target}
               </div>
             )}
@@ -147,9 +147,11 @@ export default function RecipeRunPanel({
                     )}
                   </div>
                 </div>
+                {/* 配好与没配好是「有 / 没有」，不是「成功 / 失败」：配好用中性灰勾，
+                    没配好才用红叉——只有后者需要人动手。 */}
                 <div className="ml-2 shrink-0">
                   {field.has_value ? (
-                    <Check size={16} className="text-[var(--accent-success)]" />
+                    <Check size={16} className="text-[var(--text-muted)]" />
                   ) : (
                     <X size={16} className="text-[var(--accent-error)]" />
                   )}

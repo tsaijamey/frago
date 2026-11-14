@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isApiReady, getApiMode, waitForApi } from '@/api';
 import { getInitStatus } from '@/api/client';
+import { RECONNECTED_EVENT } from '@/api/connection';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useHashRoute } from '@/hooks/useHashRoute';
 import { useRecipeAppOpen } from '@/hooks/useRecipeAppOpen';
@@ -31,52 +32,63 @@ function App() {
   // 配方跑完要给人看页面时，开在右侧、pin 在 recipes 下面，不再另开浏览器标签。
   useRecipeAppOpen();
 
-  useEffect(() => {
-    const initApi = async () => {
-      const mode = getApiMode();
-      console.log('API mode:', mode);
+  const bootstrapHttpApp = useCallback(async () => {
+    try {
+      await waitForApi();
+      setApiReady(true);
+      await loadConfig();
 
-      if (mode === 'http') {
-        // Web service mode - wait for API connection
-        try {
-          await waitForApi();
-          setApiReady(true);
-          loadConfig();
-
-          // Check init status after API is ready
-          try {
-            const initStatus = await getInitStatus();
-            setInitCompleted(initStatus.init_completed);
-          } catch (err) {
-            console.warn('Failed to check init status:', err);
-            // If check fails, assume completed to avoid blocking
-            setInitCompleted(true);
-          }
-        } catch (error) {
-          console.error('Failed to connect to web service:', error);
-        }
-      } else {
-        // pywebview mode - check if already ready
-        if (isApiReady()) {
-          setApiReady(true);
-          loadConfig();
-          return;
-        }
-
-        // Listen for pywebview ready event
-        const handleReady = () => {
-          console.log('pywebview ready');
-          setApiReady(true);
-          loadConfig();
-        };
-
-        window.addEventListener('pywebviewready', handleReady);
-        return () => window.removeEventListener('pywebviewready', handleReady);
+      // Check init status after API is ready
+      try {
+        const initStatus = await getInitStatus();
+        setInitCompleted(initStatus.init_completed);
+      } catch (err) {
+        console.warn('Failed to check init status:', err);
+        // If check fails, assume completed to avoid blocking
+        setInitCompleted(true);
       }
+    } catch (error) {
+      console.error('Failed to connect to web service:', error);
+    }
+  }, [loadConfig]);
+
+  useEffect(() => {
+    const mode = getApiMode();
+    console.log('API mode:', mode);
+
+    if (mode === 'http') {
+      void bootstrapHttpApp();
+      return;
+    }
+
+    // pywebview mode - check if already ready
+    if (isApiReady()) {
+      setApiReady(true);
+      loadConfig();
+      return;
+    }
+
+    // Listen for pywebview ready event
+    const handleReady = () => {
+      console.log('pywebview ready');
+      setApiReady(true);
+      loadConfig();
     };
 
-    initApi();
-  }, [loadConfig]);
+    window.addEventListener('pywebviewready', handleReady);
+    return () => window.removeEventListener('pywebviewready', handleReady);
+  }, [bootstrapHttpApp, loadConfig]);
+
+  // 若首屏打开时本地服务尚未启动（initCompleted 仍为 null），待终端唤醒服务并触发
+  // RECONNECTED_EVENT 后自动完成首屏初始化，无需用户手动按 F5 刷新页面。
+  useEffect(() => {
+    if (initCompleted !== null || getApiMode() !== 'http') return;
+    const onReconnected = () => {
+      void bootstrapHttpApp();
+    };
+    window.addEventListener(RECONNECTED_EVENT, onReconnected);
+    return () => window.removeEventListener(RECONNECTED_EVENT, onReconnected);
+  }, [bootstrapHttpApp, initCompleted]);
 
   // Handle init wizard completion
   const handleInitComplete = () => {

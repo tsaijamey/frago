@@ -1,0 +1,1225 @@
+/* === 新建会话页（NewTask）====================================================
+   这一页从前是「一列居中的散件」：输入框是块灰底、四枚入口是四样图标、
+   左上角还漂着一枚和左栏重复的 `+ New Session`。现在整页收成一条页头加
+   一个居中焦点框，起始屏只做三件事：说清这是哪、让人写下第一句、给四条起步路。 */
+
+.nt-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.nt-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.nt-body--welcome {
+  overflow-y: auto;
+}
+
+/* 起始屏：一整块居中，纵向排布，顶部留白比底部少一点，视觉重心略高。 */
+.nt-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  width: 100%;
+  min-height: 100%;
+  padding: 40px 24px 56px;
+  text-align: center;
+}
+
+.nt-welcome-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.nt-welcome-logo {
+  display: block;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.nt-welcome-headline {
+  margin: 0;
+  font-size: calc(24px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.nt-welcome-sub {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  max-width: 420px;
+}
+
+.nt-welcome-input {
+  width: 100%;
+  max-width: 640px;
+}
+
+/* --- 主输入面板 ------------------------------------------------------------
+   Double-Bezel 双层微边框：外层托盘线 + 内层卡边 + 顶部 1px 内高光。
+   聚焦时整块面板亮起品牌绿柔光——「敲的字会进这里」不用再靠一行提示语说明。 */
+.nti {
+  width: 100%;
+}
+
+.nti-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-elevated);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+  transition: box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.nti-frame:focus-within {
+  background: var(--bg-elevated);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--border-accent),
+    var(--focus-ring),
+    var(--shadow-card-hover);
+}
+
+.nti-textarea {
+  width: 100%;
+  min-height: 112px;
+  max-height: 240px;
+  padding: 14px 14px 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+
+.nti-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.nti-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 底部控制栏：左边「这次怎么跑」的模式切换，右边字数、快捷键与发送键。
+   发送键从原先浮在文本框右下角的圆钮移进来，位置固定，不随文字长短游移。 */
+.nti-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 8px 6px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.nti-bar-controls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nti-bar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.nti-count,
+.nti-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.nti-hint {
+  font-family: var(--font-mono);
+}
+
+.nti-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast),
+              transform var(--transition-fast);
+}
+
+.nti-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.nti-send:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.nti-send:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.nti-send:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+/* --- 运行模式切换（胶囊）---------------------------------------------------
+   两枚一枚亮一枚暗，整片胶囊共用一层底。未选中的那枚是禁用态（当前仅自动批准可用），
+   保持可读但压到中性色——禁用不等于看不见，人得知道另一个选项叫什么。 */
+.nt-approval {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.nt-approval-option {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
+
+.nt-approval-option.is-active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--seg-on-shadow);
+}
+
+.nt-approval-option:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* --- 四枚起步入口 ----------------------------------------------------------
+   完全统一的尺寸与间距：图标一律 16px、线宽 1.75，卡面走同一套 Double-Bezel 微卡。
+   此前是「描边圆 / 方框 / 文档 / 播放三角」四种画风加扁平灰块，人看不出它们是同一层级的四件事。 */
+.nt-quick {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 640px;
+}
+
+.nt-quick-card {
+  flex: 1 1 0;
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: none;
+  text-align: left;
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.nt-quick-card:hover {
+  color: var(--text-primary);
+}
+
+.nt-quick-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.nt-quick-label {
+  white-space: nowrap;
+}
+
+/* --- 会话进行中：记录区与贴底输入区 ---------------------------------------- */
+.nt-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.nt-composer {
+  flex-shrink: 0;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.nt-stop {
+  color: var(--accent-error);
+}
+
+/* 页头右侧动作区在窄屏下让位给标题。 */
+@media (max-width: 640px) {
+  .nt-welcome {
+    gap: 20px;
+    padding: 24px 16px 32px;
+  }
+
+  .nt-quick-card {
+    min-width: 0;
+    flex-basis: calc(50% - 5px);
+  }
+}
+
+/* === Directory Autocomplete === */
+.directory-autocomplete {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.directory-autocomplete-item {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.directory-autocomplete-item:hover,
+.directory-autocomplete-item.selected {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.directory-autocomplete-item .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.directory-autocomplete-empty {
+  padding: var(--spacing-md);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* === 使用手册（Guide）========================================================
+   这一页此前是全站最离群的一页：内容区顶着约 30px 粗黑体大标题、蓝色下划线链接、
+   `Q:` / `A:` 前缀加全宽分隔线，读起来像嵌进来的第三方文档站。现在按全站同一套语言
+   重做：页头走 C1 契约，左栏章节名取本地化名，每组问答是一张可折叠的 Double-Bezel
+   阅读卡，提示语用灯泡图标而不是随系统字体变形的原生 emoji。 */
+
+.gd-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gd-search {
+  width: clamp(200px, 22vw, 300px);
+}
+
+.gd-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* --- 左栏：章节导航 -------------------------------------------------------- */
+.gd-nav {
+  width: 224px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.gd-nav-inner {
+  padding: 12px 10px 20px;
+}
+
+.gd-nav-group + .gd-nav-group {
+  margin-top: 14px;
+}
+
+.gd-nav-group-title {
+  padding: 0 8px;
+  margin-bottom: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* 章节条目：整片给状态（底 + 描边 + 前景一起变），不用左单边竖线。 */
+.gd-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
+
+.gd-nav-item:hover:not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.gd-nav-item.is-active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 500;
+  box-shadow: inset 0 1px 0 var(--bezel-highlight), 0 0 0 1px var(--bezel-outer);
+}
+
+.gd-nav-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.gd-nav-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gd-nav-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.gd-nav-item.is-active .gd-nav-count {
+  color: var(--text-secondary);
+}
+
+/* --- 右栏：正文 ------------------------------------------------------------ */
+.gd-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gd-main-inner {
+  position: relative;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+}
+
+.gd-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 32px;
+}
+
+.gd-intro {
+  margin-bottom: 16px;
+}
+
+/* --- 一组问答 --------------------------------------------------------------
+   Double-Bezel 阅读卡：外层托盘线 + 内层卡边 + 顶部内高光，整卡可折叠。
+   此前每组问答是全宽分隔线加 `Q:` 前缀，长页只能一路滚。 */
+.gd-faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gd-faq {
+  padding: 0;
+  overflow: hidden;
+}
+
+.gd-faq-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.gd-faq-head:hover {
+  background: var(--bg-hover);
+}
+
+.gd-faq-head:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.gd-faq-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 21px;
+  color: var(--text-dim);
+}
+
+.gd-faq-question {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.gd-faq-body {
+  padding: 2px 14px 14px 37px;
+}
+
+/* --- 提示语 ---------------------------------------------------------------- */
+.gd-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.gd-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 22px;
+  color: var(--accent-primary);
+}
+
+.gd-tip-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-long);
+  color: var(--text-secondary);
+}
+
+/* --- 正文排印 -------------------------------------------------------------- */
+.gd-prose {
+  min-width: 0;
+}
+
+.gd-p {
+  margin: 0 0 10px;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-long);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.gd-ul,
+.gd-ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-long);
+}
+
+.gd-ul {
+  list-style: disc;
+}
+
+.gd-ol {
+  list-style: decimal;
+}
+
+.gd-li {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.gd-strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.gd-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+.gd-link:hover {
+  text-decoration: underline;
+}
+
+.gd-pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  background: var(--surface-recessed);
+  font-size: var(--font-size-sm);
+}
+
+.gd-code {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-recessed);
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* 引用块：中性微底色块 + 全周发丝边框，不用左单边竖线。 */
+.gd-quote {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+  color: var(--text-secondary);
+}
+
+.gd-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+.gd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.gd-th {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.gd-td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* --- 搜索结果浮层 ---------------------------------------------------------- */
+.gd-results {
+  position: absolute;
+  top: 12px;
+  left: 24px;
+  right: 24px;
+  z-index: 20;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.gd-results-note {
+  padding: 16px;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.gd-results-group + .gd-results-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.gd-results-chapter {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.gd-result-item {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.gd-result-item:hover {
+  background: var(--bg-hover);
+}
+
+.gd-result-question {
+  margin-bottom: 2px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.gd-result-snippet {
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 860px) {
+  .gd-nav {
+    width: 168px;
+  }
+
+  .gd-main-inner {
+    padding: 16px 16px 40px;
+  }
+}
+
+/* === 工作区（Workspace）=====================================================
+   两处此前的毛病：页头用 `(1 projects)` 括号计数，与全站空格形式不一致；每条项目
+   的第二行直接把 `theme_description` 印出来，而它常常与项目名一字不差，同一行字
+   上下重复两遍。现在计数改空格形式、重复描述换成能区分项目的路径，两级空态都走
+   全站统一的 EmptyState。 */
+
+.ws-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ws-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.ws-list-pane {
+  width: 380px;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-color);
+}
+
+.ws-detail-pane {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ws-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  padding: 24px;
+}
+
+/* --- 左栏：过滤框与项目清单 ------------------------------------------------ */
+.ws-list-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ws-filter {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ws-filter-box {
+  width: 100%;
+}
+
+.ws-list {
+  padding: 6px;
+}
+
+.ws-skeleton {
+  height: 60px;
+  margin: 6px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  animation: ws-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.ws-skeleton--row {
+  height: 42px;
+}
+
+@keyframes ws-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 项目条目：选中给整片状态（底 + 描边 + 前景一起变），不用左单边竖线。 */
+.ws-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.ws-item:hover:not(.is-selected) {
+  background: var(--bg-hover);
+}
+
+.ws-item.is-selected {
+  background: var(--bg-elevated);
+  box-shadow: inset 0 1px 0 var(--bezel-highlight), 0 0 0 1px var(--bezel-outer);
+}
+
+.ws-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.ws-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+.ws-item.is-selected .ws-item-icon {
+  color: var(--accent-primary);
+}
+
+.ws-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-item-title {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-item-subtitle {
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+}
+
+.ws-status {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.ws-status.is-active {
+  color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 32%, transparent);
+}
+
+/* 「在文件管理器中打开」平时收起，指到这一行才浮出来，不跟项目名争注意力。 */
+.ws-item-open {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.ws-item:hover .ws-item-open,
+.ws-item:focus-within .ws-item-open {
+  opacity: 1;
+}
+
+/* --- 右栏：面包屑与文件清单 ------------------------------------------------ */
+.ws-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ws-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ws-crumbs-path {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.ws-crumb {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ws-crumb-sep {
+  margin: 0 2px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.ws-crumb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.ws-crumb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ws-crumb-btn.is-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ws-crumbs-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ws-crumbs-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ws-file-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ws-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--transition-fast);
+}
+
+.ws-file-row.is-dir {
+  cursor: pointer;
+}
+
+.ws-file-row.is-dir:hover,
+.ws-file-row:hover {
+  background: var(--bg-hover);
+}
+
+.ws-file-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  color: var(--text-muted);
+}
+
+.ws-file-row.is-dir .ws-file-glyph {
+  color: var(--text-secondary);
+}
+
+.ws-file-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-file-name {
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1px;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+}
+
+.ws-file-mime {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.ws-file-row:hover .ws-file-actions,
+.ws-file-row:focus-within .ws-file-actions {
+  opacity: 1;
+}
+
+@media (max-width: 900px) {
+  .ws-list-pane {
+    width: 280px;
+  }
+}
+
+/* === 虚拟桌面（Desktop）=====================================================
+   这一页此前是「一整块纯黑，没有任何说明」：人从浅色产品里点进桌面，撞进一块黑矩形，
+   看不出它在加载、连上了、还是坏了。现在顶上一条轻薄状态栏写清连接态，画布没就绪时
+   让位给一块与深浅主题协调的工作台占位容器。 */
+
+.dt-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dt-status {
+  flex-shrink: 0;
+}
+
+.dt-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-secondary);
+}
+
+.dt-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #0b0d12;
+}
+
+/* 占位容器：深浅主题各自协调的浅底 + 一层极淡的网格，读作「一块待用的工作台」，
+   不是一块坏掉的屏幕。网格用两条线性渐变画线，不用图片。 */
+.dt-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background-color: var(--bg-secondary);
+  background-image:
+    linear-gradient(to right, var(--border-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-subtle) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* === 首启向导（Init）========================================================
+   向导的卡片此前是「1px 描边 + 灰底」的单层块，与全站 Double-Bezel 语言不一致；
+   模式切换是又一套方框页签。现在卡片统一走 C3，切换走 C6 分段胶囊，
+   安装向导的逻辑与单测一字未动。 */
+
+.init-card {
+  padding: 14px 16px;
+}
+
+.init-env-strip {
+  padding: 10px 14px;
+}
+
+/* 表单控件统一口径：圆角、描边、聚焦一圈中性描边，与设置页同源。 */
+.init-field {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+              background var(--transition-fast);
+}
+
+.init-field:focus {
+  outline: none;
+  border-color: var(--border-primary);
+  background: var(--bg-elevated);
+  box-shadow: var(--focus-ring);
+}
+
+/* 角色绑定这类「一整块可勾」的行：整片给状态，不用左单边竖线。 */
+.init-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.init-check-row:hover {
+  background: var(--bg-hover);
+}
+
+.init-check-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 高级工程参数面板：凹下去那一层（工具/折叠块语义），与外层卡片的抬起面区分开。 */
+.init-advanced {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-recessed);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+

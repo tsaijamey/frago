@@ -15,7 +15,12 @@ import { CircleSlash, ExternalLink, Loader2, X } from 'lucide-react';
 import * as api from '@/api';
 import type { TodoCategory, TodoItem } from '@/api';
 import TodoStatusIcon from './TodoStatusIcon';
-import { PRIORITY_TONE, STATUS_TONE, effectiveCategory } from './todoMeta';
+import {
+  PRIORITY_TONE,
+  STATUS_TONE,
+  effectiveCategory,
+  splitContextTimeline,
+} from './todoMeta';
 
 interface SectionProps {
   title: string;
@@ -34,10 +39,35 @@ function Section({ title, children }: SectionProps) {
 /** 属性表的一行：左边名字，右边值。 */
 function Prop({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <>
-      <dt className="tdp-prop-label">{label}</dt>
-      <dd className="tdp-prop-value">{children}</dd>
-    </>
+    <div className="tdp-prop">
+      <span className="tdp-prop-label">{label}</span>
+      <span className="tdp-prop-value">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * 背景里的时间分隔线。
+ *
+ * 事务的背景是一路追加写下来的，每续一段前面都落一条 `--- 日期 · session … ---`。
+ * 原样印出来是一串裸露的减号；这里把它画成一条有日期小字的分隔线，读的人一眼看得出
+ * 「这一段是什么时候、在哪场对话里添的」。
+ */
+function ContextTimeline({ context }: { context: string }) {
+  const { lead, entries } = splitContextTimeline(context);
+
+  return (
+    <div className="tdp-timeline">
+      {lead && <p className="td-text td-text--pre">{lead}</p>}
+      {entries.map((entry, i) => (
+        <div key={`${entry.stamp}-${i}`} className="tdp-timeline-entry">
+          <div className="tdp-timeline-stamp">
+            <span className="tdp-timeline-stamp-text">{entry.stamp}</span>
+          </div>
+          {entry.body && <p className="td-text td-text--pre">{entry.body}</p>}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -147,30 +177,34 @@ export default function TodoDetail({ todo, categories, onClose, onDropped }: Tod
   const orphanId = todo.category && !category ? todo.category : null;
 
   return (
-    <div className="td-panel tdp-panel">
-      <div className="td-head">
+    <div className="td-panel tdp-panel ui-drawer">
+      <div className="td-head ui-drawer-head">
         <div className="min-w-0 flex-1">
-          <h2 className="td-title">{todo.title}</h2>
+          <h2 className="td-title ui-drawer-title">{todo.title}</h2>
           <div className="td-id">{todo.id}</div>
         </div>
         {/* 弃置摆在标题这一行：它是这块面板上唯一一个会改动事务的动作，得在人一眼看得见
-            的地方，而不是等他把正文滚到底。已经弃置的不出现——命令那边也拒绝第二次弃置。 */}
-        {todo.status !== 'dropped' && !dropping && (
-          <button
-            type="button"
-            className="tdp-drop-open"
-            onClick={() => setDropping(true)}
-            title={t('todos.drop.button')}
-          >
-            <CircleSlash size={14} />
-            {t('todos.drop.button')}
+            的地方，而不是等他把正文滚到底。已经弃置的不出现——命令那边也拒绝第二次弃置。
+            它跟日程页的删除走同一套危险动作语言：红色描边胶囊，而不是一枚孤立的图标。 */}
+        <div className="ui-drawer-actions">
+          {todo.status !== 'dropped' && !dropping && (
+            <button
+              type="button"
+              className="ui-danger-pill tdp-drop-open"
+              onClick={() => setDropping(true)}
+              title={t('todos.drop.button')}
+            >
+              <CircleSlash size={14} />
+              {t('todos.drop.button')}
+            </button>
+          )}
+          <button type="button" className="td-close ui-icon-btn" onClick={onClose} aria-label={t('common.close')}>
+            <X size={16} />
           </button>
-        )}
-        <button type="button" className="td-close" onClick={onClose} aria-label={t('common.close')}>
-          <X size={16} />
-        </button>
+        </div>
       </div>
 
+      <div className="ui-drawer-body tdp-drawer-body">
       {dropping && (
         <DropForm
           todo={todo}
@@ -182,8 +216,8 @@ export default function TodoDetail({ todo, categories, onClose, onDropped }: Tod
         />
       )}
 
-      {/* 「这件现在什么情况」的几项答案排成一张两列表，眼睛只沿一条竖线往下扫；
-          正文三段（背景、步骤、完成条件）放在表下面，要读的时候再往下读。 */}
+      {/* 「这件现在什么情况」的几项答案收成一张双层小卡：几项属性排成两列，
+          眼睛只沿一条竖线往下扫。它答的是「这条事务是什么」，与下面要细读的正文分开。 */}
       <dl className="tdp-props">
         <Prop label={t('todos.detail.status')}>
           <span className={`td-chip tdp-status-chip ${statusTone.className}`}>
@@ -209,9 +243,9 @@ export default function TodoDetail({ todo, categories, onClose, onDropped }: Tod
         {todo.dropped_at && <Prop label={t('todos.detail.droppedAt')}>{todo.dropped_at}</Prop>}
         {todo.tags.length > 0 && (
           <Prop label={t('todos.detail.tags')}>
-            <span className="flex flex-wrap gap-1">
+            <span className="tdp-tag-row">
               {todo.tags.map((tag) => (
-                <span key={tag} className="td-tag">
+                <span key={tag} className="tdp-tag">
                   {tag}
                 </span>
               ))}
@@ -221,22 +255,25 @@ export default function TodoDetail({ todo, categories, onClose, onDropped }: Tod
       </dl>
 
       <div className="td-body">
-        {/* 弃置理由排在所有正文之前：这件事已经不做了，先看见为什么，再看它原本要做什么。 */}
+        {/* 摘要抬成「当前焦点」：读一件事务先要知道它现在卡在哪、结论是什么，
+            这一段就是那个答案。无卡纯排印，靠字号与一道分隔线把它从密集正文里拉出来。 */}
+        {todo.summary && (
+          <div className="ui-brief-conclusion tdp-focus">
+            <div className="ui-brief-conclusion-eyebrow">{t('todos.detail.summary')}</div>
+            <p className="ui-brief-conclusion-title tdp-lead">{todo.summary}</p>
+          </div>
+        )}
+
+        {/* 弃置理由排在其余正文之前：这件事已经不做了，先看见为什么，再看它原本要做什么。 */}
         {todo.drop_reason && (
           <Section title={t('todos.detail.dropReason')}>
             <p className="td-text td-text--pre">{todo.drop_reason}</p>
           </Section>
         )}
 
-        {todo.summary && (
-          <Section title={t('todos.detail.summary')}>
-            <p className="td-text tdp-lead">{todo.summary}</p>
-          </Section>
-        )}
-
         {todo.context && (
           <Section title={t('todos.detail.context')}>
-            <p className="td-text td-text--pre">{todo.context}</p>
+            <ContextTimeline context={todo.context} />
           </Section>
         )}
 
@@ -287,6 +324,7 @@ export default function TodoDetail({ todo, categories, onClose, onDropped }: Tod
             </ul>
           </Section>
         )}
+      </div>
       </div>
     </div>
   );

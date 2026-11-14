@@ -344,6 +344,7 @@ export const getConfig = withMode(
     return {
       theme: config.theme as UserConfig['theme'],
       language: (config.language || 'en') as UserConfig['language'],
+      language_configured: config.language_configured,
       agent_language: (config.agent_language || '') as UserConfig['agent_language'],
       max_history_items: config.max_history_items,
       shortcuts: config.shortcuts,
@@ -363,6 +364,7 @@ export const updateConfig = withMode(
         config: {
           theme: updated.theme as UserConfig['theme'],
           language: (updated.language || 'en') as UserConfig['language'],
+          language_configured: updated.language_configured ?? true,
           agent_language: (updated.agent_language || '') as UserConfig['agent_language'],
           max_history_items: updated.max_history_items,
           shortcuts: updated.shortcuts,

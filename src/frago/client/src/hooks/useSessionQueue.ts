@@ -25,6 +25,23 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 /** 仅检测最后一轮实际内容会话是否包含交互卡。 */
 export const TAIL_TURN_WINDOW = 1;
 
+/**
+ * 相邻记录之间超过这个间隔，说明 agent 已经停过一段（人在等，或定时器在等），不再算同一轮。
+ *
+ * 取 120 秒：正常工具流的间隔是秒级，切不到；而「每隔 45～120 秒自查一次」的长驻轮询会被
+ * 切成独立轮次。没有这道切分时，一场「派发 Worker 后用定时器自问自答数小时」的会话会把
+ * 全部内容算成一个巨型末轮，轮内一次误判（如把命令回显当卡片）就把队列闸门关死到最后。
+ */
+export const TURN_SILENCE_GAP_MS = 120_000;
+
+/** 定时唤醒类工具：agent 给自己挂定时器，或查看 / 撤销定时器，标志新一轮自查开始。 */
+const ASYNC_WAKEUP_TOOL_NAMES = new Set([
+  'schedulewakeup',
+  'croncreate',
+  'crondelete',
+  'cronlist',
+]);
+
 const BOOKKEEPING_KINDS = new Set([
   'call.envelope',
   'session.state',
@@ -70,8 +87,140 @@ function hasUiDecisionCard(text: string): boolean {
   }
 }
 
+/** 独立的 `frago ask` / `frago app ask` 调用：命令名之前只允许路径与空白。 */
+const STANDALONE_ASK_CMD_RE = /^\s*(?:[A-Za-z0-9_./-]*\/)?frago(?:\.exe)?\s+(?:app\s+)?ask\b/;
+/** 帮助类选项：只是在查用法，不会真的产出待人回答的卡片。 */
+const ASK_HELP_FLAG_RE = /(?:^|\s)(?:-h|--help)\b/;
+/** shell 命令分隔符：出现即说明这不是一条独立命令，而是复合脚本的一部分。 */
+const SHELL_CHAIN_RE = /(?:&&|\|\||;|\||\n)/;
+
+/**
+ * 这段命令行是不是**独立**的 `frago ask` 调用。
+ *
+ * 只有独立调用才可能产出「等着人点选」的卡片。复合脚本（`a && b`）里的 `frago ask`
+ * 往往是校验用例或演示，它打印出来的卡片 JSON 是**命令输出内容**，不是挂给人类的卡。
+ */
+export function isStandaloneAskCommand(command: string): boolean {
+  const cmd = (command || '').trim();
+  if (!cmd) return false;
+  if (ASK_HELP_FLAG_RE.test(cmd)) return false;
+  const head = cmd.split(SHELL_CHAIN_RE)[0] ?? '';
+  return STANDALONE_ASK_CMD_RE.test(head);
+}
+
+/** 取出 `tool.call` 里的命令行原文（各家内核字段名不一，逐个兜）。 */
+function toolCallCommand(record: WorkbenchRecord): string {
+  const args = record.payload.args;
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const obj = args as Record<string, unknown>;
+    for (const key of ['CommandLine', 'command', 'cmd']) {
+      const val = obj[key];
+      if (typeof val === 'string' && val.trim()) return val;
+    }
+  }
+  for (const key of ['command', 'cmd'] as const) {
+    const val = record.payload[key];
+    if (typeof val === 'string' && val.trim()) return val;
+  }
+  return '';
+}
+
+/** 这条 `tool.call` 是不是「挂了张待人回答的卡」的调用。`null` 表示判不出。 */
+function toolCallAskVerdict(record: WorkbenchRecord): boolean | null {
+  const command = toolCallCommand(record);
+  if (command) return isStandaloneAskCommand(command);
+  for (const key of ['tool_name', 'tool', 'name'] as const) {
+    const name = record.payload[key];
+    if (typeof name === 'string' && name.trim()) {
+      const lower = name.trim().toLowerCase();
+      return lower === 'ask' || lower === 'app_ask' || lower === 'frago_ask' || lower.endsWith('_ask');
+    }
+  }
+  return null;
+}
+
+/**
+ * 为 `records[index]` 这条 `tool.result` 找配对的 `tool.call`。
+ * 优先级：`call_id` 相同 → 同 `group_id` 的最近一条 → 紧邻的前序调用。
+ */
+function pairedToolCall(
+  records: WorkbenchRecord[],
+  index: number
+): WorkbenchRecord | null {
+  const target = records[index];
+  const targetCallId = target.payload.call_id;
+  const targetGroup = target.group_id;
+  let fallback: WorkbenchRecord | null = null;
+  for (let j = index - 1; j >= 0; j -= 1) {
+    const cand = records[j];
+    if (cand.kind !== 'tool.call') continue;
+    if (typeof targetCallId === 'string' && cand.payload.call_id === targetCallId) return cand;
+    if (fallback === null) {
+      if (targetGroup && cand.group_id === targetGroup) fallback = cand;
+      else if (!targetGroup) fallback = cand;
+    }
+  }
+  return fallback;
+}
+
+/** 各家内核给工具输出套的元数据行：判「正文是否就是那一个组件输出」时不算内容。 */
+const TOOL_OUTPUT_WRAPPER_RE =
+  /^\s*(?:Created At|Completed At|Command exited with code|Command output|Showing lines|Tool is running as a background task)\b.*$/gm;
+
+/**
+ * 正文是否就是**规范独立的**组件输出（剥掉内核元数据后只剩那一个卡片 JSON）。
+ * 命令回显（`ps aux` 行、`=== CLI VALID TEST ===` 分段日志）在 JSON 之前还夹着别的输出行。
+ */
+function bodyIsBareComponentOutput(body: string): boolean {
+  if ((body.match(/"frago_ui_component"/g) ?? []).length !== 1) return false;
+  const parsed = parseUiComponentOutput(body);
+  if (parsed === null || !parsed.ok) return false;
+  const idx = body.indexOf('"frago_ui_component"');
+  const start = body.lastIndexOf('{', idx);
+  if (start < 0) return false;
+  const prefix = body.slice(0, start).replace(TOOL_OUTPUT_WRAPPER_RE, '');
+  return !prefix.trim();
+}
+
+/** 剥掉 Markdown 代码围栏内的内容，用于排除「示例 JSON」误判。 */
+function stripMarkdownCodeFences(text: string): string {
+  if (!text.includes('```')) return text;
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of text.split('\n')) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence) out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** `tool.result` 里的卡片 JSON 是否为「真的挂给人类」的那张。 */
+function toolResultIsLiveCard(
+  record: WorkbenchRecord,
+  body: string,
+  records?: WorkbenchRecord[]
+): boolean {
+  if (records) {
+    const index = records.findIndex((r) => r === record);
+    if (index >= 0) {
+      const call = pairedToolCall(records, index);
+      if (call) {
+        const verdict = toolCallAskVerdict(call);
+        if (verdict !== null) return verdict;
+      }
+    }
+  }
+  return bodyIsBareComponentOutput(body);
+}
+
 /** 判断单条主会话记录是否携带交互卡（`answer-needed-by-human` 或 `decision-card`）。 */
-export function recordHasInteractiveCard(record: WorkbenchRecord): boolean {
+export function recordHasInteractiveCard(
+  record: WorkbenchRecord,
+  records?: WorkbenchRecord[]
+): boolean {
   if (record.agent_path.length > 0) return false;
   if (record.kind === 'agent.say') {
     const text = typeof record.payload.text === 'string' ? record.payload.text : '';
@@ -81,12 +230,13 @@ export function recordHasInteractiveCard(record: WorkbenchRecord): boolean {
       const td = trailingDecision(text);
       if (td !== null) return true;
     }
-    return hasUiDecisionCard(text);
+    return hasUiDecisionCard(stripMarkdownCodeFences(text));
   }
   if (record.kind === 'tool.result' && record.payload.status !== 'error') {
     const body = typeof record.payload.body === 'string' ? record.payload.body : '';
     if (!body.trim()) return false;
-    return hasUiDecisionCard(body);
+    if (!hasUiDecisionCard(body)) return false;
+    return toolResultIsLiveCard(record, body, records);
   }
   return false;
 }
@@ -112,9 +262,33 @@ function hasSubstantiveAssistantResponse(record: WorkbenchRecord): boolean {
   return Boolean(text.trim());
 }
 
+/** 这条记录是否标志「一次异步定时唤醒」的开始（`schedule` 族工具调用、后台任务通知）。 */
+function isAsyncWakeupBoundary(record: WorkbenchRecord): boolean {
+  if (record.kind === 'tool.call') {
+    const family = typeof record.payload.tool_family === 'string' ? record.payload.tool_family : '';
+    const name = typeof record.payload.tool_name === 'string' ? record.payload.tool_name : '';
+    return (
+      family.trim().toLowerCase() === 'schedule' ||
+      ASYNC_WAKEUP_TOOL_NAMES.has(name.trim().toLowerCase())
+    );
+  }
+  if (record.kind === 'context.inject') {
+    return (
+      record.payload.channel === 'task-notification' ||
+      record.payload.source === 'task-notification'
+    );
+  }
+  return false;
+}
+
 /**
  * 将主会话记录按「轮次」切分，保留每个有效回复轮次（含非空 `agent.say` 或交互卡），
  * 使末尾索引 `-1` 对应最后一轮实际内容会话。
+ *
+ * 除用户发言与 hook 注入这两条显式边界外，**静默与定时唤醒也要切轮**：相邻记录间隔超过
+ * `TURN_SILENCE_GAP_MS`，或一段工具流之后又遇到定时唤醒，就把已攒下的那段收成一轮。
+ * 没有这道切分时，一场「派发 Worker 后用定时器自问自答数小时」的会话会把全部内容算成
+ * 一个巨型末轮，轮内一次误判就把队列闸门关死到最后。
  */
 export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][] {
   const turns: WorkbenchRecord[][] = [];
@@ -122,6 +296,15 @@ export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][
   let currentHasSay = false;
   let currentSayGroup: string | null = null;
   let currentHasAssistantStep = false;
+  let prevTs: number | null = null;
+
+  const closeCurrent = () => {
+    if (current.length > 0) turns.push(current);
+    current = [];
+    currentHasSay = false;
+    currentSayGroup = null;
+    currentHasAssistantStep = false;
+  };
 
   for (const rec of records) {
     if (rec.agent_path.length > 0) continue;
@@ -130,31 +313,30 @@ export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][
       continue;
     }
 
+    // 定时唤醒是新一轮自查的起点：上一轮已经说过话之后，再出现一次定时唤醒就另起一段。
+    // 这一条不能只挂在「还没说话」的分支下——事故现场那场会话的自查循环每轮都有回复，
+    // 而同一次派发里所有记录的 group_id 相同，只按 group 判永远切不开。
+    // 也不能无条件切：首次挂定时器是本轮内的一个动作，切了会把人的提问和它的回答剥开。
+    if (currentHasSay && isAsyncWakeupBoundary(rec)) closeCurrent();
+
     if (currentHasSay) {
       const sameGroup = Boolean(
         rec.group_id && currentSayGroup && rec.group_id === currentSayGroup
       );
-      if (!sameGroup) {
-        turns.push(current);
-        current = [];
-        currentHasSay = false;
-        currentSayGroup = null;
-        currentHasAssistantStep = false;
-      }
+      if (!sameGroup) closeCurrent();
     } else if (currentHasAssistantStep) {
       const isNewBoundary =
         rec.kind === 'user.say' ||
         (rec.kind === 'context.inject' && rec.payload.source === 'hook');
-      if (isNewBoundary) {
-        turns.push(current);
-        current = [];
-        currentHasSay = false;
-        currentSayGroup = null;
-        currentHasAssistantStep = false;
-      }
+      const curTs = typeof rec.ts === 'number' ? rec.ts : null;
+      const silentGap =
+        prevTs !== null && curTs !== null && curTs - prevTs > TURN_SILENCE_GAP_MS;
+      if (isNewBoundary || silentGap) closeCurrent();
     }
 
+    const curTs = typeof rec.ts === 'number' ? rec.ts : null;
     current.push(rec);
+    if (curTs !== null) prevTs = curTs;
     if (hasSubstantiveAssistantResponse(rec)) {
       currentHasSay = true;
       currentSayGroup = rec.group_id ?? null;
@@ -174,7 +356,7 @@ export function segmentMainTurns(records: WorkbenchRecord[]): WorkbenchRecord[][
   }
 
   return turns.filter((turn) =>
-    turn.some((r) => hasSubstantiveAssistantResponse(r) || recordHasInteractiveCard(r))
+    turn.some((r) => hasSubstantiveAssistantResponse(r) || recordHasInteractiveCard(r, records))
   );
 }
 
@@ -191,7 +373,7 @@ export function hasInteractiveCardInTailTurns(
   let hasUnansweredCard = false;
   for (const turn of tailTurns) {
     for (const rec of turn) {
-      if (recordHasInteractiveCard(rec)) {
+      if (recordHasInteractiveCard(rec, records)) {
         hasUnansweredCard = true;
       } else if (hasUnansweredCard && isCardAnswerRecord(rec)) {
         hasUnansweredCard = false;
@@ -220,7 +402,7 @@ export function detectStopTurnId(records: WorkbenchRecord[]): string | null {
   if (!lastSubstantive) return null;
   if (
     hasSubstantiveAssistantResponse(lastSubstantive) ||
-    recordHasInteractiveCard(lastSubstantive)
+    recordHasInteractiveCard(lastSubstantive, records)
   ) {
     return lastSubstantive.id || 'stop';
   }

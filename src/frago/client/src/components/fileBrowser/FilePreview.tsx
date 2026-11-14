@@ -142,7 +142,7 @@ function TextPreview({ path, name }: { path: string; name: string }) {
     );
 
   return (
-    <pre className="h-full overflow-auto bg-bg-base p-4 font-mono text-[12px] leading-[1.6] text-text-secondary">
+    <pre className="h-full overflow-auto bg-bg-base px-5 py-4 font-mono text-[12.5px] leading-[1.65] text-text-secondary">
       {html !== null ? (
         <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
       ) : (

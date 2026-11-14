@@ -447,20 +447,25 @@ export default function StackPanel({
   };
 
   return (
-    <section data-testid="stack-panel" className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center gap-1.5 px-3 pb-1 pt-2.5">
+    <section data-testid="stack-panel" className="wb-tray h-full min-h-0">
+      <header className="wb-tray-section flex shrink-0 items-center gap-1.5">
         <Layers size={12} className="shrink-0 text-text-muted" />
-        <span className="text-[11px] font-medium tracking-wide text-text-muted">
+        <span className="wb-tray-eyebrow mb-0">
           {t('workbench.stack.title')}
         </span>
         {stacks.length ? (
-          <span className="font-mono text-[11px] text-text-muted opacity-70">
+          <span className="font-mono text-[11px] tabular-nums text-text-muted opacity-70">
             {t('workbench.stack.count', { n: stacks.length })}
           </span>
         ) : null}
       </header>
       {stacks.length === 0 ? (
-        <p data-testid="stack-empty" className="px-3 pb-3 text-[12px] leading-[1.6] text-text-muted">
+        /* 空着时只补一句怎么用。**不再画一个空态图标加一遍标题**——上面那行眉标已经
+           写着「暂存」，再写一遍就是同一句话说两遍。 */
+        <p
+          data-testid="stack-empty"
+          className="wb-tray-body px-3 pb-3 text-[12px] text-text-muted"
+        >
           {t('workbench.stack.empty')}
         </p>
       ) : (

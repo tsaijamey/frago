@@ -21,6 +21,23 @@ import { getWebSocketClient } from './websocket';
 /** 连续失败多久才点亮遮罩。低于这个数的抖动人根本来不及反应，遮罩一闪反而像出了事。 */
 export const SHOW_DELAY_MS = 800;
 
+/**
+ * 连续失联多久后展开「终端唤醒指引」。
+ *
+ * 服务自更新或日常重启通常在几秒内就答得上话，前几秒只转圈说「重连中」就够了；
+ * 满 10 秒还没动静，多半是终端被关掉或电脑休眠后后台服务停了，这时把唤醒命令递到人手上。
+ */
+export const WAKE_GUIDE_DELAY_MS = 10_000;
+
+/**
+ * 普通用户在终端唤醒/重启本机工作台服务的标准命令。
+ *
+ * 对应 `frago/cli/server_command.py:restart` → `daemon.py:restart_daemon`：
+ * 服务未运行时直接走 `start_daemon()` 后台拉起；服务假死卡住时先停旧进程再起新实例，
+ * 兼容 macOS / Windows / Linux（含 systemd）且不会多弹一个浏览器窗口。
+ */
+export const WAKE_COMMAND = 'frago server restart';
+
 /** 遮罩亮着时隔多久探一次服务。 */
 export const PROBE_INTERVAL_MS = 1_500;
 
@@ -52,13 +69,24 @@ const UNAVAILABLE_STATUS = new Set([502, 503, 504]);
 interface ConnectionSlice {
   /** 服务答得上话。页面所有请求都以它为准，遮罩也是。 */
   reachable: boolean;
+  /** 连续失联已满 WAKE_GUIDE_DELAY_MS（10 秒），需展示终端唤醒指引。 */
+  prolonged: boolean;
+  /** 用户点过「暂时收起」时退化为顶部紧凑警示条，不遮挡底下页面内容与草稿。 */
+  collapsed: boolean;
+  /** 用户手动点击「立即重新检测」时正在发起探测。 */
+  probing: boolean;
   /** 一次请求没能从服务手上拿到答复。 */
   reportFailure: () => void;
   /** 一次请求拿到了答复——只用来撤销「遮罩要亮」这个倒计时，撤不了已经亮起来的遮罩。 */
   reportSuccess: () => void;
+  /** 折叠或重新展开完整唤醒指引面板。 */
+  setCollapsed: (collapsed: boolean) => void;
+  /** 立即主动探一次服务，返回本次是否已恢复连接。 */
+  probeNow: () => Promise<boolean>;
 }
 
 let showTimer: ReturnType<typeof setTimeout> | null = null;
+let wakeGuideTimer: ReturnType<typeof setTimeout> | null = null;
 let probeTimer: ReturnType<typeof setInterval> | null = null;
 /** 已经在等遮罩亮，或遮罩已经亮着。两种情况都不必再排一个计时器。 */
 let countingDown = false;
@@ -67,6 +95,13 @@ function clearShowTimer(): void {
   if (showTimer) {
     clearTimeout(showTimer);
     showTimer = null;
+  }
+}
+
+function clearWakeGuideTimer(): void {
+  if (wakeGuideTimer) {
+    clearTimeout(wakeGuideTimer);
+    wakeGuideTimer = null;
   }
 }
 
@@ -79,10 +114,22 @@ function stopProbe(): void {
 
 export const useConnectionStore = create<ConnectionSlice>((set, get) => ({
   reachable: true,
+  prolonged: false,
+  collapsed: false,
+  probing: false,
 
   reportFailure: () => {
     if (countingDown || !get().reachable) return;
     countingDown = true;
+
+    clearWakeGuideTimer();
+    wakeGuideTimer = setTimeout(() => {
+      wakeGuideTimer = null;
+      if (!get().reachable) {
+        set({ prolonged: true });
+      }
+    }, WAKE_GUIDE_DELAY_MS);
+
     showTimer = setTimeout(() => {
       showTimer = null;
       countingDown = false;
@@ -92,8 +139,24 @@ export const useConnectionStore = create<ConnectionSlice>((set, get) => ({
   },
 
   reportSuccess: () => {
+    if (!get().reachable) return;
     clearShowTimer();
+    clearWakeGuideTimer();
     countingDown = false;
+  },
+
+  setCollapsed: (collapsed: boolean) => {
+    set({ collapsed });
+  },
+
+  probeNow: async () => {
+    if (get().probing) return get().reachable;
+    set({ probing: true });
+    try {
+      return await probe(true);
+    } finally {
+      set({ probing: false });
+    }
   },
 }));
 
@@ -105,10 +168,18 @@ export const useConnectionStore = create<ConnectionSlice>((set, get) => ({
  * 亮一下又被抹掉，看着像好了，其实什么都没通。
  */
 function markReachable(): void {
-  if (useConnectionStore.getState().reachable) return;
-  useConnectionStore.setState({ reachable: true });
+  clearShowTimer();
+  clearWakeGuideTimer();
+  countingDown = false;
   stopProbe();
-  if (typeof window !== 'undefined') {
+  const wasUnreachable = !useConnectionStore.getState().reachable;
+  useConnectionStore.setState({
+    reachable: true,
+    prolonged: false,
+    collapsed: false,
+    probing: false,
+  });
+  if (wasUnreachable && typeof window !== 'undefined') {
     window.dispatchEvent(new Event(RECONNECTED_EVENT));
   }
 }
@@ -124,19 +195,25 @@ function markReachable(): void {
  * 探不到就是失败，不只是在遮罩亮着的时候用来确认，也是 WebSocket 断线那条快路的落点
  * （见 `handleSocketDisconnect`）。
  */
-async function probe(): Promise<void> {
-  if (!callNative) return;
+async function probe(allowGlobalFallback = false): Promise<boolean> {
+  const fetcher =
+    callNative ??
+    (allowGlobalFallback && typeof globalThis.fetch === 'function'
+      ? globalThis.fetch.bind(globalThis)
+      : null);
+  if (!fetcher) return false;
   try {
-    const res = await callNative(PROBE_PATH, { cache: 'no-store' });
+    const res = await fetcher(PROBE_PATH, { cache: 'no-store' });
     if (res.ok) {
       await res.json();
       markReachable();
-      return;
+      return true;
     }
   } catch {
     // 没答上来，按失败走。
   }
   useConnectionStore.getState().reportFailure();
+  return false;
 }
 
 /**
@@ -241,9 +318,15 @@ export function uninstallConnectionMonitor(): void {
   unsubscribeSocket?.();
   unsubscribeSocket = null;
   clearShowTimer();
+  clearWakeGuideTimer();
   stopProbe();
   countingDown = false;
-  useConnectionStore.setState({ reachable: true });
+  useConnectionStore.setState({
+    reachable: true,
+    prolonged: false,
+    collapsed: false,
+    probing: false,
+  });
 }
 
 /**

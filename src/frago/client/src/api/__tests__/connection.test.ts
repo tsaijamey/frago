@@ -23,6 +23,7 @@ import {
   SHOW_DELAY_MS,
   uninstallConnectionMonitor,
   useConnectionStore,
+  WAKE_GUIDE_DELAY_MS,
 } from '../connection';
 
 interface Reply {
@@ -244,6 +245,50 @@ describe('认不认这条请求', () => {
     expect(isBackendRequest('/assets/index.js')).toBe(false);
     expect(isBackendRequest('https://example.com/api/info')).toBe(false);
     expect(isBackendRequest('https://example.com/other')).toBe(false);
+  });
+});
+
+describe('连续失联 10 秒唤醒指引状态机', () => {
+  it('短于 10 秒的失联只置 reachable=false，不触发 prolonged 唤醒指引', async () => {
+    await expect(fetch('/api/workbench/sessions')).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(SHOW_DELAY_MS);
+    expect(useConnectionStore.getState().reachable).toBe(false);
+    expect(useConnectionStore.getState().prolonged).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(WAKE_GUIDE_DELAY_MS - SHOW_DELAY_MS - 100);
+    expect(useConnectionStore.getState().prolonged).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(useConnectionStore.getState().prolonged).toBe(true);
+  });
+
+  it('几秒内服务重启恢复后，10 秒计时器被清除，不会事后弹出唤醒指引', async () => {
+    await goDown();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(useConnectionStore.getState().prolonged).toBe(false);
+
+    reply = () => Promise.resolve(answer());
+    await vi.advanceTimersByTimeAsync(PROBE_INTERVAL_MS);
+    expect(useConnectionStore.getState().reachable).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(WAKE_GUIDE_DELAY_MS);
+    expect(useConnectionStore.getState().prolonged).toBe(false);
+  });
+
+  it('手动调用 probeNow 探到明确答复时，立即收起遮罩并复位 prolonged 与 collapsed', async () => {
+    await expect(fetch('/api/workbench/sessions')).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(WAKE_GUIDE_DELAY_MS);
+    useConnectionStore.getState().setCollapsed(true);
+    expect(useConnectionStore.getState().prolonged).toBe(true);
+    expect(useConnectionStore.getState().collapsed).toBe(true);
+
+    reply = () => Promise.resolve(answer());
+    const recovered = await useConnectionStore.getState().probeNow();
+
+    expect(recovered).toBe(true);
+    expect(useConnectionStore.getState().reachable).toBe(true);
+    expect(useConnectionStore.getState().prolonged).toBe(false);
+    expect(useConnectionStore.getState().collapsed).toBe(false);
   });
 });
 

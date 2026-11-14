@@ -117,27 +117,25 @@ export default function SyncDialog({ isOpen, onClose, status, onStarted }: SyncD
   const canStart = !starting && (mode === 'all' || instruction.trim().length > 0);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[1100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm"
-    >
-      <div className="my-8 w-full max-w-2xl rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] shadow-xl">
-        <div className="flex items-center justify-between border-b border-[var(--border-color)] p-4">
-          <h3 className="flex items-center gap-2 text-lg font-semibold text-[var(--text-primary)]">
-            <UploadCloud size={20} className="text-[var(--accent-primary)]" />
+    <div className="ui-modal-backdrop">
+      <div className="ui-modal-frame ui-modal-frame--wide" role="dialog" aria-modal="true" aria-label={t('dataRepo.dialogTitle')}>
+        <div className="ui-modal-head">
+          <h3 className="ui-modal-title flex items-center gap-2">
+            <UploadCloud size={18} className="text-[var(--accent-primary)]" />
             {t('dataRepo.dialogTitle')}
           </h3>
           <button
             type="button"
             onClick={onClose}
             disabled={starting}
-            className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] disabled:opacity-40"
+            className="ui-icon-btn ui-modal-close"
             aria-label={t('dataRepo.close')}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="ui-modal-body space-y-5">
           {/* Mode picker */}
           <div className="grid grid-cols-2 gap-2">
             {(['all', 'selective'] as Mode[]).map((option) => {
@@ -274,7 +272,7 @@ export default function SyncDialog({ isOpen, onClose, status, onStarted }: SyncD
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--border-color)] p-4">
+        <div className="ui-modal-foot justify-between">
           <p className="text-xs text-[var(--text-muted)]">{t('dataRepo.agentNote')}</p>
           <div className="flex shrink-0 gap-2">
             <button

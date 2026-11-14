@@ -203,7 +203,9 @@ function ImageGridLightbox({
   return createPortal(
     <div
       data-testid="image-grid-viewer"
-      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      /* 与全站其余 11 处模态遮罩同一浓度。此前这里是 /60——图片灯箱压得比别人重，
+         说不出哪里别扭但能感觉到。 */
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

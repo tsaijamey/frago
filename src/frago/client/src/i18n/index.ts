@@ -16,8 +16,36 @@ const resources = {
   zh: { translation: zh },
 };
 
-// Get initial language from localStorage to prevent FOUC (Flash of Unstyled Content)
-function getInitialLanguage(): string {
+// Infer language from browser locale when user has no stored preference yet.
+// Chinese locales (zh / zh-CN / zh-Hans / zh-TW / zh-HK) land on 'zh'; explicit
+// non-Chinese locales land on 'en'; environments with no locale info fall back to 'zh'.
+export function detectBrowserLanguage(): 'zh' | 'en' {
+  try {
+    const candidates: string[] = [];
+    if (typeof navigator !== 'undefined') {
+      if (Array.isArray(navigator.languages)) {
+        candidates.push(...navigator.languages);
+      }
+      if (navigator.language) {
+        candidates.push(navigator.language);
+      }
+    }
+    for (const raw of candidates) {
+      const normalized = raw?.trim().toLowerCase();
+      if (!normalized) continue;
+      if (normalized.startsWith('zh')) {
+        return 'zh';
+      }
+      return 'en';
+    }
+  } catch {
+    // navigator not available
+  }
+  return 'zh';
+}
+
+// Get initial language from localStorage (or browser locale on fresh install)
+export function getInitialLanguage(): 'zh' | 'en' {
   try {
     const stored = localStorage.getItem('language');
     if (stored === 'en' || stored === 'zh') {
@@ -26,7 +54,7 @@ function getInitialLanguage(): string {
   } catch {
     // localStorage not available
   }
-  return 'en';
+  return detectBrowserLanguage();
 }
 
 i18n.use(initReactI18next).init({

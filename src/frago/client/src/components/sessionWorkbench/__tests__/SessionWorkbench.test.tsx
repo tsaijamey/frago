@@ -226,6 +226,36 @@ describe('RecordStream 中栏', () => {
     expect(screen.getByText(/从左边挑一场会话/)).toBeTruthy();
   });
 
+  // 2026-11-14：中栏空态此前只有一个图标加一行说明，占着整栏却不提供信息。
+  // 现在把手上已有的最近几场摆进去，点一条直接进那一场——不新取数据、不新加接口。
+  describe('空态里的最近会话', () => {
+    const recent = [
+      { id: 'r1', title: '最近一场' },
+      { id: 'r2', title: '第二场' },
+      { id: 'r3', title: '第三场' },
+    ];
+
+    it('给了最近几场就摆出来，点一条交回它的编号', () => {
+      const onOpenRecent = vi.fn();
+      render(
+        <RecordStream
+          {...streamProps({ sessionId: null, records: [], recentSessions: recent, onOpenRecent })}
+        />
+      );
+      const items = screen.getAllByTestId('stream-empty-recent-item');
+      expect(items).toHaveLength(3);
+      expect(items[0].textContent).toContain('最近一场');
+      fireEvent.click(items[1]);
+      expect(onOpenRecent).toHaveBeenCalledWith('r2');
+    });
+
+    it('没给最近几场时只留说明，不摆空列表', () => {
+      render(<RecordStream {...streamProps({ sessionId: null, records: [] })} />);
+      expect(screen.queryByTestId('stream-empty-recent')).toBeNull();
+      expect(screen.getByText(/从左边挑一场会话/)).toBeTruthy();
+    });
+  });
+
   it('空壳会话渲染成引导页而不是报错', () => {
     render(<RecordStream {...streamProps({ records: [] })} />);
     expect(screen.getByText(/一条记录都没留下/)).toBeTruthy();
@@ -238,6 +268,19 @@ describe('RecordStream 中栏', () => {
     setGeometry(scroller, 2000, 800);
     rerender(<RecordStream {...streamProps()} />);
     expect(scroller.scrollTop).toBe(2000);
+  });
+
+  it('短内容天然覆盖底部 100px 时新消息自动滚底', () => {
+    const { rerender } = render(<RecordStream {...streamProps({ records: [], loading: true })} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    // 短内容 850px，可视区 800px，视口天然覆盖底部热区
+    setGeometry(scroller, 850, 800);
+    rerender(<RecordStream {...streamProps()} />);
+    // 短内容天然覆盖底部，武装贴底；新消息到来撑高到 1200px 时自动滚底
+    setGeometry(scroller, 1200, 800);
+    const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '短内容新消息' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
+    expect(scroller.scrollTop).toBe(1200);
   });
 
   it('翻到顶才要更早的一页，没到顶不要', () => {
@@ -350,26 +393,197 @@ describe('RecordStream 中栏', () => {
     expect(screen.queryByTestId('jump-to-latest')).toBeNull();
   });
 
-  it('解除后十秒没再手动滚动，新条目进来自动滚动复活', () => {
+  it('距底 100px 内遇到单次 >100px 高新内容仍持续自动滚底', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 用户滚动到距底 50px（2000 - 1150 - 800 = 50 <= 100px），进入热区武装
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 1150;
+    fireEvent.scroll(scroller);
+
+    // 单次插入大段内容（如工具输出），高度瞬间暴增 600px（远超 100px 阈值）到 2600px
+    setGeometry(scroller, 2600, 800);
+    const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '大段长内容' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
+    // 依据内容插入前的武装状态，依然持续自动滚到底部
+    expect(scroller.scrollTop).toBe(2600);
+  });
+
+  it('上翻至 101px+ 后新内容绝不抢滚', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 距底 101px：2000 - 1099 - 800 = 101px > 100px，脱离底部热区解除武装
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 1099;
+    fireEvent.scroll(scroller);
+
+    // 新条目到来，内容增加到 2600px，视口绝对不动，严禁抢滚
+    setGeometry(scroller, 2600, 800);
+    const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '新的' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
+    expect(scroller.scrollTop).toBe(1099);
+  });
+
+  it('再下滚回 <=100px 后恢复自动滚底', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 先上翻到上面解除武装
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 800;
+    fireEvent.scroll(scroller);
+
+    // 再下滚回距底刚好 100px：2000 - 1100 - 800 = 100px <= 100px，恢复武装
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 1100;
+    fireEvent.scroll(scroller);
+
+    setGeometry(scroller, 2600, 800);
+    const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '恢复后新消息' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
+    expect(scroller.scrollTop).toBe(2600);
+  });
+
+  it('解除后即使经过十秒，新条目进来也绝不抢滚（彻底根除十秒静默复活）', () => {
     vi.useFakeTimers();
     try {
       const { rerender } = render(<RecordStream {...streamProps()} />);
       const scroller = screen.getByTestId('record-stream-scroll');
       setGeometry(scroller, 2000, 800);
 
+      // 上翻离开底部 100px 热区
       fireEvent.wheel(scroller);
       scroller.scrollTop = 1000;
       fireEvent.scroll(scroller);
 
-      // 十一秒没再碰，新条目进来时自动滚动复活。
+      // 无论经过 11 秒还是更久，新条目进来都绝不抢滚
       vi.setSystemTime(Date.now() + 11_000);
       setGeometry(scroller, 2600, 800);
-      const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '新的' } });
+      const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '新内容' } });
       rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
-      expect(scroller.scrollTop).toBe(2600);
+      expect(scroller.scrollTop).toBe(1000);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('首尾 ID 不变但最后一条单条消息流式变长时，武装着持续自动滚底', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+    scroller.scrollTop = 1200; // 处于贴底武装状态
+
+    // 流式增量到来：最后一条记录变长，但首尾 ID 均未变（first === prev.first && last === prev.last）
+    setGeometry(scroller, 2500, 800);
+    const updatedLast = {
+      ...twoInAGroup[1],
+      payload: { ...twoInAGroup[1].payload, text: '流式输出增长了内容长高500px' },
+    };
+    rerender(<RecordStream {...streamProps({ records: [twoInAGroup[0], updatedLast] })} />);
+    // 持续自动贴底滚动到底部
+    expect(scroller.scrollTop).toBe(2500);
+  });
+
+  it('首尾 ID 不变且最后一条流式变长时，若用户已离开底部 100px 热区则绝不抢滚', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 用户手动上翻离开底部 100px 热区（距底 500px > 100px）
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 700;
+    fireEvent.scroll(scroller);
+
+    // 单条流式增长撑高内容
+    setGeometry(scroller, 2500, 800);
+    const updatedLast = {
+      ...twoInAGroup[1],
+      payload: { ...twoInAGroup[1].payload, text: '流式输出继续增长' },
+    };
+    rerender(<RecordStream {...streamProps({ records: [twoInAGroup[0], updatedLast] })} />);
+    // 视口必须留在 700，严禁强行滚底！
+    expect(scroller.scrollTop).toBe(700);
+  });
+
+  it('平滑滚动途中经过距底 >100px 位置时不被误解除武装（防滚着滚着自己不跟了）', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+    scroller.scrollTop = 1200; // 贴底
+
+    // 触发平滑滚动（例如追加新条目撑高到 2600）
+    setGeometry(scroller, 2600, 800);
+    const appended1 = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '第一条' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended1] })} />);
+
+    // 平滑滚动动画在半路上（比如 scrollTop 此时由于逐帧动画停在 1300，距底 500px > 100px）
+    // 此时没有用户手动输入（无 wheel、无按键）
+    scroller.scrollTop = 1300;
+    fireEvent.scroll(scroller);
+
+    // 再次追加新条目撑高到 3000
+    setGeometry(scroller, 3000, 800);
+    const appended2 = record({ id: 'e', seq: 4, kind: 'agent.say', payload: { text: '第二条' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended1, appended2] })} />);
+    // 状态机没有在中途被误解除，继续滚到底部 3000
+    expect(scroller.scrollTop).toBe(3000);
+  });
+
+  it('鼠标按住原生滚动条滑块拖离底部 100px 热区后立即解除自动滚底', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+    scroller.scrollTop = 1200; // 贴底
+
+    // 模拟鼠标按在右侧滚动条区域（clientX 在容器右边界 20px 内）
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({
+      right: 500,
+      left: 0,
+      top: 0,
+      bottom: 800,
+      width: 500,
+      height: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+    fireEvent.mouseDown(scroller, { clientX: 490 });
+
+    // 鼠标拖拽滚动条向上，scrollTop 变为 800（距底 400px > 100px）
+    scroller.scrollTop = 800;
+    fireEvent.scroll(scroller);
+
+    // 新条目到来，内容增加到 2600px，视口绝对不动
+    setGeometry(scroller, 2600, 800);
+    const appended = record({ id: 'd', seq: 3, kind: 'agent.say', payload: { text: '新内容' } });
+    rerender(<RecordStream {...streamProps({ records: [...twoInAGroup, appended] })} />);
+    expect(scroller.scrollTop).toBe(800);
+  });
+
+  it('用户离开底部 100px 热区后，整流重拉/轮询刷新绝不抢滚', () => {
+    const { rerender } = render(<RecordStream {...streamProps()} />);
+    const scroller = screen.getByTestId('record-stream-scroll');
+    setGeometry(scroller, 2000, 800);
+
+    // 用户上翻离开底部 100px 热区
+    fireEvent.wheel(scroller);
+    scroller.scrollTop = 900;
+    fireEvent.scroll(scroller);
+
+    // 整流替换/全量刷新（first 和 last 均变化）
+    setGeometry(scroller, 2400, 800);
+    const refreshed = [
+      record({ id: 'r1', seq: 10, kind: 'user.say', payload: { text: '重排1' } }),
+      record({ id: 'r2', seq: 11, kind: 'agent.say', payload: { text: '重排2' } }),
+    ];
+    rerender(<RecordStream {...streamProps({ records: refreshed })} />);
+    // 视口依然保持在 900，绝不强行沉底
+    expect(scroller.scrollTop).toBe(900);
   });
 
   it('到顶了只说这是开头，报已经拿到的绝对条数，没有分母', () => {

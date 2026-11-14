@@ -131,11 +131,11 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               type="button"
               onClick={onOpenInitWizard}
               data-testid="settings-open-setup-flow"
-              title="Preview the edge-case onboarding flow when ~/.frago settings files are missing"
-              className="inline-flex items-center gap-1.5 rounded-[6px] border border-[var(--border-color)] bg-[var(--bg-subtle)] px-2.5 py-1 text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              title={t('settings.openSetupFlowHint')}
+              className="page-header-btn"
             >
               <Rocket size={13} strokeWidth={1.6} />
-              <span>Initial setup flow</span>
+              <span>{t('settings.openSetupFlow')}</span>
             </button>
           ) : undefined
         }
@@ -158,9 +158,7 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               >
                 <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
                 <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
-                {count !== null && (
-                  <span className="settings-nav-badge">{count}</span>
-                )}
+                {count !== null && <span className="settings-nav-badge">{count}</span>}
               </button>
             );
           })}

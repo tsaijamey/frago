@@ -8,6 +8,7 @@ import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import {
   detectStopTurnId,
   hasInteractiveCardInTailTurns,
+  recordHasInteractiveCard,
   segmentMainTurns,
   useSessionQueue,
 } from '@/hooks/useSessionQueue';
@@ -42,14 +43,16 @@ function makeRecord(
   seq: number,
   kind: WorkbenchRecord['kind'],
   payload: Record<string, unknown>,
-  groupId: string | null = null
+  groupId: string | null = null,
+  ts?: number
 ): WorkbenchRecord {
   return {
     id: `rec-${seq}`,
     session_id: SID,
     group_id: groupId,
     seq,
-    ts: 1_700_000_000_000 + seq * 1000,
+    // 默认步长 1 秒：正常工具流的间隔，绝不触发静默切分。要构造长静默跨段的用例显式传 ts。
+    ts: ts ?? 1_700_000_000_000 + seq * 1000,
     kind,
     agent_path: [],
     payload,
@@ -128,6 +131,178 @@ describe('hasInteractiveCardInTailTurns (仅看最后一轮实际内容会话的
       makeRecord(4, 'agent.say', { text: '已执行迁移。' }, 'g-done'),
     ];
     expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+});
+
+describe('命令回显里的卡片 JSON 不算待答卡片', () => {
+  const CLI_ECHO_BODY = [
+    'Created At: 2026-11-13T12:19:27+08:00',
+    'Command exited with code 0.',
+    '',
+    'Command output:',
+    'frago 82135 ... python -m frago.session.async_dispatch --job-file ...',
+    '=== CLI VALID TEST ===',
+    ASK_JSON,
+  ].join('\n');
+
+  it('复合 shell 命令回显卡片 JSON 时不阻断注入', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '核验修复结果' }),
+      makeRecord(
+        2,
+        'tool.call',
+        {
+          tool_name: 'run_command',
+          call_id: 'c1',
+          args: {
+            CommandLine:
+              'ls -la /tmp && echo "=== CLI VALID TEST ===" && frago app ask single-choice -q "测试"',
+          },
+        },
+        'g-run'
+      ),
+      makeRecord(3, 'tool.result', { status: 'ok', call_id: 'c1', body: CLI_ECHO_BODY }, 'g-run'),
+      makeRecord(4, 'agent.say', { text: '核验完成，测试全过。' }, 'g-run'),
+    ];
+    expect(recordHasInteractiveCard(records[2], records)).toBe(false);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+
+  it('独立 frago app ask 调用产出的卡片仍阻断', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '怎么收尾？' }),
+      makeRecord(
+        2,
+        'tool.call',
+        {
+          tool_name: 'run_command',
+          call_id: 'c2',
+          args: {
+            CommandLine:
+              'frago app ask single-choice -q "接下来如何收尾？" -o "A|提交|推送"',
+          },
+        },
+        'g-ask2'
+      ),
+      makeRecord(3, 'tool.result', { status: 'ok', call_id: 'c2', body: ASK_JSON }, 'g-ask2'),
+      makeRecord(4, 'agent.say', { text: '请点选上方卡片' }, 'g-ask2'),
+    ];
+    expect(recordHasInteractiveCard(records[2], records)).toBe(true);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
+  });
+
+  it('带 --help 的 ask 调用不算挂卡', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '看看用法' }),
+      makeRecord(
+        2,
+        'tool.call',
+        { tool_name: 'run_command', call_id: 'c3', args: { CommandLine: 'frago app ask --help' } },
+        'g-help'
+      ),
+      makeRecord(3, 'tool.result', { status: 'ok', call_id: 'c3', body: ASK_JSON }, 'g-help'),
+      makeRecord(4, 'agent.say', { text: '用法如上。' }, 'g-help'),
+    ];
+    expect(recordHasInteractiveCard(records[2], records)).toBe(false);
+  });
+
+  it('agent.say 代码围栏里的示例 JSON 不算待答卡片', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '给我看看卡片 JSON 长什么样' }),
+      makeRecord(
+        2,
+        'agent.say',
+        { text: `示例长这样：\n\n\`\`\`json\n${ASK_JSON}\n\`\`\`\n` },
+        'g-doc'
+      ),
+    ];
+    expect(recordHasInteractiveCard(records[1], records)).toBe(false);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+
+  it('非围栏的组件 JSON 仍按真卡片处理', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '选一个环境' }),
+      makeRecord(2, 'agent.say', { text: ASK_JSON }, 'g-live'),
+    ];
+    expect(recordHasInteractiveCard(records[1], records)).toBe(true);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
+  });
+});
+
+describe('长单轮按静默时长与定时唤醒边界切分', () => {
+  const BASE_MS = 1_700_000_000_000;
+
+  it('早先段有卡片、跨过长静默后产生新实质回复（中间无人发言）时不再被旧卡卡死', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '开始部署' }),
+      makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-old'),
+      makeRecord(
+        3,
+        'agent.say',
+        { text: '定时自查：Worker 仍在跑，继续等待。' },
+        'g-new',
+        BASE_MS + 10 * 60 * 1000
+      ),
+    ];
+    expect(segmentMainTurns(records)).toHaveLength(2);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+
+  it('默认 1 秒步长的正常工具流不被静默阈值误切', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '跑一下测试' }),
+      makeRecord(2, 'tool.call', { tool_name: 'run_command' }, 'g-flow'),
+      makeRecord(3, 'tool.result', { status: 'ok', body: '全部通过' }, 'g-flow'),
+      makeRecord(4, 'agent.say', { text: '测试全过。' }, 'g-flow'),
+    ];
+    expect(segmentMainTurns(records)).toHaveLength(1);
+  });
+
+  it('卡片之后紧跟空回复不构成新轮，闸门继续拦', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '开始部署' }),
+      makeRecord(2, 'agent.say', { text: FENCE_CARD }, 'g-card'),
+      makeRecord(3, 'agent.say', { text: '   ' }, 'g-empty', BASE_MS + 10 * 60 * 1000),
+    ];
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
+  });
+
+  it('无人发言时，定时唤醒开启新一轮自查，早先轮里的卡不再锁死队列', () => {
+    // 复刻事故现场的形状：同一次派发里所有记录 group_id 相同、每轮自查都有 agent.say 回复，
+    // 只按 group 或只看「有没有说过话」都切不开，能切开它的只有定时唤醒这条边界。
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '派发 Worker 后自查' }),
+      makeRecord(
+        2,
+        'tool.call',
+        { tool_name: 'schedule_wakeup', tool_family: 'schedule' },
+        'g-same'
+      ),
+      makeRecord(3, 'tool.call', { tool: 'ask' }, 'g-same'),
+      makeRecord(4, 'tool.result', { status: 'ok', body: ASK_JSON }, 'g-same'),
+      makeRecord(5, 'agent.say', { text: '已挂好定时器，等下次自查。' }, 'g-same'),
+      makeRecord(
+        6,
+        'tool.call',
+        { tool_name: 'schedule_wakeup', tool_family: 'schedule' },
+        'g-same'
+      ),
+      makeRecord(7, 'tool.result', { status: 'ok', body: 'Worker 仍在跑' }, 'g-same'),
+      makeRecord(8, 'agent.say', { text: 'Worker 仍在跑，继续等。' }, 'g-same'),
+    ];
+    expect(segmentMainTurns(records)).toHaveLength(2);
+    expect(hasInteractiveCardInTailTurns(records)).toBe(false);
+  });
+
+  it('真实 frago ask 卡片与同轮收尾回复仍照常拦', () => {
+    const records: WorkbenchRecord[] = [
+      makeRecord(1, 'user.say', { text: '怎么回滚？' }),
+      makeRecord(2, 'tool.call', { tool: 'ask' }, 'g-ask'),
+      makeRecord(3, 'tool.result', { status: 'ok', body: ASK_JSON }, 'g-ask'),
+      makeRecord(4, 'agent.say', { text: '请点选上方卡片' }, 'g-ask'),
+    ];
+    expect(hasInteractiveCardInTailTurns(records)).toBe(true);
   });
 });
 

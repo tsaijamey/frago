@@ -1,5 +1,9 @@
 /**
  * File Browser Component - Browse files in a project directory
+ *
+ * 右栏这一块此前只有一个「向上」图标和「外部打开」图标，没有面包屑；空目录态是
+ * 一套自画的居中大图标，与未选项目时的空态是两套尺寸。现在面包屑常驻、两级空态
+ * 都走全站统一的 EmptyState。
  */
 
 import { useState, useEffect } from 'react';
@@ -23,6 +27,7 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import * as api from '@/api';
 import type { FileInfo, ProjectDetail } from '@/api';
+import EmptyState from '@/components/ui/EmptyState';
 
 interface FileBrowserProps {
   projectId: string;
@@ -137,122 +142,110 @@ export function FileBrowser({ projectId }: FileBrowserProps) {
     return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   }
 
-  // Get file icon based on type
+  // Get file icon based on type. 一律走同一套中性描边；不再按扩展名分配八种彩字，
+  // 那让一份文件清单看起来像调色板，且颜色在这里不承载任何语义。
   function getFileIcon(file: FileInfo) {
+    const cls = 'ws-file-icon';
     if (file.is_directory) {
-      return <Folder className="w-5 h-5 text-blue-400" />;
+      return <Folder className={cls} size={16} strokeWidth={1.75} />;
     }
 
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
 
-    // Images
     if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) {
-      return <Image className="w-5 h-5 text-green-400" />;
+      return <Image className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // Videos
     if (['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext)) {
-      return <Video className="w-5 h-5 text-purple-400" />;
+      return <Video className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // Audio
     if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
-      return <Music className="w-5 h-5 text-pink-400" />;
+      return <Music className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // 3D models
     if (['gltf', 'glb', 'obj'].includes(ext)) {
-      return <Box className="w-5 h-5 text-orange-400" />;
+      return <Box className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // JSON
     if (ext === 'json') {
-      return <FileJson className="w-5 h-5 text-yellow-400" />;
+      return <FileJson className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // Code files
     if (['js', 'ts', 'jsx', 'tsx', 'py', 'sh', 'bash', 'css', 'html', 'md'].includes(ext)) {
-      return <FileCode className="w-5 h-5 text-cyan-400" />;
+      return <FileCode className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    // Text/documents
     if (['txt', 'log', 'pdf'].includes(ext)) {
-      return <FileText className="w-5 h-5 text-gray-400" />;
+      return <FileText className={cls} size={16} strokeWidth={1.75} />;
     }
-
-    return <File className="w-5 h-5 text-muted-foreground" />;
+    return <File className={cls} size={16} strokeWidth={1.75} />;
   }
 
   const breadcrumbs = getBreadcrumbs();
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header with breadcrumb */}
-      <div className="p-3 border-b border-border">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1 text-sm overflow-x-auto">
-            {breadcrumbs.map((crumb, index) => (
-              <span key={crumb.path} className="flex items-center">
-                {index > 0 && <ChevronRight className="w-4 h-4 text-muted-foreground mx-1" />}
+    <div className="ws-browser">
+      {/* 面包屑栏：常驻在顶，路径随时可见可点。 */}
+      <div className="ws-crumbs">
+        <nav className="ws-crumbs-path" aria-label={t('workspace.path', 'Path')}>
+          {breadcrumbs.map((crumb, index) => {
+            const isLast = index === breadcrumbs.length - 1;
+            return (
+              <span key={crumb.path || 'root'} className="ws-crumb">
+                {index > 0 && <ChevronRight className="ws-crumb-sep" size={13} strokeWidth={1.75} />}
                 <button
                   type="button"
                   onClick={() => handleNavigateToPath(crumb.path)}
-                  className={`
-                    px-2 py-1 rounded hover:bg-muted transition-colors whitespace-nowrap
-                    ${index === breadcrumbs.length - 1 ? 'font-medium' : 'text-muted-foreground'}
-                  `}
+                  className={`ws-crumb-btn ${isLast ? 'is-current' : ''}`}
+                  aria-current={isLast ? 'location' : undefined}
                 >
-                  {index === 0 ? <Home className="w-4 h-4" /> : crumb.name}
+                  {index === 0 ? <Home size={14} strokeWidth={1.75} /> : crumb.name}
                 </button>
               </span>
-            ))}
-          </div>
+            );
+          })}
+        </nav>
+
+        <div className="ws-crumbs-actions">
+          {project && (
+            <span className="ws-crumbs-meta">
+              {project.file_count} {t('workspace.files', 'files')} · {formatSize(project.total_size)}
+            </span>
+          )}
           <button
             type="button"
             onClick={handleOpenInFileManager}
-            className="p-2 rounded-lg hover:bg-muted transition-colors"
+            className="ui-icon-btn"
             title={t('workspace.openInFileManager', 'Open in file manager')}
+            aria-label={t('workspace.openInFileManager', 'Open in file manager')}
           >
-            <ExternalLink className="w-4 h-4" />
+            <ExternalLink size={16} strokeWidth={1.75} />
           </button>
         </div>
-
-        {/* Project info */}
-        {project && (
-          <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
-            <span>{project.file_count} files</span>
-            <span>{formatSize(project.total_size)}</span>
-          </div>
-        )}
       </div>
 
       {/* File list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="ws-file-list">
         {loading ? (
-          <div className="p-4 space-y-2">
+          <div className="ws-list">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="animate-pulse h-10 bg-muted rounded" />
+              <div key={i} className="ws-skeleton ws-skeleton--row" />
             ))}
           </div>
         ) : files.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground">
-            <Folder className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>{t('workspace.emptyDirectory', 'This directory is empty')}</p>
+          <div className="ws-empty">
+            <EmptyState
+              Icon={Folder}
+              title={t('workspace.emptyDirectory', 'This directory is empty')}
+            />
           </div>
         ) : (
-          <div className="divide-y divide-border">
-            {files.map((file) => (
-              <FileItem
-                key={file.path}
-                file={file}
-                onNavigate={() => handleNavigate(file)}
-                onView={() => handleViewFile(file)}
-                onDownload={() => handleDownloadFile(file)}
-                formatSize={formatSize}
-                getIcon={() => getFileIcon(file)}
-              />
-            ))}
-          </div>
+          files.map((file) => (
+            <FileItem
+              key={file.path}
+              file={file}
+              onNavigate={() => handleNavigate(file)}
+              onView={() => handleViewFile(file)}
+              onDownload={() => handleDownloadFile(file)}
+              formatSize={formatSize}
+              getIcon={() => getFileIcon(file)}
+            />
+          ))
         )}
       </div>
     </div>
@@ -280,37 +273,46 @@ function FileItem({
 
   return (
     <div
-      className="group flex items-center gap-3 px-4 py-2 hover:bg-muted/50 cursor-pointer"
+      className={`ws-file-row ${file.is_directory ? 'is-dir' : ''}`}
       onClick={onNavigate}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && file.is_directory) {
+          e.preventDefault();
+          onNavigate();
+        }
+      }}
     >
-      <div className="flex-shrink-0">{getIcon()}</div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm truncate" title={file.name}>
+      <span className="ws-file-glyph">{getIcon()}</span>
+      <div className="ws-file-body">
+        <div className="ws-file-name" title={file.name}>
           {file.name}
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="ws-file-meta">
           {file.is_directory ? (
             t('workspace.directory', 'Directory')
           ) : (
             <>
               {formatSize(file.size)}
-              {file.mime_type && <span className="ml-2">{file.mime_type}</span>}
+              {file.mime_type && <span className="ws-file-mime">{file.mime_type}</span>}
             </>
           )}
         </div>
       </div>
       {!file.is_directory && (
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="ws-file-actions">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onView();
             }}
-            className="p-1.5 rounded hover:bg-muted-foreground/20"
+            className="ui-icon-btn"
             title={t('workspace.view', 'View')}
+            aria-label={t('workspace.view', 'View')}
           >
-            <Eye className="w-4 h-4" />
+            <Eye size={15} strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -318,10 +320,11 @@ function FileItem({
               e.stopPropagation();
               onDownload();
             }}
-            className="p-1.5 rounded hover:bg-muted-foreground/20"
+            className="ui-icon-btn"
             title={t('workspace.download', 'Download')}
+            aria-label={t('workspace.download', 'Download')}
           >
-            <Download className="w-4 h-4" />
+            <Download size={15} strokeWidth={1.75} />
           </button>
         </div>
       )}

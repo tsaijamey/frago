@@ -54,7 +54,8 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { ChevronDown, ChevronRight, FlaskConical, Hand } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, FlaskConical, Hand } from 'lucide-react';
+import EmptyState from '@/components/ui/EmptyState';
 import {
   useSessionObserver,
   type ObserverState,
@@ -82,8 +83,10 @@ import {
  *
  * 这一栏是几段并置的短文，彼此之间没有从属关系。标题要能一眼与正文分开，但不该比正文
  * 更抢眼——所以走的是"更小更淡但更紧"，而不是"更大更重"。
+ *
+ * 定义在 workbench.css 的 `.wb-tray-eyebrow`：右栏的眉标与中栏、别的页面的眉标同一条口径。
  */
-const SLOT_LABEL = 'text-[11px] font-medium tracking-wide text-text-muted';
+const SLOT_LABEL = 'wb-tray-eyebrow mb-0';
 
 /** 标题右边那种小字按钮。 */
 const SLOT_ACTION = 'shrink-0 text-[11px] text-text-muted hover:text-text-primary';
@@ -340,7 +343,7 @@ function CoverSlot({
             ref={body}
             data-slot-body=""
             style={expanded ? undefined : { height }}
-            className={`overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[1.72] ${
+            className={`wb-tray-body overflow-hidden whitespace-pre-wrap ${
               value ? 'text-text-primary' : 'text-text-muted'
             }`}
           >
@@ -426,7 +429,7 @@ function GrowSlot({
             </button>
           ) : null}
           {entries.length === 0 ? (
-            <p className="text-[13px] leading-[1.72] text-text-muted">
+            <p className="wb-tray-body text-text-muted">
               {t('workbench.report.none')}
             </p>
           ) : (
@@ -437,8 +440,8 @@ function GrowSlot({
               {shown.map((entry, i) => (
                 <li
                   key={hidden + i}
-                  className={`whitespace-pre-wrap break-words py-2 text-[13px] leading-[1.72] first:pt-0 last:pb-0 ${
-                    entry.kind ? 'text-text-primary' : 'text-text-secondary'
+                  className={`wb-tray-body whitespace-pre-wrap py-2 first:pt-0 last:pb-0 ${
+                    entry.kind ? 'wb-tray-body--now' : ''
                   }`}
                 >
                   {entry.kind ? (
@@ -668,9 +671,9 @@ export function ReportBody({
     return (
       <aside ref={asideRef} className={aside}>
         {widthHandle}
-        <p className="px-3 py-3 text-[12px] leading-[1.6] text-text-muted">
-          {t('workbench.report.noSession')}
-        </p>
+        <div className="p-3">
+          <EmptyState Icon={Eye} title={t('workbench.report.noSession')} />
+        </div>
       </aside>
     );
   }

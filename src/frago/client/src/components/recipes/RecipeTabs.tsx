@@ -21,27 +21,31 @@ export default function RecipeTabs({
 }: RecipeTabsProps) {
   const { t } = useTranslation();
 
-  // 与事务页、定时任务页的状态筛选同一个分段控件：选中那一档整块浮起来，不刷品牌绿——
-  // 这是「你在看哪一半」，属于页面的操作面；品牌绿留给动作与活跃状态。
-  // 放在工具栏最左，跟搜索框同一行，不再单独居中占一行。
+  // 「你在看哪一半」是这一页最重的一档选择，所以走全站统一的分段胶囊（C6）：
+  // 一整片浅底托盘 + 选中那一颗浮起来，不刷品牌绿——品牌绿留给动作。
+  // 计数内嵌在胶囊右侧，与状态文字同一片底。
   const tabs = [
     { id: 'local' as const, label: t('recipes.localRecipes'), count: localCount },
     { id: 'community' as const, label: t('recipes.communityRecipes'), count: communityCount },
   ];
 
   return (
-    <div className="td-filters tdp-segmented" role="tablist">
+    <div
+      className="ui-seg-group tdp-seg-group"
+      role="tablist"
+      aria-label={t('recipes.title')}
+    >
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
           role="tab"
           aria-selected={activeTab === tab.id}
-          className={`td-filter ${activeTab === tab.id ? 'td-filter--active' : ''}`}
+          className={`ui-seg-pill ${activeTab === tab.id ? 'ui-seg-pill--active' : ''}`}
           onClick={() => onTabChange(tab.id)}
         >
           {tab.label}
-          <span className="td-filter-count">{tab.count}</span>
+          <span className="ui-seg-count">{tab.count}</span>
         </button>
       ))}
     </div>

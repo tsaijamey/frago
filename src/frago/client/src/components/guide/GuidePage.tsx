@@ -2,14 +2,233 @@
  * GuidePage Component
  *
  * Displays tutorial and FAQ content for frago Web UI.
- * Features: chapter navigation, FAQ index, markdown rendering.
+ *
+ * 这一页从前是全站最离群的一页：内容区顶着一个 30px 粗黑体大标题、正文里
+ * 蓝色下划线链接、`Q:` / `A:` 前缀加全宽分隔线，看起来像嵌进来的第三方文档站。
+ * 左栏还直接露出 `interface-faq` 这种小写连字符 key。现在它按全站同一套语言重做：
+ * 页头走 C1 契约、左栏章节名取 meta.json 里的本地化名、每组问答是一张可折叠的
+ * Double-Bezel 阅读卡、提示语用 Lucide 灯泡图标而不是原生 emoji。
  */
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import { getGuideMeta, getGuideContent, searchGuide, type GuideMeta, type GuideContent, type GuideSearchResult } from '@/api';
-import { BookOpen, ChevronRight, Search, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Lightbulb, Search, X } from 'lucide-react';
+import EmptyState from '@/components/ui/EmptyState';
+
+/** 一段内容：要么是普通 Markdown，要么是一条提示语。 */
+type Segment =
+  | { kind: 'md'; text: string }
+  | { kind: 'tip'; text: string };
+
+/** 一组问答。 */
+interface FaqSection {
+  question: string;
+  body: string;
+}
+
+/**
+ * 把小写连字符 id 变成可读标题（`interface-faq` → `Interface FAQ`）。
+ *
+ * 只在章节拿不到本地化名时兜底。此前左栏直接把 id 印出来，`interface-faq`
+ * 就这么裸露在导航里——那是数据库字段，不是给人读的标题。
+ */
+function prettifyId(id: string): string {
+  return id
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
+ * 把一章的 Markdown 拆成若干组问答。
+ *
+ * 章首（第一个 `## Q:` 之前）的内容单独返回，它讲的是这一章在说什么，
+ * 不属于任何一组问答。
+ */
+function splitFaq(markdown: string): { intro: string; sections: FaqSection[] } {
+  const lines = markdown.split('\n');
+  const introLines: string[] = [];
+  const sections: FaqSection[] = [];
+  let current: FaqSection | null = null;
+
+  for (const line of lines) {
+    // 一级标题（`# 开始使用`）与页头重复，不进正文。
+    if (/^#\s+/.test(line)) continue;
+
+    const questionMatch = line.match(/^##\s+Q:\s*(.+?)\s*$/);
+    if (questionMatch) {
+      if (current) sections.push(current);
+      current = { question: questionMatch[1], body: '' };
+      continue;
+    }
+
+    if (current) {
+      current.body += `${line}\n`;
+    } else {
+      introLines.push(line);
+    }
+  }
+  if (current) sections.push(current);
+
+  return { intro: introLines.join('\n').trim(), sections };
+}
+
+/**
+ * 把一段正文切成「普通 Markdown」与「提示语」交替的片段。
+ *
+ * 提示语在原文里写成 `**💡 提示**: …`，那个 emoji 是原生字符，字形随系统字体变，
+ * 在浅色主题下还发黄。这里把它摘出来单独用灯泡图标画，正文里不再出现 emoji。
+ */
+function splitTips(markdown: string): Segment[] {
+  const segments: Segment[] = [];
+  let buffer: string[] = [];
+
+  const flush = () => {
+    const text = buffer.join('\n').trim();
+    if (text) segments.push({ kind: 'md', text });
+    buffer = [];
+  };
+
+  for (const line of markdown.split('\n')) {
+    const tipMatch = line.match(/^\*\*\s*(?:💡\s*)?(?:提示|Tip)\s*\*\*\s*[:：]\s*(.*)$/i);
+    if (tipMatch) {
+      flush();
+      segments.push({ kind: 'tip', text: tipMatch[1].trim() });
+    } else {
+      buffer.push(line);
+    }
+  }
+  flush();
+
+  return segments;
+}
+
+/** 正文 Markdown 的统一渲染口径。 */
+function MarkdownBlock({ children }: { children: string }) {
+  return (
+    <div className="gd-prose">
+      <ReactMarkdown
+        components={{
+          p({ children: kids }) {
+            return <p className="gd-p">{kids}</p>;
+          },
+          ul({ children: kids }) {
+            return <ul className="gd-ul">{kids}</ul>;
+          },
+          ol({ children: kids }) {
+            return <ol className="gd-ol">{kids}</ol>;
+          },
+          li({ children: kids }) {
+            return <li className="gd-li">{kids}</li>;
+          },
+          strong({ children: kids }) {
+            return <strong className="gd-strong">{kids}</strong>;
+          },
+          a({ href, children: kids }) {
+            return (
+              <a
+                href={href}
+                className="gd-link"
+                target={href?.startsWith('http') ? '_blank' : undefined}
+                rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+              >
+                {kids}
+              </a>
+            );
+          },
+          pre({ children: kids }) {
+            return <pre className="gd-pre">{kids}</pre>;
+          },
+          code({ className, children: kids, ...props }) {
+            const isCodeBlock = className?.includes('language-');
+            if (isCodeBlock) {
+              return (
+                <code className={className} {...props}>
+                  {kids}
+                </code>
+              );
+            }
+            return (
+              <code className="gd-code" {...props}>
+                {kids}
+              </code>
+            );
+          },
+          // 引用块：中性微底色块 + 全周发丝边框。品牌绿只留给动作与活跃状态，
+          // 不用左单边竖线做强调。
+          blockquote({ children: kids }) {
+            return <blockquote className="gd-quote">{kids}</blockquote>;
+          },
+          table({ children: kids }) {
+            return (
+              <div className="gd-table-wrap">
+                <table className="gd-table">{kids}</table>
+              </div>
+            );
+          },
+          th({ children: kids }) {
+            return <th className="gd-th">{kids}</th>;
+          },
+          td({ children: kids }) {
+            return <td className="gd-td">{kids}</td>;
+          },
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/** 一组正文片段：普通段落照常渲染，提示语画成柔和提示框。 */
+function Segments({ segments }: { segments: Segment[] }) {
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.kind === 'tip' ? (
+          <div className="gd-tip" key={index}>
+            <span className="gd-tip-icon">
+              <Lightbulb size={15} strokeWidth={1.75} />
+            </span>
+            <span className="gd-tip-text">{segment.text}</span>
+          </div>
+        ) : (
+          <MarkdownBlock key={index}>{segment.text}</MarkdownBlock>
+        )
+      )}
+    </>
+  );
+}
+
+/** 一组可折叠问答。 */
+function FaqCard({ section, defaultOpen }: { section: FaqSection; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const segments = useMemo(() => splitTips(section.body), [section.body]);
+
+  return (
+    <section className="gd-faq ui-bezel-card">
+      <button
+        type="button"
+        className="gd-faq-head"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-expanded={open}
+      >
+        <span className="gd-faq-chevron">
+          {open ? <ChevronDown size={15} strokeWidth={1.75} /> : <ChevronRight size={15} strokeWidth={1.75} />}
+        </span>
+        <span className="gd-faq-question">{section.question}</span>
+      </button>
+      {open && (
+        <div className="gd-faq-body">
+          <Segments segments={segments} />
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function GuidePage() {
   const { t, i18n } = useTranslation();
@@ -91,23 +310,26 @@ export default function GuidePage() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery, currentLang]);
 
-  // Extract FAQ questions from content for index
-  const extractQuestions = (markdown: string): string[] => {
-    const lines = markdown.split('\n');
-    const questions: string[] = [];
-
-    for (const line of lines) {
-      // Match lines starting with Q: or **Q:**
-      const match = line.match(/^\*\*Q:\s*(.+?)\*\*$/) || line.match(/^Q:\s*(.+)$/);
-      if (match) {
-        questions.push(match[1]);
+  /**
+   * 章节的显示名。
+   *
+   * 取 meta.json 里分类的本地化标题——那本来就是人写的名字（「界面功能FAQ」）。
+   * 此前代码里写了一张硬编码映射表，键写成 `interface`，而 meta.json 里章节 id 是
+   * `interface-faq`，查不到就退回 id 本身，于是左栏直接印出 `interface-faq`。
+   * 一个分类下有多章时（当前没有）才退回把 id 变可读标题。
+   */
+  const getChapterLabel = (chapterId: string): string => {
+    const chapter = meta?.chapters.find((ch) => ch.id === chapterId);
+    const category = chapter && meta?.categories.find((cat) => cat.id === chapter.category);
+    if (category) {
+      const siblings = meta!.chapters.filter((ch) => ch.category === category.id);
+      if (siblings.length === 1) {
+        return currentLang === 'zh-CN' ? category.title['zh-CN'] : category.title.en;
       }
     }
-
-    return questions;
+    return prettifyId(chapterId);
   };
 
-  // Get category name translation
   const getCategoryName = (categoryId: string): string => {
     const category = meta?.categories.find((cat) => cat.id === categoryId);
     if (category) {
@@ -115,33 +337,58 @@ export default function GuidePage() {
         ? category.title['zh-CN']
         : category.title.en;
     }
-    return categoryId;
+    return prettifyId(categoryId);
   };
 
-  // Get chapter title translation
-  const getChapterTitle = (chapterId: string): string => {
-    const titleMap: Record<string, { en: string; zh: string }> = {
-      'getting-started': { en: 'Getting Started', zh: '开始使用' },
-      'interface': { en: 'Interface FAQ', zh: '界面功能FAQ' },
-      'config': { en: 'Configuration', zh: '配置相关' },
-      'usage': { en: 'Usage Tips', zh: '使用技巧' },
-      'troubleshooting': { en: 'Troubleshooting', zh: '故障排查' },
-    };
+  const currentChapterLabel = meta ? getChapterLabel(selectedChapter) : '';
 
-    return currentLang === 'zh-CN'
-      ? titleMap[chapterId]?.zh || chapterId
-      : titleMap[chapterId]?.en || chapterId;
-  };
+  const { intro, sections } = useMemo(
+    () => (content ? splitFaq(content.content) : { intro: '', sections: [] }),
+    [content]
+  );
+
+  // 整页只有这一条页头：标题、章节名、搜索。正文里不再出现第二个大标题。
+  const header = (
+    <header className="ui-page-header">
+      <div className="ui-page-header-titles">
+        <h1 className="ui-page-header-title">{t('guide.title', 'Guide')}</h1>
+        {currentChapterLabel && <span className="ui-page-header-meta">{currentChapterLabel}</span>}
+      </div>
+      <div className="ui-page-header-actions">
+        <div className="ui-search-box gd-search">
+          <Search size={16} strokeWidth={1.75} className="ui-search-box-icon" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={currentLang === 'zh-CN' ? '搜索问题…' : 'Search questions…'}
+            aria-label={currentLang === 'zh-CN' ? '搜索问题' : 'Search questions'}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="ui-search-box-clear"
+              onClick={() => setSearchQuery('')}
+              aria-label={t('common.clear', 'Clear')}
+            >
+              <X size={14} strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
+      </div>
+    </header>
+  );
 
   if (error && !meta) {
     return (
-      <div className="page-scroll flex items-center justify-center">
-        <div className="text-center">
-          <BookOpen size={48} className="mx-auto mb-4 text-[var(--text-secondary)]" />
-          <p className="text-[var(--text-secondary)]">{error}</p>
-          <p className="text-sm text-[var(--text-tertiary)] mt-2">
-            {t('guide.errorHint', 'Please check guide_source/ directory exists')}
-          </p>
+      <div className="gd-page">
+        {header}
+        <div className="gd-state">
+          <EmptyState
+            Icon={BookOpen}
+            title={error}
+            description={t('guide.errorHint', 'Please check guide_source/ directory exists')}
+          />
         </div>
       </div>
     );
@@ -149,322 +396,130 @@ export default function GuidePage() {
 
   if (!meta) {
     return (
-      <div className="page-scroll flex items-center justify-center">
-        <div className="spinner" />
+      <div className="gd-page">
+        {header}
+        <div className="gd-state">
+          <div className="spinner" />
+        </div>
       </div>
     );
   }
 
-  const questions = content ? extractQuestions(content.content) : [];
-
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left Sidebar - Chapter Navigation */}
-      <aside className="w-64 border-r border-[var(--border-color)] overflow-y-auto bg-[var(--bg-secondary)]">
-        <div className="p-4">
-          <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4 flex items-center gap-2">
-            <BookOpen size={20} />
-            {t('guide.title', 'Guide')}
-          </h2>
+    <div className="gd-page">
+      {header}
 
-          {/* Search Box */}
-          <div className="mb-4 relative">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[var(--text-tertiary)]" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={currentLang === 'zh-CN' ? '搜索问题...' : 'Search questions...'}
-                aria-label={currentLang === 'zh-CN' ? '搜索问题' : 'Search questions'}
-                className="w-full pl-9 pr-8 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent-primary)] text-sm"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
+      <div className="gd-split">
+        {/* 左栏：章节导航。条目与选中态走全站同一套微边框语言。 */}
+        <aside className="gd-nav">
+          <div className="gd-nav-inner">
+            {meta.categories.map((category) => {
+              const categoryChapters = meta.chapters.filter((ch) => ch.category === category.id);
+              if (categoryChapters.length === 0) return null;
 
-            {/* Search Results Dropdown */}
+              return (
+                <div className="gd-nav-group" key={category.id}>
+                  <div className="gd-nav-group-title">{getCategoryName(category.id)}</div>
+                  {categoryChapters.map((chapter) => {
+                    const isActive = selectedChapter === chapter.id;
+                    return (
+                      <button
+                        type="button"
+                        key={chapter.id}
+                        onClick={() => setSelectedChapter(chapter.id)}
+                        className={`gd-nav-item ${isActive ? 'is-active' : ''}`}
+                        aria-current={isActive ? 'page' : undefined}
+                      >
+                        <span className="gd-nav-item-label">{getChapterLabel(chapter.id)}</span>
+                        {chapter.question_count > 0 && (
+                          <span className="gd-nav-count">{chapter.question_count}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* 右栏：这一章的问答。 */}
+        <main className="gd-main">
+          <div className="gd-main-inner">
+            {/* 搜索结果：盖在正文之上的浮层，选中一条就跳去那一章。 */}
             {searchQuery && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg shadow-lg max-h-96 overflow-y-auto z-10">
+              <div className="gd-results ui-bezel-card">
                 {isSearching ? (
-                  <div className="p-4 text-center text-[var(--text-secondary)]">
-                    {currentLang === 'zh-CN' ? '搜索中...' : 'Searching...'}
+                  <div className="gd-results-note">
+                    {currentLang === 'zh-CN' ? '搜索中…' : 'Searching…'}
                   </div>
                 ) : searchResults.length > 0 ? (
-                  <div className="py-2">
-                    {searchResults.map((result, resultIndex) => (
-                      <div key={resultIndex}>
-                        <div className="px-3 py-1 text-xs font-semibold text-[var(--text-tertiary)] uppercase">
-                          {getChapterTitle(result.chapter_id)}
-                        </div>
-                        {result.matches.map((match, matchIndex) => (
-                          <button
-                            type="button"
-                            key={`${resultIndex}-${matchIndex}`}
-                            onClick={() => {
-                              setSelectedChapter(result.chapter_id);
-                              setSearchQuery('');
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-[var(--bg-tertiary)] transition-colors"
-                          >
-                            <div className="text-sm font-medium text-[var(--text-primary)] mb-1">
-                              {match.question}
-                            </div>
-                            <div
-                              className="text-xs text-[var(--text-secondary)] line-clamp-2"
-                              dangerouslySetInnerHTML={{ __html: match.snippet }}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
+                  searchResults.map((result, resultIndex) => (
+                    <div key={resultIndex} className="gd-results-group">
+                      <div className="gd-results-chapter">{getChapterLabel(result.chapter_id)}</div>
+                      {result.matches.map((match, matchIndex) => (
+                        <button
+                          type="button"
+                          key={`${resultIndex}-${matchIndex}`}
+                          onClick={() => {
+                            setSelectedChapter(result.chapter_id);
+                            setSearchQuery('');
+                          }}
+                          className="gd-result-item"
+                        >
+                          <div className="gd-result-question">{match.question}</div>
+                          <div
+                            className="gd-result-snippet"
+                            dangerouslySetInnerHTML={{ __html: match.snippet }}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ))
                 ) : (
-                  <div className="p-4 text-center text-[var(--text-secondary)]">
+                  <div className="gd-results-note">
                     {currentLang === 'zh-CN' ? '未找到相关内容' : 'No results found'}
                   </div>
                 )}
               </div>
             )}
-          </div>
 
-          {/* Chapters by category */}
-          {meta.categories.map((category) => {
-            const categoryChapters = meta.chapters.filter(
-              (ch) => ch.category === category.id
-            );
-
-            if (categoryChapters.length === 0) return null;
-
-            return (
-              <div key={category.id} className="mb-4">
-                <h3 className="text-xs uppercase font-semibold text-[var(--text-tertiary)] mb-2 px-2">
-                  {getCategoryName(category.id)}
-                </h3>
-                <div className="space-y-1">
-                  {categoryChapters.map((chapter) => (
-                    <button
-                      type="button"
-                      key={chapter.id}
-                      onClick={() => setSelectedChapter(chapter.id)}
-                      className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
-                        selectedChapter === chapter.id
-                          ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)]'
-                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">
-                          {getChapterTitle(chapter.id)}
-                        </span>
-                        {chapter.question_count > 0 && (
-                          <span className="text-xs opacity-70">
-                            {chapter.question_count}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+            {loading ? (
+              <div className="gd-state">
+                <div className="spinner" />
               </div>
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="spinner" />
-          </div>
-        ) : error ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <p className="text-[var(--text-secondary)]">{error}</p>
-            </div>
-          </div>
-        ) : !content ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <BookOpen size={48} className="mx-auto mb-4 text-[var(--text-secondary)]" />
-              <p className="text-[var(--text-secondary)]">
-                {t('guide.noContent', 'No guide content available')}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="max-w-4xl mx-auto p-6">
-            {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">
-                {content.title}
-              </h1>
-              <p className="text-sm text-[var(--text-secondary)]">
-                {currentLang === 'zh-CN' ? '版本' : 'Version'}: {content.metadata.version} | {currentLang === 'zh-CN' ? '更新时间' : 'Last updated'}: {content.metadata.last_updated}
-              </p>
-            </div>
-
-            {/* FAQ Index */}
-            {questions.length > 0 && (
-              <div className="mb-8 p-4 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-color)]">
-                <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-3">
-                  {currentLang === 'zh-CN' ? '本章问题' : 'Questions in this chapter'}
-                </h2>
-                <ul className="space-y-2">
-                  {questions.map((question, index) => (
-                    <li key={index}>
-                      <a
-                        href={`#q-${index}`}
-                        className="flex items-start gap-2 text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
-                      >
-                        <ChevronRight size={16} className="mt-1 flex-shrink-0" />
-                        <span className="text-sm">{question}</span>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+            ) : error ? (
+              <div className="gd-state">
+                <EmptyState Icon={BookOpen} title={error} />
               </div>
+            ) : !content ? (
+              <div className="gd-state">
+                <EmptyState Icon={BookOpen} title={t('guide.noContent', 'No guide content available')} />
+              </div>
+            ) : (
+              <>
+                {intro && (
+                  <div className="gd-intro">
+                    <MarkdownBlock>{intro}</MarkdownBlock>
+                  </div>
+                )}
+
+                {sections.length > 0 && (
+                  <div className="gd-faq-list">
+                    {sections.map((section, index) => (
+                      <FaqCard
+                        key={`${selectedChapter}-${index}`}
+                        section={section}
+                        defaultOpen={index === 0}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
-
-            {/* Content */}
-            <div className="guide-content prose prose-invert max-w-none">
-              <ReactMarkdown
-                components={{
-                  // Custom heading renderer with anchors for FAQ questions
-                  h2({ children }) {
-                    const text = String(children);
-                    const isQuestion = text.startsWith('Q:');
-                    const questionIndex = isQuestion ? questions.findIndex((q) => text.includes(q)) : -1;
-
-                    return (
-                      <h2
-                        id={questionIndex >= 0 ? `q-${questionIndex}` : undefined}
-                        className="text-2xl font-semibold mt-8 mb-4 text-[var(--text-primary)] border-b border-[var(--border-color)] pb-2"
-                      >
-                        {children}
-                      </h2>
-                    );
-                  },
-                  h3({ children }) {
-                    return (
-                      <h3 className="text-xl font-semibold mt-6 mb-3 text-[var(--text-primary)]">
-                        {children}
-                      </h3>
-                    );
-                  },
-                  // Style paragraphs
-                  p({ children }) {
-                    return (
-                      <p className="text-[var(--text-primary)] leading-relaxed mb-4">
-                        {children}
-                      </p>
-                    );
-                  },
-                  // Style lists
-                  ul({ children }) {
-                    return (
-                      <ul className="list-disc pl-6 mb-4 text-[var(--text-primary)] space-y-2">
-                        {children}
-                      </ul>
-                    );
-                  },
-                  ol({ children }) {
-                    return (
-                      <ol className="list-decimal pl-6 mb-4 text-[var(--text-primary)] space-y-2">
-                        {children}
-                      </ol>
-                    );
-                  },
-                  // Style links
-                  a({ href, children }) {
-                    return (
-                      <a
-                        href={href}
-                        className="text-[var(--accent-primary)] hover:underline"
-                        target={href?.startsWith('http') ? '_blank' : undefined}
-                        rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-                      >
-                        {children}
-                      </a>
-                    );
-                  },
-                  // Style code blocks (pre > code)
-                  pre({ children }) {
-                    return (
-                      <pre className="bg-[var(--bg-tertiary)] p-4 rounded-lg overflow-x-auto mb-4">
-                        {children}
-                      </pre>
-                    );
-                  },
-                  // Style inline code
-                  code({ className, children, ...props }) {
-                    // If className contains 'language-', it's a code block (handled by pre)
-                    const isCodeBlock = className?.includes('language-');
-                    if (isCodeBlock) {
-                      return (
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      );
-                    }
-                    // Inline code
-                    return (
-                      <code
-                        className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--accent-primary)] font-mono text-sm"
-                        {...props}
-                      >
-                        {children}
-                      </code>
-                    );
-                  },
-                  // Style blockquotes
-                  blockquote({ children }) {
-                    return (
-                      <blockquote className="border-l-4 border-[var(--accent-primary)] pl-4 italic text-[var(--text-secondary)] my-4">
-                        {children}
-                      </blockquote>
-                    );
-                  },
-                  // Style tables
-                  table({ children }) {
-                    return (
-                      <div className="overflow-x-auto mb-4">
-                        <table className="min-w-full border border-[var(--border-color)]">
-                          {children}
-                        </table>
-                      </div>
-                    );
-                  },
-                  th({ children }) {
-                    return (
-                      <th className="border border-[var(--border-color)] bg-[var(--bg-secondary)] px-4 py-2 text-left font-semibold text-[var(--text-primary)]">
-                        {children}
-                      </th>
-                    );
-                  },
-                  td({ children }) {
-                    return (
-                      <td className="border border-[var(--border-color)] px-4 py-2 text-[var(--text-primary)]">
-                        {children}
-                      </td>
-                    );
-                  },
-                }}
-              >
-                {content.content}
-              </ReactMarkdown>
-            </div>
           </div>
-        )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

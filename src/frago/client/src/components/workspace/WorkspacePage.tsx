@@ -1,5 +1,9 @@
 /**
  * Workspace Page - Browse run instance directories and files
+ *
+ * 页头走 C1 契约：标题 + 空格分隔的计数（此前是 `(1 projects)` 括号形式，与全站
+ * 其余页面的 `122 local` 不一致）。右栏未选项目时的空态复用全站统一的 EmptyState，
+ * 不再自画一套居中大图标。
  */
 
 import { useRef, useState } from 'react';
@@ -11,10 +15,12 @@ import * as api from '@/api';
 import type { ProjectInfo } from '@/api';
 import { ProjectList } from './ProjectList';
 import { FileBrowser } from './FileBrowser';
+import EmptyState from '@/components/ui/EmptyState';
 
 export function WorkspacePage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { currentProjectId, switchPage, showToast } = useAppStore();
+  const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
 
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,32 +76,37 @@ export function WorkspacePage() {
     }
   }
 
-  return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <FolderOpen className="w-5 h-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">{t('workspace.title', 'Workspace')}</h1>
-          <span className="text-sm text-muted-foreground">
-            ({projects.length} {t('workspace.projects', 'projects')})
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
-          title={t('common.refresh', 'Refresh')}
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
+  // 计数与标题空格分隔，禁括号——与配方页的 `122 local` 同一形式。
+  // 英文下单复数有别（1 project / 2 projects），中文的「项目」不分单复数。
+  const projectWord = t('workspace.projects', 'projects');
+  const countLabel =
+    currentLang === 'zh'
+      ? `${projects.length} ${projectWord}`
+      : `${projects.length} ${projects.length === 1 ? 'project' : projectWord}`;
 
-      {/* Content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Project List - Left Panel */}
-        <div className="w-[480px] border-r border-border overflow-y-auto">
+  return (
+    <div className="ws-page">
+      <header className="ui-page-header">
+        <div className="ui-page-header-titles">
+          <h1 className="ui-page-header-title">{t('workspace.title', 'Workspace')}</h1>
+          {!loading && <span className="ui-page-header-meta">{countLabel}</span>}
+        </div>
+        <div className="ui-page-header-actions">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="ui-icon-btn"
+            title={t('common.refresh', 'Refresh')}
+            aria-label={t('common.refresh', 'Refresh')}
+          >
+            <RefreshCw size={16} strokeWidth={1.75} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </header>
+
+      <div className="ws-split">
+        <div className="ws-list-pane">
           <ProjectList
             projects={projects}
             loading={loading}
@@ -105,16 +116,15 @@ export function WorkspacePage() {
           />
         </div>
 
-        {/* File Browser - Right Panel */}
-        <div className="flex-1 overflow-hidden">
+        <div className="ws-detail-pane">
           {currentProjectId ? (
             <FileBrowser projectId={currentProjectId} />
           ) : (
-            <div className="h-full flex items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>{t('workspace.selectProject', 'Select a project to browse files')}</p>
-              </div>
+            <div className="ws-empty">
+              <EmptyState
+                Icon={FolderOpen}
+                title={t('workspace.selectProject', 'Select a project to browse files')}
+              />
             </div>
           )}
         </div>

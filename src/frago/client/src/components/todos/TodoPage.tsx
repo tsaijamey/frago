@@ -21,6 +21,7 @@ import type { TodoItem, TodoListResponse } from '@/api';
 import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
+import InlineMarkdown from '@/components/ui/InlineMarkdown';
 import TodoDetail from './TodoDetail';
 import TodoCategoryEditor from './TodoCategoryEditor';
 import TodoStatusIcon from './TodoStatusIcon';
@@ -71,17 +72,24 @@ function TodoRow({ todo, selected, onClick }: TodoRowProps) {
       <TodoStatusIcon status={todo.status} decorative={doing} />
       <span className="td-row-title">{todo.title}</span>
       <span className="tdp-row-meta">
-        {doing && <span className="tdp-row-doing">{t('todos.status.doing')}</span>}
+        {/* 在做是清单里唯一一个「此刻正在发生」的信号：一颗会呼吸的绿点加一片柔和的
+            状态角标，扫一眼就找得到，不必逐行读字。 */}
+        {doing && (
+          <span className="tdp-row-doing">
+            <span className="tdp-doing-dot" aria-hidden="true" />
+            {t('todos.status.doing')}
+          </span>
+        )}
         {todo.steps.length > 0 && <span>{t('todos.stepCount', { count: todo.steps.length })}</span>}
         <span>{formatRowDate(todo.created)}</span>
       </span>
       {(line || tags.length > 0) && (
         <span className="tdp-row-sub">
-          {line}
+          <InlineMarkdown content={line} />
           {tags.length > 0 && (
             <span className="tdp-row-tags">
               {tags.map((tag) => (
-                <span key={tag} className="td-tag">
+                <span key={tag} className="tdp-tag">
                   {tag}
                 </span>
               ))}
@@ -327,25 +335,24 @@ export default function TodoPage() {
       {/* 两排筛选长得不一样，是因为它们回答的问题不一样：上面是互斥的「进行到哪」，
           用分段控件；下面是「属于哪一摊」，用轻量的文字胶囊，前面挂上名字。 */}
       <div className="td-toolbar tdp-toolbar">
-        <div className="td-filters tdp-segmented" role="group" aria-label={t('todos.detail.status')}>
+        <div className="ui-seg-group tdp-seg-group" role="group" aria-label={t('todos.detail.status')}>
           {STATUS_FILTERS.map((name) => (
             <button
               key={name}
               type="button"
-              className={`td-filter ${filter === name ? 'td-filter--active' : ''}`}
+              className={`ui-seg-pill ${filter === name ? 'ui-seg-pill--active' : ''}`}
               onClick={() => setFilter(name)}
               aria-pressed={filter === name}
             >
               {t(`todos.filter.${name}`)}
-              <span className="td-filter-count">{countFor(name, counts)}</span>
+              <span className="ui-seg-count">{countFor(name, counts)}</span>
             </button>
           ))}
         </div>
-        <div className="search-box td-search">
-          <Search size={16} className="search-icon" />
+        <div className="ui-search-box td-search">
+          <Search size={16} className="ui-search-box-icon" />
           <input
             type="text"
-            className="search-input"
             placeholder={t('todos.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -354,7 +361,7 @@ export default function TodoPage() {
           {search && (
             <button
               type="button"
-              className="search-clear"
+              className="ui-search-box-clear"
               onClick={() => setSearch('')}
               aria-label={t('common.clear')}
             >
@@ -364,26 +371,30 @@ export default function TodoPage() {
         </div>
       </div>
 
-      <div className="td-filters tdp-categories" role="group" aria-label={t('todos.category.label')}>
-        <span className="tdp-categories-label" aria-hidden="true">
+      {/* 分类是次一级的过滤：没有互斥的「档位」要选，只是换个摊子看。所以它不用分段
+          控件，用一排安静的文字胶囊，前面挂一个名字，和上面那排拉开距离。 */}
+      <div className="tdp-catbar">
+        <span className="tdp-catbar-label" aria-hidden="true">
           {t('todos.category.label')}
         </span>
-        {['all', ...categories.map((c) => c.id), UNCATEGORIZED].map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={`td-filter ${activeCategory === id ? 'td-filter--active' : ''}`}
-            onClick={() => setCategoryFilter(id)}
-            aria-pressed={activeCategory === id}
-          >
-            {id === 'all'
-              ? t('todos.category.all')
-              : id === UNCATEGORIZED
-                ? t('todos.category.none')
-                : categories.find((c) => c.id === id)?.name}
-            <span className="td-filter-count">{categoryCounts[id] ?? 0}</span>
-          </button>
-        ))}
+        <div className="td-filters tdp-categories" role="group" aria-label={t('todos.category.label')}>
+          {['all', ...categories.map((c) => c.id), UNCATEGORIZED].map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`tdp-cat-pill ${activeCategory === id ? 'tdp-cat-pill--active' : ''}`}
+              onClick={() => setCategoryFilter(id)}
+              aria-pressed={activeCategory === id}
+            >
+              {id === 'all'
+                ? t('todos.category.all')
+                : id === UNCATEGORIZED
+                  ? t('todos.category.none')
+                  : categories.find((c) => c.id === id)?.name}
+              <span className="tdp-cat-count">{categoryCounts[id] ?? 0}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {error &&<div className="td-error">{t('todos.loadFailed', { message: error })}</div>}
@@ -408,10 +419,16 @@ export default function TodoPage() {
                 </div>
                 {group.sections.map((section, sectionIndex) => (
                   <Fragment key={`${section.priority}-${sectionIndex}`}>
-                    {/* 优先级只在这里说一次；告警橙只给高优先级这一档。 */}
+                    {/* 优先级只在这里说一次。从前是 11px 全大写灰字，和「事业 44」那种 13px
+                        分组名混在同一股流里，层级只能靠大小写去猜；现在给它一枚正经的分组
+                        标签：一小片带底色的胶囊，数字收在里面，后面拖一条发丝线到行尾。
+                        告警橙只给高优先级这一档，全页别处不再出现。 */}
                     <div className={`tdp-pri-head tdp-pri-head--${section.priority}`}>
-                      {t(`todos.section.${section.priority}`)}
-                      <span className="tdp-pri-count">{section.todos.length}</span>
+                      <span className="tdp-pri-label">
+                        {t(`todos.section.${section.priority}`)}
+                        <span className="tdp-pri-count">{section.todos.length}</span>
+                      </span>
+                      <span className="tdp-pri-rule" aria-hidden="true" />
                     </div>
                     {section.todos.map((todo) => (
                       <TodoRow

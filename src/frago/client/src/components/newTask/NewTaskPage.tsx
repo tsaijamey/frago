@@ -11,6 +11,7 @@ import { MessageList } from '@/components/shared';
 import NewTaskInput from './NewTaskInput';
 import * as httpApi from '@/api/client';
 import { localISOString } from '@/utils/time';
+import { scrollBehavior } from '@/utils/reducedMotion';
 
 export default function NewTaskPage() {
   const { t } = useTranslation();
@@ -95,7 +96,8 @@ export default function NewTaskPage() {
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 走 `scrollBehavior()`：开着减弱动效时这一步直接落位，不滑过去。
+    messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior() });
   }, [consoleMessages]);
 
   // Use ref to track internalId for WebSocket handler (avoids stale closure)
@@ -269,6 +271,8 @@ export default function NewTaskPage() {
   );
 
   // Quick action handlers - prefill input with prompt template
+  // 四枚入口共用一个图标规格（16px、线宽 1.75），此前是描边圆、方框、文档、
+  // 播放三角四种画风混在一起，人一眼看不出它们是同一层级的四件事。
   const quickActions = [
     { icon: Compass, label: t('console.quickActions.explore'), prompt: t('console.quickActions.explorePrompt') },
     { icon: Bot, label: t('console.quickActions.automate'), prompt: t('console.quickActions.automatePrompt') },
@@ -280,54 +284,57 @@ export default function NewTaskPage() {
     setInputValue(prompt);
   };
 
-  // Welcome screen for empty state
+  // 运行模式切换。这一枚在两种状态下都渲染：它是这次会话「怎么跑」的设定，
+  // 会话进行中也得看得见当前是什么模式，而不是开跑之后就消失。
+  const approvalToggle = (
+    <div className="nt-approval" role="group" aria-label={t('console.autoApprove')}>
+      <button type="button" className="nt-approval-option is-active">
+        {t('console.autoApprove')}
+      </button>
+      <button
+        type="button"
+        className="nt-approval-option"
+        title={t('console.manualApproveDisabledHint')}
+        disabled
+      >
+        {t('console.manualApprove')}
+      </button>
+    </div>
+  );
+
+  // 空会话时的起始屏：一句主张 + 一个焦点框 + 四枚起步入口，全部居中成一列。
   const welcomeScreen = (
-    <div className="welcome-screen">
-      <div className="welcome-header">
-        {/* Logo */}
-        <img src="/icons/logo-128.png" alt="frago" className="welcome-logo-img" />
-        <h1 className="welcome-headline">{t('console.welcomeHeadline')}</h1>
-        <p className="welcome-subheadline">{t('console.welcomeSubheadline')}</p>
+    <div className="nt-welcome">
+      <div className="nt-welcome-head">
+        <img src="/icons/logo-128.png" alt="frago" className="nt-welcome-logo" />
+        <h2 className="nt-welcome-headline">{t('console.welcomeHeadline')}</h2>
+        <p className="nt-welcome-sub">{t('console.welcomeSubheadline')}</p>
       </div>
 
-      {/* Capsule toggle button */}
-      <div className="approval-toggle mt-scaled-6">
-        <button type="button" className="approval-toggle-option active">
-          {t('console.autoApprove')}
-        </button>
-        <button
-          type="button"
-          className="approval-toggle-option disabled"
-          title={t('console.manualApproveDisabledHint')}
-          disabled
-        >
-          {t('console.manualApprove')}
-        </button>
-      </div>
-
-      {/* Input area - inside welcome screen */}
-      <div className="welcome-input-section">
+      <div className="nt-welcome-input">
         <NewTaskInput
           value={inputValue}
           onChange={setInputValue}
           onSend={handleSend}
           disabled={consoleIsRunning}
           placeholder={t('console.startConversation')}
+          controls={approvalToggle}
         />
       </div>
 
-      {/* Quick Actions */}
-      <div className="quick-actions">
+      <div className="nt-quick">
         {quickActions.map((action) => (
           <button
             key={action.label}
             type="button"
-            className="quick-action-btn"
+            className="nt-quick-card ui-bezel-card ui-bezel-card--interactive"
             onClick={() => handleQuickAction(action.prompt)}
             title={action.prompt}
           >
-            <action.icon className="quick-action-icon" />
-            <span>{action.label}</span>
+            <span className="nt-quick-icon">
+              <action.icon size={16} strokeWidth={1.75} />
+            </span>
+            <span className="nt-quick-label">{action.label}</span>
           </button>
         ))}
       </div>
@@ -335,24 +342,30 @@ export default function NewTaskPage() {
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
-      {/* Controls */}
-      <div className="shrink-0">
-        <NewTaskControls
-          isRunning={consoleIsRunning}
-          onNewSession={handleNewSession}
-          onStop={handleStop}
-        />
-      </div>
-
-      {/* Message area or Welcome screen */}
-      {consoleMessages.length === 0 ? (
-        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          {welcomeScreen}
+    <div className="nt-page">
+      <header className="ui-page-header">
+        <div className="ui-page-header-titles">
+          <h1 className="ui-page-header-title">{t('console.newSession')}</h1>
+          <span className="ui-page-header-meta">
+            {consoleMessages.length > 0 ? t('console.continueConversation') : t('console.startConversation')}
+          </span>
         </div>
+        <div className="ui-page-header-actions">
+          <NewTaskControls
+            isRunning={consoleIsRunning}
+            hasContent={consoleMessages.length > 0}
+            onNewSession={handleNewSession}
+            onStop={handleStop}
+          />
+        </div>
+      </header>
+
+      {/* 会话进行中：记录占满中间，输入框贴底。空会话：整块区域是起始屏。 */}
+      {consoleMessages.length === 0 ? (
+        <div className="nt-body nt-body--welcome">{welcomeScreen}</div>
       ) : (
         <>
-          <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
+          <div ref={scrollContainerRef} className="nt-stream">
             <MessageList
               messages={unifiedMessages}
               messagesEndRef={messagesEndRef}
@@ -360,14 +373,14 @@ export default function NewTaskPage() {
             />
           </div>
 
-          {/* Input area - at bottom when has messages */}
-          <div className="shrink-0">
+          <div className="nt-composer">
             <NewTaskInput
               value={inputValue}
               onChange={setInputValue}
               onSend={handleSend}
               disabled={consoleIsRunning && consoleMessages[consoleMessages.length - 1]?.type === 'assistant' && !consoleMessages[consoleMessages.length - 1]?.done}
               placeholder={t('console.continueConversation')}
+              controls={approvalToggle}
             />
           </div>
         </>

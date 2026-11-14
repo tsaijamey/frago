@@ -97,7 +97,7 @@ function Chip({
 }) {
   return (
     <span
-      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border-color bg-bg-secondary py-[3px] pl-2.5 pr-1 text-[11.5px] text-text-primary"
+      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border-color bg-bg-secondary py-[3px] pl-2.5 pr-1 text-[12px] text-text-primary"
       title={hint || undefined}
       data-testid={testId}
     >
@@ -656,7 +656,7 @@ export default function EmployeeDetailDialog({
 
       {/* 新建这一态不出现资源栏：员工还没查过，问人等于让人替它猜。 */}
       {isCreate ? (
-        <p className="rounded-[8px] bg-bg-secondary px-3 py-2 text-[11.5px] leading-relaxed text-text-secondary">
+        <p className="rounded-[8px] bg-bg-secondary px-3 py-2 text-[12px] leading-relaxed text-text-secondary">
           {t('employees.detail.autoDiscoverHint')}
         </p>
       ) : null}
@@ -699,14 +699,14 @@ export default function EmployeeDetailDialog({
           </div>
 
           {ledger ? (
-            <p className="text-[11.5px] text-text-secondary" data-testid="employee-ledger-summary">
+            <p className="text-[12px] text-text-secondary" data-testid="employee-ledger-summary">
               {t('employees.detail.claimedSummary', counts)}
             </p>
           ) : (
-            <p className="text-[11.5px] text-text-muted">{t('employees.detail.neverSynced')}</p>
+            <p className="text-[12px] text-text-muted">{t('employees.detail.neverSynced')}</p>
           )}
           {ledger?.last_synced_at ? (
-            <p className="text-[10.5px] text-text-muted">
+            <p className="text-[11px] text-text-muted">
               {t('employees.detail.lastSynced', { at: ledger.last_synced_at })}
             </p>
           ) : null}
@@ -722,7 +722,7 @@ export default function EmployeeDetailDialog({
 
           {/* 数据目录 */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[11.5px] font-medium text-text-secondary" htmlFor="employee-slots">
+            <label className="text-[12px] font-medium text-text-secondary" htmlFor="employee-slots">
               {t('employees.detail.slotsLabel')}
             </label>
             {slotList.length ? (
@@ -794,7 +794,7 @@ export default function EmployeeDetailDialog({
 
           {/* 知识域 */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[11.5px] font-medium text-text-secondary" htmlFor="employee-domains">
+            <label className="text-[12px] font-medium text-text-secondary" htmlFor="employee-domains">
               {t('employees.detail.domainsLabel')}
             </label>
             {domainList.length ? (
@@ -866,7 +866,7 @@ export default function EmployeeDetailDialog({
 
           {/* 配方 */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[11.5px] font-medium text-text-secondary" htmlFor="employee-recipes">
+            <label className="text-[12px] font-medium text-text-secondary" htmlFor="employee-recipes">
               {t('employees.detail.recipesLabel')}
             </label>
             {recipeList.length ? (
@@ -938,7 +938,7 @@ export default function EmployeeDetailDialog({
 
           {/* 默认技能 */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-[11.5px] font-medium text-text-secondary" htmlFor="employee-skills">
+            <label className="text-[12px] font-medium text-text-secondary" htmlFor="employee-skills">
               {t('employees.detail.skillsLabel')}
             </label>
             {skillList.length ? (
@@ -1013,7 +1013,7 @@ export default function EmployeeDetailDialog({
             <div className="border-t border-border-color pt-2">
               <button
                 type="button"
-                className="flex w-full items-center gap-1.5 text-left text-[11.5px] font-medium text-text-secondary transition-colors hover:text-text-primary"
+                className="flex w-full items-center gap-1.5 text-left text-[12px] font-medium text-text-secondary transition-colors hover:text-text-primary"
                 onClick={() => setDiscoveryOpen((v) => !v)}
                 aria-expanded={discoveryOpen}
                 data-testid="employee-discovery-toggle"
@@ -1064,7 +1064,7 @@ export default function EmployeeDetailDialog({
                   ) : null}
 
                   {sessions.length > 5 || glossary.length > 8 ? (
-                    <p className="text-[10.5px] text-text-muted">
+                    <p className="text-[11px] text-text-muted">
                       {t('employees.detail.drawerMore', {
                         n: Math.max(sessions.length - 5, 0) + Math.max(glossary.length - 8, 0),
                       })}
@@ -1093,7 +1093,7 @@ export default function EmployeeDetailDialog({
                 {detail.managed_data.data_slots.map((slot) => (
                   <div key={slot.slot_path} className="flex flex-col gap-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-text-primary" title={slot.resolved_path}>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text-primary" title={slot.resolved_path}>
                         {slot.slot_path}
                       </span>
                       <span className="shrink-0 text-[11px] text-text-muted">
@@ -1107,7 +1107,7 @@ export default function EmployeeDetailDialog({
                         {slot.entries.map((entry) => (
                           <li
                             key={entry.name}
-                            className="truncate font-mono text-[10.5px] text-text-secondary"
+                            className="truncate font-mono text-[11px] text-text-secondary"
                             title={entry.summary || entry.name}
                           >
                             {entry.name}
@@ -1119,10 +1119,10 @@ export default function EmployeeDetailDialog({
                 ))}
               </div>
             ) : (
-              <p className="text-[11.5px] text-text-muted">{t('employees.detail.territoryEmpty')}</p>
+              <p className="text-[12px] text-text-muted">{t('employees.detail.territoryEmpty')}</p>
             )
           ) : (
-            <p className="flex items-center gap-1.5 text-[11.5px] text-text-muted">
+            <p className="flex items-center gap-1.5 text-[12px] text-text-muted">
               {detailError ? null : <RefreshCw size={12} className="cs-spin" />}
               {detailError ?? t('employees.detail.territoryLoading')}
             </p>
@@ -1130,7 +1130,7 @@ export default function EmployeeDetailDialog({
 
           {/* 在领地里登记一个新归档目录 */}
           <div className="flex flex-col gap-2 border-t border-border-color pt-2.5">
-            <span className="text-[11.5px] font-medium text-text-secondary">
+            <span className="text-[12px] font-medium text-text-secondary">
               {t('employees.detail.registerTitle')}
             </span>
             <div className="flex flex-wrap items-center gap-1.5">

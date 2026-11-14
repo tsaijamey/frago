@@ -22,7 +22,7 @@ export const SEG_ITEM =
 export const SEG_ROOMY = 'px-[9px] text-[12px]';
 
 /** 中栏记录镜头那一排：六档要争取一排放下，收一档。 */
-export const SEG_TIGHT = 'px-[5px] text-[11.5px]';
+export const SEG_TIGHT = 'px-[5px] text-[12px]';
 
 export const SEG_ON = 'bg-bg-primary text-text-primary shadow-[var(--seg-on-shadow)]';
 export const SEG_OFF = 'text-text-secondary hover:text-text-primary';

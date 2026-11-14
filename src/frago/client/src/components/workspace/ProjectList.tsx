@@ -1,10 +1,16 @@
 /**
  * Project List Component - Shows all run instances
+ *
+ * 每条项目的第二行此前是 `theme_description`，而它常常与第一行的项目名一字不差，
+ * 于是同一行字上下重复两遍（基线截图 `21-workspace-detail-light.png` 可见）。
+ * 现在只在描述确实提供了新信息时才显示它，否则显示目录路径这类能区分项目的内容。
  */
 
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Folder, ExternalLink, Clock } from 'lucide-react';
+import { Folder, FolderOpen, ExternalLink, Clock, Search, X } from 'lucide-react';
 import type { ProjectInfo } from '@/api';
+import EmptyState from '@/components/ui/EmptyState';
 
 interface ProjectListProps {
   projects: ProjectInfo[];
@@ -12,6 +18,29 @@ interface ProjectListProps {
   selectedProjectId: string | null;
   onSelectProject: (runId: string) => void;
   onOpenInFileManager: (runId: string) => void;
+}
+
+/** 从 run_id 里去掉日期前缀，得到可读的项目名。 */
+function getDisplayName(runId: string): string {
+  const match = runId.match(/^\d{4}-?\d{2}-?\d{2}-(.+)$/);
+  if (match) return match[1].replace(/-/g, ' ');
+  return runId.replace(/-/g, ' ');
+}
+
+/**
+ * 第二行要显示什么。
+ *
+ * 描述与项目名实质相同时（去掉空格、大小写、连字符后相等）就不显示——那是在
+ * 原地重复，占一行却不给任何新信息。这种情况改显示目录名，至少能区分两个项目。
+ */
+function getSubtitle(project: ProjectInfo): string {
+  const name = getDisplayName(project.run_id);
+  const description = (project.theme_description || '').trim();
+  const normalize = (text: string) => text.toLowerCase().replace(/[\s\-_]/g, '');
+  if (description && normalize(description) !== normalize(name)) {
+    return description;
+  }
+  return project.run_id;
 }
 
 export function ProjectList({
@@ -22,14 +51,22 @@ export function ProjectList({
   onOpenInFileManager,
 }: ProjectListProps) {
   const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter((project) => {
+      const haystack = `${project.run_id} ${project.theme_description || ''}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [projects, query]);
 
   if (loading) {
     return (
-      <div className="p-4 space-y-3">
+      <div className="ws-list">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="animate-pulse">
-            <div className="h-16 bg-muted rounded-lg" />
-          </div>
+          <div key={i} className="ws-skeleton" />
         ))}
       </div>
     );
@@ -37,24 +74,57 @@ export function ProjectList({
 
   if (projects.length === 0) {
     return (
-      <div className="p-8 text-center text-muted-foreground">
-        <Folder className="w-12 h-12 mx-auto mb-4 opacity-50" />
-        <p>{t('workspace.noProjects', 'No projects found')}</p>
+      <div className="ws-empty">
+        <EmptyState
+          Icon={Folder}
+          title={t('workspace.noProjects', 'No projects found')}
+        />
       </div>
     );
   }
 
   return (
-    <div className="p-2 space-y-1">
-      {projects.map((project) => (
-        <ProjectItem
-          key={project.run_id}
-          project={project}
-          isSelected={selectedProjectId === project.run_id}
-          onSelect={() => onSelectProject(project.run_id)}
-          onOpenInFileManager={() => onOpenInFileManager(project.run_id)}
-        />
-      ))}
+    <div className="ws-list-wrap">
+      <div className="ws-filter">
+        <div className="ui-search-box ws-filter-box">
+          <Search size={16} strokeWidth={1.75} className="ui-search-box-icon" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('workspace.searchPlaceholder', 'Search projects…')}
+            aria-label={t('workspace.searchPlaceholder', 'Search projects…')}
+          />
+          {query && (
+            <button
+              type="button"
+              className="ui-search-box-clear"
+              onClick={() => setQuery('')}
+              aria-label={t('common.clear', 'Clear')}
+            >
+              <X size={14} strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="ws-empty">
+          <EmptyState Icon={Search} title={t('workspace.noMatches', 'Nothing matches that')} />
+        </div>
+      ) : (
+        <div className="ws-list">
+          {filtered.map((project) => (
+            <ProjectItem
+              key={project.run_id}
+              project={project}
+              isSelected={selectedProjectId === project.run_id}
+              onSelect={() => onSelectProject(project.run_id)}
+              onOpenInFileManager={() => onOpenInFileManager(project.run_id)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -97,61 +167,54 @@ function ProjectItem({
     }
   }
 
-  // Get display name from run_id (remove date prefix if present)
-  function getDisplayName(runId: string): string {
-    // Pattern: YYYYMMDD-name or YYYY-MM-DD-name
-    const match = runId.match(/^\d{4}-?\d{2}-?\d{2}-(.+)$/);
-    if (match) {
-      return match[1].replace(/-/g, ' ');
-    }
-    return runId.replace(/-/g, ' ');
-  }
+  const subtitle = getSubtitle(project);
+  const isActive = project.status === 'active';
 
   return (
     <div
-      className={`
-        group p-3 rounded-lg cursor-pointer transition-all duration-200
-        ${isSelected
-          ? 'bg-[var(--bg-elevated)] border border-[var(--border-primary)]'
-          : 'hover:bg-[var(--bg-hover)] border border-transparent hover:border-[var(--border-color)]'
-        }
-      `}
+      className={`ws-item ${isSelected ? 'is-selected' : ''}`}
       onClick={onSelect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
     >
-      <div className="flex items-start gap-3">
-        <Folder className={`w-5 h-5 mt-0.5 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate" title={project.run_id}>
-            {getDisplayName(project.run_id)}
-          </div>
-          {project.theme_description && (
-            <div className="text-xs text-muted-foreground truncate mt-0.5" title={project.theme_description}>
-              {project.theme_description}
-            </div>
-          )}
-          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-            <Clock className="w-3 h-3" />
-            <span>{formatDate(project.last_accessed)}</span>
-            <span className={`
-              px-1.5 py-0.5 rounded text-[11px]
-              ${project.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-muted text-muted-foreground'}
-            `}>
-              {project.status}
-            </span>
-          </div>
+      <span className="ws-item-icon">
+        {isSelected ? <FolderOpen size={17} strokeWidth={1.75} /> : <Folder size={17} strokeWidth={1.75} />}
+      </span>
+
+      <div className="ws-item-body">
+        <div className="ws-item-title" title={project.run_id}>
+          {getDisplayName(project.run_id)}
         </div>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenInFileManager();
-          }}
-          className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
-          title={t('workspace.openInFileManager', 'Open in file manager')}
-        >
-          <ExternalLink className="w-4 h-4" />
-        </button>
+        <div className="ws-item-subtitle" title={subtitle}>
+          {subtitle}
+        </div>
+        <div className="ws-item-meta">
+          <Clock size={12} strokeWidth={1.75} />
+          <span>{formatDate(project.last_accessed)}</span>
+          <span className={`ws-status ${isActive ? 'is-active' : ''}`}>
+            {isActive ? t('workspace.statusActive', 'active') : project.status}
+          </span>
+        </div>
       </div>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenInFileManager();
+        }}
+        className="ui-icon-btn ws-item-open"
+        title={t('workspace.openInFileManager', 'Open in file manager')}
+        aria-label={t('workspace.openInFileManager', 'Open in file manager')}
+      >
+        <ExternalLink size={15} strokeWidth={1.75} />
+      </button>
     </div>
   );
 }

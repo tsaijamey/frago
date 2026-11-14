@@ -1,0 +1,1205 @@
+/* === 配方清单页（本地 + 社区） ===
+   页头、工具栏、分段控件借事务页的 .tdp 版式（页面根节点带 .tdp），这里只补配方
+   独有的东西：分段标题、网格卡、清单行、社区卡的操作底栏、GitHub 提示条。
+   尺度与事务页一致：左右 24px、控件 32px 高；颜色只给动作与需要留意的状态。 */
+
+/* 工具栏一行：来源切换（最重，浮起的分段控件）→ 搜索（贴着它左对齐、定宽）→ 撑开的
+   空白 →「New folder」「Select」→ 行尾的网格/清单切换（最轻）。
+   搜索框不被推到右端：右端那几颗只在本地页出现，搜索若靠右对齐，切一次标签页它就
+   横跳一次（实测 82px）。它挂在来源切换后面，位置只由左边决定。
+   窄窗口放不下时按 .td-toolbar 原有的折行规则换行，不强行一行。 */
+.tdp.rl-page .td-search {
+  margin-left: 0;
+  flex: 0 1 210px;
+  min-width: 160px;
+}
+
+/* 照原型收紧：间距 8px、来源切换两侧 9px，1020 宽的窗口里整条工具栏才放得进一行。
+   只写在配方页下面，待办页共用的 .td-toolbar / .tdp-segmented 不动。 */
+.tdp.rl-page .td-toolbar {
+  gap: 8px;
+}
+
+.tdp.rl-page .tdp-segmented .td-filter {
+  padding: 0 9px;
+}
+
+.rl-toolbar-grow {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
+}
+
+/* 网格 / 清单切换：两颗 28×28 的方形图标按钮，外框 32px 高，与搜索框同高同基线。
+   只有一圈细描边、选中那颗铺一层灰底，不浮起、不投影——它比左边的来源切换低一级，
+   画得就要比它轻，两个控件才不会并排抢眼。 */
+.rl-view-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.rl-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  /* 外框圆角减去 1px 内衬，内外两道弧线才同心。 */
+  border-radius: calc(var(--radius-md) - 1px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.rl-view-btn:hover {
+  color: var(--text-primary);
+}
+
+.rl-view-btn--active,
+.rl-view-btn--active:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.rl-view-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+/* 竖向节奏：页头→工具栏、工具栏→内容，两段都是 16px。 */
+.rl-page .page-scroll {
+  padding: 16px var(--tdp-gutter) 40px;
+}
+
+.rl-section + .rl-section {
+  margin-top: 16px;
+}
+
+/* 分段标题：名字、计数、灰色说明排成一行。照原型不带折叠箭头，不能点。
+   三样东西分三层，一眼要能排出主次：
+   - 名字：主色、半粗，是这一段唯一的重心；
+   - 计数：跟在名字后面，退成灰字，用 tabular-nums 免得数字跳动；
+   - 说明：整行最轻的一档，比计数再小一号、再暗一级，前面挂一个「·」把它和标题
+     那一段分开——它是对这一段的注解，不是这一段的标题。 */
+.rl-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.rl-section-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.rl-section-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 说明文字降级到最轻一档：字号比计数再小一级、颜色再暗一级。 */
+.rl-section-tip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+}
+
+.rl-section-tip::before {
+  content: '·';
+  margin-right: 6px;
+  opacity: 0.7;
+}
+
+.rl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+/* 本地配方的网格：单列最小 220px，1020 宽的窗口出 3 列。社区页仍走上面的 300px。 */
+.rl-grid--local {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.rl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 网格卡：名字 → 标识与运行时 → 描述 → 标签，四层从重到轻。
+   悬停只换底色与描边，不上浮不投影——一屏几十张卡，鼠标扫过时整页不该跟着跳。 */
+.rl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.rl-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.rl-card:focus-visible,
+.rl-row:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.rl-card--static {
+  cursor: default;
+}
+
+.rl-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rl-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 20px;
+  color: var(--text-primary);
+}
+
+.rl-card:not(.rl-card--static) .rl-card-title,
+.rl-row .rl-card-title {
+  text-transform: capitalize;
+}
+
+/* 外链图标是次要入口，灰色。全局链接规则写成 a:not(...)×3，优先级比两级类名高，
+   这里补足到同一级，靠排在它后面胜出。 */
+.rl-page .rl-card a.rl-card-link {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.rl-page .rl-card a.rl-card-link:hover {
+  color: var(--text-primary);
+}
+
+.rl-card-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.rl-card-outdated {
+  color: var(--accent-warning);
+}
+
+.rl-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* 标签与事务页同一种写法：灰字前面挂个 #，不再每颗垫一块底色。 */
+.rl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 6px;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.rl-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-tag::before {
+  content: '#';
+  opacity: 0.6;
+}
+
+/* 放不下的标签收成一个「+N」：它不说自己是谁，只说「还有几个没摆出来」。
+   比真标签再轻一档——它是省略的记号，不是第 4 个标签，所以不带 #、颜色更淡，
+   也不参与截断（截成「+…」就完全没信息了）。 */
+.rl-tag-more {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
+/* 本地配方卡：标题 / 两行描述 / 卡底「类型 运行时 #标签」，约 110px 高。
+   只写在 .rl-card-wrap 之下：社区卡也用 .rl-card，但不包 .rl-card-wrap，不受影响。 */
+.rl-page .rl-card-wrap .rl-card {
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+/* 卡底收口：描述与「类型 运行时 #标签」之间加一道极淡的分隔线，把卡的上半（说的是
+   什么）和下半（它是什么）分开；同时用 margin-top:auto 把这一行压到卡底——描述只有
+   一行时，同一排卡的类型/运行时仍然落在同一条水平线上。
+   社区卡不包 .rl-card-wrap，它自己的底栏是 .rl-card-foot，另有一套，不受这条影响。 */
+.rl-page .rl-card-wrap .rl-card-meta {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, var(--border-color));
+}
+
+.rl-page .rl-card-wrap .rl-card-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+/* 不足两行（或没有描述）也留两行高，同一排卡的卡底对齐。 */
+.rl-page .rl-card-wrap .rl-card-desc {
+  margin-top: 0;
+  min-height: calc(2 * 1.55 * var(--font-size-sm));
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+/* 卡底一行：类型 → 运行时 → 标签，单行截断，放不下的标签截掉，不换行。 */
+.rl-card-meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.rl-card-meta > span {
+  margin-right: 8px;
+}
+
+.rl-card-meta > span:last-child {
+  margin-right: 0;
+}
+
+.rl-card-meta .rl-tag {
+  color: var(--text-dim);
+}
+
+/* 清单行：名字一栏定宽，描述占满中间，「类型 运行时 #标签」收在右端；无描边，悬停整行换底色。 */
+.rl-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 28%) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 20px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rl-row:hover {
+  background: var(--bg-hover);
+}
+
+.rl-row-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rl-row-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rl-row .rl-card-meta {
+  max-width: 280px;
+}
+
+/* 窄窗只收窄标题列，右端「类型 · 运行时 · #标签」留着：1020 宽下行还有 770px，放得下 */
+@media (max-width: 1100px) {
+  .rl-row {
+    grid-template-columns: minmax(160px, 30%) minmax(0, 1fr) auto;
+  }
+
+  .rl-row .rl-card-meta {
+    max-width: 220px;
+  }
+}
+
+/* 社区卡的底栏：左边是「已安装」这类状态，右边是这一步能做的动作。
+   margin-top: auto 把它压到卡底，同一排卡的按钮落在同一条水平线上。 */
+.rl-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.rl-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.rl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.rl-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.rl-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.rl-btn--warning-outline {
+  border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
+  color: var(--accent-warning);
+}
+
+.rl-btn--warning-outline:hover:not(:disabled) {
+  background: var(--accent-warning-10);
+}
+
+/* 卸载平时退成灰字，悬停时才亮出红色——它合法，但不该是这张卡最显眼的东西。 */
+.rl-btn--quiet-danger {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.rl-btn--quiet-danger:hover:not(:disabled) {
+  background: var(--accent-error-10);
+  color: var(--accent-error);
+}
+
+.rl-btn--warning {
+  height: 28px;
+  border-color: var(--accent-warning);
+  background: var(--accent-warning);
+  color: var(--bg-base);
+}
+
+.rl-btn--warning:hover:not(:disabled) {
+  background: var(--accent-warning);
+  filter: brightness(1.08);
+}
+
+/* ── 配方文件夹 ─────────────────────────────────────────────────────────
+   桌面上怎么摆图标是主人的事。一个文件夹都没有时这一段整个不出现，界面跟从前一样
+   平铺一屏卡片——系统不替人预设分类，第一个文件夹由他亲手建。
+
+   **文件夹与配方是两种东西，长得就必须不一样**：配方卡是「一张纸」——中性底、细描边、
+   圆角 10px，里面写的是这张配方自己；文件夹是「一个托盘」——更浅的底、一圈虚线，
+   顶上一小段折角暗示它装着东西。同宽同高的一屏里，人扫一眼就能分出哪几个能点开
+   往下钻、哪几张点开就是详情，不用去读字。 */
+
+.rl-folders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.rl-folder {
+  position: relative;
+  min-width: 0;
+  /* 虚线边 + 更浅的底：它是「容器」，不是「一张卡」。 */
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.rl-folder:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-accent, var(--accent-primary));
+}
+
+/* 打开的那个：虚线转实线、底色沉一档，整块给一个「掀开了」的状态。
+   不给单边色条，也不借品牌绿。 */
+.rl-folder--open {
+  border-style: solid;
+  border-color: var(--sel-border);
+  background: var(--sel-bg);
+}
+
+/* 有东西拖到上面了。只有正被指着的那个亮起来，别的一个都不许动位置。 */
+.rl-folder--over {
+  border-style: solid;
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-10);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+/* 横排一张卡：左边 32px 图标方块，右边「名称 + 数量」一行、前 3 个配方名一行。 */
+.rl-folder-hit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rl-folder-hit:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+  border-radius: var(--radius-lg);
+}
+
+/* 图标方块：比配方卡上的东西更「扁」——不要描边、不要实底，只留一个颜色更浅的圆角
+   块把图标垫起来，让文件夹整体读起来比配方卡轻一层。 */
+.rl-folder-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+}
+
+/* 打开时图标块跟着实起来，与整块状态一致。 */
+.rl-folder--open .rl-folder-icon {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.rl-folder-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rl-folder-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rl-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-primary);
+}
+
+.rl-folder-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-folder-peek {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* 改名和删除：平时藏着，鼠标进到这个文件夹上才出现——一排文件夹上挂着一排小按钮
+   是噪音，但真要用时不该还得再翻一层菜单。 */
+.rl-folder-acts {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.rl-folder:hover .rl-folder-acts,
+.rl-folder:focus-within .rl-folder-acts {
+  opacity: 1;
+}
+
+.rl-folder-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.rl-folder-act:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* 打开的文件夹就地展开在这一排下面，不换页。 */
+.rl-folder-open {
+  margin-top: 12px;
+}
+
+.rl-folder-empty {
+  padding: 8px 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* 卡片外壳：卡片本身是个按钮，「…」和勾选要浮在它上面，所以外面套一层。 */
+.rl-card-wrap,
+.rl-row-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.rl-card-wrap .rl-card,
+.rl-row-wrap .rl-row {
+  width: 100%;
+}
+
+/* 一张卡被拖到另一张上：松手就建一个新文件夹，两张都进去。 */
+.rl-card-wrap--over .rl-card {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 2px var(--accent-primary);
+}
+
+/* 挑中的卡：整块换中性底加一圈描边，不在任何一条边上加色条，也不用绿。 */
+.rl-picked .rl-card,
+.rl-picked .rl-row {
+  background: var(--sel-bg);
+  border-color: var(--sel-border);
+}
+
+.rl-pick {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-primary);
+}
+
+.rl-card-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.rl-card-wrap:hover .rl-card-menu,
+.rl-row-wrap:hover .rl-card-menu,
+.rl-card-menu:focus-visible {
+  opacity: 1;
+}
+
+.rl-card-menu:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* 作者自己起的名字不套 capitalize：那条规则是给「下划线换空格」那种凑出来的名字
+   准备的，套在人写的名字上等于替他改写。 */
+.rl-page .rl-card .rl-card-title--named,
+.rl-page .rl-row .rl-card-title--named {
+  text-transform: none;
+}
+
+/* 工具栏上的文字按钮：建文件夹、挑选。比来源切换轻，比网格/清单切换重。 */
+.rl-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rl-tool-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.rl-tool-btn--active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+/* 挑中几张之后的那一条：挑了几张、下一步去哪儿。 */
+.rl-pickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px var(--tdp-gutter) 0;
+  padding: 8px 12px;
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  background: var(--accent-primary-10, color-mix(in srgb, var(--accent-primary) 10%, transparent));
+}
+
+.rl-pickbar-count {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-primary);
+}
+
+.rl-pickbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rl-pickbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.rl-pickbar-clear {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+/* 「…」菜单：浮在整页上，点别处就关。 */
+.rl-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 18%));
+}
+
+.rl-menu-head {
+  padding: 6px 10px 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.rl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rl-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+
+/* 文件夹表出毛病时的那一条。表坏了界面照常开，但不能不吭声。 */
+.rl-folder-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px var(--tdp-gutter) 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-warning-10);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.rl-folder-banner button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+/* GitHub 未登录的提示条：整条琥珀淡底加整圈描边，颜色取主题令牌。 */
+.rl-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px var(--tdp-gutter) 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 35%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-warning-10);
+}
+
+.rl-notice-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-warning);
+}
+
+.rl-notice-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text-primary);
+}
+
+.rl-notice-text {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.rl-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.rl-notice-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--accent-warning);
+  cursor: pointer;
+}
+
+.rl-notice-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* 「安装 GitHub CLI」是个链接，同样要压过全局链接的品牌绿，保持与提示条同一种琥珀色。 */
+.rl-page .rl-notice a.rl-notice-link,
+.rl-page .rl-notice a.rl-notice-link:hover {
+  color: var(--accent-warning);
+}
+
+.rl-notice-link:disabled {
+  opacity: 0.55;
+}
+
+/* === Recipe Detail (use-flow layout) === */
+/* Two-column: intro on the left, action + parameters panel on the right */
+.rd-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.rd-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.rd-aside {
+  flex-shrink: 0;
+  width: 340px;
+  position: sticky;
+  top: 0;
+}
+
+.rd-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Stack columns on narrow viewports */
+@media (max-width: 1024px) {
+  .rd-layout {
+    flex-direction: column;
+  }
+  .rd-aside {
+    width: 100%;
+    position: static;
+  }
+}
+
+.rd-hero-icon {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary-20);
+}
+
+/* Numbered step block — "what / prepare / run" */
+.rd-step {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.rd-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* 步骤编号：一个小胶囊，不是一颗实心绿圆点。整页只有「运行」该是绿的，编号属于
+   版式记号，用中性底 + 中性字。 */
+.rd-step-no {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold, 600);
+  font-variant-numeric: tabular-nums;
+}
+
+.rd-step-body {
+  padding: 16px;
+}
+
+/* 运行就绪条。就绪是**默认态、不是成就**：整条用中性底、中性字，前面一枚灰勾，
+   不上绿底——绿色留给「运行」那颗按钮，一屏里只该有那一处绿。
+   缺东西时才需要人留意，那一档才用琥珀/红。 */
+.rd-ready {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.rd-ready--ok {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.rd-ready--warn {
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.rd-ready-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.rd-ready-action:hover {
+  background: var(--bg-hover);
+}
+
+/* ── 参数表单 ──────────────────────────────────────────────────────────
+   枚举选项（type: enum）过去是一串挤在一起的裸文字，像一行没写完的句子。现在每一档
+   自己一颗安静的小胶囊：有底、有内距、选中的那一颗实起来。它是「从几档里挑一个」，
+   形态上就该和文字段落分开。 */
+
+.rd-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rd-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.rd-option:hover:not(.rd-option--active) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* 选中：整颗浮起来（中性实底 + 描边），不刷品牌绿——绿是「运行」的。 */
+.rd-option--active {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium, 500);
+  box-shadow: var(--seg-on-shadow, none);
+}
+
+.rd-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+/* 布尔参数走开关，不走勾选框：开关的形态本身就说清了「这是开着还是关着」，
+   不用人在旁边再读一个「是 / 否」。 */
+.rd-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rd-switch-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-tertiary);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.rd-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.rd-switch--on .rd-switch-track {
+  background: var(--bg-elevated);
+  border-color: var(--text-secondary);
+}
+
+.rd-switch--on .rd-switch-track::after {
+  transform: translateX(14px);
+  background: var(--text-primary);
+}
+
+.rd-switch:focus-within .rd-switch-track {
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.rd-switch-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* === 技能页 ================================================================
+   与配方页共用同一套页头、工具栏与分段胶囊（都借 .tdp 版式），这里只补技能卡自己的
+   三行排印。 */
+
+.sk-page .page-scroll {
+  padding: 16px var(--tdp-gutter) 40px;
+}
+
+/* 技能页的搜索框与配方页同宽同基线：两页的工具栏在同一个位置，切页时不会横跳。 */
+.sk-page .td-search {
+  margin-left: 0;
+  flex: 0 1 210px;
+  min-width: 160px;
+}
+
+.sk-page .td-toolbar {
+  gap: 8px;
+}
+
+/* 技能卡：外层用全站统一的 Double-Bezel 托盘（.ui-bezel-card），这里只管里面
+   三行字的排印。卡片本身是 <button>，所以要把浏览器给按钮的默认外观清掉。 */
+.sk-card {
+  display: block;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.sk-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-primary);
+}
+
+/* 摘要严格 clamp 到 3 行。**三行截断不写在这里**，走组件上的 Tailwind `line-clamp-3`
+   ——全站已有的多行截断都走那个工具类，这里再写一遍就是同一件事两处定义；
+   而且在本项目的构建链下，手写的 `-webkit-box` + `-webkit-line-clamp` 会被随后的
+   `display` 声明覆盖，clamp 随之失效，超长摘要被硬切且不出省略号。 */
+.sk-card-desc {
+  margin-top: 4px;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* 路径是第三层，最轻：等宽、单行截断。它在这儿只是「它在哪」，看全文要点开卡片。 */
+.sk-card-path {
+  margin-top: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+}
+

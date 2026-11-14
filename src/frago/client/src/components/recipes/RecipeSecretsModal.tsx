@@ -131,9 +131,9 @@ export default function RecipeSecretsModal({
 
         {/* Error message */}
         {error && (
-          <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-            <AlertCircle size={16} className="text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <div className="flex items-start gap-2 p-3 bg-[var(--accent-error)]/10 border border-[var(--accent-error)]/30 rounded-md">
+            <AlertCircle size={16} className="text-[var(--accent-error)] mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-[var(--accent-error)]">{error}</p>
           </div>
         )}
 
@@ -161,7 +161,7 @@ export default function RecipeSecretsModal({
                     </span>
                   )}
                   {field.has_value && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)] flex items-center gap-1">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] flex items-center gap-1">
                       <Check size={12} />
                       {t('recipes.configured')}
                     </span>

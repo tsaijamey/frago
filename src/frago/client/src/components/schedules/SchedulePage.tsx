@@ -66,9 +66,14 @@ function ScheduleRow({
 
   // 表格四列：计划 / 何时 / 上次运行 / 次数。整行可点；键盘焦点落在名字那个按钮上，
   // 读屏按表头念列名。「下次运行」和连续失败次数只在详情面板里（照原型）。
+  //
+  // 挂掉的这一档整行套 .ui-row-failing：四边闭合的淡红底加一圈微红描边。几十条绿的
+  // 「上次成功」里混着一条挂掉的，人扫一眼就能停住，不必逐行去读那个红色的字。
   return (
     <tr
-      className={`sc-tr ${selected ? 'sc-tr--selected' : ''} ${schedule.enabled ? '' : 'sc-row--disabled'}`}
+      className={`sc-tr ${selected ? 'sc-tr--selected' : ''} ${
+        state === 'failing' ? 'ui-row-failing' : ''
+      } ${schedule.enabled ? '' : 'sc-row--disabled'}`}
       onClick={onClick}
     >
       <td>
@@ -106,7 +111,7 @@ function ScheduleRow({
         {effectiveSessionId && (
           <button
             type="button"
-            className="sc-run-link inline-flex items-center gap-1 mt-0.5 text-xs text-primary hover:underline"
+            className="sc-run-link"
             onClick={(e) => {
               e.stopPropagation();
               setWorkbenchSessionId(effectiveSessionId);
@@ -348,25 +353,24 @@ export default function SchedulePage() {
       )}
 
       <div className="td-toolbar tdp-toolbar">
-        <div className="td-filters tdp-segmented" role="group" aria-label={t('schedules.detail.status')}>
+        <div className="ui-seg-group tdp-seg-group" role="group" aria-label={t('schedules.detail.status')}>
           {FILTERS.map((name) => (
             <button
               key={name}
               type="button"
-              className={`td-filter ${filter === name ? 'td-filter--active' : ''}`}
+              className={`ui-seg-pill ${filter === name ? 'ui-seg-pill--active' : ''}`}
               onClick={() => setFilter(name)}
               aria-pressed={filter === name}
             >
               {t(`schedules.filter.${name}`)}
-              <span className="td-filter-count">{counts[name]}</span>
+              <span className="ui-seg-count">{counts[name]}</span>
             </button>
           ))}
         </div>
-        <div className="search-box td-search">
-          <Search size={16} className="search-icon" />
+        <div className="ui-search-box td-search">
+          <Search size={16} className="ui-search-box-icon" />
           <input
             type="text"
-            className="search-input"
             placeholder={t('schedules.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -375,7 +379,7 @@ export default function SchedulePage() {
           {search && (
             <button
               type="button"
-              className="search-clear"
+              className="ui-search-box-clear"
               onClick={() => setSearch('')}
               aria-label={t('common.clear')}
             >

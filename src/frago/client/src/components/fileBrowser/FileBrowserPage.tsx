@@ -31,18 +31,38 @@ import {
   Pin,
   PinOff,
   RefreshCw,
+  Search,
+  X,
 } from 'lucide-react';
 import * as api from '@/api';
 // 主目录与工作目录那一条不走 `@/api` 的双模入口：它只有 HTTP 这一边有（pywebview 那边
 // 没有对应的方法），会话页取默认目录时也是直接从这里进。
 import { getSystemDirectories } from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
 import type { FileEntry, FileListing, SystemDirectories } from '@/types/api';
 import { humanSize } from '@/components/sessionWorkbench/FileViewer';
 import { filePinLabel, normalizePinPath, parentDirOf, useFilePins } from '@/stores/filePins';
 import FilePreview from './FilePreview';
 
 const ICON = { size: 14, strokeWidth: 1.5 } as const;
+
+/**
+ * 目录里那几十条怎么排。
+ *
+ * 服务端给的顺序是文件系统自己的顺序，`~` 底下六十多个隐藏目录（`.EventSDK`、`.Trash`、
+ * `.agents`……）和真正在用的目录混在一起平铺，想找的那一个被埋在中间。
+ *
+ * 规矩是「目录在前、文件在后；每一类里隐藏的在后」。只挪顺序，不动任何一条的显示——
+ * 隐藏目录仍在树里、仍能点开，只是让位给日常会用的那些。
+ */
+function orderEntries(entries: FileEntry[]): FileEntry[] {
+  const rank = (entry: FileEntry) => (entry.is_dir ? 0 : 1) + (entry.name.startsWith('.') ? 2 : 0);
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index)
+    .map(({ entry }) => entry);
+}
 
 const TREE_WIDTH_KEY = 'file-browser-tree-width';
 const DEFAULT_TREE_WIDTH = 360;
@@ -147,6 +167,8 @@ export default function FileBrowserPage() {
   const [copied, setCopied] = useState(false);
   const [copiedRowPath, setCopiedRowPath] = useState<string | null>(null);
   const copyRowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 树上的名字过滤。只筛当前这一份清单，不碰服务端、不改变目录本身。 */
+  const [query, setQuery] = useState('');
 
   /** 树形展开的子目录集合与各子目录缓存的条目。 */
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
@@ -393,7 +415,13 @@ export default function FileBrowserPage() {
 
   const renderTreeEntries = (parentPath: string, entries: FileEntry[], depth: number): React.ReactNode => {
     const cleanParent = parentPath.replace(/\/+$/, '');
-    return entries.map((entry) => {
+    const q = query.trim().toLowerCase();
+    // 过滤只作用于树上当前这一份清单：命中的留下，目录一概留下（它里面可能还有命中的
+    // 东西，砍掉就等于把人拦在门外），隐藏目录在过滤时不再退后——人打了字，就是在找它。
+    const ordered = q
+      ? entries.filter((entry) => entry.is_dir || entry.name.toLowerCase().includes(q))
+      : orderEntries(entries);
+    return ordered.map((entry) => {
       const path = `${cleanParent}/${entry.name}`;
       const isExpanded = entry.is_dir && expandedDirs.has(path);
       const isDirLoading = entry.is_dir && loadingDirs.has(path);
@@ -402,6 +430,9 @@ export default function FileBrowserPage() {
       const isRowCopied = copiedRowPath === path;
       const children = entry.is_dir ? dirChildren[path] : undefined;
       const modifiedText = shortTime(entry.modified);
+      // 点文件（`.env`、`.gitignore` 这些）与普通条目分开：它们就在这一堆里，但人平时
+      // 找的多半不是它们。压一档灰、给一个更轻的图标，扫读时自然让位。
+      const hidden = entry.name.startsWith('.');
 
       return (
         <div key={path}>
@@ -442,7 +473,7 @@ export default function FileBrowserPage() {
                   )
                 ) : null}
               </span>
-              <span className="shrink-0 text-text-muted">
+              <span className={`shrink-0 ${hidden ? 'text-text-dim' : 'text-text-muted'}`}>
                 {entry.is_dir ? (
                   isExpanded ? (
                     <FolderOpen {...ICON} />
@@ -453,10 +484,10 @@ export default function FileBrowserPage() {
                   <FileIcon {...ICON} />
                 )}
               </span>
-              <span className="whitespace-nowrap">{entry.name}</span>
+              <span className={`whitespace-nowrap ${hidden ? 'text-text-dim' : ''}`}>{entry.name}</span>
               <span className="min-w-[8px] flex-1" />
               {!entry.is_dir && entry.size !== null ? (
-                <span className="shrink-0 font-mono text-[10.5px] text-text-dim">
+                <span className="shrink-0 font-mono text-[11px] text-text-dim">
                   {humanSize(entry.size)}
                 </span>
               ) : null}
@@ -533,22 +564,46 @@ export default function FileBrowserPage() {
           style={{ width: `${treeWidth}px` }}
           className="relative flex shrink-0 flex-col border-r border-border-color bg-bg-secondary"
         >
-          <div className="flex flex-wrap gap-1 border-b border-border-color px-2 py-2">
-            {places.map((place) => (
-              <button
-                key={place.key}
-                type="button"
-                onClick={() => go(place.path)}
-                title={place.path}
-                className={`rounded-[6px] px-2 py-[3px] text-[11.5px] transition-colors duration-200 ${
-                  current === place.path
-                    ? 'bg-bg-active font-medium text-text-primary'
-                    : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
-                }`}
-              >
-                {place.label}
-              </button>
-            ))}
+          {/* 三个入口走全站统一的分段胶囊（C6），不再是「纯文字加下划线/底托」的第三种
+              页签语言。计数没有，所以只出胶囊本身。 */}
+          <div className="border-b border-border-color px-2 py-2">
+            <div className="ui-seg-group" role="group" aria-label={t('files.places.label')}>
+              {places.map((place) => (
+                <button
+                  key={place.key}
+                  type="button"
+                  onClick={() => go(place.path)}
+                  title={place.path}
+                  aria-pressed={current === place.path}
+                  className={`ui-seg-pill ${current === place.path ? 'ui-seg-pill--active' : ''}`}
+                >
+                  {place.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-b border-border-color px-2 py-1.5">
+            <div className="ui-search-box !h-7 !w-full">
+              <Search size={13} className="ui-search-box-icon" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('files.searchPlaceholder', { defaultValue: 'Search files...' })}
+                aria-label={t('files.searchPlaceholder', { defaultValue: 'Search files...' })}
+              />
+              {query && (
+                <button
+                  type="button"
+                  className="ui-search-box-clear"
+                  onClick={() => setQuery('')}
+                  aria-label={t('common.clear')}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-1 border-b border-border-color px-2 py-1.5">
@@ -573,7 +628,7 @@ export default function FileBrowserPage() {
                   <button
                     type="button"
                     onClick={() => go(node.path)}
-                    className={`rounded-[5px] px-1.5 py-[1px] font-mono text-[11.5px] ${
+                    className={`rounded-[5px] px-1.5 py-[1px] font-mono text-[12px] ${
                       i === trail.length - 1
                         ? 'font-medium text-text-primary'
                         : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
@@ -680,10 +735,9 @@ export default function FileBrowserPage() {
               </div>
             </>
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-[12px] text-text-muted">
-              <Folder size={28} strokeWidth={1.4} className="text-text-dim" />
-              {t('files.noSelection')}
-            </div>
+            /* 空态走全站统一那一个（C4）：40px 微边框图标容器 + 一行说明。
+               此前这里是 28px 图标加一行灰字，与工作区、会话页的另外几套尺度对不上。 */
+            <EmptyState Icon={Folder} title={t('files.noSelection')} />
           )}
         </div>
       </div>

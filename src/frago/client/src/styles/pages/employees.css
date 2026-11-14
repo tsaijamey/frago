@@ -1,0 +1,363 @@
+/* === Employee 双色系映射色板（深浅色各自独立配值、建立 1:1 映射关系） ===
+   模仿 Chrome / Edge 外观主题选色技巧：
+   - 深色主题下使用「沉稳深色实底 + 柔亮高对比字色」；
+   - 浅色主题下映射为「柔和粉彩浅底 + 浓重深色字色」；
+   两套色值独立调校但共享同一个语义色名（ocean / violet / amber / coral / cyan / rose / plum / slate）。 */
+[data-emp-color='ocean'] {
+  --emp-bg: #1f3a68;
+  --emp-fg: #e2eeff;
+  --emp-border: rgba(96, 152, 245, 0.28);
+}
+[data-emp-color='violet'] {
+  --emp-bg: #362863;
+  --emp-fg: #ece4ff;
+  --emp-border: rgba(158, 126, 248, 0.28);
+}
+[data-emp-color='amber'] {
+  --emp-bg: #523612;
+  --emp-fg: #ffebd0;
+  --emp-border: rgba(235, 168, 68, 0.3);
+}
+[data-emp-color='coral'] {
+  --emp-bg: #58281e;
+  --emp-fg: #ffe3dc;
+  --emp-border: rgba(240, 118, 92, 0.28);
+}
+[data-emp-color='cyan'] {
+  --emp-bg: #17424d;
+  --emp-fg: #daf5fb;
+  --emp-border: rgba(72, 184, 210, 0.28);
+}
+[data-emp-color='rose'] {
+  --emp-bg: #54213a;
+  --emp-fg: #ffe0ee;
+  --emp-border: rgba(236, 108, 168, 0.28);
+}
+[data-emp-color='plum'] {
+  --emp-bg: #4a234f;
+  --emp-fg: #f8e0fc;
+  --emp-border: rgba(208, 118, 222, 0.28);
+}
+[data-emp-color='slate'] {
+  --emp-bg: #2b3644;
+  --emp-fg: #e3eaf2;
+  --emp-border: rgba(138, 162, 192, 0.26);
+}
+
+[data-theme='light'] [data-emp-color='ocean'] {
+  --emp-bg: #d8e8ff;
+  --emp-fg: #15356e;
+  --emp-border: rgba(37, 99, 235, 0.22);
+}
+[data-theme='light'] [data-emp-color='violet'] {
+  --emp-bg: #e7deff;
+  --emp-fg: #392075;
+  --emp-border: rgba(109, 64, 212, 0.22);
+}
+[data-theme='light'] [data-emp-color='amber'] {
+  --emp-bg: #fde6be;
+  --emp-fg: #663806;
+  --emp-border: rgba(180, 105, 14, 0.24);
+}
+[data-theme='light'] [data-emp-color='coral'] {
+  --emp-bg: #ffded4;
+  --emp-fg: #752312;
+  --emp-border: rgba(204, 68, 40, 0.22);
+}
+[data-theme='light'] [data-emp-color='cyan'] {
+  --emp-bg: #d2f1f8;
+  --emp-fg: #0f4654;
+  --emp-border: rgba(14, 132, 163, 0.22);
+}
+[data-theme='light'] [data-emp-color='rose'] {
+  --emp-bg: #ffdbe9;
+  --emp-fg: #731842;
+  --emp-border: rgba(194, 48, 114, 0.22);
+}
+[data-theme='light'] [data-emp-color='plum'] {
+  --emp-bg: #f6dcf9;
+  --emp-fg: #5e1d66;
+  --emp-border: rgba(162, 56, 176, 0.22);
+}
+[data-theme='light'] [data-emp-color='slate'] {
+  --emp-bg: #dfe6ef;
+  --emp-fg: #243242;
+  --emp-border: rgba(71, 95, 122, 0.22);
+}
+
+/* SessionRail 员工会话顶栏色带。高 28px（5+4 内距 + 1px 底线 + 18.2 行高），位置与高度未动。
+   整条铺满 --emp-bg 实心色，文字取 --emp-fg、底线取 --emp-border——满幅色带就是员工归属本身，
+   名字前那枚圆点只是同一语义的重复标记。
+   2026-11-13 曾改成中性 wash 降噪，同日按人类指令还原：色带改回实心色（详见下方 emp-dot）。 */
+.si-emp-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 4px;
+  background: var(--emp-bg);
+  color: var(--emp-fg);
+  border-bottom: 1px solid var(--emp-border);
+  font-size: var(--font-size-emp-bar);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.si-emp-bar .emp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  /* 圆点取 currentColor（即 --emp-fg）再压到 0.72——它落在同色的实心底上，
+     要比文字轻一档才不抢眼，直接铺满色反而显脏。 */
+  background: currentColor;
+  opacity: 0.72;
+  flex-shrink: 0;
+}
+.si-emp-bar .emp-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === 员工卡片（员工页网格里那一种） ===
+   与设置页 `.s-card` 同一套 C3 双层微边框：外一圈托盘线、内一圈卡边、顶一道 1px 内高光。
+   卡片是这一页唯一的实体，它得看起来像一张能按下去的卡，而不是一行描了边的文字。
+
+   **岗位身份色怎么进来**：卡片左上那枚缩写徽章走 `--emp-bg` / `--emp-fg` /
+   `--emp-border`（由卡片上的 `data-emp-color` 提供）。身份色只落在这枚徽章上，
+   卡片本体保持中性——八种岗位色铺满整卡会变成八种卡片，一眼扫不出哪些是同一类东西。
+   绝不用左单边竖线：那是全站铁律明令禁止的写法。 */
+.emp-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  padding: 12px 14px;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--bezel-outer),
+    var(--shadow-card);
+  transition: box-shadow var(--transition-fast), background var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.emp-card:hover {
+  background: var(--bg-elevated);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    0 0 0 1px var(--border-accent),
+    var(--shadow-card-hover);
+}
+
+/* 键盘焦点走全站同一套双环（外扩 3px + 内收 1px）。 */
+.emp-card:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--bezel-inner),
+    var(--focus-ring),
+    var(--focus-ring-inset),
+    var(--shadow-card-hover);
+}
+
+/* 身份徽章：圆角方片，底与字都取岗位色，描边是同一色的柔化版。 */
+.emp-card-badge {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--emp-border, var(--border-color));
+  background: var(--emp-bg, var(--bg-hover));
+  color: var(--emp-fg, var(--text-primary));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* 摘要的排印。**两行截断不写在这里**，走组件上的 Tailwind `line-clamp-2`——全站
+   已有的多行截断都走那个工具类，这里再写一遍就是同一件事两处定义。 */
+.emp-card-summary {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* 摘要里被反引号圈起来的词（`frago`、`frago-core`）渲染成微样式代码词。
+   从前它们连着反引号字符原样铺在卡上，两行省略一截断，屏幕上就散着几个反引号，
+   读起来像排版漏了没清。
+
+   必须是 `display: inline`：行内元素才不打断两行截断的省略号计算。 */
+.emp-card-summary code {
+  display: inline;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 编辑动作：轻量动作胶囊。静置时只有一枚弱色铅笔，没有底也没有边——每张卡右侧
+   都挂着一圈常亮的边框，就是这一页最吵的那点东西。鼠标停在卡上或键盘把焦点移进来
+   时，它才长成一枚有底有边的胶囊。
+
+   不做成悬浮才出现（`opacity: 0`）：那会让卡片右边缘一小块变成看不见却能点的区域，
+   人想点整卡起会话，落到那里却开了详情窗。 */
+.emp-card-edit {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    box-shadow var(--transition-fast), width var(--transition-fast);
+}
+
+.emp-card:hover .emp-card-edit,
+.emp-card-edit:focus-visible {
+  width: 30px;
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--bezel-inner);
+}
+
+.emp-card-edit:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.emp-card-edit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+/* Chrome / Edge 风格双色对角拼合选色圆片与深浅映射预览 */
+.emp-swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.emp-swatch {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 2px solid var(--border-strong);
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  background: transparent;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+.emp-swatch:hover {
+  transform: translateY(-1px);
+  border-color: var(--text-secondary);
+}
+.emp-swatch.on {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--text-primary);
+}
+.emp-swatch-split {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+}
+.emp-swatch-check {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  color: #ffffff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.65));
+  transition: opacity 0.12s ease;
+}
+.emp-swatch.on .emp-swatch-check {
+  opacity: 1;
+}
+.emp-map-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.emp-map-card {
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.emp-map-card.dark-preview {
+  background: #1a1a1a;
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.emp-map-card.light-preview {
+  background: #f7f7f7;
+  color: rgba(0, 0, 0, 0.88);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+.emp-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.65;
+  font-family: var(--font-mono);
+}
+.emp-map-sample {
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+}
+.emp-map-sample .bar {
+  padding: 4px 9px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.emp-map-sample .bar::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+}
+.emp-map-sample .sbody {
+  padding: 5px 9px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

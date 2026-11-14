@@ -30,6 +30,8 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
+  Search,
+  X,
 } from 'lucide-react';
 import * as api from '@/api';
 import { useAppStore } from '@/stores/appStore';
@@ -46,6 +48,10 @@ const POLL_IDLE_MS = 60_000;
  * Orange reads as a warning and green as "act" or "running"; either would make
  * a routine edit look like something to deal with. The real risk — a mass
  * deletion — has its own red notice further up.
+ *
+ * It is drawn as a small pill rather than a bare word: on a line that already
+ * carries a file name, a prefix and a path, a pill is what makes "what kind of
+ * change is this" readable at a glance.
  */
 const STATUS_STYLES: Record<string, string> = {
   modified: 'text-[var(--text-secondary)]',
@@ -204,6 +210,22 @@ export default function DataRepoPage() {
     () => (status ? buildGroups(status.rollup, status.files) : []),
     [status]
   );
+
+  // A few hundred pending files is the normal state of this repository, so the
+  // file list needs a way to be searched, not just folded. Filtering happens
+  // here, on the sample already in hand — no extra round trip, and it narrows
+  // the rows inside their groups rather than reshuffling the groups themselves.
+  const [fileQuery, setFileQuery] = useState('');
+  const visibleGroups = useMemo(() => {
+    const q = fileQuery.trim().toLowerCase();
+    if (!q) return groups;
+    return groups
+      .map((group) => ({
+        ...group,
+        rows: group.rows.filter((row) => row.path.toLowerCase().includes(q)),
+      }))
+      .filter((group) => group.rows.length > 0);
+  }, [groups, fileQuery]);
   const maxArea = useMemo(
     () => (status ? Math.max(0, ...status.rollup.map((a) => a.count)) : 0),
     [status]
@@ -375,9 +397,12 @@ export default function DataRepoPage() {
               </div>
             )}
 
-            {/* Headline numbers: one strip, hairlines between cells, no card per number. */}
-            <div className="grid grid-cols-2 rounded-[10px] border border-[var(--border-color)] md:grid-cols-[1.2fr_0.8fr_0.8fr_1.6fr] [&>*]:min-w-0 [&>*]:border-[var(--border-color)] [&>*]:px-3.5 [&>*]:py-2.5 [&>*:nth-child(2n)]:border-l max-md:[&>*:nth-child(n+3)]:border-t md:[&>*:nth-child(n+2)]:border-l">
-              <div>
+            {/* Headline numbers: four separate cards rather than one flat strip.
+                Laid out edge to edge they read as one grey block in light mode;
+                as four double-bezel cards each figure has its own surface and
+                the row can be scanned left to right. */}
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-[1.2fr_0.8fr_0.8fr_1.6fr]">
+              <div className="ui-bezel-card !p-3.5">
                 <p className="text-[11px] text-[var(--text-muted)]">{t('dataRepo.pending')}</p>
                 <p className="text-[20px] font-semibold leading-[1.3] tabular-nums text-[var(--text-primary)]">
                   {status.pending_total.toLocaleString()}
@@ -386,7 +411,7 @@ export default function DataRepoPage() {
                   <p className="truncate text-[11px] text-[var(--text-muted)]">{describeCounts(counts)}</p>
                 )}
               </div>
-              <div>
+              <div className="ui-bezel-card !p-3.5">
                 <p className="text-[11px] text-[var(--text-muted)]">{t('dataRepo.unpushed')}</p>
                 <p className="text-[20px] font-semibold leading-[1.3] tabular-nums text-[var(--text-primary)]">
                   {status.ahead.toLocaleString()}
@@ -395,17 +420,17 @@ export default function DataRepoPage() {
                   {t('dataRepo.behind', { count: status.behind })}
                 </p>
               </div>
-              <div>
+              <div className="ui-bezel-card !p-3.5">
                 <p className="text-[11px] text-[var(--text-muted)]">{t('dataRepo.branch')}</p>
                 <p
-                  className="flex items-center gap-1.5 text-sm font-medium leading-[30px] text-[var(--text-primary)]"
+                  className="flex items-center gap-1.5 truncate text-sm font-medium leading-[30px] text-[var(--text-primary)]"
                   title={status.branch ?? undefined}
                 >
                   <GitBranch size={13} className="shrink-0 text-[var(--text-muted)]" />
                   <span className="truncate">{status.branch}</span>
                 </p>
               </div>
-              <div>
+              <div className="ui-bezel-card !p-3.5">
                 <p className="truncate text-[11px] text-[var(--text-muted)]">
                   {status.last_commit && lastCommitAt
                     ? t('dataRepo.lastCommitAt', { when: lastCommitAt })
@@ -473,8 +498,13 @@ export default function DataRepoPage() {
                                 {area.area}
                               </code>
                               <div className="h-1 overflow-hidden rounded-[3px] bg-[var(--usage-track)]">
+                                {/* The bars used to be flat grey, which made the
+                                    single most important signal on this page —
+                                    how much is waiting — the least visible thing
+                                    on it. Brand green is the one accent colour
+                                    the system has, and this is what it is for. */}
                                 <div
-                                  className="h-full rounded-[3px] bg-[var(--text-muted)]"
+                                  className="h-full rounded-[3px] bg-[var(--accent-primary)]"
                                   style={{
                                     width: `${maxArea ? Math.max(2, (area.count / maxArea) * 100) : 0}%`,
                                   }}
@@ -492,18 +522,49 @@ export default function DataRepoPage() {
                 )}
 
                 {/* Files, grouped by the same areas as the bars. Group heads carry
-                    the full count; rows are a sample of at most GROUP_ROWS. */}
+                    the full count; rows are a sample of at most GROUP_ROWS.
+                    With hundreds of pending files the list needs a way in, so the
+                    heading row also carries a filter box — it narrows the rows
+                    inside each group and drops groups that end up empty. */}
                 {groups.length > 0 && (
                   <section>
-                    <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold text-[var(--text-primary)]">
-                      {t('dataRepo.fileList')}
-                      <span className="text-xs font-normal text-[var(--text-muted)]">
-                        {t('dataRepo.filesGrouped', { total: status.pending_total.toLocaleString() })}
-                      </span>
-                    </h3>
+                    <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-2">
+                      <h3 className="flex items-baseline gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                        {t('dataRepo.fileList')}
+                        <span className="text-xs font-normal text-[var(--text-muted)]">
+                          {t('dataRepo.filesGrouped', { total: status.pending_total.toLocaleString() })}
+                        </span>
+                      </h3>
+                      <div className="ui-search-box ml-auto !h-7">
+                        <Search size={13} className="ui-search-box-icon" />
+                        <input
+                          type="text"
+                          value={fileQuery}
+                          onChange={(e) => setFileQuery(e.target.value)}
+                          placeholder={t('dataRepo.searchFiles', {
+                            defaultValue: 'Search files...',
+                          })}
+                          aria-label={t('dataRepo.searchFiles', {
+                            defaultValue: 'Search files...',
+                          })}
+                        />
+                        {fileQuery && (
+                          <button
+                            type="button"
+                            className="ui-search-box-clear"
+                            onClick={() => setFileQuery('')}
+                            aria-label={t('common.clear')}
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      {groups.map((group, i) => {
-                        const open = openAreas[group.area] ?? i < GROUPS_OPEN_BY_DEFAULT;
+                      {visibleGroups.map((group, i) => {
+                        // While a filter is on, groups are open: the point of
+                        // typing a name is to see the match, not to fold again.
+                        const open = fileQuery ? true : openAreas[group.area] ?? i < GROUPS_OPEN_BY_DEFAULT;
                         const shown = open ? group.rows.slice(0, GROUP_ROWS) : [];
                         const more = group.total - shown.length;
                         const prefix = group.area.endsWith('/') ? group.area.length : 0;
@@ -544,8 +605,13 @@ export default function DataRepoPage() {
                                 data-file-row
                                 className="flex min-w-0 items-center gap-2.5 border-t border-[var(--border-color)] px-3 py-1"
                               >
+                                {/* The kind of change as a small pill, so it lines
+                                    up column-wise and reads as a label rather than
+                                    a word glued to the front of the path. */}
                                 <span
-                                  className={`w-[58px] shrink-0 text-[11px] ${STATUS_STYLES[file.status] ?? STATUS_MUTED}`}
+                                  className={`inline-flex h-[18px] w-[58px] shrink-0 items-center justify-center rounded-full bg-[var(--bg-subtle)] text-[11px] ${
+                                    STATUS_STYLES[file.status] ?? STATUS_MUTED
+                                  }`}
                                 >
                                   {t(`dataRepo.status.${file.status}`)}
                                 </span>
@@ -565,6 +631,11 @@ export default function DataRepoPage() {
                           </div>
                         );
                       })}
+                      {visibleGroups.length === 0 && (
+                        <p className="rounded-[10px] border border-[var(--border-color)] px-3 py-6 text-center text-xs text-[var(--text-muted)]">
+                          {t('dataRepo.searchEmpty', { defaultValue: 'No file matches.' })}
+                        </p>
+                      )}
                     </div>
                   </section>
                 )}

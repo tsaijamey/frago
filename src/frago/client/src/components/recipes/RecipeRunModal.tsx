@@ -5,9 +5,12 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Play, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getRecipeDetail, runRecipe, runRecipeAsync } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import RecipeParamField from './RecipeParamField';
 import type { RecipeDetail } from '@/types/pywebview';
 
 interface RecipeRunModalProps {
@@ -16,6 +19,7 @@ interface RecipeRunModalProps {
 }
 
 export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalProps) {
+  const { t } = useTranslation();
   const { showToast } = useAppStore();
   const [recipe, setRecipe] = useState<RecipeDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -134,9 +138,9 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
 
   if (isLoading) {
     return (
-      <div className="sa-modal-overlay" onClick={onClose}>
-        <div className="recipe-run-modal" onClick={(e) => e.stopPropagation()}>
-          <div className="recipe-run-modal-loading">
+      <div className="ui-modal-backdrop">
+        <div className="ui-modal-frame">
+          <div className="flex items-center justify-center py-10">
             <LoadingSpinner size="lg" />
           </div>
         </div>
@@ -149,84 +153,66 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
   }
 
   return (
-    <div className="sa-modal-overlay" onClick={onClose}>
-      <div className="recipe-run-modal" onClick={(e) => e.stopPropagation()}>
+    // 点遮罩不关窗：这扇窗里有人正在填参数，手一滑点到旁边就把刚填的东西丢掉，
+    // 而且丢得没有任何提示。关窗走右上角的 × 或 Esc。与通用 Modal 组件同一口径。
+    <div className="ui-modal-backdrop">
+      <div className="ui-modal-frame" role="dialog" aria-modal="true" aria-labelledby="recipe-run-title">
         {/* Header */}
-        <div className="recipe-run-modal-header">
-          <div>
-            <h3 className="recipe-run-modal-title">{recipe.name.replace(/_/g, ' ')}</h3>
-            <p className="recipe-run-modal-slug">{recipe.name}</p>
+        <div className="ui-modal-head">
+          <div className="min-w-0">
+            <h3 id="recipe-run-title" className="ui-modal-title">{recipe.name.replace(/_/g, ' ')}</h3>
+            <p className="text-xs font-mono text-[var(--text-muted)] truncate">{recipe.name}</p>
           </div>
-          <button className="sa-modal-close" onClick={onClose}>×</button>
+          <button
+            type="button"
+            className="ui-icon-btn ui-modal-close"
+            onClick={onClose}
+            aria-label="Close modal"
+          >
+            <X size={20} />
+          </button>
         </div>
 
-        {/* Description */}
-        {recipe.description && (
-          <div className="recipe-run-modal-desc">
-            <span className="recipe-run-modal-label">描述</span>
-            <p>{recipe.description}</p>
-          </div>
-        )}
+        <div className="ui-modal-body space-y-4">
+          {/* Description */}
+          {recipe.description && (
+            <div>
+              <span className="text-xs font-medium text-[var(--text-secondary)]">{t('recipes.description')}</span>
+              <p className="text-sm text-[var(--text-secondary)] mt-1">{recipe.description}</p>
+            </div>
+          )}
 
-        {/* Parameters Form */}
-        <div className="recipe-run-modal-body">
-          <span className="recipe-run-modal-label">运行参数</span>
-          <div className="recipe-run-modal-fields">
-            {Object.entries(recipe.inputs).map(([name, input]) => {
-              const error = validationErrors[name];
-              return (
-                <div key={name} className="recipe-run-modal-field">
-                  <label className="recipe-run-modal-field-label">
-                    {name}
-                    {input.required && <span className="recipe-run-modal-required">*</span>}
-                  </label>
-                  {input.type === 'boolean' ? (
-                    <label className="recipe-run-modal-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(formValues[name])}
-                        onChange={(e) => setFormValues((p) => ({ ...p, [name]: e.target.checked }))}
-                      />
-                      <span>{formValues[name] ? '是' : '否'}</span>
-                    </label>
-                  ) : input.type === 'array' || input.type === 'object' ? (
-                    <textarea
-                      value={String(formValues[name] ?? '')}
-                      onChange={(e) => setFormValues((p) => ({ ...p, [name]: e.target.value }))}
-                      placeholder={input.type === 'array' ? '输入 JSON 数组' : '输入 JSON 对象'}
-                      rows={3}
-                      className={`recipe-run-modal-input recipe-run-modal-textarea ${error ? 'recipe-run-modal-input--error' : ''}`}
-                    />
-                  ) : (
-                    <input
-                      type={input.type === 'number' ? 'number' : 'text'}
-                      value={formValues[name] !== undefined ? String(formValues[name]) : ''}
-                      onChange={(e) => setFormValues((p) => ({ ...p, [name]: e.target.value }))}
-                      placeholder={input.default !== undefined ? String(input.default) : '输入值'}
-                      className={`recipe-run-modal-input ${error ? 'recipe-run-modal-input--error' : ''}`}
-                    />
-                  )}
-                  {input.description && (
-                    <p className="recipe-run-modal-field-desc">{input.description}</p>
-                  )}
-                  {error && <p className="recipe-run-modal-error">{error}</p>}
-                </div>
-              );
-            })}
+          {/* Parameters Form */}
+          <div className="space-y-4">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">{t('recipes.parameters')}</span>
+            <div className="space-y-4">
+              {Object.entries(recipe.inputs).map(([name, input]) => (
+                <RecipeParamField
+                  key={name}
+                  name={name}
+                  input={input}
+                  value={formValues[name]}
+                  error={validationErrors[name]}
+                  onChange={(field, value) => setFormValues((p) => ({ ...p, [field]: value }))}
+                  t={t}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="recipe-run-modal-footer">
-          <button className="recipe-run-modal-cancel" onClick={onClose}>
-            取消
+        <div className="ui-modal-foot">
+          <button className="btn btn-secondary" onClick={onClose}>
+            {t('common.cancel')}
           </button>
           <button
-            className="recipe-run-modal-submit"
+            className="btn btn-primary gap-2"
             onClick={handleRun}
             disabled={isRunning}
           >
-            {isRunning ? <LoadingSpinner size="sm" /> : '▶ 运行'}
+            {isRunning ? <LoadingSpinner size="sm" /> : <Play size={14} />}
+            {t('recipes.run')}
           </button>
         </div>
       </div>

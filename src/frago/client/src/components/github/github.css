@@ -1,0 +1,59 @@
+/**
+ * GitHub 提示条（`GitHubGuardBanner`）的样式。
+ *
+ * 它是全站唯一一条会横在页面最顶上的告警：本机没装 gh、或者装了没登录时出现，装好登好
+ * 自己消失。这条横幅的色以前直接写 Tailwind 的 `amber-*` 调色板，那是写死的十六进制，
+ * 深浅两套主题下都是同一个色——浅色主题上对比度掉到 4.5:1 以下。这里改走全站告警令牌
+ * （`--accent-warning` / `--accent-warning-10`），它们本来就是逐主题调过的一对。
+ */
+
+.github-banner {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-warning) 40%, transparent);
+  background: var(--accent-warning-10);
+}
+
+.github-banner-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-warning);
+}
+
+/* 主动作：装 gh / 去登录。整条横幅只有这一枚实心件——另外两个（了解详情、重取）都是
+   文字或图标，不该和它争。 */
+.github-banner-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent-warning);
+  color: var(--text-on-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.github-banner-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-warning) 86%, white);
+}
+
+.github-banner-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.github-banner-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}

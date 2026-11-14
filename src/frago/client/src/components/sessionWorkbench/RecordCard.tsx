@@ -413,7 +413,7 @@ function CardHead({
     </span>
   );
   return (
-    <header className="flex items-center gap-2 text-[11px] text-text-muted">
+    <header className="wb-record-head flex min-w-0 items-center gap-2 text-[11px] text-text-muted">
       {onToggle ? (
         <button
           type="button"
@@ -431,13 +431,13 @@ function CardHead({
       ) : (
         name
       )}
-      {meta ? <span className="min-w-0 truncate">{meta}</span> : null}
+      {meta ? <span className="wb-record-head-meta">{meta}</span> : null}
       <Timestamp ts={record.ts} />
       {/* 分割线显示在时间的右侧，撑开空档并连起右侧上下文读数与结局 */}
       <span aria-hidden className="h-px flex-1 bg-border-color" />
       {context !== null ? (
         <span
-          className="shrink-0 font-mono text-[11px] text-text-dim"
+          className="shrink-0 font-mono text-[11px] tabular-nums text-text-dim"
           data-testid="card-head-context"
           title={`Context: ${context.toLocaleString()}`}
         >
@@ -667,14 +667,16 @@ function SystemShell({
 }
 
 // ── 正文块 ────────────────────────────────────────────────────────────
-/** 记录正文：基础阅读字号固定在 16px / 1.72，照原型。长会话一路读下来，长文行高明显省力。 */
+/** 记录正文：基础阅读字号固定在 16px / 1.72，照原型。长会话一路读下来，长文行高明显省力。
+    16px 是全站三档之外登记过的例外，取 `text-scaled-prose`（令牌 `--font-size-prose`），
+    不手写 `text-[16px]`——手写的那一刻它又变回没人记得的隐形档位。 */
 function Prose({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-scaled-prose italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary">
+    <p className="text-scaled-prose whitespace-pre-wrap break-words leading-[1.72] text-text-primary">
       {text}
     </p>
   );
@@ -687,12 +689,12 @@ function Prose({ text }: { text: string }) {
 function Rich({ text }: { text: string }) {
   const { t } = useTranslation();
   if (!text) {
-    return <p className="text-[16px] italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
+    return <p className="text-scaled-prose italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
   return (
     <MarkdownContent
       content={text}
-      className="min-w-0 break-words text-[16px] leading-[1.72] text-text-primary"
+      className="text-scaled-prose min-w-0 break-words leading-[1.72] text-text-primary"
     />
   );
 }
@@ -773,7 +775,7 @@ function AsyncCallbackCard({
     (callback.taskSummary.includes('\n') || callback.taskSummary.trim() !== callback.taskTitle.trim());
 
   const metaNode = (
-    <span className="inline-flex min-w-0 items-center gap-1.5">
+    <span className="wb-record-head-meta inline-flex items-center gap-1.5">
       {callback.employeeId ? (
         <span
           data-testid="async-callback-employee"
@@ -785,15 +787,18 @@ function AsyncCallbackCard({
       {callback.targetSessionId ? (
         <span
           data-testid="async-callback-session"
-          className="truncate font-mono text-text-muted"
+          className="min-w-0 truncate font-mono text-text-muted"
           title={callback.targetSessionId}
         >
           {callback.targetSessionId}
         </span>
       ) : null}
       {modeLabel ? <span className="shrink-0 text-text-muted">· {modeLabel}</span> : null}
+      {/* 内核名排在元信息最后一位，栏窄时它是**先让位**的那一个：不写 `shrink-0`，
+          自己截断加省略号。此前它不缩，一整行就被它顶到卡片右边缘之外被裁掉
+          （2026-11-14 修，与 `.wb-record-head-meta` 那对规则配套）。 */}
       {callback.agentKernel ? (
-        <span className="shrink-0 font-mono text-text-dim">· {callback.agentKernel}</span>
+        <span className="min-w-0 truncate font-mono text-text-dim">· {callback.agentKernel}</span>
       ) : null}
     </span>
   );
@@ -877,7 +882,10 @@ function AsyncCallbackCard({
           ) : null}
         </div>
       ) : null}
-      <div data-testid="async-callback-body" className="min-w-0">
+      <div
+        data-testid="async-callback-body"
+        className="max-h-[230px] min-w-0 overflow-auto"
+      >
         <Rich text={callback.resultBody} />
       </div>
       {reminders?.length ? <Reminders items={reminders} /> : null}
@@ -1223,7 +1231,7 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={t('workbench.record.toggle')}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-text-muted transition-colors hover:text-text-secondary"
+        className="flex w-full min-w-0 items-center gap-1.5 text-left text-[12px] text-text-muted transition-colors hover:text-text-secondary"
       >
         <ChevronRight
           size={12}
@@ -1391,14 +1399,14 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           <span className="shrink-0 text-text-dim">{t('workbench.record.stopHookQuiet')}</span>
         ) : null}
         {infos.length ? (
-          <span className="shrink-0 font-mono text-text-dim">
+          <span className="shrink-0 font-mono tabular-nums text-text-dim">
             {t('workbench.record.stopHooksRan', { n: infos.length })}
           </span>
         ) : null}
         <Timestamp ts={record.ts} />
         <span aria-hidden className="h-px flex-1 bg-border-color" />
         {segments.length > 1 ? (
-          <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
+          <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono tabular-nums text-text-muted">
             {t('workbench.record.segments', { n: segments.length })}
           </span>
         ) : null}
@@ -1408,7 +1416,9 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         {failed ? (
-          <span className={`shrink-0 rounded-full px-2 py-[1px] ${ERR_BG} ${ERR_TEXT}`}>
+          <span
+            className={`shrink-0 rounded-full px-2 py-[1px] tabular-nums ${ERR_BG} ${ERR_TEXT}`}
+          >
             {t('workbench.record.exitCode', { code: exit })}
           </span>
         ) : null}
@@ -2311,7 +2321,10 @@ function UsageTick({ record }: { record: WorkbenchRecord }) {
       className="flex min-w-0 items-center gap-2 px-3 py-0.5 text-[11px] text-text-dim"
     >
       <span aria-hidden className="h-px flex-1 bg-border-color" />
-      <span className="shrink-0 whitespace-nowrap">
+      {/* 这一格是整场里唯一持续跳动的数：每来一次用量心跳就换一个值，位数一变
+          （`9,900` → `10,000`）两边的分割线就跟着横移，读的人眼睛被拽一下。
+          等宽数字把这一格钉死。 */}
+      <span className="shrink-0 whitespace-nowrap tabular-nums">
         {t('workbench.record.usage.context')} {context === null ? '—' : formatTokens(context)}
       </span>
       <span aria-hidden className="h-px flex-1 bg-border-color" />
@@ -2374,7 +2387,9 @@ function ToolRunLine({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         data-testid="tool-run-line"
-        className={`flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left hover:bg-bg-hover ${
+        /* 这一行住在 `tool-run` 那个 `overflow-hidden` 的框里：全局外扩 3px 的焦点环
+           一落到行上就被框边切掉半圈。补一圈内收环（`--focus-ring-inset`），框边切不到它。 */
+        className={`flex w-full min-w-0 items-center gap-2 px-3 py-1 text-left hover:bg-bg-hover focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)] ${
           failed ? ERR_BG : ''
         }`}
       >
@@ -2477,7 +2492,8 @@ export function ToolRun({
             onClick={() => setShowExtras((v) => !v)}
             aria-expanded={showExtras}
             data-testid="tool-run-extras"
-            className="flex w-full items-center gap-1 px-3 py-1 text-left text-[11px] text-text-dim hover:text-text-secondary"
+            /* 同上：这一颗也在 `tool-run` 的裁剪框里，外环会被切。 */
+            className="flex w-full items-center gap-1 px-3 py-1 text-left text-[11px] text-text-dim hover:text-text-secondary focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)]"
           >
             <ChevronRight
               size={11}

@@ -41,7 +41,7 @@ export default function ChannelDialog({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-[var(--bg-primary)] border border-[var(--border-strong)] rounded-xl max-w-md w-full overflow-hidden shadow-xl">
         <div className="flex items-center justify-between px-4 h-11 border-b border-[var(--border-color)]">
-          <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">{title}</h3>
+          <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">{title}</h3>
           <button
             type="button"
             onClick={onCancel}

@@ -626,6 +626,17 @@ export default function SessionWorkbenchPage() {
   }, [usageReadout, t]);
 
   /**
+   * 空态里摆哪几场：手上这份会话清单的前三场，按清单原有次序（置顶在前、其余按时间）。
+   *
+   * **不另取数据**。这份清单本来就在手上（左栏画的正是它），空态只是把同一个东西换个
+   * 地方摆出来——再发一次请求换来的还是这几条。没有清单时给空数组，空态自己就只剩说明。
+   */
+  const recentSessions = useMemo(
+    () => sessions.sessions.slice(0, 3).map((s) => ({ id: s.session_id, title: s.title })),
+    [sessions.sessions]
+  );
+
+  /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
    * 专门处理这个旁支问题。**页面不跳走**——主线接着谈，输入框上方一行说分支去了哪，点「打开」
    * 才过去。切走会话或点关闭，这一行就撤。
@@ -1199,7 +1210,7 @@ export default function SessionWorkbenchPage() {
               </h1>
             )}
             {selected ? (
-              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+              <div data-testid="head-meta" className="wb-meta">
                 {headStatus ? (
                   // 状态字放得下就全写，放不下自己截断——它原先是不收缩的，长了就把右边
                   // 目录整段挤没；目录截断还看得出是哪一层，状态截断靠 title 补全。
@@ -1216,7 +1227,7 @@ export default function SessionWorkbenchPage() {
                     {/* 原型的 For you 是一枚标签，不是文字。 */}
                     {headStatus.forYou ? <ForYouChip testid="head-for-you-chip" /> : null}
                     <span className="min-w-0 truncate">{headStatus.text}</span>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                   </span>
                 ) : null}
                 {/* 哪家 CLI 在跑：这一场的固定属性，跟目录同属一段，跟在会变的状态之后。
@@ -1226,28 +1237,28 @@ export default function SessionWorkbenchPage() {
                   <>
                     <span
                       data-testid="head-agent"
-                      className="shrink-0 whitespace-nowrap"
+                      className="wb-meta-attr"
                       title={t('workbench.page.srcHint', { name: familyLabel(selected.family) })}
                     >
                       {familyLabel(selected.family)}
                     </span>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                   </>
                 ) : null}
                 <span
                   data-testid="head-directory"
-                  className="min-w-[56px] truncate font-mono"
+                  className="wb-meta-path"
                   title={t('workbench.page.dirHint', { dir: selected.directory })}
                 >
                   {shortenPathMiddle(withTilde(selected.directory))}
                 </span>
                 {usageText ? (
                   <>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                     <span
                       data-testid="head-usage"
                       title={t('workbench.composer.usageHint')}
-                      className="min-w-0 truncate font-mono text-text-dim"
+                      className="wb-meta-readout"
                     >
                       {usageText}
                     </span>
@@ -1255,12 +1266,12 @@ export default function SessionWorkbenchPage() {
                 ) : null}
               </div>
             ) : showLaunch && launch ? (
-              <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-[1.4] text-text-muted">
+              <div className="wb-meta">
                 {launch.phase === 'failed' ? (
                   <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-error">
                     <AlertTriangle size={11} className="shrink-0" />
                     <span className="truncate">{t('workbench.launch.failedTitle')}</span>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                   </span>
                 ) : launch.phase === 'claiming' ? (
                   <span className="flex min-w-0 shrink-0 items-center gap-1 text-text-secondary">
@@ -1268,7 +1279,7 @@ export default function SessionWorkbenchPage() {
                     <span className="truncate">
                       {t('workbench.launch.railClaiming', { name: launch.agentName })}
                     </span>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                   </span>
                 ) : (
                   <span className="flex min-w-0 shrink-0 items-center gap-1 text-accent-primary">
@@ -1276,15 +1287,12 @@ export default function SessionWorkbenchPage() {
                     <span className="truncate">
                       {t('workbench.launch.title', { name: launch.agentName })}
                     </span>
-                    <span aria-hidden className="shrink-0 text-text-dim">·</span>
+                    <span aria-hidden className="wb-meta-sep">·</span>
                   </span>
                 )}
-                <span className="shrink-0 whitespace-nowrap">{launch.agentName}</span>
-                <span aria-hidden className="shrink-0 text-text-dim">·</span>
-                <span
-                  className="min-w-[56px] truncate font-mono"
-                  title={t('workbench.page.dirHint', { dir: launch.cwd })}
-                >
+                <span className="wb-meta-attr">{launch.agentName}</span>
+                <span aria-hidden className="wb-meta-sep">·</span>
+                <span className="wb-meta-path" title={t('workbench.page.dirHint', { dir: launch.cwd })}>
                   {shortenPathMiddle(withTilde(launch.cwd))}
                 </span>
               </div>
@@ -1364,6 +1372,10 @@ export default function SessionWorkbenchPage() {
               }}
               marks={marks.marks}
               minimap
+              /* 还没挑会话时，中栏那块地方原先只有一个图标加一行说明。这里把手上已有的
+                 最近几场摆进去，点一条就进那一场——不新取数据、不新加接口。 */
+              recentSessions={recentSessions}
+              onOpenRecent={openSession}
               locateTarget={locateTarget}
               onLocateResult={onLocateResult}
               /* 「文件」那一档：与镜头同一排的兄弟按钮，清单由这一页备好交过来——它要调

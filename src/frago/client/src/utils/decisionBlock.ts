@@ -440,11 +440,27 @@ export interface ParsedCardAnswer {
   written: string;
 }
 
-const OPTION_LINE_RE = /^(\S{1,8}) · (.+?) —— (.+)$/;
+/**
+ * 答复行的形状：`KEY · 标题 —— 后果`。
+ *
+ * **这一侧是读取端，只管历史消息读得回来，不代表 KEY 可以随便写。** 新写入的 KEY 由命令行
+ * 侧把关：`cli/ask_commands.py` 的 `KEY_PATTERN` 收紧为 `^[A-Za-z0-9_-]{1,8}$`，字母数字加
+ * `-` / `_`、1–8 个字符，超长当场拒掉。两侧口径**有意分层**，不是遗漏：
+ *
+ * - **写入端收紧**，是因为 KEY 在卡片上只占一个 18 像素的小方块，长串会溢出去压住选项标题
+ *   （规则文案见 `book/answer-needed-by-human.md`）。
+ * - **读取端放宽**，是因为历史会话里已经有 `IMPL_DYNAMIC · ...`（12 字符）这样的旧记录。
+ *   写死上限（原为 `\S{1,8}`）会让它们拆不开，气泡退回显示整行原文，人在记录流里就认不出
+ *   自己点的是哪一项——2026-11-13 修。读取端永远比写入端宽，否则旧消息会一天比一天读不回。
+ *
+ * 分隔符取第一个 ` · `：KEY 里不会有 `·`（写入端只放行字母数字与 `-` / `_`），标题里带间隔号
+ * 也不会切错位。取不到的照旧判不认，气泡显示原文——宁可朴素，不可读错。
+ */
+const OPTION_LINE_RE = /^([^·\s][^·]*?) · (.+?) —— (.+)$/;
 
 function parseOptionLine(line: string): ParsedCardAnswer['picked'][number] | null {
   const m = OPTION_LINE_RE.exec(line);
-  return m ? { key: m[1], label: m[2], effect: m[3] } : null;
+  return m ? { key: m[1].trim(), label: m[2], effect: m[3] } : null;
 }
 
 /**

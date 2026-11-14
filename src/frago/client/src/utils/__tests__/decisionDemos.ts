@@ -118,6 +118,45 @@ options:
   - key: C
     label: 跑一遍端到端测试
     effect: 跑 tests/e2e 全套，大约 6 分钟`,
+
+  // ── 长 KEY：命令侧现在会拦，但历史卡片与手写区块里还有存量 ──────────────
+  // 2026-11-13 修 KEY 溢出时加的回归样本，取自真实会话 ca6ac282 那张卡。
+  'single-choice-long-key': `
+type: single-choice
+question: APEXP-4533 尚未实现动态字号，且需求方 11-13 09:12 新提规格
+why: 代码目前为写死的 7px 固定字号，全仓无自适应
+options:
+  - key: IMPL_DYNAMIC
+    label: 按动态字号改造
+    effect: 启动新任务：按邮箱长度动态计算字号
+    recommended: true
+  - key: REPLY_JIRA
+    label: 先在 Jira 评论回复说明
+    effect: 先基于当前 7px 单行测算结果回复需求方
+  - key: HOLD
+    label: 暂不处理
+    effect: 仅记录本次核查结果，暂不动代码也不回复`,
+  'multi-choice-long-key': `
+type: multi-choice
+question: 这几件事各自怎么处理？
+options:
+  - key: IMPL_DYNAMIC
+    label: 按动态字号改造
+    effect: 启动新任务：按邮箱长度动态计算字号
+  - key: REPLY_JIRA
+    label: 先在 Jira 评论回复说明
+    effect: 先基于当前 7px 单行测算结果回复需求方`,
+  'choice-and-text-long-key': `
+type: choice-and-text
+question: 本轮执行到哪一步？（可补充说明）
+options:
+  - key: IMPL_DYNAMIC
+    label: 按动态字号改造
+    effect: 启动新任务：按邮箱长度动态计算字号
+  - key: HOLD
+    label: 暂不处理
+    effect: 仅记录本次核查结果`,
+
   broken: `
 type: approve-irreversible
 question: 1.4.111 要发到 PyPI 吗？

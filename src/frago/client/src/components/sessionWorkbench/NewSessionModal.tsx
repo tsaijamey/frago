@@ -231,9 +231,31 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   const clients = useAgentClients(isOpen);
   const selectable = useMemo(() => clients.agents.filter((a) => a.selectable), [clients.agents]);
   const unavailable = useMemo(() => clients.agents.filter((a) => !a.selectable), [clients.agents]);
+
+  /**
+   * 这一趟该选中谁，**在渲染里当场算出来**，不等任何副作用补。
+   *
+   * 从前这件事交给一个 `useEffect`：清单到了之后再 `setAgent` 一次。于是清单先画出来、
+   * 选中态后落上，中间有一帧每个按钮都是「未选中」。人眼看不出这一帧，但断言看得见——
+   * 本机连跑 120 次有 7 次落在这一帧上，机器快慢不同就时红时绿，报出来的还是「退回默认
+   * 没生效」这种指向别处的结论。算在渲染里，清单出现的那一刻选中态就已经成立。
+   *
+   * 优先级与从前一致：人自己点过的那个最优先（只要它现在挑得了），其次对齐所选员工的
+   * 内核，最后才是服务端建议的默认值。人点过的那个现在挑不了时（卸了 / 坏了）不声张地
+   * 往下退，不弹任何报错。
+   */
+  const effectiveAgent = useMemo(() => {
+    if (agent && selectable.some((a) => a.agent_type === agent)) return agent;
+    if (selectedEmployee) {
+      const own = selectable.find((a) => a.agent_type === selectedEmployee.agent_kernel);
+      if (own) return own.agent_type;
+    }
+    return pickDefaultAgent(clients.agents, clients.fallbackDefault);
+  }, [agent, selectable, clients.agents, clients.fallbackDefault, selectedEmployee]);
+
   const chosen = useMemo(
-    () => selectable.find((a) => a.agent_type === agent) ?? null,
-    [selectable, agent]
+    () => selectable.find((a) => a.agent_type === effectiveAgent) ?? null,
+    [selectable, effectiveAgent]
   );
 
   const applyEmployee = useCallback(
@@ -399,22 +421,13 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   }, [isOpen, selectedEmployee, t]);
 
   /**
-   * 清单一到就把默认那一家选上：若当前选了员工，优先用员工配置的 `agent_kernel`；
-   * 否则上次挑的优先——换机位是有惯性的。
+   * 清单一到就把默认那一家选上这件事，已经并进上面那个 `effectiveAgent` 的渲染期计算里，
+   * 这里不再补一次 `setAgent`。
+   *
+   * 留着这个副作用不只是多余，还会把员工内核对齐那一支压掉：它会在清单刚到时就先把
+   * 服务端建议的默认值写进 `agent`，而 `effectiveAgent` 见 `agent` 有值就直接采信，
+   * 于是随后选中的员工配的是哪个内核就再也轮不上了。
    */
-  useEffect(() => {
-    if (!clients.agents.length) return;
-    setAgent((prev) => {
-      if (prev) return prev;
-      if (selectedEmployee) {
-        const own = clients.agents.find(
-          (a) => a.agent_type === selectedEmployee.agent_kernel && a.selectable
-        );
-        if (own) return own.agent_type;
-      }
-      return pickDefaultAgent(clients.agents, clients.fallbackDefault);
-    });
-  }, [clients.agents, clients.fallbackDefault, selectedEmployee]);
 
   /**
    * 翻进某一层。**停在哪一层就是选了哪一层**——翻到了想要的目录还得再点一次"就用这个"，
@@ -592,8 +605,10 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         </button>
       </header>
 
-      {/* 居中 New Chat 风格起始舞台（宽松大气的纵向节奏与清晰的两级模式引导） */}
-      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-8 pb-12 pt-[clamp(32px,6.5vh,72px)]">
+      {/* 居中 New Chat 风格起始舞台。
+          底部内距按视口高度收：这一段是滚动的，最后那块（工作目录）在常见视口高度下
+          必须能滚到、点得到——原先写死 pb-12，矮窗口里最后一行贴着底边被切。 */}
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-8 pb-[clamp(24px,5vh,48px)] pt-[clamp(24px,5vh,64px)]">
         <div className="flex w-full max-w-[720px] flex-col gap-6">
           {/* 1. 会话模式引导（「员工会话（推荐）」 vs 「普通会话」分明对比 + 专职员工选择区） */}
           {empState.employees.length > 0 ? (
@@ -602,11 +617,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <h2
                     id="new-session-employee"
-                    className="text-[16px] font-semibold leading-[1.3] tracking-[-0.015em] text-text-primary"
+                    className="text-[15px] font-semibold leading-[1.3] tracking-[-0.015em] text-text-primary"
                   >
                     {t('workbench.newSession.employeeLabel')}
                   </h2>
-                  <span className="text-[12.5px] text-text-muted">
+                  <span className="text-[12px] text-text-muted">
                     {t('workbench.newSession.employeeHint')}
                   </span>
                 </div>
@@ -635,9 +650,9 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   aria-checked={selectedEmployee !== null}
                   data-testid="new-session-mode-employee"
                   onClick={selectEmployeeMode}
-                  className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-all ${
+                  className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-[background-color,border-color,box-shadow] ${
                     selectedEmployee !== null
-                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow)]'
+                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow),inset_0_0_0_1px_var(--border-card)]'
                       : 'border-border-color bg-bg-secondary/70 hover:border-border-strong hover:bg-bg-hover'
                   }`}
                 >
@@ -652,10 +667,10 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[13.5px] font-semibold text-text-primary">
+                      <span className="text-[13px] font-semibold text-text-primary">
                         {t('workbench.newSession.employeeModeTitle')}
                       </span>
-                      <span className="rounded-[5px] bg-accent-primary-10 px-1.5 py-0.5 text-[10.5px] font-medium text-accent-primary">
+                      <span className="rounded-[5px] bg-accent-primary-10 px-1.5 py-0.5 text-[11px] font-medium text-accent-primary">
                         {t('workbench.newSession.employeeModeBadge')}
                       </span>
                     </div>
@@ -672,9 +687,9 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   data-testid="new-session-employee-plain"
                   onClick={() => applyEmployee(null, true)}
                   title={t('workbench.newSession.plainSessionDesc')}
-                  className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-all ${
+                  className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-[background-color,border-color,box-shadow] ${
                     selectedEmployee === null
-                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow)]'
+                      ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow),inset_0_0_0_1px_var(--border-card)]'
                       : 'border-border-color bg-bg-secondary/70 hover:border-border-strong hover:bg-bg-hover'
                   }`}
                 >
@@ -689,7 +704,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[13.5px] font-semibold text-text-primary">
+                      <span className="text-[13px] font-semibold text-text-primary">
                         {t('workbench.newSession.plainSession')}
                       </span>
                     </div>
@@ -717,7 +732,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   ref={empPickerRef}
                   className="relative flex flex-wrap items-center gap-2"
                 >
-                  <span className="mr-1 text-[11.5px] font-medium text-text-muted">
+                  <span className="mr-1 text-[12px] font-medium text-text-muted">
                     {selectedEmployee
                       ? t('workbench.newSession.employeeRosterLabel')
                       : t('workbench.newSession.employeeRosterPlainHint')}
@@ -737,14 +752,14 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                         data-emp-color={empColor}
                         onClick={() => applyEmployee(post, true)}
                         title={employeeSummary(post) || post.title}
-                        className={`inline-flex h-8 max-w-[210px] items-center gap-1.5 rounded-[8px] border px-3 text-[12.5px] transition-colors ${
+                        className={`inline-flex h-8 max-w-[210px] items-center gap-1.5 rounded-[8px] border px-3 text-[13px] transition-colors ${
                           selected
                             ? 'border-[var(--emp-border,var(--sel-border))] bg-[color-mix(in_srgb,var(--emp-bg,var(--sel-bg))_42%,var(--bg-secondary))] font-semibold text-text-primary [box-shadow:inset_0_2px_0_0_var(--emp-fg,var(--accent-primary))]'
                             : 'border-border-color bg-bg-primary text-text-secondary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary'
                         }`}
                       >
                         <span
-                          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] border font-mono text-[9.5px] font-semibold"
+                          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] border font-mono text-[11px] font-semibold"
                           style={{
                             background: 'var(--emp-bg, var(--bg-primary))',
                             color: 'var(--emp-fg, var(--text-primary))',
@@ -770,11 +785,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                         : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
                     }`}
                   >
-                    <Search size={12.5} className="shrink-0 text-text-muted" />
+                    <Search size={13} className="shrink-0 text-text-muted" />
                     <span>
                       {t('workbench.newSession.allEmployees', { n: empState.employees.length })}
                     </span>
-                    <ChevronDown size={12.5} className="shrink-0 text-text-muted" />
+                    <ChevronDown size={13} className="shrink-0 text-text-muted" />
                   </button>
 
                   {/* 可搜索下拉面板：最大高度 260px 滚动，100 个员工也不撑高页面 */}
@@ -792,7 +807,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                           onChange={(e) => setEmpQuery(e.target.value)}
                           placeholder={t('workbench.newSession.searchEmployeesPlaceholder')}
                           data-testid="employee-picker-search"
-                          className="min-w-0 flex-1 bg-transparent text-[12.5px] text-text-primary outline-none placeholder:text-text-muted"
+                          className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-muted"
                         />
                         {empQuery ? (
                           <button
@@ -820,7 +835,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                             <SquareTerminal size={12} />
                           </span>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[12.5px] font-medium text-text-primary">
+                            <div className="truncate text-[13px] font-medium text-text-primary">
                               {t('workbench.newSession.plainSession')}
                             </div>
                             <div className="truncate text-[11px] text-text-muted">
@@ -860,7 +875,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="truncate text-[12.5px] font-semibold text-text-primary">
+                                    <span className="truncate text-[13px] font-semibold text-text-primary">
                                       {post.title}
                                     </span>
                                     <span className="shrink-0 rounded-[4px] border border-border-color bg-bg-primary px-1.5 font-mono text-[10px] text-text-secondary">
@@ -910,11 +925,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                       ) : (
                         <ChevronRight size={13} className="shrink-0 text-text-muted" />
                       )}
-                      <Sparkles size={12.5} className="shrink-0 text-text-muted" />
-                      <span className="shrink-0 text-[11.5px] font-semibold text-text-primary">
+                      <Sparkles size={13} className="shrink-0 text-text-muted" />
+                      <span className="shrink-0 text-[12px] font-semibold text-text-primary">
                         {t('employees.launch.contextTitle')}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-muted">
+                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
                         {empDetailError
                           ? t('employees.launch.contextFailed')
                           : t('employees.launch.contextSummary', {
@@ -924,7 +939,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                               recipes: empDetail?.managed_data.recipes.length ?? 0,
                             })}
                       </span>
-                      <span className="shrink-0 text-[11.5px] text-text-secondary">
+                      <span className="shrink-0 text-[12px] text-text-secondary">
                         {ctxOpen
                           ? t('employees.launch.contextHide')
                           : t('employees.launch.contextPreview')}
@@ -938,7 +953,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                             {ctx}
                           </pre>
                         ) : (
-                          <p className="text-[11.5px] text-text-muted">
+                          <p className="text-[12px] text-text-muted">
                             {empDetailError ?? t('employees.launch.contextLoading')}
                           </p>
                         )}
@@ -957,8 +972,8 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 id="new-session-client"
                 className={`${
                   empState.employees.length > 0
-                    ? 'text-[13.5px] font-semibold text-text-secondary'
-                    : 'text-[20px] font-semibold leading-[1.25] tracking-[-0.015em] text-text-primary'
+                    ? 'text-[15px] font-semibold text-text-primary'
+                    : 'text-[15px] font-semibold leading-[1.25] tracking-[-0.015em] text-text-primary'
                 }`}
               >
                 {t('workbench.newSession.clientLabel')}
@@ -969,7 +984,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
             </div>
 
             {clients.loading && !clients.agents.length ? (
-              <p className="text-[11.5px] text-text-muted">
+              <p className="text-[12px] text-text-muted">
                 {t('workbench.newSession.probing')}
               </p>
             ) : clients.error ? (
@@ -985,7 +1000,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 aria-labelledby="new-session-client"
               >
                 {selectable.map((c) => {
-                  const selected = c.agent_type === agent;
+                  const selected = c.agent_type === effectiveAgent;
                   return (
                     <button
                       key={c.agent_type}
@@ -995,7 +1010,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                       data-testid={`agent-${c.agent_type}`}
                       onClick={() => setAgent(c.agent_type)}
                       title={c.path ?? undefined}
-                      className={`inline-flex h-8 items-center gap-1.5 rounded-[8px] border px-3 text-[12.5px] transition-colors ${
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-[8px] border px-3 text-[13px] transition-colors ${
                         selected
                           ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
                           : 'border-border-color bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
@@ -1019,7 +1034,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                     onClick={() => setShowUnavailable((v) => !v)}
                     aria-expanded={showUnavailable}
                     data-testid="toggle-unavailable-agents"
-                    className="inline-flex h-7 items-center gap-1 rounded-[6px] px-2.5 text-[11.5px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
+                    className="inline-flex h-7 items-center gap-1 rounded-[6px] px-2.5 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-secondary"
                   >
                     {showUnavailable ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     <span>
@@ -1032,14 +1047,14 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
 
             {/* 编号要等认领的那两家，把这段空窗先说在前头 */}
             {chosen?.id_origin === 'claimed' ? (
-              <p className="flex items-center gap-1.5 pt-0.5 text-[11.5px] leading-[1.45] text-text-muted">
+              <p className="flex items-center gap-1.5 pt-0.5 text-[12px] leading-[1.45] text-text-muted">
                 <Info size={13} className="shrink-0 text-text-dim" />
                 <span>{t('workbench.newSession.claimedHint', { name: chosen.display_name })}</span>
               </p>
             ) : null}
 
             {showUnavailable && unavailable.length ? (
-              <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-3 py-2.5 text-[11.5px] text-text-muted">
+              <div className="flex flex-col gap-1 rounded-[8px] border border-dashed border-border-strong bg-bg-secondary px-3 py-2.5 text-[12px] text-text-muted">
                 {unavailable.map((c) => (
                   <p key={c.agent_type} className="leading-relaxed">
                     <span className="font-medium text-text-secondary">{c.display_name}</span>
@@ -1080,11 +1095,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 <label
                   id="new-session-first"
                   htmlFor="new-session-input-box"
-                  className="text-[12.5px] font-medium text-text-secondary"
+                  className="text-[13px] font-medium text-text-secondary"
                 >
                   {t('workbench.newSession.firstMessage')}
                 </label>
-                <span className="text-[11.5px] text-text-muted">
+                <span className="text-[12px] text-text-muted">
                   {t('workbench.newSession.firstMessageOptional')}
                 </span>
               </div>
@@ -1117,7 +1132,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
               <label
                 id="new-session-cwd"
                 htmlFor="new-session-cwd-path"
-                className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-text-secondary"
+                className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-text-secondary"
                 title={t('workbench.newSession.cwdHint')}
               >
                 <Folder size={14} className="text-text-muted" />
@@ -1139,7 +1154,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 data-testid="toggle-browse-dirs"
                 onClick={toggleBrowsing}
                 aria-expanded={browsing}
-                className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[11.5px] transition-colors ${
+                className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[12px] transition-colors ${
                   browsing
                     ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
                     : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
@@ -1192,7 +1207,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                         type="button"
                         onClick={() => void openFolder(e.path)}
                         title={e.path}
-                        className="flex h-8 w-full shrink-0 items-center gap-2.5 px-3 text-left font-mono text-[12.5px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+                        className="flex h-8 w-full shrink-0 items-center gap-2.5 px-3 text-left font-mono text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
                       >
                         <Folder size={14} className="shrink-0 text-text-muted" />
                         <span className="min-w-0 flex-1 truncate">{e.name}</span>
@@ -1216,7 +1231,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                       type="button"
                       onClick={() => setDir(c.path)}
                       title={c.path}
-                      className={`inline-flex h-[25px] max-w-full items-center gap-1.5 rounded-[7px] border px-2.5 font-mono text-[11.5px] transition-colors ${
+                      className={`inline-flex h-[25px] max-w-full items-center gap-1.5 rounded-[7px] border px-2.5 font-mono text-[12px] transition-colors ${
                         active
                           ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
                           : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'

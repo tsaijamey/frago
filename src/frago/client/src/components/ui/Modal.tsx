@@ -58,7 +58,7 @@ export default function Modal({
   // Render to document.body using portal
   return createPortal(
     <div
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1100]"
+      className="ui-modal-backdrop"
       onClick={
         dismissOnBackdrop
           ? (e) => {
@@ -67,15 +67,13 @@ export default function Modal({
           : undefined
       }
     >
-      <div className="bg-[var(--bg-base)] rounded-lg shadow-xl max-w-md w-full mx-4 border border-[var(--border-color)]">
+      <div className="ui-modal-frame" role="dialog" aria-modal="true" aria-label={title}>
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
-          <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-            {title}
-          </h3>
+        <div className="ui-modal-head">
+          <h3 className="ui-modal-title">{title}</h3>
           <button
             onClick={onClose}
-            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+            className="ui-icon-btn ui-modal-close"
             aria-label="Close modal"
           >
             <X size={20} />
@@ -83,16 +81,10 @@ export default function Modal({
         </div>
 
         {/* Body */}
-        <div className="p-4">
-          {children}
-        </div>
+        <div className="ui-modal-body">{children}</div>
 
         {/* Footer (optional) */}
-        {footer && (
-          <div className="flex gap-2 p-4 border-t border-[var(--border-color)]">
-            {footer}
-          </div>
-        )}
+        {footer && <div className="ui-modal-foot">{footer}</div>}
       </div>
     </div>,
     document.body

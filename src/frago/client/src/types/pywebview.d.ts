@@ -221,6 +221,7 @@ export interface SkillItem {
 export interface UserConfig {
   theme: Theme;
   language: Language;
+  language_configured?: boolean;
   agent_language?: AgentLanguage;
   max_history_items: number;
   shortcuts: Record<string, string>;

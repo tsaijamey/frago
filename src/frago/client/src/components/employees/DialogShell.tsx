@@ -6,8 +6,14 @@
  * 点一下全都不见，而且没有任何东西提示刚才发生了什么，更没有撤回的办法。关窗只有两个
  * 明确的动作：右上角的叉，或 Esc。
  *
- * 不复用 `Modal` 是因为宽度：那个壳固定 `max-w-md`，而这里要装业务语境原文与纳管目录
- * 清单，448px 装不下。高度也不一样——内容长了要能滚，但页头与页脚要钉住不动。
+ * **外观收敛到全站唯一那套模态壳**（`base.css` 的 `.ui-modal-*`，即 C7）：遮罩、外框、
+ * 头、体、底五处的内距与高度与 `components/ui/Modal` 逐项对齐。此前这里是自己写的一套
+ * ——遮罩是纯黑 50% 不带令牌、外框是单层 1px 描边加一层大阴影、头高和关闭键位置也都
+ * 自定。同一个站里两扇窗长得不一样，人换一页就得重新认一遍。
+ *
+ * 仍然不复用 `Modal` 组件本身，因为**宽度**：那个壳固定 `max-w-md`（448px），而这里要
+ * 装业务语境原文与纳管目录清单，装不下。高度也不一样——内容长了要能滚，页头与页脚钉住
+ * 不动。这两件事由 `.ui-modal-frame` 的可覆写宽度 + 本组件自己排的体实现。
  */
 
 import { useEffect, type ReactNode } from 'react';
@@ -43,37 +49,31 @@ export default function DialogShell({
   }, [closable, onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[1100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm">
+    <div className="ui-modal-backdrop">
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="my-8 flex max-h-[calc(100vh-4rem)] w-full flex-col rounded-lg border border-border-color bg-bg-base shadow-xl"
+        className="ui-modal-frame"
         style={{ maxWidth: `min(${width}px, 100%)` }}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-color px-4 py-3">
-          <h3 className="min-w-0 truncate text-[14px] font-semibold text-text-primary">{title}</h3>
+        <div className="ui-modal-head">
+          <h3 className="ui-modal-title">{title}</h3>
           {closable ? (
             <button
               type="button"
               onClick={onClose}
-              className="shrink-0 text-text-muted transition-colors hover:text-text-primary"
+              className="ui-icon-btn ui-modal-close"
               aria-label="Close"
             >
-              <X size={18} strokeWidth={1.5} />
+              <X size={16} strokeWidth={1.5} />
             </button>
           ) : null}
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3.5">
-          {children}
-        </div>
+        <div className="ui-modal-body flex flex-col gap-3">{children}</div>
 
-        {footer ? (
-          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border-color px-4 py-3">
-            {footer}
-          </div>
-        ) : null}
+        {footer ? <div className="ui-modal-foot">{footer}</div> : null}
       </div>
     </div>,
     document.body

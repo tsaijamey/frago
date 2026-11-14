@@ -328,8 +328,12 @@ export default function PromptComposerBox({
 
   return (
     <div
-      className={`relative rounded-[12px] border transition-colors ${
-        focused || submitting ? 'border-text-muted' : 'border-border-strong'
+      className={`relative rounded-[12px] border transition-[border-color,box-shadow] ${
+        submitting
+          ? 'border-border-strong'
+          : focused
+            ? 'border-[var(--border-accent)] [box-shadow:var(--focus-ring)]'
+            : 'border-border-strong'
       } ${className}`}
     >
       {menuOpen && directive ? (
@@ -356,7 +360,8 @@ export default function PromptComposerBox({
         />
       ) : null}
 
-      <div className="relative min-w-0 rounded-[12px] bg-bg-card px-3 py-2.5">
+      {/* 内描边与决策卡同一套：浅色下把白底卡片从白底页面上勾出来，box-shadow 不参与布局。 */}
+      <div className="relative min-w-0 rounded-[12px] bg-bg-card px-3 py-2.5 [box-shadow:inset_0_0_0_1px_var(--border-card)]">
         <input
           ref={filePicker}
           type="file"

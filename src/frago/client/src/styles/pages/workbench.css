@@ -1,0 +1,1605 @@
+/* === Claude Sessions Page === */
+/* 重新取一次数据是次要动作：它不改变任何东西，失败了再点一次就行。
+   把它做成品牌色，页面上最显眼的位置就被一个「原地不动」的按钮占着。 */
+.cs-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.cs-refresh:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.cs-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cs-spin {
+  animation: spin 0.8s linear infinite;
+}
+
+.cs-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm) var(--spacing-md);
+}
+
+.cs-segment {
+  display: inline-flex;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.cs-segment-btn {
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cs-segment-btn.active {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  font-weight: var(--font-weight-medium);
+}
+
+.cs-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.cs-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.cs-search input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.cs-search input:focus {
+  border-color: var(--accent-primary);
+}
+
+.cs-search-clear {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cs-search-clear:hover {
+  color: var(--text-primary);
+}
+
+.cs-pills {
+  display: inline-flex;
+  gap: var(--spacing-sm);
+}
+
+.cs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cs-pill:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-muted);
+  background: var(--bg-secondary);
+}
+
+.cs-pill.active {
+  background: var(--bg-tertiary);
+  box-shadow: var(--shadow-sm);
+}
+
+.cs-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.cs-pill-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.cs-statusline {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.cs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 48px 16px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.cs-empty-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.cs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cs-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color var(--transition-fast),
+              background var(--transition-fast),
+              box-shadow var(--transition-fast),
+              transform var(--transition-fast);
+}
+
+/* Selection is carried by the whole card plus the source tile — never by an
+   edge bar. A left rail used to grow in here; it is banned by the project
+   design rules, and in a list this long an edge bar also reads as decoration
+   rather than state. Lighting the tile keeps the indicator anchored to the
+   element that already means "where this session came from", and costs zero
+   layout shift while arrowing through the list. */
+.cs-row:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.cs-row.selected {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--accent-primary-20), var(--shadow-sm);
+}
+
+/* Source tile goes solid: the strongest signal in the row, fixed size. */
+.cs-row.selected .cs-row-mark {
+  color: var(--text-on-accent) !important;
+  background: var(--accent-primary);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 4px 14px -3px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+}
+
+.cs-row.selected .cs-row-title {
+  color: var(--text-white);
+}
+
+.cs-row-mark {
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-lg);
+  /* Source color comes in via inline `color`; tint the tile from it */
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 26%, transparent);
+}
+
+.cs-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-row-titleline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.cs-row-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.cs-row-slug {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* Multi-session activity badge on a list row (background-keepalive engine). */
+.cs-activity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.cs-activity--running {
+  color: var(--accent-primary);
+}
+
+.cs-activity--unread {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+}
+
+.cs-row-preview {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.cs-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: 8px;
+}
+
+.cs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all var(--transition-fast);
+}
+
+/* Row action stays quiet until the row is engaged — reduces list noise */
+.cs-row:hover .cs-copy,
+.cs-row.selected .cs-copy,
+.cs-copy:focus-visible,
+.cs-copy.copied {
+  opacity: 1;
+}
+
+.cs-copy:hover {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+}
+
+.cs-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.cs-copy.copied {
+  border-color: var(--accent-success);
+  color: var(--accent-success);
+}
+
+/* Detail drawer */
+/* === Session workbench: split view ===
+   The detail used to be a fixed overlay with a full-screen backdrop, which
+   swallowed every click on the list — picking a second session meant closing
+   the first. It is now a real column: the page owns the height, list and
+   detail scroll independently, and the list stays live while a session is
+   open. Below the desktop tier there is not enough width for two columns, so
+   the detail falls back to a full-screen drill-down (see the media query). */
+.cs-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  overflow: hidden;
+}
+
+.cs-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+/* Left column — filters + list. Owns its own scroll. */
+.cs-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Right column — fixed width so the list never reflows as it opens/closes. */
+.cs-side {
+  flex: 0 0 520px;
+  min-width: 0;
+  display: flex;
+}
+
+.cs-drawer {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+/* Phone + tablet: no room for two columns — cover the page instead. */
+@media (max-width: 1024px) {
+  .cs-side {
+    position: fixed;
+    inset: 0;
+    z-index: 1101;
+    flex: none;
+  }
+
+  .cs-drawer {
+    border: none;
+    border-radius: 0;
+    animation: cs-slide-in 0.2s ease;
+  }
+}
+
+@keyframes cs-slide-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.cs-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cs-drawer-titlebar {
+  min-width: 0;
+}
+
+.cs-drawer-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.cs-drawer-sid {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.cs-drawer-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cs-drawer-close:hover {
+  color: var(--text-primary);
+}
+
+.cs-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cs-drawer-trunc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.cs-drawer-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  /* Themed scrollbar (Firefox) */
+  scrollbar-color: var(--accent-primary) transparent;
+}
+
+/* Themed scrollbar (WebKit) — accent-colored thumb instead of the faint global one. */
+.cs-drawer-stream::-webkit-scrollbar-thumb {
+  background: var(--accent-primary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.cs-drawer-stream::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary-hover, var(--accent-primary));
+  background-clip: padding-box;
+}
+
+.cs-drawer-loading {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: 24px;
+}
+
+/* Activation / awaiting-reply progress bar */
+.cs-activation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+  font-size: var(--font-size-xs);
+  color: var(--accent-primary);
+}
+
+.cs-activation-stalled {
+  color: var(--warning, #d6a544);
+}
+
+.cs-activation-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cs-activation-bar-fill {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  animation: cs-activation-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes cs-activation-slide {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+/* Composer */
+.cs-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+}
+
+.cs-composer-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--accent-danger, var(--accent-warning));
+}
+
+.cs-composer-row {
+  position: relative;
+}
+
+.cs-composer-input {
+  width: 100%;
+  resize: none;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  /* reserve room so text never slides under the floating send button */
+  padding-right: 46px;
+}
+
+.cs-composer-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.cs-composer-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cs-composer-send {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--bg-base);
+  background: var(--accent-primary);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.cs-composer-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cs-composer-send:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+/* Image attach button — sits just left of the send button inside the textarea. */
+.cs-composer-input {
+  /* two floating buttons now live at the bottom-right */
+  padding-right: 78px;
+}
+
+.cs-composer-attach {
+  position: absolute;
+  right: 43px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.cs-composer-attach:not(:disabled):hover {
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
+}
+
+.cs-composer-attach:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Drag-over affordance on the whole composer. */
+.cs-composer--drag {
+  outline: 2px dashed var(--accent-primary);
+  outline-offset: -4px;
+  border-radius: var(--radius-sm);
+}
+
+/* Pending attachment thumbnails above the input. */
+.cs-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cs-attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.cs-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cs-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.cs-attachment-remove:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.cs-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cs-msg-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: capitalize;
+}
+
+.cs-msg-user .cs-msg-role {
+  color: var(--accent-info);
+}
+
+.cs-msg-assistant .cs-msg-role {
+  color: var(--accent-primary);
+}
+
+.cs-msg-tool .cs-msg-role {
+  color: var(--text-muted);
+}
+
+.cs-msg-text {
+  /* Reading body — the most-read text in the drawer; lift off the smallest
+     token (sm) to base so it isn't the tiniest thing on screen. */
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  /* 防截断：正文必须服从所在栏宽。`min-width: 0` 让它在窄栏里收缩，
+     `overflow-wrap: anywhere` 让长路径、长中文断在任意位置——
+     少了这两条，一段长串就把气泡顶宽，右侧被抽屉边缘切掉（截图 15-session-detail）。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--border-color);
+}
+
+/* Markdown rendering inside a message bubble. The shared .markdown-content
+   styles apply, but its headings (h1=1.5em…) are oversized for a chat line —
+   scale them down here and tighten block spacing so a reply reads as prose,
+   not a document. em units keep everything proportional to --font-scale. */
+.cs-msg-markdown {
+  white-space: normal; /* react-markdown emits block elements; pre-wrap would double the gaps */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.cs-msg-markdown > :first-child { margin-top: 0; }
+.cs-msg-markdown > :last-child { margin-bottom: 0; }
+.cs-msg-markdown p { margin: 0.45em 0; line-height: 1.6; }
+.cs-msg-markdown h1,
+.cs-msg-markdown h2,
+.cs-msg-markdown h3,
+.cs-msg-markdown h4,
+.cs-msg-markdown h5,
+.cs-msg-markdown h6 {
+  margin: 0.7em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.cs-msg-markdown h1 { font-size: 1.2em; }
+.cs-msg-markdown h2 { font-size: 1.1em; }
+.cs-msg-markdown h3 { font-size: 1.03em; }
+.cs-msg-markdown h4,
+.cs-msg-markdown h5,
+.cs-msg-markdown h6 { font-size: 1em; color: var(--text-secondary); }
+.cs-msg-markdown ul,
+.cs-msg-markdown ol { margin: 0.4em 0; padding-left: 1.5em; }
+.cs-msg-markdown ul { list-style: disc outside; }
+.cs-msg-markdown ol { list-style: decimal outside; }
+.cs-msg-markdown li { margin: 0.15em 0; display: list-item; }
+.cs-msg-markdown li::marker { color: var(--text-secondary); }
+.cs-msg-markdown li > p { margin: 0.2em 0; }
+/* Explicit bold — strong/b default to 700 but pin it so no cascade flattens it. */
+.cs-msg-markdown strong,
+.cs-msg-markdown b {
+  font-weight: 700;
+  /* PingFang SC (the CJK fallback) caps at Semibold(600), so font-weight alone
+     can't make Chinese bold visibly heavier. Thicken the glyph strokes to force
+     an unmistakable bold regardless of available font weights. */
+  -webkit-text-stroke: 0.4px currentColor;
+  color: var(--text-primary);
+}
+/* A paragraph that is ENTIRELY one bold run is the model's pseudo-heading
+   (e.g. **什么时候会触发**). Give it section-break spacing so it reads as a
+   subheading instead of being cramped against the paragraph above. */
+.cs-msg-markdown p:has(> strong:only-child) {
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+}
+.cs-msg-markdown > p:has(> strong:only-child):first-child { margin-top: 0; }
+.cs-msg-markdown em,
+.cs-msg-markdown i { font-style: italic; }
+
+.cs-msg-user .cs-msg-text {
+  border-left-color: var(--accent-info);
+}
+
+.cs-msg-assistant .cs-msg-text {
+  border-left-color: var(--accent-primary);
+}
+
+/* Tool-use / tool-result / thinking blocks — collapsed by default */
+.cs-block {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cs-block-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.cs-block-summary::-webkit-details-marker {
+  display: none;
+}
+
+.cs-block-summary::before {
+  content: '▸';
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.cs-block[open] > .cs-block-summary::before {
+  content: '▾';
+}
+
+.cs-block--tool > .cs-block-summary {
+  color: var(--accent-info);
+}
+
+.cs-block--result > .cs-block-summary {
+  color: var(--accent-primary);
+}
+
+.cs-block--error {
+  border-color: var(--accent-error);
+}
+
+.cs-block--error > .cs-block-summary {
+  color: var(--accent-error);
+}
+
+.cs-block-body {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.cs-block--thinking > .cs-block-summary {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.cs-block-image {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* --- Token calendar modal --- */
+.cs-cal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.cs-cal-card {
+  width: min(640px, calc(100vw - 2 * var(--spacing-lg)));
+  max-height: calc(100vh - 2 * var(--spacing-lg));
+  overflow: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.cs-cal-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-month-label {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  min-width: 7em;
+  text-align: center;
+}
+
+.cs-cal-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cs-cal-nav-btn:hover:not(:disabled) {
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+}
+
+.cs-cal-nav-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cs-cal-total {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.cs-cal-total strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.cs-cal-actions {
+  display: inline-flex;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cs-cal-progress-bar {
+  height: 100%;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  animation: cs-cal-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes cs-cal-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.cs-cal-error {
+  font-size: var(--font-size-sm);
+  color: var(--accent-error, #e5484d);
+}
+
+.cs-cal-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.cs-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cs-cal-weekday {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.cs-cal-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 2px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  min-height: 52px;
+}
+
+.cs-cal-cell-out {
+  opacity: 0.35;
+}
+
+.cs-cal-cell-today {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.cs-cal-day {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.cs-cal-tokens {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+/* 输入区上沿那条线上走着的小人。素材是 Kenney「Pixel Platformer」的两帧，CC0，
+   出处与裁法见 src/assets/README.md。
+
+   走 = 两帧轮换。迈步那一帧本身画得比站立高一像素，所以颠簸是画出来的，不是叠上去的。
+   歇 = 停在站立那一帧上，往下压一点当作坐下，再让他缓慢地呼吸。 */
+.composer-walker-sprite {
+  width: 20px;
+  height: 24px;
+  background-image: url('../../assets/walker.png');
+  background-size: 40px 24px;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  /* 像素画放大必须按格子取色，浏览器默认的平滑插值会把它糊成一团。 */
+  image-rendering: pixelated;
+}
+
+@keyframes composer-walker-step {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -40px 0;
+  }
+}
+
+.composer-walker-sprite[data-pose='walk'] {
+  animation: composer-walker-step 380ms steps(2) infinite;
+}
+
+@keyframes composer-walker-breathe {
+  0%,
+  100% {
+    transform: scaleY(0.78);
+  }
+  50% {
+    transform: scaleY(0.82);
+  }
+}
+
+.composer-walker-sprite[data-pose='rest'] {
+  transform-origin: bottom center;
+  transform: scaleY(0.78);
+  animation: composer-walker-breathe 3.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-walker-sprite {
+    animation: none;
+  }
+}
+
+/* ── 事务页：一句话建一件 ───────────────────────────────────────────
+   人只填一句话，标题/背景/完成判据由 agent 补。所以这里不是表单，是一个输入框
+   加一次等待，外加"它替我执行了什么"的回执——看不见执行了什么的按钮，没人敢按
+   第二次。 */
+
+/* === 记录流里的「同字回声」 ====================================================
+   圈中不到五个字时，这场会话的记录里所有一模一样的文字一起变绿：短到三两个字的多半
+   是个名字、一个编号、一个开关名，人圈它是想知道「这个词在这儿还出现在哪」。
+
+   走 CSS 自定义高亮而不是往正文里插标签：记录流的正文是 markdown 渲染出来的树，插
+   标签会把代码块、链接、表格当场拆变形，而且 React 下一帧就把插进去的东西抹掉。这套
+   写法只递交一组文本范围，DOM 一个字不动。浏览器不认这条选择器就不标，按钮照常给。
+
+   底色只到两成绿：正文压在上面还得读得清，满色的绿会把字吃掉。 */
+::highlight(workbench-quote-echo) {
+  background-color: var(--accent-primary-20);
+  color: var(--accent-primary);
+}
+
+/* === 记录流里的引用、暂存与分支标注 ==========================================
+   颜色只用原型配色（spec 20260928-webui-session-branch 改版，原先引用那一档的蓝撤掉）：
+
+   | 标注 | 画法 |
+   |---|---|
+   | 引用、用过的暂存、收了口的分支 | 中性底（--border-strong）+ 同色系实线下划线（--text-muted）：这件事已经回应过了 |
+   | 没用过的暂存 | 橙底（品牌橙 24%）+ 橙色实线下划线（--accent-warning）：还等着你 |
+   | 没收口的分支 | 正文色虚线下划线，无底色：交出去了，还没回来 |
+
+   绿色留给上面那套同字标绿和缩略滚动条上的人发言，这里不用。
+
+   **底色加深一档、再压一条实线下划线**（主人 09-28 定）：从前只有一层很淡的底色，浮在正文
+   里几乎认不出。主人要的是「带边框的色块」，但这套高亮只认颜色、底色、下划线和文字阴影，
+   内边距、边框、圆角一概不认；在文字上方另画一层方框、或把文字包进标签都代价更大，
+   所以留在这套画法里：底色加深一档，下沿一条比底色深的实线下划线当作边。
+   橙色那一档原型里只有 --accent-warning-10 一档淡底，更深的一档按同一个品牌橙调浓度
+   得出，不另起色相。
+
+   与同字标绿同一套写法：只递交文本范围，DOM 一个字不动。谁压谁由脚本给每套高亮的
+   priority 决定（同字标绿 > 没用过的暂存 > 没收口的分支 > 中性底），重叠处低一档的那一组
+   先被挖掉，所以这里只管各自的样子。深浅主题各自沿用已有的变量。字色不动：正文原来
+   什么颜色就还是什么颜色，读起来不打断。 */
+::highlight(workbench-mark-quote) {
+  background-color: var(--border-strong);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--text-muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+::highlight(workbench-mark-stack) {
+  background-color: color-mix(in srgb, var(--accent-warning) 24%, transparent);
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: var(--accent-warning);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+::highlight(workbench-mark-branch) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: var(--text-primary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+/* 从暂存列表跳回原处时那段文字亮一瞬：叠一层中性的选区色，压在标注底色上面，
+   人一眼就找得到落点。不用新的颜色——它不表达状态，只是「在这儿」。 */
+::highlight(workbench-mark-flash) {
+  background-color: var(--sel-border);
+}
+
+/* === 会话文件浮窗里的代码着色 ================================================
+   接的是 highlight.js 的词法类名（`.hljs-*`）。它只给类名、不给颜色，颜色这一侧归我们。
+
+   **不引 highlight.js 自带的主题 CSS**：那些主题满篇硬编码色值，等于在界面里另立一套配色，
+   换主题时它跟不上，也不走本文件的令牌。这里把它那套**取值**搬进令牌（`--code-*`，深浅各
+   一套，见上面两段），类名照旧接它的——认得出来、也换得了主题。
+
+   一度只有四个色相，看着像没染（主人 10-10 说的）：关键词与数字同一个蓝、函数名与普通标识
+   符都是正文色，一屏下来只剩字符串是黄的。现在按上面那组令牌分档，函数名、变量、标签各是
+   各的色。 */
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-literal,
+.hljs-type,
+.hljs-built_in,
+.hljs-selector-tag,
+.hljs-doctag {
+  color: var(--code-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--code-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-meta,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--code-number);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-link {
+  color: var(--code-variable);
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: var(--code-function);
+}
+
+.hljs-tag,
+.hljs-name {
+  color: var(--code-tag);
+}
+
+/* 参数名不加色：函数名的色已经够抢眼，参数再上一档，一整条签名就花了。 */
+.hljs-params {
+  color: var(--text-secondary);
+}
+
+.hljs-deletion {
+  color: var(--accent-error);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+/* === 会话文件浮窗里的改动对照 ================================================
+   左右两列同一格栅行，删的整行一层红底、增的整行一层绿底，没改的不上底色，配不上的那侧留
+   一格更淡的空位（那格底下什么都没有，画成实底会像是「这里有个空行」）。
+   行号单占一列、右对齐、不参与选中：复制走的是代码，不是行号。 */
+
+.diff-cell {
+  display: flex;
+  gap: 9px;
+  min-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-cell.add {
+  background: var(--diff-add);
+}
+
+.diff-cell.del {
+  background: var(--diff-del);
+}
+
+.diff-cell.void {
+  background: var(--bg-subtle);
+}
+
+.diff-line-no {
+  width: 30px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+/* ============================================================================
+   === G1 · 会话工作台视觉升华 ===
+
+   这一节只放**这一页自己**的粘合规则。凡是全站已有写法的，一律引用 base.css
+   的 `.ui-*`（双层卡、分段胶囊、结论排印、决策聚光、状态信号、空态），
+   不在这里另抄一份——同一个东西在两处长成两样，正是这一轮要消除的。
+
+   三件事：把记录流的右边缘钉死（防截断）、把过程与结论的层级拉开、把右栏
+   从散落灰字收成简报托盘。
+   ============================================================================ */
+
+/* --- 一、记录流防截断（右边缘钉死）------------------------------------------
+   基线实机缺陷：中栏被拖窄之后，长中文、长路径、宽表格在右边缘被切掉。
+
+   根因是**收缩链断在某一层**。flex/grid 子项默认 `min-width: auto`，只要链上
+   有一层没写 `min-width: 0`，那一层就会被内容顶到固有宽度，右边缘越过栏边界，
+   被外层 `overflow` 裁掉。base.css 已经给 `.card` / `.message-card` /
+   `.markdown-content` / `.code-block` / `.table-scroll` 各补过一遍，但记录流
+   里还有自己搭的几层壳（卡片外壳、正文包裹、分组容器）没跟上。
+
+   这里把这三层一起钉住：`min-width: 0` 允许收缩，`max-width: 100%` 封住上限，
+   `overflow-wrap: anywhere` 让长串在放不下时断在任意位置而不是顶宽父级。 */
+.wb-stream-body,
+.wb-record,
+.wb-record-body,
+.wb-record-head,
+.wb-group {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.wb-record-body {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 卡头那一行的元信息（工具参数预览、模型名这类）是典型的长串来源。
+   它必须让位给右侧的结局标记：自己截断，而不是把整行顶宽。 */
+.wb-record-head-meta {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- 二、中栏顶栏元数据分层（C6）--------------------------------------------
+   原先六个信息点（哪家 CLI · 路径 · 模型 · 上下文 · 累计）是一行 11px 灰字
+   平铺，同权重、同颜色，读不出哪一条是判断依据。
+
+   分成两档：**属性**（哪家 CLI、路径——这一场的固定身份）与**读数**（模型、
+   上下文、累计——会变的量）。读数用等宽数字，位数变化时右邻不横移。 */
+.wb-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 属性：次级墨色、中等字重，是这一行里"先读到的"那一档。 */
+.wb-meta-attr {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* 路径：等宽、可截断，压到 56px 仍看得见开头是哪一层。 */
+.wb-meta-path {
+  min-width: 56px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* 读数：更淡一档，等宽数字。它是"此刻多大"，不是"这是什么"。 */
+.wb-meta-readout {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* 分隔点：比两侧都淡，只做断句，不当信息读。 */
+.wb-meta-sep {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+/* --- 三、镜头切换条（C6 统一分段胶囊）--------------------------------------
+   九个参差胶囊（Watcher / Executor / All / Talk / Hooks / Tools / Files /
+   System / Terminal）收敛到 `.ui-seg-group` + `.ui-seg-pill` + `.ui-seg-count`
+   一套写法。计数一律内嵌在胶囊里，与档位名同一片底。
+
+   这一排在中栏，宽度比别的页面紧，所以两处微调：
+     · 胶囊内距收一档，九档争取一排放下；
+     · 整条允许横向滚动而不是折行——折行会让档位跳位，人刚记住的位置就变了。 */
+.wb-lens {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-lens-group {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wb-lens-group::-webkit-scrollbar {
+  display: none;
+}
+
+.wb-lens-pill {
+  height: 24px;
+  padding: 0 7px;
+  gap: 5px;
+  font-size: var(--font-size-sm);
+}
+
+/* 纯文本档位名（Executor）：不是可点件，与两侧胶囊同一行、同一基线。 */
+.wb-lens-label {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 0 2px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* 终端那一档活着时旁边那枚绿点：与「在跑」同色，不单独承载语义。 */
+.wb-lens-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+}
+
+/* --- 四、过程条目降噪，结论抬出（Proto A + B 融合）--------------------------
+   一场会话里工具调用、钩子、引擎记账占绝大多数，助手真正说给人听的话只占
+   很小一段。两者原先在视觉上几乎同权（工具卡与回复同为白底、同一条淡线），
+   人扫一屏读到的是"发生了一堆事"，而不是"它说了什么"。
+
+   分层：过程退到**凹面**（--surface-recessed，比页面底更沉），结论留在抬起的
+   那一面。退次层不等于藏起来——它仍在原位、仍可展开，只是不再与结论抢第一眼。 */
+.wb-process {
+  background: var(--surface-recessed);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+/* 结论正文：字号已在正文档（16），这里给的是**呼吸**——上下留白比过程条目厚
+   一档，段间距拉开。读长文时省力的是行距与段距，不是把字再放大。 */
+.wb-conclusion {
+  padding: 2px 0;
+}
+
+.wb-conclusion > .markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.wb-conclusion > .markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+/* 一轮回复里"我做了什么"的聚合行（工具 N 次 / 思考 N 步）：它是索引，不是正文。
+   收到最淡一档，与结论的深墨色拉开。 */
+.wb-turn-index {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 五、右栏简报托盘（Proto B 读序）---------------------------------------
+   右栏原先是一条条散落的灰字，无卡无边，与中栏的密集内容形成一浓一淡的断裂。
+
+   收成托盘：外层一圈双层微边框（走 base 的 .ui-bezel-card），里面按
+   「做了什么 → 关键结论 → 当前状态 / 待决项」的读序分段。宽度没变，
+   改的是**组织方式**：每一段有自己的眉标与分隔线，扫读时知道自己在哪一段。 */
+.wb-tray {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-tray-section {
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.wb-tray-section + .wb-tray-section {
+  border-top: 1px solid var(--border-color);
+}
+
+/* 眉标：11px、字距略开、更淡。它回答"这一段是什么"，不参与正文阅读。 */
+.wb-tray-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.wb-tray-body {
+  min-width: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-long);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 托盘里当前那一条（此刻 / 产出）：整段抬到正文墨色，与上面的历史分开。 */
+.wb-tray-body--now {
+  color: var(--text-primary);
+}
+
+/* --- 六、左栏状态信号点（Proto C）------------------------------------------
+   满幅员工色带是左栏唯一的强辨识锚点，**一个像素都不动**（回归红线）。状态点
+   只加在标题 / 元信息行的右端，与色带并存，互不遮挡。
+
+   颜色从不单独承载语义——点旁边永远有状态字（见 SessionItem 的 title 提示）。 */
+.wb-rail-signal {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.wb-rail-signal--pending {
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 22%, transparent);
+}
+
+.wb-rail-signal--running {
+  background: var(--accent-warning);
+}
+
+.wb-rail-signal--done {
+  background: var(--text-dim);
+  opacity: 0.55;
+}
+
+/* --- 七、中栏空态与右栏空态 -------------------------------------------------
+   空态统一走 base 的 `.empty-state`（40px 微边框图标方片 + 13px 标题 + 12px 说明），
+   各页不再自己画。这里只把中栏那块的容器撑满并居中。 */
+.wb-empty-fill {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 空态里那条「最近会话快速打开」：一列可点的窄条，宽度收住，不与空态主体抢。 */
+.wb-empty-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(320px, 100%);
+  min-width: 0;
+}
+
+.wb-empty-recent-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast),
+              background var(--transition-fast);
+}
+
+.wb-empty-recent-item:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.wb-empty-recent-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

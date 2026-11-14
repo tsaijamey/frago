@@ -24,7 +24,7 @@ import { FILE_BADGE } from './fileBadge';
 
 /** 一行盒子的公共外框；能不能点是另一回事（删掉的那些点不开）。 */
 const ROW =
-  'flex w-full items-center gap-2.5 border-t border-border-color px-3 py-[6px] text-left text-[12.5px] text-text-secondary';
+  'flex w-full items-center gap-2.5 border-t border-border-color px-3 py-[6px] text-left text-[13px] text-text-secondary';
 
 export interface SessionFilesProps {
   /** 这份清单。`null` 是还没取（这一档没打开过），空数组是取了、这一场确实没动过文件。 */
@@ -87,7 +87,7 @@ export default function SessionFiles({
   const groups = useMemo(() => groupByDirectory(files ?? []), [files]);
 
   const note = (
-    <div className="flex items-start gap-2 rounded-[8px] border border-border-color bg-bg-secondary px-3 py-2 text-[11.5px] leading-relaxed text-text-muted">
+    <div className="flex items-start gap-2 rounded-[8px] border border-border-color bg-bg-secondary px-3 py-2 text-[12px] leading-relaxed text-text-muted">
       <Info size={13} className="mt-[2px] shrink-0 text-text-dim" />
       <span>
         <b className="font-medium text-text-secondary">
@@ -193,7 +193,7 @@ export default function SessionFiles({
                               {badge.letter}
                             </span>
                             <span
-                              className={`min-w-0 truncate font-mono text-[11.5px] ${
+                              className={`min-w-0 truncate font-mono text-[12px] ${
                                 gone ? 'text-text-dim line-through' : ''
                               }`}
                             >
