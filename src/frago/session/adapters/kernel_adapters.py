@@ -114,6 +114,42 @@ class KernelSessionAdapter(Protocol):
         ...
 
 
+_CLAUDE_PROMPT_BOX_RULE_RE = re.compile(r"^\s*─{5,}\s*$")
+_CLAUDE_PROMPT_LINE_RE = re.compile(r"^\s*│?\s*[>❯](?:\s|$)")
+_CLAUDE_DONE_SUMMARY_RE = re.compile(
+    r"^\s*[✻✽✶✢✳✺✷✸✹]\s+.*\bfor\s+\d+(?:\.\d+)?[ms]?\b"
+)
+
+
+def _claude_control_tail(target_text: str) -> str:
+    """截取 Claude Code 终端窗格底部的活跃控制区（规避历史回复/工具输出中的关键字误判）。"""
+    lines = [ln for ln in target_text.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+
+    search_floor = max(0, len(lines) - 10)
+    border_idx: int | None = None
+    for idx in range(len(lines) - 1, search_floor - 1, -1):
+        if _CLAUDE_PROMPT_LINE_RE.match(lines[idx]):
+            for up in range(idx - 1, max(-1, idx - 3), -1):
+                if _CLAUDE_PROMPT_BOX_RULE_RE.match(lines[up]):
+                    border_idx = up
+                    break
+            break
+
+    if border_idx is not None:
+        if (
+            border_idx > 0
+            and _CLAUDE_DONE_SUMMARY_RE.match(lines[border_idx - 1])
+            and "…" not in lines[border_idx - 1]
+            and "(" not in lines[border_idx - 1]
+        ):
+            return "\n".join(lines[border_idx:])
+        return "\n".join(lines[max(0, border_idx - 2) :])
+
+    return "\n".join(lines[-8:])
+
+
 class ClaudeCodeSessionAdapter:
     """Claude Code 内核会话适配器。"""
 
@@ -172,8 +208,10 @@ class ClaudeCodeSessionAdapter:
                 is_busy=False, is_terminal_idle=True, awaiting_input=True
             )
 
-        # 1. 严格检查是否有后台子外壳仍在运行（shells still running）
-        if "shells still running" in target_text or "shell still running" in target_text:
+        control_tail = _claude_control_tail(target_text)
+
+        # 1. 严格检查底部控制区是否有后台子外壳仍在运行（shells still running）
+        if "shells still running" in control_tail or "shell still running" in control_tail:
             return HarnessIdleVerdict(
                 is_busy=True,
                 is_terminal_idle=False,
@@ -182,12 +220,12 @@ class ClaudeCodeSessionAdapter:
                 detail="Background shells still running",
             )
 
-        # 2. 检查前台 busy 信号（生成中、转轮、括号耗时）
+        # 2. 检查底部控制区前台 busy 信号（生成中、转轮、括号耗时）
         from frago.agent_driver.drivers import claude as claude_driver
 
         is_busy = False
         try:
-            if claude_driver._BUSY.search(target_text):
+            if claude_driver._BUSY.search(control_tail):
                 is_busy = True
         except Exception:
             pass

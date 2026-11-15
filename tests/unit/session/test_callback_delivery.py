@@ -829,3 +829,109 @@ class TestCallbackDeliverySystemizedFixes:
         for _ in range(3):
             workbench_queue.patrol_active_queues(sync=True)
         assert scan_count == 1
+
+    def test_deliver_callback_to_session_does_not_return_early_on_earlier_queue_item(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """回归（ca04af51 现场）：同会话多条回传排队时，后发 watcher 调 try_auto_inject 弹出并送达
+        队首更早条目（job_1）时，绝不能误判自身（job_2）已送达而提前退出收口。
+        """
+        turn_records = list(_ready_turn(1))
+        monkeypatch.setattr(record_reader, "read_records", lambda *_a, **_k: list(turn_records))
+        monkeypatch.setattr(workbench_queue, "is_session_busy", lambda _sid: False)
+
+        sent_prompts: list[str] = []
+
+        def fake_send(_sid: str, prompt: str, _cwd: str | None = None) -> bool:
+            sent_prompts.append(prompt)
+            return True
+
+        monkeypatch.setattr(workbench_queue, "_send_prompt", fake_send)
+
+        job1 = async_dispatch.AsyncDispatchJob(
+            job_id="disp-ca04-first",
+            kind="worker",
+            mode="new",
+            caller_session_id=TEST_SID,
+            caller_employee_id=None,
+            caller_cwd="/repo",
+            target_session_id="worker-1",
+            target_name="worker-1",
+            employee_id=None,
+            agent="coreagent",
+            cwd="/repo",
+            prompt="p1",
+            task_summary="t1",
+        )
+        job2 = async_dispatch.AsyncDispatchJob(
+            job_id="disp-ca04-second",
+            kind="worker",
+            mode="new",
+            caller_session_id=TEST_SID,
+            caller_employee_id=None,
+            caller_cwd="/repo",
+            target_session_id="worker-2",
+            target_name="worker-2",
+            employee_id=None,
+            agent="coreagent",
+            cwd="/repo",
+            prompt="p2",
+            task_summary="t2",
+        )
+        async_dispatch.save_dispatch_job(job1)
+        async_dispatch.save_dispatch_job(job2)
+
+        cb1 = '<frago-async-callback job_id="disp-ca04-first">first</frago-async-callback>'
+        cb2 = '<frago-async-callback job_id="disp-ca04-second">second</frago-async-callback>'
+        workbench_queue.enqueue(
+            TEST_SID, text=cb1, prompt=cb1, job_id="disp-ca04-first", auto_schedule=False
+        )
+
+        # 1. 新一轮尚未出现（停留在 turn-01），仅够消化队首 disp-ca04-first，不足以消化 disp-ca04-second：
+        #    job2 的 watcher 绝不可因为 try_auto_inject 送出了 job1 而误返回 True！
+        ok_early = async_dispatch.deliver_callback_to_session(
+            TEST_SID, cb2, job_id="disp-ca04-second", max_wait_s=0.18, poll_interval_s=0.05
+        )
+        assert ok_early is False
+        assert any("disp-ca04-first" in p for p in sent_prompts)
+        assert not any("disp-ca04-second" in p for p in sent_prompts)
+        remaining = workbench_queue.list_queue(TEST_SID)
+        assert len(remaining) == 1
+        assert remaining[0].get("job_id") == "disp-ca04-second"
+
+        # 2. 移除刚刚入队的重复 item 后，模拟下一轮 stop（turn-02）出现，重新验证 job2 本身送达才返回 True
+        workbench_queue.remove_item(TEST_SID, remaining[0]["id"])
+        # 重新入队两条，且在首轮送出 job1 后于后台推进 turn-02
+        workbench_queue.enqueue(
+            TEST_SID, text=cb1, prompt=cb1, job_id="disp-ca04-first-b", auto_schedule=False
+        )
+        turn_records.extend(
+            [
+                _make_record(3, "user.say", {"text": "next"}, group_id="turn-02"),
+                _make_record(4, "agent.say", {"text": "ready"}, group_id="turn-02"),
+            ]
+        )
+
+        def _advance_turn() -> None:
+            time.sleep(0.12)
+            turn_records.extend(
+                [
+                    _make_record(5, "user.say", {"text": "next2"}, group_id="turn-03"),
+                    _make_record(6, "agent.say", {"text": "ready2"}, group_id="turn-03"),
+                ]
+            )
+
+        adv = threading.Thread(target=_advance_turn, daemon=True)
+        adv.start()
+        ok_second = async_dispatch.deliver_callback_to_session(
+            TEST_SID,
+            '<frago-async-callback job_id="disp-ca04-second-b">second-b</frago-async-callback>',
+            job_id="disp-ca04-second-b",
+            max_wait_s=0.8,
+            poll_interval_s=0.04,
+        )
+        adv.join(timeout=1.0)
+        assert ok_second is True
+        receipt = workbench_queue.get_queue_delivery_receipt(TEST_SID)
+        assert "disp-ca04-second-b" in (receipt.get("delivered_job_ids") or [])
+

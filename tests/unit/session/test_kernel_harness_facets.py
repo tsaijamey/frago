@@ -311,3 +311,61 @@ def test_safe_terminate_command_borrowed_vs_owned() -> None:
 
     agy_adapter = get_kernel_session_adapter("agy")
     assert agy_adapter.safe_terminate_command("sid", is_borrowed=True) == ["C-c", "C-c", "exit", "C-d"]
+
+
+def test_claude_adapter_ignores_historical_busy_tokens_above_prompt_box() -> None:
+    """Claude Code: 回复正文/工具回显中出现 (8.60s)、* loading…、↓ 12 tokens、esc to interrupt
+    或 shells still running 字样，但底部控制区已停在空闲 ❯ 输入框时，不得误判忙碌卡住队列。
+    """
+    adapter = get_kernel_session_adapter("claude-code")
+
+    idle_with_noisy_history = (
+        "⏺ 测试结果如下：\n"
+        "  - 114 passed in (8.60s)\n"
+        "  * loading…\n"
+        "  ↓ 12 tokens consumed\n"
+        "  日志说明：检测到 esc to interrupt 或 shells still running 时停止注入\n"
+        "✻ Sautéed for 14s · done 4:28 PM\n"
+        "────────────────────────────────────────────────────────────\n"
+        "❯ \n"
+        "────────────────────────────────────────────────────────────\n"
+        "  [gemini-4-argon-high] DIR:<frago> | 262,808 / 1,000,000 tok (26%)\n"
+        "  sid=ca04af51-13a1-4079-bb97-207c83ae330d\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+    )
+    verdict_idle = adapter.probe_harness_idle(
+        "ca04af51-13a1-4079-bb97-207c83ae330d", pane_text=idle_with_noisy_history
+    )
+    assert verdict_idle.is_busy is False
+    assert verdict_idle.is_terminal_idle is True
+    assert verdict_idle.has_running_subshells is False
+
+    # 真实 Stop hook 仍在跑时（紧邻分隔线上方/控制尾部），必须继续判忙拦截
+    stop_hook_running_pane = (
+        "⏺ 已完成修复。\n"
+        "✻ Cogitating… (running stop hook · 4s) · esc to interrupt\n"
+        "────────────────────────────────────────────────────────────\n"
+        "❯ \n"
+        "────────────────────────────────────────────────────────────\n"
+        "  sid=ca04af51-13a1-4079-bb97-207c83ae330d\n"
+    )
+    verdict_hook = adapter.probe_harness_idle(
+        "ca04af51-13a1-4079-bb97-207c83ae330d", pane_text=stop_hook_running_pane
+    )
+    assert verdict_hook.is_busy is True
+    assert verdict_hook.is_terminal_idle is False
+
+    # 底部页脚明确提示后台 shell 仍在跑时，必须判忙并标 has_running_subshells=True
+    subshell_footer_pane = (
+        "⏺ 已启动后台任务。\n"
+        "────────────────────────────────────────────────────────────\n"
+        "❯ \n"
+        "────────────────────────────────────────────────────────────\n"
+        "  (2 shells still running)\n"
+    )
+    verdict_sub = adapter.probe_harness_idle(
+        "ca04af51-13a1-4079-bb97-207c83ae330d", pane_text=subshell_footer_pane
+    )
+    assert verdict_sub.is_busy is True
+    assert verdict_sub.has_running_subshells is True
+

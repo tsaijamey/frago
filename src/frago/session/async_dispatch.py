@@ -731,7 +731,12 @@ def deliver_callback_to_session(
             try:
                 outcome = workbench_queue.try_auto_inject(caller_session_id, sync=True)
                 if isinstance(outcome, dict) and outcome.get("delivered"):
-                    return True
+                    delivered_item = outcome.get("item")
+                    if isinstance(delivered_item, dict) and (
+                        delivered_item.get("id") == item_id
+                        or (jid and delivered_item.get("job_id") == jid)
+                    ):
+                        return True
             except Exception:
                 pass
 
