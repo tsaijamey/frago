@@ -9,15 +9,16 @@
  * 4. 分组编号一个字都不露给人看。
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import RecordCard, {
   KIND_GROUP,
+  RecordStreamActionsContext,
   formatBytes,
   formatDateTime,
   formatDuration,
 } from '../RecordCard';
-import { talkView, withTurnDecisionCards } from '../RecordStream';
+import { talkView, withQueueOutcomes, withTurnDecisionCards } from '../RecordStream';
 import { RECORD_KINDS, type RecordKind, type WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
 import { DEMOS, wrap } from '@/utils/__tests__/decisionDemos';
@@ -178,12 +179,16 @@ describe('RecordCard 的十六种形态', () => {
     expect(node?.getAttribute('data-group')).toBe(KIND_GROUP[kind]);
   });
 
-  it('载荷为空时照样渲染，不崩', () => {
+  it('载荷为空时照样渲染，不崩（空 agent.think 静默隐藏）', () => {
     for (const kind of RECORD_KINDS) {
       const { container } = render(
         <RecordCard record={makeRecord(kind, { payload: {} })} sessionId={SID} />
       );
-      expect(container.querySelector(`[data-kind="${kind}"]`)).not.toBeNull();
+      if (kind === 'agent.think') {
+        expect(container.querySelector('[data-kind="agent.think"]')).toBeNull();
+      } else {
+        expect(container.querySelector(`[data-kind="${kind}"]`)).not.toBeNull();
+      }
     }
   });
 });
@@ -349,9 +354,12 @@ describe('旁路注入卡', () => {
     });
   }
 
-  it('自成一格，且默认就摊开——旁路塞进来的话不该藏在折叠里', () => {
+  it('走 sys-capsule 低调胶囊，默认单行摘要、点击展开原文', () => {
     render(<RecordCard record={hookRecord()} sessionId={SID} />);
-    expect(screen.getByTestId('hook-inject')).toBeTruthy();
+    const card = screen.getByTestId('hook-inject');
+    expect(card.className).toContain('sys-capsule');
+    expect(screen.queryByText('第一条规则')).toBeNull();
+    fireEvent.click(card.querySelector('button.sys-capsule-hd')!);
     expect(screen.getByText('第一条规则')).toBeTruthy();
     expect(screen.getByText('第二条规则')).toBeTruthy();
   });
@@ -472,20 +480,23 @@ describe('已发生的绝对数怎么写', () => {
 });
 
 describe('思考卡', () => {
-  it('正文没落盘的思考只占一行，不撑成一张空盒子', () => {
-    render(
+  it('正文为空的思考静默隐藏，不渲染任何节点', () => {
+    const { container } = render(
       <RecordCard
-        record={makeRecord('agent.think', { payload: { text: '' } })}
+        record={makeRecord('agent.think', { payload: { text: '   ' } })}
         sessionId={SID}
       />
     );
-    expect(screen.getByTestId('think-empty')).toBeTruthy();
-    expect(screen.getByText('思考了一轮，正文没落盘')).toBeTruthy();
+    expect(container.firstChild).toBeNull();
   });
 
-  it('有正文的思考照旧可折叠', () => {
-    render(<RecordCard record={makeRecord('agent.think')} sessionId={SID} />);
-    expect(screen.queryByTestId('think-empty')).toBeNull();
+  it('有正文的思考默认折叠为 .fold-think，点击展开 .fold-think-body', () => {
+    const { container } = render(<RecordCard record={makeRecord('agent.think')} sessionId={SID} />);
+    const line = screen.getByTestId('think-line');
+    expect(line.className).toContain('fold-think');
+    expect(container.querySelector('.fold-think-body')).toBeNull();
+    fireEvent.click(line.querySelector('button.fold-think-hd')!);
+    expect(container.querySelector('.fold-think-body')).toBeTruthy();
   });
 });
 
@@ -676,13 +687,13 @@ describe('用量刻度', () => {
   });
 });
 
-describe('时间戳与卡头分割线', () => {
+describe('时间戳与卡头留白边界', () => {
   it('formatDateTime 同时输出年月日与时分秒', () => {
     const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
     expect(formatDateTime(fixedTs)).toBe('2026-10-31 14:50:18');
   });
 
-  it('卡头时间右侧渲染分割线，并在带有 context_tokens 时显示上下文读数', () => {
+  it('卡头时间右侧不再画分割线、保留弹性占位与上方留白，并在带有 context_tokens 时保留悬浮读数', () => {
     const fixedTs = new Date(2026, 9, 31, 14, 50, 18).getTime();
     const { container } = render(
       <RecordCard
@@ -696,10 +707,10 @@ describe('时间戳与卡头分割线', () => {
     expect(container.textContent).toContain('2026-10-31 14:50:18');
     const head = container.querySelector('header');
     expect(head).toBeTruthy();
-    const divider = head?.querySelector('span.h-px.flex-1.bg-border-color');
-    expect(divider).toBeTruthy();
-    const ctx = screen.getByTestId('card-head-context');
-    expect(ctx.textContent).toBe('上下文 449,320');
+    expect(head?.querySelector('span.h-px.bg-border-color')).toBeNull();
+    expect(head?.querySelector('span.flex-1')).toBeTruthy();
+    expect(screen.queryByTestId('card-head-context')).toBeNull();
+    expect(head?.getAttribute('title')).toContain('449,320');
   });
 });
 
@@ -1181,5 +1192,121 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     expect(screen.getByText('你说')).toBeTruthy();
     expect(screen.getByText('查一下本地workbuddy proxy是不是被误关了')).toBeTruthy();
     expect(container.textContent).not.toContain('frago-async-callback');
+  });
+
+  it('同源连续两条纯异步回传通过 withQueueOutcomes 归并并显示 ×2 去重角标、四态送达与来源会话跳转', () => {
+    const cb1 = makeRecord('user.say', {
+      id: 'cb1',
+      seq: 1,
+      payload: { text: WORKER_CB },
+    });
+    const cb2 = makeRecord('user.say', {
+      id: 'cb2',
+      seq: 2,
+      payload: {
+        text: WORKER_CB.replace('disp-beaa67f7b8ea', 'disp-beaa67f7b8eb'),
+      },
+    });
+    const afterSay = makeRecord('agent.say', {
+      id: 'a_after',
+      seq: 3,
+      payload: { text: '已核对最新回传。' },
+    });
+
+    const processed = withQueueOutcomes([cb1, cb2, afterSay]);
+    expect(processed).toHaveLength(2);
+    expect(processed[0].payload.async_callback_dedupe).toBe(2);
+    expect(processed[0].payload.async_callback_stage).toBe('consumed');
+
+    const onSelectSession = vi.fn();
+    render(
+      <RecordStreamActionsContext.Provider value={{ onSelectSession }}>
+        <RecordCard record={processed[0]} sessionId={SID} />
+      </RecordStreamActionsContext.Provider>
+    );
+
+    expect(screen.getByTestId('async-callback-dedupe').textContent).toContain('×2');
+    expect(screen.getByTestId('async-callback-steps').getAttribute('data-stage')).toBe('consumed');
+    fireEvent.click(screen.getByTestId('async-callback-jump'));
+    expect(onSelectSession).toHaveBeenCalledWith('core_20261106_115104_b00cf771');
+  });
+});
+
+describe('P0-2 DeliveryTriad 完工验收三要素', () => {
+  it('同轮含 Edit 与通过的 vitest 验证命令时自动提取并渲染 delivery-triad，点文件 pill 触发 onOpenFileDiff', () => {
+    const turnRecords: WorkbenchRecord[] = [
+      makeRecord('user.say', { id: 'u_dt', seq: 1, payload: { text: '修一下 RecordCard 并跑单测' } }),
+      makeRecord('tool.call', {
+        id: 'tc_edit',
+        seq: 2,
+        payload: {
+          call_id: 'c_edit',
+          tool_name: 'Edit',
+          args: {
+            file_path: '/repo/src/RecordCard.tsx',
+            old_string: 'const a = 1;',
+            new_string: 'const a = 2;\nconst b = 3;',
+          },
+        },
+      }),
+      makeRecord('tool.result', {
+        id: 'tr_edit',
+        seq: 3,
+        payload: { call_id: 'c_edit', tool_name: 'Edit', status: 'ok', body: 'updated' },
+      }),
+      makeRecord('tool.call', {
+        id: 'tc_test',
+        seq: 4,
+        payload: {
+          call_id: 'c_test',
+          tool_name: 'Bash',
+          args: { command: 'npx vitest run src/RecordCard.test.tsx' },
+        },
+      }),
+      makeRecord('tool.result', {
+        id: 'tr_test',
+        seq: 5,
+        payload: { call_id: 'c_test', tool_name: 'Bash', status: 'ok', body: '12 passed' },
+      }),
+      makeRecord('agent.say', {
+        id: 'a_dt',
+        seq: 6,
+        payload: { text: '已完成修改并验证通过。', model: 'claude-opus-5' },
+      }),
+    ];
+
+    const talk = talkView(turnRecords);
+    const onOpenFileDiff = vi.fn();
+    render(
+      <RecordStreamActionsContext.Provider value={{ onOpenFileDiff }}>
+        <RecordCard record={talk[1]} sessionId={SID} />
+      </RecordStreamActionsContext.Provider>
+    );
+
+    const triad = screen.getByTestId('delivery-triad');
+    expect(triad).toBeTruthy();
+    expect(triad.querySelector('.dt-concl')).toBeNull();
+    expect(triad.querySelector('.dt-hd')).toBeNull();
+    const fileBtn = screen.getByTestId('delivery-triad-file');
+    expect(fileBtn.textContent).toContain('RecordCard.tsx');
+    expect(fileBtn.textContent).toContain('+2');
+    expect(fileBtn.textContent).toContain('-1');
+    fireEvent.click(fileBtn);
+    expect(onOpenFileDiff).toHaveBeenCalledWith('/repo/src/RecordCard.tsx');
+    expect(screen.getByTestId('delivery-triad-verify').textContent).toContain('npx vitest run');
+  });
+
+  it('回复头行不渲染横向分割线，且 Agent 回复上方保留充足留白', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('agent.say', { payload: { text: '去掉多余分割线并留出边界留白。' } })}
+        sessionId={SID}
+      />
+    );
+    const header = container.querySelector('.wb-record-head');
+    expect(header).toBeTruthy();
+    expect(header?.querySelector('.h-px.bg-border-color')).toBeNull();
+    const article = container.querySelector('article[data-kind="agent.say"]');
+    expect(article?.className).toContain('pt-3.5');
   });
 });

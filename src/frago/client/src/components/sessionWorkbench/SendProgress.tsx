@@ -34,6 +34,29 @@ export const STEP_LABEL_KEY: Record<SendStep, string> = {
   failed: 'workbench.progress.failed',
 };
 
+/** 对齐 Phase 2A 四阶段语义标签：发送中 Sending › 已入队 Queued › 已接手 Picked up › 已作答 Answered。 */
+export function resolveStepLabel(
+  step: SendStep,
+  isZh: boolean,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  switch (step) {
+    case 'on_its_way':
+      return isZh ? '发送中' : 'Sending';
+    case 'in_the_session':
+    case 'queued':
+      return isZh ? '已入队' : 'Queued';
+    case 'picked_up':
+      return isZh ? '已接手' : 'Picked up';
+    case 'folded_in':
+      return isZh ? '已接手' : 'Folded in';
+    case 'answered':
+      return isZh ? '已作答' : 'Answered';
+    case 'failed':
+      return t(STEP_LABEL_KEY.failed);
+  }
+}
+
 /** 这份进度按顺序走过的步骤。只列 `steps` 里有键的。 */
 export function stepsTaken(trail: SendTrail): SendStep[] {
   if (trail.steps.failed !== undefined) {
@@ -53,18 +76,19 @@ export default function SendProgress({
   headline?: SendStep;
   className?: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = Boolean(i18n.language?.startsWith('zh'));
   const taken = stepsTaken(trail);
   if (!taken.length) return null;
   const title = taken
-    .map((s) => `${t(STEP_LABEL_KEY[s])} ${formatClock(trail.steps[s] ?? 0)}`)
+    .map((s) => `${resolveStepLabel(s, isZh, t)} ${formatClock(trail.steps[s] ?? 0)}`)
     .join(' · ');
 
   let shown: SendStep[] = taken;
   let answeredIn = '';
   const answeredAt = trail.steps.answered;
   if (answeredAt !== undefined) {
-    // 答完了：闲着那一路收成一句带耗时的话，插话留下「并进去了」那一步
+    // 答完了：闲着那一路收成一句带耗时的话，插话留下「已接手」那一步
     if (trail.midTurn) {
       shown = taken.filter((s) => s === 'folded_in' || s === 'answered');
     } else {
@@ -92,8 +116,10 @@ export default function SendProgress({
               <span aria-hidden>{failed ? '✕' : '✓'}</span>
               <span className={step === last ? 'text-text-secondary' : ''}>
                 {answeredIn && step === 'answered'
-                  ? t('workbench.progress.answeredIn', { duration: answeredIn })
-                  : t(STEP_LABEL_KEY[step])}
+                  ? isZh
+                    ? `已作答 · ${answeredIn}`
+                    : `Answered · ${answeredIn}`
+                  : resolveStepLabel(step, isZh, t)}
               </span>
               {step === last && !answeredIn ? (
                 <span className="font-mono tabular-nums text-text-dim">{formatClock(trail.steps[step] ?? 0)}</span>

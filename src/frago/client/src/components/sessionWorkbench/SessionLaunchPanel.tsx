@@ -193,7 +193,7 @@ export default function SessionLaunchPanel({
           ) : null}
 
           {failed ? (
-            <div className="flex flex-wrap items-center gap-2.5 rounded-[8px] border border-accent-error/40 bg-accent-error-10 px-3.5 py-2.5 text-[12px] text-accent-error">
+            <div className="flex flex-wrap items-center gap-2.5 rounded-[8px] border border-accent-error-border bg-accent-error-10 px-3.5 py-2.5 text-[12px] text-accent-error">
               <AlertTriangle size={14} className="shrink-0 text-accent-error" />
               <p data-testid="launch-error" className="min-w-0 flex-1 leading-5 text-accent-error">
                 {t('workbench.launch.failed', { reason: launch.error ?? '' })}

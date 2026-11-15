@@ -226,3 +226,46 @@ export function isPureAsyncCallbackRecord(record: {
   const { text: humanText, images } = splitAttachedImages(withoutBlocks);
   return !humanText.trim() && images.length === 0;
 }
+
+export interface DeduplicatedAsyncCallback {
+  callback: AsyncCallbackBlockItem;
+  dedupeCount: number;
+}
+
+/**
+ * 同一批次/来源的异步回传归并键：优先按 `kind + targetSessionId + employeeId` 归并同源回传，
+ * 若缺失会话号则退回 `jobId`。
+ */
+export function asyncCallbackGroupKey(cb: AsyncCallbackBlockItem): string {
+  if (cb.targetSessionId) {
+    return `${cb.kind}|${cb.targetSessionId}|${cb.employeeId}`;
+  }
+  return `${cb.kind}|job:${cb.jobId}|${cb.employeeId}`;
+}
+
+/**
+ * 将同源/同批次的多条异步回传合并为单条代表条目（保留最新一条内容并累计去重次数）。
+ */
+export function dedupeAsyncCallbacks(
+  callbacks: AsyncCallbackBlockItem[]
+): DeduplicatedAsyncCallback[] {
+  if (callbacks.length <= 1) {
+    return callbacks.map((callback) => ({ callback, dedupeCount: 1 }));
+  }
+  const order: string[] = [];
+  const grouped = new Map<string, DeduplicatedAsyncCallback>();
+  for (const cb of callbacks) {
+    const key = asyncCallbackGroupKey(cb);
+    const existing = grouped.get(key);
+    if (existing) {
+      grouped.set(key, {
+        callback: cb,
+        dedupeCount: existing.dedupeCount + 1,
+      });
+    } else {
+      order.push(key);
+      grouped.set(key, { callback: cb, dedupeCount: 1 });
+    }
+  }
+  return order.map((key) => grouped.get(key)!);
+}

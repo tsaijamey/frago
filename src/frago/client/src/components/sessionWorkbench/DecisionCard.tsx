@@ -32,7 +32,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Info, Users } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Info, Users } from 'lucide-react';
 import {
   composeAnswer,
   isMany,
@@ -124,7 +124,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 // ── 卡片 ──────────────────────────────────────────────────────────────
 export function DecisionCard({ block, recordId }: { block: DecisionBlock; recordId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const host = useContext(DecisionCardContext);
   const answered = host?.answerOf(recordId) ?? null;
   const done = answered !== null;
@@ -140,6 +141,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(block.draft ?? '');
+  const [expanded, setExpanded] = useState(false);
 
   const doneKeys = done && answered.kind !== 'own-words' ? pickedFromAnswer(answered.text, block) : [];
   const isOn = (i: number) => (done ? doneKeys.includes(i) : picks.includes(i));
@@ -262,7 +264,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
   const keyBox = (o: DecisionOption, i: number) => (
     <span
       title={o.key}
-      className={`mt-px flex h-[18px] min-w-[18px] max-w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border px-1 font-mono text-[11px] ${
+      className={`dkey mt-px flex h-[22px] min-w-[24px] max-w-[96px] shrink-0 items-center justify-center overflow-hidden whitespace-nowrap rounded-[5px] border px-[6px] font-mono text-[11px] ${
         isOn(i)
           ? 'border-text-primary bg-text-primary text-bg-primary'
           : 'border-border-strong text-text-secondary'
@@ -458,7 +460,7 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     confirm && !done ? (
       <div
         data-testid="decision-confirm"
-        className="flex flex-wrap items-center gap-2 rounded-[8px] border border-accent-warning bg-accent-warning-10 px-[9px] py-[7px] text-[12px] text-accent-warning"
+        className="dconf flex flex-wrap items-center gap-2 rounded-[8px] border border-accent-warning bg-accent-warning-10 px-[9px] py-[7px] text-[12px] text-accent-warning"
       >
         <AlertTriangle size={14} className="shrink-0" />
         <span className="min-w-[140px] flex-1 font-medium">
@@ -510,28 +512,79 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
     );
   }
 
+  if (done && !expanded) {
+    const answeredSummary =
+      answered.kind === 'own-words'
+        ? isZh
+          ? '已文字回复'
+          : 'Replied in own words'
+        : doneKeys.length > 0
+          ? doneKeys.map((idx) => `${opts[idx].key} · ${opts[idx].label}`).join(', ')
+          : doneWritten
+            ? doneWritten
+            : isZh
+              ? '已作答'
+              : 'Answered';
+    return (
+      <div
+        data-testid="decision-card-answered"
+        data-type={T}
+        data-state={answered.kind}
+        className="dcard is-answered mt-2 flex min-w-0 flex-col"
+      >
+        <div className="dc-ans-row">
+          <span className="dc-ans-pill" data-testid="decision-answered-pill">
+            <Check size={12} className="shrink-0 text-accent-primary" />
+            <span className="truncate">{answeredSummary}</span>
+          </span>
+          <span className="dc-ans-q truncate" title={block.question}>
+            <Inline text={block.question} />
+          </span>
+          {answered.kind !== 'own-words' ? (
+            <span className="shrink-0 font-mono text-[11px] text-text-muted">
+              {clock(answered.at)}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            data-testid="decision-details-toggle"
+            onClick={() => setExpanded(true)}
+            className="ml-auto shrink-0 rounded-[6px] border border-border-color px-2 py-0.5 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+          >
+            {isZh ? '详情' : 'Details'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid="decision-card"
       data-type={T}
       data-state={done ? answered.kind : live ? 'open' : 'read-only'}
-      /* 浅色主题下卡片与页面底都是 #FFFFFF（`--bg-card` = `--bg-primary`），白压白，
-         卡片边界只剩圆角在暗示。这里补一圈内描边把它勾出来。
-         用 `box-shadow` 的 inset 而不是 `border`：border 会占内容宽度、把卡里的
-         换行位置挪一挪，而 box-shadow 画在盒内、不参与布局，卡的尺寸一个像素都不动。
-         `--border-card` 只在浅色侧有值，深色侧没定义——那条 shadow 声明在深色下
-         整条作废，等于没加（深色靠 #242424 对 #1f1f1f 的明度差已经分得开）。
-
-         **正在等人拍板的那一张走 `.ui-decision-spotlight`**：品牌绿柔和聚光外环加
-         双层边框，是全流对比度最高的一处——一屏记录扫下来，眼睛先落在「现在等你拍什么板」。
-         答过、只读、这场发不出去的那几张退回普通卡：聚光是给"还要你动手"的，
-         已经答完的再亮着，那一处就不再是信号。 */
-      className={`mt-2 flex min-w-0 flex-col gap-2.5 text-[13px] leading-[1.6] ${
+      className={`dcard mt-2 flex min-w-0 flex-col gap-2.5 text-[13px] leading-[1.6] ${
+        !done ? 'is-pending ' : ''
+      }${
         live
           ? 'ui-decision-spotlight'
           : 'rounded-[10px] bg-bg-card px-3.5 pb-3.5 pt-3 [box-shadow:inset_0_0_0_1px_var(--border-card)]'
       } ${irr ? 'border border-accent-warning' : 'border-0'}`}
     >
+      {!done ? (
+        <div className="dc-pending-bar" data-testid="decision-pending-bar">
+          <Clock size={12} className="shrink-0" />
+          <span>
+            {block.fromTeammate
+              ? isZh
+                ? '队友请求 · 等待你拍板'
+                : 'Teammate request · Waiting for your decision'
+              : isZh
+                ? '等待你拍板'
+                : 'Waiting for your decision'}
+          </span>
+        </div>
+      ) : null}
       <div className="flex min-w-0 items-center gap-1.5">
         {block.fromTeammate ? (
           <span className="inline-flex h-5 shrink-0 items-center gap-[5px] rounded-full bg-[var(--peer-chip)] px-2 text-[11px] font-semibold text-[var(--peer-ink)]">
@@ -547,7 +600,16 @@ export function DecisionCard({ block, recordId }: { block: DecisionBlock; record
           {head}
           {irr ? t('workbench.decision.cantUndoSuffix') : ''}
         </span>
-        {T === 'multi-choice' && live ? (
+        {done ? (
+          <button
+            type="button"
+            data-testid="decision-collapse-toggle"
+            onClick={() => setExpanded(false)}
+            className="ml-auto shrink-0 text-[12px] text-text-secondary underline underline-offset-2 hover:text-text-primary"
+          >
+            {isZh ? '收起' : 'Collapse'}
+          </button>
+        ) : T === 'multi-choice' && live ? (
           <button
             type="button"
             data-testid="decision-toggle-all"
@@ -612,7 +674,7 @@ export function CardAnswerBody({ answer }: { answer: ParsedCardAnswer }) {
               截断，悬停看完整值——历史会话里 `IMPL_DYNAMIC` 这类长 KEY 的答复也撑不破气泡。 */}
           <span
             title={o.key}
-            className="mt-px flex h-[18px] min-w-[18px] max-w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-text-primary bg-text-primary px-1 font-mono text-[11px] text-bg-primary"
+            className="dkey mt-px flex h-[22px] min-w-[24px] max-w-[96px] shrink-0 items-center justify-center overflow-hidden whitespace-nowrap rounded-[5px] border border-text-primary bg-text-primary px-[6px] font-mono text-[11px] text-bg-primary"
           >
             <span className="min-w-0 truncate">{o.key}</span>
           </span>

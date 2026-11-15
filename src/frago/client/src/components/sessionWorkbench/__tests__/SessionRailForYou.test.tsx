@@ -231,14 +231,22 @@ describe('For you 在清单上', () => {
     expect(b.getAttribute('data-for-you')).toBe('true');
   });
 
-  it('档位只剩 For you / All，清单上搜不到状态词', () => {
-    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
-    expect(screen.getByTestId('list-filter-for-you')).toBeTruthy();
+  it('顶栏提供四档 P1 筛选项（All / Decision / Backlog / Running），常态 Direct/Completed 卡片保持静默不画多余徽标', () => {
+    const extraRows = [
+      ...rows,
+      session('p1', { origin: 'pair' as WorkbenchSession['origin'], status: 'running' }),
+    ];
+    render(<TestRail state={railState(extraRows)} selectedId={null} onSelect={NOOP} />);
     expect(screen.getByTestId('list-filter-all')).toBeTruthy();
-    const text = document.body.textContent ?? '';
-    for (const word of ['Done', 'Idle', 'Running', 'Working', 'Needs you']) {
-      expect(text).not.toContain(word);
-    }
+    expect(screen.getByTestId('list-filter-decision').className).toContain('warn-chip');
+    expect(screen.getByTestId('list-filter-backlog').className).toContain('warn-chip');
+    expect(screen.getByTestId('list-filter-running')).toBeTruthy();
+    // 只有 pair/running 那张卡显示 .si-badges、Pair 与 Running；常态 Direct+Completed 卡静默
+    expect(screen.getAllByTestId('session-badges')).toHaveLength(1);
+    expect(screen.getAllByTestId('session-origin')).toHaveLength(1);
+    expect(screen.getAllByTestId('session-origin')[0].textContent).toBe('Pair');
+    expect(screen.getAllByTestId('session-lifecycle')).toHaveLength(1);
+    expect(screen.getAllByTestId('session-lifecycle')[0].textContent).toBe('Running');
   });
 
   it('时间后面不写 ago', () => {

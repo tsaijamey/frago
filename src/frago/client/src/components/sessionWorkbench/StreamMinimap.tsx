@@ -163,6 +163,12 @@ export default function StreamMinimap({ scrollRef, ticks, version, onUserScroll 
     measure();
   }, [measure, version, ticks]);
 
+  // 父组件 RecordStream 的 useLayoutEffect 晚于子组件执行并把 scrollTop 推到最底；
+  // 在 useEffect 中补量一次，确保从 Watcher 切回 Talk / All 重新挂载时滑块立即定位到轨道底部。
+  useEffect(() => {
+    measure();
+  }, [measure, version, ticks]);
+
   // 滚动、内容长高、窗口变大小：攒到下一帧再量。
   useEffect(() => {
     const box = scrollRef.current;

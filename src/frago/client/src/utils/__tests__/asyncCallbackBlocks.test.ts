@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  asyncCallbackGroupKey,
+  dedupeAsyncCallbacks,
   isPureAsyncCallbackRecord,
   splitAllLeadingBlocks,
   splitAsyncCallbackBlocks,
@@ -124,5 +126,25 @@ describe('splitAsyncCallbackBlocks', () => {
     };
     expect(isPureAsyncCallbackRecord(mixedRecord)).toBe(false);
     expect(humanReplyText(mixedRecord)).toBe('查一下本地workbuddy proxy是不是被误关了');
+  });
+
+  it('dedupeAsyncCallbacks 按同源合并多条回传并保留不同来源的回传', () => {
+    const { callbacks: c1 } = splitAsyncCallbackBlocks(WORKER_CALLBACK_SAMPLE);
+    const secondSameSource = WORKER_CALLBACK_SAMPLE
+      .replace('disp-beaa67f7b8ea', 'disp-beaa67f7b8eb')
+      .replace('全部 48 条单测通过', '全部 50 条单测通过');
+    const { callbacks: c2 } = splitAsyncCallbackBlocks(secondSameSource);
+    const { callbacks: c3 } = splitAsyncCallbackBlocks(EMPLOYEE_CALLBACK_SAMPLE);
+
+    expect(asyncCallbackGroupKey(c1[0])).toBe(asyncCallbackGroupKey(c2[0]));
+    expect(asyncCallbackGroupKey(c1[0])).not.toBe(asyncCallbackGroupKey(c3[0]));
+
+    const deduped = dedupeAsyncCallbacks([c1[0], c2[0], c3[0]]);
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0].dedupeCount).toBe(2);
+    expect(deduped[0].callback.jobId).toBe('disp-beaa67f7b8eb');
+    expect(deduped[0].callback.resultBody).toContain('全部 50 条单测通过');
+    expect(deduped[1].dedupeCount).toBe(1);
+    expect(deduped[1].callback.employeeId).toBe('frago-developer');
   });
 });

@@ -93,23 +93,23 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px 4px;
-  background: var(--emp-bg);
+  height: 22px;
+  min-height: 22px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--emp-bg) 68%, var(--bg-secondary));
   color: var(--emp-fg);
   border-bottom: 1px solid var(--emp-border);
-  font-size: var(--font-size-emp-bar);
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+  line-height: 1.25;
+  letter-spacing: 0;
 }
 .si-emp-bar .emp-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 999px;
-  /* 圆点取 currentColor（即 --emp-fg）再压到 0.72——它落在同色的实心底上，
-     要比文字轻一档才不抢眼，直接铺满色反而显脏。 */
   background: currentColor;
-  opacity: 0.72;
+  opacity: 1;
   flex-shrink: 0;
 }
 .si-emp-bar .emp-name {
@@ -118,6 +118,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 父容器 .si 的 inset box-shadow 位于子元素 .si-emp-bar 实心背景之下；
+   通过顶层无交互伪元素 ::after 把整圈 1px 描边同步画到最上层，确保员工顶栏上沿与四角不被遮挡。 */
+.si::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+.si[aria-current='true']::after {
+  box-shadow: inset 0 0 0 1px var(--sel-border);
+}
+.si:not([aria-current='true'])[data-branch-root='true']::after {
+  box-shadow: inset 0 0 0 1px var(--grp-card-border);
+}
+.si:not([aria-current='true']):not([data-branch-root='true'])[data-stacked='true']::after {
+  box-shadow: inset 0 0 0 1px var(--grp-border);
+}
+.si:not([aria-current='true']):not([data-branch-root='true']):not([data-stacked='true']):not([data-branch-card='true']):not([data-nested='true'])[data-employee]::after {
+  box-shadow: inset 0 0 0 1px var(--emp-border, var(--border-color));
 }
 
 /* === 员工卡片（员工页网格里那一种） ===
@@ -250,6 +273,32 @@
 .emp-card-edit:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring), var(--focus-ring-inset);
+}
+
+.stag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stag--active {
+  background: var(--accent-primary-10);
+  border-color: var(--accent-primary-border);
+  color: var(--accent-primary);
 }
 
 /* Chrome / Edge 风格双色对角拼合选色圆片与深浅映射预览 */

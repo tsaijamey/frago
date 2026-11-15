@@ -71,7 +71,7 @@ export default function ImageGridCard({ block }: { block: ImageGridBlock }) {
 
         <div
           data-testid="image-grid-layout"
-          className={`grid gap-2.5 ${gridCols}`}
+          className={`imggrid grid gap-2.5 ${gridCols}`}
         >
           {images.map((item, idx) => (
             <ImageGridTile
@@ -110,12 +110,12 @@ function ImageGridTile({
   const label = item.caption || item.name;
 
   return (
-    <figure className="group flex min-w-0 flex-col overflow-hidden rounded-[8px] border border-border-color bg-bg-subtle transition-colors hover:border-text-muted">
+    <figure className="imggrid-card group flex min-w-0 flex-col overflow-hidden rounded-[8px] border border-border-color bg-bg-subtle transition-colors hover:border-text-muted">
       {broken || !item.src ? (
         <div
           data-testid="image-grid-item-missing"
           title={item.raw}
-          className={`flex w-full flex-col items-center justify-center gap-1.5 px-3 text-text-dim ${
+          className={`imggrid-thumb flex w-full flex-col items-center justify-center gap-1.5 px-3 text-text-dim ${
             single ? 'h-48' : 'aspect-[16/10]'
           }`}
         >
@@ -132,7 +132,7 @@ function ImageGridTile({
           title={item.raw}
           aria-label={t('workbench.record.openImage', { name: label })}
           onClick={onOpen}
-          className="relative block w-full cursor-zoom-in overflow-hidden bg-bg-subtle text-left focus:outline-none"
+          className="imggrid-thumb relative block w-full cursor-zoom-in overflow-hidden bg-bg-subtle text-left focus:outline-none"
         >
           <img
             src={item.src}
@@ -151,7 +151,7 @@ function ImageGridTile({
           </span>
         </button>
       )}
-      <figcaption className="flex min-w-0 items-center justify-between gap-2 border-t border-border-color bg-bg-card px-2.5 py-1.5">
+      <figcaption className="imggrid-cap flex min-w-0 items-center justify-between gap-2 border-t border-border-color bg-bg-card px-2.5 py-1.5">
         <span
           className="min-w-0 flex-1 truncate text-[12px] leading-[1.45] text-text-secondary"
           title={label}
@@ -203,15 +203,13 @@ function ImageGridLightbox({
   return createPortal(
     <div
       data-testid="image-grid-viewer"
-      /* 与全站其余 11 处模态遮罩同一浓度。此前这里是 /60——图片灯箱压得比别人重，
-         说不出哪里别扭但能感觉到。 */
-      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="lightbox fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="mx-4 flex max-h-[88vh] max-w-[min(1080px,92vw)] flex-col overflow-hidden rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] shadow-xl">
-        <header className="flex items-center gap-2 border-b border-[var(--border-color)] px-3 py-2">
+      <div className="lightbox-win mx-4 flex max-h-[88vh] max-w-[min(1080px,92vw)] flex-col overflow-hidden rounded-lg border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-xl">
+        <header className="lightbox-hd flex items-center gap-2 border-b border-[var(--border-color)] px-3 py-2">
           <div className="min-w-0 flex-1">
             {current.caption ? (
               <div className="truncate text-[12px] font-medium text-text-primary">
@@ -274,7 +272,7 @@ function ImageGridLightbox({
           </button>
         </header>
 
-        <div className="relative min-h-0 flex-1 overflow-auto p-3">
+        <div className="lightbox-body relative min-h-0 flex-1 overflow-auto p-3">
           <img
             data-testid="image-grid-viewer-img"
             src={current.src}

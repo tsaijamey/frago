@@ -131,6 +131,7 @@ describe('StreamMinimap', () => {
     expect(screen.getByTestId('stream-minimap')).toBeTruthy();
     fireEvent.click(screen.getByTestId('lens-all'));
     expect(screen.getByTestId('stream-minimap')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
     fireEvent.click(screen.getByTestId('lens-tool'));
     expect(screen.queryByTestId('stream-minimap')).toBeNull();
     fireEvent.click(screen.getByTestId('lens-talk'));
@@ -141,6 +142,7 @@ describe('StreamMinimap', () => {
     mount();
     const scroll = () => screen.getByTestId('record-stream-scroll');
     expect(scroll().classList.contains('record-stream-no-bar')).toBe(true);
+    fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
     fireEvent.click(screen.getByTestId('lens-tool'));
     expect(scroll().classList.contains('record-stream-no-bar')).toBe(false);
     fireEvent.click(screen.getByTestId('lens-all'));

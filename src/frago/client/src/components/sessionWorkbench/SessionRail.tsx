@@ -55,7 +55,14 @@ import {
 import { useAppStore, useUIStore } from '@/stores/appStore';
 import { modKey } from '@/hooks/usePlatform';
 import { closeTmuxSessions } from '@/api';
-import SessionItem, { AgentOnItChip, ForYouChip, SendingChip, resumeCommand, shortAge } from './SessionItem';
+import SessionItem, {
+  AgentOnItChip,
+  ForYouChip,
+  SendingChip,
+  resumeCommand,
+  sessionLifecycleOf,
+  shortAge,
+} from './SessionItem';
 import NewSessionModal from './NewSessionModal';
 import { useSessionPins, type SessionPinsState } from '@/hooks/useSessionPins';
 import type { SessionTodayState } from '@/hooks/useSessionToday';
@@ -68,7 +75,6 @@ import {
   activityTs,
   expandSessionGroupIds,
   getSessionGroupIds,
-  type ListFilter,
   type WorkbenchSession,
   type WorkbenchSessionsState,
 } from '@/hooks/useWorkbenchSessions';
@@ -76,14 +82,48 @@ import {
 /** 档位选中态：中性填充 + 字重。整块换底，不靠任何单边色条，也不用绿。 */
 const CHIP_ON = 'bg-bg-active text-text-primary font-medium';
 const CHIP_OFF = 'text-text-muted hover:bg-bg-hover hover:text-text-secondary';
+const WARN_CHIP_ON =
+  'bg-accent-warning-10 text-accent-warning font-medium [box-shadow:inset_0_0_0_1px_var(--accent-warning-border)]';
+const WARN_CHIP_OFF = 'text-accent-warning hover:bg-accent-warning-10';
 
-/** 只剩两档：For you 与全部。 */
-const FILTERS: ListFilter[] = ['for-you', 'all'];
+export type RailFilter = 'all' | 'decision' | 'backlog' | 'running';
 
-const FILTER_LABEL_KEY: Record<ListFilter, string> = {
-  'for-you': 'workbench.forYou.label',
-  all: 'workbench.rail.filterAll',
-};
+const RAIL_FILTERS: {
+  id: RailFilter;
+  i18nKey: string;
+  fallback: string;
+  warn: boolean;
+  title: string;
+}[] = [
+  {
+    id: 'all',
+    i18nKey: 'workbench.rail.filterAll',
+    fallback: 'All',
+    warn: false,
+    title: 'Every session today — older ones live in Timeline',
+  },
+  {
+    id: 'decision',
+    i18nKey: 'workbench.rail.filterNeedsDecision',
+    fallback: 'Decision',
+    warn: true,
+    title: 'Sessions waiting on your decision card or input',
+  },
+  {
+    id: 'backlog',
+    i18nKey: 'workbench.rail.filterCallbackBacklog',
+    fallback: 'Backlog',
+    warn: true,
+    title: 'Sub-sessions with undelivered or queued async callbacks',
+  },
+  {
+    id: 'running',
+    i18nKey: 'workbench.rail.filterRunning',
+    fallback: 'Running',
+    warn: false,
+    title: 'Active turns running right now',
+  },
+];
 
 /**
  * 一次往清单里放多少场。滚到底再放下一批。
@@ -213,6 +253,8 @@ export interface SessionRailProps {
   holdId?: string | null;
   /** 这一场留了合法的「要人拍板」卡片：预览换成卡片的问题。 */
   decisionCardOf?: (sessionId: string) => string | null;
+  /** 存在待回传 / 积压的异步回调的会话集合。 */
+  callbackSessionIds?: ReadonlySet<string>;
   /** 从「…」菜单删掉了一场：选中的正是它时页面退回清单态。 */
   onSessionDeleted?: (sessionId: string) => void;
   /**
@@ -246,6 +288,7 @@ export default function SessionRail({
   busyId = null,
   holdId = null,
   decisionCardOf,
+  callbackSessionIds,
   onSessionDeleted,
   pins: pinsProp,
   onOpenTimeline,
@@ -253,7 +296,7 @@ export default function SessionRail({
   creatingNew = false,
   onToggleNew,
 }: SessionRailProps) {
-  const { sessions, visible, counts, loading, error, filter, setFilter, reload } = state;
+  const { sessions, todaySessions, visible, counts, loading, error, filter, setFilter, reload } = state;
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
   const openSearch = useUIStore((s) => s.setSessionSearchOpen);
@@ -261,6 +304,85 @@ export default function SessionRail({
   const pins = pinsProp ?? ownPins;
   const [newOpen, setNewOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [railFilter, setRailFilter] = useState<RailFilter>(filter === 'for-you' ? 'decision' : 'all');
+  const prevPropFilter = useRef(filter);
+  useEffect(() => {
+    if (prevPropFilter.current !== filter) {
+      prevPropFilter.current = filter;
+      setRailFilter(filter === 'for-you' ? 'decision' : 'all');
+    }
+  }, [filter]);
+
+  const selectRailFilter = useCallback(
+    (next: RailFilter) => {
+      setRailFilter(next);
+      setFilter(next === 'decision' ? 'for-you' : 'all');
+    },
+    [setFilter]
+  );
+
+  const lifeOf = useCallback(
+    (s: WorkbenchSession) =>
+      sessionLifecycleOf(s, {
+        forYou: forYou.infoOf(s.session_id),
+        sending: sendingId === s.session_id,
+        agentOnIt: busyId === s.session_id && sendingId !== s.session_id,
+        hasDecisionCard: Boolean(decisionCardOf?.(s.session_id)),
+        callbackQueued: callbackSessionIds?.has(s.session_id) ?? false,
+      }),
+    [forYou, sendingId, busyId, decisionCardOf, callbackSessionIds]
+  );
+
+  const baseSessions = useMemo(
+    () => (todaySessions.length > 0 ? todaySessions : visible),
+    [todaySessions, visible]
+  );
+
+  const railCounts = useMemo<Record<RailFilter, number>>(() => {
+    if (baseSessions.length === 0) {
+      return {
+        all: counts.all,
+        decision: counts['for-you'],
+        backlog: 0,
+        running: 0,
+      };
+    }
+    let decision = 0;
+    let backlog = 0;
+    let running = 0;
+    for (const s of baseSessions) {
+      const k = lifeOf(s).key;
+      if (k === 'waiting') decision += 1;
+      else if (k === 'callback') backlog += 1;
+      else if (k === 'running') running += 1;
+    }
+    return {
+      all: baseSessions.length,
+      decision,
+      backlog,
+      running,
+    };
+  }, [baseSessions, counts, lifeOf]);
+
+  const filteredVisible = useMemo(() => {
+    if (railFilter === 'all') return visible;
+    if (railFilter === 'decision') {
+      return baseSessions.filter(
+        (s) =>
+          lifeOf(s).key === 'waiting' ||
+          sessions.some(
+            (k) =>
+              k.parent_session_id === s.session_id &&
+              k.relation?.kind === 'branch' &&
+              lifeOf(k).key === 'waiting'
+          )
+      );
+    }
+    if (railFilter === 'backlog') {
+      return baseSessions.filter((s) => lifeOf(s).key === 'callback');
+    }
+    return baseSessions.filter((s) => lifeOf(s).key === 'running');
+  }, [railFilter, visible, baseSessions, lifeOf, sessions]);
   /** 哪几场把自己派出去的 worker 展开着。默认一场都不展开——清单的主干是主会话。 */
   const [expandedWorkers, setExpandedWorkers] = useState<Set<string>>(new Set());
   /** 认不出谁派的那堆 worker 那一区是不是展开着。默认折起来。 */
@@ -355,7 +477,7 @@ export default function SessionRail({
     for (const s of pinnedRows) {
       byId.set(s.session_id, s);
     }
-    for (const s of visible) {
+    for (const s of filteredVisible) {
       byId.set(s.session_id, s);
     }
     if (pinnedSeedIds.size > 0) {
@@ -367,7 +489,7 @@ export default function SessionRail({
     }
     // 路由直达或搜索选中了 24 小时之前 / 本机管理会话时，在「全部」档把该会话所属家族组
     // 一并放入左栏，保证当前打开的会话在左栏有对应选中卡。
-    if (filter === 'all' && selectedId && !byId.has(selectedId) && allById.has(selectedId)) {
+    if (railFilter === 'all' && selectedId && !byId.has(selectedId) && allById.has(selectedId)) {
       for (const memberId of getSessionGroupIds(sessions, selectedId)) {
         const member = allById.get(memberId);
         if (member && !byId.has(memberId)) {
@@ -376,7 +498,7 @@ export default function SessionRail({
       }
     }
     // 全部档位下，若某条交接会话今天在可见列表中，把它的交接祖先链也一并认进 byId，保证跨零点交接不断组。
-    if (filter === 'all') {
+    if (railFilter === 'all') {
       for (const s of Array.from(byId.values())) {
         if (s.relation?.kind !== 'handoff') continue;
         let cur = s.parent_session_id;
@@ -547,7 +669,7 @@ export default function SessionRail({
       orphanRows: orphans,
       pickedRows: picked,
     };
-  }, [sessions, pinnedRows, visible, pins, pickedGroupIds, filter, selectedId]);
+  }, [sessions, pinnedRows, filteredVisible, pins, pickedGroupIds, railFilter, selectedId]);
 
   /**
    * 主干不再按 For you 拆区。服务端已经按创建时刻排好，For you 只在卡片上挂一枚标记；
@@ -589,7 +711,7 @@ export default function SessionRail({
 
   useEffect(() => {
     setShown(PAGE_SIZE);
-  }, [filter]);
+  }, [railFilter]);
 
   // 路由直达或搜索选中了折叠在父会话下的 worker、末尾孤立 worker 或超出首屏分页的会话时，
   // 自动展开对应分组或扩充分页，让当前选中的卡片在左栏可见。
@@ -939,7 +1061,7 @@ export default function SessionRail({
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-r border-border-color bg-bg-secondary">
-      <div className="shrink-0 space-y-1.5 border-b border-border-color px-2.5 pb-2.5 pt-2.5">
+      <div className="rail-top shrink-0 space-y-1.5 border-b border-border-color px-2.5 pb-2.5 pt-2.5">
         {/* 搜索入口与新建挤在一行。新建从一整块实心绿降成右边一颗中性图标按钮：人来这一页
             是为了找会话、接着说话，这一屏唯一的实心绿留给 Send。 */}
         <div className="flex items-center gap-1.5">
@@ -1010,26 +1132,36 @@ export default function SessionRail({
           </button>
         </div>
 
-        {/* 两档分踞两端：左端是「要我做事的」，右端是「所有会话」。并排挤在左端，看不出
-            这是一对互斥的档；中间那片空当正是「选一个」的意思。 */}
-        <div className="flex items-center justify-between">
-          {FILTERS.map((id) => {
-            /* For you 里有东西时，计数加重——这一列最要紧的一个数就是它。 */
-            const hot = id === 'for-you' && counts[id] > 0;
+        <div
+          className="chips flex flex-nowrap items-center gap-[3px] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          data-testid="rail-filters"
+        >
+          {RAIL_FILTERS.map((item) => {
+            const active = railFilter === item.id;
+            const count = railCounts[item.id];
+            const isZero = (item.id === 'backlog' || item.id === 'running') && count === 0 && !active;
+            const chipTone = item.warn
+              ? active
+                ? WARN_CHIP_ON
+                : WARN_CHIP_OFF
+              : active
+                ? CHIP_ON
+                : CHIP_OFF;
             return (
               <button
-                key={id}
+                key={item.id}
                 type="button"
-                onClick={() => setFilter(id)}
-                aria-pressed={filter === id}
-                data-testid={`list-filter-${id}`}
-                className={`flex h-[22px] items-center gap-1 whitespace-nowrap rounded-[12px] px-[5px] text-[11px] transition-colors duration-200 ${
-                  filter === id ? CHIP_ON : CHIP_OFF
-                }`}
+                onClick={() => selectRailFilter(item.id)}
+                aria-pressed={active}
+                title={item.title}
+                data-testid={`list-filter-${item.id}`}
+                className={`chip ${item.warn ? 'warn-chip' : ''} ${active ? 'on' : ''} ${
+                  isZero ? 'is-zero opacity-[0.48]' : ''
+                } flex h-[22px] shrink-0 items-center gap-[3px] whitespace-nowrap rounded-[12px] px-[5px] text-[11px] transition-colors duration-200 ${chipTone}`}
               >
-                <span>{t(FILTER_LABEL_KEY[id])}</span>
-                <span className={`font-mono ${hot ? 'font-semibold text-text-primary' : 'opacity-60'}`}>
-                  {counts[id]}
+                <span>{t(item.i18nKey, item.fallback)}</span>
+                <span className={`n font-mono ${item.warn && count > 0 ? 'font-semibold' : 'opacity-65'}`}>
+                  {count}
                 </span>
               </button>
             );
@@ -1241,7 +1373,7 @@ export default function SessionRail({
           </div>
         ) : !rows.length ? (
           <p className="px-3 py-8 text-center text-[12px] text-text-muted">
-            {filter === 'for-you' ? t('workbench.rail.emptyForYou') : t('workbench.rail.empty')}
+            {railFilter === 'decision' ? t('workbench.rail.emptyForYou') : t('workbench.rail.empty')}
           </p>
         ) : (
           /* 置顶区与其余那一片共用同一条队、同一条滚动条。 */
@@ -1452,6 +1584,7 @@ export default function SessionRail({
                               busyTurn={busyId === session.session_id}
                               inTmux={inTmuxOf(session)}
                               card={decisionCardOf?.(session.session_id) ?? null}
+                              callbackQueued={callbackSessionIds?.has(session.session_id) ?? false}
                               nested={row.nested}
                               branchRoot={row.branchRoot}
                               branchCard={row.branchCard}
@@ -1494,14 +1627,18 @@ export default function SessionRail({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border-color px-2.5 py-2 font-mono text-[11px] leading-[1.6] text-text-muted">
-        {t('workbench.rail.summary', {
+      <div
+        data-testid="rail-foot"
+        title={t('workbench.rail.summary', {
           total: sessions.length,
           cc: familyCounts.cc,
           oc: familyCounts.oc,
           cx: familyCounts.cx,
           ca: familyCounts.ca,
         })}
+        className="rail-foot shrink-0 truncate border-t border-border-color px-3 py-1.5 text-[11px] leading-[1.4] text-text-muted"
+      >
+        {t('workbench.rail.summaryCompact', { total: sessions.length })}
       </div>
 
       {/* 页面传入 `onToggleNew` 时由中栏直接渲染内联新建会话起始页；仅在单独挂载左栏时兜底渲染。 */}

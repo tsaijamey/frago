@@ -779,4 +779,24 @@ describe('固定比例大窗口、文档批注落盘与打包填入对话框', (
     expect(payload.text).toContain('poster.md');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('传入 initialMode="changes" 时直接以改动对照模式打开（供 DeliveryTriad diff pill 跳转使用）', async () => {
+    getSessionFileDiff.mockResolvedValue({
+      path: '/w/src/a.py',
+      size: 20,
+      reason: null,
+      before: 'HEAD',
+      source: 'git HEAD',
+      rows: [
+        [
+          { sign: '-', no: 1, text: 'x = 1' },
+          { sign: '+', no: 1, text: 'x = 2' },
+        ],
+      ],
+    });
+    open({ initialMode: 'changes' });
+    const diff = await screen.findByTestId('file-diff');
+    expect(diff.textContent).toContain('x = 2');
+    expect(getSessionFileDiff).toHaveBeenCalledWith('sid-1', '/w/src/a.py');
+  });
 });

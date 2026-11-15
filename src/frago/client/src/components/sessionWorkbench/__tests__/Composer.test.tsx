@@ -567,7 +567,7 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
     ...over,
   });
 
-  it('在路上：虚线气泡，说清它离开了页面还没进会话；标题已说了这一档，步骤链不重复', () => {
+  it('发送中：虚线气泡，说清它离开了页面还没进会话；标题已说了这一档，步骤链不重复', () => {
     render(
       <Composer
         sessionId={SID}
@@ -581,14 +581,14 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
     const bubble = screen.getByTestId('composer-outbound');
     expect(bubble.getAttribute('data-state')).toBe('sent');
     expect(bubble.className).toContain('border-dashed');
-    expect(bubble.textContent).toContain('在路上');
+    expect(bubble.textContent).toContain('发送中');
     expect(bubble.textContent).toContain('已离开这个页面，还没进会话');
     expect(bubble.textContent).toContain('把 recipes 目录清一遍');
-    expect(bubble.textContent?.split('在路上').length).toBe(2);
+    expect(bubble.textContent?.split('发送中').length).toBe(2);
     expect(screen.queryByTestId('send-progress')).toBeNull();
   });
 
-  it('排队中：实线中性框加时钟，不用绿', () => {
+  it('已入队：实线中性框加时钟，不用绿', () => {
     render(
       <Composer
         sessionId={SID}
@@ -601,10 +601,10 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
 
     const bubble = screen.getByTestId('composer-outbound');
     expect(bubble.getAttribute('data-state')).toBe('queued');
-    // 标题写着排队中，步骤链只留之前那一步
-    expect(bubble.textContent?.split('排队中').length).toBe(2);
+    // 标题写着已入队，步骤链只留之前那一步
+    expect(bubble.textContent?.split('已入队').length).toBe(2);
     expect(screen.getByTestId('send-progress').getAttribute('data-step')).toBe('on_its_way');
-    expect(bubble.textContent).toContain('排队中');
+    expect(bubble.textContent).toContain('已入队');
     expect(bubble.textContent).toContain('agent 还在处理你上一句');
     expect(bubble.className).not.toContain('border-dashed');
     // 排队不是成功，也不是动作：这一块里一处品牌绿都没有
@@ -674,7 +674,7 @@ describe('待发的气泡：与记录流里的「你说」同一种画法', () =
 });
 
 describe('没发出去：报错条里带同一串步骤名', () => {
-  it('✓ 在路上 › ✕ 没发出去，并说原文退回了输入框', async () => {
+  it('✓ 发送中 › ✕ 没发出去，并说原文退回了输入框', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => failResponse('send failed: tmux 会话没起来'))
@@ -693,7 +693,7 @@ describe('没发出去：报错条里带同一串步骤名', () => {
     await waitFor(() => expect(screen.getByTestId('composer-error')).toBeTruthy());
     const bar = screen.getByTestId('composer-error');
     const progress = bar.querySelector('[data-testid=send-progress]');
-    expect(progress?.textContent).toContain('在路上');
+    expect(progress?.textContent).toContain('发送中');
     expect(progress?.textContent).toContain('没发出去');
     expect(bar.textContent).toContain('一个字没丢');
     vi.unstubAllGlobals();

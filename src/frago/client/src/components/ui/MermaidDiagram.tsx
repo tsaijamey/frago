@@ -21,7 +21,7 @@
 import { memo, useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Download, Maximize2, X } from 'lucide-react';
+import { Check, Code2, Copy, Download, Maximize2, X } from 'lucide-react';
 import type { Mermaid } from 'mermaid';
 import mermaidUrl from 'mermaid/dist/mermaid.min.js?url';
 // 普通脚本，加载时把 fragoMermaid 挂到全局上
@@ -235,15 +235,17 @@ export async function renderSvgToPngBlob(
 }
 
 const TOOLBAR_BTN_CLASS =
-  'inline-flex items-center gap-1 rounded-md border border-border-color bg-bg-base px-2 py-1 text-[11px] text-text-muted opacity-70 transition-opacity hover:text-text-primary hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100';
+  'inline-flex items-center gap-1 rounded-md border border-border-color bg-bg-base px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text-primary';
 
 function MermaidDiagram({ source }: { source: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const theme = useDocumentTheme();
   const baseId = `mmd${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const seq = useRef(0);
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'diag' | 'src'>('diag');
   const [zoomed, setZoomed] = useState(false);
   const [zoomWidth, setZoomWidth] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -330,15 +332,16 @@ function MermaidDiagram({ source }: { source: string }) {
   }, [baseId, source, theme]);
 
   useEffect(() => {
+    if (mode !== 'diag') return;
     const el = host.current?.querySelector('svg');
-    if (el) globalThis.fragoMermaid.postProcess(el);
-  }, [svg]);
+    if (el) globalThis.fragoMermaid?.postProcess(el);
+  }, [svg, mode]);
 
   // 浮窗里是同一段 svg 的又一份拷贝，postProcess 补的样式得再走一遍（时序图的分组框靠它）。
   useEffect(() => {
     if (!zoomed) return;
     const el = zoomHost.current?.querySelector('svg');
-    if (el) globalThis.fragoMermaid.postProcess(el);
+    if (el) globalThis.fragoMermaid?.postProcess(el);
   }, [zoomed, svg]);
 
   if (error) {
@@ -355,58 +358,85 @@ function MermaidDiagram({ source }: { source: string }) {
   }
 
   return (
-    <div className="group relative my-2">
-      <div
-        ref={host}
-        data-testid="mermaid-diagram"
-        className="mermaid-diagram flex justify-center overflow-x-auto rounded-[10px] border border-border-color bg-bg-secondary px-3.5 pb-3.5 pt-10 [&_svg]:h-auto [&_svg]:max-w-full"
-        // mermaid 以 strict 安全级别渲染，输出的 SVG 已经过它自己的净化
-        dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
-      >
-        {svg ? undefined : (
-          <span className="py-6 text-[12px] text-text-muted">{t('common.diagramRendering')}</span>
-        )}
-      </div>
-      {svg ? (
-        <div
-          data-testid="mermaid-toolbar"
-          className="absolute right-2 top-2 flex items-center gap-1"
-        >
+    <div className="mmd-card group my-2" data-testid="mermaid-card">
+      <div className="mmd-hd">
+        <span>
+          <b>Mermaid</b>
+        </span>
+        <div data-testid="mermaid-toolbar" className="flex flex-wrap items-center gap-1">
           <button
             type="button"
-            data-testid="mermaid-copy"
-            onClick={copyImage}
-            title={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
-            aria-label={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+            data-testid="mermaid-mode-toggle"
+            onClick={() => setMode((m) => (m === 'diag' ? 'src' : 'diag'))}
             className={TOOLBAR_BTN_CLASS}
           >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-            {copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+            <Code2 size={13} />
+            <span>
+              {mode === 'src'
+                ? isZh
+                  ? '图形'
+                  : 'Diagram'
+                : isZh
+                  ? '源码'
+                  : 'Source'}
+            </span>
           </button>
-          <button
-            type="button"
-            data-testid="mermaid-download"
-            onClick={downloadImage}
-            title={t('common.downloadDiagram')}
-            aria-label={t('common.downloadDiagram')}
-            className={TOOLBAR_BTN_CLASS}
-          >
-            <Download size={13} />
-            {t('common.downloadDiagram')}
-          </button>
-          <button
-            type="button"
-            data-testid="mermaid-zoom"
-            onClick={openZoom}
-            title={t('common.zoomDiagram')}
-            aria-label={t('common.zoomDiagram')}
-            className={TOOLBAR_BTN_CLASS}
-          >
-            <Maximize2 size={13} />
-            {t('common.zoomDiagram')}
-          </button>
+          {svg && mode === 'diag' ? (
+            <>
+              <button
+                type="button"
+                data-testid="mermaid-copy"
+                onClick={copyImage}
+                title={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+                aria-label={copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+                className={TOOLBAR_BTN_CLASS}
+              >
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+                {copied ? t('common.diagramCopied') : t('common.copyDiagram')}
+              </button>
+              <button
+                type="button"
+                data-testid="mermaid-download"
+                onClick={downloadImage}
+                title={t('common.downloadDiagram')}
+                aria-label={t('common.downloadDiagram')}
+                className={TOOLBAR_BTN_CLASS}
+              >
+                <Download size={13} />
+                {t('common.downloadDiagram')}
+              </button>
+              <button
+                type="button"
+                data-testid="mermaid-zoom"
+                onClick={openZoom}
+                title={t('common.zoomDiagram')}
+                aria-label={t('common.zoomDiagram')}
+                className={TOOLBAR_BTN_CLASS}
+              >
+                <Maximize2 size={13} />
+                {t('common.zoomDiagram')}
+              </button>
+            </>
+          ) : null}
         </div>
-      ) : null}
+      </div>
+      {mode === 'src' ? (
+        <pre className="mmd-src" data-testid="mermaid-source">
+          <code>{source}</code>
+        </pre>
+      ) : (
+        <div
+          ref={host}
+          data-testid="mermaid-diagram"
+          className="mermaid-diagram mmd-body flex justify-center overflow-x-auto [&_svg]:h-auto [&_svg]:max-w-full"
+          // mermaid 以 strict 安全级别渲染，输出的 SVG 已经过它自己的净化
+          dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
+        >
+          {svg ? undefined : (
+            <span className="py-6 text-[12px] text-text-muted">{t('common.diagramRendering')}</span>
+          )}
+        </div>
+      )}
       {zoomed && svg ? (
         <DiagramViewer
           svg={svg}

@@ -6,10 +6,10 @@
  * 报错不被压、只并相邻的。
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import RecordStream, { collapseRuns, groupSegments, isSilentHook } from '../RecordStream';
+import RecordStream, { collapseRuns, groupSegments, isSilentHook, withQueueOutcomes } from '../RecordStream';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
 import i18n from '@/i18n';
 
@@ -120,24 +120,31 @@ describe('RecordStream 画出来的样子', () => {
     fireEvent.click(screen.getByTestId('lens-all'));
   }
 
-  it('工具框每行一条，结果没到、又是流的最后一段写 running…', () => {
+  it('工具框默认折叠为回合摘要轨，点击展开后再渲染各调用行与 running 状态', () => {
     stream([say('开工'), call('a'), result('a'), call('b')]);
+    const rail = screen.getByTestId('turn-tools-rail');
+    expect(rail.className).toContain('turn-tools');
+    expect(rail.textContent).toContain('2 tool calls');
+    expect(screen.queryByTestId('tool-run')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('turn-tools-toggle'));
     const run = screen.getByTestId('tool-run');
     const lines = run.querySelectorAll('[data-testid=tool-run-line]');
     expect(lines).toHaveLength(2);
     expect(lines[1].textContent).toContain('running…');
-    expect(run.textContent).toContain('2 tool calls');
   });
 
-  it('点一行摊回原来的调用卡与结果卡', () => {
+  it('展开工具轨后点一行摊回原来的调用卡与结果卡', () => {
     stream([call('a'), result('a')]);
+    fireEvent.click(screen.getByTestId('turn-tools-toggle'));
     fireEvent.click(screen.getByTestId('tool-run-line'));
     expect(document.querySelectorAll('[data-kind="tool.call"]').length).toBe(1);
     expect(document.querySelectorAll('[data-kind="tool.result"]').length).toBe(1);
   });
 
-  it('并进框里的那几条不藏起来：框底报数，点开摊回原卡', () => {
+  it('并进框里的那几条不藏起来：展开工具轨后框底报数，点开摊回原卡', () => {
     stream([call('a'), silentHook(), result('a')]);
+    fireEvent.click(screen.getByTestId('turn-tools-toggle'));
     const extras = screen.getByTestId('tool-run-extras');
     expect(extras.textContent).toContain('1 more record folded in');
     fireEvent.click(extras);
@@ -163,5 +170,50 @@ describe('RecordStream 画出来的样子', () => {
     const hook = screen.getByTestId('hook-inject');
     expect(hook.getAttribute('data-empty')).toBe('true');
     expect(hook.textContent).toContain('Hook');
+  });
+
+  it('RecordStream 传递 onOpenFileDiff 与 onSelectSession 到 DeliveryTriad 和 AsyncCallbackCard', () => {
+    const onOpenFileDiff = vi.fn();
+    const onSelectSession = vi.fn();
+    const cbXml =
+      '<frago-async-callback kind="worker" mode="new" job_id="disp-1" worker_session_id="core_worker_99" status="completed">\n' +
+      '【下属 Worker 异步回传】来自 Worker 会话 `core_worker_99`（模式：新建执行，内核：`coreagent`）\n' +
+      '- 派发单号：`disp-1`\n' +
+      '- 任务摘要：验证\n' +
+      '- 执行状态：`completed` (exit_code=0)\n\n' +
+      '### Worker 交付结果\n完成。\n</frago-async-callback>';
+    const recs = withQueueOutcomes([
+      rec({ kind: 'user.say', payload: { text: cbXml } }),
+      rec({
+        kind: 'tool.call',
+        payload: { call_id: 'c1', tool_name: 'Write', args: { file_path: '/tmp/out.ts', content: 'x\ny' } },
+      }),
+      rec({ kind: 'tool.result', payload: { call_id: 'c1', tool_name: 'Write', status: 'ok', body: 'ok' } }),
+      rec({ kind: 'tool.call', payload: { call_id: 'c2', tool_name: 'Bash', args: { command: 'pytest -q' } } }),
+      rec({ kind: 'tool.result', payload: { call_id: 'c2', tool_name: 'Bash', status: 'ok', body: '1 passed' } }),
+      say('完成写入并测试通过。'),
+    ]);
+
+    render(
+      <RecordStream
+        sessionId={SID}
+        records={recs}
+        loading={false}
+        loadingOlder={false}
+        hasOlder={false}
+        error={null}
+        onLoadOlder={() => {}}
+        onOpenFileDiff={onOpenFileDiff}
+        onSelectSession={onSelectSession}
+      />
+    );
+
+    expect(screen.getByTestId('async-callback-steps').getAttribute('data-stage')).toBe('consumed');
+    fireEvent.click(screen.getByTestId('async-callback-jump'));
+    expect(onSelectSession).toHaveBeenCalledWith('core_worker_99');
+
+    fireEvent.click(screen.getByTestId('delivery-triad-file'));
+    expect(onOpenFileDiff).toHaveBeenCalledWith('/tmp/out.ts');
+    expect(screen.getByTestId('delivery-triad-verify').textContent).toContain('pytest -q');
   });
 });

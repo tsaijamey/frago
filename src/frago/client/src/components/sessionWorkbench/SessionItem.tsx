@@ -181,6 +181,69 @@ export function AgentOnItChip() {
   );
 }
 
+/** 6 类会话出身源（与原型 ORIGIN_MAP 1:1 对应）。 */
+export type SessionOriginKey = 'human' | 'employee' | 'worker' | 'schedule' | 'pair' | 'hook';
+
+/** 6 态生命周期（与原型 sessionLifecycleOf 1:1 对应）。 */
+export type SessionLifecycleKey = 'waiting' | 'callback' | 'error' | 'running' | 'idle' | 'completed';
+
+export const ORIGIN_LABEL: Record<SessionOriginKey, string> = {
+  human: 'Direct',
+  employee: 'Employee',
+  worker: 'Worker',
+  schedule: 'Cron',
+  pair: 'Pair',
+  hook: 'Hook',
+};
+
+type SessionMetaExtra = WorkbenchSession & {
+  callback_queued?: boolean;
+  need?: unknown;
+  lifecycle?: SessionLifecycleKey;
+  status?: WorkbenchSession['status'] | 'error';
+};
+
+export function sessionOriginOf(session: WorkbenchSession): SessionOriginKey {
+  const origin = session.origin as string | undefined;
+  const title = session.title || '';
+  if (origin === 'schedule' || /schedule|定时任务/i.test(title)) return 'schedule';
+  if (origin === 'pair' || /paired session/i.test(title)) return 'pair';
+  if (origin === 'hook' || (/hook/i.test(title) && origin !== 'human')) return 'hook';
+  if (
+    origin === 'worker' ||
+    Boolean(session.parent_session_id && session.relation?.kind !== 'branch' && session.relation?.kind !== 'handoff')
+  ) {
+    return 'worker';
+  }
+  if (session.employee_id || origin === 'employee') return 'employee';
+  return 'human';
+}
+
+export function sessionLifecycleOf(
+  session: WorkbenchSession,
+  opts: {
+    forYou?: ForYouInfo | null;
+    sending?: boolean;
+    agentOnIt?: boolean;
+    hasDecisionCard?: boolean;
+    callbackQueued?: boolean;
+  } = {}
+): { key: SessionLifecycleKey; label: string } {
+  const meta = session as SessionMetaExtra;
+  if (meta.status === 'error') return { key: 'error', label: 'Error' };
+  if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
+    return { key: 'callback', label: 'Callback queued' };
+  }
+  if (opts.forYou || opts.hasDecisionCard || meta.need) {
+    return { key: 'waiting', label: 'Waiting decision' };
+  }
+  if (opts.sending || opts.agentOnIt || session.status === 'running') {
+    return { key: 'running', label: 'Running' };
+  }
+  if (session.status === 'done') return { key: 'completed', label: 'Completed' };
+  return { key: 'idle', label: 'Idle' };
+}
+
 /**
  * 卡片第二行的预览。For you 那几场取收尾原话（tmux 清单的 `closing_text`，已截开头留结尾，
  * 有合法卡片时是卡片的问题）；其余取会话清单的 `digest_done`——它是最近一条回复的**开头**
@@ -230,7 +293,8 @@ export default function SessionItem({
   sending = false,
   agentOnIt = false,
   inTmux = false,
-  card: _card = null,
+  card = null,
+  callbackQueued = false,
   busyTurn = false,
   nested = false,
   branchRoot = false,
@@ -270,6 +334,8 @@ export default function SessionItem({
   inTmux?: boolean;
   /** 选中那场末条回复里留了合法的「要人拍板」卡片：预览换成卡片的问题。 */
   card?: string | null;
+  /** 存在待回传 / 积压的异步回调。 */
+  callbackQueued?: boolean;
   /** 本页刚发出的一句还没答完：菜单里关 tmux 先问。 */
   busyTurn?: boolean;
   /**
@@ -359,7 +425,7 @@ export default function SessionItem({
     : branchCard
       ? 'pl-[14px] pr-[11px] py-[7px]'
       : hasEmpBar
-        ? 'px-3 pt-[7px] pb-[7px]'
+        ? 'px-3 pt-[5px] pb-[7px]'
         : 'px-3 pt-2 pb-[7px]';
   const padding = hasEmpBar ? 'overflow-hidden p-0' : bodyPadding;
   /** 发出之后状态行只说这句话走到哪了，不再写时长。 */
@@ -409,6 +475,30 @@ export default function SessionItem({
         ? 'workbench.status.running'
         : 'workbench.status.done'
   );
+  const originKey = sessionOriginOf(session);
+  const life = sessionLifecycleOf(session, {
+    forYou,
+    sending,
+    agentOnIt,
+    hasDecisionCard: Boolean(card),
+    callbackQueued,
+  });
+  const lifeColorCls =
+    life.key === 'waiting' || life.key === 'callback'
+      ? 'text-accent-warning'
+      : life.key === 'error'
+        ? 'text-accent-error'
+        : life.key === 'running'
+          ? 'text-accent-primary'
+          : 'text-text-muted';
+  const lifeDotCls =
+    life.key === 'waiting' || life.key === 'callback'
+      ? 'bg-accent-warning'
+      : life.key === 'error'
+        ? 'bg-accent-error'
+        : life.key === 'running'
+          ? 'bg-accent-primary'
+          : 'bg-text-muted';
   return (
     /* 叠纸画在这一层：两张纸片是绝对定位的兄弟节点，排在卡片**前面**，于是被卡片盖住，
        只露出下缘与两侧收进去的那一点。层数固定三层，不随实际条数变——数量由展开后
@@ -458,7 +548,7 @@ export default function SessionItem({
            也不用绿。**底下压着 worker 的那几场、以及分支组里的卡是例外**：它们要有一张实在
            的纸，身后那一叠才立得住。内边距照原型 .si：上 8、左右 12、下 7；分支子卡与 worker
            行各收一档，见上面的 `padding`。 */
-        className={`group/session relative z-[1] w-full cursor-pointer rounded-[8px] text-left transition-colors duration-200 ${padding} ${stateCls}`}
+        className={`si group/session relative z-[1] w-full cursor-pointer rounded-[8px] text-left transition-colors duration-200 ${padding} ${stateCls}`}
       >
         {hasEmpBar ? (
           <div
@@ -491,6 +581,52 @@ export default function SessionItem({
               <span>{t('workbench.rail.branched')}</span>
             </button>
           ) : null}
+
+          {(() => {
+            const showOriginChip =
+              !nested &&
+              (originKey === 'worker' ||
+                originKey === 'schedule' ||
+                originKey === 'pair' ||
+                originKey === 'hook' ||
+                (!hasEmpBar && originKey === 'employee'));
+            const showLifeChip =
+              !nested &&
+              (life.key === 'waiting' ||
+                life.key === 'callback' ||
+                life.key === 'running' ||
+                life.key === 'error');
+            if (!showOriginChip && !showLifeChip) return null;
+            return (
+              <div
+                data-testid="session-badges"
+                className="si-badges mb-[3px] flex min-w-0 flex-wrap items-center gap-1"
+              >
+                {showOriginChip ? (
+                  <span
+                    data-testid="session-origin"
+                    data-origin-key={originKey}
+                    className="si-origin inline-flex h-[16px] items-center whitespace-nowrap rounded-[4px] border border-[var(--border-subtle)] bg-bg-hover px-[5px] font-mono text-[11px] leading-[16px] text-text-muted"
+                  >
+                    {ORIGIN_LABEL[originKey]}
+                  </span>
+                ) : null}
+                {showLifeChip ? (
+                  <span
+                    data-testid="session-lifecycle"
+                    data-lifecycle={life.key}
+                    className={`si-life ${life.key} inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium ${lifeColorCls}`}
+                  >
+                    <i
+                      aria-hidden="true"
+                      className={`dot inline-block h-[6px] w-[6px] shrink-0 rounded-full ${lifeDotCls}`}
+                    />
+                    <span>{life.label}</span>
+                  </span>
+                ) : null}
+              </div>
+            );
+          })()}
 
           {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
           <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>

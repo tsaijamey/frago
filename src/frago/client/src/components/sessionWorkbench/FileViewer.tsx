@@ -72,6 +72,8 @@ export interface FileViewerProps {
   index: number;
   /** 从对话链接点进来时附带的行号锚点（如 `L84`、`L314-L368`）。 */
   line?: string;
+  /** 指定初始打开的视图 tab（例如从 DeliveryTriad diff 胶囊直接打开 `'changes'` 模式）。 */
+  initialMode?: 'preview' | 'file' | 'changes' | 'edit';
   onClose: () => void;
   /** ‹ › 翻上一个／下一个，绕圈。 */
   onStep: (delta: number) => void;
@@ -332,6 +334,7 @@ export default function FileViewer({
   files,
   index,
   line,
+  initialMode,
   onClose,
   onStep,
   onReveal,
@@ -369,7 +372,7 @@ export default function FileViewer({
   }, [previewKind, canEdit]);
 
   const [mode, setMode] = useState<'preview' | 'file' | 'changes' | 'edit'>(() =>
-    previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file'
+    initialMode ?? (previewKindOf(files[index]?.path ?? '') ? 'preview' : 'file')
   );
   const [diff, setDiff] = useState<SessionFileDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -400,7 +403,7 @@ export default function FileViewer({
     let alive = true;
     setContent(null);
     setError(null);
-    setMode(previewKindOf(path) ? 'preview' : 'file');
+    setMode(initialMode ?? (previewKindOf(path) ? 'preview' : 'file'));
     setDiff(null);
     setDiffError(null);
     setEditText('');

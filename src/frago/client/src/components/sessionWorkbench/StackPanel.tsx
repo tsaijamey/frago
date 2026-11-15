@@ -94,6 +94,8 @@ export interface StackPanelProps {
   /** 把这一条挪到整份数组里的 `to` 位置。 */
   onMove: (id: string, to: number) => void;
   onNoteChange: (id: string, note: string) => void;
+  /** 折叠进 .obs-stack-foot 时由外层渲染折叠头，内部不重复画 header。 */
+  hideHeader?: boolean;
 }
 
 /** 列表里那一种小字按钮：悬停只换字色，不换底——这一栏的底是纸色，一换就花。 */
@@ -431,6 +433,7 @@ export default function StackPanel({
   onDelete,
   onMove,
   onNoteChange,
+  hideHeader = false,
 }: StackPanelProps) {
   const { t } = useTranslation();
   const stacks = marks.filter((m) => m.kind === 'stack');
@@ -447,24 +450,26 @@ export default function StackPanel({
   };
 
   return (
-    <section data-testid="stack-panel" className="wb-tray h-full min-h-0">
-      <header className="wb-tray-section flex shrink-0 items-center gap-1.5">
-        <Layers size={12} className="shrink-0 text-text-muted" />
-        <span className="wb-tray-eyebrow mb-0">
-          {t('workbench.stack.title')}
-        </span>
-        {stacks.length ? (
-          <span className="font-mono text-[11px] tabular-nums text-text-muted opacity-70">
-            {t('workbench.stack.count', { n: stacks.length })}
+    <section data-testid="stack-panel" className={hideHeader ? 'wb-tray min-h-0' : 'wb-tray h-full min-h-0'}>
+      {hideHeader ? null : (
+        <header className="wb-tray-section flex shrink-0 items-center gap-1.5 border-b border-border-color">
+          <Layers size={12} className="shrink-0 text-text-muted" />
+          <span className="wb-tray-eyebrow mb-0">
+            {t('workbench.stack.title')}
           </span>
-        ) : null}
-      </header>
+          {stacks.length ? (
+            <span className="font-mono text-[11px] tabular-nums text-text-muted opacity-70">
+              {t('workbench.stack.count', { n: stacks.length })}
+            </span>
+          ) : null}
+        </header>
+      )}
       {stacks.length === 0 ? (
         /* 空着时只补一句怎么用。**不再画一个空态图标加一遍标题**——上面那行眉标已经
            写着「暂存」，再写一遍就是同一句话说两遍。 */
         <p
           data-testid="stack-empty"
-          className="wb-tray-body px-3 pb-3 text-[12px] text-text-muted"
+          className={hideHeader ? 'wb-tray-body pt-1 text-[12px] text-text-muted' : 'wb-tray-body px-3 py-3 text-[12px] text-text-muted'}
         >
           {t('workbench.stack.empty')}
         </p>
@@ -473,7 +478,9 @@ export default function StackPanel({
         <ul
           data-stack-list=""
           data-testid="stack-list"
-          className="min-h-0 flex-1 divide-y divide-dashed divide-border-color overflow-y-auto pb-4 pl-2"
+          className={`min-h-0 flex-1 divide-y divide-dashed divide-border-color overflow-y-auto ${
+            hideHeader ? 'pb-1' : 'pb-4 pl-2'
+          }`}
         >
           {stacks.map((mark, index) => (
             <StackItem

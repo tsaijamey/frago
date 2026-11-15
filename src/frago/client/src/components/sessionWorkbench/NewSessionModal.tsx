@@ -653,7 +653,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-[background-color,border-color,box-shadow] ${
                     selectedEmployee !== null
                       ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow),inset_0_0_0_1px_var(--border-card)]'
-                      : 'border-border-color bg-bg-secondary/70 hover:border-border-strong hover:bg-bg-hover'
+                      : 'border-border-color bg-bg-secondary hover:border-border-strong hover:bg-bg-hover'
                   }`}
                 >
                   <span
@@ -690,7 +690,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                   className={`flex items-start gap-3 rounded-[12px] border p-3.5 text-left transition-[background-color,border-color,box-shadow] ${
                     selectedEmployee === null
                       ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] [box-shadow:var(--sel-shadow),inset_0_0_0_1px_var(--border-card)]'
-                      : 'border-border-color bg-bg-secondary/70 hover:border-border-strong hover:bg-bg-hover'
+                      : 'border-border-color bg-bg-secondary hover:border-border-strong hover:bg-bg-hover'
                   }`}
                 >
                   <span
@@ -725,7 +725,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                 className={`flex flex-col gap-3 rounded-[12px] border p-3.5 transition-colors ${
                   selectedEmployee
                     ? 'border-[var(--emp-border,var(--border-color))] bg-bg-secondary'
-                    : 'border-dashed border-border-color bg-bg-secondary/40'
+                    : 'border-dashed border-border-color bg-bg-subtle'
                 }`}
               >
                 <div
@@ -915,7 +915,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
 
                     <button
                       type="button"
-                      className="flex h-7 w-full min-w-0 items-center gap-2 rounded-[7px] bg-bg-primary/60 px-2.5 text-left transition-colors hover:bg-bg-hover"
+                      className="flex h-7 w-full min-w-0 items-center gap-2 rounded-[7px] bg-bg-primary px-2.5 text-left transition-colors hover:bg-bg-hover"
                       onClick={() => setCtxOpen((v) => !v)}
                       aria-expanded={ctxOpen}
                       data-testid="employee-context-toggle"

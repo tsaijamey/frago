@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 
 import i18n from '@/i18n';
 import { TestRail } from './railTestKit';
@@ -108,6 +108,7 @@ describe('换语言不用刷新页面', () => {
         onLoadOlder={NOOP}
       />
     );
+    fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
     expect(screen.getByTestId('lens-hook').textContent).toContain('旁路注入');
 
     await switchTo('en');

@@ -5,19 +5,20 @@
  * 数、全域禁令在三栏都成立。
  */
 
-import { beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import RecordStream, {
   buildTalkSegments,
   groupRecords,
   lensOf,
+  normalizeStreamLensParam,
   talkView,
   withTurnDecisionCards,
 } from '../RecordStream';
 import { DecisionCardContext } from '../DecisionCard';
 import { TestRail } from './railTestKit';
-import { relativeTime, shortAge } from '../SessionItem';
-import { ReportBody } from '../ReportPanel';
+import { relativeTime, sessionLifecycleOf, sessionOriginOf, shortAge } from '../SessionItem';
+import { ReportBody, jumpToPendingCard } from '../ReportPanel';
 import { parseAnsiSegments } from '../SessionTerminal';
 import type { ObserverState, SessionObserverView } from '@/hooks/useSessionObserver';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
@@ -226,34 +227,11 @@ describe('RecordStream 中栏', () => {
     expect(screen.getByText(/从左边挑一场会话/)).toBeTruthy();
   });
 
-  // 2026-11-14：中栏空态此前只有一个图标加一行说明，占着整栏却不提供信息。
-  // 现在把手上已有的最近几场摆进去，点一条直接进那一场——不新取数据、不新加接口。
-  describe('空态里的最近会话', () => {
-    const recent = [
-      { id: 'r1', title: '最近一场' },
-      { id: 'r2', title: '第二场' },
-      { id: 'r3', title: '第三场' },
-    ];
-
-    it('给了最近几场就摆出来，点一条交回它的编号', () => {
-      const onOpenRecent = vi.fn();
-      render(
-        <RecordStream
-          {...streamProps({ sessionId: null, records: [], recentSessions: recent, onOpenRecent })}
-        />
-      );
-      const items = screen.getAllByTestId('stream-empty-recent-item');
-      expect(items).toHaveLength(3);
-      expect(items[0].textContent).toContain('最近一场');
-      fireEvent.click(items[1]);
-      expect(onOpenRecent).toHaveBeenCalledWith('r2');
-    });
-
-    it('没给最近几场时只留说明，不摆空列表', () => {
-      render(<RecordStream {...streamProps({ sessionId: null, records: [] })} />);
-      expect(screen.queryByTestId('stream-empty-recent')).toBeNull();
-      expect(screen.getByText(/从左边挑一场会话/)).toBeTruthy();
-    });
+  it('没挑会话时仅渲染简洁空态提示，不渲染最近会话快捷按钮列表', () => {
+    render(<RecordStream {...streamProps({ sessionId: null, records: [] })} />);
+    expect(screen.getByText(/从左边挑一场会话/)).toBeTruthy();
+    expect(screen.queryByTestId('stream-empty-recent')).toBeNull();
+    expect(screen.queryByTestId('stream-empty-recent-item')).toBeNull();
   });
 
   it('空壳会话渲染成引导页而不是报错', () => {
@@ -620,10 +598,14 @@ describe('RecordStream 中栏', () => {
       record({ id: 'e', seq: 4, kind: 'call.envelope', payload: { duration_ms: 100 } }),
     ];
 
-    it('每一档带真实条数——筛掉的东西必须在条数上看得见', () => {
+    it('每一档带真实条数——筛掉的东西必须在条数上看得见（Inspect 折叠组含 Hooks/Tools/System 合计条数）', () => {
       render(<RecordStream {...streamProps({ records: mixed })} />);
       expect(screen.getByTestId('lens-all').textContent).toContain('5');
       expect(screen.getByTestId('lens-talk').textContent).toContain('2');
+      const inspectToggle = screen.getByTestId('lens-inspect-toggle');
+      expect(inspectToggle.textContent).toContain('Inspect');
+      expect(inspectToggle.textContent).toContain('3');
+      fireEvent.click(inspectToggle);
       expect(screen.getByTestId('lens-hook').textContent).toContain('1');
       expect(screen.getByTestId('lens-tool').textContent).toContain('1');
       expect(screen.getByTestId('lens-system').textContent).toContain('1');
@@ -636,8 +618,9 @@ describe('RecordStream 中栏', () => {
       expect(screen.queryByTestId('hook-inject')).toBeNull();
     });
 
-    it('挑一档就只剩那一档', () => {
+    it('展开 Inspect 并挑一档就只剩那一档', () => {
       render(<RecordStream {...streamProps({ records: mixed })} />);
+      fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
       fireEvent.click(screen.getByTestId('lens-hook'));
       expect(screen.getByTestId('hook-inject')).toBeTruthy();
       expect(screen.queryByText('开工')).toBeNull();
@@ -649,7 +632,7 @@ describe('RecordStream 中栏', () => {
       expect(screen.queryByTestId('stream-lens')).toBeNull();
     });
 
-    it('档位条保持纯净，不再冗余放置用量读数', () => {
+    it('档位条右侧展示紧凑模型与当前 Context 读数，累计总量收入 title 悬停提示', () => {
       render(
         <RecordStream
           {...streamProps({
@@ -659,16 +642,33 @@ describe('RecordStream 中栏', () => {
         />
       );
       expect(screen.queryByTestId('stream-lens-usage')).toBeNull();
+      const lensUsage = screen.getByTestId('lens-usage');
+      expect(lensUsage.textContent).toBe('gemini-4-argon-medium · 上下文 15k');
+      expect(lensUsage.getAttribute('title')).toContain('15,200');
+      expect(lensUsage.getAttribute('title')).toContain('累计 28k');
     });
 
-    it('档位条左侧依次紧贴展示 Watcher 菜单、隔离纯文本 Executor 与现有 All | Talk 等菜单', () => {
+    it('档位条主行收敛为 进展 / Talk / All，Hooks/Tools/System 收进 Inspect 折叠组并支持展开收起', () => {
       render(<RecordStream {...streamProps({ records: mixed })} />);
-      const watcherBtn = screen.getByTestId('lens-watcher');
-      const executorLabel = screen.getByTestId('lens-executor-label');
-      const allBtn = screen.getByTestId('lens-all');
-      expect(watcherBtn.textContent).toContain('Watcher');
-      expect(executorLabel.textContent).toBe('Executor');
-      expect(allBtn.textContent).toContain('全部');
+      expect(screen.queryByTestId('lens-executor-label')).toBeNull();
+      expect(screen.getByTestId('lens-watcher').textContent).toContain('进展');
+      expect(screen.getByTestId('lens-talk').textContent).toContain('对话');
+      expect(screen.getByTestId('lens-all').textContent).toContain('全部');
+      expect(screen.queryByTestId('lens-hook')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('lens-inspect-toggle'));
+      expect(screen.getByTestId('lens-inspect-group')).toBeTruthy();
+      expect(screen.getByTestId('lens-hook')).toBeTruthy();
+      expect(screen.getByTestId('lens-tool')).toBeTruthy();
+      expect(screen.getByTestId('lens-system')).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId('lens-inspect-close'));
+      expect(screen.queryByTestId('lens-inspect-group')).toBeNull();
+      expect(screen.getByTestId('lens-inspect-toggle')).toBeTruthy();
+
+      expect(normalizeStreamLensParam('progress')).toEqual({ lens: 'talk', progressOpen: true });
+      expect(normalizeStreamLensParam('watcher')).toEqual({ lens: 'talk', progressOpen: true });
+      expect(normalizeStreamLensParam('all')).toEqual({ lens: 'all', progressOpen: false });
     });
 
     it('Talk 视图将每个回复前的多次工具调用与 thinking 叠加为单行自增计数，不刷多行', () => {
@@ -729,7 +729,63 @@ describe('RecordStream 中栏', () => {
       expect(contentBox.className).toContain('justify-end');
     });
 
-    it('Watcher 视图对每个游标切片外部上方展示观察者总结，下方包裹默认折叠的 Talk 并原样展示可交互决策卡', () => {
+    it('切入 Watcher 时滚回顶部，从 Watcher 切回 Talk / All 时滚动区与 Minimap 滑块立即沉底', () => {
+      const origClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          if (this.getAttribute?.('data-testid') === 'stream-minimap') return 400;
+          if (this.getAttribute?.('data-testid') === 'record-stream-scroll') return 800;
+          return 0;
+        },
+      });
+      try {
+        const onLoadOlder = vi.fn();
+        render(
+          <RecordStream
+            {...streamProps({
+              records: mixed,
+              minimap: true,
+              hasOlder: true,
+              onLoadOlder,
+            })}
+          />
+        );
+        const scroller = screen.getByTestId('record-stream-scroll') as HTMLDivElement;
+        Object.defineProperty(scroller, 'scrollHeight', { value: 2000, configurable: true });
+
+        // 1. 切入 Watcher：scrollTop 置为 0，在 Watcher 内滚动不误触 onLoadOlder
+        fireEvent.click(screen.getByTestId('lens-watcher'));
+        expect(scroller.scrollTop).toBe(0);
+        onLoadOlder.mockClear();
+        fireEvent.scroll(scroller);
+        expect(onLoadOlder).not.toHaveBeenCalled();
+
+        // 2. 从 Watcher 切回对话（Talk）：scrollTop 立即沉底，Minimap 滑块位于轨道底部 (400 - 160 = 240)
+        fireEvent.click(screen.getByTestId('lens-talk'));
+        expect(scroller.scrollTop).toBe(2000);
+        const thumbTalk = screen.getByTestId('stream-minimap-thumb');
+        expect(parseFloat(thumbTalk.style.top)).toBeGreaterThan(0);
+        expect(parseFloat(thumbTalk.style.top) + parseFloat(thumbTalk.style.height)).toBeCloseTo(400, 1);
+
+        // 3. 再次进 Watcher 后切回全部（All）：scrollTop 与 Minimap 滑块同样立即沉底
+        fireEvent.click(screen.getByTestId('lens-watcher'));
+        expect(scroller.scrollTop).toBe(0);
+        fireEvent.click(screen.getByTestId('lens-all'));
+        expect(scroller.scrollTop).toBe(2000);
+        const thumbAll = screen.getByTestId('stream-minimap-thumb');
+        expect(parseFloat(thumbAll.style.top)).toBeGreaterThan(0);
+        expect(parseFloat(thumbAll.style.top) + parseFloat(thumbAll.style.height)).toBeCloseTo(400, 1);
+      } finally {
+        if (origClientHeight) {
+          Object.defineProperty(HTMLElement.prototype, 'clientHeight', origClientHeight);
+        } else {
+          delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+        }
+      }
+    });
+
+    it('Watcher 视图渲染三段式汇报 Table（态势锚点卡 + 事项总控表 + 里程碑表）并支持 Talk 折叠与内联决策卡交互', () => {
       const uiCardJson = JSON.stringify({
         frago_ui_component: 'decision-card',
         component_type: 'single-choice',
@@ -771,12 +827,26 @@ describe('RecordStream 中栏', () => {
           model: 'deepseek-v4-flash',
           status: 'ok',
           status_detail: null,
+          tasks: [
+            {
+              id: 'T1',
+              proposed_at: 1_753_800_000_000,
+              title: '梳理 Watcher 信息结构',
+              status: 'waiting',
+              actor: '主会话 · CoreAgent',
+              conclusion: '已完成 `RecordStream.tsx` 改造，待拍板方案',
+            },
+          ],
           runs: [
             {
               id: 'run-1',
+              run_id: 1,
+              task_id: 'T1',
+              actor: '主会话 · CoreAgent',
               at: 1_753_800_005_000,
               cursor_from: 0,
               cursor_to: 4,
+              phase_goal: '结构重塑与决策确认',
               tail: { kind: 'output', text: '已完成代码改造，等待选择信息结构' },
               happened_add: ['完成了 Watcher 与 Talk 改造'],
               decision: 'Observer 信息结构采用哪种组织方式？',
@@ -804,25 +874,38 @@ describe('RecordStream 中栏', () => {
 
       fireEvent.click(screen.getByTestId('lens-watcher'));
       expect(screen.getByTestId('watcher-view')).toBeTruthy();
-      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
-      expect(screen.getByTestId('watcher-phase-goal').textContent).toContain('梳理信息结构');
-      expect(screen.getByTestId('watcher-summary').textContent).toContain('完成了 Watcher 与 Talk 改造');
-      expect(screen.getByTestId('watcher-summary').textContent).not.toContain('。；');
-      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
-      expect(screen.getByTestId('watcher-part-doing').textContent).toContain('完成了 Watcher 与 Talk 改造');
-      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
-      expect(screen.getByTestId('watcher-part-findings').textContent).toContain(
+      expect(screen.getByTestId('watcher-anchor-card')).toBeTruthy();
+      expect(screen.getByTestId('watcher-anchor-card').textContent).not.toContain('WATCHER ·');
+      expect(screen.getByTestId('watcher-anchor-card').textContent).toContain('PROGRESS LEDGER');
+      expect(screen.getByTestId('watcher-stat-pills').textContent).toContain('待拍板 1');
+      expect(screen.getByTestId('watcher-goal-anchor').textContent).toContain('梳理信息结构');
+      expect(screen.getByTestId('watcher-current-state').textContent).toContain(
         '已完成代码改造，等待选择信息结构'
       );
-      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
-      expect(screen.getByTestId('watcher-part-decision').textContent).toContain(
+      expect(screen.getByTestId('watcher-decision-banner').textContent).toContain(
         'Observer 信息结构采用哪种组织方式？'
       );
 
-      // Talk 默认折叠，但决策卡在 Watcher 下原样展示且可直接选择发送
-      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      const tasksTable = screen.getByTestId('watcher-tasks-table');
+      expect(tasksTable.textContent).toContain('T1');
+      expect(tasksTable.textContent).toContain('梳理 Watcher 信息结构');
+      expect(tasksTable.querySelector('code')?.textContent).toBe('RecordStream.tsx');
+
+      const milestonesTable = screen.getByTestId('watcher-milestones-table');
+      const runRow = screen.getByTestId('watcher-run-1');
+      expect(runRow.textContent).toContain('#1');
+      expect(runRow.textContent).toContain('主会话 · CoreAgent');
+      expect(milestonesTable.textContent).toContain('结构重塑与决策确认');
+      expect(milestonesTable.textContent).toContain('完成了 Watcher 与 Talk 改造');
+
+      // Watcher 视图下不渲染跳到底部浮钮
+      expect(screen.queryByTestId('jump-to-latest')).toBeNull();
+
+      // Talk 默认折叠，但决策卡在 watcher-card-slot 中原样展示且可直接选择发送
+      const toggle = screen.getByTestId('watcher-talk-toggle-1');
       expect(toggle.getAttribute('aria-expanded')).toBe('false');
-      expect(screen.queryByTestId('watcher-talk-body-0')).toBeNull();
+      expect(screen.queryByTestId('watcher-talk-body-1')).toBeNull();
+      expect(screen.getByTestId('watcher-card-slot')).toBeTruthy();
       expect(screen.getByTestId('decision-card')).toBeTruthy();
 
       fireEvent.click(screen.getAllByTestId('decision-option')[1]);
@@ -830,10 +913,10 @@ describe('RecordStream 中栏', () => {
       fireEvent.click(screen.getByTestId('decision-answer'));
       expect(answer).toHaveBeenCalledTimes(1);
 
-      // 点击展开包裹的 Talk，展示内部对话与响应前动作聚合
+      // 点击展开包裹的 Talk，展示内部对话
       fireEvent.click(toggle);
       expect(toggle.getAttribute('aria-expanded')).toBe('true');
-      expect(screen.getByTestId('watcher-talk-body-0')).toBeTruthy();
+      expect(screen.getByTestId('watcher-talk-body-1')).toBeTruthy();
       expect(screen.getByText('请选择信息结构方案。')).toBeTruthy();
     });
 
@@ -876,18 +959,19 @@ describe('RecordStream 中栏', () => {
       fireEvent.click(screen.getByTestId('lens-watcher'));
 
       // #1 总结严格只包裹 [0, 2) 内的 1 条提问 · 1 条回复，不会把 seq=2,3 的后续问答吞进去
-      const toggle = screen.getByTestId('watcher-talk-toggle-0');
+      const toggle = screen.getByTestId('watcher-talk-toggle-1');
       expect(toggle.textContent).toContain('1条提问');
       expect(toggle.textContent).toContain('1条回复');
 
       // 游标 2 之后尚未总结的新对话独立呈现在尾部，不预设虚假的 #2 总结槽位
-      expect(screen.getAllByTestId('watcher-item')).toHaveLength(1);
+      expect(screen.getByTestId('watcher-run-1')).toBeTruthy();
+      expect(screen.queryByTestId('watcher-run-2')).toBeNull();
       const tail = screen.getByTestId('watcher-unsummarized-tail');
       expect(tail.textContent).toContain('浮动按钮上的L和数字是什么含义？');
       expect(tail.textContent).toContain('L是行号的缩写，代表起始行号到结束行号。');
     });
 
-    it('Watcher 小标题独立成行、多条内容逐行分列，且随中英语言切换完整切换小标题与计数词条', async () => {
+    it('Watcher 在无 tasks 字段时自动从 runs 合成总控事项，且 Talk 切片计数随中英语言切换', async () => {
       const recordsForI18n = [
         record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第一段目标。第二段目标？' } }),
         record({ id: 'tc1', seq: 1, kind: 'tool.call', payload: { tool_name: 'Read', args: {} } }),
@@ -897,11 +981,10 @@ describe('RecordStream 中栏', () => {
         state: {
           bound: true,
           anchor: '第一段目标。第二段目标？',
-          tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+          tail: { kind: 'now', text: '正在检查 `RecordStream.tsx` 排版。' },
           decision: '请选择排版方案',
           happened: [
             '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
-            'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
           ],
           updated_at: 1_753_800_005_000,
           model: 'deepseek-v4-flash',
@@ -913,10 +996,10 @@ describe('RecordStream 中栏', () => {
               at: 1_753_800_005_000,
               cursor_from: 0,
               cursor_to: 3,
-              tail: { kind: 'now', text: '正在检查 RecordStream 排版。同步核对语言包词条。' },
+              phase_goal: '排版核对',
+              tail: { kind: 'now', text: '正在检查 `RecordStream.tsx` 排版。' },
               happened_add: [
                 '人在写入前新增检查项：先核对本轮改动是否越出用户原话，再查本地成例。',
-                'agent 探测目标落在 127.0.0.1:9222 的 Chrome 调试接口；直接跳过无需唤醒桌面。',
               ],
               decision: '请选择排版方案',
               summary: '正在检查 RecordStream 排版',
@@ -932,28 +1015,152 @@ describe('RecordStream 中栏', () => {
       );
       fireEvent.click(screen.getByTestId('lens-watcher'));
 
-      // 多条内容被拆分为独立的多行条目
-      expect(screen.getAllByTestId('watcher-phase-goal-line')).toHaveLength(2);
-      expect(screen.getAllByTestId('watcher-part-doing-line')).toHaveLength(2);
-      expect(screen.getAllByTestId('watcher-part-findings-line')).toHaveLength(3);
+      // 未给 tasks 时自动从 runs 合成 T1，且待拍板条幅存在
+      expect(screen.getByTestId('watcher-tasks-table').textContent).toContain('T1');
+      expect(screen.getByTestId('watcher-decision-banner').textContent).toContain('请选择排版方案');
+      expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1条提问 · 1次工具调用 · 1条回复');
 
-      // 中文状态下：小标题与计数均为中文，且无硬编码冒号
-      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('阶段目标');
-      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe('当前在做什么');
-      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('关键发现或产出');
-      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('待拍板背景');
-      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1条提问 · 1次工具调用 · 1条回复');
-
-      // 切换到英文状态：小标题与计数全部切换为纯英文
+      // 切换到英文状态：Talk 切片计数词条切换为英文
       await i18n.changeLanguage('en');
       rerender(<RecordStream {...streamProps({ records: recordsForI18n, observer: observerView })} />);
-      expect(screen.getByTestId('watcher-phase-goal-label').textContent).toBe('Stage goal');
-      expect(screen.getByTestId('watcher-part-doing-label').textContent).toBe("What's happening now");
-      expect(screen.getByTestId('watcher-part-findings-label').textContent).toBe('Key findings or output');
-      expect(screen.getByTestId('watcher-part-decision-label').textContent).toBe('Decision context');
-      expect(screen.getByTestId('watcher-talk-toggle-0').textContent).toContain('1 prompts · 1 tool calls · 1 replies');
+      expect(screen.getByTestId('watcher-talk-toggle-1').textContent).toContain('1 prompts · 1 tool calls · 1 replies');
 
       await i18n.changeLanguage('zh');
+    });
+
+    it('Watcher「② 阶段里程碑追加记录」按 #N → #1 倒序置顶渲染，新增里程碑自动排首行且 Talk 切片与原始批次号精确绑定零串行', () => {
+      const recs = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '第1轮提问：初始化环境' } }),
+        record({ id: 'a1', seq: 1, kind: 'agent.say', payload: { text: '第1轮答复：环境已就绪' } }),
+        record({ id: 'u2', seq: 2, kind: 'user.say', payload: { text: '第2轮提问：排查接口超时' } }),
+        record({ id: 'a2', seq: 3, kind: 'agent.say', payload: { text: '第2轮答复：已定位连接池瓶颈' } }),
+        record({ id: 'u3', seq: 4, kind: 'user.say', payload: { text: '第3轮提问：验证修复补丁' } }),
+        record({ id: 'a3', seq: 5, kind: 'agent.say', payload: { text: '第3轮答复：回归测试全绿' } }),
+        record({ id: 'u4', seq: 6, kind: 'user.say', payload: { text: '第4轮提问：收尾归档' } }),
+        record({ id: 'a4', seq: 7, kind: 'agent.say', payload: { text: '第4轮答复：文档与产物已归档' } }),
+      ];
+      const baseRuns = [
+        {
+          id: 'run-1',
+          run_id: 1,
+          task_id: 'T1',
+          actor: '主会话',
+          at: 1_753_800_001_000,
+          cursor_from: 0,
+          cursor_to: 2,
+          phase_goal: '初始化',
+          tail: { kind: 'output' as const, text: '完成环境检查' },
+          happened_add: ['完成环境检查'],
+          decision: '',
+          summary: '完成环境检查',
+        },
+        {
+          id: 'run-2',
+          run_id: 2,
+          task_id: 'T2',
+          actor: 'Worker-A',
+          at: 1_753_800_002_000,
+          cursor_from: 2,
+          cursor_to: 4,
+          phase_goal: '排查超时',
+          tail: { kind: 'output' as const, text: '定位连接池瓶颈' },
+          happened_add: ['定位连接池瓶颈'],
+          decision: '',
+          summary: '定位连接池瓶颈',
+        },
+        {
+          id: 'run-3',
+          run_id: 3,
+          task_id: 'T3',
+          actor: '主会话',
+          at: 1_753_800_003_000,
+          cursor_from: 4,
+          cursor_to: 6,
+          phase_goal: '验证修复',
+          tail: { kind: 'output' as const, text: '回归测试全绿' },
+          happened_add: ['回归测试全绿'],
+          decision: '',
+          summary: '回归测试全绿',
+        },
+      ];
+      const makeObserver = (runs: typeof baseRuns): SessionObserverView => ({
+        state: {
+          bound: true,
+          anchor: '全链路排查与修复',
+          tail: runs[runs.length - 1].tail,
+          decision: '',
+          happened: runs.flatMap((r) => r.happened_add),
+          updated_at: runs[runs.length - 1].at,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs,
+        },
+        loading: false,
+        error: null,
+      });
+
+      const { rerender } = render(
+        <RecordStream {...streamProps({ records: recs.slice(0, 6), observer: makeObserver(baseRuns) })} />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      const table = screen.getByTestId('watcher-milestones-table');
+      expect(table.textContent).toContain('已追加 3 轮 · 最新置顶');
+      const rowIds = [...table.querySelectorAll('tbody tr.w-run-row')].map((el) =>
+        el.getAttribute('data-testid')
+      );
+      expect(rowIds).toEqual(['watcher-run-3', 'watcher-run-2', 'watcher-run-1']);
+      expect(screen.getByTestId('watcher-run-3').textContent).toContain('#3');
+      expect(screen.getByTestId('watcher-run-1').textContent).toContain('#1');
+
+      // 点击顶行 #3 展开，只展示第 3 轮对话，不与 #1 串行
+      fireEvent.click(screen.getByTestId('watcher-talk-toggle-3'));
+      const body3 = screen.getByTestId('watcher-talk-body-3');
+      expect(body3.textContent).toContain('第3轮答复：回归测试全绿');
+      expect(body3.textContent).not.toContain('第1轮答复');
+      expect(screen.getByTestId('watcher-run-3').nextElementSibling?.contains(body3)).toBe(true);
+
+      // 点击底行 #1 展开，只展示第 1 轮对话
+      fireEvent.click(screen.getByTestId('watcher-talk-toggle-1'));
+      const body1 = screen.getByTestId('watcher-talk-body-1');
+      expect(body1.textContent).toContain('第1轮答复：环境已就绪');
+      expect(body1.textContent).not.toContain('第3轮答复');
+      expect(screen.getByTestId('watcher-run-1').nextElementSibling?.contains(body1)).toBe(true);
+
+      // 追加第 4 轮到数组末尾：#4 自动置顶为首行，且已展开的 #3/#1 状态保持绑定原始切片零错位
+      const runs4 = [
+        ...baseRuns,
+        {
+          id: 'run-4',
+          run_id: 4,
+          task_id: 'T4',
+          actor: '主会话',
+          at: 1_753_800_004_000,
+          cursor_from: 6,
+          cursor_to: 8,
+          phase_goal: '归档收尾',
+          tail: { kind: 'output' as const, text: '文档与产物已归档' },
+          happened_add: ['文档与产物已归档'],
+          decision: '',
+          summary: '文档与产物已归档',
+        },
+      ];
+      rerender(
+        <RecordStream {...streamProps({ records: recs, observer: makeObserver(runs4) })} />
+      );
+      expect(table.textContent).toContain('已追加 4 轮 · 最新置顶');
+      const updatedRowIds = [...table.querySelectorAll('tbody tr.w-run-row')].map((el) =>
+        el.getAttribute('data-testid')
+      );
+      expect(updatedRowIds).toEqual([
+        'watcher-run-4',
+        'watcher-run-3',
+        'watcher-run-2',
+        'watcher-run-1',
+      ]);
+      expect(screen.getByTestId('watcher-talk-body-3').textContent).toContain('第3轮答复：回归测试全绿');
+      expect(screen.getByTestId('watcher-talk-body-1').textContent).toContain('第1轮答复：环境已就绪');
     });
   });
 });
@@ -1009,11 +1216,13 @@ describe('SessionRail 左栏', () => {
     expect(screen.queryByText('Claude Code')).toBeNull();
   });
 
-  it('底部汇总只有已经发生的绝对数', () => {
+  it('底部汇总为单行静默总数，完整各家分布收进 title 悬停提示，只有已经发生的绝对数', () => {
     const { container } = render(
       <TestRail state={railState()} selectedId={null} onSelect={NOOP} />
     );
-    expect(screen.getByText(/共 2 场/)).toBeTruthy();
+    const foot = screen.getByTestId('rail-foot');
+    expect(foot.textContent).toContain('累计 2 场会话');
+    expect(foot.getAttribute('title')).toContain('共 2 场');
     const text = container.textContent ?? '';
     expect(text.match(/\d+\s*%/g)).toBeNull();
     expect(text.match(/\d+\s*\/\s*\d+/g)).toBeNull();
@@ -1122,12 +1331,20 @@ describe('SessionRail 左栏', () => {
     expect(screen.getByText('没有匹配的会话')).toBeTruthy();
   });
 
-  it('档位只剩 For you 与全部，状态与来源都不再当筛选维度', () => {
+  it('顶栏扩为 All / Needs Decision / Callback Backlog / Running 四档筛选，告警档带 .warn-chip', () => {
     render(<TestRail state={railState()} selectedId={null} onSelect={NOOP} />);
     const ids = screen
       .getAllByTestId(/^list-filter-/)
       .map((el) => el.getAttribute('data-testid'));
-    expect(ids).toEqual(['list-filter-for-you', 'list-filter-all']);
+    expect(ids).toEqual([
+      'list-filter-all',
+      'list-filter-decision',
+      'list-filter-backlog',
+      'list-filter-running',
+    ]);
+    expect(screen.getByTestId('list-filter-decision').className).toContain('warn-chip');
+    expect(screen.getByTestId('list-filter-backlog').className).toContain('warn-chip');
+    expect(screen.getByTestId('list-filter-running').className).not.toContain('warn-chip');
     expect(screen.queryByTestId(/^status-filter-/)).toBeNull();
   });
 
@@ -1164,53 +1381,123 @@ describe('SessionRail 左栏', () => {
     expect(bars[0].getAttribute('data-employee-id')).toBe('stock');
     expect(bars[0].className).toContain('si-emp-bar');
     expect(bars[0].textContent).toBe('Stock 投研与策略专员');
+
+    // 已带员工顶栏的卡片不重复渲染 Employee 来源胶囊；常态 Completed 生命周期也不画徽标；非常态 Running 才画生命周期徽标
+    expect(items[0].querySelector('[data-testid="session-origin"]')).toBeNull();
+    expect(items[0].querySelector('[data-testid="session-lifecycle"]')).toBeNull();
+    expect(items[0].querySelector('[data-testid="session-badges"]')).toBeNull();
+    expect(items[1].querySelector('[data-testid="session-origin"]')).toBeNull();
+    expect(items[1].querySelector('[data-testid="session-badges"]')).toBeNull();
   });
 
 
-  it('每一档带真实条数，不是摆设', () => {
+  it('每一档带实时计数角标（All / Needs Decision / Callback Backlog / Running）', () => {
+    const rows = [
+      session({ session_id: 's-wait', title: '等待拍板' }),
+      session({ session_id: 's-run', title: '运行中', status: 'running' }),
+      session({ session_id: 's-cb', title: '回传积压' }),
+    ];
     render(
       <TestRail
-        state={railState({ counts: { all: 12, 'for-you': 3 } })}
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
         selectedId={null}
         onSelect={NOOP}
+        decisionCardOf={(id) => (id === 's-wait' ? '选 A 还是 B？' : null)}
+        callbackSessionIds={new Set(['s-cb'])}
       />
     );
-    expect(screen.getByTestId('list-filter-for-you').textContent).toContain('3');
-    expect(screen.getByTestId('list-filter-all').textContent).toContain('12');
+    expect(screen.getByTestId('list-filter-all').textContent).toContain('3');
+    expect(screen.getByTestId('list-filter-decision').textContent).toContain('1');
+    expect(screen.getByTestId('list-filter-backlog').textContent).toContain('1');
+    expect(screen.getByTestId('list-filter-running').textContent).toContain('1');
   });
 
-  it('点某一档把它交出去', () => {
+  it('点 Needs Decision 切出待决策列表并同步 setFilter，点 Callback Backlog / Running 各自过滤', () => {
     const setFilter = vi.fn();
-    render(<TestRail state={railState({ setFilter })} selectedId={null} onSelect={NOOP} />);
-    fireEvent.click(screen.getByTestId('list-filter-for-you'));
+    const rows = [
+      session({ session_id: 's-wait', title: '待拍板会话' }),
+      session({ session_id: 's-run', title: '执行中会话', status: 'running' }),
+      session({ session_id: 's-cb', title: '积压回传会话' }),
+    ];
+    render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows, setFilter })}
+        selectedId={null}
+        onSelect={NOOP}
+        decisionCardOf={(id) => (id === 's-wait' ? '请确认？' : null)}
+        callbackSessionIds={new Set(['s-cb'])}
+      />
+    );
+    fireEvent.click(screen.getByTestId('list-filter-decision'));
     expect(setFilter).toHaveBeenCalledWith('for-you');
+    expect(screen.getAllByTestId('session-title').map((el) => el.textContent)).toEqual(['待拍板会话']);
+
+    fireEvent.click(screen.getByTestId('list-filter-backlog'));
+    expect(screen.getAllByTestId('session-title').map((el) => el.textContent)).toEqual(['积压回传会话']);
+
+    fireEvent.click(screen.getByTestId('list-filter-running'));
+    expect(screen.getAllByTestId('session-title').map((el) => el.textContent)).toEqual(['执行中会话']);
   });
 
-  it('会话卡不再摆状态、来源与内容预览；仅保留标题与状态行', () => {
+  it('标题上方遵循塔夫特常态静默：仅非默认来源与非常态生命周期才渲染 .si-badges，常态 Direct+Completed 完全静默，仍不暴露摘要预览行', () => {
     const one = session({
       session_id: SID,
       status: 'error',
       digest_done: '把镜头判断追加进了 verdict.jsonl',
       digest_stuck: 'API Error: 连接中断',
     });
+    const pairSession = session({
+      session_id: 'pair-1',
+      title: 'Paired session · Alice',
+      origin: 'pair' as WorkbenchSession['origin'],
+      status: 'running',
+    });
+    const cronSession = session({
+      session_id: 'cron-1',
+      title: 'Schedule daily sync',
+      origin: 'schedule' as WorkbenchSession['origin'],
+      status: 'done',
+    });
+    const quietSession = session({
+      session_id: 'quiet-1',
+      title: 'Normal finished session',
+      origin: 'human' as WorkbenchSession['origin'],
+      status: 'done',
+    });
+    const rows = [one, pairSession, cronSession, quietSession];
     render(
       <TestRail
-        state={railState({ sessions: [one], visible: [one] })}
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
         selectedId={null}
         onSelect={NOOP}
       />
     );
-    const item = screen.getAllByTestId('session-item')[0];
-    expect(item.getAttribute('data-status')).toBeNull();
-    expect(screen.queryByTestId('digest-done')).toBeNull();
-    expect(screen.queryByTestId('digest-stuck')).toBeNull();
-    expect(item.querySelector('[data-testid=session-preview]')).toBeNull();
-    expect(item.textContent).not.toContain('Claude Code');
-    expect(item.textContent).not.toContain('API Error');
-    expect(item.textContent).not.toContain('verdict.jsonl');
+    const items = screen.getAllByTestId('session-item');
+    expect(items[0].querySelector('[data-testid=session-preview]')).toBeNull();
+    // human 默认来源静默，但 Error 属于非常态生命周期正常渲染
+    expect(items[0].querySelector('[data-testid=session-origin]')).toBeNull();
+    expect(items[0].querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Error');
+    expect(items[0].querySelector('[data-testid=session-lifecycle]')?.className).toContain('text-accent-error');
+    // Pair + Running 双显
+    expect(items[1].querySelector('[data-testid=session-origin]')?.textContent).toBe('Pair');
+    expect(items[1].querySelector('[data-testid=session-lifecycle]')?.textContent).toBe('Running');
+    // Cron 非常态来源渲染，但 Completed 静默
+    expect(items[2].querySelector('[data-testid=session-origin]')?.textContent).toBe('Cron');
+    expect(items[2].querySelector('[data-testid=session-lifecycle]')).toBeNull();
+    // Normal Direct + Completed 整行 .si-badges 容器不渲染
+    expect(items[3].querySelector('[data-testid=session-badges]')).toBeNull();
+    expect(items[0].textContent).not.toContain('verdict.jsonl');
+
+    expect(
+      sessionOriginOf(session({ session_id: 'hook-1', origin: 'hook' as WorkbenchSession['origin'], title: 'pre-commit hook' }))
+    ).toBe('hook');
+    expect(sessionLifecycleOf(session({ session_id: 'cb-1' }), { callbackQueued: true })).toEqual({
+      key: 'callback',
+      label: 'Callback queued',
+    });
   });
 
-  it('没有等你决策那一档', () => {
+  it('不恢复旧版「等你决策」旧筛选命名', () => {
     const { container } = render(
       <TestRail state={railState()} selectedId={null} onSelect={NOOP} />
     );
@@ -1353,7 +1640,7 @@ describe('SessionRail 左栏', () => {
   });
 });
 
-describe('ReportPanel 右栏', () => {
+describe('ReportPanel 右栏（纯 Stack 模式）', () => {
   const view = (
     state: Partial<ObserverState> | null,
     extra: Partial<SessionObserverView> = {},
@@ -1375,245 +1662,56 @@ describe('ReportPanel 右栏', () => {
     ...extra,
   });
 
-  it('没选会话时只说一句该做什么', () => {
-    render(<ReportBody sessionId={null} view={view(null)} />);
+  it('没选会话时显示 Stack 标题与引导，不出现右栏 Observer', () => {
+    const { container } = render(<ReportBody sessionId={null} view={view(null)} />);
+    expect(screen.getByText('暂存')).toBeTruthy();
     expect(screen.getByText(/选一场会话/)).toBeTruthy();
+    expect(container.querySelector('.obs-panel')).toBeNull();
+    expect(screen.queryByTestId('observer-panel')).toBeNull();
+    expect(screen.queryByTestId('observer-four-stage')).toBeNull();
+    expect(screen.queryByTestId('observer-pending-jump')).toBeNull();
   });
 
-  describe('轮到你了', () => {
-    it('有待决时钉在栏顶，排在所有格子前面', () => {
-      const { container } = render(
-        <ReportBody sessionId="s1" view={view({ decision: '三条改法要人挑一条' })} />,
-      );
-      expect(screen.getByText('轮到你了')).toBeTruthy();
-      expect(screen.getByText('三条改法要人挑一条')).toBeTruthy();
-
-      // 它不在滚动区里面：右栏滚到哪儿它都在。
-      const scroller = container.querySelector('.overflow-y-auto');
-      expect(scroller?.textContent).not.toContain('三条改法要人挑一条');
-
-      // 顺序上排在第一格前面。
-      const body = container.textContent ?? '';
-      expect(body.indexOf('轮到你了')).toBeLessThan(body.indexOf('这场在做什么'));
-    });
-
-    it('没有待决时整条不存在，不留一个「（无）」占着栏顶', () => {
-      render(<ReportBody sessionId="s1" view={view({ decision: '' })} />);
-      expect(screen.queryByText('轮到你了')).toBeNull();
-      expect(screen.queryByText('需要你决策')).toBeNull();
-    });
-  });
-
-  it('只剩两块：要干嘛 → 一路走来，「此刻」「产出」不再单独成格', () => {
-    const body =
-      render(<ReportBody sessionId="s1" view={view({ happened: ['做了一件事'] })} />).container
-        .textContent ?? '';
-    const order = ['这场在做什么', '已经发生的事'].map((s) => body.indexOf(s));
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(order.every((i) => i >= 0)).toBe(true);
-    expect(body).not.toContain('此刻在做什么');
-    expect(body).not.toContain('最近一次产出');
-  });
-
-  it('每块标它自己上次变样的时刻，老槽位文件没有就不标', () => {
-    const now = Date.now();
-    render(
-      <ReportBody
-        sessionId="s1"
-        view={view({
-          anchor_at: now - 5 * 3600_000,
-          tail: { kind: 'now', text: '在跑测试' },
-          tail_at: now - 3 * 60_000,
-        })}
-      />,
-    );
-    expect(screen.getByText('3 分钟前')).toBeTruthy();
-    expect(screen.getByText('5 小时前')).toBeTruthy();
-  });
-
-  describe('末条就是眼下的状态', () => {
-    it('默认只露末条，其余都收在「展开更早的」里', () => {
-      const { container } = render(
-        <ReportBody
-          sessionId="s1"
-          view={view({
-            happened: ['第三件', '第二件', '第一件'],
-            tail: { kind: 'now', text: '在跑测试' },
-          })}
-        />,
-      );
-      const items = () =>
-        Array.from(container.querySelectorAll('ul li')).map((li) => li.textContent);
-      expect(items()).toEqual(['此刻在跑测试']);
-      fireEvent.click(screen.getByText('展开更早的 3 条'));
-      expect(items()).toEqual(['第一件', '第二件', '第三件', '此刻在跑测试']);
-    });
-
-    it('产出出来了，末条标「产出」，没有「此刻」', () => {
-      render(
-        <ReportBody
-          sessionId="s1"
-          view={view({ happened: ['读了配方'], tail: { kind: 'output', text: '配方改好' } })}
-        />,
-      );
-      expect(screen.getByText('产出')).toBeTruthy();
-      expect(screen.queryByText('此刻')).toBeNull();
-      expect(screen.getByText('配方改好')).toBeTruthy();
-    });
-
-    it('还没有末条时，最新一条历史就是末条', () => {
-      const { container } = render(
-        <ReportBody sessionId="s1" view={view({ happened: ['第二件', '第一件'], tail: null })} />,
-      );
-      expect(Array.from(container.querySelectorAll('ul li')).map((li) => li.textContent)).toEqual([
-        '第二件',
-      ]);
-      expect(screen.getByText('展开更早的 1 条')).toBeTruthy();
-    });
-
-    it('什么都没有时写「（无）」', () => {
-      render(<ReportBody sessionId="s1" view={view({ happened: [], tail: null, anchor: '目标' })} />);
-      expect(screen.getByText('（无）')).toBeTruthy();
-    });
-  });
-
-  it('旁路 AI 没绑模型时明说', () => {
-    render(<ReportBody sessionId="s1" view={view({ bound: false, status: 'unbound' })} />);
-    expect(screen.getByText(/还没绑定模型/)).toBeTruthy();
-  });
-
-  it('锚槽排最上面，写的是人的原话', () => {
-    const { container } = render(<ReportBody sessionId="s1" view={view({})} />);
-    const labels = Array.from(container.querySelectorAll('header')).map((h) => h.textContent);
-    expect(labels[0]).toContain('这场在做什么');
-    expect(screen.getByText('把会话记录归一成同一种形状')).toBeTruthy();
-  });
-
-  it('上一次没问到时把原因说出来', () => {
-    render(
-      <ReportBody sessionId="s1" view={view({ status: 'failed', status_detail: 'WorkBuddy 没登录' })} />,
-    );
-    expect(screen.getByText(/WorkBuddy 没登录/)).toBeTruthy();
-  });
-
-  it('增长型槽位的展开按钮写绝对条数，不写比值', () => {
+  it('选中会话时右栏仅渲染纯 Stack 容器，不再重复渲染四段式 Observer', () => {
     const { container } = render(
       <ReportBody
         sessionId="s1"
-        view={view({ happened: ['第五件', '第四件', '第三件', '第二件', '第一件'] })}
+        view={view({ decision: '待决问题' })}
+        lower={<div data-testid="pure-stack">暂存列表内容</div>}
       />,
     );
-    const more = screen.getByText(/展开更早的 \d+ 条/);
-    expect(more).toBeTruthy();
-    fireEvent.click(more);
-    expect(screen.queryByText(/展开更早的/)).toBeNull();
-    const text = container.textContent ?? '';
-    expect(text.match(/\d+\s*%/g)).toBeNull();
-    expect(text.match(/\d+\s*\/\s*\d+/g)).toBeNull();
-    expect(container.querySelectorAll('progress, [role="progressbar"]')).toHaveLength(0);
+    expect(screen.getByTestId('report-lower')).toBeTruthy();
+    expect(screen.getByTestId('pure-stack')).toBeTruthy();
+    expect(container.querySelector('.obs-panel')).toBeNull();
+    expect(screen.queryByTestId('observer-panel')).toBeNull();
+    expect(screen.queryByTestId('observer-four-stage')).toBeNull();
+    expect(screen.queryByTestId('observer-pending-jump')).toBeNull();
   });
 
-  it('已经发生的事一条一格，条与条之间有分隔线，老的排在上面', () => {
-    // 服务端给的是新的在前；整栏是一条从上往下走的时间线，这一格里要是从下往上读，
-    // 两个方向打架，人就看不出谁先谁后了。
-    const { container } = render(
-      <ReportBody
-        sessionId="s1"
-        view={view({ happened: ['第三件', '第二件', '第一件'], tail: null })}
-      />,
+  it('jumpToPendingCard 可定位待拍板决策卡并触发 flash-focus', () => {
+    const dcard = document.createElement('div');
+    dcard.className = 'dcard is-pending';
+    dcard.scrollIntoView = vi.fn();
+    document.body.appendChild(dcard);
+    try {
+      expect(jumpToPendingCard()).toBe(true);
+      expect(dcard.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+      expect(dcard.classList.contains('flash-focus')).toBe(true);
+    } finally {
+      dcard.remove();
+    }
+  });
+
+  it('右栏左边缘调整栏宽度，双击回默认', () => {
+    const onWidthChange = vi.fn();
+    render(
+      <ReportBody sessionId="s1" view={view({})} width={400} onWidthChange={onWidthChange} />,
     );
-    fireEvent.click(screen.getByText(/展开更早的/));
-    const list = container.querySelector('ul');
-    expect(list?.className).toContain('divide-y');
-    expect(Array.from(list?.querySelectorAll('li') ?? []).map((li) => li.textContent)).toEqual([
-      '第一件',
-      '第二件',
-      '第三件',
-    ]);
-  });
-
-  describe('版面由人来定', () => {
-    beforeEach(() => window.localStorage.clear());
-
-    it('内容装不下时给「展开全文」，展开后变成「收起」', () => {
-      const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
-      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
-        configurable: true,
-        get() {
-          return (this as HTMLElement).hasAttribute('data-slot-body') ? 400 : 0;
-        },
-      });
-      try {
-        render(<ReportBody sessionId="s1" view={view({})} />);
-        fireEvent.click(screen.getAllByText('展开全文')[0]);
-        expect(screen.getAllByText('收起').length).toBe(1);
-      } finally {
-        if (own) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', own);
-        else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
-      }
-    });
-
-    it('点标题折成只剩标题，重新打开还是折着的', () => {
-      const { unmount } = render(<ReportBody sessionId="s1" view={view({})} />);
-      fireEvent.click(screen.getByRole('button', { name: /已经发生的事/ }));
-      expect(screen.queryByText('在跑测试')).toBeNull();
-      unmount();
-      render(<ReportBody sessionId="s1" view={view({})} />);
-      expect(screen.queryByText('在跑测试')).toBeNull();
-    });
-
-    it('分隔线调这一格的高度，双击回默认，调过的记得住', () => {
-      render(<ReportBody sessionId="s1" view={view({})} />);
-      const handle = screen.getByRole('separator', { name: /这场在做什么/ });
-      expect(handle.getAttribute('aria-valuenow')).toBe('112');
-      fireEvent.keyDown(handle, { key: 'ArrowDown' });
-      expect(handle.getAttribute('aria-valuenow')).toBe('128');
-      expect(window.localStorage.getItem('frago.workbench.reportSlots.v1')).toContain('128');
-      fireEvent.doubleClick(handle);
-      expect(handle.getAttribute('aria-valuenow')).toBe('112');
-    });
-
-    it('旧版面里存的「此刻」「产出」两格的折叠，不会把什么藏起来', () => {
-      window.localStorage.setItem(
-        'frago.workbench.reportSlots.v1',
-        JSON.stringify({ heights: { anchor: 112, now: 76, output: 76 }, collapsed: ['now', 'output'] }),
-      );
-      render(<ReportBody sessionId="s1" view={view({})} />);
-      expect(screen.getByText('在跑测试')).toBeTruthy();
-    });
-
-    it('最后一块底下没有分隔线', () => {
-      // 「已经发生的事」是时间线的终点，底下再画一道线就像下面还有一段。
-      render(<ReportBody sessionId="s1" view={view({})} />);
-      expect(screen.queryByRole('separator', { name: /已经发生的事/ })).toBeNull();
-    });
-
-    it('右栏左边缘调整栏宽度，双击回默认', () => {
-      const onWidthChange = vi.fn();
-      render(
-        <ReportBody sessionId="s1" view={view({})} width={400} onWidthChange={onWidthChange} />,
-      );
-      const handle = screen.getByRole('separator', { name: /宽度/ });
-      fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-      expect(onWidthChange).toHaveBeenLastCalledWith(416);
-      fireEvent.doubleClick(handle);
-      expect(onWidthChange).toHaveBeenLastCalledWith(null);
-    });
-
-    it('stackOnly 模式下右栏不再渲染观察者摘要槽位，仅保留暂存面板', () => {
-      render(
-        <ReportBody
-          stackOnly
-          sessionId="s1"
-          view={view({ decision: '待决问题' })}
-          lower={<div data-testid="only-stack">暂存区</div>}
-        />,
-      );
-      expect(screen.getByTestId('only-stack')).toBeTruthy();
-      expect(screen.queryByTestId('report-upper')).toBeNull();
-      expect(screen.queryByText('这场在做什么')).toBeNull();
-      expect(screen.queryByText('轮到你了')).toBeNull();
-    });
+    const handle = screen.getByRole('separator', { name: /宽度/ });
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(onWidthChange).toHaveBeenLastCalledWith(416);
+    fireEvent.doubleClick(handle);
+    expect(onWidthChange).toHaveBeenLastCalledWith(null);
   });
 });
 
@@ -1867,6 +1965,20 @@ describe('RecordStream 自动跟随的滑法', () => {
       { text: '✔ Turn complete', fg: '#3fb950', bold: true, dim: undefined },
       { text: ' plain', fg: undefined, bold: undefined, dim: undefined },
     ]);
+  });
+
+  it('挂着右侧缩略滚动条时滚动容器保留 pr-10 右侧安全间距，避免用户消息卡片外圆角与滚动条区域重叠', () => {
+    render(
+      <RecordStream
+        {...props({
+          minimap: true,
+          records: [rec({ id: 'u-pad', seq: 1, kind: 'user.say', payload: { text: '检查右缘安全间距' } })],
+        })}
+      />
+    );
+    const scroller = screen.getByTestId('record-stream-scroll');
+    expect(scroller.className).toContain('pr-10');
+    expect(scroller.className).not.toContain('pr-6');
   });
 });
 

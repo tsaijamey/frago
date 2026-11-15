@@ -67,7 +67,7 @@ import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import PromptComposerBox, { directiveQuery, mentionQuery, slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
-import SendProgress from './SendProgress';
+import SendProgress, { resolveStepLabel } from './SendProgress';
 
 export { directiveQuery, mentionQuery, slashQuery };
 
@@ -342,7 +342,7 @@ export default function Composer({
   onRemoveQueueItem,
   onMoveQueueItem,
 }: ComposerProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const blocked = blockReason(sessionId);
   const [enqueueing, setEnqueueing] = useState(false);
@@ -586,15 +586,14 @@ export default function Composer({
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`relative shrink-0 border-t border-border-color bg-bg-primary px-4 py-3 ${
+      className={`relative shrink-0 border-t border-border-color bg-bg-primary px-5 py-3 ${
         dragging ? 'bg-bg-hover' : ''
       }`}
     >
       <LineWalker walking={running || sending} />
 
-      {/* 输入框跟上面的记录流同宽、同左边距：两者左边界对齐，视线上下直着走。
-          收窄居中会让它看起来是另一样东西、缩在中间，跟正文错开一整块。 */}
-      <div className="flex w-full min-w-0 flex-col gap-2">
+      {/* 输入框跟上面的记录流同宽、同边距：两者在常规屏左边界对齐，宽屏统一收口在 960px 居中阅读列内。 */}
+      <div className="mx-auto flex w-full max-w-[960px] min-w-0 flex-col gap-2">
         {blocked ? (
           <p
             data-testid="composer-blocked"
@@ -806,7 +805,11 @@ export default function Composer({
                       <Loader2 size={13} className="shrink-0 animate-spin text-text-muted" />
                     )}
                     <span className="shrink-0 text-[11px] font-medium text-text-secondary">
-                      {t(queued ? 'workbench.progress.queued' : 'workbench.progress.onItsWay')}
+                      {resolveStepLabel(
+                        queued ? 'queued' : 'on_its_way',
+                        Boolean(i18n.language?.startsWith('zh')),
+                        t
+                      )}
                     </span>
                     {msg.skills?.map((name) => (
                       <span

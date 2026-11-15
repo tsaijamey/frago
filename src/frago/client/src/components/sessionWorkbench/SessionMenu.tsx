@@ -195,10 +195,14 @@ export default function SessionMenu({
         aria-label={t('workbench.menu.button')}
         title={t('workbench.menu.button')}
         onClick={() => (open ? closeMenu() : setOpen(true))}
-        className={`flex items-center justify-center rounded-[5px] transition-colors duration-150 ${
+        className={`flex items-center justify-center rounded-[5px] transition-[opacity,background-color,color] duration-150 ${
           header
             ? 'h-7 w-7 text-text-muted hover:bg-bg-hover hover:text-text-primary'
-            : 'h-[17px] w-5 text-[var(--card-meta)] hover:bg-bg-hover hover:text-text-primary'
+            : `si-mbtn h-[17px] w-5 text-[var(--card-meta)] hover:bg-bg-hover hover:text-text-primary ${
+                open
+                  ? 'opacity-100 pointer-events-auto'
+                  : 'opacity-0 pointer-events-none group-hover/session:opacity-100 group-hover/session:pointer-events-auto group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto'
+              }`
         } ${open ? 'bg-bg-hover text-text-primary' : ''}`}
       >
         <MoreHorizontal size={header ? 16 : 12} strokeWidth={header ? 1.5 : 2} />

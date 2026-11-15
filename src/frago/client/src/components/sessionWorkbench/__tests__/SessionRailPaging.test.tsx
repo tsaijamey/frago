@@ -170,15 +170,11 @@ describe('SessionRail 分批加载', () => {
   });
 
   it('换一个筛选档就回到第一批——那几页是上一批会话的进度', () => {
-    const rows = trunkOf(765);
-    const { rerender } = render(
-      <TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />
-    );
+    const rows = trunkOf(765).map((r) => ({ ...r, status: 'running' as const }));
+    render(<TestRail state={railState(rows)} selectedId={null} onSelect={NOOP} />);
     fireEvent.click(screen.getByTestId('scroll-to-end'));
     expect(shownCount()).toBe(100);
-    rerender(
-      <TestRail state={railState(rows, { filter: 'for-you' })} selectedId={null} onSelect={NOOP} />
-    );
+    fireEvent.click(screen.getByTestId('list-filter-running'));
     expect(shownCount()).toBe(50);
   });
 

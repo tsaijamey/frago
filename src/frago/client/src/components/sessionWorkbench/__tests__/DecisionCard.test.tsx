@@ -130,8 +130,10 @@ describe('收不回的先确认', () => {
     expect(screen.queryByTestId('decision-confirm')).toBeNull();
     fireEvent.click(answerBtn());
     expect(h.answer).not.toHaveBeenCalled();
-    expect(screen.getByTestId('decision-confirm').textContent).toContain("This can't be undone — do it?");
-    expect(screen.getByTestId('decision-confirm').textContent).toContain('A · 发布 — 打 v1.4.111 tag');
+    const confirmBar = screen.getByTestId('decision-confirm');
+    expect(confirmBar.className).toContain('dconf');
+    expect(confirmBar.textContent).toContain("This can't be undone — do it?");
+    expect(confirmBar.textContent).toContain('A · 发布 — 打 v1.4.111 tag');
     fireEvent.click(screen.getByTestId('decision-confirm-yes'));
     expect(h.answer).toHaveBeenCalledWith('r1', '【answer】A · 发布 —— 打 v1.4.111 tag 并上传 PyPI，发出去收不回');
   });
@@ -216,11 +218,17 @@ describe('什么时候点不动', () => {
     );
   });
 
-  it('卡片答过：选中项高亮，其余变淡，底部写明作答时刻', () => {
+  it('卡片答过：默认收成静默回执态，点详情后高亮选中项并写明作答时刻', () => {
     const at = new Date(2026, 8, 24, 13, 56, 53).getTime();
     const b = blocks['single-choice-irreversible'];
     const answered: DecisionAnswer = { kind: 'card', text: composeAnswer(b, [b.options[1]], ''), at };
     renderCard('single-choice-irreversible', host({ answerOf: () => answered }));
+    const receipt = screen.getByTestId('decision-card-answered');
+    expect(receipt.className).toContain('is-answered');
+    expect(screen.getByTestId('decision-answered-pill').textContent).toContain(b.options[1].key);
+    expect(receipt.textContent).toContain('13:56:53');
+
+    fireEvent.click(screen.getByTestId('decision-details-toggle'));
     const [a, bOpt] = options();
     expect(bOpt.dataset.on).toBe('true');
     expect(a.dataset.on).toBeUndefined();
@@ -229,40 +237,50 @@ describe('什么时候点不动', () => {
     expect(screen.getByTestId('decision-answered').textContent).toBe(
       'You answered at 13:56:53 — sent to the session as your message below'
     );
+
+    fireEvent.click(screen.getByTestId('decision-collapse-toggle'));
+    expect(screen.getByTestId('decision-card-answered')).toBeTruthy();
   });
 
-  it('人自己打字回了：锁住、不高亮', () => {
+  it('人自己打字回了：默认收成回执态，展开后锁住且不高亮', () => {
     renderCard('single-choice', host({ answerOf: () => ({ kind: 'own-words', text: '先别动', at: 1 }) }));
+    expect(screen.getByTestId('decision-answered-pill').textContent).toContain('Replied in own words');
+    fireEvent.click(screen.getByTestId('decision-details-toggle'));
     expect(options().some((o) => o.dataset.on)).toBe(false);
     expect(options().every((o) => (o as HTMLButtonElement).disabled)).toBe(true);
     expect(screen.getByTestId('decision-answered').textContent).toBe('You replied in your own words below');
   });
 
-  it('答过的草稿卡：草稿变成只读的最终文字', () => {
+  it('答过的草稿卡：展开后草稿变成只读的最终文字', () => {
     const b = blocks['choice-and-text-draft'];
     const text = composeAnswer(b, [b.options[1]], '改过的\n两行');
     renderCard('choice-and-text-draft', host({ answerOf: () => ({ kind: 'card', text, at: 1 }) }));
+    fireEvent.click(screen.getByTestId('decision-details-toggle'));
     expect(screen.queryByTestId('decision-draft-edit')).toBeNull();
     expect(screen.getByTestId('decision-card').textContent).toContain('改过的\n两行');
   });
 });
 
 describe('视觉规矩', () => {
-  // 2026-11-14：正在等人拍板的那一张走 `.ui-decision-spotlight`——全流对比度最高的一处。
+  // 2026-11-14：正在等人拍板的那一张走 `.ui-decision-spotlight` 与 `.dcard.is-pending`——全流对比度最高的一处。
   // 聚光是给"还要你动手"的：答过、只读、这场发不出去的那几张必须退回普通卡，
   // 否则一处亮着就不算信号了。
   describe('决策聚光：只有还在等你拍板的那一张亮着', () => {
-    it('还能答的卡片带 ui-decision-spotlight', () => {
+    it('还能答的卡片带 ui-decision-spotlight 与 is-pending 提示条', () => {
       renderCard('single-choice');
       const card = screen.getByTestId('decision-card');
       expect(card.dataset.state).toBe('open');
       expect(card.className).toContain('ui-decision-spotlight');
+      expect(card.className).toContain('is-pending');
+      expect(screen.getByTestId('decision-pending-bar').textContent).toContain('Waiting for your decision');
     });
 
-    it('答过的卡片不带聚光，退回普通卡', () => {
+    it('答过的卡片默认折叠为 is-answered，展开后不带聚光', () => {
       const b = blocks['single-choice'];
       const answered: DecisionAnswer = { kind: 'card', text: composeAnswer(b, [b.options[0]], ''), at: 1 };
       renderCard('single-choice', host({ answerOf: () => answered }));
+      expect(screen.getByTestId('decision-card-answered').className).not.toContain('ui-decision-spotlight');
+      fireEvent.click(screen.getByTestId('decision-details-toggle'));
       const card = screen.getByTestId('decision-card');
       expect(card.dataset.state).toBe('card');
       expect(card.className).not.toContain('ui-decision-spotlight');
@@ -313,13 +331,14 @@ describe('视觉规矩', () => {
     const hasFixedWidth = (box: HTMLElement) =>
       box.className.split(/\s+/).some((c) => /^w-\[/.test(c));
 
-    it('短 KEY：min-w-[18px] 顶住方块观感，不设死宽度', () => {
+    it('短 KEY：dkey + min-w-[24px] 自适应不设死宽度', () => {
       renderCard('single-choice');
       const box = keyBoxOf(0);
-      expect(box.className).toContain('min-w-[18px]');
-      expect(box.className).toContain('max-w-[72px]');
+      expect(box.className).toContain('dkey');
+      expect(box.className).toContain('min-w-[24px]');
+      expect(box.className).toContain('max-w-[96px]');
       expect(box.className).toContain('overflow-hidden');
-      expect(box.className).toContain('px-1');
+      expect(box.className).toContain('whitespace-nowrap');
       // 关键：不再有写死的宽度
       expect(hasFixedWidth(box)).toBe(false);
     });
@@ -336,8 +355,9 @@ describe('视觉规矩', () => {
       for (const id of ['single-choice-long-key', 'multi-choice-long-key', 'choice-and-text-long-key']) {
         const { unmount } = renderCard(id);
         const box = keyBoxOf(0);
-        expect(box.className).toContain('min-w-[18px]');
-        expect(box.className).toContain('max-w-[72px]');
+        expect(box.className).toContain('dkey');
+        expect(box.className).toContain('min-w-[24px]');
+        expect(box.className).toContain('max-w-[96px]');
         expect(hasFixedWidth(box)).toBe(false);
         unmount();
       }

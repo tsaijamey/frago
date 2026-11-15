@@ -236,7 +236,7 @@ export function SessionTerminal({
       className="flex h-full min-h-0 flex-col bg-bg-primary"
     >
       {/* 顶部状态与工具栏 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-bg-secondary/60 px-4 py-2 text-[12px]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-bg-secondary px-4 py-2 text-[12px]">
         <div className="flex min-w-0 items-center gap-2">
           <Terminal size={14} className="shrink-0 text-text-muted" />
           {snapshot?.alive ? (
@@ -298,7 +298,7 @@ export function SessionTerminal({
             title={t('workbench.terminal.autoScrollHint')}
             className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] transition-colors ${
               autoScroll
-                ? 'border-accent/50 bg-accent/10 text-text-primary'
+                ? 'border-accent-primary-border bg-accent-primary-10 text-text-primary'
                 : 'border-border bg-bg-primary text-text-muted hover:text-text-primary'
             }`}
           >
@@ -354,7 +354,7 @@ export function SessionTerminal({
           <pre
             ref={viewportRef}
             data-terminal-screen
-            className="m-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-[1.55] text-[#e6edf3] selection:bg-accent/30 whitespace-pre-wrap break-words"
+            className="m-0 flex-1 overflow-auto p-4 font-mono text-[13px] leading-[1.55] text-[#e6edf3] selection:bg-accent-primary-20 whitespace-pre-wrap break-words"
           >
             {segments.map((seg, idx) => (
               <span

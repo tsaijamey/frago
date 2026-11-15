@@ -469,7 +469,7 @@ describe('NewSessionModal — 选择 Employee 创建员工会话（主入口）'
   it('有员工编制时默认选中第一位员工，自动对齐内核、目录、预设 skill 并可展开预览业务语境', async () => {
     const onCreated = open();
     const devCard = await screen.findByTestId('new-session-employee-frago-developer');
-    expect(devCard.getAttribute('aria-checked')).toBe('true');
+    await waitFor(() => expect(devCard.getAttribute('aria-checked')).toBe('true'));
 
     // 内核自动对齐到 frago-developer 的 codex，工作目录对齐到 /Users/frago/repos/frago
     await waitFor(() =>

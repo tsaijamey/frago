@@ -144,7 +144,7 @@ describe('页面接上 For you', () => {
     expect(chip.hasAttribute('data-emphasis')).toBe(false);
     expect(chip.className).toContain('text-accent-primary');
     expect(cardBySid(SID).querySelector('[data-testid=session-preview]')).toBeNull();
-    expect(screen.getByTestId('list-filter-for-you').textContent).toContain('1');
+    expect(screen.getByTestId('list-filter-decision').textContent).toContain('1');
     // 原型里 For you 是页头里的一枚标签，正文只说「waiting 多久」。
     const head = screen.getByTestId('head-status');
     expect(head.querySelector('[data-testid=head-for-you-chip]')).toBeTruthy();

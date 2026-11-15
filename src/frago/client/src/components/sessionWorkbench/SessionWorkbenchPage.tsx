@@ -27,7 +27,7 @@ import RecordStream from './RecordStream';
 import SessionFiles from './SessionFiles';
 import { SessionTerminal } from './SessionTerminal';
 import FileViewer, { type FileEditSendPayload } from './FileViewer';
-import { formatTokensK, formatTokensM, shortenPathMiddle, withTilde } from './filePaths';
+import { shortenPathMiddle, withTilde } from './filePaths';
 import ReportPanel from './ReportPanel';
 import StackPanel, { marksAboard, quotesAboard, type LocateState } from './StackPanel';
 import Composer, { blockReason, type ComposerNotice, type ComposerUsage } from './Composer';
@@ -610,31 +610,6 @@ export default function SessionWorkbenchPage() {
     return { model, context, total };
   }, [records, recordsSessionId, selectedId]);
   const contextTokens = usageReadout?.context ?? null;
-
-  /** 页头副标题栏展示的用量读数（模型名 · 上下文 · 累计） */
-  const usageText = useMemo(() => {
-    if (!usageReadout) return '';
-    const parts: string[] = [];
-    if (usageReadout.model) parts.push(usageReadout.model);
-    if (usageReadout.context !== null) {
-      parts.push(`${t('workbench.record.usage.context')} ${formatTokensK(usageReadout.context)}`);
-    }
-    if (usageReadout.total !== null) {
-      parts.push(`${t('workbench.record.usage.total')} ${formatTokensM(usageReadout.total)}`);
-    }
-    return parts.join(' · ');
-  }, [usageReadout, t]);
-
-  /**
-   * 空态里摆哪几场：手上这份会话清单的前三场，按清单原有次序（置顶在前、其余按时间）。
-   *
-   * **不另取数据**。这份清单本来就在手上（左栏画的正是它），空态只是把同一个东西换个
-   * 地方摆出来——再发一次请求换来的还是这几条。没有清单时给空数组，空态自己就只剩说明。
-   */
-  const recentSessions = useMemo(
-    () => sessions.sessions.slice(0, 3).map((s) => ({ id: s.session_id, title: s.title })),
-    [sessions.sessions]
-  );
 
   /**
    * 起分支（spec 20260928-webui-session-branch）：圈一段原文、写一句话，服务端起一场新会话
@@ -1252,18 +1227,6 @@ export default function SessionWorkbenchPage() {
                 >
                   {shortenPathMiddle(withTilde(selected.directory))}
                 </span>
-                {usageText ? (
-                  <>
-                    <span aria-hidden className="wb-meta-sep">·</span>
-                    <span
-                      data-testid="head-usage"
-                      title={t('workbench.composer.usageHint')}
-                      className="wb-meta-readout"
-                    >
-                      {usageText}
-                    </span>
-                  </>
-                ) : null}
               </div>
             ) : showLaunch && launch ? (
               <div className="wb-meta">
@@ -1372,10 +1335,7 @@ export default function SessionWorkbenchPage() {
               }}
               marks={marks.marks}
               minimap
-              /* 还没挑会话时，中栏那块地方原先只有一个图标加一行说明。这里把手上已有的
-                 最近几场摆进去，点一条就进那一场——不新取数据、不新加接口。 */
-              recentSessions={recentSessions}
-              onOpenRecent={openSession}
+              onSelectSession={openSession}
               locateTarget={locateTarget}
               onLocateResult={onLocateResult}
               /* 「文件」那一档：与镜头同一排的兄弟按钮，清单由这一页备好交过来——它要调
@@ -1474,14 +1434,10 @@ export default function SessionWorkbenchPage() {
       </div>
 
       <div className="min-h-0 min-w-0 tablet:hidden phone:hidden">
-        {/* 右栏只保留这场会话的暂存列表；旁路 AI 定期解读已收进中栏 Watcher 档。 */}
         <ReportPanel
-          stackOnly
-          view={observer}
           sessionId={selectedId}
           width={report.width}
           onWidthChange={report.setWidth}
-          lowerEmpty={!marks.marks.some((m) => m.kind === 'stack')}
           lower={
             selectedId ? (
               <StackPanel

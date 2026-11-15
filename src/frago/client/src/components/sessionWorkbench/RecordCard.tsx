@@ -32,10 +32,11 @@ import {
   AlertTriangle,
   Bot,
   Braces,
+  Check,
   ChevronRight,
   Circle,
   Clock,
-  Download,
+  ExternalLink,
   FileText,
   Globe,
   Layers,
@@ -62,6 +63,7 @@ import {
 } from '@/utils/imageGridBlock';
 import { splitAttachedImages } from '@/utils/attachedImages';
 import {
+  dedupeAsyncCallbacks,
   splitAllLeadingBlocks,
   type AsyncCallbackBlockItem,
 } from '@/utils/asyncCallbackBlocks';
@@ -103,19 +105,13 @@ const YOU_LABEL = 'text-[11px] font-semibold text-text-muted';
 const YOU_TONE = 'bg-bg-subtle ring-1 ring-border-color';
 const ERR_TEXT = 'text-accent-error';
 const ERR_BG = 'bg-accent-error-10';
-const ERR_RING = 'ring-1 ring-accent-error/35';
+const ERR_RING = 'ring-1 ring-[var(--accent-error-border)]';
 const WAIT_TEXT = 'text-accent-warning';
 const WAIT_BG = 'bg-accent-warning-10';
-const WAIT_RING = 'ring-1 ring-accent-warning/35';
+const WAIT_RING = 'ring-1 ring-[var(--accent-warning-border)]';
 const OK_TEXT = 'text-text-secondary';
 const DONE_TEXT = 'text-text-muted';
 const DONE_BG = 'bg-bg-subtle';
-// 旁路注入要与人说的、agent 说的分得开：读这一格时唯一要知道的事，就是"这句话是被别人
-// 塞进来的"。分得开靠的不是再发明一个色相——**是虚线轮廓**。虚线在任何主题下都读作
-// "外来的、临时贴上去的"，而且它不消耗颜色预算：颜色留给出错与在等。
-const HOOK_TEXT = 'text-text-secondary';
-const HOOK_BG = 'bg-bg-subtle';
-const HOOK_RING = 'border border-dashed border-border-strong';
 // 后台任务完成：不上色，卡底加一圈实线边，跟工具卡同一个形状。
 const TASK_CARD_NEUTRAL = 'border border-border-color bg-bg-card';
 
@@ -342,6 +338,27 @@ function TruncationChip({ state, ref_ }: { state: string; ref_: string }) {
   return null;
 }
 
+export interface DeliveryTriadFile {
+  path: string;
+  name: string;
+  add: number;
+  del: number;
+}
+
+export interface DeliveryTriadData {
+  conclusion: string;
+  files: DeliveryTriadFile[];
+  verifyCommand: string;
+  verifyPassed?: boolean;
+}
+
+export interface RecordStreamActions {
+  onOpenFileDiff?: (filePath: string) => void;
+  onSelectSession?: (sessionId: string) => void;
+}
+
+export const RecordStreamActionsContext = createContext<RecordStreamActions>({});
+
 // ── 三个外壳 ──────────────────────────────────────────────────────────
 interface ShellProps {
   record: WorkbenchRecord;
@@ -413,7 +430,14 @@ function CardHead({
     </span>
   );
   return (
-    <header className="wb-record-head flex min-w-0 items-center gap-2 text-[11px] text-text-muted">
+    <header
+      className="wb-record-head flex min-w-0 items-center gap-2 text-[11px] text-text-muted"
+      title={
+        context !== null
+          ? `${t('workbench.record.usage.context')}: ${context.toLocaleString()}`
+          : undefined
+      }
+    >
       {onToggle ? (
         <button
           type="button"
@@ -433,17 +457,8 @@ function CardHead({
       )}
       {meta ? <span className="wb-record-head-meta">{meta}</span> : null}
       <Timestamp ts={record.ts} />
-      {/* 分割线显示在时间的右侧，撑开空档并连起右侧上下文读数与结局 */}
-      <span aria-hidden className="h-px flex-1 bg-border-color" />
-      {context !== null ? (
-        <span
-          className="shrink-0 font-mono text-[11px] tabular-nums text-text-dim"
-          data-testid="card-head-context"
-          title={`Context: ${context.toLocaleString()}`}
-        >
-          {t('workbench.record.usage.context')} {formatTokens(context)}
-        </span>
-      ) : null}
+      {/* 去掉时间右侧横向分割线，仅用弹性占位把右侧结局标记推到行末 */}
+      <span aria-hidden className="flex-1" />
       {trailing}
       <AgentPath path={record.agent_path} />
     </header>
@@ -472,6 +487,7 @@ function TextShell({
   trailing,
   tone = '',
   toneOpenOnly = false,
+  headSpacing = false,
   collapsible = false,
   defaultOpen = true,
   testId,
@@ -492,6 +508,8 @@ function TextShell({
    * 什么。摊开之后它真的有一块内容要兜住，那时纸色才有活干。
    */
   toneOpenOnly?: boolean;
+  /** 无边框回复行（如 Agent 回复）上方多留出明确留白，不靠横向分割线也能切清边界。 */
+  headSpacing?: boolean;
   collapsible?: boolean;
   defaultOpen?: boolean;
   testId?: string;
@@ -500,12 +518,13 @@ function TextShell({
   const effectiveTone = toneOpenOnly && !open ? '' : tone;
   // 有纸色的才撑上下；左右一律给，那是全栏共用的那条起字线。
   const padded = effectiveTone && effectiveTone !== 'bg-transparent';
+  const verticalSpacing = padded ? 'py-2' : headSpacing ? 'pb-0.5 pt-3.5' : 'py-0.5';
   return (
     <article
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
       data-testid={testId}
-      className={`min-w-0 rounded-[8px] px-3 ${padded ? 'py-2' : 'py-0.5'} ${effectiveTone}`}
+      className={`min-w-0 rounded-[8px] px-3 ${verticalSpacing} ${effectiveTone}`}
     >
       <CardHead
         record={record}
@@ -737,6 +756,7 @@ const ASYNC_CALLBACK_MODE_KEY: Record<string, string> = {
 function AsyncCallbackCard({
   record,
   callback,
+  dedupeCount = 1,
   employees,
   skills,
   reminders,
@@ -744,14 +764,18 @@ function AsyncCallbackCard({
 }: {
   record: WorkbenchRecord;
   callback: AsyncCallbackBlockItem;
+  dedupeCount?: number;
   employees?: EmployeeBlockItem[];
   skills?: string[];
   reminders?: string[];
   queueChip?: ReactNode;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n: i18nInst } = useTranslation();
+  const actions = useContext(RecordStreamActionsContext);
+  const [open, setOpen] = useState(true);
   const [summaryOpen, setSummaryOpen] = useState(false);
 
+  const isZh = i18nInst.language?.startsWith('zh');
   const isEmployee = callback.kind === 'employee';
   const failed = callback.status === 'failed' || (callback.exitCode !== null && callback.exitCode !== 0);
   const label = isEmployee
@@ -774,122 +798,208 @@ function AsyncCallbackCard({
     Boolean(callback.taskSummary) &&
     (callback.taskSummary.includes('\n') || callback.taskSummary.trim() !== callback.taskTitle.trim());
 
-  const metaNode = (
-    <span className="wb-record-head-meta inline-flex items-center gap-1.5">
-      {callback.employeeId ? (
-        <span
-          data-testid="async-callback-employee"
-          className="shrink-0 font-mono text-text-primary"
-        >
-          @{callback.employeeId}
-        </span>
-      ) : null}
-      {callback.targetSessionId ? (
-        <span
-          data-testid="async-callback-session"
-          className="min-w-0 truncate font-mono text-text-muted"
-          title={callback.targetSessionId}
-        >
-          {callback.targetSessionId}
-        </span>
-      ) : null}
-      {modeLabel ? <span className="shrink-0 text-text-muted">· {modeLabel}</span> : null}
-      {/* 内核名排在元信息最后一位，栏窄时它是**先让位**的那一个：不写 `shrink-0`，
-          自己截断加省略号。此前它不缩，一整行就被它顶到卡片右边缘之外被裁掉
-          （2026-11-14 修，与 `.wb-record-head-meta` 那对规则配套）。 */}
-      {callback.agentKernel ? (
-        <span className="min-w-0 truncate font-mono text-text-dim">· {callback.agentKernel}</span>
-      ) : null}
-    </span>
-  );
+  const explicitStage = str(record.payload, 'async_callback_stage');
+  const isQueuedPending =
+    (record.kind === 'context.inject' &&
+      record.payload.channel === 'queued_command' &&
+      record.payload.queue_state === 'pending') ||
+    (record.kind === 'session.state' && record.payload.queue_state === 'pending');
+  const stage: 'delivered' | 'consumed' =
+    explicitStage === 'delivered'
+      ? 'delivered'
+      : explicitStage === 'consumed'
+        ? 'consumed'
+        : isQueuedPending
+          ? 'delivered'
+          : 'consumed';
 
-  const trailingNode = (
-    <span className="flex shrink-0 items-center gap-1.5">
-      {callback.jobId ? (
-        <span
-          data-testid="async-callback-job"
-          className="font-mono text-[11px] text-text-dim"
-        >
-          {callback.jobId}
-        </span>
-      ) : null}
-      {statusObj ? (
-        <span
-          data-testid="async-callback-status"
-          className={`rounded-full px-2 py-[1px] text-[11px] ${statusObj.tone}`}
-        >
-          {statusWithCode}
-        </span>
-      ) : null}
-      {queueChip}
-    </span>
-  );
+  const stepItems = [
+    { key: 'dispatched', state: 'done', label: isZh ? '已派发 Dispatched' : 'Dispatched' },
+    { key: 'running', state: 'done', label: isZh ? '执行中 Running' : 'Running' },
+    {
+      key: 'delivered',
+      state: stage === 'consumed' ? 'done' : 'now',
+      label: isZh ? '已回传待消费 Delivered' : 'Delivered',
+    },
+    {
+      key: 'consumed',
+      state: stage === 'consumed' ? 'done' : 'wait',
+      label: isZh ? '已消费入账 Consumed' : 'Consumed',
+    },
+  ] as const;
+
+  const cardTone = statusObj?.card ?? TASK_CARD_NEUTRAL;
 
   return (
-    <TextShell
-      record={record}
-      testId="async-callback-card"
-      icon={<Bot size={12} />}
-      label={label}
-      labelTone={
-        failed
-          ? `text-[11px] font-semibold ${ERR_TEXT}`
-          : 'text-[11px] font-semibold text-text-secondary'
-      }
-      tone={statusObj?.card ?? TASK_CARD_NEUTRAL}
-      meta={metaNode}
-      trailing={trailingNode}
-      collapsible
-      defaultOpen
+    <article
+      data-kind={record.kind}
+      data-group={KIND_GROUP[record.kind]}
+      data-testid="async-callback-card"
+      className={`cb-card min-w-0 ${cardTone}`}
     >
-      {employees?.length ? <EmployeeQuotes employees={employees} /> : null}
-      {skills?.length ? <SkillQuotes names={skills} /> : null}
-      {callback.taskSummary ? (
-        <div
-          data-testid="async-callback-summary"
-          className="mb-2 rounded-[6px] border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px]"
+      <header className="cb-hd">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className={`inline-flex shrink-0 items-center gap-1 hover:opacity-80 ${
+            failed
+              ? `text-[11px] font-semibold ${ERR_TEXT}`
+              : 'text-[11px] font-semibold text-text-secondary'
+          }`}
         >
-          {hasExpandableSummary ? (
+          <ChevronRight
+            size={12}
+            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          />
+          <Bot size={12} />
+        </button>
+        <span className="cb-title flex flex-wrap items-center gap-1.5">
+          <span>{label}</span>
+          {callback.employeeId ? (
+            <span
+              data-testid="async-callback-employee"
+              className="shrink-0 font-mono text-[11px] text-text-primary"
+            >
+              @{callback.employeeId}
+            </span>
+          ) : null}
+          {callback.targetSessionId ? (
+            <span
+              data-testid="async-callback-session"
+              className="min-w-0 truncate font-mono text-[11px] font-normal text-text-muted"
+              title={callback.targetSessionId}
+            >
+              {callback.targetSessionId}
+            </span>
+          ) : null}
+          {modeLabel ? (
+            <span className="shrink-0 text-[11px] font-normal text-text-muted">· {modeLabel}</span>
+          ) : null}
+          {callback.agentKernel ? (
+            <span className="min-w-0 truncate font-mono text-[11px] font-normal text-text-dim">
+              · {callback.agentKernel}
+            </span>
+          ) : null}
+        </span>
+        {dedupeCount > 1 ? (
+          <span data-testid="async-callback-dedupe" className="cb-dedupe">
+            ×{dedupeCount} deduplicated
+          </span>
+        ) : null}
+        {callback.exitCode !== null ? (
+          <span
+            data-testid="async-callback-exit"
+            className={`cb-exit ${callback.exitCode === 0 ? 'ok' : ''}`}
+          >
+            exit {callback.exitCode}
+          </span>
+        ) : null}
+        {callback.jobId ? (
+          <span
+            data-testid="async-callback-job"
+            className="shrink-0 font-mono text-[11px] text-text-dim"
+          >
+            {callback.jobId}
+          </span>
+        ) : null}
+        {statusObj ? (
+          <span
+            data-testid="async-callback-status"
+            className={`shrink-0 rounded-full px-2 py-[1px] text-[11px] ${statusObj.tone}`}
+          >
+            {statusWithCode}
+          </span>
+        ) : null}
+        {queueChip}
+        <Timestamp ts={record.ts} />
+        <AgentPath path={record.agent_path} />
+      </header>
+
+      <div className="cb-steps" data-testid="async-callback-steps" data-stage={stage}>
+        {stepItems.map((s, i) => (
+          <span key={s.key} className="inline-flex items-center gap-1.5">
+            {i > 0 ? <span className="text-text-dim">›</span> : null}
+            <span className={`cb-step ${s.state}`}>
+              {s.state === 'done' ? <Check size={11} /> : s.state === 'now' ? <Clock size={11} /> : null}
+              <span>{s.label}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+
+      {open ? (
+        <div className="min-w-0 space-y-2">
+          {employees?.length ? <EmployeeQuotes employees={employees} /> : null}
+          {skills?.length ? <SkillQuotes names={skills} /> : null}
+          {callback.taskSummary ? (
+            <div
+              data-testid="async-callback-summary"
+              className="rounded-[6px] border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px]"
+            >
+              {hasExpandableSummary ? (
+                <button
+                  type="button"
+                  onClick={() => setSummaryOpen((v) => !v)}
+                  aria-expanded={summaryOpen}
+                  data-testid="async-callback-summary-toggle"
+                  className="flex w-full min-w-0 items-center gap-1.5 text-left text-text-secondary hover:text-text-primary"
+                >
+                  <ChevronRight
+                    size={11}
+                    className={`shrink-0 text-text-muted transition-transform duration-200 ${
+                      summaryOpen ? 'rotate-90' : ''
+                    }`}
+                  />
+                  <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
+                  <span className="min-w-0 flex-1 truncate">{callback.taskTitle}</span>
+                </button>
+              ) : (
+                <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
+                  <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
+                  <span className="min-w-0 flex-1 truncate">{callback.taskTitle || callback.taskSummary}</span>
+                </div>
+              )}
+              {hasExpandableSummary && summaryOpen ? (
+                <div
+                  data-testid="async-callback-summary-full"
+                  className="mt-1.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words border-t border-border-color pt-1.5 text-[12px] leading-[1.65] text-text-secondary"
+                >
+                  {callback.taskSummary}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div
+            data-testid="async-callback-body"
+            className="max-h-[230px] min-w-0 overflow-auto"
+          >
+            <Rich text={callback.resultBody} />
+          </div>
+          {reminders?.length ? <Reminders items={reminders} /> : null}
+        </div>
+      ) : null}
+
+      {callback.targetSessionId ? (
+        <div className="cb-foot" data-testid="async-callback-foot">
+          <span className="min-w-0 truncate">
+            {isZh ? '来源会话：' : 'Source session: '}
+            <code className="font-mono text-text-secondary">{callback.targetSessionId}</code>
+          </span>
+          {actions.onSelectSession ? (
             <button
               type="button"
-              onClick={() => setSummaryOpen((v) => !v)}
-              aria-expanded={summaryOpen}
-              data-testid="async-callback-summary-toggle"
-              className="flex w-full min-w-0 items-center gap-1.5 text-left text-text-secondary hover:text-text-primary"
+              data-testid="async-callback-jump"
+              onClick={() => actions.onSelectSession?.(callback.targetSessionId)}
+              className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-[6px] border border-border-color bg-bg-secondary px-2 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             >
-              <ChevronRight
-                size={11}
-                className={`shrink-0 text-text-muted transition-transform duration-200 ${
-                  summaryOpen ? 'rotate-90' : ''
-                }`}
-              />
-              <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
-              <span className="min-w-0 flex-1 truncate">{callback.taskTitle}</span>
+              <span>{isZh ? '打开来源会话' : 'Open source'}</span>
+              <ExternalLink size={11} />
             </button>
-          ) : (
-            <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
-              <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
-              <span className="min-w-0 flex-1 truncate">{callback.taskTitle || callback.taskSummary}</span>
-            </div>
-          )}
-          {hasExpandableSummary && summaryOpen ? (
-            <div
-              data-testid="async-callback-summary-full"
-              className="mt-1.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words border-t border-border-color pt-1.5 text-[12px] leading-[1.65] text-text-secondary"
-            >
-              {callback.taskSummary}
-            </div>
           ) : null}
         </div>
       ) : null}
-      <div
-        data-testid="async-callback-body"
-        className="max-h-[230px] min-w-0 overflow-auto"
-      >
-        <Rich text={callback.resultBody} />
-      </div>
-      {reminders?.length ? <Reminders items={reminders} /> : null}
-    </TextShell>
+    </article>
   );
 }
 
@@ -908,11 +1018,17 @@ function AsyncCallbackCards({
   reminders?: string[];
   queueChip?: ReactNode;
 }) {
-  if (callbacks.length === 1) {
+  const deduped = dedupeAsyncCallbacks(callbacks);
+  const streamDedupe = num(record.payload, 'async_callback_dedupe');
+  const streamExtra = streamDedupe !== null && streamDedupe > 1 ? streamDedupe - 1 : 0;
+
+  if (deduped.length === 1) {
+    const item = deduped[0];
     return (
       <AsyncCallbackCard
         record={record}
-        callback={callbacks[0]}
+        callback={item.callback}
+        dedupeCount={item.dedupeCount + streamExtra}
         employees={employees}
         skills={skills}
         reminders={reminders}
@@ -922,14 +1038,15 @@ function AsyncCallbackCards({
   }
   return (
     <div className="min-w-0 space-y-2">
-      {callbacks.map((cb, idx) => (
+      {deduped.map((item, idx) => (
         <AsyncCallbackCard
-          key={cb.jobId || idx}
+          key={item.callback.jobId || idx}
           record={record}
-          callback={cb}
+          callback={item.callback}
+          dedupeCount={idx === deduped.length - 1 ? item.dedupeCount + streamExtra : item.dedupeCount}
           employees={idx === 0 ? employees : undefined}
           skills={idx === 0 ? skills : undefined}
-          reminders={idx === callbacks.length - 1 ? reminders : undefined}
+          reminders={idx === deduped.length - 1 ? reminders : undefined}
           queueChip={idx === 0 ? queueChip : undefined}
         />
       ))}
@@ -1103,6 +1220,74 @@ function Reminders({ items }: { items: string[] }) {
   );
 }
 
+function parseDeliveryTriad(raw: unknown): DeliveryTriadData | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const conclusion = typeof obj.conclusion === 'string' ? obj.conclusion.trim() : '';
+  const verifyCommand = typeof obj.verifyCommand === 'string' ? obj.verifyCommand.trim() : '';
+  const rawFiles = Array.isArray(obj.files) ? obj.files : [];
+  const files: DeliveryTriadFile[] = [];
+  for (const item of rawFiles) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const f = item as Record<string, unknown>;
+    const path = typeof f.path === 'string' ? f.path : '';
+    const name = typeof f.name === 'string' ? f.name : path.split('/').pop() || path;
+    if (!path && !name) continue;
+    files.push({
+      path: path || name,
+      name,
+      add: typeof f.add === 'number' && Number.isFinite(f.add) ? f.add : 0,
+      del: typeof f.del === 'number' && Number.isFinite(f.del) ? f.del : 0,
+    });
+  }
+  if (!conclusion && !files.length && !verifyCommand) return null;
+  return {
+    conclusion,
+    files,
+    verifyCommand,
+    verifyPassed: obj.verifyPassed !== false,
+  };
+}
+
+function DeliveryTriad({ data }: { data: DeliveryTriadData }) {
+  const { i18n: i18nInst } = useTranslation();
+  const actions = useContext(RecordStreamActionsContext);
+  const isZh = i18nInst.language?.startsWith('zh');
+  const statusText =
+    data.verifyPassed !== false ? (isZh ? '已验证' : 'Verified') : isZh ? '未通过' : 'Unverified';
+  const verifyLabel = data.verifyCommand ? `${statusText} · ${data.verifyCommand}` : statusText;
+  return (
+    <section className="delivery-triad" data-testid="delivery-triad">
+      <span
+        className="dt-verify-badge"
+        data-testid="delivery-triad-verify"
+        title={data.verifyCommand || undefined}
+      >
+        <Check size={12} />
+        <span className="truncate">{verifyLabel}</span>
+      </span>
+      {data.files.length > 0 ? (
+        <div className="dt-files">
+          {data.files.map((f) => (
+            <button
+              key={f.path}
+              type="button"
+              data-testid="delivery-triad-file"
+              onClick={() => actions.onOpenFileDiff?.(f.path)}
+              className="dt-diff-pill"
+              title={f.path}
+            >
+              <span>{f.name}</span>
+              {f.add > 0 ? <span className="add">+{f.add}</span> : null}
+              {f.del > 0 ? <span className="del">-{f.del}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 /**
  * agent 的回复。末尾是 `answer-needed-by-human` 区块的，正文照常、区块换成决定卡片。
  *
@@ -1144,6 +1329,9 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
     uiComponent && !uiComponent.ok
       ? delegatedUi || (!bodyWithoutGrid.includes('```') ? bodyWithoutGrid : '')
       : '';
+  const deliveryTriad = !record.agent_path.length
+    ? parseDeliveryTriad(p.delivery_triad)
+    : null;
   return (
     <TextShell
       record={record}
@@ -1156,6 +1344,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
          名字常驻在输入框右下那边，一次性说清"现在是谁在答"。 */
       labelTone="text-[11px] font-medium text-text-secondary"
       tone="bg-transparent"
+      headSpacing
     >
       {trailing ? (
         <>
@@ -1165,6 +1354,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
             split={trailing}
             rich={(s) => <Rich text={s} />}
           />
+          {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
           ))}
@@ -1172,6 +1362,7 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
       ) : (
         <>
           <Rich text={displayText} />
+          {deliveryTriad ? <DeliveryTriad data={deliveryTriad} /> : null}
           {imageGrids.map((grid, idx) => (
             <ImageGridCard key={`grid-${idx}`} block={grid} />
           ))}
@@ -1193,59 +1384,37 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
 }
 
 /**
- * agent 想了一轮。**它就是一行，点开才摊成一段文字。**
- *
- * 原型在这个位置画的就是一行：一个折角标记 + 「思考」，后面跟着截断的正文。一场会话里
- * 思考的条数常是回复的两三倍，每条都给一张卡（哪怕默认折着），一屏下来就是同一副灰盒子
- * 反复排开，读到的是盒子的节奏。它的字号也不跟正文争：它记的是过程，不是说给人听的话。
- *
- * 正文没落盘的思考照旧只值一行——模型这一轮的推理是加密的，落盘时只剩一个空壳。那种
- * 情形本来就没有可以摊开的内容，所以不给展开入口，只写一句"想过，但没留下字"。
+ * agent 想了一轮。空思考静默隐藏；非空时默认折叠为单行摘要 `.fold-think`，点击展开 `.fold-think-body`。
  */
 function AgentThink({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
-  const text = str(record.payload, 'text');
+  const text = (str(record.payload, 'text') || str(record.payload, 'thinking')).trim();
   const [open, setOpen] = useState(false);
-  if (!text) {
-    return (
-      <div
-        data-kind={record.kind}
-        data-group="text"
-        data-testid="think-empty"
-        className="flex min-w-0 items-center gap-2 px-3 py-0.5 text-[11px] text-text-muted"
-      >
-        <Circle size={7} className="shrink-0" />
-        <span className="min-w-0 truncate">{t('workbench.record.thinkEmpty')}</span>
-      </div>
-    );
-  }
+  if (!text) return null;
+  const clock = formatClock(record.ts);
   return (
     <div
       data-kind={record.kind}
       data-group="text"
       data-testid="think-line"
-      className="min-w-0 px-3 py-0.5"
+      className="fold-think min-w-0"
     >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={t('workbench.record.toggle')}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left text-[12px] text-text-muted transition-colors hover:text-text-secondary"
+        className="fold-think-hd"
       >
         <ChevronRight
           size={12}
           className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         />
-        <span className="shrink-0">{t(KIND_LABEL_KEY['agent.think'])}</span>
-        {/* 折着时后面跟一段截断的正文，人扫一眼就知道这一轮在想什么；要读全的点开。 */}
-        <span className="min-w-0 flex-1 truncate text-text-dim">{text}</span>
+        <span className="tag">{t(KIND_LABEL_KEY['agent.think'])}</span>
+        <span className="txt truncate">{text}</span>
+        {clock ? <span className="tm">{clock}</span> : null}
       </button>
-      {open ? (
-        <p className="mt-1 whitespace-pre-wrap break-words pl-[18px] text-[12px] leading-[1.72] text-text-secondary">
-          {text}
-        </p>
-      ) : null}
+      {open ? <div className="fold-think-body">{text}</div> : null}
     </div>
   );
 }
@@ -1295,9 +1464,8 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
   const echo = p.echo === true;
   const quiet = p.quiet === true;
   const light = (silent || echo || quiet) && !failed && !prevented && !stderr;
-  const [open, setOpen] = useState(!light);
-  // 正文与各段都空、也没出错的注入缩成一行「Hook <时机>」。一屏里它们占大半，每条一张卡
-  // 等于让人读一整屏「跑过但没说话」。收尾 hook 的名字与耗时收在展开里。
+  const [open, setOpen] = useState(failed || prevented || Boolean(stderr));
+  // 正文与各段都空、也没出错的注入缩成一行「Hook <时机>」。
   const empty = light && !segments.length;
   const eventLabel = HOOK_EVENT_LABEL_KEY[event] ? t(HOOK_EVENT_LABEL_KEY[event]) : event;
   if (empty) {
@@ -1309,29 +1477,28 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
         data-testid="hook-inject"
         data-light="true"
         data-empty="true"
-        className="min-w-0 rounded-[8px] px-3 py-0.5"
+        className="sys-capsule min-w-0"
       >
-        <header className="flex items-center gap-2 text-[11px] text-text-muted">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            className="inline-flex shrink-0 items-center gap-1 hover:text-text-secondary"
-          >
-            <ChevronRight
-              size={12}
-              className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-            />
-            <Zap size={12} />
-            <span>{t('workbench.record.hookLine', { event: eventLabel })}</span>
-          </button>
-          {target ? <span className="min-w-0 truncate font-mono">{target}</span> : null}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="sys-capsule-hd w-full"
+        >
+          <ChevronRight
+            size={12}
+            className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          />
+          <span className="sys-capsule-badge">Hook</span>
+          <span className="min-w-0 truncate">
+            {t('workbench.record.hookLine', { event: eventLabel })}
+            {target ? ` · ${target}` : ''}
+          </span>
           <Timestamp ts={record.ts} />
-          <span aria-hidden className="h-px flex-1 bg-border-color" />
           <AgentPath path={record.agent_path} />
-        </header>
+        </button>
         {open ? (
-          <div className="mt-1 min-w-0 space-y-0.5 pl-4 text-[11px] text-text-muted">
+          <div className="sys-capsule-body space-y-0.5 text-[11px] text-text-muted">
             {infos.length ? (
               infos.map((info, i) => (
                 <p key={i} className="flex gap-2 font-mono">
@@ -1365,30 +1532,23 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
       data-source="hook"
       data-testid="hook-inject"
       data-light={light ? 'true' : undefined}
-      className={`min-w-0 rounded-[8px] px-3 ${light ? 'py-0.5' : `py-2 ${HOOK_BG} ${HOOK_RING}`}`}
+      className={`sys-capsule min-w-0 ${failed ? `${ERR_BG} ${ERR_RING}` : ''}`}
     >
-      <header className="flex items-center gap-2 text-[11px]">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className={`inline-flex shrink-0 items-center gap-1 ${
-            light ? 'text-text-muted' : `font-semibold ${HOOK_TEXT}`
-          }`}
-        >
-          <ChevronRight
-            size={12}
-            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-          />
-          <Zap size={12} />
-          <span>{t('workbench.record.hookInject')}</span>
-        </button>
-        <span className={`min-w-0 truncate ${light ? 'text-text-muted' : 'text-text-secondary'}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="sys-capsule-hd w-full"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="sys-capsule-badge">{t('workbench.record.hookInject')}</span>
+        <span className="min-w-0 truncate text-text-secondary">
           {HOOK_EVENT_LABEL_KEY[event] ? t(HOOK_EVENT_LABEL_KEY[event]) : event}
           {target ? <span className="ml-1 font-mono text-text-muted">{target}</span> : null}
         </span>
-        {/* 「跑过但没留下话」写在事件名旁边，不写在正文里——正文是空的，人打开一看
-            什么都没有，只会以为是界面坏了。 */}
         {silent ? (
           <span className="shrink-0 text-text-dim">{t('workbench.record.hookSilent')}</span>
         ) : null}
@@ -1404,7 +1564,6 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         <Timestamp ts={record.ts} />
-        <span aria-hidden className="h-px flex-1 bg-border-color" />
         {segments.length > 1 ? (
           <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono tabular-nums text-text-muted">
             {t('workbench.record.segments', { n: segments.length })}
@@ -1423,12 +1582,10 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
           </span>
         ) : null}
         <AgentPath path={record.agent_path} />
-      </header>
+      </button>
 
       {open ? (
-        <div className="mt-2 min-w-0 space-y-2">
-          {/* 收尾那一轮各个 hook 的名字与耗时。这是「没说话的收尾」唯一的内容，
-              从前跟着整行一起被丢掉，于是"收尾 hook 跑了几十次"在界面上完全看不到。 */}
+        <div className="sys-capsule-body space-y-2">
           {infos.length ? (
             <dl className="space-y-0.5 text-[11px]">
               {infos.map((info, i) => (
@@ -1449,19 +1606,19 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
             segments.map((text, i) => (
               <div
                 key={i}
-                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-border-color px-2.5 py-2 text-[13px] leading-[1.7] text-text-secondary"
+                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-border-color px-2.5 py-2 font-sans text-[13px] leading-[1.7] text-text-secondary"
               >
                 {text}
               </div>
             ))
           ) : infos.length ? null : (
-            <p className="text-[12px] italic text-text-muted">
+            <p className="font-sans text-[12px] italic text-text-muted">
               {t('workbench.record.hookSaidNothing')}
             </p>
           )}
           {stderr ? (
             <div>
-              <p className={`mb-1 text-[11px] ${ERR_TEXT}`}>{t('workbench.record.stderr')}</p>
+              <p className={`mb-1 font-sans text-[11px] ${ERR_TEXT}`}>{t('workbench.record.stderr')}</p>
               <Mono text={stderr} />
             </div>
           ) : null}
@@ -1659,43 +1816,51 @@ function ContextInject({ record }: { record: WorkbenchRecord }) {
   const exit = num(p, 'exit_code');
   const unrecognized = p.unrecognized === true;
   const label = str(p, 'label') || str(p, 'channel') || t(KIND_LABEL_KEY['context.inject']);
-  // 渠道名与标签在多数注入上是同一个串（`date date`、`mcp_instructions_delta
-  // mcp_instructions_delta`）。同一个词并排印两遍不是两件事，是同一件事被印了两遍——
-  // 人读到第二个会先愣一下去找两者的差别，找不到才作罢。一样就只印一次。
   const channel = str(p, 'channel');
   const showChannel = channel && channel !== label;
+  const [open, setOpen] = useState(false);
   return (
-    <TextShell
-      record={record}
-      icon={<Download size={12} />}
-      label={unrecognized ? t('workbench.record.unrecognized', { label }) : label}
-      tone="bg-bg-subtle"
-      toneOpenOnly
-      meta={
-        showChannel || exit !== null ? (
-          <span className="flex items-center gap-2">
-            {showChannel ? <span className="truncate">{channel}</span> : null}
-            {exit !== null ? (
-              <span className="font-mono">{t('workbench.record.exitCode', { code: exit })}</span>
-            ) : null}
-          </span>
-        ) : undefined
-      }
-      collapsible
-      defaultOpen={false}
+    <article
+      data-kind={record.kind}
+      data-group={KIND_GROUP[record.kind]}
+      className="sys-capsule min-w-0"
     >
-      {files.length ? (
-        <ul className="space-y-0.5 font-mono text-[12px] text-text-secondary">
-          {files.map((f, i) => (
-            <li key={i} className="break-all">
-              {typeof f === 'string' ? f : JSON.stringify(f)}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <Mono text={str(p, 'body') || str(p, 'stdout')} />
-      )}
-    </TextShell>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="sys-capsule-hd w-full"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="sys-capsule-badge">
+          {unrecognized ? t('workbench.record.unrecognized', { label }) : label}
+        </span>
+        {showChannel ? <span className="min-w-0 truncate">{channel}</span> : null}
+        {exit !== null ? (
+          <span className="shrink-0 font-mono">{t('workbench.record.exitCode', { code: exit })}</span>
+        ) : null}
+        <Timestamp ts={record.ts} />
+        <AgentPath path={record.agent_path} />
+      </button>
+      {open ? (
+        <div className="sys-capsule-body">
+          {files.length ? (
+            <ul className="space-y-0.5 font-mono text-[12px] text-text-secondary">
+              {files.map((f, i) => (
+                <li key={i} className="break-all">
+                  {typeof f === 'string' ? f : JSON.stringify(f)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Mono text={str(p, 'body') || str(p, 'stdout')} />
+          )}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -2462,50 +2627,96 @@ export function ToolRun({
   live: boolean;
 }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const [showExtras, setShowExtras] = useState(false);
+
+  let totalMs = 0;
+  let errCount = 0;
+  let deniedCount = 0;
+  let firstPreview = '';
+  for (const r of rows) {
+    const c = r.call?.payload ?? {};
+    const res = r.result?.payload ?? {};
+    const status = str(res, 'status');
+    const ms =
+      num(res, 'duration_ms') ??
+      (r.call && r.result && r.result.ts >= r.call.ts ? r.result.ts - r.call.ts : null);
+    if (ms !== null && ms > 0) totalMs += ms;
+    if (status === 'error') errCount += 1;
+    if (status === 'denied') deniedCount += 1;
+    if (!firstPreview) {
+      const nm = str(c, 'tool_name') || str(res, 'tool_name');
+      const arg = str(c, 'title') || previewArgs(dict(c.args));
+      firstPreview = `${nm} ${arg}`.trim();
+    }
+  }
+  const firstTs = (rows[0]?.call ?? rows[0]?.result)?.ts ?? 0;
+
   return (
     <section
-      data-testid="tool-run"
-      className="min-w-0 overflow-hidden rounded-[8px] border border-border-color bg-bg-card"
+      data-testid="turn-tools-rail"
+      className="turn-tools min-w-0"
     >
-      <header className="flex items-center gap-2 border-b border-border-color px-3 py-1 text-[11px] text-text-muted">
-        <Terminal size={11} />
-        <span>{t('workbench.record.toolRunCount', { count: rows.length })}</span>
-        {rows[0]?.call || rows[0]?.result ? (
-          <Timestamp ts={(rows[0].call ?? rows[0].result)!.ts} />
+      <button
+        type="button"
+        data-testid="turn-tools-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="turn-tools-hd"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="cnt">{t('workbench.record.toolRunCount', { count: rows.length })}</span>
+        {totalMs > 0 ? <span className="dur">{formatDuration(totalMs)}</span> : null}
+        {errCount > 0 ? (
+          <span className="err-pill">
+            {errCount} {t('workbench.record.status.error')}
+          </span>
         ) : null}
-      </header>
-      <ul className="divide-y divide-border-color">
-        {rows.map((row, i) => (
-          <ToolRunLine
-            key={(row.call ?? row.result)?.id ?? i}
-            row={row}
-            sessionId={sessionId}
-            live={live}
-          />
-        ))}
-      </ul>
-      {extras.length ? (
-        <div className="border-t border-border-color">
-          <button
-            type="button"
-            onClick={() => setShowExtras((v) => !v)}
-            aria-expanded={showExtras}
-            data-testid="tool-run-extras"
-            /* 同上：这一颗也在 `tool-run` 的裁剪框里，外环会被切。 */
-            className="flex w-full items-center gap-1 px-3 py-1 text-left text-[11px] text-text-dim hover:text-text-secondary focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)]"
-          >
-            <ChevronRight
-              size={11}
-              className={`transition-transform duration-200 ${showExtras ? 'rotate-90' : ''}`}
-            />
-            {t('workbench.record.toolRunExtras', { count: extras.length })}
-          </button>
-          {showExtras ? (
-            <div className="space-y-1 px-3 pb-2">
-              {extras.map((r) => (
-                <RecordCardInner key={r.id} record={r} sessionId={sessionId} />
-              ))}
+        {deniedCount > 0 ? (
+          <span className="warn-pill">
+            {deniedCount} {t('workbench.record.status.denied')}
+          </span>
+        ) : null}
+        {firstPreview ? <span className="preview truncate">{firstPreview}</span> : <span className="flex-1" />}
+        {firstTs ? <Timestamp ts={firstTs} /> : null}
+      </button>
+      {open ? (
+        <div data-testid="tool-run" className="turn-tools-list">
+          <ul className="divide-y divide-border-color">
+            {rows.map((row, i) => (
+              <ToolRunLine
+                key={(row.call ?? row.result)?.id ?? i}
+                row={row}
+                sessionId={sessionId}
+                live={live}
+              />
+            ))}
+          </ul>
+          {extras.length ? (
+            <div className="border-t border-border-color">
+              <button
+                type="button"
+                onClick={() => setShowExtras((v) => !v)}
+                aria-expanded={showExtras}
+                data-testid="tool-run-extras"
+                className="flex w-full items-center gap-1 px-3 py-1 text-left text-[11px] text-text-dim hover:text-text-secondary focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring),var(--focus-ring-inset)]"
+              >
+                <ChevronRight
+                  size={11}
+                  className={`transition-transform duration-200 ${showExtras ? 'rotate-90' : ''}`}
+                />
+                {t('workbench.record.toolRunExtras', { count: extras.length })}
+              </button>
+              {showExtras ? (
+                <div className="space-y-1 px-3 pb-2">
+                  {extras.map((r) => (
+                    <RecordCardInner key={r.id} record={r} sessionId={sessionId} />
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -2546,24 +2757,25 @@ export function SystemRun({
     }
   }
   return (
-    <section data-testid="system-run" className="min-w-0 px-3 py-0.5">
+    <section data-testid="system-run" className="sys-capsule min-w-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted hover:text-text-secondary"
+        className="sys-capsule-hd w-full"
       >
         <ChevronRight
           size={11}
           className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         />
-        <Circle size={7} className="shrink-0" />
-        <span className="shrink-0">{t('workbench.record.systemRunCount', { count: records.length })}</span>
+        <span className="sys-capsule-badge">
+          {t('workbench.record.systemRunCount', { count: records.length })}
+        </span>
         {fact ? <span className="min-w-0 truncate font-mono">· {fact}</span> : null}
         <Timestamp ts={records[0]?.ts ?? 0} />
       </button>
       {open ? (
-        <div className="mt-1 min-w-0 space-y-1">
+        <div className="sys-capsule-body space-y-1">
           {records.map((r) => (
             <RecordCardInner key={r.id} record={r} sessionId={sessionId} />
           ))}

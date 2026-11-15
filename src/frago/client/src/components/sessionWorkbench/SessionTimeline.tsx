@@ -929,7 +929,7 @@ export default function SessionTimeline({
             {affairsData && affairsData.summary.total_affairs > 0 ? (
               <span
                 data-testid="month-affairs-badge"
-                className="ml-1 inline-flex items-center gap-1 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[11px] font-medium text-accent-primary"
+                className="ml-1 inline-flex items-center gap-1 rounded-full border border-accent-primary-border bg-accent-primary-10 px-2 py-0.5 text-[11px] font-medium text-accent-primary"
               >
                 <Check size={11} strokeWidth={2.5} />
                 <span>{t('workbench.timeline.monthAffairsCount', { count: affairsData.summary.total_affairs })}</span>
@@ -1133,7 +1133,7 @@ export default function SessionTimeline({
                         {dayAffairCount > 0 ? (
                           <span
                             data-testid={`affairs-badge-${cell.date}`}
-                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1.5 py-0.2 text-[11px] font-medium text-accent-primary"
+                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary-border bg-accent-primary-10 px-1.5 py-0.2 text-[11px] font-medium text-accent-primary"
                           >
                             <Check size={10} strokeWidth={2.5} />
                             <span>{dayAffairCount}</span>
@@ -1284,7 +1284,7 @@ export default function SessionTimeline({
                         </span>
                         <div className="flex items-center gap-1">
                           {dayAffairCount > 0 ? (
-                            <span className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary/40 bg-accent-primary/10 px-1 text-[10px] font-medium text-accent-primary">
+                            <span className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary-border bg-accent-primary-10 px-1 text-[10px] font-medium text-accent-primary">
                               <Check size={9} strokeWidth={2.5} />
                               <span>{dayAffairCount}</span>
                             </span>
@@ -1342,7 +1342,7 @@ export default function SessionTimeline({
                     <CalendarCheck size={13} strokeWidth={1.75} />
                     <span>{t('workbench.timeline.tabAffairs')}</span>
                     {currentDayAffairs.length > 0 ? (
-                      <span className="rounded-full bg-accent-primary/20 px-1.5 py-0.2 text-[10px] font-semibold text-accent-primary">
+                      <span className="rounded-full bg-accent-primary-20 px-1.5 py-0.2 text-[10px] font-semibold text-accent-primary">
                         {currentDayAffairs.length}
                       </span>
                     ) : null}
@@ -1398,7 +1398,7 @@ export default function SessionTimeline({
                           <button
                             type="button"
                             onClick={() => void handleCopyText(t('workbench.timeline.promptCommand'))}
-                            className="inline-flex items-center gap-1 rounded border border-accent-primary/40 bg-accent-primary/10 px-2 py-0.5 text-[12px] font-medium text-accent-primary hover:bg-accent-primary/20"
+                            className="inline-flex items-center gap-1 rounded border border-accent-primary-border bg-accent-primary-10 px-2 py-0.5 text-[12px] font-medium text-accent-primary hover:bg-accent-primary-20"
                           >
                             <Copy size={11} />
                             <span>{t('workbench.timeline.copySummary')}</span>
@@ -1501,7 +1501,7 @@ export default function SessionTimeline({
                         <div
                           key={affair.id}
                           data-testid="affair-card"
-                          className="group relative flex flex-col gap-2.5 rounded-[10px] border border-border-color bg-bg-card p-3.5 transition-colors hover:border-border-strong hover:bg-bg-card/90"
+                          className="group relative flex flex-col gap-2.5 rounded-[10px] border border-border-color bg-bg-card p-3.5 transition-colors hover:border-border-strong hover:bg-bg-hover"
                         >
                           {/* 顶栏：标题、分类/员工徽章与操作按钮 */}
                           <div className="flex items-start justify-between gap-2">
@@ -1553,7 +1553,7 @@ export default function SessionTimeline({
 
                           {/* 业务结论摘要 */}
                           {affair.summary ? (
-                            <div className="rounded-[6px] border border-border-dim bg-bg-secondary/60 p-2.5 font-sans text-[13px] leading-relaxed text-text-secondary whitespace-pre-wrap">
+                            <div className="rounded-[6px] border border-border-subtle bg-bg-secondary p-2.5 font-sans text-[13px] leading-relaxed text-text-secondary whitespace-pre-wrap">
                               {affair.summary}
                             </div>
                           ) : null}
@@ -1569,7 +1569,7 @@ export default function SessionTimeline({
                                     type="button"
                                     onClick={() => onSelect(sid)}
                                     title={t('workbench.timeline.jumpToSession') + `: ${sid}`}
-                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-accent-primary transition-colors hover:border-accent-primary hover:bg-accent-primary/10"
+                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-accent-primary transition-colors hover:border-accent-primary hover:bg-accent-primary-10"
                                   >
                                     <ExternalLink size={10} />
                                     <span>#{sid.slice(0, 8)}</span>
@@ -1629,7 +1629,7 @@ export default function SessionTimeline({
                         <button
                           type="button"
                           onClick={() => void handleCopyText(t('workbench.timeline.promptCommand'))}
-                          className="mt-1 inline-flex items-center gap-1.5 rounded-[6px] border border-accent-primary/40 bg-accent-primary/10 px-3 py-1.5 text-[12px] font-medium text-accent-primary transition-colors hover:bg-accent-primary/20"
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-[6px] border border-accent-primary-border bg-accent-primary-10 px-3 py-1.5 text-[12px] font-medium text-accent-primary transition-colors hover:bg-accent-primary-20"
                         >
                           <Sparkles size={13} />
                           <span>{t('workbench.timeline.promptCommand')}</span>

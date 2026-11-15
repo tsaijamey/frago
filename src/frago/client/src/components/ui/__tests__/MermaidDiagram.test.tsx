@@ -124,4 +124,26 @@ describe('MermaidDiagram 导出尺寸与复制/下载按钮', () => {
       globalThis.Image = OrigImage;
     }
   });
+
+  it('外层渲染 .mmd-card，支持点击头部按钮在图形与源码视图间切换', async () => {
+    const source = 'flowchart LR\n  A-->B';
+    render(<MermaidDiagram source={source} />);
+
+    const card = screen.getByTestId('mermaid-card');
+    expect(card.className).toContain('mmd-card');
+
+    const diagram = await screen.findByTestId('mermaid-diagram');
+    expect(diagram).toBeTruthy();
+    expect(screen.queryByTestId('mermaid-source')).toBeNull();
+
+    const toggleBtn = screen.getByTestId('mermaid-mode-toggle');
+    fireEvent.click(toggleBtn);
+    const srcPre = screen.getByTestId('mermaid-source');
+    expect(srcPre.className).toContain('mmd-src');
+    expect(srcPre.textContent).toContain('flowchart LR');
+    expect(screen.queryByTestId('mermaid-diagram')).toBeNull();
+
+    fireEvent.click(toggleBtn);
+    expect(screen.getByTestId('mermaid-diagram')).toBeTruthy();
+  });
 });
