@@ -700,7 +700,7 @@ run_linux_pkg_install() {
         if [ "$(id -u)" = "0" ]; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
         elif command_exists sudo; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
         else
             return 1
         fi
