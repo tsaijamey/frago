@@ -1118,4 +1118,201 @@ class TestPeriodicWatcherRuns:
         assert "observer.md 提示词改成当前目标加三段式；前端 WatcherSlice 新增三个字段；服务端补齐了待拍板卡片提取单测" in summary
 
 
+class TestWatcherTableTasksAndRuns:
+    def test_parses_task_upserts_and_run_row_and_enforces_ban_rules(self):
+        raw_ok = json.dumps(
+            {
+                "phase_goal": "升级 Watcher 为表格进度表",
+                "tail": {"kind": "now", "text": "正在实现后端数据结构"},
+                "decision": "",
+                "happened_add": ["更新 observer.md 规范"],
+                "anchor_seq": None,
+                "task_upserts": [
+                    {
+                        "id": "T1",
+                        "title": "更新 observer.md 与提示词",
+                        "status": "done",
+                        "actor": "主会话",
+                        "conclusion": "两处 `observer.md` 已同步",
+                    },
+                    {
+                        "id": "T2",
+                        "title": "扩展 session_observer.py",
+                        "status": "doing",
+                        "actor": "源码核验",
+                        "conclusion": "正在编写 tasks upsert 逻辑",
+                    },
+                ],
+                "run_row": {
+                    "task_id": "T2",
+                    "actor": "主会话 · 源码核验",
+                    "doing": "在 `session_observer.py` 中新增 `task_upserts` 与 `run_row` 解析。",
+                    "findings": ["保持向后兼容旧版返回字段"],
+                },
+            },
+            ensure_ascii=False,
+        )
+        parsed = so.parse_answer(raw_ok)
+        assert so.violation(parsed) is None
+        assert len(parsed["task_upserts"]) == 2
+        assert parsed["task_upserts"][0]["status"] == "done"
+        assert parsed["run_row"]["task_id"] == "T2"
+
+        bad_pct = so.parse_answer(
+            reply(
+                task_upserts=[
+                    {
+                        "id": "T1",
+                        "title": "完成 80% 改造",
+                        "status": "doing",
+                        "actor": "主会话",
+                        "conclusion": "进展顺利",
+                    }
+                ]
+            )
+        )
+        assert so.violation(bad_pct)
+
+        bad_future = so.parse_answer(
+            reply(
+                run_row={
+                    "task_id": "T1",
+                    "actor": "主会话",
+                    "doing": "下一步准备修改前端",
+                    "findings": [],
+                }
+            )
+        )
+        assert so.violation(bad_future)
+
+    def test_apply_answer_upserts_tasks_preserves_proposed_at_and_feeds_build_prompt(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots["anchor"] = {"seq": 0, "text": "改造 Watcher 表格"}
+        first = so.parse_answer(
+            reply(
+                phase_goal="改造后端结构",
+                now="正在改 observer.md",
+                task_upserts=[
+                    {
+                        "id": "T1",
+                        "title": "更新 observer.md",
+                        "status": "doing",
+                        "actor": "主会话",
+                        "conclusion": "编写表格 JSON 规约",
+                    }
+                ],
+                run_row={
+                    "task_id": "T1",
+                    "actor": "主会话",
+                    "doing": "起草 `observer.md` 新字段规约。",
+                    "findings": ["保留兼容旧字段"],
+                },
+            )
+        )
+        assert so.apply_answer(slots, first, {}, stamp_ms=1000, cursor_from=0, cursor_to=3)
+        assert len(slots["tasks"]) == 1
+        assert slots["tasks"][0]["proposed_at"] == 1000
+        assert slots["tasks"][0]["updated_at"] == 1000
+
+        prompt = so.build_prompt(slots, [rec(3, "agent.say", text="继续")], 0, {})
+        assert "事项总控表" in prompt
+        assert "[T1] (doing) 更新 observer.md" in prompt
+
+        # 相同内容再次 apply 不修改 updated_at
+        assert not so.apply_answer(slots, first, {}, stamp_ms=2000, cursor_from=3, cursor_to=4)
+        assert slots["tasks"][0]["updated_at"] == 1000
+
+        # 状态变更为 done 并新增 T2
+        second = so.parse_answer(
+            reply(
+                phase_goal="改造前端页面",
+                now="正在更新 RecordStream",
+                task_upserts=[
+                    {
+                        "id": "T1",
+                        "title": "更新 observer.md",
+                        "status": "done",
+                        "actor": "主会话",
+                        "conclusion": "两份 `observer.md` 已保存",
+                    },
+                    {
+                        "id": "T2",
+                        "title": "升级 RecordStream Watcher 视图",
+                        "status": "waiting",
+                        "actor": "前端开发",
+                        "conclusion": "等待拍板表头文案",
+                    },
+                ],
+                decision="表头用中文还是双语？",
+                run_row={
+                    "task_id": "T2",
+                    "actor": "前端开发",
+                    "doing": "完成事项总控表渲染。",
+                    "findings": ["对齐原型 `.w-tbl` 样式"],
+                },
+            )
+        )
+        assert so.apply_answer(slots, second, {}, stamp_ms=3000, cursor_from=3, cursor_to=6)
+        assert slots["tasks"][0]["proposed_at"] == 1000
+        assert slots["tasks"][0]["updated_at"] == 3000
+        assert slots["tasks"][0]["status"] == "done"
+        assert slots["tasks"][1]["id"] == "T2"
+        assert slots["tasks"][1]["status"] == "waiting"
+
+        state = so.public_state(slots, bound=True)
+        assert len(state["tasks"]) == 2
+        assert state["runs"][0]["task_id"] == "T1"
+        assert state["runs"][1]["task_id"] == "T2"
+        assert state["runs"][1]["actor"] == "前端开发"
+        assert state["runs"][1]["doing"] == "完成事项总控表渲染。"
+
+    def test_public_state_synthesizes_tasks_and_run_metadata_from_legacy_slots(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots.pop("tasks", None)
+        slots.update(
+            anchor={"seq": 0, "text": "分析定时任务性能"},
+            phase_goal="确认根因并待拍板",
+            tail={"kind": "output", "text": "已交付 `summary.md`"},
+            decision="是否将 3 项隐患记入 Todo？",
+            updated_at=5000,
+            runs=[
+                {
+                    "id": "run-1",
+                    "at": 2000,
+                    "cursor_from": 0,
+                    "cursor_to": 5,
+                    "phase_goal": "盘点定时任务账本",
+                    "tail": {"kind": "output", "text": "定位 17 份历史会话"},
+                    "happened_add": ["排除脚本任务"],
+                    "decision": "",
+                    "summary": "当前在做什么：排除脚本任务\n关键发现或产出：定位 17 份历史会话",
+                },
+                {
+                    "id": "run-2",
+                    "at": 5000,
+                    "cursor_from": 5,
+                    "cursor_to": 10,
+                    "phase_goal": "确认根因并待拍板",
+                    "tail": {"kind": "output", "text": "已交付 `summary.md`"},
+                    "happened_add": ["确认 8192 token 上限"],
+                    "decision": "是否将 3 项隐患记入 Todo？",
+                    "summary": "当前在做什么：确认 8192 token 上限\n关键发现或产出：已交付 `summary.md`\n待拍板背景：是否将 3 项隐患记入 Todo？",
+                },
+            ],
+        )
+        state = so.public_state(slots, bound=True)
+        assert len(state["runs"]) == 2
+        assert state["runs"][0]["task_id"] == "T1"
+        assert state["runs"][0]["actor"] == "主会话"
+        assert state["runs"][1]["task_id"] == "T2"
+        assert len(state["tasks"]) == 2
+        assert state["tasks"][0]["id"] == "T1"
+        assert state["tasks"][0]["status"] == "done"
+        assert state["tasks"][0]["proposed_at"] == 2000
+        assert state["tasks"][1]["id"] == "T2"
+        assert state["tasks"][1]["status"] == "waiting"
+        assert state["tasks"][1]["conclusion"] == "已交付 `summary.md`"
+
+
+
 

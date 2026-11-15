@@ -40,8 +40,21 @@ export interface ObserverTail {
   text: string;
 }
 
+export interface ObserverTaskItem {
+  id: string;
+  proposed_at: number;
+  updated_at?: number;
+  title: string;
+  status: 'doing' | 'waiting' | 'done' | 'blocked';
+  actor: string;
+  conclusion: string;
+}
+
 export interface ObserverRun {
   id: string;
+  run_id?: number;
+  task_id?: string;
+  actor?: string;
   at: number | null;
   cursor_from: number;
   cursor_to: number;
@@ -50,6 +63,8 @@ export interface ObserverRun {
   happened_add: string[];
   decision: string;
   summary: string;
+  doing?: string;
+  findings?: string[];
 }
 
 export interface ObserverState {
@@ -62,6 +77,8 @@ export interface ObserverState {
   decision: string;
   /** 已经发生的事（不含末条），新的在前。 */
   happened: string[];
+  /** 事项总控表条目（由 Observer AI 维护或服务端从旧槽位合成）。 */
+  tasks?: ObserverTaskItem[];
   /** 按游标区间保存的每次定期 observer 总结（从旧到新），供 Watcher 视图包裹对应 Talk 片段。 */
   runs?: ObserverRun[];
   /**
@@ -104,7 +121,8 @@ function newer(current: ObserverState | null, fetched: ObserverState): ObserverS
     fetched.status === current.status &&
     fetched.status_detail === current.status_detail &&
     fetched.bound === current.bound &&
-    (fetched.runs?.length ?? 0) === (current.runs?.length ?? 0)
+    (fetched.runs?.length ?? 0) === (current.runs?.length ?? 0) &&
+    (fetched.tasks?.length ?? 0) === (current.tasks?.length ?? 0)
   ) {
     return current;
   }

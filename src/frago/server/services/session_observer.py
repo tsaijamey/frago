@@ -74,6 +74,21 @@ TAIL_NOW = "now"
 TAIL_OUTPUT = "output"
 TAIL_KINDS = (TAIL_NOW, TAIL_OUTPUT)
 
+#: 事项总控表状态枚举。
+TASK_STATUS_DOING = "doing"
+TASK_STATUS_WAITING = "waiting"
+TASK_STATUS_DONE = "done"
+TASK_STATUS_BLOCKED = "blocked"
+TASK_STATUSES = (
+    TASK_STATUS_DOING,
+    TASK_STATUS_WAITING,
+    TASK_STATUS_DONE,
+    TASK_STATUS_BLOCKED,
+)
+TASK_STATUS_SET = frozenset(TASK_STATUSES)
+TASKS_KEEP = 50
+TASK_UPSERTS_PER_RUN = 5
+
 #: agent 干活途中叫旁路 AI 的最短间隔（秒）。离上一次跑还不到这么久，这一批就不叫。
 WORKING_GAP_S = 60
 WORKING = "working"
@@ -200,6 +215,8 @@ def empty_slots(session_id: str, family: str) -> dict[str, Any]:
         "decision_at": None,
         # 跟 happened 一一对齐，同样从旧到新。
         "happened_at": [],
+        # 事项总控表（大助理汇报进度表第一张表）：每条含 id / proposed_at / updated_at / title / status / actor / conclusion。
+        "tasks": [],
         # 按游标区间保存的每次定期 observer 总结（从旧到新），供中栏 Watcher 视图包裹对应 Talk 片段。
         "runs": [],
         "updated_at": None,
@@ -297,13 +314,10 @@ def _safe_goal_text(text: Any) -> str | None:
     return cleaned
 
 
-def _compose_run_summary(
+def _derive_doing_and_findings(
     tail: dict[str, Any] | None,
     happened_add: Sequence[str],
-    decision: str,
-    anchor_text: str | None = None,
-) -> str:
-    """按「三段式（当前在做什么 + 关键发现或产出 + 待拍板背景）」拼出单段 Watcher 通报正文。"""
+) -> tuple[str, list[str]]:
     tail_kind = (tail or {}).get("kind")
     tail_text = _clean_tail_text((tail or {}).get("text") or "")
     items: list[str] = []
@@ -311,7 +325,6 @@ def _compose_run_summary(
         cleaned = _clean_tail_text(item or "")
         if cleaned and cleaned not in items:
             items.append(cleaned)
-    decision_text = _clean_tail_text(decision or "")
 
     doing = ""
     findings: list[str] = []
@@ -326,6 +339,27 @@ def _compose_run_summary(
     elif items:
         doing = items[0]
         findings = items[1:]
+    return doing, findings
+
+
+def _compose_run_summary(
+    tail: dict[str, Any] | None,
+    happened_add: Sequence[str],
+    decision: str,
+    anchor_text: str | None = None,
+    *,
+    doing_override: str = "",
+    findings_override: Sequence[str] = (),
+) -> str:
+    """按「三段式（当前在做什么 + 关键发现或产出 + 待拍板背景）」拼出单段 Watcher 通报正文。"""
+    doing, findings = _derive_doing_and_findings(tail, happened_add)
+    if doing_override:
+        doing = _clean_tail_text(doing_override)
+    if findings_override:
+        cleaned_findings = [_clean_tail_text(x) for x in findings_override if _clean_tail_text(x)]
+        if cleaned_findings:
+            findings = cleaned_findings
+    decision_text = _clean_tail_text(decision or "")
 
     lines: list[str] = []
     if doing:
@@ -352,6 +386,7 @@ def _fallback_runs(slots: dict[str, Any]) -> list[dict[str, Any]]:
     decision = slots.get("decision") or ""
     if not (tail or happened or decision or anchor or phase_goal):
         return []
+    doing, findings = _derive_doing_and_findings(tail, happened[-3:])
     summary = _compose_run_summary(tail, happened[-3:], decision, anchor)
     if not summary:
         return []
@@ -360,16 +395,154 @@ def _fallback_runs(slots: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "id": "run-fallback-1",
+            "run_id": 1,
+            "task_id": "T1",
+            "actor": "主会话",
             "at": at,
             "cursor_from": 0,
             "cursor_to": cursor_to,
             "phase_goal": phase_goal,
+            "doing": doing or _clean_tail_text(phase_goal or anchor or ""),
+            "findings": findings,
             "tail": tail,
             "happened_add": happened[-3:],
             "decision": decision,
             "summary": summary,
         }
     ]
+
+
+def _normalize_task_item(raw: dict[str, Any], fallback_at: int | None = None) -> dict[str, Any]:
+    tid = str(raw.get("id") or "T1").strip() or "T1"
+    status = raw.get("status")
+    if status not in TASK_STATUS_SET:
+        status = TASK_STATUS_DOING
+    proposed_at = raw.get("proposed_at")
+    if not isinstance(proposed_at, int) or isinstance(proposed_at, bool):
+        proposed_at = fallback_at
+    updated_at = raw.get("updated_at")
+    if not isinstance(updated_at, int) or isinstance(updated_at, bool):
+        updated_at = proposed_at
+    return {
+        "id": tid,
+        "proposed_at": proposed_at,
+        "updated_at": updated_at,
+        "title": str(raw.get("title") or "").strip(),
+        "status": status,
+        "actor": str(raw.get("actor") or "主会话").strip() or "主会话",
+        "conclusion": str(raw.get("conclusion") or "").strip(),
+    }
+
+
+def _normalize_runs(raw_runs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_runs):
+        if not isinstance(raw, dict):
+            continue
+        run = dict(raw)
+        run["run_id"] = (
+            raw.get("run_id")
+            if isinstance(raw.get("run_id"), int) and not isinstance(raw.get("run_id"), bool)
+            else idx + 1
+        )
+        run["task_id"] = str(raw.get("task_id") or f"T{idx + 1}").strip() or f"T{idx + 1}"
+        run["actor"] = str(raw.get("actor") or "主会话").strip() or "主会话"
+        tail = raw.get("tail") if isinstance(raw.get("tail"), dict) else None
+        happened_add = raw.get("happened_add") if isinstance(raw.get("happened_add"), list) else []
+        derived_doing, derived_findings = _derive_doing_and_findings(tail, happened_add)
+        raw_doing = raw.get("doing")
+        if isinstance(raw_doing, str) and raw_doing.strip():
+            run["doing"] = raw_doing.strip()
+        elif derived_doing:
+            run["doing"] = derived_doing
+        else:
+            run["doing"] = _clean_tail_text(str(raw.get("summary") or ""))
+        raw_findings = raw.get("findings")
+        if isinstance(raw_findings, list) and any(isinstance(x, str) and x.strip() for x in raw_findings):
+            run["findings"] = [x.strip() for x in raw_findings if isinstance(x, str) and x.strip()]
+        else:
+            run["findings"] = derived_findings
+        normalized.append(run)
+    return normalized
+
+
+def _synthesize_tasks(
+    slots: dict[str, Any],
+    runs: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """磁盘旧 observer-slots.json 中 tasks 为空而 runs 非空时，从 runs + tail + decision 合成结构化 tasks。"""
+    if not runs:
+        return []
+    raw_anchor = slots.get("anchor")
+    anchor_text = _safe_goal_text(
+        raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+    )
+    fallback_ts = slots.get("anchor_at") or slots.get("updated_at") or slots.get("tail_at")
+    tail = slots.get("tail") if isinstance(slots.get("tail"), dict) else None
+    global_decision = _clean_tail_text(slots.get("decision") or "")
+
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for idx, run in enumerate(runs):
+        tid = str(run.get("task_id") or f"T{idx + 1}").strip() or f"T{idx + 1}"
+        at = run.get("at")
+        if not isinstance(at, int) or isinstance(at, bool):
+            at = fallback_ts
+        actor = str(run.get("actor") or "主会话").strip() or "主会话"
+        phase_goal = _safe_goal_text(run.get("phase_goal"))
+        doing = _clean_tail_text(str(run.get("doing") or ""))
+        findings = [
+            _clean_tail_text(str(f))
+            for f in (run.get("findings") or [])
+            if isinstance(f, str) and _clean_tail_text(str(f))
+        ]
+        run_tail = run.get("tail") if isinstance(run.get("tail"), dict) else None
+        run_tail_text = _clean_tail_text((run_tail or {}).get("text") or "")
+        run_decision = _clean_tail_text(str(run.get("decision") or ""))
+        is_last = idx == len(runs) - 1
+
+        conclusion = findings[-1] if findings else (run_tail_text or doing)
+        if is_last and (global_decision or run_decision):
+            status = TASK_STATUS_WAITING
+        elif not is_last:
+            status = TASK_STATUS_DONE
+        elif (tail and tail.get("kind") == TAIL_OUTPUT) or (
+            run_tail and run_tail.get("kind") == TAIL_OUTPUT
+        ):
+            status = TASK_STATUS_DONE
+        else:
+            status = TASK_STATUS_DOING
+
+        title_src = phase_goal or anchor_text or doing or f"阶段 {tid}"
+        title = _clip(title_src, 28) if len(title_src) > 28 else title_src
+        concl = _clip(conclusion, 60) if len(conclusion) > 60 else conclusion
+
+        if tid not in by_id:
+            order.append(tid)
+            by_id[tid] = {
+                "id": tid,
+                "proposed_at": at,
+                "updated_at": at,
+                "title": title,
+                "status": status,
+                "actor": actor,
+                "conclusion": concl,
+            }
+        else:
+            item = by_id[tid]
+            if at is not None:
+                item["updated_at"] = at
+                if item["proposed_at"] is None:
+                    item["proposed_at"] = at
+            if title and not item["title"]:
+                item["title"] = title
+            item["status"] = status
+            if actor:
+                item["actor"] = actor
+            if concl:
+                item["conclusion"] = concl
+
+    return [by_id[tid] for tid in order]
 
 
 def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
@@ -387,7 +560,14 @@ def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
     times = list(slots.get("happened_at") or [])
     times = [None] * max(0, len(happened) - len(times)) + times[: len(happened)]
     raw_runs = slots.get("runs")
-    runs = list(raw_runs) if isinstance(raw_runs, list) and raw_runs else _fallback_runs(slots)
+    base_runs = list(raw_runs) if isinstance(raw_runs, list) and raw_runs else _fallback_runs(slots)
+    runs = _normalize_runs(base_runs)
+    raw_tasks = slots.get("tasks")
+    fallback_at = slots.get("updated_at") or slots.get("tail_at") or slots.get("anchor_at")
+    if isinstance(raw_tasks, list) and raw_tasks:
+        tasks = [_normalize_task_item(t, fallback_at) for t in raw_tasks if isinstance(t, dict)]
+    else:
+        tasks = _synthesize_tasks(slots, runs)
     return {
         "bound": bound,
         "anchor": anchor_text,
@@ -396,6 +576,7 @@ def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
         "decision": slots.get("decision") or "",
         "happened": list(reversed(happened)),
         "happened_at": list(reversed(times)),
+        "tasks": tasks,
         "runs": runs,
         "anchor_at": slots.get("anchor_at"),
         "phase_goal_at": slots.get("phase_goal_at") or slots.get("anchor_at"),
@@ -729,6 +910,16 @@ def build_prompt(
     ]
     lines += [f"  - {h}" for h in happened] or [f"  - {EMPTY_MARK}"]
     lines.append(f"- 末条（眼下的状态）：{tail_line}")
+    existing_tasks = [t for t in (slots.get("tasks") or []) if isinstance(t, dict)]
+    if existing_tasks:
+        lines.append("- 事项总控表（tasks，按 id 增量更新）：")
+        for t in existing_tasks[-15:]:
+            tid = t.get("id") or "T?"
+            st = t.get("status") or TASK_STATUS_DOING
+            title = t.get("title") or ""
+            actor = t.get("actor") or "主会话"
+            concl = t.get("conclusion") or ""
+            lines.append(f"  - [{tid}] ({st}) {title} | 执行体：{actor} | 结论：{concl}")
     shown = showable(fed)
     head = f"## 这一段新增的会话记录（{len(shown)} 条"
     head += f"；更早的 {dropped} 条太多，没给）" if dropped else "）"
@@ -779,12 +970,74 @@ def parse_answer(text: str) -> dict[str, Any]:
         if text:
             tail = {"kind": raw_tail["kind"], "text": text}
     seq = obj.get("anchor_seq")
+
+    raw_upserts = obj.get("task_upserts")
+    task_upserts: list[dict[str, str]] = []
+    if isinstance(raw_upserts, list):
+        for item in raw_upserts[:TASK_UPSERTS_PER_RUN]:
+            if not isinstance(item, dict):
+                continue
+            raw_id = item.get("id")
+            tid = _unplaceholder(raw_id.strip()) if isinstance(raw_id, str) else ""
+            if not tid:
+                continue
+            raw_status = item.get("status")
+            status = raw_status.strip() if isinstance(raw_status, str) else TASK_STATUS_DOING
+            if status not in TASK_STATUS_SET:
+                continue
+            raw_title = item.get("title")
+            title = _unplaceholder(raw_title.strip()) if isinstance(raw_title, str) else ""
+            raw_actor = item.get("actor")
+            actor = _unplaceholder(raw_actor.strip()) if isinstance(raw_actor, str) else ""
+            raw_concl = item.get("conclusion")
+            conclusion = _unplaceholder(raw_concl.strip()) if isinstance(raw_concl, str) else ""
+            if not (title or actor or conclusion):
+                continue
+            task_upserts.append(
+                {
+                    "id": tid[:16],
+                    "title": title,
+                    "status": status,
+                    "actor": actor,
+                    "conclusion": conclusion,
+                }
+            )
+
+    raw_run_row = obj.get("run_row")
+    run_row: dict[str, Any] | None = None
+    if isinstance(raw_run_row, dict):
+        r_tid = raw_run_row.get("task_id")
+        r_actor = raw_run_row.get("actor")
+        r_doing = raw_run_row.get("doing")
+        r_findings = raw_run_row.get("findings")
+        task_id = _unplaceholder(r_tid.strip()) if isinstance(r_tid, str) else ""
+        actor = _unplaceholder(r_actor.strip()) if isinstance(r_actor, str) else ""
+        doing = _unplaceholder(r_doing.strip()) if isinstance(r_doing, str) else ""
+        findings = (
+            [
+                f.strip()
+                for f in r_findings
+                if isinstance(f, str) and _unplaceholder(f.strip())
+            ][:HAPPENED_PER_RUN]
+            if isinstance(r_findings, list)
+            else []
+        )
+        if task_id or actor or doing or findings:
+            run_row = {
+                "task_id": task_id[:16],
+                "actor": actor,
+                "doing": doing,
+                "findings": findings,
+            }
+
     return {
         "phase_goal": field("phase_goal"),
         "tail": tail,
         "decision": field("decision"),
         "happened_add": happened[:HAPPENED_PER_RUN],
         "anchor_seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
+        "task_upserts": task_upserts,
+        "run_row": run_row,
     }
 
 
@@ -795,6 +1048,20 @@ def violation(answer: dict[str, Any]) -> str | None:
     if answer.get("phase_goal"):
         plain.append(("当前阶段目标", answer["phase_goal"]))
     plain += [("已经发生的事", h) for h in answer["happened_add"]]
+    for t in answer.get("task_upserts") or []:
+        if t.get("title"):
+            plain.append((f"事项[{t['id']}]简述", t["title"]))
+        if t.get("actor"):
+            plain.append((f"事项[{t['id']}]执行体", t["actor"]))
+        if t.get("conclusion"):
+            plain.append((f"事项[{t['id']}]结论", t["conclusion"]))
+    run_row = answer.get("run_row")
+    if isinstance(run_row, dict):
+        if run_row.get("actor"):
+            plain.append(("里程碑执行主体", run_row["actor"]))
+        if run_row.get("doing"):
+            plain.append(("里程碑阶段进展", run_row["doing"]))
+        plain += [("里程碑关键发现", f) for f in (run_row.get("findings") or [])]
     for name, text in plain + [("需要你决策", answer["decision"])]:
         for pattern, why in _ALWAYS_BANNED:
             if pattern.search(text):
@@ -807,6 +1074,11 @@ def violation(answer: dict[str, Any]) -> str | None:
 
 
 def _content(slots: dict[str, Any]) -> str:
+    keys = ("anchor", "phase_goal", "tail", "decision", "happened", "tasks")
+    return json.dumps({k: slots.get(k) for k in keys}, ensure_ascii=False, sort_keys=True)
+
+
+def _legacy_content(slots: dict[str, Any]) -> str:
     keys = ("anchor", "phase_goal", "tail", "decision", "happened")
     return json.dumps({k: slots.get(k) for k in keys}, ensure_ascii=False, sort_keys=True)
 
@@ -836,6 +1108,7 @@ def apply_answer(
     每一格另记它自己上次变样的时刻，右栏按时间线读要用。``stamp_ms`` 只给测试用。
     """
     before = _content(slots)
+    legacy_before = _legacy_content(slots)
     at = int(time.time() * 1000) if stamp_ms is None else stamp_ms
 
     def put(key: str, value: str) -> None:
@@ -889,30 +1162,176 @@ def apply_answer(
     ):
         slots["anchor"] = {"seq": seq, "text": candidates[seq]}
         slots["anchor_at"] = at
+
+    legacy_changed = _legacy_content(slots) != legacy_before
+    raw_anchor = slots.get("anchor")
+    anchor_text = _safe_goal_text(
+        raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+    )
+    phase_goal_text = _safe_goal_text(slots.get("phase_goal")) or anchor_text
+    run_row = answer.get("run_row")
+    upserts = answer.get("task_upserts") or []
+
+    tasks = [dict(t) for t in (slots.get("tasks") or []) if isinstance(t, dict)]
+    if upserts:
+        by_id = {str(t.get("id") or ""): i for i, t in enumerate(tasks) if t.get("id")}
+        for u in upserts:
+            tid = u["id"]
+            if tid in by_id:
+                existing = dict(tasks[by_id[tid]])
+                next_title = u["title"] or existing.get("title") or ""
+                next_status = u["status"]
+                next_actor = u["actor"] or existing.get("actor") or "主会话"
+                next_concl = u["conclusion"] or existing.get("conclusion") or ""
+                if (
+                    next_title != existing.get("title")
+                    or next_status != existing.get("status")
+                    or next_actor != existing.get("actor")
+                    or next_concl != existing.get("conclusion")
+                ):
+                    existing.update(
+                        title=next_title,
+                        status=next_status,
+                        actor=next_actor,
+                        conclusion=next_concl,
+                        updated_at=at,
+                    )
+                    tasks[by_id[tid]] = existing
+            else:
+                by_id[tid] = len(tasks)
+                tasks.append(
+                    {
+                        "id": tid,
+                        "proposed_at": at,
+                        "updated_at": at,
+                        "title": u["title"] or phase_goal_text or "当前事项",
+                        "status": u["status"],
+                        "actor": u["actor"] or ((run_row or {}).get("actor") or "主会话"),
+                        "conclusion": u["conclusion"],
+                    }
+                )
+    elif legacy_changed:
+        cur_tail = slots.get("tail") or None
+        cur_tail_text = _clean_tail_text((cur_tail or {}).get("text") or "")
+        cur_decision = _clean_tail_text(slots.get("decision") or "")
+        if phase_goal_text or cur_tail_text or cur_decision or answer["happened_add"]:
+            auto_status = (
+                TASK_STATUS_WAITING
+                if cur_decision
+                else (
+                    TASK_STATUS_DONE
+                    if (cur_tail or {}).get("kind") == TAIL_OUTPUT
+                    else TASK_STATUS_DOING
+                )
+            )
+            title_src = phase_goal_text or anchor_text or cur_tail_text or "当前阶段"
+            auto_title = _clip(title_src, 28) if len(title_src) > 28 else title_src
+            auto_actor = ((run_row or {}).get("actor") or "").strip() or "主会话"
+            concl_src = (
+                cur_tail_text
+                or (answer["happened_add"][-1] if answer["happened_add"] else "")
+                or cur_decision
+            )
+            auto_concl = _clip(concl_src, 60) if len(concl_src) > 60 else concl_src
+            target_tid = ((run_row or {}).get("task_id") or "").strip()
+
+            matched_idx: int | None = None
+            if target_tid:
+                for i, t in enumerate(tasks):
+                    if t.get("id") == target_tid:
+                        matched_idx = i
+                        break
+            elif tasks:
+                last = tasks[-1]
+                # If previous task is done and phase_goal moved to a new title, start a new task row
+                if not (
+                    last.get("status") == TASK_STATUS_DONE
+                    and answer.get("phase_goal")
+                    and auto_title
+                    and auto_title != last.get("title")
+                ):
+                    matched_idx = len(tasks) - 1
+
+            if matched_idx is not None:
+                existing = dict(tasks[matched_idx])
+                next_title = auto_title or existing.get("title") or ""
+                next_concl = auto_concl or existing.get("conclusion") or ""
+                if (
+                    next_title != existing.get("title")
+                    or auto_status != existing.get("status")
+                    or auto_actor != existing.get("actor")
+                    or next_concl != existing.get("conclusion")
+                ):
+                    existing.update(
+                        title=next_title,
+                        status=auto_status,
+                        actor=auto_actor,
+                        conclusion=next_concl,
+                        updated_at=at,
+                    )
+                    tasks[matched_idx] = existing
+            else:
+                new_tid = target_tid or f"T{len(tasks) + 1}"
+                tasks.append(
+                    {
+                        "id": new_tid,
+                        "proposed_at": at,
+                        "updated_at": at,
+                        "title": auto_title,
+                        "status": auto_status,
+                        "actor": auto_actor,
+                        "conclusion": auto_concl,
+                    }
+                )
+    if tasks:
+        slots["tasks"] = tasks[-TASKS_KEEP:]
+
     changed = _content(slots) != before
     if changed:
         runs = list(slots.get("runs") or [])
         c_from = int(cursor_from) if cursor_from is not None else (runs[-1].get("cursor_to", 0) if runs else 0)
         c_to = int(cursor_to) if cursor_to is not None else int(slots.get("cursor") or c_from)
-        raw_anchor = slots.get("anchor")
-        anchor_text = _safe_goal_text(
-            raw_anchor.get("text") if isinstance(raw_anchor, dict) else raw_anchor
+        derived_doing, derived_findings = _derive_doing_and_findings(
+            slots.get("tail") or None,
+            answer["happened_add"],
         )
-        phase_goal_text = _safe_goal_text(slots.get("phase_goal")) or anchor_text
+        run_task_id = (
+            ((run_row or {}).get("task_id") or "").strip()
+            or (upserts[0]["id"] if upserts else "")
+            or (tasks[-1]["id"] if tasks else f"T{len(runs) + 1}")
+        )
+        run_actor = (
+            ((run_row or {}).get("actor") or "").strip()
+            or next((t["actor"] for t in tasks if t["id"] == run_task_id), "")
+            or "主会话"
+        )
+        run_doing = ((run_row or {}).get("doing") or "").strip() or derived_doing
+        run_findings = (
+            list((run_row or {}).get("findings") or [])
+            if isinstance(run_row, dict) and run_row.get("findings")
+            else derived_findings
+        )
         summary = _compose_run_summary(
             slots.get("tail") or None,
             answer["happened_add"],
             slots.get("decision") or "",
             anchor_text,
+            doing_override=run_doing,
+            findings_override=run_findings,
         )
         if summary:
             runs.append(
                 {
                     "id": f"run-{len(runs) + 1}-{at}",
+                    "run_id": len(runs) + 1,
+                    "task_id": run_task_id,
+                    "actor": run_actor,
                     "at": at,
                     "cursor_from": c_from,
                     "cursor_to": c_to,
                     "phase_goal": phase_goal_text,
+                    "doing": run_doing,
+                    "findings": run_findings,
                     "tail": slots.get("tail") or None,
                     "happened_add": list(answer["happened_add"]),
                     "decision": slots.get("decision") or "",
