@@ -69,6 +69,9 @@
   --timeline-bar: rgba(255, 255, 255, 0.17);
   --timeline-bar-strong: rgba(255, 255, 255, 0.3);
   --timeline-bar-stronger: rgba(255, 255, 255, 0.4);
+  --cal-heat-1: color-mix(in srgb, #15b34d 6%, var(--bg-card));
+  --cal-heat-2: color-mix(in srgb, #15b34d 12%, var(--bg-card));
+  --cal-heat-3: color-mix(in srgb, #15b34d 19%, var(--bg-card));
 
   /* Sidebar specific colors (dark mode) */
   --page-bg: #141414;
@@ -321,6 +324,9 @@
   --timeline-bar: rgba(0, 0, 0, 0.1);
   --timeline-bar-strong: rgba(0, 0, 0, 0.2);
   --timeline-bar-stronger: rgba(0, 0, 0, 0.28);
+  --cal-heat-1: color-mix(in srgb, #0a8f33 4.5%, var(--bg-card));
+  --cal-heat-2: color-mix(in srgb, #0a8f33 9.5%, var(--bg-card));
+  --cal-heat-3: color-mix(in srgb, #0a8f33 15.5%, var(--bg-card));
 
   /* Sidebar specific colors (light mode) */
   --page-bg: #F2F2F2;

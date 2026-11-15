@@ -1136,6 +1136,11 @@ describe('挂载了 <frago-async-callback> 异步回传块的那句话', () => {
     );
     expect(screen.getByTestId('async-callback-job').textContent).toBe('disp-beaa67f7b8ea');
     expect(screen.getByTestId('async-callback-status').textContent).toBe('完成');
+    // 成功态去噪：不重复渲染绿色 exit 0，且派发单号收纳进无边框状态流转带（.cb-steps）内
+    expect(screen.queryByTestId('async-callback-exit')).toBeNull();
+    expect(screen.getByTestId('async-callback-steps').textContent).toContain('disp-beaa67f7b8ea');
+    expect(screen.getByTestId('async-callback-steps').textContent).toContain('已入账');
+    expect(screen.getByTestId('async-callback-body').className).toContain('cb-prose');
 
     // 多行任务摘要默认收起为单行标题，点击后展开完整任务书
     expect(screen.getByTestId('async-callback-summary').textContent).toContain(

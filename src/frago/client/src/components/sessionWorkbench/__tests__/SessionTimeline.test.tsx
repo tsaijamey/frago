@@ -325,23 +325,25 @@ describe('SessionTimeline (Merged Token Calendar & Timeline)', () => {
     expect(ids()).not.toContain('lone-w');
   });
 
-  it('timeline 的 bar 高度饱满且标签文本至少按 16px 显示', () => {
+  it('timeline 的 bar 高度收敛至 26px、字阶对齐工作台 12.5px 且支持热力分位属性', () => {
     const now = Date.now();
     const todayKey = toDateKey(new Date(now));
     const s = session({
       session_id: 's-tall',
       title: '重构日历与时间轴视图',
+      status: 'running',
       created_at: now - 2 * HOUR,
       last_reply_at: now - HOUR,
     });
     renderTimeline([s], { initialDate: todayKey });
     const lane = screen.getByTestId('timeline-lane');
-    expect(lane.className).toContain('h-[48px]');
+    expect(lane.className).toContain('h-[40px]');
     const bar = lane.querySelector('[data-bar]') as HTMLElement;
-    expect(bar.className).toContain('h-[38px]');
+    expect(bar.className).toContain('h-[26px]');
+    expect(bar.className).toContain('is-running');
     const label = lane.querySelector('[data-label]') as HTMLElement;
-    expect(label.className).toContain('h-[38px]');
-    expect(label.className).toContain('text-[16px]');
+    expect(label.className).toContain('h-[26px]');
+    expect(label.className).toContain('text-[12.5px]');
   });
 
   it('branched 会话加入 Today 时，其主会话在 timeline 中也同步标为已加入 Today', () => {

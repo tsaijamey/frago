@@ -99,12 +99,12 @@ const SPAN_SHORT_KEYS = [
 ] as const;
 const DEFAULT_SPAN_INDEX = 2;
 
-/** 条最少 44px 宽：比条高（38px）宽，缩到再远也是饱满的一块横条。 */
-const MIN_BAR_PX = 44;
-/** 标题最宽 520px：字号保证至少 16px 后留足宽度，同时防止超长首句铺满整屏。 */
-const MAX_LABEL_PX = 520;
+/** 条最少 36px 宽：缩到再远也是清晰的一块横条。 */
+const MIN_BAR_PX = 36;
+/** 标题最宽 420px：保持简洁对齐，不铺满整屏。 */
+const MAX_LABEL_PX = 420;
 const PAD = 8;
-const ROW_HEIGHT = 48;
+const ROW_HEIGHT = 40;
 
 /**
  * 右端留出的未来空白：占窗口宽度的比例，最多两天。
@@ -279,7 +279,8 @@ export default function SessionTimeline({
   initialDate = null,
   initialDetailTab = 'affairs',
 }: SessionTimelineProps) {
-  const { t } = useTranslation();
+  const { t, i18n: i18nInst } = useTranslation();
+  const isZh = i18nInst.language?.startsWith('zh');
   const showToast = useAppStore((s) => s.showToast);
 
   const todayKey = useMemo(() => toDateKey(new Date()), []);
@@ -458,6 +459,16 @@ export default function SessionTimeline({
   const [y, m] = month.split('-').map(Number);
   const weeks = useMemo(() => monthMatrix(month), [month]);
   const orderedMonthDays = useMemo(() => monthDaysList(month), [month]);
+  const maxDayTokens = useMemo(() => {
+    if (!calData?.days) return 0;
+    let peak = 0;
+    for (const [dKey, bucket] of Object.entries(calData.days)) {
+      if (dKey.startsWith(month) && bucket && bucket.total > peak) {
+        peak = bucket.total;
+      }
+    }
+    return peak;
+  }, [calData, month]);
 
   /** 按日期（YYYY-MM-DD）统计当前命中的会话数。 */
   const sessionCountByDate = useMemo(() => {
@@ -926,42 +937,43 @@ export default function SessionTimeline({
               <ChevronRight size={15} />
             </button>
 
-            {affairsData && affairsData.summary.total_affairs > 0 ? (
-              <span
-                data-testid="month-affairs-badge"
-                className="ml-1 inline-flex items-center gap-1 rounded-full border border-accent-primary-border bg-accent-primary-10 px-2 py-0.5 text-[11px] font-medium text-accent-primary"
-              >
-                <Check size={11} strokeWidth={2.5} />
-                <span>{t('workbench.timeline.monthAffairsCount', { count: affairsData.summary.total_affairs })}</span>
+            {/* 单行精炼月度 KPI 指标带：去重并消除数值粘连与绿色胶囊噪音 */}
+            <div className="ml-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-l border-border-color pl-3 text-[12px] text-text-secondary">
+              <span className="inline-flex items-baseline gap-1.5" data-testid="calendar-month-total">
+                <span className="text-text-muted">{t('tokenCalendar.monthTotal')}</span>
+                <strong className="font-mono text-[13px] font-semibold tabular-nums text-text-primary">
+                  {calData ? formatTokens(calData.month_total.total) : '—'}
+                </strong>
+                {calData && calData.month_total.total > 0 ? (
+                  <span className="font-mono text-[11px] tabular-nums text-text-muted">
+                    ({t('tokenCalendar.inputShort')} {formatTokens(calData.month_total.input)} ·{' '}
+                    {t('tokenCalendar.outputShort')} {formatTokens(calData.month_total.output)})
+                  </span>
+                ) : null}
               </span>
-            ) : null}
 
-            <span className="ml-1.5 text-[12px] text-text-secondary" data-testid="calendar-month-total">
-              {t('tokenCalendar.monthTotal')}:{' '}
-              <strong className="font-mono text-[13px] tabular-nums text-text-primary">
-                {calData ? formatTokens(calData.month_total.total) : '—'}
-              </strong>
-              {calData && calData.month_total.total > 0 ? (
-                <span className="ml-2 font-mono text-[11px] tabular-nums text-text-muted">
-                  {t('tokenCalendar.inputShort')} {formatTokens(calData.month_total.input)} ·{' '}
-                  {t('tokenCalendar.outputShort')} {formatTokens(calData.month_total.output)}
-                </span>
+              {affairsData && affairsData.summary.total_affairs > 0 ? (
+                <>
+                  <span aria-hidden className="text-text-dim">·</span>
+                  <span
+                    data-testid="month-affairs-badge"
+                    className="inline-flex items-baseline gap-1 text-[12px] text-text-muted"
+                  >
+                    <span>{t('workbench.timeline.monthAffairsTotal')}</span>
+                    <strong className="font-mono text-[12.5px] font-semibold tabular-nums text-text-primary">
+                      {affairsData.summary.total_affairs}
+                    </strong>
+                  </span>
+                  <span aria-hidden className="text-text-dim">·</span>
+                  <span className="hidden items-baseline gap-1 text-[12px] text-text-muted lg:inline-flex">
+                    <span>{t('workbench.timeline.productiveDays')}</span>
+                    <strong className="font-mono text-[12.5px] font-semibold tabular-nums text-text-primary">
+                      {affairsData.summary.active_days}
+                    </strong>
+                  </span>
+                </>
               ) : null}
-            </span>
-
-            {affairsData ? (
-              <div className="ml-1.5 hidden items-center gap-2 border-l border-border-color pl-2 text-[12px] text-text-muted lg:flex">
-                <span>
-                  {t('workbench.timeline.monthAffairsTotal')}:{' '}
-                  <strong className="font-mono text-text-primary">{affairsData.summary.total_affairs}</strong>
-                </span>
-                <span>·</span>
-                <span>
-                  {t('workbench.timeline.productiveDays')}:{' '}
-                  <strong className="font-mono text-text-primary">{affairsData.summary.active_days}</strong>
-                </span>
-              </div>
-            ) : null}
+            </div>
 
             <button
               type="button"
@@ -1079,6 +1091,14 @@ export default function SessionTimeline({
                 const dayAffairCount = affairDay?.count ?? 0;
                 const hasActivity = hasTokens || daySessionCount > 0 || dayAffairCount > 0;
                 const isToday = cell.date === todayKey;
+                const heatLevel =
+                  !cell.inMonth || !hasTokens || !bucket || maxDayTokens <= 0
+                    ? 0
+                    : bucket.total / maxDayTokens >= 0.66
+                      ? 3
+                      : bucket.total / maxDayTokens >= 0.3
+                        ? 2
+                        : 1;
 
                 return (
                   <button
@@ -1087,6 +1107,7 @@ export default function SessionTimeline({
                     data-testid={`calendar-cell-${cell.date}`}
                     data-date={cell.date}
                     data-active={hasActivity ? 'true' : 'false'}
+                    data-heat={heatLevel}
                     onClick={() => handleSelectDateCell(cell.date)}
                     title={
                       bucket
@@ -1098,24 +1119,24 @@ export default function SessionTimeline({
                           })
                         : undefined
                     }
-                    className={`group flex min-h-0 flex-col justify-between rounded-[10px] border p-3.5 text-left transition-colors ${
+                    className={`tl-cal-cell group flex min-h-0 flex-col justify-between rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
                       !cell.inMonth
-                        ? 'border-transparent bg-transparent opacity-30 hover:bg-bg-secondary hover:opacity-60'
+                        ? 'border-transparent bg-transparent opacity-30 hover:bg-bg-secondary hover:opacity-55'
                         : isToday
                           ? 'border-accent-primary bg-bg-card hover:bg-bg-hover'
                           : hasActivity
-                            ? 'border-border-color bg-bg-card hover:border-border-strong hover:bg-bg-hover'
+                            ? 'border-border-color bg-bg-card hover:border-border-strong'
                             : 'border-transparent bg-bg-secondary hover:border-border-color hover:bg-bg-hover'
                     }`}
                   >
-                    {/* 顶行：左上日期数字与今天标签，右上已完成事务胶囊或会话数 */}
+                    {/* 顶行：左上等宽日期 + 今日标识；右上克制文字型事务数与场次（去高饱和绿胶囊） */}
                     <div className="flex w-full items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5">
                         <span
-                          className={`font-mono text-[13px] ${
+                          className={`font-mono text-[12.5px] tabular-nums ${
                             isToday
                               ? 'font-semibold text-accent-primary'
-                              : hasActivity
+                              : cell.inMonth && hasActivity
                                 ? 'font-medium text-text-secondary'
                                 : 'text-text-dim'
                           }`}
@@ -1123,52 +1144,54 @@ export default function SessionTimeline({
                           {cell.day}
                         </span>
                         {isToday ? (
-                          <span className="text-[11px] font-medium text-accent-primary">
+                          <span className="rounded-[4px] bg-accent-primary-10 px-1 py-[1px] text-[10px] font-medium leading-none text-accent-primary">
                             {t('workbench.timeline.todayShort')}
                           </span>
                         ) : null}
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        {dayAffairCount > 0 ? (
-                          <span
-                            data-testid={`affairs-badge-${cell.date}`}
-                            className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary-border bg-accent-primary-10 px-1.5 py-0.2 text-[11px] font-medium text-accent-primary"
-                          >
-                            <Check size={10} strokeWidth={2.5} />
-                            <span>{dayAffairCount}</span>
-                          </span>
-                        ) : null}
-                        {daySessionCount > 0 ? (
-                          <span className="font-mono text-[11px] text-text-muted">
-                            {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
-                          </span>
-                        ) : null}
-                      </div>
+                      {cell.inMonth ? (
+                        <div className="flex items-center gap-2">
+                          {dayAffairCount > 0 ? (
+                            <span
+                              data-testid={`affairs-badge-${cell.date}`}
+                              className="inline-flex items-center gap-0.5 font-mono text-[11px] font-medium tabular-nums text-accent-primary"
+                            >
+                              <Check size={10} strokeWidth={2.4} />
+                              <span>{dayAffairCount}</span>
+                            </span>
+                          ) : null}
+                          {daySessionCount > 0 ? (
+                            <span className="font-mono text-[11px] tabular-nums text-text-muted">
+                              {t('workbench.timeline.daySessionsCount', { count: daySessionCount })}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
-                    {/* 中间行：当日已完成事务核心微缩标题预览（1~2 行） */}
-                    {affairDay && affairDay.previews && affairDay.previews.length > 0 ? (
-                      <div className="my-1.5 flex flex-col gap-0.5 overflow-hidden">
+                    {/* 中间行：本月当日事务微缩标题（无前缀圆点噪音，保持清爽左齐） */}
+                    {cell.inMonth && affairDay && affairDay.previews && affairDay.previews.length > 0 ? (
+                      <div className="my-1 flex flex-col gap-0.5 overflow-hidden">
                         {affairDay.previews.slice(0, 2).map((pv, i) => (
                           <div
                             key={i}
-                            className="truncate font-sans text-[11px] leading-tight text-text-secondary group-hover:text-text-primary"
+                            className="truncate font-sans text-[11px] leading-[1.35] text-text-secondary group-hover:text-text-primary"
                             title={pv}
                           >
-                            • {pv}
+                            {pv}
                           </div>
                         ))}
                       </div>
                     ) : null}
 
                     {/* 底行：仅在有 token 用量时展示大字总量 + 淡字入/出 */}
-                    {hasTokens && bucket ? (
+                    {cell.inMonth && hasTokens && bucket ? (
                       <div className="flex w-full flex-col gap-0.5">
-                        <span className="font-mono text-[18px] font-semibold leading-none tracking-tight tabular-nums text-text-primary">
+                        <span className="font-mono text-[16px] font-semibold leading-none tracking-tight tabular-nums text-text-primary">
                           {formatTokens(bucket.total)}
                         </span>
-                        <span className="truncate font-mono text-[11px] tabular-nums text-text-muted">
+                        <span className="truncate font-mono text-[10.5px] tabular-nums text-text-muted">
                           {t('tokenCalendar.inputShort')} {formatTokens(bucket.input)} ·{' '}
                           {t('tokenCalendar.outputShort')} {formatTokens(bucket.output)}
                         </span>
@@ -1179,17 +1202,27 @@ export default function SessionTimeline({
               })}
             </div>
 
-            <div className="flex shrink-0 items-center justify-between text-[12px] text-text-muted">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-[11.5px] text-text-muted">
               <span>{t('workbench.timeline.clickDayHint')}</span>
-              {activeTags.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={activateCrossDate}
-                  className="font-medium text-accent-primary hover:underline"
-                >
-                  {t('workbench.timeline.crossDateCount', { count: lanes.length })} →
-                </button>
-              ) : null}
+              <div className="flex items-center gap-3">
+                <div className="hidden items-center gap-1.5 text-[11px] text-text-dim sm:flex">
+                  <span>{isZh ? '低' : 'Less'}</span>
+                  <span className="tl-cal-heat-swatch bg-bg-secondary" />
+                  <span className="tl-cal-heat-swatch" style={{ background: 'var(--cal-heat-1)' }} />
+                  <span className="tl-cal-heat-swatch" style={{ background: 'var(--cal-heat-2)' }} />
+                  <span className="tl-cal-heat-swatch" style={{ background: 'var(--cal-heat-3)' }} />
+                  <span>{isZh ? '高' : 'More'}</span>
+                </div>
+                {activeTags.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={activateCrossDate}
+                    className="font-medium text-accent-primary hover:underline"
+                  >
+                    {t('workbench.timeline.crossDateCount', { count: lanes.length })} →
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : (
@@ -1265,32 +1298,32 @@ export default function SessionTimeline({
                             })
                           : undefined
                       }
-                      className={`flex min-h-[48px] flex-1 flex-col justify-between rounded-[8px] border px-3 py-2 text-left transition-colors ${
+                      className={`flex min-h-[46px] flex-1 flex-col justify-between rounded-[7px] border px-2.5 py-1.5 text-left transition-colors ${
                         isSelected
                           ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] text-text-primary'
                           : isToday
-                            ? 'border-accent-primary bg-bg-card text-text-primary hover:bg-bg-hover'
+                            ? 'border-accent-primary-border bg-bg-card text-text-primary hover:bg-bg-hover'
                             : hasTokens || sessionCount > 0 || dayAffairCount > 0
-                              ? 'border-transparent bg-bg-card text-text-secondary hover:bg-bg-hover hover:text-text-primary'
-                              : 'border-transparent bg-bg-primary text-text-muted hover:bg-bg-hover hover:text-text-secondary'
+                              ? 'border-transparent bg-bg-card text-text-secondary hover:border-border-color hover:bg-bg-hover hover:text-text-primary'
+                              : 'border-transparent bg-transparent text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                       }`}
                     >
-                      <div className="flex w-full items-center justify-between gap-1 text-[12px]">
-                        <span className="font-mono font-medium">
+                      <div className="flex w-full items-center justify-between gap-1 text-[11.5px]">
+                        <span className="font-mono font-medium tabular-nums">
                           {cell.date.slice(5)}{' '}
-                          <span className="font-sans text-text-muted">
+                          <span className="font-sans text-[11px] font-normal text-text-muted">
                             {t(`tokenCalendar.weekday.${wk}`)}
                           </span>
                         </span>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           {dayAffairCount > 0 ? (
-                            <span className="inline-flex items-center gap-0.5 rounded-full border border-accent-primary-border bg-accent-primary-10 px-1 text-[10px] font-medium text-accent-primary">
-                              <Check size={9} strokeWidth={2.5} />
+                            <span className="inline-flex items-center gap-0.5 font-mono text-[10.5px] font-medium tabular-nums text-accent-primary">
+                              <Check size={9} strokeWidth={2.4} />
                               <span>{dayAffairCount}</span>
                             </span>
                           ) : null}
                           {sessionCount > 0 ? (
-                            <span className="font-mono text-[11px] text-text-muted">
+                            <span className="font-mono text-[10.5px] tabular-nums text-text-muted">
                               {t('workbench.timeline.daySessionsCount', { count: sessionCount })}
                             </span>
                           ) : null}
@@ -1298,7 +1331,7 @@ export default function SessionTimeline({
                       </div>
                       {hasTokens && bucket ? (
                         <div className="flex items-baseline justify-between gap-1">
-                          <span className="font-mono text-[14px] font-semibold tabular-nums text-text-primary">
+                          <span className="font-mono text-[13.5px] font-semibold tabular-nums text-text-primary">
                             {formatTokens(bucket.total)}
                           </span>
                           <span className="truncate font-mono text-[10px] tabular-nums text-text-muted">
@@ -1404,7 +1437,7 @@ export default function SessionTimeline({
                             <span>{t('workbench.timeline.copySummary')}</span>
                           </button>
                         </div>
-                        <div className="rounded-[6px] border border-border-dim bg-bg-primary px-3 py-1.5 font-mono text-[12px] text-accent-primary select-all">
+                        <div className="rounded-[6px] border border-border-color bg-bg-primary px-3 py-1.5 font-mono text-[12px] text-accent-primary select-all">
                           {t('workbench.timeline.promptCommand')}
                         </div>
 
@@ -1491,127 +1524,130 @@ export default function SessionTimeline({
                     </span>
                   </div>
 
-                  {/* 事务卡片流 */}
+                  {/* 每日事务扁平分带台账（去盒中盒，单层外框 + 发丝线分带 + 左侧引线结论） */}
                   <div
                     data-testid="affairs-card-list"
-                    className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
+                    className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4"
                   >
                     {filteredAffairs.length > 0 ? (
-                      filteredAffairs.map((affair) => (
-                        <div
-                          key={affair.id}
-                          data-testid="affair-card"
-                          className="group relative flex flex-col gap-2.5 rounded-[10px] border border-border-color bg-bg-card p-3.5 transition-colors hover:border-border-strong hover:bg-bg-hover"
-                        >
-                          {/* 顶栏：标题、分类/员工徽章与操作按钮 */}
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex min-w-0 flex-1 flex-col gap-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {affair.category ? (
-                                  <span className="rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 text-[11px] font-medium text-text-secondary">
-                                    {affair.category}
-                                  </span>
-                                ) : null}
-                                {affair.employee ? (
-                                  <span className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 text-[11px] text-text-muted">
-                                    <User size={10} />
-                                    <span>{affair.employee}</span>
-                                  </span>
-                                ) : null}
-                                {affair.completed_at ? (
-                                  <span className="font-mono text-[11px] text-text-muted">
-                                    {affair.completed_at.slice(-8)}
-                                  </span>
-                                ) : null}
+                      <div className="tl-affair-ledger">
+                        {filteredAffairs.map((affair) => (
+                          <div
+                            key={affair.id}
+                            data-testid="affair-card"
+                            className="tl-affair-row group relative"
+                          >
+                            {/* 顶栏：紧凑行内元数据与标题 + 悬停操作 */}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-text-muted">
+                                  {affair.category ? (
+                                    <span className="rounded-[4px] bg-bg-subtle px-1.5 py-[1px] font-medium text-text-secondary">
+                                      {affair.category}
+                                    </span>
+                                  ) : null}
+                                  {affair.employee ? (
+                                    <span className="inline-flex items-center gap-1 font-mono text-text-secondary">
+                                      <User size={10} />
+                                      <span>@{affair.employee}</span>
+                                    </span>
+                                  ) : null}
+                                  {affair.completed_at ? (
+                                    <span className="font-mono tabular-nums text-text-dim">
+                                      {affair.completed_at.slice(-8)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <h3 className="font-sans text-[13.5px] font-semibold leading-snug text-text-primary">
+                                  {affair.title}
+                                </h3>
                               </div>
-                              <h3 className="font-sans text-[13px] font-semibold leading-snug text-text-primary">
-                                {affair.title}
-                              </h3>
-                            </div>
 
-                            <div className="flex shrink-0 items-center gap-1 opacity-70 group-hover:opacity-100">
-                              {affair.summary ? (
+                              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                                {affair.summary ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleCopyText(affair.summary)}
+                                    title={t('workbench.timeline.copySummary')}
+                                    className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-active hover:text-text-primary"
+                                  >
+                                    <Copy size={12} />
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
-                                  onClick={() => void handleCopyText(affair.summary)}
-                                  title={t('workbench.timeline.copySummary')}
-                                  className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+                                  onClick={() => void handleDeleteAffair(affair.id, affair.date)}
+                                  title={t('workbench.timeline.deleteAffair')}
+                                  className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-active hover:text-accent-error"
                                 >
-                                  <Copy size={12} />
+                                  <Trash2 size={12} />
                                 </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteAffair(affair.id, affair.date)}
-                                title={t('workbench.timeline.deleteAffair')}
-                                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-bg-hover hover:text-accent-error"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* 业务结论摘要 */}
-                          {affair.summary ? (
-                            <div className="rounded-[6px] border border-border-subtle bg-bg-secondary p-2.5 font-sans text-[13px] leading-relaxed text-text-secondary whitespace-pre-wrap">
-                              {affair.summary}
-                            </div>
-                          ) : null}
-
-                          {/* 关联会话与归档路径 */}
-                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[12px]">
-                            {affair.sessions && affair.sessions.length > 0 ? (
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="text-text-muted">{t('workbench.timeline.sessionsLabel')}:</span>
-                                {affair.sessions.map((sid) => (
-                                  <button
-                                    key={sid}
-                                    type="button"
-                                    onClick={() => onSelect(sid)}
-                                    title={t('workbench.timeline.jumpToSession') + `: ${sid}`}
-                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-accent-primary transition-colors hover:border-accent-primary hover:bg-accent-primary-10"
-                                  >
-                                    <ExternalLink size={10} />
-                                    <span>#{sid.slice(0, 8)}</span>
-                                  </button>
-                                ))}
                               </div>
+                            </div>
+
+                            {/* 业务结论：无内框、左侧发丝竖线引导 */}
+                            {affair.summary ? (
+                              <div className="tl-affair-summary">{affair.summary}</div>
                             ) : null}
 
-                            {affair.artifacts && affair.artifacts.length > 0 ? (
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="text-text-muted">{t('workbench.timeline.artifactsLabel')}:</span>
-                                {affair.artifacts.map((art, idx) => (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() => void handleCopyText(art)}
-                                    title={`复制路径: ${art}`}
-                                    className="inline-flex items-center gap-1 rounded-[4px] border border-border-color bg-bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                                  >
-                                    <FileText size={10} />
-                                    <span className="max-w-[220px] truncate">{art.split('/').slice(-2).join('/')}</span>
-                                    <Copy size={9} className="opacity-50" />
-                                  </button>
-                                ))}
-                              </div>
-                            ) : null}
+                            {/* 关联会话、归档路径与标签：去边框紧凑索引条 */}
+                            {(affair.sessions?.length || affair.artifacts?.length || affair.tags?.length) ? (
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5 text-[11.5px]">
+                                {affair.sessions && affair.sessions.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[11px] text-text-dim">
+                                      {t('workbench.timeline.sessionsLabel')}
+                                    </span>
+                                    {affair.sessions.map((sid) => (
+                                      <button
+                                        key={sid}
+                                        type="button"
+                                        onClick={() => onSelect(sid)}
+                                        title={t('workbench.timeline.jumpToSession') + `: ${sid}`}
+                                        className="inline-flex items-center gap-1 rounded-[4px] bg-accent-primary-10 px-1.5 py-[1px] font-mono text-[11px] text-accent-primary transition-colors hover:bg-accent-primary-20"
+                                      >
+                                        <ExternalLink size={10} />
+                                        <span>#{sid.slice(0, 8)}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
 
-                            {affair.tags && affair.tags.length > 0 ? (
-                              <div className="flex flex-wrap items-center gap-1">
-                                {affair.tags.map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className="rounded-[3px] bg-bg-secondary px-1.2 py-0.2 text-[11px] text-text-dim"
-                                  >
-                                    #{tag}
-                                  </span>
-                                ))}
+                                {affair.artifacts && affair.artifacts.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[11px] text-text-dim">
+                                      {t('workbench.timeline.artifactsLabel')}
+                                    </span>
+                                    {affair.artifacts.map((art, idx) => (
+                                      <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => void handleCopyText(art)}
+                                        title={`复制路径: ${art}`}
+                                        className="inline-flex items-center gap-1 rounded-[4px] bg-bg-subtle px-1.5 py-[1px] font-mono text-[11px] text-text-secondary transition-colors hover:bg-bg-active hover:text-text-primary"
+                                      >
+                                        <FileText size={10} />
+                                        <span className="max-w-[240px] truncate">
+                                          {art.split('/').slice(-2).join('/')}
+                                        </span>
+                                        <Copy size={9} className="opacity-50" />
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+
+                                {affair.tags && affair.tags.length > 0 ? (
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-text-dim">
+                                    {affair.tags.map((tag) => (
+                                      <span key={tag}>#{tag}</span>
+                                    ))}
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
-                        </div>
-                      ))
+                        ))}
+                      </div>
                     ) : (
                       /* 空状态友好引导卡片 */
                       <div className="flex flex-col items-center justify-center gap-3 rounded-[12px] border border-dashed border-border-color p-8 text-center">
@@ -1655,7 +1691,7 @@ export default function SessionTimeline({
                 ) : null}
 
                 <span className="ml-auto flex shrink-0 items-center gap-1">
-                  <span className="flex items-center gap-0.5 rounded-[6px] bg-bg-subtle p-0.5">
+                  <span className="flex items-center gap-0.5 rounded-[7px] bg-bg-subtle p-0.5">
                     {SPAN_HOURS.map((h, i) => (
                       <button
                         key={h}
@@ -1663,9 +1699,9 @@ export default function SessionTimeline({
                         data-testid={`timeline-span-${h}`}
                         aria-pressed={!fitAll && spanIndex === i}
                         onClick={() => chooseSpan(i)}
-                        className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
+                        className={`h-[22px] rounded-[5px] px-2 text-[11px] transition-colors ${
                           !fitAll && spanIndex === i
-                            ? 'bg-bg-active font-medium text-text-primary'
+                            ? 'bg-bg-card font-medium text-text-primary shadow-[var(--seg-on-shadow)]'
                             : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                         }`}
                       >
@@ -1677,9 +1713,9 @@ export default function SessionTimeline({
                       data-testid="timeline-span-all"
                       aria-pressed={fitAll}
                       onClick={fitEverything}
-                      className={`h-[22px] rounded-[4px] px-1.5 text-[11px] transition-colors ${
+                      className={`h-[22px] rounded-[5px] px-2 text-[11px] transition-colors ${
                         fitAll
-                          ? 'bg-bg-active font-medium text-text-primary'
+                          ? 'bg-bg-card font-medium text-text-primary shadow-[var(--seg-on-shadow)]'
                           : 'text-text-muted hover:bg-bg-hover hover:text-text-secondary'
                       }`}
                     >
@@ -1744,7 +1780,7 @@ export default function SessionTimeline({
                     <i
                       key={i}
                       className={`absolute bottom-0 top-0 w-px ${
-                        k.day ? 'bg-border-strong' : 'bg-border-color'
+                        k.day ? 'bg-border-color' : 'bg-border-subtle'
                       }`}
                       style={{ left: `${k.at * 100}%` }}
                     />
@@ -1752,7 +1788,7 @@ export default function SessionTimeline({
                   {nowAt >= 0 && nowAt <= 1.0001 ? (
                     <i
                       data-testid="timeline-now"
-                      className="absolute bottom-0 top-0 w-px bg-text-dim opacity-80"
+                      className="absolute bottom-0 top-0 w-px bg-accent-primary opacity-75"
                       style={{ left: `calc(${nowAt * 100}% - 1px)` }}
                       title={t('workbench.timeline.now')}
                     />
@@ -1917,7 +1953,7 @@ function BlockRows({
 
 /**
  * 一行：条 + 标题 + 悬停动作。**自己量自己**。
- * 条高 38px（行高 48px），文本字号保证至少 16px，视觉饱满易辨认。
+ * 条高 26px（行高 40px），文本 12.5px 与工作台字阶一致；装不下时标签无边框干净延展在条外，告别虚线拼盒。
  */
 function LaneRow({
   x,
@@ -1967,9 +2003,9 @@ function LaneRow({
       beg = endPx - MIN_BAR_PX;
     }
 
-    const inside = endPx - beg - 2;
-    const right = width - endPx + 1 - PAD;
-    const left = beg - 1 - PAD;
+    const inside = endPx - beg - 4;
+    const right = width - endPx - PAD;
+    const left = beg - PAD;
     const spot: 'in' | 'r' | 'l' =
       inside >= need
         ? 'in'
@@ -1982,35 +2018,30 @@ function LaneRow({
               : right >= left
                 ? 'r'
                 : 'l';
-    const at = spot === 'in' ? beg + 1 : spot === 'r' ? endPx - 1 : Math.max(PAD, beg + 1 - need);
+    const at = spot === 'in' ? beg + 2 : spot === 'r' ? endPx + 4 : Math.max(PAD, beg - 4 - need);
     const max =
       spot === 'in'
         ? inside
         : spot === 'r'
-          ? width - endPx + 1 - PAD
-          : Math.max(0, beg - PAD);
+          ? width - endPx - PAD
+          : Math.max(0, beg - 4 - PAD);
 
     bar.style.left = `${short ? beg : L}px`;
     bar.style.width = `${short ? MIN_BAR_PX : Math.max(1, R - L)}px`;
-    bar.style.borderRadius =
-      spot === 'r' ? '8px 0 0 8px' : spot === 'l' ? '0 8px 8px 0' : '8px';
+    bar.style.borderRadius = '6px';
 
     lb.style.left = `${at}px`;
     lb.style.maxWidth = `${Math.min(MAX_LABEL_PX, Math.max(0, max))}px`;
+    lb.style.border = 'none';
     if (spot === 'in') {
-      lb.style.border = '1px solid transparent';
-      lb.style.borderRadius = '8px';
       lb.style.color = 'var(--text-primary)';
     } else {
-      lb.style.border = '1px dashed var(--border-strong)';
-      lb.style.borderLeftWidth = spot === 'l' ? '0' : '1px';
-      lb.style.borderRightWidth = spot === 'r' ? '0' : '1px';
-      lb.style.borderRadius = spot === 'r' ? '0 8px 8px 0' : '8px 0 0 8px';
       lb.style.color = 'var(--text-secondary)';
     }
   }, [span, winStart, x.last, x.start]);
 
   const duration = x.noReply ? t('workbench.timeline.noReply') : formatDuration(x.last - x.start);
+  const isRunning = x.s.status === 'running';
 
   return (
     <div
@@ -2021,40 +2052,42 @@ function LaneRow({
       data-kind={kind || undefined}
       onClick={() => onSelect(x.s.session_id)}
       title={title}
-      className={`group relative h-[48px] w-full cursor-pointer overflow-hidden ${
+      className={`group relative h-[40px] w-full cursor-pointer overflow-hidden transition-colors ${
         selected ? 'bg-bg-active' : 'hover:bg-bg-hover'
       }`}
     >
       <div
         data-bar
-        className={`absolute top-[5px] h-[38px] transition-colors ${
+        className={`tl-lane-bar absolute top-[7px] h-[26px] ${
           kind === 'kid'
-            ? 'bg-[var(--timeline-bar-strong)] group-hover:bg-[var(--timeline-bar-stronger)]'
+            ? 'is-kid'
             : x.noReply
-              ? 'bg-transparent ring-1 ring-inset ring-[var(--timeline-bar-strong)]'
-              : 'bg-[var(--timeline-bar)] group-hover:bg-[var(--timeline-bar-strong)]'
+              ? 'is-noreply'
+              : isRunning
+                ? 'is-running'
+                : ''
         }`}
       />
       <div
         data-label
-        className={`pointer-events-none absolute top-[5px] box-border flex h-[38px] items-center gap-2 overflow-hidden whitespace-nowrap px-3 text-[16px] leading-[22px] ${
-          kind === 'kid' ? 'pl-5' : ''
+        className={`pointer-events-none absolute top-[7px] box-border flex h-[26px] items-center gap-1.5 overflow-hidden whitespace-nowrap px-2 text-[12.5px] leading-[22px] ${
+          kind === 'kid' ? 'pl-4' : ''
         }`}
       >
         {waiting ? (
           <span
             aria-hidden
             title={t('workbench.forYou.label')}
-            className="h-2 w-2 shrink-0 rounded-full bg-accent-primary"
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-primary"
           />
         ) : null}
-        {picked ? <CalendarCheck size={16} className="shrink-0 text-text-muted" /> : null}
-        <span className="min-w-0 overflow-hidden text-ellipsis text-[16px] font-medium">
+        {picked ? <CalendarCheck size={13} className="shrink-0 text-text-muted" /> : null}
+        <span className="min-w-0 overflow-hidden text-ellipsis text-[12.5px] font-medium">
           {x.s.title}
         </span>
-        <span className="shrink-0 font-mono text-[16px] text-text-muted">{duration}</span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{duration}</span>
       </div>
-      {/* 悬停才出现：把这场旧会话（及其上下文组）捡进今天（或放下）。 */}
+      {/* 悬停才出现：紧凑浮动「今天」胶囊，不遮盖大片内容 */}
       <button
         type="button"
         data-lane-action
@@ -2064,11 +2097,11 @@ function LaneRow({
           e.stopPropagation();
           onToggleToday(x.s.session_id);
         }}
-        className={`absolute right-2 top-[5px] z-[2] hidden h-[38px] items-center gap-1.5 rounded-[8px] border border-border-color bg-bg-primary px-3 text-[14px] font-medium text-text-secondary group-hover:flex hover:text-text-primary ${
-          picked ? 'text-text-primary' : ''
+        className={`absolute right-2 top-[8px] z-[2] hidden h-[24px] items-center gap-1 rounded-[6px] border border-border-color bg-bg-elevated px-2 text-[11.5px] font-medium text-text-secondary shadow-sm group-hover:flex hover:text-text-primary ${
+          picked ? 'text-accent-primary' : ''
         }`}
       >
-        {picked ? <CalendarCheck size={15} /> : <CalendarPlus size={15} />}
+        {picked ? <CalendarCheck size={12} /> : <CalendarPlus size={12} />}
         <span>{t('workbench.timeline.todayShort')}</span>
       </button>
     </div>

@@ -814,17 +814,17 @@ function AsyncCallbackCard({
           : 'consumed';
 
   const stepItems = [
-    { key: 'dispatched', state: 'done', label: isZh ? '已派发 Dispatched' : 'Dispatched' },
-    { key: 'running', state: 'done', label: isZh ? '执行中 Running' : 'Running' },
+    { key: 'dispatched', state: 'done', label: isZh ? '已派发' : 'Dispatched' },
+    { key: 'running', state: 'done', label: isZh ? '执行中' : 'Running' },
     {
       key: 'delivered',
       state: stage === 'consumed' ? 'done' : 'now',
-      label: isZh ? '已回传待消费 Delivered' : 'Delivered',
+      label: isZh ? '已回传' : 'Delivered',
     },
     {
       key: 'consumed',
       state: stage === 'consumed' ? 'done' : 'wait',
-      label: isZh ? '已消费入账 Consumed' : 'Consumed',
+      label: isZh ? '已入账' : 'Consumed',
     },
   ] as const;
 
@@ -835,85 +835,81 @@ function AsyncCallbackCard({
       data-kind={record.kind}
       data-group={KIND_GROUP[record.kind]}
       data-testid="async-callback-card"
-      className={`cb-card min-w-0 ${cardTone}`}
+      className={`cb-card min-w-0 ${cardTone}${failed ? ' is-failed' : ''}`}
     >
       <header className="cb-hd">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className={`inline-flex shrink-0 items-center gap-1 hover:opacity-80 ${
-            failed
-              ? `text-[11px] font-semibold ${ERR_TEXT}`
-              : 'text-[11px] font-semibold text-text-secondary'
-          }`}
-        >
-          <ChevronRight
-            size={12}
-            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-          />
-          <Bot size={12} />
-        </button>
-        <span className="cb-title flex flex-wrap items-center gap-1.5">
-          <span>{label}</span>
-          {callback.employeeId ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className={`inline-flex shrink-0 items-center gap-1 hover:opacity-80 ${
+              failed
+                ? `text-[11px] font-semibold ${ERR_TEXT}`
+                : 'text-[11px] font-semibold text-text-secondary'
+            }`}
+          >
+            <ChevronRight
+              size={12}
+              className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+            />
+            <Bot size={12} />
+          </button>
+          <span className="cb-title">
+            <span className="shrink-0">{label}</span>
+            {callback.employeeId ? (
+              <span
+                data-testid="async-callback-employee"
+                className="shrink-0 font-mono text-[11px] text-text-primary"
+              >
+                @{callback.employeeId}
+              </span>
+            ) : null}
+            {callback.targetSessionId ? (
+              <span
+                data-testid="async-callback-session"
+                className="max-w-[170px] truncate font-mono text-[11px] font-normal text-text-muted"
+                title={callback.targetSessionId}
+              >
+                {callback.targetSessionId}
+              </span>
+            ) : null}
+            {modeLabel ? (
+              <span className="shrink-0 text-[11px] font-normal text-text-muted">· {modeLabel}</span>
+            ) : null}
+            {callback.agentKernel ? (
+              <span className="shrink-0 truncate font-mono text-[11px] font-normal text-text-dim">
+                · {callback.agentKernel}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {dedupeCount > 1 ? (
+            <span data-testid="async-callback-dedupe" className="cb-dedupe">
+              ×{dedupeCount} deduplicated
+            </span>
+          ) : null}
+          {failed && callback.exitCode !== null ? (
             <span
-              data-testid="async-callback-employee"
-              className="shrink-0 font-mono text-[11px] text-text-primary"
+              data-testid="async-callback-exit"
+              className="cb-exit"
             >
-              @{callback.employeeId}
+              exit {callback.exitCode}
             </span>
           ) : null}
-          {callback.targetSessionId ? (
+          {statusObj ? (
             <span
-              data-testid="async-callback-session"
-              className="min-w-0 truncate font-mono text-[11px] font-normal text-text-muted"
-              title={callback.targetSessionId}
+              data-testid="async-callback-status"
+              className={`shrink-0 rounded-full px-2 py-[1px] text-[11px] font-medium ${statusObj.tone}`}
             >
-              {callback.targetSessionId}
+              {statusWithCode}
             </span>
           ) : null}
-          {modeLabel ? (
-            <span className="shrink-0 text-[11px] font-normal text-text-muted">· {modeLabel}</span>
-          ) : null}
-          {callback.agentKernel ? (
-            <span className="min-w-0 truncate font-mono text-[11px] font-normal text-text-dim">
-              · {callback.agentKernel}
-            </span>
-          ) : null}
-        </span>
-        {dedupeCount > 1 ? (
-          <span data-testid="async-callback-dedupe" className="cb-dedupe">
-            ×{dedupeCount} deduplicated
-          </span>
-        ) : null}
-        {callback.exitCode !== null ? (
-          <span
-            data-testid="async-callback-exit"
-            className={`cb-exit ${callback.exitCode === 0 ? 'ok' : ''}`}
-          >
-            exit {callback.exitCode}
-          </span>
-        ) : null}
-        {callback.jobId ? (
-          <span
-            data-testid="async-callback-job"
-            className="shrink-0 font-mono text-[11px] text-text-dim"
-          >
-            {callback.jobId}
-          </span>
-        ) : null}
-        {statusObj ? (
-          <span
-            data-testid="async-callback-status"
-            className={`shrink-0 rounded-full px-2 py-[1px] text-[11px] ${statusObj.tone}`}
-          >
-            {statusWithCode}
-          </span>
-        ) : null}
-        {queueChip}
-        <Timestamp ts={record.ts} />
-        <AgentPath path={record.agent_path} />
+          {queueChip}
+          <Timestamp ts={record.ts} />
+          <AgentPath path={record.agent_path} />
+        </div>
       </header>
 
       <div className="cb-steps" data-testid="async-callback-steps" data-stage={stage}>
@@ -921,29 +917,48 @@ function AsyncCallbackCard({
           <span key={s.key} className="inline-flex items-center gap-1.5">
             {i > 0 ? <span className="text-text-dim">›</span> : null}
             <span className={`cb-step ${s.state}`}>
-              {s.state === 'done' ? <Check size={11} /> : s.state === 'now' ? <Clock size={11} /> : null}
+              {s.state === 'done' ? (
+                <Check size={10} />
+              ) : s.state === 'now' ? (
+                <Clock size={10} />
+              ) : (
+                <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-40" />
+              )}
               <span>{s.label}</span>
             </span>
           </span>
         ))}
+        {callback.jobId ? (
+          <span
+            data-testid="async-callback-job"
+            className="ml-auto shrink-0 font-mono text-[10.5px] text-text-dim"
+          >
+            {callback.jobId}
+          </span>
+        ) : null}
       </div>
 
       {open ? (
-        <div className="min-w-0 space-y-2">
-          {employees?.length ? <EmployeeQuotes employees={employees} /> : null}
-          {skills?.length ? <SkillQuotes names={skills} /> : null}
+        <div className="min-w-0">
+          {employees?.length ? (
+            <div className="px-[14px] pt-2">
+              <EmployeeQuotes employees={employees} />
+            </div>
+          ) : null}
+          {skills?.length ? (
+            <div className="px-[14px] pt-2">
+              <SkillQuotes names={skills} />
+            </div>
+          ) : null}
           {callback.taskSummary ? (
-            <div
-              data-testid="async-callback-summary"
-              className="rounded-[6px] border border-border-color bg-bg-subtle px-2.5 py-1.5 text-[12px]"
-            >
+            <div data-testid="async-callback-summary" className="cb-summary">
               {hasExpandableSummary ? (
                 <button
                   type="button"
                   onClick={() => setSummaryOpen((v) => !v)}
                   aria-expanded={summaryOpen}
                   data-testid="async-callback-summary-toggle"
-                  className="flex w-full min-w-0 items-center gap-1.5 text-left text-text-secondary hover:text-text-primary"
+                  className="cb-summary-btn"
                 >
                   <ChevronRight
                     size={11}
@@ -951,19 +966,21 @@ function AsyncCallbackCard({
                       summaryOpen ? 'rotate-90' : ''
                     }`}
                   />
-                  <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
-                  <span className="min-w-0 flex-1 truncate">{callback.taskTitle}</span>
+                  <span className="shrink-0 text-[11px] font-medium text-text-muted">{summaryLabel}</span>
+                  <span className="min-w-0 flex-1 truncate text-text-secondary">{callback.taskTitle}</span>
                 </button>
               ) : (
-                <div className="flex min-w-0 items-center gap-1.5 text-text-secondary">
-                  <span className="shrink-0 font-semibold text-text-muted">{summaryLabel}：</span>
-                  <span className="min-w-0 flex-1 truncate">{callback.taskTitle || callback.taskSummary}</span>
+                <div className="cb-summary-static">
+                  <span className="shrink-0 text-[11px] font-medium text-text-muted">{summaryLabel}</span>
+                  <span className="min-w-0 flex-1 truncate text-text-secondary">
+                    {callback.taskTitle || callback.taskSummary}
+                  </span>
                 </div>
               )}
               {hasExpandableSummary && summaryOpen ? (
                 <div
                   data-testid="async-callback-summary-full"
-                  className="mt-1.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words border-t border-border-color pt-1.5 text-[12px] leading-[1.65] text-text-secondary"
+                  className="cb-summary-full"
                 >
                   {callback.taskSummary}
                 </div>
@@ -972,18 +989,22 @@ function AsyncCallbackCard({
           ) : null}
           <div
             data-testid="async-callback-body"
-            className="max-h-[230px] min-w-0 overflow-auto"
+            className="cb-body cb-prose max-h-[230px] min-w-0 overflow-auto"
           >
             <Rich text={callback.resultBody} />
           </div>
-          {reminders?.length ? <Reminders items={reminders} /> : null}
+          {reminders?.length ? (
+            <div className="px-[14px] pb-2">
+              <Reminders items={reminders} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {callback.targetSessionId ? (
         <div className="cb-foot" data-testid="async-callback-foot">
           <span className="min-w-0 truncate">
-            {isZh ? '来源会话：' : 'Source session: '}
+            {isZh ? '来源会话 · ' : 'Source · '}
             <code className="font-mono text-text-secondary">{callback.targetSessionId}</code>
           </span>
           {actions.onSelectSession ? (
@@ -991,7 +1012,7 @@ function AsyncCallbackCard({
               type="button"
               data-testid="async-callback-jump"
               onClick={() => actions.onSelectSession?.(callback.targetSessionId)}
-              className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-[6px] border border-border-color bg-bg-secondary px-2 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+              className="inline-flex h-[22px] shrink-0 items-center gap-1 rounded-[5px] border border-border-color bg-bg-card px-2 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             >
               <span>{isZh ? '打开来源会话' : 'Open source'}</span>
               <ExternalLink size={11} />

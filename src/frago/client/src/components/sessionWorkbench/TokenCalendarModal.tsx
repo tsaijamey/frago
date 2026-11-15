@@ -147,9 +147,9 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
                 }
               >
                 <span className="cs-cal-day">{cell.day}</span>
-                <span className="cs-cal-tokens">
-                  {bucket ? formatTokens(bucket.total) : '—'}
-                </span>
+                {bucket && bucket.total > 0 ? (
+                  <span className="cs-cal-tokens">{formatTokens(bucket.total)}</span>
+                ) : null}
               </div>
             );
           })}

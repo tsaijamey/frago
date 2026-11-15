@@ -123,10 +123,11 @@ describe('SessionTimeline Completed Affairs View', () => {
     // 1. 月历顶部汇总指标区
     expect(screen.getByTestId('month-affairs-badge').textContent).toContain('2');
 
-    // 2. 2026-11-08 格子内显著展示事务徽章与微缩预览
+    // 2. 2026-11-08 格子内显著展示事务徽章、微缩预览与最高热力分位
     const cell = screen.getByTestId('calendar-cell-2026-11-08');
     expect(cell).toBeTruthy();
     expect(cell.textContent).toContain('实现 Agent Ontology 架构方案');
+    expect(cell.getAttribute('data-heat')).toBe('3');
   });
 
   it('点击日期默认展示已完成事务 Tab，渲染事务卡片与一键直达会话', async () => {
@@ -149,9 +150,11 @@ describe('SessionTimeline Completed Affairs View', () => {
     // 1. 验证默认处于事务 Tab
     expect(screen.getByTestId('tab-affairs').getAttribute('class')).toContain('bg-[');
 
-    // 2. 验证事务卡片流渲染
+    // 2. 验证扁平分带台账结构与事务行渲染
+    expect(screen.getByTestId('affairs-card-list').querySelector('.tl-affair-ledger')).toBeTruthy();
     const cards = screen.getAllByTestId('affair-card');
     expect(cards.length).toBe(2);
+    expect(cards[0].className).toContain('tl-affair-row');
     expect(cards[0].textContent).toContain('实现 Agent Ontology 架构方案');
     expect(cards[0].textContent).toContain('frago-developer');
     expect(cards[0].textContent).toContain('排查多内核待输入状态盲区');
