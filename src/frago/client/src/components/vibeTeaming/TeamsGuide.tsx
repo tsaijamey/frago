@@ -1,41 +1,19 @@
 /**
- * 页头下的三步说明。第一次进来展开，点 × 收起并记住，页头的「?」可以再打开。
+ * 页头下的三步说明。默认收起不常驻占位，点击页头的「?」按需展开，点 × 或再次点击「?」收起。
  *
  * 左格底色同左栏、右格同右栏：第几步落在哪一栏，一眼对得上。说法是对等的——两边
  * 各有自己的 agent、各有自己给队友定的规矩，两边都能请对方的 agent 做事。
- *
- * 独立成文件：它只在第一次出现，与两栏没有数据往来。
  */
 
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
-const SEEN_KEY = 'teams-guide-seen';
-
-function seen(): boolean {
-  try {
-    return window.localStorage.getItem(SEEN_KEY) === '1';
-  } catch {
-    // 浏览器不给读（隐私窗口、禁用了存储）就当没看过：每次展开，× 仍能收起这一次。
-    return false;
-  }
-}
-
-/** 说明开着没有；收起时记住。 */
+/** 说明默认收起，点击页头「?」按需展开/收起。 */
 export function useTeamsGuide(): [boolean, () => void] {
-  const [open, setOpen] = useState(() => !seen());
+  const [open, setOpen] = useState(false);
   const toggle = useCallback(() => {
-    setOpen((was) => {
-      if (was) {
-        try {
-          window.localStorage.setItem(SEEN_KEY, '1');
-        } catch {
-          // 记不住就记不住，这一次照样收起。
-        }
-      }
-      return !was;
-    });
+    setOpen((was) => !was);
   }, []);
   return [open, toggle];
 }

@@ -1,0 +1,53 @@
+/* Compact controls for DesktopPage header & single-row virtual app toolbar. */
+.dt-select {
+  height: 26px;
+  padding: 0 22px 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  line-height: 1;
+  outline: none;
+  cursor: pointer;
+}
+
+.dt-select:hover {
+  border-color: var(--border-strong);
+}
+
+.dt-select:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.dt-select--sm {
+  height: 24px;
+}
+
+.dt-compact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.dt-compact-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dt-compact-btn--on {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+}

@@ -156,10 +156,10 @@ export default function OfficialResourceSettings() {
 
       {/* Sync Result */}
       {officialResult && officialResult.status !== 'idle' && (
-        <div className="mt-4 p-3 bg-black/5 dark:bg-white/5 rounded-md">
+        <div className="mt-4 p-3 bg-[var(--bg-subtle)] rounded-md border border-[var(--border-color)]">
           <div className="text-sm">
             {officialResult.status === 'ok' && (
-              <div className="flex items-center gap-2 text-green-600 dark:text-green-400 mb-2">
+              <div className="flex items-center gap-2 text-[var(--text-primary)] mb-2">
                 <Check size={14} />
                 <span>{t('settings.officialSync.syncComplete')}</span>
               </div>
@@ -184,8 +184,8 @@ export default function OfficialResourceSettings() {
 
       {/* Sync Error */}
       {officialError && (
-        <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-          <p className="text-sm text-red-700 dark:text-red-400">{officialError}</p>
+        <div className="mt-4 p-3 bg-accent-error-10 border border-accent-error-border rounded-md">
+          <p className="text-sm text-accent-error">{officialError}</p>
         </div>
       )}
     </div>

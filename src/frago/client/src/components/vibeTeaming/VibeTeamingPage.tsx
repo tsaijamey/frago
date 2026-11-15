@@ -69,7 +69,7 @@ import MyRulesBar from './MyRulesBar';
 import PeerTiers, { Prediction, type RulesSource } from './PeerTiers';
 import RequestCard from './RequestCard';
 import TeamAvatar from './TeamAvatar';
-import TeamsGuide, { useTeamsGuide } from './TeamsGuide';
+import TeamsGuide from './TeamsGuide';
 import {
   FRAGO_DEFAULT_RULES,
   classifyTier,
@@ -112,7 +112,8 @@ export default function VibeTeamingPage() {
   const { t } = useTranslation();
   const { state, error: stateError, loading, reload } = useTeamState();
   const [selected, setSelected] = useState<string | null>(null);
-  const [guideOpen, toggleGuide] = useTeamsGuide();
+  const [guideOpen, setGuideOpen] = useState(false);
+  const toggleGuide = useCallback(() => setGuideOpen((v) => !v), []);
   // 刚存下的设置先用上，等本机状态重读回来再以它为准——不然点完要等一轮才看得到变化。
   const [justSaved, setJustSaved] = useState<RequestRules | null>(null);
   const rules = justSaved ?? state?.request_rules ?? null;
@@ -190,7 +191,8 @@ export default function VibeTeamingPage() {
 function Intro({ onChanged }: { onChanged: () => void }) {
   const { t } = useTranslation();
   const [path, setPath] = useState<'open' | 'join' | null>(null);
-  const [guideOpen, toggleGuide] = useTeamsGuide();
+  const [guideOpen, setGuideOpen] = useState(false);
+  const toggleGuide = useCallback(() => setGuideOpen((v) => !v), []);
   // 这一屏只在一个 team 都没有时出现，所以没有「已经在里面」这种情况。
   const joined: string[] = [];
 
@@ -885,7 +887,7 @@ function MySide({
         </p>
       )}
       {pushTrouble && !pushTroubleTransient && (
-        <div role="alert" className="mx-3 mt-2 rounded-md bg-red-500/10 px-3 py-2 text-xs leading-relaxed text-accent-error">
+        <div role="alert" className="mx-3 mt-2 rounded-md bg-accent-error-10 px-3 py-2 text-xs leading-relaxed text-accent-error">
           <span className="font-medium">{t('team.pushTroubleTitle')}</span>
           <span className="text-text-muted">{t('team.pushTroubleWhy')}</span>
           <div className="mt-1 break-all font-mono">{maskCodesIn(pushTrouble, codes)}</div>

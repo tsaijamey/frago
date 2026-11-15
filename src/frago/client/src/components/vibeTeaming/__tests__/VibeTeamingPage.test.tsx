@@ -248,17 +248,13 @@ describe('三格的来源不说假话', () => {
 });
 
 describe('首次说明与我的设置', () => {
-  it('第一次展开，收起后记住，「?」可再打开', () => {
-    const first = render(<VibeTeamingPage />);
-    expect(screen.getByTestId('teams-guide')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Hide — reopen with ?'));
-    expect(screen.queryByTestId('teams-guide')).toBeNull();
-    first.unmount();
-
+  it('默认收起不常驻横幅，点「?」按需展开、点 × 收起', () => {
     render(<VibeTeamingPage />);
     expect(screen.queryByTestId('teams-guide')).toBeNull();
     fireEvent.click(screen.getByTestId('teams-help'));
     expect(screen.getByTestId('teams-guide')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Hide — reopen with ?'));
+    expect(screen.queryByTestId('teams-guide')).toBeNull();
   });
 
   it('左栏输入框上方一行摘要写着本机的设置', () => {

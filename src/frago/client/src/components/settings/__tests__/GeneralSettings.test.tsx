@@ -395,4 +395,54 @@ describe('GeneralSettings · 顶部三段切换与多 Harness 独立绑定', () 
     expect(toggledRowIds).toEqual(['alpha', 'groq', 'zeta']);
     expect(window.localStorage.getItem('frago.settings.profiles.sortOrder')).toBe('asc');
   });
+
+  it('缺 Key / 未配置 / 已停用配置展示 .fix-btn 一步修复按钮', async () => {
+    await i18n.changeLanguage('en');
+    getDecisionModelSettings.mockResolvedValue({
+      configured: false,
+      enabled: false,
+      wire: 'decisions',
+      url: null,
+      model: null,
+      has_api_key: false,
+      api_key_masked: null,
+      temperature: null,
+    });
+    getHookReviewStatus.mockResolvedValue({
+      enabled: true,
+      effective: false,
+      env_disabled: false,
+      lightagent: { status: 'no_key', model: null, provider: null, reason: 'no key' },
+    });
+    getProfiles.mockResolvedValue({
+      profiles: [
+        {
+          ...SAMPLE_PROFILES[0],
+          id: 'nokey_ep',
+          name: 'Empty Key Endpoint',
+          api_key_masked: '',
+        },
+        {
+          ...SAMPLE_PROFILES[1],
+          id: 'wb_old',
+          name: 'WorkBuddy Local',
+          kind: 'workbuddy',
+        },
+      ],
+      active_profile_id: null,
+      active_targets: ['claude'],
+      worker_profile_id: null,
+    });
+
+    render(<GeneralSettings />);
+    await screen.findByTestId('zone-harnesses');
+
+    fireEvent.click(screen.getByTestId('general-tab-sidecar'));
+    expect(await screen.findByTestId('sidecar-lightagent-fix')).toBeTruthy();
+    expect(screen.getByTestId('sidecar-decision-fix')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('general-tab-profiles'));
+    expect(await screen.findByTestId('profile-fix-nokey_ep')).toBeTruthy();
+    expect(screen.getByTestId('profile-fix-wb_old')).toBeTruthy();
+  });
 });

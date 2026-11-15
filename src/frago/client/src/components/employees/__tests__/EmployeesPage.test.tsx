@@ -757,4 +757,32 @@ describe('员工页', () => {
     });
     vi.unstubAllGlobals();
   });
+
+  it('员工卡片 .stag 徽章按 active_session_ids 展示 Ready 与 N active', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockServer({
+        list: () =>
+          new Response(
+            JSON.stringify({
+              employees: [
+                makePost({ member_post_id: 'stock', active_session_ids: [] }),
+                makePost({ member_post_id: 'ops', title: '运维专员', active_session_ids: ['s1', 's2'] }),
+              ],
+              total: 2,
+            }),
+            { status: 200 }
+          ),
+      })
+    );
+
+    render(<EmployeesPage />);
+    const stockTag = await screen.findByTestId('employee-status-tag-stock');
+    const opsTag = screen.getByTestId('employee-status-tag-ops');
+    expect(stockTag.textContent).toBe('Ready');
+    expect(stockTag.className).not.toContain('stag--active');
+    expect(opsTag.textContent).toBe('2 active');
+    expect(opsTag.className).toContain('stag--active');
+    vi.unstubAllGlobals();
+  });
 });

@@ -150,6 +150,7 @@ function EmployeeCard({
   const { t } = useTranslation();
   const summaryParts = employeeSummaryParts(employeeSummary(post));
   const empColor = resolveEmployeeColor(post.color, post.member_post_id);
+  const activeCount = post.active_session_ids?.length ?? 0;
 
   return (
     <div
@@ -158,7 +159,7 @@ function EmployeeCard({
       /* 键盘焦点走全站同一套双环（外扩 3px + 内收 1px）。此前这里自己写了 `ring-2`，
          它比全局那条 `:focus-visible` 更具体，于是把内收那圈顶掉了——卡片一旦落进
          会裁剪的容器（窄屏滚动、外层 overflow），焦点环就只剩半圈。 */
-      className="emp-card group focus:outline-none"
+      className="emp-card mcard group focus:outline-none"
       onClick={onLaunch}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -170,19 +171,28 @@ function EmployeeCard({
       data-testid={`employee-card-${post.member_post_id}`}
       data-emp-color={empColor}
     >
-      <span className="emp-card-badge">{employeeInitials(post.member_post_id)}</span>
+      <span className="emp-card-badge mav">{employeeInitials(post.member_post_id)}</span>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
+      <div className="mwho min-w-0 flex-1">
+        <div className="mnm flex items-center gap-1.5">
           <span className="min-w-0 truncate text-[13px] font-semibold text-text-primary">
             {post.title}
           </span>
+          <span
+            data-testid={`employee-status-tag-${post.member_post_id}`}
+            className={activeCount > 0 ? 'stag stag--active' : 'stag'}
+          >
+            {activeCount > 0
+              ? t('employees.card.activeCount', {
+                  count: activeCount,
+                  defaultValue: `${activeCount} active`,
+                })
+              : t('employees.card.ready', { defaultValue: 'Ready' })}
+          </span>
         </div>
-        {/* 摘要最多两行。没有摘要时这一行整个不渲染，不留占位灰字。
-            里面被反引号圈起来的词渲染成代码词，卡面上不出现反引号字符。
-            截断走 Tailwind 的 `line-clamp-2`，与全站其余多行截断同一写法。 */}
+        {/* 极简密度：一句话职责单行截断，完整说明与领地细节收进弹窗。 */}
         {summaryParts.length > 0 ? (
-          <div className="emp-card-summary line-clamp-2">
+          <div className="emp-card-summary mrole truncate">
             {summaryParts.map((part, i) =>
               part.code ? <code key={i}>{part.text}</code> : <span key={i}>{part.text}</span>,
             )}
@@ -196,7 +206,7 @@ function EmployeeCard({
           人想点整卡起会话，落到那里却开了详情窗。 */}
       <button
         type="button"
-        className="emp-card-edit"
+        className="emp-card-edit medit"
         title={t('employees.card.edit')}
         aria-label={`${t('employees.card.edit')} ${post.title}`}
         onClick={(e) => {

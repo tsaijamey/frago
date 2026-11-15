@@ -176,7 +176,8 @@ function getProfileProtocolTags(profile: ProfileItem): Array<{ label: string; ur
 }
 
 export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSettingsProps = {}) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const [subTab, setSubTab] = useState<GeneralSubTab>('harnesses');
   const [config, setConfig] = useState<MainConfig | null>(null);
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
@@ -1044,6 +1045,34 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                   <span className="s-kind">
                     {t('settings.general.sidecar.tierLight', { model: lightModelLabel })}
                   </span>
+                  {hookReview?.lightagent?.status === 'no_key' && (
+                    <button
+                      type="button"
+                      className="fix-btn"
+                      onClick={() =>
+                        lightConnection
+                          ? openProfileModal('edit', lightConnection)
+                          : openProfileModal('add-endpoint')
+                      }
+                      data-testid="sidecar-lightagent-fix"
+                    >
+                      {t('settings.general.sidecar.fixKey', {
+                        defaultValue: isZh ? '补全密钥' : 'Add API key',
+                      })}
+                    </button>
+                  )}
+                  {hookReview?.lightagent?.status === 'not_configured' && (
+                    <button
+                      type="button"
+                      className="fix-btn warn"
+                      onClick={() => openProfileModal('add-endpoint')}
+                      data-testid="sidecar-lightagent-fix"
+                    >
+                      {t('settings.general.sidecar.fixConfigure', {
+                        defaultValue: isZh ? '立即配置' : 'Configure',
+                      })}
+                    </button>
+                  )}
                 </div>
                 <div className="d">
                   <b>{t('settings.general.sidecar.roleLabel')}</b>
@@ -1142,9 +1171,23 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                       })}
                     </span>
                   ) : (
-                    <span className="s-pill off" style={{ marginLeft: 0 }}>
-                      {t('settings.general.sidecar.unconfigured')}
-                    </span>
+                    <>
+                      <span className="s-pill off" style={{ marginLeft: 0 }}>
+                        {t('settings.general.sidecar.unconfigured')}
+                      </span>
+                      {profiles.length === 0 && (
+                        <button
+                          type="button"
+                          className="fix-btn warn"
+                          onClick={() => openProfileModal('add-endpoint')}
+                          data-testid="sidecar-asr-fix"
+                        >
+                          {t('settings.general.sidecar.fixConfigure', {
+                            defaultValue: isZh ? '立即配置' : 'Configure',
+                          })}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="d">
@@ -1199,11 +1242,25 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                         })}
                       </span>
                     ) : (
-                      <span className="s-pill off" style={{ marginLeft: 0 }}>
-                        {decisionSettings?.configured
-                          ? t('settings.general.sidecar.decision.disabledBadge')
-                          : t('settings.general.sidecar.unconfigured')}
-                      </span>
+                      <>
+                        <span className="s-pill off" style={{ marginLeft: 0 }}>
+                          {decisionSettings?.configured
+                            ? t('settings.general.sidecar.decision.disabledBadge')
+                            : t('settings.general.sidecar.unconfigured')}
+                        </span>
+                        {!decisionSettings?.configured && !decisionOpen && (
+                          <button
+                            type="button"
+                            className="fix-btn warn"
+                            onClick={() => setDecisionOpen(true)}
+                            data-testid="sidecar-decision-fix"
+                          >
+                            {t('settings.general.sidecar.fixConfigure', {
+                              defaultValue: isZh ? '立即配置' : 'Configure',
+                            })}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="d">
@@ -1508,6 +1565,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                     sortedProfiles.map((p) => {
                       const isRet = p.kind === 'workbuddy';
                       const isVendor = p.kind === 'vendor_cli';
+                      const isNoKey = p.kind === 'endpoint' && !p.api_key_masked;
                       const refs = refsByProfile[p.id] || [];
                       const protoTags = getProfileProtocolTags(p);
                       const primaryModel =
@@ -1534,17 +1592,43 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                               <span>{p.name}</span>
                               {isRet ? (
-                                <span className="s-pill warn" style={{ height: 17, padding: '0 5px', fontSize: 10, marginLeft: 0 }}>
-                                  {t('settings.general.providers.badgeRetired')}
-                                </span>
+                                <>
+                                  <span className="s-pill warn" style={{ height: 17, padding: '0 5px', fontSize: 10, marginLeft: 0 }}>
+                                    {t('settings.general.providers.badgeRetired')}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="fix-btn warn"
+                                    onClick={() => openProfileModal('add-endpoint')}
+                                    data-testid={`profile-fix-${p.id}`}
+                                  >
+                                    {t('settings.general.providers.fixReplace', {
+                                      defaultValue: isZh ? '替换配置' : 'Replace',
+                                    })}
+                                  </button>
+                                </>
                               ) : isVendor ? (
                                 <span className="s-kind">
                                   {t('settings.general.providers.badgeVendor')}
                                 </span>
                               ) : (
-                                <span className="s-kind">
-                                  {t('settings.general.providers.badgeApiKey')}
-                                </span>
+                                <>
+                                  <span className="s-kind">
+                                    {t('settings.general.providers.badgeApiKey')}
+                                  </span>
+                                  {isNoKey && (
+                                    <button
+                                      type="button"
+                                      className="fix-btn"
+                                      onClick={() => openProfileModal('edit', p)}
+                                      data-testid={`profile-fix-${p.id}`}
+                                    >
+                                      {t('settings.general.sidecar.fixKey', {
+                                        defaultValue: isZh ? '补全密钥' : 'Add API key',
+                                      })}
+                                    </button>
+                                  )}
+                                </>
                               )}
                             </div>
                             <div className="provider-meta">

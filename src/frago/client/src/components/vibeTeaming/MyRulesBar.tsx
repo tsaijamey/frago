@@ -135,7 +135,7 @@ export default function MyRulesBar({
         <div
           role="alert"
           data-testid="my-rules-full-access-warning"
-          className="mx-[14px] mb-2 rounded-md border border-accent-error/40 bg-red-500/10 px-2.5 py-2"
+          className="mx-[14px] mb-2 rounded-md border border-accent-error-border bg-accent-error-10 px-2.5 py-2"
         >
           <p className="flex items-center gap-1.5 text-[11px] font-semibold text-accent-error">
             <AlertTriangle size={12} className="shrink-0" />

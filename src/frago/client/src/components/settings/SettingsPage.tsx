@@ -25,7 +25,7 @@ import AboutSettings from './AboutSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
 import PromptCapabilitySettings from './PromptCapabilitySettings';
 import PageHeader from '@/components/layout/PageHeader';
-import { getInitStatus, getProfiles, getTaskIngestion } from '../../api/client';
+import { getHookReviewStatus, getInitStatus, getProfiles, getTaskIngestion } from '../../api/client';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
@@ -69,11 +69,13 @@ const TABS: TabDef[] = [
 ];
 
 export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const [active, setActive] = useState<TabId>('capability');
   const [profileSignal, setProfileSignal] = useState(0);
   const [profileCount, setProfileCount] = useState<number | null>(null);
   const [channelCount, setChannelCount] = useState<number | null>(null);
+  const [capabilityWarn, setCapabilityWarn] = useState(false);
 
   const handleConfigureProfile = () => {
     setProfileSignal((n) => n + 1);
@@ -88,6 +90,12 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
       .catch(() => {});
     getTaskIngestion()
       .then((res) => setChannelCount(res.channels.length))
+      .catch(() => {});
+    getHookReviewStatus()
+      .then((res) => {
+        const st = res.lightagent?.status;
+        setCapabilityWarn(st === 'not_configured' || st === 'no_key');
+      })
       .catch(() => {});
   }, []);
 
@@ -158,6 +166,15 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
               >
                 <tab.Icon size={15} strokeWidth={1.5} className="settings-nav-icon" />
                 <span className="settings-nav-label">{t(`settings.tabs.${tab.id}`)}</span>
+                {tab.id === 'capability' && capabilityWarn && (
+                  <span
+                    className="settings-nav-badge warn"
+                    title={isZh ? '需要配置模型或 API 密钥' : 'Model profile or API key needed'}
+                    data-testid="settings-capability-warn"
+                  >
+                    !
+                  </span>
+                )}
                 {count !== null && <span className="settings-nav-badge">{count}</span>}
               </button>
             );

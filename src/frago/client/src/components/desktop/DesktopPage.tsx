@@ -1,33 +1,40 @@
 /**
  * 虚拟桌面（agent_os）常驻页。
  *
- * 从前虚拟桌面是独立打开的一张浏览器标签页（`/app/agent_os`），人在工作台看会话、
- * 看虚拟桌面得在两个标签之间来回切。现在它作为左侧菜单 `desktop` 项（紧跟 `sessions`
- * 下方）常驻在主界面右侧，与会话工作台等主视图并列，不再走临时标签页，也不挂到
- * `recipes` 的临时子项下面。
- *
  * 切去别的页面时，`PageHost` 把这一页保留在 DOM 中且不卸载 iframe，WebSocket 与画布
  * 帧流不断连。
  *
- * 2026-11-14：这一页此前是「一整块纯黑，没有任何说明」。人从浅色的产品里点进桌面，
- * 撞进一块黑矩形，看不出它在加载、连上了、还是坏了。现在顶上补一条轻薄状态栏，
- * 把桌面连接态写清楚；画布在没连上/还在加载时让位给一块与深浅主题协调的工作台
- * 占位容器，里面给出当前状态与可做的事，而不是让用户对着一块黑屏猜。
- *
- * 桌面画布内部（画布上的窗口、Dock、右下角语音花瓣与对话入口）由 `/app/agent_os/`
- * 那份页面自己渲染，不在本组件内。
+ * 将连接状态、分辨率、FPS、旁路女声守护开关、Observe/Takeover 模式切换、刷新/解锁
+ * 与虚拟应用切换统一归拢至顶部页头与单行紧凑工具条（`.dt-toolbar`），把最大视口高度
+ * 让给虚拟桌面舞台。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Monitor, RefreshCw } from 'lucide-react';
+import { Monitor, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import { desktopAppUrl } from '@/api/client';
 import { usePageStore } from '@/stores/pageStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import EmptyState from '@/components/ui/EmptyState';
+import './desktop.css';
 
 /** 画布的三档状态：还在装载 / 装载完 / 装载失败。 */
 type FrameState = 'loading' | 'ready' | 'error';
+type ControlMode = 'observe' | 'takeover';
+type VirtualAppKey = 'all' | 'term' | 'browser' | 'image' | 'video' | 'slide' | 'overlay';
+
+const RESOLUTIONS = ['1920×1080', '1440×900', '1280×720'] as const;
+const FPS_OPTIONS = ['30 fps', '60 fps', '15 fps'] as const;
+
+const VIRTUAL_APPS: { key: VirtualAppKey; label: string; short: string }[] = [
+  { key: 'all', label: 'All apps (Desktop)', short: 'All' },
+  { key: 'term', label: 'Terminal', short: 'Terminal' },
+  { key: 'browser', label: 'Chrome Browser', short: 'Browser' },
+  { key: 'image', label: 'Image Preview', short: 'Preview' },
+  { key: 'video', label: 'Video Player', short: 'Player' },
+  { key: 'slide', label: 'Slide Layer', short: 'Slide' },
+  { key: 'overlay', label: 'Progress Overlay', short: 'Overlay' },
+];
 
 export default function DesktopPage() {
   const { t } = useTranslation();
@@ -38,32 +45,34 @@ export default function DesktopPage() {
   const [frameState, setFrameState] = useState<FrameState>('loading');
   // 重新挂载 iframe 的钥匙：装载失败时人点「重新载入」，换掉 key 强制它重来一次。
   const [reloadKey, setReloadKey] = useState(0);
+  const [resolution, setResolution] = useState<string>(RESOLUTIONS[0]);
+  const [fps, setFps] = useState<string>(FPS_OPTIONS[0]);
+  const [narratorOn, setNarratorOn] = useState<boolean>(true);
+  const [controlMode, setControlMode] = useState<ControlMode>('observe');
+  const [soundUnlocked, setSoundUnlocked] = useState<boolean>(false);
+  const [activeApp, setActiveApp] = useState<VirtualAppKey>('all');
+
   const src = desktopAppUrl(sessionId);
 
   const { isConnected } = useWebSocket({ autoConnect: true });
 
-  useEffect(() => {
-    const win = iframeRef.current?.contentWindow;
-    if (!win) return;
+  const postToStage = useCallback((payload: Record<string, unknown>) => {
     try {
-      win.postMessage({ type: 'frago:desktop-visibility', visible: isActive }, '*');
+      iframeRef.current?.contentWindow?.postMessage(payload, '*');
     } catch {
       // ignore transient errors before iframe document is ready
     }
-  }, [isActive]);
+  }, []);
+
+  useEffect(() => {
+    postToStage({ type: 'frago:desktop-visibility', visible: isActive });
+  }, [isActive, postToStage]);
 
   useEffect(() => {
     if (!isActive) return;
 
     const postHotkey = (action: 'alt-right-down' | 'alt-right-up' | 'ctrl-right-down') => {
-      try {
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: 'frago:desktop-hotkey', action },
-          '*'
-        );
-      } catch {
-        // ignore
-      }
+      postToStage({ type: 'frago:desktop-hotkey', action });
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -88,7 +97,7 @@ export default function DesktopPage() {
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
     };
-  }, [isActive]);
+  }, [isActive, postToStage]);
 
   // 装载兜底：iframe 的 onLoad 在少数失败路径上不会触发，超过一段时间仍没就绪，
   // 就按「连不上」呈现，别让人一直盯着转圈。
@@ -105,31 +114,139 @@ export default function DesktopPage() {
     setReloadKey((prev) => prev + 1);
   };
 
+  const updateResolution = (next: string) => {
+    setResolution(next);
+    postToStage({ type: 'frago:desktop-config', resolution: next, fps, narrator: narratorOn, mode: controlMode });
+  };
+
+  const updateFps = (next: string) => {
+    setFps(next);
+    postToStage({ type: 'frago:desktop-config', resolution, fps: next, narrator: narratorOn, mode: controlMode });
+  };
+
+  const toggleNarrator = () => {
+    const next = !narratorOn;
+    setNarratorOn(next);
+    postToStage({ type: 'frago:desktop-config', resolution, fps, narrator: next, mode: controlMode });
+  };
+
+  const updateControlMode = (next: ControlMode) => {
+    setControlMode(next);
+    postToStage({ type: 'frago:desktop-config', resolution, fps, narrator: narratorOn, mode: next });
+  };
+
+  const unlockAudio = () => {
+    const next = !soundUnlocked;
+    setSoundUnlocked(next);
+    postToStage({ type: 'frago:desktop-unlock-audio', unlocked: next });
+  };
+
+  const selectVirtualApp = (next: VirtualAppKey) => {
+    setActiveApp(next);
+    postToStage({ type: 'frago:desktop-app', app: next });
+  };
+
   // 状态栏文案：服务没连上时先说服务，再说桌面本身。
   const status = !isConnected
-    ? { tone: 'error' as const, label: t('desktop.statusDisconnected', 'Disconnected') }
+    ? { tone: 'error' as const, pillClass: 'warn', label: t('desktop.statusDisconnected', 'Disconnected') }
     : frameState === 'loading'
-      ? { tone: 'running' as const, label: t('desktop.statusLoading', 'Loading') }
+      ? { tone: 'running' as const, pillClass: '', label: t('desktop.statusLoading', 'Loading') }
       : frameState === 'error'
-        ? { tone: 'error' as const, label: t('desktop.statusError', 'Failed to load') }
-        : { tone: 'done' as const, label: t('desktop.statusConnected', 'Connected') };
+        ? { tone: 'error' as const, pillClass: 'warn', label: t('desktop.statusError', 'Failed to load') }
+        : { tone: 'done' as const, pillClass: 'ok', label: t('desktop.statusConnected', 'Connected') };
 
   const showCanvas = isConnected && frameState === 'ready';
 
   return (
     <div className="dt-page">
-      <header className="ui-page-header">
+      <header className="ui-page-header ph">
         <div className="ui-page-header-titles">
           <h1 className="ui-page-header-title">{t('sidebar.nav.desktop')}</h1>
-          <span className="ui-page-header-meta">
-            {t('desktop.subtitle', 'Virtual desktop for the agent to work in')}
+          <span className="ui-page-header-meta font-mono">
+            {sessionId
+              ? `/app/agent_os?userInput=true&session=${sessionId.slice(0, 8)}…`
+              : t('desktop.subtitle', 'Virtual desktop for the agent to work in')}
           </span>
         </div>
-        <div className="ui-page-header-actions">
-          <span className={`ui-signal-pill dt-status dt-status--${status.tone}`}>
-            <span className={`ui-signal-dot ui-signal-dot--${status.tone}`} />
+        <div className="ui-page-header-actions flex-wrap gap-1.5">
+          <span
+            className={`dt-pill ${status.pillClass} dt-status inline-flex h-[24px] items-center gap-1.5 rounded-full border px-[9px] text-[12px] ${
+              status.pillClass === 'ok'
+                ? 'border-border-color bg-bg-primary text-text-secondary'
+                : status.pillClass === 'warn'
+                  ? 'border-accent-warning-border bg-accent-warning-10 text-accent-warning'
+                  : 'border-border-color bg-bg-primary text-text-secondary'
+            }`}
+            data-testid="desktop-status-pill"
+          >
+            <span
+              className={`dot inline-block h-[6px] w-[6px] rounded-full ${
+                status.pillClass === 'ok'
+                  ? 'bg-accent-primary'
+                  : status.pillClass === 'warn'
+                    ? 'bg-accent-warning'
+                    : 'bg-text-muted'
+              }`}
+            />
             {status.label}
           </span>
+          <select
+            className="dt-select"
+            aria-label={t('desktop.resolution', { defaultValue: 'Resolution' })}
+            value={resolution}
+            onChange={(e) => updateResolution(e.target.value)}
+          >
+            {RESOLUTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <select
+            className="dt-select"
+            aria-label={t('desktop.fps', { defaultValue: 'FPS' })}
+            value={fps}
+            onChange={(e) => updateFps(e.target.value)}
+          >
+            {FPS_OPTIONS.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className={`dt-pill ${narratorOn ? 'ok' : ''} inline-flex h-[24px] cursor-pointer items-center gap-1.5 rounded-full border px-[9px] text-[12px] transition-colors ${
+              narratorOn
+                ? 'border-accent-primary-border bg-accent-primary-10 text-accent-primary'
+                : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover'
+            }`}
+            onClick={toggleNarrator}
+            aria-pressed={narratorOn}
+            title={t('desktop.narratorHint', { defaultValue: 'Toggle SpeechSummarizerDaemon narrator' })}
+            data-testid="desktop-narrator-toggle"
+          >
+            {narratorOn ? <Volume2 size={12} /> : <VolumeX size={12} />}
+            <span>{narratorOn ? 'Voice: Xiaoxiao' : 'Voice: Muted'}</span>
+          </button>
+          <div className="ui-seg-group" role="group" aria-label={t('desktop.controlMode', { defaultValue: 'Control mode' })}>
+            <button
+              type="button"
+              className={`ui-seg-pill ${controlMode === 'observe' ? 'ui-seg-pill--active' : ''}`}
+              onClick={() => updateControlMode('observe')}
+              aria-pressed={controlMode === 'observe'}
+            >
+              {t('desktop.observe', { defaultValue: 'Observe' })}
+            </button>
+            <button
+              type="button"
+              className={`ui-seg-pill ${controlMode === 'takeover' ? 'ui-seg-pill--active' : ''}`}
+              onClick={() => updateControlMode('takeover')}
+              aria-pressed={controlMode === 'takeover'}
+            >
+              {t('desktop.takeover', { defaultValue: 'Takeover' })}
+            </button>
+          </div>
           <button
             type="button"
             className="ui-icon-btn"
@@ -137,10 +254,50 @@ export default function DesktopPage() {
             title={t('desktop.reload', 'Reload desktop')}
             aria-label={t('desktop.reload', 'Reload desktop')}
           >
-            <RefreshCw size={16} strokeWidth={1.75} />
+            <RefreshCw size={15} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className={`dt-compact-btn ${soundUnlocked ? 'dt-compact-btn--on' : ''}`}
+            onClick={unlockAudio}
+            aria-pressed={soundUnlocked}
+            data-testid="desktop-audio-unlock"
+          >
+            {soundUnlocked ? 'Audio Ready' : 'Unlock'}
           </button>
         </div>
       </header>
+
+      <div
+        className="dt-toolbar flex shrink-0 flex-wrap items-center gap-2 border-b border-border-color bg-bg-secondary px-[20px] py-[6px]"
+        data-testid="desktop-compact-toolbar"
+      >
+        <select
+          className="dt-select dt-select--sm"
+          aria-label={t('desktop.virtualApp', { defaultValue: 'Virtual App' })}
+          value={activeApp}
+          onChange={(e) => selectVirtualApp(e.target.value as VirtualAppKey)}
+        >
+          {VIRTUAL_APPS.map((app) => (
+            <option key={app.key} value={app.key}>
+              {app.label}
+            </option>
+          ))}
+        </select>
+        <div className="ui-seg-group" role="group" aria-label={t('desktop.virtualAppSwitcher', { defaultValue: 'Virtual app view' })}>
+          {VIRTUAL_APPS.map((app) => (
+            <button
+              key={app.key}
+              type="button"
+              className={`ui-seg-pill ${activeApp === app.key ? 'ui-seg-pill--active' : ''}`}
+              onClick={() => selectVirtualApp(app.key)}
+              aria-pressed={activeApp === app.key}
+            >
+              {app.short}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="dt-stage">
         {/* iframe 一直在 DOM 里（切走不卸载是这一页的既有约定），但没就绪时
@@ -155,17 +312,21 @@ export default function DesktopPage() {
           allow="microphone; autoplay"
           onLoad={() => {
             setFrameState('ready');
-            try {
-              iframeRef.current?.contentWindow?.postMessage(
-                {
-                  type: 'frago:desktop-visibility',
-                  visible: usePageStore.getState().currentPage === 'desktop',
-                },
-                '*'
-              );
-            } catch {
-              // ignore
-            }
+            postToStage({
+              type: 'frago:desktop-visibility',
+              visible: usePageStore.getState().currentPage === 'desktop',
+            });
+            postToStage({
+              type: 'frago:desktop-config',
+              resolution,
+              fps,
+              narrator: narratorOn,
+              mode: controlMode,
+            });
+            postToStage({
+              type: 'frago:desktop-app',
+              app: activeApp,
+            });
           }}
           onError={() => setFrameState('error')}
         />
