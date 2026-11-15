@@ -194,4 +194,40 @@ describe('文件页', () => {
       expect(copyDirBtn.getAttribute('title')).toBe('复制路径')
     );
   });
+
+  it('页头提供 Home/data/cwd 预设切换与 Show hidden 开关，右侧顶部提供可点面包屑', async () => {
+    listDirectory.mockImplementation(async (path?: string) => {
+      if (path === REPOS.path) return REPOS;
+      if (path === '/Users/frago/.frago') {
+        return {
+          path: '/Users/frago/.frago',
+          entries: [{ name: 'config.json', is_dir: false, size: 128, modified: '2026-10-13T09:00:00' }],
+        };
+      }
+      return {
+        path: '/Users/frago',
+        entries: [
+          ...HOME.entries,
+          { name: '.env', is_dir: false, size: 64, modified: '2026-10-13T09:00:00' },
+        ],
+      };
+    });
+
+    render(<FileBrowserPage />);
+
+    expect(await screen.findByText('Repos')).toBeTruthy();
+    expect(screen.queryByText('.env')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('files-show-hidden'));
+    expect(await screen.findByText('.env')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('files-place-frago'));
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith('/Users/frago/.frago'));
+    expect(await screen.findByText('config.json')).toBeTruthy();
+
+    const crumbsNav = screen.getByLabelText('Breadcrumbs');
+    expect(crumbsNav.textContent).toContain('.frago');
+    fireEvent.click(screen.getByRole('button', { name: '~' }));
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith('/Users/frago'));
+  });
 });

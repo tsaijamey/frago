@@ -4,6 +4,7 @@ import PageHeader from '@/components/layout/PageHeader';
 import { useAppStore } from '@/stores/appStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { useRecipeFolders, suggestFolderId } from '@/stores/recipeFolders';
+import { splitRecipeAppId, useRecipeAppPins } from '@/stores/recipeAppPins';
 import EmptyState from '@/components/ui/EmptyState';
 import InlineMarkdown from '@/components/ui/InlineMarkdown';
 import RecipeTabs from './RecipeTabs';
@@ -18,6 +19,7 @@ import type { RecipeFolder } from '@/types/api';
 import {
   Package, Search, X, LayoutGrid, List, Wand2,
   FolderPlus, MoreHorizontal, CheckSquare, Square,
+  AppWindow, Pin, PinOff, ExternalLink,
 } from 'lucide-react';
 
 /** 拖动时装配方名的那个格式。自己的格式，不占 text/plain，免得拖进别处变成一串字。 */
@@ -192,8 +194,13 @@ function SectionHead({ title, count, tip }: { title: string; count: number; tip?
 
 export default function RecipeList() {
   const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const { recipes, loadRecipes, communityRecipes, loadCommunityRecipes, switchPage } = useAppStore();
   const folderStore = useRecipeFolders();
+  const pinnedAppIds = useRecipeAppPins((s) => s.pins);
+  const pinApp = useRecipeAppPins((s) => s.pin);
+  const unpinApp = useRecipeAppPins((s) => s.unpin);
+  const [topView, setTopView] = useState<'catalog' | 'pinned'>('catalog');
   const [search, setSearch] = useState('');
   // 两个标签页各记各的搜索词：搜索框挪到共用的工具栏里之后，切过去再切回来，
   // 各自打过的字还在，跟以前两个标签页各有一个搜索框时一样。
@@ -366,6 +373,31 @@ export default function RecipeList() {
     ? openFolderRow.recipes.map((n) => byName.get(n)).filter((r): r is RecipeItem => Boolean(r))
     : [];
 
+  const pinnedEntries = useMemo(
+    () =>
+      pinnedAppIds.map((id) => {
+        const { name, slot } = splitRecipeAppId(id);
+        return { id, name, slot, recipe: byName.get(name) ?? null };
+      }),
+    [pinnedAppIds, byName],
+  );
+
+  const pinnedNames = useMemo(
+    () => new Set(pinnedEntries.map((entry) => entry.name)),
+    [pinnedEntries],
+  );
+
+  const availableInteractiveRecipes = useMemo(
+    () =>
+      recipes.filter(
+        (r) =>
+          (Boolean((r as RecipeItem & { has_page?: boolean }).has_page) ||
+            r.tags?.includes('interactive')) &&
+          !pinnedNames.has(r.name),
+      ),
+    [recipes, pinnedNames],
+  );
+
   return (
     <div className="flex flex-col h-full tdp rl-page">
       {/* 创建配方：过去只能在命令行下开发配方，这个入口把它搬进图形界面——
@@ -376,6 +408,36 @@ export default function RecipeList() {
           local: recipes.length,
           community: communityRecipes.length,
         })}
+        secondary={
+          <div
+            className="ui-seg-group"
+            role="tablist"
+            aria-label={t('recipes.viewSwitchAria', { defaultValue: isZh ? '配方顶层视图' : 'Recipes view' })}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={topView === 'catalog'}
+              className={`ui-seg-pill ${topView === 'catalog' ? 'ui-seg-pill--active' : ''}`}
+              onClick={() => setTopView('catalog')}
+              data-testid="recipes-view-catalog"
+            >
+              {t('recipes.catalog', { defaultValue: isZh ? '配方目录' : 'Catalog' })}
+              <span className="ui-seg-count">{recipes.length + communityRecipes.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={topView === 'pinned'}
+              className={`ui-seg-pill ${topView === 'pinned' ? 'ui-seg-pill--active' : ''}`}
+              onClick={() => setTopView('pinned')}
+              data-testid="recipes-view-pinned"
+            >
+              {t('recipes.app.pinned', { defaultValue: isZh ? '已钉应用' : 'Pinned Apps' })}
+              <span className="ui-seg-count">{pinnedEntries.length}</span>
+            </button>
+          </div>
+        }
         primary={{
           label: t('recipes.forge.button'),
           icon: <Wand2 size={14} />,
@@ -384,6 +446,142 @@ export default function RecipeList() {
       />
       {forgeOpen && <RecipeForgeModal onClose={() => setForgeOpen(false)} />}
 
+      {topView === 'pinned' ? (
+        <div className="page-scroll" data-testid="recipes-pinned-view">
+          <section className="rl-section">
+            <SectionHead
+              title={t('recipes.app.pinned', { defaultValue: isZh ? '已钉应用' : 'Pinned Apps' })}
+              count={pinnedEntries.length}
+              tip={t('recipes.app.pinnedTip', {
+                defaultValue: isZh ? '已固定在左侧边栏的交互式配方应用' : 'Interactive recipe apps pinned in the sidebar',
+              })}
+            />
+            {pinnedEntries.length === 0 ? (
+              <div className="rl-pinned-empty">
+                <EmptyState
+                  Icon={AppWindow}
+                  title={t('recipes.app.nonePinned', {
+                    defaultValue: isZh ? '还没有已钉住的配方应用' : 'No pinned apps yet',
+                  })}
+                  description={t('recipes.app.nonePinnedDesc', {
+                    defaultValue: isZh
+                      ? '在配方目录中打开任意带交互页面的配方即可自动钉在左侧。'
+                      : 'Open an interactive recipe from the Catalog to pin it here and in the sidebar.',
+                  })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setTopView('catalog')}
+                >
+                  {t('recipes.backToCatalog', { defaultValue: isZh ? '浏览配方目录' : 'Browse Catalog' })}
+                </button>
+              </div>
+            ) : (
+              <div className="rl-grid rl-grid--local">
+                {pinnedEntries.map(({ id, name, slot, recipe }) => {
+                  const title = recipe
+                    ? recipeTitle(recipe, i18n.language)
+                    : name.replace(/_/g, ' ');
+                  return (
+                    <div key={id} className="rl-card rl-card--static rl-pinned-card" data-testid={`pinned-app-${id}`}>
+                      <div className="rl-card-head">
+                        <AppWindow size={15} className="shrink-0 text-[var(--text-muted)]" />
+                        <span className="rl-card-title rl-card-title--named">{title}</span>
+                        {slot && <span className="rl-slot-badge">{slot}</span>}
+                      </div>
+                      <p className="rl-card-desc">
+                        {recipe?.description ? (
+                          <InlineMarkdown content={recipe.description} />
+                        ) : (
+                          <span className="font-mono text-xs text-[var(--text-muted)]">{id}</span>
+                        )}
+                      </p>
+                      <div className="rl-card-foot">
+                        <button
+                          type="button"
+                          className="rl-btn"
+                          onClick={() => switchPage('recipe_app', id)}
+                        >
+                          <ExternalLink size={13} />
+                          {t('recipes.app.open', { defaultValue: isZh ? '打开应用' : 'Open' })}
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {recipe && (
+                            <button
+                              type="button"
+                              className="rl-btn"
+                              onClick={() => switchPage('recipe_detail', recipe.name)}
+                            >
+                              {t('recipes.detail', { defaultValue: isZh ? '详情' : 'Details' })}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="rl-btn rl-btn--quiet-danger"
+                            onClick={() => unpinApp(id)}
+                            title={t('recipes.app.unpin')}
+                            aria-label={`${t('recipes.app.unpin')} ${title}`}
+                          >
+                            <PinOff size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {availableInteractiveRecipes.length > 0 && (
+            <section className="rl-section">
+              <SectionHead
+                title={t('recipes.app.available', {
+                  defaultValue: isZh ? '可钉住的交互应用' : 'Available Interactive Apps',
+                })}
+                count={availableInteractiveRecipes.length}
+              />
+              <div className="rl-grid rl-grid--local">
+                {availableInteractiveRecipes.map((recipe) => {
+                  const title = recipeTitle(recipe, i18n.language);
+                  return (
+                    <div key={recipe.name} className="rl-card rl-card--static rl-pinned-card">
+                      <div className="rl-card-head">
+                        <AppWindow size={15} className="shrink-0 text-[var(--text-muted)]" />
+                        <span className="rl-card-title rl-card-title--named">{title}</span>
+                      </div>
+                      <p className="rl-card-desc">
+                        <InlineMarkdown content={recipe.description} />
+                      </p>
+                      <div className="rl-card-foot">
+                        <button
+                          type="button"
+                          className="rl-btn"
+                          onClick={() => switchPage('recipe_app', pinApp(recipe.name))}
+                        >
+                          <Pin size={13} />
+                          {t('recipes.app.pinAndOpen', {
+                            defaultValue: isZh ? '钉住并打开' : 'Pin & Open',
+                          })}
+                        </button>
+                        <button
+                          type="button"
+                          className="rl-btn"
+                          onClick={() => switchPage('recipe_detail', recipe.name)}
+                        >
+                          {t('recipes.detail', { defaultValue: isZh ? '详情' : 'Details' })}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
+      ) : (
+        <>
       <div className="td-toolbar tdp-toolbar">
         <RecipeTabs
           activeTab={activeTab}
@@ -623,6 +821,8 @@ export default function RecipeList() {
               )}
             </>
           )}
+        </>
+      )}
         </>
       )}
 

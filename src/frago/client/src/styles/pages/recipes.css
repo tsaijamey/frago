@@ -899,6 +899,13 @@
 
 /* === Recipe Detail (use-flow layout) === */
 /* Two-column: intro on the left, action + parameters panel on the right */
+.rd-shell,
+.rd-layout {
+  width: 100%;
+  max-width: min(1120px, 100%);
+  margin-inline: auto;
+}
+
 .rd-layout {
   display: flex;
   gap: 20px;
@@ -1201,5 +1208,150 @@
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-xs);
   color: var(--text-dim);
+}
+
+/* === P2-2 Pinned Apps & Schema Form Parameter Controls === */
+.rl-pinned-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.rl-pinned-card {
+  gap: 6px;
+}
+
+.rl-slot-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  font: 500 11px var(--font-mono);
+  color: var(--text-muted);
+}
+
+.rcp-secret-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.rcp-secret-wrap input {
+  padding-right: 34px;
+}
+
+.rcp-secret-eye {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rcp-secret-eye:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.rcp-struct-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.rcp-struct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rcp-struct-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rcp-struct-row--kv {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.9fr) minmax(0, 1.3fr) 24px;
+  gap: 6px;
+}
+
+.rcp-struct-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rcp-struct-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.rcp-struct-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rcp-struct-del:hover {
+  color: var(--accent-error);
+  background: var(--accent-error-10);
+}
+
+.rcp-struct-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rcp-struct-add,
+.rcp-struct-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rcp-struct-add:hover,
+.rcp-struct-mode:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 

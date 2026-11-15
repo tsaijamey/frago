@@ -47,7 +47,7 @@ export default function RecipeDetail() {
        否则内容滚到底时会停在一段死白之上，而最后一行仍然贴着滚动区的边。 */
     <div className="flex h-full flex-col gap-4 overflow-hidden px-5 pt-5">
       {/* 返回 + 打开页面。有页面的配方在这里开到右侧，并 pin 到菜单 recipes 下面。 */}
-      <div className="flex shrink-0 items-center justify-between gap-2">
+      <div className="rd-shell flex shrink-0 items-center justify-between gap-2">
         <button
           type="button"
           className="btn btn-ghost"

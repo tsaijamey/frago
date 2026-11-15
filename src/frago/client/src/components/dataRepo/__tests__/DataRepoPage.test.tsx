@@ -22,13 +22,15 @@ vi.mock('react-i18next', () => ({
 const checkGhCli = vi.fn();
 const getDataRepoStatus = vi.fn();
 const getDataRepoSyncStatus = vi.fn();
+const getDataRepoPolicy = vi.fn();
+const getDataRepoSyncPrompt = vi.fn();
 
 vi.mock('@/api', () => ({
   checkGhCli: () => checkGhCli(),
   getDataRepoStatus: () => getDataRepoStatus(),
   getDataRepoSyncStatus: () => getDataRepoSyncStatus(),
-  getDataRepoPolicy: vi.fn(),
-  getDataRepoSyncPrompt: vi.fn(),
+  getDataRepoPolicy: () => getDataRepoPolicy(),
+  getDataRepoSyncPrompt: () => getDataRepoSyncPrompt(),
   startDataRepoSync: vi.fn(),
   getGhInstallPlan: vi.fn(),
   getGhInstallStatus: vi.fn(),
@@ -213,6 +215,19 @@ describe('DataRepoPage 的统计条', () => {
     render(<DataRepoPage />);
 
     await waitFor(() => expect(screen.getByText('dataRepo.behind(0)')).toBeTruthy());
+  });
+
+  it('存在未推送提交时显示 Push now (.fix-btn.warn) 一步入口', async () => {
+    getDataRepoPolicy.mockResolvedValue({ included: [], excluded: [], gitignore_note: '' });
+    getDataRepoSyncPrompt.mockResolvedValue({ prompt: 'sync now', command: 'git push' });
+
+    render(<DataRepoPage />);
+
+    const pushBtn = await screen.findByTestId('data-push-now');
+    expect(pushBtn.className).toContain('fix-btn');
+    expect(pushBtn.className).toContain('warn');
+    fireEvent.click(pushBtn);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
   });
 
   it('最近一次提交带提交号', async () => {

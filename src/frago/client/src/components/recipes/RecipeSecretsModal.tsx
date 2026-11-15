@@ -121,7 +121,7 @@ export default function RecipeSecretsModal({
 
         {/* $ref shared hint */}
         {secretsData.is_ref && secretsData.ref_target && (
-          <div className="flex items-start gap-2 p-3 bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 rounded-md">
+          <div className="flex items-start gap-2 p-3 bg-accent-primary-10 border border-accent-primary-border rounded-md">
             <Link2 size={16} className="text-[var(--accent-primary)] mt-0.5 flex-shrink-0" />
             <p className="text-sm text-[var(--accent-primary)]">
               {t('recipes.sharedSecretsHint', { target: secretsData.ref_target })}
@@ -131,7 +131,7 @@ export default function RecipeSecretsModal({
 
         {/* Error message */}
         {error && (
-          <div className="flex items-start gap-2 p-3 bg-[var(--accent-error)]/10 border border-[var(--accent-error)]/30 rounded-md">
+          <div className="flex items-start gap-2 p-3 bg-accent-error-10 border border-accent-error-border rounded-md">
             <AlertCircle size={16} className="text-[var(--accent-error)] mt-0.5 flex-shrink-0" />
             <p className="text-sm text-[var(--accent-error)]">{error}</p>
           </div>
@@ -156,7 +156,7 @@ export default function RecipeSecretsModal({
                   </code>
                   <span className="text-xs text-[var(--text-muted)]">({field.type})</span>
                   {field.required && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-accent-error-10 border border-accent-error-border text-[var(--accent-error)]">
                       {t('recipes.required')}
                     </span>
                   )}

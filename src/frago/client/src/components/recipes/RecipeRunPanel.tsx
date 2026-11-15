@@ -133,7 +133,7 @@ export default function RecipeRunPanel({
                 key={field.key}
                 className={`flex items-center justify-between p-2.5 rounded-md ${
                   field.required && !field.has_value
-                    ? 'bg-[var(--accent-error)]/5 border border-[var(--accent-error)]/20'
+                    ? 'bg-accent-error-10 border border-accent-error-border'
                     : 'bg-[var(--bg-subtle)]'
                 }`}
               >
@@ -141,7 +141,7 @@ export default function RecipeRunPanel({
                   <div className="flex items-center gap-2">
                     <code className="text-xs font-mono text-[var(--text-primary)] truncate">{field.key}</code>
                     {field.required && (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)] shrink-0">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent-error-10 border border-accent-error-border text-[var(--accent-error)] shrink-0">
                         {t('recipes.required')}
                       </span>
                     )}

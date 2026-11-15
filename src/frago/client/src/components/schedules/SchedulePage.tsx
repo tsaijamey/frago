@@ -14,9 +14,10 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import PageHeader from '@/components/layout/PageHeader';
-import { CirclePause, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, CirclePause, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import * as api from '@/api';
 import type { ScheduleItem, ScheduleListResponse } from '@/api';
+import { restartServer } from '@/api/client';
 import { usePageStore } from '@/stores/pageStore';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
@@ -45,30 +46,31 @@ function ScheduleRow({
   selected,
   now,
   onClick,
+  onRunNow,
+  busy,
 }: {
   schedule: ScheduleItem;
   selected: boolean;
   now: Date;
   onClick: () => void;
+  onRunNow: () => void;
+  busy: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const switchPage = usePageStore((s) => s.switchPage);
   const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
   const state = stateOf(schedule);
   const target = targetText(schedule);
   const raw = cronRawText(schedule, t);
   const status = schedule.last_status;
+  const failCount = Math.max(1, schedule.consecutive_failures || 1);
 
   const effectiveSessionId =
     schedule.last_session_id ||
     schedule.last_run?.session_id ||
     (schedule.history.length > 0 ? schedule.history[schedule.history.length - 1].session_id : null);
 
-  // 表格四列：计划 / 何时 / 上次运行 / 次数。整行可点；键盘焦点落在名字那个按钮上，
-  // 读屏按表头念列名。「下次运行」和连续失败次数只在详情面板里（照原型）。
-  //
-  // 挂掉的这一档整行套 .ui-row-failing：四边闭合的淡红底加一圈微红描边。几十条绿的
-  // 「上次成功」里混着一条挂掉的，人扫一眼就能停住，不必逐行去读那个红色的字。
   return (
     <tr
       className={`sc-tr ${selected ? 'sc-tr--selected' : ''} ${
@@ -94,6 +96,14 @@ function ScheduleRow({
           {!schedule.enabled && (
             <span className="td-chip sc-chip--disabled">{t('schedules.filter.disabled')}</span>
           )}
+          {state === 'failing' && (
+            <span className="td-chip sc-chip--failing">
+              {t('schedules.row.failedCount', {
+                count: failCount,
+                defaultValue: isZh ? `失败 ×${failCount}` : `Failed ×${failCount}`,
+              })}
+            </span>
+          )}
         </div>
         {target && <div className="sc-sub sc-target-line">{target}</div>}
       </td>
@@ -103,11 +113,29 @@ function ScheduleRow({
       </td>
       <td className="sc-when" title={schedule.last_run_at ? formatTime(schedule.last_run_at) : undefined}>
         <div>{lastRunText(schedule.last_run_at, now, t)}</div>
-        {schedule.last_run_at && status && (
-          <div className={`sc-sub ${status === 'failed' ? 'sc-fail' : ''}`}>
-            {t(`schedules.runStatus.${status}`, { defaultValue: status })}
+        {(schedule.last_run_at && status) || state === 'failing' ? (
+          <div className={`sc-sub sc-last-row ${status === 'failed' || state === 'failing' ? 'sc-fail' : ''}`}>
+            <span>
+              {status
+                ? t(`schedules.runStatus.${status}`, { defaultValue: status })
+                : t('schedules.runStatus.failed', { defaultValue: isZh ? '失败' : 'Failed' })}
+            </span>
+            {state === 'failing' && (
+              <button
+                type="button"
+                className="fix-btn"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRunNow();
+                }}
+                data-testid={`schedule-fix-run-${schedule.id}`}
+              >
+                {t('schedules.actions.runNow', { defaultValue: isZh ? '立即运行' : 'Run now' })}
+              </button>
+            )}
           </div>
-        )}
+        ) : null}
         {effectiveSessionId && (
           <button
             type="button"
@@ -134,7 +162,8 @@ function ScheduleRow({
 }
 
 export default function SchedulePage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const currentScheduleId = usePageStore((s) => s.currentScheduleId);
   const switchPage = usePageStore((s) => s.switchPage);
 
@@ -146,6 +175,8 @@ export default function SchedulePage() {
 
   const [busy, setBusy] = useState<'run' | 'toggle' | 'remove' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [restartingScheduler, setRestartingScheduler] = useState(false);
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -228,6 +259,41 @@ export default function SchedulePage() {
       await api.removeSchedule(s.id);
       switchPage('schedules');
     });
+
+  const enableAllSchedules = () =>
+    act('toggle', async () => {
+      const disabled = schedules.filter((s) => !s.enabled);
+      for (const s of disabled) {
+        await api.toggleSchedule(s.id);
+      }
+      if (body && !body.scheduler_running) {
+        await restartServer().catch(() => {});
+      }
+      setActionNotice(
+        t('schedules.actions.enabledAllNotice', {
+          defaultValue: isZh ? '已启用全部定时任务' : 'Enabled all schedules',
+        })
+      );
+    });
+
+  const restartScheduler = async () => {
+    if (restartingScheduler) return;
+    setRestartingScheduler(true);
+    setActionError(null);
+    try {
+      await restartServer();
+      setActionNotice(
+        t('schedules.actions.restartedNotice', {
+          defaultValue: isZh ? '已触发调度器重启' : 'Scheduler restart triggered',
+        })
+      );
+      window.setTimeout(() => void refresh(), RUN_FOLLOWUP_MS);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRestartingScheduler(false);
+    }
+  };
 
   const submitDraft = async () => {
     const text = draft.trim();
@@ -337,19 +403,55 @@ export default function SchedulePage() {
       {allDisabled ? (
         <div className="sc-banner" role="status">
           <CirclePause size={16} aria-hidden="true" />
-          <span>
+          <span className="flex-1">
             <b>{t('schedules.allDisabled.title', { count: schedules.length })}</b>{' '}
             {t('schedules.allDisabled.body')}
           </span>
+          <button
+            type="button"
+            className="fix-btn warn"
+            onClick={() => void enableAllSchedules()}
+            disabled={busy !== null}
+            data-testid="schedules-enable-all"
+          >
+            {t('schedules.actions.enableAndStart', {
+              defaultValue: isZh ? '启用并启动' : 'Enable & Start',
+            })}
+          </button>
         </div>
       ) : (
         body &&
         !body.scheduler_running && (
           <div className="sc-banner" role="status">
             <TriangleAlert size={16} aria-hidden="true" />
-            <span>{t('schedules.schedulerStopped')}</span>
+            <span className="flex-1">{t('schedules.schedulerStopped')}</span>
+            <button
+              type="button"
+              className="fix-btn warn"
+              onClick={() => void restartScheduler()}
+              disabled={busy !== null || restartingScheduler}
+              data-testid="schedules-restart-scheduler"
+            >
+              {t('schedules.actions.restartScheduler', {
+                defaultValue: isZh ? '重启调度器' : 'Restart Scheduler',
+              })}
+            </button>
           </div>
         )
+      )}
+
+      {actionNotice && (
+        <div className="alert-box-pri mx-4 mb-2 items-center" role="status">
+          <Check size={14} className="shrink-0" />
+          <span className="flex-1 text-[var(--text-primary)]">{actionNotice}</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => setActionNotice(null)}
+          >
+            {t('common.dismiss', { defaultValue: isZh ? '知道了' : 'Dismiss' })}
+          </button>
+        </div>
       )}
 
       <div className="td-toolbar tdp-toolbar">
@@ -432,6 +534,8 @@ export default function SchedulePage() {
                     schedule={s}
                     selected={s.id === currentScheduleId}
                     now={now}
+                    busy={busy !== null}
+                    onRunNow={() => void runNow(s)}
                     onClick={() =>
                       s.id === currentScheduleId
                         ? switchPage('schedules')

@@ -187,8 +187,8 @@ export default function SyncDialog({ isOpen, onClose, status, onStarted }: SyncD
           )}
 
           {massDeletion && (
-            <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
-              <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
+            <div className="flex items-start gap-2 rounded-md border border-accent-error-border bg-accent-error-10 p-3 text-sm">
+              <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-error" />
               <div className="min-w-0">
                 <p className="font-medium text-[var(--text-primary)]">
                   {t('dataRepo.massDeletionTitle', { total: deletions.toLocaleString() })}
@@ -265,8 +265,8 @@ export default function SyncDialog({ isOpen, onClose, status, onStarted }: SyncD
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
-              <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
+            <div className="flex items-start gap-2 rounded-md border border-accent-error-border bg-accent-error-10 p-3 text-sm">
+              <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-error" />
               <p className="min-w-0 break-words text-[var(--text-secondary)]">{error}</p>
             </div>
           )}

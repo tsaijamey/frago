@@ -1,7 +1,8 @@
 /**
- * RecipeRunModal — Modal with parameter form for running a recipe.
+ * RecipeRunModal — Modal with schema-driven parameter form for running a recipe.
  *
- * Reuses the parameter validation/form logic from RecipeDetail.
+ * Uses `.rcp-run-modal` and `.rcp-form-row` form layout for enum / number / integer /
+ * boolean / string / secret / structured array & object inputs.
  */
 
 import { useEffect, useState } from 'react';
@@ -32,15 +33,15 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
     getRecipeDetail(recipeName)
       .then((r) => {
         setRecipe(r);
-        // Initialize form values
         if (r.inputs) {
           const initial: Record<string, unknown> = {};
           Object.entries(r.inputs).forEach(([name, input]) => {
-            if (input.default !== undefined) {
+            if (input.default !== undefined && input.default !== null) {
               if (input.type === 'array' || input.type === 'object') {
-                initial[name] = typeof input.default === 'string'
-                  ? input.default
-                  : JSON.stringify(input.default, null, 2);
+                initial[name] =
+                  typeof input.default === 'string'
+                    ? input.default
+                    : JSON.stringify(input.default, null, 2);
               } else {
                 initial[name] = input.default;
               }
@@ -52,11 +53,11 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
         }
       })
       .catch(() => {
-        showToast('配方加载失败', 'error');
+        showToast(t('recipes.failedToLoad'), 'error');
         onClose();
       })
       .finally(() => setIsLoading(false));
-  }, [recipeName, showToast, onClose]);
+  }, [recipeName, showToast, onClose, t]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -72,10 +73,31 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
     Object.entries(recipe.inputs).forEach(([name, input]) => {
       const value = formValues[name];
       if (input.required && (value === undefined || value === null || value === '')) {
-        errors[name] = '此参数必填';
+        errors[name] = t('recipes.validation.required');
+        return;
       }
-      if (value && (input.type === 'array' || input.type === 'object')) {
-        try { JSON.parse(String(value)); } catch { errors[name] = '无效 JSON'; }
+      if (value === undefined || value === null || value === '') return;
+
+      if (input.type === 'number' || input.type === 'integer') {
+        const num = Number(value);
+        if (Number.isNaN(num) || (input.type === 'integer' && !Number.isInteger(num))) {
+          errors[name] = t('recipes.validation.invalidNumber');
+        }
+      } else if (input.type === 'array' || input.type === 'object') {
+        try {
+          const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+          if (input.type === 'array' && !Array.isArray(parsed)) {
+            errors[name] = t('recipes.validation.mustBeArray');
+          }
+          if (
+            input.type === 'object' &&
+            (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+          ) {
+            errors[name] = t('recipes.validation.mustBeObject');
+          }
+        } catch {
+          errors[name] = t('recipes.validation.invalidJson');
+        }
       }
     });
     setValidationErrors(errors);
@@ -89,11 +111,19 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
       const value = formValues[name];
       if ((value === undefined || value === null || value === '') && !input.required) return;
       switch (input.type) {
-        case 'number': params[name] = Number(value); break;
-        case 'boolean': params[name] = Boolean(value); break;
+        case 'number':
+        case 'integer':
+          params[name] = Number(value);
+          break;
+        case 'boolean':
+          params[name] = Boolean(value);
+          break;
         case 'array':
-        case 'object': params[name] = JSON.parse(String(value)); break;
-        default: params[name] = value;
+        case 'object':
+          params[name] = typeof value === 'string' ? JSON.parse(value) : value;
+          break;
+        default:
+          params[name] = value;
       }
     });
     return params;
@@ -111,18 +141,18 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
       const isInteractive = recipe?.tags?.includes('interactive');
       if (isInteractive) {
         await runRecipeAsync(recipeName, recipeParams);
-        showToast('配方已启动', 'success');
+        showToast(t('recipes.started', { defaultValue: 'Recipe started' }), 'success');
       } else {
         const result = await runRecipe(recipeName, recipeParams);
         if (result.status === 'ok') {
-          showToast('配方执行成功', 'success');
+          showToast(t('recipes.succeeded', { defaultValue: 'Recipe completed' }), 'success');
         } else {
-          showToast(result.error || '执行失败', 'error');
+          showToast(result.error || t('recipes.failed', { defaultValue: 'Execution failed' }), 'error');
         }
       }
       onClose();
     } catch {
-      showToast('配方执行失败', 'error');
+      showToast(t('recipes.failed', { defaultValue: 'Execution failed' }), 'error');
     } finally {
       setIsRunning(false);
     }
@@ -139,7 +169,7 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
   if (isLoading) {
     return (
       <div className="ui-modal-backdrop">
-        <div className="ui-modal-frame">
+        <div className="ui-modal-frame rcp-run-modal">
           <div className="flex items-center justify-center py-10">
             <LoadingSpinner size="lg" />
           </div>
@@ -153,14 +183,18 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
   }
 
   return (
-    // 点遮罩不关窗：这扇窗里有人正在填参数，手一滑点到旁边就把刚填的东西丢掉，
-    // 而且丢得没有任何提示。关窗走右上角的 × 或 Esc。与通用 Modal 组件同一口径。
     <div className="ui-modal-backdrop">
-      <div className="ui-modal-frame" role="dialog" aria-modal="true" aria-labelledby="recipe-run-title">
-        {/* Header */}
+      <div
+        className="ui-modal-frame rcp-run-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recipe-run-title"
+      >
         <div className="ui-modal-head">
           <div className="min-w-0">
-            <h3 id="recipe-run-title" className="ui-modal-title">{recipe.name.replace(/_/g, ' ')}</h3>
+            <h3 id="recipe-run-title" className="ui-modal-title">
+              {recipe.name.replace(/_/g, ' ')}
+            </h3>
             <p className="text-xs font-mono text-[var(--text-muted)] truncate">{recipe.name}</p>
           </div>
           <button
@@ -173,40 +207,44 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
           </button>
         </div>
 
-        <div className="ui-modal-body space-y-4">
-          {/* Description */}
+        <div className="ui-modal-body smb flex flex-col">
           {recipe.description && (
-            <div>
-              <span className="text-xs font-medium text-[var(--text-secondary)]">{t('recipes.description')}</span>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">{recipe.description}</p>
-            </div>
+            <p className="text-sm text-[var(--text-secondary)]">{recipe.description}</p>
           )}
 
-          {/* Parameters Form */}
-          <div className="space-y-4">
-            <span className="text-xs font-medium text-[var(--text-secondary)]">{t('recipes.parameters')}</span>
-            <div className="space-y-4">
-              {Object.entries(recipe.inputs).map(([name, input]) => (
-                <RecipeParamField
-                  key={name}
-                  name={name}
-                  input={input}
-                  value={formValues[name]}
-                  error={validationErrors[name]}
-                  onChange={(field, value) => setFormValues((p) => ({ ...p, [field]: value }))}
-                  t={t}
-                />
-              ))}
-            </div>
+          <div className="flex flex-col gap-3">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">
+              {t('recipes.parameters')}
+            </span>
+            {Object.entries(recipe.inputs).map(([name, input]) => (
+              <RecipeParamField
+                key={name}
+                name={name}
+                input={input}
+                value={formValues[name]}
+                error={validationErrors[name]}
+                onChange={(field, value) => {
+                  setFormValues((p) => ({ ...p, [field]: value }));
+                  if (validationErrors[field]) {
+                    setValidationErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[field];
+                      return next;
+                    });
+                  }
+                }}
+                t={t}
+              />
+            ))}
           </div>
         </div>
 
-        {/* Footer */}
         <div className="ui-modal-foot">
-          <button className="btn btn-secondary" onClick={onClose}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
             {t('common.cancel')}
           </button>
           <button
+            type="button"
             className="btn btn-primary gap-2"
             onClick={handleRun}
             disabled={isRunning}

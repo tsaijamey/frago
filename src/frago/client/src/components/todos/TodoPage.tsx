@@ -38,42 +38,96 @@ import {
   type CategoryFilter,
   type StatusFilter,
 } from './todoMeta';
+import './todos-overrides.css';
 
 /** 隔多久自己去取一次。事务是人在另一头手动改的，秒级刷新没有意义。 */
 const REFRESH_MS = 20_000;
+const OVERDUE_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function getTodoAttentionKind(todo: TodoItem, now: Date = new Date()): 'blocked' | 'overdue' | null {
+  if (todo.status === 'done' || todo.status === 'dropped') return null;
+  if ((todo.status as string) === 'blocked') return 'blocked';
+  const lowerTags = todo.tags.map((tag) => tag.toLowerCase());
+  if (lowerTags.some((tag) => tag === 'blocked' || tag === '阻塞' || tag === 'waiting' || tag === 'stalled')) {
+    return 'blocked';
+  }
+  if (lowerTags.some((tag) => tag === 'overdue' || tag === '逾期')) {
+    return 'overdue';
+  }
+  if (todo.priority === 'high') {
+    const rawDate = todo.updated || todo.created;
+    const ts = rawDate ? Date.parse(rawDate) : Number.NaN;
+    if (Number.isFinite(ts) && now.getTime() - ts > OVERDUE_DAYS_MS) {
+      return 'overdue';
+    }
+  }
+  return null;
+}
 
 interface TodoRowProps {
   todo: TodoItem;
   selected: boolean;
+  attentionKind: 'blocked' | 'overdue' | null;
   onClick: () => void;
+  onQuickFix: () => void;
 }
 
 /**
  * 清单里的一行，压成两行字。
  *
- * 第一行回答「是什么、到哪了」：标题，右端是在做标记、步数、日期；第二行回答「讲的什么、
- * 归哪类」：摘要后面跟标签。状态落在行首的圆圈上，标题因此总从同一条竖线起头。分类和
- * 优先级都不在行上挂——分组标题与段头各说一次，清单本来就按这个顺序排。
+ * 常规状态与优先级保持克制中性灰；仅对阻塞或逾期的未了结任务亮琥珀色告警并提供快捷处理入口。
  */
-function TodoRow({ todo, selected, onClick }: TodoRowProps) {
-  const { t } = useTranslation();
+function TodoRow({ todo, selected, attentionKind, onClick, onQuickFix }: TodoRowProps) {
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const line = todo.summary || todo.context || '';
   const tags = todo.tags.slice(0, 3);
   const doing = todo.status === 'doing';
+  const hasSession = todo.sessions.length > 0;
 
   return (
-    <button
-      type="button"
-      className={`td-row tdp-row tdp-row--${todo.status} ${selected ? 'td-row--selected' : ''}`}
+    <div
+      role="button"
+      tabIndex={0}
+      className={`td-row tdp-row tdp-row--${todo.status} ${selected ? 'td-row--selected' : ''} ${
+        attentionKind ? 'tdp-row--blocked' : ''
+      }`}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       aria-current={selected ? 'true' : undefined}
+      data-testid={`todo-row-${todo.id}`}
     >
       {/* 在做的那条右端已经写了「Doing」，圆圈就不再给读屏念一遍。 */}
       <TodoStatusIcon status={todo.status} decorative={doing} />
       <span className="td-row-title">{todo.title}</span>
       <span className="tdp-row-meta">
-        {/* 在做是清单里唯一一个「此刻正在发生」的信号：一颗会呼吸的绿点加一片柔和的
-            状态角标，扫一眼就找得到，不必逐行读字。 */}
+        {attentionKind && (
+          <span className="tdp-blocked-pill" data-testid={`todo-attention-${todo.id}`}>
+            {attentionKind === 'blocked'
+              ? t('todos.blockedTag', { defaultValue: isZh ? '阻塞' : 'Blocked' })
+              : t('todos.overdueTag', { defaultValue: isZh ? '逾期' : 'Overdue' })}
+          </span>
+        )}
+        {attentionKind && (
+          <button
+            type="button"
+            className="fix-btn warn"
+            data-testid={`todo-fix-${todo.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickFix();
+            }}
+          >
+            {hasSession
+              ? t('todos.resumeSession', { defaultValue: isZh ? '唤醒会话' : 'Resume' })
+              : t('todos.unblockAction', { defaultValue: isZh ? '查看处理' : 'Unblock' })}
+          </button>
+        )}
         {doing && (
           <span className="tdp-row-doing">
             <span className="tdp-doing-dot" aria-hidden="true" />
@@ -97,7 +151,7 @@ function TodoRow({ todo, selected, onClick }: TodoRowProps) {
           )}
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -105,6 +159,7 @@ export default function TodoPage() {
   const { t } = useTranslation();
   const currentTodoId = usePageStore((s) => s.currentTodoId);
   const switchPage = usePageStore((s) => s.switchPage);
+  const setWorkbenchSessionId = usePageStore((s) => s.setWorkbenchSessionId);
 
   const [body, setBody] = useState<TodoListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -430,18 +485,30 @@ export default function TodoPage() {
                       </span>
                       <span className="tdp-pri-rule" aria-hidden="true" />
                     </div>
-                    {section.todos.map((todo) => (
-                      <TodoRow
-                        key={todo.id}
-                        todo={todo}
-                        selected={todo.id === currentTodoId}
-                        onClick={() =>
-                          todo.id === currentTodoId
-                            ? switchPage('todos')
-                            : switchPage('todo_detail', todo.id)
-                        }
-                      />
-                    ))}
+                    {section.todos.map((todo) => {
+                      const attentionKind = getTodoAttentionKind(todo);
+                      return (
+                        <TodoRow
+                          key={todo.id}
+                          todo={todo}
+                          selected={todo.id === currentTodoId}
+                          attentionKind={attentionKind}
+                          onClick={() =>
+                            todo.id === currentTodoId
+                              ? switchPage('todos')
+                              : switchPage('todo_detail', todo.id)
+                          }
+                          onQuickFix={() => {
+                            if (todo.sessions.length > 0) {
+                              setWorkbenchSessionId(todo.sessions[todo.sessions.length - 1]);
+                              switchPage('session_workbench');
+                            } else {
+                              switchPage('todo_detail', todo.id);
+                            }
+                          }}
+                        />
+                      );
+                    })}
                   </Fragment>
                 ))}
               </Fragment>

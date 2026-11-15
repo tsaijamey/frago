@@ -1,0 +1,51 @@
+/* P2-4 Todos overrides: neutral by default, highlight only blocked / overdue items. */
+
+.tdp--todos .tdp-pri-head--high .tdp-pri-label {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+.tdp--todos .tdp-status--doing {
+  color: var(--text-secondary);
+}
+
+.tdp--todos .tdp-row-doing {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.tdp--todos .tdp-doing-dot {
+  background: var(--text-muted);
+  box-shadow: none;
+  animation: none;
+}
+
+.tdp--todos .tdp-row {
+  cursor: pointer;
+}
+
+.tdp--todos .tdp-row.tdp-row--blocked,
+.tdp--todos .tdp-row.tdp-row--blocked:hover {
+  background: var(--accent-warning-10);
+  box-shadow: inset 0 0 0 1px var(--accent-warning-border);
+}
+
+.tdp--todos .tdp-row.tdp-row--blocked.td-row--selected {
+  background: var(--accent-warning-10);
+  box-shadow: inset 0 0 0 1px var(--accent-warning);
+}
+
+.tdp-blocked-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-warning-border);
+  background: var(--accent-warning-10);
+  color: var(--accent-warning);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}

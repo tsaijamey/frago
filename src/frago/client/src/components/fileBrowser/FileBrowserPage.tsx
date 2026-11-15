@@ -1,19 +1,9 @@
 /**
  * FileBrowserPage — 文件：本机的目录树，左边树形展开，右边看。
  *
- * 从前想看会话里提到的那份文件，得把路径复制出来，去系统的文件浏览器里粘一遍，再双击。
- * 这一页把那一趟搬进界面：左边按树形一层层展开目录（支持横向平移与拖拽调宽），右边选中
- * 哪一份就摆哪一份；常去的目录或常看的文件还能直接 pin 到左侧 Files 菜单下方当子菜单。
- *
- * **目录列表由服务端读**（`GET /api/files`）：浏览器读不了随便一个本机目录，这是绕不过
- * 去的一步；服务本来只监听本机，那一侧按绝对路径读，页面这侧只管摆。
- *
- * **预览不重做。** 图片、音视频、pdf 交给浏览器自己的标签；markdown 与代码取回来在页面
- * 里摆，跟界面主题走；html 交给服务端那条现成的 viewer 管线。这一页不自己写第二套查看器
- * ——两份实现迟早会摆出不一样的东西。
- *
- * **选中态是整块换底**（`bg-bg-active`），不是单边色条：这一栏里「你选的是哪一条」要一眼
- * 认出来，而左侧竖条那套写法全仓都在拆。
+ * 页头提供 Home / data / cwd 预设根切换与 Show hidden 开关；
+ * 下方左右分栏 `.files-split`（默认 300px 可拖拽目录树 `.files-tree-col` + `1fr` 预览区 `.files-preview-col`），
+ * 树顶提供关键词过滤与目录优先排序，右侧顶部显示可点面包屑 `.files-crumbs` 与语法着色/元信息预览。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -24,6 +14,8 @@ import {
   Copy,
   Check,
   CornerLeftUp,
+  Eye,
+  EyeOff,
   File as FileIcon,
   Folder,
   FolderOpen,
@@ -35,8 +27,6 @@ import {
   X,
 } from 'lucide-react';
 import * as api from '@/api';
-// 主目录与工作目录那一条不走 `@/api` 的双模入口：它只有 HTTP 这一边有（pywebview 那边
-// 没有对应的方法），会话页取默认目录时也是直接从这里进。
 import { getSystemDirectories } from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
@@ -48,13 +38,7 @@ import FilePreview from './FilePreview';
 const ICON = { size: 14, strokeWidth: 1.5 } as const;
 
 /**
- * 目录里那几十条怎么排。
- *
- * 服务端给的顺序是文件系统自己的顺序，`~` 底下六十多个隐藏目录（`.EventSDK`、`.Trash`、
- * `.agents`……）和真正在用的目录混在一起平铺，想找的那一个被埋在中间。
- *
- * 规矩是「目录在前、文件在后；每一类里隐藏的在后」。只挪顺序，不动任何一条的显示——
- * 隐藏目录仍在树里、仍能点开，只是让位给日常会用的那些。
+ * 目录在前、文件在后；每一类里非隐藏在前、隐藏在后。
  */
 function orderEntries(entries: FileEntry[]): FileEntry[] {
   const rank = (entry: FileEntry) => (entry.is_dir ? 0 : 1) + (entry.name.startsWith('.') ? 2 : 0);
@@ -65,9 +49,9 @@ function orderEntries(entries: FileEntry[]): FileEntry[] {
 }
 
 const TREE_WIDTH_KEY = 'file-browser-tree-width';
-const DEFAULT_TREE_WIDTH = 360;
-const MIN_TREE_WIDTH = 260;
-const MAX_TREE_WIDTH = 680;
+const DEFAULT_TREE_WIDTH = 300;
+const MIN_TREE_WIDTH = 240;
+const MAX_TREE_WIDTH = 640;
 
 function readTreeWidth(): number {
   try {
@@ -82,7 +66,7 @@ function readTreeWidth(): number {
   return DEFAULT_TREE_WIDTH;
 }
 
-/** 修改时间压成 `09-24 16:31`。放在 tooltip 里备查，不挤占树节点的横向空间。 */
+/** 修改时间压成 `09-24 16:31`。 */
 function shortTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
@@ -92,9 +76,6 @@ function shortTime(iso: string): string {
 
 /**
  * 从当前目录往上的一条条。主目录底下的用 `~` 起头，主目录之外的从 `/` 起头。
- *
- * 家目录缩成 `~` 与浮窗、页头那几处同一个口径（`withTilde` 只缩显示，这里的每一节
- * 都要能点，所以自己按同一套规则切）。
  */
 function crumbs(path: string, home: string | null): { label: string; path: string }[] {
   if (home && (path === home || path.startsWith(`${home}/`))) {
@@ -124,7 +105,8 @@ interface SelectedFile {
 }
 
 export default function FileBrowserPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
 
   const pins = useFilePins((s) => s.pins);
   const togglePin = useFilePins((s) => s.togglePin);
@@ -134,22 +116,13 @@ export default function FileBrowserPage() {
 
   const pinnedSet = useMemo(() => new Set(pins.map((p) => p.path)), [pins]);
 
-  /**
-   * 想去哪个根目录。null 表示「还没指过」——第一次由服务端回主目录。
-   *
-   * **服务端解析出来的那个路径不写回这里。** 写回来的话它就是这条请求的依赖，一次挂载
-   * 会变成两次请求，中间那一下列表还会闪回「读这个目录…」——顺序反过来才对：这里存人
-   * 指的那一个，摆出来用服务端回的那一个（`current`）。
-   */
   const [dir, setDir] = useState<string | null>(() => {
     const target = useFilePins.getState().pendingTarget;
     if (!target) return null;
     return target.is_dir ? target.path : parentDirOf(target.path);
   });
-  /** 服务端上一次解析出来的那个目录，给「重读这一颗按钮」用。 */
   const resolvedPath = useRef<string | null>(null);
   const [listing, setListing] = useState<FileListing | null>(null);
-  /** 主目录与「这台机器上 frago 正在哪儿干活」，拿它俩摆在最上面当入口。 */
   const [systemDirs, setSystemDirs] = useState<SystemDirectories | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -167,19 +140,16 @@ export default function FileBrowserPage() {
   const [copied, setCopied] = useState(false);
   const [copiedRowPath, setCopiedRowPath] = useState<string | null>(null);
   const copyRowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 树上的名字过滤。只筛当前这一份清单，不碰服务端、不改变目录本身。 */
   const [query, setQuery] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
 
-  /** 树形展开的子目录集合与各子目录缓存的条目。 */
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [dirChildren, setDirChildren] = useState<Record<string, FileEntry[]>>({});
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(() => new Set());
-  /** 树里最近点选的目录路径，供面包屑与「重读」定位。 */
   const [activeDir, setActiveDir] = useState<string | null>(null);
   const expandedDirsRef = useRef<Set<string>>(expandedDirs);
   expandedDirsRef.current = expandedDirs;
 
-  /** 左栏宽度：支持拖拽调宽并跨会话记住。 */
   const [treeWidth, setTreeWidth] = useState<number>(readTreeWidth);
 
   useEffect(() => {
@@ -189,7 +159,7 @@ export default function FileBrowserPage() {
         if (alive) setSystemDirs(dirs);
       })
       .catch(() => {
-        /* 取不到就少几个入口；服务端列目录时不认路径就自己回主目录，这一页照样能用 */
+        /* 取不到就少几个入口；服务端列目录时不认路径就自己回主目录 */
       });
     return () => {
       alive = false;
@@ -200,9 +170,6 @@ export default function FileBrowserPage() {
     let alive = true;
     setLoading(true);
     setError(null);
-    // 重读这一颗按钮不该把人弹回主目录：人没指新地方（`dir` 还是 null）时，问的是上一次
-    // 服务端解析出来的那一个。用 ref 记它而不是记进状态，理由与上面那条注释同一个——
-    // 进了状态就成了这条请求的依赖，重读会变成死循环。
     api
       .listDirectory(dir ?? resolvedPath.current ?? undefined)
       .then((body) => {
@@ -228,7 +195,6 @@ export default function FileBrowserPage() {
         if (alive) setLoading(false);
       });
 
-    // 重读时把当前展开着的子目录也一并重取，树上的子级才不会停在旧内容。
     if (reloadKey > 0 && expandedDirsRef.current.size > 0) {
       for (const subPath of expandedDirsRef.current) {
         api
@@ -256,7 +222,6 @@ export default function FileBrowserPage() {
     setDir(clean);
   }, []);
 
-  // 从左侧菜单 Files 下方的 pin 子菜单点过来时，跳进对应目录或选中对应文件。
   useEffect(() => {
     if (!pendingTarget) return;
     consumeTarget(pendingTarget.seq);
@@ -281,11 +246,11 @@ export default function FileBrowserPage() {
   }, [pendingTarget, consumeTarget]);
 
   const home = systemDirs?.home ?? null;
-  // 人已经指了哪儿就用哪儿（面包屑立刻跟着走），还没指过就用服务端刚回的那一个。
   const current = dir ?? listing?.path ?? '';
-  const focusedDir = activeDir && (activeDir === current || activeDir.startsWith(`${current.replace(/\/+$/, '')}/`))
-    ? activeDir
-    : current;
+  const focusedDir =
+    activeDir && (activeDir === current || activeDir.startsWith(`${current.replace(/\/+$/, '')}/`))
+      ? activeDir
+      : current;
 
   useEffect(() => {
     const active = selected?.path ?? (focusedDir || null);
@@ -342,7 +307,7 @@ export default function FileBrowserPage() {
 
   const reveal = useCallback((path: string) => {
     void api.revealPath(path).catch(() => {
-      /* 打不开（平台不支持、路径没了）：不打断人，右边那份内容还在 */
+      /* 打不开时不打断人 */
     });
   }, []);
 
@@ -354,7 +319,7 @@ export default function FileBrowserPage() {
         setTimeout(() => setCopied(false), 1_500);
       })
       .catch(() => {
-        /* 剪贴板不给用就算了 */
+        /* 剪贴板不可用 */
       });
   }, []);
 
@@ -369,7 +334,7 @@ export default function FileBrowserPage() {
         }, 1_500);
       })
       .catch(() => {
-        /* 剪贴板不给用就算了 */
+        /* 剪贴板不可用 */
       });
   }, []);
 
@@ -413,14 +378,25 @@ export default function FileBrowserPage() {
   const currentDirPinned = current ? pinnedSet.has(normalizePinPath(current)) : false;
   const selectedFilePinned = selected ? pinnedSet.has(normalizePinPath(selected.path)) : false;
 
+  const visibleEntries = useMemo(() => {
+    if (!listing) return [];
+    const q = query.trim().toLowerCase();
+    return listing.entries.filter((entry) => {
+      if (!showHidden && !q && entry.name.startsWith('.')) return false;
+      if (q) return entry.is_dir || entry.name.toLowerCase().includes(q);
+      return true;
+    });
+  }, [listing, showHidden, query]);
+
   const renderTreeEntries = (parentPath: string, entries: FileEntry[], depth: number): React.ReactNode => {
     const cleanParent = parentPath.replace(/\/+$/, '');
     const q = query.trim().toLowerCase();
-    // 过滤只作用于树上当前这一份清单：命中的留下，目录一概留下（它里面可能还有命中的
-    // 东西，砍掉就等于把人拦在门外），隐藏目录在过滤时不再退后——人打了字，就是在找它。
-    const ordered = q
-      ? entries.filter((entry) => entry.is_dir || entry.name.toLowerCase().includes(q))
-      : orderEntries(entries);
+    const filtered = entries.filter((entry) => {
+      if (!showHidden && !q && entry.name.startsWith('.')) return false;
+      if (q) return entry.is_dir || entry.name.toLowerCase().includes(q);
+      return true;
+    });
+    const ordered = orderEntries(filtered);
     return ordered.map((entry) => {
       const path = `${cleanParent}/${entry.name}`;
       const isExpanded = entry.is_dir && expandedDirs.has(path);
@@ -430,21 +406,17 @@ export default function FileBrowserPage() {
       const isRowCopied = copiedRowPath === path;
       const children = entry.is_dir ? dirChildren[path] : undefined;
       const modifiedText = shortTime(entry.modified);
-      // 点文件（`.env`、`.gitignore` 这些）与普通条目分开：它们就在这一堆里，但人平时
-      // 找的多半不是它们。压一档灰、给一个更轻的图标，扫读时自然让位。
       const hidden = entry.name.startsWith('.');
 
       return (
         <div key={path}>
           <div
-            className={`group flex min-w-full w-max items-center pr-2 transition-colors duration-150 ${
-              active ? 'bg-bg-active font-medium text-text-primary' : 'text-text-secondary hover:bg-bg-hover'
-            }`}
+            className={`group files-row ${active ? 'on font-medium' : ''} ${hidden ? 'hidden-item' : ''}`}
           >
             <button
               type="button"
               title={modifiedText ? `${path}\n${modifiedText}` : path}
-              style={{ paddingLeft: `${8 + depth * 16}px` }}
+              style={{ paddingLeft: `${depth * 16}px` }}
               onClick={() => {
                 if (entry.is_dir) {
                   toggleDirectory(path);
@@ -460,7 +432,7 @@ export default function FileBrowserPage() {
               onDoubleClick={() => {
                 if (!entry.is_dir) reveal(path);
               }}
-              className="flex min-w-0 flex-1 items-center gap-1.5 py-[5px] pr-2 text-left text-[12px]"
+              className="flex min-w-0 flex-1 items-center gap-1.5 py-[1px] text-left text-[12.5px]"
             >
               <span className="inline-flex w-[12px] shrink-0 items-center justify-center text-text-muted">
                 {entry.is_dir ? (
@@ -484,8 +456,8 @@ export default function FileBrowserPage() {
                   <FileIcon {...ICON} />
                 )}
               </span>
-              <span className={`whitespace-nowrap ${hidden ? 'text-text-dim' : ''}`}>{entry.name}</span>
-              <span className="min-w-[8px] flex-1" />
+              <span className={`truncate ${hidden ? 'text-text-dim' : ''}`}>{entry.name}</span>
+              <span className="min-w-[6px] flex-1" />
               {!entry.is_dir && entry.size !== null ? (
                 <span className="shrink-0 font-mono text-[11px] text-text-dim">
                   {humanSize(entry.size)}
@@ -528,7 +500,7 @@ export default function FileBrowserPage() {
               renderTreeEntries(path, children, depth + 1)
             ) : (
               <p
-                style={{ paddingLeft: `${8 + (depth + 1) * 16 + 18}px` }}
+                style={{ paddingLeft: `${18 + (depth + 1) * 16}px` }}
                 className="py-1 pr-3 text-[11px] text-text-dim whitespace-nowrap"
               >
                 {t('files.empty')}
@@ -544,46 +516,60 @@ export default function FileBrowserPage() {
     <>
       <PageHeader
         title={t('files.title')}
-        meta={listing ? t('files.counting', { n: listing.entries.length }) : undefined}
+        meta={listing ? t('files.counting', { n: visibleEntries.length }) : undefined}
         secondary={
-          <button
-            type="button"
-            className="page-header-btn page-header-btn--icon page-header-btn--ghost"
-            onClick={() => setReloadKey((k) => k + 1)}
-            title={t('files.refresh')}
-            aria-label={t('files.refresh')}
-          >
-            <RefreshCw size={14} strokeWidth={1.5} />
-          </button>
+          <>
+            {places.length > 0 && (
+              <div className="ui-seg-group" role="group" aria-label={t('files.places.label')}>
+                {places.map((place) => (
+                  <button
+                    key={place.key}
+                    type="button"
+                    onClick={() => go(place.path)}
+                    title={place.path}
+                    aria-pressed={current === place.path}
+                    className={`ui-seg-pill ${current === place.path ? 'ui-seg-pill--active' : ''}`}
+                    data-testid={`files-place-${place.key}`}
+                  >
+                    {place.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              className={`page-header-btn ${showHidden ? 'page-header-btn--pressed' : ''}`}
+              onClick={() => setShowHidden((v) => !v)}
+              aria-pressed={showHidden}
+              data-testid="files-show-hidden"
+            >
+              {showHidden ? <Eye size={13} strokeWidth={1.5} /> : <EyeOff size={13} strokeWidth={1.5} />}
+              <span>
+                {t('files.showHidden', {
+                  defaultValue: isZh ? '显示隐藏文件' : 'Show hidden',
+                })}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="page-header-btn page-header-btn--icon page-header-btn--ghost"
+              onClick={() => setReloadKey((k) => k + 1)}
+              title={t('files.refresh')}
+              aria-label={t('files.refresh')}
+            >
+              <RefreshCw size={14} strokeWidth={1.5} />
+            </button>
+          </>
         }
       />
 
-      <div className="flex min-h-0 flex-1">
-        {/* 左栏：去哪儿 · 现在在哪 · 树形目录（支持横向平移与拖拽调宽） */}
-        <div
-          style={{ width: `${treeWidth}px` }}
-          className="relative flex shrink-0 flex-col border-r border-border-color bg-bg-secondary"
-        >
-          {/* 三个入口走全站统一的分段胶囊（C6），不再是「纯文字加下划线/底托」的第三种
-              页签语言。计数没有，所以只出胶囊本身。 */}
-          <div className="border-b border-border-color px-2 py-2">
-            <div className="ui-seg-group" role="group" aria-label={t('files.places.label')}>
-              {places.map((place) => (
-                <button
-                  key={place.key}
-                  type="button"
-                  onClick={() => go(place.path)}
-                  title={place.path}
-                  aria-pressed={current === place.path}
-                  className={`ui-seg-pill ${current === place.path ? 'ui-seg-pill--active' : ''}`}
-                >
-                  {place.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="border-b border-border-color px-2 py-1.5">
+      <div
+        className="files-split"
+        style={{ gridTemplateColumns: `${treeWidth}px minmax(0, 1fr)` }}
+      >
+        {/* 左栏：关键词过滤 · 向上与 Pin · 目录树（目录优先） */}
+        <div className="files-tree-col relative">
+          <div className="files-tree-top">
             <div className="ui-search-box !h-7 !w-full">
               <Search size={13} className="ui-search-box-icon" />
               <input
@@ -604,59 +590,44 @@ export default function FileBrowserPage() {
                 </button>
               )}
             </div>
-          </div>
-
-          <div className="flex items-center gap-1 border-b border-border-color px-2 py-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                const cut = current.replace(/\/+$/, '').lastIndexOf('/');
-                if (cut > 0) go(current.slice(0, cut));
-                else if (home) go(home);
-              }}
-              title={t('files.up')}
-              aria-label={t('files.up')}
-              className="inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
-            >
-              <CornerLeftUp {...ICON} />
-            </button>
-            {/* 面包屑横向可平移滚动，深路径也能完整拖看。 */}
-            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-              {trail.map((node, i) => (
-                <span key={node.path} className="flex shrink-0 items-center gap-0.5">
-                  {i > 0 ? <ChevronRight size={11} className="text-text-dim" /> : null}
-                  <button
-                    type="button"
-                    onClick={() => go(node.path)}
-                    className={`rounded-[5px] px-1.5 py-[1px] font-mono text-[12px] ${
-                      i === trail.length - 1
-                        ? 'font-medium text-text-primary'
-                        : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
-                    }`}
-                  >
-                    {node.label}
-                  </button>
-                </span>
-              ))}
-            </div>
-            {current ? (
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => togglePin({ path: current, is_dir: true })}
-                title={currentDirPinned ? t('files.unpin') : t('files.pin')}
-                aria-label={currentDirPinned ? t('files.unpin') : t('files.pin')}
-                className={`inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] ${
-                  currentDirPinned
-                    ? 'text-text-primary hover:bg-bg-hover'
-                    : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
-                }`}
+                onClick={() => {
+                  const cut = current.replace(/\/+$/, '').lastIndexOf('/');
+                  if (cut > 0) go(current.slice(0, cut));
+                  else if (home) go(home);
+                }}
+                title={t('files.up')}
+                aria-label={t('files.up')}
+                className="inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
               >
-                {currentDirPinned ? <PinOff {...ICON} /> : <Pin {...ICON} />}
+                <CornerLeftUp {...ICON} />
               </button>
-            ) : null}
+              <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-text-muted" title={current}>
+                {home && current.startsWith(home)
+                  ? `~${current.slice(home.length) || ''}`
+                  : current || '/'}
+              </span>
+              {current ? (
+                <button
+                  type="button"
+                  onClick={() => togglePin({ path: current, is_dir: true })}
+                  title={currentDirPinned ? t('files.unpin') : t('files.pin')}
+                  aria-label={currentDirPinned ? t('files.unpin') : t('files.pin')}
+                  className={`inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] ${
+                    currentDirPinned
+                      ? 'text-text-primary hover:bg-bg-hover'
+                      : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                  }`}
+                >
+                  {currentDirPinned ? <PinOff {...ICON} /> : <Pin {...ICON} />}
+                </button>
+              ) : null}
+            </div>
           </div>
 
-          <div data-testid="file-tree-scroll" className="min-h-0 flex-1 overflow-auto py-1">
+          <div data-testid="file-tree-scroll" className="files-list">
             {loading ? (
               <p className="flex items-center justify-center gap-2 py-8 text-[12px] text-text-muted">
                 <Loader2 size={14} className="animate-spin" />
@@ -667,12 +638,10 @@ export default function FileBrowserPage() {
                 <span className="block">{t('files.listFailed')}</span>
                 <span className="mt-1 block text-text-dim">{error}</span>
               </p>
-            ) : listing && listing.entries.length === 0 ? (
+            ) : listing && visibleEntries.length === 0 ? (
               <p className="px-3 py-8 text-center text-[12px] text-text-muted">{t('files.empty')}</p>
             ) : listing ? (
-              <div className="min-w-full w-max">
-                {renderTreeEntries(current, listing.entries, 0)}
-              </div>
+              renderTreeEntries(current, listing.entries, 0)
             ) : null}
           </div>
 
@@ -684,15 +653,46 @@ export default function FileBrowserPage() {
           />
         </div>
 
-        {/* 右栏：选中的那一份 */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-base">
+        {/* 右栏：可点面包屑 + 选中文件预览 */}
+        <div className="files-preview-col">
+          {current ? (
+            <div className="files-crumbs" aria-label={t('files.breadcrumbs', { defaultValue: 'Breadcrumbs' })}>
+              {trail.map((node, i) => (
+                <span key={node.path} className="flex shrink-0 items-center gap-1">
+                  {i > 0 ? <ChevronRight size={11} className="text-text-dim" /> : null}
+                  <button
+                    type="button"
+                    onClick={() => go(node.path)}
+                    className={
+                      i === trail.length - 1
+                        ? 'font-medium text-text-primary'
+                        : 'text-text-muted'
+                    }
+                  >
+                    {node.label}
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
           {selected ? (
             <>
-              <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-color bg-bg-primary px-3">
+              <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-color bg-bg-primary px-3.5">
                 <FileIcon size={14} className="shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text-secondary">
                   {selected.path}
                 </span>
+                {selected.size !== null && (
+                  <span className="shrink-0 font-mono text-[11px] text-text-dim">
+                    {humanSize(selected.size)}
+                  </span>
+                )}
+                {selected.modified && (
+                  <span className="shrink-0 font-mono text-[11px] text-text-dim">
+                    {shortTime(selected.modified)}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => togglePin({ path: selected.path, is_dir: false })}
@@ -725,7 +725,7 @@ export default function FileBrowserPage() {
                   <FolderOpen size={14} />
                 </button>
               </div>
-              <div className="min-h-0 flex-1">
+              <div className="files-preview-body !p-0">
                 <FilePreview
                   key={selected.path}
                   path={selected.path}
@@ -735,8 +735,6 @@ export default function FileBrowserPage() {
               </div>
             </>
           ) : (
-            /* 空态走全站统一那一个（C4）：40px 微边框图标容器 + 一行说明。
-               此前这里是 28px 图标加一行灰字，与工作区、会话页的另外几套尺度对不上。 */
             <EmptyState Icon={Folder} title={t('files.noSelection')} />
           )}
         </div>

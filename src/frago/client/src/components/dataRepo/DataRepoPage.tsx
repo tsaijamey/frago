@@ -263,7 +263,7 @@ export default function DataRepoPage() {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-8">
         <div className="w-full max-w-lg rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] p-6 text-center">
-          <ShieldAlert size={32} className="mx-auto mb-3 text-amber-500" />
+          <ShieldAlert size={32} className="mx-auto mb-3 text-[var(--accent-warning)]" />
           <h2 className="text-lg font-semibold text-[var(--text-primary)]">
             {t('dataRepo.ghGateTitle')}
           </h2>
@@ -331,15 +331,16 @@ export default function DataRepoPage() {
         }}
       />
 
-      <div className="page-scroll flex-1 space-y-4 p-5">
+      <div className="page-scroll flex-1 p-5">
+        <div className="mx-auto w-full max-w-[960px] space-y-4">
         {loading && !status ? (
           <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <Loader2 size={16} className="animate-spin" />
             {t('dataRepo.loading')}
           </div>
         ) : !status?.configured ? (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-            <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+          <div className="flex items-start gap-2 rounded-md border border-accent-warning-border bg-accent-warning-10 p-4 text-sm">
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-warning" />
             <div>
               <p className="font-medium text-[var(--text-primary)]">
                 {t('dataRepo.notConfiguredTitle')}
@@ -382,8 +383,8 @@ export default function DataRepoPage() {
                 treating a network blip as one would send them re-authenticating
                 for no reason. */}
             {gh && gh.verified === false && (
-              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+              <div className="flex items-start gap-2 rounded-md border border-accent-warning-border bg-accent-warning-10 p-3 text-sm">
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-warning" />
                 <p className="min-w-0 text-[var(--text-secondary)]">
                   {gh.verify_error || t('dataRepo.unverified')}
                 </p>
@@ -391,8 +392,8 @@ export default function DataRepoPage() {
             )}
 
             {status.error && (
-              <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
-                <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
+              <div className="flex items-start gap-2 rounded-md border border-accent-error-border bg-accent-error-10 p-3 text-sm">
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-error" />
                 <p className="min-w-0 break-words text-[var(--text-secondary)]">{status.error}</p>
               </div>
             )}
@@ -413,12 +414,29 @@ export default function DataRepoPage() {
               </div>
               <div className="ui-bezel-card !p-3.5">
                 <p className="text-[11px] text-[var(--text-muted)]">{t('dataRepo.unpushed')}</p>
-                <p className="text-[20px] font-semibold leading-[1.3] tabular-nums text-[var(--text-primary)]">
+                <p
+                  className={`text-[20px] font-semibold leading-[1.3] tabular-nums ${
+                    status.ahead > 0 ? 'text-[var(--accent-warning)]' : 'text-[var(--text-primary)]'
+                  }`}
+                >
                   {status.ahead.toLocaleString()}
                 </p>
-                <p className="text-[11px] text-[var(--text-muted)]">
-                  {t('dataRepo.behind', { count: status.behind })}
-                </p>
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+                  <span>{t('dataRepo.behind', { count: status.behind })}</span>
+                  {status.ahead > 0 && (
+                    <button
+                      type="button"
+                      className="fix-btn warn"
+                      onClick={() => setSyncDialogOpen(true)}
+                      disabled={running}
+                      data-testid="data-push-now"
+                    >
+                      {t('dataRepo.pushNow', {
+                        defaultValue: i18n?.language?.startsWith('zh') ? '立即推送' : 'Push now',
+                      })}
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="ui-bezel-card !p-3.5">
                 <p className="text-[11px] text-[var(--text-muted)]">{t('dataRepo.branch')}</p>
@@ -459,8 +477,8 @@ export default function DataRepoPage() {
             ) : (
               <>
                 {deletions >= 200 && (
-                  <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">
-                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
+                  <div className="flex items-start gap-2 rounded-md border border-accent-error-border bg-accent-error-10 p-3 text-sm">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-accent-error" />
                     <div className="min-w-0">
                       <p className="font-medium text-[var(--text-primary)]">
                         {t('dataRepo.massDeletionTitle', { total: deletions.toLocaleString() })}
@@ -498,13 +516,8 @@ export default function DataRepoPage() {
                                 {area.area}
                               </code>
                               <div className="h-1 overflow-hidden rounded-[3px] bg-[var(--usage-track)]">
-                                {/* The bars used to be flat grey, which made the
-                                    single most important signal on this page —
-                                    how much is waiting — the least visible thing
-                                    on it. Brand green is the one accent colour
-                                    the system has, and this is what it is for. */}
                                 <div
-                                  className="h-full rounded-[3px] bg-[var(--accent-primary)]"
+                                  className="h-full rounded-[3px] bg-[var(--text-muted)]"
                                   style={{
                                     width: `${maxArea ? Math.max(2, (area.count / maxArea) * 100) : 0}%`,
                                   }}
@@ -643,6 +656,7 @@ export default function DataRepoPage() {
             )}
           </>
         )}
+        </div>
       </div>
 
       <SyncDialog

@@ -158,6 +158,7 @@ export function useRecipeDetail() {
 
       switch (input.type) {
         case 'number':
+        case 'integer':
           params[name] = Number(value);
           break;
         case 'boolean':
