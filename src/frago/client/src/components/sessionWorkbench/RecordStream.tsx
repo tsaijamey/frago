@@ -1512,7 +1512,8 @@ export default function RecordStream({
   onSendFileEdit,
   observer = null,
 }: RecordStreamProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const decisionCardHost = useContext(DecisionCardContext);
   // 打开就落在**对话**上。整场记录里对话只占几十分之一，默认铺开全部等于让人自己
   // 在工具与记账里翻对话；要看全部，顶上那排镜头点一下就是。
@@ -2855,6 +2856,51 @@ export default function RecordStream({
                   ) : null}
                 </section>
 
+                {/* 1b. 最新发出 / 尚未纳入下批里程碑汇总的实时对话区：置顶在锚点卡下方，保证与「最新在上」读序一致 */}
+                {(() => {
+                  const tailSegments = unsummarizedTailRecords.length
+                    ? buildTalkSegments(unsummarizedTailRecords)
+                    : [];
+                  const tailGroups = tailSegments.length ? groupSegments(tailSegments) : [];
+                  const showTailAgentOnIt = Boolean(
+                    activeTrail &&
+                      !unsummarizedTailRecords.some((r) => r.id === activeTrail.recordId)
+                  );
+                  if (!tailGroups.length && !showTailAgentOnIt) return null;
+                  const orderedTailGroups = [...tailGroups].reverse();
+                  return (
+                    <section
+                      data-testid="watcher-unsummarized-tail"
+                      className="w-sec"
+                    >
+                      <div className="w-sec-hd">
+                        <span className="w-sec-title">
+                          {isZh ? '最新消息与实时动态' : 'Latest Messages & Live Activity'}
+                        </span>
+                        <span className="w-sec-sub">
+                          {isZh ? '待纳入下批里程碑 · 最新在上' : 'Pending next milestone · newest first'}
+                        </span>
+                      </div>
+                      <div className="flex max-h-[360px] min-w-0 flex-col gap-3 overflow-y-auto rounded-[10px] border border-[var(--border-color)] bg-[var(--bg-primary)] p-3.5">
+                        {orderedTailGroups.map((group, gIdx) =>
+                          group.segments.length === 1 ? (
+                            renderSegment(group.segments[0])
+                          ) : (
+                            <section
+                              key={`${group.groupId ?? 'loose'}-tail-${gIdx}`}
+                              data-testid="record-group"
+                              className="flex min-w-0 flex-col gap-1"
+                            >
+                              {group.segments.map((seg) => renderSegment(seg))}
+                            </section>
+                          )
+                        )}
+                        {showTailAgentOnIt ? agentOnIt : null}
+                      </div>
+                    </section>
+                  );
+                })()}
+
                 {/* 2. 第一张表：事项总控表 */}
                 <section className="w-sec" data-testid="watcher-tasks-table">
                   <div className="w-sec-hd">
@@ -3131,33 +3177,6 @@ export default function RecordStream({
                     </table>
                   </div>
                 </section>
-
-                {(() => {
-                  if (!unsummarizedTailRecords.length) return null;
-                  const tailSegments = buildTalkSegments(unsummarizedTailRecords);
-                  const tailGroups = groupSegments(tailSegments);
-                  if (!tailGroups.length) return null;
-                  return (
-                    <section
-                      data-testid="watcher-unsummarized-tail"
-                      className="flex min-w-0 flex-col gap-3 pt-2"
-                    >
-                      {tailGroups.map((group, gIdx) =>
-                        group.segments.length === 1 ? (
-                          renderSegment(group.segments[0])
-                        ) : (
-                          <section
-                            key={`${group.groupId ?? 'loose'}-tail-${gIdx}`}
-                            data-testid="record-group"
-                            className="flex min-w-0 flex-col gap-1"
-                          >
-                            {group.segments.map((seg) => renderSegment(seg))}
-                          </section>
-                        )
-                      )}
-                    </section>
-                  );
-                })()}
               </div>
             );
           })() : (
@@ -3201,8 +3220,8 @@ export default function RecordStream({
           ) : null}
 
           {/* 「Agent on it」紧贴在那句话下面。那句话在当前镜头里看不见时（切到了工具档），
-              退到流的末尾，安静期照样有东西撑着。 */}
-          {activeTrail && !activeShown ? agentOnIt : null}
+              退到流的末尾，安静期照样有东西撑着；Progress 视图下统一渲染在顶部动态区内。 */}
+          {!watcherOpen && activeTrail && !activeShown ? agentOnIt : null}
         </div>
         </RecordStreamActionsContext.Provider>
         </FileLinkContext.Provider>

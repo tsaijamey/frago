@@ -963,10 +963,17 @@ describe('RecordStream 中栏', () => {
       expect(toggle.textContent).toContain('1条提问');
       expect(toggle.textContent).toContain('1条回复');
 
-      // 游标 2 之后尚未总结的新对话独立呈现在尾部，不预设虚假的 #2 总结槽位
+      // 游标 2 之后尚未总结的新对话排布在顶部锚点卡下方、总控表与里程碑表之前，不掉到页面最底部
       expect(screen.getByTestId('watcher-run-1')).toBeTruthy();
       expect(screen.queryByTestId('watcher-run-2')).toBeNull();
+      const anchor = screen.getByTestId('watcher-anchor-card');
       const tail = screen.getByTestId('watcher-unsummarized-tail');
+      const tasksTable = screen.getByTestId('watcher-tasks-table');
+      const milestonesTable = screen.getByTestId('watcher-milestones-table');
+      expect(anchor.compareDocumentPosition(tail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(tail.compareDocumentPosition(tasksTable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(tail.compareDocumentPosition(milestonesTable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(tail.innerHTML).toContain('max-h-[360px]');
       expect(tail.textContent).toContain('浮动按钮上的L和数字是什么含义？');
       expect(tail.textContent).toContain('L是行号的缩写，代表起始行号到结束行号。');
     });
