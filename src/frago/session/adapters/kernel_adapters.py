@@ -547,15 +547,18 @@ class CodexSessionAdapter:
         self, session_id: str, pane_text: str = "", pane_ansi: str = ""
     ) -> HarnessIdleVerdict:
         target_text = pane_text or pane_ansi
+        plain_text = _ANSI_ESCAPE_RE.sub("", target_text) if target_text else ""
+        lines = [ln for ln in plain_text.splitlines() if ln.strip()]
+        tail = "\n".join(lines[-8:]) if lines else ""
         is_busy = False
-        if target_text and (
-            bool(re.search(r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)", target_text))
-            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", target_text))
+        if tail and (
+            bool(re.search(r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)", tail))
+            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", tail))
         ):
             is_busy = True
 
         completion = self.probe_turn_completion(session_id)
-        if completion.done:
+        if not completion.unknown and completion.done:
             is_busy = False
 
         return HarnessIdleVerdict(
@@ -607,15 +610,22 @@ class OpencodeSessionAdapter:
         return TurnCompletionVerdict(done=False, stop_reason=None, unknown=True)
 
     def probe_harness_idle(
-        self, session_id: str, pane_text: str = "", pane_ansi: str = ""  # noqa: ARG002
+        self, session_id: str, pane_text: str = "", pane_ansi: str = ""
     ) -> HarnessIdleVerdict:
         target_text = pane_text or pane_ansi
+        plain_text = _ANSI_ESCAPE_RE.sub("", target_text) if target_text else ""
+        lines = [ln for ln in plain_text.splitlines() if ln.strip()]
+        tail = "\n".join(lines[-8:]) if lines else ""
         is_busy = False
-        if target_text and (
-            bool(re.search(r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)", target_text))
-            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", target_text))
+        if tail and (
+            bool(re.search(r"(?i:\besc\s+to\s+(?:interrupt|cancel)\b)", tail))
+            or bool(re.search(r"(?m)^\s*[✻✽✶✢✳✺✷✸✹✦·*∗•◦⠋⠙⠹⠸⠼⠴⠦⠧][^\n]*…", tail))
         ):
             is_busy = True
+
+        completion = self.probe_turn_completion(session_id)
+        if not completion.unknown and completion.done:
+            is_busy = False
 
         return HarnessIdleVerdict(
             is_busy=is_busy,

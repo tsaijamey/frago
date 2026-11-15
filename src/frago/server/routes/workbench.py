@@ -629,7 +629,9 @@ async def branch_workbench_session(sid: str, request: BranchRequest) -> dict[str
             raise HTTPException(
                 status_code=400, detail=f"员工编号 '{explicit_employee}' 不存在"
             )
-        if employee_record.agent_kernel in ("claude", "codex", "opencode", "agy"):
+        from frago.ontology.projectors import list_agent_kernels
+
+        if employee_record.agent_kernel in list_agent_kernels():
             branch = replace(branch, agent_type=employee_record.agent_kernel)
     else:
         employee_record = await asyncio.to_thread(_resolve_parent_employee_record, sid)
@@ -1796,6 +1798,7 @@ async def delete_workbench_session(sid: str) -> dict[str, Any]:
     except UnknownSessionFamily as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
+    from frago.server.services import coreagent_runner
     from frago.server.services import tmux_sessions_service as tsvc
 
     # 读屏是阻塞 IO，且这条问路与「结束运行」共用同一份判据，两处 MUST 给出同一个答案。
@@ -1804,6 +1807,11 @@ async def delete_workbench_session(sid: str) -> dict[str, Any]:
         raise HTTPException(
             status_code=409,
             detail=f"这一场还在跑（{link.name}），先结束运行再删",
+        )
+    if await asyncio.to_thread(coreagent_runner.running, sid):
+        raise HTTPException(
+            status_code=409,
+            detail=f"这一场还在跑（coreagent: {sid}），先结束运行再删",
         )
 
     try:

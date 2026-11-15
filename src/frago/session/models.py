@@ -18,15 +18,29 @@ from pydantic import BaseModel, Field
 
 
 class AgentType(str, Enum):
-    """Agent tool type identifier"""
+    """Agent tool type identifier.
+
+    Active AgentKernel values (5): ``claude``, ``opencode``, ``codex``, ``coreagent``, ``agy``.
+    Reserved unimplemented placeholders kept solely for legacy JSON deserialization: ``cursor``, ``cline``.
+    """
 
     CLAUDE = "claude"  # Claude Code
     OPENCODE = "opencode"  # opencode (tmux-driven)
     CODEX = "codex"  # OpenAI Codex CLI (tmux-driven)
     COREAGENT = "coreagent"  # frago 自己的 CoreAgent
     AGY = "agy"  # Antigravity CLI (tmux-driven)
-    CURSOR = "cursor"  # Cursor (reserved)
-    CLINE = "cline"  # Cline (reserved)
+    CURSOR = "cursor"  # Reserved (unimplemented, not in AgentKernel ontology)
+    CLINE = "cline"  # Reserved (unimplemented, not in AgentKernel ontology)
+
+
+ACTIVE_AGENT_TYPES: tuple[AgentType, ...] = (
+    AgentType.CLAUDE,
+    AgentType.OPENCODE,
+    AgentType.CODEX,
+    AgentType.COREAGENT,
+    AgentType.AGY,
+)
+RESERVED_AGENT_TYPES: tuple[AgentType, ...] = (AgentType.CURSOR, AgentType.CLINE)
 
 
 class SessionStatus(str, Enum):

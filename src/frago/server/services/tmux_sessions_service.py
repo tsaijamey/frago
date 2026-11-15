@@ -175,11 +175,19 @@ _PATH_CACHE: dict[tuple[str, str], Path] = {}
 
 
 def _transcript_path(session_id: str) -> Path | None:
-    """按编号在 claude 的记录目录里找那份 jsonl。
+    """按编号在 claude 或 coreagent 的记录目录里找那份 jsonl。
 
     跨全部工程目录扫，不假设会话的工作目录——飞书、语音那些会话的 cwd 与页面
     会话不在一处，钉死一个目录会把它们全判成「找不到记录」。
     """
+    if session_id.startswith("core_"):
+        with contextlib.suppress(Exception):
+            from frago.session import coreagent_store
+
+            found = coreagent_store.find_session_file(session_id)
+            if found is not None and found.is_file():
+                return found
+
     projects_root = os.path.expanduser("~/.claude/projects")
     cache_key = (projects_root, session_id)
     cached = _PATH_CACHE.get(cache_key)
@@ -187,6 +195,12 @@ def _transcript_path(session_id: str) -> Path | None:
         return cached
     hits = glob.glob(f"{projects_root}/*/{session_id}.jsonl")
     if not hits:
+        with contextlib.suppress(Exception):
+            from frago.session import coreagent_store
+
+            found = coreagent_store.find_session_file(session_id)
+            if found is not None and found.is_file():
+                return found
         return None
     resolved = Path(hits[0])
     _PATH_CACHE[cache_key] = resolved
@@ -266,14 +280,27 @@ def _client_alive(command: str | None) -> bool | None:
     return command not in _SHELL_COMMANDS
 
 
-def _awaiting_input(pane_ansi: str, alive: bool | None, kernel: str = "claude") -> bool | None:
+def _awaiting_input(
+    pane_ansi: str, alive: bool | None, kernel: str = "claude", *, session_id: str | None = None
+) -> bool | None:
     """客户端退了就不可能在等人（False）；前台问不出就判不出（None）。
 
-    优先通过驱动契约（driver.awaiting_input）多态调用，解耦服务层对单一具体驱动文件的依赖。
+    优先通过驱动契约（driver.awaiting_input）与 CoreAgent 适配器契约多态调用，
+    解耦服务层对单一具体驱动文件的依赖。
     """
     if alive is not True:
         return None if alive is None else False
     try:
+        if kernel == "coreagent":
+            from frago.server.services import coreagent_runner
+            from frago.session.adapters.kernel_adapters import get_kernel_session_adapter
+
+            if session_id and coreagent_runner.busy(session_id):
+                return False
+            adapter = get_kernel_session_adapter("coreagent")
+            verdict = adapter.probe_harness_idle(session_id or "", pane_ansi=pane_ansi)
+            return bool(verdict.awaiting_input)
+
         from frago.agent_driver.driver import registered_drivers
 
         driver = registered_drivers().get(kernel)
@@ -582,7 +609,7 @@ def list_waiting() -> list[TmuxWaitingInfo]:
                     name=name,
                     session_id=session_id,
                     client_alive=alive,
-                    awaiting_input=_awaiting_input(pane_ansi, alive, kernel=kernel),
+                    awaiting_input=_awaiting_input(pane_ansi, alive, kernel=kernel, session_id=session_id),
                     stop_reason=stop_reason,
                     last_stop_at=last_stop_at,
                     closing_text=_closing_text(text),

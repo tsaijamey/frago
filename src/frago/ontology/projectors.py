@@ -111,7 +111,7 @@ AGENT_CAPABILITY_MATRIX: dict[str, dict[str, str]] = {
         "hook_injection": CAPABILITY_NATIVE,
     },
     "agy": {
-        "identity_probe": CAPABILITY_NATIVE,
+        "identity_probe": CAPABILITY_ADAPTED,
         "lifecycle_action": CAPABILITY_NATIVE,
         "transcript_sync": CAPABILITY_ADAPTED,
         "awaiting_input_probe": CAPABILITY_FALLBACK,
@@ -120,28 +120,28 @@ AGENT_CAPABILITY_MATRIX: dict[str, dict[str, str]] = {
         "hook_injection": CAPABILITY_ADAPTED,
     },
     "opencode": {
-        "identity_probe": CAPABILITY_NATIVE,
+        "identity_probe": CAPABILITY_ADAPTED,
         "lifecycle_action": CAPABILITY_NATIVE,
-        "transcript_sync": CAPABILITY_NATIVE,
+        "transcript_sync": CAPABILITY_ADAPTED,
         "awaiting_input_probe": CAPABILITY_FALLBACK,
         "busy_probe": CAPABILITY_FALLBACK,
         "context_watermark": CAPABILITY_ADAPTED,
         "hook_injection": CAPABILITY_ADAPTED,
     },
     "codex": {
-        "identity_probe": CAPABILITY_NATIVE,
+        "identity_probe": CAPABILITY_ADAPTED,
         "lifecycle_action": CAPABILITY_NATIVE,
         "transcript_sync": CAPABILITY_ADAPTED,
         "awaiting_input_probe": CAPABILITY_FALLBACK,
         "busy_probe": CAPABILITY_FALLBACK,
         "context_watermark": CAPABILITY_ADAPTED,
-        "hook_injection": CAPABILITY_UNSUPPORTED,
+        "hook_injection": CAPABILITY_ADAPTED,
     },
     "coreagent": {
         "identity_probe": CAPABILITY_NATIVE,
         "lifecycle_action": CAPABILITY_NATIVE,
         "transcript_sync": CAPABILITY_NATIVE,
-        "awaiting_input_probe": CAPABILITY_UNSUPPORTED,
+        "awaiting_input_probe": CAPABILITY_ADAPTED,
         "busy_probe": CAPABILITY_NATIVE,
         "context_watermark": CAPABILITY_NATIVE,
         "hook_injection": CAPABILITY_NATIVE,
@@ -167,7 +167,7 @@ AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
         "execution_mode": "tmux_tui",
         "runs_in_tmux": True,
         "supports_resume": True,
-        "supports_branch": False,
+        "supports_branch": True,
         "supports_for_you": True,
         "capability_tier": "tier2",
         "profile_mode": "file_and_env",
@@ -179,7 +179,7 @@ AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
         "execution_mode": "tmux_tui",
         "runs_in_tmux": True,
         "supports_resume": True,
-        "supports_branch": False,
+        "supports_branch": True,
         "supports_for_you": True,
         "capability_tier": "tier2",
         "profile_mode": "file_and_env",
@@ -191,7 +191,7 @@ AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
         "execution_mode": "tmux_tui",
         "runs_in_tmux": True,
         "supports_resume": True,
-        "supports_branch": False,
+        "supports_branch": True,
         "supports_for_you": True,
         "capability_tier": "tier2",
         "profile_mode": "file_and_env",
@@ -200,11 +200,11 @@ AGENT_KERNEL_METADATA: dict[str, dict[str, Any]] = {
     "coreagent": {
         "name": "coreagent",
         "display_name": "CoreAgent",
-        "execution_mode": "headless_kernel",
-        "runs_in_tmux": False,
-        "supports_resume": False,
-        "supports_branch": False,
-        "supports_for_you": False,
+        "execution_mode": "tmux_kernel_host",
+        "runs_in_tmux": True,
+        "supports_resume": True,
+        "supports_branch": True,
+        "supports_for_you": True,
         "capability_tier": "tier1",
         "profile_mode": "native_kernel",
         "capabilities": AGENT_CAPABILITY_MATRIX["coreagent"],
@@ -245,7 +245,7 @@ def runs_in_tmux(kernel: str) -> bool:
 def supports_profile_binding(kernel: str) -> bool:
     """Return True if the kernel supports profile configuration binding."""
     mode = str(get_agent_kernel_metadata(kernel).get("profile_mode", ""))
-    return mode in ("file_and_env", "env_only", "session_env", "native_flag")
+    return mode in ("file_and_env", "env_only", "session_env", "native_flag", "native_kernel")
 
 
 def supports_for_you(kernel: str) -> bool:

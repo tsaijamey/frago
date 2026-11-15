@@ -115,6 +115,7 @@ class WorkbenchStreamBridge:
                     self._opencode_stream = OpencodeStream(
                         on_records=self._on_new_records,
                         on_turn_complete=self._on_turn_complete,
+                        origin="web",
                     )
                     self._opencode_stream.start()
                 self._opencode_stream.watch_session(session_id)

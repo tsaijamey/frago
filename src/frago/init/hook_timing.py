@@ -318,10 +318,10 @@ HARNESS_HOOK_TABLES: Mapping[str, Mapping[HookTiming, HarnessHookEntry]] = Mappi
                     timing=HookTiming.TOOL_POST,
                     native_event="tool.execute.after",
                     observed_frequency=HookFrequency.ONCE_PER_TOOL_CALL,
-                    engine_target=None,
+                    engine_target="PostToolUse",
                     provenance=(
-                        "resources/opencode/frago-hook.js:17-22,725-761 "
-                        "(承接 PreToolUse 延迟注入与图片描述，不单独调引擎 PostToolUse)"
+                        "resources/opencode/frago-hook.js:725-775 "
+                        "(承接 PreToolUse 延迟注入、图片描述，并转发 PostToolUse 给 frago-core --engine)"
                     ),
                     verified=False,
                 ),
@@ -330,8 +330,8 @@ HARNESS_HOOK_TABLES: Mapping[str, Mapping[HookTiming, HarnessHookEntry]] = Mappi
                     native_event=None,
                     observed_frequency=None,
                     engine_target=None,
-                    provenance="resources/opencode/frago-hook.js 未挂载 Stop 事件",
-                    verified=False,
+                    provenance="opencode 插件协议无阻塞式 Stop 钩子（session.idle 为被动通知事件）",
+                    verified=True,
                 ),
             }
         ),

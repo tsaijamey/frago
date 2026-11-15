@@ -111,7 +111,7 @@ def self_cmd(agent_only: bool, signature_only: bool, json_output: bool):
 @session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -518,7 +518,7 @@ def ask_cmd(
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "codex", "coreagent", "agy"]),
     default="claude",
     help="Agent type"
 )

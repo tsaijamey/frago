@@ -39,9 +39,9 @@ export interface AgentClient {
   reason: string | null;
   /** 'caller' = 编号页面这边定；'claimed' = 起来之后认领，新建时要等一会儿。 */
   id_origin: 'caller' | 'claimed';
-  /** 六大正交能力切面支持等级 */
+  /** 七大正交能力切面支持等级 */
   capabilities?: Record<string, string>;
-  /** 运行形态："tmux_tui" | "headless_kernel" */
+  /** 运行形态："tmux_tui" | "tmux_kernel_host" | "headless_kernel" */
   execution_mode?: string;
   /** 是否运行在 tmux 窗格中 */
   runs_in_tmux?: boolean;
@@ -64,38 +64,43 @@ export const DEFAULT_AGENT_CAPABILITIES: Record<string, Record<string, Capabilit
     lifecycle_action: 'native',
     transcript_sync: 'native',
     awaiting_input_probe: 'adapted',
+    busy_probe: 'native',
     context_watermark: 'native',
     hook_injection: 'native',
   },
   agy: {
-    identity_probe: 'native',
+    identity_probe: 'adapted',
     lifecycle_action: 'native',
     transcript_sync: 'adapted',
     awaiting_input_probe: 'fallback',
+    busy_probe: 'adapted',
     context_watermark: 'adapted',
     hook_injection: 'adapted',
   },
   opencode: {
-    identity_probe: 'native',
+    identity_probe: 'adapted',
     lifecycle_action: 'native',
-    transcript_sync: 'native',
+    transcript_sync: 'adapted',
     awaiting_input_probe: 'fallback',
+    busy_probe: 'fallback',
     context_watermark: 'adapted',
     hook_injection: 'adapted',
   },
   codex: {
-    identity_probe: 'native',
+    identity_probe: 'adapted',
     lifecycle_action: 'native',
     transcript_sync: 'adapted',
     awaiting_input_probe: 'fallback',
+    busy_probe: 'fallback',
     context_watermark: 'adapted',
-    hook_injection: 'unsupported',
+    hook_injection: 'adapted',
   },
   coreagent: {
     identity_probe: 'native',
     lifecycle_action: 'native',
     transcript_sync: 'native',
-    awaiting_input_probe: 'unsupported',
+    awaiting_input_probe: 'adapted',
+    busy_probe: 'native',
     context_watermark: 'native',
     hook_injection: 'native',
   },
@@ -120,7 +125,7 @@ export function supportsBranch(agent: AgentClient | undefined): boolean {
   if (typeof agent.supports_branch === 'boolean') {
     return agent.supports_branch;
   }
-  return agent.agent_type === 'claude';
+  return Boolean(DEFAULT_AGENT_CAPABILITIES[agent.agent_type.toLowerCase()]);
 }
 
 /** 是否支持 For you 待输入态感知 */

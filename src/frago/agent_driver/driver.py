@@ -426,15 +426,18 @@ class AgentDriver:
 
 
 def runs_on_kernel(agent_type: str) -> bool:
-    """这一家跑在 frago 自己的内核里吗（而不是挂在 tmux 里）。
+    """这一家跑在 frago 自己的内核里吗（而不是外部 tmux TUI 驱动）。
 
-    委托给本体元数据协议（execution_mode == 'headless_kernel' / not runs_in_tmux）。
-    同时保持与原有 AgentType.COREAGENT 完全一致的向后兼容判定。
+    委托给本体元数据协议（``profile_mode == 'native_kernel'`` 或 ``execution_mode``
+    属于内置内核形态），与 ``TmuxCoreProcess`` 面板承载实况完全兼容。
     """
     from frago.ontology.projectors import get_agent_kernel_metadata
 
     meta = get_agent_kernel_metadata(agent_type)
-    return meta.get("execution_mode") == "headless_kernel"
+    return (
+        meta.get("execution_mode") in ("headless_kernel", "tmux_kernel_host")
+        or meta.get("profile_mode") == "native_kernel"
+    )
 
 
 def listed_session_id(agent_type: str, session_id: str, *, native_session_id: bool) -> str | None:

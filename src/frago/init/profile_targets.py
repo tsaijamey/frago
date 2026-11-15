@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 # writing a file. It belongs here because the person switching a connection
 # means it for every kernel they run, and the built-in one was the only kernel
 # left out — which is how its window declaration never reached it.
-AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex", "coreagent")
+AGENT_TARGETS: tuple[str, ...] = ("claude", "opencode", "codex", "agy", "coreagent")
 
 # Built-in CoreAgent plus all four external Harness CLIs managed on the Settings -> General matrix.
 HARNESS_TARGETS: tuple[str, ...] = ("coreagent", "claude", "codex", "opencode", "agy")

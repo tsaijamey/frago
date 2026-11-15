@@ -730,6 +730,20 @@ export const FragoHookPlugin = async ({ directory }) => {
         notices.push(context)
       }
 
+      if (input.sessionID && input.tool) {
+        const postResult = await runHook({
+          session_id: input.sessionID,
+          hook_event_name: "PostToolUse",
+          tool_name: toClaudeToolName(input.tool),
+          tool_input: toClaudeToolInput(input.args ?? {}),
+          tool_response: typeof output?.output === "string" ? output.output : "",
+          cwd: directory,
+          recent_turns: recentTurnsOf(history, input.sessionID),
+        })
+        const postContext = injectionOf(postResult)
+        if (postContext) notices.push(postContext)
+      }
+
       // An image the model opened itself. opencode hands the picture back as
       // an attachment on the tool result, which a model without vision cannot
       // use: it reads "Image read successfully", sees nothing, and reports

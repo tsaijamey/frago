@@ -3611,11 +3611,16 @@ class TestAgentKernelOntologyAndProjector:
 
         assert len(AGENT_CAPABILITY_MATRIX) == 5
         assert get_agent_capability_level("claude", "identity_probe") == CAPABILITY_NATIVE
+        assert get_agent_capability_level("agy", "identity_probe") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("codex", "identity_probe") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("opencode", "identity_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("claude", "awaiting_input_probe") == CAPABILITY_ADAPTED
         assert get_agent_capability_level("agy", "awaiting_input_probe") == CAPABILITY_FALLBACK
         assert get_agent_capability_level("codex", "awaiting_input_probe") == CAPABILITY_FALLBACK
         assert get_agent_capability_level("opencode", "awaiting_input_probe") == CAPABILITY_FALLBACK
-        assert get_agent_capability_level("coreagent", "awaiting_input_probe") == CAPABILITY_UNSUPPORTED
+        assert get_agent_capability_level("coreagent", "awaiting_input_probe") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("codex", "hook_injection") == CAPABILITY_ADAPTED
+        assert get_agent_capability_level("opencode", "transcript_sync") == CAPABILITY_ADAPTED
 
         # busy_probe four-level declarations
         assert get_agent_capability_level("claude", "busy_probe") == CAPABILITY_NATIVE
@@ -3687,23 +3692,25 @@ class TestAgentKernelOntologyAndProjector:
 
         core_meta = get_agent_kernel_metadata("coreagent")
         assert core_meta["name"] == "coreagent"
-        assert core_meta["execution_mode"] == "headless_kernel"
-        assert core_meta["runs_in_tmux"] is False
-        assert core_meta["supports_for_you"] is False
+        assert core_meta["execution_mode"] == "tmux_kernel_host"
+        assert core_meta["runs_in_tmux"] is True
+        assert core_meta["supports_resume"] is True
+        assert core_meta["supports_branch"] is True
+        assert core_meta["supports_for_you"] is True
 
         assert runs_in_tmux("claude") is True
         assert runs_in_tmux("agy") is True
-        assert runs_in_tmux("coreagent") is False
+        assert runs_in_tmux("coreagent") is True
 
         assert supports_profile_binding("claude") is True
         assert supports_profile_binding("codex") is True
-        assert supports_profile_binding("coreagent") is False
+        assert supports_profile_binding("coreagent") is True
 
         assert supports_for_you("claude") is True
         assert supports_for_you("agy") is True
         assert supports_for_you("codex") is True
         assert supports_for_you("opencode") is True
-        assert supports_for_you("coreagent") is False
+        assert supports_for_you("coreagent") is True
 
 
 class TestSessionOntologyGate1AndGate2:

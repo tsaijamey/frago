@@ -136,9 +136,9 @@ class WorkbenchAgent:
     #: 会话编号谁 mint："caller" = 页面先给（claude），"claimed" = 起来后认领
     #: （codex / opencode / agy），后者新建时有一段等编号的空窗。
     id_origin: str
-    #: 本体六大能力切面支持等级字典
+    #: 本体七大正交能力切面支持等级字典
     capabilities: dict[str, str] = field(default_factory=dict)
-    #: 运行形态："tmux_tui" | "headless_kernel"
+    #: 运行形态："tmux_tui" | "tmux_kernel_host" | "headless_kernel"
     execution_mode: str = "tmux_tui"
     #: 是否运行在 tmux 窗格中
     runs_in_tmux: bool = True
@@ -216,11 +216,11 @@ def _coreagent_agent() -> WorkbenchAgent:
         reason=reason,
         id_origin="caller",
         capabilities=dict(meta.get("capabilities", {})),
-        execution_mode=str(meta.get("execution_mode", "headless_kernel")),
-        runs_in_tmux=bool(meta.get("runs_in_tmux", False)),
-        supports_resume=bool(meta.get("supports_resume", False)),
-        supports_branch=bool(meta.get("supports_branch", False)),
-        supports_for_you=bool(meta.get("supports_for_you", False)),
+        execution_mode=str(meta.get("execution_mode", "tmux_kernel_host")),
+        runs_in_tmux=bool(meta.get("runs_in_tmux", True)),
+        supports_resume=bool(meta.get("supports_resume", True)),
+        supports_branch=bool(meta.get("supports_branch", True)),
+        supports_for_you=bool(meta.get("supports_for_you", True)),
         capability_tier=str(meta.get("capability_tier", "tier1")),
         profile_mode=str(meta.get("profile_mode", "native_kernel")),
     )

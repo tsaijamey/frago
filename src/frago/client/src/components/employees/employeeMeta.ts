@@ -90,8 +90,6 @@ const KERNEL_LABEL: Record<string, string> = {
   opencode: 'opencode',
   agy: 'Antigravity',
   coreagent: 'CoreAgent',
-  gemini: 'Gemini',
-  cursor: 'Cursor',
 };
 
 export function kernelLabel(kernel: string): string {

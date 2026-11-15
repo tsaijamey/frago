@@ -25,6 +25,7 @@ import threading
 from collections.abc import Callable
 
 from frago.session.opencode_store import db_path, latest_turn
+from frago.session.service import SessionOntologyService
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,15 @@ class OpencodeStream:
         *,
         on_records: Callable[[str, list[dict]], None] | None = None,
         on_turn_complete: Callable[[str, bool, str | None], None] | None = None,
+        ontology_service: SessionOntologyService | None = None,
+        origin: str = "terminal",
     ) -> None:
         self._on_records = on_records
         self._on_turn_complete = on_turn_complete
+        self._ontology_service = (
+            ontology_service if ontology_service is not None else SessionOntologyService()
+        )
+        self._origin = origin
 
         self._session_seqs: dict[str, int] = {}
         self._session_done: dict[str, bool] = {}
@@ -136,6 +143,28 @@ class OpencodeStream:
                     "OpencodeStream: failed processing session %s", sid
                 )
 
+    def _observed_origin(self, session_id: str) -> str:
+        try:
+            from frago.session.session_origin import load_origin_index
+
+            if load_origin_index().is_worker(session_id):
+                return "worker"
+        except Exception:  # noqa: BLE001
+            logger.debug("could not read origin index for %s", session_id, exc_info=True)
+        return self._origin
+
+    @staticmethod
+    def _map_record_to_step_type(kind: str) -> str:
+        if kind == "user.say":
+            return "user"
+        if kind in ("agent.say", "agent.think"):
+            return "assistant"
+        if kind == "tool.call":
+            return "tool_call"
+        if kind == "tool.result":
+            return "tool_result"
+        return "system"
+
     def _process_session(self, session_id: str) -> None:
         """Re-translate one session, diff, and emit."""
         records = _safe_translate(session_id)
@@ -162,6 +191,31 @@ class OpencodeStream:
                         session_id,
                     )
 
+            if not first_sight and self._ontology_service is not None:
+                try:
+                    self._ontology_service.ensure_managed_session(
+                        session_id=session_id,
+                        agent_kernel_id="opencode",
+                        origin=self._observed_origin(session_id),
+                    )
+                    for r in new_records:
+                        step_type = self._map_record_to_step_type(r.kind)
+                        payload = r.payload if isinstance(r.payload, dict) else {}
+                        tool_name = (
+                            payload.get("tool_name") if isinstance(payload, dict) else None
+                        )
+                        self._ontology_service.record_session_step(
+                            session_id=session_id,
+                            step_type=step_type,
+                            payload_dict=payload,
+                            tool_name=tool_name,
+                        )
+                except Exception:
+                    logger.exception(
+                        "OpencodeStream failed to record ontology steps for session %s",
+                        session_id,
+                    )
+
         turn = latest_turn(session_id)
         done = turn.done if turn is not None else False
         prev_done = self._session_done.get(session_id, False)
@@ -174,6 +228,22 @@ class OpencodeStream:
 
         if done and not prev_done:
             self._session_done[session_id] = True
+            if self._ontology_service is not None:
+                try:
+                    self._ontology_service.ensure_managed_session(
+                        session_id=session_id,
+                        agent_kernel_id="opencode",
+                        origin=self._observed_origin(session_id),
+                    )
+                    self._ontology_service.yield_awaiting_input(
+                        session_id=session_id,
+                        waiting_reason="end_turn",
+                    )
+                except Exception:
+                    logger.exception(
+                        "OpencodeStream failed to transition ontology awaiting_input for session %s",
+                        session_id,
+                    )
             if self._on_turn_complete is not None:
                 try:
                     self._on_turn_complete(session_id, True, "stop" if done else None)

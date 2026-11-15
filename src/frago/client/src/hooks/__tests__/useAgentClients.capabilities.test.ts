@@ -8,13 +8,14 @@ import {
 } from '../useAgentClients';
 
 describe('useAgentClients 能力矩阵与特性声明', () => {
-  it('DEFAULT_AGENT_CAPABILITIES 包含 5 大内核的六大正交切面', () => {
+  it('DEFAULT_AGENT_CAPABILITIES 包含 5 大内核的七大正交切面', () => {
     const kernels = ['claude', 'agy', 'opencode', 'codex', 'coreagent'] as const;
     const facets = [
       'identity_probe',
       'lifecycle_action',
       'transcript_sync',
       'awaiting_input_probe',
+      'busy_probe',
       'context_watermark',
       'hook_injection',
     ];
@@ -30,7 +31,10 @@ describe('useAgentClients 能力矩阵与特性声明', () => {
     expect(DEFAULT_AGENT_CAPABILITIES.agy.awaiting_input_probe).toBe('fallback');
     expect(DEFAULT_AGENT_CAPABILITIES.codex.awaiting_input_probe).toBe('fallback');
     expect(DEFAULT_AGENT_CAPABILITIES.opencode.awaiting_input_probe).toBe('fallback');
-    expect(DEFAULT_AGENT_CAPABILITIES.coreagent.awaiting_input_probe).toBe('unsupported');
+    expect(DEFAULT_AGENT_CAPABILITIES.coreagent.awaiting_input_probe).toBe('adapted');
+    expect(DEFAULT_AGENT_CAPABILITIES.codex.hook_injection).toBe('adapted');
+    expect(DEFAULT_AGENT_CAPABILITIES.claude.busy_probe).toBe('native');
+    expect(DEFAULT_AGENT_CAPABILITIES.coreagent.busy_probe).toBe('native');
   });
 
   it('优先消费服务端下发的能力切面，若缺省则回退到默认矩阵', () => {
