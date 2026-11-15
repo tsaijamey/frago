@@ -51,6 +51,7 @@ export default {
         'text-link': 'var(--text-link)',
         'border-color': 'var(--border-color)',
         'border-strong': 'var(--border-strong)',
+        'border-subtle': 'var(--border-subtle)',
         'border-primary': 'var(--border-primary)',
         'border-accent': 'var(--border-accent)',
         'accent-primary': 'var(--accent-primary)',
@@ -60,6 +61,7 @@ export default {
         // be hardcoded hexes, which breaks the light theme.
         'accent-primary-10': 'var(--accent-primary-10)',
         'accent-primary-20': 'var(--accent-primary-20)',
+        'accent-primary-border': 'var(--accent-primary-border)',
         'accent-secondary': 'var(--accent-secondary)',
         'accent-success': 'var(--accent-success)',
         'accent-warning': 'var(--accent-warning)',
@@ -68,7 +70,9 @@ export default {
         // 告警/报错/提示各自的淡底。同上：CSS 变量拿不到 Tailwind 的 /opacity，
         // 不给这三个令牌就只能写死十六进制，浅色主题必然失真。
         'accent-warning-10': 'var(--accent-warning-10)',
+        'accent-warning-border': 'var(--accent-warning-border)',
         'accent-error-10': 'var(--accent-error-10)',
+        'accent-error-border': 'var(--accent-error-border)',
         'accent-info-10': 'var(--accent-info-10)',
       },
       backgroundImage: {
