@@ -369,7 +369,17 @@ def _usage_tick(record: dict[str, Any], usage: _Usage, model: str | None) -> dic
     breakdown = breakdown_from_agy_record(record)
     if breakdown is None:
         return None
-    payload = build_tick(breakdown, total_before=usage.total, model=model)
+    raw_window = record.get("context_window")
+    payload = build_tick(
+        breakdown,
+        total_before=usage.total,
+        context_window=(
+            int(raw_window)
+            if isinstance(raw_window, int | float) and not isinstance(raw_window, bool) and raw_window > 0
+            else None
+        ),
+        model=model,
+    )
     usage.total = int(payload["total_tokens"])
     return payload
 

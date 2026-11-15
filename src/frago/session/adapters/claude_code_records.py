@@ -934,10 +934,21 @@ class _Translator:
         if usage is None:
             return
         breakdown = breakdown_from_claude_usage(usage)
-        model = _as_dict(row.get("message")).get("model")
+        msg_dict = _as_dict(row.get("message"))
+        model = msg_dict.get("model")
+        raw_window = (
+            usage.get("context_window")
+            or msg_dict.get("context_window")
+            or row.get("context_window")
+        )
         payload = build_tick(
             breakdown,
             total_before=self._usage_total,
+            context_window=(
+                int(raw_window)
+                if isinstance(raw_window, int | float) and not isinstance(raw_window, bool) and raw_window > 0
+                else None
+            ),
             model=model if isinstance(model, str) and model else None,
         )
         self._usage_total = int(payload["total_tokens"])

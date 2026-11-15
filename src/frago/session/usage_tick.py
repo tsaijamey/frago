@@ -44,6 +44,7 @@ __all__ = [
     "breakdown_from_opencode_tokens",
     "build_tick",
     "empty_breakdown",
+    "infer_context_window",
 ]
 
 #: 四个分项在统一记录里叫什么 → Claude Code / CoreAgent 原始 ``usage`` 里叫什么。
@@ -155,6 +156,31 @@ def breakdown_from_opencode_tokens(tokens: dict[str, Any]) -> dict[str, int] | N
     return breakdown if any(breakdown.values()) else None
 
 
+def infer_context_window(
+    model: str | None = None,
+    explicit: int | float | None = None,
+) -> int | None:
+    """按显式声明或模型标识推断上下文窗口上限；未知模型返回 ``None``。"""
+    if isinstance(explicit, int | float) and not isinstance(explicit, bool) and explicit > 0:
+        return int(explicit)
+    if not isinstance(model, str) or not model.strip():
+        return None
+    m = model.strip().lower()
+    if "[1m]" in m or "1m" in m.split("-"):
+        return 1_000_000
+    if any(tok in m for tok in ("claude", "sonnet", "opus", "haiku")):
+        return 200_000
+    if "gemini" in m:
+        return 1_000_000
+    if "gpt-5" in m:
+        return 272_000
+    if any(tok in m for tok in ("gpt-4.1", "gpt-4o", "o1", "o3", "o4")):
+        return 200_000 if m.startswith(("o1", "o3", "o4")) else 128_000
+    if "deepseek" in m:
+        return 128_000
+    return None
+
+
 def build_tick(
     breakdown: dict[str, int],
     *,
@@ -175,9 +201,10 @@ def build_tick(
     turn = sum(breakdown.values()) if turn_tokens is None else turn_tokens
     if context_tokens is None:
         context_tokens = sum(breakdown.get(field, 0) for field in PROMPT_FIELDS)
+    resolved_window = infer_context_window(model, context_window)
     return {
         "context_tokens": context_tokens,
-        "context_window": context_window,
+        "context_window": resolved_window,
         "turn_tokens": turn,
         "total_tokens": total_before + turn if total_tokens is None else total_tokens,
         "breakdown": dict(breakdown),

@@ -744,7 +744,11 @@ def _usage_breakdown(tokens: dict[str, Any]) -> dict[str, int] | None:
     return breakdown_from_opencode_tokens(tokens)
 
 
-def _with_usage_ticks(drafts: list[_Draft]) -> list[_Draft]:
+def _with_usage_ticks(
+    drafts: list[_Draft],
+    *,
+    model_by_msg: dict[str, str] | None = None,
+) -> list[_Draft]:
     """在每一条报了用量的步骤结束标记之后，插一道用量刻度。
 
     opencode 的用量挂在步骤结束标记上（见 :func:`_step_draft`），那正是"一次模型调用返回"
@@ -752,6 +756,7 @@ def _with_usage_ticks(drafts: list[_Draft]) -> list[_Draft]:
     """
     out: list[_Draft] = []
     total = 0
+    models = model_by_msg or {}
     for draft in drafts:
         out.append(draft)
         if draft.kind != "call.envelope" or draft.payload.get("phase") != "finish":
@@ -762,7 +767,18 @@ def _with_usage_ticks(drafts: list[_Draft]) -> list[_Draft]:
         breakdown = _usage_breakdown(tokens)
         if breakdown is None:
             continue
-        payload = build_tick(breakdown, total_before=total)
+        raw_window = draft.payload.get("context_window") or tokens.get("context_window")
+        model = models.get(draft.group_id) if draft.group_id else None
+        payload = build_tick(
+            breakdown,
+            total_before=total,
+            context_window=(
+                int(raw_window)
+                if isinstance(raw_window, int | float) and not isinstance(raw_window, bool) and raw_window > 0
+                else None
+            ),
+            model=model,
+        )
         total = int(payload["total_tokens"])
         out.append(
             _Draft(
@@ -835,7 +851,8 @@ def translate_session(session_id: str) -> list[UnifiedRecord]:
         if error_draft is not None:
             drafts.append(error_draft)
 
-    drafts = _with_usage_ticks(drafts)
+    model_by_msg = {e.message_id: e.model_id for e in envelopes if e.model_id}
+    drafts = _with_usage_ticks(drafts, model_by_msg=model_by_msg)
 
     return [
         UnifiedRecord(
