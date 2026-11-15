@@ -32,6 +32,7 @@ import contextlib
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -325,29 +326,61 @@ def send_queued(session_id: str, prompt: str, *, cwd_hint: str | None = None) ->
 
 
 def send_when_idle(
-    session_id: str, prompt: str, *, landed: Callable[[], bool]
+    session_id: str,
+    prompt: str,
+    *,
+    landed: Callable[[], bool],
+    confirm_s: float = 30.0,
+    poll_s: float = 0.1,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Literal["landed", "handed", "not_now"]:
     """替别人往这场会话里投一段话：**会话空闲才送，送完看记录确认进去了**。
 
-    给结对队友的消息用，不给主人自己打的字用。两者差在出错之后谁看得见：主人在页面上
-    打的话没进去，他当场就知道；队友的消息没进去，两边都以为送到了。2026-09-29 那次，
+    给结对队友的消息与异步回传用，不给主人自己打的字用。两者差在出错之后谁看得见：主人在页面上
+    打的话没进去，他当场就知道；队友或异步回传消息没进去，两边都以为送到了。2026-09-29 那次，
     :func:`send_queued` 在对方 agent 干活时把一条队友消息打进输入框，回车被吞，文字在
     输入框里停了四十分钟，最后跟主人自己打的一句拼成一条发言交了出去——
     对方 agent 分不清哪句是谁说的。
 
     - 会话在忙、或者输入框里已经有字 → ``not_now``，一个字都不打。
-    - 空闲 → 打字、回车，然后拿 ``landed`` 等这条发言出现在会话记录里。等到了是
-      ``landed``；没等到就把自己打进去的字清掉，回 ``not_now``，留给下一轮。
-    - CoreAgent 没有输入框，话交给它自己的排队 → ``handed``，之后只等它出现。
+    - 空闲 → 投喂（tmux 打字回车或 CoreAgent stdin 写入），然后拿 ``landed`` 等这条发言
+      真正落进会话记录里。等到了才返回 ``landed``；超时或进程未落盘即退出则返回 ``not_now``，
+      绝不放行未落盘的假回执。
     """
     from frago.server.services.ui_session_runner import get_runner
 
     target = resolve_target(session_id)
     if target.family == "coreagent":
-        from frago.server.services import coreagent_runner
+        from frago.server.services import coreagent_runner, workbench_queue
 
-        coreagent_runner.send_queued(session_id, prompt, cwd=target.cwd or str(Path.home()))
-        return "handed"
+        if coreagent_runner.busy(session_id):
+            return "not_now"
+        if not workbench_queue.is_server_process() and coreagent_runner.has_external_live_session(
+            session_id
+        ):
+            return "not_now"
+        try:
+            coreagent_runner.send_queued(
+                session_id, prompt, cwd=target.cwd or str(Path.home())
+            )
+        except (coreagent_runner.CoreAgentBusy, coreagent_runner.CoreAgentUnavailable):
+            return "not_now"
+
+        start = clock()
+        deadline = start + max(confirm_s, 0.5)
+        while True:
+            if landed():
+                return "landed"
+            if (
+                clock() - start >= 1.0
+                and not coreagent_runner.running(session_id)
+                and coreagent_runner.queued_count(session_id) == 0
+            ):
+                return "landed" if landed() else "not_now"
+            if clock() >= deadline:
+                return "not_now"
+            sleep(poll_s)
     return get_runner().submit_when_idle(
         session_id,
         prompt,

@@ -63,6 +63,20 @@ TAIL_TURN_WINDOW = 1
 #: 放送给前端的 WebSocket 消息类型。
 WS_SESSION_QUEUE_UPDATE = "session_queue_update"
 
+#: 当前进程是否为长驻 ``frago server`` 主进程（持有常驻 ``coreagent_runner._sessions`` 与热池）。
+_in_server_process: bool = False
+
+
+def mark_server_process(active: bool = True) -> None:
+    """标记当前进程是否为常驻 ``frago server`` 主进程。"""
+    global _in_server_process
+    _in_server_process = bool(active)
+
+
+def is_server_process() -> bool:
+    """返回当前进程是否为常驻 ``frago server`` 主进程。"""
+    return _in_server_process
+
 #: 引擎记账类记录：不单独构成对话轮次，也不代表用户或 agent 的实质发言。
 _BOOKKEEPING_KINDS = frozenset(
     {"call.envelope", "session.state", "todo.snapshot", "usage.tick"}
@@ -1435,7 +1449,7 @@ def _send_prompt(session_id: str, prompt: str, cwd_hint: str | None) -> bool:
         return False
 
     status = session_send.send_when_idle(session_id, prompt, landed=_landed)
-    return status in ("landed", "handed")
+    return status == "landed"
 
 
 def try_auto_inject(

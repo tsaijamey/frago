@@ -667,6 +667,45 @@ def wait_for_pending_child_dispatches(
     return None
 
 
+def _local_server_wakeup_port() -> int | None:
+    """若本机常驻 ``frago server`` 正在运行且当前处于外部子进程（非测试隔离桩），返回服务端口。"""
+    from frago.server.services import workbench_queue
+
+    if workbench_queue.is_server_process():
+        return None
+    if getattr(workbench_queue, "_sender_override", None) is not None:
+        return None
+    if os.environ.get("FRAGO_ASYNC_DISPATCH_NO_SERVER") == "1":
+        return None
+    if "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("FRAGO_ASYNC_DISPATCH_ALLOW_SERVER") != "1":
+        return None
+    try:
+        from frago.server.daemon import get_server_port, is_server_running
+
+        running, _pid = is_server_running()
+        if running:
+            return get_server_port()
+    except Exception:
+        pass
+    return None
+
+
+def _poke_server_queue_drain(port: int, session_id: str) -> dict[str, Any] | None:
+    """唤醒常驻 ``frago server`` 在其自身进程上下文内安全执行队首注入与落盘确认。"""
+    import urllib.parse
+    import urllib.request
+
+    url = f"http://127.0.0.1:{port}/api/workbench/sessions/{urllib.parse.quote(session_id, safe='')}/queue/drain"
+    req = urllib.request.Request(url, data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=35.0) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def deliver_callback_to_session(
     caller_session_id: str,
     callback_prompt: str,
@@ -707,6 +746,7 @@ def deliver_callback_to_session(
 
     deadline = time.monotonic() + max(max_wait_s, 5.0)
     idle_without_turn_id_ticks = 0
+    last_server_poke_at = 0.0
 
     while time.monotonic() < deadline:
         # 1. 优先检查权威送达回执（派发单磁盘状态与持久化队列回执）
@@ -727,7 +767,32 @@ def deliver_callback_to_session(
             if item_id in removed_items:
                 return False
 
-            # 2. 标准注入尝试：由 watcher 轮询同步触发一次 try_auto_inject
+        # 2. 跨进程所有权保护：若本机 frago server 在线，唤醒服务端在持有真实进程表与热池的
+        #    主进程内安全执行注入；严禁在短命 watcher 子进程里盲目另起 TmuxCoreProcess 误杀服务端会话！
+        server_port = _local_server_wakeup_port()
+        if server_port is not None:
+            now_mono = time.monotonic()
+            if now_mono - last_server_poke_at >= max(poll_interval_s, 1.0):
+                last_server_poke_at = now_mono
+                outcome = _poke_server_queue_drain(server_port, caller_session_id)
+                if isinstance(outcome, dict) and outcome.get("delivered"):
+                    delivered_item = outcome.get("item")
+                    if isinstance(delivered_item, dict) and (
+                        (item_id and delivered_item.get("id") == item_id)
+                        or (jid and delivered_item.get("job_id") == jid)
+                    ):
+                        return True
+            if item_id is not None:
+                receipt_after = workbench_queue.get_queue_delivery_receipt(caller_session_id)
+                if item_id in (receipt_after.get("delivered_items") or []) or (
+                    jid and jid in (receipt_after.get("delivered_job_ids") or [])
+                ):
+                    return True
+            time.sleep(poll_interval_s)
+            continue
+
+        if item_id is not None:
+            # 2b. 无服务端在线时的本进程标准注入尝试：触发一次 try_auto_inject
             try:
                 outcome = workbench_queue.try_auto_inject(caller_session_id, sync=True)
                 if isinstance(outcome, dict) and outcome.get("delivered"):

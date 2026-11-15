@@ -74,6 +74,61 @@ def active_run_marker_path(session_id: str) -> Path:
     return panes_dir() / f"{safe}.active_run"
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        return bool(psutil.pid_exists(pid))
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def has_live_tmux_session(session_id: str) -> bool:
+    """探测本机是否已存在针对 ``session_id`` 的活跃 CoreAgent tmux 承载实例。
+
+    用于防止非宿主短命子进程（如 ``async_dispatch`` watcher）误判会话未启动而新起
+    ``TmuxCoreProcess``，反手杀掉服务端正在托管的常驻进程。
+    """
+    if not session_id:
+        return False
+
+    marker = active_run_marker_path(session_id)
+    if marker.is_file():
+        with contextlib.suppress(OSError):
+            run_str = marker.read_text(encoding="utf-8", errors="replace").strip()
+            if run_str:
+                run_dir = Path(run_str)
+                if (
+                    run_dir.is_dir()
+                    and not (run_dir / "exit.code").is_file()
+                    and not (run_dir / "superseded").is_file()
+                ):
+                    pid_file = run_dir / "core.pid"
+                    if pid_file.is_file():
+                        with contextlib.suppress(ValueError, OSError):
+                            pid = int(pid_file.read_text(encoding="utf-8").strip())
+                            if _pid_is_alive(pid):
+                                return True
+
+    if tmux_available():
+        with contextlib.suppress(Exception):
+            res = subprocess.run(
+                ["tmux", "has-session", "-t", tmux_name_for(session_id)],
+                capture_output=True,
+                timeout=2,
+            )
+            if res.returncode == 0:
+                return True
+
+    return False
+
+
 def read_saved_pane_log(session_id: str, *, max_lines: int = 500) -> str:
     """读取留底的终端屏幕输出（tmux 已退出时兜底展示）。找不到返回空串。"""
     if not session_id:

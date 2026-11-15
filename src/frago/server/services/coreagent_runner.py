@@ -211,6 +211,17 @@ def running(session_id: str) -> bool:
     return got is not None and got.state != "absent"
 
 
+def has_external_live_session(session_id: str) -> bool:
+    """当前进程并未托管 ``session_id``，但本机已有另一进程（如 ``frago server``）持有其活 tmux 面板。"""
+    if running(session_id):
+        return False
+    if not _should_use_tmux():
+        return False
+    from frago.agent_driver.coreagent_pane_host import has_live_tmux_session
+
+    return has_live_tmux_session(session_id)
+
+
 def live_cwd(session_id: str) -> str | None:
     """此刻还开着的这一场跑在哪个目录；没有常驻条目或已收掉时返回 None。"""
     with _sessions_lock:
@@ -686,6 +697,18 @@ def _feed_one(sess: _Session, prompt: str) -> None:
 
 def _enqueue(sess: _Session, prompt: str) -> None:
     """把一句话排进这一场。满了就当场拒——唯一该拦下的情形。"""
+    external_live = False
+    with contextlib.suppress(Exception):
+        from frago.server.services import workbench_queue
+
+        external_live = (
+            not workbench_queue.is_server_process()
+            and has_external_live_session(sess.session_id)
+        )
+    if external_live:
+        raise CoreAgentBusy(
+            f"会话 {sess.session_id} 正由外部宿主进程（frago server）托管运行，禁止从短命子进程抢占重起"
+        )
     try:
         sess.pending.put_nowait(prompt)
     except queue.Full:

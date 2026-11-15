@@ -274,10 +274,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await team_sync.start()
 
     # Start autonomous workbench queue patrol (decouples callback delivery from WebUI views)
+    from frago.server.services import workbench_queue
     from frago.server.services.workbench_queue_patrol_service import (
         WorkbenchQueuePatrolService,
     )
 
+    workbench_queue.mark_server_process(True)
     queue_patrol = WorkbenchQueuePatrolService.get_instance()
     await queue_patrol.start()
 
@@ -421,6 +423,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     await team_sync.stop()
     await queue_patrol.stop()
+    workbench_queue.mark_server_process(False)
 
     # Stop workbench stream bridge
     WorkbenchStreamBridge.reset_instance()
