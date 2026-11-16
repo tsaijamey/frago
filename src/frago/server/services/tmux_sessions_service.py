@@ -556,6 +556,29 @@ def _fallback_tail(record_file: Path, session_id: str) -> tuple[str | None, str 
         return None, None, ""
 
 
+def _pending_caller_session_ids() -> set[str]:
+    """正在等待子 Worker 执行或异步回调送达的主会话 ID 集合。
+
+    主会话派发后台异步子任务后，自身终端往往已退回空闲提示符，但实际上它在等
+    `<frago-async-callback>` 回传，而不是等人类拍板。此类会话绝不能报 `awaiting_input=True`。
+    """
+    try:
+        from frago.session.async_dispatch import list_dispatch_jobs
+
+        pending: set[str] = set()
+        for job in list_dispatch_jobs(active_only=False):
+            caller = (job.caller_session_id or "").strip()
+            if not caller:
+                continue
+            if job.status in ("pending", "running", "delivering") or getattr(
+                job, "delivery_state", None
+            ) in ("queued", "delivering"):
+                pending.add(caller)
+        return pending
+    except Exception:  # noqa: BLE001 — 读取派发单失败时不阻断 tmux 列表
+        return set()
+
+
 def list_waiting() -> list[TmuxWaitingInfo]:
     """「For you」待输入判定清单，接入 Agent Ontology 三级降级回退链：
 
@@ -565,6 +588,7 @@ def list_waiting() -> list[TmuxWaitingInfo]:
     """
     names = _session_names()
     commands = _pane_commands()
+    pending_callers = _pending_caller_session_ids()
     frago_names = [n for n in names if n.startswith(_PREFIX)]
     pane_by_name: dict[str, str] = {}
     if len(frago_names) == 1:
@@ -604,12 +628,17 @@ def list_waiting() -> list[TmuxWaitingInfo]:
                 rows.append(TmuxWaitingInfo(name, session_id, alive, None, None, None, ""))
                 continue
             stop_reason, last_stop_at, text = _transcript_tail(path)
+            awaiting = (
+                False
+                if session_id in pending_callers
+                else _awaiting_input(pane_ansi, alive, kernel=kernel, session_id=session_id)
+            )
             rows.append(
                 TmuxWaitingInfo(
                     name=name,
                     session_id=session_id,
                     client_alive=alive,
-                    awaiting_input=_awaiting_input(pane_ansi, alive, kernel=kernel, session_id=session_id),
+                    awaiting_input=awaiting,
                     stop_reason=stop_reason,
                     last_stop_at=last_stop_at,
                     closing_text=_closing_text(text),
@@ -617,7 +646,11 @@ def list_waiting() -> list[TmuxWaitingInfo]:
             )
         elif cap_level == CAPABILITY_FALLBACK:
             # 第二级：通用启发式兜底探针（agy / codex / opencode）
-            awaiting = _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+            awaiting = (
+                False
+                if session_id in pending_callers
+                else _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+            )
             rec_file = _resolve_record_file(session_id)
             if rec_file is not None:
                 stop_reason, last_stop_at, text = _fallback_tail(rec_file, session_id)
@@ -868,6 +901,7 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
     mem = _memory_mb()
     managed = _managed_ids()
     commands = _pane_commands()
+    pending_callers = _pending_caller_session_ids()
     now = time.time()
 
     rows: list[TmuxSessionInfo] = []
@@ -897,7 +931,11 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
                 path = _transcript_path(session_id)
                 if path is not None:
                     # 认得出记录才是 Claude Code 会话，才套它的就绪判据
-                    awaiting = _awaiting_input(pane_ansi, alive)
+                    awaiting = (
+                        False
+                        if session_id in pending_callers
+                        else _awaiting_input(pane_ansi, alive)
+                    )
                     try:
                         verdict = tc.evaluate_file(path)
                         stop_reason = verdict.stop_reason
@@ -912,7 +950,11 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
                     except Exception as e:  # noqa: BLE001 — 一份记录读坏不该让整张清单开天窗
                         logger.debug("transcript probe failed for %s: %s", session_id, e)
             elif cap_level == CAPABILITY_FALLBACK:
-                awaiting = _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+                awaiting = (
+                    False
+                    if session_id in pending_callers
+                    else _fallback_awaiting_input(session_id, pane_ansi, alive, commands.get(name))
+                )
                 rec_file = _resolve_record_file(session_id)
                 if rec_file is not None:
                     try:
@@ -1100,13 +1142,41 @@ def open_session_names() -> set[str]:
     return set(_session_names())
 
 
+def _probe_unmounted_diagnostics(sid: str) -> tuple[str, bool, str | None]:
+    """只读投影未挂载 tmux 时的承载形态与可续接诊断（绝不向外抛异常）。"""
+    try:
+        from frago.server.services import coreagent_runner
+
+        if coreagent_runner.running(sid):
+            return "headless_subprocess", True, "headless_running"
+    except Exception:  # noqa: BLE001 — 探测失败不阻断终端快照返回
+        pass
+
+    try:
+        from frago.server.services import session_send
+        from frago.session.record_reader import UnknownSessionFamily
+
+        try:
+            session_send.resolve_target(sid)
+            return "unmounted", True, "not_mounted"
+        except session_send.SessionGone:
+            return "unmounted", False, "session_gone"
+        except session_send.SessionNotResumable:
+            return "unmounted", False, "not_resumable"
+        except UnknownSessionFamily:
+            return "unmounted", False, "not_resumable"
+    except Exception:  # noqa: BLE001 — 保底降级，绝不把探测异常外泄为 500
+        return "unmounted", True, "not_mounted"
+
+
 def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
     """抓取指定会话此刻的 tmux 终端屏幕（含 ANSI 转义与 scrollback）。
 
     - 若该会话此刻有活着的 tmux 窗格，实时调 ``tmux capture-pane -p -e -S -<lines>`` 返回；
     - 若 tmux 已退出（例如 CoreAgent 单轮 worker 已跑完收场），但留有 ``panes/<sid>.log``，
       则返回留底终端日志并标 ``alive=False, source="saved_pane"``；
-    - 两者皆无时返回 ``alive=False, source="none", content=""``。
+    - 两者皆无时返回 ``alive=False, source="none", content=""``，并附加只读诊断字段
+      ``hosting_mode``、``resumable``、``unmount_reason``。
     """
     sid = (session_id or "").strip()
     clamped_lines = max(50, min(int(lines or 500), 5000))
@@ -1121,6 +1191,9 @@ def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
             "memory_mb": 0,
             "source": "none",
             "content": "",
+            "hosting_mode": "unmounted",
+            "resumable": False,
+            "unmount_reason": "not_mounted",
         }
 
     link = find_for_session(sid)
@@ -1145,6 +1218,9 @@ def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
             "memory_mb": link.memory_mb,
             "source": "tmux",
             "content": content,
+            "hosting_mode": "tmux",
+            "resumable": True,
+            "unmount_reason": None,
         }
 
     if sid.startswith("core_"):
@@ -1163,8 +1239,12 @@ def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
                 "memory_mb": 0,
                 "source": "saved_pane",
                 "content": saved,
+                "hosting_mode": "saved_pane",
+                "resumable": True,
+                "unmount_reason": None,
             }
 
+    hosting_mode, resumable, unmount_reason = _probe_unmounted_diagnostics(sid)
     return {
         "session_id": sid,
         "alive": False,
@@ -1175,6 +1255,9 @@ def capture_session_terminal(session_id: str, *, lines: int = 500) -> dict:
         "memory_mb": 0,
         "source": "none",
         "content": "",
+        "hosting_mode": hosting_mode,
+        "resumable": resumable,
+        "unmount_reason": unmount_reason,
     }
 
 

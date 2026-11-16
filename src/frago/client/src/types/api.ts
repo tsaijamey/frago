@@ -1478,5 +1478,14 @@ export interface SessionTerminalSnapshot {
   memory_mb: number;
   source: 'tmux' | 'saved_pane' | 'none';
   content: string;
+  hosting_mode?: 'tmux' | 'saved_pane' | 'headless_subprocess' | 'unmounted';
+  resumable?: boolean;
+  unmount_reason?:
+    | 'session_gone'
+    | 'not_resumable'
+    | 'headless_running'
+    | 'not_mounted'
+    | string
+    | null;
 }
 

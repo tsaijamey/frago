@@ -207,7 +207,56 @@ class TestTerminalApiAndDeduplication:
         assert body["session_id"] == sid
         assert body["alive"] is False
         assert body["source"] == "saved_pane"
+        assert body["hosting_mode"] == "saved_pane"
+        assert body["resumable"] is True
+        assert body["unmount_reason"] is None
         assert "saved terminal output line 1" in body["content"]
+
+    def test_terminal_endpoint_reports_unmounted_diagnostics(self, monkeypatch, tmp_path):
+        from frago.server.services import session_send
+
+        monkeypatch.setenv("FRAGO_COREAGENT_PANES_DIR", str(tmp_path / "panes"))
+        monkeypatch.setattr(tsvc, "find_for_session", lambda _sid: None)
+
+        # 1. CoreAgent 无头子进程运行中
+        monkeypatch.setattr(cr, "running", lambda sid: sid == "core_headless_1")
+        headless = tsvc.capture_session_terminal("core_headless_1")
+        assert headless["source"] == "none"
+        assert headless["hosting_mode"] == "headless_subprocess"
+        assert headless["resumable"] is True
+        assert headless["unmount_reason"] == "headless_running"
+
+        # 2. 未挂载且可续接
+        monkeypatch.setattr(cr, "running", lambda _sid: False)
+        monkeypatch.setattr(
+            session_send,
+            "resolve_target",
+            lambda sid: session_send.SendTarget(sid, "codex", "codex", "/repo", is_new=False),
+        )
+        unmounted = tsvc.capture_session_terminal("019c0000-0000-7000-8000-000000000001")
+        assert unmounted["hosting_mode"] == "unmounted"
+        assert unmounted["resumable"] is True
+        assert unmounted["unmount_reason"] == "not_mounted"
+
+        # 3. 原始记录已丢失（SessionGone）
+        def _raise_gone(_sid):
+            raise session_send.SessionGone("missing")
+
+        monkeypatch.setattr(session_send, "resolve_target", _raise_gone)
+        gone = tsvc.capture_session_terminal("ses_missing_1")
+        assert gone["hosting_mode"] == "unmounted"
+        assert gone["resumable"] is False
+        assert gone["unmount_reason"] == "session_gone"
+
+        # 4. 不可续接（SessionNotResumable）
+        def _raise_unresumable(_sid):
+            raise session_send.SessionNotResumable("readonly")
+
+        monkeypatch.setattr(session_send, "resolve_target", _raise_unresumable)
+        readonly = tsvc.capture_session_terminal("ses_readonly_1")
+        assert readonly["hosting_mode"] == "unmounted"
+        assert readonly["resumable"] is False
+        assert readonly["unmount_reason"] == "not_resumable"
 
     def test_agent_sessions_service_deduplicates_tmux_backed_coreagent(self, monkeypatch):
         snap = cr.LiveSessionSnapshot(
