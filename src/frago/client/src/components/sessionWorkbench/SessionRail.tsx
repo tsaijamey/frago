@@ -321,6 +321,16 @@ export default function SessionRail({
     [setFilter]
   );
 
+  const runningWorkerParentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of sessions) {
+      if (s.origin === 'worker' && s.status === 'running' && s.parent_session_id) {
+        ids.add(s.parent_session_id);
+      }
+    }
+    return ids;
+  }, [sessions]);
+
   const lifeOf = useCallback(
     (s: WorkbenchSession) =>
       sessionLifecycleOf(s, {
@@ -328,9 +338,10 @@ export default function SessionRail({
         sending: sendingId === s.session_id,
         agentOnIt: busyId === s.session_id && sendingId !== s.session_id,
         hasDecisionCard: Boolean(decisionCardOf?.(s.session_id)),
-        callbackQueued: callbackSessionIds?.has(s.session_id) ?? false,
+        callbackQueued: Boolean(s.callback_queued) || (callbackSessionIds?.has(s.session_id) ?? false),
+        hasRunningWorker: Boolean(s.has_running_worker) || runningWorkerParentIds.has(s.session_id),
       }),
-    [forYou, sendingId, busyId, decisionCardOf, callbackSessionIds]
+    [forYou, sendingId, busyId, decisionCardOf, callbackSessionIds, runningWorkerParentIds]
   );
 
   const baseSessions = useMemo(
@@ -1584,7 +1595,14 @@ export default function SessionRail({
                               busyTurn={busyId === session.session_id}
                               inTmux={inTmuxOf(session)}
                               card={decisionCardOf?.(session.session_id) ?? null}
-                              callbackQueued={callbackSessionIds?.has(session.session_id) ?? false}
+                              callbackQueued={
+                                Boolean(session.callback_queued) ||
+                                (callbackSessionIds?.has(session.session_id) ?? false)
+                              }
+                              hasRunningWorker={
+                                Boolean(session.has_running_worker) ||
+                                runningWorkerParentIds.has(session.session_id)
+                              }
                               nested={row.nested}
                               branchRoot={row.branchRoot}
                               branchCard={row.branchCard}

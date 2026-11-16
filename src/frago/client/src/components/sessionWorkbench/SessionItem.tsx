@@ -37,7 +37,7 @@ export const FAMILY_ICON: Record<SessionFamily, { src: string; label: string }> 
 const SELECTED = 'bg-[var(--sel-bg)] [box-shadow:inset_0_0_0_1px_var(--sel-border),var(--sel-shadow)]';
 
 /** 路径里有空格、引号这类字符时裹一层单引号，否则粘进终端会被拆成两个参数。 */
-function shellArg(value: string): string {
+export function shellArg(value: string): string {
   return /^[A-Za-z0-9_\-./~:@%+=,]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -198,6 +198,8 @@ export const ORIGIN_LABEL: Record<SessionOriginKey, string> = {
 
 type SessionMetaExtra = WorkbenchSession & {
   callback_queued?: boolean;
+  has_running_worker?: boolean;
+  need_decision?: boolean;
   need?: unknown;
   lifecycle?: SessionLifecycleKey;
   status?: WorkbenchSession['status'] | 'error';
@@ -227,6 +229,7 @@ export function sessionLifecycleOf(
     agentOnIt?: boolean;
     hasDecisionCard?: boolean;
     callbackQueued?: boolean;
+    hasRunningWorker?: boolean;
   } = {}
 ): { key: SessionLifecycleKey; label: string } {
   const meta = session as SessionMetaExtra;
@@ -234,11 +237,22 @@ export function sessionLifecycleOf(
   if (opts.callbackQueued || meta.callback_queued || meta.lifecycle === 'callback') {
     return { key: 'callback', label: 'Callback queued' };
   }
-  if (opts.forYou || opts.hasDecisionCard || meta.need) {
-    return { key: 'waiting', label: 'Waiting decision' };
-  }
-  if (opts.sending || opts.agentOnIt || session.status === 'running') {
+  if (
+    opts.sending ||
+    opts.agentOnIt ||
+    session.status === 'running' ||
+    opts.hasRunningWorker ||
+    meta.has_running_worker
+  ) {
     return { key: 'running', label: 'Running' };
+  }
+  if (
+    opts.hasDecisionCard ||
+    meta.need ||
+    meta.need_decision === true ||
+    (meta.need_decision === undefined && Boolean(opts.forYou))
+  ) {
+    return { key: 'waiting', label: 'Waiting decision' };
   }
   if (session.status === 'done') return { key: 'completed', label: 'Completed' };
   return { key: 'idle', label: 'Idle' };
@@ -295,6 +309,7 @@ export default function SessionItem({
   inTmux = false,
   card = null,
   callbackQueued = false,
+  hasRunningWorker = false,
   busyTurn = false,
   nested = false,
   branchRoot = false,
@@ -336,6 +351,8 @@ export default function SessionItem({
   card?: string | null;
   /** 存在待回传 / 积压的异步回调。 */
   callbackQueued?: boolean;
+  /** 存在正在后台运行的子 Worker 会话。 */
+  hasRunningWorker?: boolean;
   /** 本页刚发出的一句还没答完：菜单里关 tmux 先问。 */
   busyTurn?: boolean;
   /**
@@ -463,18 +480,6 @@ export default function SessionItem({
    * 颜色从不单独承载语义：那枚点带 `title`，写着它是什么档。取字复用会话状态那一套
    * 词表（`workbench.status.*`，左栏状态行与时间线用的是同一份），不另造一套说法。
    */
-  const signal: 'pending' | 'running' | 'done' = forYou
-    ? 'pending'
-    : progress
-      ? 'running'
-      : 'done';
-  const signalLabel = t(
-    signal === 'pending'
-      ? 'workbench.report.slotDecision'
-      : signal === 'running'
-        ? 'workbench.status.running'
-        : 'workbench.status.done'
-  );
   const originKey = sessionOriginOf(session);
   const life = sessionLifecycleOf(session, {
     forYou,
@@ -482,7 +487,21 @@ export default function SessionItem({
     agentOnIt,
     hasDecisionCard: Boolean(card),
     callbackQueued,
+    hasRunningWorker,
   });
+  const signal: 'pending' | 'running' | 'done' =
+    life.key === 'waiting' || life.key === 'callback'
+      ? 'pending'
+      : life.key === 'running'
+        ? 'running'
+        : 'done';
+  const signalLabel = t(
+    signal === 'pending'
+      ? 'workbench.report.slotDecision'
+      : signal === 'running'
+        ? 'workbench.status.running'
+        : 'workbench.status.done'
+  );
   const lifeColorCls =
     life.key === 'waiting' || life.key === 'callback'
       ? 'text-accent-warning'

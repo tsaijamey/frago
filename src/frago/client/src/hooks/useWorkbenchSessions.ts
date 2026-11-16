@@ -139,6 +139,12 @@ export interface WorkbenchSession {
    * 员工岗位配置的双色系颜色名（如 `amber` / `ocean`）。服务端联表补齐；缺省时按 `employee_id` 确定性回退。
    */
   employee_color?: string | null;
+  /** 该会话存在尚未送达或投递中的异步回调（服务端下发）。 */
+  callback_queued?: boolean;
+  /** 该会话派发了后台 Worker 且仍有子任务处于 pending / running。 */
+  has_running_worker?: boolean;
+  /** 该会话此刻是否真正存在需要人类拍板的未决事项（服务端收敛判定）。 */
+  need_decision?: boolean;
 }
 
 /**

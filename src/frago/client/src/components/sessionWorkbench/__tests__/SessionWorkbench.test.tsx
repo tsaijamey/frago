@@ -1169,6 +1169,196 @@ describe('RecordStream 中栏', () => {
       expect(screen.getByTestId('watcher-talk-body-3').textContent).toContain('第3轮答复：回归测试全绿');
       expect(screen.getByTestId('watcher-talk-body-1').textContent).toContain('第1轮答复：环境已就绪');
     });
+
+    it('PROGRESS LEDGER 自动剥离系统脚手架噪音，长任务书默认紧凑折叠并支持展开全文/收起及切会话重置', () => {
+      const longTaskPrompt = [
+        '<image name=[Image #1] path="/Users/frago/.frago/webui_uploads/s1/shot.png"></image>',
+        '<frago-employee id="frago-developer" title="frago Developer" kernel="claude">',
+        '岗位：frago Developer',
+        '</frago-employee>',
+        '',
+        '# 任务书：会话详情页 PROGRESS LEDGER 高度优化',
+        '',
+        '## 1. 背景与现象',
+        '当 prompt 很长或给 worker 派发长任务书时，顶部 Goal Anchor 原样渲染整篇长文导致卡片高度暴涨，下方事项总控表被挤出首屏。',
+        '',
+        '## 2. 交付要求',
+        '- 剥离系统注入脚手架路径与内部指令。',
+        '- 限制默认展示高度，并提供平滑的展开全文与收起交互。',
+        '',
+        '[附带图片，请用读文件的工具逐一打开查看]:',
+        '/Users/frago/.frago/webui_uploads/s1/shot.png',
+      ].join('\n');
+
+      const longRecords = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: longTaskPrompt } }),
+        record({ id: 'a1', seq: 1, kind: 'agent.say', payload: { text: '已开始定位并改造' } }),
+      ];
+
+      const observerWithLongAnchor: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: longTaskPrompt,
+          tail: { kind: 'now', text: '正在编写前端紧凑折叠交互' },
+          decision: '',
+          happened: ['已完成链路定位'],
+          updated_at: 1_753_800_005_000,
+          model: 'deepseek-v4-flash',
+          status: 'ok',
+          status_detail: null,
+          runs: [
+            {
+              id: 'run-1',
+              run_id: 1,
+              task_id: 'T1',
+              actor: '主会话',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              phase_goal: 'PROGRESS LEDGER 优化',
+              tail: { kind: 'now', text: '正在编写前端紧凑折叠交互' },
+              happened_add: ['已完成链路定位'],
+              decision: '',
+              summary: '正在编写前端紧凑折叠交互',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const { rerender } = render(
+        <RecordStream
+          {...streamProps({ sessionId: 'ses-long-1', records: longRecords, observer: observerWithLongAnchor })}
+        />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      const anchorBox = screen.getByTestId('watcher-goal-anchor');
+      const anchorTextEl = screen.getByTestId('watcher-goal-anchor-text');
+      const toggleBtn = screen.getByTestId('watcher-goal-anchor-toggle');
+
+      // 1. 剥离了系统注入脚手架与附带图片路径
+      expect(anchorBox.textContent).not.toContain('附带图片');
+      expect(anchorBox.textContent).not.toContain('webui_uploads');
+      expect(anchorBox.textContent).not.toContain('frago-employee');
+
+      // 2. 默认处于紧凑折叠态，展示提炼标题与目标，且右侧短 Current State 不出现展开按钮
+      expect(anchorTextEl.getAttribute('data-clamped')).toBe('true');
+      expect(anchorTextEl.className).toContain('is-clamped');
+      expect(anchorTextEl.textContent).toContain('任务书：会话详情页 PROGRESS LEDGER 高度优化');
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+      expect(toggleBtn.textContent).toContain('展开全文');
+      expect(screen.queryByTestId('watcher-current-state-toggle')).toBeNull();
+
+      // 3. 点击「展开全文」展示完整干净任务书原文
+      fireEvent.click(toggleBtn);
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('true');
+      expect(toggleBtn.textContent).toContain('收起');
+      expect(anchorTextEl.getAttribute('data-clamped')).toBe('false');
+      expect(anchorTextEl.className).toContain('is-expanded');
+      expect(anchorTextEl.textContent).toContain('限制默认展示高度，并提供平滑的展开全文与收起交互');
+      expect(anchorTextEl.textContent).not.toContain('附带图片');
+
+      // 4. 切换到新会话时自动复位折叠态
+      rerender(
+        <RecordStream
+          {...streamProps({ sessionId: 'ses-long-2', records: longRecords, observer: observerWithLongAnchor })}
+        />
+      );
+      expect(screen.getByTestId('watcher-goal-anchor-toggle').getAttribute('aria-expanded')).toBe('false');
+      expect(screen.getByTestId('watcher-goal-anchor-text').getAttribute('data-clamped')).toBe('true');
+
+      // 5. 再点击展开、然后点击收起还原
+      fireEvent.click(screen.getByTestId('watcher-goal-anchor-toggle'));
+      expect(screen.getByTestId('watcher-goal-anchor-toggle').getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(screen.getByTestId('watcher-goal-anchor-toggle'));
+      expect(screen.getByTestId('watcher-goal-anchor-toggle').getAttribute('aria-expanded')).toBe('false');
+      expect(screen.getByTestId('watcher-goal-anchor-text').getAttribute('data-clamped')).toBe('true');
+    });
+
+    it('事项全为 done 且待拍板 0 时忽略过期 decision，且无真实交互决策卡时不渲染虚假「定位决策卡 ↓」按钮', () => {
+      const recsNoCard = [
+        record({ id: 'u1', seq: 0, kind: 'user.say', payload: { text: '优化输入区布局' } }),
+        record({ id: 'a1', seq: 1, kind: 'agent.say', payload: { text: '已上线并在 8093 验证。' } }),
+      ];
+      const staleObserver: SessionObserverView = {
+        state: {
+          bound: true,
+          anchor: '优化输入区布局',
+          tail: { kind: 'output', text: 'Composer 改造已在 8093 上线，亮暗双主题实拍已归档。' },
+          decision: '需等待前端视觉主审 ui-designer 返回细节',
+          happened: ['Composer 改造上线'],
+          updated_at: 1_753_800_005_000,
+          model: 'minimax-m3.1-flash',
+          status: 'ok',
+          status_detail: null,
+          tasks: [
+            {
+              id: 'T4',
+              proposed_at: 1_753_800_000_000,
+              title: '优化输入区非输入状态布局视觉',
+              status: 'done',
+              actor: '研发工作会话',
+              conclusion: 'Composer 胶囊态已上线',
+            },
+          ],
+          runs: [
+            {
+              id: 'run-1',
+              run_id: 1,
+              task_id: 'T4',
+              actor: '研发工作会话',
+              at: 1_753_800_005_000,
+              cursor_from: 0,
+              cursor_to: 2,
+              phase_goal: '优化输入区',
+              tail: { kind: 'output', text: 'Composer 改造已在 8093 上线' },
+              happened_add: ['Composer 改造上线'],
+              decision: '需等待前端视觉主审 ui-designer 返回细节',
+              summary: 'Composer 改造已在 8093 上线',
+            },
+          ],
+        },
+        loading: false,
+        error: null,
+      };
+
+      const { rerender } = render(
+        <RecordStream {...streamProps({ sessionId: 'ses-stale-1', records: recsNoCard, observer: staleObserver })} />
+      );
+      fireEvent.click(screen.getByTestId('lens-watcher'));
+
+      // 1. 待拍板 0 + 已办结 1：状态为 Completed，不显示 Waiting decision 与虚假横幅/定位按钮
+      expect(screen.getByTestId('watcher-stat-pills').textContent).toContain('待拍板 0');
+      expect(screen.getByTestId('watcher-stat-pills').textContent).toContain('已办结 1');
+      expect(screen.getByTestId('watcher-current-state').textContent).toContain('Completed');
+      expect(screen.getByTestId('watcher-current-state').textContent).not.toContain('Waiting decision');
+      expect(screen.queryByTestId('watcher-decision-banner')).toBeNull();
+      expect(screen.queryByText('定位决策卡 ↓')).toBeNull();
+
+      // 2. 即使存在 waiting 事项与文本提问，但流里并无真实交互决策卡组件时，只显示提示横幅而不出现虚假「定位决策卡 ↓」
+      const textOnlyWaitingObserver: SessionObserverView = {
+        ...staleObserver,
+        state: {
+          ...staleObserver.state!,
+          tasks: [
+            {
+              ...staleObserver.state!.tasks![0],
+              status: 'waiting',
+            },
+          ],
+          decision: '请问是否确认直接发布？',
+        },
+      };
+      rerender(
+        <RecordStream
+          {...streamProps({ sessionId: 'ses-stale-1', records: recsNoCard, observer: textOnlyWaitingObserver })}
+        />
+      );
+      expect(screen.getByTestId('watcher-decision-banner').textContent).toContain('请问是否确认直接发布？');
+      expect(screen.queryByText('定位决策卡 ↓')).toBeNull();
+    });
   });
 });
 
@@ -1444,6 +1634,64 @@ describe('SessionRail 左栏', () => {
 
     fireEvent.click(screen.getByTestId('list-filter-running'));
     expect(screen.getAllByTestId('session-title').map((el) => el.textContent)).toEqual(['执行中会话']);
+  });
+
+  it('主会话派发了运行中子 Worker 时显示 Running 且计入「运行中」，绝不误报 Waiting decision / For you', () => {
+    const parent = session({
+      session_id: 's-parent',
+      title: '主会话派发中',
+      status: 'done',
+      has_running_worker: true,
+      need_decision: false,
+    });
+    const worker = session({
+      session_id: 'core_w1',
+      title: '子 Worker 执行中',
+      origin: 'worker',
+      parent_session_id: 's-parent',
+      relation: { kind: 'dispatch', closed: false },
+      status: 'running',
+    });
+    const cbParent = session({
+      session_id: 's-cb-parent',
+      title: '等待回调回传会话',
+      status: 'done',
+      callback_queued: true,
+      need_decision: false,
+    });
+    const plainDone = session({
+      session_id: 's-plain',
+      title: '普通已完结会话',
+      status: 'done',
+      need_decision: false,
+    });
+    const rows = [parent, worker, cbParent, plainDone];
+
+    render(
+      <TestRail
+        state={railState({ sessions: rows, visible: rows, todaySessions: rows })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+
+    expect(screen.getByTestId('list-filter-decision').textContent).toContain('0');
+    expect(screen.getByTestId('list-filter-backlog').textContent).toContain('1');
+    expect(screen.getByTestId('list-filter-running').textContent).toContain('2');
+
+    const items = screen.getAllByTestId('session-item');
+    const parentItem = items.find((el) => el.textContent?.includes('主会话派发中'))!;
+    expect(parentItem.querySelector('[data-testid="session-lifecycle"]')?.textContent).toContain('Running');
+    expect(parentItem.querySelector('[data-testid="session-lifecycle"]')?.textContent).not.toContain(
+      'Waiting decision'
+    );
+    expect(parentItem.getAttribute('data-for-you')).toBeNull();
+
+    const cbItem = items.find((el) => el.textContent?.includes('等待回调回传会话'))!;
+    expect(cbItem.querySelector('[data-testid="session-lifecycle"]')?.textContent).toContain('Callback queued');
+
+    const plainItem = items.find((el) => el.textContent?.includes('普通已完结会话'))!;
+    expect(plainItem.querySelector('[data-testid="session-lifecycle"]')).toBeNull();
   });
 
   it('标题上方遵循塔夫特常态静默：仅非默认来源与非常态生命周期才渲染 .si-badges，常态 Direct+Completed 完全静默，仍不暴露摘要预览行', () => {

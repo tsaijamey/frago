@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import time
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -67,6 +68,136 @@ from frago.skills.skill_prompt import UnknownSkill, embed_skills, load_skills
 
 router = APIRouter()
 
+_OBSERVER_DECISION_CACHE: dict[str, tuple[tuple[int, int], bool]] = {}
+_TRAILING_CARD_CACHE: dict[str, tuple[int, bool]] = {}
+_RECENT_DECISION_WINDOW_MS = 24 * 60 * 60 * 1000
+
+
+def _dispatch_states_by_caller() -> tuple[set[str], set[str]]:
+    """一次扫描异步派发单，返回 (有运行中子任务的主会话集合, 有排队/送达中回调的主会话集合)。"""
+    try:
+        from frago.session.async_dispatch import list_dispatch_jobs
+
+        running_callers: set[str] = set()
+        callback_callers: set[str] = set()
+        for job in list_dispatch_jobs(active_only=False):
+            cid = (job.caller_session_id or "").strip()
+            if not cid:
+                continue
+            if job.status in ("pending", "running"):
+                running_callers.add(cid)
+            elif job.status == "delivering" or getattr(
+                job, "delivery_state", None
+            ) in ("queued", "delivering"):
+                callback_callers.add(cid)
+        return running_callers, callback_callers
+    except Exception:  # noqa: BLE001 — 读取派发账本异常不阻断工作台清单
+        return set(), set()
+
+
+def _observer_slots_need_decision(session_id: str, family: str) -> bool:
+    """从已落盘的 observer-slots.json 判定是否存在未收敛的待拍板事项。"""
+    try:
+        from frago.server.services import session_observer
+
+        if family not in session_observer._FAMILY_DIR:
+            return False
+        slots_path = (
+            session_observer.session_dir(session_id, family)
+            / session_observer.SLOTS_FILENAME
+        )
+        if not slots_path.is_file():
+            return False
+        st = slots_path.stat()
+        key = (st.st_mtime_ns, st.st_size)
+        cached = _OBSERVER_DECISION_CACHE.get(str(slots_path))
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        slots = session_observer.load_slots(slots_path.parent, session_id, family)
+        fallback_at = (
+            slots.get("updated_at") or slots.get("tail_at") or slots.get("anchor_at")
+        )
+        raw_tasks = slots.get("tasks")
+        if isinstance(raw_tasks, list) and raw_tasks:
+            tasks = [
+                session_observer._normalize_task_item(t, fallback_at)
+                for t in raw_tasks
+                if isinstance(t, dict)
+            ]
+        else:
+            raw_runs = slots.get("runs")
+            base_runs = (
+                list(raw_runs)
+                if isinstance(raw_runs, list) and raw_runs
+                else session_observer._fallback_runs(slots)
+            )
+            tasks = session_observer._synthesize_tasks(
+                slots, session_observer._normalize_runs(base_runs)
+            )
+        reconciled = session_observer._reconcile_decision_consistency(
+            tasks, slots.get("decision")
+        )
+        has_waiting_task = any(
+            isinstance(t, dict)
+            and t.get("status") == session_observer.TASK_STATUS_WAITING
+            for t in tasks
+        )
+        verdict = bool(reconciled) or has_waiting_task
+        _OBSERVER_DECISION_CACHE[str(slots_path)] = (key, verdict)
+        return verdict
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _has_trailing_unanswered_card(session_id: str, last_active_at: int) -> bool:
+    """检查会话末轮是否存在尚未被人类回答的交互决策卡（带 last_active_at 缓存）。"""
+    cached = _TRAILING_CARD_CACHE.get(session_id)
+    if cached is not None and cached[0] == last_active_at:
+        return cached[1]
+    verdict = False
+    try:
+        from frago.server.services import session_observer, workbench_queue
+
+        recs = record_reader.read_records(session_id, limit=25)
+        for rec in reversed(recs):
+            if rec.agent_path:
+                continue
+            if rec.kind == "user.say" and session_observer.spoken_text(rec.payload) is not None:
+                break
+            if workbench_queue.record_has_interactive_card(rec, recs):
+                verdict = True
+                break
+    except Exception:  # noqa: BLE001
+        verdict = False
+    _TRAILING_CARD_CACHE[session_id] = (last_active_at, verdict)
+    return verdict
+
+
+def _session_needs_decision(
+    card: Any,
+    *,
+    status: str,
+    is_alive: bool,
+    has_running_worker: bool,
+    callback_queued: bool,
+    now_ms: int,
+) -> bool:
+    """判定会话此刻是否真正存在等待人类拍板的未决事项。"""
+    if (
+        has_running_worker
+        or callback_queued
+        or getattr(card, "origin", "human") == "worker"
+        or status == "error"
+    ):
+        return False
+    if _observer_slots_need_decision(card.session_id, card.family):
+        return True
+    if is_alive or (now_ms - int(getattr(card, "last_active_at", 0) or 0)) <= _RECENT_DECISION_WINDOW_MS:
+        return _has_trailing_unanswered_card(
+            card.session_id, int(getattr(card, "last_active_at", 0) or 0)
+        )
+    return False
+
 
 @router.get("/workbench/sessions")
 async def list_workbench_sessions() -> list[dict[str, Any]]:
@@ -89,10 +220,12 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
 
-    cards, open_names = await asyncio.gather(
+    cards, open_names, dispatch_states = await asyncio.gather(
         asyncio.to_thread(record_reader.list_sessions),
         asyncio.to_thread(tsvc.open_session_names),
+        asyncio.to_thread(_dispatch_states_by_caller),
     )
+    running_callers, callback_callers = dispatch_states
     # ``tmux_name``：开着时那个 tmux 会话的名字，页面「关闭 tmux 会话」的弹窗原样摆出来，
     # 命名规则不在前端再抄一份。没开着为 null。
     # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
@@ -111,11 +244,29 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     }
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
+    computed_states: list[tuple[Any, str, bool, str, bool]] = []
+    running_worker_parents: set[str] = set(running_callers)
     for card in cards:
         parent_by_sid[card.session_id] = card.parent_session_id
         emp_id = card.employee_id or active_employee_by_sid.get(card.session_id)
         if emp_id:
             direct_employee_by_sid[card.session_id] = emp_id
+        name = tmux_name_for(card.session_id)
+        alive = name in open_names
+        is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
+        status = card.status
+        if card.status != "error":
+            if is_alive and card.last_kind in IN_PROGRESS_KINDS:
+                status = "running"
+            elif not is_alive and status == "running":
+                status = "done" if card.last_kind == "agent.say" else "idle"
+        if (
+            getattr(card, "origin", "human") == "worker"
+            and card.parent_session_id
+            and (is_alive or status == "running")
+        ):
+            running_worker_parents.add(card.parent_session_id)
+        computed_states.append((card, name, alive, status, is_alive))
 
     def _resolve_employee_id(card: Any) -> str | None:
         direct = direct_employee_by_sid.get(card.session_id)
@@ -135,45 +286,55 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
             cur = parent_by_sid.get(cur)
         return None
 
-    rows = []
-    for card in cards:
-        name = tmux_name_for(card.session_id)
-        alive = name in open_names
-        is_alive = _still_alive(card.session_id, in_tmux=alive, core_alive=core_alive)
-        status = card.status
-        if card.status != "error":
-            if is_alive and card.last_kind in IN_PROGRESS_KINDS:
-                status = "running"
-            elif not is_alive and status == "running":
-                status = "done" if card.last_kind == "agent.say" else "idle"
-        card_data = asdict(card)
-        card_data.pop("last_kind", None)
-        employee_id = _resolve_employee_id(card)
-        matched_post = posts_by_id.get(employee_id) if employee_id else None
-        employee_title = (
-            matched_post.title if matched_post is not None else employee_id
-        )
-        employee_color = (
-            matched_post.color
-            if matched_post is not None
-            else (default_employee_color(employee_id) if employee_id else None)
-        )
-        row = {
-            **card_data,
-            "status": status,
-            "employee_id": employee_id,
-            "employee_title": employee_title,
-            "employee_color": employee_color,
-            "raw_title": card.title,
-            "custom_title": titles.get(card.session_id),
-            "in_tmux": alive,
-            "tmux_name": name if alive else None,
-            "alive": is_alive,
-            "local_ops": card.session_id in local_ops_ids,
-        }
-        if card.session_id in titles:
-            row["title"] = titles[card.session_id]
-        rows.append(row)
+    now_ms = int(time.time() * 1000)
+
+    def _build_rows() -> list[dict[str, Any]]:
+        built: list[dict[str, Any]] = []
+        for card, name, alive, status, is_alive in computed_states:
+            has_running_worker = card.session_id in running_worker_parents
+            callback_queued = card.session_id in callback_callers
+            need_decision = _session_needs_decision(
+                card,
+                status=status,
+                is_alive=is_alive,
+                has_running_worker=has_running_worker,
+                callback_queued=callback_queued,
+                now_ms=now_ms,
+            )
+            card_data = asdict(card)
+            card_data.pop("last_kind", None)
+            employee_id = _resolve_employee_id(card)
+            matched_post = posts_by_id.get(employee_id) if employee_id else None
+            employee_title = (
+                matched_post.title if matched_post is not None else employee_id
+            )
+            employee_color = (
+                matched_post.color
+                if matched_post is not None
+                else (default_employee_color(employee_id) if employee_id else None)
+            )
+            row = {
+                **card_data,
+                "status": status,
+                "employee_id": employee_id,
+                "employee_title": employee_title,
+                "employee_color": employee_color,
+                "raw_title": card.title,
+                "custom_title": titles.get(card.session_id),
+                "in_tmux": alive,
+                "tmux_name": name if alive else None,
+                "alive": is_alive,
+                "local_ops": card.session_id in local_ops_ids,
+                "has_running_worker": has_running_worker,
+                "callback_queued": callback_queued,
+                "need_decision": need_decision,
+            }
+            if card.session_id in titles:
+                row["title"] = titles[card.session_id]
+            built.append(row)
+        return built
+
+    rows = await asyncio.to_thread(_build_rows)
     # 这一场还活着的才盯它的文件（主人 09-30 定的省法：不开着的、点开那一刻取一次最新内容
     # 就够）。清单本来就每 15 秒取一次、手上正好有 tmux 此刻的样子，顺带收一道。
     still_alive = {row["session_id"] for row in rows if row["alive"]}

@@ -270,3 +270,101 @@ class TestAwaitingInputThreeTierFallbackChain:
         # 3. Claude (native): 保持存量专用探针，匹配带括号秒数 `(45s` 与 token 计数
         assert _is_busy("✻ Thinking (45s · ↑ 1.2k tokens)", kernel="claude") is True
         assert _is_busy("❯ \n  ? for shortcuts", kernel="claude") is False
+
+    def test_list_waiting_suppresses_awaiting_input_when_async_dispatch_pending(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """主会话派发了在途子 Worker（pending/running/queued callback）时，绝不误报 awaiting_input=True。"""
+        import os
+
+        from frago.server.services.tmux_sessions_service import _FALLBACK_VERDICT_CACHE, _PATH_CACHE
+        from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
+
+        _FALLBACK_VERDICT_CACHE.clear()
+        _PATH_CACHE.clear()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        claude_sid = "aaaa1111-1111-1111-1111-111111111111"
+        agy_sid = "bbbb2222-2222-2222-2222-222222222222"
+
+        claude_dir = tmp_path / ".claude" / "projects" / "test_proj"
+        claude_dir.mkdir(parents=True)
+        (claude_dir / f"{claude_sid}.jsonl").write_text(
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "已派发 Worker"}]}})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        agy_dir = tmp_path / ".frago" / "sessions" / "agy" / agy_sid
+        agy_dir.mkdir(parents=True)
+        agy_file = agy_dir / "raw.jsonl"
+        agy_file.write_text(
+            json.dumps({"type": "assistant", "message": {"content": "已派发 Worker"}}) + "\n",
+            encoding="utf-8",
+        )
+        past_time = time.time() - 10.0
+        os.utime(agy_file, (past_time, past_time))
+
+        # claude_sid 挂一个 running 派发单；agy_sid 挂一个 queued 回调单
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-claude-run",
+                kind="worker",
+                mode="new",
+                caller_session_id=claude_sid,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_1111",
+                target_name="core_1111",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="check",
+                task_summary="check",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="running",
+                delivery_state="queued",
+            )
+        )
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-agy-cb",
+                kind="worker",
+                mode="new",
+                caller_session_id=agy_sid,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_2222",
+                target_name="core_2222",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="check",
+                task_summary="check",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="completed",
+                delivery_state="queued",
+            )
+        )
+
+        tmux_sessions = [f"frago-agent-{claude_sid}", f"frago-agent-{agy_sid}"]
+        tmux_commands = {
+            f"frago-agent-{claude_sid}": "claude",
+            f"frago-agent-{agy_sid}": "antigravity",
+        }
+        with (
+            patch("frago.server.services.tmux_sessions_service._session_names", return_value=tmux_sessions),
+            patch("frago.server.services.tmux_sessions_service._pane_commands", return_value=tmux_commands),
+            patch("frago.server.services.tmux_sessions_service._tmux", return_value=""),
+            patch("frago.server.services.tmux_sessions_service._awaiting_input", return_value=True),
+            patch("frago.server.services.tmux_sessions_service._is_busy", return_value=False),
+        ):
+            waiting = list_waiting()
+            by_sid = {w.session_id: w for w in waiting if w.session_id}
+            assert by_sid[claude_sid].awaiting_input is False
+            assert by_sid[agy_sid].awaiting_input is False

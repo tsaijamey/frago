@@ -77,6 +77,8 @@ export function forYouOf(
   card: string | null = null
 ): ForYouInfo | null {
   if (session.origin !== 'human') return null;
+  if (session.callback_queued === true || session.has_running_worker === true) return null;
+  if (session.need_decision === false && !card) return null;
   if (!row) return null;
   if (row.client_alive !== true) return null;
   if (row.awaiting_input !== true) return null;
@@ -149,9 +151,20 @@ export function useForYou(
     return map;
   }, [rows]);
 
+  const runningWorkerParentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of sessions) {
+      if (s.origin === 'worker' && s.status === 'running' && s.parent_session_id) {
+        ids.add(s.parent_session_id);
+      }
+    }
+    return ids;
+  }, [sessions]);
+
   const infos = useMemo(() => {
     const map = new Map<string, ForYouInfo>();
     for (const s of sessions) {
+      if (runningWorkerParentIds.has(s.session_id)) continue;
       const row = bySession.get(s.session_id);
       if (!row) continue;
       const hold = suppressed[s.session_id];
@@ -163,7 +176,7 @@ export function useForYou(
       if (info) map.set(s.session_id, info);
     }
     return map;
-  }, [sessions, bySession, suppressed, viewedAt, decisionCardOf]);
+  }, [sessions, runningWorkerParentIds, bySession, suppressed, viewedAt, decisionCardOf]);
 
   const suppress = useCallback((sessionId: string) => {
     setSuppressed((prev) => ({ ...prev, [sessionId]: Date.now() }));

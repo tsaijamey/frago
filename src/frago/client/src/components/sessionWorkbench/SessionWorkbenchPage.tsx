@@ -198,6 +198,13 @@ export default function SessionWorkbenchPage() {
     (sid: string) => (cardQuestion && cardQuestion.sid === sid ? cardQuestion.question : null),
     [cardQuestion]
   );
+  const callbackSessionIds = useMemo(
+    () =>
+      new Set(
+        sessions.sessions.filter((s) => s.callback_queued === true).map((s) => s.session_id)
+      ),
+    [sessions.sessions]
+  );
   const forYou = useForYou(sessions.sessions, views.viewedAt, decisionCardOf);
   useEffect(() => {
     setIsForYou(() => (id: string) => forYou.infoOf(id) !== null);
@@ -1081,6 +1088,7 @@ export default function SessionWorkbenchPage() {
           today={today}
           holdId={holdId}
           decisionCardOf={decisionCardOf}
+          callbackSessionIds={callbackSessionIds}
           onSessionDeleted={(sid) => {
             if (sid === selectedId) setWorkbenchSessionId(null);
           }}
@@ -1355,17 +1363,28 @@ export default function SessionWorkbenchPage() {
               /* 还没数出来、而且没出错 → 那一档后面写个省略号。出错就不写：个数出不来是
                  因为有故障，那时该说的是故障，不是「正在数」。 */
               filesPending={sessionFiles.files === null && sessionFiles.error === null}
-              terminalView={
+              terminalView={({ counts, switchToTalk }) => (
                 <SessionTerminal
                   sessionId={selectedId}
                   open={terminalOpen}
+                  session={selected}
+                  sessionRunning={sessionRunning}
+                  usage={usageReadout}
+                  recordCounts={{ all: counts.all, talk: counts.talk }}
+                  hasOlderRecords={hasOlder}
                   onAliveChange={setTerminalAliveOverride}
                   onStopped={() => {
                     forYou.refresh();
                     void sessions.reload();
                   }}
+                  onSwitchToTalk={switchToTalk}
+                  onFocusComposer={() => {
+                    document
+                      .querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')
+                      ?.focus();
+                  }}
                 />
-              }
+              )}
               terminalOpen={terminalOpen}
               onTerminalOpenChange={setTerminalOpen}
               terminalAlive={terminalAliveOverride ?? selectedInTmux}

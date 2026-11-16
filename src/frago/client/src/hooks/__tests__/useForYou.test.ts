@@ -77,6 +77,14 @@ describe('挂不挂', () => {
     expect(forYouOf(session({ origin: 'worker' }), row(), undefined)).toBeNull();
   });
 
+  it('有运行中子 Worker、有排队回调、或后端明确无待拍板事项时不挂 For you', () => {
+    expect(forYouOf(session({ has_running_worker: true }), row(), undefined)).toBeNull();
+    expect(forYouOf(session({ callback_queued: true }), row(), undefined)).toBeNull();
+    expect(forYouOf(session({ need_decision: false }), row(), undefined)).toBeNull();
+    // 若当前选中会话实收到了交互决策卡问题文本，即使 need_decision 尚未刷新仍允许挂上
+    expect(forYouOf(session({ need_decision: false }), row(), undefined, '选 A 还是 B？')).not.toBeNull();
+  });
+
   it('那一轮没终结（没有停下时刻）照挂，等的起点退回最后回复', () => {
     const info = forYouOf(session({ last_reply_at: STOP_MS - 5_000 }), row({ last_stop_at: null }), undefined);
     expect(info?.waitingSince).toBe(STOP_MS - 5_000);

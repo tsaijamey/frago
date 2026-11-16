@@ -138,6 +138,10 @@ class TestSessionList:
             # 编号是机器认的，名字才是人认的；只给编号，界面上就只剩一串字母。
             "employee_title",
             "employee_color",
+            # 异步派发聚合态：是否有运行中子 Worker、是否有排队/投递中回调、是否真有待拍板事项。
+            "has_running_worker",
+            "callback_queued",
+            "need_decision",
         }
 
     def test_开在tmux里的那一场才标上(self, client, monkeypatch):
@@ -193,6 +197,161 @@ class TestSessionList:
         assert [row["alive"] for row in body] == [True, False], (
             "CoreAgent 活着要认，「不在 tmux 里又没常驻进程」的不能跟着算活着"
         )
+
+    def test_dispatch_worker_and_callback_and_decision_flags(self, client, monkeypatch, tmp_path):
+        """透出 has_running_worker / callback_queued / need_decision：在跑 Worker 不误报待拍板。"""
+        from pathlib import Path
+
+        from frago.server.routes import workbench as wb_route
+        from frago.server.services import coreagent_runner, session_observer, tmux_sessions_service as tsvc
+        from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
+
+        wb_route._OBSERVER_DECISION_CACHE.clear()
+        wb_route._TRAILING_CARD_CACHE.clear()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        parent_running = "11111111-1111-1111-1111-111111111111"
+        parent_cb = "22222222-2222-2222-2222-222222222222"
+        parent_decision = "33333333-3333-3333-3333-333333333333"
+        parent_plain = "44444444-4444-4444-4444-444444444444"
+        worker_run = "core_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+        # 1. parent_running 派发了一个 running 的 worker
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-run",
+                kind="worker",
+                mode="new",
+                caller_session_id=parent_running,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id=worker_run,
+                target_name=worker_run,
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="running",
+                delivery_state="queued",
+            )
+        )
+        # 2. parent_cb 的 worker 已结束，但 callback 仍在排队投递
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-cb",
+                kind="worker",
+                mode="new",
+                caller_session_id=parent_cb,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                target_name="core_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="completed",
+                delivery_state="queued",
+            )
+        )
+        # 3. parent_decision 在 observer-slots.json 中有真实 waiting 事项与 decision
+        dec_dir = session_observer.session_dir(parent_decision, "agy")
+        dec_slots = session_observer.empty_slots(parent_decision, "agy")
+        dec_slots["decision"] = "选方案 A 还是 B？"
+        dec_slots["tasks"] = [{"id": "T1", "title": "拍板方案", "status": "waiting", "actor": "主会话", "conclusion": ""}]
+        session_observer.save_slots(dec_dir, dec_slots)
+
+        # 4. parent_plain 已办结且无待拍板事项
+        plain_dir = session_observer.session_dir(parent_plain, "agy")
+        plain_slots = session_observer.empty_slots(parent_plain, "agy")
+        plain_slots["tasks"] = [{"id": "T1", "title": "回答问题", "status": "done", "actor": "主会话", "conclusion": "已完成"}]
+        session_observer.save_slots(plain_dir, plain_slots)
+
+        monkeypatch.setattr(tsvc, "open_session_names", lambda: set())
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+        monkeypatch.setattr(
+            record_reader,
+            "list_sessions",
+            lambda: [
+                SessionCard(
+                    session_id=parent_running,
+                    family="agy",
+                    title="运行中父会话",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=4000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=worker_run,
+                    family="coreagent",
+                    title="运行中 Worker",
+                    directory=str(tmp_path),
+                    created_at=1500,
+                    last_active_at=4000,
+                    status="running",
+                    origin="worker",
+                    parent_session_id=parent_running,
+                ),
+                SessionCard(
+                    session_id=parent_cb,
+                    family="agy",
+                    title="待回传父会话",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=3000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=parent_decision,
+                    family="agy",
+                    title="真待拍板会话",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=parent_plain,
+                    family="agy",
+                    title="普通已答完会话",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=1500,
+                    status="done",
+                    origin="human",
+                ),
+            ],
+        )
+
+        body = {r["session_id"]: r for r in client.get("/api/workbench/sessions").json()}
+        assert body[parent_running]["has_running_worker"] is True
+        assert body[parent_running]["callback_queued"] is False
+        assert body[parent_running]["need_decision"] is False
+
+        assert body[parent_cb]["has_running_worker"] is False
+        assert body[parent_cb]["callback_queued"] is True
+        assert body[parent_cb]["need_decision"] is False
+
+        assert body[parent_decision]["has_running_worker"] is False
+        assert body[parent_decision]["callback_queued"] is False
+        assert body[parent_decision]["need_decision"] is True
+
+        assert body[parent_plain]["has_running_worker"] is False
+        assert body[parent_plain]["callback_queued"] is False
+        assert body[parent_plain]["need_decision"] is False
 
     def test_coreagent那一场收摊了就不算活着(self, client, monkeypatch):
         """空闲回收掉、真正关掉的那一场回落成不盯——省资源的本意不变。"""
