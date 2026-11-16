@@ -924,6 +924,7 @@ function MySide({
         <Composer
           sessionId={sessionId}
           family={session?.family ?? null}
+          layout="embedded"
           running={session?.status === 'running' || mine.awaitingAgent}
           onSendStart={cards.onSendStart}
           onSendFailed={cards.onSendFailed}

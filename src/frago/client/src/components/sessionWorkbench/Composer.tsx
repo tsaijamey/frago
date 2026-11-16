@@ -183,6 +183,12 @@ export interface ComposerProps {
   onRemoveQueueItem?: (itemId: string) => void | Promise<void>;
   /** 调整会话自有消息队列中的顺序。 */
   onMoveQueueItem?: (itemId: string, direction: 'up' | 'down') => void | Promise<void>;
+  /**
+   * 布局模式：
+   * - 'floating'（默认）：用于会话详情页底部，移除实体分割线并带顶部 Scrim 渐变遮罩
+   * - 'embedded'：用于 VibeTeamingPage 左栏底部等已由外层提供分割线与上下提示行的嵌入容器
+   */
+  layout?: 'floating' | 'embedded';
 }
 
 /** 输入框上方那一行原地提示。 */
@@ -251,7 +257,13 @@ const WALK_SPEED = 24;
  * 2. **停下来要停在当下站的地方。** 位移正走到一半时状态变了，直接把目标位置清零他会
  *    瞬移回原点。所以停的那一刻先量一次他此刻在屏幕上的横坐标，把它当作坐下的位置。
  */
-function LineWalker({ walking }: { walking: boolean }) {
+function LineWalker({
+  walking,
+  insetClass = 'inset-x-0',
+}: {
+  walking: boolean;
+  insetClass?: string;
+}) {
   const lane = useRef<HTMLDivElement>(null);
   const mark = useRef<HTMLSpanElement>(null);
   const posRef = useRef(16);
@@ -295,7 +307,7 @@ function LineWalker({ walking }: { walking: boolean }) {
       aria-hidden
       data-testid="composer-walker"
       data-walking={walking ? 'yes' : 'no'}
-      className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0 select-none"
+      className={`pointer-events-none absolute ${insetClass} top-0 z-10 h-0 select-none`}
     >
       <span
         ref={mark}
@@ -341,12 +353,14 @@ export default function Composer({
   onEnqueue,
   onRemoveQueueItem,
   onMoveQueueItem,
+  layout = 'floating',
 }: ComposerProps) {
   const { t, i18n } = useTranslation();
   const { familyLabel } = useWorkbenchLabels();
   const blocked = blockReason(sessionId);
   const [enqueueing, setEnqueueing] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const {
     text,
     setText,
@@ -577,20 +591,28 @@ export default function Composer({
     [blocked, takeFiles]
   );
 
+  const isFloating = layout === 'floating';
+
   return (
     <div
       data-testid="composer"
+      data-layout={layout}
       onDragOver={(e) => {
         e.preventDefault();
         if (!blocked) setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`relative shrink-0 border-t border-border-color bg-bg-primary px-5 py-3 ${
-        dragging ? 'bg-bg-hover' : ''
-      }`}
+      className={`relative shrink-0 bg-bg-primary ${
+        isFloating ? 'z-20 px-5 pb-3 pt-1' : 'px-3.5 py-2.5'
+      } ${dragging ? 'bg-bg-hover' : ''}`}
     >
-      <LineWalker walking={running || sending} />
+      {isFloating ? (
+        <div
+          aria-hidden
+          className="wb-composer-scrim pointer-events-none absolute inset-x-0 -top-5 h-5"
+        />
+      ) : null}
 
       {/* 输入框跟上面的记录流同宽、同边距：两者在常规屏左边界对齐，宽屏统一收口在 960px 居中阅读列内。 */}
       <div className="mx-auto flex w-full max-w-[960px] min-w-0 flex-col gap-2">
@@ -909,6 +931,17 @@ export default function Composer({
         ) : null}
 
         <PromptComposerBox
+          variant="compact"
+          minLines={1}
+          maxLines={9}
+          hasExtraContent={attachCount > 0 || Boolean(packedBanner)}
+          onExpandedChange={setIsExpanded}
+          topEdgeOverlay={
+            <LineWalker
+              walking={running || sending}
+              insetClass={isExpanded ? 'inset-x-4' : 'inset-x-6'}
+            />
+          }
           text={text}
           onChangeText={setText}
           skills={picked}
@@ -927,8 +960,10 @@ export default function Composer({
             blocked
               ? ''
               : family
-                ? t('workbench.composer.placeholderWithFamily', { family: familyLabel(family) })
-                : t('workbench.composer.placeholder')
+                ? t('workbench.composer.placeholderCompactWithFamily', {
+                    family: familyLabel(family),
+                  })
+                : t('workbench.composer.placeholderCompact')
           }
           idPrefix="composer"
           menuPlacement="above"
@@ -968,33 +1003,76 @@ export default function Composer({
                 <button
                   type="button"
                   data-testid="composer-enqueue"
+                  aria-label={t('workbench.composer.enqueue')}
                   disabled={!canEnqueue}
                   onClick={() => void handleEnqueue()}
                   title={t('workbench.composer.enqueueHint')}
-                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-color px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+                  className={
+                    isExpanded
+                      ? 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-color px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40'
+                      : `relative flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                          canEnqueue
+                            ? 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                            : 'text-text-dim'
+                        }`
+                  }
                 >
-                  <ListOrdered size={13} />
-                  {enqueueing
-                    ? t('workbench.composer.enqueueing')
-                    : t('workbench.composer.enqueue')}
+                  <ListOrdered size={isExpanded ? 13 : 15} strokeWidth={1.5} />
+                  {isExpanded ? (
+                    enqueueing ? (
+                      t('workbench.composer.enqueueing')
+                    ) : (
+                      t('workbench.composer.enqueue')
+                    )
+                  ) : (
+                    <>
+                      <span className="sr-only">
+                        {enqueueing
+                          ? t('workbench.composer.enqueueing')
+                          : t('workbench.composer.enqueue')}
+                      </span>
+                      {queueItems.length > 0 ? (
+                        <span
+                          data-testid="composer-enqueue-badge"
+                          className={`pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full border px-0.5 font-mono text-[9px] leading-none tabular-nums ${
+                            queueBlockedByCard
+                              ? 'border-accent-warning-border bg-bg-tertiary text-accent-warning'
+                              : 'border-border-color bg-bg-tertiary text-text-primary'
+                          }`}
+                        >
+                          {queueItems.length}
+                        </span>
+                      ) : null}
+                    </>
+                  )}
                 </button>
               ) : null}
               {onBringBack && !blocked ? (
                 <button
                   type="button"
                   data-testid="composer-bring-back"
+                  aria-label={t('workbench.branch.bringBack')}
                   onClick={onBringBack}
                   title={t('workbench.branch.bringBackHint')}
-                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10"
+                  className={
+                    isExpanded
+                      ? 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10'
+                      : 'flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-border-accent text-accent-primary transition-colors hover:bg-accent-primary-10'
+                  }
                 >
-                  <CornerUpLeft size={13} />
-                  {t('workbench.branch.bringBack')}
+                  <CornerUpLeft size={isExpanded ? 13 : 14} strokeWidth={isExpanded ? 1.5 : 1.6} />
+                  {isExpanded ? (
+                    t('workbench.branch.bringBack')
+                  ) : (
+                    <span className="sr-only">{t('workbench.branch.bringBack')}</span>
+                  )}
                 </button>
               ) : null}
               {onHandoff && !blocked ? (
                 <button
                   type="button"
                   data-testid="composer-handoff"
+                  aria-label={t('workbench.composer.handoff')}
                   disabled={handingOff || contextTokens === null || contextTokens < HANDOFF_MIN_CONTEXT}
                   onClick={onHandoff}
                   title={
@@ -1009,14 +1087,28 @@ export default function Composer({
                           })
                         : t('workbench.composer.handoffHint')
                   }
-                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                  className={
+                    isExpanded
+                      ? 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-border-accent px-3 text-[12px] text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-border-color disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent'
+                      : 'flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-border-accent text-accent-primary transition-colors hover:bg-accent-primary-10 disabled:border-transparent disabled:text-text-dim disabled:opacity-45 disabled:hover:bg-transparent'
+                  }
                 >
                   {handingOff ? (
-                    <Loader2 size={13} className="animate-spin" />
+                    <Loader2 size={isExpanded ? 13 : 15} className="animate-spin" />
                   ) : (
-                    <GitBranchPlus size={13} />
+                    <GitBranchPlus size={isExpanded ? 13 : 15} strokeWidth={1.5} />
                   )}
-                  {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
+                  {isExpanded ? (
+                    handingOff ? (
+                      t('workbench.composer.handingOff')
+                    ) : (
+                      t('workbench.composer.handoff')
+                    )
+                  ) : (
+                    <span className="sr-only">
+                      {handingOff ? t('workbench.composer.handingOff') : t('workbench.composer.handoff')}
+                    </span>
+                  )}
                 </button>
               ) : null}
             </>

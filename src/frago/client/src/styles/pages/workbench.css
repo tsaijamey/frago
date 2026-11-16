@@ -2666,6 +2666,10 @@
   gap: 10px;
 }
 
+.w-anchor-grid.has-expanded {
+  align-items: start;
+}
+
 @media (max-width: 640px) {
   .w-anchor-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -2721,12 +2725,77 @@
   color: var(--text-secondary);
 }
 
+.w-box-txt-wrap {
+  position: relative;
+  min-width: 0;
+}
+
 .w-box-txt {
   font-size: 13px;
   line-height: 1.55;
   color: var(--text-primary);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.w-box-txt.is-clamped {
+  max-height: 5.05rem;
+  overflow: hidden;
+}
+
+.w-box-txt.is-expanded {
+  max-height: 18rem;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.w-box-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 22px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-primary));
+}
+
+.w-box-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.w-box-count {
+  font: 11px var(--font-mono);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.w-box-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.w-box-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 .w-box-txt code {
@@ -3073,6 +3142,79 @@
   .w-runs-tbl col.col-talk {
     width: 104px !important;
   }
+}
+
+/* === 终端 Tab 空状态双主题画布 ===
+   仅在未挂载 tmux / 无留底内容 / 加载 / 出错时启用，使空状态融入工作台「地」层级（--bg-base），
+   绝不使用硬编码深黑底色，避免 Light 主题下出现黑底黑字事故。 */
+.wb-term-empty-canvas {
+  background-color: var(--bg-base);
+  background-image: radial-gradient(var(--border-subtle) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* ══ Composer 底部悬浮渐隐遮罩、Double-Bezel 呼吸边框与单节点变形网格 ══════════ */
+.wb-composer-scrim {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--bg-primary) 72%, transparent) 55%,
+    var(--bg-primary) 100%
+  );
+}
+
+/* Double-Bezel 输入盒外框：彻底替代刺眼的 3px --focus-ring 常亮粗绿圈 */
+.wb-composer-shell {
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--border-subtle),
+    var(--shadow-card);
+}
+
+.wb-composer-shell:hover:not([data-focused='yes']) {
+  border-color: var(--border-strong);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    inset 0 0 0 1px var(--border-subtle),
+    var(--shadow-card-hover);
+}
+
+/* 常规点击聚焦：克制的中性绿混色细边框 + 2px 极淡微晕 */
+.wb-composer-shell[data-focused='yes'] {
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--border-color));
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    0 0 0 2px color-mix(in srgb, var(--accent-primary) 10%, transparent),
+    var(--shadow-card);
+}
+
+/* 纯键盘 Tab 聚焦（:focus-within 且内部有 :focus-visible）：满足无障碍高亮 */
+.wb-composer-shell:has(:focus-visible) {
+  border-color: var(--accent-primary);
+  box-shadow:
+    inset 0 1px 0 var(--bezel-highlight),
+    0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+.wb-pcb-grid[data-compact='true'] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'pick input actions';
+  align-items: center;
+  column-gap: 8px;
+}
+
+.wb-pcb-grid[data-compact='false'] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'top top top'
+    'input input input'
+    'attachments attachments attachments'
+    'pick spacer actions';
+  align-items: center;
 }
 
 

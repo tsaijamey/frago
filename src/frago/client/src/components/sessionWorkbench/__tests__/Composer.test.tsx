@@ -782,8 +782,13 @@ describe('交接到新会话', () => {
     expect(onHandoff).toHaveBeenCalledTimes(1);
   });
 
-  it('比发送低一档：只描边不填色', () => {
+  it('比发送低一档：空态发送静默中性，有字时发送亮绿、交接只描边不填色', () => {
     render(<Composer sessionId={SID} family="claude-code" onSent={NOOP} contextTokens={400_000} onHandoff={NOOP} />);
+    const emptySend = screen.getByTestId('composer-send').className;
+    expect(emptySend).not.toContain('bg-accent-primary');
+    expect(emptySend).toContain('bg-bg-active');
+
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '继续' } });
     const handoff = screen.getByTestId('composer-handoff').className;
     const send = screen.getByTestId('composer-send').className;
     expect(send).toContain('bg-accent-primary');
@@ -1021,5 +1026,36 @@ describe('Next Task 列表与独立投递按钮', () => {
     const deleteButtons = screen.getAllByTestId('session-queue-delete');
     fireEvent.click(deleteButtons[0]);
     expect(onRemove).toHaveBeenCalledWith('q-1');
+  });
+
+  it('胶囊静默态有排队项时在 Next Task 图标角标展示队列条数，挂载附件自动展开且移除后回缩', async () => {
+    const { container } = render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        running={false}
+        onSent={NOOP}
+        onEnqueue={vi.fn(async () => ({}))}
+        queueItems={[
+          { id: 'q-1', text: '排队任务', skills: [], attachments: 0, created_at: 10 },
+        ]}
+      />
+    );
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+    expect(screen.getByTestId('composer-enqueue-badge').textContent).toBe('1');
+
+    const fileInput = container.querySelector('[data-testid="composer-file"]') as HTMLInputElement;
+    const f = new File([new Uint8Array([1, 2, 3])], 'note.txt', { type: 'text/plain' });
+    fireEvent.change(fileInput, { target: { files: [f] } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes')
+    );
+
+    const removeBtn = screen.getByLabelText('移除 note.txt');
+    fireEvent.click(removeBtn);
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no')
+    );
   });
 });

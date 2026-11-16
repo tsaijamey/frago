@@ -96,18 +96,20 @@ describe('引用落进输入框', () => {
 });
 
 describe('输入框的高度', () => {
-  it('空着是两行', () => {
+  it('compact 静默空态是单行胶囊（24px）', () => {
     mount(null);
-    expect(box().style.height).toBe(`${2 * LINE_PX}px`);
+    expect(box().style.height).toBe(`${1 * LINE_PX}px`);
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
   });
 
-  it('打到五行就有五行高，框内不滚', () => {
+  it('打到五行就有五行高并进入展开态，框内不滚', () => {
     mount(null);
     act(() => {
       fireEvent.change(box(), { target: { value: 'a\nb\nc\nd\ne' } });
     });
     expect(box().style.height).toBe(`${5 * LINE_PX}px`);
     expect(box().style.overflowY).toBe('hidden');
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
   });
 
   it('超过九行封在九行，多出来的由框内自己滚', () => {
@@ -121,7 +123,7 @@ describe('输入框的高度', () => {
     expect(box().style.overflowY).toBe('auto');
   });
 
-  it('删回去要变矮，不许停在长过的那个高度上', () => {
+  it('删回单行安全阈值后要回缩回 24px 胶囊态，不许停在长过的那个高度上', () => {
     mount(null);
     act(() => {
       fireEvent.change(box(), { target: { value: 'a\nb\nc\nd\ne\nf' } });
@@ -130,6 +132,87 @@ describe('输入框的高度', () => {
     act(() => {
       fireEvent.change(box(), { target: { value: 'a' } });
     });
-    expect(box().style.height).toBe(`${2 * LINE_PX}px`);
+    expect(box().style.height).toBe(`${1 * LINE_PX}px`);
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+  });
+
+  it('单行胶囊与展开态切换时保持同一个 textarea DOM 节点与焦点不丢失', () => {
+    mount(null);
+    const elBefore = box();
+    act(() => {
+      elBefore.focus();
+      fireEvent.change(elBefore, { target: { value: '第一行\n第二行' } });
+    });
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
+    expect(box()).toBe(elBefore);
+    expect(document.activeElement).toBe(elBefore);
+
+    act(() => {
+      fireEvent.change(elBefore, { target: { value: '' } });
+    });
+    expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+    expect(box()).toBe(elBefore);
+    expect(document.activeElement).toBe(elBefore);
+  });
+
+  it('IME 合成期间冻结形态切换，compositionEnd 后再结算展开态', () => {
+    // 临时让长单行（无换行）在非合成态下触发折行展开
+    const prevDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight');
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLTextAreaElement) {
+        return this.value.length > 12 ? 2 * LINE_PX : LINE_PX;
+      },
+    });
+    try {
+      mount(null);
+      const el = box();
+      act(() => {
+        fireEvent.compositionStart(el);
+        fireEvent.change(el, { target: { value: 'nihaozhongwenpinyinshuruchangdu' } });
+      });
+      // 合成过程中禁止切换形态
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+
+      act(() => {
+        fireEvent.compositionEnd(el);
+      });
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
+    } finally {
+      if (prevDesc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', prevDesc);
+    }
+  });
+
+  it('滞回锁防抖：因折行展开后，删回 12 字（单行）仍保持展开，缩至 <=10 字或清空后回缩', () => {
+    const prevDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'scrollHeight');
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLTextAreaElement) {
+        return this.value.length > 20 ? 2 * LINE_PX : LINE_PX;
+      },
+    });
+    try {
+      mount(null);
+      const el = box();
+      act(() => {
+        fireEvent.change(el, { target: { value: '超过二十个字符从而触发单行溢出折入第二行再多加几个字' } });
+      });
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
+
+      // 删回 12 字（此时 scrollHeight 为 24，但仍在滞回缓冲区 > 10 字内，不许震荡回缩）
+      act(() => {
+        fireEvent.change(el, { target: { value: '十二个字滞回缓冲测试文本' } });
+      });
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('yes');
+
+      // 进一步缩减到 6 字（<= 10 字安全阈值），平滑回缩回单行胶囊
+      act(() => {
+        fireEvent.change(el, { target: { value: '缩到六个字符' } });
+      });
+      expect(screen.getByTestId('composer-shell').getAttribute('data-expanded')).toBe('no');
+      expect(el.style.height).toBe(`${1 * LINE_PX}px`);
+    } finally {
+      if (prevDesc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', prevDesc);
+    }
   });
 });

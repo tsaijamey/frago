@@ -10,7 +10,7 @@
 
 import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Loader2, Paperclip, Send } from 'lucide-react';
+import { AlertTriangle, ArrowUp, Check, Loader2, Plus } from 'lucide-react';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
@@ -248,23 +248,22 @@ export default function SessionLaunchPanel({
       </div>
 
       {/* 底部输入框占位：与真实会话详情输入框同位同高，避免首条记录落盘时底栏跳变 */}
-      <div className="shrink-0 border-t border-border-color bg-bg-primary px-4 py-3">
-        <div className="flex flex-col gap-2 rounded-[10px] border border-border-color bg-bg-secondary px-3 py-2.5 opacity-60">
-          <p className="select-none text-[16px] leading-6 text-text-muted">
-            {t('workbench.composer.placeholderWithFamily', { family: launch.agentName })}
-          </p>
-          <div className="flex items-center justify-between pt-1">
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-text-muted">
-              <Paperclip size={14} />
+      <div className="relative z-20 shrink-0 bg-bg-primary px-5 pb-3 pt-1">
+        <div
+          aria-hidden
+          className="wb-composer-scrim pointer-events-none absolute inset-x-0 -top-5 h-5"
+        />
+        <div className="mx-auto w-full max-w-[960px]">
+          <div className="wb-composer-shell flex items-center gap-2 rounded-[24px] px-2.5 py-[7px] opacity-65">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted">
+              <Plus size={17} strokeWidth={1.6} />
             </span>
-            <button
-              type="button"
-              disabled
-              className="inline-flex h-7 items-center gap-1.5 rounded-[8px] bg-accent-primary px-3 text-[12px] font-medium text-[var(--text-on-accent)] opacity-50"
-            >
-              <Send size={12} />
-              {t('workbench.composer.send')}
-            </button>
+            <p className="min-w-0 flex-1 select-none truncate text-[16px] leading-6 text-text-muted">
+              {t('workbench.composer.placeholderCompactWithFamily', { family: launch.agentName })}
+            </p>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-active text-text-dim">
+              <ArrowUp size={16} strokeWidth={2} />
+            </span>
           </div>
         </div>
       </div>

@@ -22,7 +22,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Paperclip, Plus, SendHorizontal } from 'lucide-react';
+import { ArrowUp, Loader2, Paperclip, Plus, SendHorizontal } from 'lucide-react';
 import { MAX_ATTACHMENTS } from '@/hooks/useAttachments';
 import { useDataStore } from '@/stores/dataStore';
 import type { EmployeeItem, SkillItem } from '@/types/api';
@@ -111,6 +111,22 @@ export interface PromptComposerBoxProps {
   submitAriaLabel?: string;
   submitTestId?: string;
   className?: string;
+  /**
+   * 输入盒形态：
+   * - 'hero'（默认）：舒展双层创作面板（新建会话、划选浮窗、启动员工沿用）
+   * - 'compact'：渐进式变形条（会话详情页底部跟帖专属——空/单行无挂载时为单行胶囊，否则平滑展开）
+   */
+  variant?: 'hero' | 'compact';
+  /**
+   * 仅 compact 态有效：外部插槽（如 attachmentSlot / packedBanner）当前是否实际占用了可视内容。
+   */
+  hasExtraContent?: boolean;
+  /** 将当前所处形态（是否已展开为多行创作态）通告给外层（如 Composer 用于切换按钮标签与 LineWalker 边距） */
+  onExpandedChange?: (expanded: boolean) => void;
+  /** compact 胶囊态下渲染在左侧 `+` 按钮上的补充行为或渲染扩展，默认复用 filePicker */
+  renderLeftActions?: ReactNode;
+  /** 顶部附着装饰（如 LineWalker），置于外框上沿且在圆角安全区内 */
+  topEdgeOverlay?: ReactNode;
 }
 
 export default function PromptComposerBox({
@@ -149,6 +165,11 @@ export default function PromptComposerBox({
   submitAriaLabel,
   submitTestId,
   className = '',
+  variant = 'hero',
+  hasExtraContent = false,
+  onExpandedChange,
+  renderLeftActions,
+  topEdgeOverlay,
 }: PromptComposerBoxProps) {
   const { t } = useTranslation();
   const box = useRef<HTMLTextAreaElement>(null);
@@ -156,6 +177,29 @@ export default function PromptComposerBox({
   const caretTo = caretToRef ?? internalCaretTo;
   const filePicker = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(autoFocus);
+  const isComposingRef = useRef(false);
+  const [imeTick, setImeTick] = useState(0);
+  const [latchedExpanded, setLatchedExpanded] = useState(false);
+
+  const hasDirectives = employees.length > 0 || skills.length > 0;
+  const isCompact = variant === 'compact';
+  const hasTopSlot = Boolean(headerSlot || hasDirectives || bannerSlot);
+  const forcedExpanded =
+    !isCompact ||
+    text.includes('\n') ||
+    hasDirectives ||
+    hasExtraContent ||
+    hasTopSlot;
+  const isExpanded = forcedExpanded || latchedExpanded;
+  const isPill = isCompact && !isExpanded;
+
+  const lastReportedExpandedRef = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    if (lastReportedExpandedRef.current !== isExpanded) {
+      lastReportedExpandedRef.current = isExpanded;
+      onExpandedChange?.(isExpanded);
+    }
+  }, [isExpanded, onExpandedChange]);
 
   useEffect(() => {
     if (autoFocus) box.current?.focus();
@@ -250,8 +294,24 @@ export default function PromptComposerBox({
     if (!el) return;
     el.style.height = 'auto';
     const content = el.scrollHeight;
+
+    if (isCompact && !isComposingRef.current) {
+      if (!forcedExpanded && !latchedExpanded && content > 32) {
+        setLatchedExpanded(true);
+        return;
+      }
+      if (
+        latchedExpanded &&
+        (text.length === 0 || (text.trim().length <= 10 && !text.includes('\n')))
+      ) {
+        setLatchedExpanded(false);
+        return;
+      }
+    }
+
+    const effectiveMinLines = isPill ? 1 : isCompact ? Math.max(minLines, 2) : minLines;
     const ceiling = maxLines * LINE_PX;
-    el.style.height = `${Math.min(Math.max(content, minLines * LINE_PX), ceiling)}px`;
+    el.style.height = `${Math.min(Math.max(content, effectiveMinLines * LINE_PX), ceiling)}px`;
     el.style.overflowY = content > ceiling ? 'auto' : 'hidden';
     if (caretTo.current !== null) {
       const at = caretTo.current;
@@ -260,7 +320,17 @@ export default function PromptComposerBox({
       el.setSelectionRange(at, at);
       el.scrollTop = el.scrollHeight;
     }
-  }, [text, minLines, maxLines, caretTo]);
+  }, [
+    text,
+    minLines,
+    maxLines,
+    caretTo,
+    isCompact,
+    isPill,
+    forcedExpanded,
+    latchedExpanded,
+    imeTick,
+  ]);
 
   const takeFiles = useCallback(
     (files: FileList | File[] | null) => {
@@ -324,7 +394,225 @@ export default function PromptComposerBox({
     ]
   );
 
-  const hasDirectives = employees.length > 0 || skills.length > 0;
+  const menuOverlay =
+    menuOpen && directive ? (
+      <DirectiveMenu
+        trigger={directive.trigger}
+        entries={menuEntries}
+        activeIndex={Math.min(menuActive, Math.max(menuEntries.length - 1, 0))}
+        placement={menuPlacement}
+        titleText={
+          directive.trigger === '@'
+            ? t('workbench.employees.menuTitle')
+            : t('workbench.skills.menuTitle')
+        }
+        testId={directive.trigger === '@' ? 'employee-menu' : 'skill-menu'}
+        itemTestId={directive.trigger === '@' ? 'employee-menu-item' : 'skill-menu-item'}
+        emptyTestId={directive.trigger === '@' ? 'employee-menu-empty' : 'skill-menu-empty'}
+        emptyText={
+          directive.trigger === '@'
+            ? t('workbench.employees.noMatch')
+            : t('workbench.skills.noMatch')
+        }
+        onSelect={pickDirectiveEntry}
+        onHover={setMenuActive}
+      />
+    ) : null;
+
+  const directivesBlock = hasDirectives ? (
+    <div
+      data-testid={`${idPrefix}-skills`}
+      data-has-employees={employees.length > 0 ? 'yes' : 'no'}
+      data-has-skills={skills.length > 0 ? 'yes' : 'no'}
+      className="mb-1.5 flex flex-wrap gap-1.5"
+    >
+      {employees.map((emp) => (
+        <EmployeeQuote
+          key={emp.member_post_id}
+          id={emp.member_post_id}
+          title={emp.title}
+          kernel={emp.agent_kernel}
+          description={emp.work_scope || emp.description}
+          onRemove={onRemoveEmployee ? () => onRemoveEmployee(emp.member_post_id) : undefined}
+        />
+      ))}
+      {skills.map((skill) => (
+        <SkillQuote
+          key={skill.name}
+          name={skill.name}
+          description={skill.description}
+          onRemove={() => onRemoveSkill(skill.name)}
+        />
+      ))}
+    </div>
+  ) : null;
+
+  if (isCompact) {
+    const compactMinLines = isPill ? 1 : Math.max(minLines, 2);
+    return (
+      <div
+        data-testid={`${idPrefix}-shell`}
+        data-variant={variant}
+        data-expanded={isExpanded ? 'yes' : 'no'}
+        data-focused={focused && !submitting ? 'yes' : 'no'}
+        className={`wb-composer-shell relative transition-[border-radius,border-color,box-shadow] duration-150 ease-out ${
+          isPill ? 'rounded-[24px]' : 'rounded-[16px]'
+        } ${className}`}
+      >
+        {topEdgeOverlay}
+        {menuOverlay}
+
+        <div
+          data-compact={isPill ? 'true' : 'false'}
+          className={`wb-pcb-grid relative min-w-0 ${
+            isPill ? 'rounded-[24px] px-2.5 py-[7px]' : 'rounded-[16px] px-3.5 py-2.5'
+          }`}
+        >
+          <input
+            ref={filePicker}
+            type="file"
+            multiple
+            hidden
+            data-testid={`${idPrefix}-file`}
+            onChange={(e) => {
+              takeFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+
+          {!isPill && hasTopSlot ? (
+            <div className="mb-1.5 min-w-0 [grid-area:top]">
+              {headerSlot ? <div className="mb-1.5">{headerSlot}</div> : null}
+              {directivesBlock}
+              {bannerSlot}
+            </div>
+          ) : null}
+
+          <textarea
+            key="prompt-textarea"
+            ref={box}
+            id={textareaId}
+            aria-labelledby={ariaLabelledBy}
+            data-testid={`${idPrefix}-input`}
+            autoFocus={autoFocus}
+            value={text}
+            onChange={(e) => {
+              onChangeText(e.target.value);
+              setCaret(e.target.selectionStart ?? e.target.value.length);
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+              setImeTick((n) => n + 1);
+            }}
+            onPaste={handlePaste}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            disabled={disabled}
+            rows={compactMinLines}
+            placeholder={placeholder}
+            className={`w-full min-w-0 resize-none bg-transparent text-[16px] leading-6 text-text-primary outline-none focus-visible:shadow-none placeholder:text-text-muted disabled:cursor-not-allowed [grid-area:input] ${
+              isPill ? 'min-h-[24px] py-0' : 'min-h-[48px]'
+            }`}
+          />
+
+          {!isPill && attachmentSlot ? (
+            <div className="mt-1.5 min-w-0 [grid-area:attachments]">{attachmentSlot}</div>
+          ) : null}
+
+          <div className={isPill ? 'shrink-0 [grid-area:pick]' : 'mt-1.5 shrink-0 [grid-area:pick]'}>
+            {isPill && renderLeftActions ? (
+              renderLeftActions
+            ) : !isPill && attachButtonLabel ? (
+              <button
+                type="button"
+                data-testid={`${idPrefix}-pick`}
+                disabled={disabled || attachCount >= MAX_ATTACHMENTS}
+                onClick={() => filePicker.current?.click()}
+                className="inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[12px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
+              >
+                <Paperclip size={13} strokeWidth={1.5} />
+                {attachButtonLabel}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid={`${idPrefix}-pick`}
+                aria-label={t('workbench.composer.addAttachment')}
+                title={t('workbench.composer.addAttachment')}
+                disabled={disabled || attachCount >= MAX_ATTACHMENTS}
+                onClick={() => filePicker.current?.click()}
+                className={
+                  isPill
+                    ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40'
+                    : 'flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40'
+                }
+              >
+                <Plus size={isPill ? 17 : 16} strokeWidth={isPill ? 1.6 : 1.5} />
+              </button>
+            )}
+          </div>
+
+          <div
+            className={
+              isPill
+                ? 'flex shrink-0 items-center gap-1 [grid-area:actions]'
+                : 'mt-1.5 flex shrink-0 items-center gap-2 justify-self-end [grid-area:actions]'
+            }
+          >
+            {rightActionsSlot}
+
+            <button
+              type="button"
+              data-testid={submitTestId ?? `${idPrefix}-send`}
+              aria-label={submitAriaLabel ?? submitLabel}
+              title={submitAriaLabel ?? submitLabel}
+              disabled={!canSubmit}
+              onClick={() => void onSubmit()}
+              className={
+                isPill
+                  ? `flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed ${
+                      submitting
+                        ? 'bg-bg-active text-text-secondary'
+                        : canSubmit
+                          ? 'bg-accent-primary text-[var(--text-on-accent)] hover:brightness-105'
+                          : 'bg-bg-active text-text-dim'
+                    }`
+                  : `flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed ${
+                      submitting
+                        ? 'bg-bg-active text-text-secondary'
+                        : canSubmit
+                          ? 'bg-accent-primary text-[var(--text-on-accent)] hover:brightness-105'
+                          : 'bg-bg-active text-text-dim'
+                    }`
+              }
+            >
+              {submitting ? (
+                <Loader2 size={isPill ? 15 : 13} className="animate-spin" />
+              ) : isPill ? (
+                <ArrowUp size={16} strokeWidth={2} />
+              ) : (
+                <SendHorizontal size={13} />
+              )}
+              {isPill ? (
+                <span className="sr-only">
+                  {submitting ? (submittingLabel ?? submitLabel) : submitLabel}
+                </span>
+              ) : submitting ? (
+                (submittingLabel ?? submitLabel)
+              ) : (
+                submitLabel
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -336,29 +624,8 @@ export default function PromptComposerBox({
             : 'border-border-strong'
       } ${className}`}
     >
-      {menuOpen && directive ? (
-        <DirectiveMenu
-          trigger={directive.trigger}
-          entries={menuEntries}
-          activeIndex={Math.min(menuActive, Math.max(menuEntries.length - 1, 0))}
-          placement={menuPlacement}
-          titleText={
-            directive.trigger === '@'
-              ? t('workbench.employees.menuTitle')
-              : t('workbench.skills.menuTitle')
-          }
-          testId={directive.trigger === '@' ? 'employee-menu' : 'skill-menu'}
-          itemTestId={directive.trigger === '@' ? 'employee-menu-item' : 'skill-menu-item'}
-          emptyTestId={directive.trigger === '@' ? 'employee-menu-empty' : 'skill-menu-empty'}
-          emptyText={
-            directive.trigger === '@'
-              ? t('workbench.employees.noMatch')
-              : t('workbench.skills.noMatch')
-          }
-          onSelect={pickDirectiveEntry}
-          onHover={setMenuActive}
-        />
-      ) : null}
+      {topEdgeOverlay}
+      {menuOverlay}
 
       {/* 内描边与决策卡同一套：浅色下把白底卡片从白底页面上勾出来，box-shadow 不参与布局。 */}
       <div className="relative min-w-0 rounded-[12px] bg-bg-card px-3 py-2.5 [box-shadow:inset_0_0_0_1px_var(--border-card)]">
@@ -376,33 +643,7 @@ export default function PromptComposerBox({
 
         {headerSlot ? <div className="mb-1.5">{headerSlot}</div> : null}
 
-        {hasDirectives ? (
-          <div
-            data-testid={`${idPrefix}-skills`}
-            data-has-employees={employees.length > 0 ? 'yes' : 'no'}
-            data-has-skills={skills.length > 0 ? 'yes' : 'no'}
-            className="mb-1.5 flex flex-wrap gap-1.5"
-          >
-            {employees.map((emp) => (
-              <EmployeeQuote
-                key={emp.member_post_id}
-                id={emp.member_post_id}
-                title={emp.title}
-                kernel={emp.agent_kernel}
-                description={emp.work_scope || emp.description}
-                onRemove={onRemoveEmployee ? () => onRemoveEmployee(emp.member_post_id) : undefined}
-              />
-            ))}
-            {skills.map((skill) => (
-              <SkillQuote
-                key={skill.name}
-                name={skill.name}
-                description={skill.description}
-                onRemove={() => onRemoveSkill(skill.name)}
-              />
-            ))}
-          </div>
-        ) : null}
+        {directivesBlock}
 
         {bannerSlot}
 
