@@ -1314,5 +1314,160 @@ class TestWatcherTableTasksAndRuns:
         assert state["tasks"][1]["conclusion"] == "已交付 `summary.md`"
 
 
+class TestGoalAnchorCleaningAndSummary:
+    """GOAL ANCHOR 清洗系统注入脚手架并提炼长任务书核心目标。"""
+
+    def test_strips_leading_image_tag_employee_skill_and_attachment_blocks(self):
+        raw_prompt = (
+            '<image name=[Image #1] path="/Users/frago/.frago/webui_uploads/abc/1.png"></image>'
+            '<frago-employee id="frago-developer" title="frago Developer" kernel="claude">\n'
+            "【员工身份与工作范畴】\n岗位：frago Developer\n"
+            "</frago-employee>\n"
+            '<must-use-skill name="git-push" path="/Users/frago/.frago/skills/git-push/SKILL.md">\n'
+            "技能正文\n"
+            "</must-use-skill>\n\n"
+            "修复进展页顶部卡片高度暴涨问题。\n\n"
+            "[附带图片，请用读文件的工具逐一打开查看]:\n"
+            "/Users/frago/.frago/webui_uploads/abc/1.png\n\n"
+            "[附带文档，请用读文件的工具逐一打开阅读]:\n"
+            "/Users/frago/.frago/webui_uploads/abc/spec.md"
+        )
+        assert so.spoken_text({"text": raw_prompt}) == "修复进展页顶部卡片高度暴涨问题。"
+        state = so.public_state({"anchor": {"seq": 0, "text": raw_prompt}}, bound=True)
+        assert state["anchor"] == "修复进展页顶部卡片高度暴涨问题。"
+        assert state["anchor_summary"] == "修复进展页顶部卡片高度暴涨问题。"
+        assert "webui_uploads" not in (state["anchor"] or "")
+        assert "frago-employee" not in (state["anchor"] or "")
+
+    def test_extracts_compact_summary_for_long_task_brief_while_preserving_full_anchor(self):
+        long_brief = (
+            "你是 frago recipe 开发专家。\n\n"
+            "任务：根据 spec 创建 recipe 'focus_compass'。\n\n"
+            "先运行以下命令获取规范：\n"
+            "  frago book recipe-creation\n\n"
+            "# 任务书：构建 focus_compass 专注指南工作流\n\n"
+            "## 1. 背景与目标\n\n"
+            "提供一个单页可回放的专注罗盘控制台，支持任务计时、复盘归档与双主题适配。\n\n"
+            "## 2. 约束\n\n"
+            "- 必须通过 recipe validate。\n"
+            "- 严禁硬编码本地绝对路径。"
+        )
+        state = so.public_state({"anchor": {"seq": 0, "text": long_brief}}, bound=True)
+        assert state["anchor"] == long_brief
+        summary = state["anchor_summary"] or ""
+        assert "任务书：构建 focus_compass 专注指南工作流" in summary
+        assert "任务：根据 spec 创建 recipe 'focus_compass'" in summary
+        assert "构建 focus_compass" in summary
+        assert len(summary) < len(long_brief)
+        assert "你是 frago recipe 开发专家" not in summary
+
+
+class TestDecisionTaskInvariantReconciliation:
+    """tasks 与 decision 本体一致性收敛：事项已推进/办结且无 waiting 事项时绝不残留过期 decision。"""
+
+    def test_apply_answer_clears_stale_decision_when_tasks_advance_to_done_without_human_reply(self):
+        slots = so.empty_slots(SID, "agy")
+        slots["anchor"] = {"seq": 0, "text": "优化输入区布局"}
+        slots["decision"] = "需等待前端视觉主审 ui-designer 返回双主题视觉细节后启动实施"
+        slots["tasks"] = [
+            {
+                "id": "T4",
+                "proposed_at": 1000,
+                "updated_at": 1000,
+                "title": "优化输入区非输入状态布局视觉",
+                "status": "doing",
+                "actor": "主会话",
+                "conclusion": "等待 ui-designer 回传",
+            }
+        ]
+
+        # 即使人没有新发言 (candidates={}) 且模型仍机械抄回旧 decision，T4 已变为 done 且无任何 waiting 事项
+        ans = so.parse_answer(
+            reply(
+                output="Composer 胶囊态已在 8093 上线",
+                decision="需等待前端视觉主审 ui-designer 返回双主题视觉细节后启动实施",
+                task_upserts=[
+                    {
+                        "id": "T4",
+                        "title": "优化输入区非输入状态布局视觉",
+                        "status": "done",
+                        "actor": "研发工作会话",
+                        "conclusion": "8093 双主题实拍已归档",
+                    }
+                ],
+                run_row={
+                    "task_id": "T4",
+                    "actor": "研发工作会话",
+                    "doing": "Composer 胶囊态改造已在 8093 上线。",
+                    "findings": ["亮暗双主题实拍已归档"],
+                },
+            )
+        )
+        assert so.apply_answer(slots, ans, {}, stamp_ms=2000, cursor_from=10, cursor_to=20)
+        assert slots["tasks"][0]["status"] == "done"
+        assert slots["decision"] == "", "无 waiting 事项时，过期 decision 必须强制清零"
+        assert slots["runs"][-1]["decision"] == ""
+
+    def test_public_state_reconciles_legacy_slots_when_all_tasks_done_but_decision_remains(self):
+        slots = so.empty_slots(SID, "agy")
+        slots.update(
+            anchor={"seq": 0, "text": "11月16日迭代"},
+            tail={"kind": "output", "text": "Composer 改造已上线"},
+            decision="需等待 ui-designer 返回细节",
+            tasks=[
+                {
+                    "id": "T1",
+                    "proposed_at": 1000,
+                    "updated_at": 1000,
+                    "title": "任务一",
+                    "status": "done",
+                    "actor": "主会话",
+                    "conclusion": "已办结",
+                },
+                {
+                    "id": "T4",
+                    "proposed_at": 2000,
+                    "updated_at": 3000,
+                    "title": "优化输入区非输入状态布局视觉",
+                    "status": "done",
+                    "actor": "研发工作会话",
+                    "conclusion": "已上线",
+                },
+            ],
+        )
+        state = so.public_state(slots, bound=True)
+        assert state["decision"] == "", "public_state 输出层也必须按 tasks 强一致清掉过期 decision"
+
+    def test_trailing_interactive_card_keeps_decision_and_marks_task_waiting(self):
+        slots = so.empty_slots(SID, "claude-code")
+        slots["anchor"] = {"seq": 0, "text": "选型"}
+        ans = so.parse_answer(
+            reply(
+                now="等待用户从卡片选定方案",
+                decision="采用哪套交互方案？",
+                task_upserts=[
+                    {
+                        "id": "T1",
+                        "title": "方案选型",
+                        "status": "doing",
+                        "actor": "主会话",
+                        "conclusion": "已产出备选方案",
+                    }
+                ],
+                run_row={
+                    "task_id": "T1",
+                    "actor": "主会话",
+                    "doing": "已发出决策卡等人拍板。",
+                    "findings": [],
+                },
+            )
+        )
+        so.apply_answer(slots, ans, {}, stamp_ms=1000, has_trailing_card=True)
+        assert slots["tasks"][0]["status"] == "waiting"
+        assert slots["decision"] == "采用哪套交互方案？"
+
+
+
+
 
 

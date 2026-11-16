@@ -299,19 +299,134 @@ def _join_clauses(items: Sequence[str]) -> str:
     return "；".join(x.rstrip("。；;") for x in cleaned)
 
 
-def _safe_goal_text(text: Any) -> str | None:
-    if not isinstance(text, str):
-        return None
+_LEADING_IMAGE_TAG_RE = re.compile(
+    r"^\s*(?:<image\b[^>]*>[\s\S]*?</image>\s*|<image\b[^>]*/>\s*)+",
+    re.IGNORECASE,
+)
+_LEADING_ASYNC_CALLBACK_RE = re.compile(
+    r"^\s*(?:<frago-async-callback\b[^>]*>[\s\S]*?</frago-async-callback>\s*)+"
+)
+_ATTACHMENT_BLOCK_RE = re.compile(
+    r"(?:^|\r?\n{1,2})\[附带(?:图片，请用读文件的工具逐一打开查看|文档，请用读文件的工具逐一打开阅读)\]:\r?\n[\s\S]*?(?=\r?\n\s*\r?\n|\Z)"
+)
+_ROLE_PREAMBLE_RE = re.compile(
+    r"^(?:你是[^\n。！？]*?(?:专家|导演|开发者|管理员|助手|参谋)|先运行以下命令|frago\s+book\b|请用读文件的?工具|请查看以下(?:图片|附件)|Spec\s*内容（位于|用户需求[：:]?$)"
+)
+
+
+def _strip_goal_scaffolding(text: str, *, strip_attachments: bool = True) -> str:
+    """剥离消息头尾的系统注入脚手架（<image>/<frago-employee>/<must-use-skill>/<frago-async-callback>/附带附件清单）。"""
     from frago.session.session_index import split_employee_block
     from frago.skills.skill_prompt import split_skill_blocks
 
-    _, body = split_employee_block(text.strip())
-    _, body = split_skill_blocks(body)
-    _, body = split_employee_block(body)
-    cleaned = body.strip()
+    current = text.strip()
+    for _ in range(6):
+        prev = current
+        current = _LEADING_IMAGE_TAG_RE.sub("", current).strip()
+        _, current = split_employee_block(current)
+        _, current = split_skill_blocks(current)
+        current = _LEADING_ASYNC_CALLBACK_RE.sub("", current).strip()
+        if current == prev:
+            break
+    if strip_attachments:
+        current = _ATTACHMENT_BLOCK_RE.sub("", current)
+        current = re.sub(r"\r?\n{3,}", "\n\n", current)
+    return current.strip()
+
+
+def _safe_goal_text(text: Any) -> str | None:
+    if not isinstance(text, str):
+        return None
+    cleaned = _strip_goal_scaffolding(text, strip_attachments=True)
     if not cleaned or is_card_answer_text(cleaned):
         return None
     return cleaned
+
+
+def extract_goal_summary(text: str | None, limit: int = 180) -> str:
+    """从清洗后的长 Prompt / 任务书中提炼北极星核心目标摘要，短文本原样返回。"""
+    if not isinstance(text, str):
+        return ""
+    cleaned = _strip_goal_scaffolding(text, strip_attachments=True)
+    if not cleaned:
+        return ""
+
+    non_empty_lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+    if len(cleaned) <= 110 and len(non_empty_lines) <= 3 and not any(
+        ln.startswith("#") for ln in non_empty_lines
+    ):
+        return cleaned
+
+    title = ""
+    task_line = ""
+    lead = ""
+
+    for ln in non_empty_lines:
+        m_named = re.match(r"^#{1,3}\s*((?:任务书|任务|目标)[：:]\s*.+)$", ln)
+        if m_named:
+            title = re.sub(r"\s+", " ", m_named.group(1)).strip()
+            break
+        if not title:
+            m_h1 = re.match(r"^#\s+(.+)$", ln)
+            if m_h1:
+                cand = re.sub(r"\s+", " ", m_h1.group(1)).strip()
+                if len(cand) >= 3:
+                    title = cand
+
+    for ln in non_empty_lines:
+        m_task = re.match(r"^(?:任务|Task)[：:]\s*(.+)$", ln)
+        if m_task:
+            cand = re.sub(r"\s+", " ", m_task.group(1)).strip()
+            if cand and cand not in title:
+                task_line = f"任务：{cand}" if not cand.startswith("任务") else cand
+                break
+
+    in_code_fence = False
+    lead_lines: list[str] = []
+    for raw_ln in cleaned.splitlines():
+        ln = raw_ln.strip()
+        if ln.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or not ln:
+            continue
+        if ln.startswith("#") or ln.startswith(">") or re.match(r"^[-*_]{3,}$", ln):
+            continue
+        if _ROLE_PREAMBLE_RE.match(ln):
+            continue
+        if task_line and ln in task_line:
+            continue
+        if title and ln in title:
+            continue
+        plain = re.sub(r"^[-*+]\s+", "", ln).strip()
+        if len(plain) < 4:
+            continue
+        if (title or task_line) and plain.endswith((":", "：")):
+            continue
+        lead_lines.append(re.sub(r"\s+", " ", plain))
+        if title or task_line:
+            break
+        if sum(len(x) for x in lead_lines) >= limit:
+            break
+    lead = " ".join(lead_lines).strip()
+
+    parts: list[str] = []
+    if title:
+        parts.append(title)
+    if task_line and task_line not in parts and (not title or task_line not in title):
+        parts.append(task_line)
+    if lead and not any(lead in p or p in lead for p in parts):
+        parts.append(lead)
+
+    if not parts:
+        return _clip(cleaned, limit)
+    joined = "\n".join(parts)
+    if len(joined) <= limit:
+        return joined
+    if len(parts) >= 2 and len(parts[0]) < limit - 20:
+        remain = limit - len(parts[0]) - 1
+        return f"{parts[0]}\n{_clip(parts[1], remain)}"
+    return _clip(joined, limit)
 
 
 def _derive_doing_and_findings(
@@ -545,6 +660,21 @@ def _synthesize_tasks(
     return [by_id[tid] for tid in order]
 
 
+def _reconcile_decision_consistency(
+    tasks: Sequence[dict[str, Any]],
+    decision: Any,
+) -> str:
+    """本体不变量收敛：当事项总控表非空且没有任何待拍板（waiting）事项时，强制清空过期 decision。"""
+    cleaned = _unplaceholder(decision.strip()) if isinstance(decision, str) else ""
+    if not cleaned or cleaned.lower() in ("none", "null", "暂无"):
+        return ""
+    if tasks and not any(
+        isinstance(t, dict) and t.get("status") == TASK_STATUS_WAITING for t in tasks
+    ):
+        return ""
+    return cleaned
+
+
 def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
     """页面要的形状。「已经发生的事」给新的在前，页面按顺序露头三条。
 
@@ -568,12 +698,14 @@ def public_state(slots: dict[str, Any], bound: bool) -> dict[str, Any]:
         tasks = [_normalize_task_item(t, fallback_at) for t in raw_tasks if isinstance(t, dict)]
     else:
         tasks = _synthesize_tasks(slots, runs)
+    decision_out = _reconcile_decision_consistency(tasks, slots.get("decision"))
     return {
         "bound": bound,
         "anchor": anchor_text,
+        "anchor_summary": extract_goal_summary(anchor_text) or None,
         "phase_goal": phase_goal,
         "tail": slots.get("tail") or None,
-        "decision": slots.get("decision") or "",
+        "decision": decision_out,
         "happened": list(reversed(happened)),
         "happened_at": list(reversed(times)),
         "tasks": tasks,
@@ -627,7 +759,7 @@ def spoken_text(payload: Any) -> str | None:
     记录），人刚发话时要在那里就问一句「这是不是人在说话」，那时还没有记录对象。
     """
     from frago.session.opencode_store import strip_hook_injection
-    from frago.session.session_index import is_wake_text, split_employee_block
+    from frago.session.session_index import is_wake_text
 
     if not isinstance(payload, dict) or payload.get("is_tool_result"):
         return None
@@ -637,8 +769,8 @@ def spoken_text(payload: Any) -> str | None:
     stripped = strip_hook_injection(text)
     if not stripped:
         return None
-    _, body = split_employee_block(stripped)
-    return body or stripped
+    body = _strip_goal_scaffolding(stripped, strip_attachments=True)
+    return body or None
 
 
 def person_spoke(records: Sequence[Any]) -> bool:
@@ -901,9 +1033,10 @@ def build_prompt(
         if tail.get("text")
         else EMPTY_MARK
     )
+    anchor_prompt = extract_goal_summary(anchor, limit=280) if anchor else ""
     lines = [
         "## 当前右栏",
-        f"- 这场在做什么（人的原话）：{_clip(anchor, 300) if anchor else EMPTY_MARK}",
+        f"- 这场在做什么（人的原话）：{anchor_prompt or EMPTY_MARK}",
         f"- 当前阶段目标：{_clip(phase_goal, 200) if phase_goal else EMPTY_MARK}",
         f"- 需要你决策：{slots.get('decision') or NONE_MARK}",
         "- 已经发生的事（最近几条，从旧到新）：",
@@ -1091,6 +1224,7 @@ def apply_answer(
     *,
     cursor_from: int | None = None,
     cursor_to: int | None = None,
+    has_trailing_card: bool = False,
 ) -> bool:
     """把回答合进槽位，返回槽位是否真的变了。
 
@@ -1121,7 +1255,11 @@ def apply_answer(
             slots[key] = value
             slots[f"{key}_at"] = at
 
-    if answer["decision"] or candidates:
+    upserts_raw = answer.get("task_upserts") or []
+    upserts_have_waiting = any(
+        isinstance(u, dict) and u.get("status") == TASK_STATUS_WAITING for u in upserts_raw
+    )
+    if answer["decision"] or candidates or (upserts_raw and not upserts_have_waiting):
         put("decision", answer["decision"])
     if answer.get("phase_goal"):
         put("phase_goal", answer["phase_goal"])
@@ -1284,7 +1422,18 @@ def apply_answer(
                     }
                 )
     if tasks:
+        if has_trailing_card and not any(t.get("status") == TASK_STATUS_WAITING for t in tasks):
+            target_tid = ((run_row or {}).get("task_id") or "").strip()
+            target_idx = next(
+                (i for i, t in enumerate(tasks) if target_tid and t.get("id") == target_tid),
+                len(tasks) - 1,
+            )
+            tasks[target_idx] = {**tasks[target_idx], "status": TASK_STATUS_WAITING, "updated_at": at}
         slots["tasks"] = tasks[-TASKS_KEEP:]
+
+    reconciled_decision = _reconcile_decision_consistency(tasks, slots.get("decision") or "")
+    if reconciled_decision != (slots.get("decision") or ""):
+        put("decision", reconciled_decision)
 
     changed = _content(slots) != before
     if changed:
@@ -1538,16 +1687,17 @@ class SessionObserver:
             entry.update(rejected=why, changed=False)
             changed = False
         else:
-            if not answer["decision"]:
-                fallback_decision = _trailing_unanswered_card_decision(new)
-                if fallback_decision:
-                    answer["decision"] = fallback_decision
+            fallback_decision = _trailing_unanswered_card_decision(new)
+            has_trailing_card = bool(fallback_decision)
+            if not answer["decision"] and fallback_decision:
+                answer["decision"] = fallback_decision
             changed = apply_answer(
                 slots,
                 answer,
                 candidates,
                 cursor_from=cursor,
                 cursor_to=last_seq + 1,
+                has_trailing_card=has_trailing_card,
             )
             entry["changed"] = changed
         prev_status = slots.get("status")

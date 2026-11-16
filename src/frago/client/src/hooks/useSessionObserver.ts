@@ -71,6 +71,8 @@ export interface ObserverState {
   bound: boolean;
   /** 这场在做什么：人说过的原话，不经模型改写。 */
   anchor: string | null;
+  /** 从长任务书/长 Prompt 提炼的北极星目标摘要（用于紧凑态预览）。 */
+  anchor_summary?: string | null;
   /** 当前所处阶段的目标（随人新指令或 agent 阶段推进更新）。 */
   phase_goal?: string | null;
   tail: ObserverTail | null;

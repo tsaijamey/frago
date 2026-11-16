@@ -42,6 +42,7 @@ import {
   CheckCheck,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ExternalLink,
   Inbox,
   Loader2,
@@ -110,6 +111,7 @@ import {
   type DecisionBlock,
 } from '@/utils/decisionBlock';
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
+import { cleanGoalText, extractGoalSummary, isLongLedgerText } from '@/utils/goalAnchor';
 import { scrollBehavior } from '@/utils/reducedMotion';
 import type { ObserverTaskItem, SessionObserverView } from '@/hooks/useSessionObserver';
 
@@ -1271,8 +1273,11 @@ export interface RecordStreamProps {
   /**
    * 「终端」那一档：查看这场会话在 tmux 窗格里的实时屏幕或留底终端日志。
    * 与 `filesView` 一样作为 Executor 栏的兄弟档位，点开时覆盖在滚动区上方，不卸载记录流。
+   * 支持函数形式按需注入实时的 `counts` 与 `switchToTalk` 回调。
    */
-  terminalView?: ReactNode;
+  terminalView?:
+    | ReactNode
+    | ((ctx: { counts: Record<StreamLens, number>; switchToTalk: () => void }) => ReactNode);
   /** 终端那一档此刻露着没有。 */
   terminalOpen?: boolean;
   /** 切回普通镜头或跳回原文时把终端那一档合上。 */
@@ -1361,12 +1366,65 @@ function WatcherFindingItem({ text }: { text: string }) {
   );
 }
 
-function cleanGoalText(raw?: string | null): string | null {
-  if (typeof raw !== 'string') return null;
-  const withoutBlocks = splitAllLeadingBlocks(raw).text;
-  const trimmed = withoutBlocks.trim();
-  if (!trimmed || trimmed.startsWith('【answer】')) return null;
-  return trimmed;
+function WatcherBoxBody({
+  fullText,
+  summaryText,
+  expanded,
+  onToggle,
+  testIdPrefix,
+  expandLabel,
+  collapseLabel,
+  lengthLabel,
+}: {
+  fullText: string;
+  summaryText?: string | null;
+  expanded: boolean;
+  onToggle: () => void;
+  testIdPrefix: string;
+  expandLabel: string;
+  collapseLabel: string;
+  lengthLabel: string;
+}) {
+  const preview = summaryText && summaryText.trim() ? summaryText.trim() : fullText;
+  const hasDiffSummary = preview !== fullText.trim();
+  const collapsible = isLongLedgerText(fullText) || hasDiffSummary;
+  const displayText = expanded || !collapsible ? fullText : preview;
+
+  if (!collapsible) {
+    return (
+      <div className="w-box-txt" data-testid={`${testIdPrefix}-text`}>
+        <WatcherInlineText text={displayText} />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="w-box-txt-wrap">
+        <div
+          className={`w-box-txt ${expanded ? 'is-expanded' : 'is-clamped'}`}
+          data-testid={`${testIdPrefix}-text`}
+          data-clamped={expanded ? 'false' : 'true'}
+        >
+          <WatcherInlineText text={displayText} />
+        </div>
+        {!expanded ? <div className="w-box-fade" aria-hidden="true" /> : null}
+      </div>
+      <div className="w-box-foot">
+        <span className="w-box-count">{lengthLabel}</span>
+        <button
+          type="button"
+          className="w-box-toggle"
+          data-testid={`${testIdPrefix}-toggle`}
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          <span>{expanded ? collapseLabel : expandLabel}</span>
+        </button>
+      </div>
+    </>
+  );
 }
 
 function cleanTailText(raw?: string | null): string {
@@ -1522,9 +1580,13 @@ export default function RecordStream({
   const [watcherOpen, setWatcherOpen] = useState(initialLensState.progressOpen);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [expandedWatcherIds, setExpandedWatcherIds] = useState<Record<string, boolean>>({});
+  const [anchorExpanded, setAnchorExpanded] = useState(false);
+  const [stateExpanded, setStateExpanded] = useState(false);
   useEffect(() => {
     setExpandedWatcherIds({});
     setInspectOpen(false);
+    setAnchorExpanded(false);
+    setStateExpanded(false);
   }, [sessionId]);
   /** 圈中的那段是一条真文件、或点中回复里的本地文件链接时，就地浮开的那一份。 */
   const [peek, setPeek] = useState<{
@@ -2734,10 +2796,15 @@ export default function RecordStream({
 
           {watcherOpen ? (() => {
             const state = observer?.state ?? null;
+            const cleanedStateAnchor = cleanGoalText(state?.anchor);
             const anchorText =
-              cleanGoalText(state?.anchor) ||
+              cleanedStateAnchor ||
               firstHumanGoal ||
               t('workbench.report.none');
+            const anchorSummaryText =
+              cleanedStateAnchor || firstHumanGoal
+                ? cleanGoalText(state?.anchor_summary) || extractGoalSummary(anchorText)
+                : null;
             const modelLabel = state?.model || 'observer';
             const latestSlice =
               watcherSlices.length > 0 ? watcherSlices[watcherSlices.length - 1] : null;
@@ -2747,24 +2814,45 @@ export default function RecordStream({
             const waitingCount = watcherTasks.filter((task) => task.status === 'waiting').length;
             const doneCount = watcherTasks.filter((task) => task.status === 'done').length;
 
-            let pendingCard: { taskId: string; question: string } | null = null;
+            let pendingCard: {
+              taskId: string;
+              question: string;
+              hasInteractiveCard: boolean;
+            } | null = null;
             for (const sl of watcherSlices) {
               for (const dc of sl.decisionCards) {
                 if (!decisionCardHost?.answerOf(dc.recordId)) {
                   pendingCard = {
                     taskId: sl.taskId,
                     question: dc.block.question,
+                    hasInteractiveCard: true,
                   };
                   break;
                 }
               }
               if (pendingCard) break;
             }
-            if (!pendingCard && state?.decision?.trim()) {
+            if (!pendingCard && unsummarizedTailRecords.length > 0) {
+              const tailCards = extractSliceDecisionCards(unsummarizedTailRecords);
+              for (const dc of tailCards) {
+                if (!decisionCardHost?.answerOf(dc.recordId)) {
+                  pendingCard = {
+                    taskId: latestSlice?.taskId || 'T1',
+                    question: dc.block.question,
+                    hasInteractiveCard: true,
+                  };
+                  break;
+                }
+              }
+            }
+            const cleanedStateDecision = cleanTailText(state?.decision);
+            const tasksAllowDecision = watcherTasks.length === 0 || waitingCount > 0;
+            if (!pendingCard && cleanedStateDecision && tasksAllowDecision) {
               const waitingTask = watcherTasks.find((task) => task.status === 'waiting');
               pendingCard = {
                 taskId: waitingTask?.id || latestSlice?.taskId || 'T1',
-                question: cleanTailText(state.decision),
+                question: cleanedStateDecision,
+                hasInteractiveCard: false,
               };
             }
 
@@ -2809,14 +2897,25 @@ export default function RecordStream({
                       <span className="w-stat done">已办结 {doneCount}</span>
                     </div>
                   </div>
-                  <div className="w-anchor-grid">
+                  <div
+                    className={`w-anchor-grid ${anchorExpanded || stateExpanded ? 'has-expanded' : ''}`}
+                  >
                     <div className="w-box" data-testid="watcher-goal-anchor">
                       <div className="w-box-lbl">
                         <span>① Goal Anchor · 总目标锚点</span>
                       </div>
-                      <div className="w-box-txt">
-                        <WatcherInlineText text={anchorText} />
-                      </div>
+                      <WatcherBoxBody
+                        fullText={anchorText}
+                        summaryText={anchorSummaryText}
+                        expanded={anchorExpanded}
+                        onToggle={() => setAnchorExpanded((v) => !v)}
+                        testIdPrefix="watcher-goal-anchor"
+                        expandLabel={t('workbench.stream.watcherExpandFull')}
+                        collapseLabel={t('workbench.stream.watcherCollapseFull')}
+                        lengthLabel={t('workbench.stream.watcherFullLength', {
+                          count: anchorText.length,
+                        })}
+                      />
                     </div>
                     <div className="w-box is-now" data-testid="watcher-current-state">
                       <div className="w-box-lbl">
@@ -2835,9 +2934,17 @@ export default function RecordStream({
                           <span className="w-box-state done">Completed</span>
                         )}
                       </div>
-                      <div className="w-box-txt">
-                        <WatcherInlineText text={curStateText} />
-                      </div>
+                      <WatcherBoxBody
+                        fullText={curStateText}
+                        expanded={stateExpanded}
+                        onToggle={() => setStateExpanded((v) => !v)}
+                        testIdPrefix="watcher-current-state"
+                        expandLabel={t('workbench.stream.watcherExpandFull')}
+                        collapseLabel={t('workbench.stream.watcherCollapseFull')}
+                        lengthLabel={t('workbench.stream.watcherFullLength', {
+                          count: curStateText.length,
+                        })}
+                      />
                     </div>
                   </div>
                   {pendingCard ? (
@@ -2845,13 +2952,15 @@ export default function RecordStream({
                       <span className="w-dec-q" title={pendingCard.question}>
                         待主人拍板 · [{pendingCard.taskId}] {pendingCard.question}
                       </span>
-                      <button
-                        type="button"
-                        className="w-decision-btn"
-                        onClick={() => jumpToPendingCard()}
-                      >
-                        定位决策卡 ↓
-                      </button>
+                      {pendingCard.hasInteractiveCard ? (
+                        <button
+                          type="button"
+                          className="w-decision-btn"
+                          onClick={() => jumpToPendingCard()}
+                        >
+                          定位决策卡 ↓
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </section>
@@ -3270,7 +3379,17 @@ export default function RecordStream({
           data-testid="terminal-panel"
           className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg-primary"
         >
-          {terminalView}
+          {typeof terminalView === 'function'
+            ? terminalView({
+                counts,
+                switchToTalk: () => {
+                  setWatcherOpen(false);
+                  setLens(counts.talk > 0 ? 'talk' : 'all');
+                  onFilesOpenChange?.(false);
+                  onTerminalOpenChange?.(false);
+                },
+              })
+            : terminalView}
         </div>
       ) : null}
       </div>

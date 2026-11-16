@@ -1957,7 +1957,10 @@
       "watcherPhaseGoalLabel": "阶段目标",
       "watcherPartDoing": "当前在做什么",
       "watcherPartFindings": "关键发现或产出",
-      "watcherPartDecision": "待拍板背景"
+      "watcherPartDecision": "待拍板背景",
+      "watcherExpandFull": "展开全文",
+      "watcherCollapseFull": "收起",
+      "watcherFullLength": "{{count}} 字"
     },
     "files": {
       "lens": "文件",
@@ -2055,7 +2058,66 @@
       "loading": "正在抓取终端屏幕…",
       "retry": "重试",
       "emptyTitle": "这场会话当前没有活跃的 tmux 终端",
-      "emptyBody": "当会话在 tmux 中启动或继续对话时（含 Claude Code / codex / opencode / CoreAgent），这里会实时展示窗格里的运行画面。"
+      "emptyBody": "当会话在 tmux 中启动或继续对话时（含 Claude Code / codex / opencode / CoreAgent），这里会实时展示窗格里的运行画面。",
+      "empty": {
+        "dormant": {
+          "pill": "终端未挂载 · 会话待命中",
+          "title": "实时终端已关闭，会话处于待命状态",
+          "desc": "历史对话与上下文已完整保存，无需保持 tmux 窗口常驻。随时可在下方输入框发消息唤醒，或在本地终端续接。"
+        },
+        "dormantError": {
+          "pill": "终端未挂载 · 上次执行异常",
+          "title": "终端已退出，上次执行遇到错误",
+          "desc": "下方保留了报错摘要与历史记录。你可以在底部输入框追加指令重试，或切回「对话」查看上下文。"
+        },
+        "headless": {
+          "pill": "后台运行中 · 无终端窗格",
+          "title": "当前会话正在后台执行，未挂载交互式终端",
+          "desc": "任务正在无头进程中推进，没有绑定 tmux 窗口。切回「对话」或「进展」可实时查看输出与进度。"
+        },
+        "completed": {
+          "pill": "会话已结束",
+          "title": "这场会话已结束，实时终端已释放",
+          "desc": "完整对话、改动文件与上下文均已归档。仍可在下方输入框追加提问重新拉起，或查看完整记录。"
+        },
+        "neverStarted": {
+          "pill": "待启动",
+          "title": "尚未启动终端进程",
+          "desc": "在下方输入框发送第一条指令，系统将自动启动执行进程并实时记录过程。"
+        },
+        "unresumableGone": "原始会话记录已不在本机磁盘上，无法重新挂载或续接终端。",
+        "unresumableReadonly": "当前会话仅支持只读回看历史记录，不支持重新挂载终端。"
+      },
+      "snapshot": {
+        "kernel": "执行内核",
+        "modelUnknown": "模型未记录",
+        "cwd": "工作目录",
+        "cwdUnknown": "未记录目录",
+        "progress": "规模与上下文",
+        "progressValue": "{{prefix}}{{records}} 条记录 · {{talks}} 条对话",
+        "contextLabel": "上下文 {{value}}",
+        "contextUnknown": "未记录",
+        "identity": "会话标识 · 最近活跃",
+        "timeUnknown": "时间未记录"
+      },
+      "actions": {
+        "primaryWakeTitle": "直接在 WebUI 中唤醒续接",
+        "primaryWakeDesc": "在底部输入框发送消息，系统将自动拉起进程并续接上下文。",
+        "focusComposer": "聚焦输入框",
+        "primaryHeadlessTitle": "后台正在持续产出",
+        "primaryHeadlessDesc": "切回对话流查看最新回复、工具调用与进度。",
+        "primaryUnresumableTitle": "仅支持回看历史记录",
+        "primaryUnresumableDesc": "该会话当前无法续接拉起新终端，可切回对话查看已有内容。",
+        "switchToTalk": "切回「对话」({{count}})",
+        "switchToTalkFull": "切回「对话」({{count}}) 查看完整记录",
+        "queueFollowUp": "在输入框排队插话",
+        "cliResumeLabel": "本地终端一键续接命令",
+        "cliDirLabel": "打开原工作目录",
+        "copyCmd": "复制命令",
+        "copyPath": "复制完整路径",
+        "copySessionId": "复制完整 Session ID",
+        "recheck": "重新检测终端"
+      }
     },
     "record": {
       "kind": {
@@ -2331,6 +2393,8 @@
       "addImage": "添加图片",
       "placeholder": "说点什么。敲 / 挑 skill，图片和文档可以直接粘贴或拖进来",
       "placeholderWithFamily": "对 {{family}} 说点什么。敲 / 挑 skill，图片和文档可以直接粘贴或拖进来",
+      "placeholderCompact": "说点什么，敲 / 挑技能…",
+      "placeholderCompactWithFamily": "对 {{family}} 说点什么，敲 / 挑技能…",
       "send": "发送",
       "sending": "发送中",
       "addAttachment": "添加图片或文档",

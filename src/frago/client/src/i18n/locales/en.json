@@ -1957,7 +1957,10 @@
       "watcherPhaseGoalLabel": "Stage goal",
       "watcherPartDoing": "What's happening now",
       "watcherPartFindings": "Key findings or output",
-      "watcherPartDecision": "Decision context"
+      "watcherPartDecision": "Decision context",
+      "watcherExpandFull": "Show full",
+      "watcherCollapseFull": "Collapse",
+      "watcherFullLength": "{{count}} chars"
     },
     "files": {
       "lens": "Files",
@@ -2055,7 +2058,66 @@
       "loading": "Capturing terminal pane…",
       "retry": "Retry",
       "emptyTitle": "No active tmux terminal for this session",
-      "emptyBody": "When this session starts or continues in tmux (including Claude Code, codex, opencode, and CoreAgent), its live pane output appears here."
+      "emptyBody": "When this session starts or continues in tmux (including Claude Code, codex, opencode, and CoreAgent), its live pane output appears here.",
+      "empty": {
+        "dormant": {
+          "pill": "Not in tmux · Standby",
+          "title": "Live terminal closed, session is on standby",
+          "desc": "Conversation history and context are preserved without keeping a tmux window open. Send a message below to wake it, or resume in a local terminal."
+        },
+        "dormantError": {
+          "pill": "Not in tmux · Last turn failed",
+          "title": "Terminal exited after an error on the last turn",
+          "desc": "The error summary and history are preserved below. Retry from the composer or switch back to Talk for full context."
+        },
+        "headless": {
+          "pill": "Running headless · No tmux pane",
+          "title": "Session is running in the background without a tmux terminal",
+          "desc": "Execution is progressing in a headless process with no attached tmux pane. Switch to Talk or Progress to follow live output."
+        },
+        "completed": {
+          "pill": "Session ended",
+          "title": "Session ended and live terminal was released",
+          "desc": "All messages, changed files, and context are archived. You can still send a follow-up below to resume, or review the transcript."
+        },
+        "neverStarted": {
+          "pill": "Not started",
+          "title": "No terminal process has started yet",
+          "desc": "Send your first instruction in the composer below to start execution and record the session."
+        },
+        "unresumableGone": "The original session transcript is no longer on disk, so a terminal cannot be re-mounted or resumed.",
+        "unresumableReadonly": "This session is read-only and does not support resuming a terminal."
+      },
+      "snapshot": {
+        "kernel": "Kernel",
+        "modelUnknown": "Model unrecorded",
+        "cwd": "Working directory",
+        "cwdUnknown": "Directory unrecorded",
+        "progress": "Scale & context",
+        "progressValue": "{{prefix}}{{records}} records · {{talks}} turns",
+        "contextLabel": "Context {{value}}",
+        "contextUnknown": "unrecorded",
+        "identity": "Session ID · Last active",
+        "timeUnknown": "Time unrecorded"
+      },
+      "actions": {
+        "primaryWakeTitle": "Wake and resume in WebUI",
+        "primaryWakeDesc": "Send a message below to automatically start the process and restore context.",
+        "focusComposer": "Focus composer",
+        "primaryHeadlessTitle": "Generating output in background",
+        "primaryHeadlessDesc": "Switch back to Talk to inspect live replies, tool calls, and progress.",
+        "primaryUnresumableTitle": "Read-only transcript",
+        "primaryUnresumableDesc": "This session cannot launch a new terminal; switch back to Talk to view existing history.",
+        "switchToTalk": "Back to Talk ({{count}})",
+        "switchToTalkFull": "Back to Talk ({{count}}) for full transcript",
+        "queueFollowUp": "Queue follow-up in composer",
+        "cliResumeLabel": "Resume in local terminal",
+        "cliDirLabel": "Open working directory",
+        "copyCmd": "Copy cmd",
+        "copyPath": "Copy full path",
+        "copySessionId": "Copy full Session ID",
+        "recheck": "Re-check terminal"
+      }
     },
     "record": {
       "kind": {
@@ -2331,6 +2393,8 @@
       "addImage": "Add an image",
       "placeholder": "Say something. Type / to pick a skill; images and documents can be pasted or dropped straight in",
       "placeholderWithFamily": "Say something to {{family}}. Type / to pick a skill; images and documents can be pasted or dropped straight in",
+      "placeholderCompact": "Message… (/ for skills)",
+      "placeholderCompactWithFamily": "Message {{family}}… (/ for skills)",
       "send": "Send",
       "sending": "Sending",
       "addAttachment": "Add an image or a document",
