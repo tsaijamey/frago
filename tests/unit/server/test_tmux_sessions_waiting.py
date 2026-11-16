@@ -368,3 +368,118 @@ class TestAwaitingInputThreeTierFallbackChain:
             by_sid = {w.session_id: w for w in waiting if w.session_id}
             assert by_sid[claude_sid].awaiting_input is False
             assert by_sid[agy_sid].awaiting_input is False
+
+    def test_list_waiting_ignores_stale_superseded_and_observer_done_dispatches(self, tmp_path, monkeypatch):
+        """历史僵尸单（superseded+queued / 超60s死目标 running / observer 全部 done）不抑制 awaiting_input。"""
+        import os
+
+        from frago.server.services import session_observer
+        from frago.server.services.tmux_sessions_service import _FALLBACK_VERDICT_CACHE, _PATH_CACHE
+        from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
+
+        _FALLBACK_VERDICT_CACHE.clear()
+        _PATH_CACHE.clear()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        sid_superseded = "bbbb1111-1111-4111-8111-111111111111"
+        sid_dead_run = "bbbb2222-2222-4222-8222-222222222222"
+        sid_obs_done = "bbbb3333-3333-4333-8333-333333333333"
+
+        for sid in (sid_superseded, sid_dead_run, sid_obs_done):
+            d = tmp_path / ".frago" / "sessions" / "agy" / sid
+            d.mkdir(parents=True)
+            f = d / "raw.jsonl"
+            f.write_text(json.dumps({"type": "assistant", "message": {"content": "请确认"}}) + "\n", encoding="utf-8")
+            past_time = time.time() - 10.0
+            os.utime(f, (past_time, past_time))
+
+        old_iso = "2026-11-10T01:00:00Z"
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-stale-superseded",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_superseded,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_dead1",
+                target_name="core_dead1",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="check",
+                task_summary="check",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="superseded",
+                delivery_state="queued",
+                created_at=old_iso,
+                completed_at=old_iso,
+            )
+        )
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-stale-dead-run",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_dead_run,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_dead2",
+                target_name="core_dead2",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="check",
+                task_summary="check",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="running",
+                delivery_state="queued",
+                created_at=old_iso,
+            )
+        )
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-obs-done-queued",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_obs_done,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_dead3",
+                target_name="core_dead3",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="check",
+                task_summary="check",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="completed",
+                delivery_state="queued",
+            )
+        )
+        obs_dir = session_observer.session_dir(sid_obs_done, "agy")
+        obs_slots = session_observer.empty_slots(sid_obs_done, "agy")
+        obs_slots["tasks"] = [{"id": "T1", "title": "已完成", "status": "done", "actor": "主会话", "conclusion": "ok"}]
+        session_observer.save_slots(obs_dir, obs_slots)
+
+        tmux_sessions = [f"frago-agent-{sid}" for sid in (sid_superseded, sid_dead_run, sid_obs_done)]
+        tmux_commands = {name: "antigravity" for name in tmux_sessions}
+        with (
+            patch("frago.server.services.tmux_sessions_service._session_names", return_value=tmux_sessions),
+            patch("frago.server.services.tmux_sessions_service._pane_commands", return_value=tmux_commands),
+            patch("frago.server.services.tmux_sessions_service._tmux", return_value=""),
+            patch("frago.server.services.tmux_sessions_service._awaiting_input", return_value=True),
+            patch("frago.server.services.tmux_sessions_service._is_busy", return_value=False),
+        ):
+            waiting = list_waiting()
+            by_sid = {w.session_id: w for w in waiting if w.session_id}
+            assert by_sid[sid_superseded].awaiting_input is True
+            assert by_sid[sid_dead_run].awaiting_input is True
+            assert by_sid[sid_obs_done].awaiting_input is True

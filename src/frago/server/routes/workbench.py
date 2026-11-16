@@ -21,6 +21,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import asdict, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,46 +69,121 @@ from frago.skills.skill_prompt import UnknownSkill, embed_skills, load_skills
 
 router = APIRouter()
 
-_OBSERVER_DECISION_CACHE: dict[str, tuple[tuple[int, int], bool]] = {}
+_OBSERVER_DECISION_CACHE: dict[str, tuple[tuple[int, int], tuple[bool, bool]]] = {}
 _TRAILING_CARD_CACHE: dict[str, tuple[int, bool]] = {}
 _RECENT_DECISION_WINDOW_MS = 24 * 60 * 60 * 1000
+_DISPATCH_STARTUP_GRACE_MS = 60_000
+_DISPATCH_STALE_DELIVERING_MS = 1_800_000
+_DISPATCH_REPLY_OVERTAKEN_GRACE_MS = 5_000
 
 
-def _dispatch_states_by_caller() -> tuple[set[str], set[str]]:
-    """一次扫描异步派发单，返回 (有运行中子任务的主会话集合, 有排队/送达中回调的主会话集合)。"""
+def _iso_to_epoch_ms(raw: str | None) -> int | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _dispatch_states_by_caller(
+    active_target_ids: set[str] | None = None,
+    caller_last_reply_ms: dict[str, int] | None = None,
+    now_ms: int | None = None,
+) -> tuple[set[str], set[str]]:
+    """一次扫描异步派发单并校验真实活性与时序，返回 (有运行中子任务的主会话集合, 有排队/送达中回调的主会话集合)。"""
     try:
         from frago.session.async_dispatch import list_dispatch_jobs
 
+        jobs = list_dispatch_jobs(active_only=False)
+        if not jobs:
+            return set(), set()
+
+        live_targets = active_target_ids or set()
+        reply_map = caller_last_reply_ms or {}
+        cur_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+
+        def _is_live_running(job: Any) -> bool:
+            tid = (job.target_session_id or "").strip()
+            if tid and tid in live_targets:
+                return True
+            created_ms = _iso_to_epoch_ms(getattr(job, "created_at", None))
+            return created_ms is not None and (cur_ms - created_ms) <= _DISPATCH_STARTUP_GRACE_MS
+
+        # 1. 识别真正活跃的 pending/running 任务，并沿两级嵌套派发链向上传递活性
         running_callers: set[str] = set()
+        for job in jobs:
+            st = (job.status or "").strip().lower()
+            cid = (job.caller_session_id or "").strip()
+            if cid and st in ("pending", "running") and _is_live_running(job):
+                running_callers.add(cid)
+
+        changed = True
+        while changed:
+            changed = False
+            for job in jobs:
+                st = (job.status or "").strip().lower()
+                if st not in ("pending", "running"):
+                    continue
+                cid = (job.caller_session_id or "").strip()
+                tid = (job.target_session_id or "").strip()
+                if cid and tid in running_callers and cid not in running_callers:
+                    running_callers.add(cid)
+                    changed = True
+
+        # 2. 识别真正待投递的 callback（严格排除 superseded/failed/cancelled、僵尸 delivering 与已被主会话新回复超越的单据）
         callback_callers: set[str] = set()
-        for job in list_dispatch_jobs(active_only=False):
+        for job in jobs:
+            st = (job.status or "").strip().lower()
+            if st in ("superseded", "failed", "cancelled"):
+                continue
             cid = (job.caller_session_id or "").strip()
             if not cid:
                 continue
-            if job.status in ("pending", "running"):
-                running_callers.add(cid)
-            elif job.status == "delivering" or getattr(
-                job, "delivery_state", None
-            ) in ("queued", "delivering"):
-                callback_callers.add(cid)
+            ds = (getattr(job, "delivery_state", None) or "").strip().lower()
+            is_cb = st == "delivering" or (st == "completed" and ds in ("queued", "delivering"))
+            if not is_cb:
+                continue
+
+            tid = (job.target_session_id or "").strip()
+            completed_ms = _iso_to_epoch_ms(getattr(job, "completed_at", None))
+            updated_ms = _iso_to_epoch_ms(getattr(job, "updated_at", None))
+            if st == "delivering" and completed_ms is None:
+                if (
+                    updated_ms is not None
+                    and (cur_ms - updated_ms) > _DISPATCH_STALE_DELIVERING_MS
+                    and tid not in live_targets
+                ):
+                    continue
+
+            job_ts_ms = completed_ms or updated_ms
+            last_reply = reply_map.get(cid)
+            if (
+                job_ts_ms is not None
+                and last_reply is not None
+                and last_reply > job_ts_ms + _DISPATCH_REPLY_OVERTAKEN_GRACE_MS
+            ):
+                continue
+
+            callback_callers.add(cid)
         return running_callers, callback_callers
     except Exception:  # noqa: BLE001 — 读取派发账本异常不阻断工作台清单
         return set(), set()
 
 
-def _observer_slots_need_decision(session_id: str, family: str) -> bool:
-    """从已落盘的 observer-slots.json 判定是否存在未收敛的待拍板事项。"""
+def _observer_slots_state(session_id: str, family: str) -> tuple[bool, bool]:
+    """从已落盘的 observer-slots.json 返回 (need_decision, all_tasks_done)。"""
     try:
         from frago.server.services import session_observer
 
         if family not in session_observer._FAMILY_DIR:
-            return False
+            return False, False
         slots_path = (
             session_observer.session_dir(session_id, family)
             / session_observer.SLOTS_FILENAME
         )
         if not slots_path.is_file():
-            return False
+            return False, False
         st = slots_path.stat()
         key = (st.st_mtime_ns, st.st_size)
         cached = _OBSERVER_DECISION_CACHE.get(str(slots_path))
@@ -137,16 +213,28 @@ def _observer_slots_need_decision(session_id: str, family: str) -> bool:
         reconciled = session_observer._reconcile_decision_consistency(
             tasks, slots.get("decision")
         )
-        has_waiting_task = any(
-            isinstance(t, dict)
-            and t.get("status") == session_observer.TASK_STATUS_WAITING
+        doing_cnt = sum(
+            1
             for t in tasks
+            if isinstance(t, dict) and t.get("status") == session_observer.TASK_STATUS_DOING
         )
-        verdict = bool(reconciled) or has_waiting_task
-        _OBSERVER_DECISION_CACHE[str(slots_path)] = (key, verdict)
-        return verdict
+        waiting_cnt = sum(
+            1
+            for t in tasks
+            if isinstance(t, dict) and t.get("status") == session_observer.TASK_STATUS_WAITING
+        )
+        done_cnt = sum(
+            1
+            for t in tasks
+            if isinstance(t, dict) and t.get("status") == session_observer.TASK_STATUS_DONE
+        )
+        need_dec = bool(reconciled) or waiting_cnt > 0
+        all_done = bool(tasks) and doing_cnt == 0 and waiting_cnt == 0 and done_cnt > 0
+        result = (need_dec, all_done)
+        _OBSERVER_DECISION_CACHE[str(slots_path)] = (key, result)
+        return result
     except Exception:  # noqa: BLE001
-        return False
+        return False, False
 
 
 def _has_trailing_unanswered_card(session_id: str, last_active_at: int) -> bool:
@@ -181,6 +269,7 @@ def _session_needs_decision(
     has_running_worker: bool,
     callback_queued: bool,
     now_ms: int,
+    slots_need_decision: bool | None = None,
 ) -> bool:
     """判定会话此刻是否真正存在等待人类拍板的未决事项。"""
     if (
@@ -190,7 +279,12 @@ def _session_needs_decision(
         or status == "error"
     ):
         return False
-    if _observer_slots_need_decision(card.session_id, card.family):
+    need_from_slots = (
+        slots_need_decision
+        if slots_need_decision is not None
+        else _observer_slots_state(card.session_id, card.family)[0]
+    )
+    if need_from_slots:
         return True
     if is_alive or (now_ms - int(getattr(card, "last_active_at", 0) or 0)) <= _RECENT_DECISION_WINDOW_MS:
         return _has_trailing_unanswered_card(
@@ -220,12 +314,10 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     from frago.agent_driver.tmux_session import tmux_name_for
     from frago.server.services import tmux_sessions_service as tsvc
 
-    cards, open_names, dispatch_states = await asyncio.gather(
+    cards, open_names = await asyncio.gather(
         asyncio.to_thread(record_reader.list_sessions),
         asyncio.to_thread(tsvc.open_session_names),
-        asyncio.to_thread(_dispatch_states_by_caller),
     )
-    running_callers, callback_callers = dispatch_states
     # ``tmux_name``：开着时那个 tmux 会话的名字，页面「关闭 tmux 会话」的弹窗原样摆出来，
     # 命名规则不在前端再抄一份。没开着为 null。
     # 会话页上起过的名字盖在各家自己的标题上（见 ``workbench_titles``）。
@@ -245,7 +337,9 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     direct_employee_by_sid: dict[str, str] = {}
     parent_by_sid: dict[str, str | None] = {}
     computed_states: list[tuple[Any, str, bool, str, bool]] = []
-    running_worker_parents: set[str] = set(running_callers)
+    running_worker_parents: set[str] = set()
+    active_target_ids: set[str] = set()
+    caller_last_reply_ms: dict[str, int] = {}
     for card in cards:
         parent_by_sid[card.session_id] = card.parent_session_id
         emp_id = card.employee_id or active_employee_by_sid.get(card.session_id)
@@ -260,10 +354,15 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
                 status = "running"
             elif not is_alive and status == "running":
                 status = "done" if card.last_kind == "agent.say" else "idle"
+        if status == "running" or (card.family == "coreagent" and is_alive):
+            active_target_ids.add(card.session_id)
+        reply_ts = getattr(card, "last_reply_at", None)
+        if isinstance(reply_ts, int) and reply_ts > 0:
+            caller_last_reply_ms[card.session_id] = reply_ts
         if (
             getattr(card, "origin", "human") == "worker"
             and card.parent_session_id
-            and (is_alive or status == "running")
+            and status == "running"
         ):
             running_worker_parents.add(card.parent_session_id)
         computed_states.append((card, name, alive, status, is_alive))
@@ -289,10 +388,23 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
     now_ms = int(time.time() * 1000)
 
     def _build_rows() -> list[dict[str, Any]]:
+        running_callers, callback_callers = _dispatch_states_by_caller(
+            active_target_ids=active_target_ids,
+            caller_last_reply_ms=caller_last_reply_ms,
+            now_ms=now_ms,
+        )
+        effective_running_parents = running_worker_parents | running_callers
         built: list[dict[str, Any]] = []
         for card, name, alive, status, is_alive in computed_states:
-            has_running_worker = card.session_id in running_worker_parents
+            slots_need_decision, all_tasks_done = _observer_slots_state(
+                card.session_id, card.family
+            )
+            has_running_worker = card.session_id in effective_running_parents
             callback_queued = card.session_id in callback_callers
+            # 与右侧 Observer 进展账本强一致收敛：若总控表全为已办结且会话当前未在跑，强制清零残留的在跑/待回传状态
+            if all_tasks_done and status != "running":
+                has_running_worker = False
+                callback_queued = False
             need_decision = _session_needs_decision(
                 card,
                 status=status,
@@ -300,6 +412,7 @@ async def list_workbench_sessions() -> list[dict[str, Any]]:
                 has_running_worker=has_running_worker,
                 callback_queued=callback_queued,
                 now_ms=now_ms,
+                slots_need_decision=slots_need_decision,
             )
             card_data = asdict(card)
             card_data.pop("last_kind", None)

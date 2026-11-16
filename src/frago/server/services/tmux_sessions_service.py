@@ -556,24 +556,129 @@ def _fallback_tail(record_file: Path, session_id: str) -> tuple[str | None, str 
         return None, None, ""
 
 
-def _pending_caller_session_ids() -> set[str]:
+def _iso_to_epoch_sec(raw: str | None) -> float | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _caller_observer_all_done(session_id: str) -> bool:
+    """检查发起方会话在 observer-slots.json 中的全部事项是否均已办结（doing=0, waiting=0, done>0）。"""
+    try:
+        from frago.server.services import session_observer
+
+        kernel = _detect_session_kernel(session_id)
+        family = "claude-code" if kernel == "claude" else kernel
+        if family not in session_observer._FAMILY_DIR:
+            return False
+        slots_dir = session_observer.session_dir(session_id, family)
+        if not (slots_dir / session_observer.SLOTS_FILENAME).is_file():
+            return False
+        slots = session_observer.load_slots(slots_dir, session_id, family)
+        raw_tasks = slots.get("tasks")
+        if not isinstance(raw_tasks, list) or not raw_tasks:
+            return False
+        fallback_at = slots.get("updated_at") or slots.get("tail_at") or slots.get("anchor_at")
+        tasks = [
+            session_observer._normalize_task_item(t, fallback_at)
+            for t in raw_tasks
+            if isinstance(t, dict)
+        ]
+        if not tasks:
+            return False
+        doing_cnt = sum(1 for t in tasks if t.get("status") == "doing")
+        waiting_cnt = sum(1 for t in tasks if t.get("status") == "waiting")
+        done_cnt = sum(1 for t in tasks if t.get("status") == "done")
+        return doing_cnt == 0 and waiting_cnt == 0 and done_cnt > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _pending_caller_session_ids(open_names: list[str] | set[str] | None = None) -> set[str]:
     """正在等待子 Worker 执行或异步回调送达的主会话 ID 集合。
 
     主会话派发后台异步子任务后，自身终端往往已退回空闲提示符，但实际上它在等
     `<frago-async-callback>` 回传，而不是等人类拍板。此类会话绝不能报 `awaiting_input=True`。
+    同时严格过滤已取代（superseded）/失败终态与目标已失活、或发起方已全部完结的僵尸派发单。
     """
     try:
         from frago.session.async_dispatch import list_dispatch_jobs
 
-        pending: set[str] = set()
-        for job in list_dispatch_jobs(active_only=False):
-            caller = (job.caller_session_id or "").strip()
-            if not caller:
+        jobs = list_dispatch_jobs(active_only=False)
+        if not jobs:
+            return set()
+
+        tmux_sids: set[str] = set()
+        for name in open_names or ():
+            if name.startswith(_PREFIX):
+                tmux_sids.add(name[len(_PREFIX) :])
+
+        core_alive: dict[str, bool] = {}
+        with contextlib.suppress(Exception):
+            from frago.server.services import coreagent_runner
+
+            core_alive = coreagent_runner.live_states()
+
+        now_s = time.time()
+
+        def _is_live_running_job(job: Any) -> bool:
+            tid = (job.target_session_id or "").strip()
+            if tid and (core_alive.get(tid) or tid in tmux_sids):
+                return True
+            created_s = _iso_to_epoch_sec(getattr(job, "created_at", None))
+            return created_s is not None and (now_s - created_s) <= 60.0
+
+        # 第一遍：识别真正活跃的 pending/running 任务，并沿两级嵌套向上传递活性
+        active_running_jobs: list[Any] = []
+        for job in jobs:
+            st = (job.status or "").strip().lower()
+            if st in ("pending", "running") and _is_live_running_job(job):
+                active_running_jobs.append(job)
+
+        active_callers: set[str] = {
+            (j.caller_session_id or "").strip() for j in active_running_jobs if j.caller_session_id
+        }
+        changed = True
+        while changed:
+            changed = False
+            for job in jobs:
+                st = (job.status or "").strip().lower()
+                if st not in ("pending", "running"):
+                    continue
+                cid = (job.caller_session_id or "").strip()
+                tid = (job.target_session_id or "").strip()
+                if cid and tid in active_callers and cid not in active_callers:
+                    active_callers.add(cid)
+                    changed = True
+
+        # 第二遍：合并真正活跃的 running 调用方与合法待投递的 callback 调用方
+        pending: set[str] = set(active_callers)
+        for job in jobs:
+            st = (job.status or "").strip().lower()
+            if st in ("superseded", "failed", "cancelled"):
                 continue
-            if job.status in ("pending", "running", "delivering") or getattr(
-                job, "delivery_state", None
-            ) in ("queued", "delivering"):
-                pending.add(caller)
+            caller = (job.caller_session_id or "").strip()
+            if not caller or caller in pending:
+                continue
+            ds = (getattr(job, "delivery_state", None) or "").strip().lower()
+            is_cb = st == "delivering" or (st == "completed" and ds in ("queued", "delivering"))
+            if not is_cb:
+                continue
+            if st == "delivering" and not getattr(job, "completed_at", None):
+                updated_s = _iso_to_epoch_sec(getattr(job, "updated_at", None))
+                tid = (job.target_session_id or "").strip()
+                if (
+                    updated_s is not None
+                    and (now_s - updated_s) > 1800.0
+                    and not (core_alive.get(tid) or tid in tmux_sids)
+                ):
+                    continue
+            if _caller_observer_all_done(caller):
+                continue
+            pending.add(caller)
         return pending
     except Exception:  # noqa: BLE001 — 读取派发单失败时不阻断 tmux 列表
         return set()
@@ -588,7 +693,7 @@ def list_waiting() -> list[TmuxWaitingInfo]:
     """
     names = _session_names()
     commands = _pane_commands()
-    pending_callers = _pending_caller_session_ids()
+    pending_callers = _pending_caller_session_ids(open_names=names)
     frago_names = [n for n in names if n.startswith(_PREFIX)]
     pane_by_name: dict[str, str] = {}
     if len(frago_names) == 1:
@@ -901,7 +1006,7 @@ def list_sessions(*, excerpt_chars: int = DEFAULT_EXCERPT_CHARS) -> list[TmuxSes
     mem = _memory_mb()
     managed = _managed_ids()
     commands = _pane_commands()
-    pending_callers = _pending_caller_session_ids()
+    pending_callers = _pending_caller_session_ids(open_names=names)
     now = time.time()
 
     rows: list[TmuxSessionInfo] = []

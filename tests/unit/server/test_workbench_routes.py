@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -352,6 +354,221 @@ class TestSessionList:
         assert body[parent_plain]["has_running_worker"] is False
         assert body[parent_plain]["callback_queued"] is False
         assert body[parent_plain]["need_decision"] is False
+
+    def test_stale_zombie_dispatches_and_observer_done_converge_to_false(self, client, monkeypatch, tmp_path):
+        """历史僵尸派发单（superseded+queued / 超期未活 running / 主会话已回复超越 / observer 全部 done）绝不污染左栏状态。"""
+        from pathlib import Path
+
+        from frago.server.routes import workbench as wb_route
+        from frago.server.services import coreagent_runner, session_observer, tmux_sessions_service as tsvc
+        from frago.session.async_dispatch import AsyncDispatchJob, save_dispatch_job
+
+        wb_route._OBSERVER_DECISION_CACHE.clear()
+        wb_route._TRAILING_CARD_CACHE.clear()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        sid_superseded = "55555555-5555-5555-5555-555555555555"
+        sid_overtaken = "66666666-6666-6666-6666-666666666666"
+        sid_obs_done = "77777777-7777-7777-7777-777777777777"
+        sid_stale_run = "88888888-8888-8888-8888-888888888888"
+        sid_idle_tmux_worker = "99999999-9999-9999-9999-999999999999"
+        worker_idle_tmux = "aaaa9999-9999-9999-9999-999999999999"
+        worker_dead = "core_cccccccccccccccccccccccccccccccc"
+
+        old_iso = "2026-11-10T01:00:00Z"
+        old_ms = int(1794272400 * 1000)
+
+        # 1. superseded + queued（Investigate 400 同款）
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-superseded-zombie",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_superseded,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id=worker_dead,
+                target_name=worker_dead,
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="superseded",
+                delivery_state="queued",
+                created_at=old_iso,
+                completed_at=old_iso,
+            )
+        )
+        # 2. completed + queued 但主会话 last_reply_at 明显晚于 completed_at（已被消化超越）
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-overtaken",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_overtaken,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_dddddddddddddddddddddddddddddddd",
+                target_name="core_dddddddddddddddddddddddddddddddd",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="completed",
+                delivery_state="queued",
+                created_at="2026-11-15T01:00:00Z",
+                completed_at="2026-11-15T01:05:00Z",
+            )
+        )
+        # 3. queued 单但在 observer-slots.json 中所有事项已 done
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-obs-done",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_obs_done,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id="core_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                target_name="core_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="completed",
+                delivery_state="queued",
+            )
+        )
+        done_dir = session_observer.session_dir(sid_obs_done, "agy")
+        done_slots = session_observer.empty_slots(sid_obs_done, "agy")
+        done_slots["tasks"] = [{"id": "T1", "title": "已办结事项", "status": "done", "actor": "主会话", "conclusion": "ok"}]
+        session_observer.save_slots(done_dir, done_slots)
+
+        # 4. 超期 >60s 且目标不存活的 running 僵尸单
+        save_dispatch_job(
+            AsyncDispatchJob(
+                job_id="disp-stale-running",
+                kind="worker",
+                mode="new",
+                caller_session_id=sid_stale_run,
+                caller_employee_id=None,
+                caller_cwd=str(tmp_path),
+                target_session_id=worker_dead,
+                target_name=worker_dead,
+                employee_id=None,
+                agent="coreagent",
+                cwd=str(tmp_path),
+                prompt="task",
+                task_summary="task",
+                resume=None,
+                model=None,
+                timeout=None,
+                status="running",
+                delivery_state="queued",
+                created_at=old_iso,
+            )
+        )
+
+        # 5. 常驻子会话在 tmux 中活着但状态已是 done，绝不能反推父会话 has_running_worker=True
+        monkeypatch.setattr(tsvc, "open_session_names", lambda: {f"frago-agent-{worker_idle_tmux}"})
+        monkeypatch.setattr(coreagent_runner, "live_states", lambda: {})
+        monkeypatch.setattr(
+            record_reader,
+            "list_sessions",
+            lambda: [
+                SessionCard(
+                    session_id=sid_superseded,
+                    family="agy",
+                    title="Superseded 残留",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=sid_overtaken,
+                    family="agy",
+                    title="主会话已有新回复",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=old_ms + 999_000_000,
+                    last_reply_at=int(datetime.fromisoformat("2026-11-15T02:00:00+00:00").timestamp() * 1000),
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=sid_obs_done,
+                    family="agy",
+                    title="Observer 全已办结",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=sid_stale_run,
+                    family="agy",
+                    title="目标已死僵尸 running",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=worker_dead,
+                    family="coreagent",
+                    title="死掉的 Worker",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="idle",
+                    origin="worker",
+                    parent_session_id=sid_stale_run,
+                ),
+                SessionCard(
+                    session_id=sid_idle_tmux_worker,
+                    family="agy",
+                    title="挂了空闲常驻子会话",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="human",
+                ),
+                SessionCard(
+                    session_id=worker_idle_tmux,
+                    family="agy",
+                    title="闲置开着tmux的子员工",
+                    directory=str(tmp_path),
+                    created_at=1000,
+                    last_active_at=2000,
+                    status="done",
+                    origin="worker",
+                    parent_session_id=sid_idle_tmux_worker,
+                ),
+            ],
+        )
+
+        body = {r["session_id"]: r for r in client.get("/api/workbench/sessions").json()}
+        for sid in (sid_superseded, sid_overtaken, sid_obs_done, sid_stale_run, sid_idle_tmux_worker):
+            assert body[sid]["has_running_worker"] is False, f"{sid} should not have running worker"
+            assert body[sid]["callback_queued"] is False, f"{sid} should not have callback_queued"
 
     def test_coreagent那一场收摊了就不算活着(self, client, monkeypatch):
         """空闲回收掉、真正关掉的那一场回落成不盯——省资源的本意不变。"""

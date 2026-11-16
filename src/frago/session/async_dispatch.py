@@ -108,7 +108,7 @@ class AsyncDispatchJob:
             st = str(data.get("status") or "").strip().lower()
             if st == "completed":
                 filtered["delivery_state"] = "delivered"
-            elif st == "failed":
+            elif st in {"failed", "superseded", "cancelled"}:
                 filtered["delivery_state"] = "failed"
             elif st in {"pending", "running", "delivering"}:
                 filtered["delivery_state"] = "queued"
@@ -319,6 +319,9 @@ def supersede_active_jobs_for_target(
         old_job.superseded_by = new_job_id
         old_job.completed_at = _utc_now()
         old_job.error = f"Superseded by {new_job_id}"
+        if getattr(old_job, "delivery_state", "queued") in ("queued", "delivering"):
+            old_job.delivery_state = "failed"
+            old_job.delivery_error = f"Superseded by {new_job_id}"
         save_dispatch_job(old_job)
         superseded_ids.append(old_job.job_id)
     return superseded_ids
