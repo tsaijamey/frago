@@ -35,6 +35,10 @@ from frago.employee import (
     scan_data_slot_entries,
 )
 from frago.ontology import ContractViolationError
+from frago.server.services.employee_usage import (
+    epoch_ms_to_iso,
+    get_employee_last_used_ms,
+)
 
 router = APIRouter()
 
@@ -107,8 +111,14 @@ def _data_summary(data_slots: list[str]) -> dict[str, Any]:
     return {"slot_count": len(data_slots), "entry_count": total, "slots": slots}
 
 
-def _post_payload(record: EmployeePostRecord, *, with_data_summary: bool = True) -> dict[str, Any]:
+def _post_payload(
+    record: EmployeePostRecord,
+    *,
+    with_data_summary: bool = True,
+    last_used_at: str | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = record.to_dict()
+    payload["last_used_at"] = last_used_at
     if with_data_summary:
         payload["data_summary"] = _data_summary(list(record.data_slots))
     return payload
@@ -116,7 +126,7 @@ def _post_payload(record: EmployeePostRecord, *, with_data_summary: bool = True)
 
 @router.get("/employees")
 async def list_employees() -> dict[str, Any]:
-    """所有员工，各带一份领地数据总览。
+    """所有员工，各带一份领地数据总览与最近会话使用时间，按最近选用降序排列。
 
     一个都没有时先落一个内置的 `stock` 岗位再回。这一步写在读接口里是刻意的：员工页
     是这台机器上「点卡片就起会话」的入口，空清单等于页面没法用，而修它不需要问人
@@ -125,9 +135,17 @@ async def list_employees() -> dict[str, Any]:
     if not await run_in_threadpool(list_posts):
         await run_in_threadpool(ensure_builtin_stock_employee)
     records = await run_in_threadpool(list_posts)
+    last_used_ms = await run_in_threadpool(get_employee_last_used_ms, records)
+    ordered = sorted(
+        records,
+        key=lambda r: (-(last_used_ms.get(r.member_post_id) or -1), r.member_post_id),
+    )
     return {
-        "employees": [_post_payload(r) for r in records],
-        "total": len(records),
+        "employees": [
+            _post_payload(r, last_used_at=epoch_ms_to_iso(last_used_ms.get(r.member_post_id)))
+            for r in ordered
+        ],
+        "total": len(ordered),
     }
 
 

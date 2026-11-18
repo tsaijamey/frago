@@ -86,6 +86,7 @@ import {
 } from 'lucide-react';
 import { browseDirectories, getSystemDirectories } from '../../api/client';
 import { getRecentDirectories, addRecentDirectory } from '../../utils/recentDirectories';
+import { readEmployeeMru, sortEmployeesByMru, touchEmployeeMru } from '../../utils/employeeMru';
 import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import { useAttachments } from '@/hooks/useAttachments';
 import { modKey } from '@/hooks/usePlatform';
@@ -117,8 +118,8 @@ import {
 
 const LAST_EMPLOYEE_KEY = 'frago-workbench-last-employee';
 const DEFAULT_EMPLOYEE_CWD = '~/.frago';
-/** 顶栏单行最多直接露出的快捷员工胶囊数；其余全部收进可搜索下拉面板，保证 100 个员工也不撑爆版面。 */
-const MAX_QUICK_EMPLOYEES = 3;
+/** 优先展示区最多直接露出的最近选用员工胶囊数（2 行 × 3 列）；其余收进可搜索下拉面板。 */
+const MAX_QUICK_EMPLOYEES = 6;
 /** 目录卡片内联展示的最近目录上限，更多目录走「翻目录挑」。 */
 const MAX_INLINE_DIR_CHOICES = 6;
 
@@ -181,6 +182,8 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   const [ctxOpen, setCtxOpen] = useState(false);
   const [empPickerOpen, setEmpPickerOpen] = useState(false);
   const [empQuery, setEmpQuery] = useState('');
+  const [mruMap, setMruMap] = useState<Record<string, number>>(() => readEmployeeMru());
+  const [slotSnapshotIds, setSlotSnapshotIds] = useState<string[] | null>(null);
   const empPickerRef = useRef<HTMLDivElement | null>(null);
   const empSearchRef = useRef<HTMLInputElement | null>(null);
   const { images, documents, addFiles, removeImage, removeDocument, clear, count } =
@@ -196,29 +199,43 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
   }, []);
 
   const empState = useEmployeeList(isOpen);
+  const orderedEmployees = useMemo<EmployeePost[]>(
+    () => sortEmployeesByMru(empState.employees, mruMap),
+    [empState.employees, mruMap]
+  );
   const selectedEmployee = useMemo<EmployeePost | null>(() => {
     if (!selectedEmployeeId) return null;
-    return empState.employees.find((e) => e.member_post_id === selectedEmployeeId) ?? null;
-  }, [empState.employees, selectedEmployeeId]);
+    return orderedEmployees.find((e) => e.member_post_id === selectedEmployeeId) ?? null;
+  }, [orderedEmployees, selectedEmployeeId]);
 
   /**
-   * 顶栏单行快捷员工胶囊（最多 3 个）：若当前选中的员工不在前 3 个里，把它置顶到第 1 位，
-   * 保证人刚从 100 个员工的搜索面板里挑中的那一位当场出现在顶栏上。
+   * 优先展示区（最多 6 个最近选用员工）：
+   * - 按服务端真实历史会话 `last_used_at` 与本地 `localStorage` MRU 联合排序；
+   * - 直接点击当前网格内的胶囊时锁定本轮槽位顺序，避免按钮在指针下原地闪跳；
+   * - 从 `All` 下拉框或 `@` 选中非前 6 的员工时，立即将其晋升至首位并持久保存，刷新不丢。
    */
   const quickEmployees = useMemo<EmployeePost[]>(() => {
-    const list = empState.employees;
-    if (list.length <= MAX_QUICK_EMPLOYEES) return list;
-    const head = list.slice(0, MAX_QUICK_EMPLOYEES);
+    if (orderedEmployees.length <= MAX_QUICK_EMPLOYEES) return orderedEmployees;
+    let head = orderedEmployees.slice(0, MAX_QUICK_EMPLOYEES);
+    if (slotSnapshotIds && slotSnapshotIds.length > 0) {
+      const byId = new Map(orderedEmployees.map((e) => [e.member_post_id, e]));
+      const resolved = slotSnapshotIds
+        .map((id) => byId.get(id))
+        .filter((e): e is EmployeePost => Boolean(e));
+      if (resolved.length >= Math.min(MAX_QUICK_EMPLOYEES, orderedEmployees.length)) {
+        head = resolved.slice(0, MAX_QUICK_EMPLOYEES);
+      }
+    }
     if (!selectedEmployee) return head;
     if (head.some((e) => e.member_post_id === selectedEmployee.member_post_id)) return head;
     return [selectedEmployee, ...head.slice(0, MAX_QUICK_EMPLOYEES - 1)];
-  }, [empState.employees, selectedEmployee]);
+  }, [orderedEmployees, slotSnapshotIds, selectedEmployee]);
 
-  /** 可搜索下拉面板里的过滤结果（支持按名称、编号、职责描述、内核名筛选）。 */
+  /** 可搜索下拉面板里的过滤结果（按 MRU 排序，支持按名称、编号、职责描述、内核名筛选）。 */
   const filteredEmployees = useMemo<EmployeePost[]>(() => {
     const q = empQuery.trim().toLowerCase();
-    if (!q) return empState.employees;
-    return empState.employees.filter(
+    if (!q) return orderedEmployees;
+    return orderedEmployees.filter(
       (e) =>
         e.title.toLowerCase().includes(q) ||
         e.member_post_id.toLowerCase().includes(q) ||
@@ -226,7 +243,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         (e.work_scope || '').toLowerCase().includes(q) ||
         (e.agent_kernel || '').toLowerCase().includes(q)
     );
-  }, [empState.employees, empQuery]);
+  }, [orderedEmployees, empQuery]);
 
   const clients = useAgentClients(isOpen);
   const selectable = useMemo(() => clients.agents.filter((a) => a.selectable), [clients.agents]);
@@ -277,8 +294,19 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         }
         return;
       }
+      if (persist) {
+        rememberLastEmployee(post.member_post_id);
+        const currentQuickIds = quickEmployees.map((e) => e.member_post_id);
+        const wasInQuick = currentQuickIds.includes(post.member_post_id);
+        const nextMru = touchEmployeeMru(post.member_post_id);
+        if (wasInQuick) {
+          setSlotSnapshotIds((prev) => prev ?? currentQuickIds);
+        } else {
+          setSlotSnapshotIds(null);
+        }
+        setMruMap(nextMru);
+      }
       setSelectedEmployeeId(post.member_post_id);
-      if (persist) rememberLastEmployee(post.member_post_id);
       setDir(post.cwd || DEFAULT_EMPLOYEE_CWD);
       setSkills(
         (post.skills ?? []).map((name) => {
@@ -293,18 +321,18 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
         setAgent(null);
       }
     },
-    [allSkills, choices, clients.agents, clients.fallbackDefault]
+    [allSkills, choices, clients.agents, clients.fallbackDefault, quickEmployees]
   );
 
   const selectEmployeeMode = useCallback(() => {
     if (selectedEmployee) return;
     const saved = readLastEmployee();
     const target =
-      (saved ? empState.employees.find((e) => e.member_post_id === saved) : null) ??
-      empState.employees[0] ??
+      (saved ? orderedEmployees.find((e) => e.member_post_id === saved) : null) ??
+      orderedEmployees[0] ??
       null;
     if (target) applyEmployee(target, true);
-  }, [selectedEmployee, empState.employees, applyEmployee]);
+  }, [selectedEmployee, orderedEmployees, applyEmployee]);
 
   useEffect(() => {
     if (!empPickerOpen) return;
@@ -344,6 +372,8 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     setCtxOpen(false);
     setEmpPickerOpen(false);
     setEmpQuery('');
+    setMruMap(readEmployeeMru());
+    setSlotSnapshotIds(null);
     clear();
 
     let cancelled = false;
@@ -381,19 +411,19 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
    * 若用户上次明确选了「普通会话」（`saved === ''`），则保持普通会话模式。
    */
   useEffect(() => {
-    if (!isOpen || selectedEmployeeId !== null || !empState.employees.length) return;
+    if (!isOpen || selectedEmployeeId !== null || !orderedEmployees.length) return;
     const saved = readLastEmployee();
     if (saved === '') {
       setSelectedEmployeeId('');
       return;
     }
     const target =
-      (saved ? empState.employees.find((e) => e.member_post_id === saved) : null) ??
-      empState.employees[0];
+      (saved ? orderedEmployees.find((e) => e.member_post_id === saved) : null) ??
+      orderedEmployees[0];
     if (target) {
       applyEmployee(target);
     }
-  }, [isOpen, selectedEmployeeId, empState.employees, applyEmployee]);
+  }, [isOpen, selectedEmployeeId, orderedEmployees, applyEmployee]);
 
   /**
    * 选中员工后拉取详情（拿到自动注入的业务语境原文与领地统计）。
@@ -511,6 +541,9 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
       rememberLastAgent(chosen.agent_type);
       if (empState.employees.length > 0) {
         rememberLastEmployee(selectedEmployee ? selectedEmployee.member_post_id : '');
+        if (selectedEmployee) {
+          setMruMap(touchEmployeeMru(selectedEmployee.member_post_id));
+        }
       }
       addRecentDirectory(dir.trim());
       const enrichedLaunch: PendingLaunch = selectedEmployee
@@ -728,75 +761,81 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                     : 'border-dashed border-border-color bg-bg-subtle'
                 }`}
               >
-                <div
-                  ref={empPickerRef}
-                  className="relative flex flex-wrap items-center gap-2"
-                >
-                  <span className="mr-1 text-[12px] font-medium text-text-muted">
-                    {selectedEmployee
-                      ? t('workbench.newSession.employeeRosterLabel')
-                      : t('workbench.newSession.employeeRosterPlainHint')}
-                  </span>
-
-                  {/* 常用/当前选中的最多 3 个员工快捷胶囊 */}
-                  {quickEmployees.map((post) => {
-                    const selected = selectedEmployee?.member_post_id === post.member_post_id;
-                    const empColor = resolveEmployeeColor(post.color, post.member_post_id);
-                    return (
-                      <button
-                        key={post.member_post_id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        data-testid={`new-session-employee-${post.member_post_id}`}
-                        data-emp-color={empColor}
-                        onClick={() => applyEmployee(post, true)}
-                        title={employeeSummary(post) || post.title}
-                        className={`inline-flex h-8 max-w-[210px] items-center gap-1.5 rounded-[8px] border px-3 text-[13px] transition-colors ${
-                          selected
-                            ? 'border-[var(--emp-border,var(--sel-border))] bg-[color-mix(in_srgb,var(--emp-bg,var(--sel-bg))_42%,var(--bg-secondary))] font-semibold text-text-primary [box-shadow:inset_0_2px_0_0_var(--emp-fg,var(--accent-primary))]'
-                            : 'border-border-color bg-bg-primary text-text-secondary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary'
-                        }`}
-                      >
-                        <span
-                          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] border font-mono text-[11px] font-semibold"
-                          style={{
-                            background: 'var(--emp-bg, var(--bg-primary))',
-                            color: 'var(--emp-fg, var(--text-primary))',
-                            borderColor: 'var(--emp-border, var(--border-color))',
-                          }}
-                        >
-                          {employeeInitials(post.member_post_id)}
-                        </span>
-                        <span className="truncate">{post.title}</span>
-                      </button>
-                    );
-                  })}
-
-                  {/* 可搜索的全部员工选择器（支持 100+ 员工瞬时过滤） */}
-                  <button
-                    type="button"
-                    data-testid="employee-picker-trigger"
-                    aria-expanded={empPickerOpen}
-                    onClick={() => setEmpPickerOpen((v) => !v)}
-                    className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] transition-colors ${
-                      empPickerOpen
-                        ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
-                        : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
-                    }`}
-                  >
-                    <Search size={13} className="shrink-0 text-text-muted" />
-                    <span>
-                      {t('workbench.newSession.allEmployees', { n: empState.employees.length })}
+                <div ref={empPickerRef} className="relative flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[12px] font-medium text-text-muted">
+                      {selectedEmployee
+                        ? t('workbench.newSession.employeeRosterLabel')
+                        : t('workbench.newSession.employeeRosterPlainHint')}
                     </span>
-                    <ChevronDown size={13} className="shrink-0 text-text-muted" />
-                  </button>
+
+                    {/* 可搜索的全部员工选择器（支持 100+ 员工瞬时过滤） */}
+                    <button
+                      type="button"
+                      data-testid="employee-picker-trigger"
+                      aria-expanded={empPickerOpen}
+                      onClick={() => setEmpPickerOpen((v) => !v)}
+                      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[12px] transition-colors ${
+                        empPickerOpen
+                          ? 'border-[var(--sel-border)] bg-[var(--sel-bg)] font-medium text-text-primary'
+                          : 'border-border-color bg-bg-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                      }`}
+                    >
+                      <Search size={12} className="shrink-0 text-text-muted" />
+                      <span>
+                        {t('workbench.newSession.allEmployees', { n: empState.employees.length })}
+                      </span>
+                      <ChevronDown size={12} className="shrink-0 text-text-muted" />
+                    </button>
+                  </div>
+
+                  {/* 优先展示区：最多 6 个最近选用员工（桌面端 2 行 × 3 列整齐网格，窄屏自适应） */}
+                  <div
+                    role="radiogroup"
+                    aria-label={t('workbench.newSession.employeeRosterLabel')}
+                    data-testid="new-session-quick-employees"
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3"
+                  >
+                    {quickEmployees.map((post) => {
+                      const selected = selectedEmployee?.member_post_id === post.member_post_id;
+                      const empColor = resolveEmployeeColor(post.color, post.member_post_id);
+                      return (
+                        <button
+                          key={post.member_post_id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          data-testid={`new-session-employee-${post.member_post_id}`}
+                          data-emp-color={empColor}
+                          onClick={() => applyEmployee(post, true)}
+                          title={employeeSummary(post) || post.title}
+                          className={`inline-flex h-8 w-full min-w-0 items-center gap-2 rounded-[8px] border px-2.5 text-[13px] transition-colors ${
+                            selected
+                              ? 'border-[var(--emp-border,var(--sel-border))] bg-[color-mix(in_srgb,var(--emp-bg,var(--sel-bg))_52%,var(--bg-secondary))] font-semibold text-text-primary [box-shadow:inset_0_0_0_1px_var(--emp-border,var(--sel-border)),var(--sel-shadow)]'
+                              : 'border-border-color bg-bg-primary text-text-secondary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary'
+                          }`}
+                        >
+                          <span
+                            className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] border font-mono text-[11px] font-semibold"
+                            style={{
+                              background: 'var(--emp-bg, var(--bg-primary))',
+                              color: 'var(--emp-fg, var(--text-primary))',
+                              borderColor: 'var(--emp-border, var(--border-color))',
+                            }}
+                          >
+                            {employeeInitials(post.member_post_id)}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-left">{post.title}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
                   {/* 可搜索下拉面板：最大高度 260px 滚动，100 个员工也不撑高页面 */}
                   {empPickerOpen ? (
                     <div
                       data-testid="employee-picker-popover"
-                      className="absolute left-0 top-[calc(100%+6px)] z-30 flex w-full max-w-[460px] flex-col overflow-hidden rounded-[10px] border border-border-strong bg-bg-secondary shadow-[0_12px_32px_rgba(0,0,0,0.38)]"
+                      className="absolute right-0 top-[34px] z-30 flex w-full max-w-[460px] flex-col overflow-hidden rounded-[10px] border border-border-strong bg-bg-secondary shadow-[0_12px_32px_rgba(0,0,0,0.38)]"
                     >
                       <div className="flex items-center gap-2 border-b border-border-color bg-bg-primary px-3 py-2">
                         <Search size={13} className="shrink-0 text-text-muted" />
@@ -949,7 +988,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
                     {ctxOpen ? (
                       <div className="rounded-[8px] border border-border-color bg-bg-primary px-3 py-2.5">
                         {ctx ? (
-                          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.55] text-text-secondary">
+                          <pre className="max-h-56 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-[11px] leading-[1.55] text-text-secondary">
                             {ctx}
                           </pre>
                         ) : (
@@ -1074,7 +1113,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
             onAddSkill={addSkill}
             onRemoveSkill={removeSkill}
             employees={selectedEmployee ? [selectedEmployee] : []}
-            employeesCatalog={empState.employees}
+            employeesCatalog={orderedEmployees}
             onAddEmployee={(emp) => applyEmployee(emp, true)}
             onRemoveEmployee={() => applyEmployee(null, true)}
             onAddFiles={addFiles}

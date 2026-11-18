@@ -190,6 +190,7 @@ export interface EmployeeItem {
   cwd?: string | null;
   skills?: string[];
   color?: string | null;
+  last_used_at?: string | null;
 }
 
 export interface GhRateLimit {

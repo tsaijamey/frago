@@ -524,14 +524,16 @@ describe('NewSessionModal — 选择 Employee 创建员工会话（主入口）'
     expect(localStorage.getItem('frago-workbench-last-employee')).toBe('');
   });
 
-  it('有 100 个员工时顶栏只露 3 个快捷胶囊 + 置顶普通会话，其余通过可搜索下拉面板瞬时定位', async () => {
+  it('有 100 个员工时优先展示 6 个快捷胶囊 + 置顶普通会话，从下拉挑中非前 6 立即进入优先区且刷新后保持', async () => {
     const hundredEmployees = Array.from({ length: 100 }, (_, i) => {
       const idx = String(i + 1).padStart(3, '0');
+      const ts = Date.UTC(2026, 10, 17, 0, 0, 0) - i * 60_000;
       return {
         ...EMPLOYEES[0],
         member_post_id: `emp-${idx}`,
         title: `专职员工 ${idx}`,
         description: `负责第 ${idx} 号业务线`,
+        last_used_at: new Date(ts).toISOString(),
       };
     });
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -572,9 +574,26 @@ describe('NewSessionModal — 选择 Employee 创建员工会话（主入口）'
       throw new Error(`没料到的请求：${url}`);
     });
 
-    open();
+    const view = render(
+      <NewSessionModal isOpen onClose={vi.fn()} onCreated={vi.fn()} />
+    );
     const trigger = await screen.findByTestId('employee-picker-trigger');
     expect(trigger.textContent).toContain('全部 100 个');
+
+    // 优先展示区正好露 6 个（emp-001 ~ emp-006）
+    const quickGrid = await screen.findByTestId('new-session-quick-employees');
+    const quickButtons = quickGrid.querySelectorAll('[role="radio"]');
+    expect(quickButtons).toHaveLength(6);
+    expect(
+      Array.from(quickButtons).map((el) => el.getAttribute('data-testid'))
+    ).toEqual([
+      'new-session-employee-emp-001',
+      'new-session-employee-emp-002',
+      'new-session-employee-emp-003',
+      'new-session-employee-emp-004',
+      'new-session-employee-emp-005',
+      'new-session-employee-emp-006',
+    ]);
 
     // 顶栏不会把第 88 号员工直接平铺出来撑爆页面
     expect(screen.queryByTestId('new-session-employee-emp-088')).toBeNull();
@@ -590,10 +609,74 @@ describe('NewSessionModal — 选择 Employee 创建员工会话（主入口）'
     expect(screen.queryByTestId('picker-employee-emp-001')).toBeNull();
     fireEvent.click(item88);
 
-    // 挑中后下拉收起，且第 88 号员工被提升到顶栏快捷胶囊第 1 位并处于选中态
+    // 挑中后下拉收起，且第 88 号员工被提升到优先展示区第 1 位并处于选中态
     expect(screen.queryByTestId('employee-picker-popover')).toBeNull();
     const promoted = await screen.findByTestId('new-session-employee-emp-088');
     expect(promoted.getAttribute('aria-checked')).toBe('true');
+
+    // 模拟刷新页面后重新挂载组件：emp-088 依然保留在优先展示区第 1 位
+    view.unmount();
+    render(<NewSessionModal isOpen onClose={vi.fn()} onCreated={vi.fn()} />);
+    const reloadedGrid = await screen.findByTestId('new-session-quick-employees');
+    await waitFor(() => {
+      const ids = Array.from(reloadedGrid.querySelectorAll('[role="radio"]')).map((el) =>
+        el.getAttribute('data-testid')
+      );
+      expect(ids[0]).toBe('new-session-employee-emp-088');
+      expect(ids).toHaveLength(6);
+    });
+  });
+
+  it('无本地 localStorage 时仍严格按服务端 last_used_at 降序展示最近选用的前 6 名员工', async () => {
+    const baseMs = Date.UTC(2026, 10, 17, 8, 0, 0);
+    // 故意按非时间顺序给出数组，验证前端按 last_used_at 降序排序
+    const unordered = [
+      { ...EMPLOYEES[0], member_post_id: 'emp-old', title: 'Old', last_used_at: new Date(baseMs - 900_000).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-never', title: 'Never', last_used_at: null },
+      { ...EMPLOYEES[0], member_post_id: 'emp-3', title: 'Third', last_used_at: new Date(baseMs - 200_000).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-1', title: 'First', last_used_at: new Date(baseMs).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-5', title: 'Fifth', last_used_at: new Date(baseMs - 400_000).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-2', title: 'Second', last_used_at: new Date(baseMs - 100_000).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-6', title: 'Sixth', last_used_at: new Date(baseMs - 500_000).toISOString() },
+      { ...EMPLOYEES[0], member_post_id: 'emp-4', title: 'Fourth', last_used_at: new Date(baseMs - 300_000).toISOString() },
+    ];
+    fetchMock.mockImplementation(async (url: string) => {
+      const u = String(url);
+      if (u.endsWith('/api/employees')) {
+        return jsonResponse({ employees: unordered });
+      }
+      if (u.includes('/api/employees/')) {
+        const emp = unordered[3];
+        return jsonResponse({
+          employee: emp,
+          managed_data: {
+            member_post_id: emp.member_post_id,
+            data_slots: [],
+            knowledge_domains: [],
+            recipes: [],
+          },
+          business_context_block: '<frago-employee>ctx</frago-employee>',
+        });
+      }
+      if (u.endsWith('/api/workbench/agents')) {
+        return jsonResponse({ agents: AGENTS, default: 'claude' });
+      }
+      throw new Error(`没料到的请求：${url}`);
+    });
+
+    open();
+    const grid = await screen.findByTestId('new-session-quick-employees');
+    const ids = Array.from(grid.querySelectorAll('[role="radio"]')).map((el) =>
+      el.getAttribute('data-testid')
+    );
+    expect(ids).toEqual([
+      'new-session-employee-emp-1',
+      'new-session-employee-emp-2',
+      'new-session-employee-emp-3',
+      'new-session-employee-emp-4',
+      'new-session-employee-emp-5',
+      'new-session-employee-emp-6',
+    ]);
   });
 
   it('在普通会话模式下于输入框敲 @ 选择员工：自动切回员工会话模式并在输入框顶部渲染 EmployeeQuote', async () => {

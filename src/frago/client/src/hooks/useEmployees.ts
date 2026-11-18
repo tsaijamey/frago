@@ -37,6 +37,7 @@ export interface EmployeePost {
   color?: string;
   created_at: string;
   updated_at: string;
+  last_used_at?: string | null;
   /** 清单接口顺带给的一行总览：几个槽位、每个槽位几项、合计几项。 */
   data_summary: {
     slot_count: number;
