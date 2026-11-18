@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "frago bridge",
-  "version": "0.3.3",
-  "description": "frago agent OS — browser bridge (MVP P1).",
+  "version": "0.4.0",
+  "description": "frago agent OS — browser bridge & session context panel.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA01yvqkJGY42v37WEUKr5qqH+bToHgjWePd2t/QmLQZJu7Fi5mcArGXXGMYOyYpqeB/k7Cx8wTcLsdJ/fmDMMi6M2dCowgyMSyLQKDqvM+0q2newhcp9B68NkFy7OrjpkNLiovrsBf/pYjziZ8l/VE6+ETvxhCmtB7T9XQ3ODcI8X4gNrHuO9emGIUWS/qqKpHi8Yp9WGFbVWzia8bKuxIqYeCnv/PFaHoWqrh2apVNQib7XKbwH+erSakhe+POyn/cahZhmoSRJHm5VuMOoBw8MB3+2wGENzmC1/cU5o9ON2xx1gSDt8FtNxgzdCFPMFSnmkZIkwVaK1ZfLWMX0PmQIDAQAB",
   "permissions": [
     "activeTab",
@@ -15,7 +15,9 @@
     "offscreen",
     "tabGroups",
     "alarms",
-    "proxy"
+    "proxy",
+    "sidePanel",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -24,12 +26,17 @@
     "service_worker": "background/service-worker-v14.js",
     "type": "module"
   },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
   "content_scripts": [
     {
       "matches": [
         "<all_urls>"
       ],
       "js": [
+        "shared/page_extractor.js",
+        "content/picker.js",
         "content/content_script.js"
       ],
       "run_at": "document_idle",

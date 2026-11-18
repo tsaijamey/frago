@@ -3,229 +3,467 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>frago bridge — 代理与直连域名设置</title>
+  <title>frago bridge — 服务连接、代理与扩展诊断设置</title>
   <style>
     :root {
-      --bg: #f7f8fa;
-      --card-bg: #ffffff;
-      --border: #dfe3e8;
-      --text: #1f2328;
-      --muted: #59636e;
-      --primary: #1f6feb;
-      --primary-hover: #1a5fd0;
-      --active-bg: #eef6ff;
-      --active-border: #9ec5fe;
-      --active-text: #0a3622;
-      --inactive-bg: #f3f4f6;
-      --inactive-border: #d0d7de;
-      --danger-bg: #fff5f5;
-      --danger-border: #f1aeb5;
-      --danger-text: #842029;
+      --bg-base: #f2f2f2;
+      --bg-primary: #ffffff;
+      --bg-secondary: #f7f7f7;
+      --bg-subtle: #f5f5f5;
+      --bg-card: #ffffff;
+      --bg-hover: rgba(0, 0, 0, 0.045);
+      --code-bg: rgba(0, 0, 0, 0.05);
+
+      --text-primary: rgba(0, 0, 0, 0.9);
+      --text-secondary: rgba(0, 0, 0, 0.62);
+      --text-muted: rgba(0, 0, 0, 0.45);
+      --text-on-accent: #ffffff;
+
+      --border-subtle: rgba(0, 0, 0, 0.06);
+      --border-color: rgba(0, 0, 0, 0.09);
+      --border-strong: rgba(0, 0, 0, 0.16);
+      --bezel-highlight: rgba(255, 255, 255, 0.9);
+
+      --accent-primary: #0a8f33;
+      --accent-primary-10: rgba(10, 143, 51, 0.1);
+      --accent-primary-border: rgba(10, 143, 51, 0.3);
+
+      --accent-error: #c42b45;
+      --accent-error-10: rgba(196, 43, 69, 0.1);
+      --accent-error-border: rgba(196, 43, 69, 0.32);
+
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --font-family: "Geist Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
     }
-    * { box-sizing: border-box; }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-base: #141414;
+        --bg-primary: #1f1f1f;
+        --bg-secondary: #1a1a1a;
+        --bg-subtle: #1a1a1a;
+        --bg-card: #242424;
+        --bg-hover: rgba(255, 255, 255, 0.06);
+        --code-bg: rgba(255, 255, 255, 0.07);
+
+        --text-primary: rgba(255, 255, 255, 0.92);
+        --text-secondary: rgba(255, 255, 255, 0.62);
+        --text-muted: rgba(255, 255, 255, 0.42);
+        --text-on-accent: #06210f;
+
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border-color: rgba(255, 255, 255, 0.09);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --bezel-highlight: rgba(255, 255, 255, 0.06);
+
+        --accent-primary: #15b34d;
+        --accent-primary-10: rgba(21, 179, 77, 0.12);
+        --accent-primary-border: rgba(21, 179, 77, 0.32);
+
+        --accent-error: #f0596b;
+        --accent-error-10: rgba(240, 89, 107, 0.14);
+        --accent-error-border: rgba(240, 89, 107, 0.38);
+
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      padding: 36px 20px;
-      font: 14px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
+      padding: 36px 24px 56px;
+      font-family: var(--font-family);
+      font-size: 13px;
+      line-height: 1.55;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
     }
+
     .container {
       max-width: 720px;
       margin: 0 auto;
     }
-    header {
-      margin-bottom: 20px;
+
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 22px;
     }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      box-shadow: inset 0 1px 0 var(--bezel-highlight), var(--shadow-card);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-primary);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
     h1 {
-      font-size: 20px;
-      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0 0 3px;
+      color: var(--text-primary);
     }
+
     .subtitle {
-      color: var(--muted);
+      color: var(--text-muted);
       margin: 0;
-      font-size: 13px;
+      font-size: 12.5px;
     }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+      box-shadow:
+        inset 0 1px 0 var(--bezel-highlight),
+        inset 0 0 0 1px var(--border-subtle),
+        var(--shadow-card);
+      transition: opacity 0.15s ease, border-color 0.15s ease;
+    }
+
+    .card.is-muted {
+      background: var(--bg-secondary);
+      opacity: 0.72;
+    }
+
     .status-banner {
-      padding: 14px 16px;
-      border-radius: 10px;
-      border: 1px solid var(--inactive-border);
-      background: var(--inactive-bg);
-      margin-bottom: 20px;
+      padding: 13px 16px;
+      border-radius: 11px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      margin-bottom: 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      box-shadow: inset 0 1px 0 var(--bezel-highlight), var(--shadow-card);
     }
+
     .status-banner.is-active {
-      background: var(--active-bg);
-      border-color: var(--active-border);
+      background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-card));
+      border-color: var(--accent-primary-border);
     }
-    .status-badge {
-      display: inline-block;
-      padding: 2px 10px;
-      border-radius: 999px;
-      font-size: 12px;
+
+    .status-banner-title {
+      display: block;
+      font-size: 13px;
       font-weight: 600;
-      background: #e5e7eb;
-      color: #374151;
+      color: var(--text-primary);
+      margin-bottom: 2px;
     }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .status-badge::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--text-muted);
+    }
+
     .status-banner.is-active .status-badge {
-      background: #dbeafe;
-      color: #1e40af;
+      background: var(--accent-primary-10);
+      border-color: var(--accent-primary-border);
+      color: var(--accent-primary);
     }
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 18px;
-      box-shadow: 0 1px 2px rgba(31, 35, 40, 0.04);
-      transition: opacity 0.15s ease, background-color 0.15s ease;
+
+    .status-banner.is-active .status-badge::before {
+      background: var(--accent-primary);
     }
-    .card.is-muted {
-      background: #fafbfc;
-      opacity: 0.72;
-    }
+
     .field-label {
       display: block;
       font-weight: 600;
-      font-size: 14px;
+      font-size: 13px;
+      color: var(--text-primary);
       margin-bottom: 4px;
     }
+
     .field-hint {
-      color: var(--muted);
+      color: var(--text-muted);
       font-size: 12px;
       margin: 0 0 12px;
     }
+
+    .field-hint code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--code-bg);
+      color: var(--text-secondary);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
     .input-row {
       display: flex;
       gap: 8px;
+      align-items: center;
     }
-    input[type="text"], textarea {
-      width: 100%;
-      padding: 9px 12px;
-      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: #fff;
-      color: var(--text);
-    }
-    input[type="text"]:focus, textarea:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.15);
-    }
+
+    input[type="text"],
     textarea {
-      min-height: 150px;
+      width: 100%;
+      padding: 8px 11px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.5;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+
+    input[type="text"]::placeholder,
+    textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    input[type="text"]:focus,
+    textarea:focus {
+      outline: none;
+      border-color: color-mix(in srgb, var(--accent-primary) 50%, var(--border-color));
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 12%, transparent);
+    }
+
+    textarea {
+      min-height: 132px;
       resize: vertical;
     }
+
     .chip-list {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin: 12px 0;
+      gap: 6px;
+      margin: 10px 0;
     }
+
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: #f0f4f9;
-      border: 1px solid #d0d7de;
-      font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      gap: 5px;
+      padding: 3px 8px 3px 9px;
+      border-radius: 7px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-primary);
     }
+
     .chip button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border: none;
       background: transparent;
-      color: var(--muted);
+      color: var(--text-muted);
       cursor: pointer;
-      padding: 0 2px;
-      font-size: 14px;
-      line-height: 1;
+      padding: 0;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      transition: color 0.12s ease, background-color 0.12s ease;
     }
+
     .chip button:hover {
-      color: var(--danger-text);
+      color: var(--accent-error);
+      background: var(--accent-error-10);
     }
+
     .builtin-box {
-      margin-top: 14px;
+      margin-top: 12px;
       padding: 10px 12px;
       border-radius: 8px;
-      background: #f6f8fa;
-      border: 1px solid #eaeef2;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
       font-size: 12px;
-      color: var(--muted);
+      color: var(--text-secondary);
     }
+
+    .diag-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .diag-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     .builtin-box code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      background: #eaeef2;
-      padding: 1px 5px;
-      border-radius: 4px;
-      margin-right: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      background: var(--code-bg);
+      color: var(--text-primary);
+      padding: 1px 6px;
+      border-radius: 5px;
     }
+
+    .builtin-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 6px;
+    }
+
     .actions {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-top: 16px;
+      margin-top: 18px;
     }
+
     .btn {
-      padding: 9px 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 14px;
       border-radius: 8px;
-      font: 600 13px system-ui, sans-serif;
-      border: 1px solid var(--border);
-      background: #fff;
-      color: var(--text);
+      font-family: var(--font-family);
+      font-size: 12.5px;
+      font-weight: 500;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      color: var(--text-primary);
       cursor: pointer;
       white-space: nowrap;
       flex-shrink: 0;
+      box-shadow: var(--shadow-card);
+      transition: background-color 0.14s ease, border-color 0.14s ease;
     }
-    .btn:hover {
-      background: #f3f4f6;
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-hover);
+      border-color: var(--border-strong);
     }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: #fff;
+      background: var(--accent-primary);
+      border-color: var(--accent-primary);
+      color: var(--text-on-accent);
+      font-weight: 600;
     }
-    .btn-primary:hover {
-      background: var(--primary-hover);
+
+    .btn-primary:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent-primary) 90%, #000);
+      border-color: color-mix(in srgb, var(--accent-primary) 90%, #000);
     }
+
     .toast {
-      font-size: 13px;
-      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 11px;
       border-radius: 8px;
       display: none;
     }
+
     .toast.is-visible {
       display: inline-block;
     }
+
     .toast.is-ok {
-      background: #e6f4ea;
-      border: 1px solid #a8dab5;
-      color: #137333;
+      background: var(--accent-primary-10);
+      border: 1px solid var(--accent-primary-border);
+      color: var(--accent-primary);
     }
+
     .toast.is-err {
-      background: var(--danger-bg);
-      border: 1px solid var(--danger-border);
-      color: var(--danger-text);
+      background: var(--accent-error-10);
+      border: 1px solid var(--accent-error-border);
+      color: var(--accent-error);
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>frago bridge 代理与直连域名设置</h1>
-      <p class="subtitle">填写代理地址即启用代理；留空则全部流量直连，一切代理与直连域名规则均不生效。</p>
+    <header class="page-header">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+      </div>
+      <div>
+        <h1>frago bridge — 服务连接与代理设置</h1>
+        <p class="subtitle">配置会话桥接连接的 Frago Server，以及浏览器代理与直连域名规则。</p>
+      </div>
     </header>
+
+    <section class="card">
+      <label class="field-label" for="server-url">Frago Server 连接</label>
+      <p class="field-hint">
+        扩展侧边栏默认直连本机 <code>http://127.0.0.1:8093</code>（无需启动 <code>extension daemon</code>）；非本机访问需填写 Bearer Token。
+      </p>
+      <div class="input-row" style="margin-bottom: 10px;">
+        <input
+          id="server-url"
+          type="text"
+          placeholder="http://127.0.0.1:8093"
+          spellcheck="false"
+        >
+        <button id="test-server-btn" class="btn" type="button">保存并测试连接</button>
+      </div>
+      <input
+        id="server-token"
+        type="text"
+        placeholder="Bearer Token（本机访问留空，远程或代理后填 frago server token）"
+        spellcheck="false"
+      >
+      <div class="builtin-box">
+        <div class="diag-line">
+          <span class="diag-item"><span>Extension ID</span><code id="opt-eid">...</code></span>
+          <span class="diag-item"><span>Native Host</span><code id="opt-native">checking…</code></span>
+          <span class="diag-item"><span>Server</span><code id="opt-server-status">未检测</code></span>
+        </div>
+      </div>
+    </section>
 
     <div id="status-banner" class="status-banner">
       <div>
-        <strong id="status-title">当前未启用代理</strong>
+        <strong id="status-title" class="status-banner-title">当前未启用代理</strong>
         <div id="status-detail" class="subtitle">未填写代理地址，浏览器所有请求直连。</div>
       </div>
-      <span id="status-badge" class="status-badge">不生效</span>
+      <span id="status-badge" class="status-badge">未启用</span>
     </div>
 
     <section class="card">
@@ -245,7 +483,7 @@
     </section>
 
     <section id="bypass-card" class="card is-muted">
-      <label class="field-label" for="bypass-domains">强制不通过代理的域名列表</label>
+      <label class="field-label" for="bypass-domains">直连域名例外（Bypass）</label>
       <p id="bypass-hint" class="field-hint">
         仅在上方填写了代理服务器地址时生效。每行一个域名或通配符（例如 <code>*.lenovo.com</code>、<code>ccopyright.com.cn</code>）。
       </p>
@@ -270,8 +508,8 @@
       ></textarea>
 
       <div class="builtin-box">
-        <div><strong>内置默认直连（启用代理时自动包含，无需重复填写）：</strong></div>
-        <div id="builtin-list" style="margin-top: 4px;"></div>
+        <div>内置默认直连（启用代理时自动包含，无需重复填写）</div>
+        <div id="builtin-list" class="builtin-tags"></div>
       </div>
     </section>
 

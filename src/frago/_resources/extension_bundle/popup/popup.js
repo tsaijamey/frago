@@ -1,8 +1,4 @@
-// Popup status fill — must live in its own file because MV3's default
-// CSP (`script-src 'self'`) blocks inline <script> tags.
-//
-// `frago.popup.status` and `frago.proxy.get` are answered by the service
-// worker; see background/service-worker-v14.js -> chrome.runtime.onMessage.
+// Popup status fill & Side Panel fallback launcher
 
 document.getElementById("eid").textContent = chrome.runtime.id;
 
@@ -24,7 +20,19 @@ chrome.runtime.sendMessage({ type: "frago.proxy.get" }, (resp) => {
     el.textContent = resp.active && resp.proxyUrl ? resp.proxyUrl : "direct (off)";
 });
 
+document.getElementById("open-sidepanel").addEventListener("click", async () => {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (chrome.sidePanel?.open && tab?.windowId != null) {
+            await chrome.sidePanel.open({ windowId: tab.windowId });
+            window.close();
+            return;
+        }
+    } catch (_) { /* fallback below */ }
+    chrome.tabs.create({ url: chrome.runtime.getURL("sidepanel/index.html") });
+    window.close();
+});
+
 document.getElementById("open-options").addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
 });
-

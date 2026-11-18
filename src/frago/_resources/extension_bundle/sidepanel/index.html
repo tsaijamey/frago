@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frago 实时会话面板</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 1. 顶部紧凑会话顶栏 (44px) -->
+    <header class="chat-header">
+      <div class="header-left">
+        <button id="session-picker-btn" class="session-picker-btn" type="button" title="切换或搜索会话" aria-label="切换或搜索会话">
+          <span id="active-session-dot" class="status-dot is-idle"></span>
+          <span id="active-session-emp" class="emp-badge is-hidden"></span>
+          <span id="active-session-title" class="session-title-text">选择或新建会话</span>
+          <svg class="icon-svg caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button id="new-session-btn" class="header-pill-btn" type="button" title="新建会话" aria-label="新建会话">
+          <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          <span>新建</span>
+        </button>
+      </div>
+
+      <div class="header-right">
+        <button id="stop-session-btn" class="icon-btn danger is-hidden" type="button" title="停止当前运行" aria-label="停止当前运行">
+          <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+        <button id="open-webui-btn" class="icon-btn is-hidden" type="button" title="在 WebUI 中打开当前会话" aria-label="在 WebUI 中打开当前会话">
+          <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+        </button>
+        <button id="toggle-settings-btn" class="conn-btn" type="button" title="连接状态与诊断设置" aria-label="连接状态与诊断设置">
+          <span id="conn-dot" class="status-dot is-checking"></span>
+          <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+        </button>
+      </div>
+
+      <!-- 会话切换弹出抽屉 -->
+      <div id="session-drawer" class="popover-drawer is-hidden">
+        <div class="drawer-toolbar">
+          <div class="search-field">
+            <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="session-search-input" type="search" placeholder="搜索会话标题、员工、目录或 ID…">
+          </div>
+          <button id="refresh-sessions-btn" class="icon-btn" type="button" title="刷新会话列表" aria-label="刷新会话列表">
+            <svg class="icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
+        </div>
+        <div class="filter-row">
+          <div class="filter-pills">
+            <button class="filter-pill is-active" type="button" data-filter="all">全部</button>
+            <button class="filter-pill" type="button" data-filter="running">运行中</button>
+            <button class="filter-pill" type="button" data-filter="recent">最近活跃</button>
+          </div>
+          <label class="worker-toggle">
+            <input id="show-workers-checkbox" type="checkbox">
+            <span>含 worker</span>
+          </label>
+        </div>
+        <div id="session-list" class="session-list">
+          <div class="drawer-empty">正在加载会话列表…</div>
+        </div>
+      </div>
+
+      <!-- 连接与诊断设置弹出层（默认收起） -->
+      <div id="settings-drawer" class="popover-drawer settings-popover is-hidden">
+        <div class="settings-title">
+          <span>连接与诊断</span>
+          <span id="conn-label" class="conn-label">检测连接中…</span>
+        </div>
+        <label class="field-sm">
+          <span>Frago Server URL</span>
+          <input id="server-url-input" type="text" placeholder="http://127.0.0.1:8093" spellcheck="false">
+        </label>
+        <label class="field-sm">
+          <span>Bearer Token（本机免填，远程必填）</span>
+          <input id="server-token-input" type="password" placeholder="可选，见 frago server token" spellcheck="false">
+        </label>
+        <div class="drawer-actions">
+          <button id="save-conn-btn" class="btn btn-primary btn-xs" type="button">保存并重连</button>
+          <button id="open-options-btn" class="btn btn-xs" type="button">完整设置页</button>
+        </div>
+        <div class="diag-bar">
+          <span>ID <code id="diag-eid">-</code></span>
+          <span>WS <code id="diag-ws">connecting</code></span>
+          <span>Host <code id="diag-native">-</code></span>
+          <span>Proxy <code id="diag-proxy">-</code></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 轻量新建会话配置条（仅在「+ 新建」模式时展开） -->
+    <section id="new-session-bar" class="new-session-bar is-hidden">
+      <div class="new-bar-head">
+        <span class="new-bar-title">
+          <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M3 12h18"/></svg>
+          <span>新建会话</span>
+          <span class="new-bar-sub">发送首条消息自动绑定</span>
+        </span>
+        <button id="cancel-new-session-btn" class="link-btn" type="button">取消</button>
+      </div>
+      <div id="employee-chips" class="employee-chips"></div>
+      <div class="new-bar-fields">
+        <select id="agent-select" class="select-compact" title="选择 Agent 内核"></select>
+        <div class="cwd-group">
+          <input id="cwd-input" class="input-compact" type="text" placeholder="工作目录（留空使用默认目录）" spellcheck="false">
+          <button id="browse-dir-btn" class="btn btn-xs" type="button">浏览</button>
+        </div>
+      </div>
+      <div id="agent-hint" class="new-bar-hint is-hidden"></div>
+      <div id="dir-browser" class="dir-browser is-hidden">
+        <div class="dir-browser-head">
+          <code id="dir-current-path">~</code>
+          <div class="dir-browser-btns">
+            <button id="dir-up-btn" class="btn btn-xs" type="button">上一级</button>
+            <button id="dir-use-btn" class="btn btn-primary btn-xs" type="button">选用</button>
+          </div>
+        </div>
+        <div id="dir-entries" class="dir-entries"></div>
+      </div>
+    </section>
+
+    <div id="banner-toast" class="banner-toast is-hidden" role="status"></div>
+
+    <!-- 2. 中部主体：实时会话对话流区域 -->
+    <main class="stream-container">
+      <div id="chat-stream" class="chat-stream">
+        <div class="stream-empty">
+          <div class="empty-mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="empty-title">选择一个会话或新建会话开始对话</div>
+          <div class="empty-desc">可直接带着当前网页全文、划词选区、拾取区块或截图在侧边栏里实时对话并查看结果。</div>
+        </div>
+      </div>
+
+      <div id="live-status-row" class="live-status-row is-hidden">
+        <span class="pulse-dot"></span>
+        <span id="live-status-text">Agent 正在处理…</span>
+      </div>
+
+      <button id="scroll-bottom-btn" class="scroll-bottom-btn is-hidden" type="button" title="回到底部">
+        <svg class="icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+        <span>最新消息</span>
+      </button>
+    </main>
+
+    <!-- 3. 底部紧凑输入与网页选区挂载栏 -->
+    <footer class="chat-composer">
+      <div class="composer-scrim" aria-hidden="true"></div>
+      <div class="composer-shell">
+        <!-- 轻量选区/截图挂载胶囊条（仅在有内容时显示，发送后自动清空） -->
+        <div id="attachment-pills" class="attachment-pills is-hidden"></div>
+
+        <!-- 多行对话输入框 -->
+        <div class="composer-input-row">
+          <textarea
+            id="instruction-input"
+            class="composer-textarea"
+            rows="1"
+            placeholder="给 Frago 发消息…（⌘↵ 发送）"
+          ></textarea>
+        </div>
+
+        <!-- 内嵌底部工具栏 + 右下角主发送键 -->
+        <div class="context-bar">
+          <div class="context-tools">
+            <button id="toggle-fullpage-btn" class="ctx-pill is-active" type="button" title="点击开关：发送时是否附带当前网页完整可见正文">
+              <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <span>当前页</span>
+              <span id="fullpage-chars-badge" class="ctx-meta">读取中</span>
+            </button>
+            <button id="pick-element-btn" class="tool-btn-sm" type="button" title="在网页中点选区块带入对话">
+              <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
+              <span>拾取</span>
+            </button>
+            <button id="capture-selection-btn" class="tool-btn-sm" type="button" title="捕获网页当前划词选区">
+              <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg>
+              <span>选区</span>
+            </button>
+            <button id="capture-shot-btn" class="tool-btn-sm" type="button" title="截取当前可视窗口图片">
+              <svg class="icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+              <span>截图</span>
+            </button>
+            <label class="pill-mini-toggle" title="网页划词时自动显示「带入对话」浮标">
+              <input id="pill-toggle-checkbox" type="checkbox" checked>
+              <span class="toggle-track" aria-hidden="true"></span>
+              <span>浮标</span>
+            </label>
+          </div>
+          <button id="send-btn" class="send-btn" type="button" title="发送消息 (Cmd/Ctrl + Enter)" aria-label="发送消息">
+            <svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+            <span class="sr-only">发送</span>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="../shared/page_extractor.js"></script>
+  <script src="../shared/message_composer.js"></script>
+  <script src="../shared/markdown.js"></script>
+  <script src="../shared/session_records.js"></script>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

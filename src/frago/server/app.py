@@ -547,19 +547,23 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # Configure CORS for local development and home LAN access
-    # Allows localhost plus RFC1918 private network ranges (10/8, 172.16/12, 192.168/16)
-    # on any port — safe assumption for a trusted home network.
+    # Configure CORS for local development, home LAN access, and browser extensions
+    # Allows localhost, RFC1918 private network ranges (10/8, 172.16/12, 192.168/16)
+    # on any port, plus Chromium extension origins (32-char lowercase ID).
+    # AccessZoneMiddleware still sits outside CORSMiddleware and enforces local/token bounds.
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=(
-            r"^http://("
+            r"^("
+            r"http://("
             r"localhost"
             r"|127\.\d+\.\d+\.\d+"
             r"|10\.\d+\.\d+\.\d+"
             r"|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+"
             r"|192\.168\.\d+\.\d+"
-            r")(:\d+)?$"
+            r")(:\d+)?"
+            r"|chrome-extension://[a-z]{32}"
+            r")$"
         ),
         allow_credentials=True,
         allow_methods=["*"],

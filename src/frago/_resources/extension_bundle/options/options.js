@@ -5,6 +5,8 @@
 //   - Empty proxyUrl     -> nothing takes effect (`chrome.proxy.settings.clear`).
 
 const PROXY_CONFIG_KEY = "fragoProxyConfig";
+const SERVER_CONFIG_KEY = "fragoServerConfig";
+const DEFAULT_SERVER_URL = "http://127.0.0.1:8093";
 const BASE_BYPASS = [
     "<local>",
     "*.local",
@@ -13,6 +15,13 @@ const BASE_BYPASS = [
     "192.168.0.0/16",
     "169.254.0.0/16",
 ];
+
+const serverUrlInput = document.getElementById("server-url");
+const serverTokenInput = document.getElementById("server-token");
+const testServerBtn = document.getElementById("test-server-btn");
+const optEidEl = document.getElementById("opt-eid");
+const optNativeEl = document.getElementById("opt-native");
+const optServerStatusEl = document.getElementById("opt-server-status");
 
 const proxyInput = document.getElementById("proxy-url");
 const clearProxyBtn = document.getElementById("clear-proxy-btn");
@@ -28,6 +37,111 @@ const statusBanner = document.getElementById("status-banner");
 const statusTitle = document.getElementById("status-title");
 const statusDetail = document.getElementById("status-detail");
 const statusBadge = document.getElementById("status-badge");
+
+function normalizeServerUrlInput(raw) {
+    const cleaned = String(raw || "").trim().replace(/\/+$/, "");
+    return cleaned || DEFAULT_SERVER_URL;
+}
+
+async function probeServerInfo(serverUrl, token) {
+    const headers = {};
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+    const resp = await fetch(`${serverUrl}/api/info`, {
+        method: "GET",
+        headers,
+    });
+    const text = await resp.text();
+    let body = null;
+    if (text) {
+        try { body = JSON.parse(text); } catch (_) { body = null; }
+    }
+    if (!resp.ok) {
+        const err = new Error(resp.status === 401 ? "需要 Bearer Token 鉴权" : `HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
+    return body || {};
+}
+
+async function persistServerConfigFromInputs() {
+    const rawUrl = normalizeServerUrlInput(serverUrlInput?.value);
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch (_) {
+        throw new Error(`无效的 Frago Server 地址: ${rawUrl}`);
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error(`Frago Server 地址必须使用 http 或 https 协议: ${rawUrl}`);
+    }
+    const serverUrl = normalizeServerUrlInput(parsed.origin + parsed.pathname);
+    const token = String(serverTokenInput?.value || "").trim();
+    if (serverUrlInput) serverUrlInput.value = serverUrl;
+    if (chrome?.storage?.local) {
+        await chrome.storage.local.set({
+            [SERVER_CONFIG_KEY]: { serverUrl, token },
+        });
+    }
+    return { serverUrl, token };
+}
+
+async function testAndSaveServerSettings({ silent = false } = {}) {
+    if (testServerBtn) testServerBtn.disabled = true;
+    if (optServerStatusEl) optServerStatusEl.textContent = "检测中…";
+    try {
+        const { serverUrl, token } = await persistServerConfigFromInputs();
+        const info = await probeServerInfo(serverUrl, token);
+        const version = info?.version ? ` v${info.version}` : "";
+        if (optServerStatusEl) {
+            optServerStatusEl.textContent = `已连接${version}`;
+        }
+        if (!silent) {
+            showToast(`已保存并连上 Frago Server（${serverUrl}${version}）`, false);
+        }
+    } catch (err) {
+        const msg = String(err?.message || err);
+        if (optServerStatusEl) {
+            optServerStatusEl.textContent = err?.status === 401 ? "401 未鉴权" : "不可达 / 离线";
+        }
+        if (!silent) {
+            showToast(`连接测试失败：${msg}`, true);
+        }
+    } finally {
+        if (testServerBtn) testServerBtn.disabled = false;
+    }
+}
+
+async function loadServerSettings() {
+    if (optEidEl) {
+        optEidEl.textContent = chrome?.runtime?.id || "—";
+    }
+    if (optNativeEl && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ type: "frago.popup.status" }, (resp) => {
+            if (chrome.runtime.lastError || !resp) {
+                optNativeEl.textContent = "no response";
+                return;
+            }
+            optNativeEl.textContent = resp.ok ? "connected" : "disconnected";
+        });
+    }
+    try {
+        const stored = chrome?.storage?.local
+            ? await chrome.storage.local.get(SERVER_CONFIG_KEY)
+            : {};
+        const cfg = stored[SERVER_CONFIG_KEY] || {};
+        if (serverUrlInput) {
+            serverUrlInput.value = normalizeServerUrlInput(cfg.serverUrl);
+        }
+        if (serverTokenInput) {
+            serverTokenInput.value = String(cfg.token || "").trim();
+        }
+    } catch (_) {
+        if (serverUrlInput) serverUrlInput.value = DEFAULT_SERVER_URL;
+    }
+    await testAndSaveServerSettings({ silent: true });
+}
 
 function normalizeProxyUrlInput(raw) {
     return String(raw || "")
@@ -191,7 +305,24 @@ function renderChips(domains) {
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.title = `移除 ${domain}`;
-        removeBtn.textContent = "×";
+        removeBtn.setAttribute("aria-label", `移除 ${domain}`);
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("width", "11");
+        svg.setAttribute("height", "11");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "2");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("aria-hidden", "true");
+        const p1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p1.setAttribute("d", "M18 6 6 18");
+        const p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p2.setAttribute("d", "m6 6 12 12");
+        svg.appendChild(p1);
+        svg.appendChild(p2);
+        removeBtn.appendChild(svg);
         removeBtn.addEventListener("click", () => {
             const next = parseDomainsText(bypassTextarea.value).filter((d) => d !== domain);
             bypassTextarea.value = next.join("\n");
@@ -294,8 +425,11 @@ function saveSettings() {
     bypassTextarea.value = bypassDomains.join("\n");
     renderChips(bypassDomains);
 
-    applyDirectFromOptions(proxyUrl, bypassDomains)
-        .then((resp) => {
+    Promise.all([
+        persistServerConfigFromInputs(),
+        applyDirectFromOptions(proxyUrl, bypassDomains),
+    ])
+        .then(([, resp]) => {
             chrome.runtime.sendMessage(
                 {
                     type: "frago.proxy.save",
@@ -311,6 +445,7 @@ function saveSettings() {
 
 async function loadInitialState() {
     renderBuiltins(BASE_BYPASS);
+    await loadServerSettings();
     try {
         const stored = await chrome.storage.local.get(PROXY_CONFIG_KEY);
         const cfg = stored[PROXY_CONFIG_KEY] || {};
@@ -401,6 +536,21 @@ proxyInput.addEventListener("change", () => {
         // Wait for explicit click or valid address
     }
 });
+
+if (testServerBtn) {
+    testServerBtn.addEventListener("click", () => {
+        testAndSaveServerSettings({ silent: false });
+    });
+}
+for (const inputEl of [serverUrlInput, serverTokenInput]) {
+    if (!inputEl) continue;
+    inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            testAndSaveServerSettings({ silent: false });
+        }
+    });
+}
 
 saveBtn.addEventListener("click", saveSettings);
 

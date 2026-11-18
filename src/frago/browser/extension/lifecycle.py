@@ -16,12 +16,15 @@ The orchestration is **idempotent**:
 from __future__ import annotations
 
 import contextlib
+import copy
+import json
 import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import bundle_path
 from .native_host import (
@@ -246,6 +249,176 @@ def _profile_locked(profile_dir: Path) -> bool:
         return False
 
 
+def _read_bundle_permissions(bundle_dir: Path | None) -> list[str] | None:
+    """Read manifest ``permissions`` list from ``bundle_dir`` if available."""
+    if bundle_dir is None:
+        return None
+    manifest_file = bundle_dir / "manifest.json"
+    if not manifest_file.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    perms = manifest.get("permissions")
+    if not isinstance(perms, list):
+        return None
+    return [p for p in perms if isinstance(p, str)]
+
+
+def _harden_extension_prefs_dict(
+    prefs: dict[str, Any],
+    extension_id: str,
+    *,
+    manifest_permissions: list[str] | None = None,
+) -> bool:
+    """Ensure developer mode is enabled and clear any disable/escalation locks.
+
+    Returns True when ``prefs`` was mutated in place.
+    """
+    changed = False
+
+    extensions = prefs.get("extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+        prefs["extensions"] = extensions
+        changed = True
+
+    ui = extensions.get("ui")
+    if not isinstance(ui, dict):
+        ui = {}
+        extensions["ui"] = ui
+        changed = True
+    if ui.get("developer_mode") is not True:
+        ui["developer_mode"] = True
+        changed = True
+
+    settings = extensions.get("settings")
+    if isinstance(settings, dict) and isinstance(settings.get(extension_id), dict):
+        entry = settings[extension_id]
+        if entry.get("state") != 1:
+            entry["state"] = 1
+            changed = True
+        if entry.get("disable_reasons"):
+            entry["disable_reasons"] = []
+            changed = True
+        for lock_key in ("ack_prompt_count", "ack_external"):
+            if lock_key in entry:
+                entry.pop(lock_key, None)
+                changed = True
+        if entry.get("withholding_permissions") is True:
+            entry["withholding_permissions"] = False
+            changed = True
+
+        active_perms = entry.get("active_permissions")
+        granted_perms = entry.get("granted_permissions")
+        if isinstance(active_perms, dict):
+            if not isinstance(granted_perms, dict):
+                entry["granted_permissions"] = copy.deepcopy(active_perms)
+                changed = True
+            else:
+                for perm_group in (
+                    "api",
+                    "explicit_host",
+                    "manifest_permissions",
+                    "scriptable_host",
+                ):
+                    active_list = active_perms.get(perm_group)
+                    if not isinstance(active_list, list):
+                        continue
+                    cur_list = granted_perms.get(perm_group)
+                    if not isinstance(cur_list, list):
+                        granted_perms[perm_group] = list(active_list)
+                        changed = True
+                    else:
+                        merged = list(cur_list)
+                        for item in active_list:
+                            if item not in merged:
+                                merged.append(item)
+                                changed = True
+                        if merged != cur_list:
+                            granted_perms[perm_group] = merged
+
+        if manifest_permissions:
+            for bucket_name in ("active_permissions", "granted_permissions"):
+                bucket = entry.get(bucket_name)
+                if isinstance(bucket, dict) and isinstance(bucket.get("api"), list):
+                    cur_api = bucket["api"]
+                    merged_api = list(cur_api)
+                    for perm in manifest_permissions:
+                        if perm not in merged_api:
+                            merged_api.append(perm)
+                            changed = True
+                    if merged_api != cur_api:
+                        bucket["api"] = merged_api
+
+    return changed
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    tmp_path = path.with_name(f".{path.name}.frago-tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def _ensure_developer_mode_and_enable_extension(
+    profile_dir: Path,
+    *,
+    extension_id: str = STABLE_EXTENSION_ID,
+    bundle_dir: Path | None = None,
+) -> None:
+    """Harden ``Default/Preferences`` (and ``Default/Secure Preferences`` if present)
+    before launching Chromium so unpacked extension upgrades or refreshes never
+    leave ``frago bridge`` disabled with "开启开发者模式即可使用此扩展程序".
+
+    Must only be called while the profile is unlocked (no live browser process).
+    """
+    default_dir = profile_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    manifest_perms = _read_bundle_permissions(bundle_dir)
+
+    prefs_path = default_dir / "Preferences"
+    prefs_existed = prefs_path.exists()
+    prefs: dict[str, Any] = {}
+    if prefs_existed:
+        try:
+            loaded = json.loads(prefs_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                prefs = loaded
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"warning: failed to parse {prefs_path}, reinitializing extension "
+                f"preferences cleanly: {exc}",
+                file=sys.stderr,
+            )
+            prefs = {}
+    if _harden_extension_prefs_dict(
+        prefs, extension_id, manifest_permissions=manifest_perms
+    ) or not prefs_existed:
+        _write_json_atomic(prefs_path, prefs)
+
+    secure_prefs_path = default_dir / "Secure Preferences"
+    if secure_prefs_path.exists():
+        try:
+            loaded_secure = json.loads(secure_prefs_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"warning: failed to parse {secure_prefs_path}, skipping secure "
+                f"preferences hardening: {exc}",
+                file=sys.stderr,
+            )
+            return
+        if isinstance(loaded_secure, dict) and _harden_extension_prefs_dict(
+            loaded_secure, extension_id, manifest_permissions=manifest_perms
+        ):
+            _write_json_atomic(secure_prefs_path, loaded_secure)
+
+
 def _fetch_cft_if_missing() -> None:
     """没有 CfT 就先取一份，再交给挑浏览器那一步。
 
@@ -445,6 +618,13 @@ def start_extension_bridge(
     manifest_path = install_manifest(
         str(launcher),
         target_dir=profile / "NativeMessagingHosts",
+    )
+
+    # 5.5. Profile preferences hardening (profile is unlocked at this point)
+    _ensure_developer_mode_and_enable_extension(
+        profile,
+        extension_id=STABLE_EXTENSION_ID,
+        bundle_dir=bundle,
     )
 
     # 6. Browser launch

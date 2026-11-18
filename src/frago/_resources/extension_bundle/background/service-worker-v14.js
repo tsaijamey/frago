@@ -1847,7 +1847,315 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }).catch(() => {});
         return false;
     }
+    if (handleBridgeMessage(msg, sender, sendResponse)) {
+        return true;
+    }
     return false;
+});
+
+// ════════════════════════ Session Bridge (Side Panel & Context Menus) ════════════════════════
+
+const BRIDGE_DRAFT_KEY = "fragoSessionBridgeDraft";
+const BRIDGE_SETTINGS_KEY = "fragoBridgeSettings";
+const MENU_ADD_SELECTION = "frago-add-selection-focus";
+const MENU_PICK_ELEMENT = "frago-pick-element-focus";
+
+const sidePanelPorts = new Set();
+let draftWriteChain = Promise.resolve();
+let contextMenusInitialized = false;
+
+function normalizeBridgeUrl(rawUrl) {
+    const s = String(rawUrl || "").trim();
+    if (!s) return "";
+    try {
+        const u = new URL(s);
+        u.hash = "";
+        return u.href;
+    } catch (_) {
+        const idx = s.indexOf("#");
+        return idx >= 0 ? s.slice(0, idx) : s;
+    }
+}
+
+async function ensureContentScriptsInjected(tabId) {
+    if (tabId == null) return false;
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            files: [
+                "shared/page_extractor.js",
+                "content/picker.js",
+                "content/content_script.js",
+            ],
+        });
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function sendMessageToTabWithRetry(tabId, payload) {
+    try {
+        return await chrome.tabs.sendMessage(tabId, payload);
+    } catch (_) {
+        const injected = await ensureContentScriptsInjected(tabId);
+        if (!injected) return null;
+        try {
+            return await chrome.tabs.sendMessage(tabId, payload);
+        } catch (_) {
+            return null;
+        }
+    }
+}
+
+async function getEffectivePillEnabled() {
+    try {
+        const stored = await chrome.storage.local.get(BRIDGE_SETTINGS_KEY);
+        const cfg = stored[BRIDGE_SETTINGS_KEY] || {};
+        // Default "auto": active only when Side Panel is open.
+        // User can also explicitly set "off" or "always".
+        const mode = cfg.selectionPillMode || "auto";
+        if (mode === "off") return false;
+        if (mode === "always") return true;
+        return sidePanelPorts.size > 0;
+    } catch (_) {
+        return sidePanelPorts.size > 0;
+    }
+}
+
+async function broadcastPillState() {
+    const enabled = await getEffectivePillEnabled();
+    try {
+        const tabs = await chrome.tabs.query({ active: true });
+        await Promise.all(
+            tabs.map((t) =>
+                chrome.tabs.sendMessage(t.id, {
+                    type: "frago.bridge.pillState",
+                    enabled,
+                }).catch(() => {})
+            )
+        );
+    } catch (_) { /* ignore */ }
+}
+
+function appendFocusToDraft(focus, pageSnapshot) {
+    const task = draftWriteChain.then(async () => {
+        const stored = await chrome.storage.local.get(BRIDGE_DRAFT_KEY);
+        const draft = stored[BRIDGE_DRAFT_KEY] || {
+            focusItems: [],
+            pageSnapshots: {},
+            screenshots: [],
+            instruction: "",
+            includeFullPage: true,
+        };
+        const focusItems = Array.isArray(draft.focusItems) ? [...draft.focusItems] : [];
+        const id = focus.id || `focus-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const entry = {
+            ...focus,
+            id,
+            enabled: focus.enabled !== false,
+            capturedAt: focus.capturedAt || Date.now(),
+        };
+        focusItems.push(entry);
+
+        const pageSnapshots = { ...(draft.pageSnapshots || {}) };
+        if (pageSnapshot && pageSnapshot.url && pageSnapshot.markdown) {
+            const normUrl = pageSnapshot.normalizedUrl || normalizeBridgeUrl(pageSnapshot.url);
+            if (normUrl) {
+                pageSnapshots[normUrl] = {
+                    ...pageSnapshot,
+                    normalizedUrl: normUrl,
+                };
+            }
+            const keys = Object.keys(pageSnapshots);
+            if (keys.length > 12) {
+                const activeUrls = new Set(
+                    focusItems.map((f) => normalizeBridgeUrl(f.url)).filter(Boolean)
+                );
+                for (const k of keys) {
+                    if (Object.keys(pageSnapshots).length <= 12) break;
+                    if (!activeUrls.has(k)) delete pageSnapshots[k];
+                }
+            }
+        }
+
+        const nextDraft = {
+            ...draft,
+            focusItems,
+            pageSnapshots,
+        };
+        await chrome.storage.local.set({ [BRIDGE_DRAFT_KEY]: nextDraft });
+        try {
+            chrome.runtime.sendMessage(
+                { type: "frago.bridge.draftUpdated", draft: nextDraft },
+                () => { void chrome.runtime.lastError; }
+            );
+        } catch (_) { /* no active listener */ }
+        return nextDraft;
+    });
+    draftWriteChain = task.catch(() => {});
+    return task;
+}
+
+function handleBridgeMessage(msg, sender, sendResponse) {
+    if (!msg || typeof msg.type !== "string" || !msg.type.startsWith("frago.bridge.")) {
+        return false;
+    }
+
+    if (msg.type === "frago.bridge.addFocus") {
+        appendFocusToDraft(msg.focus || {}, msg.pageSnapshot || null)
+            .then((draft) => sendResponse({ ok: true, draft }))
+            .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+        return true;
+    }
+
+    if (msg.type === "frago.bridge.getPillState") {
+        getEffectivePillEnabled()
+            .then((enabled) => sendResponse({ ok: true, enabled }))
+            .catch(() => sendResponse({ ok: true, enabled: false }));
+        return true;
+    }
+
+    if (msg.type === "frago.bridge.setPillPreference") {
+        (async () => {
+            const stored = await chrome.storage.local.get(BRIDGE_SETTINGS_KEY);
+            const prev = stored[BRIDGE_SETTINGS_KEY] || {};
+            const mode = ["auto", "always", "off"].includes(msg.mode) ? msg.mode : "auto";
+            await chrome.storage.local.set({
+                [BRIDGE_SETTINGS_KEY]: { ...prev, selectionPillMode: mode },
+            });
+            await broadcastPillState();
+            const enabled = await getEffectivePillEnabled();
+            sendResponse({ ok: true, mode, enabled });
+        })().catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+        return true;
+    }
+
+    if (msg.type === "frago.bridge.captureScreenshot") {
+        (async () => {
+            const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            const windowId = tab ? tab.windowId : undefined;
+            const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+            sendResponse({
+                ok: true,
+                screenshot: {
+                    id: `shot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    dataUrl,
+                    title: tab?.title || "",
+                    url: tab?.url || "",
+                    capturedAt: Date.now(),
+                },
+            });
+        })().catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+        return true;
+    }
+
+    if (msg.type === "frago.bridge.ensureTabInjected") {
+        const tabId = msg.tabId;
+        sendMessageToTabWithRetry(tabId, msg.payload || { type: "frago.bridge.extractFullPage" })
+            .then((resp) => sendResponse(resp || { ok: false, error: "当前页面无法注入脚本（例如 chrome:// 系统页）" }))
+            .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+        return true;
+    }
+
+    if (msg.type === "frago.bridge.openWebuiSession") {
+        (async () => {
+            const targetUrl = String(msg.url || "");
+            const baseUrl = String(msg.baseUrl || "").replace(/\/+$/, "");
+            const tabs = await chrome.tabs.query({});
+            const existing = baseUrl
+                ? tabs.find((t) => typeof t.url === "string" && t.url.startsWith(baseUrl))
+                : null;
+            if (existing && existing.id != null) {
+                await chrome.tabs.update(existing.id, { url: targetUrl, active: true });
+                if (existing.windowId != null) {
+                    await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
+                }
+                sendResponse({ ok: true, reused: true, tabId: existing.id });
+            } else {
+                const created = await chrome.tabs.create({ url: targetUrl, active: true });
+                sendResponse({ ok: true, reused: false, tabId: created?.id ?? null });
+            }
+        })().catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+        return true;
+    }
+
+    return false;
+}
+
+function initSidePanelAndMenus() {
+    try {
+        if (chrome.sidePanel?.setPanelBehavior) {
+            chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+        }
+    } catch (_) { /* ignore */ }
+
+    if (!contextMenusInitialized && chrome.contextMenus) {
+        contextMenusInitialized = true;
+        try {
+            chrome.contextMenus.removeAll(() => {
+                void chrome.runtime.lastError;
+                chrome.contextMenus.create({
+                    id: MENU_ADD_SELECTION,
+                    title: "将选中内容带入 Frago 对话",
+                    contexts: ["selection"],
+                }, () => { void chrome.runtime.lastError; });
+                chrome.contextMenus.create({
+                    id: MENU_PICK_ELEMENT,
+                    title: "拾取网页区块带入 Frago 对话",
+                    contexts: ["page", "selection"],
+                }, () => { void chrome.runtime.lastError; });
+            });
+        } catch (_) {
+            contextMenusInitialized = false;
+        }
+    }
+}
+
+if (chrome.contextMenus?.onClicked) {
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+        if (!tab || tab.id == null) return;
+        if (chrome.sidePanel?.open && tab.windowId != null) {
+            chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+        }
+        if (info.menuItemId === MENU_ADD_SELECTION) {
+            sendMessageToTabWithRetry(tab.id, { type: "frago.bridge.captureSelection" })
+                .then((resp) => {
+                    if (resp && resp.ok && resp.focus) {
+                        return appendFocusToDraft(resp.focus, resp.pageSnapshot || null);
+                    }
+                    const fallbackText = String(info.selectionText || "").trim();
+                    if (!fallbackText) return null;
+                    return appendFocusToDraft({
+                        kind: "selection",
+                        title: tab.title || "",
+                        url: info.pageUrl || tab.url || "",
+                        selector: "",
+                        markdown: fallbackText,
+                        text: fallbackText,
+                        contextBefore: "",
+                        contextAfter: "",
+                    }, null);
+                })
+                .catch(() => {});
+        } else if (info.menuItemId === MENU_PICK_ELEMENT) {
+            sendMessageToTabWithRetry(tab.id, { type: "frago.bridge.startPicker" }).catch(() => {});
+        }
+    });
+}
+
+chrome.runtime.onConnect.addListener((connectedPort) => {
+    if (connectedPort?.name !== "frago-sidepanel") return;
+    sidePanelPorts.add(connectedPort);
+    broadcastPillState();
+    connectedPort.onDisconnect.addListener(() => {
+        sidePanelPorts.delete(connectedPort);
+        broadcastPillState();
+    });
+});
+
+chrome.tabs.onActivated.addListener(() => {
+    broadcastPillState();
 });
 
 // ════════════════════════ bootstrap ════════════════════════
@@ -1856,6 +2164,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 ready = loadGroups();
 
 function bootstrap() {
+    initSidePanelAndMenus();
     ready.then(() => {
         connectHost();
         applyProxySettings().catch((e) =>

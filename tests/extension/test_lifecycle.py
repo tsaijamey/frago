@@ -266,3 +266,179 @@ def test_profile_locked_treats_dead_pid_as_stale():
         # Pick a PID that's overwhelmingly likely to be dead.
         (profile / "SingletonLock").symlink_to("host-2147483647")
         assert lc._profile_locked(profile) is False
+
+
+# ─────────────── preferences hardening (developer_mode & enable) ──────
+
+
+def test_preferences_hardening_initializes_fresh_profile(tmp_path):
+    """Missing Default/Preferences is initialized with developer_mode=True."""
+    profile = tmp_path / "profile"
+    lc._ensure_developer_mode_and_enable_extension(profile)
+    prefs_file = profile / "Default" / "Preferences"
+    assert prefs_file.exists()
+    import json
+    data = json.loads(prefs_file.read_text(encoding="utf-8"))
+    assert data["extensions"]["ui"]["developer_mode"] is True
+
+
+def test_preferences_hardening_preserves_unrelated_keys_and_enables_extension(tmp_path):
+    """Existing Preferences & Secure Preferences keep unrelated keys while
+    forcing developer_mode=True, clearing disable_reasons/ack locks, setting
+    state=1, and syncing granted_permissions from manifest/active_permissions."""
+    import json
+    profile = tmp_path / "profile"
+    default_dir = profile / "Default"
+    default_dir.mkdir(parents=True)
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps({"permissions": ["tabs", "sidePanel", "contextMenus"]}),
+        encoding="utf-8",
+    )
+
+    ext_id = lc.STABLE_EXTENSION_ID
+    (default_dir / "Preferences").write_text(
+        json.dumps({
+            "profile": {"name": "Work", "exited_cleanly": True},
+            "extensions": {
+                "ui": {"developer_mode": False},
+                "settings": {
+                    ext_id: {
+                        "state": 0,
+                        "disable_reasons": [1, 16777216],
+                        "ack_prompt_count": 2,
+                        "withholding_permissions": True,
+                        "active_permissions": {
+                            "api": ["tabs", "sidePanel", "contextMenus"],
+                            "explicit_host": ["<all_urls>"],
+                        },
+                        "granted_permissions": {
+                            "api": ["tabs"],
+                        },
+                    },
+                    "otherextensionid0000000000000000": {
+                        "state": 0,
+                        "disable_reasons": [1],
+                    },
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    (default_dir / "Secure Preferences").write_text(
+        json.dumps({
+            "extensions": {
+                "settings": {
+                    ext_id: {
+                        "state": 0,
+                        "disable_reasons": [16777216],
+                        "ack_external": True,
+                        "active_permissions": {"api": ["tabs", "sidePanel"]},
+                        "granted_permissions": {"api": ["tabs"]},
+                    }
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    lc._ensure_developer_mode_and_enable_extension(
+        profile, extension_id=ext_id, bundle_dir=bundle
+    )
+
+    prefs = json.loads((default_dir / "Preferences").read_text(encoding="utf-8"))
+    assert prefs["profile"] == {"name": "Work", "exited_cleanly": True}
+    assert prefs["extensions"]["ui"]["developer_mode"] is True
+    entry = prefs["extensions"]["settings"][ext_id]
+    assert entry["state"] == 1
+    assert entry["disable_reasons"] == []
+    assert "ack_prompt_count" not in entry
+    assert entry["withholding_permissions"] is False
+    assert set(entry["granted_permissions"]["api"]) >= {"tabs", "sidePanel", "contextMenus"}
+    assert entry["granted_permissions"]["explicit_host"] == ["<all_urls>"]
+    # Unrelated extension settings are untouched
+    assert prefs["extensions"]["settings"]["otherextensionid0000000000000000"] == {
+        "state": 0,
+        "disable_reasons": [1],
+    }
+
+    sp = json.loads((default_dir / "Secure Preferences").read_text(encoding="utf-8"))
+    assert sp["extensions"]["ui"]["developer_mode"] is True
+    sp_entry = sp["extensions"]["settings"][ext_id]
+    assert sp_entry["state"] == 1
+    assert sp_entry["disable_reasons"] == []
+    assert "ack_external" not in sp_entry
+    assert set(sp_entry["granted_permissions"]["api"]) >= {"tabs", "sidePanel", "contextMenus"}
+
+
+def test_preferences_hardening_recovers_from_malformed_json(tmp_path, capsys):
+    """Corrupt Preferences JSON warns and reinitializes cleanly without crashing."""
+    import json
+    profile = tmp_path / "profile"
+    default_dir = profile / "Default"
+    default_dir.mkdir(parents=True)
+    (default_dir / "Preferences").write_text("{not valid json", encoding="utf-8")
+
+    lc._ensure_developer_mode_and_enable_extension(profile)
+
+    data = json.loads((default_dir / "Preferences").read_text(encoding="utf-8"))
+    assert data["extensions"]["ui"]["developer_mode"] is True
+    assert "failed to parse" in capsys.readouterr().err
+
+
+def test_start_extension_bridge_hardens_preferences_before_launch(tmp_path):
+    """start_extension_bridge hardens Preferences before calling launch_chrome_with_extension."""
+    import json
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps({"permissions": ["tabs", "sidePanel", "contextMenus"]}),
+        encoding="utf-8",
+    )
+    profile = tmp_path / "profile"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Secure Preferences").write_text(
+        json.dumps({
+            "extensions": {
+                "settings": {
+                    lc.STABLE_EXTENSION_ID: {
+                        "state": 0,
+                        "disable_reasons": [16777216],
+                    }
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    observed_before_launch: dict = {}
+
+    def fake_launch(bundle_dir, user_data_dir, **_kw):
+        observed_before_launch["prefs"] = json.loads(
+            (user_data_dir / "Default" / "Preferences").read_text(encoding="utf-8")
+        )
+        observed_before_launch["secure"] = json.loads(
+            (user_data_dir / "Default" / "Secure Preferences").read_text(encoding="utf-8")
+        )
+        return MagicMock(pid=7777)
+
+    with patch.object(lc, "_daemon_alive", return_value=True), \
+         patch.object(lc, "_profile_locked", return_value=False), \
+         patch.object(lc, "_ensure_native_host_launcher",
+                      return_value=Path("/tmp/fake-launcher.sh")), \
+         patch.object(lc, "install_manifest",
+                      return_value=Path("/tmp/manifest.json")), \
+         patch("frago.browser.backends.extension.launch_chrome_with_extension",
+               side_effect=fake_launch), \
+         patch.object(lc, "_wait_bridge",
+                      return_value={"bridge": {"extensionId": lc.STABLE_EXTENSION_ID}}), \
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
+               return_value=MagicMock(path="/usr/bin/chromium", brand="chromium")):
+        lc.start_extension_bridge(profile_dir=profile, bundle_dir=bundle)
+
+    assert observed_before_launch["prefs"]["extensions"]["ui"]["developer_mode"] is True
+    sp_ext = observed_before_launch["secure"]["extensions"]["settings"][lc.STABLE_EXTENSION_ID]
+    assert sp_ext["state"] == 1
+    assert sp_ext["disable_reasons"] == []
