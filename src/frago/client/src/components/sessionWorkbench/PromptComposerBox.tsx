@@ -26,6 +26,7 @@ import { ArrowUp, Loader2, Paperclip, Plus, SendHorizontal } from 'lucide-react'
 import { MAX_ATTACHMENTS } from '@/hooks/useAttachments';
 import { useDataStore } from '@/stores/dataStore';
 import type { EmployeeItem, SkillItem } from '@/types/api';
+import { parseTextQuoteBlocks, type ComposerQuoteItem } from '@/utils/textQuoteBlocks';
 import DirectiveMenu, {
   directiveQuery,
   filterEmployees,
@@ -36,6 +37,7 @@ import DirectiveMenu, {
 } from './DirectiveMenu';
 import { EmployeeQuote } from './EmployeeQuote';
 import { SkillQuote } from './SkillQuote';
+import { ComposerTextQuotes } from './TextQuote';
 
 const LINE_PX = 24;
 
@@ -76,6 +78,9 @@ export interface PromptComposerBoxProps {
   onAddEmployee?: (employee: EmployeeItem) => void;
   onRemoveEmployee?: (id: string) => void;
   employeesCatalog?: EmployeeItem[];
+  quotes?: ComposerQuoteItem[];
+  onAddQuote?: (quoteText: string) => void;
+  onRemoveQuote?: (id: string) => void;
   onAddFiles: (files: FileList | File[]) => void | Promise<void>;
   attachCount: number;
   canSubmit: boolean;
@@ -139,6 +144,9 @@ export default function PromptComposerBox({
   onAddEmployee,
   onRemoveEmployee,
   employeesCatalog,
+  quotes = [],
+  onAddQuote,
+  onRemoveQuote,
   onAddFiles,
   attachCount,
   canSubmit,
@@ -182,12 +190,14 @@ export default function PromptComposerBox({
   const [latchedExpanded, setLatchedExpanded] = useState(false);
 
   const hasDirectives = employees.length > 0 || skills.length > 0;
+  const hasQuotes = quotes.length > 0;
   const isCompact = variant === 'compact';
-  const hasTopSlot = Boolean(headerSlot || hasDirectives || bannerSlot);
+  const hasTopSlot = Boolean(headerSlot || hasDirectives || hasQuotes || bannerSlot);
   const forcedExpanded =
     !isCompact ||
     text.includes('\n') ||
     hasDirectives ||
+    hasQuotes ||
     hasExtraContent ||
     hasTopSlot;
   const isExpanded = forcedExpanded || latchedExpanded;
@@ -322,6 +332,7 @@ export default function PromptComposerBox({
     }
   }, [
     text,
+    quotes.length,
     minLines,
     maxLines,
     caretTo,
@@ -343,11 +354,29 @@ export default function PromptComposerBox({
   const handlePaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
       const extracted = extractClipboardFiles(e.clipboardData);
-      if (extracted.length === 0) return;
+      if (extracted.length > 0) {
+        e.preventDefault();
+        takeFiles(e.clipboardData?.files?.length ? e.clipboardData.files : extracted);
+        return;
+      }
+      if (!onAddQuote) return;
+      const pasted = e.clipboardData?.getData('text/plain') ?? '';
+      if (!pasted.includes('"""')) return;
+      const parsed = parseTextQuoteBlocks(pasted);
+      if (!parsed.hasQuotes) return;
       e.preventDefault();
-      takeFiles(e.clipboardData?.files?.length ? e.clipboardData.files : extracted);
+      for (const q of parsed.quotes) {
+        onAddQuote(q.text);
+      }
+      const el = box.current;
+      const start = el?.selectionStart ?? text.length;
+      const end = el?.selectionEnd ?? text.length;
+      const inserted = parsed.userPrompt;
+      const nextText = text.slice(0, start) + inserted + text.slice(end);
+      caretTo.current = start + inserted.length;
+      onChangeText(nextText);
     },
-    [takeFiles]
+    [takeFiles, onAddQuote, text, onChangeText, caretTo]
   );
 
   const handleKeyDown = useCallback(
@@ -447,6 +476,10 @@ export default function PromptComposerBox({
     </div>
   ) : null;
 
+  const quotesBlock = hasQuotes ? (
+    <ComposerTextQuotes quotes={quotes} onRemove={onRemoveQuote} idPrefix={idPrefix} />
+  ) : null;
+
   if (isCompact) {
     const compactMinLines = isPill ? 1 : Math.max(minLines, 2);
     return (
@@ -484,6 +517,7 @@ export default function PromptComposerBox({
             <div className="mb-1.5 min-w-0 [grid-area:top]">
               {headerSlot ? <div className="mb-1.5">{headerSlot}</div> : null}
               {directivesBlock}
+              {quotesBlock}
               {bannerSlot}
             </div>
           ) : null}
@@ -644,6 +678,8 @@ export default function PromptComposerBox({
         {headerSlot ? <div className="mb-1.5">{headerSlot}</div> : null}
 
         {directivesBlock}
+
+        {quotesBlock}
 
         {bannerSlot}
 

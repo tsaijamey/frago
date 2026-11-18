@@ -34,6 +34,10 @@ import {
   type AttachedImage,
 } from '@/hooks/useAttachments';
 import type { EmployeeItem, SkillItem } from '@/types/api';
+import {
+  serializeQuotesWithPrompt,
+  type ComposerQuoteItem,
+} from '@/utils/textQuoteBlocks';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -90,6 +94,13 @@ export interface SendToSessionState {
   employees: EmployeeItem[];
   addEmployee: (employee: EmployeeItem) => void;
   removeEmployee: (id: string) => void;
+  /**
+   * 人通过 Quote 引用进输入框的原文片段，发出去时按 `"""\n...\n"""\n>>> ` 拼入消息。
+   */
+  quotes: ComposerQuoteItem[];
+  addQuote: (text: string) => void;
+  removeQuote: (id: string) => void;
+  clearQuotes: () => void;
   sending: boolean;
   /** 失败原因，照抄服务端的说法。成功或重新发送时清掉。 */
   error: string | null;
@@ -119,6 +130,8 @@ export interface SendToSessionState {
 /** 一次投出去的全部内容。发送那一刻从输入框里整份取走，之后输入框与它再无关系。 */
 interface OutboundPayload {
   text: string;
+  rawText: string;
+  quotes: ComposerQuoteItem[];
   images: AttachedImage[];
   documents: AttachedDoc[];
   skills: SkillItem[];
@@ -223,6 +236,8 @@ export function useSendToSession(
   const [text, setText] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [employees, setEmployees] = useState<EmployeeItem[]>([]);
+  const [quotes, setQuotes] = useState<ComposerQuoteItem[]>([]);
+  const quoteIdSeq = useRef(0);
   const { images, documents, addFiles, removeImage, removeDocument, clear, restore } =
     useAttachments();
   const [sending, setSending] = useState(false);
@@ -244,6 +259,7 @@ export function useSendToSession(
   const boxEmpty = useRef(true);
   boxEmpty.current =
     !text &&
+    quotes.length === 0 &&
     images.length === 0 &&
     documents.length === 0 &&
     skills.length === 0 &&
@@ -259,6 +275,14 @@ export function useSendToSession(
     ticket: number;
     sessionId: string;
     timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  // 剛因报错退回输入框/暂存的那一单：若随后记录流核实该消息其实已落盘入库（deliveredAt 到达），
+  // 立即撤回误报的红条与退回的重复原文，防止用户点重试在会话里产生重复发言。
+  const lastGiveBack = useRef<{
+    ticket: number;
+    sessionId: string;
+    payload: OutboundPayload;
+    restoredToBox: boolean;
   } | null>(null);
   // 这三个回调每渲染都是新的，放进 ref 让 send 保持稳定，同时永远调到最新那个。
   const onSentRef = useRef(onSent);
@@ -292,9 +316,11 @@ export function useSendToSession(
       clearTimeout(unconfirmed.current.timer);
       unconfirmed.current = null;
     }
+    lastGiveBack.current = null;
     setText('');
     setSkills([]);
     setEmployees([]);
+    setQuotes([]);
     clear();
     setSending(false);
     setError(null);
@@ -315,6 +341,18 @@ export function useSendToSession(
   const removeEmployee = useCallback((id: string) => {
     setEmployees((prev) => prev.filter((e) => e.member_post_id !== id));
   }, []);
+  const addQuote = useCallback((rawQuote: string) => {
+    const trimmed = rawQuote.trim();
+    if (!trimmed) return;
+    const id = `q_${Date.now()}_${(quoteIdSeq.current += 1)}`;
+    setQuotes((prev) => [...prev, { id, text: trimmed }]);
+  }, []);
+  const removeQuote = useCallback((id: string) => {
+    setQuotes((prev) => prev.filter((q) => q.id !== id));
+  }, []);
+  const clearQuotes = useCallback(() => {
+    setQuotes([]);
+  }, []);
 
   /**
    * 送达信号一到就把按钮放回去。
@@ -326,7 +364,25 @@ export function useSendToSession(
    */
   useEffect(() => {
     if (!deliveredAt) return;
-    if (ticket.current === 0 || clearedTicket.current === ticket.current) return;
+    if (ticket.current === 0) return;
+    if (
+      lastGiveBack.current &&
+      lastGiveBack.current.ticket === ticket.current &&
+      lastGiveBack.current.sessionId === currentSessionId.current
+    ) {
+      const prev = lastGiveBack.current;
+      lastGiveBack.current = null;
+      clearedTicket.current = ticket.current;
+      setSending(false);
+      setError(null);
+      setFailedState(null);
+      if (prev.restoredToBox) {
+        setText((cur) => (cur === prev.payload.rawText ? '' : cur));
+        setQuotes((cur) => (cur === prev.payload.quotes ? [] : cur));
+      }
+      return;
+    }
+    if (clearedTicket.current === ticket.current) return;
     clearedTicket.current = ticket.current;
     setSending(false);
     // 连接断了还在核对的那一单，送达信号一到就有了答案：它发出去了。
@@ -341,6 +397,7 @@ export function useSendToSession(
     Boolean(enabled && sessionId) &&
     !sending &&
     (!!body ||
+      quotes.length > 0 ||
       images.length > 0 ||
       documents.length > 0 ||
       skills.length > 0 ||
@@ -360,9 +417,17 @@ export function useSendToSession(
       outboundId?: string
     ) => {
       if (!mounted.current || currentSessionId.current !== targetSessionId) return;
+      const restoredToBox = boxEmpty.current;
+      lastGiveBack.current = {
+        ticket: ticket.current,
+        sessionId: targetSessionId,
+        payload,
+        restoredToBox,
+      };
       setError(reason);
-      if (boxEmpty.current) {
-        setText(payload.text);
+      if (restoredToBox) {
+        setText(payload.rawText);
+        setQuotes(payload.quotes);
         setSkills(payload.skills);
         setEmployees(payload.employees);
         restore(payload.images, payload.documents);
@@ -381,6 +446,7 @@ export function useSendToSession(
       if (!sessionId) return;
       const targetSessionId = sessionId;
       const mine = ++ticket.current;
+      lastGiveBack.current = null;
       let pending = false;
       setSending(true);
       setError(null);
@@ -466,9 +532,20 @@ export function useSendToSession(
 
   const send = useCallback(async () => {
     if (!enabled || !sessionId || sending) return;
-    const payload: OutboundPayload = { text: text.trim(), images, documents, skills, employees };
+    const rawText = text.trim();
+    const serializedText = serializeQuotesWithPrompt(quotes, rawText);
+    const payload: OutboundPayload = {
+      text: serializedText,
+      rawText,
+      quotes,
+      images,
+      documents,
+      skills,
+      employees,
+    };
     const hasDraft =
       Boolean(payload.text) ||
+      payload.quotes.length > 0 ||
       payload.images.length > 0 ||
       payload.documents.length > 0 ||
       payload.skills.length > 0 ||
@@ -483,9 +560,11 @@ export function useSendToSession(
     }
     // 点了发送就撤不回了，输入框当场交还给人。那句话改由上方的信封替它站着。
     setText('');
+    setQuotes([]);
     setSkills([]);
     setEmployees([]);
     clear();
+    boxEmpty.current = true;
     await dispatch(payload);
   }, [
     enabled,
@@ -493,6 +572,7 @@ export function useSendToSession(
     sending,
     failed,
     text,
+    quotes,
     images,
     documents,
     skills,
@@ -516,7 +596,15 @@ export function useSendToSession(
     async (value: string) => {
       const body = value.trim();
       if (!enabled || !sessionId || !body) return;
-      await dispatch({ text: body, images: [], documents: [], skills: [], employees: [] });
+      await dispatch({
+        text: body,
+        rawText: body,
+        quotes: [],
+        images: [],
+        documents: [],
+        skills: [],
+        employees: [],
+      });
     },
     [enabled, sessionId, dispatch]
   );
@@ -535,6 +623,10 @@ export function useSendToSession(
     employees,
     addEmployee,
     removeEmployee,
+    quotes,
+    addQuote,
+    removeQuote,
+    clearQuotes,
     sending,
     error,
     canSend,

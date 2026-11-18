@@ -39,6 +39,7 @@ import {
   ExternalLink,
   FileText,
   Globe,
+  Info,
   Layers,
   ListChecks,
   Lock,
@@ -72,6 +73,10 @@ import { EmployeeQuotes } from './EmployeeQuote';
 import { SkillQuotes } from './SkillQuote';
 import AttachedImages from './AttachedImages';
 import ImageGridCard from './ImageGridCard';
+import { TextQuoteBlocksView } from './TextQuote';
+import WebBridgeContextView from './WebBridgeContextView';
+import { parseTextQuoteBlocks, stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { parseWebBridgeContext, stripWebBridgeContext } from '@/utils/webBridgeContext';
 import {
   CardAnswerBody,
   CardAnswerTag,
@@ -694,8 +699,12 @@ function Prose({ text }: { text: string }) {
   if (!text) {
     return <p className="text-scaled-prose italic text-text-muted">{t('workbench.record.emptyBody')}</p>;
   }
+  const parsedQuotes = parseTextQuoteBlocks(text);
+  if (parsedQuotes.hasQuotes) {
+    return <TextQuoteBlocksView parsed={parsedQuotes} />;
+  }
   return (
-    <p className="text-scaled-prose whitespace-pre-wrap break-words leading-[1.72] text-text-primary">
+    <p className="text-scaled-prose min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-[1.72] text-text-primary">
       {text}
     </p>
   );
@@ -713,7 +722,7 @@ function Rich({ text }: { text: string }) {
   return (
     <MarkdownContent
       content={text}
-      className="text-scaled-prose min-w-0 break-words leading-[1.72] text-text-primary"
+      className="text-scaled-prose min-w-0 max-w-full break-words [overflow-wrap:anywhere] leading-[1.72] text-text-primary"
     />
   );
 }
@@ -728,7 +737,7 @@ function Mono({ text }: { text: string }) {
     return <p className="text-[12px] italic text-text-muted">{t('workbench.record.noOutput')}</p>;
   }
   return (
-    <pre className="max-h-[230px] overflow-auto whitespace-pre-wrap break-words rounded-[3px] bg-bg-subtle p-2 font-mono text-[12px] leading-[1.6] text-text-secondary">
+    <pre className="max-h-[230px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[3px] bg-bg-subtle p-2 font-mono text-[12px] leading-[1.6] text-text-secondary">
       {text}
     </pre>
   );
@@ -1116,6 +1125,8 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
   const modeKey = INPUT_MODE_LABEL_KEY[mode];
   const inline = !!command && isInlineArg(text);
   const cardAnswer = command ? null : parseCardAnswer(text);
+  const bridge = command || cardAnswer ? null : parseWebBridgeContext(text);
+  const proseText = bridge?.hasBridgeContext ? bridge.userPrompt : text;
 
   const userShell = (
     <TextShell
@@ -1136,14 +1147,24 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       {command ? (
         <p
           data-testid="user-command"
-          className="inline-block max-w-full break-all rounded-[4px] bg-bg-card px-2 py-[3px] font-mono text-[12px] text-text-primary"
+          className="inline-block max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[4px] bg-bg-card px-2 py-[3px] font-mono text-[12px] text-text-primary"
         >
           {inline ? `${command} ${text}` : command}
         </p>
       ) : null}
-      {!inline && (text || (!command && !skills.length && !employees.length)) ? (
+      {!inline &&
+      (proseText || bridge?.hasBridgeContext || (!command && !skills.length && !employees.length)) ? (
         <div className={command ? 'mt-1.5' : undefined}>
-          {cardAnswer ? <CardAnswerBody answer={cardAnswer} /> : <Prose text={text} />}
+          {cardAnswer ? (
+            <CardAnswerBody answer={cardAnswer} />
+          ) : (
+            <>
+              {proseText || (!bridge?.hasBridgeContext && !command && !skills.length && !employees.length) ? (
+                <Prose text={proseText} />
+              ) : null}
+              {bridge?.hasBridgeContext ? <WebBridgeContextView parsed={bridge} /> : null}
+            </>
+          )}
         </div>
       ) : null}
       {images.length ? (
@@ -1230,7 +1251,7 @@ function Reminders({ items }: { items: string[] }) {
           {items.map((text, i) => (
             <div
               key={i}
-              className="max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
+              className="max-h-[200px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-dashed border-border-color px-2.5 py-1.5 text-[12px] leading-[1.7] text-text-muted"
             >
               {text}
             </div>
@@ -1627,7 +1648,7 @@ function HookInject({ record }: { record: WorkbenchRecord }) {
             segments.map((text, i) => (
               <div
                 key={i}
-                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-border-color px-2.5 py-2 font-sans text-[13px] leading-[1.7] text-text-secondary"
+                className="max-h-[260px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[6px] border border-border-color px-2.5 py-2 font-sans text-[13px] leading-[1.7] text-text-secondary"
               >
                 {text}
               </div>
@@ -1687,6 +1708,8 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
   }
 
   const cardAnswer = parseCardAnswer(text);
+  const bridge = cardAnswer ? null : parseWebBridgeContext(text);
+  const proseText = bridge?.hasBridgeContext ? bridge.userPrompt : text;
   // 与「You said」同一种气泡：它就是人说的一句话，只是当时 agent 正忙
   const userShell = (
     <TextShell
@@ -1701,9 +1724,14 @@ function QueuedCommand({ record }: { record: WorkbenchRecord }) {
       <SkillQuotes names={skills} />
       {cardAnswer ? (
         <CardAnswerBody answer={cardAnswer} />
-      ) : text || (!skills.length && !employees.length) ? (
-        <Prose text={text} />
-      ) : null}
+      ) : (
+        <>
+          {proseText || (!bridge?.hasBridgeContext && !skills.length && !employees.length) ? (
+            <Prose text={proseText} />
+          ) : null}
+          {bridge?.hasBridgeContext ? <WebBridgeContextView parsed={bridge} /> : null}
+        </>
+      )}
       <AttachedImages images={images} />
     </TextShell>
   );
@@ -2183,16 +2211,34 @@ function MediaAttach({ record }: { record: WorkbenchRecord }) {
 function ErrorCard({ record }: { record: WorkbenchRecord }) {
   const { t } = useTranslation();
   const p = record.payload;
+  const scope = str(p, 'scope');
+  const code = str(p, 'code');
+  const isInformational = code === 'informational';
+  const showCredentialWithheld =
+    !isInformational && !(scope === 'engine' && code === 'informational');
   return (
     <article
       data-kind={record.kind}
       data-group="system"
-      className={`min-w-0 rounded-[8px] px-3 py-2 ${ERR_BG} ${ERR_RING}`}
+      data-informational={isInformational ? 'true' : undefined}
+      className={`min-w-0 rounded-[8px] px-3 py-2 ${
+        isInformational
+          ? `${DONE_BG} ring-1 ring-border-color`
+          : `${ERR_BG} ${ERR_RING}`
+      }`}
     >
       <header className="mb-1.5 flex items-center gap-2">
-        <AlertTriangle size={14} className={ERR_TEXT} />
-        <span className={`text-[13px] font-semibold ${ERR_TEXT}`}>
-          {t(KIND_LABEL_KEY.error)}
+        {isInformational ? (
+          <Info size={14} className={OK_TEXT} />
+        ) : (
+          <AlertTriangle size={14} className={ERR_TEXT} />
+        )}
+        <span
+          className={`text-[13px] font-semibold ${isInformational ? OK_TEXT : ERR_TEXT}`}
+        >
+          {isInformational
+            ? t('workbench.record.informationalNotice')
+            : t(KIND_LABEL_KEY.error)}
         </span>
         <Timestamp ts={record.ts} />
         <span aria-hidden className="h-px flex-1 bg-border-color" />
@@ -2202,12 +2248,12 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
         <div className="flex gap-2">
           <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errScope')}</dt>
           <dd className="min-w-0 break-words font-mono text-text-secondary">
-            {str(p, 'scope')}
+            {scope}
           </dd>
         </div>
         <div className="flex gap-2">
           <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errCode')}</dt>
-          <dd className="min-w-0 break-words font-mono text-text-secondary">{str(p, 'code')}</dd>
+          <dd className="min-w-0 break-words font-mono text-text-secondary">{code}</dd>
         </div>
         <div className="flex gap-2">
           <dt className="w-12 shrink-0 text-text-muted">{t('workbench.record.errMessage')}</dt>
@@ -2216,10 +2262,12 @@ function ErrorCard({ record }: { record: WorkbenchRecord }) {
           </dd>
         </div>
       </dl>
-      <p className="mt-2 flex items-center gap-1 text-[11px] text-text-muted">
-        <Lock size={11} />
-        {t('workbench.record.rawWithheld')}
-      </p>
+      {showCredentialWithheld ? (
+        <p className="mt-2 flex items-center gap-1 text-[11px] text-text-muted">
+          <Lock size={11} />
+          {t('workbench.record.rawWithheld')}
+        </p>
+      ) : null}
     </article>
   );
 }
@@ -2298,6 +2346,12 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
   const chip = (
     <span className={`rounded-full px-2 py-[1px] ${state.tone}`}>{t(state.key)}</span>
   );
+  const bridge = parseWebBridgeContext(text);
+  const proseText = bridge.hasBridgeContext ? bridge.userPrompt : text;
+  const settledText = bridge.hasBridgeContext
+    ? stripTextQuoteBlocks(bridge.userPrompt) || '[网页上下文]'
+    : stripTextQuoteBlocks(stripWebBridgeContext(text));
+
   if (raw === 'pending' || !raw) {
     if (callbacks.length > 0 && !text.trim() && !images.length) {
       return (
@@ -2321,7 +2375,10 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
       >
         <EmployeeQuotes employees={employees} />
         <SkillQuotes names={skills} />
-        {text || (!skills.length && !employees.length) ? <Prose text={text} /> : null}
+        {proseText || (!bridge.hasBridgeContext && !skills.length && !employees.length) ? (
+          <Prose text={proseText} />
+        ) : null}
+        {bridge.hasBridgeContext ? <WebBridgeContextView parsed={bridge} /> : null}
         <AttachedImages images={images} />
       </TextShell>
     );
@@ -2355,7 +2412,7 @@ function QueuedInput({ record, content }: { record: WorkbenchRecord; content: st
                 (cb) =>
                   `[${cb.jobId || cb.employeeId || cb.kind}] ${cb.taskTitle || cb.targetSessionId}`
               ),
-              text,
+              settledText,
             ]
               .filter(Boolean)
               .join(' ')}

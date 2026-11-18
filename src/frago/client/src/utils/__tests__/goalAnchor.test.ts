@@ -62,4 +62,32 @@ describe('goalAnchor utils', () => {
     expect(summary).not.toContain('你是 frago recipe 开发专家');
     expect(isLongLedgerText(longBrief)).toBe(true);
   });
+
+  it('剥离浏览器扩展回传的 Focus 与网页完整可见上下文尾巴', () => {
+    const raw = [
+      '<frago-employee id="dev" title="Developer" kernel="claude">',
+      '岗位描述',
+      '</frago-employee>',
+      '',
+      '帮我总结这个 JIRA 工单的根因和下一步处理动作。',
+      '',
+      '---',
+      '### 🎯 Focus 焦点内容（共 1 处）',
+      '',
+      '#### [FOCUS #1] [APEXP-4629] PIN answer（划词焦点）',
+      '- 来源：https://jira.xpaas.lenovo.com/browse/APEXP-4629',
+      '',
+      'PIN code verification failed on retry',
+      '',
+      '---',
+      '### 📄 网页完整可见上下文（共 1 页，按页去重并已原地锚定 Focus）',
+      '',
+      '#### [页面 1] [APEXP-4629] PIN answer（约 12108 字）',
+      '- URL：https://jira.xpaas.lenovo.com/browse/APEXP-4629',
+      '',
+      '正文内容',
+    ].join('\n');
+
+    expect(cleanGoalText(raw)).toBe('帮我总结这个 JIRA 工单的根因和下一步处理动作。');
+  });
 });

@@ -26,6 +26,8 @@ import { usePageStore, useUIStore } from '@/stores/appStore';
 import { useSessionSearch, type SessionSearchHit } from '@/hooks/useSessionSearch';
 import { useWorkbenchLabels } from '@/hooks/useWorkbenchSessions';
 import { relativeTime } from './SessionItem';
+import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 
 /** 备份里的来源名 → 工作台的家族名。两处叫法不同，卡片上摆的是工作台那套。 */
 const FAMILY_OF_SOURCE: Record<string, string> = { claude: 'claude-code', opencode: 'opencode' };
@@ -78,7 +80,9 @@ function HitRow({
     >
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
-          {hit.title || hit.session_id}
+          {(hit.title
+            ? stripTextQuoteBlocks(stripWebBridgeContext(hit.title)) || hit.title
+            : '') || hit.session_id}
         </span>
         <span className="shrink-0 text-[11px] text-text-muted">
           {relativeTime(hit.last_activity * 1000)}

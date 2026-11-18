@@ -71,4 +71,36 @@ describe('递话之后的排队口', () => {
     expect(marked).toEqual([]);
     expect(result.current.error).toContain('还在跑');
   });
+
+  it('若请求报错退回输入框后记录流证实该话已入库（deliveredAt 到达），立即撤回误报红条与退回的原文', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 503,
+            json: async () => ({ detail: 'LLM call 1 failed' }),
+          }) as Response
+      )
+    );
+    const { result, rerender } = renderHook(
+      ({ deliveredAt }: { deliveredAt: number | null }) =>
+        useSendToSession(SID, { deliveredAt }),
+      { initialProps: { deliveredAt: null as number | null } }
+    );
+
+    act(() => result.current.setText('已经落盘的话'));
+    await act(async () => {
+      await result.current.send();
+    });
+
+    expect(result.current.error).toContain('LLM call 1 failed');
+    expect(result.current.text).toBe('已经落盘的话');
+
+    rerender({ deliveredAt: Date.now() });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.text).toBe('');
+  });
 });

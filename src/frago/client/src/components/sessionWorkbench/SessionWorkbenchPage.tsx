@@ -71,6 +71,8 @@ import {
   updateSessionTitle,
 } from '@/api';
 import { useSessionFiles } from '@/hooks/useSessionFiles';
+import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 
 /**
  * 起分支之后输入框上方那一行说到哪一步了。只属于起分支的那场会话（`parent`），切走就撤。
@@ -212,10 +214,14 @@ export default function SessionWorkbenchPage() {
   // 右栏多宽由人拖出来，记在这个浏览器里；没拖过就用下面网格里写的默认列宽。
   const report = useReportWidth();
   const selected = sessions.sessions.find((s) => s.session_id === selectedId) ?? null;
-  // 开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它（For you 那几场）。
+  // 开在 tmux 里：会话清单的 `in_tmux`（只按名字对），或 tmux 清单认得出它且客户端仍存活。
+  // 已退出的空壳终端（`client_alive === false`，仅留在 `forYou.rows` 供清理弹窗用）不算有活跃终端。
   const selectedInTmux =
     selected !== null &&
-    (selected.in_tmux === true || forYou.rows.some((r) => r.session_id === selected.session_id));
+    (selected.in_tmux === true ||
+      forYou.rows.some(
+        (r) => r.session_id === selected.session_id && r.client_alive !== false
+      ));
   // 这一场还活着（比开在 tmux 里宽一格，含 CoreAgent 的常驻进程）→ 让中栏自己活起来：
   // 文件一动服务端就推增量，轮询只是断连时的兜底。**不活着的只在点开时取一次**（主人
   // 09-30 定）。从前这里用的是 `selectedInTmux`，而 CoreAgent 不跑在 tmux 里、被判成死的，
@@ -719,6 +725,10 @@ export default function SessionWorkbenchPage() {
     setTerminalAliveOverride(null);
     setViewerIndex(null);
   }, [selectedId]);
+  // 当后端会话清单里的 `in_tmux` 刷新变化时，清掉旧的终端存活覆盖值，让镜头栏绿点跟上最新实况。
+  useEffect(() => {
+    setTerminalAliveOverride(null);
+  }, [selected?.in_tmux]);
   /**
    * **切到这一场就去取**，不等人点开「文件」那一档。
    *
@@ -991,6 +1001,9 @@ export default function SessionWorkbenchPage() {
   const titleDiscardedRef = useRef(false);
   const [generatingTitleId, setGeneratingTitleId] = useState<string | null>(null);
   const generatingTitle = Boolean(selected && generatingTitleId === selected.session_id);
+  const selectedTitle = selected
+    ? stripTextQuoteBlocks(stripWebBridgeContext(selected.title)) || selected.title
+    : '';
 
   useEffect(() => {
     setEditingTitle(false);
@@ -1001,7 +1014,7 @@ export default function SessionWorkbenchPage() {
   const startTitleEdit = () => {
     if (!selected || generatingTitle) return;
     titleDiscardedRef.current = false;
-    setTitleDraft(selected.title);
+    setTitleDraft(selectedTitle);
     setEditingTitle(true);
   };
 
@@ -1013,8 +1026,8 @@ export default function SessionWorkbenchPage() {
     if (!editingTitle || !selected) return;
     setEditingTitle(false);
     const cleaned = titleDraft.replace(/\s+/g, ' ').trim();
-    if (!cleaned || cleaned === selected.title) {
-      setTitleDraft(selected.title);
+    if (!cleaned || cleaned === selectedTitle) {
+      setTitleDraft(selectedTitle);
       return;
     }
     const sid = selected.session_id;
@@ -1145,7 +1158,7 @@ export default function SessionWorkbenchPage() {
                       } else if (e.key === 'Escape') {
                         e.preventDefault();
                         titleDiscardedRef.current = true;
-                        setTitleDraft(selected.title);
+                        setTitleDraft(selectedTitle);
                         setEditingTitle(false);
                       }
                     }}
@@ -1158,7 +1171,7 @@ export default function SessionWorkbenchPage() {
                     onClick={startTitleEdit}
                     className="min-w-0 cursor-text truncate rounded-[4px] px-0.5 -mx-0.5 text-[14px] font-semibold leading-[1.3] text-text-primary transition-colors hover:bg-bg-hover"
                   >
-                    {selected.title}
+                    {selectedTitle}
                   </h1>
                 )}
                 <button
@@ -1188,7 +1201,9 @@ export default function SessionWorkbenchPage() {
             ) : (
               <h1 className="min-w-0 truncate text-[14px] font-semibold leading-[1.3] text-text-primary">
                 {showLaunch
-                  ? launch?.text || t('workbench.launch.railTitle')
+                  ? (launch?.text
+                      ? stripTextQuoteBlocks(stripWebBridgeContext(launch.text)) || launch.text
+                      : t('workbench.launch.railTitle'))
                   : t('workbench.page.title')}
               </h1>
             )}
@@ -1369,10 +1384,17 @@ export default function SessionWorkbenchPage() {
                   open={terminalOpen}
                   session={selected}
                   sessionRunning={sessionRunning}
+                  awaitingTurn={Boolean(awaitingAgent || inFlight)}
                   usage={usageReadout}
                   recordCounts={{ all: counts.all, talk: counts.talk }}
                   hasOlderRecords={hasOlder}
-                  onAliveChange={setTerminalAliveOverride}
+                  onAliveChange={(alive) => {
+                    setTerminalAliveOverride(alive);
+                    if (!alive && selected?.in_tmux) {
+                      forYou.refresh();
+                      void sessions.reload();
+                    }
+                  }}
                   onStopped={() => {
                     forYou.refresh();
                     void sessions.reload();

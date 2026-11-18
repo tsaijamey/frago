@@ -20,6 +20,8 @@ import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
 import { formatClock } from './RecordCard';
 import { activityTs, type SessionFamily, type WorkbenchSession } from '@/hooks/useWorkbenchSessions';
 import { keepTail, type ForYouInfo } from '@/hooks/useForYou';
+import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 import { LiveBorder } from '@/components/ui/LiveEdge';
 import SessionMenu from './SessionMenu';
 import type { DeleteSessionResult } from './DeleteSessionButton';
@@ -269,9 +271,11 @@ export function previewOf(
   forYou: ForYouInfo | null,
   card: string | null = null
 ): string {
-  if (forYou?.words) return forYou.words;
+  if (forYou?.words) return stripTextQuoteBlocks(stripWebBridgeContext(forYou.words));
   const text = card ?? session.digest_done ?? '';
-  return keepTail(text.replace(/^\s*#{1,6}\s+/, ''));
+  return keepTail(
+    stripTextQuoteBlocks(stripWebBridgeContext(text)).replace(/^\s*#{1,6}\s+/, '')
+  );
 }
 
 function MaybeLiveCard({
@@ -648,20 +652,26 @@ export default function SessionItem({
           })()}
 
           {/* 第 1 行：标题，最多两行，悬停看全文。折角只在从属行上出现，且不可点。 */}
-          <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>
-            {nested ? (
-              <CornerDownRight size={12} className="mt-[2px] shrink-0 text-text-dim" aria-hidden="true" />
-            ) : null}
-            <span
-              data-testid="session-title"
-              title={session.title}
-              className={`line-clamp-2 min-w-0 flex-1 break-words leading-[1.35] ${
-                nested ? 'text-[12px]' : 'text-[13px]'
-              } ${titleCls}`}
-            >
-              {session.title}
-            </span>
-          </div>
+          {(() => {
+            const cleanTitle =
+              stripTextQuoteBlocks(stripWebBridgeContext(session.title || '')) || session.title;
+            return (
+              <div className={`flex min-w-0 items-start ${nested ? 'gap-[5px]' : 'gap-1.5'}`}>
+                {nested ? (
+                  <CornerDownRight size={12} className="mt-[2px] shrink-0 text-text-dim" aria-hidden="true" />
+                ) : null}
+                <span
+                  data-testid="session-title"
+                  title={cleanTitle}
+                  className={`line-clamp-2 min-w-0 flex-1 break-words leading-[1.35] ${
+                    nested ? 'text-[12px]' : 'text-[13px]'
+                  } ${titleCls}`}
+                >
+                  {cleanTitle}
+                </span>
+              </div>
+            );
+          })()}
 
           {/* 第 2 行：状态行（去掉会话内容预览以节省垂直空间，照原型 .si .sr 顶距 5px）。
               worker 行再压一档顶距并把左内边距缩到 17px，越过 12px 折角图标加 5px 间距，

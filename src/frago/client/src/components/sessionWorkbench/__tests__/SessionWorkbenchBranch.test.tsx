@@ -316,13 +316,15 @@ describe('带回主线', () => {
     });
     expect(store.getState().workbenchSessionId).toBe(MAIN);
     const input = (await screen.findByTestId('composer-input')) as HTMLTextAreaElement;
-    await waitFor(() => expect(input.value).toBe('"""\n查过了，是代理超时\n"""\n>>> '));
+    await waitFor(() =>
+      expect(screen.getByTestId('text-quote-preview').textContent).toBe('查过了，是代理超时')
+    );
     // 没有自动发出
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/send'))).toBe(false);
     expect(api.closeBranch).not.toHaveBeenCalled();
 
     await act(async () => {
-      fireEvent.change(input, { target: { value: `${input.value}那就不查了` } });
+      fireEvent.change(input, { target: { value: '那就不查了' } });
     });
     await act(async () => {
       fireEvent.click(screen.getByTestId('composer-send'));

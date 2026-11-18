@@ -14,11 +14,15 @@ import { AlertTriangle, ArrowUp, Check, Loader2, Plus } from 'lucide-react';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import { splitEmployeeBlocks } from '@/utils/employeeBlocks';
 import { splitSkillBlocks } from '@/utils/skillBlocks';
+import { parseTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { parseWebBridgeContext } from '@/utils/webBridgeContext';
 import { EmployeeQuotes } from './EmployeeQuote';
 import { KIND_LABEL_KEY, formatClock, formatDuration } from './RecordCard';
 import { LENS_LABEL_KEY, LENS_ORDER, type StreamLens } from './RecordStream';
 import { SEG_GROUP, SEG_ITEM, SEG_OFF, SEG_ON, SEG_TIGHT } from './seg';
 import { SkillQuotes } from './SkillQuote';
+import { TextQuoteBlocksView } from './TextQuote';
+import WebBridgeContextView from './WebBridgeContextView';
 
 export interface SessionLaunchPanelProps {
   launch: SessionLaunch;
@@ -79,7 +83,10 @@ export default function SessionLaunchPanel({
   const elapsed = formatDuration(Math.max(1_000, now - launch.at));
   const hasMessage = Boolean(launch.text);
   const { text: afterEmp, employees: launchEmployees } = splitEmployeeBlocks(launch.text ?? '');
-  const { text: launchSaid, skills: launchSkills } = splitSkillBlocks(afterEmp);
+  const { text: launchRawSaid, skills: launchSkills } = splitSkillBlocks(afterEmp);
+  const launchBridge = parseWebBridgeContext(launchRawSaid);
+  const launchSaid = launchBridge.hasBridgeContext ? launchBridge.userPrompt : launchRawSaid;
+  const launchQuotes = launchSaid ? parseTextQuoteBlocks(launchSaid) : null;
   const [lens, setLens] = useState<StreamLens>('talk');
   const counts: Record<StreamLens, number> = {
     all: hasMessage ? 1 : 0,
@@ -178,14 +185,21 @@ export default function SessionLaunchPanel({
                   <div className="mt-1.5 min-w-0">
                     <EmployeeQuotes employees={launchEmployees} />
                     <SkillQuotes names={launchSkills} />
-                    {launchSaid || (!launchEmployees.length && !launchSkills.length) ? (
-                      <p
-                        data-testid="launch-first-message"
-                        className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary"
-                      >
-                        {launchSaid}
-                      </p>
+                    {launchSaid || (!launchBridge.hasBridgeContext && !launchEmployees.length && !launchSkills.length) ? (
+                      launchQuotes?.hasQuotes ? (
+                        <div data-testid="launch-first-message">
+                          <TextQuoteBlocksView parsed={launchQuotes} />
+                        </div>
+                      ) : (
+                        <p
+                          data-testid="launch-first-message"
+                          className="whitespace-pre-wrap break-words text-[16px] leading-[1.72] text-text-primary"
+                        >
+                          {launchSaid}
+                        </p>
+                      )
                     ) : null}
+                    {launchBridge.hasBridgeContext ? <WebBridgeContextView parsed={launchBridge} /> : null}
                   </div>
                 </article>
               </div>

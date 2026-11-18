@@ -67,7 +67,13 @@ import AttachmentStrip from '@/components/ui/AttachmentStrip';
 import PromptComposerBox, { directiveQuery, mentionQuery, slashQuery } from './PromptComposerBox';
 import { useWorkbenchLabels, type SessionFamily } from '@/hooks/useWorkbenchSessions';
 import type { OutboundMessage, SendTrail } from '@/hooks/useWorkbenchRecords';
+import {
+  parseTextQuoteBlocks,
+  serializeQuotesWithPrompt,
+  stripTextQuoteBlocks,
+} from '@/utils/textQuoteBlocks';
 import SendProgress, { resolveStepLabel } from './SendProgress';
+import { TextQuoteBlocksView } from './TextQuote';
 
 export { directiveQuery, mentionQuery, slashQuery };
 
@@ -375,6 +381,10 @@ export default function Composer({
     employees: pickedEmployees,
     addEmployee,
     removeEmployee,
+    quotes,
+    addQuote,
+    removeQuote,
+    clearQuotes,
     sending,
     error,
     canSend,
@@ -398,6 +408,7 @@ export default function Composer({
 
   const hasDraft = Boolean(
     text.trim() ||
+      quotes.length > 0 ||
       images.length > 0 ||
       documents.length > 0 ||
       picked.length > 0 ||
@@ -407,7 +418,9 @@ export default function Composer({
 
   const handleEnqueue = useCallback(async () => {
     if (!sessionId || !onEnqueue || enqueueing || !hasDraft) return;
-    const draftText = text.trim();
+    const rawDraftText = text.trim();
+    const draftQuotes = [...quotes];
+    const draftText = serializeQuotesWithPrompt(draftQuotes, rawDraftText);
     const draftImages = [...images];
     const draftDocs = [...documents];
     const draftSkills = [...picked];
@@ -416,6 +429,7 @@ export default function Composer({
     setQueueError(null);
     setPackedBanner(null);
     setText('');
+    clearQuotes();
     for (const sk of draftSkills) removeSkill(sk.name);
     for (const emp of draftEmployees) removeEmployee(emp.member_post_id);
     for (const im of draftImages) removeImage(im.id);
@@ -439,7 +453,8 @@ export default function Composer({
       }
     } catch (e) {
       setQueueError(e instanceof Error ? e.message : String(e));
-      setText(draftText);
+      setText(rawDraftText);
+      for (const q of draftQuotes) addQuote(q.text);
       for (const sk of draftSkills) addSkill(sk);
       for (const emp of draftEmployees) addEmployee(emp);
     } finally {
@@ -451,11 +466,14 @@ export default function Composer({
     enqueueing,
     hasDraft,
     text,
+    quotes,
     images,
     documents,
     picked,
     pickedEmployees,
     setText,
+    clearQuotes,
+    addQuote,
     removeSkill,
     removeEmployee,
     removeImage,
@@ -516,25 +534,39 @@ export default function Composer({
     ? [...trails].reverse().find((tr) => tr.steps.failed !== undefined)
     : undefined;
 
-  // 引用落进输入框。同一段话连引两次也是两次，靠的是按下的时刻，不是文字本身。
+  // 引用落进输入框：结构化挂载为顶部引用卡片（100% 复用 DirectiveQuote 样式契约），
+  // 若带暂存想法（note），想法进入打字区供人继续编辑；同一段话连引两次也是两次，靠的是按下的时刻。
+  const lastQuoteAt = useRef(0);
+  useEffect(() => {
+    lastQuoteAt.current = 0;
+  }, [sessionId]);
   const quoteAt = quote?.at ?? 0;
   const quoteText = quote?.text ?? '';
   const quoteNote = quote?.note ?? '';
   useEffect(() => {
     // 时刻为 0 表示这一场还没有人引用过任何东西。
-    if (!quoteText || !quoteAt) return;
-    const prev = textRef.current;
-    const lead = prev && !prev.endsWith('\n') ? '\n' : '';
-    const next = `${prev}${lead}"""\n${quoteText}\n"""\n>>> ${quoteNote}`;
-    caretTo.current = next.length;
-    setText(next);
-  }, [quoteAt, quoteText, quoteNote, setText]);
+    if (!quoteText || !quoteAt || lastQuoteAt.current === quoteAt) return;
+    lastQuoteAt.current = quoteAt;
+    addQuote(quoteText);
+    const trimmedNote = quoteNote.trim();
+    if (trimmedNote) {
+      const prev = textRef.current;
+      const lead = prev && !prev.endsWith('\n') ? '\n' : '';
+      const next = `${prev}${lead}${trimmedNote}`;
+      caretTo.current = next.length;
+      setText(next);
+    } else {
+      caretTo.current = textRef.current.length;
+    }
+  }, [quoteAt, quoteText, quoteNote, addQuote, setText]);
 
   // 文档批注打包填入输入框：附带可溯源存档路径条，供人检视或补充后按 Send 发送。
   const [packedBanner, setPackedBanner] = useState<{ count: number; tracePath: string } | null>(
     null
   );
+  const lastPackedAt = useRef(0);
   useEffect(() => {
+    lastPackedAt.current = 0;
     setPackedBanner(null);
   }, [sessionId]);
   useEffect(() => {
@@ -545,11 +577,22 @@ export default function Composer({
   const packedCount = packedPrompt?.count ?? 0;
   const packedTrace = packedPrompt?.tracePath ?? '';
   useEffect(() => {
-    if (!packedText || !packedAt) return;
-    caretTo.current = packedText.length;
-    setText(packedText);
+    if (!packedText || !packedAt || lastPackedAt.current === packedAt) return;
+    lastPackedAt.current = packedAt;
+    const parsed = parseTextQuoteBlocks(packedText);
+    if (parsed.hasQuotes) {
+      for (const q of parsed.quotes) {
+        addQuote(q.text);
+      }
+      const remaining = parsed.userPrompt;
+      caretTo.current = remaining.length;
+      setText(remaining);
+    } else {
+      caretTo.current = packedText.length;
+      setText(packedText);
+    }
     setPackedBanner({ count: packedCount, tracePath: packedTrace });
-  }, [packedAt, packedText, packedCount, packedTrace, setText]);
+  }, [packedAt, packedText, packedCount, packedTrace, addQuote, setText]);
 
   // 卡片答复整句投出。时刻为 0 表示这一场还没点过卡片；记下已消费的序号，防止重挂载或同帧重渲染重复投出。
   const lastAnswerAt = useRef(0);
@@ -740,7 +783,7 @@ export default function Composer({
                     </span>
                   ))}
                   <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
-                    {item.text ||
+                    {(item.text ? stripTextQuoteBlocks(item.text) : '') ||
                       (item.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
                   </span>
                   {item.attachments > 0 ? (
@@ -811,6 +854,7 @@ export default function Composer({
             {outbound.map((msg) => {
               const queued = msg.state === 'queued';
               const trail = trailOf.get(msg.id);
+              const parsedOutbound = msg.text ? parseTextQuoteBlocks(msg.text) : null;
               return (
                 <div
                   key={msg.id}
@@ -842,15 +886,24 @@ export default function Composer({
                         /{name}
                       </span>
                     ))}
-                    <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
-                      {msg.text || (msg.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
-                    </span>
+                    {!parsedOutbound?.hasQuotes ? (
+                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
+                        {msg.text || (msg.skills?.length ? '' : t('workbench.composer.attachmentsOnly'))}
+                      </span>
+                    ) : (
+                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-primary">
+                        {parsedOutbound.userPrompt}
+                      </span>
+                    )}
                     {msg.attachments ? (
                       <span className="shrink-0 text-[11px] tabular-nums text-text-muted">
                         {t('workbench.composer.outboundAttachments', { n: msg.attachments })}
                       </span>
                     ) : null}
                   </div>
+                  {parsedOutbound?.hasQuotes ? (
+                    <TextQuoteBlocksView parsed={parsedOutbound} hideProse />
+                  ) : null}
                   <p className="text-[11px] text-text-muted">
                     {t(queued ? 'workbench.composer.queuedHint' : 'workbench.composer.onItsWayHint')}
                   </p>
@@ -950,6 +1003,9 @@ export default function Composer({
           employees={pickedEmployees}
           onAddEmployee={addEmployee}
           onRemoveEmployee={removeEmployee}
+          quotes={quotes}
+          onAddQuote={addQuote}
+          onRemoveQuote={removeQuote}
           onAddFiles={takeFiles}
           attachCount={attachCount}
           canSubmit={canSend}
@@ -989,6 +1045,7 @@ export default function Composer({
                   onClick={() => {
                     setPackedBanner(null);
                     setText('');
+                    clearQuotes();
                   }}
                   className="shrink-0 rounded-[4px] px-1.5 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
                 >

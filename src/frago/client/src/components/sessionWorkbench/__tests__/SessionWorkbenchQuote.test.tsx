@@ -201,13 +201,15 @@ async function mountOn(sid: string) {
   return usePageStore;
 }
 
-/** 按引用，等原文按引用格式落进输入框。 */
+/** 按引用，等原文作为结构化引用卡片落进输入框顶部。 */
 async function quoteIntoBox(): Promise<HTMLTextAreaElement> {
   await act(async () => {
     fireEvent.click(screen.getByTestId('fake-quote'));
   });
   const input = (await screen.findByTestId('composer-input')) as HTMLTextAreaElement;
-  await waitFor(() => expect(input.value).toContain(QUOTED));
+  await waitFor(() =>
+    expect(screen.getByTestId('text-quote-preview').textContent).toContain(QUOTED)
+  );
   return input;
 }
 
@@ -234,7 +236,7 @@ describe('引用何时留痕', () => {
   it('带着原文发出、落进会话：留痕——发送接口还没回也照样落', async () => {
     await mountOn(MAIN);
     const input = await quoteIntoBox();
-    await send(input, `${input.value}同意`);
+    await send(input, '同意');
     // 接口还挂着，只是发出去了：此刻不留痕
     expect(quoteMarksPut()).toEqual([]);
     await act(async () => {
@@ -247,6 +249,9 @@ describe('引用何时留痕', () => {
   it('引了又把原文删掉再发：不留痕', async () => {
     await mountOn(MAIN);
     const input = await quoteIntoBox();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('text-quote-remove'));
+    });
     await send(input, '算了，说别的');
     await act(async () => {
       trails.set([landed()]);
@@ -258,6 +263,9 @@ describe('引用何时留痕', () => {
   it('引了又改写成别的内容再发：不留痕', async () => {
     await mountOn(MAIN);
     const input = await quoteIntoBox();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('text-quote-remove'));
+    });
     await send(input, '"""\n先把配色改成蓝色\n"""\n>>> 这样行吗');
     await act(async () => {
       trails.set([landed()]);
@@ -320,7 +328,9 @@ describe('暂存转用过：一轮还没说完也照样转', () => {
       fireEvent.click(await screen.findByTestId('stack-item-fill'));
     });
     const input = (await screen.findByTestId('composer-input')) as HTMLTextAreaElement;
-    await waitFor(() => expect(input.value).toContain('第二个决策点'));
+    await waitFor(() =>
+      expect(screen.getByTestId('text-quote-preview').textContent).toContain('第二个决策点')
+    );
     await send(input, input.value);
     expect(api.putSessionMarks).not.toHaveBeenCalled();
     await act(async () => {
@@ -359,8 +369,10 @@ describe('带回主线收口：一轮还没说完也照样收', () => {
       fireEvent.click(screen.getByTestId('composer-bring-back'));
     });
     const input = (await screen.findByTestId('composer-input')) as HTMLTextAreaElement;
-    await waitFor(() => expect(input.value).toContain('查过了，是代理超时'));
-    await send(input, `${input.value}那就不查了`);
+    await waitFor(() =>
+      expect(screen.getByTestId('text-quote-preview').textContent).toContain('查过了，是代理超时')
+    );
+    await send(input, '那就不查了');
     expect(api.closeBranch).not.toHaveBeenCalled();
     await act(async () => {
       trails.set([landed()]);

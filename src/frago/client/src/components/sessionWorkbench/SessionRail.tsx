@@ -71,6 +71,8 @@ import type { ForYouState } from '@/hooks/useForYou';
 import type { PendingLaunch } from '@/hooks/useAgentClients';
 import type { SessionLaunch } from '@/hooks/useSessionLaunch';
 import { resolveEmployeeColor } from '@/components/employees/employeeMeta';
+import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 import {
   activityTs,
   expandSessionGroupIds,
@@ -450,7 +452,16 @@ export default function SessionRail({
    * - 其余 → 主干。
    */
   /** 编号 → 标题。分支会话卡片上那一行「分支自」用；在整份清单里认，原会话被筛掉了也认得出。 */
-  const titleOf = useMemo(() => new Map(sessions.map((s) => [s.session_id, s.title])), [sessions]);
+  const titleOf = useMemo(
+    () =>
+      new Map(
+        sessions.map((s) => [
+          s.session_id,
+          stripTextQuoteBlocks(stripWebBridgeContext(s.title)) || s.title,
+        ])
+      ),
+    [sessions]
+  );
 
   /**
    * 今天从 Timeline 捡回来的完整上下文组。
@@ -1284,7 +1295,9 @@ export default function SessionRail({
               {/* 第 1 行：标题（首条消息或「新会话」） */}
               <div className="flex min-w-0 items-start gap-1.5">
                 <span className="line-clamp-2 min-w-0 flex-1 break-words text-[13px] font-semibold leading-[1.35] text-text-primary">
-                  {launch.text || t('workbench.launch.railTitle')}
+                  {(launch.text
+                    ? stripTextQuoteBlocks(stripWebBridgeContext(launch.text)) || launch.text
+                    : '') || t('workbench.launch.railTitle')}
                 </span>
               </div>
 

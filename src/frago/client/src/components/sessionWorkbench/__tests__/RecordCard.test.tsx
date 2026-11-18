@@ -415,6 +415,28 @@ describe('报错卡', () => {
     expect(container.querySelectorAll('button')).toHaveLength(0);
     expect(screen.queryByText('取原文')).toBeNull();
     expect(screen.queryByText(/查看原文/)).toBeNull();
+    expect(screen.getByText('原文带登录凭据，不予提供')).toBeTruthy();
+  });
+
+  it('code 为 informational 的系统/生命周期通知不渲染红底报错卡且不展示登录凭据脱敏提示', () => {
+    const { container } = render(
+      <RecordCard
+        record={makeRecord('error', {
+          payload: {
+            scope: 'engine',
+            code: 'informational',
+            message: '这一场由全域生命周期协调器在 2026-11-18T14:28:10Z 停下：当时没有在跑的一轮。',
+          },
+        })}
+        sessionId={SID}
+      />
+    );
+    const article = container.querySelector('article');
+    expect(article?.getAttribute('data-informational')).toBe('true');
+    expect(article?.className).not.toContain('bg-accent-error-10');
+    expect(screen.getByText('系统提示')).toBeTruthy();
+    expect(screen.queryByText('报错')).toBeNull();
+    expect(screen.queryByText('原文带登录凭据，不予提供')).toBeNull();
   });
 
   it('内容完整的工具结果也不挂取原文入口——没被截断就没有别处可取', () => {

@@ -10,6 +10,8 @@
 
 import { splitAllLeadingBlocks } from './asyncCallbackBlocks';
 import { splitAttachedImages } from './attachedImages';
+import { stripTextQuoteBlocks } from './textQuoteBlocks';
+import { stripWebBridgeContext } from './webBridgeContext';
 
 const LEADING_IMAGE_TAG_RE =
   /^\s*(?:<image\b[^>]*>[\s\S]*?<\/image>\s*|<image\b[^>]*\/>\s*)+/i;
@@ -49,6 +51,8 @@ export function cleanGoalText(raw?: string | null): string | null {
   }
   current = splitAttachedImages(current).text;
   current = stripDocAttachmentBlock(current);
+  current = stripWebBridgeContext(current);
+  current = stripTextQuoteBlocks(current);
   current = current.replace(/\r?\n{3,}/g, '\n\n').trim();
   if (!current || current.startsWith('【answer】')) return null;
   return current;

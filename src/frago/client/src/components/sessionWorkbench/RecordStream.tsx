@@ -98,6 +98,7 @@ import {
   MAX_BACKFILL_PAGES,
   MIN_TALK_RECORDS,
   PAGE_SIZE,
+  isLifecycleStopRecord,
   queueOpOf,
   queueOutcomes,
   trailSettled,
@@ -112,6 +113,8 @@ import {
 } from '@/utils/decisionBlock';
 import { parseAllImageGridOutputs } from '@/utils/imageGridBlock';
 import { cleanGoalText, extractGoalSummary, isLongLedgerText } from '@/utils/goalAnchor';
+import { parseTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { parseWebBridgeContext } from '@/utils/webBridgeContext';
 import { scrollBehavior } from '@/utils/reducedMotion';
 import type { ObserverTaskItem, SessionObserverView } from '@/hooks/useSessionObserver';
 
@@ -1020,7 +1023,9 @@ export function describeActivity(
     case 'subagent.dispatch':
       return t('workbench.progress.doingSubagent');
     case 'error':
-      return t('workbench.progress.doingError');
+      return p.code === 'informational'
+        ? t('workbench.progress.doingNotice')
+        : t('workbench.progress.doingError');
     default:
       return t('workbench.progress.doingNothingYet');
   }
@@ -1309,6 +1314,8 @@ interface WatcherSlice {
   taskId: string;
   actor: string;
   at: number | null;
+  cursorFrom: number;
+  cursorTo: number;
   phaseGoal: string | null;
   doing: string | null;
   findings: string[];
@@ -1331,7 +1338,14 @@ function WatcherInlineText({ text }: { text: string }) {
     <>
       {parts.map((part, idx) => {
         if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-          return <code key={idx}>{part.slice(1, -1)}</code>;
+          return (
+            <code
+              key={idx}
+              className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+            >
+              {part.slice(1, -1)}
+            </code>
+          );
         }
         if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
           return <strong key={idx}>{part.slice(2, -2)}</strong>;
@@ -1752,6 +1766,8 @@ export default function RecordStream({
           taskId,
           actor,
           at: run.at ?? state?.updated_at ?? sliceRecords[sliceRecords.length - 1]?.ts ?? null,
+          cursorFrom: fromSeq,
+          cursorTo: toSeq,
           phaseGoal,
           doing,
           findings,
@@ -1781,6 +1797,8 @@ export default function RecordStream({
             taskId: 'T1',
             actor: '主会话',
             at: state?.updated_at ?? resolved[resolved.length - 1]?.ts ?? null,
+            cursorFrom: 0,
+            cursorTo: (resolved[resolved.length - 1]?.seq ?? 0) + 1,
             phaseGoal:
               cleanGoalText(state?.phase_goal) ||
               safeAnchor ||
@@ -1804,6 +1822,64 @@ export default function RecordStream({
     };
   }, [watcherOpen, resolved, observer?.state, t]);
 
+  /**
+   * Progress 视图下自动向前补齐覆盖全部里程碑（`runs`）所需的早期历史记录。
+   *
+   * 长会话首屏默认只拉取尾部 200 条记录（及最多补足 40 条可见对话），导致早期里程碑
+   * （`cursor_from < records[0].seq`）在前端内存里找不到对应的 `records`，按钮误显
+   * `No conversation` 且点开后为空框。当打开 Progress 视图时，只要窗口首条 `seq` 仍大于
+   * 最早里程碑的 `cursor_from` 且 `hasOlder` 为真，就按页向前加载，直至覆盖全部里程碑。
+   */
+  const earliestWatcherSeq = useMemo(() => {
+    if (!watcherOpen) return null;
+    const runs = observer?.state?.runs ?? [];
+    if (!runs.length) return null;
+    let minSeq = Number.POSITIVE_INFINITY;
+    for (const run of runs) {
+      const fromSeq = typeof run.cursor_from === 'number' ? run.cursor_from : 0;
+      if (fromSeq < minSeq) minSeq = fromSeq;
+    }
+    return Number.isFinite(minSeq) ? minSeq : null;
+  }, [watcherOpen, observer?.state?.runs]);
+
+  const watcherBackfillPaged = useRef<{
+    sessionId: string | null | undefined;
+    firstId: string | undefined;
+    firstSeq: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!watcherOpen) {
+      watcherBackfillPaged.current = null;
+      return;
+    }
+    if (
+      earliestWatcherSeq === null ||
+      !records.length ||
+      records[0].seq <= earliestWatcherSeq ||
+      !hasOlder ||
+      loadingOlder
+    ) {
+      return;
+    }
+    const first = records[0];
+    const paged = watcherBackfillPaged.current;
+    if (
+      paged &&
+      paged.sessionId === sessionId &&
+      paged.firstId === first.id &&
+      paged.firstSeq === first.seq
+    ) {
+      return;
+    }
+    watcherBackfillPaged.current = {
+      sessionId,
+      firstId: first.id,
+      firstSeq: first.seq,
+    };
+    onLoadOlder();
+  }, [watcherOpen, earliestWatcherSeq, records, hasOlder, loadingOlder, sessionId, onLoadOlder]);
+
   const watcherTasks = useMemo<ObserverTaskItem[]>(() => {
     if (!watcherOpen) return [];
     const rawTasks = observer?.state?.tasks;
@@ -1811,7 +1887,9 @@ export default function RecordStream({
       return rawTasks;
     }
     if (!watcherSlices.length) return [];
-    return watcherSlices.map((slice, idx) => {
+    const byId = new Map<string, ObserverTaskItem>();
+    for (let idx = 0; idx < watcherSlices.length; idx += 1) {
+      const slice = watcherSlices[idx];
       const isLast = idx === watcherSlices.length - 1;
       const hasUnansweredCard = slice.decisionCards.some(
         (dc) => !decisionCardHost?.answerOf(dc.recordId)
@@ -1831,15 +1909,27 @@ export default function RecordStream({
         slice.doing ||
         slice.summary.split('\n')[0] ||
         t('workbench.stream.watcherEmptySummary');
-      return {
-        id: slice.taskId || `T${idx + 1}`,
-        proposed_at: slice.at ?? resolved[resolved.length - 1]?.ts ?? Date.now(),
-        title: slice.phaseGoal || slice.summary.split('\n')[0] || `阶段 #${idx + 1}`,
-        status,
-        actor: slice.actor || '主会话',
-        conclusion,
-      };
-    });
+      const id = slice.taskId || `T${idx + 1}`;
+      const existing = byId.get(id);
+      if (!existing) {
+        byId.set(id, {
+          id,
+          proposed_at: slice.at ?? resolved[resolved.length - 1]?.ts ?? Date.now(),
+          title: slice.phaseGoal || slice.summary.split('\n')[0] || `阶段 #${idx + 1}`,
+          status,
+          actor: slice.actor || '主会话',
+          conclusion,
+        });
+      } else {
+        byId.set(id, {
+          ...existing,
+          status,
+          actor: slice.actor || existing.actor,
+          conclusion: conclusion || existing.conclusion,
+        });
+      }
+    }
+    return Array.from(byId.values());
   }, [watcherOpen, observer?.state?.tasks, observer?.state?.tail?.kind, watcherSlices, decisionCardHost, resolved, t]);
 
   /** 记录编号 → 挂在它下面的那份进度。 */
@@ -1853,10 +1943,16 @@ export default function RecordStream({
     for (let i = trails.length - 1; i >= 0; i -= 1) {
       const tr = trails[i];
       if (tr.expired || trailSettled(tr)) continue;
-      if (tr.recordId) return tr;
+      if (!tr.recordId) continue;
+      const since = (tr.steps.in_the_session ?? tr.steps.queued ?? tr.steps.on_its_way ?? 0) - 1_000;
+      const stoppedAfter = records.some(
+        (r) => r.ts >= since && (isLifecycleStopRecord(r) || r.kind === 'interrupt')
+      );
+      if (stoppedAfter) continue;
+      return tr;
     }
     return null;
-  }, [trails]);
+  }, [trails, records]);
   const now = useTicking(activeTrail !== null);
   const activeShown = activeTrail?.recordId
     ? visible.some((r) => r.id === activeTrail.recordId)
@@ -2033,7 +2129,8 @@ export default function RecordStream({
     setShowJump(false);
   }, [scrollToBottom]);
 
-  // 换会话：一切归零，默认重新武装——新打开的会话加载最新尾部一页就该落在最新内容上。
+  // 换会话：一切归零，默认重新武装——新打开的会话加载最新尾部一页就该落在最新内容上；
+  // 若当前正处于 Progress / Files 等顶部定位视图，同步将滚动条重置回 0。
   useLayoutEffect(() => {
     followArmed.current = true;
     manualIntentUntil.current = 0;
@@ -2043,6 +2140,9 @@ export default function RecordStream({
     olderArmed.current = true;
     autoBackfillCount.current = 0;
     setShowJump(false);
+    if (overlayViewOpenRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
   }, [sessionId]);
 
   // 记录流变化：前插钉住视口，初装沉底武装，尾部追加与流式单条变长跟底，整流替换按武装状态走。
@@ -2208,7 +2308,7 @@ export default function RecordStream({
     if (!underMinBubbles && !underViewport) return;
 
     autoBackfillCount.current += 1;
-    if (el && el.scrollHeight > 0) {
+    if (!watcherOpen && el && el.scrollHeight > 0) {
       anchor.current = { height: el.scrollHeight, top: el.scrollTop };
     }
     onLoadOlder();
@@ -2565,9 +2665,18 @@ export default function RecordStream({
     ? `${lensUsageTitleParts.join(' · ')} — ${t('workbench.composer.usageHint')}`
     : undefined;
 
+  // Progress 视图切换会话期间的统一就绪门禁：等待首取 records 与首取 observer state 均落定后再
+  // 一次性同帧渲染镜头栏与 PROGRESS LEDGER，防止异步竞态导致的「半截抢跑闪现 → 后手顶开」抖动。
+  const watcherWaitingForInitial =
+    watcherOpen &&
+    Boolean(sessionId) &&
+    !error &&
+    ((loading && !records.length) ||
+      (Boolean(observer?.loading) && !observer?.state && !observer?.error));
+
   return (
     <div className="streamcol flex h-full min-h-0 min-w-0 flex-col">
-      {records.length ? (
+      {records.length && !watcherWaitingForInitial ? (
         <div
           data-testid="stream-lens"
           className="wb-lens shrink-0 border-b border-border-color px-4 py-2"
@@ -2759,7 +2868,7 @@ export default function RecordStream({
             watcherOpen ? 'justify-start' : 'justify-end'
           }`}
         >
-          {loadingOlder ? (
+          {!watcherOpen && loadingOlder ? (
             <p className="flex items-center justify-center gap-2 py-2 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
               {t('workbench.stream.loadingOlder')}
@@ -2784,7 +2893,7 @@ export default function RecordStream({
             </p>
           ) : null}
 
-          {!records.length && !loading && !error ? (
+          {!records.length && !loading && !watcherWaitingForInitial && !error ? (
             <div className="my-auto flex flex-col items-center py-16">
               <EmptyState
                 Icon={Inbox}
@@ -2794,8 +2903,18 @@ export default function RecordStream({
             </div>
           ) : null}
 
-          {watcherOpen ? (() => {
+          {watcherOpen && !watcherWaitingForInitial && (records.length > 0 || Boolean(observer?.state)) ? (() => {
             const state = observer?.state ?? null;
+            const rawAnchorHasBridge =
+              parseWebBridgeContext(state?.anchor ?? '').hasBridgeContext ||
+              parseTextQuoteBlocks(state?.anchor ?? '').hasQuotes;
+            const firstUserHasBridge = resolved.some(
+              (r) =>
+                r.kind === 'user.say' &&
+                typeof r.payload.text === 'string' &&
+                (parseWebBridgeContext(r.payload.text).hasBridgeContext ||
+                  parseTextQuoteBlocks(r.payload.text).hasQuotes)
+            );
             const cleanedStateAnchor = cleanGoalText(state?.anchor);
             const anchorText =
               cleanedStateAnchor ||
@@ -2803,7 +2922,8 @@ export default function RecordStream({
               t('workbench.report.none');
             const anchorSummaryText =
               cleanedStateAnchor || firstHumanGoal
-                ? cleanGoalText(state?.anchor_summary) || extractGoalSummary(anchorText)
+                ? (!(rawAnchorHasBridge || firstUserHasBridge) && cleanGoalText(state?.anchor_summary)) ||
+                  extractGoalSummary(anchorText)
                 : null;
             const modelLabel = state?.model || 'observer';
             const latestSlice =
@@ -3119,9 +3239,27 @@ export default function RecordStream({
                             .reverse()
                             .map(({ slice, origNum }) => {
                             const isExpanded = Boolean(expandedWatcherIds[slice.id]);
-                            const sliceGroups = isExpanded
-                              ? groupSegments(buildTalkSegments(slice.records))
-                              : [];
+                            const rawTalkSegments = buildTalkSegments(slice.records);
+                            const sliceSegments =
+                              rawTalkSegments.length > 0
+                                ? rawTalkSegments
+                                : slice.records.length > 0
+                                  ? collapseRuns(
+                                      slice.records.filter(
+                                        (r) => r.kind !== 'usage.tick' && !isSilentHook(r)
+                                      ),
+                                      { tools: true, system: true }
+                                    )
+                                  : [];
+                            const hasTalkContent = sliceSegments.length > 0;
+                            const isSliceHistoryPending =
+                              resolved.length > 0 &&
+                              slice.cursorFrom < resolved[0].seq &&
+                              (hasOlder || loadingOlder);
+                            const canToggleTalk = hasTalkContent || isSliceHistoryPending;
+                            const showTalkBody = isExpanded && canToggleTalk;
+                            const sliceGroups =
+                              showTalkBody && hasTalkContent ? groupSegments(sliceSegments) : [];
                             const sliceDecisionCards = slice.decisionCards;
                             let promptCount = 0;
                             let toolCallsCount = 0;
@@ -3141,6 +3279,19 @@ export default function RecordStream({
                                 thinkingCount += 1;
                               } else if (r.kind === 'agent.say') {
                                 replyCount += 1;
+                              }
+                            }
+                            if (
+                              hasTalkContent &&
+                              promptCount === 0 &&
+                              toolCallsCount === 0 &&
+                              thinkingCount === 0 &&
+                              replyCount === 0
+                            ) {
+                              if (rawTalkSegments.length > 0) {
+                                replyCount = rawTalkSegments.length;
+                              } else {
+                                toolCallsCount = sliceSegments.length;
                               }
                             }
                             const metaCounts: string[] = [];
@@ -3168,9 +3319,11 @@ export default function RecordStream({
                             }
                             const metaSummary = metaCounts.length
                               ? metaCounts.join(' · ')
-                              : t('workbench.stream.watcherTalkEmpty');
+                              : isSliceHistoryPending
+                                ? t('workbench.stream.watcherTalkLoading')
+                                : t('workbench.stream.watcherTalkEmpty');
                             const clock = slice.at ? formatClock(slice.at) : '';
-                            const hasDetail = isExpanded || sliceDecisionCards.length > 0;
+                            const hasDetail = showTalkBody || sliceDecisionCards.length > 0;
 
                             return (
                               <Fragment key={slice.id}>
@@ -3212,26 +3365,34 @@ export default function RecordStream({
                                       type="button"
                                       className="wtalk-btn"
                                       title={`Talk · ${metaSummary}`}
-                                      aria-expanded={isExpanded}
+                                      disabled={!canToggleTalk}
+                                      aria-expanded={showTalkBody}
                                       data-testid={`watcher-talk-toggle-${origNum}`}
-                                      onClick={() =>
+                                      onClick={() => {
+                                        if (!canToggleTalk) return;
+                                        if (isSliceHistoryPending && hasOlder && !loadingOlder) {
+                                          watcherBackfillPaged.current = null;
+                                          onLoadOlder();
+                                        }
                                         setExpandedWatcherIds((prev) => ({
                                           ...prev,
                                           [slice.id]: !prev[slice.id],
-                                        }))
-                                      }
+                                        }));
+                                      }}
                                     >
-                                      {isExpanded ? (
-                                        <ChevronDown
-                                          size={12}
-                                          className="shrink-0 text-text-muted"
-                                        />
-                                      ) : (
-                                        <ChevronRight
-                                          size={12}
-                                          className="shrink-0 text-text-muted"
-                                        />
-                                      )}
+                                      {canToggleTalk ? (
+                                        showTalkBody ? (
+                                          <ChevronDown
+                                            size={12}
+                                            className="shrink-0 text-text-muted"
+                                          />
+                                        ) : (
+                                          <ChevronRight
+                                            size={12}
+                                            className="shrink-0 text-text-muted"
+                                          />
+                                        )
+                                      ) : null}
                                       <span className="truncate">Talk · {metaSummary}</span>
                                     </button>
                                   </td>
@@ -3240,23 +3401,33 @@ export default function RecordStream({
                                   <tr className="w-run-detail-row">
                                     <td colSpan={4}>
                                       <div className="w-run-detail-stack">
-                                        {isExpanded ? (
+                                        {showTalkBody ? (
                                           <div
                                             className="wtalk-body"
                                             data-testid={`watcher-talk-body-${origNum}`}
                                           >
-                                            {sliceGroups.map((group, gIdx) =>
-                                              group.segments.length === 1 ? (
-                                                renderSegment(group.segments[0])
-                                              ) : (
-                                                <section
-                                                  key={`${group.groupId ?? 'loose'}-${gIdx}`}
-                                                  data-testid="record-group"
-                                                  className="flex min-w-0 flex-col gap-1"
-                                                >
-                                                  {group.segments.map((seg) => renderSegment(seg))}
-                                                </section>
+                                            {sliceGroups.length > 0 ? (
+                                              sliceGroups.map((group, gIdx) =>
+                                                group.segments.length === 1 ? (
+                                                  renderSegment(group.segments[0])
+                                                ) : (
+                                                  <section
+                                                    key={`${group.groupId ?? 'loose'}-${gIdx}`}
+                                                    data-testid="record-group"
+                                                    className="flex min-w-0 flex-col gap-1"
+                                                  >
+                                                    {group.segments.map((seg) => renderSegment(seg))}
+                                                  </section>
+                                                )
                                               )
+                                            ) : (
+                                              <div
+                                                className="flex items-center gap-2 py-1 text-[12px] text-text-muted"
+                                                data-testid={`watcher-talk-loading-${origNum}`}
+                                              >
+                                                <Loader2 size={13} className="animate-spin" />
+                                                <span>{t('workbench.stream.watcherTalkLoading')}</span>
+                                              </div>
                                             )}
                                           </div>
                                         ) : null}
@@ -3288,7 +3459,7 @@ export default function RecordStream({
                 </section>
               </div>
             );
-          })() : (
+          })() : watcherOpen ? null : (
             groups.map((group, index) => {
               /* **归组只剩间距，头上不再有字。**
                  同一次回复里的几条收在 4px 里，两次回复之间隔 16px——人不读一个字也看得出
@@ -3311,17 +3482,17 @@ export default function RecordStream({
 
           {/* 换到一场会话、首取还没落定：占住空态的位置说「正在加载」。大会话首取要好几秒，
               这段时间里摆空白或空态，人会以为这场会话没有内容。 */}
-          {loading && !records.length && !error ? (
+          {((loading && !records.length && !error) || watcherWaitingForInitial) ? (
             <div
               data-testid="record-stream-loading"
-              className="flex flex-col items-center gap-3 py-16 text-text-muted"
+              className="my-auto flex flex-col items-center gap-3 py-16 text-text-muted"
             >
               <Loader2 size={28} className="animate-spin" />
               <p className="text-[13px]">{t('workbench.stream.loading')}</p>
             </div>
           ) : null}
 
-          {loading && records.length ? (
+          {!watcherOpen && loading && records.length ? (
             <p className="flex items-center justify-center gap-2 py-4 text-[12px] text-text-muted">
               <Loader2 size={13} className="animate-spin" />
               {t('workbench.stream.loading')}

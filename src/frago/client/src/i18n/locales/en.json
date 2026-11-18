@@ -152,7 +152,10 @@
     "probing": "Checking…",
     "collapseToBar": "Hide for now (view page)",
     "compactBannerText": "Local service disconnected · Run in terminal to wake:",
-    "expandGuide": "Show wake guide"
+    "expandGuide": "Show wake guide",
+    "staleBuildBanner": "UI has been updated — click reload to apply the latest version",
+    "reloadNow": "Reload now",
+    "dismissUpdate": "Dismiss"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -900,13 +903,13 @@
       "harnesses": {
         "title": "Harness Tool Connections (Built-in CoreAgent & External CLIs)",
         "subtitle": "Assign an independent AI provider for Daily Sessions and Dispatched Workers on each Harness tool.",
-        "revertAll": "Revert all to native login",
+        "revertAll": "Reset to default",
         "colTool": "Harness Tool",
-        "colToolSub": "Built-in CoreAgent & external CLI coding tools",
-        "colDaily": "Daily Session (writes local config)",
-        "colDailySub": "Applies to interactive sessions, schedules, or manual CLI runs",
-        "colWorker": "Dispatched Worker (frago agent injection)",
-        "colWorkerSub": "Injected into background worker sessions only, leaves local config untouched",
+        "colToolSub": "Built-in & CLI tools",
+        "colDaily": "Daily Session",
+        "colDailySub": "Interactive & scheduled runs",
+        "colWorker": "Dispatched Worker",
+        "colWorkerSub": "Injected per background task",
         "protocolLabel": {
           "coreagent": "Built-in Core · Anthropic",
           "claude": "Anthropic",
@@ -914,14 +917,25 @@
           "opencode": "Anthropic",
           "agy": "Gemini / Vendor CLI"
         },
+        "protocolShort": {
+          "coreagent": "Anthropic (Core)",
+          "claude": "Anthropic",
+          "codex": "Responses",
+          "opencode": "Anthropic",
+          "agy": "Gemini"
+        },
         "notInstalled": "Not installed",
         "coreagentMeta": "~/.frago/profiles.json · Interactive / Schedules / Todo",
         "dailySelectAria": "{{name}} Daily Session configuration",
         "workerSelectAria": "{{name}} Dispatched Worker configuration",
         "optAutoFallback": "Auto fallback (active or first provider)",
+        "optAutoFallbackShort": "Auto fallback",
         "optNativeLogin": "Native CLI login (leaves local config untouched)",
+        "optNativeLoginShort": "Native CLI login",
         "optFollowDaily": "Follow Daily Session (same as left)",
+        "optFollowDailyShort": "Follow Daily",
         "optForceNative": "Native CLI login (force own account)",
+        "optForceNativeShort": "Force native login",
         "optDisabledWorkbuddy": "{{name}} — Legacy client encrypted",
         "optDisabledVendorNoKey": "{{name}} — Vendor CLI has no API key",
         "optDisabledWorkerOnly": "{{name}} — Dispatched Worker only",
@@ -932,16 +946,20 @@
         "subCoreAutoFallback": "Auto-falls back to active or first available provider",
         "subKeepNative": "Keeps tool's own login",
         "subFollowsDaily": "Follows Daily → {{target}}",
+        "subFollowsShort": "→ {{target}}",
         "subTargetAutoFallback": "Auto fallback",
         "subTargetNative": "Native login",
         "subWorkerNative": "Uses tool's own login for worker runs",
         "subWorkerInjected": "Injected per worker session · {{target}}",
         "contextWindowOnConnection": "Window {{window}} tokens · the kernel compacts at 85%",
-        "contextWindowUnknown": "No window declared · the kernel falls back to the model name, which can put the compact line far past what a session reaches"
+        "contextWindowUnknown": "No window declared · the kernel falls back to the model name, which can put the compact line far past what a session reaches",
+        "contextWindowShortUnknown": "No window",
+        "agyWindowManaged": "Managed by agy",
+        "agyWindowHint": "Antigravity CLI (agy) manages its own model context window tiers (256K / 512K / 900K)."
       },
       "danger": {
         "title": "Danger Zone",
-        "desc": "Directly edit each Harness tool's native config file (including registered hooks). Broken syntax will disable the tool or hooks:",
+        "desc": "Edit native config files directly; syntax errors disable hooks:",
         "selectAria": "Select a Harness native configuration file to open",
         "openBtn": "Open in VSCode",
         "openedNotice": "Opened {{name}} native config file in VSCode: {{path}}",
@@ -958,36 +976,44 @@
         "lightagent": {
           "name": "Light AI",
           "role": "Hook review (blocks dangerous commands, checks delivery rules), memory relevance scoring, and long-output summarization.",
+          "roleShort": "Hook guardrails, memory scoring, and output summaries.",
           "why": "Replaces brittle regexes with millisecond, low-cost semantic guardrails.",
           "selectAria": "Light AI provider",
           "optAutoFallback": "Auto fallback (follows Daily Session light model)",
+          "optAutoFallbackShort": "Auto fallback (daily light)",
           "toggleTitle": "Enable or disable per-turn prompt review",
           "reviewOn": "Review on",
-          "reviewOff": "Review off"
+          "reviewOff": "Review off",
+          "envOffBadge": "ENV OFF"
         },
         "observer": {
           "name": "Sidecar AI",
           "offBadge": "Disabled · 0 calls",
           "role": "Summarizes \"what happened this turn, which files changed, and where it stopped\" in the session right panel.",
+          "roleShort": "Auto-summarizes turn progress in the session watcher.",
           "why": "Track progress in long sessions at a glance without scrolling through hundreds of logs.",
           "selectAria": "Sidecar AI provider",
-          "optOff": "Disabled (turn off session observer)"
+          "optOff": "Disabled (turn off session observer)",
+          "optOffShort": "Disabled"
         },
         "asr": {
           "name": "Desktop Speech Recognition",
           "activeBadge": "ASR: {{name}} ({{model}})",
           "role": "Speech-to-text (ASR) for the virtual desktop petal voice listener.",
+          "roleShort": "Speech-to-text for the virtual desktop voice listener.",
           "why": "Requires a provider with its own API key (e.g. Groq Whisper); auto-matches when unbound.",
           "selectAria": "Desktop speech recognition provider",
-          "optAutoMatch": "Auto-match (prefers Groq / Whisper provider)"
+          "optAutoMatch": "Auto-match (prefers Groq / Whisper provider)",
+          "optAutoMatchShort": "Auto-match (Groq / Whisper)"
         },
         "decision": {
           "name": "Decision Model",
           "activeBadge": "Structured choice · {{wire}} · {{model}}",
           "disabledBadge": "Disabled",
           "roleAndWhy": "Produces deterministic choices for structured multiple-choice questions (supports HTTP Decision API and Ollama logprobs).",
+          "roleShort": "Deterministic choices for structured decision prompts.",
           "hideBtn": "Hide parameters",
-          "configBtn": "Configure endpoint ▾",
+          "configBtn": "Configure",
           "wireLabel": "Decision Wire Mode",
           "wireDecisions": "HTTP Decisions API (OpenAI compatible)",
           "wireOllama": "Local Ollama (logprobs scoring)",
@@ -1025,10 +1051,12 @@
         "refLight": "Light AI",
         "refObserver": "Sidecar AI",
         "refAsr": "Desktop ASR",
+        "refAutoSuffix": "{{name}} (auto)",
         "refUnused": "Unused",
         "editTitle": "Edit AI provider",
         "deleteTitle": "Delete AI provider",
         "deleteFailed": "Failed to delete provider",
+        "confirmDeleteAffected": "Currently referenced by: {{refs}}. Deleting it will revert those bindings to default.",
         "sortAria": "Sort providers by name",
         "sortAsc": "A→Z",
         "sortAscTitle": "Sort by name ascending (A→Z)",
@@ -1951,6 +1979,7 @@
       "preResponseThinking": "{{count}} thinking",
       "watcherTalkPromptCount": "{{count}} prompts",
       "watcherTalkReplyCount": "{{count}} replies",
+      "watcherTalkLoading": "Loading history…",
       "watcherTalkEmpty": "No conversation records",
       "watcherEmptySummary": "Observer is watching execution records after the cursor…",
       "watcherPhaseGoal": "Stage goal: {{goal}}",
@@ -2251,6 +2280,7 @@
       "errScope": "Scope",
       "errCode": "Code",
       "errMessage": "Message",
+      "informationalNotice": "System notice",
       "rawWithheld": "The raw response carries login credentials — not provided",
       "interrupted": "You hit stop",
       "phaseTool": "while a tool was running",
@@ -2384,6 +2414,14 @@
       "menuTitle": "Employees managed by frago · ↑↓ to move, Enter or Tab to pick, Esc to close",
       "noMatch": "No employee matches what you typed",
       "remove": "Remove @{{name}}"
+    },
+    "quote": {
+      "remove": "Remove quote",
+      "expand": "Expand quote",
+      "collapse": "Collapse",
+      "sessionBadge": "Quoted passage",
+      "lineCount": "{{n}} lines",
+      "charCount": "~{{n}} chars"
     },
     "composer": {
       "blockedNoSession": "Pick a session on the left, then say something here",
@@ -2627,7 +2665,8 @@
       "doingReplying": "replying",
       "doingToolResult": "reading what {{tool}} returned",
       "doingSubagent": "handing work to a subagent",
-      "doingError": "hit an error"
+      "doingError": "hit an error",
+      "doingNotice": "received a system notice"
     },
     "forYou": {
       "label": "For you",

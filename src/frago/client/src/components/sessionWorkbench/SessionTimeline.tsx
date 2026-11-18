@@ -57,6 +57,8 @@ import {
   type WorkbenchSession,
 } from '@/hooks/useWorkbenchSessions';
 import { useAppStore } from '@/stores/appStore';
+import { stripTextQuoteBlocks } from '@/utils/textQuoteBlocks';
+import { stripWebBridgeContext } from '@/utils/webBridgeContext';
 import {
   computeVisibleDayCount,
   dayBounds,
@@ -2083,7 +2085,7 @@ function LaneRow({
         ) : null}
         {picked ? <CalendarCheck size={13} className="shrink-0 text-text-muted" /> : null}
         <span className="min-w-0 overflow-hidden text-ellipsis text-[12.5px] font-medium">
-          {x.s.title}
+          {stripTextQuoteBlocks(stripWebBridgeContext(x.s.title)) || x.s.title}
         </span>
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{duration}</span>
       </div>

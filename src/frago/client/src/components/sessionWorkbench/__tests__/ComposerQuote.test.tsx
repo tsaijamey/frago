@@ -53,18 +53,33 @@ function mount(quote: { text: string; at: number } | null) {
 }
 
 describe('引用落进输入框', () => {
-  it('形状是三引号包住原话，下一行 >>> ，光标停在它后面，框拿到焦点', () => {
+  it('结构化挂载为顶部 TextQuote 卡片（复用 DirectiveQuote 样式契约），打字区保持干净且拿到焦点，支持展开与移除', () => {
     const view = mount(null);
     view.rerender(
-      <Composer sessionId={SID} family="claude-code" quote={{ text: '收尾闸门拦下了', at: 1 }} onSent={NOOP} />
+      <Composer sessionId={SID} family="claude-code" quote={{ text: '收尾闸门拦下了\n第二行详情', at: 1 }} onSent={NOOP} />
     );
     const el = box();
-    expect(el.value).toBe('"""\n收尾闸门拦下了\n"""\n>>> ');
-    expect(el.selectionStart).toBe(el.value.length);
+    expect(el.value).toBe('');
+    expect(el.selectionStart).toBe(0);
     expect(document.activeElement).toBe(el);
+
+    const card = screen.getByTestId('text-quote');
+    expect(card.className).toContain('border-border-color');
+    expect(card.className).toContain('bg-bg-subtle');
+    expect(screen.getByTestId('text-quote-preview').textContent).toBe('收尾闸门拦下了 第二行详情');
+    expect(screen.getByTestId('text-quote-count').textContent).toContain('2');
+
+    // 点击展开完整引用内容
+    expect(screen.queryByTestId('text-quote-expanded')).toBeNull();
+    fireEvent.click(screen.getByTestId('text-quote-toggle'));
+    expect(screen.getByTestId('text-quote-expanded').textContent).toBe('收尾闸门拦下了\n第二行详情');
+
+    // 点击 × 移除引用
+    fireEvent.click(screen.getByTestId('text-quote-remove'));
+    expect(screen.queryByTestId('text-quote')).toBeNull();
   });
 
-  it('接在已有内容后面，同一段话连引两次也算两次', () => {
+  it('保留打字区已有内容不覆盖，同一段话连引两次也叠加为两张引用卡', () => {
     const view = mount(null);
     act(() => {
       fireEvent.change(box(), { target: { value: '先说一句' } });
@@ -72,14 +87,16 @@ describe('引用落进输入框', () => {
     view.rerender(
       <Composer sessionId={SID} family="claude-code" quote={{ text: '配方', at: 1 }} onSent={NOOP} />
     );
-    expect(box().value).toBe('先说一句\n"""\n配方\n"""\n>>> ');
+    expect(box().value).toBe('先说一句');
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
     view.rerender(
       <Composer sessionId={SID} family="claude-code" quote={{ text: '配方', at: 2 }} onSent={NOOP} />
     );
-    expect(box().value).toBe('先说一句\n"""\n配方\n"""\n>>> \n"""\n配方\n"""\n>>> ');
+    expect(box().value).toBe('先说一句');
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(2);
   });
 
-  it('暂存列表填入的那一份带着想法：接在 >>> 后面，光标停在想法末尾', () => {
+  it('暂存列表填入的那一份带着想法：原文挂载为顶部引用卡，想法放入打字区且光标停在末尾', () => {
     const view = mount(null);
     view.rerender(
       <Composer
@@ -90,7 +107,8 @@ describe('引用落进输入框', () => {
       />
     );
     const el = box();
-    expect(el.value).toBe('"""\n第二个决策点\n"""\n>>> 倾向选乙');
+    expect(screen.getByTestId('text-quote-preview').textContent).toBe('第二个决策点');
+    expect(el.value).toBe('倾向选乙');
     expect(el.selectionStart).toBe(el.value.length);
   });
 });
@@ -214,5 +232,50 @@ describe('输入框的高度', () => {
     } finally {
       if (prevDesc) Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', prevDesc);
     }
+  });
+});
+
+describe('批注打包与粘贴三引号拆解为引用卡片', () => {
+  it('收到带 """ 块的 packedPrompt 时自动拆解为顶部 TextQuote 卡片，打字区不留裸 """', () => {
+    render(
+      <Composer
+        sessionId={SID}
+        family="claude-code"
+        onSent={NOOP}
+        packedPrompt={{
+          text: '【文档批注汇总】\n\n1. `~/a.py:L1`\n"""\nx = 1\ny = 2\n"""\n>>> 提取成配置\n\n请按以上批注逐项处理。',
+          count: 1,
+          tracePath: '~/.frago/sessions/claude-code/sid/file-annotations.json',
+          at: 101,
+        }}
+      />
+    );
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
+    expect(screen.getByTestId('text-quote-preview').textContent).toBe('x = 1 y = 2');
+    const el = box();
+    expect(el.value).not.toContain('"""');
+    expect(el.value).toContain('提取成配置');
+
+    fireEvent.click(screen.getByTestId('composer-packed-clear'));
+    expect(screen.queryAllByTestId('text-quote')).toHaveLength(0);
+    expect(el.value).toBe('');
+  });
+
+  it('在输入框直接粘贴带 """...""" 的文本时自动转为引用卡片并保留 >>> 后的正文', () => {
+    mount(null);
+    const el = box();
+    act(() => {
+      fireEvent.paste(el, {
+        clipboardData: {
+          files: [],
+          items: [],
+          getData: (type: string) =>
+            type === 'text/plain' ? '"""\n旧格式片段\n"""\n>>> 为什么还在' : '',
+        },
+      });
+    });
+    expect(screen.getAllByTestId('text-quote')).toHaveLength(1);
+    expect(screen.getByTestId('text-quote-preview').textContent).toBe('旧格式片段');
+    expect(el.value).toBe('为什么还在');
   });
 });
